@@ -13,10 +13,18 @@ jobs:
       - run: cargo fmt --all --check
 
   clippy:
-    # ponytail: Windows のみ。gpui の Linux ビルドは apt で系依存が要るので、Linux も見たくなったら matrix に追加
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # gpui の Linux ビルド依存 (zed の script/linux から gpui に要るものを抜粋)
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfontconfig-dev libglib2.0-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
