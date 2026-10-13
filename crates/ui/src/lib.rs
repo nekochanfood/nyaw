@@ -196,11 +196,13 @@ const PANEL_PX: (u32, u32) = (800, 600);
 /// Desktop（novr）だけが使う周期。VR ランタイムは `poll` が vsync まで待つ。
 const FRAME: Duration = Duration::from_millis(11);
 
+type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
+
 /// 画面と VR 空間での配置。異なる画面型を同じ起動リストに入れられる。
 pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
-    build: Box<dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView>,
+    build: Box<PanelBuilder>,
 }
 
 impl PanelSpec {
@@ -230,7 +232,7 @@ impl PanelSpec {
             Some(from) => {
                 kernel.panel(from).pose
                     * Pose::new(
-                        Vec3::new(0.9 * (next - from) as f32, 0.0, 0.0),
+                        Vec3::new(1.2 * (next - from) as f32, 0.0, 0.0),
                         Quat::IDENTITY,
                     )
             }

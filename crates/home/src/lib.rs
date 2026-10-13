@@ -111,6 +111,13 @@ fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'stati
     }
 }
 
+fn attach_offset(panel: PanelId, base: Pose) -> Pose {
+    Pose::new(
+        base.position + Vec3::new(1.2 * panel as f32, 0.0, 0.0),
+        base.orientation,
+    )
+}
+
 fn row() -> Div {
     div().flex().flex_wrap().gap_2().items_center()
 }
@@ -139,7 +146,7 @@ impl Render for Home {
             .child(
                 button("attach-hmd", "HMD", on(&Device::Hmd)).on_click(command(
                     self.panel,
-                    PanelCommand::Attach(Device::Hmd, HMD_OFFSET),
+                    PanelCommand::Attach(Device::Hmd, attach_offset(self.panel, HMD_OFFSET)),
                 )),
             )
             .child(
@@ -150,7 +157,10 @@ impl Render for Home {
                 )
                 .on_click(command(
                     self.panel,
-                    PanelCommand::Attach(Device::Controller(Hand::Left), HAND_OFFSET),
+                    PanelCommand::Attach(
+                        Device::Controller(Hand::Left),
+                        attach_offset(self.panel, HAND_OFFSET),
+                    ),
                 )),
             )
             .child(
@@ -161,7 +171,10 @@ impl Render for Home {
                 )
                 .on_click(command(
                     self.panel,
-                    PanelCommand::Attach(Device::Controller(Hand::Right), HAND_OFFSET),
+                    PanelCommand::Attach(
+                        Device::Controller(Hand::Right),
+                        attach_offset(self.panel, HAND_OFFSET),
+                    ),
                 )),
             )
             .child({
@@ -175,9 +188,10 @@ impl Render for Home {
                     tracker.as_ref().is_some_and(on),
                 );
                 match tracker {
-                    Some(d) => {
-                        b.on_click(command(self.panel, PanelCommand::Attach(d, HAND_OFFSET)))
-                    }
+                    Some(d) => b.on_click(command(
+                        self.panel,
+                        PanelCommand::Attach(d, attach_offset(self.panel, HAND_OFFSET)),
+                    )),
                     None => b,
                 }
             })
