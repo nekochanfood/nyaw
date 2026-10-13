@@ -78,6 +78,8 @@ struct HandState {
 pub struct Overlay {
     panels: Vec<Panel>,
     hands: HashMap<Hand, HandState>,
+    /// 手ごとの前フレームの入力（ボタンのヒステリシス用）。
+    inputs: HashMap<Hand, ControllerState>,
     /// 最後の tick で見えていたトラッカーの ID（取り付け先の候補）。
     trackers: Vec<String>,
 }
@@ -186,7 +188,9 @@ impl Overlay {
             }
         }
         let mut events = Vec::new();
-        for c in frame.controllers.iter().map(input::map) {
+        for raw in &frame.controllers {
+            let c = input::map(raw, self.inputs.get(&raw.hand));
+            self.inputs.insert(raw.hand, c);
             self.update_hand(&c, &frame, &mut events);
         }
         for p in &mut self.panels {
