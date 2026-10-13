@@ -95,9 +95,17 @@ impl Overlay {
     }
 
     /// `panel` の描画済み UI フレームを VR ランタイムへ送る。
-    pub fn submit(&self, vr: &mut dyn VrBackend, panel: PanelId, rgba: &[u8]) {
-        let p = &self.panels[panel];
-        vr.submit_overlay_pixels(p.overlay, p.resolution.0, p.resolution.1, rgba);
+    /// テクスチャの大きさは `resolution`（ヒット判定用の論理ピクセル）と独立してよい。
+    /// HiDPI では UI が `resolution × 拡大率` で描かれるため。
+    pub fn submit(
+        &self,
+        vr: &mut dyn VrBackend,
+        panel: PanelId,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) {
+        vr.submit_overlay_pixels(self.panels[panel].overlay, width, height, rgba);
     }
 
     pub fn tick(&mut self, vr: &mut dyn VrBackend) -> Vec<UiEvent> {
@@ -313,7 +321,11 @@ mod tests {
     #[test]
     fn submit_reaches_backend() {
         let (mut vr, ov) = setup();
-        ov.submit(&mut vr, 0, &vec![0; 100 * 100 * 4]);
-        assert_eq!(vr.overlays[0].submitted, Some((100, 100)));
+        let mut rgba = vec![0; 200 * 200 * 4];
+        rgba[..4].copy_from_slice(&[1, 2, 3, 4]);
+        ov.submit(&mut vr, 0, 200, 200, &rgba);
+        let tex = vr.overlays[0].texture.as_ref().unwrap();
+        assert_eq!((tex.width, tex.height), (200, 200));
+        assert_eq!(tex.pixel(0, 0), [1, 2, 3, 4]);
     }
 }
