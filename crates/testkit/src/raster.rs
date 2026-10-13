@@ -6,7 +6,7 @@ use gpui::{App, Rgba, Window};
 use ui::Frame;
 
 /// `ui::capture` と同じく描き直してから、シーンを RGBA に塗る。
-// ponytail: 単色の矩形・角丸・枠線まで（縁のアンチエイリアス無し）。影・文字・画像は塗らない。見た目の検証が要るものが出たら足す。
+// ponytail: 単色の矩形・角丸・枠線まで（縁のアンチエイリアス無し）と直線の下線。波線・影・文字・画像は塗らない。見た目の検証が要るものが出たら足す。
 pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
     window.draw(cx).clear(cx);
     let scale = window.scale_factor();
@@ -68,6 +68,21 @@ pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
                 let i = ((y * width + x) * 4) as usize;
                 let px: &mut [u8; 4] = (&mut rgba[i..i + 4]).try_into().unwrap();
                 blend(px, color);
+            }
+        }
+    }
+    // ponytail: 下線は矩形の上に重ねるだけ（描画順は quad と別の空間）。波線は直線で塗る。
+    for u in window.painted_underlines() {
+        let color = Rgba::from(u.color);
+        let b = u.bounds.intersect(&u.content_mask.bounds);
+        let x0 = b.origin.x.0.max(0.0).round() as u32;
+        let y0 = b.origin.y.0.max(0.0).round() as u32;
+        let x1 = ((b.origin.x.0 + b.size.width.0).round().max(0.0) as u32).min(width);
+        let y1 = ((b.origin.y.0 + b.size.height.0).round().max(0.0) as u32).min(height);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = ((y * width + x) * 4) as usize;
+                blend((&mut rgba[i..i + 4]).try_into().unwrap(), color);
             }
         }
     }
