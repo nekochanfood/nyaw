@@ -217,6 +217,10 @@ pub fn run<V: Render>(
             loop {
                 cx.background_executor().timer(wait).await;
                 let inputs = pump(&mut kernel, panel, &mut bridge);
+                if kernel.quit_requested() {
+                    cx.update(|cx| cx.quit());
+                    return;
+                }
                 // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
                 // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
                 let Ok(frame) = cx.update_window(window.into(), |_, window, cx| {
