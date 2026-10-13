@@ -145,7 +145,7 @@ impl OpenVrBackend {
                 &mut err,
             )
         };
-        let (mut since, mut counter) = (0.0f32, 0u64);
+        let (mut since, mut counter) = (0.0f32, Default::default());
         if hz > 0.0 && unsafe { f(s.GetTimeSinceLastVsync)(&mut since, &mut counter) } {
             let left = 1.0 / hz - since;
             if left > 0.0 {
