@@ -68,7 +68,12 @@ impl Overlay {
     ) -> Result<PanelId, VrError> {
         let overlay = vr.create_overlay(key, size.x)?;
         vr.set_overlay_pose(overlay, pose);
-        self.panels.push(Panel { pose, size, resolution, overlay });
+        self.panels.push(Panel {
+            pose,
+            size,
+            resolution,
+            overlay,
+        });
         Ok(self.panels.len() - 1)
     }
 
@@ -116,9 +121,18 @@ impl Overlay {
             .filter_map(|(id, p)| hit_test(p, &c.aim).map(|(pos, t)| (id, pos, t)))
             .min_by(|a, b| a.2.total_cmp(&b.2));
 
-        let mut emit = |panel, event| out.push(UiEvent { panel, hand: c.hand, event });
+        let mut emit = |panel, event| {
+            out.push(UiEvent {
+                panel,
+                hand: c.hand,
+                event,
+            })
+        };
         let new_hover = hit.map(|h| h.0);
-        if let Some(old) = st.hover.filter(|&old| Some(old) != new_hover || grab_started) {
+        if let Some(old) = st
+            .hover
+            .filter(|&old| Some(old) != new_hover || grab_started)
+        {
             emit(old, PointerEvent::Leave);
         }
 
@@ -136,10 +150,23 @@ impl Overlay {
 
         emit(id, PointerEvent::Move { pos });
         if c.select != st.select {
-            emit(id, if c.select { PointerEvent::Down { pos } } else { PointerEvent::Up { pos } });
+            emit(
+                id,
+                if c.select {
+                    PointerEvent::Down { pos }
+                } else {
+                    PointerEvent::Up { pos }
+                },
+            );
         }
         if c.scroll != Vec2::ZERO {
-            emit(id, PointerEvent::Scroll { pos, delta: c.scroll });
+            emit(
+                id,
+                PointerEvent::Scroll {
+                    pos,
+                    delta: c.scroll,
+                },
+            );
         }
         st.hover = Some(id);
         st.select = c.select;
@@ -163,7 +190,13 @@ fn hit_test(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
         return None;
     }
     let (w, h) = (p.resolution.0 as f32, p.resolution.1 as f32);
-    Some((Vec2::new((local.x / p.size.x + 0.5) * w, (0.5 - local.y / p.size.y) * h), t))
+    Some((
+        Vec2::new(
+            (local.x / p.size.x + 0.5) * w,
+            (0.5 - local.y / p.size.y) * h,
+        ),
+        t,
+    ))
 }
 
 #[cfg(test)]
@@ -175,7 +208,8 @@ mod tests {
         let mut vr = MockBackend::default();
         let mut ov = Overlay::new();
         let pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
-        ov.add_panel(&mut vr, "main", pose, Vec2::new(1.0, 1.0), (100, 100)).unwrap();
+        ov.add_panel(&mut vr, "main", pose, Vec2::new(1.0, 1.0), (100, 100))
+            .unwrap();
         (vr, ov)
     }
 
@@ -197,17 +231,42 @@ mod tests {
         let (mut vr, mut ov) = setup();
         let center = Vec2::new(50.0, 50.0);
         controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
-        assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Move { pos: center }, PointerEvent::Down { pos: center }]);
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [
+                PointerEvent::Move { pos: center },
+                PointerEvent::Down { pos: center }
+            ]
+        );
         controller(&mut vr, Pose::IDENTITY, &[]);
-        assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Move { pos: center }, PointerEvent::Up { pos: center }]);
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [
+                PointerEvent::Move { pos: center },
+                PointerEvent::Up { pos: center }
+            ]
+        );
     }
 
     #[test]
     fn hit_maps_to_top_left_pixels_and_leave() {
         let (mut vr, mut ov) = setup();
-        controller(&mut vr, Pose::new(Vec3::new(-0.25, 0.25, 0.0), Quat::IDENTITY), &[]);
-        assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Move { pos: Vec2::new(25.0, 25.0) }]);
-        controller(&mut vr, Pose::new(Vec3::new(5.0, 0.0, 0.0), Quat::IDENTITY), &[]);
+        controller(
+            &mut vr,
+            Pose::new(Vec3::new(-0.25, 0.25, 0.0), Quat::IDENTITY),
+            &[],
+        );
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [PointerEvent::Move {
+                pos: Vec2::new(25.0, 25.0)
+            }]
+        );
+        controller(
+            &mut vr,
+            Pose::new(Vec3::new(5.0, 0.0, 0.0), Quat::IDENTITY),
+            &[],
+        );
         assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Leave]);
     }
 
@@ -221,13 +280,13 @@ mod tests {
         assert!(ov.tick(&mut vr).is_empty());
         let expected = Vec3::new(1.0, 0.0, -1.0);
         assert!(ov.panel(0).pose.position.abs_diff_eq(expected, 1e-5));
-        assert!(vr.overlays[0].1.position.abs_diff_eq(expected, 1e-5));
+        assert!(vr.overlays[0].pose.position.abs_diff_eq(expected, 1e-5));
     }
 
     #[test]
     fn submit_reaches_backend() {
         let (mut vr, ov) = setup();
         ov.submit(&mut vr, 0, &vec![0; 100 * 100 * 4]);
-        assert_eq!(vr.overlays[0].2, Some((100, 100)));
+        assert_eq!(vr.overlays[0].submitted, Some((100, 100)));
     }
 }

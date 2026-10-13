@@ -69,14 +69,19 @@ fn first(raw: &RawController, names: &[&str]) -> f32 {
 
 /// 未知のデバイスは KHR simple controller のバインドにフォールバックする。
 pub fn map(raw: &RawController) -> ControllerState {
-    let p = PROFILES.iter().find(|p| p.id == raw.profile).unwrap_or(&SIMPLE);
+    let p = PROFILES
+        .iter()
+        .find(|p| p.id == raw.profile)
+        .unwrap_or(&SIMPLE);
     ControllerState {
         hand: raw.hand,
         aim: raw.aim,
         select: first(raw, p.select) > PRESS,
         grab: first(raw, p.grab) > PRESS,
         menu: first(raw, p.menu) > PRESS,
-        scroll: p.scroll.map_or(Vec2::ZERO, |(x, y)| Vec2::new(first(raw, &[x]), first(raw, &[y]))),
+        scroll: p.scroll.map_or(Vec2::ZERO, |(x, y)| {
+            Vec2::new(first(raw, &[x]), first(raw, &[y]))
+        }),
     }
 }
 
@@ -95,7 +100,10 @@ mod tests {
 
     #[test]
     fn different_devices_same_action() {
-        let index = map(&raw("valve/index_controller", &[("trigger/value", 0.9), ("thumbstick/y", 1.0)]));
+        let index = map(&raw(
+            "valve/index_controller",
+            &[("trigger/value", 0.9), ("thumbstick/y", 1.0)],
+        ));
         let simple = map(&raw("khr/simple_controller", &[("select/click", 1.0)]));
         assert!(index.select && simple.select);
         assert_eq!(index.scroll, Vec2::new(0.0, 1.0));
@@ -103,7 +111,10 @@ mod tests {
 
     #[test]
     fn touch_menu_candidates_and_threshold() {
-        let s = map(&raw("oculus/touch_controller", &[("b/click", 1.0), ("squeeze/value", 0.3)]));
+        let s = map(&raw(
+            "oculus/touch_controller",
+            &[("b/click", 1.0), ("squeeze/value", 0.3)],
+        ));
         assert!(s.menu);
         assert!(!s.grab);
     }

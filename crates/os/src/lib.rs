@@ -17,14 +17,18 @@ pub const CURRENT: Os = Os::Linux;
 compile_error!("nyaw supports Windows and Linux only");
 
 fn env_path(key: &str) -> Option<PathBuf> {
-    std::env::var_os(key).filter(|v| !v.is_empty()).map(PathBuf::from)
+    std::env::var_os(key)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// ユーザーごとの設定ルート: Windows は `%APPDATA%`、Linux は `$XDG_CONFIG_HOME` か `~/.config`。
 fn user_config_root() -> Option<PathBuf> {
     match CURRENT {
         Os::Windows => env_path("APPDATA"),
-        Os::Linux => env_path("XDG_CONFIG_HOME").or_else(|| env_path("HOME").map(|h| h.join(".config"))),
+        Os::Linux => {
+            env_path("XDG_CONFIG_HOME").or_else(|| env_path("HOME").map(|h| h.join(".config")))
+        }
     }
 }
 
@@ -54,7 +58,9 @@ pub fn openxr_runtime_manifest() -> Option<PathBuf> {
         Os::Linux => {
             let mut v: Vec<PathBuf> = user_config_root().into_iter().collect();
             v.push("/etc/xdg".into());
-            v.into_iter().map(|d| d.join("openxr/1/active_runtime.json")).collect()
+            v.into_iter()
+                .map(|d| d.join("openxr/1/active_runtime.json"))
+                .collect()
         }
     };
     candidates.into_iter().find(|p| p.exists())

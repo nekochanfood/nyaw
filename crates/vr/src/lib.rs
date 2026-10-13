@@ -20,10 +20,16 @@ pub struct Pose {
 }
 
 impl Pose {
-    pub const IDENTITY: Pose = Pose { position: Vec3::ZERO, orientation: Quat::IDENTITY };
+    pub const IDENTITY: Pose = Pose {
+        position: Vec3::ZERO,
+        orientation: Quat::IDENTITY,
+    };
 
     pub fn new(position: Vec3, orientation: Quat) -> Self {
-        Self { position, orientation }
+        Self {
+            position,
+            orientation,
+        }
     }
 
     pub fn transform_point(&self, p: Vec3) -> Vec3 {
@@ -36,14 +42,20 @@ impl Pose {
 
     pub fn inverse(&self) -> Pose {
         let inv = self.orientation.inverse();
-        Pose { position: inv * -self.position, orientation: inv }
+        Pose {
+            position: inv * -self.position,
+            orientation: inv,
+        }
     }
 }
 
 impl std::ops::Mul for Pose {
     type Output = Pose;
     fn mul(self, rhs: Pose) -> Pose {
-        Pose { position: self.transform_point(rhs.position), orientation: self.orientation * rhs.orientation }
+        Pose {
+            position: self.transform_point(rhs.position),
+            orientation: self.orientation * rhs.orientation,
+        }
     }
 }
 
