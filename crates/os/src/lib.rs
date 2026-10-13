@@ -120,6 +120,17 @@ impl logger::Sink for FileSink {
     }
 }
 
+/// `path` に `contents` を書く（親ディレクトリが無ければ作る）。中身が同じなら書かない。
+pub fn write_file(path: &Path, contents: &str) -> io::Result<()> {
+    if fs::read_to_string(path).is_ok_and(|old| old == contents) {
+        return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(path, contents)
+}
+
 /// SteamVR はインストール時に `openvrpaths.vrpath` を書き出す。存在すれば OpenVR が使える。
 pub fn openvr_paths_file() -> Option<PathBuf> {
     let dir = match CURRENT {

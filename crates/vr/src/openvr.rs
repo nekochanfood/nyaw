@@ -1,4 +1,4 @@
-//! OpenVR (SteamVR) バックエンド: オーバーレイは `IVROverlay`、入力は `IVRSystem` のコントローラ状態。
+//! OpenVR (SteamVR) バックエンド: オーバーレイは `IVROverlay`、入力は SteamVR Input（`IVRInput`、[`input`]）。
 //! C++ の vtable ではなく C API の関数表（`FnTable:IVRSystem_022` 等）を通して呼ぶ。
 
 use std::collections::HashMap;
@@ -10,13 +10,15 @@ use glam::Mat3;
 use openvr_bindings as sys;
 
 mod client;
+mod input;
 
 use client::Client;
 pub use client::runtime_path;
+use input::{HandActions, Input};
 
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
-    Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
+    Frame, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
 };
 
 pub(crate) fn available() -> bool {
@@ -27,9 +29,18 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
     let client = Client::init(sys::EVRApplicationType_VRApplication_Overlay)?;
     let system = client.interface(sys::IVRSystem_Version)?;
     let compositor = client.interface(sys::IVRCompositor_Version)?;
+    // manifest の登録は最初の PollNextEvent より前でなければならない。
+    let input = Input::init(client.interface(sys::IVRInput_Version)?)
+        .inspect_err(|e| {
+            logger::warn!(
+                "SteamVR Input を使えないのでコントローラは無しで動く",
+                error = e
+            )
+        })
+        .ok();
     Ok(Box::new(OpenVrBackend {
         system,
-        render_models: client.interface(sys::IVRRenderModels_Version)?,
+        input,
         overlay: client.interface(sys::IVROverlay_Version)?,
         textures: HashMap::new(),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
@@ -92,18 +103,6 @@ fn f<T>(func: Option<T>) -> T {
     func.expect("OpenVR の関数表に欠けている関数がある")
 }
 
-/// `VRControllerState_t`。Linux では詰め物 4 バイトで定義されているが、
-/// openvr_bindings はそれを反映していない（Windows で 64 バイト、Linux で 60 バイト）ので自前で持つ。
-#[cfg_attr(unix, repr(C, packed(4)))]
-#[cfg_attr(not(unix), repr(C))]
-#[derive(Clone, Copy, Default)]
-struct ControllerState {
-    packet: u32,
-    pressed: u64,
-    touched: u64,
-    axes: [[f32; 2]; 5],
-}
-
 const MAX_DEVICES: usize = sys::k_unMaxTrackedDeviceCount as usize;
 
 /// オーバーレイ 1 枚あたりのイメージの数。コンポジタが読んでいる最中のイメージに書き込まないよう順番に使う。
@@ -119,7 +118,8 @@ struct Textures {
 
 pub(crate) struct OpenVrBackend {
     system: *const sys::VR_IVRSystem_FnTable,
-    render_models: *const sys::VR_IVRRenderModels_FnTable,
+    /// 使えなければ（manifest を登録できない等）コントローラは無し。
+    input: Option<Input>,
     overlay: *const sys::VR_IVROverlay_FnTable,
     textures: HashMap<u64, Textures>,
     gpu: Gpu,
@@ -164,32 +164,6 @@ impl OpenVrBackend {
         period + self.hmd_float(sys::ETrackedDeviceProperty_Prop_SecondsFromVsyncToPhotons_Float)
     }
 
-    /// SteamVR がレンダーモデルに定義しているレーザーの出口（`tip`）の、デバイス原点からの相対姿勢。
-    fn tip(&self, device: u32, state: &mut ControllerState) -> Option<Pose> {
-        let mut model = self
-            .string_property(
-                device,
-                sys::ETrackedDeviceProperty_Prop_RenderModelName_String,
-            )
-            .into_bytes();
-        model.push(0);
-        let mut mode = sys::RenderModel_ControllerMode_State_t {
-            bScrollWheelVisible: false,
-        };
-        let mut out: sys::RenderModel_ComponentState_t =
-            unsafe { MaybeUninit::zeroed().assume_init() };
-        let ok = unsafe {
-            f((*self.render_models).GetComponentState)(
-                model.as_mut_ptr().cast(),
-                c"tip".as_ptr().cast_mut(),
-                state as *mut ControllerState as *mut sys::VRControllerState_t,
-                &mut mode,
-                &mut out,
-            )
-        };
-        ok.then(|| pose_from(&out.mTrackingToComponentLocal.m))
-    }
-
     fn overlay(&self) -> &sys::VR_IVROverlay_FnTable {
         unsafe { &*self.overlay }
     }
@@ -207,54 +181,6 @@ impl OpenVrBackend {
             );
             CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned()
         }
-    }
-
-    fn controller(&self, device: u32, pose: &sys::TrackedDevicePose_t) -> Option<RawController> {
-        let s = self.system();
-        let hand = match unsafe { f(s.GetControllerRoleForTrackedDeviceIndex)(device) } {
-            sys::ETrackedControllerRole_TrackedControllerRole_LeftHand => Hand::Left,
-            sys::ETrackedControllerRole_TrackedControllerRole_RightHand => Hand::Right,
-            _ => return None,
-        };
-        let mut state = ControllerState::default();
-        let ok = unsafe {
-            f(s.GetControllerState)(
-                device,
-                &mut state as *mut ControllerState as *mut sys::VRControllerState_t,
-                size_of::<ControllerState>() as u32,
-            )
-        };
-        if !ok {
-            return None;
-        }
-        let mut axis_types = [0; 5];
-        for (n, t) in axis_types.iter_mut().enumerate() {
-            let mut err = Default::default();
-            let prop = sys::ETrackedDeviceProperty_Prop_Axis0Type_Int32 + n as u32;
-            *t = unsafe { f(s.GetInt32TrackedDeviceProperty)(device, prop, &mut err) };
-        }
-        let tip = self.tip(device, &mut state);
-        let profile = profile(&self.string_property(
-            device,
-            sys::ETrackedDeviceProperty_Prop_ControllerType_String,
-        ));
-        Some(RawController {
-            hand,
-            profile: profile.into(),
-            // デバイス原点は Index だと前方が下に傾くので、SteamVR 定義の `tip` を合成する。
-            // ponytail: レンダーモデルの旧 API。IVRInput の `/pose/tip` は action manifest が要るので使わない。
-            aim: {
-                let device_pose = pose_from(&pose.mDeviceToAbsoluteTracking.m);
-                match tip {
-                    Some(t) => Pose::new(
-                        device_pose.position + device_pose.orientation * t.position,
-                        device_pose.orientation * t.orientation,
-                    ),
-                    None => device_pose,
-                }
-            },
-            inputs: inputs(profile, state.pressed, axis_types, state.axes),
-        })
     }
 
     fn release(&mut self, id: u64) {
@@ -378,20 +304,34 @@ impl VrBackend for OpenVrBackend {
             if !pose.bPoseIsValid {
                 continue;
             }
-            match unsafe { f(s.GetTrackedDeviceClass)(device) } {
-                sys::ETrackedDeviceClass_TrackedDeviceClass_Controller => {
-                    frame.controllers.extend(self.controller(device, pose))
-                }
-                sys::ETrackedDeviceClass_TrackedDeviceClass_GenericTracker => {
-                    frame.trackers.push((
-                        self.string_property(
-                            device,
-                            sys::ETrackedDeviceProperty_Prop_SerialNumber_String,
-                        ),
-                        pose_from(&pose.mDeviceToAbsoluteTracking.m),
-                    ))
-                }
-                _ => {}
+            if unsafe { f(s.GetTrackedDeviceClass)(device) }
+                == sys::ETrackedDeviceClass_TrackedDeviceClass_GenericTracker
+            {
+                frame.trackers.push((
+                    self.string_property(
+                        device,
+                        sys::ETrackedDeviceProperty_Prop_SerialNumber_String,
+                    ),
+                    pose_from(&pose.mDeviceToAbsoluteTracking.m),
+                ))
+            }
+        }
+        if let Some(input) = &self.input {
+            if let Err(e) = input.update() {
+                logger::warn!("SteamVR Input の状態を取り込めない", error = e);
+            }
+            for (hand, device, aim, actions) in input.hands(predict) {
+                let profile = profile(&self.string_property(
+                    device,
+                    sys::ETrackedDeviceProperty_Prop_ControllerType_String,
+                ));
+                frame.controllers.push(RawController {
+                    hand,
+                    profile: profile.into(),
+                    // バインディングの `/pose/tip`（SteamVR が機種ごとに定義するレーザーの出口）。
+                    aim,
+                    inputs: inputs(profile, actions),
+                });
             }
         }
         frame
@@ -514,61 +454,28 @@ fn profile(controller_type: &str) -> &'static str {
     }
 }
 
-fn button(pressed: u64, id: sys::EVRButtonId) -> f32 {
-    if pressed & (1 << id) != 0 { 1.0 } else { 0.0 }
-}
-
-/// 旧来のコントローラ状態（ボタンのビット列と軸 5 本）を OpenXR の入力名に翻訳する。
-/// 軸の意味はデバイスごとに `Prop_Axis{n}Type_Int32` で宣言されている。
-fn inputs(
-    profile: &str,
-    pressed: u64,
-    axis_types: [i32; 5],
-    axes: [[f32; 2]; 5],
-) -> Vec<(String, f32)> {
-    let mut v = Vec::new();
-    let mut put = |name: &str, value: f32| v.push((name.to_owned(), value));
-
-    let mut seen = [false; 3];
-    for (t, [x, y]) in axis_types.into_iter().zip(axes) {
-        // 同じ種類の軸が複数あるときは最初のものだけ使う。
-        match t as u32 {
-            sys::EVRControllerAxisType_k_eControllerAxis_Trigger if !seen[0] => {
-                seen[0] = true;
-                put("trigger/value", x);
-            }
-            sys::EVRControllerAxisType_k_eControllerAxis_Joystick if !seen[1] => {
-                seen[1] = true;
-                put("thumbstick/x", x);
-                put("thumbstick/y", y);
-            }
-            sys::EVRControllerAxisType_k_eControllerAxis_TrackPad if !seen[2] => {
-                seen[2] = true;
-                put("trackpad/x", x);
-                put("trackpad/y", y);
-            }
-            _ => {}
-        }
-    }
-
-    put(
-        "select/click",
-        button(pressed, sys::EVRButtonId_k_EButton_SteamVR_Trigger),
-    );
-    let grip = button(pressed, sys::EVRButtonId_k_EButton_Grip);
-    put("squeeze/value", grip);
-    put("squeeze/click", grip);
-    // 旧来の ApplicationMenu は、Index では B ボタン、Touch では B / Y ボタンに当たる。
+/// SteamVR Input のアクションを、入力層が機種ごとに引く OpenXR の入力名で表す。
+fn inputs(profile: &str, a: HandActions) -> Vec<(String, f32)> {
+    let on = |b: bool| if b { 1.0 } else { 0.0 };
+    // Index のメニューは B ボタン。他の機種の表では menu/click で引く。
     let menu = if profile == "valve/index_controller" {
         "b/click"
     } else {
         "menu/click"
     };
-    put(
-        menu,
-        button(pressed, sys::EVRButtonId_k_EButton_ApplicationMenu),
-    );
-    v
+    [
+        ("select/click", on(a.select)),
+        ("squeeze/value", on(a.grab)),
+        ("squeeze/click", on(a.grab)),
+        (menu, on(a.menu)),
+        ("thumbstick/x", a.scroll.x),
+        ("thumbstick/y", a.scroll.y),
+        ("trackpad/x", a.scroll.x),
+        ("trackpad/y", a.scroll.y),
+    ]
+    .into_iter()
+    .map(|(n, v)| (n.to_owned(), v))
+    .collect()
 }
 
 /// `HmdMatrix34_t`（行優先の 3x4。左 3 列が回転、右端の列が平行移動）から姿勢へ。
@@ -625,39 +532,23 @@ mod tests {
         assert_eq!(profile("unknown_thing"), "khr/simple_controller");
     }
 
+    /// どの機種でも、アクションが入力層の表で引ける名前に出る。
     #[test]
-    fn legacy_state_maps_to_openxr_inputs() {
-        let axis_types = [
-            sys::EVRControllerAxisType_k_eControllerAxis_Joystick as i32,
-            sys::EVRControllerAxisType_k_eControllerAxis_Trigger as i32,
-            sys::EVRControllerAxisType_k_eControllerAxis_Trigger as i32,
-            0,
-            0,
-        ];
-        let axes = [[0.1, -0.2], [0.8, 0.0], [0.3, 0.0], [0.0; 2], [0.0; 2]];
-        let pressed = (1 << sys::EVRButtonId_k_EButton_Grip)
-            | (1 << sys::EVRButtonId_k_EButton_ApplicationMenu);
-        let v = inputs("valve/index_controller", pressed, axis_types, axes);
-        assert_eq!(value(&v, "thumbstick/x"), Some(0.1));
-        assert_eq!(value(&v, "thumbstick/y"), Some(-0.2));
-        // 同じ種類の 2 本目の軸は無視する。
-        assert_eq!(value(&v, "trigger/value"), Some(0.8));
+    fn actions_map_to_each_profile() {
+        let a = HandActions {
+            select: true,
+            grab: true,
+            menu: true,
+            scroll: crate::Vec2::new(0.5, -1.0),
+        };
+        let v = inputs("valve/index_controller", a);
+        assert_eq!(value(&v, "select/click"), Some(1.0));
         assert_eq!(value(&v, "squeeze/value"), Some(1.0));
         assert_eq!(value(&v, "b/click"), Some(1.0));
-        assert_eq!(value(&v, "menu/click"), None);
-        assert_eq!(value(&v, "select/click"), Some(0.0));
-    }
-
-    #[test]
-    fn vive_menu_is_menu_click() {
-        let pressed = 1 << sys::EVRButtonId_k_EButton_ApplicationMenu;
-        let v = inputs("htc/vive_controller", pressed, [0; 5], [[0.0; 2]; 5]);
+        assert_eq!(value(&v, "thumbstick/y"), Some(-1.0));
+        let v = inputs("htc/vive_controller", a);
         assert_eq!(value(&v, "menu/click"), Some(1.0));
-    }
-
-    #[test]
-    fn controller_state_matches_openvr_layout() {
-        let expected = if cfg!(unix) { 60 } else { 64 };
-        assert_eq!(size_of::<ControllerState>(), expected);
+        assert_eq!(value(&v, "squeeze/click"), Some(1.0));
+        assert_eq!(value(&v, "trackpad/x"), Some(0.5));
     }
 }

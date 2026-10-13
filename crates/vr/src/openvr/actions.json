@@ -1,0 +1,28 @@
+{
+  "default_bindings": [
+    { "controller_type": "knuckles", "binding_url": "bindings_knuckles.json" },
+    { "controller_type": "oculus_touch", "binding_url": "bindings_oculus_touch.json" },
+    { "controller_type": "vive_controller", "binding_url": "bindings_vive_controller.json" }
+  ],
+  "actions": [
+    { "name": "/actions/nyaw/in/aim", "type": "pose" },
+    { "name": "/actions/nyaw/in/select", "type": "boolean" },
+    { "name": "/actions/nyaw/in/grab", "type": "boolean" },
+    { "name": "/actions/nyaw/in/menu", "type": "boolean" },
+    { "name": "/actions/nyaw/in/scroll", "type": "vector2" }
+  ],
+  "action_sets": [
+    { "name": "/actions/nyaw", "usage": "leftright" }
+  ],
+  "localization": [
+    {
+      "language_tag": "en_US",
+      "/actions/nyaw": "nyaw",
+      "/actions/nyaw/in/aim": "Laser",
+      "/actions/nyaw/in/select": "Click",
+      "/actions/nyaw/in/grab": "Grab panel",
+      "/actions/nyaw/in/menu": "Menu",
+      "/actions/nyaw/in/scroll": "Scroll"
+    }
+  ]
+}
