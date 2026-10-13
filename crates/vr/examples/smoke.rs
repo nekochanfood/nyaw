@@ -1,18 +1,20 @@
-//! OpenVR 実ランタイムへの手動の疎通確認: 接続 → オーバーレイ作成 → 単色の画像を送信 →
-//! ランタイムから読み戻して色が届いたか確かめる → 数秒間 poll してコントローラを表示する。
-//! `cargo run -p vr --example smoke`
+//! 実ランタイムへの手動の疎通確認: 接続 → オーバーレイ作成 → 毎フレーム違う画像を送り続ける →
+//! （OpenVR のみ）ランタイムから読み戻して色が届いたか確かめる → 数秒間 poll してコントローラを表示する。
+//! `cargo run -p vr --example smoke`（OpenXR は `-- --openxr`）
 
-use std::ffi::{CString, c_void};
 use std::time::{Duration, Instant};
 
-use openvr_bindings as sys;
 use vr::{OverlayId, Pose, Quat, Runtime, Vec3};
 
 const W: u32 = 64;
 const H: u32 = 64;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut vr = vr::connect(Some(Runtime::OpenVr))?;
+    let runtime = match std::env::args().nth(1).as_deref() {
+        Some("--openxr") => Runtime::OpenXr,
+        _ => Runtime::OpenVr,
+    };
+    let mut vr = vr::connect(Some(runtime))?;
     println!("connected: {:?}", vr.runtime());
 
     let id = vr.create_overlay("nyaw.smoke", 0.5)?;
@@ -38,8 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         busy.as_secs_f64() * 1000.0 / frames as f64
     );
 
-    // 最後に送った絵がランタイムに届いていること。
-    for color in [[255, 0, 0, 255], [0, 0, 255, 255]] {
+    // 最後に送った絵がランタイムに届いていること。OpenXR には読み戻す手段が無い。
+    let colors: &[[u8; 4]] = if runtime == Runtime::OpenVr {
+        &[[255, 0, 0, 255], [0, 0, 255, 255]]
+    } else {
+        &[]
+    };
+    for color in colors {
         let rgba = color.repeat((W * H) as usize);
         vr.submit_overlay_pixels(id, W, H, &rgba);
         // コンポジタの取り込みは非同期なので、届くまで少し待つ。
@@ -76,34 +83,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// バックエンドの外から OpenVR に直接問い合わせ、オーバーレイが今持っている画像を得る。
 fn read_back(id: OverlayId) -> Result<Vec<u8>, String> {
-    let name = CString::new(format!(
-        "FnTable:{}",
-        std::str::from_utf8(sys::IVROverlay_Version)
-            .unwrap()
-            .trim_end_matches('\0')
-    ))
-    .unwrap();
-    let mut err = 0;
-    let table = unsafe { sys::VR_GetGenericInterface(name.as_ptr(), &mut err) };
-    let overlay = unsafe { &*(table as *const sys::VR_IVROverlay_FnTable) };
-    let mut buf = vec![0u8; (W * H * 4) as usize];
-    let (mut w, mut h) = (0, 0);
-    let e = unsafe {
-        overlay.GetOverlayImageData.unwrap()(
-            id.0,
-            buf.as_mut_ptr() as *mut c_void,
-            buf.len() as u32,
-            &mut w,
-            &mut h,
-        )
-    };
-    if e != sys::EVROverlayError_VROverlayError_None {
-        return Err(format!("GetOverlayImageData: EVROverlayError {e}"));
-    }
+    let (w, h, rgba) = vr::openvr_overlay_image(id).map_err(|e| e.to_string())?;
     if (w, h) != (W, H) {
         return Err(format!("大きさが違う: {w}x{h}"));
     }
-    Ok(buf)
+    Ok(rgba)
 }

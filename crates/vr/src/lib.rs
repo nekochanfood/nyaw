@@ -10,6 +10,10 @@ mod gpu;
 pub mod mock;
 mod novr;
 mod openvr;
+
+/// 疎通確認用（`examples/smoke.rs`）。上位層からは使わない。
+#[doc(hidden)]
+pub use openvr::overlay_image as openvr_overlay_image;
 mod openxr;
 
 use std::fmt;

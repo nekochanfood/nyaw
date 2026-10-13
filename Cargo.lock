@@ -5080,6 +5080,7 @@ version = "2026.0.1"
 dependencies = [
  "ash",
  "glam",
+ "libloading",
  "openvr_bindings",
  "openxr",
  "os",

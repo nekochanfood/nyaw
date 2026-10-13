@@ -9,6 +9,10 @@ use ash::vk::{self, Handle};
 use glam::Mat3;
 use openvr_bindings as sys;
 
+mod client;
+
+use client::Client;
+
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
     Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
@@ -19,25 +23,16 @@ pub(crate) fn available() -> bool {
 }
 
 pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
-    let mut err = sys::EVRInitError_VRInitError_None;
-    unsafe { sys::VR_InitInternal(&mut err, sys::EVRApplicationType_VRApplication_Overlay) };
-    if err != sys::EVRInitError_VRInitError_None {
-        return Err(init_error(err));
-    }
-    let backend = (|| {
-        let system = interface(sys::IVRSystem_Version)?;
-        let compositor = interface(sys::IVRCompositor_Version)?;
-        Ok(OpenVrBackend {
-            system,
-            overlay: interface(sys::IVROverlay_Version)?,
-            textures: HashMap::new(),
-            gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
-        })
-    })();
-    if backend.is_err() {
-        unsafe { sys::VR_ShutdownInternal() };
-    }
-    Ok(Box::new(backend?))
+    let client = Client::init(sys::EVRApplicationType_VRApplication_Overlay)?;
+    let system = client.interface(sys::IVRSystem_Version)?;
+    let compositor = client.interface(sys::IVRCompositor_Version)?;
+    Ok(Box::new(OpenVrBackend {
+        system,
+        overlay: client.interface(sys::IVROverlay_Version)?,
+        textures: HashMap::new(),
+        gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
+        client,
+    }))
 }
 
 /// SteamVR が要求する拡張を有効にし、HMD が繋がっている GPU で Vulkan のデバイスを作る。
@@ -90,26 +85,6 @@ fn create_gpu(
     })
 }
 
-fn init_error(err: sys::EVRInitError) -> VrError {
-    let msg = unsafe { CStr::from_ptr(sys::VR_GetVRInitErrorAsEnglishDescription(err)) };
-    VrError::Runtime(format!("VR_Init: {}", msg.to_string_lossy()))
-}
-
-/// `version` は `b"IVRSystem_022\0"` のようなバインディングの定数。C API の関数表を得る。
-fn interface<T>(version: &[u8]) -> Result<*const T, VrError> {
-    let version = CStr::from_bytes_with_nul(version)
-        .unwrap()
-        .to_str()
-        .unwrap();
-    let name = CString::new(format!("FnTable:{version}")).unwrap();
-    let mut err = sys::EVRInitError_VRInitError_None;
-    let table = unsafe { sys::VR_GetGenericInterface(name.as_ptr(), &mut err) };
-    if err != sys::EVRInitError_VRInitError_None || table == 0 {
-        return Err(init_error(err));
-    }
-    Ok(table as *const T)
-}
-
 /// 関数表の各項目は `Option<fn>`。ランタイムが埋めていなければ ABI の不一致なので落とす。
 fn f<T>(func: Option<T>) -> T {
     func.expect("OpenVR の関数表に欠けている関数がある")
@@ -145,6 +120,8 @@ pub(crate) struct OpenVrBackend {
     overlay: *const sys::VR_IVROverlay_FnTable,
     textures: HashMap<u64, Textures>,
     gpu: Gpu,
+    /// SteamVR との接続。関数表の持ち主なので最後に破棄する。
+    client: Client,
 }
 
 impl OpenVrBackend {
@@ -281,7 +258,7 @@ impl Drop for OpenVrBackend {
         for id in self.textures.keys().copied().collect::<Vec<_>>() {
             self.release(id);
         }
-        unsafe { sys::VR_ShutdownInternal() };
+        self.client.shutdown();
         // この後、フィールドの gpu が Vulkan のデバイスを破棄する。
     }
 }
@@ -379,6 +356,28 @@ impl VrBackend for OpenVrBackend {
         );
         log(self.submit(id.0, width, height, rgba));
     }
+}
+
+/// 疎通確認用: オーバーレイが今ランタイム側で持っている画像（幅, 高さ, RGBA）を読み戻す。
+/// 同じプロセスで OpenVR に接続済みであること。
+pub fn overlay_image(id: OverlayId) -> Result<(u32, u32, Vec<u8>), VrError> {
+    let client = Client::load()?;
+    let overlay =
+        unsafe { &*client.interface::<sys::VR_IVROverlay_FnTable>(sys::IVROverlay_Version)? };
+    let (mut w, mut h) = (0, 0);
+    // まず大きさだけ問い合わせる（バッファが小さいと ArrayTooSmall で大きさが返る）。
+    unsafe { f(overlay.GetOverlayImageData)(id.0, std::ptr::null_mut(), 0, &mut w, &mut h) };
+    let mut buf = vec![0u8; (w * h * 4) as usize];
+    check("GetOverlayImageData", unsafe {
+        f(overlay.GetOverlayImageData)(
+            id.0,
+            buf.as_mut_ptr() as *mut c_void,
+            buf.len() as u32,
+            &mut w,
+            &mut h,
+        )
+    })?;
+    Ok((w, h, buf))
 }
 
 fn check(what: &str, e: sys::EVROverlayError) -> Result<(), VrError> {
