@@ -6,3 +6,6 @@ edition.workspace = true
 [dependencies]
 vr.workspace = true
 input.workspace = true
+
+[dev-dependencies]
+vr = { workspace = true, features = ["test-support"] }

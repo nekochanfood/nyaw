@@ -6,3 +6,7 @@ edition.workspace = true
 [dependencies]
 glam.workspace = true
 os.workspace = true
+
+[features]
+# 上位層のテスト用モック (vr::mock) を公開する
+test-support = []
