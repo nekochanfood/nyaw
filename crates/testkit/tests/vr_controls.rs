@@ -1,26 +1,13 @@
-//! Home パネルのユーザー操作シナリオ。
+//! VR 固有の操作シナリオ: コントローラ機種・左右の手・パネルの掴み移動。
+//! 基本操作は home.rs で全ランタイム共通に検証する。
 
 use gpui::TestAppContext;
-use testkit::{Hand, Kit, Vec3};
+use testkit::{Driver, Hand, Vec3, VrKit};
 use ui::Home;
 
 #[gpui::test]
-fn click_button(cx: &mut TestAppContext) {
-    let mut kit = Kit::new(cx, |_, _| Home::default());
-    kit.click("click-me").click("click-me");
-    assert_eq!(kit.read(|h| h.clicks), 2);
-}
-
-#[gpui::test]
-fn hover_alone_does_not_click(cx: &mut TestAppContext) {
-    let mut kit = Kit::new(cx, |_, _| Home::default());
-    kit.hover("click-me");
-    assert_eq!(kit.read(|h| h.clicks), 0);
-}
-
-#[gpui::test]
 fn every_controller_can_click(cx: &mut TestAppContext) {
-    let mut kit = Kit::new(cx, |_, _| Home::default());
+    let mut kit = VrKit::new(cx, |_, _| Home::default());
     let profiles = [
         "khr/simple_controller",
         "valve/index_controller",
@@ -36,7 +23,7 @@ fn every_controller_can_click(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn left_hand_clicks(cx: &mut TestAppContext) {
-    let mut kit = Kit::new(cx, |_, _| Home::default());
+    let mut kit = VrKit::new(cx, |_, _| Home::default());
     kit.hand(Hand::Left)
         .profile("oculus/touch_controller")
         .click("click-me");
@@ -45,7 +32,7 @@ fn left_hand_clicks(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn dragged_panel_moves_in_vr_and_stays_clickable(cx: &mut TestAppContext) {
-    let mut kit = Kit::new(cx, |_, _| Home::default());
+    let mut kit = VrKit::new(cx, |_, _| Home::default());
     let to = Vec3::new(0.3, 0.2, -1.2);
     kit.drag_panel(to);
     assert!(kit.panel_pose().position.abs_diff_eq(to, 1e-4));
