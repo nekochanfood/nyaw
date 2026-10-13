@@ -6,11 +6,24 @@ use logger::{Level, Logger, StderrSink};
 use vr::Runtime;
 
 fn main() -> ExitCode {
-    init_logger();
-    let prefer = match std::env::args().nth(1).as_deref() {
-        Some("--novr") => Some(Runtime::NoVr),
-        Some("--openxr") => Some(Runtime::OpenXr),
-        Some("--openvr") => Some(Runtime::OpenVr),
+    let config = config::load();
+    init_logger(config.as_ref().ok().and_then(|c| c.log.clone()));
+    let config = match config {
+        Ok(c) => c,
+        Err(e) => {
+            logger::warn!("設定ファイルを読めないので既定値で起動する", path = ?config::path(), error = e);
+            config::Config::default()
+        }
+    };
+    // 優先順位: コマンドライン > 設定ファイル
+    let prefer = match std::env::args()
+        .nth(1)
+        .as_deref()
+        .or(config.runtime.as_deref())
+    {
+        Some("--novr" | "novr") => Some(Runtime::NoVr),
+        Some("--openxr" | "openxr") => Some(Runtime::OpenXr),
+        Some("--openvr" | "openvr") => Some(Runtime::OpenVr),
         _ => None,
     };
     let backend = match vr::connect(prefer) {
@@ -30,9 +43,9 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// 標準エラー出力と `os::log_dir()/nyaw.log` へ出すロガーを設定する。レベルは `NYAW_LOG`（既定 info）。
-fn init_logger() {
-    let requested = os::log_level();
+/// 標準エラー出力と `os::log_dir()/nyaw.log` へ出すロガーを設定する。レベルは `NYAW_LOG` > 設定ファイルの `log`（既定 info）。
+fn init_logger(from_config: Option<String>) {
+    let requested = os::log_level().or(from_config);
     let level = requested.as_deref().and_then(|s| s.parse().ok());
     let path = os::log_dir().map(|d| d.join("nyaw.log"));
     let file = path.as_ref().map(os::FileSink::create);
@@ -53,7 +66,7 @@ fn init_logger() {
     }));
 
     if let (Some(raw), None) = (&requested, level) {
-        logger::warn!("NYAW_LOG を解釈できないので info にする", value = raw);
+        logger::warn!("ログレベルを解釈できないので info にする", value = raw);
     }
     match (path, file_error) {
         (Some(p), None) => logger::debug!("ログをファイルにも出す", path = p.display()),

@@ -13,6 +13,7 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c01
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 logger = { path = "crates/logger" }
 os = { path = "crates/os" }
+config = { path = "crates/config" }
 vr = { path = "crates/vr" }
 input = { path = "crates/input" }
 overlay = { path = "crates/overlay" }
@@ -27,6 +28,7 @@ edition.workspace = true
 [dependencies]
 logger.workspace = true
 os.workspace = true
+config.workspace = true
 vr.workspace = true
 ui.workspace = true
 home.workspace = true
