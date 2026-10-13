@@ -8,11 +8,11 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 |---|---|---|---|
 | - | `crates/logger` | logfmt 形式の構造化ロガー（横断）。整形・レベル・出力先 `Sink` の抽象と、`log` クレート（gpui 等）からの橋渡し | `trace!/debug!/info!/warn!/error!`, `Logger`, `Sink`, `StderrSink`, `init`, `format` |
 | 0 OS | `crates/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出、ファイル入出力）。`#[cfg]` はここだけに書く | `config_dir`, `log_dir`, `log_level`, `FileSink`, `openvr_paths_file`, `openxr_runtime_manifest` |
-| 1 ランタイム | `crates/vr` | OpenVR / OpenXR / novr の差を吸収。上位層は `Box<dyn VrBackend>` しか持たない | `connect`, `VrBackend`, `Runtime`, `Surface`, `Pose`, `Frame`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
+| 1 ランタイム | `crates/vr` | OpenVR / OpenXR / novr の差を吸収。上位層は `Box<dyn VrBackend>` しか持たない | `connect`, `VrBackend`, `Runtime`, `Surface`, `Pose`, `Frame`（`pose(&Device)`）, `Device`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
 | 2 入力 | `crates/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController) -> ControllerState`, `source(profile, Action)`（逆引き） |
-| 3 オーバーレイ | `crates/overlay` | パネル配置、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
+| 3 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, set_locked, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | 4 UI | `crates/ui` | GPUI フロントエンド。ポインタイベントを GPUI のマウス入力に変換してビューへ流し、描画結果を読み戻してパネルへ返す | `run`, `pump`（入力1フレーム分。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `PointerBridge`, ビュー（`Home`） |
-| - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit`, `VrKit::{press, drag_panel, hand, profile, point_at}`, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け） |
+| - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit`, `VrKit::{press, drag_panel, attach_panel, detach_panel, lock_panel, move_hand, hand, profile, point_at}`, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け） |
 | - | `src/main.rs` | ブートローダー。ロガーを組み立て、ランタイムを選んで `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
 
 依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input ← overlay ← ui ← main`）。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
@@ -49,7 +49,8 @@ novr・SteamVR (OpenVR)・OpenXR はどれも対等な「手段」でしかな�
 ```
 ui::run（GPUI のイベントループ上で約 90Hz）/ testkit の VrKit::step
  └ ui::pump → overlay.tick(vr)
-     ├ vr.poll()            → Frame { hmd, controllers: Vec<RawController> }
+     ├ vr.poll()            → Frame { hmd, controllers: Vec<RawController>, trackers }
+     ├ 取り付け中のパネル   → 姿勢 = frame.pose(device) * offset（掴み中は手に従い、離すとオフセットを付け直す）
      ├ input::map(raw)      → ControllerState { aim, select, grab, menu, scroll }
      ├ レーザー × パネル判定 → Vec<UiEvent { panel, hand, PointerEvent }>
      └ vr.set_overlay_pose  （掴み移動を反映）
@@ -79,13 +80,11 @@ ui::run（GPUI のイベントループ上で約 90Hz）/ testkit の VrKit::ste
 - **ユーザー操作のシナリオ（E2E 風）**: `crates/testkit/tests/` に置く。要素は GPUI の `.debug_selector(|| "名前".into())` で指定し、プロファイル名や座標計算はテストに書かない。
   - **基本操作**（クリック・ホバー・見えている色など）: `Driver` に対して1回だけ書き、`on_every_runtime!` で全ランタイム（novr / VR）で実行する（例: `home.rs`）。
   - **UI のロジックだけ**の確認: ランタイムに関係しないので `NoVrKit` だけで書く。
-  - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`）。
+  - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`, `attach.rs`）。
   - `color_at` は「ユーザーに見えている色」: novr は画面、VR は VR パネルに送られたテクスチャ。テストプラットフォームには GPU が無いため、描画は `testkit::raster` の CPU ラスタライザ（単色矩形のみ）。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
 - **実ランタイムでの E2E**: `crates/testkit/tests/runtimes.rs`（`harness = false`）。`testkit::runtimes` がランタイムを起動し（Playwright の `webServer` に当たる）、繋いでオーバーレイへ送り、OpenVR はランタイムから読み戻して確かめ、Drop で自分が起動したプロセスを止めて消えたことまで確かめる。起動に数秒かかり画面にも出るので `cargo test -p testkit --test runtimes -- --ignored [monado|steamvr]` のときだけ流す。入っていないランタイムと、すでに動いているランタイム（別の設定で動いているかもしれず、止めると持ち主が困る）はスキップする。
-  - **ランタイムを入れる**: `cargo runtimes`（`.cargo/config.toml` の別名。`npx playwright install` に当たるウィザード。`list` / `install [名前] [--dry-run]` / `uninstall [名前]`）。入れる先は `NYAW_RUNTIMES_PATH`、無ければ `%LOCALAPPDATA%
-yaw
-untimes`（Linux は `~/.cache/nyaw/runtimes`）。
+  - **ランタイムを入れる**: `cargo runtimes`（`.cargo/config.toml` の別名。`npx playwright install` に当たるウィザード。`list` / `install [名前] [--dry-run]` / `uninstall [名前]`）。入れる先は `NYAW_RUNTIMES_PATH`、無ければ `%LOCALAPPDATA%\nyaw\runtimes`（Linux は `~/.cache/nyaw/runtimes`）。
   - **Monado**: Windows 版は公式の配布物が無いので、Monado の GitLab CI の `windows` ジョブの成果物（main の最新。`install/` に `monado-service.exe` と `openxr_monado.json`）を入れる。`XRT_COMPOSITOR_COMPUTE=false` で起動し（コンピュート合成でクアッドを出すと落ちる）、`XR_RUNTIME_JSON` でマニフェストを指す。模擬 HMD（simulated）の画面にパネルが映る。読み戻しの手段は無い。Linux はディストリのパッケージを使う。ログは `<入れる先>/logs/monado-service.log`。
   - **SteamVR**: Steam の管理下なので入れない（`steam://install/250820` を開くだけ）。HMD が無くても動くよう、null ドライバを有効にした `steamvr.vrsettings` だけを置いた一時フォルダを `VR_CONFIG_PATH` で指す（普段の設定には触らない）。最初に繋いだクライアントが SteamVR を起動する。null ドライバだと `steamvr_room_setup` が立ち上がって vrserver を起動し直すので、後片付けは静かになるまで止め続ける。
 

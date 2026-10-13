@@ -30,7 +30,7 @@ pub mod vr_kit;
 
 pub use input::Action;
 pub use novr::NoVrKit;
-pub use vr::{Hand, Pose, Quat, Vec2, Vec3};
+pub use vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 pub use vr_kit::{DEFAULT_PROFILE, VrKit};
 
 /// どのランタイムでもネイティブに行える基本操作。

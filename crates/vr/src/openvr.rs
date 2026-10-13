@@ -300,13 +300,24 @@ impl VrBackend for OpenVrBackend {
         }
         for (device, pose) in poses.iter().enumerate().skip(1) {
             let device = device as u32;
-            if !pose.bPoseIsValid
-                || unsafe { f(s.GetTrackedDeviceClass)(device) }
-                    != sys::ETrackedDeviceClass_TrackedDeviceClass_Controller
-            {
+            if !pose.bPoseIsValid {
                 continue;
             }
-            frame.controllers.extend(self.controller(device, pose));
+            match unsafe { f(s.GetTrackedDeviceClass)(device) } {
+                sys::ETrackedDeviceClass_TrackedDeviceClass_Controller => {
+                    frame.controllers.extend(self.controller(device, pose))
+                }
+                sys::ETrackedDeviceClass_TrackedDeviceClass_GenericTracker => {
+                    frame.trackers.push((
+                        self.string_property(
+                            device,
+                            sys::ETrackedDeviceProperty_Prop_SerialNumber_String,
+                        ),
+                        pose_from(&pose.mDeviceToAbsoluteTracking.m),
+                    ))
+                }
+                _ => {}
+            }
         }
         frame
     }
