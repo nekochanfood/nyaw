@@ -128,7 +128,8 @@ pub fn install(kind: Kind, dry_run: bool) -> Result<(), String> {
         Kind::Monado if cfg!(windows) => {
             let dir = root().join("monado");
             println!(
-                "monado: {MONADO_WINDOWS_ARTIFACT}\n     -> {}",
+                "monado: {}\n     -> {}",
+                monado_windows_artifact(),
                 dir.display()
             );
             if !dry_run {
