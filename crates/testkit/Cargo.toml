@@ -1,0 +1,13 @@
+[package]
+name = "testkit"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+# 開発専用。本番クレートからは dev-dependencies でのみ参照すること。
+[dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+vr = { workspace = true, features = ["test-support"] }
+input.workspace = true
+overlay.workspace = true
+ui.workspace = true

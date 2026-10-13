@@ -21,6 +21,19 @@ pub struct Panel {
     overlay: OverlayId,
 }
 
+impl Panel {
+    /// パネル上のピクセル（左上原点）をトラッキング空間の点に変換する。ヒット判定の逆。
+    pub fn pixel_to_world(&self, px: Vec2) -> Vec3 {
+        let (w, h) = (self.resolution.0 as f32, self.resolution.1 as f32);
+        let local = Vec3::new(
+            (px.x / w - 0.5) * self.size.x,
+            (0.5 - px.y / h) * self.size.y,
+            0.0,
+        );
+        self.pose.transform_point(local)
+    }
+}
+
 /// 座標はパネルのピクセル、原点は左上。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PointerEvent {
@@ -281,6 +294,20 @@ mod tests {
         let expected = Vec3::new(1.0, 0.0, -1.0);
         assert!(ov.panel(0).pose.position.abs_diff_eq(expected, 1e-5));
         assert!(vr.overlays[0].pose.position.abs_diff_eq(expected, 1e-5));
+    }
+
+    #[test]
+    fn pixel_to_world_inverts_hit_test() {
+        let (_, ov) = setup();
+        let p = ov.panel(0);
+        let px = Vec2::new(10.0, 70.0);
+        let target = p.pixel_to_world(px);
+        let aim = Pose::new(
+            Vec3::ZERO,
+            Quat::from_rotation_arc(Vec3::NEG_Z, target.normalize()),
+        );
+        let (hit, _) = hit_test(p, &aim).unwrap();
+        assert!(hit.abs_diff_eq(px, 1e-3), "{hit}");
     }
 
     #[test]

@@ -4599,6 +4599,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "testkit"
+version = "2026.0.1"
+dependencies = [
+ "gpui",
+ "input",
+ "overlay",
+ "ui",
+ "vr",
+]
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

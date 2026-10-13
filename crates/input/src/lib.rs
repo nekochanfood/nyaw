@@ -68,11 +68,32 @@ fn first(raw: &RawController, names: &[&str]) -> f32 {
 }
 
 /// 未知のデバイスは KHR simple controller のバインドにフォールバックする。
+fn profile(id: &str) -> &'static Profile {
+    PROFILES.iter().find(|p| p.id == id).unwrap_or(&SIMPLE)
+}
+
+/// ボタン系の抽象アクション。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Action {
+    Select,
+    Grab,
+    Menu,
+}
+
+/// 逆引き: `profile` で `action` を起こす入力名。テストでの入力生成や操作ヒント表示用。
+pub fn source(profile_id: &str, action: Action) -> Option<&'static str> {
+    let p = profile(profile_id);
+    match action {
+        Action::Select => p.select,
+        Action::Grab => p.grab,
+        Action::Menu => p.menu,
+    }
+    .first()
+    .copied()
+}
+
 pub fn map(raw: &RawController) -> ControllerState {
-    let p = PROFILES
-        .iter()
-        .find(|p| p.id == raw.profile)
-        .unwrap_or(&SIMPLE);
+    let p = profile(&raw.profile);
     ControllerState {
         hand: raw.hand,
         aim: raw.aim,
@@ -117,6 +138,15 @@ mod tests {
         ));
         assert!(s.menu);
         assert!(!s.grab);
+    }
+
+    #[test]
+    fn source_roundtrips_through_map() {
+        for id in PROFILES.iter().map(|p| p.id) {
+            let name = source(id, Action::Select).unwrap();
+            assert!(map(&raw(id, &[(name, 1.0)])).select, "{id}");
+        }
+        assert_eq!(source("khr/simple_controller", Action::Grab), None);
     }
 
     #[test]
