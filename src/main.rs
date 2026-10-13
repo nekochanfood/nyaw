@@ -35,7 +35,7 @@ fn init_logger() {
     let requested = os::log_level();
     let level = requested.as_deref().and_then(|s| s.parse().ok());
     let path = os::log_dir().map(|d| d.join("nyaw.log"));
-    let file = path.as_ref().map(os::FileSink::open);
+    let file = path.as_ref().map(os::FileSink::create);
 
     let mut logger = Logger::new(level.unwrap_or(Level::Info)).sink(StderrSink);
     let mut file_error = None;

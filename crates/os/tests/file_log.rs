@@ -11,7 +11,7 @@ fn logger_writes_logfmt_lines_through_file_sink() {
     let path = dir.join("nyaw.log");
     let _ = fs::remove_dir_all(&dir);
 
-    let logger = Logger::new(Level::Info).sink(FileSink::open(&path).unwrap());
+    let logger = Logger::new(Level::Info).sink(FileSink::create(&path).unwrap());
     let fields = [("error", "device lost".to_string()), ("panel", "0".into())];
     logger.log(&Record {
         level: Level::Warn,
