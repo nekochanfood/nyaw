@@ -1,3 +1,7 @@
 [env]
 # openvr_bindings が同梱する OpenVR の CMakeLists.txt は cmake_minimum_required が古く、CMake 4 で設定に失敗する
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
+[alias]
+# E2E 用の実ランタイム（Monado / SteamVR）を入れるウィザード。crates/testkit/src/bin/runtimes.rs
+runtimes = "run -q -p testkit --bin runtimes --"
