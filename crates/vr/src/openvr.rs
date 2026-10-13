@@ -140,7 +140,7 @@ impl OpenVrBackend {
         let mut err = Default::default();
         let hz = unsafe {
             f(s.GetFloatTrackedDeviceProperty)(
-                sys::k_unTrackedDeviceIndex_Hmd,
+                sys::k_unTrackedDeviceIndex_Hmd as _,
                 sys::ETrackedDeviceProperty_Prop_DisplayFrequency_Float,
                 &mut err,
             )
