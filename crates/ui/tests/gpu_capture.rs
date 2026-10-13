@@ -7,13 +7,16 @@ fn main() {
 
     use gpui::AppContext;
     use ui::{Home, PANEL_BG, capture, open_panel_window};
+    use vr::Surface;
 
     const RES: (u32, u32) = (200, 100);
     let result = Rc::new(RefCell::new(None));
     let out = result.clone();
     gpui_platform::application().run(move |cx| {
-        let window = open_panel_window(cx, RES, |_, cx| cx.new(|_| Home::default()))
-            .expect("パネルウィンドウを開けない");
+        let window = open_panel_window(cx, Surface::Overlay, RES, |_, cx| {
+            cx.new(|_| Home::default())
+        })
+        .expect("パネルウィンドウを開けない");
         cx.spawn(async move |cx| {
             // リサイズの反映は非同期なので、実寸で読み戻せるまで待つ（最大 5 秒）
             for _ in 0..100 {

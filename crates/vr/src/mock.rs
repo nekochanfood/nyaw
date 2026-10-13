@@ -1,6 +1,6 @@
 //! この層より上のすべての層のテスト用、メモリ上のバックエンド。
 
-use crate::{Frame, OverlayId, Pose, Runtime, VrBackend, VrError};
+use crate::{Frame, OverlayId, Pose, Runtime, Surface, VrBackend, VrError};
 
 /// モックが記録するオーバーレイ1枚分の状態。
 #[derive(Debug)]
@@ -38,6 +38,10 @@ pub struct MockBackend {
 impl VrBackend for MockBackend {
     fn runtime(&self) -> Runtime {
         Runtime::OpenXr
+    }
+
+    fn surface(&self) -> Surface {
+        Surface::Overlay
     }
 
     fn poll(&mut self) -> Frame {
