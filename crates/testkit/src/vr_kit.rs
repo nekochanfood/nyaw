@@ -22,6 +22,8 @@ use crate::{Action, Driver, Hand, Pose, Quat, Vec2, Vec3, raster};
 pub const DEFAULT_PROFILE: &str = "valve/index_controller";
 const PANEL_POS: Vec3 = Vec3::new(0.0, 0.0, -1.0);
 const PANEL_WIDTH_M: f32 = 1.0;
+/// 掴み移動がなめらかに追いつくまでの tick 数（余裕を持たせて）。
+const DRAG_SETTLE: usize = 60;
 
 /// 仮想コントローラ。押しているアクションを、機種に応じた生入力に変換して VR モックに流す。
 struct VirtualController {
@@ -68,7 +70,12 @@ impl<'a, V: Render> VrKit<'a, V> {
         let res = (f32::from(vp.width) as u32, f32::from(vp.height) as u32);
         let size = Vec2::new(PANEL_WIDTH_M, PANEL_WIDTH_M * res.1 as f32 / res.0 as f32);
 
-        let mut kernel = Kernel::with_backend(MockBackend::default(), Default::default());
+        // 手ブレ抑えは指した瞬間に当たらなくなるので切る（抑え自体は overlay の単体テストで確かめる）。
+        let config = kernel::config::Config {
+            pointer_smoothing: Some(0.0),
+            ..Default::default()
+        };
+        let mut kernel = Kernel::with_backend(MockBackend::default(), config);
         let pose = Pose::new(PANEL_POS, Quat::IDENTITY);
         let panel = kernel
             .add_panel("testkit", pose, size, res)
@@ -170,7 +177,11 @@ impl<'a, V: Render> VrKit<'a, V> {
         let delta = to - p.pose.position;
         self.point_at(center).press(Action::Grab);
         self.ctrl().aim.position += delta;
-        self.step().release(Action::Grab)
+        // 掴み移動はなめらかに追いつくので、追いつくまで持ち続ける。
+        for _ in 0..DRAG_SETTLE {
+            self.step();
+        }
+        self.release(Action::Grab)
     }
 
     pub fn panel_pose(&self) -> Pose {

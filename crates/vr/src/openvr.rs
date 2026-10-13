@@ -18,7 +18,7 @@ use input::{HandActions, Input};
 
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
-    Frame, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
+    Device, Frame, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
 };
 
 pub(crate) fn available() -> bool {
@@ -43,6 +43,8 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         input,
         overlay: client.interface(sys::IVROverlay_Version)?,
         textures: HashMap::new(),
+        devices: HashMap::new(),
+        fixed: HashMap::new(),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
     }))
@@ -122,6 +124,11 @@ pub(crate) struct OpenVrBackend {
     input: Option<Input>,
     overlay: *const sys::VR_IVROverlay_FnTable,
     textures: HashMap<u64, Textures>,
+    /// 最後の poll で見えていたデバイスの番号と、その生の姿勢から [`Frame::pose`] の姿勢への相対姿勢
+    /// （コントローラは `/pose/tip`）。相対配置をランタイムに任せるため。
+    devices: HashMap<Device, (u32, Pose)>,
+    /// 高さを固定したオーバーレイの（幅, 高さ）（m）。OpenVR は高さを縦横比で決めるので、テクセルの縦横比で合わせる。
+    fixed: HashMap<u64, (f32, f32)>,
     gpu: Gpu,
     /// SteamVR との接続。関数表の持ち主なので最後に破棄する。
     client: Client,
@@ -162,6 +169,20 @@ impl OpenVrBackend {
         std::thread::sleep(std::time::Duration::from_secs_f32(left));
         // ここから描画して送ったものは、コンポジタの次のフレームで表示される。
         period + self.hmd_float(sys::ETrackedDeviceProperty_Prop_SecondsFromVsyncToPhotons_Float)
+    }
+
+    /// 高さを固定したオーバーレイの見た目の高さを、テクセルの縦横比（横 / 縦）で合わせる。
+    /// 表示の高さ = 幅 × テクスチャの高さ / テクスチャの幅 / テクセルの縦横比。
+    fn apply_height(&self, id: u64) {
+        let (Some(&(w, h)), Some(t)) = (self.fixed.get(&id), self.textures.get(&id)) else {
+            return;
+        };
+        if w <= 0.0 || h <= 0.0 {
+            return;
+        }
+        let aspect = t.height as f32 * w / (t.width as f32 * h);
+        let e = unsafe { f(self.overlay().SetOverlayTexelAspect)(id, aspect) };
+        log(check("SetOverlayTexelAspect", e));
     }
 
     fn overlay(&self) -> &sys::VR_IVROverlay_FnTable {
@@ -295,9 +316,14 @@ impl VrBackend for OpenVrBackend {
             quit,
             ..Frame::default()
         };
+        let mut devices = HashMap::new();
         let hmd = &poses[sys::k_unTrackedDeviceIndex_Hmd as usize];
         if hmd.bPoseIsValid {
             frame.hmd = pose_from(&hmd.mDeviceToAbsoluteTracking.m);
+            devices.insert(
+                Device::Hmd,
+                (sys::k_unTrackedDeviceIndex_Hmd, Pose::IDENTITY),
+            );
         }
         for (device, pose) in poses.iter().enumerate().skip(1) {
             let device = device as u32;
@@ -307,13 +333,12 @@ impl VrBackend for OpenVrBackend {
             if unsafe { f(s.GetTrackedDeviceClass)(device) }
                 == sys::ETrackedDeviceClass_TrackedDeviceClass_GenericTracker
             {
-                frame.trackers.push((
-                    self.string_property(
-                        device,
-                        sys::ETrackedDeviceProperty_Prop_SerialNumber_String,
-                    ),
-                    pose_from(&pose.mDeviceToAbsoluteTracking.m),
-                ))
+                let serial = self
+                    .string_property(device, sys::ETrackedDeviceProperty_Prop_SerialNumber_String);
+                devices.insert(Device::Tracker(serial.clone()), (device, Pose::IDENTITY));
+                frame
+                    .trackers
+                    .push((serial, pose_from(&pose.mDeviceToAbsoluteTracking.m)))
             }
         }
         if let Some(input) = &self.input {
@@ -325,6 +350,12 @@ impl VrBackend for OpenVrBackend {
                     device,
                     sys::ETrackedDeviceProperty_Prop_ControllerType_String,
                 ));
+                // 生の姿勢と同じ時刻の予測なので、本体から見た tip は一定。
+                let raw = poses.get(device as usize).filter(|p| p.bPoseIsValid);
+                if let Some(raw) = raw {
+                    let tip = pose_from(&raw.mDeviceToAbsoluteTracking.m).inverse() * aim;
+                    devices.insert(Device::Controller(hand), (device, tip));
+                }
                 frame.controllers.push(RawController {
                     hand,
                     profile: profile.into(),
@@ -334,6 +365,7 @@ impl VrBackend for OpenVrBackend {
                 });
             }
         }
+        self.devices = devices;
         frame
     }
 
@@ -355,6 +387,11 @@ impl VrBackend for OpenVrBackend {
                 "SetOverlayWidthInMeters",
                 f(o.SetOverlayWidthInMeters)(handle, width_m),
             )?;
+            // GPUI の描画は透明な背景に合成した事前乗算アルファ。
+            check(
+                "SetOverlayFlag",
+                f(o.SetOverlayFlag)(handle, sys::VROverlayFlags_IsPremultiplied, true),
+            )?;
             check("ShowOverlay", f(o.ShowOverlay)(handle))?;
         }
         // OpenVR のハンドルをそのまま ID にする。
@@ -375,9 +412,39 @@ impl VrBackend for OpenVrBackend {
         log(check("SetOverlayTransformAbsolute", e));
     }
 
+    fn set_overlay_pose_relative(&mut self, id: OverlayId, device: &Device, offset: Pose) -> bool {
+        let Some(&(index, to_pose)) = self.devices.get(device) else {
+            return false;
+        };
+        let mut m = sys::HmdMatrix34_t {
+            m: matrix_from(to_pose * offset),
+        };
+        let e = unsafe {
+            f(self.overlay().SetOverlayTransformTrackedDeviceRelative)(id.0, index, &mut m)
+        };
+        check("SetOverlayTransformTrackedDeviceRelative", e).is_ok()
+    }
+
     fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
         let e = unsafe { f(self.overlay().SetOverlayWidthInMeters)(id.0, width_m) };
         log(check("SetOverlayWidthInMeters", e));
+        if let Some(size) = self.fixed.get_mut(&id.0) {
+            size.0 = width_m;
+            self.apply_height(id.0);
+        }
+    }
+
+    fn set_overlay_height(&mut self, id: OverlayId, height_m: f32) {
+        let width = self.fixed.get(&id.0).map_or(0.0, |s| s.0);
+        let width = if width > 0.0 {
+            width
+        } else {
+            let mut w = 0.0;
+            unsafe { f(self.overlay().GetOverlayWidthInMeters)(id.0, &mut w) };
+            w
+        };
+        self.fixed.insert(id.0, (width, height_m));
+        self.apply_height(id.0);
     }
 
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
@@ -404,6 +471,7 @@ impl VrBackend for OpenVrBackend {
             "RGBA バッファのサイズが不正"
         );
         log(self.submit(id.0, width, height, rgba));
+        self.apply_height(id.0);
     }
 }
 

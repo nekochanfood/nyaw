@@ -8,13 +8,15 @@ use std::path::PathBuf;
 use serde::Deserialize;
 
 /// `config.toml` の中身。どのキーも省略でき、知らないキーは無視する。
-#[derive(Debug, Default, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Config {
     /// ログレベル（`trace` / `debug` / `info` / `warn` / `error`）。解釈は呼び出し側。
     pub log: Option<String>,
     /// 使うランタイム（`openvr` / `openxr` / `novr`）。解釈は呼び出し側。
     pub runtime: Option<String>,
+    /// レーザーの手ブレ抑え（0 = 抑えない 〜 1 未満。大きいほど強く、遅れる）。省略で既定値。
+    pub pointer_smoothing: Option<f32>,
 }
 
 #[derive(Debug)]
@@ -59,7 +61,9 @@ mod tests {
 
     #[test]
     fn parses_known_keys_and_ignores_unknown() {
-        let c = parse("log = \"debug\"\nruntime = \"novr\"\nfuture = 1\n").unwrap();
+        let c = parse("log = \"debug\"\nruntime = \"novr\"\npointer_smoothing = 0.5\nfuture = 1\n")
+            .unwrap();
+        assert_eq!(c.pointer_smoothing, Some(0.5));
         assert_eq!(c.log.as_deref(), Some("debug"));
         assert_eq!(c.runtime.as_deref(), Some("novr"));
     }

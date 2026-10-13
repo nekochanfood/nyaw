@@ -11,8 +11,8 @@ use std::{
 use gpui::{
     AnyView, AnyWindowHandle, App, Bounds, Context, Entity, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rgb,
-    size,
+    ScrollWheelEvent, Window, WindowBackgroundAppearance, WindowBounds, WindowHandle,
+    WindowOptions, div, prelude::*, px, rgb, size,
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
@@ -182,6 +182,8 @@ pub fn panel_window_options(surface: Surface, resolution: (u32, u32), cx: &App) 
             })),
             show: false,
             focus: false,
+            // 既定（Opaque）だと白で塗ってから描くので、半透明の画面も不透明になる。
+            window_background: WindowBackgroundAppearance::Transparent,
             ..Default::default()
         },
         Surface::Desktop => WindowOptions {
@@ -209,6 +211,32 @@ pub fn open_panel_window<V: Render>(
 }
 
 const PANEL_PX: (u32, u32) = (800, 600);
+
+/// ドラッグの見た目を描くウィンドウ（[`Pointer::Drag`] のパネル）。無ければ（novr）どのウィンドウでも描く。
+#[derive(Default)]
+struct DragWindows(Vec<AnyWindowHandle>);
+
+impl gpui::Global for DragWindows {}
+
+/// ドラッグ中の見た目（`on_drag` が返すビュー）を包む。GPUI はこれをどのウィンドウにもマウス位置に描くが、
+/// VR ではカーソル側のウィンドウ（[`Pointer::Drag`]）だけに描く。パネルの外へ出てもウィンドウをまたいで見える。
+pub struct DragPreview(AnyView);
+
+/// `.on_drag(value, |_, _, _, cx| ui::drag_preview(cx, MyPreview))` のように使う。
+pub fn drag_preview<V: Render>(cx: &mut App, view: V) -> Entity<DragPreview> {
+    let view = cx.new(|_| view).into();
+    cx.new(|_| DragPreview(view))
+}
+
+impl Render for DragPreview {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let here = window.window_handle();
+        let shown = cx
+            .try_global::<DragWindows>()
+            .is_none_or(|d| d.0.is_empty() || d.0.contains(&here));
+        div().when(shown, |d| d.child(self.0.clone()))
+    }
+}
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
 /// Desktop（novr）の周期。主ディスプレイのリフレッシュ間隔が取れないときに使う。VR ランタイムは `poll` が vsync まで待つ。
@@ -216,6 +244,28 @@ const FRAME: Duration = Duration::from_millis(11);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
 const IDLE_REDRAW: Duration = Duration::from_millis(250);
+
+/// `panel` で始まったドラッグの見た目を、押している手の [`Pointer::Drag`] のパネルに出す。
+/// 大きさは元のパネルと同じ縮尺（1m あたりのピクセル）にする。
+fn start_drag(
+    kernel: &mut Kernel,
+    bridges: &HashMap<(PanelId, Hand), PointerBridge>,
+    windows: &[(PanelId, AnyWindowHandle)],
+    panel: PanelId,
+) -> Option<(Hand, PanelId)> {
+    let hand = bridges
+        .iter()
+        .find(|((p, _), b)| *p == panel && b.pressed)
+        .map(|((_, h), _)| *h)?;
+    let (dp, _) = windows
+        .iter()
+        .find(|(id, _)| kernel.panel(*id).pointer == Some((hand, Pointer::Drag)))?;
+    let src = kernel.panel(panel);
+    let px_per_m = src.resolution.0 as f32 / src.size.x;
+    let width = kernel.panel(*dp).resolution.0 as f32 / px_per_m;
+    kernel.set_drag(hand, Some(width));
+    Some((hand, *dp))
+}
 
 /// 位置はそのまま、向きを水平方向（Y 軸回り）だけにした姿勢。前方は -Z。
 fn level(p: Pose) -> Pose {
@@ -379,6 +429,8 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
             let mut last = vec![None; windows.len()];
             // パネルごとの最後に描いた時刻（None = 次のフレームで必ず描く）。
             let mut drawn: Vec<Option<Instant>> = vec![None; windows.len()];
+            // ドラッグ中の手と、その見た目を描くパネル。
+            let mut drag: Option<(Hand, PanelId)> = None;
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
             // 0 だとこのループがすぐ再スケジュールされ、後から積まれた GPUI のタスクが走らない。
             // 途中で開いたパネルのリサイズ（SetWindowPos はタスクで行われる）が届かず、1x1 のまま表示されなかった。
@@ -395,6 +447,12 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                     (0..windows.len()).map(|_| Vec::new()).collect();
                 for (panel, input) in pump(&mut kernel, &mut bridges) {
                     inputs[panel].push(input);
+                }
+                // ドラッグの見た目は中心がカーソルに来るよう置かれるので、そのウィンドウのマウスを中心に置いて毎フレーム描く。
+                if let Some((_, dp)) = drag {
+                    let (w, h) = kernel.panel(dp).resolution;
+                    let pos = Vec2::new(w as f32, h as f32) / 2.0;
+                    inputs[dp].push(PointerBridge::default().translate(PointerEvent::Move { pos }));
                 }
                 // ponytail: pump の poll（VR は vsync 待ち）とヒット判定をまとめて wait とする。判定が重くなったら分けて測る。
                 let mut stages = Stages {
@@ -423,6 +481,13 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                         }
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
+                        if !cx.has_active_drag() {
+                            if let Some((hand, _)) = drag.take() {
+                                kernel.set_drag(hand, None);
+                            }
+                        } else if drag.is_none() {
+                            drag = start_drag(&mut kernel, &bridges, &windows, panel);
+                        }
                         stages.input += t.elapsed();
                         if kernel.panel(panel).closed {
                             window.remove_window();
@@ -638,12 +703,18 @@ fn open_panel(
     if let Some((hand, part)) = spec.pointer {
         kernel.apply(panel, PanelCommand::Pointer(hand, part));
     }
-    let window = open_panel_window(cx, kernel.surface(), spec.resolution, |w, cx| {
+    let surface = kernel.surface();
+    let drag_layer = spec.pointer.is_some_and(|(_, part)| part == Pointer::Drag);
+    let window: AnyWindowHandle = open_panel_window(cx, surface, spec.resolution, |w, cx| {
         let view = spec.build(panel, w, cx);
         cx.new(|_| PanelRoot::new(view))
     })
-    .expect("open panel window");
-    (panel, window.into())
+    .expect("open panel window")
+    .into();
+    if drag_layer {
+        cx.default_global::<DragWindows>().0.push(window);
+    }
+    (panel, window)
 }
 
 #[cfg(test)]

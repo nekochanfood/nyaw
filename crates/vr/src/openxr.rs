@@ -95,6 +95,8 @@ const HANDS: [(Hand, &str); 2] = [(Hand::Left, "left"), (Hand::Right, "right")];
 
 struct Overlay {
     width_m: f32,
+    /// 固定された高さ。無ければテクスチャの縦横比で決まる。
+    height_m: Option<f32>,
     pose: Pose,
     visible: bool,
     sort: u32,
@@ -379,13 +381,14 @@ impl OpenXrBackend {
             .into_iter()
             .filter_map(|(_, o)| {
                 let sc = o.swapchain.as_ref()?;
-                let height_m = o.width_m * sc.height as f32 / sc.width as f32;
+                let height_m = o
+                    .height_m
+                    .unwrap_or(o.width_m * sc.height as f32 / sc.width as f32);
                 Some(
                     xr::CompositionLayerQuad::new()
                         .layer_flags(
-                            // GPUI の描画は事前乗算していない（straight）アルファ。
-                            xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA
-                                | xr::CompositionLayerFlags::UNPREMULTIPLIED_ALPHA,
+                            // GPUI の描画は透明な背景に合成した事前乗算アルファ。
+                            xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA,
                         )
                         .space(&self.stage)
                         .eye_visibility(xr::EyeVisibility::BOTH)
@@ -710,6 +713,7 @@ impl VrBackend for OpenXrBackend {
             id,
             Overlay {
                 width_m,
+                height_m: None,
                 pose: Pose::IDENTITY,
                 visible: true,
                 sort: 0,
@@ -728,6 +732,12 @@ impl VrBackend for OpenXrBackend {
     fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
         if let Some(o) = self.overlays.get_mut(&id.0) {
             o.width_m = width_m;
+        }
+    }
+
+    fn set_overlay_height(&mut self, id: OverlayId, height_m: f32) {
+        if let Some(o) = self.overlays.get_mut(&id.0) {
+            o.height_m = Some(height_m);
         }
     }
 

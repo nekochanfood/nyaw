@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use vr::{Device, Frame, Hand, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
+use vr::{Device, Frame, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
 pub use input::ControllerState;
 
@@ -29,8 +29,10 @@ pub struct Panel {
     /// どの手のレーザーを描くパネルか。ヒット判定の対象外で、配置は毎 tick ここで決める。
     pub pointer: Option<(Hand, Pointer)>,
     overlay: OverlayId,
-    /// ランタイムへ最後に送った姿勢。変わったときだけ送る。
-    sent: Option<Pose>,
+    /// この tick で追従させるデバイスと相対姿勢。ランタイムに任せられればそうする。
+    follow: Option<(Device, Pose)>,
+    /// ランタイムへ最後に送った（相対の先, 姿勢）。変わったときだけ送る。
+    sent: Option<(Option<Device>, Pose)>,
     /// ランタイムへ最後に送った（表示, 幅）。ポインタのパネルだけが使う。
     shown: Option<(bool, f32)>,
 }
@@ -38,14 +40,17 @@ pub struct Panel {
 /// レーザーを描くパネルの役割。見た目は上の層の画面が描き、置き場所はオーバーレイ層が決める。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pointer {
-    /// 手元からヒット点（無ければ [`LASER_MAX`]）まで伸びる線。幅 = 長さで、テクスチャの横方向が
+    /// 手元からヒット点（掴み中は掴んだパネル）まで伸びる線。何も指していなければ隠す。幅 = 長さで、テクスチャの横方向が
     /// レーザーの向き（左端が手元）。テクスチャの面はコントローラの上を向く。
     Laser,
     /// ヒット点に貼り付く印。パネルより手前に描く。ヒットしていなければ隠す。
     Cursor,
+    /// ドラッグ中の要素の見た目。中心をヒット点に置き、[`Overlay::set_drag`] で幅が決まっている間だけ出す。
+    /// パネルの外へも描けるので、ウィンドウをまたいで運べる。
+    Drag,
 }
 
-/// 何にも当たっていないときのレーザーの長さ（m）。
+/// レーザーのパネルを作るときの長さ（m）。以降は毎 tick ヒット点までの長さに伸び縮みする。
 pub const LASER_MAX: f32 = 1.5;
 /// カーソルをパネル面からレーザーの来る側へ浮かせる距離（m）。描画順でもパネルより手前に出すが、
 /// 奥行きで並べるランタイムでも同じ面に乗って Z ファイティングしないように少し離す。
@@ -54,11 +59,31 @@ const CURSOR_LIFT: f32 = 0.003;
 const LASER_ROT: Quat = Quat::from_xyzw(-0.5, 0.5, 0.5, 0.5);
 /// 描画順。パネルは 0。
 const LASER_SORT: u32 = 1;
-const CURSOR_SORT: u32 = 2;
+const DRAG_SORT: u32 = 2;
+const CURSOR_SORT: u32 = 3;
+/// ドラッグの見た目をパネル面から浮かせる距離（m）。カーソルより奥。
+const DRAG_LIFT: f32 = 0.002;
+/// 掴み移動で、目標へ 1 tick に近づく割合。目標との差が [`SNAP`] 未満なら目標に合わせる。
+// ponytail: tick 単位なのでリフレッシュレートで速さが変わる（144Hz で約 0.1 秒）。気になれば経過時間で決める。
+const SMOOTH: f32 = 0.3;
+const SNAP: f32 = 1e-5;
+/// 手ブレ抑えの既定値: レーザーの向きが 1 tick ごとに前の向きを残す割合（0 = 抑えない）。
+/// ヒット判定もこの向きで行うので、クリック位置も揺れない。
+// ponytail: tick 単位なのでリフレッシュレートで効き方が変わる。気になれば経過時間で決める。
+const POINTER_SMOOTHING: f32 = 0.8;
+/// 掴み中のスティックを倒し切ったとき、1 tick に距離が変わる割合（遠いほど速い）と、効き始める倒し量。
+const PUSH: f32 = 0.02;
+const PUSH_DEADZONE: f32 = 0.2;
+/// 掴んだパネルを手から離せる距離（m）。
+const GRAB_MIN: f32 = 0.15;
+const GRAB_MAX: f32 = 10.0;
 
 /// この tick のレーザー。
 #[derive(Debug, Clone, Copy)]
 struct Ray {
+    /// 手（コントローラ）の姿勢。
+    hand: Pose,
+    /// レーザー: 位置は手、向きは手ブレを抑えたもの。ヒット判定もこれで行う。
     aim: Pose,
     len: f32,
     /// 当たったパネルとトラッキング空間での点。
@@ -106,9 +131,13 @@ struct HandState {
     select: bool,
     grab_held: bool,
     menu: bool,
-    /// ドラッグ中のパネルと、コントローラから見たその相対姿勢。
-    dragging: Option<(PanelId, Pose)>,
-    /// この tick のレーザー。コントローラが見えていなければ `None`。
+    /// ドラッグ中のパネルと、レーザーから見たその中心、掴んだ点までのレーザー上の距離。
+    dragging: Option<(PanelId, Vec3, f32)>,
+    /// ドラッグの見た目の幅（m）。ドラッグ中だけ。
+    drag: Option<f32>,
+    /// 前の tick に描いたレーザーの向き。隠れていたら `None`（次に出すときは追わずに合わせる）。
+    drawn: Option<Quat>,
+    /// この tick のレーザー。コントローラが見えていない・何も指していなければ `None`。
     ray: Option<Ray>,
 }
 
@@ -123,6 +152,8 @@ pub struct Overlay {
     quit: bool,
     /// 最後の tick の HMD の姿勢。
     hmd: Pose,
+    /// 手ブレ抑え（[`POINTER_SMOOTHING`]）。`None` で既定値。
+    smoothing: Option<f32>,
 }
 
 impl Overlay {
@@ -149,6 +180,7 @@ impl Overlay {
             closed: false,
             pointer: None,
             overlay,
+            follow: None,
             sent: None,
             shown: None,
         });
@@ -162,6 +194,11 @@ impl Overlay {
     /// 最後の tick でランタイムが終了を求めていたか。
     pub fn quit_requested(&self) -> bool {
         self.quit
+    }
+
+    /// 手ブレ抑えの強さ（0 = 抑えない 〜 1 未満）。
+    pub fn set_pointer_smoothing(&mut self, smoothing: f32) {
+        self.smoothing = Some(smoothing.clamp(0.0, 0.99));
     }
 
     /// 最後の tick の HMD の姿勢（新しいパネルを目の前に出すため）。
@@ -188,8 +225,8 @@ impl Overlay {
 
     /// パネルを `device` に取り付ける。以降の tick で `device` の姿勢 * `offset` に追従する。
     /// 取り付け中のパネルを掴んで動かすと、離した位置でオフセットが付け直される。
-    // ponytail: 姿勢は tick（= vsync ごとの poll）の姿勢でオーバーレイ層が合成して送るので、1フレーム分遅れる。
-    // 揺れが気になったらランタイムの相対配置（OpenVR の SetOverlayTransformTrackedDeviceRelative 等）に任せる。
+    // 追従はランタイムに任せられれば任せる（`VrBackend::set_overlay_pose_relative`）。
+    // ponytail: 任せられない（OpenXR）ときは tick の姿勢を送るので 1 フレーム分遅れる。
     pub fn attach(&mut self, id: PanelId, device: Device, offset: Pose) {
         self.panels[id].attached = Some((device, offset));
     }
@@ -211,8 +248,18 @@ impl Overlay {
         let sort = match part {
             Pointer::Laser => LASER_SORT,
             Pointer::Cursor => CURSOR_SORT,
+            Pointer::Drag => DRAG_SORT,
         };
         vr.set_overlay_sort(p.overlay, sort);
+        // レーザーは長さ（幅）だけ変え、太さ（高さ）は作ったときのまま。
+        if part == Pointer::Laser {
+            vr.set_overlay_height(p.overlay, p.size.y);
+        }
+    }
+
+    /// `hand` でドラッグしている間、その見た目（[`Pointer::Drag`] のパネル）を幅 `width_m` で出す。`None` で隠す。
+    pub fn set_drag(&mut self, hand: Hand, width_m: Option<f32>) {
+        self.hands.entry(hand).or_default().drag = width_m;
     }
 
     /// パネルを閉じる。ランタイムにオーバーレイの破棄 API が無いので、透明な 1px を送って見えなくする。
@@ -258,9 +305,11 @@ impl Overlay {
             .map(|d| d.0)
             .collect();
         for (id, p) in self.panels.iter_mut().enumerate() {
+            p.follow = None;
             if dragged.contains(&id) {
                 continue;
             }
+            p.follow = p.attached.clone();
             if let Some(pose) = p
                 .attached
                 .as_ref()
@@ -293,28 +342,66 @@ impl Overlay {
         }
         self.place_pointers(vr);
         for p in &mut self.panels {
-            if p.sent != Some(p.pose) {
+            if let Some((device, offset)) = &p.follow {
+                let want = Some((Some(device.clone()), *offset));
+                if p.sent == want {
+                    continue;
+                }
+                if vr.set_overlay_pose_relative(p.overlay, device, *offset) {
+                    p.sent = want;
+                    continue;
+                }
+            }
+            let want = Some((None, p.pose));
+            if p.sent != want {
                 vr.set_overlay_pose(p.overlay, p.pose);
-                p.sent = Some(p.pose);
+                p.sent = want;
             }
         }
         events
     }
 
     fn update_hand(&mut self, c: &ControllerState, frame: &Frame, out: &mut Vec<UiEvent>) {
+        let smoothing = self.smoothing.unwrap_or(POINTER_SMOOTHING);
         let st = self.hands.entry(c.hand).or_default();
+        // 手ブレを抑えたレーザー。隠れていた後は追わずに手に合わせる。
+        let aim = Pose::new(
+            c.aim.position,
+            st.drawn.map_or(c.aim.orientation, |q| {
+                q.slerp(c.aim.orientation, 1.0 - smoothing)
+            }),
+        );
         let grab_started = c.grab && !st.grab_held;
         st.grab_held = c.grab;
         st.menu = c.menu;
 
-        if let Some((id, offset)) = st.dragging {
+        if let Some((id, offset, len)) = st.dragging {
             if c.grab {
-                self.panels[id].pose = c.aim * offset;
+                // スティックの上下で、掴んだ点をレーザーに沿って遠く・近くへ。
+                let push = if c.scroll.y.abs() < PUSH_DEADZONE {
+                    0.0
+                } else {
+                    c.scroll.y
+                };
+                let new_len = (len * (1.0 + PUSH * push)).clamp(GRAB_MIN, GRAB_MAX);
+                let offset = offset + Vec3::NEG_Z * (new_len - len);
+                st.dragging = Some((id, offset, new_len));
+                // 手に付いて動き、頭の方を向く。頭を傾けてもパネルは傾けない（水平にスナップ）。
+                // 目標へはなめらかに追いつく。
+                let at = aim.transform_point(offset);
+                let p = &mut self.panels[id];
+                let target = Pose::new(
+                    at,
+                    facing(at, frame.hmd.position, Vec3::Y).unwrap_or(p.pose.orientation),
+                );
+                p.pose = approach(p.pose, target);
                 st.ray = Some(Ray {
-                    aim: c.aim,
-                    len: offset.position.length(),
+                    hand: c.aim,
+                    aim,
+                    len: new_len,
                     hit: None,
                 });
+                st.drawn = Some(aim.orientation);
                 return;
             }
             st.dragging = None;
@@ -333,13 +420,16 @@ impl Overlay {
             .iter()
             .enumerate()
             .filter(|(_, p)| !p.closed && p.pointer.is_none())
-            .filter_map(|(id, p)| hit_test(p, &c.aim).map(|(pos, t)| (id, pos, t)))
+            .filter_map(|(id, p)| hit_test(p, &aim).map(|(pos, t)| (id, pos, t)))
             .min_by(|a, b| a.2.total_cmp(&b.2));
-        st.ray = Some(Ray {
-            aim: c.aim,
-            len: hit.map_or(LASER_MAX, |h| h.2),
-            hit: hit.map(|(id, _, t)| (id, c.aim.position + c.aim.forward() * t)),
+        // 何も指していなければレーザーは出さない。
+        st.ray = hit.map(|(id, _, t)| Ray {
+            hand: c.aim,
+            aim,
+            len: t,
+            hit: Some((id, aim.position + aim.forward() * t)),
         });
+        st.drawn = st.ray.map(|r| r.aim.orientation);
         // ロック中のパネルは掴めない（掴みボタンは無視して普通に指す）。
         let grab_started = grab_started && hit.is_some_and(|h| !self.panels[h.0].locked);
 
@@ -364,7 +454,9 @@ impl Overlay {
             return;
         };
         if grab_started {
-            st.dragging = Some((id, c.aim.inverse() * self.panels[id].pose));
+            let t = hit.map_or(0.0, |h| h.2);
+            let offset = aim.inverse().transform_point(self.panels[id].pose.position);
+            st.dragging = Some((id, offset, t));
             st.hover = None;
             st.select = false;
             return;
@@ -404,30 +496,36 @@ impl Overlay {
                 continue;
             };
             let ray = self.hands.get(&hand).and_then(|h| h.ray);
-            let placed = match (part, ray) {
-                (Pointer::Laser, Some(r)) => Some((
-                    r.aim * Pose::new(Vec3::new(0.0, 0.0, -r.len / 2.0), LASER_ROT),
-                    r.len,
-                )),
-                (
-                    Pointer::Cursor,
-                    Some(Ray {
-                        aim,
-                        hit: Some((target, point)),
-                        ..
-                    }),
-                ) => {
-                    let face = self.panels[target].pose.orientation;
-                    let normal = face * Vec3::Z;
-                    // レーザーの来る側（裏から指していれば裏側）へ浮かせる。
-                    let side = (aim.position - point).dot(normal).signum();
-                    Some((
-                        Pose::new(point + normal * side * CURSOR_LIFT, face),
-                        p.size.x,
-                    ))
+            let drag = self.hands.get(&hand).and_then(|h| h.drag);
+            let drawn = ray.map(|r| (r, r.aim, r.len));
+            let placed = match (part, drawn) {
+                (Pointer::Laser, Some((r, aim, len))) => {
+                    // 横から見ると面が見えなくなるので、レーザーの軸回りに面を頭へ向ける。
+                    let h = aim.inverse().transform_point(self.hmd.position);
+                    let roll = Quat::from_rotation_z((-h.x).atan2(h.y));
+                    let pose = aim * Pose::new(Vec3::new(0.0, 0.0, -len / 2.0), roll * LASER_ROT);
+                    Some((r, pose, len))
                 }
+                (Pointer::Cursor, Some((r, aim, len))) => r.hit.map(|(target, _)| {
+                    let pose = on_panel(&self.panels[target].pose, &aim, len, CURSOR_LIFT);
+                    // 頭から見て同じ大きさに見えるよう、離れるほど大きくする（`size` は 1m 先での大きさ）。
+                    let width = self.panels[id].size.x * pose.position.distance(self.hmd.position);
+                    (r, pose, width)
+                }),
+                (Pointer::Drag, Some((r, aim, len))) => r.hit.zip(drag).map(|((target, _), w)| {
+                    (
+                        r,
+                        on_panel(&self.panels[target].pose, &aim, len, DRAG_LIFT),
+                        w,
+                    )
+                }),
                 _ => None,
-            };
+            }
+            .map(|(r, pose, width)| {
+                // 手からの相対で置き、ランタイムの追従でレーザーとカーソルがずれないようにする。
+                self.panels[id].follow = Some((Device::Controller(hand), r.hand.inverse() * pose));
+                (pose, width)
+            });
             let p = &mut self.panels[id];
             let shown = match placed {
                 Some((pose, width)) => {
@@ -447,6 +545,34 @@ impl Overlay {
             }
         }
     }
+}
+
+/// レーザーの先（`aim` の前方 `len`）で、パネルの面に沿わせてレーザーの来る側（裏から指していれば裏側）へ `lift` 浮かせた姿勢。
+fn on_panel(panel: &Pose, aim: &Pose, len: f32, lift: f32) -> Pose {
+    let point = aim.position + aim.forward() * len;
+    let normal = panel.orientation * Vec3::Z;
+    let side = (aim.position - point).dot(normal).signum();
+    Pose::new(point + normal * side * lift, panel.orientation)
+}
+
+/// `from` から `to` へ [`SMOOTH`] だけ近づける。十分近ければ `to`。
+fn approach(from: Pose, to: Pose) -> Pose {
+    if from.position.distance(to.position) < SNAP
+        && from.orientation.angle_between(to.orientation) < SNAP
+    {
+        return to;
+    }
+    Pose::new(
+        from.position.lerp(to.position, SMOOTH),
+        from.orientation.slerp(to.orientation, SMOOTH),
+    )
+}
+
+/// `at` に置いて表面（+Z）を `eye` に向け、上（+Y）を `up` に寄せた向き。`up` と視線が平行なら `None`。
+fn facing(at: Vec3, eye: Vec3, up: Vec3) -> Option<Quat> {
+    let z = (eye - at).try_normalize()?;
+    let x = up.cross(z).try_normalize()?;
+    Some(Quat::from_mat3(&Mat3::from_cols(x, z.cross(x), z)))
 }
 
 /// レイ（aim の前方）とパネルの交差判定。ヒットしたピクセルとレイ上の距離を返す。
@@ -496,6 +622,13 @@ mod tests {
             aim,
             inputs: inputs.iter().map(|(n, v)| (n.to_string(), *v)).collect(),
         }];
+    }
+
+    /// 掴み移動がなめらかに追いつくまで、同じ入力のまま tick する。
+    fn settle(vr: &mut MockBackend, ov: &mut Overlay) {
+        for _ in 0..60 {
+            ov.tick(vr);
+        }
     }
 
     fn kinds(ev: &[UiEvent]) -> Vec<PointerEvent> {
@@ -554,6 +687,7 @@ mod tests {
         let moved = Pose::new(Vec3::new(1.0, 0.0, 0.0), Quat::IDENTITY);
         controller(&mut vr, moved, &[("squeeze/value", 1.0)]);
         assert!(ov.tick(&mut vr).is_empty());
+        settle(&mut vr, &mut ov);
         let expected = Vec3::new(1.0, 0.0, -1.0);
         assert!(ov.panel(0).pose.position.abs_diff_eq(expected, 1e-5));
         assert!(vr.overlays[0].pose.position.abs_diff_eq(expected, 1e-5));
@@ -643,7 +777,7 @@ mod tests {
         controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
         ov.tick(&mut vr);
         controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
-        ov.tick(&mut vr);
+        settle(&mut vr, &mut ov);
         controller(&mut vr, at(1.0, 0.0, 0.0), &[]);
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(1.0, 0.0, -1.0));
@@ -677,7 +811,7 @@ mod tests {
         controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
         ov.tick(&mut vr);
         controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
-        ov.tick(&mut vr);
+        settle(&mut vr, &mut ov);
         assert_at(&ov, &vr, Vec3::new(1.0, 0.0, -1.0));
     }
 
@@ -760,16 +894,209 @@ mod tests {
     }
 
     #[test]
-    fn missing_panel_hides_cursor_and_extends_laser() {
+    fn laser_turns_its_face_to_head_around_its_axis() {
+        let (mut vr, mut ov, laser, _) = with_pointers();
+        // 頭がレーザーの右横にある。
+        vr.frame.hmd = at(1.0, 0.0, -0.5);
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        let q = vr.overlays[laser].pose.orientation;
+        assert!((q * Vec3::Z).abs_diff_eq(Vec3::X, 1e-5), "{}", q * Vec3::Z);
+        assert!((q * Vec3::X).abs_diff_eq(Vec3::NEG_Z, 1e-5));
+    }
+
+    fn move_x(ev: &[UiEvent]) -> f32 {
+        let PointerEvent::Move { pos } = ev[0].event else {
+            panic!()
+        };
+        pos.x
+    }
+
+    #[test]
+    fn smoothing_steadies_hits_and_pointer_together() {
         let (mut vr, mut ov, laser, cursor) = with_pointers();
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        // 右へ向けると、ヒット（クリック位置）もポインタも途中から追う。
+        let turned = Pose::new(Vec3::ZERO, Quat::from_rotation_y(-0.3));
+        let target = hit_test(ov.panel(0), &turned).unwrap().0.x;
+        controller(&mut vr, turned, &[]);
+        let x = move_x(&ov.tick(&mut vr));
+        assert!(50.0 < x && x < target, "{x} {target}");
+        // カーソルはヒット点（パネルの面の上）、レーザーの先端にある。
+        let c = vr.overlays[cursor].pose.position;
+        let hit = ov.panel(0).pixel_to_world(Vec2::new(x, 50.0));
+        assert!(
+            c.abs_diff_eq(hit + Vec3::Z * CURSOR_LIFT, 1e-4),
+            "{c} {hit}"
+        );
+        let tip = vr.overlays[laser].pose.position * 2.0;
+        assert!(tip.abs_diff_eq(hit, 1e-4), "{tip}");
+        for _ in 0..200 {
+            ov.tick(&mut vr);
+        }
+        assert!((move_x(&ov.tick(&mut vr)) - target).abs() < 0.01);
+        // 抑えを切れば即座に当たる。
+        ov.set_pointer_smoothing(0.0);
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        assert_eq!(move_x(&ov.tick(&mut vr)), 50.0);
+    }
+
+    #[test]
+    fn laser_keeps_its_thickness_and_cursor_its_apparent_size() {
+        let (mut vr, mut ov, laser, cursor) = with_pointers();
+        assert_eq!(vr.overlays[laser].height_m, Some(0.02));
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        // 頭（原点）から 1m 先のカーソルは 1m 先での大きさ、2m 先なら 2 倍。
+        let near = vr.overlays[cursor].width_m;
+        assert!((near - 0.02 * (1.0 - CURSOR_LIFT)).abs() < 1e-5, "{near}");
+        vr.frame.hmd = at(0.0, 0.0, 1.0);
+        ov.tick(&mut vr);
+        assert!(
+            (vr.overlays[cursor].width_m - near * (2.0 - CURSOR_LIFT) / (1.0 - CURSOR_LIFT)).abs()
+                < 1e-4
+        );
+    }
+
+    #[test]
+    fn drag_visual_shows_only_while_dragging_at_given_width() {
+        let (mut vr, mut ov, _, cursor) = with_pointers();
+        let drag = ov
+            .add_panel(&mut vr, "d", Pose::IDENTITY, Vec2::splat(0.4), (400, 400))
+            .unwrap();
+        ov.set_pointer(&mut vr, drag, Hand::Right, Pointer::Drag);
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        assert!(!vr.overlays[drag].visible);
+        ov.set_drag(Hand::Right, Some(0.25));
+        ov.tick(&mut vr);
+        let d = &vr.overlays[drag];
+        assert!(d.visible && (d.width_m - 0.25).abs() < 1e-6);
+        assert!(
+            d.pose
+                .position
+                .abs_diff_eq(Vec3::new(0.0, 0.0, -1.0 + DRAG_LIFT), 1e-5)
+        );
+        // パネル < ドラッグの見た目 < カーソル。
+        assert!(vr.overlays[0].sort < d.sort && d.sort < vr.overlays[cursor].sort);
+        ov.set_drag(Hand::Right, None);
+        ov.tick(&mut vr);
+        assert!(!vr.overlays[drag].visible);
+    }
+
+    #[test]
+    fn missing_panel_hides_laser_and_cursor() {
+        let (mut vr, mut ov, laser, cursor) = with_pointers();
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        assert!(vr.overlays[laser].visible && vr.overlays[cursor].visible);
         controller(&mut vr, at(5.0, 0.0, 0.0), &[]);
         ov.tick(&mut vr);
-        assert!((vr.overlays[laser].width_m - LASER_MAX).abs() < 1e-5);
-        assert!(!vr.overlays[cursor].visible);
-        // コントローラを見失えばレーザーも隠す。
-        vr.frame.controllers.clear();
+        assert!(!vr.overlays[laser].visible && !vr.overlays[cursor].visible);
+        // 掴み中はパネルの外を向いていてもレーザーを出す。
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
         ov.tick(&mut vr);
-        assert!(!vr.overlays[laser].visible);
+        controller(&mut vr, at(0.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+        vr.frame.controllers[0].aim.orientation = Quat::from_rotation_y(1.0);
+        ov.tick(&mut vr);
+        assert!(vr.overlays[laser].visible);
+    }
+
+    #[test]
+    fn grabbed_panel_faces_head_and_stays_level() {
+        let (mut vr, mut ov) = setup();
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        // 頭を傾けて横にずらし、手首もひねる。パネルは頭の方を向き、傾かない。
+        vr.frame.hmd = Pose::new(Vec3::new(0.5, 0.3, 0.2), Quat::from_rotation_z(0.3));
+        let aim = Pose::new(
+            Vec3::ZERO,
+            Quat::from_rotation_y(0.5) * Quat::from_rotation_z(1.0),
+        );
+        controller(&mut vr, aim, &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        let p = ov.panel(0).pose;
+        assert!(
+            p.position
+                .abs_diff_eq(aim.transform_point(Vec3::new(0.0, 0.0, -1.0)), 1e-5)
+        );
+        let normal = p.orientation * Vec3::Z;
+        let to_head = (vr.frame.hmd.position - p.position).normalize();
+        assert!(normal.abs_diff_eq(to_head, 1e-5), "{normal}");
+        assert!((p.orientation * Vec3::X).y.abs() < 1e-5, "水平");
+    }
+
+    #[test]
+    fn grab_glides_toward_hand() {
+        let (mut vr, mut ov) = setup();
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        // 1 tick では途中まで。
+        let x = ov.panel(0).pose.position.x;
+        assert!(0.0 < x && x < 1.0, "{x}");
+    }
+
+    #[test]
+    fn stick_pushes_and_pulls_grabbed_panel() {
+        let (mut vr, mut ov) = setup();
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        let dist = |ov: &Overlay| -ov.panel(0).pose.position.z;
+        let push = |y| [("squeeze/value", 1.0), ("thumbstick/y", y)];
+        controller(&mut vr, Pose::IDENTITY, &push(1.0));
+        settle(&mut vr, &mut ov);
+        controller(&mut vr, Pose::IDENTITY, &push(0.0));
+        settle(&mut vr, &mut ov);
+        let far = dist(&ov);
+        assert!(far > 1.5, "{far}");
+        // 遊びの中では動かない。
+        controller(&mut vr, Pose::IDENTITY, &push(0.1));
+        settle(&mut vr, &mut ov);
+        assert!((dist(&ov) - far).abs() < 1e-4);
+        // 引き寄せても手より手前には来ない。
+        controller(&mut vr, Pose::IDENTITY, &push(-1.0));
+        for _ in 0..1000 {
+            ov.tick(&mut vr);
+        }
+        assert!((dist(&ov) - GRAB_MIN).abs() < 1e-4, "{}", dist(&ov));
+    }
+
+    #[test]
+    fn stick_moves_grabbed_point_along_the_laser() {
+        let (mut vr, mut ov) = setup();
+        ov.set_pointer_smoothing(0.0);
+        // パネルの右寄り（中心から 0.3m）を斜めに掴み、押し出す。
+        let aim = Pose::new(Vec3::ZERO, Quat::from_rotation_y(-0.3f32.atan()));
+        controller(&mut vr, aim, &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        let before = ov.panel(0).pose.position;
+        controller(
+            &mut vr,
+            aim,
+            &[("squeeze/value", 1.0), ("thumbstick/y", 1.0)],
+        );
+        for _ in 0..20 {
+            ov.tick(&mut vr);
+        }
+        controller(&mut vr, aim, &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        // 中心（= 掴んだ点）はレーザーと平行に、手から遠ざかる向きへ動く。
+        let moved = ov.panel(0).pose.position - before;
+        assert!(moved.length() > 0.3);
+        assert!(
+            moved.normalize().abs_diff_eq(aim.forward(), 1e-4),
+            "{moved}"
+        );
+    }
+
+    #[test]
+    fn facing_points_surface_at_eye() {
+        let q = facing(Vec3::new(0.0, 0.0, -1.0), Vec3::ZERO, Vec3::Y).unwrap();
+        assert!(q.abs_diff_eq(Quat::IDENTITY, 1e-6));
+        assert!(facing(Vec3::ZERO, Vec3::Y, Vec3::Y).is_none());
     }
 
     #[test]

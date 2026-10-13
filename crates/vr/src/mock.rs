@@ -9,6 +9,8 @@ pub struct MockOverlay {
     /// 最後に設定された姿勢。
     pub pose: Pose,
     pub width_m: f32,
+    /// 固定された高さ（m）。
+    pub height_m: Option<f32>,
     pub visible: bool,
     pub sort: u32,
     /// 最後に送られたテクスチャ。
@@ -56,6 +58,7 @@ impl VrBackend for MockBackend {
             key: key.to_owned(),
             pose: Pose::IDENTITY,
             width_m,
+            height_m: None,
             visible: true,
             sort: 0,
             texture: None,
@@ -69,6 +72,10 @@ impl VrBackend for MockBackend {
 
     fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
         self.overlays[id.0 as usize].width_m = width_m;
+    }
+
+    fn set_overlay_height(&mut self, id: OverlayId, height_m: f32) {
+        self.overlays[id.0 as usize].height_m = Some(height_m);
     }
 
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
