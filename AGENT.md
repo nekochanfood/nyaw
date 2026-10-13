@@ -7,11 +7,11 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 層 | クレート | 責務 | 主な公開 API |
 |---|---|---|---|
 | 0 OS | `crates/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出）。`#[cfg]` はここだけに書く | `config_dir`, `openvr_paths_file`, `openxr_runtime_manifest` |
-| 1 ランタイム | `crates/vr` | OpenVR / OpenXR / novr の差を吸収。上位層は `Box<dyn VrBackend>` しか持たない | `connect`, `VrBackend`, `Runtime`, `Surface`, `Pose`, `Frame`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
+| 1 ランタイム | `crates/vr` | OpenVR / OpenXR / novr の差を吸収。上位層は `Box<dyn VrBackend>` しか持たない | `connect`, `VrBackend`, `Runtime`, `Surface`, `Pose`, `Frame`（`pose(&Device)`）, `Device`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
 | 2 入力 | `crates/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController) -> ControllerState`, `source(profile, Action)`（逆引き） |
-| 3 オーバーレイ | `crates/overlay` | パネル配置、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
+| 3 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | 4 UI | `crates/ui` | GPUI フロントエンド。ポインタイベントを GPUI のマウス入力に変換してビューへ流し、描画結果を読み戻してパネルへ返す | `run`, `pump`（入力1フレーム分。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `PointerBridge`, ビュー（`Home`） |
-| - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit`, `VrKit::{press, drag_panel, hand, profile, point_at}` |
+| - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit`, `VrKit::{press, drag_panel, attach_panel, move_hand, hand, profile, point_at}` |
 | - | `src/main.rs` | ブートローダー。ランタイムを選んで `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
 
 依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input ← overlay ← ui ← main`）。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
@@ -33,7 +33,8 @@ novr・SteamVR (OpenVR)・OpenXR はどれも対等な「手段」でしかな�
 ```
 ui::run（GPUI のイベントループ上で約 90Hz）/ testkit の VrKit::step
  └ ui::pump → overlay.tick(vr)
-     ├ vr.poll()            → Frame { hmd, controllers: Vec<RawController> }
+     ├ vr.poll()            → Frame { hmd, controllers: Vec<RawController>, trackers }
+     ├ 取り付け中のパネル   → 姿勢 = frame.pose(device) * offset（掴み中は手に従い、離すとオフセットを付け直す）
      ├ input::map(raw)      → ControllerState { aim, select, grab, menu, scroll }
      ├ レーザー × パネル判定 → Vec<UiEvent { panel, hand, PointerEvent }>
      └ vr.set_overlay_pose  （掴み移動を反映）
@@ -63,7 +64,7 @@ ui::run（GPUI のイベントループ上で約 90Hz）/ testkit の VrKit::ste
 - **ユーザー操作のシナリオ（E2E 風）**: `crates/testkit/tests/` に置く。要素は GPUI の `.debug_selector(|| "名前".into())` で指定し、プロファイル名や座標計算はテストに書かない。
   - **基本操作**（クリック・ホバー・見えている色など）: `Driver` に対して1回だけ書き、`on_every_runtime!` で全ランタイム（novr / VR）で実行する（例: `home.rs`）。
   - **UI のロジックだけ**の確認: ランタイムに関係しないので `NoVrKit` だけで書く。
-  - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`）。
+  - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`, `attach.rs`）。
   - `color_at` は「ユーザーに見えている色」: novr は画面、VR は VR パネルに送られたテクスチャ。テストプラットフォームには GPU が無いため、描画は `testkit::raster` の CPU ラスタライザ（単色矩形のみ）。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
 - **実ランタイムでの疎通確認**: `cargo run -p vr --example smoke`（OpenXR は `-- --openxr`。手動。SteamVR に接続し、オーバーレイに送った画像をランタイムから読み戻して確かめる）。HMD が無ければ SteamVR 同梱の null ドライバを使う: `{"steamvr": {"requireHmd": false, "forcedDriver": "null", "activateMultipleDrivers": true}, "driver_null": {"enable": true}}` を書いた `steamvr.vrsettings` だけを置いたフォルダを `VR_CONFIG_PATH` で指す（普段の設定には触らない）。SteamVR がすでに起動していると、そちらの設定で動くので先に終了しておく。

@@ -579,6 +579,8 @@ impl VrBackend for OpenXrBackend {
         Frame {
             hmd,
             controllers: self.controllers(time),
+            // ponytail: トラッカーは未対応。要るなら XR_HTCX_vive_tracker_interaction でロールごとに取る。
+            trackers: Vec::new(),
         }
     }
 

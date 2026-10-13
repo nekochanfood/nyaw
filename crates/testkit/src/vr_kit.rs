@@ -10,7 +10,7 @@ use vr::{
     mock::{MockBackend, MockTexture},
 };
 
-use crate::{Action, Driver, Hand, Pose, Quat, Vec2, Vec3, raster};
+use crate::{Action, Device, Driver, Hand, Pose, Quat, Vec2, Vec3, raster};
 
 /// 指定がないときの仮想コントローラの機種。
 pub const DEFAULT_PROFILE: &str = "valve/index_controller";
@@ -107,6 +107,12 @@ impl<'a, V: Render> VrKit<'a, V> {
         self.step()
     }
 
+    /// 現在の手のコントローラを `aim` に動かして1フレーム進める。
+    pub fn move_hand(&mut self, aim: Pose) -> &mut Self {
+        self.ctrl().aim = aim;
+        self.step()
+    }
+
     pub fn press(&mut self, action: Action) -> &mut Self {
         let c = self.ctrl();
         if !c.held.contains(&action) {
@@ -128,6 +134,12 @@ impl<'a, V: Render> VrKit<'a, V> {
         self.point_at(center).press(Action::Grab);
         self.ctrl().aim.position += delta;
         self.step().release(Action::Grab)
+    }
+
+    /// パネルを `device` に取り付けて1フレーム進める（`offset` は取り付け先から見た相対姿勢）。
+    pub fn attach_panel(&mut self, device: Device, offset: Pose) -> &mut Self {
+        self.overlay.attach(self.panel, device, offset);
+        self.step()
     }
 
     pub fn panel_pose(&self) -> Pose {

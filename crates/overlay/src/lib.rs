@@ -1,23 +1,27 @@
 //! Layer 3: オーバーレイの土台。3D 空間上のパネルを持ち、各コントローラのレーザーとの交差を判定し、
 //! ヒットを UI 層向けの 2D ポインタイベントに変換する。パネルを掴んで動かす操作も扱う。
-//! [`Overlay::tick`] が下位パイプライン1フレーム分: VR poll → 入力マップ → ヒット判定 → イベント。
+//! パネルはデバイス（HMD・コントローラ・トラッカー）に取り付けて追従させられる。
+//! [`Overlay::tick`] が下位パイプライン1フレーム分: VR poll → 取り付け先への追従 → 入力マップ → ヒット判定 → イベント。
 
 use std::collections::HashMap;
 
-use vr::{Hand, OverlayId, Pose, Vec2, Vec3, VrBackend, VrError};
+use vr::{Device, Frame, Hand, OverlayId, Pose, Vec2, Vec3, VrBackend, VrError};
 
 pub use input::ControllerState;
 
 pub type PanelId = usize;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Panel {
-    /// クアッドの中心。表面はローカル +Z を向く。
+    /// クアッドの中心（トラッキング空間）。表面はローカル +Z を向く。
+    /// 取り付け中は毎 tick `取り付け先の姿勢 * オフセット` で更新される。
     pub pose: Pose,
     /// メートル単位。
     pub size: Vec2,
     /// クアッドに貼る UI サーフェスのピクセル数。
     pub resolution: (u32, u32),
+    /// 取り付け先のデバイスと、そこから見たパネルの相対姿勢。
+    pub attached: Option<(Device, Pose)>,
     overlay: OverlayId,
 }
 
@@ -85,6 +89,7 @@ impl Overlay {
             pose,
             size,
             resolution,
+            attached: None,
             overlay,
         });
         Ok(self.panels.len() - 1)
@@ -92,6 +97,19 @@ impl Overlay {
 
     pub fn panel(&self, id: PanelId) -> &Panel {
         &self.panels[id]
+    }
+
+    /// パネルを `device` に取り付ける。以降の tick で `device` の姿勢 * `offset` に追従する。
+    /// 取り付け中のパネルを掴んで動かすと、離した位置でオフセットが付け直される。
+    // ponytail: 姿勢は毎 tick オーバーレイ層で合成して送るので、ポーリング1回分遅れる。
+    // 揺れが気になったらランタイムの相対配置（OpenVR の SetOverlayTransformTrackedDeviceRelative 等）に任せる。
+    pub fn attach(&mut self, id: PanelId, device: Device, offset: Pose) {
+        self.panels[id].attached = Some((device, offset));
+    }
+
+    /// 取り付けを外す。パネルはその場（最後の姿勢）に残る。
+    pub fn detach(&mut self, id: PanelId) {
+        self.panels[id].attached = None;
     }
 
     /// `panel` の描画済み UI フレームを VR ランタイムへ送る。
@@ -110,9 +128,29 @@ impl Overlay {
 
     pub fn tick(&mut self, vr: &mut dyn VrBackend) -> Vec<UiEvent> {
         let frame = vr.poll();
+        // 掴み中のパネルは手に従う（離したフレームで update_hand がオフセットを付け直す）。
+        // 取り付け先が見失われたフレームは最後の姿勢のまま。
+        let dragged: Vec<PanelId> = self
+            .hands
+            .values()
+            .filter_map(|h| h.dragging)
+            .map(|d| d.0)
+            .collect();
+        for (id, p) in self.panels.iter_mut().enumerate() {
+            if dragged.contains(&id) {
+                continue;
+            }
+            if let Some(pose) = p
+                .attached
+                .as_ref()
+                .and_then(|(d, o)| Some(frame.pose(d)? * *o))
+            {
+                p.pose = pose;
+            }
+        }
         let mut events = Vec::new();
         for c in frame.controllers.iter().map(input::map) {
-            self.update_hand(&c, &mut events);
+            self.update_hand(&c, &frame, &mut events);
         }
         // ponytail: 毎フレーム全パネルの姿勢を送る。ランタイム呼び出しが重くなったら変更分だけにする。
         for p in &self.panels {
@@ -121,7 +159,7 @@ impl Overlay {
         events
     }
 
-    fn update_hand(&mut self, c: &ControllerState, out: &mut Vec<UiEvent>) {
+    fn update_hand(&mut self, c: &ControllerState, frame: &Frame, out: &mut Vec<UiEvent>) {
         let st = self.hands.entry(c.hand).or_default();
         let grab_started = c.grab && !st.grab_held;
         st.grab_held = c.grab;
@@ -132,6 +170,13 @@ impl Overlay {
                 return;
             }
             st.dragging = None;
+            // 取り付け中なら、離した位置を新しいオフセットにする。
+            let p = &mut self.panels[id];
+            if let Some((device, offset)) = &mut p.attached
+                && let Some(dp) = frame.pose(device)
+            {
+                *offset = dp.inverse() * p.pose;
+            }
         }
 
         // レーザー上で最も近いパネル。
@@ -316,6 +361,86 @@ mod tests {
         );
         let (hit, _) = hit_test(p, &aim).unwrap();
         assert!(hit.abs_diff_eq(px, 1e-3), "{hit}");
+    }
+
+    fn at(x: f32, y: f32, z: f32) -> Pose {
+        Pose::new(Vec3::new(x, y, z), Quat::IDENTITY)
+    }
+
+    fn assert_at(ov: &Overlay, vr: &MockBackend, expected: Vec3) {
+        let got = ov.panel(0).pose.position;
+        assert!(got.abs_diff_eq(expected, 1e-5), "{got}");
+        assert!(vr.overlays[0].pose.position.abs_diff_eq(expected, 1e-5));
+    }
+
+    #[test]
+    fn attached_to_hmd_follows_head_including_rotation() {
+        let (mut vr, mut ov) = setup();
+        ov.attach(0, Device::Hmd, at(0.0, 0.0, -0.5));
+        vr.frame.hmd = Pose::new(
+            Vec3::new(1.0, 1.5, 0.0),
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+        );
+        ov.tick(&mut vr);
+        // 左を向いた頭の 0.5m 前方 = -X 方向。
+        assert_at(&ov, &vr, Vec3::new(0.5, 1.5, 0.0));
+        assert!(
+            ov.panel(0)
+                .pose
+                .orientation
+                .abs_diff_eq(vr.frame.hmd.orientation, 1e-5)
+        );
+    }
+
+    #[test]
+    fn attached_to_controller_follows_hand() {
+        let (mut vr, mut ov) = setup();
+        ov.attach(0, Device::Controller(Hand::Right), at(0.0, 0.1, 0.0));
+        controller(&mut vr, at(0.3, -0.2, -0.4), &[]);
+        ov.tick(&mut vr);
+        assert_at(&ov, &vr, Vec3::new(0.3, -0.1, -0.4));
+    }
+
+    #[test]
+    fn attached_to_tracker_and_keeps_pose_when_lost() {
+        let (mut vr, mut ov) = setup();
+        ov.attach(0, Device::Tracker("waist".into()), at(0.0, 0.0, -0.2));
+        vr.frame.trackers = vec![("waist".into(), at(0.0, 1.0, 0.0))];
+        ov.tick(&mut vr);
+        assert_at(&ov, &vr, Vec3::new(0.0, 1.0, -0.2));
+        vr.frame.trackers.clear();
+        ov.tick(&mut vr);
+        assert_at(&ov, &vr, Vec3::new(0.0, 1.0, -0.2));
+    }
+
+    #[test]
+    fn detach_leaves_panel_in_place() {
+        let (mut vr, mut ov) = setup();
+        ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
+        vr.frame.hmd = at(2.0, 0.0, 0.0);
+        ov.tick(&mut vr);
+        ov.detach(0);
+        vr.frame.hmd = at(5.0, 0.0, 0.0);
+        ov.tick(&mut vr);
+        assert_at(&ov, &vr, Vec3::new(2.0, 0.0, -1.0));
+    }
+
+    #[test]
+    fn dragging_attached_panel_reanchors_offset() {
+        let (mut vr, mut ov) = setup();
+        ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
+        // 右手で掴んで 1m 右へ動かして離す。
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        controller(&mut vr, at(1.0, 0.0, 0.0), &[]);
+        ov.tick(&mut vr);
+        assert_at(&ov, &vr, Vec3::new(1.0, 0.0, -1.0));
+        // 頭が動けば、新しいオフセットのまま追従する。
+        vr.frame.hmd = at(0.0, 0.5, 0.0);
+        ov.tick(&mut vr);
+        assert_at(&ov, &vr, Vec3::new(1.0, 0.5, -1.0));
     }
 
     #[test]

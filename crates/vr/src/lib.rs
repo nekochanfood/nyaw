@@ -92,6 +92,33 @@ impl RawController {
 pub struct Frame {
     pub hmd: Pose,
     pub controllers: Vec<RawController>,
+    /// コントローラ以外のトラッカー（腰・足など）。ID はランタイムが決める（OpenVR はシリアル番号）。
+    pub trackers: Vec<(String, Pose)>,
+}
+
+impl Frame {
+    /// このフレームでの `device` の姿勢。トラッキングされていなければ `None`。
+    pub fn pose(&self, device: &Device) -> Option<Pose> {
+        match device {
+            Device::Hmd => Some(self.hmd),
+            Device::Controller(hand) => self
+                .controllers
+                .iter()
+                .find(|c| c.hand == *hand)
+                .map(|c| c.aim),
+            Device::Tracker(id) => self.trackers.iter().find(|(i, _)| i == id).map(|(_, p)| *p),
+        }
+    }
+}
+
+/// トラッキングされるデバイス。オーバーレイを取り付ける先として使う。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Device {
+    Hmd,
+    /// 姿勢は [`RawController::aim`]。
+    Controller(Hand),
+    /// [`Frame::trackers`] の ID。
+    Tracker(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -190,6 +217,26 @@ mod tests {
             (b.runtime(), b.surface()),
             (Runtime::NoVr, Surface::Desktop)
         );
+    }
+
+    #[test]
+    fn frame_pose_finds_each_device() {
+        let at = |x| Pose::new(Vec3::new(x, 0.0, 0.0), Quat::IDENTITY);
+        let frame = Frame {
+            hmd: at(1.0),
+            controllers: vec![RawController {
+                hand: Hand::Left,
+                profile: String::new(),
+                aim: at(2.0),
+                inputs: Vec::new(),
+            }],
+            trackers: vec![("LHR-1".into(), at(3.0))],
+        };
+        assert_eq!(frame.pose(&Device::Hmd), Some(at(1.0)));
+        assert_eq!(frame.pose(&Device::Controller(Hand::Left)), Some(at(2.0)));
+        assert_eq!(frame.pose(&Device::Controller(Hand::Right)), None);
+        assert_eq!(frame.pose(&Device::Tracker("LHR-1".into())), Some(at(3.0)));
+        assert_eq!(frame.pose(&Device::Tracker("LHR-2".into())), None);
     }
 
     #[test]
