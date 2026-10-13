@@ -1,0 +1,10 @@
+[package]
+name = "profiler"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

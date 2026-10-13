@@ -9,6 +9,7 @@ edition.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }
 kernel.workspace = true
+profiler.workspace = true
 logger.workspace = true
 
 # 実プラットフォーム + GPU で描画を読み戻す。GUI はメインスレッドで回すため独自 main。
