@@ -2,9 +2,14 @@
 //! レーザー・コントローラ機種・手・パネル操作・VR に映る描画など、VR 固有の機能も検証できる。
 //! 毎フレーム UI の描画結果も VR モックに送られる（描画は [`crate::raster`] の CPU ラスタライザ）。
 
-use gpui::{Bounds, Context, Entity, Pixels, Render, TestAppContext, VisualTestContext, Window};
+use std::collections::HashMap;
+
+use gpui::{
+    AnyWindowHandle, AppContext, Bounds, Context, Entity, Pixels, PlatformInput, Render,
+    TestAppContext, VisualTestContext, Window,
+};
 use kernel::{Kernel, PanelId};
-use ui::PointerBridge;
+use ui::{PanelControl, PanelRoot, PanelSpec, PointerBridge};
 use vr::{
     RawController,
     mock::{MockBackend, MockTexture},
@@ -38,24 +43,25 @@ fn rest_position(hand: Hand) -> Vec3 {
 /// VR ランタイム（モック）越しに操作する。
 pub struct VrKit<'a, V: 'static> {
     cx: &'a mut VisualTestContext,
-    view: Entity<V>,
+    views: Vec<Option<Entity<V>>>,
+    windows: Vec<AnyWindowHandle>,
     /// 直接覗いてよい（例: VR 側に送られたパネル姿勢の確認）。
     pub kernel: Kernel<MockBackend>,
     panel: PanelId,
-    bridge: PointerBridge,
+    bridges: HashMap<(PanelId, Hand), PointerBridge>,
     controllers: Vec<VirtualController>,
     active: Hand,
 }
 
 impl<'a, V: Render> VrKit<'a, V> {
-    /// `build` のビューを、正面 1m に置いたパネル1枚として起動する。パネル解像度 = ウィンドウサイズ。
-    // ponytail: パネル1枚のみ。複数パネルのシナリオが要るなら panel を引数で選べるようにする。
+    /// `build` のビューを、正面 1m に置いた最初のパネルとして起動する。パネル解像度 = ウィンドウサイズ。
     pub fn new(
         cx: &'a mut TestAppContext,
         build: impl FnOnce(&mut Window, &mut Context<V>) -> V,
     ) -> Self {
         let (view, cx) = cx.add_window_view(build);
         cx.run_until_parked();
+        let window = cx.update(|window, _| window.window_handle());
         let vp = cx.update(|window, _| window.viewport_size());
         let res = (f32::from(vp.width) as u32, f32::from(vp.height) as u32);
         let size = Vec2::new(PANEL_WIDTH_M, PANEL_WIDTH_M * res.1 as f32 / res.0 as f32);
@@ -67,15 +73,44 @@ impl<'a, V: Render> VrKit<'a, V> {
             .expect("モックはパネル作成に失敗しない");
         let mut kit = Self {
             cx,
-            view,
+            views: vec![Some(view)],
+            windows: vec![window],
             kernel,
             panel,
-            bridge: PointerBridge::default(),
+            bridges: HashMap::new(),
             controllers: Vec::new(),
             active: Hand::Right,
         };
         kit.step(); // 最初のフレームを VR に送っておく
         kit
+    }
+
+    /// 同じ画面型のパネルを追加する。戻り値を [`Self::panel`] に渡して操作先を選ぶ。
+    pub fn add_panel(
+        &mut self,
+        pose: Pose,
+        build: impl FnOnce(&mut Window, &mut Context<V>) -> V,
+    ) -> PanelId {
+        let (view, cx) = self.cx.cx.add_window_view(build);
+        let window = cx.update(|window, _| window.window_handle());
+        let vp = cx.update(|window, _| window.viewport_size());
+        let res = (f32::from(vp.width) as u32, f32::from(vp.height) as u32);
+        let size = Vec2::new(PANEL_WIDTH_M, PANEL_WIDTH_M * res.1 as f32 / res.0 as f32);
+        let id = self
+            .kernel
+            .add_panel(&format!("testkit.{}", self.windows.len()), pose, size, res)
+            .expect("モックはパネル作成に失敗しない");
+        self.views.push(Some(view));
+        self.windows.push(window);
+        self.step();
+        id
+    }
+
+    /// 以降の操作・読み取りに使うパネルを選ぶ。
+    pub fn panel(&mut self, panel: PanelId) -> &mut Self {
+        assert!(panel < self.windows.len(), "パネル {panel} がない");
+        self.panel = panel;
+        self
     }
 
     /// 以降の操作に使う手を切り替える（既定は右手）。
@@ -92,7 +127,7 @@ impl<'a, V: Render> VrKit<'a, V> {
 
     /// `debug_selector` を付けた要素のウィンドウ上の範囲。
     pub fn bounds(&mut self, selector: &'static str) -> Bounds<Pixels> {
-        self.cx
+        VisualTestContext::from_window(self.windows[self.panel], &self.cx.cx)
             .debug_bounds(selector)
             .unwrap_or_else(|| panic!("要素 {selector:?} が描画されていない"))
     }
@@ -142,25 +177,68 @@ impl<'a, V: Render> VrKit<'a, V> {
     /// 仮想コントローラの状態を VR モックに流し、本番と同じ `ui::pump` で1フレーム進めて GPUI に配送する。
     pub fn step(&mut self) -> &mut Self {
         self.kernel.vr.frame.controllers = self.controllers.iter().map(raw).collect();
-        for input in ui::pump(&mut self.kernel, self.panel, &mut self.bridge) {
-            self.cx.update(|window, cx| {
-                window.dispatch_event(input, cx);
-            });
+        let mut inputs: Vec<Vec<PlatformInput>> =
+            (0..self.windows.len()).map(|_| Vec::new()).collect();
+        for (panel, input) in ui::pump(&mut self.kernel, &mut self.bridges) {
+            inputs[panel].push(input);
+        }
+        for (panel, (window, inputs)) in self.windows.iter().copied().zip(inputs).enumerate() {
+            self.cx
+                .cx
+                .update_window(window, |_, window, cx| {
+                    for input in inputs {
+                        window.dispatch_event(input, cx);
+                    }
+                    ui::sync_panel(&mut self.kernel, panel, cx);
+                })
+                .unwrap();
         }
         self.cx.run_until_parked();
-        let (kernel, panel) = (&mut self.kernel, self.panel);
-        self.cx.update(|_, cx| ui::sync_panel(kernel, panel, cx));
+        let spawns = self
+            .cx
+            .cx
+            .update(|cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns));
+        for spec in spawns {
+            self.add_spec(spec);
+        }
         self.cx.run_until_parked();
-        let frame = self.cx.update(raster::capture);
-        self.kernel
-            .submit(self.panel, frame.width, frame.height, &frame.rgba);
+        for (panel, window) in self.windows.iter().copied().enumerate() {
+            let frame = self
+                .cx
+                .cx
+                .update_window(window, |_, window, cx| raster::capture(window, cx))
+                .unwrap();
+            self.kernel
+                .submit(panel, frame.width, frame.height, &frame.rgba);
+        }
         self
+    }
+
+    fn add_spec(&mut self, spec: PanelSpec) {
+        let id = self.windows.len();
+        let pose = spec.pose_for(&self.kernel, id);
+        let (root, cx) = self
+            .cx
+            .cx
+            .add_window_view(|window, cx| PanelRoot::new(spec.build(id, window, cx)));
+        let window = cx.update(|window, _| window.window_handle());
+        let vp = cx.update(|window, _| window.viewport_size());
+        let res = (f32::from(vp.width) as u32, f32::from(vp.height) as u32);
+        let size = Vec2::new(PANEL_WIDTH_M, PANEL_WIDTH_M * res.1 as f32 / res.0 as f32);
+        let view = root.read_with(cx, |root, _| root.view().downcast::<V>().ok());
+        let panel = self
+            .kernel
+            .add_panel(&format!("testkit.{id}"), pose, size, res)
+            .unwrap();
+        assert_eq!(panel, id);
+        self.views.push(view);
+        self.windows.push(window);
+        cx.update(|_, cx| ui::sync_panel(&mut self.kernel, panel, cx));
     }
 
     /// VR パネルに最後に送られたテクスチャ。
     pub fn texture(&self) -> &MockTexture {
-        // ponytail: VrKit が作るオーバーレイは1枚なので添字 0 固定。複数パネル対応時に PanelId から引く。
-        self.kernel.vr.overlays[0]
+        self.kernel.vr.overlays[self.kernel.panel(self.panel).overlay_id().0 as usize]
             .texture
             .as_ref()
             .expect("VrKit::new で最初のフレームを送っている")
@@ -251,7 +329,10 @@ impl<V: Render> Driver<V> for VrKit<'_, V> {
     }
 
     fn read<R>(&mut self, f: impl FnOnce(&V) -> R) -> R {
-        self.view.read_with(self.cx, |v, _| f(v))
+        self.views[self.panel]
+            .as_ref()
+            .expect("画面型が異なる")
+            .read_with(self.cx, |v, _| f(v))
     }
 
     /// VR パネルに映っている色。

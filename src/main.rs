@@ -2,6 +2,8 @@
 
 use std::process::ExitCode;
 
+use kernel::Pose;
+use kernel::vr::{Quat, Vec3};
 use kernel::{Kernel, config};
 use logger::{Level, Logger, StderrSink};
 
@@ -20,7 +22,13 @@ fn main() -> ExitCode {
     let Ok(kernel) = Kernel::boot(requested.as_deref(), config) else {
         return ExitCode::FAILURE;
     };
-    ui::run(kernel, |_, _| home::Home::default());
+    ui::run(
+        kernel,
+        vec![ui::PanelSpec::new(
+            Pose::new(Vec3::new(0.0, 1.2, -1.0), Quat::IDENTITY),
+            |id, _, _| home::Home::new(id),
+        )],
+    );
     ExitCode::SUCCESS
 }
 
