@@ -8,8 +8,23 @@ pub struct MockOverlay {
     pub key: String,
     /// 最後に設定された姿勢。
     pub pose: Pose,
-    /// 最後に送られたピクセルのサイズ。
-    pub submitted: Option<(u32, u32)>,
+    /// 最後に送られたテクスチャ。
+    pub texture: Option<MockTexture>,
+}
+
+/// モックが受け取ったテクスチャ（RGBA8）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct MockTexture {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+impl MockTexture {
+    pub fn pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        let i = ((y * self.width + x) * 4) as usize;
+        self.rgba[i..i + 4].try_into().unwrap()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -33,7 +48,7 @@ impl VrBackend for MockBackend {
         self.overlays.push(MockOverlay {
             key: key.to_owned(),
             pose: Pose::IDENTITY,
-            submitted: None,
+            texture: None,
         });
         Ok(OverlayId(self.overlays.len() as u64 - 1))
     }
@@ -48,6 +63,10 @@ impl VrBackend for MockBackend {
             (width * height * 4) as usize,
             "RGBA バッファのサイズが不正"
         );
-        self.overlays[id.0 as usize].submitted = Some((width, height));
+        self.overlays[id.0 as usize].texture = Some(MockTexture {
+            width,
+            height,
+            rgba: rgba.to_vec(),
+        });
     }
 }

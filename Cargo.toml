@@ -24,3 +24,7 @@ edition.workspace = true
 [dependencies]
 vr.workspace = true
 ui.workspace = true
+
+# testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する
+[profile.dev.package.testkit]
+opt-level = 2

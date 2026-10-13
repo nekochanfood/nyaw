@@ -1,13 +1,14 @@
 //! Layer 4: GPUI フロントエンド。各オーバーレイパネルは GPUI ウィンドウで実体化され、
 //! オーバーレイ層のレーザーイベントは通常の GPUI マウス入力に変換される。
 //! そのためビューはデスクトップの GPUI ビューと全く同じように書け、VR 上にあることを意識しない。
+//! 逆向きは [`capture`] でウィンドウをオフスクリーン描画して読み戻し、`Overlay::submit` で VR パネルへ送る。
 
 use std::time::Duration;
 
 use gpui::{
-    App, Bounds, Context, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    App, Bounds, Context, Entity, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, Window,
-    WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
+    WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rgb, size,
 };
 use overlay::{Overlay, PanelId, PointerEvent};
 use vr::{Pose, Quat, Vec2, Vec3, VrBackend};
@@ -73,6 +74,11 @@ impl PointerBridge {
     }
 }
 
+pub const PANEL_BG: u32 = 0x202020;
+pub const BUTTON_BG: u32 = 0x3060c0;
+/// レーザーが当たっている間のボタン色。VR 上でどこを指しているかの視覚的フィードバック。
+pub const BUTTON_HOVER_BG: u32 = 0x4f86f7;
+
 /// 仮のホームパネル。
 #[derive(Debug, Default)]
 pub struct Home {
@@ -86,13 +92,14 @@ impl Render for Home {
             .flex()
             .items_center()
             .justify_center()
-            .bg(rgb(0x202020))
+            .bg(rgb(PANEL_BG))
             .child(
                 div()
                     .id("click-me")
                     .debug_selector(|| "click-me".into())
                     .p_4()
-                    .bg(rgb(0x3060c0))
+                    .bg(rgb(BUTTON_BG))
+                    .hover(|s| s.bg(rgb(BUTTON_HOVER_BG)))
                     .text_color(rgb(0xffffff))
                     .child(format!("Clicked {}", self.clicks))
                     .on_click(cx.listener(|this, _, _, cx| {
@@ -120,6 +127,51 @@ pub fn pump(
         .collect()
 }
 
+/// CPU に読み戻した UI の1フレーム（RGBA8、行間に詰め物なし）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Frame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+/// ウィンドウを描き直し、画面に出さずにオフスクリーンへ描画して読み戻す。
+/// 大きさはデバイスピクセル（論理サイズ × 拡大率）。
+// ponytail: gpui の `render_to_image` は test-support フィーチャー限定かつ Windows のみ実装。
+// 上流で一般公開されたらフィーチャーを外す。Linux は gpui_wgpu のヘッドレスレンダラ経由が次の一手。
+pub fn capture(window: &mut Window, cx: &mut App) -> gpui::Result<Frame> {
+    window.draw(cx).clear(cx);
+    let img = window.render_to_image()?;
+    Ok(Frame {
+        width: img.width(),
+        height: img.height(),
+        rgba: img.into_raw(),
+    })
+}
+
+/// パネル用の非表示ウィンドウを開く。VR に送るのでデスクトップには出さない。
+/// Windows では非表示ウィンドウのレンダーターゲットが 1x1 のまま作られるので、明示的に
+/// リサイズして実寸にする（反映は非同期。最初の数フレームは 1x1 で読み戻される）。
+pub fn open_panel_window<V: Render>(
+    cx: &mut App,
+    resolution: (u32, u32),
+    build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
+) -> gpui::Result<WindowHandle<V>> {
+    let size = size(px(resolution.0 as f32), px(resolution.1 as f32));
+    let options = WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds {
+            origin: Point::default(),
+            size,
+        })),
+        show: false,
+        focus: false,
+        ..Default::default()
+    };
+    let window = cx.open_window(options, build)?;
+    cx.update_window(window.into(), |_, window, _| window.resize(size))?;
+    Ok(window)
+}
+
 const PANEL_PX: (u32, u32) = (600, 400);
 // ponytail: 約 90Hz の固定タイマー。後でランタイムの vsync (WaitGetPoses / xrWaitFrame) 駆動にする。
 const FRAME: Duration = Duration::from_millis(11);
@@ -139,31 +191,33 @@ pub fn run(mut vr: Box<dyn VrBackend>) {
             )
             .expect("create home overlay");
 
-        // ponytail: パネルは普通のデスクトップウィンドウで、ピクセルはまだ VR に送っていない。
-        // GPUI にはオフスクリーン描画先がないので、次の段階でウィンドウのサーフェスを取得して
-        // `overlay.submit(vr, panel, rgba)` に流す。
-        let bounds = Bounds::centered(None, size(px(PANEL_PX.0 as f32), px(PANEL_PX.1 as f32)), cx);
-        let window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    ..Default::default()
-                },
-                |_, cx| cx.new(|_| Home::default()),
-            )
+        let window = open_panel_window(cx, PANEL_PX, |_, cx| cx.new(|_| Home::default()))
             .expect("open home window");
 
         cx.spawn(async move |cx| {
             let mut bridge = PointerBridge::default();
+            let mut warned = false;
             loop {
                 cx.background_executor().timer(FRAME).await;
-                for input in pump(&mut overlay, vr.as_mut(), panel, &mut bridge) {
-                    let alive = window.update(cx, |_, window, cx| {
+                let inputs = pump(&mut overlay, vr.as_mut(), panel, &mut bridge);
+                // ponytail: 変化がなくても毎フレーム描画して送る。重ければ dirty なときだけにする。
+                // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
+                // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
+                let Ok(frame) = cx.update_window(window.into(), |_, window, cx| {
+                    for input in inputs {
                         window.dispatch_event(input, cx);
-                    });
-                    if alive.is_err() {
-                        return; // ウィンドウが閉じられた
                     }
+                    capture(window, cx)
+                }) else {
+                    return; // ウィンドウが閉じられた
+                };
+                match frame {
+                    Ok(f) => overlay.submit(vr.as_mut(), panel, f.width, f.height, &f.rgba),
+                    Err(e) if !warned => {
+                        eprintln!("nyaw: パネルの描画を取得できない: {e}");
+                        warned = true;
+                    }
+                    Err(_) => {}
                 }
             }
         })
