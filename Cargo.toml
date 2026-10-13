@@ -1,6 +1,26 @@
-[package]
-name = "nyaw"
-version = "0.1.0"
+[workspace]
+members = ["crates/*"]
+
+[workspace.package]
+version = "2026.0.1"
 edition = "2024"
 
+[workspace.dependencies]
+glam = "0.30"
+# crates.io 版 (0.2.2) は Window::dispatch_event の戻り値型が非公開で外部から入力を注入できないため git 版に固定
+gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
+os = { path = "crates/os" }
+vr = { path = "crates/vr" }
+input = { path = "crates/input" }
+overlay = { path = "crates/overlay" }
+ui = { path = "crates/ui" }
+
+[package]
+name = "nyaw"
+version.workspace = true
+edition.workspace = true
+
 [dependencies]
+vr.workspace = true
+ui.workspace = true

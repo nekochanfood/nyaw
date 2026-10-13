@@ -1,0 +1,13 @@
+[package]
+name = "ui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+gpui_platform.workspace = true
+vr.workspace = true
+overlay.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
