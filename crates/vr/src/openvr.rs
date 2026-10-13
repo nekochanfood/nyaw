@@ -313,11 +313,11 @@ impl VrBackend for OpenVrBackend {
 
     fn poll(&mut self) -> Frame {
         let s = self.system();
-        // ponytail: イベントは読み捨てる。VREvent_Quit で自分から終了しないので、
-        // SteamVR 終了時は数秒後に強制終了される。きれいに閉じたくなったら Frame に終了フラグを足す。
+        let mut quit = false;
         let mut event = MaybeUninit::<sys::VREvent_t>::zeroed();
         while unsafe { f(s.PollNextEvent)(event.as_mut_ptr(), size_of::<sys::VREvent_t>() as u32) }
         {
+            quit |= unsafe { event.assume_init_ref() }.eventType == sys::EVREventType_VREvent_Quit;
         }
 
         let mut poses: [sys::TrackedDevicePose_t; MAX_DEVICES] =
@@ -331,7 +331,10 @@ impl VrBackend for OpenVrBackend {
             )
         };
 
-        let mut frame = Frame::default();
+        let mut frame = Frame {
+            quit,
+            ..Frame::default()
+        };
         let hmd = &poses[sys::k_unTrackedDeviceIndex_Hmd as usize];
         if hmd.bPoseIsValid {
             frame.hmd = pose_from(&hmd.mDeviceToAbsoluteTracking.m);

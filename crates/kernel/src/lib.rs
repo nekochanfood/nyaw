@@ -105,6 +105,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.tick(&mut self.vr)
     }
 
+    /// ランタイムが終了を求めている（SteamVR の終了など）。呼び出し側はループを抜ける。
+    pub fn quit_requested(&self) -> bool {
+        self.overlay.quit_requested()
+    }
+
     /// パネルの描画結果（RGBA8）をランタイムへ送る。
     pub fn submit(&mut self, panel: PanelId, width: u32, height: u32, rgba: &[u8]) {
         self.overlay

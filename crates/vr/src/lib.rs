@@ -94,6 +94,8 @@ pub struct Frame {
     pub controllers: Vec<RawController>,
     /// コントローラ以外のトラッカー（腰・足など）。ID はランタイムが決める（OpenVR はシリアル番号）。
     pub trackers: Vec<(String, Pose)>,
+    /// ランタイムが終了を求めている（SteamVR の終了、OpenXR セッションの EXITING など）。
+    pub quit: bool,
 }
 
 impl Frame {
@@ -267,6 +269,7 @@ mod tests {
                 inputs: Vec::new(),
             }],
             trackers: vec![("LHR-1".into(), at(3.0))],
+            quit: false,
         };
         assert_eq!(frame.pose(&Device::Hmd), Some(at(1.0)));
         assert_eq!(frame.pose(&Device::Controller(Hand::Left)), Some(at(2.0)));

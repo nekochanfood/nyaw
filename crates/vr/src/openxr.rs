@@ -76,6 +76,21 @@ fn action_name(input: &str) -> String {
     input.replace('/', "_")
 }
 
+/// XR_HTCX_vive_tracker_interaction のロール（`/user/vive_tracker_htcx/role/<名前>`）。
+/// トラッカーの ID にはこの名前をそのまま使う。
+const TRACKER_ROLES: &[&str] = &[
+    "waist",
+    "chest",
+    "left_foot",
+    "right_foot",
+    "left_knee",
+    "right_knee",
+    "left_elbow",
+    "right_elbow",
+    "left_shoulder",
+    "right_shoulder",
+];
+
 const HANDS: [(Hand, &str); 2] = [(Hand::Left, "left"), (Hand::Right, "right")];
 
 struct Overlay {
@@ -98,9 +113,12 @@ pub(crate) struct OpenXrBackend {
     stage: xr::Space,
     view: xr::Space,
     aim_spaces: Vec<xr::Space>,
+    /// ロールごとのトラッカーの空間。拡張が無いランタイムでは空。
+    tracker_spaces: Vec<(&'static str, xr::Space)>,
     actions: Vec<(String, xr::Action<f32>)>,
     /// レーザーの姿勢。`aim_spaces` の元なので持っておく。
     _aim: xr::Action<xr::Posef>,
+    _tracker: Option<xr::Action<xr::Posef>>,
     action_set: xr::ActionSet,
     hand_paths: [xr::Path; 2],
     stream: xr::FrameStream<xr::Vulkan>,
@@ -112,6 +130,8 @@ pub(crate) struct OpenXrBackend {
     in_frame: Option<xr::Time>,
     /// ランタイムとの接続が失われた（落ちた等）。以後は何もしない。
     lost: bool,
+    /// セッションが EXITING / LOSS_PENDING になった。`Frame::quit` で上位へ伝える。
+    quit: bool,
     gpu: Gpu,
     instance: xr::Instance,
 }
@@ -135,6 +155,9 @@ impl OpenXrBackend {
         let mut extensions = xr::ExtensionSet::default();
         extensions.extx_overlay = true;
         extensions.khr_vulkan_enable2 = true;
+        // トラッカーは任意。無いランタイムでもコントローラだけで動く。
+        let has_trackers = available.htcx_vive_tracker_interaction;
+        extensions.htcx_vive_tracker_interaction = has_trackers;
         let instance = entry
             .create_instance(
                 &xr::ApplicationInfo {
@@ -214,6 +237,33 @@ impl OpenXrBackend {
                 eprintln!("OpenXR: {profile} のバインドを拒否された: {e}");
             }
         }
+        let tracker = if has_trackers {
+            let role_paths = TRACKER_ROLES
+                .iter()
+                .map(|r| path(&format!("/user/vive_tracker_htcx/role/{r}")))
+                .collect::<Result<Vec<_>, _>>()?;
+            let action = action_set
+                .create_action::<xr::Posef>("tracker", "tracker", &role_paths)
+                .map_err(xr_err("xrCreateAction"))?;
+            let bindings = TRACKER_ROLES
+                .iter()
+                .map(|r| {
+                    Ok(xr::Binding::new(
+                        &action,
+                        path(&format!("/user/vive_tracker_htcx/role/{r}/input/grip/pose"))?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, VrError>>()?;
+            if let Err(e) = instance.suggest_interaction_profile_bindings(
+                path("/interaction_profiles/htc/vive_tracker_htcx")?,
+                &bindings,
+            ) {
+                eprintln!("OpenXR: トラッカーのバインドを拒否された: {e}");
+            }
+            Some((action, role_paths))
+        } else {
+            None
+        };
         session
             .attach_action_sets(&[&action_set])
             .map_err(xr_err("xrAttachSessionActionSets"))?;
@@ -224,6 +274,15 @@ impl OpenXrBackend {
                     .map_err(xr_err("xrCreateActionSpace"))
             })
             .collect::<Result<_, _>>()?;
+        let mut tracker_spaces = Vec::new();
+        if let Some((action, role_paths)) = &tracker {
+            for (&role, &p) in TRACKER_ROLES.iter().zip(role_paths) {
+                let space = action
+                    .create_space(&session, p, xr::Posef::IDENTITY)
+                    .map_err(xr_err("xrCreateActionSpace"))?;
+                tracker_spaces.push((role, space));
+            }
+        }
 
         Ok(Self {
             overlays: HashMap::new(),
@@ -231,8 +290,10 @@ impl OpenXrBackend {
             stage,
             view,
             aim_spaces,
+            tracker_spaces,
             actions,
             _aim: aim,
+            _tracker: tracker.map(|(a, _)| a),
             action_set,
             hand_paths,
             stream,
@@ -241,6 +302,7 @@ impl OpenXrBackend {
             running: false,
             in_frame: None,
             lost: false,
+            quit: false,
             gpu,
             instance,
         })
@@ -254,8 +316,17 @@ impl OpenXrBackend {
         ) {
             eprintln!("OpenXR: ランタイムとの接続が失われた");
             self.lost = true;
+            self.quit = true;
             self.running = false;
             self.in_frame = None;
+        }
+    }
+
+    /// 姿勢を取れないフレーム。終了要求だけは伝える。
+    fn idle(&self) -> Frame {
+        Frame {
+            quit: self.quit,
+            ..Frame::default()
         }
     }
 
@@ -282,11 +353,10 @@ impl OpenXrBackend {
                         eprintln!("OpenXR: xrEndSession: {e}");
                     }
                 }
-                // ponytail: EXITING / LOSS_PENDING ではフレームを止めるだけで、アプリは終了しない。
-                // きれいに閉じたくなったら Frame に終了フラグを足す（OpenVR の VREvent_Quit と同じ）。
                 xr::SessionState::EXITING | xr::SessionState::LOSS_PENDING => {
                     self.running = false;
                     self.in_frame = None;
+                    self.quit = true;
                 }
                 _ => {}
             }
@@ -336,6 +406,22 @@ impl OpenXrBackend {
         {
             eprintln!("OpenXR: xrEndFrame: {e}");
         }
+    }
+
+    /// いま追跡できているトラッカー（ロール名, 姿勢）。つながっていないロールは位置が無効で落ちる。
+    fn trackers(&self, time: xr::Time) -> Vec<(String, Pose)> {
+        self.tracker_spaces
+            .iter()
+            .filter_map(|(role, space)| {
+                let l = space.locate(&self.stage, time).ok()?;
+                l.location_flags
+                    .contains(
+                        xr::SpaceLocationFlags::POSITION_VALID
+                            | xr::SpaceLocationFlags::ORIENTATION_VALID,
+                    )
+                    .then(|| (role.to_string(), from_posef(l.pose)))
+            })
+            .collect()
     }
 
     fn controllers(&self, time: xr::Time) -> Vec<RawController> {
@@ -560,23 +646,23 @@ impl VrBackend for OpenXrBackend {
         // 前回の poll から今までに送られた画像を載せて、前のフレームを閉じる。
         self.end_frame();
         if self.lost {
-            return Frame::default();
+            return self.idle();
         }
         self.handle_events();
         if !self.running {
-            return Frame::default();
+            return self.idle();
         }
         let state = match self.waiter.wait() {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("OpenXR: xrWaitFrame: {e}");
                 self.check_lost(e);
-                return Frame::default();
+                return self.idle();
             }
         };
         if let Err(e) = self.stream.begin() {
             eprintln!("OpenXR: xrBeginFrame: {e}");
-            return Frame::default();
+            return self.idle();
         }
         let time = state.predicted_display_time;
         self.in_frame = Some(time);
@@ -599,8 +685,8 @@ impl VrBackend for OpenXrBackend {
         Frame {
             hmd,
             controllers: self.controllers(time),
-            // ponytail: トラッカーは未対応。要るなら XR_HTCX_vive_tracker_interaction でロールごとに取る。
-            trackers: Vec::new(),
+            trackers: self.trackers(time),
+            quit: self.quit,
         }
     }
 

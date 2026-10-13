@@ -135,9 +135,7 @@ pub fn openxr_runtime_manifest() -> Option<PathBuf> {
         return Some(p);
     }
     let candidates: Vec<PathBuf> = match CURRENT {
-        // ponytail: Windows のレジストリ (HKLM\SOFTWARE\Khronos\OpenXR\1\ActiveRuntime) は未対応。
-        // Windows で OpenXR 検出が必要になったらここでレジストリを読む。
-        Os::Windows => vec![],
+        Os::Windows => active_runtime_from_registry().into_iter().collect(),
         Os::Linux => {
             let mut v: Vec<PathBuf> = user_config_root().into_iter().collect();
             v.push("/etc/xdg".into());
@@ -149,9 +147,46 @@ pub fn openxr_runtime_manifest() -> Option<PathBuf> {
     candidates.into_iter().find(|p| p.exists())
 }
 
+/// `reg query` の出力から `ActiveRuntime` の値（マニフェストのパス）を取り出す。
+fn parse_reg_value(out: &str) -> Option<PathBuf> {
+    let line = out.lines().find(|l| l.contains("REG_SZ"))?;
+    let value = line.split_once("REG_SZ")?.1.trim();
+    (!value.is_empty()).then(|| PathBuf::from(value))
+}
+
+/// HKLM\SOFTWARE\Khronos\OpenXR\1 の ActiveRuntime。
+// ponytail: reg.exe を呼ぶ（依存を足さない）。毎回プロセスを起こすので、頻繁に呼ぶなら winreg にする。
+fn active_runtime_from_registry() -> Option<PathBuf> {
+    let out = std::process::Command::new("reg")
+        .args([
+            "query",
+            r"HKLM\SOFTWARE\Khronos\OpenXR\1",
+            "/v",
+            "ActiveRuntime",
+        ])
+        .output()
+        .ok()?;
+    parse_reg_value(&String::from_utf8_lossy(&out.stdout))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_reg_query_output() {
+        let out = r"
+HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\OpenXR\1
+    ActiveRuntime    REG_SZ    C:\Program Files\SteamVR\steamxr_win64.json
+";
+        assert_eq!(
+            parse_reg_value(out),
+            Some(PathBuf::from(
+                r"C:\Program Files\SteamVR\steamxr_win64.json"
+            ))
+        );
+        assert_eq!(parse_reg_value("ERROR: not found"), None);
+    }
 
     #[test]
     fn config_dir_is_namespaced() {
