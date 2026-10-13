@@ -67,6 +67,7 @@ ui::run（GPUI のイベントループ上で約 90Hz）/ testkit の VrKit::ste
   - `color_at` は「ユーザーに見えている色」: novr は画面、VR は VR パネルに送られたテクスチャ。テストプラットフォームには GPU が無いため、描画は `testkit::raster` の CPU ラスタライザ（単色矩形のみ）。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
 - **実ランタイムでの疎通確認**: `cargo run -p vr --example smoke`（OpenXR は `-- --openxr`。手動。SteamVR に接続し、オーバーレイに送った画像をランタイムから読み戻して確かめる）。HMD が無ければ SteamVR 同梱の null ドライバを使う: `{"steamvr": {"requireHmd": false, "forcedDriver": "null", "activateMultipleDrivers": true}, "driver_null": {"enable": true}}` を書いた `steamvr.vrsettings` だけを置いたフォルダを `VR_CONFIG_PATH` で指す（普段の設定には触らない）。SteamVR がすでに起動していると、そちらの設定で動くので先に終了しておく。
+- **OpenXR（Monado）での確認**: Windows 版 Monado は公式の配布物が無いが、Monado の GitLab CI の `windows` ジョブの成果物（`install/`）に`monado-service.exe` と `openxr_monado.json` が入っている（`https://gitlab.freedesktop.org/api/v4/projects/2685/jobs/<job id>/artifacts`）。`XRT_COMPOSITOR_COMPUTE=false` で `monado-service.exe` を起動し（Windows 版はコンピュート合成でクアッドを出すと落ちる）、`XR_RUNTIME_JSON` で `openxr_monado.json` を指して smoke を `-- --openxr` で流す。模擬 HMD（simulated）の画面にパネルが映る。読み戻しの手段は無い。
 
 ```rust
 // 基本操作: 全ランタイムで実行（click_button::novr / click_button::vr）
@@ -87,7 +88,7 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 
 ## 未実装（土台のみ）
 
-- 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は実ランタイムで未確認。
+- 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は Monado（Windows、simulated）でパネルが映るところまで確認済みで、コントローラ入力は未確認。
 - Linux での描画の読み戻し（gpui の `render_to_image` が Windows のみ実装。`gpui_wgpu` のヘッドレスレンダラ経由が候補）。
 - 描画は毎フレーム CPU に読み戻し、`vr` が Vulkan のイメージへ上げ直してランタイムへ渡す（`crates/vr/src/gpu.rs`。1024x768 で約 1.6ms）。GPUI のテクスチャを読み戻さずに直接共有する経路は未実装。
 - Windows での OpenXR ランタイム検出（レジストリ）。
