@@ -99,8 +99,6 @@ pub struct PanelControl {
     /// 計測するか。ビューが切り替え、フレームループが計測とプロファイラパネルの開閉を合わせる。
     /// パネルの閉じるボタンでも `false` になる。
     pub profiling: bool,
-    /// プロファイラパネルを開く起点のパネル（`profiling` を `true` にするビューが設定する）。
-    pub profiler_from: PanelId,
 }
 
 impl gpui::Global for PanelControl {}
@@ -211,11 +209,19 @@ pub fn open_panel_window<V: Render>(
 }
 
 const PANEL_PX: (u32, u32) = (800, 600);
+/// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
+const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
 /// Desktop（novr）の周期。主ディスプレイのリフレッシュ間隔が取れないときに使う。VR ランタイムは `poll` が vsync まで待つ。
 const FRAME: Duration = Duration::from_millis(11);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
 const IDLE_REDRAW: Duration = Duration::from_millis(250);
+
+/// 位置はそのまま、向きを水平方向（Y 軸回り）だけにした姿勢。前方は -Z。
+fn level(p: Pose) -> Pose {
+    let f = p.orientation * Vec3::NEG_Z;
+    Pose::new(p.position, Quat::from_rotation_y((-f.x).atan2(-f.z)))
+}
 
 type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
 
@@ -223,6 +229,8 @@ type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
 pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
+    /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
+    in_view: bool,
     size: Vec2,
     resolution: (u32, u32),
     /// 起動時に取り付ける先と相対姿勢。
@@ -242,6 +250,7 @@ impl PanelSpec {
         Self {
             pose,
             from: None,
+            in_view: false,
             size: Vec2::new(0.8, 0.6),
             resolution: PANEL_PX,
             attach: None,
@@ -259,6 +268,13 @@ impl PanelSpec {
             from: Some(from),
             ..Self::new(Pose::IDENTITY, build)
         }
+    }
+
+    /// 開いた瞬間の目の前に出す。`offset` は頭から見た相対姿勢（頭の傾きは無視し、パネルは立てて置く）。
+    /// トラッキング空間の原点は人の居場所と一致しないので、召喚するパネルはこれで出す。
+    pub fn in_view(mut self, offset: Pose) -> Self {
+        (self.pose, self.from, self.in_view) = (offset, None, true);
+        self
     }
 
     /// 大きさ（m）と解像度（px）を指定する。既定は 0.8m × 0.6m / 800 × 600。
@@ -294,6 +310,7 @@ impl PanelSpec {
                         Quat::IDENTITY,
                     )
             }
+            None if self.in_view => level(kernel.hmd()) * self.pose,
             None => self.pose,
         }
     }
@@ -363,10 +380,13 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
             // パネルごとの最後に描いた時刻（None = 次のフレームで必ず描く）。
             let mut drawn: Vec<Option<Instant>> = vec![None; windows.len()];
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
+            // 0 だとこのループがすぐ再スケジュールされ、後から積まれた GPUI のタスクが走らない。
+            // 途中で開いたパネルのリサイズ（SetWindowPos はタスクで行われる）が届かず、1x1 のまま表示されなかった。
+            // poll は次の vsync までの残りを眠るので、ここで 1ms 譲っても周期は変わらない。
             let wait = if surface == Surface::Desktop {
                 frame
             } else {
-                Duration::ZERO
+                Duration::from_millis(1)
             };
             loop {
                 let begin = Instant::now();
@@ -467,12 +487,10 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                     profiler_panel = None;
                     cx.update(|cx| cx.default_global::<PanelControl>().profiling = false);
                 }
-                let (profiling, from) = cx.update(|cx| {
-                    let c = cx.default_global::<PanelControl>();
-                    (c.profiling, c.profiler_from)
-                });
+                let profiling = cx.update(|cx| cx.default_global::<PanelControl>().profiling);
                 if profiling != cx.update(|cx| cx.has_global::<Profiler>()) {
                     cx.update(|cx| {
+                        logger::info!("プロファイラを切り替え", profiling = profiling);
                         if profiling {
                             // --profile 無しで始めたときは CSV に書かない。
                             let p = Profiler::new(None).expect("出力先が無ければ失敗しない");
@@ -488,13 +506,19 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                 }
                 match profiler_panel {
                     None if profiling => {
-                        let spec = PanelSpec::spawn(from, |panel, _, cx| ProfilerPanel {
+                        let spec = PanelSpec::new(Pose::IDENTITY, |panel, _, cx| ProfilerPanel {
                             panel,
                             view: cx.new(|_| ProfilerView),
                         })
-                        .sized(Vec2::new(1.1, 0.56), (1100, 560));
+                        .sized(Vec2::new(1.1, 0.56), (1100, 560))
+                        .in_view(PROFILER_POSE);
                         let i = windows.len();
                         let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, i, cx));
+                        logger::info!(
+                            "プロファイラパネルを開いた",
+                            panel = panel,
+                            pose = ?kernel.panel(panel).pose
+                        );
                         windows.push((panel, window));
                         last.push(None);
                         drawn.push(None);
@@ -743,6 +767,19 @@ mod tests {
             sync_panel(&mut kernel, panel, cx);
         });
         assert_eq!(kernel.panel(panel).attached, None);
+    }
+
+    /// 目の前に出すパネルは頭の向く水平方向に置き、うつむいていても立てて置く。
+    #[test]
+    fn in_view_places_level_in_front_of_head() {
+        // +X を向き、30° うつむいた頭。
+        let head = Pose::new(
+            Vec3::new(1.0, 1.6, 0.0),
+            Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.5),
+        );
+        let p = level(head) * Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
+        assert!(p.position.abs_diff_eq(Vec3::new(2.0, 1.6, 0.0), 1e-5));
+        assert!((p.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
     }
 
     #[test]

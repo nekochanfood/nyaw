@@ -16,8 +16,8 @@ pub const WATCH_OFFSET: Pose = Pose::new(
     Vec3::new(0.0, 0.04, 0.08),
     Quat::from_xyzw(-0.707_106_77, 0.0, 0.0, 0.707_106_77),
 );
-/// 召喚する Testing パネルの位置（正面 1m）。
-pub const TESTING_POSE: Pose = Pose::new(Vec3::new(0.0, 1.2, -1.0), Quat::IDENTITY);
+/// 召喚する Testing パネルの位置。召喚した瞬間の頭から見て正面 0.8m、少し下。
+pub const TESTING_POSE: Pose = Pose::new(Vec3::new(0.0, -0.1, -0.8), Quat::IDENTITY);
 
 const SIZE_M: Vec2 = Vec2::new(0.12, 0.06);
 const RES_PX: (u32, u32) = (480, 240);
@@ -111,10 +111,11 @@ impl Render for Wrist {
                                 None => {
                                     let wrist = cx.entity();
                                     cx.default_global::<PanelControl>().spawns.push(
-                                        PanelSpec::new(TESTING_POSE, move |id, _, cx| {
+                                        PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
                                             wrist.update(cx, |w, _| w.testing = Some(id));
                                             Testing::new(id)
-                                        }),
+                                        })
+                                        .in_view(TESTING_POSE),
                                     );
                                 }
                             }

@@ -110,6 +110,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.tick(&mut self.vr)
     }
 
+    /// 最後の tick の HMD の姿勢。
+    pub fn hmd(&self) -> Pose {
+        self.overlay.hmd()
+    }
+
     /// ランタイムが終了を求めている（SteamVR の終了など）。呼び出し側はループを抜ける。
     pub fn quit_requested(&self) -> bool {
         self.overlay.quit_requested()

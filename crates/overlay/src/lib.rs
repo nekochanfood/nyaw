@@ -121,6 +121,8 @@ pub struct Overlay {
     /// 最後の tick で見えていたトラッカーの ID（取り付け先の候補）。
     trackers: Vec<String>,
     quit: bool,
+    /// 最後の tick の HMD の姿勢。
+    hmd: Pose,
 }
 
 impl Overlay {
@@ -160,6 +162,11 @@ impl Overlay {
     /// 最後の tick でランタイムが終了を求めていたか。
     pub fn quit_requested(&self) -> bool {
         self.quit
+    }
+
+    /// 最後の tick の HMD の姿勢（新しいパネルを目の前に出すため）。
+    pub fn hmd(&self) -> Pose {
+        self.hmd
     }
 
     /// 最後の tick で見えていたトラッカーの ID。
@@ -240,6 +247,7 @@ impl Overlay {
     pub fn tick(&mut self, vr: &mut dyn VrBackend) -> Vec<UiEvent> {
         let frame = vr.poll();
         self.quit = frame.quit;
+        self.hmd = frame.hmd;
         self.trackers = frame.trackers.iter().map(|(id, _)| id.clone()).collect();
         // 掴み中のパネルは手に従う（離したフレームで update_hand がオフセットを付け直す）。
         // 取り付け先が見失われたフレームは最後の姿勢のまま。
