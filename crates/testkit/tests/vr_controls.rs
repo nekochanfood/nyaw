@@ -2,8 +2,9 @@
 //! 基本操作は home.rs で全ランタイム共通に検証する。
 
 use gpui::TestAppContext;
-use testkit::{Driver, Hand, Vec3, VrKit};
-use ui::Home;
+use home::Home;
+use home::{BUTTON_ACTIVE_BG, BUTTON_BG};
+use testkit::{Action, Driver, Hand, Vec2, Vec3, VrKit};
 
 #[gpui::test]
 fn every_controller_can_click(cx: &mut TestAppContext) {
@@ -40,4 +41,26 @@ fn dragged_panel_moves_in_vr_and_stays_clickable(cx: &mut TestAppContext) {
 
     kit.click("click-me");
     assert_eq!(kit.read(|h| h.clicks), 1);
+}
+
+/// メニューボタンを押している間、Home の表示が光る。
+#[gpui::test]
+fn menu_button_shows_on_home(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Home::default());
+    kit.hover("click-me").press(Action::Menu);
+    assert_eq!(kit.color_at("menu-held"), BUTTON_ACTIVE_BG);
+    kit.release(Action::Menu);
+    assert_eq!(kit.color_at("menu-held"), BUTTON_BG);
+}
+
+/// パネルを掴んでいる間、Home の表示が光る。
+#[gpui::test]
+fn grabbing_panel_shows_on_home(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Home::default());
+    let (w, h) = kit.overlay.panel(0).resolution;
+    kit.point_at(Vec2::new(w as f32, h as f32) / 2.0)
+        .press(Action::Grab);
+    assert_eq!(kit.color_at("grabbed"), BUTTON_ACTIVE_BG);
+    kit.release(Action::Grab);
+    assert_eq!(kit.color_at("grabbed"), BUTTON_BG);
 }

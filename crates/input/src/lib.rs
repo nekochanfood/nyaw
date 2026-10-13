@@ -92,6 +92,11 @@ pub fn source(profile_id: &str, action: Action) -> Option<&'static str> {
     .copied()
 }
 
+/// 逆引き: `profile` でスクロールを起こす入力名（x, y）。スクロールできない機種は `None`。
+pub fn scroll_source(profile_id: &str) -> Option<(&'static str, &'static str)> {
+    profile(profile_id).scroll
+}
+
 pub fn map(raw: &RawController) -> ControllerState {
     let p = profile(&raw.profile);
     ControllerState {
@@ -147,6 +152,10 @@ mod tests {
             assert!(map(&raw(id, &[(name, 1.0)])).select, "{id}");
         }
         assert_eq!(source("khr/simple_controller", Action::Grab), None);
+        let (x, y) = scroll_source("valve/index_controller").unwrap();
+        let s = map(&raw("valve/index_controller", &[(x, 0.5), (y, -1.0)])).scroll;
+        assert_eq!(s, Vec2::new(0.5, -1.0));
+        assert_eq!(scroll_source("khr/simple_controller"), None);
     }
 
     #[test]

@@ -2093,6 +2093,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "home"
+version = "2026.0.1"
+dependencies = [
+ "gpui",
+ "ui",
+ "vr",
+]
+
+[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2933,6 +2942,7 @@ dependencies = [
 name = "nyaw"
 version = "2026.0.1"
 dependencies = [
+ "home",
  "logger",
  "os",
  "ui",
@@ -4655,6 +4665,7 @@ name = "testkit"
 version = "2026.0.1"
 dependencies = [
  "gpui",
+ "home",
  "input",
  "overlay",
  "ui",

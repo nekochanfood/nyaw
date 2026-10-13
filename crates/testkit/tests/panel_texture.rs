@@ -1,8 +1,8 @@
 //! VR 固有: オーバーレイ ⇄ UI の往復。レーザー入力が UI に届き、その描画結果が VR パネルに映ること。
 
 use gpui::TestAppContext;
+use home::{BUTTON_BG, BUTTON_HOVER_BG, Home, PANEL_BG};
 use testkit::{Driver, Vec2, Vec3, VrKit};
-use ui::{BUTTON_BG, BUTTON_HOVER_BG, Home, PANEL_BG};
 
 #[gpui::test]
 fn vr_panel_shows_rendered_ui(cx: &mut TestAppContext) {

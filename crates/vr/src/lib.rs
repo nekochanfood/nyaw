@@ -33,7 +33,7 @@ impl Pose {
         orientation: Quat::IDENTITY,
     };
 
-    pub fn new(position: Vec3, orientation: Quat) -> Self {
+    pub const fn new(position: Vec3, orientation: Quat) -> Self {
         Self {
             position,
             orientation,

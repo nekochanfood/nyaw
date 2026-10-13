@@ -5,18 +5,25 @@
 fn main() {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
-    use gpui::AppContext;
-    use ui::{Home, PANEL_BG, capture, open_panel_window};
+    use gpui::{AppContext, Context, IntoElement, Render, Styled, Window, div, rgb};
+    use ui::{capture, open_panel_window};
     use vr::Surface;
+
+    const PANEL_BG: u32 = 0x204060;
+    /// 背景を塗るだけの画面（画面は UI 層の上にあるので、UI 層のテストでは自前で用意する）。
+    struct Solid;
+    impl Render for Solid {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().bg(rgb(PANEL_BG))
+        }
+    }
 
     const RES: (u32, u32) = (200, 100);
     let result = Rc::new(RefCell::new(None));
     let out = result.clone();
     gpui_platform::application().run(move |cx| {
-        let window = open_panel_window(cx, Surface::Overlay, RES, |_, cx| {
-            cx.new(|_| Home::default())
-        })
-        .expect("パネルウィンドウを開けない");
+        let window = open_panel_window(cx, Surface::Overlay, RES, |_, cx| cx.new(|_| Solid))
+            .expect("パネルウィンドウを開けない");
         cx.spawn(async move |cx| {
             // リサイズの反映は非同期なので、実寸で読み戻せるまで待つ（最大 5 秒）
             for _ in 0..100 {
