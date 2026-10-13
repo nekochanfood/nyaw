@@ -237,7 +237,7 @@ pub fn run(mut vr: Box<dyn VrBackend>) {
                 match frame {
                     Some(Ok(f)) => overlay.submit(vr.as_mut(), panel, f.width, f.height, &f.rgba),
                     Some(Err(e)) if !warned => {
-                        eprintln!("nyaw: パネルの描画を取得できない: {e}");
+                        logger::error!("パネルの描画を取得できない", error = e);
                         warned = true;
                     }
                     _ => {}

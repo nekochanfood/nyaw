@@ -6,15 +6,31 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 
 | 層 | クレート | 責務 | 主な公開 API |
 |---|---|---|---|
-| 0 OS | `crates/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出）。`#[cfg]` はここだけに書く | `config_dir`, `openvr_paths_file`, `openxr_runtime_manifest` |
+| - | `crates/logger` | logfmt 形式の構造化ロガー（横断）。整形・レベル・出力先 `Sink` の抽象と、`log` クレート（gpui 等）からの橋渡し | `trace!/debug!/info!/warn!/error!`, `Logger`, `Sink`, `StderrSink`, `init`, `format` |
+| 0 OS | `crates/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出、ファイル入出力）。`#[cfg]` はここだけに書く | `config_dir`, `log_dir`, `log_level`, `FileSink`, `openvr_paths_file`, `openxr_runtime_manifest` |
 | 1 ランタイム | `crates/vr` | OpenVR / OpenXR / novr の差を吸収。上位層は `Box<dyn VrBackend>` しか持たない | `connect`, `VrBackend`, `Runtime`, `Surface`, `Pose`, `Frame`（`pose(&Device)`）, `Device`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
 | 2 入力 | `crates/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController) -> ControllerState`, `source(profile, Action)`（逆引き） |
 | 3 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | 4 UI | `crates/ui` | GPUI フロントエンド。ポインタイベントを GPUI のマウス入力に変換してビューへ流し、描画結果を読み戻してパネルへ返す | `run`, `pump`（入力1フレーム分。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `PointerBridge`, ビュー（`Home`） |
 | - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit`, `VrKit::{press, drag_panel, attach_panel, move_hand, hand, profile, point_at}` |
-| - | `src/main.rs` | ブートローダー。ランタイムを選んで `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
+| - | `src/main.rs` | ブートローダー。ロガーを組み立て、ランタイムを選んで `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
 
 依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input ← overlay ← ui ← main`）。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
+`logger` は例外で、どの層からも直接依存してよい唯一の横断クレート（`logger` 自身は他の自前クレートに依存しない）。
+
+## ログ
+
+- ログは**必ず** `logger` のマクロで出す。`println!` / `eprintln!` は使わない（テストハーネスの出力は除く）。
+  ```rust
+  logger::warn!("パネルの描画を取得できない", error = e, panel = ?panel); // key = Display, key = ?Debug
+  ```
+- 出力は 1 行 1 件の logfmt: `ts=2026-10-13T09:00:00.123Z level=warn target=ui msg=パネルの描画を取得できない error="device lost" panel=0`。
+  `ts level target msg` は固定、以降はフィールドを書いた順。キーは snake_case。`target` は `module_path!()`。
+- 出力先は `main` だけが組み立てる: 標準エラー出力（`logger::StderrSink`）と `os::log_dir()/nyaw.log`（`os::FileSink`。Windows `%LOCALAPPDATA%\nyaw\logs`、Linux `$XDG_STATE_HOME/nyaw/logs`）。
+  起動ごとに新しく作り、前回分は `nyaw-prev.log` に 1 世代だけ残す（既存の prev は消してから退避）。
+  ファイル入出力は OS 層の責務なので、新しい出力先が要るときも `Sink` の実装は `os` に置く。
+- レベルは環境変数 `NYAW_LOG`（`trace`/`debug`/`info`/`warn`/`error`、既定 `info`）。`init` 前のログは stderr・info 以上に出る。
+- 外部クレートの `log` 出力（gpui 等）も同じロガーに流れる。パニックも `main` のフックで `error` として記録する。
 
 ## ランタイム（設計思想）
 
