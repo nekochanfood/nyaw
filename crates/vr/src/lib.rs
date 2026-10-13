@@ -11,9 +11,9 @@ pub mod mock;
 mod novr;
 mod openvr;
 
-/// 疎通確認用（`examples/smoke.rs`）。上位層からは使わない。
+/// testkit の実ランタイムテスト用。上位層からは使わない。
 #[doc(hidden)]
-pub use openvr::overlay_image as openvr_overlay_image;
+pub use openvr::{overlay_image as openvr_overlay_image, runtime_path as openvr_runtime_path};
 mod openxr;
 
 use std::fmt;
@@ -186,19 +186,12 @@ pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
     };
     let mut last = VrError::NoRuntime;
     for rt in order {
-        let attempt = match rt {
-            Runtime::OpenVr if openvr::available() => openvr::connect(),
-            Runtime::OpenXr if openxr::available() => openxr::connect(),
-            _ => {
-                logger::debug!("ランタイムが見つからない", runtime = ?rt);
-                continue;
-            }
-        };
-        match attempt {
+        match connect_exact(rt) {
             Ok(b) => {
                 logger::debug!("ランタイムに接続する", runtime = ?rt);
                 return Ok(b);
             }
+            Err(VrError::NoRuntime) => logger::debug!("ランタイムが見つからない", runtime = ?rt),
             Err(e) => {
                 logger::debug!("ランタイムに接続できない", runtime = ?rt, error = e);
                 last = e;
@@ -206,6 +199,17 @@ pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
         }
     }
     Err(last)
+}
+
+/// 指定したランタイムだけに接続する（フォールバックしない）。見つからなければ [`VrError::NoRuntime`]。
+/// testkit が起動したランタイムを、別のランタイムと取り違えずに掴むため。
+pub fn connect_exact(rt: Runtime) -> Result<Box<dyn VrBackend>, VrError> {
+    match rt {
+        Runtime::NoVr => Ok(Box::new(novr::NoVrBackend::default())),
+        Runtime::OpenVr if openvr::available() => openvr::connect(),
+        Runtime::OpenXr if openxr::available() => openxr::connect(),
+        _ => Err(VrError::NoRuntime),
+    }
 }
 
 #[cfg(test)]

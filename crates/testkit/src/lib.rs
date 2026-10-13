@@ -20,9 +20,12 @@
 //! ```
 //!
 //! 要素は GPUI の `.debug_selector(|| "名前".into())` で指定する。
+//!
+//! 実ランタイム（Monado / SteamVR）でのテストは [`runtimes`]（インストールのウィザードと起動・後片付け）を使う。
 
 pub mod novr;
 pub mod raster;
+pub mod runtimes;
 pub mod vr_kit;
 
 pub use input::Action;

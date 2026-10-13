@@ -11,3 +11,8 @@ vr = { workspace = true, features = ["test-support"] }
 input.workspace = true
 overlay.workspace = true
 ui.workspace = true
+
+# 実ランタイムでの E2E。起動するランタイムが環境変数を読むので、シングルスレッドの自前の main で流す
+[[test]]
+name = "runtimes"
+harness = false

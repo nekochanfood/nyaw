@@ -110,6 +110,8 @@ pub(crate) struct OpenXrBackend {
     running: bool,
     /// `begin` 済みで `end` していないフレームの表示時刻。
     in_frame: Option<xr::Time>,
+    /// ランタイムとの接続が失われた（落ちた等）。以後は何もしない。
+    lost: bool,
     gpu: Gpu,
     instance: xr::Instance,
 }
@@ -238,9 +240,23 @@ impl OpenXrBackend {
             session,
             running: false,
             in_frame: None,
+            lost: false,
             gpu,
             instance,
         })
+    }
+
+    /// セッションやインスタンスが失われたら、以後のフレームと送信を止める（エラーを出し続けないため）。
+    fn check_lost(&mut self, e: xr::sys::Result) {
+        if matches!(
+            e,
+            xr::sys::Result::ERROR_SESSION_LOST | xr::sys::Result::ERROR_INSTANCE_LOST
+        ) {
+            eprintln!("OpenXR: ランタイムとの接続が失われた");
+            self.lost = true;
+            self.running = false;
+            self.in_frame = None;
+        }
     }
 
     fn handle_events(&mut self) {
@@ -543,6 +559,9 @@ impl VrBackend for OpenXrBackend {
     fn poll(&mut self) -> Frame {
         // 前回の poll から今までに送られた画像を載せて、前のフレームを閉じる。
         self.end_frame();
+        if self.lost {
+            return Frame::default();
+        }
         self.handle_events();
         if !self.running {
             return Frame::default();
@@ -551,6 +570,7 @@ impl VrBackend for OpenXrBackend {
             Ok(s) => s,
             Err(e) => {
                 eprintln!("OpenXR: xrWaitFrame: {e}");
+                self.check_lost(e);
                 return Frame::default();
             }
         };
@@ -610,6 +630,9 @@ impl VrBackend for OpenXrBackend {
             (width * height * 4) as usize,
             "RGBA バッファのサイズが不正"
         );
+        if self.lost {
+            return;
+        }
         if let Err(e) = self.submit(id.0, width, height, rgba) {
             eprintln!("{e}");
         }
