@@ -1,7 +1,7 @@
 //! 実ランタイムでの E2E: ランタイムを起動 → 繋ぐ → オーバーレイへ毎フレーム違う絵を送る →
-//! Home 画面を操作し、その描画を実ランタイムのオーバーレイへ送る →
+//! Testing 画面を操作し、その描画を実ランタイムのオーバーレイへ送る →
 //! （OpenVR のみ）ランタイムから読み戻して届いたか確かめる → 後片付けでプロセスが消えたか確かめる。
-//! 実ランタイムにはコントローラが無い（null ドライバ / simulated）ので、Home はマウスで操作する。
+//! 実ランタイムにはコントローラが無い（null ドライバ / simulated）ので、Testing はマウスで操作する。
 //!
 //! 起動に数秒かかり画面にも出るので、`#[ignore]` と同じく `--ignored` を付けたときだけ流す。
 //! 入っていないランタイムはスキップする（`cargo runtimes` で入れる）。
@@ -15,7 +15,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use home::{BUTTON_ACTIVE_BG, Home};
+use testing::{BUTTON_ACTIVE_BG, Testing};
 use testkit::runtimes::{self, Kind, LaunchError};
 use testkit::{Driver, NoVrKit};
 use vr::{Device, OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
@@ -115,18 +115,18 @@ fn overlay_reaches_runtime(vr: &mut dyn VrBackend) {
     }
 }
 
-/// Home 画面を実ランタイム上で操作する: ボタンでパネルを HMD に取り付けてロックし、
+/// Testing 画面を実ランタイム上で操作する: ボタンでパネルを HMD に取り付けてロックし、
 /// その結果（光ったボタン）がランタイムのオーバーレイに届いていること（OpenVR のみ読み戻せる）。
 fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
     let runtime = vr.runtime();
     let mut cx = gpui::TestAppContext::single();
-    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| Home::default());
+    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| Testing::default());
     kit.click("attach-hmd").click("lock").hover("click-me");
     let p = kit.kernel.panel(kit.panel);
     assert_eq!(
         (p.attached.as_ref().map(|a| &a.0), p.locked),
         (Some(&Device::Hmd), true),
-        "Home のボタンがパネルに効いていない"
+        "Testing のボタンがパネルに効いていない"
     );
     // 実ランタイムのフレームを回しながら、HMD に付いたパネルへ描画を送り続ける。
     for _ in 0..30 {

@@ -18,7 +18,9 @@ vr = { path = "crates/vr" }
 input = { path = "crates/input" }
 overlay = { path = "crates/overlay" }
 ui = { path = "crates/ui" }
-home = { path = "crates/home" }
+testing = { path = "crates/testing" }
+wrist = { path = "crates/wrist" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [package]
 name = "nyaw"
@@ -30,7 +32,8 @@ logger.workspace = true
 os.workspace = true
 kernel.workspace = true
 ui.workspace = true
-home.workspace = true
+testing.workspace = true
+wrist.workspace = true
 
 # testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する
 [profile.dev.package.testkit]

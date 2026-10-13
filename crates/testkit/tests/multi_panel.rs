@@ -1,14 +1,14 @@
 use gpui::{MouseButton, PlatformInput, TestAppContext};
-use home::{BUTTON_ACTIVE_BG, BUTTON_BG, Home};
 use kernel::{Device, Kernel};
 use std::collections::HashMap;
+use testing::{BUTTON_ACTIVE_BG, BUTTON_BG, Testing};
 use testkit::{Driver, Hand, NoVrKit, Pose, Quat, Vec2, Vec3, VrKit};
 use ui::PointerBridge;
 use vr::{RawController, mock::MockBackend};
 
 #[gpui::test]
 fn panels_have_separate_views_controls_and_textures(cx: &mut TestAppContext) {
-    let mut kit = VrKit::new(cx, |_, _| Home::new(0));
+    let mut kit = VrKit::new(cx, |_, _| Testing::new(0));
     kit.click("spawn-panel");
     let second = 1;
     assert_eq!(kit.kernel.vr.overlays.len(), 2);
@@ -36,7 +36,7 @@ fn panels_have_separate_views_controls_and_textures(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn desktop_panels_can_spawn_attach_and_lock_independently(cx: &mut TestAppContext) {
-    let mut kit = NoVrKit::new(cx, |_, _| Home::new(0));
+    let mut kit = NoVrKit::new(cx, |_, _| Testing::new(0));
     kit.click("spawn-panel");
     kit.select_panel(1)
         .click("click-me")

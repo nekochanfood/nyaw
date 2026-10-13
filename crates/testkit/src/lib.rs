@@ -12,11 +12,11 @@
 //! [`NoVrKit`] だけで検証する。
 //!
 //! ```ignore
-//! fn click_counts<D: Driver<Home>>(kit: &mut D) {
+//! fn click_counts<D: Driver<Testing>>(kit: &mut D) {
 //!     kit.click("click-me");
 //!     assert_eq!(kit.read(|h| h.clicks), 1);
 //! }
-//! on_every_runtime!(click_counts, |_, _| Home::default());
+//! on_every_runtime!(click_counts, |_, _| Testing::default());
 //! ```
 //!
 //! 要素は GPUI の `.debug_selector(|| "名前".into())` で指定する。

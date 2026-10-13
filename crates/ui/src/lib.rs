@@ -12,7 +12,8 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Kernel, PanelCommand, PanelId, PanelStatus, PointerEvent, Pose, Surface, Vec2, VrBackend,
+    Device, Kernel, PanelCommand, PanelId, PanelStatus, PointerEvent, Pose, Surface, Vec2,
+    VrBackend,
 };
 
 /// 1つの手のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
@@ -202,6 +203,12 @@ type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
 pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
+    size: Vec2,
+    resolution: (u32, u32),
+    /// 起動時に取り付ける先と相対姿勢。
+    attach: Option<(Device, Pose)>,
+    /// 起動時から掴めない。
+    locked: bool,
     build: Box<PanelBuilder>,
 }
 
@@ -213,6 +220,10 @@ impl PanelSpec {
         Self {
             pose,
             from: None,
+            size: Vec2::new(0.8, 0.6),
+            resolution: PANEL_PX,
+            attach: None,
+            locked: false,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -225,6 +236,24 @@ impl PanelSpec {
             from: Some(from),
             ..Self::new(Pose::IDENTITY, build)
         }
+    }
+
+    /// 大きさ（m）と解像度（px）を指定する。既定は 0.8m × 0.6m / 800 × 600。
+    pub fn sized(mut self, size: Vec2, resolution: (u32, u32)) -> Self {
+        (self.size, self.resolution) = (size, resolution);
+        self
+    }
+
+    /// 起動時にデバイスへ取り付ける。
+    pub fn attached(mut self, device: Device, offset: Pose) -> Self {
+        self.attach = Some((device, offset));
+        self
+    }
+
+    /// 起動時から掴めなくする。
+    pub fn locked(mut self) -> Self {
+        self.locked = true;
+        self
     }
 
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, next: PanelId) -> Pose {
@@ -356,7 +385,7 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
 
 fn open_panel(
     kernel: &mut Kernel,
-    spec: PanelSpec,
+    mut spec: PanelSpec,
     index: usize,
     cx: &mut App,
 ) -> (PanelId, AnyWindowHandle) {
@@ -365,11 +394,17 @@ fn open_panel(
         .add_panel(
             &format!("nyaw.panel.{index}"),
             pose,
-            Vec2::new(0.8, 0.6),
-            PANEL_PX,
+            spec.size,
+            spec.resolution,
         )
         .expect("create overlay");
-    let window = open_panel_window(cx, kernel.surface(), PANEL_PX, |w, cx| {
+    if let Some((device, offset)) = spec.attach.take() {
+        kernel.apply(panel, PanelCommand::Attach(device, offset));
+    }
+    if spec.locked {
+        kernel.apply(panel, PanelCommand::Lock(true));
+    }
+    let window = open_panel_window(cx, kernel.surface(), spec.resolution, |w, cx| {
         let view = spec.build(panel, w, cx);
         cx.new(|_| PanelRoot::new(view))
     })
@@ -403,7 +438,7 @@ mod tests {
 
     #[gpui::test]
     fn laser_click_reaches_gpui_view(cx: &mut TestAppContext) {
-        let (home, cx) = cx.add_window_view(|_, _| Probe::default());
+        let (testing, cx) = cx.add_window_view(|_, _| Probe::default());
         cx.run_until_parked();
         let c = cx.debug_bounds("probe").expect("button rendered").center();
         let pos = Vec2::new(c.x.into(), c.y.into());
@@ -421,7 +456,7 @@ mod tests {
             });
         }
         cx.run_until_parked();
-        assert_eq!(home.read_with(cx, |h, _| h.clicks), 1);
+        assert_eq!(testing.read_with(cx, |h, _| h.clicks), 1);
     }
 
     #[gpui::test]
@@ -444,6 +479,21 @@ mod tests {
             .update(|cx| cx.update_window(window.into(), |_, w, _| w.viewport_size()))
             .unwrap();
         assert_eq!(vp, size(px(PANEL_PX.0 as f32), px(PANEL_PX.1 as f32)));
+    }
+
+    #[gpui::test]
+    fn spec_attaches_locks_and_sizes_panel(cx: &mut TestAppContext) {
+        let mut kernel = Kernel::boot(Some("novr"), Default::default()).unwrap();
+        let hand = Device::Controller(Hand::Left);
+        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default())
+            .sized(Vec2::new(0.1, 0.05), (10, 5))
+            .attached(hand.clone(), Pose::IDENTITY)
+            .locked();
+        let (panel, _) = cx.update(|cx| open_panel(&mut kernel, spec, 0, cx));
+        let p = kernel.panel(panel);
+        assert_eq!(p.attached, Some((hand, Pose::IDENTITY)));
+        assert!(p.locked);
+        assert_eq!((p.size, p.resolution), (Vec2::new(0.1, 0.05), (10, 5)));
     }
 
     #[gpui::test]

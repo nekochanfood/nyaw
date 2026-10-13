@@ -14,11 +14,12 @@ yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知ら
 | 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, set_locked, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | 4.5 カーネル | `crates/kernel` | 一点集中型の中枢。ブートローダー → カーネル → 各層。下位（`vr` / `overlay`）の状態を 1 か所で持ち、ランタイムの選択（`Kernel::boot`）・フレームの進行（`tick`）・パネル操作（`apply` / `status`）・描画の受け渡し（`submit`）を提供する。UI・画面はカーネルだけを見る。カーネル内の設定 `kernel::config` が持つ設定ファイル: `os::config_dir()/config.toml`（ログと同じ `nyaw` ディレクトリ: Windows `%LOCALAPPDATA% | `Kernel::{boot, with_backend, tick, submit, apply, status, add_panel}`, `PanelCommand`, `PanelStatus`, `config::{load, parse, path, Config}`, `vr` / `overlay` の型の再エクスポート |
 | 5 UI | `crates/ui` | GPUI フロントエンド（1つ）。ポインタイベントを GPUI のマウス入力に変換して画面へ流し、描画結果を読み戻してパネルへ返す。どの画面かは知らない | `run(kernel, panels)`, `PanelSpec`, `pump`（入力1フレーム分。本番と testkit 共通）, `sync_panel`（画面からのパネル操作を反映。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `PointerBridge`, `PanelControl` / `PanelCommand` / `PanelStatus` |
-| 6 画面 | `crates/home` ほか（n 個） | UI 層の上に載る画面。GPUI のビューで、ランタイムを意識しない | `Home`（テスト用の画面） |
+| 6 画面 | `crates/testing` ほか（n 個） | UI 層の上に載る画面。GPUI のビューで、ランタイムを意識しない | `Testing`（テスト用の画面） |
+| 6 画面 | `crates/wrist` | 常駐パネル。左手首に腕時計のように取り付き（掴めない）、時刻と日付、Toggle Panel ボタンで Testing を召喚 / 閉じる。起動時のパネルはこれだけ | `wrist::spec()`, `Wrist`, `WATCH_OFFSET` |
 | - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, down, up, drag, scroll, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit::{with_backend, select_panel, type_keys}`, `VrKit::{panel, add_panel, press, drag_panel, move_hand, hand, profile, point_at}`, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け） |
-| - | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして（ランタイムの選択はカーネルの仕事）載せる画面（Home）とともに `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
+| - | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして（ランタイムの選択はカーネルの仕事）載せる画面（wrist）とともに `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
 
-依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input ← overlay ← kernel（config を内に持つ） ← ui ← 画面（home 等） ← main`）。UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
+依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input ← overlay ← kernel（config を内に持つ） ← ui ← 画面（testing 等） ← main`）。UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
 `logger` は例外で、どの層からも直接依存してよい唯一の横断クレート（`logger` 自身は他の自前クレートに依存しない）。
 
 ## ログ
@@ -76,14 +77,14 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 見えているトラッカー・メニューボタン・掴み中）を書き戻す。画面の型に依存しないので、本番・どのキットでも同じ経路。
 新しい画面 = `crates/<名前>` を足して `ui` に依存し、`main` で選ぶ。
 
-### Home（`crates/home`。テスト用の画面）
+### Testing（`crates/testing`。テスト用の画面）
 
-一連の機能を1画面で試せる画面。新しい機能を足したら Home にも操作を足し、E2E はその操作で書く。有効な状態は `BUTTON_ACTIVE_BG` で光る。
+一連の機能を1画面で試せる画面。新しい機能を足したら Testing にも操作を足し、E2E はその操作で書く。有効な状態は `BUTTON_ACTIVE_BG` で光る。
 
 | 区分 | 要素（`debug_selector`） | 試せること |
 |---|---|---|
 | VR | `click-me` | クリック・ホバー（全機種・左右の手） |
-| VR | `spawn-panel` | 隣に Home パネルを追加し、その画面を独立して操作する |
+| VR | `spawn-panel` | 隣に Testing パネルを追加し、その画面を独立して操作する |
 | VR | `attach-hmd` / `attach-left` / `attach-right` / `attach-tracker` / `detach` | 取り付け・取り外し（トラッカーは見えている最初のもの） |
 | VR | `lock` | 掴めないようにする |
 | VR | `menu-held` / `grabbed` | メニューボタン・パネルを掴んでいる間光る（表示のみ） |
@@ -110,29 +111,29 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 `cargo test --workspace`。ビルドには cmake と C++ コンパイラが要る（`vr` が OpenXR ローダーを静的リンクし、`openvr_bindings` もビルド時に OpenVR を cmake でビルドするため）。cmake が PATH に無ければ環境変数 `CMAKE` で指す（Windows は Visual Studio 同梱の `Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` でよい）。CI は `cargo fmt --check` と `cargo clippy --workspace --all-targets -D warnings`。
 
 - **単体テスト**: 各クレート内の `#[cfg(test)]`。その層の範囲だけで完結させる。実機の代わりは `vr` の `test-support` フィーチャーで出る `vr::mock::MockBackend`。単体テストから testkit は使わない（依存が循環する）。
-- **ユーザー操作のシナリオ（E2E 風）**: `crates/testkit/tests/` に置く。Home の画面を操作して検証する（取り付け・ロックも `kit.click("attach-hmd")` のようにボタンで）。testkit 自体は画面を知らず、`home` は dev-dependency。要素は GPUI の `.debug_selector(|| "名前".into())` で指定し、プロファイル名や座標計算はテストに書かない。
-  - **基本操作**（クリック・ホバー・見えている色など）: `Driver` に対して1回だけ書き、`on_every_runtime!` で全ランタイム（novr / VR）で実行する（例: `home.rs`）。
+- **ユーザー操作のシナリオ（E2E 風）**: `crates/testkit/tests/` に置く。Testing の画面を操作して検証する（取り付け・ロックも `kit.click("attach-hmd")` のようにボタンで）。testkit 自体は画面を知らず、`testing` は dev-dependency。要素は GPUI の `.debug_selector(|| "名前".into())` で指定し、プロファイル名や座標計算はテストに書かない。
+  - **基本操作**（クリック・ホバー・見えている色など）: `Driver` に対して1回だけ書き、`on_every_runtime!` で全ランタイム（novr / VR）で実行する（例: `testing.rs`）。
   - **UI のロジックだけ**の確認: ランタイムに関係しないので `NoVrKit` だけで書く。
   - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`, `attach.rs`）。
   - `color_at` は「ユーザーに見えている色」: novr は画面、VR は VR パネルに送られたテクスチャ。テストプラットフォームには GPU が無いため、描画は `testkit::raster` の CPU ラスタライザ。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
-- **実ランタイムでの E2E**: `crates/testkit/tests/runtimes.rs`（`harness = false`）。`testkit::runtimes` がランタイムを起動し（Playwright の `webServer` に当たる）、繋いでオーバーレイへ送り、Home をマウスで操作して（取り付け・ロック）その描画を `NoVrKit::with_backend` で実ランタイムへ送り、OpenVR はランタイムから読み戻して（光ったボタンまで）確かめ、Drop で自分が起動したプロセスを止めて消えたことまで確かめる。起動に数秒かかり画面にも出るので `cargo test -p testkit --test runtimes -- --ignored [monado|steamvr]` のときだけ流す。入っていないランタイムと、すでに動いているランタイム（別の設定で動いているかもしれず、止めると持ち主が困る）はスキップする。
+- **実ランタイムでの E2E**: `crates/testkit/tests/runtimes.rs`（`harness = false`）。`testkit::runtimes` がランタイムを起動し（Playwright の `webServer` に当たる）、繋いでオーバーレイへ送り、Testing をマウスで操作して（取り付け・ロック）その描画を `NoVrKit::with_backend` で実ランタイムへ送り、OpenVR はランタイムから読み戻して（光ったボタンまで）確かめ、Drop で自分が起動したプロセスを止めて消えたことまで確かめる。起動に数秒かかり画面にも出るので `cargo test -p testkit --test runtimes -- --ignored [monado|steamvr]` のときだけ流す。入っていないランタイムと、すでに動いているランタイム（別の設定で動いているかもしれず、止めると持ち主が困る）はスキップする。
   - **ランタイムを入れる**: `cargo runtimes`（`.cargo/config.toml` の別名。`npx playwright install` に当たるウィザード。`list` / `install [名前] [--dry-run]` / `uninstall [名前]`）。入れる先は `NYAW_RUNTIMES_PATH`、無ければ `%LOCALAPPDATA%\nyaw\runtimes`（Linux は `~/.cache/nyaw/runtimes`）。
   - **Monado**: Windows 版は公式の配布物が無いので、Monado の GitLab CI の `windows` ジョブの成果物（main の最新。`install/` に `monado-service.exe` と `openxr_monado.json`）を入れる。`XRT_COMPOSITOR_COMPUTE=false` で起動し（コンピュート合成でクアッドを出すと落ちる）、`XR_RUNTIME_JSON` でマニフェストを指す。模擬 HMD（simulated）の画面にパネルが映る。読み戻しの手段は無い。Linux はディストリのパッケージを使う。ログは `<入れる先>/logs/monado-service.log`。
   - **SteamVR**: Steam の管理下なので入れない（`steam://install/250820` を開くだけ）。HMD が無くても動くよう、null ドライバを有効にした `steamvr.vrsettings` だけを置いた一時フォルダを `VR_CONFIG_PATH` で指す（普段の設定には触らない）。最初に繋いだクライアントが SteamVR を起動する。null ドライバだと `steamvr_room_setup` が立ち上がって vrserver を起動し直すので、後片付けは静かになるまで止め続ける。
 
 ```rust
 // 基本操作: 全ランタイムで実行（click_button::novr / click_button::vr）
-fn click_button(kit: &mut impl Driver<Home>) {
+fn click_button(kit: &mut impl Driver<Testing>) {
     kit.click("click-me");
     assert_eq!(kit.read(|h| h.clicks), 1);
 }
-on_every_runtime!(click_button, |_, _| Home::default());
+on_every_runtime!(click_button, |_, _| Testing::default());
 
 // VR 固有
 #[gpui::test]
 fn left_touch_controller_clicks(cx: &mut TestAppContext) {
-    let mut kit = VrKit::new(cx, |_, _| Home::default());
+    let mut kit = VrKit::new(cx, |_, _| Testing::default());
     kit.hand(Hand::Left).profile("oculus/touch_controller").click("click-me");
     assert_eq!(kit.read(|h| h.clicks), 1);
 }

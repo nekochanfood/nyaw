@@ -1,12 +1,12 @@
 //! VR 固有: オーバーレイ ⇄ UI の往復。レーザー入力が UI に届き、その描画結果が VR パネルに映ること。
 
 use gpui::TestAppContext;
-use home::{BUTTON_BG, BUTTON_HOVER_BG, Home, PANEL_BG};
+use testing::{BUTTON_BG, BUTTON_HOVER_BG, PANEL_BG, Testing};
 use testkit::{Driver, Vec2, Vec3, VrKit};
 
 #[gpui::test]
 fn vr_panel_shows_rendered_ui(cx: &mut TestAppContext) {
-    let mut kit = VrKit::new(cx, |_, _| Home::default());
+    let mut kit = VrKit::new(cx, |_, _| Testing::default());
     assert_eq!(kit.color_at("click-me"), BUTTON_BG);
     assert_eq!(kit.vr_color_at_px(Vec2::new(2.0, 2.0)), PANEL_BG);
 
@@ -20,7 +20,7 @@ fn vr_panel_shows_rendered_ui(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn laser_hover_highlight_reaches_vr(cx: &mut TestAppContext) {
-    let mut kit = VrKit::new(cx, |_, _| Home::default());
+    let mut kit = VrKit::new(cx, |_, _| Testing::default());
     kit.hover("click-me");
     assert_eq!(kit.color_at("click-me"), BUTTON_HOVER_BG);
 
@@ -30,7 +30,7 @@ fn laser_hover_highlight_reaches_vr(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn moved_panel_keeps_receiving_frames(cx: &mut TestAppContext) {
-    let mut kit = VrKit::new(cx, |_, _| Home::default());
+    let mut kit = VrKit::new(cx, |_, _| Testing::default());
     kit.drag_panel(Vec3::new(-0.4, 0.1, -1.5)).hover("click-me");
     assert_eq!(kit.color_at("click-me"), BUTTON_HOVER_BG);
 }

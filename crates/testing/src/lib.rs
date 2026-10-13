@@ -1,4 +1,4 @@
-//! Layer 5 画面: ホームパネル。UI 層（`ui`）の上に載る画面の1つで、一連の機能を1画面で試せるテスト用の画面。
+//! Layer 5 画面: Testing パネル。UI 層（`ui`）の上に載る画面の1つで、一連の機能を1画面で試せるテスト用の画面。
 //! E2E テストもこの画面を操作して検証する。
 //!
 //! - VR: クリック数・HMD / 手 / トラッカーへの取り付け・取り外し・ロック・メニューボタンと掴みの表示
@@ -37,7 +37,7 @@ const ROW_PX: f32 = 24.0;
 const SCROLL_LINE_PX: f32 = 20.0;
 
 #[derive(Default)]
-pub struct Home {
+pub struct Testing {
     panel: PanelId,
     pub clicks: usize,
     /// 受け取ったスクロール量の合計（行。下向きが負）。
@@ -55,7 +55,7 @@ pub struct Home {
     focus: Option<FocusHandle>,
 }
 
-impl Home {
+impl Testing {
     pub fn new(panel: PanelId) -> Self {
         Self {
             panel,
@@ -107,7 +107,7 @@ fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'stati
     move |_, _, cx| {
         cx.default_global::<PanelControl>()
             .spawns
-            .push(PanelSpec::spawn(panel, |id, _, _| Home::new(id)))
+            .push(PanelSpec::spawn(panel, |id, _, _| Testing::new(id)))
     }
 }
 
@@ -122,7 +122,7 @@ fn row() -> Div {
     div().flex().flex_wrap().gap_2().items_center()
 }
 
-impl Render for Home {
+impl Render for Testing {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let st = cx
             .try_global::<PanelControl>()
@@ -345,7 +345,7 @@ mod tests {
     /// ボタンは操作要求を積むだけで、反映はフレームループ（`ui::sync_panel`）の仕事。
     #[gpui::test]
     fn attach_button_queues_command(cx: &mut TestAppContext) {
-        let (_, cx) = cx.add_window_view(|_, _| Home::default());
+        let (_, cx) = cx.add_window_view(|_, _| Testing::default());
         cx.run_until_parked();
         let c = cx.debug_bounds("attach-hmd").unwrap().center();
         cx.simulate_click(c, Modifiers::none());

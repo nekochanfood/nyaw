@@ -2093,15 +2093,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "home"
-version = "2026.0.1"
-dependencies = [
- "gpui",
- "kernel",
- "ui",
-]
-
-[[package]]
 name = "http"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2954,11 +2945,12 @@ dependencies = [
 name = "nyaw"
 version = "2026.0.1"
 dependencies = [
- "home",
  "kernel",
  "logger",
  "os",
+ "testing",
  "ui",
+ "wrist",
 ]
 
 [[package]]
@@ -4673,13 +4665,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "testing"
+version = "2026.0.1"
+dependencies = [
+ "gpui",
+ "kernel",
+ "ui",
+]
+
+[[package]]
 name = "testkit"
 version = "2026.0.1"
 dependencies = [
  "gpui",
- "home",
  "input",
  "kernel",
+ "testing",
  "ui",
  "vr",
 ]
@@ -5910,6 +5911,17 @@ name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
+
+[[package]]
+name = "wrist"
+version = "2026.0.1"
+dependencies = [
+ "chrono",
+ "gpui",
+ "kernel",
+ "testing",
+ "ui",
+]
 
 [[package]]
 name = "writeable"

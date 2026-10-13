@@ -32,6 +32,8 @@ pub struct PanelStatus {
     pub menu: bool,
     /// パネルを掴んでいる。
     pub grabbed: bool,
+    /// 閉じられた。
+    pub closed: bool,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -135,6 +137,7 @@ impl<B: VrBackend> Kernel<B> {
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
             grabbed: self.overlay.grabbed(panel),
+            closed: p.closed,
         }
     }
 }

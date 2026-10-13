@@ -1,9 +1,7 @@
-//! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（Home）を UI 層に引き渡す。それ以外は何も置かない。
+//! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（wrist）を UI 層に引き渡す。それ以外は何も置かない。
 
 use std::process::ExitCode;
 
-use kernel::Pose;
-use kernel::vr::{Quat, Vec3};
 use kernel::{Kernel, config};
 use logger::{Level, Logger, StderrSink};
 
@@ -22,13 +20,7 @@ fn main() -> ExitCode {
     let Ok(kernel) = Kernel::boot(requested.as_deref(), config) else {
         return ExitCode::FAILURE;
     };
-    ui::run(
-        kernel,
-        vec![ui::PanelSpec::new(
-            Pose::new(Vec3::new(0.0, 1.2, -1.0), Quat::IDENTITY),
-            |id, _, _| home::Home::new(id),
-        )],
-    );
+    ui::run(kernel, vec![wrist::spec()]);
     ExitCode::SUCCESS
 }
 
