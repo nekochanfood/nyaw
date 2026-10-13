@@ -9,7 +9,7 @@ use gpui::{
     MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, Window,
     WindowBounds, WindowOptions, div, prelude::*, px, rgb, size,
 };
-use overlay::{Overlay, PointerEvent};
+use overlay::{Overlay, PanelId, PointerEvent};
 use vr::{Pose, Quat, Vec2, Vec3, VrBackend};
 
 /// 1パネル分のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
@@ -103,6 +103,23 @@ impl Render for Home {
     }
 }
 
+/// 1フレーム分: 下位パイプラインを回し、`panel` 宛てのイベントを GPUI 入力に変換して返す。
+/// 本番の [`run`] とテスト用の testkit が共通で通る経路。
+pub fn pump(
+    overlay: &mut Overlay,
+    vr: &mut dyn VrBackend,
+    panel: PanelId,
+    bridge: &mut PointerBridge,
+) -> Vec<PlatformInput> {
+    // ponytail: パネル1枚・ブリッジ1つ。両手で同じパネルを触るとマウス状態が混ざる。複数ポインタが要るならブリッジを手ごとにする。
+    overlay
+        .tick(vr)
+        .into_iter()
+        .filter(|e| e.panel == panel)
+        .map(|e| bridge.translate(e.event))
+        .collect()
+}
+
 const PANEL_PX: (u32, u32) = (600, 400);
 // ponytail: 約 90Hz の固定タイマー。後でランタイムの vsync (WaitGetPoses / xrWaitFrame) 駆動にする。
 const FRAME: Duration = Duration::from_millis(11);
@@ -140,12 +157,7 @@ pub fn run(mut vr: Box<dyn VrBackend>) {
             let mut bridge = PointerBridge::default();
             loop {
                 cx.background_executor().timer(FRAME).await;
-                for ev in overlay
-                    .tick(vr.as_mut())
-                    .into_iter()
-                    .filter(|e| e.panel == panel)
-                {
-                    let input = bridge.translate(ev.event);
+                for input in pump(&mut overlay, vr.as_mut(), panel, &mut bridge) {
                     let alive = window.update(cx, |_, window, cx| {
                         window.dispatch_event(input, cx);
                     });
