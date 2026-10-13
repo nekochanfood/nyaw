@@ -1,0 +1,8 @@
+[package]
+name = "vr"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+glam.workspace = true
+os.workspace = true
