@@ -2529,6 +2529,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "logger"
+version = "2026.0.1"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "loop9"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2917,6 +2924,8 @@ dependencies = [
 name = "nyaw"
 version = "2026.0.1"
 dependencies = [
+ "logger",
+ "os",
  "ui",
  "vr",
 ]
@@ -3261,6 +3270,9 @@ dependencies = [
 [[package]]
 name = "os"
 version = "2026.0.1"
+dependencies = [
+ "logger",
+]
 
 [[package]]
 name = "overlay"
@@ -4891,6 +4903,7 @@ version = "2026.0.1"
 dependencies = [
  "gpui",
  "gpui_platform",
+ "logger",
  "overlay",
  "vr",
 ]
@@ -5041,6 +5054,7 @@ name = "vr"
 version = "2026.0.1"
 dependencies = [
  "glam",
+ "logger",
  "os",
 ]
 

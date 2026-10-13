@@ -7,9 +7,11 @@ edition = "2024"
 
 [workspace.dependencies]
 glam = "0.30"
+log = "0.4"
 # crates.io 版 (0.2.2) は Window::dispatch_event の戻り値型が非公開で外部から入力を注入できないため git 版に固定
 gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
+logger = { path = "crates/logger" }
 os = { path = "crates/os" }
 vr = { path = "crates/vr" }
 input = { path = "crates/input" }
@@ -22,6 +24,8 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+logger.workspace = true
+os.workspace = true
 vr.workspace = true
 ui.workspace = true
 
