@@ -124,7 +124,7 @@ impl Drop for Client {
 }
 
 /// SteamVR の場所。`VR_OVERRIDE` があればそれ、無ければ `openvrpaths.vrpath` の `runtime` の先頭。
-fn runtime_path() -> Option<PathBuf> {
+pub fn runtime_path() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("VR_OVERRIDE").filter(|v| !v.is_empty()) {
         return Some(p.into());
     }

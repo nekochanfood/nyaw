@@ -12,6 +12,7 @@ use openvr_bindings as sys;
 mod client;
 
 use client::Client;
+pub use client::runtime_path;
 
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
