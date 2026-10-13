@@ -10,9 +10,9 @@ use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
     ScrollWheelEvent, Stateful, Window, anchored, deferred, div, prelude::*, rgb,
 };
-use kernel::PanelCommand;
 use kernel::vr::{Device, Hand, Pose, Quat, Vec3};
-use ui::PanelControl;
+use kernel::{PanelCommand, PanelId};
+use ui::{PanelControl, PanelSpec};
 
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
@@ -38,6 +38,7 @@ const SCROLL_LINE_PX: f32 = 20.0;
 
 #[derive(Default)]
 pub struct Home {
+    panel: PanelId,
     pub clicks: usize,
     /// 受け取ったスクロール量の合計（行。下向きが負）。
     pub scrolled: f32,
@@ -52,6 +53,15 @@ pub struct Home {
     /// スクロールする一覧の状態（`offset().y` が負 = 下へスクロール済み）。
     pub list: ScrollHandle,
     focus: Option<FocusHandle>,
+}
+
+impl Home {
+    pub fn new(panel: PanelId) -> Self {
+        Self {
+            panel,
+            ..Self::default()
+        }
+    }
 }
 
 /// ドラッグ＆ドロップで運ぶ値。
@@ -79,8 +89,33 @@ fn button(id: &'static str, label: impl Into<String>, active: bool) -> Stateful<
 }
 
 /// ボタンを押したらパネルへの操作要求を積む。
-fn command(c: PanelCommand) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    move |_, _, cx| cx.default_global::<PanelControl>().commands.push(c.clone())
+fn command(
+    panel: PanelId,
+    c: PanelCommand,
+) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(panel)
+            .or_default()
+            .commands
+            .push(c.clone())
+    }
+}
+
+fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        cx.default_global::<PanelControl>()
+            .spawns
+            .push(PanelSpec::spawn(panel, |id, _, _| Home::new(id)))
+    }
+}
+
+fn attach_offset(panel: PanelId, base: Pose) -> Pose {
+    Pose::new(
+        base.position + Vec3::new(1.2 * panel as f32, 0.0, 0.0),
+        base.orientation,
+    )
 }
 
 fn row() -> Div {
@@ -91,6 +126,7 @@ impl Render for Home {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let st = cx
             .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&self.panel))
             .map(|c| c.status.clone())
             .unwrap_or_default();
         let on = |d: &Device| st.attached.as_ref() == Some(d);
@@ -98,6 +134,7 @@ impl Render for Home {
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
 
         let vr_row = row()
+            .child(button("spawn-panel", "Spawn panel", false).on_click(spawn(self.panel)))
             .child(
                 button("click-me", format!("Clicked {}", self.clicks), false).on_click(
                     cx.listener(|this, _, _, cx| {
@@ -107,8 +144,10 @@ impl Render for Home {
                 ),
             )
             .child(
-                button("attach-hmd", "HMD", on(&Device::Hmd))
-                    .on_click(command(PanelCommand::Attach(Device::Hmd, HMD_OFFSET))),
+                button("attach-hmd", "HMD", on(&Device::Hmd)).on_click(command(
+                    self.panel,
+                    PanelCommand::Attach(Device::Hmd, attach_offset(self.panel, HMD_OFFSET)),
+                )),
             )
             .child(
                 button(
@@ -116,10 +155,13 @@ impl Render for Home {
                     "Left hand",
                     on(&Device::Controller(Hand::Left)),
                 )
-                .on_click(command(PanelCommand::Attach(
-                    Device::Controller(Hand::Left),
-                    HAND_OFFSET,
-                ))),
+                .on_click(command(
+                    self.panel,
+                    PanelCommand::Attach(
+                        Device::Controller(Hand::Left),
+                        attach_offset(self.panel, HAND_OFFSET),
+                    ),
+                )),
             )
             .child(
                 button(
@@ -127,10 +169,13 @@ impl Render for Home {
                     "Right hand",
                     on(&Device::Controller(Hand::Right)),
                 )
-                .on_click(command(PanelCommand::Attach(
-                    Device::Controller(Hand::Right),
-                    HAND_OFFSET,
-                ))),
+                .on_click(command(
+                    self.panel,
+                    PanelCommand::Attach(
+                        Device::Controller(Hand::Right),
+                        attach_offset(self.panel, HAND_OFFSET),
+                    ),
+                )),
             )
             .child({
                 // 見えている最初のトラッカーに取り付ける。見えていなければ何もしない。
@@ -143,13 +188,20 @@ impl Render for Home {
                     tracker.as_ref().is_some_and(on),
                 );
                 match tracker {
-                    Some(d) => b.on_click(command(PanelCommand::Attach(d, HAND_OFFSET))),
+                    Some(d) => b.on_click(command(
+                        self.panel,
+                        PanelCommand::Attach(d, attach_offset(self.panel, HAND_OFFSET)),
+                    )),
                     None => b,
                 }
             })
-            .child(button("detach", "Detach", false).on_click(command(PanelCommand::Detach)))
             .child(
-                button("lock", "Lock", st.locked).on_click(command(PanelCommand::Lock(!st.locked))),
+                button("detach", "Detach", false)
+                    .on_click(command(self.panel, PanelCommand::Detach)),
+            )
+            .child(
+                button("lock", "Lock", st.locked)
+                    .on_click(command(self.panel, PanelCommand::Lock(!st.locked))),
             )
             .child(button("menu-held", "Menu", st.menu))
             .child(button("grabbed", "Grab", st.grabbed));
@@ -293,7 +345,7 @@ mod tests {
         cx.run_until_parked();
         let c = cx.debug_bounds("attach-hmd").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
-        let queued = cx.update(|_, cx| cx.global::<PanelControl>().commands.clone());
+        let queued = cx.update(|_, cx| cx.global::<PanelControl>().panels[&0].commands.clone());
         assert_eq!(queued, [PanelCommand::Attach(Device::Hmd, HMD_OFFSET)]);
     }
 }
