@@ -18,7 +18,7 @@ mod openxr;
 
 use std::fmt;
 
-pub use glam::{Quat, Vec2, Vec3};
+pub use glam::{Mat3, Quat, Vec2, Vec3};
 
 /// トラッキング空間での剛体変換（メートル）。前方は -Z（OpenVR / OpenXR 共通）。
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -172,8 +172,20 @@ pub trait VrBackend {
     fn poll(&mut self) -> Frame;
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError>;
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose);
+    /// `device` の姿勢 * `offset` に置き、追従はランタイムに任せる（アプリが poll した姿勢を送るより遅れない）。
+    /// 任せられなければ `false` を返し、呼び出し側は毎 tick [`set_overlay_pose`](Self::set_overlay_pose) で送る。
+    fn set_overlay_pose_relative(
+        &mut self,
+        _id: OverlayId,
+        _device: &Device,
+        _offset: Pose,
+    ) -> bool {
+        false
+    }
     /// 幅（m）。高さはテクスチャの縦横比で決まる。
     fn set_overlay_width(&mut self, id: OverlayId, width_m: f32);
+    /// 高さ（m）を幅・テクスチャの縦横比と関係なく固定する（伸び縮みするレーザーの太さを保つため）。
+    fn set_overlay_height(&mut self, id: OverlayId, height_m: f32);
     /// 作成直後は表示されている。
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool);
     /// 重なったときの描画順。大きいほど手前に描かれる（既定 0）。奥行きでは決まらない。
@@ -204,8 +216,14 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
         (**self).set_overlay_pose(id, pose)
     }
+    fn set_overlay_pose_relative(&mut self, id: OverlayId, device: &Device, offset: Pose) -> bool {
+        (**self).set_overlay_pose_relative(id, device, offset)
+    }
     fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
         (**self).set_overlay_width(id, width_m)
+    }
+    fn set_overlay_height(&mut self, id: OverlayId, height_m: f32) {
+        (**self).set_overlay_height(id, height_m)
     }
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
         (**self).set_overlay_visible(id, visible)

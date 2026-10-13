@@ -1,5 +1,5 @@
 //! Layer 6 画面: コントローラのビーム。手ごとに、手元から伸びるレーザーと、指しているパネルに貼り付く
-//! 小さな円（カーソル）の 2 枚。ここは見た目だけを描き、置き場所・長さ・表示はオーバーレイ層が毎 tick 決める。
+//! 小さな円（カーソル）と、ドラッグ中の要素の見た目（中身は GPUI が描く `ui::DragPreview`）の 3 枚。ここは見た目だけを描き、置き場所・長さ・表示はオーバーレイ層が毎 tick 決める。
 
 use gpui::{Context, Window, div, prelude::*, px, rgba};
 use kernel::overlay::LASER_MAX;
@@ -9,17 +9,18 @@ use ui::PanelSpec;
 const COLOR: u32 = 0xffffffd0;
 const OUTLINE: u32 = 0x000000a0;
 
-/// レーザーのテクスチャ。横方向がレーザーの向きで、オーバーレイ層が幅 = 長さに伸ばす（高さは縦横比で
-/// 長さの 1/16、線はその中央 1/16 なので太さは長さの 1/256: 1.5m で約 6mm）。
-// ponytail: 太さが長さに比例する。気になるなら VrBackend に高さも渡せるようにする。
+/// レーザーのテクスチャ。横方向がレーザーの向きで、オーバーレイ層が幅 = 長さに伸ばす。高さは長さによらず
+/// 作ったとき（長さ LASER_MAX の 1/16）のままで、線はその中央 1/32 なので太さは約 3mm。
 const LASER_PX: (u32, u32) = (1024, 64);
-const LINE_PX: f32 = 4.0;
-/// カーソルの直径（m）。
+const LINE_PX: f32 = 2.0;
+/// カーソルの直径（m）。頭から 1m 先にあるときの大きさで、離れるほど大きくして見た目の大きさを保つ。
 const CURSOR_M: f32 = 0.012;
 /// Windows の非表示ウィンドウには最小の大きさがあるので小さくしすぎない。
 const CURSOR_PX: (u32, u32) = (160, 160);
+/// ドラッグの見た目を描くウィンドウ。中心がカーソル。幅（m）はドラッグを始めたパネルの縮尺で UI 層が決める。
+const DRAG_PX: (u32, u32) = (400, 400);
 
-/// 両手のレーザーとカーソル。
+/// 両手のレーザーとカーソルとドラッグの見た目。
 pub fn specs() -> Vec<PanelSpec> {
     [Hand::Left, Hand::Right]
         .into_iter()
@@ -31,6 +32,9 @@ pub fn specs() -> Vec<PanelSpec> {
                 PanelSpec::new(Pose::IDENTITY, |_, _, _| Cursor)
                     .sized(Vec2::splat(CURSOR_M), CURSOR_PX)
                     .pointer(hand, Pointer::Cursor),
+                PanelSpec::new(Pose::IDENTITY, |_, _, _| DragLayer)
+                    .sized(Vec2::splat(0.4), DRAG_PX)
+                    .pointer(hand, Pointer::Drag),
             ]
         })
         .collect()
@@ -61,5 +65,14 @@ impl Render for Cursor {
                 .border_8()
                 .border_color(rgba(OUTLINE)),
         )
+    }
+}
+
+/// 空。ドラッグ中は GPUI がドラッグの見た目をマウス位置（= 中心）に重ねて描く。
+pub struct DragLayer;
+
+impl Render for DragLayer {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().size_full()
     }
 }

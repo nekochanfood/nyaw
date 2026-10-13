@@ -241,7 +241,7 @@ impl Render for Testing {
             .child(button("hold-me", "Hold", false).active(|s| s.bg(rgb(BUTTON_ACTIVE_BG))))
             .child(
                 button("drag-chip", "Drag me", false)
-                    .on_drag(Chip, |_, _, _, cx| cx.new(|_| ChipPreview)),
+                    .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
             )
             .child(
                 div()

@@ -75,10 +75,14 @@ impl Kernel {
 impl<B: VrBackend> Kernel<B> {
     /// 接続済みのバックエンドで起動する（テスト用。本番は [`Kernel::boot`]）。
     pub fn with_backend(vr: B, config: Config) -> Self {
+        let mut overlay = Overlay::new();
+        if let Some(s) = config.pointer_smoothing {
+            overlay.set_pointer_smoothing(s);
+        }
         Self {
             config,
             vr,
-            overlay: Overlay::new(),
+            overlay,
         }
     }
 
@@ -113,6 +117,11 @@ impl<B: VrBackend> Kernel<B> {
     /// 最後の tick の HMD の姿勢。
     pub fn hmd(&self) -> Pose {
         self.overlay.hmd()
+    }
+
+    /// `hand` でドラッグしている間、その見た目を幅 `width_m` で出す（`Overlay::set_drag`）。`None` で隠す。
+    pub fn set_drag(&mut self, hand: Hand, width_m: Option<f32>) {
+        self.overlay.set_drag(hand, width_m)
     }
 
     /// ランタイムが終了を求めている（SteamVR の終了など）。呼び出し側はループを抜ける。

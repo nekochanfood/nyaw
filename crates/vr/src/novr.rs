@@ -29,6 +29,7 @@ impl VrBackend for NoVrBackend {
     fn set_overlay_pose(&mut self, _id: OverlayId, _pose: Pose) {}
 
     fn set_overlay_width(&mut self, _id: OverlayId, _width_m: f32) {}
+    fn set_overlay_height(&mut self, _id: OverlayId, _height_m: f32) {}
 
     fn set_overlay_visible(&mut self, _id: OverlayId, _visible: bool) {}
 
