@@ -108,10 +108,18 @@ pub fn root() -> PathBuf {
 
 // --- インストール ---------------------------------------------------------------------------
 
-/// Monado の GitLab CI の `windows` ジョブの成果物（main の最新の成功分）。`install/` に一式が入っている。
-// ponytail: 常に main の最新を取る。版を固定したくなったら `jobs/<id>/artifacts` の id を持つ。
-const MONADO_WINDOWS_ARTIFACT: &str =
-    "https://gitlab.freedesktop.org/api/v4/projects/2685/jobs/artifacts/main/download?job=windows";
+/// Monado の GitLab CI の `windows` ジョブの成果物。`install/` に一式が入っている。
+/// 既定は main の最新の成功分。`NYAW_MONADO_JOB=<job id>` で `jobs/<id>/artifacts` に固定できる。
+fn monado_windows_artifact() -> String {
+    let base = "https://gitlab.freedesktop.org/api/v4/projects/2685/jobs";
+    match std::env::var("NYAW_MONADO_JOB")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
+        Some(id) => format!("{base}/{id}/artifacts"),
+        None => format!("{base}/artifacts/main/download?job=windows"),
+    }
+}
 pub const STEAMVR_INSTALL_URL: &str = "steam://install/250820";
 
 /// インストールする（済みなら入れ直す）。何をするかは `dry_run` で先に表示できる。
@@ -120,7 +128,8 @@ pub fn install(kind: Kind, dry_run: bool) -> Result<(), String> {
         Kind::Monado if cfg!(windows) => {
             let dir = root().join("monado");
             println!(
-                "monado: {MONADO_WINDOWS_ARTIFACT}\n     -> {}",
+                "monado: {}\n     -> {}",
+                monado_windows_artifact(),
                 dir.display()
             );
             if !dry_run {
@@ -175,7 +184,7 @@ fn install_monado_windows(dir: &Path) -> Result<(), String> {
     run(Command::new("curl")
         .args(["-fL", "--progress-bar", "-o"])
         .arg(&zip)
-        .arg(MONADO_WINDOWS_ARTIFACT))?;
+        .arg(monado_windows_artifact()))?;
     run(Command::new("tar")
         .arg("-xf")
         .arg(&zip)
