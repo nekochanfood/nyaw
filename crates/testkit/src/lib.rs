@@ -8,11 +8,19 @@
 //! ```
 //!
 //! 要素は GPUI の `.debug_selector(|| "名前".into())` で指定する。
+//!
+//! 毎フレーム UI の描画結果も VR モックに送られるので、「VR のパネルに何が映っているか」を
+//! [`Kit::vr_color_at`] で確かめられる（描画は [`raster`] の CPU ラスタライザ）。
+
+pub mod raster;
 
 use gpui::{Bounds, Context, Entity, Pixels, Render, TestAppContext, VisualTestContext, Window};
 use overlay::{Overlay, PanelId};
 use ui::PointerBridge;
-use vr::{RawController, mock::MockBackend};
+use vr::{
+    RawController,
+    mock::{MockBackend, MockTexture},
+};
 
 pub use input::Action;
 pub use vr::{Hand, Pose, Quat, Vec2, Vec3};
@@ -69,7 +77,7 @@ impl<'a, V: Render> Kit<'a, V> {
         let panel = overlay
             .add_panel(&mut vr, "testkit", pose, size, res)
             .expect("モックはパネル作成に失敗しない");
-        Self {
+        let mut kit = Self {
             cx,
             view,
             vr,
@@ -78,7 +86,9 @@ impl<'a, V: Render> Kit<'a, V> {
             bridge: PointerBridge::default(),
             controllers: Vec::new(),
             active: Hand::Right,
-        }
+        };
+        kit.step(); // 最初のフレームを VR に送っておく
+        kit
     }
 
     /// 以降の操作に使う手を切り替える（既定は右手）。
@@ -168,7 +178,40 @@ impl<'a, V: Render> Kit<'a, V> {
             });
         }
         self.cx.run_until_parked();
+        let frame = self.cx.update(raster::capture);
+        self.overlay.submit(
+            &mut self.vr,
+            self.panel,
+            frame.width,
+            frame.height,
+            &frame.rgba,
+        );
         self
+    }
+
+    /// VR パネルに最後に送られたテクスチャ。
+    pub fn texture(&self) -> &MockTexture {
+        // ponytail: Kit が作るオーバーレイは1枚なので添字 0 固定。複数パネル対応時に PanelId から引く。
+        self.vr.overlays[0]
+            .texture
+            .as_ref()
+            .expect("Kit::new で最初のフレームを送っている")
+    }
+
+    /// VR パネルに映っている、パネル上の論理ピクセル `px` の色（0xRRGGBB）。
+    pub fn vr_color_at_px(&self, px: Vec2) -> u32 {
+        let tex = self.texture();
+        let (rw, rh) = self.overlay.panel(self.panel).resolution;
+        let x = ((px.x / rw as f32 * tex.width as f32) as u32).min(tex.width - 1);
+        let y = ((px.y / rh as f32 * tex.height as f32) as u32).min(tex.height - 1);
+        let [r, g, b, _] = tex.pixel(x, y);
+        u32::from_be_bytes([0, r, g, b])
+    }
+
+    /// VR パネルに映っている、要素の中心の色（0xRRGGBB）。
+    pub fn vr_color_at(&mut self, selector: &'static str) -> u32 {
+        let c = self.bounds(selector).center();
+        self.vr_color_at_px(Vec2::new(c.x.into(), c.y.into()))
     }
 
     fn ctrl(&mut self) -> &mut VirtualController {
