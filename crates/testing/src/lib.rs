@@ -8,7 +8,7 @@
 
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, Stateful, Window, anchored, deferred, div, prelude::*, rgb,
+    ScrollWheelEvent, Stateful, Window, anchored, deferred, div, prelude::*, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec3};
 use kernel::{PanelCommand, PanelId};
@@ -111,6 +111,16 @@ fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'stati
     }
 }
 
+fn spawn_transparent(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        cx.default_global::<PanelControl>()
+            .spawns
+            .push(PanelSpec::spawn(panel, |id, _, _| {
+                TestingTransparent::new(id)
+            }))
+    }
+}
+
 fn attach_offset(panel: PanelId, base: Pose) -> Pose {
     Pose::new(
         base.position + Vec3::new(1.2 * panel as f32, 0.0, 0.0),
@@ -135,6 +145,10 @@ impl Render for Testing {
 
         let vr_row = row()
             .child(button("spawn-panel", "Spawn panel", false).on_click(spawn(self.panel)))
+            .child(
+                button("spawn-transparent", "Spawn transparent", false)
+                    .on_click(spawn_transparent(self.panel)),
+            )
             .child(
                 button("close-panel", "Close panel", false)
                     .on_click(command(self.panel, PanelCommand::Close)),
@@ -334,6 +348,43 @@ impl Render for Testing {
             .child(gpui_row)
             .child(field)
             .child(list)
+    }
+}
+
+/// 半透明の背景に描画される画面（`testing-transparent`）。右上の Close ボタンで自分を閉じる。
+pub const TRANSPARENT_BG: u32 = 0x202020a0;
+
+#[derive(Default)]
+pub struct TestingTransparent {
+    panel: PanelId,
+}
+
+impl TestingTransparent {
+    pub fn new(panel: PanelId) -> Self {
+        Self { panel }
+    }
+}
+
+impl Render for TestingTransparent {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .p_3()
+            .bg(rgba(TRANSPARENT_BG))
+            .text_color(rgb(0xffffff))
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_start()
+                    .child("testing-transparent")
+                    .child(
+                        button("close-transparent", "Close", false)
+                            .on_click(command(self.panel, PanelCommand::Close)),
+                    ),
+            )
     }
 }
 
