@@ -1,11 +1,13 @@
-//! Layer 1: VR プラットフォーム。OpenVR と OpenXR の違いを1つのトレイト [`VrBackend`] の裏に隠す。
-//! 上位層は [`connect`] から得た `Box<dyn VrBackend>` だけを扱う。
+//! Layer 1: ランタイム。OpenVR / OpenXR / novr（VR なし）の違いを1つのトレイト [`VrBackend`] の裏に隠す。
+//! どれも対等な「手段」で、上位層は [`connect`] から得た `Box<dyn VrBackend>` だけを扱う。
+//! 基本操作はどのランタイムでもネイティブに行える。違いは [`Surface`]（表示と入力の経路）だけで表す。
 //!
 //! 語彙は OpenXR に揃える: コントローラのプロファイルは `"vendor/name"`（例 `"valve/index_controller"`）、
 //! 入力は `"component/feature"`（例 `"trigger/value"`）。OpenVR バックエンドはこれに翻訳する。
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
+mod novr;
 mod openvr;
 mod openxr;
 
@@ -94,6 +96,17 @@ pub struct OverlayId(pub u64);
 pub enum Runtime {
     OpenVr,
     OpenXr,
+    /// VR を使わずデスクトップで動かす。
+    NoVr,
+}
+
+/// パネルをどう見せ、入力をどこから受けるか。上位層がランタイムごとに変えてよいのはここだけ。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Surface {
+    /// 描画を読み戻して VR のオーバーレイへ送る。入力はコントローラ（[`VrBackend::poll`]）から。
+    Overlay,
+    /// OS のウィンドウとしてそのまま表示する。入力も OS（マウス等）からネイティブに受ける。
+    Desktop,
 }
 
 #[derive(Debug, PartialEq)]
@@ -116,9 +129,10 @@ impl fmt::Display for VrError {
 impl std::error::Error for VrError {}
 
 /// 上位層が呼ぶ唯一のインターフェース。各メソッドは [`connect`] が返したバックエンドに応じて
-/// 「OpenVR のやり方」か「OpenXR のやり方」で実行される。
+/// 「OpenVR のやり方」「OpenXR のやり方」「novr のやり方」で実行される。
 pub trait VrBackend {
     fn runtime(&self) -> Runtime;
+    fn surface(&self) -> Surface;
     /// ランタイムのイベントを処理し、このフレームの姿勢と生のコントローラ入力を返す。
     fn poll(&mut self) -> Frame;
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError>;
@@ -127,8 +141,12 @@ pub trait VrBackend {
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]);
 }
 
-/// 希望のランタイムに接続し、なければインストール済みのもの（OpenVR 優先）にフォールバックする。
+/// 希望のランタイムに接続する。VR ランタイムを希望した（または指定なしの）場合は、
+/// インストール済みのもの（OpenVR 優先）にフォールバックする。novr へのフォールバックは呼び出し側が決める。
 pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
+    if prefer == Some(Runtime::NoVr) {
+        return Ok(Box::new(novr::NoVrBackend::default()));
+    }
     let order = match prefer {
         Some(Runtime::OpenXr) => [Runtime::OpenXr, Runtime::OpenVr],
         _ => [Runtime::OpenVr, Runtime::OpenXr],
@@ -158,6 +176,15 @@ mod tests {
         let id = p * p.inverse();
         assert!(id.position.abs_diff_eq(Vec3::ZERO, 1e-5));
         assert!(id.orientation.abs_diff_eq(Quat::IDENTITY, 1e-5));
+    }
+
+    #[test]
+    fn novr_is_always_available_and_desktop() {
+        let b = connect(Some(Runtime::NoVr)).unwrap();
+        assert_eq!(
+            (b.runtime(), b.surface()),
+            (Runtime::NoVr, Surface::Desktop)
+        );
     }
 
     #[test]
