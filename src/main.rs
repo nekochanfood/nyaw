@@ -1,4 +1,4 @@
-//! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（wrist）を UI 層に引き渡す。それ以外は何も置かない。
+//! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（wrist・ビーム）を UI 層に引き渡す。それ以外は何も置かない。
 
 use std::process::ExitCode;
 
@@ -20,7 +20,12 @@ fn main() -> ExitCode {
     let Ok(kernel) = Kernel::boot(requested.as_deref(), config) else {
         return ExitCode::FAILURE;
     };
-    ui::run(kernel, vec![wrist::spec()]);
+    let mut panels = vec![wrist::spec()];
+    // ビームは VR のコントローラ用。novr ではマウスがそのまま届くので要らない。
+    if kernel.surface() == kernel::Surface::Overlay {
+        panels.extend(beam::specs());
+    }
+    ui::run(kernel, panels);
     ExitCode::SUCCESS
 }
 

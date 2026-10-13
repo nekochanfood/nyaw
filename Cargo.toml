@@ -20,6 +20,7 @@ overlay = { path = "crates/overlay" }
 ui = { path = "crates/ui" }
 testing = { path = "crates/testing" }
 wrist = { path = "crates/wrist" }
+beam = { path = "crates/beam" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [package]
@@ -34,6 +35,7 @@ kernel.workspace = true
 ui.workspace = true
 testing.workspace = true
 wrist.workspace = true
+beam.workspace = true
 
 # testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する
 [profile.dev.package.testkit]

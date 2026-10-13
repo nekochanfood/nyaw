@@ -132,26 +132,36 @@ impl OpenVrBackend {
         unsafe { &*self.system }
     }
 
-    /// 次の vsync まで待つ。オーバーレイアプリは WaitGetPoses でフレームを進められないので、
-    /// 直前の vsync からの経過時間と表示周波数から残りを計算して眠る。
-    // ponytail: 周波数が取れない／vsync が分からないときは待たない（呼び出し側が回し続ける）。
-    fn wait_vsync(&self) {
-        let s = self.system();
+    fn hmd_float(&self, prop: sys::ETrackedDeviceProperty) -> f32 {
         let mut err = Default::default();
-        let hz = unsafe {
-            f(s.GetFloatTrackedDeviceProperty)(
+        unsafe {
+            f(self.system().GetFloatTrackedDeviceProperty)(
                 sys::k_unTrackedDeviceIndex_Hmd as _,
-                sys::ETrackedDeviceProperty_Prop_DisplayFrequency_Float,
+                prop,
                 &mut err,
             )
-        };
-        let (mut since, mut counter) = (0.0f32, Default::default());
-        if hz > 0.0 && unsafe { f(s.GetTimeSinceLastVsync)(&mut since, &mut counter) } {
-            let left = 1.0 / hz - since;
-            if left > 0.0 {
-                std::thread::sleep(std::time::Duration::from_secs_f32(left));
-            }
         }
+    }
+
+    /// 次の vsync まで眠り、このフレームで送る姿勢が表示されるまでの秒数（姿勢の予測に使う）を返す。
+    /// オーバーレイアプリは WaitGetPoses でフレームを進められないので、直前の vsync からの経過時間と
+    /// 表示周波数から残りを計算して眠る。
+    /// 経過時間が 1 フレームを超えて返るドライバ（Quest 系で実測）があるので、周期で割った余りを使う。
+    /// そうしないと待たずに空回りし、毎回全パネルを描き直してフレームレートを落とす。
+    fn wait_vsync(&self) -> f32 {
+        let hz = self.hmd_float(sys::ETrackedDeviceProperty_Prop_DisplayFrequency_Float);
+        // ponytail: 周波数が取れないときは 90Hz とみなす。
+        let period = if hz > 0.0 { 1.0 / hz } else { 1.0 / 90.0 };
+        let (mut since, mut counter) = (0.0f32, Default::default());
+        let synced = unsafe { f(self.system().GetTimeSinceLastVsync)(&mut since, &mut counter) };
+        let left = if synced {
+            period - since.rem_euclid(period)
+        } else {
+            period
+        };
+        std::thread::sleep(std::time::Duration::from_secs_f32(left));
+        // ここから描画して送ったものは、コンポジタの次のフレームで表示される。
+        period + self.hmd_float(sys::ETrackedDeviceProperty_Prop_SecondsFromVsyncToPhotons_Float)
     }
 
     /// SteamVR がレンダーモデルに定義しているレーザーの出口（`tip`）の、デバイス原点からの相対姿勢。
@@ -334,7 +344,7 @@ impl VrBackend for OpenVrBackend {
     }
 
     fn poll(&mut self) -> Frame {
-        self.wait_vsync();
+        let predict = self.wait_vsync();
         let s = self.system();
         let mut quit = false;
         let mut event = MaybeUninit::<sys::VREvent_t>::zeroed();
@@ -345,10 +355,11 @@ impl VrBackend for OpenVrBackend {
 
         let mut poses: [sys::TrackedDevicePose_t; MAX_DEVICES] =
             unsafe { MaybeUninit::zeroed().assume_init() };
+        // 表示される時刻の姿勢を予測させる（0 だと今の姿勢で、表示時には 1〜2 フレーム遅れて見える）。
         unsafe {
             f(s.GetDeviceToAbsoluteTrackingPose)(
                 sys::ETrackingUniverseOrigin_TrackingUniverseStanding,
-                0.0,
+                predict,
                 poses.as_mut_ptr(),
                 MAX_DEVICES as u32,
             )
@@ -424,6 +435,28 @@ impl VrBackend for OpenVrBackend {
         log(check("SetOverlayTransformAbsolute", e));
     }
 
+    fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
+        let e = unsafe { f(self.overlay().SetOverlayWidthInMeters)(id.0, width_m) };
+        log(check("SetOverlayWidthInMeters", e));
+    }
+
+    fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
+        let o = self.overlay();
+        let e = unsafe {
+            if visible {
+                f(o.ShowOverlay)(id.0)
+            } else {
+                f(o.HideOverlay)(id.0)
+            }
+        };
+        log(check("ShowOverlay / HideOverlay", e));
+    }
+
+    fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
+        let e = unsafe { f(self.overlay().SetOverlaySortOrder)(id.0, order) };
+        log(check("SetOverlaySortOrder", e));
+    }
+
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         assert_eq!(
             rgba.len(),
@@ -467,7 +500,7 @@ fn check(what: &str, e: sys::EVROverlayError) -> Result<(), VrError> {
 /// 戻り値でエラーを返せないメソッド用。フレームは続けたいので表示だけする。
 fn log(r: Result<(), VrError>) {
     if let Err(e) = r {
-        eprintln!("{e}");
+        logger::warn!("OpenVR の呼び出しに失敗", error = e);
     }
 }
 

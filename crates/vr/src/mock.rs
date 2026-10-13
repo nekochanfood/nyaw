@@ -8,6 +8,9 @@ pub struct MockOverlay {
     pub key: String,
     /// 最後に設定された姿勢。
     pub pose: Pose,
+    pub width_m: f32,
+    pub visible: bool,
+    pub sort: u32,
     /// 最後に送られたテクスチャ。
     pub texture: Option<MockTexture>,
 }
@@ -48,10 +51,13 @@ impl VrBackend for MockBackend {
         self.frame.clone()
     }
 
-    fn create_overlay(&mut self, key: &str, _width_m: f32) -> Result<OverlayId, VrError> {
+    fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError> {
         self.overlays.push(MockOverlay {
             key: key.to_owned(),
             pose: Pose::IDENTITY,
+            width_m,
+            visible: true,
+            sort: 0,
             texture: None,
         });
         Ok(OverlayId(self.overlays.len() as u64 - 1))
@@ -59,6 +65,18 @@ impl VrBackend for MockBackend {
 
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
         self.overlays[id.0 as usize].pose = pose;
+    }
+
+    fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
+        self.overlays[id.0 as usize].width_m = width_m;
+    }
+
+    fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
+        self.overlays[id.0 as usize].visible = visible;
+    }
+
+    fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
+        self.overlays[id.0 as usize].sort = order;
     }
 
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {

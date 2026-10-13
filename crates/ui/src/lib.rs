@@ -3,7 +3,10 @@
 //! そのためビューはデスクトップの GPUI ビューと全く同じように書け、VR 上にあることを意識しない。
 //! 逆向きは [`capture`] でウィンドウをオフスクリーン描画して読み戻し、`Overlay::submit` で VR パネルへ送る。
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use gpui::{
     AnyView, AnyWindowHandle, App, Bounds, Context, Entity, MouseButton, MouseDownEvent,
@@ -12,7 +15,7 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PanelStatus, PointerEvent, Pose, Surface, Vec2,
+    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, Pose, Surface, Vec2,
     VrBackend,
 };
 
@@ -95,9 +98,9 @@ pub struct PanelControl {
 
 impl gpui::Global for PanelControl {}
 
-/// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す。
+/// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す（`true` を返す）。
 /// 入力を配送した後・描画する前に毎フレーム呼ぶ。
-pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut App) {
+pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut App) -> bool {
     let ctl = cx
         .default_global::<PanelControl>()
         .panels
@@ -107,10 +110,12 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
         kernel.apply(panel, c);
     }
     let status = kernel.status(panel);
-    if ctl.status != status {
-        ctl.status = status;
-        cx.refresh_windows();
+    if ctl.status == status {
+        return false;
     }
+    ctl.status = status;
+    cx.refresh_windows();
+    true
 }
 
 /// 1フレーム分: 下位パイプラインを回し、パネル宛てのイベントを GPUI 入力に変換して返す。
@@ -196,6 +201,9 @@ pub fn open_panel_window<V: Render>(
 const PANEL_PX: (u32, u32) = (800, 600);
 /// Desktop（novr）だけが使う周期。VR ランタイムは `poll` が vsync まで待つ。
 const FRAME: Duration = Duration::from_millis(11);
+/// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
+// ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
+const IDLE_REDRAW: Duration = Duration::from_millis(250);
 
 type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
 
@@ -209,6 +217,8 @@ pub struct PanelSpec {
     attach: Option<(Device, Pose)>,
     /// 起動時から掴めない。
     locked: bool,
+    /// レーザーを描くパネル。
+    pointer: Option<(Hand, Pointer)>,
     build: Box<PanelBuilder>,
 }
 
@@ -224,6 +234,7 @@ impl PanelSpec {
             resolution: PANEL_PX,
             attach: None,
             locked: false,
+            pointer: None,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -253,6 +264,12 @@ impl PanelSpec {
     /// 起動時から掴めなくする。
     pub fn locked(mut self) -> Self {
         self.locked = true;
+        self
+    }
+
+    /// `hand` のレーザー（線またはカーソル）を描くパネルにする。置き場所はオーバーレイ層が決める。
+    pub fn pointer(mut self, hand: Hand, part: Pointer) -> Self {
+        self.pointer = Some((hand, part));
         self
     }
 
@@ -311,6 +328,8 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
             let mut bridges = HashMap::new();
             let mut warned = false;
             let mut last = vec![None; windows.len()];
+            // パネルごとの最後に描いた時刻（None = 次のフレームで必ず描く）。
+            let mut drawn: Vec<Option<Instant>> = vec![None; windows.len()];
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
             let wait = if surface == Surface::Desktop {
                 FRAME
@@ -334,18 +353,23 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
                     if kernel.panel(panel).closed {
                         continue;
                     }
+                    // 描画と読み戻し（GPU の完了待ちを含む）は重いので、入力・状態の変化があったとき、
+                    // 前回描いてから IDLE_REDRAW 経ったときだけ行う。
+                    let mut redraw = !inputs.is_empty()
+                        || drawn[panel].is_none_or(|t| t.elapsed() >= IDLE_REDRAW);
+                    let mut changed = false;
                     let Ok(frame) = cx.update_window(window, |_, window, cx| {
                         for input in inputs {
                             window.dispatch_event(input, cx);
                         }
-                        sync_panel(&mut kernel, panel, cx);
+                        changed = sync_panel(&mut kernel, panel, cx);
+                        redraw |= changed;
                         if kernel.panel(panel).closed {
                             window.remove_window();
                             return None;
                         }
                         // Desktop では OS が表示するので読み戻さない。
-                        // ponytail: Overlay では変化がなくても毎フレーム描画して送る。重ければ dirty なときだけにする。
-                        (surface == Surface::Overlay).then(|| capture(window, cx))
+                        (surface == Surface::Overlay && redraw).then(|| capture(window, cx))
                     }) else {
                         // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じ、全部閉じたら終了する。
                         kernel.apply(panel, PanelCommand::Close);
@@ -355,14 +379,21 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
                         }
                         continue;
                     };
+                    if changed {
+                        // sync_panel は全ウィンドウを描き直させる（状態はどのパネルにも表示されうる）。
+                        drawn.iter_mut().for_each(|t| *t = None);
+                    }
                     match frame {
-                        // ponytail: 描画の読み戻しは毎フレーム行い、画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
-                        // GPUI が dirty を公開したら、読み戻しごと省く。
-                        Some(Ok(f)) if last[panel].as_ref() != Some(&f) => {
-                            kernel.submit(panel, f.width, f.height, &f.rgba);
-                            last[panel] = Some(f);
+                        // 開いた直後はウィンドウの大きさの反映が間に合わず 1x1 で描かれる。送らずに次のフレームで描き直す。
+                        Some(Ok(f)) if f.width <= 1 || f.height <= 1 => {}
+                        // 画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
+                        Some(Ok(f)) => {
+                            drawn[panel] = Some(Instant::now());
+                            if last[panel].as_ref() != Some(&f) {
+                                kernel.submit(panel, f.width, f.height, &f.rgba);
+                                last[panel] = Some(f);
+                            }
                         }
-                        Some(Ok(_)) => {}
                         Some(Err(e)) if !warned => {
                             logger::error!("パネルの描画を取得できない", error = e, panel = panel);
                             warned = true;
@@ -376,6 +407,7 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
                     let i = windows.len();
                     windows.push(cx.update(|cx| open_panel(&mut kernel, spec, i, cx)));
                     last.push(None);
+                    drawn.push(None);
                 }
             }
         })
@@ -403,6 +435,9 @@ fn open_panel(
     }
     if spec.locked {
         kernel.apply(panel, PanelCommand::Lock(true));
+    }
+    if let Some((hand, part)) = spec.pointer {
+        kernel.apply(panel, PanelCommand::Pointer(hand, part));
     }
     let window = open_panel_window(cx, kernel.surface(), spec.resolution, |w, cx| {
         let view = spec.build(panel, w, cx);

@@ -96,6 +96,8 @@ const HANDS: [(Hand, &str); 2] = [(Hand::Left, "left"), (Hand::Right, "right")];
 struct Overlay {
     width_m: f32,
     pose: Pose,
+    visible: bool,
+    sort: u32,
     swapchain: Option<Swapchain>,
 }
 
@@ -370,10 +372,12 @@ impl OpenXrBackend {
         let Some(time) = self.in_frame.take() else {
             return;
         };
-        let quads: Vec<_> = self
-            .overlays
-            .values()
-            .filter_map(|o| {
+        // レイヤーは後ろのものほど手前に合成される。描画順、同じなら作った順に並べる。
+        let mut overlays: Vec<_> = self.overlays.iter().filter(|(_, o)| o.visible).collect();
+        overlays.sort_by_key(|(id, o)| (o.sort, **id));
+        let quads: Vec<_> = overlays
+            .into_iter()
+            .filter_map(|(_, o)| {
                 let sc = o.swapchain.as_ref()?;
                 let height_m = o.width_m * sc.height as f32 / sc.width as f32;
                 Some(
@@ -707,6 +711,8 @@ impl VrBackend for OpenXrBackend {
             Overlay {
                 width_m,
                 pose: Pose::IDENTITY,
+                visible: true,
+                sort: 0,
                 swapchain: None,
             },
         );
@@ -716,6 +722,24 @@ impl VrBackend for OpenXrBackend {
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
         if let Some(o) = self.overlays.get_mut(&id.0) {
             o.pose = pose;
+        }
+    }
+
+    fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
+        if let Some(o) = self.overlays.get_mut(&id.0) {
+            o.width_m = width_m;
+        }
+    }
+
+    fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
+        if let Some(o) = self.overlays.get_mut(&id.0) {
+            o.visible = visible;
+        }
+    }
+
+    fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
+        if let Some(o) = self.overlays.get_mut(&id.0) {
+            o.sort = order;
         }
     }
 

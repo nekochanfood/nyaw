@@ -172,6 +172,12 @@ pub trait VrBackend {
     fn poll(&mut self) -> Frame;
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError>;
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose);
+    /// 幅（m）。高さはテクスチャの縦横比で決まる。
+    fn set_overlay_width(&mut self, id: OverlayId, width_m: f32);
+    /// 作成直後は表示されている。
+    fn set_overlay_visible(&mut self, id: OverlayId, visible: bool);
+    /// 重なったときの描画順。大きいほど手前に描かれる（既定 0）。奥行きでは決まらない。
+    fn set_overlay_sort(&mut self, id: OverlayId, order: u32);
     /// RGBA8、行間に詰め物なし。
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]);
     /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
@@ -197,6 +203,15 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
         (**self).set_overlay_pose(id, pose)
+    }
+    fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
+        (**self).set_overlay_width(id, width_m)
+    }
+    fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
+        (**self).set_overlay_visible(id, visible)
+    }
+    fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
+        (**self).set_overlay_sort(id, order)
     }
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         (**self).submit_overlay_pixels(id, width, height, rgba)

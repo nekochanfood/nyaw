@@ -8,8 +8,8 @@
 pub mod config;
 
 pub use config::Config;
-pub use overlay::{self, Overlay, Panel, PanelId, PointerEvent, UiEvent};
-pub use vr::{self, Device, Pose, Runtime, Surface, Vec2, VrBackend, VrError};
+pub use overlay::{self, Overlay, Panel, PanelId, Pointer, PointerEvent, UiEvent};
+pub use vr::{self, Device, Hand, Pose, Runtime, Surface, Vec2, VrBackend, VrError};
 
 /// 上位層（ビュー）からパネルへの操作要求。
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +18,8 @@ pub enum PanelCommand {
     Detach,
     Lock(bool),
     Close,
+    /// その手のレーザーを描くパネルにする（ヒット判定の対象外になり、置き場所はオーバーレイが決める）。
+    Pointer(Hand, Pointer),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -125,6 +127,9 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Detach => self.overlay.detach(panel),
             PanelCommand::Lock(locked) => self.overlay.set_locked(panel, locked),
             PanelCommand::Close => self.overlay.close(&mut self.vr, panel),
+            PanelCommand::Pointer(hand, part) => {
+                self.overlay.set_pointer(&mut self.vr, panel, hand, part)
+            }
         }
     }
 
