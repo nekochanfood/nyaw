@@ -57,7 +57,7 @@ ui::run（GPUI のイベントループ上で約 90Hz）/ testkit の VrKit::ste
 
 ## テスト
 
-`cargo test --workspace`。CI は `cargo fmt --check` と `cargo clippy --workspace --all-targets -D warnings`。
+`cargo test --workspace`。ビルドには cmake と C++ コンパイラが要る（`vr` が OpenVR の `openvr_api` を静的リンクするため）。cmake が PATH に無ければ環境変数 `CMAKE` で指す（Windows は Visual Studio 同梱の `Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` でよい）。CI は `cargo fmt --check` と `cargo clippy --workspace --all-targets -D warnings`。
 
 - **単体テスト**: 各クレート内の `#[cfg(test)]`。その層の範囲だけで完結させる。実機の代わりは `vr` の `test-support` フィーチャーで出る `vr::mock::MockBackend`。単体テストから testkit は使わない（依存が循環する）。
 - **ユーザー操作のシナリオ（E2E 風）**: `crates/testkit/tests/` に置く。要素は GPUI の `.debug_selector(|| "名前".into())` で指定し、プロファイル名や座標計算はテストに書かない。
@@ -66,6 +66,7 @@ ui::run（GPUI のイベントループ上で約 90Hz）/ testkit の VrKit::ste
   - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`）。
   - `color_at` は「ユーザーに見えている色」: novr は画面、VR は VR パネルに送られたテクスチャ。テストプラットフォームには GPU が無いため、描画は `testkit::raster` の CPU ラスタライザ（単色矩形のみ）。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
+- **実ランタイムでの疎通確認**: `cargo run -p vr --example smoke`（手動。SteamVR に接続し、オーバーレイに送った画像をランタイムから読み戻して確かめる）。HMD が無ければ SteamVR 同梱の null ドライバを使う: `{"steamvr": {"requireHmd": false, "forcedDriver": "null", "activateMultipleDrivers": true}, "driver_null": {"enable": true}}` を書いた `steamvr.vrsettings` だけを置いたフォルダを `VR_CONFIG_PATH` で指す（普段の設定には触らない）。SteamVR がすでに起動していると、そちらの設定で動くので先に終了しておく。
 
 ```rust
 // 基本操作: 全ランタイムで実行（click_button::novr / click_button::vr）
@@ -86,7 +87,7 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 
 ## 未実装（土台のみ）
 
-- `vr` の OpenVR / OpenXR 実 FFI（`connect` は `NotImplemented` を返す）。
+- `vr` の OpenXR 実 FFI（`connect` は `NotImplemented` を返す）。OpenVR は `openvr_bindings` の C API（関数表）で接続済み。null ドライバで接続・オーバーレイへの送信までは確認済みだが、コントローラ入力は実機で未確認。
 - Linux での描画の読み戻し（gpui の `render_to_image` が Windows のみ実装。`gpui_wgpu` のヘッドレスレンダラ経由が候補）。
 - 読み戻しは毎フレーム CPU 経由。VR ランタイムへ GPU テクスチャを直接共有する経路は未実装。
 - Windows での OpenXR ランタイム検出（レジストリ）。
