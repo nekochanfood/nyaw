@@ -1,0 +1,3 @@
+[env]
+# openvr_bindings が同梱する OpenVR の CMakeLists.txt は cmake_minimum_required が古く、CMake 4 で設定に失敗する
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
