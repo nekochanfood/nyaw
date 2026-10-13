@@ -35,9 +35,9 @@ fn user_config_root() -> Option<PathBuf> {
     }
 }
 
-/// nyaw 自身の設定の保存先。
+/// nyaw 自身の設定の保存先。ログと同じ `nyaw` ディレクトリ（`log_dir` の親）。
 pub fn config_dir() -> Option<PathBuf> {
-    user_config_root().map(|p| p.join("nyaw"))
+    log_dir().and_then(|d| d.parent().map(Path::to_path_buf))
 }
 
 /// ログファイルの置き場: Windows は `%LOCALAPPDATA%\nyaw\logs`、
