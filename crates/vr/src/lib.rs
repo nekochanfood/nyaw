@@ -165,6 +165,7 @@ impl std::error::Error for VrError {}
 pub trait VrBackend {
     fn runtime(&self) -> Runtime;
     fn surface(&self) -> Surface;
+    /// OpenVR / OpenXR はここでランタイムの vsync（次フレーム）まで待つ。novr は待たない（呼び出し側が周期を決める）。
     /// ランタイムのイベントを処理し、このフレームの姿勢と生のコントローラ入力を返す。
     fn poll(&mut self) -> Frame;
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError>;

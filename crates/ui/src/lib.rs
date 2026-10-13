@@ -180,7 +180,7 @@ pub fn open_panel_window<V: Render>(
 }
 
 const PANEL_PX: (u32, u32) = (800, 600);
-// ponytail: 約 90Hz の固定タイマー。後でランタイムの vsync (WaitGetPoses / xrWaitFrame) 駆動にする。
+/// Desktop（novr）だけが使う周期。VR ランタイムは `poll` が vsync まで待つ。
 const FRAME: Duration = Duration::from_millis(11);
 
 /// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
@@ -207,8 +207,15 @@ pub fn run<V: Render>(
         cx.spawn(async move |cx| {
             let mut bridge = PointerBridge::default();
             let mut warned = false;
+            let mut last: Option<Frame> = None;
+            // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
+            let wait = if surface == Surface::Desktop {
+                FRAME
+            } else {
+                Duration::ZERO
+            };
             loop {
-                cx.background_executor().timer(FRAME).await;
+                cx.background_executor().timer(wait).await;
                 let inputs = pump(&mut kernel, panel, &mut bridge);
                 // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
                 // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
@@ -225,7 +232,13 @@ pub fn run<V: Render>(
                     return;
                 };
                 match frame {
-                    Some(Ok(f)) => kernel.submit(panel, f.width, f.height, &f.rgba),
+                    // ponytail: 描画の読み戻しは毎フレーム行い、画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
+                    // GPUI が dirty を公開したら、読み戻しごと省く。
+                    Some(Ok(f)) if last.as_ref() != Some(&f) => {
+                        kernel.submit(panel, f.width, f.height, &f.rgba);
+                        last = Some(f);
+                    }
+                    Some(Ok(_)) => {}
                     Some(Err(e)) if !warned => {
                         logger::error!("パネルの描画を取得できない", error = e);
                         warned = true;
