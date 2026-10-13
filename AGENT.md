@@ -10,9 +10,9 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 0 OS | `crates/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出、ファイル入出力）。`#[cfg]` はここだけに書く | `config_dir`, `log_dir`, `log_level`, `FileSink`, `openvr_paths_file`, `openxr_runtime_manifest` |
 | 1 ランタイム | `crates/vr` | OpenVR / OpenXR / novr の差を吸収。上位層は `Box<dyn VrBackend>` しか持たない | `connect`, `VrBackend`, `Runtime`, `Surface`, `Pose`, `Frame`（`pose(&Device)`）, `Device`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
 | 2 入力 | `crates/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController) -> ControllerState`, `source(profile, Action)`（逆引き） |
-| 3 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
+| 3 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, set_locked, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | 4 UI | `crates/ui` | GPUI フロントエンド。ポインタイベントを GPUI のマウス入力に変換してビューへ流し、描画結果を読み戻してパネルへ返す | `run`, `pump`（入力1フレーム分。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `PointerBridge`, ビュー（`Home`） |
-| - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit`, `VrKit::{press, drag_panel, attach_panel, move_hand, hand, profile, point_at}` |
+| - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit`, `VrKit::{press, drag_panel, attach_panel, detach_panel, lock_panel, move_hand, hand, profile, point_at}` |
 | - | `src/main.rs` | ブートローダー。ロガーを組み立て、ランタイムを選んで `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
 
 依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input ← overlay ← ui ← main`）。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。

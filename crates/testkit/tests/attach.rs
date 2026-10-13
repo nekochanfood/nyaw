@@ -77,3 +77,26 @@ fn dragging_hmd_panel_keeps_new_offset(cx: &mut TestAppContext) {
             .abs_diff_eq(to + Vec3::new(0.0, 0.5, 0.0), 1e-4)
     );
 }
+
+#[gpui::test]
+fn detached_and_locked_panel_stays_fixed_in_space(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Home::default());
+    kit.attach_panel(
+        Device::Hmd,
+        Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY),
+    );
+    kit.vr.frame.hmd = Pose::new(Vec3::new(0.0, 0.3, 0.0), Quat::IDENTITY);
+    kit.step();
+    // 今の位置で空間に固定する: 掴んでも、頭を動かしても動かない。
+    let fixed = Vec3::new(0.0, 0.3, -1.0);
+    kit.detach_panel()
+        .lock_panel(true)
+        .drag_panel(Vec3::new(0.5, 0.0, -0.5));
+    kit.vr.frame.hmd = Pose::new(Vec3::new(1.0, 0.3, 0.0), Quat::IDENTITY);
+    kit.step();
+    assert!(kit.panel_pose().position.abs_diff_eq(fixed, 1e-4));
+    assert!(kit.vr.overlays[0].pose.position.abs_diff_eq(fixed, 1e-4));
+
+    kit.click("click-me");
+    assert_eq!(kit.read(|h| h.clicks), 1);
+}

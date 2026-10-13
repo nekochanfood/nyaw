@@ -142,6 +142,18 @@ impl<'a, V: Render> VrKit<'a, V> {
         self.step()
     }
 
+    /// 取り付けを外して1フレーム進める。パネルはその場に残る。
+    pub fn detach_panel(&mut self) -> &mut Self {
+        self.overlay.detach(self.panel);
+        self.step()
+    }
+
+    /// パネルを掴めないようにする（`false` で戻す）。
+    pub fn lock_panel(&mut self, locked: bool) -> &mut Self {
+        self.overlay.set_locked(self.panel, locked);
+        self
+    }
+
     pub fn panel_pose(&self) -> Pose {
         self.overlay.panel(self.panel).pose
     }

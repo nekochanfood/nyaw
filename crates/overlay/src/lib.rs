@@ -22,6 +22,8 @@ pub struct Panel {
     pub resolution: (u32, u32),
     /// 取り付け先のデバイスと、そこから見たパネルの相対姿勢。
     pub attached: Option<(Device, Pose)>,
+    /// 掴んでも動かない。取り付けていなければ空間に固定される。
+    pub locked: bool,
     overlay: OverlayId,
 }
 
@@ -90,6 +92,7 @@ impl Overlay {
             size,
             resolution,
             attached: None,
+            locked: false,
             overlay,
         });
         Ok(self.panels.len() - 1)
@@ -110,6 +113,11 @@ impl Overlay {
     /// 取り付けを外す。パネルはその場（最後の姿勢）に残る。
     pub fn detach(&mut self, id: PanelId) {
         self.panels[id].attached = None;
+    }
+
+    /// 掴んで動かせないようにする（`false` で戻す）。レーザーでの操作はそのまま使える。
+    pub fn set_locked(&mut self, id: PanelId, locked: bool) {
+        self.panels[id].locked = locked;
     }
 
     /// `panel` の描画済み UI フレームを VR ランタイムへ送る。
@@ -186,6 +194,8 @@ impl Overlay {
             .enumerate()
             .filter_map(|(id, p)| hit_test(p, &c.aim).map(|(pos, t)| (id, pos, t)))
             .min_by(|a, b| a.2.total_cmp(&b.2));
+        // ロック中のパネルは掴めない（掴みボタンは無視して普通に指す）。
+        let grab_started = grab_started && hit.is_some_and(|h| !self.panels[h.0].locked);
 
         let mut emit = |panel, event| {
             out.push(UiEvent {
@@ -441,6 +451,44 @@ mod tests {
         vr.frame.hmd = at(0.0, 0.5, 0.0);
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(1.0, 0.5, -1.0));
+    }
+
+    #[test]
+    fn locked_panel_ignores_grab_but_still_takes_pointer() {
+        let (mut vr, mut ov) = setup();
+        ov.set_locked(0, true);
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [PointerEvent::Move {
+                pos: Vec2::new(50.0, 50.0)
+            }]
+        );
+        controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        assert_at(&ov, &vr, Vec3::new(0.0, 0.0, -1.0));
+    }
+
+    #[test]
+    fn unlocked_panel_can_be_grabbed_again() {
+        let (mut vr, mut ov) = setup();
+        ov.set_locked(0, true);
+        ov.set_locked(0, false);
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        assert_at(&ov, &vr, Vec3::new(1.0, 0.0, -1.0));
+    }
+
+    #[test]
+    fn locked_attached_panel_still_follows_device() {
+        let (mut vr, mut ov) = setup();
+        ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
+        ov.set_locked(0, true);
+        vr.frame.hmd = at(0.0, 0.5, 0.0);
+        ov.tick(&mut vr);
+        assert_at(&ov, &vr, Vec3::new(0.0, 0.5, -1.0));
     }
 
     #[test]
