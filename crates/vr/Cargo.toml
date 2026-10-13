@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 glam.workspace = true
+logger.workspace = true
 os.workspace = true
 # OpenVR の C API。ビルド時に cmake と C++ コンパイラで openvr_api を静的リンクする
 openvr_bindings = "2.1.1"

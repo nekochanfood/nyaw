@@ -150,6 +150,7 @@ pub trait VrBackend {
 /// インストール済みのもの（OpenVR 優先）にフォールバックする。novr へのフォールバックは呼び出し側が決める。
 pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
     if prefer == Some(Runtime::NoVr) {
+        logger::debug!("ランタイムに接続する", runtime = ?Runtime::NoVr);
         return Ok(Box::new(novr::NoVrBackend::default()));
     }
     let order = match prefer {
@@ -161,11 +162,20 @@ pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
         let attempt = match rt {
             Runtime::OpenVr if openvr::available() => openvr::connect(),
             Runtime::OpenXr if openxr::available() => openxr::connect(),
-            _ => continue,
+            _ => {
+                logger::debug!("ランタイムが見つからない", runtime = ?rt);
+                continue;
+            }
         };
         match attempt {
-            Ok(b) => return Ok(b),
-            Err(e) => last = e,
+            Ok(b) => {
+                logger::debug!("ランタイムに接続する", runtime = ?rt);
+                return Ok(b);
+            }
+            Err(e) => {
+                logger::debug!("ランタイムに接続できない", runtime = ?rt, error = e);
+                last = e;
+            }
         }
     }
     Err(last)
