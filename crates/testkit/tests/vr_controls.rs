@@ -37,7 +37,12 @@ fn dragged_panel_moves_in_vr_and_stays_clickable(cx: &mut TestAppContext) {
     let to = Vec3::new(0.3, 0.2, -1.2);
     kit.drag_panel(to);
     assert!(kit.panel_pose().position.abs_diff_eq(to, 1e-4));
-    assert!(kit.vr.overlays[0].pose.position.abs_diff_eq(to, 1e-4));
+    assert!(
+        kit.kernel.vr.overlays[0]
+            .pose
+            .position
+            .abs_diff_eq(to, 1e-4)
+    );
 
     kit.click("click-me");
     assert_eq!(kit.read(|h| h.clicks), 1);
@@ -57,7 +62,7 @@ fn menu_button_shows_on_home(cx: &mut TestAppContext) {
 #[gpui::test]
 fn grabbing_panel_shows_on_home(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Home::default());
-    let (w, h) = kit.overlay.panel(0).resolution;
+    let (w, h) = kit.kernel.panel(0).resolution;
     kit.point_at(Vec2::new(w as f32, h as f32) / 2.0)
         .press(Action::Grab);
     assert_eq!(kit.color_at("grabbed"), BUTTON_ACTIVE_BG);

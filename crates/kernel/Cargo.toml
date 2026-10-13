@@ -1,0 +1,16 @@
+[package]
+name = "kernel"
+version.workspace = true
+edition.workspace = true
+
+# 一点集中型の中枢。設定（config）を内に持ち、下位（os / vr / overlay）を束ね、上位（UI・画面）には kernel だけを見せる。
+[dependencies]
+logger.workspace = true
+os.workspace = true
+vr.workspace = true
+overlay.workspace = true
+serde = { version = "1", features = ["derive"] }
+toml = "0.9"
+
+[dev-dependencies]
+vr = { workspace = true, features = ["test-support"] }

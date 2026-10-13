@@ -10,7 +10,7 @@ fn vr_panel_shows_rendered_ui(cx: &mut TestAppContext) {
     assert_eq!(kit.color_at("click-me"), BUTTON_BG);
     assert_eq!(kit.vr_color_at_px(Vec2::new(2.0, 2.0)), PANEL_BG);
 
-    let res = kit.overlay.panel(0).resolution;
+    let res = kit.kernel.panel(0).resolution;
     let tex = kit.texture();
     assert!(
         tex.width >= res.0 && tex.height >= res.1,

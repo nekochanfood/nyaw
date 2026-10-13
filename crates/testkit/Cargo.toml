@@ -9,7 +9,7 @@ publish = false
 gpui = { workspace = true, features = ["test-support"] }
 vr = { workspace = true, features = ["test-support"] }
 input.workspace = true
-overlay.workspace = true
+kernel.workspace = true
 ui.workspace = true
 
 # シナリオが操作する画面。キット自体は画面を知らない

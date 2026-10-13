@@ -6,8 +6,8 @@ fn main() {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
     use gpui::{AppContext, Context, IntoElement, Render, Styled, Window, div, rgb};
+    use kernel::Surface;
     use ui::{capture, open_panel_window};
-    use vr::Surface;
 
     const PANEL_BG: u32 = 0x204060;
     /// 背景を塗るだけの画面（画面は UI 層の上にあるので、UI 層のテストでは自前で用意する）。

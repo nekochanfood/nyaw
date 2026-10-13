@@ -122,7 +122,7 @@ fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
     let mut cx = gpui::TestAppContext::single();
     let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| Home::default());
     kit.click("attach-hmd").click("lock").hover("click-me");
-    let p = kit.overlay.panel(kit.panel);
+    let p = kit.kernel.panel(kit.panel);
     assert_eq!(
         (p.attached.as_ref().map(|a| &a.0), p.locked),
         (Some(&Device::Hmd), true),
@@ -138,7 +138,7 @@ fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
     }
     let c = kit.bounds("lock").center();
     let (res, id) = {
-        let p = kit.overlay.panel(kit.panel);
+        let p = kit.kernel.panel(kit.panel);
         (p.resolution, p.overlay_id())
     };
     let start = Instant::now();

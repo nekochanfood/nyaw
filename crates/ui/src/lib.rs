@@ -10,8 +10,10 @@ use gpui::{
     MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, Window,
     WindowBounds, WindowHandle, WindowOptions, prelude::*, px, size,
 };
-use overlay::{Overlay, PanelId, PointerEvent};
-use vr::{Device, Pose, Quat, Runtime, Surface, Vec2, Vec3, VrBackend};
+use kernel::vr::{Quat, Vec3};
+use kernel::{
+    Kernel, PanelCommand, PanelId, PanelStatus, PointerEvent, Pose, Surface, Vec2, VrBackend,
+};
 
 /// 1パネル分のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
 /// 位置とボタン状態を持つがオーバーレイのイベントは持たないので、直前の値を保持する。
@@ -74,28 +76,6 @@ impl PointerBridge {
     }
 }
 
-/// ビューからパネル（オーバーレイ層）への操作要求。
-#[derive(Debug, Clone, PartialEq)]
-pub enum PanelCommand {
-    Attach(Device, Pose),
-    Detach,
-    Lock(bool),
-}
-
-/// フレームループから見たパネルの状態。ビューの表示用。
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct PanelStatus {
-    pub runtime: Option<Runtime>,
-    pub attached: Option<Device>,
-    pub locked: bool,
-    /// 見えているトラッカーの ID（取り付け先の候補）。
-    pub trackers: Vec<String>,
-    /// メニューボタンを押している。
-    pub menu: bool,
-    /// パネルを掴んでいる。
-    pub grabbed: bool,
-}
-
 /// ビューとフレームループの受け渡し口（GPUI のグローバル）。ビューは `commands` に積み、
 /// フレームループが [`sync_panel`] でオーバーレイに反映して `status` を書き戻す。
 /// ビューの型に依存しないので、本番・testkit のどのキットも同じ経路を通る。
@@ -110,24 +90,12 @@ impl gpui::Global for PanelControl {}
 
 /// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す。
 /// 入力を配送した後・描画する前に毎フレーム呼ぶ。
-pub fn sync_panel(overlay: &mut Overlay, vr: &dyn VrBackend, panel: PanelId, cx: &mut App) {
+pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut App) {
     let ctl = cx.default_global::<PanelControl>();
     for c in ctl.commands.drain(..) {
-        match c {
-            PanelCommand::Attach(device, offset) => overlay.attach(panel, device, offset),
-            PanelCommand::Detach => overlay.detach(panel),
-            PanelCommand::Lock(locked) => overlay.set_locked(panel, locked),
-        }
+        kernel.apply(panel, c);
     }
-    let p = overlay.panel(panel);
-    let status = PanelStatus {
-        runtime: Some(vr.runtime()),
-        attached: p.attached.as_ref().map(|(d, _)| d.clone()),
-        locked: p.locked,
-        trackers: overlay.trackers().to_vec(),
-        menu: overlay.menu_held(),
-        grabbed: overlay.grabbed(panel),
-    };
+    let status = kernel.status(panel);
     if ctl.status != status {
         ctl.status = status;
         cx.refresh_windows();
@@ -136,15 +104,14 @@ pub fn sync_panel(overlay: &mut Overlay, vr: &dyn VrBackend, panel: PanelId, cx:
 
 /// 1フレーム分: 下位パイプラインを回し、`panel` 宛てのイベントを GPUI 入力に変換して返す。
 /// 本番の [`run`] とテスト用の testkit が共通で通る経路。
-pub fn pump(
-    overlay: &mut Overlay,
-    vr: &mut dyn VrBackend,
+pub fn pump<B: VrBackend>(
+    kernel: &mut Kernel<B>,
     panel: PanelId,
     bridge: &mut PointerBridge,
 ) -> Vec<PlatformInput> {
     // ponytail: パネル1枚・ブリッジ1つ。両手で同じパネルを触るとマウス状態が混ざる。複数ポインタが要るならブリッジを手ごとにする。
-    overlay
-        .tick(vr)
+    kernel
+        .tick()
         .into_iter()
         .filter(|e| e.panel == panel)
         .map(|e| bridge.translate(e.event))
@@ -221,21 +188,14 @@ const FRAME: Duration = Duration::from_millis(11);
 /// パネルに載せる画面（上の層）は `build` で受け取る。UI 層はどの画面かを知らない。
 // ponytail: パネル1枚に画面1つ。複数の画面を同時に浮かべるなら (画面, 姿勢) の一覧を受け取り、PanelControl とブリッジをパネルごとにする。
 pub fn run<V: Render>(
-    mut vr: Box<dyn VrBackend>,
+    mut kernel: Kernel,
     build: impl FnOnce(&mut Window, &mut Context<V>) -> V + 'static,
 ) {
-    let surface = vr.surface();
+    let surface = kernel.surface();
     gpui_platform::application().run(move |cx: &mut App| {
-        let mut overlay = Overlay::new();
         let pose = Pose::new(Vec3::new(0.0, 1.2, -1.0), Quat::IDENTITY);
-        let panel = overlay
-            .add_panel(
-                vr.as_mut(),
-                "nyaw.home",
-                pose,
-                Vec2::new(0.8, 0.6),
-                PANEL_PX,
-            )
+        let panel = kernel
+            .add_panel("nyaw.home", pose, Vec2::new(0.8, 0.6), PANEL_PX)
             .expect("create home overlay");
 
         let window = open_panel_window(cx, surface, PANEL_PX, |w, cx| cx.new(|cx| build(w, cx)))
@@ -249,14 +209,14 @@ pub fn run<V: Render>(
             let mut warned = false;
             loop {
                 cx.background_executor().timer(FRAME).await;
-                let inputs = pump(&mut overlay, vr.as_mut(), panel, &mut bridge);
+                let inputs = pump(&mut kernel, panel, &mut bridge);
                 // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
                 // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
                 let Ok(frame) = cx.update_window(window.into(), |_, window, cx| {
                     for input in inputs {
                         window.dispatch_event(input, cx);
                     }
-                    sync_panel(&mut overlay, vr.as_ref(), panel, cx);
+                    sync_panel(&mut kernel, panel, cx);
                     // Desktop では OS が表示するので読み戻さない。
                     // ponytail: Overlay では変化がなくても毎フレーム描画して送る。重ければ dirty なときだけにする。
                     (surface == Surface::Overlay).then(|| capture(window, cx))
@@ -265,7 +225,7 @@ pub fn run<V: Render>(
                     return;
                 };
                 match frame {
-                    Some(Ok(f)) => overlay.submit(vr.as_mut(), panel, f.width, f.height, &f.rgba),
+                    Some(Ok(f)) => kernel.submit(panel, f.width, f.height, &f.rgba),
                     Some(Err(e)) if !warned => {
                         logger::error!("パネルの描画を取得できない", error = e);
                         warned = true;
@@ -282,6 +242,7 @@ pub fn run<V: Render>(
 mod tests {
     use super::*;
     use gpui::{TestAppContext, div};
+    use kernel::{Device, Runtime};
 
     /// UI 層だけで確かめるための最小の画面。
     #[derive(Default)]
@@ -348,17 +309,16 @@ mod tests {
 
     #[gpui::test]
     fn sync_panel_applies_commands_and_reports_status(cx: &mut TestAppContext) {
-        let mut vr = vr::connect(Some(Runtime::NoVr)).unwrap();
-        let mut overlay = Overlay::new();
-        let panel = overlay
-            .add_panel(vr.as_mut(), "t", Pose::IDENTITY, Vec2::ONE, PANEL_PX)
+        let mut kernel = Kernel::boot(Some("novr"), Default::default()).unwrap();
+        let panel = kernel
+            .add_panel("t", Pose::IDENTITY, Vec2::ONE, PANEL_PX)
             .unwrap();
         cx.update(|cx| {
             cx.default_global::<PanelControl>().commands.extend([
                 PanelCommand::Attach(Device::Hmd, Pose::IDENTITY),
                 PanelCommand::Lock(true),
             ]);
-            sync_panel(&mut overlay, vr.as_ref(), panel, cx);
+            sync_panel(&mut kernel, panel, cx);
             let ctl = cx.global::<PanelControl>();
             assert!(ctl.commands.is_empty());
             assert_eq!(
@@ -373,9 +333,9 @@ mod tests {
             cx.default_global::<PanelControl>()
                 .commands
                 .push(PanelCommand::Detach);
-            sync_panel(&mut overlay, vr.as_ref(), panel, cx);
+            sync_panel(&mut kernel, panel, cx);
         });
-        assert_eq!(overlay.panel(panel).attached, None);
+        assert_eq!(kernel.panel(panel).attached, None);
     }
 
     #[test]

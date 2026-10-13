@@ -8,8 +8,7 @@ edition.workspace = true
 # 上流で一般公開されたら外す。
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }
-vr.workspace = true
-overlay.workspace = true
+kernel.workspace = true
 logger.workspace = true
 
 # 実プラットフォーム + GPU で描画を読み戻す。GUI はメインスレッドで回すため独自 main。
