@@ -1,0 +1,91 @@
+{
+  "controller_type": "knuckles",
+  "bindings": {
+    "/actions/nyaw": {
+      "sources": [
+        {
+          "path": "/user/hand/left/input/trigger",
+          "mode": "trigger",
+          "inputs": {
+            "click": {
+              "output": "/actions/nyaw/in/select"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/grip",
+          "mode": "trigger",
+          "inputs": {
+            "click": {
+              "output": "/actions/nyaw/in/grab"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/b",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/nyaw/in/menu"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/thumbstick",
+          "mode": "joystick",
+          "inputs": {
+            "position": {
+              "output": "/actions/nyaw/in/scroll"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/trigger",
+          "mode": "trigger",
+          "inputs": {
+            "click": {
+              "output": "/actions/nyaw/in/select"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/grip",
+          "mode": "trigger",
+          "inputs": {
+            "click": {
+              "output": "/actions/nyaw/in/grab"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/b",
+          "mode": "button",
+          "inputs": {
+            "click": {
+              "output": "/actions/nyaw/in/menu"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/thumbstick",
+          "mode": "joystick",
+          "inputs": {
+            "position": {
+              "output": "/actions/nyaw/in/scroll"
+            }
+          }
+        }
+      ],
+      "poses": [
+        {
+          "output": "/actions/nyaw/in/aim",
+          "path": "/user/hand/left/pose/tip"
+        },
+        {
+          "output": "/actions/nyaw/in/aim",
+          "path": "/user/hand/right/pose/tip"
+        }
+      ]
+    }
+  }
+}

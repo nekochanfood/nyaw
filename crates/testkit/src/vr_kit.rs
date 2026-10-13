@@ -15,6 +15,7 @@ use vr::{
     mock::{MockBackend, MockTexture},
 };
 
+use crate::watch::Watch;
 use crate::{Action, Driver, Hand, Pose, Quat, Vec2, Vec3, raster};
 
 /// 指定がないときの仮想コントローラの機種。
@@ -48,6 +49,7 @@ pub struct VrKit<'a, V: 'static> {
     /// 直接覗いてよい（例: VR 側に送られたパネル姿勢の確認）。
     pub kernel: Kernel<MockBackend>,
     panel: PanelId,
+    watch: Option<Watch>,
     bridges: HashMap<(PanelId, Hand), PointerBridge>,
     controllers: Vec<VirtualController>,
     active: Hand,
@@ -77,6 +79,7 @@ impl<'a, V: Render> VrKit<'a, V> {
             windows: vec![window],
             kernel,
             panel,
+            watch: Watch::from_env(),
             bridges: HashMap::new(),
             controllers: Vec::new(),
             active: Hand::Right,
@@ -208,8 +211,14 @@ impl<'a, V: Render> VrKit<'a, V> {
                 .cx
                 .update_window(window, |_, window, cx| raster::capture(window, cx))
                 .unwrap();
+            if let Some(w) = &mut self.watch {
+                w.show(panel, &frame);
+            }
             self.kernel
                 .submit(panel, frame.width, frame.height, &frame.rgba);
+        }
+        if let Some(w) = &self.watch {
+            w.wait();
         }
         self
     }

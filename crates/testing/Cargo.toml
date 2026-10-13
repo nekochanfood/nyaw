@@ -1,0 +1,12 @@
+[package]
+name = "testing"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+gpui.workspace = true
+kernel.workspace = true
+ui.workspace = true
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

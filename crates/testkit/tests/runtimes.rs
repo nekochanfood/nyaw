@@ -1,7 +1,7 @@
 //! 実ランタイムでの E2E: ランタイムを起動 → 繋ぐ → オーバーレイへ毎フレーム違う絵を送る →
-//! Home 画面を操作し、その描画を実ランタイムのオーバーレイへ送る →
+//! Testing 画面を操作し、その描画を実ランタイムのオーバーレイへ送る →
 //! （OpenVR のみ）ランタイムから読み戻して届いたか確かめる → 後片付けでプロセスが消えたか確かめる。
-//! 実ランタイムにはコントローラが無い（null ドライバ / simulated）ので、Home はマウスで操作する。
+//! 実ランタイムにはコントローラが無い（null ドライバ / simulated）ので、Testing はマウスで操作する。
 //!
 //! 起動に数秒かかり画面にも出るので、`#[ignore]` と同じく `--ignored` を付けたときだけ流す。
 //! 入っていないランタイムはスキップする（`cargo runtimes` で入れる）。
@@ -15,7 +15,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use home::{BUTTON_ACTIVE_BG, Home};
+use testing::{BUTTON_ACTIVE_BG, Testing, TestingTransparent};
 use testkit::runtimes::{self, Kind, LaunchError};
 use testkit::{Driver, NoVrKit};
 use vr::{Device, OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
@@ -56,6 +56,10 @@ fn main() -> ExitCode {
             let mut vr = rt.connect().unwrap_or_else(|e| panic!("繋がらない: {e}"));
             overlay_reaches_runtime(vr.as_mut());
             home_runs_on_runtime(vr);
+            let vr = rt
+                .connect()
+                .unwrap_or_else(|e| panic!("再接続できない: {e}"));
+            transparent_runs_on_runtime(vr);
         }));
         let log = rt.log.clone();
         drop(rt);
@@ -115,18 +119,18 @@ fn overlay_reaches_runtime(vr: &mut dyn VrBackend) {
     }
 }
 
-/// Home 画面を実ランタイム上で操作する: ボタンでパネルを HMD に取り付けてロックし、
+/// Testing 画面を実ランタイム上で操作する: ボタンでパネルを HMD に取り付けてロックし、
 /// その結果（光ったボタン）がランタイムのオーバーレイに届いていること（OpenVR のみ読み戻せる）。
 fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
     let runtime = vr.runtime();
     let mut cx = gpui::TestAppContext::single();
-    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| Home::default());
+    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| Testing::default());
     kit.click("attach-hmd").click("lock").hover("click-me");
     let p = kit.kernel.panel(kit.panel);
     assert_eq!(
         (p.attached.as_ref().map(|a| &a.0), p.locked),
         (Some(&Device::Hmd), true),
-        "Home のボタンがパネルに効いていない"
+        "Testing のボタンがパネルに効いていない"
     );
     // 実ランタイムのフレームを回しながら、HMD に付いたパネルへ描画を送り続ける。
     for _ in 0..30 {
@@ -157,6 +161,36 @@ fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
         std::thread::sleep(Duration::from_millis(50));
     }
     panic!("ランタイムのパネルでロックのボタンが光っていない（{got:06x?}）");
+}
+
+/// 半透明の画面（testing-transparent）を実ランタイムへ送り、背景が半透明のまま届くこと。
+/// OpenVR はランタイム側の画像を、OpenXR は渡したスワップチェーン画像を GPU から読み戻して、
+/// 背景のアルファが 0 でも 255 でもないことを確かめる（OpenXR のコンポジタ出力は読めない）。
+fn transparent_runs_on_runtime(vr: Box<dyn VrBackend>) {
+    let runtime = vr.runtime();
+    let mut cx = gpui::TestAppContext::single();
+    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| TestingTransparent::new(0));
+    let id = kit.kernel.panel(kit.panel).overlay_id();
+    let start = Instant::now();
+    let mut px = None;
+    while start.elapsed() < Duration::from_secs(5) {
+        kit.step();
+        let image = match runtime {
+            Runtime::OpenVr => vr::openvr_overlay_image(id).ok(),
+            _ => kit.kernel.vr.overlay_image(id),
+        };
+        if let Some((_, _, rgba)) = image {
+            px = Some([rgba[0], rgba[1], rgba[2], rgba[3]]);
+            // 事前乗算なら RGB は 0x20 * 160 / 255 に縮む。straight のまま届くこと（層に UNPREMULTIPLIED_ALPHA を付ける根拠）。
+            if matches!(rgba[3], 1..=254) {
+                assert_eq!(rgba[..3], [0x20; 3], "straight アルファのはず");
+                eprintln!("  {runtime:?} 背景の画素 = {px:?}");
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("ランタイムに半透明のまま届いていない（背景の画素 = {px:?}）");
 }
 
 /// コンポジタの取り込みは非同期なので、届くまで少し待つ。届かなければ最後に読めたものを返す。

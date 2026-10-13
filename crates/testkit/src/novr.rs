@@ -12,6 +12,7 @@ use kernel::{Kernel, PanelId};
 use ui::{PanelControl, PanelRoot, PanelSpec};
 use vr::{Runtime, VrBackend};
 
+use crate::watch::Watch;
 use crate::{Driver, Pose, Quat, Vec2, Vec3, raster};
 
 /// パネルを置く位置（実ランタイムで目の前に見えるよう、立った目の高さの正面 1m）。
@@ -24,6 +25,7 @@ pub struct NoVrKit<'a, V: 'static> {
     /// 描画の送り先。novr では何もしない。
     pub kernel: Kernel,
     pub panel: PanelId,
+    watch: Option<Watch>,
     /// マウスの位置と、左ボタンを押したままか。
     mouse: Vec<(Point<Pixels>, bool)>,
 }
@@ -57,6 +59,7 @@ impl<'a, V: Render> NoVrKit<'a, V> {
             windows: vec![window],
             kernel,
             panel,
+            watch: Watch::from_env(),
             mouse: vec![(Point::default(), false)],
         };
         kit.step();
@@ -88,8 +91,14 @@ impl<'a, V: Render> NoVrKit<'a, V> {
                 .cx
                 .update_window(window, |_, window, cx| raster::capture(window, cx))
                 .unwrap();
+            if let Some(w) = &mut self.watch {
+                w.show(panel, &frame);
+            }
             self.kernel
                 .submit(panel, frame.width, frame.height, &frame.rgba);
+        }
+        if let Some(w) = &self.watch {
+            w.wait();
         }
         self
     }

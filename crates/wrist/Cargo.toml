@@ -1,10 +1,12 @@
 [package]
-name = "home"
+name = "wrist"
 version.workspace = true
 edition.workspace = true
 
 [dependencies]
+chrono.workspace = true
 gpui.workspace = true
+testing.workspace = true
 kernel.workspace = true
 ui.workspace = true
 

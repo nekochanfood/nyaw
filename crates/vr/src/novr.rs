@@ -28,5 +28,11 @@ impl VrBackend for NoVrBackend {
 
     fn set_overlay_pose(&mut self, _id: OverlayId, _pose: Pose) {}
 
+    fn set_overlay_width(&mut self, _id: OverlayId, _width_m: f32) {}
+
+    fn set_overlay_visible(&mut self, _id: OverlayId, _visible: bool) {}
+
+    fn set_overlay_sort(&mut self, _id: OverlayId, _order: u32) {}
+
     fn submit_overlay_pixels(&mut self, _id: OverlayId, _w: u32, _h: u32, _rgba: &[u8]) {}
 }

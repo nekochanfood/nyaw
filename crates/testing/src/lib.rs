@@ -1,4 +1,4 @@
-//! Layer 5 画面: ホームパネル。UI 層（`ui`）の上に載る画面の1つで、一連の機能を1画面で試せるテスト用の画面。
+//! Layer 5 画面: Testing パネル。UI 層（`ui`）の上に載る画面の1つで、一連の機能を1画面で試せるテスト用の画面。
 //! E2E テストもこの画面を操作して検証する。
 //!
 //! - VR: クリック数・HMD / 手 / トラッカーへの取り付け・取り外し・ロック・メニューボタンと掴みの表示
@@ -8,7 +8,7 @@
 
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, Stateful, Window, anchored, deferred, div, prelude::*, rgb,
+    ScrollWheelEvent, Stateful, Window, anchored, deferred, div, prelude::*, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec3};
 use kernel::{PanelCommand, PanelId};
@@ -37,7 +37,7 @@ const ROW_PX: f32 = 24.0;
 const SCROLL_LINE_PX: f32 = 20.0;
 
 #[derive(Default)]
-pub struct Home {
+pub struct Testing {
     panel: PanelId,
     pub clicks: usize,
     /// 受け取ったスクロール量の合計（行。下向きが負）。
@@ -55,7 +55,7 @@ pub struct Home {
     focus: Option<FocusHandle>,
 }
 
-impl Home {
+impl Testing {
     pub fn new(panel: PanelId) -> Self {
         Self {
             panel,
@@ -107,7 +107,17 @@ fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'stati
     move |_, _, cx| {
         cx.default_global::<PanelControl>()
             .spawns
-            .push(PanelSpec::spawn(panel, |id, _, _| Home::new(id)))
+            .push(PanelSpec::spawn(panel, |id, _, _| Testing::new(id)))
+    }
+}
+
+fn spawn_transparent(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        cx.default_global::<PanelControl>()
+            .spawns
+            .push(PanelSpec::spawn(panel, |id, _, _| {
+                TestingTransparent::new(id)
+            }))
     }
 }
 
@@ -122,7 +132,7 @@ fn row() -> Div {
     div().flex().flex_wrap().gap_2().items_center()
 }
 
-impl Render for Home {
+impl Render for Testing {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let st = cx
             .try_global::<PanelControl>()
@@ -130,14 +140,25 @@ impl Render for Home {
             .map(|c| c.status.clone())
             .unwrap_or_default();
         let on = |d: &Device| st.attached.as_ref() == Some(d);
+        let profiling = cx.try_global::<PanelControl>().is_some_and(|c| c.profiling);
         let tracker = st.trackers.first().map(|id| Device::Tracker(id.clone()));
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
 
         let vr_row = row()
             .child(button("spawn-panel", "Spawn panel", false).on_click(spawn(self.panel)))
             .child(
+                button("spawn-transparent", "Spawn transparent", false)
+                    .on_click(spawn_transparent(self.panel)),
+            )
+            .child(
                 button("close-panel", "Close panel", false)
                     .on_click(command(self.panel, PanelCommand::Close)),
+            )
+            .child(
+                button("toggle-profiler", "Profiler", profiling).on_click(|_, _, cx| {
+                    let c = cx.default_global::<PanelControl>();
+                    c.profiling = !c.profiling;
+                }),
             )
             .child(
                 button("click-me", format!("Clicked {}", self.clicks), false).on_click(
@@ -337,6 +358,43 @@ impl Render for Home {
     }
 }
 
+/// 半透明の背景に描画される画面（`testing-transparent`）。右上の Close ボタンで自分を閉じる。
+pub const TRANSPARENT_BG: u32 = 0x202020a0;
+
+#[derive(Default)]
+pub struct TestingTransparent {
+    panel: PanelId,
+}
+
+impl TestingTransparent {
+    pub fn new(panel: PanelId) -> Self {
+        Self { panel }
+    }
+}
+
+impl Render for TestingTransparent {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .p_3()
+            .bg(rgba(TRANSPARENT_BG))
+            .text_color(rgb(0xffffff))
+            .child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_start()
+                    .child("testing-transparent")
+                    .child(
+                        button("close-transparent", "Close", false)
+                            .on_click(command(self.panel, PanelCommand::Close)),
+                    ),
+            )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -345,11 +403,26 @@ mod tests {
     /// ボタンは操作要求を積むだけで、反映はフレームループ（`ui::sync_panel`）の仕事。
     #[gpui::test]
     fn attach_button_queues_command(cx: &mut TestAppContext) {
-        let (_, cx) = cx.add_window_view(|_, _| Home::default());
+        let (_, cx) = cx.add_window_view(|_, _| Testing::default());
         cx.run_until_parked();
         let c = cx.debug_bounds("attach-hmd").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
         let queued = cx.update(|_, cx| cx.global::<PanelControl>().panels[&0].commands.clone());
         assert_eq!(queued, [PanelCommand::Attach(Device::Hmd, HMD_OFFSET)]);
+    }
+
+    /// Profiler ボタンは計測の有効・無効を切り替える。
+    #[gpui::test]
+    fn profiler_button_toggles_profiling(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| Testing::default());
+        cx.run_until_parked();
+        let profiling = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| cx.global::<PanelControl>().profiling)
+        };
+        let c = cx.debug_bounds("toggle-profiler").unwrap().center();
+        cx.simulate_click(c, Modifiers::none());
+        assert!(profiling(cx));
+        cx.simulate_click(c, Modifiers::none());
+        assert!(!profiling(cx));
     }
 }

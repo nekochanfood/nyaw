@@ -64,22 +64,10 @@ pub struct FileSink {
 }
 
 impl FileSink {
-    /// 親ディレクトリが無ければ作り、新しいファイルを作る。
-    /// 既に `path` があれば [`prev_log_path`] へ退避する（既存の退避先は先に消す。Windows の rename は上書きできないため）。
+    /// [`create_rotated`] で新しいファイルを作る（前回分は 1 世代だけ残る）。
     pub fn create(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir)?;
-        }
-        if path.exists() {
-            let prev = prev_log_path(path);
-            match fs::remove_file(&prev) {
-                Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
-                _ => {}
-            }
-            fs::rename(path, &prev)?;
-        }
-        let file = File::create(path)?;
+        let file = create_rotated(path)?;
         Ok(Self {
             file: Mutex::new(file),
             path: path.to_path_buf(),
@@ -89,6 +77,24 @@ impl FileSink {
     pub fn path(&self) -> &Path {
         &self.path
     }
+}
+
+/// 新しいファイルを作る（ログ・プロファイラのダンプ共通）。親ディレクトリが無ければ作り、
+/// 既に `path` があれば [`prev_log_path`] へ 1 世代だけ退避する（既存の退避先は先に消す。Windows の rename は上書きできないため）。
+pub fn create_rotated(path: impl AsRef<Path>) -> io::Result<File> {
+    let path = path.as_ref();
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    if path.exists() {
+        let prev = prev_log_path(path);
+        match fs::remove_file(&prev) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => return Err(e),
+            _ => {}
+        }
+        fs::rename(path, &prev)?;
+    }
+    File::create(path)
 }
 
 /// 前回のログの退避先: `logs/nyaw.log` → `logs/nyaw-prev.log`（拡張子が無ければ `nyaw-prev`）。
@@ -118,6 +124,17 @@ impl logger::Sink for FileSink {
             let _ = f.flush();
         }
     }
+}
+
+/// `path` に `contents` を書く（親ディレクトリが無ければ作る）。中身が同じなら書かない。
+pub fn write_file(path: &Path, contents: &str) -> io::Result<()> {
+    if fs::read_to_string(path).is_ok_and(|old| old == contents) {
+        return Ok(());
+    }
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(path, contents)
 }
 
 /// SteamVR はインストール時に `openvrpaths.vrpath` を書き出す。存在すれば OpenVR が使える。
@@ -234,6 +251,23 @@ HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\OpenXR\1
         FileSink::create(&path).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
         assert_eq!(fs::read_to_string(&prev).unwrap(), "run2-a\nrun2-b\n");
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn create_rotated_keeps_previous_dump() {
+        let dir = std::env::temp_dir().join(format!("nyaw-os-rotate-{}", std::process::id()));
+        let path = dir.join("profile.csv");
+        let _ = fs::remove_dir_all(&dir);
+
+        create_rotated(&path).unwrap().write_all(b"run1").unwrap();
+        create_rotated(&path).unwrap().write_all(b"run2").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "run2");
+        assert_eq!(
+            fs::read_to_string(dir.join("profile-prev.csv")).unwrap(),
+            "run1"
+        );
 
         fs::remove_dir_all(&dir).unwrap();
     }

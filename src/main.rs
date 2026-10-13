@@ -1,9 +1,9 @@
-//! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（Home）を UI 層に引き渡す。それ以外は何も置かない。
+//! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（wrist・ビーム）を UI 層に引き渡す。それ以外は何も置かない。
 
+use std::io::{BufWriter, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kernel::Pose;
-use kernel::vr::{Quat, Vec3};
 use kernel::{Kernel, config};
 use logger::{Level, Logger, StderrSink};
 
@@ -17,19 +17,69 @@ fn main() -> ExitCode {
             config::Config::default()
         }
     };
+    let args = Args::parse(std::env::args().skip(1));
     // 優先順位: コマンドライン > 設定ファイル
-    let requested = std::env::args().nth(1).or(config.runtime.clone());
+    let requested = args.runtime.or(config.runtime.clone());
     let Ok(kernel) = Kernel::boot(requested.as_deref(), config) else {
         return ExitCode::FAILURE;
     };
-    ui::run(
-        kernel,
-        vec![ui::PanelSpec::new(
-            Pose::new(Vec3::new(0.0, 1.2, -1.0), Quat::IDENTITY),
-            |id, _, _| home::Home::new(id),
-        )],
-    );
+    let mut panels = vec![wrist::spec()];
+    // ビームは VR のコントローラ用。novr ではマウスがそのまま届くので要らない。
+    if kernel.surface() == kernel::Surface::Overlay {
+        panels.extend(beam::specs());
+    }
+    let profiler = args.profile.map(start_profiler);
+    ui::run(kernel, panels, profiler);
     ExitCode::SUCCESS
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct Args {
+    /// `--novr` / `--openxr` / `--openvr`（`--profile` 以外の最初の引数）。
+    runtime: Option<String>,
+    /// `--profile` で `Some(None)`（既定のダンプ先）、`--profile=PATH` で `Some(Some(PATH))`。
+    profile: Option<Option<PathBuf>>,
+}
+
+impl Args {
+    fn parse(args: impl IntoIterator<Item = String>) -> Self {
+        let mut out = Self::default();
+        for a in args {
+            match a.strip_prefix("--profile") {
+                Some("") => out.profile = Some(None),
+                Some(rest) if rest.starts_with('=') => {
+                    out.profile = Some(Some(PathBuf::from(&rest[1..])))
+                }
+                _ if out.runtime.is_none() => out.runtime = Some(a),
+                _ => logger::warn!("知らない引数を無視する", arg = a),
+            }
+        }
+        out
+    }
+}
+
+/// プロファイラを起こす。ダンプ先は既定 `os::log_dir()/profile.csv`（前回分は `profile-prev.csv`）。
+/// 作れなくても計測と表示はする。
+fn start_profiler(path: Option<PathBuf>) -> profiler::Profiler {
+    let path = path.or_else(|| os::log_dir().map(|d| d.join("profile.csv")));
+    let out = path.as_ref().and_then(|p| match os::create_rotated(p) {
+        Ok(f) => Some(Box::new(BufWriter::new(f)) as Box<dyn Write>),
+        Err(e) => {
+            logger::warn!(
+                "プロファイルのダンプ先を作れない",
+                path = p.display(),
+                error = e
+            );
+            None
+        }
+    });
+    if let (Some(p), Some(_)) = (&path, &out) {
+        logger::info!("プロファイルを CSV にダンプする", path = p.display());
+    }
+    profiler::Profiler::new(out).unwrap_or_else(|e| {
+        logger::warn!("プロファイルの CSV を書けないので表示だけにする", error = e);
+        profiler::Profiler::new(None).expect("出力先が無ければ失敗しない")
+    })
 }
 
 /// 標準エラー出力と `os::log_dir()/nyaw.log` へ出すロガーを設定する。レベルは `NYAW_LOG` > 設定ファイルの `log`（既定 info）。
@@ -65,5 +115,40 @@ fn init_logger(from_config: Option<String>) {
             error = e
         ),
         (None, _) => logger::warn!("ログファイルの置き場が決まらないので標準エラー出力のみに出す"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Args {
+        Args::parse(args.iter().map(|s| s.to_string()))
+    }
+
+    #[test]
+    fn profile_flag_is_off_by_default_and_independent_of_runtime() {
+        assert_eq!(parse(&[]), Args::default());
+        assert_eq!(
+            parse(&["--novr"]),
+            Args {
+                runtime: Some("--novr".into()),
+                profile: None
+            }
+        );
+        assert_eq!(
+            parse(&["--profile", "--openxr"]),
+            Args {
+                runtime: Some("--openxr".into()),
+                profile: Some(None)
+            }
+        );
+        assert_eq!(
+            parse(&["--openvr", "--profile=out/p.csv"]),
+            Args {
+                runtime: Some("--openvr".into()),
+                profile: Some(Some(PathBuf::from("out/p.csv")))
+            }
+        );
     }
 }

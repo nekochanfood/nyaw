@@ -3,17 +3,23 @@
 //! そのためビューはデスクトップの GPUI ビューと全く同じように書け、VR 上にあることを意識しない。
 //! 逆向きは [`capture`] でウィンドウをオフスクリーン描画して読み戻し、`Overlay::submit` で VR パネルへ送る。
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use gpui::{
     AnyView, AnyWindowHandle, App, Bounds, Context, Entity, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, Window, WindowBounds, WindowHandle, WindowOptions, prelude::*, px, size,
+    ScrollWheelEvent, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rgb,
+    size,
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Kernel, PanelCommand, PanelId, PanelStatus, PointerEvent, Pose, Surface, Vec2, VrBackend,
+    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, Pose, Surface, Vec2,
+    VrBackend,
 };
+use profiler::{Profiler, ProfilerView, Stages};
 
 /// 1つの手のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
 /// 位置とボタン状態を持つがオーバーレイのイベントは持たないので、直前の値を保持する。
@@ -90,13 +96,16 @@ pub struct PanelState {
 pub struct PanelControl {
     pub panels: HashMap<PanelId, PanelState>,
     pub spawns: Vec<PanelSpec>,
+    /// 計測するか。ビューが切り替え、フレームループが計測とプロファイラパネルの開閉を合わせる。
+    /// パネルの閉じるボタンでも `false` になる。
+    pub profiling: bool,
 }
 
 impl gpui::Global for PanelControl {}
 
-/// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す。
+/// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す（`true` を返す）。
 /// 入力を配送した後・描画する前に毎フレーム呼ぶ。
-pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut App) {
+pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut App) -> bool {
     let ctl = cx
         .default_global::<PanelControl>()
         .panels
@@ -106,10 +115,12 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
         kernel.apply(panel, c);
     }
     let status = kernel.status(panel);
-    if ctl.status != status {
-        ctl.status = status;
-        cx.refresh_windows();
+    if ctl.status == status {
+        return false;
     }
+    ctl.status = status;
+    cx.refresh_windows();
+    true
 }
 
 /// 1フレーム分: 下位パイプラインを回し、パネル宛てのイベントを GPUI 入力に変換して返す。
@@ -145,6 +156,11 @@ pub struct Frame {
 // 上流で一般公開されたらフィーチャーを外す。Linux は gpui_wgpu のヘッドレスレンダラ経由が次の一手。
 pub fn capture(window: &mut Window, cx: &mut App) -> gpui::Result<Frame> {
     window.draw(cx).clear(cx);
+    read_back(window)
+}
+
+/// 描き直し済みのシーンを GPU で描画して読み戻す（[`capture`] の後半。プロファイラが別々に測るため分けてある）。
+fn read_back(window: &mut Window) -> gpui::Result<Frame> {
     let img = window.render_to_image()?;
     Ok(Frame {
         width: img.width(),
@@ -193,8 +209,19 @@ pub fn open_panel_window<V: Render>(
 }
 
 const PANEL_PX: (u32, u32) = (800, 600);
-/// Desktop（novr）だけが使う周期。VR ランタイムは `poll` が vsync まで待つ。
+/// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
+const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
+/// Desktop（novr）の周期。主ディスプレイのリフレッシュ間隔が取れないときに使う。VR ランタイムは `poll` が vsync まで待つ。
 const FRAME: Duration = Duration::from_millis(11);
+/// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
+// ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
+const IDLE_REDRAW: Duration = Duration::from_millis(250);
+
+/// 位置はそのまま、向きを水平方向（Y 軸回り）だけにした姿勢。前方は -Z。
+fn level(p: Pose) -> Pose {
+    let f = p.orientation * Vec3::NEG_Z;
+    Pose::new(p.position, Quat::from_rotation_y((-f.x).atan2(-f.z)))
+}
 
 type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
 
@@ -202,6 +229,16 @@ type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
 pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
+    /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
+    in_view: bool,
+    size: Vec2,
+    resolution: (u32, u32),
+    /// 起動時に取り付ける先と相対姿勢。
+    attach: Option<(Device, Pose)>,
+    /// 起動時から掴めない。
+    locked: bool,
+    /// レーザーを描くパネル。
+    pointer: Option<(Hand, Pointer)>,
     build: Box<PanelBuilder>,
 }
 
@@ -213,6 +250,12 @@ impl PanelSpec {
         Self {
             pose,
             from: None,
+            in_view: false,
+            size: Vec2::new(0.8, 0.6),
+            resolution: PANEL_PX,
+            attach: None,
+            locked: false,
+            pointer: None,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -227,6 +270,37 @@ impl PanelSpec {
         }
     }
 
+    /// 開いた瞬間の目の前に出す。`offset` は頭から見た相対姿勢（頭の傾きは無視し、パネルは立てて置く）。
+    /// トラッキング空間の原点は人の居場所と一致しないので、召喚するパネルはこれで出す。
+    pub fn in_view(mut self, offset: Pose) -> Self {
+        (self.pose, self.from, self.in_view) = (offset, None, true);
+        self
+    }
+
+    /// 大きさ（m）と解像度（px）を指定する。既定は 0.8m × 0.6m / 800 × 600。
+    pub fn sized(mut self, size: Vec2, resolution: (u32, u32)) -> Self {
+        (self.size, self.resolution) = (size, resolution);
+        self
+    }
+
+    /// 起動時にデバイスへ取り付ける。
+    pub fn attached(mut self, device: Device, offset: Pose) -> Self {
+        self.attach = Some((device, offset));
+        self
+    }
+
+    /// 起動時から掴めなくする。
+    pub fn locked(mut self) -> Self {
+        self.locked = true;
+        self
+    }
+
+    /// `hand` のレーザー（線またはカーソル）を描くパネルにする。置き場所はオーバーレイ層が決める。
+    pub fn pointer(mut self, hand: Hand, part: Pointer) -> Self {
+        self.pointer = Some((hand, part));
+        self
+    }
+
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, next: PanelId) -> Pose {
         match self.from {
             Some(from) => {
@@ -236,6 +310,7 @@ impl PanelSpec {
                         Quat::IDENTITY,
                     )
             }
+            None if self.in_view => level(kernel.hmd()) * self.pose,
             None => self.pose,
         }
     }
@@ -266,9 +341,29 @@ impl Render for PanelRoot {
 /// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
 /// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通り、違いは `kernel.surface()` だけ。
 /// パネルに載せる画面（上の層）は `panels` で受け取る。UI 層はどの画面かを知らない。
-pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
+/// `profiler` があれば起動時から計測し（`PanelControl::profiling`）、段階ごとの所要時間をプロファイラパネルにグラフで出す。
+pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler>) {
     let surface = kernel.surface();
     gpui_platform::application().run(move |cx: &mut App| {
+        // novr はディスプレイのリフレッシュに揃える。
+        // ponytail: 起動時の主ディスプレイで固定。モニタ間の移動や設定変更を追うなら毎フレーム問い合わせる。
+        let frame = cx
+            .primary_display()
+            .and_then(|d| d.refresh_interval())
+            .unwrap_or(FRAME);
+        // novr はタイマーが周期を決めるので予算が分かる。VR は vsync の間隔から推定する。
+        let budget = move |p: Profiler| {
+            if surface == Surface::Desktop {
+                p.with_budget(frame)
+            } else {
+                p
+            }
+        };
+        if let Some(p) = profiler {
+            cx.set_global(budget(p));
+            cx.default_global::<PanelControl>().profiling = true;
+        }
+        let mut profiler_panel: Option<PanelId> = None;
         let mut windows: Vec<(PanelId, AnyWindowHandle)> = panels
             .into_iter()
             .enumerate()
@@ -282,21 +377,32 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
             let mut bridges = HashMap::new();
             let mut warned = false;
             let mut last = vec![None; windows.len()];
+            // パネルごとの最後に描いた時刻（None = 次のフレームで必ず描く）。
+            let mut drawn: Vec<Option<Instant>> = vec![None; windows.len()];
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
+            // 0 だとこのループがすぐ再スケジュールされ、後から積まれた GPUI のタスクが走らない。
+            // 途中で開いたパネルのリサイズ（SetWindowPos はタスクで行われる）が届かず、1x1 のまま表示されなかった。
+            // poll は次の vsync までの残りを眠るので、ここで 1ms 譲っても周期は変わらない。
             let wait = if surface == Surface::Desktop {
-                FRAME
+                frame
             } else {
-                Duration::ZERO
+                Duration::from_millis(1)
             };
             loop {
+                let begin = Instant::now();
                 cx.background_executor().timer(wait).await;
                 let mut inputs: Vec<Vec<PlatformInput>> =
                     (0..windows.len()).map(|_| Vec::new()).collect();
                 for (panel, input) in pump(&mut kernel, &mut bridges) {
                     inputs[panel].push(input);
                 }
+                // ponytail: pump の poll（VR は vsync 待ち）とヒット判定をまとめて wait とする。判定が重くなったら分けて測る。
+                let mut stages = Stages {
+                    wait: begin.elapsed(),
+                    ..Default::default()
+                };
                 if kernel.quit_requested() {
-                    cx.update(|cx| cx.quit());
+                    cx.update(quit);
                     return;
                 }
                 // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
@@ -305,35 +411,59 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
                     if kernel.panel(panel).closed {
                         continue;
                     }
+                    // 描画と読み戻し（GPU の完了待ちを含む）は重いので、入力・状態の変化があったとき、
+                    // 前回描いてから IDLE_REDRAW 経ったときだけ行う。
+                    let mut redraw = !inputs.is_empty()
+                        || drawn[panel].is_none_or(|t| t.elapsed() >= IDLE_REDRAW);
+                    let mut changed = false;
                     let Ok(frame) = cx.update_window(window, |_, window, cx| {
+                        let t = Instant::now();
                         for input in inputs {
                             window.dispatch_event(input, cx);
                         }
-                        sync_panel(&mut kernel, panel, cx);
+                        changed = sync_panel(&mut kernel, panel, cx);
+                        redraw |= changed;
+                        stages.input += t.elapsed();
                         if kernel.panel(panel).closed {
                             window.remove_window();
                             return None;
                         }
                         // Desktop では OS が表示するので読み戻さない。
-                        // ponytail: Overlay では変化がなくても毎フレーム描画して送る。重ければ dirty なときだけにする。
-                        (surface == Surface::Overlay).then(|| capture(window, cx))
+                        (surface == Surface::Overlay && redraw).then(|| {
+                            let t = Instant::now();
+                            window.draw(cx).clear(cx);
+                            let scene = Instant::now();
+                            let frame = read_back(window);
+                            stages.draw += scene - t;
+                            stages.render += scene.elapsed();
+                            frame
+                        })
                     }) else {
                         // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じ、全部閉じたら終了する。
                         kernel.apply(panel, PanelCommand::Close);
                         if (0..windows.len()).all(|p| kernel.panel(p).closed) {
-                            cx.update(|cx| cx.quit());
+                            cx.update(quit);
                             return;
                         }
                         continue;
                     };
+                    if changed {
+                        // sync_panel は全ウィンドウを描き直させる（状態はどのパネルにも表示されうる）。
+                        drawn.iter_mut().for_each(|t| *t = None);
+                    }
                     match frame {
-                        // ponytail: 描画の読み戻しは毎フレーム行い、画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
-                        // GPUI が dirty を公開したら、読み戻しごと省く。
-                        Some(Ok(f)) if last[panel].as_ref() != Some(&f) => {
-                            kernel.submit(panel, f.width, f.height, &f.rgba);
-                            last[panel] = Some(f);
+                        // 開いた直後はウィンドウの大きさの反映が間に合わず 1x1 で描かれる。送らずに次のフレームで描き直す。
+                        Some(Ok(f)) if f.width <= 1 || f.height <= 1 => {}
+                        // 画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
+                        Some(Ok(f)) => {
+                            drawn[panel] = Some(Instant::now());
+                            if last[panel].as_ref() != Some(&f) {
+                                let t = Instant::now();
+                                kernel.submit(panel, f.width, f.height, &f.rgba);
+                                stages.upload += t.elapsed();
+                                last[panel] = Some(f);
+                            }
                         }
-                        Some(Ok(_)) => {}
                         Some(Err(e)) if !warned => {
                             logger::error!("パネルの描画を取得できない", error = e, panel = panel);
                             warned = true;
@@ -347,16 +477,146 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
                     let i = windows.len();
                     windows.push(cx.update(|cx| open_panel(&mut kernel, spec, i, cx)));
                     last.push(None);
+                    drawn.push(None);
                 }
+                // 計測とプロファイラパネルを `profiling` に合わせる。
+                if let Some(p) = profiler_panel
+                    && kernel.panel(p).closed
+                {
+                    // OS の X などで閉じられた。
+                    profiler_panel = None;
+                    cx.update(|cx| cx.default_global::<PanelControl>().profiling = false);
+                }
+                let profiling = cx.update(|cx| cx.default_global::<PanelControl>().profiling);
+                if profiling != cx.update(|cx| cx.has_global::<Profiler>()) {
+                    cx.update(|cx| {
+                        logger::info!("プロファイラを切り替え", profiling = profiling);
+                        if profiling {
+                            // --profile 無しで始めたときは CSV に書かない。
+                            let p = Profiler::new(None).expect("出力先が無ければ失敗しない");
+                            cx.set_global(budget(p));
+                        } else {
+                            log_summary(cx);
+                            cx.remove_global::<Profiler>();
+                        }
+                        // 切り替えボタンの表示を変えるため、どのパネルも描き直させる。
+                        cx.refresh_windows();
+                    });
+                    drawn.iter_mut().for_each(|t| *t = None);
+                }
+                match profiler_panel {
+                    None if profiling => {
+                        let spec = PanelSpec::new(Pose::IDENTITY, |panel, _, cx| ProfilerPanel {
+                            panel,
+                            view: cx.new(|_| ProfilerView),
+                        })
+                        .sized(Vec2::new(1.1, 0.56), (1100, 560))
+                        .in_view(PROFILER_POSE);
+                        let i = windows.len();
+                        let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, i, cx));
+                        logger::info!(
+                            "プロファイラパネルを開いた",
+                            panel = panel,
+                            pose = ?kernel.panel(panel).pose
+                        );
+                        windows.push((panel, window));
+                        last.push(None);
+                        drawn.push(None);
+                        profiler_panel = Some(panel);
+                    }
+                    Some(p) if !profiling => {
+                        // 次のフレームの sync_panel が閉じてウィンドウを消す。
+                        cx.update(|cx| {
+                            cx.default_global::<PanelControl>()
+                                .panels
+                                .entry(p)
+                                .or_default()
+                                .commands
+                                .push(PanelCommand::Close)
+                        });
+                        profiler_panel = None;
+                    }
+                    _ => {}
+                }
+                cx.update(|cx| {
+                    if cx.has_global::<Profiler>() {
+                        cx.global_mut::<Profiler>().record(Instant::now(), stages);
+                    }
+                    if let Some(p) = profiler_panel
+                        && let Some((_, w)) = windows.iter().find(|(id, _)| *id == p)
+                    {
+                        // グラフは毎フレーム変わるので描き直させる（VR では IDLE_REDRAW を待たずに読み戻す）。
+                        let _ = cx.update_window(*w, |_, w, _| w.refresh());
+                        drawn[p] = None;
+                    }
+                });
             }
         })
         .detach();
     });
 }
 
+/// 終了する。プロファイル中なら集計をログへ残す。
+fn quit(cx: &mut App) {
+    log_summary(cx);
+    cx.quit();
+}
+
+/// プロファイル中なら集計をログへ残す。
+fn log_summary(cx: &App) {
+    if let Some(p) = cx.try_global::<Profiler>() {
+        let s = p.summary();
+        let ms = |d: Duration| format!("{:.3}", d.as_secs_f64() * 1e3);
+        logger::info!(
+            "プロファイルの集計（直近）",
+            frames = s.frames,
+            dropped = s.dropped,
+            fps = format!("{:.1}", s.fps),
+            frame_avg_ms = ms(s.frame_avg),
+            frame_p99_ms = ms(s.frame_p99),
+            cpu_avg_ms = ms(s.cpu_avg),
+            gpu_avg_ms = ms(s.gpu_avg)
+        );
+    }
+}
+
+/// プロファイラのパネル。グラフの上に閉じるボタン（計測も止める）を出す。
+/// VR ではパネルに OS の閉じるボタンが無いので要る。
+struct ProfilerPanel {
+    panel: PanelId,
+    view: Entity<ProfilerView>,
+}
+
+impl Render for ProfilerPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(0x17181c))
+            .child(
+                div().flex().justify_end().p_1().child(
+                    div()
+                        .id(("close-profiler", self.panel))
+                        .debug_selector(|| "close-profiler".into())
+                        .px_3()
+                        .py_1()
+                        .bg(rgb(0x3a3d46))
+                        .hover(|s| s.bg(rgb(0x50545f)))
+                        .text_color(rgb(0xd8dae0))
+                        .child("Close")
+                        .on_click(|_, _, cx| {
+                            cx.default_global::<PanelControl>().profiling = false;
+                        }),
+                ),
+            )
+            .child(div().flex_1().child(self.view.clone()))
+    }
+}
+
 fn open_panel(
     kernel: &mut Kernel,
-    spec: PanelSpec,
+    mut spec: PanelSpec,
     index: usize,
     cx: &mut App,
 ) -> (PanelId, AnyWindowHandle) {
@@ -365,11 +625,20 @@ fn open_panel(
         .add_panel(
             &format!("nyaw.panel.{index}"),
             pose,
-            Vec2::new(0.8, 0.6),
-            PANEL_PX,
+            spec.size,
+            spec.resolution,
         )
         .expect("create overlay");
-    let window = open_panel_window(cx, kernel.surface(), PANEL_PX, |w, cx| {
+    if let Some((device, offset)) = spec.attach.take() {
+        kernel.apply(panel, PanelCommand::Attach(device, offset));
+    }
+    if spec.locked {
+        kernel.apply(panel, PanelCommand::Lock(true));
+    }
+    if let Some((hand, part)) = spec.pointer {
+        kernel.apply(panel, PanelCommand::Pointer(hand, part));
+    }
+    let window = open_panel_window(cx, kernel.surface(), spec.resolution, |w, cx| {
         let view = spec.build(panel, w, cx);
         cx.new(|_| PanelRoot::new(view))
     })
@@ -403,7 +672,7 @@ mod tests {
 
     #[gpui::test]
     fn laser_click_reaches_gpui_view(cx: &mut TestAppContext) {
-        let (home, cx) = cx.add_window_view(|_, _| Probe::default());
+        let (testing, cx) = cx.add_window_view(|_, _| Probe::default());
         cx.run_until_parked();
         let c = cx.debug_bounds("probe").expect("button rendered").center();
         let pos = Vec2::new(c.x.into(), c.y.into());
@@ -421,7 +690,7 @@ mod tests {
             });
         }
         cx.run_until_parked();
-        assert_eq!(home.read_with(cx, |h, _| h.clicks), 1);
+        assert_eq!(testing.read_with(cx, |h, _| h.clicks), 1);
     }
 
     #[gpui::test]
@@ -444,6 +713,21 @@ mod tests {
             .update(|cx| cx.update_window(window.into(), |_, w, _| w.viewport_size()))
             .unwrap();
         assert_eq!(vp, size(px(PANEL_PX.0 as f32), px(PANEL_PX.1 as f32)));
+    }
+
+    #[gpui::test]
+    fn spec_attaches_locks_and_sizes_panel(cx: &mut TestAppContext) {
+        let mut kernel = Kernel::boot(Some("novr"), Default::default()).unwrap();
+        let hand = Device::Controller(Hand::Left);
+        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default())
+            .sized(Vec2::new(0.1, 0.05), (10, 5))
+            .attached(hand.clone(), Pose::IDENTITY)
+            .locked();
+        let (panel, _) = cx.update(|cx| open_panel(&mut kernel, spec, 0, cx));
+        let p = kernel.panel(panel);
+        assert_eq!(p.attached, Some((hand, Pose::IDENTITY)));
+        assert!(p.locked);
+        assert_eq!((p.size, p.resolution), (Vec2::new(0.1, 0.05), (10, 5)));
     }
 
     #[gpui::test]
@@ -483,6 +767,19 @@ mod tests {
             sync_panel(&mut kernel, panel, cx);
         });
         assert_eq!(kernel.panel(panel).attached, None);
+    }
+
+    /// 目の前に出すパネルは頭の向く水平方向に置き、うつむいていても立てて置く。
+    #[test]
+    fn in_view_places_level_in_front_of_head() {
+        // +X を向き、30° うつむいた頭。
+        let head = Pose::new(
+            Vec3::new(1.0, 1.6, 0.0),
+            Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.5),
+        );
+        let p = level(head) * Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
+        assert!(p.position.abs_diff_eq(Vec3::new(2.0, 1.6, 0.0), 1e-5));
+        assert!((p.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
     }
 
     #[test]

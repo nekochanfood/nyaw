@@ -8,8 +8,8 @@
 pub mod config;
 
 pub use config::Config;
-pub use overlay::{self, Overlay, Panel, PanelId, PointerEvent, UiEvent};
-pub use vr::{self, Device, Pose, Runtime, Surface, Vec2, VrBackend, VrError};
+pub use overlay::{self, Overlay, Panel, PanelId, Pointer, PointerEvent, UiEvent};
+pub use vr::{self, Device, Hand, Pose, Runtime, Surface, Vec2, VrBackend, VrError};
 
 /// 上位層（ビュー）からパネルへの操作要求。
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +18,8 @@ pub enum PanelCommand {
     Detach,
     Lock(bool),
     Close,
+    /// その手のレーザーを描くパネルにする（ヒット判定の対象外になり、置き場所はオーバーレイが決める）。
+    Pointer(Hand, Pointer),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -32,6 +34,8 @@ pub struct PanelStatus {
     pub menu: bool,
     /// パネルを掴んでいる。
     pub grabbed: bool,
+    /// 閉じられた。
+    pub closed: bool,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -106,6 +110,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.tick(&mut self.vr)
     }
 
+    /// 最後の tick の HMD の姿勢。
+    pub fn hmd(&self) -> Pose {
+        self.overlay.hmd()
+    }
+
     /// ランタイムが終了を求めている（SteamVR の終了など）。呼び出し側はループを抜ける。
     pub fn quit_requested(&self) -> bool {
         self.overlay.quit_requested()
@@ -123,6 +132,9 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Detach => self.overlay.detach(panel),
             PanelCommand::Lock(locked) => self.overlay.set_locked(panel, locked),
             PanelCommand::Close => self.overlay.close(&mut self.vr, panel),
+            PanelCommand::Pointer(hand, part) => {
+                self.overlay.set_pointer(&mut self.vr, panel, hand, part)
+            }
         }
     }
 
@@ -135,6 +147,7 @@ impl<B: VrBackend> Kernel<B> {
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
             grabbed: self.overlay.grabbed(panel),
+            closed: p.closed,
         }
     }
 }

@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use vr::{Device, Frame, Hand, OverlayId, Pose, Vec2, Vec3, VrBackend, VrError};
+use vr::{Device, Frame, Hand, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
 pub use input::ControllerState;
 
@@ -26,9 +26,43 @@ pub struct Panel {
     pub locked: bool,
     /// 閉じられた。ヒット判定の対象外で、PanelId は詰めずに欠番のまま残る。
     pub closed: bool,
+    /// どの手のレーザーを描くパネルか。ヒット判定の対象外で、配置は毎 tick ここで決める。
+    pub pointer: Option<(Hand, Pointer)>,
     overlay: OverlayId,
     /// ランタイムへ最後に送った姿勢。変わったときだけ送る。
     sent: Option<Pose>,
+    /// ランタイムへ最後に送った（表示, 幅）。ポインタのパネルだけが使う。
+    shown: Option<(bool, f32)>,
+}
+
+/// レーザーを描くパネルの役割。見た目は上の層の画面が描き、置き場所はオーバーレイ層が決める。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pointer {
+    /// 手元からヒット点（無ければ [`LASER_MAX`]）まで伸びる線。幅 = 長さで、テクスチャの横方向が
+    /// レーザーの向き（左端が手元）。テクスチャの面はコントローラの上を向く。
+    Laser,
+    /// ヒット点に貼り付く印。パネルより手前に描く。ヒットしていなければ隠す。
+    Cursor,
+}
+
+/// 何にも当たっていないときのレーザーの長さ（m）。
+pub const LASER_MAX: f32 = 1.5;
+/// カーソルをパネル面からレーザーの来る側へ浮かせる距離（m）。描画順でもパネルより手前に出すが、
+/// 奥行きで並べるランタイムでも同じ面に乗って Z ファイティングしないように少し離す。
+const CURSOR_LIFT: f32 = 0.003;
+/// レーザーのクアッドの向き: ローカル +X（テクスチャの右）を前方 -Z へ、面の法線 +Z を上 +Y へ。
+const LASER_ROT: Quat = Quat::from_xyzw(-0.5, 0.5, 0.5, 0.5);
+/// 描画順。パネルは 0。
+const LASER_SORT: u32 = 1;
+const CURSOR_SORT: u32 = 2;
+
+/// この tick のレーザー。
+#[derive(Debug, Clone, Copy)]
+struct Ray {
+    aim: Pose,
+    len: f32,
+    /// 当たったパネルとトラッキング空間での点。
+    hit: Option<(PanelId, Vec3)>,
 }
 
 impl Panel {
@@ -74,6 +108,8 @@ struct HandState {
     menu: bool,
     /// ドラッグ中のパネルと、コントローラから見たその相対姿勢。
     dragging: Option<(PanelId, Pose)>,
+    /// この tick のレーザー。コントローラが見えていなければ `None`。
+    ray: Option<Ray>,
 }
 
 #[derive(Debug, Default)]
@@ -85,6 +121,8 @@ pub struct Overlay {
     /// 最後の tick で見えていたトラッカーの ID（取り付け先の候補）。
     trackers: Vec<String>,
     quit: bool,
+    /// 最後の tick の HMD の姿勢。
+    hmd: Pose,
 }
 
 impl Overlay {
@@ -109,8 +147,10 @@ impl Overlay {
             attached: None,
             locked: false,
             closed: false,
+            pointer: None,
             overlay,
             sent: None,
+            shown: None,
         });
         Ok(self.panels.len() - 1)
     }
@@ -122,6 +162,11 @@ impl Overlay {
     /// 最後の tick でランタイムが終了を求めていたか。
     pub fn quit_requested(&self) -> bool {
         self.quit
+    }
+
+    /// 最後の tick の HMD の姿勢（新しいパネルを目の前に出すため）。
+    pub fn hmd(&self) -> Pose {
+        self.hmd
     }
 
     /// 最後の tick で見えていたトラッカーの ID。
@@ -159,6 +204,17 @@ impl Overlay {
         self.panels[id].locked = locked;
     }
 
+    /// `hand` のレーザーを描くパネルにする。以降はヒット判定の対象外になり、毎 tick レーザーに合わせて置かれる。
+    pub fn set_pointer(&mut self, vr: &mut dyn VrBackend, id: PanelId, hand: Hand, part: Pointer) {
+        let p = &mut self.panels[id];
+        p.pointer = Some((hand, part));
+        let sort = match part {
+            Pointer::Laser => LASER_SORT,
+            Pointer::Cursor => CURSOR_SORT,
+        };
+        vr.set_overlay_sort(p.overlay, sort);
+    }
+
     /// パネルを閉じる。ランタイムにオーバーレイの破棄 API が無いので、透明な 1px を送って見えなくする。
     // ponytail: ランタイム側のオーバーレイは残る。数が問題になったら VrBackend に destroy を足す。
     pub fn close(&mut self, vr: &mut dyn VrBackend, id: PanelId) {
@@ -191,6 +247,7 @@ impl Overlay {
     pub fn tick(&mut self, vr: &mut dyn VrBackend) -> Vec<UiEvent> {
         let frame = vr.poll();
         self.quit = frame.quit;
+        self.hmd = frame.hmd;
         self.trackers = frame.trackers.iter().map(|(id, _)| id.clone()).collect();
         // 掴み中のパネルは手に従う（離したフレームで update_hand がオフセットを付け直す）。
         // 取り付け先が見失われたフレームは最後の姿勢のまま。
@@ -213,11 +270,28 @@ impl Overlay {
             }
         }
         let mut events = Vec::new();
+        for h in self.hands.values_mut() {
+            h.ray = None;
+        }
         for raw in &frame.controllers {
-            let c = input::map(raw, self.inputs.get(&raw.hand));
+            let prev = self.inputs.get(&raw.hand).copied();
+            let c = input::map(raw, prev.as_ref());
             self.inputs.insert(raw.hand, c);
             self.update_hand(&c, &frame, &mut events);
+            let buttons = |c: &ControllerState| (c.select, c.grab, c.menu);
+            if prev.is_none_or(|p| buttons(&p) != buttons(&c)) {
+                logger::debug!(
+                    "コントローラのボタン",
+                    hand = ?c.hand,
+                    profile = raw.profile,
+                    select = c.select,
+                    grab = c.grab,
+                    menu = c.menu,
+                    hover = ?self.hands[&c.hand].hover,
+                );
+            }
         }
+        self.place_pointers(vr);
         for p in &mut self.panels {
             if p.sent != Some(p.pose) {
                 vr.set_overlay_pose(p.overlay, p.pose);
@@ -236,6 +310,11 @@ impl Overlay {
         if let Some((id, offset)) = st.dragging {
             if c.grab {
                 self.panels[id].pose = c.aim * offset;
+                st.ray = Some(Ray {
+                    aim: c.aim,
+                    len: offset.position.length(),
+                    hit: None,
+                });
                 return;
             }
             st.dragging = None;
@@ -253,9 +332,14 @@ impl Overlay {
             .panels
             .iter()
             .enumerate()
-            .filter(|(_, p)| !p.closed)
+            .filter(|(_, p)| !p.closed && p.pointer.is_none())
             .filter_map(|(id, p)| hit_test(p, &c.aim).map(|(pos, t)| (id, pos, t)))
             .min_by(|a, b| a.2.total_cmp(&b.2));
+        st.ray = Some(Ray {
+            aim: c.aim,
+            len: hit.map_or(LASER_MAX, |h| h.2),
+            hit: hit.map(|(id, _, t)| (id, c.aim.position + c.aim.forward() * t)),
+        });
         // ロック中のパネルは掴めない（掴みボタンは無視して普通に指す）。
         let grab_started = grab_started && hit.is_some_and(|h| !self.panels[h.0].locked);
 
@@ -308,6 +392,60 @@ impl Overlay {
         }
         st.hover = Some(id);
         st.select = c.select;
+    }
+}
+
+impl Overlay {
+    /// レーザーとカーソルのパネルを、この tick のレーザーに合わせて置く・伸ばす・隠す。
+    fn place_pointers(&mut self, vr: &mut dyn VrBackend) {
+        for id in 0..self.panels.len() {
+            let p = &self.panels[id];
+            let Some((hand, part)) = p.pointer.filter(|_| !p.closed) else {
+                continue;
+            };
+            let ray = self.hands.get(&hand).and_then(|h| h.ray);
+            let placed = match (part, ray) {
+                (Pointer::Laser, Some(r)) => Some((
+                    r.aim * Pose::new(Vec3::new(0.0, 0.0, -r.len / 2.0), LASER_ROT),
+                    r.len,
+                )),
+                (
+                    Pointer::Cursor,
+                    Some(Ray {
+                        aim,
+                        hit: Some((target, point)),
+                        ..
+                    }),
+                ) => {
+                    let face = self.panels[target].pose.orientation;
+                    let normal = face * Vec3::Z;
+                    // レーザーの来る側（裏から指していれば裏側）へ浮かせる。
+                    let side = (aim.position - point).dot(normal).signum();
+                    Some((
+                        Pose::new(point + normal * side * CURSOR_LIFT, face),
+                        p.size.x,
+                    ))
+                }
+                _ => None,
+            };
+            let p = &mut self.panels[id];
+            let shown = match placed {
+                Some((pose, width)) => {
+                    p.pose = pose;
+                    (true, width)
+                }
+                None => (false, p.shown.map_or(p.size.x, |s| s.1)),
+            };
+            if p.shown != Some(shown) {
+                if p.shown.map(|s| s.0) != Some(shown.0) {
+                    vr.set_overlay_visible(p.overlay, shown.0);
+                }
+                if p.shown.map(|s| s.1) != Some(shown.1) {
+                    vr.set_overlay_width(p.overlay, shown.1);
+                }
+                p.shown = Some(shown);
+            }
+        }
     }
 }
 
@@ -573,6 +711,65 @@ mod tests {
         controller(&mut vr, Pose::IDENTITY, &[]);
         ov.tick(&mut vr);
         assert!(!ov.menu_held() && !ov.grabbed(0));
+    }
+
+    #[test]
+    fn laser_rot_lays_texture_along_aim_facing_up() {
+        assert!((LASER_ROT * Vec3::X).abs_diff_eq(Vec3::NEG_Z, 1e-6));
+        assert!((LASER_ROT * Vec3::Z).abs_diff_eq(Vec3::Y, 1e-6));
+    }
+
+    /// パネル（z = -1）の前にレーザーとカーソルを置き、右手で中心を指す。
+    fn with_pointers() -> (MockBackend, Overlay, PanelId, PanelId) {
+        let (mut vr, mut ov) = setup();
+        let mut add = |ov: &mut Overlay, part| {
+            let id = ov
+                .add_panel(&mut vr, "p", Pose::IDENTITY, Vec2::new(0.02, 0.02), (8, 8))
+                .unwrap();
+            ov.set_pointer(&mut vr, id, Hand::Right, part);
+            id
+        };
+        let laser = add(&mut ov, Pointer::Laser);
+        let cursor = add(&mut ov, Pointer::Cursor);
+        (vr, ov, laser, cursor)
+    }
+
+    #[test]
+    fn laser_ends_at_hit_and_cursor_floats_in_front_of_panel() {
+        let (mut vr, mut ov, laser, cursor) = with_pointers();
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        // ポインタのパネルはレーザーの手前にあってもヒットしない。
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [PointerEvent::Move {
+                pos: Vec2::new(50.0, 50.0)
+            }]
+        );
+        let l = &vr.overlays[laser];
+        assert!(l.visible && (l.width_m - 1.0).abs() < 1e-5);
+        assert!(l.pose.position.abs_diff_eq(Vec3::new(0.0, 0.0, -0.5), 1e-5));
+        let c = &vr.overlays[cursor];
+        assert!(c.visible);
+        assert!(
+            c.pose
+                .position
+                .abs_diff_eq(Vec3::new(0.0, 0.0, -1.0 + CURSOR_LIFT), 1e-5)
+        );
+        // カーソルはパネル（0）とレーザーより手前に描く。
+        assert!(c.sort > l.sort && l.sort > vr.overlays[0].sort);
+    }
+
+    #[test]
+    fn missing_panel_hides_cursor_and_extends_laser() {
+        let (mut vr, mut ov, laser, cursor) = with_pointers();
+        controller(&mut vr, at(5.0, 0.0, 0.0), &[]);
+        ov.tick(&mut vr);
+        assert!((vr.overlays[laser].width_m - LASER_MAX).abs() < 1e-5);
+        assert!(!vr.overlays[cursor].visible);
+        // コントローラを見失えばレーザーも隠す。
+        vr.frame.controllers.clear();
+        ov.tick(&mut vr);
+        assert!(!vr.overlays[laser].visible);
     }
 
     #[test]
