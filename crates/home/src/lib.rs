@@ -10,8 +10,9 @@ use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
     ScrollWheelEvent, Stateful, Window, anchored, deferred, div, prelude::*, rgb,
 };
-use ui::{PanelCommand, PanelControl};
-use vr::{Device, Hand, Pose, Quat, Vec3};
+use kernel::PanelCommand;
+use kernel::vr::{Device, Hand, Pose, Quat, Vec3};
+use ui::PanelControl;
 
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);

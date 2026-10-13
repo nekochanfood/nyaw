@@ -8,7 +8,7 @@ use gpui::{
     Bounds, Context, Entity, Modifiers, MouseButton, Pixels, Point, Render, ScrollDelta,
     ScrollWheelEvent, TestAppContext, VisualTestContext, Window,
 };
-use overlay::{Overlay, PanelId};
+use kernel::{Kernel, PanelId};
 use vr::{Runtime, VrBackend};
 
 use crate::{Driver, Pose, Quat, Vec2, Vec3, raster};
@@ -20,8 +20,7 @@ pub struct NoVrKit<'a, V: 'static> {
     cx: &'a mut VisualTestContext,
     view: Entity<V>,
     /// 描画の送り先。novr では何もしない。
-    pub vr: Box<dyn VrBackend>,
-    pub overlay: Overlay,
+    pub kernel: Kernel,
     pub panel: PanelId,
     /// マウスの位置と、左ボタンを押したままか。
     pos: Point<Pixels>,
@@ -40,21 +39,20 @@ impl<'a, V: Render> NoVrKit<'a, V> {
     /// 描画を `vr` のオーバーレイ（正面 1m）へ毎フレーム送る。入力はマウスのまま。
     pub fn with_backend(
         cx: &'a mut TestAppContext,
-        mut vr: Box<dyn VrBackend>,
+        vr: Box<dyn VrBackend>,
         build: impl FnOnce(&mut Window, &mut Context<V>) -> V,
     ) -> Self {
         let (view, cx) = cx.add_window_view(build);
-        let mut overlay = Overlay::new();
         let vp = cx.update(|window, _| window.viewport_size());
         let res = (f32::from(vp.width) as u32, f32::from(vp.height) as u32);
-        let panel = overlay
-            .add_panel(vr.as_mut(), "nyaw.testkit", PANEL_POSE, Vec2::ONE, res)
+        let mut kernel = Kernel::with_backend(vr, Default::default());
+        let panel = kernel
+            .add_panel("nyaw.testkit", PANEL_POSE, Vec2::ONE, res)
             .expect("パネルを作れない");
         let mut kit = Self {
             cx,
             view,
-            vr,
-            overlay,
+            kernel,
             panel,
             pos: Point::default(),
             held: false,
@@ -66,14 +64,12 @@ impl<'a, V: Render> NoVrKit<'a, V> {
     /// 本番のフレームループ1回分: ビューからのパネル操作を反映し、落ち着くまで回す。
     pub fn step(&mut self) -> &mut Self {
         self.cx.run_until_parked();
-        let (overlay, vr, panel) = (&mut self.overlay, self.vr.as_ref(), self.panel);
-        self.cx
-            .update(|_, cx| ui::sync_panel(overlay, vr, panel, cx));
+        let (kernel, panel) = (&mut self.kernel, self.panel);
+        self.cx.update(|_, cx| ui::sync_panel(kernel, panel, cx));
         self.cx.run_until_parked();
         let frame = self.cx.update(raster::capture);
-        let vr = self.vr.as_mut();
-        self.overlay
-            .submit(vr, self.panel, frame.width, frame.height, &frame.rgba);
+        self.kernel
+            .submit(self.panel, frame.width, frame.height, &frame.rgba);
         self
     }
 

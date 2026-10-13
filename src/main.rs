@@ -1,9 +1,9 @@
-//! ブートローダー: ロガーを組み立て、ランタイム（OpenVR / OpenXR / novr）を選び、メインスレッドと載せる画面（Home）を UI 層に引き渡す。それ以外は何も置かない。
+//! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（Home）を UI 層に引き渡す。それ以外は何も置かない。
 
 use std::process::ExitCode;
 
+use kernel::{Kernel, config};
 use logger::{Level, Logger, StderrSink};
-use vr::Runtime;
 
 fn main() -> ExitCode {
     let config = config::load();
@@ -16,30 +16,11 @@ fn main() -> ExitCode {
         }
     };
     // 優先順位: コマンドライン > 設定ファイル
-    let prefer = match std::env::args()
-        .nth(1)
-        .as_deref()
-        .or(config.runtime.as_deref())
-    {
-        Some("--novr" | "novr") => Some(Runtime::NoVr),
-        Some("--openxr" | "openxr") => Some(Runtime::OpenXr),
-        Some("--openvr" | "openvr") => Some(Runtime::OpenVr),
-        _ => None,
+    let requested = std::env::args().nth(1).or(config.runtime.clone());
+    let Ok(kernel) = Kernel::boot(requested.as_deref(), config) else {
+        return ExitCode::FAILURE;
     };
-    let backend = match vr::connect(prefer) {
-        Ok(b) => b,
-        // 指定なしで VR ランタイムが無ければ novr で起動する（novr は常に使える）
-        Err(e) if prefer.is_none() => {
-            logger::warn!("VR ランタイムに接続できないので novr で起動する", error = e);
-            vr::connect(Some(Runtime::NoVr)).expect("novr は常に接続できる")
-        }
-        Err(e) => {
-            logger::error!("VR ランタイムに接続できない", runtime = ?prefer, error = e);
-            return ExitCode::FAILURE;
-        }
-    };
-    logger::info!("ランタイムを選択", runtime = ?backend.runtime());
-    ui::run(backend, |_, _| home::Home::default());
+    ui::run(kernel, |_, _| home::Home::default());
     ExitCode::SUCCESS
 }
 

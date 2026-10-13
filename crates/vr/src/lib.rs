@@ -173,6 +173,28 @@ pub trait VrBackend {
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]);
 }
 
+/// `Box<dyn VrBackend>` もそのままバックエンドとして使える（カーネルが具象型・動的型の両方を持てるように）。
+impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
+    fn runtime(&self) -> Runtime {
+        (**self).runtime()
+    }
+    fn surface(&self) -> Surface {
+        (**self).surface()
+    }
+    fn poll(&mut self) -> Frame {
+        (**self).poll()
+    }
+    fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError> {
+        (**self).create_overlay(key, width_m)
+    }
+    fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
+        (**self).set_overlay_pose(id, pose)
+    }
+    fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
+        (**self).submit_overlay_pixels(id, width, height, rgba)
+    }
+}
+
 /// 希望のランタイムに接続する。VR ランタイムを希望した（または指定なしの）場合は、
 /// インストール済みのもの（OpenVR 優先）にフォールバックする。novr へのフォールバックは呼び出し側が決める。
 pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {

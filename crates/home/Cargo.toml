@@ -5,7 +5,7 @@ edition.workspace = true
 
 [dependencies]
 gpui.workspace = true
-vr.workspace = true
+kernel.workspace = true
 ui.workspace = true
 
 [dev-dependencies]

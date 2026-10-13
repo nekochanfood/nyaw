@@ -775,15 +775,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "config"
-version = "2026.0.1"
-dependencies = [
- "os",
- "serde",
- "toml 0.9.12+spec-1.1.0",
-]
-
-[[package]]
 name = "console_error_panic_hook"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2106,8 +2097,8 @@ name = "home"
 version = "2026.0.1"
 dependencies = [
  "gpui",
+ "kernel",
  "ui",
- "vr",
 ]
 
 [[package]]
@@ -2432,6 +2423,18 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kernel"
+version = "2026.0.1"
+dependencies = [
+ "logger",
+ "os",
+ "overlay",
+ "serde",
+ "toml 0.9.12+spec-1.1.0",
+ "vr",
 ]
 
 [[package]]
@@ -2951,12 +2954,11 @@ dependencies = [
 name = "nyaw"
 version = "2026.0.1"
 dependencies = [
- "config",
  "home",
+ "kernel",
  "logger",
  "os",
  "ui",
- "vr",
 ]
 
 [[package]]
@@ -4677,7 +4679,7 @@ dependencies = [
  "gpui",
  "home",
  "input",
- "overlay",
+ "kernel",
  "ui",
  "vr",
 ]
@@ -4986,9 +4988,8 @@ version = "2026.0.1"
 dependencies = [
  "gpui",
  "gpui_platform",
+ "kernel",
  "logger",
- "overlay",
- "vr",
 ]
 
 [[package]]
