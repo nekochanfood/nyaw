@@ -29,6 +29,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
     let compositor = client.interface(sys::IVRCompositor_Version)?;
     Ok(Box::new(OpenVrBackend {
         system,
+        render_models: client.interface(sys::IVRRenderModels_Version)?,
         overlay: client.interface(sys::IVROverlay_Version)?,
         textures: HashMap::new(),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
@@ -118,6 +119,7 @@ struct Textures {
 
 pub(crate) struct OpenVrBackend {
     system: *const sys::VR_IVRSystem_FnTable,
+    render_models: *const sys::VR_IVRRenderModels_FnTable,
     overlay: *const sys::VR_IVROverlay_FnTable,
     textures: HashMap<u64, Textures>,
     gpu: Gpu,
@@ -128,6 +130,32 @@ pub(crate) struct OpenVrBackend {
 impl OpenVrBackend {
     fn system(&self) -> &sys::VR_IVRSystem_FnTable {
         unsafe { &*self.system }
+    }
+
+    /// SteamVR がレンダーモデルに定義しているレーザーの出口（`tip`）の、デバイス原点からの相対姿勢。
+    fn tip(&self, device: u32, state: &mut ControllerState) -> Option<Pose> {
+        let mut model = self
+            .string_property(
+                device,
+                sys::ETrackedDeviceProperty_Prop_RenderModelName_String,
+            )
+            .into_bytes();
+        model.push(0);
+        let mut mode = sys::RenderModel_ControllerMode_State_t {
+            bScrollWheelVisible: false,
+        };
+        let mut out: sys::RenderModel_ComponentState_t =
+            unsafe { MaybeUninit::zeroed().assume_init() };
+        let ok = unsafe {
+            f((*self.render_models).GetComponentState)(
+                model.as_mut_ptr().cast(),
+                c"tip".as_ptr().cast_mut(),
+                state as *mut ControllerState as *mut sys::VRControllerState_t,
+                &mut mode,
+                &mut out,
+            )
+        };
+        ok.then(|| pose_from(&out.mTrackingToComponentLocal.m))
     }
 
     fn overlay(&self) -> &sys::VR_IVROverlay_FnTable {
@@ -173,6 +201,7 @@ impl OpenVrBackend {
             let prop = sys::ETrackedDeviceProperty_Prop_Axis0Type_Int32 + n as u32;
             *t = unsafe { f(s.GetInt32TrackedDeviceProperty)(device, prop, &mut err) };
         }
+        let tip = self.tip(device, &mut state);
         let profile = profile(&self.string_property(
             device,
             sys::ETrackedDeviceProperty_Prop_ControllerType_String,
@@ -180,9 +209,18 @@ impl OpenVrBackend {
         Some(RawController {
             hand,
             profile: profile.into(),
-            // ponytail: トラッキング姿勢をそのままレーザーに使う。Index は前方が下向きに傾くので、
-            // ずれが気になったら IVRInput のポーズアクション（/pose/aim）に切り替える。
-            aim: pose_from(&pose.mDeviceToAbsoluteTracking.m),
+            // デバイス原点は Index だと前方が下に傾くので、SteamVR 定義の `tip` を合成する。
+            // ponytail: レンダーモデルの旧 API。IVRInput の `/pose/tip` は action manifest が要るので使わない。
+            aim: {
+                let device_pose = pose_from(&pose.mDeviceToAbsoluteTracking.m);
+                match tip {
+                    Some(t) => Pose::new(
+                        device_pose.position + device_pose.orientation * t.position,
+                        device_pose.orientation * t.orientation,
+                    ),
+                    None => device_pose,
+                }
+            },
             inputs: inputs(profile, state.pressed, axis_types, state.axes),
         })
     }
