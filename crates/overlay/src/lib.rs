@@ -25,6 +25,8 @@ pub struct Panel {
     /// 掴んでも動かない。取り付けていなければ空間に固定される。
     pub locked: bool,
     overlay: OverlayId,
+    /// ランタイムへ最後に送った姿勢。変わったときだけ送る。
+    sent: Option<Pose>,
 }
 
 impl Panel {
@@ -102,6 +104,7 @@ impl Overlay {
             attached: None,
             locked: false,
             overlay,
+            sent: None,
         });
         Ok(self.panels.len() - 1)
     }
@@ -129,7 +132,7 @@ impl Overlay {
 
     /// パネルを `device` に取り付ける。以降の tick で `device` の姿勢 * `offset` に追従する。
     /// 取り付け中のパネルを掴んで動かすと、離した位置でオフセットが付け直される。
-    // ponytail: 姿勢は毎 tick オーバーレイ層で合成して送るので、ポーリング1回分遅れる。
+    // ponytail: 姿勢は tick（= vsync ごとの poll）の姿勢でオーバーレイ層が合成して送るので、1フレーム分遅れる。
     // 揺れが気になったらランタイムの相対配置（OpenVR の SetOverlayTransformTrackedDeviceRelative 等）に任せる。
     pub fn attach(&mut self, id: PanelId, device: Device, offset: Pose) {
         self.panels[id].attached = Some((device, offset));
@@ -186,9 +189,11 @@ impl Overlay {
         for c in frame.controllers.iter().map(input::map) {
             self.update_hand(&c, &frame, &mut events);
         }
-        // ponytail: 毎フレーム全パネルの姿勢を送る。ランタイム呼び出しが重くなったら変更分だけにする。
-        for p in &self.panels {
-            vr.set_overlay_pose(p.overlay, p.pose);
+        for p in &mut self.panels {
+            if p.sent != Some(p.pose) {
+                vr.set_overlay_pose(p.overlay, p.pose);
+                p.sent = Some(p.pose);
+            }
         }
         events
     }

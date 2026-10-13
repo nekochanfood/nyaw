@@ -132,6 +132,28 @@ impl OpenVrBackend {
         unsafe { &*self.system }
     }
 
+    /// 次の vsync まで待つ。オーバーレイアプリは WaitGetPoses でフレームを進められないので、
+    /// 直前の vsync からの経過時間と表示周波数から残りを計算して眠る。
+    // ponytail: 周波数が取れない／vsync が分からないときは待たない（呼び出し側が回し続ける）。
+    fn wait_vsync(&self) {
+        let s = self.system();
+        let mut err = Default::default();
+        let hz = unsafe {
+            f(s.GetFloatTrackedDeviceProperty)(
+                sys::k_unTrackedDeviceIndex_Hmd,
+                sys::ETrackedDeviceProperty_Prop_DisplayFrequency_Float,
+                &mut err,
+            )
+        };
+        let (mut since, mut counter) = (0.0f32, Default::default());
+        if hz > 0.0 && unsafe { f(s.GetTimeSinceLastVsync)(&mut since, &mut counter) } {
+            let left = 1.0 / hz - since;
+            if left > 0.0 {
+                std::thread::sleep(std::time::Duration::from_secs_f32(left));
+            }
+        }
+    }
+
     /// SteamVR がレンダーモデルに定義しているレーザーの出口（`tip`）の、デバイス原点からの相対姿勢。
     fn tip(&self, device: u32, state: &mut ControllerState) -> Option<Pose> {
         let mut model = self
@@ -164,7 +186,7 @@ impl OpenVrBackend {
 
     fn string_property(&self, device: u32, prop: sys::ETrackedDeviceProperty) -> String {
         let mut buf = [0 as c_char; 256];
-        let mut err = 0;
+        let mut err = Default::default();
         unsafe {
             f(self.system().GetStringTrackedDeviceProperty)(
                 device,
@@ -197,7 +219,7 @@ impl OpenVrBackend {
         }
         let mut axis_types = [0; 5];
         for (n, t) in axis_types.iter_mut().enumerate() {
-            let mut err = 0;
+            let mut err = Default::default();
             let prop = sys::ETrackedDeviceProperty_Prop_Axis0Type_Int32 + n as u32;
             *t = unsafe { f(s.GetInt32TrackedDeviceProperty)(device, prop, &mut err) };
         }
@@ -312,6 +334,7 @@ impl VrBackend for OpenVrBackend {
     }
 
     fn poll(&mut self) -> Frame {
+        self.wait_vsync();
         let s = self.system();
         // ponytail: イベントは読み捨てる。VREvent_Quit で自分から終了しないので、
         // SteamVR 終了時は数秒後に強制終了される。きれいに閉じたくなったら Frame に終了フラグを足す。
