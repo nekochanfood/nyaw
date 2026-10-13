@@ -8,10 +8,10 @@ use std::time::Duration;
 use gpui::{
     App, Bounds, Context, Entity, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent, Window,
-    WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rgb, size,
+    WindowBounds, WindowHandle, WindowOptions, prelude::*, px, size,
 };
 use overlay::{Overlay, PanelId, PointerEvent};
-use vr::{Pose, Quat, Surface, Vec2, Vec3, VrBackend};
+use vr::{Device, Pose, Quat, Runtime, Surface, Vec2, Vec3, VrBackend};
 
 /// 1パネル分のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
 /// 位置とボタン状態を持つがオーバーレイのイベントは持たないので、直前の値を保持する。
@@ -74,39 +74,63 @@ impl PointerBridge {
     }
 }
 
-pub const PANEL_BG: u32 = 0x202020;
-pub const BUTTON_BG: u32 = 0x3060c0;
-/// レーザーが当たっている間のボタン色。VR 上でどこを指しているかの視覚的フィードバック。
-pub const BUTTON_HOVER_BG: u32 = 0x4f86f7;
-
-/// 仮のホームパネル。
-#[derive(Debug, Default)]
-pub struct Home {
-    pub clicks: usize,
+/// ビューからパネル（オーバーレイ層）への操作要求。
+#[derive(Debug, Clone, PartialEq)]
+pub enum PanelCommand {
+    Attach(Device, Pose),
+    Detach,
+    Lock(bool),
 }
 
-impl Render for Home {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .bg(rgb(PANEL_BG))
-            .child(
-                div()
-                    .id("click-me")
-                    .debug_selector(|| "click-me".into())
-                    .p_4()
-                    .bg(rgb(BUTTON_BG))
-                    .hover(|s| s.bg(rgb(BUTTON_HOVER_BG)))
-                    .text_color(rgb(0xffffff))
-                    .child(format!("Clicked {}", self.clicks))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.clicks += 1;
-                        cx.notify();
-                    })),
-            )
+/// フレームループから見たパネルの状態。ビューの表示用。
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PanelStatus {
+    pub runtime: Option<Runtime>,
+    pub attached: Option<Device>,
+    pub locked: bool,
+    /// 見えているトラッカーの ID（取り付け先の候補）。
+    pub trackers: Vec<String>,
+    /// メニューボタンを押している。
+    pub menu: bool,
+    /// パネルを掴んでいる。
+    pub grabbed: bool,
+}
+
+/// ビューとフレームループの受け渡し口（GPUI のグローバル）。ビューは `commands` に積み、
+/// フレームループが [`sync_panel`] でオーバーレイに反映して `status` を書き戻す。
+/// ビューの型に依存しないので、本番・testkit のどのキットも同じ経路を通る。
+// ponytail: パネル1枚ぶん。複数パネルになったら PanelId ごとに持つ。
+#[derive(Debug, Default)]
+pub struct PanelControl {
+    pub commands: Vec<PanelCommand>,
+    pub status: PanelStatus,
+}
+
+impl gpui::Global for PanelControl {}
+
+/// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す。
+/// 入力を配送した後・描画する前に毎フレーム呼ぶ。
+pub fn sync_panel(overlay: &mut Overlay, vr: &dyn VrBackend, panel: PanelId, cx: &mut App) {
+    let ctl = cx.default_global::<PanelControl>();
+    for c in ctl.commands.drain(..) {
+        match c {
+            PanelCommand::Attach(device, offset) => overlay.attach(panel, device, offset),
+            PanelCommand::Detach => overlay.detach(panel),
+            PanelCommand::Lock(locked) => overlay.set_locked(panel, locked),
+        }
+    }
+    let p = overlay.panel(panel);
+    let status = PanelStatus {
+        runtime: Some(vr.runtime()),
+        attached: p.attached.as_ref().map(|(d, _)| d.clone()),
+        locked: p.locked,
+        trackers: overlay.trackers().to_vec(),
+        menu: overlay.menu_held(),
+        grabbed: overlay.grabbed(panel),
+    };
+    if ctl.status != status {
+        ctl.status = status;
+        cx.refresh_windows();
     }
 }
 
@@ -188,13 +212,18 @@ pub fn open_panel_window<V: Render>(
     Ok(window)
 }
 
-const PANEL_PX: (u32, u32) = (600, 400);
+const PANEL_PX: (u32, u32) = (800, 600);
 // ponytail: 約 90Hz の固定タイマー。後でランタイムの vsync (WaitGetPoses / xrWaitFrame) 駆動にする。
 const FRAME: Duration = Duration::from_millis(11);
 
 /// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
 /// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通り、違いは `vr.surface()` だけ。
-pub fn run(mut vr: Box<dyn VrBackend>) {
+/// パネルに載せる画面（上の層）は `build` で受け取る。UI 層はどの画面かを知らない。
+// ponytail: パネル1枚に画面1つ。複数の画面を同時に浮かべるなら (画面, 姿勢) の一覧を受け取り、PanelControl とブリッジをパネルごとにする。
+pub fn run<V: Render>(
+    mut vr: Box<dyn VrBackend>,
+    build: impl FnOnce(&mut Window, &mut Context<V>) -> V + 'static,
+) {
     let surface = vr.surface();
     gpui_platform::application().run(move |cx: &mut App| {
         let mut overlay = Overlay::new();
@@ -204,12 +233,12 @@ pub fn run(mut vr: Box<dyn VrBackend>) {
                 vr.as_mut(),
                 "nyaw.home",
                 pose,
-                Vec2::new(0.6, 0.4),
+                Vec2::new(0.8, 0.6),
                 PANEL_PX,
             )
             .expect("create home overlay");
 
-        let window = open_panel_window(cx, surface, PANEL_PX, |_, cx| cx.new(|_| Home::default()))
+        let window = open_panel_window(cx, surface, PANEL_PX, |w, cx| cx.new(|cx| build(w, cx)))
             .expect("open home window");
         if surface == Surface::Desktop {
             cx.activate(true);
@@ -227,6 +256,7 @@ pub fn run(mut vr: Box<dyn VrBackend>) {
                     for input in inputs {
                         window.dispatch_event(input, cx);
                     }
+                    sync_panel(&mut overlay, vr.as_ref(), panel, cx);
                     // Desktop では OS が表示するので読み戻さない。
                     // ponytail: Overlay では変化がなくても毎フレーム描画して送る。重ければ dirty なときだけにする。
                     (surface == Surface::Overlay).then(|| capture(window, cx))
@@ -251,16 +281,31 @@ pub fn run(mut vr: Box<dyn VrBackend>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::TestAppContext;
+    use gpui::{TestAppContext, div};
+
+    /// UI 層だけで確かめるための最小の画面。
+    #[derive(Default)]
+    struct Probe {
+        clicks: usize,
+    }
+
+    impl Render for Probe {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div().size_full().child(
+                div()
+                    .id("probe")
+                    .debug_selector(|| "probe".into())
+                    .size_10()
+                    .on_click(cx.listener(|this, _, _, _| this.clicks += 1)),
+            )
+        }
+    }
 
     #[gpui::test]
     fn laser_click_reaches_gpui_view(cx: &mut TestAppContext) {
-        let (home, cx) = cx.add_window_view(|_, _| Home::default());
+        let (home, cx) = cx.add_window_view(|_, _| Probe::default());
         cx.run_until_parked();
-        let c = cx
-            .debug_bounds("click-me")
-            .expect("button rendered")
-            .center();
+        let c = cx.debug_bounds("probe").expect("button rendered").center();
         let pos = Vec2::new(c.x.into(), c.y.into());
 
         let mut bridge = PointerBridge::default();
@@ -291,7 +336,7 @@ mod tests {
     fn desktop_window_matches_panel_resolution(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
             open_panel_window(cx, Surface::Desktop, PANEL_PX, |_, cx| {
-                cx.new(|_| Home::default())
+                cx.new(|_| Probe::default())
             })
             .unwrap()
         });
@@ -299,6 +344,38 @@ mod tests {
             .update(|cx| cx.update_window(window.into(), |_, w, _| w.viewport_size()))
             .unwrap();
         assert_eq!(vp, size(px(PANEL_PX.0 as f32), px(PANEL_PX.1 as f32)));
+    }
+
+    #[gpui::test]
+    fn sync_panel_applies_commands_and_reports_status(cx: &mut TestAppContext) {
+        let mut vr = vr::connect(Some(Runtime::NoVr)).unwrap();
+        let mut overlay = Overlay::new();
+        let panel = overlay
+            .add_panel(vr.as_mut(), "t", Pose::IDENTITY, Vec2::ONE, PANEL_PX)
+            .unwrap();
+        cx.update(|cx| {
+            cx.default_global::<PanelControl>().commands.extend([
+                PanelCommand::Attach(Device::Hmd, Pose::IDENTITY),
+                PanelCommand::Lock(true),
+            ]);
+            sync_panel(&mut overlay, vr.as_ref(), panel, cx);
+            let ctl = cx.global::<PanelControl>();
+            assert!(ctl.commands.is_empty());
+            assert_eq!(
+                ctl.status,
+                PanelStatus {
+                    runtime: Some(Runtime::NoVr),
+                    attached: Some(Device::Hmd),
+                    locked: true,
+                    ..Default::default()
+                }
+            );
+            cx.default_global::<PanelControl>()
+                .commands
+                .push(PanelCommand::Detach);
+            sync_panel(&mut overlay, vr.as_ref(), panel, cx);
+        });
+        assert_eq!(overlay.panel(panel).attached, None);
     }
 
     #[test]

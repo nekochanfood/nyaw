@@ -10,7 +10,7 @@ use vr::{
     mock::{MockBackend, MockTexture},
 };
 
-use crate::{Action, Device, Driver, Hand, Pose, Quat, Vec2, Vec3, raster};
+use crate::{Action, Driver, Hand, Pose, Quat, Vec2, Vec3, raster};
 
 /// 指定がないときの仮想コントローラの機種。
 pub const DEFAULT_PROFILE: &str = "valve/index_controller";
@@ -23,6 +23,8 @@ struct VirtualController {
     profile: String,
     aim: Pose,
     held: Vec<Action>,
+    /// スティック（トラックパッド）の倒し具合。
+    stick: Vec2,
 }
 
 /// 手を下ろした位置（頭の少し下・左右）。レーザーはここから対象へ向ける。
@@ -136,24 +138,6 @@ impl<'a, V: Render> VrKit<'a, V> {
         self.step().release(Action::Grab)
     }
 
-    /// パネルを `device` に取り付けて1フレーム進める（`offset` は取り付け先から見た相対姿勢）。
-    pub fn attach_panel(&mut self, device: Device, offset: Pose) -> &mut Self {
-        self.overlay.attach(self.panel, device, offset);
-        self.step()
-    }
-
-    /// 取り付けを外して1フレーム進める。パネルはその場に残る。
-    pub fn detach_panel(&mut self) -> &mut Self {
-        self.overlay.detach(self.panel);
-        self.step()
-    }
-
-    /// パネルを掴めないようにする（`false` で戻す）。
-    pub fn lock_panel(&mut self, locked: bool) -> &mut Self {
-        self.overlay.set_locked(self.panel, locked);
-        self
-    }
-
     pub fn panel_pose(&self) -> Pose {
         self.overlay.panel(self.panel).pose
     }
@@ -171,6 +155,10 @@ impl<'a, V: Render> VrKit<'a, V> {
                 window.dispatch_event(input, cx);
             });
         }
+        self.cx.run_until_parked();
+        let (overlay, vr, panel) = (&mut self.overlay, &self.vr, self.panel);
+        self.cx
+            .update(|_, cx| ui::sync_panel(overlay, vr, panel, cx));
         self.cx.run_until_parked();
         let frame = self.cx.update(raster::capture);
         self.overlay.submit(
@@ -212,6 +200,7 @@ impl<'a, V: Render> VrKit<'a, V> {
                     profile: DEFAULT_PROFILE.to_owned(),
                     aim: Pose::new(rest_position(hand), Quat::IDENTITY),
                     held: Vec::new(),
+                    stick: Vec2::ZERO,
                 });
                 self.controllers.len() - 1
             }
@@ -221,7 +210,7 @@ impl<'a, V: Render> VrKit<'a, V> {
 }
 
 fn raw(c: &VirtualController) -> RawController {
-    let inputs = c
+    let mut inputs = c
         .held
         .iter()
         .map(|&a| {
@@ -229,7 +218,12 @@ fn raw(c: &VirtualController) -> RawController {
                 .unwrap_or_else(|| panic!("{} には {a:?} に当たる入力がない", c.profile));
             (name.to_owned(), 1.0)
         })
-        .collect();
+        .collect::<Vec<_>>();
+    if c.stick != Vec2::ZERO {
+        let (x, y) = input::scroll_source(&c.profile)
+            .unwrap_or_else(|| panic!("{} にはスクロールに当たる入力がない", c.profile));
+        inputs.extend([(x.to_owned(), c.stick.x), (y.to_owned(), c.stick.y)]);
+    }
     RawController {
         hand: c.hand,
         profile: c.profile.clone(),
@@ -250,6 +244,24 @@ impl<V: Render> Driver<V> for VrKit<'_, V> {
         self.hover(selector)
             .press(Action::Select)
             .release(Action::Select)
+    }
+
+    /// 要素の中心を狙って選択ボタンを押したままにする。
+    fn down(&mut self, selector: &'static str) -> &mut Self {
+        self.hover(selector).press(Action::Select)
+    }
+
+    fn up(&mut self) -> &mut Self {
+        self.release(Action::Select)
+    }
+
+    /// 要素の中心を狙い、スティックを1フレームだけ縦に倒す。
+    fn scroll(&mut self, selector: &'static str, lines: f32) -> &mut Self {
+        self.hover(selector);
+        self.ctrl().stick = Vec2::new(0.0, lines);
+        self.step();
+        self.ctrl().stick = Vec2::ZERO;
+        self.step()
     }
 
     fn read<R>(&mut self, f: impl FnOnce(&V) -> R) -> R {

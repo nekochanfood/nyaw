@@ -1,4 +1,4 @@
-//! ブートローダー: ロガーを組み立て、ランタイム（OpenVR / OpenXR / novr）を選び、メインスレッドを UI 層に引き渡す。それ以外は何も置かない。
+//! ブートローダー: ロガーを組み立て、ランタイム（OpenVR / OpenXR / novr）を選び、メインスレッドと載せる画面（Home）を UI 層に引き渡す。それ以外は何も置かない。
 
 use std::process::ExitCode;
 
@@ -26,7 +26,7 @@ fn main() -> ExitCode {
         }
     };
     logger::info!("ランタイムを選択", runtime = ?backend.runtime());
-    ui::run(backend);
+    ui::run(backend, |_, _| home::Home::default());
     ExitCode::SUCCESS
 }
 

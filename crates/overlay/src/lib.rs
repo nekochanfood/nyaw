@@ -38,6 +38,11 @@ impl Panel {
         );
         self.pose.transform_point(local)
     }
+
+    /// ランタイム側のオーバーレイ。実ランタイムから描画を読み戻して確かめるとき用。
+    pub fn overlay_id(&self) -> OverlayId {
+        self.overlay
+    }
 }
 
 /// 座標はパネルのピクセル、原点は左上。
@@ -62,6 +67,7 @@ struct HandState {
     hover: Option<PanelId>,
     select: bool,
     grab_held: bool,
+    menu: bool,
     /// ドラッグ中のパネルと、コントローラから見たその相対姿勢。
     dragging: Option<(PanelId, Pose)>,
 }
@@ -70,6 +76,8 @@ struct HandState {
 pub struct Overlay {
     panels: Vec<Panel>,
     hands: HashMap<Hand, HandState>,
+    /// 最後の tick で見えていたトラッカーの ID（取り付け先の候補）。
+    trackers: Vec<String>,
 }
 
 impl Overlay {
@@ -100,6 +108,23 @@ impl Overlay {
 
     pub fn panel(&self, id: PanelId) -> &Panel {
         &self.panels[id]
+    }
+
+    /// 最後の tick で見えていたトラッカーの ID。
+    pub fn trackers(&self) -> &[String] {
+        &self.trackers
+    }
+
+    /// どちらかの手でメニューボタンを押している。
+    pub fn menu_held(&self) -> bool {
+        self.hands.values().any(|h| h.menu)
+    }
+
+    /// `id` をどちらかの手で掴んでいる。
+    pub fn grabbed(&self, id: PanelId) -> bool {
+        self.hands
+            .values()
+            .any(|h| h.dragging.is_some_and(|d| d.0 == id))
     }
 
     /// パネルを `device` に取り付ける。以降の tick で `device` の姿勢 * `offset` に追従する。
@@ -136,6 +161,7 @@ impl Overlay {
 
     pub fn tick(&mut self, vr: &mut dyn VrBackend) -> Vec<UiEvent> {
         let frame = vr.poll();
+        self.trackers = frame.trackers.iter().map(|(id, _)| id.clone()).collect();
         // 掴み中のパネルは手に従う（離したフレームで update_hand がオフセットを付け直す）。
         // 取り付け先が見失われたフレームは最後の姿勢のまま。
         let dragged: Vec<PanelId> = self
@@ -171,6 +197,7 @@ impl Overlay {
         let st = self.hands.entry(c.hand).or_default();
         let grab_started = c.grab && !st.grab_held;
         st.grab_held = c.grab;
+        st.menu = c.menu;
 
         if let Some((id, offset)) = st.dragging {
             if c.grab {
@@ -489,6 +516,23 @@ mod tests {
         vr.frame.hmd = at(0.0, 0.5, 0.0);
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(0.0, 0.5, -1.0));
+    }
+
+    #[test]
+    fn reports_trackers_menu_and_grab() {
+        let (mut vr, mut ov) = setup();
+        vr.frame.trackers = vec![("LHR-1".into(), Pose::IDENTITY)];
+        controller(
+            &mut vr,
+            Pose::IDENTITY,
+            &[("b/click", 1.0), ("squeeze/value", 1.0)],
+        );
+        ov.tick(&mut vr);
+        assert_eq!(ov.trackers(), ["LHR-1"]);
+        assert!(ov.menu_held() && ov.grabbed(0));
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        assert!(!ov.menu_held() && !ov.grabbed(0));
     }
 
     #[test]

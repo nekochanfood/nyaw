@@ -1,5 +1,7 @@
 //! 実ランタイムでの E2E: ランタイムを起動 → 繋ぐ → オーバーレイへ毎フレーム違う絵を送る →
+//! Home 画面を操作し、その描画を実ランタイムのオーバーレイへ送る →
 //! （OpenVR のみ）ランタイムから読み戻して届いたか確かめる → 後片付けでプロセスが消えたか確かめる。
+//! 実ランタイムにはコントローラが無い（null ドライバ / simulated）ので、Home はマウスで操作する。
 //!
 //! 起動に数秒かかり画面にも出るので、`#[ignore]` と同じく `--ignored` を付けたときだけ流す。
 //! 入っていないランタイムはスキップする（`cargo runtimes` で入れる）。
@@ -13,8 +15,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use home::{BUTTON_ACTIVE_BG, Home};
 use testkit::runtimes::{self, Kind, LaunchError};
-use vr::{OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
+use testkit::{Driver, NoVrKit};
+use vr::{Device, OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -51,6 +55,7 @@ fn main() -> ExitCode {
         let result = catch_unwind(AssertUnwindSafe(|| {
             let mut vr = rt.connect().unwrap_or_else(|e| panic!("繋がらない: {e}"));
             overlay_reaches_runtime(vr.as_mut());
+            home_runs_on_runtime(vr);
         }));
         let log = rt.log.clone();
         drop(rt);
@@ -108,6 +113,50 @@ fn overlay_reaches_runtime(vr: &mut dyn VrBackend) {
             );
         }
     }
+}
+
+/// Home 画面を実ランタイム上で操作する: ボタンでパネルを HMD に取り付けてロックし、
+/// その結果（光ったボタン）がランタイムのオーバーレイに届いていること（OpenVR のみ読み戻せる）。
+fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
+    let runtime = vr.runtime();
+    let mut cx = gpui::TestAppContext::single();
+    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| Home::default());
+    kit.click("attach-hmd").click("lock").hover("click-me");
+    let p = kit.overlay.panel(kit.panel);
+    assert_eq!(
+        (p.attached.as_ref().map(|a| &a.0), p.locked),
+        (Some(&Device::Hmd), true),
+        "Home のボタンがパネルに効いていない"
+    );
+    // 実ランタイムのフレームを回しながら、HMD に付いたパネルへ描画を送り続ける。
+    for _ in 0..30 {
+        kit.step();
+        std::thread::sleep(Duration::from_millis(11));
+    }
+    if runtime != Runtime::OpenVr {
+        return;
+    }
+    let c = kit.bounds("lock").center();
+    let (res, id) = {
+        let p = kit.overlay.panel(kit.panel);
+        (p.resolution, p.overlay_id())
+    };
+    let start = Instant::now();
+    let mut got = None;
+    while start.elapsed() < Duration::from_secs(5) {
+        kit.step();
+        if let Ok((w, h, rgba)) = vr::openvr_overlay_image(id) {
+            let x = (f32::from(c.x) / res.0 as f32 * w as f32) as u32;
+            let y = (f32::from(c.y) / res.1 as f32 * h as f32) as u32;
+            let i = ((y * w + x) * 4) as usize;
+            got = Some(u32::from_be_bytes([0, rgba[i], rgba[i + 1], rgba[i + 2]]));
+            if got == Some(BUTTON_ACTIVE_BG) {
+                return;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("ランタイムのパネルでロックのボタンが光っていない（{got:06x?}）");
 }
 
 /// コンポジタの取り込みは非同期なので、届くまで少し待つ。届かなければ最後に読めたものを返す。

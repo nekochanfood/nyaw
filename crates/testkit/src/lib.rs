@@ -39,6 +39,16 @@ pub trait Driver<V> {
     fn hover(&mut self, selector: &'static str) -> &mut Self;
     /// 要素の中心をクリックする（novr は左クリック、VR は選択ボタン）。
     fn click(&mut self, selector: &'static str) -> &mut Self;
+    /// 要素の中心で押したままにする（novr は左ボタン、VR は選択ボタン）。押したまま `hover` で動かすとドラッグになる。
+    fn down(&mut self, selector: &'static str) -> &mut Self;
+    /// `down` で押したボタンを、今指している場所で離す。
+    fn up(&mut self) -> &mut Self;
+    /// `from` を掴んで `to` まで運んで離す（GPUI のドラッグ＆ドロップ）。
+    fn drag(&mut self, from: &'static str, to: &'static str) -> &mut Self {
+        self.down(from).hover(to).up()
+    }
+    /// 要素の中心で `lines` 行ぶん縦にスクロールする（novr はホイール、VR はスティック）。
+    fn scroll(&mut self, selector: &'static str, lines: f32) -> &mut Self;
     /// ビューの状態を読む。
     fn read<R>(&mut self, f: impl FnOnce(&V) -> R) -> R;
     /// ユーザーに見えている要素の中心の色（0xRRGGBB）。novr は画面、VR はパネルのテクスチャ。
