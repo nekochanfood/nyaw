@@ -3341,6 +3341,7 @@ name = "overlay"
 version = "2026.0.1"
 dependencies = [
  "input",
+ "logger",
  "vr",
 ]
 

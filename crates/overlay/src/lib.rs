@@ -266,9 +266,22 @@ impl Overlay {
             h.ray = None;
         }
         for raw in &frame.controllers {
-            let c = input::map(raw, self.inputs.get(&raw.hand));
+            let prev = self.inputs.get(&raw.hand).copied();
+            let c = input::map(raw, prev.as_ref());
             self.inputs.insert(raw.hand, c);
             self.update_hand(&c, &frame, &mut events);
+            let buttons = |c: &ControllerState| (c.select, c.grab, c.menu);
+            if prev.is_none_or(|p| buttons(&p) != buttons(&c)) {
+                logger::debug!(
+                    "コントローラのボタン",
+                    hand = ?c.hand,
+                    profile = raw.profile,
+                    select = c.select,
+                    grab = c.grab,
+                    menu = c.menu,
+                    hover = ?self.hands[&c.hand].hover,
+                );
+            }
         }
         self.place_pointers(vr);
         for p in &mut self.panels {

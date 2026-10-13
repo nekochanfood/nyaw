@@ -18,7 +18,7 @@ pub struct ControllerState {
     pub scroll: Vec2,
 }
 
-/// アクションごとの入力名（OpenXR の語彙）。デバイスが報告した最初のものを採用する。
+/// アクションごとの入力名（OpenXR の語彙）。報告された候補のうち最も大きい値を採用する。
 struct Profile {
     id: &'static str,
     select: &'static [&'static str],
@@ -39,21 +39,24 @@ const PROFILES: &[Profile] = &[
     SIMPLE,
     Profile {
         id: "valve/index_controller",
-        select: &["trigger/value"],
+        // OpenVR では軸の種類の宣言がずれるドライバがあるので、トリガーのボタン（select/click）でも押せるようにする。
+        select: &["trigger/value", "select/click"],
         grab: &["squeeze/value"],
         menu: &["b/click"],
         scroll: Some(("thumbstick/x", "thumbstick/y")),
     },
     Profile {
         id: "oculus/touch_controller",
-        select: &["trigger/value"],
+        // OpenVR では軸の種類の宣言がずれるドライバがあるので、トリガーのボタン（select/click）でも押せるようにする。
+        select: &["trigger/value", "select/click"],
         grab: &["squeeze/value"],
         menu: &["menu/click", "y/click", "b/click"],
         scroll: Some(("thumbstick/x", "thumbstick/y")),
     },
     Profile {
         id: "htc/vive_controller",
-        select: &["trigger/value"],
+        // OpenVR では軸の種類の宣言がずれるドライバがあるので、トリガーのボタン（select/click）でも押せるようにする。
+        select: &["trigger/value", "select/click"],
         grab: &["squeeze/click"],
         menu: &["menu/click"],
         scroll: Some(("trackpad/x", "trackpad/y")),
@@ -69,8 +72,11 @@ fn held(v: f32, was: bool) -> bool {
     v > if was { RELEASE } else { PRESS }
 }
 
-fn first(raw: &RawController, names: &[&str]) -> f32 {
-    names.iter().find_map(|n| raw.input(n)).unwrap_or(0.0)
+fn strongest(raw: &RawController, names: &[&str]) -> f32 {
+    names
+        .iter()
+        .filter_map(|n| raw.input(n))
+        .fold(0.0, f32::max)
 }
 
 /// 未知のデバイスは KHR simple controller のバインドにフォールバックする。
@@ -110,11 +116,11 @@ pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerSta
     ControllerState {
         hand: raw.hand,
         aim: raw.aim,
-        select: held(first(raw, p.select), was(|c| c.select)),
-        grab: held(first(raw, p.grab), was(|c| c.grab)),
-        menu: held(first(raw, p.menu), was(|c| c.menu)),
+        select: held(strongest(raw, p.select), was(|c| c.select)),
+        grab: held(strongest(raw, p.grab), was(|c| c.grab)),
+        menu: held(strongest(raw, p.menu), was(|c| c.menu)),
         scroll: p.scroll.map_or(Vec2::ZERO, |(x, y)| {
-            Vec2::new(first(raw, &[x]), first(raw, &[y]))
+            Vec2::new(raw.input(x).unwrap_or(0.0), raw.input(y).unwrap_or(0.0))
         }),
     }
 }
@@ -189,5 +195,15 @@ mod tests {
     #[test]
     fn unknown_device_falls_back_to_simple() {
         assert!(map(&raw("acme/mystery", &[("select/click", 1.0)]), None).select);
+    }
+
+    /// トリガーの軸が 0 のままでも、ボタンのビットが立っていれば押せる。
+    #[test]
+    fn trigger_button_selects_when_axis_is_silent() {
+        let r = raw(
+            "oculus/touch_controller",
+            &[("trigger/value", 0.0), ("select/click", 1.0)],
+        );
+        assert!(map(&r, None).select);
     }
 }
