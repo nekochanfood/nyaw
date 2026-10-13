@@ -16,7 +16,11 @@ fn main() -> ExitCode {
         }
     };
     // 優先順位: コマンドライン > 設定ファイル
-    let prefer = match std::env::args().nth(1).as_deref().or(config.runtime.as_deref()) {
+    let prefer = match std::env::args()
+        .nth(1)
+        .as_deref()
+        .or(config.runtime.as_deref())
+    {
         Some("--novr" | "novr") => Some(Runtime::NoVr),
         Some("--openxr" | "openxr") => Some(Runtime::OpenXr),
         Some("--openvr" | "openvr") => Some(Runtime::OpenVr),

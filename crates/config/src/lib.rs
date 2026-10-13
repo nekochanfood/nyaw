@@ -72,6 +72,10 @@ mod tests {
 
     #[test]
     fn path_is_config_toml_under_config_dir() {
-        assert!(path().unwrap().ends_with(std::path::Path::new("nyaw").join("config.toml")));
+        assert!(
+            path()
+                .unwrap()
+                .ends_with(std::path::Path::new("nyaw").join("config.toml"))
+        );
     }
 }
