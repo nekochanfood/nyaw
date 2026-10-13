@@ -223,9 +223,9 @@ impl Gpu {
             let buffer = self
                 .device
                 .create_buffer(
-                    &vk::BufferCreateInfo::default()
-                        .size(size as u64)
-                        .usage(vk::BufferUsageFlags::TRANSFER_SRC),
+                    &vk::BufferCreateInfo::default().size(size as u64).usage(
+                        vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST,
+                    ),
                     None,
                 )
                 .map_err(vk_err("vkCreateBuffer"))?;
@@ -366,6 +366,96 @@ impl Gpu {
                 .map_err(vk_err("vkResetFences"))?;
         }
         Ok(())
+    }
+
+    /// `image`（`layout` の状態）の全体を RGBA で読み戻し、`layout` に戻す。テスト用の疎通確認。
+    pub fn download(
+        &mut self,
+        image: vk::Image,
+        width: u32,
+        height: u32,
+        layout: vk::ImageLayout,
+    ) -> Result<Vec<u8>, VrError> {
+        let len = (width * height * 4) as usize;
+        let staging = self.staging(len)?;
+        unsafe {
+            let d = &self.device;
+            let range = vk::ImageSubresourceRange::default()
+                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                .level_count(1)
+                .layer_count(1);
+            let barrier = |old, new, src, dst| {
+                vk::ImageMemoryBarrier::default()
+                    .old_layout(old)
+                    .new_layout(new)
+                    .src_access_mask(src)
+                    .dst_access_mask(dst)
+                    .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                    .image(image)
+                    .subresource_range(range)
+            };
+            let transition = |from, to, src, dst| {
+                d.cmd_pipeline_barrier(
+                    self.cmd,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[barrier(from, to, src, dst)],
+                )
+            };
+            d.begin_command_buffer(
+                self.cmd,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+            .map_err(vk_err("vkBeginCommandBuffer"))?;
+            transition(
+                layout,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                vk::AccessFlags::MEMORY_WRITE,
+                vk::AccessFlags::TRANSFER_READ,
+            );
+            d.cmd_copy_image_to_buffer(
+                self.cmd,
+                image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                self.staging.as_ref().unwrap().buffer,
+                &[vk::BufferImageCopy::default()
+                    .image_subresource(
+                        vk::ImageSubresourceLayers::default()
+                            .aspect_mask(vk::ImageAspectFlags::COLOR)
+                            .layer_count(1),
+                    )
+                    .image_extent(vk::Extent3D {
+                        width,
+                        height,
+                        depth: 1,
+                    })],
+            );
+            transition(
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                layout,
+                vk::AccessFlags::TRANSFER_READ,
+                vk::AccessFlags::MEMORY_READ,
+            );
+            d.end_command_buffer(self.cmd)
+                .map_err(vk_err("vkEndCommandBuffer"))?;
+            let cmds = [self.cmd];
+            d.queue_submit(
+                self.queue,
+                &[vk::SubmitInfo::default().command_buffers(&cmds)],
+                self.fence,
+            )
+            .map_err(vk_err("vkQueueSubmit"))?;
+            d.wait_for_fences(&[self.fence], true, u64::MAX)
+                .map_err(vk_err("vkWaitForFences"))?;
+            d.reset_fences(&[self.fence])
+                .map_err(vk_err("vkResetFences"))?;
+            Ok(std::slice::from_raw_parts(staging, len).to_vec())
+        }
     }
 
     pub fn wait_idle(&self) {

@@ -174,6 +174,11 @@ pub trait VrBackend {
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose);
     /// RGBA8、行間に詰め物なし。
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]);
+    /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
+    /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読めるので、これは OpenXR 用。
+    fn overlay_image(&mut self, _id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
+        None
+    }
 }
 
 /// `Box<dyn VrBackend>` もそのままバックエンドとして使える（カーネルが具象型・動的型の両方を持てるように）。
@@ -195,6 +200,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         (**self).submit_overlay_pixels(id, width, height, rgba)
+    }
+    fn overlay_image(&mut self, id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
+        (**self).overlay_image(id)
     }
 }
 

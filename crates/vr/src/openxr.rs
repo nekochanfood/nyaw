@@ -104,6 +104,8 @@ struct Swapchain {
     width: u32,
     height: u32,
     images: Vec<vk::Image>,
+    /// 最後に書き込んだ画像の index。
+    last: Option<usize>,
 }
 
 pub(crate) struct OpenXrBackend {
@@ -376,7 +378,11 @@ impl OpenXrBackend {
                 let height_m = o.width_m * sc.height as f32 / sc.width as f32;
                 Some(
                     xr::CompositionLayerQuad::new()
-                        .layer_flags(xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA)
+                        .layer_flags(
+                            // GPUI の描画は事前乗算していない（straight）アルファ。
+                            xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA
+                                | xr::CompositionLayerFlags::UNPREMULTIPLIED_ALPHA,
+                        )
                         .space(&self.stage)
                         .eye_visibility(xr::EyeVisibility::BOTH)
                         .sub_image(
@@ -482,7 +488,8 @@ impl OpenXrBackend {
                 .create_swapchain(&xr::SwapchainCreateInfo {
                     create_flags: xr::SwapchainCreateFlags::EMPTY,
                     usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
-                        | xr::SwapchainUsageFlags::TRANSFER_DST,
+                        | xr::SwapchainUsageFlags::TRANSFER_DST
+                        | xr::SwapchainUsageFlags::TRANSFER_SRC,
                     format: gpu::FORMAT.as_raw() as u32,
                     sample_count: 1,
                     width,
@@ -503,6 +510,7 @@ impl OpenXrBackend {
                 width,
                 height,
                 images,
+                last: None,
             });
         }
         let sc = overlay.swapchain.as_mut().unwrap();
@@ -521,6 +529,7 @@ impl OpenXrBackend {
             rgba,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         );
+        sc.last = Some(index as usize);
         sc.handle
             .release_image()
             .map_err(xr_err("xrReleaseSwapchainImage"))?;
@@ -708,6 +717,23 @@ impl VrBackend for OpenXrBackend {
         if let Some(o) = self.overlays.get_mut(&id.0) {
             o.pose = pose;
         }
+    }
+
+    fn overlay_image(&mut self, id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
+        // 最後に書き込んだスワップチェーン画像。submit は acquire した画像へ書いて release するので、
+        // 直近に書いたのは「次に acquire される一つ前」だが、ここでは最後に使った index を覚えている。
+        let sc = self.overlays.get(&id.0)?.swapchain.as_ref()?;
+        let image = sc.images[sc.last?];
+        let rgba = self
+            .gpu
+            .download(
+                image,
+                sc.width,
+                sc.height,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            )
+            .ok()?;
+        Some((sc.width, sc.height, rgba))
     }
 
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
