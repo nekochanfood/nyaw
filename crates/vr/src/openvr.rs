@@ -5,9 +5,11 @@ use std::collections::HashMap;
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::mem::{MaybeUninit, size_of};
 
+use ash::vk::{self, Handle};
 use glam::Mat3;
 use openvr_bindings as sys;
 
+use crate::gpu::{self, Gpu, vk_err};
 use crate::{
     Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
 };
@@ -22,15 +24,70 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
     if err != sys::EVRInitError_VRInitError_None {
         return Err(init_error(err));
     }
-    // ここから先で失敗しても Drop が VR_ShutdownInternal を呼ぶ。
-    let mut backend = OpenVrBackend {
-        system: std::ptr::null(),
-        overlay: std::ptr::null(),
-        sent: HashMap::new(),
+    let backend = (|| {
+        let system = interface(sys::IVRSystem_Version)?;
+        let compositor = interface(sys::IVRCompositor_Version)?;
+        Ok(OpenVrBackend {
+            system,
+            overlay: interface(sys::IVROverlay_Version)?,
+            textures: HashMap::new(),
+            gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
+        })
+    })();
+    if backend.is_err() {
+        unsafe { sys::VR_ShutdownInternal() };
+    }
+    Ok(Box::new(backend?))
+}
+
+/// SteamVR が要求する拡張を有効にし、HMD が繋がっている GPU で Vulkan のデバイスを作る。
+fn create_gpu(
+    system: &sys::VR_IVRSystem_FnTable,
+    compositor: &sys::VR_IVRCompositor_FnTable,
+) -> Result<Gpu, VrError> {
+    let entry = gpu::entry()?;
+    let mut buf = [0 as c_char; 4096];
+    unsafe {
+        f(compositor.GetVulkanInstanceExtensionsRequired)(buf.as_mut_ptr(), buf.len() as u32)
     };
-    backend.system = interface(sys::IVRSystem_Version)?;
-    backend.overlay = interface(sys::IVROverlay_Version)?;
-    Ok(Box::new(backend))
+    let instance = gpu::create_instance(
+        &entry,
+        &gpu::extension_names(&gpu::c_buf_to_string(&buf)),
+        |info| {
+            unsafe { entry.create_instance(info, None) }
+                .map(|i| i.handle())
+                .map_err(vk_err("vkCreateInstance"))
+        },
+    )?;
+    let mut physical = 0u64;
+    unsafe {
+        f(system.GetOutputDevice)(
+            &mut physical,
+            sys::ETextureType_TextureType_Vulkan,
+            instance.handle().as_raw() as *mut sys::VkInstance_T,
+        )
+    };
+    let physical = match physical {
+        // 分からなければ最初の GPU にする。
+        0 => *unsafe { instance.enumerate_physical_devices() }
+            .map_err(vk_err("vkEnumeratePhysicalDevices"))?
+            .first()
+            .ok_or_else(|| VrError::Runtime("Vulkan: GPU が無い".into()))?,
+        raw => vk::PhysicalDevice::from_raw(raw),
+    };
+    unsafe {
+        f(compositor.GetVulkanDeviceExtensionsRequired)(
+            physical.as_raw() as *mut sys::VkPhysicalDevice_T,
+            buf.as_mut_ptr(),
+            buf.len() as u32,
+        )
+    };
+    let extensions = gpu::extension_names(&gpu::c_buf_to_string(&buf));
+    gpu::create_device(entry, instance, physical, &extensions, |instance, info| {
+        unsafe { instance.create_device(physical, info, None) }
+            .map(|d| d.handle())
+            .map_err(vk_err("vkCreateDevice"))
+    })
 }
 
 fn init_error(err: sys::EVRInitError) -> VrError {
@@ -72,11 +129,22 @@ struct ControllerState {
 
 const MAX_DEVICES: usize = sys::k_unMaxTrackedDeviceCount as usize;
 
+/// オーバーレイ 1 枚あたりのイメージの数。コンポジタが読んでいる最中のイメージに書き込まないよう順番に使う。
+// ponytail: 3 枚あれば足りる想定。絵がちらつく・崩れるなら増やすか、送ったイメージの使用完了を待つ。
+const RING: usize = 3;
+
+struct Textures {
+    width: u32,
+    height: u32,
+    images: Vec<gpu::Image>,
+    next: usize,
+}
+
 pub(crate) struct OpenVrBackend {
     system: *const sys::VR_IVRSystem_FnTable,
     overlay: *const sys::VR_IVROverlay_FnTable,
-    /// オーバーレイごとに最後に送った画像（幅, 高さ, RGBA）。同じ画像は送り直さない。
-    sent: HashMap<u64, (u32, u32, Vec<u8>)>,
+    textures: HashMap<u64, Textures>,
+    gpu: Gpu,
 }
 
 impl OpenVrBackend {
@@ -140,11 +208,81 @@ impl OpenVrBackend {
             inputs: inputs(profile, state.pressed, axis_types, state.axes),
         })
     }
+
+    fn release(&mut self, id: u64) {
+        if let Some(old) = self.textures.remove(&id) {
+            self.gpu.wait_idle();
+            for image in old.images {
+                self.gpu.destroy_image(image);
+            }
+        }
+    }
+
+    fn submit(&mut self, id: u64, width: u32, height: u32, rgba: &[u8]) -> Result<(), VrError> {
+        if self
+            .textures
+            .get(&id)
+            .is_none_or(|t| (t.width, t.height) != (width, height))
+        {
+            self.release(id);
+            let usage = vk::ImageUsageFlags::TRANSFER_DST
+                | vk::ImageUsageFlags::TRANSFER_SRC
+                | vk::ImageUsageFlags::SAMPLED;
+            let images = (0..RING)
+                .map(|_| self.gpu.create_image(width, height, usage))
+                .collect::<Result<_, _>>()?;
+            self.textures.insert(
+                id,
+                Textures {
+                    width,
+                    height,
+                    images,
+                    next: 0,
+                },
+            );
+        }
+        let t = self.textures.get_mut(&id).unwrap();
+        let image = t.images[t.next].image;
+        t.next = (t.next + 1) % RING;
+        // SteamVR は Vulkan のテクスチャを TRANSFER_SRC_OPTIMAL で受け取る。
+        self.gpu.upload(
+            image,
+            width,
+            height,
+            rgba,
+            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        )?;
+        let g = &self.gpu;
+        let mut data = sys::VRVulkanTextureData_t {
+            m_nImage: image.as_raw(),
+            m_pDevice: g.device.handle().as_raw() as *mut _,
+            m_pPhysicalDevice: g.physical.as_raw() as *mut _,
+            m_pInstance: g.instance.handle().as_raw() as *mut _,
+            m_pQueue: g.queue.as_raw() as *mut _,
+            m_nQueueFamilyIndex: g.queue_family,
+            m_nWidth: width,
+            m_nHeight: height,
+            m_nFormat: gpu::FORMAT.as_raw() as u32,
+            m_nSampleCount: 1,
+        };
+        let mut texture = sys::Texture_t {
+            handle: &mut data as *mut _ as *mut c_void,
+            eType: sys::ETextureType_TextureType_Vulkan,
+            eColorSpace: sys::EColorSpace_ColorSpace_Auto,
+        };
+        check("SetOverlayTexture", unsafe {
+            f(self.overlay().SetOverlayTexture)(id, &mut texture)
+        })
+    }
 }
 
 impl Drop for OpenVrBackend {
     fn drop(&mut self) {
+        for id in self.textures.keys().copied().collect::<Vec<_>>() {
+            self.release(id);
+        }
         unsafe { sys::VR_ShutdownInternal() };
+        // この後、フィールドの gpu が Vulkan のデバイスを破棄する。
     }
 }
 
@@ -239,32 +377,7 @@ impl VrBackend for OpenVrBackend {
             (width * height * 4) as usize,
             "RGBA バッファのサイズが不正"
         );
-        if self
-            .sent
-            .get(&id.0)
-            .is_some_and(|(w, h, prev)| (*w, *h) == (width, height) && prev == rgba)
-        {
-            return;
-        }
-        // ponytail: SetOverlayRaw は呼ぶたびに共有メモリのブロックを確保し、コンポジタが取り込むまで解放されない
-        // （約 200 個で RequestFailed になる。null ドライバでは 10Hz で送り続けても溜まっていった）。
-        // 同じ画像を送らないことで抑えているが、絵が変わり続けると詰まりうる。
-        // そうなったら SetOverlayTexture で GPU テクスチャを直接渡す。
-        let e = unsafe {
-            f(self.overlay().SetOverlayRaw)(
-                id.0,
-                // 読むだけで書き換えない（API の型が *mut なだけ）。
-                rgba.as_ptr().cast_mut() as *mut c_void,
-                width,
-                height,
-                4,
-            )
-        };
-        let r = check("SetOverlayRaw", e);
-        if r.is_ok() {
-            self.sent.insert(id.0, (width, height, rgba.to_vec()));
-        }
-        log(r);
+        log(self.submit(id.0, width, height, rgba));
     }
 }
 

@@ -5,6 +5,7 @@
 //! 語彙は OpenXR に揃える: コントローラのプロファイルは `"vendor/name"`（例 `"valve/index_controller"`）、
 //! 入力は `"component/feature"`（例 `"trigger/value"`）。OpenVR バックエンドはこれに翻訳する。
 
+mod gpu;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 mod novr;

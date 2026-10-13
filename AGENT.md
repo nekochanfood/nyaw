@@ -87,8 +87,8 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 
 ## 未実装（土台のみ）
 
-- `vr` の OpenXR 実 FFI（`connect` は `NotImplemented` を返す）。OpenVR は `openvr_bindings` の C API（関数表）で接続済み。null ドライバで接続・オーバーレイへの送信までは確認済みだが、コントローラ入力は実機で未確認。
+- `vr` の OpenXR 実 FFI（`connect` は `NotImplemented` を返す）。OpenVR は `openvr_bindings` の C API（関数表）で接続済み。null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）までは確認済みだが、コントローラ入力は実機で未確認。
 - Linux での描画の読み戻し（gpui の `render_to_image` が Windows のみ実装。`gpui_wgpu` のヘッドレスレンダラ経由が候補）。
-- 読み戻しは毎フレーム CPU 経由。VR ランタイムへ GPU テクスチャを直接共有する経路は未実装。
+- 描画は毎フレーム CPU に読み戻し、`vr` が Vulkan のイメージへ上げ直してランタイムへ渡す（`crates/vr/src/gpu.rs`。1024x768 で約 1.6ms）。GPUI のテクスチャを読み戻さずに直接共有する経路は未実装。
 - Windows での OpenXR ランタイム検出（レジストリ）。
 - `gpui` は crates.io 版では `Window::dispatch_event` を外部から呼べないため、Zed の git リビジョンに固定している。`render_to_image` のため `ui` は本番でも gpui の `test-support` フィーチャーを有効にしている。
