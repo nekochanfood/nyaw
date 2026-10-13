@@ -140,6 +140,8 @@ impl Render for Testing {
             .map(|c| c.status.clone())
             .unwrap_or_default();
         let on = |d: &Device| st.attached.as_ref() == Some(d);
+        let profiling = cx.try_global::<PanelControl>().is_some_and(|c| c.profiling);
+        let panel = self.panel;
         let tracker = st.trackers.first().map(|id| Device::Tracker(id.clone()));
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
 
@@ -152,6 +154,13 @@ impl Render for Testing {
             .child(
                 button("close-panel", "Close panel", false)
                     .on_click(command(self.panel, PanelCommand::Close)),
+            )
+            .child(
+                button("toggle-profiler", "Profiler", profiling).on_click(move |_, _, cx| {
+                    let c = cx.default_global::<PanelControl>();
+                    c.profiling = !c.profiling;
+                    c.profiler_from = panel;
+                }),
             )
             .child(
                 button("click-me", format!("Clicked {}", self.clicks), false).on_click(
@@ -402,5 +411,23 @@ mod tests {
         cx.simulate_click(c, Modifiers::none());
         let queued = cx.update(|_, cx| cx.global::<PanelControl>().panels[&0].commands.clone());
         assert_eq!(queued, [PanelCommand::Attach(Device::Hmd, HMD_OFFSET)]);
+    }
+
+    /// Profiler ボタンは計測の有効・無効を切り替え、パネルの起点に自分を指定する。
+    #[gpui::test]
+    fn profiler_button_toggles_profiling(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| Testing::new(2));
+        cx.run_until_parked();
+        let profiling = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                let c = cx.global::<PanelControl>();
+                (c.profiling, c.profiler_from)
+            })
+        };
+        let c = cx.debug_bounds("toggle-profiler").unwrap().center();
+        cx.simulate_click(c, Modifiers::none());
+        assert_eq!(profiling(cx), (true, 2));
+        cx.simulate_click(c, Modifiers::none());
+        assert_eq!(profiling(cx).0, false);
     }
 }

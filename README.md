@@ -15,7 +15,7 @@ NYAW_LOG=debug cargo run   # ログレベル変更（trace/debug/info/warn/error
 
 ログは標準エラーと `%LOCALAPPDATA%\nyaw\logs\nyaw.log`（Linux は `$XDG_STATE_HOME/nyaw/logs`）に出る。
 
-`--profile` を付けると、FPS・フレーム時間・CPU/GPU の内訳・ドロップフレームをグラフと数値で出すウィンドウが開き、
+`--profile` を付けると、FPS・フレーム時間・CPU/GPU の内訳・ドロップフレームをグラフと数値で出すプロファイラパネルが開き（Testing パネルの Profiler ボタンでも開閉・計測の有効/無効を切り替えられる。パネルの Close で止まる）、
 1 フレーム 1 行の CSV を同じログフォルダの `profile.csv` に書き出す（前回分は `profile-prev.csv`）。
 
 ### テスト

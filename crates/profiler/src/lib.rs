@@ -28,7 +28,7 @@ pub const WINDOW: usize = 90;
 /// 予算（1 フレームの目標時間）のこの倍を超えたフレームをドロップとみなす。
 pub const DROP_FACTOR: f64 = 1.5;
 /// CSV の列。時間はすべてミリ秒。`t_ms` は計測開始からの経過。
-pub const CSV_HEADER: &str = "frame,t_ms,interval_ms,wait_ms,input_ms,draw_ms,render_ms,upload_ms,cpu_ms,gpu_ms,budget_ms,dropped";
+pub const CSV_HEADER: &str = "frame,t_ms,interval_ms,wait_ms,input_ms,draw_ms,render_ms,upload_ms,profiler_ms,cpu_ms,gpu_ms,budget_ms,dropped";
 
 /// 1 フレームの段階ごとの所要時間。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -38,11 +38,13 @@ pub struct Stages {
     pub draw: Duration,
     pub render: Duration,
     pub upload: Duration,
+    /// プロファイラ窓自身の描画（render + paint）。待ちの間に main スレッドで走るので wait からは差し引く。
+    pub profiler: Duration,
 }
 
 impl Stages {
     pub fn cpu(&self) -> Duration {
-        self.input + self.draw
+        self.input + self.draw + self.profiler
     }
 
     pub fn gpu(&self) -> Duration {
@@ -75,6 +77,7 @@ impl Sample {
             ms(s.draw),
             ms(s.render),
             ms(s.upload),
+            ms(s.profiler),
             ms(s.cpu()),
             ms(s.gpu()),
             ms(self.budget),
@@ -108,6 +111,8 @@ pub struct Profiler {
     samples: VecDeque<Sample>,
     frames: u64,
     dropped: u64,
+    /// 前回の `record` 以降にプロファイラ窓の描画にかかった時間。
+    self_time: Duration,
     out: Option<Box<dyn Write>>,
 }
 
@@ -128,6 +133,7 @@ impl Profiler {
             samples: VecDeque::with_capacity(CAPACITY),
             frames: 0,
             dropped: 0,
+            self_time: Duration::ZERO,
             out,
         })
     }
@@ -139,7 +145,14 @@ impl Profiler {
     }
 
     /// フレームの終わり（`now`）に呼ぶ。最初の 1 回は間隔が分からないので段階の合計を間隔とする。
-    pub fn record(&mut self, now: Instant, stages: Stages) {
+    /// プロファイラ窓の描画時間を足す。次の `record` で `Stages::profiler` に入り、wait から差し引かれる。
+    pub fn add_self_time(&mut self, d: Duration) {
+        self.self_time += d;
+    }
+
+    pub fn record(&mut self, now: Instant, mut stages: Stages) {
+        stages.profiler = std::mem::take(&mut self.self_time);
+        stages.wait = stages.wait.saturating_sub(stages.profiler);
         let interval = match self.last.replace(now) {
             Some(prev) => now - prev,
             None => stages.wait + stages.cpu() + stages.gpu(),
@@ -207,6 +220,7 @@ impl Profiler {
                 draw: sum(|s| s.stages.draw),
                 render: sum(|s| s.stages.render),
                 upload: sum(|s| s.stages.upload),
+                profiler: sum(|s| s.stages.profiler),
             },
             budget: self.budget(),
             frames: self.frames,
@@ -254,6 +268,11 @@ const CPU_LAYERS: &[Layer] = &[
         value: |s| s.draw,
     },
     Layer {
+        name: "Profiler (self)",
+        color: 0xe07b39,
+        value: |s| s.profiler,
+    },
+    Layer {
         name: "Wait (idle)",
         color: 0x3a4150,
         value: |s| s.wait,
@@ -283,6 +302,7 @@ pub struct ProfilerView;
 
 impl Render for ProfilerView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = Instant::now();
         let Some(p) = cx.try_global::<Profiler>() else {
             return div().size_full().bg(rgb(BG));
         };
@@ -300,7 +320,7 @@ impl Render for ProfilerView {
         } else {
             s.dropped as f64 * 100.0 / s.frames as f64
         };
-        div()
+        let root = div()
             .size_full()
             .flex()
             .flex_col()
@@ -335,7 +355,9 @@ impl Render for ProfilerView {
                     .child(format!(
                         "last {CAPACITY} frames · stats over last {WINDOW} · drop = interval > {DROP_FACTOR}× budget"
                     )),
-            )
+            );
+        cx.global_mut::<Profiler>().add_self_time(t.elapsed());
+        root
     }
 }
 
@@ -357,7 +379,8 @@ fn chart(
     let samples = samples.to_vec();
     let plot = canvas(
         |_, _, _| {},
-        move |b: Bounds<Pixels>, _, window: &mut Window, _: &mut App| {
+        move |b: Bounds<Pixels>, _, window: &mut Window, cx: &mut App| {
+            let t = Instant::now();
             window.paint_quad(fill(b, rgb(PLOT_BG)));
             let h = f32::from(b.size.height);
             let y_of = |v_ms: f64| b.bottom() - px((v_ms / top).min(1.0) as f32 * h);
@@ -394,6 +417,7 @@ fn chart(
                 }
             }
             hline(window, y_of(budget.as_secs_f64() * 1e3), rgb(BUDGET).into());
+            cx.global_mut::<Profiler>().add_self_time(t.elapsed());
         },
     )
     .flex_1()
@@ -498,7 +522,7 @@ mod tests {
         assert_eq!(lines[0], CSV_HEADER);
         assert_eq!(
             lines[3],
-            "2,36.000,16.000,8.000,1.000,0.000,1.000,0.000,1.000,1.000,10.000,1"
+            "2,36.000,16.000,8.000,1.000,0.000,1.000,0.000,0.000,1.000,1.000,10.000,1"
         );
         assert_eq!(lines[0].split(',').count(), lines[3].split(',').count());
     }

@@ -14,7 +14,7 @@ yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知ら
 | 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, set_locked, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | 4.5 カーネル | `crates/kernel` | 一点集中型の中枢。ブートローダー → カーネル → 各層。下位（`vr` / `overlay`）の状態を 1 か所で持ち、ランタイムの選択（`Kernel::boot`）・フレームの進行（`tick`）・パネル操作（`apply` / `status`）・描画の受け渡し（`submit`）を提供する。UI・画面はカーネルだけを見る。カーネル内の設定 `kernel::config` が持つ設定ファイル: `os::config_dir()/config.toml`（ログと同じ `nyaw` ディレクトリ: Windows `%LOCALAPPDATA% | `Kernel::{boot, with_backend, tick, submit, apply, status, add_panel}`, `PanelCommand`, `PanelStatus`, `config::{load, parse, path, Config}`, `vr` / `overlay` の型の再エクスポート |
 | 5 UI | `crates/ui` | GPUI フロントエンド（1つ）。ポインタイベントを GPUI のマウス入力に変換して画面へ流し、描画結果を読み戻してパネルへ返す。どの画面かは知らない | `run(kernel, panels, profiler)`, `PanelSpec`, `pump`（入力1フレーム分。本番と testkit 共通）, `sync_panel`（画面からのパネル操作を反映。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `PointerBridge`, `PanelControl` / `PanelCommand` / `PanelStatus` |
-| 5 横 | `crates/profiler` | `--profile` のときだけ動くプロファイラ。UI 層のフレームループが段階ごとの所要時間（wait / input / draw / render / upload）を記録し、FPS・フレーム時間・CPU/GPU・ドロップを OS のウィンドウにグラフで出し、1 フレーム 1 行の CSV（`os::log_dir()/profile.csv`）にダンプする。GPU は同期して待つ段階（描画+読み戻し、VR への転送）の実時間 | `Profiler::{new, with_budget, record, summary}`, `ProfilerView`, `Stages`, `CSV_HEADER` |
+| 5 横 | `crates/profiler` | 計測中だけ動くプロファイラ（`--profile` で起動時から、または Testing の Profiler ボタン / `PanelControl::profiling` で切り替え）。UI 層のフレームループが段階ごとの所要時間（wait / input / draw / render / upload と、プロファイラ表示自身の描画 profiler）を記録し、FPS・フレーム時間・CPU/GPU・ドロップをプロファイラパネル（Close ボタンで計測ごと止める）にグラフで出す。`--profile` のときは 1 フレーム 1 行の CSV（`os::log_dir()/profile.csv`）にもダンプする。GPU は同期して待つ段階（描画+読み戻し、VR への転送）の実時間 | `Profiler::{new, with_budget, record, add_self_time, summary}`, `ProfilerView`, `Stages`, `CSV_HEADER` |
 | 6 画面 | `crates/testing` ほか（n 個） | UI 層の上に載る画面。GPUI のビューで、ランタイムを意識しない | `Testing`（テスト用の画面） |
 | 6 画面 | `crates/wrist` | 常駐パネル。左手首に腕時計のように取り付き（掴めない）、時刻と日付、Toggle Panel ボタンで Testing を召喚 / 閉じる | `wrist::spec()`, `Wrist`, `WATCH_OFFSET` |
 | 6 画面 | `crates/beam` | コントローラのビーム。手ごとにレーザー（線）とカーソル（パネルに貼り付く円）の 2 枚。見た目だけを描き、置き場所・長さ・表示・描画順は `PanelSpec::pointer` で役割を与えたオーバーレイ層が毎 tick 決める（ヒット判定の対象外）。VR（`Surface::Overlay`）のときだけ載せる | `beam::specs()`, `Laser`, `Cursor` |
@@ -53,7 +53,7 @@ novr・SteamVR (OpenVR)・OpenXR はどれも対等な「手段」でしかな�
 ## 1 フレームの流れ（`ui::run`。どのランタイムでも同じ。novr ではコントローラが無いので入力は空、送信もしない）
 
 ```
-ui::run（VR はランタイムの vsync、novr は約 90Hz）/ testkit の VrKit::step
+ui::run（VR はランタイムの vsync、novr は主ディスプレイのリフレッシュレート。取れなければ約 90Hz）/ testkit の VrKit::step
  └ ui::pump → kernel.tick()（内部で overlay.tick(vr)）
      ├ vr.poll()            → Frame { hmd, controllers: Vec<RawController>, trackers }
      ├ 取り付け中のパネル   → 姿勢 = frame.pose(device) * offset（掴み中は手に従い、離すとオフセットを付け直す）

@@ -11,8 +11,8 @@ use std::{
 use gpui::{
     AnyView, AnyWindowHandle, App, Bounds, Context, Entity, MouseButton, MouseDownEvent,
     MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TitlebarOptions, Window, WindowBounds, WindowHandle, WindowOptions,
-    prelude::*, px, size,
+    ScrollWheelEvent, Window, WindowBounds, WindowHandle, WindowOptions, div, prelude::*, px, rgb,
+    size,
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
@@ -96,6 +96,11 @@ pub struct PanelState {
 pub struct PanelControl {
     pub panels: HashMap<PanelId, PanelState>,
     pub spawns: Vec<PanelSpec>,
+    /// 計測するか。ビューが切り替え、フレームループが計測とプロファイラパネルの開閉を合わせる。
+    /// パネルの閉じるボタンでも `false` になる。
+    pub profiling: bool,
+    /// プロファイラパネルを開く起点のパネル（`profiling` を `true` にするビューが設定する）。
+    pub profiler_from: PanelId,
 }
 
 impl gpui::Global for PanelControl {}
@@ -206,7 +211,7 @@ pub fn open_panel_window<V: Render>(
 }
 
 const PANEL_PX: (u32, u32) = (800, 600);
-/// Desktop（novr）だけが使う周期。VR ランタイムは `poll` が vsync まで待つ。
+/// Desktop（novr）の周期。主ディスプレイのリフレッシュ間隔が取れないときに使う。VR ランタイムは `poll` が vsync まで待つ。
 const FRAME: Duration = Duration::from_millis(11);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
@@ -319,20 +324,29 @@ impl Render for PanelRoot {
 /// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
 /// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通り、違いは `kernel.surface()` だけ。
 /// パネルに載せる画面（上の層）は `panels` で受け取る。UI 層はどの画面かを知らない。
-/// `profiler` があればフレームごとの段階の所要時間を記録し、OS のウィンドウにグラフで出す。
+/// `profiler` があれば起動時から計測し（`PanelControl::profiling`）、段階ごとの所要時間をプロファイラパネルにグラフで出す。
 pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler>) {
     let surface = kernel.surface();
     gpui_platform::application().run(move |cx: &mut App| {
-        let profiler_window = profiler.map(|p| {
-            // novr はタイマーが周期を決めるので予算が分かる。VR は vsync の間隔から推定する。
-            let p = if surface == Surface::Desktop {
-                p.with_budget(FRAME)
+        // novr はディスプレイのリフレッシュに揃える。
+        // ponytail: 起動時の主ディスプレイで固定。モニタ間の移動や設定変更を追うなら毎フレーム問い合わせる。
+        let frame = cx
+            .primary_display()
+            .and_then(|d| d.refresh_interval())
+            .unwrap_or(FRAME);
+        // novr はタイマーが周期を決めるので予算が分かる。VR は vsync の間隔から推定する。
+        let budget = move |p: Profiler| {
+            if surface == Surface::Desktop {
+                p.with_budget(frame)
             } else {
                 p
-            };
-            cx.set_global(p);
-            open_profiler_window(cx)
-        });
+            }
+        };
+        if let Some(p) = profiler {
+            cx.set_global(budget(p));
+            cx.default_global::<PanelControl>().profiling = true;
+        }
+        let mut profiler_panel: Option<PanelId> = None;
         let mut windows: Vec<(PanelId, AnyWindowHandle)> = panels
             .into_iter()
             .enumerate()
@@ -350,7 +364,7 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
             let mut drawn: Vec<Option<Instant>> = vec![None; windows.len()];
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
             let wait = if surface == Surface::Desktop {
-                FRAME
+                frame
             } else {
                 Duration::ZERO
             };
@@ -445,13 +459,73 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                     last.push(None);
                     drawn.push(None);
                 }
-                if let Some(handle) = profiler_window {
-                    cx.update(|cx| {
-                        cx.global_mut::<Profiler>().record(Instant::now(), stages);
-                        // プロファイラのウィンドウが閉じられても計測とダンプは続ける。
-                        let _ = cx.update_window(handle, |_, window, _| window.refresh());
-                    });
+                // 計測とプロファイラパネルを `profiling` に合わせる。
+                if let Some(p) = profiler_panel
+                    && kernel.panel(p).closed
+                {
+                    // OS の X などで閉じられた。
+                    profiler_panel = None;
+                    cx.update(|cx| cx.default_global::<PanelControl>().profiling = false);
                 }
+                let (profiling, from) = cx.update(|cx| {
+                    let c = cx.default_global::<PanelControl>();
+                    (c.profiling, c.profiler_from)
+                });
+                if profiling != cx.update(|cx| cx.has_global::<Profiler>()) {
+                    cx.update(|cx| {
+                        if profiling {
+                            // --profile 無しで始めたときは CSV に書かない。
+                            let p = Profiler::new(None).expect("出力先が無ければ失敗しない");
+                            cx.set_global(budget(p));
+                        } else {
+                            log_summary(cx);
+                            cx.remove_global::<Profiler>();
+                        }
+                        // 切り替えボタンの表示を変えるため、どのパネルも描き直させる。
+                        cx.refresh_windows();
+                    });
+                    drawn.iter_mut().for_each(|t| *t = None);
+                }
+                match profiler_panel {
+                    None if profiling => {
+                        let spec = PanelSpec::spawn(from, |panel, _, cx| ProfilerPanel {
+                            panel,
+                            view: cx.new(|_| ProfilerView),
+                        })
+                        .sized(Vec2::new(1.1, 0.56), (1100, 560));
+                        let i = windows.len();
+                        let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, i, cx));
+                        windows.push((panel, window));
+                        last.push(None);
+                        drawn.push(None);
+                        profiler_panel = Some(panel);
+                    }
+                    Some(p) if !profiling => {
+                        // 次のフレームの sync_panel が閉じてウィンドウを消す。
+                        cx.update(|cx| {
+                            cx.default_global::<PanelControl>()
+                                .panels
+                                .entry(p)
+                                .or_default()
+                                .commands
+                                .push(PanelCommand::Close)
+                        });
+                        profiler_panel = None;
+                    }
+                    _ => {}
+                }
+                cx.update(|cx| {
+                    if cx.has_global::<Profiler>() {
+                        cx.global_mut::<Profiler>().record(Instant::now(), stages);
+                    }
+                    if let Some(p) = profiler_panel
+                        && let Some((_, w)) = windows.iter().find(|(id, _)| *id == p)
+                    {
+                        // グラフは毎フレーム変わるので描き直させる（VR では IDLE_REDRAW を待たずに読み戻す）。
+                        let _ = cx.update_window(*w, |_, w, _| w.refresh());
+                        drawn[p] = None;
+                    }
+                });
             }
         })
         .detach();
@@ -460,6 +534,12 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
 
 /// 終了する。プロファイル中なら集計をログへ残す。
 fn quit(cx: &mut App) {
+    log_summary(cx);
+    cx.quit();
+}
+
+/// プロファイル中なら集計をログへ残す。
+fn log_summary(cx: &App) {
     if let Some(p) = cx.try_global::<Profiler>() {
         let s = p.summary();
         let ms = |d: Duration| format!("{:.3}", d.as_secs_f64() * 1e3);
@@ -474,26 +554,40 @@ fn quit(cx: &mut App) {
             gpu_avg_ms = ms(s.gpu_avg)
         );
     }
-    cx.quit();
 }
 
-/// プロファイラの OS ウィンドウ。ランタイムに関係なく常にデスクトップに表示する。
-fn open_profiler_window(cx: &mut App) -> AnyWindowHandle {
-    let size = size(px(1100.0), px(560.0));
-    cx.open_window(
-        WindowOptions {
-            titlebar: Some(TitlebarOptions {
-                title: Some("nyaw profiler".into()),
-                ..Default::default()
-            }),
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size, cx))),
-            focus: false,
-            ..Default::default()
-        },
-        |_, cx| cx.new(|_| ProfilerView),
-    )
-    .expect("open profiler window")
-    .into()
+/// プロファイラのパネル。グラフの上に閉じるボタン（計測も止める）を出す。
+/// VR ではパネルに OS の閉じるボタンが無いので要る。
+struct ProfilerPanel {
+    panel: PanelId,
+    view: Entity<ProfilerView>,
+}
+
+impl Render for ProfilerPanel {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .bg(rgb(0x17181c))
+            .child(
+                div().flex().justify_end().p_1().child(
+                    div()
+                        .id(("close-profiler", self.panel))
+                        .debug_selector(|| "close-profiler".into())
+                        .px_3()
+                        .py_1()
+                        .bg(rgb(0x3a3d46))
+                        .hover(|s| s.bg(rgb(0x50545f)))
+                        .text_color(rgb(0xd8dae0))
+                        .child("Close")
+                        .on_click(|_, _, cx| {
+                            cx.default_global::<PanelControl>().profiling = false;
+                        }),
+                ),
+            )
+            .child(div().flex_1().child(self.view.clone()))
+    }
 }
 
 fn open_panel(

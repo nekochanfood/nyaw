@@ -42,3 +42,8 @@ beam.workspace = true
 # testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する
 [profile.dev.package.testkit]
 opt-level = 2
+
+# 依存（gpui 等）は未最適化だと描画が桁違いに遅く、プロファイラ窓の描画だけで 1 フレーム 50ms を超えてフレームを落とす。
+# 自前クレートはデバッグしやすいよう最適化しない。
+[profile.dev.package."*"]
+opt-level = 2
