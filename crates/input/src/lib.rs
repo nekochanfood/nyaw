@@ -60,8 +60,14 @@ const PROFILES: &[Profile] = &[
     },
 ];
 
-// ponytail: 固定しきい値でヒステリシスなし。トリガーがチャタリングするならアクション毎にヒステリシスを追加。
-const PRESS: f32 = 0.5;
+/// ヒステリシス: 押下は `PRESS` 超え、離すのは `RELEASE` 未満になってから。
+// ponytail: 全アクション共通のしきい値。アクション毎に変えたくなったら Profile に持たせる。
+const PRESS: f32 = 0.6;
+const RELEASE: f32 = 0.4;
+
+fn held(v: f32, was: bool) -> bool {
+    v > if was { RELEASE } else { PRESS }
+}
 
 fn first(raw: &RawController, names: &[&str]) -> f32 {
     names.iter().find_map(|n| raw.input(n)).unwrap_or(0.0)
@@ -97,14 +103,16 @@ pub fn scroll_source(profile_id: &str) -> Option<(&'static str, &'static str)> {
     profile(profile_id).scroll
 }
 
-pub fn map(raw: &RawController) -> ControllerState {
+/// `prev` は同じ手の前フレームの結果（ヒステリシス用。初回は `None`）。
+pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerState {
     let p = profile(&raw.profile);
+    let was = |f: fn(&ControllerState) -> bool| prev.is_some_and(f);
     ControllerState {
         hand: raw.hand,
         aim: raw.aim,
-        select: first(raw, p.select) > PRESS,
-        grab: first(raw, p.grab) > PRESS,
-        menu: first(raw, p.menu) > PRESS,
+        select: held(first(raw, p.select), was(|c| c.select)),
+        grab: held(first(raw, p.grab), was(|c| c.grab)),
+        menu: held(first(raw, p.menu), was(|c| c.menu)),
         scroll: p.scroll.map_or(Vec2::ZERO, |(x, y)| {
             Vec2::new(first(raw, &[x]), first(raw, &[y]))
         }),
@@ -125,12 +133,23 @@ mod tests {
     }
 
     #[test]
+    fn hysteresis_holds_between_thresholds() {
+        let r = |v| raw("valve/index_controller", &[("trigger/value", v)]);
+        let a = map(&r(0.5), None);
+        assert!(!a.select); // 0.6 未満では押下にならない
+        let b = map(&r(0.7), Some(&a));
+        assert!(b.select);
+        assert!(map(&r(0.5), Some(&b)).select); // 0.4 まで保持
+        assert!(!map(&r(0.3), Some(&b)).select);
+    }
+
+    #[test]
     fn different_devices_same_action() {
         let index = map(&raw(
             "valve/index_controller",
             &[("trigger/value", 0.9), ("thumbstick/y", 1.0)],
-        ));
-        let simple = map(&raw("khr/simple_controller", &[("select/click", 1.0)]));
+        ), None);
+        let simple = map(&raw("khr/simple_controller", &[("select/click", 1.0)]), None);
         assert!(index.select && simple.select);
         assert_eq!(index.scroll, Vec2::new(0.0, 1.0));
     }
@@ -140,7 +159,7 @@ mod tests {
         let s = map(&raw(
             "oculus/touch_controller",
             &[("b/click", 1.0), ("squeeze/value", 0.3)],
-        ));
+        ), None);
         assert!(s.menu);
         assert!(!s.grab);
     }
@@ -149,17 +168,17 @@ mod tests {
     fn source_roundtrips_through_map() {
         for id in PROFILES.iter().map(|p| p.id) {
             let name = source(id, Action::Select).unwrap();
-            assert!(map(&raw(id, &[(name, 1.0)])).select, "{id}");
+            assert!(map(&raw(id, &[(name, 1.0)]), None).select, "{id}");
         }
         assert_eq!(source("khr/simple_controller", Action::Grab), None);
         let (x, y) = scroll_source("valve/index_controller").unwrap();
-        let s = map(&raw("valve/index_controller", &[(x, 0.5), (y, -1.0)])).scroll;
+        let s = map(&raw("valve/index_controller", &[(x, 0.5), (y, -1.0)]), None).scroll;
         assert_eq!(s, Vec2::new(0.5, -1.0));
         assert_eq!(scroll_source("khr/simple_controller"), None);
     }
 
     #[test]
     fn unknown_device_falls_back_to_simple() {
-        assert!(map(&raw("acme/mystery", &[("select/click", 1.0)])).select);
+        assert!(map(&raw("acme/mystery", &[("select/click", 1.0)]), None).select);
     }
 }
