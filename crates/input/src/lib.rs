@@ -145,21 +145,30 @@ mod tests {
 
     #[test]
     fn different_devices_same_action() {
-        let index = map(&raw(
-            "valve/index_controller",
-            &[("trigger/value", 0.9), ("thumbstick/y", 1.0)],
-        ), None);
-        let simple = map(&raw("khr/simple_controller", &[("select/click", 1.0)]), None);
+        let index = map(
+            &raw(
+                "valve/index_controller",
+                &[("trigger/value", 0.9), ("thumbstick/y", 1.0)],
+            ),
+            None,
+        );
+        let simple = map(
+            &raw("khr/simple_controller", &[("select/click", 1.0)]),
+            None,
+        );
         assert!(index.select && simple.select);
         assert_eq!(index.scroll, Vec2::new(0.0, 1.0));
     }
 
     #[test]
     fn touch_menu_candidates_and_threshold() {
-        let s = map(&raw(
-            "oculus/touch_controller",
-            &[("b/click", 1.0), ("squeeze/value", 0.3)],
-        ), None);
+        let s = map(
+            &raw(
+                "oculus/touch_controller",
+                &[("b/click", 1.0), ("squeeze/value", 0.3)],
+            ),
+            None,
+        );
         assert!(s.menu);
         assert!(!s.grab);
     }
