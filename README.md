@@ -9,10 +9,14 @@ VR オーバーレイアプリ
 cargo run                  # VR ランタイムを自動検出。無ければ novr（デスクトップのウィンドウ）で起動
 cargo run -- --novr        # novr 固定
 cargo run -- --openxr      # OpenXR 固定（--openvr で SteamVR）
+cargo run -- --profile     # プロファイラ付き（ランタイム指定と併用可。--profile=PATH でダンプ先を指定）
 NYAW_LOG=debug cargo run   # ログレベル変更（trace/debug/info/warn/error、既定 info）
 ```
 
 ログは標準エラーと `%LOCALAPPDATA%\nyaw\logs\nyaw.log`（Linux は `$XDG_STATE_HOME/nyaw/logs`）に出る。
+
+`--profile` を付けると、FPS・フレーム時間・CPU/GPU の内訳・ドロップフレームをグラフと数値で出すウィンドウが開き、
+1 フレーム 1 行の CSV を同じログフォルダの `profile.csv` に書き出す（前回分は `profile-prev.csv`）。
 
 ### テスト
 
