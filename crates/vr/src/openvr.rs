@@ -137,7 +137,7 @@ impl OpenVrBackend {
     // ponytail: 周波数が取れない／vsync が分からないときは待たない（呼び出し側が回し続ける）。
     fn wait_vsync(&self) {
         let s = self.system();
-        let mut err = 0;
+        let mut err = Default::default();
         let hz = unsafe {
             f(s.GetFloatTrackedDeviceProperty)(
                 sys::k_unTrackedDeviceIndex_Hmd,
@@ -186,7 +186,7 @@ impl OpenVrBackend {
 
     fn string_property(&self, device: u32, prop: sys::ETrackedDeviceProperty) -> String {
         let mut buf = [0 as c_char; 256];
-        let mut err = 0;
+        let mut err = Default::default();
         unsafe {
             f(self.system().GetStringTrackedDeviceProperty)(
                 device,
@@ -219,7 +219,7 @@ impl OpenVrBackend {
         }
         let mut axis_types = [0; 5];
         for (n, t) in axis_types.iter_mut().enumerate() {
-            let mut err = 0;
+            let mut err = Default::default();
             let prop = sys::ETrackedDeviceProperty_Prop_Axis0Type_Int32 + n as u32;
             *t = unsafe { f(s.GetInt32TrackedDeviceProperty)(device, prop, &mut err) };
         }
