@@ -2586,6 +2586,7 @@ dependencies = [
 name = "logger"
 version = "2026.0.1"
 dependencies = [
+ "chrono",
  "log",
 ]
 

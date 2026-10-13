@@ -6,3 +6,4 @@ edition.workspace = true
 # 全層から直接使ってよい唯一の横断クレート。下位のクレートに依存してはならない。
 [dependencies]
 log.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock"] }

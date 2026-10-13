@@ -10,7 +10,7 @@
 //! 外部クレートが `log` クレートで出すログ（gpui など）も [`init`] 以降は同じロガーへ流れる。
 
 use std::fmt;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::str::FromStr;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -81,15 +81,30 @@ pub struct Record<'a> {
 /// ログの出力先。`line` は改行を含まない 1 行の logfmt。
 pub trait Sink: Send + Sync {
     fn write(&self, line: &str);
+    /// 表示用シンクはレコードを整形できる。既定では保存用の logfmt を書く。
+    fn write_record(&self, _record: &Record, _ts: SystemTime, line: &str) {
+        self.write(line);
+    }
     fn flush(&self) {}
 }
 
-/// 標準エラー出力へ書くシンク。
+/// 標準エラー出力へ書くシンク。端末では現地時刻と列揃え、リダイレクト時は logfmt。
+/// 色は `NO_COLOR` が空でなく設定されている場合、または `TERM=dumb` の場合に無効。
 pub struct StderrSink;
 
 impl Sink for StderrSink {
     fn write(&self, line: &str) {
         let _ = writeln!(std::io::stderr().lock(), "{line}");
+    }
+
+    fn write_record(&self, record: &Record, ts: SystemTime, line: &str) {
+        if std::io::stderr().is_terminal() {
+            let color = std::env::var_os("NO_COLOR").is_none_or(|v| v.is_empty())
+                && std::env::var_os("TERM").is_none_or(|v| v != "dumb");
+            self.write(&format_terminal(record, ts, color));
+        } else {
+            self.write(line);
+        }
     }
 }
 
@@ -124,9 +139,10 @@ impl Logger {
         if !self.enabled(record.level) {
             return;
         }
-        let line = format(record, SystemTime::now());
+        let ts = SystemTime::now();
+        let line = format(record, ts);
         for s in &self.sinks {
-            s.write(&line);
+            s.write_record(record, ts, &line);
         }
     }
 
@@ -188,6 +204,32 @@ pub fn format(record: &Record, ts: SystemTime) -> String {
     out.push_str(record.level.as_str());
     push_pair(&mut out, "target", record.target);
     push_pair(&mut out, "msg", record.msg);
+    for (k, v) in record.fields {
+        push_pair(&mut out, k, v);
+    }
+    out
+}
+
+fn format_terminal(record: &Record, ts: SystemTime, color: bool) -> String {
+    let local: chrono::DateTime<chrono::Local> = ts.into();
+    let level = std::format!("{:5}", record.level.as_str().to_ascii_uppercase());
+    let level = if color {
+        let code = match record.level {
+            Level::Trace => 90,
+            Level::Debug => 36,
+            Level::Info => 32,
+            Level::Warn => 33,
+            Level::Error => 31,
+        };
+        std::format!("\x1b[{code}m{level}\x1b[0m")
+    } else {
+        level
+    };
+    let mut out = std::format!("{}  {level}  ", local.format("%Y-%m-%d %H:%M:%S%.3f %:z"));
+    let mut target = String::new();
+    push_value(&mut target, record.target);
+    out.push_str(&std::format!("{target:24}  "));
+    push_value(&mut out, record.msg);
     for (k, v) in record.fields {
         push_pair(&mut out, k, v);
     }
@@ -442,6 +484,45 @@ mod tests {
             rfc3339_millis(UNIX_EPOCH - Duration::from_secs(1)),
             "1970-01-01T00:00:00.000Z"
         );
+    }
+
+    #[test]
+    fn terminal_uses_local_time_and_aligned_levels_with_optional_color() {
+        let ts = at(1_791_882_487_654);
+        let local: chrono::DateTime<chrono::Local> = ts.into();
+        let timestamp = local.format("%Y-%m-%d %H:%M:%S%.3f %:z").to_string();
+        for (level, label, code) in [
+            (Level::Trace, "TRACE", 90),
+            (Level::Debug, "DEBUG", 36),
+            (Level::Info, "INFO ", 32),
+            (Level::Warn, "WARN ", 33),
+            (Level::Error, "ERROR", 31),
+        ] {
+            let record = rec(level, "描画完了", &[]);
+            let plain = format_terminal(&record, ts, false);
+            assert_eq!(
+                plain,
+                std::format!("{timestamp}  {label}  {:24}  描画完了", "vr")
+            );
+            let colored = format_terminal(&record, ts, true);
+            assert_eq!(
+                colored,
+                plain.replacen(label, &std::format!("\x1b[{code}m{label}\x1b[0m"), 1)
+            );
+        }
+    }
+
+    #[test]
+    fn terminal_escapes_control_characters_and_preserves_fields() {
+        let fields = [("error", "device\nlost\x1b[31m".into())];
+        let record = Record {
+            target: "ui\tpanel",
+            ..rec(Level::Warn, "bad\r\nmessage", &fields)
+        };
+        let line = format_terminal(&record, at(0), false);
+        assert!(!line.contains(['\n', '\r', '\t', '\x1b']));
+        assert!(line.contains(r#""ui\tpanel""#));
+        assert!(line.ends_with(r#""bad\r\nmessage" error="device\nlost\u{001b}[31m""#));
     }
 
     #[test]
