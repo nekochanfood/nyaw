@@ -302,17 +302,29 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>) {
                 // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
                 // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
                 for ((panel, window), inputs) in windows.iter().copied().zip(inputs) {
+                    if kernel.panel(panel).closed {
+                        continue;
+                    }
                     let Ok(frame) = cx.update_window(window, |_, window, cx| {
                         for input in inputs {
                             window.dispatch_event(input, cx);
                         }
                         sync_panel(&mut kernel, panel, cx);
+                        if kernel.panel(panel).closed {
+                            window.remove_window();
+                            return None;
+                        }
                         // Desktop では OS が表示するので読み戻さない。
                         // ponytail: Overlay では変化がなくても毎フレーム描画して送る。重ければ dirty なときだけにする。
                         (surface == Surface::Overlay).then(|| capture(window, cx))
                     }) else {
-                        cx.update(|cx| cx.quit()); // ウィンドウが閉じられた
-                        return;
+                        // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じ、全部閉じたら終了する。
+                        kernel.apply(panel, PanelCommand::Close);
+                        if (0..windows.len()).all(|p| kernel.panel(p).closed) {
+                            cx.update(|cx| cx.quit());
+                            return;
+                        }
+                        continue;
                     };
                     match frame {
                         // ponytail: 描画の読み戻しは毎フレーム行い、画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。

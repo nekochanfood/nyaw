@@ -17,6 +17,7 @@ pub enum PanelCommand {
     Attach(Device, Pose),
     Detach,
     Lock(bool),
+    Close,
 }
 
 /// パネルの状態。ビューの表示用。
@@ -121,6 +122,7 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Attach(device, offset) => self.overlay.attach(panel, device, offset),
             PanelCommand::Detach => self.overlay.detach(panel),
             PanelCommand::Lock(locked) => self.overlay.set_locked(panel, locked),
+            PanelCommand::Close => self.overlay.close(&mut self.vr, panel),
         }
     }
 

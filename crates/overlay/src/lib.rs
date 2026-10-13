@@ -24,6 +24,8 @@ pub struct Panel {
     pub attached: Option<(Device, Pose)>,
     /// 掴んでも動かない。取り付けていなければ空間に固定される。
     pub locked: bool,
+    /// 閉じられた。ヒット判定の対象外で、PanelId は詰めずに欠番のまま残る。
+    pub closed: bool,
     overlay: OverlayId,
     /// ランタイムへ最後に送った姿勢。変わったときだけ送る。
     sent: Option<Pose>,
@@ -106,6 +108,7 @@ impl Overlay {
             resolution,
             attached: None,
             locked: false,
+            closed: false,
             overlay,
             sent: None,
         });
@@ -154,6 +157,21 @@ impl Overlay {
     /// 掴んで動かせないようにする（`false` で戻す）。レーザーでの操作はそのまま使える。
     pub fn set_locked(&mut self, id: PanelId, locked: bool) {
         self.panels[id].locked = locked;
+    }
+
+    /// パネルを閉じる。ランタイムにオーバーレイの破棄 API が無いので、透明な 1px を送って見えなくする。
+    // ponytail: ランタイム側のオーバーレイは残る。数が問題になったら VrBackend に destroy を足す。
+    pub fn close(&mut self, vr: &mut dyn VrBackend, id: PanelId) {
+        self.panels[id].closed = true;
+        vr.submit_overlay_pixels(self.panels[id].overlay, 1, 1, &[0; 4]);
+        for h in self.hands.values_mut() {
+            if h.hover == Some(id) {
+                h.hover = None;
+            }
+            if h.dragging.is_some_and(|d| d.0 == id) {
+                h.dragging = None;
+            }
+        }
     }
 
     /// `panel` の描画済み UI フレームを VR ランタイムへ送る。
@@ -235,6 +253,7 @@ impl Overlay {
             .panels
             .iter()
             .enumerate()
+            .filter(|(_, p)| !p.closed)
             .filter_map(|(id, p)| hit_test(p, &c.aim).map(|(pos, t)| (id, pos, t)))
             .min_by(|a, b| a.2.total_cmp(&b.2));
         // ロック中のパネルは掴めない（掴みボタンは無視して普通に指す）。

@@ -136,6 +136,10 @@ impl Render for Home {
         let vr_row = row()
             .child(button("spawn-panel", "Spawn panel", false).on_click(spawn(self.panel)))
             .child(
+                button("close-panel", "Close panel", false)
+                    .on_click(command(self.panel, PanelCommand::Close)),
+            )
+            .child(
                 button("click-me", format!("Clicked {}", self.clicks), false).on_click(
                     cx.listener(|this, _, _, cx| {
                         this.clicks += 1;
