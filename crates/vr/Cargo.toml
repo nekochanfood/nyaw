@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 glam.workspace = true
+logger.workspace = true
 os.workspace = true
 
 [features]
