@@ -21,12 +21,15 @@
 //!
 //! 要素は GPUI の `.debug_selector(|| "名前".into())` で指定する。
 //!
+//! 環境変数 `NYAW_E2E_WATCH`（1 フレームの表示時間 ms）を付けると、テスト中のパネルをウィンドウで見られる。
+//!
 //! 実ランタイム（Monado / SteamVR）でのテストは [`runtimes`]（インストールのウィザードと起動・後片付け）を使う。
 
 pub mod novr;
 pub mod raster;
 pub mod runtimes;
 pub mod vr_kit;
+mod watch;
 
 pub use input::Action;
 pub use novr::NoVrKit;

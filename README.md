@@ -27,4 +27,11 @@ cargo runtimes install     # Monado を導入するウィザード（SteamVR は
 cargo test -p testkit --test runtimes   # 実ランタイムでの E2E
 ```
 
+環境変数 `NYAW_E2E_WATCH` を付けると、E2E 中のパネルをパネルごとのウィンドウで見られる。値は 1 フレームの表示時間（ms、数値でなければ 100）。
+見えるのはテスト用ラスタライザの絵（矩形のみ、文字は出ない）。並列だと窓が乱立するので `--test-threads=1` 推奨。
+
+```sh
+NYAW_E2E_WATCH=300 cargo test -p testkit --test testing -- --test-threads=1
+```
+
 構成と設計は [AGENT.md](AGENT.md) を参照。

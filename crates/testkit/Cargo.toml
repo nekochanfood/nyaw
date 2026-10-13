@@ -11,6 +11,9 @@ vr = { workspace = true, features = ["test-support"] }
 input.workspace = true
 kernel.workspace = true
 ui.workspace = true
+# NYAW_E2E_WATCH でテスト中の描画を OS のウィンドウに出す（watch.rs）
+minifb = "0.29.0"
+logger.workspace = true
 
 # シナリオが操作する画面。キット自体は画面を知らない
 [dev-dependencies]
