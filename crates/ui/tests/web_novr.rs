@@ -18,9 +18,9 @@ use kernel::{Hand, Kernel, Pose, Runtime, Vec2, VrBackend, VrError};
 use serde_json::Value;
 use ui::{PanelControl, PanelSpec};
 
-/// GPUI の Testing（パネル 0）の位置。Web 版（パネル 1）はその右 1.2m に開く。
+/// GPUI の Testing（パネル 0）の位置。Web 版（パネル 1）はその中心の手前 5cm に重ねて開く。
 const GPUI_POS: Vec3 = Vec3::new(-0.6, 0.0, -1.5);
-const WEB_POS: Vec3 = Vec3::new(0.6, 0.0, -1.5);
+const WEB_POS: Vec3 = Vec3::new(-0.6, 0.0, -1.45);
 
 type Job = Box<dyn FnOnce(&mut Emulator) + Send>;
 
@@ -205,15 +205,16 @@ fn scenario(page: &mut Page, emu: &Emu) {
     let h = status["resolution"][1].as_f64().expect("解像度") as f32;
 
     // 画面に出さない WebView が読み戻されて、エミュレーターの画面に映る（背景は不透明な #202020）。
-    // パネルの外（2 枚の間）は無彩色の市松模様。
+    // パネルの外（右）は無彩色の市松模様。
+    let w = status["resolution"][0].as_f64().expect("解像度") as f32;
     let bottom_left = emu.on_screen(&status, (4.0, h - 10.0));
     emu.until_color(
         "ページの描画が画面に映る",
         bottom_left,
         near([0x20, 0x20, 0x20]),
     );
-    let between = emu.run(|e| e.project(Vec3::new(0.0, 0.0, -1.5))).unwrap();
-    assert!(gray(emu.color(between)), "パネルの外は無彩色");
+    let outside = emu.on_screen(&status, (w - 4.0, h - 10.0)) + Vec2::new(100.0, 0.0);
+    assert!(gray(emu.color(outside)), "パネルの外は無彩色");
     assert_ne!(
         emu.color(Vec2::new(0.0, 0.0)),
         emu.color(Vec2::new(16.0, 0.0)),
@@ -259,7 +260,8 @@ fn scenario(page: &mut Page, emu: &Emu) {
         s["state"]["status"]["locked"] == false
     });
 
-    // 右クリック = グリップ: パネルを掴んでマウスで右へ運ぶと、元の場所は背景に戻る。
+    // 右クリック = グリップ: パネルを掴んでマウスで右へ運ぶと、パネルの外だった所に映る
+    // （元の場所には下に重なった GPUI の Testing が見えるので、そちらでは確かめない）。
     let grip = emu.on_screen(&status, (20.0, h - 20.0));
     emu.point(Some(grip));
     emu.button(Button::Grab, true);
@@ -269,7 +271,7 @@ fn scenario(page: &mut Page, emu: &Emu) {
     for i in 1..=10 {
         emu.point(Some(grip + Vec2::new(20.0 * i as f32, 0.0)));
     }
-    emu.until_color("パネルが動いた", bottom_left, gray);
+    emu.until_color("パネルが動いた", outside, near([0x20, 0x20, 0x20]));
     emu.button(Button::Grab, false);
     page.until("離した", |s| s["state"]["status"]["grabbed"] == false);
 

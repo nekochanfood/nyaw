@@ -12,7 +12,7 @@ use crate::panels::Panels;
 use crate::watch::Watch;
 use crate::{Driver, Hand, Pose, Quat, Vec2, Vec3};
 
-/// 最初のパネルの位置。隣に召喚したパネル（右 1.2m）も画面に収まる距離。
+/// 最初のパネルの位置。
 const PANEL_POS: Vec3 = Vec3::new(0.0, 0.0, -1.5);
 /// エミュレーターの画面の大きさ（本番のウィンドウの初期値と同じ）。
 const SCREEN: (u32, u32) = (1280, 720);
