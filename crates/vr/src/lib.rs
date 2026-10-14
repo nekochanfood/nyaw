@@ -276,10 +276,11 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
 
 /// 希望のランタイムに接続する。VR ランタイムを希望した（または指定なしの）場合は、
 /// インストール済みのもの（OpenVR 優先）にフォールバックする。novr へのフォールバックは呼び出し側が決める。
-pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
+/// `emulator_gpu` は novr のエミュレーターが GPU で合成するか（`false` なら CPU）。
+pub fn connect(prefer: Option<Runtime>, emulator_gpu: bool) -> Result<Box<dyn VrBackend>, VrError> {
     if prefer == Some(Runtime::NoVr) {
         logger::debug!("ランタイムに接続する", runtime = ?Runtime::NoVr);
-        return Ok(Box::new(novr::Emulator::windowed()));
+        return Ok(Box::new(novr::Emulator::windowed(emulator_gpu)));
     }
     let order = match prefer {
         Some(Runtime::OpenXr) => [Runtime::OpenXr, Runtime::OpenVr],
@@ -306,7 +307,7 @@ pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
 /// testkit が起動したランタイムを、別のランタイムと取り違えずに掴むため。
 pub fn connect_exact(rt: Runtime) -> Result<Box<dyn VrBackend>, VrError> {
     match rt {
-        Runtime::NoVr => Ok(Box::new(novr::Emulator::windowed())),
+        Runtime::NoVr => Ok(Box::new(novr::Emulator::windowed(true))),
         Runtime::OpenVr if openvr::available() => openvr::connect(),
         Runtime::OpenXr if openxr::available() => openxr::connect(),
         _ => Err(VrError::NoRuntime),
@@ -340,7 +341,7 @@ mod tests {
 
     #[test]
     fn novr_is_always_available() {
-        let b = connect(Some(Runtime::NoVr)).unwrap();
+        let b = connect(Some(Runtime::NoVr), true).unwrap();
         assert_eq!(b.runtime(), Runtime::NoVr);
     }
 

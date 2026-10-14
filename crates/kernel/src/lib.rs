@@ -80,11 +80,12 @@ impl Kernel {
             Some("--openvr" | "openvr") => Some(Runtime::OpenVr),
             _ => None,
         };
-        let vr = match vr::connect(prefer) {
+        let gpu = config.gpu.emulator;
+        let vr = match vr::connect(prefer, gpu) {
             Ok(b) => b,
             Err(e) if prefer.is_none() => {
                 logger::warn!("VR ランタイムに接続できないので novr で起動する", error = e);
-                vr::connect(Some(Runtime::NoVr)).expect("novr は常に接続できる")
+                vr::connect(Some(Runtime::NoVr), gpu).expect("novr は常に接続できる")
             }
             Err(e) => {
                 logger::error!("VR ランタイムに接続できない", runtime = ?prefer, error = e);

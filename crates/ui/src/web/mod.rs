@@ -568,7 +568,7 @@ impl Host {
         match window {
             Ok(window) => {
                 logger::info!("Web のパネルを開いた", panel = panel, page = page);
-                self.stream(panel, &window);
+                self.stream(panel, &window, kernel.config.gpu.web_capture);
                 self.windows.insert(panel, window);
                 self.draws.insert(panel, Draw::default());
                 self.outboxes.insert(panel, Outbox::default());
@@ -581,11 +581,12 @@ impl Host {
     }
 
     /// Windows: `window` を撮り続ける。始められなければ CapturePreview で撮る（ほかの OS は何もしない）。
-    /// 環境変数 `NYAW_WEB_CAPTURE=preview` なら撮り続けず、従来の CapturePreview で撮る（比べる・切り分ける用）。
+    /// `gpu` が偽（設定の `gpu.web_capture = false`）か環境変数 `NYAW_WEB_CAPTURE=preview` なら撮り続けず、
+    /// 従来の CapturePreview で撮る（互換性のため・比べる・切り分ける用）。
     #[cfg_attr(not(windows), allow(unused_variables))]
-    fn stream(&mut self, panel: PanelId, window: &WebviewWindow<Wry>) {
+    fn stream(&mut self, panel: PanelId, window: &WebviewWindow<Wry>, gpu: bool) {
         #[cfg(windows)]
-        if std::env::var("NYAW_WEB_CAPTURE").as_deref() != Ok("preview") {
+        if gpu && std::env::var("NYAW_WEB_CAPTURE").as_deref() != Ok("preview") {
             let tx = self.tx.clone();
             let sink: stream::Sink = std::sync::Arc::new(move |r| {
                 let _ = tx.send((panel, r));

@@ -31,6 +31,27 @@ pub struct Config {
     pub pointer_smoothing: Option<f32>,
     /// レーザーのエミュレート方式（`mouse` / `touch`）。省略でタッチ。
     pub pointer_mode: Option<PointerMode>,
+    /// 機能ごとに GPU を使うか（`[gpu]` の表。互換性のため CPU に落とせる）。
+    pub gpu: Gpu,
+}
+
+/// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(default)]
+pub struct Gpu {
+    /// novr のエミュレーターの合成（`false` で CPU で合成する）。
+    pub emulator: bool,
+    /// Web のパネルの読み戻し（Windows。`false` で Windows.Graphics.Capture ではなく CapturePreview の PNG）。
+    pub web_capture: bool,
+}
+
+impl Default for Gpu {
+    fn default() -> Self {
+        Self {
+            emulator: true,
+            web_capture: true,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -80,6 +101,19 @@ mod tests {
         assert_eq!(c.pointer_smoothing, Some(0.5));
         assert_eq!(c.log.as_deref(), Some("debug"));
         assert_eq!(c.runtime.as_deref(), Some("novr"));
+    }
+
+    #[test]
+    fn gpu_defaults_on_and_switches_per_feature() {
+        assert_eq!(Config::default().gpu, Gpu::default());
+        assert!(Gpu::default().emulator && Gpu::default().web_capture);
+        let c = parse(
+            "[gpu]
+emulator = false
+",
+        )
+        .unwrap();
+        assert!(!c.gpu.emulator && c.gpu.web_capture);
     }
 
     #[test]

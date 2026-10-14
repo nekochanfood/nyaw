@@ -81,6 +81,8 @@ pub struct Emulator {
     headless: bool,
     /// ウィンドウを出すが、入力はウィンドウから読まない（[`Emulator::scripted_window`]）。
     scripted: bool,
+    /// GPU で合成してよいか（設定の `gpu.emulator`。`false` か環境変数 `NYAW_EMULATOR_CPU` があれば CPU）。
+    allow_gpu: bool,
     size: (u32, u32),
     /// 合成した絵（0RGB）。
     pixels: Vec<u32>,
@@ -107,8 +109,12 @@ pub struct Emulator {
 
 impl Emulator {
     /// ウィンドウ付き。ウィンドウは最初の poll で開き、閉じると終了を求める。入力はウィンドウから受ける。
-    pub(crate) fn windowed() -> Self {
-        Self::new(SIZE, false)
+    /// `gpu` が偽なら CPU で合成する。
+    pub(crate) fn windowed(gpu: bool) -> Self {
+        Self {
+            allow_gpu: gpu,
+            ..Self::new(SIZE, false)
+        }
     }
 
     /// ウィンドウを出して本番と同じく合成・表示する（GPU が使えれば GPU）が、入力はウィンドウからではなく
@@ -131,6 +137,7 @@ impl Emulator {
             window: None,
             headless,
             scripted: false,
+            allow_gpu: true,
             size,
             pixels: Vec::new(),
             background: Vec::new(),
@@ -240,7 +247,7 @@ impl Emulator {
                 Ok(mut w) => {
                     // 周期は poll が自分で作る（minifb の待ちを合成の時間に混ぜない）。
                     w.set_target_fps(0);
-                    if std::env::var_os("NYAW_EMULATOR_CPU").is_none() {
+                    if self.allow_gpu && std::env::var_os("NYAW_EMULATOR_CPU").is_none() {
                         match Gpu::new(&w, self.size) {
                             Ok(gpu) => {
                                 logger::info!("エミュレーターは GPU で合成する");
