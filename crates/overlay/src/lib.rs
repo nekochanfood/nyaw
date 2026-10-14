@@ -83,7 +83,14 @@ const SNAP: f32 = 1e-5;
 /// 手ブレ抑えの既定値: レーザーの向きが 1 tick ごとに前の向きを残す割合（0 = 抑えない）。
 /// ヒット判定もこの向きで行うので、クリック位置も揺れない。
 // ponytail: tick 単位なのでリフレッシュレートで効き方が変わる。気になれば経過時間で決める。
-const POINTER_SMOOTHING: f32 = 0.8;
+const POINTER_SMOOTHING: f32 = 0.9;
+/// 速く振ると手ブレ抑えを弱める目安（ラジアン/tick、約 1.1°）。1 tick にこれだけ動くと抑えが半分になる。
+/// 止めているときはしっかり抑え、大きく動かすときは遅れないように。
+// ponytail: tick 単位。リフレッシュレートで効き方が変わる。
+const POINTER_FAST: f32 = 0.02;
+/// トリガーを引き切る直前（押下になる直前）の手ブレ抑え。引き始めからこれへ向けて強める。
+/// 押下と判定される前の、トリガーを引く動きでクリック位置がずれないように（押した後は [`CLICK_SLOP`]）。
+const TRIGGER_STEADY: f32 = 0.97;
 /// 押してから、押した点がレーザーからこの角度（ラジアン、2°）ずれるまでは押した位置に留める。
 /// トリガーを引く・離すときの手ブレでクリックが外れたりスワイプになったりしないように。
 // ponytail: 固定値。きつい・ゆるいと感じたらここを調整する。
@@ -581,7 +588,7 @@ impl Overlay {
 
     fn update_hand(&mut self, c: &ControllerState, frame: &Frame, out: &mut Vec<UiEvent>) {
         // 模したデバイス（novr のマウス）は手ブレしない。抑えると遅れるだけで、ドラッグで離した位置がずれる。
-        let smoothing = if frame.emulated {
+        let base = if frame.emulated {
             0.0
         } else {
             self.smoothing.unwrap_or(POINTER_SMOOTHING)
@@ -591,7 +598,8 @@ impl Overlay {
         let aim = Pose::new(
             c.aim.position,
             st.drawn.map_or(c.aim.orientation, |q| {
-                q.slerp(c.aim.orientation, 1.0 - smoothing)
+                let s = steadiness(base, q.angle_between(c.aim.orientation), c);
+                q.slerp(c.aim.orientation, 1.0 - s)
             }),
         );
         let grab_started = c.grab && !st.grab_held;
@@ -749,6 +757,19 @@ impl Overlay {
             st.free = false;
         }
     }
+}
+
+/// この tick の手ブレ抑え: 前の向きを残す割合。`moved` は前のレーザーから手の向きまでの角度。
+/// 速く振るほど弱め、押下前にトリガーを引いている間は強める。
+fn steadiness(base: f32, moved: f32, c: &ControllerState) -> f32 {
+    if base == 0.0 {
+        return 0.0;
+    }
+    let s = base / (1.0 + moved / POINTER_FAST);
+    if c.select || c.grab {
+        return s;
+    }
+    s.max(TRIGGER_STEADY * (c.trigger / input::PRESS).clamp(0.0, 1.0))
 }
 
 impl Overlay {
@@ -1498,6 +1519,25 @@ mod tests {
             panic!()
         };
         pos.x
+    }
+
+    #[test]
+    fn pulling_the_trigger_steadies_and_fast_swings_follow() {
+        // 同じだけ向きを変えたとき、1 tick で進んだ量（ピクセル）。
+        let step = |turn: f32, trigger: f32| {
+            let (mut vr, mut ov) = setup();
+            controller(&mut vr, Pose::IDENTITY, &[("trigger/value", trigger)]);
+            ov.tick(&mut vr);
+            let aim = Pose::new(Vec3::ZERO, Quat::from_rotation_y(-turn));
+            controller(&mut vr, aim, &[("trigger/value", trigger)]);
+            (move_x(&ov.tick(&mut vr)) - 50.0) / (hit_test(ov.panel(0), &aim).unwrap().0.x - 50.0)
+        };
+        // 押下前にトリガーを引いている間は、手ブレをほとんど拾わない。
+        let (free, pulling) = (step(0.01, 0.0), step(0.01, 0.55));
+        assert!(pulling < free / 2.0, "{pulling} {free}");
+        // 速く振るほど遅れない。
+        let fast = step(0.3, 0.0);
+        assert!(fast > 0.8 && fast > free, "{fast} {free}");
     }
 
     #[test]

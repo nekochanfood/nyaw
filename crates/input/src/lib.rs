@@ -12,6 +12,8 @@ pub struct ControllerState {
     pub aim: Pose,
     /// UI 要素のクリック・押下。
     pub select: bool,
+    /// select の入力の強さ（0〜1。トリガーの引き具合）。押下の判定前の引き始めを知るため。
+    pub trigger: f32,
     /// パネルを掴んで動かす。
     pub grab: bool,
     pub menu: bool,
@@ -65,7 +67,7 @@ const PROFILES: &[Profile] = &[
 
 /// ヒステリシス: 押下は `PRESS` 超え、離すのは `RELEASE` 未満になってから。
 // ponytail: 全アクション共通のしきい値。アクション毎に変えたくなったら Profile に持たせる。
-const PRESS: f32 = 0.6;
+pub const PRESS: f32 = 0.6;
 const RELEASE: f32 = 0.4;
 
 fn held(v: f32, was: bool) -> bool {
@@ -113,10 +115,12 @@ pub fn scroll_source(profile_id: &str) -> Option<(&'static str, &'static str)> {
 pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerState {
     let p = profile(&raw.profile);
     let was = |f: fn(&ControllerState) -> bool| prev.is_some_and(f);
+    let trigger = strongest(raw, p.select);
     ControllerState {
         hand: raw.hand,
         aim: raw.aim,
-        select: held(strongest(raw, p.select), was(|c| c.select)),
+        select: held(trigger, was(|c| c.select)),
+        trigger,
         grab: held(strongest(raw, p.grab), was(|c| c.grab)),
         menu: held(strongest(raw, p.menu), was(|c| c.menu)),
         scroll: p.scroll.map_or(Vec2::ZERO, |(x, y)| {
