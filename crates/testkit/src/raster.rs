@@ -61,10 +61,9 @@ pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
                     &mut rgba[((y * width + x0) * 4) as usize..((y * width + x1) * 4) as usize];
                 if f.a >= 1.0 {
                     let px = [to_u8(f.r), to_u8(f.g), to_u8(f.b), 255];
-                    row.chunks_exact_mut(4).for_each(|d| d.copy_from_slice(&px));
+                    row.as_chunks_mut::<4>().0.fill(px);
                 } else {
-                    row.chunks_exact_mut(4)
-                        .for_each(|d| blend(d.try_into().unwrap(), f));
+                    row.as_chunks_mut::<4>().0.iter_mut().for_each(|d| blend(d, f));
                 }
             }
             continue;
