@@ -1,3 +1,6 @@
 /target
 /target-*
 /crates/ui/gen
+
+# ローカルの入れ子の worktree
+/.worktrees/

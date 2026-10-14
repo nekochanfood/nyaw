@@ -8,7 +8,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 |---|---|---|---|
 | - | `crates/logger` | logfmt 形式の構造化ロガー（横断）。整形・レベル・出力先 `Sink` の抽象と、`log` クレート（gpui 等）からの橋渡し | `trace!/debug!/info!/warn!/error!`, `Logger`, `Sink`, `StderrSink`, `init`, `format` |
 | 0 OS | `crates/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出、ファイル入出力）。`#[cfg]` はここだけに書く | `config_dir`, `log_dir`, `log_level`, `FileSink`, `openvr_paths_file`, `openxr_runtime_manifest` |
-yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知らないキーは無視。キーは `log`（ログレベル）、`runtime`（`openvr`/`openxr`/`novr`）、`pointer_smoothing`（レーザーの手ブレ抑え）、`pointer_mode`（`mouse`/`touch`。レーザーのエミュレート方式、既定 `touch`）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル）で、決めるのは `main` | `load`, `parse`, `path`, `Config` |
+yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知らないキーは無視。キーは `log`（ログレベル）、`runtime`（`openvr`/`openxr`/`novr`）、`pointer_smoothing`（レーザーの手ブレ抑え）、`pointer_mode`（`mouse`/`touch`。レーザーのエミュレート方式、既定 `touch`）、`[gpu]` の表（機能ごとに GPU を使うか。既定はどれも `true`、互換性のため `false` で CPU の実装へ: `emulator` = novr の合成、`web_capture` = Web の読み戻し）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル）で、決めるのは `main` | `load`, `parse`, `path`, `Config` |
 | 2 ランタイム | `crates/vr` | OpenVR / OpenXR / novr の差を吸収。上位層は `Box<dyn VrBackend>` しか持たない。novr はデスクトップのウィンドウで VR を模すエミュレーター | `connect`, `VrBackend`, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`）, `Device`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
 | 3 入力 | `crates/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController) -> ControllerState`, `source(profile, Action)` / `scroll_source(profile)`（逆引き） |
 | 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, set_locked, set_resolution, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
@@ -51,6 +51,11 @@ novr・SteamVR (OpenVR)・OpenXR はどれも対等な「手段」でしかな�
 - **novr は VR のエミュレーター**（`vr::novr::Emulator`）。最初の poll でウィンドウ（`nyaw (novr)`）を開き、受け取ったテクスチャを
   固定した頭（原点・前方 -Z、縦の視野 70°）から見た絵として合成する。重なりは VR と同じく描画順。背景は透過がわかるよう無彩色の市松模様。
   ウィンドウを閉じると終了を求める（`Frame::quit`）。poll は約 90Hz に待って周期を作る（VR の vsync 待ちに当たる）。
+  - 合成は GPU（wgpu。`vr::compositor`）でウィンドウに直接描く。使えなければ（または `gpu.emulator = false` か `NYAW_EMULATOR_CPU=1`）CPU で合成して minifb に渡す。
+    GPU のときも、見えたか（`VrBackend::overlay_seen`。隠れたパネルの描き直しを止めるカリングに使う）は縦横 1/8 の CPU の合成で求める。
+    スクリーンショットはいつも CPU で合成し直す。`Emulator::headless` はウィンドウを出さず CPU で合成し、`Emulator::scripted_window` は
+    ウィンドウと合成は本番どおりで入力だけ注入する（ベンチマーク用）。
+  - カーソルの周りの輪は長押しの進み（`PanelControl::hold`）。満ちるとマウスの押下になり、その場でドラッグが始まる。
   - 片手操作: 右手のレイは目からマウスの方向（レーザーは視線と重なるので見えず、カーソルだけ見える）。左クリック = トリガー、
     右クリック = グリップ（掴む）、矢印キー = 右手のスティック。左手は手元で下を向いていてパネルを指さず、WASD = 左手のスティック。
   - デバイスは実在しないので取り付けたパネルは追従しない（`Frame::emulated` で `Frame::pose` が `None`。取り付け先を見失ったのと同じ扱い）。
@@ -158,7 +163,10 @@ ui::run の 1 フレーム（GPUI の部分は上の「1 フレームの流れ�
   ページへ送る宛先は `ui::web::label_of` で引く（ケーパビリティも `spare-*` を許す）。終了時は WebView を閉じ終えてから終わる（`Host::shutdown`）。
 - イベントの購読は `getCurrentWebviewWindow().listen` で行う（`event.listen` は既定で全宛先を受けるので、ほかのパネル宛ての `emit_to` まで届く）。
 - ウィンドウは（novr でも）デスクトップに出さず、GPUI のパネルと同じく背景を透かす（塗るかどうかはページが決める。読み戻しはストレートアルファ）。
-  WebKitGTK は未マップのウィンドウを描かないので、Linux は表示したまま画面の外（-20000, -20000）に置く。ほかは非表示。
+  表示したまま画面の外（-20000, -20000）に置く（WebKitGTK は未マップのウィンドウを描かず、Windows は Windows.Graphics.Capture で撮るので）。
+- Windows の読み戻しは Windows.Graphics.Capture（`ui::web::stream`）で GPU のフレームを撮り続ける（PNG を介さない。クリック → 画面が
+  CapturePreview の 130〜200ms から 60ms 台に）。隠れ判定と裏での間引きは `BROWSER_ARGS` 等で切っている。`gpu.web_capture = false` か `NYAW_WEB_CAPTURE=preview` で
+  旧来の CapturePreview（PNG）に戻す。CapturePreview は PNG / JPEG しか出せないので、JPEG XL 等への置き換えはできない。
 - 合成イベントの限界（VR）: `isTrusted` は偽、CSS の `:hover` / `:active` は効かない。代わりにブリッジが `data-nyaw-hover` / `data-nyaw-active` を付け、
   `web/src/index.css` で Tailwind の `hover:` / `active:` をこの属性でも効くよう上書きしている。HTML5 のドラッグ＆ドロップ（`draggable`）とテキスト選択は起きない
   （ポインタイベントで書いたドラッグや Base UI の Slider は動く）。
@@ -175,7 +183,7 @@ ui::run の 1 フレーム（GPUI の部分は上の「1 フレームの流れ�
 
 - **メインスレッドを止めない**。読み込み・展開・デコード・ファイル入出力・重い計算はフレームループの中でしない。
   別スレッドで行い、結果はチャンネル等で次のフレーム以降に受け取る（非同期）。間に合わないフレームは前の結果のまま進める。
-  - 例: WebView の撮影（WebView2 の CapturePreview）の PNG 展開は、完了のコールバックでバイト列だけ受け取り、別スレッドで展開する
+  - 例: WebView の撮影（WebView2 の CapturePreview。`NYAW_WEB_CAPTURE=preview` のとき）の PNG 展開は、完了のコールバックでバイト列だけ受け取り、別スレッドで展開する
     （1 枚 40〜55ms がフレームループを塞いでいた）。
   - GPUI のウィンドウ操作・描画のように、メインスレッドでしかできないものは仕方ない。代わりに回数を減らす
     （何もしていないパネルの描き直しは 1 フレームに 1 枚まで・絵が変わらなければ間隔を延ばす、同じ位置への Move は送らない）。
@@ -217,7 +225,10 @@ E2E はローカルで実行し、CI には追加しない。
   マウスで掃く・押したままのスワイプ・パネルの召喚と破棄の繰り返し・目の前のパネルの局面ごとに、FPS・ドロップ率と
   レンダラー（`compositor`）・オーバーレイ（`overlay`）・UI（`input` / `draw` / `render` / `upload` / `web`）の平均と p95 を出す。
   最初と最後のアイドルの差で時間とともに重くなるか、召喚の局面の最大フレーム時間で召喚の引っ掛かりを見る。
-  1 フレームごとの CSV と集計は `target/tmp/stress.{csv,txt}`。`NYAW_STRESS_SCALE` で局面の長さ、`NYAW_STRESS_NO_WEB=1` で Web を外す。
+  10 枚を重ねて出す物量の局面（`volume`）もある。
+  1 フレームごとの CSV と集計は `target/tmp/stress.{csv,txt}`。`NYAW_STRESS_SCALE` で局面の長さ、`NYAW_STRESS_NO_WEB=1` で Web を外す、
+  `NYAW_STRESS_WINDOW=1` で本番と同じくウィンドウを出して GPU で合成する、`NYAW_STRESS_PROFILER=1` でプロファイラの窓も載せる。
+- **長押しの輪**: `crates/ui/tests/novr_cursor.rs`（`harness = false`、`-- --ignored`）。タッチで押したまま、カーソルの輪が満ちていくのをエミュレーターの画面で見る。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
 - **Web のパネルの E2E**: `crates/ui/tests/web_vr.rs` / `web_novr.rs` / `web_pointer.rs`（`harness = false`）。本番と同じ `ui::run_with`（GPUI のループの上で Tauri も回す）を実プラットフォームで起動し、
   手順は別スレッドで流す。ページの状態は `web/src/probe.ts` の `testing:probe` → `testing:state` で読み、GPUI 側は `Hooks::remote` でフレームループに処理を差し込む。
@@ -260,7 +271,7 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 
 - 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は Monado（Windows、simulated）でパネルが映るところまで確認済みで、コントローラ入力は未確認。
 - Linux での描画の読み戻し（gpui の `render_to_image` が Windows のみ実装。`gpui_wgpu` のヘッドレスレンダラ経由が候補）。
-- Web のパネル: Windows はモックの VR で入力・リサイズ・半透明・WebView2 の読み戻し（CapturePreview）を確認済み。
+- Web のパネル: Windows はモックの VR で入力・リサイズ・半透明・WebView2 の読み戻し（Windows.Graphics.Capture と CapturePreview）を確認済み。
   Tauri は最初の Web のパネルを開くまで起こさないので、開かなければ GPUI だけの動きは変わらない。macOS の読み戻しは無い。
   Wayland ではウィンドウを画面外に置けないので VR の Web のパネルがデスクトップにも出る。Web のページのドラッグの見た目は `Pointer::Drag` のパネルに出ない（ページ内で動かす）。
 - 描画は毎フレーム CPU に読み戻し、変化があれば `vr` が Vulkan のイメージへ上げ直してランタイムへ渡す（`crates/vr/src/gpu.rs`。1024x768 で約 1.6ms）。GPUI のテクスチャを読み戻さずに直接共有する経路は未実装。
