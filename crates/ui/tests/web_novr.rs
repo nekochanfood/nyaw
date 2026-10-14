@@ -8,6 +8,7 @@
 mod common;
 
 use std::process::ExitCode;
+use std::time::Instant;
 
 use common::{Driven, Emu, Page, num};
 use kernel::vr::novr::Button;
@@ -134,9 +135,15 @@ fn scenario(page: &mut Page, emu: &Emu) {
     page.until("押した", |s| {
         num(s, &["state", "counts", "pointerdown"]) == 1.0
     });
+    let clicked = Instant::now();
     emu.button(Button::Trigger, false);
     page.until("クリックした", |s| s["state"]["clicks"] == 1);
     emu.until_color("クリックの結果が画面に映る", edge, near([0x2e, 0xcc, 0x71]));
+    // 応答速度の目安（離してから画面に映るまで。問い合わせの間隔 20ms 刻み）。
+    println!(
+        "web_novr: クリックが画面に映るまで {} ms",
+        clicked.elapsed().as_millis()
+    );
 
     // 矢印キー = 右手のスティック。下へ倒すと一覧が下へ動く。
     // 一覧の中心には行があるので、宛先が一覧そのものになるのは待たない。

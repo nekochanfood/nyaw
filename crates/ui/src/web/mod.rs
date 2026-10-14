@@ -16,6 +16,8 @@
 //! どのページかは知らない。ページのファイル（[`Files`]）は上から渡され、`nyaw://localhost/<ページ名>/index.html` で配信する。
 
 mod capture;
+#[cfg(windows)]
+mod stream;
 
 use std::{
     borrow::Cow,
@@ -59,6 +61,10 @@ pub const HAND_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.3), Quat::IDENTIT
 const HOT: Duration = Duration::from_millis(300);
 /// 入力がこれだけ無ければ、予備の WebView を作る（作る間はメインスレッドが止まるので、操作中は避ける）。
 const PREWARM_IDLE: Duration = Duration::from_secs(1);
+/// WebView2 の起動引数。wry の既定の `--disable-features` に、画面の外のウィンドウを隠れていると判定して
+/// 描画を止める CalculateNativeWinOcclusion を足す（Windows.Graphics.Capture で撮り続けるため）。
+const BROWSER_ARGS: &str =
+    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion";
 /// 終わるときに WebView が閉じ終わるのを待つ上限。
 const SHUTDOWN: Duration = Duration::from_millis(1000);
 
@@ -436,6 +442,9 @@ pub struct Host {
     tx: Sender<(PanelId, Result<Image, String>)>,
     rx: Receiver<(PanelId, Result<Image, String>)>,
     warned: bool,
+    /// Windows: パネルごとの撮り続けるストリーム（Windows.Graphics.Capture）。無いパネルは CapturePreview で撮る。
+    #[cfg(windows)]
+    streams: HashMap<PanelId, stream::Stream>,
     /// 予備の WebView。作るのにメインスレッドが 100ms 近く止まるので、入力の無いときに作っておき、開くときはページを読ませるだけにする。
     spare: Option<WebviewWindow<Wry>>,
     spares: u64,
@@ -488,6 +497,8 @@ impl Host {
             tx,
             rx,
             warned: false,
+            #[cfg(windows)]
+            streams: HashMap::new(),
             spare: None,
             spares: 0,
             active: Instant::now(),
@@ -502,6 +513,8 @@ impl Host {
     /// 開いたままプロセスが終わると WebView2 のブラウザが後始末を終えられず（"Failed to unregister class
     /// Chrome_WidgetWin_0" が出る）、続けて起動したときに同じデータフォルダの WebView を作れないことがある。
     pub fn shutdown(&mut self) {
+        #[cfg(windows)]
+        self.streams.clear();
         for w in self
             .windows
             .drain()
@@ -555,6 +568,7 @@ impl Host {
         match window {
             Ok(window) => {
                 logger::info!("Web のパネルを開いた", panel = panel, page = page);
+                self.stream(panel, &window);
                 self.windows.insert(panel, window);
                 self.draws.insert(panel, Draw::default());
                 self.outboxes.insert(panel, Outbox::default());
@@ -562,6 +576,29 @@ impl Host {
             Err(e) => {
                 logger::error!("Web のパネルを開けない", panel = panel, error = e);
                 kernel.apply(panel, PanelCommand::Close);
+            }
+        }
+    }
+
+    /// Windows: `window` を撮り続ける。始められなければ CapturePreview で撮る（ほかの OS は何もしない）。
+    /// 環境変数 `NYAW_WEB_CAPTURE=preview` なら撮り続けず、従来の CapturePreview で撮る（比べる・切り分ける用）。
+    #[cfg_attr(not(windows), allow(unused_variables))]
+    fn stream(&mut self, panel: PanelId, window: &WebviewWindow<Wry>) {
+        #[cfg(windows)]
+        if std::env::var("NYAW_WEB_CAPTURE").as_deref() != Ok("preview") {
+            let tx = self.tx.clone();
+            let sink: stream::Sink = std::sync::Arc::new(move |r| {
+                let _ = tx.send((panel, r));
+            });
+            match stream::Stream::start(window, sink) {
+                Ok(s) => {
+                    self.streams.insert(panel, s);
+                }
+                Err(e) => logger::warn!(
+                    "Web のパネルを撮り続けられないので、都度撮る",
+                    panel = panel,
+                    error = e
+                ),
             }
         }
     }
@@ -575,7 +612,11 @@ impl Host {
     ) -> tauri::Result<WebviewWindow<Wry>> {
         let builder = WebviewWindowBuilder::new(&self.app, label, url)
             .inner_size(w as f64, h as f64)
-            .initialization_script(BRIDGE);
+            .initialization_script(BRIDGE)
+            // 画面の外に置いたウィンドウでも描き続ける（隠れていると判定して描画を止めたり間引いたりさせない）。
+            // 起動引数は同じデータフォルダのすべての WebView で揃える（違うと WebView を作れない）。
+            .additional_browser_args(BROWSER_ARGS)
+            .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
         // 描画は VR に送るので画面外へ。枠を消すと Windows の WebView の描画領域が縮むため残す。
         offscreen(builder)
             .transparent(true)
@@ -780,6 +821,8 @@ impl Host {
 
     /// パネルのウィンドウを閉じて忘れる。
     fn forget(&mut self, panel: PanelId) {
+        #[cfg(windows)]
+        self.streams.remove(&panel);
         if let Some(w) = self.windows.remove(&panel)
             && let Err(e) = w.destroy()
         {
@@ -847,6 +890,11 @@ impl Host {
                 || visible
                     && (d.hot_until.is_some_and(|t| now < t)
                         || d.captured.is_none_or(|t| now - t >= crate::IDLE_REDRAW));
+            #[cfg(windows)]
+            if self.streams.contains_key(&panel) {
+                // 撮り続けている（中身が変わるたびに届く）。
+                continue;
+            }
             if d.capturing || !due {
                 continue;
             }
@@ -907,7 +955,8 @@ fn offscreen<'a>(
 fn offscreen<'a>(
     b: WebviewWindowBuilder<'a, Wry, tauri::App<Wry>>,
 ) -> WebviewWindowBuilder<'a, Wry, tauri::App<Wry>> {
-    b.visible(false)
+    // Windows.Graphics.Capture は非表示のウィンドウを撮れないので、表示したまま画面の外に置く。
+    b.visible(true).position(-20000.0, -20000.0)
 }
 
 #[cfg(test)]
