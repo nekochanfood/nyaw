@@ -781,6 +781,10 @@ pub fn run_with(
                         kernel.apply(panel, PanelCommand::Close);
                         continue;
                     };
+                    if kernel.panel(panel).closed {
+                        // 閉じたパネルの最後の描画（1 枚 2MB 近い）は手放す。
+                        last[panel] = None;
+                    }
                     if changed {
                         // 状態はどのパネルにも表示されうるので、ほかのパネルも描き直す（1 フレームに 1 枚ずつ）。
                         for (p, t) in drawn.iter_mut().enumerate() {
@@ -824,6 +828,22 @@ pub fn run_with(
                     let t = Instant::now();
                     for e in web_events {
                         host.deliver(e, kernel.pointer_mode(), t);
+                    }
+                    // GPUI の画面が Web のパネルへ積んだ操作（閉じる等）。
+                    for &(panel, window) in &windows {
+                        if window.is_some() || kernel.panel(panel).closed {
+                            continue;
+                        }
+                        let commands = cx.update(|cx| {
+                            cx.default_global::<PanelControl>()
+                                .panels
+                                .get_mut(&panel)
+                                .map(|s| std::mem::take(&mut s.commands))
+                                .unwrap_or_default()
+                        });
+                        for c in commands {
+                            host.apply(&mut kernel, panel, c);
+                        }
                     }
                     web_spawns = host.step(&mut kernel, t);
                     stages.web += t.elapsed();

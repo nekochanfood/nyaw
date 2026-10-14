@@ -6,8 +6,8 @@
 //! - オーバーレイ: 追従・ヒット判定・ポインタの配置・アニメーション（`overlay`）
 //! - UI: 入力の配送（`input`）・GPUI のレイアウト（`draw`）・描画と読み戻し（`render`）・ランタイムへの転送（`upload`）・Web（`web`）
 //!
-//! 局面: アイドル → マウスで掃く（押したままのスワイプを含む）→ パネルの召喚と破棄を繰り返す → 目の前のパネル → もう一度アイドル。
-//! 最初と最後のアイドルの差で「時間とともに重くなる」を、召喚の局面の最大フレーム時間で召喚の引っ掛かりを見る。
+//! 局面: アイドル → マウスで掃く（押したままのスワイプを含む）→ アイドル → パネルの召喚と破棄を繰り返す → 目の前のパネル → もう一度アイドル。
+//! アイドル同士の差で「時間とともに重くなる」（掃いた後 = idle-mid、召喚と破棄の後 = idle-after）を、召喚の局面の最大フレーム時間で召喚の引っ掛かりを見る。
 //! 1 フレームごとの CSV（`stress.csv`）と集計（`stress.txt`）を `CARGO_TARGET_TMPDIR` に書く。
 //! 局面の長さは `NYAW_STRESS_SCALE`（既定 1.0）で伸縮する。`NYAW_STRESS_NO_WEB=1` で Web のパネルを外す（切り分け用）。
 
@@ -199,6 +199,8 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
 
     run_phase(&mut phases, t0, "idle", secs(4.0), |_| emu.point(None));
     run_phase(&mut phases, t0, "sweep", secs(8.0), |f| sweep_frame(emu, f));
+    // 操作し続けたこと自体で重くなっていないか（最初のアイドルと比べる）。
+    run_phase(&mut phases, t0, "idle-mid", secs(4.0), |_| emu.point(None));
     // 0.5 秒ごとにパネルを開いて前のを閉じる（GPUI の Testing、4 回に 1 回は Web の Testing）。
     run_phase(&mut phases, t0, "spawn", secs(8.0), |f| {
         sweep_frame(emu, f);

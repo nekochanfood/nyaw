@@ -733,6 +733,18 @@ impl Host {
         }
     }
 
+    /// GPUI の画面（`PanelControl`）から Web のパネルへの操作。閉じるときはウィンドウも閉じる。
+    pub fn apply<B: VrBackend>(&mut self, kernel: &mut Kernel<B>, panel: PanelId, c: PanelCommand) {
+        if !self.windows.contains_key(&panel) {
+            return;
+        }
+        let close = c == PanelCommand::Close;
+        kernel.apply(panel, c);
+        if close {
+            self.forget(panel);
+        }
+    }
+
     fn command<B: VrBackend>(&mut self, kernel: &mut Kernel<B>, panel: PanelId, c: WebCommand) {
         match c {
             WebCommand::Attach(d) => {
