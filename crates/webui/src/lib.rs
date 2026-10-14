@@ -677,6 +677,7 @@ impl<B: VrBackend> Frames<B> {
                 .focused(false)
                 .skip_taskbar(true)
                 .decorations(false)
+                .shadow(false)
                 .build()
         } else {
             builder.build()
