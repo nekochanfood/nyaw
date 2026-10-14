@@ -101,7 +101,7 @@ impl VrBackend for MockBackend {
         assert_eq!(
             rgba.len(),
             (width * height * 4) as usize,
-            "RGBA バッファのサイズが不正"
+            "invalid RGBA buffer size"
         );
         self.overlays[id.0 as usize].texture = Some(MockTexture {
             width,

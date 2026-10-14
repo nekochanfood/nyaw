@@ -1,12 +1,12 @@
-//! テスト用のソフトウェアラスタライザ。テストプラットフォームには GPU レンダラが無いので、
-//! GPUI が描いたシーン（矩形）を CPU で RGBA に塗り、本番の `ui::capture` の代わりにする。
-//! 以降の経路（`Overlay::submit` → VR）は本番と同じ。
+//! A software rasterizer for tests. The test platform has no GPU renderer, so
+//! this paints the scene GPUI drew (rectangles) into RGBA on the CPU, replacing production `ui::capture`.
+//! The rest of the path (`Overlay::submit` -> VR) is the same as production.
 
 use gpui::{App, Rgba, Window};
 use ui::Frame;
 
-/// `ui::capture` と同じく描き直してから、シーンを RGBA に塗る。
-// ponytail: 単色の矩形・角丸・枠線まで（縁のアンチエイリアス無し）と直線の下線。波線・影・文字・画像は塗らない。見た目の検証が要るものが出たら足す。
+/// Like `ui::capture`, redraws first and then paints the scene into RGBA.
+// ponytail: only solid rectangles, rounded corners, borders (no edge anti-aliasing) and straight underlines. Wavy lines, shadows, text and images are not painted. Add them when something needs visual verification.
 pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
     window.draw(cx).clear(cx);
     let scale = window.scale_factor();
@@ -71,7 +71,7 @@ pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
             }
         }
     }
-    // ponytail: 下線は矩形の上に重ねるだけ（描画順は quad と別の空間）。波線は直線で塗る。
+    // ponytail: underlines are just overlaid on the rectangles (draw order lives in a separate space from quads). Wavy lines are painted straight.
     for u in window.painted_underlines() {
         let color = Rgba::from(u.color);
         let b = u.bounds.intersect(&u.content_mask.bounds);
@@ -93,12 +93,12 @@ pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
     }
 }
 
-/// 角丸の矩形 `[x0, y0, x1, y1]`（角は左上・右上・右下・左下の順）が点を含むか。
+/// Whether the rounded rectangle `[x0, y0, x1, y1]` (corners in the order top-left, top-right, bottom-right, bottom-left) contains the point.
 fn inside([x0, y0, x1, y1]: [f32; 4], [tl, tr, br, bl]: [f32; 4], x: f32, y: f32) -> bool {
     if x < x0 || x >= x1 || y < y0 || y >= y1 {
         return false;
     }
-    // 角の円の中心。点がその角の正方形領域にあるときだけ円の内外を見る。
+    // Center of the corner circle. Only check inside/outside the circle when the point is in that corner's square region.
     for (r, cx, cy) in [
         (tl, x0 + tl, y0 + tl),
         (tr, x1 - tr, y0 + tr),
@@ -116,7 +116,7 @@ fn inside([x0, y0, x1, y1]: [f32; 4], [tl, tr, br, bl]: [f32; 4], x: f32, y: f32
     true
 }
 
-/// `src` を `dst` に重ねる（ストレートアルファの source-over）。
+/// Composites `src` over `dst` (source-over with straight alpha).
 fn blend(dst: &mut [u8; 4], src: Rgba) {
     let da = dst[3] as f32 / 255.0;
     let out_a = src.a + da * (1.0 - src.a);
@@ -149,7 +149,7 @@ mod tests {
         let r = [4.0, 0.0, 0.0, 0.0];
         assert!(!inside(rect, r, 0.5, 0.5));
         assert!(inside(rect, r, 5.0, 5.0));
-        assert!(inside(rect, r, 9.5, 0.5), "半径 0 の角は切れない");
+        assert!(inside(rect, r, 9.5, 0.5), "a corner with radius 0 is not clipped");
         assert!(!inside(rect, r, 10.5, 5.0));
     }
 

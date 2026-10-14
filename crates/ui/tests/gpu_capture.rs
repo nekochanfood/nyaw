@@ -1,5 +1,5 @@
-//! 本番と同じ経路（実プラットフォーム + GPU）で、非表示のパネルウィンドウの描画を読み戻せることを確かめる。
-//! GUI のイベントループはメインスレッドで回す必要があるので、テストハーネスを使わず main で実行する。
+//! Checks that a hidden panel window's render can be read back through the production path (real platform + GPU).
+//! The GUI event loop must run on the main thread, so this runs in main without the test harness.
 
 #[cfg(windows)]
 fn main() {
@@ -9,7 +9,7 @@ fn main() {
     use ui::{capture, open_panel_window};
 
     const PANEL_BG: u32 = 0x204060;
-    /// 背景を塗るだけの画面（画面は UI 層の上にあるので、UI 層のテストでは自前で用意する）。
+    /// A view that only fills the background (views sit above the UI layer, so UI-layer tests provide their own).
     struct Solid;
     impl Render for Solid {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -22,9 +22,9 @@ fn main() {
     let out = result.clone();
     gpui_platform::application().run(move |cx| {
         let window = open_panel_window(cx, RES, |_, cx| cx.new(|_| Solid))
-            .expect("パネルウィンドウを開けない");
+            .expect("cannot open panel window");
         cx.spawn(async move |cx| {
-            // リサイズの反映は非同期なので、実寸で読み戻せるまで待つ（最大 5 秒）
+            // resizing is applied asynchronously, so wait until the readback has the real size (up to 5 s)
             for _ in 0..100 {
                 cx.background_executor()
                     .timer(Duration::from_millis(50))
@@ -33,7 +33,7 @@ fn main() {
                     .update_window(window.into(), |_, window, cx| {
                         (capture(window, cx), window.scale_factor())
                     })
-                    .expect("ウィンドウが閉じている");
+                    .expect("window is closed");
                 let done = matches!(&captured.0, Ok(f) if f.width > 1) || captured.0.is_err();
                 *out.borrow_mut() = Some(captured);
                 if done {
@@ -45,20 +45,24 @@ fn main() {
         .detach();
     });
 
-    let (frame, scale) = result.take().expect("アプリが起動しなかった");
-    let frame = frame.expect("GPU から読み戻せない");
+    let (frame, scale) = result.take().expect("app did not start");
+    let frame = frame.expect("cannot read back from GPU");
     assert_eq!(
         (frame.width, frame.height),
         ((RES.0 as f32 * scale) as u32, (RES.1 as f32 * scale) as u32)
     );
     assert_eq!(frame.rgba.len(), (frame.width * frame.height * 4) as usize);
     let [r, g, b] = [PANEL_BG >> 16, PANEL_BG >> 8, PANEL_BG].map(|c| (c & 0xff) as u8);
-    assert_eq!(&frame.rgba[..4], &[r, g, b, 0xff], "左上はパネル背景色");
+    assert_eq!(
+        &frame.rgba[..4],
+        &[r, g, b, 0xff],
+        "top-left is the panel background color"
+    );
     println!("gpu_capture: ok ({}x{})", frame.width, frame.height);
 }
 
-// ponytail: render_to_image は gpui 側で Windows のみ実装。Linux 対応時にこの分岐を消す。
+// ponytail: render_to_image is only implemented for Windows in gpui. Remove this branch when Linux is supported.
 #[cfg(not(windows))]
 fn main() {
-    println!("gpu_capture: skipped (Windows 以外は未対応)");
+    println!("gpu_capture: skipped (non-Windows unsupported)");
 }

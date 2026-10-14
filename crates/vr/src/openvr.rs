@@ -33,7 +33,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
     let input = Input::init(client.interface(sys::IVRInput_Version)?)
         .inspect_err(|e| {
             logger::warn!(
-                "SteamVR Input を使えないのでコントローラは無しで動く",
+                "SteamVR Input unavailable, running without controllers",
                 error = e
             )
         })
@@ -82,7 +82,7 @@ fn create_gpu(
         0 => *unsafe { instance.enumerate_physical_devices() }
             .map_err(vk_err("vkEnumeratePhysicalDevices"))?
             .first()
-            .ok_or_else(|| VrError::Runtime("Vulkan: GPU が無い".into()))?,
+            .ok_or_else(|| VrError::Runtime("Vulkan: no GPU".into()))?,
         raw => vk::PhysicalDevice::from_raw(raw),
     };
     unsafe {
@@ -102,7 +102,7 @@ fn create_gpu(
 
 /// 関数表の各項目は `Option<fn>`。ランタイムが埋めていなければ ABI の不一致なので落とす。
 fn f<T>(func: Option<T>) -> T {
-    func.expect("OpenVR の関数表に欠けている関数がある")
+    func.expect("OpenVR function table is missing a function")
 }
 
 const MAX_DEVICES: usize = sys::k_unMaxTrackedDeviceCount as usize;
@@ -339,7 +339,7 @@ impl VrBackend for OpenVrBackend {
         }
         if let Some(input) = &self.input {
             if let Err(e) = input.update() {
-                logger::warn!("SteamVR Input の状態を取り込めない", error = e);
+                logger::warn!("failed to sync SteamVR Input state", error = e);
             }
             for (hand, device, aim, actions) in input.hands(predict) {
                 let profile = profile(&self.string_property(
@@ -470,7 +470,7 @@ impl VrBackend for OpenVrBackend {
         assert_eq!(
             rgba.len(),
             (width * height * 4) as usize,
-            "RGBA バッファのサイズが不正"
+            "invalid RGBA buffer size"
         );
         log(self.submit(id.0, width, height, rgba));
         self.apply_height(id.0);
@@ -525,7 +525,7 @@ fn check(what: &str, e: sys::EVROverlayError) -> Result<(), VrError> {
 /// 戻り値でエラーを返せないメソッド用。フレームは続けたいので表示だけする。
 fn log(r: Result<(), VrError>) {
     if let Err(e) = r {
-        logger::warn!("OpenVR の呼び出しに失敗", error = e);
+        logger::warn!("OpenVR call failed", error = e);
     }
 }
 
@@ -600,7 +600,7 @@ mod tests {
 
     #[test]
     fn matrix_layout_is_row_major_with_translation_last() {
-        // Y 軸まわり 90°: ローカル -Z（前方）がワールド -X を向く。
+        // 90° about the Y axis: local -Z (forward) points to world -X.
         let m = matrix_from(Pose::new(
             Vec3::new(1.0, 2.0, 3.0),
             Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),

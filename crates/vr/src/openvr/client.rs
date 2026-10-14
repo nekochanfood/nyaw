@@ -59,7 +59,7 @@ impl Client {
     /// 同じプロセスですでに `init` 済みなら、その接続をそのまま使える。
     pub fn load() -> Result<Self, VrError> {
         let runtime = runtime_path().ok_or_else(|| {
-            VrError::Runtime("SteamVR の場所が分からない（openvrpaths.vrpath）".into())
+            VrError::Runtime("SteamVR location unknown (openvrpaths.vrpath)".into())
         })?;
         let dll = if cfg!(windows) {
             runtime.join("bin").join("vrclient_x64.dll")
@@ -74,7 +74,7 @@ impl Client {
         let core = unsafe { factory(c"IVRClientCore_003".as_ptr(), &mut code) } as *mut Core;
         if core.is_null() {
             return Err(VrError::Runtime(format!(
-                "IVRClientCore_003 が得られない ({code})"
+                "failed to get IVRClientCore_003 ({code})"
             )));
         }
         Ok(Self {

@@ -1,9 +1,9 @@
-//! novr（エミュレーター）の E2E。本番と同じ `ui::run_with` で GPUI の Testing を開き、そこから Testing の Web 版を開く
-//! （ボタンと同じく `PanelControl::spawns` に `PanelSpec::spawn_web` を積む。ボタン自体は testkit の `open_web_testing`）。
-//! 本番の novr と同じく WebView は画面に出さずに描いて読み戻し、エミュレーターの画面に合成される。入力はエミュレーターの
-//! マウス（右手のコントローラ）: 左クリック = トリガー、右クリック = グリップ、矢印キー = スティック。ページへはブリッジの合成イベントで届く。
-//! エミュレーターはウィンドウを出さない（headless）で、テストのスレッドから `common::Emu` で操作する。
-//! Linux は画面（Xvfb でよい）があれば `cargo test -p ui --test web_novr` で流れる。
+//! E2E for novr (emulator). Opens GPUI's Testing on the production `ui::run_with`, then opens the web version of Testing from it
+//! (like the button, pushes `PanelSpec::spawn_web` onto `PanelControl::spawns`; the button itself is testkit's `open_web_testing`).
+//! As in production novr, the WebView is rendered off-screen and read back, then composited onto the emulator screen. Input comes from the emulator's
+//! mouse (right-hand controller): left click = trigger, right click = grip, arrow keys = stick. It reaches the page as the bridge's synthetic events.
+//! The emulator shows no window (headless) and is driven from the test thread via `common::Emu`.
+//! On Linux, with a display (Xvfb is fine), `cargo test -p ui --test web_novr` runs it.
 
 mod common;
 
@@ -17,17 +17,18 @@ use kernel::{Kernel, Pose, Vec2, VrBackend};
 use serde_json::Value;
 use ui::{PanelControl, PanelSpec};
 
-/// GPUI の Testing（パネル 0）の位置。Web 版（パネル 1）はその中心の手前 5cm に重ねて開く。
+/// position of GPUI's Testing (panel 0). The web version (panel 1) opens stacked 5cm in front of its center.
 const GPUI_POS: Vec3 = Vec3::new(-0.6, 0.0, -1.5);
 const WEB_POS: Vec3 = Vec3::new(-0.6, 0.0, -1.45);
 
-/// Web のパネル上の点（CSS px）が映る画面上の点。大きさ・解像度はページが受け取った状態から読む。
+/// the screen point where a point on the web panel (CSS px) appears. Size and resolution are read from the status the page received.
 fn on_screen(emu: &Emu, status: &Value, (x, y): (f32, f32)) -> Vec2 {
     let f = |v: &Value| v.as_f64().unwrap() as f32;
     let (sw, sh) = (f(&status["size"][0]), f(&status["size"][1]));
     let (rw, rh) = (f(&status["resolution"][0]), f(&status["resolution"][1]));
     let p = WEB_POS + Vec3::new((x / rw - 0.5) * sw, (0.5 - y / rh) * sh, 0.0);
-    emu.run(move |e| e.project(p)).expect("パネルは目の前")
+    emu.run(move |e| e.project(p))
+        .expect("panel is in front of the eyes")
 }
 
 fn near(rgb: [u8; 3]) -> impl Fn([u8; 3]) -> bool {
@@ -47,15 +48,15 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let (emu, tx) = Driven::headless(1280, 720);
-    // 手ブレ抑えは指した瞬間に当たらなくなるので切る（testkit と同じ）。
+    // turn off hand-shake damping, since it makes pointing miss right after aiming (same as testkit).
     let config = kernel::config::Config {
         pointer_smoothing: Some(0.0),
-        // 操作のシナリオはマウスで書く（既定のタッチは web_pointer で確かめる）。
+        // write the scenarios for mouse (the default touch is covered by web_pointer).
         pointer_mode: Some(kernel::PointerMode::Mouse),
         ..Default::default()
     };
     let kernel = Kernel::with_backend(Box::new(emu) as Box<dyn VrBackend>, config);
-    // GPUI の Testing（パネル 0）から、Web 版（パネル 1）を開く。
+    // open the web version (panel 1) from GPUI's Testing (panel 0).
     let gpui = PanelSpec::new(Pose::new(GPUI_POS, Quat::IDENTITY), |id, _, _| {
         testing::Testing::new(id)
     });
@@ -74,23 +75,23 @@ fn main() -> ExitCode {
     )
 }
 
-/// 要素の中心をマウスで指す。
+/// point at the element's center with the mouse.
 fn hover(page: &mut Page, emu: &Emu, id: &str) -> Vec2 {
     let status = page.probe()["state"]["status"].clone();
     let at = on_screen(emu, &status, page.center(id));
     emu.point(Some(at));
-    page.until(&format!("{id} に乗る"), |s| {
+    page.until(&format!("hover over {id}"), |s| {
         s["state"]["last"]["target"] == id
     });
     at
 }
 
-/// 要素の中心を左クリック（トリガー）する。
+/// left-click (trigger) the element's center.
 fn click(page: &mut Page, emu: &Emu, id: &str) {
     hover(page, emu, id);
     let downs = num(&page.probe(), &["state", "counts", "pointerdown"]);
     emu.button(Button::Trigger, true);
-    page.until(&format!("{id} を押した"), |s| {
+    page.until(&format!("pressed {id}"), |s| {
         num(s, &["state", "counts", "pointerdown"]) > downs
     });
     emu.button(Button::Trigger, false);
@@ -101,86 +102,88 @@ fn scenario(page: &mut Page, emu: &Emu) {
     assert_eq!(s["state"]["status"]["panel"], 1);
     assert_eq!(s["state"]["status"]["runtime"], "novr");
     let status = s["state"]["status"].clone();
-    let h = status["resolution"][1].as_f64().expect("解像度") as f32;
+    let h = status["resolution"][1].as_f64().expect("resolution") as f32;
 
-    // 画面に出さない WebView が読み戻されて、エミュレーターの画面に映る（背景は不透明な #202020）。
-    // パネルの外（右）は無彩色の市松模様。
-    let w = status["resolution"][0].as_f64().expect("解像度") as f32;
+    // the off-screen WebView is read back and shows on the emulator screen (background is opaque #202020).
+    // outside the panel (right) is an achromatic checkerboard.
+    let w = status["resolution"][0].as_f64().expect("resolution") as f32;
     let bottom_left = on_screen(emu, &status, (4.0, h - 10.0));
     emu.until_color(
-        "ページの描画が画面に映る",
+        "the page's render shows on screen",
         bottom_left,
         near([0x20, 0x20, 0x20]),
     );
     let outside = on_screen(emu, &status, (w - 4.0, h - 10.0)) + Vec2::new(100.0, 0.0);
-    assert!(gray(emu.color(outside)), "パネルの外は無彩色");
+    assert!(gray(emu.color(outside)), "outside the panel is achromatic");
     assert_ne!(
         emu.color(Vec2::new(0.0, 0.0)),
         emu.color(Vec2::new(16.0, 0.0)),
-        "市松模様"
+        "checkerboard"
     );
 
-    // ホバー: マウスの方向が右手のレイになり、ブリッジの合成イベントで届く（Tailwind の hover: の色まで映る）。
+    // hover: the mouse direction becomes the right-hand ray and arrives as the bridge's synthetic events (even Tailwind's hover: color shows).
     hover(page, emu, "click-me");
-    let s = page.until("マウスが乗る", |s| s["state"]["hovered"] == true);
+    let s = page.until("mouse hovers", |s| s["state"]["hovered"] == true);
     assert_eq!(
         s["state"]["lastPointer"]["trusted"], false,
-        "ブリッジが合成したイベント"
+        "event synthesized by the bridge"
     );
     let edge = on_screen(emu, &status, page.left_edge("click-me", 3.0));
-    emu.until_color("ホバーの色が画面に映る", edge, near([0x50, 0x54, 0x5f]));
+    emu.until_color(
+        "hover color shows on screen",
+        edge,
+        near([0x50, 0x54, 0x5f]),
+    );
 
-    // 左クリック = トリガー。
+    // left click = trigger.
     emu.button(Button::Trigger, true);
-    page.until("押した", |s| {
+    page.until("pressed", |s| {
         num(s, &["state", "counts", "pointerdown"]) == 1.0
     });
     let clicked = Instant::now();
     emu.button(Button::Trigger, false);
-    page.until("クリックした", |s| s["state"]["clicks"] == 1);
-    emu.until_color("クリックの結果が画面に映る", edge, near([0x2e, 0xcc, 0x71]));
-    // 応答速度の目安（離してから画面に映るまで。問い合わせの間隔 20ms 刻み）。
+    page.until("clicked", |s| s["state"]["clicks"] == 1);
+    emu.until_color(
+        "click result shows on screen",
+        edge,
+        near([0x2e, 0xcc, 0x71]),
+    );
+    // rough response time (from release until it shows on screen, in 20ms polling steps).
     println!(
-        "web_novr: クリックが画面に映るまで {} ms",
+        "web_novr: click shown on screen after {} ms",
         clicked.elapsed().as_millis()
     );
 
-    // 矢印キー = 右手のスティック。下へ倒すと一覧が下へ動く。
-    // 一覧の中心には行があるので、宛先が一覧そのものになるのは待たない。
+    // arrow keys = right-hand stick. Tilting down moves the list down.
+    // there is a row at the list's center, so don't wait for the target to be the list itself.
     let list = on_screen(emu, &status, page.center("scroll-list"));
     emu.point(Some(list));
     emu.stick(Vec2::new(0.0, -1.0));
-    page.until("スクロールした", |s| {
+    page.until("scrolled", |s| {
         num(s, &["state", "wheel"]) > 0.0 && num(s, &["state", "scrollTop"]) > 0.0
     });
     emu.stick(Vec2::ZERO);
 
-    // カーネルとの対話はどのランタイムでも同じ。
+    // interaction with the kernel is the same on every runtime.
     click(page, emu, "lock");
-    page.until("ロックした", |s| {
-        s["state"]["status"]["locked"] == true
-    });
+    page.until("locked", |s| s["state"]["status"]["locked"] == true);
     click(page, emu, "lock");
-    page.until("ロックを外した", |s| {
-        s["state"]["status"]["locked"] == false
-    });
+    page.until("unlocked", |s| s["state"]["status"]["locked"] == false);
 
-    // 右クリック = グリップ: パネルを掴んでマウスで右へ運ぶと、パネルの外だった所に映る
-    // （元の場所には下に重なった GPUI の Testing が見えるので、そちらでは確かめない）。
+    // right click = grip: grab the panel and carry it right with the mouse, and it shows where it was outside the panel
+    // (the GPUI Testing stacked below is visible at the original spot, so don't check there).
     let grip = on_screen(emu, &status, (20.0, h - 20.0));
     emu.point(Some(grip));
     emu.button(Button::Grab, true);
-    page.until("掴んでいる", |s| {
-        s["state"]["status"]["grabbed"] == true
-    });
+    page.until("grabbing", |s| s["state"]["status"]["grabbed"] == true);
     for i in 1..=10 {
         emu.point(Some(grip + Vec2::new(20.0 * i as f32, 0.0)));
     }
-    emu.until_color("パネルが動いた", outside, near([0x20, 0x20, 0x20]));
+    emu.until_color("panel moved", outside, near([0x20, 0x20, 0x20]));
     emu.button(Button::Grab, false);
-    page.until("離した", |s| s["state"]["status"]["grabbed"] == false);
+    page.until("released", |s| s["state"]["status"]["grabbed"] == false);
 
-    // マウスが画面の外へ出ると右手が消え、leave が届く。
+    // when the mouse leaves the screen the right hand disappears and leave arrives.
     emu.point(None);
-    page.until("離れた", |s| s["state"]["hovered"] == false);
+    page.until("left", |s| s["state"]["hovered"] == false);
 }

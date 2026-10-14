@@ -388,7 +388,7 @@ impl Overlay {
         assert_eq!(
             rgba.len(),
             width as usize * height as usize * 4,
-            "RGBA バッファのサイズが不正"
+            "invalid RGBA buffer size"
         );
         let p = &mut self.panels[panel];
         if p.closed {
@@ -501,7 +501,7 @@ impl Overlay {
             let buttons = |c: &ControllerState| (c.select, c.grab, c.menu);
             if prev.is_none_or(|p| buttons(&p) != buttons(&c)) {
                 logger::debug!(
-                    "コントローラのボタン",
+                    "controller buttons",
                     hand = ?c.hand,
                     profile = raw.profile,
                     select = c.select,
@@ -1094,7 +1094,7 @@ mod tests {
     fn in_view_estimates_from_head_direction() {
         let (mut vr, mut ov) = setup();
         ov.tick(&mut vr);
-        assert!(ov.in_view(0), "正面 1m");
+        assert!(ov.in_view(0), "1m straight ahead");
         // 真後ろを向くと見えない。
         vr.frame.hmd = Pose::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
         ov.tick(&mut vr);
@@ -1498,7 +1498,7 @@ mod tests {
         let normal = p.orientation * Vec3::Z;
         let to_head = (vr.frame.hmd.position - p.position).normalize();
         assert!(normal.abs_diff_eq(to_head, 1e-5), "{normal}");
-        assert!((p.orientation * Vec3::X).y.abs() < 1e-5, "水平");
+        assert!((p.orientation * Vec3::X).y.abs() < 1e-5, "horizontal");
     }
 
     #[test]

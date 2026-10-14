@@ -279,7 +279,7 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
 /// `emulator_gpu` は novr のエミュレーターが GPU で合成するか（`false` なら CPU）。
 pub fn connect(prefer: Option<Runtime>, emulator_gpu: bool) -> Result<Box<dyn VrBackend>, VrError> {
     if prefer == Some(Runtime::NoVr) {
-        logger::debug!("ランタイムに接続する", runtime = ?Runtime::NoVr);
+        logger::debug!("connecting to runtime", runtime = ?Runtime::NoVr);
         return Ok(Box::new(novr::Emulator::windowed(emulator_gpu)));
     }
     let order = match prefer {
@@ -290,12 +290,12 @@ pub fn connect(prefer: Option<Runtime>, emulator_gpu: bool) -> Result<Box<dyn Vr
     for rt in order {
         match connect_exact(rt) {
             Ok(b) => {
-                logger::debug!("ランタイムに接続する", runtime = ?rt);
+                logger::debug!("connecting to runtime", runtime = ?rt);
                 return Ok(b);
             }
-            Err(VrError::NoRuntime) => logger::debug!("ランタイムが見つからない", runtime = ?rt),
+            Err(VrError::NoRuntime) => logger::debug!("runtime not found", runtime = ?rt),
             Err(e) => {
-                logger::debug!("ランタイムに接続できない", runtime = ?rt, error = e);
+                logger::debug!("failed to connect to runtime", runtime = ?rt, error = e);
                 last = e;
             }
         }
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn leveled_keeps_heading_and_drops_pitch() {
-        // +X を向き、うつむいた頭。
+        // Head facing +X, looking down.
         let head = Pose::new(
             Vec3::new(1.0, 1.6, 0.0),
             Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.5),

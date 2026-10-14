@@ -24,7 +24,7 @@ mod tests {
             let (_, html) = FILES
                 .iter()
                 .find(|(p, _)| *p == entry)
-                .unwrap_or_else(|| panic!("{entry} が無い"));
+                .unwrap_or_else(|| panic!("{entry} not found"));
             let html = std::str::from_utf8(html).unwrap();
             // 共有の assets/ を相対パスで読む（nyaw://localhost/<ページ>/ から辿れる）。
             assert!(html.contains("../assets/"), "{entry}: {html}");

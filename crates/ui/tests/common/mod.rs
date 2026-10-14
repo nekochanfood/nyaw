@@ -1,8 +1,8 @@
-//! Web のパネルの E2E の共通部分。本番と同じく GPUI のイベントループがメインスレッドを持ち、Tauri もその上で回るので、
-//! テストの手順は別スレッドで流す。ページの状態は Tauri のイベント（`testing:probe` → `testing:state`）で読み、
-//! GPUI 側は `ui::Hooks::remote` でフレームループに処理を差し込んで触る。
+//! Shared parts of the web panel E2E tests. As in production, GPUI's event loop owns the main thread and Tauri runs on top of it, so
+//! the test steps run on another thread. Page state is read via Tauri events (`testing:probe` -> `testing:state`), and
+//! the GPUI side is touched by injecting work into the frame loop with `ui::Hooks::remote`.
 
-#![allow(dead_code)] // テストごとに使う部分が違う
+#![allow(dead_code)] // each test uses a different subset
 
 use std::{
     panic::AssertUnwindSafe,
@@ -20,18 +20,18 @@ use serde_json::Value;
 use std::sync::mpsc::Sender;
 use tauri::{AppHandle, Emitter, Listener};
 
-/// どこで流すか。Linux は画面（X / Wayland）があれば毎回、ほかの OS は `--ignored` のときだけ
-/// （読み戻しなど Linux でしか確かめていない経路を含むため）。
+/// where to run. On Linux every time if there is a display (X / Wayland), on other OSes only with `--ignored`
+/// (since it includes paths such as readback that have only been verified on Linux).
 pub fn should_run(name: &str) -> bool {
     let ignored = std::env::args().any(|a| a == "--ignored" || a == "--include-ignored");
     let display =
         std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
     let run = ignored || (cfg!(target_os = "linux") && display);
     if !run {
-        println!("{name}: スキップ（画面が無い。Linux 以外は --ignored で流す）");
+        println!("{name}: skipped (no display; run with --ignored on non-Linux)");
         return false;
     }
-    // ログレベルは本番と同じく NYAW_LOG（既定 info）。
+    // the log level is NYAW_LOG as in production (default info).
     let level = std::env::var("NYAW_LOG")
         .ok()
         .and_then(|l| l.parse().ok())
@@ -40,7 +40,7 @@ pub fn should_run(name: &str) -> bool {
     true
 }
 
-/// テストスレッドと共有するモックのランタイム（`VrKit` と同じく OpenXR の Overlay として振る舞う）。
+/// mock runtime shared with the test thread (behaves as an OpenXR Overlay like `VrKit`).
 #[derive(Clone, Default)]
 pub struct SharedMock(pub Arc<Mutex<MockBackend>>);
 
@@ -49,7 +49,7 @@ impl VrBackend for SharedMock {
         self.0.lock().unwrap().runtime()
     }
     fn poll(&mut self) -> Frame {
-        // 実ランタイムの vsync 待ちの代わり（約 90Hz）。
+        // stands in for the real runtime's vsync wait (about 90Hz).
         std::thread::sleep(Duration::from_millis(11));
         self.0.lock().unwrap().poll()
     }
@@ -82,16 +82,16 @@ impl VrBackend for SharedMock {
     }
 }
 
-/// ページ（web/src/probe.ts）への問い合わせと返事。
+/// queries to the page (web/src/probe.ts) and its replies.
 pub const PROBE_EVENT: &str = "testing:probe";
 pub const STATE_EVENT: &str = "testing:state";
 
-/// テストのスレッドから、フレームループ（メインスレッド）で GPUI を触る口。
+/// a way for the test thread to touch GPUI on the frame loop (main thread).
 pub type Remote = std::sync::mpsc::Sender<ui::Remote>;
 
-/// 本番と同じ `ui::run_with`（GPUI のイベントループの上で Tauri も回す）で起動する。`kick` を最初のフレームで実行し、
-/// Web（Tauri）が起きたら `scenario` を別スレッドで流す。最初に読むのは `label` のパネル。
-/// 終わったら（失敗したらパニックの内容を出して）アプリに終了を頼み（WebView を閉じてから終わる）、終了コードを返す。
+/// start with the production `ui::run_with` (Tauri also runs on top of GPUI's event loop). Run `kick` on the first frame, and
+/// once web (Tauri) is up, run `scenario` on another thread. The first panel read is `label`.
+/// when done (printing the panic message on failure), ask the app to quit (it closes the WebView first) and return the exit code.
 pub fn run(
     name: &'static str,
     kernel: Kernel,
@@ -123,8 +123,8 @@ pub fn run(
                     seq: 0,
                 };
                 let ok = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    // ページの読み込みと最初の状態を待つ。
-                    page.until("ページが読み込まれ状態が届く", |s| {
+                    // wait for the page to load and its first status.
+                    page.until("page loaded and status arrived", |s| {
                         !s["state"]["status"].is_null()
                     });
                     scenario(&mut page, &remote)
@@ -142,33 +142,33 @@ pub fn run(
     exit_code(name, &result)
 }
 
-/// アプリに終了を頼む（フレームループが WebView を閉じてから終わる）。終わらなければ 15 秒後にプロセスごと終える。
+/// ask the app to quit (the frame loop closes the WebView first). If it does not quit, end the process after 15 seconds.
 pub fn quit(remote: &Remote, ok: bool) {
     let _ = remote.send(Box::new(|cx| {
         cx.default_global::<ui::PanelControl>().quit = true;
     }));
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(15));
-        println!("終了を頼んでもアプリが終わらないので、プロセスを終える");
+        println!("the app did not quit when asked, so ending the process");
         logger::global().flush();
         std::process::exit(if ok { 0 } else { 1 });
     });
 }
 
-/// `run_with` が戻った後の終了コード。シナリオの結果が無ければ、終わる前にアプリが終了した。
+/// exit code after `run_with` returns. If there is no scenario result, the app exited before it finished.
 pub fn exit_code(name: &str, result: &Mutex<Option<bool>>) -> std::process::ExitCode {
     logger::global().flush();
     match *result.lock().unwrap() {
         Some(true) => std::process::ExitCode::SUCCESS,
         Some(false) => std::process::ExitCode::FAILURE,
         None => {
-            println!("{name}: FAILED（シナリオが終わる前にアプリが終了した）");
+            println!("{name}: FAILED (the app exited before the scenario finished)");
             std::process::ExitCode::FAILURE
         }
     }
 }
 
-/// Web のページ 1 枚を読む口（`label` のパネル）。
+/// a way to read one web page (the panel `label`).
 pub struct Page {
     pub app: AppHandle,
     pub label: String,
@@ -179,7 +179,7 @@ pub struct Page {
 pub const TIMEOUT: Duration = Duration::from_secs(15);
 
 impl Page {
-    /// ページの状態・要素の位置（`webtesting:state` の中身）。
+    /// page state and element positions (the contents of `webtesting:state`).
     pub fn probe(&mut self) -> Value {
         self.seq += 1;
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -193,10 +193,10 @@ impl Page {
                 Err(_) => break,
             }
         }
-        Value::Null // まだ読み込み中など。呼び出し側は until で待つ
+        Value::Null // still loading, etc. The caller waits with until
     }
 
-    /// `cond` が成り立つまで問い合わせ続ける。成り立たなければ最後の状態を添えて失敗する。
+    /// keep querying until `cond` holds. If it never does, fail with the last status attached.
     pub fn until(&mut self, what: &str, cond: impl Fn(&Value) -> bool) -> Value {
         let deadline = Instant::now() + TIMEOUT;
         loop {
@@ -205,15 +205,15 @@ impl Page {
                 return v;
             }
             if Instant::now() > deadline {
-                panic!("{what}: 時間内に成り立たない。最後の状態: {v:#}");
+                panic!("{what}: did not hold in time. Last status: {v:#}");
             }
             std::thread::sleep(Duration::from_millis(20));
         }
     }
 
-    /// 要素の中心（CSS px = パネルの論理ピクセル）。
+    /// center of the element (CSS px = the panel's logical pixels).
     pub fn center(&mut self, id: &str) -> (f32, f32) {
-        let v = self.until(&format!("要素 {id} がある"), |v| {
+        let v = self.until(&format!("element {id} exists"), |v| {
             v["rects"][id].is_object()
         });
         let r = &v["rects"][id];
@@ -221,9 +221,9 @@ impl Page {
         (f("x") + f("w") / 2.0, f("y") + f("h") / 2.0)
     }
 
-    /// 要素の左端から `dx` px 内側、縦は中央（文字に掛からない所の色を見る）。
+    /// `dx` px inside the element's left edge, vertically centered (to check a color away from the text).
     pub fn left_edge(&mut self, id: &str, dx: f32) -> (f32, f32) {
-        let v = self.until(&format!("要素 {id} がある"), |v| {
+        let v = self.until(&format!("element {id} exists"), |v| {
             v["rects"][id].is_object()
         });
         let r = &v["rects"][id];
@@ -232,7 +232,7 @@ impl Page {
     }
 }
 
-/// 状態の数値。
+/// a numeric value in the status.
 pub fn num(v: &Value, path: &[&str]) -> f64 {
     path.iter()
         .fold(v, |v, k| &v[*k])
@@ -241,23 +241,23 @@ pub fn num(v: &Value, path: &[&str]) -> f64 {
 }
 
 pub const PANEL_POS: Vec3 = Vec3::new(0.0, 0.0, -1.0);
-/// 1m あたりのピクセル数（800px = 0.8m）。リサイズしても変わらない。
+/// pixels per meter (800px = 0.8m). Unchanged by resizing.
 pub const PX_PER_M: f32 = 1000.0;
 pub const PROFILE: &str = "valve/index_controller";
 
-/// 右手の仮想コントローラ。値はモックの `frame` に書き、フレームループが次の tick で読む。
+/// the right-hand virtual controller. Values are written to the mock's `frame` and read by the frame loop on the next tick.
 pub struct Vr {
     pub mock: Arc<Mutex<MockBackend>>,
     pub aim: Pose,
     pub inputs: Vec<(String, f32)>,
-    /// 操作するパネルの中心。
+    /// center of the panel being operated.
     pub panel: Vec3,
-    /// 今のパネルの解像度（ピクセル → 空間の点の変換に使う）。
+    /// current panel resolution (used to convert pixels to space points).
     pub resolution: (u32, u32),
 }
 
 impl Vr {
-    /// 右手を下ろした位置から、正面 1m の 800×600 のパネルを指す。
+    /// from the lowered right hand's position, point at an 800x600 panel 1m straight ahead.
     pub fn new(mock: SharedMock) -> Self {
         Self {
             mock: mock.0,
@@ -277,7 +277,7 @@ impl Vr {
         }];
     }
 
-    /// レーザーをパネル上のピクセル（CSS px）へ向ける。
+    /// aim the laser at a pixel (CSS px) on the panel.
     pub fn point_at(&mut self, (x, y): (f32, f32)) {
         let (w, h) = (self.resolution.0 as f32, self.resolution.1 as f32);
         let target =
@@ -295,7 +295,7 @@ impl Vr {
         self.send();
     }
 
-    /// VR パネル（オーバーレイ 0）に最後に送られたテクスチャの、論理ピクセル `(x, y)` の色。
+    /// color at logical pixel `(x, y)` of the texture last sent to the VR panel (overlay 0).
     pub fn color_at(&self, (x, y): (f32, f32)) -> Option<[u8; 4]> {
         let mock = self.mock.lock().unwrap();
         let tex = mock.overlays[0].texture.as_ref()?;
@@ -317,7 +317,7 @@ impl Vr {
             .map(|t| (t.width, t.height))
     }
 
-    /// VR パネルの `(x, y)` が `rgb` に近い色になるまで待つ。
+    /// wait until `(x, y)` of the VR panel is close to `rgb`.
     pub fn until_color(&self, what: &str, at: (f32, f32), rgb: [u8; 3]) {
         let deadline = Instant::now() + TIMEOUT;
         loop {
@@ -332,30 +332,30 @@ impl Vr {
             }
             assert!(
                 Instant::now() < deadline,
-                "{what}: VR パネルの {at:?} が {rgb:02x?} にならない（{c:02x?}）"
+                "{what}: VR panel at {at:?} never became {rgb:02x?} ({c:02x?})"
             );
             std::thread::sleep(Duration::from_millis(20));
         }
     }
 }
 
-/// 要素の中心を指して、選択ボタンを押して離し、click が届くのを待つ。
+/// point at the element's center, press and release the select button, and wait for click to arrive.
 pub fn click(page: &mut Page, vr: &mut Vr, id: &str) {
     press(page, vr, id);
-    page.until(&format!("{id} を離した"), |s| {
+    page.until(&format!("released {id}"), |s| {
         s["state"]["last"]["type"] == "click" || s["state"]["last"]["type"] == "lostpointercapture"
     });
 }
 
-/// 要素の中心を指して、選択ボタンを押して離す（離した後のページは待たない）。
+/// point at the element's center, press and release the select button (don't wait for the page after release）。
 pub fn press(page: &mut Page, vr: &mut Vr, id: &str) {
     vr.point_at(page.center(id));
-    page.until(&format!("{id} に乗る"), |s| {
+    page.until(&format!("hover over {id}"), |s| {
         s["state"]["last"]["target"] == id
     });
     let downs = num(&page.probe(), &["state", "counts", "pointerdown"]);
     vr.set("trigger/value", 1.0);
-    page.until(&format!("{id} を押した"), |s| {
+    page.until(&format!("pressed {id}"), |s| {
         num(s, &["state", "counts", "pointerdown"]) > downs
     });
     vr.set("trigger/value", 0.0);
@@ -363,19 +363,19 @@ pub fn press(page: &mut Page, vr: &mut Vr, id: &str) {
 
 pub type Job = Box<dyn FnOnce(&mut Emulator) + Send>;
 
-/// エミュレーターを持つバックエンド。テストのスレッドから送られた操作を、メインスレッドの poll で行う
-/// （エミュレーターはウィンドウを持ちうるのでメインスレッドから出せない）。
+/// a backend that owns the emulator. Operations sent from the test thread run in the main thread's poll
+/// (the emulator may own a window, so it cannot leave the main thread).
 pub struct Driven {
     emu: Emulator,
     jobs: Receiver<Job>,
-    /// 次のフレームの始まり（ウィンドウ付きのエミュレーターと同じく、poll はここまで眠る）。
+    /// start of the next frame (as with a windowed emulator, poll sleeps until here).
     next: Option<Instant>,
-    /// エミュレーターがウィンドウを出して自分で周期を作り、合成する（[`Driven::scripted_window`]）。
+    /// the emulator shows a window, makes its own cycle, and composites ([`Driven::scripted_window`]).
     windowed: bool,
 }
 
 impl Driven {
-    /// ウィンドウを出さないエミュレーターと、それを操作する口。
+    /// an emulator without a window, and a way to drive it.
     pub fn headless(width: u32, height: u32) -> (Self, Emu) {
         let (tx, jobs) = channel();
         let emu = Emulator::headless(width, height);
@@ -390,8 +390,8 @@ impl Driven {
         )
     }
 
-    /// ウィンドウを出して本番と同じく合成・表示する（GPU が使えれば GPU）エミュレーターと、それを操作する口。
-    /// 入力はウィンドウからではなく `Emu` で注入する。
+    /// an emulator that shows a window and composites and displays as in production (on GPU if available), and a way to drive it.
+    /// input is injected through `Emu`, not from the window.
     pub fn scripted_window(width: u32, height: u32) -> (Self, Emu) {
         let (tx, jobs) = channel();
         let emu = Emulator::scripted_window(width, height);
@@ -413,13 +413,13 @@ impl VrBackend for Driven {
     }
     fn poll(&mut self) -> Frame {
         if self.windowed {
-            // 周期・合成・表示はエミュレーターがする。
+            // the emulator handles the cycle, compositing, and display.
             while let Ok(job) = self.jobs.try_recv() {
                 job(&mut self.emu);
             }
             return self.emu.poll();
         }
-        // ウィンドウ付きのエミュレーターと同じ周期（約 90Hz）。間に合わなかったフレームは取り戻さない。
+        // same cycle as a windowed emulator (about 90Hz). Missed frames are not made up.
         let frame = Duration::from_nanos(1_000_000_000 / 90);
         let now = Instant::now();
         let next = self.next.unwrap_or(now);
@@ -431,7 +431,7 @@ impl VrBackend for Driven {
             job(&mut self.emu);
         }
         let frame = self.emu.poll();
-        // ウィンドウ付きと同じく、毎フレーム合成する（コストを本番に揃える）。
+        // as with the windowed one, composite every frame (to match production cost).
         self.emu.composite();
         frame
     }
@@ -470,19 +470,20 @@ impl VrBackend for Driven {
     }
 }
 
-/// テストのスレッドからエミュレーターを操作する口。
+/// a way for the test thread to drive the emulator.
 pub struct Emu(pub Sender<Job>);
 
 impl Emu {
-    /// 次の poll で `f` を行い、結果を待つ。
+    /// run `f` on the next poll and wait for the result.
     pub fn run<R: Send + 'static>(&self, f: impl FnOnce(&mut Emulator) -> R + Send + 'static) -> R {
         let (tx, rx) = channel();
         self.0
             .send(Box::new(move |e| {
                 let _ = tx.send(f(e));
             }))
-            .expect("フレームループが止まっている");
-        rx.recv_timeout(TIMEOUT).expect("フレームループが応えない")
+            .expect("frame loop has stopped");
+        rx.recv_timeout(TIMEOUT)
+            .expect("frame loop is not responding")
     }
 
     pub fn point(&self, at: Option<Vec2>) {
@@ -503,7 +504,7 @@ impl Emu {
         [rgba[i], rgba[i + 1], rgba[i + 2]]
     }
 
-    /// 画面の `at` が `pred` を満たす色になるまで待つ。
+    /// wait until the screen color at `at` satisfies `pred`.
     pub fn until_color(&self, what: &str, at: Vec2, pred: impl Fn([u8; 3]) -> bool) {
         let deadline = Instant::now() + TIMEOUT;
         loop {
@@ -513,7 +514,7 @@ impl Emu {
             }
             assert!(
                 Instant::now() < deadline,
-                "{what}: 画面の {at:?} の色が合わない（{c:02x?}）"
+                "{what}: screen color at {at:?} does not match ({c:02x?})"
             );
             std::thread::sleep(Duration::from_millis(20));
         }

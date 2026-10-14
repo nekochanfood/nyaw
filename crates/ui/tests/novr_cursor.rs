@@ -1,6 +1,6 @@
-//! novr（エミュレーター）でのポインタの見た目の E2E。本番と同じ `ui::run_with` に GPUI の Testing とビームを載せ、
-//! タッチで動かさずに押し続けると、カーソルの周りに長押しの進み具合のリング（ドーナツ型。丸は穴に収まる）が満ちていき、
-//! エミュレーターの画面に映ることを確かめる。実際の GPU で描いて読み戻すので、画面のある環境で `--ignored` のときだけ流す。
+//! E2E for the pointer's look in novr (emulator). Runs GPUI's Testing and the beam on the production `ui::run_with`,
+//! checking that holding a touch without moving fills a long-press progress ring (donut-shaped; the circle fits in the hole) around the cursor,
+//! and that it shows on the emulator screen. It renders on the real GPU and reads back, so it only runs with `--ignored` on a machine with a display.
 
 mod common;
 
@@ -25,7 +25,7 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let (backend, emu) = Driven::headless(SCREEN.0, SCREEN.1);
-    // 既定（タッチ）のまま。
+    // keep the default (touch).
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, Default::default());
     let mut panels = vec![PanelSpec::new(
         Pose::new(PANEL, Quat::IDENTITY),
@@ -55,15 +55,15 @@ fn brightness(c: [u8; 3]) -> u32 {
 }
 
 fn scenario(emu: &Emu) {
-    // 起動とパネルの最初の描画を待つ。
+    // wait for startup and the panel's first render.
     std::thread::sleep(Duration::from_secs(2));
-    // パネルの右下寄り（ボタンの無い背景）を指す。
+    // point at the lower right of the panel (background with no buttons).
     let at = emu
         .run(|e| e.project(PANEL + Vec3::new(0.3, -0.2, 0.0)))
-        .expect("パネルは目の前");
+        .expect("panel is in front of the eyes");
     emu.point(Some(at));
     std::thread::sleep(Duration::from_millis(300));
-    // リングの半径（画面の px）: カーソルのパネルは 1m 先で 36mm、リングの中心線はその 1/3（80/240 px）。
+    // ring radius (screen px): the cursor panel is 36mm at 1m, and the ring's center line is 1/3 of that (80/240 px).
     let ring = emu.run(move |e| {
         let edge = e
             .project(PANEL + Vec3::new(0.3 + 0.036 / 3.0, -0.2, 0.0))
@@ -74,29 +74,31 @@ fn scenario(emu: &Emu) {
         let a = (turn - 0.25) * TAU;
         at + Vec2::new(ring * a.cos(), ring * a.sin())
     };
-    // 押す前はリングが無い（12 時の位置はパネルの背景のまま）。
+    // no ring before pressing (the 12 o'clock position is still panel background).
     let before = emu.color(on_ring(0.02));
 
     emu.button(Button::Trigger, true);
     std::thread::sleep(Duration::from_millis(250));
-    // 半分ほど満ちた: 満ちた側（12 時の少し先）は明るく、まだの側（10 時ごろ）は下地で暗い。
+    // about half filled: the filled side (just past 12 o'clock) is bright, the unfilled side (around 10 o'clock) is the dark base.
     let filled = emu.color(on_ring(0.08));
     let empty = emu.color(on_ring(0.85));
     emu.button(Button::Trigger, false);
-    println!("リング: 押す前 {before:02x?} / 満ちた側 {filled:02x?} / まだの側 {empty:02x?}");
+    println!(
+        "ring: before press {before:02x?} / filled side {filled:02x?} / unfilled side {empty:02x?}"
+    );
     assert!(
         brightness(filled) > brightness(before) + 40,
-        "満ちた弧が明るく映る（{before:02x?} → {filled:02x?}）"
+        "filled arc shows bright ({before:02x?} -> {filled:02x?})"
     );
     assert!(
         brightness(filled) > brightness(empty) + 40,
-        "満ちた側とまだの側で違う（{filled:02x?} / {empty:02x?}）"
+        "filled and unfilled sides differ ({filled:02x?} / {empty:02x?})"
     );
-    // 離すとリングは消える。
+    // the ring disappears on release.
     std::thread::sleep(Duration::from_millis(200));
     let after = emu.color(on_ring(0.08));
     assert!(
         brightness(after) + 40 < brightness(filled),
-        "離すと消える（{after:02x?}）"
+        "disappears on release ({after:02x?})"
     );
 }

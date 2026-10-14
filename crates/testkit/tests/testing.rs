@@ -1,5 +1,5 @@
-//! Testing 画面の操作。Testing は一連の機能を1画面で試せるテスト用の画面で、
-//! 基本操作はどのランタイムでもネイティブに行えるべきなので、シナリオは1回だけ書いて全ランタイム（novr / VR）で実行する。
+//! Operations on the Testing screen. Testing is a test screen that exercises a series of features on one screen,
+//! and basic operations should be doable natively on every runtime, so each scenario is written once and run on all runtimes (novr / VR).
 
 use gpui::TestAppContext;
 use testing::{
@@ -20,7 +20,7 @@ fn hover_highlights_button(kit: &mut impl Driver<Testing>) {
 }
 on_every_runtime!(hover_highlights_button, |_, _| Testing::default());
 
-/// ロックはボタンで切り替わり、有効な間はボタンの色で分かる。
+/// Lock is toggled with a button, and while enabled it is shown by the button color.
 fn lock_button_toggles(kit: &mut impl Driver<Testing>) {
     kit.click("lock").hover("click-me");
     assert_eq!(kit.color_at("lock"), BUTTON_ACTIVE_BG);
@@ -30,7 +30,7 @@ fn lock_button_toggles(kit: &mut impl Driver<Testing>) {
 on_every_runtime!(lock_button_toggles, |_, _| Testing::default());
 
 fn animation_button_opts_out(kit: &mut impl Driver<Testing>) {
-    // キットの既定は異なるが、どちらも最初のクリックで切り替わる。
+    // The kits' defaults differ, but both toggle on the first click.
     let before = kit.color_at("animate-panel");
     kit.click("animate-panel").hover("click-me");
     let after = kit.color_at("animate-panel");
@@ -40,8 +40,8 @@ fn animation_button_opts_out(kit: &mut impl Driver<Testing>) {
 }
 on_every_runtime!(animation_button_opts_out, |_, _| Testing::default());
 
-/// 取り付け先はどれか1つだけ光り、外すと消える。
-/// （操作している右手に取り付けるとレーザーの先にパネルが付いてきて他を指せないので、右手は attach.rs で左手から操作する）
+/// Only one attach target lights up, and it goes out when detached.
+/// (Attaching to the operating right hand makes the panel follow the laser tip so nothing else can be pointed at, so the right hand is handled from the left hand in attach.rs)
 fn attach_buttons_show_target(kit: &mut impl Driver<Testing>) {
     kit.click("attach-hmd")
         .click("attach-left")
@@ -53,7 +53,7 @@ fn attach_buttons_show_target(kit: &mut impl Driver<Testing>) {
 }
 on_every_runtime!(attach_buttons_show_target, |_, _| Testing::default());
 
-// ---- GPUI の部品 ----
+// ---- GPUI components ----
 
 fn toggle_switches_and_shows_state(kit: &mut impl Driver<Testing>) {
     kit.click("toggle").hover("click-me");
@@ -65,7 +65,7 @@ fn toggle_switches_and_shows_state(kit: &mut impl Driver<Testing>) {
 }
 on_every_runtime!(toggle_switches_and_shows_state, |_, _| Testing::default());
 
-/// `.active()`: 押している間だけ見た目が変わる。
+/// `.active()`: the appearance changes only while pressed.
 fn pressed_style_while_held(kit: &mut impl Driver<Testing>) {
     kit.down("hold-me");
     assert_eq!(kit.color_at("hold-me"), BUTTON_ACTIVE_BG);
@@ -74,7 +74,7 @@ fn pressed_style_while_held(kit: &mut impl Driver<Testing>) {
 }
 on_every_runtime!(pressed_style_while_held, |_, _| Testing::default());
 
-/// `.on_drag()` / `.drag_over()` / `.on_drop()`: 運んでいる間はドロップ先が光り、離すと届く。
+/// `.on_drag()` / `.drag_over()` / `.on_drop()`: while carrying, the drop target lights up, and releasing delivers the drop.
 fn drag_and_drop(kit: &mut impl Driver<Testing>) {
     kit.down("drag-chip").hover("drop-zone");
     assert_eq!(kit.color_at("drop-zone"), DROP_TARGET_BG);
@@ -84,18 +84,18 @@ fn drag_and_drop(kit: &mut impl Driver<Testing>) {
 }
 on_every_runtime!(drag_and_drop, |_, _| Testing::default());
 
-/// `.on_scroll_wheel()` と `.overflow_y_scroll()`: スクロール量が届き、一覧が実際に動く。
+/// `.on_scroll_wheel()` and `.overflow_y_scroll()`: the scroll amount arrives and the list actually moves.
 fn scroll_moves_list(kit: &mut impl Driver<Testing>) {
     kit.scroll("scroll-list", 1.0).scroll("scroll-list", -3.0);
     assert_eq!(kit.read(|h| h.scrolled), -2.0);
     assert!(
         kit.read(|h| h.list.offset().y) < gpui::px(0.0),
-        "下へ動いている"
+        "moving down"
     );
 }
 on_every_runtime!(scroll_moves_list, |_, _| Testing::default());
 
-/// `deferred(anchored())`: ポップアップを開いて項目を選ぶと閉じる。外を押しても閉じる。
+/// `deferred(anchored())`: opening the popup and choosing an item closes it. Pressing outside also closes it.
 fn popup_menu_picks_item(kit: &mut impl Driver<Testing>) {
     kit.click("open-menu").click("menu-b");
     assert_eq!(
@@ -109,30 +109,30 @@ fn popup_menu_picks_item(kit: &mut impl Driver<Testing>) {
 }
 on_every_runtime!(popup_menu_picks_item, |_, _| Testing::default());
 
-/// `.track_focus()` / `.focus()`: 押した入力欄にフォーカスが移り、見た目で分かる。
+/// `.track_focus()` / `.focus()`: focus moves to the pressed input field, visible in its appearance.
 fn click_focuses_field(kit: &mut impl Driver<Testing>) {
     kit.click("text-field").hover("click-me");
     assert_eq!(kit.color_at("text-field"), FIELD_FOCUS_BG);
 }
 on_every_runtime!(click_focuses_field, |_, _| Testing::default());
 
-/// GPUI の Testing から Testing の Web 版（Tauri の WebView）を開くよう頼める。開いた先の操作は crates/ui/tests/web_*.rs。
+/// GPUI's Testing can ask to open the Web version of Testing (Tauri WebView). Operating what opens is done in crates/ui/tests/web_*.rs.
 fn open_web_testing(kit: &mut impl Driver<Testing>) {
     kit.click("open-web");
     assert_eq!(kit.web_spawns(), [testing::WEB_PAGE]);
 }
 on_every_runtime!(open_web_testing, |_, _| Testing::default());
 
-/// `.on_key_down()`: キーボードは novr にしかない。
+/// `.on_key_down()`: only novr has a keyboard.
 #[gpui::test]
 fn typing_goes_to_focused_field(cx: &mut TestAppContext) {
     let mut kit = NoVrKit::new(cx, |_, _| Testing::default());
-    kit.type_keys("x"); // フォーカスが無いうちは入らない
+    kit.type_keys("x"); // nothing is entered while there is no focus
     kit.click("text-field").type_keys("h i space o k backspace");
     assert_eq!(kit.read(|h| h.text.clone()), "hi o");
 }
 
-/// UI のロジックだけの確認なので novr で十分。
+/// This only checks UI logic, so novr is enough.
 #[gpui::test]
 fn hover_alone_does_not_click(cx: &mut TestAppContext) {
     let mut kit = NoVrKit::new(cx, |_, _| Testing::default());

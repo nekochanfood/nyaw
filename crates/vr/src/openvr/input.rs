@@ -68,7 +68,7 @@ impl Input {
     /// manifest を `os::config_dir()/openvr` に書き出して登録する。最初の `PollNextEvent` より前に呼ぶこと。
     pub fn init(table: *const sys::VR_IVRInput_FnTable) -> Result<Self, VrError> {
         let dir = os::config_dir()
-            .ok_or_else(|| VrError::Runtime("設定ディレクトリが分からない".into()))?
+            .ok_or_else(|| VrError::Runtime("config directory unknown".into()))?
             .join("openvr");
         for (name, body) in FILES {
             let path = dir.join(name);
@@ -216,7 +216,7 @@ mod tests {
     fn bindings_match_manifest() {
         let manifest = FILES[0].1;
         for (name, body) in &FILES[1..] {
-            assert!(manifest.contains(name), "{name} が default_bindings に無い");
+            assert!(manifest.contains(name), "{name} missing from default_bindings");
             for out in body.split("\"output\": \"").skip(1) {
                 let action = &out[..out.find('"').unwrap()];
                 assert!(

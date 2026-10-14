@@ -9,7 +9,7 @@ fn main() {
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     // canonicalize はしない（Windows では \\?\ 付きのパスになり、cmd.exe が作業ディレクトリにできない）。
     let web = manifest.join("..").join("..").join("web");
-    assert!(web.join("package.json").exists(), "web/ がある");
+    assert!(web.join("package.json").exists(), "web/ exists");
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let dist = out.join("web");
 
@@ -30,7 +30,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=NYAW_WEB_SKIP");
 
     let files = if env::var_os("NYAW_WEB_SKIP").is_some() {
-        println!("cargo:warning=NYAW_WEB_SKIP: Web のページをビルドしない（ページは 404 になる）");
+        println!("cargo:warning=NYAW_WEB_SKIP: not building web pages (pages will 404)");
         Vec::new()
     } else {
         if !web.join("node_modules").exists() {
@@ -69,9 +69,9 @@ fn npm(web: &Path, args: &[&str]) {
     let status = npm_command().args(args).current_dir(web).status();
     match status {
         Ok(s) if s.success() => {}
-        Ok(s) => panic!("npm {args:?} が失敗した（{s}）"),
+        Ok(s) => panic!("npm {args:?} failed ({s})"),
         Err(e) => panic!(
-            "npm を起動できない（{e}）。Node.js を入れるか、NYAW_WEB_SKIP=1 でページのビルドを飛ばす"
+            "failed to run npm ({e}). Install Node.js, or set NYAW_WEB_SKIP=1 to skip building pages"
         ),
     }
 }
@@ -84,9 +84,9 @@ fn npm_build(web: &Path, dist: &Path) {
         .status();
     match status {
         Ok(s) if s.success() => {}
-        Ok(s) => panic!("web/ のビルドが失敗した（{s}）"),
+        Ok(s) => panic!("web/ build failed ({s})"),
         Err(e) => panic!(
-            "npm を起動できない（{e}）。Node.js を入れるか、NYAW_WEB_SKIP=1 でページのビルドを飛ばす"
+            "failed to run npm ({e}). Install Node.js, or set NYAW_WEB_SKIP=1 to skip building pages"
         ),
     }
 }

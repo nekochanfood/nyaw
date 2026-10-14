@@ -84,15 +84,15 @@ impl Kernel {
         let vr = match vr::connect(prefer, gpu) {
             Ok(b) => b,
             Err(e) if prefer.is_none() => {
-                logger::warn!("VR ランタイムに接続できないので novr で起動する", error = e);
-                vr::connect(Some(Runtime::NoVr), gpu).expect("novr は常に接続できる")
+                logger::warn!("failed to connect to VR runtime, starting novr", error = e);
+                vr::connect(Some(Runtime::NoVr), gpu).expect("novr always connects")
             }
             Err(e) => {
-                logger::error!("VR ランタイムに接続できない", runtime = ?prefer, error = e);
+                logger::error!("failed to connect to VR runtime", runtime = ?prefer, error = e);
                 return Err(e);
             }
         };
-        logger::info!("ランタイムを選択", runtime = ?vr.runtime());
+        logger::info!("runtime selected", runtime = ?vr.runtime());
         Ok(Self::with_backend(vr, config))
     }
 }
@@ -293,7 +293,7 @@ mod tests {
         assert_eq!(
             kernel().0.pointer_mode(),
             PointerMode::Touch,
-            "既定はタッチ"
+            "defaults to touch"
         );
     }
 

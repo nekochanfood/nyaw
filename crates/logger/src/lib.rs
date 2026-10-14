@@ -2,8 +2,8 @@
 //!
 //! ```
 //! let runtime = "NoVr";
-//! logger::info!("ランタイムを選択", runtime = runtime, fallback = true);
-//! // ts=2026-10-13T09:00:00.123Z level=info target=nyaw msg=ランタイムを選択 runtime=NoVr fallback=true
+//! logger::info!("runtime selected", runtime = runtime, fallback = true);
+//! // ts=2026-10-13T09:00:00.123Z level=info target=nyaw msg="runtime selected" runtime=NoVr fallback=true
 //! ```
 //!
 //! 出力先（[`Sink`]）の組み立てはブートローダー（`main`）だけが行う。ファイル出力は OS 層（`os::FileSink`）が実装する。
@@ -456,14 +456,14 @@ mod tests {
             ("quote", "say \"hi\"".into()),
             ("newline", "a\nb\tc".into()),
             ("backslash", r"C:\nyaw".into()),
-            ("ja", "描画失敗".into()),
+            ("ja", "draw_failed".into()),
             ("ctrl", "\u{1}".into()),
         ];
         let line = format(&rec(Level::Warn, "m", &fields), at(0));
         let tail = line.split_once("msg=m ").unwrap().1;
         assert_eq!(
             tail,
-            r#"plain=abc empty="" eq="a=b" quote="say \"hi\"" newline="a\nb\tc" backslash="C:\\nyaw" ja=描画失敗 ctrl="\u{0001}""#
+            r#"plain=abc empty="" eq="a=b" quote="say \"hi\"" newline="a\nb\tc" backslash="C:\\nyaw" ja=draw_failed ctrl="\u{0001}""#
         );
     }
 
@@ -474,12 +474,12 @@ mod tests {
             rfc3339_millis(at(1_791_882_487_654)),
             "2026-10-13T09:08:07.654Z"
         );
-        // うるう日
+        // leap day
         assert_eq!(
             rfc3339_millis(at(951_782_400_000)),
             "2000-02-29T00:00:00.000Z"
         );
-        // エポック以前は 1970-01-01 に丸める
+        // before the epoch, clamps to 1970-01-01
         assert_eq!(
             rfc3339_millis(UNIX_EPOCH - Duration::from_secs(1)),
             "1970-01-01T00:00:00.000Z"
@@ -498,11 +498,11 @@ mod tests {
             (Level::Warn, "WARN ", 33),
             (Level::Error, "ERROR", 31),
         ] {
-            let record = rec(level, "描画完了", &[]);
+            let record = rec(level, "render done", &[]);
             let plain = format_terminal(&record, ts, false);
             assert_eq!(
                 plain,
-                std::format!("{timestamp}  {label}  {:24}  描画完了", "vr")
+                std::format!("{timestamp}  {label}  {:24}  \"render done\"", "vr")
             );
             let colored = format_terminal(&record, ts, true);
             assert_eq!(

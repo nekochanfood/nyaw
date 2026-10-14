@@ -118,7 +118,7 @@ impl PointerBridge {
                     return self.mouse(ev);
                 }
                 PointerEvent::Up { pos } => {
-                    let t = self.touch.take().expect("押している");
+                    let t = self.touch.take().expect("pressed");
                     if t.swiping {
                         // 離した後も慣性で滑る（フレームごとの momentum）。GPUI のマウスは離した所へ。
                         self.momentum = Some((t.start, t.velocity));
@@ -579,7 +579,7 @@ impl PanelSpec {
     pub fn build(self, panel: PanelId, window: &mut Window, cx: &mut App) -> AnyView {
         match self.content {
             Content::Gpui(build) => build(panel, window, cx),
-            Content::Web(page) => panic!("Web のページ {page} は GPUI のビューにならない"),
+            Content::Web(page) => panic!("web page {page} cannot become a GPUI view"),
         }
     }
 }
@@ -647,7 +647,7 @@ impl WebSlot {
                     self.host = Some(h);
                 }
                 Err(e) => {
-                    logger::error!("Web（Tauri）を起動できない", error = e);
+                    logger::error!("cannot start web (tauri)", error = e);
                     self.failed = true;
                 }
             }
@@ -884,7 +884,7 @@ pub fn run_with(
                             }
                         }
                         Some(Err(e)) if !warned => {
-                            logger::error!("パネルの描画を取得できない", error = e, panel = panel);
+                            logger::error!("cannot get panel render", error = e, panel = panel);
                             warned = true;
                         }
                         _ => {}
@@ -950,10 +950,11 @@ pub fn run_with(
                 let profiling = cx.update(|cx| cx.default_global::<PanelControl>().profiling);
                 if profiling != cx.update(|cx| cx.has_global::<Profiler>()) {
                     cx.update(|cx| {
-                        logger::info!("プロファイラを切り替え", profiling = profiling);
+                        logger::info!("profiler toggled", profiling = profiling);
                         if profiling {
                             // --profile 無しで始めたときは CSV に書かない。
-                            let p = Profiler::new(None).expect("出力先が無ければ失敗しない");
+                            let p =
+                                Profiler::new(None).expect("cannot fail without an output path");
                             cx.set_global(with_budget(p));
                         } else {
                             log_summary(cx);
@@ -976,7 +977,7 @@ pub fn run_with(
                         let (panel, window) =
                             cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs));
                         logger::info!(
-                            "プロファイラパネルを開いた",
+                            "profiler panel opened",
                             panel = panel,
                             pose = ?kernel.panel(panel).pose
                         );
@@ -1033,7 +1034,7 @@ fn log_summary(cx: &App) {
         let s = p.summary();
         let ms = |d: Duration| format!("{:.3}", d.as_secs_f64() * 1e3);
         logger::info!(
-            "プロファイルの集計（直近）",
+            "profile summary (recent)",
             frames = s.frames,
             dropped = s.dropped,
             fps = format!("{:.1}", s.fps),
@@ -1261,7 +1262,7 @@ mod tests {
         assert_eq!(spec.pose_for(&kernel, 1).position, SPAWN_GAP);
         let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, 1, cx, &mut webs));
         assert_eq!((panel, window.is_none()), (1, true));
-        assert!(kernel.panel(panel).closed, "Web を起こせなければ閉じる");
+        assert!(kernel.panel(panel).closed, "closes if web cannot start");
         assert!(
             PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default())
                 .web_page()
@@ -1288,15 +1289,11 @@ mod tests {
         let pos = Vec2::new(3.0, 4.0);
         let mut send = |ev| b.translate(ev, PointerMode::Mouse).len();
         assert_eq!(send(PointerEvent::Move { pos }), 1);
-        assert_eq!(
-            send(PointerEvent::Move { pos }),
-            0,
-            "止まっていれば送らない"
-        );
+        assert_eq!(send(PointerEvent::Move { pos }), 0, "not sent while still");
         assert_eq!(send(PointerEvent::Down { pos }), 1);
         assert_eq!(send(PointerEvent::Move { pos }), 0);
         assert_eq!(send(PointerEvent::Leave), 1);
-        assert_eq!(send(PointerEvent::Move { pos }), 1, "入り直したら送る");
+        assert_eq!(send(PointerEvent::Move { pos }), 1, "sent on re-entry");
     }
 
     #[test]
@@ -1380,7 +1377,11 @@ mod tests {
             panic!("{swipe:?}")
         };
         assert_eq!(e.delta.pixel_delta(px(1.0)), Point::new(px(0.0), px(30.0)));
-        assert_eq!(e.position, Point::new(px(10.0), px(10.0)), "宛先は押した所");
+        assert_eq!(
+            e.position,
+            Point::new(px(10.0), px(10.0)),
+            "target is where it was pressed"
+        );
         assert_eq!(
             kinds(b.translate(
                 PointerEvent::Up {
@@ -1393,7 +1394,7 @@ mod tests {
         assert!(!b.pressed);
         // 離した後も慣性で同じ向きに滑り、だんだん止まる。
         let Some(PlatformInput::ScrollWheel(first)) = b.momentum() else {
-            panic!("慣性が無い")
+            panic!("no momentum")
         };
         let dy = |e: &ScrollWheelEvent| f32::from(e.delta.pixel_delta(px(1.0)).y);
         assert!(dy(&first) > 0.0);
@@ -1404,7 +1405,7 @@ mod tests {
             last = dy(&e);
             frames += 1;
         }
-        assert!(frames > 10, "すぐには止まらない（{frames}）");
+        assert!(frames > 10, "does not stop immediately ({frames})");
         assert!(b.momentum().is_none());
     }
 
@@ -1436,7 +1437,7 @@ mod tests {
         assert_eq!(nudge.pressed_button, Some(MouseButton::Left));
         assert!(
             f32::from(nudge.position.x) - 10.0 > 2.0,
-            "GPUI のドラッグの閾値を越える"
+            "exceeds the GPUI drag threshold"
         );
         assert_eq!(back.position, Point::new(px(10.0), px(10.0)));
         // 以降はマウスのドラッグ（押したままの Move）で、スクロールにはならない。
@@ -1457,6 +1458,6 @@ mod tests {
             touch,
         );
         assert!(matches!(up[..], [PlatformInput::MouseUp(_)]), "{up:?}");
-        assert!(b.momentum().is_none(), "ドラッグには慣性が無い");
+        assert!(b.momentum().is_none(), "drag has no momentum");
     }
 }

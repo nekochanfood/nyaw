@@ -1,18 +1,18 @@
-//! 実ランタイム（Monado / SteamVR）を E2E テストのために用意する。Playwright の
-//! `npx playwright install`（[`install`]）と `webServer`（[`launch`] が返す [`Launched`]）に当たる。
+//! Prepares real runtimes (Monado / SteamVR) for E2E tests. The equivalent of Playwright's
+//! `npx playwright install` ([`install`]) and `webServer` ([`Launched`] returned by [`launch`]).
 //!
-//! - インストール先は `NYAW_RUNTIMES_PATH`、無ければ Windows は `%LOCALAPPDATA%\nyaw\runtimes`、
-//!   Linux は `$XDG_CACHE_HOME/nyaw/runtimes`（`~/.cache/...`）。testkit が持つのはこの中だけ。
-//! - SteamVR は Steam の管理下にあるので、testkit はインストールも削除もしない（場所を探して案内するだけ）。
-//! - 実ランタイムはマシンに1つしか動かないので、テストは1つずつ流す（Playwright の `workers: 1`）。
+//! - The install location is `NYAW_RUNTIMES_PATH`, or if unset, `%LOCALAPPDATA%\nyaw\runtimes` on Windows and
+//!   `$XDG_CACHE_HOME/nyaw/runtimes` (`~/.cache/...`) on Linux. testkit owns only what is inside this directory.
+//! - SteamVR is managed by Steam, so testkit neither installs nor removes it (it only locates it and gives guidance).
+//! - Only one real runtime can run on a machine, so tests run one at a time (like Playwright's `workers: 1`).
 //!
 //! ```ignore
-//! // harness = false のテストの main から（環境変数を書き換えるのでシングルスレッドで呼ぶ）
+//! // From the main of a harness = false test (call it single-threaded, since it rewrites environment variables)
 //! let rt = unsafe { runtimes::launch(Kind::Monado) }?;
-//! let mut vr = rt.connect()?;   // 起動を待って、そのランタイムだけに繋ぐ
-//! // ... vr を使う ...
+//! let mut vr = rt.connect()?;   // wait for startup and connect to that runtime only
+//! // ... use vr ...
 //! drop(vr);
-//! drop(rt);                     // 自分が起動したプロセスを止め、環境変数を戻す
+//! drop(rt);                     // stop the processes we started and restore environment variables
 //! ```
 
 use std::ffi::OsString;
@@ -25,9 +25,9 @@ use vr::{Runtime, VrBackend, VrError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// OpenXR。Windows は GitLab CI の成果物を testkit が入れる。Linux はディストリのパッケージ。
+    /// OpenXR. On Windows testkit installs the GitLab CI artifacts; on Linux, the distro package.
     Monado,
-    /// OpenVR。HMD 無しで動かすため、同梱の null ドライバを有効にした設定で起動する。
+    /// OpenVR. To run without an HMD, it is launched with a config that enables the bundled null driver.
     SteamVr,
 }
 
@@ -45,7 +45,7 @@ impl Kind {
         Kind::ALL.into_iter().find(|k| k.name() == s)
     }
 
-    /// このランタイムに繋ぐときの `vr` のランタイム。
+    /// The `vr` runtime to use when connecting to this runtime.
     pub fn runtime(self) -> Runtime {
         match self {
             Kind::Monado => Runtime::OpenXr,
@@ -53,7 +53,7 @@ impl Kind {
         }
     }
 
-    /// インストール済みなら、その場所（Monado は `monado-service`、SteamVR は本体のフォルダ）。
+    /// If installed, its location (`monado-service` for Monado, the main folder for SteamVR).
     pub fn locate(self) -> Option<PathBuf> {
         match self {
             Kind::Monado => monado().map(|m| m.service),
@@ -61,7 +61,7 @@ impl Kind {
         }
     }
 
-    /// このランタイムのプロセスが（誰が起動したものでも）動いているか。
+    /// Whether a process of this runtime is running (no matter who started it).
     pub fn is_running(self) -> bool {
         match self {
             Kind::Monado => is_running("monado-service"),
@@ -69,12 +69,12 @@ impl Kind {
         }
     }
 
-    /// 見つからないときにユーザーへ出す案内。
+    /// Guidance shown to the user when it is not found.
     pub fn install_hint(self) -> String {
         match (self, cfg!(windows)) {
-            (Kind::Monado, true) => format!("`cargo runtimes install monado` で {} に入る", root().join("monado").display()),
-            (Kind::Monado, false) => "ディストリのパッケージを入れる（例: `sudo apt install monado-service libopenxr1-monado`）".into(),
-            (Kind::SteamVr, _) => format!("Steam で SteamVR を入れる（`cargo runtimes install steamvr` で {STEAMVR_INSTALL_URL} を開く）"),
+            (Kind::Monado, true) => format!("`cargo runtimes install monado` installs it to {}", root().join("monado").display()),
+            (Kind::Monado, false) => "Install the distro package (e.g. `sudo apt install monado-service libopenxr1-monado`)".into(),
+            (Kind::SteamVr, _) => format!("Install SteamVR via Steam (`cargo runtimes install steamvr` opens {STEAMVR_INSTALL_URL})"),
         }
     }
 }
@@ -85,7 +85,7 @@ impl std::fmt::Display for Kind {
     }
 }
 
-/// testkit がランタイムを入れる場所。
+/// Where testkit installs runtimes.
 pub fn root() -> PathBuf {
     let env = |k| {
         std::env::var_os(k)
@@ -106,10 +106,10 @@ pub fn root() -> PathBuf {
         .join("runtimes")
 }
 
-// --- インストール ---------------------------------------------------------------------------
+// --- Install --------------------------------------------------------------------------------
 
-/// Monado の GitLab CI の `windows` ジョブの成果物。`install/` に一式が入っている。
-/// 既定は main の最新の成功分。`NYAW_MONADO_JOB=<job id>` で `jobs/<id>/artifacts` に固定できる。
+/// Artifacts of Monado's GitLab CI `windows` job. The whole set is in `install/`.
+/// Defaults to the latest successful one on main. `NYAW_MONADO_JOB=<job id>` pins it to `jobs/<id>/artifacts`.
 fn monado_windows_artifact() -> String {
     let base = "https://gitlab.freedesktop.org/api/v4/projects/2685/jobs";
     match std::env::var("NYAW_MONADO_JOB")
@@ -122,7 +122,7 @@ fn monado_windows_artifact() -> String {
 }
 pub const STEAMVR_INSTALL_URL: &str = "steam://install/250820";
 
-/// インストールする（済みなら入れ直す）。何をするかは `dry_run` で先に表示できる。
+/// Installs (reinstalls if already installed). `dry_run` shows beforehand what would be done.
 pub fn install(kind: Kind, dry_run: bool) -> Result<(), String> {
     match kind {
         Kind::Monado if cfg!(windows) => {
@@ -137,18 +137,18 @@ pub fn install(kind: Kind, dry_run: bool) -> Result<(), String> {
             }
             Ok(())
         }
-        // testkit が持たないもの（パッケージマネージャや Steam の管轄）は案内だけ。
+        // What testkit does not own (under the package manager's or Steam's control) gets guidance only.
         Kind::Monado => Err(kind.install_hint()),
         Kind::SteamVr => {
             if let Some(p) = kind.locate() {
-                println!("steamvr: 入っている ({})。更新は Steam から", p.display());
+                println!("steamvr: installed ({}). Update it via Steam", p.display());
                 return Ok(());
             }
-            println!("steamvr: Steam で {STEAMVR_INSTALL_URL} を開く");
+            println!("steamvr: open {STEAMVR_INSTALL_URL} in Steam");
             if !dry_run {
                 open_url(STEAMVR_INSTALL_URL)?;
                 println!(
-                    "steamvr: Steam でのインストールが終わったら `cargo runtimes list` で確かめる"
+                    "steamvr: once the install in Steam finishes, check with `cargo runtimes list`"
                 );
             }
             Ok(())
@@ -156,7 +156,7 @@ pub fn install(kind: Kind, dry_run: bool) -> Result<(), String> {
     }
 }
 
-/// testkit が入れたものを消す。SteamVR は Steam から消す。
+/// Removes what testkit installed. SteamVR is removed via Steam.
 pub fn uninstall(kind: Kind) -> Result<(), String> {
     match kind {
         Kind::Monado => {
@@ -164,23 +164,23 @@ pub fn uninstall(kind: Kind) -> Result<(), String> {
             if dir.exists() {
                 fs::remove_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
             }
-            println!("monado: {} を消した", dir.display());
+            println!("monado: removed {}", dir.display());
             Ok(())
         }
-        Kind::SteamVr => Err("SteamVR は Steam の管理下にあるので Steam から削除する".into()),
+        Kind::SteamVr => Err("SteamVR is managed by Steam; remove it via Steam".into()),
     }
 }
 
 fn install_monado_windows(dir: &Path) -> Result<(), String> {
     let parent = dir.parent().unwrap();
     fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    // 途中で失敗しても前のインストールを壊さないよう、別の場所に展開してから差し替える。
+    // Extract to a separate location and then swap, so a failure midway does not break the previous install.
     let zip = parent.join("monado.zip");
     let staging = parent.join("monado.partial");
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
-    // Windows 10 以降に同梱の curl.exe と tar.exe（bsdtar。zip も読める）を使う。Rust の Command は
-    // PATH より先に System32 を探すので、Git Bash の GNU tar（zip を読めない）は拾わない。
+    // Use curl.exe and tar.exe (bsdtar; it can read zip too) bundled with Windows 10 and later. Rust's Command
+    // looks in System32 before PATH, so Git Bash's GNU tar (which cannot read zip) is not picked up.
     run(Command::new("curl")
         .args(["-fL", "--progress-bar", "-o"])
         .arg(&zip)
@@ -194,12 +194,12 @@ fn install_monado_windows(dir: &Path) -> Result<(), String> {
     let _ = fs::remove_file(&zip);
     if monado_in(&staging).is_none() {
         return Err(
-            "成果物に install/bin/monado-service.exe か install/openxr_monado.json が無い".into(),
+            "the artifacts lack install/bin/monado-service.exe or install/openxr_monado.json".into(),
         );
     }
     let _ = fs::remove_dir_all(dir);
     fs::rename(&staging, dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    println!("monado: 入れた ({})", dir.display());
+    println!("monado: installed ({})", dir.display());
     Ok(())
 }
 
@@ -213,14 +213,14 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 
 fn open_url(url: &str) -> Result<(), String> {
     if cfg!(windows) {
-        // start の最初の引数はウィンドウタイトル
+        // the first argument of start is the window title
         run(Command::new("cmd").args(["/C", "start", "", url]))
     } else {
         run(Command::new("xdg-open").arg(url))
     }
 }
 
-// --- 場所 ------------------------------------------------------------------------------------
+// --- Locations ------------------------------------------------------------------------------
 
 struct Monado {
     service: PathBuf,
@@ -231,7 +231,7 @@ fn monado() -> Option<Monado> {
     if let Some(m) = monado_in(&root().join("monado")) {
         return Some(m);
     }
-    // Linux はディストリのパッケージ
+    // On Linux, the distro package
     let service = std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|d| d.join("monado-service"))
         .find(|p| p.is_file())?;
@@ -242,7 +242,7 @@ fn monado() -> Option<Monado> {
     Some(Monado { service, manifest })
 }
 
-/// testkit が展開した Monado（`<dir>/install/...`）。
+/// Monado extracted by testkit (`<dir>/install/...`).
 fn monado_in(dir: &Path) -> Option<Monado> {
     let install = dir.join("install");
     let service = install.join("bin").join(if cfg!(windows) {
@@ -254,9 +254,9 @@ fn monado_in(dir: &Path) -> Option<Monado> {
     (service.is_file() && manifest.is_file()).then_some(Monado { service, manifest })
 }
 
-// --- 起動と後片付け --------------------------------------------------------------------------
+// --- Launch and cleanup ---------------------------------------------------------------------
 
-/// SteamVR が動かすプロセス。後片付けではこれを全部止める。
+/// Processes that SteamVR runs. Cleanup stops all of them.
 const STEAMVR_PROCESSES: [&str; 7] = [
     "vrstartup",
     "vrmonitor",
@@ -264,11 +264,11 @@ const STEAMVR_PROCESSES: [&str; 7] = [
     "vrcompositor",
     "vrdashboard",
     "vrwebhelper",
-    // null ドライバだとルームセットアップが立ち上がり、vrserver を起動し直す
+    // With the null driver, room setup starts up and restarts vrserver
     "steamvr_room_setup",
 ];
 
-/// HMD 無しで SteamVR を動かす設定。普段の設定には触らず、これだけを置いたフォルダを `VR_CONFIG_PATH` で指す。
+/// Config for running SteamVR without an HMD. Leaves the usual config untouched and points `VR_CONFIG_PATH` at a folder containing only this.
 const STEAMVR_NULL_SETTINGS: &str = r#"{
   "steamvr": { "requireHmd": false, "forcedDriver": "null", "activateMultipleDrivers": true },
   "driver_null": { "enable": true }
@@ -277,9 +277,9 @@ const STEAMVR_NULL_SETTINGS: &str = r#"{
 
 #[derive(Debug)]
 pub enum LaunchError {
-    /// 入っていない。中身は案内。テストではスキップにする（Playwright のブラウザ未インストールに当たる）。
+    /// Not installed. The payload is guidance. Tests skip (like Playwright with browsers not installed).
     NotInstalled(String),
-    /// すでに動いている。別の設定で動いているかもしれないし、止めると持ち主が困るので使わない。
+    /// Already running. It may be running with a different config, and stopping it would trouble its owner, so it is not used.
     AlreadyRunning(Kind),
     Io(String),
 }
@@ -287,8 +287,8 @@ pub enum LaunchError {
 impl std::fmt::Display for LaunchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LaunchError::NotInstalled(hint) => write!(f, "インストールされていない: {hint}"),
-            LaunchError::AlreadyRunning(k) => write!(f, "{k} がすでに動いている。終了してから流す"),
+            LaunchError::NotInstalled(hint) => write!(f, "not installed: {hint}"),
+            LaunchError::AlreadyRunning(k) => write!(f, "{k} is already running. Quit it and then run"),
             LaunchError::Io(m) => f.write_str(m),
         }
     }
@@ -296,23 +296,23 @@ impl std::fmt::Display for LaunchError {
 
 impl std::error::Error for LaunchError {}
 
-/// 起動したランタイム。Drop で、自分が起動したプロセスを止めて環境変数を元に戻す。
+/// A launched runtime. On Drop, stops the processes it started and restores environment variables.
 pub struct Launched {
     kind: Kind,
     child: Option<Child>,
-    /// 書き換えた環境変数と元の値
+    /// Environment variables that were rewritten, with their original values
     env: Vec<(&'static str, Option<OsString>)>,
-    /// 消す一時フォルダ
+    /// Temporary folders to delete
     scratch: Option<PathBuf>,
     pub log: Option<PathBuf>,
 }
 
-/// ランタイムを起動する。このプロセスの環境変数（`XR_RUNTIME_JSON` / `VR_CONFIG_PATH`）を書き換えて、
-/// [`Launched::connect`] がそのランタイムに繋がるようにする。
+/// Launches a runtime. Rewrites this process's environment variables (`XR_RUNTIME_JSON` / `VR_CONFIG_PATH`) so that
+/// [`Launched::connect`] connects to that runtime.
 ///
 /// # Safety
-/// 環境変数を書き換えるので、他のスレッドが環境変数を読み書きしていないときに呼ぶ
-/// （`harness = false` のテストの main から呼ぶ）。返した [`Launched`] の Drop も同じ。
+/// This rewrites environment variables, so call it when no other thread is reading or writing them
+/// (call it from the main of a `harness = false` test). The same applies to the Drop of the returned [`Launched`].
 pub unsafe fn launch(kind: Kind) -> Result<Launched, LaunchError> {
     if kind.locate().is_none() {
         return Err(LaunchError::NotInstalled(kind.install_hint()));
@@ -339,7 +339,7 @@ pub unsafe fn launch(kind: Kind) -> Result<Launched, LaunchError> {
                 .try_clone()
                 .map_err(|e| LaunchError::Io(e.to_string()))?;
             let child = Command::new(&m.service)
-                // Windows 版はコンピュート合成でクアッドを出すと落ちる
+                // The Windows build crashes when showing a quad with compute composition
                 .env("XRT_COMPOSITOR_COMPUTE", "false")
                 .stdin(Stdio::null())
                 .stdout(out)
@@ -351,7 +351,7 @@ pub unsafe fn launch(kind: Kind) -> Result<Launched, LaunchError> {
             unsafe { launched.set_env("XR_RUNTIME_JSON", m.manifest.into()) };
         }
         Kind::SteamVr => {
-            // SteamVR は最初に繋いだクライアントが起動する（vrserver はクライアントの環境変数を引き継ぐ）。
+            // SteamVR is started by the first client that connects (vrserver inherits the client's environment variables).
             let dir =
                 std::env::temp_dir().join(format!("nyaw-steamvr-null-{}", std::process::id()));
             fs::create_dir_all(&dir).map_err(|e| LaunchError::Io(e.to_string()))?;
@@ -369,7 +369,7 @@ impl Launched {
         self.kind
     }
 
-    /// 起動を待って、このランタイムだけに繋ぐ（Playwright の `webServer` が URL を待つのに当たる）。
+    /// Waits for startup and connects to this runtime only (like Playwright's `webServer` waiting for the URL).
     pub fn connect(&mut self) -> Result<Box<dyn VrBackend>, VrError> {
         let start = Instant::now();
         loop {
@@ -379,7 +379,7 @@ impl Launched {
                 .and_then(|c| c.try_wait().ok().flatten())
             {
                 return Err(VrError::Runtime(format!(
-                    "{} が終了した ({status})。ログ: {:?}",
+                    "{} exited ({status}). log: {:?}",
                     self.kind, self.log
                 )));
             }
@@ -403,9 +403,9 @@ impl Drop for Launched {
             let _ = child.kill();
             let _ = child.wait();
         }
-        // ponytail: launch の時点で動いていなかったので、いま動いている SteamVR は自分が起動したものとみなす。
-        // その間にユーザーが起動したものも止めてしまう。困ったら PID を控えて絞る。
-        // SteamVR は止めている途中で生き残ったプロセスが仲間を起動し直すので、2 秒続けて静かになるまで止め続ける。
+        // ponytail: it was not running at launch time, so the SteamVR running now is assumed to be ours.
+        // This also stops one the user started in the meantime. If that is a problem, record the PID and narrow it down.
+        // While SteamVR is being stopped, surviving processes restart their peers, so keep stopping until it stays quiet for 2 seconds.
         let start = Instant::now();
         let mut quiet_since = Instant::now();
         while start.elapsed() < Duration::from_secs(30)
@@ -420,7 +420,7 @@ impl Drop for Launched {
             std::thread::sleep(Duration::from_millis(200));
         }
         for (key, old) in self.env.drain(..).rev() {
-            // SAFETY: launch と同じ約束（シングルスレッドで drop する）
+            // SAFETY: same contract as launch (drop single-threaded)
             unsafe {
                 match old {
                     Some(v) => std::env::set_var(key, v),
@@ -434,9 +434,9 @@ impl Drop for Launched {
     }
 }
 
-// --- プロセス --------------------------------------------------------------------------------
+// --- Processes ------------------------------------------------------------------------------
 
-/// 実行ファイル名（拡張子なし）のプロセスが動いているか。
+/// Whether a process with the executable name (without extension) is running.
 pub fn is_running(name: &str) -> bool {
     if cfg!(windows) {
         let exe = format!("{name}.exe");
@@ -450,7 +450,7 @@ pub fn is_running(name: &str) -> bool {
                     .contains(&format!("\"{exe}\""))
             })
     } else {
-        // Linux のプロセス名（comm）は 15 文字で切られる
+        // Linux process names (comm) are truncated to 15 characters
         let comm = &name[..name.len().min(15)];
         Command::new("pgrep")
             .args(["-x", comm])
@@ -503,7 +503,7 @@ mod tests {
         fs::write(bin.join(exe), "").unwrap();
         assert!(
             monado_in(&dir).is_none(),
-            "マニフェストが無いのに見つかった"
+            "found even though there is no manifest"
         );
 
         fs::write(dir.join("install").join("openxr_monado.json"), "{}").unwrap();
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn is_running_sees_a_spawned_process_and_not_a_missing_one() {
         assert!(!is_running("nyaw-no-such-process"));
-        // 自分のテストバイナリは動いているはず
+        // our own test binary should be running
         let me = std::env::current_exe().unwrap();
         assert!(is_running(me.file_stem().unwrap().to_str().unwrap()));
     }

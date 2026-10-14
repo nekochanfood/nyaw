@@ -143,7 +143,7 @@ pub(crate) struct OpenXrBackend {
 
 impl OpenXrBackend {
     fn new() -> Result<Self, VrError> {
-        let entry = xr::Entry::linked(&()).map_err(xr_err("OpenXR ローダー"))?;
+        let entry = xr::Entry::linked(&()).map_err(xr_err("OpenXR loader"))?;
         let available = entry
             .enumerate_extensions()
             .map_err(xr_err("xrEnumerateInstanceExtensionProperties"))?;
@@ -153,7 +153,7 @@ impl OpenXrBackend {
         ] {
             if !ok {
                 return Err(VrError::Runtime(format!(
-                    "OpenXR ランタイムが {name} に対応していない"
+                    "OpenXR runtime does not support {name}"
                 )));
             }
         }
@@ -241,7 +241,7 @@ impl OpenXrBackend {
                 path(&format!("/interaction_profiles/{profile}"))?,
                 &bindings,
             ) {
-                eprintln!("OpenXR: {profile} のバインドを拒否された: {e}");
+                eprintln!("OpenXR: {profile} bindings rejected: {e}");
             }
         }
         let tracker = if has_trackers {
@@ -265,7 +265,7 @@ impl OpenXrBackend {
                 path("/interaction_profiles/htc/vive_tracker_htcx")?,
                 &bindings,
             ) {
-                eprintln!("OpenXR: トラッカーのバインドを拒否された: {e}");
+                eprintln!("OpenXR: tracker bindings rejected: {e}");
             }
             Some((action, role_paths))
         } else {
@@ -321,7 +321,7 @@ impl OpenXrBackend {
             e,
             xr::sys::Result::ERROR_SESSION_LOST | xr::sys::Result::ERROR_INSTANCE_LOST
         ) {
-            eprintln!("OpenXR: ランタイムとの接続が失われた");
+            eprintln!("OpenXR: lost connection to runtime");
             self.lost = true;
             self.quit = true;
             self.running = false;
@@ -495,7 +495,7 @@ impl OpenXrBackend {
         let overlay = self
             .overlays
             .get_mut(&id)
-            .ok_or_else(|| VrError::Runtime(format!("知らないオーバーレイ {id}")))?;
+            .ok_or_else(|| VrError::Runtime(format!("unknown overlay {id}")))?;
         if overlay
             .swapchain
             .as_ref()
@@ -815,7 +815,7 @@ impl VrBackend for OpenXrBackend {
         assert_eq!(
             rgba.len(),
             (width * height * 4) as usize,
-            "RGBA バッファのサイズが不正"
+            "invalid RGBA buffer size"
         );
         if self.lost {
             return;

@@ -1,4 +1,4 @@
-//! 通常サイズのパネルを実時間で進め、カーネルからバックエンドに届く表示を検証する。
+//! Advances a normal-size panel in real time and checks what the kernel delivers to the backend.
 
 use std::time::Duration;
 
@@ -34,7 +34,7 @@ fn full_size_panel_animates_in_and_out_while_neighbor_opts_out() {
     assert_eq!((width, alpha), (0.8, 128));
     assert_eq!(
         k.vr.overlays[panel].pixel_submissions, 1,
-        "インで画像を再転送しない"
+        "fade-in does not re-upload the image"
     );
     assert_eq!(k.panel(panel).pose, Pose::IDENTITY);
     k.apply(panel, PanelCommand::Close);
@@ -56,7 +56,7 @@ fn full_size_panel_animates_in_and_out_while_neighbor_opts_out() {
     assert!(!k.vr.overlays[panel].visible);
     assert_eq!(
         k.vr.overlays[panel].pixel_submissions, 2,
-        "アウトでは最後の透明な 1px だけを転送する"
+        "fade-out uploads only the final transparent 1px"
     );
     assert_eq!(k.panel(panel).pose, Pose::IDENTITY);
     assert!(k.vr.overlays[neighbor].visible);

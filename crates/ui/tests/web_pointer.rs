@@ -1,8 +1,8 @@
-//! ポインタの方式（マウス / タッチのエミュレート）の E2E を実プラットフォームの WebView で流す（モックの VR）。
-//! React の Pointer test を開き、既定のマウスでは押したまま動かしてもスクロールしないこと、
-//! ページのボタンでタッチにすると pointerType が touch になり、スワイプでスクロールし（pointercancel が来る）、
-//! 動かさずに離すとタップ（click）になり、touch-action: none の上ではドラッグが続くことを JS 側のイベントで確かめる。
-//! Linux は画面（Xvfb でよい）があれば `cargo test -p ui --test web_pointer` で流れる。
+//! E2E for pointer modes (mouse / touch emulation) run in the real platform's WebView (mock VR).
+//! Opens the React Pointer test and checks that with the default mouse, moving while pressed does not scroll,
+//! that switching to touch via the page button makes pointerType touch, swiping scrolls (pointercancel arrives),
+//! releasing without moving is a tap (click), and dragging continues over touch-action: none, via JS-side events.
+//! On Linux, with a display (Xvfb is fine), `cargo test -p ui --test web_pointer` runs it.
 
 mod common;
 
@@ -19,10 +19,10 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let mock = SharedMock::default();
-    // 手ブレ抑えは指した瞬間に当たらなくなるので切る（testkit と同じ）。
+    // turn off hand-shake damping, since it makes pointing miss right after aiming (same as testkit).
     let config = kernel::config::Config {
         pointer_smoothing: Some(0.0),
-        // 操作のシナリオはマウスで書く（既定のタッチは web_pointer で確かめる）。
+        // write the scenarios for mouse (the default touch is covered by web_pointer).
         pointer_mode: Some(kernel::PointerMode::Mouse),
         ..Default::default()
     };
@@ -43,79 +43,79 @@ fn main() -> ExitCode {
 
 fn scenario(page: &mut Page, vr: &mut Vr) {
     press(page, vr, "open-pointer");
-    page.until("Pointer test が開く", |s| {
+    page.until("Pointer test opens", |s| {
         s["state"]["page"] == "pointer" && !s["state"]["status"].is_null()
     });
     assert_eq!(
         page.probe()["state"]["status"]["pointer_mode"],
         "mouse",
-        "このテストはマウスから始める"
+        "this test starts with the mouse"
     );
 
-    // マウス: 押したまま動かしてもスクロールしない（押して動かして離すだけ）。
+    // mouse: moving while pressed does not scroll (just press, move, release).
     swipe_up(page, vr);
-    let s = page.until("離した", |s| {
+    let s = page.until("released", |s| {
         num(s, &["state", "counts", "pointerup"]) >= 1.0
     });
     assert_eq!(s["state"]["lastPointer"]["pointerType"], "mouse");
     assert_eq!(
         num(&s, &["state", "scrollTop"]),
         0.0,
-        "マウスではスクロールしない"
+        "mouse does not scroll"
     );
     assert_eq!(num(&s, &["state", "counts", "pointercancel"]), 0.0);
     stick_scroll(page, vr);
 
-    // タッチに切り替える（ページ → Tauri のコマンド → カーネル → 状態のイベント）。
+    // switch to touch (page -> Tauri command -> kernel -> status event).
     click(page, vr, "pointer-mode");
-    page.until("タッチになった", |s| {
+    page.until("switched to touch", |s| {
         s["state"]["status"]["pointer_mode"] == "touch"
     });
 
-    // スワイプ: 指に付いて下へスクロールし、ポインタは取り消される。
+    // swipe: content follows the finger and scrolls down, and the pointer is cancelled.
     swipe_up(page, vr);
-    let s = page.until("スワイプでスクロールした", |s| {
+    let s = page.until("scrolled by swipe", |s| {
         num(s, &["state", "scrollTop"]) > 50.0
     });
     assert_eq!(num(&s, &["state", "counts", "pointercancel"]), 1.0);
     assert_eq!(s["state"]["lastPointer"]["pointerType"], "touch");
 
-    // 二次元の領域も斜めのスワイプで縦横に動く。
+    // a 2D area also moves both ways with a diagonal swipe.
     let (x, y) = page.center("swipe-grid");
     let downs = num(&page.probe(), &["state", "counts", "pointerdown"]);
     vr.point_at((x + 60.0, y + 80.0));
     vr.set("trigger/value", 1.0);
-    page.until("二次元領域に触れた", |s| {
+    page.until("touched the 2D area", |s| {
         num(s, &["state", "counts", "pointerdown"]) > downs
     });
     glide(vr, (x + 60.0, y + 80.0), (x - 60.0, y - 80.0));
     vr.set("trigger/value", 0.0);
-    page.until("二次元のスワイプ", |s| {
+    page.until("2D swipe", |s| {
         let (left, top) = scroll_position(s, "swipe-grid");
         left > 50.0 && top > 50.0
     });
     stick_scroll(page, vr);
 
-    // タップ: 動かさずに離すと click。
+    // tap: releasing without moving gives a click.
     tap(page, vr, "tap-me");
-    let s = page.until("タップした", |s| s["state"]["taps"] == 1);
+    let s = page.until("tapped", |s| s["state"]["taps"] == 1);
     assert_eq!(s["state"]["lastPointer"]["pointerType"], "touch");
 
-    // touch-action: none の上ではスクロールにならず、ドラッグで運べる。
+    // over touch-action: none it does not scroll and can be dragged.
     let (chip, zone) = (page.center("drag-chip"), page.center("drop-zone"));
     vr.point_at(chip);
     std::thread::sleep(Duration::from_millis(50));
     vr.set("trigger/value", 1.0);
-    page.until("チップを押した", |s| {
+    page.until("pressed the chip", |s| {
         s["state"]["lastPointer"]["target"] == "drag-chip"
     });
     glide(vr, chip, zone);
     vr.set("trigger/value", 0.0);
-    page.until("タッチでも運べる", |s| s["state"]["dropped"] == 1);
+    page.until("can drag with touch too", |s| s["state"]["dropped"] == 1);
 
-    // タッチのままボタンでマウスへ戻せる。
+    // can switch back to mouse with the button while in touch.
     tap(page, vr, "pointer-mode");
-    page.until("マウスに戻った", |s| {
+    page.until("back to mouse", |s| {
         s["state"]["status"]["pointer_mode"] == "mouse"
     });
 }
@@ -134,14 +134,14 @@ fn scroll_position(s: &serde_json::Value, id: &str) -> (f64, f64) {
     }
 }
 
-/// スティックはどちらの方式でも縦横に動き、逆方向に倒すと端まで戻れる。
+/// the stick moves both ways in either mode, and tilting back returns to the edge.
 fn stick_scroll(page: &mut Page, vr: &mut Vr) {
     for id in ["swipe-list", "swipe-grid"] {
         vr.point_at(page.center(id));
         let before = scroll_position(&page.probe(), id);
         vr.set("thumbstick/x", 1.0);
         vr.set("thumbstick/y", -1.0);
-        let s = page.until("スティックでスクロール", |s| {
+        let s = page.until("scroll with stick", |s| {
             let (left, top) = scroll_position(s, id);
             top > before.1 && (id == "swipe-list" || left > before.0)
         });
@@ -150,7 +150,7 @@ fn stick_scroll(page: &mut Page, vr: &mut Vr) {
         }
         vr.set("thumbstick/x", -1.0);
         vr.set("thumbstick/y", 1.0);
-        page.until("逆方向で端に戻る", |s| {
+        page.until("back to the edge in reverse", |s| {
             scroll_position(s, id) == (0.0, 0.0)
         });
         vr.set("thumbstick/x", 0.0);
@@ -158,34 +158,34 @@ fn stick_scroll(page: &mut Page, vr: &mut Vr) {
     }
 }
 
-/// タッチで要素の中心を押して離す。タッチは触れるまでホバーのイベントが無いので、押したことを pointerdown で見る。
+/// press and release the element's center by touch. Touch has no hover events before contact, so check the press via pointerdown.
 fn tap(page: &mut Page, vr: &mut Vr, id: &str) {
     let downs = num(&page.probe(), &["state", "counts", "pointerdown"]);
     vr.point_at(page.center(id));
     std::thread::sleep(Duration::from_millis(50));
     vr.set("trigger/value", 1.0);
-    page.until(&format!("{id} に触れた"), |s| {
+    page.until(&format!("touched {id}"), |s| {
         num(s, &["state", "counts", "pointerdown"]) > downs
             && s["state"]["lastPointer"]["target"] == id
     });
     vr.set("trigger/value", 0.0);
 }
 
-/// `swipe-list` の下寄りを押し、上へ 200px 少しずつ動かして離す。
+/// press the lower part of `swipe-list`, move up 200px in small steps, and release.
 fn swipe_up(page: &mut Page, vr: &mut Vr) {
     let (x, y) = page.center("swipe-list");
     let ups = num(&page.probe(), &["state", "counts", "pointerdown"]);
     vr.point_at((x, y + 100.0));
     std::thread::sleep(Duration::from_millis(50));
     vr.set("trigger/value", 1.0);
-    page.until("一覧を押した", |s| {
+    page.until("pressed the list", |s| {
         num(s, &["state", "counts", "pointerdown"]) > ups
     });
     glide(vr, (x, y + 100.0), (x, y - 100.0));
     vr.set("trigger/value", 0.0);
 }
 
-/// レーザーを `from` から `to` へ少しずつ動かす。
+/// move the laser from `from` to `to` in small steps.
 fn glide(vr: &mut Vr, from: (f32, f32), to: (f32, f32)) {
     for i in 1..=10 {
         let t = i as f32 / 10.0;

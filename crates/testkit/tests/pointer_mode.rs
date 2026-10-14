@@ -1,13 +1,13 @@
-//! ポインタの方式（マウス / タッチのエミュレート）の E2E。PointerTest の画面を VR のレーザーで操作する。
-//! 既定はマウス（押したまま動かすとドラッグ）。`pointer-mode` でタッチにすると、押したまま動かすとスワイプ、
-//! 動かさずに離すとタップになる。
+//! E2E for the pointer mode (mouse / touch emulation). Operates the PointerTest screen with the VR laser.
+//! The default is mouse (moving while held is a drag). Switching to touch with `pointer-mode` makes moving while held a swipe,
+//! and releasing without moving a tap.
 
 use gpui::TestAppContext;
 use kernel::PointerMode;
 use testing::{BUTTON_ACTIVE_BG, BUTTON_BG, PointerTest};
 use testkit::{Action, Driver, Vec2, VrKit};
 
-/// `swipe-list` の下寄りを押し、上へ 1/2 の高さぶん少しずつ動かして離す。
+/// Presses toward the bottom of `swipe-list`, moves up gradually by 1/2 of its height, and releases.
 fn swipe_up(kit: &mut VrKit<PointerTest>) {
     let b = kit.bounds("swipe-list");
     let (x, y0, h) = (
@@ -33,7 +33,7 @@ fn mouse_mode_drags_and_does_not_swipe(cx: &mut TestAppContext) {
     assert_eq!(
         kit.kernel.pointer_mode(),
         PointerMode::Mouse,
-        "既定はマウス"
+        "mouse by default"
     );
     assert_eq!(kit.color_at("pointer-mode"), BUTTON_BG);
     kit.drag("drag-chip", "drop-zone");
@@ -42,7 +42,7 @@ fn mouse_mode_drags_and_does_not_swipe(cx: &mut TestAppContext) {
     assert_eq!(
         scrolled(&mut kit),
         0.0,
-        "マウスでは押したまま動かしてもスクロールしない"
+        "with the mouse, moving while held does not scroll"
     );
     kit.click("tap-me");
     assert_eq!(kit.read(|v| v.taps), 1);
@@ -53,7 +53,7 @@ fn touch_mode_swipes_and_taps(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| PointerTest::default());
     kit.click("pointer-mode");
     assert_eq!(kit.kernel.pointer_mode(), PointerMode::Touch);
-    // レーザーが乗っているとホバーの色になるので、外してから見る。
+    // With the laser on it the color becomes the hover color, so move it off before looking.
     assert_eq!(
         kit.hover("tap-me").color_at("pointer-mode"),
         BUTTON_ACTIVE_BG
@@ -61,13 +61,13 @@ fn touch_mode_swipes_and_taps(cx: &mut TestAppContext) {
 
     swipe_up(&mut kit);
     let s = scrolled(&mut kit);
-    assert!(s < -50.0, "指に付いて下へスクロールする（{s}）");
+    assert!(s < -50.0, "scrolls down following the finger ({s})");
     kit.click("tap-me");
-    assert_eq!(kit.read(|v| v.taps), 1, "動かさずに離すとタップ");
+    assert_eq!(kit.read(|v| v.taps), 1, "releasing without moving is a tap");
     kit.drag("drag-chip", "drop-zone");
-    assert_eq!(kit.read(|v| v.dropped), 0, "タッチではドラッグにならない");
+    assert_eq!(kit.read(|v| v.dropped), 0, "touch does not make a drag");
 
-    // タッチのままでもボタンで戻せる。
+    // Even in touch mode it can be switched back with the button.
     kit.click("pointer-mode");
     assert_eq!(kit.kernel.pointer_mode(), PointerMode::Mouse);
     assert_eq!(kit.hover("tap-me").color_at("pointer-mode"), BUTTON_BG);

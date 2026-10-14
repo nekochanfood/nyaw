@@ -250,18 +250,18 @@ impl Emulator {
                     if self.allow_gpu && std::env::var_os("NYAW_EMULATOR_CPU").is_none() {
                         match Gpu::new(&w, self.size) {
                             Ok(gpu) => {
-                                logger::info!("エミュレーターは GPU で合成する");
+                                logger::info!("emulator compositing on GPU");
                                 self.gpu = Some(gpu);
                             }
                             Err(e) => {
-                                logger::warn!("GPU で合成できないので CPU で合成する", error = e)
+                                logger::warn!("GPU compositing unavailable, falling back to CPU", error = e)
                             }
                         }
                     }
                     self.window = Some(w);
                 }
                 Err(e) => {
-                    logger::error!("エミュレーターのウィンドウを開けない", error = e);
+                    logger::error!("failed to open emulator window", error = e);
                     self.quit = true;
                     return;
                 }
@@ -372,7 +372,7 @@ impl Emulator {
         if let Some(gpu) = &mut self.gpu
             && let Err(e) = gpu.draw(&draws, FOV_Y, NEAR)
         {
-            logger::debug!("エミュレーターの画面を出せない", error = e);
+            logger::debug!("failed to present emulator frame", error = e);
             self.dirty = true;
         }
         drop(draws);
@@ -461,7 +461,7 @@ impl Emulator {
                     .collect();
                 handles
                     .into_iter()
-                    .map(|h| h.join().expect("合成のスレッドが落ちた"))
+                    .map(|h| h.join().expect("compositing thread panicked"))
                     .collect()
             })
         };
@@ -689,7 +689,7 @@ impl VrBackend for Emulator {
                         Ok(())
                     };
                     if let Err(e) = shown {
-                        logger::warn!("エミュレーターの画面を更新できない", error = e);
+                        logger::warn!("failed to update emulator frame", error = e);
                     }
                 }
             }
@@ -833,13 +833,13 @@ mod tests {
         let (mut e, _) = emulator_with_red_panel();
         let shot = e.screenshot();
         assert_eq!((shot.0, shot.1), (200, 100));
-        // 左半分は不透明な赤、右半分は半透明の青が市松模様に重なる。
+        // Left half is opaque red; right half is translucent blue over the checkerboard.
         let left = e.project(Vec3::new(-0.25, 0.0, -1.0)).unwrap();
         assert_eq!(pixel(&shot, left), [255, 0, 0, 255]);
         let right = pixel(&shot, e.project(Vec3::new(0.25, 0.0, -1.0)).unwrap());
-        assert_eq!(right[0], right[1], "灰色に青が混ざる");
+        assert_eq!(right[0], right[1], "blue blends into gray");
         assert!(right[2] > right[0]);
-        // パネルの外は無彩色の市松模様。
+        // Outside the panel is the neutral checkerboard.
         let corner = pixel(&shot, Vec2::new(0.0, 0.0));
         assert!(corner[0] == corner[1] && corner[1] == corner[2]);
         let next = pixel(&shot, Vec2::new(CHECKER as f32, 0.0));
@@ -850,13 +850,13 @@ mod tests {
     fn sort_order_decides_overlap_and_hidden_is_not_drawn() {
         let (mut e, red) = emulator_with_red_panel();
         let front = e.create_overlay("f", 0.1).unwrap();
-        // 赤いパネルの左半分と同じ視線上の、より奥。
+        // Further back, on the same line of sight as the red panel's left half.
         e.set_overlay_pose(front, Pose::new(Vec3::new(-0.5, 0.0, -2.0), Quat::IDENTITY));
         e.submit_overlay_pixels(front, 1, 1, &[0, 255, 0, 255]);
         let at = e.project(Vec3::new(-0.25, 0.0, -1.0)).unwrap();
-        // 同じ順位なら近いほうが手前に描かれる（後から作っても奥の緑は隠れる）。
+        // At equal rank the nearer one draws in front (the far green stays hidden even if created later).
         assert_eq!(pixel(&e.screenshot(), at), [255, 0, 0, 255]);
-        // 赤を奥へ押すと前後が入れ替わる。
+        // Pushing red back swaps the order.
         e.set_overlay_pose(red, Pose::new(Vec3::new(0.0, 0.0, -3.0), Quat::IDENTITY));
         assert_eq!(pixel(&e.screenshot(), at), [0, 255, 0, 255]);
         e.set_overlay_pose(red, Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY));
@@ -870,18 +870,18 @@ mod tests {
     #[test]
     fn panel_hidden_behind_an_opaque_one_is_not_seen() {
         let (mut e, red) = emulator_with_red_panel();
-        // 赤（左半分は不透明・右半分は半透明）の手前に、赤より大きい不透明な板。
+        // In front of red (left half opaque, right half translucent): an opaque plate larger than red.
         let front = e.create_overlay("f", 2.0).unwrap();
         e.set_overlay_pose(front, Pose::new(Vec3::new(0.0, 0.0, -0.5), Quat::IDENTITY));
         e.submit_overlay_pixels(front, 1, 1, &[0, 255, 0, 255]);
         e.screenshot();
         assert_eq!(e.overlay_seen(front), Some(true));
-        assert_eq!(e.overlay_seen(red), Some(false), "隠れたパネルは見えない");
-        // 板を退けると見える。
+        assert_eq!(e.overlay_seen(red), Some(false), "occluded panel is not visible");
+        // Moving the plate away makes it visible.
         e.set_overlay_visible(front, false);
         e.screenshot();
         assert_eq!(e.overlay_seen(red), Some(true));
-        // 目の後ろに回ると見えない。
+        // Behind the eye it is not visible.
         e.set_overlay_pose(red, Pose::new(Vec3::new(0.0, 0.0, 1.0), Quat::IDENTITY));
         e.screenshot();
         assert_eq!(e.overlay_seen(red), Some(false));
@@ -895,7 +895,7 @@ mod tests {
         let half = pixel(&e.screenshot(), at);
         assert!(
             half[0] > half[1] && half[1] == half[2],
-            "灰色に赤が半分混ざる"
+            "red half-blends into gray"
         );
         e.set_overlay_alpha(red, 0.0);
         let gone = pixel(&e.screenshot(), at);
@@ -904,7 +904,7 @@ mod tests {
 
     #[test]
     fn quad_seen_edge_on_from_the_eye_is_invisible() {
-        // 目から伸びるレーザー: 面が目を通る。
+        // Laser extending from the eye: the surface passes through the eye.
         let (mut e, _) = emulator_with_red_panel();
         let blank = e.screenshot();
         let laser = e.create_overlay("l", 1.0).unwrap();
@@ -922,7 +922,7 @@ mod tests {
         let mut e = Emulator::headless(200, 100);
         let frame = e.poll();
         assert!(frame.emulated);
-        assert_eq!(frame.controllers.len(), 1, "マウスが外なら左手だけ");
+        assert_eq!(frame.controllers.len(), 1, "only the left hand when the mouse is outside");
         assert_eq!(frame.controllers[0].hand, Hand::Left);
 
         let target = Vec3::new(0.2, 0.1, -1.0);
@@ -937,7 +937,7 @@ mod tests {
         assert_eq!(right.input("squeeze/value"), Some(0.0));
         let left = &frame.controllers[0];
         assert_eq!(left.input("thumbstick/y"), Some(1.0));
-        // 左手は下を向いてパネルを指さない。
+        // The left hand points down and does not aim at panels.
         assert!(left.aim.forward().abs_diff_eq(Vec3::NEG_Y, 1e-4));
     }
 }

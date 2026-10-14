@@ -1,17 +1,17 @@
-//! ストレステスト（ベンチマーク）。常には流さない: `cargo test -p ui --test stress -- --ignored`。
-//! 本番と同じ `ui::run_with` に novr のエミュレーター（ウィンドウは出さないが毎フレーム合成する）を載せ、厳しめの負荷を掛けて
-//! プロファイラの段階ごとの時間を局面ごとに集計する。最適化の手掛かりにするため、コストを 3 つに分けて出す:
+//! Stress test (benchmark). Not run by default: `cargo test -p ui --test stress -- --ignored`。
+//! Runs the novr emulator (no window, but composites every frame) on the production `ui::run_with` under heavy load and
+//! aggregates the profiler's per-stage times per phase. As a lead for optimization, the cost is split into three:
 //!
-//! - レンダラー: エミュレーターの合成（`compositor`）
-//! - オーバーレイ: 追従・ヒット判定・ポインタの配置・アニメーション（`overlay`）
-//! - UI: 入力の配送（`input`）・GPUI のレイアウト（`draw`）・描画と読み戻し（`render`）・ランタイムへの転送（`upload`）・Web（`web`）
+//! - renderer: the emulator's compositing (`compositor`)
+//! - overlay: following, hit testing, pointer placement, animation (`overlay`)
+//! - UI: input delivery (`input`), GPUI layout (`draw`), render and readback (`render`), transfer to the runtime (`upload`), web (`web`)
 //!
-//! 局面: アイドル → マウスで掃く（押したままのスワイプを含む）→ アイドル → パネルの召喚と破棄を繰り返す → 目の前のパネル
-//! → 物量（Toggle Panel と同じく重ねて 10 枚召喚して掃く）→ もう一度アイドル。
-//! アイドル同士の差で「時間とともに重くなる」（掃いた後 = idle-mid、召喚と破棄の後 = idle-after）を、召喚の局面の最大フレーム時間で召喚の引っ掛かりを見る。
-//! 1 フレームごとの CSV（`stress.csv`）と集計（`stress.txt`）を `CARGO_TARGET_TMPDIR` に書く。
-//! 局面の長さは `NYAW_STRESS_SCALE`（既定 1.0）で伸縮する。`NYAW_STRESS_WINDOW=1` で本番と同じくウィンドウを出して
-//! 合成する（GPU が使えれば GPU。既定はウィンドウを出さず CPU で合成する）。`NYAW_STRESS_NO_WEB=1` で Web のパネルを外し、`NYAW_STRESS_PROFILER=1` でプロファイラの窓を出す（切り分け用）。
+//! Phases: idle -> sweep with the mouse (including pressed swipes) -> idle -> repeated panel summon and destroy -> panel in front of the eyes
+//! -> volume (summon 10 stacked panels like Toggle Panel and sweep) -> idle again.
+//! The difference between idles shows "getting heavier over time" (after sweeping = idle-mid, after summon and destroy = idle-after), and the max frame time of the summon phase shows summon hitches.
+//! Writes a per-frame CSV (`stress.csv`) and a summary (`stress.txt`) to `CARGO_TARGET_TMPDIR`.
+//! Phase length scales with `NYAW_STRESS_SCALE` (default 1.0). `NYAW_STRESS_WINDOW=1` shows windows as in production and
+//! composites (on GPU if available; by default no window and CPU compositing). `NYAW_STRESS_NO_WEB=1` removes the web panels and `NYAW_STRESS_PROFILER=1` shows the profiler window (for isolating causes).
 
 mod common;
 
@@ -32,10 +32,10 @@ use testing::Testing;
 use ui::{PanelControl, PanelSpec};
 
 const SCREEN: (u32, u32) = (1920, 1080);
-/// 物量の局面で重ねて召喚するパネルの数。
+/// number of panels summoned stacked in the volume phase.
 const VOLUME: usize = 10;
 
-/// 書いた CSV を後から読める出力先。
+/// an output sink whose written CSV can be read back later.
 #[derive(Clone, Default)]
 struct Shared(Arc<Mutex<Vec<u8>>>);
 
@@ -56,20 +56,20 @@ fn testing_at(x: f32, y: f32, z: f32) -> PanelSpec {
 
 fn main() -> ExitCode {
     if !std::env::args().any(|a| a == "--ignored" || a == "--include-ignored") {
-        println!("stress: スキップ（ベンチマークなので --ignored のときだけ流す）");
+        println!("stress: skipped (benchmark, so only run with --ignored)");
         return ExitCode::SUCCESS;
     }
     if !common::should_run("stress") {
         return ExitCode::SUCCESS;
     }
-    // NYAW_STRESS_WINDOW=1 なら、本番と同じくウィンドウを出して合成する（GPU が使えれば GPU）。
+    // with NYAW_STRESS_WINDOW=1, show windows and composite as in production (on GPU if available).
     let (backend, emu) = if std::env::var_os("NYAW_STRESS_WINDOW").is_some() {
         Driven::scripted_window(SCREEN.0, SCREEN.1)
     } else {
         Driven::headless(SCREEN.0, SCREEN.1)
     };
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, Default::default());
-    // GPUI の Testing 8 枚（2 段）と Web の Testing 2 枚、本番と同じくビームも載せる。
+    // 8 GPUI Testing panels (2 rows) and 2 web Testing panels, plus the beam as in production.
     let mut panels: Vec<PanelSpec> = (0..8)
         .map(|i| {
             let (col, row) = ((i % 4) as f32, (i / 4) as f32);
@@ -86,7 +86,7 @@ fn main() -> ExitCode {
     let opened = panels.len();
 
     let csv = Shared::default();
-    let profiler = Profiler::new(Some(Box::new(csv.clone()))).expect("メモリへは書ける");
+    let profiler = Profiler::new(Some(Box::new(csv.clone()))).expect("can write to memory");
     let t0 = Instant::now();
     let (remote, rx) = channel::<ui::Remote>();
     let result: Arc<Mutex<Option<bool>>> = Arc::default();
@@ -105,20 +105,20 @@ fn main() -> ExitCode {
     let hooks = ui::Hooks {
         on_web: None,
         remote: Some(rx),
-        // プロファイラの窓は毎フレーム描き直すので、計測を汚さないよう出さない（NYAW_STRESS_PROFILER=1 で出してそのコストを見る）。
+        // the profiler window is redrawn every frame, so it is not shown to keep measurements clean (NYAW_STRESS_PROFILER=1 shows it to see its cost).
         hide_profiler: std::env::var_os("NYAW_STRESS_PROFILER").is_none(),
     };
     ui::run_with(kernel, panels, Some(profiler), webpages::FILES, hooks);
     common::exit_code("stress", &result)
 }
 
-/// 局面の名前と、計測開始からの範囲。
+/// phase name and its range from the start of measurement.
 struct Phase {
     name: &'static str,
     range: (Duration, Duration),
 }
 
-/// Web のパネルを載せるか（`NYAW_STRESS_NO_WEB=1` で外して GPUI だけのコストを見る）。
+/// whether to include web panels (`NYAW_STRESS_NO_WEB=1` removes them to see the GPUI-only cost).
 fn web() -> bool {
     std::env::var_os("NYAW_STRESS_NO_WEB").is_none()
 }
@@ -130,7 +130,7 @@ fn scale() -> f32 {
         .unwrap_or(1.0)
 }
 
-/// 画面を大きく掃くマウスの位置（リサジュー曲線）。
+/// mouse position sweeping the screen widely (Lissajous curve).
 fn sweep(frame: u32) -> Vec2 {
     let t = frame as f32 / 90.0;
     let (w, h) = (SCREEN.0 as f32, SCREEN.1 as f32);
@@ -140,8 +140,8 @@ fn sweep(frame: u32) -> Vec2 {
     )
 }
 
-/// 1 フレーム分の掃く操作。60 フレームのうち 30 フレームは押したまま（タッチではスワイプ、マウスではドラッグ）。
-/// 押し始めと離す前にも大きく動いているので、タップ（クリック）にはならない。90 フレームごとにスティックでスクロールする。
+/// one frame of the sweep. 30 of every 60 frames are pressed (swipe for touch, drag for mouse).
+/// It also moves a lot right after pressing and before releasing, so it never becomes a tap (click). Scrolls with the stick every 90 frames.
 fn sweep_frame(emu: &Emu, frame: u32) {
     emu.point(Some(sweep(frame)));
     match frame % 60 {
@@ -177,7 +177,7 @@ fn close(remote: &Sender<ui::Remote>, panel: PanelId) {
     });
 }
 
-/// `len` の間、1 フレームに 1 回 `step` を行う局面を流して記録する。
+/// run a phase that calls `step` once per frame for `len` and record it.
 fn run_phase(
     phases: &mut Vec<Phase>,
     t0: Instant,
@@ -187,7 +187,7 @@ fn run_phase(
 ) {
     let start = t0.elapsed();
     let mut frame = 0;
-    // emu の操作は次のフレームで行われるのを待つので、1 回 = 約 1 フレーム。
+    // emu operations wait for the next frame, so one call is about one frame.
     while t0.elapsed() - start < len {
         step(frame);
         frame += 1;
@@ -203,14 +203,14 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     let secs = |x: f32| Duration::from_secs_f32(x * s);
     let mut phases = Vec::new();
     let mut next_id = opened;
-    // 起動（Web の読み込みを含む）が落ち着くまで待つ。計測には入れない。
+    // wait for startup (including web loading) to settle. Not included in measurement.
     std::thread::sleep(Duration::from_secs(3));
 
     run_phase(&mut phases, t0, "idle", secs(4.0), |_| emu.point(None));
     run_phase(&mut phases, t0, "sweep", secs(8.0), |f| sweep_frame(emu, f));
-    // 操作し続けたこと自体で重くなっていないか（最初のアイドルと比べる）。
+    // check whether continued operation itself made things heavier (compare with the first idle).
     run_phase(&mut phases, t0, "idle-mid", secs(4.0), |_| emu.point(None));
-    // 0.5 秒ごとにパネルを開いて前のを閉じる（GPUI の Testing、4 回に 1 回は Web の Testing）。
+    // every 0.5 s open a panel and close the previous one (GPUI Testing, with web Testing every 4th time).
     run_phase(&mut phases, t0, "spawn", secs(8.0), |f| {
         sweep_frame(emu, f);
         if f % 45 != 0 {
@@ -236,13 +236,13 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     if next_id > opened {
         close(remote, next_id - 1);
     }
-    // 目の前 0.5m（画面の大半を覆う）のパネルを掃く。
+    // sweep a panel 0.5m in front of the eyes (covers most of the screen).
     let near = next_id;
     spawn(remote, || testing_at(0.0, 0.0, -0.5));
     run_phase(&mut phases, t0, "near", secs(5.0), |f| sweep_frame(emu, f));
     close(remote, near);
     next_id += 1;
-    // 物量: Toggle Panel と同じく、親の手前 5cm に Testing を 10 枚重ねて召喚し、その上を掃く。
+    // volume: like Toggle Panel, summon 10 stacked Testing panels 5cm in front of the parent and sweep over them.
     let first = next_id;
     spawn(remote, || testing_at(0.0, 0.0, -1.2));
     for k in 1..VOLUME {
@@ -264,7 +264,7 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     phases
 }
 
-/// 1 フレーム分の CSV の行（必要な列だけ）。
+/// one frame's CSV row (only the needed columns).
 struct Row {
     t: f64,
     interval: f64,
@@ -319,7 +319,7 @@ fn rows(csv: &Shared) -> Vec<Row> {
         .collect()
 }
 
-/// 平均と 95 パーセンタイル（ms）。
+/// mean and 95th percentile (ms).
 fn stat(mut v: Vec<f64>) -> (f64, f64, f64) {
     if v.is_empty() {
         return (0.0, 0.0, 0.0);
@@ -335,7 +335,7 @@ fn report(csv: &Shared, phases: &[Phase]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "stress（{}x{}、GPUI 8 枚 + Web 2 枚 + ビーム。時間は ms、平均 / p95）",
+        "stress ({}x{}, 8 GPUI + 2 web panels + beam. times in ms, mean / p95)",
         SCREEN.0, SCREEN.1
     );
     let _ = writeln!(

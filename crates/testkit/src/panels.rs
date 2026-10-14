@@ -1,4 +1,4 @@
-//! ランタイムを通すキット（[`crate::VrKit`] / [`crate::NoVrKit`]）に共通の、パネルの GPUI ウィンドウとフレームの進め方。
+//! Panel GPUI windows and frame stepping shared by the kits that go through a runtime ([`crate::VrKit`] / [`crate::NoVrKit`]).
 
 use std::collections::HashMap;
 
@@ -10,17 +10,17 @@ use vr::VrBackend;
 use crate::watch::Watch;
 use crate::{Pose, Vec2, raster};
 
-/// パネルの幅（m）。高さはウィンドウの縦横比で決まる。
+/// Panel width (m). The height is determined by the window aspect ratio.
 pub(crate) const PANEL_WIDTH_M: f32 = 1.0;
 
 pub(crate) struct Panels<V: 'static> {
-    /// 添字は PanelId。画面型が違うパネル（召喚されたもの）は `None`。
+    /// Indexed by PanelId. Panels with a different screen type (summoned ones) are `None`.
     pub(crate) views: Vec<Option<Entity<V>>>,
     pub(crate) windows: Vec<AnyWindowHandle>,
     bridges: HashMap<(PanelId, Hand), PointerBridge>,
-    /// 画面が開くよう頼んだ Web のページ（[`ui::PanelSpec::web`]）。テストプラットフォームでは開かない。
+    /// Web pages the screen asked to open ([`ui::PanelSpec::web`]). Not opened on the test platform.
     pub(crate) web_spawns: Vec<String>,
-    /// `Some` なら各パネルの描画をウィンドウに出す（`NYAW_E2E_WATCH`）。
+    /// If `Some`, shows each panel's rendering in a window (`NYAW_E2E_WATCH`).
     pub(crate) watch: Option<Watch>,
 }
 
@@ -35,7 +35,7 @@ impl<V: Render> Panels<V> {
         }
     }
 
-    /// ビュー `view`（ウィンドウ `window`）を `pose` のパネルとして足す。パネル解像度 = ウィンドウサイズ。
+    /// Adds view `view` (window `window`) as a panel at `pose`. Panel resolution = window size.
     pub(crate) fn add<B: VrBackend>(
         &mut self,
         cx: &mut VisualTestContext,
@@ -49,16 +49,16 @@ impl<V: Render> Panels<V> {
         let size = Vec2::new(PANEL_WIDTH_M, PANEL_WIDTH_M * res.1 as f32 / res.0 as f32);
         let id = kernel
             .add_panel(&format!("testkit.{}", self.windows.len()), pose, size, res)
-            .expect("パネルを作れない");
-        assert_eq!(id, self.windows.len(), "PanelId は開いた順の添字");
-        // 通常の操作テストは時間に依存させない。アニメーションは overlay / kernel で検証する。
+            .expect("failed to create panel");
+        assert_eq!(id, self.windows.len(), "PanelId is the index in opening order");
+        // Ordinary operation tests must not depend on time. Animations are verified in overlay / kernel.
         kernel.apply(id, kernel::PanelCommand::Animated(false));
         self.views.push(view);
         self.windows.push(window);
         id
     }
 
-    /// 本番と同じ `ui::pump` で1フレーム進めて GPUI に配送し、ビューのパネル操作・召喚を反映して、描画をランタイムへ送る。
+    /// Steps one frame with the same `ui::pump` as production and dispatches to GPUI, applies the view's panel operations and summons, and sends rendering to the runtime.
     pub(crate) fn step<B: VrBackend>(
         &mut self,
         cx: &mut VisualTestContext,
@@ -102,15 +102,15 @@ impl<V: Render> Panels<V> {
         }
     }
 
-    /// 画面から召喚されたパネルを開く（本番の `ui::run` と同じく `pose_for` で置く）。
+    /// Opens a panel summoned from a screen (placed with `pose_for`, as in production `ui::run`).
     fn add_spec<B: VrBackend>(
         &mut self,
         cx: &mut VisualTestContext,
         kernel: &mut Kernel<B>,
         spec: PanelSpec,
     ) {
-        // Web のページ（Tauri の WebView）はテストプラットフォームでは開けないので、頼まれたことだけ記録する。
-        // 実際に開いて操作するのは crates/ui/tests/web_*.rs。
+        // Web pages (Tauri WebView) cannot be opened on the test platform, so only record what was requested.
+        // Actually opening and operating them is done in crates/ui/tests/web_*.rs.
         if let Some(page) = spec.web_page() {
             self.web_spawns.push(page.to_owned());
             return;

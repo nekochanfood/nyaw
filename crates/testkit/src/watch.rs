@@ -1,11 +1,11 @@
-//! E2E を目で見るための窓。環境変数 `NYAW_E2E_WATCH` があるとき、キットが毎フレーム描いたパネルを
-//! パネルごとの OS のウィンドウに出す。値は 1 フレームの表示時間（ms、数値でなければ 100）。
+//! A window for watching E2E tests. When the environment variable `NYAW_E2E_WATCH` is set, shows the panels the kit draws every frame
+//! in one OS window per panel. The value is the display time per frame (ms; 100 if not a number).
 //!
 //! ```text
 //! NYAW_E2E_WATCH=300 cargo test -p testkit --test testing -- --test-threads=1
 //! ```
 //!
-//! 見えるのは [`crate::raster`] が塗った絵（矩形だけ。文字は出ない）。
+//! What you see is the image painted by [`crate::raster`] (rectangles only; no text).
 
 use std::time::Duration;
 
@@ -28,7 +28,7 @@ impl Watch {
         })
     }
 
-    /// パネル `panel` の絵を出す。閉じられたウィンドウは開き直さない。
+    /// Shows the image of panel `panel`. A window that has been closed is not reopened.
     pub(crate) fn show(&mut self, panel: usize, frame: &Frame) {
         if frame.width == 0 || frame.height == 0 {
             return;
@@ -42,7 +42,7 @@ impl Watch {
             };
             self.windows.push(
                 Window::new(&title, frame.width as usize, frame.height as usize, opts)
-                    .map_err(|e| logger::warn!("E2E の窓を開けない", error = e))
+                    .map_err(|e| logger::warn!("failed to open E2E window", error = e))
                     .ok(),
             );
         }
@@ -61,13 +61,13 @@ impl Watch {
         let _ = window.update_with_buffer(&self.buf, frame.width as usize, frame.height as usize);
     }
 
-    /// 全パネルを出し終えたあとに 1 回呼ぶ。
+    /// Call once after all panels have been shown.
     pub(crate) fn wait(&self) {
         std::thread::sleep(self.delay);
     }
 }
 
-/// テスト名（テストハーネスはテストごとにその名前のスレッドで流す）。
+/// The test name (the test harness runs each test on a thread with that name).
 fn test_name() -> String {
     std::thread::current().name().unwrap_or("e2e").to_owned()
 }

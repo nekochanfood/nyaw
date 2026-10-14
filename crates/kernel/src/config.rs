@@ -41,16 +41,11 @@ pub struct Config {
 pub struct Gpu {
     /// novr のエミュレーターの合成（`false` で CPU で合成する）。
     pub emulator: bool,
-    /// Web のパネルの読み戻し（Windows。`false` で Windows.Graphics.Capture ではなく CapturePreview の PNG）。
-    pub web_capture: bool,
 }
 
 impl Default for Gpu {
     fn default() -> Self {
-        Self {
-            emulator: true,
-            web_capture: true,
-        }
+        Self { emulator: true }
     }
 }
 
@@ -106,14 +101,14 @@ mod tests {
     #[test]
     fn gpu_defaults_on_and_switches_per_feature() {
         assert_eq!(Config::default().gpu, Gpu::default());
-        assert!(Gpu::default().emulator && Gpu::default().web_capture);
+        assert!(Gpu::default().emulator);
         let c = parse(
             "[gpu]
 emulator = false
 ",
         )
         .unwrap();
-        assert!(!c.gpu.emulator && c.gpu.web_capture);
+        assert!(!c.gpu.emulator);
     }
 
     #[test]

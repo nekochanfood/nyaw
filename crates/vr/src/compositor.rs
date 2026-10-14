@@ -111,18 +111,18 @@ impl Gpu {
             };
             instance.create_surface_unsafe(target)
         }
-        .map_err(|e| format!("サーフェスを作れない: {e}"))?;
+        .map_err(|e| format!("failed to create surface: {e}"))?;
         let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
             compatible_surface: Some(&surface),
         }))
-        .map_err(|e| format!("GPU が無い: {e}"))?;
+        .map_err(|e| format!("no GPU: {e}"))?;
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("nyaw-emulator"),
             ..Default::default()
         }))
-        .map_err(|e| format!("GPU のデバイスを作れない: {e}"))?;
+        .map_err(|e| format!("failed to create GPU device: {e}"))?;
         let caps = surface.get_capabilities(&adapter);
         // CPU の合成と同じく sRGB の値のまま混ぜるので、sRGB でない形式を選ぶ。
         let format = caps
@@ -380,7 +380,7 @@ impl Gpu {
             other => {
                 // 失われた・古くなったサーフェスは作り直して、このフレームは飛ばす。
                 self.surface.configure(&self.device, &self.config);
-                return Err(format!("表示先を取れない: {other:?}"));
+                return Err(format!("failed to acquire present target: {other:?}"));
             }
         };
         let view = frame.texture.create_view(&Default::default());

@@ -1,18 +1,18 @@
-//! Playwright 風の E2E テスト基盤。テストは「どの要素を・どう操作するか」だけを書き、
-//! プロファイル名や座標計算は書かない。
+//! A Playwright-style E2E test foundation. Tests only state which element to operate and how,
+//! and never write profile names or coordinate math.
 //!
-//! ランタイムは対等な「手段」なので、キットもランタイムごとに対等に用意する:
+//! Runtimes are equal "means", so a kit is provided equally for each runtime:
 //!
-//! - [`NoVrKit`]: novr（エミュレーター）。本番の novr と同じく、マウス（右手のコントローラ）で指してクリックし、
-//!   ユーザーに見える絵はエミュレーターの画面（[`NoVrKit::screenshot`]）。ウィンドウは出さない。
-//! - [`VrKit`]: VR（モック）。レーザー越しに操作し、描画は VR パネルへ送られる。
+//! - [`NoVrKit`]: novr (emulator). As in production novr, points and clicks with the mouse (right-hand controller),
+//!   and the image the user sees is the emulator screen ([`NoVrKit::screenshot`]). No window is shown.
+//! - [`VrKit`]: VR (mock). Operates via the laser, and rendering is sent to the VR panel.
 //!
-//! [`DesktopKit`] はランタイムを通さずパネルのウィンドウへマウスを直接送る（コントローラの無い実ランタイム用）。
+//! [`DesktopKit`] sends the mouse directly to the panel window without going through a runtime (for real runtimes with no controllers).
 //!
-//! 基本操作（[`Driver`]）はどのランタイムでもネイティブに行えなければならないので、基本操作の
-//! シナリオは1回だけ書いて [`on_every_runtime!`] で全ランタイムで実行する。VR 固有の機能
-//! （手・機種・パネル移動など）は [`VrKit`] の固有メソッドで、UI のロジックだけを見たいものは
-//! [`NoVrKit`] だけで検証する。
+//! Basic operations ([`Driver`]) must be doable natively on every runtime, so a scenario of
+//! basic operations is written once and run on all runtimes with [`on_every_runtime!`]. VR-specific features
+//! (hands, controller models, panel movement, etc.) are [`VrKit`]'s own methods, and tests that only look at UI logic
+//! are verified with [`NoVrKit`] alone.
 //!
 //! ```ignore
 //! fn click_counts<D: Driver<Testing>>(kit: &mut D) {
@@ -22,11 +22,11 @@
 //! on_every_runtime!(click_counts, |_, _| Testing::default());
 //! ```
 //!
-//! 要素は GPUI の `.debug_selector(|| "名前".into())` で指定する。
+//! Elements are specified with GPUI's `.debug_selector(|| "name".into())`.
 //!
-//! 環境変数 `NYAW_E2E_WATCH`（1 フレームの表示時間 ms）を付けると、テスト中のパネルをウィンドウで見られる。
+//! Setting the environment variable `NYAW_E2E_WATCH` (display time per frame, in ms) lets you watch the panels in a window during tests.
 //!
-//! 実ランタイム（Monado / SteamVR）でのテストは [`runtimes`]（インストールのウィザードと起動・後片付け）を使う。
+//! For tests on real runtimes (Monado / SteamVR), use [`runtimes`] (install wizard, launch, and cleanup).
 
 pub mod desktop;
 pub mod novr;
@@ -43,37 +43,37 @@ pub use vr::novr::Button;
 pub use vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 pub use vr_kit::{DEFAULT_PROFILE, VrKit};
 
-/// どのランタイムでもネイティブに行える基本操作。
+/// Basic operations that can be done natively on every runtime.
 pub trait Driver<V> {
-    /// 要素の中心を指す（novr はエミュレーターのマウス、VR はレーザー）。
+    /// Points at the center of an element (novr: emulator mouse; VR: laser).
     fn hover(&mut self, selector: &'static str) -> &mut Self;
-    /// 要素の中心をクリックする（novr は左クリック = トリガー、VR は選択ボタン）。
+    /// Clicks the center of an element (novr: left click = trigger; VR: select button).
     fn click(&mut self, selector: &'static str) -> &mut Self;
-    /// 要素の中心で押したままにする（novr は左ボタン、VR は選択ボタン）。押したまま `hover` で動かすとドラッグになる。
+    /// Holds down at the center of an element (novr: left button; VR: select button). Moving with `hover` while held makes a drag.
     fn down(&mut self, selector: &'static str) -> &mut Self;
-    /// `down` で押したボタンを、今指している場所で離す。
+    /// Releases the button pressed by `down` at the place currently pointed at.
     fn up(&mut self) -> &mut Self;
-    /// `from` を掴んで `to` まで運んで離す（GPUI のドラッグ＆ドロップ）。
+    /// Grabs `from`, carries it to `to`, and releases (GPUI drag and drop).
     fn drag(&mut self, from: &'static str, to: &'static str) -> &mut Self {
         self.down(from).hover(to).up()
     }
-    /// 要素の中心で `lines` 行ぶん縦にスクロールする（novr は矢印キー = 右手のスティック、VR はスティック）。
+    /// Scrolls vertically by `lines` lines at the center of an element (novr: arrow keys = right-hand stick; VR: stick).
     fn scroll(&mut self, selector: &'static str, lines: f32) -> &mut Self;
-    /// ビューの状態を読む。
+    /// Reads the view's state.
     fn read<R>(&mut self, f: impl FnOnce(&V) -> R) -> R;
-    /// ユーザーに見えている要素の中心の色（0xRRGGBB）。novr はエミュレーターの画面、VR はパネルのテクスチャ。
+    /// Color (0xRRGGBB) at the center of an element as visible to the user. novr: emulator screen; VR: panel texture.
     fn color_at(&mut self, selector: &'static str) -> u32;
-    /// 画面が開くよう頼んだ Web のページ（テストプラットフォームでは開かず、名前だけ残る）。
+    /// Web pages the screen asked to open (not opened on the test platform; only the name is kept).
     fn web_spawns(&self) -> &[String];
 }
 
-/// 基本操作のシナリオ `scenario(&mut impl Driver<V>)` を、全ランタイムのキットで実行するテストを作る。
-/// `scenario::novr` / `scenario::vr` という名前のテストになる。
+/// Creates tests that run a basic-operation scenario `scenario(&mut impl Driver<V>)` with the kit of every runtime.
+/// The tests are named `scenario::novr` / `scenario::vr`.
 #[macro_export]
 macro_rules! on_every_runtime {
     ($scenario:ident, $build:expr) => {
         mod $scenario {
-            // `$build` は呼び出し側のスコープの名前（ビューの型など）を使うので取り込む
+            // `$build` uses names from the caller's scope (such as the view type), so pull them in
             #[allow(unused_imports)]
             use super::*;
 

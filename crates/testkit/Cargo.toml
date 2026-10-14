@@ -5,22 +5,22 @@ edition.workspace = true
 license.workspace = true
 publish = false
 
-# 開発専用。本番クレートからは dev-dependencies でのみ参照すること。
+# Development only. Production crates must reference this only via dev-dependencies.
 [dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 vr = { workspace = true, features = ["test-support"] }
 input.workspace = true
 kernel.workspace = true
 ui.workspace = true
-# NYAW_E2E_WATCH でテスト中の描画を OS のウィンドウに出す（watch.rs）
+# NYAW_E2E_WATCH shows rendering during tests in an OS window (watch.rs)
 minifb = "0.29.0"
 logger.workspace = true
 
-# シナリオが操作する画面。キット自体は画面を知らない
+# The screens the scenarios operate. The kit itself knows nothing about screens
 [dev-dependencies]
 testing.workspace = true
 
-# 実ランタイムでの E2E。起動するランタイムが環境変数を読むので、シングルスレッドの自前の main で流す
+# E2E on real runtimes. The launched runtime reads environment variables, so run it from a single-threaded custom main
 [[test]]
 name = "runtimes"
 harness = false

@@ -58,7 +58,7 @@ pub(crate) fn create_device(
     let family = unsafe { instance.get_physical_device_queue_family_properties(physical) }
         .iter()
         .position(|q| q.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-        .ok_or_else(|| VrError::Runtime("Vulkan: グラフィックス用のキューが無い".into()))?
+        .ok_or_else(|| VrError::Runtime("Vulkan: no graphics queue".into()))?
         as u32;
     let priorities = [1.0];
     let queues = [vk::DeviceQueueCreateInfo::default()
@@ -155,7 +155,7 @@ impl Gpu {
                         .property_flags
                         .contains(flags)
             })
-            .ok_or_else(|| VrError::Runtime("Vulkan: 適したメモリの種類が無い".into()))
+            .ok_or_else(|| VrError::Runtime("Vulkan: no suitable memory type".into()))
     }
 
     pub fn create_image(
