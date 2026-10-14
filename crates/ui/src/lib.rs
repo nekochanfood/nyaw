@@ -63,6 +63,8 @@ struct Touch {
 
 /// これだけ動かさずに押し続けると、タッチでもマウスの押下になる（ドラッグ＆ドロップを始められる）。
 pub const LONG_PRESS: Duration = Duration::from_millis(400);
+/// 長押しでドラッグを始めるときに押したまま動かす量（論理 px）。GPUI のドラッグの閾値（2px）を越える。
+const DRAG_NUDGE: f32 = 3.0;
 /// 慣性の 1 フレームあたりの減衰（約 90Hz で 1 秒後に 1% 程度）。
 const FRICTION: f32 = 0.95;
 /// 慣性がこれより遅くなったら止める（論理 px / フレーム）。
@@ -87,10 +89,15 @@ impl PointerBridge {
                             return Vec::new();
                         }
                         // 長押し: 押した所でマウスの押下にする。以降はマウスと同じ（動かせばドラッグ）。
+                        // 押したまま GPUI のドラッグの閾値（2px）を越えて動かし、カーソルを動かさなくてもすぐドラッグを始めて
+                        // その見た目を出す。最後に今の位置へ戻す。
                         t.held = true;
                         let start = Vec2::new(t.start.x.into(), t.start.y.into());
                         let mut out = self.mouse(PointerEvent::Move { pos: start });
                         out.extend(self.mouse(PointerEvent::Down { pos: start }));
+                        out.extend(self.mouse(PointerEvent::Move {
+                            pos: start + Vec2::new(DRAG_NUDGE, 0.0),
+                        }));
                         out.extend(self.mouse(ev));
                         return out;
                     }
@@ -1402,15 +1409,23 @@ mod tests {
                 .is_empty()
         );
         std::thread::sleep(LONG_PRESS);
-        // 動かさずに長押しすると、押した所でマウスの押下になる。
+        // 動かさずに長押しすると、押した所でマウスの押下になり、押したまま閾値を越えて動かして（ドラッグがすぐ始まる）元へ戻す。
         let held = b.translate(PointerEvent::Move { pos: at }, touch);
+        let [
+            PlatformInput::MouseMove(_),
+            PlatformInput::MouseDown(_),
+            PlatformInput::MouseMove(nudge),
+            PlatformInput::MouseMove(back),
+        ] = &held[..]
+        else {
+            panic!("{held:?}")
+        };
+        assert_eq!(nudge.pressed_button, Some(MouseButton::Left));
         assert!(
-            matches!(
-                held[..],
-                [PlatformInput::MouseMove(_), PlatformInput::MouseDown(_)]
-            ),
-            "{held:?}"
+            f32::from(nudge.position.x) - 10.0 > 2.0,
+            "GPUI のドラッグの閾値を越える"
         );
+        assert_eq!(back.position, Point::new(px(10.0), px(10.0)));
         // 以降はマウスのドラッグ（押したままの Move）で、スクロールにはならない。
         let drag = b.translate(
             PointerEvent::Move {

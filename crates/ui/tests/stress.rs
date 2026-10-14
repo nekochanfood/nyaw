@@ -10,7 +10,7 @@
 //! → 物量（Toggle Panel と同じく重ねて 10 枚召喚して掃く）→ もう一度アイドル。
 //! アイドル同士の差で「時間とともに重くなる」（掃いた後 = idle-mid、召喚と破棄の後 = idle-after）を、召喚の局面の最大フレーム時間で召喚の引っ掛かりを見る。
 //! 1 フレームごとの CSV（`stress.csv`）と集計（`stress.txt`）を `CARGO_TARGET_TMPDIR` に書く。
-//! 局面の長さは `NYAW_STRESS_SCALE`（既定 1.0）で伸縮する。`NYAW_STRESS_NO_WEB=1` で Web のパネルを外す（切り分け用）。
+//! 局面の長さは `NYAW_STRESS_SCALE`（既定 1.0）で伸縮する。`NYAW_STRESS_NO_WEB=1` で Web のパネルを外し、`NYAW_STRESS_PROFILER=1` でプロファイラの窓を出す（切り分け用）。
 
 mod common;
 
@@ -99,8 +99,8 @@ fn main() -> ExitCode {
     let hooks = ui::Hooks {
         on_web: None,
         remote: Some(rx),
-        // プロファイラの窓は毎フレーム描き直すので、計測を汚さないよう出さない。
-        hide_profiler: true,
+        // プロファイラの窓は毎フレーム描き直すので、計測を汚さないよう出さない（NYAW_STRESS_PROFILER=1 で出してそのコストを見る）。
+        hide_profiler: std::env::var_os("NYAW_STRESS_PROFILER").is_none(),
     };
     ui::run_with(kernel, panels, Some(profiler), webpages::FILES, hooks);
     common::exit_code("stress", &result)
