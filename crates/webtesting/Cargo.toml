@@ -1,9 +1,0 @@
-[package]
-name = "webtesting"
-version.workspace = true
-edition.workspace = true
-
-# Web UI 層の上に載るテスト用の画面（Testing の Web 版）。
-[dependencies]
-kernel.workspace = true
-webui.workspace = true

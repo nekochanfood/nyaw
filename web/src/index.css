@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/*
+ * VR のレーザーは UI 層のブリッジが合成した DOM イベントなので、CSS の :hover / :active が効かない。
+ * 代わりにブリッジが付ける data-nyaw-hover / data-nyaw-active も同じ見た目にする（novr のマウスでは :hover が効く）。
+ */
+@custom-variant hover (&:is(:hover, [data-nyaw-hover]));
+@custom-variant active (&:is(:active, [data-nyaw-active]));
+
+@theme {
+  --color-panel: #202020;
+  --color-ink: #d8dae0;
+  --color-btn: #3a3d46;
+  --color-btn-hover: #50545f;
+  --color-btn-press: #6a6f7c;
+  --color-accent: #6c8cff;
+  --color-ok: #2ecc71;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: system-ui, sans-serif;
+}
+
+/* 透明なページのため、背景は既定で塗らない（塗るのは各ページのルート要素）。 */
+html,
+body {
+  background: transparent;
+}

@@ -1,0 +1,34 @@
+{
+  "name": "nyaw-web",
+  "version": "2026.0.1",
+  "private": true,
+  "description": "nyaw の Web UI のページ（React）。UI 層の Tauri の WebView に載る。crates/webpages の build.rs がビルドして埋め込む。",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "lint": "cd .. && oxlint -c web/.oxlintrc.json --deny-warnings web crates/ui/src/web",
+    "fmt": "cd .. && oxfmt -c web/.oxfmtrc.json web crates/ui/src/web",
+    "fmt:check": "cd .. && oxfmt -c web/.oxfmtrc.json --check web crates/ui/src/web",
+    "check": "npm run lint && npm run fmt:check && npm run typecheck && npm run build"
+  },
+  "dependencies": {
+    "@base-ui/react": "1.9.0",
+    "@tauri-apps/api": "2.12.3",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "oxfmt": "0.73.0",
+    "oxlint": "1.88.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.4"
+  }
+}
