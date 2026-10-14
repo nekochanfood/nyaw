@@ -79,6 +79,8 @@ pub struct Emulator {
     /// `None` かつ `!headless` なら最初の poll で開く。
     window: Option<Window>,
     headless: bool,
+    /// ウィンドウを出すが、入力はウィンドウから読まない（[`Emulator::scripted_window`]）。
+    scripted: bool,
     size: (u32, u32),
     /// 合成した絵（0RGB）。
     pixels: Vec<u32>,
@@ -109,6 +111,15 @@ impl Emulator {
         Self::new(SIZE, false)
     }
 
+    /// ウィンドウを出して本番と同じく合成・表示する（GPU が使えれば GPU）が、入力はウィンドウからではなく
+    /// [`Emulator::point`] などで注入する（ベンチマーク用。本番と同じ合成のコストを測る）。
+    pub fn scripted_window(width: u32, height: u32) -> Self {
+        Self {
+            scripted: true,
+            ..Self::new((width, height), false)
+        }
+    }
+
     /// ウィンドウを出さない（testkit 用）。入力は [`Emulator::point`] などで注入し、絵は [`Emulator::screenshot`] で見る。
     pub fn headless(width: u32, height: u32) -> Self {
         Self::new((width, height), true)
@@ -119,6 +130,7 @@ impl Emulator {
             gpu: None,
             window: None,
             headless,
+            scripted: false,
             size,
             pixels: Vec::new(),
             background: Vec::new(),
@@ -171,7 +183,14 @@ impl Emulator {
 
     /// 今の画面（幅, 高さ, RGBA）。ユーザーに見えている絵。
     pub fn screenshot(&mut self) -> (u32, u32, Vec<u8>) {
-        self.render();
+        if self.gpu.is_some() {
+            // GPU で描いているときは CPU の絵が無いので、CPU で合成し直す（次のフレームは GPU でも描き直す）。
+            self.dirty = true;
+            self.render();
+            self.dirty = true;
+        } else {
+            self.render();
+        }
         let rgba = self
             .pixels
             .iter()
@@ -217,7 +236,7 @@ impl Emulator {
                 resize: true,
                 ..Default::default()
             };
-            match Window::new(TITLE, SIZE.0 as usize, SIZE.1 as usize, opts) {
+            match Window::new(TITLE, self.size.0 as usize, self.size.1 as usize, opts) {
                 Ok(mut w) => {
                     // 周期は poll が自分で作る（minifb の待ちを合成の時間に混ぜない）。
                     w.set_target_fps(0);
@@ -253,6 +272,9 @@ impl Emulator {
             if let Some(gpu) = &mut self.gpu {
                 gpu.resize(self.size);
             }
+        }
+        if self.scripted {
+            return;
         }
         // 押したままウィンドウの外へ出ても、掴んだパネルやドラッグを放さないよう縁に留める。
         let mode = if self.trigger || self.grab {

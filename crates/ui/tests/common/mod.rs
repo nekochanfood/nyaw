@@ -370,6 +370,8 @@ pub struct Driven {
     jobs: Receiver<Job>,
     /// 次のフレームの始まり（ウィンドウ付きのエミュレーターと同じく、poll はここまで眠る）。
     next: Option<Instant>,
+    /// エミュレーターがウィンドウを出して自分で周期を作り、合成する（[`Driven::scripted_window`]）。
+    windowed: bool,
 }
 
 impl Driven {
@@ -382,6 +384,23 @@ impl Driven {
                 emu,
                 jobs,
                 next: None,
+                windowed: false,
+            },
+            Emu(tx),
+        )
+    }
+
+    /// ウィンドウを出して本番と同じく合成・表示する（GPU が使えれば GPU）エミュレーターと、それを操作する口。
+    /// 入力はウィンドウからではなく `Emu` で注入する。
+    pub fn scripted_window(width: u32, height: u32) -> (Self, Emu) {
+        let (tx, jobs) = channel();
+        let emu = Emulator::scripted_window(width, height);
+        (
+            Self {
+                emu,
+                jobs,
+                next: None,
+                windowed: true,
             },
             Emu(tx),
         )
@@ -393,6 +412,13 @@ impl VrBackend for Driven {
         self.emu.runtime()
     }
     fn poll(&mut self) -> Frame {
+        if self.windowed {
+            // 周期・合成・表示はエミュレーターがする。
+            while let Ok(job) = self.jobs.try_recv() {
+                job(&mut self.emu);
+            }
+            return self.emu.poll();
+        }
         // ウィンドウ付きのエミュレーターと同じ周期（約 90Hz）。間に合わなかったフレームは取り戻さない。
         let frame = Duration::from_nanos(1_000_000_000 / 90);
         let now = Instant::now();

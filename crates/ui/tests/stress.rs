@@ -10,7 +10,8 @@
 //! → 物量（Toggle Panel と同じく重ねて 10 枚召喚して掃く）→ もう一度アイドル。
 //! アイドル同士の差で「時間とともに重くなる」（掃いた後 = idle-mid、召喚と破棄の後 = idle-after）を、召喚の局面の最大フレーム時間で召喚の引っ掛かりを見る。
 //! 1 フレームごとの CSV（`stress.csv`）と集計（`stress.txt`）を `CARGO_TARGET_TMPDIR` に書く。
-//! 局面の長さは `NYAW_STRESS_SCALE`（既定 1.0）で伸縮する。`NYAW_STRESS_NO_WEB=1` で Web のパネルを外し、`NYAW_STRESS_PROFILER=1` でプロファイラの窓を出す（切り分け用）。
+//! 局面の長さは `NYAW_STRESS_SCALE`（既定 1.0）で伸縮する。`NYAW_STRESS_WINDOW=1` で本番と同じくウィンドウを出して
+//! 合成する（GPU が使えれば GPU。既定はウィンドウを出さず CPU で合成する）。`NYAW_STRESS_NO_WEB=1` で Web のパネルを外し、`NYAW_STRESS_PROFILER=1` でプロファイラの窓を出す（切り分け用）。
 
 mod common;
 
@@ -61,7 +62,12 @@ fn main() -> ExitCode {
     if !common::should_run("stress") {
         return ExitCode::SUCCESS;
     }
-    let (backend, emu) = Driven::headless(SCREEN.0, SCREEN.1);
+    // NYAW_STRESS_WINDOW=1 なら、本番と同じくウィンドウを出して合成する（GPU が使えれば GPU）。
+    let (backend, emu) = if std::env::var_os("NYAW_STRESS_WINDOW").is_some() {
+        Driven::scripted_window(SCREEN.0, SCREEN.1)
+    } else {
+        Driven::headless(SCREEN.0, SCREEN.1)
+    };
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, Default::default());
     // GPUI の Testing 8 枚（2 段）と Web の Testing 2 枚、本番と同じくビームも載せる。
     let mut panels: Vec<PanelSpec> = (0..8)
@@ -201,7 +207,6 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     std::thread::sleep(Duration::from_secs(3));
 
     run_phase(&mut phases, t0, "idle", secs(4.0), |_| emu.point(None));
-    print_seen(emu, "idle");
     run_phase(&mut phases, t0, "sweep", secs(8.0), |f| sweep_frame(emu, f));
     // 操作し続けたこと自体で重くなっていないか（最初のアイドルと比べる）。
     run_phase(&mut phases, t0, "idle-mid", secs(4.0), |_| emu.point(None));
@@ -256,32 +261,7 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     run_phase(&mut phases, t0, "idle-after", secs(4.0), |_| {
         emu.point(None)
     });
-    print_seen(emu, "idle-after");
     phases
-}
-
-/// 各オーバーレイが直前の合成で見えたか（カリングの確認用）。
-fn print_seen(emu: &Emu, when: &str) {
-    let seen: String = emu.run(|e| {
-        (0..64)
-            .map_while(|i| {
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    e.overlay_seen(kernel::vr::OverlayId(i))
-                }))
-                .ok()
-                .flatten()
-            })
-            .map(|v| if v { '1' } else { '0' })
-            .collect()
-    });
-    println!("SEEN {when}: {seen}");
-    let (w, h, rgba) = emu.run(|e| e.screenshot());
-    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("stress-{when}.png"));
-    let file = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
-    let mut enc = png::Encoder::new(file, w, h);
-    enc.set_color(png::ColorType::Rgba);
-    enc.set_depth(png::BitDepth::Eight);
-    enc.write_header().unwrap().write_image_data(&rgba).unwrap();
 }
 
 /// 1 フレーム分の CSV の行（必要な列だけ）。
