@@ -211,6 +211,14 @@ export function App() {
           >
             Lock
           </Button>
+          <Button
+            id="animate-panel"
+            className={btn}
+            {...on(!!s?.animated)}
+            onClick={cmd({ animated: !s?.animated })}
+          >
+            Animation
+          </Button>
           <Button id="spawn-panel" className={btn} onClick={() => void nyaw().spawn("testing")}>
             Spawn Panel
           </Button>

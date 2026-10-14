@@ -17,6 +17,8 @@ pub enum PanelCommand {
     Attach(Device, Pose),
     Detach,
     Lock(bool),
+    /// このパネルのイン・アウトアニメーションを有効化・無効化する。
+    Animated(bool),
     Close,
     /// その手のレーザーを描くパネルにする（ヒット判定の対象外になり、置き場所はオーバーレイが決める）。
     Pointer(Hand, Pointer),
@@ -32,6 +34,7 @@ pub struct PanelStatus {
     pub runtime: Option<Runtime>,
     pub attached: Option<Device>,
     pub locked: bool,
+    pub animated: bool,
     /// 見えているトラッカーの ID（取り付け先の候補）。
     pub trackers: Vec<String>,
     /// メニューボタンを押している。
@@ -153,6 +156,9 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Attach(device, offset) => self.overlay.attach(panel, device, offset),
             PanelCommand::Detach => self.overlay.detach(panel),
             PanelCommand::Lock(locked) => self.overlay.set_locked(panel, locked),
+            PanelCommand::Animated(animated) => {
+                self.overlay.set_animated(&mut self.vr, panel, animated)
+            }
             PanelCommand::Close => self.overlay.close(&mut self.vr, panel),
             PanelCommand::Pointer(hand, part) => {
                 self.overlay.set_pointer(&mut self.vr, panel, hand, part)
@@ -168,6 +174,7 @@ impl<B: VrBackend> Kernel<B> {
             runtime: Some(self.vr.runtime()),
             attached: p.attached.as_ref().map(|(d, _)| d.clone()),
             locked: p.locked,
+            animated: p.animated,
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
             grabbed: self.overlay.grabbed(panel),
@@ -241,8 +248,30 @@ mod tests {
     #[test]
     fn submit_reaches_backend() {
         let (mut k, p) = kernel();
+        k.apply(p, PanelCommand::Animated(false));
         k.submit(p, 1, 1, &[1, 2, 3, 4]);
         let tex = k.vr.overlays[0].texture.as_ref().unwrap();
         assert_eq!(tex.pixel(0, 0), [1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn animation_command_opts_out_only_the_selected_panel() {
+        let (mut k, p) = kernel();
+        let other = k
+            .add_panel("other", Pose::IDENTITY, Vec2::ONE, (4, 4))
+            .unwrap();
+        k.apply(p, PanelCommand::Animated(false));
+        assert!(!k.status(p).animated && k.status(other).animated);
+        k.submit(p, 1, 1, &[255; 4]);
+        k.submit(other, 1, 1, &[255; 4]);
+        assert_eq!(k.vr.overlays[p].width_m, 1.0);
+        assert_eq!(k.vr.overlays[other].width_m, 0.75);
+        k.apply(p, PanelCommand::Close);
+        assert!(k.status(p).closed && !k.vr.overlays[p].visible);
+        k.apply(other, PanelCommand::Animated(false));
+        assert_eq!(
+            k.vr.overlays[other].texture.as_ref().unwrap().pixel(0, 0),
+            [255; 4]
+        );
     }
 }

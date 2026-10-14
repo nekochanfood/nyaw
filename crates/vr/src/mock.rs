@@ -12,6 +12,8 @@ pub struct MockOverlay {
     /// 固定された高さ（m）。
     pub height_m: Option<f32>,
     pub visible: bool,
+    pub alpha: f32,
+    pub pixel_submissions: usize,
     pub sort: u32,
     /// 最後に送られたテクスチャ。
     pub texture: Option<MockTexture>,
@@ -34,6 +36,8 @@ impl MockTexture {
 
 #[derive(Debug, Default)]
 pub struct MockBackend {
+    /// 不透明度 API のないランタイムを再現する。
+    pub unsupported_alpha: bool,
     /// 毎回の `poll` で返す値。テストはフレーム間でこれを書き換える。
     pub frame: Frame,
     /// 作成されたオーバーレイ。添字は `OverlayId.0`。
@@ -60,6 +64,8 @@ impl VrBackend for MockBackend {
             width_m,
             height_m: None,
             visible: true,
+            alpha: 1.0,
+            pixel_submissions: 0,
             sort: 0,
             texture: None,
         });
@@ -82,11 +88,20 @@ impl VrBackend for MockBackend {
         self.overlays[id.0 as usize].visible = visible;
     }
 
+    fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
+        if self.unsupported_alpha {
+            return false;
+        }
+        self.overlays[id.0 as usize].alpha = alpha.clamp(0.0, 1.0);
+        true
+    }
+
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
         self.overlays[id.0 as usize].sort = order;
     }
 
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
+        self.overlays[id.0 as usize].pixel_submissions += 1;
         assert_eq!(
             rgba.len(),
             (width * height * 4) as usize,

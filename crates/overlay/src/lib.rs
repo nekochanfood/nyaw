@@ -4,6 +4,9 @@
 //! [`Overlay::tick`] が下位パイプライン1フレーム分: VR poll → 取り付け先への追従 → 入力マップ → ヒット判定 → イベント。
 
 use std::collections::HashMap;
+use std::time::Instant;
+
+use animato::{Easing, Tween, Update};
 
 use vr::{Device, Frame, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
@@ -28,6 +31,12 @@ pub struct Panel {
     pub closed: bool,
     /// どの手のレーザーを描くパネルか。ヒット判定の対象外で、配置は毎 tick ここで決める。
     pub pointer: Option<(Hand, Pointer)>,
+    /// このパネルのイン・アウトアニメーション。`Overlay::set_animated` で個別に無効化できる。
+    pub animated: bool,
+    /// 表示の進行度。サイズは 75%〜100%、不透明度は 0%〜100%。
+    opacity: f32,
+    /// フェードアウトにも使う、加工前の最後の描画。
+    texture: Option<(u32, u32, Vec<u8>)>,
     overlay: OverlayId,
     /// この tick で追従させるデバイスと相対姿勢。ランタイムに任せられればそうする。
     follow: Option<(Device, Pose)>,
@@ -91,12 +100,17 @@ struct Ray {
 }
 
 impl Panel {
+    /// アニメーションを反映した表示サイズ。中心の位置・姿勢は変えない。
+    pub fn displayed_size(&self) -> Vec2 {
+        self.size * (0.75 + 0.25 * self.opacity)
+    }
+
     /// パネル上のピクセル（左上原点）をトラッキング空間の点に変換する。ヒット判定の逆。
     pub fn pixel_to_world(&self, px: Vec2) -> Vec3 {
         let (w, h) = (self.resolution.0 as f32, self.resolution.1 as f32);
         let local = Vec3::new(
-            (px.x / w - 0.5) * self.size.x,
-            (0.5 - px.y / h) * self.size.y,
+            (px.x / w - 0.5) * self.displayed_size().x,
+            (0.5 - px.y / h) * self.displayed_size().y,
             0.0,
         );
         self.pose.transform_point(local)
@@ -154,6 +168,7 @@ pub struct Overlay {
     hmd: Pose,
     /// 手ブレ抑え（[`POINTER_SMOOTHING`]）。`None` で既定値。
     smoothing: Option<f32>,
+    animations: HashMap<PanelId, (Tween<f32>, Instant)>,
 }
 
 impl Overlay {
@@ -179,6 +194,9 @@ impl Overlay {
             locked: false,
             closed: false,
             pointer: None,
+            animated: true,
+            opacity: 1.0,
+            texture: None,
             overlay,
             follow: None,
             sent: None,
@@ -254,11 +272,23 @@ impl Overlay {
             p.size.y * h as f32 / p.resolution.1 as f32,
         );
         p.resolution = (w, h);
-        vr.set_overlay_width(p.overlay, p.size.x);
+        vr.set_overlay_width(p.overlay, p.displayed_size().x);
+    }
+
+    /// パネルごとのオプトアウト。再生中に無効化した場合も、直ちに最終状態にする。
+    pub fn set_animated(&mut self, vr: &mut dyn VrBackend, id: PanelId, animated: bool) {
+        self.panels[id].animated = animated;
+        if !animated {
+            self.animations.remove(&id);
+            let p = &mut self.panels[id];
+            p.opacity = if p.closed { 0.0 } else { 1.0 };
+            Self::present(vr, p, false);
+        }
     }
 
     /// `hand` のレーザーを描くパネルにする。以降はヒット判定の対象外になり、毎 tick レーザーに合わせて置かれる。
     pub fn set_pointer(&mut self, vr: &mut dyn VrBackend, id: PanelId, hand: Hand, part: Pointer) {
+        self.set_animated(vr, id, false);
         let p = &mut self.panels[id];
         p.pointer = Some((hand, part));
         let sort = match part {
@@ -278,11 +308,30 @@ impl Overlay {
         self.hands.entry(hand).or_default().drag = width_m;
     }
 
-    /// パネルを閉じる。ランタイムにオーバーレイの破棄 API が無いので、透明な 1px を送って見えなくする。
+    /// パネルを閉じる。入力を即座に止め、最後の描画をフェードアウトしてから隠す。
     // ponytail: ランタイム側のオーバーレイは残る。数が問題になったら VrBackend に destroy を足す。
     pub fn close(&mut self, vr: &mut dyn VrBackend, id: PanelId) {
-        self.panels[id].closed = true;
-        vr.submit_overlay_pixels(self.panels[id].overlay, 1, 1, &[0; 4]);
+        let p = &mut self.panels[id];
+        if p.closed {
+            return;
+        }
+        p.closed = true;
+        if p.animated && p.texture.is_some() && p.opacity > 0.0 {
+            self.animations.insert(
+                id,
+                (
+                    Tween::new(p.opacity, 0.0)
+                        .duration(0.15)
+                        .easing(Easing::EaseInCubic)
+                        .build(),
+                    Instant::now(),
+                ),
+            );
+        } else {
+            self.animations.remove(&id);
+            p.opacity = 0.0;
+            Self::present(vr, p, false);
+        }
         for h in self.hands.values_mut() {
             if h.hover == Some(id) {
                 h.hover = None;
@@ -297,18 +346,87 @@ impl Overlay {
     /// テクスチャの大きさは `resolution`（ヒット判定用の論理ピクセル）と独立してよい。
     /// HiDPI では UI が `resolution × 拡大率` で描かれるため。
     pub fn submit(
-        &self,
+        &mut self,
         vr: &mut dyn VrBackend,
         panel: PanelId,
         width: u32,
         height: u32,
         rgba: &[u8],
     ) {
-        vr.submit_overlay_pixels(self.panels[panel].overlay, width, height, rgba);
+        assert_eq!(
+            rgba.len(),
+            width as usize * height as usize * 4,
+            "RGBA バッファのサイズが不正"
+        );
+        let p = &mut self.panels[panel];
+        if p.closed {
+            return;
+        }
+        let entering = p.texture.is_none() && p.animated;
+        if entering {
+            p.opacity = 0.0;
+        }
+        p.texture = Some((width, height, rgba.to_vec()));
+        Self::present(vr, p, true);
+        if entering {
+            // 初回の GPU 転送が終わってから時計を始める。
+            self.animations.insert(
+                panel,
+                (
+                    Tween::new(0.0, 1.0)
+                        .duration(0.2)
+                        .easing(Easing::EaseOutCubic)
+                        .build(),
+                    Instant::now(),
+                ),
+            );
+        }
+    }
+
+    fn present(vr: &mut dyn VrBackend, p: &mut Panel, upload: bool) {
+        if p.pointer.is_none() {
+            vr.set_overlay_width(p.overlay, p.displayed_size().x);
+        }
+        let native = vr.set_overlay_alpha(p.overlay, p.opacity);
+        if p.closed && p.opacity == 0.0 {
+            vr.set_overlay_visible(p.overlay, false);
+            vr.submit_overlay_pixels(p.overlay, 1, 1, &[0; 4]);
+            p.texture = None;
+            return;
+        }
+        if native && !upload {
+            return;
+        }
+        if let Some((width, height, rgba)) = &p.texture {
+            if native || p.opacity == 1.0 {
+                vr.submit_overlay_pixels(p.overlay, *width, *height, rgba);
+            } else {
+                // 両 VR バックエンドの事前乗算アルファに合わせ、RGB も同じ割合で減らす。
+                // 不透明度 API が無いランタイムだけ、画素の減衰で補う。
+                let opacity = (p.opacity * 65536.0).round() as u32;
+                let faded: Vec<u8> = rgba
+                    .iter()
+                    .map(|v| ((*v as u32 * opacity + 32768) >> 16) as u8)
+                    .collect();
+                vr.submit_overlay_pixels(p.overlay, *width, *height, &faded);
+            }
+        }
+    }
+
+    fn animate(&mut self, vr: &mut dyn VrBackend, now: Instant) {
+        self.animations.retain(|id, (tween, last)| {
+            tween.update((now - *last).as_secs_f32());
+            *last = now;
+            let p = &mut self.panels[*id];
+            p.opacity = tween.value();
+            Self::present(vr, p, false);
+            !tween.is_complete()
+        });
     }
 
     pub fn tick(&mut self, vr: &mut dyn VrBackend) -> Vec<UiEvent> {
         let frame = vr.poll();
+        self.animate(vr, Instant::now());
         self.quit = frame.quit;
         self.hmd = frame.hmd;
         self.trackers = frame.trackers.iter().map(|(id, _)| id.clone()).collect();
@@ -604,15 +722,13 @@ fn hit_test(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
         return None;
     }
     let local = p.pose.inverse().transform_point(aim.position + dir * t);
-    if local.x.abs() > p.size.x / 2.0 || local.y.abs() > p.size.y / 2.0 {
+    let size = p.displayed_size();
+    if local.x.abs() > size.x / 2.0 || local.y.abs() > size.y / 2.0 {
         return None;
     }
     let (w, h) = (p.resolution.0 as f32, p.resolution.1 as f32);
     Some((
-        Vec2::new(
-            (local.x / p.size.x + 0.5) * w,
-            (0.5 - local.y / p.size.y) * h,
-        ),
+        Vec2::new((local.x / size.x + 0.5) * w, (0.5 - local.y / size.y) * h),
         t,
     ))
 }
@@ -621,6 +737,169 @@ fn hit_test(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
 mod tests {
     use super::*;
     use vr::{Quat, RawController, mock::MockBackend};
+
+    fn advance(ov: &mut Overlay, vr: &mut MockBackend, seconds: f32) {
+        let now = Instant::now();
+        for (_, last) in ov.animations.values_mut() {
+            *last = now - std::time::Duration::from_secs_f32(seconds);
+        }
+        ov.animate(vr, now);
+    }
+
+    #[test]
+    fn entrance_and_exit_reach_backend_without_new_ui_frames() {
+        let (mut vr, mut ov) = setup();
+        vr.unsupported_alpha = true;
+        let pose = ov.panel(0).pose;
+        ov.submit(&mut vr, 0, 2, 1, &[80, 40, 20, 128, 200, 100, 50, 255]);
+        assert_eq!(vr.overlays[0].width_m, 0.75);
+        assert_eq!(vr.overlays[0].texture.as_ref().unwrap().rgba, [0; 8]);
+        advance(&mut ov, &mut vr, 0.1);
+        assert!((vr.overlays[0].width_m - 0.96875).abs() < 1e-6);
+        assert_eq!(
+            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            [70, 35, 18, 112]
+        );
+        // UI の次の描画が届いても、インを最初からやり直さない。
+        ov.submit(&mut vr, 0, 2, 1, &[80, 40, 20, 128, 200, 100, 50, 255]);
+        advance(&mut ov, &mut vr, 0.1);
+        assert_eq!(vr.overlays[0].width_m, 1.0);
+        assert_eq!(
+            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            [80, 40, 20, 128]
+        );
+        assert!(ov.animations.is_empty());
+
+        ov.close(&mut vr, 0);
+        assert!(ov.panel(0).closed && vr.overlays[0].visible);
+        advance(&mut ov, &mut vr, 0.075);
+        assert!((vr.overlays[0].width_m - 0.96875).abs() < 1e-6);
+        assert_eq!(
+            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            [70, 35, 18, 112]
+        );
+        // 閉じた UI から遅れて届く描画は、アウトの絵を上書きしない。
+        ov.submit(&mut vr, 0, 1, 1, &[255; 4]);
+        advance(&mut ov, &mut vr, 0.075);
+        assert!(!vr.overlays[0].visible);
+        assert_eq!(vr.overlays[0].width_m, 0.75);
+        assert_eq!(vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0), [0; 4]);
+        assert!(ov.panel(0).texture.is_none() && ov.animations.is_empty());
+        assert_eq!(ov.panel(0).pose, pose);
+    }
+
+    #[test]
+    fn native_alpha_does_not_modify_or_resubmit_pixels() {
+        let (mut vr, mut ov) = setup();
+        ov.submit(&mut vr, 0, 1, 1, &[80, 40, 20, 128]);
+        assert_eq!(vr.overlays[0].alpha, 0.0);
+        advance(&mut ov, &mut vr, 0.1);
+        assert_eq!(vr.overlays[0].alpha, 0.875);
+        assert_eq!(vr.overlays[0].pixel_submissions, 1);
+        assert_eq!(
+            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            [80, 40, 20, 128]
+        );
+        ov.submit(&mut vr, 0, 1, 1, &[40, 20, 10, 64]);
+        assert_eq!(vr.overlays[0].alpha, 0.875);
+        advance(&mut ov, &mut vr, 0.1);
+        assert_eq!(vr.overlays[0].alpha, 1.0);
+        ov.close(&mut vr, 0);
+        advance(&mut ov, &mut vr, 0.075);
+        assert_eq!(vr.overlays[0].alpha, 0.875);
+        assert_eq!(vr.overlays[0].pixel_submissions, 2);
+        assert_eq!(
+            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            [40, 20, 10, 64]
+        );
+        advance(&mut ov, &mut vr, 0.075);
+        assert_eq!(vr.overlays[0].alpha, 0.0);
+        assert!(!vr.overlays[0].visible);
+    }
+
+    #[test]
+    fn close_interrupts_entrance_and_repeated_close_does_not_restart() {
+        let (mut vr, mut ov) = setup();
+        ov.submit(&mut vr, 0, 1, 1, &[255; 4]);
+        advance(&mut ov, &mut vr, 0.05);
+        let before = vr.overlays[0].width_m;
+        ov.close(&mut vr, 0);
+        assert_eq!(vr.overlays[0].width_m, before);
+        controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
+        assert!(ov.tick(&mut vr).is_empty());
+        advance(&mut ov, &mut vr, 0.075);
+        assert!(vr.overlays[0].width_m < before);
+        ov.close(&mut vr, 0);
+        advance(&mut ov, &mut vr, 0.075);
+        assert!(!vr.overlays[0].visible && ov.animations.is_empty());
+    }
+
+    #[test]
+    fn opt_out_is_per_panel_and_finishes_running_animation() {
+        let (mut vr, mut ov) = setup();
+        let other = ov
+            .add_panel(&mut vr, "other", Pose::IDENTITY, Vec2::ONE, (100, 100))
+            .unwrap();
+        ov.set_animated(&mut vr, other, false);
+        for id in [0, other] {
+            ov.submit(&mut vr, id, 1, 1, &[255; 4]);
+        }
+        assert_eq!(vr.overlays[0].width_m, 0.75);
+        assert_eq!(vr.overlays[other].width_m, 1.0);
+        assert_eq!(
+            vr.overlays[other].texture.as_ref().unwrap().pixel(0, 0),
+            [255; 4]
+        );
+        ov.set_animated(&mut vr, 0, false);
+        assert_eq!(vr.overlays[0].width_m, 1.0);
+        assert!(ov.animations.is_empty());
+        ov.close(&mut vr, other);
+        assert!(!vr.overlays[other].visible);
+        ov.set_animated(&mut vr, 0, true);
+        ov.close(&mut vr, 0);
+        assert!(vr.overlays[0].visible);
+        ov.set_animated(&mut vr, 0, false);
+        assert!(!vr.overlays[0].visible && ov.animations.is_empty());
+    }
+
+    #[test]
+    fn scale_keeps_center_and_hit_coordinates_when_resized() {
+        let (mut vr, mut ov) = setup();
+        let pose = ov.panel(0).pose;
+        ov.submit(&mut vr, 0, 1, 1, &[255; 4]);
+        ov.set_resolution(&mut vr, 0, (200, 100));
+        assert_eq!(vr.overlays[0].width_m, 1.5);
+        let p = ov.panel(0);
+        assert_eq!(p.pixel_to_world(Vec2::new(100.0, 50.0)), pose.position);
+        assert_eq!(
+            p.pixel_to_world(Vec2::ZERO),
+            pose.transform_point(Vec3::new(-0.75, 0.375, 0.0))
+        );
+        let (px, _) = hit_test(p, &at(0.375, 0.0, 0.0)).unwrap();
+        assert_eq!(px, Vec2::new(150.0, 50.0));
+        assert!(hit_test(p, &at(0.8, 0.0, 0.0)).is_none());
+        advance(&mut ov, &mut vr, 0.2);
+        assert_eq!(vr.overlays[0].width_m, 2.0);
+        assert_eq!(ov.panel(0).pose, pose);
+    }
+
+    #[test]
+    fn tick_uses_elapsed_time_and_pointers_opt_out() {
+        let (mut vr, mut ov, laser, cursor) = with_pointers();
+        for id in [laser, cursor] {
+            assert!(!ov.panel(id).animated);
+        }
+        ov.submit(&mut vr, 0, 1, 1, &[255; 4]);
+        ov.animations.get_mut(&0).unwrap().1 =
+            Instant::now() - std::time::Duration::from_millis(250);
+        ov.tick(&mut vr);
+        assert_eq!(vr.overlays[0].width_m, 1.0);
+        assert_eq!(
+            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            [255; 4]
+        );
+        assert!(ov.animations.is_empty());
+    }
 
     fn setup() -> (MockBackend, Overlay) {
         let mut vr = MockBackend::default();
@@ -1138,7 +1417,8 @@ mod tests {
 
     #[test]
     fn submit_reaches_backend() {
-        let (mut vr, ov) = setup();
+        let (mut vr, mut ov) = setup();
+        ov.set_animated(&mut vr, 0, false);
         let mut rgba = vec![0; 200 * 200 * 4];
         rgba[..4].copy_from_slice(&[1, 2, 3, 4]);
         ov.submit(&mut vr, 0, 200, 200, &rgba);

@@ -143,6 +143,7 @@ pub enum WebCommand {
     Attach(WebDevice),
     Detach,
     Lock(bool),
+    Animated(bool),
     Close,
     /// ウィンドウ（WebView のビューポート）を論理ピクセルでこの大きさにする。パネルの解像度も合わせる。
     Resize {
@@ -161,6 +162,7 @@ pub struct WebStatus {
     pub runtime: &'static str,
     pub attached: Option<WebDevice>,
     pub locked: bool,
+    pub animated: bool,
     /// 見えているトラッカーの ID（取り付け先の候補）。
     pub trackers: Vec<String>,
     /// メニューボタンを押している。
@@ -188,6 +190,7 @@ impl WebStatus {
             },
             attached: s.attached.as_ref().map(WebDevice::from_device),
             locked: s.locked,
+            animated: s.animated,
             trackers: s.trackers,
             menu: s.menu,
             grabbed: s.grabbed,
@@ -641,6 +644,7 @@ impl Host {
             }
             WebCommand::Detach => kernel.apply(panel, PanelCommand::Detach),
             WebCommand::Lock(l) => kernel.apply(panel, PanelCommand::Lock(l)),
+            WebCommand::Animated(a) => kernel.apply(panel, PanelCommand::Animated(a)),
             WebCommand::Close => {
                 kernel.apply(panel, PanelCommand::Close);
                 self.forget(panel);
@@ -854,6 +858,7 @@ mod tests {
         let parse = |s: &str| serde_json::from_str::<WebCommand>(s).unwrap();
         assert_eq!(parse(r#""detach""#), WebCommand::Detach);
         assert_eq!(parse(r#"{"lock":true}"#), WebCommand::Lock(true));
+        assert_eq!(parse(r#"{"animated":false}"#), WebCommand::Animated(false));
         assert_eq!(
             parse(r#"{"attach":"left"}"#),
             WebCommand::Attach(WebDevice::Left)
@@ -886,8 +891,10 @@ mod tests {
             PanelCommand::Attach(Device::Controller(Hand::Left), HAND_OFFSET),
         );
         k.apply(p, PanelCommand::Lock(true));
+        k.apply(p, PanelCommand::Animated(false));
         k.apply(p, PanelCommand::Resize(400, 300));
         let s = WebStatus::of(&k, p);
+        assert!(!s.animated);
         assert_eq!(
             (
                 s.runtime,

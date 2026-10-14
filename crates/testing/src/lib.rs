@@ -167,6 +167,10 @@ impl Render for Testing {
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
 
         let vr_row = row()
+            .child(
+                button("animate-panel", "Animation", st.animated)
+                    .on_click(command(self.panel, PanelCommand::Animated(!st.animated))),
+            )
             .child(button("spawn-panel", "Spawn panel", false).on_click(spawn(self.panel)))
             .child(
                 button("spawn-transparent", "Spawn transparent", false)

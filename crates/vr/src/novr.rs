@@ -33,6 +33,10 @@ impl VrBackend for NoVrBackend {
 
     fn set_overlay_visible(&mut self, _id: OverlayId, _visible: bool) {}
 
+    fn set_overlay_alpha(&mut self, _id: OverlayId, _alpha: f32) -> bool {
+        true
+    }
+
     fn set_overlay_sort(&mut self, _id: OverlayId, _order: u32) {}
 
     fn submit_overlay_pixels(&mut self, _id: OverlayId, _w: u32, _h: u32, _rgba: &[u8]) {}

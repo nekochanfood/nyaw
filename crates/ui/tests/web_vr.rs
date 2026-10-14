@@ -393,7 +393,14 @@ fn transparent_page(page: &mut Page, vr: &mut Vr) {
         assert!(Instant::now() < deadline, "ウィンドウが閉じない");
         std::thread::sleep(Duration::from_millis(20));
     }
-    assert_eq!(vr.texture_size(1), Some((1, 1)), "閉じたパネルは透明な 1px");
+    let deadline = Instant::now() + common::TIMEOUT;
+    while vr.texture_size(1) != Some((1, 1)) {
+        assert!(
+            Instant::now() < deadline,
+            "アウト後にパネルが透明な 1px にならない"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
 
     page.label = "panel-0".into();
     (vr.panel, vr.resolution, vr.overlay) = (PANEL_POS, (640, 480), 0);

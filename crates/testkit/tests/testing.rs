@@ -29,6 +29,17 @@ fn lock_button_toggles(kit: &mut impl Driver<Testing>) {
 }
 on_every_runtime!(lock_button_toggles, |_, _| Testing::default());
 
+fn animation_button_opts_out(kit: &mut impl Driver<Testing>) {
+    // キットの既定は異なるが、どちらも最初のクリックで切り替わる。
+    let before = kit.color_at("animate-panel");
+    kit.click("animate-panel").hover("click-me");
+    let after = kit.color_at("animate-panel");
+    assert_ne!(before, after);
+    kit.click("animate-panel").hover("click-me");
+    assert_eq!(kit.color_at("animate-panel"), before);
+}
+on_every_runtime!(animation_button_opts_out, |_, _| Testing::default());
+
 /// 取り付け先はどれか1つだけ光り、外すと消える。
 /// （操作している右手に取り付けるとレーザーの先にパネルが付いてきて他を指せないので、右手は attach.rs で左手から操作する）
 fn attach_buttons_show_target(kit: &mut impl Driver<Testing>) {

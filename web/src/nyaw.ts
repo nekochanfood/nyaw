@@ -10,6 +10,7 @@ export type Command =
   | "close"
   | { attach: Device }
   | { lock: boolean }
+  | { animated: boolean }
   | { pointer_mode: PointerMode }
   | { resize: { width: number; height: number } };
 
@@ -20,6 +21,7 @@ export interface Status {
   pointer_mode: PointerMode;
   attached: Device | null;
   locked: boolean;
+  animated: boolean;
   trackers: string[];
   menu: boolean;
   grabbed: boolean;

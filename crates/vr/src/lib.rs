@@ -13,7 +13,10 @@ mod openvr;
 
 /// testkit の実ランタイムテスト用。上位層からは使わない。
 #[doc(hidden)]
-pub use openvr::{overlay_image as openvr_overlay_image, runtime_path as openvr_runtime_path};
+pub use openvr::{
+    overlay_image as openvr_overlay_image, overlay_state as openvr_overlay_state,
+    runtime_path as openvr_runtime_path,
+};
 mod openxr;
 
 use std::fmt;
@@ -195,6 +198,10 @@ pub trait VrBackend {
     fn set_overlay_height(&mut self, id: OverlayId, height_m: f32);
     /// 作成直後は表示されている。
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool);
+    /// 不透明度（0〜1）をランタイムで合成する。未対応なら `false`（呼び出し側が画素を減衰させる）。
+    fn set_overlay_alpha(&mut self, _id: OverlayId, _alpha: f32) -> bool {
+        false
+    }
     /// 重なったときの描画順。大きいほど手前に描かれる（既定 0）。奥行きでは決まらない。
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32);
     /// RGBA8、行間に詰め物なし。
@@ -234,6 +241,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
         (**self).set_overlay_visible(id, visible)
+    }
+    fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
+        (**self).set_overlay_alpha(id, alpha)
     }
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
         (**self).set_overlay_sort(id, order)

@@ -371,6 +371,7 @@ pub struct PanelSpec {
     attach: Option<(Device, Pose)>,
     /// 起動時から掴めない。
     locked: bool,
+    animated: bool,
     /// レーザーを描くパネル。
     pointer: Option<(Hand, Pointer)>,
     content: Content,
@@ -398,6 +399,7 @@ impl PanelSpec {
             resolution: PANEL_PX,
             attach: None,
             locked: false,
+            animated: true,
             pointer: None,
             content,
         }
@@ -456,6 +458,12 @@ impl PanelSpec {
     /// 起動時から掴めなくする。
     pub fn locked(mut self) -> Self {
         self.locked = true;
+        self
+    }
+
+    /// このパネルのイン・アウトアニメーションを無効にする。
+    pub fn without_animation(mut self) -> Self {
+        self.animated = false;
         self
     }
 
@@ -913,6 +921,9 @@ fn open_panel(
             spec.resolution,
         )
         .expect("create overlay");
+    if !spec.animated {
+        kernel.apply(panel, PanelCommand::Animated(false));
+    }
     if let Some((device, offset)) = spec.attach.take() {
         kernel.apply(panel, PanelCommand::Attach(device, offset));
     }
@@ -1020,12 +1031,14 @@ mod tests {
         let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default())
             .sized(Vec2::new(0.1, 0.05), (10, 5))
             .attached(hand.clone(), Pose::IDENTITY)
-            .locked();
+            .locked()
+            .without_animation();
         let mut webs = WebSlot::new(&[], None);
         let (panel, _) = cx.update(|cx| open_panel(&mut kernel, spec, 0, cx, &mut webs));
         let p = kernel.panel(panel);
         assert_eq!(p.attached, Some((hand, Pose::IDENTITY)));
         assert!(p.locked);
+        assert!(!p.animated);
         assert_eq!((p.size, p.resolution), (Vec2::new(0.1, 0.05), (10, 5)));
     }
 
@@ -1054,6 +1067,7 @@ mod tests {
                     runtime: Some(Runtime::NoVr),
                     attached: Some(Device::Hmd),
                     locked: true,
+                    animated: true,
                     ..Default::default()
                 }
             );
@@ -1062,10 +1076,11 @@ mod tests {
                 .get_mut(&panel)
                 .unwrap()
                 .commands
-                .push(PanelCommand::Detach);
+                .extend([PanelCommand::Detach, PanelCommand::Animated(false)]);
             sync_panel(&mut kernel, panel, cx);
         });
         assert_eq!(kernel.panel(panel).attached, None);
+        assert!(!kernel.panel(panel).animated);
     }
 
     /// Web のページのパネルも GPUI のパネルと同じく置く（隣に開く・目の前に出す）。ビューにはならない。

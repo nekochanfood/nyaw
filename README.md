@@ -17,6 +17,14 @@ NYAW_LOG=debug cargo run   # ログレベル変更（trace/debug/info/warn/error
 
 ログは標準エラーと `%LOCALAPPDATA%\nyaw\logs\nyaw.log`（Linux は `$XDG_STATE_HOME/nyaw/logs`）に出る。
 
+VR パネルは中央をアンカーに、サイズ 75%→100%・不透明度 0%→100% で表示し（200ms）、閉じると逆方向に消える（150ms）。
+`animato` で実時間を使って進め、最初の描画が届いてから開始する。途中で閉じても現在の状態から消え、入力は即座に止まる。
+各インスタンスで `PanelSpec::without_animation()` を指定すると無効化できる（GPUI・Web 共通）。
+作成後は `PanelCommand::Animated(false)`（Web は `nyaw.command({ animated: false })`）でも切り替えられる。
+Testing の Animation ボタンでも自分のパネルだけ切り替えられる。レーザー・カーソル・ドラッグ表示は既定で無効。
+フェードは OpenVR の `SetOverlayAlpha`、OpenXR の `XR_KHR_composition_layer_color_scale_bias` で合成し、再生中の画像の再転送を避ける。
+不透明度 API の無いランタイムだけ、加工前の描画を保持して RGBA を減衰させて転送する。デスクトップの OS ウィンドウは対象外。
+
 `--profile` を付けると、FPS・フレーム時間・CPU/GPU の内訳・ドロップフレームをグラフと数値で出すプロファイラパネルが開き（Testing パネルの Profiler ボタンでも開閉・計測の有効/無効を切り替えられる。パネルの Close で止まる）、
 1 フレーム 1 行の CSV を同じログフォルダの `profile.csv` に書き出す（前回分は `profile-prev.csv`）。
 
@@ -29,6 +37,7 @@ cargo test --workspace     # novr 上の E2E を含む（実ランタイム不�
 cargo runtimes list        # 実ランタイム (Monado / SteamVR) の状態
 cargo runtimes install     # Monado を導入するウィザード（SteamVR は Steam 側で入れる）
 cargo test -p testkit --test runtimes   # 実ランタイムでの E2E
+cargo test -p overlay --test animation_runtime -- --ignored # 起動済み SteamVR でアニメーション画像を検証（HMD 必須）
 ```
 
 ### Web のページ（`web/`）

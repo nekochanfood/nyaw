@@ -69,6 +69,9 @@ impl VrBackend for SharedMock {
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
         self.0.lock().unwrap().set_overlay_visible(id, visible)
     }
+    fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
+        self.0.lock().unwrap().set_overlay_alpha(id, alpha)
+    }
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
         self.0.lock().unwrap().set_overlay_sort(id, order)
     }

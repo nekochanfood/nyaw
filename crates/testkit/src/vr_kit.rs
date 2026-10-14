@@ -82,6 +82,8 @@ impl<'a, V: Render> VrKit<'a, V> {
         let panel = kernel
             .add_panel("testkit", pose, size, res)
             .expect("モックはパネル作成に失敗しない");
+        // 通常の操作テストは時間に依存させない。アニメーションは overlay / kernel で検証する。
+        kernel.apply(panel, kernel::PanelCommand::Animated(false));
         let mut kit = Self {
             cx,
             views: vec![Some(view)],
@@ -113,6 +115,7 @@ impl<'a, V: Render> VrKit<'a, V> {
             .kernel
             .add_panel(&format!("testkit.{}", self.windows.len()), pose, size, res)
             .expect("モックはパネル作成に失敗しない");
+        self.kernel.apply(id, kernel::PanelCommand::Animated(false));
         self.views.push(Some(view));
         self.windows.push(window);
         self.step();
@@ -260,6 +263,8 @@ impl<'a, V: Render> VrKit<'a, V> {
             .add_panel(&format!("testkit.{id}"), pose, size, res)
             .unwrap();
         assert_eq!(panel, id);
+        self.kernel
+            .apply(panel, kernel::PanelCommand::Animated(false));
         self.views.push(view);
         self.windows.push(window);
         cx.update(|_, cx| ui::sync_panel(&mut self.kernel, panel, cx));

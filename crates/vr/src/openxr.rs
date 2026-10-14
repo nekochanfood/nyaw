@@ -99,6 +99,7 @@ struct Overlay {
     height_m: Option<f32>,
     pose: Pose,
     visible: bool,
+    color_scale: xr::sys::CompositionLayerColorScaleBiasKHR,
     sort: u32,
     swapchain: Option<Swapchain>,
 }
@@ -161,6 +162,8 @@ impl OpenXrBackend {
         let mut extensions = xr::ExtensionSet::default();
         extensions.extx_overlay = true;
         extensions.khr_vulkan_enable2 = true;
+        extensions.khr_composition_layer_color_scale_bias =
+            available.khr_composition_layer_color_scale_bias;
         // トラッカーは任意。無いランタイムでもコントローラだけで動く。
         let has_trackers = available.htcx_vive_tracker_interaction;
         extensions.htcx_vive_tracker_interaction = has_trackers;
@@ -384,31 +387,42 @@ impl OpenXrBackend {
                 let height_m = o
                     .height_m
                     .unwrap_or(o.width_m * sc.height as f32 / sc.width as f32);
-                Some(
-                    xr::CompositionLayerQuad::new()
-                        .layer_flags(
-                            // GPUI の描画は透明な背景に合成した事前乗算アルファ。
-                            xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA,
-                        )
-                        .space(&self.stage)
-                        .eye_visibility(xr::EyeVisibility::BOTH)
-                        .sub_image(
-                            xr::SwapchainSubImage::new()
-                                .swapchain(&sc.handle)
-                                .image_rect(xr::Rect2Di {
-                                    offset: xr::Offset2Di { x: 0, y: 0 },
-                                    extent: xr::Extent2Di {
-                                        width: sc.width as i32,
-                                        height: sc.height as i32,
-                                    },
-                                }),
-                        )
-                        .pose(to_posef(o.pose))
-                        .size(xr::Extent2Df {
-                            width: o.width_m,
-                            height: height_m,
-                        }),
-                )
+                let mut quad = xr::CompositionLayerQuad::new()
+                    .layer_flags(
+                        // GPUI の描画は透明な背景に合成した事前乗算アルファ。
+                        xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA,
+                    )
+                    .space(&self.stage)
+                    .eye_visibility(xr::EyeVisibility::BOTH)
+                    .sub_image(
+                        xr::SwapchainSubImage::new()
+                            .swapchain(&sc.handle)
+                            .image_rect(xr::Rect2Di {
+                                offset: xr::Offset2Di { x: 0, y: 0 },
+                                extent: xr::Extent2Di {
+                                    width: sc.width as i32,
+                                    height: sc.height as i32,
+                                },
+                            }),
+                    )
+                    .pose(to_posef(o.pose))
+                    .size(xr::Extent2Df {
+                        width: o.width_m,
+                        height: height_m,
+                    })
+                    .into_raw();
+                if self
+                    .instance
+                    .exts()
+                    .khr_composition_layer_color_scale_bias
+                    .is_some()
+                {
+                    quad.next = (&o.color_scale
+                        as *const xr::sys::CompositionLayerColorScaleBiasKHR)
+                        .cast();
+                }
+                // SAFETY: swapchain・stage・拡張構造体は、下の xrEndFrame が終わるまで保持される。
+                Some(unsafe { xr::CompositionLayerQuad::from_raw(quad) })
             })
             .collect();
         let layers: Vec<&xr::CompositionLayerBase<xr::Vulkan>> =
@@ -716,6 +730,22 @@ impl VrBackend for OpenXrBackend {
                 height_m: None,
                 pose: Pose::IDENTITY,
                 visible: true,
+                color_scale: xr::sys::CompositionLayerColorScaleBiasKHR {
+                    ty: xr::sys::CompositionLayerColorScaleBiasKHR::TYPE,
+                    next: std::ptr::null(),
+                    color_scale: xr::Color4f {
+                        r: 1.0,
+                        g: 1.0,
+                        b: 1.0,
+                        a: 1.0,
+                    },
+                    color_bias: xr::Color4f {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    },
+                },
                 sort: 0,
                 swapchain: None,
             },
@@ -745,6 +775,22 @@ impl VrBackend for OpenXrBackend {
         if let Some(o) = self.overlays.get_mut(&id.0) {
             o.visible = visible;
         }
+    }
+
+    fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
+        if self
+            .instance
+            .exts()
+            .khr_composition_layer_color_scale_bias
+            .is_none()
+        {
+            return false;
+        }
+        if let Some(o) = self.overlays.get_mut(&id.0) {
+            // 拡張は事前乗算を外してから適用するので、RGB は保ち alpha だけを減らす。
+            o.color_scale.color_scale.a = alpha.clamp(0.0, 1.0);
+        }
+        true
     }
 
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {

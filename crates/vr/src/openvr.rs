@@ -464,6 +464,12 @@ impl VrBackend for OpenVrBackend {
         log(check("SetOverlaySortOrder", e));
     }
 
+    fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
+        let e = unsafe { f(self.overlay().SetOverlayAlpha)(id.0, alpha.clamp(0.0, 1.0)) };
+        log(check("SetOverlayAlpha", e));
+        true
+    }
+
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         assert_eq!(
             rgba.len(),
@@ -495,6 +501,21 @@ pub fn overlay_image(id: OverlayId) -> Result<(u32, u32, Vec<u8>), VrError> {
         )
     })?;
     Ok((w, h, buf))
+}
+
+/// 実ランタイムテスト用: 最後に設定された（幅, 不透明度, 表示）を読み戻す。
+pub fn overlay_state(id: OverlayId) -> Result<(f32, f32, bool), VrError> {
+    let client = Client::load()?;
+    let overlay =
+        unsafe { &*client.interface::<sys::VR_IVROverlay_FnTable>(sys::IVROverlay_Version)? };
+    let (mut width, mut alpha) = (0.0, 0.0);
+    check("GetOverlayWidthInMeters", unsafe {
+        f(overlay.GetOverlayWidthInMeters)(id.0, &mut width)
+    })?;
+    check("GetOverlayAlpha", unsafe {
+        f(overlay.GetOverlayAlpha)(id.0, &mut alpha)
+    })?;
+    Ok((width, alpha, unsafe { f(overlay.IsOverlayVisible)(id.0) }))
 }
 
 fn check(what: &str, e: sys::EVROverlayError) -> Result<(), VrError> {

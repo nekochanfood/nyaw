@@ -180,6 +180,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "animato"
+version = "1.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3442e820517e920a1ac56d9e331be066374ecf1e9deda46c4107e3fde0ce12e3"
+dependencies = [
+ "animato-core",
+ "animato-tween",
+]
+
+[[package]]
+name = "animato-core"
+version = "1.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4bec574aad55366acee5e4bcce6f75045f11459db2b1ab4e0ac456fc1d9357ff"
+dependencies = [
+ "libm",
+]
+
+[[package]]
+name = "animato-tween"
+version = "1.7.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3dde84d5eb9a52c61447b0026fd4e1026b96bcb591d99637d9d90770cf4ed20e"
+dependencies = [
+ "animato-core",
+]
+
+[[package]]
 name = "anyhow"
 version = "1.0.104"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4850,6 +4878,7 @@ dependencies = [
 name = "overlay"
 version = "2026.0.1"
 dependencies = [
+ "animato",
  "input",
  "logger",
  "vr",

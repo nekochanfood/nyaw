@@ -17,6 +17,7 @@ test.beforeEach(async ({ page }) => {
       pointer_mode: "mouse",
       attached: null,
       locked: false,
+      animated: true,
       trackers: [],
       menu: false,
       grabbed: false,
@@ -57,6 +58,8 @@ test.beforeEach(async ({ page }) => {
         if (cmd === "panel_command") {
           if (args.command.pointer_mode)
             status = { ...status, pointer_mode: args.command.pointer_mode };
+          if (typeof args.command.animated === "boolean")
+            status = { ...status, animated: args.command.animated };
           dispatch("nyaw:status", status);
           return;
         }
@@ -71,6 +74,16 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript({
     content: readFileSync(new URL("../../crates/ui/src/web/bridge.js", import.meta.url), "utf8"),
   });
+});
+
+test("パネルのアニメーションを個別に無効化できる", async ({ page }) => {
+  await page.goto("/testing/index.html");
+  const animation = page.locator("#animate-panel");
+  await expect(animation).toHaveAttribute("data-on", "");
+  await animation.click();
+  await expect(animation).not.toHaveAttribute("data-on");
+  await animation.click();
+  await expect(animation).toHaveAttribute("data-on", "");
 });
 
 const probe = (page: Page) =>
