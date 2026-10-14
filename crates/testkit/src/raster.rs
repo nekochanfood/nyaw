@@ -63,7 +63,10 @@ pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
                     let px = [to_u8(f.r), to_u8(f.g), to_u8(f.b), 255];
                     row.as_chunks_mut::<4>().0.fill(px);
                 } else {
-                    row.as_chunks_mut::<4>().0.iter_mut().for_each(|d| blend(d, f));
+                    row.as_chunks_mut::<4>()
+                        .0
+                        .iter_mut()
+                        .for_each(|d| blend(d, f));
                 }
             }
             continue;
