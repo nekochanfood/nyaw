@@ -276,6 +276,14 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 - `cargo test -p ui --test panel_lod -- --ignored` で実描画と入力を確認し、`--off` を追加して無効時も確認する（Windows）。
 - ストレステストは `NYAW_STRESS_LOD=0` と `2` で同じ負荷を比較できる。
 
+## パネルの表示アニメーション
+
+- VR パネルは中央をアンカーに、サイズ 75%→100%・不透明度 0%→100% で表示し（200ms）、閉じると逆方向に消える（150ms）。
+- `animato` で実時間を使って進め、最初の描画が届いてから開始する。途中で閉じても現在の状態から消え、入力は即座に止まる。
+- `PanelSpec::without_animation()` で無効化（GPUI・Web 共通）。作成後は `PanelCommand::Animated(false)`（Web は `nyaw.command({ animated: false })`）、Testing の Animation ボタンでも切り替えられる。レーザー・カーソル・ドラッグ表示は既定で無効。
+- フェードは OpenVR の `SetOverlayAlpha`、OpenXR の `XR_KHR_composition_layer_color_scale_bias` で合成し、再生中の画像の再転送を避ける。不透明度 API の無いランタイムだけ、加工前の描画を保持して RGBA を減衰させて転送する。デスクトップの OS ウィンドウは対象外。
+- `cargo test -p overlay --test animation_runtime -- --ignored` で起動済み SteamVR でアニメーション画像を検証（HMD 必須）。
+
 ## 未実装（土台のみ）
 
 - 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は Monado（Windows、simulated）でパネルが映るところまで確認済みで、コントローラ入力は未確認。
