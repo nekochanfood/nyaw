@@ -25,4 +25,4 @@ lod_quality = 2 # 遠くのパネルの解像度を下げる度合い。0 = Off�
 
 ## ライセンス
 
-[MIT](LICENSE-MIT) または [Apache-2.0](LICENSE-APACHE) のどちらかを選んで使える。
+[MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
