@@ -267,12 +267,6 @@ fn start_drag(
     Some((hand, *dp))
 }
 
-/// 位置はそのまま、向きを水平方向（Y 軸回り）だけにした姿勢。前方は -Z。
-fn level(p: Pose) -> Pose {
-    let f = p.orientation * Vec3::NEG_Z;
-    Pose::new(p.position, Quat::from_rotation_y((-f.x).atan2(-f.z)))
-}
-
 type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
 
 /// 画面と VR 空間での配置。異なる画面型を同じ起動リストに入れられる。
@@ -360,7 +354,7 @@ impl PanelSpec {
                         Quat::IDENTITY,
                     )
             }
-            None if self.in_view => level(kernel.hmd()) * self.pose,
+            None if self.in_view => kernel.hmd().leveled() * self.pose,
             None => self.pose,
         }
     }
@@ -848,7 +842,7 @@ mod tests {
             Vec3::new(1.0, 1.6, 0.0),
             Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.5),
         );
-        let p = level(head) * Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
+        let p = head.leveled() * Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
         assert!(p.position.abs_diff_eq(Vec3::new(2.0, 1.6, 0.0), 1e-5));
         assert!((p.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
     }

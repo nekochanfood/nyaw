@@ -20,6 +20,8 @@ pub enum PanelCommand {
     Close,
     /// その手のレーザーを描くパネルにする（ヒット判定の対象外になり、置き場所はオーバーレイが決める）。
     Pointer(Hand, Pointer),
+    /// 解像度（UI の論理ピクセル）を変える。1m あたりのピクセル数を保って VR 上の大きさも変わる。
+    Resize(u32, u32),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -144,6 +146,7 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Pointer(hand, part) => {
                 self.overlay.set_pointer(&mut self.vr, panel, hand, part)
             }
+            PanelCommand::Resize(w, h) => self.overlay.set_resolution(&mut self.vr, panel, (w, h)),
         }
     }
 
@@ -193,6 +196,15 @@ mod tests {
         assert!(!k.status(p).locked);
         k.apply(p, PanelCommand::Lock(true));
         assert!(k.status(p).locked);
+    }
+
+    #[test]
+    fn apply_resize_changes_resolution_and_vr_width() {
+        let (mut k, p) = kernel();
+        k.apply(p, PanelCommand::Resize(8, 2));
+        assert_eq!(k.panel(p).resolution, (8, 2));
+        assert_eq!(k.panel(p).size, Vec2::new(2.0, 0.5));
+        assert_eq!(k.vr.overlays[0].width_m, 2.0);
     }
 
     #[test]

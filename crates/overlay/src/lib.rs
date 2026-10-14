@@ -241,6 +241,22 @@ impl Overlay {
         self.panels[id].locked = locked;
     }
 
+    /// パネルの解像度（UI のピクセル数）を変える。1m あたりのピクセル数は保ち、VR 上の大きさも同じ割合で変える
+    /// （ウィンドウを広げると、中身が縮まずにパネルが広がる）。中心の位置は変えない。
+    pub fn set_resolution(&mut self, vr: &mut dyn VrBackend, id: PanelId, resolution: (u32, u32)) {
+        let p = &mut self.panels[id];
+        let (w, h) = (resolution.0.max(1), resolution.1.max(1));
+        if p.resolution == (w, h) {
+            return;
+        }
+        p.size = Vec2::new(
+            p.size.x * w as f32 / p.resolution.0 as f32,
+            p.size.y * h as f32 / p.resolution.1 as f32,
+        );
+        p.resolution = (w, h);
+        vr.set_overlay_width(p.overlay, p.size.x);
+    }
+
     /// `hand` のレーザーを描くパネルにする。以降はヒット判定の対象外になり、毎 tick レーザーに合わせて置かれる。
     pub fn set_pointer(&mut self, vr: &mut dyn VrBackend, id: PanelId, hand: Hand, part: Pointer) {
         let p = &mut self.panels[id];
@@ -677,6 +693,27 @@ mod tests {
             &[],
         );
         assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Leave]);
+    }
+
+    #[test]
+    fn resize_keeps_pixel_density_and_hit_mapping() {
+        let (mut vr, mut ov) = setup();
+        // 100px = 1m のパネルを 200x50 にすると 2m x 0.5m になる。
+        ov.set_resolution(&mut vr, 0, (200, 50));
+        assert_eq!(ov.panel(0).size, Vec2::new(2.0, 0.5));
+        assert_eq!(vr.overlays[0].width_m, 2.0);
+        // 中心から右へ 0.75m・上へ 0.125m は、新しい解像度で (175, 12.5)。
+        controller(
+            &mut vr,
+            Pose::new(Vec3::new(0.75, 0.125, 0.0), Quat::IDENTITY),
+            &[],
+        );
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [PointerEvent::Move {
+                pos: Vec2::new(175.0, 12.5)
+            }]
+        );
     }
 
     #[test]

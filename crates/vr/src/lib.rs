@@ -48,6 +48,13 @@ impl Pose {
         self.orientation * Vec3::NEG_Z
     }
 
+    /// 位置はそのまま、向きを水平方向（Y 軸回り）だけにした姿勢。前方は -Z。
+    /// 頭の前にパネルを出すとき、うつむき・首の傾きを無視して立てて置くのに使う。
+    pub fn leveled(&self) -> Pose {
+        let f = self.forward();
+        Pose::new(self.position, Quat::from_rotation_y((-f.x).atan2(-f.z)))
+    }
+
     pub fn inverse(&self) -> Pose {
         let inv = self.orientation.inverse();
         Pose {
@@ -288,6 +295,19 @@ mod tests {
         let id = p * p.inverse();
         assert!(id.position.abs_diff_eq(Vec3::ZERO, 1e-5));
         assert!(id.orientation.abs_diff_eq(Quat::IDENTITY, 1e-5));
+    }
+
+    #[test]
+    fn leveled_keeps_heading_and_drops_pitch() {
+        // +X を向き、うつむいた頭。
+        let head = Pose::new(
+            Vec3::new(1.0, 1.6, 0.0),
+            Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.5),
+        );
+        let l = head.leveled();
+        assert_eq!(l.position, head.position);
+        assert!(l.forward().abs_diff_eq(Vec3::X, 1e-5));
+        assert!((l.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
     }
 
     #[test]
