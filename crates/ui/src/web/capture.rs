@@ -176,21 +176,21 @@ mod platform {
     /// PNG を RGBA8 にする。
     fn decode(bytes: &[u8]) -> Result<Image, String> {
         let mut decoder = png::Decoder::new(bytes);
-        decoder.set_transformations(png::Transformations::normalize_to_color8());
+        // CapturePreview の PNG は RGB（アルファ無し）。アルファの付け足しも（最適化された）png に任せる。
+        // 自前で画素ごとに詰め直すと、最適化しないデバッグビルドでは 800x600 で 40ms かかっていた。
+        decoder.set_transformations(
+            png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
+        );
         let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
-        let mut data = vec![0; reader.output_buffer_size()];
-        let info = reader.next_frame(&mut data).map_err(|e| e.to_string())?;
-        data.truncate(info.buffer_size());
-        let rgba = match info.color_type {
-            png::ColorType::Rgba => data,
-            png::ColorType::Rgb => data
-                .as_chunks::<3>()
-                .0
-                .iter()
-                .flat_map(|p| [p[0], p[1], p[2], 255])
-                .collect(),
-            c => return Err(format!("unsupported PNG color format: {c:?}")),
-        };
+        let mut rgba = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut rgba).map_err(|e| e.to_string())?;
+        if info.color_type != png::ColorType::Rgba {
+            return Err(format!(
+                "unsupported PNG color format: {:?}",
+                info.color_type
+            ));
+        }
+        rgba.truncate(info.buffer_size());
         Ok(Image {
             width: info.width,
             height: info.height,
