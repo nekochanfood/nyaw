@@ -275,8 +275,13 @@ impl Emulator {
                 q.visible && q.alpha > 0.0 && q.texture.is_some()
             })
             .collect();
-        // 安定ソートなので、同じ順位なら作った順に重ねる。
-        order.sort_by_key(|&i| self.quads[i].sort);
+        // OpenVR と同じく、描画順が同じなら頭（原点）から遠い順に重ねる（奥行きを押し引きすると前後が入れ替わる）。
+        let far = |i: usize| -self.quads[i].pose.position.length();
+        order.sort_by(|&a, &b| {
+            (self.quads[a].sort, far(a))
+                .partial_cmp(&(self.quads[b].sort, far(b)))
+                .unwrap()
+        });
         for i in order {
             self.draw(i);
         }
@@ -516,8 +521,13 @@ mod tests {
         e.set_overlay_pose(front, Pose::new(Vec3::new(-0.5, 0.0, -2.0), Quat::IDENTITY));
         e.submit_overlay_pixels(front, 1, 1, &[0, 255, 0, 255]);
         let at = e.project(Vec3::new(-0.25, 0.0, -1.0)).unwrap();
-        // 奥にあっても後に作ったほうが手前に描かれる（同じ順位）。
+        // 同じ順位なら近いほうが手前に描かれる（後から作っても奥の緑は隠れる）。
+        assert_eq!(pixel(&e.screenshot(), at), [255, 0, 0, 255]);
+        // 赤を奥へ押すと前後が入れ替わる。
+        e.set_overlay_pose(red, Pose::new(Vec3::new(0.0, 0.0, -3.0), Quat::IDENTITY));
         assert_eq!(pixel(&e.screenshot(), at), [0, 255, 0, 255]);
+        e.set_overlay_pose(red, Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY));
+        e.set_overlay_sort(front, 0);
         e.set_overlay_sort(red, 1);
         assert_eq!(pixel(&e.screenshot(), at), [255, 0, 0, 255]);
         e.set_overlay_visible(red, false);
