@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 
 use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
 
+use crate::compositor::{Draw, Gpu};
+
 use crate::{
     Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec2, Vec3, VrBackend, VrError,
 };
@@ -33,6 +35,8 @@ const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 90);
 /// 1 刻み = 3 行（一般的なホイールの既定）になる。
 // ponytail: 刻みの大きさ（Windows は 120 単位、ほかは OS ごと）は見ず向きだけ。滑らかなスクロールのホイールでは速すぎるかもしれない。
 const WHEEL: f32 = 3.0;
+/// GPU で描くとき、見えたかを求める CPU の合成の縮小率（縦横これで割る）。
+const SEEN_SCALE: u32 = 8;
 /// 合成に使うスレッドの上限（画面を横帯に分けて並べて塗る）。
 const MAX_THREADS: usize = 8;
 /// 模すコントローラの機種（トリガー・グリップ・スティックがそろっている）。
@@ -69,6 +73,9 @@ struct Quad {
 
 /// novr のエミュレーター。本番は [`crate::connect`] がウィンドウ付きで作り、testkit は [`Emulator::headless`] で作る。
 pub struct Emulator {
+    /// GPU コンポジタ。ウィンドウに直接描く（使えなければ CPU で合成して minifb に渡す）。
+    /// ウィンドウを使うので、ウィンドウより先に落とす（フィールドはこの順で落ちる）。
+    gpu: Option<Gpu>,
     /// `None` かつ `!headless` なら最初の poll で開く。
     window: Option<Window>,
     headless: bool,
@@ -77,6 +84,10 @@ pub struct Emulator {
     pixels: Vec<u32>,
     /// 背景の市松模様（`size` の大きさ。変わったら作り直す）。
     background: Vec<u32>,
+    /// GPU で描くときに、見えたかを求めるための縮小した合成の置き場。
+    seen_pixels: Vec<u32>,
+    /// クアッドごとの、GPU へ上げ直すテクスチャがあるか。
+    uploads: Vec<bool>,
     dirty: bool,
     quads: Vec<Quad>,
     /// マウスの位置（ウィンドウのピクセル、左上原点）。ウィンドウの外なら `None`（右手が見えない）。
@@ -105,11 +116,14 @@ impl Emulator {
 
     fn new(size: (u32, u32), headless: bool) -> Self {
         Self {
+            gpu: None,
             window: None,
             headless,
             size,
             pixels: Vec::new(),
             background: Vec::new(),
+            seen_pixels: Vec::new(),
+            uploads: Vec::new(),
             dirty: true,
             quads: Vec::new(),
             pointer: None,
@@ -146,25 +160,13 @@ impl Emulator {
 
     /// 頭の座標系（= トラッキング空間）の点が映る画面上の点。目の後ろなら `None`。
     pub fn project(&self, p: Vec3) -> Option<Vec2> {
-        if p.z > -NEAR {
-            return None;
-        }
-        let (k, b) = self.lens();
-        Some((Vec2::new(p.x, p.y) / -p.z - b) / k)
+        project_at(self.size, p)
     }
 
     /// 画面上の点を通る、目からの視線（z = -1 に正規化）。[`Emulator::project`] の逆。
     fn ray(&self, at: Vec2) -> Vec3 {
-        let (k, b) = self.lens();
+        let (k, b) = lens_at(self.size);
         (at * k + b).extend(-1.0)
-    }
-
-    /// 画面の点 `at` を通る視線の x, y（z = -1）が `at * k + b` になる係数。
-    fn lens(&self) -> (Vec2, Vec2) {
-        let (w, h) = (self.size.0 as f32, self.size.1 as f32);
-        let t = (FOV_Y / 2.0).tan();
-        let k = Vec2::new(2.0 * t / h, -2.0 * t / h);
-        (k, Vec2::new(-t * w / h, t))
     }
 
     /// 今の画面（幅, 高さ, RGBA）。ユーザーに見えている絵。
@@ -219,6 +221,17 @@ impl Emulator {
                 Ok(mut w) => {
                     // 周期は poll が自分で作る（minifb の待ちを合成の時間に混ぜない）。
                     w.set_target_fps(0);
+                    if std::env::var_os("NYAW_EMULATOR_CPU").is_none() {
+                        match Gpu::new(&w, self.size) {
+                            Ok(gpu) => {
+                                logger::info!("エミュレーターは GPU で合成する");
+                                self.gpu = Some(gpu);
+                            }
+                            Err(e) => {
+                                logger::warn!("GPU で合成できないので CPU で合成する", error = e)
+                            }
+                        }
+                    }
                     self.window = Some(w);
                 }
                 Err(e) => {
@@ -237,6 +250,9 @@ impl Emulator {
         if ww > 0 && wh > 0 && (ww as u32, wh as u32) != self.size {
             self.size = (ww as u32, wh as u32);
             self.dirty = true;
+            if let Some(gpu) = &mut self.gpu {
+                gpu.resize(self.size);
+            }
         }
         // 押したままウィンドウの外へ出ても、掴んだパネルやドラッグを放さないよう縁に留める。
         let mode = if self.trigger || self.grab {
@@ -288,41 +304,118 @@ impl Emulator {
                 })
                 .collect();
         }
+        let mut pixels = std::mem::take(&mut self.pixels);
+        let seen = self.rasterize(self.size, &mut pixels, Some(&self.background));
+        self.pixels = pixels;
+        self.mark_seen(&seen);
+    }
+
+    /// 変化があれば GPU で描いて表示する。見えたかは縮小した CPU の合成（縦横 1/[`SEEN_SCALE`]）で求める。
+    fn render_gpu(&mut self) {
+        if !self.dirty {
+            return;
+        }
+        self.dirty = false;
+        let order = self.order();
+        let mut draws = Vec::with_capacity(order.len());
+        for i in order {
+            let Some(size) = self.quad_size(i) else {
+                continue;
+            };
+            let q = &self.quads[i];
+            let upload = std::mem::take(&mut self.uploads[i]);
+            draws.push(Draw {
+                quad: i,
+                pose: q.pose,
+                size,
+                alpha: q.alpha,
+                upload: upload
+                    .then(|| {
+                        q.texture
+                            .as_ref()
+                            .map(|(w, h, rgba)| (*w, *h, rgba.as_slice()))
+                    })
+                    .flatten(),
+            });
+        }
+        if let Some(gpu) = &mut self.gpu
+            && let Err(e) = gpu.draw(&draws, FOV_Y, NEAR)
+        {
+            logger::debug!("エミュレーターの画面を出せない", error = e);
+            self.dirty = true;
+        }
+        drop(draws);
+        let small = (
+            (self.size.0 / SEEN_SCALE).max(1),
+            (self.size.1 / SEEN_SCALE).max(1),
+        );
+        let mut scratch = std::mem::take(&mut self.seen_pixels);
+        let seen = self.rasterize(small, &mut scratch, None);
+        self.seen_pixels = scratch;
+        self.mark_seen(&seen);
+    }
+
+    /// 直前の合成で見えたかを付け直す。
+    fn mark_seen(&mut self, seen: &[(usize, bool)]) {
+        for q in &mut self.quads {
+            q.seen = false;
+        }
+        for &(i, v) in seen {
+            self.quads[i].seen = v;
+        }
+    }
+
+    /// 描くクアッドを、奥から手前へ重ねる順に並べる（OpenVR と同じく描画順、同じなら頭（原点）から遠い順。
+    /// 奥行きを押し引きすると前後が入れ替わる）。
+    fn order(&self) -> Vec<usize> {
         let mut order: Vec<usize> = (0..self.quads.len())
             .filter(|&i| {
                 let q = &self.quads[i];
                 q.visible && q.alpha > 0.0 && q.texture.is_some()
             })
             .collect();
-        // OpenVR と同じく、描画順が同じなら頭（原点）から遠い順に重ねる（奥行きを押し引きすると前後が入れ替わる）。
         let far = |i: usize| -self.quads[i].pose.position.length();
         order.sort_by(|&a, &b| {
             (self.quads[a].sort, far(a))
                 .partial_cmp(&(self.quads[b].sort, far(b)))
                 .unwrap()
         });
-        // 手前から奥へ塗る（画素ごとにここまでの不透明度を持ち、不透明になった画素では奥のクアッドを計算しない。重なりのカリング）。
+        order
+    }
+
+    /// 大きさ `size` の画面に CPU で合成する（`background` が無ければ塗らず、見えたかだけ出す）。
+    /// 手前から奥へ塗り（画素ごとにここまでの不透明度を持ち、不透明になった画素では奥のクアッドを計算しない。重なりのカリング）、
+    /// 画面を横帯に分けて帯ごとに別のスレッドで塗る。クアッドごとに、ほかに隠されていない画素があったかを返す。
+    fn rasterize(
+        &self,
+        size: (u32, u32),
+        pixels: &mut Vec<u32>,
+        background: Option<&[u32]>,
+    ) -> Vec<(usize, bool)> {
+        let (w, h) = size;
+        let mut order = self.order();
         order.reverse();
-        // 画面を横帯に分けて、帯ごとに別のスレッドで全クアッドと背景を塗る。
-        let mut pixels = std::mem::take(&mut self.pixels);
         pixels.resize((w * h) as usize, 0);
-        let rasters: Vec<Raster> = order.into_iter().filter_map(|i| self.raster(i)).collect();
+        let rasters: Vec<Raster> = order
+            .into_iter()
+            .filter_map(|i| self.raster(i, size))
+            .collect();
         let threads = std::thread::available_parallelism()
             .map_or(1, |n| n.get())
             .clamp(1, MAX_THREADS);
         let rows = h.div_ceil(threads as u32).max(1);
         let band = (rows * w) as usize;
-        let background = &self.background;
-        // 帯ごとに、どのクアッドが 1 画素でも見えたかを返す。
         let fill = |(k, px): (usize, &mut [u32])| -> Vec<bool> {
             let y0 = k as u32 * rows;
             let y1 = y0 + (px.len() / w as usize) as u32;
             px.fill(0);
             let seen = rasters.iter().map(|r| r.fill(px, y0, y1, w)).collect();
             // 残った透けている分に背景を敷く。
-            let bg = &background[y0 as usize * w as usize..][..px.len()];
-            for (p, b) in px.iter_mut().zip(bg) {
-                *p = under_background(*p, *b);
+            if let Some(background) = background {
+                let bg = &background[y0 as usize * w as usize..][..px.len()];
+                for (p, b) in px.iter_mut().zip(bg) {
+                    *p = under_background(*p, *b);
+                }
             }
             seen
         };
@@ -341,26 +434,20 @@ impl Emulator {
                     .collect()
             })
         };
-        let drawn: Vec<usize> = rasters.iter().map(|r| r.quad).collect();
-        drop(rasters);
-        self.pixels = pixels;
-        for q in &mut self.quads {
-            q.seen = false;
-        }
-        for (j, &i) in drawn.iter().enumerate() {
-            self.quads[i].seen = seen.iter().any(|band| band[j]);
-        }
+        rasters
+            .iter()
+            .enumerate()
+            .map(|(j, r)| (r.quad, seen.iter().any(|band| band[j])))
+            .collect()
     }
 
     /// クアッド `i` を塗る準備（画面上の範囲と、視線との交点を足し込みで出す係数）。写らなければ `None`。
-    fn raster(&self, i: usize) -> Option<Raster<'_>> {
+    fn raster(&self, i: usize, size: (u32, u32)) -> Option<Raster<'_>> {
         let q = &self.quads[i];
         let (tw, th, tex) = q.texture.as_ref()?;
         let (tw, th) = (*tw, *th);
-        let size = Vec2::new(
-            q.width_m,
-            q.height_m.unwrap_or(q.width_m * th as f32 / tw as f32),
-        );
+        let screen = size;
+        let size = self.quad_size(i)?;
         let (ux, uy, n) = (
             q.pose.orientation * Vec3::X,
             q.pose.orientation * Vec3::Y,
@@ -372,13 +459,13 @@ impl Emulator {
             return None;
         }
         // 4 隅が写る範囲だけを走査する。全部の隅が目の後ろなら写らない。一部が後ろなら全面。
-        let (w, h) = self.size;
+        let (w, h) = screen;
         let world = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
             .map(|(sx, sy)| c + ux * size.x / 2.0 * sx + uy * size.y / 2.0 * sy);
         if world.iter().all(|p| p.z > -NEAR) {
             return None;
         }
-        let corners = world.map(|p| self.project(p));
+        let corners = world.map(|p| project_at(screen, p));
         let (x0, y0, x1, y1) = match corners {
             [Some(a), Some(b), Some(cc), Some(d)] => {
                 let lo = a.min(b).min(cc).min(d).max(Vec2::ZERO);
@@ -394,7 +481,7 @@ impl Emulator {
         };
         // 視線 d = (x*kx + bx, y*ky + by, -1) とクアッドの交点は t = nc / (n·d)。テクスチャ座標は (ux·d) t、(uy·d) t から
         // 出るので、3 つの内積を行ごとに x について足し込めば、ピクセルごとの計算は割り算 1 回で済む。
-        let (k, b) = self.lens();
+        let (k, b) = lens_at(screen);
         let dot = |a: Vec3| [a.x * k.x, a.x * b.x - a.z, a.y * k.y, a.y * b.y];
         Some(Raster {
             quad: i,
@@ -413,10 +500,38 @@ impl Emulator {
         })
     }
 
+    /// クアッド `i` の大きさ（m）。高さを固定していなければテクスチャの縦横比から。テクスチャが無ければ `None`。
+    fn quad_size(&self, i: usize) -> Option<Vec2> {
+        let q = &self.quads[i];
+        let (tw, th, _) = q.texture.as_ref()?;
+        Some(Vec2::new(
+            q.width_m,
+            q.height_m
+                .unwrap_or(q.width_m * *th as f32 / (*tw).max(1) as f32),
+        ))
+    }
+
     fn quad(&mut self, id: OverlayId) -> &mut Quad {
         self.dirty = true;
         &mut self.quads[id.0 as usize]
     }
+}
+
+/// 大きさ `size` の画面で、頭の座標系の点が映る画面上の点。目の後ろなら `None`。
+fn project_at(size: (u32, u32), p: Vec3) -> Option<Vec2> {
+    if p.z > -NEAR {
+        return None;
+    }
+    let (k, b) = lens_at(size);
+    Some((Vec2::new(p.x, p.y) / -p.z - b) / k)
+}
+
+/// 大きさ `size` の画面で、点 `at` を通る視線の x, y（z = -1）が `at * k + b` になる係数。
+fn lens_at(size: (u32, u32)) -> (Vec2, Vec2) {
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    let t = (FOV_Y / 2.0).tan();
+    let k = Vec2::new(2.0 * t / h, -2.0 * t / h);
+    (k, Vec2::new(-t * w / h, t))
 }
 
 /// 乗算済みの ARGB（手前に塗った分）の下に、背景（0RGB）を残った透けている分だけ敷いた 0RGB。
@@ -525,18 +640,26 @@ impl VrBackend for Emulator {
             self.next_frame = Some(next.max(Instant::now() - FRAME) + FRAME);
             self.read_window();
             let t = Instant::now();
-            self.render();
-            let (w, h) = (self.size.0 as usize, self.size.1 as usize);
-            if let Some(win) = &mut self.window {
-                let shown = if self.pixels.len() == w * h {
-                    win.update_with_buffer(&self.pixels, w, h)
-                } else {
-                    // 大きさが変わった直後で、まだ合成していない。
+            if self.gpu.is_some() {
+                self.render_gpu();
+                // GPU が直接ウィンドウに出すので、minifb にはメッセージを回させるだけ。
+                if let Some(win) = &mut self.window {
                     win.update();
-                    Ok(())
-                };
-                if let Err(e) = shown {
-                    logger::warn!("エミュレーターの画面を更新できない", error = e);
+                }
+            } else {
+                self.render();
+                let (w, h) = (self.size.0 as usize, self.size.1 as usize);
+                if let Some(win) = &mut self.window {
+                    let shown = if self.pixels.len() == w * h {
+                        win.update_with_buffer(&self.pixels, w, h)
+                    } else {
+                        // 大きさが変わった直後で、まだ合成していない。
+                        win.update();
+                        Ok(())
+                    };
+                    if let Err(e) = shown {
+                        logger::warn!("エミュレーターの画面を更新できない", error = e);
+                    }
                 }
             }
             self.composite_time = t.elapsed();
@@ -561,6 +684,7 @@ impl VrBackend for Emulator {
             sort: 0,
             texture: None,
         });
+        self.uploads.push(false);
         Ok(OverlayId(self.quads.len() as u64 - 1))
     }
 
@@ -591,6 +715,7 @@ impl VrBackend for Emulator {
 
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         self.quad(id).texture = Some((width, height, rgba.to_vec()));
+        self.uploads[id.0 as usize] = true;
     }
 
     fn compositor_time(&self) -> Duration {

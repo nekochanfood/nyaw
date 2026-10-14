@@ -17,6 +17,10 @@ ash = "0.38"
 libloading = "0.8"
 # novr のエミュレーターのウィンドウ
 minifb = "0.29.0"
+# novr のエミュレーターの GPU コンポジタ（compositor.rs）
+wgpu = "29.0.4"
+pollster = "0.4"
+raw-window-handle = "0.6"
 
 [features]
 # 上位層のテスト用モック (vr::mock) を公開する

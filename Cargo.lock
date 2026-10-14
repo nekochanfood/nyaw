@@ -7710,6 +7710,9 @@ dependencies = [
  "openvr_bindings",
  "openxr",
  "os",
+ "pollster 0.4.0",
+ "raw-window-handle",
+ "wgpu",
 ]
 
 [[package]]
