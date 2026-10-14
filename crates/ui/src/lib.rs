@@ -237,6 +237,8 @@ pub struct PanelControl {
     /// 計測するか。ビューが切り替え、フレームループが計測とプロファイラパネルの開閉を合わせる。
     /// パネルの閉じるボタンでも `false` になる。
     pub profiling: bool,
+    /// 終了を頼む。フレームループが WebView を閉じてからアプリを終える（テストのハーネスもこれで終える）。
+    pub quit: bool,
 }
 
 impl gpui::Global for PanelControl {}
@@ -625,6 +627,13 @@ impl WebSlot {
         self.host.as_mut()
     }
 
+    /// 終わる前に WebView を閉じる（[`web::Host::shutdown`]）。
+    fn shutdown(&mut self) {
+        if let Some(h) = self.host.as_mut() {
+            h.shutdown();
+        }
+    }
+
     fn is_web(&self, panel: PanelId) -> bool {
         self.host.as_ref().is_some_and(|h| h.contains(panel))
     }
@@ -717,6 +726,7 @@ pub fn run_with(
                     ..Default::default()
                 };
                 if kernel.quit_requested() {
+                    webs.shutdown();
                     cx.update(quit);
                     return;
                 }
@@ -818,8 +828,11 @@ pub fn run_with(
                     web_spawns = host.step(&mut kernel, t);
                     stages.web += t.elapsed();
                 }
-                // ウィンドウが全部（OS の X などで）閉じられたら終了する。
-                if !windows.is_empty() && (0..windows.len()).all(|p| kernel.panel(p).closed) {
+                // 終了を頼まれたか、ウィンドウが全部（OS の X などで）閉じられたら終了する。
+                if cx.update(|cx| cx.default_global::<PanelControl>().quit)
+                    || !windows.is_empty() && (0..windows.len()).all(|p| kernel.panel(p).closed)
+                {
+                    webs.shutdown();
                     cx.update(quit);
                     return;
                 }

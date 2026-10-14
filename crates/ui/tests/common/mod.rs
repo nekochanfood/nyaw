@@ -91,7 +91,7 @@ pub type Remote = std::sync::mpsc::Sender<ui::Remote>;
 
 /// 本番と同じ `ui::run_with`（GPUI のイベントループの上で Tauri も回す）で起動する。`kick` を最初のフレームで実行し、
 /// Web（Tauri）が起きたら `scenario` を別スレッドで流す。最初に読むのは `label` のパネル。
-/// 終わったら（失敗したらパニックの内容を出して）終了コードでプロセスを終える。
+/// 終わったら（失敗したらパニックの内容を出して）アプリに終了を頼み（WebView を閉じてから終わる）、終了コードを返す。
 pub fn run(
     name: &'static str,
     kernel: Kernel,
@@ -104,6 +104,8 @@ pub fn run(
     if let Some(k) = kick {
         remote.send(k).unwrap();
     }
+    let result: Arc<Mutex<Option<bool>>> = Arc::default();
+    let done = result.clone();
     let hooks = ui::Hooks {
         on_web: Some(Box::new(move |app: &AppHandle| {
             let (tx, replies) = channel();
@@ -129,18 +131,41 @@ pub fn run(
                 }))
                 .is_ok();
                 println!("{name}: {}", if ok { "ok" } else { "FAILED" });
-                let _ = remote.send(Box::new(move |_| {
-                    logger::global().flush();
-                    std::process::exit(if ok { 0 } else { 1 })
-                }));
+                *done.lock().unwrap() = Some(ok);
+                quit(&remote, ok);
             });
         })),
         remote: Some(rx),
         hide_profiler: false,
     };
     ui::run_with(kernel, panels, None, webpages::FILES, hooks);
-    println!("{name}: FAILED（シナリオが終わる前にアプリが終了した）");
-    std::process::ExitCode::FAILURE
+    exit_code(name, &result)
+}
+
+/// アプリに終了を頼む（フレームループが WebView を閉じてから終わる）。終わらなければ 15 秒後にプロセスごと終える。
+pub fn quit(remote: &Remote, ok: bool) {
+    let _ = remote.send(Box::new(|cx| {
+        cx.default_global::<ui::PanelControl>().quit = true;
+    }));
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_secs(15));
+        println!("終了を頼んでもアプリが終わらないので、プロセスを終える");
+        logger::global().flush();
+        std::process::exit(if ok { 0 } else { 1 });
+    });
+}
+
+/// `run_with` が戻った後の終了コード。シナリオの結果が無ければ、終わる前にアプリが終了した。
+pub fn exit_code(name: &str, result: &Mutex<Option<bool>>) -> std::process::ExitCode {
+    logger::global().flush();
+    match *result.lock().unwrap() {
+        Some(true) => std::process::ExitCode::SUCCESS,
+        Some(false) => std::process::ExitCode::FAILURE,
+        None => {
+            println!("{name}: FAILED（シナリオが終わる前にアプリが終了した）");
+            std::process::ExitCode::FAILURE
+        }
+    }
 }
 
 /// Web のページ 1 枚を読む口（`label` のパネル）。

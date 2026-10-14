@@ -36,7 +36,7 @@ use kernel::{
 };
 use serde::{Deserialize, Serialize};
 use tauri::{
-    AppHandle, Emitter, LogicalSize, PhysicalSize, RunEvent, WebviewUrl, WebviewWindow,
+    AppHandle, Emitter, LogicalSize, Manager, PhysicalSize, RunEvent, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent, Wry,
 };
 
@@ -57,6 +57,8 @@ pub const HAND_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.3), Quat::IDENTIT
 /// 入力・状態の変化から、毎フレーム撮り直し続ける時間。ページの JS がイベントを処理して描き終わるのを待たずに済む。
 // ponytail: WebView の描画完了を知る手段が無いので時間で決める。requestAnimationFrame から知らせる手もある。
 const HOT: Duration = Duration::from_millis(300);
+/// 終わるときに WebView が閉じ終わるのを待つ上限。
+const SHUTDOWN: Duration = Duration::from_millis(1000);
 
 /// ページのファイル（`<ページ名>/index.html` と、そこから相対パスで辿る共有の `assets/` など）。
 /// `webpages::FILES` のように、ビルドしたものを埋め込んで渡す。
@@ -454,6 +456,24 @@ impl Host {
 
     pub fn handle(&self) -> &AppHandle {
         self.app.handle()
+    }
+
+    /// 終わる前に WebView のウィンドウを閉じ、閉じ終わるまで（最長 [`SHUTDOWN`]）Tauri を回す。
+    /// 開いたままプロセスが終わると WebView2 のブラウザが後始末を終えられず（"Failed to unregister class
+    /// Chrome_WidgetWin_0" が出る）、続けて起動したときに同じデータフォルダの WebView を作れないことがある。
+    pub fn shutdown(&mut self) {
+        for (_, w) in self.windows.drain() {
+            if let Err(e) = w.destroy() {
+                logger::warn!("Web のパネルを閉じられない", error = e);
+            }
+        }
+        let deadline = Instant::now() + SHUTDOWN;
+        while !self.app.webview_windows().is_empty() && Instant::now() < deadline {
+            self.pump();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        self.app.cleanup_before_exit();
+        logger::info!("Web（Tauri）を閉じた");
     }
 
     /// `panel` が開いている Web のパネルか。

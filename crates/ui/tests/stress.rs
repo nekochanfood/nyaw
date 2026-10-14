@@ -80,6 +80,8 @@ fn main() -> ExitCode {
     let profiler = Profiler::new(Some(Box::new(csv.clone()))).expect("メモリへは書ける");
     let t0 = Instant::now();
     let (remote, rx) = channel::<ui::Remote>();
+    let result: Arc<Mutex<Option<bool>>> = Arc::default();
+    let done = result.clone();
     std::thread::spawn(move || {
         let phases = scenario(&emu, &remote, opened, t0);
         let report = report(&csv, &phases);
@@ -88,10 +90,8 @@ fn main() -> ExitCode {
         let _ = std::fs::write(dir.join("stress.csv"), csv.0.lock().unwrap().as_slice());
         let _ = std::fs::write(dir.join("stress.txt"), &report);
         println!("stress: ok（{}）", dir.join("stress.txt").display());
-        let _ = remote.send(Box::new(|_| {
-            logger::global().flush();
-            std::process::exit(0)
-        }));
+        *done.lock().unwrap() = Some(true);
+        common::quit(&remote, true);
     });
     let hooks = ui::Hooks {
         on_web: None,
@@ -100,8 +100,7 @@ fn main() -> ExitCode {
         hide_profiler: true,
     };
     ui::run_with(kernel, panels, Some(profiler), webpages::FILES, hooks);
-    println!("stress: FAILED（シナリオが終わる前にアプリが終了した）");
-    ExitCode::FAILURE
+    common::exit_code("stress", &result)
 }
 
 /// 局面の名前と、計測開始からの範囲。
