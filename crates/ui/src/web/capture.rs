@@ -38,8 +38,8 @@ pub fn from_argb32(data: &[u8], width: u32, height: u32, stride: usize, alpha: b
     let mut out = Vec::with_capacity((width * height * 4) as usize);
     for y in 0..height as usize {
         let row = &data[y * stride..y * stride + width as usize * 4];
-        for px in row.chunks_exact(4) {
-            let v = u32::from_ne_bytes([px[0], px[1], px[2], px[3]]);
+        for px in row.as_chunks::<4>().0 {
+            let v = u32::from_ne_bytes(*px);
             let a = if alpha { (v >> 24) as u8 } else { 255 };
             let [r, g, b] = [(v >> 16) as u8, (v >> 8) as u8, v as u8];
             out.extend_from_slice(&match a {
@@ -177,7 +177,9 @@ mod platform {
         let rgba = match info.color_type {
             png::ColorType::Rgba => data,
             png::ColorType::Rgb => data
-                .chunks_exact(3)
+                .as_chunks::<3>()
+                .0
+                .iter()
                 .flat_map(|p| [p[0], p[1], p[2], 255])
                 .collect(),
             c => return Err(format!("扱えない PNG の色形式: {c:?}")),

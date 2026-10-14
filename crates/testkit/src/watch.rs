@@ -53,7 +53,9 @@ impl Watch {
         self.buf.extend(
             frame
                 .rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .map(|p| u32::from_be_bytes([0, p[0], p[1], p[2]])),
         );
         let _ = window.update_with_buffer(&self.buf, frame.width as usize, frame.height as usize);
