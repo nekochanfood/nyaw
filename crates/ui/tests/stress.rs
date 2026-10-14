@@ -201,6 +201,7 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     std::thread::sleep(Duration::from_secs(3));
 
     run_phase(&mut phases, t0, "idle", secs(4.0), |_| emu.point(None));
+    print_seen(emu, "idle");
     run_phase(&mut phases, t0, "sweep", secs(8.0), |f| sweep_frame(emu, f));
     // 操作し続けたこと自体で重くなっていないか（最初のアイドルと比べる）。
     run_phase(&mut phases, t0, "idle-mid", secs(4.0), |_| emu.point(None));
@@ -255,7 +256,32 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     run_phase(&mut phases, t0, "idle-after", secs(4.0), |_| {
         emu.point(None)
     });
+    print_seen(emu, "idle-after");
     phases
+}
+
+/// 各オーバーレイが直前の合成で見えたか（カリングの確認用）。
+fn print_seen(emu: &Emu, when: &str) {
+    let seen: String = emu.run(|e| {
+        (0..64)
+            .map_while(|i| {
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    e.overlay_seen(kernel::vr::OverlayId(i))
+                }))
+                .ok()
+                .flatten()
+            })
+            .map(|v| if v { '1' } else { '0' })
+            .collect()
+    });
+    println!("SEEN {when}: {seen}");
+    let (w, h, rgba) = emu.run(|e| e.screenshot());
+    let path = std::path::Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("stress-{when}.png"));
+    let file = std::io::BufWriter::new(std::fs::File::create(&path).unwrap());
+    let mut enc = png::Encoder::new(file, w, h);
+    enc.set_color(png::ColorType::Rgba);
+    enc.set_depth(png::BitDepth::Eight);
+    enc.write_header().unwrap().write_image_data(&rgba).unwrap();
 }
 
 /// 1 フレーム分の CSV の行（必要な列だけ）。

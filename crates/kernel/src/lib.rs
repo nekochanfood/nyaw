@@ -160,6 +160,11 @@ impl<B: VrBackend> Kernel<B> {
         self.timing
     }
 
+    /// フレームの周期が決まっていれば（novr）その長さ。プロファイラがドロップを数える基準に使う。
+    pub fn frame_interval(&self) -> Option<Duration> {
+        self.vr.frame_interval()
+    }
+
     /// `hand` が押している間のポインタのキャプチャを外す（タッチの長押しでドラッグになったとき。ほかのパネルへ運べるように）。
     pub fn release_capture(&mut self, hand: Hand) {
         self.overlay.release_capture(hand);

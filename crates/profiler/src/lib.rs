@@ -23,6 +23,8 @@ use gpui::{
 
 /// 保持してグラフに出すフレーム数。
 pub const CAPACITY: usize = 900;
+/// グラフの 1 列の幅（px）。この幅に入るフレームは平均してまとめて描く。
+const COLUMN_PX: f32 = 2.0;
 /// 数値（平均・p99 など）を出す直近のフレーム数。
 pub const WINDOW: usize = 90;
 /// 予算（1 フレームの目標時間）のこの倍を超えたフレームをドロップとみなす。
@@ -420,25 +422,34 @@ fn chart(
             for i in 1..4 {
                 hline(window, y_of(top * i as f64 / 4.0), rgb(GRID).into());
             }
-            let w = b.size.width / CAPACITY as f32;
-            let n = samples.len();
-            for (i, s) in samples.iter().enumerate() {
-                let x = b.right() - w * (n - i) as f32;
+            // 1 フレーム 1 本だと幅 1px 未満の四角が数千個になり、描くだけで重い。COLUMN_PX ごとの列に平均してまとめる
+            // （ドロップは列の中に 1 つでもあれば印を付ける）。新しいものが右端。
+            let columns = (f32::from(b.size.width) / COLUMN_PX).floor().max(1.0) as usize;
+            let per = CAPACITY.div_ceil(columns).max(1);
+            let w = b.size.width / columns as f32;
+            for (c, chunk) in samples.rchunks(per).enumerate() {
+                let x = b.right() - w * (c + 1) as f32;
+                let k = chunk.len() as f64;
                 let mut acc = 0.0;
                 for l in layers {
-                    let v = (l.value)(&s.stages).as_secs_f64() * 1e3;
+                    let v = chunk
+                        .iter()
+                        .map(|s| (l.value)(&s.stages).as_secs_f64())
+                        .sum::<f64>()
+                        * 1e3
+                        / k;
                     let (y0, y1) = (y_of(acc), y_of(acc + v));
                     acc += v;
                     if y0 > y1 {
                         window.paint_quad(fill(
-                            Bounds::new(point(x, y1), size(w.max(px(1.0)), y0 - y1)),
+                            Bounds::new(point(x, y1), size(w, y0 - y1)),
                             rgb(l.color),
                         ));
                     }
                 }
-                if s.dropped {
+                if chunk.iter().any(|s| s.dropped) {
                     window.paint_quad(fill(
-                        Bounds::new(point(x, b.top()), size(w.max(px(1.0)), px(4.0))),
+                        Bounds::new(point(x, b.top()), size(w, px(4.0))),
                         rgb(DROP),
                     ));
                 }

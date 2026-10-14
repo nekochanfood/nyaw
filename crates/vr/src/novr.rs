@@ -453,7 +453,7 @@ struct Raster<'a> {
 
 impl Raster<'_> {
     /// 画面の行 `band_y0..band_y1` を受け持つ帯 `px`（幅 `w`）の、ここまで手前に塗った分の下に敷く（`px` は乗算済みの ARGB）。
-    /// 1 画素でも見えたら `true`。
+    /// 手前に隠されていない画素が 1 つでもあれば `true`（自分の透明度は問わない）。
     fn fill(&self, px: &mut [u32], band_y0: u32, band_y1: u32, w: u32) -> bool {
         let mut seen = false;
         let (x0, y0, x1, y1) = self.rect;
@@ -487,13 +487,14 @@ impl Raster<'_> {
                 let tx = ((u * tw_f) as u32).min(self.tw - 1);
                 let ty = ((v * th_f) as u32).min(self.th - 1);
                 let s = ((ty * self.tw + tx) * 4) as usize;
+                // 手前に隠されていない画素がある（自分が透明でも、描き直せば見えうるので見えたとする）。
+                seen = true;
                 let a = u32::from(self.tex[s + 3]) * self.alpha / 255;
                 // この画素へのこのクアッドの寄与（手前で隠れた分を除く）。
                 let k = a * (255 - covered) / 255;
                 if k == 0 {
                     continue;
                 }
-                seen = true;
                 let [r, g, b] = [self.tex[s], self.tex[s + 1], self.tex[s + 2]].map(u32::from);
                 let [_, dr, dg, db] = dst.to_be_bytes().map(u32::from);
                 let add = |d: u32, s: u32| (d + s * k / 255).min(255);
@@ -594,6 +595,10 @@ impl VrBackend for Emulator {
 
     fn compositor_time(&self) -> Duration {
         self.composite_time
+    }
+
+    fn frame_interval(&self) -> Option<Duration> {
+        Some(FRAME)
     }
 
     fn overlay_seen(&self, id: OverlayId) -> Option<bool> {

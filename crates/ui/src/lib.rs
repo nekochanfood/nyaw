@@ -405,6 +405,8 @@ impl Render for DragPreview {
         div().when(shown, |d| d.child(self.0.clone()))
     }
 }
+/// プロファイラパネルのグラフを描き直す間隔（約 10Hz）。
+const PROFILER_REDRAW: Duration = Duration::from_millis(100);
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
 /// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 5cm）。
 const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.05);
@@ -682,9 +684,15 @@ pub fn run_with(
     let mut webs = WebSlot::new(web, hooks.on_web);
     let remote = hooks.remote;
     let hide_profiler = hooks.hide_profiler;
+    // novr はフレームの周期が決まっているので、ドロップをその長さで数える（間隔からの推定は揺れに弱い）。
+    let budget = kernel.frame_interval();
+    let with_budget = move |p: Profiler| match budget {
+        Some(b) => p.with_budget(b),
+        None => p,
+    };
     gpui_platform::application().run(move |cx: &mut App| {
         if let Some(p) = profiler {
-            cx.set_global(p);
+            cx.set_global(with_budget(p));
             cx.default_global::<PanelControl>().profiling = true;
         }
         let mut profiler_panel: Option<PanelId> = None;
@@ -943,7 +951,7 @@ pub fn run_with(
                         if profiling {
                             // --profile 無しで始めたときは CSV に書かない。
                             let p = Profiler::new(None).expect("出力先が無ければ失敗しない");
-                            cx.set_global(p);
+                            cx.set_global(with_budget(p));
                         } else {
                             log_summary(cx);
                             cx.remove_global::<Profiler>();
@@ -996,8 +1004,10 @@ pub fn run_with(
                     }
                     if let Some(p) = profiler_panel
                         && let Some((_, Some(w))) = windows.iter().find(|(id, _)| *id == p)
+                        && drawn[p].is_none_or(|t| t.elapsed() >= PROFILER_REDRAW)
                     {
-                        // グラフは毎フレーム変わるので描き直させる（VR では IDLE_REDRAW を待たずに読み戻す）。
+                        // グラフは毎フレーム変わるが、読むには PROFILER_REDRAW ごとで足りる。毎フレーム描くと、描画・読み戻し・
+                        // 合成のコストで計測そのものを重くする（プロファイラの窓だけで 1 フレーム 20ms 近かった）。
                         let _ = cx.update_window(*w, |_, w, _| w.refresh());
                         drawn[p] = None;
                     }

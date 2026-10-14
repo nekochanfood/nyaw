@@ -206,7 +206,13 @@ pub trait VrBackend {
     fn compositor_time(&self) -> std::time::Duration {
         std::time::Duration::ZERO
     }
-    /// 直前に合成した絵で、オーバーレイが 1 画素でも見えたか（ほかのパネルに隠れた・視野の外なら `false`）。
+    /// フレームの周期が決まっていれば返す（novr のエミュレーター）。VR ランタイムは vsync で決まり分からないので `None`。
+    /// プロファイラがドロップを数える基準に使う。
+    fn frame_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+    /// 直前に合成した絵で、オーバーレイの画面上の領域が 1 画素でもほかのオーバーレイに隠されずにあったか
+    /// （ほかのパネルに隠れた・視野の外なら `false`。自分が透明かどうかは問わない）。
     /// ランタイムが教えてくれなければ `None`（呼び出し側が視野で見積もる）。見えないパネルの描き直しを省くのに使う。
     fn overlay_seen(&self, _id: OverlayId) -> Option<bool> {
         None
@@ -261,6 +267,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn overlay_seen(&self, id: OverlayId) -> Option<bool> {
         (**self).overlay_seen(id)
+    }
+    fn frame_interval(&self) -> Option<std::time::Duration> {
+        (**self).frame_interval()
     }
 }
 

@@ -412,6 +412,12 @@ impl VrBackend for Driven {
     fn compositor_time(&self) -> Duration {
         self.emu.compositor_time()
     }
+    fn frame_interval(&self) -> Option<Duration> {
+        self.emu.frame_interval()
+    }
+    fn overlay_seen(&self, id: OverlayId) -> Option<bool> {
+        self.emu.overlay_seen(id)
+    }
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError> {
         self.emu.create_overlay(key, width_m)
     }
