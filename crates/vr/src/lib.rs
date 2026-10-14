@@ -1,19 +1,23 @@
 //! Layer 1: ランタイム。OpenVR / OpenXR / novr（VR なし）の違いを1つのトレイト [`VrBackend`] の裏に隠す。
 //! どれも対等な「手段」で、上位層は [`connect`] から得た `Box<dyn VrBackend>` だけを扱う。
-//! 基本操作はどのランタイムでもネイティブに行える。違いは [`Surface`]（表示と入力の経路）だけで表す。
+//! novr もデスクトップのウィンドウで VR を模すエミュレーター（[`novr::Emulator`]）なので、上位層から見た違いは無い。
 //!
 //! 語彙は OpenXR に揃える: コントローラのプロファイルは `"vendor/name"`（例 `"valve/index_controller"`）、
 //! 入力は `"component/feature"`（例 `"trigger/value"`）。OpenVR バックエンドはこれに翻訳する。
 
+mod compositor;
 mod gpu;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
-mod novr;
+pub mod novr;
 mod openvr;
 
 /// testkit の実ランタイムテスト用。上位層からは使わない。
 #[doc(hidden)]
-pub use openvr::{overlay_image as openvr_overlay_image, runtime_path as openvr_runtime_path};
+pub use openvr::{
+    overlay_image as openvr_overlay_image, overlay_state as openvr_overlay_state,
+    runtime_path as openvr_runtime_path,
+};
 mod openxr;
 
 use std::fmt;
@@ -46,6 +50,13 @@ impl Pose {
 
     pub fn forward(&self) -> Vec3 {
         self.orientation * Vec3::NEG_Z
+    }
+
+    /// 位置はそのまま、向きを水平方向（Y 軸回り）だけにした姿勢。前方は -Z。
+    /// 頭の前にパネルを出すとき、うつむき・首の傾きを無視して立てて置くのに使う。
+    pub fn leveled(&self) -> Pose {
+        let f = self.forward();
+        Pose::new(self.position, Quat::from_rotation_y((-f.x).atan2(-f.z)))
     }
 
     pub fn inverse(&self) -> Pose {
@@ -96,11 +107,16 @@ pub struct Frame {
     pub trackers: Vec<(String, Pose)>,
     /// ランタイムが終了を求めている（SteamVR の終了、OpenXR セッションの EXITING など）。
     pub quit: bool,
+    /// デバイスは実在せず模したもの（novr のエミュレーター）。取り付けたパネルは追従しない（[`Frame::pose`] が `None`）。
+    pub emulated: bool,
 }
 
 impl Frame {
-    /// このフレームでの `device` の姿勢。トラッキングされていなければ `None`。
+    /// このフレームでの `device` の姿勢。トラッキングされていなければ（模したデバイスも）`None`。
     pub fn pose(&self, device: &Device) -> Option<Pose> {
+        if self.emulated {
+            return None;
+        }
         match device {
             Device::Hmd => Some(self.hmd),
             Device::Controller(hand) => self
@@ -130,17 +146,8 @@ pub struct OverlayId(pub u64);
 pub enum Runtime {
     OpenVr,
     OpenXr,
-    /// VR を使わずデスクトップで動かす。
+    /// VR を使わず、デスクトップのウィンドウで VR を模す（[`novr::Emulator`]）。
     NoVr,
-}
-
-/// パネルをどう見せ、入力をどこから受けるか。上位層がランタイムごとに変えてよいのはここだけ。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Surface {
-    /// 描画を読み戻して VR のオーバーレイへ送る。入力はコントローラ（[`VrBackend::poll`]）から。
-    Overlay,
-    /// OS のウィンドウとしてそのまま表示する。入力も OS（マウス等）からネイティブに受ける。
-    Desktop,
 }
 
 #[derive(Debug, PartialEq)]
@@ -166,7 +173,6 @@ impl std::error::Error for VrError {}
 /// 「OpenVR のやり方」「OpenXR のやり方」「novr のやり方」で実行される。
 pub trait VrBackend {
     fn runtime(&self) -> Runtime;
-    fn surface(&self) -> Surface;
     /// OpenVR / OpenXR はここでランタイムの vsync（次フレーム）まで待つ。novr は待たない（呼び出し側が周期を決める）。
     /// ランタイムのイベントを処理し、このフレームの姿勢と生のコントローラ入力を返す。
     fn poll(&mut self) -> Frame;
@@ -188,10 +194,30 @@ pub trait VrBackend {
     fn set_overlay_height(&mut self, id: OverlayId, height_m: f32);
     /// 作成直後は表示されている。
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool);
+    /// 不透明度（0〜1）をランタイムで合成する。未対応なら `false`（呼び出し側が画素を減衰させる）。
+    fn set_overlay_alpha(&mut self, _id: OverlayId, _alpha: f32) -> bool {
+        false
+    }
     /// 重なったときの描画順。大きいほど手前に描かれる（既定 0）。奥行きでは決まらない。
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32);
     /// RGBA8、行間に詰め物なし。
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]);
+    /// 直前の [`poll`](Self::poll) でランタイムがアプリのスレッドで合成・表示にかけた時間（待ちは含まない）。
+    /// 合成をランタイム（別プロセス）がするなら 0（novr のエミュレーターだけが返す）。プロファイラ用。
+    fn compositor_time(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+    /// フレームの周期が決まっていれば返す（novr のエミュレーター）。VR ランタイムは vsync で決まり分からないので `None`。
+    /// プロファイラがドロップを数える基準に使う。
+    fn frame_interval(&self) -> Option<std::time::Duration> {
+        None
+    }
+    /// 直前に合成した絵で、オーバーレイの画面上の領域が 1 画素でもほかのオーバーレイに隠されずにあったか
+    /// （ほかのパネルに隠れた・視野の外なら `false`。自分が透明かどうかは問わない）。
+    /// ランタイムが教えてくれなければ `None`（呼び出し側が視野で見積もる）。見えないパネルの描き直しを省くのに使う。
+    fn overlay_seen(&self, _id: OverlayId) -> Option<bool> {
+        None
+    }
     /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
     /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読めるので、これは OpenXR 用。
     fn overlay_image(&mut self, _id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
@@ -203,9 +229,6 @@ pub trait VrBackend {
 impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     fn runtime(&self) -> Runtime {
         (**self).runtime()
-    }
-    fn surface(&self) -> Surface {
-        (**self).surface()
     }
     fn poll(&mut self) -> Frame {
         (**self).poll()
@@ -228,6 +251,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
         (**self).set_overlay_visible(id, visible)
     }
+    fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
+        (**self).set_overlay_alpha(id, alpha)
+    }
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
         (**self).set_overlay_sort(id, order)
     }
@@ -237,14 +263,24 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     fn overlay_image(&mut self, id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
         (**self).overlay_image(id)
     }
+    fn compositor_time(&self) -> std::time::Duration {
+        (**self).compositor_time()
+    }
+    fn overlay_seen(&self, id: OverlayId) -> Option<bool> {
+        (**self).overlay_seen(id)
+    }
+    fn frame_interval(&self) -> Option<std::time::Duration> {
+        (**self).frame_interval()
+    }
 }
 
 /// 希望のランタイムに接続する。VR ランタイムを希望した（または指定なしの）場合は、
 /// インストール済みのもの（OpenVR 優先）にフォールバックする。novr へのフォールバックは呼び出し側が決める。
-pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
+/// `emulator_gpu` は novr のエミュレーターが GPU で合成するか（`false` なら CPU）。
+pub fn connect(prefer: Option<Runtime>, emulator_gpu: bool) -> Result<Box<dyn VrBackend>, VrError> {
     if prefer == Some(Runtime::NoVr) {
-        logger::debug!("ランタイムに接続する", runtime = ?Runtime::NoVr);
-        return Ok(Box::new(novr::NoVrBackend::default()));
+        logger::debug!("connecting to runtime", runtime = ?Runtime::NoVr);
+        return Ok(Box::new(novr::Emulator::windowed(emulator_gpu)));
     }
     let order = match prefer {
         Some(Runtime::OpenXr) => [Runtime::OpenXr, Runtime::OpenVr],
@@ -254,12 +290,12 @@ pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
     for rt in order {
         match connect_exact(rt) {
             Ok(b) => {
-                logger::debug!("ランタイムに接続する", runtime = ?rt);
+                logger::debug!("connecting to runtime", runtime = ?rt);
                 return Ok(b);
             }
-            Err(VrError::NoRuntime) => logger::debug!("ランタイムが見つからない", runtime = ?rt),
+            Err(VrError::NoRuntime) => logger::debug!("runtime not found", runtime = ?rt),
             Err(e) => {
-                logger::debug!("ランタイムに接続できない", runtime = ?rt, error = e);
+                logger::debug!("failed to connect to runtime", runtime = ?rt, error = e);
                 last = e;
             }
         }
@@ -271,7 +307,7 @@ pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
 /// testkit が起動したランタイムを、別のランタイムと取り違えずに掴むため。
 pub fn connect_exact(rt: Runtime) -> Result<Box<dyn VrBackend>, VrError> {
     match rt {
-        Runtime::NoVr => Ok(Box::new(novr::NoVrBackend::default())),
+        Runtime::NoVr => Ok(Box::new(novr::Emulator::windowed(true))),
         Runtime::OpenVr if openvr::available() => openvr::connect(),
         Runtime::OpenXr if openxr::available() => openxr::connect(),
         _ => Err(VrError::NoRuntime),
@@ -291,12 +327,22 @@ mod tests {
     }
 
     #[test]
-    fn novr_is_always_available_and_desktop() {
-        let b = connect(Some(Runtime::NoVr)).unwrap();
-        assert_eq!(
-            (b.runtime(), b.surface()),
-            (Runtime::NoVr, Surface::Desktop)
+    fn leveled_keeps_heading_and_drops_pitch() {
+        // Head facing +X, looking down.
+        let head = Pose::new(
+            Vec3::new(1.0, 1.6, 0.0),
+            Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.5),
         );
+        let l = head.leveled();
+        assert_eq!(l.position, head.position);
+        assert!(l.forward().abs_diff_eq(Vec3::X, 1e-5));
+        assert!((l.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
+    }
+
+    #[test]
+    fn novr_is_always_available() {
+        let b = connect(Some(Runtime::NoVr), true).unwrap();
+        assert_eq!(b.runtime(), Runtime::NoVr);
     }
 
     #[test]
@@ -311,13 +357,18 @@ mod tests {
                 inputs: Vec::new(),
             }],
             trackers: vec![("LHR-1".into(), at(3.0))],
-            quit: false,
+            ..Frame::default()
         };
         assert_eq!(frame.pose(&Device::Hmd), Some(at(1.0)));
         assert_eq!(frame.pose(&Device::Controller(Hand::Left)), Some(at(2.0)));
         assert_eq!(frame.pose(&Device::Controller(Hand::Right)), None);
         assert_eq!(frame.pose(&Device::Tracker("LHR-1".into())), Some(at(3.0)));
         assert_eq!(frame.pose(&Device::Tracker("LHR-2".into())), None);
+        let emulated = Frame {
+            emulated: true,
+            ..frame
+        };
+        assert_eq!(emulated.pose(&Device::Hmd), None);
     }
 
     #[test]

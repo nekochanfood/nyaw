@@ -4,6 +4,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "2026.0.1"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 glam = "0.30"
@@ -18,6 +19,7 @@ vr = { path = "crates/vr" }
 input = { path = "crates/input" }
 overlay = { path = "crates/overlay" }
 ui = { path = "crates/ui" }
+webpages = { path = "crates/webpages" }
 profiler = { path = "crates/profiler" }
 testing = { path = "crates/testing" }
 wrist = { path = "crates/wrist" }
@@ -28,6 +30,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 name = "nyaw"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 logger.workspace = true
@@ -38,10 +41,24 @@ testing.workspace = true
 profiler.workspace = true
 wrist.workspace = true
 beam.workspace = true
+webpages.workspace = true
 
 # testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する
 [profile.dev.package.testkit]
 opt-level = 2
+
+# novr のエミュレーターは毎フレーム全画素を CPU で合成するので、デバッグビルドでも最適化する
+[profile.dev.package.vr]
+opt-level = 2
+
+# プロファイラは計測する側なので、その描画で計測を重くしないよう最適化する
+[profile.dev.package.profiler]
+opt-level = 2
+
+# gpui（Windows）はデバッグアサーションが有効だと、ウィンドウを作るたびに HLSL を最適化なしで実行時にコンパイルする
+# （1 枚 180ms 前後止まり、描画も遅いシェーダーになる）。ビルド時にコンパイル済みのシェーダーを使わせる。
+[profile.dev.package.gpui_windows]
+debug-assertions = false
 
 # 依存（gpui 等）は未最適化だと描画が桁違いに遅く、プロファイラ窓の描画だけで 1 フレーム 50ms を超えてフレームを落とす。
 # 自前クレートはデバッグしやすいよう最適化しない。

@@ -1,5 +1,5 @@
-//! VR 固有の操作シナリオ: コントローラ機種・左右の手・パネルの掴み移動。
-//! 基本操作は testing.rs で全ランタイム共通に検証する。
+//! VR-specific operation scenarios: controller models, left/right hands, and grab-moving panels.
+//! Basic operations are verified across all runtimes in testing.rs.
 
 use gpui::TestAppContext;
 use testing::Testing;
@@ -48,7 +48,7 @@ fn dragged_panel_moves_in_vr_and_stays_clickable(cx: &mut TestAppContext) {
     assert_eq!(kit.read(|h| h.clicks), 1);
 }
 
-/// メニューボタンを押している間、Testing の表示が光る。
+/// While the menu button is held, the Testing display lights up.
 #[gpui::test]
 fn menu_button_shows_on_home(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::default());
@@ -58,7 +58,7 @@ fn menu_button_shows_on_home(cx: &mut TestAppContext) {
     assert_eq!(kit.color_at("menu-held"), BUTTON_BG);
 }
 
-/// パネルを掴んでいる間、Testing の表示が光る。
+/// While the panel is grabbed, the Testing display lights up.
 #[gpui::test]
 fn grabbing_panel_shows_on_home(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::default());

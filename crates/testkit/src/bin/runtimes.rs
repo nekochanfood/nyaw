@@ -1,13 +1,13 @@
-//! E2E 用の実ランタイムを入れるウィザード（`npx playwright install` に当たる）。
+//! A wizard that installs real runtimes for E2E (the equivalent of `npx playwright install`).
 //!
 //! ```text
-//! cargo runtimes                       対話式: 状態を見せて、入っていないものを入れるか聞く
-//! cargo runtimes list                  状態だけ見る
-//! cargo runtimes install [名前..]      入れる（省略で全部）。--dry-run で何をするかだけ表示
-//! cargo runtimes uninstall [名前..]    testkit が入れたものを消す
+//! cargo runtimes                       interactive: shows the status and asks whether to install what is missing
+//! cargo runtimes list                  show the status only
+//! cargo runtimes install [name..]      install (all if omitted). --dry-run only shows what would be done
+//! cargo runtimes uninstall [name..]    remove what testkit installed
 //! ```
 //!
-//! 名前は `monado` / `steamvr`。`cargo runtimes` は `.cargo/config.toml` の別名。
+//! Names are `monado` / `steamvr`. `cargo runtimes` is an alias in `.cargo/config.toml`.
 
 use std::io::{BufRead, Write};
 use std::process::ExitCode;
@@ -31,7 +31,7 @@ fn parse(args: &[String]) -> Result<Cmd, String> {
     let mut kinds = vec![];
     for a in rest.iter().filter(|a| *a != "--dry-run") {
         kinds.push(
-            Kind::parse(a).ok_or_else(|| format!("知らないランタイム: {a}（monado / steamvr）"))?,
+            Kind::parse(a).ok_or_else(|| format!("unknown runtime: {a} (monado / steamvr)"))?,
         );
     }
     if kinds.is_empty() {
@@ -42,7 +42,7 @@ fn parse(args: &[String]) -> Result<Cmd, String> {
         "install" => Ok(Cmd::Install { kinds, dry_run }),
         "uninstall" => Ok(Cmd::Uninstall(kinds)),
         _ => Err(format!(
-            "知らないコマンド: {sub}（list / install / uninstall）"
+            "unknown command: {sub} (list / install / uninstall)"
         )),
     }
 }
@@ -77,11 +77,11 @@ fn main() -> ExitCode {
                 .collect();
             if missing.is_empty() {
                 println!(
-                    "\n全部入っている。`cargo test -p testkit --test runtimes -- --ignored` で流せる"
+                    "\nEverything is installed. Run with `cargo test -p testkit --test runtimes -- --ignored`"
                 );
             }
             for k in missing {
-                if ask(&format!("\n{k} を入れる？ ({}) [y/N] ", k.install_hint())) {
+                if ask(&format!("\nInstall {k}? ({}) [y/N] ", k.install_hint())) {
                     ok &= report(runtimes::install(k, false));
                 }
             }
@@ -95,11 +95,11 @@ fn main() -> ExitCode {
 }
 
 fn list() {
-    println!("インストール先: {}", runtimes::root().display());
+    println!("Install location: {}", runtimes::root().display());
     for k in Kind::ALL {
         match k.locate() {
-            Some(p) => println!("  {:<8} 入っている   {}", k.name(), p.display()),
-            None => println!("  {:<8} 入っていない {}", k.name(), k.install_hint()),
+            Some(p) => println!("  {:<8} installed     {}", k.name(), p.display()),
+            None => println!("  {:<8} not installed {}", k.name(), k.install_hint()),
         }
     }
 }

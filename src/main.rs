@@ -1,4 +1,5 @@
 //! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（wrist・ビーム）を UI 層に引き渡す。それ以外は何も置かない。
+//! Web のページ（`webpages`。Testing の Web 版など）も UI 層に渡し、GPUI の画面から開けるようにする。
 
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -13,7 +14,7 @@ fn main() -> ExitCode {
     let config = match config {
         Ok(c) => c,
         Err(e) => {
-            logger::warn!("設定ファイルを読めないので既定値で起動する", path = ?config::path(), error = e);
+            logger::warn!("failed to read config file, starting with defaults", path = ?config::path(), error = e);
             config::Config::default()
         }
     };
@@ -24,12 +25,10 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
     let mut panels = vec![wrist::spec()];
-    // ビームは VR のコントローラ用。novr ではマウスがそのまま届くので要らない。
-    if kernel.surface() == kernel::Surface::Overlay {
-        panels.extend(beam::specs());
-    }
+    // novr もコントローラを模すので、どのランタイムでもビームを載せる（novr のレーザーは視線と重なって見えない）。
+    panels.extend(beam::specs());
     let profiler = args.profile.map(start_profiler);
-    ui::run(kernel, panels, profiler);
+    ui::run(kernel, panels, profiler, webpages::FILES);
     ExitCode::SUCCESS
 }
 
@@ -51,7 +50,7 @@ impl Args {
                     out.profile = Some(Some(PathBuf::from(&rest[1..])))
                 }
                 _ if out.runtime.is_none() => out.runtime = Some(a),
-                _ => logger::warn!("知らない引数を無視する", arg = a),
+                _ => logger::warn!("ignoring unknown argument", arg = a),
             }
         }
         out
@@ -66,7 +65,7 @@ fn start_profiler(path: Option<PathBuf>) -> profiler::Profiler {
         Ok(f) => Some(Box::new(BufWriter::new(f)) as Box<dyn Write>),
         Err(e) => {
             logger::warn!(
-                "プロファイルのダンプ先を作れない",
+                "failed to create profile dump file",
                 path = p.display(),
                 error = e
             );
@@ -74,11 +73,11 @@ fn start_profiler(path: Option<PathBuf>) -> profiler::Profiler {
         }
     });
     if let (Some(p), Some(_)) = (&path, &out) {
-        logger::info!("プロファイルを CSV にダンプする", path = p.display());
+        logger::info!("dumping profile to CSV", path = p.display());
     }
     profiler::Profiler::new(out).unwrap_or_else(|e| {
-        logger::warn!("プロファイルの CSV を書けないので表示だけにする", error = e);
-        profiler::Profiler::new(None).expect("出力先が無ければ失敗しない")
+        logger::warn!("failed to write profile CSV, display only", error = e);
+        profiler::Profiler::new(None).expect("cannot fail without an output")
     })
 }
 
@@ -96,25 +95,25 @@ fn init_logger(from_config: Option<String>) {
         Some(Err(e)) => file_error = Some(e),
         None => {}
     }
-    logger::init(logger).expect("ロガーの初期化は main の最初に 1 回だけ");
+    logger::init(logger).expect("logger is initialized once, first thing in main");
 
     // パニックもロガーを通して残す（ファイルにも書かれる）
     std::panic::set_hook(Box::new(|info| {
-        logger::error!("パニック", info = info);
+        logger::error!("panic", info = info);
         logger::global().flush();
     }));
 
     if let (Some(raw), None) = (&requested, level) {
-        logger::warn!("ログレベルを解釈できないので info にする", value = raw);
+        logger::warn!("unrecognized log level, using info", value = raw);
     }
     match (path, file_error) {
-        (Some(p), None) => logger::debug!("ログをファイルにも出す", path = p.display()),
+        (Some(p), None) => logger::debug!("also logging to file", path = p.display()),
         (Some(p), Some(e)) => logger::warn!(
-            "ログファイルを開けないので標準エラー出力のみに出す",
+            "failed to open log file, using stderr only",
             path = p.display(),
             error = e
         ),
-        (None, _) => logger::warn!("ログファイルの置き場が決まらないので標準エラー出力のみに出す"),
+        (None, _) => logger::warn!("no log file location, using stderr only"),
     }
 }
 
@@ -150,5 +149,11 @@ mod tests {
                 profile: Some(Some(PathBuf::from("out/p.csv")))
             }
         );
+    }
+
+    /// GPUI の Testing が開く Web のページは、渡しているページの中にある。
+    #[test]
+    fn testing_opens_a_bundled_web_page() {
+        assert_eq!(testing::WEB_PAGE, webpages::TESTING);
     }
 }

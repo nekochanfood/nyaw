@@ -16,6 +16,9 @@ pub const WATCH_OFFSET: Pose = Pose::new(
     Vec3::new(0.0, 0.04, 0.08),
     Quat::from_xyzw(-0.707_106_77, 0.0, 0.0, 0.707_106_77),
 );
+/// 取り付け先の手が追えない間（起動直後・novr のエミュレーター）の置き場所。開いた瞬間の頭から見て左下 0.4m。
+/// 召喚する Testing パネル（[`TESTING_POSE`]）とは視線の方向が重ならない。
+pub const IN_VIEW: Pose = Pose::new(Vec3::new(-0.32, -0.2, -0.4), Quat::IDENTITY);
 /// 召喚する Testing パネルの位置。召喚した瞬間の頭から見て正面 0.8m、少し下。
 pub const TESTING_POSE: Pose = Pose::new(Vec3::new(0.0, -0.1, -0.8), Quat::IDENTITY);
 
@@ -26,6 +29,7 @@ const RES_PX: (u32, u32) = (480, 240);
 pub fn spec() -> PanelSpec {
     PanelSpec::new(Pose::IDENTITY, |_, _, cx| Wrist::new(cx))
         .sized(SIZE_M, RES_PX)
+        .in_view(IN_VIEW)
         .attached(Device::Controller(Hand::Left), WATCH_OFFSET)
         .locked()
 }

@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "react-perf", "import", "unicorn", "oxc"],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn"
+  },
+  "rules": {
+    "react/react-in-jsx-scope": "off",
+    "import/no-unassigned-import": [
+      "warn",
+      {
+        "allow": ["**/*.css"]
+      }
+    ],
+    "unicorn/consistent-function-scoping": "off",
+    "no-underscore-dangle": [
+      "warn",
+      {
+        "allow": ["__TAURI__", "__TAURI_INTERNALS__", "__TAURI_EVENT_PLUGIN_INTERNALS__"]
+      }
+    ]
+  },
+  "env": {
+    "browser": true,
+    "es2024": true
+  },
+  "ignorePatterns": ["**/dist", "**/node_modules", "**/package-lock.json"]
+}

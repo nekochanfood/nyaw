@@ -18,7 +18,7 @@ use input::{HandActions, Input};
 
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
-    Device, Frame, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
+    Device, Frame, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError,
 };
 
 pub(crate) fn available() -> bool {
@@ -33,7 +33,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
     let input = Input::init(client.interface(sys::IVRInput_Version)?)
         .inspect_err(|e| {
             logger::warn!(
-                "SteamVR Input を使えないのでコントローラは無しで動く",
+                "SteamVR Input unavailable, running without controllers",
                 error = e
             )
         })
@@ -82,7 +82,7 @@ fn create_gpu(
         0 => *unsafe { instance.enumerate_physical_devices() }
             .map_err(vk_err("vkEnumeratePhysicalDevices"))?
             .first()
-            .ok_or_else(|| VrError::Runtime("Vulkan: GPU が無い".into()))?,
+            .ok_or_else(|| VrError::Runtime("Vulkan: no GPU".into()))?,
         raw => vk::PhysicalDevice::from_raw(raw),
     };
     unsafe {
@@ -102,7 +102,7 @@ fn create_gpu(
 
 /// 関数表の各項目は `Option<fn>`。ランタイムが埋めていなければ ABI の不一致なので落とす。
 fn f<T>(func: Option<T>) -> T {
-    func.expect("OpenVR の関数表に欠けている関数がある")
+    func.expect("OpenVR function table is missing a function")
 }
 
 const MAX_DEVICES: usize = sys::k_unMaxTrackedDeviceCount as usize;
@@ -286,10 +286,6 @@ impl VrBackend for OpenVrBackend {
         Runtime::OpenVr
     }
 
-    fn surface(&self) -> Surface {
-        Surface::Overlay
-    }
-
     fn poll(&mut self) -> Frame {
         let predict = self.wait_vsync();
         let s = self.system();
@@ -322,7 +318,7 @@ impl VrBackend for OpenVrBackend {
             frame.hmd = pose_from(&hmd.mDeviceToAbsoluteTracking.m);
             devices.insert(
                 Device::Hmd,
-                (sys::k_unTrackedDeviceIndex_Hmd, Pose::IDENTITY),
+                (sys::k_unTrackedDeviceIndex_Hmd as _, Pose::IDENTITY),
             );
         }
         for (device, pose) in poses.iter().enumerate().skip(1) {
@@ -343,7 +339,7 @@ impl VrBackend for OpenVrBackend {
         }
         if let Some(input) = &self.input {
             if let Err(e) = input.update() {
-                logger::warn!("SteamVR Input の状態を取り込めない", error = e);
+                logger::warn!("failed to sync SteamVR Input state", error = e);
             }
             for (hand, device, aim, actions) in input.hands(predict) {
                 let profile = profile(&self.string_property(
@@ -464,11 +460,17 @@ impl VrBackend for OpenVrBackend {
         log(check("SetOverlaySortOrder", e));
     }
 
+    fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
+        let e = unsafe { f(self.overlay().SetOverlayAlpha)(id.0, alpha.clamp(0.0, 1.0)) };
+        log(check("SetOverlayAlpha", e));
+        true
+    }
+
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         assert_eq!(
             rgba.len(),
             (width * height * 4) as usize,
-            "RGBA バッファのサイズが不正"
+            "invalid RGBA buffer size"
         );
         log(self.submit(id.0, width, height, rgba));
         self.apply_height(id.0);
@@ -497,6 +499,21 @@ pub fn overlay_image(id: OverlayId) -> Result<(u32, u32, Vec<u8>), VrError> {
     Ok((w, h, buf))
 }
 
+/// 実ランタイムテスト用: 最後に設定された（幅, 不透明度, 表示）を読み戻す。
+pub fn overlay_state(id: OverlayId) -> Result<(f32, f32, bool), VrError> {
+    let client = Client::load()?;
+    let overlay =
+        unsafe { &*client.interface::<sys::VR_IVROverlay_FnTable>(sys::IVROverlay_Version)? };
+    let (mut width, mut alpha) = (0.0, 0.0);
+    check("GetOverlayWidthInMeters", unsafe {
+        f(overlay.GetOverlayWidthInMeters)(id.0, &mut width)
+    })?;
+    check("GetOverlayAlpha", unsafe {
+        f(overlay.GetOverlayAlpha)(id.0, &mut alpha)
+    })?;
+    Ok((width, alpha, unsafe { f(overlay.IsOverlayVisible)(id.0) }))
+}
+
 fn check(what: &str, e: sys::EVROverlayError) -> Result<(), VrError> {
     if e == sys::EVROverlayError_VROverlayError_None {
         Ok(())
@@ -508,7 +525,7 @@ fn check(what: &str, e: sys::EVROverlayError) -> Result<(), VrError> {
 /// 戻り値でエラーを返せないメソッド用。フレームは続けたいので表示だけする。
 fn log(r: Result<(), VrError>) {
     if let Err(e) = r {
-        logger::warn!("OpenVR の呼び出しに失敗", error = e);
+        logger::warn!("OpenVR call failed", error = e);
     }
 }
 
@@ -583,7 +600,7 @@ mod tests {
 
     #[test]
     fn matrix_layout_is_row_major_with_translation_last() {
-        // Y 軸まわり 90°: ローカル -Z（前方）がワールド -X を向く。
+        // 90° about the Y axis: local -Z (forward) points to world -X.
         let m = matrix_from(Pose::new(
             Vec3::new(1.0, 2.0, 3.0),
             Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),

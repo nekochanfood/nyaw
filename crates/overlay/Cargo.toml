@@ -2,11 +2,13 @@
 name = "overlay"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 vr.workspace = true
 input.workspace = true
 logger.workspace = true
+animato = { version = "1.7.2", default-features = false, features = ["tween"] }
 
 [dev-dependencies]
 vr = { workspace = true, features = ["test-support"] }

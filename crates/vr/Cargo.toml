@@ -2,6 +2,7 @@
 name = "vr"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 glam.workspace = true
@@ -15,6 +16,12 @@ openxr = { version = "0.22", default-features = false, features = ["static"] }
 ash = "0.38"
 # SteamVR の vrclient を実行時に読み込む
 libloading = "0.8"
+# novr のエミュレーターのウィンドウ
+minifb = "0.29.0"
+# novr のエミュレーターの GPU コンポジタ（compositor.rs）
+wgpu = "29.0.4"
+pollster = "0.4"
+raw-window-handle = "0.6"
 
 [features]
 # 上位層のテスト用モック (vr::mock) を公開する

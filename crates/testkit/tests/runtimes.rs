@@ -1,14 +1,14 @@
-//! 実ランタイムでの E2E: ランタイムを起動 → 繋ぐ → オーバーレイへ毎フレーム違う絵を送る →
-//! Testing 画面を操作し、その描画を実ランタイムのオーバーレイへ送る →
-//! （OpenVR のみ）ランタイムから読み戻して届いたか確かめる → 後片付けでプロセスが消えたか確かめる。
-//! 実ランタイムにはコントローラが無い（null ドライバ / simulated）ので、Testing はマウスで操作する。
+//! E2E on real runtimes: launch the runtime -> connect -> send a different image to the overlay every frame ->
+//! operate the Testing screen and send its rendering to the real runtime's overlay ->
+//! (OpenVR only) read back from the runtime to check it arrived -> check that the processes are gone after cleanup.
+//! Real runtimes have no controllers (null driver / simulated), so Testing is operated with the mouse.
 //!
-//! 起動に数秒かかり画面にも出るので、`#[ignore]` と同じく `--ignored` を付けたときだけ流す。
-//! 入っていないランタイムはスキップする（`cargo runtimes` で入れる）。
+//! Startup takes several seconds and shows on screen, so like `#[ignore]` it runs only when `--ignored` is passed.
+//! Runtimes that are not installed are skipped (install them with `cargo runtimes`).
 //!
 //! ```text
-//! cargo test -p testkit --test runtimes -- --ignored           全部
-//! cargo test -p testkit --test runtimes -- --ignored monado    名前で絞る
+//! cargo test -p testkit --test runtimes -- --ignored           all
+//! cargo test -p testkit --test runtimes -- --ignored monado    filter by name
 //! ```
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use testing::{BUTTON_ACTIVE_BG, Testing, TestingTransparent};
 use testkit::runtimes::{self, Kind, LaunchError};
-use testkit::{Driver, NoVrKit};
+use testkit::{DesktopKit, Driver};
 use vr::{Device, OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
 
 fn main() -> ExitCode {
@@ -34,11 +34,11 @@ fn main() -> ExitCode {
     for kind in kinds {
         print!("test runtimes::{kind} ... ");
         if !run_ignored {
-            println!("ignored（--ignored で流す）");
+            println!("ignored (run with --ignored)");
             skipped += 1;
             continue;
         }
-        // SAFETY: harness = false の main はシングルスレッド
+        // SAFETY: the main of harness = false is single-threaded
         let mut rt = match unsafe { runtimes::launch(kind) } {
             Ok(rt) => rt,
             Err(e @ (LaunchError::NotInstalled(_) | LaunchError::AlreadyRunning(_))) => {
@@ -47,22 +47,41 @@ fn main() -> ExitCode {
                 continue;
             }
             Err(e) => {
-                println!("FAILED\n  起動できない: {e}");
+                println!("FAILED\n  failed to launch: {e}");
                 failed += 1;
                 continue;
             }
         };
+        let t0 = Instant::now();
         let result = catch_unwind(AssertUnwindSafe(|| {
-            let mut vr = rt.connect().unwrap_or_else(|e| panic!("繋がらない: {e}"));
+            let mut lap = Instant::now();
+            let mut mark = |what: &str| {
+                eprintln!("  timing: {what} {:?}", lap.elapsed());
+                lap = Instant::now();
+            };
+            let mut vr = rt
+                .connect()
+                .unwrap_or_else(|e| panic!("failed to connect: {e}"));
+            mark("connect");
             overlay_reaches_runtime(vr.as_mut());
+            mark("overlay");
             home_runs_on_runtime(vr);
+            mark("home");
             let vr = rt
                 .connect()
-                .unwrap_or_else(|e| panic!("再接続できない: {e}"));
+                .unwrap_or_else(|e| panic!("failed to reconnect: {e}"));
+            mark("reconnect");
             transparent_runs_on_runtime(vr);
+            mark("transparent");
         }));
         let log = rt.log.clone();
+        let t1 = Instant::now();
         drop(rt);
+        eprintln!(
+            "  timing: scenario {:?}, cleanup {:?}",
+            t1 - t0,
+            t1.elapsed()
+        );
         let leftover = kind.is_running();
         match result {
             Ok(()) if !leftover => {
@@ -70,11 +89,11 @@ fn main() -> ExitCode {
                 passed += 1;
             }
             Ok(()) => {
-                println!("FAILED\n  後片付けのあとも {kind} のプロセスが残っている");
+                println!("FAILED\n  {kind} processes remain after cleanup");
                 failed += 1;
             }
             Err(_) => {
-                println!("FAILED（ログ: {log:?}）");
+                println!("FAILED (log: {log:?})");
                 failed += 1;
             }
         }
@@ -90,10 +109,10 @@ fn main() -> ExitCode {
 fn overlay_reaches_runtime(vr: &mut dyn VrBackend) {
     let id = vr
         .create_overlay("nyaw.e2e", 0.5)
-        .expect("オーバーレイを作れない");
+        .expect("failed to create overlay");
     vr.set_overlay_pose(id, Pose::new(Vec3::new(0.0, 1.5, -1.0), Quat::IDENTITY));
 
-    // 毎フレーム違う絵を、実際のパネルの大きさ（1024x768）で 90Hz で 1 秒送り続けても詰まらないこと。
+    // Sending a different image every frame at the real panel size (1024x768) at 90Hz for 1 second must not stall.
     let (w, h) = (1024, 768);
     let start = Instant::now();
     let mut frames = 0u32;
@@ -104,35 +123,35 @@ fn overlay_reaches_runtime(vr: &mut dyn VrBackend) {
         frames += 1;
         std::thread::sleep(Duration::from_millis(11));
     }
-    assert!(frames > 30, "1 秒で {frames} フレームしか送れない");
+    assert!(frames > 30, "only {frames} frames sent in 1 second");
 
-    // 最後に送った絵がランタイムに届いていること。OpenXR には読み戻す手段が無い。
+    // The last image sent must have reached the runtime. OpenXR has no way to read back.
     if vr.runtime() == Runtime::OpenVr {
         for color in [[255, 0, 0, 255], [0, 0, 255, 255]] {
             let rgba = color.repeat(64 * 64);
             vr.submit_overlay_pixels(id, 64, 64, &rgba);
             assert!(
                 read_back(vr, id, &rgba) == rgba,
-                "ランタイムの画像が送ったもの（{color:?}）と違う"
+                "the runtime image differs from what was sent ({color:?})"
             );
         }
     }
 }
 
-/// Testing 画面を実ランタイム上で操作する: ボタンでパネルを HMD に取り付けてロックし、
-/// その結果（光ったボタン）がランタイムのオーバーレイに届いていること（OpenVR のみ読み戻せる）。
+/// Operates the Testing screen on a real runtime: attaches the panel to the HMD with a button and locks it,
+/// and the result (the lit button) must reach the runtime's overlay (only OpenVR can be read back).
 fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
     let runtime = vr.runtime();
     let mut cx = gpui::TestAppContext::single();
-    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| Testing::default());
+    let mut kit = DesktopKit::with_backend(&mut cx, vr, |_, _| Testing::default());
     kit.click("attach-hmd").click("lock").hover("click-me");
     let p = kit.kernel.panel(kit.panel);
     assert_eq!(
         (p.attached.as_ref().map(|a| &a.0), p.locked),
         (Some(&Device::Hmd), true),
-        "Testing のボタンがパネルに効いていない"
+        "Testing buttons have no effect on the panel"
     );
-    // 実ランタイムのフレームを回しながら、HMD に付いたパネルへ描画を送り続ける。
+    // While running the real runtime's frames, keep sending rendering to the panel attached to the HMD.
     for _ in 0..30 {
         kit.step();
         std::thread::sleep(Duration::from_millis(11));
@@ -160,16 +179,16 @@ fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    panic!("ランタイムのパネルでロックのボタンが光っていない（{got:06x?}）");
+    panic!("the lock button is not lit on the runtime panel ({got:06x?})");
 }
 
-/// 半透明の画面（testing-transparent）を実ランタイムへ送り、背景が半透明のまま届くこと。
-/// OpenVR はランタイム側の画像を、OpenXR は渡したスワップチェーン画像を GPU から読み戻して、
-/// 背景のアルファが 0 でも 255 でもないことを確かめる（OpenXR のコンポジタ出力は読めない）。
+/// Sends the semi-transparent screen (testing-transparent) to a real runtime; the background must arrive still semi-transparent.
+/// For OpenVR, reads back the runtime-side image; for OpenXR, the swapchain image passed in, from the GPU,
+/// and checks that the background alpha is neither 0 nor 255 (OpenXR compositor output cannot be read).
 fn transparent_runs_on_runtime(vr: Box<dyn VrBackend>) {
     let runtime = vr.runtime();
     let mut cx = gpui::TestAppContext::single();
-    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| TestingTransparent::new(0));
+    let mut kit = DesktopKit::with_backend(&mut cx, vr, |_, _| TestingTransparent::new(0));
     let id = kit.kernel.panel(kit.panel).overlay_id();
     let start = Instant::now();
     let mut px = None;
@@ -181,19 +200,19 @@ fn transparent_runs_on_runtime(vr: Box<dyn VrBackend>) {
         };
         if let Some((_, _, rgba)) = image {
             px = Some([rgba[0], rgba[1], rgba[2], rgba[3]]);
-            // 事前乗算なら RGB は 0x20 * 160 / 255 に縮む。straight のまま届くこと（層に UNPREMULTIPLIED_ALPHA を付ける根拠）。
+            // With premultiplication RGB would shrink to 0x20 * 160 / 255. It must arrive as straight alpha (the reason for setting UNPREMULTIPLIED_ALPHA on the layer).
             if matches!(rgba[3], 1..=254) {
-                assert_eq!(rgba[..3], [0x20; 3], "straight アルファのはず");
-                eprintln!("  {runtime:?} 背景の画素 = {px:?}");
+                assert_eq!(rgba[..3], [0x20; 3], "should be straight alpha");
+                eprintln!("  {runtime:?} background pixel = {px:?}");
                 return;
             }
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    panic!("ランタイムに半透明のまま届いていない（背景の画素 = {px:?}）");
+    panic!("did not reach the runtime semi-transparent (background pixel = {px:?})");
 }
 
-/// コンポジタの取り込みは非同期なので、届くまで少し待つ。届かなければ最後に読めたものを返す。
+/// The compositor ingests asynchronously, so wait a little until it arrives. If it never does, returns the last value read.
 fn read_back(vr: &mut dyn VrBackend, id: OverlayId, want: &[u8]) -> Vec<u8> {
     let start = Instant::now();
     let mut got = vec![];

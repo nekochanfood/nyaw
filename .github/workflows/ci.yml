@@ -12,6 +12,25 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  # Web UI のページ（web/。React + Tailwind + Base UI）と、UI 層が WebView に注入するブリッジ（crates/ui/src/web/bridge.js）
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run lint # oxlint
+      - run: npm run fmt:check # oxfmt
+      - run: npm run typecheck # tsc
+      - run: npm run build # vite
+
   clippy:
     strategy:
       fail-fast: false
@@ -20,11 +39,19 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # gpui の Linux ビルド依存 (zed の script/linux から gpui に要るものを抜粋)
+      # gpui の Linux ビルド依存 (zed の script/linux から gpui に要るものを抜粋) と、UI 層の Tauri が使う WebKitGTK
       - if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfontconfig-dev libglib2.0-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev
+          sudo apt-get install -y libasound2-dev libfontconfig-dev libglib2.0-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev libwebkit2gtk-4.1-dev
+      # crates/webpages の build.rs が web/ を Vite でビルドして埋め込む
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

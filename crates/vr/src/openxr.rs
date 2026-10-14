@@ -8,9 +8,7 @@ use ash::vk::{self, Handle};
 use openxr as xr;
 
 use crate::gpu::{self, Gpu};
-use crate::{
-    Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
-};
+use crate::{Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError};
 
 pub(crate) fn available() -> bool {
     os::openxr_runtime_manifest().is_some()
@@ -99,6 +97,7 @@ struct Overlay {
     height_m: Option<f32>,
     pose: Pose,
     visible: bool,
+    color_scale: xr::sys::CompositionLayerColorScaleBiasKHR,
     sort: u32,
     swapchain: Option<Swapchain>,
 }
@@ -144,7 +143,7 @@ pub(crate) struct OpenXrBackend {
 
 impl OpenXrBackend {
     fn new() -> Result<Self, VrError> {
-        let entry = xr::Entry::linked(&()).map_err(xr_err("OpenXR ローダー"))?;
+        let entry = xr::Entry::linked(&()).map_err(xr_err("OpenXR loader"))?;
         let available = entry
             .enumerate_extensions()
             .map_err(xr_err("xrEnumerateInstanceExtensionProperties"))?;
@@ -154,13 +153,15 @@ impl OpenXrBackend {
         ] {
             if !ok {
                 return Err(VrError::Runtime(format!(
-                    "OpenXR ランタイムが {name} に対応していない"
+                    "OpenXR runtime does not support {name}"
                 )));
             }
         }
         let mut extensions = xr::ExtensionSet::default();
         extensions.extx_overlay = true;
         extensions.khr_vulkan_enable2 = true;
+        extensions.khr_composition_layer_color_scale_bias =
+            available.khr_composition_layer_color_scale_bias;
         // トラッカーは任意。無いランタイムでもコントローラだけで動く。
         let has_trackers = available.htcx_vive_tracker_interaction;
         extensions.htcx_vive_tracker_interaction = has_trackers;
@@ -240,7 +241,7 @@ impl OpenXrBackend {
                 path(&format!("/interaction_profiles/{profile}"))?,
                 &bindings,
             ) {
-                eprintln!("OpenXR: {profile} のバインドを拒否された: {e}");
+                eprintln!("OpenXR: {profile} bindings rejected: {e}");
             }
         }
         let tracker = if has_trackers {
@@ -264,7 +265,7 @@ impl OpenXrBackend {
                 path("/interaction_profiles/htc/vive_tracker_htcx")?,
                 &bindings,
             ) {
-                eprintln!("OpenXR: トラッカーのバインドを拒否された: {e}");
+                eprintln!("OpenXR: tracker bindings rejected: {e}");
             }
             Some((action, role_paths))
         } else {
@@ -320,7 +321,7 @@ impl OpenXrBackend {
             e,
             xr::sys::Result::ERROR_SESSION_LOST | xr::sys::Result::ERROR_INSTANCE_LOST
         ) {
-            eprintln!("OpenXR: ランタイムとの接続が失われた");
+            eprintln!("OpenXR: lost connection to runtime");
             self.lost = true;
             self.quit = true;
             self.running = false;
@@ -384,31 +385,42 @@ impl OpenXrBackend {
                 let height_m = o
                     .height_m
                     .unwrap_or(o.width_m * sc.height as f32 / sc.width as f32);
-                Some(
-                    xr::CompositionLayerQuad::new()
-                        .layer_flags(
-                            // GPUI の描画は透明な背景に合成した事前乗算アルファ。
-                            xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA,
-                        )
-                        .space(&self.stage)
-                        .eye_visibility(xr::EyeVisibility::BOTH)
-                        .sub_image(
-                            xr::SwapchainSubImage::new()
-                                .swapchain(&sc.handle)
-                                .image_rect(xr::Rect2Di {
-                                    offset: xr::Offset2Di { x: 0, y: 0 },
-                                    extent: xr::Extent2Di {
-                                        width: sc.width as i32,
-                                        height: sc.height as i32,
-                                    },
-                                }),
-                        )
-                        .pose(to_posef(o.pose))
-                        .size(xr::Extent2Df {
-                            width: o.width_m,
-                            height: height_m,
-                        }),
-                )
+                let mut quad = xr::CompositionLayerQuad::new()
+                    .layer_flags(
+                        // GPUI の描画は透明な背景に合成した事前乗算アルファ。
+                        xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA,
+                    )
+                    .space(&self.stage)
+                    .eye_visibility(xr::EyeVisibility::BOTH)
+                    .sub_image(
+                        xr::SwapchainSubImage::new()
+                            .swapchain(&sc.handle)
+                            .image_rect(xr::Rect2Di {
+                                offset: xr::Offset2Di { x: 0, y: 0 },
+                                extent: xr::Extent2Di {
+                                    width: sc.width as i32,
+                                    height: sc.height as i32,
+                                },
+                            }),
+                    )
+                    .pose(to_posef(o.pose))
+                    .size(xr::Extent2Df {
+                        width: o.width_m,
+                        height: height_m,
+                    })
+                    .into_raw();
+                if self
+                    .instance
+                    .exts()
+                    .khr_composition_layer_color_scale_bias
+                    .is_some()
+                {
+                    quad.next = (&o.color_scale
+                        as *const xr::sys::CompositionLayerColorScaleBiasKHR)
+                        .cast();
+                }
+                // SAFETY: swapchain・stage・拡張構造体は、下の xrEndFrame が終わるまで保持される。
+                Some(unsafe { xr::CompositionLayerQuad::from_raw(quad) })
             })
             .collect();
         let layers: Vec<&xr::CompositionLayerBase<xr::Vulkan>> =
@@ -483,7 +495,7 @@ impl OpenXrBackend {
         let overlay = self
             .overlays
             .get_mut(&id)
-            .ok_or_else(|| VrError::Runtime(format!("知らないオーバーレイ {id}")))?;
+            .ok_or_else(|| VrError::Runtime(format!("unknown overlay {id}")))?;
         if overlay
             .swapchain
             .as_ref()
@@ -654,10 +666,6 @@ impl VrBackend for OpenXrBackend {
         Runtime::OpenXr
     }
 
-    fn surface(&self) -> Surface {
-        Surface::Overlay
-    }
-
     fn poll(&mut self) -> Frame {
         // 前回の poll から今までに送られた画像を載せて、前のフレームを閉じる。
         self.end_frame();
@@ -703,6 +711,7 @@ impl VrBackend for OpenXrBackend {
             controllers: self.controllers(time),
             trackers: self.trackers(time),
             quit: self.quit,
+            emulated: false,
         }
     }
 
@@ -716,6 +725,22 @@ impl VrBackend for OpenXrBackend {
                 height_m: None,
                 pose: Pose::IDENTITY,
                 visible: true,
+                color_scale: xr::sys::CompositionLayerColorScaleBiasKHR {
+                    ty: xr::sys::CompositionLayerColorScaleBiasKHR::TYPE,
+                    next: std::ptr::null(),
+                    color_scale: xr::Color4f {
+                        r: 1.0,
+                        g: 1.0,
+                        b: 1.0,
+                        a: 1.0,
+                    },
+                    color_bias: xr::Color4f {
+                        r: 0.0,
+                        g: 0.0,
+                        b: 0.0,
+                        a: 0.0,
+                    },
+                },
                 sort: 0,
                 swapchain: None,
             },
@@ -747,6 +772,22 @@ impl VrBackend for OpenXrBackend {
         }
     }
 
+    fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
+        if self
+            .instance
+            .exts()
+            .khr_composition_layer_color_scale_bias
+            .is_none()
+        {
+            return false;
+        }
+        if let Some(o) = self.overlays.get_mut(&id.0) {
+            // 拡張は事前乗算を外してから適用するので、RGB は保ち alpha だけを減らす。
+            o.color_scale.color_scale.a = alpha.clamp(0.0, 1.0);
+        }
+        true
+    }
+
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
         if let Some(o) = self.overlays.get_mut(&id.0) {
             o.sort = order;
@@ -774,7 +815,7 @@ impl VrBackend for OpenXrBackend {
         assert_eq!(
             rgba.len(),
             (width * height * 4) as usize,
-            "RGBA バッファのサイズが不正"
+            "invalid RGBA buffer size"
         );
         if self.lost {
             return;

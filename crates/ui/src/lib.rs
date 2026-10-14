@@ -1,7 +1,16 @@
-//! Layer 4: GPUI フロントエンド。各オーバーレイパネルは GPUI ウィンドウで実体化され、
-//! オーバーレイ層のレーザーイベントは通常の GPUI マウス入力に変換される。
-//! そのためビューはデスクトップの GPUI ビューと全く同じように書け、VR 上にあることを意識しない。
-//! 逆向きは [`capture`] でウィンドウをオフスクリーン描画して読み戻し、`Overlay::submit` で VR パネルへ送る。
+//! Layer 5: UI 層。各オーバーレイパネルを GPUI のウィンドウか、Tauri の WebView（[`web`]）で実体化する。
+//! どちらも同じフレームループ（[`run`]）・同じカーネル・同じ PanelId の空間に載り、GPUI の画面から Web のページを開ける。
+//!
+//! - GPUI: オーバーレイ層のレーザーイベントは通常の GPUI マウス入力に変換される。
+//!   そのためビューはデスクトップの GPUI ビューと全く同じように書け、VR 上にあることを意識しない。
+//!   逆向きは [`capture`] でウィンドウをオフスクリーン描画して読み戻し、`Overlay::submit` で VR パネルへ送る。
+//! - Web: レーザーイベントはブリッジが DOM のポインタイベントにする（[`web`]）。ページは React 等で書く。
+//!
+//! イベントループは GPUI が持ち、Tauri は最初の Web のパネルを開いたときに起こして毎フレーム 1 回ずつ回す。
+
+mod lod;
+pub mod web;
+pub use lod::set_render_lod;
 
 use std::{
     collections::HashMap,
@@ -16,24 +25,177 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, Pose, Surface, Vec2,
-    VrBackend,
+    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose,
+    UiEvent, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 
 /// 1つの手のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
 /// 位置とボタン状態を持つがオーバーレイのイベントは持たないので、直前の値を保持する。
+///
+/// [`PointerMode::Touch`] では押したまま動かすとスワイプ（ピクセル単位のスクロール。離すと慣性で滑る）になり、
+/// 動かさずに離すとタップ（押して離す）、動かさずに [`LONG_PRESS`] 押し続けるとマウスの押下になる（そのまま動かせば
+/// ドラッグ＆ドロップ）。GPUI にはタッチ入力が無いので、どれと決まるまで押下を送らずに待つ。
+/// 方式は押した瞬間に決め、離すまで変えない。
 #[derive(Debug, Default)]
 pub struct PointerBridge {
     pos: Point<Pixels>,
     pressed: bool,
+    touch: Option<Touch>,
+    /// スワイプを離した後の慣性（宛先の位置と、1 フレームあたりの移動量）。
+    momentum: Option<(Point<Pixels>, Point<Pixels>)>,
+    /// GPUI が知っているこの手の位置（最後に送ったイベントの位置。離れたら `None`）。同じ位置への Move は送らない
+    /// （オーバーレイは指している間 毎 tick Move を出すので、止まっていても描き直しと読み戻しが毎フレーム走ってしまう）。
+    sent: Option<Point<Pixels>>,
 }
 
+/// タッチで押している間の状態。
+#[derive(Debug)]
+struct Touch {
+    start: Point<Pixels>,
+    /// 押した時刻（長押しの判定）。
+    at: Instant,
+    /// スワイプと決まった。
+    swiping: bool,
+    /// 長押しでマウスの押下になった（以降はマウスと同じ）。
+    held: bool,
+    /// スワイプの 1 イベントあたりの移動量（慣性の初速。直近を重く見て均す）。
+    velocity: Point<Pixels>,
+}
+
+/// これだけ動かさずに押し続けると、タッチでもマウスの押下になる（ドラッグ＆ドロップを始められる）。
+pub const LONG_PRESS: Duration = Duration::from_millis(400);
+/// 長押しでドラッグを始めるときに押したまま動かす量（論理 px）。GPUI のドラッグの閾値（2px）を越える。
+const DRAG_NUDGE: f32 = 3.0;
+/// 慣性の 1 フレームあたりの減衰（約 90Hz で 1 秒後に 1% 程度）。
+const FRICTION: f32 = 0.95;
+/// 慣性がこれより遅くなったら止める（論理 px / フレーム）。
+const MOMENTUM_STOP: f32 = 0.5;
+
+/// これより動いたらタップではなくスワイプ（論理 px）。
+// ponytail: 手ブレを見込んだ固定値。指す距離で変えたくなったら角度で決める。
+pub const SWIPE_SLOP: f32 = 12.0;
+
 impl PointerBridge {
-    pub fn translate(&mut self, ev: PointerEvent) -> PlatformInput {
+    pub fn translate(&mut self, ev: PointerEvent, mode: PointerMode) -> Vec<PlatformInput> {
+        let at = |p: Vec2| Point::new(px(p.x), px(p.y));
+        if let Some(t) = &mut self.touch {
+            match ev {
+                PointerEvent::Move { .. } if t.held => return self.mouse(ev),
+                PointerEvent::Move { pos } => {
+                    let (last, pos) = (self.pos, at(pos));
+                    let d = pos - t.start;
+                    t.swiping |= f32::from(d.x).hypot(f32::from(d.y)) > SWIPE_SLOP;
+                    if !t.swiping {
+                        if t.at.elapsed() < LONG_PRESS {
+                            return Vec::new();
+                        }
+                        // 長押し: 押した所でマウスの押下にする。以降はマウスと同じ（動かせばドラッグ）。
+                        // 押したまま GPUI のドラッグの閾値（2px）を越えて動かし、カーソルを動かさなくてもすぐドラッグを始めて
+                        // その見た目を出す。最後に今の位置へ戻す。
+                        t.held = true;
+                        let start = Vec2::new(t.start.x.into(), t.start.y.into());
+                        let mut out = self.mouse(PointerEvent::Move { pos: start });
+                        out.extend(self.mouse(PointerEvent::Down { pos: start }));
+                        out.extend(self.mouse(PointerEvent::Move {
+                            pos: start + Vec2::new(DRAG_NUDGE, 0.0),
+                        }));
+                        out.extend(self.mouse(ev));
+                        return out;
+                    }
+                    let delta = pos - last;
+                    t.velocity = t.velocity * 0.5 + delta * 0.5;
+                    self.pos = pos;
+                    self.sent = Some(t.start);
+                    // 中身が指に付いてくる向き（下へ動かすと上へスクロール）。宛先は押した所に固定する。
+                    return vec![PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position: t.start,
+                        delta: ScrollDelta::Pixels(pos - last),
+                        modifiers: Default::default(),
+                        touch_phase: Default::default(),
+                    })];
+                }
+                PointerEvent::Up { .. } if t.held => {
+                    self.touch = None;
+                    return self.mouse(ev);
+                }
+                PointerEvent::Up { pos } => {
+                    let t = self.touch.take().expect("pressed");
+                    if t.swiping {
+                        // 離した後も慣性で滑る（フレームごとの momentum）。GPUI のマウスは離した所へ。
+                        self.momentum = Some((t.start, t.velocity));
+                        return self.mouse(PointerEvent::Move { pos });
+                    }
+                    // タップ: 押して離す。
+                    let mut out = self.mouse(PointerEvent::Move { pos });
+                    out.extend(self.mouse(PointerEvent::Down { pos }));
+                    out.extend(self.mouse(PointerEvent::Up { pos }));
+                    return out;
+                }
+                PointerEvent::Leave => self.touch = None,
+                // スティックのスクロールはマウスと同じ。押し直しは来ない。
+                PointerEvent::Scroll { .. } | PointerEvent::Down { .. } => {}
+            }
+        } else if let (PointerMode::Touch, PointerEvent::Down { pos }) = (mode, ev) {
+            // 触れたら慣性は止まる。
+            self.momentum = None;
+            self.touch = Some(Touch {
+                start: at(pos),
+                at: Instant::now(),
+                swiping: false,
+                held: false,
+                velocity: Point::default(),
+            });
+            self.pos = at(pos);
+            return Vec::new();
+        }
+        self.mouse(ev)
+    }
+
+    /// タッチで押して動かしていない間の、長押し（[`LONG_PRESS`]）までの進み具合（0〜1）。押していない・スワイプ中・
+    /// 長押しが済んだ後は `None`。ポインタのリングに出す。
+    pub fn hold_progress(&self) -> Option<f32> {
+        let t = self.touch.as_ref().filter(|t| !t.swiping && !t.held)?;
+        // 普通のタップでリングがちらつかないよう、押して少しの間は出さず、残りの時間で 0〜1 に満ちる。
+        const RING_DELAY: Duration = Duration::from_millis(150);
+        let e = t.at.elapsed().checked_sub(RING_DELAY)?;
+        Some((e.as_secs_f32() / (LONG_PRESS - RING_DELAY).as_secs_f32()).min(1.0))
+    }
+
+    /// タッチの長押しでマウスの押下になっている（ドラッグできる）。
+    pub fn held(&self) -> bool {
+        self.touch.as_ref().is_some_and(|t| t.held)
+    }
+
+    /// スワイプを離した後の慣性の 1 フレーム分（スクロール）。滑っていなければ `None`。フレームごとに 1 回呼ぶ。
+    pub fn momentum(&mut self) -> Option<PlatformInput> {
+        let (position, v) = self.momentum.as_mut()?;
+        *v *= FRICTION;
+        if f32::from(v.x).hypot(f32::from(v.y)) < MOMENTUM_STOP {
+            self.momentum = None;
+            return None;
+        }
+        Some(PlatformInput::ScrollWheel(ScrollWheelEvent {
+            position: *position,
+            delta: ScrollDelta::Pixels(*v),
+            modifiers: Default::default(),
+            touch_phase: Default::default(),
+        }))
+    }
+
+    /// マウスとして変換する。
+    fn mouse(&mut self, ev: PointerEvent) -> Vec<PlatformInput> {
         let at = |p: Vec2| Point::new(px(p.x), px(p.y));
         let held = |pressed: bool| pressed.then_some(MouseButton::Left);
         match ev {
+            PointerEvent::Move { pos } if self.sent == Some(at(pos)) => return Vec::new(),
+            PointerEvent::Leave => self.sent = None,
+            PointerEvent::Move { pos }
+            | PointerEvent::Down { pos }
+            | PointerEvent::Up { pos }
+            | PointerEvent::Scroll { pos, .. } => self.sent = Some(at(pos)),
+        }
+        vec![match ev {
             PointerEvent::Move { pos } => {
                 self.pos = at(pos);
                 PlatformInput::MouseMove(MouseMoveEvent {
@@ -78,7 +240,7 @@ impl PointerBridge {
                     modifiers: Default::default(),
                 })
             }
-        }
+        }]
     }
 }
 
@@ -99,6 +261,10 @@ pub struct PanelControl {
     /// 計測するか。ビューが切り替え、フレームループが計測とプロファイラパネルの開閉を合わせる。
     /// パネルの閉じるボタンでも `false` になる。
     pub profiling: bool,
+    /// 手ごとの、タッチの長押しの進み具合（0〜1。[`PointerBridge::hold_progress`]）。ポインタ（カーソル）がリングで見せる。
+    pub hold: HashMap<Hand, f32>,
+    /// 終了を頼む。フレームループが WebView を閉じてからアプリを終える（テストのハーネスもこれで終える）。
+    pub quit: bool,
 }
 
 impl gpui::Global for PanelControl {}
@@ -129,17 +295,37 @@ pub fn pump<B: VrBackend>(
     kernel: &mut Kernel<B>,
     bridges: &mut HashMap<(PanelId, Hand), PointerBridge>,
 ) -> Vec<(PanelId, PlatformInput)> {
-    kernel
-        .tick()
-        .into_iter()
-        .map(|e| {
-            let input = bridges
-                .entry((e.panel, e.hand))
-                .or_default()
-                .translate(e.event);
-            (e.panel, input)
-        })
-        .collect()
+    pump_with(kernel, bridges, |_| false).0
+}
+
+/// [`pump`] に Web のパネルを混ぜたもの。`is_web` なパネル宛てのイベントは変換せずにそのまま返す（[`web::Host::deliver`] へ）。
+pub fn pump_with<B: VrBackend>(
+    kernel: &mut Kernel<B>,
+    bridges: &mut HashMap<(PanelId, Hand), PointerBridge>,
+    is_web: impl Fn(PanelId) -> bool,
+) -> (Vec<(PanelId, PlatformInput)>, Vec<UiEvent>) {
+    let mode = kernel.pointer_mode();
+    let mut gpui = Vec::new();
+    let mut web = Vec::new();
+    for e in kernel.tick() {
+        if is_web(e.panel) {
+            web.push(e);
+            continue;
+        }
+        let bridge = bridges.entry((e.panel, e.hand)).or_default();
+        let input = bridge.translate(e.event, mode);
+        if bridge.held() {
+            // 長押しでドラッグになった。ほかのパネルへ運べるよう、オーバーレイのキャプチャを外す。
+            kernel.release_capture(e.hand);
+        }
+        gpui.extend(input.into_iter().map(|input| (e.panel, input)));
+    }
+    for (&(panel, _), b) in bridges.iter_mut() {
+        if let Some(input) = b.momentum() {
+            gpui.push((panel, input));
+        }
+    }
+    (gpui, web)
 }
 
 /// CPU に読み戻した UI の1フレーム（RGBA8、行間に詰め物なし）。
@@ -169,44 +355,34 @@ fn read_back(window: &mut Window) -> gpui::Result<Frame> {
     })
 }
 
-/// パネル用ウィンドウの設定。ランタイムの [`Surface`] によって見せ方だけが変わる。
-/// - `Overlay`: 描画は VR に送るので、デスクトップには出さない（非表示）。
-/// - `Desktop`: OS のウィンドウとして画面中央に表示し、OS の入力をそのまま受ける。
-pub fn panel_window_options(surface: Surface, resolution: (u32, u32), cx: &App) -> WindowOptions {
-    let size = size(px(resolution.0 as f32), px(resolution.1 as f32));
-    match surface {
-        Surface::Overlay => WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: Point::default(),
-                size,
-            })),
-            show: false,
-            focus: false,
-            // 既定（Opaque）だと白で塗ってから描くので、半透明の画面も不透明になる。
-            window_background: WindowBackgroundAppearance::Transparent,
-            ..Default::default()
-        },
-        Surface::Desktop => WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size, cx))),
-            ..Default::default()
-        },
+/// パネル用ウィンドウの設定。描画は VR（novr はエミュレーター）に送るので、デスクトップには出さない（非表示）。
+pub fn panel_window_options(resolution: (u32, u32)) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds {
+            origin: Point::default(),
+            size: size(px(resolution.0 as f32), px(resolution.1 as f32)),
+        })),
+        show: false,
+        focus: false,
+        // OS の最小幅に、小さな LOD の描画先を広げられないよう枠を持たせない。
+        kind: gpui::WindowKind::PopUp,
+        window_min_size: Some(size(px(1.), px(1.))),
+        // 既定（Opaque）だと白で塗ってから描くので、半透明の画面も不透明になる。
+        window_background: WindowBackgroundAppearance::Transparent,
+        ..Default::default()
     }
 }
 
-/// パネル用ウィンドウを開く。`Overlay` では Windows の非表示ウィンドウのレンダーターゲットが
+/// パネル用ウィンドウを開く。Windows の非表示ウィンドウのレンダーターゲットは
 /// 1x1 のまま作られるので、明示的にリサイズして実寸にする（反映は非同期。最初の数フレームは 1x1）。
 pub fn open_panel_window<V: Render>(
     cx: &mut App,
-    surface: Surface,
     resolution: (u32, u32),
     build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
 ) -> gpui::Result<WindowHandle<V>> {
-    let options = panel_window_options(surface, resolution, cx);
-    let window = cx.open_window(options, build)?;
-    if surface == Surface::Overlay {
-        let size = size(px(resolution.0 as f32), px(resolution.1 as f32));
-        cx.update_window(window.into(), |_, window, _| window.resize(size))?;
-    }
+    let window = cx.open_window(panel_window_options(resolution), build)?;
+    let size = size(px(resolution.0 as f32), px(resolution.1 as f32));
+    cx.update_window(window.into(), |_, window, _| window.resize(size))?;
     Ok(window)
 }
 
@@ -237,20 +413,24 @@ impl Render for DragPreview {
         div().when(shown, |d| d.child(self.0.clone()))
     }
 }
+/// プロファイラパネルのグラフを描き直す間隔（約 10Hz）。
+const PROFILER_REDRAW: Duration = Duration::from_millis(100);
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
+/// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 5cm）。
+const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.05);
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
-/// Desktop（novr）の周期。主ディスプレイのリフレッシュ間隔が取れないときに使う。VR ランタイムは `poll` が vsync まで待つ。
-const FRAME: Duration = Duration::from_millis(11);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
-const IDLE_REDRAW: Duration = Duration::from_millis(250);
+pub(crate) const IDLE_REDRAW: Duration = Duration::from_millis(250);
+/// 描き直しても絵が変わらないパネルの、描き直す間隔の上限（時計の分の切り替わりはこの遅れで見える）。
+const IDLE_MAX: Duration = Duration::from_secs(1);
 
 /// `panel` で始まったドラッグの見た目を、押している手の [`Pointer::Drag`] のパネルに出す。
 /// 大きさは元のパネルと同じ縮尺（1m あたりのピクセル）にする。
 fn start_drag(
     kernel: &mut Kernel,
     bridges: &HashMap<(PanelId, Hand), PointerBridge>,
-    windows: &[(PanelId, AnyWindowHandle)],
+    windows: &[(PanelId, Option<AnyWindowHandle>)],
     panel: PanelId,
 ) -> Option<(Hand, PanelId)> {
     let hand = bridges
@@ -267,13 +447,15 @@ fn start_drag(
     Some((hand, *dp))
 }
 
-/// 位置はそのまま、向きを水平方向（Y 軸回り）だけにした姿勢。前方は -Z。
-fn level(p: Pose) -> Pose {
-    let f = p.orientation * Vec3::NEG_Z;
-    Pose::new(p.position, Quat::from_rotation_y((-f.x).atan2(-f.z)))
-}
-
 type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
+
+/// パネルの中身。
+enum Content {
+    /// GPUI のビュー。
+    Gpui(Box<PanelBuilder>),
+    /// Web のページ（ページ名。`web::Files` の `<ページ名>/index.html`）。
+    Web(String),
+}
 
 /// 画面と VR 空間での配置。異なる画面型を同じ起動リストに入れられる。
 pub struct PanelSpec {
@@ -287,9 +469,10 @@ pub struct PanelSpec {
     attach: Option<(Device, Pose)>,
     /// 起動時から掴めない。
     locked: bool,
+    animated: bool,
     /// レーザーを描くパネル。
     pointer: Option<(Hand, Pointer)>,
-    build: Box<PanelBuilder>,
+    content: Content,
 }
 
 impl PanelSpec {
@@ -297,6 +480,15 @@ impl PanelSpec {
         pose: Pose,
         build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
     ) -> Self {
+        Self::with_content(
+            pose,
+            Content::Gpui(Box::new(move |panel, window, cx| {
+                cx.new(|cx| build(panel, window, cx)).into()
+            })),
+        )
+    }
+
+    fn with_content(pose: Pose, content: Content) -> Self {
         Self {
             pose,
             from: None,
@@ -305,8 +497,30 @@ impl PanelSpec {
             resolution: PANEL_PX,
             attach: None,
             locked: false,
+            animated: true,
             pointer: None,
-            build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
+            content,
+        }
+    }
+
+    /// Web のページ `page` のパネル（Tauri の WebView）。置き場所や大きさは GPUI のパネルと同じく指定する。
+    pub fn web(pose: Pose, page: impl Into<String>) -> Self {
+        Self::with_content(pose, Content::Web(page.into()))
+    }
+
+    /// `from` の隣に Web のページを開く。
+    pub fn spawn_web(from: PanelId, page: impl Into<String>) -> Self {
+        Self {
+            from: Some(from),
+            ..Self::web(Pose::IDENTITY, page)
+        }
+    }
+
+    /// Web のパネルならページ名。
+    pub fn web_page(&self) -> Option<&str> {
+        match &self.content {
+            Content::Web(page) => Some(page),
+            Content::Gpui(_) => None,
         }
     }
 
@@ -345,28 +559,33 @@ impl PanelSpec {
         self
     }
 
+    /// このパネルのイン・アウトアニメーションを無効にする。
+    pub fn without_animation(mut self) -> Self {
+        self.animated = false;
+        self
+    }
+
     /// `hand` のレーザー（線またはカーソル）を描くパネルにする。置き場所はオーバーレイ層が決める。
     pub fn pointer(mut self, hand: Hand, part: Pointer) -> Self {
         self.pointer = Some((hand, part));
         self
     }
 
-    pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, next: PanelId) -> Pose {
+    pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
         match self.from {
-            Some(from) => {
-                kernel.panel(from).pose
-                    * Pose::new(
-                        Vec3::new(1.2 * (next - from) as f32, 0.0, 0.0),
-                        Quat::IDENTITY,
-                    )
-            }
-            None if self.in_view => level(kernel.hmd()) * self.pose,
+            // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
+            Some(from) => kernel.panel(from).pose * Pose::new(SPAWN_GAP, Quat::IDENTITY),
+            None if self.in_view => kernel.hmd().leveled() * self.pose,
             None => self.pose,
         }
     }
 
+    /// GPUI のビューを組み立てる。Web のパネル（[`Self::web_page`] が `Some`）には使えない。
     pub fn build(self, panel: PanelId, window: &mut Window, cx: &mut App) -> AnyView {
-        (self.build)(panel, window, cx)
+        match self.content {
+            Content::Gpui(build) => build(panel, window, cx),
+            Content::Web(page) => panic!("web page {page} cannot become a GPUI view"),
+        }
     }
 }
 
@@ -388,40 +607,109 @@ impl Render for PanelRoot {
     }
 }
 
-/// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
-/// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通り、違いは `kernel.surface()` だけ。
-/// パネルに載せる画面（上の層）は `panels` で受け取る。UI 層はどの画面かを知らない。
-/// `profiler` があれば起動時から計測し（`PanelControl::profiling`）、段階ごとの所要時間をプロファイラパネルにグラフで出す。
-pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler>) {
-    let surface = kernel.surface();
-    gpui_platform::application().run(move |cx: &mut App| {
-        // novr はディスプレイのリフレッシュに揃える。
-        // ponytail: 起動時の主ディスプレイで固定。モニタ間の移動や設定変更を追うなら毎フレーム問い合わせる。
-        let frame = cx
-            .primary_display()
-            .and_then(|d| d.refresh_interval())
-            .unwrap_or(FRAME);
-        // novr はタイマーが周期を決めるので予算が分かる。VR は vsync の間隔から推定する。
-        let budget = move |p: Profiler| {
-            if surface == Surface::Desktop {
-                p.with_budget(frame)
-            } else {
-                p
+/// テストなどがフレームループに差し込む口。
+#[derive(Default)]
+pub struct Hooks {
+    /// Web（Tauri）を起こした直後に呼ぶ（最初の Web のパネルを開くとき）。テストがイベントを購読するのに使う。
+    pub on_web: Option<OnWeb>,
+    /// 毎フレーム、メインスレッドで `App` を触る処理を受け取る（別スレッドのテストが GPUI を操作する）。
+    pub remote: Option<std::sync::mpsc::Receiver<Remote>>,
+    /// 計測はするがプロファイラパネルを出さない（ベンチマークが自分の描画で計測を汚さないように）。
+    pub hide_profiler: bool,
+}
+
+/// Web（Tauri）を起こした直後に呼ぶ処理。
+pub type OnWeb = Box<dyn FnOnce(&tauri::AppHandle)>;
+
+/// フレームループ（メインスレッド）で実行してもらう処理。
+pub type Remote = Box<dyn FnOnce(&mut App) + Send>;
+
+/// Web のパネル。Tauri は重いので、最初の Web のパネルを開くときに起こす。
+struct WebSlot {
+    files: web::Files,
+    host: Option<web::Host>,
+    on_web: Option<OnWeb>,
+    failed: bool,
+}
+
+impl WebSlot {
+    fn new(files: web::Files, on_web: Option<OnWeb>) -> Self {
+        Self {
+            files,
+            host: None,
+            on_web,
+            failed: false,
+        }
+    }
+
+    fn host(&mut self) -> Option<&mut web::Host> {
+        if self.host.is_none() && !self.failed {
+            match web::Host::new(self.files) {
+                Ok(h) => {
+                    if let Some(f) = self.on_web.take() {
+                        f(h.handle());
+                    }
+                    self.host = Some(h);
+                }
+                Err(e) => {
+                    logger::error!("cannot start web (tauri)", error = e);
+                    self.failed = true;
+                }
             }
-        };
+        }
+        self.host.as_mut()
+    }
+
+    /// 終わる前に WebView を閉じる（[`web::Host::shutdown`]）。
+    fn shutdown(&mut self) {
+        if let Some(h) = self.host.as_mut() {
+            h.shutdown();
+        }
+    }
+
+    fn is_web(&self, panel: PanelId) -> bool {
+        self.host.as_ref().is_some_and(|h| h.contains(panel))
+    }
+}
+
+/// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
+/// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通る（周期は `poll` が vsync まで待って作る）。
+/// パネルに載せる画面（上の層）は `panels` で受け取る。UI 層はどの画面かを知らない。
+/// Web のパネル（[`PanelSpec::web`]）のページは `web` から配信する。
+/// `profiler` があれば起動時から計測し（`PanelControl::profiling`）、段階ごとの所要時間をプロファイラパネルにグラフで出す。
+pub fn run(kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler>, web: web::Files) {
+    run_with(kernel, panels, profiler, web, Hooks::default())
+}
+
+/// [`run`] にテスト用の差し込み口（[`Hooks`]）を足したもの。
+pub fn run_with(
+    mut kernel: Kernel,
+    panels: Vec<PanelSpec>,
+    profiler: Option<Profiler>,
+    web: web::Files,
+    hooks: Hooks,
+) {
+    let mut webs = WebSlot::new(web, hooks.on_web);
+    let remote = hooks.remote;
+    let hide_profiler = hooks.hide_profiler;
+    // novr はフレームの周期が決まっているので、ドロップをその長さで数える（間隔からの推定は揺れに弱い）。
+    let budget = kernel.frame_interval();
+    let with_budget = move |p: Profiler| match budget {
+        Some(b) => p.with_budget(b),
+        None => p,
+    };
+    gpui_platform::application().run(move |cx: &mut App| {
         if let Some(p) = profiler {
-            cx.set_global(budget(p));
+            cx.set_global(with_budget(p));
             cx.default_global::<PanelControl>().profiling = true;
         }
         let mut profiler_panel: Option<PanelId> = None;
-        let mut windows: Vec<(PanelId, AnyWindowHandle)> = panels
+        // 添字は PanelId。Web のパネルは None（ウィンドウは web::Host が持つ）。
+        let mut windows: Vec<(PanelId, Option<AnyWindowHandle>)> = panels
             .into_iter()
             .enumerate()
-            .map(|(i, spec)| open_panel(&mut kernel, spec, i, cx))
+            .map(|(i, spec)| open_panel(&mut kernel, spec, i, cx, &mut webs))
             .collect();
-        if surface == Surface::Desktop {
-            cx.activate(true);
-        }
 
         cx.spawn(async move |cx| {
             let mut bridges = HashMap::new();
@@ -429,50 +717,110 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
             let mut last = vec![None; windows.len()];
             // パネルごとの最後に描いた時刻（None = 次のフレームで必ず描く）。
             let mut drawn: Vec<Option<Instant>> = vec![None; windows.len()];
+            // パネルごとの、入力も変化も無いときに描き直す間隔。描いても変わらなければ IDLE_MAX まで延ばす。
+            let mut idle: Vec<Duration> = vec![IDLE_REDRAW; windows.len()];
+            // パネルごとの、前のフレームで見えていたか（隠れていた・視野の外だったパネルは見えた瞬間に描き直す）。
+            let mut seen: Vec<bool> = vec![false; windows.len()];
+            let mut render_sizes = HashMap::new();
             // ドラッグ中の手と、その見た目を描くパネル。
             let mut drag: Option<(Hand, PanelId)> = None;
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
             // 0 だとこのループがすぐ再スケジュールされ、後から積まれた GPUI のタスクが走らない。
             // 途中で開いたパネルのリサイズ（SetWindowPos はタスクで行われる）が届かず、1x1 のまま表示されなかった。
             // poll は次の vsync までの残りを眠るので、ここで 1ms 譲っても周期は変わらない。
-            let wait = if surface == Surface::Desktop {
-                frame
-            } else {
-                Duration::from_millis(1)
-            };
+            let wait = Duration::from_millis(1);
             loop {
                 let begin = Instant::now();
-                cx.background_executor().timer(wait).await;
+                // GPUI のタイマーは Windows では粗く（1ms を頼んでも 6〜12ms 掛かり、フレームが 60fps 台に頭打ちになる）、
+                // バックグラウンドのスレッドで眠ってから戻る（std の sleep は細かい）。
+                cx.background_executor()
+                    .spawn(async move { std::thread::sleep(wait) })
+                    .await;
+                if let Some(remote) = &remote {
+                    while let Ok(f) = remote.try_recv() {
+                        cx.update(f);
+                    }
+                }
                 let mut inputs: Vec<Vec<PlatformInput>> =
                     (0..windows.len()).map(|_| Vec::new()).collect();
-                for (panel, input) in pump(&mut kernel, &mut bridges) {
+                let (gpui_inputs, web_events) =
+                    pump_with(&mut kernel, &mut bridges, |p| webs.is_web(p));
+                for (panel, input) in gpui_inputs {
                     inputs[panel].push(input);
+                }
+                // タッチの長押しの進み具合を手ごとに置き、変わればカーソルを描き直す（リングが満ちていく）。
+                let mut hold: HashMap<Hand, f32> = HashMap::new();
+                for (&(_, hand), b) in &bridges {
+                    if let Some(p) = b.hold_progress() {
+                        let e = hold.entry(hand).or_default();
+                        *e = e.max(p);
+                    }
+                }
+                let hold_changed = cx.update(|cx| {
+                    let ctl = cx.default_global::<PanelControl>();
+                    let changed = ctl.hold != hold;
+                    ctl.hold = hold;
+                    changed
+                });
+                if hold_changed {
+                    for &(p, _) in &windows {
+                        if kernel
+                            .panel(p)
+                            .pointer
+                            .is_some_and(|(_, part)| part == Pointer::Cursor)
+                        {
+                            drawn[p] = None;
+                        }
+                    }
                 }
                 // ドラッグの見た目は中心がカーソルに来るよう置かれるので、そのウィンドウのマウスを中心に置いて毎フレーム描く。
                 if let Some((_, dp)) = drag {
                     let (w, h) = kernel.panel(dp).resolution;
                     let pos = Vec2::new(w as f32, h as f32) / 2.0;
-                    inputs[dp].push(PointerBridge::default().translate(PointerEvent::Move { pos }));
+                    inputs[dp].extend(
+                        PointerBridge::default()
+                            .translate(PointerEvent::Move { pos }, PointerMode::Mouse),
+                    );
                 }
-                // ponytail: pump の poll（VR は vsync 待ち）とヒット判定をまとめて wait とする。判定が重くなったら分けて測る。
+                // wait = ランタイムの待ち（VR は vsync、novr はエミュレーターの周期）。オーバーレイ層と合成は別に測る。
+                let timing = kernel.timing();
                 let mut stages = Stages {
-                    wait: begin.elapsed(),
+                    wait: begin
+                        .elapsed()
+                        .saturating_sub(timing.overlay + timing.compositor),
+                    overlay: timing.overlay,
+                    compositor: timing.compositor,
                     ..Default::default()
                 };
                 if kernel.quit_requested() {
+                    webs.shutdown();
                     cx.update(quit);
                     return;
                 }
                 // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
                 // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
+                // 何もしていないパネルの描き直しは 1 フレームに 1 枚まで（同じフレームに重なると読み戻しの待ちが積み上がる）。
+                let mut idle_slot = true;
                 for ((panel, window), inputs) in windows.iter().copied().zip(inputs) {
+                    let Some(window) = window else { continue }; // Web のパネルは後で web::Host が回す
                     if kernel.panel(panel).closed {
                         continue;
                     }
                     // 描画と読み戻し（GPU の完了待ちを含む）は重いので、入力・状態の変化があったとき、
-                    // 前回描いてから IDLE_REDRAW 経ったときだけ行う。
-                    let mut redraw = !inputs.is_empty()
-                        || drawn[panel].is_none_or(|t| t.elapsed() >= IDLE_REDRAW);
+                    // 前回描いてから idle[panel] 経ったとき（1 フレームに 1 枚）だけ行う。
+                    // 見えていないパネル（ほかのパネルに隠れた・視野の外）は、何もしていないときに描き直さない（カリング）。
+                    let visible = kernel.panel_seen(panel);
+                    if visible && !seen[panel] {
+                        drawn[panel] = None;
+                    }
+                    seen[panel] = visible;
+                    let forced = !inputs.is_empty() || drawn[panel].is_none();
+                    let idle_due = !forced
+                        && visible
+                        && idle_slot
+                        && drawn[panel].is_some_and(|t| t.elapsed() >= idle[panel]);
+                    idle_slot &= !idle_due;
+                    let mut redraw = forced || idle_due;
                     let mut changed = false;
                     let Ok(frame) = cx.update_window(window, |_, window, cx| {
                         let t = Instant::now();
@@ -481,6 +829,14 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                         }
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
+                        let resolution = kernel.panel(panel).resolution;
+                        let lod = kernel.panel_lod(panel);
+                        if render_sizes.insert(panel, (resolution, lod)) != Some((resolution, lod))
+                        {
+                            set_render_lod(window, cx, resolution, lod);
+                            drawn[panel] = None;
+                            redraw = false;
+                        }
                         if !cx.has_active_drag() {
                             if let Some((hand, _)) = drag.take() {
                                 kernel.set_drag(hand, None);
@@ -493,8 +849,7 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                             window.remove_window();
                             return None;
                         }
-                        // Desktop では OS が表示するので読み戻さない。
-                        (surface == Surface::Overlay && redraw).then(|| {
+                        redraw.then(|| {
                             let t = Instant::now();
                             window.draw(cx).clear(cx);
                             let scene = Instant::now();
@@ -504,25 +859,45 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                             frame
                         })
                     }) else {
-                        // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じ、全部閉じたら終了する。
+                        // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じる（全部閉じたら下で終了する）。
                         kernel.apply(panel, PanelCommand::Close);
-                        if (0..windows.len()).all(|p| kernel.panel(p).closed) {
-                            cx.update(quit);
-                            return;
-                        }
                         continue;
                     };
+                    if kernel.panel(panel).closed {
+                        // 閉じたパネルの最後の描画（1 枚 2MB 近い）は手放す。
+                        last[panel] = None;
+                    }
                     if changed {
-                        // sync_panel は全ウィンドウを描き直させる（状態はどのパネルにも表示されうる）。
-                        drawn.iter_mut().for_each(|t| *t = None);
+                        // 状態はどのパネルにも表示されうるので、ほかのパネルも描き直す（1 フレームに 1 枚ずつ）。
+                        for (p, t) in drawn.iter_mut().enumerate() {
+                            if p != panel
+                                && let Some(t) = t
+                            {
+                                *t = t.checked_sub(IDLE_MAX).unwrap_or(*t);
+                                idle[p] = Duration::ZERO;
+                            }
+                        }
                     }
                     match frame {
                         // 開いた直後はウィンドウの大きさの反映が間に合わず 1x1 で描かれる。送らずに次のフレームで描き直す。
-                        Some(Ok(f)) if f.width <= 1 || f.height <= 1 => {}
+                        Some(Ok(f))
+                            if render_sizes.get(&panel).is_some_and(|&(res, lod)| {
+                                (f.width, f.height)
+                                    != ((res.0 >> lod).max(1), (res.1 >> lod).max(1))
+                            }) =>
+                        {
+                            drawn[panel] = None;
+                        }
                         // 画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
                         Some(Ok(f)) => {
                             drawn[panel] = Some(Instant::now());
-                            if last[panel].as_ref() != Some(&f) {
+                            let same = last[panel].as_ref() == Some(&f);
+                            idle[panel] = if idle_due && same && !changed {
+                                (idle[panel] * 2).min(IDLE_MAX)
+                            } else {
+                                IDLE_REDRAW
+                            };
+                            if !same {
                                 let t = Instant::now();
                                 kernel.submit(panel, f.width, f.height, &f.rgba);
                                 stages.upload += t.elapsed();
@@ -530,19 +905,60 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                             }
                         }
                         Some(Err(e)) if !warned => {
-                            logger::error!("パネルの描画を取得できない", error = e, panel = panel);
+                            logger::error!("cannot get panel render", error = e, panel = panel);
                             warned = true;
                         }
                         _ => {}
                     }
                 }
-                for spec in
-                    cx.update(|cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns))
+                // Web のパネル: Tauri を 1 回回し、ポインタを送り、ページの操作を反映して撮り直す。
+                let mut web_spawns = Vec::new();
+                if let Some(host) = webs.host.as_mut() {
+                    let t = Instant::now();
+                    for e in web_events {
+                        host.deliver(e, kernel.pointer_mode(), t);
+                    }
+                    // GPUI の画面が Web のパネルへ積んだ操作（閉じる等）。
+                    for &(panel, window) in &windows {
+                        if window.is_some() || kernel.panel(panel).closed {
+                            continue;
+                        }
+                        let commands = cx.update(|cx| {
+                            cx.default_global::<PanelControl>()
+                                .panels
+                                .get_mut(&panel)
+                                .map(|s| std::mem::take(&mut s.commands))
+                                .unwrap_or_default()
+                        });
+                        for c in commands {
+                            host.apply(&mut kernel, panel, c);
+                        }
+                    }
+                    web_spawns = host.step(&mut kernel, t);
+                    stages.web += t.elapsed();
+                }
+                // 終了を頼まれたか、ウィンドウが全部（OS の X などで）閉じられたら終了する。
+                if cx.update(|cx| cx.default_global::<PanelControl>().quit)
+                    || !windows.is_empty() && (0..windows.len()).all(|p| kernel.panel(p).closed)
                 {
+                    webs.shutdown();
+                    cx.update(quit);
+                    return;
+                }
+                let mut spawns =
+                    cx.update(|cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns));
+                spawns.extend(
+                    web_spawns
+                        .into_iter()
+                        .map(|(from, page)| PanelSpec::spawn_web(from, page)),
+                );
+                for spec in spawns {
                     let i = windows.len();
-                    windows.push(cx.update(|cx| open_panel(&mut kernel, spec, i, cx)));
+                    windows.push(cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs)));
                     last.push(None);
                     drawn.push(None);
+                    idle.push(IDLE_REDRAW);
+                    seen.push(false);
                 }
                 // 計測とプロファイラパネルを `profiling` に合わせる。
                 if let Some(p) = profiler_panel
@@ -555,11 +971,12 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                 let profiling = cx.update(|cx| cx.default_global::<PanelControl>().profiling);
                 if profiling != cx.update(|cx| cx.has_global::<Profiler>()) {
                     cx.update(|cx| {
-                        logger::info!("プロファイラを切り替え", profiling = profiling);
+                        logger::info!("profiler toggled", profiling = profiling);
                         if profiling {
                             // --profile 無しで始めたときは CSV に書かない。
-                            let p = Profiler::new(None).expect("出力先が無ければ失敗しない");
-                            cx.set_global(budget(p));
+                            let p =
+                                Profiler::new(None).expect("cannot fail without an output path");
+                            cx.set_global(with_budget(p));
                         } else {
                             log_summary(cx);
                             cx.remove_global::<Profiler>();
@@ -570,7 +987,7 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                     drawn.iter_mut().for_each(|t| *t = None);
                 }
                 match profiler_panel {
-                    None if profiling => {
+                    None if profiling && !hide_profiler => {
                         let spec = PanelSpec::new(Pose::IDENTITY, |panel, _, cx| ProfilerPanel {
                             panel,
                             view: cx.new(|_| ProfilerView),
@@ -578,15 +995,18 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                         .sized(Vec2::new(1.1, 0.56), (1100, 560))
                         .in_view(PROFILER_POSE);
                         let i = windows.len();
-                        let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, i, cx));
+                        let (panel, window) =
+                            cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs));
                         logger::info!(
-                            "プロファイラパネルを開いた",
+                            "profiler panel opened",
                             panel = panel,
                             pose = ?kernel.panel(panel).pose
                         );
                         windows.push((panel, window));
                         last.push(None);
                         drawn.push(None);
+                        idle.push(IDLE_REDRAW);
+                        seen.push(false);
                         profiler_panel = Some(panel);
                     }
                     Some(p) if !profiling => {
@@ -608,9 +1028,11 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                         cx.global_mut::<Profiler>().record(Instant::now(), stages);
                     }
                     if let Some(p) = profiler_panel
-                        && let Some((_, w)) = windows.iter().find(|(id, _)| *id == p)
+                        && let Some((_, Some(w))) = windows.iter().find(|(id, _)| *id == p)
+                        && drawn[p].is_none_or(|t| t.elapsed() >= PROFILER_REDRAW)
                     {
-                        // グラフは毎フレーム変わるので描き直させる（VR では IDLE_REDRAW を待たずに読み戻す）。
+                        // グラフは毎フレーム変わるが、読むには PROFILER_REDRAW ごとで足りる。毎フレーム描くと、描画・読み戻し・
+                        // 合成のコストで計測そのものを重くする（プロファイラの窓だけで 1 フレーム 20ms 近かった）。
                         let _ = cx.update_window(*w, |_, w, _| w.refresh());
                         drawn[p] = None;
                     }
@@ -633,7 +1055,7 @@ fn log_summary(cx: &App) {
         let s = p.summary();
         let ms = |d: Duration| format!("{:.3}", d.as_secs_f64() * 1e3);
         logger::info!(
-            "プロファイルの集計（直近）",
+            "profile summary (recent)",
             frames = s.frames,
             dropped = s.dropped,
             fps = format!("{:.1}", s.fps),
@@ -679,12 +1101,14 @@ impl Render for ProfilerPanel {
     }
 }
 
+/// カーネルにパネルを作り、中身（GPUI のウィンドウか Web のページ）を開く。Web のパネルのウィンドウは `None`。
 fn open_panel(
     kernel: &mut Kernel,
     mut spec: PanelSpec,
     index: usize,
     cx: &mut App,
-) -> (PanelId, AnyWindowHandle) {
+    webs: &mut WebSlot,
+) -> (PanelId, Option<AnyWindowHandle>) {
     let pose = spec.pose_for(kernel, index);
     let panel = kernel
         .add_panel(
@@ -694,6 +1118,9 @@ fn open_panel(
             spec.resolution,
         )
         .expect("create overlay");
+    if !spec.animated {
+        kernel.apply(panel, PanelCommand::Animated(false));
+    }
     if let Some((device, offset)) = spec.attach.take() {
         kernel.apply(panel, PanelCommand::Attach(device, offset));
     }
@@ -703,9 +1130,15 @@ fn open_panel(
     if let Some((hand, part)) = spec.pointer {
         kernel.apply(panel, PanelCommand::Pointer(hand, part));
     }
-    let surface = kernel.surface();
+    if let Content::Web(page) = &spec.content {
+        match webs.host() {
+            Some(host) => host.open(kernel, panel, page),
+            None => kernel.apply(panel, PanelCommand::Close),
+        }
+        return (panel, None);
+    }
     let drag_layer = spec.pointer.is_some_and(|(_, part)| part == Pointer::Drag);
-    let window: AnyWindowHandle = open_panel_window(cx, surface, spec.resolution, |w, cx| {
+    let window: AnyWindowHandle = open_panel_window(cx, spec.resolution, |w, cx| {
         let view = spec.build(panel, w, cx);
         cx.new(|_| PanelRoot::new(view))
     })
@@ -714,7 +1147,7 @@ fn open_panel(
     if drag_layer {
         cx.default_global::<DragWindows>().0.push(window);
     }
-    (panel, window)
+    (panel, Some(window))
 }
 
 #[cfg(test)]
@@ -755,30 +1188,21 @@ mod tests {
             PointerEvent::Up { pos },
             PointerEvent::Leave,
         ] {
-            let input = bridge.translate(ev);
-            cx.update(|window, cx| {
-                window.dispatch_event(input, cx);
-            });
+            for input in bridge.translate(ev, PointerMode::Mouse) {
+                cx.update(|window, cx| {
+                    window.dispatch_event(input, cx);
+                });
+            }
         }
         cx.run_until_parked();
         assert_eq!(testing.read_with(cx, |h, _| h.clicks), 1);
     }
 
     #[gpui::test]
-    fn panel_window_shows_only_on_desktop_surface(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            assert!(!panel_window_options(Surface::Overlay, PANEL_PX, cx).show);
-            assert!(panel_window_options(Surface::Desktop, PANEL_PX, cx).show);
-        });
-    }
-
-    #[gpui::test]
-    fn desktop_window_matches_panel_resolution(cx: &mut TestAppContext) {
+    fn panel_window_is_hidden_and_matches_panel_resolution(cx: &mut TestAppContext) {
+        assert!(!panel_window_options(PANEL_PX).show);
         let window = cx.update(|cx| {
-            open_panel_window(cx, Surface::Desktop, PANEL_PX, |_, cx| {
-                cx.new(|_| Probe::default())
-            })
-            .unwrap()
+            open_panel_window(cx, PANEL_PX, |_, cx| cx.new(|_| Probe::default())).unwrap()
         });
         let vp = cx
             .update(|cx| cx.update_window(window.into(), |_, w, _| w.viewport_size()))
@@ -793,11 +1217,14 @@ mod tests {
         let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default())
             .sized(Vec2::new(0.1, 0.05), (10, 5))
             .attached(hand.clone(), Pose::IDENTITY)
-            .locked();
-        let (panel, _) = cx.update(|cx| open_panel(&mut kernel, spec, 0, cx));
+            .locked()
+            .without_animation();
+        let mut webs = WebSlot::new(&[], None);
+        let (panel, _) = cx.update(|cx| open_panel(&mut kernel, spec, 0, cx, &mut webs));
         let p = kernel.panel(panel);
         assert_eq!(p.attached, Some((hand, Pose::IDENTITY)));
         assert!(p.locked);
+        assert!(!p.animated);
         assert_eq!((p.size, p.resolution), (Vec2::new(0.1, 0.05), (10, 5)));
     }
 
@@ -826,6 +1253,7 @@ mod tests {
                     runtime: Some(Runtime::NoVr),
                     attached: Some(Device::Hmd),
                     locked: true,
+                    animated: true,
                     ..Default::default()
                 }
             );
@@ -834,10 +1262,33 @@ mod tests {
                 .get_mut(&panel)
                 .unwrap()
                 .commands
-                .push(PanelCommand::Detach);
+                .extend([PanelCommand::Detach, PanelCommand::Animated(false)]);
             sync_panel(&mut kernel, panel, cx);
         });
         assert_eq!(kernel.panel(panel).attached, None);
+        assert!(!kernel.panel(panel).animated);
+    }
+
+    /// Web のページのパネルも GPUI のパネルと同じく置く（隣に開く・目の前に出す）。ビューにはならない。
+    #[gpui::test]
+    fn web_spec_opens_without_gpui_window_when_web_is_unavailable(cx: &mut TestAppContext) {
+        let mut kernel = Kernel::boot(Some("novr"), Default::default()).unwrap();
+        let first = PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default());
+        let mut webs = WebSlot::new(&[], None);
+        // テストプラットフォームでは Tauri を起こさない（起こせなかった扱い）。パネルは作られ、すぐ閉じる。
+        webs.failed = true;
+        cx.update(|cx| open_panel(&mut kernel, first, 0, cx, &mut webs));
+        let spec = PanelSpec::spawn_web(0, "demo");
+        assert_eq!(spec.web_page(), Some("demo"));
+        assert_eq!(spec.pose_for(&kernel, 1).position, SPAWN_GAP);
+        let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, 1, cx, &mut webs));
+        assert_eq!((panel, window.is_none()), (1, true));
+        assert!(kernel.panel(panel).closed, "closes if web cannot start");
+        assert!(
+            PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default())
+                .web_page()
+                .is_none()
+        );
     }
 
     /// 目の前に出すパネルは頭の向く水平方向に置き、うつむいていても立てて置く。
@@ -848,18 +1299,36 @@ mod tests {
             Vec3::new(1.0, 1.6, 0.0),
             Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2) * Quat::from_rotation_x(-0.5),
         );
-        let p = level(head) * Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
+        let p = head.leveled() * Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
         assert!(p.position.abs_diff_eq(Vec3::new(2.0, 1.6, 0.0), 1e-5));
         assert!((p.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
     }
 
     #[test]
+    fn move_to_the_same_place_is_sent_once_until_leave() {
+        let mut b = PointerBridge::default();
+        let pos = Vec2::new(3.0, 4.0);
+        let mut send = |ev| b.translate(ev, PointerMode::Mouse).len();
+        assert_eq!(send(PointerEvent::Move { pos }), 1);
+        assert_eq!(send(PointerEvent::Move { pos }), 0, "not sent while still");
+        assert_eq!(send(PointerEvent::Down { pos }), 1);
+        assert_eq!(send(PointerEvent::Move { pos }), 0);
+        assert_eq!(send(PointerEvent::Leave), 1);
+        assert_eq!(send(PointerEvent::Move { pos }), 1, "sent on re-entry");
+    }
+
+    #[test]
     fn leave_releases_held_button() {
         let mut b = PointerBridge::default();
-        b.translate(PointerEvent::Down {
-            pos: Vec2::new(3.0, 4.0),
-        });
-        let PlatformInput::MouseExited(e) = b.translate(PointerEvent::Leave) else {
+        b.translate(
+            PointerEvent::Down {
+                pos: Vec2::new(3.0, 4.0),
+            },
+            PointerMode::Mouse,
+        );
+        let [PlatformInput::MouseExited(e)] =
+            &b.translate(PointerEvent::Leave, PointerMode::Mouse)[..]
+        else {
             panic!()
         };
         assert_eq!(
@@ -867,5 +1336,149 @@ mod tests {
             (Point::new(px(3.0), px(4.0)), Some(MouseButton::Left))
         );
         assert!(!b.pressed);
+    }
+
+    /// タッチ: 動かさずに離すとタップ（押して離す）、しきい値を超えて動かすとスワイプ（指に付いてくるスクロール）だけになる。
+    #[test]
+    fn touch_taps_or_swipes() {
+        let pos = |x, y| Vec2::new(x, y);
+        let kinds = |v: Vec<PlatformInput>| {
+            v.iter()
+                .map(|i| match i {
+                    PlatformInput::MouseMove(_) => "move",
+                    PlatformInput::MouseDown(_) => "down",
+                    PlatformInput::MouseUp(_) => "up",
+                    PlatformInput::ScrollWheel(_) => "scroll",
+                    _ => "other",
+                })
+                .collect::<Vec<_>>()
+        };
+        let touch = PointerMode::Touch;
+        let mut b = PointerBridge::default();
+        assert!(
+            b.translate(
+                PointerEvent::Down {
+                    pos: pos(10.0, 10.0)
+                },
+                touch
+            )
+            .is_empty()
+        );
+        assert!(
+            b.translate(
+                PointerEvent::Move {
+                    pos: pos(12.0, 12.0)
+                },
+                touch
+            )
+            .is_empty()
+        );
+        let tap = b.translate(
+            PointerEvent::Up {
+                pos: pos(12.0, 12.0),
+            },
+            touch,
+        );
+        assert_eq!(kinds(tap), ["move", "down", "up"]);
+
+        b.translate(
+            PointerEvent::Down {
+                pos: pos(10.0, 10.0),
+            },
+            touch,
+        );
+        // 押している間に方式が変わっても、離すまではタッチのまま。
+        let swipe = b.translate(
+            PointerEvent::Move {
+                pos: pos(10.0, 40.0),
+            },
+            PointerMode::Mouse,
+        );
+        let [PlatformInput::ScrollWheel(e)] = &swipe[..] else {
+            panic!("{swipe:?}")
+        };
+        assert_eq!(e.delta.pixel_delta(px(1.0)), Point::new(px(0.0), px(30.0)));
+        assert_eq!(
+            e.position,
+            Point::new(px(10.0), px(10.0)),
+            "target is where it was pressed"
+        );
+        assert_eq!(
+            kinds(b.translate(
+                PointerEvent::Up {
+                    pos: pos(10.0, 40.0)
+                },
+                touch
+            )),
+            ["move"]
+        );
+        assert!(!b.pressed);
+        // 離した後も慣性で同じ向きに滑り、だんだん止まる。
+        let Some(PlatformInput::ScrollWheel(first)) = b.momentum() else {
+            panic!("no momentum")
+        };
+        let dy = |e: &ScrollWheelEvent| f32::from(e.delta.pixel_delta(px(1.0)).y);
+        assert!(dy(&first) > 0.0);
+        let mut last = dy(&first);
+        let mut frames = 0;
+        while let Some(PlatformInput::ScrollWheel(e)) = b.momentum() {
+            assert!(dy(&e) < last);
+            last = dy(&e);
+            frames += 1;
+        }
+        assert!(frames > 10, "does not stop immediately ({frames})");
+        assert!(b.momentum().is_none());
+    }
+
+    #[test]
+    fn touch_long_press_becomes_mouse_press_for_drag() {
+        let touch = PointerMode::Touch;
+        let mut b = PointerBridge::default();
+        let at = Vec2::new(10.0, 10.0);
+        assert!(
+            b.translate(PointerEvent::Down { pos: at }, touch)
+                .is_empty()
+        );
+        assert!(
+            b.translate(PointerEvent::Move { pos: at }, touch)
+                .is_empty()
+        );
+        std::thread::sleep(LONG_PRESS);
+        // 動かさずに長押しすると、押した所でマウスの押下になり、押したまま閾値を越えて動かして（ドラッグがすぐ始まる）元へ戻す。
+        let held = b.translate(PointerEvent::Move { pos: at }, touch);
+        let [
+            PlatformInput::MouseMove(_),
+            PlatformInput::MouseDown(_),
+            PlatformInput::MouseMove(nudge),
+            PlatformInput::MouseMove(back),
+        ] = &held[..]
+        else {
+            panic!("{held:?}")
+        };
+        assert_eq!(nudge.pressed_button, Some(MouseButton::Left));
+        assert!(
+            f32::from(nudge.position.x) - 10.0 > 2.0,
+            "exceeds the GPUI drag threshold"
+        );
+        assert_eq!(back.position, Point::new(px(10.0), px(10.0)));
+        // 以降はマウスのドラッグ（押したままの Move）で、スクロールにはならない。
+        let drag = b.translate(
+            PointerEvent::Move {
+                pos: Vec2::new(10.0, 60.0),
+            },
+            touch,
+        );
+        let [PlatformInput::MouseMove(m)] = &drag[..] else {
+            panic!("{drag:?}")
+        };
+        assert_eq!(m.pressed_button, Some(MouseButton::Left));
+        let up = b.translate(
+            PointerEvent::Up {
+                pos: Vec2::new(10.0, 60.0),
+            },
+            touch,
+        );
+        assert!(matches!(up[..], [PlatformInput::MouseUp(_)]), "{up:?}");
+        assert!(b.momentum().is_none(), "drag has no momentum");
     }
 }

@@ -19,6 +19,22 @@ pub const CURRENT: Os = Os::Linux;
 #[cfg(not(any(windows, target_os = "linux")))]
 compile_error!("nyaw supports Windows and Linux only");
 
+/// OS のタイマーの精度を 1ms にする（プロセスが終わるまで有効）。Windows の既定は 15.6ms 刻みで、
+/// フレームループの「1ms 譲る」待ちが 1 刻みに丸められてフレームが伸びる。Linux は元から細かいので何もしない。
+pub fn precise_timers() {
+    #[cfg(windows)]
+    {
+        #[link(name = "winmm")]
+        unsafe extern "system" {
+            fn timeBeginPeriod(period: u32) -> u32;
+        }
+        // SAFETY: 整数を渡すだけの Win32 API。
+        unsafe {
+            timeBeginPeriod(1);
+        }
+    }
+}
+
 fn env_path(key: &str) -> Option<PathBuf> {
     std::env::var_os(key)
         .filter(|v| !v.is_empty())

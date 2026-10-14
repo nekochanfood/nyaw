@@ -16,6 +16,8 @@ fn panels_have_separate_views_controls_and_textures(cx: &mut TestAppContext) {
     kit.panel(second)
         .click("click-me")
         .click("attach-hmd")
+        // Wait for the panel to move to where it was attached before pressing the next one.
+        .step()
         .click("lock")
         .click("click-me");
     assert_eq!(kit.read(|h| h.clicks), 2);
@@ -55,7 +57,12 @@ fn desktop_panels_can_spawn_attach_and_lock_independently(cx: &mut TestAppContex
 
 #[test]
 fn hands_keep_independent_pressed_state_on_same_panel() {
-    let mut kernel = Kernel::with_backend(MockBackend::default(), Default::default());
+    // This checks that presses are tracked per hand, so use the mouse mode, which sends the press at the instant of pressing.
+    let config = kernel::Config {
+        pointer_mode: Some(kernel::PointerMode::Mouse),
+        ..Default::default()
+    };
+    let mut kernel = Kernel::with_backend(MockBackend::default(), config);
     kernel
         .add_panel(
             "shared",
@@ -78,6 +85,10 @@ fn hands_keep_independent_pressed_state_on_same_panel() {
         .to_vec();
     let mut bridges: HashMap<_, PointerBridge> = HashMap::new();
     ui::pump(&mut kernel, &mut bridges);
+    // Move is not sent when stationary, so move both hands slightly.
+    for c in &mut kernel.vr.frame.controllers {
+        c.aim = Pose::new(Vec3::new(0.1, 0.0, 0.0), Quat::IDENTITY);
+    }
     let moves: Vec<_> = ui::pump(&mut kernel, &mut bridges)
         .into_iter()
         .filter_map(|(_, input)| match input {
@@ -86,4 +97,49 @@ fn hands_keep_independent_pressed_state_on_same_panel() {
         })
         .collect();
     assert_eq!(moves, [Some(MouseButton::Left), None]);
+}
+
+/// Carries to the neighboring panel's drop target between `down` and `up` (the drag visual is visible across panels).
+fn drag_to_next_panel(kit: &mut VrKit<'_, Testing>, wait: std::time::Duration) {
+    let next = kit.add_panel(
+        Pose::new(Vec3::new(1.2, 0.0, -1.0), Quat::IDENTITY),
+        |_, _| Testing::new(1),
+    );
+    kit.panel(0).down("drag-chip");
+    // With touch, it only becomes a drag after a long press without moving.
+    let until = std::time::Instant::now() + wait;
+    while std::time::Instant::now() < until {
+        kit.step();
+    }
+    // Move slightly over the original panel to start the drag, then carry it to the neighboring panel.
+    let c = kit.bounds("drag-chip").center();
+    for dx in [10.0, 20.0, 30.0] {
+        kit.point_at(Vec2::new(f32::from(c.x) + dx, c.y.into()));
+    }
+    kit.panel(next).hover("drop-zone").up();
+    assert_eq!(
+        kit.read(|h| h.dropped),
+        1,
+        "could drop onto the neighboring panel"
+    );
+    assert_eq!(kit.panel(0).read(|h| h.dropped), 0);
+}
+
+#[gpui::test]
+fn mouse_drags_and_drops_across_panels(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Testing::new(0));
+    drag_to_next_panel(&mut kit, std::time::Duration::ZERO);
+}
+
+#[gpui::test]
+fn touch_long_press_drags_and_drops_across_panels(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Testing::new(0));
+    kit.kernel.apply(
+        0,
+        kernel::PanelCommand::PointerMode(kernel::PointerMode::Touch),
+    );
+    drag_to_next_panel(
+        &mut kit,
+        ui::LONG_PRESS + std::time::Duration::from_millis(100),
+    );
 }

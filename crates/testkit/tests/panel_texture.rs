@@ -1,4 +1,4 @@
-//! VR 固有: オーバーレイ ⇄ UI の往復。レーザー入力が UI に届き、その描画結果が VR パネルに映ること。
+//! VR-specific: the overlay <-> UI round trip. Laser input reaches the UI, and its rendering result appears on the VR panel.
 
 use gpui::TestAppContext;
 use testing::{BUTTON_BG, BUTTON_HOVER_BG, PANEL_BG, Testing};
@@ -14,7 +14,7 @@ fn vr_panel_shows_rendered_ui(cx: &mut TestAppContext) {
     let tex = kit.texture();
     assert!(
         tex.width >= res.0 && tex.height >= res.1,
-        "HiDPI でも論理解像度以上"
+        "at least the logical resolution even on HiDPI"
     );
 }
 

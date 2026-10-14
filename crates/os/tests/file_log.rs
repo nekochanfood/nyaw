@@ -1,4 +1,4 @@
-//! 結合テスト: logger の整形 → os の FileSink → ファイル、が logfmt の 1 行として読み戻せること。
+//! Integration test: logger formatting -> os FileSink -> file reads back as a single logfmt line.
 
 use std::fs;
 
@@ -16,13 +16,13 @@ fn logger_writes_logfmt_lines_through_file_sink() {
     logger.log(&Record {
         level: Level::Warn,
         target: "ui",
-        msg: "パネルの描画を取得できない",
+        msg: "failed to get panel render",
         fields: &fields,
     });
     logger.log(&Record {
         level: Level::Debug,
         target: "ui",
-        msg: "捨てられる",
+        msg: "dropped",
         fields: &[],
     });
     logger.flush();
@@ -34,7 +34,7 @@ fn logger_writes_logfmt_lines_through_file_sink() {
     assert!(line.starts_with("ts="), "{line}");
     assert!(
         line.ends_with(
-            r#" level=warn target=ui msg=パネルの描画を取得できない error="device lost" panel=0"#
+            r#" level=warn target=ui msg="failed to get panel render" error="device lost" panel=0"#
         ),
         "{line}"
     );

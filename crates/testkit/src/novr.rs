@@ -1,230 +1,197 @@
-//! novr ランタイムの E2E。パネルはウィンドウで、入力は OS のマウスとしてネイティブに届く
-//! （本番の novr と同じく、入力は VR・入力・オーバーレイ層を経由しない）。
-//! ビューからのパネル操作（取り付け・ロック）は本番と同じく novr バックエンドのオーバーレイに反映する。
-//! [`NoVrKit::with_backend`] で実ランタイムを渡すと、マウスで操作した画面の描画をそのランタイムのオーバーレイへ送る
-//! （コントローラの無い実ランタイムで、画面を操作した結果が VR に届くかを確かめる用）。
+//! E2E for the novr runtime. Goes through the emulator ([`Emulator`]) as production novr does: it holds all layers (emulator -> input ->
+//! overlay -> UI -> GPUI) as a whole, panel rendering is sent to the emulator as a texture,
+//! and input comes from the emulator's mouse (right-hand controller), buttons and sticks. The image the user sees is
+//! the emulator screen ([`NoVrKit::screenshot`]). No window is shown (the screen can be viewed with `NYAW_E2E_WATCH`).
 
-use gpui::{
-    AnyWindowHandle, AppContext, Bounds, Context, Entity, Modifiers, MouseButton, Pixels, Point,
-    Render, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext, Window,
-};
+use gpui::{Bounds, Context, Pixels, Render, TestAppContext, VisualTestContext, Window};
 use kernel::{Kernel, PanelId};
-use ui::{PanelControl, PanelRoot, PanelSpec};
-use vr::{Runtime, VrBackend};
+use ui::Frame;
+use vr::novr::{Button, Emulator};
 
+use crate::panels::Panels;
 use crate::watch::Watch;
-use crate::{Driver, Pose, Quat, Vec2, Vec3, raster};
+use crate::{Driver, Hand, Pose, Quat, Vec2, Vec3};
 
-/// パネルを置く位置（実ランタイムで目の前に見えるよう、立った目の高さの正面 1m）。
-const PANEL_POSE: Pose = Pose::new(Vec3::new(0.0, 1.5, -1.0), Quat::IDENTITY);
+/// Position of the first panel.
+const PANEL_POS: Vec3 = Vec3::new(0.0, 0.0, -1.5);
+/// Size of the emulator screen (same as the production window's initial size).
+const SCREEN: (u32, u32) = (1280, 720);
 
 pub struct NoVrKit<'a, V: 'static> {
     cx: &'a mut VisualTestContext,
-    views: Vec<Option<Entity<V>>>,
-    windows: Vec<AnyWindowHandle>,
-    /// 描画の送り先。novr では何もしない。
-    pub kernel: Kernel,
+    panels: Panels<V>,
+    /// May be inspected directly (e.g. to check panel state). The emulator is `kernel.vr`.
+    pub kernel: Kernel<Emulator>,
     pub panel: PanelId,
+    /// Shows the emulator screen (`NYAW_E2E_WATCH`).
     watch: Option<Watch>,
-    /// マウスの位置と、左ボタンを押したままか。
-    mouse: Vec<(Point<Pixels>, bool)>,
 }
 
 impl<'a, V: Render> NoVrKit<'a, V> {
+    /// Starts the `build` view as the first panel, placed straight ahead. Panel resolution = window size.
     pub fn new(
         cx: &'a mut TestAppContext,
         build: impl FnOnce(&mut Window, &mut Context<V>) -> V,
     ) -> Self {
-        let vr = vr::connect_exact(Runtime::NoVr).expect("novr は常に接続できる");
-        Self::with_backend(cx, vr, build)
-    }
-
-    /// 描画を `vr` のオーバーレイ（正面 1m）へ毎フレーム送る。入力はマウスのまま。
-    pub fn with_backend(
-        cx: &'a mut TestAppContext,
-        vr: Box<dyn VrBackend>,
-        build: impl FnOnce(&mut Window, &mut Context<V>) -> V,
-    ) -> Self {
         let (view, cx) = cx.add_window_view(build);
-        let window = cx.update(|window, _| window.window_handle());
-        let vp = cx.update(|window, _| window.viewport_size());
-        let res = (f32::from(vp.width) as u32, f32::from(vp.height) as u32);
-        let mut kernel = Kernel::with_backend(vr, Default::default());
-        let panel = kernel
-            .add_panel("nyaw.testkit", PANEL_POSE, Vec2::ONE, res)
-            .expect("パネルを作れない");
+        cx.run_until_parked();
+        // Turn off hand-jitter smoothing, since it would make pointing miss at the instant of aiming (same as VrKit).
+        let config = kernel::config::Config {
+            pointer_smoothing: Some(0.0),
+            // Operation scenarios are written for the mouse (the default touch mode is checked in pointer_mode.rs / web_pointer.rs).
+            pointer_mode: Some(kernel::PointerMode::Mouse),
+            ..Default::default()
+        };
+        let mut kernel = Kernel::with_backend(Emulator::headless(SCREEN.0, SCREEN.1), config);
+        let mut panels = Panels::new(None);
+        let pose = Pose::new(PANEL_POS, Quat::IDENTITY);
+        let panel = panels.add(cx, &mut kernel, pose, Some(view));
         let mut kit = Self {
             cx,
-            views: vec![Some(view)],
-            windows: vec![window],
+            panels,
             kernel,
             panel,
             watch: Watch::from_env(),
-            mouse: vec![(Point::default(), false)],
         };
-        kit.step();
+        kit.step(); // send the first frame up front
         kit
     }
 
-    /// 本番のフレームループ1回分: ビューからのパネル操作を反映し、落ち着くまで回す。
+    /// Steps one frame (emulator input -> `ui::pump` -> GPUI -> rendering back to the emulator).
     pub fn step(&mut self) -> &mut Self {
-        self.cx.run_until_parked();
-        for (panel, window) in self.windows.iter().copied().enumerate() {
-            self.cx
-                .cx
-                .update_window(window, |_, _, cx| {
-                    ui::sync_panel(&mut self.kernel, panel, cx)
-                })
-                .unwrap();
-        }
-        let spawns = self
-            .cx
-            .cx
-            .update(|cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns));
-        for spec in spawns {
-            self.add_spec(spec);
-        }
-        self.cx.run_until_parked();
-        for (panel, window) in self.windows.iter().copied().enumerate() {
-            let frame = self
-                .cx
-                .cx
-                .update_window(window, |_, window, cx| raster::capture(window, cx))
-                .unwrap();
-            if let Some(w) = &mut self.watch {
-                w.show(panel, &frame);
-            }
-            self.kernel
-                .submit(panel, frame.width, frame.height, &frame.rgba);
-        }
-        if let Some(w) = &self.watch {
+        self.panels.step(self.cx, &mut self.kernel);
+        if self.watch.is_some() {
+            let shot = self.screenshot();
+            let w = self.watch.as_mut().unwrap();
+            w.show(0, &shot);
             w.wait();
         }
         self
     }
 
-    fn add_spec(&mut self, spec: PanelSpec) {
-        let id = self.windows.len();
-        let pose = spec.pose_for(&self.kernel, id);
-        let (root, cx) = self
-            .cx
-            .cx
-            .add_window_view(|window, cx| PanelRoot::new(spec.build(id, window, cx)));
-        let window = cx.update(|window, _| window.window_handle());
-        let vp = cx.update(|window, _| window.viewport_size());
-        let res = (f32::from(vp.width) as u32, f32::from(vp.height) as u32);
-        let view = root.read_with(cx, |root, _| root.view().downcast::<V>().ok());
-        let panel = self
-            .kernel
-            .add_panel(&format!("nyaw.testkit.{id}"), pose, Vec2::ONE, res)
-            .unwrap();
-        assert_eq!(panel, id);
-        self.views.push(view);
-        self.windows.push(window);
-        self.mouse.push((Point::default(), false));
-        cx.update(|_, cx| ui::sync_panel(&mut self.kernel, panel, cx));
-    }
-
-    /// 以降の操作・読み取りに使うパネルを選ぶ。
+    /// Selects the panel used for subsequent operations and reads.
     pub fn select_panel(&mut self, panel: PanelId) -> &mut Self {
-        assert!(panel < self.windows.len(), "パネル {panel} がない");
+        assert!(panel < self.panels.windows.len(), "no panel {panel}");
         self.panel = panel;
         self
     }
 
     fn visual(&self) -> VisualTestContext {
-        VisualTestContext::from_window(self.windows[self.panel], &self.cx.cx)
+        VisualTestContext::from_window(self.panels.windows[self.panel], &self.cx.cx)
     }
 
-    /// フォーカスのある要素にキーを打つ（`"h i backspace"` のように空白区切り）。VR にはキーボードが無いので novr だけ。
-    pub fn type_keys(&mut self, keys: &str) -> &mut Self {
-        self.visual().simulate_keystrokes(keys);
-        self.step()
-    }
-
-    /// `debug_selector` を付けた要素のウィンドウ上の範囲。
+    /// The bounds on the panel (logical pixels) of the element tagged with `debug_selector`.
     pub fn bounds(&mut self, selector: &'static str) -> Bounds<Pixels> {
         self.visual()
             .debug_bounds(selector)
-            .unwrap_or_else(|| panic!("要素 {selector:?} が描画されていない"))
+            .unwrap_or_else(|| panic!("element {selector:?} is not rendered"))
     }
 
-    /// マウスをウィンドウ上の点へ動かす。
-    pub fn move_to(&mut self, pos: Point<Pixels>) -> &mut Self {
-        self.mouse[self.panel].0 = pos;
-        let button = self.mouse[self.panel].1.then_some(MouseButton::Left);
-        self.visual()
-            .simulate_mouse_move(pos, button, Modifiers::none());
+    /// The point on screen where the center of an element appears.
+    pub fn on_screen(&mut self, selector: &'static str) -> Vec2 {
+        let c = self.bounds(selector).center();
+        let world = self
+            .kernel
+            .panel(self.panel)
+            .pixel_to_world(Vec2::new(c.x.into(), c.y.into()));
+        self.kernel
+            .vr
+            .project(world)
+            .unwrap_or_else(|| panic!("element {selector:?} is behind the eye"))
+    }
+
+    /// The emulator screen (the image visible to the user).
+    pub fn screenshot(&mut self) -> Frame {
+        let (width, height, rgba) = self.kernel.vr.screenshot();
+        Frame {
+            width,
+            height,
+            rgba,
+        }
+    }
+
+    /// Color (0xRRGGBB) of a point on screen.
+    pub fn color_on_screen(&mut self, at: Vec2) -> u32 {
+        let shot = self.screenshot();
+        let i = ((at.y as u32 * shot.width + at.x as u32) * 4) as usize;
+        u32::from_be_bytes([0, shot.rgba[i], shot.rgba[i + 1], shot.rgba[i + 2]])
+    }
+
+    /// Moves the mouse to a point on screen (`None` moves it off screen) and steps one frame.
+    pub fn move_mouse(&mut self, at: Option<Vec2>) -> &mut Self {
+        self.kernel.vr.point(at);
+        self.step()
+    }
+
+    /// Presses a mouse button (left = trigger, right = grip) and steps one frame.
+    pub fn press(&mut self, button: Button) -> &mut Self {
+        self.kernel.vr.set_button(button, true);
+        self.step()
+    }
+
+    pub fn release(&mut self, button: Button) -> &mut Self {
+        self.kernel.vr.set_button(button, false);
+        self.step()
+    }
+
+    /// Tilts a stick (left hand = WASD, right hand = arrow keys) and steps one frame. Use `Vec2::ZERO` to release.
+    pub fn stick(&mut self, hand: Hand, value: Vec2) -> &mut Self {
+        self.kernel.vr.set_stick(hand, value);
+        self.step()
+    }
+
+    /// Types keys into the focused element (space-separated, like `"h i backspace"`). The emulator's keyboard is
+    /// a stick, so it does not reach the panel. To check UI logic, types directly into the GPUI window.
+    pub fn type_keys(&mut self, keys: &str) -> &mut Self {
+        self.visual().simulate_keystrokes(keys);
         self.step()
     }
 }
 
 impl<V: Render> Driver<V> for NoVrKit<'_, V> {
-    /// マウスを要素の中心へ動かす。
+    fn web_spawns(&self) -> &[String] {
+        &self.panels.web_spawns
+    }
+
+    /// Moves the mouse to the center of an element.
     fn hover(&mut self, selector: &'static str) -> &mut Self {
-        let c = self.bounds(selector).center();
-        self.move_to(c)
+        let at = self.on_screen(selector);
+        self.move_mouse(Some(at))
     }
 
-    /// 要素の中心を左クリックする。
+    /// Left-clicks (trigger) the center of an element.
     fn click(&mut self, selector: &'static str) -> &mut Self {
-        let c = self.bounds(selector).center();
-        self.move_to(c);
-        self.visual().simulate_click(c, Modifiers::none());
-        self.step()
+        self.hover(selector)
+            .press(Button::Trigger)
+            .release(Button::Trigger)
     }
 
-    /// 要素の中心で左ボタンを押したままにする。
+    /// Holds the left button (trigger) down at the center of an element.
     fn down(&mut self, selector: &'static str) -> &mut Self {
-        let c = self.bounds(selector).center();
-        self.move_to(c);
-        self.visual()
-            .simulate_mouse_down(c, MouseButton::Left, Modifiers::none());
-        self.mouse[self.panel].1 = true;
-        self.step()
+        self.hover(selector).press(Button::Trigger)
     }
 
     fn up(&mut self) -> &mut Self {
-        self.visual().simulate_mouse_up(
-            self.mouse[self.panel].0,
-            MouseButton::Left,
-            Modifiers::none(),
-        );
-        self.mouse[self.panel].1 = false;
-        self.step()
+        self.release(Button::Trigger)
     }
 
-    /// 要素の中心でホイールを回す。
+    /// Points at the center of an element and tilts the arrow keys (right-hand stick) vertically for one frame only.
     fn scroll(&mut self, selector: &'static str, lines: f32) -> &mut Self {
-        let c = self.bounds(selector).center();
-        self.move_to(c);
-        self.visual().simulate_event(ScrollWheelEvent {
-            position: c,
-            delta: ScrollDelta::Lines(Point::new(0.0, lines)),
-            ..Default::default()
-        });
-        self.step()
+        self.hover(selector)
+            .stick(Hand::Right, Vec2::new(0.0, lines))
+            .stick(Hand::Right, Vec2::ZERO)
     }
 
-    /// ビューの状態を読む。
     fn read<R>(&mut self, f: impl FnOnce(&V) -> R) -> R {
-        self.views[self.panel]
+        self.panels.views[self.panel]
             .as_ref()
-            .expect("画面型が異なる")
+            .expect("screen type mismatch")
             .read_with(self.cx, |v, _| f(v))
     }
 
-    /// 画面に描かれている要素の中心の色（0xRRGGBB）。
+    /// The color shown on the emulator screen.
     fn color_at(&mut self, selector: &'static str) -> u32 {
-        let c = self.bounds(selector).center();
-        let (frame, scale) = self
-            .visual()
-            .update(|window, cx| (raster::capture(window, cx), window.scale_factor()));
-        let (x, y) = (
-            (f32::from(c.x) * scale) as u32,
-            (f32::from(c.y) * scale) as u32,
-        );
-        let i = ((y * frame.width + x) * 4) as usize;
-        u32::from_be_bytes([0, frame.rgba[i], frame.rgba[i + 1], frame.rgba[i + 2]])
+        let at = self.on_screen(selector);
+        self.color_on_screen(at)
     }
 }
