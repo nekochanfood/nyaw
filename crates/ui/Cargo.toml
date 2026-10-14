@@ -35,7 +35,6 @@ tauri-build = "2"
 vr = { workspace = true, features = ["test-support"] }
 webpages.workspace = true
 testing.workspace = true
-beam.workspace = true
 
 # 実プラットフォーム + GPU で描画を読み戻す。GUI はメインスレッドで回すため独自 main。
 [[test]]

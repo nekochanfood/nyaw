@@ -7511,7 +7511,6 @@ dependencies = [
 name = "ui"
 version = "2026.0.1"
 dependencies = [
- "beam",
  "cairo-rs",
  "gpui",
  "gpui_platform",

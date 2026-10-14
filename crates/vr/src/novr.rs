@@ -4,7 +4,7 @@
 //!
 //! 入力は片手のコントローラとして模す:
 //! - 右手: レイは目からマウスの方向（レーザーは視線と重なるので見えず、カーソルだけが見える）。
-//!   左クリック = トリガー、右クリック = グリップ（掴む）、矢印キー = スティック。
+//!   左クリック = トリガー、右クリック = グリップ（掴む）、矢印キー = スティック、ホイール = スティックの縦。
 //! - 左手: 手元で下を向いていてパネルを指さない。WASD = スティック。
 //!
 //! デバイスは実在しないので、取り付けたパネルは追従しない（[`Frame::emulated`]）。
@@ -27,6 +27,10 @@ const CHECKER: u32 = 16;
 const CHECKER_GRAY: [u32; 2] = [0x6b6b6b, 0x8a8a8a];
 /// ウィンドウの更新の上限。VR ランタイムの vsync と同じく poll はここで待つ。
 const FPS: usize = 90;
+/// ホイール 1 刻みで右手のスティックを倒す量（1 フレームだけ）。オーバーレイはスティックの値をそのまま行数として送るので、
+/// 1 刻み = 3 行（一般的なホイールの既定）になる。
+// ponytail: 刻みの大きさ（Windows は 120 単位、ほかは OS ごと）は見ず向きだけ。滑らかなスクロールのホイールでは速すぎるかもしれない。
+const WHEEL: f32 = 3.0;
 /// 模すコントローラの機種（トリガー・グリップ・スティックがそろっている）。
 const PROFILE: &str = "valve/index_controller";
 /// 左手の置き場所（頭の少し下・左）。下を向けてパネルを指さないようにする。
@@ -65,6 +69,8 @@ pub struct Emulator {
     size: (u32, u32),
     /// 合成した絵（0RGB）。
     pixels: Vec<u32>,
+    /// 背景の市松模様（`size` の大きさ。変わったら作り直す）。
+    background: Vec<u32>,
     dirty: bool,
     quads: Vec<Quad>,
     /// マウスの位置（ウィンドウのピクセル、左上原点）。ウィンドウの外なら `None`（右手が見えない）。
@@ -93,6 +99,7 @@ impl Emulator {
             headless,
             size,
             pixels: Vec::new(),
+            background: Vec::new(),
             dirty: true,
             quads: Vec::new(),
             pointer: None,
@@ -130,22 +137,22 @@ impl Emulator {
         if p.z > -NEAR {
             return None;
         }
-        let (w, h) = (self.size.0 as f32, self.size.1 as f32);
-        let t = (FOV_Y / 2.0).tan();
-        let x = p.x / -p.z / (t * w / h);
-        let y = p.y / -p.z / t;
-        Some(Vec2::new((x + 1.0) / 2.0 * w, (1.0 - y) / 2.0 * h))
+        let (k, b) = self.lens();
+        Some((Vec2::new(p.x, p.y) / -p.z - b) / k)
     }
 
     /// 画面上の点を通る、目からの視線（z = -1 に正規化）。[`Emulator::project`] の逆。
     fn ray(&self, at: Vec2) -> Vec3 {
+        let (k, b) = self.lens();
+        (at * k + b).extend(-1.0)
+    }
+
+    /// 画面の点 `at` を通る視線の x, y（z = -1）が `at * k + b` になる係数。
+    fn lens(&self) -> (Vec2, Vec2) {
         let (w, h) = (self.size.0 as f32, self.size.1 as f32);
         let t = (FOV_Y / 2.0).tan();
-        Vec3::new(
-            (2.0 * at.x / w - 1.0) * t * w / h,
-            (1.0 - 2.0 * at.y / h) * t,
-            -1.0,
-        )
+        let k = Vec2::new(2.0 * t / h, -2.0 * t / h);
+        (k, Vec2::new(-t * w / h, t))
     }
 
     /// 今の画面（幅, 高さ, RGBA）。ユーザーに見えている絵。
@@ -237,6 +244,12 @@ impl Emulator {
             stick([Key::A, Key::D, Key::S, Key::W]),
             stick([Key::Left, Key::Right, Key::Down, Key::Up]),
         ];
+        // ホイールは右手のスティックの縦。回したフレームだけ倒す（量は向きだけ見る。OS ごとに単位が違う）。
+        if let Some((_, y)) = w.get_scroll_wheel()
+            && y != 0.0
+        {
+            self.sticks[1].y = y.signum() * WHEEL;
+        }
     }
 
     /// 変化があれば合成し直す。
@@ -246,11 +259,16 @@ impl Emulator {
         }
         self.dirty = false;
         let (w, h) = self.size;
+        if self.background.len() != (w * h) as usize {
+            self.background = (0..w * h)
+                .map(|i| {
+                    let (x, y) = (i % w, i / w);
+                    CHECKER_GRAY[((x / CHECKER + y / CHECKER) % 2) as usize]
+                })
+                .collect();
+        }
         self.pixels.clear();
-        self.pixels.extend((0..w * h).map(|i| {
-            let (x, y) = (i % w, i / w);
-            CHECKER_GRAY[((x / CHECKER + y / CHECKER) % 2) as usize]
-        }));
+        self.pixels.extend_from_slice(&self.background);
         let mut order: Vec<usize> = (0..self.quads.len())
             .filter(|&i| {
                 let q = &self.quads[i];
@@ -303,32 +321,59 @@ impl Emulator {
             }
             _ => (0, 0, w, h),
         };
+        // 視線 d = (x*kx + bx, y*ky + by, -1) とクアッドの交点は t = nc / (n·d)。テクスチャ座標は (ux·d) t、(uy·d) t から
+        // 出るので、3 つの内積を行ごとに x について足し込めば、ピクセルごとの計算は割り算 1 回で済む。
+        let (k, b) = self.lens();
+        let dot = |a: Vec3| (a.x * k.x, a.x * b.x - a.z, a.y * k.y, a.y * b.y);
+        let (n_x, n_c, n_y, n_b) = dot(n);
+        let (u_x, u_c, u_y, u_b) = dot(ux);
+        let (v_x, v_c, v_y, v_b) = dot(uy);
+        let (cu, cv) = (c.dot(ux), c.dot(uy));
+        let (tw_f, th_f) = (tw as f32, th as f32);
         for y in y0..y1 {
+            let py = y as f32 + 0.5;
+            let row = |x_k: f32, c0: f32, y_k: f32, y_b: f32| (x_k, c0 + y_k * py + y_b);
+            let (n_dx, mut dn) = row(n_x, n_c, n_y, n_b);
+            let (u_dx, mut du) = row(u_x, u_c, u_y, u_b);
+            let (v_dx, mut dv) = row(v_x, v_c, v_y, v_b);
+            let px0 = x0 as f32 + 0.5;
+            dn += n_dx * px0;
+            du += u_dx * px0;
+            dv += v_dx * px0;
+            let line = (y * w) as usize;
             for x in x0..x1 {
-                let d = self.ray(Vec2::new(x as f32 + 0.5, y as f32 + 0.5));
-                let dn = d.dot(n);
-                if dn.abs() < 1e-9 {
+                let (pn, pu, pv) = (dn, du, dv);
+                dn += n_dx;
+                du += u_dx;
+                dv += v_dx;
+                if pn.abs() < 1e-9 {
                     continue;
                 }
-                let t = nc / dn;
+                let t = nc / pn;
                 if t < NEAR {
                     continue;
                 }
-                let hit = d * t - c;
-                let u = hit.dot(ux) / size.x + 0.5;
-                let v = 0.5 - hit.dot(uy) / size.y;
+                let u = (pu * t - cu) / size.x + 0.5;
+                let v = 0.5 - (pv * t - cv) / size.y;
                 if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
                     continue;
                 }
-                let tx = ((u * tw as f32) as u32).min(tw - 1);
-                let ty = ((v * th as f32) as u32).min(th - 1);
+                let tx = ((u * tw_f) as u32).min(tw - 1);
+                let ty = ((v * th_f) as u32).min(th - 1);
                 let s = ((ty * tw + tx) * 4) as usize;
-                let [r, g, b, a] = [tex[s], tex[s + 1], tex[s + 2], tex[s + 3]].map(u32::from);
-                let a = a * alpha / 255;
-                let dst = &mut self.pixels[(y * w + x) as usize];
-                let [_, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-                let mix = |s: u32, d: u32| (s * a + d * (255 - a)) / 255;
-                *dst = (mix(r, dr) << 16) | (mix(g, dg) << 8) | mix(b, db);
+                let a = u32::from(tex[s + 3]) * alpha / 255;
+                if a == 0 {
+                    continue;
+                }
+                let [r, g, b] = [tex[s], tex[s + 1], tex[s + 2]].map(u32::from);
+                let dst = &mut self.pixels[line + x as usize];
+                *dst = if a == 255 {
+                    (r << 16) | (g << 8) | b
+                } else {
+                    let [_, dr, dg, db] = dst.to_be_bytes().map(u32::from);
+                    let mix = |s: u32, d: u32| (s * a + d * (255 - a)) / 255;
+                    (mix(r, dr) << 16) | (mix(g, dg) << 8) | mix(b, db)
+                };
             }
         }
     }
@@ -485,7 +530,10 @@ mod tests {
         let at = e.project(Vec3::new(-0.25, 0.0, -1.0)).unwrap();
         assert!(e.set_overlay_alpha(red, 0.5));
         let half = pixel(&e.screenshot(), at);
-        assert!(half[0] > half[1] && half[1] == half[2], "灰色に赤が半分混ざる");
+        assert!(
+            half[0] > half[1] && half[1] == half[2],
+            "灰色に赤が半分混ざる"
+        );
         e.set_overlay_alpha(red, 0.0);
         let gone = pixel(&e.screenshot(), at);
         assert!(gone[0] == gone[1] && gone[1] == gone[2]);

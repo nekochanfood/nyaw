@@ -156,7 +156,7 @@ fn main() -> ExitCode {
         ..Default::default()
     };
     let kernel = Kernel::with_backend(Box::new(emu) as Box<dyn VrBackend>, config);
-    // GPUI の Testing（パネル 0）から、Web 版（パネル 1）を開く。ビームも本番と同じく載せる（パネル 2 以降）。
+    // GPUI の Testing（パネル 0）から、Web 版（パネル 1）を開く。
     let gpui = PanelSpec::new(Pose::new(GPUI_POS, Quat::IDENTITY), |id, _, _| {
         testing::Testing::new(id)
     });
@@ -165,12 +165,10 @@ fn main() -> ExitCode {
             .spawns
             .push(PanelSpec::spawn_web(0, testing::WEB_PAGE))
     });
-    let mut panels = vec![gpui];
-    panels.extend(beam::specs());
     common::run(
         "web_novr",
         kernel,
-        panels,
+        vec![gpui],
         "panel-1",
         Some(open_web),
         move |page, _| scenario(page, &Emu(tx)),
@@ -204,7 +202,7 @@ fn scenario(page: &mut Page, emu: &Emu) {
     assert_eq!(s["state"]["status"]["panel"], 1);
     assert_eq!(s["state"]["status"]["runtime"], "novr");
     let status = s["state"]["status"].clone();
-    let h = num(&status, &["resolution", "1"]) as f32;
+    let h = status["resolution"][1].as_f64().expect("解像度") as f32;
 
     // 画面に出さない WebView が読み戻されて、エミュレーターの画面に映る（背景は不透明な #202020）。
     // パネルの外（2 枚の間）は無彩色の市松模様。
@@ -242,7 +240,9 @@ fn scenario(page: &mut Page, emu: &Emu) {
     emu.until_color("クリックの結果が画面に映る", edge, near([0x2e, 0xcc, 0x71]));
 
     // 矢印キー = 右手のスティック。下へ倒すと一覧が下へ動く。
-    hover(page, emu, "scroll-list");
+    // 一覧の中心には行があるので、宛先が一覧そのものになるのは待たない。
+    let list = emu.on_screen(&status, page.center("scroll-list"));
+    emu.point(Some(list));
     emu.stick(Vec2::new(0.0, -1.0));
     page.until("スクロールした", |s| {
         num(s, &["state", "wheel"]) > 0.0 && num(s, &["state", "scrollTop"]) > 0.0

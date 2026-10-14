@@ -80,6 +80,10 @@ fn hands_keep_independent_pressed_state_on_same_panel() {
         .to_vec();
     let mut bridges: HashMap<_, PointerBridge> = HashMap::new();
     ui::pump(&mut kernel, &mut bridges);
+    // 止まっていれば Move は送らないので、両手を少し動かす。
+    for c in &mut kernel.vr.frame.controllers {
+        c.aim = Pose::new(Vec3::new(0.1, 0.0, 0.0), Quat::IDENTITY);
+    }
     let moves: Vec<_> = ui::pump(&mut kernel, &mut bridges)
         .into_iter()
         .filter_map(|(_, input)| match input {

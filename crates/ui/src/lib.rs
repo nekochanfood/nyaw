@@ -39,6 +39,9 @@ pub struct PointerBridge {
     pos: Point<Pixels>,
     pressed: bool,
     touch: Option<Touch>,
+    /// GPUI が知っているこの手の位置（最後に送ったイベントの位置。離れたら `None`）。同じ位置への Move は送らない
+    /// （オーバーレイは指している間 毎 tick Move を出すので、止まっていても描き直しと読み戻しが毎フレーム走ってしまう）。
+    sent: Option<Point<Pixels>>,
 }
 
 /// タッチで押している間の状態。
@@ -66,6 +69,7 @@ impl PointerBridge {
                         return Vec::new();
                     }
                     self.pos = pos;
+                    self.sent = Some(t.start);
                     // 中身が指に付いてくる向き（下へ動かすと上へスクロール）。宛先は押した所に固定する。
                     return vec![PlatformInput::ScrollWheel(ScrollWheelEvent {
                         position: t.start,
@@ -102,6 +106,14 @@ impl PointerBridge {
     fn mouse(&mut self, ev: PointerEvent) -> Vec<PlatformInput> {
         let at = |p: Vec2| Point::new(px(p.x), px(p.y));
         let held = |pressed: bool| pressed.then_some(MouseButton::Left);
+        match ev {
+            PointerEvent::Move { pos } if self.sent == Some(at(pos)) => return Vec::new(),
+            PointerEvent::Leave => self.sent = None,
+            PointerEvent::Move { pos }
+            | PointerEvent::Down { pos }
+            | PointerEvent::Up { pos }
+            | PointerEvent::Scroll { pos, .. } => self.sent = Some(at(pos)),
+        }
         vec![match ev {
             PointerEvent::Move { pos } => {
                 self.pos = at(pos);
@@ -1064,6 +1076,23 @@ mod tests {
         let p = head.leveled() * Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
         assert!(p.position.abs_diff_eq(Vec3::new(2.0, 1.6, 0.0), 1e-5));
         assert!((p.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
+    }
+
+    #[test]
+    fn move_to_the_same_place_is_sent_once_until_leave() {
+        let mut b = PointerBridge::default();
+        let pos = Vec2::new(3.0, 4.0);
+        let mut send = |ev| b.translate(ev, PointerMode::Mouse).len();
+        assert_eq!(send(PointerEvent::Move { pos }), 1);
+        assert_eq!(
+            send(PointerEvent::Move { pos }),
+            0,
+            "止まっていれば送らない"
+        );
+        assert_eq!(send(PointerEvent::Down { pos }), 1);
+        assert_eq!(send(PointerEvent::Move { pos }), 0);
+        assert_eq!(send(PointerEvent::Leave), 1);
+        assert_eq!(send(PointerEvent::Move { pos }), 1, "入り直したら送る");
     }
 
     #[test]

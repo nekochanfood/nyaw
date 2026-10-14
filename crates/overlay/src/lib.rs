@@ -510,7 +510,12 @@ impl Overlay {
     }
 
     fn update_hand(&mut self, c: &ControllerState, frame: &Frame, out: &mut Vec<UiEvent>) {
-        let smoothing = self.smoothing.unwrap_or(POINTER_SMOOTHING);
+        // 模したデバイス（novr のマウス）は手ブレしない。抑えると遅れるだけで、ドラッグで離した位置がずれる。
+        let smoothing = if frame.emulated {
+            0.0
+        } else {
+            self.smoothing.unwrap_or(POINTER_SMOOTHING)
+        };
         let st = self.hands.entry(c.hand).or_default();
         // 手ブレを抑えたレーザー。隠れていた後は追わずに手に合わせる。
         let aim = Pose::new(
@@ -986,6 +991,21 @@ mod tests {
             &[],
         );
         assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Leave]);
+    }
+
+    #[test]
+    fn emulated_pointer_is_not_smoothed() {
+        let (mut vr, mut ov) = setup();
+        vr.frame.emulated = true;
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        // 右へ向けると、手ブレ抑えなしでその場でヒット点が動く。
+        let aim = Pose::new(Vec3::ZERO, Quat::from_rotation_y(-0.2));
+        controller(&mut vr, aim, &[]);
+        let PointerEvent::Move { pos } = ov.tick(&mut vr)[0].event else {
+            panic!()
+        };
+        assert_eq!(Some(pos), hit_test(ov.panel(0), &aim).map(|h| h.0));
     }
 
     #[test]
