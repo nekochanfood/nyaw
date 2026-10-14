@@ -15,6 +15,8 @@ openxr = { version = "0.22", default-features = false, features = ["static"] }
 ash = "0.38"
 # SteamVR の vrclient を実行時に読み込む
 libloading = "0.8"
+# novr のエミュレーターのウィンドウ
+minifb = "0.29.0"
 
 [features]
 # 上位層のテスト用モック (vr::mock) を公開する

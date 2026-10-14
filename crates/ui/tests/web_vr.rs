@@ -1,4 +1,4 @@
-//! VR（`Surface::Overlay`）の Web のパネルの E2E。本番と同じ `ui::run_with`（GPUI のイベントループの上で Tauri も回す）で、
+//! VR（モックのランタイム）の Web のパネルの E2E。本番と同じ `ui::run_with`（GPUI のイベントループの上で Tauri も回す）で、
 //! 実プラットフォームの WebView に Testing の Web 版（React + Base UI）を載せて流す。
 //! 仮想コントローラのレーザー → オーバーレイ層 → カーネル → Tauri のイベント → ブリッジ → DOM のポインタイベント → React / Base UI、
 //! ページの描画 → 画面に出さない WebView の読み戻し → VR パネル（半透明を含む）、ページ → Tauri のコマンド → カーネル、

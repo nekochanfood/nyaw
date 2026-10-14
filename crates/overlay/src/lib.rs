@@ -474,6 +474,20 @@ impl Overlay {
                 );
             }
         }
+        // 見えなくなった手（電源が切れた・novr のマウスが画面の外へ出た）は、指していたパネルから離れる。
+        for (hand, st) in &mut self.hands {
+            if frame.controllers.iter().any(|c| c.hand == *hand) {
+                continue;
+            }
+            if let Some(panel) = st.hover.take() {
+                events.push(UiEvent {
+                    panel,
+                    hand: *hand,
+                    event: PointerEvent::Leave,
+                });
+            }
+            st.select = false;
+        }
         self.place_pointers(vr);
         for p in &mut self.panels {
             if let Some((device, offset)) = &p.follow {
@@ -972,6 +986,16 @@ mod tests {
             &[],
         );
         assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Leave]);
+    }
+
+    #[test]
+    fn lost_controller_leaves_the_panel_once() {
+        let (mut vr, mut ov) = setup();
+        controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
+        ov.tick(&mut vr);
+        vr.frame.controllers.clear();
+        assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Leave]);
+        assert!(ov.tick(&mut vr).is_empty());
     }
 
     #[test]

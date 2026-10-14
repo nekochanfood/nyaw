@@ -24,7 +24,7 @@ use gpui::{
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
     Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose,
-    Surface, UiEvent, Vec2, VrBackend,
+    UiEvent, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 
@@ -251,44 +251,31 @@ fn read_back(window: &mut Window) -> gpui::Result<Frame> {
     })
 }
 
-/// パネル用ウィンドウの設定。ランタイムの [`Surface`] によって見せ方だけが変わる。
-/// - `Overlay`: 描画は VR に送るので、デスクトップには出さない（非表示）。
-/// - `Desktop`: OS のウィンドウとして画面中央に表示し、OS の入力をそのまま受ける。
-pub fn panel_window_options(surface: Surface, resolution: (u32, u32), cx: &App) -> WindowOptions {
-    let size = size(px(resolution.0 as f32), px(resolution.1 as f32));
-    match surface {
-        Surface::Overlay => WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: Point::default(),
-                size,
-            })),
-            show: false,
-            focus: false,
-            // 既定（Opaque）だと白で塗ってから描くので、半透明の画面も不透明になる。
-            window_background: WindowBackgroundAppearance::Transparent,
-            ..Default::default()
-        },
-        Surface::Desktop => WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(None, size, cx))),
-            ..Default::default()
-        },
+/// パネル用ウィンドウの設定。描画は VR（novr はエミュレーター）に送るので、デスクトップには出さない（非表示）。
+pub fn panel_window_options(resolution: (u32, u32)) -> WindowOptions {
+    WindowOptions {
+        window_bounds: Some(WindowBounds::Windowed(Bounds {
+            origin: Point::default(),
+            size: size(px(resolution.0 as f32), px(resolution.1 as f32)),
+        })),
+        show: false,
+        focus: false,
+        // 既定（Opaque）だと白で塗ってから描くので、半透明の画面も不透明になる。
+        window_background: WindowBackgroundAppearance::Transparent,
+        ..Default::default()
     }
 }
 
-/// パネル用ウィンドウを開く。`Overlay` では Windows の非表示ウィンドウのレンダーターゲットが
+/// パネル用ウィンドウを開く。Windows の非表示ウィンドウのレンダーターゲットは
 /// 1x1 のまま作られるので、明示的にリサイズして実寸にする（反映は非同期。最初の数フレームは 1x1）。
 pub fn open_panel_window<V: Render>(
     cx: &mut App,
-    surface: Surface,
     resolution: (u32, u32),
     build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
 ) -> gpui::Result<WindowHandle<V>> {
-    let options = panel_window_options(surface, resolution, cx);
-    let window = cx.open_window(options, build)?;
-    if surface == Surface::Overlay {
-        let size = size(px(resolution.0 as f32), px(resolution.1 as f32));
-        cx.update_window(window.into(), |_, window, _| window.resize(size))?;
-    }
+    let window = cx.open_window(panel_window_options(resolution), build)?;
+    let size = size(px(resolution.0 as f32), px(resolution.1 as f32));
+    cx.update_window(window.into(), |_, window, _| window.resize(size))?;
     Ok(window)
 }
 
@@ -323,8 +310,6 @@ impl Render for DragPreview {
 /// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 5cm）。
 const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.05);
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
-/// Desktop（novr）の周期。主ディスプレイのリフレッシュ間隔が取れないときに使う。VR ランタイムは `poll` が vsync まで待つ。
-const FRAME: Duration = Duration::from_millis(11);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
 pub(crate) const IDLE_REDRAW: Duration = Duration::from_millis(250);
@@ -544,9 +529,9 @@ impl WebSlot {
         }
     }
 
-    fn host(&mut self, surface: Surface) -> Option<&mut web::Host> {
+    fn host(&mut self) -> Option<&mut web::Host> {
         if self.host.is_none() && !self.failed {
-            match web::Host::new(surface, self.files) {
+            match web::Host::new(self.files) {
                 Ok(h) => {
                     if let Some(f) = self.on_web.take() {
                         f(h.handle());
@@ -568,7 +553,7 @@ impl WebSlot {
 }
 
 /// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
-/// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通り、違いは `kernel.surface()` だけ。
+/// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通る（周期は `poll` が vsync まで待って作る）。
 /// パネルに載せる画面（上の層）は `panels` で受け取る。UI 層はどの画面かを知らない。
 /// Web のパネル（[`PanelSpec::web`]）のページは `web` から配信する。
 /// `profiler` があれば起動時から計測し（`PanelControl::profiling`）、段階ごとの所要時間をプロファイラパネルにグラフで出す。
@@ -584,26 +569,11 @@ pub fn run_with(
     web: web::Files,
     hooks: Hooks,
 ) {
-    let surface = kernel.surface();
     let mut webs = WebSlot::new(web, hooks.on_web);
     let remote = hooks.remote;
     gpui_platform::application().run(move |cx: &mut App| {
-        // novr はディスプレイのリフレッシュに揃える。
-        // ponytail: 起動時の主ディスプレイで固定。モニタ間の移動や設定変更を追うなら毎フレーム問い合わせる。
-        let frame = cx
-            .primary_display()
-            .and_then(|d| d.refresh_interval())
-            .unwrap_or(FRAME);
-        // novr はタイマーが周期を決めるので予算が分かる。VR は vsync の間隔から推定する。
-        let budget = move |p: Profiler| {
-            if surface == Surface::Desktop {
-                p.with_budget(frame)
-            } else {
-                p
-            }
-        };
         if let Some(p) = profiler {
-            cx.set_global(budget(p));
+            cx.set_global(p);
             cx.default_global::<PanelControl>().profiling = true;
         }
         let mut profiler_panel: Option<PanelId> = None;
@@ -613,9 +583,6 @@ pub fn run_with(
             .enumerate()
             .map(|(i, spec)| open_panel(&mut kernel, spec, i, cx, &mut webs))
             .collect();
-        if surface == Surface::Desktop {
-            cx.activate(true);
-        }
 
         cx.spawn(async move |cx| {
             let mut bridges = HashMap::new();
@@ -629,11 +596,7 @@ pub fn run_with(
             // 0 だとこのループがすぐ再スケジュールされ、後から積まれた GPUI のタスクが走らない。
             // 途中で開いたパネルのリサイズ（SetWindowPos はタスクで行われる）が届かず、1x1 のまま表示されなかった。
             // poll は次の vsync までの残りを眠るので、ここで 1ms 譲っても周期は変わらない。
-            let wait = if surface == Surface::Desktop {
-                frame
-            } else {
-                Duration::from_millis(1)
-            };
+            let wait = Duration::from_millis(1);
             loop {
                 let begin = Instant::now();
                 cx.background_executor().timer(wait).await;
@@ -698,8 +661,7 @@ pub fn run_with(
                             window.remove_window();
                             return None;
                         }
-                        // Desktop では OS が表示するので読み戻さない。
-                        (surface == Surface::Overlay && redraw).then(|| {
+                        redraw.then(|| {
                             let t = Instant::now();
                             window.draw(cx).clear(cx);
                             let scene = Instant::now();
@@ -780,7 +742,7 @@ pub fn run_with(
                         if profiling {
                             // --profile 無しで始めたときは CSV に書かない。
                             let p = Profiler::new(None).expect("出力先が無ければ失敗しない");
-                            cx.set_global(budget(p));
+                            cx.set_global(p);
                         } else {
                             log_summary(cx);
                             cx.remove_global::<Profiler>();
@@ -930,16 +892,15 @@ fn open_panel(
     if let Some((hand, part)) = spec.pointer {
         kernel.apply(panel, PanelCommand::Pointer(hand, part));
     }
-    let surface = kernel.surface();
     if let Content::Web(page) = &spec.content {
-        match webs.host(surface) {
+        match webs.host() {
             Some(host) => host.open(kernel, panel, page),
             None => kernel.apply(panel, PanelCommand::Close),
         }
         return (panel, None);
     }
     let drag_layer = spec.pointer.is_some_and(|(_, part)| part == Pointer::Drag);
-    let window: AnyWindowHandle = open_panel_window(cx, surface, spec.resolution, |w, cx| {
+    let window: AnyWindowHandle = open_panel_window(cx, spec.resolution, |w, cx| {
         let view = spec.build(panel, w, cx);
         cx.new(|_| PanelRoot::new(view))
     })
@@ -1000,20 +961,10 @@ mod tests {
     }
 
     #[gpui::test]
-    fn panel_window_shows_only_on_desktop_surface(cx: &mut TestAppContext) {
-        cx.update(|cx| {
-            assert!(!panel_window_options(Surface::Overlay, PANEL_PX, cx).show);
-            assert!(panel_window_options(Surface::Desktop, PANEL_PX, cx).show);
-        });
-    }
-
-    #[gpui::test]
-    fn desktop_window_matches_panel_resolution(cx: &mut TestAppContext) {
+    fn panel_window_is_hidden_and_matches_panel_resolution(cx: &mut TestAppContext) {
+        assert!(!panel_window_options(PANEL_PX).show);
         let window = cx.update(|cx| {
-            open_panel_window(cx, Surface::Desktop, PANEL_PX, |_, cx| {
-                cx.new(|_| Probe::default())
-            })
-            .unwrap()
+            open_panel_window(cx, PANEL_PX, |_, cx| cx.new(|_| Probe::default())).unwrap()
         });
         let vp = cx
             .update(|cx| cx.update_window(window.into(), |_, w, _| w.viewport_size()))

@@ -1,6 +1,6 @@
 //! Layer 1: ランタイム。OpenVR / OpenXR / novr（VR なし）の違いを1つのトレイト [`VrBackend`] の裏に隠す。
 //! どれも対等な「手段」で、上位層は [`connect`] から得た `Box<dyn VrBackend>` だけを扱う。
-//! 基本操作はどのランタイムでもネイティブに行える。違いは [`Surface`]（表示と入力の経路）だけで表す。
+//! novr もデスクトップのウィンドウで VR を模すエミュレーター（[`novr::Emulator`]）なので、上位層から見た違いは無い。
 //!
 //! 語彙は OpenXR に揃える: コントローラのプロファイルは `"vendor/name"`（例 `"valve/index_controller"`）、
 //! 入力は `"component/feature"`（例 `"trigger/value"`）。OpenVR バックエンドはこれに翻訳する。
@@ -8,7 +8,7 @@
 mod gpu;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
-mod novr;
+pub mod novr;
 mod openvr;
 
 /// testkit の実ランタイムテスト用。上位層からは使わない。
@@ -106,11 +106,16 @@ pub struct Frame {
     pub trackers: Vec<(String, Pose)>,
     /// ランタイムが終了を求めている（SteamVR の終了、OpenXR セッションの EXITING など）。
     pub quit: bool,
+    /// デバイスは実在せず模したもの（novr のエミュレーター）。取り付けたパネルは追従しない（[`Frame::pose`] が `None`）。
+    pub emulated: bool,
 }
 
 impl Frame {
-    /// このフレームでの `device` の姿勢。トラッキングされていなければ `None`。
+    /// このフレームでの `device` の姿勢。トラッキングされていなければ（模したデバイスも）`None`。
     pub fn pose(&self, device: &Device) -> Option<Pose> {
+        if self.emulated {
+            return None;
+        }
         match device {
             Device::Hmd => Some(self.hmd),
             Device::Controller(hand) => self
@@ -140,17 +145,8 @@ pub struct OverlayId(pub u64);
 pub enum Runtime {
     OpenVr,
     OpenXr,
-    /// VR を使わずデスクトップで動かす。
+    /// VR を使わず、デスクトップのウィンドウで VR を模す（[`novr::Emulator`]）。
     NoVr,
-}
-
-/// パネルをどう見せ、入力をどこから受けるか。上位層がランタイムごとに変えてよいのはここだけ。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Surface {
-    /// 描画を読み戻して VR のオーバーレイへ送る。入力はコントローラ（[`VrBackend::poll`]）から。
-    Overlay,
-    /// OS のウィンドウとしてそのまま表示する。入力も OS（マウス等）からネイティブに受ける。
-    Desktop,
 }
 
 #[derive(Debug, PartialEq)]
@@ -176,7 +172,6 @@ impl std::error::Error for VrError {}
 /// 「OpenVR のやり方」「OpenXR のやり方」「novr のやり方」で実行される。
 pub trait VrBackend {
     fn runtime(&self) -> Runtime;
-    fn surface(&self) -> Surface;
     /// OpenVR / OpenXR はここでランタイムの vsync（次フレーム）まで待つ。novr は待たない（呼び出し側が周期を決める）。
     /// ランタイムのイベントを処理し、このフレームの姿勢と生のコントローラ入力を返す。
     fn poll(&mut self) -> Frame;
@@ -218,9 +213,6 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     fn runtime(&self) -> Runtime {
         (**self).runtime()
     }
-    fn surface(&self) -> Surface {
-        (**self).surface()
-    }
     fn poll(&mut self) -> Frame {
         (**self).poll()
     }
@@ -261,7 +253,7 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
 pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
     if prefer == Some(Runtime::NoVr) {
         logger::debug!("ランタイムに接続する", runtime = ?Runtime::NoVr);
-        return Ok(Box::new(novr::NoVrBackend::default()));
+        return Ok(Box::new(novr::Emulator::windowed()));
     }
     let order = match prefer {
         Some(Runtime::OpenXr) => [Runtime::OpenXr, Runtime::OpenVr],
@@ -288,7 +280,7 @@ pub fn connect(prefer: Option<Runtime>) -> Result<Box<dyn VrBackend>, VrError> {
 /// testkit が起動したランタイムを、別のランタイムと取り違えずに掴むため。
 pub fn connect_exact(rt: Runtime) -> Result<Box<dyn VrBackend>, VrError> {
     match rt {
-        Runtime::NoVr => Ok(Box::new(novr::NoVrBackend::default())),
+        Runtime::NoVr => Ok(Box::new(novr::Emulator::windowed())),
         Runtime::OpenVr if openvr::available() => openvr::connect(),
         Runtime::OpenXr if openxr::available() => openxr::connect(),
         _ => Err(VrError::NoRuntime),
@@ -321,12 +313,9 @@ mod tests {
     }
 
     #[test]
-    fn novr_is_always_available_and_desktop() {
+    fn novr_is_always_available() {
         let b = connect(Some(Runtime::NoVr)).unwrap();
-        assert_eq!(
-            (b.runtime(), b.surface()),
-            (Runtime::NoVr, Surface::Desktop)
-        );
+        assert_eq!(b.runtime(), Runtime::NoVr);
     }
 
     #[test]
@@ -341,13 +330,18 @@ mod tests {
                 inputs: Vec::new(),
             }],
             trackers: vec![("LHR-1".into(), at(3.0))],
-            quit: false,
+            ..Frame::default()
         };
         assert_eq!(frame.pose(&Device::Hmd), Some(at(1.0)));
         assert_eq!(frame.pose(&Device::Controller(Hand::Left)), Some(at(2.0)));
         assert_eq!(frame.pose(&Device::Controller(Hand::Right)), None);
         assert_eq!(frame.pose(&Device::Tracker("LHR-1".into())), Some(at(3.0)));
         assert_eq!(frame.pose(&Device::Tracker("LHR-2".into())), None);
+        let emulated = Frame {
+            emulated: true,
+            ..frame
+        };
+        assert_eq!(emulated.pose(&Device::Hmd), None);
     }
 
     #[test]

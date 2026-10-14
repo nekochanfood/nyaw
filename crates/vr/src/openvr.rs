@@ -18,7 +18,7 @@ use input::{HandActions, Input};
 
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
-    Device, Frame, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
+    Device, Frame, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError,
 };
 
 pub(crate) fn available() -> bool {
@@ -284,10 +284,6 @@ impl Drop for OpenVrBackend {
 impl VrBackend for OpenVrBackend {
     fn runtime(&self) -> Runtime {
         Runtime::OpenVr
-    }
-
-    fn surface(&self) -> Surface {
-        Surface::Overlay
     }
 
     fn poll(&mut self) -> Frame {

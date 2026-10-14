@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use testing::{BUTTON_ACTIVE_BG, Testing, TestingTransparent};
 use testkit::runtimes::{self, Kind, LaunchError};
-use testkit::{Driver, NoVrKit};
+use testkit::{DesktopKit, Driver};
 use vr::{Device, OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
 
 fn main() -> ExitCode {
@@ -124,7 +124,7 @@ fn overlay_reaches_runtime(vr: &mut dyn VrBackend) {
 fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
     let runtime = vr.runtime();
     let mut cx = gpui::TestAppContext::single();
-    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| Testing::default());
+    let mut kit = DesktopKit::with_backend(&mut cx, vr, |_, _| Testing::default());
     kit.click("attach-hmd").click("lock").hover("click-me");
     let p = kit.kernel.panel(kit.panel);
     assert_eq!(
@@ -169,7 +169,7 @@ fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
 fn transparent_runs_on_runtime(vr: Box<dyn VrBackend>) {
     let runtime = vr.runtime();
     let mut cx = gpui::TestAppContext::single();
-    let mut kit = NoVrKit::with_backend(&mut cx, vr, |_, _| TestingTransparent::new(0));
+    let mut kit = DesktopKit::with_backend(&mut cx, vr, |_, _| TestingTransparent::new(0));
     let id = kit.kernel.panel(kit.panel).overlay_id();
     let start = Instant::now();
     let mut px = None;

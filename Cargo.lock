@@ -7511,6 +7511,7 @@ dependencies = [
 name = "ui"
 version = "2026.0.1"
 dependencies = [
+ "beam",
  "cairo-rs",
  "gpui",
  "gpui_platform",
@@ -7705,6 +7706,7 @@ dependencies = [
  "glam",
  "libloading 0.8.9",
  "logger",
+ "minifb",
  "openvr_bindings",
  "openxr",
  "os",

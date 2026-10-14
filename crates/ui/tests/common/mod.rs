@@ -14,7 +14,7 @@ use std::{
 };
 
 use kernel::vr::{Frame, OverlayId, Quat, RawController, Vec3, mock::MockBackend};
-use kernel::{Hand, Kernel, Pose, Runtime, Surface, VrBackend, VrError};
+use kernel::{Hand, Kernel, Pose, Runtime, VrBackend, VrError};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Listener};
 
@@ -45,9 +45,6 @@ pub struct SharedMock(pub Arc<Mutex<MockBackend>>);
 impl VrBackend for SharedMock {
     fn runtime(&self) -> Runtime {
         self.0.lock().unwrap().runtime()
-    }
-    fn surface(&self) -> Surface {
-        self.0.lock().unwrap().surface()
     }
     fn poll(&mut self) -> Frame {
         // 実ランタイムの vsync 待ちの代わり（約 90Hz）。

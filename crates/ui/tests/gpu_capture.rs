@@ -6,7 +6,6 @@ fn main() {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
     use gpui::{AppContext, Context, IntoElement, Render, Styled, Window, div, rgb};
-    use kernel::Surface;
     use ui::{capture, open_panel_window};
 
     const PANEL_BG: u32 = 0x204060;
@@ -22,7 +21,7 @@ fn main() {
     let result = Rc::new(RefCell::new(None));
     let out = result.clone();
     gpui_platform::application().run(move |cx| {
-        let window = open_panel_window(cx, Surface::Overlay, RES, |_, cx| cx.new(|_| Solid))
+        let window = open_panel_window(cx, RES, |_, cx| cx.new(|_| Solid))
             .expect("パネルウィンドウを開けない");
         cx.spawn(async move |cx| {
             // リサイズの反映は非同期なので、実寸で読み戻せるまで待つ（最大 5 秒）

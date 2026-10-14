@@ -8,7 +8,7 @@ Node.js 22 以降（Web のページ `web/` を build.rs が Vite でビルド�
 Linux では WebKitGTK（`libwebkit2gtk-4.1-dev`。Web のパネルの Tauri が使う）も要る。
 
 ```sh
-cargo run                  # VR ランタイムを自動検出。無ければ novr（デスクトップのウィンドウ）で起動
+cargo run                  # VR ランタイムを自動検出。無ければ novr（VR をウィンドウで模すエミュレーター）で起動
 cargo run -- --novr        # novr 固定
 cargo run -- --openxr      # OpenXR 固定（--openvr で SteamVR）
 cargo run -- --profile     # プロファイラ付き（ランタイム指定と併用可。--profile=PATH でダンプ先を指定）
@@ -56,7 +56,7 @@ npm test           # 事前に npm run build。入力・スクロール・ルー
 
 Web Testing の「Pointer test」でマウス／タッチ方式を切り替え、タップ・ドラッグ・スワイプと、スティックの縦横スクロールを試せる。
 
-Web のパネルの E2E は実際の GPUI のウィンドウと WebView を開くので、Linux は画面（Xvfb でよい）があるときだけ流れる（novr 側は xdotool も要る）。
+Web のパネルの E2E は実際の GPUI のウィンドウと WebView を開くので、Linux は画面（Xvfb でよい）があるときだけ流れる。
 
 ```sh
 Xvfb :99 & DISPLAY=:99 cargo test -p ui --tests

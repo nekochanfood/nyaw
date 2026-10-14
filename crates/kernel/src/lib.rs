@@ -9,7 +9,7 @@ pub mod config;
 
 pub use config::{Config, PointerMode};
 pub use overlay::{self, Overlay, Panel, PanelId, Pointer, PointerEvent, UiEvent};
-pub use vr::{self, Device, Hand, Pose, Runtime, Surface, Vec2, VrBackend, VrError};
+pub use vr::{self, Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
 /// 上位層（ビュー）からパネルへの操作要求。
 #[derive(Debug, Clone, PartialEq)]
@@ -99,10 +99,6 @@ impl<B: VrBackend> Kernel<B> {
 
     pub fn runtime(&self) -> Runtime {
         self.vr.runtime()
-    }
-
-    pub fn surface(&self) -> Surface {
-        self.vr.surface()
     }
 
     /// レーザーのエミュレート方式。UI がポインタイベントをマウス・タッチのどちらとして流すかを決める。
@@ -198,10 +194,7 @@ mod tests {
     #[test]
     fn boot_novr_by_name() {
         let k = Kernel::boot(Some("--novr"), Config::default()).unwrap();
-        assert_eq!(
-            (k.runtime(), k.surface()),
-            (Runtime::NoVr, Surface::Desktop)
-        );
+        assert_eq!(k.runtime(), Runtime::NoVr);
     }
 
     #[test]

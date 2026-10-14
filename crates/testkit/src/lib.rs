@@ -3,8 +3,11 @@
 //!
 //! ランタイムは対等な「手段」なので、キットもランタイムごとに対等に用意する:
 //!
-//! - [`NoVrKit`]: novr。パネルはウィンドウで、OS のマウス入力をネイティブに受ける。
+//! - [`NoVrKit`]: novr（エミュレーター）。本番の novr と同じく、マウス（右手のコントローラ）で指してクリックし、
+//!   ユーザーに見える絵はエミュレーターの画面（[`NoVrKit::screenshot`]）。ウィンドウは出さない。
 //! - [`VrKit`]: VR（モック）。レーザー越しに操作し、描画は VR パネルへ送られる。
+//!
+//! [`DesktopKit`] はランタイムを通さずパネルのウィンドウへマウスを直接送る（コントローラの無い実ランタイム用）。
 //!
 //! 基本操作（[`Driver`]）はどのランタイムでもネイティブに行えなければならないので、基本操作の
 //! シナリオは1回だけ書いて [`on_every_runtime!`] で全ランタイムで実行する。VR 固有の機能
@@ -25,22 +28,26 @@
 //!
 //! 実ランタイム（Monado / SteamVR）でのテストは [`runtimes`]（インストールのウィザードと起動・後片付け）を使う。
 
+pub mod desktop;
 pub mod novr;
+mod panels;
 pub mod raster;
 pub mod runtimes;
 pub mod vr_kit;
 mod watch;
 
+pub use desktop::DesktopKit;
 pub use input::Action;
 pub use novr::NoVrKit;
+pub use vr::novr::Button;
 pub use vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 pub use vr_kit::{DEFAULT_PROFILE, VrKit};
 
 /// どのランタイムでもネイティブに行える基本操作。
 pub trait Driver<V> {
-    /// 要素の中心を指す（novr はマウス移動、VR はレーザー）。
+    /// 要素の中心を指す（novr はエミュレーターのマウス、VR はレーザー）。
     fn hover(&mut self, selector: &'static str) -> &mut Self;
-    /// 要素の中心をクリックする（novr は左クリック、VR は選択ボタン）。
+    /// 要素の中心をクリックする（novr は左クリック = トリガー、VR は選択ボタン）。
     fn click(&mut self, selector: &'static str) -> &mut Self;
     /// 要素の中心で押したままにする（novr は左ボタン、VR は選択ボタン）。押したまま `hover` で動かすとドラッグになる。
     fn down(&mut self, selector: &'static str) -> &mut Self;
@@ -50,11 +57,11 @@ pub trait Driver<V> {
     fn drag(&mut self, from: &'static str, to: &'static str) -> &mut Self {
         self.down(from).hover(to).up()
     }
-    /// 要素の中心で `lines` 行ぶん縦にスクロールする（novr はホイール、VR はスティック）。
+    /// 要素の中心で `lines` 行ぶん縦にスクロールする（novr は矢印キー = 右手のスティック、VR はスティック）。
     fn scroll(&mut self, selector: &'static str, lines: f32) -> &mut Self;
     /// ビューの状態を読む。
     fn read<R>(&mut self, f: impl FnOnce(&V) -> R) -> R;
-    /// ユーザーに見えている要素の中心の色（0xRRGGBB）。novr は画面、VR はパネルのテクスチャ。
+    /// ユーザーに見えている要素の中心の色（0xRRGGBB）。novr はエミュレーターの画面、VR はパネルのテクスチャ。
     fn color_at(&mut self, selector: &'static str) -> u32;
     /// 画面が開くよう頼んだ Web のページ（テストプラットフォームでは開かず、名前だけ残る）。
     fn web_spawns(&self) -> &[String];

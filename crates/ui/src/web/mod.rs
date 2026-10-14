@@ -5,12 +5,12 @@
 //! - レーザー → Web: オーバーレイ層のポインタイベントを Tauri のイベント `nyaw:pointer` でそのパネルの WebView へ送り、
 //!   注入したブリッジ（`bridge.js`）が DOM の PointerEvent / MouseEvent / click / wheel として発火する。
 //!   ページは普通の Web ページと同じく React 等で書け、VR 上にあることを意識しない。
-//!   novr（`Surface::Desktop`）では WebView を OS のウィンドウとして出すので、OS のマウスがそのまま届く。
+//!   novr もエミュレーターがコントローラを模すので同じ経路を通る。
 //! - Web → カーネル: ページは Tauri のコマンド（`panel_command` / `panel_status` / `spawn_panel`、JS からは `window.nyaw`）で
 //!   操作を積み、フレームループがカーネルに反映して状態の変化を Tauri のイベント `nyaw:status` で返す
 //!   （GPUI の `PanelControl` / `sync_panel` と同じ形）。
-//! - Web → VR: `Surface::Overlay` では WebView を画面に出さずに描き、[`capture`] で読み戻して `Kernel::submit` で送る。
-//! - リサイズ: ウィンドウの大きさが変わると（OS の操作でも `{ resize }` コマンドでも）パネルの解像度を合わせる
+//! - Web → VR: WebView を画面に出さずに描き、[`capture`] で読み戻して `Kernel::submit` で送る。
+//! - リサイズ: `{ resize }` コマンドでウィンドウの大きさが変わるとパネルの解像度を合わせる
 //!   （`PanelCommand::Resize`。1m あたりのピクセル数を保つので VR 上のパネルも広がる）。
 //!
 //! どのページかは知らない。ページのファイル（[`Files`]）は上から渡され、`nyaw://localhost/<ページ名>/index.html` で配信する。
@@ -31,8 +31,8 @@ use std::{
 
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PointerEvent, PointerMode, Pose, Runtime, Surface,
-    UiEvent, Vec2, VrBackend,
+    Device, Kernel, PanelCommand, PanelId, PointerEvent, PointerMode, Pose, Runtime, UiEvent, Vec2,
+    VrBackend,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -393,7 +393,6 @@ struct Draw {
 pub struct Host {
     app: tauri::App<Wry>,
     shared: Arc<Shared>,
-    surface: Surface,
     windows: HashMap<PanelId, WebviewWindow<Wry>>,
     draws: HashMap<PanelId, Draw>,
     outboxes: HashMap<PanelId, Outbox>,
@@ -407,7 +406,7 @@ pub struct Host {
 
 impl Host {
     /// Tauri を起こす。1 プロセスで 1 回だけ（イベントループは作り直せない）。
-    pub fn new(surface: Surface, files: Files) -> tauri::Result<Self> {
+    pub fn new(files: Files) -> tauri::Result<Self> {
         let shared = Arc::new(Shared {
             control: Mutex::default(),
             files,
@@ -442,7 +441,6 @@ impl Host {
         Ok(Self {
             app,
             shared,
-            surface,
             windows: HashMap::new(),
             draws: HashMap::new(),
             outboxes: HashMap::new(),
@@ -464,8 +462,7 @@ impl Host {
     }
 
     /// カーネルに作ったパネル `panel` に、ページ `page` の WebView のウィンドウを開く。開けなければパネルを閉じる。
-    /// VR（`Surface::Overlay`）では GPUI のパネルと同じく背景を透かす（塗るかどうかはページが決める）。
-    /// novr では普通の（不透明な）ウィンドウ。
+    /// GPUI のパネルと同じく背景を透かす（塗るかどうかはページが決める）。
     pub fn open<B: VrBackend>(&mut self, kernel: &mut Kernel<B>, panel: PanelId, page: &str) {
         if !has_page(self.shared.files, page) {
             logger::error!("知らない Web のページ", page = page, panel = panel);
@@ -481,16 +478,12 @@ impl Host {
         .title(page)
         .inner_size(w as f64, h as f64)
         .initialization_script(BRIDGE);
-        let window = if self.surface == Surface::Overlay {
-            // 描画は VR に送るので画面外へ。枠を消すと Windows の WebView の描画領域が縮むため残す。
-            offscreen(builder)
-                .transparent(true)
-                .focused(false)
-                .skip_taskbar(true)
-                .build()
-        } else {
-            builder.build()
-        };
+        // 描画は VR に送るので画面外へ。枠を消すと Windows の WebView の描画領域が縮むため残す。
+        let window = offscreen(builder)
+            .transparent(true)
+            .focused(false)
+            .skip_taskbar(true)
+            .build();
         match window {
             Ok(window) => {
                 logger::info!("Web のパネルを開いた", panel = panel, page = page);
@@ -564,9 +557,7 @@ impl Host {
         for panel in panels {
             self.sync(kernel, panel, now);
         }
-        if self.surface == Surface::Overlay {
-            self.capture(now);
-        }
+        self.capture(now);
         std::mem::take(&mut self.lock().spawns)
     }
 
@@ -764,7 +755,7 @@ impl Host {
     }
 }
 
-/// `Surface::Overlay` のウィンドウをデスクトップに出さない。
+/// パネルのウィンドウをデスクトップに出さない。
 /// WebKitGTK は未マップ（非表示）のウィンドウを描かず撮れないので、表示したまま画面の外に置く。
 // ponytail: Wayland ではアプリがウィンドウの位置を決められず画面に出てしまう。X11（XWayland 含む）のみ。
 // GDK_BACKEND=x11 で起動するか、オフスクリーン描画（WPE 等）に移すのが次の一手。
@@ -775,7 +766,7 @@ fn offscreen<'a>(
     b.visible(true).position(-20000.0, -20000.0)
 }
 
-/// `Surface::Overlay` のウィンドウをデスクトップに出さない（非表示のまま描かせて撮る）。
+/// パネルのウィンドウをデスクトップに出さない（非表示のまま描かせて撮る）。
 #[cfg(not(target_os = "linux"))]
 fn offscreen<'a>(
     b: WebviewWindowBuilder<'a, Wry, tauri::App<Wry>>,

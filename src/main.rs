@@ -25,10 +25,8 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
     let mut panels = vec![wrist::spec()];
-    // ビームは VR のコントローラ用。novr ではマウスがそのまま届くので要らない。
-    if kernel.surface() == kernel::Surface::Overlay {
-        panels.extend(beam::specs());
-    }
+    // novr もコントローラを模すので、どのランタイムでもビームを載せる（novr のレーザーは視線と重なって見えない）。
+    panels.extend(beam::specs());
     let profiler = args.profile.map(start_profiler);
     ui::run(kernel, panels, profiler, webpages::FILES);
     ExitCode::SUCCESS

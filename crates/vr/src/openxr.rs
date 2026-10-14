@@ -8,9 +8,7 @@ use ash::vk::{self, Handle};
 use openxr as xr;
 
 use crate::gpu::{self, Gpu};
-use crate::{
-    Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Surface, Vec3, VrBackend, VrError,
-};
+use crate::{Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError};
 
 pub(crate) fn available() -> bool {
     os::openxr_runtime_manifest().is_some()
@@ -668,10 +666,6 @@ impl VrBackend for OpenXrBackend {
         Runtime::OpenXr
     }
 
-    fn surface(&self) -> Surface {
-        Surface::Overlay
-    }
-
     fn poll(&mut self) -> Frame {
         // 前回の poll から今までに送られた画像を載せて、前のフレームを閉じる。
         self.end_frame();
@@ -717,6 +711,7 @@ impl VrBackend for OpenXrBackend {
             controllers: self.controllers(time),
             trackers: self.trackers(time),
             quit: self.quit,
+            emulated: false,
         }
     }
 
