@@ -9,7 +9,7 @@ pub mod config;
 
 use std::time::{Duration, Instant};
 
-pub use config::{Config, PointerMode};
+pub use config::{Config, LodQuality, PointerMode};
 pub use overlay::{self, Overlay, Panel, PanelId, Pointer, PointerEvent, UiEvent};
 pub use vr::{self, Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
@@ -142,6 +142,21 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.panel(id)
     }
 
+    /// 距離による描画解像度の段階（LOD0〜3）。Mid は 2 / 4 / 8 m で切り替える。
+    pub fn panel_lod(&self, id: PanelId) -> u8 {
+        let near = match self.config.lod_quality {
+            LodQuality::Off => return 0,
+            LodQuality::Low => 1.0,
+            LodQuality::Mid => 2.0,
+            LodQuality::High => 4.0,
+        };
+        let distance = self.panel(id).pose.position.distance(self.hmd().position);
+        [near, near * 2.0, near * 4.0]
+            .into_iter()
+            .filter(|&threshold| distance >= threshold)
+            .count() as u8
+    }
+
     /// 1 フレーム進める。ランタイムを poll し、パネルの追従・掴み移動とレーザーのヒット判定を行って UI イベントを返す。
     pub fn tick(&mut self) -> Vec<UiEvent> {
         let t = Instant::now();
@@ -268,6 +283,40 @@ mod tests {
         assert!(!k.status(p).locked);
         k.apply(p, PanelCommand::Lock(true));
         assert!(k.status(p).locked);
+    }
+
+    #[test]
+    fn distance_lod_tracks_camera_and_preserves_panel_geometry() {
+        let (mut k, p) = kernel();
+        let pose = k.panel(p).pose;
+        let resolution = k.panel(p).resolution;
+        let size = k.panel(p).size;
+        k.config.lod_quality = LodQuality::Off;
+        k.vr.frame.hmd.position = pose.position + vr::Vec3::Z * 100.0;
+        k.tick();
+        assert_eq!(k.panel_lod(p), 0);
+        for (quality, near) in [
+            (LodQuality::Low, 1.0),
+            (LodQuality::Mid, 2.0),
+            (LodQuality::High, 4.0),
+        ] {
+            k.config.lod_quality = quality;
+            for (distance, lod) in [
+                (0.0, 0),
+                (near - 0.01, 0),
+                (near, 1),
+                (near * 2.0, 2),
+                (near * 4.0, 3),
+                (100.0, 3),
+                (0.5, 0),
+            ] {
+                k.vr.frame.hmd.position = pose.position + vr::Vec3::Z * distance;
+                k.tick();
+                assert_eq!(k.panel_lod(p), lod, "{quality:?}: {distance}");
+                assert_eq!(k.panel(p).resolution, resolution);
+                assert_eq!(k.panel(p).size, size);
+            }
+        }
     }
 
     #[test]

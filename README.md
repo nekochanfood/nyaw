@@ -17,6 +17,16 @@ NYAW_LOG=debug cargo run   # ログレベル変更（trace/debug/info/warn/error
 
 ログは標準エラーと `%LOCALAPPDATA%\nyaw\logs\nyaw.log`（Linux は `$XDG_STATE_HOME/nyaw/logs`）に出る。
 
+`config.toml`（Windows は `%LOCALAPPDATA%\nyaw\config.toml`）の `lod_quality` で、距離に応じたパネルの描画解像度を調整できる。
+`0` は Off（常に LOD0）、`1` は Low、`2` は Mid（既定）、`3` は High。
+LOD0〜3 の縦横の解像度は元の 1、1/2、1/4、1/8。パネルの物理サイズと入力座標は変わらない。
+解像度の端数は切り捨てるため、8 の倍数でないサイズでは低 LOD の表示領域に最大 7 論理ピクセルの丸めが生じる。
+カメラからパネル中心までの距離で切り替え、Low は 1 / 2 / 4 m、Mid は 2 / 4 / 8 m、High は 4 / 8 / 16 m からそれぞれ LOD1 / 2 / 3 になる。
+
+```toml
+lod_quality = 0 # 距離による解像度の低下を無効にする（省略時は 2）
+```
+
 VR パネルは中央をアンカーに、サイズ 75%→100%・不透明度 0%→100% で表示し（200ms）、閉じると逆方向に消える（150ms）。
 `animato` で実時間を使って進め、最初の描画が届いてから開始する。途中で閉じても現在の状態から消え、入力は即座に止まる。
 各インスタンスで `PanelSpec::without_animation()` を指定すると無効化できる（GPUI・Web 共通）。
@@ -34,6 +44,8 @@ E2E はローカルで実行する。CI では lint・整形・型チェック�
 
 ```sh
 cargo test --workspace     # novr 上の E2E を含む（実ランタイム不要）
+cargo test -p ui --test panel_lod -- --ignored # Windows の GPUI / Web で LOD と入力を確認
+cargo test -p ui --test panel_lod -- --ignored --off # 0=Off を確認
 cargo runtimes list        # 実ランタイム (Monado / SteamVR) の状態
 cargo runtimes install     # Monado を導入するウィザード（SteamVR は Steam 側で入れる）
 cargo test -p testkit --test runtimes   # 実ランタイムでの E2E

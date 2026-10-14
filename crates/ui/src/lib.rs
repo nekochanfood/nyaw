@@ -8,7 +8,9 @@
 //!
 //! イベントループは GPUI が持ち、Tauri は最初の Web のパネルを開いたときに起こして毎フレーム 1 回ずつ回す。
 
+mod lod;
 pub mod web;
+pub use lod::set_render_lod;
 
 use std::{
     collections::HashMap,
@@ -362,6 +364,9 @@ pub fn panel_window_options(resolution: (u32, u32)) -> WindowOptions {
         })),
         show: false,
         focus: false,
+        // OS の最小幅に、小さな LOD の描画先を広げられないよう枠を持たせない。
+        kind: gpui::WindowKind::PopUp,
+        window_min_size: Some(size(px(1.), px(1.))),
         // 既定（Opaque）だと白で塗ってから描くので、半透明の画面も不透明になる。
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
@@ -716,6 +721,7 @@ pub fn run_with(
             let mut idle: Vec<Duration> = vec![IDLE_REDRAW; windows.len()];
             // パネルごとの、前のフレームで見えていたか（隠れていた・視野の外だったパネルは見えた瞬間に描き直す）。
             let mut seen: Vec<bool> = vec![false; windows.len()];
+            let mut render_sizes = HashMap::new();
             // ドラッグ中の手と、その見た目を描くパネル。
             let mut drag: Option<(Hand, PanelId)> = None;
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
@@ -823,6 +829,14 @@ pub fn run_with(
                         }
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
+                        let resolution = kernel.panel(panel).resolution;
+                        let lod = kernel.panel_lod(panel);
+                        if render_sizes.insert(panel, (resolution, lod)) != Some((resolution, lod))
+                        {
+                            set_render_lod(window, cx, resolution, lod);
+                            drawn[panel] = None;
+                            redraw = false;
+                        }
                         if !cx.has_active_drag() {
                             if let Some((hand, _)) = drag.take() {
                                 kernel.set_drag(hand, None);
@@ -866,7 +880,14 @@ pub fn run_with(
                     }
                     match frame {
                         // 開いた直後はウィンドウの大きさの反映が間に合わず 1x1 で描かれる。送らずに次のフレームで描き直す。
-                        Some(Ok(f)) if f.width <= 1 || f.height <= 1 => {}
+                        Some(Ok(f))
+                            if render_sizes.get(&panel).is_some_and(|&(res, lod)| {
+                                (f.width, f.height)
+                                    != ((res.0 >> lod).max(1), (res.1 >> lod).max(1))
+                            }) =>
+                        {
+                            drawn[panel] = None;
+                        }
                         // 画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
                         Some(Ok(f)) => {
                             drawn[panel] = Some(Instant::now());

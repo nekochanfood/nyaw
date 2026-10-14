@@ -16,6 +16,7 @@ profiler.workspace = true
 logger.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+raw-window-handle = "0.6"
 tauri = "2.12"
 
 # WebView を画面に出さずに撮る（web/capture.rs）と、GTK のイベントを回す。tauri が使うものと同じ版に合わせる。
@@ -30,6 +31,7 @@ windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_System_Com",
     "Win32_System_Com_StructuredStorage",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 png = "0.17"
 
@@ -54,6 +56,10 @@ beam.workspace = true
 # 実プラットフォーム + GPU で描画を読み戻す。GUI はメインスレッドで回すため独自 main。
 [[test]]
 name = "gpu_capture"
+harness = false
+
+[[test]]
+name = "panel_lod"
 harness = false
 
 # 実プラットフォームの GPUI + Tauri（WebView）で、レーザー・マウスから JS のポインタイベントまでを確かめる。

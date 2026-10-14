@@ -68,7 +68,20 @@ fn main() -> ExitCode {
     } else {
         Driven::headless(SCREEN.0, SCREEN.1)
     };
-    let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, Default::default());
+    let config = kernel::Config {
+        lod_quality: std::env::var("NYAW_STRESS_LOD")
+            .map(|value| {
+                kernel::LodQuality::try_from(
+                    value
+                        .parse::<u8>()
+                        .expect("LOD must be a number from 0 to 3"),
+                )
+                .expect("LOD must be between 0 and 3")
+            })
+            .unwrap_or_default(),
+        ..Default::default()
+    };
+    let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, config);
     // 8 GPUI Testing panels (2 rows) and 2 web Testing panels, plus the beam as in production.
     let mut panels: Vec<PanelSpec> = (0..8)
         .map(|i| {

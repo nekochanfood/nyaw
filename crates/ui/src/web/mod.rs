@@ -16,6 +16,7 @@
 //! どのページかは知らない。ページのファイル（[`Files`]）は上から渡され、`nyaw://localhost/<ページ名>/index.html` で配信する。
 
 mod capture;
+mod lod;
 
 use std::{
     borrow::Cow,
@@ -418,6 +419,8 @@ enum WinEvent {
 /// パネルごとの描画（読み戻し）の状態。
 #[derive(Default)]
 struct Draw {
+    render_size: Option<((u32, u32), u8)>,
+    resizing: bool,
     capturing: bool,
     captured: Option<Instant>,
     hot_until: Option<Instant>,
@@ -579,6 +582,7 @@ impl Host {
     ) -> tauri::Result<WebviewWindow<Wry>> {
         let builder = WebviewWindowBuilder::new(&self.app, label, url)
             .inner_size(w as f64, h as f64)
+            .min_inner_size(1.0, 1.0)
             .initialization_script(BRIDGE)
             // 画面の外に置いたウィンドウでも描き続ける（隠れていると判定して描画を止めたり間引いたりさせない）。
             // 起動引数は同じデータフォルダのすべての WebView で揃える（違うと WebView を作れない）。
@@ -672,6 +676,27 @@ impl Host {
         let panels: Vec<PanelId> = self.windows.keys().copied().collect();
         for panel in panels {
             self.sync(kernel, panel, now);
+        }
+        for (&panel, window) in &self.windows {
+            let wanted = (kernel.panel(panel).resolution, kernel.panel_lod(panel));
+            let draw = self.draws.get_mut(&panel).expect("draw state");
+            if draw.render_size != Some(wanted) {
+                match lod::resize(window, wanted.0, wanted.1) {
+                    Ok(()) => {
+                        draw.render_size = Some(wanted);
+                        draw.resizing = true;
+                        draw.last = None;
+                        draw.hot_until = Some(now + HOT);
+                    }
+                    Err(e) => {
+                        logger::warn!(
+                            "cannot change Web render resolution",
+                            panel = panel,
+                            error = e
+                        )
+                    }
+                }
+            }
         }
         self.capture(kernel, now);
         self.prewarm(now);
@@ -775,11 +800,6 @@ impl Host {
             WebCommand::PointerMode(m) => kernel.apply(panel, PanelCommand::PointerMode(m)),
             WebCommand::Resize { width, height } => {
                 let (width, height) = (width.max(1), height.max(1));
-                if let Some(w) = self.windows.get(&panel)
-                    && let Err(e) = w.set_size(LogicalSize::new(width, height))
-                {
-                    logger::warn!("cannot resize window", panel = panel, error = e);
-                }
                 // 画面に出ていないウィンドウは Resized が来ないことがあるので、ここでも合わせる。
                 kernel.apply(panel, PanelCommand::Resize(width, height));
             }
@@ -816,9 +836,27 @@ impl Host {
         if size.width == 0 || size.height == 0 {
             return; // 最小化
         }
-        let scale = window.scale_factor().unwrap_or(1.0);
-        let logical = size.to_logical::<f64>(scale);
-        let res = (logical.width.round() as u32, logical.height.round() as u32);
+        let res = if let Some(draw) = self.draws.get_mut(&panel)
+            && let Some((resolution, lod)) = draw.render_size
+        {
+            // 自分が頼んだ LOD 変更は論理サイズへ逆流させず、OS からのリサイズだけ換算する。
+            if (size.width, size.height)
+                == ((resolution.0 >> lod).max(1), (resolution.1 >> lod).max(1))
+            {
+                draw.resizing = false;
+                return;
+            }
+            if draw.resizing {
+                return;
+            }
+            (
+                size.width.saturating_mul(1 << lod),
+                size.height.saturating_mul(1 << lod),
+            )
+        } else {
+            let logical = size.to_logical::<f64>(window.scale_factor().unwrap_or(1.0));
+            (logical.width.round() as u32, logical.height.round() as u32)
+        };
         if kernel.panel(panel).resolution != res {
             logger::debug!("panel resized", panel = panel, resolution = ?res);
             kernel.apply(panel, PanelCommand::Resize(res.0, res.1));
@@ -882,7 +920,11 @@ impl Host {
             }
             match r {
                 // 開いた直後は大きさの反映が間に合わないことがある。送らずに次で撮り直す。
-                Ok(img) if img.width <= 1 || img.height <= 1 => {}
+                Ok(img) if img.width == 0 || img.height == 0 => {}
+                Ok(img)
+                    if d.render_size.is_some_and(|(res, lod)| {
+                        (img.width, img.height) != ((res.0 >> lod).max(1), (res.1 >> lod).max(1))
+                    }) => {}
                 Ok(img) => {
                     if d.last.as_ref() != Some(&img) {
                         kernel.submit(panel, img.width, img.height, &img.rgba);

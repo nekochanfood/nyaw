@@ -17,9 +17,11 @@ fn main() {
         }
     }
 
-    const RES: (u32, u32) = (200, 100);
+    const RES: (u32, u32) = (200, 104);
     let result = Rc::new(RefCell::new(None));
     let out = result.clone();
+    let lod_results = Rc::new(RefCell::new(Vec::new()));
+    let lod_out = lod_results.clone();
     gpui_platform::application().run(move |cx| {
         let window = open_panel_window(cx, RES, |_, cx| cx.new(|_| Solid))
             .expect("cannot open panel window");
@@ -38,6 +40,20 @@ fn main() {
                 *out.borrow_mut() = Some(captured);
                 if done {
                     break;
+                }
+            }
+            for lod in [0, 1, 2, 3, 0] {
+                cx.update_window(window.into(), |_, window, cx| ui::set_render_lod(window, cx, RES, lod)).unwrap();
+                for attempt in 0..100 {
+                    cx.background_executor().timer(Duration::from_millis(50)).await;
+                    let (frame, viewport) = cx.update_window(window.into(), |_, window, cx| {
+                        (capture(window, cx), window.viewport_size())
+                    }).unwrap();
+                    let ready = matches!(&frame, Ok(f) if (f.width, f.height) == (RES.0 >> lod, RES.1 >> lod));
+                    if ready || attempt == 99 {
+                        lod_out.borrow_mut().push((lod, frame, viewport));
+                        break;
+                    }
                 }
             }
             cx.update(|cx| cx.quit());
@@ -59,6 +75,28 @@ fn main() {
         "top-left is the panel background color"
     );
     println!("gpu_capture: ok ({}x{})", frame.width, frame.height);
+    for (lod, frame, viewport) in lod_results.take() {
+        let frame = frame.unwrap();
+        assert_eq!(
+            (frame.width, frame.height),
+            (RES.0 >> lod, RES.1 >> lod),
+            "LOD{lod}"
+        );
+        assert_eq!(
+            viewport,
+            gpui::size(gpui::px(RES.0 as f32), gpui::px(RES.1 as f32)),
+            "LOD{lod}: logical size"
+        );
+        assert_eq!(
+            &frame.rgba[frame.rgba.len() - 4..],
+            &[r, g, b, 255],
+            "LOD{lod}: rendered through bottom-right corner"
+        );
+        println!(
+            "gpu_capture: LOD{lod} ok ({}x{})",
+            frame.width, frame.height
+        );
+    }
 }
 
 // ponytail: render_to_image is only implemented for Windows in gpui. Remove this branch when Linux is supported.

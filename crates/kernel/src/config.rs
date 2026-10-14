@@ -7,6 +7,30 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// 距離 LOD の品質。0 は無効、数字が小さいほど近い距離で解像度を落とす。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "u8")]
+pub enum LodQuality {
+    Off = 0,
+    Low = 1,
+    #[default]
+    Mid = 2,
+    High = 3,
+}
+
+impl TryFrom<u8> for LodQuality {
+    type Error = &'static str;
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Off),
+            1 => Ok(Self::Low),
+            2 => Ok(Self::Mid),
+            3 => Ok(Self::High),
+            _ => Err("lod_quality must be 0 (Off), 1 (Low), 2 (Mid), or 3 (High)"),
+        }
+    }
+}
+
 /// トリガーを押したまま動かしたときの意味。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +47,8 @@ pub enum PointerMode {
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Config {
+    /// 距離 LOD の品質（0 = Off、1 = Low、2 = Mid、3 = High）。省略で 2。
+    pub lod_quality: LodQuality,
     /// ログレベル（`trace` / `debug` / `info` / `warn` / `error`）。解釈は呼び出し側。
     pub log: Option<String>,
     /// 使うランタイム（`openvr` / `openxr` / `novr`）。解釈は呼び出し側。
@@ -88,6 +114,25 @@ pub fn load() -> Result<Config, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lod_quality_defaults_to_mid_and_validates_numbers() {
+        assert_eq!(parse("").unwrap().lod_quality, LodQuality::Mid);
+        for (n, quality) in [
+            (0, LodQuality::Off),
+            (1, LodQuality::Low),
+            (2, LodQuality::Mid),
+            (3, LodQuality::High),
+        ] {
+            assert_eq!(
+                parse(&format!("lod_quality = {n}")).unwrap().lod_quality,
+                quality
+            );
+        }
+        for value in ["4", "-1", "2.5", "\"Mid\""] {
+            assert!(parse(&format!("lod_quality = {value}")).is_err());
+        }
+    }
 
     #[test]
     fn parses_known_keys_and_ignores_unknown() {
