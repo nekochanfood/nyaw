@@ -261,9 +261,7 @@
           t.pan.scrollBy({ left: -dx, top: -dy, behavior: "instant" });
           // 慣性の初速（直近を重く見て均す）。
           [t.vx, t.vy] = [t.vx * 0.5 + dx * 0.5, t.vy * 0.5 + dy * 0.5];
-        } else {
-          fire(captures.get(s.id) ?? s.down, "pointermove", s);
-        }
+        } else fire(captures.get(s.id) ?? s.down, "pointermove", s);
         break;
       }
       case "down": {

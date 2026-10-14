@@ -2,8 +2,8 @@
   "name": "nyaw-web",
   "version": "2026.0.1",
   "private": true,
-  "license": "MIT OR Apache-2.0",
   "description": "nyaw の Web UI のページ（React）。UI 層の Tauri の WebView に載る。crates/webpages の build.rs がビルドして埋め込む。",
+  "license": "MIT OR Apache-2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
