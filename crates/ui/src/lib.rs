@@ -16,24 +16,86 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, Pose, Surface, Vec2,
-    VrBackend,
+    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose,
+    Surface, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 
 /// 1つの手のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
 /// 位置とボタン状態を持つがオーバーレイのイベントは持たないので、直前の値を保持する。
+///
+/// [`PointerMode::Touch`] では押したまま動かすとスワイプ（ピクセル単位のスクロール）になり、動かさずに離すとタップ
+/// （押して離す）になる。GPUI にはタッチ入力が無いので、どちらと決まるまで押下を送らずに待つ。
+/// 方式は押した瞬間に決め、離すまで変えない。
 #[derive(Debug, Default)]
 pub struct PointerBridge {
     pos: Point<Pixels>,
     pressed: bool,
+    touch: Option<Touch>,
 }
 
+/// タッチで押している間の状態。
+#[derive(Debug)]
+struct Touch {
+    start: Point<Pixels>,
+    /// スワイプと決まった。
+    swiping: bool,
+}
+
+/// これより動いたらタップではなくスワイプ（論理 px）。
+// ponytail: 手ブレを見込んだ固定値。指す距離で変えたくなったら角度で決める。
+pub const SWIPE_SLOP: f32 = 12.0;
+
 impl PointerBridge {
-    pub fn translate(&mut self, ev: PointerEvent) -> PlatformInput {
+    pub fn translate(&mut self, ev: PointerEvent, mode: PointerMode) -> Vec<PlatformInput> {
+        let at = |p: Vec2| Point::new(px(p.x), px(p.y));
+        if let Some(t) = &mut self.touch {
+            match ev {
+                PointerEvent::Move { pos } => {
+                    let (last, pos) = (self.pos, at(pos));
+                    let d = pos - t.start;
+                    t.swiping |= f32::from(d.x).hypot(f32::from(d.y)) > SWIPE_SLOP;
+                    if !t.swiping {
+                        return Vec::new();
+                    }
+                    self.pos = pos;
+                    // 中身が指に付いてくる向き（下へ動かすと上へスクロール）。宛先は押した所に固定する。
+                    return vec![PlatformInput::ScrollWheel(ScrollWheelEvent {
+                        position: t.start,
+                        delta: ScrollDelta::Pixels(pos - last),
+                        modifiers: Default::default(),
+                        touch_phase: Default::default(),
+                    })];
+                }
+                PointerEvent::Up { pos } => {
+                    let tap = !self.touch.take().is_some_and(|t| t.swiping);
+                    let mut out = self.mouse(PointerEvent::Move { pos });
+                    if tap {
+                        out.extend(self.mouse(PointerEvent::Down { pos }));
+                        out.extend(self.mouse(PointerEvent::Up { pos }));
+                    }
+                    return out;
+                }
+                PointerEvent::Leave => self.touch = None,
+                // スティックのスクロールはマウスと同じ。押し直しは来ない。
+                PointerEvent::Scroll { .. } | PointerEvent::Down { .. } => {}
+            }
+        } else if let (PointerMode::Touch, PointerEvent::Down { pos }) = (mode, ev) {
+            self.touch = Some(Touch {
+                start: at(pos),
+                swiping: false,
+            });
+            self.pos = at(pos);
+            return Vec::new();
+        }
+        self.mouse(ev)
+    }
+
+    /// マウスとして変換する。
+    fn mouse(&mut self, ev: PointerEvent) -> Vec<PlatformInput> {
         let at = |p: Vec2| Point::new(px(p.x), px(p.y));
         let held = |pressed: bool| pressed.then_some(MouseButton::Left);
-        match ev {
+        vec![match ev {
             PointerEvent::Move { pos } => {
                 self.pos = at(pos);
                 PlatformInput::MouseMove(MouseMoveEvent {
@@ -78,7 +140,7 @@ impl PointerBridge {
                     modifiers: Default::default(),
                 })
             }
-        }
+        }]
     }
 }
 
@@ -129,15 +191,16 @@ pub fn pump<B: VrBackend>(
     kernel: &mut Kernel<B>,
     bridges: &mut HashMap<(PanelId, Hand), PointerBridge>,
 ) -> Vec<(PanelId, PlatformInput)> {
+    let mode = kernel.pointer_mode();
     kernel
         .tick()
         .into_iter()
-        .map(|e| {
-            let input = bridges
+        .flat_map(|e| {
+            let inputs = bridges
                 .entry((e.panel, e.hand))
                 .or_default()
-                .translate(e.event);
-            (e.panel, input)
+                .translate(e.event, mode);
+            inputs.into_iter().map(move |i| (e.panel, i))
         })
         .collect()
 }
@@ -446,7 +509,10 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                 if let Some((_, dp)) = drag {
                     let (w, h) = kernel.panel(dp).resolution;
                     let pos = Vec2::new(w as f32, h as f32) / 2.0;
-                    inputs[dp].push(PointerBridge::default().translate(PointerEvent::Move { pos }));
+                    inputs[dp].extend(
+                        PointerBridge::default()
+                            .translate(PointerEvent::Move { pos }, PointerMode::Mouse),
+                    );
                 }
                 // ponytail: pump の poll（VR は vsync 待ち）とヒット判定をまとめて wait とする。判定が重くなったら分けて測る。
                 let mut stages = Stages {
@@ -749,10 +815,11 @@ mod tests {
             PointerEvent::Up { pos },
             PointerEvent::Leave,
         ] {
-            let input = bridge.translate(ev);
-            cx.update(|window, cx| {
-                window.dispatch_event(input, cx);
-            });
+            for input in bridge.translate(ev, PointerMode::Mouse) {
+                cx.update(|window, cx| {
+                    window.dispatch_event(input, cx);
+                });
+            }
         }
         cx.run_until_parked();
         assert_eq!(testing.read_with(cx, |h, _| h.clicks), 1);
@@ -850,15 +917,93 @@ mod tests {
     #[test]
     fn leave_releases_held_button() {
         let mut b = PointerBridge::default();
-        b.translate(PointerEvent::Down {
-            pos: Vec2::new(3.0, 4.0),
-        });
-        let PlatformInput::MouseExited(e) = b.translate(PointerEvent::Leave) else {
+        b.translate(
+            PointerEvent::Down {
+                pos: Vec2::new(3.0, 4.0),
+            },
+            PointerMode::Mouse,
+        );
+        let [PlatformInput::MouseExited(e)] =
+            &b.translate(PointerEvent::Leave, PointerMode::Mouse)[..]
+        else {
             panic!()
         };
         assert_eq!(
             (e.position, e.pressed_button),
             (Point::new(px(3.0), px(4.0)), Some(MouseButton::Left))
+        );
+        assert!(!b.pressed);
+    }
+
+    /// タッチ: 動かさずに離すとタップ（押して離す）、しきい値を超えて動かすとスワイプ（指に付いてくるスクロール）だけになる。
+    #[test]
+    fn touch_taps_or_swipes() {
+        let pos = |x, y| Vec2::new(x, y);
+        let kinds = |v: Vec<PlatformInput>| {
+            v.iter()
+                .map(|i| match i {
+                    PlatformInput::MouseMove(_) => "move",
+                    PlatformInput::MouseDown(_) => "down",
+                    PlatformInput::MouseUp(_) => "up",
+                    PlatformInput::ScrollWheel(_) => "scroll",
+                    _ => "other",
+                })
+                .collect::<Vec<_>>()
+        };
+        let touch = PointerMode::Touch;
+        let mut b = PointerBridge::default();
+        assert!(
+            b.translate(
+                PointerEvent::Down {
+                    pos: pos(10.0, 10.0)
+                },
+                touch
+            )
+            .is_empty()
+        );
+        assert!(
+            b.translate(
+                PointerEvent::Move {
+                    pos: pos(12.0, 12.0)
+                },
+                touch
+            )
+            .is_empty()
+        );
+        let tap = b.translate(
+            PointerEvent::Up {
+                pos: pos(12.0, 12.0),
+            },
+            touch,
+        );
+        assert_eq!(kinds(tap), ["move", "down", "up"]);
+
+        b.translate(
+            PointerEvent::Down {
+                pos: pos(10.0, 10.0),
+            },
+            touch,
+        );
+        // 押している間に方式が変わっても、離すまではタッチのまま。
+        let swipe = b.translate(
+            PointerEvent::Move {
+                pos: pos(10.0, 40.0),
+            },
+            PointerMode::Mouse,
+        );
+        let [PlatformInput::ScrollWheel(e)] = &swipe[..] else {
+            panic!("{swipe:?}")
+        };
+        assert_eq!(e.delta.pixel_delta(px(1.0)), Point::new(px(0.0), px(30.0)));
+        assert_eq!(e.position, Point::new(px(10.0), px(10.0)), "宛先は押した所");
+        assert_eq!(
+            kinds(b.translate(
+                PointerEvent::Up {
+                    pos: pos(10.0, 40.0)
+                },
+                touch
+            )),
+            ["move"]
         );
         assert!(!b.pressed);
     }

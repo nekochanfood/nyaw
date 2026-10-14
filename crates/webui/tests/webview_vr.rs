@@ -6,20 +6,13 @@
 mod common;
 
 use std::process::ExitCode;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::{Page, SharedMock, num};
-use kernel::vr::mock::MockBackend;
-use kernel::vr::{Quat, RawController, Vec3};
-use kernel::{Hand, Kernel, Pose, Vec2};
+use common::{PANEL_POS, Page, SharedMock, Vr, click, num, press};
+use kernel::vr::{Quat, Vec3};
+use kernel::{Kernel, Pose, Vec2};
 use tauri::Manager;
 use webui::WebPanelSpec;
-
-const PANEL_POS: Vec3 = Vec3::new(0.0, 0.0, -1.0);
-/// 1m あたりのピクセル数（800px = 0.8m）。リサイズしても変わらない。
-const PX_PER_M: f32 = 1000.0;
-const PROFILE: &str = "valve/index_controller";
 
 fn main() -> ExitCode {
     if !common::should_run("webview_vr") {
@@ -35,98 +28,9 @@ fn main() -> ExitCode {
     let spec = WebPanelSpec::new(Pose::new(PANEL_POS, Quat::IDENTITY), webtesting::page())
         .sized(Vec2::new(0.8, 0.6), (800, 600));
     common::run("webview_vr", kernel, vec![spec], move |page| {
-        let mut vr = Vr {
-            mock: mock.0,
-            aim: Pose::new(Vec3::new(0.2, -0.3, 0.0), Quat::IDENTITY),
-            inputs: Vec::new(),
-            panel: PANEL_POS,
-            resolution: (800, 600),
-        };
+        let mut vr = Vr::new(mock);
         scenario(page, &mut vr);
     })
-}
-
-/// 右手の仮想コントローラ。値はモックの `frame` に書き、フレームループが次の tick で読む。
-struct Vr {
-    mock: Arc<Mutex<MockBackend>>,
-    aim: Pose,
-    inputs: Vec<(String, f32)>,
-    /// 操作するパネルの中心。
-    panel: Vec3,
-    /// 今のパネルの解像度（ピクセル → 空間の点の変換に使う）。
-    resolution: (u32, u32),
-}
-
-impl Vr {
-    fn send(&self) {
-        self.mock.lock().unwrap().frame.controllers = vec![RawController {
-            hand: Hand::Right,
-            profile: PROFILE.into(),
-            aim: self.aim,
-            inputs: self.inputs.clone(),
-        }];
-    }
-
-    /// レーザーをパネル上のピクセル（CSS px）へ向ける。
-    fn point_at(&mut self, (x, y): (f32, f32)) {
-        let (w, h) = (self.resolution.0 as f32, self.resolution.1 as f32);
-        let target =
-            self.panel + Vec3::new((x - w / 2.0) / PX_PER_M, (h / 2.0 - y) / PX_PER_M, 0.0);
-        let dir = (target - self.aim.position).normalize();
-        self.aim.orientation = Quat::from_rotation_arc(Vec3::NEG_Z, dir);
-        self.send();
-    }
-
-    fn set(&mut self, input: &str, value: f32) {
-        self.inputs.retain(|(n, _)| n != input);
-        if value != 0.0 {
-            self.inputs.push((input.into(), value));
-        }
-        self.send();
-    }
-
-    /// VR パネル（オーバーレイ 0）に最後に送られたテクスチャの、論理ピクセル `(x, y)` の色。
-    fn color_at(&self, (x, y): (f32, f32)) -> Option<[u8; 4]> {
-        let mock = self.mock.lock().unwrap();
-        let tex = mock.overlays[0].texture.as_ref()?;
-        let (rw, rh) = self.resolution;
-        let tx = ((x / rw as f32 * tex.width as f32) as u32).min(tex.width - 1);
-        let ty = ((y / rh as f32 * tex.height as f32) as u32).min(tex.height - 1);
-        Some(tex.pixel(tx, ty))
-    }
-
-    fn texture_size(&self) -> Option<(u32, u32)> {
-        self.texture_size_of(0)
-    }
-
-    fn texture_size_of(&self, overlay: usize) -> Option<(u32, u32)> {
-        let mock = self.mock.lock().unwrap();
-        mock.overlays[overlay]
-            .texture
-            .as_ref()
-            .map(|t| (t.width, t.height))
-    }
-
-    /// VR パネルの `(x, y)` が `rgb` に近い色になるまで待つ。
-    fn until_color(&self, what: &str, at: (f32, f32), rgb: [u8; 3]) {
-        let deadline = Instant::now() + common::TIMEOUT;
-        loop {
-            let c = self.color_at(at);
-            if c.is_some_and(|[r, g, b, _]| {
-                [r, g, b]
-                    .iter()
-                    .zip(rgb)
-                    .all(|(a, b)| (*a as i32 - b as i32).abs() <= 8)
-            }) {
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "{what}: VR パネルの {at:?} が {rgb:02x?} にならない（{c:02x?}）"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
 }
 
 fn scenario(page: &mut Page, vr: &mut Vr) {
@@ -290,26 +194,4 @@ fn scenario(page: &mut Page, vr: &mut Vr) {
     page.until("離れた", |s| {
         s["state"]["hovered"] == false && s["hoverAttr"] == false
     });
-}
-
-/// 要素の中心を指して、選択ボタンを押して離し、click が届くのを待つ。
-fn click(page: &mut Page, vr: &mut Vr, id: &str) {
-    press(page, vr, id);
-    page.until(&format!("{id} を離した"), |s| {
-        s["state"]["last"]["type"] == "click" || s["state"]["last"]["type"] == "lostpointercapture"
-    });
-}
-
-/// 要素の中心を指して、選択ボタンを押して離す（離した後のページは待たない）。
-fn press(page: &mut Page, vr: &mut Vr, id: &str) {
-    vr.point_at(page.center(id));
-    page.until(&format!("{id} に乗る"), |s| {
-        s["state"]["last"]["target"] == id
-    });
-    let downs = num(&page.probe(), &["state", "counts", "pointerdown"]);
-    vr.set("trigger/value", 1.0);
-    page.until(&format!("{id} を押した"), |s| {
-        num(s, &["state", "counts", "pointerdown"]) > downs
-    });
-    vr.set("trigger/value", 0.0);
 }

@@ -1,0 +1,217 @@
+<!doctype html>
+<!--
+  ポインタの方式（マウス / タッチのエミュレート）を試すページ。Testing (Web) の「Pointer test」から開く。
+  pointer-mode で方式を切り替え（nyaw.command({ pointer_mode })。全パネルに効く）、同じ操作がどう効くかを見る:
+  マウスでは swipe-list を押したまま動かしてもスクロールせず、タッチではスワイプでスクロールする（pointercancel が来る）。
+  drag-chip は touch-action: none なので、どちらでも setPointerCapture のドラッグで drop-zone へ運べる。tap-me はどちらでも押せる。
+  E2E のため、webtesting:probe に状態と要素の位置を webtesting:state で返す（index.html と同じ形）。
+-->
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Pointer test (Web)</title>
+    <style>
+      :root {
+        --bg: #202020;
+        --fg: #d8dae0;
+        --btn: #3a3d46;
+        --btn-hover: #50545f;
+        --btn-press: #6a6f7c;
+        --active: #6c8cff;
+        --ok: #2ecc71;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.4 system-ui, sans-serif;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      main {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        padding: 12px;
+        height: 100%;
+      }
+      .row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+      .btn {
+        padding: 6px 12px;
+        border: 0;
+        border-radius: 4px;
+        background: var(--btn);
+        color: var(--fg);
+        font: inherit;
+      }
+      .btn:is(:hover, [data-nyaw-hover]) {
+        background: var(--btn-hover);
+      }
+      .btn:is(:active, [data-nyaw-active]) {
+        background: var(--btn-press);
+      }
+      .btn.on {
+        background: var(--active);
+      }
+      #drag-chip {
+        width: 60px;
+        height: 30px;
+        border-radius: 15px;
+        background: var(--active);
+        touch-action: none;
+      }
+      #drop-zone {
+        width: 140px;
+        height: 60px;
+        border: 2px dashed var(--btn-hover);
+        border-radius: 6px;
+        display: grid;
+        place-items: center;
+      }
+      #drop-zone.dropped {
+        background: var(--ok);
+      }
+      #swipe-list {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        background: #17181c;
+      }
+      #swipe-list div {
+        height: 40px;
+        padding: 8px;
+        border-bottom: 1px solid #2a2c33;
+      }
+      #log {
+        font: 11px/1.3 ui-monospace, monospace;
+        white-space: pre;
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="row">
+        <button class="btn" id="back">Back</button>
+        <button class="btn" id="pointer-mode">Mode: -</button>
+        <button class="btn" id="tap-me">Tapped 0</button>
+      </div>
+      <div class="row">
+        <div id="drag-chip"></div>
+        <div id="drop-zone">Drop</div>
+      </div>
+      <div id="log"></div>
+      <div id="swipe-list"></div>
+    </main>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const state = {
+        page: "pointer",
+        taps: 0,
+        dropped: 0,
+        scrollTop: 0,
+        counts: { pointerover: 0, pointerdown: 0, pointerup: 0, pointercancel: 0, click: 0 },
+        /** 最後のイベント（E2E の共通の手順が宛先を見る）。 */
+        last: null,
+        lastPointer: null,
+        status: null,
+      };
+      for (const type of Object.keys(state.counts)) {
+        document.addEventListener(
+          type,
+          (e) => {
+            state.counts[type]++;
+            state.last = { type, target: e.target.id || e.target.tagName.toLowerCase(), pointerType: e.pointerType ?? null };
+            if (type.startsWith("pointer") && type !== "pointerover") state.lastPointer = state.last;
+            render();
+          },
+          { capture: true },
+        );
+      }
+
+      $("back").addEventListener("click", () => (location.href = "index.html"));
+      $("pointer-mode").addEventListener("click", () =>
+        nyaw.command({ pointer_mode: state.status?.pointer_mode === "touch" ? "mouse" : "touch" }),
+      );
+      $("tap-me").addEventListener("click", () => {
+        state.taps++;
+        $("tap-me").textContent = `Tapped ${state.taps}`;
+      });
+
+      // ドラッグ: touch-action: none なので、タッチでもスクロールにならずポインタイベントが続く。
+      const chip = $("drag-chip");
+      const zone = $("drop-zone");
+      let drag = null;
+      chip.addEventListener("pointerdown", (e) => {
+        chip.setPointerCapture(e.pointerId);
+        drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        e.preventDefault();
+      });
+      chip.addEventListener("pointermove", (e) => {
+        if (drag?.id === e.pointerId)
+          chip.style.transform = `translate(${e.clientX - drag.x}px, ${e.clientY - drag.y}px)`;
+      });
+      chip.addEventListener("pointerup", (e) => {
+        if (drag?.id !== e.pointerId) return;
+        const r = zone.getBoundingClientRect();
+        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+          state.dropped++;
+          zone.classList.add("dropped");
+        }
+        drag = null;
+        chip.style.transform = "";
+        render();
+      });
+
+      const list = $("swipe-list");
+      for (let i = 0; i < 40; i++) {
+        const row = document.createElement("div");
+        row.textContent = `Swipe row ${i}`;
+        list.append(row);
+      }
+      list.addEventListener("scroll", () => ((state.scrollTop = list.scrollTop), render()));
+
+      const onStatus = (s) => {
+        state.status = s;
+        $("pointer-mode").textContent = s.pointer_mode === "touch" ? "Mode: Touch" : "Mode: Mouse";
+        $("pointer-mode").classList.toggle("on", s.pointer_mode === "touch");
+        render();
+      };
+      nyaw.onStatus(onStatus);
+      const first = () => nyaw.status().then(onStatus, () => setTimeout(first, 100));
+      first();
+
+      function render() {
+        const p = state.lastPointer;
+        $("log").textContent = [
+          `mode ${state.status?.pointer_mode ?? "-"}  taps ${state.taps}  dropped ${state.dropped}  scrollTop ${state.scrollTop | 0}`,
+          `last: ${p ? `${p.type} ${p.target} ${p.pointerType}` : "-"}  cancel ${state.counts.pointercancel}`,
+        ].join("\n");
+      }
+      render();
+
+      // ---- E2E 用の問い合わせ ----
+      const rects = () =>
+        Object.fromEntries(
+          [...document.querySelectorAll("[id]")].map((el) => {
+            const r = el.getBoundingClientRect();
+            return [el.id, { x: r.x, y: r.y, w: r.width, h: r.height }];
+          }),
+        );
+      window.__TAURI__.webviewWindow.getCurrentWebviewWindow().listen("webtesting:probe", (e) =>
+        window.__TAURI__.event.emit("webtesting:state", { seq: e.payload, state, rects: rects() }),
+      );
+    </script>
+  </body>
+</html>

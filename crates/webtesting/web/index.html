@@ -132,6 +132,7 @@
         <button class="btn" id="detach">Detach</button>
         <button class="btn" id="lock">Lock</button>
         <button class="btn" id="spawn-panel">Spawn Panel</button>
+        <button class="btn" id="open-pointer">Pointer test</button>
         <button class="btn" id="close">Close</button>
         <span class="btn" id="menu-held">Menu</span>
         <span class="btn" id="grabbed">Grabbed</span>
@@ -181,6 +182,7 @@
         resizes: 0,
         viewport: [innerWidth, innerHeight],
         status: null,
+        page: "index",
       };
 
       for (const type of TYPES) {
@@ -287,6 +289,8 @@
       cmd("close", "close");
       $("lock").addEventListener("click", () => nyaw.command({ lock: !state.status?.locked }));
       $("spawn-panel").addEventListener("click", () => nyaw.spawn("webtesting"));
+      // マウス / タッチのエミュレートを試すページ（同じパネルで開く）。
+      $("open-pointer").addEventListener("click", () => (location.href = "pointer.html"));
 
       const onStatus = (s) => {
         state.status = s;

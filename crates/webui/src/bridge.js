@@ -2,12 +2,13 @@
 //
 // 1. カーネルとの対話: `window.nyaw` を公開する。操作は Tauri のコマンド、状態の変化は Tauri のイベントで受ける。
 //    - nyaw.command(cmd)  … "detach" / "close" / { attach: "hmd" | "left" | "right" | { tracker: id } } /
-//                            { lock: bool } / { resize: { width, height } }
+//                            { lock: bool } / { resize: { width, height } } / { pointer_mode: "mouse" | "touch" }
 //    - nyaw.status()      … 現在の状態（Promise）。nyaw.onStatus(cb) で変化を受ける。
 //    - nyaw.spawn(page)   … 隣にページのパネルを開く。
 // 2. レーザーのポインタ: Tauri のイベント `nyaw:pointer`（イベントの束）を DOM の PointerEvent / MouseEvent / click / wheel として発火する。
 //    ページは普通の Web ページと同じく addEventListener で書ける。setPointerCapture も使える。
 //    novr（デスクトップ）では OS のマウスがそのまま届くので、このイベントは来ない。
+//    方式（イベントの mode）が "touch" のときはタッチとして流す（下の touch）。押したまま動かすとスワイプになる。
 //
 // ponytail: 合成イベントでは CSS の :hover / :active が効かない。代わりにレーザーが乗っている要素（と祖先）に
 // data-nyaw-hover、押している間は data-nyaw-active を付ける。`:is(:hover, [data-nyaw-hover])` のように書く。
@@ -36,7 +37,7 @@
   const hand = (name) => {
     let s = hands.get(name);
     if (!s) {
-      s = { name, id: POINTER_ID[name] ?? 1003, x: 0, y: 0, over: null, down: null, pressed: false, mouseSuppressed: false };
+      s = { name, id: POINTER_ID[name] ?? 1003, x: 0, y: 0, over: null, down: null, pressed: false, mouseSuppressed: false, touch: null };
       hands.set(name, s);
     }
     return s;
@@ -97,7 +98,7 @@
       button: 0,
       buttons: s.pressed ? 1 : 0,
       pointerId: s.id,
-      pointerType: "mouse",
+      pointerType: s.touch ? "touch" : "mouse",
       isPrimary: true,
       width: 1,
       height: 1,
@@ -130,8 +131,8 @@
   /** ポインタイベントの宛先。キャプチャ中はその要素。 */
   const target = (s) => captures.get(s.id) ?? at(s);
 
-  /** 乗っている要素を `el` に変え、境界イベント（over / out / enter / leave）を出す。 */
-  const hover = (s, el) => {
+  /** 乗っている要素を `el` に変え、境界イベント（over / out / enter / leave）を出す。`quiet` なら印だけ付け替える。 */
+  const hover = (s, el, quiet = false) => {
     const old = s.over;
     if (old === el) return;
     s.over = el;
@@ -139,6 +140,11 @@
     const newPath = el ? path(el) : [];
     const left = oldPath.filter((e) => !newPath.includes(e));
     const entered = newPath.filter((e) => !oldPath.includes(e)).reverse();
+    if (quiet) {
+      mark("data-nyaw-hover", left, s, false);
+      mark("data-nyaw-hover", entered, s, true);
+      return;
+    }
     const boundary = { cancelable: false };
     const leaf = { bubbles: false, cancelable: false };
     if (oldPath.length) {
@@ -186,10 +192,93 @@
     return path(b).find((e) => pa.includes(e)) ?? null;
   };
 
+  /** これより動いたらタップではなくスワイプ（CSS px。UI 層の SWIPE_SLOP と同じ）。 */
+  const SLOP = 12;
+  /** 要素とその祖先のどれも touch-action: none でなければ、指で中身を動かせる。 */
+  const pannable = (el) => path(el).every((e) => getComputedStyle(e).touchAction !== "none");
+
+  /**
+   * タッチとして流す（ブラウザのタッチと同じ順序）。押すと pointerdown（pointerType "touch"）、
+   * しきい値を超えて動かすと pointercancel してスクロール（スワイプ。touch-action: none の上では pointermove のまま）、
+   * 動かさずに離すと pointerup と互換のマウスイベントと click（タップ）。指が触れていない間はホバーのイベントを出さず、印だけ付ける。
+   */
+  // ponytail: TouchEvent（touchstart 等）は出さない。慣性スクロールも無い。要るページが出てきたら足す。
+  const touch = (p, s) => {
+    const t = s.touch;
+    switch (p.type) {
+      case "move": {
+        if (!t) return hover(s, at(s), true);
+        const [dx, dy] = t.pan ? [s.x - t.lx, s.y - t.ly] : [s.x - t.x0, s.y - t.y0];
+        [t.lx, t.ly] = [s.x, s.y];
+        if (!t.pan && s.down && Math.hypot(dx, dy) > SLOP && pannable(s.down)) {
+          // パンが始まったらポインタは取り消す。
+          fire(captures.get(s.id) ?? s.down, "pointercancel", s, { cancelable: false });
+          mark("data-nyaw-active", path(s.down), s, false);
+          release(s);
+          hover(s, null);
+          t.pan = scroller(s.down, dx, dy);
+        }
+        // 中身が指に付いてくる向き（下へ動かすと上へスクロール）。
+        if (t.pan) t.pan.scrollBy({ left: -dx, top: -dy, behavior: "instant" });
+        else fire(captures.get(s.id) ?? s.down, "pointermove", s);
+        break;
+      }
+      case "down": {
+        s.pressed = true;
+        s.mouseSuppressed = true; // 互換のマウスイベントはタップと決まってから出す
+        s.touch = { x0: s.x, y0: s.y, lx: s.x, ly: s.y, pan: null, compat: true };
+        const el = at(s);
+        hover(s, el);
+        s.down = el;
+        mark("data-nyaw-active", path(el), s, true);
+        s.touch.compat = fire(el, "pointerdown", s);
+        break;
+      }
+      case "up": {
+        if (!t) return;
+        s.pressed = false;
+        if (!t.pan) {
+          fire(captures.get(s.id) ?? s.down, "pointerup", s);
+          if (s.down) mark("data-nyaw-active", path(s.down), s, false);
+          const el = at(s);
+          // pointerdown を止めたら互換のマウスイベントは出さない。click は出す（Pointer Events の仕様）。
+          if (t.compat) {
+            if (fire(el, "mousedown", s, { buttons: 1 })) focusFrom(el);
+            fire(el, "mouseup", s);
+          }
+          const c = s.down && s.down.isConnected ? common(s.down, el) : null;
+          if (c) fire(c, "click", s, { detail: 1 });
+          release(s);
+          hover(s, null); // 指が離れると乗っていない
+        }
+        s.down = null;
+        s.touch = null;
+        s.mouseSuppressed = false;
+        hover(s, at(s), true);
+        break;
+      }
+      case "leave": {
+        if (t && !t.pan) {
+          fire(captures.get(s.id) ?? s.down ?? at(s), "pointercancel", s, { cancelable: false });
+          if (s.down) mark("data-nyaw-active", path(s.down), s, false);
+          release(s);
+        }
+        hover(s, null, !t || !!t.pan);
+        s.pressed = false;
+        s.down = null;
+        s.touch = null;
+        s.mouseSuppressed = false;
+        break;
+      }
+    }
+  };
+
   /** カーネル（オーバーレイ層）からのポインタイベント 1 件を DOM に流す。 */
   const pointer = (p) => {
     const s = hand(p.hand);
     if (p.type !== "leave") [s.x, s.y] = [p.x, p.y];
+    // 方式は押した瞬間に決め、離すまで変えない。スティックのスクロールはどちらでも同じ。
+    if (p.type !== "scroll" && (s.touch || (p.mode === "touch" && !s.pressed))) return touch(p, s);
     switch (p.type) {
       case "move": {
         const t = target(s);

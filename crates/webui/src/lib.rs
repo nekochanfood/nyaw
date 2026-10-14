@@ -28,8 +28,8 @@ use std::{
 
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, Pointer, PointerEvent, Pose, Runtime, Surface, Vec2,
-    VrBackend,
+    Device, Kernel, PanelCommand, PanelId, Pointer, PointerEvent, PointerMode, Pose, Runtime,
+    Surface, Vec2, VrBackend,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -162,7 +162,7 @@ impl WebDevice {
 }
 
 /// ページからパネルへの操作（`nyaw.command(..)`）。JSON では `"detach"` / `"close"` / `{ "attach": "hmd" }` /
-/// `{ "lock": true }` / `{ "resize": { "width": 640, "height": 480 } }`。
+/// `{ "lock": true }` / `{ "resize": { "width": 640, "height": 480 } }` / `{ "pointer_mode": "touch" }`。
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WebCommand {
@@ -175,6 +175,8 @@ pub enum WebCommand {
         width: u32,
         height: u32,
     },
+    /// レーザーのエミュレート方式（`"mouse"` / `"touch"`）。全パネルに効く。
+    PointerMode(PointerMode),
 }
 
 /// パネルの状態（`nyaw.status()` / `nyaw.onStatus(..)`）。
@@ -195,6 +197,8 @@ pub struct WebStatus {
     pub resolution: (u32, u32),
     /// VR 上の大きさ（m）。
     pub size: (f32, f32),
+    /// レーザーのエミュレート方式（`"mouse"` / `"touch"`）。
+    pub pointer_mode: PointerMode,
 }
 
 impl WebStatus {
@@ -215,6 +219,7 @@ impl WebStatus {
             grabbed: s.grabbed,
             resolution: p.resolution,
             size: (p.size.x, p.size.y),
+            pointer_mode: s.pointer_mode,
         }
     }
 }
@@ -232,10 +237,12 @@ pub struct WebPointer {
     /// スクロール量（行）。上・右に倒すと正。
     pub dx: f32,
     pub dy: f32,
+    /// `"mouse"` / `"touch"`。ブリッジは押した瞬間の方式を離すまで使う。
+    pub mode: PointerMode,
 }
 
 impl WebPointer {
-    pub fn new(hand: Hand, ev: PointerEvent) -> Self {
+    pub fn new(hand: Hand, ev: PointerEvent, mode: PointerMode) -> Self {
         let hand = match hand {
             Hand::Left => "left",
             Hand::Right => "right",
@@ -254,6 +261,7 @@ impl WebPointer {
             y: pos.y,
             dx: delta.x,
             dy: delta.y,
+            mode,
         }
     }
 }
@@ -725,6 +733,7 @@ impl<B: VrBackend> Frames<B> {
 
     /// 1 フレーム: カーネルを進めてポインタを配り、ページの操作を反映し、パネルを開き、描画を読み戻す。
     fn step(&mut self, app: &AppHandle, now: Instant) {
+        let mode = self.kernel.pointer_mode();
         let events = self.kernel.tick();
         if self.kernel.quit_requested() {
             app.exit(0);
@@ -746,7 +755,7 @@ impl<B: VrBackend> Frames<B> {
                 }
                 _ => {}
             }
-            self.outboxes[e.panel].push(WebPointer::new(e.hand, e.event));
+            self.outboxes[e.panel].push(WebPointer::new(e.hand, e.event, mode));
             self.draws[e.panel].hot_until = Some(now + HOT);
         }
         let acks = std::mem::take(&mut self.lock().acks);
@@ -824,6 +833,7 @@ impl<B: VrBackend> Frames<B> {
                     logger::warn!("ウィンドウを閉じられない", panel = panel, error = e);
                 }
             }
+            WebCommand::PointerMode(m) => self.kernel.apply(panel, PanelCommand::PointerMode(m)),
             WebCommand::Resize { width, height } => {
                 let (width, height) = (width.max(1), height.max(1));
                 if let Some(w) = &self.windows[panel]
@@ -930,17 +940,18 @@ mod tests {
                 pos: Vec2::new(10.0, 20.0),
                 delta: Vec2::new(0.0, -2.0),
             },
+            PointerMode::Touch,
         );
         assert_eq!(
             serde_json::to_value(p).unwrap(),
-            serde_json::json!({ "hand": "left", "type": "scroll", "x": 10.0, "y": 20.0, "dx": 0.0, "dy": -2.0 })
+            serde_json::json!({ "hand": "left", "type": "scroll", "x": 10.0, "y": 20.0, "dx": 0.0, "dy": -2.0, "mode": "touch" })
         );
-        let leave = WebPointer::new(Hand::Right, PointerEvent::Leave);
+        let leave = WebPointer::new(Hand::Right, PointerEvent::Leave, PointerMode::Mouse);
         assert_eq!((leave.hand, leave.kind), ("right", "leave"));
     }
 
     fn ptr(hand: Hand, ev: PointerEvent) -> WebPointer {
-        WebPointer::new(hand, ev)
+        WebPointer::new(hand, ev, PointerMode::Mouse)
     }
 
     #[test]
@@ -1005,6 +1016,10 @@ mod tests {
                 width: 640,
                 height: 480
             }
+        );
+        assert_eq!(
+            parse(r#"{"pointer_mode":"touch"}"#),
+            WebCommand::PointerMode(PointerMode::Touch)
         );
     }
 

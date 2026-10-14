@@ -8,7 +8,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 |---|---|---|---|
 | - | `crates/logger` | logfmt 形式の構造化ロガー（横断）。整形・レベル・出力先 `Sink` の抽象と、`log` クレート（gpui 等）からの橋渡し | `trace!/debug!/info!/warn!/error!`, `Logger`, `Sink`, `StderrSink`, `init`, `format` |
 | 0 OS | `crates/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出、ファイル入出力）。`#[cfg]` はここだけに書く | `config_dir`, `log_dir`, `log_level`, `FileSink`, `openvr_paths_file`, `openxr_runtime_manifest` |
-yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知らないキーは無視。キーは `log`（ログレベル）、`runtime`（`openvr`/`openxr`/`novr`）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル）で、決めるのは `main` | `load`, `parse`, `path`, `Config` |
+yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知らないキーは無視。キーは `log`（ログレベル）、`runtime`（`openvr`/`openxr`/`novr`）、`pointer_smoothing`（レーザーの手ブレ抑え）、`pointer_mode`（`mouse`/`touch`。レーザーのエミュレート方式、既定 `mouse`）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル）で、決めるのは `main` | `load`, `parse`, `path`, `Config` |
 | 2 ランタイム | `crates/vr` | OpenVR / OpenXR / novr の差を吸収。上位層は `Box<dyn VrBackend>` しか持たない | `connect`, `VrBackend`, `Runtime`, `Surface`, `Pose`, `Frame`（`pose(&Device)`）, `Device`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
 | 3 入力 | `crates/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController) -> ControllerState`, `source(profile, Action)` / `scroll_source(profile)`（逆引き） |
 | 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, set_locked, set_resolution, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
@@ -92,6 +92,7 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 |---|---|---|
 | VR | `click-me` | クリック・ホバー（全機種・左右の手） |
 | VR | `spawn-panel` | 隣に Testing パネルを追加し、その画面を独立して操作する |
+| VR | `pointer-test` | 隣にポインタの方式を試す画面（`PointerTest`）を開く。`pointer-mode` でマウス / タッチのエミュレートを切り替え（タッチで光る）、`drag-chip` → `drop-zone`（マウスのドラッグ）・`swipe-list`（タッチのスワイプ）・`tap-me`（どちらでも押せる） |
 | VR | `attach-hmd` / `attach-left` / `attach-right` / `attach-tracker` / `detach` | 取り付け・取り外し（トラッカーは見えている最初のもの） |
 | VR | `lock` | 掴めないようにする |
 | VR | `menu-held` / `grabbed` | メニューボタン・パネルを掴んでいる間光る（表示のみ） |
@@ -101,6 +102,10 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 | GPUI | `open-menu` → `menu-a` / `menu-b` | ポップアップ（`deferred(anchored())`、`on_mouse_down_out` で閉じる） |
 | GPUI | `text-field` | フォーカス（`track_focus` / `.focus()`）と文字入力（`on_key_down`。キーボードは novr のみ） |
 | GPUI | `scroll-list` | スクロール（`on_scroll_wheel` / `overflow_y_scroll` + `ScrollHandle`） |
+
+ポインタの方式（`kernel::PointerMode`。カーネルが持ち、`config.toml` の `pointer_mode` が初期値、`PanelCommand::PointerMode` で切り替え、`PanelStatus::pointer_mode` で見える。全パネル共通）:
+- マウス（既定）: 押したまま動かすとドラッグ。
+- タッチ: 押したまま `ui::SWIPE_SLOP`（12px）より動かすとスワイプ（GPUI にはピクセル単位の `ScrollWheel`、宛先は押した所）、動かさずに離すとタップ（その時点で押して離す）。押下はどちらと決まるまで送らないので、`on_drag` のドラッグや押している間の見た目は効かない。方式は押した瞬間に決まり、離すまで変わらない。
 
 未対応: ツールチップ（遅延タイマー）、右クリック・ダブルクリック（レーザーは左ボタン1回押しのみ）、文字・画像の見た目（testkit のラスタライザは矩形・角丸・枠線・下線を描く）。
 
@@ -123,11 +128,13 @@ webui::run（Tauri のイベントループ。別スレッドが周期ごとに 
 
 - ページ（`Page`）は画面のクレートが `include_str!` で持ち、`nyaw://localhost/<名前>/index.html`（Windows は `http://nyaw.localhost/..`）で配信する。
   ページは普通の Web ページと同じく `addEventListener` で書き、カーネルへは `window.nyaw` で話す:
-  `nyaw.command("detach" | "close" | { attach: "hmd" | "left" | "right" | { tracker: id } } | { lock: bool } | { resize: { width, height } })`,
+  `nyaw.command("detach" | "close" | { attach: "hmd" | "left" | "right" | { tracker: id } } | { lock: bool } | { resize: { width, height } } | { pointer_mode: "mouse" | "touch" })`,
   `nyaw.status()`, `nyaw.onStatus(cb)`, `nyaw.spawn(ページ名)`。
 - イベントの購読は `getCurrentWebviewWindow().listen` で行う（`event.listen` は既定で全宛先を受けるので、ほかのパネル宛ての `emit_to` まで届く）。
 - `Surface::Overlay` のウィンドウはデスクトップに出さない。WebKitGTK は未マップのウィンドウを描かないので、Linux は表示したまま画面の外（-20000, -20000）に置く。ほかは非表示。
 - novr（`Surface::Desktop`）では WebView を普通のウィンドウとして出し、OS のマウス・キーボードがそのまま届く（ブリッジのポインタは来ない）。
+- ポインタの方式がタッチ（`WebPointer::mode` が `"touch"`）のとき、ブリッジはブラウザのタッチと同じ順序で流す: 押すと pointerdown（pointerType `touch`）、12px より動かすと pointercancel して一番近いスクロールできる祖先をスクロール（`touch-action: none` の上では pointermove のまま）、動かさずに離すと pointerup → 互換の mousedown / mouseup → click。触れていない間はホバーのイベントを出さず `data-nyaw-hover` だけ付ける。TouchEvent（touchstart 等）と慣性スクロールは無い。
+  Testing (Web) の `open-pointer` で同じパネルに `pointer.html`（Pointer test。`pointer-mode` / `tap-me` / `drag-chip` → `drop-zone` / `swipe-list`）を開く。
 - 合成イベントの限界: `isTrusted` は偽、CSS の `:hover` / `:active` は効かない（代わりにブリッジが `data-nyaw-hover` / `data-nyaw-active` を付けるので
   `:is(:hover, [data-nyaw-hover])` と書く）、HTML5 のドラッグ＆ドロップ（`draggable`）とテキスト選択は起きない（ポインタイベントで書いたドラッグは動く）。
 
@@ -148,11 +155,12 @@ webui::run（Tauri のイベントループ。別スレッドが周期ごとに 
 - **ユーザー操作のシナリオ（E2E 風）**: `crates/testkit/tests/` に置く。Testing の画面を操作して検証する（取り付け・ロックも `kit.click("attach-hmd")` のようにボタンで）。testkit 自体は画面を知らず、`testing` は dev-dependency。要素は GPUI の `.debug_selector(|| "名前".into())` で指定し、プロファイル名や座標計算はテストに書かない。
   - **基本操作**（クリック・ホバー・見えている色など）: `Driver` に対して1回だけ書き、`on_every_runtime!` で全ランタイム（novr / VR）で実行する（例: `testing.rs`）。
   - **UI のロジックだけ**の確認: ランタイムに関係しないので `NoVrKit` だけで書く。
-  - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`, `attach.rs`）。
+  - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`, `attach.rs`, ポインタの方式は `pointer_mode.rs`）。
   - `color_at` は「ユーザーに見えている色」: novr は画面、VR は VR パネルに送られたテクスチャ。テストプラットフォームには GPU が無いため、描画は `testkit::raster` の CPU ラスタライザ。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
 - **WebView の E2E**: `crates/webui/tests/webview_vr.rs` / `webview_novr.rs`（`harness = false`。Tauri をメインスレッドで回し、手順は別スレッドで流す。ページの状態は webtesting の `webtesting:probe` で読む）。
   - `webview_vr`: モックの VR（`Surface::Overlay`）。仮想コントローラのレーザーでホバー・クリック・ドラッグ（setPointerCapture）・スクロール・フォーカス・カーネル操作（ロック・取り付け）・パネルを掴む・リサイズ・隣にパネルを開いて閉じるまでを JS 側のイベントで確かめ、読み戻した描画が VR パネルに届く（クリックで変わった色・リサイズ後の大きさ）ことも見る。
+  - `webview_pointer`: モックの VR で Pointer test を開き、既定のマウスでは押したまま動かしてもスクロールしないこと、タッチに切り替えるとスワイプでスクロール（pointercancel）・タップで click・`touch-action: none` の上ではドラッグが続くことを確かめる（Windows の WebView2 でも確認済み）。
   - `webview_novr`: novr。xdotool で OS のマウスを動かし（`isTrusted` なネイティブのイベント）、OS 側のウィンドウのリサイズにカーネルの解像度が追従することも見る。
   - Linux は画面（X11。Xvfb でよい）があれば `cargo test --workspace` で流れ、無ければスキップ。ほかの OS は `-- --ignored` のときだけ。ビルドには WebKitGTK（`libwebkit2gtk-4.1-dev`）が要る。
     ```sh

@@ -38,3 +38,8 @@ harness = false
 [[test]]
 name = "webview_novr"
 harness = false
+
+# ポインタの方式（マウス / タッチのエミュレート）を webtesting の pointer.html で確かめる。
+[[test]]
+name = "webview_pointer"
+harness = false
