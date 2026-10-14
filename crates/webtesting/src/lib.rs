@@ -1,5 +1,5 @@
 //! Layer 6 画面（Web）: Testing の Web 版。Web UI 層（`webui`）の機能を 1 ページで試せる。
-//! レーザー（VR）でもマウス（novr）でも同じページが動き、JS のポインタイベントで書いてある。
+//! レーザー（VR）でもマウス（novr）でも同じ React 画面（`web/Testing.tsx`）が動く。
 //!
 //! E2E のため、Tauri のイベント `webtesting:probe` を受けると、状態と要素の位置を `webtesting:state` で返す。
 
@@ -16,7 +16,7 @@ pub const STATE_EVENT: &str = "webtesting:state";
 const IN_VIEW: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
 
 pub fn page() -> Page {
-    Page::html("webtesting", include_str!("../web/index.html"))
+    Page::new("webtesting")
 }
 
 /// 目の前に出す Testing（Web 版）のパネル。

@@ -14,11 +14,11 @@ const CURSOR_M: f32 = 0.012;
 const CURSOR_PX: (u32, u32) = (160, 160);
 
 pub fn laser() -> Page {
-    Page::html("laser", include_str!("../web/laser.html"))
+    Page::new("laser")
 }
 
 pub fn cursor() -> Page {
-    Page::html("cursor", include_str!("../web/cursor.html"))
+    Page::new("cursor")
 }
 
 /// 両手のレーザーとカーソル。

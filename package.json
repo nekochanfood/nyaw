@@ -1,0 +1,24 @@
+{
+  "name": "nyaw-web",
+  "private": true,
+  "version": "2026.0.1",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config web/vite.config.ts",
+    "build": "tsc -p web && vite build --config web/vite.config.ts",
+    "test": "playwright test --config web/playwright.config.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-router": "^1.170.44",
+    "@tauri-apps/api": "^2.12.3",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  }
+}

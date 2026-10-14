@@ -4,7 +4,10 @@
   "version": "2026.0.1",
   "identifier": "dev.nyaw.webui",
   "build": {
-    "frontendDist": "web"
+    "frontendDist": "../../web/dist",
+    "windows": {
+      "staticVCRuntime": false
+    }
   },
   "app": {
     "withGlobalTauri": true,

@@ -19,7 +19,7 @@ yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知ら
 | 6 画面 | `crates/testing` ほか（n 個） | UI 層の上に載る画面。GPUI のビューで、ランタイムを意識しない | `Testing`（テスト用の画面） |
 | 6 画面 | `crates/wrist` | 常駐パネル。左手首に腕時計のように取り付き（掴めない）、時刻と日付、Toggle Panel ボタンで Testing を召喚 / 閉じる | `wrist::spec()`, `Wrist`, `WATCH_OFFSET` |
 | 6 画面 | `crates/beam` | コントローラのビーム。手ごとにレーザー（線）とカーソル（パネルに貼り付く円）とドラッグの見た目（ドラッグ中だけ。中身は `ui::drag_preview` で包んだビューを GPUI が描き、パネルの外・ウィンドウをまたいでも見える）の 3 枚。見た目だけを描き、置き場所・長さ・表示・描画順は `PanelSpec::pointer` で役割を与えたオーバーレイ層が毎 tick 決める（ヒット判定の対象外）。VR（`Surface::Overlay`）のときだけ載せる | `beam::specs()`, `Laser`, `Cursor`, `DragLayer` |
-| 6 画面（Web） | `crates/webtesting` | Testing の Web 版（1 ページの HTML）。Web UI 層の機能を試す。`webtesting:probe` イベントに状態と要素の位置を `webtesting:state` で返す（E2E 用） | `webtesting::{page, spec}`, `PROBE_EVENT`, `STATE_EVENT` |
+| 6 画面（Web） | `crates/webtesting` | Testing の React 版（`web/Testing.tsx`）。Web UI 層の機能を試す。`webtesting:probe` イベントに状態と要素の位置を `webtesting:state` で返す（E2E 用） | `webtesting::{page, spec}`, `PROBE_EVENT`, `STATE_EVENT` |
 | 6 画面（Web） | `crates/webbeam` | ビームの Web 版（レーザーとカーソルの 2 枚。ドラッグの見た目は無い）。VR のときだけ載せる | `webbeam::specs()` |
 | - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, down, up, drag, scroll, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit::{with_backend, select_panel, type_keys}`, `VrKit::{panel, add_panel, press, drag_panel, move_hand, hand, profile, point_at}`, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け） |
 | - | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして（ランタイムの選択はカーネルの仕事）載せる画面（wrist、VR ならビームも）とともに `ui::run` に引き渡すだけ。`--webui` のときは `webui::run` に Web の画面（webtesting、VR なら webbeam も）を引き渡す。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
@@ -121,10 +121,20 @@ webui::run（Tauri のイベントループ。別スレッドが周期ごとに 
  └ WindowEvent::Resized                 → PanelCommand::Resize（論理 px。1m あたりのピクセル数を保つので VR 上のパネルも広がる）
 ```
 
-- ページ（`Page`）は画面のクレートが `include_str!` で持ち、`nyaw://localhost/<名前>/index.html`（Windows は `http://nyaw.localhost/..`）で配信する。
-  ページは普通の Web ページと同じく `addEventListener` で書き、カーネルへは `window.nyaw` で話す:
+- Web の画面は **1 画面につき 1 TSX**。Testing は `crates/webtesting/web/Testing.tsx`、ビームは `crates/webbeam/web/Laser.tsx` / `Cursor.tsx`。
+  `web/src/router.tsx` が TanStack Router のコードベースルーティングで画面を組み立てる。新しい画面は TSX とルートを足し、画面クレートから `Page::new("ルート名")` を渡す。
+  UI 層は画面を import せず、Rust 側で渡されたページ名だけを登録する。
+- `npm ci && npm run build`（リポジトリルート）で TypeScript の型チェックと Vite のビルドを行い、`web/dist` を作る。
+  Cargo のビルド前に実行すること。Tauri の `frontendDist` がアセットを実行ファイルへ埋め込む。
+  `nyaw://localhost/<名前>`（Windows は `http://nyaw.localhost/<名前>`）は共通の HTML を返し、画面の選択は React のルーターが行う。
+  `/assets/...` は埋め込まれた実ファイルだけを返し、知らないページや存在しないアセットは 404。
+- 画面は React のイベントハンドラと state で書き、カーネルへは `window.nyaw` で話す:
   `nyaw.command("detach" | "close" | { attach: "hmd" | "left" | "right" | { tracker: id } } | { lock: bool } | { resize: { width, height } })`,
-  `nyaw.status()`, `nyaw.onStatus(cb)`, `nyaw.spawn(ページ名)`。
+  `nyaw.status()`, `nyaw.onStatus(cb)`（購読解除関数を返す）, `nyaw.spawn(ページ名)`。型は `web/src/nyaw.d.ts`。
+  イベント購読・タイマーは React の effect で登録し、画面を離れるときに解除する。
+- 共通の `crates/webui/web/ScrollArea.tsx` は一次元（縦）・二次元（縦横）のスクロール領域。
+  マウス・タッチ・レーザーはポインタキャプチャでスワイプし、ホイールとスティックは既定のスクロール経路を使う。
+  Testing の `scroll-list` / `scroll-grid` で試せる。スティックは右で右、上で上へスクロールする。
 - イベントの購読は `getCurrentWebviewWindow().listen` で行う（`event.listen` は既定で全宛先を受けるので、ほかのパネル宛ての `emit_to` まで届く）。
 - `Surface::Overlay` のウィンドウはデスクトップに出さない。WebKitGTK は未マップのウィンドウを描かないので、Linux は表示したまま画面の外（-20000, -20000）に置く。ほかは非表示。
 - novr（`Surface::Desktop`）では WebView を普通のウィンドウとして出し、OS のマウス・キーボードがそのまま届く（ブリッジのポインタは来ない）。
@@ -143,6 +153,10 @@ webui::run（Tauri のイベントループ。別スレッドが周期ごとに 
 ## テスト
 
 `cargo test --workspace`。ビルドには cmake と C++ コンパイラが要る（`vr` が OpenXR ローダーを静的リンクし、`openvr_bindings` もビルド時に OpenVR を cmake でビルドするため）。cmake が PATH に無ければ環境変数 `CMAKE` で指す（Windows は Visual Studio 同梱の `Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` でよい）。CI は `cargo fmt --check` と `cargo clippy --workspace --all-targets -D warnings`。
+
+先に `npm ci && npm run build` で埋め込み用の React アセットを作る。
+`npx playwright install chromium && npm test` はビルド済みアプリで画面の操作とルーティングを検証する。
+Tauri の IPC 配送だけを置き換え、`bridge.js` は実物を読み込み、マウス入力と合成ポインタ入力の両方で React を操作する。
 
 - **単体テスト**: 各クレート内の `#[cfg(test)]`。その層の範囲だけで完結させる。実機の代わりは `vr` の `test-support` フィーチャーで出る `vr::mock::MockBackend`。単体テストから testkit は使わない（依存が循環する）。
 - **ユーザー操作のシナリオ（E2E 風）**: `crates/testkit/tests/` に置く。Testing の画面を操作して検証する（取り付け・ロックも `kit.click("attach-hmd")` のようにボタンで）。testkit 自体は画面を知らず、`testing` は dev-dependency。要素は GPUI の `.debug_selector(|| "名前".into())` で指定し、プロファイル名や座標計算はテストに書かない。

@@ -130,6 +130,9 @@ impl Vr {
 }
 
 fn scenario(page: &mut Page, vr: &mut Vr) {
+    page.until("初期ビューポートの大きさが確定する", |s| {
+        s["state"]["viewport"] == serde_json::json!([800, 600])
+    });
     // 非表示の WebView が読み戻されて VR に届く（背景は #202020）。
     vr.until_color("ページの描画が VR に届く", (4.0, 590.0), [0x20, 0x20, 0x20]);
     assert_eq!(
@@ -195,6 +198,45 @@ fn scenario(page: &mut Page, vr: &mut Vr) {
     page.until("スクロールした", |s| {
         num(s, &["state", "wheel"]) > 0.0 && num(s, &["state", "scrollTop"]) > 0.0
     });
+    vr.set("thumbstick/y", 0.0);
+
+    // 一次元の領域はレーザーを押して上へスワイプしても動く。
+    let list = page.center("scroll-list");
+    let before = num(&page.probe(), &["state", "scrollTop"]);
+    swipe(page, vr, list, (list.0 - 30.0, list.1 - 30.0));
+    let s = page.until("一次元のスワイプ", |s| {
+        num(s, &["state", "scrollTop"]) > before
+    });
+    assert_eq!(num(&s, &["state", "scrollLeft"]), 0.0);
+
+    // 二次元の領域はスティックの両軸と、斜めのスワイプで縦横に動く。
+    vr.point_at(page.center("scroll-grid"));
+    vr.set("thumbstick/x", 1.0);
+    vr.set("thumbstick/y", -1.0);
+    let s = page.until("二次元のスティック入力", |s| {
+        s["state"]["scroll2d"][0].as_f64().unwrap() > 0.0
+            && s["state"]["scroll2d"][1].as_f64().unwrap() > 0.0
+    });
+    vr.set("thumbstick/x", 0.0);
+    vr.set("thumbstick/y", 0.0);
+    let before = (
+        s["state"]["scroll2d"][0].as_f64().unwrap(),
+        s["state"]["scroll2d"][1].as_f64().unwrap(),
+    );
+    let grid = page.center("scroll-grid");
+    swipe(page, vr, grid, (grid.0 - 30.0, grid.1 - 30.0));
+    page.until("二次元のスワイプ", |s| {
+        s["state"]["scroll2d"][0].as_f64().unwrap() > before.0
+            && s["state"]["scroll2d"][1].as_f64().unwrap() > before.1
+    });
+
+    // 左／上へ倒すと、両軸とも元の端まで戻る。
+    vr.set("thumbstick/x", -1.0);
+    vr.set("thumbstick/y", 1.0);
+    page.until("二次元の逆方向スクロール", |s| {
+        s["state"]["scroll2d"] == serde_json::json!([0, 0])
+    });
+    vr.set("thumbstick/x", 0.0);
     vr.set("thumbstick/y", 0.0);
 
     // フォーカス: 入力欄を押すとフォーカスが移る。
@@ -290,6 +332,20 @@ fn scenario(page: &mut Page, vr: &mut Vr) {
     page.until("離れた", |s| {
         s["state"]["hovered"] == false && s["hoverAttr"] == false
     });
+}
+
+/// 選択ボタンを押したままパネル上をスワイプする。
+fn swipe(page: &mut Page, vr: &mut Vr, from: (f32, f32), to: (f32, f32)) {
+    vr.point_at(from);
+    std::thread::sleep(Duration::from_millis(40));
+    let downs = num(&page.probe(), &["state", "counts", "pointerdown"]);
+    vr.set("trigger/value", 1.0);
+    page.until("スワイプを開始", |s| {
+        num(s, &["state", "counts", "pointerdown"]) > downs
+    });
+    vr.point_at(to);
+    std::thread::sleep(Duration::from_millis(60));
+    vr.set("trigger/value", 0.0);
 }
 
 /// 要素の中心を指して、選択ボタンを押して離し、click が届くのを待つ。

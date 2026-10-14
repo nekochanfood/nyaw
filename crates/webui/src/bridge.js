@@ -226,8 +226,8 @@
       case "scroll": {
         const t = target(s);
         hover(s, t);
-        // スティックを上に倒す（dy > 0）と上へスクロールする。wheel の deltaY は下が正。
-        const dx = -p.dx * LINE;
+        // スティックを右／上に倒すと右／上へスクロールする。wheel の deltaY は下が正。
+        const dx = p.dx * LINE;
         const dy = -p.dy * LINE;
         if (fire(t, "wheel", s, { deltaX: dx, deltaY: dy, deltaMode: 0 })) {
           scroller(t, dx, dy).scrollBy({ left: dx, top: dy, behavior: "instant" });
@@ -249,12 +249,15 @@
     }
   };
 
-  const statusListeners = [];
+  const statusListeners = new Set();
   window.nyaw = {
     command: (command) => invoke("panel_command", { command }),
     status: () => invoke("panel_status"),
     spawn: (page) => invoke("spawn_panel", { page }),
-    onStatus: (cb) => statusListeners.push(cb),
+    onStatus: (cb) => {
+      statusListeners.add(cb);
+      return () => statusListeners.delete(cb);
+    },
   };
 
   // Tauri の API（withGlobalTauri）はこのスクリプトの後に用意されることがあるので、読み込み後に購読する。

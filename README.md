@@ -3,8 +3,16 @@ VR オーバーレイアプリ
 
 ## 開発・実行
 
-必要なもの: Rust (edition 2024 対応の stable)、cmake と C++ コンパイラ（OpenVR / OpenXR のビルドに使う）。
+必要なもの: Rust (edition 2024 対応の stable)、cmake と C++ コンパイラ（OpenVR / OpenXR のビルドに使う）、Node.js 24 と npm（React 画面のビルドに使う）。
 Linux では WebKitGTK（`libwebkit2gtk-4.1-dev`。Web UI の Tauri が使う）も要る。
+
+最初に、または TSX / CSS を変更したら、リポジトリのルートで Web のアセットをビルドしてから Cargo を実行する。
+Tauri は `web/dist` を実行ファイルへ埋め込むので、実行時に Node.js や HTTP サーバーは不要。
+
+```sh
+npm ci
+npm run build
+```
 
 ```sh
 cargo run                  # VR ランタイムを自動検出。無ければ novr（デスクトップのウィンドウ）で起動
@@ -23,6 +31,9 @@ NYAW_LOG=debug cargo run   # ログレベル変更（trace/debug/info/warn/error
 ### テスト
 
 ```sh
+npm run build              # Rust のビルド・テストの前に Web アセットを更新
+npx playwright install chromium
+npm test                   # React 画面、ルーティング、実物の入力ブリッジのブラウザ回帰テスト
 cargo test --workspace     # novr 上の E2E を含む（実ランタイム不要）
 cargo runtimes list        # 実ランタイム (Monado / SteamVR) の状態
 cargo runtimes install     # Monado を導入するウィザード（SteamVR は Steam 側で入れる）

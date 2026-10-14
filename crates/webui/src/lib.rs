@@ -2,7 +2,7 @@
 //!
 //! - レーザー → Web: オーバーレイ層のポインタイベントを Tauri のイベント `nyaw:pointer` でそのパネルの WebView へ送り、
 //!   注入したブリッジ（`bridge.js`）が DOM の PointerEvent / MouseEvent / click / wheel として発火する。
-//!   ページは普通の Web ページと同じく `addEventListener("pointerdown", ..)` で書け、VR 上にあることを意識しない。
+//!   画面は React のポインタイベントで書け、VR 上にあることを意識しない。
 //!   novr（`Surface::Desktop`）では WebView を OS のウィンドウとして出すので、OS のマウスがそのまま届く。
 //! - Web → カーネル: ページは Tauri のコマンド（`panel_command` / `panel_status` / `spawn_panel`、JS からは `window.nyaw`）で
 //!   操作を積み、フレームループがカーネルに反映して状態の変化を Tauri のイベント `nyaw:status` で返す
@@ -11,7 +11,7 @@
 //! - リサイズ: ウィンドウの大きさが変わると（OS の操作でも `{ resize }` コマンドでも）パネルの解像度を合わせる
 //!   （`PanelCommand::Resize`。1m あたりのピクセル数を保つので VR 上のパネルも広がる）。
 //!
-//! どのページかは知らない。ページ（[`Page`]）は画面のクレートが持ち、`nyaw://` プロトコルで配信する。
+//! どの画面かは知らない。ページ（[`Page`]）は React のルート名を持ち、`nyaw://` プロトコルで共通アプリを配信する。
 
 mod capture;
 
@@ -69,30 +69,15 @@ pub struct Image {
 
 // ---- ページ ----
 
-/// Web の画面（UI 層でいう画面のビュー）。`nyaw://localhost/<name>/<path>` で配信する。
+/// Web の画面（UI 層でいう画面のビュー）。`nyaw://localhost/<name>` が React のルート。
 #[derive(Debug, Clone)]
 pub struct Page {
     name: &'static str,
-    files: Vec<(&'static str, &'static [u8])>,
 }
 
 impl Page {
     pub fn new(name: &'static str) -> Self {
-        Self {
-            name,
-            files: Vec::new(),
-        }
-    }
-
-    /// `index.html` だけのページ。
-    pub fn html(name: &'static str, html: &'static str) -> Self {
-        Self::new(name).file("index.html", html.as_bytes())
-    }
-
-    /// ページに含めるファイル（`index.html` からの相対パス）。
-    pub fn file(mut self, path: &'static str, bytes: &'static [u8]) -> Self {
-        self.files.push((path, bytes));
-        self
+        Self { name }
     }
 
     pub fn name(&self) -> &'static str {
@@ -107,26 +92,21 @@ pub fn page_url(name: &str) -> tauri::Url {
     } else {
         "nyaw://localhost"
     };
-    format!("{base}/{name}/index.html")
+    format!("{base}/{name}")
         .parse()
         .expect("ページ名は URL のパスに使える")
 }
 
-/// `/<page>/<path>` に当たるファイルと Content-Type。
-fn serve(pages: &HashMap<&'static str, Page>, path: &str) -> Option<(&'static [u8], &'static str)> {
-    let (name, file) = path.trim_start_matches('/').split_once('/')?;
-    let file = if file.is_empty() { "index.html" } else { file };
-    let (_, bytes) = pages.get(name)?.files.iter().find(|(p, _)| *p == file)?;
-    let mime = match file.rsplit_once('.').map(|(_, ext)| ext) {
-        Some("html") => "text/html; charset=utf-8",
-        Some("js" | "mjs") => "text/javascript; charset=utf-8",
-        Some("css") => "text/css; charset=utf-8",
-        Some("json") => "application/json",
-        Some("svg") => "image/svg+xml",
-        Some("png") => "image/png",
-        _ => "application/octet-stream",
-    };
-    Some((bytes, mime))
+/// 登録した画面のルートだけを共通 HTML にし、アセットは実ファイルのパスを使う。
+fn asset_path<'a>(pages: &HashMap<&'static str, Page>, path: &'a str) -> Option<&'a str> {
+    let name = path.strip_prefix('/')?;
+    if name.starts_with("assets/") {
+        Some(path)
+    } else if pages.contains_key(name.trim_end_matches('/')) {
+        Some("/index.html")
+    } else {
+        None
+    }
 }
 
 // ---- ページとのやり取り（JSON） ----
@@ -504,12 +484,21 @@ pub fn run_with<B: VrBackend + 'static>(
     let served = shared.clone();
     let app = tauri::Builder::<Wry>::default()
         .manage(shared.clone())
-        .register_uri_scheme_protocol("nyaw", move |_, req| {
+        .register_uri_scheme_protocol("nyaw", move |ctx, req| {
             let res = tauri::http::Response::builder();
-            match serve(&served.pages, req.uri().path()) {
-                Some((body, mime)) => res
-                    .header(tauri::http::header::CONTENT_TYPE, mime)
-                    .body(Cow::Borrowed(body)),
+            let resolver = ctx.app_handle().asset_resolver();
+            let asset = asset_path(&served.pages, req.uri().path()).and_then(|path| {
+                // resolver.get は見つからないパスにも HTML を返すので、実在を先に確認する。
+                resolver
+                    .iter()
+                    .any(|(key, _)| key == path)
+                    .then(|| resolver.get(path.into()))
+                    .flatten()
+            });
+            match asset {
+                Some(asset) => res
+                    .header(tauri::http::header::CONTENT_TYPE, asset.mime_type)
+                    .body(Cow::Owned(asset.bytes)),
                 None => res.status(404).body(Cow::Borrowed(&b"not found"[..])),
             }
             .expect("ヘッダーは固定の値")
@@ -1044,22 +1033,35 @@ mod tests {
     }
 
     #[test]
-    fn pages_are_served_by_name_and_path() {
-        let pages: HashMap<_, _> = [("demo", Page::html("demo", "<p>hi</p>").file("app.js", b"1"))]
-            .into_iter()
-            .collect();
-        assert_eq!(
-            serve(&pages, "/demo/index.html"),
-            Some((&b"<p>hi</p>"[..], "text/html; charset=utf-8"))
+    fn registered_routes_use_the_shared_app() {
+        let pages: HashMap<_, _> = [("demo", Page::new("demo"))].into_iter().collect();
+        assert_eq!(asset_path(&pages, "/demo"), Some("/index.html"));
+        assert_eq!(asset_path(&pages, "/demo/"), Some("/index.html"));
+        assert_eq!(asset_path(&pages, "/assets/app.js"), Some("/assets/app.js"));
+        assert_eq!(asset_path(&pages, "/demo/nope.js"), None);
+        assert_eq!(asset_path(&pages, "/other"), None);
+        assert_eq!(asset_path(&pages, "/"), None);
+        assert_eq!(page_url("demo").path(), "/demo");
+    }
+
+    #[test]
+    fn react_app_and_its_assets_are_embedded() {
+        let context = context();
+        let assets = context.assets();
+        let html = assets
+            .get(&"/index.html".into())
+            .expect("npm run build で作った React の入口");
+        assert!(String::from_utf8_lossy(&html).contains("id=\"root\""));
+        assert!(
+            assets
+                .iter()
+                .any(|(path, _)| path.starts_with("/assets/") && path.ends_with(".js"))
         );
-        assert_eq!(serve(&pages, "/demo/"), serve(&pages, "/demo/index.html"));
-        assert_eq!(
-            serve(&pages, "/demo/app.js").map(|(_, m)| m),
-            Some("text/javascript; charset=utf-8")
+        assert!(
+            assets
+                .iter()
+                .any(|(path, _)| path.starts_with("/assets/") && path.ends_with(".css"))
         );
-        assert_eq!(serve(&pages, "/demo/nope.js"), None);
-        assert_eq!(serve(&pages, "/other/index.html"), None);
-        assert_eq!(page_url("demo").path(), "/demo/index.html");
     }
 
     #[test]
