@@ -81,7 +81,10 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>) {
     };
     let before = emu.run(pixels);
     std::thread::sleep(Duration::from_millis(300));
-    assert!(emu.run(pixels) != before, "testing-anim moves without input");
+    assert!(
+        emu.run(pixels) != before,
+        "testing-anim moves without input"
+    );
 
     let (open, limit) = open_and_limit(remote);
     assert_eq!((open, limit), (1, MAX_PANELS), "novr has no runtime limit");
