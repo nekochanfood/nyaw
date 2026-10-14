@@ -70,3 +70,7 @@ NYAW_E2E_WATCH=300 cargo test -p testkit --test testing -- --test-threads=1
 ```
 
 構成と設計は [AGENT.md](AGENT.md) を参照。
+
+## ライセンス
+
+[MIT](LICENSE-MIT) または [Apache-2.0](LICENSE-APACHE) のどちらかを選んで使える。

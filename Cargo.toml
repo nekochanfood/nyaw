@@ -4,6 +4,7 @@ members = ["crates/*"]
 [workspace.package]
 version = "2026.0.1"
 edition = "2024"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 glam = "0.30"
@@ -29,6 +30,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 name = "nyaw"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 logger.workspace = true

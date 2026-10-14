@@ -2,6 +2,7 @@
 name = "webpages"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 # Web UI のページ（リポジトリ直下の web/。React + Tailwind + Base UI）を Vite でビルドして埋め込む。
 # ビルドには Node.js（npm）が要る。NYAW_WEB_SKIP=1 でビルドを飛ばす（ページは空になり 404 を返す）。

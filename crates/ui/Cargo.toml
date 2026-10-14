@@ -2,6 +2,7 @@
 name = "ui"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 # UI 層。パネルを GPUI のウィンドウか Tauri の WebView（web モジュール）で実体化する。
 [dependencies]
