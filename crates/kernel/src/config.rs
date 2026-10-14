@@ -12,9 +12,10 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum PointerMode {
     /// マウスのエミュレート: 押したまま動かすとドラッグ。
-    #[default]
     Mouse,
-    /// タッチのエミュレート: 押したまま動かすとスワイプ（スクロール）、動かさずに離すとタップ（クリック）。
+    /// タッチのエミュレート（既定）: 押したまま動かすとスワイプ（スクロール。離すと慣性で滑る）、動かさずに離すとタップ（クリック）、
+    /// 動かさずに長押しするとマウスの押下（そのまま動かせばドラッグ）。
+    #[default]
     Touch,
 }
 
@@ -28,7 +29,7 @@ pub struct Config {
     pub runtime: Option<String>,
     /// レーザーの手ブレ抑え（0 = 抑えない 〜 1 未満。大きいほど強く、遅れる）。省略で既定値。
     pub pointer_smoothing: Option<f32>,
-    /// レーザーのエミュレート方式（`mouse` / `touch`）。省略でマウス。
+    /// レーザーのエミュレート方式（`mouse` / `touch`）。省略でタッチ。
     pub pointer_mode: Option<PointerMode>,
 }
 

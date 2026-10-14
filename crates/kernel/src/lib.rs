@@ -264,8 +264,8 @@ mod tests {
         assert_eq!(k.pointer_mode(), PointerMode::Mouse);
         assert_eq!(
             kernel().0.pointer_mode(),
-            PointerMode::Mouse,
-            "既定はマウス"
+            PointerMode::Touch,
+            "既定はタッチ"
         );
     }
 

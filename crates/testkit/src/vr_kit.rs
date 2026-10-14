@@ -59,6 +59,8 @@ impl<'a, V: Render> VrKit<'a, V> {
         // 手ブレ抑えは指した瞬間に当たらなくなるので切る（抑え自体は overlay の単体テストで確かめる）。
         let config = kernel::config::Config {
             pointer_smoothing: Some(0.0),
+            // 操作のシナリオはマウスで書く（既定のタッチは pointer_mode.rs / web_pointer.rs で確かめる）。
+            pointer_mode: Some(kernel::PointerMode::Mouse),
             ..Default::default()
         };
         let mut kernel = Kernel::with_backend(MockBackend::default(), config);

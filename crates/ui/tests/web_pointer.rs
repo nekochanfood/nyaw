@@ -22,6 +22,8 @@ fn main() -> ExitCode {
     // 手ブレ抑えは指した瞬間に当たらなくなるので切る（testkit と同じ）。
     let config = kernel::config::Config {
         pointer_smoothing: Some(0.0),
+        // 操作のシナリオはマウスで書く（既定のタッチは web_pointer で確かめる）。
+        pointer_mode: Some(kernel::PointerMode::Mouse),
         ..Default::default()
     };
     let kernel = Kernel::with_backend(Box::new(mock.clone()) as Box<dyn VrBackend>, config);
@@ -47,7 +49,7 @@ fn scenario(page: &mut Page, vr: &mut Vr) {
     assert_eq!(
         page.probe()["state"]["status"]["pointer_mode"],
         "mouse",
-        "既定はマウス"
+        "このテストはマウスから始める"
     );
 
     // マウス: 押したまま動かしてもスクロールしない（押して動かして離すだけ）。

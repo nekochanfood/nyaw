@@ -47,6 +47,7 @@
         pressed: false,
         mouseSuppressed: false,
         touch: null,
+        fling: null,
       };
       hands.set(name, s);
     }
@@ -219,7 +220,27 @@
    * しきい値を超えて動かすと pointercancel してスクロール（スワイプ。touch-action: none の上では pointermove のまま）、
    * 動かさずに離すと pointerup と互換のマウスイベントと click（タップ）。指が触れていない間はホバーのイベントを出さず、印だけ付ける。
    */
-  // ponytail: TouchEvent（touchstart 等）は出さない。慣性スクロールも無い。要るページが出てきたら足す。
+  // ponytail: TouchEvent（touchstart 等）は出さない。要るページが出てきたら足す。
+  /** 慣性の 1 フレーム（約 90Hz）あたりの減衰と、止める速さ（CSS px / フレーム）。UI 層の FRICTION / MOMENTUM_STOP と同じ。 */
+  const FRICTION = 0.95;
+  const MOMENTUM_STOP = 0.5;
+  const FRAME_MS = 1000 / 90;
+  /** スワイプを離した後、`el` を速度 (vx, vy)（中身が指に付いてくる向き、px / フレーム）で滑らせる。触れたら止める。 */
+  // 非表示の WebView では requestAnimationFrame が止まることがあるので、タイマーで経過時間から減衰させる。
+  const fling = (s, el, vx, vy) => {
+    let last = performance.now();
+    const step = () => {
+      const now = performance.now();
+      const k = (now - last) / FRAME_MS;
+      last = now;
+      const f = Math.pow(FRICTION, k);
+      [vx, vy] = [vx * f, vy * f];
+      if (Math.hypot(vx, vy) < MOMENTUM_STOP) return (s.fling = null);
+      el.scrollBy({ left: -vx * k, top: -vy * k, behavior: "instant" });
+      s.fling = setTimeout(step, FRAME_MS);
+    };
+    s.fling = setTimeout(step, FRAME_MS);
+  };
   const touch = (p, s) => {
     const t = s.touch;
     switch (p.type) {
@@ -236,14 +257,21 @@
           t.pan = scroller(s.down, dx, dy);
         }
         // 中身が指に付いてくる向き（下へ動かすと上へスクロール）。
-        if (t.pan) t.pan.scrollBy({ left: -dx, top: -dy, behavior: "instant" });
+        if (t.pan) {
+          t.pan.scrollBy({ left: -dx, top: -dy, behavior: "instant" });
+          // 慣性の初速（直近を重く見て均す）。
+          [t.vx, t.vy] = [t.vx * 0.5 + dx * 0.5, t.vy * 0.5 + dy * 0.5];
+        }
         else fire(captures.get(s.id) ?? s.down, "pointermove", s);
         break;
       }
       case "down": {
         s.pressed = true;
         s.mouseSuppressed = true; // 互換のマウスイベントはタップと決まってから出す
-        s.touch = { x0: s.x, y0: s.y, lx: s.x, ly: s.y, pan: null, compat: true };
+        // 触れたら慣性は止まる。
+        clearTimeout(s.fling);
+        s.fling = null;
+        s.touch = { x0: s.x, y0: s.y, lx: s.x, ly: s.y, pan: null, vx: 0, vy: 0, compat: true };
         const el = at(s);
         hover(s, el);
         s.down = el;
@@ -267,6 +295,8 @@
           if (c) fire(c, "click", s, { detail: 1 });
           release(s);
           hover(s, null); // 指が離れると乗っていない
+        } else {
+          fling(s, t.pan, t.vx, t.vy);
         }
         s.down = null;
         s.touch = null;

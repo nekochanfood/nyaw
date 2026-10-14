@@ -38,6 +38,8 @@ impl<'a, V: Render> NoVrKit<'a, V> {
         // 手ブレ抑えは指した瞬間に当たらなくなるので切る（VrKit と同じ）。
         let config = kernel::config::Config {
             pointer_smoothing: Some(0.0),
+            // 操作のシナリオはマウスで書く（既定のタッチは pointer_mode.rs / web_pointer.rs で確かめる）。
+            pointer_mode: Some(kernel::PointerMode::Mouse),
             ..Default::default()
         };
         let mut kernel = Kernel::with_backend(Emulator::headless(SCREEN.0, SCREEN.1), config);
