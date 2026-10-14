@@ -332,8 +332,8 @@
       case "scroll": {
         const t = target(s);
         hover(s, t);
-        // スティックを上に倒す（dy > 0）と上へスクロールする。wheel の deltaY は下が正。
-        const dx = -p.dx * LINE;
+        // スティックを右／上に倒すと右／上へ進む。wheel の deltaY は下が正。
+        const dx = p.dx * LINE;
         const dy = -p.dy * LINE;
         if (fire(t, "wheel", s, { deltaX: dx, deltaY: dy, deltaMode: 0 })) {
           scroller(t, dx, dy).scrollBy({ left: dx, top: dy, behavior: "instant" });

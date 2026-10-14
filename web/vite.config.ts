@@ -7,7 +7,7 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 /** ページ名（= ディレクトリ名）。Rust 側の `PanelSpec::web` はこの名前で開く。 */
-const pages = ["testing", "testing-transparent"];
+const pages = ["testing", "testing-transparent", "testing-pointer"];
 
 export default defineConfig({
   base: "./",

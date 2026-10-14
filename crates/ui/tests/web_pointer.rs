@@ -1,15 +1,15 @@
 //! ポインタの方式（マウス / タッチのエミュレート）の E2E を実プラットフォームの WebView で流す（`Surface::Overlay` のモック）。
-//! webtesting の Pointer test（`pointer.html`）を開き、既定のマウスでは押したまま動かしてもスクロールしないこと、
+//! React の Pointer test を開き、既定のマウスでは押したまま動かしてもスクロールしないこと、
 //! ページのボタンでタッチにすると pointerType が touch になり、スワイプでスクロールし（pointercancel が来る）、
 //! 動かさずに離すとタップ（click）になり、touch-action: none の上ではドラッグが続くことを JS 側のイベントで確かめる。
-//! Linux は画面（Xvfb でよい）があれば `cargo test -p webui --test webview_pointer` で流れる。
+//! Linux は画面（Xvfb でよい）があれば `cargo test -p ui --test web_pointer` で流れる。
 
 mod common;
 
 use std::process::ExitCode;
 use std::time::Duration;
 
-use common::{PANEL_POS, Page, SharedMock, Vr, click, num};
+use common::{PANEL_POS, Page, SharedMock, Vr, click, num, press};
 use kernel::vr::Quat;
 use kernel::{Kernel, Pose, Vec2, VrBackend};
 use ui::PanelSpec;
@@ -27,13 +27,20 @@ fn main() -> ExitCode {
     let kernel = Kernel::with_backend(Box::new(mock.clone()) as Box<dyn VrBackend>, config);
     let spec = PanelSpec::web(Pose::new(PANEL_POS, Quat::IDENTITY), webpages::TESTING)
         .sized(Vec2::new(0.8, 0.6), (800, 600));
-    common::run("web_pointer", kernel, vec![spec], "panel-0", None, move |page, _| {
-        scenario(page, &mut Vr::new(mock));
-    })
+    common::run(
+        "web_pointer",
+        kernel,
+        vec![spec],
+        "panel-0",
+        None,
+        move |page, _| {
+            scenario(page, &mut Vr::new(mock));
+        },
+    )
 }
 
 fn scenario(page: &mut Page, vr: &mut Vr) {
-    click(page, vr, "open-pointer");
+    press(page, vr, "open-pointer");
     page.until("Pointer test が開く", |s| {
         s["state"]["page"] == "pointer" && !s["state"]["status"].is_null()
     });
@@ -55,6 +62,7 @@ fn scenario(page: &mut Page, vr: &mut Vr) {
         "マウスではスクロールしない"
     );
     assert_eq!(num(&s, &["state", "counts", "pointercancel"]), 0.0);
+    stick_scroll(page, vr);
 
     // タッチに切り替える（ページ → Tauri のコマンド → カーネル → 状態のイベント）。
     click(page, vr, "pointer-mode");
@@ -69,6 +77,22 @@ fn scenario(page: &mut Page, vr: &mut Vr) {
     });
     assert_eq!(num(&s, &["state", "counts", "pointercancel"]), 1.0);
     assert_eq!(s["state"]["lastPointer"]["pointerType"], "touch");
+
+    // 二次元の領域も斜めのスワイプで縦横に動く。
+    let (x, y) = page.center("swipe-grid");
+    let downs = num(&page.probe(), &["state", "counts", "pointerdown"]);
+    vr.point_at((x + 60.0, y + 80.0));
+    vr.set("trigger/value", 1.0);
+    page.until("二次元領域に触れた", |s| {
+        num(s, &["state", "counts", "pointerdown"]) > downs
+    });
+    glide(vr, (x + 60.0, y + 80.0), (x - 60.0, y - 80.0));
+    vr.set("trigger/value", 0.0);
+    page.until("二次元のスワイプ", |s| {
+        let (left, top) = scroll_position(s, "swipe-grid");
+        left > 50.0 && top > 50.0
+    });
+    stick_scroll(page, vr);
 
     // タップ: 動かさずに離すと click。
     tap(page, vr, "tap-me");
@@ -92,6 +116,44 @@ fn scenario(page: &mut Page, vr: &mut Vr) {
     page.until("マウスに戻った", |s| {
         s["state"]["status"]["pointer_mode"] == "mouse"
     });
+}
+
+fn scroll_position(s: &serde_json::Value, id: &str) -> (f64, f64) {
+    if id == "swipe-list" {
+        (
+            num(s, &["state", "scrollLeft"]),
+            num(s, &["state", "scrollTop"]),
+        )
+    } else {
+        (
+            s["state"]["scroll2d"][0].as_f64().unwrap(),
+            s["state"]["scroll2d"][1].as_f64().unwrap(),
+        )
+    }
+}
+
+/// スティックはどちらの方式でも縦横に動き、逆方向に倒すと端まで戻れる。
+fn stick_scroll(page: &mut Page, vr: &mut Vr) {
+    for id in ["swipe-list", "swipe-grid"] {
+        vr.point_at(page.center(id));
+        let before = scroll_position(&page.probe(), id);
+        vr.set("thumbstick/x", 1.0);
+        vr.set("thumbstick/y", -1.0);
+        let s = page.until("スティックでスクロール", |s| {
+            let (left, top) = scroll_position(s, id);
+            top > before.1 && (id == "swipe-list" || left > before.0)
+        });
+        if id == "swipe-list" {
+            assert_eq!(scroll_position(&s, id).0, 0.0);
+        }
+        vr.set("thumbstick/x", -1.0);
+        vr.set("thumbstick/y", 1.0);
+        page.until("逆方向で端に戻る", |s| {
+            scroll_position(s, id) == (0.0, 0.0)
+        });
+        vr.set("thumbstick/x", 0.0);
+        vr.set("thumbstick/y", 0.0);
+    }
 }
 
 /// タッチで要素の中心を押して離す。タッチは触れるまでホバーのイベントが無いので、押したことを pointerdown で見る。

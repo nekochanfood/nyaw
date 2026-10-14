@@ -116,6 +116,14 @@ fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'stati
     }
 }
 
+fn spawn_pointer_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        cx.default_global::<PanelControl>()
+            .spawns
+            .push(PanelSpec::spawn(panel, |id, _, _| PointerTest::new(id)))
+    }
+}
+
 /// 隣に Testing の Web 版（Tauri の WebView）を開く。
 fn spawn_web(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {

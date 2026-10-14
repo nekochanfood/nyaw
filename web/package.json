@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "test": "playwright test",
     "lint": "cd .. && oxlint -c web/.oxlintrc.json --deny-warnings web crates/ui/src/web",
     "fmt": "cd .. && oxfmt -c web/.oxfmtrc.json web crates/ui/src/web",
     "fmt:check": "cd .. && oxfmt -c web/.oxfmtrc.json --check web crates/ui/src/web",

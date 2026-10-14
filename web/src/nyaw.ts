@@ -3,18 +3,21 @@
 import { useEffect, useState } from "react";
 
 export type Device = "hmd" | "left" | "right" | { tracker: string };
+export type PointerMode = "mouse" | "touch";
 
 export type Command =
   | "detach"
   | "close"
   | { attach: Device }
   | { lock: boolean }
+  | { pointer_mode: PointerMode }
   | { resize: { width: number; height: number } };
 
 /** パネルの状態（Rust の `WebStatus`）。 */
 export interface Status {
   panel: number;
   runtime: "openvr" | "openxr" | "novr";
+  pointer_mode: PointerMode;
   attached: Device | null;
   locked: boolean;
   trackers: string[];

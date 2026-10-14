@@ -7,6 +7,8 @@ include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 pub const TESTING: &str = "testing";
 /// 半透明の確認用（背景が透明で、不透明度の違う要素を並べる）。
 pub const TESTING_TRANSPARENT: &str = "testing-transparent";
+/// マウス／タッチのエミュレートと一次元・二次元スクロールを試す。
+pub const TESTING_POINTER: &str = "testing-pointer";
 
 #[cfg(test)]
 mod tests {
@@ -17,7 +19,7 @@ mod tests {
         if FILES.is_empty() {
             return; // NYAW_WEB_SKIP
         }
-        for page in [TESTING, TESTING_TRANSPARENT] {
+        for page in [TESTING, TESTING_TRANSPARENT, TESTING_POINTER] {
             let entry = format!("{page}/index.html");
             let (_, html) = FILES
                 .iter()

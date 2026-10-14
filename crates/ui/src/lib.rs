@@ -23,8 +23,8 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose, Surface,
-    UiEvent, Vec2, VrBackend,
+    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose,
+    Surface, UiEvent, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 

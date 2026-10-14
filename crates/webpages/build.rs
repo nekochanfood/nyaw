@@ -19,6 +19,7 @@ fn main() {
         "src",
         "testing",
         "testing-transparent",
+        "testing-pointer",
         "package.json",
         "package-lock.json",
         "vite.config.ts",

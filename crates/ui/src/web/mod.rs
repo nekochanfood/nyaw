@@ -31,8 +31,8 @@ use std::{
 
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PointerEvent, PointerMode, Pose, Runtime, Surface, UiEvent, Vec2,
-    VrBackend,
+    Device, Kernel, PanelCommand, PanelId, PointerEvent, PointerMode, Pose, Runtime, Surface,
+    UiEvent, Vec2, VrBackend,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -479,12 +479,11 @@ impl Host {
         .inner_size(w as f64, h as f64)
         .initialization_script(BRIDGE);
         let window = if self.surface == Surface::Overlay {
-            // 描画は VR に送るので、デスクトップには出さない。
+            // 描画は VR に送るので画面外へ。枠を消すと Windows の WebView の描画領域が縮むため残す。
             offscreen(builder)
                 .transparent(true)
                 .focused(false)
                 .skip_taskbar(true)
-                .decorations(false)
                 .build()
         } else {
             builder.build()
@@ -646,7 +645,7 @@ impl Host {
                 kernel.apply(panel, PanelCommand::Close);
                 self.forget(panel);
             }
-            WebCommand::PointerMode(m) => self.kernel.apply(panel, PanelCommand::PointerMode(m)),
+            WebCommand::PointerMode(m) => kernel.apply(panel, PanelCommand::PointerMode(m)),
             WebCommand::Resize { width, height } => {
                 let (width, height) = (width.max(1), height.max(1));
                 if let Some(w) = self.windows.get(&panel)

@@ -22,6 +22,8 @@ NYAW_LOG=debug cargo run   # ログレベル変更（trace/debug/info/warn/error
 
 ### テスト
 
+E2E はローカルで実行する。CI では lint・整形・型チェック・ビルドのみを行う。
+
 ```sh
 cargo test --workspace     # novr 上の E2E を含む（実ランタイム不要）
 cargo runtimes list        # 実ランタイム (Monado / SteamVR) の状態
@@ -39,7 +41,11 @@ npm ci
 npm run dev        # ブラウザで見た目を確かめる（カーネルとは繋がらない）
 npm run check      # oxlint・oxfmt・tsc・ビルド（CI の web ジョブと同じ）
 npm run fmt        # oxfmt で整形
+npx playwright install chromium
+npm test           # 事前に npm run build。入力・スクロール・ルーティングの回帰テスト（ローカルのみ）
 ```
+
+Web Testing の「Pointer test」でマウス／タッチ方式を切り替え、タップ・ドラッグ・スワイプと、スティックの縦横スクロールを試せる。
 
 Web のパネルの E2E は実際の GPUI のウィンドウと WebView を開くので、Linux は画面（Xvfb でよい）があるときだけ流れる（novr 側は xdotool も要る）。
 

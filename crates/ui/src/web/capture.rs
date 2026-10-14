@@ -98,8 +98,7 @@ mod platform {
     }
 }
 
-// ponytail: 実機（Windows）では未確認。非表示ウィンドウの WebView2 が CapturePreview で描けない場合は、
-// コントローラを見える状態にしたままウィンドウだけ隠す（画面外に置く）のが次の一手。
+// Windows は画面外に置いた WebView2 の CapturePreview で読み戻す。
 #[cfg(windows)]
 mod platform {
     use std::sync::{Arc, Mutex};

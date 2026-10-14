@@ -130,10 +130,11 @@ ui::run の 1 フレーム（GPUI の部分は上の「1 フレームの流れ�
 ```
 
 - ページは `web/`（Vite + React + TypeScript + Tailwind v4 + Base UI）。`web/<ページ名>/index.html` が入口で、`vite.config.ts` の `pages` に足す。
+  画面ごとに `web/src/<ページ名>/App.tsx` を持ち、共通の `main.tsx` と `router.tsx`（TanStack Router のコードベースルーティング）で起動する。
   `crates/webpages` の build.rs がビルドして埋め込み、UI 層は `nyaw://localhost/<ページ名>/index.html`（Windows は `http://nyaw.localhost/..`）で配信する。
   `cd web && npm run check` で oxlint（`--deny-warnings`）・oxfmt・tsc・ビルドをまとめて流す（CI の `web` ジョブと同じ）。lint と整形は `crates/ui/src/web/bridge.js` も対象。
 - ページからカーネルへは `window.nyaw`（`web/src/nyaw.ts` に型と `useStatus`）:
-  `nyaw.command("detach" | "close" | { attach: "hmd" | "left" | "right" | { tracker: id } } | { lock: bool } | { resize: { width, height } })`,
+  `nyaw.command("detach" | "close" | { attach: "hmd" | "left" | "right" | { tracker: id } } | { lock: bool } | { resize: { width, height } } | { pointer_mode: "mouse" | "touch" })`,
   `nyaw.status()`, `nyaw.onStatus(cb)`（戻り値で購読をやめる）, `nyaw.spawn(ページ名)`。
 - リサイズ: ウィンドウの大きさが変わると（OS の操作でも `{ resize }` でも）`PanelCommand::Resize` で解像度を合わせる（1m あたりのピクセル数を保つので VR 上のパネルも広がる）。
 - イベントの購読は `getCurrentWebviewWindow().listen` で行う（`event.listen` は既定で全宛先を受けるので、ほかのパネル宛ての `emit_to` まで届く）。
@@ -144,6 +145,10 @@ ui::run の 1 フレーム（GPUI の部分は上の「1 フレームの流れ�
   `web/src/index.css` で Tailwind の `hover:` / `active:` をこの属性でも効くよう上書きしている。HTML5 のドラッグ＆ドロップ（`draggable`）とテキスト選択は起きない
   （ポインタイベントで書いたドラッグや Base UI の Slider は動く）。
 - Base UI は Switch / Checkbox / Slider のつまみの `id` を中の隠れた `<input>` に付けるので、E2E で位置を引く `id` は見える要素（包む要素など）に付ける。
+- Testing の `open-pointer` で同じパネルの Pointer test（`testing-pointer`）へ移る。マウスはドラッグ、タッチは 12px 以上動かすと `pointercancel` してスワイプになる。
+  `touch-action: none` のチップは両方式でドラッグできる。スティックは両方式で縦横にスクロールし、右で右、上で上へ進む。
+  `swipe-list` が一次元、`swipe-grid` が二次元のスクロール領域。`crates/ui/tests/web_pointer.rs` がカーネルからの入力経路を検証する。
+  `cd web && npm test` は実物のブリッジと React を使うブラウザ回帰テスト（事前に `npm run build` と `npx playwright install chromium`）。
 
 ## 規約
 
@@ -156,6 +161,8 @@ ui::run の 1 フレーム（GPUI の部分は上の「1 フレームの流れ�
 
 ## テスト
 
+E2E はローカルで実行し、CI には追加しない。
+
 `cargo test --workspace`。ビルドには cmake と C++ コンパイラが要る（`vr` が OpenXR ローダーを静的リンクし、`openvr_bindings` もビルド時に OpenVR を cmake でビルドするため）。cmake が PATH に無ければ環境変数 `CMAKE` で指す（Windows は Visual Studio 同梱の `Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` でよい）。CI は `cargo fmt --check` と `cargo clippy --workspace --all-targets -D warnings`。
 
 - **単体テスト**: 各クレート内の `#[cfg(test)]`。その層の範囲だけで完結させる。実機の代わりは `vr` の `test-support` フィーチャーで出る `vr::mock::MockBackend`。単体テストから testkit は使わない（依存が循環する）。
@@ -165,7 +172,7 @@ ui::run の 1 フレーム（GPUI の部分は上の「1 フレームの流れ�
   - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`, `attach.rs`, ポインタの方式は `pointer_mode.rs`）。
   - `color_at` は「ユーザーに見えている色」: novr は画面、VR は VR パネルに送られたテクスチャ。テストプラットフォームには GPU が無いため、描画は `testkit::raster` の CPU ラスタライザ。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
-- **Web のパネルの E2E**: `crates/ui/tests/web_vr.rs` / `web_novr.rs`（`harness = false`）。本番と同じ `ui::run_with`（GPUI のループの上で Tauri も回す）を実プラットフォームで起動し、
+- **Web のパネルの E2E**: `crates/ui/tests/web_vr.rs` / `web_novr.rs` / `web_pointer.rs`（`harness = false`）。本番と同じ `ui::run_with`（GPUI のループの上で Tauri も回す）を実プラットフォームで起動し、
   手順は別スレッドで流す。ページの状態は `web/src/probe.ts` の `testing:probe` → `testing:state` で読み、GPUI 側は `Hooks::remote` でフレームループに処理を差し込む。
   - `web_vr`: モックの VR（`Surface::Overlay`）。仮想コントローラのレーザーで、ホバー（Tailwind の hover: の色まで VR に映る）・クリック・押している間・
     Base UI の Toggle / Switch / Checkbox / Tabs / Slider（ポインタキャプチャ）/ Menu（ポップアップ）・ドラッグ・スクロール（ScrollArea）・フォーカス・
@@ -205,8 +212,8 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 
 - 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は Monado（Windows、simulated）でパネルが映るところまで確認済みで、コントローラ入力は未確認。
 - Linux での描画の読み戻し（gpui の `render_to_image` が Windows のみ実装。`gpui_wgpu` のヘッドレスレンダラ経由が候補）。
-- Web のパネル: Windows では未確認（GPUI のループの上で Tauri を `run_iteration` で回すこと、WebView2 の読み戻し（CapturePreview。型検査のみ）。
-  Tauri は最初の Web のパネルを開くまで起こさないので、開かなければ GPUI だけの動きは変わらない）。macOS の読み戻しは無い。
+- Web のパネル: Windows はモックの VR で入力・リサイズ・半透明・WebView2 の読み戻し（CapturePreview）を確認済み。
+  Tauri は最初の Web のパネルを開くまで起こさないので、開かなければ GPUI だけの動きは変わらない。macOS の読み戻しは無い。
   Wayland ではウィンドウを画面外に置けないので VR の Web のパネルがデスクトップにも出る。Web のページのドラッグの見た目は `Pointer::Drag` のパネルに出ない（ページ内で動かす）。
   キーボードは novr のみ（GPUI と同じ）。
 - 描画は毎フレーム CPU に読み戻し、変化があれば `vr` が Vulkan のイメージへ上げ直してランタイムへ渡す（`crates/vr/src/gpu.rs`。1024x768 で約 1.6ms）。GPUI のテクスチャを読み戻さずに直接共有する経路は未実装。
