@@ -722,6 +722,19 @@ impl VrBackend for Emulator {
         Ok(OverlayId(self.quads.len() as u64 - 1))
     }
 
+    /// クアッドの添字は `OverlayId` なので詰めず、テクスチャだけ手放して非表示の空き殻にする。
+    // ponytail: 殻（数十バイト）と GPU 側の 1x1 のスロットは残る。数が問題になったら空きを作り直しに使う。
+    fn destroy_overlay(&mut self, id: OverlayId) {
+        let q = self.quad(id);
+        q.visible = false;
+        q.texture = None;
+        self.uploads[id.0 as usize] = false;
+        if let Some(gpu) = &mut self.gpu {
+            gpu.release(id.0 as usize);
+        }
+        self.dirty = true;
+    }
+
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
         self.quad(id).pose = pose;
     }
@@ -748,7 +761,15 @@ impl VrBackend for Emulator {
     }
 
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
-        self.quad(id).texture = Some((width, height, rgba.to_vec()));
+        // 毎フレーム数 MB を確保し直さないよう、前のバッファを使い回す。
+        match &mut self.quad(id).texture {
+            Some((w, h, buf)) => {
+                (*w, *h) = (width, height);
+                buf.clear();
+                buf.extend_from_slice(rgba);
+            }
+            t => *t = Some((width, height, rgba.to_vec())),
+        }
         self.uploads[id.0 as usize] = true;
     }
 

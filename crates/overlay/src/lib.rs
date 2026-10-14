@@ -29,6 +29,8 @@ pub struct Panel {
     pub locked: bool,
     /// 閉じられた。ヒット判定の対象外で、PanelId は詰めずに欠番のまま残る。
     pub closed: bool,
+    /// 閉じ切ってランタイム側のオーバーレイも捨てた。以降は `overlay` に触れない。
+    released: bool,
     /// どの手のレーザーを描くパネルか。ヒット判定の対象外で、配置は毎 tick ここで決める。
     pub pointer: Option<(Hand, Pointer)>,
     /// このパネルのイン・アウトアニメーション。`Overlay::set_animated` で個別に無効化できる。
@@ -88,6 +90,11 @@ const PUSH_DEADZONE: f32 = 0.2;
 /// 掴んだパネルを手から離せる距離（m）。
 const GRAB_MIN: f32 = 0.15;
 const GRAB_MAX: f32 = 10.0;
+/// 掴み中にトリガーを押しながら手を 1m 前へ出したときの拡大率の指数（e^SCALE_RATE 倍）。後ろへ引くと縮む。
+const SCALE_RATE: f32 = 3.0;
+/// パネルの幅の範囲（m）。
+const SCALE_MIN: f32 = 0.05;
+const SCALE_MAX: f32 = 10.0;
 
 /// この tick のレーザー。
 #[derive(Debug, Clone, Copy)]
@@ -151,6 +158,8 @@ struct HandState {
     dragging: Option<(PanelId, Vec3, f32)>,
     /// ドラッグの見た目の幅（m）。ドラッグ中だけ。
     drag: Option<f32>,
+    /// 掴み中にトリガーで拡大縮小しているとき、前の tick の手の位置。
+    scaling: Option<Vec3>,
     /// 前の tick に描いたレーザーの向き。隠れていたら `None`（次に出すときは追わずに合わせる）。
     drawn: Option<Quat>,
     /// この tick のレーザー。コントローラが見えていない・何も指していなければ `None`。
@@ -199,6 +208,7 @@ impl Overlay {
             attached: None,
             locked: false,
             closed: false,
+            released: false,
             pointer: None,
             animated: true,
             opacity: 1.0,
@@ -296,7 +306,7 @@ impl Overlay {
     pub fn set_resolution(&mut self, vr: &mut dyn VrBackend, id: PanelId, resolution: (u32, u32)) {
         let p = &mut self.panels[id];
         let (w, h) = (resolution.0.max(1), resolution.1.max(1));
-        if p.resolution == (w, h) {
+        if p.resolution == (w, h) || p.released {
             return;
         }
         p.size = Vec2::new(
@@ -341,7 +351,7 @@ impl Overlay {
     }
 
     /// パネルを閉じる。入力を即座に止め、最後の描画をフェードアウトしてから隠す。
-    // ponytail: ランタイム側のオーバーレイは残る。数が問題になったら VrBackend に destroy を足す。
+    /// フェードアウトが終わると、ランタイム側のオーバーレイも捨てる（[`VrBackend::destroy_overlay`]）。
     pub fn close(&mut self, vr: &mut dyn VrBackend, id: PanelId) {
         let p = &mut self.panels[id];
         if p.closed {
@@ -416,6 +426,9 @@ impl Overlay {
     }
 
     fn present(vr: &mut dyn VrBackend, p: &mut Panel, upload: bool) {
+        if p.released {
+            return;
+        }
         if p.pointer.is_none() {
             vr.set_overlay_width(p.overlay, p.displayed_size().x);
         }
@@ -423,6 +436,9 @@ impl Overlay {
         if p.closed && p.opacity == 0.0 {
             vr.set_overlay_visible(p.overlay, false);
             vr.submit_overlay_pixels(p.overlay, 1, 1, &[0; 4]);
+            // 閉じ切った。ランタイム側の資源を返す（PanelId は欠番のまま残る）。
+            vr.destroy_overlay(p.overlay);
+            p.released = true;
             p.texture = None;
             return;
         }
@@ -498,6 +514,12 @@ impl Overlay {
             let c = input::map(raw, prev.as_ref());
             self.inputs.insert(raw.hand, c);
             self.update_hand(&c, &frame, &mut events);
+            if let Some((id, ..)) = self.hands[&c.hand].dragging
+                && self.hands[&c.hand].scaling.is_some()
+            {
+                let p = &self.panels[id];
+                vr.set_overlay_width(p.overlay, p.displayed_size().x);
+            }
             let buttons = |c: &ControllerState| (c.select, c.grab, c.menu);
             if prev.is_none_or(|p| buttons(&p) != buttons(&c)) {
                 logger::debug!(
@@ -526,7 +548,7 @@ impl Overlay {
             st.select = false;
         }
         self.place_pointers(vr);
-        for p in &mut self.panels {
+        for p in self.panels.iter_mut().filter(|p| !p.released) {
             if let Some((device, offset)) = &p.follow {
                 let want = Some((Some(device.clone()), *offset));
                 if p.sent == want {
@@ -573,13 +595,26 @@ impl Overlay {
                 } else {
                     c.scroll.y
                 };
-                let new_len = (len * (1.0 + PUSH * push)).clamp(GRAB_MIN, GRAB_MAX);
+                let mut new_len = len * (1.0 + PUSH * push);
+                // トリガーを押しながら手を前後に動かすと拡大縮小。パネルは手に付いて動かず、その場に留める。
+                let p = &mut self.panels[id];
+                if c.select {
+                    if let Some(last) = st.scaling {
+                        let delta = (c.aim.position - last).dot(aim.forward());
+                        let w = (p.size.x * (delta * SCALE_RATE).exp()).clamp(SCALE_MIN, SCALE_MAX);
+                        p.size *= w / p.size.x;
+                        new_len -= delta;
+                    }
+                    st.scaling = Some(c.aim.position);
+                } else {
+                    st.scaling = None;
+                }
+                let new_len = new_len.clamp(GRAB_MIN, GRAB_MAX);
                 let offset = offset + Vec3::NEG_Z * (new_len - len);
                 st.dragging = Some((id, offset, new_len));
                 // 手に付いて動き、頭の方を向く。頭を傾けてもパネルは傾けない（水平にスナップ）。
                 // 目標へはなめらかに追いつく。
                 let at = aim.transform_point(offset);
-                let p = &mut self.panels[id];
                 let target = Pose::new(
                     at,
                     facing(at, frame.hmd.position, Vec3::Y).unwrap_or(p.pose.orientation),
@@ -595,6 +630,7 @@ impl Overlay {
                 return;
             }
             st.dragging = None;
+            st.scaling = None;
             // 取り付け中なら、離した位置を新しいオフセットにする。
             let p = &mut self.panels[id];
             if let Some((device, offset)) = &mut p.attached
@@ -1511,6 +1547,32 @@ mod tests {
         // 1 tick では途中まで。
         let x = ov.panel(0).pose.position.x;
         assert!(0.0 < x && x < 1.0, "{x}");
+    }
+
+    #[test]
+    fn trigger_and_move_scales_grabbed_panel_in_place() {
+        let (mut vr, mut ov) = setup();
+        ov.set_pointer_smoothing(0.0);
+        let both = [("squeeze/value", 1.0), ("trigger/value", 1.0)];
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        let (w0, pos) = (ov.panel(0).size.x, ov.panel(0).pose.position);
+        controller(&mut vr, Pose::IDENTITY, &both);
+        ov.tick(&mut vr);
+        // 前へ出すと大きく、その場に留まる。
+        controller(&mut vr, at(0.0, 0.0, -0.2), &both);
+        settle(&mut vr, &mut ov);
+        let w1 = ov.panel(0).size.x;
+        assert!((w1 / w0 - (0.2 * SCALE_RATE).exp()).abs() < 1e-3, "{w1}");
+        assert!(ov.panel(0).pose.position.abs_diff_eq(pos, 1e-3));
+        // 引くと縮む。
+        controller(&mut vr, Pose::IDENTITY, &both);
+        settle(&mut vr, &mut ov);
+        assert!((ov.panel(0).size.x - w0).abs() < 1e-3);
+        // トリガーなしで動かしても大きさは変わらない。
+        controller(&mut vr, at(0.0, 0.0, -0.2), &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        assert!((ov.panel(0).size.x - w0).abs() < 1e-3);
     }
 
     #[test]

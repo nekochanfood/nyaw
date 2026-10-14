@@ -142,7 +142,11 @@
 
   const at = (s) => document.elementFromPoint(s.x, s.y) ?? document.documentElement;
   /** ポインタイベントの宛先。キャプチャ中はその要素。 */
-  const target = (s) => captures.get(s.id) ?? at(s);
+  const target = (s) => {
+    const el = captures.get(s.id);
+    if (el && !el.isConnected) captures.delete(s.id); // DOM から外れた要素は掴み続けない
+    return (el?.isConnected && el) || at(s);
+  };
 
   /** 乗っている要素を `el` に変え、境界イベント（over / out / enter / leave）を出す。`quiet` なら印だけ付け替える。 */
   const hover = (s, el, quiet = false) => {
@@ -235,7 +239,8 @@
       last = now;
       const f = Math.pow(FRICTION, k);
       [vx, vy] = [vx * f, vy * f];
-      if (Math.hypot(vx, vy) < MOMENTUM_STOP) return (s.fling = null);
+      // 外れた要素は滑らせても見えない。タイマーを止める。
+      if (!el.isConnected || Math.hypot(vx, vy) < MOMENTUM_STOP) return (s.fling = null);
       el.scrollBy({ left: -vx * k, top: -vy * k, behavior: "instant" });
       s.fling = setTimeout(step, FRAME_MS);
     };

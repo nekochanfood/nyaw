@@ -265,6 +265,13 @@ impl Gpu {
         self.surface.configure(&self.device, &self.config);
     }
 
+    /// クアッドのテクスチャ・uniform・bind group を手放す（wgpu が GPU の使用が済むまで延命する）。
+    pub(crate) fn release(&mut self, quad: usize) {
+        if let Some(slot) = self.slots.get_mut(quad) {
+            *slot = None;
+        }
+    }
+
     /// テクスチャを上げる（大きさが変わったら作り直す）。
     pub(crate) fn upload(&mut self, quad: usize, (w, h, rgba): (u32, u32, &[u8])) {
         if self.slots.len() <= quad {

@@ -501,7 +501,11 @@ impl OpenXrBackend {
             .as_ref()
             .is_none_or(|s| (s.width, s.height) != (width, height))
         {
-            overlay.swapchain = None;
+            if let Some(old) = overlay.swapchain.take() {
+                // 古い画像を GPU がまだ使っているかもしれない。LOD の切り替えなどで作り直すたびに待つ。
+                self.gpu.wait_idle();
+                drop(old);
+            }
             let handle = self
                 .session
                 .create_swapchain(&xr::SwapchainCreateInfo {
@@ -791,6 +795,13 @@ impl VrBackend for OpenXrBackend {
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
         if let Some(o) = self.overlays.get_mut(&id.0) {
             o.sort = order;
+        }
+    }
+
+    fn destroy_overlay(&mut self, id: OverlayId) {
+        if let Some(o) = self.overlays.remove(&id.0) {
+            self.gpu.wait_idle();
+            drop(o);
         }
     }
 

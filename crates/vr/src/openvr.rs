@@ -394,6 +394,12 @@ impl VrBackend for OpenVrBackend {
         Ok(OverlayId(handle))
     }
 
+    fn destroy_overlay(&mut self, id: OverlayId) {
+        unsafe {
+            let _ = f(self.overlay().DestroyOverlay)(id.0);
+        }
+    }
+
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
         let mut m = sys::HmdMatrix34_t {
             m: matrix_from(pose),
