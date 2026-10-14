@@ -59,3 +59,8 @@ harness = false
 [[test]]
 name = "stress"
 harness = false
+
+# novr（エミュレーター）でのポインタの見た目（長押しのリング）を実際の GPU で確かめる。
+[[test]]
+name = "novr_cursor"
+harness = false

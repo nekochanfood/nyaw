@@ -143,6 +143,13 @@ impl PointerBridge {
         self.mouse(ev)
     }
 
+    /// タッチで押して動かしていない間の、長押し（[`LONG_PRESS`]）までの進み具合（0〜1）。押していない・スワイプ中・
+    /// 長押しが済んだ後は `None`。ポインタのリングに出す。
+    pub fn hold_progress(&self) -> Option<f32> {
+        let t = self.touch.as_ref().filter(|t| !t.swiping && !t.held)?;
+        Some((t.at.elapsed().as_secs_f32() / LONG_PRESS.as_secs_f32()).min(1.0))
+    }
+
     /// タッチの長押しでマウスの押下になっている（ドラッグできる）。
     pub fn held(&self) -> bool {
         self.touch.as_ref().is_some_and(|t| t.held)
@@ -242,6 +249,8 @@ pub struct PanelControl {
     /// 計測するか。ビューが切り替え、フレームループが計測とプロファイラパネルの開閉を合わせる。
     /// パネルの閉じるボタンでも `false` になる。
     pub profiling: bool,
+    /// 手ごとの、タッチの長押しの進み具合（0〜1。[`PointerBridge::hold_progress`]）。ポインタ（カーソル）がリングで見せる。
+    pub hold: HashMap<Hand, f32>,
     /// 終了を頼む。フレームループが WebView を閉じてからアプリを終える（テストのハーネスもこれで終える）。
     pub quit: bool,
 }
@@ -714,6 +723,31 @@ pub fn run_with(
                     pump_with(&mut kernel, &mut bridges, |p| webs.is_web(p));
                 for (panel, input) in gpui_inputs {
                     inputs[panel].push(input);
+                }
+                // タッチの長押しの進み具合を手ごとに置き、変わればカーソルを描き直す（リングが満ちていく）。
+                let mut hold: HashMap<Hand, f32> = HashMap::new();
+                for (&(_, hand), b) in &bridges {
+                    if let Some(p) = b.hold_progress() {
+                        let e = hold.entry(hand).or_default();
+                        *e = e.max(p);
+                    }
+                }
+                let hold_changed = cx.update(|cx| {
+                    let ctl = cx.default_global::<PanelControl>();
+                    let changed = ctl.hold != hold;
+                    ctl.hold = hold;
+                    changed
+                });
+                if hold_changed {
+                    for &(p, _) in &windows {
+                        if kernel
+                            .panel(p)
+                            .pointer
+                            .is_some_and(|(_, part)| part == Pointer::Cursor)
+                        {
+                            drawn[p] = None;
+                        }
+                    }
                 }
                 // ドラッグの見た目は中心がカーソルに来るよう置かれるので、そのウィンドウのマウスを中心に置いて毎フレーム描く。
                 if let Some((_, dp)) = drag {
