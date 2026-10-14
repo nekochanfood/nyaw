@@ -105,8 +105,11 @@ impl<B: VrBackend> Kernel<B> {
         if let Some(s) = config.pointer_smoothing {
             overlay.set_pointer_smoothing(s);
         }
+        let pointer_mode = config.pointer_mode.unwrap_or_default();
+        // タッチではスライドがパネルからはみ出しても続くよう、押している間はポインタを掴んでおく。
+        overlay.set_capture(pointer_mode == PointerMode::Touch);
         Self {
-            pointer_mode: config.pointer_mode.unwrap_or_default(),
+            pointer_mode,
             config,
             vr,
             overlay,
@@ -157,6 +160,11 @@ impl<B: VrBackend> Kernel<B> {
         self.timing
     }
 
+    /// `hand` が押している間のポインタのキャプチャを外す（タッチの長押しでドラッグになったとき。ほかのパネルへ運べるように）。
+    pub fn release_capture(&mut self, hand: Hand) {
+        self.overlay.release_capture(hand);
+    }
+
     /// パネルが見えているか（ほかのパネルに隠れていない・視野の中）。ランタイムが直前の合成から教えてくれればそれ（novr）、
     /// 無ければ頭の向きと視野で見積もる。見えないパネルの描き直しを省く（カリング）のに使う。
     pub fn panel_seen(&self, panel: PanelId) -> bool {
@@ -202,7 +210,10 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay.set_pointer(&mut self.vr, panel, hand, part)
             }
             PanelCommand::Resize(w, h) => self.overlay.set_resolution(&mut self.vr, panel, (w, h)),
-            PanelCommand::PointerMode(m) => self.pointer_mode = m,
+            PanelCommand::PointerMode(m) => {
+                self.pointer_mode = m;
+                self.overlay.set_capture(m == PointerMode::Touch);
+            }
         }
     }
 

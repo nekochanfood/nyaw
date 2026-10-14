@@ -143,6 +143,11 @@ impl PointerBridge {
         self.mouse(ev)
     }
 
+    /// タッチの長押しでマウスの押下になっている（ドラッグできる）。
+    pub fn held(&self) -> bool {
+        self.touch.as_ref().is_some_and(|t| t.held)
+    }
+
     /// スワイプを離した後の慣性の 1 フレーム分（スクロール）。滑っていなければ `None`。フレームごとに 1 回呼ぶ。
     pub fn momentum(&mut self) -> Option<PlatformInput> {
         let (position, v) = self.momentum.as_mut()?;
@@ -286,10 +291,12 @@ pub fn pump_with<B: VrBackend>(
             web.push(e);
             continue;
         }
-        let input = bridges
-            .entry((e.panel, e.hand))
-            .or_default()
-            .translate(e.event, mode);
+        let bridge = bridges.entry((e.panel, e.hand)).or_default();
+        let input = bridge.translate(e.event, mode);
+        if bridge.held() {
+            // 長押しでドラッグになった。ほかのパネルへ運べるよう、オーバーレイのキャプチャを外す。
+            kernel.release_capture(e.hand);
+        }
         gpui.extend(input.into_iter().map(|input| (e.panel, input)));
     }
     for (&(panel, _), b) in bridges.iter_mut() {

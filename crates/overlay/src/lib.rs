@@ -155,6 +155,8 @@ struct HandState {
     drawn: Option<Quat>,
     /// この tick のレーザー。コントローラが見えていない・何も指していなければ `None`。
     ray: Option<Ray>,
+    /// 押している間のキャプチャを外した（離すまで）。
+    free: bool,
 }
 
 #[derive(Debug, Default)]
@@ -168,6 +170,8 @@ pub struct Overlay {
     quit: bool,
     /// 最後の tick の HMD の姿勢。
     hmd: Pose,
+    /// 押している間のポインタのキャプチャを使うか（[`Overlay::set_capture`]）。
+    capture: bool,
     /// 手ブレ抑え（[`POINTER_SMOOTHING`]）。`None` で既定値。
     smoothing: Option<f32>,
     animations: HashMap<PanelId, (Tween<f32>, Instant)>,
@@ -235,6 +239,16 @@ impl Overlay {
         }
         let off_axis = self.hmd.forward().angle_between(to);
         off_axis - (radius / d).asin() < VIEW_HALF_ANGLE
+    }
+
+    /// 押している間のポインタのキャプチャ（はみ出してもスライドが続く）を使うか。タッチ方式で使う。
+    pub fn set_capture(&mut self, capture: bool) {
+        self.capture = capture;
+    }
+
+    /// `hand` が押している間のキャプチャを外す（ドラッグ＆ドロップでほかのパネルへ運べるように）。離すと戻る。
+    pub fn release_capture(&mut self, hand: Hand) {
+        self.hands.entry(hand).or_default().free = true;
     }
 
     /// 最後の tick の HMD の姿勢（新しいパネルを目の前に出すため）。
@@ -590,11 +604,11 @@ impl Overlay {
             }
         }
 
-        // 押している間は、押したパネルの面を指し続ける（はみ出しても離すまでそのパネルへ送る。ポインタのキャプチャ）。
-        // 離したフレームも押していたパネルへ送り、Up を届ける。
+        // キャプチャが有効なら、押している間は押したパネルの面を指し続ける（はみ出しても離すまでそのパネルへ送る）。
+        // 離したフレームも押していたパネルへ送り、Up を届ける。ドラッグ＆ドロップでほかのパネルへ運ぶときは外す（release_capture）。
         let captured = st
             .hover
-            .filter(|&id| st.select && !self.panels[id].closed)
+            .filter(|&id| self.capture && !st.free && st.select && !self.panels[id].closed)
             .and_then(|id| plane_hit(&self.panels[id], &aim).map(|(pos, t)| (id, pos, t)));
         // そうでなければ、レーザー上で最も近いパネル。
         let hit = captured.or_else(|| {
@@ -667,6 +681,9 @@ impl Overlay {
         }
         st.hover = Some(id);
         st.select = c.select;
+        if !c.select {
+            st.free = false;
+        }
     }
 }
 
@@ -1045,6 +1062,7 @@ mod tests {
     #[test]
     fn pressed_pointer_keeps_its_panel_past_the_edge() {
         let (mut vr, mut ov) = setup();
+        ov.set_capture(true);
         controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
         ov.tick(&mut vr);
         // 押したまま右へはみ出しても、Leave にならずパネルの外の座標で Move が届く。
@@ -1081,6 +1099,27 @@ mod tests {
         vr.frame.hmd = Pose::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
         ov.tick(&mut vr);
         assert!(!ov.in_view(0));
+    }
+
+    #[test]
+    fn released_capture_lets_the_pointer_move_to_another_panel() {
+        let (mut vr, mut ov) = setup();
+        ov.set_capture(true);
+        let right = Pose::new(Vec3::new(1.2, 0.0, -1.0), Quat::IDENTITY);
+        ov.add_panel(&mut vr, "right", right, Vec2::new(1.0, 1.0), (100, 100))
+            .unwrap();
+        controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
+        ov.tick(&mut vr);
+        // ドラッグに切り替わった（キャプチャを外した）ので、押したまま隣のパネルへ移れる。
+        ov.release_capture(Hand::Right);
+        let over_right = Pose::new(Vec3::new(1.2, 0.0, 0.0), Quat::IDENTITY);
+        controller(&mut vr, over_right, &[("trigger/value", 1.0)]);
+        let ev = ov.tick(&mut vr);
+        assert!(
+            ev.iter()
+                .any(|e| e.panel == 1 && matches!(e.event, PointerEvent::Move { .. })),
+            "{ev:?}"
+        );
     }
 
     #[test]

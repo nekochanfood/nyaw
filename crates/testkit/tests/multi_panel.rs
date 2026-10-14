@@ -98,3 +98,44 @@ fn hands_keep_independent_pressed_state_on_same_panel() {
         .collect();
     assert_eq!(moves, [Some(MouseButton::Left), None]);
 }
+
+/// 隣のパネルのドロップ先へ、`down` から `up` までの間に運ぶ（ドラッグの見た目はパネルをまたいで見える）。
+fn drag_to_next_panel(kit: &mut VrKit<'_, Testing>, wait: std::time::Duration) {
+    let next = kit.add_panel(
+        Pose::new(Vec3::new(1.2, 0.0, -1.0), Quat::IDENTITY),
+        |_, _| Testing::new(1),
+    );
+    kit.panel(0).down("drag-chip");
+    // タッチは動かさずに長押ししてからでないとドラッグにならない。
+    let until = std::time::Instant::now() + wait;
+    while std::time::Instant::now() < until {
+        kit.step();
+    }
+    // 元のパネルの上で少し動かしてドラッグを始めてから、隣のパネルへ運ぶ。
+    let c = kit.bounds("drag-chip").center();
+    for dx in [10.0, 20.0, 30.0] {
+        kit.point_at(Vec2::new(f32::from(c.x) + dx, c.y.into()));
+    }
+    kit.panel(next).hover("drop-zone").up();
+    assert_eq!(kit.read(|h| h.dropped), 1, "隣のパネルに落とせた");
+    assert_eq!(kit.panel(0).read(|h| h.dropped), 0);
+}
+
+#[gpui::test]
+fn mouse_drags_and_drops_across_panels(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Testing::new(0));
+    drag_to_next_panel(&mut kit, std::time::Duration::ZERO);
+}
+
+#[gpui::test]
+fn touch_long_press_drags_and_drops_across_panels(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Testing::new(0));
+    kit.kernel.apply(
+        0,
+        kernel::PanelCommand::PointerMode(kernel::PointerMode::Touch),
+    );
+    drag_to_next_panel(
+        &mut kit,
+        ui::LONG_PRESS + std::time::Duration::from_millis(100),
+    );
+}
