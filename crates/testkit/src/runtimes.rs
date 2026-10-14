@@ -194,7 +194,8 @@ fn install_monado_windows(dir: &Path) -> Result<(), String> {
     let _ = fs::remove_file(&zip);
     if monado_in(&staging).is_none() {
         return Err(
-            "the artifacts lack install/bin/monado-service.exe or install/openxr_monado.json".into(),
+            "the artifacts lack install/bin/monado-service.exe or install/openxr_monado.json"
+                .into(),
         );
     }
     let _ = fs::remove_dir_all(dir);
@@ -288,7 +289,9 @@ impl std::fmt::Display for LaunchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LaunchError::NotInstalled(hint) => write!(f, "not installed: {hint}"),
-            LaunchError::AlreadyRunning(k) => write!(f, "{k} is already running. Quit it and then run"),
+            LaunchError::AlreadyRunning(k) => {
+                write!(f, "{k} is already running. Quit it and then run")
+            }
             LaunchError::Io(m) => f.write_str(m),
         }
     }

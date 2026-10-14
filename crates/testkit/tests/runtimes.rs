@@ -53,7 +53,9 @@ fn main() -> ExitCode {
             }
         };
         let result = catch_unwind(AssertUnwindSafe(|| {
-            let mut vr = rt.connect().unwrap_or_else(|e| panic!("failed to connect: {e}"));
+            let mut vr = rt
+                .connect()
+                .unwrap_or_else(|e| panic!("failed to connect: {e}"));
             overlay_reaches_runtime(vr.as_mut());
             home_runs_on_runtime(vr);
             let vr = rt

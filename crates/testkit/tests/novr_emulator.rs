@@ -21,7 +21,10 @@ fn panel_is_shown_over_gray_checker(cx: &mut TestAppContext) {
         kit.color_on_screen(Vec2::new(0.0, 0.0)),
         kit.color_on_screen(Vec2::new(16.0, 0.0)),
     );
-    assert!(is_gray(a) && is_gray(b) && a != b, "achromatic checkerboard");
+    assert!(
+        is_gray(a) && is_gray(b) && a != b,
+        "achromatic checkerboard"
+    );
     assert_eq!(kit.color_at("click-me"), BUTTON_BG);
 }
 
@@ -75,7 +78,11 @@ fn arrows_scroll_but_wasd_does_not_in_one_handed_mode(cx: &mut TestAppContext) {
     kit.hover("scroll-list")
         .stick(Hand::Left, Vec2::new(0.0, -1.0))
         .stick(Hand::Left, Vec2::ZERO);
-    assert_eq!(kit.read(|h| h.scrolled), 0.0, "the left hand points at nothing");
+    assert_eq!(
+        kit.read(|h| h.scrolled),
+        0.0,
+        "the left hand points at nothing"
+    );
     kit.stick(Hand::Right, Vec2::new(0.0, -1.0))
         .stick(Hand::Right, Vec2::ZERO);
     assert_ne!(kit.read(|h| h.scrolled), 0.0);

@@ -50,7 +50,11 @@ impl<V: Render> Panels<V> {
         let id = kernel
             .add_panel(&format!("testkit.{}", self.windows.len()), pose, size, res)
             .expect("failed to create panel");
-        assert_eq!(id, self.windows.len(), "PanelId is the index in opening order");
+        assert_eq!(
+            id,
+            self.windows.len(),
+            "PanelId is the index in opening order"
+        );
         // Ordinary operation tests must not depend on time. Animations are verified in overlay / kernel.
         kernel.apply(id, kernel::PanelCommand::Animated(false));
         self.views.push(view);

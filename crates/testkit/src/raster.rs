@@ -149,7 +149,10 @@ mod tests {
         let r = [4.0, 0.0, 0.0, 0.0];
         assert!(!inside(rect, r, 0.5, 0.5));
         assert!(inside(rect, r, 5.0, 5.0));
-        assert!(inside(rect, r, 9.5, 0.5), "a corner with radius 0 is not clipped");
+        assert!(
+            inside(rect, r, 9.5, 0.5),
+            "a corner with radius 0 is not clipped"
+        );
         assert!(!inside(rect, r, 10.5, 5.0));
     }
 

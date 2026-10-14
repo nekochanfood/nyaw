@@ -18,7 +18,10 @@ fn animation_reaches_steamvr() {
     let id = ov.panel(panel).overlay_id();
     ov.submit(vr.as_mut(), panel, 64, 64, &[255; 64 * 64 * 4]);
     let (_, _, initial) = openvr_overlay_image(id).unwrap();
-    assert!(initial.iter().all(|v| *v == 255), "original image is left unmodified");
+    assert!(
+        initial.iter().all(|v| *v == 255),
+        "original image is left unmodified"
+    );
     assert_eq!(openvr_overlay_state(id).unwrap(), (0.75, 0.0, true));
 
     let start = Instant::now();

@@ -216,7 +216,10 @@ mod tests {
     fn bindings_match_manifest() {
         let manifest = FILES[0].1;
         for (name, body) in &FILES[1..] {
-            assert!(manifest.contains(name), "{name} missing from default_bindings");
+            assert!(
+                manifest.contains(name),
+                "{name} missing from default_bindings"
+            );
             for out in body.split("\"output\": \"").skip(1) {
                 let action = &out[..out.find('"').unwrap()];
                 assert!(

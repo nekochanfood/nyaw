@@ -117,7 +117,11 @@ fn drag_to_next_panel(kit: &mut VrKit<'_, Testing>, wait: std::time::Duration) {
         kit.point_at(Vec2::new(f32::from(c.x) + dx, c.y.into()));
     }
     kit.panel(next).hover("drop-zone").up();
-    assert_eq!(kit.read(|h| h.dropped), 1, "could drop onto the neighboring panel");
+    assert_eq!(
+        kit.read(|h| h.dropped),
+        1,
+        "could drop onto the neighboring panel"
+    );
     assert_eq!(kit.panel(0).read(|h| h.dropped), 0);
 }
 

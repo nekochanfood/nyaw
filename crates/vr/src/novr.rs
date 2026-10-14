@@ -254,7 +254,10 @@ impl Emulator {
                                 self.gpu = Some(gpu);
                             }
                             Err(e) => {
-                                logger::warn!("GPU compositing unavailable, falling back to CPU", error = e)
+                                logger::warn!(
+                                    "GPU compositing unavailable, falling back to CPU",
+                                    error = e
+                                )
                             }
                         }
                     }
@@ -876,7 +879,11 @@ mod tests {
         e.submit_overlay_pixels(front, 1, 1, &[0, 255, 0, 255]);
         e.screenshot();
         assert_eq!(e.overlay_seen(front), Some(true));
-        assert_eq!(e.overlay_seen(red), Some(false), "occluded panel is not visible");
+        assert_eq!(
+            e.overlay_seen(red),
+            Some(false),
+            "occluded panel is not visible"
+        );
         // Moving the plate away makes it visible.
         e.set_overlay_visible(front, false);
         e.screenshot();
@@ -922,7 +929,11 @@ mod tests {
         let mut e = Emulator::headless(200, 100);
         let frame = e.poll();
         assert!(frame.emulated);
-        assert_eq!(frame.controllers.len(), 1, "only the left hand when the mouse is outside");
+        assert_eq!(
+            frame.controllers.len(),
+            1,
+            "only the left hand when the mouse is outside"
+        );
         assert_eq!(frame.controllers[0].hand, Hand::Left);
 
         let target = Vec3::new(0.2, 0.1, -1.0);
