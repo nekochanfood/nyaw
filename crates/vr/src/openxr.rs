@@ -115,6 +115,8 @@ pub(crate) struct OpenXrBackend {
     // フィールドは宣言順に破棄される。セッション由来のものを先に、Vulkan、インスタンスの順に。
     overlays: HashMap<u64, Overlay>,
     next_id: u64,
+    /// 1 フレームに出せるレイヤーの数（`maxLayerCount`）。超えると xrEndFrame が失敗して何も出なくなる。
+    max_layers: usize,
     stage: xr::Space,
     view: xr::Space,
     aim_spaces: Vec<xr::Space>,
@@ -182,6 +184,11 @@ impl OpenXrBackend {
             .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
             .map_err(xr_err("xrGetSystem"))?;
 
+        let max_layers = instance
+            .system_properties(system)
+            .map_err(xr_err("xrGetSystemProperties"))?
+            .graphics_properties
+            .max_layer_count as usize;
         let gpu = create_gpu(&instance, system)?;
         let session = create_overlay_session(&instance, system, &gpu)?;
         let (session, waiter, stream) = session;
@@ -294,6 +301,7 @@ impl OpenXrBackend {
         Ok(Self {
             overlays: HashMap::new(),
             next_id: 0,
+            max_layers,
             stage,
             view,
             aim_spaces,
@@ -666,6 +674,10 @@ fn from_posef(p: xr::Posef) -> Pose {
 }
 
 impl VrBackend for OpenXrBackend {
+    fn max_overlays(&self) -> Option<usize> {
+        Some(self.max_layers)
+    }
+
     fn runtime(&self) -> Runtime {
         Runtime::OpenXr
     }
@@ -720,6 +732,12 @@ impl VrBackend for OpenXrBackend {
     }
 
     fn create_overlay(&mut self, _key: &str, width_m: f32) -> Result<OverlayId, VrError> {
+        if self.overlays.len() >= self.max_layers {
+            return Err(VrError::Runtime(format!(
+                "OpenXR: no more than {} layers per frame",
+                self.max_layers
+            )));
+        }
         let id = self.next_id;
         self.next_id += 1;
         self.overlays.insert(

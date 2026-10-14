@@ -249,6 +249,8 @@ impl PointerBridge {
 pub struct PanelState {
     pub commands: Vec<PanelCommand>,
     pub status: PanelStatus,
+    /// 見えている間は毎フレーム描き直す（アニメーションし続けるビューが立てる）。
+    pub live: bool,
 }
 
 /// ビューとフレームループの受け渡し口（GPUI のグローバル）。ビューは対象パネルの `commands` に積み、
@@ -265,6 +267,10 @@ pub struct PanelControl {
     pub hold: HashMap<Hand, f32>,
     /// 終了を頼む。フレームループが WebView を閉じてからアプリを終える（テストのハーネスもこれで終える）。
     pub quit: bool,
+    /// 開いているパネルの数（閉じたものは数えない）と、同時に開ける数の上限（[`MAX_PANELS`] とランタイムの上限の小さい方）。
+    /// フレームループが毎フレーム書く。
+    pub open: usize,
+    pub limit: usize,
 }
 
 impl gpui::Global for PanelControl {}
@@ -423,8 +429,9 @@ const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
 pub(crate) const IDLE_REDRAW: Duration = Duration::from_millis(250);
 /// 同時に開いておけるパネルの数（閉じたものは数えない）。OpenVR はランタイム全体で 128 枚までなので、
-/// レーザーや他のアプリのオーバーレイの分を残す。超えた分は `open_panel` がエラーにする。
-const MAX_PANELS: usize = 64;
+/// レーザーや他のアプリのオーバーレイの分を残す。ランタイムの上限（OpenXR のレイヤー数など）が小さければそちら。
+/// 超えた分は開かずにエラーを出す。
+pub const MAX_PANELS: usize = 64;
 /// 描き直しても絵が変わらないパネルの、描き直す間隔の上限（時計の分の切り替わりはこの遅れで見える）。
 const IDLE_MAX: Duration = Duration::from_secs(1);
 
@@ -725,6 +732,9 @@ pub fn run_with(
             // パネルごとの、前のフレームで見えていたか（隠れていた・視野の外だったパネルは見えた瞬間に描き直す）。
             let mut seen: Vec<bool> = vec![false; windows.len()];
             let mut render_sizes = HashMap::new();
+            let limit = kernel
+                .max_overlays()
+                .map_or(MAX_PANELS, |m| m.min(MAX_PANELS));
             // ドラッグ中の手と、その見た目を描くパネル。
             let mut drag: Option<(Hand, PanelId)> = None;
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
@@ -832,6 +842,16 @@ pub fn run_with(
                         }
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
+                        if visible
+                            && cx
+                                .try_global::<PanelControl>()
+                                .and_then(|c| c.panels.get(&panel))
+                                .is_some_and(|s| s.live)
+                        {
+                            // ビューが描くたびに変わる。GPUI が描き直すよう汚す。
+                            window.refresh();
+                            redraw = true;
+                        }
                         let resolution = kernel.panel(panel).resolution;
                         let lod = kernel.panel_lod(panel);
                         if render_sizes.insert(panel, (resolution, lod)) != Some((resolution, lod))
@@ -958,14 +978,12 @@ pub fn run_with(
                 // 閉じたパネルの手ごとの状態（慣性のスクロールなど）は持ち越さない。
                 bridges.retain(|&(p, _), _| !kernel.panel(p).closed);
                 render_sizes.retain(|&p, _| !kernel.panel(p).closed);
+                let open =
+                    |kernel: &Kernel, n: usize| (0..n).filter(|&p| !kernel.panel(p).closed).count();
                 for spec in spawns {
                     // ページや連打で開きっぱなしのパネルが際限なく増えないように。
-                    if (0..windows.len())
-                        .filter(|&p| !kernel.panel(p).closed)
-                        .count()
-                        >= MAX_PANELS
-                    {
-                        logger::error!("too many open panels", max = MAX_PANELS);
+                    if open(&kernel, windows.len()) >= limit {
+                        logger::error!("too many open panels", max = limit);
                         break;
                     }
                     let i = windows.len();
@@ -980,6 +998,11 @@ pub fn run_with(
                     idle.push(IDLE_REDRAW);
                     seen.push(false);
                 }
+                let open = open(&kernel, windows.len());
+                cx.update(|cx| {
+                    let c = cx.default_global::<PanelControl>();
+                    (c.open, c.limit) = (open, limit);
+                });
                 // 計測とプロファイラパネルを `profiling` に合わせる。
                 if let Some(p) = profiler_panel
                     && kernel.panel(p).closed
