@@ -16,8 +16,6 @@
 //! どのページかは知らない。ページのファイル（[`Files`]）は上から渡され、`nyaw://localhost/<ページ名>/index.html` で配信する。
 
 mod capture;
-#[cfg(windows)]
-mod stream;
 
 use std::{
     borrow::Cow,
@@ -61,8 +59,8 @@ pub const HAND_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.3), Quat::IDENTIT
 const HOT: Duration = Duration::from_millis(300);
 /// 入力がこれだけ無ければ、予備の WebView を作る（作る間はメインスレッドが止まるので、操作中は避ける）。
 const PREWARM_IDLE: Duration = Duration::from_secs(1);
-/// WebView2 の起動引数。wry の既定の `--disable-features` に、画面の外のウィンドウを隠れていると判定して
-/// 描画を止める CalculateNativeWinOcclusion を足す（Windows.Graphics.Capture で撮り続けるため）。
+/// WebView2 の起動引数。wry の既定の `--disable-features` に、表示していないウィンドウを隠れていると判定して
+/// 描画を止める CalculateNativeWinOcclusion を足す（非表示のまま描かせて撮るため）。
 const BROWSER_ARGS: &str =
     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion";
 /// 終わるときに WebView が閉じ終わるのを待つ上限。
@@ -83,7 +81,7 @@ pub fn page_url(name: &str) -> tauri::Url {
     };
     format!("{base}/{name}/index.html")
         .parse()
-        .expect("ページ名は URL のパスに使える")
+        .expect("page name is usable in a URL path")
 }
 
 fn has_page(files: Files, name: &str) -> bool {
@@ -349,7 +347,7 @@ fn panel_of(label: &str) -> Result<PanelId, String> {
     label
         .strip_prefix("panel-")
         .and_then(|n| n.parse().ok())
-        .ok_or_else(|| format!("パネルのウィンドウではない: {label}"))
+        .ok_or_else(|| format!("not a panel window: {label}"))
 }
 
 #[tauri::command]
@@ -359,7 +357,7 @@ fn panel_command(
     command: WebCommand,
 ) -> Result<(), String> {
     let panel = shared.panel_of(webview.label())?;
-    logger::debug!("ページからの操作", panel = panel, command = ?command);
+    logger::debug!("command from page", panel = panel, command = ?command);
     let mut ctl = shared.control.lock().map_err(|e| e.to_string())?;
     ctl.commands.entry(panel).or_default().push(command);
     Ok(())
@@ -375,7 +373,7 @@ fn panel_status(
     ctl.statuses
         .get(&panel)
         .cloned()
-        .ok_or_else(|| format!("パネル {panel} の状態がまだない"))
+        .ok_or_else(|| format!("panel {panel} has no status yet"))
 }
 
 /// ブリッジが `nyaw:pointer` の束を DOM に流し終えた。
@@ -398,7 +396,7 @@ fn spawn_panel(
 ) -> Result<(), String> {
     let panel = shared.panel_of(webview.label())?;
     if !has_page(shared.files, &page) {
-        return Err(format!("知らないページ: {page}"));
+        return Err(format!("unknown page: {page}"));
     }
     let mut ctl = shared.control.lock().map_err(|e| e.to_string())?;
     ctl.spawns.push((panel, page));
@@ -442,9 +440,6 @@ pub struct Host {
     tx: Sender<(PanelId, Result<Image, String>)>,
     rx: Receiver<(PanelId, Result<Image, String>)>,
     warned: bool,
-    /// Windows: パネルごとの撮り続けるストリーム（Windows.Graphics.Capture）。無いパネルは CapturePreview で撮る。
-    #[cfg(windows)]
-    streams: HashMap<PanelId, stream::Stream>,
     /// 予備の WebView。作るのにメインスレッドが 100ms 近く止まるので、入力の無いときに作っておき、開くときはページを読ませるだけにする。
     spare: Option<WebviewWindow<Wry>>,
     spares: u64,
@@ -469,7 +464,7 @@ impl Host {
                         .body(Cow::Borrowed(body)),
                     None => res.status(404).body(Cow::Borrowed(&b"not found"[..])),
                 }
-                .expect("ヘッダーは固定の値")
+                .expect("header is a fixed value")
             })
             .invoke_handler(tauri::generate_handler![
                 panel_command,
@@ -480,7 +475,7 @@ impl Host {
             .build(context())?;
         let (tx, rx) = channel();
         logger::info!(
-            "Web（Tauri）を起動した",
+            "web (tauri) started",
             pages = files
                 .iter()
                 .filter(|(p, _)| p.ends_with("/index.html"))
@@ -497,8 +492,6 @@ impl Host {
             tx,
             rx,
             warned: false,
-            #[cfg(windows)]
-            streams: HashMap::new(),
             spare: None,
             spares: 0,
             active: Instant::now(),
@@ -513,8 +506,6 @@ impl Host {
     /// 開いたままプロセスが終わると WebView2 のブラウザが後始末を終えられず（"Failed to unregister class
     /// Chrome_WidgetWin_0" が出る）、続けて起動したときに同じデータフォルダの WebView を作れないことがある。
     pub fn shutdown(&mut self) {
-        #[cfg(windows)]
-        self.streams.clear();
         for w in self
             .windows
             .drain()
@@ -522,7 +513,7 @@ impl Host {
             .chain(self.spare.take())
         {
             if let Err(e) = w.destroy() {
-                logger::warn!("Web のパネルを閉じられない", error = e);
+                logger::warn!("cannot close web panel", error = e);
             }
         }
         let deadline = Instant::now() + SHUTDOWN;
@@ -531,7 +522,7 @@ impl Host {
             std::thread::sleep(Duration::from_millis(5));
         }
         self.app.cleanup_before_exit();
-        logger::info!("Web（Tauri）を閉じた");
+        logger::info!("web (tauri) closed");
     }
 
     /// `panel` が開いている Web のパネルか。
@@ -543,7 +534,7 @@ impl Host {
     /// GPUI のパネルと同じく背景を透かす（塗るかどうかはページが決める）。
     pub fn open<B: VrBackend>(&mut self, kernel: &mut Kernel<B>, panel: PanelId, page: &str) {
         if !has_page(self.shared.files, page) {
-            logger::error!("知らない Web のページ", page = page, panel = panel);
+            logger::error!("unknown web page", page = page, panel = panel);
             kernel.apply(panel, PanelCommand::Close);
             return;
         }
@@ -567,39 +558,14 @@ impl Host {
         };
         match window {
             Ok(window) => {
-                logger::info!("Web のパネルを開いた", panel = panel, page = page);
-                self.stream(panel, &window, kernel.config.gpu.web_capture);
+                logger::info!("web panel opened", panel = panel, page = page);
                 self.windows.insert(panel, window);
                 self.draws.insert(panel, Draw::default());
                 self.outboxes.insert(panel, Outbox::default());
             }
             Err(e) => {
-                logger::error!("Web のパネルを開けない", panel = panel, error = e);
+                logger::error!("cannot open web panel", panel = panel, error = e);
                 kernel.apply(panel, PanelCommand::Close);
-            }
-        }
-    }
-
-    /// Windows: `window` を撮り続ける。始められなければ CapturePreview で撮る（ほかの OS は何もしない）。
-    /// `gpu` が偽（設定の `gpu.web_capture = false`）か環境変数 `NYAW_WEB_CAPTURE=preview` なら撮り続けず、
-    /// 従来の CapturePreview で撮る（互換性のため・比べる・切り分ける用）。
-    #[cfg_attr(not(windows), allow(unused_variables))]
-    fn stream(&mut self, panel: PanelId, window: &WebviewWindow<Wry>, gpu: bool) {
-        #[cfg(windows)]
-        if gpu && std::env::var("NYAW_WEB_CAPTURE").as_deref() != Ok("preview") {
-            let tx = self.tx.clone();
-            let sink: stream::Sink = std::sync::Arc::new(move |r| {
-                let _ = tx.send((panel, r));
-            });
-            match stream::Stream::start(window, sink) {
-                Ok(s) => {
-                    self.streams.insert(panel, s);
-                }
-                Err(e) => logger::warn!(
-                    "Web のパネルを撮り続けられないので、都度撮る",
-                    panel = panel,
-                    error = e
-                ),
             }
         }
     }
@@ -618,19 +584,12 @@ impl Host {
             // 起動引数は同じデータフォルダのすべての WebView で揃える（違うと WebView を作れない）。
             .additional_browser_args(BROWSER_ARGS)
             .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
-        // 描画は VR に送るので画面外へ。枠を消すと Windows の WebView の描画領域が縮むため残す。
-        offscreen(builder)
+        // 描画は VR に送るのでデスクトップには出さない。枠を消すと Windows の WebView の描画領域が縮むため残す。
+        headless(builder)
             .transparent(true)
             .focused(false)
             .skip_taskbar(true)
-            // 作った瞬間に画面内へ映らないよう、隠したまま作って画面外へ置いてから表示する。
-            .visible(false)
             .build()
-            .inspect(|w| {
-                let _ = w.set_position(tauri::PhysicalPosition::new(-20000, -20000));
-                let _ = w.set_ignore_cursor_events(true);
-                let _ = w.show();
-            })
     }
 
     /// 入力が [`PREWARM_IDLE`] 無ければ、次に開くパネルのための予備の WebView を作っておく。
@@ -640,14 +599,14 @@ impl Host {
         }
         let t = Instant::now();
         self.spares += 1;
-        let url = WebviewUrl::External("about:blank".parse().expect("固定の URL"));
+        let url = WebviewUrl::External("about:blank".parse().expect("fixed URL"));
         match self.build(format!("spare-{}", self.spares), url, crate::PANEL_PX) {
             Ok(w) => {
-                logger::debug!("予備の WebView を作った", ms = t.elapsed().as_millis());
+                logger::debug!("spare WebView created", ms = t.elapsed().as_millis());
                 self.spare = Some(w);
             }
             Err(e) => {
-                logger::warn!("予備の WebView を作れない", error = e);
+                logger::warn!("cannot create spare WebView", error = e);
                 // 作れないときに毎フレーム試さない。
                 self.active = now;
             }
@@ -707,7 +666,7 @@ impl Host {
             if let Some(batch) = self.outboxes.get_mut(&panel).and_then(|o| o.take(now))
                 && let Err(err) = app.emit_to(window.label(), POINTER_EVENT, batch)
             {
-                logger::warn!("ポインタを送れない", panel = panel, error = err);
+                logger::warn!("cannot send pointer", panel = panel, error = err);
             }
         }
         let panels: Vec<PanelId> = self.windows.keys().copied().collect();
@@ -776,7 +735,7 @@ impl Host {
             if let Some(to) = to
                 && let Err(e) = self.app.emit_to(to.as_str(), STATUS_EVENT, status)
             {
-                logger::warn!("状態を送れない", panel = panel, error = e);
+                logger::warn!("cannot send status", panel = panel, error = e);
             }
             if let Some(d) = self.draws.get_mut(&panel) {
                 d.hot_until = Some(now + HOT);
@@ -819,7 +778,7 @@ impl Host {
                 if let Some(w) = self.windows.get(&panel)
                     && let Err(e) = w.set_size(LogicalSize::new(width, height))
                 {
-                    logger::warn!("ウィンドウの大きさを変えられない", panel = panel, error = e);
+                    logger::warn!("cannot resize window", panel = panel, error = e);
                 }
                 // 画面に出ていないウィンドウは Resized が来ないことがあるので、ここでも合わせる。
                 kernel.apply(panel, PanelCommand::Resize(width, height));
@@ -829,12 +788,10 @@ impl Host {
 
     /// パネルのウィンドウを閉じて忘れる。
     fn forget(&mut self, panel: PanelId) {
-        #[cfg(windows)]
-        self.streams.remove(&panel);
         if let Some(w) = self.windows.remove(&panel)
             && let Err(e) = w.destroy()
         {
-            logger::warn!("ウィンドウを閉じられない", panel = panel, error = e);
+            logger::warn!("cannot close window", panel = panel, error = e);
         }
         self.draws.remove(&panel);
         self.outboxes.remove(&panel);
@@ -863,7 +820,7 @@ impl Host {
         let logical = size.to_logical::<f64>(scale);
         let res = (logical.width.round() as u32, logical.height.round() as u32);
         if kernel.panel(panel).resolution != res {
-            logger::debug!("パネルの大きさが変わった", panel = panel, resolution = ?res);
+            logger::debug!("panel resized", panel = panel, resolution = ?res);
             kernel.apply(panel, PanelCommand::Resize(res.0, res.1));
             self.sync(kernel, panel, now);
         }
@@ -898,11 +855,6 @@ impl Host {
                 || visible
                     && (d.hot_until.is_some_and(|t| now < t)
                         || d.captured.is_none_or(|t| now - t >= crate::IDLE_REDRAW));
-            #[cfg(windows)]
-            if self.streams.contains_key(&panel) {
-                // 撮り続けている（中身が変わるたびに届く）。
-                continue;
-            }
             if d.capturing || !due {
                 continue;
             }
@@ -926,7 +878,7 @@ impl Host {
             };
             d.capturing = false;
             if let Some(t) = d.captured {
-                logger::trace!("読み戻した", panel = panel, ms = t.elapsed().as_millis());
+                logger::trace!("read back", panel = panel, ms = t.elapsed().as_millis());
             }
             match r {
                 // 開いた直後は大きさの反映が間に合わないことがある。送らずに次で撮り直す。
@@ -938,7 +890,7 @@ impl Host {
                     }
                 }
                 Err(e) if !self.warned => {
-                    logger::error!("Web のパネルの描画を取得できない", panel = panel, error = e);
+                    logger::error!("cannot get web panel render", panel = panel, error = e);
                     self.warned = true;
                 }
                 Err(_) => {}
@@ -947,24 +899,24 @@ impl Host {
     }
 }
 
-/// パネルのウィンドウをデスクトップに出さない。
+/// パネルのウィンドウをデスクトップに出さない。どの OS も WebView 自身の撮影 API（`capture`）で撮る。
 /// WebKitGTK は未マップ（非表示）のウィンドウを描かず撮れないので、表示したまま画面の外に置く。
 // ponytail: Wayland ではアプリがウィンドウの位置を決められず画面に出てしまう。X11（XWayland 含む）のみ。
 // GDK_BACKEND=x11 で起動するか、オフスクリーン描画（WPE 等）に移すのが次の一手。
 #[cfg(target_os = "linux")]
-fn offscreen<'a>(
+fn headless<'a>(
     b: WebviewWindowBuilder<'a, Wry, tauri::App<Wry>>,
 ) -> WebviewWindowBuilder<'a, Wry, tauri::App<Wry>> {
     b.visible(true).position(-20000.0, -20000.0)
 }
 
-/// パネルのウィンドウをデスクトップに出さない（非表示のまま描かせて撮る）。
+/// パネルのウィンドウをデスクトップに出さない。WebView2（CapturePreview）も WKWebView（takeSnapshot）も
+/// 非表示のまま描いて撮れるので、一度も表示しない。
 #[cfg(not(target_os = "linux"))]
-fn offscreen<'a>(
+fn headless<'a>(
     b: WebviewWindowBuilder<'a, Wry, tauri::App<Wry>>,
 ) -> WebviewWindowBuilder<'a, Wry, tauri::App<Wry>> {
-    // Windows.Graphics.Capture は非表示のウィンドウを撮れないので、表示したまま画面の外に置く。
-    b.visible(true).position(-20000.0, -20000.0)
+    b.visible(false)
 }
 
 #[cfg(test)]
@@ -1018,7 +970,7 @@ mod tests {
                 },
             ));
         }
-        assert_eq!(o.take(t0), None, "返事待ち");
+        assert_eq!(o.take(t0), None, "awaiting ack");
         o.ack();
         let batch = o.take(t0).unwrap();
         let kinds: Vec<_> = batch.iter().map(|p| (p.hand, p.kind, p.x, p.dy)).collect();

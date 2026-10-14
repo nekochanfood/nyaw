@@ -4448,6 +4448,7 @@ dependencies = [
  "block2 0.6.2",
  "objc2 0.6.5",
  "objc2-core-foundation",
+ "objc2-core-graphics",
  "objc2-foundation 0.3.2",
  "objc2-quartz-core 0.3.2",
 ]
@@ -7512,12 +7513,18 @@ name = "ui"
 version = "2026.0.1"
 dependencies = [
  "beam",
+ "block2 0.6.2",
  "cairo-rs",
  "gpui",
  "gpui_platform",
  "gtk",
  "kernel",
  "logger",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
+ "objc2-web-kit",
  "png 0.17.16",
  "profiler",
  "serde",

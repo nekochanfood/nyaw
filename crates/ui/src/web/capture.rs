@@ -80,14 +80,14 @@ mod platform {
 
     fn read(surface: cairo::Surface) -> Result<Image, String> {
         let mut img = cairo::ImageSurface::try_from(surface)
-            .map_err(|s| format!("画像のサーフェスではない: {:?}", s.type_()))?;
+            .map_err(|s| format!("not an image surface: {:?}", s.type_()))?;
         img.flush();
         let (width, height) = (img.width() as u32, img.height() as u32);
         let stride = img.stride() as usize;
         let alpha = match img.format() {
             cairo::Format::ARgb32 => true,
             cairo::Format::Rgb24 => false,
-            f => return Err(format!("扱えない画素形式: {f:?}")),
+            f => return Err(format!("unsupported pixel format: {f:?}")),
         };
         let data = img.data().map_err(|e| e.to_string())?;
         Ok(Image {
@@ -189,7 +189,7 @@ mod platform {
                 .iter()
                 .flat_map(|p| [p[0], p[1], p[2], 255])
                 .collect(),
-            c => return Err(format!("扱えない PNG の色形式: {c:?}")),
+            c => return Err(format!("unsupported PNG color format: {c:?}")),
         };
         Ok(Image {
             width: info.width,
@@ -199,15 +199,100 @@ mod platform {
     }
 }
 
-// ponytail: macOS（WKWebView の takeSnapshot）は未実装。
-#[cfg(not(any(target_os = "linux", windows)))]
+/// 乗算済みアルファの RGBA8 をストレートアルファにする。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn from_rgba_premultiplied(mut rgba: Vec<u8>) -> Vec<u8> {
+    for px in rgba.as_chunks_mut::<4>().0 {
+        match px[3] {
+            0 => *px = [0; 4],
+            255 => {}
+            a => {
+                for c in &mut px[..3] {
+                    *c = unpremultiply(*c, a);
+                }
+            }
+        }
+    }
+    rgba
+}
+
+// macOS は WKWebView の takeSnapshot で読み戻す（非表示のウィンドウでも撮れる）。
+#[cfg(target_os = "macos")]
+mod platform {
+    use std::sync::Mutex;
+
+    use block2::RcBlock;
+    use objc2_app_kit::NSImage;
+    use objc2_core_foundation::{CGPoint, CGRect, CGSize};
+    use objc2_core_graphics::{
+        CGBitmapContextCreate, CGColorSpace, CGContext, CGImage, CGImageAlphaInfo,
+    };
+    use objc2_foundation::NSError;
+    use objc2_web_kit::WKWebView;
+    use tauri::webview::PlatformWebview;
+
+    use super::{Done, Image, from_rgba_premultiplied};
+
+    pub fn snapshot(webview: PlatformWebview, done: Done) {
+        // SAFETY: wry の WKWebView。with_webview の中（メインスレッド）で使い、ブロックも呼ばれるまで生きている。
+        let view: &WKWebView = unsafe { &*webview.inner().cast() };
+        // ブロックは Fn なので、1 回だけ呼べるよう取り出せる形で持つ。
+        let done = Mutex::new(Some(done));
+        let block = RcBlock::new(move |image: *mut NSImage, error: *mut NSError| {
+            let Some(done) = done.lock().ok().and_then(|mut d| d.take()) else {
+                return;
+            };
+            // SAFETY: WebKit が渡すのは null か有効な NSImage / NSError。
+            done(match unsafe { (image.as_ref(), error.as_ref()) } {
+                (Some(image), _) => read(image),
+                (None, Some(e)) => Err(e.localizedDescription().to_string()),
+                (None, None) => Err("snapshot failed".into()),
+            });
+        });
+        unsafe { view.takeSnapshotWithConfiguration_completionHandler(None, &block) };
+    }
+
+    /// NSImage を RGBA8 のビットマップに描いて読み出す。
+    fn read(image: &NSImage) -> Result<Image, String> {
+        // SAFETY: 矩形・文脈・ヒントは省く（そのままの大きさで取り出す）。
+        let cg =
+            unsafe { image.CGImageForProposedRect_context_hints(std::ptr::null_mut(), None, None) }
+                .ok_or("cannot convert to CGImage")?;
+        let (w, h) = (CGImage::width(Some(&cg)), CGImage::height(Some(&cg)));
+        let mut rgba = vec![0u8; w * h * 4];
+        let space = CGColorSpace::new_device_rgb();
+        // SAFETY: rgba は w*h*4 バイトで、文脈より長く生きる。
+        let ctx = unsafe {
+            CGBitmapContextCreate(
+                rgba.as_mut_ptr().cast(),
+                w,
+                h,
+                8,
+                w * 4,
+                space.as_deref(),
+                CGImageAlphaInfo::PremultipliedLast.0,
+            )
+        }
+        .ok_or("cannot create bitmap context")?;
+        let rect = CGRect::new(CGPoint::new(0.0, 0.0), CGSize::new(w as f64, h as f64));
+        CGContext::draw_image(Some(&ctx), rect, Some(&cg));
+        drop(ctx);
+        Ok(Image {
+            width: w as u32,
+            height: h as u32,
+            rgba: from_rgba_premultiplied(rgba),
+        })
+    }
+}
+
+#[cfg(not(any(target_os = "linux", windows, target_os = "macos")))]
 mod platform {
     use tauri::webview::PlatformWebview;
 
     use super::Done;
 
     pub fn snapshot(_: PlatformWebview, done: Done) {
-        done(Err("このプラットフォームでは WebView を読み戻せない".into()));
+        done(Err("cannot read back WebView on this platform".into()))
     }
 }
 
@@ -232,6 +317,16 @@ mod tests {
         assert_eq!(
             from_argb32(&px(0x00_01_02_03), 1, 1, 4, false),
             [1, 2, 3, 255]
+        );
+    }
+
+    #[test]
+    fn premultiplied_rgba_is_unpremultiplied() {
+        assert_eq!(
+            from_rgba_premultiplied(vec![
+                0x10, 0x20, 0x30, 0xff, 0x20, 0x00, 0x40, 0x80, 9, 9, 9, 0
+            ]),
+            [0x10, 0x20, 0x30, 0xff, 0x40, 0x00, 0x80, 0x80, 0, 0, 0, 0]
         );
     }
 }
