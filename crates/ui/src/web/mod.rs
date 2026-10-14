@@ -623,7 +623,14 @@ impl Host {
             .transparent(true)
             .focused(false)
             .skip_taskbar(true)
+            // 作った瞬間に画面内へ映らないよう、隠したまま作って画面外へ置いてから表示する。
+            .visible(false)
             .build()
+            .inspect(|w| {
+                let _ = w.set_position(tauri::PhysicalPosition::new(-20000, -20000));
+                let _ = w.set_ignore_cursor_events(true);
+                let _ = w.show();
+            })
     }
 
     /// 入力が [`PREWARM_IDLE`] 無ければ、次に開くパネルのための予備の WebView を作っておく。
