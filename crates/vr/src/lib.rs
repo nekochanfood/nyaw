@@ -201,6 +201,11 @@ pub trait VrBackend {
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32);
     /// RGBA8、行間に詰め物なし。
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]);
+    /// 直前の [`poll`](Self::poll) でランタイムがアプリのスレッドで合成・表示にかけた時間（待ちは含まない）。
+    /// 合成をランタイム（別プロセス）がするなら 0（novr のエミュレーターだけが返す）。プロファイラ用。
+    fn compositor_time(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
     /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
     /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読めるので、これは OpenXR 用。
     fn overlay_image(&mut self, _id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
@@ -245,6 +250,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn overlay_image(&mut self, id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
         (**self).overlay_image(id)
+    }
+    fn compositor_time(&self) -> std::time::Duration {
+        (**self).compositor_time()
     }
 }
 

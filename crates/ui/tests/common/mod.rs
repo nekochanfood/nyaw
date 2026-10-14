@@ -13,9 +13,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use kernel::vr::novr::{Button, Emulator};
 use kernel::vr::{Frame, OverlayId, Quat, RawController, Vec3, mock::MockBackend};
-use kernel::{Hand, Kernel, Pose, Runtime, VrBackend, VrError};
+use kernel::{Hand, Kernel, Pose, Runtime, Vec2, VrBackend, VrError};
 use serde_json::Value;
+use std::sync::mpsc::Sender;
 use tauri::{AppHandle, Emitter, Listener};
 
 /// どこで流すか。Linux は画面（X / Wayland）があれば毎回、ほかの OS は `--ignored` のときだけ
@@ -134,6 +136,7 @@ pub fn run(
             });
         })),
         remote: Some(rx),
+        hide_profiler: false,
     };
     ui::run_with(kernel, panels, None, webpages::FILES, hooks);
     println!("{name}: FAILED（シナリオが終わる前にアプリが終了した）");
@@ -331,4 +334,116 @@ pub fn press(page: &mut Page, vr: &mut Vr, id: &str) {
         num(s, &["state", "counts", "pointerdown"]) > downs
     });
     vr.set("trigger/value", 0.0);
+}
+
+pub type Job = Box<dyn FnOnce(&mut Emulator) + Send>;
+
+/// エミュレーターを持つバックエンド。テストのスレッドから送られた操作を、メインスレッドの poll で行う
+/// （エミュレーターはウィンドウを持ちうるのでメインスレッドから出せない）。
+pub struct Driven {
+    emu: Emulator,
+    jobs: Receiver<Job>,
+}
+
+impl Driven {
+    /// ウィンドウを出さないエミュレーターと、それを操作する口。
+    pub fn headless(width: u32, height: u32) -> (Self, Emu) {
+        let (tx, jobs) = channel();
+        let emu = Emulator::headless(width, height);
+        (Self { emu, jobs }, Emu(tx))
+    }
+}
+
+impl VrBackend for Driven {
+    fn runtime(&self) -> Runtime {
+        self.emu.runtime()
+    }
+    fn poll(&mut self) -> Frame {
+        // ウィンドウ付きのエミュレーターが poll で待つ周期の代わり（約 90Hz）。
+        std::thread::sleep(Duration::from_millis(11));
+        while let Ok(job) = self.jobs.try_recv() {
+            job(&mut self.emu);
+        }
+        let frame = self.emu.poll();
+        // ウィンドウ付きと同じく、毎フレーム合成する（コストを本番に揃える）。
+        self.emu.composite();
+        frame
+    }
+    fn compositor_time(&self) -> Duration {
+        self.emu.compositor_time()
+    }
+    fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError> {
+        self.emu.create_overlay(key, width_m)
+    }
+    fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
+        self.emu.set_overlay_pose(id, pose)
+    }
+    fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
+        self.emu.set_overlay_width(id, width_m)
+    }
+    fn set_overlay_height(&mut self, id: OverlayId, height_m: f32) {
+        self.emu.set_overlay_height(id, height_m)
+    }
+    fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
+        self.emu.set_overlay_visible(id, visible)
+    }
+    fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
+        self.emu.set_overlay_alpha(id, alpha)
+    }
+    fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
+        self.emu.set_overlay_sort(id, order)
+    }
+    fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
+        self.emu.submit_overlay_pixels(id, width, height, rgba)
+    }
+}
+
+/// テストのスレッドからエミュレーターを操作する口。
+pub struct Emu(pub Sender<Job>);
+
+impl Emu {
+    /// 次の poll で `f` を行い、結果を待つ。
+    pub fn run<R: Send + 'static>(&self, f: impl FnOnce(&mut Emulator) -> R + Send + 'static) -> R {
+        let (tx, rx) = channel();
+        self.0
+            .send(Box::new(move |e| {
+                let _ = tx.send(f(e));
+            }))
+            .expect("フレームループが止まっている");
+        rx.recv_timeout(TIMEOUT).expect("フレームループが応えない")
+    }
+
+    pub fn point(&self, at: Option<Vec2>) {
+        self.run(move |e| e.point(at));
+    }
+
+    pub fn button(&self, button: Button, down: bool) {
+        self.run(move |e| e.set_button(button, down));
+    }
+
+    pub fn stick(&self, value: Vec2) {
+        self.run(move |e| e.set_stick(Hand::Right, value));
+    }
+
+    pub fn color(&self, at: Vec2) -> [u8; 3] {
+        let (w, _, rgba) = self.run(|e| e.screenshot());
+        let i = ((at.y as u32 * w + at.x as u32) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2]]
+    }
+
+    /// 画面の `at` が `pred` を満たす色になるまで待つ。
+    pub fn until_color(&self, what: &str, at: Vec2, pred: impl Fn([u8; 3]) -> bool) {
+        let deadline = Instant::now() + TIMEOUT;
+        loop {
+            let c = self.color(at);
+            if pred(c) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{what}: 画面の {at:?} の色が合わない（{c:02x?}）"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
 }

@@ -10,6 +10,8 @@
 //! デバイスは実在しないので、取り付けたパネルは追従しない（[`Frame::emulated`]）。
 //! testkit 用に、ウィンドウを出さない [`Emulator::headless`] と、入力の注入・スクリーンショットを公開する。
 
+use std::time::{Duration, Instant};
+
 use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
 
 use crate::{
@@ -25,8 +27,8 @@ const NEAR: f32 = 0.01;
 /// 市松模様の 1 マス（px）と、無彩色の 2 色。
 const CHECKER: u32 = 16;
 const CHECKER_GRAY: [u32; 2] = [0x6b6b6b, 0x8a8a8a];
-/// ウィンドウの更新の上限。VR ランタイムの vsync と同じく poll はここで待つ。
-const FPS: usize = 90;
+/// フレームの周期（約 90Hz）。VR ランタイムの vsync 待ちと同じく、poll はここまで待つ。
+const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 90);
 /// ホイール 1 刻みで右手のスティックを倒す量（1 フレームだけ）。オーバーレイはスティックの値をそのまま行数として送るので、
 /// 1 刻み = 3 行（一般的なホイールの既定）になる。
 // ponytail: 刻みの大きさ（Windows は 120 単位、ほかは OS ごと）は見ず向きだけ。滑らかなスクロールのホイールでは速すぎるかもしれない。
@@ -80,6 +82,10 @@ pub struct Emulator {
     /// 左手・右手のスティック。
     sticks: [Vec2; 2],
     quit: bool,
+    /// 次のフレームの始まり（ウィンドウ付きの poll はここまで眠る）。
+    next_frame: Option<Instant>,
+    /// 直前の合成と表示にかかった時間（[`VrBackend::compositor_time`]）。
+    composite_time: Duration,
 }
 
 impl Emulator {
@@ -107,6 +113,8 @@ impl Emulator {
             grab: false,
             sticks: [Vec2::ZERO; 2],
             quit: false,
+            next_frame: None,
+            composite_time: Duration::ZERO,
         }
     }
 
@@ -205,7 +213,8 @@ impl Emulator {
             };
             match Window::new(TITLE, SIZE.0 as usize, SIZE.1 as usize, opts) {
                 Ok(mut w) => {
-                    w.set_target_fps(FPS);
+                    // 周期は poll が自分で作る（minifb の待ちを合成の時間に混ぜない）。
+                    w.set_target_fps(0);
                     self.window = Some(w);
                 }
                 Err(e) => {
@@ -250,6 +259,14 @@ impl Emulator {
         {
             self.sticks[1].y = y.signum() * WHEEL;
         }
+    }
+
+    /// 変化があれば合成し直す（かかった時間は [`VrBackend::compositor_time`] で返す）。ウィンドウ付きでは poll が呼ぶ。
+    /// ウィンドウの無いとき（testkit・ベンチマーク）に、本番と同じ合成のコストを掛けたいなら毎フレーム呼ぶ。
+    pub fn composite(&mut self) {
+        let t = Instant::now();
+        self.render();
+        self.composite_time = t.elapsed();
     }
 
     /// 変化があれば合成し直す。
@@ -394,10 +411,18 @@ impl VrBackend for Emulator {
         Runtime::NoVr
     }
 
-    /// ウィンドウ付きでは、前のフレームの絵を出して入力を読み、[`FPS`] の周期まで待つ。
+    /// ウィンドウ付きでは [`FRAME`] の周期まで待ってから、前のフレームの絵を出して入力を読む。
     fn poll(&mut self) -> Frame {
         if !self.headless {
+            let now = Instant::now();
+            let next = self.next_frame.unwrap_or(now);
+            if next > now {
+                std::thread::sleep(next - now);
+            }
+            // 間に合わなかったフレームは取り戻そうとせず、今から数え直す。
+            self.next_frame = Some(next.max(Instant::now() - FRAME) + FRAME);
             self.read_window();
+            let t = Instant::now();
             self.render();
             let (w, h) = (self.size.0 as usize, self.size.1 as usize);
             if let Some(win) = &mut self.window {
@@ -412,6 +437,7 @@ impl VrBackend for Emulator {
                     logger::warn!("エミュレーターの画面を更新できない", error = e);
                 }
             }
+            self.composite_time = t.elapsed();
         }
         Frame {
             hmd: Pose::IDENTITY,
@@ -462,6 +488,10 @@ impl VrBackend for Emulator {
 
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         self.quad(id).texture = Some((width, height, rgba.to_vec()));
+    }
+
+    fn compositor_time(&self) -> Duration {
+        self.composite_time
     }
 }
 

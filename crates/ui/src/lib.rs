@@ -515,6 +515,8 @@ pub struct Hooks {
     pub on_web: Option<OnWeb>,
     /// 毎フレーム、メインスレッドで `App` を触る処理を受け取る（別スレッドのテストが GPUI を操作する）。
     pub remote: Option<std::sync::mpsc::Receiver<Remote>>,
+    /// 計測はするがプロファイラパネルを出さない（ベンチマークが自分の描画で計測を汚さないように）。
+    pub hide_profiler: bool,
 }
 
 /// Web（Tauri）を起こした直後に呼ぶ処理。
@@ -583,6 +585,7 @@ pub fn run_with(
 ) {
     let mut webs = WebSlot::new(web, hooks.on_web);
     let remote = hooks.remote;
+    let hide_profiler = hooks.hide_profiler;
     gpui_platform::application().run(move |cx: &mut App| {
         if let Some(p) = profiler {
             cx.set_global(p);
@@ -633,9 +636,14 @@ pub fn run_with(
                             .translate(PointerEvent::Move { pos }, PointerMode::Mouse),
                     );
                 }
-                // ponytail: pump の poll（VR は vsync 待ち）とヒット判定をまとめて wait とする。判定が重くなったら分けて測る。
+                // wait = ランタイムの待ち（VR は vsync、novr はエミュレーターの周期）。オーバーレイ層と合成は別に測る。
+                let timing = kernel.timing();
                 let mut stages = Stages {
-                    wait: begin.elapsed(),
+                    wait: begin
+                        .elapsed()
+                        .saturating_sub(timing.overlay + timing.compositor),
+                    overlay: timing.overlay,
+                    compositor: timing.compositor,
                     ..Default::default()
                 };
                 if kernel.quit_requested() {
@@ -719,7 +727,7 @@ pub fn run_with(
                         host.deliver(e, kernel.pointer_mode(), t);
                     }
                     web_spawns = host.step(&mut kernel, t);
-                    stages.input += t.elapsed();
+                    stages.web += t.elapsed();
                 }
                 // ウィンドウが全部（OS の X などで）閉じられたら終了する。
                 if !windows.is_empty() && (0..windows.len()).all(|p| kernel.panel(p).closed) {
@@ -765,7 +773,7 @@ pub fn run_with(
                     drawn.iter_mut().for_each(|t| *t = None);
                 }
                 match profiler_panel {
-                    None if profiling => {
+                    None if profiling && !hide_profiler => {
                         let spec = PanelSpec::new(Pose::IDENTITY, |panel, _, cx| ProfilerPanel {
                             panel,
                             view: cx.new(|_| ProfilerView),

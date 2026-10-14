@@ -7,9 +7,22 @@
 
 pub mod config;
 
+use std::time::{Duration, Instant};
+
 pub use config::{Config, PointerMode};
 pub use overlay::{self, Overlay, Panel, PanelId, Pointer, PointerEvent, UiEvent};
 pub use vr::{self, Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
+
+/// [`Kernel::tick`] 1 回の内訳。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TickTiming {
+    /// ランタイムの poll（vsync 待ち・合成を含む）。
+    pub poll: Duration,
+    /// オーバーレイ層（追従・ヒット判定・ポインタの配置・アニメーション）。
+    pub overlay: Duration,
+    /// poll のうち、ランタイムがこのスレッドで合成・表示にかけた時間（novr のエミュレーターだけ）。
+    pub compositor: Duration,
+}
 
 /// 上位層（ビュー）からパネルへの操作要求。
 #[derive(Debug, Clone, PartialEq)]
@@ -53,6 +66,7 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     /// テストがモックを直接いじるために公開している。本番コードはメソッド経由で使う。
     pub vr: B,
     overlay: Overlay,
+    timing: TickTiming,
     pointer_mode: PointerMode,
 }
 
@@ -94,6 +108,7 @@ impl<B: VrBackend> Kernel<B> {
             config,
             vr,
             overlay,
+            timing: TickTiming::default(),
         }
     }
 
@@ -123,7 +138,21 @@ impl<B: VrBackend> Kernel<B> {
 
     /// 1 フレーム進める。ランタイムを poll し、パネルの追従・掴み移動とレーザーのヒット判定を行って UI イベントを返す。
     pub fn tick(&mut self) -> Vec<UiEvent> {
-        self.overlay.tick(&mut self.vr)
+        let t = Instant::now();
+        let frame = self.vr.poll();
+        let polled = Instant::now();
+        let events = self.overlay.tick_frame(&mut self.vr, frame);
+        self.timing = TickTiming {
+            poll: polled - t,
+            overlay: polled.elapsed(),
+            compositor: self.vr.compositor_time(),
+        };
+        events
+    }
+
+    /// 最後の [`tick`](Self::tick) の内訳（プロファイラ用）。
+    pub fn timing(&self) -> TickTiming {
+        self.timing
     }
 
     /// 最後の tick の HMD の姿勢。

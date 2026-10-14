@@ -130,7 +130,10 @@ mod platform {
             let png = stream.clone();
             let finish = finish.clone();
             let handler = CapturePreviewCompletedHandler::create(Box::new(move |r| {
-                finish(r.map_err(|e| e.to_string()).and_then(|_| read(&png)));
+                let bytes = r.map_err(|e| e.to_string()).and_then(|_| read(&png));
+                // PNG の展開は重い（800x600 で数十 ms）。メインスレッド（フレームループ）を塞がないよう別スレッドで行う。
+                let finish = finish.clone();
+                std::thread::spawn(move || finish(bytes.and_then(|b| decode(&b))));
                 Ok(())
             }));
             unsafe {
@@ -146,8 +149,8 @@ mod platform {
         }
     }
 
-    /// CapturePreview が書いた PNG を読み出して RGBA8 にする。
-    fn read(stream: &IStream) -> Result<Image, String> {
+    /// CapturePreview が書いた PNG のバイト列を読み出す。
+    fn read(stream: &IStream) -> Result<Vec<u8>, String> {
         let mut bytes = Vec::new();
         let mut buf = [0u8; 64 * 1024];
         // SAFETY: buf の長さだけ書かせる。
@@ -167,7 +170,12 @@ mod platform {
                 bytes.extend_from_slice(&buf[..n as usize]);
             }
         }
-        let mut decoder = png::Decoder::new(bytes.as_slice());
+        Ok(bytes)
+    }
+
+    /// PNG を RGBA8 にする。
+    fn decode(bytes: &[u8]) -> Result<Image, String> {
+        let mut decoder = png::Decoder::new(bytes);
         decoder.set_transformations(png::Transformations::normalize_to_color8());
         let mut reader = decoder.read_info().map_err(|e| e.to_string())?;
         let mut data = vec![0; reader.output_buffer_size()];

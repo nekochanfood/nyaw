@@ -426,6 +426,11 @@ impl Overlay {
 
     pub fn tick(&mut self, vr: &mut dyn VrBackend) -> Vec<UiEvent> {
         let frame = vr.poll();
+        self.tick_frame(vr, frame)
+    }
+
+    /// [`Self::tick`] の poll の後半（ランタイムの待ちとオーバーレイの処理を別々に測るため分けてある）。
+    pub fn tick_frame(&mut self, vr: &mut dyn VrBackend, frame: Frame) -> Vec<UiEvent> {
         self.animate(vr, Instant::now());
         self.quit = frame.quit;
         self.hmd = frame.hmd;
