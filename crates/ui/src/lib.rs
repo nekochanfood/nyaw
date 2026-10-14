@@ -422,8 +422,9 @@ const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
 pub(crate) const IDLE_REDRAW: Duration = Duration::from_millis(250);
-/// 同時に開いておけるパネルの数（閉じたものは数えない）。
-const MAX_PANELS: usize = 16;
+/// 同時に開いておけるパネルの数（閉じたものは数えない）。OpenVR はランタイム全体で 128 枚までなので、
+/// レーザーや他のアプリのオーバーレイの分を残す。超えた分は `open_panel` がエラーにする。
+const MAX_PANELS: usize = 64;
 /// 描き直しても絵が変わらないパネルの、描き直す間隔の上限（時計の分の切り替わりはこの遅れで見える）。
 const IDLE_MAX: Duration = Duration::from_secs(1);
 
@@ -710,7 +711,7 @@ pub fn run_with(
         let mut windows: Vec<(PanelId, Option<AnyWindowHandle>)> = panels
             .into_iter()
             .enumerate()
-            .map(|(i, spec)| open_panel(&mut kernel, spec, i, cx, &mut webs))
+            .filter_map(|(i, spec)| open_panel(&mut kernel, spec, i, cx, &mut webs))
             .collect();
 
         cx.spawn(async move |cx| {
@@ -964,11 +965,16 @@ pub fn run_with(
                         .count()
                         >= MAX_PANELS
                     {
-                        logger::warn!("too many open panels", max = MAX_PANELS);
+                        logger::error!("too many open panels", max = MAX_PANELS);
                         break;
                     }
                     let i = windows.len();
-                    windows.push(cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs)));
+                    let Some(opened) =
+                        cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs))
+                    else {
+                        break;
+                    };
+                    windows.push(opened);
                     last.push(None);
                     drawn.push(None);
                     idle.push(IDLE_REDRAW);
@@ -1009,19 +1015,24 @@ pub fn run_with(
                         .sized(Vec2::new(1.1, 0.56), (1100, 560))
                         .in_view(PROFILER_POSE);
                         let i = windows.len();
-                        let (panel, window) =
-                            cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs));
-                        logger::info!(
-                            "profiler panel opened",
-                            panel = panel,
-                            pose = ?kernel.panel(panel).pose
-                        );
-                        windows.push((panel, window));
-                        last.push(None);
-                        drawn.push(None);
-                        idle.push(IDLE_REDRAW);
-                        seen.push(false);
-                        profiler_panel = Some(panel);
+                        match cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs)) {
+                            Some((panel, window)) => {
+                                logger::info!(
+                                    "profiler panel opened",
+                                    panel = panel,
+                                    pose = ?kernel.panel(panel).pose
+                                );
+                                windows.push((panel, window));
+                                last.push(None);
+                                drawn.push(None);
+                                idle.push(IDLE_REDRAW);
+                                seen.push(false);
+                                profiler_panel = Some(panel);
+                            }
+                            // 開けなかった。毎フレーム作り直そうとしないよう計測ごと止める。
+                            None => cx
+                                .update(|cx| cx.default_global::<PanelControl>().profiling = false),
+                        }
                     }
                     Some(p) if !profiling => {
                         // 次のフレームの sync_panel が閉じてウィンドウを消す。
@@ -1116,22 +1127,27 @@ impl Render for ProfilerPanel {
 }
 
 /// カーネルにパネルを作り、中身（GPUI のウィンドウか Web のページ）を開く。Web のパネルのウィンドウは `None`。
+/// ランタイムがオーバーレイを作れない（数の上限など）ときはエラーを出して `None`。
 fn open_panel(
     kernel: &mut Kernel,
     mut spec: PanelSpec,
     index: usize,
     cx: &mut App,
     webs: &mut WebSlot,
-) -> (PanelId, Option<AnyWindowHandle>) {
+) -> Option<(PanelId, Option<AnyWindowHandle>)> {
     let pose = spec.pose_for(kernel, index);
-    let panel = kernel
-        .add_panel(
-            &format!("nyaw.panel.{index}"),
-            pose,
-            spec.size,
-            spec.resolution,
-        )
-        .expect("create overlay");
+    let panel = match kernel.add_panel(
+        &format!("nyaw.panel.{index}"),
+        pose,
+        spec.size,
+        spec.resolution,
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            logger::error!("cannot open panel", error = ?e);
+            return None;
+        }
+    };
     if !spec.animated {
         kernel.apply(panel, PanelCommand::Animated(false));
     }
@@ -1149,7 +1165,7 @@ fn open_panel(
             Some(host) => host.open(kernel, panel, page),
             None => kernel.apply(panel, PanelCommand::Close),
         }
-        return (panel, None);
+        return Some((panel, None));
     }
     let drag_layer = spec.pointer.is_some_and(|(_, part)| part == Pointer::Drag);
     let window: AnyWindowHandle = open_panel_window(cx, spec.resolution, |w, cx| {
@@ -1161,7 +1177,7 @@ fn open_panel(
     if drag_layer {
         cx.default_global::<DragWindows>().0.push(window);
     }
-    (panel, Some(window))
+    Some((panel, Some(window)))
 }
 
 #[cfg(test)]
@@ -1234,7 +1250,9 @@ mod tests {
             .locked()
             .without_animation();
         let mut webs = WebSlot::new(&[], None);
-        let (panel, _) = cx.update(|cx| open_panel(&mut kernel, spec, 0, cx, &mut webs));
+        let (panel, _) = cx
+            .update(|cx| open_panel(&mut kernel, spec, 0, cx, &mut webs))
+            .unwrap();
         let p = kernel.panel(panel);
         assert_eq!(p.attached, Some((hand, Pose::IDENTITY)));
         assert!(p.locked);
@@ -1291,11 +1309,14 @@ mod tests {
         let mut webs = WebSlot::new(&[], None);
         // テストプラットフォームでは Tauri を起こさない（起こせなかった扱い）。パネルは作られ、すぐ閉じる。
         webs.failed = true;
-        cx.update(|cx| open_panel(&mut kernel, first, 0, cx, &mut webs));
+        cx.update(|cx| open_panel(&mut kernel, first, 0, cx, &mut webs))
+            .unwrap();
         let spec = PanelSpec::spawn_web(0, "demo");
         assert_eq!(spec.web_page(), Some("demo"));
         assert_eq!(spec.pose_for(&kernel, 1).position, SPAWN_GAP);
-        let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, 1, cx, &mut webs));
+        let (panel, window) = cx
+            .update(|cx| open_panel(&mut kernel, spec, 1, cx, &mut webs))
+            .unwrap();
         assert_eq!((panel, window.is_none()), (1, true));
         assert!(kernel.panel(panel).closed, "closes if web cannot start");
         assert!(
