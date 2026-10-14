@@ -3,7 +3,7 @@
 // 1. カーネルとの対話: `window.nyaw` を公開する。操作は Tauri のコマンド、状態の変化は Tauri のイベントで受ける。
 //    - nyaw.command(cmd)  … "detach" / "close" / { attach: "hmd" | "left" | "right" | { tracker: id } } /
 //                            { lock: bool } / { resize: { width, height } }
-//    - nyaw.status()      … 現在の状態（Promise）。nyaw.onStatus(cb) で変化を受ける。
+//    - nyaw.status()      … 現在の状態（Promise）。nyaw.onStatus(cb) で変化を受ける（戻り値で購読をやめる）。
 //    - nyaw.spawn(page)   … 隣にページのパネルを開く。
 // 2. レーザーのポインタ: Tauri のイベント `nyaw:pointer`（イベントの束）を DOM の PointerEvent / MouseEvent / click / wheel として発火する。
 //    ページは普通の Web ページと同じく addEventListener で書ける。setPointerCapture も使える。
@@ -36,7 +36,16 @@
   const hand = (name) => {
     let s = hands.get(name);
     if (!s) {
-      s = { name, id: POINTER_ID[name] ?? 1003, x: 0, y: 0, over: null, down: null, pressed: false, mouseSuppressed: false };
+      s = {
+        name,
+        id: POINTER_ID[name] ?? 1003,
+        x: 0,
+        y: 0,
+        over: null,
+        down: null,
+        pressed: false,
+        mouseSuppressed: false,
+      };
       hands.set(name, s);
     }
     return s;
@@ -120,9 +129,11 @@
   const mark = (attr, els, s, on) => {
     for (const el of els) {
       const set = marks[attr].get(el) ?? new Set();
-      on ? set.add(s.name) : set.delete(s.name);
+      if (on) set.add(s.name);
+      else set.delete(s.name);
       marks[attr].set(el, set);
-      set.size ? el.setAttribute(attr, "") : el.removeAttribute(attr);
+      if (set.size) el.setAttribute(attr, "");
+      else el.removeAttribute(attr);
     }
   };
 
@@ -138,7 +149,7 @@
     const oldPath = old && old.isConnected ? path(old) : [];
     const newPath = el ? path(el) : [];
     const left = oldPath.filter((e) => !newPath.includes(e));
-    const entered = newPath.filter((e) => !oldPath.includes(e)).reverse();
+    const entered = newPath.filter((e) => !oldPath.includes(e)).toReversed();
     const boundary = { cancelable: false };
     const leaf = { bubbles: false, cancelable: false };
     if (oldPath.length) {
@@ -167,12 +178,17 @@
   const focusFrom = (el) => {
     const f = el.closest?.(FOCUSABLE);
     if (f && !f.disabled) f.focus({ preventScroll: true });
-    else if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    else if (document.activeElement && document.activeElement !== document.body)
+      document.activeElement.blur();
   };
 
   /** 縦横にスクロールできる一番近い祖先（無ければ文書）。 */
   const scroller = (el, dx, dy) => {
-    for (let e = el; e && e !== document.documentElement && e !== document.body; e = e.parentElement) {
+    for (
+      let e = el;
+      e && e !== document.documentElement && e !== document.body;
+      e = e.parentElement
+    ) {
       const st = getComputedStyle(e);
       const canY = dy && /(auto|scroll)/.test(st.overflowY) && e.scrollHeight > e.clientHeight;
       const canX = dx && /(auto|scroll)/.test(st.overflowX) && e.scrollWidth > e.clientWidth;
@@ -254,7 +270,13 @@
     command: (command) => invoke("panel_command", { command }),
     status: () => invoke("panel_status"),
     spawn: (page) => invoke("spawn_panel", { page }),
-    onStatus: (cb) => statusListeners.push(cb),
+    onStatus: (cb) => {
+      statusListeners.push(cb);
+      return () => {
+        const i = statusListeners.indexOf(cb);
+        if (i >= 0) statusListeners.splice(i, 1);
+      };
+    },
   };
 
   // Tauri の API（withGlobalTauri）はこのスクリプトの後に用意されることがあるので、読み込み後に購読する。
@@ -269,6 +291,7 @@
     });
     listen("nyaw:status", (st) => statusListeners.forEach((cb) => cb(st)));
   };
-  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", subscribe, { once: true });
+  if (document.readyState === "loading")
+    document.addEventListener("DOMContentLoaded", subscribe, { once: true });
   else subscribe();
 })();

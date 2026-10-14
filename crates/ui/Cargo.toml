@@ -3,16 +3,49 @@ name = "ui"
 version.workspace = true
 edition.workspace = true
 
+# UI 層。パネルを GPUI のウィンドウか Tauri の WebView（web モジュール）で実体化する。
 [dependencies]
 # test-support は Window::render_to_image（オフスクリーン描画の読み戻し）のために本番でも必要。
 # 上流で一般公開されたら外す。
 gpui = { workspace = true, features = ["test-support"] }
-gpui_platform = { workspace = true, features = ["test-support"] }
+# x11 / wayland: Linux で実ウィンドウを開く（無いとヘッドレスになる）。
+gpui_platform = { workspace = true, features = ["test-support", "x11", "wayland"] }
 kernel.workspace = true
 profiler.workspace = true
 logger.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = "2.12"
+
+# WebView を画面に出さずに撮る（web/capture.rs）と、GTK のイベントを回す。tauri が使うものと同じ版に合わせる。
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { version = "2", features = ["v2_40"] }
+cairo-rs = "0.18"
+gtk = "0.18"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Com_StructuredStorage"] }
+png = "0.17"
+
+[build-dependencies]
+tauri-build = "2"
+
+[dev-dependencies]
+vr = { workspace = true, features = ["test-support"] }
+webpages.workspace = true
+testing.workspace = true
 
 # 実プラットフォーム + GPU で描画を読み戻す。GUI はメインスレッドで回すため独自 main。
 [[test]]
 name = "gpu_capture"
+harness = false
+
+# 実プラットフォームの GPUI + Tauri（WebView）で、レーザー・マウスから JS のポインタイベントまでを確かめる。
+[[test]]
+name = "web_vr"
+harness = false
+
+[[test]]
+name = "web_novr"
 harness = false

@@ -4,14 +4,14 @@ VR オーバーレイアプリ
 ## 開発・実行
 
 必要なもの: Rust (edition 2024 対応の stable)、cmake と C++ コンパイラ（OpenVR / OpenXR のビルドに使う）。
-Linux では WebKitGTK（`libwebkit2gtk-4.1-dev`。Web UI の Tauri が使う）も要る。
+Node.js 22 以降（Web のページ `web/` を build.rs が Vite でビルドする。`NYAW_WEB_SKIP=1` で飛ばせる）、
+Linux では WebKitGTK（`libwebkit2gtk-4.1-dev`。Web のパネルの Tauri が使う）も要る。
 
 ```sh
 cargo run                  # VR ランタイムを自動検出。無ければ novr（デスクトップのウィンドウ）で起動
 cargo run -- --novr        # novr 固定
 cargo run -- --openxr      # OpenXR 固定（--openvr で SteamVR）
 cargo run -- --profile     # プロファイラ付き（ランタイム指定と併用可。--profile=PATH でダンプ先を指定）
-cargo run -- --webui       # GPUI の代わりに Tauri の WebView で画面を出す（ランタイム指定と併用可）
 NYAW_LOG=debug cargo run   # ログレベル変更（trace/debug/info/warn/error、既定 info）
 ```
 
@@ -29,10 +29,22 @@ cargo runtimes install     # Monado を導入するウィザード（SteamVR は
 cargo test -p testkit --test runtimes   # 実ランタイムでの E2E
 ```
 
-Web UI（`--webui`）の E2E は実際の WebView を開くので、Linux は画面（Xvfb でよい）があるときだけ流れる（novr 側は xdotool も要る）。
+### Web のページ（`web/`）
+
+Testing（GPUI）の「Web Testing」ボタンで、Testing の Web 版（React + Tailwind + Base UI）を Tauri の WebView で開ける。
 
 ```sh
-Xvfb :99 & DISPLAY=:99 cargo test -p webui --tests
+cd web
+npm ci
+npm run dev        # ブラウザで見た目を確かめる（カーネルとは繋がらない）
+npm run check      # oxlint・oxfmt・tsc・ビルド（CI の web ジョブと同じ）
+npm run fmt        # oxfmt で整形
+```
+
+Web のパネルの E2E は実際の GPUI のウィンドウと WebView を開くので、Linux は画面（Xvfb でよい）があるときだけ流れる（novr 側は xdotool も要る）。
+
+```sh
+Xvfb :99 & DISPLAY=:99 cargo test -p ui --tests
 ```
 
 環境変数 `NYAW_E2E_WATCH` を付けると、E2E 中のパネルをパネルごとのウィンドウで見られる。値は 1 フレームの表示時間（ms、数値でなければ 100）。

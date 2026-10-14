@@ -26,6 +26,8 @@ pub struct NoVrKit<'a, V: 'static> {
     pub kernel: Kernel,
     pub panel: PanelId,
     watch: Option<Watch>,
+    /// 画面が開くよう頼んだ Web のページ（[`ui::PanelSpec::web`]）。テストプラットフォームでは開かない。
+    pub web_spawns: Vec<String>,
     /// マウスの位置と、左ボタンを押したままか。
     mouse: Vec<(Point<Pixels>, bool)>,
 }
@@ -60,6 +62,7 @@ impl<'a, V: Render> NoVrKit<'a, V> {
             kernel,
             panel,
             watch: Watch::from_env(),
+            web_spawns: Vec::new(),
             mouse: vec![(Point::default(), false)],
         };
         kit.step();
@@ -104,6 +107,12 @@ impl<'a, V: Render> NoVrKit<'a, V> {
     }
 
     fn add_spec(&mut self, spec: PanelSpec) {
+        // Web のページ（Tauri の WebView）はテストプラットフォームでは開けないので、頼まれたことだけ記録する。
+        // 実際に開いて操作するのは crates/ui/tests/web_*.rs。
+        if let Some(page) = spec.web_page() {
+            self.web_spawns.push(page.to_owned());
+            return;
+        }
         let id = self.windows.len();
         let pose = spec.pose_for(&self.kernel, id);
         let (root, cx) = self
@@ -160,6 +169,10 @@ impl<'a, V: Render> NoVrKit<'a, V> {
 }
 
 impl<V: Render> Driver<V> for NoVrKit<'_, V> {
+    fn web_spawns(&self) -> &[String] {
+        &self.web_spawns
+    }
+
     /// マウスを要素の中心へ動かす。
     fn hover(&mut self, selector: &'static str) -> &mut Self {
         let c = self.bounds(selector).center();

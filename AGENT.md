@@ -13,18 +13,16 @@ yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知ら
 | 3 入力 | `crates/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController) -> ControllerState`, `source(profile, Action)` / `scroll_source(profile)`（逆引き） |
 | 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, set_locked, set_resolution, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | 4.5 カーネル | `crates/kernel` | 一点集中型の中枢。ブートローダー → カーネル → 各層。下位（`vr` / `overlay`）の状態を 1 か所で持ち、ランタイムの選択（`Kernel::boot`）・フレームの進行（`tick`）・パネル操作（`apply` / `status`）・描画の受け渡し（`submit`）を提供する。UI・画面はカーネルだけを見る。カーネル内の設定 `kernel::config` が持つ設定ファイル: `os::config_dir()/config.toml`（ログと同じ `nyaw` ディレクトリ: Windows `%LOCALAPPDATA% | `Kernel::{boot, with_backend, tick, submit, apply, status, add_panel}`, `PanelCommand`, `PanelStatus`, `config::{load, parse, path, Config}`, `vr` / `overlay` の型の再エクスポート |
-| 5 UI | `crates/ui` | GPUI フロントエンド（1つ）。ポインタイベントを GPUI のマウス入力に変換して画面へ流し、描画結果を読み戻してパネルへ返す。どの画面かは知らない | `run(kernel, panels, profiler)`, `PanelSpec`, `pump`（入力1フレーム分。本番と testkit 共通）, `sync_panel`（画面からのパネル操作を反映。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `drag_preview`（`on_drag` の見た目はこれで包む。VR ではカーソル側だけに描く）, `PointerBridge`, `PanelControl` / `PanelCommand` / `PanelStatus` |
-| 5 Web UI | `crates/webui` | UI 層と同格の Tauri フロントエンド（`--webui` で UI 層の代わりに使う）。パネルを WebView のウィンドウにし、ポインタイベントを Tauri のイベントで送って注入したブリッジ（`src/bridge.js`）が DOM の PointerEvent / MouseEvent / click / wheel にする。ページからカーネルへは Tauri のコマンド。`Surface::Overlay` では WebView を撮って（Linux: WebKitGTK のスナップショット、Windows: WebView2 の CapturePreview）パネルへ返す。どのページかは知らない | `run(kernel, panels)` / `run_with`（テスト用の `ready` 付き）, `WebPanelSpec`, `Page`（`nyaw://` で配信）, `WebCommand` / `WebStatus` / `WebDevice` / `WebPointer`, `Outbox`, `BRIDGE` |
+| 5 UI | `crates/ui` | UI 層（1つ）。パネルを GPUI のウィンドウか Tauri の WebView（`ui::web`）で実体化し、1 つのフレームループ・1 つのカーネルで両方を回す。GPUI はポインタイベントをマウス入力に変換して画面へ流し、Web は注入したブリッジ（`src/web/bridge.js`）が DOM のポインタイベントにする。描画結果を読み戻してパネルへ返す。どの画面・ページかは知らない | `run(kernel, panels, profiler, web_files)` / `run_with`（テスト用の `Hooks`）, `PanelSpec`（`new` = GPUI、`web` / `spawn_web` = Web のページ）, `pump` / `pump_with`（入力1フレーム分。本番と testkit 共通）, `sync_panel`（画面からのパネル操作を反映。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `drag_preview`（`on_drag` の見た目はこれで包む。VR ではカーソル側だけに描く）, `PointerBridge`, `PanelControl` / `PanelCommand` / `PanelStatus`, `web::{Host, Files, WebCommand, WebStatus, WebPointer, Outbox, BRIDGE}` |
 | 5 横 | `crates/profiler` | 計測中だけ動くプロファイラ（`--profile` で起動時から、または Testing の Profiler ボタン / `PanelControl::profiling` で切り替え）。UI 層のフレームループが段階ごとの所要時間（wait / input / draw / render / upload と、プロファイラ表示自身の描画 profiler）を記録し、FPS・フレーム時間・CPU/GPU・ドロップをプロファイラパネル（Close ボタンで計測ごと止める）にグラフで出す。`--profile` のときは 1 フレーム 1 行の CSV（`os::log_dir()/profile.csv`）にもダンプする。GPU は同期して待つ段階（描画+読み戻し、VR への転送）の実時間 | `Profiler::{new, with_budget, record, add_self_time, summary}`, `ProfilerView`, `Stages`, `CSV_HEADER` |
 | 6 画面 | `crates/testing` ほか（n 個） | UI 層の上に載る画面。GPUI のビューで、ランタイムを意識しない | `Testing`（テスト用の画面） |
 | 6 画面 | `crates/wrist` | 常駐パネル。左手首に腕時計のように取り付き（掴めない）、時刻と日付、Toggle Panel ボタンで Testing を召喚 / 閉じる | `wrist::spec()`, `Wrist`, `WATCH_OFFSET` |
 | 6 画面 | `crates/beam` | コントローラのビーム。手ごとにレーザー（線）とカーソル（パネルに貼り付く円）とドラッグの見た目（ドラッグ中だけ。中身は `ui::drag_preview` で包んだビューを GPUI が描き、パネルの外・ウィンドウをまたいでも見える）の 3 枚。見た目だけを描き、置き場所・長さ・表示・描画順は `PanelSpec::pointer` で役割を与えたオーバーレイ層が毎 tick 決める（ヒット判定の対象外）。VR（`Surface::Overlay`）のときだけ載せる | `beam::specs()`, `Laser`, `Cursor`, `DragLayer` |
-| 6 画面（Web） | `crates/webtesting` | Testing の Web 版（1 ページの HTML）。Web UI 層の機能を試す。`webtesting:probe` イベントに状態と要素の位置を `webtesting:state` で返す（E2E 用） | `webtesting::{page, spec}`, `PROBE_EVENT`, `STATE_EVENT` |
-| 6 画面（Web） | `crates/webbeam` | ビームの Web 版（レーザーとカーソルの 2 枚。ドラッグの見た目は無い）。VR のときだけ載せる | `webbeam::specs()` |
+| 6 画面（Web） | `web/` + `crates/webpages` | Web のページ（React + Tailwind + Base UI。Vite のマルチページ）。`testing`（Testing の Web 版: 基本的なコンポーネントと VR の操作）と `testing-transparent`（半透明の確認）。`webpages` の build.rs が `npm run build` して全ファイルを埋め込む（Node.js が要る。`NYAW_WEB_SKIP=1` で飛ばす）。lint は oxlint、整形は oxfmt | `webpages::{FILES, TESTING, TESTING_TRANSPARENT}`, `web/src/nyaw.ts`（`window.nyaw` の型と `useStatus`）, `web/src/probe.ts`（E2E 用 `testing:probe`） |
 | - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, down, up, drag, scroll, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit::{with_backend, select_panel, type_keys}`, `VrKit::{panel, add_panel, press, drag_panel, move_hand, hand, profile, point_at}`, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け） |
-| - | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして（ランタイムの選択はカーネルの仕事）載せる画面（wrist、VR ならビームも）とともに `ui::run` に引き渡すだけ。`--webui` のときは `webui::run` に Web の画面（webtesting、VR なら webbeam も）を引き渡す。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
+| - | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして（ランタイムの選択はカーネルの仕事）載せる画面（wrist、VR ならビームも）と Web のページ（`webpages::FILES`）とともに `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
 
-依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input ← overlay ← kernel（config を内に持つ） ← ui ← 画面（testing 等） ← main`。Web は `kernel ← webui ← Web の画面（webtesting 等） ← main` で、`ui` と `webui` は互いに依存しない）。UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
+依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input ← overlay ← kernel（config を内に持つ） ← ui ← 画面（testing 等） ← main`）。Web のページ（`webpages`）は何にも依存せず、`main` が `ui::run` に渡す。画面は Web のページを名前（`PanelSpec::spawn_web(.., "testing")`）で開く。UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
 `logger` は例外で、どの層からも直接依存してよい唯一の横断クレート（`logger` 自身は他の自前クレートに依存しない）。
 
 ## ログ
@@ -91,6 +89,7 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 | 区分 | 要素（`debug_selector`） | 試せること |
 |---|---|---|
 | VR | `click-me` | クリック・ホバー（全機種・左右の手） |
+| Web | `open-web` | 隣に Testing の Web 版（`web/testing/`。React + Base UI）を開く。Web 版には同じ操作と、Base UI の Switch / Checkbox / Slider / Tabs、半透明のページ（`testing-transparent`）を開くボタンがある |
 | VR | `spawn-panel` | 隣に Testing パネルを追加し、その画面を独立して操作する |
 | VR | `attach-hmd` / `attach-left` / `attach-right` / `attach-tracker` / `detach` | 取り付け・取り外し（トラッカーは見えている最初のもの） |
 | VR | `lock` | 掴めないようにする |
@@ -104,32 +103,42 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 
 未対応: ツールチップ（遅延タイマー）、右クリック・ダブルクリック（レーザーは左ボタン1回押しのみ）、文字・画像の見た目（testkit のラスタライザは矩形・角丸・枠線・下線を描く）。
 
-## Web UI 層（`crates/webui`。UI 層と同格、オーバーレイ層（カーネル）の上）
+## Web のパネル（`ui::web`。UI 層の中で GPUI と並ぶ）
 
-UI 層（GPUI）の代わりに Tauri の WebView でパネルを出す。`cargo run -- --webui [--novr|--openxr|--openvr]`。
-GPUI と Tauri はどちらもメインスレッドのイベントループを握るので、1 プロセスではどちらか一方だけを使う。
+UI 層は 1 つで、パネルの中身を GPUI のビュー（`PanelSpec::new`）か Web のページ（`PanelSpec::web` / `spawn_web`）から選ぶ。
+GPUI と Tauri はどちらもメインスレッドのイベントループを使うので、GPUI のループ（`ui::run`）の上で Tauri を毎フレーム 1 回ずつ回す
+（`App::run_iteration`。Linux は GTK の溜まったイベントも処理する）。Tauri は最初の Web のパネルを開くときに起こす。
+カーネルは 1 つで、GPUI のパネルと Web のパネルは同じ PanelId の空間に並ぶ。Testing（GPUI）の `open-web` ボタンで Testing の Web 版を開ける。
 
 ```
-webui::run（Tauri のイベントループ。別スレッドが周期ごとに run_on_main_thread で起こし、MainEventsCleared でフレームを進める）
- └ kernel.tick()                       … UI 層と同じ（poll → 追従 → ヒット判定 → UiEvent）
- └ Outbox（パネルごと）                 → 同じ位置の Move は捨て、ページの返事（pointer_ack）待ちの間は Move は最新だけ・Scroll は合算
- └ emit_to(panel-N, "nyaw:pointer", [WebPointer])
-       └ bridge.js（全パネルに注入）    → DOM の pointerover/enter/down/move/up/out/leave/cancel、mouse*、click、wheel（既定動作のスクロール）、
-                                          フォーカス、setPointerCapture（合成の pointerId 1001/1002 を自前で持つ）
- └ ページのコマンド（panel_command / panel_status / spawn_panel）を反映 → 状態が変われば emit_to(panel-N, "nyaw:status", WebStatus)
- └ capture（Surface::Overlay のみ）     → 入力・状態の変化から 300ms は毎フレーム、ほかは 250ms ごとに WebView を撮り、変わっていれば kernel.submit
- └ WindowEvent::Resized                 → PanelCommand::Resize（論理 px。1m あたりのピクセル数を保つので VR 上のパネルも広がる）
+ui::run の 1 フレーム（GPUI の部分は上の「1 フレームの流れ」と同じ）
+ └ pump_with                            → GPUI のパネル宛ては PlatformInput に、Web のパネル宛ては UiEvent のまま web::Host へ
+ └ web::Host::deliver                   → Outbox（パネルごと）: 同じ位置の Move は捨て、ページの返事（pointer_ack）待ちの間は Move は最新だけ・Scroll は合算
+ └ web::Host::step
+     ├ Tauri を 1 回回す（run_iteration）、ウィンドウの Resized / Destroyed を処理
+     ├ emit_to(panel-N, "nyaw:pointer", [WebPointer])
+     │    └ bridge.js（全ページに注入）  → DOM の pointerover/enter/down/move/up/out/leave/cancel、mouse*、click、wheel（既定動作のスクロール）、
+     │                                      フォーカス、setPointerCapture（合成の pointerId 1001/1002 を自前で持つ）
+     ├ ページのコマンド（panel_command / panel_status / spawn_panel）を反映 → 状態が変われば emit_to(panel-N, "nyaw:status", WebStatus)
+     ├ capture（Surface::Overlay のみ）   → 入力・状態の変化から 300ms は毎フレーム、ほかは 250ms ごとに WebView を撮り、変わっていれば kernel.submit
+     └ ページが開くよう頼んだページ       → PanelSpec::spawn_web で開く
 ```
 
-- ページ（`Page`）は画面のクレートが `include_str!` で持ち、`nyaw://localhost/<名前>/index.html`（Windows は `http://nyaw.localhost/..`）で配信する。
-  ページは普通の Web ページと同じく `addEventListener` で書き、カーネルへは `window.nyaw` で話す:
+- ページは `web/`（Vite + React + TypeScript + Tailwind v4 + Base UI）。`web/<ページ名>/index.html` が入口で、`vite.config.ts` の `pages` に足す。
+  `crates/webpages` の build.rs がビルドして埋め込み、UI 層は `nyaw://localhost/<ページ名>/index.html`（Windows は `http://nyaw.localhost/..`）で配信する。
+  `cd web && npm run check` で oxlint（`--deny-warnings`）・oxfmt・tsc・ビルドをまとめて流す（CI の `web` ジョブと同じ）。lint と整形は `crates/ui/src/web/bridge.js` も対象。
+- ページからカーネルへは `window.nyaw`（`web/src/nyaw.ts` に型と `useStatus`）:
   `nyaw.command("detach" | "close" | { attach: "hmd" | "left" | "right" | { tracker: id } } | { lock: bool } | { resize: { width, height } })`,
-  `nyaw.status()`, `nyaw.onStatus(cb)`, `nyaw.spawn(ページ名)`。
+  `nyaw.status()`, `nyaw.onStatus(cb)`（戻り値で購読をやめる）, `nyaw.spawn(ページ名)`。
+- リサイズ: ウィンドウの大きさが変わると（OS の操作でも `{ resize }` でも）`PanelCommand::Resize` で解像度を合わせる（1m あたりのピクセル数を保つので VR 上のパネルも広がる）。
 - イベントの購読は `getCurrentWebviewWindow().listen` で行う（`event.listen` は既定で全宛先を受けるので、ほかのパネル宛ての `emit_to` まで届く）。
-- `Surface::Overlay` のウィンドウはデスクトップに出さない。WebKitGTK は未マップのウィンドウを描かないので、Linux は表示したまま画面の外（-20000, -20000）に置く。ほかは非表示。
-- novr（`Surface::Desktop`）では WebView を普通のウィンドウとして出し、OS のマウス・キーボードがそのまま届く（ブリッジのポインタは来ない）。
-- 合成イベントの限界: `isTrusted` は偽、CSS の `:hover` / `:active` は効かない（代わりにブリッジが `data-nyaw-hover` / `data-nyaw-active` を付けるので
-  `:is(:hover, [data-nyaw-hover])` と書く）、HTML5 のドラッグ＆ドロップ（`draggable`）とテキスト選択は起きない（ポインタイベントで書いたドラッグは動く）。
+- VR（`Surface::Overlay`）のウィンドウはデスクトップに出さず、GPUI のパネルと同じく背景を透かす（塗るかどうかはページが決める。読み戻しはストレートアルファ）。
+  WebKitGTK は未マップのウィンドウを描かないので、Linux は表示したまま画面の外（-20000, -20000）に置く。ほかは非表示。
+  novr（`Surface::Desktop`）では普通の（不透明な）ウィンドウとして出し、OS のマウス・キーボードがそのまま届く（ブリッジのポインタは来ない）。
+- 合成イベントの限界（VR）: `isTrusted` は偽、CSS の `:hover` / `:active` は効かない。代わりにブリッジが `data-nyaw-hover` / `data-nyaw-active` を付け、
+  `web/src/index.css` で Tailwind の `hover:` / `active:` をこの属性でも効くよう上書きしている。HTML5 のドラッグ＆ドロップ（`draggable`）とテキスト選択は起きない
+  （ポインタイベントで書いたドラッグや Base UI の Slider は動く）。
+- Base UI は Switch / Checkbox / Slider のつまみの `id` を中の隠れた `<input>` に付けるので、E2E で位置を引く `id` は見える要素（包む要素など）に付ける。
 
 ## 規約
 
@@ -151,12 +160,19 @@ webui::run（Tauri のイベントループ。別スレッドが周期ごとに 
   - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`, `attach.rs`）。
   - `color_at` は「ユーザーに見えている色」: novr は画面、VR は VR パネルに送られたテクスチャ。テストプラットフォームには GPU が無いため、描画は `testkit::raster` の CPU ラスタライザ。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
-- **WebView の E2E**: `crates/webui/tests/webview_vr.rs` / `webview_novr.rs`（`harness = false`。Tauri をメインスレッドで回し、手順は別スレッドで流す。ページの状態は webtesting の `webtesting:probe` で読む）。
-  - `webview_vr`: モックの VR（`Surface::Overlay`）。仮想コントローラのレーザーでホバー・クリック・ドラッグ（setPointerCapture）・スクロール・フォーカス・カーネル操作（ロック・取り付け）・パネルを掴む・リサイズ・隣にパネルを開いて閉じるまでを JS 側のイベントで確かめ、読み戻した描画が VR パネルに届く（クリックで変わった色・リサイズ後の大きさ）ことも見る。
-  - `webview_novr`: novr。xdotool で OS のマウスを動かし（`isTrusted` なネイティブのイベント）、OS 側のウィンドウのリサイズにカーネルの解像度が追従することも見る。
-  - Linux は画面（X11。Xvfb でよい）があれば `cargo test --workspace` で流れ、無ければスキップ。ほかの OS は `-- --ignored` のときだけ。ビルドには WebKitGTK（`libwebkit2gtk-4.1-dev`）が要る。
+- **Web のパネルの E2E**: `crates/ui/tests/web_vr.rs` / `web_novr.rs`（`harness = false`）。本番と同じ `ui::run_with`（GPUI のループの上で Tauri も回す）を実プラットフォームで起動し、
+  手順は別スレッドで流す。ページの状態は `web/src/probe.ts` の `testing:probe` → `testing:state` で読み、GPUI 側は `Hooks::remote` でフレームループに処理を差し込む。
+  - `web_vr`: モックの VR（`Surface::Overlay`）。仮想コントローラのレーザーで、ホバー（Tailwind の hover: の色まで VR に映る）・クリック・押している間・
+    Base UI の Toggle / Switch / Checkbox / Tabs / Slider（ポインタキャプチャ）/ Menu（ポップアップ）・ドラッグ・スクロール（ScrollArea）・フォーカス・
+    カーネル操作（ロック・取り付け）・パネルを掴む・リサイズを JS 側で確かめ、読み戻した描画が VR パネルに届くことを見る。
+    半透明のページを開き、テクスチャのアルファ（透明 0・25% 64・50% 128・不透明 255、色はストレートアルファ）とレーザーでの操作、Close で閉じるところまで見る。
+  - `web_novr`: novr。GPUI の Testing を開き、そこから（ボタンと同じ `PanelControl::spawns` で）Web 版を開き、xdotool で OS のマウスとキーボードを動かして
+    同じコンポーネントを操作する（`isTrusted` なネイティブのイベント）。OS 側のウィンドウのリサイズにカーネルの解像度が追従すること、半透明のページも開いて操作できることも見る。
+    ボタン自体（GPUI の Testing → Web のページを頼む）は testkit の `open_web_testing` で全ランタイムで確かめる。
+  - Linux は画面（X11。Xvfb でよい）があれば `cargo test --workspace` で流れ、無ければスキップ。ほかの OS は `-- --ignored` のときだけ。
+    GPUI のウィンドウに Vulkan（GPU が無ければ mesa の lavapipe）、Web に WebKitGTK（`libwebkit2gtk-4.1-dev`）、novr に xdotool が要る。
     ```sh
-    Xvfb :99 & DISPLAY=:99 cargo test -p webui --tests
+    Xvfb :99 & DISPLAY=:99 cargo test -p ui --tests
     ```
 - **実ランタイムでの E2E**: `crates/testkit/tests/runtimes.rs`（`harness = false`）。`testkit::runtimes` がランタイムを起動し（Playwright の `webServer` に当たる）、繋いでオーバーレイへ送り、Testing をマウスで操作して（取り付け・ロック）その描画を `NoVrKit::with_backend` で実ランタイムへ送り、OpenVR はランタイムから読み戻して（光ったボタンまで）確かめ、Drop で自分が起動したプロセスを止めて消えたことまで確かめる。起動に数秒かかり画面にも出るので `cargo test -p testkit --test runtimes -- --ignored [monado|steamvr]` のときだけ流す。入っていないランタイムと、すでに動いているランタイム（別の設定で動いているかもしれず、止めると持ち主が困る）はスキップする。
   - **ランタイムを入れる**: `cargo runtimes`（`.cargo/config.toml` の別名。`npx playwright install` に当たるウィザード。`list` / `install [名前] [--dry-run]` / `uninstall [名前]`）。入れる先は `NYAW_RUNTIMES_PATH`、無ければ `%LOCALAPPDATA%\nyaw\runtimes`（Linux は `~/.cache/nyaw/runtimes`）。
@@ -184,9 +200,10 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 
 - 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は Monado（Windows、simulated）でパネルが映るところまで確認済みで、コントローラ入力は未確認。
 - Linux での描画の読み戻し（gpui の `render_to_image` が Windows のみ実装。`gpui_wgpu` のヘッドレスレンダラ経由が候補）。
-- Web UI 層: Windows の WebView2 の読み戻し（CapturePreview）は型検査のみで実機未確認（非表示ウィンドウで描かれない場合は画面外に置く）。macOS の読み戻しは無い。
-  Wayland ではウィンドウを画面外に置けないので VR のパネルがデスクトップにも出る。プロファイラ・ドラッグの見た目（`Pointer::Drag`）は無い。
-  キーボードは novr のみ（UI 層と同じ）。
+- Web のパネル: Windows では未確認（GPUI のループの上で Tauri を `run_iteration` で回すこと、WebView2 の読み戻し（CapturePreview。型検査のみ）。
+  Tauri は最初の Web のパネルを開くまで起こさないので、開かなければ GPUI だけの動きは変わらない）。macOS の読み戻しは無い。
+  Wayland ではウィンドウを画面外に置けないので VR の Web のパネルがデスクトップにも出る。Web のページのドラッグの見た目は `Pointer::Drag` のパネルに出ない（ページ内で動かす）。
+  キーボードは novr のみ（GPUI と同じ）。
 - 描画は毎フレーム CPU に読み戻し、変化があれば `vr` が Vulkan のイメージへ上げ直してランタイムへ渡す（`crates/vr/src/gpu.rs`。1024x768 で約 1.6ms）。GPUI のテクスチャを読み戻さずに直接共有する経路は未実装。
 - Windows での OpenXR ランタイム検出（レジストリ）。
 - `gpui` は crates.io 版では `Window::dispatch_event` を外部から呼べないため、Zed の git リビジョンに固定している。`render_to_image` のため `ui` は本番でも gpui の `test-support` フィーチャーを有効にしている。

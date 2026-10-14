@@ -1,5 +1,6 @@
-//! WebView の E2E の共通部分。Tauri はメインスレッドでイベントループを回すので、テストの手順は別スレッドで流し、
-//! ページ（webtesting）の状態は Tauri のイベント（`webtesting:probe` → `webtesting:state`）で読む。
+//! Web のパネルの E2E の共通部分。本番と同じく GPUI のイベントループがメインスレッドを持ち、Tauri もその上で回るので、
+//! テストの手順は別スレッドで流す。ページの状態は Tauri のイベント（`testing:probe` → `testing:state`）で読み、
+//! GPUI 側は `ui::Hooks::remote` でフレームループに処理を差し込んで触る。
 
 #![allow(dead_code)] // テストごとに使う部分が違う
 
@@ -16,7 +17,6 @@ use kernel::vr::{Frame, OverlayId, mock::MockBackend};
 use kernel::{Kernel, Pose, Runtime, Surface, VrBackend, VrError};
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Listener};
-use webui::WebPanelSpec;
 
 /// どこで流すか。Linux は画面（X / Wayland）があれば毎回、ほかの OS は `--ignored` のときだけ
 /// （読み戻しなど Linux でしか確かめていない経路を含むため）。
@@ -80,52 +80,67 @@ impl VrBackend for SharedMock {
     }
 }
 
-/// `kernel` と `panels` で Web UI を起動し、`scenario` を別スレッドで流す。失敗（パニック）したら終了コードで返す。
-pub fn run<B: VrBackend + 'static>(
+/// ページ（web/src/probe.ts）への問い合わせと返事。
+pub const PROBE_EVENT: &str = "testing:probe";
+pub const STATE_EVENT: &str = "testing:state";
+
+/// テストのスレッドから、フレームループ（メインスレッド）で GPUI を触る口。
+pub type Remote = std::sync::mpsc::Sender<ui::Remote>;
+
+/// 本番と同じ `ui::run_with`（GPUI のイベントループの上で Tauri も回す）で起動する。`kick` を最初のフレームで実行し、
+/// Web（Tauri）が起きたら `scenario` を別スレッドで流す。最初に読むのは `label` のパネル。
+/// 終わったら（失敗したらパニックの内容を出して）終了コードでプロセスを終える。
+pub fn run(
     name: &'static str,
-    kernel: Kernel<B>,
-    panels: Vec<WebPanelSpec>,
-    scenario: impl FnOnce(&mut Page) + Send + 'static,
+    kernel: Kernel,
+    panels: Vec<ui::PanelSpec>,
+    label: &'static str,
+    kick: Option<ui::Remote>,
+    scenario: impl FnOnce(&mut Page, &Remote) + Send + 'static,
 ) -> std::process::ExitCode {
-    let result: Arc<Mutex<Option<bool>>> = Arc::default();
-    let done = result.clone();
-    let code = webui::run_with(kernel, panels, move |app| {
-        let (tx, rx) = channel();
-        app.listen_any(webtesting::STATE_EVENT, move |e| {
-            if let Ok(v) = serde_json::from_str::<Value>(e.payload()) {
-                let _ = tx.send(v);
-            }
-        });
-        let app = app.clone();
-        std::thread::spawn(move || {
-            let mut page = Page {
-                app: app.clone(),
-                label: "panel-0".into(),
-                replies: rx,
-                seq: 0,
-            };
-            // ページの読み込みと最初の状態を待つ。
-            page.until("ページが読み込まれ状態が届く", |s| {
-                !s["state"]["status"].is_null()
-            });
-            let ok = std::panic::catch_unwind(AssertUnwindSafe(|| scenario(&mut page))).is_ok();
-            *done.lock().unwrap() = Some(ok);
-            app.exit(if ok { 0 } else { 1 });
-        });
-    });
-    match *result.lock().unwrap() {
-        Some(true) if code == 0 => {
-            println!("{name}: ok");
-            std::process::ExitCode::SUCCESS
-        }
-        r => {
-            println!("{name}: FAILED (結果 {r:?}, 終了コード {code})");
-            std::process::ExitCode::FAILURE
-        }
+    let (remote, rx) = channel::<ui::Remote>();
+    if let Some(k) = kick {
+        remote.send(k).unwrap();
     }
+    let hooks = ui::Hooks {
+        on_web: Some(Box::new(move |app: &AppHandle| {
+            let (tx, replies) = channel();
+            app.listen_any(STATE_EVENT, move |e| {
+                if let Ok(v) = serde_json::from_str::<Value>(e.payload()) {
+                    let _ = tx.send(v);
+                }
+            });
+            let app = app.clone();
+            std::thread::spawn(move || {
+                let mut page = Page {
+                    app,
+                    label: label.into(),
+                    replies,
+                    seq: 0,
+                };
+                let ok = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                    // ページの読み込みと最初の状態を待つ。
+                    page.until("ページが読み込まれ状態が届く", |s| {
+                        !s["state"]["status"].is_null()
+                    });
+                    scenario(&mut page, &remote)
+                }))
+                .is_ok();
+                println!("{name}: {}", if ok { "ok" } else { "FAILED" });
+                let _ = remote.send(Box::new(move |_| {
+                    logger::global().flush();
+                    std::process::exit(if ok { 0 } else { 1 })
+                }));
+            });
+        })),
+        remote: Some(rx),
+    };
+    ui::run_with(kernel, panels, None, webpages::FILES, hooks);
+    println!("{name}: FAILED（シナリオが終わる前にアプリが終了した）");
+    std::process::ExitCode::FAILURE
 }
 
-/// webtesting のページ 1 枚を読む口。
+/// Web のページ 1 枚を読む口（`label` のパネル）。
 pub struct Page {
     pub app: AppHandle,
     pub label: String,
@@ -141,7 +156,7 @@ impl Page {
         self.seq += 1;
         let deadline = Instant::now() + Duration::from_secs(2);
         self.app
-            .emit_to(self.label.as_str(), webtesting::PROBE_EVENT, self.seq)
+            .emit_to(self.label.as_str(), PROBE_EVENT, self.seq)
             .unwrap();
         while let Some(left) = deadline.checked_duration_since(Instant::now()) {
             match self.replies.recv_timeout(left) {

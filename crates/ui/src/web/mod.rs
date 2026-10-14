@@ -1,26 +1,29 @@
-//! Layer 5（UI 層と同格）: Tauri の Web フロントエンド。各オーバーレイパネルは Tauri の WebView ウィンドウで実体化される。
+//! UI 層の Web 側: Tauri の WebView でパネルを実体化する（GPUI のウィンドウと並ぶもう 1 つの見せ方）。
+//! フレームループ（[`crate::run`]）は GPUI のイベントループの上で回り、毎フレーム [`Host::step`] で Tauri も 1 回回す。
+//! カーネルは 1 つで、GPUI のパネルと Web のパネルは同じ PanelId の空間に並ぶ。
 //!
 //! - レーザー → Web: オーバーレイ層のポインタイベントを Tauri のイベント `nyaw:pointer` でそのパネルの WebView へ送り、
 //!   注入したブリッジ（`bridge.js`）が DOM の PointerEvent / MouseEvent / click / wheel として発火する。
-//!   ページは普通の Web ページと同じく `addEventListener("pointerdown", ..)` で書け、VR 上にあることを意識しない。
+//!   ページは普通の Web ページと同じく React 等で書け、VR 上にあることを意識しない。
 //!   novr（`Surface::Desktop`）では WebView を OS のウィンドウとして出すので、OS のマウスがそのまま届く。
 //! - Web → カーネル: ページは Tauri のコマンド（`panel_command` / `panel_status` / `spawn_panel`、JS からは `window.nyaw`）で
 //!   操作を積み、フレームループがカーネルに反映して状態の変化を Tauri のイベント `nyaw:status` で返す
-//!   （UI 層の `PanelControl` / `sync_panel` と同じ形）。
-//! - Web → VR: `Surface::Overlay` では WebView を非表示のウィンドウで描き、[`capture`] で読み戻して `Kernel::submit` で送る。
+//!   （GPUI の `PanelControl` / `sync_panel` と同じ形）。
+//! - Web → VR: `Surface::Overlay` では WebView を画面に出さずに描き、[`capture`] で読み戻して `Kernel::submit` で送る。
 //! - リサイズ: ウィンドウの大きさが変わると（OS の操作でも `{ resize }` コマンドでも）パネルの解像度を合わせる
 //!   （`PanelCommand::Resize`。1m あたりのピクセル数を保つので VR 上のパネルも広がる）。
 //!
-//! どのページかは知らない。ページ（[`Page`]）は画面のクレートが持ち、`nyaw://` プロトコルで配信する。
+//! どのページかは知らない。ページのファイル（[`Files`]）は上から渡され、`nyaw://localhost/<ページ名>/index.html` で配信する。
 
 mod capture;
 
 use std::{
     borrow::Cow,
+    cell::RefCell,
     collections::HashMap,
+    rc::Rc,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, Sender, channel},
     },
     time::{Duration, Instant},
@@ -28,7 +31,7 @@ use std::{
 
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, Pointer, PointerEvent, Pose, Runtime, Surface, Vec2,
+    Device, Kernel, PanelCommand, PanelId, PointerEvent, Pose, Runtime, Surface, UiEvent, Vec2,
     VrBackend,
 };
 use serde::{Deserialize, Serialize};
@@ -36,6 +39,8 @@ use tauri::{
     AppHandle, Emitter, LogicalSize, PhysicalSize, RunEvent, WebviewUrl, WebviewWindow,
     WebviewWindowBuilder, WindowEvent, Wry,
 };
+
+pub use capture::Image;
 
 /// すべてのパネルに注入するブリッジ。
 pub const BRIDGE: &str = include_str!("bridge.js");
@@ -49,56 +54,15 @@ pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY
 /// 「手・トラッカーに取り付け」の相対姿勢: 0.3m 前（Testing と同じ）。
 pub const HAND_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.3), Quat::IDENTITY);
 
-const PANEL_PX: (u32, u32) = (800, 600);
-/// Desktop（novr）の周期。VR ランタイムは `poll` が vsync まで待つ。
-// ponytail: Tauri はモニタのリフレッシュレートを出さないので約 90Hz に固定。
-const FRAME: Duration = Duration::from_millis(11);
-/// 入力も状態の変化も無いパネルを撮り直す間隔。ページが自分で動かす表示（時計など）はこれで反映される。
-const IDLE_REDRAW: Duration = Duration::from_millis(250);
 /// 入力・状態の変化から、毎フレーム撮り直し続ける時間。ページの JS がイベントを処理して描き終わるのを待たずに済む。
 // ponytail: WebView の描画完了を知る手段が無いので時間で決める。requestAnimationFrame から知らせる手もある。
 const HOT: Duration = Duration::from_millis(300);
 
-/// 読み戻した 1 フレーム（RGBA8、ストレートアルファ、行間に詰め物なし）。
-#[derive(Debug, Clone, PartialEq)]
-pub struct Image {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-}
+/// ページのファイル（`<ページ名>/index.html` と、そこから相対パスで辿る共有の `assets/` など）。
+/// `webpages::FILES` のように、ビルドしたものを埋め込んで渡す。
+pub type Files = &'static [(&'static str, &'static [u8])];
 
-// ---- ページ ----
-
-/// Web の画面（UI 層でいう画面のビュー）。`nyaw://localhost/<name>/<path>` で配信する。
-#[derive(Debug, Clone)]
-pub struct Page {
-    name: &'static str,
-    files: Vec<(&'static str, &'static [u8])>,
-}
-
-impl Page {
-    pub fn new(name: &'static str) -> Self {
-        Self {
-            name,
-            files: Vec::new(),
-        }
-    }
-
-    /// `index.html` だけのページ。
-    pub fn html(name: &'static str, html: &'static str) -> Self {
-        Self::new(name).file("index.html", html.as_bytes())
-    }
-
-    /// ページに含めるファイル（`index.html` からの相対パス）。
-    pub fn file(mut self, path: &'static str, bytes: &'static [u8]) -> Self {
-        self.files.push((path, bytes));
-        self
-    }
-
-    pub fn name(&self) -> &'static str {
-        self.name
-    }
-}
+// ---- ページの配信 ----
 
 /// ページの入口の URL。Windows（WebView2）は独自スキームを `http://<scheme>.localhost` で受ける。
 pub fn page_url(name: &str) -> tauri::Url {
@@ -112,18 +76,28 @@ pub fn page_url(name: &str) -> tauri::Url {
         .expect("ページ名は URL のパスに使える")
 }
 
-/// `/<page>/<path>` に当たるファイルと Content-Type。
-fn serve(pages: &HashMap<&'static str, Page>, path: &str) -> Option<(&'static [u8], &'static str)> {
-    let (name, file) = path.trim_start_matches('/').split_once('/')?;
-    let file = if file.is_empty() { "index.html" } else { file };
-    let (_, bytes) = pages.get(name)?.files.iter().find(|(p, _)| *p == file)?;
-    let mime = match file.rsplit_once('.').map(|(_, ext)| ext) {
+fn has_page(files: Files, name: &str) -> bool {
+    let entry = format!("{name}/index.html");
+    files.iter().any(|(p, _)| *p == entry)
+}
+
+/// URL のパス（`/<ページ名>/<ファイル>`）に当たるファイルと Content-Type。
+fn serve(files: Files, path: &str) -> Option<(&'static [u8], &'static str)> {
+    let path = path.trim_start_matches('/');
+    let path = if path.is_empty() || path.ends_with('/') {
+        format!("{path}index.html")
+    } else {
+        path.to_owned()
+    };
+    let (_, bytes) = files.iter().find(|(p, _)| *p == path)?;
+    let mime = match path.rsplit_once('.').map(|(_, ext)| ext) {
         Some("html") => "text/html; charset=utf-8",
         Some("js" | "mjs") => "text/javascript; charset=utf-8",
         Some("css") => "text/css; charset=utf-8",
         Some("json") => "application/json",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
+        Some("woff2") => "font/woff2",
         _ => "application/octet-stream",
     };
     Some((bytes, mime))
@@ -300,105 +274,12 @@ impl Outbox {
     }
 }
 
-// ---- パネルの指定 ----
-
-/// ページと VR 空間での配置（UI 層の `PanelSpec` に当たる）。
-pub struct WebPanelSpec {
-    page: Page,
-    pose: Pose,
-    from: Option<PanelId>,
-    /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
-    in_view: bool,
-    size: Vec2,
-    resolution: (u32, u32),
-    attach: Option<(Device, Pose)>,
-    locked: bool,
-    pointer: Option<(Hand, Pointer)>,
-    /// 背景を透かす（ページの背景が透明なら VR でも透ける）。
-    transparent: bool,
-}
-
-impl WebPanelSpec {
-    pub fn new(pose: Pose, page: Page) -> Self {
-        Self {
-            page,
-            pose,
-            from: None,
-            in_view: false,
-            size: Vec2::new(0.8, 0.6),
-            resolution: PANEL_PX,
-            attach: None,
-            locked: false,
-            pointer: None,
-            transparent: false,
-        }
-    }
-
-    fn spawn(from: PanelId, page: Page) -> Self {
-        Self {
-            from: Some(from),
-            ..Self::new(Pose::IDENTITY, page)
-        }
-    }
-
-    /// 開いた瞬間の目の前に出す。`offset` は頭から見た相対姿勢（頭の傾きは無視し、パネルは立てて置く）。
-    pub fn in_view(mut self, offset: Pose) -> Self {
-        (self.pose, self.from, self.in_view) = (offset, None, true);
-        self
-    }
-
-    /// 大きさ（m）と解像度（論理 px = CSS px）。既定は 0.8m × 0.6m / 800 × 600。
-    pub fn sized(mut self, size: Vec2, resolution: (u32, u32)) -> Self {
-        (self.size, self.resolution) = (size, resolution);
-        self
-    }
-
-    pub fn attached(mut self, device: Device, offset: Pose) -> Self {
-        self.attach = Some((device, offset));
-        self
-    }
-
-    pub fn locked(mut self) -> Self {
-        self.locked = true;
-        self
-    }
-
-    /// `hand` のレーザー（線またはカーソル）を描くパネルにする。置き場所はオーバーレイ層が決める。
-    pub fn pointer(mut self, hand: Hand, part: Pointer) -> Self {
-        self.pointer = Some((hand, part));
-        self
-    }
-
-    pub fn transparent(mut self) -> Self {
-        self.transparent = true;
-        self
-    }
-
-    pub fn page(&self) -> &Page {
-        &self.page
-    }
-
-    pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, next: PanelId) -> Pose {
-        match self.from {
-            Some(from) => {
-                kernel.panel(from).pose
-                    * Pose::new(
-                        Vec3::new(1.2 * (next - from) as f32, 0.0, 0.0),
-                        Quat::IDENTITY,
-                    )
-            }
-            None if self.in_view => kernel.hmd().leveled() * self.pose,
-            None => self.pose,
-        }
-    }
-}
-
 // ---- コマンド（ページ → カーネル） ----
 
 /// コマンドとフレームループの受け渡し口（Tauri の管理状態）。UI 層の `PanelControl` に当たる。
 struct Shared {
     control: Mutex<Control>,
-    pages: HashMap<&'static str, Page>,
+    files: Files,
 }
 
 #[derive(Default)]
@@ -406,7 +287,7 @@ struct Control {
     commands: HashMap<PanelId, Vec<WebCommand>>,
     statuses: HashMap<PanelId, WebStatus>,
     /// (開いたパネル, ページ名)。
-    spawns: Vec<(PanelId, &'static str)>,
+    spawns: Vec<(PanelId, String)>,
     /// ポインタの束を処理し終えたパネル（[`Outbox::ack`]）。
     acks: Vec<PanelId>,
 }
@@ -467,133 +348,24 @@ fn spawn_panel(
     page: String,
 ) -> Result<(), String> {
     let panel = panel_of(webview.label())?;
-    let (&name, _) = shared
-        .pages
-        .get_key_value(page.as_str())
-        .ok_or_else(|| format!("知らないページ: {page}"))?;
+    if !has_page(shared.files, &page) {
+        return Err(format!("知らないページ: {page}"));
+    }
     let mut ctl = shared.control.lock().map_err(|e| e.to_string())?;
-    ctl.spawns.push((panel, name));
+    ctl.spawns.push((panel, page));
     Ok(())
 }
 
-// ---- 起動とフレームループ ----
+// ---- Tauri の口 ----
 
 fn context() -> tauri::Context<Wry> {
     tauri::generate_context!()
 }
 
-/// メインスレッドを占有する。Tauri のイベントループがランタイムのフレームループも回す。
-/// どのランタイムでも同じ経路を通り、違いは `kernel.surface()` だけ。戻り値は終了コード。
-pub fn run(kernel: Kernel, panels: Vec<WebPanelSpec>) -> i32 {
-    run_with(kernel, panels, |_| {})
-}
-
-/// [`run`] に、パネルを開いた直後に呼ぶ `ready` を足したもの（テストがイベントを購読し、操作を始めるのに使う）。
-pub fn run_with<B: VrBackend + 'static>(
-    kernel: Kernel<B>,
-    panels: Vec<WebPanelSpec>,
-    ready: impl FnOnce(&AppHandle) + 'static,
-) -> i32 {
-    let shared = Arc::new(Shared {
-        control: Mutex::default(),
-        pages: panels
-            .iter()
-            .map(|s| (s.page.name, s.page.clone()))
-            .collect(),
-    });
-    let served = shared.clone();
-    let app = tauri::Builder::<Wry>::default()
-        .manage(shared.clone())
-        .register_uri_scheme_protocol("nyaw", move |_, req| {
-            let res = tauri::http::Response::builder();
-            match serve(&served.pages, req.uri().path()) {
-                Some((body, mime)) => res
-                    .header(tauri::http::header::CONTENT_TYPE, mime)
-                    .body(Cow::Borrowed(body)),
-                None => res.status(404).body(Cow::Borrowed(&b"not found"[..])),
-            }
-            .expect("ヘッダーは固定の値")
-        })
-        .invoke_handler(tauri::generate_handler![
-            panel_command,
-            panel_status,
-            pointer_ack,
-            spawn_panel
-        ])
-        .build(context());
-    let app = match app {
-        Ok(app) => app,
-        Err(e) => {
-            logger::error!("Tauri を起動できない", error = e);
-            return 1;
-        }
-    };
-    let mut frames = Frames::new(kernel, shared);
-    let mut start = Some((panels, ready));
-    let pending = Arc::new(AtomicBool::new(false));
-    app.run_return(move |app, event| match event {
-        RunEvent::Ready => {
-            if let Some((panels, ready)) = start.take() {
-                for spec in panels {
-                    frames.open(app, spec);
-                }
-                tick(app.clone(), frames.wait(), pending.clone());
-                ready(app);
-            }
-        }
-        RunEvent::MainEventsCleared => frames.idle(app),
-        RunEvent::WindowEvent {
-            label,
-            event: WindowEvent::Resized(size),
-            ..
-        } => frames.resized(app, &label, size),
-        RunEvent::WindowEvent {
-            label,
-            event: WindowEvent::Destroyed,
-            ..
-        } => frames.destroyed(&label),
-        _ => {}
-    })
-}
-
-/// `period` ごとにイベントループを起こす（[`RunEvent::MainEventsCleared`] が来て [`Frames::idle`] が回る）。
-/// フレームループはカーネルを持つのでメインスレッドから出せない。起こすだけを別スレッドで行う。
-fn tick(app: AppHandle, period: Duration, pending: Arc<AtomicBool>) {
-    std::thread::spawn(move || {
-        loop {
-            std::thread::sleep(period);
-            // 前の起こしが処理されるまで積まない（VR は poll が vsync まで待つので溜まりやすい）。
-            if pending.swap(true, Ordering::AcqRel) {
-                continue;
-            }
-            let p = pending.clone();
-            if app
-                .run_on_main_thread(move || p.store(false, Ordering::Release))
-                .is_err()
-            {
-                break; // 終了した
-            }
-        }
-    });
-}
-
-/// `Surface::Overlay` のウィンドウをデスクトップに出さない。
-/// WebKitGTK は未マップ（非表示）のウィンドウを描かず撮れないので、表示したまま画面の外に置く。
-// ponytail: Wayland ではアプリがウィンドウの位置を決められず画面に出てしまう。X11（XWayland 含む）のみ。
-// GDK_BACKEND=x11 で起動するか、オフスクリーン描画（WPE 等）に移すのが次の一手。
-#[cfg(target_os = "linux")]
-fn offscreen<'a>(
-    b: WebviewWindowBuilder<'a, Wry, AppHandle>,
-) -> WebviewWindowBuilder<'a, Wry, AppHandle> {
-    b.visible(true).position(-20000.0, -20000.0)
-}
-
-/// `Surface::Overlay` のウィンドウをデスクトップに出さない（非表示のまま描かせて撮る）。
-#[cfg(not(target_os = "linux"))]
-fn offscreen<'a>(
-    b: WebviewWindowBuilder<'a, Wry, AppHandle>,
-) -> WebviewWindowBuilder<'a, Wry, AppHandle> {
-    b.visible(false)
+/// `run_iteration` の中で受けたウィンドウのイベント。
+enum WinEvent {
+    Resized(String, PhysicalSize<u32>),
+    Destroyed(String),
 }
 
 /// パネルごとの描画（読み戻し）の状態。
@@ -605,86 +377,103 @@ struct Draw {
     last: Option<Image>,
 }
 
-struct Frames<B: VrBackend> {
-    kernel: Kernel<B>,
-    surface: Surface,
+/// Web のパネルを持つ Tauri アプリ。メインスレッド専用で、イベントループは持たず [`Self::step`] で回してもらう。
+/// GPUI と Tauri はどちらもメインスレッドのイベントループを使うので、GPUI のループの上で Tauri を 1 回ずつ回す。
+pub struct Host {
+    app: tauri::App<Wry>,
     shared: Arc<Shared>,
-    /// 添字は PanelId。閉じたパネルは None。
-    windows: Vec<Option<WebviewWindow<Wry>>>,
-    draws: Vec<Draw>,
+    surface: Surface,
+    windows: HashMap<PanelId, WebviewWindow<Wry>>,
+    draws: HashMap<PanelId, Draw>,
+    outboxes: HashMap<PanelId, Outbox>,
     /// (パネル, 手) ごとに最後に送った Move の位置。
     moved: HashMap<(PanelId, Hand), Vec2>,
-    /// 添字は PanelId。
-    outboxes: Vec<Outbox>,
+    events: Rc<RefCell<Vec<WinEvent>>>,
     tx: Sender<(PanelId, Result<Image, String>)>,
     rx: Receiver<(PanelId, Result<Image, String>)>,
-    next: Instant,
     warned: bool,
 }
 
-impl<B: VrBackend> Frames<B> {
-    fn new(kernel: Kernel<B>, shared: Arc<Shared>) -> Self {
+impl Host {
+    /// Tauri を起こす。1 プロセスで 1 回だけ（イベントループは作り直せない）。
+    pub fn new(surface: Surface, files: Files) -> tauri::Result<Self> {
+        let shared = Arc::new(Shared {
+            control: Mutex::default(),
+            files,
+        });
+        let app = tauri::Builder::<Wry>::default()
+            .manage(shared.clone())
+            .register_uri_scheme_protocol("nyaw", move |_, req| {
+                let res = tauri::http::Response::builder();
+                match serve(files, req.uri().path()) {
+                    Some((body, mime)) => res
+                        .header(tauri::http::header::CONTENT_TYPE, mime)
+                        .body(Cow::Borrowed(body)),
+                    None => res.status(404).body(Cow::Borrowed(&b"not found"[..])),
+                }
+                .expect("ヘッダーは固定の値")
+            })
+            .invoke_handler(tauri::generate_handler![
+                panel_command,
+                panel_status,
+                pointer_ack,
+                spawn_panel
+            ])
+            .build(context())?;
         let (tx, rx) = channel();
-        Self {
-            surface: kernel.surface(),
-            kernel,
+        logger::info!(
+            "Web（Tauri）を起動した",
+            pages = files
+                .iter()
+                .filter(|(p, _)| p.ends_with("/index.html"))
+                .count()
+        );
+        Ok(Self {
+            app,
             shared,
-            windows: Vec::new(),
-            draws: Vec::new(),
+            surface,
+            windows: HashMap::new(),
+            draws: HashMap::new(),
+            outboxes: HashMap::new(),
             moved: HashMap::new(),
-            outboxes: Vec::new(),
+            events: Rc::default(),
             tx,
             rx,
-            next: Instant::now(),
             warned: false,
-        }
+        })
     }
 
-    /// 起こす間隔。VR は `poll` が vsync まで待つので、すぐ戻ってくる程度でよい（UI 層と同じく 1ms 譲る）。
-    fn wait(&self) -> Duration {
-        match self.surface {
-            Surface::Desktop => FRAME,
-            Surface::Overlay => Duration::from_millis(1),
-        }
+    pub fn handle(&self) -> &AppHandle {
+        self.app.handle()
     }
 
-    fn open(&mut self, app: &AppHandle, spec: WebPanelSpec) -> PanelId {
-        let index = self.windows.len();
-        let pose = spec.pose_for(&self.kernel, index);
-        let panel = self
-            .kernel
-            .add_panel(
-                &format!("nyaw.web.{index}"),
-                pose,
-                spec.size,
-                spec.resolution,
-            )
-            .expect("create overlay");
-        debug_assert_eq!(panel, index, "PanelId は開いた順の添字");
-        if let Some((device, offset)) = spec.attach {
-            self.kernel
-                .apply(panel, PanelCommand::Attach(device, offset));
+    /// `panel` が開いている Web のパネルか。
+    pub fn contains(&self, panel: PanelId) -> bool {
+        self.windows.contains_key(&panel)
+    }
+
+    /// カーネルに作ったパネル `panel` に、ページ `page` の WebView のウィンドウを開く。開けなければパネルを閉じる。
+    /// VR（`Surface::Overlay`）では GPUI のパネルと同じく背景を透かす（塗るかどうかはページが決める）。
+    /// novr では普通の（不透明な）ウィンドウ。
+    pub fn open<B: VrBackend>(&mut self, kernel: &mut Kernel<B>, panel: PanelId, page: &str) {
+        if !has_page(self.shared.files, page) {
+            logger::error!("知らない Web のページ", page = page, panel = panel);
+            kernel.apply(panel, PanelCommand::Close);
+            return;
         }
-        if spec.locked {
-            self.kernel.apply(panel, PanelCommand::Lock(true));
-        }
-        if let Some((hand, part)) = spec.pointer {
-            self.kernel.apply(panel, PanelCommand::Pointer(hand, part));
-        }
-        let overlay = self.surface == Surface::Overlay;
-        let (w, h) = spec.resolution;
+        let (w, h) = kernel.panel(panel).resolution;
         let builder = WebviewWindowBuilder::new(
-            app,
+            &self.app,
             label(panel),
-            WebviewUrl::CustomProtocol(page_url(spec.page.name)),
+            WebviewUrl::CustomProtocol(page_url(page)),
         )
-        .title(spec.page.name)
+        .title(page)
         .inner_size(w as f64, h as f64)
-        .initialization_script(BRIDGE)
-        .transparent(spec.transparent);
-        let window = if overlay {
+        .initialization_script(BRIDGE);
+        let window = if self.surface == Surface::Overlay {
             // 描画は VR に送るので、デスクトップには出さない。
             offscreen(builder)
+                .transparent(true)
                 .focused(false)
                 .skip_taskbar(true)
                 .decorations(false)
@@ -692,85 +481,113 @@ impl<B: VrBackend> Frames<B> {
         } else {
             builder.build()
         };
-        let window = match window {
-            Ok(w) => Some(w),
+        match window {
+            Ok(window) => {
+                logger::info!("Web のパネルを開いた", panel = panel, page = page);
+                self.windows.insert(panel, window);
+                self.draws.insert(panel, Draw::default());
+                self.outboxes.insert(panel, Outbox::default());
+            }
             Err(e) => {
-                logger::error!("パネルのウィンドウを開けない", panel = panel, error = e);
-                self.kernel.apply(panel, PanelCommand::Close);
-                None
+                logger::error!("Web のパネルを開けない", panel = panel, error = e);
+                kernel.apply(panel, PanelCommand::Close);
             }
-        };
-        logger::info!(
-            "Web パネルを開いた",
-            panel = panel,
-            page = spec.page.name,
-            pose = ?pose
-        );
-        self.windows.push(window);
-        self.draws.push(Draw::default());
-        self.outboxes.push(Outbox::default());
-        panel
+        }
     }
 
-    /// イベントループが空いたとき。読み戻しの結果を受け取り、周期が来ていれば 1 フレーム進める。
-    fn idle(&mut self, app: &AppHandle) {
-        self.receive();
-        let now = Instant::now();
-        if now < self.next {
+    /// オーバーレイ層のポインタイベントを、このパネルへ送る束に積む。
+    pub fn deliver(&mut self, e: UiEvent, now: Instant) {
+        if !self.windows.contains_key(&e.panel) {
             return;
         }
-        self.next = now + self.wait();
-        self.step(app, now);
+        // オーバーレイは指している間 毎 tick Move を出す。同じ位置なら送らない（JS とイベントループを詰まらせない）。
+        let at = (e.panel, e.hand);
+        match e.event {
+            PointerEvent::Move { pos } if self.moved.get(&at) == Some(&pos) => return,
+            PointerEvent::Move { pos } => {
+                self.moved.insert(at, pos);
+            }
+            PointerEvent::Leave => {
+                self.moved.remove(&at);
+            }
+            _ => {}
+        }
+        if let Some(o) = self.outboxes.get_mut(&e.panel) {
+            o.push(WebPointer::new(e.hand, e.event));
+        }
+        if let Some(d) = self.draws.get_mut(&e.panel) {
+            d.hot_until = Some(now + HOT);
+        }
     }
 
-    /// 1 フレーム: カーネルを進めてポインタを配り、ページの操作を反映し、パネルを開き、描画を読み戻す。
-    fn step(&mut self, app: &AppHandle, now: Instant) {
-        let events = self.kernel.tick();
-        if self.kernel.quit_requested() {
-            app.exit(0);
-            return;
-        }
+    /// 1 フレーム: Tauri を 1 回回し、ウィンドウのイベントと読み戻しを処理し、ポインタを送り、ページの操作を反映し、
+    /// 撮り直す。ページが開くよう頼んだ (元のパネル, ページ名) を返す。
+    pub fn step<B: VrBackend>(
+        &mut self,
+        kernel: &mut Kernel<B>,
+        now: Instant,
+    ) -> Vec<(PanelId, String)> {
+        self.pump();
+        let events = std::mem::take(&mut *self.events.borrow_mut());
         for e in events {
-            if !matches!(self.windows.get(e.panel), Some(Some(_))) {
-                continue;
+            match e {
+                WinEvent::Resized(label, size) => self.resized(kernel, &label, size, now),
+                WinEvent::Destroyed(label) => self.destroyed(kernel, &label),
             }
-            // オーバーレイは指している間 毎 tick Move を出す。同じ位置なら送らない（JS とイベントループを詰まらせない）。
-            let at = (e.panel, e.hand);
-            match e.event {
-                PointerEvent::Move { pos } if self.moved.get(&at) == Some(&pos) => continue,
-                PointerEvent::Move { pos } => {
-                    self.moved.insert(at, pos);
-                }
-                PointerEvent::Leave => {
-                    self.moved.remove(&at);
-                }
-                _ => {}
-            }
-            self.outboxes[e.panel].push(WebPointer::new(e.hand, e.event));
-            self.draws[e.panel].hot_until = Some(now + HOT);
         }
+        self.receive(kernel);
         let acks = std::mem::take(&mut self.lock().acks);
         for panel in acks {
-            self.outboxes[panel].ack();
+            if let Some(o) = self.outboxes.get_mut(&panel) {
+                o.ack();
+            }
         }
-        for (panel, window) in self.windows.iter().enumerate() {
-            let Some(window) = window else { continue };
-            if let Some(batch) = self.outboxes[panel].take(now)
+        let app = self.app.handle().clone();
+        for (&panel, window) in &self.windows {
+            if let Some(batch) = self.outboxes.get_mut(&panel).and_then(|o| o.take(now))
                 && let Err(err) = app.emit_to(window.label(), POINTER_EVENT, batch)
             {
                 logger::warn!("ポインタを送れない", panel = panel, error = err);
             }
         }
-        for panel in 0..self.windows.len() {
-            self.sync(app, panel, now);
-        }
-        let spawns = std::mem::take(&mut self.lock().spawns);
-        for (from, name) in spawns {
-            let page = self.shared.pages[name].clone();
-            self.open(app, WebPanelSpec::spawn(from, page));
+        let panels: Vec<PanelId> = self.windows.keys().copied().collect();
+        for panel in panels {
+            self.sync(kernel, panel, now);
         }
         if self.surface == Surface::Overlay {
             self.capture(now);
+        }
+        std::mem::take(&mut self.lock().spawns)
+    }
+
+    /// Tauri のイベントループを 1 回回す（待たない）。
+    #[allow(deprecated)] // run_iteration は「ループで呼ぶと busy-loop する」ため非推奨。周期は GPUI のループが作る。
+    fn pump(&mut self) {
+        let events = self.events.clone();
+        self.app.run_iteration(move |_, event| match event {
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::Resized(size),
+                ..
+            } => events.borrow_mut().push(WinEvent::Resized(label, size)),
+            RunEvent::WindowEvent {
+                label,
+                event: WindowEvent::Destroyed,
+                ..
+            } => events.borrow_mut().push(WinEvent::Destroyed(label)),
+            RunEvent::ExitRequested { api, .. } => {
+                // 最後の Web のウィンドウが閉じても終わらない（終わるかどうかは UI 層が決める）。
+                api.prevent_exit();
+            }
+            _ => {}
+        });
+        // WebKitGTK の描画・読み戻しは GLib のイベントで進む。溜まっている分を処理する。
+        #[cfg(target_os = "linux")]
+        for _ in 0..256 {
+            if !gtk::events_pending() {
+                break;
+            }
+            gtk::main_iteration_do(false);
         }
     }
 
@@ -781,29 +598,31 @@ impl<B: VrBackend> Frames<B> {
             .unwrap_or_else(|e| e.into_inner())
     }
 
-    /// ページが積んだ操作を `panel` に反映し、状態が変わったらページへ知らせる。UI 層の `sync_panel` に当たる。
-    fn sync(&mut self, app: &AppHandle, panel: PanelId, now: Instant) {
-        if self.kernel.panel(panel).closed {
+    /// ページが積んだ操作を `panel` に反映し、状態が変わったらページへ知らせる。GPUI の `sync_panel` に当たる。
+    fn sync<B: VrBackend>(&mut self, kernel: &mut Kernel<B>, panel: PanelId, now: Instant) {
+        if kernel.panel(panel).closed {
             return;
         }
         let commands = self.lock().commands.remove(&panel).unwrap_or_default();
         for c in commands {
-            self.command(panel, c);
+            self.command(kernel, panel, c);
         }
-        if self.kernel.panel(panel).closed {
+        if kernel.panel(panel).closed {
             return;
         }
-        let status = WebStatus::of(&self.kernel, panel);
+        let status = WebStatus::of(kernel, panel);
         let changed = self.lock().statuses.insert(panel, status.clone()) != Some(status.clone());
         if changed {
-            if let Err(e) = app.emit_to(label(panel), STATUS_EVENT, status) {
+            if let Err(e) = self.app.emit_to(label(panel), STATUS_EVENT, status) {
                 logger::warn!("状態を送れない", panel = panel, error = e);
             }
-            self.draws[panel].hot_until = Some(now + HOT);
+            if let Some(d) = self.draws.get_mut(&panel) {
+                d.hot_until = Some(now + HOT);
+            }
         }
     }
 
-    fn command(&mut self, panel: PanelId, c: WebCommand) {
+    fn command<B: VrBackend>(&mut self, kernel: &mut Kernel<B>, panel: PanelId, c: WebCommand) {
         match c {
             WebCommand::Attach(d) => {
                 let offset = if d == WebDevice::Hmd {
@@ -811,37 +630,49 @@ impl<B: VrBackend> Frames<B> {
                 } else {
                     HAND_OFFSET
                 };
-                self.kernel
-                    .apply(panel, PanelCommand::Attach(d.device(), offset));
+                kernel.apply(panel, PanelCommand::Attach(d.device(), offset));
             }
-            WebCommand::Detach => self.kernel.apply(panel, PanelCommand::Detach),
-            WebCommand::Lock(l) => self.kernel.apply(panel, PanelCommand::Lock(l)),
+            WebCommand::Detach => kernel.apply(panel, PanelCommand::Detach),
+            WebCommand::Lock(l) => kernel.apply(panel, PanelCommand::Lock(l)),
             WebCommand::Close => {
-                self.kernel.apply(panel, PanelCommand::Close);
-                if let Some(w) = self.windows[panel].take()
-                    && let Err(e) = w.destroy()
-                {
-                    logger::warn!("ウィンドウを閉じられない", panel = panel, error = e);
-                }
+                kernel.apply(panel, PanelCommand::Close);
+                self.forget(panel);
             }
             WebCommand::Resize { width, height } => {
                 let (width, height) = (width.max(1), height.max(1));
-                if let Some(w) = &self.windows[panel]
+                if let Some(w) = self.windows.get(&panel)
                     && let Err(e) = w.set_size(LogicalSize::new(width, height))
                 {
                     logger::warn!("ウィンドウの大きさを変えられない", panel = panel, error = e);
                 }
-                // 非表示のウィンドウは Resized が来ないことがあるので、ここでも合わせる。
-                self.kernel
-                    .apply(panel, PanelCommand::Resize(width, height));
+                // 画面に出ていないウィンドウは Resized が来ないことがあるので、ここでも合わせる。
+                kernel.apply(panel, PanelCommand::Resize(width, height));
             }
         }
     }
 
+    /// パネルのウィンドウを閉じて忘れる。
+    fn forget(&mut self, panel: PanelId) {
+        if let Some(w) = self.windows.remove(&panel)
+            && let Err(e) = w.destroy()
+        {
+            logger::warn!("ウィンドウを閉じられない", panel = panel, error = e);
+        }
+        self.draws.remove(&panel);
+        self.outboxes.remove(&panel);
+        self.moved.retain(|(p, _), _| *p != panel);
+    }
+
     /// ウィンドウの大きさが変わった（OS の操作・`resize` コマンド）。パネルの解像度を論理ピクセルで合わせる。
-    fn resized(&mut self, app: &AppHandle, label: &str, size: PhysicalSize<u32>) {
+    fn resized<B: VrBackend>(
+        &mut self,
+        kernel: &mut Kernel<B>,
+        label: &str,
+        size: PhysicalSize<u32>,
+        now: Instant,
+    ) {
         let Ok(panel) = panel_of(label) else { return };
-        let Some(Some(window)) = self.windows.get(panel) else {
+        let Some(window) = self.windows.get(&panel) else {
             return;
         };
         if size.width == 0 || size.height == 0 {
@@ -850,29 +681,33 @@ impl<B: VrBackend> Frames<B> {
         let scale = window.scale_factor().unwrap_or(1.0);
         let logical = size.to_logical::<f64>(scale);
         let res = (logical.width.round() as u32, logical.height.round() as u32);
-        if self.kernel.panel(panel).resolution != res {
+        if kernel.panel(panel).resolution != res {
             logger::debug!("パネルの大きさが変わった", panel = panel, resolution = ?res);
-            self.kernel.apply(panel, PanelCommand::Resize(res.0, res.1));
-            self.sync(app, panel, Instant::now());
+            kernel.apply(panel, PanelCommand::Resize(res.0, res.1));
+            self.sync(kernel, panel, now);
         }
     }
 
     /// ウィンドウが閉じられた（OS の X など）。そのパネルも閉じる。
-    fn destroyed(&mut self, label: &str) {
+    fn destroyed<B: VrBackend>(&mut self, kernel: &mut Kernel<B>, label: &str) {
         let Ok(panel) = panel_of(label) else { return };
-        if panel < self.windows.len() && !self.kernel.panel(panel).closed {
-            self.kernel.apply(panel, PanelCommand::Close);
-            self.windows[panel] = None;
+        if self.windows.contains_key(&panel) {
+            self.windows.remove(&panel);
+            self.forget(panel);
+            if !kernel.panel(panel).closed {
+                kernel.apply(panel, PanelCommand::Close);
+            }
         }
     }
 
     /// 撮り直すパネルの WebView を撮る（非同期。結果は [`Self::receive`] で受ける）。
     fn capture(&mut self, now: Instant) {
-        for (panel, window) in self.windows.iter().enumerate() {
-            let Some(window) = window else { continue };
-            let d = &mut self.draws[panel];
+        for (&panel, window) in &self.windows {
+            let Some(d) = self.draws.get_mut(&panel) else {
+                continue;
+            };
             let due = d.hot_until.is_some_and(|t| now < t)
-                || d.captured.is_none_or(|t| now - t >= IDLE_REDRAW);
+                || d.captured.is_none_or(|t| now - t >= crate::IDLE_REDRAW);
             if d.capturing || !due {
                 continue;
             }
@@ -889,32 +724,51 @@ impl<B: VrBackend> Frames<B> {
     }
 
     /// 読み戻した描画を VR へ送る。画素が変わったときだけ（GPU への書き込みと完了待ちを省く）。
-    fn receive(&mut self) {
+    fn receive<B: VrBackend>(&mut self, kernel: &mut Kernel<B>) {
         while let Ok((panel, r)) = self.rx.try_recv() {
-            self.draws[panel].capturing = false;
-            if self.kernel.panel(panel).closed {
-                continue;
-            }
-            if let Some(t) = self.draws[panel].captured {
+            let Some(d) = self.draws.get_mut(&panel) else {
+                continue; // 閉じた
+            };
+            d.capturing = false;
+            if let Some(t) = d.captured {
                 logger::trace!("読み戻した", panel = panel, ms = t.elapsed().as_millis());
             }
             match r {
                 // 開いた直後は大きさの反映が間に合わないことがある。送らずに次で撮り直す。
                 Ok(img) if img.width <= 1 || img.height <= 1 => {}
                 Ok(img) => {
-                    if self.draws[panel].last.as_ref() != Some(&img) {
-                        self.kernel.submit(panel, img.width, img.height, &img.rgba);
-                        self.draws[panel].last = Some(img);
+                    if d.last.as_ref() != Some(&img) {
+                        kernel.submit(panel, img.width, img.height, &img.rgba);
+                        d.last = Some(img);
                     }
                 }
                 Err(e) if !self.warned => {
-                    logger::error!("Web パネルの描画を取得できない", panel = panel, error = e);
+                    logger::error!("Web のパネルの描画を取得できない", panel = panel, error = e);
                     self.warned = true;
                 }
                 Err(_) => {}
             }
         }
     }
+}
+
+/// `Surface::Overlay` のウィンドウをデスクトップに出さない。
+/// WebKitGTK は未マップ（非表示）のウィンドウを描かず撮れないので、表示したまま画面の外に置く。
+// ponytail: Wayland ではアプリがウィンドウの位置を決められず画面に出てしまう。X11（XWayland 含む）のみ。
+// GDK_BACKEND=x11 で起動するか、オフスクリーン描画（WPE 等）に移すのが次の一手。
+#[cfg(target_os = "linux")]
+fn offscreen<'a>(
+    b: WebviewWindowBuilder<'a, Wry, tauri::App<Wry>>,
+) -> WebviewWindowBuilder<'a, Wry, tauri::App<Wry>> {
+    b.visible(true).position(-20000.0, -20000.0)
+}
+
+/// `Surface::Overlay` のウィンドウをデスクトップに出さない（非表示のまま描かせて撮る）。
+#[cfg(not(target_os = "linux"))]
+fn offscreen<'a>(
+    b: WebviewWindowBuilder<'a, Wry, tauri::App<Wry>>,
+) -> WebviewWindowBuilder<'a, Wry, tauri::App<Wry>> {
+    b.visible(false)
 }
 
 #[cfg(test)]
@@ -1012,7 +866,7 @@ mod tests {
     fn status_reports_attach_lock_and_resolution() {
         let mut k = Kernel::with_backend(MockBackend::default(), Default::default());
         let p = k
-            .add_panel("t", Pose::IDENTITY, Vec2::new(0.8, 0.6), PANEL_PX)
+            .add_panel("t", Pose::IDENTITY, Vec2::new(0.8, 0.6), (800, 600))
             .unwrap();
         k.apply(
             p,
@@ -1044,21 +898,22 @@ mod tests {
     }
 
     #[test]
-    fn pages_are_served_by_name_and_path() {
-        let pages: HashMap<_, _> = [("demo", Page::html("demo", "<p>hi</p>").file("app.js", b"1"))]
-            .into_iter()
-            .collect();
+    fn pages_are_served_by_path() {
+        static FILES: &[(&str, &[u8])] =
+            &[("demo/index.html", b"<p>hi</p>"), ("assets/app.js", b"1")];
         assert_eq!(
-            serve(&pages, "/demo/index.html"),
+            serve(FILES, "/demo/index.html"),
             Some((&b"<p>hi</p>"[..], "text/html; charset=utf-8"))
         );
-        assert_eq!(serve(&pages, "/demo/"), serve(&pages, "/demo/index.html"));
+        assert_eq!(serve(FILES, "/demo/"), serve(FILES, "/demo/index.html"));
+        // ページから ../assets/ で辿る共有のファイル。
         assert_eq!(
-            serve(&pages, "/demo/app.js").map(|(_, m)| m),
+            serve(FILES, "/assets/app.js").map(|(_, m)| m),
             Some("text/javascript; charset=utf-8")
         );
-        assert_eq!(serve(&pages, "/demo/nope.js"), None);
-        assert_eq!(serve(&pages, "/other/index.html"), None);
+        assert_eq!(serve(FILES, "/demo/nope.js"), None);
+        assert!(has_page(FILES, "demo"));
+        assert!(!has_page(FILES, "assets"));
         assert_eq!(page_url("demo").path(), "/demo/index.html");
     }
 
@@ -1066,14 +921,5 @@ mod tests {
     fn panel_labels_round_trip() {
         assert_eq!(panel_of(&label(7)), Ok(7));
         assert!(panel_of("main").is_err());
-    }
-
-    #[test]
-    fn spawned_panel_is_placed_next_to_its_source() {
-        let mut k = Kernel::with_backend(MockBackend::default(), Default::default());
-        let pose = Pose::new(Vec3::new(0.0, 1.0, -1.0), Quat::IDENTITY);
-        k.add_panel("t", pose, Vec2::ONE, PANEL_PX).unwrap();
-        let spec = WebPanelSpec::spawn(0, Page::new("x"));
-        assert_eq!(spec.pose_for(&k, 1).position, Vec3::new(1.2, 1.0, -1.0));
     }
 }

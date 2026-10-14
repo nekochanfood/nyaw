@@ -4,7 +4,13 @@
 
 use tauri::{WebviewWindow, Wry};
 
-use crate::Image;
+/// 読み戻した 1 フレーム（RGBA8、ストレートアルファ、行間に詰め物なし）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Image {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
 
 pub type Done = Box<dyn FnOnce(Result<Image, String>) + Send>;
 
@@ -60,8 +66,8 @@ mod platform {
     use tauri::webview::PlatformWebview;
     use webkit2gtk::{SnapshotOptions, SnapshotRegion, WebViewExt, gio};
 
+    use super::Image;
     use super::{Done, from_argb32};
-    use crate::Image;
 
     pub fn snapshot(webview: PlatformWebview, done: Done) {
         webview.inner().snapshot(
@@ -106,7 +112,7 @@ mod platform {
     use windows::Win32::System::Com::{IStream, STREAM_SEEK_SET};
 
     use super::Done;
-    use crate::Image;
+    use super::Image;
 
     pub fn snapshot(webview: PlatformWebview, done: Done) {
         let slot = Arc::new(Mutex::new(Some(done)));

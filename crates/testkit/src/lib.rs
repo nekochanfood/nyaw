@@ -56,6 +56,8 @@ pub trait Driver<V> {
     fn read<R>(&mut self, f: impl FnOnce(&V) -> R) -> R;
     /// ユーザーに見えている要素の中心の色（0xRRGGBB）。novr は画面、VR はパネルのテクスチャ。
     fn color_at(&mut self, selector: &'static str) -> u32;
+    /// 画面が開くよう頼んだ Web のページ（テストプラットフォームでは開かず、名前だけ残る）。
+    fn web_spawns(&self) -> &[String];
 }
 
 /// 基本操作のシナリオ `scenario(&mut impl Driver<V>)` を、全ランタイムのキットで実行するテストを作る。

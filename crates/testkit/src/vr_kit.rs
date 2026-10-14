@@ -52,6 +52,8 @@ pub struct VrKit<'a, V: 'static> {
     pub kernel: Kernel<MockBackend>,
     panel: PanelId,
     watch: Option<Watch>,
+    /// 画面が開くよう頼んだ Web のページ（[`ui::PanelSpec::web`]）。テストプラットフォームでは開かない。
+    pub web_spawns: Vec<String>,
     bridges: HashMap<(PanelId, Hand), PointerBridge>,
     controllers: Vec<VirtualController>,
     active: Hand,
@@ -87,6 +89,7 @@ impl<'a, V: Render> VrKit<'a, V> {
             kernel,
             panel,
             watch: Watch::from_env(),
+            web_spawns: Vec::new(),
             bridges: HashMap::new(),
             controllers: Vec::new(),
             active: Hand::Right,
@@ -235,6 +238,12 @@ impl<'a, V: Render> VrKit<'a, V> {
     }
 
     fn add_spec(&mut self, spec: PanelSpec) {
+        // Web のページ（Tauri の WebView）はテストプラットフォームでは開けないので、頼まれたことだけ記録する。
+        // 実際に開いて操作するのは crates/ui/tests/web_*.rs。
+        if let Some(page) = spec.web_page() {
+            self.web_spawns.push(page.to_owned());
+            return;
+        }
         let id = self.windows.len();
         let pose = spec.pose_for(&self.kernel, id);
         let (root, cx) = self
@@ -317,6 +326,10 @@ fn raw(c: &VirtualController) -> RawController {
 }
 
 impl<V: Render> Driver<V> for VrKit<'_, V> {
+    fn web_spawns(&self) -> &[String] {
+        &self.web_spawns
+    }
+
     /// 要素の中心にレーザーを当てる。
     fn hover(&mut self, selector: &'static str) -> &mut Self {
         let c = self.bounds(selector).center();

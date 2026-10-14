@@ -1,7 +1,14 @@
-//! Layer 4: GPUI フロントエンド。各オーバーレイパネルは GPUI ウィンドウで実体化され、
-//! オーバーレイ層のレーザーイベントは通常の GPUI マウス入力に変換される。
-//! そのためビューはデスクトップの GPUI ビューと全く同じように書け、VR 上にあることを意識しない。
-//! 逆向きは [`capture`] でウィンドウをオフスクリーン描画して読み戻し、`Overlay::submit` で VR パネルへ送る。
+//! Layer 5: UI 層。各オーバーレイパネルを GPUI のウィンドウか、Tauri の WebView（[`web`]）で実体化する。
+//! どちらも同じフレームループ（[`run`]）・同じカーネル・同じ PanelId の空間に載り、GPUI の画面から Web のページを開ける。
+//!
+//! - GPUI: オーバーレイ層のレーザーイベントは通常の GPUI マウス入力に変換される。
+//!   そのためビューはデスクトップの GPUI ビューと全く同じように書け、VR 上にあることを意識しない。
+//!   逆向きは [`capture`] でウィンドウをオフスクリーン描画して読み戻し、`Overlay::submit` で VR パネルへ送る。
+//! - Web: レーザーイベントはブリッジが DOM のポインタイベントにする（[`web`]）。ページは React 等で書く。
+//!
+//! イベントループは GPUI が持ち、Tauri は最初の Web のパネルを開いたときに起こして毎フレーム 1 回ずつ回す。
+
+pub mod web;
 
 use std::{
     collections::HashMap,
@@ -16,8 +23,8 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, Pose, Surface, Vec2,
-    VrBackend,
+    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, Pose, Surface,
+    UiEvent, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 
@@ -129,17 +136,29 @@ pub fn pump<B: VrBackend>(
     kernel: &mut Kernel<B>,
     bridges: &mut HashMap<(PanelId, Hand), PointerBridge>,
 ) -> Vec<(PanelId, PlatformInput)> {
-    kernel
-        .tick()
-        .into_iter()
-        .map(|e| {
-            let input = bridges
-                .entry((e.panel, e.hand))
-                .or_default()
-                .translate(e.event);
-            (e.panel, input)
-        })
-        .collect()
+    pump_with(kernel, bridges, |_| false).0
+}
+
+/// [`pump`] に Web のパネルを混ぜたもの。`is_web` なパネル宛てのイベントは変換せずにそのまま返す（[`web::Host::deliver`] へ）。
+pub fn pump_with<B: VrBackend>(
+    kernel: &mut Kernel<B>,
+    bridges: &mut HashMap<(PanelId, Hand), PointerBridge>,
+    is_web: impl Fn(PanelId) -> bool,
+) -> (Vec<(PanelId, PlatformInput)>, Vec<UiEvent>) {
+    let mut gpui = Vec::new();
+    let mut web = Vec::new();
+    for e in kernel.tick() {
+        if is_web(e.panel) {
+            web.push(e);
+            continue;
+        }
+        let input = bridges
+            .entry((e.panel, e.hand))
+            .or_default()
+            .translate(e.event);
+        gpui.push((e.panel, input));
+    }
+    (gpui, web)
 }
 
 /// CPU に読み戻した UI の1フレーム（RGBA8、行間に詰め物なし）。
@@ -243,14 +262,14 @@ const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY
 const FRAME: Duration = Duration::from_millis(11);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
-const IDLE_REDRAW: Duration = Duration::from_millis(250);
+pub(crate) const IDLE_REDRAW: Duration = Duration::from_millis(250);
 
 /// `panel` で始まったドラッグの見た目を、押している手の [`Pointer::Drag`] のパネルに出す。
 /// 大きさは元のパネルと同じ縮尺（1m あたりのピクセル）にする。
 fn start_drag(
     kernel: &mut Kernel,
     bridges: &HashMap<(PanelId, Hand), PointerBridge>,
-    windows: &[(PanelId, AnyWindowHandle)],
+    windows: &[(PanelId, Option<AnyWindowHandle>)],
     panel: PanelId,
 ) -> Option<(Hand, PanelId)> {
     let hand = bridges
@@ -269,6 +288,14 @@ fn start_drag(
 
 type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
 
+/// パネルの中身。
+enum Content {
+    /// GPUI のビュー。
+    Gpui(Box<PanelBuilder>),
+    /// Web のページ（ページ名。`web::Files` の `<ページ名>/index.html`）。
+    Web(String),
+}
+
 /// 画面と VR 空間での配置。異なる画面型を同じ起動リストに入れられる。
 pub struct PanelSpec {
     pose: Pose,
@@ -283,7 +310,7 @@ pub struct PanelSpec {
     locked: bool,
     /// レーザーを描くパネル。
     pointer: Option<(Hand, Pointer)>,
-    build: Box<PanelBuilder>,
+    content: Content,
 }
 
 impl PanelSpec {
@@ -291,6 +318,15 @@ impl PanelSpec {
         pose: Pose,
         build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
     ) -> Self {
+        Self::with_content(
+            pose,
+            Content::Gpui(Box::new(move |panel, window, cx| {
+                cx.new(|cx| build(panel, window, cx)).into()
+            })),
+        )
+    }
+
+    fn with_content(pose: Pose, content: Content) -> Self {
         Self {
             pose,
             from: None,
@@ -300,7 +336,28 @@ impl PanelSpec {
             attach: None,
             locked: false,
             pointer: None,
-            build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
+            content,
+        }
+    }
+
+    /// Web のページ `page` のパネル（Tauri の WebView）。置き場所や大きさは GPUI のパネルと同じく指定する。
+    pub fn web(pose: Pose, page: impl Into<String>) -> Self {
+        Self::with_content(pose, Content::Web(page.into()))
+    }
+
+    /// `from` の隣に Web のページを開く。
+    pub fn spawn_web(from: PanelId, page: impl Into<String>) -> Self {
+        Self {
+            from: Some(from),
+            ..Self::web(Pose::IDENTITY, page)
+        }
+    }
+
+    /// Web のパネルならページ名。
+    pub fn web_page(&self) -> Option<&str> {
+        match &self.content {
+            Content::Web(page) => Some(page),
+            Content::Gpui(_) => None,
         }
     }
 
@@ -359,8 +416,12 @@ impl PanelSpec {
         }
     }
 
+    /// GPUI のビューを組み立てる。Web のパネル（[`Self::web_page`] が `Some`）には使えない。
     pub fn build(self, panel: PanelId, window: &mut Window, cx: &mut App) -> AnyView {
-        (self.build)(panel, window, cx)
+        match self.content {
+            Content::Gpui(build) => build(panel, window, cx),
+            Content::Web(page) => panic!("Web のページ {page} は GPUI のビューにならない"),
+        }
     }
 }
 
@@ -382,12 +443,82 @@ impl Render for PanelRoot {
     }
 }
 
+/// テストなどがフレームループに差し込む口。
+#[derive(Default)]
+pub struct Hooks {
+    /// Web（Tauri）を起こした直後に呼ぶ（最初の Web のパネルを開くとき）。テストがイベントを購読するのに使う。
+    pub on_web: Option<OnWeb>,
+    /// 毎フレーム、メインスレッドで `App` を触る処理を受け取る（別スレッドのテストが GPUI を操作する）。
+    pub remote: Option<std::sync::mpsc::Receiver<Remote>>,
+}
+
+/// Web（Tauri）を起こした直後に呼ぶ処理。
+pub type OnWeb = Box<dyn FnOnce(&tauri::AppHandle)>;
+
+/// フレームループ（メインスレッド）で実行してもらう処理。
+pub type Remote = Box<dyn FnOnce(&mut App) + Send>;
+
+/// Web のパネル。Tauri は重いので、最初の Web のパネルを開くときに起こす。
+struct WebSlot {
+    files: web::Files,
+    host: Option<web::Host>,
+    on_web: Option<OnWeb>,
+    failed: bool,
+}
+
+impl WebSlot {
+    fn new(files: web::Files, on_web: Option<OnWeb>) -> Self {
+        Self {
+            files,
+            host: None,
+            on_web,
+            failed: false,
+        }
+    }
+
+    fn host(&mut self, surface: Surface) -> Option<&mut web::Host> {
+        if self.host.is_none() && !self.failed {
+            match web::Host::new(surface, self.files) {
+                Ok(h) => {
+                    if let Some(f) = self.on_web.take() {
+                        f(h.handle());
+                    }
+                    self.host = Some(h);
+                }
+                Err(e) => {
+                    logger::error!("Web（Tauri）を起動できない", error = e);
+                    self.failed = true;
+                }
+            }
+        }
+        self.host.as_mut()
+    }
+
+    fn is_web(&self, panel: PanelId) -> bool {
+        self.host.as_ref().is_some_and(|h| h.contains(panel))
+    }
+}
+
 /// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
 /// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通り、違いは `kernel.surface()` だけ。
 /// パネルに載せる画面（上の層）は `panels` で受け取る。UI 層はどの画面かを知らない。
+/// Web のパネル（[`PanelSpec::web`]）のページは `web` から配信する。
 /// `profiler` があれば起動時から計測し（`PanelControl::profiling`）、段階ごとの所要時間をプロファイラパネルにグラフで出す。
-pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler>) {
+pub fn run(kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler>, web: web::Files) {
+    run_with(kernel, panels, profiler, web, Hooks::default())
+}
+
+/// [`run`] にテスト用の差し込み口（[`Hooks`]）を足したもの。
+pub fn run_with(
+    mut kernel: Kernel,
+    panels: Vec<PanelSpec>,
+    profiler: Option<Profiler>,
+    web: web::Files,
+    hooks: Hooks,
+) {
     let surface = kernel.surface();
+    let mut webs = WebSlot::new(web, hooks.on_web);
+    let remote = hooks.remote;
     gpui_platform::application().run(move |cx: &mut App| {
         // novr はディスプレイのリフレッシュに揃える。
         // ponytail: 起動時の主ディスプレイで固定。モニタ間の移動や設定変更を追うなら毎フレーム問い合わせる。
@@ -408,10 +539,11 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
             cx.default_global::<PanelControl>().profiling = true;
         }
         let mut profiler_panel: Option<PanelId> = None;
-        let mut windows: Vec<(PanelId, AnyWindowHandle)> = panels
+        // 添字は PanelId。Web のパネルは None（ウィンドウは web::Host が持つ）。
+        let mut windows: Vec<(PanelId, Option<AnyWindowHandle>)> = panels
             .into_iter()
             .enumerate()
-            .map(|(i, spec)| open_panel(&mut kernel, spec, i, cx))
+            .map(|(i, spec)| open_panel(&mut kernel, spec, i, cx, &mut webs))
             .collect();
         if surface == Surface::Desktop {
             cx.activate(true);
@@ -437,9 +569,16 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
             loop {
                 let begin = Instant::now();
                 cx.background_executor().timer(wait).await;
+                if let Some(remote) = &remote {
+                    while let Ok(f) = remote.try_recv() {
+                        cx.update(f);
+                    }
+                }
                 let mut inputs: Vec<Vec<PlatformInput>> =
                     (0..windows.len()).map(|_| Vec::new()).collect();
-                for (panel, input) in pump(&mut kernel, &mut bridges) {
+                let (gpui_inputs, web_events) =
+                    pump_with(&mut kernel, &mut bridges, |p| webs.is_web(p));
+                for (panel, input) in gpui_inputs {
                     inputs[panel].push(input);
                 }
                 // ドラッグの見た目は中心がカーソルに来るよう置かれるので、そのウィンドウのマウスを中心に置いて毎フレーム描く。
@@ -460,6 +599,7 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                 // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
                 // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
                 for ((panel, window), inputs) in windows.iter().copied().zip(inputs) {
+                    let Some(window) = window else { continue }; // Web のパネルは後で web::Host が回す
                     if kernel.panel(panel).closed {
                         continue;
                     }
@@ -498,12 +638,8 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                             frame
                         })
                     }) else {
-                        // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じ、全部閉じたら終了する。
+                        // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じる（全部閉じたら下で終了する）。
                         kernel.apply(panel, PanelCommand::Close);
-                        if (0..windows.len()).all(|p| kernel.panel(p).closed) {
-                            cx.update(quit);
-                            return;
-                        }
                         continue;
                     };
                     if changed {
@@ -530,11 +666,31 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                         _ => {}
                     }
                 }
-                for spec in
-                    cx.update(|cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns))
-                {
+                // Web のパネル: Tauri を 1 回回し、ポインタを送り、ページの操作を反映して撮り直す。
+                let mut web_spawns = Vec::new();
+                if let Some(host) = webs.host.as_mut() {
+                    let t = Instant::now();
+                    for e in web_events {
+                        host.deliver(e, t);
+                    }
+                    web_spawns = host.step(&mut kernel, t);
+                    stages.input += t.elapsed();
+                }
+                // ウィンドウが全部（OS の X などで）閉じられたら終了する。
+                if !windows.is_empty() && (0..windows.len()).all(|p| kernel.panel(p).closed) {
+                    cx.update(quit);
+                    return;
+                }
+                let mut spawns =
+                    cx.update(|cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns));
+                spawns.extend(
+                    web_spawns
+                        .into_iter()
+                        .map(|(from, page)| PanelSpec::spawn_web(from, page)),
+                );
+                for spec in spawns {
                     let i = windows.len();
-                    windows.push(cx.update(|cx| open_panel(&mut kernel, spec, i, cx)));
+                    windows.push(cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs)));
                     last.push(None);
                     drawn.push(None);
                 }
@@ -572,7 +728,8 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                         .sized(Vec2::new(1.1, 0.56), (1100, 560))
                         .in_view(PROFILER_POSE);
                         let i = windows.len();
-                        let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, i, cx));
+                        let (panel, window) =
+                            cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs));
                         logger::info!(
                             "プロファイラパネルを開いた",
                             panel = panel,
@@ -602,7 +759,7 @@ pub fn run(mut kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler
                         cx.global_mut::<Profiler>().record(Instant::now(), stages);
                     }
                     if let Some(p) = profiler_panel
-                        && let Some((_, w)) = windows.iter().find(|(id, _)| *id == p)
+                        && let Some((_, Some(w))) = windows.iter().find(|(id, _)| *id == p)
                     {
                         // グラフは毎フレーム変わるので描き直させる（VR では IDLE_REDRAW を待たずに読み戻す）。
                         let _ = cx.update_window(*w, |_, w, _| w.refresh());
@@ -673,12 +830,14 @@ impl Render for ProfilerPanel {
     }
 }
 
+/// カーネルにパネルを作り、中身（GPUI のウィンドウか Web のページ）を開く。Web のパネルのウィンドウは `None`。
 fn open_panel(
     kernel: &mut Kernel,
     mut spec: PanelSpec,
     index: usize,
     cx: &mut App,
-) -> (PanelId, AnyWindowHandle) {
+    webs: &mut WebSlot,
+) -> (PanelId, Option<AnyWindowHandle>) {
     let pose = spec.pose_for(kernel, index);
     let panel = kernel
         .add_panel(
@@ -698,6 +857,13 @@ fn open_panel(
         kernel.apply(panel, PanelCommand::Pointer(hand, part));
     }
     let surface = kernel.surface();
+    if let Content::Web(page) = &spec.content {
+        match webs.host(surface) {
+            Some(host) => host.open(kernel, panel, page),
+            None => kernel.apply(panel, PanelCommand::Close),
+        }
+        return (panel, None);
+    }
     let drag_layer = spec.pointer.is_some_and(|(_, part)| part == Pointer::Drag);
     let window: AnyWindowHandle = open_panel_window(cx, surface, spec.resolution, |w, cx| {
         let view = spec.build(panel, w, cx);
@@ -708,7 +874,7 @@ fn open_panel(
     if drag_layer {
         cx.default_global::<DragWindows>().0.push(window);
     }
-    (panel, window)
+    (panel, Some(window))
 }
 
 #[cfg(test)]
@@ -788,7 +954,8 @@ mod tests {
             .sized(Vec2::new(0.1, 0.05), (10, 5))
             .attached(hand.clone(), Pose::IDENTITY)
             .locked();
-        let (panel, _) = cx.update(|cx| open_panel(&mut kernel, spec, 0, cx));
+        let mut webs = WebSlot::new(&[], None);
+        let (panel, _) = cx.update(|cx| open_panel(&mut kernel, spec, 0, cx, &mut webs));
         let p = kernel.panel(panel);
         assert_eq!(p.attached, Some((hand, Pose::IDENTITY)));
         assert!(p.locked);
@@ -832,6 +999,28 @@ mod tests {
             sync_panel(&mut kernel, panel, cx);
         });
         assert_eq!(kernel.panel(panel).attached, None);
+    }
+
+    /// Web のページのパネルも GPUI のパネルと同じく置く（隣に開く・目の前に出す）。ビューにはならない。
+    #[gpui::test]
+    fn web_spec_opens_without_gpui_window_when_web_is_unavailable(cx: &mut TestAppContext) {
+        let mut kernel = Kernel::boot(Some("novr"), Default::default()).unwrap();
+        let first = PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default());
+        let mut webs = WebSlot::new(&[], None);
+        // テストプラットフォームでは Tauri を起こさない（起こせなかった扱い）。パネルは作られ、すぐ閉じる。
+        webs.failed = true;
+        cx.update(|cx| open_panel(&mut kernel, first, 0, cx, &mut webs));
+        let spec = PanelSpec::spawn_web(0, "demo");
+        assert_eq!(spec.web_page(), Some("demo"));
+        assert_eq!(spec.pose_for(&kernel, 1).position, Vec3::new(1.2, 0.0, 0.0));
+        let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, 1, cx, &mut webs));
+        assert_eq!((panel, window.is_none()), (1, true));
+        assert!(kernel.panel(panel).closed, "Web を起こせなければ閉じる");
+        assert!(
+            PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default())
+                .web_page()
+                .is_none()
+        );
     }
 
     /// 目の前に出すパネルは頭の向く水平方向に置き、うつむいていても立てて置く。

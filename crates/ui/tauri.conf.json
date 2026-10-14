@@ -2,9 +2,9 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "nyaw",
   "version": "2026.0.1",
-  "identifier": "dev.nyaw.webui",
+  "identifier": "dev.nyaw.app",
   "build": {
-    "frontendDist": "web"
+    "frontendDist": "tauri-dist"
   },
   "app": {
     "withGlobalTauri": true,
