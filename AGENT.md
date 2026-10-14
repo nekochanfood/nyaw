@@ -151,6 +151,9 @@ ui::run の 1 フレーム（GPUI の部分は上の「1 フレームの流れ�
   `nyaw.command("detach" | "close" | { attach: "hmd" | "left" | "right" | { tracker: id } } | { lock: bool } | { resize: { width, height } } | { pointer_mode: "mouse" | "touch" })`,
   `nyaw.status()`, `nyaw.onStatus(cb)`（戻り値で購読をやめる）, `nyaw.spawn(ページ名)`。
 - リサイズ: `{ resize }` でウィンドウの大きさが変わると `PanelCommand::Resize` で解像度を合わせる（1m あたりのピクセル数を保つので VR 上のパネルも広がる）。
+- WebView を作るとメインスレッドが 100ms 近く止まる（WebView2 の作成はメインスレッドでしかできない）。入力が 1 秒無いときに予備の WebView（ラベル `spare-N`）を
+  1 枚作っておき、Web のパネルを開くときはそれにページを読ませるだけにする。予備から割り当てたパネルのウィンドウのラベルは `panel-N` ではないので、
+  ページへ送る宛先は `ui::web::label_of` で引く（ケーパビリティも `spare-*` を許す）。終了時は WebView を閉じ終えてから終わる（`Host::shutdown`）。
 - イベントの購読は `getCurrentWebviewWindow().listen` で行う（`event.listen` は既定で全宛先を受けるので、ほかのパネル宛ての `emit_to` まで届く）。
 - ウィンドウは（novr でも）デスクトップに出さず、GPUI のパネルと同じく背景を透かす（塗るかどうかはページが決める。読み戻しはストレートアルファ）。
   WebKitGTK は未マップのウィンドウを描かないので、Linux は表示したまま画面の外（-20000, -20000）に置く。ほかは非表示。

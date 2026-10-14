@@ -57,6 +57,8 @@ pub const HAND_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.3), Quat::IDENTIT
 /// 入力・状態の変化から、毎フレーム撮り直し続ける時間。ページの JS がイベントを処理して描き終わるのを待たずに済む。
 // ponytail: WebView の描画完了を知る手段が無いので時間で決める。requestAnimationFrame から知らせる手もある。
 const HOT: Duration = Duration::from_millis(300);
+/// 入力がこれだけ無ければ、予備の WebView を作る（作る間はメインスレッドが止まるので、操作中は避ける）。
+const PREWARM_IDLE: Duration = Duration::from_secs(1);
 /// 終わるときに WebView が閉じ終わるのを待つ上限。
 const SHUTDOWN: Duration = Duration::from_millis(1000);
 
@@ -295,6 +297,20 @@ struct Shared {
     files: Files,
 }
 
+impl Shared {
+    /// ウィンドウのラベルのパネル。予備から割り当てたウィンドウ（`spare-N`）は対応表で引く。
+    fn panel_of(&self, label: &str) -> Result<PanelId, String> {
+        let mapped = self
+            .control
+            .lock()
+            .map_err(|e| e.to_string())?
+            .labels
+            .get(label)
+            .copied();
+        mapped.map_or_else(|| panel_of(label), Ok)
+    }
+}
+
 #[derive(Default)]
 struct Control {
     commands: HashMap<PanelId, Vec<WebCommand>>,
@@ -303,6 +319,20 @@ struct Control {
     spawns: Vec<(PanelId, String)>,
     /// ポインタの束を処理し終えたパネル（[`Outbox::ack`]）。
     acks: Vec<PanelId>,
+    /// 予備から割り当てたウィンドウのラベル → パネル（`panel-N` でないもの）。
+    labels: HashMap<String, PanelId>,
+}
+
+/// パネルの WebView のウィンドウのラベル（予備から割り当てたものは `spare-N`）。ページへイベントを送る宛先（テスト用）。
+pub fn label_of(app: &AppHandle, panel: PanelId) -> String {
+    let mapped = app.try_state::<Arc<Shared>>().and_then(|s| {
+        let ctl = s.control.lock().ok()?;
+        ctl.labels
+            .iter()
+            .find(|(_, p)| **p == panel)
+            .map(|(l, _)| l.clone())
+    });
+    mapped.unwrap_or_else(|| label(panel))
 }
 
 fn label(panel: PanelId) -> String {
@@ -322,7 +352,7 @@ fn panel_command(
     shared: tauri::State<'_, Arc<Shared>>,
     command: WebCommand,
 ) -> Result<(), String> {
-    let panel = panel_of(webview.label())?;
+    let panel = shared.panel_of(webview.label())?;
     logger::debug!("ページからの操作", panel = panel, command = ?command);
     let mut ctl = shared.control.lock().map_err(|e| e.to_string())?;
     ctl.commands.entry(panel).or_default().push(command);
@@ -334,7 +364,7 @@ fn panel_status(
     webview: tauri::Webview,
     shared: tauri::State<'_, Arc<Shared>>,
 ) -> Result<WebStatus, String> {
-    let panel = panel_of(webview.label())?;
+    let panel = shared.panel_of(webview.label())?;
     let ctl = shared.control.lock().map_err(|e| e.to_string())?;
     ctl.statuses
         .get(&panel)
@@ -348,7 +378,7 @@ fn pointer_ack(
     webview: tauri::Webview,
     shared: tauri::State<'_, Arc<Shared>>,
 ) -> Result<(), String> {
-    let panel = panel_of(webview.label())?;
+    let panel = shared.panel_of(webview.label())?;
     let mut ctl = shared.control.lock().map_err(|e| e.to_string())?;
     ctl.acks.push(panel);
     Ok(())
@@ -360,7 +390,7 @@ fn spawn_panel(
     shared: tauri::State<'_, Arc<Shared>>,
     page: String,
 ) -> Result<(), String> {
-    let panel = panel_of(webview.label())?;
+    let panel = shared.panel_of(webview.label())?;
     if !has_page(shared.files, &page) {
         return Err(format!("知らないページ: {page}"));
     }
@@ -404,6 +434,11 @@ pub struct Host {
     tx: Sender<(PanelId, Result<Image, String>)>,
     rx: Receiver<(PanelId, Result<Image, String>)>,
     warned: bool,
+    /// 予備の WebView。作るのにメインスレッドが 100ms 近く止まるので、入力の無いときに作っておき、開くときはページを読ませるだけにする。
+    spare: Option<WebviewWindow<Wry>>,
+    spares: u64,
+    /// 最後にポインタが届いた・パネルを開いた時刻（予備は落ち着いているときに作る）。
+    active: Instant,
 }
 
 impl Host {
@@ -451,6 +486,9 @@ impl Host {
             tx,
             rx,
             warned: false,
+            spare: None,
+            spares: 0,
+            active: Instant::now(),
         })
     }
 
@@ -462,7 +500,12 @@ impl Host {
     /// 開いたままプロセスが終わると WebView2 のブラウザが後始末を終えられず（"Failed to unregister class
     /// Chrome_WidgetWin_0" が出る）、続けて起動したときに同じデータフォルダの WebView を作れないことがある。
     pub fn shutdown(&mut self) {
-        for (_, w) in self.windows.drain() {
+        for w in self
+            .windows
+            .drain()
+            .map(|(_, w)| w)
+            .chain(self.spare.take())
+        {
             if let Err(e) = w.destroy() {
                 logger::warn!("Web のパネルを閉じられない", error = e);
             }
@@ -490,20 +533,23 @@ impl Host {
             return;
         }
         let (w, h) = kernel.panel(panel).resolution;
-        let builder = WebviewWindowBuilder::new(
-            &self.app,
-            label(panel),
-            WebviewUrl::CustomProtocol(page_url(page)),
-        )
-        .title(page)
-        .inner_size(w as f64, h as f64)
-        .initialization_script(BRIDGE);
-        // 描画は VR に送るので画面外へ。枠を消すと Windows の WebView の描画領域が縮むため残す。
-        let window = offscreen(builder)
-            .transparent(true)
-            .focused(false)
-            .skip_taskbar(true)
-            .build();
+        self.active = Instant::now();
+        let window = match self.spare.take() {
+            // 予備があればページを読ませるだけ（作り直さないのでメインスレッドが止まらない）。
+            Some(spare) => {
+                self.lock().labels.insert(spare.label().to_owned(), panel);
+                let r = spare
+                    .set_size(LogicalSize::new(w, h))
+                    .and_then(|_| spare.set_title(page))
+                    .and_then(|_| spare.navigate(page_url(page)));
+                r.map(|_| spare)
+            }
+            None => self.build(
+                label(panel),
+                WebviewUrl::CustomProtocol(page_url(page)),
+                (w, h),
+            ),
+        };
         match window {
             Ok(window) => {
                 logger::info!("Web のパネルを開いた", panel = panel, page = page);
@@ -518,11 +564,51 @@ impl Host {
         }
     }
 
+    /// パネル用の WebView のウィンドウを作る（メインスレッドが 100ms 近く止まる）。
+    fn build(
+        &self,
+        label: String,
+        url: WebviewUrl,
+        (w, h): (u32, u32),
+    ) -> tauri::Result<WebviewWindow<Wry>> {
+        let builder = WebviewWindowBuilder::new(&self.app, label, url)
+            .inner_size(w as f64, h as f64)
+            .initialization_script(BRIDGE);
+        // 描画は VR に送るので画面外へ。枠を消すと Windows の WebView の描画領域が縮むため残す。
+        offscreen(builder)
+            .transparent(true)
+            .focused(false)
+            .skip_taskbar(true)
+            .build()
+    }
+
+    /// 入力が [`PREWARM_IDLE`] 無ければ、次に開くパネルのための予備の WebView を作っておく。
+    fn prewarm(&mut self, now: Instant) {
+        if self.spare.is_some() || now - self.active < PREWARM_IDLE {
+            return;
+        }
+        let t = Instant::now();
+        self.spares += 1;
+        let url = WebviewUrl::External("about:blank".parse().expect("固定の URL"));
+        match self.build(format!("spare-{}", self.spares), url, crate::PANEL_PX) {
+            Ok(w) => {
+                logger::debug!("予備の WebView を作った", ms = t.elapsed().as_millis());
+                self.spare = Some(w);
+            }
+            Err(e) => {
+                logger::warn!("予備の WebView を作れない", error = e);
+                // 作れないときに毎フレーム試さない。
+                self.active = now;
+            }
+        }
+    }
+
     /// オーバーレイ層のポインタイベントを、このパネルへ送る束に積む。
     pub fn deliver(&mut self, e: UiEvent, mode: PointerMode, now: Instant) {
         if !self.windows.contains_key(&e.panel) {
             return;
         }
+        self.active = now;
         // オーバーレイは指している間 毎 tick Move を出す。同じ位置なら送らない（JS とイベントループを詰まらせない）。
         let at = (e.panel, e.hand);
         match e.event {
@@ -578,6 +664,7 @@ impl Host {
             self.sync(kernel, panel, now);
         }
         self.capture(now);
+        self.prewarm(now);
         std::mem::take(&mut self.lock().spawns)
     }
 
@@ -634,7 +721,10 @@ impl Host {
         let status = WebStatus::of(kernel, panel);
         let changed = self.lock().statuses.insert(panel, status.clone()) != Some(status.clone());
         if changed {
-            if let Err(e) = self.app.emit_to(label(panel), STATUS_EVENT, status) {
+            let to = self.windows.get(&panel).map(|w| w.label().to_owned());
+            if let Some(to) = to
+                && let Err(e) = self.app.emit_to(to.as_str(), STATUS_EVENT, status)
+            {
                 logger::warn!("状態を送れない", panel = panel, error = e);
             }
             if let Some(d) = self.draws.get_mut(&panel) {
@@ -684,6 +774,7 @@ impl Host {
         self.draws.remove(&panel);
         self.outboxes.remove(&panel);
         self.moved.retain(|(p, _), _| *p != panel);
+        self.lock().labels.retain(|_, p| *p != panel);
     }
 
     /// ウィンドウの大きさが変わった（OS の操作・`resize` コマンド）。パネルの解像度を論理ピクセルで合わせる。
@@ -694,7 +785,9 @@ impl Host {
         size: PhysicalSize<u32>,
         now: Instant,
     ) {
-        let Ok(panel) = panel_of(label) else { return };
+        let Ok(panel) = self.shared.panel_of(label) else {
+            return;
+        };
         let Some(window) = self.windows.get(&panel) else {
             return;
         };
@@ -713,7 +806,9 @@ impl Host {
 
     /// ウィンドウが閉じられた（OS の X など）。そのパネルも閉じる。
     fn destroyed<B: VrBackend>(&mut self, kernel: &mut Kernel<B>, label: &str) {
-        let Ok(panel) = panel_of(label) else { return };
+        let Ok(panel) = self.shared.panel_of(label) else {
+            return;
+        };
         if self.windows.contains_key(&panel) {
             self.windows.remove(&panel);
             self.forget(panel);

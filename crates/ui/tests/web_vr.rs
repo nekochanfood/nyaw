@@ -366,7 +366,16 @@ fn transparent_page(page: &mut Page, vr: &mut Vr) {
         assert!(Instant::now() < deadline, "パネルが開かない");
         std::thread::sleep(Duration::from_millis(20));
     }
-    page.label = "panel-1".into();
+    // 開いたパネルの WebView（予備から割り当てられていればそのラベル）が見えるまで待つ。
+    let label = loop {
+        let label = ui::web::label_of(&page.app, 1);
+        if page.app.get_webview_window(&label).is_some() {
+            break label;
+        }
+        assert!(Instant::now() < deadline, "パネルのウィンドウが無い");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    page.label = label.clone();
     let s = page.until("半透明のページが読み込まれる", |s| {
         s["state"]["clicks"] == 0
     });
@@ -391,7 +400,7 @@ fn transparent_page(page: &mut Page, vr: &mut Vr) {
     // Close: このパネルだけ閉じる。
     press(page, vr, "close");
     let deadline = Instant::now() + common::TIMEOUT;
-    while page.app.get_webview_window("panel-1").is_some() {
+    while page.app.get_webview_window(&label).is_some() {
         assert!(Instant::now() < deadline, "ウィンドウが閉じない");
         std::thread::sleep(Duration::from_millis(20));
     }
