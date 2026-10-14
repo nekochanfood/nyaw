@@ -39,6 +39,8 @@ pub enum PanelCommand {
     Resize(u32, u32),
     /// レーザーのエミュレート方式を変える。パネルを問わずすべてのパネルに効く。
     PointerMode(PointerMode),
+    /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
+    Place(Pose),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -58,6 +60,8 @@ pub struct PanelStatus {
     pub closed: bool,
     /// レーザーのエミュレート方式（全パネル共通）。
     pub pointer_mode: PointerMode,
+    /// 描画解像度の段階（[`Kernel::panel_lod`]）。
+    pub lod: u8,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -197,6 +201,11 @@ impl<B: VrBackend> Kernel<B> {
                 .unwrap_or_else(|| self.overlay.in_view(panel))
     }
 
+    /// ランタイムが同時に出せるオーバーレイの数の上限（[`VrBackend::max_overlays`]）。
+    pub fn max_overlays(&self) -> Option<usize> {
+        self.vr.max_overlays()
+    }
+
     /// 最後の tick の HMD の姿勢。
     pub fn hmd(&self) -> Pose {
         self.overlay.hmd()
@@ -235,6 +244,10 @@ impl<B: VrBackend> Kernel<B> {
                 self.pointer_mode = m;
                 self.overlay.set_capture(m == PointerMode::Touch);
             }
+            PanelCommand::Place(offset) => {
+                self.overlay.detach(panel);
+                self.overlay.set_pose(panel, self.hmd().leveled() * offset);
+            }
         }
     }
 
@@ -250,6 +263,7 @@ impl<B: VrBackend> Kernel<B> {
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
             pointer_mode: self.pointer_mode,
+            lod: self.panel_lod(panel),
         }
     }
 }
@@ -283,6 +297,16 @@ mod tests {
         assert!(!k.status(p).locked);
         k.apply(p, PanelCommand::Lock(true));
         assert!(k.status(p).locked);
+    }
+
+    #[test]
+    fn place_detaches_and_moves_relative_to_head() {
+        let (mut k, p) = kernel();
+        k.apply(p, PanelCommand::Attach(Device::Hmd, Pose::IDENTITY));
+        let to = Pose::new(vr::Vec3::new(1.0, 0.0, -2.0), vr::Quat::IDENTITY);
+        k.apply(p, PanelCommand::Place(to));
+        assert_eq!(k.status(p).attached, None);
+        assert_eq!(k.panel(p).pose, k.hmd().leveled() * to);
     }
 
     #[test]

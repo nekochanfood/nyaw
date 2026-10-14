@@ -80,6 +80,14 @@ impl<V: Render> Panels<V> {
                         window.dispatch_event(input, cx);
                     }
                     ui::sync_panel(kernel, panel, cx);
+                    // As in production, a view that changes every frame is redrawn every frame.
+                    if cx
+                        .try_global::<PanelControl>()
+                        .and_then(|c| c.panels.get(&panel))
+                        .is_some_and(|s| s.live)
+                    {
+                        window.refresh();
+                    }
                 })
                 .unwrap();
         }

@@ -296,6 +296,11 @@ impl Overlay {
         self.panels[id].attached = None;
     }
 
+    /// パネルをその姿勢へ置く（次の tick でランタイムへ送る）。取り付け中なら取り付け先に戻される。
+    pub fn set_pose(&mut self, id: PanelId, pose: Pose) {
+        self.panels[id].pose = pose;
+    }
+
     /// 掴んで動かせないようにする（`false` で戻す）。レーザーでの操作はそのまま使える。
     pub fn set_locked(&mut self, id: PanelId, locked: bool) {
         self.panels[id].locked = locked;

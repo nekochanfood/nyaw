@@ -5,14 +5,21 @@
 //! - GPUI: 切り替え・押している間の見た目・ドラッグ＆ドロップ・スクロールする一覧・フォーカスと文字入力・ポップアップメニュー
 //! - Web: Testing の Web 版（[`WEB_PAGE`]。React のページ）を隣に開く
 //! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
+//! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）
+//! - 負荷: [`StressTest`] で上限いっぱいまでパネルを出し、閉じる・ちりばめる・並べる
 //!
 //! 要素はすべて `debug_selector` で名前を付けてある（名前 = `id`）。
 
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Instant, SystemTime};
+
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, Stateful, Window, anchored, deferred, div, prelude::*, rgb, rgba,
+    ScrollWheelEvent, Stateful, Window, anchored, deferred, div, hsla, prelude::*, px, relative,
+    rgb, rgba,
 };
-use kernel::vr::{Device, Hand, Pose, Quat, Vec3};
+use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, PointerMode};
 use ui::{PanelControl, PanelSpec};
 
@@ -143,6 +150,18 @@ fn spawn_transparent(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut A
     }
 }
 
+/// 隣に `build` の画面を開く。
+fn spawn_view<V: Render>(
+    panel: PanelId,
+    build: fn(PanelId, &mut App) -> V,
+) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        cx.default_global::<PanelControl>()
+            .spawns
+            .push(PanelSpec::spawn(panel, move |id, _, cx| build(id, cx)))
+    }
+}
+
 fn attach_offset(panel: PanelId, base: Pose) -> Pose {
     Pose::new(
         base.position + Vec3::new(1.2 * panel as f32, 0.0, 0.0),
@@ -175,6 +194,18 @@ impl Render for Testing {
             .child(
                 button("spawn-transparent", "Spawn transparent", false)
                     .on_click(spawn_transparent(self.panel)),
+            )
+            .child(
+                button("spawn-anim", "Spawn anim", false)
+                    .on_click(spawn_view(self.panel, TestingAnim::new)),
+            )
+            .child(
+                button("spawn-lod", "Spawn LOD", false)
+                    .on_click(spawn_view(self.panel, |id, _| TestingLod::new(id))),
+            )
+            .child(
+                button("stress-test", "Stress test", false)
+                    .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
             )
             .child(button("open-web", "Web Testing", false).on_click(spawn_web(self.panel)))
             .child(
@@ -524,6 +555,281 @@ impl Render for TestingTransparent {
     }
 }
 
+/// 閉じるボタン付きの見出し。
+fn title_bar(panel: PanelId, title: impl Into<String>, close_id: &'static str) -> Div {
+    div()
+        .flex()
+        .justify_between()
+        .items_start()
+        .child(title.into())
+        .child(button(close_id, "Close", false).on_click(command(panel, PanelCommand::Close)))
+}
+
+/// ループアニメーションの周期（秒）。
+const ANIM_PERIOD: f32 = 2.0;
+
+/// 毎フレーム中身が変わる画面（`testing-anim`）: 描いた回数と、周期 [`ANIM_PERIOD`] で左右を往復し色の変わる四角。
+/// 見えている間はフレームループが毎フレーム描き直す（[`ui::PanelState::live`]）。
+pub struct TestingAnim {
+    panel: PanelId,
+    /// 描いた回数。
+    pub frames: u64,
+    start: Instant,
+}
+
+impl TestingAnim {
+    pub fn new(panel: PanelId, cx: &mut App) -> Self {
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(panel)
+            .or_default()
+            .live = true;
+        Self {
+            panel,
+            frames: 0,
+            start: Instant::now(),
+        }
+    }
+}
+
+impl Render for TestingAnim {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        self.frames += 1;
+        let phase = self.start.elapsed().as_secs_f32() / ANIM_PERIOD % 1.0;
+        // 0→1→0 と往復する。
+        let x = 1.0 - (phase * 2.0 - 1.0).abs();
+        div()
+            .size_full()
+            .relative()
+            .p_3()
+            .bg(rgb(PANEL_BG))
+            .text_color(rgb(0xffffff))
+            .child(title_bar(self.panel, "testing-anim", "close-anim"))
+            .child(
+                div()
+                    .debug_selector(|| "anim-frames".into())
+                    .text_size(px(64.0))
+                    .child(format!("frame {}", self.frames)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(40.0))
+                    .left(relative(0.05 + 0.7 * x))
+                    .size(px(160.0))
+                    .bg(hsla(phase, 0.8, 0.5, 1.0)),
+            )
+    }
+}
+
+/// LOD0〜3 の背景色: 緑・黄・橙・赤。
+pub const LOD_COLORS: [u32; 4] = [0x30a050, 0xc0b030, 0xc07030, 0xc03030];
+
+/// 今の LOD（距離による描画解像度の段階）を数字と背景色で大きく出す画面（`testing-lod`）。
+pub struct TestingLod {
+    panel: PanelId,
+}
+
+impl TestingLod {
+    pub fn new(panel: PanelId) -> Self {
+        Self { panel }
+    }
+}
+
+impl Render for TestingLod {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let lod = cx
+            .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&self.panel))
+            .map_or(0, |c| c.status.lod);
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .p_3()
+            .bg(rgb(LOD_COLORS[(lod as usize).min(3)]))
+            .text_color(rgb(0xffffff))
+            .child(title_bar(self.panel, "testing-lod", "close-lod"))
+            .child(
+                div()
+                    .debug_selector(|| "lod-level".into())
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_size(px(320.0))
+                    .child(format!("{lod}")),
+            )
+    }
+}
+
+/// 負荷試験で出すパネルの大きさ（m）。解像度は既定のまま（800 × 600）。
+pub const STRESS_SIZE: Vec2 = Vec2::new(0.3, 0.225);
+/// 一度に足す枚数（[`StressTest`] の `stress-add`）。
+pub const STRESS_STEP: usize = 10;
+/// 並べるときの列数と間隔（m）、頭からの距離（m）。
+const GRID_COLS: usize = 8;
+const GRID_GAP: Vec2 = Vec2::new(0.33, 0.255);
+const GRID_DISTANCE: f32 = 2.0;
+
+/// 負荷試験の画面（`stress-test`）。[`TestingAnim`]・[`TestingLod`]・[`TestingTransparent`] を順に出す。
+/// `stress-fill` は開いているパネルが上限（[`ui::PanelControl::limit`]: [`ui::MAX_PANELS`] とランタイムの上限の小さい方）
+/// ちょうどになるまで出す。ランタイムがそれより手前で作れなくなれば（OpenVR のほかのアプリの分など）そこで止まり、
+/// 届いた数が `stress-count` に出る。
+pub struct StressTest {
+    panel: PanelId,
+    /// 出したパネル（閉じたものも含む）。ビルド時に積まれる。
+    spawned: Rc<RefCell<Vec<PanelId>>>,
+    rng: u64,
+}
+
+impl StressTest {
+    pub fn new(panel: PanelId) -> Self {
+        let seed = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map_or(1, |d| d.as_nanos() as u64);
+        Self {
+            panel,
+            spawned: Rc::default(),
+            rng: seed | 1,
+        }
+    }
+
+    /// 出したパネルのうち閉じていないもの。
+    fn alive(&self, cx: &App) -> Vec<PanelId> {
+        let ctl = cx.try_global::<PanelControl>();
+        self.spawned
+            .borrow()
+            .iter()
+            .copied()
+            .filter(|id| {
+                ctl.and_then(|c| c.panels.get(id))
+                    .is_none_or(|s| !s.status.closed)
+            })
+            .collect()
+    }
+
+    /// 上限を超えない範囲で、最大 `n` 枚を並べる位置に出す。
+    fn spawn(&mut self, n: usize, cx: &mut App) {
+        let start = self.alive(cx).len();
+        let c = cx.default_global::<PanelControl>();
+        // spawns に積んだまま次のフレームを待っている分も数える。
+        let room = c.limit.saturating_sub(c.open + c.spawns.len());
+        for i in start..start + n.min(room) {
+            let ids = self.spawned.clone();
+            let track = move |id| ids.borrow_mut().push(id);
+            let spec = match i % 3 {
+                0 => PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+                    track(id);
+                    TestingAnim::new(id, cx)
+                }),
+                1 => PanelSpec::new(Pose::IDENTITY, move |id, _, _| {
+                    track(id);
+                    TestingLod::new(id)
+                }),
+                _ => PanelSpec::new(Pose::IDENTITY, move |id, _, _| {
+                    track(id);
+                    TestingTransparent::new(id)
+                }),
+            };
+            c.spawns
+                .push(spec.in_view(grid_pose(i)).sized(STRESS_SIZE, (800, 600)));
+        }
+    }
+
+    /// 閉じていない出したパネルに、`i` 枚目なら `f(i)` の操作を積む。
+    fn each(&self, cx: &mut App, mut f: impl FnMut(usize) -> PanelCommand) {
+        let alive = self.alive(cx);
+        let c = cx.default_global::<PanelControl>();
+        for (i, id) in alive.into_iter().enumerate() {
+            c.panels.entry(id).or_default().commands.push(f(i));
+        }
+    }
+
+    /// xorshift64 で 0〜1。
+    fn random(&mut self) -> f32 {
+        self.rng ^= self.rng << 13;
+        self.rng ^= self.rng >> 7;
+        self.rng ^= self.rng << 17;
+        (self.rng >> 40) as f32 / (1u64 << 24) as f32
+    }
+}
+
+/// 並べるときの `i` 枚目の位置（頭から見た相対姿勢）。正面 [`GRID_DISTANCE`] に [`GRID_COLS`] 列で上から下へ。
+pub fn grid_pose(i: usize) -> Pose {
+    let (col, row) = ((i % GRID_COLS) as f32, (i / GRID_COLS) as f32);
+    Pose::new(
+        Vec3::new(
+            (col - (GRID_COLS - 1) as f32 / 2.0) * GRID_GAP.x,
+            0.6 - row * GRID_GAP.y,
+            -GRID_DISTANCE,
+        ),
+        Quat::IDENTITY,
+    )
+}
+
+/// `p` に置いたパネルが頭（原点）の方を向く姿勢。
+fn facing_head(p: Vec3) -> Pose {
+    Pose::new(p, Quat::from_rotation_y((-p.x).atan2(-p.z)))
+}
+
+impl Render for StressTest {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (open, limit) = cx
+            .try_global::<PanelControl>()
+            .map_or((0, 0), |c| (c.open, c.limit));
+        let alive = self.alive(cx).len();
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgb(PANEL_BG))
+            .text_color(rgb(0xffffff))
+            .child(title_bar(self.panel, "stress-test", "close-stress"))
+            .child(
+                div()
+                    .debug_selector(|| "stress-count".into())
+                    .child(format!("open {open} / limit {limit} (spawned {alive})")),
+            )
+            .child(
+                row()
+                    .child(
+                        button("stress-fill", "Fill to limit", false)
+                            .on_click(cx.listener(|this, _, _, cx| this.spawn(usize::MAX, cx))),
+                    )
+                    .child(
+                        button("stress-add", format!("+{STRESS_STEP}"), false)
+                            .on_click(cx.listener(|this, _, _, cx| this.spawn(STRESS_STEP, cx))),
+                    )
+                    .child(button("stress-close", "Close all", false).on_click(
+                        cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
+                    ))
+                    .child(
+                        button("stress-scatter", "Scatter", false).on_click(cx.listener(
+                            |this, _, _, cx| {
+                                // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
+                                let poses: Vec<_> = (0..this.alive(cx).len())
+                                    .map(|_| {
+                                        facing_head(Vec3::new(
+                                            this.random() * 6.0 - 3.0,
+                                            this.random() * 2.5 - 1.0,
+                                            -0.8 - this.random() * 7.2,
+                                        ))
+                                    })
+                                    .collect();
+                                this.each(cx, |i| PanelCommand::Place(poses[i]));
+                            },
+                        )),
+                    )
+                    .child(button("stress-grid", "Grid", false).on_click(cx.listener(
+                        |this, _, _, cx| this.each(cx, |i| PanelCommand::Place(grid_pose(i))),
+                    ))),
+            )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -570,5 +876,58 @@ mod tests {
         assert!(profiling(cx));
         cx.simulate_click(c, Modifiers::none());
         assert!(!profiling(cx));
+    }
+
+    /// 描画のテストパネルと負荷試験の画面は Testing から召喚できる。
+    #[gpui::test]
+    fn test_panel_buttons_spawn_panels(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| Testing::default());
+        cx.run_until_parked();
+        for id in ["spawn-anim", "spawn-lod", "stress-test"] {
+            let c = cx.debug_bounds(id).unwrap().center();
+            cx.simulate_click(c, Modifiers::none());
+        }
+        let spawns = cx.update(|_, cx| cx.global::<PanelControl>().spawns.len());
+        assert_eq!(spawns, 3);
+    }
+
+    /// Fill は上限ちょうどまで出し（待っている分も数える）、Grid・Close all は出したもののうち開いているものだけに効く。
+    #[gpui::test]
+    fn stress_fill_stops_at_limit_and_commands_reach_spawned(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| StressTest::new(0));
+        cx.update(|_, cx| {
+            let c = cx.default_global::<PanelControl>();
+            (c.open, c.limit) = (10, 15);
+        });
+        cx.run_until_parked();
+        let fill = cx.debug_bounds("stress-fill").unwrap().center();
+        cx.simulate_click(fill, Modifiers::none());
+        cx.simulate_click(fill, Modifiers::none());
+        let spawns =
+            cx.update(|_, cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns));
+        assert_eq!(spawns.len(), 5);
+
+        // 開いたことにする（ビルドで積まれる ID の代わり）。1 枚は閉じられた。
+        view.update(cx, |s, _| s.spawned.borrow_mut().extend([1, 2, 3]));
+        cx.update(|_, cx| {
+            let c = cx.default_global::<PanelControl>();
+            c.panels.entry(2).or_default().status.closed = true;
+        });
+        for id in ["stress-grid", "stress-close"] {
+            let c = cx.debug_bounds(id).unwrap().center();
+            cx.simulate_click(c, Modifiers::none());
+        }
+        let commands = cx.update(|_, cx| {
+            let c = cx.global::<PanelControl>();
+            [1, 2, 3].map(|id| c.panels.get(&id).map_or(0, |s| s.commands.len()))
+        });
+        assert_eq!(commands, [2, 0, 2]);
+    }
+
+    #[test]
+    fn grid_rows_are_full_before_wrapping() {
+        assert_eq!(grid_pose(0).position.y, grid_pose(GRID_COLS - 1).position.y);
+        assert!(grid_pose(GRID_COLS).position.y < grid_pose(0).position.y);
+        assert!(grid_pose(0).position.x < 0.0 && grid_pose(GRID_COLS - 1).position.x > 0.0);
     }
 }

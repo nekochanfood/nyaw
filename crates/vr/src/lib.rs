@@ -177,6 +177,11 @@ pub trait VrBackend {
     /// ランタイムのイベントを処理し、このフレームの姿勢と生のコントローラ入力を返す。
     fn poll(&mut self) -> Frame;
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError>;
+    /// 同時に作れるオーバーレイの数の上限（OpenXR は 1 フレームに出せるレイヤー数、OpenVR はランタイム全体の数）。
+    /// 無い・分からなければ `None`。超えた分の [`create_overlay`](Self::create_overlay) はエラーになる。
+    fn max_overlays(&self) -> Option<usize> {
+        None
+    }
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose);
     /// `device` の姿勢 * `offset` に置き、追従はランタイムに任せる（アプリが poll した姿勢を送るより遅れない）。
     /// 任せられなければ `false` を返し、呼び出し側は毎 tick [`set_overlay_pose`](Self::set_overlay_pose) で送る。
@@ -237,6 +242,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError> {
         (**self).create_overlay(key, width_m)
+    }
+    fn max_overlays(&self) -> Option<usize> {
+        (**self).max_overlays()
     }
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
         (**self).set_overlay_pose(id, pose)

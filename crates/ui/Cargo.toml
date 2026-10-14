@@ -84,3 +84,7 @@ harness = false
 [[test]]
 name = "novr_cursor"
 harness = false
+# テスト用パネル（毎フレーム描き直すパネル・開けるパネルの数の上限）を本番のフレームループで確かめる。
+[[test]]
+name = "test_panels"
+harness = false

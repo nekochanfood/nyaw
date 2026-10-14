@@ -365,6 +365,11 @@ impl VrBackend for OpenVrBackend {
         frame
     }
 
+    fn max_overlays(&self) -> Option<usize> {
+        // ランタイム全体（ほかのアプリの分も含む）の数。実際に作れる数はこれより少ないことがある。
+        Some(sys::k_unMaxOverlayCount as usize)
+    }
+
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError> {
         let o = self.overlay();
         let key = CString::new(key).map_err(|e| VrError::Runtime(e.to_string()))?;
