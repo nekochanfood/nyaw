@@ -322,7 +322,7 @@ impl VrBackend for OpenVrBackend {
             frame.hmd = pose_from(&hmd.mDeviceToAbsoluteTracking.m);
             devices.insert(
                 Device::Hmd,
-                (sys::k_unTrackedDeviceIndex_Hmd, Pose::IDENTITY),
+                (sys::k_unTrackedDeviceIndex_Hmd as _, Pose::IDENTITY),
             );
         }
         for (device, pose) in poses.iter().enumerate().skip(1) {
