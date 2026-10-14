@@ -84,6 +84,10 @@ const SNAP: f32 = 1e-5;
 /// ヒット判定もこの向きで行うので、クリック位置も揺れない。
 // ponytail: tick 単位なのでリフレッシュレートで効き方が変わる。気になれば経過時間で決める。
 const POINTER_SMOOTHING: f32 = 0.8;
+/// 押してから、押した点がレーザーからこの角度（ラジアン、2°）ずれるまでは押した位置に留める。
+/// トリガーを引く・離すときの手ブレでクリックが外れたりスワイプになったりしないように。
+// ponytail: 固定値。きつい・ゆるいと感じたらここを調整する。
+const CLICK_SLOP: f32 = 0.035;
 /// 掴み中のスティックを倒し切ったとき、1 tick に距離が変わる割合（遠いほど速い）と、効き始める倒し量。
 const PUSH: f32 = 0.02;
 const PUSH_DEADZONE: f32 = 0.2;
@@ -166,6 +170,8 @@ struct HandState {
     ray: Option<Ray>,
     /// 押している間のキャプチャを外した（離すまで）。
     free: bool,
+    /// 押した位置（ピクセル）とトラッキング空間での点。[`CLICK_SLOP`] を越えて動かすか離すまで。
+    press: Option<(Vec2, Vec3)>,
 }
 
 #[derive(Debug, Default)]
@@ -686,7 +692,7 @@ impl Overlay {
             emit(old, PointerEvent::Leave);
         }
 
-        let Some((id, pos, _)) = hit else {
+        let Some((id, pos, t)) = hit else {
             st.hover = None;
             st.select = false;
             return;
@@ -700,8 +706,25 @@ impl Overlay {
             return;
         }
 
+        // 押した点から少し揺れただけなら、離すまで押した位置を指していることにする。
+        let pos = match st.press {
+            Some((at, point))
+                if st.select
+                    && st.hover == Some(id)
+                    && (point - aim.position).angle_between(aim.forward()) < CLICK_SLOP =>
+            {
+                at
+            }
+            _ => {
+                st.press = None;
+                pos
+            }
+        };
         emit(id, PointerEvent::Move { pos });
         if c.select != st.select {
+            // 模したデバイス（novr のマウス）は手ブレしない。
+            st.press =
+                (c.select && !frame.emulated).then(|| (pos, aim.position + aim.forward() * t));
             emit(
                 id,
                 if c.select {
@@ -816,8 +839,11 @@ fn facing(at: Vec3, eye: Vec3, up: Vec3) -> Option<Quat> {
     Some(Quat::from_mat3(&Mat3::from_cols(x, z.cross(x), z)))
 }
 
-/// レイ（aim の前方）とパネルの交差判定。ヒットしたピクセルとレイ上の距離を返す。
+/// レイ（aim の前方）とパネルの表面（+Z 側）の交差判定。ヒットしたピクセルとレイ上の距離を返す。裏からは当たらない。
 fn hit_test(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
+    if aim.forward().dot(p.pose.orientation * Vec3::Z) >= 0.0 {
+        return None;
+    }
     let (px, t) = plane_hit(p, aim)?;
     let (w, h) = (p.resolution.0 as f32, p.resolution.1 as f32);
     ((0.0..=w).contains(&px.x) && (0.0..=h).contains(&px.y)).then_some((px, t))
@@ -1061,6 +1087,53 @@ mod tests {
                 PointerEvent::Up { pos: center }
             ]
         );
+    }
+
+    #[test]
+    fn small_shake_while_pressed_keeps_the_press_point() {
+        let (mut vr, mut ov) = setup();
+        let center = Vec2::new(50.0, 50.0);
+        controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
+        ov.tick(&mut vr);
+        // 1cm（約 0.6°）ずれて離しても、押した所で離したことになる。
+        let shaken = at(0.01, 0.0, 0.0);
+        controller(&mut vr, shaken, &[("trigger/value", 1.0)]);
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [PointerEvent::Move { pos: center }]
+        );
+        controller(&mut vr, shaken, &[]);
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [
+                PointerEvent::Move { pos: center },
+                PointerEvent::Up { pos: center }
+            ]
+        );
+        // 離した後は手ブレのままの位置を指す。
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [PointerEvent::Move {
+                pos: Vec2::new(51.0, 50.0)
+            }]
+        );
+        // 大きく動かすと、押したままでも追う。
+        controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
+        ov.tick(&mut vr);
+        controller(&mut vr, at(0.1, 0.0, 0.0), &[("trigger/value", 1.0)]);
+        assert!((move_x(&ov.tick(&mut vr)) - 60.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn panel_is_not_hit_from_behind() {
+        let (mut vr, mut ov) = setup();
+        // パネル（z = -1、表は +Z）の裏側（z = -2）から +Z へ向けて指しても、当たらない。
+        let behind = Pose::new(
+            Vec3::new(0.0, 0.0, -2.0),
+            Quat::from_rotation_y(std::f32::consts::PI),
+        );
+        controller(&mut vr, behind, &[("trigger/value", 1.0)]);
+        assert_eq!(kinds(&ov.tick(&mut vr)), []);
     }
 
     #[test]

@@ -111,9 +111,9 @@ fn drag_to_next_panel(kit: &mut VrKit<'_, Testing>, wait: std::time::Duration) {
     while std::time::Instant::now() < until {
         kit.step();
     }
-    // Move slightly over the original panel to start the drag, then carry it to the neighboring panel.
+    // Move over the original panel (past the overlay's click slop) to start the drag, then carry it to the neighboring panel.
     let c = kit.bounds("drag-chip").center();
-    for dx in [10.0, 20.0, 30.0] {
+    for dx in [10.0, 20.0, 30.0, 120.0] {
         kit.point_at(Vec2::new(f32::from(c.x) + dx, c.y.into()));
     }
     kit.panel(next).hover("drop-zone").up();
