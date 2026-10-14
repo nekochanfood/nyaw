@@ -31,7 +31,7 @@ use std::{
 
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PointerEvent, Pose, Runtime, Surface, UiEvent, Vec2,
+    Device, Kernel, PanelCommand, PanelId, PointerEvent, PointerMode, Pose, Runtime, Surface, UiEvent, Vec2,
     VrBackend,
 };
 use serde::{Deserialize, Serialize};
@@ -136,7 +136,7 @@ impl WebDevice {
 }
 
 /// ページからパネルへの操作（`nyaw.command(..)`）。JSON では `"detach"` / `"close"` / `{ "attach": "hmd" }` /
-/// `{ "lock": true }` / `{ "resize": { "width": 640, "height": 480 } }`。
+/// `{ "lock": true }` / `{ "resize": { "width": 640, "height": 480 } }` / `{ "pointer_mode": "touch" }`。
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WebCommand {
@@ -149,6 +149,8 @@ pub enum WebCommand {
         width: u32,
         height: u32,
     },
+    /// レーザーのエミュレート方式（`"mouse"` / `"touch"`）。全パネルに効く。
+    PointerMode(PointerMode),
 }
 
 /// パネルの状態（`nyaw.status()` / `nyaw.onStatus(..)`）。
@@ -169,6 +171,8 @@ pub struct WebStatus {
     pub resolution: (u32, u32),
     /// VR 上の大きさ（m）。
     pub size: (f32, f32),
+    /// レーザーのエミュレート方式（`"mouse"` / `"touch"`）。
+    pub pointer_mode: PointerMode,
 }
 
 impl WebStatus {
@@ -189,6 +193,7 @@ impl WebStatus {
             grabbed: s.grabbed,
             resolution: p.resolution,
             size: (p.size.x, p.size.y),
+            pointer_mode: s.pointer_mode,
         }
     }
 }
@@ -206,10 +211,12 @@ pub struct WebPointer {
     /// スクロール量（行）。上・右に倒すと正。
     pub dx: f32,
     pub dy: f32,
+    /// `"mouse"` / `"touch"`。ブリッジは押した瞬間の方式を離すまで使う。
+    pub mode: PointerMode,
 }
 
 impl WebPointer {
-    pub fn new(hand: Hand, ev: PointerEvent) -> Self {
+    pub fn new(hand: Hand, ev: PointerEvent, mode: PointerMode) -> Self {
         let hand = match hand {
             Hand::Left => "left",
             Hand::Right => "right",
@@ -228,6 +235,7 @@ impl WebPointer {
             y: pos.y,
             dx: delta.x,
             dy: delta.y,
+            mode,
         }
     }
 }
@@ -496,7 +504,7 @@ impl Host {
     }
 
     /// オーバーレイ層のポインタイベントを、このパネルへ送る束に積む。
-    pub fn deliver(&mut self, e: UiEvent, now: Instant) {
+    pub fn deliver(&mut self, e: UiEvent, mode: PointerMode, now: Instant) {
         if !self.windows.contains_key(&e.panel) {
             return;
         }
@@ -513,7 +521,7 @@ impl Host {
             _ => {}
         }
         if let Some(o) = self.outboxes.get_mut(&e.panel) {
-            o.push(WebPointer::new(e.hand, e.event));
+            o.push(WebPointer::new(e.hand, e.event, mode));
         }
         if let Some(d) = self.draws.get_mut(&e.panel) {
             d.hot_until = Some(now + HOT);
@@ -638,6 +646,7 @@ impl Host {
                 kernel.apply(panel, PanelCommand::Close);
                 self.forget(panel);
             }
+            WebCommand::PointerMode(m) => self.kernel.apply(panel, PanelCommand::PointerMode(m)),
             WebCommand::Resize { width, height } => {
                 let (width, height) = (width.max(1), height.max(1));
                 if let Some(w) = self.windows.get(&panel)
@@ -784,17 +793,18 @@ mod tests {
                 pos: Vec2::new(10.0, 20.0),
                 delta: Vec2::new(0.0, -2.0),
             },
+            PointerMode::Touch,
         );
         assert_eq!(
             serde_json::to_value(p).unwrap(),
-            serde_json::json!({ "hand": "left", "type": "scroll", "x": 10.0, "y": 20.0, "dx": 0.0, "dy": -2.0 })
+            serde_json::json!({ "hand": "left", "type": "scroll", "x": 10.0, "y": 20.0, "dx": 0.0, "dy": -2.0, "mode": "touch" })
         );
-        let leave = WebPointer::new(Hand::Right, PointerEvent::Leave);
+        let leave = WebPointer::new(Hand::Right, PointerEvent::Leave, PointerMode::Mouse);
         assert_eq!((leave.hand, leave.kind), ("right", "leave"));
     }
 
     fn ptr(hand: Hand, ev: PointerEvent) -> WebPointer {
-        WebPointer::new(hand, ev)
+        WebPointer::new(hand, ev, PointerMode::Mouse)
     }
 
     #[test]
@@ -859,6 +869,10 @@ mod tests {
                 width: 640,
                 height: 480
             }
+        );
+        assert_eq!(
+            parse(r#"{"pointer_mode":"touch"}"#),
+            WebCommand::PointerMode(PointerMode::Touch)
         );
     }
 

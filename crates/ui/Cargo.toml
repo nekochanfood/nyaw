@@ -49,3 +49,7 @@ harness = false
 [[test]]
 name = "web_novr"
 harness = false
+
+[[test]]
+name = "web_pointer"
+harness = false

@@ -5,7 +5,18 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+
+/// トリガーを押したまま動かしたときの意味。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerMode {
+    /// マウスのエミュレート: 押したまま動かすとドラッグ。
+    #[default]
+    Mouse,
+    /// タッチのエミュレート: 押したまま動かすとスワイプ（スクロール）、動かさずに離すとタップ（クリック）。
+    Touch,
+}
 
 /// `config.toml` の中身。どのキーも省略でき、知らないキーは無視する。
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
@@ -17,6 +28,8 @@ pub struct Config {
     pub runtime: Option<String>,
     /// レーザーの手ブレ抑え（0 = 抑えない 〜 1 未満。大きいほど強く、遅れる）。省略で既定値。
     pub pointer_smoothing: Option<f32>,
+    /// レーザーのエミュレート方式（`mouse` / `touch`）。省略でマウス。
+    pub pointer_mode: Option<PointerMode>,
 }
 
 #[derive(Debug)]

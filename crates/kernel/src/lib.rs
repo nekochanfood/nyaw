@@ -7,7 +7,7 @@
 
 pub mod config;
 
-pub use config::Config;
+pub use config::{Config, PointerMode};
 pub use overlay::{self, Overlay, Panel, PanelId, Pointer, PointerEvent, UiEvent};
 pub use vr::{self, Device, Hand, Pose, Runtime, Surface, Vec2, VrBackend, VrError};
 
@@ -22,6 +22,8 @@ pub enum PanelCommand {
     Pointer(Hand, Pointer),
     /// 解像度（UI の論理ピクセル）を変える。1m あたりのピクセル数を保って VR 上の大きさも変わる。
     Resize(u32, u32),
+    /// レーザーのエミュレート方式を変える。パネルを問わずすべてのパネルに効く。
+    PointerMode(PointerMode),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -38,6 +40,8 @@ pub struct PanelStatus {
     pub grabbed: bool,
     /// 閉じられた。
     pub closed: bool,
+    /// レーザーのエミュレート方式（全パネル共通）。
+    pub pointer_mode: PointerMode,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -46,6 +50,7 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     /// テストがモックを直接いじるために公開している。本番コードはメソッド経由で使う。
     pub vr: B,
     overlay: Overlay,
+    pointer_mode: PointerMode,
 }
 
 impl Kernel {
@@ -82,6 +87,7 @@ impl<B: VrBackend> Kernel<B> {
             overlay.set_pointer_smoothing(s);
         }
         Self {
+            pointer_mode: config.pointer_mode.unwrap_or_default(),
             config,
             vr,
             overlay,
@@ -94,6 +100,11 @@ impl<B: VrBackend> Kernel<B> {
 
     pub fn surface(&self) -> Surface {
         self.vr.surface()
+    }
+
+    /// レーザーのエミュレート方式。UI がポインタイベントをマウス・タッチのどちらとして流すかを決める。
+    pub fn pointer_mode(&self) -> PointerMode {
+        self.pointer_mode
     }
 
     pub fn add_panel(
@@ -147,6 +158,7 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay.set_pointer(&mut self.vr, panel, hand, part)
             }
             PanelCommand::Resize(w, h) => self.overlay.set_resolution(&mut self.vr, panel, (w, h)),
+            PanelCommand::PointerMode(m) => self.pointer_mode = m,
         }
     }
 
@@ -160,6 +172,7 @@ impl<B: VrBackend> Kernel<B> {
             menu: self.overlay.menu_held(),
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
+            pointer_mode: self.pointer_mode,
         }
     }
 }
@@ -205,6 +218,24 @@ mod tests {
         assert_eq!(k.panel(p).resolution, (8, 2));
         assert_eq!(k.panel(p).size, Vec2::new(2.0, 0.5));
         assert_eq!(k.vr.overlays[0].width_m, 2.0);
+    }
+
+    #[test]
+    fn pointer_mode_starts_from_config_and_switches() {
+        let config = Config {
+            pointer_mode: Some(PointerMode::Touch),
+            ..Default::default()
+        };
+        let mut k = Kernel::with_backend(MockBackend::default(), config);
+        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (4, 4)).unwrap();
+        assert_eq!(k.status(p).pointer_mode, PointerMode::Touch);
+        k.apply(p, PanelCommand::PointerMode(PointerMode::Mouse));
+        assert_eq!(k.pointer_mode(), PointerMode::Mouse);
+        assert_eq!(
+            kernel().0.pointer_mode(),
+            PointerMode::Mouse,
+            "既定はマウス"
+        );
     }
 
     #[test]

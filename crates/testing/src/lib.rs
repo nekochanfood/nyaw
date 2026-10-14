@@ -4,6 +4,7 @@
 //! - VR: クリック数・HMD / 手 / トラッカーへの取り付け・取り外し・ロック・メニューボタンと掴みの表示
 //! - GPUI: 切り替え・押している間の見た目・ドラッグ＆ドロップ・スクロールする一覧・フォーカスと文字入力・ポップアップメニュー
 //! - Web: Testing の Web 版（[`WEB_PAGE`]。React のページ）を隣に開く
+//! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
 //!
 //! 要素はすべて `debug_selector` で名前を付けてある（名前 = `id`）。
 
@@ -12,7 +13,7 @@ use gpui::{
     ScrollWheelEvent, Stateful, Window, anchored, deferred, div, prelude::*, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec3};
-use kernel::{PanelCommand, PanelId};
+use kernel::{PanelCommand, PanelId, PointerMode};
 use ui::{PanelControl, PanelSpec};
 
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
@@ -164,6 +165,10 @@ impl Render for Testing {
                     .on_click(spawn_transparent(self.panel)),
             )
             .child(button("open-web", "Web Testing", false).on_click(spawn_web(self.panel)))
+            .child(
+                button("pointer-test", "Pointer test", false)
+                    .on_click(spawn_pointer_test(self.panel)),
+            )
             .child(
                 button("close-panel", "Close panel", false)
                     .on_click(command(self.panel, PanelCommand::Close)),
@@ -369,6 +374,104 @@ impl Render for Testing {
             .child(gpui_row)
             .child(field)
             .child(list)
+    }
+}
+
+/// ポインタの方式（マウス / タッチのエミュレート）を試す画面（`pointer-test`）。
+/// `pointer-mode` で方式を切り替え（タッチのとき光る）、同じ操作がどう効くかを見る:
+/// マウスでは `drag-chip` を `drop-zone` へ運べ、タッチでは `swipe-list` を押したまま動かすとスクロールする。
+/// `tap-me` はどちらでも押せる。
+#[derive(Default)]
+pub struct PointerTest {
+    panel: PanelId,
+    pub taps: usize,
+    pub dropped: usize,
+    /// スワイプする一覧の状態（`offset().y` が負 = 下へスクロール済み）。
+    pub list: ScrollHandle,
+}
+
+impl PointerTest {
+    pub fn new(panel: PanelId) -> Self {
+        Self {
+            panel,
+            ..Self::default()
+        }
+    }
+}
+
+impl Render for PointerTest {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mode = cx
+            .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&self.panel))
+            .map(|c| c.status.pointer_mode)
+            .unwrap_or_default();
+        let (label, next) = match mode {
+            PointerMode::Mouse => ("Mode: Mouse", PointerMode::Touch),
+            PointerMode::Touch => ("Mode: Touch", PointerMode::Mouse),
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgb(PANEL_BG))
+            .text_color(rgb(0xffffff))
+            .child(
+                row()
+                    .child(
+                        button("pointer-mode", label, mode == PointerMode::Touch)
+                            .on_click(command(self.panel, PanelCommand::PointerMode(next))),
+                    )
+                    .child(
+                        button("tap-me", format!("Tapped {}", self.taps), false).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.taps += 1;
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .child(
+                        button("close-pointer-test", "Close", false)
+                            .on_click(command(self.panel, PanelCommand::Close)),
+                    ),
+            )
+            .child(
+                row()
+                    .child(
+                        button("drag-chip", "Drag me", false)
+                            .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
+                    )
+                    .child(
+                        div()
+                            .id("drop-zone")
+                            .debug_selector(|| "drop-zone".into())
+                            .p_2()
+                            .bg(rgb(AREA_BG))
+                            .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
+                            .on_drop(cx.listener(|this, _: &Chip, _, cx| {
+                                this.dropped += 1;
+                                cx.notify();
+                            }))
+                            .child(format!("Dropped {}", self.dropped)),
+                    ),
+            )
+            .child(
+                div()
+                    .id("swipe-list")
+                    .debug_selector(|| "swipe-list".into())
+                    .h(gpui::px(240.0))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.list)
+                    .bg(rgb(AREA_BG))
+                    .children((0..LIST_ROWS).map(|i| {
+                        div()
+                            .h(gpui::px(ROW_PX))
+                            .px_2()
+                            .child(format!("Swipe row {i}"))
+                    })),
+            )
     }
 }
 
