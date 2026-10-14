@@ -202,6 +202,8 @@ pub trait VrBackend {
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32);
     /// RGBA8、行間に詰め物なし。
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]);
+    /// オーバーレイを捨てて資源を返す。以降 `id` は使わない。閉じたパネルが溜まらないよう、既定は何もしない。
+    fn destroy_overlay(&mut self, _id: OverlayId) {}
     /// 直前の [`poll`](Self::poll) でランタイムがアプリのスレッドで合成・表示にかけた時間（待ちは含まない）。
     /// 合成をランタイム（別プロセス）がするなら 0（novr のエミュレーターだけが返す）。プロファイラ用。
     fn compositor_time(&self) -> std::time::Duration {
@@ -259,6 +261,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         (**self).submit_overlay_pixels(id, width, height, rgba)
+    }
+    fn destroy_overlay(&mut self, id: OverlayId) {
+        (**self).destroy_overlay(id)
     }
     fn overlay_image(&mut self, id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
         (**self).overlay_image(id)

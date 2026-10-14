@@ -29,6 +29,8 @@ pub struct Panel {
     pub locked: bool,
     /// 閉じられた。ヒット判定の対象外で、PanelId は詰めずに欠番のまま残る。
     pub closed: bool,
+    /// 閉じ切ってランタイム側のオーバーレイも捨てた。以降は `overlay` に触れない。
+    released: bool,
     /// どの手のレーザーを描くパネルか。ヒット判定の対象外で、配置は毎 tick ここで決める。
     pub pointer: Option<(Hand, Pointer)>,
     /// このパネルのイン・アウトアニメーション。`Overlay::set_animated` で個別に無効化できる。
@@ -206,6 +208,7 @@ impl Overlay {
             attached: None,
             locked: false,
             closed: false,
+            released: false,
             pointer: None,
             animated: true,
             opacity: 1.0,
@@ -303,7 +306,7 @@ impl Overlay {
     pub fn set_resolution(&mut self, vr: &mut dyn VrBackend, id: PanelId, resolution: (u32, u32)) {
         let p = &mut self.panels[id];
         let (w, h) = (resolution.0.max(1), resolution.1.max(1));
-        if p.resolution == (w, h) {
+        if p.resolution == (w, h) || p.released {
             return;
         }
         p.size = Vec2::new(
@@ -348,7 +351,7 @@ impl Overlay {
     }
 
     /// パネルを閉じる。入力を即座に止め、最後の描画をフェードアウトしてから隠す。
-    // ponytail: ランタイム側のオーバーレイは残る。数が問題になったら VrBackend に destroy を足す。
+    /// フェードアウトが終わると、ランタイム側のオーバーレイも捨てる（[`VrBackend::destroy_overlay`]）。
     pub fn close(&mut self, vr: &mut dyn VrBackend, id: PanelId) {
         let p = &mut self.panels[id];
         if p.closed {
@@ -423,6 +426,9 @@ impl Overlay {
     }
 
     fn present(vr: &mut dyn VrBackend, p: &mut Panel, upload: bool) {
+        if p.released {
+            return;
+        }
         if p.pointer.is_none() {
             vr.set_overlay_width(p.overlay, p.displayed_size().x);
         }
@@ -430,6 +436,9 @@ impl Overlay {
         if p.closed && p.opacity == 0.0 {
             vr.set_overlay_visible(p.overlay, false);
             vr.submit_overlay_pixels(p.overlay, 1, 1, &[0; 4]);
+            // 閉じ切った。ランタイム側の資源を返す（PanelId は欠番のまま残る）。
+            vr.destroy_overlay(p.overlay);
+            p.released = true;
             p.texture = None;
             return;
         }
@@ -539,7 +548,7 @@ impl Overlay {
             st.select = false;
         }
         self.place_pointers(vr);
-        for p in &mut self.panels {
+        for p in self.panels.iter_mut().filter(|p| !p.released) {
             if let Some((device, offset)) = &p.follow {
                 let want = Some((Some(device.clone()), *offset));
                 if p.sent == want {

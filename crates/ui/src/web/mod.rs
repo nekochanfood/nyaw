@@ -264,6 +264,8 @@ pub struct Outbox {
 
 /// 返事が来なくても次を送るまでの時間（ページの読み込み直し等で返事が失われたとき）。
 const ACK_TIMEOUT: Duration = Duration::from_millis(500);
+/// 撮影の結果が返らないとみなして撮り直すまでの時間。
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl Outbox {
     pub fn push(&mut self, p: WebPointer) {
@@ -551,7 +553,15 @@ impl Host {
                     .set_size(LogicalSize::new(w, h))
                     .and_then(|_| spare.set_title(page))
                     .and_then(|_| spare.navigate(page_url(page)));
-                r.map(|_| spare)
+                match r {
+                    Ok(()) => Ok(spare),
+                    Err(e) => {
+                        // 失敗した予備は誰も持たなくなる。ウィンドウとラベルを残さない。
+                        self.lock().labels.remove(spare.label());
+                        let _ = spare.destroy();
+                        Err(e)
+                    }
+                }
             }
             None => self.build(
                 label(panel),
@@ -816,7 +826,10 @@ impl Host {
         self.draws.remove(&panel);
         self.outboxes.remove(&panel);
         self.moved.retain(|(p, _), _| *p != panel);
-        self.lock().labels.retain(|_, p| *p != panel);
+        let mut ctl = self.lock();
+        ctl.labels.retain(|_, p| *p != panel);
+        ctl.commands.remove(&panel);
+        ctl.statuses.remove(&panel);
     }
 
     /// ウィンドウの大きさが変わった（OS の操作・`resize` コマンド）。パネルの解像度を論理ピクセルで合わせる。
@@ -893,6 +906,11 @@ impl Host {
                 || visible
                     && (d.hot_until.is_some_and(|t| now < t)
                         || d.captured.is_none_or(|t| now - t >= crate::IDLE_REDRAW));
+            // コールバックが失われても止まらないよう、返らない撮影は諦めて撮り直す。
+            if d.capturing && d.captured.is_some_and(|t| now - t >= CAPTURE_TIMEOUT) {
+                logger::warn!("web capture timed out", panel = panel);
+                d.capturing = false;
+            }
             if d.capturing || !due {
                 continue;
             }

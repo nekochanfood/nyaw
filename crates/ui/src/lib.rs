@@ -422,6 +422,8 @@ const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
 pub(crate) const IDLE_REDRAW: Duration = Duration::from_millis(250);
+/// 同時に開いておけるパネルの数（閉じたものは数えない）。
+const MAX_PANELS: usize = 16;
 /// 描き直しても絵が変わらないパネルの、描き直す間隔の上限（時計の分の切り替わりはこの遅れで見える）。
 const IDLE_MAX: Duration = Duration::from_secs(1);
 
@@ -952,7 +954,19 @@ pub fn run_with(
                         .into_iter()
                         .map(|(from, page)| PanelSpec::spawn_web(from, page)),
                 );
+                // 閉じたパネルの手ごとの状態（慣性のスクロールなど）は持ち越さない。
+                bridges.retain(|&(p, _), _| !kernel.panel(p).closed);
+                render_sizes.retain(|&p, _| !kernel.panel(p).closed);
                 for spec in spawns {
+                    // ページや連打で開きっぱなしのパネルが際限なく増えないように。
+                    if (0..windows.len())
+                        .filter(|&p| !kernel.panel(p).closed)
+                        .count()
+                        >= MAX_PANELS
+                    {
+                        logger::warn!("too many open panels", max = MAX_PANELS);
+                        break;
+                    }
                     let i = windows.len();
                     windows.push(cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs)));
                     last.push(None);
