@@ -572,14 +572,21 @@ impl Overlay {
             }
         }
 
-        // レーザー上で最も近いパネル。
-        let hit = self
-            .panels
-            .iter()
-            .enumerate()
-            .filter(|(_, p)| !p.closed && p.pointer.is_none())
-            .filter_map(|(id, p)| hit_test(p, &aim).map(|(pos, t)| (id, pos, t)))
-            .min_by(|a, b| a.2.total_cmp(&b.2));
+        // 押している間は、押したパネルの面を指し続ける（はみ出しても離すまでそのパネルへ送る。ポインタのキャプチャ）。
+        // 離したフレームも押していたパネルへ送り、Up を届ける。
+        let captured = st
+            .hover
+            .filter(|&id| st.select && !self.panels[id].closed)
+            .and_then(|id| plane_hit(&self.panels[id], &aim).map(|(pos, t)| (id, pos, t)));
+        // そうでなければ、レーザー上で最も近いパネル。
+        let hit = captured.or_else(|| {
+            self.panels
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| !p.closed && p.pointer.is_none())
+                .filter_map(|(id, p)| hit_test(p, &aim).map(|(pos, t)| (id, pos, t)))
+                .min_by(|a, b| a.2.total_cmp(&b.2))
+        });
         // 何も指していなければレーザーは出さない。
         st.ray = hit.map(|(id, _, t)| Ray {
             hand: c.aim,
@@ -735,6 +742,13 @@ fn facing(at: Vec3, eye: Vec3, up: Vec3) -> Option<Quat> {
 
 /// レイ（aim の前方）とパネルの交差判定。ヒットしたピクセルとレイ上の距離を返す。
 fn hit_test(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
+    let (px, t) = plane_hit(p, aim)?;
+    let (w, h) = (p.resolution.0 as f32, p.resolution.1 as f32);
+    ((0.0..=w).contains(&px.x) && (0.0..=h).contains(&px.y)).then_some((px, t))
+}
+
+/// レイとパネルを含む平面の交点（パネルの外でもよい）のピクセル座標とレイ上の距離。レイが面と平行か後ろなら `None`。
+fn plane_hit(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
     let normal = p.pose.orientation * Vec3::Z;
     let dir = aim.forward();
     let denom = dir.dot(normal);
@@ -747,9 +761,6 @@ fn hit_test(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
     }
     let local = p.pose.inverse().transform_point(aim.position + dir * t);
     let size = p.displayed_size();
-    if local.x.abs() > size.x / 2.0 || local.y.abs() > size.y / 2.0 {
-        return None;
-    }
     let (w, h) = (p.resolution.0 as f32, p.resolution.1 as f32);
     Some((
         Vec2::new((local.x / size.x + 0.5) * w, (0.5 - local.y / size.y) * h),
@@ -1011,6 +1022,36 @@ mod tests {
             panic!()
         };
         assert_eq!(Some(pos), hit_test(ov.panel(0), &aim).map(|h| h.0));
+    }
+
+    #[test]
+    fn pressed_pointer_keeps_its_panel_past_the_edge() {
+        let (mut vr, mut ov) = setup();
+        controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
+        ov.tick(&mut vr);
+        // 押したまま右へはみ出しても、Leave にならずパネルの外の座標で Move が届く。
+        let outside = Pose::new(Vec3::new(0.8, 0.0, 0.0), Quat::IDENTITY);
+        controller(&mut vr, outside, &[("trigger/value", 1.0)]);
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [PointerEvent::Move {
+                pos: Vec2::new(130.0, 50.0)
+            }]
+        );
+        // 離すと外で Up、次の tick で離れる。
+        controller(&mut vr, outside, &[]);
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [
+                PointerEvent::Move {
+                    pos: Vec2::new(130.0, 50.0)
+                },
+                PointerEvent::Up {
+                    pos: Vec2::new(130.0, 50.0)
+                }
+            ]
+        );
+        assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Leave]);
     }
 
     #[test]

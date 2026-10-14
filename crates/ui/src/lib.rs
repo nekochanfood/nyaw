@@ -31,14 +31,17 @@ use profiler::{Profiler, ProfilerView, Stages};
 /// 1つの手のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
 /// 位置とボタン状態を持つがオーバーレイのイベントは持たないので、直前の値を保持する。
 ///
-/// [`PointerMode::Touch`] では押したまま動かすとスワイプ（ピクセル単位のスクロール）になり、動かさずに離すとタップ
-/// （押して離す）になる。GPUI にはタッチ入力が無いので、どちらと決まるまで押下を送らずに待つ。
+/// [`PointerMode::Touch`] では押したまま動かすとスワイプ（ピクセル単位のスクロール。離すと慣性で滑る）になり、
+/// 動かさずに離すとタップ（押して離す）、動かさずに [`LONG_PRESS`] 押し続けるとマウスの押下になる（そのまま動かせば
+/// ドラッグ＆ドロップ）。GPUI にはタッチ入力が無いので、どれと決まるまで押下を送らずに待つ。
 /// 方式は押した瞬間に決め、離すまで変えない。
 #[derive(Debug, Default)]
 pub struct PointerBridge {
     pos: Point<Pixels>,
     pressed: bool,
     touch: Option<Touch>,
+    /// スワイプを離した後の慣性（宛先の位置と、1 フレームあたりの移動量）。
+    momentum: Option<(Point<Pixels>, Point<Pixels>)>,
     /// GPUI が知っているこの手の位置（最後に送ったイベントの位置。離れたら `None`）。同じ位置への Move は送らない
     /// （オーバーレイは指している間 毎 tick Move を出すので、止まっていても描き直しと読み戻しが毎フレーム走ってしまう）。
     sent: Option<Point<Pixels>>,
@@ -48,9 +51,22 @@ pub struct PointerBridge {
 #[derive(Debug)]
 struct Touch {
     start: Point<Pixels>,
+    /// 押した時刻（長押しの判定）。
+    at: Instant,
     /// スワイプと決まった。
     swiping: bool,
+    /// 長押しでマウスの押下になった（以降はマウスと同じ）。
+    held: bool,
+    /// スワイプの 1 イベントあたりの移動量（慣性の初速。直近を重く見て均す）。
+    velocity: Point<Pixels>,
 }
+
+/// これだけ動かさずに押し続けると、タッチでもマウスの押下になる（ドラッグ＆ドロップを始められる）。
+pub const LONG_PRESS: Duration = Duration::from_millis(400);
+/// 慣性の 1 フレームあたりの減衰（約 90Hz で 1 秒後に 1% 程度）。
+const FRICTION: f32 = 0.95;
+/// 慣性がこれより遅くなったら止める（論理 px / フレーム）。
+const MOMENTUM_STOP: f32 = 0.5;
 
 /// これより動いたらタップではなくスワイプ（論理 px）。
 // ponytail: 手ブレを見込んだ固定値。指す距離で変えたくなったら角度で決める。
@@ -61,13 +77,25 @@ impl PointerBridge {
         let at = |p: Vec2| Point::new(px(p.x), px(p.y));
         if let Some(t) = &mut self.touch {
             match ev {
+                PointerEvent::Move { .. } if t.held => return self.mouse(ev),
                 PointerEvent::Move { pos } => {
                     let (last, pos) = (self.pos, at(pos));
                     let d = pos - t.start;
                     t.swiping |= f32::from(d.x).hypot(f32::from(d.y)) > SWIPE_SLOP;
                     if !t.swiping {
-                        return Vec::new();
+                        if t.at.elapsed() < LONG_PRESS {
+                            return Vec::new();
+                        }
+                        // 長押し: 押した所でマウスの押下にする。以降はマウスと同じ（動かせばドラッグ）。
+                        t.held = true;
+                        let start = Vec2::new(t.start.x.into(), t.start.y.into());
+                        let mut out = self.mouse(PointerEvent::Move { pos: start });
+                        out.extend(self.mouse(PointerEvent::Down { pos: start }));
+                        out.extend(self.mouse(ev));
+                        return out;
                     }
+                    let delta = pos - last;
+                    t.velocity = t.velocity * 0.5 + delta * 0.5;
                     self.pos = pos;
                     self.sent = Some(t.start);
                     // 中身が指に付いてくる向き（下へ動かすと上へスクロール）。宛先は押した所に固定する。
@@ -78,13 +106,21 @@ impl PointerBridge {
                         touch_phase: Default::default(),
                     })];
                 }
+                PointerEvent::Up { .. } if t.held => {
+                    self.touch = None;
+                    return self.mouse(ev);
+                }
                 PointerEvent::Up { pos } => {
-                    let tap = !self.touch.take().is_some_and(|t| t.swiping);
-                    let mut out = self.mouse(PointerEvent::Move { pos });
-                    if tap {
-                        out.extend(self.mouse(PointerEvent::Down { pos }));
-                        out.extend(self.mouse(PointerEvent::Up { pos }));
+                    let t = self.touch.take().expect("押している");
+                    if t.swiping {
+                        // 離した後も慣性で滑る（フレームごとの momentum）。GPUI のマウスは離した所へ。
+                        self.momentum = Some((t.start, t.velocity));
+                        return self.mouse(PointerEvent::Move { pos });
                     }
+                    // タップ: 押して離す。
+                    let mut out = self.mouse(PointerEvent::Move { pos });
+                    out.extend(self.mouse(PointerEvent::Down { pos }));
+                    out.extend(self.mouse(PointerEvent::Up { pos }));
                     return out;
                 }
                 PointerEvent::Leave => self.touch = None,
@@ -92,14 +128,35 @@ impl PointerBridge {
                 PointerEvent::Scroll { .. } | PointerEvent::Down { .. } => {}
             }
         } else if let (PointerMode::Touch, PointerEvent::Down { pos }) = (mode, ev) {
+            // 触れたら慣性は止まる。
+            self.momentum = None;
             self.touch = Some(Touch {
                 start: at(pos),
+                at: Instant::now(),
                 swiping: false,
+                held: false,
+                velocity: Point::default(),
             });
             self.pos = at(pos);
             return Vec::new();
         }
         self.mouse(ev)
+    }
+
+    /// スワイプを離した後の慣性の 1 フレーム分（スクロール）。滑っていなければ `None`。フレームごとに 1 回呼ぶ。
+    pub fn momentum(&mut self) -> Option<PlatformInput> {
+        let (position, v) = self.momentum.as_mut()?;
+        *v = *v * FRICTION;
+        if f32::from(v.x).hypot(f32::from(v.y)) < MOMENTUM_STOP {
+            self.momentum = None;
+            return None;
+        }
+        Some(PlatformInput::ScrollWheel(ScrollWheelEvent {
+            position: *position,
+            delta: ScrollDelta::Pixels(*v),
+            modifiers: Default::default(),
+            touch_phase: Default::default(),
+        }))
     }
 
     /// マウスとして変換する。
@@ -232,6 +289,11 @@ pub fn pump_with<B: VrBackend>(
             .or_default()
             .translate(e.event, mode);
         gpui.extend(input.into_iter().map(|input| (e.panel, input)));
+    }
+    for (&(panel, _), b) in bridges.iter_mut() {
+        if let Some(input) = b.momentum() {
+            gpui.push((panel, input));
+        }
     }
     (gpui, web)
 }
@@ -1224,5 +1286,64 @@ mod tests {
             ["move"]
         );
         assert!(!b.pressed);
+        // 離した後も慣性で同じ向きに滑り、だんだん止まる。
+        let Some(PlatformInput::ScrollWheel(first)) = b.momentum() else {
+            panic!("慣性が無い")
+        };
+        let dy = |e: &ScrollWheelEvent| f32::from(e.delta.pixel_delta(px(1.0)).y);
+        assert!(dy(&first) > 0.0);
+        let mut last = dy(&first);
+        let mut frames = 0;
+        while let Some(PlatformInput::ScrollWheel(e)) = b.momentum() {
+            assert!(dy(&e) < last);
+            last = dy(&e);
+            frames += 1;
+        }
+        assert!(frames > 10, "すぐには止まらない（{frames}）");
+        assert!(b.momentum().is_none());
+    }
+
+    #[test]
+    fn touch_long_press_becomes_mouse_press_for_drag() {
+        let touch = PointerMode::Touch;
+        let mut b = PointerBridge::default();
+        let at = Vec2::new(10.0, 10.0);
+        assert!(
+            b.translate(PointerEvent::Down { pos: at }, touch)
+                .is_empty()
+        );
+        assert!(
+            b.translate(PointerEvent::Move { pos: at }, touch)
+                .is_empty()
+        );
+        std::thread::sleep(LONG_PRESS);
+        // 動かさずに長押しすると、押した所でマウスの押下になる。
+        let held = b.translate(PointerEvent::Move { pos: at }, touch);
+        assert!(
+            matches!(
+                held[..],
+                [PlatformInput::MouseMove(_), PlatformInput::MouseDown(_)]
+            ),
+            "{held:?}"
+        );
+        // 以降はマウスのドラッグ（押したままの Move）で、スクロールにはならない。
+        let drag = b.translate(
+            PointerEvent::Move {
+                pos: Vec2::new(10.0, 60.0),
+            },
+            touch,
+        );
+        let [PlatformInput::MouseMove(m)] = &drag[..] else {
+            panic!("{drag:?}")
+        };
+        assert_eq!(m.pressed_button, Some(MouseButton::Left));
+        let up = b.translate(
+            PointerEvent::Up {
+                pos: Vec2::new(10.0, 60.0),
+            },
+            touch,
+        );
+        assert!(matches!(up[..], [PlatformInput::MouseUp(_)]), "{up:?}");
+        assert!(b.momentum().is_none(), "ドラッグには慣性が無い");
     }
 }
