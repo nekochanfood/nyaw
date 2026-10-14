@@ -153,7 +153,7 @@ ui::run の 1 フレーム（GPUI の部分は上の「1 フレームの流れ�
 - ページは `web/`（Vite + React + TypeScript + Tailwind v4 + Base UI）。`web/<ページ名>/index.html` が入口で、`vite.config.ts` の `pages` に足す。
   画面ごとに `web/src/<ページ名>/App.tsx` を持ち、共通の `main.tsx` と `router.tsx`（TanStack Router のコードベースルーティング）で起動する。
   `crates/webpages` の build.rs がビルドして埋め込み、UI 層は `nyaw://localhost/<ページ名>/index.html`（Windows は `http://nyaw.localhost/..`）で配信する。
-  `cd web && npm run check` で oxlint（`--deny-warnings`）・oxfmt・tsc・ビルドをまとめて流す（CI の `web` ジョブと同じ）。lint と整形は `crates/ui/src/web/bridge.js` も対象。
+  `cd web && npm run check` で oxlint（`--deny-warnings`）・oxfmt・tsc（増分）・ビルドを並列に流す（`web/scripts/check.mjs`。直列の約 4 秒が約 1.5 秒。CI の `web` ジョブと同じ）。lint と整形は `crates/ui/src/web/bridge.js` も対象。
 - ページからカーネルへは `window.nyaw`（`web/src/nyaw.ts` に型と `useStatus`）:
   `nyaw.command("detach" | "close" | { attach: "hmd" | "left" | "right" | { tracker: id } } | { lock: bool } | { resize: { width, height } } | { pointer_mode: "mouse" | "touch" })`,
   `nyaw.status()`, `nyaw.onStatus(cb)`（戻り値で購読をやめる）, `nyaw.spawn(ページ名)`。
