@@ -154,7 +154,10 @@ impl PointerBridge {
     /// 長押しが済んだ後は `None`。ポインタのリングに出す。
     pub fn hold_progress(&self) -> Option<f32> {
         let t = self.touch.as_ref().filter(|t| !t.swiping && !t.held)?;
-        Some((t.at.elapsed().as_secs_f32() / LONG_PRESS.as_secs_f32()).min(1.0))
+        // 普通のタップでリングがちらつかないよう、押して少しの間は出さず、残りの時間で 0〜1 に満ちる。
+        const RING_DELAY: Duration = Duration::from_millis(150);
+        let e = t.at.elapsed().checked_sub(RING_DELAY)?;
+        Some((e.as_secs_f32() / (LONG_PRESS - RING_DELAY).as_secs_f32()).min(1.0))
     }
 
     /// タッチの長押しでマウスの押下になっている（ドラッグできる）。
