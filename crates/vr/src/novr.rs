@@ -338,6 +338,16 @@ impl Emulator {
             return;
         }
         self.dirty = false;
+        // 非表示でも、閉じたパネルの解放用テクスチャを GPU に反映する。
+        if let Some(gpu) = &mut self.gpu {
+            for (i, pending) in self.uploads.iter_mut().enumerate() {
+                if std::mem::take(pending)
+                    && let Some((w, h, rgba)) = &self.quads[i].texture
+                {
+                    gpu.upload(i, (*w, *h, rgba));
+                }
+            }
+        }
         let order = self.order();
         let mut draws = Vec::with_capacity(order.len());
         for i in order {
@@ -345,19 +355,11 @@ impl Emulator {
                 continue;
             };
             let q = &self.quads[i];
-            let upload = std::mem::take(&mut self.uploads[i]);
             draws.push(Draw {
                 quad: i,
                 pose: q.pose,
                 size,
                 alpha: q.alpha,
-                upload: upload
-                    .then(|| {
-                        q.texture
-                            .as_ref()
-                            .map(|(w, h, rgba)| (*w, *h, rgba.as_slice()))
-                    })
-                    .flatten(),
             });
         }
         if let Some(gpu) = &mut self.gpu
@@ -768,6 +770,42 @@ mod tests {
     fn pixel(shot: &(u32, u32, Vec<u8>), at: Vec2) -> [u8; 4] {
         let i = ((at.y as u32 * shot.0 + at.x as u32) * 4) as usize;
         shot.2[i..i + 4].try_into().unwrap()
+    }
+
+    #[test]
+    #[ignore = "requires a desktop and GPU"]
+    fn hidden_panel_upload_replaces_gpu_texture() {
+        let (mut e, id) = emulator_with_red_panel();
+        let window = Window::new("novr upload test", 200, 100, WindowOptions::default()).unwrap();
+        e.gpu = Some(Gpu::new(&window, e.size).unwrap());
+        e.window = Some(window);
+        e.render_gpu();
+        assert_eq!(
+            e.gpu.as_ref().unwrap().texture_size(id.0 as usize),
+            Some((2, 1))
+        );
+
+        e.set_overlay_alpha(id, 0.0);
+        e.set_overlay_visible(id, false);
+        e.submit_overlay_pixels(id, 1, 1, &[0; 4]);
+        assert!(e.order().is_empty());
+        e.render_gpu();
+        assert_eq!(
+            e.gpu.as_ref().unwrap().texture_size(id.0 as usize),
+            Some((1, 1))
+        );
+        assert!(!e.uploads[id.0 as usize]);
+
+        e.submit_overlay_pixels(id, 2, 1, &[255; 8]);
+        e.render_gpu();
+        assert_eq!(
+            e.gpu.as_ref().unwrap().texture_size(id.0 as usize),
+            Some((2, 1))
+        );
+        e.set_overlay_alpha(id, 1.0);
+        e.set_overlay_visible(id, true);
+        e.render_gpu();
+        assert_eq!(e.order(), vec![id.0 as usize]);
     }
 
     #[test]
