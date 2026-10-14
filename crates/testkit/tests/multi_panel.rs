@@ -16,6 +16,8 @@ fn panels_have_separate_views_controls_and_textures(cx: &mut TestAppContext) {
     kit.panel(second)
         .click("click-me")
         .click("attach-hmd")
+        // 取り付けた先へパネルが動くのを待ってから次を押す。
+        .step()
         .click("lock")
         .click("click-me");
     assert_eq!(kit.read(|h| h.clicks), 2);

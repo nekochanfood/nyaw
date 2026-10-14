@@ -320,6 +320,8 @@ impl Render for DragPreview {
     }
 }
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
+/// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 5cm）。
+const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.05);
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
 /// Desktop（novr）の周期。主ディスプレイのリフレッシュ間隔が取れないときに使う。VR ランタイムは `poll` が vsync まで待つ。
 const FRAME: Duration = Duration::from_millis(11);
@@ -473,15 +475,10 @@ impl PanelSpec {
         self
     }
 
-    pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, next: PanelId) -> Pose {
+    pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
         match self.from {
-            Some(from) => {
-                kernel.panel(from).pose
-                    * Pose::new(
-                        Vec3::new(1.2 * (next - from) as f32, 0.0, 0.0),
-                        Quat::IDENTITY,
-                    )
-            }
+            // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
+            Some(from) => kernel.panel(from).pose * Pose::new(SPAWN_GAP, Quat::IDENTITY),
             None if self.in_view => kernel.hmd().leveled() * self.pose,
             None => self.pose,
         }
@@ -1094,7 +1091,7 @@ mod tests {
         cx.update(|cx| open_panel(&mut kernel, first, 0, cx, &mut webs));
         let spec = PanelSpec::spawn_web(0, "demo");
         assert_eq!(spec.web_page(), Some("demo"));
-        assert_eq!(spec.pose_for(&kernel, 1).position, Vec3::new(1.2, 0.0, 0.0));
+        assert_eq!(spec.pose_for(&kernel, 1).position, SPAWN_GAP);
         let (panel, window) = cx.update(|cx| open_panel(&mut kernel, spec, 1, cx, &mut webs));
         assert_eq!((panel, window.is_none()), (1, true));
         assert!(kernel.panel(panel).closed, "Web を起こせなければ閉じる");

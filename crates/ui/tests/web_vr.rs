@@ -368,7 +368,7 @@ fn transparent_page(page: &mut Page, vr: &mut Vr) {
     let s = page.until("半透明のページが読み込まれる", |s| {
         s["state"]["clicks"] == 0
     });
-    (vr.panel, vr.resolution, vr.overlay) = (PANEL_POS + Vec3::new(1.2, 0.0, 0.0), (800, 600), 1);
+    (vr.panel, vr.resolution, vr.overlay) = (PANEL_POS + Vec3::new(0.0, 0.0, 0.05), (800, 600), 1);
     let at = |id: &str| {
         let r = &s["rects"][id];
         let f = |k: &str| r[k].as_f64().unwrap() as f32;
