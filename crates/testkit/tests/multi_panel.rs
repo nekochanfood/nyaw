@@ -57,7 +57,12 @@ fn desktop_panels_can_spawn_attach_and_lock_independently(cx: &mut TestAppContex
 
 #[test]
 fn hands_keep_independent_pressed_state_on_same_panel() {
-    let mut kernel = Kernel::with_backend(MockBackend::default(), Default::default());
+    // 押下を手ごとに持つことを見るので、押した瞬間に押下を送るマウス方式で。
+    let config = kernel::Config {
+        pointer_mode: Some(kernel::PointerMode::Mouse),
+        ..Default::default()
+    };
+    let mut kernel = Kernel::with_backend(MockBackend::default(), config);
     kernel
         .add_panel(
             "shared",

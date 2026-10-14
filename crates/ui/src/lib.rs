@@ -146,7 +146,7 @@ impl PointerBridge {
     /// スワイプを離した後の慣性の 1 フレーム分（スクロール）。滑っていなければ `None`。フレームごとに 1 回呼ぶ。
     pub fn momentum(&mut self) -> Option<PlatformInput> {
         let (position, v) = self.momentum.as_mut()?;
-        *v = *v * FRICTION;
+        *v *= FRICTION;
         if f32::from(v.x).hypot(f32::from(v.y)) < MOMENTUM_STOP {
             self.momentum = None;
             return None;
