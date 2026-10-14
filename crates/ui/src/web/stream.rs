@@ -195,8 +195,8 @@ impl Reader {
             // 撮れるのはウィンドウ全体（枠を含む）。クライアント領域の位置と大きさで切り出す。
             let (ox, oy, cw, ch) = self.client_in_frame()?;
             let (cw, ch) = (
-                cw.min((content.Width as u32).saturating_sub(ox)),
-                ch.min((content.Height as u32).saturating_sub(oy)),
+                cw.min((content.Width as u32).min(fw).saturating_sub(ox)),
+                ch.min((content.Height as u32).min(fh).saturating_sub(oy)),
             );
             if cw <= 1 || ch <= 1 {
                 return Ok(None);

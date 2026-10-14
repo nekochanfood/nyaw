@@ -12,7 +12,7 @@ const CHECKER: f32 = 16.0;
 const CHECKER_GRAY: [f32; 2] = [0x6b as f32 / 255.0, 0x8a as f32 / 255.0];
 
 /// 1 枚のクアッドを描く材料（毎フレーム novr.rs が渡す）。
-pub(crate) struct Draw<'a> {
+pub(crate) struct Draw {
     /// どのクアッドか（GPU 側のテクスチャの持ち主）。
     pub quad: usize,
     pub pose: Pose,
@@ -20,8 +20,6 @@ pub(crate) struct Draw<'a> {
     pub size: Vec2,
     /// 不透明度（0〜1）。
     pub alpha: f32,
-    /// テクスチャを上げ直すなら (幅, 高さ, RGBA)。
-    pub upload: Option<(u32, u32, &'a [u8])>,
 }
 
 /// 1 枚のクアッドの GPU 側の持ち物。
@@ -94,6 +92,11 @@ fn block_on<F: std::future::Future>(f: F) -> F::Output {
 }
 
 impl Gpu {
+    #[cfg(test)]
+    pub(crate) fn texture_size(&self, quad: usize) -> Option<(u32, u32)> {
+        self.slots.get(quad)?.as_ref().map(|slot| slot.size)
+    }
+
     /// `window` に描く GPU コンポジタを作る。使える GPU が無ければエラー（呼び出し側は CPU で合成する）。
     pub(crate) fn new(window: &Window, size: (u32, u32)) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -263,7 +266,7 @@ impl Gpu {
     }
 
     /// テクスチャを上げる（大きさが変わったら作り直す）。
-    fn upload(&mut self, quad: usize, (w, h, rgba): (u32, u32, &[u8])) {
+    pub(crate) fn upload(&mut self, quad: usize, (w, h, rgba): (u32, u32, &[u8])) {
         if self.slots.len() <= quad {
             self.slots.resize_with(quad + 1, || None);
         }
@@ -339,11 +342,6 @@ impl Gpu {
 
     /// 背景の上に `draws` を奥から手前の順に描いて表示する。`fov_y` は縦の視野角（ラジアン）。
     pub(crate) fn draw(&mut self, draws: &[Draw], fov_y: f32, near: f32) -> Result<(), String> {
-        for d in draws {
-            if let Some(up) = d.upload {
-                self.upload(d.quad, up);
-            }
-        }
         let (w, h) = (self.config.width as f32, self.config.height as f32);
         let proj = Mat4::perspective_rh(fov_y, w / h, near, 1000.0);
         let mut drawn = Vec::new();
