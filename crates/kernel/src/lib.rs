@@ -108,6 +108,10 @@ impl<B: VrBackend> Kernel<B> {
     pub fn with_backend(vr: B, config: Config) -> Self {
         // フレームの周期を作る短い待ちが丸められないように。
         os::precise_timers();
+        // ゲームが GPU を使い切っていても、パネルの描画と読み戻しが後回しにされないように。
+        if !os::high_gpu_priority() {
+            logger::warn!("cannot raise GPU scheduling priority");
+        }
         let mut overlay = Overlay::new();
         if let Some(s) = config.pointer_smoothing {
             overlay.set_pointer_smoothing(s);
