@@ -6,7 +6,6 @@ import { Button } from "@base-ui/react/button";
 import { Checkbox } from "@base-ui/react/checkbox";
 import { Input } from "@base-ui/react/input";
 import { Menu } from "@base-ui/react/menu";
-import { ScrollArea } from "@base-ui/react/scroll-area";
 import { Slider } from "@base-ui/react/slider";
 import { Switch } from "@base-ui/react/switch";
 import { Tabs } from "@base-ui/react/tabs";
@@ -20,6 +19,7 @@ import {
 } from "react";
 import { type Command, nyaw, useStatus } from "../nyaw";
 import { useProbe } from "../probe";
+import { SwipeScrollArea } from "../SwipeScrollArea";
 
 /** E2E が数える DOM イベント。 */
 const TYPES = [
@@ -86,7 +86,7 @@ export function App() {
   const counts = useRef(Object.fromEntries(TYPES.map((t) => [t, 0])) as Record<string, number>);
   const last = useRef<{ any: Last; pointer: Last }>({ any: null, pointer: null });
   const drag = useRef({ id: -1, x: 0, y: 0, moves: 0, captured: false });
-  const scrolled = useRef({ wheel: 0, top: 0 });
+  const scrolled = useRef({ wheel: 0, top: 0, left: 0, both: [0, 0] });
 
   useEffect(() => {
     const record = (e: Event) => {
@@ -136,6 +136,8 @@ export function App() {
     captured: drag.current.captured,
     wheel: scrolled.current.wheel,
     scrollTop: scrolled.current.top,
+    scrollLeft: scrolled.current.left,
+    scroll2d: scrolled.current.both,
     status,
   }));
 
@@ -162,11 +164,12 @@ export function App() {
     drag.current.id = -1;
     setOffset(null);
   };
+  const chipCancel = () => { drag.current.id = -1; setOffset(null); };
 
   const s = status;
   return (
     <main className="grid h-full grid-cols-2 gap-3 overflow-hidden bg-panel p-3 text-ink">
-      <div className="flex flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-3">
         <Section title="VR（カーネル）">
           <Button
             id="attach-hmd"
@@ -272,7 +275,7 @@ export function App() {
         </Section>
       </div>
 
-      <div className="flex flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-3">
         <Section title="ボタン">
           <Button
             id="click-me"
@@ -369,8 +372,9 @@ export function App() {
             onPointerDown={chipDown}
             onPointerMove={chipMove}
             onPointerUp={chipUp}
+            onPointerCancel={chipCancel}
             onGotPointerCapture={() => (drag.current.captured = true)}
-            onLostPointerCapture={() => (drag.current.captured = false)}
+            onLostPointerCapture={() => { drag.current.captured = false; chipCancel(); }}
           />
           <div
             id="drop-zone"
@@ -380,24 +384,26 @@ export function App() {
             Drop
           </div>
         </Section>
-        <Section title="スクロール（Base UI ScrollArea）">
-          <ScrollArea.Root className="h-28 w-full bg-black/30">
-            <ScrollArea.Viewport
+        <Section title="一次元スクロール（スワイプ／スティック）">
+            <SwipeScrollArea axis="y" role="region" aria-label="一次元スクロール"
               id="scroll-list"
-              className="h-full"
               onWheel={(e) => (scrolled.current.wheel += e.deltaY)}
-              onScroll={(e) => (scrolled.current.top = e.currentTarget.scrollTop)}
+              onScroll={(e) => { scrolled.current.top = e.currentTarget.scrollTop; scrolled.current.left = e.currentTarget.scrollLeft; }}
             >
               {Array.from({ length: 30 }, (_, i) => (
                 <div key={i} className="border-b border-white/10 px-2 py-1 text-sm">
                   Row {i}
                 </div>
               ))}
-            </ScrollArea.Viewport>
-            <ScrollArea.Scrollbar className="w-1.5">
-              <ScrollArea.Thumb className="w-full rounded bg-btn-hover" />
-            </ScrollArea.Scrollbar>
-          </ScrollArea.Root>
+            </SwipeScrollArea>
+        </Section>
+        <Section title="二次元スクロール（スワイプ／スティック）">
+          <SwipeScrollArea id="scroll-grid" axis="both" role="region" aria-label="二次元スクロール"
+            onScroll={(e) => { scrolled.current.both = [e.currentTarget.scrollLeft, e.currentTarget.scrollTop]; }}>
+            <div className="grid w-[960px] grid-cols-12 auto-rows-[60px]">
+              {Array.from({ length: 120 }, (_, i) => <div key={i} className="border border-white/10 p-2 text-sm">{i % 12}, {Math.floor(i / 12)}</div>)}
+            </div>
+          </SwipeScrollArea>
         </Section>
       </div>
     </main>
