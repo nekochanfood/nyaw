@@ -20,11 +20,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      # gpui の Linux ビルド依存 (zed の script/linux から gpui に要るものを抜粋)
+      # gpui の Linux ビルド依存 (zed の script/linux から gpui に要るものを抜粋) と、webui (Tauri) の WebKitGTK
       - if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfontconfig-dev libglib2.0-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev
+          sudo apt-get install -y libasound2-dev libfontconfig-dev libglib2.0-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev libwebkit2gtk-4.1-dev
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

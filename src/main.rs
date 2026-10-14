@@ -1,4 +1,5 @@
 //! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（wrist・ビーム）を UI 層に引き渡す。それ以外は何も置かない。
+//! `--webui` のときは UI 層の代わりに Web UI 層（Tauri）へ、Web の画面（Testing の Web 版・ビーム）とともに引き渡す。
 
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -23,6 +24,19 @@ fn main() -> ExitCode {
     let Ok(kernel) = Kernel::boot(requested.as_deref(), config) else {
         return ExitCode::FAILURE;
     };
+    if args.webui {
+        if args.profile.is_some() {
+            logger::warn!("Web UI ではプロファイラを使えないので --profile を無視する");
+        }
+        let mut panels = vec![webtesting::spec()];
+        if kernel.surface() == kernel::Surface::Overlay {
+            panels.extend(webbeam::specs());
+        }
+        return match webui::run(kernel, panels) {
+            0 => ExitCode::SUCCESS,
+            _ => ExitCode::FAILURE,
+        };
+    }
     let mut panels = vec![wrist::spec()];
     // ビームは VR のコントローラ用。novr ではマウスがそのまま届くので要らない。
     if kernel.surface() == kernel::Surface::Overlay {
@@ -35,10 +49,12 @@ fn main() -> ExitCode {
 
 #[derive(Debug, Default, PartialEq)]
 struct Args {
-    /// `--novr` / `--openxr` / `--openvr`（`--profile` 以外の最初の引数）。
+    /// `--novr` / `--openxr` / `--openvr`（`--profile` / `--webui` 以外の最初の引数）。
     runtime: Option<String>,
     /// `--profile` で `Some(None)`（既定のダンプ先）、`--profile=PATH` で `Some(Some(PATH))`。
     profile: Option<Option<PathBuf>>,
+    /// `--webui`: UI 層（GPUI）の代わりに Web UI 層（Tauri）で画面を出す。
+    webui: bool,
 }
 
 impl Args {
@@ -46,6 +62,7 @@ impl Args {
         let mut out = Self::default();
         for a in args {
             match a.strip_prefix("--profile") {
+                _ if a == "--webui" => out.webui = true,
                 Some("") => out.profile = Some(None),
                 Some(rest) if rest.starts_with('=') => {
                     out.profile = Some(Some(PathBuf::from(&rest[1..])))
@@ -133,22 +150,37 @@ mod tests {
             parse(&["--novr"]),
             Args {
                 runtime: Some("--novr".into()),
-                profile: None
+                ..Args::default()
             }
         );
         assert_eq!(
             parse(&["--profile", "--openxr"]),
             Args {
                 runtime: Some("--openxr".into()),
-                profile: Some(None)
+                profile: Some(None),
+                ..Args::default()
             }
         );
         assert_eq!(
             parse(&["--openvr", "--profile=out/p.csv"]),
             Args {
                 runtime: Some("--openvr".into()),
-                profile: Some(Some(PathBuf::from("out/p.csv")))
+                profile: Some(Some(PathBuf::from("out/p.csv"))),
+                ..Args::default()
             }
         );
+    }
+
+    #[test]
+    fn webui_flag_selects_web_frontend_with_any_runtime() {
+        assert_eq!(
+            parse(&["--webui", "--novr"]),
+            Args {
+                runtime: Some("--novr".into()),
+                webui: true,
+                ..Args::default()
+            }
+        );
+        assert!(!parse(&["--openxr"]).webui);
     }
 }

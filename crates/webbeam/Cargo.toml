@@ -1,0 +1,9 @@
+[package]
+name = "webbeam"
+version.workspace = true
+edition.workspace = true
+
+# Web UI 層で使うコントローラのビーム（beam の Web 版）。
+[dependencies]
+kernel.workspace = true
+webui.workspace = true

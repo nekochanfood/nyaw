@@ -18,6 +18,9 @@ vr = { path = "crates/vr" }
 input = { path = "crates/input" }
 overlay = { path = "crates/overlay" }
 ui = { path = "crates/ui" }
+webui = { path = "crates/webui" }
+webtesting = { path = "crates/webtesting" }
+webbeam = { path = "crates/webbeam" }
 profiler = { path = "crates/profiler" }
 testing = { path = "crates/testing" }
 wrist = { path = "crates/wrist" }
@@ -38,6 +41,9 @@ testing.workspace = true
 profiler.workspace = true
 wrist.workspace = true
 beam.workspace = true
+webui.workspace = true
+webtesting.workspace = true
+webbeam.workspace = true
 
 # testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する
 [profile.dev.package.testkit]

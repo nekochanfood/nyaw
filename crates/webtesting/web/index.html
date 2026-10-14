@@ -1,0 +1,341 @@
+<!doctype html>
+<!--
+  Testing の Web 版。Web UI 層の機能を 1 ページで試す。ポインタは普通の DOM イベント（pointerdown / click / wheel …）で受ける。
+  VR ではレーザーを Web UI 層のブリッジが DOM イベントにし、novr では OS のマウスがそのまま届く。
+  カーネルとの対話は window.nyaw（Tauri のコマンドとイベント）。
+  ホバーの見た目は :hover と、レーザー用の [data-nyaw-hover] の両方に付ける。
+-->
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Testing (Web)</title>
+    <style>
+      :root {
+        --bg: #202020;
+        --fg: #d8dae0;
+        --btn: #3a3d46;
+        --btn-hover: #50545f;
+        --btn-press: #6a6f7c;
+        --active: #6c8cff;
+        --ok: #2ecc71;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--fg);
+        font: 14px/1.4 system-ui, sans-serif;
+        overflow: hidden;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        padding: 12px;
+        height: 100%;
+      }
+      section {
+        display: flex;
+        flex-wrap: wrap;
+        align-content: flex-start;
+        gap: 8px;
+      }
+      h2 {
+        width: 100%;
+        margin: 4px 0 0;
+        font-size: 12px;
+        opacity: 0.7;
+      }
+      .btn {
+        padding: 6px 12px;
+        border: 0;
+        border-radius: 4px;
+        background: var(--btn);
+        color: var(--fg);
+        font: inherit;
+      }
+      .btn:is(:hover, [data-nyaw-hover]) {
+        background: var(--btn-hover);
+      }
+      .btn:is(:active, [data-nyaw-active]) {
+        background: var(--btn-press);
+      }
+      .btn.on {
+        background: var(--active);
+      }
+      #click-me.clicked {
+        background: var(--ok);
+      }
+      #drop-zone {
+        width: 140px;
+        height: 60px;
+        border: 2px dashed var(--btn-hover);
+        border-radius: 6px;
+        display: grid;
+        place-items: center;
+      }
+      #drop-zone.over {
+        border-color: var(--active);
+      }
+      #drop-zone.dropped {
+        background: var(--ok);
+      }
+      #drag-chip {
+        width: 60px;
+        height: 30px;
+        border-radius: 15px;
+        background: var(--active);
+        touch-action: none;
+      }
+      #scroll-list {
+        width: 100%;
+        height: 120px;
+        overflow-y: auto;
+        background: #17181c;
+      }
+      #scroll-list div {
+        height: 30px;
+        padding: 4px 8px;
+        border-bottom: 1px solid #2a2c33;
+      }
+      #text-field {
+        width: 100%;
+        padding: 6px;
+        background: #17181c;
+        color: var(--fg);
+        border: 1px solid var(--btn-hover);
+      }
+      #text-field:focus {
+        outline: 2px solid var(--active);
+      }
+      #log {
+        width: 100%;
+        font: 11px/1.3 ui-monospace, monospace;
+        white-space: pre;
+        opacity: 0.8;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <h2>VR（カーネル）</h2>
+        <button class="btn" id="attach-hmd">Attach HMD</button>
+        <button class="btn" id="attach-left">Attach Left</button>
+        <button class="btn" id="attach-right">Attach Right</button>
+        <button class="btn" id="detach">Detach</button>
+        <button class="btn" id="lock">Lock</button>
+        <button class="btn" id="spawn-panel">Spawn Panel</button>
+        <button class="btn" id="close">Close</button>
+        <span class="btn" id="menu-held">Menu</span>
+        <span class="btn" id="grabbed">Grabbed</span>
+        <h2>リサイズ</h2>
+        <button class="btn" id="resize-small">640×480</button>
+        <button class="btn" id="resize-large">1000×700</button>
+        <span id="size"></span>
+        <h2>状態</h2>
+        <div id="log"></div>
+      </section>
+      <section>
+        <h2>ポインタ（DOM イベント）</h2>
+        <button class="btn" id="click-me">Click Me</button>
+        <button class="btn" id="toggle">Toggle</button>
+        <h2>ドラッグ（setPointerCapture）</h2>
+        <div id="drag-chip"></div>
+        <div id="drop-zone">Drop</div>
+        <h2>スクロール（wheel）</h2>
+        <div id="scroll-list"></div>
+        <h2>フォーカス</h2>
+        <input id="text-field" placeholder="Type here" />
+      </section>
+    </main>
+    <script>
+      const $ = (id) => document.getElementById(id);
+
+      // ---- 状態（E2E は webtesting:probe でこれを読む） ----
+      const TYPES = [
+        "pointerover", "pointerenter", "pointerdown", "pointermove", "pointerup", "pointercancel",
+        "pointerout", "pointerleave", "gotpointercapture", "lostpointercapture",
+        "mouseover", "mouseenter", "mousedown", "mousemove", "mouseup", "mouseout", "mouseleave",
+        "click", "wheel",
+      ];
+      const state = {
+        clicks: 0,
+        hovered: false,
+        toggled: false,
+        counts: Object.fromEntries(TYPES.map((t) => [t, 0])),
+        last: null,
+        lastPointer: null,
+        captured: false,
+        dragMoves: 0,
+        dropped: false,
+        wheel: 0,
+        scrollTop: 0,
+        focused: false,
+        resizes: 0,
+        viewport: [innerWidth, innerHeight],
+        status: null,
+      };
+
+      for (const type of TYPES) {
+        document.addEventListener(
+          type,
+          (e) => {
+            state.counts[type]++;
+            if (type !== "pointermove" && type !== "mousemove") {
+              state.last = {
+                type,
+                target: e.target.id || e.target.tagName.toLowerCase(),
+                x: e.clientX,
+                y: e.clientY,
+                pointerType: e.pointerType ?? null,
+                pointerId: e.pointerId ?? null,
+                buttons: e.buttons,
+                trusted: e.isTrusted,
+              };
+              if (type.startsWith("pointer")) state.lastPointer = state.last;
+            }
+            render();
+          },
+          { capture: true },
+        );
+      }
+
+      // ---- ポインタ ----
+      $("click-me").addEventListener("click", () => {
+        state.clicks++;
+        $("click-me").classList.add("clicked");
+        $("click-me").textContent = `Clicked ${state.clicks}`;
+      });
+      $("click-me").addEventListener("pointerenter", () => (state.hovered = true));
+      $("click-me").addEventListener("pointerleave", () => (state.hovered = false));
+      $("toggle").addEventListener("click", () => {
+        state.toggled = !state.toggled;
+        $("toggle").classList.toggle("on", state.toggled);
+      });
+
+      // ---- ドラッグ: pointerdown でキャプチャし、パネルの外へ出ても追い続ける ----
+      const chip = $("drag-chip");
+      const zone = $("drop-zone");
+      let drag = null;
+      const inside = (el, x, y) => {
+        const r = el.getBoundingClientRect();
+        return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+      };
+      chip.addEventListener("pointerdown", (e) => {
+        chip.setPointerCapture(e.pointerId);
+        drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+        e.preventDefault();
+      });
+      chip.addEventListener("gotpointercapture", () => (state.captured = true));
+      chip.addEventListener("lostpointercapture", () => (state.captured = false));
+      chip.addEventListener("pointermove", (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        state.dragMoves++;
+        chip.style.transform = `translate(${e.clientX - drag.x}px, ${e.clientY - drag.y}px)`;
+        zone.classList.toggle("over", inside(zone, e.clientX, e.clientY));
+      });
+      chip.addEventListener("pointerup", (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        if (inside(zone, e.clientX, e.clientY)) {
+          state.dropped = true;
+          zone.classList.add("dropped");
+        }
+        drag = null;
+        chip.style.transform = "";
+        zone.classList.remove("over");
+      });
+
+      // ---- スクロール ----
+      const list = $("scroll-list");
+      for (let i = 0; i < 30; i++) {
+        const row = document.createElement("div");
+        row.textContent = `Row ${i}`;
+        list.append(row);
+      }
+      list.addEventListener("wheel", (e) => (state.wheel += e.deltaY), { passive: true });
+      list.addEventListener("scroll", () => {
+        state.scrollTop = list.scrollTop;
+        render();
+      });
+
+      // ---- フォーカス ----
+      $("text-field").addEventListener("focus", () => ((state.focused = true), render()));
+      $("text-field").addEventListener("blur", () => ((state.focused = false), render()));
+
+      // ---- リサイズ ----
+      addEventListener("resize", () => {
+        state.resizes++;
+        state.viewport = [innerWidth, innerHeight];
+        render();
+      });
+      $("resize-small").addEventListener("click", () => nyaw.command({ resize: { width: 640, height: 480 } }));
+      $("resize-large").addEventListener("click", () => nyaw.command({ resize: { width: 1000, height: 700 } }));
+
+      // ---- VR（カーネル） ----
+      const cmd = (id, c) => $(id).addEventListener("click", () => nyaw.command(c));
+      cmd("attach-hmd", { attach: "hmd" });
+      cmd("attach-left", { attach: "left" });
+      cmd("attach-right", { attach: "right" });
+      cmd("detach", "detach");
+      cmd("close", "close");
+      $("lock").addEventListener("click", () => nyaw.command({ lock: !state.status?.locked }));
+      $("spawn-panel").addEventListener("click", () => nyaw.spawn("webtesting"));
+
+      const onStatus = (s) => {
+        state.status = s;
+        const at = s.attached;
+        $("attach-hmd").classList.toggle("on", at === "hmd");
+        $("attach-left").classList.toggle("on", at === "left");
+        $("attach-right").classList.toggle("on", at === "right");
+        $("lock").classList.toggle("on", s.locked);
+        $("menu-held").classList.toggle("on", s.menu);
+        $("grabbed").classList.toggle("on", s.grabbed);
+        render();
+      };
+      nyaw.onStatus(onStatus);
+      // 起動直後はまだ状態が無いことがあるので、取れるまで問い合わせる。
+      const first = () => nyaw.status().then(onStatus, () => setTimeout(first, 100));
+      first();
+
+      function render() {
+        const s = state.status;
+        $("size").textContent =
+          `viewport ${state.viewport.join("×")}` + (s ? ` / panel ${s.resolution.join("×")}px ${s.size.map((m) => m.toFixed(2)).join("×")}m` : "");
+        $("log").textContent = [
+          s ? `${s.runtime} panel ${s.panel}` : "status: -",
+          `last: ${state.last ? `${state.last.type} ${state.last.target} (${state.last.x | 0},${state.last.y | 0}) ${state.last.pointerType}` : "-"}`,
+          `clicks ${state.clicks}  wheel ${state.wheel}  scrollTop ${state.scrollTop | 0}`,
+        ].join("\n");
+      }
+      render();
+
+      // ---- E2E 用の問い合わせ ----
+      const rects = () =>
+        Object.fromEntries(
+          [...document.querySelectorAll("[id]")].map((el) => {
+            const r = el.getBoundingClientRect();
+            return [el.id, { x: r.x, y: r.y, w: r.width, h: r.height }];
+          }),
+        );
+      const subscribe = () =>
+        window.__TAURI__.webviewWindow.getCurrentWebviewWindow().listen("webtesting:probe", (e) =>
+          window.__TAURI__.event.emit("webtesting:state", {
+            seq: e.payload,
+            state,
+            rects: rects(),
+            focused: document.activeElement?.id ?? null,
+            hoverAttr: $("click-me").hasAttribute("data-nyaw-hover"),
+            screen: [screenX, screenY],
+          }),
+        );
+      subscribe();
+    </script>
+  </body>
+</html>
