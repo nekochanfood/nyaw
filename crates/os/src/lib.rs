@@ -35,6 +35,34 @@ pub fn precise_timers() {
     }
 }
 
+/// このプロセスの GPU スケジューリングの優先度を上げる（プロセスが終わるまで有効。D3D11 も Vulkan も対象）。
+/// 既定（通常）のままだと、ゲームが GPU を使い切っている間は小さな描画もゲームのフレームの後ろに並ばされ、
+/// 読み戻しの完了待ちが 1 回 100ms 近くになってフレームループごと止まる。
+/// REALTIME は管理者権限が要るので HIGH。Linux は何もしない。成功したか返す。
+pub fn high_gpu_priority() -> bool {
+    #[cfg(windows)]
+    {
+        const D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH: i32 = 4;
+        #[link(name = "gdi32")]
+        unsafe extern "system" {
+            fn D3DKMTSetProcessSchedulingPriorityClass(process: isize, priority: i32) -> i32;
+        }
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetCurrentProcess() -> isize;
+        }
+        // SAFETY: 自プロセスの疑似ハンドルと整数を渡すだけ。戻り値は NTSTATUS（0 が成功）。
+        unsafe {
+            D3DKMTSetProcessSchedulingPriorityClass(
+                GetCurrentProcess(),
+                D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH,
+            ) == 0
+        }
+    }
+    #[cfg(not(windows))]
+    true
+}
+
 fn env_path(key: &str) -> Option<PathBuf> {
     std::env::var_os(key)
         .filter(|v| !v.is_empty())
@@ -286,5 +314,10 @@ HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\OpenXR\1
         );
 
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn raises_gpu_priority_without_admin() {
+        assert!(high_gpu_priority());
     }
 }
