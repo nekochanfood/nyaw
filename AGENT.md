@@ -272,6 +272,7 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 
 - `config.toml` の `lod_quality`: 0 = Off（常に LOD0）、1 = Low、2 = Mid（既定）、3 = High。`Kernel::panel_lod` が HMD とパネル中心の距離から決める。
 - LOD0〜3 は縦横 1 / 1/2 / 1/4 / 1/8。切り替え距離は Low が 1 / 2 / 4 m、Mid が 2 / 4 / 8 m、High が 4 / 8 / 16 m。
+- フレームレートも LOD で絞る。LOD0 は毎フレーム、LOD1〜3 は 2 / 4 / 8 フレームに 1 回だけ描き直す（`Kernel::panel_frame_due`。パネルごとにずらす）。間引いたフレームの入力・変化は次に描いてよいフレームで描く。
 - GPUI は非表示ウィンドウの DPI、WebView2 は rasterization scale / zoom と実ピクセルサイズを変える。カーネルの論理解像度と物理サイズは変えない。8 の倍数でないサイズは表示領域に最大 7 論理ピクセルの丸めがある。
 - `cargo test -p ui --test panel_lod -- --ignored` で実描画と入力を確認し、`--off` を追加して無効時も確認する（Windows）。
 - ストレステストは `NYAW_STRESS_LOD=0` と `2` で同じ負荷を比較できる。

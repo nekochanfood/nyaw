@@ -72,6 +72,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     overlay: Overlay,
     timing: TickTiming,
     pointer_mode: PointerMode,
+    /// 進めたフレームの数（[`Self::panel_frame_due`]）。
+    frame: u64,
 }
 
 impl Kernel {
@@ -119,6 +121,7 @@ impl<B: VrBackend> Kernel<B> {
             vr,
             overlay,
             timing: TickTiming::default(),
+            frame: 0,
         }
     }
 
@@ -161,9 +164,16 @@ impl<B: VrBackend> Kernel<B> {
             .count() as u8
     }
 
+    /// このフレームでパネルを描き直してよいか。LOD0 は毎フレーム、LOD n は 2^n フレームに 1 回。
+    /// パネルごとにずらし、間引いたパネルの描き直しが同じフレームに重ならないようにする。
+    pub fn panel_frame_due(&self, id: PanelId) -> bool {
+        (self.frame + id as u64).is_multiple_of(1 << self.panel_lod(id))
+    }
+
     /// 1 フレーム進める。ランタイムを poll し、パネルの追従・掴み移動とレーザーのヒット判定を行って UI イベントを返す。
     pub fn tick(&mut self) -> Vec<UiEvent> {
         let t = Instant::now();
+        self.frame += 1;
         let frame = self.vr.poll();
         let polled = Instant::now();
         let events = self.overlay.tick_frame(&mut self.vr, frame);
@@ -337,6 +347,13 @@ mod tests {
                 k.vr.frame.hmd.position = pose.position + vr::Vec3::Z * distance;
                 k.tick();
                 assert_eq!(k.panel_lod(p), lod, "{quality:?}: {distance}");
+                let due = (0..8)
+                    .filter(|_| {
+                        k.tick();
+                        k.panel_frame_due(p)
+                    })
+                    .count();
+                assert_eq!(due, 8 >> lod, "{quality:?}: {distance}");
                 assert_eq!(k.panel(p).resolution, resolution);
                 assert_eq!(k.panel(p).size, size);
             }

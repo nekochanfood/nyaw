@@ -904,6 +904,7 @@ impl Host {
             let due = appeared
                 || d.last.is_none()
                 || visible
+                    && kernel.panel_frame_due(panel)
                     && (d.hot_until.is_some_and(|t| now < t)
                         || d.captured.is_none_or(|t| now - t >= crate::IDLE_REDRAW));
             // コールバックが失われても止まらないよう、返らない撮影は諦めて撮り直す。

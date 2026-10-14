@@ -828,8 +828,11 @@ pub fn run_with(
                     }
                     seen[panel] = visible;
                     let forced = !inputs.is_empty() || drawn[panel].is_none();
+                    // 遠い（LOD1 以上の）パネルはフレームを間引いて描く。
+                    let due = kernel.panel_frame_due(panel);
                     let idle_due = !forced
                         && visible
+                        && due
                         && idle_slot
                         && drawn[panel].is_some_and(|t| t.elapsed() >= idle[panel]);
                     idle_slot &= !idle_due;
@@ -871,6 +874,11 @@ pub fn run_with(
                         if kernel.panel(panel).closed {
                             window.remove_window();
                             return None;
+                        }
+                        if redraw && !due {
+                            // 間引いたフレーム。次に描いてよいフレームで必ず描く。
+                            drawn[panel] = None;
+                            redraw = false;
                         }
                         redraw.then(|| {
                             let t = Instant::now();
