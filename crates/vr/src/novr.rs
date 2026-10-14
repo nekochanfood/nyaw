@@ -33,6 +33,8 @@ const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 90);
 /// 1 刻み = 3 行（一般的なホイールの既定）になる。
 // ponytail: 刻みの大きさ（Windows は 120 単位、ほかは OS ごと）は見ず向きだけ。滑らかなスクロールのホイールでは速すぎるかもしれない。
 const WHEEL: f32 = 3.0;
+/// 合成に使うスレッドの上限（画面を横帯に分けて並べて塗る）。
+const MAX_THREADS: usize = 8;
 /// 模すコントローラの機種（トリガー・グリップ・スティックがそろっている）。
 const PROFILE: &str = "valve/index_controller";
 /// 左手の置き場所（頭の少し下・左）。下を向けてパネルを指さないようにする。
@@ -284,8 +286,6 @@ impl Emulator {
                 })
                 .collect();
         }
-        self.pixels.clear();
-        self.pixels.extend_from_slice(&self.background);
         let mut order: Vec<usize> = (0..self.quads.len())
             .filter(|&i| {
                 let q = &self.quads[i];
@@ -299,17 +299,41 @@ impl Emulator {
                 .partial_cmp(&(self.quads[b].sort, far(b)))
                 .unwrap()
         });
-        for i in order {
-            self.draw(i);
+        // 画面を横帯に分けて、帯ごとに別のスレッドで背景と全クアッドを塗る。
+        let mut pixels = std::mem::take(&mut self.pixels);
+        pixels.resize((w * h) as usize, 0);
+        let rasters: Vec<Raster> = order.into_iter().filter_map(|i| self.raster(i)).collect();
+        let threads = std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .clamp(1, MAX_THREADS);
+        let rows = h.div_ceil(threads as u32).max(1);
+        let band = (rows * w) as usize;
+        let background = &self.background;
+        let fill = |(k, px): (usize, &mut [u32])| {
+            let y0 = k as u32 * rows;
+            px.copy_from_slice(&background[y0 as usize * w as usize..][..px.len()]);
+            let y1 = y0 + (px.len() / w as usize) as u32;
+            for r in &rasters {
+                r.fill(px, y0, y1, w);
+            }
+        };
+        if threads == 1 {
+            pixels.chunks_mut(band).enumerate().for_each(fill);
+        } else {
+            std::thread::scope(|s| {
+                for chunk in pixels.chunks_mut(band).enumerate() {
+                    s.spawn(move || fill(chunk));
+                }
+            });
         }
+        drop(rasters);
+        self.pixels = pixels;
     }
 
-    /// クアッド `i` を画面に重ねる（ピクセルごとに視線とクアッドの交点のテクセルを取る）。
-    fn draw(&mut self, i: usize) {
+    /// クアッド `i` を塗る準備（画面上の範囲と、視線との交点を足し込みで出す係数）。写らなければ `None`。
+    fn raster(&self, i: usize) -> Option<Raster<'_>> {
         let q = &self.quads[i];
-        let Some((tw, th, tex)) = &q.texture else {
-            return;
-        };
+        let (tw, th, tex) = q.texture.as_ref()?;
         let (tw, th) = (*tw, *th);
         let size = Vec2::new(
             q.width_m,
@@ -321,10 +345,9 @@ impl Emulator {
             q.pose.orientation * Vec3::Z,
         );
         let c = q.pose.position;
-        let alpha = (q.alpha * 255.0).round() as u32;
         let nc = n.dot(c);
         if nc.abs() < NEAR || tw == 0 || th == 0 {
-            return;
+            return None;
         }
         // 4 隅が写る範囲だけを走査する。目の後ろに隅があれば全面。
         let (w, h) = self.size;
@@ -346,49 +369,84 @@ impl Emulator {
         // 視線 d = (x*kx + bx, y*ky + by, -1) とクアッドの交点は t = nc / (n·d)。テクスチャ座標は (ux·d) t、(uy·d) t から
         // 出るので、3 つの内積を行ごとに x について足し込めば、ピクセルごとの計算は割り算 1 回で済む。
         let (k, b) = self.lens();
-        let dot = |a: Vec3| (a.x * k.x, a.x * b.x - a.z, a.y * k.y, a.y * b.y);
-        let (n_x, n_c, n_y, n_b) = dot(n);
-        let (u_x, u_c, u_y, u_b) = dot(ux);
-        let (v_x, v_c, v_y, v_b) = dot(uy);
-        let (cu, cv) = (c.dot(ux), c.dot(uy));
-        let (tw_f, th_f) = (tw as f32, th as f32);
-        for y in y0..y1 {
+        let dot = |a: Vec3| [a.x * k.x, a.x * b.x - a.z, a.y * k.y, a.y * b.y];
+        Some(Raster {
+            tex,
+            tw,
+            th,
+            size,
+            nc,
+            n: dot(n),
+            u: dot(ux),
+            v: dot(uy),
+            cu: c.dot(ux),
+            cv: c.dot(uy),
+            alpha: (q.alpha * 255.0).round() as u32,
+            rect: (x0, y0, x1.min(w), y1.min(h)),
+        })
+    }
+
+    fn quad(&mut self, id: OverlayId) -> &mut Quad {
+        self.dirty = true;
+        &mut self.quads[id.0 as usize]
+    }
+}
+
+/// 1 枚のクアッドを塗るための、フレームごとに決まる値（[`Emulator::raster`]）。
+struct Raster<'a> {
+    tex: &'a [u8],
+    tw: u32,
+    th: u32,
+    size: Vec2,
+    nc: f32,
+    /// 法線・横・縦の向きと視線の内積を、画面の (x, y) の 1 次式にした係数 [x の係数, 定数, y の係数, y の定数]。
+    n: [f32; 4],
+    u: [f32; 4],
+    v: [f32; 4],
+    cu: f32,
+    cv: f32,
+    alpha: u32,
+    /// 画面上の範囲 (x0, y0, x1, y1)。
+    rect: (u32, u32, u32, u32),
+}
+
+impl Raster<'_> {
+    /// 画面の行 `band_y0..band_y1` を受け持つ帯 `px`（幅 `w`）に重ねる。
+    fn fill(&self, px: &mut [u32], band_y0: u32, band_y1: u32, w: u32) {
+        let (x0, y0, x1, y1) = self.rect;
+        let (tw_f, th_f) = (self.tw as f32, self.th as f32);
+        let px0 = x0 as f32 + 0.5;
+        for y in y0.max(band_y0)..y1.min(band_y1) {
             let py = y as f32 + 0.5;
-            let row = |x_k: f32, c0: f32, y_k: f32, y_b: f32| (x_k, c0 + y_k * py + y_b);
-            let (n_dx, mut dn) = row(n_x, n_c, n_y, n_b);
-            let (u_dx, mut du) = row(u_x, u_c, u_y, u_b);
-            let (v_dx, mut dv) = row(v_x, v_c, v_y, v_b);
-            let px0 = x0 as f32 + 0.5;
-            dn += n_dx * px0;
-            du += u_dx * px0;
-            dv += v_dx * px0;
-            let line = (y * w) as usize;
+            let start = |c: [f32; 4]| c[1] + c[2] * py + c[3] + c[0] * px0;
+            let (mut dn, mut du, mut dv) = (start(self.n), start(self.u), start(self.v));
+            let line = ((y - band_y0) * w) as usize;
             for x in x0..x1 {
                 let (pn, pu, pv) = (dn, du, dv);
-                dn += n_dx;
-                du += u_dx;
-                dv += v_dx;
+                dn += self.n[0];
+                du += self.u[0];
+                dv += self.v[0];
                 if pn.abs() < 1e-9 {
                     continue;
                 }
-                let t = nc / pn;
+                let t = self.nc / pn;
                 if t < NEAR {
                     continue;
                 }
-                let u = (pu * t - cu) / size.x + 0.5;
-                let v = 0.5 - (pv * t - cv) / size.y;
+                let u = (pu * t - self.cu) / self.size.x + 0.5;
+                let v = 0.5 - (pv * t - self.cv) / self.size.y;
                 if !(0.0..1.0).contains(&u) || !(0.0..1.0).contains(&v) {
                     continue;
                 }
-                let tx = ((u * tw_f) as u32).min(tw - 1);
-                let ty = ((v * th_f) as u32).min(th - 1);
-                let s = ((ty * tw + tx) * 4) as usize;
-                let a = u32::from(tex[s + 3]) * alpha / 255;
+                let tx = ((u * tw_f) as u32).min(self.tw - 1);
+                let ty = ((v * th_f) as u32).min(self.th - 1);
+                let s = ((ty * self.tw + tx) * 4) as usize;
+                let a = u32::from(self.tex[s + 3]) * self.alpha / 255;
                 if a == 0 {
                     continue;
                 }
-                let [r, g, b] = [tex[s], tex[s + 1], tex[s + 2]].map(u32::from);
-                let dst = &mut self.pixels[line + x as usize];
+                let [r, g, b] = [self.tex[s], self.tex[s + 1], self.tex[s + 2]].map(u32::from);
+                let dst = &mut px[line + x as usize];
                 *dst = if a == 255 {
                     (r << 16) | (g << 8) | b
                 } else {
@@ -398,11 +456,6 @@ impl Emulator {
                 };
             }
         }
-    }
-
-    fn quad(&mut self, id: OverlayId) -> &mut Quad {
-        self.dirty = true;
-        &mut self.quads[id.0 as usize]
     }
 }
 
