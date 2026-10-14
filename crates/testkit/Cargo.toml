@@ -15,6 +15,8 @@ ui.workspace = true
 # NYAW_E2E_WATCH shows rendering during tests in an OS window (watch.rs)
 minifb = "0.29.0"
 logger.workspace = true
+# One in-process process snapshot instead of spawning tasklist/taskkill per name (cleanup polls fast)
+sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 
 # The screens the scenarios operate. The kit itself knows nothing about screens
 [dev-dependencies]

@@ -7066,6 +7066,7 @@ dependencies = [
  "kernel",
  "logger",
  "minifb",
+ "sysinfo",
  "testing",
  "ui",
  "vr",

@@ -13,7 +13,7 @@
     "lint": "cd .. && oxlint -c web/.oxlintrc.json --deny-warnings web crates/ui/src/web",
     "fmt": "cd .. && oxfmt -c web/.oxfmtrc.json web crates/ui/src/web",
     "fmt:check": "cd .. && oxfmt -c web/.oxfmtrc.json --check web crates/ui/src/web",
-    "check": "npm run lint && npm run fmt:check && npm run typecheck && npm run build"
+    "check": "node scripts/check.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.9.0",

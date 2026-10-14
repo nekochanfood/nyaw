@@ -52,19 +52,36 @@ fn main() -> ExitCode {
                 continue;
             }
         };
+        let t0 = Instant::now();
         let result = catch_unwind(AssertUnwindSafe(|| {
+            let mut lap = Instant::now();
+            let mut mark = |what: &str| {
+                eprintln!("  timing: {what} {:?}", lap.elapsed());
+                lap = Instant::now();
+            };
             let mut vr = rt
                 .connect()
                 .unwrap_or_else(|e| panic!("failed to connect: {e}"));
+            mark("connect");
             overlay_reaches_runtime(vr.as_mut());
+            mark("overlay");
             home_runs_on_runtime(vr);
+            mark("home");
             let vr = rt
                 .connect()
                 .unwrap_or_else(|e| panic!("failed to reconnect: {e}"));
+            mark("reconnect");
             transparent_runs_on_runtime(vr);
+            mark("transparent");
         }));
         let log = rt.log.clone();
+        let t1 = Instant::now();
         drop(rt);
+        eprintln!(
+            "  timing: scenario {:?}, cleanup {:?}",
+            t1 - t0,
+            t1.elapsed()
+        );
         let leftover = kind.is_running();
         match result {
             Ok(()) if !leftover => {
