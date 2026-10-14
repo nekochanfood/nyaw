@@ -325,6 +325,8 @@ const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
 pub(crate) const IDLE_REDRAW: Duration = Duration::from_millis(250);
+/// 描き直しても絵が変わらないパネルの、描き直す間隔の上限（時計の分の切り替わりはこの遅れで見える）。
+const IDLE_MAX: Duration = Duration::from_secs(1);
 
 /// `panel` で始まったドラッグの見た目を、押している手の [`Pointer::Drag`] のパネルに出す。
 /// 大きさは元のパネルと同じ縮尺（1m あたりのピクセル）にする。
@@ -605,6 +607,8 @@ pub fn run_with(
             let mut last = vec![None; windows.len()];
             // パネルごとの最後に描いた時刻（None = 次のフレームで必ず描く）。
             let mut drawn: Vec<Option<Instant>> = vec![None; windows.len()];
+            // パネルごとの、入力も変化も無いときに描き直す間隔。描いても変わらなければ IDLE_MAX まで延ばす。
+            let mut idle: Vec<Duration> = vec![IDLE_REDRAW; windows.len()];
             // ドラッグ中の手と、その見た目を描くパネル。
             let mut drag: Option<(Hand, PanelId)> = None;
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
@@ -614,7 +618,11 @@ pub fn run_with(
             let wait = Duration::from_millis(1);
             loop {
                 let begin = Instant::now();
-                cx.background_executor().timer(wait).await;
+                // GPUI のタイマーは Windows では粗く（1ms を頼んでも 6〜12ms 掛かり、フレームが 60fps 台に頭打ちになる）、
+                // バックグラウンドのスレッドで眠ってから戻る（std の sleep は細かい）。
+                cx.background_executor()
+                    .spawn(async move { std::thread::sleep(wait) })
+                    .await;
                 if let Some(remote) = &remote {
                     while let Ok(f) = remote.try_recv() {
                         cx.update(f);
@@ -652,15 +660,21 @@ pub fn run_with(
                 }
                 // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
                 // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
+                // 何もしていないパネルの描き直しは 1 フレームに 1 枚まで（同じフレームに重なると読み戻しの待ちが積み上がる）。
+                let mut idle_slot = true;
                 for ((panel, window), inputs) in windows.iter().copied().zip(inputs) {
                     let Some(window) = window else { continue }; // Web のパネルは後で web::Host が回す
                     if kernel.panel(panel).closed {
                         continue;
                     }
                     // 描画と読み戻し（GPU の完了待ちを含む）は重いので、入力・状態の変化があったとき、
-                    // 前回描いてから IDLE_REDRAW 経ったときだけ行う。
-                    let mut redraw = !inputs.is_empty()
-                        || drawn[panel].is_none_or(|t| t.elapsed() >= IDLE_REDRAW);
+                    // 前回描いてから idle[panel] 経ったとき（1 フレームに 1 枚）だけ行う。
+                    let forced = !inputs.is_empty() || drawn[panel].is_none();
+                    let idle_due = !forced
+                        && idle_slot
+                        && drawn[panel].is_some_and(|t| t.elapsed() >= idle[panel]);
+                    idle_slot &= !idle_due;
+                    let mut redraw = forced || idle_due;
                     let mut changed = false;
                     let Ok(frame) = cx.update_window(window, |_, window, cx| {
                         let t = Instant::now();
@@ -696,8 +710,15 @@ pub fn run_with(
                         continue;
                     };
                     if changed {
-                        // sync_panel は全ウィンドウを描き直させる（状態はどのパネルにも表示されうる）。
-                        drawn.iter_mut().for_each(|t| *t = None);
+                        // 状態はどのパネルにも表示されうるので、ほかのパネルも描き直す（1 フレームに 1 枚ずつ）。
+                        for (p, t) in drawn.iter_mut().enumerate() {
+                            if p != panel
+                                && let Some(t) = t
+                            {
+                                *t = t.checked_sub(IDLE_MAX).unwrap_or(*t);
+                                idle[p] = Duration::ZERO;
+                            }
+                        }
                     }
                     match frame {
                         // 開いた直後はウィンドウの大きさの反映が間に合わず 1x1 で描かれる。送らずに次のフレームで描き直す。
@@ -705,7 +726,13 @@ pub fn run_with(
                         // 画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
                         Some(Ok(f)) => {
                             drawn[panel] = Some(Instant::now());
-                            if last[panel].as_ref() != Some(&f) {
+                            let same = last[panel].as_ref() == Some(&f);
+                            idle[panel] = if idle_due && same && !changed {
+                                (idle[panel] * 2).min(IDLE_MAX)
+                            } else {
+                                IDLE_REDRAW
+                            };
+                            if !same {
                                 let t = Instant::now();
                                 kernel.submit(panel, f.width, f.height, &f.rgba);
                                 stages.upload += t.elapsed();
@@ -746,6 +773,7 @@ pub fn run_with(
                     windows.push(cx.update(|cx| open_panel(&mut kernel, spec, i, cx, &mut webs)));
                     last.push(None);
                     drawn.push(None);
+                    idle.push(IDLE_REDRAW);
                 }
                 // 計測とプロファイラパネルを `profiling` に合わせる。
                 if let Some(p) = profiler_panel
@@ -791,6 +819,7 @@ pub fn run_with(
                         windows.push((panel, window));
                         last.push(None);
                         drawn.push(None);
+                        idle.push(IDLE_REDRAW);
                         profiler_panel = Some(panel);
                     }
                     Some(p) if !profiling => {

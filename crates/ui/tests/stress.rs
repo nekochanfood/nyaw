@@ -9,7 +9,7 @@
 //! 局面: アイドル → マウスで掃く（押したままのスワイプを含む）→ パネルの召喚と破棄を繰り返す → 目の前のパネル → もう一度アイドル。
 //! 最初と最後のアイドルの差で「時間とともに重くなる」を、召喚の局面の最大フレーム時間で召喚の引っ掛かりを見る。
 //! 1 フレームごとの CSV（`stress.csv`）と集計（`stress.txt`）を `CARGO_TARGET_TMPDIR` に書く。
-//! 局面の長さは `NYAW_STRESS_SCALE`（既定 1.0）で伸縮する。
+//! 局面の長さは `NYAW_STRESS_SCALE`（既定 1.0）で伸縮する。`NYAW_STRESS_NO_WEB=1` で Web のパネルを外す（切り分け用）。
 
 mod common;
 
@@ -67,7 +67,7 @@ fn main() -> ExitCode {
             testing_at(-1.5 + col, 0.7 - 0.7 * row, -2.2)
         })
         .collect();
-    for x in [-0.5, 0.5] {
+    for x in [-0.5, 0.5].into_iter().filter(|_| web()) {
         panels.push(PanelSpec::web(
             Pose::new(Vec3::new(x, -0.75, -2.2), Quat::IDENTITY),
             webpages::TESTING,
@@ -108,6 +108,11 @@ fn main() -> ExitCode {
 struct Phase {
     name: &'static str,
     range: (Duration, Duration),
+}
+
+/// Web のパネルを載せるか（`NYAW_STRESS_NO_WEB=1` で外して GPUI だけのコストを見る）。
+fn web() -> bool {
+    std::env::var_os("NYAW_STRESS_NO_WEB").is_none()
 }
 
 fn scale() -> f32 {
@@ -206,7 +211,7 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
             close(remote, next_id - 1);
         }
         let (x, y) = ((n % 3) as f32 * 0.4 - 0.4, 0.1);
-        if n % 4 == 3 {
+        if n % 4 == 3 && web() {
             spawn(remote, move || {
                 PanelSpec::web(
                     Pose::new(Vec3::new(x, y, -1.4), Quat::IDENTITY),

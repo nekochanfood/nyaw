@@ -343,6 +343,8 @@ pub type Job = Box<dyn FnOnce(&mut Emulator) + Send>;
 pub struct Driven {
     emu: Emulator,
     jobs: Receiver<Job>,
+    /// 次のフレームの始まり（ウィンドウ付きのエミュレーターと同じく、poll はここまで眠る）。
+    next: Option<Instant>,
 }
 
 impl Driven {
@@ -350,7 +352,14 @@ impl Driven {
     pub fn headless(width: u32, height: u32) -> (Self, Emu) {
         let (tx, jobs) = channel();
         let emu = Emulator::headless(width, height);
-        (Self { emu, jobs }, Emu(tx))
+        (
+            Self {
+                emu,
+                jobs,
+                next: None,
+            },
+            Emu(tx),
+        )
     }
 }
 
@@ -359,8 +368,14 @@ impl VrBackend for Driven {
         self.emu.runtime()
     }
     fn poll(&mut self) -> Frame {
-        // ウィンドウ付きのエミュレーターが poll で待つ周期の代わり（約 90Hz）。
-        std::thread::sleep(Duration::from_millis(11));
+        // ウィンドウ付きのエミュレーターと同じ周期（約 90Hz）。間に合わなかったフレームは取り戻さない。
+        let frame = Duration::from_nanos(1_000_000_000 / 90);
+        let now = Instant::now();
+        let next = self.next.unwrap_or(now);
+        if next > now {
+            std::thread::sleep(next - now);
+        }
+        self.next = Some(next.max(Instant::now() - frame) + frame);
         while let Ok(job) = self.jobs.try_recv() {
             job(&mut self.emu);
         }

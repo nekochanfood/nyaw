@@ -99,6 +99,8 @@ impl Kernel {
 impl<B: VrBackend> Kernel<B> {
     /// 接続済みのバックエンドで起動する（テスト用。本番は [`Kernel::boot`]）。
     pub fn with_backend(vr: B, config: Config) -> Self {
+        // フレームの周期を作る短い待ちが丸められないように。
+        os::precise_timers();
         let mut overlay = Overlay::new();
         if let Some(s) = config.pointer_smoothing {
             overlay.set_pointer_smoothing(s);

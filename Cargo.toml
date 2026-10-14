@@ -49,6 +49,11 @@ opt-level = 2
 [profile.dev.package.vr]
 opt-level = 2
 
+# gpui（Windows）はデバッグアサーションが有効だと、ウィンドウを作るたびに HLSL を最適化なしで実行時にコンパイルする
+# （1 枚 180ms 前後止まり、描画も遅いシェーダーになる）。ビルド時にコンパイル済みのシェーダーを使わせる。
+[profile.dev.package.gpui_windows]
+debug-assertions = false
+
 # 依存（gpui 等）は未最適化だと描画が桁違いに遅く、プロファイラ窓の描画だけで 1 フレーム 50ms を超えてフレームを落とす。
 # 自前クレートはデバッグしやすいよう最適化しない。
 [profile.dev.package."*"]
