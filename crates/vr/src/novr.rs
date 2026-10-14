@@ -60,6 +60,8 @@ struct Quad {
     visible: bool,
     /// 不透明度（0〜1）。テクスチャのアルファに掛ける。
     alpha: f32,
+    /// 直前の合成で 1 画素でも見えた（[`VrBackend::overlay_seen`]）。
+    seen: bool,
     sort: u32,
     /// 幅, 高さ, RGBA。
     texture: Option<(u32, u32, Vec<u8>)>,
@@ -299,7 +301,9 @@ impl Emulator {
                 .partial_cmp(&(self.quads[b].sort, far(b)))
                 .unwrap()
         });
-        // 画面を横帯に分けて、帯ごとに別のスレッドで背景と全クアッドを塗る。
+        // 手前から奥へ塗る（画素ごとにここまでの不透明度を持ち、不透明になった画素では奥のクアッドを計算しない。重なりのカリング）。
+        order.reverse();
+        // 画面を横帯に分けて、帯ごとに別のスレッドで全クアッドと背景を塗る。
         let mut pixels = std::mem::take(&mut self.pixels);
         pixels.resize((w * h) as usize, 0);
         let rasters: Vec<Raster> = order.into_iter().filter_map(|i| self.raster(i)).collect();
@@ -309,25 +313,43 @@ impl Emulator {
         let rows = h.div_ceil(threads as u32).max(1);
         let band = (rows * w) as usize;
         let background = &self.background;
-        let fill = |(k, px): (usize, &mut [u32])| {
+        // 帯ごとに、どのクアッドが 1 画素でも見えたかを返す。
+        let fill = |(k, px): (usize, &mut [u32])| -> Vec<bool> {
             let y0 = k as u32 * rows;
-            px.copy_from_slice(&background[y0 as usize * w as usize..][..px.len()]);
             let y1 = y0 + (px.len() / w as usize) as u32;
-            for r in &rasters {
-                r.fill(px, y0, y1, w);
+            px.fill(0);
+            let seen = rasters.iter().map(|r| r.fill(px, y0, y1, w)).collect();
+            // 残った透けている分に背景を敷く。
+            let bg = &background[y0 as usize * w as usize..][..px.len()];
+            for (p, b) in px.iter_mut().zip(bg) {
+                *p = under_background(*p, *b);
             }
+            seen
         };
-        if threads == 1 {
-            pixels.chunks_mut(band).enumerate().for_each(fill);
+        let seen: Vec<Vec<bool>> = if threads == 1 {
+            pixels.chunks_mut(band).enumerate().map(fill).collect()
         } else {
             std::thread::scope(|s| {
-                for chunk in pixels.chunks_mut(band).enumerate() {
-                    s.spawn(move || fill(chunk));
-                }
-            });
-        }
+                let handles: Vec<_> = pixels
+                    .chunks_mut(band)
+                    .enumerate()
+                    .map(|chunk| s.spawn(move || fill(chunk)))
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("合成のスレッドが落ちた"))
+                    .collect()
+            })
+        };
+        let drawn: Vec<usize> = rasters.iter().map(|r| r.quad).collect();
         drop(rasters);
         self.pixels = pixels;
+        for q in &mut self.quads {
+            q.seen = false;
+        }
+        for (j, &i) in drawn.iter().enumerate() {
+            self.quads[i].seen = seen.iter().any(|band| band[j]);
+        }
     }
 
     /// クアッド `i` を塗る準備（画面上の範囲と、視線との交点を足し込みで出す係数）。写らなければ `None`。
@@ -349,10 +371,14 @@ impl Emulator {
         if nc.abs() < NEAR || tw == 0 || th == 0 {
             return None;
         }
-        // 4 隅が写る範囲だけを走査する。目の後ろに隅があれば全面。
+        // 4 隅が写る範囲だけを走査する。全部の隅が目の後ろなら写らない。一部が後ろなら全面。
         let (w, h) = self.size;
-        let corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
-            .map(|(sx, sy)| self.project(c + ux * size.x / 2.0 * sx + uy * size.y / 2.0 * sy));
+        let world = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .map(|(sx, sy)| c + ux * size.x / 2.0 * sx + uy * size.y / 2.0 * sy);
+        if world.iter().all(|p| p.z > -NEAR) {
+            return None;
+        }
+        let corners = world.map(|p| self.project(p));
         let (x0, y0, x1, y1) = match corners {
             [Some(a), Some(b), Some(cc), Some(d)] => {
                 let lo = a.min(b).min(cc).min(d).max(Vec2::ZERO);
@@ -371,6 +397,7 @@ impl Emulator {
         let (k, b) = self.lens();
         let dot = |a: Vec3| [a.x * k.x, a.x * b.x - a.z, a.y * k.y, a.y * b.y];
         Some(Raster {
+            quad: i,
             tex,
             tw,
             th,
@@ -392,8 +419,22 @@ impl Emulator {
     }
 }
 
+/// 乗算済みの ARGB（手前に塗った分）の下に、背景（0RGB）を残った透けている分だけ敷いた 0RGB。
+fn under_background(p: u32, bg: u32) -> u32 {
+    let a = p >> 24;
+    if a == 255 {
+        return p & 0x00ff_ffff;
+    }
+    let [_, r, g, b] = p.to_be_bytes().map(u32::from);
+    let [_, br, bgg, bb] = bg.to_be_bytes().map(u32::from);
+    let mix = |c: u32, d: u32| (c + d * (255 - a) / 255).min(255);
+    (mix(r, br) << 16) | (mix(g, bgg) << 8) | mix(b, bb)
+}
+
 /// 1 枚のクアッドを塗るための、フレームごとに決まる値（[`Emulator::raster`]）。
 struct Raster<'a> {
+    /// どのクアッドか（`Emulator::quads` の添字）。
+    quad: usize,
     tex: &'a [u8],
     tw: u32,
     th: u32,
@@ -411,8 +452,10 @@ struct Raster<'a> {
 }
 
 impl Raster<'_> {
-    /// 画面の行 `band_y0..band_y1` を受け持つ帯 `px`（幅 `w`）に重ねる。
-    fn fill(&self, px: &mut [u32], band_y0: u32, band_y1: u32, w: u32) {
+    /// 画面の行 `band_y0..band_y1` を受け持つ帯 `px`（幅 `w`）の、ここまで手前に塗った分の下に敷く（`px` は乗算済みの ARGB）。
+    /// 1 画素でも見えたら `true`。
+    fn fill(&self, px: &mut [u32], band_y0: u32, band_y1: u32, w: u32) -> bool {
+        let mut seen = false;
         let (x0, y0, x1, y1) = self.rect;
         let (tw_f, th_f) = (self.tw as f32, self.th as f32);
         let px0 = x0 as f32 + 0.5;
@@ -426,7 +469,10 @@ impl Raster<'_> {
                 dn += self.n[0];
                 du += self.u[0];
                 dv += self.v[0];
-                if pn.abs() < 1e-9 {
+                let dst = &mut px[line + x as usize];
+                let covered = *dst >> 24;
+                // 手前で不透明になった画素は計算しない。
+                if covered == 255 || pn.abs() < 1e-9 {
                     continue;
                 }
                 let t = self.nc / pn;
@@ -442,20 +488,22 @@ impl Raster<'_> {
                 let ty = ((v * th_f) as u32).min(self.th - 1);
                 let s = ((ty * self.tw + tx) * 4) as usize;
                 let a = u32::from(self.tex[s + 3]) * self.alpha / 255;
-                if a == 0 {
+                // この画素へのこのクアッドの寄与（手前で隠れた分を除く）。
+                let k = a * (255 - covered) / 255;
+                if k == 0 {
                     continue;
                 }
+                seen = true;
                 let [r, g, b] = [self.tex[s], self.tex[s + 1], self.tex[s + 2]].map(u32::from);
-                let dst = &mut px[line + x as usize];
-                *dst = if a == 255 {
-                    (r << 16) | (g << 8) | b
-                } else {
-                    let [_, dr, dg, db] = dst.to_be_bytes().map(u32::from);
-                    let mix = |s: u32, d: u32| (s * a + d * (255 - a)) / 255;
-                    (mix(r, dr) << 16) | (mix(g, dg) << 8) | mix(b, db)
-                };
+                let [_, dr, dg, db] = dst.to_be_bytes().map(u32::from);
+                let add = |d: u32, s: u32| (d + s * k / 255).min(255);
+                *dst = ((covered + k).min(255) << 24)
+                    | (add(dr, r) << 16)
+                    | (add(dg, g) << 8)
+                    | add(db, b);
             }
         }
+        seen
     }
 }
 
@@ -508,6 +556,7 @@ impl VrBackend for Emulator {
             height_m: None,
             visible: true,
             alpha: 1.0,
+            seen: false,
             sort: 0,
             texture: None,
         });
@@ -545,6 +594,10 @@ impl VrBackend for Emulator {
 
     fn compositor_time(&self) -> Duration {
         self.composite_time
+    }
+
+    fn overlay_seen(&self, id: OverlayId) -> Option<bool> {
+        Some(self.quads[id.0 as usize].seen)
     }
 }
 
@@ -615,6 +668,26 @@ mod tests {
         assert_eq!(pixel(&e.screenshot(), at), [255, 0, 0, 255]);
         e.set_overlay_visible(red, false);
         assert_eq!(pixel(&e.screenshot(), at), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn panel_hidden_behind_an_opaque_one_is_not_seen() {
+        let (mut e, red) = emulator_with_red_panel();
+        // 赤（左半分は不透明・右半分は半透明）の手前に、赤より大きい不透明な板。
+        let front = e.create_overlay("f", 2.0).unwrap();
+        e.set_overlay_pose(front, Pose::new(Vec3::new(0.0, 0.0, -0.5), Quat::IDENTITY));
+        e.submit_overlay_pixels(front, 1, 1, &[0, 255, 0, 255]);
+        e.screenshot();
+        assert_eq!(e.overlay_seen(front), Some(true));
+        assert_eq!(e.overlay_seen(red), Some(false), "隠れたパネルは見えない");
+        // 板を退けると見える。
+        e.set_overlay_visible(front, false);
+        e.screenshot();
+        assert_eq!(e.overlay_seen(red), Some(true));
+        // 目の後ろに回ると見えない。
+        e.set_overlay_pose(red, Pose::new(Vec3::new(0.0, 0.0, 1.0), Quat::IDENTITY));
+        e.screenshot();
+        assert_eq!(e.overlay_seen(red), Some(false));
     }
 
     #[test]

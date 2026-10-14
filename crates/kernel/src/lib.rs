@@ -157,6 +157,17 @@ impl<B: VrBackend> Kernel<B> {
         self.timing
     }
 
+    /// パネルが見えているか（ほかのパネルに隠れていない・視野の中）。ランタイムが直前の合成から教えてくれればそれ（novr）、
+    /// 無ければ頭の向きと視野で見積もる。見えないパネルの描き直しを省く（カリング）のに使う。
+    pub fn panel_seen(&self, panel: PanelId) -> bool {
+        let p = self.overlay.panel(panel);
+        !p.closed
+            && self
+                .vr
+                .overlay_seen(p.overlay_id())
+                .unwrap_or_else(|| self.overlay.in_view(panel))
+    }
+
     /// 最後の tick の HMD の姿勢。
     pub fn hmd(&self) -> Pose {
         self.overlay.hmd()

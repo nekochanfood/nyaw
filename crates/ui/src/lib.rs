@@ -680,6 +680,8 @@ pub fn run_with(
             let mut drawn: Vec<Option<Instant>> = vec![None; windows.len()];
             // パネルごとの、入力も変化も無いときに描き直す間隔。描いても変わらなければ IDLE_MAX まで延ばす。
             let mut idle: Vec<Duration> = vec![IDLE_REDRAW; windows.len()];
+            // パネルごとの、前のフレームで見えていたか（隠れていた・視野の外だったパネルは見えた瞬間に描き直す）。
+            let mut seen: Vec<bool> = vec![false; windows.len()];
             // ドラッグ中の手と、その見た目を描くパネル。
             let mut drag: Option<(Hand, PanelId)> = None;
             // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
@@ -741,8 +743,15 @@ pub fn run_with(
                     }
                     // 描画と読み戻し（GPU の完了待ちを含む）は重いので、入力・状態の変化があったとき、
                     // 前回描いてから idle[panel] 経ったとき（1 フレームに 1 枚）だけ行う。
+                    // 見えていないパネル（ほかのパネルに隠れた・視野の外）は、何もしていないときに描き直さない（カリング）。
+                    let visible = kernel.panel_seen(panel);
+                    if visible && !seen[panel] {
+                        drawn[panel] = None;
+                    }
+                    seen[panel] = visible;
                     let forced = !inputs.is_empty() || drawn[panel].is_none();
                     let idle_due = !forced
+                        && visible
                         && idle_slot
                         && drawn[panel].is_some_and(|t| t.elapsed() >= idle[panel]);
                     idle_slot &= !idle_due;
@@ -869,6 +878,7 @@ pub fn run_with(
                     last.push(None);
                     drawn.push(None);
                     idle.push(IDLE_REDRAW);
+                    seen.push(false);
                 }
                 // 計測とプロファイラパネルを `profiling` に合わせる。
                 if let Some(p) = profiler_panel
@@ -915,6 +925,7 @@ pub fn run_with(
                         last.push(None);
                         drawn.push(None);
                         idle.push(IDLE_REDRAW);
+                        seen.push(false);
                         profiler_panel = Some(panel);
                     }
                     Some(p) if !profiling => {

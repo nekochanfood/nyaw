@@ -418,6 +418,8 @@ struct Draw {
     captured: Option<Instant>,
     hot_until: Option<Instant>,
     last: Option<Image>,
+    /// 前に撮ろうとしたときに見えていたか。
+    seen: bool,
 }
 
 /// Web のパネルを持つ Tauri アプリ。メインスレッド専用で、イベントループは持たず [`Self::step`] で回してもらう。
@@ -663,7 +665,7 @@ impl Host {
         for panel in panels {
             self.sync(kernel, panel, now);
         }
-        self.capture(now);
+        self.capture(kernel, now);
         self.prewarm(now);
         std::mem::take(&mut self.lock().spawns)
     }
@@ -831,13 +833,20 @@ impl Host {
     }
 
     /// 撮り直すパネルの WebView を撮る（非同期。結果は [`Self::receive`] で受ける）。
-    fn capture(&mut self, now: Instant) {
+    fn capture<B: VrBackend>(&mut self, kernel: &Kernel<B>, now: Instant) {
         for (&panel, window) in &self.windows {
             let Some(d) = self.draws.get_mut(&panel) else {
                 continue;
             };
-            let due = d.hot_until.is_some_and(|t| now < t)
-                || d.captured.is_none_or(|t| now - t >= crate::IDLE_REDRAW);
+            // 見えていないパネル（ほかのパネルに隠れた・視野の外）は撮らない（カリング）。見えた瞬間と、まだ一度も撮れていないときは撮る。
+            let visible = kernel.panel_seen(panel);
+            let appeared = visible && !d.seen;
+            d.seen = visible;
+            let due = appeared
+                || d.last.is_none()
+                || visible
+                    && (d.hot_until.is_some_and(|t| now < t)
+                        || d.captured.is_none_or(|t| now - t >= crate::IDLE_REDRAW));
             if d.capturing || !due {
                 continue;
             }

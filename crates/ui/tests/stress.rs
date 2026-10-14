@@ -6,7 +6,8 @@
 //! - オーバーレイ: 追従・ヒット判定・ポインタの配置・アニメーション（`overlay`）
 //! - UI: 入力の配送（`input`）・GPUI のレイアウト（`draw`）・描画と読み戻し（`render`）・ランタイムへの転送（`upload`）・Web（`web`）
 //!
-//! 局面: アイドル → マウスで掃く（押したままのスワイプを含む）→ アイドル → パネルの召喚と破棄を繰り返す → 目の前のパネル → もう一度アイドル。
+//! 局面: アイドル → マウスで掃く（押したままのスワイプを含む）→ アイドル → パネルの召喚と破棄を繰り返す → 目の前のパネル
+//! → 物量（Toggle Panel と同じく重ねて 10 枚召喚して掃く）→ もう一度アイドル。
 //! アイドル同士の差で「時間とともに重くなる」（掃いた後 = idle-mid、召喚と破棄の後 = idle-after）を、召喚の局面の最大フレーム時間で召喚の引っ掛かりを見る。
 //! 1 フレームごとの CSV（`stress.csv`）と集計（`stress.txt`）を `CARGO_TARGET_TMPDIR` に書く。
 //! 局面の長さは `NYAW_STRESS_SCALE`（既定 1.0）で伸縮する。`NYAW_STRESS_NO_WEB=1` で Web のパネルを外す（切り分け用）。
@@ -29,7 +30,9 @@ use profiler::Profiler;
 use testing::Testing;
 use ui::{PanelControl, PanelSpec};
 
-const SCREEN: (u32, u32) = (1280, 720);
+const SCREEN: (u32, u32) = (1920, 1080);
+/// 物量の局面で重ねて召喚するパネルの数。
+const VOLUME: usize = 10;
 
 /// 書いた CSV を後から読める出力先。
 #[derive(Clone, Default)]
@@ -232,6 +235,23 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     spawn(remote, || testing_at(0.0, 0.0, -0.5));
     run_phase(&mut phases, t0, "near", secs(5.0), |f| sweep_frame(emu, f));
     close(remote, near);
+    next_id += 1;
+    // 物量: Toggle Panel と同じく、親の手前 5cm に Testing を 10 枚重ねて召喚し、その上を掃く。
+    let first = next_id;
+    spawn(remote, || testing_at(0.0, 0.0, -1.2));
+    for k in 1..VOLUME {
+        let from = first + k - 1;
+        spawn(remote, move || {
+            PanelSpec::spawn(from, |id, _, _| Testing::new(id))
+        });
+    }
+    next_id += VOLUME;
+    run_phase(&mut phases, t0, "volume", secs(6.0), |f| {
+        sweep_frame(emu, f)
+    });
+    for id in first..next_id {
+        close(remote, id);
+    }
     run_phase(&mut phases, t0, "idle-after", secs(4.0), |_| {
         emu.point(None)
     });

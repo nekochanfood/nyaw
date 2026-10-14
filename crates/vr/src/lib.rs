@@ -206,6 +206,11 @@ pub trait VrBackend {
     fn compositor_time(&self) -> std::time::Duration {
         std::time::Duration::ZERO
     }
+    /// 直前に合成した絵で、オーバーレイが 1 画素でも見えたか（ほかのパネルに隠れた・視野の外なら `false`）。
+    /// ランタイムが教えてくれなければ `None`（呼び出し側が視野で見積もる）。見えないパネルの描き直しを省くのに使う。
+    fn overlay_seen(&self, _id: OverlayId) -> Option<bool> {
+        None
+    }
     /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
     /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読めるので、これは OpenXR 用。
     fn overlay_image(&mut self, _id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
@@ -253,6 +258,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn compositor_time(&self) -> std::time::Duration {
         (**self).compositor_time()
+    }
+    fn overlay_seen(&self, id: OverlayId) -> Option<bool> {
+        (**self).overlay_seen(id)
     }
 }
 

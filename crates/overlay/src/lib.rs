@@ -66,6 +66,8 @@ pub const LASER_MAX: f32 = 1.5;
 const CURSOR_LIFT: f32 = 0.003;
 /// レーザーのクアッドの向き: ローカル +X（テクスチャの右）を前方 -Z へ、面の法線 +Z を上 +Y へ。
 const LASER_ROT: Quat = Quat::from_xyzw(-0.5, 0.5, 0.5, 0.5);
+/// 見えていそうかの見積もり（[`Overlay::in_view`]）に使う視野の半角（ラジアン、70°。実機の視野より広めに取る）。
+const VIEW_HALF_ANGLE: f32 = 1.221_730_5;
 /// 描画順。パネルは 0。
 const LASER_SORT: u32 = 1;
 const DRAG_SORT: u32 = 2;
@@ -217,6 +219,22 @@ impl Overlay {
     /// 手ブレ抑えの強さ（0 = 抑えない 〜 1 未満）。
     pub fn set_pointer_smoothing(&mut self, smoothing: f32) {
         self.smoothing = Some(smoothing.clamp(0.0, 0.99));
+    }
+
+    /// パネルが頭の向きから見えていそうか（ランタイムが教えてくれないときの見積もり。視野を広めに取った円錐とパネルを囲む球で判定）。
+    pub fn in_view(&self, id: PanelId) -> bool {
+        let p = &self.panels[id];
+        if p.closed {
+            return false;
+        }
+        let to = p.pose.position - self.hmd.position;
+        let radius = p.displayed_size().length() / 2.0;
+        let d = to.length();
+        if d <= radius {
+            return true;
+        }
+        let off_axis = self.hmd.forward().angle_between(to);
+        off_axis - (radius / d).asin() < VIEW_HALF_ANGLE
     }
 
     /// 最後の tick の HMD の姿勢（新しいパネルを目の前に出すため）。
@@ -1052,6 +1070,17 @@ mod tests {
             ]
         );
         assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Leave]);
+    }
+
+    #[test]
+    fn in_view_estimates_from_head_direction() {
+        let (mut vr, mut ov) = setup();
+        ov.tick(&mut vr);
+        assert!(ov.in_view(0), "正面 1m");
+        // 真後ろを向くと見えない。
+        vr.frame.hmd = Pose::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
+        ov.tick(&mut vr);
+        assert!(!ov.in_view(0));
     }
 
     #[test]
