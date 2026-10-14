@@ -52,6 +52,23 @@ pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
         let y0 = b.origin.y.0.max(0.0).round() as u32;
         let x1 = ((b.origin.x.0 + b.size.width.0).round().max(0.0) as u32).min(width);
         let y1 = ((b.origin.y.0 + b.size.height.0).round().max(0.0) as u32).min(height);
+        // Plain rectangles (no corners, no border) skip the per-pixel tests, and opaque ones are a row copy.
+        // The window-sized background alone is 8M pixels at 4K, so this is most of the capture time.
+        if !has_border && radii == [0.0; 4] {
+            let Some(f) = fill else { continue };
+            for y in y0..y1 {
+                let row =
+                    &mut rgba[((y * width + x0) * 4) as usize..((y * width + x1) * 4) as usize];
+                if f.a >= 1.0 {
+                    let px = [to_u8(f.r), to_u8(f.g), to_u8(f.b), 255];
+                    row.chunks_exact_mut(4).for_each(|d| d.copy_from_slice(&px));
+                } else {
+                    row.chunks_exact_mut(4)
+                        .for_each(|d| blend(d.try_into().unwrap(), f));
+                }
+            }
+            continue;
+        }
         for y in y0..y1 {
             for x in x0..x1 {
                 let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
@@ -116,8 +133,16 @@ fn inside([x0, y0, x1, y1]: [f32; 4], [tl, tr, br, bl]: [f32; 4], x: f32, y: f32
     true
 }
 
+fn to_u8(c: f32) -> u8 {
+    (c * 255.0).round() as u8
+}
+
 /// Composites `src` over `dst` (source-over with straight alpha).
 fn blend(dst: &mut [u8; 4], src: Rgba) {
+    if src.a >= 1.0 {
+        *dst = [to_u8(src.r), to_u8(src.g), to_u8(src.b), 255];
+        return;
+    }
     let da = dst[3] as f32 / 255.0;
     let out_a = src.a + da * (1.0 - src.a);
     if out_a <= 0.0 {
@@ -149,7 +174,10 @@ mod tests {
         let r = [4.0, 0.0, 0.0, 0.0];
         assert!(!inside(rect, r, 0.5, 0.5));
         assert!(inside(rect, r, 5.0, 5.0));
-        assert!(inside(rect, r, 9.5, 0.5), "a corner with radius 0 is not clipped");
+        assert!(
+            inside(rect, r, 9.5, 0.5),
+            "a corner with radius 0 is not clipped"
+        );
         assert!(!inside(rect, r, 10.5, 5.0));
     }
 

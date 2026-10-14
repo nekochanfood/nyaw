@@ -63,9 +63,13 @@ impl Kind {
 
     /// Whether a process of this runtime is running (no matter who started it).
     pub fn is_running(self) -> bool {
+        !running(self.processes()).is_empty()
+    }
+
+    fn processes(self) -> &'static [&'static str] {
         match self {
-            Kind::Monado => is_running("monado-service"),
-            Kind::SteamVr => STEAMVR_PROCESSES.iter().any(|p| is_running(p)),
+            Kind::Monado => &["monado-service"],
+            Kind::SteamVr => &STEAMVR_PROCESSES,
         }
     }
 
@@ -194,7 +198,8 @@ fn install_monado_windows(dir: &Path) -> Result<(), String> {
     let _ = fs::remove_file(&zip);
     if monado_in(&staging).is_none() {
         return Err(
-            "the artifacts lack install/bin/monado-service.exe or install/openxr_monado.json".into(),
+            "the artifacts lack install/bin/monado-service.exe or install/openxr_monado.json"
+                .into(),
         );
     }
     let _ = fs::remove_dir_all(dir);
@@ -288,7 +293,9 @@ impl std::fmt::Display for LaunchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             LaunchError::NotInstalled(hint) => write!(f, "not installed: {hint}"),
-            LaunchError::AlreadyRunning(k) => write!(f, "{k} is already running. Quit it and then run"),
+            LaunchError::AlreadyRunning(k) => {
+                write!(f, "{k} is already running. Quit it and then run")
+            }
             LaunchError::Io(m) => f.write_str(m),
         }
     }
@@ -408,16 +415,20 @@ impl Drop for Launched {
         // While SteamVR is being stopped, surviving processes restart their peers, so keep stopping until it stays quiet for 2 seconds.
         let start = Instant::now();
         let mut quiet_since = Instant::now();
-        while start.elapsed() < Duration::from_secs(30)
-            && quiet_since.elapsed() < Duration::from_secs(2)
-        {
-            if self.kind.is_running() {
-                if self.kind == Kind::SteamVr {
-                    kill_all(&STEAMVR_PROCESSES);
-                }
+        // Only SteamVR's processes restart each other. Monado is a single process that we killed.
+        let quiet = if self.kind == Kind::SteamVr {
+            Duration::from_secs(2)
+        } else {
+            Duration::ZERO
+        };
+        while start.elapsed() < Duration::from_secs(30) && quiet_since.elapsed() < quiet {
+            // One process snapshot per pass (spawning tasklist per name cost ~100ms each)
+            let alive = running(self.kind.processes());
+            if !alive.is_empty() {
+                kill_all(alive);
                 quiet_since = Instant::now();
             }
-            std::thread::sleep(Duration::from_millis(200));
+            std::thread::sleep(Duration::from_millis(100));
         }
         for (key, old) in self.env.drain(..).rev() {
             // SAFETY: same contract as launch (drop single-threaded)
@@ -436,41 +447,39 @@ impl Drop for Launched {
 
 // --- Processes ------------------------------------------------------------------------------
 
-/// Whether a process with the executable name (without extension) is running.
-pub fn is_running(name: &str) -> bool {
-    if cfg!(windows) {
-        let exe = format!("{name}.exe");
-        Command::new("tasklist")
-            .args(["/FO", "CSV", "/NH", "/FI"])
-            .arg(format!("IMAGENAME eq {exe}"))
-            .output()
-            .is_ok_and(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .to_lowercase()
-                    .contains(&format!("\"{exe}\""))
+/// Processes (from one snapshot) whose executable name (without extension) is in `names`.
+/// Linux process names (comm) are truncated to 15 characters.
+fn running(names: &[&str]) -> Vec<sysinfo::Pid> {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    sys.processes()
+        .iter()
+        .filter(|(_, p)| {
+            let n = p.name().to_string_lossy().to_lowercase();
+            let n = n.strip_suffix(".exe").unwrap_or(&n);
+            names.iter().any(|w| {
+                n == if cfg!(windows) {
+                    w
+                } else {
+                    &w[..w.len().min(15)]
+                }
             })
-    } else {
-        // Linux process names (comm) are truncated to 15 characters
-        let comm = &name[..name.len().min(15)];
-        Command::new("pgrep")
-            .args(["-x", comm])
-            .stdout(Stdio::null())
-            .status()
-            .is_ok_and(|s| s.success())
-    }
+        })
+        .map(|(pid, _)| *pid)
+        .collect()
 }
 
-fn kill_all(names: &[&str]) {
-    if cfg!(windows) {
-        let mut cmd = Command::new("taskkill");
-        cmd.args(["/F", "/T"]);
-        for n in names {
-            cmd.arg("/IM").arg(format!("{n}.exe"));
-        }
-        let _ = cmd.stdout(Stdio::null()).stderr(Stdio::null()).status();
-    } else {
-        for n in names {
-            let _ = Command::new("pkill").args(["-x", n]).status();
+/// Whether a process with the executable name (without extension) is running.
+pub fn is_running(name: &str) -> bool {
+    !running(&[name]).is_empty()
+}
+
+fn kill_all(pids: Vec<sysinfo::Pid>) {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    for pid in pids {
+        if let Some(p) = sys.process(pid) {
+            p.kill();
         }
     }
 }
