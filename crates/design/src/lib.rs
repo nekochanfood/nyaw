@@ -16,6 +16,7 @@ include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
 
 pub mod animation;
 pub mod components;
+pub mod font;
 pub mod icon;
 
 pub use icon::{Icon, Weight, icon};

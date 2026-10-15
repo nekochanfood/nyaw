@@ -303,6 +303,7 @@ pub fn slider(
 /// 画面やパネルの地。文字色も役割から決まる。
 pub fn surface(theme: &Theme) -> Div {
     div()
+        .font(crate::font::font())
         .bg(rgba(theme.neutral_base))
         .text_color(rgba(theme.neutral_text))
         .text_size(px(font_size::MD))
