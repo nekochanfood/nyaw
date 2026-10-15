@@ -12,6 +12,8 @@ pub enum Motion {
     Enter,
     /// 消える。速く離れる（ease-in）。
     Exit,
+    /// 元に戻る。消えるときと同じ長さで、終わり際にゆっくり着地する（ease-out）。
+    Return,
     /// 位置や明るさの移り変わり（ease-in-out）。
     Move,
 }
@@ -20,14 +22,14 @@ impl Motion {
     pub const fn duration_ms(self) -> u64 {
         match self {
             Motion::Enter => duration_ms::NORMAL,
-            Motion::Exit => duration_ms::FAST,
+            Motion::Exit | Motion::Return => duration_ms::QUICK,
             Motion::Move => duration_ms::NORMAL,
         }
     }
 
     fn easing(self) -> Easing {
         match self {
-            Motion::Enter => Easing::EaseOutCubic,
+            Motion::Enter | Motion::Return => Easing::EaseOutCubic,
             Motion::Exit => Easing::EaseInCubic,
             Motion::Move => Easing::EaseInOutCubic,
         }
@@ -35,6 +37,7 @@ impl Motion {
 }
 
 /// `from` から `to` へ [`Motion`] の長さで動く値。毎フレーム [`Animation::advance`] に経過秒を渡す。
+#[derive(Debug)]
 pub struct Animation(Tween<f32>);
 
 impl Animation {

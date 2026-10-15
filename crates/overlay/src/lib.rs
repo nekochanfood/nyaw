@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use animato::{Easing, Tween, Update};
+use design::animation::{Animation, Motion};
 use subsystems::{Frame, Subsystems, rendering::Surface, vr};
 
 use vr::{Device, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
@@ -211,11 +211,11 @@ pub struct Overlay {
     capture: bool,
     /// 手ブレ抑え（[`POINTER_SMOOTHING`]）。`None` で既定値。
     smoothing: Option<f32>,
-    animations: HashMap<PanelId, (Tween<f32>, Instant)>,
+    animations: HashMap<PanelId, (Animation, Instant)>,
     /// この tick で外側を押されて閉じる子。
     dismissed: Vec<PanelId>,
     /// 親の暗転。
-    dims: HashMap<PanelId, (Tween<f32>, Instant)>,
+    dims: HashMap<PanelId, (Animation, Instant)>,
 }
 
 impl Overlay {
@@ -434,10 +434,7 @@ impl Overlay {
             self.animations.insert(
                 id,
                 (
-                    Tween::new(p.opacity, 0.0)
-                        .duration(0.15)
-                        .easing(Easing::EaseInCubic)
-                        .build(),
+                    Animation::new(p.opacity, 0.0, Motion::Exit),
                     Instant::now(),
                 ),
             );
@@ -487,10 +484,7 @@ impl Overlay {
             self.animations.insert(
                 panel,
                 (
-                    Tween::new(0.0, 1.0)
-                        .duration(0.2)
-                        .easing(Easing::EaseOutCubic)
-                        .build(),
+                    Animation::new(0.0, 1.0, Motion::Enter),
                     Instant::now(),
                 ),
             );
@@ -513,20 +507,20 @@ impl Overlay {
 
     fn animate(&mut self, vr: &mut dyn VrBackend, now: Instant) {
         self.animations.retain(|id, (tween, last)| {
-            tween.update((now - *last).as_secs_f32());
+            let v = tween.advance((now - *last).as_secs_f32());
             *last = now;
             let p = &mut self.panels[*id];
-            p.opacity = tween.value();
+            p.opacity = v;
             Self::present(vr, p, false);
-            !tween.is_complete()
+            !tween.is_done()
         });
         self.dims.retain(|id, (tween, last)| {
-            tween.update((now - *last).as_secs_f32());
+            let v = tween.advance((now - *last).as_secs_f32());
             *last = now;
             let p = &mut self.panels[*id];
-            p.dim = tween.value();
+            p.dim = v;
             Self::present(vr, p, false);
-            !tween.is_complete()
+            !tween.is_done()
         });
     }
 
@@ -609,11 +603,7 @@ impl Overlay {
             p.dim_to = to;
             if p.animated && !p.closed {
                 // 戻るときも ease-out: 終わり際に急に明るくなると、子が消える瞬間と重なってちらつく。
-                let secs = if parent { 0.2 } else { 0.15 };
-                let tween = Tween::new(p.dim, to)
-                    .duration(secs)
-                    .easing(Easing::EaseOutCubic)
-                    .build();
+                let tween = Animation::new(p.dim, to, if parent { Motion::Enter } else { Motion::Return });
                 self.dims.insert(id, (tween, now));
             } else {
                 self.dims.remove(&id);
