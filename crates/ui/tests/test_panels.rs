@@ -41,11 +41,10 @@ fn main() -> ExitCode {
         common::quit(&remote, ok);
     });
     let hooks = ui::Hooks {
-        on_web: None,
         remote: Some(rx),
         hide_profiler: false,
     };
-    ui::run_with(kernel, panels, None, webpages::FILES, hooks);
+    ui::run_with(kernel, panels, None, hooks);
     common::exit_code("test_panels", &result)
 }
 

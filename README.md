@@ -4,7 +4,7 @@ VR オーバーレイアプリ。SteamVR（OpenVR）と OpenXR に対応。
 
 ## ビルドと起動
 
-必要なもの: Rust（stable）、cmake と C++ コンパイラ、Node.js 22 以降。Linux では `libwebkit2gtk-4.1-dev` も要る。
+必要なもの: Rust（stable）、cmake と C++ コンパイラ。
 
 ```sh
 cargo run --release              # VR ランタイムを自動検出（無ければウィンドウで動くエミュレーターで起動）

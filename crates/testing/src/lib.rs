@@ -3,7 +3,6 @@
 //!
 //! - VR: クリック数・HMD / 手 / トラッカーへの取り付け・取り外し・ロック・メニューボタンと掴みの表示
 //! - GPUI: 切り替え・押している間の見た目・ドラッグ＆ドロップ・スクロールする一覧・フォーカスと文字入力・ポップアップメニュー
-//! - Web: Testing の Web 版（[`WEB_PAGE`]。React のページ）を隣に開く
 //! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
 //! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
 //! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）・[`TestingFont`]（フォントの見本）・[`TestingScrollbar`]（縦・横・両方のスクロールバー）
@@ -30,9 +29,6 @@ use ui::{PanelControl, PanelSpec};
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
 /// 「手・トラッカーに取り付け」で使う相対姿勢: 0.3m 前（手首の時計のような配置）。
 pub const HAND_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.3), Quat::IDENTITY);
-
-/// Testing の Web 版のページ名（`web/testing/`。`webpages::TESTING`）。
-pub const WEB_PAGE: &str = "testing";
 
 /// 色は `design` のダークテーマの役割から引く（`color_at` は 0xRRGGBB なのでアルファを落とす）。
 const THEME: Theme = Theme::of(Mode::Dark);
@@ -158,15 +154,6 @@ fn spawn_pointer_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut 
     }
 }
 
-/// 隣に Testing の Web 版（Tauri の WebView）を開く。
-fn spawn_web(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    move |_, _, cx| {
-        cx.default_global::<PanelControl>()
-            .spawns
-            .push(PanelSpec::spawn_web(panel, WEB_PAGE))
-    }
-}
-
 fn spawn_transparent(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
         cx.default_global::<PanelControl>()
@@ -270,7 +257,6 @@ impl Render for Testing {
                 button!("stress-test", "Stress test", false)
                     .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
             )
-            .child(button!("open-web", "Web Testing", false).on_click(spawn_web(self.panel)))
             .child(
                 button!("pointer-test", "Pointer test", false)
                     .on_click(spawn_pointer_test(self.panel)),
@@ -1344,23 +1330,6 @@ mod tests {
         cx.simulate_click(c, Modifiers::none());
         let queued = cx.update(|_, cx| cx.global::<PanelControl>().panels[&0].commands.clone());
         assert_eq!(queued, [PanelCommand::Attach(Device::Hmd, HMD_OFFSET)]);
-    }
-
-    /// Web Testing ボタンは、隣に Testing の Web 版のページを開くよう頼む。
-    #[gpui::test]
-    fn open_web_button_spawns_web_page(cx: &mut TestAppContext) {
-        let (_, cx) = cx.add_window_view(|_, _| Testing::default());
-        cx.run_until_parked();
-        let c = cx.debug_bounds("open-web").unwrap().center();
-        cx.simulate_click(c, Modifiers::none());
-        let pages: Vec<_> = cx.update(|_, cx| {
-            cx.global::<PanelControl>()
-                .spawns
-                .iter()
-                .map(|s| s.web_page().map(str::to_owned))
-                .collect()
-        });
-        assert_eq!(pages, [Some(WEB_PAGE.to_owned())]);
     }
 
     /// テーマボタンは全体のテーマを切り替える要求を積む。切り替わると画面の色も変わる。

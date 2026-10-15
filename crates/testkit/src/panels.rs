@@ -18,8 +18,6 @@ pub(crate) struct Panels<V: 'static> {
     pub(crate) views: Vec<Option<Entity<V>>>,
     pub(crate) windows: Vec<AnyWindowHandle>,
     bridges: HashMap<(PanelId, Hand), PointerBridge>,
-    /// Web pages the screen asked to open ([`ui::PanelSpec::web`]). Not opened on the test platform.
-    pub(crate) web_spawns: Vec<String>,
     /// If `Some`, shows each panel's rendering in a window (`NYAW_E2E_WATCH`).
     pub(crate) watch: Option<Watch>,
 }
@@ -30,7 +28,6 @@ impl<V: Render> Panels<V> {
             views: Vec::new(),
             windows: Vec::new(),
             bridges: HashMap::new(),
-            web_spawns: Vec::new(),
             watch,
         }
     }
@@ -121,12 +118,6 @@ impl<V: Render> Panels<V> {
         kernel: &mut Kernel<B>,
         spec: PanelSpec,
     ) {
-        // Web pages (Tauri WebView) cannot be opened on the test platform, so only record what was requested.
-        // Actually opening and operating them is done in crates/ui/tests/web_*.rs.
-        if let Some(page) = spec.web_page() {
-            self.web_spawns.push(page.to_owned());
-            return;
-        }
         let id = self.windows.len();
         let pose = spec.pose_for(kernel, id);
         let parent = spec.parent();

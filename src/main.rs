@@ -1,5 +1,4 @@
 //! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（wrist・ビーム）を UI 層に引き渡す。それ以外は何も置かない。
-//! Web のページ（`webpages`。Testing の Web 版など）も UI 層に渡し、GPUI の画面から開けるようにする。
 
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -28,7 +27,7 @@ fn main() -> ExitCode {
     // novr もコントローラを模すので、どのランタイムでもビームを載せる（novr のレーザーは視線と重なって見えない）。
     panels.extend(beam::specs());
     let profiler = args.profile.map(start_profiler);
-    ui::run(kernel, panels, profiler, webpages::FILES);
+    ui::run(kernel, panels, profiler);
     ExitCode::SUCCESS
 }
 
@@ -149,11 +148,5 @@ mod tests {
                 profile: Some(Some(PathBuf::from("out/p.csv")))
             }
         );
-    }
-
-    /// GPUI の Testing が開く Web のページは、渡しているページの中にある。
-    #[test]
-    fn testing_opens_a_bundled_web_page() {
-        assert_eq!(testing::WEB_PAGE, webpages::TESTING);
     }
 }

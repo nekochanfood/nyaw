@@ -28,7 +28,6 @@ input = { path = "crates/subsystems/input" }
 overlay = { path = "crates/overlay" }
 ui = { path = "crates/ui" }
 design = { path = "crates/design" }
-webpages = { path = "crates/webpages" }
 profiler = { path = "crates/profiler" }
 testing = { path = "crates/testing" }
 wrist = { path = "crates/wrist" }
@@ -45,11 +44,9 @@ license.workspace = true
 logger.workspace = true
 kernel = { workspace = true, features = ["novr", "openvr", "openxr"] }
 ui.workspace = true
-testing.workspace = true
 profiler.workspace = true
 wrist.workspace = true
 beam.workspace = true
-webpages.workspace = true
 
 # testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する
 [profile.dev.package.testkit]
