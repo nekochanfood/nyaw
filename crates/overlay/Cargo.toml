@@ -4,6 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+# 起動済みの SteamVR が要るテスト（animation_runtime）用。
+openvr = ["subsystems/openvr"]
+
+[[test]]
+name = "animation_runtime"
+required-features = ["openvr"]
+
 [dependencies]
 subsystems.workspace = true
 logger.workspace = true

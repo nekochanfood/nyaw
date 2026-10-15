@@ -80,7 +80,7 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
 
 impl Kernel {
     /// ランタイムを選んで起動する。`requested` は `"--novr"` / `"novr"` のような指定（コマンドライン > 設定ファイル。決めるのは呼び出し側）。
-    /// 指定なしで VR ランタイムが無ければ novr で起動する（novr は常に使える）。指定したのに繋がらなければエラー。
+    /// 指定なしで VR ランタイムが無ければ novr で起動する（`novr` フィーチャーがあれば常に使える）。指定したのに繋がらなければエラー。
     pub fn boot(requested: Option<&str>, config: Config) -> Result<Self, VrError> {
         let prefer = match requested {
             Some("--novr" | "novr") => Some(Runtime::NoVr),
@@ -92,7 +92,8 @@ impl Kernel {
             Ok(b) => b,
             Err(e) if prefer.is_none() => {
                 logger::warn!("failed to connect to VR runtime, starting novr", error = e);
-                vr::connect(Some(Runtime::NoVr), config.gpu.emulator).expect("novr always connects")
+                // `novr` フィーチャーなしのビルドにはエミュレーターが無く、ここで失敗しうる。
+                vr::connect(Some(Runtime::NoVr), config.gpu.emulator)?
             }
             Err(e) => {
                 logger::error!("failed to connect to VR runtime", runtime = ?prefer, error = e);
@@ -301,6 +302,7 @@ mod tests {
         (k, p)
     }
 
+    #[cfg(feature = "novr")]
     #[test]
     fn boot_novr_by_name() {
         for name in ["novr", "--novr"] {
@@ -313,6 +315,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "novr")]
     #[test]
     fn boot_without_request_always_succeeds() {
         // 実ランタイムの有無に依らず、指定なしなら novr にフォールバックして起動できる
