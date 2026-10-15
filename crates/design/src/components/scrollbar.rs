@@ -17,9 +17,10 @@
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Axis, Div, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    AnyElement, App, Axis, Bounds, Div, Element, ElementId, GlobalElementId, InspectorElementId,
+    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Styled,
-    TouchPhase, Window, canvas, div, prelude::*, px, rgba,
+    TouchPhase, Window, canvas, div, point, prelude::*, px, rgba,
 };
 
 use super::{Fade, keep_drawing};
@@ -31,8 +32,8 @@ const SQUASH_RANGE: f32 = 48.0;
 const PULL_RESIST: f32 = 0.5;
 /// ホイールが止まって、これだけ経つと離したとみなす。
 const HOLD_WHEEL: Duration = Duration::from_millis(120);
-/// 指のスライド（またはトラックパッド）に終わりの合図が来なかったとき、離したとみなすまで。
-const HOLD_TOUCH: Duration = Duration::from_millis(400);
+/// 終わりの合図が無い指の入力（トラックパッドなど）が止まって、これだけ経つと離したとみなす。
+const HOLD_PIXELS: Duration = Duration::from_millis(250);
 /// 縦と横が両方出るとき、交わる隅に空ける長さ。
 const CORNER: f32 = spec::THICK + 2.0 * spec::MARGIN;
 const AXES: [Axis; 2] = [Axis::Vertical, Axis::Horizontal];
@@ -218,14 +219,87 @@ impl gpui::Global for Pulls {}
 #[derive(Clone, Copy)]
 enum Pull {
     /// 引っ張っている。`idle` の間、新しい入力が無ければ離したとみなす
-    /// （マウスのホイールに離す合図は無く、タッチは終わりの合図が来る）。
+    /// （マウスのホイールに離す合図は無い。タッチは終わりの合図が来るまで保持する）。
     Held {
         value: f32,
         last: Instant,
-        idle: Duration,
+        /// `None` は離す合図が来るまで保持する（タッチ）。
+        idle: Option<Duration>,
     },
     /// 戻っている（落ち着いていれば 0）。
     Release(Smooth),
+}
+
+/// `elastic` の状態。
+#[derive(Clone, Copy)]
+struct ElasticState {
+    pull: [Pull; 2],
+    /// 指がスライド中（始まりの合図から終わりの合図まで）。この間は手を止めても戻さない。
+    touching: bool,
+}
+
+/// 描画だけを `offset` ずらす。レイアウトは動かないので、スクロールの範囲や位置に影響しない
+/// （`top` などで動かすと、末尾側ではスクロール範囲が縮んで引っ張りが打ち消される）。
+struct Shift {
+    offset: Point<Pixels>,
+    child: AnyElement,
+}
+
+impl IntoElement for Shift {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for Shift {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let child = &mut self.child;
+        window.with_element_offset(self.offset, |window| child.prepaint(window, cx));
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.paint(window, cx);
+    }
 }
 
 impl Pull {
@@ -281,15 +355,18 @@ impl ParentElement for Elastic {
 impl RenderOnce for Elastic {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Elastic { id, handle, base } = self;
-        let state = window.use_keyed_state(id, cx, |_, _| [Pull::Release(Smooth::rest(0.0)); 2]);
+        let state = window.use_keyed_state(id, cx, |_, _| ElasticState {
+            pull: [Pull::Release(Smooth::rest(0.0)); 2],
+            touching: false,
+        });
         let now = Instant::now();
         let mut moving = false;
         // 離したとみなせるものは戻し始め、いまの値を出す。
         let v = state.update(cx, |s, _| {
-            s.each_mut().map(|p| {
+            s.pull.each_mut().map(|p| {
                 if let Pull::Held { last, idle, .. } = *p {
                     moving = true; // 離したかを見張るため描き続ける
-                    if now.saturating_duration_since(last) >= idle {
+                    if idle.is_some_and(|idle| now.saturating_duration_since(last) >= idle) {
                         p.release(now);
                     }
                 }
@@ -304,34 +381,44 @@ impl RenderOnce for Elastic {
             keep_drawing(window, cx);
         }
         // 子はホイールを中身より先に受け取る（スクロールする前の状態で見られる）。
-        base.top(px(v[0])).left(px(v[1])).on_scroll_wheel(
+        let child = base.on_scroll_wheel(
             move |e: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
                 if !cx.has_global::<Motion>() {
                     return;
                 }
                 let now = Instant::now();
                 let ended = matches!(e.touch_phase, TouchPhase::Ended | TouchPhase::Cancelled);
-                let idle = match e.delta {
-                    ScrollDelta::Lines(_) => HOLD_WHEEL,
-                    ScrollDelta::Pixels(_) => HOLD_TOUCH,
-                };
                 let ds = axis_deltas(&handle, e, window);
                 let mut used = false;
                 state.update(cx, |s, _| {
+                    // 指のスライドは始まりと終わりの合図がある。ない入力（ホイール・トラックパッド）は止まったら離したとみなす。
+                    match e.touch_phase {
+                        TouchPhase::Started => s.touching = true,
+                        _ if ended => s.touching = false,
+                        _ => {}
+                    }
+                    let idle = if s.touching {
+                        None
+                    } else {
+                        Some(match e.delta {
+                            ScrollDelta::Lines(_) => HOLD_WHEEL,
+                            ScrollDelta::Pixels(_) => HOLD_PIXELS,
+                        })
+                    };
                     for (i, axis) in AXES.into_iter().enumerate() {
                         if ended {
                             // 指を離した（惰性も含む）。戻し始める。引っ張りは惰性で増やさない。
-                            s[i].release(now);
+                            s.pull[i].release(now);
                             continue;
                         }
-                        let (d, cur) = (ds[i], s[i].value(now));
+                        let (d, cur) = (ds[i], s.pull[i].value(now));
                         let reeling = cur != 0.0 && d * cur < 0.0;
                         if d != 0.0 && (reeling || at_edge(&handle, axis, d)) {
                             let mut value = cur + d * PULL_RESIST;
                             if value * cur < 0.0 {
                                 value = 0.0; // 戻しきった
                             }
-                            s[i] = Pull::Held {
+                            s.pull[i] = Pull::Held {
                                 value,
                                 last: now,
                                 idle,
@@ -346,7 +433,11 @@ impl RenderOnce for Elastic {
                     window.refresh();
                 }
             },
-        )
+        );
+        Shift {
+            offset: point(px(v[1]), px(v[0])),
+            child: child.into_any_element(),
+        }
     }
 }
 

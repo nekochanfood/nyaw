@@ -2,14 +2,14 @@
 //!
 //! - つかんだら、ポインタがスライダーやパネルの外へ出ても離すまで追従する（ウィンドウ全体で動きとボタンの離しを見る）。
 //!   離したのに知らせが来なかったときは、ボタンを押していない動きが来た時点で離したとみなす。
-//! - 指のスライド（タッチはスクロールとして届く）はスライダーが受け取り、外側のスクロールやスクロールバーへ流さない。
-//!   ホイールの目盛りは流す（ページのスクロールを妨げない）。
+//! - つかめるのはハンドルだけ（溝を押しても何も起きない）。値はポインタの絶対位置から決まり、相対的な動き量では動かさない。
+//! - ハンドルの上で始まったスクロール（指のスライド）は、外側のスクロールやスクロールバーへ流さず捨てる。
+//!   ハンドル以外の場所のスクロールはそのままページへ流れる。
 //! - 埋まった側（始点からハンドルまで）は `accent_solid`、残りは色を付けない。
 
 use gpui::{
     App, Bounds, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, RenderOnce, ScrollDelta, ScrollWheelEvent, TouchPhase, Window, canvas, div, prelude::*,
-    px, rgba,
+    Point, RenderOnce, ScrollDelta, ScrollWheelEvent, Window, canvas, div, prelude::*, px, rgba,
 };
 use std::rc::Rc;
 
@@ -124,41 +124,24 @@ impl RenderOnce for Slider {
             }
         };
 
+        // ハンドルを掴む。ポインタがハンドルの中心からずれていた分は保つ（掴んだ瞬間に値は動かない）。
         let press = {
-            let (state, set) = (state.clone(), set.clone());
-            move |e: &MouseDownEvent, window: &mut Window, cx: &mut App| {
+            let state = state.clone();
+            move |e: &MouseDownEvent, _: &mut Window, cx: &mut App| {
                 let (b, v) = {
                     let s = state.read(cx);
                     (s.bounds, s.value)
                 };
-                let p = along(&b, vertical, e.position);
                 let center = HANDLE / 2.0 + v * (length - HANDLE);
-                // ハンドルを掴んだらそのまま、溝を押したらハンドルの中心がポインタに来るよう飛ぶ。
-                let grab = if (p - center).abs() <= HANDLE / 2.0 {
-                    p - center
-                } else {
-                    0.0
-                };
+                let grab = along(&b, vertical, e.position) - center;
                 state.update(cx, |s, _| s.grab = Some(grab));
-                set(value_at(length, p - grab), window, cx);
                 cx.stop_propagation();
             }
         };
-
-        // 指のスライド: 指が d 動くとハンドルも d 動く。
-        let slide = {
-            let (state, set) = (state.clone(), set.clone());
-            move |e: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
-                let ScrollDelta::Pixels(d) = e.delta else {
-                    return; // ホイールの目盛りはページへ流す。
-                };
-                cx.stop_propagation(); // 終わり（惰性）も含め、ページを流さない。
-                if !matches!(e.touch_phase, TouchPhase::Started | TouchPhase::Moved) {
-                    return;
-                }
-                let d = f32::from(if vertical { -d.y } else { d.x });
-                let v = state.read(cx).value + d / (length - HANDLE);
-                set(v, window, cx);
+        // ハンドルの上のスクロールはページへ流さない（ホイールの目盛りは流す）。
+        let swallow = move |e: &ScrollWheelEvent, _: &mut Window, cx: &mut App| {
+            if matches!(e.delta, ScrollDelta::Pixels(_)) {
+                cx.stop_propagation();
             }
         };
 
@@ -181,7 +164,9 @@ impl RenderOnce for Slider {
             .rounded(px(radius::FULL))
             .border_2()
             .border_color(rgba(if grabbed { knob_active } else { fill }))
-            .bg(rgba(knob));
+            .bg(rgba(knob))
+            .on_mouse_down(MouseButton::Left, press)
+            .on_scroll_wheel(swallow);
         if vertical {
             track = track.left(px(groove)).w(px(GROOVE)).top_0().bottom_0();
             filled = filled
@@ -241,8 +226,6 @@ impl RenderOnce for Slider {
             .w(px(w))
             .h(px(h))
             .flex_none()
-            .on_mouse_down(MouseButton::Left, press)
-            .on_scroll_wheel(slide)
             .child(track)
             .child(filled)
             .child(handle)
