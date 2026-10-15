@@ -2265,7 +2265,6 @@ dependencies = [
 [[package]]
 name = "gpui_windows"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed?rev=26363aabdb31a0c016728634202e1ad5067033aa#26363aabdb31a0c016728634202e1ad5067033aa"
 dependencies = [
  "accesskit",
  "accesskit_windows",
@@ -4545,6 +4544,7 @@ name = "rendering"
 version = "2026.0.1"
 dependencies = [
  "gpui",
+ "gpui_windows",
  "logger",
  "raw-window-handle",
  "vr",

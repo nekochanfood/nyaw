@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-gpui = ["dep:gpui", "dep:raw-window-handle", "dep:windows"]
+gpui = ["dep:gpui", "dep:raw-window-handle", "dep:windows", "dep:gpui_windows"]
 
 [dependencies]
 vr.workspace = true
@@ -15,6 +15,7 @@ gpui = { workspace = true, features = ["test-support"], optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 
 [target.'cfg(windows)'.dependencies]
+gpui_windows = { workspace = true, features = ["test-support"], optional = true }
 windows = { optional = true, version = "0.62", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",

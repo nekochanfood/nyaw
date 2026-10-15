@@ -6,6 +6,8 @@ members = [
     "crates/subsystems/input",
     "crates/subsystems/rendering",
 ]
+# vendor/gpui_windows は手を入れた gpui_windows の写し（その Cargo.toml）。ワークスペースには入れない
+exclude = ["vendor"]
 
 [workspace.package]
 version = "2026.0.1"
@@ -18,6 +20,7 @@ log = "0.4"
 # crates.io 版 (0.2.2) は Window::dispatch_event の戻り値型が非公開で外部から入力を注入できないため git 版に固定
 gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
+gpui_windows = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 logger = { path = "crates/logger" }
 os = { path = "crates/subsystems/os" }
 rendering = { path = "crates/subsystems/rendering" }
@@ -69,3 +72,7 @@ debug-assertions = false
 # 自前クレートはデバッグしやすいよう最適化しない。
 [profile.dev.package."*"]
 opt-level = 2
+
+# Windows の GPUI の読み戻しを GPU の完了を待たないものにする（vendor/gpui_windows/Cargo.toml）
+[patch."https://github.com/zed-industries/zed"]
+gpui_windows = { path = "vendor/gpui_windows" }

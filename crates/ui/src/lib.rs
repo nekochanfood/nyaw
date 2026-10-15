@@ -1,8 +1,7 @@
 //! Layer 5: UI 層。各オーバーレイパネルを GPUI の非表示ウィンドウで描画する。
 //! レーザーイベントを GPUI のマウス入力に変換し、描画を読み戻してカーネルへ返す。
 
-use kernel::rendering::gpui::read_back;
-pub use kernel::rendering::gpui::{Frame, capture, set_render_lod};
+pub use kernel::rendering::gpui::{Frame, capture, collect, read_back, set_render_lod};
 mod panel_window;
 pub use panel_window::{open_panel_window, panel_window_options};
 
@@ -677,6 +676,8 @@ pub fn run_with(
             let mut seen: Vec<bool> = vec![false; windows.len()];
             // ホバーだけの Move を受けて、まだ描いていないパネル。
             let mut hover_pending = std::collections::HashSet::new();
+            // 描いて読み戻しを積んだまま、まだ受け取っていないパネル。
+            let mut collecting = std::collections::HashSet::new();
             let mut render_sizes = HashMap::new();
             let limit = kernel
                 .max_overlays()
@@ -804,6 +805,7 @@ pub fn run_with(
                     let mut changed = false;
                     let mut asked = false;
                     let mut others = false;
+                    let mut collected = false;
                     let Ok(frame) = cx.update_window(window, |_, window, cx| {
                         let t = Instant::now();
                         for input in inputs {
@@ -871,15 +873,25 @@ pub fn run_with(
                             drawn[panel] = None;
                             redraw = false;
                         }
-                        redraw.then(|| {
+                        if redraw {
                             let t = Instant::now();
                             window.draw(cx).clear(cx);
                             let scene = Instant::now();
+                            // 読み戻しは GPU の完了を待たず 1 回遅れで返る。描いた絵は次のフレームで受け取る。
                             let frame = read_back(window);
+                            collecting.insert(panel);
                             stages.draw += scene - t;
                             stages.render += scene.elapsed();
-                            frame
-                        })
+                            Some(frame)
+                        } else if collecting.remove(&panel) {
+                            let t = Instant::now();
+                            let frame = collect(window);
+                            stages.render += t.elapsed();
+                            collected = true;
+                            frame.map(Ok)
+                        } else {
+                            None
+                        }
                     }) else {
                         // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じる（全部閉じたら下で終了する）。
                         kernel.apply(panel, PanelCommand::Close);
@@ -915,9 +927,10 @@ pub fn run_with(
                             drawn[panel] = Some(Instant::now());
                             let same = last[panel].as_ref() == Some(&f);
                             // 頼まれて描いた分は推測の間隔を縮めない（自分で頼むビューは推測で描かなくてよい）。
+                            // 描いたフレームの絵は前の読み戻し（1 回遅れ）なので、変わったかは受け取ったフレームで決める。
                             idle[panel] = if idle_due && same && !changed {
                                 (idle[panel] * 2).min(IDLE_MAX)
-                            } else if asked && !changed {
+                            } else if !changed && (asked || (collected && same)) {
                                 idle[panel]
                             } else {
                                 IDLE_REDRAW

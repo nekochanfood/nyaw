@@ -17,10 +17,14 @@ pub struct Frame {
 // 上流で一般公開されたらフィーチャーを外す。Linux は gpui_wgpu のヘッドレスレンダラ経由が次の一手。
 pub fn capture(window: &mut Window, cx: &mut App) -> gpui::Result<Frame> {
     window.draw(cx).clear(cx);
-    read_back(window)
+    let frame = read_back(window)?;
+    // 読み戻しは 1 回遅れなので、いま描いた絵を受け取る（積んでいなければ返った絵がいまの絵）。
+    Ok(collect(window).unwrap_or(frame))
 }
 
-/// 描き直し済みのシーンを GPU で描画して読み戻す（[`capture`] の後半。プロファイラが別々に測るため分けてある）。
+/// 描き直し済みのシーンを GPU で描画し、読み戻しを積む（[`capture`] の後半。プロファイラが別々に測るため分けてある）。
+/// Windows では GPU の完了を待たず、前に積んだ読み戻しの絵（無ければ最後に返した絵）を返す。いま描いた絵は
+/// 次のフレームの [`collect`] か、次の `read_back` で受け取る。
 pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
     let img = window.render_to_image()?;
     Ok(Frame {
@@ -28,6 +32,25 @@ pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
         height: img.height(),
         rgba: img.into_raw(),
     })
+}
+
+/// 前の [`read_back`] で積んだ読み戻しを、描き直さずに受け取る。積んでいなければ `None`。
+pub fn collect(window: &mut Window) -> Option<Frame> {
+    #[cfg(windows)]
+    {
+        gpui_windows::collect_readback(|| window.render_to_image())
+            .ok()
+            .map(|img| Frame {
+                width: img.width(),
+                height: img.height(),
+                rgba: img.into_raw(),
+            })
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        None
+    }
 }
 
 /// 指定された表示方針でウィンドウを開く。Windows の非表示ウィンドウのレンダーターゲットは
