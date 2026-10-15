@@ -20,6 +20,8 @@ pub(crate) struct Draw {
     pub size: Vec2,
     /// 不透明度（0〜1）。
     pub alpha: f32,
+    /// 色に掛ける明るさ（0〜1）。
+    pub tint: f32,
 }
 
 /// 1 枚のクアッドの GPU 側の持ち物。
@@ -70,7 +72,7 @@ struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 
 @fragment fn quad_fs(v: V) -> @location(0) vec4<f32> {
     let c = textureSample(tex, samp, v.uv);
-    return vec4(c.rgb, c.a * q.alpha.x);
+    return vec4(c.rgb * q.alpha.y, c.a * q.alpha.x);
 }
 
 struct Checker { size: f32, a: f32, b: f32, pad: f32 };
@@ -369,7 +371,7 @@ impl Gpu {
                     corner(-1.0, -1.0),
                     corner(1.0, -1.0),
                 ],
-                alpha: [d.alpha, 0.0, 0.0, 0.0],
+                alpha: [d.alpha, d.tint, 0.0, 0.0],
             };
             // SAFETY: QuadUniform は repr(C) の f32 だけ。
             let bytes = unsafe {

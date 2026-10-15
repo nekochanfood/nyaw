@@ -64,6 +64,8 @@ struct Quad {
     visible: bool,
     /// 不透明度（0〜1）。テクスチャのアルファに掛ける。
     alpha: f32,
+    /// 色に掛ける明るさ。
+    tint: f32,
     /// 直前の合成で 1 画素でも見えた（[`VrBackend::overlay_seen`]）。
     seen: bool,
     sort: u32,
@@ -370,6 +372,7 @@ impl Emulator {
                 pose: q.pose,
                 size,
                 alpha: q.alpha,
+                tint: q.tint,
             });
         }
         if let Some(gpu) = &mut self.gpu
@@ -530,6 +533,7 @@ impl Emulator {
             cu: c.dot(ux),
             cv: c.dot(uy),
             alpha: (q.alpha * 255.0).round() as u32,
+            tint: (q.tint * 255.0).round() as u32,
             rect: (x0, y0, x1.min(w), y1.min(h)),
         })
     }
@@ -596,6 +600,7 @@ struct Raster<'a> {
     cu: f32,
     cv: f32,
     alpha: u32,
+    tint: u32,
     /// 画面上の範囲 (x0, y0, x1, y1)。
     rect: (u32, u32, u32, u32),
 }
@@ -644,7 +649,8 @@ impl Raster<'_> {
                 if k == 0 {
                     continue;
                 }
-                let [r, g, b] = [self.tex[s], self.tex[s + 1], self.tex[s + 2]].map(u32::from);
+                let [r, g, b] = [self.tex[s], self.tex[s + 1], self.tex[s + 2]]
+                    .map(|c| u32::from(c) * self.tint / 255);
                 let [_, dr, dg, db] = dst.to_be_bytes().map(u32::from);
                 let add = |d: u32, s: u32| (d + s * k / 255).min(255);
                 *dst = ((covered + k).min(255) << 24)
@@ -714,6 +720,7 @@ impl VrBackend for Emulator {
             height_m: None,
             visible: true,
             alpha: 1.0,
+            tint: 1.0,
             seen: false,
             sort: 0,
             texture: None,
@@ -753,6 +760,11 @@ impl VrBackend for Emulator {
 
     fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
         self.quad(id).alpha = alpha.clamp(0.0, 1.0);
+        true
+    }
+
+    fn set_overlay_tint(&mut self, id: OverlayId, brightness: f32) -> bool {
+        self.quad(id).tint = brightness.clamp(0.0, 1.0);
         true
     }
 
@@ -913,6 +925,22 @@ mod tests {
         e.set_overlay_pose(red, Pose::new(Vec3::new(0.0, 0.0, 1.0), Quat::IDENTITY));
         e.screenshot();
         assert_eq!(e.overlay_seen(red), Some(false));
+    }
+
+    #[test]
+    fn overlay_tint_darkens_color_and_keeps_it_opaque() {
+        let (mut e, red) = emulator_with_red_panel();
+        let at = e.project(Vec3::new(-0.25, 0.0, -1.0)).unwrap();
+        let bright = pixel(&e.screenshot(), at);
+        assert!(e.set_overlay_tint(red, 0.5));
+        let dark = pixel(&e.screenshot(), at);
+        assert!(
+            dark[0] < bright[0] && dark[0] > 0 && dark[1] == 0 && dark[2] == 0,
+            "{bright:?} {dark:?}"
+        );
+        e.set_overlay_tint(red, 0.0);
+        let black = pixel(&e.screenshot(), at);
+        assert_eq!(black[..3], [0, 0, 0], "black, not the checkerboard behind");
     }
 
     #[test]

@@ -1515,6 +1515,8 @@ mod tests {
     #[test]
     fn parent_is_dimmed_and_blocked_while_a_child_is_open() {
         let (mut vr, mut ov) = with_child(false);
+        // ランタイムが明るさを掛けられないときは、画素を暗くして送る。
+        vr.backend.unsupported_tint = true;
         ov.set_animated(&mut vr.backend, 0, false);
         ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
         ov.tick(&mut vr);

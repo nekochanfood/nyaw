@@ -477,6 +477,13 @@ impl VrBackend for OpenVrBackend {
         true
     }
 
+    fn set_overlay_tint(&mut self, id: OverlayId, brightness: f32) -> bool {
+        let b = brightness.clamp(0.0, 1.0);
+        let e = unsafe { f(self.overlay().SetOverlayColor)(id.0, b, b, b) };
+        log(check("SetOverlayColor", e));
+        true
+    }
+
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         assert_eq!(
             rgba.len(),

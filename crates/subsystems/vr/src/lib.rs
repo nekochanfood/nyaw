@@ -211,6 +211,10 @@ pub trait VrBackend {
     fn set_overlay_alpha(&mut self, _id: OverlayId, _alpha: f32) -> bool {
         false
     }
+    /// 色の明るさ（1 = そのまま 〜 0 = 黒）をランタイムで掛ける。透明度は変えない。未対応なら `false`（呼び出し側が画素を暗くする）。
+    fn set_overlay_tint(&mut self, _id: OverlayId, _brightness: f32) -> bool {
+        false
+    }
     /// 重なったときの描画順。大きいほど手前に描かれる（既定 0）。奥行きでは決まらない。
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32);
     /// RGBA8、行間に詰め物なし。
@@ -271,6 +275,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn set_overlay_alpha(&mut self, id: OverlayId, alpha: f32) -> bool {
         (**self).set_overlay_alpha(id, alpha)
+    }
+    fn set_overlay_tint(&mut self, id: OverlayId, brightness: f32) -> bool {
+        (**self).set_overlay_tint(id, brightness)
     }
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
         (**self).set_overlay_sort(id, order)

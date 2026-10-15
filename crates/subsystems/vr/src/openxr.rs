@@ -810,6 +810,26 @@ impl VrBackend for OpenXrBackend {
         true
     }
 
+    fn set_overlay_tint(&mut self, id: OverlayId, brightness: f32) -> bool {
+        if self
+            .instance
+            .exts()
+            .khr_composition_layer_color_scale_bias
+            .is_none()
+        {
+            return false;
+        }
+        if let Some(o) = self.overlays.get_mut(&id.0) {
+            let b = brightness.clamp(0.0, 1.0);
+            (
+                o.color_scale.color_scale.r,
+                o.color_scale.color_scale.g,
+                o.color_scale.color_scale.b,
+            ) = (b, b, b);
+        }
+        true
+    }
+
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
         if let Some(o) = self.overlays.get_mut(&id.0) {
             o.sort = order;

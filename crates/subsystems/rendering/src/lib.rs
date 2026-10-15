@@ -130,13 +130,16 @@ impl Surface {
     }
 
     /// 不透明度 API のないランタイムでは、加工前の画像から画素を減衰させる。
-    /// `dim`（0 = そのまま 〜 1 = 真っ黒）は色だけを黒へ寄せ、透明度は変えない。変わったときは `upload` でなくても画素を送り直す。
+    /// `dim`（0 = そのまま 〜 1 = 真っ黒）は色だけを黒へ寄せ、透明度は変えない。ランタイムが明るさを掛けられれば画素には触らない
+    /// （フェード中に毎フレーム画素を作り直して送ると詰まる）。掛けられないときだけ、変わったときに画素を暗くして送り直す。
     pub fn present(&mut self, vr: &mut dyn VrBackend, opacity: f32, dim: f32, upload: bool) {
         if self.released {
             return;
         }
         let native = vr.set_overlay_alpha(self.id, opacity);
-        let upload = upload || dim != self.dim;
+        let tinted = vr.set_overlay_tint(self.id, 1.0 - dim);
+        let upload = upload || !tinted && dim != self.dim;
+        let dim = if tinted { 0.0 } else { dim };
         self.dim = dim;
         if native && !upload {
             return;
@@ -206,10 +209,29 @@ mod tests {
     }
 
     #[test]
+    fn dim_is_native_when_the_runtime_can_tint() {
+        let mut vr = MockBackend::default();
+        let mut surface = Surface::new(&mut vr, "tint", 1.0, Pose::IDENTITY).unwrap();
+        surface.store(1, 1, &[200, 100, 50, 128]);
+        surface.present(&mut vr, 1.0, 0.0, true);
+        let sent = vr.overlays[0].pixel_submissions;
+        for dim in [0.2, 0.45, 0.0] {
+            surface.present(&mut vr, 1.0, dim, false);
+            assert_eq!(vr.overlays[0].tint, 1.0 - dim);
+        }
+        assert_eq!(vr.overlays[0].pixel_submissions, sent, "no pixel work");
+        assert_eq!(
+            vr.overlays[0].texture.as_ref().unwrap().rgba,
+            [200, 100, 50, 128]
+        );
+    }
+
+    #[test]
     fn dim_darkens_color_only_and_resends_when_it_changes() {
         for unsupported_alpha in [false, true] {
             let mut vr = MockBackend {
                 unsupported_alpha,
+                unsupported_tint: true,
                 ..Default::default()
             };
             let mut surface = Surface::new(&mut vr, "dim", 1.0, Pose::IDENTITY).unwrap();
