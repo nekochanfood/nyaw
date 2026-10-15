@@ -77,10 +77,10 @@ pub enum Pointer {
 /// ツールチップをカーソルの上下どちらに出すか。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Anchor {
-    /// 上。手（レーザーの来る側）が頭から見てカーソルの下にあるとき。
-    #[default]
+    /// 上。手（レーザーの来る側）がカーソルの上に見えるとき（下から見上げている）。
     Above,
-    /// 下。手がカーソルの上に見えるとき（下から見上げている）。
+    /// 下。手が頭から見てカーソルの下にあるとき（ふだんの構え）。
+    #[default]
     Below,
 }
 
@@ -376,7 +376,7 @@ impl Overlay {
         self.hands.entry(hand).or_default().free = true;
     }
 
-    /// `hand` のツールチップをカーソルの上下どちらに出すか。頭から見て、レーザーの来る側（手）と反対に出す。
+    /// `hand` のツールチップをカーソルの上下どちらに出すか。頭から見て、レーザーの来る側（手）に出す。
     pub fn tooltip_anchor(&self, hand: Hand) -> Anchor {
         self.hands.get(&hand).map(|h| h.anchor).unwrap_or_default()
     }
@@ -1062,7 +1062,7 @@ fn on_panel(panel: &Pose, aim: &Pose, len: f32, lift: f32) -> Pose {
 }
 
 /// 頭 `eye` から点 `point` を見たとき、手 `hand` がパネルの上 `up` に対して上下どちらに見えるかでツールチップの向きを決める。
-/// 手が下に見えればレーザーは下から来るので上に、上に見えれば下に出す。どちらとも言えなければ `prev` のまま。
+/// 手が下に見えれば（レーザーは下から来る）下に、上に見えれば上に出す（手の側）。どちらとも言えなければ `prev` のまま。
 fn anchor(prev: Anchor, eye: Vec3, hand: Vec3, point: Vec3, up: Vec3) -> Anchor {
     let view = (point - eye).normalize_or_zero();
     let flat = |v: Vec3| v - view * v.dot(view);
@@ -1074,9 +1074,9 @@ fn anchor(prev: Anchor, eye: Vec3, hand: Vec3, point: Vec3, up: Vec3) -> Anchor 
     }
     let s = hand.dot(up) / len;
     if s < -ANCHOR_BAND {
-        Anchor::Above
-    } else if s > ANCHOR_BAND {
         Anchor::Below
+    } else if s > ANCHOR_BAND {
+        Anchor::Above
     } else {
         prev
     }
@@ -2017,15 +2017,15 @@ mod tests {
     }
 
     #[test]
-    fn tooltip_goes_opposite_the_hand_as_seen_from_the_head() {
+    fn tooltip_goes_on_the_hand_side_as_seen_from_the_head() {
         let (point, up) = (Vec3::new(0.0, 1.5, -1.0), Vec3::Y);
         let eye = Vec3::new(0.0, 1.6, 0.0);
-        // 右手を腰の高さで構え、上から見下ろす: レーザーは下から来るので上。
+        // 右手を腰の高さで構え、上から見下ろす: レーザーは下から来るので下。
         let low = Vec3::new(0.3, 1.0, -0.3);
-        assert_eq!(anchor(Anchor::Below, eye, low, point, up), Anchor::Above);
-        // 手を頭より高く掲げて見上げる: 下。
+        assert_eq!(anchor(Anchor::Above, eye, low, point, up), Anchor::Below);
+        // 手を頭より高く掲げて見上げる: 上。
         let high = Vec3::new(0.3, 2.2, -0.3);
-        assert_eq!(anchor(Anchor::Above, eye, high, point, up), Anchor::Below);
+        assert_eq!(anchor(Anchor::Below, eye, high, point, up), Anchor::Above);
         // 手が真横（水平近く）なら前の向きのまま。
         let side = Vec3::new(0.6, 1.5, -0.6);
         assert_eq!(anchor(Anchor::Below, eye, side, point, up), Anchor::Below);
@@ -2060,7 +2060,7 @@ mod tests {
         let (pc, pt) = (ov.panel(cursor).pose.position, ov.panel(tip).pose.position);
         assert!((pc.x - pt.x).abs() < 1e-5 && (pc.y - pt.y).abs() < 1e-5);
         assert!(pt.z > pc.z, "カーソルより手前");
-        assert_eq!(ov.tooltip_anchor(Hand::Right), Anchor::Above);
+        assert_eq!(ov.tooltip_anchor(Hand::Right), Anchor::Below);
     }
 
     /// パネル（z = -1）の前にレーザーとカーソルを置き、右手で中心を指す。
