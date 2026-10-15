@@ -70,6 +70,8 @@ pub struct Testing {
     /// 入力欄に打たれた文字。
     pub text: String,
     pub menu_open: bool,
+    /// この画面のテーマ（`toggle-theme` で切り替わる）。
+    pub mode: Mode,
     /// ポップアップメニューで選んだ項目。
     pub picked: Option<&'static str>,
     /// スクロールする一覧の状態（`offset().y` が負 = 下へスクロール済み）。
@@ -100,7 +102,16 @@ impl Render for ChipPreview {
 
 /// 押せるボタン（`design` の部品）。`active` は切り替えボタンが有効なとき。
 fn button(id: &'static str, label: impl Into<String>, active: bool) -> components::Button {
-    components::button(&THEME, id, label.into(), Variant::Primary).selected(active)
+    themed_button(&THEME, id, label, active)
+}
+
+fn themed_button(
+    theme: &Theme,
+    id: &'static str,
+    label: impl Into<String>,
+    active: bool,
+) -> components::Button {
+    components::button(theme, id, label.into(), Variant::Primary).selected(active)
 }
 
 /// ボタンを押したらパネルへの操作要求を積む。
@@ -195,49 +206,56 @@ impl Render for Testing {
         let profiling = cx.try_global::<PanelControl>().is_some_and(|c| c.profiling);
         let tracker = st.trackers.first().map(|id| Device::Tracker(id.clone()));
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        let theme = Theme::of(self.mode);
+        // この画面のボタンは現在のテーマで描く（上のモジュール関数 `button` を隠す）。
+        macro_rules! button {
+            ($($a:expr),+ $(,)?) => {
+                themed_button(&theme, $($a),+)
+            };
+        }
 
         let vr_row = row()
             .child(
-                button("animate-panel", "Animation", st.animated)
+                button!("animate-panel", "Animation", st.animated)
                     .on_click(command(self.panel, PanelCommand::Animated(!st.animated))),
             )
-            .child(button("spawn-panel", "Spawn panel", false).on_click(spawn(self.panel)))
+            .child(button!("spawn-panel", "Spawn panel", false).on_click(spawn(self.panel)))
             .child(
-                button("spawn-transparent", "Spawn transparent", false)
+                button!("spawn-transparent", "Spawn transparent", false)
                     .on_click(spawn_transparent(self.panel)),
             )
             .child(
-                button("spawn-anim", "Spawn anim", false)
+                button!("spawn-anim", "Spawn anim", false)
                     .on_click(spawn_view(self.panel, TestingAnim::new)),
             )
             .child(
-                button("spawn-lod", "Spawn LOD", false)
+                button!("spawn-lod", "Spawn LOD", false)
                     .on_click(spawn_view(self.panel, |id, _| TestingLod::new(id))),
             )
             .child(
-                button("stress-test", "Stress test", false)
+                button!("stress-test", "Stress test", false)
                     .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
             )
-            .child(button("open-web", "Web Testing", false).on_click(spawn_web(self.panel)))
+            .child(button!("open-web", "Web Testing", false).on_click(spawn_web(self.panel)))
             .child(
-                button("pointer-test", "Pointer test", false)
+                button!("pointer-test", "Pointer test", false)
                     .on_click(spawn_pointer_test(self.panel)),
             )
             .child(
-                button("dialog-test", "Dialog test", false).on_click(spawn_dialog_test(self.panel)),
+                button!("dialog-test", "Dialog test", false).on_click(spawn_dialog_test(self.panel)),
             )
             .child(
-                button("close-panel", "Close panel", false)
+                button!("close-panel", "Close panel", false)
                     .on_click(command(self.panel, PanelCommand::Close)),
             )
             .child(
-                button("toggle-profiler", "Profiler", profiling).on_click(|_, _, cx| {
+                button!("toggle-profiler", "Profiler", profiling).on_click(|_, _, cx| {
                     let c = cx.default_global::<PanelControl>();
                     c.profiling = !c.profiling;
                 }),
             )
             .child(
-                button("click-me", format!("Clicked {}", self.clicks), false).on_click(
+                button!("click-me", format!("Clicked {}", self.clicks), false).on_click(
                     cx.listener(|this, _, _, cx| {
                         this.clicks += 1;
                         cx.notify();
@@ -245,13 +263,13 @@ impl Render for Testing {
                 ),
             )
             .child(
-                button("attach-hmd", "HMD", on(&Device::Hmd)).on_click(command(
+                button!("attach-hmd", "HMD", on(&Device::Hmd)).on_click(command(
                     self.panel,
                     PanelCommand::Attach(Device::Hmd, attach_offset(self.panel, HMD_OFFSET)),
                 )),
             )
             .child(
-                button(
+                button!(
                     "attach-left",
                     "Left hand",
                     on(&Device::Controller(Hand::Left)),
@@ -265,7 +283,7 @@ impl Render for Testing {
                 )),
             )
             .child(
-                button(
+                button!(
                     "attach-right",
                     "Right hand",
                     on(&Device::Controller(Hand::Right)),
@@ -280,7 +298,7 @@ impl Render for Testing {
             )
             .child({
                 // 見えている最初のトラッカーに取り付ける。見えていなければ何もしない。
-                let b = button(
+                let b = button!(
                     "attach-tracker",
                     match &tracker {
                         Some(Device::Tracker(id)) => format!("Tracker {id}"),
@@ -297,26 +315,34 @@ impl Render for Testing {
                 }
             })
             .child(
-                button("detach", "Detach", false)
+                button!("detach", "Detach", false)
                     .on_click(command(self.panel, PanelCommand::Detach)),
             )
             .child(
-                button("lock", "Lock", st.locked)
+                button!("lock", "Lock", st.locked)
                     .on_click(command(self.panel, PanelCommand::Lock(!st.locked))),
             )
-            .child(button("menu-held", "Menu", st.menu))
-            .child(button("grabbed", "Grab", st.grabbed));
+            .child(button!("menu-held", "Menu", st.menu))
+            .child(button!("grabbed", "Grab", st.grabbed));
 
         let gpui_row = row()
             .child(
-                button("toggle", "Toggle", self.toggled).on_click(cx.listener(|this, _, _, cx| {
+                button!("toggle-theme", format!("Theme: {:?}", self.mode), false).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        this.mode = this.mode.toggled();
+                        cx.notify();
+                    }),
+                ),
+            )
+            .child(
+                button!("toggle", "Toggle", self.toggled).on_click(cx.listener(|this, _, _, cx| {
                     this.toggled = !this.toggled;
                     cx.notify();
                 })),
             )
-            .child(button("hold-me", "Hold", false).active(|s| s.bg(rgb(BUTTON_ACTIVE_BG))))
+            .child(button!("hold-me", "Hold", false).active(|s| s.bg(rgb(BUTTON_ACTIVE_BG))))
             .child(
-                button("drag-chip", "Drag me", false)
+                button!("drag-chip", "Drag me", false)
                     .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
             )
             .child(
@@ -335,7 +361,7 @@ impl Render for Testing {
             .child(
                 div()
                     .child(
-                        button(
+                        button!(
                             "open-menu",
                             format!("Menu: {}", self.picked.unwrap_or("-")),
                             self.menu_open,
@@ -357,7 +383,7 @@ impl Render for Testing {
                                         cx.notify();
                                     }))
                                     .children(["menu-a", "menu-b"].map(|id| {
-                                        button(id, id, self.picked == Some(id)).on_click(
+                                        button!(id, id, self.picked == Some(id)).on_click(
                                             cx.listener(move |this, _, _, cx| {
                                                 this.picked = Some(id);
                                                 this.menu_open = false;
@@ -421,8 +447,8 @@ impl Render for Testing {
             .flex_col()
             .gap_2()
             .p_3()
-            .bg(rgb(PANEL_BG))
-            .text_color(rgb(0xffffff))
+            .bg(rgba(theme.panel))
+            .text_color(rgba(theme.neutral_text))
             .child(format!(
                 "runtime: {:?} / attached: {:?} / locked: {}",
                 st.runtime, st.attached, st.locked
@@ -1005,6 +1031,16 @@ mod tests {
                 .collect()
         });
         assert_eq!(pages, [Some(WEB_PAGE.to_owned())]);
+    }
+
+    /// テーマボタンはこの画面のライト / ダークを切り替える。
+    #[gpui::test]
+    fn theme_button_toggles_mode(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| Testing::default());
+        cx.run_until_parked();
+        let c = cx.debug_bounds("toggle-theme").unwrap().center();
+        cx.simulate_click(c, Modifiers::none());
+        assert_eq!(view.read_with(cx, |t, _| t.mode), Mode::Light);
     }
 
     /// Profiler ボタンは計測の有効・無効を切り替える。
