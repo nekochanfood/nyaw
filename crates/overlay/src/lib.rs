@@ -179,6 +179,8 @@ struct HandState {
     grab_held: bool,
     /// 前の tick でトリガーを押していた（押した瞬間の判定用）。
     pressed: bool,
+    /// 外側を押して子を閉じた押下。離すまで、その下にあるパネルへは何も送らない（親のボタンを押したことにしない）。
+    swallow: bool,
     menu: bool,
     /// ドラッグ中のパネルと、レーザーから見たその中心、掴んだ点までのレーザー上の距離。
     dragging: Option<(PanelId, Vec3, f32)>,
@@ -645,6 +647,9 @@ impl Overlay {
         let grab_started = c.grab && !st.grab_held;
         let press = c.select && !st.pressed;
         st.pressed = c.select;
+        if !c.select {
+            st.swallow = false;
+        }
         st.grab_held = c.grab;
         st.menu = c.menu;
 
@@ -725,6 +730,7 @@ impl Overlay {
                 let inside = on.is_some_and(|x| x == i || ancestors(&self.panels, x).contains(&i));
                 if !q.closed && !inside && q.parent.is_some_and(|p| p.dismiss) {
                     self.dismissed.push(i);
+                    st.swallow = true;
                 }
             }
         }
@@ -757,7 +763,8 @@ impl Overlay {
                 .iter()
                 .any(|q| !q.closed && q.parent.is_some_and(|p| p.panel == id))
         };
-        let new_hover = hit.map(|h| h.0).filter(|&id| !blocked(id));
+        let swallow = st.swallow;
+        let new_hover = hit.map(|h| h.0).filter(|&id| !blocked(id) && !swallow);
         if let Some(old) = st
             .hover
             .filter(|&old| Some(old) != new_hover || grab_started)
@@ -778,7 +785,7 @@ impl Overlay {
             st.select = false;
             return;
         }
-        if blocked(id) {
+        if blocked(id) || swallow {
             st.hover = None;
             st.select = false;
             return;
@@ -1592,6 +1599,32 @@ mod tests {
         let (mut vr, mut ov) = with_child(false);
         press(&mut ov, &mut vr, 0.45);
         assert!(!ov.panel(1).closed);
+        // 閉じた押下は、その下の親には届かない（押したままでも、離しても）。
+        let (mut vr, mut ov) = with_child(false);
+        ov.panels[1].parent.as_mut().unwrap().dismiss = true;
+        let mut seen = Vec::new();
+        controller(&mut vr, at(0.45, 0.0, 0.0), &[]);
+        seen.extend(ov.tick(&mut vr));
+        for _ in 0..3 {
+            controller(&mut vr, at(0.45, 0.0, 0.0), &[("trigger/value", 1.0)]);
+            seen.extend(ov.tick(&mut vr));
+        }
+        controller(&mut vr, at(0.45, 0.0, 0.0), &[]);
+        seen.extend(ov.tick(&mut vr));
+        assert!(ov.panel(1).closed);
+        assert!(
+            !seen
+                .iter()
+                .any(|e| matches!(e.event, PointerEvent::Down { .. } | PointerEvent::Up { .. })),
+            "{seen:?}"
+        );
+        // 離したあとは、親は普通に押せる。
+        controller(&mut vr, at(0.45, 0.0, 0.0), &[("trigger/value", 1.0)]);
+        assert!(
+            ov.tick(&mut vr)
+                .iter()
+                .any(|e| matches!(e.event, PointerEvent::Down { .. }))
+        );
     }
 
     #[test]
