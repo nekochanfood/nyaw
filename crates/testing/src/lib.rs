@@ -19,8 +19,8 @@ use design::components::{self, Variant};
 use design::{Mode, Theme};
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, Stateful, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px,
-    relative, rgb, rgba,
+    ScrollWheelEvent, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px, relative,
+    rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, PointerMode};
@@ -99,13 +99,8 @@ impl Render for ChipPreview {
 }
 
 /// 押せるボタン（`design` の部品）。`active` は切り替えボタンが有効なとき。
-fn button(id: &'static str, label: impl Into<String>, active: bool) -> Stateful<Div> {
-    let b = components::button(&THEME, id, label.into(), Variant::Primary);
-    if active {
-        b.bg(rgba(THEME.accent_solid_active))
-    } else {
-        b
-    }
+fn button(id: &'static str, label: impl Into<String>, active: bool) -> components::Button {
+    components::button(&THEME, id, label.into(), Variant::Primary).selected(active)
 }
 
 /// ボタンを押したらパネルへの操作要求を積む。

@@ -685,6 +685,8 @@ pub fn run_with(
         None => p,
     };
     gpui_platform::application().run(move |cx: &mut App| {
+        // 部品のトランジションを有効にする（テストのキットは置かない）。
+        cx.set_global(design::Motion::default());
         if let Some(p) = profiler {
             cx.set_global(with_budget(p));
             cx.default_global::<PanelControl>().profiling = true;
@@ -821,11 +823,18 @@ pub fn run_with(
                         }
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
-                        if visible
+                        // 部品のトランジションが動いている間は、毎フレーム描き直す。
+                        let transitioning = cx.has_global::<design::Motion>()
                             && cx
-                                .try_global::<PanelControl>()
-                                .and_then(|c| c.panels.get(&panel))
-                                .is_some_and(|s| s.live)
+                                .global_mut::<design::Motion>()
+                                .animating
+                                .remove(&window.window_handle().window_id());
+                        if visible
+                            && (transitioning
+                                || cx
+                                    .try_global::<PanelControl>()
+                                    .and_then(|c| c.panels.get(&panel))
+                                    .is_some_and(|s| s.live))
                         {
                             // ビューが描くたびに変わる。GPUI が描き直すよう汚す。
                             window.refresh();

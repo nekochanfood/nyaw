@@ -15,6 +15,15 @@ include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
 pub mod animation;
 pub mod components;
 
+/// 部品のトランジションを有効にする GPUI のグローバル（置いたときだけ動く。テストは置かないので即座に切り替わる）。
+/// 動いている間のウィンドウを `animating` に積む。フレームループ（`ui`）は、これを見て毎フレーム描き直し、読み出したら消す。
+#[derive(Default)]
+pub struct Motion {
+    pub animating: std::collections::HashSet<gpui::WindowId>,
+}
+
+impl gpui::Global for Motion {}
+
 /// ライトかダークか。`Theme::of(mode)` で役割の色を引く。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mode {

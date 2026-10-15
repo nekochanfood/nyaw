@@ -12,6 +12,7 @@ gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support", "x11", "wayland"] }
 kernel = { workspace = true, features = ["rendering-host"] }
 profiler.workspace = true
+design.workspace = true
 logger.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

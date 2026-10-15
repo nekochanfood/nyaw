@@ -7597,6 +7597,7 @@ name = "ui"
 version = "2026.0.1"
 dependencies = [
  "beam",
+ "design",
  "gpui",
  "gpui_platform",
  "kernel",
