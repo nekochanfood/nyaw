@@ -12,7 +12,7 @@ use gpui::{
 use palette::{FromColor, Mix, Oklab, Srgb};
 
 mod scrollbar;
-pub use scrollbar::{Scrollbars, free_scroll, scrollbars};
+pub use scrollbar::{Elastic, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 
 use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 

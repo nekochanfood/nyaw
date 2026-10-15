@@ -17,8 +17,8 @@
 use std::time::Instant;
 
 use gpui::{
-    App, Axis, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Point,
-    Pixels, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Styled,
+    App, Axis, Div, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    Point, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Styled,
     TouchPhase, Window, canvas, div, prelude::*, px, rgba,
 };
 
@@ -27,6 +27,8 @@ use crate::{Motion, Theme, duration_ms, radius, scrollbar as spec};
 
 /// 端でホイールをこれだけ（px）押し込むと、押しつぶしが最大になる。
 const PUSH_PX: f32 = 120.0;
+/// 端でのスクロール量に対する、中身の引っ張られ方（1 より小さいほど重い）。
+const PULL_RESIST: f32 = 0.4;
 /// 縦と横が両方出るとき、交わる隅に空ける長さ。
 const CORNER: f32 = spec::THICK + 2.0 * spec::MARGIN;
 const AXES: [Axis; 2] = [Axis::Vertical, Axis::Horizontal];
@@ -179,6 +181,109 @@ pub fn free_scroll<E: Styled>(mut element: E) -> E {
     element
 }
 
+/// ホイール（や指のスライド）が、先頭か末尾に着いたままさらに外へ押しているときの量（軸ごと。押していなければ 0）。
+/// 正 = 先頭を越えて引く向き、負 = 末尾を越えて引く向き。内側の要素がホイールを受け取る前の状態で見る必要がある。
+fn edge_push(handle: &ScrollHandle, e: &ScrollWheelEvent, window: &Window) -> [f32; 2] {
+    let d = e.delta.pixel_delta(window.line_height());
+    let (dx, dy) = (f32::from(d.x), f32::from(d.y));
+    let only_x = f32::from(handle.max_offset().y) < 1.0;
+    AXES.map(|axis| {
+        let (_, max, off, _) = read(handle, axis);
+        let d = match axis {
+            Axis::Vertical => dy,
+            // 横だけあふれているときは縦のホイールも横を動かす（gpui と同じ）。
+            Axis::Horizontal if dx != 0.0 => dx,
+            Axis::Horizontal if only_x => dy,
+            Axis::Horizontal => 0.0,
+        };
+        let pushing = max >= 1.0 && ((off >= -0.5 && d > 0.0) || (off <= -max + 0.5 && d < 0.0));
+        if pushing { d } else { 0.0 }
+    })
+}
+
+/// 端で引っ張られる中身。スクロール要素の直下の子として、中身を包む。端に着いたままさらにスクロールすると、
+/// 中身が指（ホイール）に引っ張られて（[`scrollbar::PULL`] まで）、離すと戻る。棒の押しつぶしと同じきっかけ。
+/// 中身は少なくともビューポートの大きさになる（どこをポインタが指していても受け取れるように）。
+#[derive(IntoElement)]
+pub struct Elastic {
+    id: &'static str,
+    handle: ScrollHandle,
+    base: Div,
+}
+
+pub fn elastic(id: &'static str, handle: &ScrollHandle) -> Elastic {
+    Elastic {
+        id,
+        handle: handle.clone(),
+        base: div().relative().min_w_full().min_h_full(),
+    }
+}
+
+impl Styled for Elastic {
+    fn style(&mut self) -> &mut gpui::StyleRefinement {
+        self.base.style()
+    }
+}
+
+impl ParentElement for Elastic {
+    fn extend(&mut self, elements: impl IntoIterator<Item = gpui::AnyElement>) {
+        self.base.extend(elements)
+    }
+}
+
+impl RenderOnce for Elastic {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Elastic { id, handle, base } = self;
+        let state = window.use_keyed_state(id, cx, |_, _| [Smooth::rest(0.0); 2]);
+        let now = Instant::now();
+        let [(y, my), (x, mx)] = state.read(cx).map(|s| s.at(now));
+        if my || mx {
+            keep_drawing(window, cx);
+        }
+        // 子はホイールを中身より先に受け取る（スクロールする前の状態で見られる）。
+        base.top(px(y)).left(px(x)).on_scroll_wheel(
+            move |e: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
+                if !cx.has_global::<Motion>() {
+                    return;
+                }
+                let now = Instant::now();
+                for (i, d) in edge_push(&handle, e, window).into_iter().enumerate() {
+                    if d != 0.0 {
+                        state.update(cx, |s, _| {
+                            let (cur, _) = s[i].at(now);
+                            // 引っ張るほど重くなる（上限は PULL）。
+                            let pull = (cur + d * PULL_RESIST).clamp(-spec::PULL, spec::PULL);
+                            s[i] = Smooth {
+                                from: pull,
+                                to: 0.0,
+                                start: Some(now),
+                            };
+                        });
+                        window.refresh();
+                    }
+                }
+            },
+        )
+    }
+}
+
+/// 入れ子のスクロール要素のうち、内側の要素にこれを通す。gpui はポインタの下にあるスクロール要素すべてに同じホイールを配るので、
+/// 通さないと内側と外側が同時に動いて操作しづらい。通すと、ポインタが触れている最も内側のあふれる要素だけが受け取る
+/// （内側が端に着いていても外側へは流さない）。`handle` はその要素の `track_scroll` と同じもの。
+pub fn claim_scroll<E: InteractiveElement>(element: E, handle: &ScrollHandle) -> E {
+    let handle = handle.clone();
+    element.on_scroll_wheel(move |e, window, cx| {
+        let d = e.delta.pixel_delta(window.line_height());
+        let (dx, dy) = (f32::from(d.x) != 0.0, f32::from(d.y) != 0.0);
+        let m = handle.max_offset();
+        let (sx, sy) = (f32::from(m.x) >= 1.0, f32::from(m.y) >= 1.0);
+        // 横だけあふれる要素は縦のホイールも横に受ける（gpui と同じ）。
+        if (dx && sx) || (dy && sy) || (dy && sx && !sy) {
+            cx.stop_propagation();
+        }
+    })
+}
+
 /// 重ねるスクロールバー。[`scrollbars`] で作る。
 #[derive(IntoElement)]
 pub struct Scrollbars {
@@ -231,8 +336,15 @@ impl RenderOnce for Scrollbars {
         let reads = AXES.map(|a| read(&handle, a));
         let st = state.update(cx, |s, _| {
             for (i, b) in s.bars.iter_mut().enumerate() {
-                b.thick
-                    .go(if b.zone || b.slide || b.grab.is_some() { 1.0 } else { 0.0 }, now, animated);
+                b.thick.go(
+                    if b.zone || b.slide || b.grab.is_some() {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                    now,
+                    animated,
+                );
                 let to = if b.grab.is_some() || b.slide {
                     active
                 } else if b.over {
@@ -400,20 +512,9 @@ impl RenderOnce for Scrollbars {
                 if !cx.has_global::<Motion>() {
                     return;
                 }
-                let d = e.delta.pixel_delta(window.line_height());
                 let now = Instant::now();
-                for (i, axis) in AXES.into_iter().enumerate() {
-                    let (_, max, off, _) = read(&handle, axis);
-                    // 横だけあふれているときは縦のホイールも横を動かす（gpui と同じ）。
-                    let d = match axis {
-                        Axis::Vertical => f32::from(d.y),
-                        Axis::Horizontal if f32::from(d.x) != 0.0 => f32::from(d.x),
-                        Axis::Horizontal if f32::from(handle.max_offset().y) < 1.0 => f32::from(d.y),
-                        Axis::Horizontal => 0.0,
-                    };
-                    // ホイールの正 = 先頭へ戻る向き。先頭か末尾に着いたままさらに押している。
-                    let pushing = max >= 1.0 && ((off >= -0.5 && d > 0.0) || (off <= -max + 0.5 && d < 0.0));
-                    if pushing {
+                for (i, d) in edge_push(&handle, e, window).into_iter().enumerate() {
+                    if d != 0.0 {
                         state.update(cx, |s, _| {
                             let (cur, _) = s.bars[i].squash.at(now);
                             s.bars[i].squash = Smooth {
@@ -500,9 +601,7 @@ mod tests {
         let plain = thumb(100.0, 100.0, -100.0, 0.0, 0.0).unwrap();
         assert!(squashed.len < plain.len);
         // 押しつぶされても末尾（押し込んでいる端）は動かない。
-        assert!(
-            (squashed.start + squashed.len - (plain.start + plain.len)).abs() < 1e-3
-        );
+        assert!((squashed.start + squashed.len - (plain.start + plain.len)).abs() < 1e-3);
     }
 
     #[test]

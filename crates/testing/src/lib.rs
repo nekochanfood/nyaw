@@ -19,8 +19,8 @@ use design::components::{self, Variant};
 use design::{Mode, Theme};
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, Stateful, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px, relative,
-    rgb, rgba,
+    ScrollWheelEvent, Stateful, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px,
+    relative, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, PointerMode};
@@ -191,7 +191,11 @@ fn spawn_catalog(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) 
             .spawns
             .push(PanelSpec::spawn(panel, |id, _, cx| {
                 // 動きの見本を毎フレーム描く。
-                cx.default_global::<PanelControl>().panels.entry(id).or_default().live = true;
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(id)
+                    .or_default()
+                    .live = true;
                 design::catalog::Catalog::with_close(command(id, PanelCommand::Close))
             }))
     }
@@ -254,7 +258,8 @@ impl Render for Testing {
                     .on_click(spawn_view(self.panel, |id, _| TestingScrollbar::new(id))),
             )
             .child(
-                button!("spawn-catalog", "Spawn catalog", false).on_click(spawn_catalog(self.panel)),
+                button!("spawn-catalog", "Spawn catalog", false)
+                    .on_click(spawn_catalog(self.panel)),
             )
             .child(
                 button!("stress-test", "Stress test", false)
@@ -873,6 +878,8 @@ pub struct TestingScrollbar {
     pub vertical: ScrollHandle,
     pub horizontal: ScrollHandle,
     pub both: ScrollHandle,
+    /// 縦の領域の中にある、入れ子のスクロール要素。
+    pub inner: ScrollHandle,
 }
 
 impl TestingScrollbar {
@@ -882,6 +889,7 @@ impl TestingScrollbar {
             vertical: ScrollHandle::new(),
             horizontal: ScrollHandle::new(),
             both: ScrollHandle::new(),
+            inner: ScrollHandle::new(),
         }
     }
 }
@@ -922,9 +930,48 @@ impl Render for TestingScrollbar {
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
-                .gap_2()
-                .p_2()
-                .children((0..40).map(|i| cell(i).w_full())),
+                .child(
+                    components::elastic("pull-v", &self.vertical)
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .p_2()
+                        .child(
+                            // 入れ子: ポインタが触れている内側だけが動く。
+                            div()
+                                .debug_selector(|| "scrollbar-nested".into())
+                                .relative()
+                                .flex_none()
+                                .h(px(120.0))
+                                .rounded(px(8.0))
+                                .bg(rgba(theme.neutral_bg_active))
+                                .child(
+                                    components::claim_scroll(
+                                        div()
+                                            .id("scrollbar-inner")
+                                            .debug_selector(|| "scrollbar-inner".into())
+                                            .size_full()
+                                            .overflow_y_scroll()
+                                            .track_scroll(&self.inner),
+                                        &self.inner,
+                                    )
+                                    .child(
+                                        components::elastic("pull-inner", &self.inner)
+                                            .flex_none()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .p_1()
+                                            .children((0..20).map(|i| {
+                                                div().flex_none().child(format!("inner {i}"))
+                                            })),
+                                    ),
+                                )
+                                .child(components::scrollbars(&theme, "bars-inner", &self.inner)),
+                        )
+                        .children((0..40).map(|i| cell(i).w_full())),
+                ),
         );
         let horizontal = area(
             "bars-h",
@@ -934,9 +981,14 @@ impl Render for TestingScrollbar {
                 .debug_selector(|| "scrollbar-h".into())
                 .overflow_x_scroll()
                 .flex()
-                .gap_2()
-                .p_2()
-                .children((0..40).map(cell)),
+                .child(
+                    components::elastic("pull-h", &self.horizontal)
+                        .flex_none()
+                        .flex()
+                        .gap_2()
+                        .p_2()
+                        .children((0..40).map(cell)),
+                ),
         );
         let both = area(
             "bars-both",
@@ -946,17 +998,23 @@ impl Render for TestingScrollbar {
                 .overflow_scroll()
                 .flex()
                 .flex_col()
-                .gap_2()
-                .p_2()
-                .children((0..20).map(|r| {
-                    div()
-                        .flex()
+                .child(
+                    components::elastic("pull-both", &self.both)
                         .flex_none()
-                        // 行の幅を中身に合わせないと、親の幅に揃えられて横にあふれない。
-                        .w(px(30.0 * 56.0))
+                        .flex()
+                        .flex_col()
                         .gap_2()
-                        .children((0..30).map(move |c| cell(r * 30 + c)))
-                })),
+                        .p_2()
+                        // 幅を中身に合わせないと、親の幅に揃えられて横にあふれない。
+                        .w(px(30.0 * 56.0 + 16.0))
+                        .children((0..20).map(|r| {
+                            div()
+                                .flex()
+                                .flex_none()
+                                .gap_2()
+                                .children((0..30).map(move |c| cell(r * 30 + c)))
+                        })),
+                ),
         );
         div()
             .size_full()
@@ -966,10 +1024,29 @@ impl Render for TestingScrollbar {
             .p_3()
             .bg(rgba(theme.panel))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(self.panel, "testing-scrollbar", "close-scrollbar"))
-            .child(div().flex_1().min_h_0().flex().gap_2().child(vertical).child(
-                div().flex_1().min_w_0().flex().flex_col().gap_2().child(horizontal).child(both),
+            .child(title_bar(
+                self.panel,
+                "testing-scrollbar",
+                "close-scrollbar",
             ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .gap_2()
+                    .child(vertical)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(horizontal)
+                            .child(both),
+                    ),
+            )
     }
 }
 
@@ -1298,7 +1375,56 @@ mod tests {
         let y = view.read_with(cx, |t, _| t.list.offset().y);
         assert!(y < px(-30.0), "棒が 30px 動くと中身はそれ以上進む: {y:?}");
         cx.simulate_event(wheel(gpui::TouchPhase::Ended));
-        assert_eq!(view.read_with(cx, |t, _| t.list.offset().y), y, "惰性では動かない");
+        assert_eq!(
+            view.read_with(cx, |t, _| t.list.offset().y),
+            y,
+            "惰性では動かない"
+        );
+    }
+
+    /// 先頭に着いたままさらに引くと中身が引っ張られ、時間が経つと戻る（動きが有効なときだけ）。
+    #[gpui::test]
+    fn content_is_pulled_at_the_edge_and_settles(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
+        cx.update(|_, cx| cx.set_global(design::Motion::default()));
+        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let area = cx.debug_bounds("scrollbar-v").unwrap();
+        let top = |cx: &mut gpui::VisualTestContext| {
+            cx.debug_bounds("scrollbar-nested").unwrap().origin.y
+        };
+        let rest = top(cx);
+        cx.simulate_event(ScrollWheelEvent {
+            position: gpui::point(area.center().x, area.bottom() - px(20.0)),
+            delta: ScrollDelta::Pixels(gpui::point(px(0.0), px(40.0))),
+            modifiers: gpui::Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(top(cx) > rest, "先頭を越えて引くと中身が下へ引かれる");
+    }
+
+    /// 入れ子のスクロール要素の上でホイールを回すと、内側だけが動いて外側は動かない。
+    #[gpui::test]
+    fn nested_scroll_moves_only_the_innermost(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
+        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let at = cx.debug_bounds("scrollbar-inner").unwrap().center();
+        cx.simulate_event(ScrollWheelEvent {
+            position: at,
+            delta: ScrollDelta::Pixels(gpui::point(px(0.0), px(-30.0))),
+            modifiers: gpui::Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        let (inner, outer) = view.read_with(cx, |t, _| (t.inner.offset().y, t.vertical.offset().y));
+        assert!(inner < px(0.0), "内側が進む: {inner:?}");
+        assert_eq!(outer, px(0.0), "外側は動かない");
     }
 
     /// スクロールバーの試験画面は 3 つの領域それぞれに棒が出る（縦横の領域は両方出る）。
@@ -1317,7 +1443,10 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(name).is_some(), "{name} が出る");
         }
-        assert!(cx.debug_bounds("bars-v-h-thumb").is_none(), "縦だけの領域に横の棒は出ない");
+        assert!(
+            cx.debug_bounds("bars-v-h-thumb").is_none(),
+            "縦だけの領域に横の棒は出ない"
+        );
     }
 
     /// Profiler ボタンは計測の有効・無効を切り替える。
