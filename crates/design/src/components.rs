@@ -5,9 +5,9 @@
 use std::time::Instant;
 
 use gpui::{
-    App, Div, FontWeight, InteractiveElement, Interactivity, IntoElement, MouseButton, RenderOnce,
-    SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Window, div,
-    prelude::*, px, rgba,
+    App, Bounds, ContentMask, Div, FontWeight, InteractiveElement, Interactivity, IntoElement,
+    MouseButton, Pixels, Point, RenderOnce, SharedString, Stateful, StatefulInteractiveElement,
+    StyleRefinement, Styled, Window, canvas, div, fill, point, prelude::*, px, rgba, size,
 };
 use palette::{FromColor, Mix, Oklab, Srgb};
 
@@ -64,7 +64,25 @@ fn mix(a: u32, b: u32, t: f32) -> u32 {
 struct State {
     pointer: Pointer,
     fade: Fade,
+    /// 押した位置（ウィンドウ座標）と時刻。波紋の起点。
+    ripple: Option<(Point<Pixels>, Instant)>,
 }
+
+/// 波紋の `elapsed_ms` 時点の（半径, 不透明度 0..=255）。`reach` は起点から最も遠い角までの距離。終わっていれば `None`。
+/// 半径は ease-out で広がり、不透明度は線形に薄れる。
+fn ripple_frame(elapsed_ms: f32, reach: f32) -> Option<(f32, u8)> {
+    let t = elapsed_ms / duration_ms::SLOW as f32;
+    if !(0.0..1.0).contains(&t) {
+        return None;
+    }
+    Some((
+        reach * (1.0 - (1.0 - t).powi(3)),
+        (RIPPLE_ALPHA * (1.0 - t)) as u8,
+    ))
+}
+
+/// 波紋の最初の不透明度（0..=255）。
+const RIPPLE_ALPHA: f32 = 64.0;
 
 #[derive(Clone, Copy, Default)]
 struct Pointer {
@@ -80,9 +98,18 @@ pub struct Button {
     rest: u32,
     hover: u32,
     active: u32,
+    /// 波紋の色（文字色）。
+    ink: u32,
+    ripple: bool,
 }
 
 impl Button {
+    /// 波紋（押した位置から広がる効果）を出さない。既定は出す。
+    pub fn no_ripple(mut self) -> Self {
+        self.ripple = false;
+        self
+    }
+
     /// 切り替えボタンが有効なときの見た目（平常時の色が押下の色になる）。
     pub fn selected(mut self, selected: bool) -> Self {
         if selected {
@@ -129,6 +156,8 @@ pub fn button(
         rest: bg,
         hover,
         active,
+        ink: fg,
+        ripple: true,
     }
 }
 
@@ -156,10 +185,12 @@ impl RenderOnce for Button {
                 to: rest,
                 start: None,
             },
+            ripple: None,
         });
         let State {
             pointer: p,
             fade: f,
+            ripple,
         } = *state.read(cx);
         let target = if p.pressed {
             self.active
@@ -200,6 +231,7 @@ impl RenderOnce for Button {
         };
 
         // ポインタの状態を書き換えて描き直す。
+        let press = state.clone();
         let set = move |hovered: Option<bool>, pressed: Option<bool>| {
             let state = state.clone();
             move |window: &mut Window, cx: &mut App| {
@@ -218,13 +250,57 @@ impl RenderOnce for Button {
                 window.refresh();
             }
         };
+        let animated = cx.has_global::<Motion>();
+        let (ink, enabled) = (self.ink, self.ripple && animated);
         let (over, leave) = (set(Some(true), None), set(Some(false), None));
         let (down, up) = (set(None, Some(true)), set(None, Some(false)));
         let up_out = set(None, Some(false));
+        let wave = ripple.filter(|_| enabled).and_then(|(origin, start)| {
+            let ms = now.saturating_duration_since(start).as_secs_f32() * 1000.0;
+            ripple_frame(ms, 0.0)?;
+            keep_drawing(window, cx);
+            // ponytail: 長方形で切るので、丸い角の外へ薄くはみ出る。角丸で切りたければ自前で形を抜く。
+            Some(
+                canvas(
+                    |_, _, _| (),
+                    move |b, _, w, _| {
+                        let (dx, dy) = (
+                        (origin.x - b.left()).abs().max((origin.x - b.right()).abs()),
+                        (origin.y - b.top()).abs().max((origin.y - b.bottom()).abs()),
+                    );
+                    let reach = f32::from(dx).hypot(f32::from(dy));
+                        let ms = Instant::now()
+                            .saturating_duration_since(start)
+                            .as_secs_f32()
+                            * 1000.0;
+                        let Some((r, a)) = ripple_frame(ms, reach) else {
+                            return;
+                        };
+                        let circle = Bounds::new(
+                            point(origin.x - px(r), origin.y - px(r)),
+                            size(px(r * 2.0), px(r * 2.0)),
+                        );
+                        w.with_content_mask(Some(ContentMask { bounds: b }), |w| {
+                            w.paint_quad(
+                                fill(circle, rgba(ink & !0xff | u32::from(a))).corner_radii(px(r)),
+                            )
+                        });
+                    },
+                )
+                .absolute()
+                .size_full(),
+            )
+        });
         self.base
             .bg(rgba(color))
+            .children(wave)
             .on_hover(move |h, w, cx| if *h { over(w, cx) } else { leave(w, cx) })
-            .on_mouse_down(MouseButton::Left, move |_, w, cx| down(w, cx))
+            .on_mouse_down(MouseButton::Left, move |e, w, cx| {
+                if enabled {
+                    press.update(cx, |s, _| s.ripple = Some((e.position, Instant::now())));
+                }
+                down(w, cx)
+            })
             .on_mouse_up(MouseButton::Left, move |_, w, cx| up(w, cx))
             .on_mouse_up_out(MouseButton::Left, move |_, w, cx| up_out(w, cx))
     }
@@ -294,6 +370,16 @@ mod tests {
             f.at(t0 + Duration::from_millis(duration_ms::NORMAL)),
             (0xffffffff, false)
         );
+    }
+
+    #[test]
+    fn ripple_grows_fades_and_ends() {
+        let slow = duration_ms::SLOW as f32;
+        let (r0, a0) = ripple_frame(0.0, 100.0).unwrap();
+        let (r1, a1) = ripple_frame(slow / 2.0, 100.0).unwrap();
+        assert!(r0 == 0.0 && r1 > 50.0 && r1 < 100.0, "{r1}");
+        assert!(a0 as f32 == RIPPLE_ALPHA && a1 < a0 && a1 > 0);
+        assert_eq!(ripple_frame(slow, 100.0), None);
     }
 
     #[test]
