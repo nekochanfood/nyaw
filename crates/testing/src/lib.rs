@@ -16,9 +16,9 @@ use std::rc::Rc;
 use std::time::{Instant, SystemTime};
 
 use design::components::{self, Variant};
-use design::{Mode, Theme};
+use design::{Mode, Theme, font_size, radius, spacing};
 use gpui::{
-    App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
+    App, ClickEvent, Context, Div, FocusHandle, FontWeight, KeyDownEvent, ScrollDelta, ScrollHandle,
     ScrollWheelEvent, Stateful, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px,
     relative, rgb, rgba,
 };
@@ -52,8 +52,8 @@ pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_bg_active);
 /// ダイアログの背景色（親より明るくして重なりが見えるように）。
 pub const DIALOG_BG: u32 = rgb24(THEME.card);
 /// Testing パネルの大きさ（m）と解像度（px）。ボタンが高い（最小ヒット領域）ので、既定の 0.8m × 0.6m では入りきらない。
-pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 0.9);
-pub const TESTING_PX: (u32, u32) = (1200, 900);
+pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 1.0);
+pub const TESTING_PX: (u32, u32) = (1200, 1000);
 /// スクロールする一覧の行数と1行の高さ。
 pub const LIST_ROWS: usize = 30;
 const ROW_PX: f32 = 24.0;
@@ -208,6 +208,61 @@ fn row() -> Div {
     div().flex().flex_wrap().gap_2().items_center()
 }
 
+/// 見出し付きのカード。中身は縦に並べる。
+fn section(theme: &Theme, title: &'static str) -> Div {
+    components::card(theme)
+        .p(px(spacing::LG))
+        .flex()
+        .flex_col()
+        .gap(px(spacing::LG))
+        .child(
+            div()
+                .text_size(px(font_size::MD))
+                .font_weight(FontWeight::BOLD)
+                .child(title),
+        )
+}
+
+/// 小見出しと、その下の中身。
+fn labeled(theme: &Theme, label: &'static str, body: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(spacing::XS))
+        .child(
+            div()
+                .text_size(px(font_size::SM))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(label),
+        )
+        .child(body)
+}
+
+/// 押せない状態の表示。ボタンと見分けられるよう低く、先頭に点を置く（点は入っている間だけ強調色）。
+/// 面の色は入っている間 `control-active`、それ以外 `control`（テストは中心の色を見る）。
+fn indicator(theme: &Theme, id: &'static str, label: &'static str, on: bool) -> Stateful<Div> {
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .h(px(36.0))
+        .px(px(spacing::MD))
+        .flex()
+        .items_center()
+        .gap(px(spacing::SM))
+        .rounded(px(radius::FULL))
+        .bg(rgba(if on {
+            theme.control_active
+        } else {
+            theme.control
+        }))
+        .child(div().size(px(10.0)).rounded(px(radius::FULL)).bg(rgba(if on {
+            theme.accent_solid
+        } else {
+            theme.neutral_text_low
+        })))
+        .child(label)
+}
+
 impl Render for Testing {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let st = cx
@@ -227,70 +282,28 @@ impl Render for Testing {
             };
         }
 
-        let vr_row = row()
+        // このパネル自身の操作（表示・テーマ・ロック・計測）。
+        let panel_row = row()
             .child(
                 button!("animate-panel", "Animation", st.animated)
                     .on_click(command(self.panel, PanelCommand::Animated(!st.animated))),
             )
-            .child(button!("spawn-panel", "Spawn panel", false).on_click(spawn(self.panel)))
             .child(
-                button!("spawn-transparent", "Spawn transparent", false)
-                    .on_click(spawn_transparent(self.panel)),
+                button!("toggle-theme", format!("Theme: {:?}", st.theme), false)
+                    .on_click(command(self.panel, PanelCommand::Theme(st.theme.toggled()))),
             )
             .child(
-                button!("spawn-anim", "Spawn anim", false)
-                    .on_click(spawn_view(self.panel, TestingAnim::new)),
-            )
-            .child(
-                button!("spawn-lod", "Spawn LOD", false)
-                    .on_click(spawn_view(self.panel, |id, _| TestingLod::new(id))),
-            )
-            .child(
-                button!("spawn-font", "Spawn font", false)
-                    .on_click(spawn_view(self.panel, |id, _| TestingFont::new(id))),
-            )
-            .child(
-                button!("spawn-scrollbar", "Spawn scrollbar", false)
-                    .on_click(spawn_view(self.panel, |id, _| TestingScrollbar::new(id))),
-            )
-            .child(
-                button!("spawn-catalog", "Spawn catalog", false)
-                    .on_click(spawn_catalog(self.panel)),
-            )
-            .child(
-                button!("stress-test", "Stress test", false)
-                    .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
-            )
-            .child(
-                button!("pointer-test", "Pointer test", false)
-                    .on_click(spawn_pointer_test(self.panel)),
-            )
-            .child(
-                button!("tooltip-test", "Tooltip test", false)
-                    .on_click(spawn_view(self.panel, |id, _| TooltipTest::new(id))),
-            )
-            .child(
-                button!("dialog-test", "Dialog test", false)
-                    .on_click(spawn_dialog_test(self.panel)),
-            )
-            .child(
-                button!("close-panel", "Close panel", false)
-                    .on_click(command(self.panel, PanelCommand::Close)),
+                button!("lock", "Lock", st.locked)
+                    .on_click(command(self.panel, PanelCommand::Lock(!st.locked))),
             )
             .child(
                 button!("toggle-profiler", "Profiler", profiling).on_click(|_, _, cx| {
                     let c = cx.default_global::<PanelControl>();
                     c.profiling = !c.profiling;
                 }),
-            )
-            .child(
-                button!("click-me", format!("Clicked {}", self.clicks), false).on_click(
-                    cx.listener(|this, _, _, cx| {
-                        this.clicks += 1;
-                        cx.notify();
-                    }),
-                ),
-            )
+            );
+        // 取り付け先（今どこに付いているかで光る）。
+        let attach_row = row()
             .child(
                 button!("attach-hmd", "HMD", on(&Device::Hmd)).on_click(command(
                     self.panel,
@@ -346,18 +359,58 @@ impl Render for Testing {
             .child(
                 button!("detach", "Detach", false)
                     .on_click(command(self.panel, PanelCommand::Detach)),
-            )
-            .child(
-                button!("lock", "Lock", st.locked)
-                    .on_click(command(self.panel, PanelCommand::Lock(!st.locked))),
-            )
-            .child(button!("menu-held", "Menu", st.menu))
-            .child(button!("grabbed", "Grab", st.grabbed));
+            );
+        // コントローラの入力の表示（押せない）。見出しの行に置く。
+        let input_row = row()
+            .child(indicator(&theme, "menu-held", "Menu button", st.menu))
+            .child(indicator(&theme, "grabbed", "Grabbing", st.grabbed));
 
-        let gpui_row = row()
+        // 隣に開く画面。
+        let open_row = row()
+            .child(button!("spawn-panel", "Testing", false).on_click(spawn(self.panel)))
             .child(
-                button!("toggle-theme", format!("Theme: {:?}", st.theme), false)
-                    .on_click(command(self.panel, PanelCommand::Theme(st.theme.toggled()))),
+                button!("spawn-transparent", "Transparent", false)
+                    .on_click(spawn_transparent(self.panel)),
+            )
+            .child(
+                button!("spawn-anim", "Moving", false)
+                    .on_click(spawn_view(self.panel, TestingAnim::new)),
+            )
+            .child(
+                button!("spawn-lod", "LOD", false)
+                    .on_click(spawn_view(self.panel, |id, _| TestingLod::new(id))),
+            )
+            .child(
+                button!("spawn-font", "Font", false)
+                    .on_click(spawn_view(self.panel, |id, _| TestingFont::new(id))),
+            )
+            .child(
+                button!("spawn-scrollbar", "Scrollbar", false)
+                    .on_click(spawn_view(self.panel, |id, _| TestingScrollbar::new(id))),
+            )
+            .child(
+                button!("pointer-test", "Pointer", false).on_click(spawn_pointer_test(self.panel)),
+            )
+            .child(
+                button!("tooltip-test", "Tooltip", false)
+                    .on_click(spawn_view(self.panel, |id, _| TooltipTest::new(id))),
+            )
+            .child(button!("dialog-test", "Dialog", false).on_click(spawn_dialog_test(self.panel)))
+            .child(
+                button!("stress-test", "Stress", false)
+                    .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
+            )
+            .child(button!("spawn-catalog", "Catalog", false).on_click(spawn_catalog(self.panel)));
+
+        // ボタン・切り替え・長押し・ポップアップ。
+        let press_row = row()
+            .child(
+                button!("click-me", format!("Clicked {}", self.clicks), false).on_click(
+                    cx.listener(|this, _, _, cx| {
+                        this.clicks += 1;
+                        cx.notify();
+                    }),
+                ),
             )
             .child(
                 button!("toggle", "Toggle", self.toggled).on_click(cx.listener(
@@ -368,23 +421,6 @@ impl Render for Testing {
                 )),
             )
             .child(button!("hold-me", "Hold", false).active(|s| s.bg(rgba(theme.control_active))))
-            .child(
-                button!("drag-chip", "Drag me", false)
-                    .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
-            )
-            .child(
-                div()
-                    .id("drop-zone")
-                    .debug_selector(|| "drop-zone".into())
-                    .p_2()
-                    .bg(rgba(theme.control))
-                    .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
-                    .on_drop(cx.listener(|this, _: &Chip, _, cx| {
-                        this.dropped += 1;
-                        cx.notify();
-                    }))
-                    .child(format!("Dropped {}", self.dropped)),
-            )
             .child(
                 div()
                     .child(
@@ -402,9 +438,14 @@ impl Render for Testing {
                         d.child(deferred(
                             anchored().child(
                                 div()
+                                    .mt(px(spacing::XS))
+                                    .p(px(spacing::XS))
                                     .flex()
                                     .flex_col()
-                                    .bg(rgba(theme.control))
+                                    .gap(px(spacing::XS))
+                                    .rounded(px(radius::LG))
+                                    .bg(rgba(theme.card))
+                                    .shadow_md()
                                     .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                                         this.menu_open = false;
                                         cx.notify();
@@ -422,12 +463,43 @@ impl Render for Testing {
                         ))
                     }),
             );
+        // ドラッグ＆ドロップ: 左を右へ運ぶ。
+        let drag_row = row()
+            .child(
+                button!("drag-chip", "Drag me", false)
+                    .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
+            )
+            .child(
+                div()
+                    .id("drop-zone")
+                    .debug_selector(|| "drop-zone".into())
+                    .flex_1()
+                    .h(px(54.0))
+                    .px(px(spacing::LG))
+                    .flex()
+                    .items_center()
+                    .rounded(px(radius::LG))
+                    .border_2()
+                    .border_dashed()
+                    .border_color(rgba(theme.neutral_text_low))
+                    .bg(rgba(theme.control))
+                    .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
+                    .on_drop(cx.listener(|this, _: &Chip, _, cx| {
+                        this.dropped += 1;
+                        cx.notify();
+                    }))
+                    .child(format!("Drop here (dropped {})", self.dropped)),
+            );
 
         let field = div()
             .id("text-field")
             .debug_selector(|| "text-field".into())
             .track_focus(&focus)
-            .p_2()
+            .h(px(54.0))
+            .px(px(spacing::LG))
+            .flex()
+            .items_center()
+            .rounded(px(radius::LG))
             .bg(rgba(theme.control))
             .focus(|s| s.bg(rgba(theme.accent_bg_active)))
             .on_click(cx.listener(move |_, _, window, cx| window.focus(&focus, cx)))
@@ -444,7 +516,13 @@ impl Render for Testing {
                 }
                 cx.notify();
             }))
-            .child(format!("Text: {}", self.text));
+            .child(if self.text.is_empty() {
+                div()
+                    .text_color(rgba(theme.neutral_text_low))
+                    .child("Click, then type")
+            } else {
+                div().child(self.text.clone())
+            });
 
         let list = div()
             .id("scroll-list")
@@ -452,6 +530,7 @@ impl Render for Testing {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.list)
+            .rounded(px(radius::LG))
             .bg(rgba(theme.control))
             .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
                 this.scrolled += match e.delta {
@@ -464,28 +543,98 @@ impl Render for Testing {
                 components::elastic("pull-list", &self.list).children((0..LIST_ROWS).map(|i| {
                     div()
                         .h(gpui::px(ROW_PX))
-                        .px_2()
+                        .px(px(spacing::LG))
+                        .flex()
+                        .items_center()
                         .child(format!("Row {i} (scrolled {:.1})", self.scrolled))
                 })),
             );
 
-        components::card_panel(&theme)
+        // 見出し: 何の画面か、このパネルの今の状態、閉じる。
+        let header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .px(px(spacing::SM))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(spacing::MD))
+                    .child(
+                        div()
+                            .text_size(px(font_size::LG))
+                            .font_weight(FontWeight::BOLD)
+                            .child("Testing"),
+                    )
+                    .child(
+                        div()
+                            .debug_selector(|| "panel-status".into())
+                            .text_color(rgba(theme.neutral_text_low))
+                            .child(format!(
+                                "{:?} / attached: {} / {}",
+                                st.runtime,
+                                st.attached.as_ref().map_or("none".into(), |d| format!("{d:?}")),
+                                if st.locked { "locked" } else { "unlocked" },
+                            )),
+                    )
+                    .child(input_row),
+            )
+            .child(
+                // カードではなく背景に置くので、背景用の色。
+                components::button(&theme, "close-panel", "Close", Variant::OnBackground)
+                    .on_click(command(self.panel, PanelCommand::Close)),
+            );
+
+        // カードが複数なので地を敷く。左 = このパネルと開く画面、右 = 部品の操作。
+        components::panel(&theme)
             .flex()
             .flex_col()
-            .gap_2()
-            .p_3()
-            .bg(rgba(theme.card))
-            .text_color(rgba(theme.neutral_text))
-            .child(format!(
-                "runtime: {:?} / attached: {:?} / locked: {}",
-                st.runtime, st.attached, st.locked
-            ))
-            .child(vr_row)
-            .child(gpui_row)
-            .child(field)
-            .child(div().relative().flex_1().min_h_0().child(list).child(
-                components::scrollbars(&theme, "scroll-bars", &self.list).pulled_by("pull-list"),
-            ))
+            .gap(px(spacing::MD))
+            .child(header)
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .gap(px(spacing::MD))
+                    .child(
+                        div()
+                            .id("testing-left")
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .gap(px(spacing::MD))
+                            .child(
+                                section(&theme, "This panel")
+                                    .child(labeled(&theme, "View", panel_row))
+                                    .child(labeled(&theme, "Attach to", attach_row)),
+                            )
+                            .child(section(&theme, "Open next to this").child(open_row)),
+                    )
+                    .child(
+                        section(&theme, "Interact")
+                            .flex_1()
+                            .min_w_0()
+                            .child(labeled(&theme, "Press", press_row))
+                            .child(labeled(&theme, "Drag and drop", drag_row))
+                            .child(labeled(&theme, "Type", field))
+                            .child(
+                                labeled(
+                                    &theme,
+                                    "Scroll",
+                                    div().relative().flex_1().min_h_0().child(list).child(
+                                        components::scrollbars(&theme, "scroll-bars", &self.list)
+                                            .pulled_by("pull-list"),
+                                    ),
+                                )
+                                .flex_1()
+                                .min_h_0(),
+                            ),
+                    ),
+            )
     }
 }
 
