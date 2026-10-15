@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Instant, SystemTime};
 
+use design::{Mode, Theme};
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
     ScrollWheelEvent, Stateful, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px,
@@ -32,19 +33,24 @@ pub const HAND_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.3), Quat::IDENTIT
 /// Testing の Web 版のページ名（`web/testing/`。`webpages::TESTING`）。
 pub const WEB_PAGE: &str = "testing";
 
-pub const PANEL_BG: u32 = 0x202020;
-pub const BUTTON_BG: u32 = 0x3060c0;
+/// 色は `design` のダークテーマの役割から引く（`color_at` は 0xRRGGBB なのでアルファを落とす）。
+const THEME: Theme = Theme::of(Mode::Dark);
+const fn rgb24(rgba: u32) -> u32 {
+    rgba >> 8
+}
+pub const PANEL_BG: u32 = rgb24(THEME.panel);
+pub const BUTTON_BG: u32 = rgb24(THEME.accent_solid);
 /// レーザーが当たっている間のボタン色。VR 上でどこを指しているかの視覚的フィードバック。
-pub const BUTTON_HOVER_BG: u32 = 0x4f86f7;
+pub const BUTTON_HOVER_BG: u32 = rgb24(THEME.accent_solid_hover);
 /// 有効になっている切り替えボタン・表示や、押している間のボタンの色。
-pub const BUTTON_ACTIVE_BG: u32 = 0xc07030;
+pub const BUTTON_ACTIVE_BG: u32 = rgb24(THEME.accent_solid_active);
 /// ドラッグ中の値を落とせる場所の上にいるときの色。
 pub const DROP_TARGET_BG: u32 = 0x30a050;
 /// フォーカスのある入力欄の色。
-pub const FIELD_FOCUS_BG: u32 = 0x505080;
-const AREA_BG: u32 = 0x303030;
+pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_bg_active);
+const AREA_BG: u32 = rgb24(THEME.neutral_bg);
 /// ダイアログの背景色（親より明るくして重なりが見えるように）。
-pub const DIALOG_BG: u32 = 0x404060;
+pub const DIALOG_BG: u32 = rgb24(THEME.neutral_bg_active);
 /// スクロールする一覧の行数と1行の高さ。
 pub const LIST_ROWS: usize = 30;
 const ROW_PX: f32 = 24.0;

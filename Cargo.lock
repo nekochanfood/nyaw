@@ -7134,6 +7134,7 @@ dependencies = [
 name = "testing"
 version = "2026.0.1"
 dependencies = [
+ "design",
  "gpui",
  "kernel",
  "ui",
@@ -8878,6 +8879,7 @@ name = "wrist"
 version = "2026.0.1"
 dependencies = [
  "chrono",
+ "design",
  "gpui",
  "kernel",
  "testing",

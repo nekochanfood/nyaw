@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 chrono.workspace = true
+design.workspace = true
 gpui.workspace = true
 testing.workspace = true
 kernel.workspace = true

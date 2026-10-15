@@ -3,10 +3,12 @@
 
 use std::time::Duration;
 
-use gpui::{Context, Window, div, prelude::*, rgb};
+use design::components::{Variant, button};
+use design::{Mode, Theme};
+use gpui::{Context, Window, div, prelude::*, rgba};
 use kernel::PanelId;
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
-use testing::{BUTTON_BG, BUTTON_HOVER_BG, PANEL_BG, Testing};
+use testing::Testing;
 use ui::{PanelControl, PanelSpec};
 
 /// 手首の甲側に載せた腕時計の相対姿勢: コントローラ原点の少し手首寄り（+Z）・上（+Y）で、
@@ -59,14 +61,15 @@ impl Render for Wrist {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = chrono::Local::now();
         let this = cx.entity();
+        let theme = Theme::of(Mode::Dark);
         div()
             .size_full()
             .flex()
             .items_center()
             .justify_center()
             .gap_4()
-            .bg(rgb(PANEL_BG))
-            .text_color(rgb(0xffffff))
+            .bg(rgba(theme.panel))
+            .text_color(rgba(theme.neutral_text))
             .text_size(gpui::px(48.0))
             .child(
                 div()
@@ -86,14 +89,8 @@ impl Render for Wrist {
                     ),
             )
             .child(
-                div()
-                    .id("toggle-panel")
-                    .debug_selector(|| "toggle-panel".into())
-                    .p_2()
+                button(&theme, "toggle-panel", "Toggle Panel", Variant::Primary)
                     .text_size(gpui::px(32.0))
-                    .bg(rgb(BUTTON_BG))
-                    .hover(|s| s.bg(rgb(BUTTON_HOVER_BG)))
-                    .child("Toggle Panel")
                     .on_click(move |_, _, cx| {
                         let this = this.clone();
                         this.update(cx, |w, cx| {
