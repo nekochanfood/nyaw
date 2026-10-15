@@ -1,0 +1,14 @@
+[package]
+name = "design"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# デザイン層。値（Constants）→ 役割とテーマ（Utilities）→ 部品（Components）の 3 層。
+# 値は tokens.json が唯一の情報源で、build.rs が Rust のコードにする。
+[dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
+[build-dependencies]
+palette = "0.7"
+serde_json = "1"

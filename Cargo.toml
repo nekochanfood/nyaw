@@ -27,6 +27,7 @@ vr = { path = "crates/subsystems/vr", default-features = false }
 input = { path = "crates/subsystems/input" }
 overlay = { path = "crates/overlay" }
 ui = { path = "crates/ui" }
+design = { path = "crates/design" }
 webpages = { path = "crates/webpages" }
 profiler = { path = "crates/profiler" }
 testing = { path = "crates/testing" }
