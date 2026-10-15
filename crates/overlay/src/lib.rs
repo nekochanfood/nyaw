@@ -46,8 +46,9 @@ pub struct Panel {
     pub parent: Option<Parent>,
     /// 親から見た相対姿勢。
     offset: Pose,
-    /// 子が開いている間の暗さ（0 = そのまま）。
+    /// 今の暗さ（0 = そのまま）と、向かっている先。
     dim: f32,
+    dim_to: f32,
     /// 表示の進行度。サイズは 75%〜100%、不透明度は 0%〜100%。
     opacity: f32,
     surface: Surface,
@@ -88,7 +89,7 @@ const DRAG_LIFT: f32 = 0.002;
 const SMOOTH: f32 = 0.3;
 const SNAP: f32 = 1e-5;
 /// 子が開いている間の親の暗さ（黒との混ぜ具合）。子に目が行くよう、読める程度に落とす。
-// ponytail: 切り替えは即時。なだらかにするなら tick ごとに近づけるが、そのたびに画素を作り直して転送する。
+/// 暗転の時間は子のフェードイン（0.2 秒）・アウト（0.15 秒）と同じ。
 const DIM: f32 = 0.45;
 /// 手ブレ抑えの既定値: レーザーの向きが 1 tick ごとに前の向きを残す割合（0 = 抑えない）。
 /// ヒット判定もこの向きで行うので、クリック位置も揺れない。
@@ -205,6 +206,8 @@ pub struct Overlay {
     /// 手ブレ抑え（[`POINTER_SMOOTHING`]）。`None` で既定値。
     smoothing: Option<f32>,
     animations: HashMap<PanelId, (Tween<f32>, Instant)>,
+    /// 親の暗転。
+    dims: HashMap<PanelId, (Tween<f32>, Instant)>,
 }
 
 impl Overlay {
@@ -233,6 +236,7 @@ impl Overlay {
             parent: None,
             offset: Pose::IDENTITY,
             dim: 0.0,
+            dim_to: 0.0,
             opacity: 1.0,
             surface,
             follow: None,
@@ -372,7 +376,9 @@ impl Overlay {
         self.panels[id].animated = animated;
         if !animated {
             self.animations.remove(&id);
+            self.dims.remove(&id);
             let p = &mut self.panels[id];
+            p.dim = p.dim_to;
             p.opacity = if p.closed { 0.0 } else { 1.0 };
             Self::present(vr, p, false);
         }
@@ -506,6 +512,14 @@ impl Overlay {
             Self::present(vr, p, false);
             !tween.is_complete()
         });
+        self.dims.retain(|id, (tween, last)| {
+            tween.update((now - *last).as_secs_f32());
+            *last = now;
+            let p = &mut self.panels[*id];
+            p.dim = tween.value();
+            Self::present(vr, p, false);
+            !tween.is_complete()
+        });
     }
 
     pub fn tick<B: VrBackend>(&mut self, subsystems: &mut Subsystems<B>) -> Vec<UiEvent> {
@@ -575,10 +589,24 @@ impl Overlay {
         }
         self.settle_family(&dragged);
         let parents: Vec<bool> = (0..self.panels.len()).map(|i| self.has_child(i)).collect();
-        for (p, parent) in self.panels.iter_mut().zip(parents) {
-            let dim = if parent { DIM } else { 0.0 };
-            if p.dim != dim {
-                p.dim = dim;
+        let now = Instant::now();
+        for (id, (p, parent)) in self.panels.iter_mut().zip(parents).enumerate() {
+            let to = if parent { DIM } else { 0.0 };
+            if p.dim_to == to {
+                continue;
+            }
+            p.dim_to = to;
+            if p.animated && !p.closed {
+                let (secs, easing) = if parent {
+                    (0.2, Easing::EaseOutCubic)
+                } else {
+                    (0.15, Easing::EaseInCubic)
+                };
+                let tween = Tween::new(p.dim, to).duration(secs).easing(easing).build();
+                self.dims.insert(id, (tween, now));
+            } else {
+                self.dims.remove(&id);
+                p.dim = to;
                 Self::present(vr, p, false);
             }
         }
@@ -1505,6 +1533,34 @@ mod tests {
         assert_eq!(pixel(&vr), [200, 100, 50, 255]);
         controller(&mut vr, at(0.45, 0.0, 0.0), &[("trigger/value", 1.0)]);
         assert!(!ov.tick(&mut vr).is_empty());
+    }
+
+    #[test]
+    fn dimming_fades_in_and_out_like_the_panels() {
+        let (mut vr, mut ov) = with_child(false);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
+        ov.animations.clear();
+        ov.tick(&mut vr);
+        let dim = |ov: &Overlay| ov.panel(0).dim;
+        assert_eq!(dim(&ov), 0.0);
+        let step = |ov: &mut Overlay, vr: &mut Subsystems<MockBackend>, secs: f32| {
+            let now = Instant::now();
+            for (_, last) in ov.dims.values_mut() {
+                *last = now - std::time::Duration::from_secs_f32(secs);
+            }
+            ov.animate(&mut vr.backend, now);
+        };
+        step(&mut ov, &mut vr, 0.1);
+        assert!(0.0 < dim(&ov) && dim(&ov) < DIM, "{}", dim(&ov));
+        step(&mut ov, &mut vr, 0.1);
+        assert_eq!(dim(&ov), DIM);
+        assert!(ov.dims.is_empty());
+        ov.close(&mut vr.backend, 1);
+        ov.tick(&mut vr);
+        step(&mut ov, &mut vr, 0.075);
+        assert!(0.0 < dim(&ov) && dim(&ov) < DIM);
+        step(&mut ov, &mut vr, 0.075);
+        assert_eq!(dim(&ov), 0.0);
     }
 
     #[test]
