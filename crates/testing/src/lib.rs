@@ -15,6 +15,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::{Instant, SystemTime};
 
+use design::components::{self, Variant};
 use design::{Mode, Theme};
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
@@ -97,16 +98,14 @@ impl Render for ChipPreview {
     }
 }
 
-/// 押せる四角いボタン。`active` は切り替えボタンが有効なとき。
+/// 押せるボタン（`design` の部品）。`active` は切り替えボタンが有効なとき。
 fn button(id: &'static str, label: impl Into<String>, active: bool) -> Stateful<Div> {
-    let bg = if active { BUTTON_ACTIVE_BG } else { BUTTON_BG };
-    div()
-        .id(id)
-        .debug_selector(move || id.into())
-        .p_2()
-        .bg(rgb(bg))
-        .hover(|s| s.bg(rgb(BUTTON_HOVER_BG)))
-        .child(label.into())
+    let b = components::button(&THEME, id, label.into(), Variant::Primary);
+    if active {
+        b.bg(rgba(THEME.accent_solid_active))
+    } else {
+        b
+    }
 }
 
 /// ボタンを押したらパネルへの操作要求を積む。

@@ -7,7 +7,7 @@
 //! 3. **Components**（[`components`]）: ボタン・スイッチ・スライダー。
 //!
 //! 値は `tokens.json` が唯一の情報源（色は Radix Colors を OKLCH にしたもの）で、build.rs がこのクレートのコードにする。
-色は `0xRRGGBBAA`（`gpui::rgba` にそのまま渡せる）。
+//! 色は `0xRRGGBBAA`（`gpui::rgba` にそのまま渡せる）。
 
 include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
 
