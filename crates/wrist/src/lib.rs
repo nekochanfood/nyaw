@@ -1,11 +1,12 @@
-//! Layer 6 画面: 常駐パネル「wrist」。左手首に腕時計のように取り付き（掴めない）、"時刻\n日付" と
-//! Toggle Panel ボタンを出す。ボタンで Testing パネルを召喚 / 閉じる。
+//! Layer 6 画面: 常駐パネル「wrist」。左手首に腕時計のように取り付き（掴めない）、丸い文字盤に
+//! 日付・時刻・Toggle Panel ボタンを出す（縁に目盛りと秒の点）。ボタンで Testing パネルを召喚 / 閉じる。
 
 use std::time::Duration;
 
-use design::Theme;
-use design::components::{self, Variant, button};
-use gpui::{Context, Window, div, prelude::*, rgba};
+use chrono::Timelike;
+use design::components::{self, Variant};
+use design::{Theme, font_size, icons, radius, spacing};
+use gpui::{Context, FontWeight, Window, div, prelude::*, px, rgba};
 use kernel::PanelId;
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use testing::Testing;
@@ -24,8 +25,11 @@ pub const IN_VIEW: Pose = Pose::new(Vec3::new(-0.32, -0.2, -0.4), Quat::IDENTITY
 /// 召喚する Testing パネルの位置。召喚した瞬間の頭から見て正面 0.8m、少し下。
 pub const TESTING_POSE: Pose = Pose::new(Vec3::new(0.0, -0.1, -0.8), Quat::IDENTITY);
 
-const SIZE_M: Vec2 = Vec2::new(0.12, 0.06);
-const RES_PX: (u32, u32) = (480, 240);
+/// 丸い文字盤が収まる正方形。4px/mm（旧来の 0.12m / 480px と同じ密度）。
+const SIZE_M: Vec2 = Vec2::new(0.1, 0.1);
+const RES_PX: (u32, u32) = (400, 400);
+/// 文字盤の中心から目盛り（と秒の点）の中心までの半径。縁から `spacing::LG` 内側。
+const DIAL_R: f32 = RES_PX.0 as f32 / 2.0 - spacing::LG - 8.0;
 
 /// 左手首に取り付いた状態で起動する wrist の起動仕様。
 pub fn spec() -> PanelSpec {
@@ -62,70 +66,90 @@ impl Render for Wrist {
         let now = chrono::Local::now();
         let this = cx.entity();
         let theme = Theme::current(cx);
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .flex()
-                .items_center()
-                .justify_center()
-                .gap_4()
-                .bg(rgba(theme.card))
-                .text_color(rgba(theme.neutral_text))
-                .text_size(gpui::px(48.0))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .child(
-                            div()
-                                .id("time")
-                                .debug_selector(|| "time".into())
-                                .child(now.format("%H:%M").to_string()),
-                        )
-                        .child(
-                            div()
-                                .id("date")
-                                .debug_selector(|| "date".into())
-                                .child(now.format("%Y-%m-%d").to_string()),
-                        ),
+        // 腕時計の文字盤: 丸いカード 1 枚がパネル全体（地は敷かない）。縁に 12 の目盛りと、今の秒を指す点。
+        let dot = |i: u32, d: f32, color: u32| {
+            let a = i as f32 * std::f32::consts::TAU / 60.0;
+            let c = RES_PX.0 as f32 / 2.0;
+            div()
+                .absolute()
+                .left(px(c + DIAL_R * a.sin() - d / 2.0))
+                .top(px(c - DIAL_R * a.cos() - d / 2.0))
+                .size(px(d))
+                .rounded(px(radius::FULL))
+                .bg(rgba(color))
+        };
+        let ticks = (0..60)
+            .step_by(5)
+            .map(|i| dot(i, if i % 15 == 0 { 14.0 } else { 8.0 }, theme.neutral_text_low));
+        let second = dot(now.second(), 12.0, theme.accent_solid);
+        components::card_panel(&theme)
+            .rounded(px(radius::FULL))
+            .relative()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .children(ticks)
+            .child(second)
+            .child(
+                div()
+                    .id("date")
+                    .debug_selector(|| "date".into())
+                    .text_size(px(font_size::LG))
+                    .text_color(rgba(theme.neutral_text_low))
+                    .child(now.format("%a %b %-d").to_string()),
+            )
+            .child(
+                div()
+                    .id("time")
+                    .debug_selector(|| "time".into())
+                    .text_size(px(96.0))
+                    .font_weight(FontWeight::BOLD)
+                    .line_height(px(104.0))
+                    .child(now.format("%H:%M").to_string()),
+            )
+            .child(
+                components::icon_button(
+                    &theme,
+                    "toggle-panel",
+                    &icons::APP_WINDOW,
+                    "Toggle Panel",
+                    Variant::Default,
                 )
-                .child(
-                    button(&theme, "toggle-panel", "Toggle Panel", Variant::Default)
-                        .text_size(gpui::px(32.0))
-                        .on_click(move |_, _, cx| {
-                            let this = this.clone();
-                            this.update(cx, |w, cx| {
-                                // Testing 自身のボタンで閉じられていたら、閉じ済みとして扱い次は召喚する。
-                                let open = w.testing.take().filter(|id| {
-                                    !cx.default_global::<PanelControl>()
-                                        .panels
-                                        .get(id)
-                                        .is_some_and(|p| p.status.closed)
-                                });
-                                match open {
-                                    Some(id) => cx
-                                        .default_global::<PanelControl>()
-                                        .panels
-                                        .entry(id)
-                                        .or_default()
-                                        .commands
-                                        .push(kernel::PanelCommand::Close),
-                                    None => {
-                                        let wrist = cx.entity();
-                                        cx.default_global::<PanelControl>().spawns.push(
-                                            PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
-                                                wrist.update(cx, |w, _| w.testing = Some(id));
-                                                Testing::new(id)
-                                            })
-                                            .sized(testing::TESTING_SIZE, testing::TESTING_PX)
-                                            .in_view(TESTING_POSE),
-                                        );
-                                    }
-                                }
-                            });
-                        }),
-                ),
-        )
+                .mt(px(spacing::SM))
+                .on_click(move |_, _, cx| {
+                    let this = this.clone();
+                    this.update(cx, |w, cx| {
+                        // Testing 自身のボタンで閉じられていたら、閉じ済みとして扱い次は召喚する。
+                        let open = w.testing.take().filter(|id| {
+                            !cx.default_global::<PanelControl>()
+                                .panels
+                                .get(id)
+                                .is_some_and(|p| p.status.closed)
+                        });
+                        match open {
+                            Some(id) => cx
+                                .default_global::<PanelControl>()
+                                .panels
+                                .entry(id)
+                                .or_default()
+                                .commands
+                                .push(kernel::PanelCommand::Close),
+                            None => {
+                                let wrist = cx.entity();
+                                cx.default_global::<PanelControl>().spawns.push(
+                                    PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+                                        wrist.update(cx, |w, _| w.testing = Some(id));
+                                        Testing::new(id)
+                                    })
+                                    .sized(testing::TESTING_SIZE, testing::TESTING_PX)
+                                    .in_view(TESTING_POSE),
+                                );
+                            }
+                        }
+                    });
+                }),
+            )
     }
 }
 
@@ -173,13 +197,15 @@ mod tests {
         );
     }
 
-    /// 時刻の下に日付、その右隣にボタン。
+    /// 丸い文字盤の中央に、日付・時刻・ボタンを縦に並べる。
     #[gpui::test]
-    fn layout_is_time_over_date_with_button_on_right(cx: &mut TestAppContext) {
+    fn layout_is_date_over_time_over_button(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, cx| Wrist::new(cx));
         cx.run_until_parked();
-        let [t, d, b] = ["time", "date", "toggle-panel"].map(|s| cx.debug_bounds(s).unwrap());
-        assert!(t.bottom() <= d.top());
-        assert!(b.left() >= t.right().max(d.right()));
+        let [d, t, b] = ["date", "time", "toggle-panel"].map(|s| cx.debug_bounds(s).unwrap());
+        assert!(d.bottom() <= t.top());
+        assert!(t.bottom() <= b.top());
+        let mid = |r: gpui::Bounds<gpui::Pixels>| r.center().x;
+        assert!((mid(d) - mid(t)).abs() < px(1.0) && (mid(t) - mid(b)).abs() < px(1.0));
     }
 }
