@@ -10,7 +10,7 @@ default = ["novr", "openvr", "openxr"]
 novr = ["vr/novr"]
 openvr = ["vr/openvr"]
 openxr = ["vr/openxr"]
-rendering-host = ["rendering/gpui", "rendering/web"]
+rendering-host = ["rendering/gpui"]
 test-support = ["vr/test-support"]
 
 [dependencies]

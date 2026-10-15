@@ -24,8 +24,6 @@ pub struct DesktopKit<'a, V: 'static> {
     pub kernel: Kernel,
     pub panel: PanelId,
     watch: Option<Watch>,
-    /// Web pages the screen asked to open ([`ui::PanelSpec::web`]). Not opened on the test platform.
-    pub web_spawns: Vec<String>,
     /// Mouse position, and whether the left button is held down.
     mouse: Vec<(Point<Pixels>, bool)>,
 }
@@ -52,7 +50,6 @@ impl<'a, V: Render> DesktopKit<'a, V> {
             kernel,
             panel,
             watch: Watch::from_env(),
-            web_spawns: Vec::new(),
             mouse: vec![(Point::default(), false)],
         };
         kit.step();
@@ -97,11 +94,6 @@ impl<'a, V: Render> DesktopKit<'a, V> {
     }
 
     fn add_spec(&mut self, spec: PanelSpec) {
-        // Web pages (Tauri WebView) cannot be opened on the test platform, so only record what was requested.
-        if let Some(page) = spec.web_page() {
-            self.web_spawns.push(page.to_owned());
-            return;
-        }
         let id = self.windows.len();
         let pose = spec.pose_for(&self.kernel, id);
         let parent = spec.parent();
@@ -157,10 +149,6 @@ impl<'a, V: Render> DesktopKit<'a, V> {
 }
 
 impl<V: Render> Driver<V> for DesktopKit<'_, V> {
-    fn web_spawns(&self) -> &[String] {
-        &self.web_spawns
-    }
-
     /// Moves the mouse to the center of an element.
     fn hover(&mut self, selector: &'static str) -> &mut Self {
         let c = self.bounds(selector).center();

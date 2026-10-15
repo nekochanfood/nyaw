@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# UI 層。パネルを GPUI のウィンドウか Tauri の WebView（web モジュール）で実体化する。
+# UI 層。パネルを GPUI のウィンドウで実体化する。
 [dependencies]
 # 描画は kernel::rendering が担う。UI の入力注入とテストにも test-support を使う。
 gpui = { workspace = true, features = ["test-support"] }
@@ -14,17 +14,10 @@ kernel = { workspace = true, features = ["rendering-host"] }
 profiler.workspace = true
 design.workspace = true
 logger.workspace = true
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tauri = "2.12"
-
-[build-dependencies]
-tauri-build = "2"
 
 [dev-dependencies]
 kernel = { workspace = true, features = ["novr"] }
 vr = { workspace = true, features = ["test-support", "novr"] }
-webpages.workspace = true
 testing.workspace = true
 beam.workspace = true
 
@@ -35,19 +28,6 @@ harness = false
 
 [[test]]
 name = "panel_lod"
-harness = false
-
-# 実プラットフォームの GPUI + Tauri（WebView）で、レーザー・マウスから JS のポインタイベントまでを確かめる。
-[[test]]
-name = "web_vr"
-harness = false
-
-[[test]]
-name = "web_novr"
-harness = false
-
-[[test]]
-name = "web_pointer"
 harness = false
 
 # ベンチマーク。常には流さない（`-- --ignored` のときだけ）。

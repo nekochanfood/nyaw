@@ -59,7 +59,7 @@ impl<'a, V: Render> VrKit<'a, V> {
         // Turn off hand-jitter smoothing, since it would make pointing miss at the instant of aiming (the smoothing itself is checked in overlay unit tests).
         let config = kernel::config::Config {
             pointer_smoothing: Some(0.0),
-            // Operation scenarios are written for the mouse (the default touch mode is checked in pointer_mode.rs / web_pointer.rs).
+            // Operation scenarios are written for the mouse (the default touch mode is checked in pointer_mode.rs).
             pointer_mode: Some(kernel::PointerMode::Mouse),
             ..Default::default()
         };
@@ -239,10 +239,6 @@ fn raw(c: &VirtualController) -> RawController {
 }
 
 impl<V: Render> Driver<V> for VrKit<'_, V> {
-    fn web_spawns(&self) -> &[String] {
-        &self.panels.web_spawns
-    }
-
     /// Aims the laser at the center of an element.
     fn hover(&mut self, selector: &'static str) -> &mut Self {
         let c = self.bounds(selector).center();

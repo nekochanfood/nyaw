@@ -5,7 +5,6 @@
 //!
 //! CPU / GPU の分け方（GPUI は GPU タイマーを公開していないので、同期して待つ段階の実時間で測る）:
 //! - CPU = `input`（入力の配送とパネル操作の反映）+ `draw`（GPUI のレイアウトとシーン構築）+ `overlay`（オーバーレイ層）
-//!   + `web`（Web のパネル）
 //! - GPU = `render`（GPU 描画と CPU への読み戻し）+ `upload`（VR ランタイムへのテクスチャ転送）
 //!   + `compositor`（novr のエミュレーターの合成と表示）
 //! - `wait` = 次のフレームまでの待ち（VR は vsync、novr はエミュレーターの周期）。アイドル時間。
@@ -30,7 +29,7 @@ pub const WINDOW: usize = 90;
 /// 予算（1 フレームの目標時間）のこの倍を超えたフレームをドロップとみなす。
 pub const DROP_FACTOR: f64 = 1.5;
 /// CSV の列。時間はすべてミリ秒。`t_ms` は計測開始からの経過。
-pub const CSV_HEADER: &str = "frame,t_ms,interval_ms,wait_ms,input_ms,draw_ms,render_ms,upload_ms,profiler_ms,overlay_ms,compositor_ms,web_ms,cpu_ms,gpu_ms,budget_ms,dropped";
+pub const CSV_HEADER: &str = "frame,t_ms,interval_ms,wait_ms,input_ms,draw_ms,render_ms,upload_ms,profiler_ms,overlay_ms,compositor_ms,cpu_ms,gpu_ms,budget_ms,dropped";
 
 /// 1 フレームの段階ごとの所要時間。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -46,13 +45,11 @@ pub struct Stages {
     pub overlay: Duration,
     /// ランタイムがこのスレッドで合成・表示にかけた時間（novr のエミュレーター。VR ランタイムは 0）。
     pub compositor: Duration,
-    /// Web のパネル（Tauri を回す・ポインタを送る・WebView を撮る）。
-    pub web: Duration,
 }
 
 impl Stages {
     pub fn cpu(&self) -> Duration {
-        self.input + self.draw + self.profiler + self.overlay + self.web
+        self.input + self.draw + self.profiler + self.overlay
     }
 
     pub fn gpu(&self) -> Duration {
@@ -88,7 +85,6 @@ impl Sample {
             ms(s.profiler),
             ms(s.overlay),
             ms(s.compositor),
-            ms(s.web),
             ms(s.cpu()),
             ms(s.gpu()),
             ms(self.budget),
@@ -234,7 +230,6 @@ impl Profiler {
                 profiler: sum(|s| s.stages.profiler),
                 overlay: sum(|s| s.stages.overlay),
                 compositor: sum(|s| s.stages.compositor),
-                web: sum(|s| s.stages.web),
             },
             budget: self.budget(),
             frames: self.frames,
@@ -285,11 +280,6 @@ const CPU_LAYERS: &[Layer] = &[
         name: "Overlay",
         color: 0xd4b106,
         value: |s| s.overlay,
-    },
-    Layer {
-        name: "Web",
-        color: 0xe0559b,
-        value: |s| s.web,
     },
     Layer {
         name: "Profiler (self)",
@@ -560,7 +550,7 @@ mod tests {
         assert_eq!(lines[0], CSV_HEADER);
         assert_eq!(
             lines[3],
-            "2,36.000,16.000,8.000,1.000,0.000,1.000,0.000,0.000,0.000,0.000,0.000,1.000,1.000,10.000,1"
+            "2,36.000,16.000,8.000,1.000,0.000,1.000,0.000,0.000,0.000,0.000,1.000,1.000,10.000,1"
         );
         assert_eq!(lines[0].split(',').count(), lines[3].split(',').count());
     }

@@ -4,14 +4,14 @@
 //!
 //! - renderer: the emulator's compositing (`compositor`)
 //! - overlay: following, hit testing, pointer placement, animation (`overlay`)
-//! - UI: input delivery (`input`), GPUI layout (`draw`), render and readback (`render`), transfer to the runtime (`upload`), web (`web`)
+//! - UI: input delivery (`input`), GPUI layout (`draw`), render and readback (`render`), transfer to the runtime (`upload`)
 //!
 //! Phases: idle -> sweep with the mouse (including pressed swipes) -> idle -> repeated panel summon and destroy -> panel in front of the eyes
 //! -> volume (summon 10 stacked panels like Toggle Panel and sweep) -> idle again.
 //! The difference between idles shows "getting heavier over time" (after sweeping = idle-mid, after summon and destroy = idle-after), and the max frame time of the summon phase shows summon hitches.
 //! Writes a per-frame CSV (`stress.csv`) and a summary (`stress.txt`) to `CARGO_TARGET_TMPDIR`.
 //! Phase length scales with `NYAW_STRESS_SCALE` (default 1.0). `NYAW_STRESS_WINDOW=1` shows windows as in production and
-//! composites (on GPU if available; by default no window and CPU compositing). `NYAW_STRESS_NO_WEB=1` removes the web panels and `NYAW_STRESS_PROFILER=1` shows the profiler window (for isolating causes).
+//! composites (on GPU if available; by default no window and CPU compositing). `NYAW_STRESS_PROFILER=1` shows the profiler window (for isolating causes).
 
 mod common;
 
@@ -82,19 +82,13 @@ fn main() -> ExitCode {
         ..Default::default()
     };
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, config);
-    // 8 GPUI Testing panels (2 rows) and 2 web Testing panels, plus the beam as in production.
+    // GPUI の Testing 8 枚（2 行）と、本番と同じビーム。
     let mut panels: Vec<PanelSpec> = (0..8)
         .map(|i| {
             let (col, row) = ((i % 4) as f32, (i / 4) as f32);
             testing_at(-1.5 + col, 0.7 - 0.7 * row, -2.2)
         })
         .collect();
-    for x in [-0.5, 0.5].into_iter().filter(|_| web()) {
-        panels.push(PanelSpec::web(
-            Pose::new(Vec3::new(x, -0.75, -2.2), Quat::IDENTITY),
-            webpages::TESTING,
-        ));
-    }
     panels.extend(beam::specs());
     let opened = panels.len();
 
@@ -116,12 +110,11 @@ fn main() -> ExitCode {
         common::quit(&remote, true);
     });
     let hooks = ui::Hooks {
-        on_web: None,
         remote: Some(rx),
         // the profiler window is redrawn every frame, so it is not shown to keep measurements clean (NYAW_STRESS_PROFILER=1 shows it to see its cost).
         hide_profiler: std::env::var_os("NYAW_STRESS_PROFILER").is_none(),
     };
-    ui::run_with(kernel, panels, Some(profiler), webpages::FILES, hooks);
+    ui::run_with(kernel, panels, Some(profiler), hooks);
     common::exit_code("stress", &result)
 }
 
@@ -129,11 +122,6 @@ fn main() -> ExitCode {
 struct Phase {
     name: &'static str,
     range: (Duration, Duration),
-}
-
-/// whether to include web panels (`NYAW_STRESS_NO_WEB=1` removes them to see the GPUI-only cost).
-fn web() -> bool {
-    std::env::var_os("NYAW_STRESS_NO_WEB").is_none()
 }
 
 fn scale() -> f32 {
@@ -216,14 +204,14 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     let secs = |x: f32| Duration::from_secs_f32(x * s);
     let mut phases = Vec::new();
     let mut next_id = opened;
-    // wait for startup (including web loading) to settle. Not included in measurement.
+    // 起動直後の描画が落ち着くまで待つ。 Not included in measurement.
     std::thread::sleep(Duration::from_secs(3));
 
     run_phase(&mut phases, t0, "idle", secs(4.0), |_| emu.point(None));
     run_phase(&mut phases, t0, "sweep", secs(8.0), |f| sweep_frame(emu, f));
     // check whether continued operation itself made things heavier (compare with the first idle).
     run_phase(&mut phases, t0, "idle-mid", secs(4.0), |_| emu.point(None));
-    // every 0.5 s open a panel and close the previous one (GPUI Testing, with web Testing every 4th time).
+    // 0.5 秒ごとに Testing パネルを開き、前のパネルを閉じる。
     run_phase(&mut phases, t0, "spawn", secs(8.0), |f| {
         sweep_frame(emu, f);
         if f % 45 != 0 {
@@ -234,16 +222,7 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
             close(remote, next_id - 1);
         }
         let (x, y) = ((n % 3) as f32 * 0.4 - 0.4, 0.1);
-        if n % 4 == 3 && web() {
-            spawn(remote, move || {
-                PanelSpec::web(
-                    Pose::new(Vec3::new(x, y, -1.4), Quat::IDENTITY),
-                    webpages::TESTING,
-                )
-            });
-        } else {
-            spawn(remote, move || testing_at(x, y, -1.4));
-        }
+        spawn(remote, move || testing_at(x, y, -1.4));
         next_id += 1;
     });
     if next_id > opened {
@@ -288,7 +267,6 @@ struct Row {
     upload: f64,
     overlay: f64,
     compositor: f64,
-    web: f64,
     dropped: bool,
 }
 
@@ -307,7 +285,6 @@ fn rows(csv: &Shared) -> Vec<Row> {
         "upload_ms",
         "overlay_ms",
         "compositor_ms",
-        "web_ms",
         "dropped",
     ]
     .map(col);
@@ -325,8 +302,7 @@ fn rows(csv: &Shared) -> Vec<Row> {
                 upload: g(6)?,
                 overlay: g(7)?,
                 compositor: g(8)?,
-                web: g(9)?,
-                dropped: g(10)? > 0.0,
+                dropped: g(9)? > 0.0,
             })
         })
         .collect()
@@ -348,12 +324,12 @@ fn report(csv: &Shared, phases: &[Phase]) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
-        "stress ({}x{}, 8 GPUI + 2 web panels + beam. times in ms, mean / p95)",
+        "stress ({}x{}, 8 GPUI panels + beam. times in ms, mean / p95)",
         SCREEN.0, SCREEN.1
     );
     let _ = writeln!(
         out,
-        "{:<11} {:>6} {:>6} {:>6} {:>17} | {:>13} {:>13} {:>13} | {:>13} {:>13} {:>13} {:>13} {:>13} | {:>13}",
+        "{:<11} {:>6} {:>6} {:>6} {:>17} | {:>13} {:>13} {:>13} | {:>13} {:>13} {:>13} {:>13} | {:>13}",
         "phase",
         "frames",
         "fps",
@@ -366,7 +342,6 @@ fn report(csv: &Shared, phases: &[Phase]) -> String {
         "ui:draw",
         "ui:render",
         "ui:upload",
-        "ui:web",
         "wait"
     );
     for p in phases {
@@ -380,7 +355,7 @@ fn report(csv: &Shared, phases: &[Phase]) -> String {
         let fps = if frame.0 > 0.0 { 1000.0 / frame.0 } else { 0.0 };
         let _ = writeln!(
             out,
-            "{:<11} {:>6} {:>6.1} {:>6.1} {:>5.1}/{:>5.1}/{:>5.0} | {:>13} {:>13} {:>13} | {:>13} {:>13} {:>13} {:>13} {:>13} | {:>13}",
+            "{:<11} {:>6} {:>6.1} {:>6.1} {:>5.1}/{:>5.1}/{:>5.0} | {:>13} {:>13} {:>13} | {:>13} {:>13} {:>13} {:>13} | {:>13}",
             p.name,
             r.len(),
             fps,
@@ -390,12 +365,11 @@ fn report(csv: &Shared, phases: &[Phase]) -> String {
             frame.2,
             pair(col(|r| r.compositor)),
             pair(col(|r| r.overlay)),
-            pair(col(|r| r.input + r.draw + r.render + r.upload + r.web)),
+            pair(col(|r| r.input + r.draw + r.render + r.upload)),
             pair(col(|r| r.input)),
             pair(col(|r| r.draw)),
             pair(col(|r| r.render)),
             pair(col(|r| r.upload)),
-            pair(col(|r| r.web)),
             pair(col(|r| r.wait)),
         );
     }
