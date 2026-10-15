@@ -58,7 +58,9 @@ pub fn tooltip_width(text: &SharedString, window: &mut Window) -> f32 {
     f32::from(line.width).ceil() + PAD_X * 2.0
 }
 
-/// 幅 `width`（[`tooltip_width`]。動かしている間は途中の値）の箱。収まらない文字は省略する。
+/// 幅 `width`（[`tooltip_width`]。動かしている間は途中の値）の箱。収まらない文字は省略せず箱で切る
+/// （幅が伸び縮みする間に省略記号が出ないように。中央から開いていくように見える）。
+// ponytail: 1 行だけ。パネルの幅（640px）を超える文字は切れる。長い説明が要るなら折り返しを入れる。
 pub fn tooltip(text: SharedString, width: f32) -> Div {
     let theme = Theme::DARK;
     div()
@@ -76,7 +78,7 @@ pub fn tooltip(text: SharedString, width: f32) -> Div {
         .text_size(px(font_size::MD))
         .line_height(px(LINE))
         .whitespace_nowrap()
-        .child(div().truncate().child(text))
+        .child(div().flex_none().child(text))
 }
 
 #[cfg(test)]
