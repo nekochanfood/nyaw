@@ -3,7 +3,7 @@
 //! - 端が丸い丸棒。ふだんは [`scrollbar::THIN`] の細さで端に寄り、カーソルが触れる（トラックの帯の上・ドラッグ中）と
 //!   [`scrollbar::THICK`] まで厚みを取り戻す。
 //! - 色は平常 / ホバー / 押下（ドラッグ）で変わる（`track` → `neutral_solid_hover` → `neutral_text_low`）。
-//! - 端でさらに押し込む（端に着いたままホイールを回す）と、棒が端で押しつぶされて縮み、戻る。
+//! - 中身が端で引っ張られている間（[`elastic`]）、棒が端で押しつぶされて縮み、戻る（[`Scrollbars::pulled_by`]）。
 //! - 棒を掴んで動かす・トラックを押すとその位置へ飛ぶ。
 //!
 //! 使い方: スクロールする要素（`overflow_*_scroll` + `track_scroll(&handle)`）と同じ大きさの `relative()` な入れ物に、
@@ -14,7 +14,7 @@
 //!     .child(scrollbars(&theme, "list-bars", &handle))
 //! ```
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui::{
     App, Axis, Div, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
@@ -25,10 +25,14 @@ use gpui::{
 use super::{Fade, keep_drawing};
 use crate::{Motion, Theme, duration_ms, radius, scrollbar as spec};
 
-/// 端でホイールをこれだけ（px）押し込むと、押しつぶしが最大になる。
-const PUSH_PX: f32 = 120.0;
+/// 中身がこれだけ（px）引っ張られると、棒の押しつぶしが最大になる。
+const SQUASH_RANGE: f32 = 48.0;
 /// 端でのスクロール量に対する、中身の引っ張られ方（1 より小さいほど重い）。
-const PULL_RESIST: f32 = 0.4;
+const PULL_RESIST: f32 = 0.5;
+/// ホイールが止まって、これだけ経つと離したとみなす。
+const HOLD_WHEEL: Duration = Duration::from_millis(120);
+/// 指のスライド（またはトラックパッド）に終わりの合図が来なかったとき、離したとみなすまで。
+const HOLD_TOUCH: Duration = Duration::from_millis(400);
 /// 縦と横が両方出るとき、交わる隅に空ける長さ。
 const CORNER: f32 = spec::THICK + 2.0 * spec::MARGIN;
 const AXES: [Axis; 2] = [Axis::Vertical, Axis::Horizontal];
@@ -126,7 +130,6 @@ struct Bar {
     slide: bool,
     thick: Smooth,
     color: Fade,
-    squash: Smooth,
 }
 
 #[derive(Clone, Copy)]
@@ -181,28 +184,72 @@ pub fn free_scroll<E: Styled>(mut element: E) -> E {
     element
 }
 
-/// ホイール（や指のスライド）が、先頭か末尾に着いたままさらに外へ押しているときの量（軸ごと。押していなければ 0）。
-/// 正 = 先頭を越えて引く向き、負 = 末尾を越えて引く向き。内側の要素がホイールを受け取る前の状態で見る必要がある。
-fn edge_push(handle: &ScrollHandle, e: &ScrollWheelEvent, window: &Window) -> [f32; 2] {
+/// ホイール（や指のスライド）の、軸ごとの動き量（gpui と同じ割り当て: 横だけあふれているときは縦のホイールも横を動かす）。
+fn axis_deltas(handle: &ScrollHandle, e: &ScrollWheelEvent, window: &Window) -> [f32; 2] {
     let d = e.delta.pixel_delta(window.line_height());
     let (dx, dy) = (f32::from(d.x), f32::from(d.y));
     let only_x = f32::from(handle.max_offset().y) < 1.0;
-    AXES.map(|axis| {
-        let (_, max, off, _) = read(handle, axis);
-        let d = match axis {
-            Axis::Vertical => dy,
-            // 横だけあふれているときは縦のホイールも横を動かす（gpui と同じ）。
-            Axis::Horizontal if dx != 0.0 => dx,
-            Axis::Horizontal if only_x => dy,
-            Axis::Horizontal => 0.0,
-        };
-        let pushing = max >= 1.0 && ((off >= -0.5 && d > 0.0) || (off <= -max + 0.5 && d < 0.0));
-        if pushing { d } else { 0.0 }
-    })
+    [
+        dy,
+        if dx != 0.0 {
+            dx
+        } else if only_x {
+            dy
+        } else {
+            0.0
+        },
+    ]
+}
+
+/// 先頭か末尾に着いたまま、さらに外へ押しているか（`d` > 0 = 先頭を越えて引く向き）。
+/// 内側の要素がホイールを受け取る前の状態で見る必要がある。
+fn at_edge(handle: &ScrollHandle, axis: Axis, d: f32) -> bool {
+    let (_, max, off, _) = read(handle, axis);
+    max >= 1.0 && ((off >= -0.5 && d > 0.0) || (off <= -max + 0.5 && d < 0.0))
+}
+
+/// いまの中身の引っ張り量（軸ごとの px。`elastic` の id ごと）。棒の押しつぶしがこれを見る。
+#[derive(Default)]
+struct Pulls(std::collections::HashMap<&'static str, [f32; 2]>);
+
+impl gpui::Global for Pulls {}
+
+/// 引っ張りの状態。触れている間は動かさず、離したら戻る。
+#[derive(Clone, Copy)]
+enum Pull {
+    /// 引っ張っている。`idle` の間、新しい入力が無ければ離したとみなす
+    /// （マウスのホイールに離す合図は無く、タッチは終わりの合図が来る）。
+    Held {
+        value: f32,
+        last: Instant,
+        idle: Duration,
+    },
+    /// 戻っている（落ち着いていれば 0）。
+    Release(Smooth),
+}
+
+impl Pull {
+    fn value(&self, now: Instant) -> f32 {
+        match self {
+            Pull::Held { value, .. } => *value,
+            Pull::Release(s) => s.at(now).0,
+        }
+    }
+
+    fn release(&mut self, now: Instant) {
+        if let Pull::Held { value, .. } = *self {
+            *self = Pull::Release(Smooth {
+                from: value,
+                to: 0.0,
+                start: Some(now),
+            });
+        }
+    }
 }
 
 /// 端で引っ張られる中身。スクロール要素の直下の子として、中身を包む。端に着いたままさらにスクロールすると、
-/// 中身が指（ホイール）に引っ張られて（[`scrollbar::PULL`] まで）、離すと戻る。棒の押しつぶしと同じきっかけ。
+/// 中身がどこまでも（重みを付けて）引っ張られ、離す（タッチを離す・ホイールが止まる）と戻る。
+/// 反対向きにスクロールすれば、引っ張りが先に戻ってからスクロールする。
 /// 中身は少なくともビューポートの大きさになる（どこをポインタが指していても受け取れるように）。
 #[derive(IntoElement)]
 pub struct Elastic {
@@ -234,33 +281,69 @@ impl ParentElement for Elastic {
 impl RenderOnce for Elastic {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Elastic { id, handle, base } = self;
-        let state = window.use_keyed_state(id, cx, |_, _| [Smooth::rest(0.0); 2]);
+        let state = window.use_keyed_state(id, cx, |_, _| [Pull::Release(Smooth::rest(0.0)); 2]);
         let now = Instant::now();
-        let [(y, my), (x, mx)] = state.read(cx).map(|s| s.at(now));
-        if my || mx {
+        let mut moving = false;
+        // 離したとみなせるものは戻し始め、いまの値を出す。
+        let v = state.update(cx, |s, _| {
+            s.each_mut().map(|p| {
+                if let Pull::Held { last, idle, .. } = *p {
+                    moving = true; // 離したかを見張るため描き続ける
+                    if now.saturating_duration_since(last) >= idle {
+                        p.release(now);
+                    }
+                }
+                if let Pull::Release(r) = p {
+                    moving |= r.at(now).1;
+                }
+                p.value(now)
+            })
+        });
+        cx.default_global::<Pulls>().0.insert(id, v);
+        if moving {
             keep_drawing(window, cx);
         }
         // 子はホイールを中身より先に受け取る（スクロールする前の状態で見られる）。
-        base.top(px(y)).left(px(x)).on_scroll_wheel(
+        base.top(px(v[0])).left(px(v[1])).on_scroll_wheel(
             move |e: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
                 if !cx.has_global::<Motion>() {
                     return;
                 }
                 let now = Instant::now();
-                for (i, d) in edge_push(&handle, e, window).into_iter().enumerate() {
-                    if d != 0.0 {
-                        state.update(cx, |s, _| {
-                            let (cur, _) = s[i].at(now);
-                            // 引っ張るほど重くなる（上限は PULL）。
-                            let pull = (cur + d * PULL_RESIST).clamp(-spec::PULL, spec::PULL);
-                            s[i] = Smooth {
-                                from: pull,
-                                to: 0.0,
-                                start: Some(now),
+                let ended = matches!(e.touch_phase, TouchPhase::Ended | TouchPhase::Cancelled);
+                let idle = match e.delta {
+                    ScrollDelta::Lines(_) => HOLD_WHEEL,
+                    ScrollDelta::Pixels(_) => HOLD_TOUCH,
+                };
+                let ds = axis_deltas(&handle, e, window);
+                let mut used = false;
+                state.update(cx, |s, _| {
+                    for (i, axis) in AXES.into_iter().enumerate() {
+                        if ended {
+                            // 指を離した（惰性も含む）。戻し始める。引っ張りは惰性で増やさない。
+                            s[i].release(now);
+                            continue;
+                        }
+                        let (d, cur) = (ds[i], s[i].value(now));
+                        let reeling = cur != 0.0 && d * cur < 0.0;
+                        if d != 0.0 && (reeling || at_edge(&handle, axis, d)) {
+                            let mut value = cur + d * PULL_RESIST;
+                            if value * cur < 0.0 {
+                                value = 0.0; // 戻しきった
+                            }
+                            s[i] = Pull::Held {
+                                value,
+                                last: now,
+                                idle,
                             };
-                        });
-                        window.refresh();
+                            used = true;
+                        }
                     }
+                });
+                if used {
+                    // 引っ張っている間は中身をスクロールさせず、外側にも流さない。
+                    cx.stop_propagation();
+                    window.refresh();
                 }
             },
         )
@@ -289,6 +372,7 @@ pub fn claim_scroll<E: InteractiveElement>(element: E, handle: &ScrollHandle) ->
 pub struct Scrollbars {
     id: &'static str,
     handle: ScrollHandle,
+    pull: Option<&'static str>,
     rest: u32,
     hover: u32,
     active: u32,
@@ -300,9 +384,18 @@ pub fn scrollbars(theme: &Theme, id: &'static str, handle: &ScrollHandle) -> Scr
     Scrollbars {
         id,
         handle: handle.clone(),
+        pull: None,
         rest: theme.track,
         hover: theme.neutral_solid_hover,
         active: theme.neutral_text_low,
+    }
+}
+
+impl Scrollbars {
+    /// 中身を包む [`elastic`] の id。中身が端で引っ張られている間、棒が押しつぶされる。
+    pub fn pulled_by(mut self, elastic: &'static str) -> Self {
+        self.pull = Some(elastic);
+        self
     }
 }
 
@@ -311,6 +404,7 @@ impl RenderOnce for Scrollbars {
         let Scrollbars {
             id,
             handle,
+            pull,
             rest,
             hover,
             active,
@@ -327,7 +421,6 @@ impl RenderOnce for Scrollbars {
                     to: rest,
                     start: None,
                 },
-                squash: Smooth::rest(0.0),
             }; 2],
             shown: [false; 2],
         });
@@ -373,15 +466,18 @@ impl RenderOnce for Scrollbars {
             *s
         });
 
+        let pulled = pull
+            .and_then(|p| cx.try_global::<Pulls>()?.0.get(p).copied())
+            .unwrap_or_default();
         let mut moving = false;
         let mut overlay = div().absolute().inset_0();
         for (i, axis) in AXES.into_iter().enumerate() {
             let (view, max, off, reserve) = reads[i];
             let bar = st.bars[i];
-            let (squash, m1) = bar.squash.at(now);
+            let squash = (pulled[i].abs() / SQUASH_RANGE).min(1.0);
             let (thick, m2) = bar.thick.at(now);
             let (color, m3) = bar.color.at(now);
-            moving |= m1 | m2 | m3;
+            moving |= m2 | m3;
             let Some(t) = thumb(view, max, off, reserve, squash) else {
                 continue;
             };
@@ -505,30 +601,6 @@ impl RenderOnce for Scrollbars {
             keep_drawing(window, cx);
         }
 
-        // 端でのさらなる押し込みを見て、棒を押しつぶす（動きが有効なときだけ）。
-        let wheel = {
-            let (state, handle) = (state.clone(), handle.clone());
-            move |e: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
-                if !cx.has_global::<Motion>() {
-                    return;
-                }
-                let now = Instant::now();
-                for (i, d) in edge_push(&handle, e, window).into_iter().enumerate() {
-                    if d != 0.0 {
-                        state.update(cx, |s, _| {
-                            let (cur, _) = s.bars[i].squash.at(now);
-                            s.bars[i].squash = Smooth {
-                                from: (cur + d.abs() / PUSH_PX).min(1.0),
-                                to: 0.0,
-                                start: Some(now),
-                            };
-                        });
-                        window.refresh();
-                    }
-                }
-            }
-        };
-
         // 描画後の仕事: レイアウトで出る軸が変わったら描き直す。掴んでいる間はウィンドウのどこでもカーソルに追従する。
         let watch = {
             let (state, handle) = (state.clone(), handle.clone());
@@ -571,7 +643,7 @@ impl RenderOnce for Scrollbars {
             .size_0()
         };
 
-        overlay.on_scroll_wheel(wheel).child(watch)
+        overlay.child(watch)
     }
 }
 

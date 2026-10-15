@@ -465,12 +465,14 @@ impl Render for Testing {
                 };
                 cx.notify();
             }))
-            .children((0..LIST_ROWS).map(|i| {
-                div()
-                    .h(gpui::px(ROW_PX))
-                    .px_2()
-                    .child(format!("Row {i} (scrolled {:.1})", self.scrolled))
-            }));
+            .child(
+                components::elastic("pull-list", &self.list).children((0..LIST_ROWS).map(|i| {
+                    div()
+                        .h(gpui::px(ROW_PX))
+                        .px_2()
+                        .child(format!("Row {i} (scrolled {:.1})", self.scrolled))
+                })),
+            );
 
         div()
             .size_full()
@@ -487,14 +489,9 @@ impl Render for Testing {
             .child(vr_row)
             .child(gpui_row)
             .child(field)
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .child(list)
-                    .child(components::scrollbars(&theme, "scroll-bars", &self.list)),
-            )
+            .child(div().relative().flex_1().min_h_0().child(list).child(
+                components::scrollbars(&theme, "scroll-bars", &self.list).pulled_by("pull-list"),
+            ))
     }
 }
 
@@ -911,18 +908,20 @@ impl Render for TestingScrollbar {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::DARK;
         // 領域の枠: 入れ物（relative）に、スクロールする本体と棒を重ねる。
-        let area = |id: &'static str, handle: &ScrollHandle, body: Stateful<Div>| {
-            div()
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .rounded(px(8.0))
-                .bg(rgba(theme.neutral_bg))
-                .child(body.size_full().track_scroll(handle))
-                .child(components::scrollbars(&theme, id, handle))
-        };
+        let area =
+            |id: &'static str, pull: &'static str, handle: &ScrollHandle, body: Stateful<Div>| {
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .rounded(px(8.0))
+                    .bg(rgba(theme.neutral_bg))
+                    .child(body.size_full().track_scroll(handle))
+                    .child(components::scrollbars(&theme, id, handle).pulled_by(pull))
+            };
         let vertical = area(
             "bars-v",
+            "pull-v",
             &self.vertical,
             div()
                 .id("scrollbar-v")
@@ -968,13 +967,17 @@ impl Render for TestingScrollbar {
                                             })),
                                     ),
                                 )
-                                .child(components::scrollbars(&theme, "bars-inner", &self.inner)),
+                                .child(
+                                    components::scrollbars(&theme, "bars-inner", &self.inner)
+                                        .pulled_by("pull-inner"),
+                                ),
                         )
                         .children((0..40).map(|i| cell(i).w_full())),
                 ),
         );
         let horizontal = area(
             "bars-h",
+            "pull-h",
             &self.horizontal,
             div()
                 .id("scrollbar-h")
@@ -992,6 +995,7 @@ impl Render for TestingScrollbar {
         );
         let both = area(
             "bars-both",
+            "pull-both",
             &self.both,
             components::free_scroll(div().id("scrollbar-both"))
                 .debug_selector(|| "scrollbar-both".into())
@@ -1404,7 +1408,65 @@ mod tests {
         });
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
-        assert!(top(cx) > rest, "先頭を越えて引くと中身が下へ引かれる");
+        let pulled = top(cx);
+        assert!(pulled > rest, "先頭を越えて引くと中身が下へ引かれる");
+        // 引き続けると上限なく引っ張れる（戻る力は離したときだけ）。
+        for _ in 0..20 {
+            cx.simulate_event(ScrollWheelEvent {
+                position: gpui::point(area.center().x, area.bottom() - px(20.0)),
+                delta: ScrollDelta::Pixels(gpui::point(px(0.0), px(40.0))),
+                modifiers: gpui::Modifiers::none(),
+                touch_phase: gpui::TouchPhase::Moved,
+            });
+        }
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(
+            top(cx) > pulled + px(100.0),
+            "引くほど伸びる: {:?}",
+            top(cx)
+        );
+        // 指を離すと戻り始める。
+        cx.simulate_event(ScrollWheelEvent {
+            position: gpui::point(area.center().x, area.bottom() - px(20.0)),
+            delta: ScrollDelta::Pixels(gpui::point(px(0.0), px(0.0))),
+            modifiers: gpui::Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Ended,
+        });
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert_eq!(top(cx), rest, "離したら戻る");
+    }
+
+    /// 入れ子の内側を引っ張っても、外側の棒は反応しない。
+    #[gpui::test]
+    fn pulling_the_inner_does_not_squash_the_outer_bar(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
+        cx.update(|_, cx| cx.set_global(design::Motion::default()));
+        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let outer = cx.debug_bounds("bars-v-v-thumb").unwrap().size.height;
+        let inner = cx.debug_bounds("bars-inner-v-thumb").unwrap().size.height;
+        let at = cx.debug_bounds("scrollbar-inner").unwrap().center();
+        cx.simulate_event(ScrollWheelEvent {
+            position: at,
+            delta: ScrollDelta::Pixels(gpui::point(px(0.0), px(40.0))),
+            modifiers: gpui::Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert_eq!(
+            cx.debug_bounds("bars-v-v-thumb").unwrap().size.height,
+            outer
+        );
+        assert!(
+            cx.debug_bounds("bars-inner-v-thumb").unwrap().size.height < inner,
+            "内側の棒は縮む"
+        );
     }
 
     /// 入れ子のスクロール要素の上でホイールを回すと、内側だけが動いて外側は動かない。
