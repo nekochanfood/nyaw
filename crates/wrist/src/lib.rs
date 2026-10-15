@@ -36,7 +36,7 @@ const DIAL_R: f32 = DIAL_C - spacing::LG - 8.0;
 
 /// 左手首に取り付いた状態で起動する wrist の起動仕様。
 pub fn spec() -> PanelSpec {
-    PanelSpec::new(Pose::IDENTITY, |_, _, cx| Wrist::new(cx))
+    PanelSpec::new(Pose::IDENTITY, |panel, _, cx| Wrist::new(panel, cx))
         .sized(SIZE_M, RES_PX)
         .in_view(IN_VIEW)
         .attached(Device::Controller(Hand::Left), WATCH_OFFSET)
@@ -49,12 +49,20 @@ pub struct Wrist {
 }
 
 impl Wrist {
-    pub fn new(cx: &mut Context<Self>) -> Self {
-        // 時計を進める: 1 秒ごとに描き直す。
+    pub fn new(panel: PanelId, cx: &mut Context<Self>) -> Self {
+        // 時計を進める: 1 秒ごとに描き直す（フレームループはビューの notify を知らないので `redraw` で頼む）。
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
-                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                let redraw = |_: &mut Self, cx: &mut Context<Self>| {
+                    cx.notify();
+                    cx.default_global::<PanelControl>()
+                        .panels
+                        .entry(panel)
+                        .or_default()
+                        .redraw = true;
+                };
+                if this.update(cx, redraw).is_err() {
                     return;
                 }
             }
@@ -166,7 +174,7 @@ mod tests {
     /// ボタンは Testing の召喚要求を積み、もう一度押すと閉じる要求を積む。
     #[gpui::test]
     fn toggle_panel_spawns_then_closes_home(cx: &mut TestAppContext) {
-        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(cx));
+        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(0, cx));
         cx.run_until_parked();
         let c = cx.debug_bounds("toggle-panel").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
@@ -183,7 +191,7 @@ mod tests {
     /// Testing が自分のボタンで閉じられた後は、トグルでもう一度召喚される。
     #[gpui::test]
     fn toggle_summons_again_after_home_closed_itself(cx: &mut TestAppContext) {
-        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(cx));
+        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(0, cx));
         cx.run_until_parked();
         wrist.update(cx, |w, _| w.testing = Some(3));
         cx.update(|_, cx| {
@@ -205,7 +213,7 @@ mod tests {
     /// 丸い文字盤の中央に、日付・時刻・ボタンを縦に並べる。
     #[gpui::test]
     fn layout_is_date_over_time_over_button(cx: &mut TestAppContext) {
-        let (_, cx) = cx.add_window_view(|_, cx| Wrist::new(cx));
+        let (_, cx) = cx.add_window_view(|_, cx| Wrist::new(0, cx));
         cx.run_until_parked();
         let [d, t, b] = ["date", "time", "toggle-panel"].map(|s| cx.debug_bounds(s).unwrap());
         assert!(d.bottom() <= t.top());

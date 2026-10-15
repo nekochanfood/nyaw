@@ -99,7 +99,12 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     config_path: Option<std::path::PathBuf>,
     /// 進めたフレームの数（[`Self::panel_frame_due`]）。
     frame: u64,
+    /// パネルごとの LOD（[`Self::panel_lod`]）。tick ごとに前の値から決める。
+    lods: Vec<u8>,
 }
+
+/// LOD を下げる（近づいて解像度を上げる）のは、閾値のこの割合まで近づいてから。
+const LOD_HYSTERESIS: f32 = 0.9;
 
 impl Kernel {
     /// ランタイムを選んで起動する。`requested` は `"--novr"` / `"novr"` のような指定（コマンドライン > 設定ファイル。決めるのは呼び出し側）。
@@ -161,6 +166,7 @@ impl<B: VrBackend> Kernel<B> {
             overlay,
             timing: TickTiming::default(),
             frame: 0,
+            lods: Vec::new(),
         }
     }
 
@@ -192,8 +198,17 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.panel(id)
     }
 
-    /// 距離による描画解像度の段階（LOD0〜3）。Mid は 2 / 4 / 8 m で切り替える。
+    /// 距離による描画解像度の段階（LOD0〜3）。Mid は 2 / 4 / 8 m で切り替える（下げるのは [`LOD_HYSTERESIS`] だけ近づいてから）。
+    /// [`Self::tick`] で決めた値（まだ tick していないパネルはその場で求める）。
     pub fn panel_lod(&self, id: PanelId) -> u8 {
+        self.lods
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| self.lod_for(id, None))
+    }
+
+    /// 前の段階 `prev` から、距離で次の段階を決める。境目の前後で行き来しないよう、下げる側は閾値を縮める。
+    fn lod_for(&self, id: PanelId, prev: Option<u8>) -> u8 {
         let near = match self.config.lod_quality {
             LodQuality::Off => return 0,
             LodQuality::Low => 1.0,
@@ -201,10 +216,18 @@ impl<B: VrBackend> Kernel<B> {
             LodQuality::High => 4.0,
         };
         let distance = self.panel(id).pose.position.distance(self.hmd().position);
-        [near, near * 2.0, near * 4.0]
-            .into_iter()
-            .filter(|&threshold| distance >= threshold)
-            .count() as u8
+        let count = |scale: f32| {
+            [near, near * 2.0, near * 4.0]
+                .into_iter()
+                .filter(|&threshold| distance >= threshold * scale)
+                .count() as u8
+        };
+        let (up, down) = (count(1.0), count(LOD_HYSTERESIS));
+        match prev {
+            // 上げるのは閾値ちょうどで、下げるのは縮めた閾値を割ってから。
+            Some(prev) => prev.clamp(up, down),
+            None => up,
+        }
     }
 
     /// このフレームでパネルを描き直してよいか。LOD0 は毎フレーム、LOD n は 2^n フレームに 1 回。
@@ -220,6 +243,11 @@ impl<B: VrBackend> Kernel<B> {
         let frame = self.subsystems.poll();
         let polled = Instant::now();
         let events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
+        // 段階が変わるとパネルの描き直し・描画先とランタイムのテクスチャの作り直しが走るので、境目で行き来させない。
+        let lods = (0..self.overlay.len())
+            .map(|id| self.lod_for(id, self.lods.get(id).copied()))
+            .collect();
+        self.lods = lods;
         self.timing = TickTiming {
             poll: polled - t,
             overlay: polled.elapsed(),
@@ -429,6 +457,19 @@ mod tests {
         k.apply(p, PanelCommand::Place(to));
         assert_eq!(k.status(p).attached, None);
         assert_eq!(k.panel(p).pose, k.hmd().leveled() * to);
+    }
+
+    /// 境目の前後で行き来しない: 上げるのは閾値で、下げるのは閾値の 9 割を割ってから。
+    #[test]
+    fn lod_does_not_flap_at_the_threshold() {
+        let (mut k, p) = kernel();
+        k.config.lod_quality = LodQuality::Low;
+        let pose = k.panel(p).pose;
+        for (distance, lod) in [(1.0, 1), (0.95, 1), (1.0, 1), (0.85, 0), (0.95, 0)] {
+            k.subsystems.backend.frame.hmd.position = pose.position + vr::Vec3::Z * distance;
+            k.tick();
+            assert_eq!(k.panel_lod(p), lod, "{distance}");
+        }
     }
 
     #[test]

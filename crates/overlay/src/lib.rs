@@ -139,8 +139,8 @@ const TRIGGER_STEADY: f32 = 0.97;
 /// トリガーを引く・離すときの手ブレでクリックが外れたりスワイプになったりしないように。
 // ponytail: 固定値。きつい・ゆるいと感じたらここを調整する。
 const CLICK_SLOP: f32 = 0.035;
-/// 掴み中のスティックを倒し切ったとき、1 tick に距離が変わる割合（遠いほど速い）と、効き始める倒し量。
-const PUSH: f32 = 0.02;
+/// 掴み中のスティックを倒し切ったとき、距離が変わる速さ（m/s。距離によらず一定）と、効き始める倒し量。
+const PUSH: f32 = 2.0;
 const PUSH_DEADZONE: f32 = 0.2;
 /// 掴んだパネルを手から離せる距離（m）。
 const GRAB_MIN: f32 = 0.15;
@@ -258,7 +258,14 @@ pub struct Overlay {
     dismissed: Vec<PanelId>,
     /// 親の暗転。
     dims: HashMap<PanelId, (Animation, Instant)>,
+    /// 前の tick の時刻と、そこからの経過（秒。[`TICK_MIN`]〜[`TICK_MAX`] に丸める）。
+    last_tick: Option<Instant>,
+    dt: f32,
 }
+
+/// 1 tick の経過の下限・上限（秒）。テストのように続けて tick しても 1 フレーム分は進め、止まった後に飛ばない。
+const TICK_MIN: f32 = 1.0 / 120.0;
+const TICK_MAX: f32 = 1.0 / 30.0;
 
 impl Overlay {
     pub fn new() -> Self {
@@ -292,6 +299,15 @@ impl Overlay {
             follow: None,
         });
         Ok(self.panels.len() - 1)
+    }
+
+    /// パネルの数（閉じたものも含む。PanelId は 0..len）。
+    pub fn len(&self) -> usize {
+        self.panels.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.panels.is_empty()
     }
 
     pub fn panel(&self, id: PanelId) -> &Panel {
@@ -336,7 +352,8 @@ impl Overlay {
     /// パネルが頭の向きから見えていそうか（ランタイムが教えてくれないときの見積もり。視野を広めに取った円錐とパネルを囲む球で判定）。
     pub fn in_view(&self, id: PanelId) -> bool {
         let p = &self.panels[id];
-        if p.closed {
+        // 隠しているポインタのパネルは最後に出した所に残るので、そちらを向くたびに見えた扱いで描き直していた。
+        if p.closed || p.surface.hidden() {
             return false;
         }
         let to = p.pose.position - self.hmd.position;
@@ -598,7 +615,13 @@ impl Overlay {
 
     /// [`Self::tick`] の poll の後半（ランタイムの待ちとオーバーレイの処理を別々に測るため分けてある）。
     pub fn tick_frame(&mut self, vr: &mut dyn VrBackend, frame: Frame) -> Vec<UiEvent> {
-        self.animate(vr, Instant::now());
+        let now = Instant::now();
+        self.animate(vr, now);
+        self.dt = self
+            .last_tick
+            .map_or(TICK_MIN, |t| (now - t).as_secs_f32())
+            .clamp(TICK_MIN, TICK_MAX);
+        self.last_tick = Some(now);
         self.quit = frame.quit;
         self.hmd = frame.hmd;
         self.steadied = frame.stabilize_pointer && self.pointer_smoothing() > 0.0;
@@ -728,7 +751,7 @@ impl Overlay {
                 } else {
                     c.scroll.y
                 };
-                let mut new_len = len * (1.0 + PUSH * push);
+                let mut new_len = len + PUSH * push * self.dt;
                 // トリガーを押しながら手を前後に動かすと拡大縮小。パネルは手に付いて動かず、その場に留める。
                 let p = &mut self.panels[id];
                 if c.select {
@@ -2060,6 +2083,18 @@ mod tests {
         (vr, ov, laser, cursor)
     }
 
+    /// 隠したポインタは最後に出した所（目の前）に残っても見えない扱い（描き直さない）。
+    #[test]
+    fn hidden_pointer_is_not_in_view() {
+        let (mut vr, mut ov, _, cursor) = with_pointers();
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        assert!(ov.in_view(cursor));
+        vr.backend.frame.controllers.clear();
+        ov.tick(&mut vr);
+        assert!(!ov.in_view(cursor));
+    }
+
     #[test]
     fn laser_stops_short_of_hit_and_cursor_floats_in_front_of_panel() {
         let (mut vr, mut ov, laser, cursor) = with_pointers();
@@ -2352,6 +2387,29 @@ mod tests {
             ov.tick(&mut vr);
         }
         assert!((dist(&ov) - GRAB_MIN).abs() < 1e-4, "{}", dist(&ov));
+    }
+
+    /// 奥行きの変化は距離によらず一定の速さ（近くでも遅くならない）。
+    #[test]
+    fn stick_push_is_linear_in_distance() {
+        let (mut vr, mut ov) = setup();
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        let dist = |ov: &Overlay| -ov.panel(0).pose.position.z;
+        let mut pull = |vr: &mut Subsystems<MockBackend>, ov: &mut Overlay| {
+            controller(vr, Pose::IDENTITY, &[("squeeze/value", 1.0), ("thumbstick/y", -1.0)]);
+            for _ in 0..10 {
+                ov.tick(vr);
+            }
+            controller(vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+            settle(vr, ov);
+        };
+        let d0 = dist(&ov);
+        pull(&mut vr, &mut ov);
+        let d1 = dist(&ov);
+        pull(&mut vr, &mut ov);
+        let d2 = dist(&ov);
+        assert!(((d0 - d1) - (d1 - d2)).abs() < 0.02, "{d0} {d1} {d2}");
     }
 
     #[test]

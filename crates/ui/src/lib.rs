@@ -277,6 +277,9 @@ pub struct PanelState {
     pub status: PanelStatus,
     /// 見えている間は毎フレーム描き直す（アニメーションし続けるビューが立てる）。
     pub live: bool,
+    /// 次のフレームで 1 回描き直す（タイマーなどで自分から変わるビューが立て、フレームループが下ろす）。
+    /// 何もしていないパネルの推測の描き直し（[`IDLE_REDRAW`]）を待たずに、変わったときだけ描ける。
+    pub redraw: bool,
 }
 
 /// ビューとフレームループの受け渡し口（GPUI のグローバル）。ビューは対象パネルの `commands` に積み、
@@ -428,6 +431,8 @@ pub(crate) const IDLE_REDRAW: Duration = Duration::from_millis(250);
 /// レーザーや他のアプリのオーバーレイの分を残す。ランタイムの上限（OpenXR のレイヤー数など）が小さければそちら。
 /// 超えた分は開かずにエラーを出す。
 pub const MAX_PANELS: usize = 64;
+/// ホバーだけの入力で描き直す間隔の下限（約 40Hz）。
+const HOVER_REDRAW: Duration = Duration::from_millis(25);
 /// 描き直しても絵が変わらないパネルの、描き直す間隔の上限（時計の分の切り替わりはこの遅れで見える）。
 const IDLE_MAX: Duration = Duration::from_secs(1);
 
@@ -670,6 +675,8 @@ pub fn run_with(
             let mut idle: Vec<Duration> = vec![IDLE_REDRAW; windows.len()];
             // パネルごとの、前のフレームで見えていたか（隠れていた・視野の外だったパネルは見えた瞬間に描き直す）。
             let mut seen: Vec<bool> = vec![false; windows.len()];
+            // ホバーだけの Move を受けて、まだ描いていないパネル。
+            let mut hover_pending = std::collections::HashSet::new();
             let mut render_sizes = HashMap::new();
             let limit = kernel
                 .max_overlays()
@@ -767,7 +774,24 @@ pub fn run_with(
                         drawn[panel] = None;
                     }
                     seen[panel] = visible;
-                    let forced = !inputs.is_empty() || drawn[panel].is_none();
+                    // ボタンを押していない Move だけなら、変わりうるのはホバーの見た目だけ（カーソルは別のパネルで毎フレーム動く）。
+                    // 描き直しを HOVER_REDRAW ごとに間引き、間引いた分は後で描く（読み戻しはゲーム中 1 回数 ms 掛かる）。
+                    let hover_only = !inputs.is_empty()
+                        && inputs.iter().all(|i| match i {
+                            PlatformInput::MouseMove(m) => m.pressed_button.is_none(),
+                            _ => false,
+                        });
+                    if hover_only {
+                        hover_pending.insert(panel);
+                    }
+                    let hover_due = hover_pending.contains(&panel)
+                        && drawn[panel].is_none_or(|t| t.elapsed() >= HOVER_REDRAW);
+                    let forced = (!inputs.is_empty() && !hover_only)
+                        || hover_due
+                        || drawn[panel].is_none();
+                    if forced {
+                        hover_pending.remove(&panel);
+                    }
                     // 遠い（LOD1 以上の）パネルはフレームを間引いて描く。
                     let due = kernel.panel_frame_due(panel);
                     let idle_due = !forced
@@ -778,19 +802,39 @@ pub fn run_with(
                     idle_slot &= !idle_due;
                     let mut redraw = forced || idle_due;
                     let mut changed = false;
+                    let mut asked = false;
+                    let mut others = false;
                     let Ok(frame) = cx.update_window(window, |_, window, cx| {
                         let t = Instant::now();
                         for input in inputs {
                             window.dispatch_event(input, cx);
                         }
+                        let before = cx
+                            .try_global::<PanelControl>()
+                            .and_then(|c| c.panels.get(&panel))
+                            .map(|s| s.status.clone());
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
+                        // LOD はそのパネルだけの状態。動かして段階が変わるたびにほかのパネルまで描き直させない。
+                        let lod = kernel.panel_lod(panel);
+                        others = changed
+                            && before.is_none_or(|b| {
+                                PanelStatus { lod, ..b } != kernel.status(panel)
+                            });
                         // 部品のトランジションが動いている間は、毎フレーム描き直す。
                         let transitioning = cx.has_global::<design::Motion>()
                             && cx
                                 .global_mut::<design::Motion>()
                                 .animating
                                 .remove(&window.window_handle().window_id());
+                        // 頼まれた描き直しは、見えていなければ捨てる（見えた瞬間に描き直す）。
+                        asked = cx.has_global::<PanelControl>()
+                            && cx
+                                .global_mut::<PanelControl>()
+                                .panels
+                                .get_mut(&panel)
+                                .is_some_and(|s| std::mem::take(&mut s.redraw));
+                        redraw |= asked && visible;
                         if visible
                             && (transitioning
                                 || cx
@@ -845,7 +889,7 @@ pub fn run_with(
                         // 閉じたパネルの最後の描画（1 枚 2MB 近い）は手放す。
                         last[panel] = None;
                     }
-                    if changed {
+                    if others {
                         // 状態はどのパネルにも表示されうるので、ほかのパネルも描き直す（1 フレームに 1 枚ずつ）。
                         for (p, t) in drawn.iter_mut().enumerate() {
                             if p != panel
@@ -870,8 +914,11 @@ pub fn run_with(
                         Some(Ok(f)) => {
                             drawn[panel] = Some(Instant::now());
                             let same = last[panel].as_ref() == Some(&f);
+                            // 頼まれて描いた分は推測の間隔を縮めない（自分で頼むビューは推測で描かなくてよい）。
                             idle[panel] = if idle_due && same && !changed {
                                 (idle[panel] * 2).min(IDLE_MAX)
+                            } else if asked && !changed {
+                                idle[panel]
                             } else {
                                 IDLE_REDRAW
                             };
