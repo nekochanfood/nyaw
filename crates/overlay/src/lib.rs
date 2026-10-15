@@ -113,8 +113,8 @@ const TOOLTIP_LIFT: f32 = 0.012;
 const ANCHOR_BAND: f32 = 0.2;
 /// ドラッグの見た目をパネル面から浮かせる距離（m）。カーソルより奥。
 const DRAG_LIFT: f32 = 0.005;
-/// 掴み移動で、目標へ 1 tick に近づく割合。目標との差が [`SNAP`] 未満なら目標に合わせる。
-// ponytail: tick 単位なのでリフレッシュレートで速さが変わる（144Hz で約 0.1 秒）。気になれば経過時間で決める。
+/// 掴み移動で、目標へ 1/120 秒（[`TICK_MIN`]）に近づく割合。経過時間で換算するので、フレームが落ちても追いつく速さは変わらない。
+/// 目標との差が [`SNAP`] 未満なら目標に合わせる。
 const SMOOTH: f32 = 0.3;
 const SNAP: f32 = 1e-5;
 /// 子が開いている間の親の暗さ（黒との混ぜ具合）。子に目が行くよう、読める程度に落とす。
@@ -780,7 +780,7 @@ impl Overlay {
                     at,
                     facing(at, frame.hmd.position, Vec3::Y).unwrap_or(p.pose.orientation),
                 );
-                p.pose = approach(p.pose, target);
+                p.pose = approach(p.pose, target, self.dt);
                 st.ray = Some(Ray {
                     hand: c.aim,
                     aim,
@@ -1082,16 +1082,17 @@ fn anchor(prev: Anchor, eye: Vec3, hand: Vec3, point: Vec3, up: Vec3) -> Anchor 
     }
 }
 
-/// `from` から `to` へ [`SMOOTH`] だけ近づける。十分近ければ `to`。
-fn approach(from: Pose, to: Pose) -> Pose {
+/// `from` から `to` へ、経過 `dt` 秒の分（[`SMOOTH`]）だけ近づける。十分近ければ `to`。
+fn approach(from: Pose, to: Pose, dt: f32) -> Pose {
     if from.position.distance(to.position) < SNAP
         && from.orientation.angle_between(to.orientation) < SNAP
     {
         return to;
     }
+    let k = 1.0 - (1.0 - SMOOTH).powf(dt / TICK_MIN);
     Pose::new(
-        from.position.lerp(to.position, SMOOTH),
-        from.orientation.slerp(to.orientation, SMOOTH),
+        from.position.lerp(to.position, k),
+        from.orientation.slerp(to.orientation, k),
     )
 }
 
@@ -2270,6 +2271,8 @@ mod tests {
     #[test]
     fn grabbed_panel_faces_head_and_stays_level() {
         let (mut vr, mut ov) = setup();
+        // 手ブレ抑えが効くと掴んだパネルは抑えたレーザーに付いて遅れるので、ここでは向きだけを確かめる。
+        ov.set_pointer_smoothing(0.0);
         controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
         ov.tick(&mut vr);
         // 頭を傾けて横にずらし、手首もひねる。パネルは頭の方を向き、傾かない。
@@ -2283,7 +2286,8 @@ mod tests {
         let p = ov.panel(0).pose;
         assert!(
             p.position
-                .abs_diff_eq(aim.transform_point(Vec3::new(0.0, 0.0, -1.0)), 1e-5)
+                .abs_diff_eq(aim.transform_point(Vec3::new(0.0, 0.0, -1.0)), 1e-5),
+            "{} {}", p.position, aim.transform_point(Vec3::new(0.0, 0.0, -1.0))
         );
         let normal = p.orientation * Vec3::Z;
         let to_head = (vr.backend.frame.hmd.position - p.position).normalize();
@@ -2387,6 +2391,15 @@ mod tests {
             ov.tick(&mut vr);
         }
         assert!((dist(&ov) - GRAB_MIN).abs() < 1e-4, "{}", dist(&ov));
+    }
+
+    /// 掴み移動の追いつきは経過時間で決まる: 2 tick 分の時間を 1 回で進めても同じ所に来る。
+    #[test]
+    fn approach_depends_on_elapsed_time_not_ticks() {
+        let (from, to) = (Pose::IDENTITY, Pose::new(Vec3::X, Quat::IDENTITY));
+        let twice = approach(approach(from, to, TICK_MIN), to, TICK_MIN);
+        let once = approach(from, to, TICK_MIN * 2.0);
+        assert!(once.position.abs_diff_eq(twice.position, 1e-6));
     }
 
     /// 奥行きの変化は距離によらず一定の速さ（近くでも遅くならない）。
