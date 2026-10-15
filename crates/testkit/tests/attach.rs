@@ -16,7 +16,7 @@ fn panel_on_left_hand_follows_it_and_right_hand_clicks(cx: &mut TestAppContext) 
     assert_eq!(expected, Vec3::new(-0.4, 0.1, -0.8));
     assert!(kit.panel_pose().position.abs_diff_eq(expected, 1e-4));
     assert!(
-        kit.kernel.vr.overlays[0]
+        kit.kernel.subsystems.backend.overlays[0]
             .pose
             .position
             .abs_diff_eq(expected, 1e-4)
@@ -31,14 +31,14 @@ fn panel_on_hmd_follows_head_and_stays_clickable(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::default());
     kit.click("attach-hmd"); // 1m straight in front of the face
     // Stand up and turn right.
-    kit.kernel.vr.frame.hmd = Pose::new(
+    kit.kernel.subsystems.backend.frame.hmd = Pose::new(
         Vec3::new(0.0, 1.6, 0.0),
         Quat::from_rotation_y(-std::f32::consts::FRAC_PI_2),
     );
     kit.step();
     let expected = Vec3::new(1.0, 1.6, 0.0);
     assert!(
-        kit.kernel.vr.overlays[0]
+        kit.kernel.subsystems.backend.overlays[0]
             .pose
             .position
             .abs_diff_eq(expected, 1e-4)
@@ -52,14 +52,14 @@ fn panel_on_hmd_follows_head_and_stays_clickable(cx: &mut TestAppContext) {
 fn panel_on_tracker_follows_it(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::default());
     // Visible trackers appear as Testing buttons, so press that.
-    kit.kernel.vr.frame.trackers = vec![("LHR-WAIST".into(), Pose::IDENTITY)];
+    kit.kernel.subsystems.backend.frame.trackers = vec![("LHR-WAIST".into(), Pose::IDENTITY)];
     kit.step().click("attach-tracker");
     let waist = Pose::new(Vec3::new(0.2, 0.9, 0.0), Quat::IDENTITY);
-    kit.kernel.vr.frame.trackers[0].1 = waist;
+    kit.kernel.subsystems.backend.frame.trackers[0].1 = waist;
     kit.step();
     let expected = (waist * HAND_OFFSET).position;
     assert!(
-        kit.kernel.vr.overlays[0]
+        kit.kernel.subsystems.backend.overlays[0]
             .pose
             .position
             .abs_diff_eq(expected, 1e-4)
@@ -87,7 +87,7 @@ fn panel_on_right_hand_is_operated_by_left_hand(cx: &mut TestAppContext) {
     let hand = Pose::new(Vec3::new(0.3, 0.0, -0.4), Quat::IDENTITY);
     kit.hand(Hand::Right).move_hand(hand);
     assert!(
-        kit.kernel.vr.overlays[0]
+        kit.kernel.subsystems.backend.overlays[0]
             .pose
             .position
             .abs_diff_eq((hand * HAND_OFFSET).position, 1e-4)
@@ -103,7 +103,7 @@ fn dragging_hmd_panel_keeps_new_offset(cx: &mut TestAppContext) {
     kit.click("attach-hmd"); // 1m straight in front of the face
     let to = Vec3::new(0.3, 0.2, -1.2);
     kit.drag_panel(to);
-    kit.kernel.vr.frame.hmd = Pose::new(Vec3::new(0.0, 0.5, 0.0), Quat::IDENTITY);
+    kit.kernel.subsystems.backend.frame.hmd = Pose::new(Vec3::new(0.0, 0.5, 0.0), Quat::IDENTITY);
     kit.step();
     assert!(
         kit.panel_pose()
@@ -116,18 +116,18 @@ fn dragging_hmd_panel_keeps_new_offset(cx: &mut TestAppContext) {
 fn detached_and_locked_panel_stays_fixed_in_space(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::default());
     kit.click("attach-hmd"); // 1m straight in front of the face
-    kit.kernel.vr.frame.hmd = Pose::new(Vec3::new(0.0, 0.3, 0.0), Quat::IDENTITY);
+    kit.kernel.subsystems.backend.frame.hmd = Pose::new(Vec3::new(0.0, 0.3, 0.0), Quat::IDENTITY);
     kit.step();
     // Fix it in space at the current position: it does not move even if grabbed or if the head moves.
     let fixed = Vec3::new(0.0, 0.3, -1.0);
     kit.click("detach")
         .click("lock")
         .drag_panel(Vec3::new(0.5, 0.0, -0.5));
-    kit.kernel.vr.frame.hmd = Pose::new(Vec3::new(1.0, 0.3, 0.0), Quat::IDENTITY);
+    kit.kernel.subsystems.backend.frame.hmd = Pose::new(Vec3::new(1.0, 0.3, 0.0), Quat::IDENTITY);
     kit.step();
     assert!(kit.panel_pose().position.abs_diff_eq(fixed, 1e-4));
     assert!(
-        kit.kernel.vr.overlays[0]
+        kit.kernel.subsystems.backend.overlays[0]
             .pose
             .position
             .abs_diff_eq(fixed, 1e-4)

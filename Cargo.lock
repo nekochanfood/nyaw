@@ -3641,12 +3641,10 @@ name = "kernel"
 version = "2026.0.1"
 dependencies = [
  "logger",
- "os",
  "overlay",
- "rendering",
  "serde",
+ "subsystems",
  "toml 0.9.12+spec-1.1.0",
- "vr",
 ]
 
 [[package]]
@@ -4368,7 +4366,6 @@ dependencies = [
  "beam",
  "kernel",
  "logger",
- "os",
  "profiler",
  "testing",
  "ui",
@@ -4872,19 +4869,14 @@ dependencies = [
 [[package]]
 name = "os"
 version = "2026.0.1"
-dependencies = [
- "logger",
-]
 
 [[package]]
 name = "overlay"
 version = "2026.0.1"
 dependencies = [
  "animato",
- "input",
  "logger",
- "rendering",
- "vr",
+ "subsystems",
 ]
 
 [[package]]
@@ -6592,6 +6584,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "subsystems"
+version = "2026.0.1"
+dependencies = [
+ "input",
+ "logger",
+ "os",
+ "rendering",
+ "vr",
 ]
 
 [[package]]

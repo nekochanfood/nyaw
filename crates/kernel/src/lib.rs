@@ -1,18 +1,19 @@
 //! カーネル: 一点集中型の中枢。ブートローダー（`main`）が起こし、UI や画面はこれだけを相手にする。
 //!
-//! 入れ子の層: 設定（[`config`]）・描画（[`rendering`]）を内に持ち、下位の層（ランタイム `vr`・入力 `input`・オーバーレイ `overlay`）の状態を
-//! 1 か所で持つ。フレームの進行（[`Kernel::tick`]）・パネルへの操作（[`Kernel::apply`]）・描画結果の受け取り
-//! （[`Kernel::submit`]）をシステムコールのように提供する。上位層が下位層を直接組み立てたり、状態を別々に持ったりしない。
-//! 上位層が語彙として使う `vr` / `overlay` の型は再エクスポートする。
+//! 最下部の [`subsystems`] が OS・ランタイム・入力・描画の差を吸収し、その上で設定とパネル管理を行う。
+//! フレームの進行（[`Kernel::tick`]）・パネルへの操作（[`Kernel::apply`]）・描画結果の受け取り
+//! （[`Kernel::submit`]）を提供する。UI や画面は下位層を直接組み立てない。
 
 pub mod config;
-pub use rendering;
+pub use subsystems::{self, Subsystems};
+pub use subsystems::{rendering, vr};
 
 use std::time::{Duration, Instant};
+use subsystems::os;
 
 pub use config::{Config, LodQuality, PointerMode};
 pub use overlay::{self, Overlay, Panel, PanelId, Pointer, PointerEvent, UiEvent};
-pub use vr::{self, Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
+pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
 /// [`Kernel::tick`] 1 回の内訳。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -69,7 +70,7 @@ pub struct PanelStatus {
 pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     pub config: Config,
     /// テストがモックを直接いじるために公開している。本番コードはメソッド経由で使う。
-    pub vr: B,
+    pub subsystems: Subsystems<B>,
     overlay: Overlay,
     timing: TickTiming,
     pointer_mode: PointerMode,
@@ -87,12 +88,11 @@ impl Kernel {
             Some("--openvr" | "openvr") => Some(Runtime::OpenVr),
             _ => None,
         };
-        let gpu = config.gpu.emulator;
-        let vr = match vr::connect(prefer, gpu) {
+        let vr = match vr::connect(prefer, config.gpu.emulator) {
             Ok(b) => b,
             Err(e) if prefer.is_none() => {
                 logger::warn!("failed to connect to VR runtime, starting novr", error = e);
-                vr::connect(Some(Runtime::NoVr), gpu).expect("novr always connects")
+                vr::connect(Some(Runtime::NoVr), config.gpu.emulator).expect("novr always connects")
             }
             Err(e) => {
                 logger::error!("failed to connect to VR runtime", runtime = ?prefer, error = e);
@@ -113,6 +113,7 @@ impl<B: VrBackend> Kernel<B> {
         if !os::high_gpu_priority() {
             logger::warn!("cannot raise GPU scheduling priority");
         }
+        let subsystems = Subsystems::with_backend(vr);
         let mut overlay = Overlay::new();
         if let Some(s) = config.pointer_smoothing {
             overlay.set_pointer_smoothing(s);
@@ -123,7 +124,7 @@ impl<B: VrBackend> Kernel<B> {
         Self {
             pointer_mode,
             config,
-            vr,
+            subsystems,
             overlay,
             timing: TickTiming::default(),
             frame: 0,
@@ -131,7 +132,7 @@ impl<B: VrBackend> Kernel<B> {
     }
 
     pub fn runtime(&self) -> Runtime {
-        self.vr.runtime()
+        self.subsystems.backend.runtime()
     }
 
     /// レーザーのエミュレート方式。UI がポインタイベントをマウス・タッチのどちらとして流すかを決める。
@@ -147,7 +148,7 @@ impl<B: VrBackend> Kernel<B> {
         resolution: (u32, u32),
     ) -> Result<PanelId, VrError> {
         self.overlay
-            .add_panel(&mut self.vr, key, pose, size, resolution)
+            .add_panel(&mut self.subsystems.backend, key, pose, size, resolution)
     }
 
     pub fn panel(&self, id: PanelId) -> &Panel {
@@ -179,13 +180,13 @@ impl<B: VrBackend> Kernel<B> {
     pub fn tick(&mut self) -> Vec<UiEvent> {
         let t = Instant::now();
         self.frame += 1;
-        let frame = self.vr.poll();
+        let frame = self.subsystems.poll();
         let polled = Instant::now();
-        let events = self.overlay.tick_frame(&mut self.vr, frame);
+        let events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
         self.timing = TickTiming {
             poll: polled - t,
             overlay: polled.elapsed(),
-            compositor: self.vr.compositor_time(),
+            compositor: self.subsystems.backend.compositor_time(),
         };
         events
     }
@@ -197,7 +198,7 @@ impl<B: VrBackend> Kernel<B> {
 
     /// フレームの周期が決まっていれば（novr）その長さ。プロファイラがドロップを数える基準に使う。
     pub fn frame_interval(&self) -> Option<Duration> {
-        self.vr.frame_interval()
+        self.subsystems.backend.frame_interval()
     }
 
     /// `hand` が押している間のポインタのキャプチャを外す（タッチの長押しでドラッグになったとき。ほかのパネルへ運べるように）。
@@ -211,14 +212,15 @@ impl<B: VrBackend> Kernel<B> {
         let p = self.overlay.panel(panel);
         !p.closed
             && self
-                .vr
+                .subsystems
+                .backend
                 .overlay_seen(p.overlay_id())
                 .unwrap_or_else(|| self.overlay.in_view(panel))
     }
 
     /// ランタイムが同時に出せるオーバーレイの数の上限（[`VrBackend::max_overlays`]）。
     pub fn max_overlays(&self) -> Option<usize> {
-        self.vr.max_overlays()
+        self.subsystems.backend.max_overlays()
     }
 
     /// 最後の tick の HMD の姿勢。
@@ -239,7 +241,7 @@ impl<B: VrBackend> Kernel<B> {
     /// パネルの描画結果（RGBA8）をランタイムへ送る。
     pub fn submit(&mut self, panel: PanelId, width: u32, height: u32, rgba: &[u8]) {
         self.overlay
-            .submit(&mut self.vr, panel, width, height, rgba)
+            .submit(&mut self.subsystems.backend, panel, width, height, rgba)
     }
 
     pub fn apply(&mut self, panel: PanelId, cmd: PanelCommand) {
@@ -248,13 +250,18 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Detach => self.overlay.detach(panel),
             PanelCommand::Lock(locked) => self.overlay.set_locked(panel, locked),
             PanelCommand::Animated(animated) => {
-                self.overlay.set_animated(&mut self.vr, panel, animated)
+                self.overlay
+                    .set_animated(&mut self.subsystems.backend, panel, animated)
             }
-            PanelCommand::Close => self.overlay.close(&mut self.vr, panel),
+            PanelCommand::Close => self.overlay.close(&mut self.subsystems.backend, panel),
             PanelCommand::Pointer(hand, part) => {
-                self.overlay.set_pointer(&mut self.vr, panel, hand, part)
+                self.overlay
+                    .set_pointer(&mut self.subsystems.backend, panel, hand, part)
             }
-            PanelCommand::Resize(w, h) => self.overlay.set_resolution(&mut self.vr, panel, (w, h)),
+            PanelCommand::Resize(w, h) => {
+                self.overlay
+                    .set_resolution(&mut self.subsystems.backend, panel, (w, h))
+            }
             PanelCommand::PointerMode(m) => {
                 self.pointer_mode = m;
                 self.overlay.set_capture(m == PointerMode::Touch);
@@ -269,7 +276,7 @@ impl<B: VrBackend> Kernel<B> {
     pub fn status(&self, panel: PanelId) -> PanelStatus {
         let p = self.overlay.panel(panel);
         PanelStatus {
-            runtime: Some(self.vr.runtime()),
+            runtime: Some(self.subsystems.backend.runtime()),
             attached: p.attached.as_ref().map(|(d, _)| d.clone()),
             locked: p.locked,
             animated: p.animated,
@@ -296,8 +303,14 @@ mod tests {
 
     #[test]
     fn boot_novr_by_name() {
-        let k = Kernel::boot(Some("--novr"), Config::default()).unwrap();
-        assert_eq!(k.runtime(), Runtime::NoVr);
+        for name in ["novr", "--novr"] {
+            for gpu in [false, true] {
+                let mut config = Config::default();
+                config.gpu.emulator = gpu;
+                let k = Kernel::boot(Some(name), config).unwrap();
+                assert_eq!(k.runtime(), Runtime::NoVr);
+            }
+        }
     }
 
     #[test]
@@ -331,7 +344,7 @@ mod tests {
         let resolution = k.panel(p).resolution;
         let size = k.panel(p).size;
         k.config.lod_quality = LodQuality::Off;
-        k.vr.frame.hmd.position = pose.position + vr::Vec3::Z * 100.0;
+        k.subsystems.backend.frame.hmd.position = pose.position + vr::Vec3::Z * 100.0;
         k.tick();
         assert_eq!(k.panel_lod(p), 0);
         for (quality, near) in [
@@ -349,7 +362,7 @@ mod tests {
                 (100.0, 3),
                 (0.5, 0),
             ] {
-                k.vr.frame.hmd.position = pose.position + vr::Vec3::Z * distance;
+                k.subsystems.backend.frame.hmd.position = pose.position + vr::Vec3::Z * distance;
                 k.tick();
                 assert_eq!(k.panel_lod(p), lod, "{quality:?}: {distance}");
                 let due = (0..8)
@@ -371,7 +384,7 @@ mod tests {
         k.apply(p, PanelCommand::Resize(8, 2));
         assert_eq!(k.panel(p).resolution, (8, 2));
         assert_eq!(k.panel(p).size, Vec2::new(2.0, 0.5));
-        assert_eq!(k.vr.overlays[0].width_m, 2.0);
+        assert_eq!(k.subsystems.backend.overlays[0].width_m, 2.0);
     }
 
     #[test]
@@ -397,7 +410,7 @@ mod tests {
         let (mut k, p) = kernel();
         k.apply(p, PanelCommand::Animated(false));
         k.submit(p, 1, 1, &[1, 2, 3, 4]);
-        let tex = k.vr.overlays[0].texture.as_ref().unwrap();
+        let tex = k.subsystems.backend.overlays[0].texture.as_ref().unwrap();
         assert_eq!(tex.pixel(0, 0), [1, 2, 3, 4]);
     }
 
@@ -411,13 +424,17 @@ mod tests {
         assert!(!k.status(p).animated && k.status(other).animated);
         k.submit(p, 1, 1, &[255; 4]);
         k.submit(other, 1, 1, &[255; 4]);
-        assert_eq!(k.vr.overlays[p].width_m, 1.0);
-        assert_eq!(k.vr.overlays[other].width_m, 0.75);
+        assert_eq!(k.subsystems.backend.overlays[p].width_m, 1.0);
+        assert_eq!(k.subsystems.backend.overlays[other].width_m, 0.75);
         k.apply(p, PanelCommand::Close);
-        assert!(k.status(p).closed && !k.vr.overlays[p].visible);
+        assert!(k.status(p).closed && !k.subsystems.backend.overlays[p].visible);
         k.apply(other, PanelCommand::Animated(false));
         assert_eq!(
-            k.vr.overlays[other].texture.as_ref().unwrap().pixel(0, 0),
+            k.subsystems.backend.overlays[other]
+                .texture
+                .as_ref()
+                .unwrap()
+                .pixel(0, 0),
             [255; 4]
         );
     }

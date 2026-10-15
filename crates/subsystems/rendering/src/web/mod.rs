@@ -41,8 +41,8 @@ pub fn pump_events() {
     }
 }
 
-/// パネル用の非表示 WebView。描画停止の抑制、透過、描画領域をまとめて設定する。
-pub fn panel_window<'a>(
+/// 非表示で読み戻せる WebView にする。透過・フォーカス等の表示方針は呼び出し側が指定する。
+pub fn offscreen_window<'a>(
     builder: WebviewWindowBuilder<'a, Wry, tauri::App<Wry>>,
     resolution: (u32, u32),
 ) -> WebviewWindowBuilder<'a, Wry, tauri::App<Wry>> {
@@ -54,9 +54,6 @@ pub fn panel_window<'a>(
         .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
     // 枠を消すと Windows の WebView の描画領域が縮むため残す。
     headless(builder)
-        .transparent(true)
-        .focused(false)
-        .skip_taskbar(true)
 }
 
 /// WebView の独自スキームの OS 差を吸収する。

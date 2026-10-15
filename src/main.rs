@@ -5,7 +5,7 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kernel::{Kernel, config};
+use kernel::{Kernel, config, subsystems::os};
 use logger::{Level, Logger, StderrSink};
 
 fn main() -> ExitCode {
@@ -61,7 +61,7 @@ impl Args {
 /// 作れなくても計測と表示はする。
 fn start_profiler(path: Option<PathBuf>) -> profiler::Profiler {
     let path = path.or_else(|| os::log_dir().map(|d| d.join("profile.csv")));
-    let out = path.as_ref().and_then(|p| match os::create_rotated(p) {
+    let out = path.as_ref().and_then(|p| match logger::create_rotated(p) {
         Ok(f) => Some(Box::new(BufWriter::new(f)) as Box<dyn Write>),
         Err(e) => {
             logger::warn!(
@@ -83,10 +83,10 @@ fn start_profiler(path: Option<PathBuf>) -> profiler::Profiler {
 
 /// 標準エラー出力と `os::log_dir()/nyaw.log` へ出すロガーを設定する。レベルは `NYAW_LOG` > 設定ファイルの `log`（既定 info）。
 fn init_logger(from_config: Option<String>) {
-    let requested = os::log_level().or(from_config);
+    let requested = config::log_level().or(from_config);
     let level = requested.as_deref().and_then(|s| s.parse().ok());
     let path = os::log_dir().map(|d| d.join("nyaw.log"));
-    let file = path.as_ref().map(os::FileSink::create);
+    let file = path.as_ref().map(logger::FileSink::create);
 
     let mut logger = Logger::new(level.unwrap_or(Level::Info)).sink(StderrSink);
     let mut file_error = None;

@@ -5,11 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-rendering.workspace = true
-vr.workspace = true
-input.workspace = true
+subsystems.workspace = true
 logger.workspace = true
 animato = { version = "1.7.2", default-features = false, features = ["tween"] }
 
 [dev-dependencies]
-vr = { workspace = true, features = ["test-support"] }
+subsystems = { workspace = true, features = ["test-support"] }

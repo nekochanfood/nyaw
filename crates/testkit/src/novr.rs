@@ -20,7 +20,7 @@ const SCREEN: (u32, u32) = (1280, 720);
 pub struct NoVrKit<'a, V: 'static> {
     cx: &'a mut VisualTestContext,
     panels: Panels<V>,
-    /// May be inspected directly (e.g. to check panel state). The emulator is `kernel.vr`.
+    /// May be inspected directly (e.g. to check panel state). The emulator is `kernel.subsystems.backend`.
     pub kernel: Kernel<Emulator>,
     pub panel: PanelId,
     /// Shows the emulator screen (`NYAW_E2E_WATCH`).
@@ -95,14 +95,15 @@ impl<'a, V: Render> NoVrKit<'a, V> {
             .panel(self.panel)
             .pixel_to_world(Vec2::new(c.x.into(), c.y.into()));
         self.kernel
-            .vr
+            .subsystems
+            .backend
             .project(world)
             .unwrap_or_else(|| panic!("element {selector:?} is behind the eye"))
     }
 
     /// The emulator screen (the image visible to the user).
     pub fn screenshot(&mut self) -> Frame {
-        let (width, height, rgba) = self.kernel.vr.screenshot();
+        let (width, height, rgba) = self.kernel.subsystems.backend.screenshot();
         Frame {
             width,
             height,
@@ -119,24 +120,24 @@ impl<'a, V: Render> NoVrKit<'a, V> {
 
     /// Moves the mouse to a point on screen (`None` moves it off screen) and steps one frame.
     pub fn move_mouse(&mut self, at: Option<Vec2>) -> &mut Self {
-        self.kernel.vr.point(at);
+        self.kernel.subsystems.backend.point(at);
         self.step()
     }
 
     /// Presses a mouse button (left = trigger, right = grip) and steps one frame.
     pub fn press(&mut self, button: Button) -> &mut Self {
-        self.kernel.vr.set_button(button, true);
+        self.kernel.subsystems.backend.set_button(button, true);
         self.step()
     }
 
     pub fn release(&mut self, button: Button) -> &mut Self {
-        self.kernel.vr.set_button(button, false);
+        self.kernel.subsystems.backend.set_button(button, false);
         self.step()
     }
 
     /// Tilts a stick (left hand = WASD, right hand = arrow keys) and steps one frame. Use `Vec2::ZERO` to release.
     pub fn stick(&mut self, hand: Hand, value: Vec2) -> &mut Self {
-        self.kernel.vr.set_stick(hand, value);
+        self.kernel.subsystems.backend.set_stick(hand, value);
         self.step()
     }
 

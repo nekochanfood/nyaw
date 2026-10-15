@@ -1,0 +1,19 @@
+[package]
+name = "subsystems"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+rendering-host = ["rendering/gpui", "rendering/web"]
+test-support = ["vr/test-support"]
+
+[dependencies]
+os.workspace = true
+vr.workspace = true
+input.workspace = true
+rendering.workspace = true
+logger.workspace = true
+
+[dev-dependencies]
+vr = { workspace = true, features = ["test-support"] }

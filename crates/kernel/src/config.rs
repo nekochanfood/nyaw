@@ -6,6 +6,12 @@ use std::io;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use subsystems::os;
+
+/// 環境変数 `NYAW_LOG` で指定されたログレベル（`trace` / `debug` / `info` / `warn` / `error`）。解釈は呼び出し側。
+pub fn log_level() -> Option<String> {
+    std::env::var("NYAW_LOG").ok().filter(|v| !v.is_empty())
+}
 
 /// 距離 LOD の品質。0 は無効、数字が小さいほど近い距離で解像度を落とす。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]

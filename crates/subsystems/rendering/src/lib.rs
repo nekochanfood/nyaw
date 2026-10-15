@@ -1,4 +1,4 @@
-//! カーネル内の描画層。描画先・読み戻し・ランタイムへの転送と能力差を扱う。
+//! カーネル最下部の描画サブシステム。描画先・読み戻し・ランタイムへの転送と能力差を扱う。
 //! パネルの配置、入力、アニメーションの進行は overlay が決める。
 
 #[cfg(feature = "gpui")]
@@ -113,20 +113,25 @@ impl Surface {
         self.shown = Some((visible, width));
     }
 
+    /// 描画先を解放する。いつ解放するかは呼び出し側が決める。
+    pub fn release(&mut self, vr: &mut dyn VrBackend) {
+        if self.released {
+            return;
+        }
+        vr.set_overlay_alpha(self.id, 0.0);
+        vr.set_overlay_visible(self.id, false);
+        vr.submit_overlay_pixels(self.id, 1, 1, &[0; 4]);
+        vr.destroy_overlay(self.id);
+        self.released = true;
+        self.texture = None;
+    }
+
     /// 不透明度 API のないランタイムでは、加工前の画像から画素を減衰させる。
-    pub fn present(&mut self, vr: &mut dyn VrBackend, opacity: f32, closed: bool, upload: bool) {
+    pub fn present(&mut self, vr: &mut dyn VrBackend, opacity: f32, upload: bool) {
         if self.released {
             return;
         }
         let native = vr.set_overlay_alpha(self.id, opacity);
-        if closed && opacity == 0.0 {
-            vr.set_overlay_visible(self.id, false);
-            vr.submit_overlay_pixels(self.id, 1, 1, &[0; 4]);
-            vr.destroy_overlay(self.id);
-            self.released = true;
-            self.texture = None;
-            return;
-        }
         if native && !upload {
             return;
         }
@@ -156,8 +161,8 @@ mod tests {
         let mut vr = MockBackend::default();
         let mut surface = Surface::new(&mut vr, "native", 1.0, Pose::IDENTITY).unwrap();
         surface.store(1, 1, &[200, 100, 50, 255]);
-        surface.present(&mut vr, 0.0, false, true);
-        surface.present(&mut vr, 0.5, false, false);
+        surface.present(&mut vr, 0.0, true);
+        surface.present(&mut vr, 0.5, false);
         assert_eq!(vr.overlays[0].alpha, 0.5);
         assert_eq!(vr.overlays[0].pixel_submissions, 1);
         assert_eq!(
@@ -179,7 +184,7 @@ mod tests {
             (0.25, [50, 25, 13, 64]),
             (1.0, [200, 100, 50, 255]),
         ] {
-            surface.present(&mut vr, opacity, false, false);
+            surface.present(&mut vr, opacity, false);
             assert_eq!(vr.overlays[0].texture.as_ref().unwrap().rgba, expected);
         }
     }
@@ -205,12 +210,15 @@ mod tests {
         let mut vr = MockBackend::default();
         let mut surface = Surface::new(&mut vr, "close", 1.0, Pose::IDENTITY).unwrap();
         surface.store(1, 1, &[255; 4]);
-        surface.present(&mut vr, 0.0, true, false);
+        surface.present(&mut vr, 0.0, true);
+        assert!(!surface.released() && surface.has_texture());
+        surface.release(&mut vr);
         assert!(surface.released());
         assert!(!surface.has_texture());
         let submissions = vr.overlays[0].pixel_submissions;
         surface.store(1, 1, &[255; 4]);
-        surface.present(&mut vr, 1.0, false, true);
+        surface.present(&mut vr, 1.0, true);
+        surface.release(&mut vr);
         surface.show(&mut vr, true, Some(5.0), 1.0);
         surface.set_width(&mut vr, 5.0);
         surface.set_height(&mut vr, 5.0);

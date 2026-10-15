@@ -165,14 +165,16 @@ impl<'a, V: Render> VrKit<'a, V> {
 
     /// Feeds the virtual controller state to the VR mock, steps one frame with the same `ui::pump` as production, and dispatches to GPUI.
     pub fn step(&mut self) -> &mut Self {
-        self.kernel.vr.frame.controllers = self.controllers.iter().map(raw).collect();
+        self.kernel.subsystems.backend.frame.controllers =
+            self.controllers.iter().map(raw).collect();
         self.panels.step(self.cx, &mut self.kernel);
         self
     }
 
     /// The texture most recently sent to the VR panel.
     pub fn texture(&self) -> &MockTexture {
-        self.kernel.vr.overlays[self.kernel.panel(self.panel).overlay_id().0 as usize]
+        self.kernel.subsystems.backend.overlays
+            [self.kernel.panel(self.panel).overlay_id().0 as usize]
             .texture
             .as_ref()
             .expect("VrKit::new sends the first frame")
