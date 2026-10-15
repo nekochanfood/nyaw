@@ -376,20 +376,24 @@ fn scroll_demo(t: &Theme, handle: &ScrollHandle) -> Div {
         .rounded(px(radius::MD))
         .bg(rgba(t.neutral_bg))
         .child(
-            div()
-                .id("cat-scroll")
-                .size_full()
-                .overflow_scroll()
-                .track_scroll(handle)
-                .child(
-                    div()
-                        .w(px(900.0))
-                        .h(px(500.0))
-                        .p(px(spacing::SM))
-                        .child("スクロールして確認 / scroll me"),
-                ),
+            // ページの中の入れ子: ポインタが触れている内側だけが動く。
+            components::claim_scroll(
+                components::free_scroll(div().id("cat-scroll"))
+                    .size_full()
+                    .overflow_scroll()
+                    .track_scroll(handle),
+                handle,
+            )
+            .child(
+                components::elastic("cat-pull-demo", handle)
+                    .flex_none()
+                    .w(px(900.0))
+                    .h(px(500.0))
+                    .p(px(spacing::SM))
+                    .child("スクロールして確認 / scroll me"),
+            ),
         )
-        .child(components::scrollbars(t, "cat-bars", handle))
+        .child(components::scrollbars(t, "cat-bars", handle).pulled_by("cat-pull-demo"))
 }
 
 impl Catalog {
@@ -599,9 +603,12 @@ impl Render for Catalog {
                         .id("catalog")
                         .size_full()
                         .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
                         .track_scroll(&page)
                         .child(
-                            div()
+                            components::elastic("cat-pull-page", &page)
+                                .flex_none()
                                 .flex()
                                 .flex_col()
                                 .gap(px(spacing::XL))
@@ -616,7 +623,9 @@ impl Render for Catalog {
                                 .child(motion),
                         ),
                 )
-                .child(components::scrollbars(&t, "cat-page-bars", &page)),
+                .child(
+                    components::scrollbars(&t, "cat-page-bars", &page).pulled_by("cat-pull-page"),
+                ),
         )
     }
 }
