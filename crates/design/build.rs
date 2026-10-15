@@ -146,13 +146,14 @@ fn main() {
         writeln!(out, "    /// 0xRRGGBBAA\n    pub {}: u32,", field(f)).unwrap();
     }
     out += "}\nimpl Theme {\n";
+    let mut failures = Vec::new();
     for theme in THEMES {
         writeln!(out, "    pub const {}: Theme = Theme {{", konst(theme)).unwrap();
         for f in &fields {
             writeln!(out, "        {}: {},", field(f), resolved[theme][f].0).unwrap();
         }
         out += "    };\n";
-        for rule in root["contrast"].as_array().unwrap() {
+        for rule in root["contrast"].as_array().unwrap().iter().chain(root["distinct"].as_array().unwrap()) {
             let (fg, bg) = (rule["fg"].as_str().unwrap(), rule["bg"].as_str().unwrap());
             let min = rule["min"].as_f64().unwrap();
             let c = |r: &str| {
@@ -162,13 +163,15 @@ fn main() {
                     .1
             };
             let got = f64::from(c(fg).relative_contrast(c(bg)));
-            assert!(
-                got >= min,
-                "テーマ {theme}: {fg} と {bg} のコントラスト比 {got:.2} が {min} に足りない"
-            );
+            if got < min {
+                failures.push(format!(
+                    "テーマ {theme}: {fg} と {bg} のコントラスト比 {got:.2} が {min} に足りない"
+                ));
+            }
         }
     }
     out += "}\n";
+    assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 
     fs::write(
         Path::new(&env::var("OUT_DIR").unwrap()).join("tokens.rs"),
