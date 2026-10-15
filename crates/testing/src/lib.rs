@@ -373,9 +373,7 @@ impl Render for Testing {
                     },
                 )),
             )
-            .child(
-                button!("hold-me", "Hold", false).active(|s| s.bg(rgba(theme.accent_solid_active))),
-            )
+            .child(button!("hold-me", "Hold", false).active(|s| s.bg(rgba(theme.control_active))))
             .child(
                 button!("drag-chip", "Drag me", false)
                     .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
