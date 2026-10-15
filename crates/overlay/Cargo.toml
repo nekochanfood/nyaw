@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+rendering.workspace = true
 vr.workspace = true
 input.workspace = true
 logger.workspace = true

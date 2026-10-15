@@ -1,0 +1,50 @@
+[package]
+name = "rendering"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+gpui = ["dep:gpui", "dep:raw-window-handle", "dep:windows"]
+web = [
+    "dep:tauri", "dep:webkit2gtk", "dep:cairo-rs", "dep:gtk",
+    "dep:webview2-com", "dep:windows", "dep:png", "dep:block2",
+    "dep:objc2-foundation", "dep:objc2-app-kit", "dep:objc2-web-kit",
+    "dep:objc2-core-graphics", "dep:objc2-core-foundation",
+]
+
+[dependencies]
+vr.workspace = true
+logger.workspace = true
+# render_to_image が一般公開されたら test-support を外す。
+gpui = { workspace = true, features = ["test-support"], optional = true }
+raw-window-handle = { version = "0.6", optional = true }
+tauri = { version = "2.12", optional = true }
+
+# WebView を画面に出さずに撮る（src/web/capture.rs）と、GTK のイベントを回す。tauri が使うものと同じ版に合わせる。
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = { optional = true, version = "2", features = ["v2_40"] }
+cairo-rs = { version = "0.18", optional = true }
+gtk = { version = "0.18", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = { version = "0.39", optional = true }
+windows = { optional = true, version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_UI_WindowsAndMessaging",
+] }
+png = { version = "0.17", optional = true }
+
+# WebView を撮る（src/web/capture.rs の WKWebView の takeSnapshot）。wry が使うものと同じ版に合わせる。
+[target.'cfg(target_os = "macos")'.dependencies]
+block2 = { version = "0.6", optional = true }
+objc2-foundation = { optional = true, version = "0.3", default-features = false, features = ["NSError", "NSString"] }
+objc2-app-kit = { optional = true, version = "0.3", default-features = false, features = ["NSImage", "NSImageRep", "NSGraphicsContext", "objc2-core-graphics"] }
+objc2-web-kit = { optional = true, version = "0.3", default-features = false, features = ["WKWebView", "WKSnapshotConfiguration", "block2", "objc2-app-kit"] }
+objc2-core-graphics = { optional = true, version = "0.3", default-features = false, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
+objc2-core-foundation = { optional = true, version = "0.3", default-features = false, features = ["CFCGTypes"] }
+
+[dev-dependencies]
+vr = { workspace = true, features = ["test-support"] }

@@ -3643,6 +3643,7 @@ dependencies = [
  "logger",
  "os",
  "overlay",
+ "rendering",
  "serde",
  "toml 0.9.12+spec-1.1.0",
  "vr",
@@ -4882,6 +4883,7 @@ dependencies = [
  "animato",
  "input",
  "logger",
+ "rendering",
  "vr",
 ]
 
@@ -5735,6 +5737,29 @@ name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
+
+[[package]]
+name = "rendering"
+version = "2026.0.1"
+dependencies = [
+ "block2 0.6.2",
+ "cairo-rs",
+ "gpui",
+ "gtk",
+ "logger",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-core-graphics",
+ "objc2-foundation 0.3.2",
+ "objc2-web-kit",
+ "png 0.17.16",
+ "raw-window-handle",
+ "tauri",
+ "vr",
+ "webkit2gtk",
+ "webview2-com",
+ "windows 0.62.2",
+]
 
 [[package]]
 name = "reqwest"
@@ -7514,31 +7539,18 @@ name = "ui"
 version = "2026.0.1"
 dependencies = [
  "beam",
- "block2 0.6.2",
- "cairo-rs",
  "gpui",
  "gpui_platform",
- "gtk",
  "kernel",
  "logger",
- "objc2-app-kit 0.3.2",
- "objc2-core-foundation",
- "objc2-core-graphics",
- "objc2-foundation 0.3.2",
- "objc2-web-kit",
- "png 0.17.16",
  "profiler",
- "raw-window-handle",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "testing",
  "vr",
- "webkit2gtk",
  "webpages",
- "webview2-com",
- "windows 0.62.2",
 ]
 
 [[package]]

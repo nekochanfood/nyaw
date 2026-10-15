@@ -6,43 +6,16 @@ license.workspace = true
 
 # UI 層。パネルを GPUI のウィンドウか Tauri の WebView（web モジュール）で実体化する。
 [dependencies]
-# test-support は Window::render_to_image（オフスクリーン描画の読み戻し）のために本番でも必要。
-# 上流で一般公開されたら外す。
+# 描画は kernel::rendering が担う。UI の入力注入とテストにも test-support を使う。
 gpui = { workspace = true, features = ["test-support"] }
 # x11 / wayland: Linux で実ウィンドウを開く（無いとヘッドレスになる）。
 gpui_platform = { workspace = true, features = ["test-support", "x11", "wayland"] }
-kernel.workspace = true
+kernel = { workspace = true, features = ["rendering-host"] }
 profiler.workspace = true
 logger.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-raw-window-handle = "0.6"
 tauri = "2.12"
-
-# WebView を画面に出さずに撮る（web/capture.rs）と、GTK のイベントを回す。tauri が使うものと同じ版に合わせる。
-[target.'cfg(target_os = "linux")'.dependencies]
-webkit2gtk = { version = "2", features = ["v2_40"] }
-cairo-rs = "0.18"
-gtk = "0.18"
-
-[target.'cfg(windows)'.dependencies]
-webview2-com = "0.39"
-windows = { version = "0.62", features = [
-    "Win32_Foundation",
-    "Win32_System_Com",
-    "Win32_System_Com_StructuredStorage",
-    "Win32_UI_WindowsAndMessaging",
-] }
-png = "0.17"
-
-# WebView を撮る（web/capture.rs の WKWebView の takeSnapshot）。wry が使うものと同じ版に合わせる。
-[target.'cfg(target_os = "macos")'.dependencies]
-block2 = "0.6"
-objc2-foundation = { version = "0.3", default-features = false, features = ["NSError", "NSString"] }
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSImage", "NSImageRep", "NSGraphicsContext", "objc2-core-graphics"] }
-objc2-web-kit = { version = "0.3", default-features = false, features = ["WKWebView", "WKSnapshotConfiguration", "block2", "objc2-app-kit"] }
-objc2-core-graphics = { version = "0.3", default-features = false, features = ["CGBitmapContext", "CGColorSpace", "CGContext", "CGImage"] }
-objc2-core-foundation = { version = "0.3", default-features = false, features = ["CFCGTypes"] }
 
 [build-dependencies]
 tauri-build = "2"

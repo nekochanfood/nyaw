@@ -1,11 +1,12 @@
 //! カーネル: 一点集中型の中枢。ブートローダー（`main`）が起こし、UI や画面はこれだけを相手にする。
 //!
-//! 入れ子の層: 設定（[`config`]）を内に持ち、下位の層（ランタイム `vr`・入力 `input`・オーバーレイ `overlay`）の状態を
+//! 入れ子の層: 設定（[`config`]）・描画（[`rendering`]）を内に持ち、下位の層（ランタイム `vr`・入力 `input`・オーバーレイ `overlay`）の状態を
 //! 1 か所で持つ。フレームの進行（[`Kernel::tick`]）・パネルへの操作（[`Kernel::apply`]）・描画結果の受け取り
 //! （[`Kernel::submit`]）をシステムコールのように提供する。上位層が下位層を直接組み立てたり、状態を別々に持ったりしない。
 //! 上位層が語彙として使う `vr` / `overlay` の型は再エクスポートする。
 
 pub mod config;
+pub use rendering;
 
 use std::time::{Duration, Instant};
 

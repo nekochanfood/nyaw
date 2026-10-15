@@ -4,8 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# 一点集中型の中枢。設定（config）を内に持ち、下位（os / vr / overlay）を束ね、上位（UI・画面）には kernel だけを見せる。
+# 一点集中型の中枢。設定（config）・描画（rendering）を内に持ち、下位（os / vr / overlay）を束ね、上位（UI・画面）には kernel だけを見せる。
+[features]
+rendering-host = ["rendering/gpui", "rendering/web"]
+
 [dependencies]
+rendering.workspace = true
 logger.workspace = true
 os.workspace = true
 vr.workspace = true

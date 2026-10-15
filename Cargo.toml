@@ -14,6 +14,7 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c01
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 logger = { path = "crates/logger" }
 os = { path = "crates/os" }
+rendering = { path = "crates/rendering" }
 kernel = { path = "crates/kernel" }
 vr = { path = "crates/vr" }
 input = { path = "crates/input" }

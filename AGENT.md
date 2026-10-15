@@ -7,13 +7,14 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 層 | クレート | 責務 | 主な公開 API |
 |---|---|---|---|
 | - | `crates/logger` | logfmt 形式の構造化ロガー（横断）。整形・レベル・出力先 `Sink` の抽象と、`log` クレート（gpui 等）からの橋渡し | `trace!/debug!/info!/warn!/error!`, `Logger`, `Sink`, `StderrSink`, `init`, `format` |
-| 0 OS | `crates/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出、ファイル入出力）。`#[cfg]` はここだけに書く | `config_dir`, `log_dir`, `log_level`, `FileSink`, `openvr_paths_file`, `openxr_runtime_manifest` |
+| 0 OS | `crates/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出、ファイル入出力）。OS の一般的な `#[cfg]` はここに書く（描画固有は `rendering`） | `config_dir`, `log_dir`, `log_level`, `FileSink`, `openvr_paths_file`, `openxr_runtime_manifest` |
 yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知らないキーは無視。キーは `log`（ログレベル）、`runtime`（`openvr`/`openxr`/`novr`）、`pointer_smoothing`（レーザーの手ブレ抑え）、`pointer_mode`（`mouse`/`touch`。レーザーのエミュレート方式、既定 `touch`）、`[gpu]` の表（機能ごとに GPU を使うか。既定はどれも `true`、互換性のため `false` で CPU の実装へ: `emulator` = novr の合成）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル）で、決めるのは `main` | `load`, `parse`, `path`, `Config` |
 | 2 ランタイム | `crates/vr` | OpenVR / OpenXR / novr の差を吸収。上位層は `Box<dyn VrBackend>` しか持たない。novr はデスクトップのウィンドウで VR を模すエミュレーター | `connect`, `VrBackend`, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`）, `Device`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
 | 3 入力 | `crates/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController) -> ControllerState`, `source(profile, Action)` / `scroll_source(profile)`（逆引き） |
+| 3.5 描画 | `crates/rendering`（カーネルの一部） | GPUI / WebView の非表示描画先・読み戻し・描画密度と OS 差、ランタイムへの画像転送・不透明度 / 相対追従の能力差・描画資源の保持と解放。UI は `kernel::rendering` 経由で使う | `Surface::{new, store, present, place, show}`, `gpui::{capture, read_back, open_panel_window, set_render_lod}`, `web::{capture, resize, panel_window, page_url, pump_events}` |
 | 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, set_locked, set_resolution, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | 4.5 カーネル | `crates/kernel` | 一点集中型の中枢。ブートローダー → カーネル → 各層。下位（`vr` / `overlay`）の状態を 1 か所で持ち、ランタイムの選択（`Kernel::boot`）・フレームの進行（`tick`）・パネル操作（`apply` / `status`）・描画の受け渡し（`submit`）を提供する。UI・画面はカーネルだけを見る。カーネル内の設定 `kernel::config` が持つ設定ファイル: `os::config_dir()/config.toml`（ログと同じ `nyaw` ディレクトリ: Windows `%LOCALAPPDATA% | `Kernel::{boot, with_backend, tick, submit, apply, status, add_panel}`, `PanelCommand`, `PanelStatus`, `config::{load, parse, path, Config}`, `vr` / `overlay` の型の再エクスポート |
-| 5 UI | `crates/ui` | UI 層（1つ）。パネルを GPUI のウィンドウか Tauri の WebView（`ui::web`）で実体化し、1 つのフレームループ・1 つのカーネルで両方を回す。GPUI はポインタイベントをマウス入力に変換して画面へ流し、Web は注入したブリッジ（`src/web/bridge.js`）が DOM のポインタイベントにする。描画結果を読み戻してパネルへ返す。どの画面・ページかは知らない | `run(kernel, panels, profiler, web_files)` / `run_with`（テスト用の `Hooks`）, `PanelSpec`（`new` = GPUI、`web` / `spawn_web` = Web のページ）, `pump` / `pump_with`（入力1フレーム分。本番と testkit 共通）, `sync_panel`（画面からのパネル操作を反映。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `drag_preview`（`on_drag` の見た目はこれで包む。VR ではカーソル側だけに描く）, `PointerBridge`, `PanelControl`（`open` / `limit` = 開いている数と上限）/ `PanelState::live`（毎フレーム描き直す）/ `PanelCommand` / `PanelStatus`, `MAX_PANELS`, `web::{Host, Files, WebCommand, WebStatus, WebPointer, Outbox, BRIDGE}` |
+| 5 UI | `crates/ui` | UI 層（1つ）。パネルを GPUI のウィンドウか Tauri の WebView（`ui::web`）で実体化し、1 つのフレームループ・1 つのカーネルで両方を回す。GPUI はポインタイベントをマウス入力に変換して画面へ流し、Web は注入したブリッジ（`src/web/bridge.js`）が DOM のポインタイベントにする。描画結果は `kernel::rendering` で読み戻してパネルへ返す。どの画面・ページかは知らない | `run(kernel, panels, profiler, web_files)` / `run_with`（テスト用の `Hooks`）, `PanelSpec`（`new` = GPUI、`web` / `spawn_web` = Web のページ）, `pump` / `pump_with`（入力1フレーム分。本番と testkit 共通）, `sync_panel`（画面からのパネル操作を反映。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `drag_preview`（`on_drag` の見た目はこれで包む。VR ではカーソル側だけに描く）, `PointerBridge`, `PanelControl`（`open` / `limit` = 開いている数と上限）/ `PanelState::live`（毎フレーム描き直す）/ `PanelCommand` / `PanelStatus`, `MAX_PANELS`, `web::{Host, Files, WebCommand, WebStatus, WebPointer, Outbox, BRIDGE}` |
 | 5 横 | `crates/profiler` | 計測中だけ動くプロファイラ（`--profile` で起動時から、または Testing の Profiler ボタン / `PanelControl::profiling` で切り替え）。UI 層のフレームループが段階ごとの所要時間（wait / input / draw / render / upload / overlay / compositor / web と、プロファイラ表示自身の描画 profiler）を記録し、FPS・フレーム時間・CPU/GPU・ドロップをプロファイラパネル（Close ボタンで計測ごと止める）にグラフで出す。`--profile` のときは 1 フレーム 1 行の CSV（`os::log_dir()/profile.csv`）にもダンプする。GPU は同期して待つ段階（描画+読み戻し、VR への転送）の実時間 | `Profiler::{new, with_budget, record, add_self_time, summary}`, `ProfilerView`, `Stages`, `CSV_HEADER` |
 | 6 画面 | `crates/testing` ほか（n 個） | UI 層の上に載る画面。GPUI のビューで、ランタイムを意識しない | `Testing`（テスト用の画面）, `TestingAnim`（毎フレーム変わる）, `TestingLod`（LOD を数字と色で表示）, `StressTest`（上限までパネルを出す・閉じる・ちりばめる・並べる） |
 | 6 画面 | `crates/wrist` | 常駐パネル。左手首に腕時計のように取り付き（掴めない）、時刻と日付、Toggle Panel ボタンで Testing を召喚 / 閉じる | `wrist::spec()`, `Wrist`, `WATCH_OFFSET` |
@@ -22,7 +23,8 @@ yaw`、Linux `$XDG_STATE_HOME/nyaw`）を読む。無ければ既定値、知ら
 | - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, down, up, drag, scroll, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit::{screenshot, on_screen, color_on_screen, move_mouse, press, release, stick, select_panel, type_keys}`, `DesktopKit::with_backend`, `VrKit::{panel, add_panel, press, drag_panel, move_hand, hand, profile, point_at}`, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け） |
 | - | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして（ランタイムの選択はカーネルの仕事）載せる画面（wrist とビーム）と Web のページ（`webpages::FILES`）とともに `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
 
-依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input ← overlay ← kernel（config を内に持つ） ← ui ← 画面（testing 等） ← main`）。Web のページ（`webpages`）は何にも依存せず、`main` が `ui::run` に渡す。画面は Web のページを名前（`PanelSpec::spawn_web(.., "testing")`）で開く。UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
+依存は**必ず下向き**、かつ原則として 1 つ下の層まで（`os ← vr ← input / rendering ← overlay ← kernel（config・rendering を内に持つ） ← ui ← 画面（testing 等） ← main`）。Web のページ（`webpages`）は何にも依存せず、`main` が `ui::run` に渡す。画面は Web のページを名前（`PanelSpec::spawn_web(.., "testing")`）で開く。描画に必要な OS 分岐は `rendering` に集約する（`gpui` / `web` フィーチャー。`ui` は `kernel/rendering-host` で両方を有効にし、下位だけのテストではホスト依存を不要にする）。入力変換・画面の構築とイベントループの進行は UI が担う。ランタイム固有の Vulkan 転送・novr 合成は `vr` に残り、`rendering` が `VrBackend` を通して利用する。
+UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
 `logger` は例外で、どの層からも直接依存してよい唯一の横断クレート（`logger` 自身は他の自前クレートに依存しない）。
 
 ## ログ
@@ -294,4 +296,11 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
   Wayland ではウィンドウを画面外に置けないので VR の Web のパネルがデスクトップにも出る。Web のページのドラッグの見た目は `Pointer::Drag` のパネルに出ない（ページ内で動かす）。
 - 描画は毎フレーム CPU に読み戻し、変化があれば `vr` が Vulkan のイメージへ上げ直してランタイムへ渡す（`crates/vr/src/gpu.rs`。1024x768 で約 1.6ms）。GPUI のテクスチャを読み戻さずに直接共有する経路は未実装。
 - Windows での OpenXR ランタイム検出（レジストリ）。
-- `gpui` は crates.io 版では `Window::dispatch_event` を外部から呼べないため、Zed の git リビジョンに固定している。`render_to_image` のため `ui` は本番でも gpui の `test-support` フィーチャーを有効にしている。
+- `gpui` は crates.io 版では `Window::dispatch_event` を外部から呼べないため、Zed の git リビジョンに固定している。`render_to_image` のため `rendering` は本番でも gpui の `test-support` フィーチャーを有効にしている。
+
+## 描画層（Issue #41）
+
+- `rendering` は `overlay` の下、`vr` の上に入り、カーネルが `kernel::rendering` として公開する。UI から描画クレートへ直接依存しない。
+- `overlay::Panel` が持つ `rendering::Surface` が描画資源と送信済み状態を保持する。配置・入力判定・アニメーションの目標と進行は overlay が決め、描画先へ送るときの能力差は Surface が吸収する。
+- `ui::{capture, Frame, open_panel_window, panel_window_options, set_render_lod}` と `ui::web::Image` は rendering の再エクスポート。実装を足す先は `crates/rendering`。
+- `cargo test -p rendering --all-features` は画素変換、アルファ対応 / 未対応、追従のフォールバック、解放後の更新抑止を検証する。実描画は既存の `gpu_capture` / `panel_lod` / `web_vr` で描画層からカーネルまで通す。
