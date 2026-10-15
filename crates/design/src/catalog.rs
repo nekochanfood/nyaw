@@ -2,11 +2,12 @@
 //! `cargo run -p design --example catalog` で単独のウィンドウに出る。画面側（VR のパネル）に載せてもよい。
 //! 右上のスイッチでライト / ダークを切り替える。
 
+use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{
-    Context, Div, FontWeight, IntoElement, ParentElement, Render, ScrollHandle, SharedString,
-    Styled, Window, div, prelude::*, px, rgba,
+    App, ClickEvent, Context, Div, FontWeight, IntoElement, ParentElement, Render, ScrollHandle,
+    SharedString, Styled, Window, div, prelude::*, px, rgba,
 };
 
 use crate::{
@@ -18,6 +19,9 @@ use crate::{
 
 pub struct Catalog {
     mode: Mode,
+    page: ScrollHandle,
+    /// 閉じるボタンの処理（パネルに載せるときだけ）。
+    on_close: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
     scroll: ScrollHandle,
     slider: f32,
     toggle: bool,
@@ -31,6 +35,8 @@ impl Default for Catalog {
     fn default() -> Self {
         Self {
             mode: Mode::Dark,
+            page: ScrollHandle::new(),
+            on_close: None,
             scroll: ScrollHandle::new(),
             slider: 0.5,
             toggle: false,
@@ -387,6 +393,14 @@ fn scroll_demo(t: &Theme, handle: &ScrollHandle) -> Div {
 }
 
 impl Catalog {
+    /// パネルに載せる版。Close ボタンが `on_close` を呼ぶ。
+    pub fn with_close(on_close: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static) -> Self {
+        Self {
+            on_close: Some(Rc::new(on_close)),
+            ..Self::default()
+        }
+    }
+
     fn components_section(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
         let (a, b, c) = (cx.entity(), cx.entity(), cx.entity());
         let on = self.toggle;
@@ -553,7 +567,11 @@ impl Render for Catalog {
                                 })
                             },
                         ),
-                    ),
+                    )
+                    .children(self.on_close.clone().map(|f| {
+                        components::button(&t, "cat-close", "Close", Variant::Danger)
+                            .on_click(move |e, w, cx| f(e, w, cx))
+                    })),
             );
         let components = self.components_section(&t, cx);
         let motion = self.motion_section(&t, window, cx);
@@ -562,21 +580,30 @@ impl Render for Catalog {
             "Utilities / Theme の役割",
             wrap().children(theme_roles(&t).iter().map(|(n, c)| swatch(&t, n, *c))),
         );
+        let page = self.page.clone();
         components::surface(&t).size_full().child(
-            div().id("catalog").size_full().overflow_y_scroll().child(
+            div().relative().size_full().child(
                 div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(spacing::XL))
-                    .p(px(spacing::XL))
-                    .child(header)
-                    .child(roles)
-                    .child(scale_section(&t))
-                    .child(constants_section(&t))
-                    .child(text_section(&t))
-                    .child(icon_section(&t))
-                    .child(components)
-                    .child(motion),
+                    .id("catalog")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&page)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(spacing::XL))
+                            .p(px(spacing::XL))
+                            .child(header)
+                            .child(roles)
+                            .child(scale_section(&t))
+                            .child(constants_section(&t))
+                            .child(text_section(&t))
+                            .child(icon_section(&t))
+                            .child(components)
+                            .child(motion),
+                    )
+                    .child(components::scrollbars(&t, "cat-page-bars", &page)),
             ),
         )
     }
