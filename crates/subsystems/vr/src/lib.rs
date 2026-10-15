@@ -5,19 +5,27 @@
 //! 語彙は OpenXR に揃える: コントローラのプロファイルは `"vendor/name"`（例 `"valve/index_controller"`）、
 //! 入力は `"component/feature"`（例 `"trigger/value"`）。OpenVR バックエンドはこれに翻訳する。
 
+#[cfg(feature = "novr")]
 mod compositor;
+// openvr と openxr で使う部分が違うので、片方だけのビルドでは未使用になる。
+#[cfg(any(feature = "openvr", feature = "openxr"))]
+#[cfg_attr(not(all(feature = "openvr", feature = "openxr")), allow(dead_code))]
 mod gpu;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
+#[cfg(feature = "novr")]
 pub mod novr;
+#[cfg(feature = "openvr")]
 mod openvr;
 
 /// testkit の実ランタイムテスト用。上位層からは使わない。
+#[cfg(feature = "openvr")]
 #[doc(hidden)]
 pub use openvr::{
     overlay_image as openvr_overlay_image, overlay_state as openvr_overlay_state,
     runtime_path as openvr_runtime_path,
 };
+#[cfg(feature = "openxr")]
 mod openxr;
 
 use std::fmt;
@@ -293,7 +301,7 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
 pub fn connect(prefer: Option<Runtime>, emulator_gpu: bool) -> Result<Box<dyn VrBackend>, VrError> {
     if prefer == Some(Runtime::NoVr) {
         logger::debug!("connecting to runtime", runtime = ?Runtime::NoVr);
-        return Ok(Box::new(novr::Emulator::windowed(emulator_gpu)));
+        return novr_emulator(emulator_gpu);
     }
     let order = match prefer {
         Some(Runtime::OpenXr) => [Runtime::OpenXr, Runtime::OpenVr],
@@ -320,11 +328,24 @@ pub fn connect(prefer: Option<Runtime>, emulator_gpu: bool) -> Result<Box<dyn Vr
 /// testkit が起動したランタイムを、別のランタイムと取り違えずに掴むため。
 pub fn connect_exact(rt: Runtime) -> Result<Box<dyn VrBackend>, VrError> {
     match rt {
-        Runtime::NoVr => Ok(Box::new(novr::Emulator::windowed(true))),
+        Runtime::NoVr => novr_emulator(true),
+        #[cfg(feature = "openvr")]
         Runtime::OpenVr if openvr::available() => openvr::connect(),
+        #[cfg(feature = "openxr")]
         Runtime::OpenXr if openxr::available() => openxr::connect(),
         _ => Err(VrError::NoRuntime),
     }
+}
+
+#[cfg(feature = "novr")]
+fn novr_emulator(gpu: bool) -> Result<Box<dyn VrBackend>, VrError> {
+    Ok(Box::new(novr::Emulator::windowed(gpu)))
+}
+
+/// `novr` フィーチャーなしのビルドにはエミュレーターが無い。
+#[cfg(not(feature = "novr"))]
+fn novr_emulator(_: bool) -> Result<Box<dyn VrBackend>, VrError> {
+    Err(VrError::NoRuntime)
 }
 
 #[cfg(test)]
@@ -352,6 +373,7 @@ mod tests {
         assert!((l.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
     }
 
+    #[cfg(feature = "novr")]
     #[test]
     fn novr_is_always_available() {
         let b = connect(Some(Runtime::NoVr), true).unwrap();

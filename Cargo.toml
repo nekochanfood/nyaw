@@ -21,9 +21,9 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aab
 logger = { path = "crates/logger" }
 os = { path = "crates/subsystems/os" }
 rendering = { path = "crates/subsystems/rendering" }
-kernel = { path = "crates/kernel" }
-subsystems = { path = "crates/subsystems" }
-vr = { path = "crates/subsystems/vr" }
+kernel = { path = "crates/kernel", default-features = false }
+subsystems = { path = "crates/subsystems", default-features = false }
+vr = { path = "crates/subsystems/vr", default-features = false }
 input = { path = "crates/subsystems/input" }
 overlay = { path = "crates/overlay" }
 ui = { path = "crates/ui" }
@@ -42,7 +42,7 @@ license.workspace = true
 
 [dependencies]
 logger.workspace = true
-kernel.workspace = true
+kernel = { workspace = true, features = ["novr", "openvr", "openxr"] }
 ui.workspace = true
 testing.workspace = true
 profiler.workspace = true

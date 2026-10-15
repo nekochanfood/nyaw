@@ -21,7 +21,8 @@ tauri = "2.12"
 tauri-build = "2"
 
 [dev-dependencies]
-vr = { workspace = true, features = ["test-support"] }
+kernel = { workspace = true, features = ["novr"] }
+vr = { workspace = true, features = ["test-support", "novr"] }
 webpages.workspace = true
 testing.workspace = true
 beam.workspace = true
