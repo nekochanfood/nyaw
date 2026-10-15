@@ -16,7 +16,7 @@ mod slider;
 pub use scrollbar::{Elastic, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 pub use slider::{Slider, slider};
 
-use crate::{Motion, Theme, duration_ms, font_size, radius};
+use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Variant {
@@ -411,12 +411,31 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
     )
 }
 
+/// パネル全体の地。角丸は `XL`、中身との間隔は `MD`（12）なので、中のカードの角丸は同心の `XL − MD = LG`。
+/// 中身は [`card`] に入れる。
+pub fn panel(theme: &Theme) -> Div {
+    div()
+        .size_full()
+        .p(px(spacing::MD))
+        .rounded(px(radius::XL))
+        .bg(rgba(theme.background))
+        .text_color(rgba(theme.neutral_text))
+}
+
+/// 地（[`panel`]）の上に置くカード。要素は基本的にカードの中に置く。
+pub fn card(theme: &Theme) -> Div {
+    div()
+        .rounded(px(radius::LG))
+        .bg(rgba(theme.card))
+        .text_color(rgba(theme.neutral_text))
+}
+
 /// 画面やパネルの地。文字色も役割から決まる。
 pub fn surface(theme: &Theme) -> Div {
     div()
         .font(crate::font::font())
         .bg(rgba(theme.background))
-        .rounded(px(radius::LG))
+        .rounded(px(radius::XL))
         .text_color(rgba(theme.neutral_text))
         .text_size(px(font_size::MD))
         .line_height(px(font_size::MD * 1.4))

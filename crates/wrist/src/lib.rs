@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use design::Theme;
-use design::components::{Variant, button};
+use design::components::{self, Variant, button};
 use gpui::{Context, Window, div, prelude::*, rgba};
 use kernel::PanelId;
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
@@ -62,67 +62,69 @@ impl Render for Wrist {
         let now = chrono::Local::now();
         let this = cx.entity();
         let theme = Theme::current(cx);
-        div()
-            .size_full()
-            .flex()
-            .items_center()
-            .justify_center()
-            .gap_4()
-            .bg(rgba(theme.panel))
-            .text_color(rgba(theme.neutral_text))
-            .text_size(gpui::px(48.0))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .id("time")
-                            .debug_selector(|| "time".into())
-                            .child(now.format("%H:%M").to_string()),
-                    )
-                    .child(
-                        div()
-                            .id("date")
-                            .debug_selector(|| "date".into())
-                            .child(now.format("%Y-%m-%d").to_string()),
-                    ),
-            )
-            .child(
-                button(&theme, "toggle-panel", "Toggle Panel", Variant::Primary)
-                    .text_size(gpui::px(32.0))
-                    .on_click(move |_, _, cx| {
-                        let this = this.clone();
-                        this.update(cx, |w, cx| {
-                            // Testing 自身のボタンで閉じられていたら、閉じ済みとして扱い次は召喚する。
-                            let open = w.testing.take().filter(|id| {
-                                !cx.default_global::<PanelControl>()
-                                    .panels
-                                    .get(id)
-                                    .is_some_and(|p| p.status.closed)
-                            });
-                            match open {
-                                Some(id) => cx
-                                    .default_global::<PanelControl>()
-                                    .panels
-                                    .entry(id)
-                                    .or_default()
-                                    .commands
-                                    .push(kernel::PanelCommand::Close),
-                                None => {
-                                    let wrist = cx.entity();
-                                    cx.default_global::<PanelControl>().spawns.push(
-                                        PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
-                                            wrist.update(cx, |w, _| w.testing = Some(id));
-                                            Testing::new(id)
-                                        })
-                                        .in_view(TESTING_POSE),
-                                    );
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .bg(rgba(theme.card))
+                .text_color(rgba(theme.neutral_text))
+                .text_size(gpui::px(48.0))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            div()
+                                .id("time")
+                                .debug_selector(|| "time".into())
+                                .child(now.format("%H:%M").to_string()),
+                        )
+                        .child(
+                            div()
+                                .id("date")
+                                .debug_selector(|| "date".into())
+                                .child(now.format("%Y-%m-%d").to_string()),
+                        ),
+                )
+                .child(
+                    button(&theme, "toggle-panel", "Toggle Panel", Variant::Default)
+                        .text_size(gpui::px(32.0))
+                        .on_click(move |_, _, cx| {
+                            let this = this.clone();
+                            this.update(cx, |w, cx| {
+                                // Testing 自身のボタンで閉じられていたら、閉じ済みとして扱い次は召喚する。
+                                let open = w.testing.take().filter(|id| {
+                                    !cx.default_global::<PanelControl>()
+                                        .panels
+                                        .get(id)
+                                        .is_some_and(|p| p.status.closed)
+                                });
+                                match open {
+                                    Some(id) => cx
+                                        .default_global::<PanelControl>()
+                                        .panels
+                                        .entry(id)
+                                        .or_default()
+                                        .commands
+                                        .push(kernel::PanelCommand::Close),
+                                    None => {
+                                        let wrist = cx.entity();
+                                        cx.default_global::<PanelControl>().spawns.push(
+                                            PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+                                                wrist.update(cx, |w, _| w.testing = Some(id));
+                                                Testing::new(id)
+                                            })
+                                            .in_view(TESTING_POSE),
+                                        );
+                                    }
                                 }
-                            }
-                        });
-                    }),
-            )
+                            });
+                        }),
+                ),
+        )
     }
 }
 

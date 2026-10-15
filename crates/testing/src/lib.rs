@@ -39,18 +39,18 @@ const THEME: Theme = Theme::of(Mode::Dark);
 const fn rgb24(rgba: u32) -> u32 {
     rgba >> 8
 }
-pub const PANEL_BG: u32 = rgb24(THEME.panel);
-pub const BUTTON_BG: u32 = rgb24(THEME.accent_solid);
+pub const PANEL_BG: u32 = rgb24(THEME.background);
+pub const BUTTON_BG: u32 = rgb24(THEME.control);
 /// レーザーが当たっている間のボタン色。VR 上でどこを指しているかの視覚的フィードバック。
-pub const BUTTON_HOVER_BG: u32 = rgb24(THEME.accent_solid_hover);
+pub const BUTTON_HOVER_BG: u32 = rgb24(THEME.control_hover);
 /// 有効になっている切り替えボタン・表示や、押している間のボタンの色。
-pub const BUTTON_ACTIVE_BG: u32 = rgb24(THEME.accent_solid_active);
+pub const BUTTON_ACTIVE_BG: u32 = rgb24(THEME.control_active);
 /// ドラッグ中の値を落とせる場所の上にいるときの色。
 pub const DROP_TARGET_BG: u32 = 0x30a050;
 /// フォーカスのある入力欄の色。
 pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_bg_active);
 /// ダイアログの背景色（親より明るくして重なりが見えるように）。
-pub const DIALOG_BG: u32 = rgb24(THEME.neutral_bg_active);
+pub const DIALOG_BG: u32 = rgb24(THEME.card);
 /// スクロールする一覧の行数と1行の高さ。
 pub const LIST_ROWS: usize = 30;
 const ROW_PX: f32 = 24.0;
@@ -113,7 +113,7 @@ fn themed_button(
     label: impl Into<String>,
     active: bool,
 ) -> components::Button {
-    components::button(theme, id, label.into(), Variant::Primary).selected(active)
+    components::button(theme, id, label.into(), Variant::Default).selected(active)
 }
 
 /// ボタンを押したらパネルへの操作要求を積む。
@@ -382,7 +382,7 @@ impl Render for Testing {
                     .id("drop-zone")
                     .debug_selector(|| "drop-zone".into())
                     .p_2()
-                    .bg(rgba(theme.neutral_bg))
+                    .bg(rgba(theme.control))
                     .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
                     .on_drop(cx.listener(|this, _: &Chip, _, cx| {
                         this.dropped += 1;
@@ -409,7 +409,7 @@ impl Render for Testing {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .bg(rgba(theme.neutral_bg))
+                                    .bg(rgba(theme.control))
                                     .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                                         this.menu_open = false;
                                         cx.notify();
@@ -433,7 +433,7 @@ impl Render for Testing {
             .debug_selector(|| "text-field".into())
             .track_focus(&focus)
             .p_2()
-            .bg(rgba(theme.neutral_bg))
+            .bg(rgba(theme.control))
             .focus(|s| s.bg(rgba(theme.accent_bg_active)))
             .on_click(cx.listener(move |_, _, window, cx| window.focus(&focus, cx)))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
@@ -457,7 +457,7 @@ impl Render for Testing {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.list)
-            .bg(rgba(theme.neutral_bg))
+            .bg(rgba(theme.control))
             .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
                 this.scrolled += match e.delta {
                     ScrollDelta::Lines(p) => p.y,
@@ -474,24 +474,29 @@ impl Render for Testing {
                 })),
             );
 
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .bg(rgba(theme.panel))
-            .text_color(rgba(theme.neutral_text))
-            .child(format!(
-                "runtime: {:?} / attached: {:?} / locked: {}",
-                st.runtime, st.attached, st.locked
-            ))
-            .child(vr_row)
-            .child(gpui_row)
-            .child(field)
-            .child(div().relative().flex_1().min_h_0().child(list).child(
-                components::scrollbars(&theme, "scroll-bars", &self.list).pulled_by("pull-list"),
-            ))
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .bg(rgba(theme.card))
+                .text_color(rgba(theme.neutral_text))
+                .child(format!(
+                    "runtime: {:?} / attached: {:?} / locked: {}",
+                    st.runtime, st.attached, st.locked
+                ))
+                .child(vr_row)
+                .child(gpui_row)
+                .child(field)
+                .child(
+                    div().relative().flex_1().min_h_0().child(list).child(
+                        components::scrollbars(&theme, "scroll-bars", &self.list)
+                            .pulled_by("pull-list"),
+                    ),
+                ),
+        )
     }
 }
 
@@ -529,68 +534,69 @@ impl Render for PointerTest {
             PointerMode::Mouse => ("Mode: Mouse", PointerMode::Touch),
             PointerMode::Touch => ("Mode: Touch", PointerMode::Mouse),
         };
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .bg(rgba(theme.panel))
-            .text_color(rgba(theme.neutral_text))
-            .child(
-                row()
-                    .child(
-                        button(&theme, "pointer-mode", label, mode == PointerMode::Touch)
-                            .on_click(command(self.panel, PanelCommand::PointerMode(next))),
-                    )
-                    .child(
-                        button(&theme, "tap-me", format!("Tapped {}", self.taps), false).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.taps += 1;
-                                cx.notify();
-                            }),
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .bg(rgba(theme.card))
+                .text_color(rgba(theme.neutral_text))
+                .child(
+                    row()
+                        .child(
+                            button(&theme, "pointer-mode", label, mode == PointerMode::Touch)
+                                .on_click(command(self.panel, PanelCommand::PointerMode(next))),
+                        )
+                        .child(
+                            button(&theme, "tap-me", format!("Tapped {}", self.taps), false)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.taps += 1;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            button(&theme, "close-pointer-test", "Close", false)
+                                .on_click(command(self.panel, PanelCommand::Close)),
                         ),
-                    )
-                    .child(
-                        button(&theme, "close-pointer-test", "Close", false)
-                            .on_click(command(self.panel, PanelCommand::Close)),
-                    ),
-            )
-            .child(
-                row()
-                    .child(
-                        button(&theme, "drag-chip", "Drag me", false)
-                            .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
-                    )
-                    .child(
-                        div()
-                            .id("drop-zone")
-                            .debug_selector(|| "drop-zone".into())
-                            .p_2()
-                            .bg(rgba(theme.neutral_bg))
-                            .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
-                            .on_drop(cx.listener(|this, _: &Chip, _, cx| {
-                                this.dropped += 1;
-                                cx.notify();
-                            }))
-                            .child(format!("Dropped {}", self.dropped)),
-                    ),
-            )
-            .child(
-                div()
-                    .id("swipe-list")
-                    .debug_selector(|| "swipe-list".into())
-                    .h(gpui::px(240.0))
-                    .overflow_y_scroll()
-                    .track_scroll(&self.list)
-                    .bg(rgba(theme.neutral_bg))
-                    .children((0..LIST_ROWS).map(|i| {
-                        div()
-                            .h(gpui::px(ROW_PX))
-                            .px_2()
-                            .child(format!("Swipe row {i}"))
-                    })),
-            )
+                )
+                .child(
+                    row()
+                        .child(
+                            button(&theme, "drag-chip", "Drag me", false)
+                                .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
+                        )
+                        .child(
+                            div()
+                                .id("drop-zone")
+                                .debug_selector(|| "drop-zone".into())
+                                .p_2()
+                                .bg(rgba(theme.control))
+                                .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
+                                .on_drop(cx.listener(|this, _: &Chip, _, cx| {
+                                    this.dropped += 1;
+                                    cx.notify();
+                                }))
+                                .child(format!("Dropped {}", self.dropped)),
+                        ),
+                )
+                .child(
+                    div()
+                        .id("swipe-list")
+                        .debug_selector(|| "swipe-list".into())
+                        .h(gpui::px(240.0))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.list)
+                        .bg(rgba(theme.control))
+                        .children((0..LIST_ROWS).map(|i| {
+                            div()
+                                .h(gpui::px(ROW_PX))
+                                .px_2()
+                                .child(format!("Swipe row {i}"))
+                        })),
+                ),
+        )
     }
 }
 
@@ -625,55 +631,56 @@ impl Render for DialogTest {
         let theme = Theme::current(cx);
         let panel = self.panel;
         let me = cx.entity().downgrade();
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .bg(rgba(theme.panel))
-            .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, panel, "dialog-test", "close-dialog-test"))
-            .child(
-                row()
-                    .child({
-                        let me = me.clone();
-                        button(&theme, "open-dialog", "Open dialog", false).on_click(
-                            move |_, _, cx| {
-                                let me = me.clone();
-                                cx.default_global::<PanelControl>().spawns.push(
-                                    PanelSpec::child(panel, true, move |id, _, _| {
-                                        Dialog::new(id, me, "Click outside to dismiss")
-                                    })
-                                    .sized(DIALOG_SIZE, DIALOG_PX),
-                                )
-                            },
-                        )
-                    })
-                    .child(
-                        button(&theme, "open-modal-dialog", "Open modal dialog", false).on_click(
-                            move |_, _, cx| {
-                                let me = me.clone();
-                                cx.default_global::<PanelControl>().spawns.push(
-                                    PanelSpec::child(panel, true, move |id, _, _| {
-                                        Dialog::new(id, me, "Answer required")
-                                    })
-                                    .without_dismiss()
-                                    .sized(DIALOG_SIZE, DIALOG_PX),
-                                )
-                            },
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .bg(rgba(theme.card))
+                .text_color(rgba(theme.neutral_text))
+                .child(title_bar(&theme, panel, "dialog-test", "close-dialog-test"))
+                .child(
+                    row()
+                        .child({
+                            let me = me.clone();
+                            button(&theme, "open-dialog", "Open dialog", false).on_click(
+                                move |_, _, cx| {
+                                    let me = me.clone();
+                                    cx.default_global::<PanelControl>().spawns.push(
+                                        PanelSpec::child(panel, true, move |id, _, _| {
+                                            Dialog::new(id, me, "Click outside to dismiss")
+                                        })
+                                        .sized(DIALOG_SIZE, DIALOG_PX),
+                                    )
+                                },
+                            )
+                        })
+                        .child(
+                            button(&theme, "open-modal-dialog", "Open modal dialog", false)
+                                .on_click(move |_, _, cx| {
+                                    let me = me.clone();
+                                    cx.default_global::<PanelControl>().spawns.push(
+                                        PanelSpec::child(panel, true, move |id, _, _| {
+                                            Dialog::new(id, me, "Answer required")
+                                        })
+                                        .without_dismiss()
+                                        .sized(DIALOG_SIZE, DIALOG_PX),
+                                    )
+                                }),
                         ),
-                    ),
-            )
-            .child(
-                div()
-                    .debug_selector(|| "dialog-answer".into())
-                    .child(format!(
-                        "Answered {} ({})",
-                        self.answered,
-                        self.answer.unwrap_or("-")
-                    )),
-            )
+                )
+                .child(
+                    div()
+                        .debug_selector(|| "dialog-answer".into())
+                        .child(format!(
+                            "Answered {} ({})",
+                            self.answered,
+                            self.answer.unwrap_or("-")
+                        )),
+                ),
+        )
     }
 }
 
@@ -711,20 +718,20 @@ impl Render for Dialog {
                 close(e, w, cx);
             })
         };
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .justify_between()
-            .p_3()
-            .bg(rgba(theme.neutral_bg_active))
-            .text_color(rgba(theme.neutral_text))
-            .child(self.message)
-            .child(
-                row()
-                    .child(answer("dialog-ok", "OK"))
-                    .child(answer("dialog-cancel", "Cancel")),
-            )
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .flex()
+                .flex_col()
+                .justify_between()
+                .p_3()
+                .child(self.message)
+                .child(
+                    row()
+                        .child(answer("dialog-ok", "OK"))
+                        .child(answer("dialog-cancel", "Cancel")),
+                ),
+        )
     }
 }
 
@@ -817,27 +824,29 @@ impl Render for TestingAnim {
         let phase = self.start.elapsed().as_secs_f32() / ANIM_PERIOD % 1.0;
         // 0→1→0 と往復する。
         let x = 1.0 - (phase * 2.0 - 1.0).abs();
-        div()
-            .size_full()
-            .relative()
-            .p_3()
-            .bg(rgba(theme.panel))
-            .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, self.panel, "testing-anim", "close-anim"))
-            .child(
-                div()
-                    .debug_selector(|| "anim-frames".into())
-                    .text_size(px(64.0))
-                    .child(format!("frame {}", self.frames)),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .bottom(px(40.0))
-                    .left(relative(0.05 + 0.7 * x))
-                    .size(px(160.0))
-                    .bg(hsla(phase, 0.8, 0.5, 1.0)),
-            )
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .relative()
+                .p_3()
+                .bg(rgba(theme.card))
+                .text_color(rgba(theme.neutral_text))
+                .child(title_bar(&theme, self.panel, "testing-anim", "close-anim"))
+                .child(
+                    div()
+                        .debug_selector(|| "anim-frames".into())
+                        .text_size(px(64.0))
+                        .child(format!("frame {}", self.frames)),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .bottom(px(40.0))
+                        .left(relative(0.05 + 0.7 * x))
+                        .size(px(160.0))
+                        .bg(hsla(phase, 0.8, 0.5, 1.0)),
+                ),
+        )
     }
 }
 
@@ -930,7 +939,7 @@ impl Render for TestingScrollbar {
                     .flex_1()
                     .min_h_0()
                     .rounded(px(8.0))
-                    .bg(rgba(theme.neutral_bg))
+                    .bg(rgba(theme.control))
                     .child(body.size_full().track_scroll(handle))
                     .child(components::scrollbars(&theme, id, handle).pulled_by(pull))
             };
@@ -959,7 +968,7 @@ impl Render for TestingScrollbar {
                                 .flex_none()
                                 .h(px(120.0))
                                 .rounded(px(8.0))
-                                .bg(rgba(theme.neutral_bg_active))
+                                .bg(rgba(theme.card))
                                 .child(
                                     components::claim_scroll(
                                         div()
@@ -1035,38 +1044,40 @@ impl Render for TestingScrollbar {
                         })),
                 ),
         );
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .bg(rgba(theme.panel))
-            .text_color(rgba(theme.neutral_text))
-            .child(title_bar(
-                &theme,
-                self.panel,
-                "testing-scrollbar",
-                "close-scrollbar",
-            ))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .gap_2()
-                    .child(vertical)
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(horizontal)
-                            .child(both),
-                    ),
-            )
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .bg(rgba(theme.card))
+                .text_color(rgba(theme.neutral_text))
+                .child(title_bar(
+                    &theme,
+                    self.panel,
+                    "testing-scrollbar",
+                    "close-scrollbar",
+                ))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .flex()
+                        .gap_2()
+                        .child(vertical)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(horizontal)
+                                .child(both),
+                        ),
+                ),
+        )
     }
 }
 
@@ -1092,51 +1103,53 @@ impl Render for TestingFont {
                 .font_weight(weight)
                 .child(text)
         };
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .bg(rgba(theme.panel))
-            .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, self.panel, "testing-font", "close-font"))
-            .child(sample(
-                "font-latin",
-                24.0,
-                FontWeight::NORMAL,
-                "Noto Sans: The quick brown fox jumps over the lazy dog 0123456789",
-            ))
-            .child(sample(
-                "font-latin-bold",
-                24.0,
-                FontWeight::BOLD,
-                "Noto Sans Bold: Sphinx of black quartz, judge my vow",
-            ))
-            .child(sample(
-                "font-ja",
-                24.0,
-                FontWeight::NORMAL,
-                "Noto Sans JP: 吾輩は猫である。名前はまだ無い。",
-            ))
-            .child(sample(
-                "font-ja-bold",
-                24.0,
-                FontWeight::BOLD,
-                "Noto Sans JP 太字: いろはにほへと ちりぬるを",
-            ))
-            .child(sample(
-                "font-mixed",
-                19.0,
-                FontWeight::NORMAL,
-                "Mixed 混在: Hello、世界! VR パネル 123 ABC あいう",
-            ))
-            .child(sample(
-                "font-small",
-                14.0,
-                FontWeight::NORMAL,
-                "Small 14px: 小さい文字の読みやすさ — ABC abc 漢字かな",
-            ))
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .bg(rgba(theme.card))
+                .text_color(rgba(theme.neutral_text))
+                .child(title_bar(&theme, self.panel, "testing-font", "close-font"))
+                .child(sample(
+                    "font-latin",
+                    24.0,
+                    FontWeight::NORMAL,
+                    "Noto Sans: The quick brown fox jumps over the lazy dog 0123456789",
+                ))
+                .child(sample(
+                    "font-latin-bold",
+                    24.0,
+                    FontWeight::BOLD,
+                    "Noto Sans Bold: Sphinx of black quartz, judge my vow",
+                ))
+                .child(sample(
+                    "font-ja",
+                    24.0,
+                    FontWeight::NORMAL,
+                    "Noto Sans JP: 吾輩は猫である。名前はまだ無い。",
+                ))
+                .child(sample(
+                    "font-ja-bold",
+                    24.0,
+                    FontWeight::BOLD,
+                    "Noto Sans JP 太字: いろはにほへと ちりぬるを",
+                ))
+                .child(sample(
+                    "font-mixed",
+                    19.0,
+                    FontWeight::NORMAL,
+                    "Mixed 混在: Hello、世界! VR パネル 123 ABC あいう",
+                ))
+                .child(sample(
+                    "font-small",
+                    14.0,
+                    FontWeight::NORMAL,
+                    "Small 14px: 小さい文字の読みやすさ — ABC abc 漢字かな",
+                )),
+        )
     }
 }
 
@@ -1257,54 +1270,60 @@ impl Render for StressTest {
             .try_global::<PanelControl>()
             .map_or((0, 0), |c| (c.open, c.limit));
         let alive = self.alive(cx).len();
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .p_3()
-            .bg(rgba(theme.panel))
-            .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, self.panel, "stress-test", "close-stress"))
-            .child(
-                div()
-                    .debug_selector(|| "stress-count".into())
-                    .child(format!("open {open} / limit {limit} (spawned {alive})")),
-            )
-            .child(
-                row()
-                    .child(
-                        button(&theme, "stress-fill", "Fill to limit", false)
-                            .on_click(cx.listener(|this, _, _, cx| this.spawn(usize::MAX, cx))),
-                    )
-                    .child(
-                        button(&theme, "stress-add", format!("+{STRESS_STEP}"), false)
-                            .on_click(cx.listener(|this, _, _, cx| this.spawn(STRESS_STEP, cx))),
-                    )
-                    .child(button(&theme, "stress-close", "Close all", false).on_click(
-                        cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
-                    ))
-                    .child(button(&theme, "stress-scatter", "Scatter", false).on_click(
-                        cx.listener(|this, _, _, cx| {
-                            // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
-                            let poses: Vec<_> = (0..this.alive(cx).len())
-                                .map(|_| {
-                                    facing_head(Vec3::new(
-                                        this.random() * 6.0 - 3.0,
-                                        this.random() * 2.5 - 1.0,
-                                        -0.8 - this.random() * 7.2,
-                                    ))
-                                })
-                                .collect();
-                            this.each(cx, |i| PanelCommand::Place(poses[i]));
-                        }),
-                    ))
-                    .child(
-                        button(&theme, "stress-grid", "Grid", false).on_click(cx.listener(
-                            |this, _, _, cx| this.each(cx, |i| PanelCommand::Place(grid_pose(i))),
-                        )),
-                    ),
-            )
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_3()
+                .bg(rgba(theme.card))
+                .text_color(rgba(theme.neutral_text))
+                .child(title_bar(&theme, self.panel, "stress-test", "close-stress"))
+                .child(
+                    div()
+                        .debug_selector(|| "stress-count".into())
+                        .child(format!("open {open} / limit {limit} (spawned {alive})")),
+                )
+                .child(
+                    row()
+                        .child(
+                            button(&theme, "stress-fill", "Fill to limit", false)
+                                .on_click(cx.listener(|this, _, _, cx| this.spawn(usize::MAX, cx))),
+                        )
+                        .child(
+                            button(&theme, "stress-add", format!("+{STRESS_STEP}"), false)
+                                .on_click(
+                                    cx.listener(|this, _, _, cx| this.spawn(STRESS_STEP, cx)),
+                                ),
+                        )
+                        .child(button(&theme, "stress-close", "Close all", false).on_click(
+                            cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
+                        ))
+                        .child(button(&theme, "stress-scatter", "Scatter", false).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
+                                let poses: Vec<_> = (0..this.alive(cx).len())
+                                    .map(|_| {
+                                        facing_head(Vec3::new(
+                                            this.random() * 6.0 - 3.0,
+                                            this.random() * 2.5 - 1.0,
+                                            -0.8 - this.random() * 7.2,
+                                        ))
+                                    })
+                                    .collect();
+                                this.each(cx, |i| PanelCommand::Place(poses[i]));
+                            }),
+                        ))
+                        .child(
+                            button(&theme, "stress-grid", "Grid", false).on_click(cx.listener(
+                                |this, _, _, cx| {
+                                    this.each(cx, |i| PanelCommand::Place(grid_pose(i)))
+                                },
+                            )),
+                        ),
+                ),
+        )
     }
 }
 
