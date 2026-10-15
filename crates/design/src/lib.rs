@@ -7,6 +7,8 @@
 //! 動き（[`animation`]）: 出る・消える・動かすの 3 種の [`animation::Motion`] と、値を時間で動かす [`animation::Animation`]。animato はここで隠す。
 //! 3. **Components**（[`components`]）: ボタン・スイッチ・スライダー。
 //!
+//! アイコンは Phosphor を [`icon`] モジュールで path として描く（使うものだけをビルドに含める）。
+//!
 //! 値は `tokens.json` が唯一の情報源（色は Radix Colors を OKLCH にしたもの）で、build.rs がこのクレートのコードにする。
 //! 色は `0xRRGGBBAA`（`gpui::rgba` にそのまま渡せる）。
 
@@ -14,6 +16,11 @@ include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
 
 pub mod animation;
 pub mod components;
+pub mod icon;
+
+pub use icon::{Icon, Weight, icon};
+
+include!(concat!(env!("OUT_DIR"), "/icons.rs"));
 
 /// 部品のトランジションを有効にする GPUI のグローバル（置いたときだけ動く。テストは置かないので即座に切り替わる）。
 /// 動いている間のウィンドウを `animating` に積む。フレームループ（`ui`）は、これを見て毎フレーム描き直し、読み出したら消す。

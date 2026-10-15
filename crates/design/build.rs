@@ -14,11 +14,15 @@ use palette::color_difference::Wcag21RelativeContrast;
 use palette::{Clamp, FromColor, Oklch, Srgb};
 use serde_json::Value;
 
+#[path = "build_icons.rs"]
+mod icons;
+
 type Map = serde_json::Map<String, Value>;
 
 const THEMES: [&str; 2] = ["light", "dark"];
 
 fn main() {
+    icons::generate(Path::new(&env::var("OUT_DIR").unwrap()));
     println!("cargo:rerun-if-changed=tokens.json");
     let src = fs::read_to_string("tokens.json").expect("tokens.json を読めない");
     let root: Value = serde_json::from_str(&src).expect("tokens.json が JSON ではない");
