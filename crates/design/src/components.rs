@@ -81,6 +81,20 @@ fn ripple_frame(elapsed_ms: f32, reach: f32) -> Option<(f32, u8)> {
     ))
 }
 
+/// 角丸を半分の幅・高さに収める（CSS と同じく、大きすぎる角丸は丸めた長さに縮む）。[左上, 右上, 右下, 左下]。
+fn clamp_corners(c: [f32; 4], width: f32, height: f32) -> [f32; 4] {
+    let max = (width.min(height) / 2.0).max(0.0);
+    c.map(|r| r.clamp(0.0, max))
+}
+
+/// 半径 `r` の角で、辺から `d` の高さの行が内側へ削られる長さ。`d >= r` なら 0。
+fn corner_inset(r: f32, d: f32) -> f32 {
+    if d >= r {
+        return 0.0;
+    }
+    r - (r * r - (r - d) * (r - d)).sqrt()
+}
+
 /// 波紋の最初の不透明度（0..=255）。
 const RIPPLE_ALPHA: f32 = 64.0;
 
@@ -176,7 +190,7 @@ impl InteractiveElement for Button {
 impl StatefulInteractiveElement for Button {}
 
 impl RenderOnce for Button {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let rest = self.rest;
         let state = window.use_keyed_state(self.id, cx, move |_, _| State {
             pointer: Pointer::default(),
@@ -255,20 +269,33 @@ impl RenderOnce for Button {
         let (over, leave) = (set(Some(true), None), set(Some(false), None));
         let (down, up) = (set(None, Some(true)), set(None, Some(false)));
         let up_out = set(None, Some(false));
+        // ボタンごとに違う角丸（`rounded*` で上書きされたものも含む）。指定が無い角は 0。
+        let rem = window.rem_size();
+        let corners = {
+            let c = &self.base.style().corner_radii;
+            let px_of = |l: Option<gpui::AbsoluteLength>| {
+                l.map_or(0.0, |l| f32::from(l.to_pixels(rem)))
+            };
+            [
+                px_of(c.top_left),
+                px_of(c.top_right),
+                px_of(c.bottom_right),
+                px_of(c.bottom_left),
+            ]
+        };
         let wave = ripple.filter(|_| enabled).and_then(|(origin, start)| {
             let ms = now.saturating_duration_since(start).as_secs_f32() * 1000.0;
             ripple_frame(ms, 0.0)?;
             keep_drawing(window, cx);
-            // ponytail: 長方形で切るので、丸い角の外へ薄くはみ出る。角丸で切りたければ自前で形を抜く。
             Some(
                 canvas(
                     |_, _, _| (),
                     move |b, _, w, _| {
                         let (dx, dy) = (
-                        (origin.x - b.left()).abs().max((origin.x - b.right()).abs()),
-                        (origin.y - b.top()).abs().max((origin.y - b.bottom()).abs()),
-                    );
-                    let reach = f32::from(dx).hypot(f32::from(dy));
+                            (origin.x - b.left()).abs().max((origin.x - b.right()).abs()),
+                            (origin.y - b.top()).abs().max((origin.y - b.bottom()).abs()),
+                        );
+                        let reach = f32::from(dx).hypot(f32::from(dy));
                         let ms = Instant::now()
                             .saturating_duration_since(start)
                             .as_secs_f32()
@@ -280,11 +307,30 @@ impl RenderOnce for Button {
                             point(origin.x - px(r), origin.y - px(r)),
                             size(px(r * 2.0), px(r * 2.0)),
                         );
-                        w.with_content_mask(Some(ContentMask { bounds: b }), |w| {
-                            w.paint_quad(
-                                fill(circle, rgba(ink & !0xff | u32::from(a))).corner_radii(px(r)),
-                            )
-                        });
+                        let quad = fill(circle, rgba(ink & !0xff | u32::from(a)))
+                            .corner_radii(px(r));
+                        // 角丸で切る: gpui のマスクは長方形だけなので、角の部分は 1px の帯に分けて
+                        // 帯ごとに角丸の内側だけをマスクにして描き、間の長方形部分は一度で描く。
+                        let (width, height) = (f32::from(b.size.width), f32::from(b.size.height));
+                        let [tl, tr, br, bl] = clamp_corners(corners, width, height);
+                        let (top, bottom) = (tl.max(tr), bl.max(br));
+                        let at = |x: f32, y: f32, w: f32, h: f32| {
+                            Bounds::new(b.origin + point(px(x), px(y)), size(px(w), px(h)))
+                        };
+                        let mut paint = |mask: Bounds<Pixels>| {
+                            w.with_content_mask(Some(ContentMask { bounds: mask }), |w| {
+                                w.paint_quad(quad.clone())
+                            })
+                        };
+                        paint(at(0.0, top, width, height - top - bottom));
+                        for i in 0..top.ceil() as u32 {
+                            let (l, r) = (corner_inset(tl, i as f32 + 0.5), corner_inset(tr, i as f32 + 0.5));
+                            paint(at(l, i as f32, width - l - r, 1.0));
+                        }
+                        for i in 0..bottom.ceil() as u32 {
+                            let (l, r) = (corner_inset(bl, i as f32 + 0.5), corner_inset(br, i as f32 + 0.5));
+                            paint(at(l, height - 1.0 - i as f32, width - l - r, 1.0));
+                        }
                     },
                 )
                 .absolute()
@@ -381,6 +427,18 @@ mod tests {
         assert!(r0 == 0.0 && r1 > 50.0 && r1 < 100.0, "{r1}");
         assert!(a0 as f32 == RIPPLE_ALPHA && a1 < a0 && a1 > 0);
         assert_eq!(ripple_frame(slow, 100.0), None);
+    }
+
+    #[test]
+    fn corner_cuts_follow_the_radius() {
+        // 辺ぎわの行ほど深く削れ、半径に届けば削れない。
+        assert!(corner_inset(10.0, 0.5) > corner_inset(10.0, 5.0));
+        assert_eq!(corner_inset(10.0, 10.0), 0.0);
+        assert_eq!(corner_inset(0.0, 0.5), 0.0);
+        // 円の式に乗る（半径 10、辺から 5 の行は 10 - sqrt(75)）。
+        assert!((corner_inset(10.0, 5.0) - (10.0 - 75f32.sqrt())).abs() < 1e-5);
+        // 巨大な角丸（カプセル）は高さの半分に縮む。
+        assert_eq!(clamp_corners([9999.0, 4.0, -1.0, 0.0], 100.0, 40.0), [20.0, 4.0, 0.0, 0.0]);
     }
 
     #[test]
