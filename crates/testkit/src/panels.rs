@@ -92,6 +92,15 @@ impl<V: Render> Panels<V> {
                 .unwrap();
         }
         cx.run_until_parked();
+        // As in production, route the hovered element's tooltip to the hand pointing at it.
+        let ids: Vec<_> = self
+            .windows
+            .iter()
+            .map(|w| w.window_id())
+            .enumerate()
+            .collect();
+        cx.cx
+            .update(|cx| ui::sync_tooltips(kernel, &self.bridges, ids, cx));
         let spawns = cx
             .cx
             .update(|cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns));

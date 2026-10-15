@@ -1,5 +1,5 @@
 //! Layer 6 画面: コントローラのビーム。手ごとに、手元から伸びるレーザーと、指しているパネルに貼り付く
-//! 小さな円（カーソル）と、ドラッグ中の要素の見た目（中身は GPUI が描く `ui::DragPreview`）の 3 枚。ここは見た目だけを描き、置き場所・長さ・表示はオーバーレイ層が毎 tick 決める。
+//! 小さな円（カーソル）と、ドラッグ中の要素の見た目（中身は GPUI が描く `ui::DragPreview`）と、カーソルの子のツールチップ（[`tooltip`]）の 4 枚。ここは見た目だけを描き、置き場所・長さ・表示はオーバーレイ層が毎 tick 決める。
 
 use gpui::{
     Bounds, Context, PathBuilder, Pixels, Point, Window, canvas, div, point, prelude::*, px, rgba,
@@ -7,6 +7,9 @@ use gpui::{
 use kernel::overlay::LASER_MAX;
 use kernel::{Hand, Pointer, Pose, Vec2};
 use ui::PanelSpec;
+
+pub mod tooltip;
+pub use tooltip::Tooltip;
 
 const COLOR: u32 = 0xffffffd0;
 const OUTLINE: u32 = 0x000000a0;
@@ -31,6 +34,10 @@ const RING_FILL: u32 = 0xffffffe0;
 const RING_SHOW: f32 = 0.15;
 /// ドラッグの見た目を描くウィンドウ。中心がカーソル。幅（m）はドラッグを始めたパネルの縮尺で UI 層が決める。
 const DRAG_PX: (u32, u32) = (400, 400);
+/// ツールチップのパネル。中心がカーソルで、カーソルと同じく頭から 1m 先での大きさ（m）。
+/// 1m あたり 1000px（既定のパネルと同じ縮尺）なので、文字は 1m 先のパネルの本文と同じ大きさに見える。
+const TOOLTIP_M: f32 = 0.64;
+const TOOLTIP_PX: (u32, u32) = (640, 256);
 
 /// 両手のレーザーとカーソルとドラッグの見た目。
 pub fn specs() -> Vec<PanelSpec> {
@@ -47,6 +54,7 @@ pub fn specs() -> Vec<PanelSpec> {
                 PanelSpec::new(Pose::IDENTITY, |_, _, _| DragLayer)
                     .sized(Vec2::splat(0.4), DRAG_PX)
                     .pointer(hand, Pointer::Drag),
+                tooltip::spec(hand),
             ]
         })
         .collect()

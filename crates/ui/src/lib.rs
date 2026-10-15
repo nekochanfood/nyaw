@@ -26,8 +26,8 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose,
-    ThemeMode, UiEvent, Vec2, VrBackend,
+    Anchor, Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode,
+    Pose, ThemeMode, UiEvent, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 
@@ -190,6 +190,11 @@ impl PointerBridge {
         Some((e.as_secs_f32() / (LONG_PRESS - RING_DELAY).as_secs_f32()).min(1.0))
     }
 
+    /// この手のレーザーがパネルの上にある（GPUI がこの手のマウスの位置を知っている）。
+    pub fn on_panel(&self) -> bool {
+        self.sent.is_some()
+    }
+
     /// タッチの長押しでマウスの押下になっている（ドラッグできる）。
     pub fn held(&self) -> bool {
         self.touch.as_ref().is_some_and(|t| t.held)
@@ -294,6 +299,10 @@ pub struct PanelControl {
     pub profiling: bool,
     /// 手ごとの、タッチの長押しの進み具合（0〜1。[`PointerBridge::hold_progress`]）。ポインタ（カーソル）がリングで見せる。
     pub hold: HashMap<Hand, f32>,
+    /// 手ごとの、ツールチップの文字（指している要素が [`design::components::Tooltips`] に置いたもの）と、
+    /// カーソルの上下どちらに出すか。フレームループが [`sync_tooltips`] で書き、ツールチップのパネルが描く。
+    pub tooltip: HashMap<Hand, gpui::SharedString>,
+    pub anchor: HashMap<Hand, Anchor>,
     /// 終了を頼む。フレームループが WebView を閉じてからアプリを終える（テストのハーネスもこれで終える）。
     pub quit: bool,
     /// 開いているパネルの数（閉じたものは数えない）と、同時に開ける数の上限（[`MAX_PANELS`] とランタイムの上限の小さい方）。
@@ -328,6 +337,38 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     });
     cx.refresh_windows();
     true
+}
+
+/// ウィンドウごとのツールチップの要求（[`design::components::Tooltips`]）を、そのパネルを指している手に振り分け、
+/// 手ごとの向き（[`Kernel::tooltip_anchor`]）とともに [`PanelControl`] へ書く。変わったら `true`（ツールチップを描き直す）。
+/// 入力を配送した後に毎フレーム呼ぶ。本番と testkit 共通。
+pub fn sync_tooltips<B: VrBackend>(
+    kernel: &Kernel<B>,
+    bridges: &HashMap<(PanelId, Hand), PointerBridge>,
+    windows: impl IntoIterator<Item = (PanelId, gpui::WindowId)>,
+    cx: &mut App,
+) -> bool {
+    let requests = cx.default_global::<design::components::Tooltips>();
+    let mut tooltip = HashMap::new();
+    for (panel, window) in windows {
+        let Some((_, text)) = requests.0.get(&window) else {
+            continue;
+        };
+        // ponytail: 両手で同じパネルを指すと GPUI のマウスは 1 つなので、どちらの手の要求か見分けられない。両方に出す。
+        for hand in [Hand::Left, Hand::Right] {
+            if bridges.get(&(panel, hand)).is_some_and(|b| b.on_panel()) {
+                tooltip.insert(hand, text.clone());
+            }
+        }
+    }
+    let anchor: HashMap<Hand, Anchor> = [Hand::Left, Hand::Right]
+        .into_iter()
+        .map(|h| (h, kernel.tooltip_anchor(h)))
+        .collect();
+    let ctl = cx.default_global::<PanelControl>();
+    let changed = ctl.tooltip != tooltip || ctl.anchor != anchor;
+    (ctl.tooltip, ctl.anchor) = (tooltip, anchor);
+    changed
 }
 
 /// 1フレーム分: 下位パイプラインを回し、パネル宛てのイベントを GPUI 入力に変換して返す。
@@ -792,15 +833,24 @@ pub fn run_with(
                     ctl.hold = hold;
                     changed
                 });
-                if hold_changed {
-                    for &(p, _) in &windows {
-                        if kernel
-                            .panel(p)
-                            .pointer
-                            .is_some_and(|(_, part)| part == Pointer::Cursor)
-                        {
-                            drawn[p] = None;
-                        }
+                // 前のフレームの配送でホバーした要素のツールチップを手に振り分ける。変わればツールチップのパネルを描き直す。
+                let tooltip_changed = cx.update(|cx| {
+                    let ids = windows
+                        .iter()
+                        .filter_map(|&(p, w)| w.map(|w| (p, w.window_id())));
+                    sync_tooltips(&kernel, &bridges, ids, cx)
+                });
+                for &(p, w) in &windows {
+                    let part = kernel.panel(p).pointer.map(|(_, part)| part);
+                    if hold_changed && part == Some(Pointer::Cursor) {
+                        drawn[p] = None;
+                    }
+                    if tooltip_changed
+                        && part == Some(Pointer::Tooltip)
+                        && let Some(w) = w
+                    {
+                        let _ = cx.update_window(w, |_, w, _| w.refresh());
+                        drawn[p] = None;
                     }
                 }
                 // ドラッグの見た目は中心がカーソルに来るよう置かれるので、そのウィンドウのマウスを中心に置いて毎フレーム描く。
