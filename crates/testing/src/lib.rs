@@ -5,7 +5,7 @@
 //! - GPUI: 切り替え・押している間の見た目・ドラッグ＆ドロップ・スクロールする一覧・フォーカスと文字入力・ポップアップメニュー
 //! - Web: Testing の Web 版（[`WEB_PAGE`]。React のページ）を隣に開く
 //! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
-//! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴んでも親は付いてこない
+//! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
 //! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）
 //! - 負荷: [`StressTest`] で上限いっぱいまでパネルを出し、閉じる・ちりばめる・並べる
 //!
@@ -538,7 +538,7 @@ const DIALOG_PX: (u32, u32) = (400, 250);
 
 /// 親子関係を試す画面（`dialog-test`）。`open-dialog` でダイアログ（[`Dialog`]）を子として開く。
 /// 開いている間はこの画面が暗くなって押せず（掴んで動かすと子も付いてくる）、ダイアログの `dialog-ok` / `dialog-cancel` で閉じる。
-/// ダイアログを掴んでも親は付いてこない（独立）。
+/// ダイアログを掴むと親も付いてくる（独立しない）。
 #[derive(Default)]
 pub struct DialogTest {
     panel: PanelId,
@@ -573,7 +573,7 @@ impl Render for DialogTest {
                 button("open-dialog", "Open dialog", false).on_click(move |_, _, cx| {
                     let me = me.clone();
                     cx.default_global::<PanelControl>().spawns.push(
-                        PanelSpec::child(panel, false, move |id, _, _| Dialog::new(id, me))
+                        PanelSpec::child(panel, true, move |id, _, _| Dialog::new(id, me))
                             .sized(DIALOG_SIZE, DIALOG_PX),
                     )
                 }),

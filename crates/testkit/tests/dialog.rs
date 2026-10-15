@@ -1,5 +1,5 @@
 //! Parent/child panels on the Dialog test screen: the dialog follows its parent, the parent dims while the dialog is open,
-//! and grabbing the dialog (which is built not to carry its parent) leaves the parent behind.
+//! and grabbing the dialog (which is built to carry its parent) takes the parent along.
 
 use gpui::TestAppContext;
 use kernel::PanelCommand;
@@ -11,7 +11,7 @@ fn channels(c: u32) -> [u32; 3] {
 }
 
 #[gpui::test]
-fn dialog_dims_its_parent_follows_it_and_leaves_alone_when_grabbed(cx: &mut TestAppContext) {
+fn dialog_dims_its_parent_follows_it_and_carries_it_when_grabbed(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| DialogTest::new(0));
     assert_eq!(kit.color_at("open-dialog"), BUTTON_BG);
     kit.click("open-dialog").step().step();
@@ -28,7 +28,7 @@ fn dialog_dims_its_parent_follows_it_and_leaves_alone_when_grabbed(cx: &mut Test
         "{dimmed:06x}"
     );
 
-    // Grabbing the dialog moves only the dialog.
+    // Grabbing the dialog takes the parent along, keeping how they sit relative to each other.
     let parent_at = kit.kernel.panel(0).pose;
     let target = kit.kernel.panel(dialog).pose.position + Vec3::new(0.3, 0.2, 0.0);
     kit.panel(dialog).drag_panel(target);
@@ -39,23 +39,24 @@ fn dialog_dims_its_parent_follows_it_and_leaves_alone_when_grabbed(cx: &mut Test
             .position
             .abs_diff_eq(target, 1e-3)
     );
-    assert_eq!(kit.kernel.panel(0).pose, parent_at);
+    let moved = kit.kernel.panel(0).pose.position;
+    assert!(moved.distance(parent_at.position) > 0.2, "{moved:?}");
 
-    // Moving the parent takes the dialog along, keeping where it was left.
-    let apart = kit.kernel.panel(dialog).pose.position - parent_at.position;
+    // Moving the parent takes the dialog along.
+    let apart = kit.kernel.panel(0).pose.inverse() * kit.kernel.panel(dialog).pose;
     kit.kernel.apply(
         0,
         PanelCommand::Place(Pose::new(Vec3::new(1.0, 0.0, -2.0), Quat::IDENTITY)),
     );
     kit.step();
-    let parent = kit.kernel.panel(0).pose.position;
-    assert!(parent.distance(parent_at.position) > 0.5);
+    let parent = kit.kernel.panel(0).pose;
+    assert!(parent.position.distance(moved) > 0.5);
     assert!(
         kit.kernel
             .panel(dialog)
             .pose
             .position
-            .abs_diff_eq(parent + apart, 1e-3)
+            .abs_diff_eq((parent * apart).position, 1e-3)
     );
 
     // Once the dialog is closed the parent is bright again.

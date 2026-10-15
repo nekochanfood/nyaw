@@ -113,7 +113,7 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 | Web | `open-web` | 隣に Testing の Web 版（`web/testing/`。React + Base UI）を開く。Web 版には同じ操作と、Base UI の Switch / Checkbox / Slider / Tabs、半透明のページ（`testing-transparent`）を開くボタンがある |
 | VR | `spawn-panel` | 隣に Testing パネルを追加し、その画面を独立して操作する |
 | VR | `pointer-test` | 隣にポインタの方式を試す画面（`PointerTest`）を開く。`pointer-mode` でマウス / タッチのエミュレートを切り替え（タッチで光る）、`drag-chip` → `drop-zone`（マウスのドラッグ）・`swipe-list`（タッチのスワイプ）・`tap-me`（どちらでも押せる） |
-| VR | `dialog-test` | 隣に親子関係を試す画面（`DialogTest`）を開く。`open-dialog` でダイアログ（`Dialog`。`PanelSpec::child(.., carry = false, ..)`）を子として出す。開いている間は親が暗くなって押せず（掴んで動かすと子が付いてくる）、ダイアログを掴んでも親は付いてこない。`dialog-ok` / `dialog-cancel` で答えて閉じる |
+| VR | `dialog-test` | 隣に親子関係を試す画面（`DialogTest`）を開く。`open-dialog` でダイアログ（`Dialog`。`PanelSpec::child(.., carry = true, ..)`）を子として出す。開いている間は親が暗くなって押せず（掴んで動かすと子が付いてくる）、ダイアログを掴むと親も付いてくる（独立しない）。`dialog-ok` / `dialog-cancel` で答えて閉じる |
 | VR | `attach-hmd` / `attach-left` / `attach-right` / `attach-tracker` / `detach` | 取り付け・取り外し（トラッカーは見えている最初のもの） |
 | VR | `lock` | 掴めないようにする |
 | VR | `menu-held` / `grabbed` | メニューボタン・パネルを掴んでいる間光る（表示のみ） |
