@@ -597,12 +597,12 @@ impl Overlay {
             }
             p.dim_to = to;
             if p.animated && !p.closed {
-                let (secs, easing) = if parent {
-                    (0.2, Easing::EaseOutCubic)
-                } else {
-                    (0.15, Easing::EaseInCubic)
-                };
-                let tween = Tween::new(p.dim, to).duration(secs).easing(easing).build();
+                // 戻るときも ease-out: 終わり際に急に明るくなると、子が消える瞬間と重なってちらつく。
+                let secs = if parent { 0.2 } else { 0.15 };
+                let tween = Tween::new(p.dim, to)
+                    .duration(secs)
+                    .easing(Easing::EaseOutCubic)
+                    .build();
                 self.dims.insert(id, (tween, now));
             } else {
                 self.dims.remove(&id);
