@@ -34,6 +34,8 @@ struct State {
     value: f32,
 }
 
+type OnChange = Rc<dyn Fn(f32, &mut Window, &mut App)>;
+
 #[derive(IntoElement)]
 pub struct Slider {
     id: &'static str,
@@ -43,7 +45,7 @@ pub struct Slider {
     fill: u32,
     knob: u32,
     knob_active: u32,
-    on_change: Rc<dyn Fn(f32, &mut Window, &mut App)>,
+    on_change: OnChange,
 }
 
 /// `value`（0..=1）を軸に沿って動かすスライダー。動かすたびに `on_change` が新しい値で呼ばれる。

@@ -263,6 +263,8 @@ struct ElasticState {
     touching: bool,
 }
 
+type OnWheel = Rc<dyn Fn(&ScrollWheelEvent, &mut Window, &mut App)>;
+
 /// 描画だけを `offset` ずらす。レイアウトは動かないので、スクロールの範囲や位置に影響しない
 /// （`top` などで動かすと、末尾側ではスクロール範囲が縮んで引っ張りが打ち消される）。
 ///
@@ -271,7 +273,7 @@ struct ElasticState {
 struct Shift {
     offset: Point<Pixels>,
     child: AnyElement,
-    on_wheel: Rc<dyn Fn(&ScrollWheelEvent, &mut Window, &mut App)>,
+    on_wheel: OnWheel,
 }
 
 impl IntoElement for Shift {

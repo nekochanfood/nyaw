@@ -17,11 +17,13 @@ use crate::{
     duration_ms, font_size, icon, icons, letter_spacing, radius, scale, spacing,
 };
 
+type OnClick = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
 pub struct Catalog {
     mode: Mode,
     page: ScrollHandle,
     /// 閉じるボタンの処理（パネルに載せるときだけ）。
-    on_close: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>>,
+    on_close: Option<OnClick>,
     scroll: ScrollHandle,
     slider: f32,
     toggle: bool,
