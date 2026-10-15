@@ -102,7 +102,13 @@ mod tests {
     fn text_stays_readable_over_a_white_backdrop() {
         // いちばん明るい背景（白）に半透明の箱を重ねても、文字は本文の 7:1。
         let a = TOOLTIP_ALPHA as f32 / 255.0;
-        let rgb = |c: u32| [(c >> 24) as f32, (c >> 16 & 0xff) as f32, (c >> 8 & 0xff) as f32];
+        let rgb = |c: u32| {
+            [
+                (c >> 24) as f32,
+                (c >> 16 & 0xff) as f32,
+                (c >> 8 & 0xff) as f32,
+            ]
+        };
         let bg = rgb(Theme::DARK.tooltip).map(|v| v * a + 255.0 * (1.0 - a));
         let fg = luminance(rgb(Theme::DARK.on_tooltip));
         let ratio = (fg + 0.05) / (luminance(bg) + 0.05);
@@ -112,7 +118,7 @@ mod tests {
 
     #[test]
     fn capsule_ends_clear_the_text() {
-        assert!(PAD_X >= TOOLTIP_HEIGHT / 2.0 && PAD_X > PAD_Y);
+        const { assert!(PAD_X >= TOOLTIP_HEIGHT / 2.0 && PAD_X > PAD_Y) };
     }
 
     #[gpui::test]
