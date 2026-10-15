@@ -13,7 +13,7 @@ use gpui::{Context, SharedString, Window, div, prelude::*, px};
 use kernel::{Anchor, Hand, PanelId, Pointer};
 
 /// 要素から離れてから、消え始めるまでの猶予。
-pub const GRACE: Duration = Duration::from_millis(50);
+pub const GRACE: Duration = Duration::from_millis(125);
 /// スライドする距離（px）。
 const SLIDE: f32 = design::spacing::SM;
 
