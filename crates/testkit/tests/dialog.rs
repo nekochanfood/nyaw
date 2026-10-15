@@ -6,10 +6,6 @@ use kernel::PanelCommand;
 use testing::{BUTTON_BG, DialogTest};
 use testkit::{Driver, Pose, Quat, Vec3, VrKit};
 
-fn channels(c: u32) -> [u32; 3] {
-    [c >> 16 & 0xff, c >> 8 & 0xff, c & 0xff]
-}
-
 #[gpui::test]
 fn dialog_dims_its_parent_follows_it_and_carries_it_when_grabbed(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| DialogTest::new(0));
@@ -18,15 +14,9 @@ fn dialog_dims_its_parent_follows_it_and_carries_it_when_grabbed(cx: &mut TestAp
     let dialog = 1;
     assert_eq!(kit.kernel.status(dialog).parent, Some(0));
 
-    // The parent is dimmed (the color is darker, not more transparent) while the dialog is open.
-    let dimmed = kit.panel(0).color_at("open-dialog");
-    assert!(
-        channels(dimmed)
-            .iter()
-            .zip(channels(BUTTON_BG))
-            .all(|(d, b)| *d < b),
-        "{dimmed:06x}"
-    );
+    // The parent is dimmed by the runtime (only the color, and the pixels sent are untouched) while the dialog is open.
+    let tint = |kit: &VrKit<'_, DialogTest>| kit.kernel.subsystems.backend.overlays[0].tint;
+    assert!(tint(&kit) < 1.0);
 
     // Grabbing the dialog takes the parent along, keeping how they sit relative to each other.
     let parent_at = kit.kernel.panel(0).pose;
@@ -63,6 +53,7 @@ fn dialog_dims_its_parent_follows_it_and_carries_it_when_grabbed(cx: &mut TestAp
     kit.kernel.apply(dialog, PanelCommand::Close);
     kit.panel(0).hover("dialog-answer").step();
     assert_eq!(kit.color_at("open-dialog"), BUTTON_BG);
+    assert_eq!(tint(&kit), 1.0);
 }
 
 #[gpui::test]
