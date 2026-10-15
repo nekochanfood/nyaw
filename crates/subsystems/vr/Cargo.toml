@@ -9,20 +9,26 @@ glam.workspace = true
 logger.workspace = true
 os.workspace = true
 # OpenVR の C API。ビルド時に cmake と C++ コンパイラで openvr_api を静的リンクする
-openvr_bindings = "2.1.1"
+openvr_bindings = { version = "2.1.1", optional = true }
 # OpenXR。ローダーは cmake でビルドして静的リンクする（DLL を同梱しなくて済む）
-openxr = { version = "0.22", default-features = false, features = ["static"] }
-# OpenXR のスワップチェーンへ画像を書き込むための Vulkan
-ash = "0.38"
+openxr = { version = "0.22", default-features = false, features = ["static"], optional = true }
+# OpenXR / OpenVR のスワップチェーン・共有テクスチャへ画像を書き込むための Vulkan
+ash = { version = "0.38", optional = true }
 # SteamVR の vrclient を実行時に読み込む
-libloading = "0.8"
+libloading = { version = "0.8", optional = true }
 # novr のエミュレーターのウィンドウ
-minifb = "0.29.0"
+minifb = { version = "0.29.0", optional = true }
 # novr のエミュレーターの GPU コンポジタ（compositor.rs）
-wgpu = "29.0.4"
-pollster = "0.4"
-raw-window-handle = "0.6"
+wgpu = { version = "29.0.4", optional = true }
+pollster = { version = "0.4", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
 
 [features]
+# 実ランタイムとエミュレーターは重い依存（wgpu・ash・OpenXR/OpenVR 等）を引くので、使う側が選ぶ。
+# 型・トレイトと `connect` は常にある（無効なランタイムは `VrError::NoRuntime`）。
+default = ["novr", "openvr", "openxr"]
+novr = ["dep:minifb", "dep:wgpu", "dep:pollster", "dep:raw-window-handle"]
+openvr = ["dep:openvr_bindings", "dep:libloading", "dep:ash"]
+openxr = ["dep:openxr", "dep:ash"]
 # 上位層のテスト用モック (vr::mock) を公開する
 test-support = []
