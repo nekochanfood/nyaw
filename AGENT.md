@@ -6,12 +6,12 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 
 | 層 | クレート | 責務 | 主な公開 API |
 |---|---|---|---|
-| - | `crates/logger` | logfmt 形式の構造化ロガー（横断）。整形・レベル・出力先 `Sink` の抽象と、`log` クレート（gpui 等）からの橋渡し | `trace!/debug!/info!/warn!/error!`, `Logger`, `Sink`, `StderrSink`, `init`, `format` |
+| - | `crates/logger` | logfmt 形式の構造化ロガー（横断）。整形・レベル・出力先 `Sink` の抽象と、`log` クレート（gpui 等）からの橋渡し | `trace!/debug!/info!/warn!/error!`, `Logger`, `Sink`, `StderrSink`, `FileSink`, `create_rotated`, `init`, `format` |
 | カーネル最下部 / Subsystems | `crates/subsystems` | OS・ランタイム・コントローラ入力・描画の差を吸収。ランタイムと入力履歴を所有し、上位には生入力のない共通フレームを渡す。設定・パネル管理・UI には依存しない | `Subsystems::{with_backend, poll}`, `Frame`, `ControllerState`, `os`, `rendering` |
-| カーネル / Subsystems / OS | `crates/subsystems/os` | Windows/Linux の差を吸収（パス、環境変数、ランタイム検出、ファイル入出力）。OS の一般的な `#[cfg]` はここに書く（描画固有は `rendering`） | `config_dir`, `log_dir`, `log_level`, `FileSink`, `openvr_paths_file`, `openxr_runtime_manifest` |
+| カーネル / Subsystems / OS | `crates/subsystems/os` | Windows/Linux の差を吸収（保存先、ランタイム検出、タイマー精度・GPU 優先度）。OS の一般的な `#[cfg]` はここに書く（描画固有は `rendering`） | `config_dir`, `log_dir`, `precise_timers`, `high_gpu_priority`, `openvr_paths_file`, `openxr_runtime_manifest` |
 | カーネル / Subsystems / ランタイム | `crates/subsystems/vr` | OpenVR / OpenXR / novr の差を吸収。`Subsystems` が `VrBackend` を所有し、上位は共通フレームを受け取る。novr はデスクトップのウィンドウで VR を模すエミュレーター | `connect`, `VrBackend`, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`）, `Device`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
 | カーネル / Subsystems / 入力 | `crates/subsystems/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController, prev) -> ControllerState`, `source(profile, Action)` / `scroll_source(profile)`（逆引き） |
-| カーネル / Subsystems / 描画 | `crates/subsystems/rendering` | GPUI / WebView の非表示描画先・読み戻し・描画密度と OS 差、ランタイムへの画像転送・不透明度 / 相対追従の能力差・描画資源の保持と解放。UI は `kernel::rendering` 経由で使う | `Surface::{new, store, present, place, show}`, `gpui::{capture, read_back, open_panel_window, set_render_lod}`, `web::{capture, resize, panel_window, page_url, pump_events}` |
+| カーネル / Subsystems / 描画 | `crates/subsystems/rendering` | GPUI / WebView の非表示描画先・読み戻し・描画密度と OS 差、ランタイムへの画像転送・不透明度 / 相対追従の能力差・描画資源の保持と解放。UI は `kernel::rendering` 経由で使う | `Surface::{new, store, present, place, show, release}`, `gpui::{capture, read_back, open_window, set_render_lod}`, `web::{capture, resize, offscreen_window, page_url, pump_events}` |
 | 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動 | `Overlay::{add_panel, attach, detach, set_locked, set_resolution, tick, submit}`, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | カーネル | `crates/kernel` | 設定・フレーム進行・パネル操作を束ねる。最下部の Subsystems の上に位置し、UI・画面はカーネルだけを見る。設定は `subsystems::os::config_dir()/config.toml`。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル） | `Kernel::{boot, with_backend, tick, submit, apply, status, add_panel}`, `PanelCommand`, `PanelStatus`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート |
 | 5 UI | `crates/ui` | UI 層（1つ）。パネルを GPUI のウィンドウか Tauri の WebView（`ui::web`）で実体化し、1 つのフレームループ・1 つのカーネルで両方を回す。GPUI はポインタイベントをマウス入力に変換して画面へ流し、Web は注入したブリッジ（`src/web/bridge.js`）が DOM のポインタイベントにする。描画結果は `kernel::rendering` で読み戻してパネルへ返す。どの画面・ページかは知らない | `run(kernel, panels, profiler, web_files)` / `run_with`（テスト用の `Hooks`）, `PanelSpec`（`new` = GPUI、`web` / `spawn_web` = Web のページ）, `pump` / `pump_with`（入力1フレーム分。本番と testkit 共通）, `sync_panel`（画面からのパネル操作を反映。本番と testkit 共通）, `capture`（描画の読み戻し）, `open_panel_window`, `drag_preview`（`on_drag` の見た目はこれで包む。VR ではカーソル側だけに描く）, `PointerBridge`, `PanelControl`（`open` / `limit` = 開いている数と上限）/ `PanelState::live`（毎フレーム描き直す）/ `PanelCommand` / `PanelStatus`, `MAX_PANELS`, `web::{Host, Files, WebCommand, WebStatus, WebPointer, Outbox, BRIDGE}` |
@@ -36,10 +36,10 @@ UI・画面・testkit が見る下位の型は `kernel` の再エクスポート
   ```
 - 出力は 1 行 1 件の logfmt: `ts=2026-10-13T09:00:00.123Z level=warn target=ui msg=パネルの描画を取得できない error="device lost" panel=0`。
   `ts level target msg` は固定、以降はフィールドを書いた順。キーは snake_case。`target` は `module_path!()`。
-- 出力先は `main` だけが組み立てる: 標準エラー出力（`logger::StderrSink`）と `os::log_dir()/nyaw.log`（`os::FileSink`。Windows `%LOCALAPPDATA%\nyaw\logs`、Linux `$XDG_STATE_HOME/nyaw/logs`）。
+- 出力先は `main` だけが組み立てる: 標準エラー出力（`logger::StderrSink`）と `os::log_dir()/nyaw.log`（`logger::FileSink`。Windows `%LOCALAPPDATA%\nyaw\logs`、Linux `$XDG_STATE_HOME/nyaw/logs`）。
   起動ごとに新しく作り、前回分は `nyaw-prev.log` に 1 世代だけ残す（既存の prev は消してから退避）。
-  ファイル入出力は OS 層の責務なので、新しい出力先が要るときも `Sink` の実装は `os` に置く。
-- レベルは環境変数 `NYAW_LOG`（`trace`/`debug`/`info`/`warn`/`error`、既定 `info`）。`init` 前のログは stderr・info 以上に出る。
+  ファイル出力・世代管理は `logger::FileSink` / `logger::create_rotated`。保存先の OS 差は `os::log_dir` に閉じ、ローテーションの方針は logger が持つ。logger は自前クレートに依存しない。
+- レベルの環境変数は `kernel::config::log_level()` が読む。レベルは環境変数 `NYAW_LOG`（`trace`/`debug`/`info`/`warn`/`error`、既定 `info`）。`init` 前のログは stderr・info 以上に出る。
 - 外部クレートの `log` 出力（gpui 等）も同じロガーに流れる。パニックも `main` のフックで `error` として記録する。
 
 ## ランタイム（設計思想）
@@ -305,7 +305,7 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 
 - `rendering` は `overlay` の下、`vr` の上に入り、カーネルが `kernel::rendering` として公開する。UI から描画クレートへ直接依存しない。
 - `overlay::Panel` が持つ `rendering::Surface` が描画資源と送信済み状態を保持する。配置・入力判定・アニメーションの目標と進行は overlay が決め、描画先へ送るときの能力差は Surface が吸収する。
-- `ui::{capture, Frame, open_panel_window, panel_window_options, set_render_lod}` と `ui::web::Image` は rendering の再エクスポート。実装を足す先は `crates/subsystems/rendering`。
+- `ui::{capture, Frame, set_render_lod}` と `ui::web::Image` は rendering の再エクスポート。`ui::{open_panel_window, panel_window_options}` は UI の表示方針で、OS・描画ホスト固有の作成と読み戻しは `crates/subsystems/rendering` が担う。
 - `cargo test -p rendering --all-features` は画素変換、アルファ対応 / 未対応、追従のフォールバック、解放後の更新抑止を検証する。実描画は既存の `gpu_capture` / `panel_lod` / `web_vr` で描画層からカーネルまで通す。
 
 ## Subsystems（Issue #42）
@@ -329,7 +329,14 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 - `Subsystems<B>` がバックエンドと機種・手ごとの入力履歴を所有する。`poll()` の中で取得・機種別変換・ヒステリシスを完結し、切断や機種変更では履歴を捨てる。
 - 上位へ渡す `subsystems::Frame` は `ControllerState` の配列と姿勢・トラッカー・終了要求を持つ。生入力・機種プロファイル・ランタイムの `emulated` フラグは含めない。`pose()` は追跡可能な姿勢だけを返し、`stabilize_pointer` はポインタ補正の要否を表す。
 - オーバーレイは共通アクションからヒット判定・クリック・掴み・スクロールを処理する。機種別の入力名・押下しきい値・入力履歴の管理はしない。パネル操作に必要なインタラクションの状態はオーバーレイに置く。
-- `Kernel::boot` はランタイム選択を Subsystems に委譲する。OS 初期化は `Subsystems::with_backend` が行う。設定の優先順位は呼び出し側の責務。
+- ランタイム指定の解釈・novr へのフォールバックは `Kernel::boot`、タイマー精度・GPU 優先度を設定する判断は `Kernel::with_backend` が行う。Subsystems は接続・OS 設定の実行手段を提供する。設定の優先順位は呼び出し側の責務。
 - テストの入力注入と描画結果の確認は `kernel.subsystems.backend` を使う（旧 `kernel.vr`）。本番のフレーム取得は必ず `Subsystems::poll` を通す。既存の `kernel::vr` / `kernel::rendering` の型の再エクスポートは維持する。
 - OS 差は `os`、描画ホストの差やランタイムの描画能力差は `rendering` に閉じる。新環境への対応で上位へ環境別分岐を増やさない。
 - `cargo test -p subsystems -p kernel -p overlay` で機種差・左右独立の押下判定・切断と機種変更・追跡能力・パネル操作への接続を検証する。
+
+### 共通方針の所有者
+
+- ログのファイル出力・世代管理は `logger`、`NYAW_LOG` の取得は `kernel::config`。OS サブシステムは保存先の違いを吸収する。
+- パネルを閉じた後、フェード完了で資源を解放する判断は `overlay`。`rendering::Surface` は `release` を実行し、パネルの閉鎖状態を受け取らない。
+- 非表示・透過・フォーカスしないというウィンドウの方針は `ui`。Windows の描画先サイズ補正や Linux のオフスクリーン配置など、実現手段の違いは描画サブシステムが吸収する。
+- Subsystems とのやり取りがあるだけでは、その共通機能を Subsystems の一部にしない。同名クレートを上下に作らず、ログ・起動・パネル管理などの所有者へ置く。

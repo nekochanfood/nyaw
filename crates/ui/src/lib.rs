@@ -10,9 +10,9 @@
 
 pub mod web;
 use kernel::rendering::gpui::read_back;
-pub use kernel::rendering::gpui::{
-    Frame, capture, open_panel_window, panel_window_options, set_render_lod,
-};
+pub use kernel::rendering::gpui::{Frame, capture, set_render_lod};
+mod panel_window;
+pub use panel_window::{open_panel_window, panel_window_options};
 
 use std::{
     collections::HashMap,
@@ -1204,7 +1204,12 @@ mod tests {
 
     #[gpui::test]
     fn panel_window_is_hidden_and_matches_panel_resolution(cx: &mut TestAppContext) {
-        assert!(!panel_window_options(PANEL_PX).show);
+        let options = panel_window_options(PANEL_PX);
+        assert!(!options.show && !options.focus);
+        assert!(matches!(
+            options.window_background,
+            gpui::WindowBackgroundAppearance::Transparent
+        ));
         let window = cx.update(|cx| {
             open_panel_window(cx, PANEL_PX, |_, cx| cx.new(|_| Probe::default())).unwrap()
         });

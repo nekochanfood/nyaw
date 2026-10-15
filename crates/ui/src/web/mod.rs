@@ -575,9 +575,15 @@ impl Host {
         url: WebviewUrl,
         (w, h): (u32, u32),
     ) -> tauri::Result<WebviewWindow<Wry>> {
-        rendering::panel_window(WebviewWindowBuilder::new(&self.app, label, url), (w, h))
-            .initialization_script(BRIDGE)
-            .build()
+        rendering::offscreen_window(
+            WebviewWindowBuilder::new(&self.app, label, url)
+                .transparent(true)
+                .focused(false)
+                .skip_taskbar(true),
+            (w, h),
+        )
+        .initialization_script(BRIDGE)
+        .build()
     }
 
     /// 入力が [`PREWARM_IDLE`] 無ければ、次に開くパネルのための予備の WebView を作っておく。

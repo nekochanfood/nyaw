@@ -6,8 +6,11 @@
 //! // ts=2026-10-13T09:00:00.123Z level=info target=nyaw msg="runtime selected" runtime=NoVr fallback=true
 //! ```
 //!
-//! 出力先（[`Sink`]）の組み立てはブートローダー（`main`）だけが行う。ファイル出力は OS 層（`os::FileSink`）が実装する。
+//! 出力先（[`Sink`]）の組み立てはブートローダー（`main`）だけが行う。ファイル出力と世代管理は [`FileSink`] が担い、保存先は呼び出し側が指定する。
 //! 外部クレートが `log` クレートで出すログ（gpui など）も [`init`] 以降は同じロガーへ流れる。
+
+mod file;
+pub use file::{FileSink, create_rotated, prev_log_path};
 
 use std::fmt;
 use std::io::{IsTerminal, Write};

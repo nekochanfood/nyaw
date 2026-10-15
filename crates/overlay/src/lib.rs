@@ -436,7 +436,11 @@ impl Overlay {
         if p.pointer.is_none() {
             p.surface.set_width(vr, p.displayed_size().x);
         }
-        p.surface.present(vr, p.opacity, p.closed, upload);
+        if p.closed && p.opacity == 0.0 {
+            p.surface.release(vr);
+        } else {
+            p.surface.present(vr, p.opacity, upload);
+        }
     }
 
     fn animate(&mut self, vr: &mut dyn VrBackend, now: Instant) {

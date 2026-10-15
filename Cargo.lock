@@ -4869,9 +4869,6 @@ dependencies = [
 [[package]]
 name = "os"
 version = "2026.0.1"
-dependencies = [
- "logger",
-]
 
 [[package]]
 name = "overlay"

@@ -3,6 +3,3 @@ name = "os"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-
-[dependencies]
-logger.workspace = true

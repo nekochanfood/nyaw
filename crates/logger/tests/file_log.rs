@@ -1,9 +1,9 @@
-//! Integration test: logger formatting -> os FileSink -> file reads back as a single logfmt line.
+//! ファイルシンクを通したログの整形・フィルタ・書き込みを検証する。
 
 use std::fs;
 
+use logger::FileSink;
 use logger::{Level, Logger, Record};
-use os::FileSink;
 
 #[test]
 fn logger_writes_logfmt_lines_through_file_sink() {

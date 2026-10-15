@@ -9,6 +9,7 @@ pub use subsystems::{self, Subsystems};
 pub use subsystems::{rendering, vr};
 
 use std::time::{Duration, Instant};
+use subsystems::os;
 
 pub use config::{Config, LodQuality, PointerMode};
 pub use overlay::{self, Overlay, Panel, PanelId, Pointer, PointerEvent, UiEvent};
@@ -81,7 +82,24 @@ impl Kernel {
     /// ランタイムを選んで起動する。`requested` は `"--novr"` / `"novr"` のような指定（コマンドライン > 設定ファイル。決めるのは呼び出し側）。
     /// 指定なしで VR ランタイムが無ければ novr で起動する（novr は常に使える）。指定したのに繋がらなければエラー。
     pub fn boot(requested: Option<&str>, config: Config) -> Result<Self, VrError> {
-        let vr = subsystems::connect(requested, config.gpu.emulator)?;
+        let prefer = match requested {
+            Some("--novr" | "novr") => Some(Runtime::NoVr),
+            Some("--openxr" | "openxr") => Some(Runtime::OpenXr),
+            Some("--openvr" | "openvr") => Some(Runtime::OpenVr),
+            _ => None,
+        };
+        let vr = match vr::connect(prefer, config.gpu.emulator) {
+            Ok(b) => b,
+            Err(e) if prefer.is_none() => {
+                logger::warn!("failed to connect to VR runtime, starting novr", error = e);
+                vr::connect(Some(Runtime::NoVr), config.gpu.emulator).expect("novr always connects")
+            }
+            Err(e) => {
+                logger::error!("failed to connect to VR runtime", runtime = ?prefer, error = e);
+                return Err(e);
+            }
+        };
+        logger::info!("runtime selected", runtime = ?vr.runtime());
         Ok(Self::with_backend(vr, config))
     }
 }
@@ -89,6 +107,12 @@ impl Kernel {
 impl<B: VrBackend> Kernel<B> {
     /// 接続済みのバックエンドで起動する（テスト用。本番は [`Kernel::boot`]）。
     pub fn with_backend(vr: B, config: Config) -> Self {
+        // フレームの周期を作る短い待ちが丸められないように。
+        os::precise_timers();
+        // ゲームが GPU を使い切っていても、パネルの描画と読み戻しが後回しにされないように。
+        if !os::high_gpu_priority() {
+            logger::warn!("cannot raise GPU scheduling priority");
+        }
         let subsystems = Subsystems::with_backend(vr);
         let mut overlay = Overlay::new();
         if let Some(s) = config.pointer_smoothing {
@@ -279,8 +303,14 @@ mod tests {
 
     #[test]
     fn boot_novr_by_name() {
-        let k = Kernel::boot(Some("--novr"), Config::default()).unwrap();
-        assert_eq!(k.runtime(), Runtime::NoVr);
+        for name in ["novr", "--novr"] {
+            for gpu in [false, true] {
+                let mut config = Config::default();
+                config.gpu.emulator = gpu;
+                let k = Kernel::boot(Some(name), config).unwrap();
+                assert_eq!(k.runtime(), Runtime::NoVr);
+            }
+        }
     }
 
     #[test]

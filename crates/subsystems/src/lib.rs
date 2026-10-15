@@ -7,7 +7,7 @@ pub use {input, os, rendering, vr};
 use std::collections::HashMap;
 
 pub use input::ControllerState;
-use vr::{Device, Hand, Pose, Runtime, VrBackend, VrError};
+use vr::{Device, Hand, Pose, VrBackend};
 
 /// 上位に渡す共通フレーム。機種名・生入力・ランタイム固有の状態は含めない。
 #[derive(Debug, Clone, PartialEq)]
@@ -48,7 +48,6 @@ pub struct Subsystems<B: VrBackend = Box<dyn VrBackend>> {
 
 impl<B: VrBackend> Subsystems<B> {
     pub fn with_backend(backend: B) -> Self {
-        init();
         Self {
             backend,
             inputs: HashMap::new(),
@@ -87,39 +86,6 @@ impl<B: VrBackend> Subsystems<B> {
             stabilize_pointer: !raw.emulated,
             tracked: !raw.emulated,
         }
-    }
-}
-
-/// ランタイムを選ぶ。指定なしで接続できなければ、常に使える novr にフォールバックする。
-pub fn connect(requested: Option<&str>, gpu: bool) -> Result<Box<dyn VrBackend>, VrError> {
-    let prefer = match requested {
-        Some("--novr" | "novr") => Some(Runtime::NoVr),
-        Some("--openxr" | "openxr") => Some(Runtime::OpenXr),
-        Some("--openvr" | "openvr") => Some(Runtime::OpenVr),
-        _ => None,
-    };
-    let vr = match vr::connect(prefer, gpu) {
-        Ok(b) => b,
-        Err(e) if prefer.is_none() => {
-            logger::warn!("failed to connect to VR runtime, starting novr", error = e);
-            vr::connect(Some(Runtime::NoVr), gpu).expect("novr always connects")
-        }
-        Err(e) => {
-            logger::error!("failed to connect to VR runtime", runtime = ?prefer, error = e);
-            return Err(e);
-        }
-    };
-    logger::info!("runtime selected", runtime = ?vr.runtime());
-    Ok(vr)
-}
-
-/// フレーム進行と描画に必要な OS の設定を行う。接続済みバックエンドを使う場合も呼ぶ。
-pub fn init() {
-    // フレームの周期を作る短い待ちが丸められないように。
-    os::precise_timers();
-    // ゲームが GPU を使い切っていても、パネルの描画と読み戻しが後回しにされないように。
-    if !os::high_gpu_priority() {
-        logger::warn!("cannot raise GPU scheduling priority");
     }
 }
 
@@ -264,14 +230,5 @@ mod tests {
         }
         assert_eq!(frame.hmd, head);
         assert!(frame.controllers[0].select);
-    }
-
-    #[test]
-    fn explicit_novr_accepts_config_and_command_line_names() {
-        for name in ["novr", "--novr"] {
-            for gpu in [false, true] {
-                assert_eq!(connect(Some(name), gpu).unwrap().runtime(), Runtime::NoVr);
-            }
-        }
     }
 }
