@@ -494,54 +494,138 @@ pub fn card_panel(theme: &Theme) -> Div {
     panel_base(card(theme)).rounded(px(radius::XL))
 }
 
-/// ダイアログのアイコンの大きさ。幅の 1/4 前後（幅 300px のダイアログで）。
+/// ダイアログのアイコンの大きさ。
 const DIALOG_ICON: f32 = 64.0;
+/// ダイアログの文の行の高さ（文字の大きさに対する比）。
+const DIALOG_LEADING: f32 = 1.4;
+/// 収まらずにスクロールするときも、概要はこの行数までは見せる。
+const DIALOG_MIN_LINES: f32 = 3.0;
+
+/// ダイアログのパネルの高さ（px。影の余白を含む）の下限。ボタンが `actions` 個、タイトルが 1 行のとき、
+/// 概要が少なくとも 3 行見える。`PanelSpec::sized` の高さはこれ以上にする。
+pub const fn dialog_height(actions: u32) -> u32 {
+    let n = actions as f32;
+    let h = 2.0 * PANEL_MARGIN
+        + 2.0 * spacing::XL
+        + DIALOG_ICON
+        + spacing::LG
+        + font_size::LG * DIALOG_LEADING
+        + spacing::SM
+        + DIALOG_MIN_LINES * font_size::MD * DIALOG_LEADING
+        + spacing::XL
+        + n * BUTTON_HEIGHT
+        + (n - 1.0) * spacing::SM;
+    h as u32 + 1
+}
+
+/// ダイアログ（子パネル）の中身。[`dialog`] で作る。
+#[derive(IntoElement)]
+pub struct Dialog {
+    id: &'static str,
+    theme: Theme,
+    glyph: &'static crate::Icon,
+    title: SharedString,
+    description: SharedString,
+    actions: Vec<Button>,
+}
 
 /// ダイアログ（子パネル）の中身。上からアイコン・タイトル・概要・ボタンを中央揃えで並べる。
-/// ボタンは幅いっぱいで縦に積み、下に寄せる。並べる順は呼び出し側が決める（主の操作を上に）。
+/// ボタンは幅いっぱいで縦に積む。間隔は決まった値で、全体を上下の中央に置く（余った高さは上下の縁に分ける）。
+/// 収まらないときは、アイコン・タイトル・ボタンを残して概要だけがスクロールする（`{id}-body`、棒は `{id}-bars`）。
+/// 並べる順は呼び出し側が決める（主の操作を上に）。`id` はパネルの中で一意に。
 /// 開く・閉じる・答えを返すのは呼び出し側（`ui::PanelSpec::child`）。
 pub fn dialog(
     theme: &Theme,
+    id: &'static str,
     glyph: &'static crate::Icon,
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
     actions: impl IntoIterator<Item = Button>,
-) -> Div {
-    card_panel(theme)
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(spacing::SM))
-        .p(px(spacing::LG))
-        .child(
-            crate::icon(glyph)
-                .weight(crate::Weight::Fill)
-                .size(px(DIALOG_ICON))
-                .color(rgba(theme.accent_solid)),
-        )
-        .child(
-            div()
-                .text_center()
-                .text_size(px(font_size::LG))
-                .font_weight(FontWeight::BOLD)
-                .child(title.into()),
-        )
-        .child(
-            div()
-                .text_center()
-                .text_size(px(font_size::MD))
-                .text_color(rgba(theme.neutral_text_low))
-                .child(description.into()),
-        )
-        .child(
-            div()
-                .mt_auto()
-                .w_full()
-                .flex()
-                .flex_col()
-                .gap(px(spacing::SM))
-                .children(actions.into_iter().map(|b| b.w_full())),
-        )
+) -> Dialog {
+    Dialog {
+        id,
+        theme: *theme,
+        glyph,
+        title: title.into(),
+        description: description.into(),
+        actions: actions.into_iter().collect(),
+    }
+}
+
+impl RenderOnce for Dialog {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let Dialog {
+            id,
+            theme,
+            glyph,
+            title,
+            description,
+            actions,
+        } = self;
+        let scroll = window
+            .use_keyed_state(id, cx, |_, _| gpui::ScrollHandle::new())
+            .read(cx)
+            .clone();
+        let body_id = format!("{id}-body");
+        // 余白は縁 `XL`、アイコン → タイトル `LG`、タイトル → 概要 `SM`（ひとまとまり）、文 → ボタン `XL`。
+        // 縮められる（min_h_0）のは概要の枠だけなので、収まらなければ概要だけが縮んでスクロールする。
+        // 横の `SM` は、スクロールバーが文にかからないための余白。
+        let body = div()
+            .id(SharedString::from(body_id.clone()))
+            .debug_selector(move || body_id.clone())
+            .min_h_0()
+            .overflow_y_scroll()
+            .track_scroll(&scroll)
+            .px(px(spacing::SM))
+            .text_center()
+            .text_size(px(font_size::MD))
+            .line_height(px(font_size::MD * DIALOG_LEADING))
+            .text_color(rgba(theme.neutral_text_low))
+            .child(description);
+        card_panel(&theme)
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .p(px(spacing::XL))
+            .child(
+                crate::icon(glyph)
+                    .weight(crate::Weight::Fill)
+                    .size(px(DIALOG_ICON))
+                    .color(rgba(theme.accent_solid)),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .mt(px(spacing::LG))
+                    .text_center()
+                    .text_size(px(font_size::LG))
+                    .line_height(px(font_size::LG * DIALOG_LEADING))
+                    .font_weight(FontWeight::BOLD)
+                    .child(title),
+            )
+            .child(
+                div()
+                    .relative()
+                    .mt(px(spacing::SM))
+                    .w_full()
+                    .min_h_0()
+                    .flex()
+                    .flex_col()
+                    .child(body)
+                    .child(scrollbars(&theme, format!("{id}-bars"), &scroll)),
+            )
+            .child(
+                div()
+                    .mt(px(spacing::XL))
+                    .flex_none()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap(px(spacing::SM))
+                    .children(actions.into_iter().map(|b| b.w_full())),
+            )
+    }
 }
 
 /// 画面やパネルの地。文字色も役割から決まる。

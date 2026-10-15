@@ -680,9 +680,13 @@ impl Render for TooltipTest {
 }
 
 /// ダイアログの大きさ。
-/// 縦長（上からアイコン・タイトル・概要・ボタン）。影の余白を除いた面は 252 x 392px。
-const DIALOG_SIZE: Vec2 = Vec2::new(0.3, 0.44);
-const DIALOG_PX: (u32, u32) = (300, 440);
+/// 上からアイコン・タイトル・概要・ボタン（2 個）。文の幅 344px。高さは、概要が収まらずスクロールしても
+/// 3 行は見える下限（`components::dialog_height`）。1px = 1mm。
+const DIALOG_PX: (u32, u32) = (440, components::dialog_height(2));
+const DIALOG_SIZE: Vec2 = Vec2::new(
+    DIALOG_PX.0 as f32 / 1000.0,
+    DIALOG_PX.1 as f32 / 1000.0,
+);
 
 /// 親子関係を試す画面（`dialog-test`）。ダイアログ（[`Dialog`]）を子として開く 2 種類のボタンがある。
 /// - `open-dialog`: 外側（この画面など）を押すと閉じる（既定）。
@@ -752,7 +756,14 @@ impl Render for DialogTest {
                                             me,
                                             &design::icons::WARNING,
                                             "Answer required",
-                                            "This dialog stays open until you press OK or Cancel.",
+                                            // わざと長い文。収まらない分は文の側だけがスクロールし、ボタンは残る。
+                                            "This dialog stays open until you press OK or Cancel. \
+                                             Pressing outside does nothing, so the parent stays dimmed \
+                                             and cannot be used in the meantime. Use it for questions \
+                                             that must be answered before going on, such as discarding \
+                                             unsaved changes or overwriting a file. Keep the text short \
+                                             in real dialogs: if it does not fit, only this part scrolls \
+                                             while the buttons stay in place at the bottom.",
                                         )
                                     })
                                     .without_dismiss()
@@ -820,6 +831,7 @@ impl Render for Dialog {
         };
         components::dialog(
             &theme,
+            "dialog",
             self.glyph,
             self.title,
             self.description,

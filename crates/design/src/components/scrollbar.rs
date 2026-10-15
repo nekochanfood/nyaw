@@ -519,7 +519,7 @@ pub fn claim_scroll<E: InteractiveElement>(element: E, handle: &ScrollHandle) ->
 /// 重ねるスクロールバー。[`scrollbars`] で作る。
 #[derive(IntoElement)]
 pub struct Scrollbars {
-    id: &'static str,
+    id: SharedString,
     handle: ScrollHandle,
     pull: Option<&'static str>,
     ends: f32,
@@ -530,9 +530,9 @@ pub struct Scrollbars {
 
 /// `handle` がスクロールする要素のスクロールバー（縦・横とも）。`id` は部品ごとに一意に。
 /// 縦は `{id}-v`、横は `{id}-h`（棒は `-thumb` 付き）で指せる。
-pub fn scrollbars(theme: &Theme, id: &'static str, handle: &ScrollHandle) -> Scrollbars {
+pub fn scrollbars(theme: &Theme, id: impl Into<SharedString>, handle: &ScrollHandle) -> Scrollbars {
     Scrollbars {
-        id,
+        id: id.into(),
         handle: handle.clone(),
         pull: None,
         ends: 0.0,
@@ -568,7 +568,7 @@ impl RenderOnce for Scrollbars {
             hover,
             active,
         } = self;
-        let state = window.use_keyed_state(id, cx, move |_, _| State {
+        let state = window.use_keyed_state(id.clone(), cx, move |_, _| State {
             bars: [Bar {
                 zone: false,
                 over: false,
