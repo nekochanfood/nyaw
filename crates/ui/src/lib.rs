@@ -422,6 +422,8 @@ pub struct PanelSpec {
     attach: Option<(Device, Pose)>,
     /// 起動時から掴めない。
     locked: bool,
+    /// 親子関係（[`Self::child`]）。
+    parent: Option<kernel::Parent>,
     animated: bool,
     /// レーザーを描くパネル。
     pointer: Option<(Hand, Pointer)>,
@@ -450,6 +452,7 @@ impl PanelSpec {
             resolution: PANEL_PX,
             attach: None,
             locked: false,
+            parent: None,
             animated: true,
             pointer: None,
             content,
@@ -485,6 +488,24 @@ impl PanelSpec {
             from: Some(from),
             ..Self::new(Pose::IDENTITY, build)
         }
+    }
+
+    /// `from` の子として出す（ダイアログなど）。親に追従し、開いている間の親は暗くなって入力を受けない。
+    /// 子を掴んだとき、`carry` なら親も連れていき、そうでなければ子だけが離れる。
+    pub fn child<V: Render>(
+        from: PanelId,
+        carry: bool,
+        build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
+    ) -> Self {
+        Self {
+            parent: Some(kernel::Parent { panel: from, carry }),
+            ..Self::spawn(from, build)
+        }
+    }
+
+    /// 親子関係を作る要求（親がいなければ `None`）。開いた直後に [`PanelCommand::Parent`] で適用する。
+    pub fn parent(&self) -> Option<kernel::Parent> {
+        self.parent
     }
 
     /// 開いた瞬間の目の前に出す。`offset` は頭から見た相対姿勢（頭の傾きは無視し、パネルは立てて置く）。
@@ -1130,6 +1151,9 @@ fn open_panel(
     }
     if spec.locked {
         kernel.apply(panel, PanelCommand::Lock(true));
+    }
+    if let Some(parent) = spec.parent {
+        kernel.apply(panel, PanelCommand::Parent(Some(parent)));
     }
     if let Some((hand, part)) = spec.pointer {
         kernel.apply(panel, PanelCommand::Pointer(hand, part));

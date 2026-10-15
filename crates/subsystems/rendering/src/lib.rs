@@ -16,6 +16,8 @@ pub struct Surface {
     released: bool,
     sent: Option<(Option<Device>, Pose)>,
     shown: Option<(bool, f32)>,
+    /// 最後に送った暗さ。
+    dim: f32,
 }
 
 impl Surface {
@@ -28,6 +30,7 @@ impl Surface {
             released: false,
             sent: None,
             shown: None,
+            dim: 0.0,
         })
     }
 
@@ -127,23 +130,36 @@ impl Surface {
     }
 
     /// 不透明度 API のないランタイムでは、加工前の画像から画素を減衰させる。
-    pub fn present(&mut self, vr: &mut dyn VrBackend, opacity: f32, upload: bool) {
+    /// `dim`（0 = そのまま 〜 1 = 真っ黒）は色だけを黒へ寄せ、透明度は変えない。変わったときは `upload` でなくても画素を送り直す。
+    pub fn present(&mut self, vr: &mut dyn VrBackend, opacity: f32, dim: f32, upload: bool) {
         if self.released {
             return;
         }
         let native = vr.set_overlay_alpha(self.id, opacity);
+        let upload = upload || dim != self.dim;
+        self.dim = dim;
         if native && !upload {
             return;
         }
         if let Some((width, height, rgba)) = &self.texture {
-            if native || opacity == 1.0 {
+            let fade = if native { 1.0 } else { opacity };
+            if fade == 1.0 && dim == 0.0 {
                 vr.submit_overlay_pixels(self.id, *width, *height, rgba);
             } else {
                 // 両 VR バックエンドの事前乗算アルファに合わせ、RGB も同じ割合で減らす。
-                let opacity = (opacity * 65536.0).round() as u32;
+                let alpha = (fade * 65536.0).round() as u32;
+                let color = (fade * (1.0 - dim) * 65536.0).round() as u32;
                 let faded: Vec<u8> = rgba
-                    .iter()
-                    .map(|v| ((*v as u32 * opacity + 32768) >> 16) as u8)
+                    .chunks_exact(4)
+                    .flat_map(|px| {
+                        let f = |v: u8, k: u32| ((v as u32 * k + 32768) >> 16) as u8;
+                        [
+                            f(px[0], color),
+                            f(px[1], color),
+                            f(px[2], color),
+                            f(px[3], alpha),
+                        ]
+                    })
                     .collect();
                 vr.submit_overlay_pixels(self.id, *width, *height, &faded);
             }
@@ -161,8 +177,8 @@ mod tests {
         let mut vr = MockBackend::default();
         let mut surface = Surface::new(&mut vr, "native", 1.0, Pose::IDENTITY).unwrap();
         surface.store(1, 1, &[200, 100, 50, 255]);
-        surface.present(&mut vr, 0.0, true);
-        surface.present(&mut vr, 0.5, false);
+        surface.present(&mut vr, 0.0, 0.0, true);
+        surface.present(&mut vr, 0.5, 0.0, false);
         assert_eq!(vr.overlays[0].alpha, 0.5);
         assert_eq!(vr.overlays[0].pixel_submissions, 1);
         assert_eq!(
@@ -184,8 +200,32 @@ mod tests {
             (0.25, [50, 25, 13, 64]),
             (1.0, [200, 100, 50, 255]),
         ] {
-            surface.present(&mut vr, opacity, false);
+            surface.present(&mut vr, opacity, 0.0, false);
             assert_eq!(vr.overlays[0].texture.as_ref().unwrap().rgba, expected);
+        }
+    }
+
+    #[test]
+    fn dim_darkens_color_only_and_resends_when_it_changes() {
+        for unsupported_alpha in [false, true] {
+            let mut vr = MockBackend {
+                unsupported_alpha,
+                ..Default::default()
+            };
+            let mut surface = Surface::new(&mut vr, "dim", 1.0, Pose::IDENTITY).unwrap();
+            surface.store(1, 1, &[200, 100, 50, 128]);
+            surface.present(&mut vr, 1.0, 0.5, false);
+            assert_eq!(
+                vr.overlays[0].texture.as_ref().unwrap().rgba,
+                [100, 50, 25, 128]
+            );
+            let sent = vr.overlays[0].pixel_submissions;
+            surface.present(&mut vr, 1.0, 0.0, false);
+            assert_eq!(vr.overlays[0].pixel_submissions, sent + 1);
+            assert_eq!(
+                vr.overlays[0].texture.as_ref().unwrap().rgba,
+                [200, 100, 50, 128]
+            );
         }
     }
 
@@ -210,14 +250,14 @@ mod tests {
         let mut vr = MockBackend::default();
         let mut surface = Surface::new(&mut vr, "close", 1.0, Pose::IDENTITY).unwrap();
         surface.store(1, 1, &[255; 4]);
-        surface.present(&mut vr, 0.0, true);
+        surface.present(&mut vr, 0.0, 0.0, true);
         assert!(!surface.released() && surface.has_texture());
         surface.release(&mut vr);
         assert!(surface.released());
         assert!(!surface.has_texture());
         let submissions = vr.overlays[0].pixel_submissions;
         surface.store(1, 1, &[255; 4]);
-        surface.present(&mut vr, 1.0, true);
+        surface.present(&mut vr, 1.0, 0.0, true);
         surface.release(&mut vr);
         surface.show(&mut vr, true, Some(5.0), 1.0);
         surface.set_width(&mut vr, 5.0);
