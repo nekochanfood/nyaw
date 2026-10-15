@@ -422,8 +422,7 @@ impl Render for Testing {
         let list = div()
             .id("scroll-list")
             .debug_selector(|| "scroll-list".into())
-            .flex_1()
-            .min_h_0()
+            .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.list)
             .bg(rgb(AREA_BG))
@@ -456,7 +455,14 @@ impl Render for Testing {
             .child(vr_row)
             .child(gpui_row)
             .child(field)
-            .child(list)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(list)
+                    .child(components::scrollbars(&theme, "scroll-bars", &self.list)),
+            )
     }
 }
 
@@ -1041,6 +1047,33 @@ mod tests {
         let c = cx.debug_bounds("toggle-theme").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
         assert_eq!(view.read_with(cx, |t, _| t.mode), Mode::Light);
+    }
+
+    /// あふれた一覧にはスクロールバーが出て、棒を掴んで引くと一覧が動く。
+    #[gpui::test]
+    fn scrollbar_appears_and_drags(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| Testing::default());
+        // 一覧（30 行 × 24px）があふれる高さにする。
+        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.run_until_parked();
+        // 初回のレイアウトで初めてあふれが分かるので、描き直されてから出る（本番はフレームループが描き直す）。
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let thumb = cx.debug_bounds("scroll-bars-v-thumb").expect("棒が出る");
+        let from = thumb.center();
+        cx.simulate_mouse_down(from, gpui::MouseButton::Left, Modifiers::none());
+        cx.simulate_mouse_move(
+            from + gpui::point(px(0.0), px(40.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        cx.simulate_mouse_up(
+            from + gpui::point(px(0.0), px(40.0)),
+            gpui::MouseButton::Left,
+            Modifiers::none(),
+        );
+        let y = view.read_with(cx, |t, _| t.list.offset().y);
+        assert!(y < px(0.0), "引いた分だけ一覧が進む: {y:?}");
     }
 
     /// Profiler ボタンは計測の有効・無効を切り替える。
