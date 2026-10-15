@@ -582,29 +582,32 @@ impl Render for Catalog {
         );
         let page = self.page.clone();
         components::surface(&t).size_full().child(
-            div().relative().size_full().child(
-                div()
-                    .id("catalog")
-                    .size_full()
-                    .overflow_y_scroll()
-                    .track_scroll(&page)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(spacing::XL))
-                            .p(px(spacing::XL))
-                            .child(header)
-                            .child(roles)
-                            .child(scale_section(&t))
-                            .child(constants_section(&t))
-                            .child(text_section(&t))
-                            .child(icon_section(&t))
-                            .child(components)
-                            .child(motion),
-                    )
-                    .child(components::scrollbars(&t, "cat-page-bars", &page)),
-            ),
+            div()
+                .relative()
+                .size_full()
+                .child(
+                    div()
+                        .id("catalog")
+                        .size_full()
+                        .overflow_y_scroll()
+                        .track_scroll(&page)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(spacing::XL))
+                                .p(px(spacing::XL))
+                                .child(header)
+                                .child(roles)
+                                .child(scale_section(&t))
+                                .child(constants_section(&t))
+                                .child(text_section(&t))
+                                .child(icon_section(&t))
+                                .child(components)
+                                .child(motion),
+                        ),
+                )
+                .child(components::scrollbars(&t, "cat-page-bars", &page)),
         )
     }
 }
