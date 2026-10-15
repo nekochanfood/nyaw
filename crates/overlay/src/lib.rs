@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use animato::{Easing, Tween, Update};
+use rendering::Surface;
 
 use vr::{Device, Frame, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
@@ -29,23 +30,15 @@ pub struct Panel {
     pub locked: bool,
     /// 閉じられた。ヒット判定の対象外で、PanelId は詰めずに欠番のまま残る。
     pub closed: bool,
-    /// 閉じ切ってランタイム側のオーバーレイも捨てた。以降は `overlay` に触れない。
-    released: bool,
     /// どの手のレーザーを描くパネルか。ヒット判定の対象外で、配置は毎 tick ここで決める。
     pub pointer: Option<(Hand, Pointer)>,
     /// このパネルのイン・アウトアニメーション。`Overlay::set_animated` で個別に無効化できる。
     pub animated: bool,
     /// 表示の進行度。サイズは 75%〜100%、不透明度は 0%〜100%。
     opacity: f32,
-    /// フェードアウトにも使う、加工前の最後の描画。
-    texture: Option<(u32, u32, Vec<u8>)>,
-    overlay: OverlayId,
+    surface: Surface,
     /// この tick で追従させるデバイスと相対姿勢。ランタイムに任せられればそうする。
     follow: Option<(Device, Pose)>,
-    /// ランタイムへ最後に送った（相対の先, 姿勢）。変わったときだけ送る。
-    sent: Option<(Option<Device>, Pose)>,
-    /// ランタイムへ最後に送った（表示, 幅）。ポインタのパネルだけが使う。
-    shown: Option<(bool, f32)>,
 }
 
 /// レーザーを描くパネルの役割。見た目は上の層の画面が描き、置き場所はオーバーレイ層が決める。
@@ -138,7 +131,7 @@ impl Panel {
 
     /// ランタイム側のオーバーレイ。実ランタイムから描画を読み戻して確かめるとき用。
     pub fn overlay_id(&self) -> OverlayId {
-        self.overlay
+        self.surface.id()
     }
 }
 
@@ -212,8 +205,7 @@ impl Overlay {
         size: Vec2,
         resolution: (u32, u32),
     ) -> Result<PanelId, VrError> {
-        let overlay = vr.create_overlay(key, size.x)?;
-        vr.set_overlay_pose(overlay, pose);
+        let surface = Surface::new(vr, key, size.x, pose)?;
         self.panels.push(Panel {
             pose,
             size,
@@ -221,15 +213,11 @@ impl Overlay {
             attached: None,
             locked: false,
             closed: false,
-            released: false,
             pointer: None,
             animated: true,
             opacity: 1.0,
-            texture: None,
-            overlay,
+            surface,
             follow: None,
-            sent: None,
-            shown: None,
         });
         Ok(self.panels.len() - 1)
     }
@@ -324,7 +312,7 @@ impl Overlay {
     pub fn set_resolution(&mut self, vr: &mut dyn VrBackend, id: PanelId, resolution: (u32, u32)) {
         let p = &mut self.panels[id];
         let (w, h) = (resolution.0.max(1), resolution.1.max(1));
-        if p.resolution == (w, h) || p.released {
+        if p.resolution == (w, h) || p.surface.released() {
             return;
         }
         p.size = Vec2::new(
@@ -332,7 +320,7 @@ impl Overlay {
             p.size.y * h as f32 / p.resolution.1 as f32,
         );
         p.resolution = (w, h);
-        vr.set_overlay_width(p.overlay, p.displayed_size().x);
+        p.surface.set_width(vr, p.displayed_size().x);
     }
 
     /// パネルごとのオプトアウト。再生中に無効化した場合も、直ちに最終状態にする。
@@ -356,10 +344,10 @@ impl Overlay {
             Pointer::Cursor => CURSOR_SORT,
             Pointer::Drag => DRAG_SORT,
         };
-        vr.set_overlay_sort(p.overlay, sort);
+        p.surface.set_sort(vr, sort);
         // レーザーは長さ（幅）だけ変え、太さ（高さ）は作ったときのまま。
         if part == Pointer::Laser {
-            vr.set_overlay_height(p.overlay, p.size.y);
+            p.surface.set_height(vr, p.size.y);
         }
     }
 
@@ -376,7 +364,7 @@ impl Overlay {
             return;
         }
         p.closed = true;
-        if p.animated && p.texture.is_some() && p.opacity > 0.0 {
+        if p.animated && p.surface.has_texture() && p.opacity > 0.0 {
             self.animations.insert(
                 id,
                 (
@@ -422,11 +410,11 @@ impl Overlay {
         if p.closed {
             return;
         }
-        let entering = p.texture.is_none() && p.animated;
+        let entering = !p.surface.has_texture() && p.animated;
         if entering {
             p.opacity = 0.0;
         }
-        p.texture = Some((width, height, rgba.to_vec()));
+        p.surface.store(width, height, rgba);
         Self::present(vr, p, true);
         if entering {
             // 初回の GPU 転送が終わってから時計を始める。
@@ -444,39 +432,13 @@ impl Overlay {
     }
 
     fn present(vr: &mut dyn VrBackend, p: &mut Panel, upload: bool) {
-        if p.released {
+        if p.surface.released() {
             return;
         }
         if p.pointer.is_none() {
-            vr.set_overlay_width(p.overlay, p.displayed_size().x);
+            p.surface.set_width(vr, p.displayed_size().x);
         }
-        let native = vr.set_overlay_alpha(p.overlay, p.opacity);
-        if p.closed && p.opacity == 0.0 {
-            vr.set_overlay_visible(p.overlay, false);
-            vr.submit_overlay_pixels(p.overlay, 1, 1, &[0; 4]);
-            // 閉じ切った。ランタイム側の資源を返す（PanelId は欠番のまま残る）。
-            vr.destroy_overlay(p.overlay);
-            p.released = true;
-            p.texture = None;
-            return;
-        }
-        if native && !upload {
-            return;
-        }
-        if let Some((width, height, rgba)) = &p.texture {
-            if native || p.opacity == 1.0 {
-                vr.submit_overlay_pixels(p.overlay, *width, *height, rgba);
-            } else {
-                // 両 VR バックエンドの事前乗算アルファに合わせ、RGB も同じ割合で減らす。
-                // 不透明度 API が無いランタイムだけ、画素の減衰で補う。
-                let opacity = (p.opacity * 65536.0).round() as u32;
-                let faded: Vec<u8> = rgba
-                    .iter()
-                    .map(|v| ((*v as u32 * opacity + 32768) >> 16) as u8)
-                    .collect();
-                vr.submit_overlay_pixels(p.overlay, *width, *height, &faded);
-            }
-        }
+        p.surface.present(vr, p.opacity, p.closed, upload);
     }
 
     fn animate(&mut self, vr: &mut dyn VrBackend, now: Instant) {
@@ -536,7 +498,7 @@ impl Overlay {
                 && self.hands[&c.hand].scaling.is_some()
             {
                 let p = &self.panels[id];
-                vr.set_overlay_width(p.overlay, p.displayed_size().x);
+                p.surface.set_width(vr, p.displayed_size().x);
             }
             let buttons = |c: &ControllerState| (c.select, c.grab, c.menu);
             if prev.is_none_or(|p| buttons(&p) != buttons(&c)) {
@@ -566,22 +528,8 @@ impl Overlay {
             st.select = false;
         }
         self.place_pointers(vr);
-        for p in self.panels.iter_mut().filter(|p| !p.released) {
-            if let Some((device, offset)) = &p.follow {
-                let want = Some((Some(device.clone()), *offset));
-                if p.sent == want {
-                    continue;
-                }
-                if vr.set_overlay_pose_relative(p.overlay, device, *offset) {
-                    p.sent = want;
-                    continue;
-                }
-            }
-            let want = Some((None, p.pose));
-            if p.sent != want {
-                vr.set_overlay_pose(p.overlay, p.pose);
-                p.sent = want;
-            }
+        for p in &mut self.panels {
+            p.surface.place(vr, p.pose, p.follow.as_ref());
         }
         events
     }
@@ -812,22 +760,15 @@ impl Overlay {
                 (pose, width)
             });
             let p = &mut self.panels[id];
-            let shown = match placed {
-                Some((pose, width)) => {
-                    p.pose = pose;
-                    (true, width)
-                }
-                None => (false, p.shown.map_or(p.size.x, |s| s.1)),
-            };
-            if p.shown != Some(shown) {
-                if p.shown.map(|s| s.0) != Some(shown.0) {
-                    vr.set_overlay_visible(p.overlay, shown.0);
-                }
-                if p.shown.map(|s| s.1) != Some(shown.1) {
-                    vr.set_overlay_width(p.overlay, shown.1);
-                }
-                p.shown = Some(shown);
+            if let Some((pose, _)) = placed {
+                p.pose = pose;
             }
+            p.surface.show(
+                vr,
+                placed.is_some(),
+                placed.map(|(_, width)| width),
+                p.size.x,
+            );
         }
     }
 }
@@ -942,7 +883,7 @@ mod tests {
         assert!(!vr.overlays[0].visible);
         assert_eq!(vr.overlays[0].width_m, 0.75);
         assert_eq!(vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0), [0; 4]);
-        assert!(ov.panel(0).texture.is_none() && ov.animations.is_empty());
+        assert!(!ov.panel(0).surface.has_texture() && ov.animations.is_empty());
         assert_eq!(ov.panel(0).pose, pose);
     }
 

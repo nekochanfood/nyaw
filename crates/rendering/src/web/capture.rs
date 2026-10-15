@@ -1,6 +1,6 @@
 //! WebView を撮って RGBA8（ストレートアルファ、行間に詰め物なし）で読み戻す。
 //! どのプラットフォームも非同期 API で、結果は `done` に 1 回だけ届く（メインスレッドのイベントループ上で呼ばれる）。
-//! UI 層の `ui::capture`（GPUI の `render_to_image`）に当たる。
+//! GPUI 側の `crate::gpui::capture`（`render_to_image`）に当たる。
 
 use tauri::{WebviewWindow, Wry};
 

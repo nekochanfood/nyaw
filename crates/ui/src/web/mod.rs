@@ -15,8 +15,7 @@
 //!
 //! どのページかは知らない。ページのファイル（[`Files`]）は上から渡され、`nyaw://localhost/<ページ名>/index.html` で配信する。
 
-mod capture;
-mod lod;
+use kernel::rendering::web::{self as rendering, capture, resize};
 
 use std::{
     borrow::Cow,
@@ -41,7 +40,7 @@ use tauri::{
     WebviewWindowBuilder, WindowEvent, Wry,
 };
 
-pub use capture::Image;
+pub use kernel::rendering::web::Image;
 
 /// すべてのパネルに注入するブリッジ。
 pub const BRIDGE: &str = include_str!("bridge.js");
@@ -60,10 +59,6 @@ pub const HAND_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.3), Quat::IDENTIT
 const HOT: Duration = Duration::from_millis(300);
 /// 入力がこれだけ無ければ、予備の WebView を作る（作る間はメインスレッドが止まるので、操作中は避ける）。
 const PREWARM_IDLE: Duration = Duration::from_secs(1);
-/// WebView2 の起動引数。wry の既定の `--disable-features` に、表示していないウィンドウを隠れていると判定して
-/// 描画を止める CalculateNativeWinOcclusion を足す（非表示のまま描かせて撮るため）。
-const BROWSER_ARGS: &str =
-    "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion";
 /// 終わるときに WebView が閉じ終わるのを待つ上限。
 const SHUTDOWN: Duration = Duration::from_millis(1000);
 
@@ -73,17 +68,7 @@ pub type Files = &'static [(&'static str, &'static [u8])];
 
 // ---- ページの配信 ----
 
-/// ページの入口の URL。Windows（WebView2）は独自スキームを `http://<scheme>.localhost` で受ける。
-pub fn page_url(name: &str) -> tauri::Url {
-    let base = if cfg!(windows) {
-        "http://nyaw.localhost"
-    } else {
-        "nyaw://localhost"
-    };
-    format!("{base}/{name}/index.html")
-        .parse()
-        .expect("page name is usable in a URL path")
-}
+pub use kernel::rendering::web::page_url;
 
 fn has_page(files: Files, name: &str) -> bool {
     let entry = format!("{name}/index.html");
@@ -590,19 +575,8 @@ impl Host {
         url: WebviewUrl,
         (w, h): (u32, u32),
     ) -> tauri::Result<WebviewWindow<Wry>> {
-        let builder = WebviewWindowBuilder::new(&self.app, label, url)
-            .inner_size(w as f64, h as f64)
-            .min_inner_size(1.0, 1.0)
+        rendering::panel_window(WebviewWindowBuilder::new(&self.app, label, url), (w, h))
             .initialization_script(BRIDGE)
-            // 画面の外に置いたウィンドウでも描き続ける（隠れていると判定して描画を止めたり間引いたりさせない）。
-            // 起動引数は同じデータフォルダのすべての WebView で揃える（違うと WebView を作れない）。
-            .additional_browser_args(BROWSER_ARGS)
-            .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
-        // 描画は VR に送るのでデスクトップには出さない。枠を消すと Windows の WebView の描画領域が縮むため残す。
-        headless(builder)
-            .transparent(true)
-            .focused(false)
-            .skip_taskbar(true)
             .build()
     }
 
@@ -691,7 +665,7 @@ impl Host {
             let wanted = (kernel.panel(panel).resolution, kernel.panel_lod(panel));
             let draw = self.draws.get_mut(&panel).expect("draw state");
             if draw.render_size != Some(wanted) {
-                match lod::resize(window, wanted.0, wanted.1) {
+                match resize(window, wanted.0, wanted.1) {
                     Ok(()) => {
                         draw.render_size = Some(wanted);
                         draw.resizing = true;
@@ -734,14 +708,7 @@ impl Host {
             }
             _ => {}
         });
-        // WebKitGTK の描画・読み戻しは GLib のイベントで進む。溜まっている分を処理する。
-        #[cfg(target_os = "linux")]
-        for _ in 0..256 {
-            if !gtk::events_pending() {
-                break;
-            }
-            gtk::main_iteration_do(false);
-        }
+        rendering::pump_events();
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Control> {
@@ -918,7 +885,7 @@ impl Host {
             d.capturing = true;
             d.captured = Some(now);
             let tx = self.tx.clone();
-            capture::capture(
+            capture(
                 window,
                 Box::new(move |r| {
                     let _ = tx.send((panel, r));
@@ -958,26 +925,6 @@ impl Host {
             }
         }
     }
-}
-
-/// パネルのウィンドウをデスクトップに出さない。どの OS も WebView 自身の撮影 API（`capture`）で撮る。
-/// WebKitGTK は未マップ（非表示）のウィンドウを描かず撮れないので、表示したまま画面の外に置く。
-// ponytail: Wayland ではアプリがウィンドウの位置を決められず画面に出てしまう。X11（XWayland 含む）のみ。
-// GDK_BACKEND=x11 で起動するか、オフスクリーン描画（WPE 等）に移すのが次の一手。
-#[cfg(target_os = "linux")]
-fn headless<'a>(
-    b: WebviewWindowBuilder<'a, Wry, tauri::App<Wry>>,
-) -> WebviewWindowBuilder<'a, Wry, tauri::App<Wry>> {
-    b.visible(true).position(-20000.0, -20000.0)
-}
-
-/// パネルのウィンドウをデスクトップに出さない。WebView2（CapturePreview）も WKWebView（takeSnapshot）も
-/// 非表示のまま描いて撮れるので、一度も表示しない。
-#[cfg(not(target_os = "linux"))]
-fn headless<'a>(
-    b: WebviewWindowBuilder<'a, Wry, tauri::App<Wry>>,
-) -> WebviewWindowBuilder<'a, Wry, tauri::App<Wry>> {
-    b.visible(false)
 }
 
 #[cfg(test)]
