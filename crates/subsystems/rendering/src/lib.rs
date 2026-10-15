@@ -153,7 +153,9 @@ impl Surface {
                 let alpha = (fade * 65536.0).round() as u32;
                 let color = (fade * (1.0 - dim) * 65536.0).round() as u32;
                 let faded: Vec<u8> = rgba
-                    .chunks_exact(4)
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
                     .flat_map(|px| {
                         let f = |v: u8, k: u32| ((v as u32 * k + 32768) >> 16) as u8;
                         [
