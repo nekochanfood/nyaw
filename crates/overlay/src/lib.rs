@@ -69,6 +69,19 @@ pub enum Pointer {
     /// ドラッグ中の要素の見た目。中心をヒット点に置き、[`Overlay::set_drag`] で幅が決まっている間だけ出す。
     /// パネルの外へも描けるので、ウィンドウをまたいで運べる。
     Drag,
+    /// ツールチップ。カーソルの子で、カーソルと同じ点・同じ縮尺（頭から 1m 先での大きさ）に置き、カーソルより手前に描く。
+    /// 中心がカーソルで、箱を上下どちらに描くかは [`Overlay::tooltip_anchor`] を見て上の層が決める。
+    Tooltip,
+}
+
+/// ツールチップをカーソルの上下どちらに出すか。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Anchor {
+    /// 上。手（レーザーの来る側）が頭から見てカーソルの下にあるとき。
+    #[default]
+    Above,
+    /// 下。手がカーソルの上に見えるとき（下から見上げている）。
+    Below,
 }
 
 /// レーザーのパネルを作るときの長さ（m）。以降は毎 tick ヒット点までの長さに伸び縮みする。
@@ -84,6 +97,13 @@ const VIEW_HALF_ANGLE: f32 = 1.221_730_5;
 const LASER_SORT: u32 = 1;
 const DRAG_SORT: u32 = 2;
 const CURSOR_SORT: u32 = 3;
+const TOOLTIP_SORT: u32 = 4;
+/// ツールチップをパネル面から浮かせる距離（m）。カーソルより手前。
+const TOOLTIP_LIFT: f32 = 0.004;
+/// ツールチップの向きを変える目安: 頭から見た手の方向が、パネルの上下へ水平からこれ（sin。約 12°）より傾いたら切り替える。
+/// 間は前の向きのまま（水平近くで行ったり来たりしないように）。
+// ponytail: 固定の幅。切り替わりが敏感・鈍いと感じたらここを調整する。
+const ANCHOR_BAND: f32 = 0.2;
 /// ドラッグの見た目をパネル面から浮かせる距離（m）。カーソルより奥。
 const DRAG_LIFT: f32 = 0.002;
 /// 掴み移動で、目標へ 1 tick に近づく割合。目標との差が [`SNAP`] 未満なら目標に合わせる。
@@ -196,6 +216,8 @@ struct HandState {
     free: bool,
     /// 押した位置（ピクセル）とトラッキング空間での点。[`CLICK_SLOP`] を越えて動かすか離すまで。
     press: Option<(Vec2, Vec3)>,
+    /// ツールチップを出す向き（毎 tick 見直す）。
+    anchor: Anchor,
 }
 
 #[derive(Debug, Default)]
@@ -290,6 +312,11 @@ impl Overlay {
     /// `hand` が押している間のキャプチャを外す（ドラッグ＆ドロップでほかのパネルへ運べるように）。離すと戻る。
     pub fn release_capture(&mut self, hand: Hand) {
         self.hands.entry(hand).or_default().free = true;
+    }
+
+    /// `hand` のツールチップをカーソルの上下どちらに出すか。頭から見て、レーザーの来る側（手）と反対に出す。
+    pub fn tooltip_anchor(&self, hand: Hand) -> Anchor {
+        self.hands.get(&hand).map(|h| h.anchor).unwrap_or_default()
     }
 
     /// 最後の tick の HMD の姿勢（新しいパネルを目の前に出すため）。
@@ -401,6 +428,7 @@ impl Overlay {
             Pointer::Laser => LASER_SORT,
             Pointer::Cursor => CURSOR_SORT,
             Pointer::Drag => DRAG_SORT,
+            Pointer::Tooltip => TOOLTIP_SORT,
         };
         p.surface.set_sort(vr, sort);
         // レーザーは長さ（幅）だけ変え、太さ（高さ）は作ったときのまま。
@@ -873,6 +901,16 @@ impl Overlay {
 
     /// レーザーとカーソルのパネルを、この tick のレーザーに合わせて置く・伸ばす・隠す。
     fn place_pointers(&mut self, vr: &mut dyn VrBackend) {
+        // 向きは毎 tick 数回の内積で決まるので、指している間はいつも見直す。
+        let eye = self.hmd.position;
+        for h in self.hands.values_mut() {
+            if let Some(r) = h.ray
+                && let Some((target, point)) = r.hit
+            {
+                let up = self.panels[target].pose.orientation * Vec3::Y;
+                h.anchor = anchor(h.anchor, eye, r.hand.position, point, up);
+            }
+        }
         for id in 0..self.panels.len() {
             let p = &self.panels[id];
             let Some((hand, part)) = p.pointer.filter(|_| !p.closed) else {
@@ -889,12 +927,22 @@ impl Overlay {
                     let pose = aim * Pose::new(Vec3::new(0.0, 0.0, -len / 2.0), roll * LASER_ROT);
                     Some((r, pose, len))
                 }
-                (Pointer::Cursor, Some((r, aim, len))) => r.hit.map(|(target, _)| {
-                    let pose = on_panel(&self.panels[target].pose, &aim, len, CURSOR_LIFT);
-                    // 頭から見て同じ大きさに見えるよう、離れるほど大きくする（`size` は 1m 先での大きさ）。
-                    let width = self.panels[id].size.x * pose.position.distance(self.hmd.position);
-                    (r, pose, width)
-                }),
+                (Pointer::Cursor | Pointer::Tooltip, Some((r, aim, len))) => {
+                    r.hit.map(|(target, _)| {
+                        // ツールチップはカーソルの子: 同じ点に、同じ縮尺で、少しだけ手前に置く。
+                        let lift = if part == Pointer::Cursor {
+                            CURSOR_LIFT
+                        } else {
+                            TOOLTIP_LIFT
+                        };
+                        let pose = on_panel(&self.panels[target].pose, &aim, len, lift);
+                        // 頭から見て同じ大きさに見えるよう、離れるほど大きくする（`size` は 1m 先での大きさ）。
+                        // 距離はヒット点まで（浮かせた分は含めない）なので、カーソルとツールチップの縮尺はそろう。
+                        let hit = aim.position + aim.forward() * len;
+                        let width = self.panels[id].size.x * hit.distance(self.hmd.position);
+                        (r, pose, width)
+                    })
+                }
                 (Pointer::Drag, Some((r, aim, len))) => r.hit.zip(drag).map(|((target, _), w)| {
                     (
                         r,
@@ -929,6 +977,27 @@ fn on_panel(panel: &Pose, aim: &Pose, len: f32, lift: f32) -> Pose {
     let normal = panel.orientation * Vec3::Z;
     let side = (aim.position - point).dot(normal).signum();
     Pose::new(point + normal * side * lift, panel.orientation)
+}
+
+/// 頭 `eye` から点 `point` を見たとき、手 `hand` がパネルの上 `up` に対して上下どちらに見えるかでツールチップの向きを決める。
+/// 手が下に見えればレーザーは下から来るので上に、上に見えれば下に出す。どちらとも言えなければ `prev` のまま。
+fn anchor(prev: Anchor, eye: Vec3, hand: Vec3, point: Vec3, up: Vec3) -> Anchor {
+    let view = (point - eye).normalize_or_zero();
+    let flat = |v: Vec3| v - view * v.dot(view);
+    let (hand, up) = (flat(hand - point), flat(up).normalize_or_zero());
+    let len = hand.length();
+    // 手が視線の上にある（novr のように目から指す）と、レーザーは点にしか見えない。
+    if len < 1e-4 {
+        return prev;
+    }
+    let s = hand.dot(up) / len;
+    if s < -ANCHOR_BAND {
+        Anchor::Above
+    } else if s > ANCHOR_BAND {
+        Anchor::Below
+    } else {
+        prev
+    }
 }
 
 /// `from` から `to` へ [`SMOOTH`] だけ近づける。十分近ければ `to`。
@@ -1864,6 +1933,53 @@ mod tests {
         assert!((LASER_ROT * Vec3::Z).abs_diff_eq(Vec3::Y, 1e-6));
     }
 
+    #[test]
+    fn tooltip_goes_opposite_the_hand_as_seen_from_the_head() {
+        let (point, up) = (Vec3::new(0.0, 1.5, -1.0), Vec3::Y);
+        let eye = Vec3::new(0.0, 1.6, 0.0);
+        // 右手を腰の高さで構え、上から見下ろす: レーザーは下から来るので上。
+        let low = Vec3::new(0.3, 1.0, -0.3);
+        assert_eq!(anchor(Anchor::Below, eye, low, point, up), Anchor::Above);
+        // 手を頭より高く掲げて見上げる: 下。
+        let high = Vec3::new(0.3, 2.2, -0.3);
+        assert_eq!(anchor(Anchor::Above, eye, high, point, up), Anchor::Below);
+        // 手が真横（水平近く）なら前の向きのまま。
+        let side = Vec3::new(0.6, 1.5, -0.6);
+        assert_eq!(anchor(Anchor::Below, eye, side, point, up), Anchor::Below);
+        assert_eq!(anchor(Anchor::Above, eye, side, point, up), Anchor::Above);
+        // 目から指す（novr）: レーザーが見えないので前のまま。
+        assert_eq!(anchor(Anchor::Below, eye, eye, point, up), Anchor::Below);
+    }
+
+    #[test]
+    fn tooltip_follows_the_cursor_in_front_of_it() {
+        let (mut vr, mut ov, _, cursor) = with_pointers();
+        let tip = ov
+            .add_panel(
+                &mut vr.backend,
+                "t",
+                Pose::IDENTITY,
+                Vec2::new(0.02, 0.02),
+                (8, 8),
+            )
+            .unwrap();
+        ov.set_pointer(&mut vr.backend, tip, Hand::Right, Pointer::Tooltip);
+        // 手を目より下に置いて正面のパネルを指す。
+        controller(
+            &mut vr,
+            Pose::new(Vec3::new(0.0, -0.4, 0.0), Quat::IDENTITY),
+            &[],
+        );
+        ov.tick(&mut vr);
+        let (c, t) = (&vr.backend.overlays[cursor], &vr.backend.overlays[tip]);
+        assert!(t.visible && c.visible);
+        assert!((t.width_m - c.width_m).abs() < 1e-5, "同じ縮尺");
+        let (pc, pt) = (ov.panel(cursor).pose.position, ov.panel(tip).pose.position);
+        assert!((pc.x - pt.x).abs() < 1e-5 && (pc.y - pt.y).abs() < 1e-5);
+        assert!(pt.z > pc.z, "カーソルより手前");
+        assert_eq!(ov.tooltip_anchor(Hand::Right), Anchor::Above);
+    }
+
     /// パネル（z = -1）の前にレーザーとカーソルを置き、右手で中心を指す。
     fn with_pointers() -> (Subsystems<MockBackend>, Overlay, PanelId, PanelId) {
         let (mut vr, mut ov) = setup();
@@ -1986,15 +2102,10 @@ mod tests {
         ov.tick(&mut vr);
         // 頭（原点）から 1m 先のカーソルは 1m 先での大きさ、2m 先なら 2 倍。
         let near = vr.backend.overlays[cursor].width_m;
-        assert!((near - 0.02 * (1.0 - CURSOR_LIFT)).abs() < 1e-5, "{near}");
+        assert!((near - 0.02).abs() < 1e-5, "{near}");
         vr.backend.frame.hmd = at(0.0, 0.0, 1.0);
         ov.tick(&mut vr);
-        assert!(
-            (vr.backend.overlays[cursor].width_m
-                - near * (2.0 - CURSOR_LIFT) / (1.0 - CURSOR_LIFT))
-                .abs()
-                < 1e-4
-        );
+        assert!((vr.backend.overlays[cursor].width_m - near * 2.0).abs() < 1e-4);
     }
 
     #[test]
