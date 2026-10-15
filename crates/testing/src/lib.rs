@@ -49,7 +49,6 @@ pub const BUTTON_ACTIVE_BG: u32 = rgb24(THEME.accent_solid_active);
 pub const DROP_TARGET_BG: u32 = 0x30a050;
 /// フォーカスのある入力欄の色。
 pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_bg_active);
-const AREA_BG: u32 = rgb24(THEME.neutral_bg);
 /// ダイアログの背景色（親より明るくして重なりが見えるように）。
 pub const DIALOG_BG: u32 = rgb24(THEME.neutral_bg_active);
 /// スクロールする一覧の行数と1行の高さ。
@@ -70,8 +69,6 @@ pub struct Testing {
     /// 入力欄に打たれた文字。
     pub text: String,
     pub menu_open: bool,
-    /// この画面のテーマ（`toggle-theme` で切り替わる）。
-    pub mode: Mode,
     /// ポップアップメニューで選んだ項目。
     pub picked: Option<&'static str>,
     /// スクロールする一覧の状態（`offset().y` が負 = 下へスクロール済み）。
@@ -101,8 +98,13 @@ impl Render for ChipPreview {
 }
 
 /// 押せるボタン（`design` の部品）。`active` は切り替えボタンが有効なとき。
-fn button(id: &'static str, label: impl Into<String>, active: bool) -> components::Button {
-    themed_button(&THEME, id, label, active)
+fn button(
+    theme: &Theme,
+    id: &'static str,
+    label: impl Into<String>,
+    active: bool,
+) -> components::Button {
+    themed_button(theme, id, label, active)
 }
 
 fn themed_button(
@@ -213,7 +215,7 @@ fn row() -> Div {
 }
 
 impl Render for Testing {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let st = cx
             .try_global::<PanelControl>()
             .and_then(|c| c.panels.get(&self.panel))
@@ -223,7 +225,7 @@ impl Render for Testing {
         let profiling = cx.try_global::<PanelControl>().is_some_and(|c| c.profiling);
         let tracker = st.trackers.first().map(|id| Device::Tracker(id.clone()));
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
-        let theme = Theme::of(self.mode);
+        let theme = Theme::current(cx);
         // この画面のボタンは現在のテーマで描く（上のモジュール関数 `button` を隠す）。
         macro_rules! button {
             ($($a:expr),+ $(,)?) => {
@@ -357,12 +359,10 @@ impl Render for Testing {
 
         let gpui_row = row()
             .child(
-                button!("toggle-theme", format!("Theme: {:?}", self.mode), false).on_click(
-                    cx.listener(|this, _, _, cx| {
-                        this.mode = this.mode.toggled();
-                        cx.notify();
-                    }),
-                ),
+                button!("toggle-theme", format!("Theme: {:?}", st.theme), false).on_click(command(
+                    self.panel,
+                    PanelCommand::Theme(st.theme.toggled()),
+                )),
             )
             .child(
                 button!("toggle", "Toggle", self.toggled).on_click(cx.listener(
@@ -372,7 +372,7 @@ impl Render for Testing {
                     },
                 )),
             )
-            .child(button!("hold-me", "Hold", false).active(|s| s.bg(rgb(BUTTON_ACTIVE_BG))))
+            .child(button!("hold-me", "Hold", false).active(|s| s.bg(rgba(theme.accent_solid_active))))
             .child(
                 button!("drag-chip", "Drag me", false)
                     .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
@@ -382,7 +382,7 @@ impl Render for Testing {
                     .id("drop-zone")
                     .debug_selector(|| "drop-zone".into())
                     .p_2()
-                    .bg(rgb(AREA_BG))
+                    .bg(rgba(theme.neutral_bg))
                     .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
                     .on_drop(cx.listener(|this, _: &Chip, _, cx| {
                         this.dropped += 1;
@@ -409,7 +409,7 @@ impl Render for Testing {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .bg(rgb(AREA_BG))
+                                    .bg(rgba(theme.neutral_bg))
                                     .on_mouse_down_out(cx.listener(|this, _, _, cx| {
                                         this.menu_open = false;
                                         cx.notify();
@@ -433,8 +433,8 @@ impl Render for Testing {
             .debug_selector(|| "text-field".into())
             .track_focus(&focus)
             .p_2()
-            .bg(rgb(AREA_BG))
-            .focus(|s| s.bg(rgb(FIELD_FOCUS_BG)))
+            .bg(rgba(theme.neutral_bg))
+            .focus(|s| s.bg(rgba(theme.accent_bg_active)))
             .on_click(cx.listener(move |_, _, window, cx| window.focus(&focus, cx)))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
                 let k = &e.keystroke;
@@ -457,7 +457,7 @@ impl Render for Testing {
             .size_full()
             .overflow_y_scroll()
             .track_scroll(&self.list)
-            .bg(rgb(AREA_BG))
+            .bg(rgba(theme.neutral_bg))
             .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
                 this.scrolled += match e.delta {
                     ScrollDelta::Lines(p) => p.y,
@@ -519,6 +519,7 @@ impl PointerTest {
 
 impl Render for PointerTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         let mode = cx
             .try_global::<PanelControl>()
             .and_then(|c| c.panels.get(&self.panel))
@@ -534,16 +535,16 @@ impl Render for PointerTest {
             .flex_col()
             .gap_2()
             .p_3()
-            .bg(rgb(PANEL_BG))
-            .text_color(rgb(0xffffff))
+            .bg(rgba(theme.panel))
+            .text_color(rgba(theme.neutral_text))
             .child(
                 row()
                     .child(
-                        button("pointer-mode", label, mode == PointerMode::Touch)
+                        button(&theme, "pointer-mode", label, mode == PointerMode::Touch)
                             .on_click(command(self.panel, PanelCommand::PointerMode(next))),
                     )
                     .child(
-                        button("tap-me", format!("Tapped {}", self.taps), false).on_click(
+                        button(&theme, "tap-me", format!("Tapped {}", self.taps), false).on_click(
                             cx.listener(|this, _, _, cx| {
                                 this.taps += 1;
                                 cx.notify();
@@ -551,14 +552,14 @@ impl Render for PointerTest {
                         ),
                     )
                     .child(
-                        button("close-pointer-test", "Close", false)
+                        button(&theme, "close-pointer-test", "Close", false)
                             .on_click(command(self.panel, PanelCommand::Close)),
                     ),
             )
             .child(
                 row()
                     .child(
-                        button("drag-chip", "Drag me", false)
+                        button(&theme, "drag-chip", "Drag me", false)
                             .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
                     )
                     .child(
@@ -566,7 +567,7 @@ impl Render for PointerTest {
                             .id("drop-zone")
                             .debug_selector(|| "drop-zone".into())
                             .p_2()
-                            .bg(rgb(AREA_BG))
+                            .bg(rgba(theme.neutral_bg))
                             .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
                             .on_drop(cx.listener(|this, _: &Chip, _, cx| {
                                 this.dropped += 1;
@@ -582,7 +583,7 @@ impl Render for PointerTest {
                     .h(gpui::px(240.0))
                     .overflow_y_scroll()
                     .track_scroll(&self.list)
-                    .bg(rgb(AREA_BG))
+                    .bg(rgba(theme.neutral_bg))
                     .children((0..LIST_ROWS).map(|i| {
                         div()
                             .h(gpui::px(ROW_PX))
@@ -621,6 +622,7 @@ impl DialogTest {
 
 impl Render for DialogTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         let panel = self.panel;
         let me = cx.entity().downgrade();
         div()
@@ -629,14 +631,14 @@ impl Render for DialogTest {
             .flex_col()
             .gap_2()
             .p_3()
-            .bg(rgb(PANEL_BG))
-            .text_color(rgb(0xffffff))
-            .child(title_bar(panel, "dialog-test", "close-dialog-test"))
+            .bg(rgba(theme.panel))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(&theme, panel, "dialog-test", "close-dialog-test"))
             .child(
                 row()
                     .child({
                         let me = me.clone();
-                        button("open-dialog", "Open dialog", false).on_click(move |_, _, cx| {
+                        button(&theme, "open-dialog", "Open dialog", false).on_click(move |_, _, cx| {
                             let me = me.clone();
                             cx.default_global::<PanelControl>().spawns.push(
                                 PanelSpec::child(panel, true, move |id, _, _| {
@@ -647,7 +649,7 @@ impl Render for DialogTest {
                         })
                     })
                     .child(
-                        button("open-modal-dialog", "Open modal dialog", false).on_click(
+                        button(&theme, "open-modal-dialog", "Open modal dialog", false).on_click(
                             move |_, _, cx| {
                                 let me = me.clone();
                                 cx.default_global::<PanelControl>().spawns.push(
@@ -691,11 +693,12 @@ impl Dialog {
 }
 
 impl Render for Dialog {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         let answer = |id: &'static str, label: &'static str| {
             let parent = self.parent.clone();
             let close = command(self.panel, PanelCommand::Close);
-            button(id, label, false).on_click(move |e, w, cx| {
+            button(&theme, id, label, false).on_click(move |e, w, cx| {
                 parent
                     .update(cx, |t, cx| {
                         t.answered += 1;
@@ -712,8 +715,8 @@ impl Render for Dialog {
             .flex_col()
             .justify_between()
             .p_3()
-            .bg(rgb(DIALOG_BG))
-            .text_color(rgb(0xffffff))
+            .bg(rgba(theme.neutral_bg_active))
+            .text_color(rgba(theme.neutral_text))
             .child(self.message)
             .child(
                 row()
@@ -738,14 +741,15 @@ impl TestingTransparent {
 }
 
 impl Render for TestingTransparent {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         div()
             .size_full()
             .flex()
             .flex_col()
             .p_3()
             .bg(rgba(TRANSPARENT_BG))
-            .text_color(rgb(0xffffff))
+            .text_color(rgba(theme.neutral_text))
             .child(
                 div()
                     .flex()
@@ -753,7 +757,7 @@ impl Render for TestingTransparent {
                     .items_start()
                     .child("testing-transparent")
                     .child(
-                        button("close-transparent", "Close", false)
+                        button(&theme, "close-transparent", "Close", false)
                             .on_click(command(self.panel, PanelCommand::Close)),
                     ),
             )
@@ -761,13 +765,13 @@ impl Render for TestingTransparent {
 }
 
 /// 閉じるボタン付きの見出し。
-fn title_bar(panel: PanelId, title: impl Into<String>, close_id: &'static str) -> Div {
+fn title_bar(theme: &Theme, panel: PanelId, title: impl Into<String>, close_id: &'static str) -> Div {
     div()
         .flex()
         .justify_between()
         .items_start()
         .child(title.into())
-        .child(button(close_id, "Close", false).on_click(command(panel, PanelCommand::Close)))
+        .child(button(theme, close_id, "Close", false).on_click(command(panel, PanelCommand::Close)))
 }
 
 /// ループアニメーションの周期（秒）。
@@ -798,7 +802,8 @@ impl TestingAnim {
 }
 
 impl Render for TestingAnim {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         self.frames += 1;
         let phase = self.start.elapsed().as_secs_f32() / ANIM_PERIOD % 1.0;
         // 0→1→0 と往復する。
@@ -807,9 +812,9 @@ impl Render for TestingAnim {
             .size_full()
             .relative()
             .p_3()
-            .bg(rgb(PANEL_BG))
-            .text_color(rgb(0xffffff))
-            .child(title_bar(self.panel, "testing-anim", "close-anim"))
+            .bg(rgba(theme.panel))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(&theme, self.panel, "testing-anim", "close-anim"))
             .child(
                 div()
                     .debug_selector(|| "anim-frames".into())
@@ -843,6 +848,7 @@ impl TestingLod {
 
 impl Render for TestingLod {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         let lod = cx
             .try_global::<PanelControl>()
             .and_then(|c| c.panels.get(&self.panel))
@@ -853,8 +859,8 @@ impl Render for TestingLod {
             .flex_col()
             .p_3()
             .bg(rgb(LOD_COLORS[(lod as usize).min(3)]))
-            .text_color(rgb(0xffffff))
-            .child(title_bar(self.panel, "testing-lod", "close-lod"))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(&theme, self.panel, "testing-lod", "close-lod"))
             .child(
                 div()
                     .debug_selector(|| "lod-level".into())
@@ -905,8 +911,8 @@ fn cell(i: usize) -> Div {
 }
 
 impl Render for TestingScrollbar {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::DARK;
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         // 領域の枠: 入れ物（relative）に、スクロールする本体と棒を重ねる。
         let area =
             |id: &'static str, pull: &'static str, handle: &ScrollHandle, body: Stateful<Div>| {
@@ -1028,7 +1034,7 @@ impl Render for TestingScrollbar {
             .p_3()
             .bg(rgba(theme.panel))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(
+            .child(title_bar(&theme, 
                 self.panel,
                 "testing-scrollbar",
                 "close-scrollbar",
@@ -1066,7 +1072,8 @@ impl TestingFont {
 }
 
 impl Render for TestingFont {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         use gpui::FontWeight;
         let sample = |id: &'static str, size: f32, weight: FontWeight, text: &'static str| {
             div()
@@ -1081,9 +1088,9 @@ impl Render for TestingFont {
             .flex_col()
             .gap_2()
             .p_3()
-            .bg(rgb(PANEL_BG))
-            .text_color(rgb(0xffffff))
-            .child(title_bar(self.panel, "testing-font", "close-font"))
+            .bg(rgba(theme.panel))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(&theme, self.panel, "testing-font", "close-font"))
             .child(sample(
                 "font-latin",
                 24.0,
@@ -1235,6 +1242,7 @@ fn facing_head(p: Vec3) -> Pose {
 
 impl Render for StressTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         let (open, limit) = cx
             .try_global::<PanelControl>()
             .map_or((0, 0), |c| (c.open, c.limit));
@@ -1245,9 +1253,9 @@ impl Render for StressTest {
             .flex_col()
             .gap_2()
             .p_3()
-            .bg(rgb(PANEL_BG))
-            .text_color(rgb(0xffffff))
-            .child(title_bar(self.panel, "stress-test", "close-stress"))
+            .bg(rgba(theme.panel))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(&theme, self.panel, "stress-test", "close-stress"))
             .child(
                 div()
                     .debug_selector(|| "stress-count".into())
@@ -1256,18 +1264,18 @@ impl Render for StressTest {
             .child(
                 row()
                     .child(
-                        button("stress-fill", "Fill to limit", false)
+                        button(&theme, "stress-fill", "Fill to limit", false)
                             .on_click(cx.listener(|this, _, _, cx| this.spawn(usize::MAX, cx))),
                     )
                     .child(
-                        button("stress-add", format!("+{STRESS_STEP}"), false)
+                        button(&theme, "stress-add", format!("+{STRESS_STEP}"), false)
                             .on_click(cx.listener(|this, _, _, cx| this.spawn(STRESS_STEP, cx))),
                     )
-                    .child(button("stress-close", "Close all", false).on_click(
+                    .child(button(&theme, "stress-close", "Close all", false).on_click(
                         cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
                     ))
                     .child(
-                        button("stress-scatter", "Scatter", false).on_click(cx.listener(
+                        button(&theme, "stress-scatter", "Scatter", false).on_click(cx.listener(
                             |this, _, _, cx| {
                                 // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
                                 let poses: Vec<_> = (0..this.alive(cx).len())
@@ -1283,7 +1291,7 @@ impl Render for StressTest {
                             },
                         )),
                     )
-                    .child(button("stress-grid", "Grid", false).on_click(cx.listener(
+                    .child(button(&theme, "stress-grid", "Grid", false).on_click(cx.listener(
                         |this, _, _, cx| this.each(cx, |i| PanelCommand::Place(grid_pose(i))),
                     ))),
             )
@@ -1323,14 +1331,18 @@ mod tests {
         assert_eq!(pages, [Some(WEB_PAGE.to_owned())]);
     }
 
-    /// テーマボタンはこの画面のライト / ダークを切り替える。
+    /// テーマボタンは全体のテーマを切り替える要求を積む。切り替わると画面の色も変わる。
     #[gpui::test]
-    fn theme_button_toggles_mode(cx: &mut TestAppContext) {
-        let (view, cx) = cx.add_window_view(|_, _| Testing::default());
+    fn theme_button_requests_toggle_and_screen_follows(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| Testing::default());
         cx.run_until_parked();
         let c = cx.debug_bounds("toggle-theme").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
-        assert_eq!(view.read_with(cx, |t, _| t.mode), Mode::Light);
+        let queued = cx.update(|_, cx| cx.global::<PanelControl>().panels[&PanelId::default()].commands.clone());
+        assert_eq!(queued, [PanelCommand::Theme(kernel::ThemeMode::Light)]);
+        cx.update(|_, cx| cx.set_global(Mode::Light));
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| Theme::current(cx)) == Theme::LIGHT);
     }
 
     /// あふれた一覧にはスクロールバーが出て、棒を掴んで引くと一覧が動く。

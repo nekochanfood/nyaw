@@ -11,7 +11,7 @@ pub use subsystems::{rendering, vr};
 use std::time::{Duration, Instant};
 use subsystems::os;
 
-pub use config::{Config, LodQuality, PointerMode};
+pub use config::{Config, LodQuality, PointerMode, ThemeMode};
 pub use overlay::{self, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
@@ -41,6 +41,8 @@ pub enum PanelCommand {
     Resize(u32, u32),
     /// レーザーのエミュレート方式を変える。パネルを問わずすべてのパネルに効く。
     PointerMode(PointerMode),
+    /// テーマを変える。全パネルに効き、設定ファイルへ書き戻される（起動時の設定の場合のみ。テスト用のカーネルは書かない）。
+    Theme(ThemeMode),
     /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
     Place(Pose),
     /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
@@ -64,6 +66,8 @@ pub struct PanelStatus {
     pub closed: bool,
     /// レーザーのエミュレート方式（全パネル共通）。
     pub pointer_mode: PointerMode,
+    /// 見た目のテーマ（全パネル共通）。
+    pub theme: ThemeMode,
     /// 描画解像度の段階（[`Kernel::panel_lod`]）。
     pub lod: u8,
     /// 親パネル（このパネルが子のとき）。
@@ -78,6 +82,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     overlay: Overlay,
     timing: TickTiming,
     pointer_mode: PointerMode,
+    /// テーマの変更を書き戻す設定ファイル。`boot` だけが設定する（テスト用のカーネルは実ファイルを触らない）。
+    config_path: Option<std::path::PathBuf>,
     /// 進めたフレームの数（[`Self::panel_frame_due`]）。
     frame: u64,
 }
@@ -105,7 +111,9 @@ impl Kernel {
             }
         };
         logger::info!("runtime selected", runtime = ?vr.runtime());
-        Ok(Self::with_backend(vr, config))
+        let mut kernel = Self::with_backend(vr, config);
+        kernel.config_path = config::path();
+        Ok(kernel)
     }
 }
 
@@ -128,6 +136,7 @@ impl<B: VrBackend> Kernel<B> {
         overlay.set_capture(pointer_mode == PointerMode::Touch);
         Self {
             pointer_mode,
+            config_path: None,
             config,
             subsystems,
             overlay,
@@ -143,6 +152,10 @@ impl<B: VrBackend> Kernel<B> {
     /// レーザーのエミュレート方式。UI がポインタイベントをマウス・タッチのどちらとして流すかを決める。
     pub fn pointer_mode(&self) -> PointerMode {
         self.pointer_mode
+    }
+
+    pub fn theme(&self) -> ThemeMode {
+        self.config.theme
     }
 
     pub fn add_panel(
@@ -271,6 +284,14 @@ impl<B: VrBackend> Kernel<B> {
                 self.pointer_mode = m;
                 self.overlay.set_capture(m == PointerMode::Touch);
             }
+            PanelCommand::Theme(t) => {
+                self.config.theme = t;
+                if let Some(path) = &self.config_path
+                    && let Err(e) = config::save_theme_at(path, t)
+                {
+                    logger::warn!("failed to save theme to config file", path = path.display(), error = e);
+                }
+            }
             PanelCommand::Parent(parent) => self.overlay.set_parent(panel, parent),
             PanelCommand::Place(offset) => {
                 self.overlay.detach(panel);
@@ -291,6 +312,7 @@ impl<B: VrBackend> Kernel<B> {
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
             pointer_mode: self.pointer_mode,
+            theme: self.config.theme,
             lod: self.panel_lod(panel),
             parent: p.parent.map(|q| q.panel),
         }
@@ -412,6 +434,31 @@ mod tests {
             PointerMode::Touch,
             "defaults to touch"
         );
+    }
+
+    #[test]
+    fn theme_starts_from_config_and_switches_without_touching_files() {
+        let config = Config {
+            theme: ThemeMode::Light,
+            ..Default::default()
+        };
+        let mut k = Kernel::with_backend(MockBackend::default(), config);
+        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (4, 4)).unwrap();
+        assert_eq!(k.status(p).theme, ThemeMode::Light);
+        k.apply(p, PanelCommand::Theme(ThemeMode::Dark));
+        assert_eq!(k.theme(), ThemeMode::Dark);
+        assert_eq!(k.status(p).theme, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn theme_command_persists_to_config_path() {
+        let path = std::env::temp_dir().join(format!("nyaw-kernel-{}.toml", std::process::id()));
+        let (mut k, p) = kernel();
+        k.config_path = Some(path.clone());
+        k.apply(p, PanelCommand::Theme(ThemeMode::Light));
+        let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(saved.theme, ThemeMode::Light);
     }
 
     #[test]

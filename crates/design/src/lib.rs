@@ -50,7 +50,15 @@ impl Mode {
     }
 }
 
+/// 今のテーマ（GPUI のグローバル）。`ui` のフレームループがカーネルの設定から書く。置かれていなければダーク。
+impl gpui::Global for Mode {}
+
 impl Theme {
+    /// 画面が描くときの今のテーマ。テーマが切り替わるとウィンドウが描き直されるので、`render` で毎回引く。
+    pub fn current(cx: &gpui::App) -> Theme {
+        Theme::of(cx.try_global::<Mode>().copied().unwrap_or_default())
+    }
+
     pub const fn of(mode: Mode) -> Theme {
         match mode {
             Mode::Dark => Theme::DARK,
@@ -67,6 +75,15 @@ mod tests {
     fn themes_differ_but_share_roles() {
         assert_ne!(Theme::DARK.neutral_base, Theme::LIGHT.neutral_base);
         assert_eq!(Theme::DARK.on_accent & 0xff, 0xff);
+    }
+
+    #[gpui::test]
+    fn current_follows_the_global_mode(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            assert_eq!(Theme::current(cx), Theme::DARK, "dark until set");
+            cx.set_global(Mode::Light);
+            assert_eq!(Theme::current(cx), Theme::LIGHT);
+        });
     }
 
     #[test]

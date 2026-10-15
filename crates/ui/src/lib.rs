@@ -26,7 +26,7 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose,
+    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose, ThemeMode,
     UiEvent, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
@@ -319,7 +319,13 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     if ctl.status == status {
         return false;
     }
+    let theme = status.theme;
     ctl.status = status;
+    // テーマは全パネル共通。画面は `design::Theme::current` で引く。
+    cx.set_global(match theme {
+        ThemeMode::Dark => design::Mode::Dark,
+        ThemeMode::Light => design::Mode::Light,
+    });
     cx.refresh_windows();
     true
 }
@@ -1233,6 +1239,7 @@ fn open_panel(
 mod tests {
     use super::*;
     use gpui::{TestAppContext, div};
+    use design::Theme;
     use kernel::{Device, Runtime};
 
     /// UI 層だけで確かめるための最小の画面。
@@ -1343,6 +1350,15 @@ mod tests {
                     ..Default::default()
                 }
             );
+            assert_eq!(Theme::current(cx), Theme::DARK);
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(panel)
+                .or_default()
+                .commands
+                .push(PanelCommand::Theme(ThemeMode::Light));
+            sync_panel(&mut kernel, panel, cx);
+            assert_eq!(Theme::current(cx), Theme::LIGHT, "every screen follows");
             cx.default_global::<PanelControl>()
                 .panels
                 .get_mut(&panel)

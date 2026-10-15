@@ -4,7 +4,7 @@
 use std::time::Duration;
 
 use design::components::{Variant, button};
-use design::{Mode, Theme};
+use design::Theme;
 use gpui::{Context, Window, div, prelude::*, rgba};
 use kernel::PanelId;
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
@@ -61,7 +61,7 @@ impl Render for Wrist {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = chrono::Local::now();
         let this = cx.entity();
-        let theme = Theme::of(Mode::Dark);
+        let theme = Theme::current(cx);
         div()
             .size_full()
             .flex()

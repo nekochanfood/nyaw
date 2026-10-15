@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use subsystems::os;
@@ -49,6 +49,24 @@ pub enum PointerMode {
     Touch,
 }
 
+/// 見た目のテーマ（ライト / ダーク）。`design::Mode` に対応する。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl ThemeMode {
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Dark => Self::Light,
+            Self::Light => Self::Dark,
+        }
+    }
+}
+
 /// `config.toml` の中身。どのキーも省略でき、知らないキーは無視する。
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default)]
@@ -65,6 +83,8 @@ pub struct Config {
     pub pointer_mode: Option<PointerMode>,
     /// 機能ごとに GPU を使うか（`[gpu]` の表。互換性のため CPU に落とせる）。
     pub gpu: Gpu,
+    /// 見た目のテーマ（`dark` / `light`）。省略で `dark`。画面での切り替えはここへ書き戻される。
+    pub theme: ThemeMode,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -117,6 +137,23 @@ pub fn load() -> Result<Config, Error> {
     }
 }
 
+/// `path` の設定ファイルの `theme` だけを書き換える（他のキーは残す。ファイルが無ければ作る）。
+/// 既存のファイルが読めない・TOML として壊れているときは、上書きせずにエラーを返す。
+pub fn save_theme_at(path: &Path, theme: ThemeMode) -> Result<(), Error> {
+    let mut table = match fs::read_to_string(path) {
+        Ok(text) => text.parse::<toml::Table>().map_err(Error::Parse)?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => toml::Table::new(),
+        Err(e) => return Err(Error::Io(e)),
+    };
+    let value = toml::Value::try_from(theme).expect("an enum of unit variants is a string");
+    table.insert("theme".into(), value);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(Error::Io)?;
+    }
+    // ponytail: 書き換えでコメントは消える。残したければ toml_edit。
+    fs::write(path, table.to_string()).map_err(Error::Io)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,6 +203,35 @@ emulator = false
     fn empty_is_default_and_bad_toml_is_error() {
         assert_eq!(parse("").unwrap(), Config::default());
         assert!(parse("log = ").is_err());
+    }
+
+    #[test]
+    fn theme_defaults_to_dark_and_parses() {
+        assert_eq!(parse("").unwrap().theme, ThemeMode::Dark);
+        assert_eq!(parse("theme = \"light\"").unwrap().theme, ThemeMode::Light);
+        assert!(parse("theme = \"blue\"").is_err());
+        assert_eq!(ThemeMode::Dark.toggled(), ThemeMode::Light);
+    }
+
+    #[test]
+    fn save_theme_keeps_other_keys_and_round_trips() {
+        let dir = std::env::temp_dir().join(format!("nyaw-config-{}", std::process::id()));
+        let path = dir.join("nested").join("config.toml");
+        // ファイルもディレクトリも無くても作る。
+        save_theme_at(&path, ThemeMode::Light).unwrap();
+        assert_eq!(parse(&fs::read_to_string(&path).unwrap()).unwrap().theme, ThemeMode::Light);
+        fs::write(&path, "log = \"debug\"
+[gpu]
+emulator = false
+").unwrap();
+        save_theme_at(&path, ThemeMode::Light).unwrap();
+        let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!((c.theme, c.log.as_deref(), c.gpu.emulator), (ThemeMode::Light, Some("debug"), false));
+        // 壊れたファイルは上書きしない。
+        fs::write(&path, "log = ").unwrap();
+        assert!(save_theme_at(&path, ThemeMode::Dark).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "log = ");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
