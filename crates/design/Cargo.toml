@@ -7,6 +7,7 @@ license.workspace = true
 # デザイン層。値（Constants）→ 役割とテーマ（Utilities）→ 部品（Components）の 3 層。
 # 値は tokens.json が唯一の情報源で、build.rs が Rust のコードにする。
 [dependencies]
+animato = { version = "1.7.2", default-features = false, features = ["tween"] }
 gpui = { workspace = true, features = ["test-support"] }
 
 [build-dependencies]
