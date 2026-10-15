@@ -6,7 +6,7 @@
 //! - Web: Testing の Web 版（[`WEB_PAGE`]。React のページ）を隣に開く
 //! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
 //! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
-//! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）
+//! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）・[`TestingFont`]（フォントの見本）・[`TestingScrollbar`]（縦・横・両方のスクロールバー）
 //! - 負荷: [`StressTest`] で上限いっぱいまでパネルを出し、閉じる・ちりばめる・並べる
 //!
 //! 要素はすべて `debug_selector` で名前を付けてある（名前 = `id`）。
@@ -19,7 +19,7 @@ use design::components::{self, Variant};
 use design::{Mode, Theme};
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px, relative,
+    ScrollWheelEvent, Stateful, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px, relative,
     rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
@@ -233,6 +233,14 @@ impl Render for Testing {
                     .on_click(spawn_view(self.panel, |id, _| TestingLod::new(id))),
             )
             .child(
+                button!("spawn-font", "Spawn font", false)
+                    .on_click(spawn_view(self.panel, |id, _| TestingFont::new(id))),
+            )
+            .child(
+                button!("spawn-scrollbar", "Spawn scrollbar", false)
+                    .on_click(spawn_view(self.panel, |id, _| TestingScrollbar::new(id))),
+            )
+            .child(
                 button!("stress-test", "Stress test", false)
                     .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
             )
@@ -242,7 +250,8 @@ impl Render for Testing {
                     .on_click(spawn_pointer_test(self.panel)),
             )
             .child(
-                button!("dialog-test", "Dialog test", false).on_click(spawn_dialog_test(self.panel)),
+                button!("dialog-test", "Dialog test", false)
+                    .on_click(spawn_dialog_test(self.panel)),
             )
             .child(
                 button!("close-panel", "Close panel", false)
@@ -335,10 +344,12 @@ impl Render for Testing {
                 ),
             )
             .child(
-                button!("toggle", "Toggle", self.toggled).on_click(cx.listener(|this, _, _, cx| {
-                    this.toggled = !this.toggled;
-                    cx.notify();
-                })),
+                button!("toggle", "Toggle", self.toggled).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.toggled = !this.toggled;
+                        cx.notify();
+                    },
+                )),
             )
             .child(button!("hold-me", "Hold", false).active(|s| s.bg(rgb(BUTTON_ACTIVE_BG))))
             .child(
@@ -839,6 +850,183 @@ impl Render for TestingLod {
     }
 }
 
+/// スクロールバーの試験画面（`testing-scrollbar`）: 縦だけ・横だけ・縦横の 3 つのあふれる領域。
+/// 領域は `scrollbar-v` / `scrollbar-h` / `scrollbar-both`、棒は `{領域}-bars-v` / `-h`（`-thumb` 付きが棒）。
+pub struct TestingScrollbar {
+    panel: PanelId,
+    pub vertical: ScrollHandle,
+    pub horizontal: ScrollHandle,
+    pub both: ScrollHandle,
+}
+
+impl TestingScrollbar {
+    pub fn new(panel: PanelId) -> Self {
+        Self {
+            panel,
+            vertical: ScrollHandle::new(),
+            horizontal: ScrollHandle::new(),
+            both: ScrollHandle::new(),
+        }
+    }
+}
+
+/// 中身の 1 マス（色で位置が分かる）。
+fn cell(i: usize) -> Div {
+    div()
+        .flex_none()
+        .size(px(48.0))
+        .rounded(px(8.0))
+        .bg(hsla((i % 12) as f32 / 12.0, 0.5, 0.45, 1.0))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(format!("{i}"))
+}
+
+impl Render for TestingScrollbar {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::DARK;
+        // 領域の枠: 入れ物（relative）に、スクロールする本体と棒を重ねる。
+        let area = |id: &'static str, handle: &ScrollHandle, body: Stateful<Div>| {
+            div()
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .rounded(px(8.0))
+                .bg(rgba(theme.neutral_bg))
+                .child(body.size_full().track_scroll(handle))
+                .child(components::scrollbars(&theme, id, handle))
+        };
+        let vertical = area(
+            "bars-v",
+            &self.vertical,
+            div()
+                .id("scrollbar-v")
+                .debug_selector(|| "scrollbar-v".into())
+                .overflow_y_scroll()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_2()
+                .children((0..40).map(|i| cell(i).w_full())),
+        );
+        let horizontal = area(
+            "bars-h",
+            &self.horizontal,
+            div()
+                .id("scrollbar-h")
+                .debug_selector(|| "scrollbar-h".into())
+                .overflow_x_scroll()
+                .flex()
+                .gap_2()
+                .p_2()
+                .children((0..40).map(cell)),
+        );
+        let both = area(
+            "bars-both",
+            &self.both,
+            div()
+                .id("scrollbar-both")
+                .debug_selector(|| "scrollbar-both".into())
+                .overflow_scroll()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p_2()
+                .children((0..20).map(|r| {
+                    div()
+                        .flex()
+                        .flex_none()
+                        // 行の幅を中身に合わせないと、親の幅に揃えられて横にあふれない。
+                        .w(px(30.0 * 56.0))
+                        .gap_2()
+                        .children((0..30).map(move |c| cell(r * 30 + c)))
+                })),
+        );
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgba(theme.panel))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(self.panel, "testing-scrollbar", "close-scrollbar"))
+            .child(div().flex_1().min_h_0().flex().gap_2().child(vertical).child(
+                div().flex_1().min_w_0().flex().flex_col().gap_2().child(horizontal).child(both),
+            ))
+    }
+}
+
+/// フォントの見本（`testing-font`）: 英数・かな漢字・混在を、太さと大きさを変えて並べる。
+pub struct TestingFont {
+    panel: PanelId,
+}
+
+impl TestingFont {
+    pub fn new(panel: PanelId) -> Self {
+        Self { panel }
+    }
+}
+
+impl Render for TestingFont {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        use gpui::FontWeight;
+        let sample = |id: &'static str, size: f32, weight: FontWeight, text: &'static str| {
+            div()
+                .debug_selector(|| id.into())
+                .text_size(px(size))
+                .font_weight(weight)
+                .child(text)
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgb(PANEL_BG))
+            .text_color(rgb(0xffffff))
+            .child(title_bar(self.panel, "testing-font", "close-font"))
+            .child(sample(
+                "font-latin",
+                24.0,
+                FontWeight::NORMAL,
+                "Noto Sans: The quick brown fox jumps over the lazy dog 0123456789",
+            ))
+            .child(sample(
+                "font-latin-bold",
+                24.0,
+                FontWeight::BOLD,
+                "Noto Sans Bold: Sphinx of black quartz, judge my vow",
+            ))
+            .child(sample(
+                "font-ja",
+                24.0,
+                FontWeight::NORMAL,
+                "Noto Sans JP: 吾輩は猫である。名前はまだ無い。",
+            ))
+            .child(sample(
+                "font-ja-bold",
+                24.0,
+                FontWeight::BOLD,
+                "Noto Sans JP 太字: いろはにほへと ちりぬるを",
+            ))
+            .child(sample(
+                "font-mixed",
+                19.0,
+                FontWeight::NORMAL,
+                "Mixed 混在: Hello、世界! VR パネル 123 ABC あいう",
+            ))
+            .child(sample(
+                "font-small",
+                14.0,
+                FontWeight::NORMAL,
+                "Small 14px: 小さい文字の読みやすさ — ABC abc 漢字かな",
+            ))
+    }
+}
+
 /// 負荷試験で出すパネルの大きさ（m）。解像度は既定のまま（800 × 600）。
 pub const STRESS_SIZE: Vec2 = Vec2::new(0.3, 0.225);
 /// 一度に足す枚数（[`StressTest`] の `stress-add`）。
@@ -1076,6 +1264,25 @@ mod tests {
         assert!(y < px(0.0), "引いた分だけ一覧が進む: {y:?}");
     }
 
+    /// スクロールバーの試験画面は 3 つの領域それぞれに棒が出る（縦横の領域は両方出る）。
+    #[gpui::test]
+    fn scrollbar_screen_shows_bars_for_overflowing_axes(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
+        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        for name in [
+            "bars-v-v-thumb",
+            "bars-h-h-thumb",
+            "bars-both-v-thumb",
+            "bars-both-h-thumb",
+        ] {
+            assert!(cx.debug_bounds(name).is_some(), "{name} が出る");
+        }
+        assert!(cx.debug_bounds("bars-v-h-thumb").is_none(), "縦だけの領域に横の棒は出ない");
+    }
+
     /// Profiler ボタンは計測の有効・無効を切り替える。
     #[gpui::test]
     fn profiler_button_toggles_profiling(cx: &mut TestAppContext) {
@@ -1096,12 +1303,12 @@ mod tests {
     fn test_panel_buttons_spawn_panels(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, _| Testing::default());
         cx.run_until_parked();
-        for id in ["spawn-anim", "spawn-lod", "stress-test"] {
+        for id in ["spawn-anim", "spawn-lod", "spawn-font", "stress-test"] {
             let c = cx.debug_bounds(id).unwrap().center();
             cx.simulate_click(c, Modifiers::none());
         }
         let spawns = cx.update(|_, cx| cx.global::<PanelControl>().spawns.len());
-        assert_eq!(spawns, 3);
+        assert_eq!(spawns, 4);
     }
 
     /// Fill は上限ちょうどまで出し（待っている分も数える）、Grid・Close all は出したもののうち開いているものだけに効く。
