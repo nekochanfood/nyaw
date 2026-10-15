@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use subsystems::os;
 
 pub use config::{Config, LodQuality, PointerMode, ThemeMode};
-pub use overlay::{self, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
+pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
 /// [`Kernel::tick`] 1 回の内訳。
@@ -244,6 +244,11 @@ impl<B: VrBackend> Kernel<B> {
     /// 最後の tick の HMD の姿勢。
     pub fn hmd(&self) -> Pose {
         self.overlay.hmd()
+    }
+
+    /// `hand` のツールチップをカーソルの上下どちらに出すか（`Overlay::tooltip_anchor`）。
+    pub fn tooltip_anchor(&self, hand: Hand) -> Anchor {
+        self.overlay.tooltip_anchor(hand)
     }
 
     /// `hand` でドラッグしている間、その見た目を幅 `width_m` で出す（`Overlay::set_drag`）。`None` で隠す。

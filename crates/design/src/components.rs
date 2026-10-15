@@ -13,8 +13,10 @@ use palette::{FromColor, Mix, Oklab, Srgb};
 
 mod scrollbar;
 mod slider;
+mod tooltip;
 pub use scrollbar::{Elastic, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 pub use slider::{Slider, slider};
+pub use tooltip::*;
 
 use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 
@@ -121,12 +123,20 @@ pub struct Button {
     /// 波紋の色（文字色）。
     ink: u32,
     ripple: bool,
+    /// ホバー中にカーソルへ出す説明（[`Tooltips`]）。
+    tooltip: Option<SharedString>,
 }
 
 impl Button {
     /// 波紋（押した位置から広がる効果）を出さない。既定は出す。
     pub fn no_ripple(mut self) -> Self {
         self.ripple = false;
+        self
+    }
+
+    /// ホバー中にカーソルへ説明を出す。アイコンだけのボタンなど、見た目だけでは意味が伝わりにくいものに付ける。
+    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
         self
     }
 
@@ -145,6 +155,30 @@ pub fn button(
     label: impl Into<SharedString>,
     variant: Variant,
 ) -> Button {
+    let mut b = base_button(theme, id, variant);
+    b.base = b.base.px(px(BUTTON_PADDING)).child(label.into());
+    b
+}
+
+/// アイコンだけの丸いボタン。見た目だけでは意味が伝わりにくいので、説明（ツールチップ）を必ず持たせる。
+pub fn icon_button(
+    theme: &Theme,
+    id: &'static str,
+    glyph: &'static crate::Icon,
+    tooltip: impl Into<SharedString>,
+    variant: Variant,
+) -> Button {
+    let mut b = base_button(theme, id, variant).tooltip(tooltip);
+    b.base = b.base.w(px(BUTTON_HEIGHT)).child(
+        crate::icon(glyph)
+            .weight(crate::Weight::Bold)
+            .size(px(font_size::LG)),
+    );
+    b
+}
+
+/// 高さ・角丸・色・文字だけを決めたボタン。中身と横の大きさは呼び出し側が足す。
+fn base_button(theme: &Theme, id: &'static str, variant: Variant) -> Button {
     let (bg, hover, active, fg) = match variant {
         Variant::Default => (
             theme.control,
@@ -169,7 +203,6 @@ pub fn button(
         .id(id)
         .debug_selector(move || id.into())
         .h(px(BUTTON_HEIGHT))
-        .px(px(BUTTON_PADDING))
         .flex()
         .items_center()
         .justify_center()
@@ -177,8 +210,7 @@ pub fn button(
         .text_size(px(font_size::MD))
         // 太字の 18.66px 以上は大きい文字（WCAG の 3:1）。ボタンの文字色の検査はこれを前提にしている。
         .font_weight(FontWeight::BOLD)
-        .text_color(rgba(fg))
-        .child(label.into());
+        .text_color(rgba(fg));
     Button {
         id,
         base,
@@ -187,6 +219,7 @@ pub fn button(
         active,
         ink: fg,
         ripple: true,
+        tooltip: None,
     }
 }
 
@@ -282,6 +315,7 @@ impl RenderOnce for Button {
         let animated = cx.has_global::<Motion>();
         let (ink, enabled) = (self.ink, self.ripple && animated);
         let (over, leave) = (set(Some(true), None), set(Some(false), None));
+        let (id, tip) = (self.id, self.tooltip.clone());
         let (down, up) = (set(None, Some(true)), set(None, Some(false)));
         let up_out = set(None, Some(false));
         // ボタンごとに違う角丸（`rounded*` で上書きされたものも含む）。指定が無い角は 0。
@@ -365,7 +399,12 @@ impl RenderOnce for Button {
         self.base
             .bg(rgba(color))
             .children(wave)
-            .on_hover(move |h, w, cx| if *h { over(w, cx) } else { leave(w, cx) })
+            .on_hover(move |h, w, cx| {
+                if let Some(tip) = &tip {
+                    hover_tooltip(id, tip.clone(), *h, w, cx);
+                }
+                if *h { over(w, cx) } else { leave(w, cx) }
+            })
             .on_mouse_down(MouseButton::Left, move |e, w, cx| {
                 if enabled {
                     press.update(cx, |s, _| s.ripple = Some((e.position, Instant::now())));
