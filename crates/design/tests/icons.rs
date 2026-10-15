@@ -4,7 +4,10 @@ use gpui::{point, px};
 #[test]
 fn every_weight_of_a_used_icon_builds() {
     for w in Weight::ALL {
-        let paths = icon(&icons::HEART).weight(w).size(px(32.)).paths(point(px(0.), px(0.)));
+        let paths = icon(&icons::HEART)
+            .weight(w)
+            .size(px(32.))
+            .paths(point(px(0.), px(0.)));
         assert!(!paths.is_empty(), "{w:?}");
         assert!(paths.iter().all(|(p, _)| !p.vertices.is_empty()), "{w:?}");
     }
@@ -12,7 +15,9 @@ fn every_weight_of_a_used_icon_builds() {
 
 #[test]
 fn duotone_has_a_faint_layer() {
-    let p = icon(&icons::CARET_DOWN).weight(Weight::Duotone).paths(point(px(0.), px(0.)));
+    let p = icon(&icons::CARET_DOWN)
+        .weight(Weight::Duotone)
+        .paths(point(px(0.), px(0.)));
     assert_eq!(p.iter().map(|(_, o)| *o).collect::<Vec<_>>(), [0.2, 1.0]);
 }
 

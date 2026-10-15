@@ -30,13 +30,19 @@ pub fn generate(out_dir: &Path) {
 
     // weight -> name -> d のリスト
     let mut data: BTreeMap<&str, BTreeMap<String, Vec<String>>> = BTreeMap::new();
-    for w in weights.iter().map(|w| *WEIGHTS.iter().find(|x| *x == w).unwrap()) {
+    for w in weights
+        .iter()
+        .map(|w| *WEIGHTS.iter().find(|x| *x == w).unwrap())
+    {
         let tsv = fs::read_to_string(format!("icons/{w}.tsv")).unwrap();
         let map = tsv
             .lines()
             .map(|l| {
                 let mut it = l.split('\t');
-                (it.next().unwrap().to_string(), it.map(String::from).collect())
+                (
+                    it.next().unwrap().to_string(),
+                    it.map(String::from).collect(),
+                )
             })
             .collect();
         data.insert(w, map);
@@ -46,7 +52,11 @@ pub fn generate(out_dir: &Path) {
     let mut all = Vec::new();
     for name in &names {
         let kebab = name.to_lowercase().replace('_', "-");
-        writeln!(out, "    pub static {name}: Icon = Icon {{ name: {kebab:?},").unwrap();
+        writeln!(
+            out,
+            "    pub static {name}: Icon = Icon {{ name: {kebab:?},"
+        )
+        .unwrap();
         for w in WEIGHTS {
             write!(out, "        {w}: &[").unwrap();
             if let Some(map) = data.get(w) {
@@ -65,7 +75,12 @@ pub fn generate(out_dir: &Path) {
     let list: Vec<String> = all.iter().map(|n| format!("&{n}")).collect();
     writeln!(out, "    /// 実際に使われていて、ビルドに含まれるアイコン。\n    pub static ALL: &[&Icon] = &[{}];", list.join(", ")).unwrap();
     let used: Vec<String> = weights.iter().map(|w| format!("{w:?}")).collect();
-    writeln!(out, "    /// ビルドに含まれるウェイト（小文字）。\n    pub const WEIGHTS: &[&str] = &[{}];", used.join(", ")).unwrap();
+    writeln!(
+        out,
+        "    /// ビルドに含まれるウェイト（小文字）。\n    pub const WEIGHTS: &[&str] = &[{}];",
+        used.join(", ")
+    )
+    .unwrap();
     out += "}\n";
     fs::write(out_dir.join("icons.rs"), out).unwrap();
 }
@@ -96,7 +111,11 @@ fn is_const(c: char) -> bool {
 fn scan_names(text: &str, names: &mut BTreeSet<String>) {
     for (i, _) in text.match_indices("icons::") {
         // `xicons::` のような別の識別子の末尾は除く
-        if text[..i].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_') {
+        if text[..i]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || c == '_')
+        {
             continue;
         }
         let rest = &text[i + 7..];
@@ -110,7 +129,10 @@ fn scan_names(text: &str, names: &mut BTreeSet<String>) {
                 cur.push(c);
             } else {
                 // 先頭が大文字で、`ALL` / `WEIGHTS` 以外が定数名
-                if cur.starts_with(|c: char| c.is_ascii_uppercase()) && cur != "ALL" && cur != "WEIGHTS" {
+                if cur.starts_with(|c: char| c.is_ascii_uppercase())
+                    && cur != "ALL"
+                    && cur != "WEIGHTS"
+                {
                     names.insert(std::mem::take(&mut cur));
                 }
                 cur.clear();
@@ -124,10 +146,15 @@ fn scan_names(text: &str, names: &mut BTreeSet<String>) {
 
 fn scan_weights(text: &str, weights: &mut BTreeSet<String>) {
     for (i, _) in text.match_indices("Weight::") {
-        let word: String = text[i + 8..].chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+        let word: String = text[i + 8..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphabetic())
+            .collect();
         if word == "ALL" {
             weights.extend(WEIGHTS.map(String::from));
-        } else if WEIGHTS.contains(&word.to_lowercase().as_str()) && word.starts_with(|c: char| c.is_ascii_uppercase()) {
+        } else if WEIGHTS.contains(&word.to_lowercase().as_str())
+            && word.starts_with(|c: char| c.is_ascii_uppercase())
+        {
             weights.insert(word.to_lowercase());
         }
     }
@@ -145,11 +172,29 @@ fn layer(d: &str) -> String {
             S::MoveTo { x, y } => format!("M({},{})", n(x), n(y)),
             S::LineTo { x, y } => format!("L({},{})", n(x), n(y)),
             S::Quadratic { x1, y1, x, y } => format!("Q({},{},{},{})", n(x1), n(y1), n(x), n(y)),
-            S::CurveTo { x1, y1, x2, y2, x, y } => {
-                format!("C({},{},{},{},{},{})", n(x1), n(y1), n(x2), n(y2), n(x), n(y))
+            S::CurveTo {
+                x1,
+                y1,
+                x2,
+                y2,
+                x,
+                y,
+            } => {
+                format!(
+                    "C({},{},{},{},{},{})",
+                    n(x1),
+                    n(y1),
+                    n(x2),
+                    n(y2),
+                    n(x),
+                    n(y)
+                )
             }
             S::ClosePath => "Z".into(),
         })
         .collect();
-    format!("Layer {{ opacity: {opacity}, segs: &[{}] }},", segs.join(","))
+    format!(
+        "Layer {{ opacity: {opacity}, segs: &[{}] }},",
+        segs.join(",")
+    )
 }

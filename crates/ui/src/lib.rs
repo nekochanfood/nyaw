@@ -26,8 +26,8 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose, ThemeMode,
-    UiEvent, Vec2, VrBackend,
+    Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode, Pose,
+    ThemeMode, UiEvent, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 
@@ -624,7 +624,10 @@ impl PanelRoot {
 impl Render for PanelRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         // 全パネル共通の書体（子は継承する）。
-        div().size_full().font(design::font::font()).child(self.0.clone())
+        div()
+            .size_full()
+            .font(design::font::font())
+            .child(self.0.clone())
     }
 }
 
@@ -1238,8 +1241,8 @@ fn open_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{TestAppContext, div};
     use design::Theme;
+    use gpui::{TestAppContext, div};
     use kernel::{Device, Runtime};
 
     /// UI 層だけで確かめるための最小の画面。

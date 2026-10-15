@@ -219,14 +219,24 @@ emulator = false
         let path = dir.join("nested").join("config.toml");
         // ファイルもディレクトリも無くても作る。
         save_theme_at(&path, ThemeMode::Light).unwrap();
-        assert_eq!(parse(&fs::read_to_string(&path).unwrap()).unwrap().theme, ThemeMode::Light);
-        fs::write(&path, "log = \"debug\"
+        assert_eq!(
+            parse(&fs::read_to_string(&path).unwrap()).unwrap().theme,
+            ThemeMode::Light
+        );
+        fs::write(
+            &path,
+            "log = \"debug\"
 [gpu]
 emulator = false
-").unwrap();
+",
+        )
+        .unwrap();
         save_theme_at(&path, ThemeMode::Light).unwrap();
         let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!((c.theme, c.log.as_deref(), c.gpu.emulator), (ThemeMode::Light, Some("debug"), false));
+        assert_eq!(
+            (c.theme, c.log.as_deref(), c.gpu.emulator),
+            (ThemeMode::Light, Some("debug"), false)
+        );
         // 壊れたファイルは上書きしない。
         fs::write(&path, "log = ").unwrap();
         assert!(save_theme_at(&path, ThemeMode::Dark).is_err());

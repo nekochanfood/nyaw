@@ -167,8 +167,8 @@ impl IconView {
             .iter()
             .filter_map(|layer| {
                 // 塗りの規則は SVG の既定の nonzero（lyon の既定は evenodd）
-                let mut b = PathBuilder::fill()
-                    .with_style(PathStyle::Fill(FillOptions::non_zero()));
+                let mut b =
+                    PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::non_zero()));
                 for seg in layer.segs {
                     match *seg {
                         Seg::M(x, y) => b.move_to(at(x, y)),

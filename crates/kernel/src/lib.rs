@@ -289,7 +289,11 @@ impl<B: VrBackend> Kernel<B> {
                 if let Some(path) = &self.config_path
                     && let Err(e) = config::save_theme_at(path, t)
                 {
-                    logger::warn!("failed to save theme to config file", path = path.display(), error = e);
+                    logger::warn!(
+                        "failed to save theme to config file",
+                        path = path.display(),
+                        error = e
+                    );
                 }
             }
             PanelCommand::Parent(parent) => self.overlay.set_parent(panel, parent),

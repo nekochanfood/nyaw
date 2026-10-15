@@ -153,7 +153,12 @@ fn main() {
             writeln!(out, "        {}: {},", field(f), resolved[theme][f].0).unwrap();
         }
         out += "    };\n";
-        for rule in root["contrast"].as_array().unwrap().iter().chain(root["distinct"].as_array().unwrap()) {
+        for rule in root["contrast"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(root["distinct"].as_array().unwrap())
+        {
             let (fg, bg) = (rule["fg"].as_str().unwrap(), rule["bg"].as_str().unwrap());
             let min = rule["min"].as_f64().unwrap();
             let c = |r: &str| {

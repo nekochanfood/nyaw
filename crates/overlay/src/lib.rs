@@ -433,10 +433,7 @@ impl Overlay {
         if p.animated && p.surface.has_texture() && p.opacity > 0.0 {
             self.animations.insert(
                 id,
-                (
-                    Animation::new(p.opacity, 0.0, Motion::Exit),
-                    Instant::now(),
-                ),
+                (Animation::new(p.opacity, 0.0, Motion::Exit), Instant::now()),
             );
         } else {
             self.animations.remove(&id);
@@ -483,10 +480,7 @@ impl Overlay {
             // 初回の GPU 転送が終わってから時計を始める。
             self.animations.insert(
                 panel,
-                (
-                    Animation::new(0.0, 1.0, Motion::Enter),
-                    Instant::now(),
-                ),
+                (Animation::new(0.0, 1.0, Motion::Enter), Instant::now()),
             );
         }
     }
@@ -603,7 +597,15 @@ impl Overlay {
             p.dim_to = to;
             if p.animated && !p.closed {
                 // 戻るときも ease-out: 終わり際に急に明るくなると、子が消える瞬間と重なってちらつく。
-                let tween = Animation::new(p.dim, to, if parent { Motion::Enter } else { Motion::Return });
+                let tween = Animation::new(
+                    p.dim,
+                    to,
+                    if parent {
+                        Motion::Enter
+                    } else {
+                        Motion::Return
+                    },
+                );
                 self.dims.insert(id, (tween, now));
             } else {
                 self.dims.remove(&id);

@@ -273,9 +273,8 @@ impl RenderOnce for Button {
         let rem = window.rem_size();
         let corners = {
             let c = &self.base.style().corner_radii;
-            let px_of = |l: Option<gpui::AbsoluteLength>| {
-                l.map_or(0.0, |l| f32::from(l.to_pixels(rem)))
-            };
+            let px_of =
+                |l: Option<gpui::AbsoluteLength>| l.map_or(0.0, |l| f32::from(l.to_pixels(rem)));
             [
                 px_of(c.top_left),
                 px_of(c.top_right),
@@ -292,8 +291,12 @@ impl RenderOnce for Button {
                     |_, _, _| (),
                     move |b, _, w, _| {
                         let (dx, dy) = (
-                            (origin.x - b.left()).abs().max((origin.x - b.right()).abs()),
-                            (origin.y - b.top()).abs().max((origin.y - b.bottom()).abs()),
+                            (origin.x - b.left())
+                                .abs()
+                                .max((origin.x - b.right()).abs()),
+                            (origin.y - b.top())
+                                .abs()
+                                .max((origin.y - b.bottom()).abs()),
                         );
                         let reach = f32::from(dx).hypot(f32::from(dy));
                         let ms = Instant::now()
@@ -307,8 +310,8 @@ impl RenderOnce for Button {
                             point(origin.x - px(r), origin.y - px(r)),
                             size(px(r * 2.0), px(r * 2.0)),
                         );
-                        let quad = fill(circle, rgba(ink & !0xff | u32::from(a)))
-                            .corner_radii(px(r));
+                        let quad =
+                            fill(circle, rgba(ink & !0xff | u32::from(a))).corner_radii(px(r));
                         // 角丸で切る: gpui のマスクは長方形だけなので、角の部分は 1px の帯に分けて
                         // 帯ごとに角丸の内側だけをマスクにして描き、間の長方形部分は一度で描く。
                         let (width, height) = (f32::from(b.size.width), f32::from(b.size.height));
@@ -324,11 +327,17 @@ impl RenderOnce for Button {
                         };
                         paint(at(0.0, top, width, height - top - bottom));
                         for i in 0..top.ceil() as u32 {
-                            let (l, r) = (corner_inset(tl, i as f32 + 0.5), corner_inset(tr, i as f32 + 0.5));
+                            let (l, r) = (
+                                corner_inset(tl, i as f32 + 0.5),
+                                corner_inset(tr, i as f32 + 0.5),
+                            );
                             paint(at(l, i as f32, width - l - r, 1.0));
                         }
                         for i in 0..bottom.ceil() as u32 {
-                            let (l, r) = (corner_inset(bl, i as f32 + 0.5), corner_inset(br, i as f32 + 0.5));
+                            let (l, r) = (
+                                corner_inset(bl, i as f32 + 0.5),
+                                corner_inset(br, i as f32 + 0.5),
+                            );
                             paint(at(l, height - 1.0 - i as f32, width - l - r, 1.0));
                         }
                     },
@@ -438,7 +447,10 @@ mod tests {
         // 円の式に乗る（半径 10、辺から 5 の行は 10 - sqrt(75)）。
         assert!((corner_inset(10.0, 5.0) - (10.0 - 75f32.sqrt())).abs() < 1e-5);
         // 巨大な角丸（カプセル）は高さの半分に縮む。
-        assert_eq!(clamp_corners([9999.0, 4.0, -1.0, 0.0], 100.0, 40.0), [20.0, 4.0, 0.0, 0.0]);
+        assert_eq!(
+            clamp_corners([9999.0, 4.0, -1.0, 0.0], 100.0, 40.0),
+            [20.0, 4.0, 0.0, 0.0]
+        );
     }
 
     #[test]

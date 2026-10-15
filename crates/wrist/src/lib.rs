@@ -3,8 +3,8 @@
 
 use std::time::Duration;
 
-use design::components::{Variant, button};
 use design::Theme;
+use design::components::{Variant, button};
 use gpui::{Context, Window, div, prelude::*, rgba};
 use kernel::PanelId;
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};

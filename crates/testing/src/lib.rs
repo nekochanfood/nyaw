@@ -359,10 +359,8 @@ impl Render for Testing {
 
         let gpui_row = row()
             .child(
-                button!("toggle-theme", format!("Theme: {:?}", st.theme), false).on_click(command(
-                    self.panel,
-                    PanelCommand::Theme(st.theme.toggled()),
-                )),
+                button!("toggle-theme", format!("Theme: {:?}", st.theme), false)
+                    .on_click(command(self.panel, PanelCommand::Theme(st.theme.toggled()))),
             )
             .child(
                 button!("toggle", "Toggle", self.toggled).on_click(cx.listener(
@@ -372,7 +370,9 @@ impl Render for Testing {
                     },
                 )),
             )
-            .child(button!("hold-me", "Hold", false).active(|s| s.bg(rgba(theme.accent_solid_active))))
+            .child(
+                button!("hold-me", "Hold", false).active(|s| s.bg(rgba(theme.accent_solid_active))),
+            )
             .child(
                 button!("drag-chip", "Drag me", false)
                     .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
@@ -638,15 +638,17 @@ impl Render for DialogTest {
                 row()
                     .child({
                         let me = me.clone();
-                        button(&theme, "open-dialog", "Open dialog", false).on_click(move |_, _, cx| {
-                            let me = me.clone();
-                            cx.default_global::<PanelControl>().spawns.push(
-                                PanelSpec::child(panel, true, move |id, _, _| {
-                                    Dialog::new(id, me, "Click outside to dismiss")
-                                })
-                                .sized(DIALOG_SIZE, DIALOG_PX),
-                            )
-                        })
+                        button(&theme, "open-dialog", "Open dialog", false).on_click(
+                            move |_, _, cx| {
+                                let me = me.clone();
+                                cx.default_global::<PanelControl>().spawns.push(
+                                    PanelSpec::child(panel, true, move |id, _, _| {
+                                        Dialog::new(id, me, "Click outside to dismiss")
+                                    })
+                                    .sized(DIALOG_SIZE, DIALOG_PX),
+                                )
+                            },
+                        )
                     })
                     .child(
                         button(&theme, "open-modal-dialog", "Open modal dialog", false).on_click(
@@ -765,13 +767,20 @@ impl Render for TestingTransparent {
 }
 
 /// 閉じるボタン付きの見出し。
-fn title_bar(theme: &Theme, panel: PanelId, title: impl Into<String>, close_id: &'static str) -> Div {
+fn title_bar(
+    theme: &Theme,
+    panel: PanelId,
+    title: impl Into<String>,
+    close_id: &'static str,
+) -> Div {
     div()
         .flex()
         .justify_between()
         .items_start()
         .child(title.into())
-        .child(button(theme, close_id, "Close", false).on_click(command(panel, PanelCommand::Close)))
+        .child(
+            button(theme, close_id, "Close", false).on_click(command(panel, PanelCommand::Close)),
+        )
 }
 
 /// ループアニメーションの周期（秒）。
@@ -1034,7 +1043,8 @@ impl Render for TestingScrollbar {
             .p_3()
             .bg(rgba(theme.panel))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, 
+            .child(title_bar(
+                &theme,
                 self.panel,
                 "testing-scrollbar",
                 "close-scrollbar",
@@ -1274,26 +1284,26 @@ impl Render for StressTest {
                     .child(button(&theme, "stress-close", "Close all", false).on_click(
                         cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
                     ))
+                    .child(button(&theme, "stress-scatter", "Scatter", false).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
+                            let poses: Vec<_> = (0..this.alive(cx).len())
+                                .map(|_| {
+                                    facing_head(Vec3::new(
+                                        this.random() * 6.0 - 3.0,
+                                        this.random() * 2.5 - 1.0,
+                                        -0.8 - this.random() * 7.2,
+                                    ))
+                                })
+                                .collect();
+                            this.each(cx, |i| PanelCommand::Place(poses[i]));
+                        }),
+                    ))
                     .child(
-                        button(&theme, "stress-scatter", "Scatter", false).on_click(cx.listener(
-                            |this, _, _, cx| {
-                                // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
-                                let poses: Vec<_> = (0..this.alive(cx).len())
-                                    .map(|_| {
-                                        facing_head(Vec3::new(
-                                            this.random() * 6.0 - 3.0,
-                                            this.random() * 2.5 - 1.0,
-                                            -0.8 - this.random() * 7.2,
-                                        ))
-                                    })
-                                    .collect();
-                                this.each(cx, |i| PanelCommand::Place(poses[i]));
-                            },
+                        button(&theme, "stress-grid", "Grid", false).on_click(cx.listener(
+                            |this, _, _, cx| this.each(cx, |i| PanelCommand::Place(grid_pose(i))),
                         )),
-                    )
-                    .child(button(&theme, "stress-grid", "Grid", false).on_click(cx.listener(
-                        |this, _, _, cx| this.each(cx, |i| PanelCommand::Place(grid_pose(i))),
-                    ))),
+                    ),
             )
     }
 }
@@ -1338,7 +1348,11 @@ mod tests {
         cx.run_until_parked();
         let c = cx.debug_bounds("toggle-theme").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
-        let queued = cx.update(|_, cx| cx.global::<PanelControl>().panels[&PanelId::default()].commands.clone());
+        let queued = cx.update(|_, cx| {
+            cx.global::<PanelControl>().panels[&PanelId::default()]
+                .commands
+                .clone()
+        });
         assert_eq!(queued, [PanelCommand::Theme(kernel::ThemeMode::Light)]);
         cx.update(|_, cx| cx.set_global(Mode::Light));
         cx.run_until_parked();

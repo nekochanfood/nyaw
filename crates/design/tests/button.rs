@@ -1,4 +1,7 @@
-use design::{Motion, Theme, components::{Variant, button}};
+use design::{
+    Motion, Theme,
+    components::{Variant, button},
+};
 use gpui::{
     Context, IntoElement, Modifiers, MouseButton, Render, TestAppContext, Window, div, prelude::*,
     px,
