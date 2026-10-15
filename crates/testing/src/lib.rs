@@ -51,6 +51,9 @@ pub const DROP_TARGET_BG: u32 = 0x30a050;
 pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_bg_active);
 /// ダイアログの背景色（親より明るくして重なりが見えるように）。
 pub const DIALOG_BG: u32 = rgb24(THEME.card);
+/// Testing パネルの大きさ（m）と解像度（px）。ボタンが高い（最小ヒット領域）ので、既定の 0.8m × 0.6m では入りきらない。
+pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 0.9);
+pub const TESTING_PX: (u32, u32) = (1200, 900);
 /// スクロールする一覧の行数と1行の高さ。
 pub const LIST_ROWS: usize = 30;
 const ROW_PX: f32 = 24.0;
@@ -133,9 +136,9 @@ fn command(
 
 fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
-        cx.default_global::<PanelControl>()
-            .spawns
-            .push(PanelSpec::spawn(panel, |id, _, _| Testing::new(id)))
+        cx.default_global::<PanelControl>().spawns.push(
+            PanelSpec::spawn(panel, |id, _, _| Testing::new(id)).sized(TESTING_SIZE, TESTING_PX),
+        )
     }
 }
 
@@ -1383,7 +1386,7 @@ mod tests {
     fn scrollbar_appears_and_drags(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(|_, _| Testing::default());
         // 一覧（30 行 × 24px）があふれる高さにする。
-        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
         cx.run_until_parked();
         // 初回のレイアウトで初めてあふれが分かるので、描き直されてから出る（本番はフレームループが描き直す）。
         cx.update(|window, _| window.refresh());
@@ -1409,7 +1412,7 @@ mod tests {
     #[gpui::test]
     fn scrollbar_follows_a_touch_slide_without_long_press(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(|_, _| Testing::default());
-        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
         cx.run_until_parked();
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
@@ -1436,7 +1439,7 @@ mod tests {
     fn content_is_pulled_at_the_edge_and_settles(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
         cx.update(|_, cx| cx.set_global(design::Motion::default()));
-        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
         cx.run_until_parked();
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
@@ -1489,7 +1492,7 @@ mod tests {
     fn pull_at_the_end_is_unlimited_and_held_while_touching(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
         cx.update(|_, cx| cx.set_global(design::Motion::default()));
-        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
         cx.run_until_parked();
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
@@ -1541,7 +1544,7 @@ mod tests {
     fn pulling_the_inner_does_not_squash_the_outer_bar(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
         cx.update(|_, cx| cx.set_global(design::Motion::default()));
-        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
         cx.run_until_parked();
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
@@ -1570,7 +1573,7 @@ mod tests {
     #[gpui::test]
     fn nested_scroll_moves_only_the_innermost(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
-        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
         cx.run_until_parked();
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
@@ -1590,7 +1593,7 @@ mod tests {
     #[gpui::test]
     fn scrollbar_screen_shows_bars_for_overflowing_axes(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
-        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.simulate_resize(gpui::size(px(1200.0), px(900.0)));
         cx.run_until_parked();
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();

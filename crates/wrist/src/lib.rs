@@ -117,6 +117,7 @@ impl Render for Wrist {
                                                 wrist.update(cx, |w, _| w.testing = Some(id));
                                                 Testing::new(id)
                                             })
+                                            .sized(testing::TESTING_SIZE, testing::TESTING_PX)
                                             .in_view(TESTING_POSE),
                                         );
                                     }
