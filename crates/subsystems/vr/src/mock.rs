@@ -13,6 +13,8 @@ pub struct MockOverlay {
     pub height_m: Option<f32>,
     pub visible: bool,
     pub alpha: f32,
+    /// 色の明るさ（[`VrBackend::set_overlay_tint`]）。
+    pub tint: f32,
     pub pixel_submissions: usize,
     pub sort: u32,
     /// 最後に送られたテクスチャ。
@@ -38,6 +40,8 @@ impl MockTexture {
 pub struct MockBackend {
     /// 不透明度 API のないランタイムを再現する。
     pub unsupported_alpha: bool,
+    /// 明るさの合成に対応していない（画素を暗くして送らせる）。
+    pub unsupported_tint: bool,
     /// 毎回の `poll` で返す値。テストはフレーム間でこれを書き換える。
     pub frame: Frame,
     /// 作成されたオーバーレイ。添字は `OverlayId.0`。
@@ -61,6 +65,7 @@ impl VrBackend for MockBackend {
             height_m: None,
             visible: true,
             alpha: 1.0,
+            tint: 1.0,
             pixel_submissions: 0,
             sort: 0,
             texture: None,
@@ -89,6 +94,14 @@ impl VrBackend for MockBackend {
             return false;
         }
         self.overlays[id.0 as usize].alpha = alpha.clamp(0.0, 1.0);
+        true
+    }
+
+    fn set_overlay_tint(&mut self, id: OverlayId, brightness: f32) -> bool {
+        if self.unsupported_tint {
+            return false;
+        }
+        self.overlays[id.0 as usize].tint = brightness.clamp(0.0, 1.0);
         true
     }
 

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use subsystems::os;
 
 pub use config::{Config, LodQuality, PointerMode};
-pub use overlay::{self, Overlay, Panel, PanelId, Pointer, PointerEvent, UiEvent};
+pub use overlay::{self, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
 /// [`Kernel::tick`] 1 回の内訳。
@@ -43,6 +43,8 @@ pub enum PanelCommand {
     PointerMode(PointerMode),
     /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
     Place(Pose),
+    /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
+    Parent(Option<Parent>),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -64,6 +66,8 @@ pub struct PanelStatus {
     pub pointer_mode: PointerMode,
     /// 描画解像度の段階（[`Kernel::panel_lod`]）。
     pub lod: u8,
+    /// 親パネル（このパネルが子のとき）。
+    pub parent: Option<PanelId>,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -267,6 +271,7 @@ impl<B: VrBackend> Kernel<B> {
                 self.pointer_mode = m;
                 self.overlay.set_capture(m == PointerMode::Touch);
             }
+            PanelCommand::Parent(parent) => self.overlay.set_parent(panel, parent),
             PanelCommand::Place(offset) => {
                 self.overlay.detach(panel);
                 self.overlay.set_pose(panel, self.hmd().leveled() * offset);
@@ -287,6 +292,7 @@ impl<B: VrBackend> Kernel<B> {
             closed: p.closed,
             pointer_mode: self.pointer_mode,
             lod: self.panel_lod(panel),
+            parent: p.parent.map(|q| q.panel),
         }
     }
 }

@@ -5,6 +5,7 @@
 //! - GPUI: 切り替え・押している間の見た目・ドラッグ＆ドロップ・スクロールする一覧・フォーカスと文字入力・ポップアップメニュー
 //! - Web: Testing の Web 版（[`WEB_PAGE`]。React のページ）を隣に開く
 //! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
+//! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
 //! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）
 //! - 負荷: [`StressTest`] で上限いっぱいまでパネルを出し、閉じる・ちりばめる・並べる
 //!
@@ -16,8 +17,8 @@ use std::time::{Instant, SystemTime};
 
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, KeyDownEvent, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, Stateful, Window, anchored, deferred, div, hsla, prelude::*, px, relative,
-    rgb, rgba,
+    ScrollWheelEvent, Stateful, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px,
+    relative, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, PointerMode};
@@ -42,6 +43,8 @@ pub const DROP_TARGET_BG: u32 = 0x30a050;
 /// フォーカスのある入力欄の色。
 pub const FIELD_FOCUS_BG: u32 = 0x505080;
 const AREA_BG: u32 = 0x303030;
+/// ダイアログの背景色（親より明るくして重なりが見えるように）。
+pub const DIALOG_BG: u32 = 0x404060;
 /// スクロールする一覧の行数と1行の高さ。
 pub const LIST_ROWS: usize = 30;
 const ROW_PX: f32 = 24.0;
@@ -120,6 +123,14 @@ fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'stati
         cx.default_global::<PanelControl>()
             .spawns
             .push(PanelSpec::spawn(panel, |id, _, _| Testing::new(id)))
+    }
+}
+
+fn spawn_dialog_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        cx.default_global::<PanelControl>()
+            .spawns
+            .push(PanelSpec::spawn(panel, |id, _, _| DialogTest::new(id)))
     }
 }
 
@@ -211,6 +222,9 @@ impl Render for Testing {
             .child(
                 button("pointer-test", "Pointer test", false)
                     .on_click(spawn_pointer_test(self.panel)),
+            )
+            .child(
+                button("dialog-test", "Dialog test", false).on_click(spawn_dialog_test(self.panel)),
             )
             .child(
                 button("close-panel", "Close panel", false)
@@ -514,6 +528,136 @@ impl Render for PointerTest {
                             .px_2()
                             .child(format!("Swipe row {i}"))
                     })),
+            )
+    }
+}
+
+/// ダイアログの大きさ。
+const DIALOG_SIZE: Vec2 = Vec2::new(0.4, 0.25);
+const DIALOG_PX: (u32, u32) = (400, 250);
+
+/// 親子関係を試す画面（`dialog-test`）。ダイアログ（[`Dialog`]）を子として開く 2 種類のボタンがある。
+/// - `open-dialog`: 外側（この画面など）を押すと閉じる（既定）。
+/// - `open-modal-dialog`: 外側を押しても閉じない（`PanelSpec::without_dismiss`）。`dialog-ok` / `dialog-cancel` で答えるまで残る。
+///
+/// 開いている間はこの画面が暗くなって押せず（掴んで動かすと子も付いてくる）、ダイアログを掴むと親も付いてくる（独立しない）。
+#[derive(Default)]
+pub struct DialogTest {
+    panel: PanelId,
+    /// ダイアログが答えた回数と、最後の答え。
+    pub answered: usize,
+    pub answer: Option<&'static str>,
+}
+
+impl DialogTest {
+    pub fn new(panel: PanelId) -> Self {
+        Self {
+            panel,
+            ..Self::default()
+        }
+    }
+}
+
+impl Render for DialogTest {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let panel = self.panel;
+        let me = cx.entity().downgrade();
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgb(PANEL_BG))
+            .text_color(rgb(0xffffff))
+            .child(title_bar(panel, "dialog-test", "close-dialog-test"))
+            .child(
+                row()
+                    .child({
+                        let me = me.clone();
+                        button("open-dialog", "Open dialog", false).on_click(move |_, _, cx| {
+                            let me = me.clone();
+                            cx.default_global::<PanelControl>().spawns.push(
+                                PanelSpec::child(panel, true, move |id, _, _| {
+                                    Dialog::new(id, me, "Click outside to dismiss")
+                                })
+                                .sized(DIALOG_SIZE, DIALOG_PX),
+                            )
+                        })
+                    })
+                    .child(
+                        button("open-modal-dialog", "Open modal dialog", false).on_click(
+                            move |_, _, cx| {
+                                let me = me.clone();
+                                cx.default_global::<PanelControl>().spawns.push(
+                                    PanelSpec::child(panel, true, move |id, _, _| {
+                                        Dialog::new(id, me, "Answer required")
+                                    })
+                                    .without_dismiss()
+                                    .sized(DIALOG_SIZE, DIALOG_PX),
+                                )
+                            },
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "dialog-answer".into())
+                    .child(format!(
+                        "Answered {} ({})",
+                        self.answered,
+                        self.answer.unwrap_or("-")
+                    )),
+            )
+    }
+}
+
+/// [`DialogTest`] が開く、OK / Cancel だけのダイアログ。押した答えを親へ渡して自分を閉じる。`message` は種類の見分け用。
+pub struct Dialog {
+    panel: PanelId,
+    parent: WeakEntity<DialogTest>,
+    message: &'static str,
+}
+
+impl Dialog {
+    pub fn new(panel: PanelId, parent: WeakEntity<DialogTest>, message: &'static str) -> Self {
+        Self {
+            panel,
+            parent,
+            message,
+        }
+    }
+}
+
+impl Render for Dialog {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let answer = |id: &'static str, label: &'static str| {
+            let parent = self.parent.clone();
+            let close = command(self.panel, PanelCommand::Close);
+            button(id, label, false).on_click(move |e, w, cx| {
+                parent
+                    .update(cx, |t, cx| {
+                        t.answered += 1;
+                        t.answer = Some(label);
+                        cx.notify();
+                    })
+                    .ok();
+                close(e, w, cx);
+            })
+        };
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .justify_between()
+            .p_3()
+            .bg(rgb(DIALOG_BG))
+            .text_color(rgb(0xffffff))
+            .child(self.message)
+            .child(
+                row()
+                    .child(answer("dialog-ok", "OK"))
+                    .child(answer("dialog-cancel", "Cancel")),
             )
     }
 }

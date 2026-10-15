@@ -129,11 +129,15 @@ impl<V: Render> Panels<V> {
         }
         let id = self.windows.len();
         let pose = spec.pose_for(kernel, id);
+        let parent = spec.parent();
         let (root, cx) = cx
             .cx
             .add_window_view(|window, cx| PanelRoot::new(spec.build(id, window, cx)));
         let view = root.read_with(cx, |root, _| root.view().downcast::<V>().ok());
         let panel = self.add(cx, kernel, pose, view);
+        if let Some(parent) = parent {
+            kernel.apply(panel, kernel::PanelCommand::Parent(Some(parent)));
+        }
         cx.update(|_, cx| ui::sync_panel(kernel, panel, cx));
     }
 }

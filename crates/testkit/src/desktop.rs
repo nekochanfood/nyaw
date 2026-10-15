@@ -104,6 +104,7 @@ impl<'a, V: Render> DesktopKit<'a, V> {
         }
         let id = self.windows.len();
         let pose = spec.pose_for(&self.kernel, id);
+        let parent = spec.parent();
         let (root, cx) = self
             .cx
             .cx
@@ -117,6 +118,10 @@ impl<'a, V: Render> DesktopKit<'a, V> {
             .add_panel(&format!("nyaw.testkit.{id}"), pose, Vec2::ONE, res)
             .unwrap();
         assert_eq!(panel, id);
+        if let Some(parent) = parent {
+            self.kernel
+                .apply(panel, kernel::PanelCommand::Parent(Some(parent)));
+        }
         self.views.push(view);
         self.windows.push(window);
         self.mouse.push((Point::default(), false));
