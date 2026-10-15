@@ -530,8 +530,8 @@ pub fn scrollbars(theme: &Theme, id: &'static str, handle: &ScrollHandle) -> Scr
         handle: handle.clone(),
         pull: None,
         rest: theme.track,
-        hover: theme.neutral_solid_hover,
-        active: theme.neutral_text_low,
+        hover: theme.neutral_text_low,
+        active: theme.neutral_text,
     }
 }
 

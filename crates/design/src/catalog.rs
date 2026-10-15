@@ -56,11 +56,15 @@ fn hex(c: u32) -> String {
 }
 
 /// 見出し + 中身。
+/// 見出しと中身を 1 枚のカードに入れる。
 fn section(t: &Theme, title: &str, body: Div) -> Div {
     div()
         .flex()
         .flex_col()
         .gap(px(spacing::SM))
+        .p(px(spacing::XL))
+        .rounded(px(radius::LG))
+        .bg(rgba(t.card))
         .child(
             div()
                 .text_size(px(font_size::LG))
@@ -136,7 +140,7 @@ macro_rules! roles {
     ($t:expr, $($f:ident),+ $(,)?) => { [$((stringify!($f), $t.$f)),+] };
 }
 
-fn theme_roles(t: &Theme) -> [(&'static str, u32); 43] {
+fn theme_roles(t: &Theme) -> [(&'static str, u32); 48] {
     roles!(
         t,
         accent_base,
@@ -180,7 +184,12 @@ fn theme_roles(t: &Theme) -> [(&'static str, u32); 43] {
         focus_ring,
         on_accent,
         on_danger,
-        panel,
+        background,
+        card,
+        control,
+        control_hover,
+        control_active,
+        groove,
         track,
     )
 }
@@ -376,7 +385,7 @@ fn scroll_demo(t: &Theme, handle: &ScrollHandle) -> Div {
         .w(px(320.0))
         .h(px(120.0))
         .rounded(px(radius::MD))
-        .bg(rgba(t.neutral_bg))
+        .bg(rgba(t.control))
         .child(
             // ページの中の入れ子: ポインタが触れている内側だけが動く。
             components::claim_scroll(
@@ -416,6 +425,12 @@ impl Catalog {
             .gap(px(spacing::MD))
             .child(
                 wrap()
+                    .child(components::button(
+                        t,
+                        "cat-default",
+                        "Default",
+                        Variant::Default,
+                    ))
                     .child(
                         components::button(t, "cat-primary", "Primary", Variant::Primary).on_click(
                             move |_, _, cx| {
@@ -433,7 +448,7 @@ impl Catalog {
                         Variant::Danger,
                     ))
                     .child(
-                        components::button(t, "cat-selected", "Selected", Variant::Primary)
+                        components::button(t, "cat-selected", "Selected", Variant::Default)
                             .selected(true),
                     ),
             )

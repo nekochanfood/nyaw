@@ -16,10 +16,12 @@ mod slider;
 pub use scrollbar::{Elastic, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 pub use slider::{Slider, slider};
 
-use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
+use crate::{Motion, Theme, duration_ms, font_size, radius};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Variant {
+    /// 既定。カードに載せる前提で、カードよりわずかに暗い無彩色。
+    Default,
     Primary,
     Danger,
 }
@@ -104,6 +106,10 @@ struct Pointer {
     pressed: bool,
 }
 
+/// ボタンの高さと左右の余白（文字 `font_size::MD` に対して、高さ ≒ 2.8 倍、左右 ≒ 1.7 倍）。最小ヒット領域（48）を下回らない。
+const BUTTON_HEIGHT: f32 = 54.0;
+const BUTTON_PADDING: f32 = 32.0;
+
 /// 押せるボタン。`id` はそのまま `debug_selector` にもなる。
 #[derive(IntoElement)]
 pub struct Button {
@@ -140,6 +146,12 @@ pub fn button(
     variant: Variant,
 ) -> Button {
     let (bg, hover, active, fg) = match variant {
+        Variant::Default => (
+            theme.control,
+            theme.control_hover,
+            theme.control_active,
+            theme.neutral_text,
+        ),
         Variant::Primary => (
             theme.accent_solid,
             theme.accent_solid_hover,
@@ -156,9 +168,12 @@ pub fn button(
     let base = div()
         .id(id)
         .debug_selector(move || id.into())
-        .px(px(spacing::LG))
-        .py(px(spacing::SM))
-        .rounded(px(radius::MD))
+        .h(px(BUTTON_HEIGHT))
+        .px(px(BUTTON_PADDING))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded(px(radius::FULL))
         .text_size(px(font_size::MD))
         // 太字の 18.66px 以上は大きい文字（WCAG の 3:1）。ボタンの文字色の検査はこれを前提にしている。
         .font_weight(FontWeight::BOLD)
@@ -384,7 +399,7 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
         .h(px(h))
         .px(px(pad))
         .rounded(px(radius::FULL))
-        .bg(rgba(if on { theme.accent_solid } else { theme.track }));
+        .bg(rgba(if on { theme.accent_solid } else { theme.groove }));
     if on {
         track = track.justify_end();
     }
@@ -392,7 +407,7 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
         div()
             .size(px(knob))
             .rounded(px(radius::FULL))
-            .bg(rgba(if on { theme.on_accent } else { theme.panel })),
+            .bg(rgba(if on { theme.on_accent } else { theme.card })),
     )
 }
 
@@ -400,7 +415,8 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
 pub fn surface(theme: &Theme) -> Div {
     div()
         .font(crate::font::font())
-        .bg(rgba(theme.neutral_base))
+        .bg(rgba(theme.background))
+        .rounded(px(radius::LG))
         .text_color(rgba(theme.neutral_text))
         .text_size(px(font_size::MD))
         .line_height(px(font_size::MD * 1.4))

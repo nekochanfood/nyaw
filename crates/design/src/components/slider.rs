@@ -42,6 +42,8 @@ pub struct Slider {
     value: f32,
     vertical: bool,
     length: f32,
+    /// 空いた側（まだ埋まっていない溝）。
+    groove: u32,
     fill: u32,
     knob: u32,
     knob_active: u32,
@@ -61,6 +63,7 @@ pub fn slider(
         value: value.clamp(0.0, 1.0),
         vertical: false,
         length: 200.0,
+        groove: theme.groove,
         fill: theme.accent_solid,
         knob: theme.on_accent,
         knob_active: theme.accent_solid_active,
@@ -103,6 +106,7 @@ impl RenderOnce for Slider {
             value,
             vertical,
             length,
+            groove: groove_color,
             fill,
             knob,
             knob_active,
@@ -184,7 +188,10 @@ impl RenderOnce for Slider {
             (length, HANDLE)
         };
         let groove = (HANDLE - GROOVE) / 2.0;
-        let mut track = div().absolute();
+        let mut track = div()
+            .absolute()
+            .rounded(px(radius::FULL))
+            .bg(rgba(groove_color));
         let mut filled = div().absolute().rounded(px(radius::FULL)).bg(rgba(fill));
         let mut handle = div()
             .id(format!("{id}-handle"))
