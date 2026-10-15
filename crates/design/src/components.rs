@@ -288,6 +288,7 @@ impl RenderOnce for Button {
                     },
                 )
                 .absolute()
+                .inset_0()
                 .size_full(),
             )
         });
