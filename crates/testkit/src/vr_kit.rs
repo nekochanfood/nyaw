@@ -159,6 +159,12 @@ impl<'a, V: Render> VrKit<'a, V> {
         self.release(Action::Grab)
     }
 
+    /// Reads what the frame loop handed to the views (tooltips, hold progress, panel status, ...).
+    pub fn panel_control<R>(&mut self, f: impl FnOnce(&ui::PanelControl) -> R) -> R {
+        self.cx
+            .update(|_, cx| f(cx.default_global::<ui::PanelControl>()))
+    }
+
     pub fn panel_pose(&self) -> Pose {
         self.kernel.panel(self.panel).pose
     }
