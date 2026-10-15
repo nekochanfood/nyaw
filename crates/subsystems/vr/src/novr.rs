@@ -102,6 +102,8 @@ pub struct Emulator {
     grab: bool,
     /// 左手・右手のスティック。
     sticks: [Vec2; 2],
+    /// 右手が掴んでいるパネルの拡大縮小（PageUp = +1、PageDown = -1）。
+    resize: f32,
     quit: bool,
     /// 次のフレームの始まり（ウィンドウ付きの poll はここまで眠る）。
     next_frame: Option<Instant>,
@@ -151,6 +153,7 @@ impl Emulator {
             trigger: false,
             grab: false,
             sticks: [Vec2::ZERO; 2],
+            resize: 0.0,
             quit: false,
             next_frame: None,
             composite_time: Duration::ZERO,
@@ -177,6 +180,11 @@ impl Emulator {
     /// スティックの倒し具合（-1..1、上が +Y）。左手は WASD、右手は矢印キーに当たる。
     pub fn set_stick(&mut self, hand: Hand, value: Vec2) {
         self.sticks[hand as usize] = value;
+    }
+
+    /// 掴んでいるパネルの拡大縮小（-1..1、+ で大きく）。PageUp / PageDown に当たる。
+    pub fn set_resize(&mut self, value: f32) {
+        self.resize = value;
     }
 
     /// 頭の座標系（= トラッキング空間）の点が映る画面上の点。目の後ろなら `None`。
@@ -212,7 +220,7 @@ impl Emulator {
     }
 
     fn controllers(&self) -> Vec<RawController> {
-        let raw = |hand, aim, trigger: bool, grab: bool, stick: Vec2| RawController {
+        let raw = |hand, aim, trigger: bool, grab: bool, stick: Vec2, resize: f32| RawController {
             hand,
             profile: PROFILE.to_owned(),
             aim,
@@ -221,9 +229,17 @@ impl Emulator {
                 ("squeeze/value".to_owned(), f32::from(u8::from(grab))),
                 ("thumbstick/x".to_owned(), stick.x),
                 ("thumbstick/y".to_owned(), stick.y),
+                (crate::RESIZE_INPUT.to_owned(), resize),
             ],
         };
-        let mut out = vec![raw(Hand::Left, LEFT_HAND, false, false, self.sticks[0])];
+        let mut out = vec![raw(
+            Hand::Left,
+            LEFT_HAND,
+            false,
+            false,
+            self.sticks[0],
+            0.0,
+        )];
         if let Some(at) = self.pointer {
             let dir = self.ray(at).normalize();
             let aim = Pose::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::NEG_Z, dir));
@@ -233,6 +249,7 @@ impl Emulator {
                 self.trigger,
                 self.grab,
                 self.sticks[1],
+                self.resize,
             ));
         }
         out
@@ -307,6 +324,8 @@ impl Emulator {
             stick([Key::A, Key::D, Key::S, Key::W]),
             stick([Key::Left, Key::Right, Key::Down, Key::Up]),
         ];
+        self.resize = f32::from(u8::from(w.is_key_down(Key::PageUp)))
+            - f32::from(u8::from(w.is_key_down(Key::PageDown)));
         // ホイールは右手のスティックの縦。回したフレームだけ倒す（量は向きだけ見る。OS ごとに単位が違う）。
         if let Some((_, y)) = w.get_scroll_wheel()
             && y != 0.0
@@ -995,6 +1014,10 @@ mod tests {
         assert!(right.aim.forward().abs_diff_eq(target.normalize(), 1e-4));
         assert_eq!(right.input("trigger/value"), Some(1.0));
         assert_eq!(right.input("squeeze/value"), Some(0.0));
+        assert_eq!(right.input(crate::RESIZE_INPUT), Some(0.0));
+        e.set_resize(1.0);
+        let frame = e.poll();
+        assert_eq!(frame.controllers[1].input(crate::RESIZE_INPUT), Some(1.0));
         let left = &frame.controllers[0];
         assert_eq!(left.input("thumbstick/y"), Some(1.0));
         // The left hand points down and does not aim at panels.

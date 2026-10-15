@@ -49,22 +49,27 @@ const AXES: [Axis; 2] = [Axis::Vertical, Axis::Horizontal];
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Thumb {
     start: f32,
+    /// トラックの始まり（端の余白 + 角丸を避ける分）。
+    lead: f32,
     len: f32,
     track: f32,
 }
 
 /// `view` = ビューポートの長さ、`max` = スクロールできる量、`offset` = 今のオフセット（負 = 進んだ）、
-/// `reserve` = 反対の軸の棒に譲る隅、`squash` = 押しつぶし 0..=1。あふれていなければ `None`。
-fn thumb(view: f32, max: f32, offset: f32, reserve: f32, squash: f32) -> Option<Thumb> {
+/// `reserve` = 反対の軸の棒に譲る隅、`squash` = 押しつぶし 0..=1、`ends` = 両端で避ける角丸。
+/// あふれていなければ `None`。
+fn thumb(view: f32, max: f32, offset: f32, reserve: f32, squash: f32, ends: f32) -> Option<Thumb> {
     if max < 1.0 {
         return None;
     }
-    let track = (view - 2.0 * spec::MARGIN - reserve).max(0.0);
+    let lead = spec::MARGIN + ends;
+    let track = (view - 2.0 * lead - reserve).max(0.0);
     let full = (track * view / (view + max)).clamp(spec::MIN_THUMB.min(track), track);
     let len = full * (1.0 - spec::SQUASH * squash.clamp(0.0, 1.0));
     let progress = (-offset / max).clamp(0.0, 1.0);
     Some(Thumb {
-        start: spec::MARGIN + progress * (track - len),
+        start: lead + progress * (track - len),
+        lead,
         len,
         track,
     })
@@ -76,7 +81,7 @@ fn offset_for(t: &Thumb, pointer: f32, grab: f32, max: f32) -> f32 {
     if free <= 0.0 {
         return 0.0;
     }
-    -((pointer - grab - spec::MARGIN) / free).clamp(0.0, 1.0) * max
+    -((pointer - grab - t.lead) / free).clamp(0.0, 1.0) * max
 }
 
 /// 値が `NORMAL` かけて ease-out で動く。
@@ -517,6 +522,7 @@ pub struct Scrollbars {
     id: &'static str,
     handle: ScrollHandle,
     pull: Option<&'static str>,
+    ends: f32,
     rest: u32,
     hover: u32,
     active: u32,
@@ -529,6 +535,7 @@ pub fn scrollbars(theme: &Theme, id: &'static str, handle: &ScrollHandle) -> Scr
         id,
         handle: handle.clone(),
         pull: None,
+        ends: 0.0,
         rest: theme.track,
         hover: theme.neutral_text_low,
         active: theme.neutral_text,
@@ -541,6 +548,13 @@ impl Scrollbars {
         self.pull = Some(elastic);
         self
     }
+
+    /// 入れ物の角丸。棒のトラックを両端でこの長さだけ縮め、角の丸みに棒がかからないようにする。
+    /// パネルの縁に沿って付けるときは、パネルの角丸（`radius::XL`）を渡す。
+    pub fn corner_radius(mut self, r: f32) -> Self {
+        self.ends = r;
+        self
+    }
 }
 
 impl RenderOnce for Scrollbars {
@@ -549,6 +563,7 @@ impl RenderOnce for Scrollbars {
             id,
             handle,
             pull,
+            ends,
             rest,
             hover,
             active,
@@ -622,7 +637,7 @@ impl RenderOnce for Scrollbars {
             let (thick, m2) = bar.thick.at(now);
             let (color, m3) = bar.color.at(now);
             moving |= m2 | m3;
-            let Some(t) = thumb(view, max, off, reserve, squash) else {
+            let Some(t) = thumb(view, max, off, reserve, squash, ends) else {
                 continue;
             };
             let v = axis == Axis::Vertical;
@@ -649,7 +664,7 @@ impl RenderOnce for Scrollbars {
                 let (state, handle) = (state.clone(), handle.clone());
                 move |e: &MouseDownEvent, window: &mut Window, cx: &mut App| {
                     let (view, max, off, reserve) = read(&handle, axis);
-                    let Some(t) = thumb(view, max, off, reserve, 0.0) else {
+                    let Some(t) = thumb(view, max, off, reserve, 0.0, ends) else {
                         return;
                     };
                     let p = along(&handle, axis, e.position);
@@ -678,7 +693,7 @@ impl RenderOnce for Scrollbars {
                     match e.touch_phase {
                         TouchPhase::Started | TouchPhase::Moved => {
                             let (view, max, off, reserve) = read(&handle, axis);
-                            let Some(t) = thumb(view, max, off, reserve, 0.0) else {
+                            let Some(t) = thumb(view, max, off, reserve, 0.0, ends) else {
                                 return;
                             };
                             let free = t.track - t.len;
@@ -767,7 +782,7 @@ impl RenderOnce for Scrollbars {
                                 continue;
                             }
                             let (view, max, off, reserve) = read(&h, axis);
-                            if let Some(t) = thumb(view, max, off, reserve, 0.0) {
+                            if let Some(t) = thumb(view, max, off, reserve, 0.0, ends) {
                                 let p = along(&h, axis, e.position);
                                 set_offset(&h, axis, offset_for(&t, p, grab, max));
                                 window.refresh();
@@ -798,23 +813,36 @@ mod tests {
     #[test]
     fn thumb_spans_the_track_in_proportion() {
         // ビューポート 100、中身 200（あふれ 100）→ 棒は半分。
-        let t = thumb(100.0, 100.0, 0.0, 0.0, 0.0).unwrap();
+        let t = thumb(100.0, 100.0, 0.0, 0.0, 0.0, 0.0).unwrap();
         assert_eq!(t.track, 100.0 - 2.0 * spec::MARGIN);
         assert!((t.len - t.track / 2.0).abs() < 1e-3);
         assert_eq!(t.start, spec::MARGIN);
         // 一番下まで進むと棒の末尾がトラックの末尾に着く。
-        let end = thumb(100.0, 100.0, -100.0, 0.0, 0.0).unwrap();
+        let end = thumb(100.0, 100.0, -100.0, 0.0, 0.0, 0.0).unwrap();
         assert!((end.start + end.len - (spec::MARGIN + end.track)).abs() < 1e-3);
         // あふれていなければ出ない。
-        assert_eq!(thumb(100.0, 0.0, 0.0, 0.0, 0.0), None);
+        assert_eq!(thumb(100.0, 0.0, 0.0, 0.0, 0.0, 0.0), None);
+    }
+
+    #[test]
+    fn corner_radius_keeps_the_track_off_both_rounded_ends() {
+        let r = radius::XL;
+        let t = thumb(200.0, 100.0, 0.0, 0.0, 0.0, r).unwrap();
+        assert_eq!(t.start, spec::MARGIN + r);
+        assert_eq!(t.track, 200.0 - 2.0 * (spec::MARGIN + r));
+        // 一番下まで進んでも、末尾は下の角丸の手前で止まる。
+        let end = thumb(200.0, 100.0, -100.0, 0.0, 0.0, r).unwrap();
+        assert!((end.start + end.len - (200.0 - spec::MARGIN - r)).abs() < 1e-3);
+        // 掴んで動かしても、縮めたトラックの上でオフセットに戻る。
+        assert!((offset_for(&end, end.start + 1.0, 1.0, 100.0) + 100.0).abs() < 1e-2);
     }
 
     #[test]
     fn thumb_has_a_minimum_and_squashes_at_the_end() {
-        let tiny = thumb(100.0, 100000.0, 0.0, 0.0, 0.0).unwrap();
+        let tiny = thumb(100.0, 100000.0, 0.0, 0.0, 0.0, 0.0).unwrap();
         assert_eq!(tiny.len, spec::MIN_THUMB);
-        let squashed = thumb(100.0, 100.0, -100.0, 0.0, 1.0).unwrap();
-        let plain = thumb(100.0, 100.0, -100.0, 0.0, 0.0).unwrap();
+        let squashed = thumb(100.0, 100.0, -100.0, 0.0, 1.0, 0.0).unwrap();
+        let plain = thumb(100.0, 100.0, -100.0, 0.0, 0.0, 0.0).unwrap();
         assert!(squashed.len < plain.len);
         // 押しつぶされても末尾（押し込んでいる端）は動かない。
         assert!((squashed.start + squashed.len - (plain.start + plain.len)).abs() < 1e-3);
@@ -823,7 +851,7 @@ mod tests {
     #[test]
     fn dragging_maps_pointer_back_to_offset() {
         let max = 300.0;
-        let t = thumb(100.0, max, -150.0, 0.0, 0.0).unwrap();
+        let t = thumb(100.0, max, -150.0, 0.0, 0.0, 0.0).unwrap();
         // 今の位置を掴んだまま動かさなければオフセットは変わらない。
         let grab = 5.0;
         let got = offset_for(&t, t.start + grab, grab, max);

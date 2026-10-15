@@ -641,7 +641,9 @@ impl Render for Catalog {
                         ),
                 )
                 .child(
-                    components::scrollbars(&t, "cat-page-bars", &page).pulled_by("cat-pull-page"),
+                    components::scrollbars(&t, "cat-page-bars", &page)
+                        .pulled_by("cat-pull-page")
+                        .corner_radius(radius::XL),
                 ),
         )
     }

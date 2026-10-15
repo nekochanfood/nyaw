@@ -13,7 +13,7 @@ use gpui::{Context, SharedString, Window, div, prelude::*, px};
 use kernel::{Anchor, Hand, PanelId, Pointer};
 
 /// 要素から離れてから、消え始めるまでの猶予。
-pub const GRACE: Duration = Duration::from_millis(500);
+pub const GRACE: Duration = Duration::from_millis(50);
 /// スライドする距離（px）。
 const SLIDE: f32 = design::spacing::SM;
 
@@ -259,10 +259,10 @@ mod tests {
         let (t0, mut s) = (Instant::now(), State::default());
         run(&mut s, t0, 0, 400, Some("Save"), Anchor::Above);
         // 離れて猶予の間は残る（猶予を数えるため描き直し続ける）。
-        assert!(run(&mut s, t0, 410, 850, None, Anchor::Above));
+        assert!(run(&mut s, t0, 410, 450, None, Anchor::Above));
         assert_eq!(s.vis, 1.0);
         // 猶予が過ぎたら消える。
-        run(&mut s, t0, 960, 1300, None, Anchor::Above);
+        run(&mut s, t0, 470, 1000, None, Anchor::Above);
         assert!(s.shown.is_none() && s.vis == 0.0);
     }
 
@@ -270,8 +270,8 @@ mod tests {
     fn a_new_element_within_the_grace_swaps_the_text_and_resizes() {
         let (t0, mut s) = (Instant::now(), State::default());
         run(&mut s, t0, 0, 400, Some("Save"), Anchor::Above);
-        run(&mut s, t0, 410, 700, None, Anchor::Above);
-        run(&mut s, t0, 710, 720, Some("Open settings"), Anchor::Above);
+        run(&mut s, t0, 410, 440, None, Anchor::Above);
+        run(&mut s, t0, 450, 460, Some("Open settings"), Anchor::Above);
         assert_eq!(s.shown.as_ref().unwrap().0, "Open settings");
         assert_eq!(s.vis, 1.0, "消えずに文字だけ変わる");
         assert!(
@@ -279,7 +279,7 @@ mod tests {
             "幅は動いている途中: {}",
             s.width
         );
-        run(&mut s, t0, 730, 1100, Some("Open settings"), Anchor::Above);
+        run(&mut s, t0, 470, 900, Some("Open settings"), Anchor::Above);
         assert_eq!(s.width, 130.0);
     }
 

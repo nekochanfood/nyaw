@@ -36,7 +36,10 @@ const THEME: Theme = Theme::of(Mode::Dark);
 const fn rgb24(rgba: u32) -> u32 {
     rgba >> 8
 }
-pub const PANEL_BG: u32 = rgb24(THEME.background);
+/// パネルの地。どの画面もカード 1 枚なので、カードがそのままパネルになる。
+pub const PANEL_BG: u32 = rgb24(THEME.card);
+/// パネルの縁の影の余白。地はこの内側から始まる。
+pub use design::components::PANEL_MARGIN;
 pub const BUTTON_BG: u32 = rgb24(THEME.control);
 /// レーザーが当たっている間のボタン色。VR 上でどこを指しているかの視覚的フィードバック。
 pub const BUTTON_HOVER_BG: u32 = rgb24(THEME.control_hover);
@@ -466,29 +469,23 @@ impl Render for Testing {
                 })),
             );
 
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_3()
-                .bg(rgba(theme.card))
-                .text_color(rgba(theme.neutral_text))
-                .child(format!(
-                    "runtime: {:?} / attached: {:?} / locked: {}",
-                    st.runtime, st.attached, st.locked
-                ))
-                .child(vr_row)
-                .child(gpui_row)
-                .child(field)
-                .child(
-                    div().relative().flex_1().min_h_0().child(list).child(
-                        components::scrollbars(&theme, "scroll-bars", &self.list)
-                            .pulled_by("pull-list"),
-                    ),
-                ),
-        )
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgba(theme.card))
+            .text_color(rgba(theme.neutral_text))
+            .child(format!(
+                "runtime: {:?} / attached: {:?} / locked: {}",
+                st.runtime, st.attached, st.locked
+            ))
+            .child(vr_row)
+            .child(gpui_row)
+            .child(field)
+            .child(div().relative().flex_1().min_h_0().child(list).child(
+                components::scrollbars(&theme, "scroll-bars", &self.list).pulled_by("pull-list"),
+            ))
     }
 }
 
@@ -526,69 +523,67 @@ impl Render for PointerTest {
             PointerMode::Mouse => ("Mode: Mouse", PointerMode::Touch),
             PointerMode::Touch => ("Mode: Touch", PointerMode::Mouse),
         };
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_3()
-                .bg(rgba(theme.card))
-                .text_color(rgba(theme.neutral_text))
-                .child(
-                    row()
-                        .child(
-                            button(&theme, "pointer-mode", label, mode == PointerMode::Touch)
-                                .on_click(command(self.panel, PanelCommand::PointerMode(next))),
-                        )
-                        .child(
-                            button(&theme, "tap-me", format!("Tapped {}", self.taps), false)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.taps += 1;
-                                    cx.notify();
-                                })),
-                        )
-                        .child(
-                            button(&theme, "close-pointer-test", "Close", false)
-                                .on_click(command(self.panel, PanelCommand::Close)),
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgba(theme.card))
+            .text_color(rgba(theme.neutral_text))
+            .child(
+                row()
+                    .child(
+                        button(&theme, "pointer-mode", label, mode == PointerMode::Touch)
+                            .on_click(command(self.panel, PanelCommand::PointerMode(next))),
+                    )
+                    .child(
+                        button(&theme, "tap-me", format!("Tapped {}", self.taps), false).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.taps += 1;
+                                cx.notify();
+                            }),
                         ),
-                )
-                .child(
-                    row()
-                        .child(
-                            button(&theme, "drag-chip", "Drag me", false)
-                                .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
-                        )
-                        .child(
-                            div()
-                                .id("drop-zone")
-                                .debug_selector(|| "drop-zone".into())
-                                .p_2()
-                                .bg(rgba(theme.control))
-                                .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
-                                .on_drop(cx.listener(|this, _: &Chip, _, cx| {
-                                    this.dropped += 1;
-                                    cx.notify();
-                                }))
-                                .child(format!("Dropped {}", self.dropped)),
-                        ),
-                )
-                .child(
-                    div()
-                        .id("swipe-list")
-                        .debug_selector(|| "swipe-list".into())
-                        .h(gpui::px(240.0))
-                        .overflow_y_scroll()
-                        .track_scroll(&self.list)
-                        .bg(rgba(theme.control))
-                        .children((0..LIST_ROWS).map(|i| {
-                            div()
-                                .h(gpui::px(ROW_PX))
-                                .px_2()
-                                .child(format!("Swipe row {i}"))
-                        })),
-                ),
-        )
+                    )
+                    .child(
+                        button(&theme, "close-pointer-test", "Close", false)
+                            .on_click(command(self.panel, PanelCommand::Close)),
+                    ),
+            )
+            .child(
+                row()
+                    .child(
+                        button(&theme, "drag-chip", "Drag me", false)
+                            .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
+                    )
+                    .child(
+                        div()
+                            .id("drop-zone")
+                            .debug_selector(|| "drop-zone".into())
+                            .p_2()
+                            .bg(rgba(theme.control))
+                            .drag_over::<Chip>(|s, _, _, _| s.bg(rgb(DROP_TARGET_BG)))
+                            .on_drop(cx.listener(|this, _: &Chip, _, cx| {
+                                this.dropped += 1;
+                                cx.notify();
+                            }))
+                            .child(format!("Dropped {}", self.dropped)),
+                    ),
+            )
+            .child(
+                div()
+                    .id("swipe-list")
+                    .debug_selector(|| "swipe-list".into())
+                    .h(gpui::px(240.0))
+                    .overflow_y_scroll()
+                    .track_scroll(&self.list)
+                    .bg(rgba(theme.control))
+                    .children((0..LIST_ROWS).map(|i| {
+                        div()
+                            .h(gpui::px(ROW_PX))
+                            .px_2()
+                            .child(format!("Swipe row {i}"))
+                    })),
+            )
     }
 }
 
@@ -624,56 +619,54 @@ impl Render for TooltipTest {
             .join(" / ");
         let icon =
             |id, glyph, tip| components::icon_button(&theme, id, glyph, tip, Variant::Default);
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .flex()
-                .flex_col()
-                .justify_between()
-                .p_3()
-                .child(
-                    row()
-                        .child(div().debug_selector(|| "tip-status".into()).child(status))
-                        .child(
-                            button(&theme, "close-tooltip-test", "Close", false)
-                                .on_click(command(self.panel, PanelCommand::Close)),
-                        ),
-                )
-                .child(
-                    row()
-                        .child(button(&theme, "tip-short", "Short", false).tooltip("Save"))
-                        .child(
-                            button(&theme, "tip-long", "Long", false)
-                                .tooltip("Open the settings of this panel"),
-                        )
-                        .child(button(&theme, "no-tip", "No tooltip", false)),
-                )
-                .child(
-                    row()
-                        .child(icon("tip-icon-gear", &design::icons::GEAR, "Settings"))
-                        .child(icon(
-                            "tip-icon-heart",
-                            &design::icons::HEART,
-                            "Add to favorites",
-                        ))
-                        .child(icon(
-                            "tip-icon-search",
-                            &design::icons::MAGNIFYING_GLASS,
-                            "検索",
-                        )),
-                )
-                .child(
-                    row()
-                        .justify_end()
-                        .child(button(&theme, "tip-far", "Far", false).tooltip("Far away")),
-                ),
-        )
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .justify_between()
+            .p_3()
+            .child(
+                row()
+                    .child(div().debug_selector(|| "tip-status".into()).child(status))
+                    .child(
+                        button(&theme, "close-tooltip-test", "Close", false)
+                            .on_click(command(self.panel, PanelCommand::Close)),
+                    ),
+            )
+            .child(
+                row()
+                    .child(button(&theme, "tip-short", "Short", false).tooltip("Save"))
+                    .child(
+                        button(&theme, "tip-long", "Long", false)
+                            .tooltip("Open the settings of this panel"),
+                    )
+                    .child(button(&theme, "no-tip", "No tooltip", false)),
+            )
+            .child(
+                row()
+                    .child(icon("tip-icon-gear", &design::icons::GEAR, "Settings"))
+                    .child(icon(
+                        "tip-icon-heart",
+                        &design::icons::HEART,
+                        "Add to favorites",
+                    ))
+                    .child(icon(
+                        "tip-icon-search",
+                        &design::icons::MAGNIFYING_GLASS,
+                        "検索",
+                    )),
+            )
+            .child(
+                row()
+                    .justify_end()
+                    .child(button(&theme, "tip-far", "Far", false).tooltip("Far away")),
+            )
     }
 }
 
 /// ダイアログの大きさ。
-const DIALOG_SIZE: Vec2 = Vec2::new(0.4, 0.25);
-const DIALOG_PX: (u32, u32) = (400, 250);
+/// 縦長（上からアイコン・タイトル・概要・ボタン）。影の余白を除いた面は 252 x 392px。
+const DIALOG_SIZE: Vec2 = Vec2::new(0.3, 0.44);
+const DIALOG_PX: (u32, u32) = (300, 440);
 
 /// 親子関係を試す画面（`dialog-test`）。ダイアログ（[`Dialog`]）を子として開く 2 種類のボタンがある。
 /// - `open-dialog`: 外側（この画面など）を押すと閉じる（既定）。
@@ -702,72 +695,92 @@ impl Render for DialogTest {
         let theme = Theme::current(cx);
         let panel = self.panel;
         let me = cx.entity().downgrade();
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_3()
-                .bg(rgba(theme.card))
-                .text_color(rgba(theme.neutral_text))
-                .child(title_bar(&theme, panel, "dialog-test", "close-dialog-test"))
-                .child(
-                    row()
-                        .child({
-                            let me = me.clone();
-                            button(&theme, "open-dialog", "Open dialog", false).on_click(
-                                move |_, _, cx| {
-                                    let me = me.clone();
-                                    cx.default_global::<PanelControl>().spawns.push(
-                                        PanelSpec::child(panel, true, move |id, _, _| {
-                                            Dialog::new(id, me, "Click outside to dismiss")
-                                        })
-                                        .sized(DIALOG_SIZE, DIALOG_PX),
-                                    )
-                                },
-                            )
-                        })
-                        .child(
-                            button(&theme, "open-modal-dialog", "Open modal dialog", false)
-                                .on_click(move |_, _, cx| {
-                                    let me = me.clone();
-                                    cx.default_global::<PanelControl>().spawns.push(
-                                        PanelSpec::child(panel, true, move |id, _, _| {
-                                            Dialog::new(id, me, "Answer required")
-                                        })
-                                        .without_dismiss()
-                                        .sized(DIALOG_SIZE, DIALOG_PX),
-                                    )
-                                }),
-                        ),
-                )
-                .child(
-                    div()
-                        .debug_selector(|| "dialog-answer".into())
-                        .child(format!(
-                            "Answered {} ({})",
-                            self.answered,
-                            self.answer.unwrap_or("-")
-                        )),
-                ),
-        )
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgba(theme.card))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(&theme, panel, "dialog-test", "close-dialog-test"))
+            .child(
+                row()
+                    .child({
+                        let me = me.clone();
+                        button(&theme, "open-dialog", "Open dialog", false).on_click(
+                            move |_, _, cx| {
+                                let me = me.clone();
+                                cx.default_global::<PanelControl>().spawns.push(
+                                    PanelSpec::child(panel, true, move |id, _, _| {
+                                        Dialog::new(
+                                            id,
+                                            me,
+                                            &design::icons::INFO,
+                                            "Click outside to dismiss",
+                                            "Answer below, or press outside this dialog to close it.",
+                                        )
+                                    })
+                                    .sized(DIALOG_SIZE, DIALOG_PX),
+                                )
+                            },
+                        )
+                    })
+                    .child(
+                        button(&theme, "open-modal-dialog", "Open modal dialog", false)
+                            .on_click(move |_, _, cx| {
+                                let me = me.clone();
+                                cx.default_global::<PanelControl>().spawns.push(
+                                    PanelSpec::child(panel, true, move |id, _, _| {
+                                        Dialog::new(
+                                            id,
+                                            me,
+                                            &design::icons::WARNING,
+                                            "Answer required",
+                                            "This dialog stays open until you press OK or Cancel.",
+                                        )
+                                    })
+                                    .without_dismiss()
+                                    .sized(DIALOG_SIZE, DIALOG_PX),
+                                )
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "dialog-answer".into())
+                    .child(format!(
+                        "Answered {} ({})",
+                        self.answered,
+                        self.answer.unwrap_or("-")
+                    )),
+            )
     }
 }
 
-/// [`DialogTest`] が開く、OK / Cancel だけのダイアログ。押した答えを親へ渡して自分を閉じる。`message` は種類の見分け用。
+/// [`DialogTest`] が開く、OK / Cancel だけのダイアログ（`components::dialog`）。押した答えを親へ渡して自分を閉じる。
+/// `title` は種類の見分け用。
 pub struct Dialog {
     panel: PanelId,
     parent: WeakEntity<DialogTest>,
-    message: &'static str,
+    glyph: &'static design::Icon,
+    title: &'static str,
+    description: &'static str,
 }
 
 impl Dialog {
-    pub fn new(panel: PanelId, parent: WeakEntity<DialogTest>, message: &'static str) -> Self {
+    pub fn new(
+        panel: PanelId,
+        parent: WeakEntity<DialogTest>,
+        glyph: &'static design::Icon,
+        title: &'static str,
+        description: &'static str,
+    ) -> Self {
         Self {
             panel,
             parent,
-            message,
+            glyph,
+            title,
+            description,
         }
     }
 }
@@ -775,10 +788,10 @@ impl Dialog {
 impl Render for Dialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let answer = |id: &'static str, label: &'static str| {
+        let answer = |id: &'static str, label: &'static str, variant| {
             let parent = self.parent.clone();
             let close = command(self.panel, PanelCommand::Close);
-            button(&theme, id, label, false).on_click(move |e, w, cx| {
+            components::button(&theme, id, label, variant).on_click(move |e, w, cx| {
                 parent
                     .update(cx, |t, cx| {
                         t.answered += 1;
@@ -789,19 +802,15 @@ impl Render for Dialog {
                 close(e, w, cx);
             })
         };
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .flex()
-                .flex_col()
-                .justify_between()
-                .p_3()
-                .child(self.message)
-                .child(
-                    row()
-                        .child(answer("dialog-ok", "OK"))
-                        .child(answer("dialog-cancel", "Cancel")),
-                ),
+        components::dialog(
+            &theme,
+            self.glyph,
+            self.title,
+            self.description,
+            [
+                answer("dialog-ok", "OK", Variant::Primary),
+                answer("dialog-cancel", "Cancel", Variant::Default),
+            ],
         )
     }
 }
@@ -895,29 +904,25 @@ impl Render for TestingAnim {
         let phase = self.start.elapsed().as_secs_f32() / ANIM_PERIOD % 1.0;
         // 0→1→0 と往復する。
         let x = 1.0 - (phase * 2.0 - 1.0).abs();
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .relative()
-                .p_3()
-                .bg(rgba(theme.card))
-                .text_color(rgba(theme.neutral_text))
-                .child(title_bar(&theme, self.panel, "testing-anim", "close-anim"))
-                .child(
-                    div()
-                        .debug_selector(|| "anim-frames".into())
-                        .text_size(px(64.0))
-                        .child(format!("frame {}", self.frames)),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .bottom(px(40.0))
-                        .left(relative(0.05 + 0.7 * x))
-                        .size(px(160.0))
-                        .bg(hsla(phase, 0.8, 0.5, 1.0)),
-                ),
-        )
+        components::card_panel(&theme)
+            .p_3()
+            .bg(rgba(theme.card))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(&theme, self.panel, "testing-anim", "close-anim"))
+            .child(
+                div()
+                    .debug_selector(|| "anim-frames".into())
+                    .text_size(px(64.0))
+                    .child(format!("frame {}", self.frames)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .bottom(px(40.0))
+                    .left(relative(0.05 + 0.7 * x))
+                    .size(px(160.0))
+                    .bg(hsla(phase, 0.8, 0.5, 1.0)),
+            )
     }
 }
 
@@ -1115,40 +1120,37 @@ impl Render for TestingScrollbar {
                         })),
                 ),
         );
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_3()
-                .bg(rgba(theme.card))
-                .text_color(rgba(theme.neutral_text))
-                .child(title_bar(
-                    &theme,
-                    self.panel,
-                    "testing-scrollbar",
-                    "close-scrollbar",
-                ))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .flex()
-                        .gap_2()
-                        .child(vertical)
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .child(horizontal)
-                                .child(both),
-                        ),
-                ),
-        )
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgba(theme.card))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(
+                &theme,
+                self.panel,
+                "testing-scrollbar",
+                "close-scrollbar",
+            ))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .gap_2()
+                    .child(vertical)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(horizontal)
+                            .child(both),
+                    ),
+            )
     }
 }
 
@@ -1174,53 +1176,50 @@ impl Render for TestingFont {
                 .font_weight(weight)
                 .child(text)
         };
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_3()
-                .bg(rgba(theme.card))
-                .text_color(rgba(theme.neutral_text))
-                .child(title_bar(&theme, self.panel, "testing-font", "close-font"))
-                .child(sample(
-                    "font-latin",
-                    24.0,
-                    FontWeight::NORMAL,
-                    "Noto Sans: The quick brown fox jumps over the lazy dog 0123456789",
-                ))
-                .child(sample(
-                    "font-latin-bold",
-                    24.0,
-                    FontWeight::BOLD,
-                    "Noto Sans Bold: Sphinx of black quartz, judge my vow",
-                ))
-                .child(sample(
-                    "font-ja",
-                    24.0,
-                    FontWeight::NORMAL,
-                    "Noto Sans JP: 吾輩は猫である。名前はまだ無い。",
-                ))
-                .child(sample(
-                    "font-ja-bold",
-                    24.0,
-                    FontWeight::BOLD,
-                    "Noto Sans JP 太字: いろはにほへと ちりぬるを",
-                ))
-                .child(sample(
-                    "font-mixed",
-                    19.0,
-                    FontWeight::NORMAL,
-                    "Mixed 混在: Hello、世界! VR パネル 123 ABC あいう",
-                ))
-                .child(sample(
-                    "font-small",
-                    14.0,
-                    FontWeight::NORMAL,
-                    "Small 14px: 小さい文字の読みやすさ — ABC abc 漢字かな",
-                )),
-        )
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgba(theme.card))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(&theme, self.panel, "testing-font", "close-font"))
+            .child(sample(
+                "font-latin",
+                24.0,
+                FontWeight::NORMAL,
+                "Noto Sans: The quick brown fox jumps over the lazy dog 0123456789",
+            ))
+            .child(sample(
+                "font-latin-bold",
+                24.0,
+                FontWeight::BOLD,
+                "Noto Sans Bold: Sphinx of black quartz, judge my vow",
+            ))
+            .child(sample(
+                "font-ja",
+                24.0,
+                FontWeight::NORMAL,
+                "Noto Sans JP: 吾輩は猫である。名前はまだ無い。",
+            ))
+            .child(sample(
+                "font-ja-bold",
+                24.0,
+                FontWeight::BOLD,
+                "Noto Sans JP 太字: いろはにほへと ちりぬるを",
+            ))
+            .child(sample(
+                "font-mixed",
+                19.0,
+                FontWeight::NORMAL,
+                "Mixed 混在: Hello、世界! VR パネル 123 ABC あいう",
+            ))
+            .child(sample(
+                "font-small",
+                14.0,
+                FontWeight::NORMAL,
+                "Small 14px: 小さい文字の読みやすさ — ABC abc 漢字かな",
+            ))
     }
 }
 
@@ -1341,60 +1340,53 @@ impl Render for StressTest {
             .try_global::<PanelControl>()
             .map_or((0, 0), |c| (c.open, c.limit));
         let alive = self.alive(cx).len();
-        components::panel(&theme).child(
-            components::card(&theme)
-                .size_full()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .p_3()
-                .bg(rgba(theme.card))
-                .text_color(rgba(theme.neutral_text))
-                .child(title_bar(&theme, self.panel, "stress-test", "close-stress"))
-                .child(
-                    div()
-                        .debug_selector(|| "stress-count".into())
-                        .child(format!("open {open} / limit {limit} (spawned {alive})")),
-                )
-                .child(
-                    row()
-                        .child(
-                            button(&theme, "stress-fill", "Fill to limit", false)
-                                .on_click(cx.listener(|this, _, _, cx| this.spawn(usize::MAX, cx))),
-                        )
-                        .child(
-                            button(&theme, "stress-add", format!("+{STRESS_STEP}"), false)
-                                .on_click(
-                                    cx.listener(|this, _, _, cx| this.spawn(STRESS_STEP, cx)),
-                                ),
-                        )
-                        .child(button(&theme, "stress-close", "Close all", false).on_click(
-                            cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
-                        ))
-                        .child(button(&theme, "stress-scatter", "Scatter", false).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
-                                let poses: Vec<_> = (0..this.alive(cx).len())
-                                    .map(|_| {
-                                        facing_head(Vec3::new(
-                                            this.random() * 6.0 - 3.0,
-                                            this.random() * 2.5 - 1.0,
-                                            -0.8 - this.random() * 7.2,
-                                        ))
-                                    })
-                                    .collect();
-                                this.each(cx, |i| PanelCommand::Place(poses[i]));
-                            }),
-                        ))
-                        .child(
-                            button(&theme, "stress-grid", "Grid", false).on_click(cx.listener(
-                                |this, _, _, cx| {
-                                    this.each(cx, |i| PanelCommand::Place(grid_pose(i)))
-                                },
-                            )),
-                        ),
-                ),
-        )
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap_2()
+            .p_3()
+            .bg(rgba(theme.card))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(&theme, self.panel, "stress-test", "close-stress"))
+            .child(
+                div()
+                    .debug_selector(|| "stress-count".into())
+                    .child(format!("open {open} / limit {limit} (spawned {alive})")),
+            )
+            .child(
+                row()
+                    .child(
+                        button(&theme, "stress-fill", "Fill to limit", false)
+                            .on_click(cx.listener(|this, _, _, cx| this.spawn(usize::MAX, cx))),
+                    )
+                    .child(
+                        button(&theme, "stress-add", format!("+{STRESS_STEP}"), false)
+                            .on_click(cx.listener(|this, _, _, cx| this.spawn(STRESS_STEP, cx))),
+                    )
+                    .child(button(&theme, "stress-close", "Close all", false).on_click(
+                        cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
+                    ))
+                    .child(button(&theme, "stress-scatter", "Scatter", false).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
+                            let poses: Vec<_> = (0..this.alive(cx).len())
+                                .map(|_| {
+                                    facing_head(Vec3::new(
+                                        this.random() * 6.0 - 3.0,
+                                        this.random() * 2.5 - 1.0,
+                                        -0.8 - this.random() * 7.2,
+                                    ))
+                                })
+                                .collect();
+                            this.each(cx, |i| PanelCommand::Place(poses[i]));
+                        }),
+                    ))
+                    .child(
+                        button(&theme, "stress-grid", "Grid", false).on_click(cx.listener(
+                            |this, _, _, cx| this.each(cx, |i| PanelCommand::Place(grid_pose(i))),
+                        )),
+                    ),
+            )
     }
 }
 
