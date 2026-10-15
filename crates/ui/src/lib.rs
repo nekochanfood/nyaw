@@ -1230,6 +1230,9 @@ mod tests {
                     attached: Some(Device::Hmd),
                     locked: true,
                     animated: true,
+                    pointer_smoothing: kernel::overlay::POINTER_SMOOTHING,
+                    pointer_release_deg: kernel::overlay::POINTER_RELEASE_DEG,
+                    laser_length: kernel::overlay::LASER_LENGTH,
                     ..Default::default()
                 }
             );

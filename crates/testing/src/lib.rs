@@ -4,6 +4,7 @@
 //! - VR: クリック数・HMD / 手 / トラッカーへの取り付け・取り外し・ロック・メニューボタンと掴みの表示
 //! - GPUI: 切り替え・押している間の見た目・ドラッグ＆ドロップ・スクロールする一覧・フォーカスと文字入力・ポップアップメニュー
 //! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
+//! - レーザー: [`SmoothingTest`] でレーザーの手ブレ抑えの強さと線の長さを変え、小さな的で揺れと遅れを見る
 //! - ツールチップ: [`TooltipTest`] で、カーソルに付いて出る説明（向き・猶予・文字の差し替え・幅の伸び縮み）を見る
 //! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
 //! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）・[`TestingFont`]（フォントの見本）・[`TestingScrollbar`]（縦・横・両方のスクロールバー）
@@ -392,6 +393,10 @@ impl Render for Testing {
                 button!("pointer-test", "Pointer", false).on_click(spawn_pointer_test(self.panel)),
             )
             .child(
+                button!("smoothing-test", "Laser", false)
+                    .on_click(spawn_view(self.panel, |id, _| SmoothingTest::new(id))),
+            )
+            .child(
                 button!("tooltip-test", "Tooltip", false)
                     .on_click(spawn_view(self.panel, |id, _| TooltipTest::new(id))),
             )
@@ -736,8 +741,172 @@ impl Render for PointerTest {
     }
 }
 
+/// レーザーを調整する画面（`smoothing-test`）。`smoothing-slider` で手ブレ抑えの強さを、`laser-length-slider` で
+/// 線の見える長さを変えるとその場で効き、設定ファイルの `pointer_smoothing` / `laser_length` にも残る
+/// （`PanelCommand::PointerSmoothing` / `LaserLength`）。下の小さな的を狙って、止めたときの揺れと、振ったときの遅れを見比べる。
+pub struct SmoothingTest {
+    panel: PanelId,
+}
+
+impl SmoothingTest {
+    pub fn new(panel: PanelId) -> Self {
+        Self { panel }
+    }
+}
+
+/// 狙う的の数と大きさ（px）。小さいほど揺れが分かる。
+const AIM_TARGETS: usize = 8;
+const AIM_PX: f32 = 32.0;
+
+impl Render for SmoothingTest {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let panel = self.panel;
+        let max = kernel::overlay::POINTER_SMOOTHING_MAX;
+        let now = cx
+            .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&panel))
+            .map_or(kernel::overlay::POINTER_SMOOTHING, |c| {
+                c.status.pointer_smoothing
+            });
+        let length = cx
+            .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&panel))
+            .map_or(kernel::overlay::LASER_LENGTH, |c| c.status.laser_length);
+        let (short, long) = (kernel::overlay::LASER_LENGTH_MIN, kernel::overlay::LASER_MAX);
+        let release = cx
+            .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&panel))
+            .map_or(kernel::overlay::POINTER_RELEASE_DEG, |c| {
+                c.status.pointer_release_deg
+            });
+        let (tight, loose) = (
+            kernel::overlay::POINTER_RELEASE_DEG_MIN,
+            kernel::overlay::POINTER_RELEASE_DEG_MAX,
+        );
+        let preset = |id: &'static str, label: &'static str, v: f32| {
+            button(&theme, id, label, (now - v).abs() < 1e-3)
+                .on_click(command(panel, PanelCommand::PointerSmoothing(v)))
+        };
+        let length_preset = |id: &'static str, label: &'static str, v: f32| {
+            button(&theme, id, label, (length - v).abs() < 1e-3)
+                .on_click(command(panel, PanelCommand::LaserLength(v)))
+        };
+        let push = move |c: PanelCommand, cx: &mut App| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(panel)
+                .or_default()
+                .commands
+                .push(c)
+        };
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap(px(spacing::LG))
+            .p(px(spacing::XL))
+            .child(title_bar(&theme, panel, "Laser", "close-smoothing"))
+            .child(
+                div()
+                    .debug_selector(|| "smoothing-value".into())
+                    .text_color(rgba(theme.neutral_text_low))
+                    .child(format!(
+                        "Strength {now:.2} (0 = off, {max:.2} = strongest). Saved to config.toml."
+                    )),
+            )
+            .child(
+                components::slider(&theme, "smoothing-slider", now / max, move |v, _, cx| {
+                    push(PanelCommand::PointerSmoothing(v * max), cx)
+                })
+                .length(560.0),
+            )
+            .child(
+                row()
+                    .child(preset("smoothing-off", "Off", 0.0))
+                    .child(preset(
+                        "smoothing-default",
+                        "Default",
+                        kernel::overlay::POINTER_SMOOTHING,
+                    ))
+                    .child(preset("smoothing-strong", "Light", 0.95)),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "release-value".into())
+                    .text_color(rgba(theme.neutral_text_low))
+                    .child(format!(
+                        "Lets go after lagging {release:.1}° ({tight:.1}° to {loose:.0}°). \
+                         Larger keeps the smoothing on while the hand shakes."
+                    )),
+            )
+            .child(
+                components::slider(
+                    &theme,
+                    "release-slider",
+                    (release - tight) / (loose - tight),
+                    move |v, _, cx| {
+                        push(PanelCommand::PointerRelease(tight + v * (loose - tight)), cx)
+                    },
+                )
+                .length(560.0),
+            )
+            .child(
+                div()
+                    .debug_selector(|| "laser-length-value".into())
+                    .text_color(rgba(theme.neutral_text_low))
+                    .child(format!(
+                        "Length {length:.2} m ({short:.2} to {long:.2}). The line fades out over this length."
+                    )),
+            )
+            .child(
+                components::slider(
+                    &theme,
+                    "laser-length-slider",
+                    (length - short) / (long - short),
+                    move |v, _, cx| push(PanelCommand::LaserLength(short + v * (long - short)), cx),
+                )
+                .length(560.0),
+            )
+            .child(
+                row()
+                    .child(length_preset("laser-short", "Short", 0.15))
+                    .child(length_preset(
+                        "laser-medium",
+                        "Default",
+                        kernel::overlay::LASER_LENGTH,
+                    ))
+                    .child(length_preset("laser-full", "Full", long)),
+            )
+            .child(
+                // 3 つとも既定値へ戻す（設定ファイルにも既定値が書き戻される）。
+                row().child(button(&theme, "laser-reset", "Reset to defaults", false).on_click(
+                    move |_, _, cx| {
+                        for c in [
+                            PanelCommand::PointerSmoothing(kernel::overlay::POINTER_SMOOTHING),
+                            PanelCommand::PointerRelease(kernel::overlay::POINTER_RELEASE_DEG),
+                            PanelCommand::LaserLength(kernel::overlay::LASER_LENGTH),
+                        ] {
+                            push(c, cx);
+                        }
+                    },
+                )),
+            )
+            .child(
+                // 狙う的。指している間だけ強調色になる。
+                row().children((0..AIM_TARGETS).map(|i| {
+                    div()
+                        .id(("aim", i))
+                        .size(px(AIM_PX))
+                        .rounded(px(radius::FULL))
+                        .bg(rgba(theme.control))
+                        .hover(|s| s.bg(rgba(theme.accent_solid)))
+                })),
+            )
+    }
+}
+
 /// ツールチップを試す画面（`tooltip-test`）。
-/// - `tip-short` / `tip-long` は隣り合っていて、移ると猶予（0.5 秒）の間に文字が変わり、箱の幅が伸び縮みする。
+/// - `tip-short` / `tip-long` は隣り合っていて、移ると猶予（0.125 秒）の間に文字が変わり、箱の幅が伸び縮みする。
 /// - `tip-far` は離れていて、届くまでに猶予が過ぎると一度消えてから出直す。`no-tip` には説明が無い（指すと猶予の後に消える）。
 /// - アイコンだけのボタン（`tip-icon-*`）には必ず説明が付く（`components::icon_button`）。
 /// - `tip-status` に、手ごとの今の文字と向き（上下）を出す。手を頭より上に掲げて見上げると下に、下から指すと上に出る。

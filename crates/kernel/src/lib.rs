@@ -43,6 +43,13 @@ pub enum PanelCommand {
     PointerMode(PointerMode),
     /// テーマを変える。全パネルに効き、設定ファイルへ書き戻される（起動時の設定の場合のみ。テスト用のカーネルは書かない）。
     Theme(ThemeMode),
+    /// レーザーの手ブレ抑えの強さを変える（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`）。全パネルに効き、
+    /// テーマと同じく設定ファイルの `pointer_smoothing` へ書き戻される。
+    PointerSmoothing(f32),
+    /// 手ブレ抑えを緩める角度（度）を変える。全パネルに効き、設定ファイルの `pointer_release_deg` へ書き戻される。
+    PointerRelease(f32),
+    /// レーザーの見える長さ（m）を変える。全パネルに効き、設定ファイルの `laser_length` へ書き戻される。
+    LaserLength(f32),
     /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
     Place(Pose),
     /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
@@ -68,6 +75,12 @@ pub struct PanelStatus {
     pub pointer_mode: PointerMode,
     /// 見た目のテーマ（全パネル共通）。
     pub theme: ThemeMode,
+    /// レーザーの手ブレ抑えの強さ（全パネル共通）。
+    pub pointer_smoothing: f32,
+    /// 手ブレ抑えを緩める角度（度。全パネル共通）。
+    pub pointer_release_deg: f32,
+    /// レーザーの見える長さ（m。全パネル共通）。
+    pub laser_length: f32,
     /// 描画解像度の段階（[`Kernel::panel_lod`]）。
     pub lod: u8,
     /// 親パネル（このパネルが子のとき）。
@@ -130,6 +143,12 @@ impl<B: VrBackend> Kernel<B> {
         let mut overlay = Overlay::new();
         if let Some(s) = config.pointer_smoothing {
             overlay.set_pointer_smoothing(s);
+        }
+        if let Some(deg) = config.pointer_release_deg {
+            overlay.set_pointer_release(deg);
+        }
+        if let Some(l) = config.laser_length {
+            overlay.set_laser_length(l);
         }
         let pointer_mode = config.pointer_mode.unwrap_or_default();
         // タッチではスライドがパネルからはみ出しても続くよう、押している間はポインタを掴んでおく。
@@ -301,11 +320,43 @@ impl<B: VrBackend> Kernel<B> {
                     );
                 }
             }
+            PanelCommand::PointerSmoothing(s) => {
+                self.overlay.set_pointer_smoothing(s);
+                let s = self.overlay.pointer_smoothing();
+                self.config.pointer_smoothing = Some(s);
+                self.save_number("pointer_smoothing", s);
+            }
+            PanelCommand::PointerRelease(deg) => {
+                self.overlay.set_pointer_release(deg);
+                let deg = self.overlay.pointer_release();
+                self.config.pointer_release_deg = Some(deg);
+                self.save_number("pointer_release_deg", deg);
+            }
+            PanelCommand::LaserLength(l) => {
+                self.overlay.set_laser_length(l);
+                let l = self.overlay.laser_length();
+                self.config.laser_length = Some(l);
+                self.save_number("laser_length", l);
+            }
             PanelCommand::Parent(parent) => self.overlay.set_parent(panel, parent),
             PanelCommand::Place(offset) => {
                 self.overlay.detach(panel);
                 self.overlay.set_pose(panel, self.hmd().leveled() * offset);
             }
+        }
+    }
+
+    /// 設定ファイルへ数値を書き戻す（起動時の設定の場合のみ。テスト用のカーネルは書かない）。
+    fn save_number(&self, key: &str, value: f32) {
+        if let Some(path) = &self.config_path
+            && let Err(e) = config::save_number_at(path, key, value)
+        {
+            logger::warn!(
+                "failed to save to config file",
+                key = key,
+                path = path.display(),
+                error = e
+            );
         }
     }
 
@@ -322,6 +373,9 @@ impl<B: VrBackend> Kernel<B> {
             closed: p.closed,
             pointer_mode: self.pointer_mode,
             theme: self.config.theme,
+            pointer_smoothing: self.overlay.pointer_smoothing(),
+            pointer_release_deg: self.overlay.pointer_release(),
+            laser_length: self.overlay.laser_length(),
             lod: self.panel_lod(panel),
             parent: p.parent.map(|q| q.panel),
         }

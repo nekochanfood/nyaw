@@ -86,9 +86,16 @@ pub enum Anchor {
 
 /// レーザーのパネルを作るときの長さ（m）。以降は毎 tick ヒット点までの長さに伸び縮みする。
 pub const LASER_MAX: f32 = 1.5;
+/// レーザーをヒット点の手前で止める長さ（m）。奥行きで並べるランタイムで、先の透明な部分がカーソルに重なって
+/// カーソルを欠けさせないように、線とカーソルを離す（先は透明なので、見た目の長さはほとんど変わらない）。
+const LASER_GAP: f32 = 0.03;
+/// レーザーの見える長さ（m）の既定値と範囲。手元からこの長さで消える（カーソルが近ければその手前で消える）。
+pub const LASER_LENGTH: f32 = 0.3;
+pub const LASER_LENGTH_MIN: f32 = 0.05;
 /// カーソルをパネル面からレーザーの来る側へ浮かせる距離（m）。描画順でもパネルより手前に出すが、
-/// 奥行きで並べるランタイムでも同じ面に乗って Z ファイティングしないように少し離す。
-const CURSOR_LIFT: f32 = 0.003;
+/// 奥行きで並べるランタイムでも同じ面に乗って Z ファイティングしないように離す。
+/// ドラッグの見た目・カーソル・ツールチップの順に手前へ、どの間も数 mm 空ける（近すぎるとちらつく）。
+const CURSOR_LIFT: f32 = 0.008;
 /// レーザーのクアッドの向き: ローカル +X（テクスチャの右）を前方 -Z へ、面の法線 +Z を上 +Y へ。
 const LASER_ROT: Quat = Quat::from_xyzw(-0.5, 0.5, 0.5, 0.5);
 /// 見えていそうかの見積もり（[`Overlay::in_view`]）に使う視野の半角（ラジアン、70°。実機の視野より広めに取る）。
@@ -99,13 +106,13 @@ const DRAG_SORT: u32 = 2;
 const CURSOR_SORT: u32 = 3;
 const TOOLTIP_SORT: u32 = 4;
 /// ツールチップをパネル面から浮かせる距離（m）。カーソルより手前。
-const TOOLTIP_LIFT: f32 = 0.004;
+const TOOLTIP_LIFT: f32 = 0.012;
 /// ツールチップの向きを変える目安: 頭から見た手の方向が、パネルの上下へ水平からこれ（sin。約 12°）より傾いたら切り替える。
 /// 間は前の向きのまま（水平近くで行ったり来たりしないように）。
 // ponytail: 固定の幅。切り替わりが敏感・鈍いと感じたらここを調整する。
 const ANCHOR_BAND: f32 = 0.2;
 /// ドラッグの見た目をパネル面から浮かせる距離（m）。カーソルより奥。
-const DRAG_LIFT: f32 = 0.002;
+const DRAG_LIFT: f32 = 0.005;
 /// 掴み移動で、目標へ 1 tick に近づく割合。目標との差が [`SNAP`] 未満なら目標に合わせる。
 // ponytail: tick 単位なのでリフレッシュレートで速さが変わる（144Hz で約 0.1 秒）。気になれば経過時間で決める。
 const SMOOTH: f32 = 0.3;
@@ -116,11 +123,15 @@ const DIM: f32 = 0.45;
 /// 手ブレ抑えの既定値: レーザーの向きが 1 tick ごとに前の向きを残す割合（0 = 抑えない）。
 /// ヒット判定もこの向きで行うので、クリック位置も揺れない。
 // ponytail: tick 単位なのでリフレッシュレートで効き方が変わる。気になれば経過時間で決める。
-const POINTER_SMOOTHING: f32 = 0.9;
-/// 速く振ると手ブレ抑えを弱める目安（ラジアン/tick、約 1.1°）。1 tick にこれだけ動くと抑えが半分になる。
-/// 止めているときはしっかり抑え、大きく動かすときは遅れないように。
-// ponytail: tick 単位。リフレッシュレートで効き方が変わる。
-const POINTER_FAST: f32 = 0.02;
+pub const POINTER_SMOOTHING: f32 = POINTER_SMOOTHING_MAX;
+/// 手ブレ抑えの上限。1 だとレーザーが動かなくなる。
+pub const POINTER_SMOOTHING_MAX: f32 = 0.998;
+/// 手ブレ抑えを緩める角度（度）の既定値と範囲。抑えたレーザーが手の向きからこれだけ遅れると、抑えが半分になる。
+/// 止めているときはしっかり抑え、大きく動かすときは遅れすぎないように。小さいと手ブレの揺れだけで抑えが崩れる
+/// （強い抑えほど遅れがたまるので、抑えを強めても効かなくなる）。
+pub const POINTER_RELEASE_DEG: f32 = 11.25;
+pub const POINTER_RELEASE_DEG_MIN: f32 = 0.5;
+pub const POINTER_RELEASE_DEG_MAX: f32 = 45.0;
 /// トリガーを引き切る直前（押下になる直前）の手ブレ抑え。引き始めからこれへ向けて強める。
 /// 押下と判定される前の、トリガーを引く動きでクリック位置がずれないように（押した後は [`CLICK_SLOP`]）。
 const TRIGGER_STEADY: f32 = 0.97;
@@ -236,6 +247,12 @@ pub struct Overlay {
     capture: bool,
     /// 手ブレ抑え（[`POINTER_SMOOTHING`]）。`None` で既定値。
     smoothing: Option<f32>,
+    /// レーザーの見える長さ（[`LASER_LENGTH`]）。`None` で既定値。
+    laser_length: Option<f32>,
+    /// 手ブレ抑えを緩める角度（度。[`POINTER_RELEASE_DEG`]）。`None` で既定値。
+    release_deg: Option<f32>,
+    /// この tick で手ブレ抑えが効いている（ポインタを手に追従させず、空間に置く）。
+    steadied: bool,
     animations: HashMap<PanelId, (Animation, Instant)>,
     /// この tick で外側を押されて閉じる子。
     dismissed: Vec<PanelId>,
@@ -286,9 +303,34 @@ impl Overlay {
         self.quit
     }
 
-    /// 手ブレ抑えの強さ（0 = 抑えない 〜 1 未満）。
+    /// 手ブレ抑えの強さ（0 = 抑えない 〜 [`POINTER_SMOOTHING_MAX`]）。
     pub fn set_pointer_smoothing(&mut self, smoothing: f32) {
-        self.smoothing = Some(smoothing.clamp(0.0, 0.99));
+        self.smoothing = Some(smoothing.clamp(0.0, POINTER_SMOOTHING_MAX));
+    }
+
+    /// 今の手ブレ抑えの強さ（設定していなければ既定値 [`POINTER_SMOOTHING`]）。
+    pub fn pointer_smoothing(&self) -> f32 {
+        self.smoothing.unwrap_or(POINTER_SMOOTHING)
+    }
+
+    /// 手ブレ抑えを緩める角度（度。[`POINTER_RELEASE_DEG_MIN`] 〜 [`POINTER_RELEASE_DEG_MAX`]）。
+    pub fn set_pointer_release(&mut self, deg: f32) {
+        self.release_deg = Some(deg.clamp(POINTER_RELEASE_DEG_MIN, POINTER_RELEASE_DEG_MAX));
+    }
+
+    /// 今の手ブレ抑えを緩める角度（度。設定していなければ既定値 [`POINTER_RELEASE_DEG`]）。
+    pub fn pointer_release(&self) -> f32 {
+        self.release_deg.unwrap_or(POINTER_RELEASE_DEG)
+    }
+
+    /// レーザーの見える長さ（m。[`LASER_LENGTH_MIN`] 〜 [`LASER_MAX`]）。
+    pub fn set_laser_length(&mut self, length: f32) {
+        self.laser_length = Some(length.clamp(LASER_LENGTH_MIN, LASER_MAX));
+    }
+
+    /// 今のレーザーの見える長さ（設定していなければ既定値 [`LASER_LENGTH`]）。
+    pub fn laser_length(&self) -> f32 {
+        self.laser_length.unwrap_or(LASER_LENGTH)
     }
 
     /// パネルが頭の向きから見えていそうか（ランタイムが教えてくれないときの見積もり。視野を広めに取った円錐とパネルを囲む球で判定）。
@@ -559,6 +601,7 @@ impl Overlay {
         self.animate(vr, Instant::now());
         self.quit = frame.quit;
         self.hmd = frame.hmd;
+        self.steadied = frame.stabilize_pointer && self.pointer_smoothing() > 0.0;
         self.trackers = frame.trackers.iter().map(|(id, _)| id.clone()).collect();
         // 掴み中のパネルは手に従う（離したフレームで update_hand がオフセットを付け直す）。
         // 取り付け先が見失われたフレームは最後の姿勢のまま。
@@ -656,14 +699,15 @@ impl Overlay {
         let base = if !frame.stabilize_pointer {
             0.0
         } else {
-            self.smoothing.unwrap_or(POINTER_SMOOTHING)
+            self.pointer_smoothing()
         };
+        let release = self.pointer_release().to_radians();
         let st = self.hands.entry(c.hand).or_default();
         // 手ブレを抑えたレーザー。隠れていた後は追わずに手に合わせる。
         let aim = Pose::new(
             c.aim.position,
             st.drawn.map_or(c.aim.orientation, |q| {
-                let s = steadiness(base, q.angle_between(c.aim.orientation), c);
+                let s = steadiness(base, q.angle_between(c.aim.orientation), release, c);
                 q.slerp(c.aim.orientation, 1.0 - s)
             }),
         );
@@ -865,12 +909,12 @@ impl Overlay {
 }
 
 /// この tick の手ブレ抑え: 前の向きを残す割合。`moved` は前のレーザーから手の向きまでの角度。
-/// 速く振るほど弱め、押下前にトリガーを引いている間は強める。
-fn steadiness(base: f32, moved: f32, c: &ControllerState) -> f32 {
+/// 速く振るほど弱め（`release` ラジアン遅れると半分）、押下前にトリガーを引いている間は強める。
+fn steadiness(base: f32, moved: f32, release: f32, c: &ControllerState) -> f32 {
     if base == 0.0 {
         return 0.0;
     }
-    let s = base / (1.0 + moved / POINTER_FAST);
+    let s = base / (1.0 + moved / release);
     if c.select || c.grab {
         return s;
     }
@@ -911,6 +955,8 @@ impl Overlay {
     fn place_pointers(&mut self, vr: &mut dyn VrBackend) {
         // 向きは毎 tick 数回の内積で決まるので、指している間はいつも見直す。
         let eye = self.hmd.position;
+        let laser_length = self.laser_length();
+        let steadied = self.steadied;
         for h in self.hands.values_mut() {
             if let Some(r) = h.ray
                 && let Some((target, point)) = r.hit
@@ -932,6 +978,7 @@ impl Overlay {
                     // 横から見ると面が見えなくなるので、レーザーの軸回りに面を頭へ向ける。
                     let h = aim.inverse().transform_point(self.hmd.position);
                     let roll = Quat::from_rotation_z((-h.x).atan2(h.y));
+                    let len = (len - LASER_GAP).clamp(0.0, laser_length);
                     let pose = aim * Pose::new(Vec3::new(0.0, 0.0, -len / 2.0), roll * LASER_ROT);
                     Some((r, pose, len))
                 }
@@ -961,8 +1008,12 @@ impl Overlay {
                 _ => None,
             }
             .map(|(r, pose, width)| {
-                // 手からの相対で置き、ランタイムの追従でレーザーとカーソルがずれないようにする。
-                self.panels[id].follow = Some((Device::Controller(hand), r.hand.inverse() * pose));
+                // レーザーは手からの相対で置き、ランタイムの追従で手元から離れないようにする。
+                // カーソルなど面の上のものは、手ブレ抑えが効いていれば空間に置く: 手に追従させると、tick の間
+                // （ゲームで tick が遅れるほど長い）はランタイムが手ブレどおりに動かし、次の tick で抑えた位置へ
+                // 戻されてガタつく。抑えていなければ手に追従させ、レーザーの先とずれないようにする。
+                self.panels[id].follow = (part == Pointer::Laser || !steadied)
+                    .then(|| (Device::Controller(hand), r.hand.inverse() * pose));
                 (pose, width)
             });
             let p = &mut self.panels[id];
@@ -2010,7 +2061,7 @@ mod tests {
     }
 
     #[test]
-    fn laser_ends_at_hit_and_cursor_floats_in_front_of_panel() {
+    fn laser_stops_short_of_hit_and_cursor_floats_in_front_of_panel() {
         let (mut vr, mut ov, laser, cursor) = with_pointers();
         controller(&mut vr, Pose::IDENTITY, &[]);
         // ポインタのパネルはレーザーの手前にあってもヒットしない。
@@ -2021,8 +2072,13 @@ mod tests {
             }]
         );
         let l = &vr.backend.overlays[laser];
-        assert!(l.visible && (l.width_m - 1.0).abs() < 1e-5);
-        assert!(l.pose.position.abs_diff_eq(Vec3::new(0.0, 0.0, -0.5), 1e-5));
+        let shown = (1.0 - LASER_GAP).min(LASER_LENGTH);
+        assert!(l.visible && (l.width_m - shown).abs() < 1e-5);
+        assert!(
+            l.pose
+                .position
+                .abs_diff_eq(Vec3::new(0.0, 0.0, -shown / 2.0), 1e-5)
+        );
         let c = &vr.backend.overlays[cursor];
         assert!(c.visible);
         assert!(
@@ -2058,6 +2114,9 @@ mod tests {
         // 同じだけ向きを変えたとき、1 tick で進んだ量（ピクセル）。
         let step = |turn: f32, trigger: f32| {
             let (mut vr, mut ov) = setup();
+            // 仕組みを見るため、既定値によらない強さ・緩める角度（約 1.1°）にする。
+            ov.set_pointer_smoothing(0.9);
+            ov.set_pointer_release(0.02f32.to_degrees());
             controller(&mut vr, Pose::IDENTITY, &[("trigger/value", trigger)]);
             ov.tick(&mut vr);
             let aim = Pose::new(Vec3::ZERO, Quat::from_rotation_y(-turn));
@@ -2075,6 +2134,10 @@ mod tests {
     #[test]
     fn smoothing_steadies_hits_and_pointer_together() {
         let (mut vr, mut ov, laser, cursor) = with_pointers();
+        // 仕組みを見るため、既定値によらない強さ・緩める角度・線の長さにする。
+        ov.set_pointer_smoothing(0.9);
+        ov.set_pointer_release(0.02f32.to_degrees());
+        ov.set_laser_length(LASER_MAX);
         controller(&mut vr, Pose::IDENTITY, &[]);
         ov.tick(&mut vr);
         // 右へ向けると、ヒット（クリック位置）もポインタも途中から追う。
@@ -2091,7 +2154,10 @@ mod tests {
             "{c} {hit}"
         );
         let tip = vr.backend.overlays[laser].pose.position * 2.0;
-        assert!(tip.abs_diff_eq(hit, 1e-4), "{tip}");
+        assert!(
+            tip.abs_diff_eq(hit - hit.normalize() * LASER_GAP, 1e-4),
+            "{tip}"
+        );
         for _ in 0..200 {
             ov.tick(&mut vr);
         }

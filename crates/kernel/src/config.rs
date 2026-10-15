@@ -79,6 +79,10 @@ pub struct Config {
     pub runtime: Option<String>,
     /// レーザーの手ブレ抑え（0 = 抑えない 〜 1 未満。大きいほど強く、遅れる）。省略で既定値。
     pub pointer_smoothing: Option<f32>,
+    /// 手ブレ抑えを緩める角度（度）。抑えたレーザーが手の向きからこれだけ遅れると抑えが半分になる。省略で既定値。
+    pub pointer_release_deg: Option<f32>,
+    /// レーザーの見える長さ（m）。手元からこの長さで消える（カーソルが近ければその手前で消える）。省略で既定値。
+    pub laser_length: Option<f32>,
     /// レーザーのエミュレート方式（`mouse` / `touch`）。省略でタッチ。
     pub pointer_mode: Option<PointerMode>,
     /// 機能ごとに GPU を使うか（`[gpu]` の表。互換性のため CPU に落とせる）。
@@ -140,13 +144,23 @@ pub fn load() -> Result<Config, Error> {
 /// `path` の設定ファイルの `theme` だけを書き換える（他のキーは残す。ファイルが無ければ作る）。
 /// 既存のファイルが読めない・TOML として壊れているときは、上書きせずにエラーを返す。
 pub fn save_theme_at(path: &Path, theme: ThemeMode) -> Result<(), Error> {
+    let value = toml::Value::try_from(theme).expect("an enum of unit variants is a string");
+    save_at(path, "theme", value)
+}
+
+/// 数値のキー（`pointer_smoothing` など）を `path` の設定ファイルへ書き戻す（[`save_theme_at`] と同じく他のキーは残す）。
+pub fn save_number_at(path: &Path, key: &str, value: f32) -> Result<(), Error> {
+    save_at(path, key, toml::Value::Float(f64::from(value)))
+}
+
+/// 設定ファイルの 1 つのキーだけを書き換える。ファイルが無ければ作り、壊れていれば上書きしない。
+fn save_at(path: &Path, key: &str, value: toml::Value) -> Result<(), Error> {
     let mut table = match fs::read_to_string(path) {
         Ok(text) => text.parse::<toml::Table>().map_err(Error::Parse)?,
         Err(e) if e.kind() == io::ErrorKind::NotFound => toml::Table::new(),
         Err(e) => return Err(Error::Io(e)),
     };
-    let value = toml::Value::try_from(theme).expect("an enum of unit variants is a string");
-    table.insert("theme".into(), value);
+    table.insert(key.into(), value);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).map_err(Error::Io)?;
     }
@@ -237,6 +251,10 @@ emulator = false
             (c.theme, c.log.as_deref(), c.gpu.emulator),
             (ThemeMode::Light, Some("debug"), false)
         );
+        // 手ブレ抑えも同じく書き戻せ、テーマは残る。
+        save_number_at(&path, "pointer_smoothing", 0.5).unwrap();
+        let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!((c.pointer_smoothing, c.theme), (Some(0.5), ThemeMode::Light));
         // 壊れたファイルは上書きしない。
         fs::write(&path, "log = ").unwrap();
         assert!(save_theme_at(&path, ThemeMode::Dark).is_err());
