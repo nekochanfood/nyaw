@@ -589,7 +589,8 @@ impl PanelRoot {
 
 impl Render for PanelRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.0.clone()
+        // 全パネル共通の書体（子は継承する）。
+        div().size_full().font(design::font::font()).child(self.0.clone())
     }
 }
 
