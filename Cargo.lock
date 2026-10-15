@@ -1570,6 +1570,7 @@ version = "2026.0.1"
 dependencies = [
  "animato",
  "gpui",
+ "gpui_platform",
  "palette",
  "serde_json",
  "svgtypes 0.15.3",

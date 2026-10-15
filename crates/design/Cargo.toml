@@ -11,6 +11,9 @@ palette = "0.7"
 animato = { version = "1.7.2", default-features = false, features = ["tween"] }
 gpui = { workspace = true, features = ["test-support"] }
 
+[dev-dependencies]
+gpui_platform = { workspace = true, features = ["test-support"] }
+
 [build-dependencies]
 palette = "0.7"
 serde_json = "1"

@@ -15,6 +15,7 @@
 include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
 
 pub mod animation;
+pub mod catalog;
 pub mod components;
 pub mod font;
 pub mod icon;
