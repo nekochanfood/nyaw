@@ -30,6 +30,11 @@ harness = false
 name = "panel_lod"
 harness = false
 
+# フォールバックで描いた日本語が、そのフォントを直に指定したときと同じ字形になるか（実プラットフォーム + GPU）。
+[[test]]
+name = "jp_fallback"
+harness = false
+
 # ベンチマーク。常には流さない（`-- --ignored` のときだけ）。
 [[test]]
 name = "stress"

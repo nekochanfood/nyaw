@@ -1541,19 +1541,30 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             // so create a new font from it and cache it accordingly. The usual culprit here seems to be Segoe UI Symbol
             .map_or_else(
                 || {
-                    let font = font_face_to_font(font_face, &self.locale)
-                        .ok_or_else(|| Error::new(DWRITE_E_NOFONT, "Failed to create font"))?;
-                    let font_id = match context.text_system.font_to_font_id.get(&font) {
-                        Some(&font_id) => font_id,
-                        None => context
-                            .text_system
-                            .select_and_cache_font(context.components, &font)
-                            .ok_or_else(|| Error::new(DWRITE_E_NOFONT, "Failed to create font"))?,
-                    };
-                    context
-                        .text_system
-                        .font_info_cache
-                        .insert(font_face_key, font_id);
+                    // NYAW: フォールバックで選ばれた面は、名前で引き直さずにその面のまま登録する。
+                    // 名前（ファミリー・太さ）で引き直すと別のファイルの面になることがあり（埋め込みの可変フォント、
+                    // システムのフォールバックなど）、字形の番号が合わずに日本語が別の字で描かれていた。
+                    // 面を持っておくので、キー（面のアドレス）がほかの面に使い回されることもない。
+                    let family = font_face_to_font(font_face, &self.locale)
+                        .map(|f| f.family.to_string())
+                        .unwrap_or_default();
+                    let features = unsafe {
+                        DirectWriteState::generate_font_features(
+                            &context.components.factory,
+                            &FontFeatures::default(),
+                        )
+                    }
+                    .map_err(|e| Error::new(DWRITE_E_NOFONT, e.to_string()))?;
+                    let state = &mut *context.text_system;
+                    let font_id = FontId(state.fonts.len());
+                    state.fonts.push(FontInfo {
+                        font_family_h: HSTRING::from(family.as_str()),
+                        font_face: font_face.clone(),
+                        features,
+                        fallbacks: None,
+                        font_collection: state.system_font_collection.clone(),
+                    });
+                    state.font_info_cache.insert(font_face_key, font_id);
                     windows::core::Result::Ok(font_id)
                 },
                 Ok,
