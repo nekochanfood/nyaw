@@ -42,6 +42,8 @@ const fn rgb24(rgba: u32) -> u32 {
 }
 /// パネルの地。どの画面もカード 1 枚なので、カードがそのままパネルになる。
 pub const PANEL_BG: u32 = rgb24(THEME.card);
+/// パネルの縁の影の余白。地はこの内側から始まる。
+pub use design::components::PANEL_MARGIN;
 pub const BUTTON_BG: u32 = rgb24(THEME.control);
 /// レーザーが当たっている間のボタン色。VR 上でどこを指しているかの視覚的フィードバック。
 pub const BUTTON_HOVER_BG: u32 = rgb24(THEME.control_hover);
@@ -678,8 +680,9 @@ impl Render for TooltipTest {
 }
 
 /// ダイアログの大きさ。
-const DIALOG_SIZE: Vec2 = Vec2::new(0.4, 0.25);
-const DIALOG_PX: (u32, u32) = (400, 250);
+/// 縦長（上からアイコン・タイトル・概要・ボタン）。影の余白を除いた面は 252 x 392px。
+const DIALOG_SIZE: Vec2 = Vec2::new(0.3, 0.44);
+const DIALOG_PX: (u32, u32) = (300, 440);
 
 /// 親子関係を試す画面（`dialog-test`）。ダイアログ（[`Dialog`]）を子として開く 2 種類のボタンがある。
 /// - `open-dialog`: 外側（この画面など）を押すと閉じる（既定）。
@@ -725,7 +728,13 @@ impl Render for DialogTest {
                                 let me = me.clone();
                                 cx.default_global::<PanelControl>().spawns.push(
                                     PanelSpec::child(panel, true, move |id, _, _| {
-                                        Dialog::new(id, me, "Click outside to dismiss")
+                                        Dialog::new(
+                                            id,
+                                            me,
+                                            &design::icons::INFO,
+                                            "Click outside to dismiss",
+                                            "Answer below, or press outside this dialog to close it.",
+                                        )
                                     })
                                     .sized(DIALOG_SIZE, DIALOG_PX),
                                 )
@@ -738,7 +747,13 @@ impl Render for DialogTest {
                                 let me = me.clone();
                                 cx.default_global::<PanelControl>().spawns.push(
                                     PanelSpec::child(panel, true, move |id, _, _| {
-                                        Dialog::new(id, me, "Answer required")
+                                        Dialog::new(
+                                            id,
+                                            me,
+                                            &design::icons::WARNING,
+                                            "Answer required",
+                                            "This dialog stays open until you press OK or Cancel.",
+                                        )
                                     })
                                     .without_dismiss()
                                     .sized(DIALOG_SIZE, DIALOG_PX),
@@ -758,19 +773,30 @@ impl Render for DialogTest {
     }
 }
 
-/// [`DialogTest`] が開く、OK / Cancel だけのダイアログ。押した答えを親へ渡して自分を閉じる。`message` は種類の見分け用。
+/// [`DialogTest`] が開く、OK / Cancel だけのダイアログ（`components::dialog`）。押した答えを親へ渡して自分を閉じる。
+/// `title` は種類の見分け用。
 pub struct Dialog {
     panel: PanelId,
     parent: WeakEntity<DialogTest>,
-    message: &'static str,
+    glyph: &'static design::Icon,
+    title: &'static str,
+    description: &'static str,
 }
 
 impl Dialog {
-    pub fn new(panel: PanelId, parent: WeakEntity<DialogTest>, message: &'static str) -> Self {
+    pub fn new(
+        panel: PanelId,
+        parent: WeakEntity<DialogTest>,
+        glyph: &'static design::Icon,
+        title: &'static str,
+        description: &'static str,
+    ) -> Self {
         Self {
             panel,
             parent,
-            message,
+            glyph,
+            title,
+            description,
         }
     }
 }
@@ -778,10 +804,10 @@ impl Dialog {
 impl Render for Dialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let answer = |id: &'static str, label: &'static str| {
+        let answer = |id: &'static str, label: &'static str, variant| {
             let parent = self.parent.clone();
             let close = command(self.panel, PanelCommand::Close);
-            button(&theme, id, label, false).on_click(move |e, w, cx| {
+            components::button(&theme, id, label, variant).on_click(move |e, w, cx| {
                 parent
                     .update(cx, |t, cx| {
                         t.answered += 1;
@@ -792,17 +818,16 @@ impl Render for Dialog {
                 close(e, w, cx);
             })
         };
-        components::card_panel(&theme)
-            .flex()
-            .flex_col()
-            .justify_between()
-            .p_3()
-            .child(self.message)
-            .child(
-                row()
-                    .child(answer("dialog-ok", "OK"))
-                    .child(answer("dialog-cancel", "Cancel")),
-            )
+        components::dialog(
+            &theme,
+            self.glyph,
+            self.title,
+            self.description,
+            [
+                answer("dialog-ok", "OK", Variant::Primary),
+                answer("dialog-cancel", "Cancel", Variant::Default),
+            ],
+        )
     }
 }
 
@@ -896,7 +921,6 @@ impl Render for TestingAnim {
         // 0→1→0 と往復する。
         let x = 1.0 - (phase * 2.0 - 1.0).abs();
         components::card_panel(&theme)
-            .relative()
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))

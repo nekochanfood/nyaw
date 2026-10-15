@@ -8,8 +8,9 @@ use testkit::{Driver, Vec2, Vec3, VrKit};
 fn vr_panel_shows_rendered_ui(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::default());
     assert_eq!(kit.color_at("click-me"), BUTTON_BG);
-    // 角は角丸で透明なので、左の縁（地の余白）を見る。
-    assert_eq!(kit.vr_color_at_px(Vec2::new(4.0, 60.0)), PANEL_BG);
+    // 縁は影の余白、角は角丸で透明なので、影の内側の左の縁（地の余白）を見る。
+    let edge = testing::PANEL_MARGIN + 4.0;
+    assert_eq!(kit.vr_color_at_px(Vec2::new(edge, 60.0)), PANEL_BG);
 
     let res = kit.kernel.panel(0).resolution;
     let tex = kit.texture();

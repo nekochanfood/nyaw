@@ -137,6 +137,9 @@ const GRAB_MAX: f32 = 10.0;
 /// 掴み中にトリガーを押しながら手を 1m 前へ出したときの拡大率の指数（e^SCALE_RATE 倍）。後ろへ引くと縮む。
 const SCALE_RATE: f32 = 3.0;
 /// パネルの幅の範囲（m）。
+/// 掴み中の拡大縮小の入力（`ControllerState::resize`）を倒し切ったときの、1 tick あたりの拡大率の指数。
+// ponytail: tick 単位なので速さはフレームレート次第（90Hz で毎秒約 2.5 倍）。テスト用の入力なので時間では割らない。
+const RESIZE_STEP: f32 = 0.01;
 const SCALE_MIN: f32 = 0.05;
 const SCALE_MAX: f32 = 10.0;
 
@@ -694,6 +697,11 @@ impl Overlay {
                     st.scaling = Some(c.aim.position);
                 } else {
                     st.scaling = None;
+                }
+                // 拡大縮小の入力（novr の PageUp / PageDown）。その場で大きさだけ変える。
+                if c.resize != 0.0 {
+                    let w = (p.size.x * (c.resize * RESIZE_STEP).exp()).clamp(SCALE_MIN, SCALE_MAX);
+                    p.size *= w / p.size.x;
                 }
                 let new_len = new_len.clamp(GRAB_MIN, GRAB_MAX);
                 let offset = offset + Vec3::NEG_Z * (new_len - len);
@@ -2216,6 +2224,37 @@ mod tests {
         assert!((ov.panel(0).size.x - w0).abs() < 1e-3);
         // トリガーなしで動かしても大きさは変わらない。
         controller(&mut vr, at(0.0, 0.0, -0.2), &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        assert!((ov.panel(0).size.x - w0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn resize_input_scales_only_the_grabbed_panel() {
+        let (mut vr, mut ov) = setup();
+        const RESIZE: &str = subsystems::vr::RESIZE_INPUT;
+        let resize = |r| [("squeeze/value", 1.0), (RESIZE, r)];
+        controller(&mut vr, Pose::IDENTITY, &resize(0.0));
+        settle(&mut vr, &mut ov);
+        let (w0, h0, pos) = (ov.panel(0).size.x, ov.panel(0).size.y, ov.panel(0).pose.position);
+        // 押している間、tick ごとに大きくなる。縦横比は保ち、その場に留まる。
+        controller(&mut vr, Pose::IDENTITY, &resize(1.0));
+        for _ in 0..10 {
+            ov.tick(&mut vr);
+        }
+        let w1 = ov.panel(0).size.x;
+        assert!((w1 / w0 - (10.0 * RESIZE_STEP).exp()).abs() < 1e-3, "{w1}");
+        assert!((ov.panel(0).size.y / h0 - w1 / w0).abs() < 1e-4);
+        assert!(ov.panel(0).pose.position.abs_diff_eq(pos, 1e-3));
+        // 逆向きで同じだけ縮むと元に戻る。
+        controller(&mut vr, Pose::IDENTITY, &resize(-1.0));
+        for _ in 0..10 {
+            ov.tick(&mut vr);
+        }
+        assert!((ov.panel(0).size.x - w0).abs() < 1e-3);
+        // 掴んでいなければ変わらない。
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        settle(&mut vr, &mut ov);
+        controller(&mut vr, Pose::IDENTITY, &[(RESIZE, 1.0)]);
         settle(&mut vr, &mut ov);
         assert!((ov.panel(0).size.x - w0).abs() < 1e-3);
     }

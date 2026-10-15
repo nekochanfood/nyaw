@@ -450,11 +450,31 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
     )
 }
 
+/// パネルの影のぼかし（ガウスの σ）。ずらさず四方へ広がる影で、重なったパネルどうしの境界を見せる。
+const PANEL_SHADOW_BLUR: f32 = 8.0;
+/// パネルの地をウィンドウの縁から離す幅。影はパネルのテクスチャの中に描くので、ここに収める。
+/// GPUI は影を σ の 3 倍まで描くので、それと同じにして影が切れないようにする。
+pub const PANEL_MARGIN: f32 = 3.0 * PANEL_SHADOW_BLUR;
+
+/// パネルの地の置き方: ウィンドウの縁から [`PANEL_MARGIN`] 内側を埋め、その余白に影を落とす。
+/// 大きさは `absolute` と `inset` で決まるので、呼び出し側は `.relative()` や `.size_full()` で上書きしない
+/// （`absolute` のままで、中の `absolute` の子の基準になる）。
+fn panel_base(div: Div) -> Div {
+    div.absolute()
+        .inset(px(PANEL_MARGIN))
+        .shadow(vec![gpui::BoxShadow {
+            color: gpui::hsla(0.0, 0.0, 0.0, 0.4),
+            offset: point(px(0.0), px(0.0)),
+            blur_radius: px(PANEL_SHADOW_BLUR),
+            spread_radius: px(0.0),
+            inset: false,
+        }])
+}
+
 /// パネル全体の地。角丸は `XL`、中身との間隔は `MD`（12）なので、中のカードの角丸は同心の `XL − MD = LG`。
 /// カードを複数並べる画面だけが使い、中身は [`card`] に入れる。カードが 1 枚なら [`card_panel`]。
 pub fn panel(theme: &Theme) -> Div {
-    div()
-        .size_full()
+    panel_base(div())
         .p(px(spacing::MD))
         .rounded(px(radius::XL))
         .bg(rgba(theme.background))
@@ -471,7 +491,57 @@ pub fn card(theme: &Theme) -> Div {
 
 /// カードが 1 枚だけの画面: 地（[`panel`]）を敷かず、カードがパネル全体になる。角丸はパネルの `XL`。
 pub fn card_panel(theme: &Theme) -> Div {
-    card(theme).size_full().rounded(px(radius::XL))
+    panel_base(card(theme)).rounded(px(radius::XL))
+}
+
+/// ダイアログのアイコンの大きさ。幅の 1/4 前後（幅 300px のダイアログで）。
+const DIALOG_ICON: f32 = 64.0;
+
+/// ダイアログ（子パネル）の中身。上からアイコン・タイトル・概要・ボタンを中央揃えで並べる。
+/// ボタンは幅いっぱいで縦に積み、下に寄せる。並べる順は呼び出し側が決める（主の操作を上に）。
+/// 開く・閉じる・答えを返すのは呼び出し側（`ui::PanelSpec::child`）。
+pub fn dialog(
+    theme: &Theme,
+    glyph: &'static crate::Icon,
+    title: impl Into<SharedString>,
+    description: impl Into<SharedString>,
+    actions: impl IntoIterator<Item = Button>,
+) -> Div {
+    card_panel(theme)
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(spacing::SM))
+        .p(px(spacing::LG))
+        .child(
+            crate::icon(glyph)
+                .weight(crate::Weight::Fill)
+                .size(px(DIALOG_ICON))
+                .color(rgba(theme.accent_solid)),
+        )
+        .child(
+            div()
+                .text_center()
+                .text_size(px(font_size::LG))
+                .font_weight(FontWeight::BOLD)
+                .child(title.into()),
+        )
+        .child(
+            div()
+                .text_center()
+                .text_size(px(font_size::MD))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(description.into()),
+        )
+        .child(
+            div()
+                .mt_auto()
+                .w_full()
+                .flex()
+                .flex_col()
+                .gap(px(spacing::SM))
+                .children(actions.into_iter().map(|b| b.w_full())),
+        )
 }
 
 /// 画面やパネルの地。文字色も役割から決まる。

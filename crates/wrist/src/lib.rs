@@ -25,11 +25,14 @@ pub const IN_VIEW: Pose = Pose::new(Vec3::new(-0.32, -0.2, -0.4), Quat::IDENTITY
 /// 召喚する Testing パネルの位置。召喚した瞬間の頭から見て正面 0.8m、少し下。
 pub const TESTING_POSE: Pose = Pose::new(Vec3::new(0.0, -0.1, -0.8), Quat::IDENTITY);
 
-/// 丸い文字盤が収まる正方形。4px/mm（旧来の 0.12m / 480px と同じ密度）。
-const SIZE_M: Vec2 = Vec2::new(0.1, 0.1);
-const RES_PX: (u32, u32) = (400, 400);
+/// 丸い文字盤（直径 0.1m）と、周りの影の余白（[`components::PANEL_MARGIN`]）が収まる正方形。
+/// 4px/mm（旧来の 0.12m / 480px と同じ密度）。
+const SIZE_M: Vec2 = Vec2::new(0.112, 0.112);
+const RES_PX: (u32, u32) = (448, 448);
+/// 文字盤（カード）の中での中心。
+const DIAL_C: f32 = RES_PX.0 as f32 / 2.0 - components::PANEL_MARGIN;
 /// 文字盤の中心から目盛り（と秒の点）の中心までの半径。縁から `spacing::LG` 内側。
-const DIAL_R: f32 = RES_PX.0 as f32 / 2.0 - spacing::LG - 8.0;
+const DIAL_R: f32 = DIAL_C - spacing::LG - 8.0;
 
 /// 左手首に取り付いた状態で起動する wrist の起動仕様。
 pub fn spec() -> PanelSpec {
@@ -69,11 +72,10 @@ impl Render for Wrist {
         // 腕時計の文字盤: 丸いカード 1 枚がパネル全体（地は敷かない）。縁に 12 の目盛りと、今の秒を指す点。
         let dot = |i: u32, d: f32, color: u32| {
             let a = i as f32 * std::f32::consts::TAU / 60.0;
-            let c = RES_PX.0 as f32 / 2.0;
             div()
                 .absolute()
-                .left(px(c + DIAL_R * a.sin() - d / 2.0))
-                .top(px(c - DIAL_R * a.cos() - d / 2.0))
+                .left(px(DIAL_C + DIAL_R * a.sin() - d / 2.0))
+                .top(px(DIAL_C - DIAL_R * a.cos() - d / 2.0))
                 .size(px(d))
                 .rounded(px(radius::FULL))
                 .bg(rgba(color))
@@ -84,7 +86,6 @@ impl Render for Wrist {
         let second = dot(now.second(), 12.0, theme.accent_solid);
         components::card_panel(&theme)
             .rounded(px(radius::FULL))
-            .relative()
             .flex()
             .flex_col()
             .items_center()

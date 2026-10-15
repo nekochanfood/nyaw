@@ -92,6 +92,10 @@ pub enum Hand {
     Right,
 }
 
+/// 掴んでいるパネルの拡大縮小（-1..1、+ で大きく）を直接伝える入力名。実機のコントローラには無く、
+/// novr のエミュレーターが PageUp / PageDown で出す（テスト用。手を前後に動かせないため）。
+pub const RESIZE_INPUT: &str = "nyaw/resize";
+
 /// ランタイム非依存・バインド前のコントローラのスナップショット。解釈は入力層の仕事。
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawController {
