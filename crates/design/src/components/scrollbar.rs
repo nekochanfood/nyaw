@@ -31,8 +31,12 @@ use crate::{Motion, Theme, duration_ms, radius, scrollbar as spec};
 
 /// 中身がこれだけ（px）引っ張られると、棒の押しつぶしが最大になる。
 const SQUASH_RANGE: f32 = 48.0;
-/// 端でのスクロール量に対する、中身の引っ張られ方（1 より小さいほど重い）。
-const PULL_RESIST: f32 = 0.5;
+/// 引っ張りの重さ。伸びるほど重くなり（対数）、上限はない。`PULL_SOFT` は重くなり始める目安（px）、
+/// `PULL_GRIP` は伸び始めの追従（1 = 指と同じだけ動く）。
+const PULL_SOFT: f32 = 96.0;
+const PULL_GRIP: f32 = 0.6;
+/// 離したあとの戻りの時定数（秒）。止まった所からゆっくり動き出し、加速して、長く柔らかく着地する。
+const RELEASE_TAU: f32 = 0.11;
 /// ホイールが止まって、これだけ経つと離したとみなす。
 const HOLD_WHEEL: Duration = Duration::from_millis(120);
 /// 終わりの合図が無い指の入力（トラックパッドなど）が止まって、これだけ経つと離したとみなす。
@@ -229,8 +233,26 @@ enum Pull {
         /// `None` は離す合図が来るまで保持する（タッチ）。
         idle: Option<Duration>,
     },
-    /// 戻っている（落ち着いていれば 0）。
-    Release(Smooth),
+    /// 戻っている（落ち着いていれば `from` = 0）。`from` は離した時点の伸び（px）。
+    Release { from: f32, start: Instant },
+}
+
+/// 指（ホイール）の動きの積算 `raw` から、中身の伸び（px）を出す。伸びるほど重くなる。
+fn stretch(raw: f32) -> f32 {
+    raw.signum() * PULL_SOFT * (1.0 + PULL_GRIP * raw.abs() / PULL_SOFT).ln()
+}
+
+/// [`stretch`] の逆。
+fn unstretch(shown: f32) -> f32 {
+    shown.signum() * PULL_SOFT / PULL_GRIP * ((shown.abs() / PULL_SOFT).exp() - 1.0)
+}
+
+/// 離したあとの伸び。速度 0 から動き出し（緩）、加速し（急）、尾を引いて着地する（緩）。振動はしない
+/// （過減衰の端、臨界減衰: x(t) = x0 (1 + t/τ) e^(-t/τ)）。
+fn settle(from: f32, secs: f32) -> f32 {
+    let u = secs / RELEASE_TAU;
+    let v = from * (1.0 + u) * (-u).exp();
+    if v.abs() < 0.5 { 0.0 } else { v }
 }
 
 /// `elastic` の状態。
@@ -319,26 +341,36 @@ impl Element for Shift {
 }
 
 impl Pull {
-    fn value(&self, now: Instant) -> f32 {
-        match self {
-            Pull::Held { value, .. } => *value,
-            Pull::Release(s) => s.at(now).0,
+    /// いま見えている伸び（px）。
+    fn shown(&self, now: Instant) -> f32 {
+        match *self {
+            Pull::Held { value, .. } => stretch(value),
+            Pull::Release { from, start } => {
+                settle(from, now.saturating_duration_since(start).as_secs_f32())
+            }
+        }
+    }
+
+    /// 指の動きの積算（戻っている途中でもう一度掴んだら、いまの伸びから続ける）。
+    fn raw(&self, now: Instant) -> f32 {
+        match *self {
+            Pull::Held { value, .. } => value,
+            Pull::Release { .. } => unstretch(self.shown(now)),
         }
     }
 
     fn release(&mut self, now: Instant) {
         if let Pull::Held { value, .. } = *self {
-            *self = Pull::Release(Smooth {
-                from: value,
-                to: 0.0,
-                start: Some(now),
-            });
+            *self = Pull::Release {
+                from: stretch(value),
+                start: now,
+            };
         }
     }
 }
 
 /// 端で引っ張られる中身。スクロール要素の直下の子として、中身を包む。端に着いたままさらにスクロールすると、
-/// 中身がどこまでも（重みを付けて）引っ張られ、離す（タッチを離す・ホイールが止まる）と戻る。
+/// 中身がどこまでも（伸びるほど重くなりながら）引っ張られ、離す（タッチを離す・ホイールが止まる）と戻る。
 /// 反対向きにスクロールすれば、引っ張りが先に戻ってからスクロールする。
 /// 中身は少なくともビューポートの大きさになる（どこをポインタが指していても受け取れるように）。
 #[derive(IntoElement)]
@@ -372,7 +404,10 @@ impl RenderOnce for Elastic {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Elastic { id, handle, base } = self;
         let state = window.use_keyed_state(id, cx, |_, _| ElasticState {
-            pull: [Pull::Release(Smooth::rest(0.0)); 2],
+            pull: [Pull::Release {
+                from: 0.0,
+                start: Instant::now(),
+            }; 2],
             touching: false,
         });
         let now = Instant::now();
@@ -386,10 +421,9 @@ impl RenderOnce for Elastic {
                         p.release(now);
                     }
                 }
-                if let Pull::Release(r) = p {
-                    moving |= r.at(now).1;
-                }
-                p.value(now)
+                let shown = p.shown(now);
+                moving |= matches!(p, Pull::Release { .. }) && shown != 0.0;
+                shown
             })
         });
         cx.default_global::<Pulls>().0.insert(id, v);
@@ -427,10 +461,10 @@ impl RenderOnce for Elastic {
                             s.pull[i].release(now);
                             continue;
                         }
-                        let (d, cur) = (ds[i], s.pull[i].value(now));
+                        let (d, cur) = (ds[i], s.pull[i].raw(now));
                         let reeling = cur != 0.0 && d * cur < 0.0;
                         if d != 0.0 && (reeling || at_edge(&handle, axis, d)) {
-                            let mut value = cur + d * PULL_RESIST;
+                            let mut value = cur + d;
                             if value * cur < 0.0 {
                                 value = 0.0; // 戻しきった
                             }
@@ -795,5 +829,34 @@ mod tests {
         // 行き過ぎても範囲に収まる。
         assert_eq!(offset_for(&t, -1000.0, grab, max), 0.0);
         assert_eq!(offset_for(&t, 1000.0, grab, max), -max);
+    }
+
+    #[test]
+    fn pull_gets_heavier_without_a_limit_and_inverts() {
+        let (a, b, c) = (stretch(100.0), stretch(200.0), stretch(10000.0));
+        assert!(
+            a > 0.0 && b - a < a,
+            "伸びるほど同じ入力での伸びが小さくなる"
+        );
+        assert!(c > b, "上限はない");
+        assert_eq!(stretch(-100.0), -a);
+        assert!((unstretch(stretch(250.0)) - 250.0).abs() < 1e-2);
+    }
+
+    #[test]
+    fn release_eases_in_then_out_without_overshoot() {
+        let at = |ms: f32| settle(100.0, ms / 1000.0);
+        let (early, middle) = (100.0 - at(50.0), at(50.0) - at(150.0));
+        assert!(
+            early < middle,
+            "動き出しはゆっくり、そのあと加速する: {early} {middle}"
+        );
+        assert!(
+            at(150.0) - at(250.0) > at(450.0) - at(550.0),
+            "終わりへ向けて緩やかになる"
+        );
+        let samples: Vec<f32> = (0..100).map(|i| at(i as f32 * 10.0)).collect();
+        assert!(samples.windows(2).all(|w| w[1] <= w[0]), "行き過ぎない");
+        assert_eq!(at(2000.0), 0.0, "最後は 0 に落ち着く");
     }
 }

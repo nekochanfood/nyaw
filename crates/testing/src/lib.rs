@@ -1433,7 +1433,7 @@ mod tests {
             modifiers: gpui::Modifiers::none(),
             touch_phase: gpui::TouchPhase::Ended,
         });
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        std::thread::sleep(std::time::Duration::from_millis(900));
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         assert_eq!(top(cx), rest, "離したら戻る");
@@ -1474,7 +1474,7 @@ mod tests {
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         assert!(
-            top(cx) < rest - px(200.0),
+            top(cx) < rest - px(150.0),
             "末尾でも上限なく引っ張れる: {:?}",
             top(cx)
         );
@@ -1485,7 +1485,7 @@ mod tests {
         cx.run_until_parked();
         assert_eq!(top(cx), held, "タッチ中は手を止めても戻らない");
         cx.simulate_event(wheel(0.0, gpui::TouchPhase::Ended));
-        std::thread::sleep(std::time::Duration::from_millis(250));
+        std::thread::sleep(std::time::Duration::from_millis(900));
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
         assert_eq!(top(cx), rest, "離したら戻る");
