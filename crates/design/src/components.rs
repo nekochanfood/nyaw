@@ -1,7 +1,7 @@
 //! Components: 役割（[`Theme`]）と Constants だけで組む部品。生の色は書かない。
 //! 部品は `Stateful<Div>` を返すので、呼び出し側が `on_click` などを足す。
 
-use gpui::{App, Div, SharedString, Stateful, Window, div, prelude::*, px, rgba};
+use gpui::{App, Div, FontWeight, SharedString, Stateful, Window, div, prelude::*, px, rgba};
 
 use crate::{Theme, font_size, radius, spacing};
 
@@ -20,15 +20,15 @@ pub fn button(
 ) -> Stateful<Div> {
     let (bg, hover, active, fg) = match variant {
         Variant::Primary => (
-            theme.primary,
-            theme.primary_hover,
-            theme.primary_active,
-            theme.on_primary,
+            theme.accent_solid,
+            theme.accent_solid_hover,
+            theme.accent_solid_active,
+            theme.on_accent,
         ),
         Variant::Danger => (
-            theme.danger,
-            theme.danger_hover,
-            theme.danger_active,
+            theme.danger_solid,
+            theme.danger_solid_hover,
+            theme.danger_solid_active,
             theme.on_danger,
         ),
     };
@@ -39,6 +39,8 @@ pub fn button(
         .py(px(spacing::SM))
         .rounded(px(radius::MD))
         .text_size(px(font_size::MD))
+        // 太字の 18.66px 以上は大きい文字（WCAG の 3:1）。ボタンの文字色の検査はこれを前提にしている。
+        .font_weight(FontWeight::BOLD)
         .text_color(rgba(fg))
         .bg(rgba(bg))
         .hover(move |s| s.bg(rgba(hover)))
@@ -59,7 +61,7 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
         .h(px(h))
         .px(px(pad))
         .rounded(px(radius::FULL))
-        .bg(rgba(if on { theme.primary } else { theme.track }));
+        .bg(rgba(if on { theme.accent_solid } else { theme.track }));
     if on {
         track = track.justify_end();
     }
@@ -67,7 +69,7 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
         div()
             .size(px(knob))
             .rounded(px(radius::FULL))
-            .bg(rgba(if on { theme.on_primary } else { theme.surface })),
+            .bg(rgba(if on { theme.on_accent } else { theme.panel })),
     )
 }
 
@@ -102,7 +104,7 @@ pub fn slider(
                 .h(px(if i == filled { 24.0 } else { 8.0 }))
                 .rounded(px(radius::SM))
                 .bg(rgba(if i <= filled {
-                    theme.primary
+                    theme.accent_solid
                 } else {
                     theme.track
                 }))
@@ -115,9 +117,8 @@ pub fn slider(
 /// 画面やパネルの地。文字色も役割から決まる。
 pub fn surface(theme: &Theme) -> Div {
     div()
-        .bg(rgba(theme.surface))
-        .text_color(rgba(theme.on_surface))
+        .bg(rgba(theme.neutral_base))
+        .text_color(rgba(theme.neutral_text))
         .text_size(px(font_size::MD))
         .line_height(px(font_size::MD * 1.4))
-        .text_decoration_color(rgba(theme.focus))
 }

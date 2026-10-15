@@ -1,12 +1,12 @@
 //! デザイン層。UI の見た目の責務を 3 層に分ける。
 //!
-//! 1. **Constants**（[`palette`] / [`radius`] / [`spacing`] / [`font_size`] / [`letter_spacing`] / [`duration_ms`]）:
-//!    生の値だけ。色の用途は持たない。個性（パレット・角丸・字間）はここと [`components`] の装飾で出す。
-//! 2. **Utilities**（[`Theme`]）: 役割（`primary` / `on_primary` ...）→ パレットの色。部品は役割だけを見る。
-//!    役割の組のコントラスト比は build.rs が検証するので、パレットを変えても読めない組み合わせは作れない。
+//! 1. **Constants**（[`scale`] / [`radius`] / [`spacing`] / [`font_size`] / [`letter_spacing`] / [`duration_ms`]）:
+//!    生の値だけ。色の用途は持たない。個性（スケール・角丸・字間）はここと [`components`] の装飾で出す。
+//! 2. **Utilities**（[`Theme`]）: 役割（Radix Colors に倣い、`accent` → `blue` のようなスケールの別名、`accent-solid` のような段の用途名、`panel` のようなテーマで変わる名前）→ 色。部品は役割だけを見る。
+//!    役割の組のコントラスト比は build.rs が検証するので、スケールを変えても読めない組み合わせは作れない。
 //! 3. **Components**（[`components`]）: ボタン・スイッチ・スライダー。
 //!
-//! 値は `tokens.json` が唯一の情報源（色は OKLCH）で、build.rs がこのクレートのコードにする。
+//! 値は `tokens.json` が唯一の情報源（色は Radix Colors を OKLCH にしたもの）で、build.rs がこのクレートのコードにする。
 //! Web 側も同じ JSON を読めば値を共有できる。色は `0xRRGGBBAA`（`gpui::rgba` にそのまま渡せる）。
 
 include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
@@ -45,8 +45,8 @@ mod tests {
 
     #[test]
     fn themes_differ_but_share_roles() {
-        assert_ne!(Theme::DARK.surface, Theme::LIGHT.surface);
-        assert_eq!(Theme::DARK.on_primary & 0xff, 0xff);
+        assert_ne!(Theme::DARK.neutral_base, Theme::LIGHT.neutral_base);
+        assert_eq!(Theme::DARK.on_accent & 0xff, 0xff);
     }
 
     #[test]
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn constants_come_from_tokens() {
-        assert_eq!(palette::GRAY_0, 0xffffffff);
+        assert_eq!(scale::WHITE, 0xffffffff);
         assert_eq!(radius::MD, 8.0);
         assert_eq!(duration_ms::NORMAL, 200);
     }
