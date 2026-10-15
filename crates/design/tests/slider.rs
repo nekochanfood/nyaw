@@ -90,16 +90,41 @@ fn only_the_handle_can_be_grabbed(cx: &mut TestAppContext) {
     assert_eq!(view.read_with(cx, |v, _| v.0), 0.5);
 }
 
+fn slide(at: gpui::Point<gpui::Pixels>, dx: f32, phase: TouchPhase) -> ScrollWheelEvent {
+    ScrollWheelEvent {
+        position: at,
+        delta: ScrollDelta::Pixels(point(px(dx), px(0.0))),
+        modifiers: Modifiers::none(),
+        touch_phase: phase,
+    }
+}
+
 #[gpui::test]
-fn scroll_slide_is_not_relative(cx: &mut TestAppContext) {
+fn touch_slide_on_the_handle_follows_the_finger(cx: &mut TestAppContext) {
     let (view, cx) = setup(cx);
     let at = cx.debug_bounds("s-handle").unwrap().center();
-    cx.simulate_event(ScrollWheelEvent {
-        position: at,
-        delta: ScrollDelta::Pixels(point(px(18.0), px(0.0))),
-        modifiers: Modifiers::none(),
-        touch_phase: TouchPhase::Moved,
-    });
+    // 長押しなしで、指の移動量の合計だけハンドルが動く（180px の移動幅で 18px = 0.1）。
+    cx.simulate_event(slide(at, 9.0, TouchPhase::Started));
+    cx.simulate_event(slide(at, 9.0, TouchPhase::Moved));
+    assert!((view.read_with(cx, |v, _| v.0) - 0.6).abs() < 0.01);
+    // 行き過ぎても、指が戻れば戻る。
+    cx.simulate_event(slide(at, 900.0, TouchPhase::Moved));
+    assert_eq!(view.read_with(cx, |v, _| v.0), 1.0);
+    cx.simulate_event(slide(at, -900.0, TouchPhase::Moved));
+    assert!((view.read_with(cx, |v, _| v.0) - 0.6).abs() < 0.01);
+    // 終わったら次のスライドは今の位置から。
+    cx.simulate_event(slide(at, 0.0, TouchPhase::Ended));
+    let now = cx.debug_bounds("s-handle").unwrap().center();
+    cx.simulate_event(slide(now, -18.0, TouchPhase::Started));
+    assert!((view.read_with(cx, |v, _| v.0) - 0.5).abs() < 0.01);
+}
+
+#[gpui::test]
+fn touch_slide_off_the_handle_does_nothing(cx: &mut TestAppContext) {
+    let (view, cx) = setup(cx);
+    let s = cx.debug_bounds("s").unwrap();
+    let groove = point(s.origin.x + px(180.0), s.center().y);
+    cx.simulate_event(slide(groove, 50.0, TouchPhase::Moved));
     assert_eq!(view.read_with(cx, |v, _| v.0), 0.5);
 }
 
