@@ -58,7 +58,7 @@ impl State {
         request: Option<&SharedString>,
         anchor: Anchor,
         animated: bool,
-        measure: impl Fn(&SharedString) -> f32,
+        mut measure: impl FnMut(&SharedString) -> f32,
     ) -> bool {
         let dt = self
             .last
