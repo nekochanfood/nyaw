@@ -38,7 +38,7 @@ fn dragged_panel_moves_in_vr_and_stays_clickable(cx: &mut TestAppContext) {
     kit.drag_panel(to);
     assert!(kit.panel_pose().position.abs_diff_eq(to, 1e-4));
     assert!(
-        kit.kernel.vr.overlays[0]
+        kit.kernel.subsystems.backend.overlays[0]
             .pose
             .position
             .abs_diff_eq(to, 1e-4)

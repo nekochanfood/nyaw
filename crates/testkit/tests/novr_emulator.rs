@@ -40,7 +40,8 @@ fn mouse_hovers_and_leaving_the_screen_drops_the_hand(cx: &mut TestAppContext) {
     assert_eq!(kit.read(|h| h.clicks), 0);
     assert!(
         kit.kernel
-            .vr
+            .subsystems
+            .backend
             .poll()
             .controllers
             .iter()

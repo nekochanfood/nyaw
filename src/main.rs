@@ -5,7 +5,7 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kernel::{Kernel, config};
+use kernel::{Kernel, config, subsystems::os};
 use logger::{Level, Logger, StderrSink};
 
 fn main() -> ExitCode {

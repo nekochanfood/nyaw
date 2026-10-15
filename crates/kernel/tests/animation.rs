@@ -16,13 +16,13 @@ fn full_size_panel_animates_in_and_out_while_neighbor_opts_out() {
     k.apply(neighbor, PanelCommand::Animated(false));
     k.submit(neighbor, 4, 4, &[255; 64]);
     k.submit(panel, 800, 600, &vec![128; 800 * 600 * 4]);
-    let mut width = k.vr.overlays[panel].width_m;
+    let mut width = k.subsystems.backend.overlays[panel].width_m;
     assert!((width - 0.6).abs() < 1e-6);
     let mut alpha = 0;
     let mut intermediate = false;
     for _ in 0..25 {
         k.tick();
-        let o = &k.vr.overlays[panel];
+        let o = &k.subsystems.backend.overlays[panel];
         let next = (o.texture.as_ref().unwrap().pixel(400, 300)[3] as f32 * o.alpha).round() as u8;
         assert!(o.width_m >= width && next >= alpha);
         intermediate |= 0 < next && next < 128;
@@ -33,16 +33,16 @@ fn full_size_panel_animates_in_and_out_while_neighbor_opts_out() {
     assert!(intermediate);
     assert_eq!((width, alpha), (0.8, 128));
     assert_eq!(
-        k.vr.overlays[panel].pixel_submissions, 1,
+        k.subsystems.backend.overlays[panel].pixel_submissions, 1,
         "fade-in does not re-upload the image"
     );
     assert_eq!(k.panel(panel).pose, Pose::IDENTITY);
     k.apply(panel, PanelCommand::Close);
-    assert!(k.status(panel).closed && k.vr.overlays[panel].visible);
+    assert!(k.status(panel).closed && k.subsystems.backend.overlays[panel].visible);
     let mut intermediate = false;
     for _ in 0..20 {
         k.tick();
-        let o = &k.vr.overlays[panel];
+        let o = &k.subsystems.backend.overlays[panel];
         let next = (o.texture.as_ref().unwrap().pixel(0, 0)[3] as f32 * o.alpha).round() as u8;
         assert!(o.width_m <= width && next <= alpha);
         intermediate |= 0 < next && next < 128;
@@ -53,16 +53,16 @@ fn full_size_panel_animates_in_and_out_while_neighbor_opts_out() {
     assert!(intermediate);
     assert!((width - 0.6).abs() < 1e-6);
     assert_eq!(alpha, 0);
-    assert!(!k.vr.overlays[panel].visible);
+    assert!(!k.subsystems.backend.overlays[panel].visible);
     assert_eq!(
-        k.vr.overlays[panel].pixel_submissions, 2,
+        k.subsystems.backend.overlays[panel].pixel_submissions, 2,
         "fade-out uploads only the final transparent 1px"
     );
     assert_eq!(k.panel(panel).pose, Pose::IDENTITY);
-    assert!(k.vr.overlays[neighbor].visible);
-    assert_eq!(k.vr.overlays[neighbor].width_m, 1.0);
+    assert!(k.subsystems.backend.overlays[neighbor].visible);
+    assert_eq!(k.subsystems.backend.overlays[neighbor].width_m, 1.0);
     assert_eq!(
-        k.vr.overlays[neighbor]
+        k.subsystems.backend.overlays[neighbor]
             .texture
             .as_ref()
             .unwrap()

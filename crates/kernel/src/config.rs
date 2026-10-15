@@ -6,6 +6,7 @@ use std::io;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use subsystems::os;
 
 /// 距離 LOD の品質。0 は無効、数字が小さいほど近い距離で解像度を落とす。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Deserialize)]

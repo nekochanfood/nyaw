@@ -196,7 +196,7 @@ fn transparent_runs_on_runtime(vr: Box<dyn VrBackend>) {
         kit.step();
         let image = match runtime {
             Runtime::OpenVr => vr::openvr_overlay_image(id).ok(),
-            _ => kit.kernel.vr.overlay_image(id),
+            _ => kit.kernel.subsystems.backend.overlay_image(id),
         };
         if let Some((_, _, rgba)) = image {
             px = Some([rgba[0], rgba[1], rgba[2], rgba[3]]);

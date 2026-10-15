@@ -1,17 +1,17 @@
 //! Layer 3: オーバーレイの土台。3D 空間上のパネルを持ち、各コントローラのレーザーとの交差を判定し、
 //! ヒットを UI 層向けの 2D ポインタイベントに変換する。パネルを掴んで動かす操作も扱う。
 //! パネルはデバイス（HMD・コントローラ・トラッカー）に取り付けて追従させられる。
-//! [`Overlay::tick`] が下位パイプライン1フレーム分: VR poll → 取り付け先への追従 → 入力マップ → ヒット判定 → イベント。
+//! [`Overlay::tick`] が下位パイプライン1フレーム分: Subsystems の共通フレーム → 取り付け先への追従 → ヒット判定 → イベント。
 
 use std::collections::HashMap;
 use std::time::Instant;
 
 use animato::{Easing, Tween, Update};
-use rendering::Surface;
+use subsystems::{Frame, Subsystems, rendering::Surface, vr};
 
-use vr::{Device, Frame, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
+use vr::{Device, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
-pub use input::ControllerState;
+pub use subsystems::ControllerState;
 
 pub type PanelId = usize;
 
@@ -178,8 +178,6 @@ struct HandState {
 pub struct Overlay {
     panels: Vec<Panel>,
     hands: HashMap<Hand, HandState>,
-    /// 手ごとの前フレームの入力（ボタンのヒステリシス用）。
-    inputs: HashMap<Hand, ControllerState>,
     /// 最後の tick で見えていたトラッカーの ID（取り付け先の候補）。
     trackers: Vec<String>,
     quit: bool,
@@ -452,9 +450,9 @@ impl Overlay {
         });
     }
 
-    pub fn tick(&mut self, vr: &mut dyn VrBackend) -> Vec<UiEvent> {
-        let frame = vr.poll();
-        self.tick_frame(vr, frame)
+    pub fn tick<B: VrBackend>(&mut self, subsystems: &mut Subsystems<B>) -> Vec<UiEvent> {
+        let frame = subsystems.poll();
+        self.tick_frame(&mut subsystems.backend, frame)
     }
 
     /// [`Self::tick`] の poll の後半（ランタイムの待ちとオーバーレイの処理を別々に測るため分けてある）。
@@ -489,28 +487,13 @@ impl Overlay {
         for h in self.hands.values_mut() {
             h.ray = None;
         }
-        for raw in &frame.controllers {
-            let prev = self.inputs.get(&raw.hand).copied();
-            let c = input::map(raw, prev.as_ref());
-            self.inputs.insert(raw.hand, c);
-            self.update_hand(&c, &frame, &mut events);
+        for c in &frame.controllers {
+            self.update_hand(c, &frame, &mut events);
             if let Some((id, ..)) = self.hands[&c.hand].dragging
                 && self.hands[&c.hand].scaling.is_some()
             {
                 let p = &self.panels[id];
                 p.surface.set_width(vr, p.displayed_size().x);
-            }
-            let buttons = |c: &ControllerState| (c.select, c.grab, c.menu);
-            if prev.is_none_or(|p| buttons(&p) != buttons(&c)) {
-                logger::debug!(
-                    "controller buttons",
-                    hand = ?c.hand,
-                    profile = raw.profile,
-                    select = c.select,
-                    grab = c.grab,
-                    menu = c.menu,
-                    hover = ?self.hands[&c.hand].hover,
-                );
             }
         }
         // 見えなくなった手（電源が切れた・novr のマウスが画面の外へ出た）は、指していたパネルから離れる。
@@ -535,8 +518,8 @@ impl Overlay {
     }
 
     fn update_hand(&mut self, c: &ControllerState, frame: &Frame, out: &mut Vec<UiEvent>) {
-        // 模したデバイス（novr のマウス）は手ブレしない。抑えると遅れるだけで、ドラッグで離した位置がずれる。
-        let base = if frame.emulated {
+        // 手ブレのない入力は補正すると遅れるため、サブシステムが示す能力に従う。
+        let base = if !frame.stabilize_pointer {
             0.0
         } else {
             self.smoothing.unwrap_or(POINTER_SMOOTHING)
@@ -678,9 +661,9 @@ impl Overlay {
         };
         emit(id, PointerEvent::Move { pos });
         if c.select != st.select {
-            // 模したデバイス（novr のマウス）は手ブレしない。
-            st.press =
-                (c.select && !frame.emulated).then(|| (pos, aim.position + aim.forward() * t));
+            // 手ブレのある入力だけ、押した位置を保持する。
+            st.press = (c.select && frame.stabilize_pointer)
+                .then(|| (pos, aim.position + aim.forward() * t));
             emit(
                 id,
                 if c.select {
@@ -717,7 +700,7 @@ fn steadiness(base: f32, moved: f32, c: &ControllerState) -> f32 {
     if c.select || c.grab {
         return s;
     }
-    s.max(TRIGGER_STEADY * (c.trigger / input::PRESS).clamp(0.0, 1.0))
+    s.max(TRIGGER_STEADY * c.select_progress())
 }
 
 impl Overlay {
@@ -837,52 +820,70 @@ mod tests {
     use super::*;
     use vr::{Quat, RawController, mock::MockBackend};
 
-    fn advance(ov: &mut Overlay, vr: &mut MockBackend, seconds: f32) {
+    fn advance(ov: &mut Overlay, vr: &mut Subsystems<MockBackend>, seconds: f32) {
         let now = Instant::now();
         for (_, last) in ov.animations.values_mut() {
             *last = now - std::time::Duration::from_secs_f32(seconds);
         }
-        ov.animate(vr, now);
+        ov.animate(&mut vr.backend, now);
     }
 
     #[test]
     fn entrance_and_exit_reach_backend_without_new_ui_frames() {
         let (mut vr, mut ov) = setup();
-        vr.unsupported_alpha = true;
+        vr.backend.unsupported_alpha = true;
         let pose = ov.panel(0).pose;
-        ov.submit(&mut vr, 0, 2, 1, &[80, 40, 20, 128, 200, 100, 50, 255]);
-        assert_eq!(vr.overlays[0].width_m, 0.75);
-        assert_eq!(vr.overlays[0].texture.as_ref().unwrap().rgba, [0; 8]);
-        advance(&mut ov, &mut vr, 0.1);
-        assert!((vr.overlays[0].width_m - 0.96875).abs() < 1e-6);
+        ov.submit(
+            &mut vr.backend,
+            0,
+            2,
+            1,
+            &[80, 40, 20, 128, 200, 100, 50, 255],
+        );
+        assert_eq!(vr.backend.overlays[0].width_m, 0.75);
         assert_eq!(
-            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            vr.backend.overlays[0].texture.as_ref().unwrap().rgba,
+            [0; 8]
+        );
+        advance(&mut ov, &mut vr, 0.1);
+        assert!((vr.backend.overlays[0].width_m - 0.96875).abs() < 1e-6);
+        assert_eq!(
+            vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
             [70, 35, 18, 112]
         );
         // UI の次の描画が届いても、インを最初からやり直さない。
-        ov.submit(&mut vr, 0, 2, 1, &[80, 40, 20, 128, 200, 100, 50, 255]);
+        ov.submit(
+            &mut vr.backend,
+            0,
+            2,
+            1,
+            &[80, 40, 20, 128, 200, 100, 50, 255],
+        );
         advance(&mut ov, &mut vr, 0.1);
-        assert_eq!(vr.overlays[0].width_m, 1.0);
+        assert_eq!(vr.backend.overlays[0].width_m, 1.0);
         assert_eq!(
-            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
             [80, 40, 20, 128]
         );
         assert!(ov.animations.is_empty());
 
-        ov.close(&mut vr, 0);
-        assert!(ov.panel(0).closed && vr.overlays[0].visible);
+        ov.close(&mut vr.backend, 0);
+        assert!(ov.panel(0).closed && vr.backend.overlays[0].visible);
         advance(&mut ov, &mut vr, 0.075);
-        assert!((vr.overlays[0].width_m - 0.96875).abs() < 1e-6);
+        assert!((vr.backend.overlays[0].width_m - 0.96875).abs() < 1e-6);
         assert_eq!(
-            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
             [70, 35, 18, 112]
         );
         // 閉じた UI から遅れて届く描画は、アウトの絵を上書きしない。
-        ov.submit(&mut vr, 0, 1, 1, &[255; 4]);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[255; 4]);
         advance(&mut ov, &mut vr, 0.075);
-        assert!(!vr.overlays[0].visible);
-        assert_eq!(vr.overlays[0].width_m, 0.75);
-        assert_eq!(vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0), [0; 4]);
+        assert!(!vr.backend.overlays[0].visible);
+        assert_eq!(vr.backend.overlays[0].width_m, 0.75);
+        assert_eq!(
+            vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            [0; 4]
+        );
         assert!(!ov.panel(0).surface.has_texture() && ov.animations.is_empty());
         assert_eq!(ov.panel(0).pose, pose);
     }
@@ -890,84 +891,94 @@ mod tests {
     #[test]
     fn native_alpha_does_not_modify_or_resubmit_pixels() {
         let (mut vr, mut ov) = setup();
-        ov.submit(&mut vr, 0, 1, 1, &[80, 40, 20, 128]);
-        assert_eq!(vr.overlays[0].alpha, 0.0);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[80, 40, 20, 128]);
+        assert_eq!(vr.backend.overlays[0].alpha, 0.0);
         advance(&mut ov, &mut vr, 0.1);
-        assert_eq!(vr.overlays[0].alpha, 0.875);
-        assert_eq!(vr.overlays[0].pixel_submissions, 1);
+        assert_eq!(vr.backend.overlays[0].alpha, 0.875);
+        assert_eq!(vr.backend.overlays[0].pixel_submissions, 1);
         assert_eq!(
-            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
             [80, 40, 20, 128]
         );
-        ov.submit(&mut vr, 0, 1, 1, &[40, 20, 10, 64]);
-        assert_eq!(vr.overlays[0].alpha, 0.875);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[40, 20, 10, 64]);
+        assert_eq!(vr.backend.overlays[0].alpha, 0.875);
         advance(&mut ov, &mut vr, 0.1);
-        assert_eq!(vr.overlays[0].alpha, 1.0);
-        ov.close(&mut vr, 0);
+        assert_eq!(vr.backend.overlays[0].alpha, 1.0);
+        ov.close(&mut vr.backend, 0);
         advance(&mut ov, &mut vr, 0.075);
-        assert_eq!(vr.overlays[0].alpha, 0.875);
-        assert_eq!(vr.overlays[0].pixel_submissions, 2);
+        assert_eq!(vr.backend.overlays[0].alpha, 0.875);
+        assert_eq!(vr.backend.overlays[0].pixel_submissions, 2);
         assert_eq!(
-            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
             [40, 20, 10, 64]
         );
         advance(&mut ov, &mut vr, 0.075);
-        assert_eq!(vr.overlays[0].alpha, 0.0);
-        assert!(!vr.overlays[0].visible);
+        assert_eq!(vr.backend.overlays[0].alpha, 0.0);
+        assert!(!vr.backend.overlays[0].visible);
     }
 
     #[test]
     fn close_interrupts_entrance_and_repeated_close_does_not_restart() {
         let (mut vr, mut ov) = setup();
-        ov.submit(&mut vr, 0, 1, 1, &[255; 4]);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[255; 4]);
         advance(&mut ov, &mut vr, 0.05);
-        let before = vr.overlays[0].width_m;
-        ov.close(&mut vr, 0);
-        assert_eq!(vr.overlays[0].width_m, before);
+        let before = vr.backend.overlays[0].width_m;
+        ov.close(&mut vr.backend, 0);
+        assert_eq!(vr.backend.overlays[0].width_m, before);
         controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
         assert!(ov.tick(&mut vr).is_empty());
         advance(&mut ov, &mut vr, 0.075);
-        assert!(vr.overlays[0].width_m < before);
-        ov.close(&mut vr, 0);
+        assert!(vr.backend.overlays[0].width_m < before);
+        ov.close(&mut vr.backend, 0);
         advance(&mut ov, &mut vr, 0.075);
-        assert!(!vr.overlays[0].visible && ov.animations.is_empty());
+        assert!(!vr.backend.overlays[0].visible && ov.animations.is_empty());
     }
 
     #[test]
     fn opt_out_is_per_panel_and_finishes_running_animation() {
         let (mut vr, mut ov) = setup();
         let other = ov
-            .add_panel(&mut vr, "other", Pose::IDENTITY, Vec2::ONE, (100, 100))
+            .add_panel(
+                &mut vr.backend,
+                "other",
+                Pose::IDENTITY,
+                Vec2::ONE,
+                (100, 100),
+            )
             .unwrap();
-        ov.set_animated(&mut vr, other, false);
+        ov.set_animated(&mut vr.backend, other, false);
         for id in [0, other] {
-            ov.submit(&mut vr, id, 1, 1, &[255; 4]);
+            ov.submit(&mut vr.backend, id, 1, 1, &[255; 4]);
         }
-        assert_eq!(vr.overlays[0].width_m, 0.75);
-        assert_eq!(vr.overlays[other].width_m, 1.0);
+        assert_eq!(vr.backend.overlays[0].width_m, 0.75);
+        assert_eq!(vr.backend.overlays[other].width_m, 1.0);
         assert_eq!(
-            vr.overlays[other].texture.as_ref().unwrap().pixel(0, 0),
+            vr.backend.overlays[other]
+                .texture
+                .as_ref()
+                .unwrap()
+                .pixel(0, 0),
             [255; 4]
         );
-        ov.set_animated(&mut vr, 0, false);
-        assert_eq!(vr.overlays[0].width_m, 1.0);
+        ov.set_animated(&mut vr.backend, 0, false);
+        assert_eq!(vr.backend.overlays[0].width_m, 1.0);
         assert!(ov.animations.is_empty());
-        ov.close(&mut vr, other);
-        assert!(!vr.overlays[other].visible);
-        ov.set_animated(&mut vr, 0, true);
-        ov.close(&mut vr, 0);
-        assert!(vr.overlays[0].visible);
-        ov.set_animated(&mut vr, 0, false);
-        assert!(!vr.overlays[0].visible && ov.animations.is_empty());
+        ov.close(&mut vr.backend, other);
+        assert!(!vr.backend.overlays[other].visible);
+        ov.set_animated(&mut vr.backend, 0, true);
+        ov.close(&mut vr.backend, 0);
+        assert!(vr.backend.overlays[0].visible);
+        ov.set_animated(&mut vr.backend, 0, false);
+        assert!(!vr.backend.overlays[0].visible && ov.animations.is_empty());
     }
 
     #[test]
     fn scale_keeps_center_and_hit_coordinates_when_resized() {
         let (mut vr, mut ov) = setup();
         let pose = ov.panel(0).pose;
-        ov.submit(&mut vr, 0, 1, 1, &[255; 4]);
-        ov.set_resolution(&mut vr, 0, (200, 100));
-        assert_eq!(vr.overlays[0].width_m, 1.5);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[255; 4]);
+        ov.set_resolution(&mut vr.backend, 0, (200, 100));
+        assert_eq!(vr.backend.overlays[0].width_m, 1.5);
         let p = ov.panel(0);
         assert_eq!(p.pixel_to_world(Vec2::new(100.0, 50.0)), pose.position);
         assert_eq!(
@@ -978,7 +989,7 @@ mod tests {
         assert_eq!(px, Vec2::new(150.0, 50.0));
         assert!(hit_test(p, &at(0.8, 0.0, 0.0)).is_none());
         advance(&mut ov, &mut vr, 0.2);
-        assert_eq!(vr.overlays[0].width_m, 2.0);
+        assert_eq!(vr.backend.overlays[0].width_m, 2.0);
         assert_eq!(ov.panel(0).pose, pose);
     }
 
@@ -988,29 +999,35 @@ mod tests {
         for id in [laser, cursor] {
             assert!(!ov.panel(id).animated);
         }
-        ov.submit(&mut vr, 0, 1, 1, &[255; 4]);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[255; 4]);
         ov.animations.get_mut(&0).unwrap().1 =
             Instant::now() - std::time::Duration::from_millis(250);
         ov.tick(&mut vr);
-        assert_eq!(vr.overlays[0].width_m, 1.0);
+        assert_eq!(vr.backend.overlays[0].width_m, 1.0);
         assert_eq!(
-            vr.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
+            vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
             [255; 4]
         );
         assert!(ov.animations.is_empty());
     }
 
-    fn setup() -> (MockBackend, Overlay) {
-        let mut vr = MockBackend::default();
+    fn setup() -> (Subsystems<MockBackend>, Overlay) {
+        let mut vr = Subsystems::with_backend(MockBackend::default());
         let mut ov = Overlay::new();
         let pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
-        ov.add_panel(&mut vr, "main", pose, Vec2::new(1.0, 1.0), (100, 100))
-            .unwrap();
+        ov.add_panel(
+            &mut vr.backend,
+            "main",
+            pose,
+            Vec2::new(1.0, 1.0),
+            (100, 100),
+        )
+        .unwrap();
         (vr, ov)
     }
 
-    fn controller(vr: &mut MockBackend, aim: Pose, inputs: &[(&str, f32)]) {
-        vr.frame.controllers = vec![RawController {
+    fn controller(vr: &mut Subsystems<MockBackend>, aim: Pose, inputs: &[(&str, f32)]) {
+        vr.backend.frame.controllers = vec![RawController {
             hand: Hand::Right,
             profile: "valve/index_controller".into(),
             aim,
@@ -1019,7 +1036,7 @@ mod tests {
     }
 
     /// 掴み移動がなめらかに追いつくまで、同じ入力のまま tick する。
-    fn settle(vr: &mut MockBackend, ov: &mut Overlay) {
+    fn settle(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay) {
         for _ in 0..60 {
             ov.tick(vr);
         }
@@ -1123,7 +1140,7 @@ mod tests {
     #[test]
     fn emulated_pointer_is_not_smoothed() {
         let (mut vr, mut ov) = setup();
-        vr.frame.emulated = true;
+        vr.backend.frame.emulated = true;
         controller(&mut vr, Pose::IDENTITY, &[]);
         ov.tick(&mut vr);
         // 右へ向けると、手ブレ抑えなしでその場でヒット点が動く。
@@ -1172,7 +1189,7 @@ mod tests {
         ov.tick(&mut vr);
         assert!(ov.in_view(0), "1m straight ahead");
         // 真後ろを向くと見えない。
-        vr.frame.hmd = Pose::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
+        vr.backend.frame.hmd = Pose::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
         ov.tick(&mut vr);
         assert!(!ov.in_view(0));
     }
@@ -1182,8 +1199,14 @@ mod tests {
         let (mut vr, mut ov) = setup();
         ov.set_capture(true);
         let right = Pose::new(Vec3::new(1.2, 0.0, -1.0), Quat::IDENTITY);
-        ov.add_panel(&mut vr, "right", right, Vec2::new(1.0, 1.0), (100, 100))
-            .unwrap();
+        ov.add_panel(
+            &mut vr.backend,
+            "right",
+            right,
+            Vec2::new(1.0, 1.0),
+            (100, 100),
+        )
+        .unwrap();
         controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
         ov.tick(&mut vr);
         // ドラッグに切り替わった（キャプチャを外した）ので、押したまま隣のパネルへ移れる。
@@ -1203,7 +1226,7 @@ mod tests {
         let (mut vr, mut ov) = setup();
         controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
         ov.tick(&mut vr);
-        vr.frame.controllers.clear();
+        vr.backend.frame.controllers.clear();
         assert_eq!(kinds(&ov.tick(&mut vr)), [PointerEvent::Leave]);
         assert!(ov.tick(&mut vr).is_empty());
     }
@@ -1212,9 +1235,9 @@ mod tests {
     fn resize_keeps_pixel_density_and_hit_mapping() {
         let (mut vr, mut ov) = setup();
         // 100px = 1m のパネルを 200x50 にすると 2m x 0.5m になる。
-        ov.set_resolution(&mut vr, 0, (200, 50));
+        ov.set_resolution(&mut vr.backend, 0, (200, 50));
         assert_eq!(ov.panel(0).size, Vec2::new(2.0, 0.5));
-        assert_eq!(vr.overlays[0].width_m, 2.0);
+        assert_eq!(vr.backend.overlays[0].width_m, 2.0);
         // 中心から右へ 0.75m・上へ 0.125m は、新しい解像度で (175, 12.5)。
         controller(
             &mut vr,
@@ -1240,7 +1263,12 @@ mod tests {
         settle(&mut vr, &mut ov);
         let expected = Vec3::new(1.0, 0.0, -1.0);
         assert!(ov.panel(0).pose.position.abs_diff_eq(expected, 1e-5));
-        assert!(vr.overlays[0].pose.position.abs_diff_eq(expected, 1e-5));
+        assert!(
+            vr.backend.overlays[0]
+                .pose
+                .position
+                .abs_diff_eq(expected, 1e-5)
+        );
     }
 
     #[test]
@@ -1261,17 +1289,22 @@ mod tests {
         Pose::new(Vec3::new(x, y, z), Quat::IDENTITY)
     }
 
-    fn assert_at(ov: &Overlay, vr: &MockBackend, expected: Vec3) {
+    fn assert_at(ov: &Overlay, vr: &Subsystems<MockBackend>, expected: Vec3) {
         let got = ov.panel(0).pose.position;
         assert!(got.abs_diff_eq(expected, 1e-5), "{got}");
-        assert!(vr.overlays[0].pose.position.abs_diff_eq(expected, 1e-5));
+        assert!(
+            vr.backend.overlays[0]
+                .pose
+                .position
+                .abs_diff_eq(expected, 1e-5)
+        );
     }
 
     #[test]
     fn attached_to_hmd_follows_head_including_rotation() {
         let (mut vr, mut ov) = setup();
         ov.attach(0, Device::Hmd, at(0.0, 0.0, -0.5));
-        vr.frame.hmd = Pose::new(
+        vr.backend.frame.hmd = Pose::new(
             Vec3::new(1.0, 1.5, 0.0),
             Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
         );
@@ -1282,7 +1315,7 @@ mod tests {
             ov.panel(0)
                 .pose
                 .orientation
-                .abs_diff_eq(vr.frame.hmd.orientation, 1e-5)
+                .abs_diff_eq(vr.backend.frame.hmd.orientation, 1e-5)
         );
     }
 
@@ -1299,10 +1332,10 @@ mod tests {
     fn attached_to_tracker_and_keeps_pose_when_lost() {
         let (mut vr, mut ov) = setup();
         ov.attach(0, Device::Tracker("waist".into()), at(0.0, 0.0, -0.2));
-        vr.frame.trackers = vec![("waist".into(), at(0.0, 1.0, 0.0))];
+        vr.backend.frame.trackers = vec![("waist".into(), at(0.0, 1.0, 0.0))];
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(0.0, 1.0, -0.2));
-        vr.frame.trackers.clear();
+        vr.backend.frame.trackers.clear();
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(0.0, 1.0, -0.2));
     }
@@ -1311,10 +1344,10 @@ mod tests {
     fn detach_leaves_panel_in_place() {
         let (mut vr, mut ov) = setup();
         ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
-        vr.frame.hmd = at(2.0, 0.0, 0.0);
+        vr.backend.frame.hmd = at(2.0, 0.0, 0.0);
         ov.tick(&mut vr);
         ov.detach(0);
-        vr.frame.hmd = at(5.0, 0.0, 0.0);
+        vr.backend.frame.hmd = at(5.0, 0.0, 0.0);
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(2.0, 0.0, -1.0));
     }
@@ -1332,7 +1365,7 @@ mod tests {
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(1.0, 0.0, -1.0));
         // 頭が動けば、新しいオフセットのまま追従する。
-        vr.frame.hmd = at(0.0, 0.5, 0.0);
+        vr.backend.frame.hmd = at(0.0, 0.5, 0.0);
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(1.0, 0.5, -1.0));
     }
@@ -1370,7 +1403,7 @@ mod tests {
         let (mut vr, mut ov) = setup();
         ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
         ov.set_locked(0, true);
-        vr.frame.hmd = at(0.0, 0.5, 0.0);
+        vr.backend.frame.hmd = at(0.0, 0.5, 0.0);
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(0.0, 0.5, -1.0));
     }
@@ -1378,7 +1411,7 @@ mod tests {
     #[test]
     fn reports_trackers_menu_and_grab() {
         let (mut vr, mut ov) = setup();
-        vr.frame.trackers = vec![("LHR-1".into(), Pose::IDENTITY)];
+        vr.backend.frame.trackers = vec![("LHR-1".into(), Pose::IDENTITY)];
         controller(
             &mut vr,
             Pose::IDENTITY,
@@ -1387,10 +1420,10 @@ mod tests {
         ov.tick(&mut vr);
         assert_eq!(ov.trackers(), ["LHR-1"]);
         assert!(!ov.quit_requested());
-        vr.frame.quit = true;
+        vr.backend.frame.quit = true;
         ov.tick(&mut vr);
         assert!(ov.quit_requested());
-        vr.frame.quit = false;
+        vr.backend.frame.quit = false;
         assert!(ov.menu_held() && ov.grabbed(0));
         controller(&mut vr, Pose::IDENTITY, &[]);
         ov.tick(&mut vr);
@@ -1404,13 +1437,19 @@ mod tests {
     }
 
     /// パネル（z = -1）の前にレーザーとカーソルを置き、右手で中心を指す。
-    fn with_pointers() -> (MockBackend, Overlay, PanelId, PanelId) {
+    fn with_pointers() -> (Subsystems<MockBackend>, Overlay, PanelId, PanelId) {
         let (mut vr, mut ov) = setup();
         let mut add = |ov: &mut Overlay, part| {
             let id = ov
-                .add_panel(&mut vr, "p", Pose::IDENTITY, Vec2::new(0.02, 0.02), (8, 8))
+                .add_panel(
+                    &mut vr.backend,
+                    "p",
+                    Pose::IDENTITY,
+                    Vec2::new(0.02, 0.02),
+                    (8, 8),
+                )
                 .unwrap();
-            ov.set_pointer(&mut vr, id, Hand::Right, part);
+            ov.set_pointer(&mut vr.backend, id, Hand::Right, part);
             id
         };
         let laser = add(&mut ov, Pointer::Laser);
@@ -1429,10 +1468,10 @@ mod tests {
                 pos: Vec2::new(50.0, 50.0)
             }]
         );
-        let l = &vr.overlays[laser];
+        let l = &vr.backend.overlays[laser];
         assert!(l.visible && (l.width_m - 1.0).abs() < 1e-5);
         assert!(l.pose.position.abs_diff_eq(Vec3::new(0.0, 0.0, -0.5), 1e-5));
-        let c = &vr.overlays[cursor];
+        let c = &vr.backend.overlays[cursor];
         assert!(c.visible);
         assert!(
             c.pose
@@ -1440,17 +1479,17 @@ mod tests {
                 .abs_diff_eq(Vec3::new(0.0, 0.0, -1.0 + CURSOR_LIFT), 1e-5)
         );
         // カーソルはパネル（0）とレーザーより手前に描く。
-        assert!(c.sort > l.sort && l.sort > vr.overlays[0].sort);
+        assert!(c.sort > l.sort && l.sort > vr.backend.overlays[0].sort);
     }
 
     #[test]
     fn laser_turns_its_face_to_head_around_its_axis() {
         let (mut vr, mut ov, laser, _) = with_pointers();
         // 頭がレーザーの右横にある。
-        vr.frame.hmd = at(1.0, 0.0, -0.5);
+        vr.backend.frame.hmd = at(1.0, 0.0, -0.5);
         controller(&mut vr, Pose::IDENTITY, &[]);
         ov.tick(&mut vr);
-        let q = vr.overlays[laser].pose.orientation;
+        let q = vr.backend.overlays[laser].pose.orientation;
         assert!((q * Vec3::Z).abs_diff_eq(Vec3::X, 1e-5), "{}", q * Vec3::Z);
         assert!((q * Vec3::X).abs_diff_eq(Vec3::NEG_Z, 1e-5));
     }
@@ -1493,13 +1532,13 @@ mod tests {
         let x = move_x(&ov.tick(&mut vr));
         assert!(50.0 < x && x < target, "{x} {target}");
         // カーソルはヒット点（パネルの面の上）、レーザーの先端にある。
-        let c = vr.overlays[cursor].pose.position;
+        let c = vr.backend.overlays[cursor].pose.position;
         let hit = ov.panel(0).pixel_to_world(Vec2::new(x, 50.0));
         assert!(
             c.abs_diff_eq(hit + Vec3::Z * CURSOR_LIFT, 1e-4),
             "{c} {hit}"
         );
-        let tip = vr.overlays[laser].pose.position * 2.0;
+        let tip = vr.backend.overlays[laser].pose.position * 2.0;
         assert!(tip.abs_diff_eq(hit, 1e-4), "{tip}");
         for _ in 0..200 {
             ov.tick(&mut vr);
@@ -1514,16 +1553,18 @@ mod tests {
     #[test]
     fn laser_keeps_its_thickness_and_cursor_its_apparent_size() {
         let (mut vr, mut ov, laser, cursor) = with_pointers();
-        assert_eq!(vr.overlays[laser].height_m, Some(0.02));
+        assert_eq!(vr.backend.overlays[laser].height_m, Some(0.02));
         controller(&mut vr, Pose::IDENTITY, &[]);
         ov.tick(&mut vr);
         // 頭（原点）から 1m 先のカーソルは 1m 先での大きさ、2m 先なら 2 倍。
-        let near = vr.overlays[cursor].width_m;
+        let near = vr.backend.overlays[cursor].width_m;
         assert!((near - 0.02 * (1.0 - CURSOR_LIFT)).abs() < 1e-5, "{near}");
-        vr.frame.hmd = at(0.0, 0.0, 1.0);
+        vr.backend.frame.hmd = at(0.0, 0.0, 1.0);
         ov.tick(&mut vr);
         assert!(
-            (vr.overlays[cursor].width_m - near * (2.0 - CURSOR_LIFT) / (1.0 - CURSOR_LIFT)).abs()
+            (vr.backend.overlays[cursor].width_m
+                - near * (2.0 - CURSOR_LIFT) / (1.0 - CURSOR_LIFT))
+                .abs()
                 < 1e-4
         );
     }
@@ -1532,15 +1573,21 @@ mod tests {
     fn drag_visual_shows_only_while_dragging_at_given_width() {
         let (mut vr, mut ov, _, cursor) = with_pointers();
         let drag = ov
-            .add_panel(&mut vr, "d", Pose::IDENTITY, Vec2::splat(0.4), (400, 400))
+            .add_panel(
+                &mut vr.backend,
+                "d",
+                Pose::IDENTITY,
+                Vec2::splat(0.4),
+                (400, 400),
+            )
             .unwrap();
-        ov.set_pointer(&mut vr, drag, Hand::Right, Pointer::Drag);
+        ov.set_pointer(&mut vr.backend, drag, Hand::Right, Pointer::Drag);
         controller(&mut vr, Pose::IDENTITY, &[]);
         ov.tick(&mut vr);
-        assert!(!vr.overlays[drag].visible);
+        assert!(!vr.backend.overlays[drag].visible);
         ov.set_drag(Hand::Right, Some(0.25));
         ov.tick(&mut vr);
-        let d = &vr.overlays[drag];
+        let d = &vr.backend.overlays[drag];
         assert!(d.visible && (d.width_m - 0.25).abs() < 1e-6);
         assert!(
             d.pose
@@ -1548,10 +1595,10 @@ mod tests {
                 .abs_diff_eq(Vec3::new(0.0, 0.0, -1.0 + DRAG_LIFT), 1e-5)
         );
         // パネル < ドラッグの見た目 < カーソル。
-        assert!(vr.overlays[0].sort < d.sort && d.sort < vr.overlays[cursor].sort);
+        assert!(vr.backend.overlays[0].sort < d.sort && d.sort < vr.backend.overlays[cursor].sort);
         ov.set_drag(Hand::Right, None);
         ov.tick(&mut vr);
-        assert!(!vr.overlays[drag].visible);
+        assert!(!vr.backend.overlays[drag].visible);
     }
 
     #[test]
@@ -1559,17 +1606,17 @@ mod tests {
         let (mut vr, mut ov, laser, cursor) = with_pointers();
         controller(&mut vr, Pose::IDENTITY, &[]);
         ov.tick(&mut vr);
-        assert!(vr.overlays[laser].visible && vr.overlays[cursor].visible);
+        assert!(vr.backend.overlays[laser].visible && vr.backend.overlays[cursor].visible);
         controller(&mut vr, at(5.0, 0.0, 0.0), &[]);
         ov.tick(&mut vr);
-        assert!(!vr.overlays[laser].visible && !vr.overlays[cursor].visible);
+        assert!(!vr.backend.overlays[laser].visible && !vr.backend.overlays[cursor].visible);
         // 掴み中はパネルの外を向いていてもレーザーを出す。
         controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
         ov.tick(&mut vr);
         controller(&mut vr, at(0.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
-        vr.frame.controllers[0].aim.orientation = Quat::from_rotation_y(1.0);
+        vr.backend.frame.controllers[0].aim.orientation = Quat::from_rotation_y(1.0);
         ov.tick(&mut vr);
-        assert!(vr.overlays[laser].visible);
+        assert!(vr.backend.overlays[laser].visible);
     }
 
     #[test]
@@ -1578,7 +1625,7 @@ mod tests {
         controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
         ov.tick(&mut vr);
         // 頭を傾けて横にずらし、手首もひねる。パネルは頭の方を向き、傾かない。
-        vr.frame.hmd = Pose::new(Vec3::new(0.5, 0.3, 0.2), Quat::from_rotation_z(0.3));
+        vr.backend.frame.hmd = Pose::new(Vec3::new(0.5, 0.3, 0.2), Quat::from_rotation_z(0.3));
         let aim = Pose::new(
             Vec3::ZERO,
             Quat::from_rotation_y(0.5) * Quat::from_rotation_z(1.0),
@@ -1591,7 +1638,7 @@ mod tests {
                 .abs_diff_eq(aim.transform_point(Vec3::new(0.0, 0.0, -1.0)), 1e-5)
         );
         let normal = p.orientation * Vec3::Z;
-        let to_head = (vr.frame.hmd.position - p.position).normalize();
+        let to_head = (vr.backend.frame.hmd.position - p.position).normalize();
         assert!(normal.abs_diff_eq(to_head, 1e-5), "{normal}");
         assert!((p.orientation * Vec3::X).y.abs() < 1e-5, "horizontal");
     }
@@ -1697,11 +1744,11 @@ mod tests {
     #[test]
     fn submit_reaches_backend() {
         let (mut vr, mut ov) = setup();
-        ov.set_animated(&mut vr, 0, false);
+        ov.set_animated(&mut vr.backend, 0, false);
         let mut rgba = vec![0; 200 * 200 * 4];
         rgba[..4].copy_from_slice(&[1, 2, 3, 4]);
-        ov.submit(&mut vr, 0, 200, 200, &rgba);
-        let tex = vr.overlays[0].texture.as_ref().unwrap();
+        ov.submit(&mut vr.backend, 0, 200, 200, &rgba);
+        let tex = vr.backend.overlays[0].texture.as_ref().unwrap();
         assert_eq!((tex.width, tex.height), (200, 200));
         assert_eq!(tex.pixel(0, 0), [1, 2, 3, 4]);
     }

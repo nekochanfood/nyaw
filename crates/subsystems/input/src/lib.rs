@@ -1,4 +1,4 @@
-//! Layer 2: コントローラ抽象化（ドライバ層）。VR 層から来るデバイスごとの生入力を、
+//! 入力サブシステム（ドライバ）。VR サブシステムから来るデバイスごとの生入力を、
 //! オーバーレイ層が理解する少数のアクションに変換する。コントローラ追加 = [`PROFILES`] に1行追加。
 //! この層より上でプロファイル名を見てはいけない。
 
@@ -69,6 +69,13 @@ const PROFILES: &[Profile] = &[
 // ponytail: 全アクション共通のしきい値。アクション毎に変えたくなったら Profile に持たせる。
 pub const PRESS: f32 = 0.6;
 const RELEASE: f32 = 0.4;
+
+impl ControllerState {
+    /// 押下になるまでの進み（0〜1）。ポインタ補正側は押下のしきい値を知らなくてよい。
+    pub fn select_progress(&self) -> f32 {
+        (self.trigger / PRESS).clamp(0.0, 1.0)
+    }
+}
 
 fn held(v: f32, was: bool) -> bool {
     v > if was { RELEASE } else { PRESS }

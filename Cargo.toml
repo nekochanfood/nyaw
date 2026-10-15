@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/*"]
+members = [
+    "crates/*",
+    "crates/subsystems/os",
+    "crates/subsystems/vr",
+    "crates/subsystems/input",
+    "crates/subsystems/rendering",
+]
 
 [workspace.package]
 version = "2026.0.1"
@@ -13,11 +19,12 @@ log = "0.4"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 logger = { path = "crates/logger" }
-os = { path = "crates/os" }
-rendering = { path = "crates/rendering" }
+os = { path = "crates/subsystems/os" }
+rendering = { path = "crates/subsystems/rendering" }
 kernel = { path = "crates/kernel" }
-vr = { path = "crates/vr" }
-input = { path = "crates/input" }
+subsystems = { path = "crates/subsystems" }
+vr = { path = "crates/subsystems/vr" }
+input = { path = "crates/subsystems/input" }
 overlay = { path = "crates/overlay" }
 ui = { path = "crates/ui" }
 webpages = { path = "crates/webpages" }
@@ -35,7 +42,6 @@ license.workspace = true
 
 [dependencies]
 logger.workspace = true
-os.workspace = true
 kernel.workspace = true
 ui.workspace = true
 testing.workspace = true

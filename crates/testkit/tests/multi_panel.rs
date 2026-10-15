@@ -11,7 +11,7 @@ fn panels_have_separate_views_controls_and_textures(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::new(0));
     kit.click("spawn-panel");
     let second = 1;
-    assert_eq!(kit.kernel.vr.overlays.len(), 2);
+    assert_eq!(kit.kernel.subsystems.backend.overlays.len(), 2);
 
     kit.panel(second)
         .click("click-me")
@@ -31,8 +31,8 @@ fn panels_have_separate_views_controls_and_textures(cx: &mut TestAppContext) {
     assert!(!kit.kernel.panel(0).locked);
     assert_eq!(kit.color_at("lock"), BUTTON_BG);
     assert_ne!(
-        kit.kernel.vr.overlays[0].texture,
-        kit.kernel.vr.overlays[1].texture
+        kit.kernel.subsystems.backend.overlays[0].texture,
+        kit.kernel.subsystems.backend.overlays[1].texture
     );
 }
 
@@ -71,7 +71,7 @@ fn hands_keep_independent_pressed_state_on_same_panel() {
             (100, 100),
         )
         .unwrap();
-    kernel.vr.frame.controllers = [Hand::Right, Hand::Left]
+    kernel.subsystems.backend.frame.controllers = [Hand::Right, Hand::Left]
         .map(|hand| RawController {
             hand,
             profile: "valve/index_controller".into(),
@@ -86,7 +86,7 @@ fn hands_keep_independent_pressed_state_on_same_panel() {
     let mut bridges: HashMap<_, PointerBridge> = HashMap::new();
     ui::pump(&mut kernel, &mut bridges);
     // Move is not sent when stationary, so move both hands slightly.
-    for c in &mut kernel.vr.frame.controllers {
+    for c in &mut kernel.subsystems.backend.frame.controllers {
         c.aim = Pose::new(Vec3::new(0.1, 0.0, 0.0), Quat::IDENTITY);
     }
     let moves: Vec<_> = ui::pump(&mut kernel, &mut bridges)
