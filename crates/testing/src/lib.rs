@@ -536,9 +536,11 @@ impl Render for PointerTest {
 const DIALOG_SIZE: Vec2 = Vec2::new(0.4, 0.25);
 const DIALOG_PX: (u32, u32) = (400, 250);
 
-/// 親子関係を試す画面（`dialog-test`）。`open-dialog` でダイアログ（[`Dialog`]）を子として開く。
-/// 開いている間はこの画面が暗くなって押せず（掴んで動かすと子も付いてくる）、ダイアログの `dialog-ok` / `dialog-cancel` で閉じる。
-/// ダイアログを掴むと親も付いてくる（独立しない）。
+/// 親子関係を試す画面（`dialog-test`）。ダイアログ（[`Dialog`]）を子として開く 2 種類のボタンがある。
+/// - `open-dialog`: 外側（この画面など）を押すと閉じる（既定）。
+/// - `open-modal-dialog`: 外側を押しても閉じない（`PanelSpec::without_dismiss`）。`dialog-ok` / `dialog-cancel` で答えるまで残る。
+///
+/// 開いている間はこの画面が暗くなって押せず（掴んで動かすと子も付いてくる）、ダイアログを掴むと親も付いてくる（独立しない）。
 #[derive(Default)]
 pub struct DialogTest {
     panel: PanelId,
@@ -570,13 +572,33 @@ impl Render for DialogTest {
             .text_color(rgb(0xffffff))
             .child(title_bar(panel, "dialog-test", "close-dialog-test"))
             .child(
-                button("open-dialog", "Open dialog", false).on_click(move |_, _, cx| {
-                    let me = me.clone();
-                    cx.default_global::<PanelControl>().spawns.push(
-                        PanelSpec::child(panel, true, move |id, _, _| Dialog::new(id, me))
-                            .sized(DIALOG_SIZE, DIALOG_PX),
-                    )
-                }),
+                row()
+                    .child({
+                        let me = me.clone();
+                        button("open-dialog", "Open dialog", false).on_click(move |_, _, cx| {
+                            let me = me.clone();
+                            cx.default_global::<PanelControl>().spawns.push(
+                                PanelSpec::child(panel, true, move |id, _, _| {
+                                    Dialog::new(id, me, "Click outside to dismiss")
+                                })
+                                .sized(DIALOG_SIZE, DIALOG_PX),
+                            )
+                        })
+                    })
+                    .child(
+                        button("open-modal-dialog", "Open modal dialog", false).on_click(
+                            move |_, _, cx| {
+                                let me = me.clone();
+                                cx.default_global::<PanelControl>().spawns.push(
+                                    PanelSpec::child(panel, true, move |id, _, _| {
+                                        Dialog::new(id, me, "Answer required")
+                                    })
+                                    .without_dismiss()
+                                    .sized(DIALOG_SIZE, DIALOG_PX),
+                                )
+                            },
+                        ),
+                    ),
             )
             .child(
                 div()
@@ -590,15 +612,20 @@ impl Render for DialogTest {
     }
 }
 
-/// [`DialogTest`] が開く、OK / Cancel だけのダイアログ。押した答えを親へ渡して自分を閉じる。
+/// [`DialogTest`] が開く、OK / Cancel だけのダイアログ。押した答えを親へ渡して自分を閉じる。`message` は種類の見分け用。
 pub struct Dialog {
     panel: PanelId,
     parent: WeakEntity<DialogTest>,
+    message: &'static str,
 }
 
 impl Dialog {
-    pub fn new(panel: PanelId, parent: WeakEntity<DialogTest>) -> Self {
-        Self { panel, parent }
+    pub fn new(panel: PanelId, parent: WeakEntity<DialogTest>, message: &'static str) -> Self {
+        Self {
+            panel,
+            parent,
+            message,
+        }
     }
 }
 
@@ -626,7 +653,7 @@ impl Render for Dialog {
             .p_3()
             .bg(rgb(DIALOG_BG))
             .text_color(rgb(0xffffff))
-            .child("Are you sure?")
+            .child(self.message)
             .child(
                 row()
                     .child(answer("dialog-ok", "OK"))

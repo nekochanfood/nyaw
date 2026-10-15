@@ -21,6 +21,8 @@ pub struct Parent {
     pub panel: PanelId,
     /// 子を掴んだとき、親も連れていく。`false` なら子だけが離れ、親との相対位置が付け直される。
     pub carry: bool,
+    /// 子の外側（親・ほかのパネル・何もない所）を押したとき、子を閉じる。ブロックしたい子だけ `false`。
+    pub dismiss: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,6 +177,8 @@ struct HandState {
     hover: Option<PanelId>,
     select: bool,
     grab_held: bool,
+    /// 前の tick でトリガーを押していた（押した瞬間の判定用）。
+    pressed: bool,
     menu: bool,
     /// ドラッグ中のパネルと、レーザーから見たその中心、掴んだ点までのレーザー上の距離。
     dragging: Option<(PanelId, Vec3, f32)>,
@@ -206,6 +210,8 @@ pub struct Overlay {
     /// 手ブレ抑え（[`POINTER_SMOOTHING`]）。`None` で既定値。
     smoothing: Option<f32>,
     animations: HashMap<PanelId, (Tween<f32>, Instant)>,
+    /// この tick で外側を押されて閉じる子。
+    dismissed: Vec<PanelId>,
     /// 親の暗転。
     dims: HashMap<PanelId, (Tween<f32>, Instant)>,
 }
@@ -587,6 +593,9 @@ impl Overlay {
             }
             st.select = false;
         }
+        for id in std::mem::take(&mut self.dismissed) {
+            self.close(vr, id);
+        }
         self.settle_family(&dragged);
         let parents: Vec<bool> = (0..self.panels.len()).map(|i| self.has_child(i)).collect();
         let now = Instant::now();
@@ -634,6 +643,8 @@ impl Overlay {
             }),
         );
         let grab_started = c.grab && !st.grab_held;
+        let press = c.select && !st.pressed;
+        st.pressed = c.select;
         st.grab_held = c.grab;
         st.menu = c.menu;
 
@@ -707,6 +718,16 @@ impl Overlay {
                 .filter_map(|(id, p)| hit_test(p, &aim).map(|(pos, t)| (id, pos, t)))
                 .min_by(|a, b| a.2.total_cmp(&b.2))
         });
+        // 押した瞬間、そこが子の外側ならその子を閉じる（`Parent::dismiss`）。
+        if press {
+            let on = hit.map(|h| h.0);
+            for (i, q) in self.panels.iter().enumerate() {
+                let inside = on.is_some_and(|x| x == i || ancestors(&self.panels, x).contains(&i));
+                if !q.closed && !inside && q.parent.is_some_and(|p| p.dismiss) {
+                    self.dismissed.push(i);
+                }
+            }
+        }
         // 何も指していなければレーザーは出さない。
         st.ray = hit.map(|(id, _, t)| Ray {
             hand: c.aim,
@@ -828,7 +849,7 @@ impl Overlay {
     fn settle_family(&mut self, dragged: &[PanelId]) {
         for &id in dragged {
             let mut cur = id;
-            while let Some(Parent { panel, carry }) = self.panels[cur].parent {
+            while let Some(Parent { panel, carry, .. }) = self.panels[cur].parent {
                 if carry {
                     let (pose, offset) = (self.panels[cur].pose, self.panels[cur].offset);
                     self.panels[panel].pose = pose * offset.inverse();
@@ -942,7 +963,10 @@ fn ancestors(panels: &[Panel], id: PanelId) -> Vec<PanelId> {
 fn carried(panels: &[Panel], id: PanelId) -> Vec<PanelId> {
     let mut v = Vec::new();
     let mut cur = id;
-    while let Some(Parent { panel, carry: true }) = panels[cur].parent {
+    while let Some(Parent {
+        panel, carry: true, ..
+    }) = panels[cur].parent
+    {
         if v.contains(&panel) {
             break;
         }
@@ -1458,7 +1482,14 @@ mod tests {
                 (40, 40),
             )
             .unwrap();
-        ov.set_parent(child, Some(Parent { panel: 0, carry }));
+        ov.set_parent(
+            child,
+            Some(Parent {
+                panel: 0,
+                carry,
+                dismiss: false,
+            }),
+        );
         (vr, ov)
     }
 
@@ -1538,6 +1569,64 @@ mod tests {
     }
 
     #[test]
+    fn pressing_outside_the_child_closes_it_unless_blocked() {
+        let press = |ov: &mut Overlay, vr: &mut Subsystems<MockBackend>, x: f32| {
+            controller(vr, at(x, 0.0, 0.0), &[]);
+            ov.tick(vr);
+            controller(vr, at(x, 0.0, 0.0), &[("trigger/value", 1.0)]);
+            ov.tick(vr);
+        };
+        // 子の中を押しても閉じない。
+        let (mut vr, mut ov) = with_child(false);
+        ov.panels[1].parent.as_mut().unwrap().dismiss = true;
+        press(&mut ov, &mut vr, 0.0);
+        assert!(!ov.panel(1).closed);
+        // 親の上でも、何もない所でも閉じる。
+        for x in [0.45, 3.0] {
+            let (mut vr, mut ov) = with_child(false);
+            ov.panels[1].parent.as_mut().unwrap().dismiss = true;
+            press(&mut ov, &mut vr, x);
+            assert!(ov.panel(1).closed && !ov.panel(0).closed, "x = {x}");
+        }
+        // ブロックした子は閉じない。
+        let (mut vr, mut ov) = with_child(false);
+        press(&mut ov, &mut vr, 0.45);
+        assert!(!ov.panel(1).closed);
+    }
+
+    #[test]
+    fn pressing_a_nested_child_keeps_its_parent_dialog() {
+        let (mut vr, mut ov) = with_child(false);
+        ov.panels[1].parent.as_mut().unwrap().dismiss = true;
+        let inner = ov
+            .add_panel(
+                &mut vr.backend,
+                "inner",
+                at(0.0, 0.0, -0.8),
+                Vec2::new(0.2, 0.2),
+                (20, 20),
+            )
+            .unwrap();
+        ov.set_parent(
+            inner,
+            Some(Parent {
+                panel: 1,
+                carry: false,
+                dismiss: true,
+            }),
+        );
+        controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
+        ov.tick(&mut vr);
+        assert!(!ov.panel(1).closed && !ov.panel(inner).closed);
+        // 外側の子を押すと内側の子だけが閉じる。
+        controller(&mut vr, at(0.15, 0.0, 0.0), &[]);
+        ov.tick(&mut vr);
+        controller(&mut vr, at(0.15, 0.0, 0.0), &[("trigger/value", 1.0)]);
+        ov.tick(&mut vr);
+        assert!(ov.panel(inner).closed && !ov.panel(1).closed);
+    }
+
+    #[test]
     fn dimming_fades_in_and_out_like_the_panels() {
         let (mut vr, mut ov) = with_child(false);
         ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
@@ -1573,6 +1662,7 @@ mod tests {
             Some(Parent {
                 panel: 1,
                 carry: false,
+                dismiss: false,
             }),
         );
         assert_eq!(

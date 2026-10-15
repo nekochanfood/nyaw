@@ -498,9 +498,21 @@ impl PanelSpec {
         build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
     ) -> Self {
         Self {
-            parent: Some(kernel::Parent { panel: from, carry }),
+            parent: Some(kernel::Parent {
+                panel: from,
+                carry,
+                dismiss: true,
+            }),
             ..Self::spawn(from, build)
         }
+    }
+
+    /// 子の外側を押しても閉じないようにする（既定は閉じる）。親がなければ何もしない。
+    pub fn without_dismiss(mut self) -> Self {
+        if let Some(p) = &mut self.parent {
+            p.dismiss = false;
+        }
+        self
     }
 
     /// 親子関係を作る要求（親がいなければ `None`）。開いた直後に [`PanelCommand::Parent`] で適用する。

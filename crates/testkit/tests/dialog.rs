@@ -4,7 +4,7 @@
 use gpui::TestAppContext;
 use kernel::PanelCommand;
 use testing::{BUTTON_BG, DialogTest};
-use testkit::{Driver, Pose, Quat, Vec3, VrKit};
+use testkit::{Action, Driver, Pose, Quat, Vec2, Vec3, VrKit};
 
 #[gpui::test]
 fn dialog_dims_its_parent_follows_it_and_carries_it_when_grabbed(cx: &mut TestAppContext) {
@@ -65,4 +65,35 @@ fn answering_closes_the_dialog_and_reports_to_the_parent(cx: &mut TestAppContext
     kit.panel(0).hover("dialog-answer").step();
     assert_eq!(kit.read(|t| (t.answered, t.answer)), (1, Some("OK")));
     assert_eq!(kit.color_at("open-dialog"), BUTTON_BG);
+}
+
+/// Presses and releases the select button on empty space, off the edge of the panels.
+fn click_outside(kit: &mut VrKit<'_, DialogTest>) {
+    kit.panel(0)
+        .point_at(Vec2::new(-400.0, 100.0))
+        .press(Action::Select)
+        .release(Action::Select)
+        .step()
+        .step();
+}
+
+#[gpui::test]
+fn pressing_outside_closes_the_dialog_unless_it_is_the_modal_one(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| DialogTest::new(0));
+    let tint = |kit: &VrKit<'_, DialogTest>| kit.kernel.subsystems.backend.overlays[0].tint;
+    // The ordinary dialog goes away, and the parent is bright again.
+    kit.click("open-dialog").step().step();
+    assert!(tint(&kit) < 1.0);
+    click_outside(&mut kit);
+    assert!(kit.kernel.panel(1).closed);
+    assert_eq!(tint(&kit), 1.0);
+
+    // The modal one stays until it is answered.
+    kit.click("open-modal-dialog").step().step();
+    let modal = 2;
+    click_outside(&mut kit);
+    assert!(!kit.kernel.panel(modal).closed);
+    assert!(tint(&kit) < 1.0);
+    kit.panel(modal).click("dialog-ok").step().step();
+    assert!(kit.kernel.panel(modal).closed);
 }
