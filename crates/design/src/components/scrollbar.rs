@@ -505,7 +505,7 @@ pub fn claim_scroll<E: InteractiveElement>(element: E, handle: &ScrollHandle) ->
         let m = handle.max_offset();
         let (sx, sy) = (f32::from(m.x) >= 1.0, f32::from(m.y) >= 1.0);
         // 横だけあふれる要素は縦のホイールも横に受ける（gpui と同じ）。
-        if (dx && sx) || (dy && sy) || (dy && sx && !sy) {
+        if (dx && sx) || (dy && (sx || sy)) {
             cx.stop_propagation();
         }
     })

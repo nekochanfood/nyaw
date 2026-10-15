@@ -5,6 +5,7 @@
 //! - GPUI: 切り替え・押している間の見た目・ドラッグ＆ドロップ・スクロールする一覧・フォーカスと文字入力・ポップアップメニュー
 //! - Web: Testing の Web 版（[`WEB_PAGE`]。React のページ）を隣に開く
 //! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
+//! - ツールチップ: [`TooltipTest`] で、カーソルに付いて出る説明（向き・猶予・文字の差し替え・幅の伸び縮み）を見る
 //! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
 //! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）・[`TestingFont`]（フォントの見本）・[`TestingScrollbar`]（縦・横・両方のスクロールバー）
 //! - 負荷: [`StressTest`] で上限いっぱいまでパネルを出し、閉じる・ちりばめる・並べる
@@ -274,6 +275,10 @@ impl Render for Testing {
             .child(
                 button!("pointer-test", "Pointer test", false)
                     .on_click(spawn_pointer_test(self.panel)),
+            )
+            .child(
+                button!("tooltip-test", "Tooltip test", false)
+                    .on_click(spawn_view(self.panel, |id, _| TooltipTest::new(id))),
             )
             .child(
                 button!("dialog-test", "Dialog test", false)
@@ -596,6 +601,85 @@ impl Render for PointerTest {
                                 .px_2()
                                 .child(format!("Swipe row {i}"))
                         })),
+                ),
+        )
+    }
+}
+
+/// ツールチップを試す画面（`tooltip-test`）。
+/// - `tip-short` / `tip-long` は隣り合っていて、移ると猶予（0.5 秒）の間に文字が変わり、箱の幅が伸び縮みする。
+/// - `tip-far` は離れていて、届くまでに猶予が過ぎると一度消えてから出直す。`no-tip` には説明が無い（指すと猶予の後に消える）。
+/// - アイコンだけのボタン（`tip-icon-*`）には必ず説明が付く（`components::icon_button`）。
+/// - `tip-status` に、手ごとの今の文字と向き（上下）を出す。手を頭より上に掲げて見上げると下に、下から指すと上に出る。
+#[derive(Default)]
+pub struct TooltipTest {
+    panel: PanelId,
+}
+
+impl TooltipTest {
+    pub fn new(panel: PanelId) -> Self {
+        Self { panel }
+    }
+}
+
+impl Render for TooltipTest {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let ctl = cx.try_global::<PanelControl>();
+        let status = [Hand::Left, Hand::Right]
+            .map(|h| {
+                let text = ctl.and_then(|c| c.tooltip.get(&h));
+                let anchor = ctl
+                    .and_then(|c| c.anchor.get(&h))
+                    .copied()
+                    .unwrap_or_default();
+                format!("{h:?}: {} ({anchor:?})", text.map_or("-", |t| t.as_ref()))
+            })
+            .join(" / ");
+        let icon =
+            |id, glyph, tip| components::icon_button(&theme, id, glyph, tip, Variant::Default);
+        components::panel(&theme).child(
+            components::card(&theme)
+                .size_full()
+                .flex()
+                .flex_col()
+                .justify_between()
+                .p_3()
+                .child(
+                    row()
+                        .child(div().debug_selector(|| "tip-status".into()).child(status))
+                        .child(
+                            button(&theme, "close-tooltip-test", "Close", false)
+                                .on_click(command(self.panel, PanelCommand::Close)),
+                        ),
+                )
+                .child(
+                    row()
+                        .child(button(&theme, "tip-short", "Short", false).tooltip("Save"))
+                        .child(
+                            button(&theme, "tip-long", "Long", false)
+                                .tooltip("Open the settings of this panel"),
+                        )
+                        .child(button(&theme, "no-tip", "No tooltip", false)),
+                )
+                .child(
+                    row()
+                        .child(icon("tip-icon-gear", &design::icons::GEAR, "Settings"))
+                        .child(icon(
+                            "tip-icon-heart",
+                            &design::icons::HEART,
+                            "Add to favorites",
+                        ))
+                        .child(icon(
+                            "tip-icon-search",
+                            &design::icons::MAGNIFYING_GLASS,
+                            "検索",
+                        )),
+                )
+                .child(
+                    row()
+                        .justify_end()
+                        .child(button(&theme, "tip-far", "Far", false).tooltip("Far away")),
                 ),
         )
     }
