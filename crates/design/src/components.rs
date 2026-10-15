@@ -26,6 +26,8 @@ pub enum Variant {
     Default,
     Primary,
     Danger,
+    /// カードではなく背景（[`panel`] の地）に直接置くとき。背景から浮くよう、背景との差を取った無彩色。
+    OnBackground,
 }
 
 /// 色の移り変わり: `from` から `to` へ `start` から動いている。`start` が `None` なら落ち着いている。
@@ -197,6 +199,12 @@ fn base_button(theme: &Theme, id: &'static str, variant: Variant) -> Button {
             theme.danger_solid_hover,
             theme.danger_solid_active,
             theme.on_danger,
+        ),
+        Variant::OnBackground => (
+            theme.control_on_background,
+            theme.control_on_background_hover,
+            theme.control_on_background_active,
+            theme.neutral_text,
         ),
     };
     let base = div()

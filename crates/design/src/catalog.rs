@@ -140,7 +140,7 @@ macro_rules! roles {
     ($t:expr, $($f:ident),+ $(,)?) => { [$((stringify!($f), $t.$f)),+] };
 }
 
-fn theme_roles(t: &Theme) -> [(&'static str, u32); 48] {
+fn theme_roles(t: &Theme) -> [(&'static str, u32); 51] {
     roles!(
         t,
         accent_base,
@@ -189,6 +189,9 @@ fn theme_roles(t: &Theme) -> [(&'static str, u32); 48] {
         control,
         control_hover,
         control_active,
+        control_on_background,
+        control_on_background_hover,
+        control_on_background_active,
         groove,
         track,
     )
@@ -451,6 +454,19 @@ impl Catalog {
                         components::button(t, "cat-selected", "Selected", Variant::Default)
                             .selected(true),
                     ),
+            )
+            .child(
+                // 背景に直接置くボタンは、背景の上で見る。
+                wrap()
+                    .p(px(spacing::MD))
+                    .rounded(px(radius::LG))
+                    .bg(rgba(t.background))
+                    .child(components::button(
+                        t,
+                        "cat-on-background",
+                        "On background",
+                        Variant::OnBackground,
+                    )),
             )
             .child(caption(
                 t,
