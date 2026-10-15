@@ -451,7 +451,7 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
 }
 
 /// パネル全体の地。角丸は `XL`、中身との間隔は `MD`（12）なので、中のカードの角丸は同心の `XL − MD = LG`。
-/// 中身は [`card`] に入れる。
+/// カードを複数並べる画面だけが使い、中身は [`card`] に入れる。カードが 1 枚なら [`card_panel`]。
 pub fn panel(theme: &Theme) -> Div {
     div()
         .size_full()
@@ -467,6 +467,11 @@ pub fn card(theme: &Theme) -> Div {
         .rounded(px(radius::LG))
         .bg(rgba(theme.card))
         .text_color(rgba(theme.neutral_text))
+}
+
+/// カードが 1 枚だけの画面: 地（[`panel`]）を敷かず、カードがパネル全体になる。角丸はパネルの `XL`。
+pub fn card_panel(theme: &Theme) -> Div {
+    card(theme).size_full().rounded(px(radius::XL))
 }
 
 /// 画面やパネルの地。文字色も役割から決まる。
