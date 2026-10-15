@@ -67,6 +67,15 @@ impl ThemeMode {
     }
 }
 
+/// 画面の言語（`en` / `ja`）。`i18n::Lang` に対応する。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Language {
+    #[default]
+    En,
+    Ja,
+}
+
 /// `config.toml` の中身。どのキーも省略でき、知らないキーは無視する。
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default)]
@@ -89,6 +98,8 @@ pub struct Config {
     pub gpu: Gpu,
     /// 見た目のテーマ（`dark` / `light`）。省略で `dark`。画面での切り替えはここへ書き戻される。
     pub theme: ThemeMode,
+    /// 画面の言語（`en` / `ja`）。省略で `en`。画面での切り替えはここへ書き戻される。
+    pub language: Language,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -146,6 +157,12 @@ pub fn load() -> Result<Config, Error> {
 pub fn save_theme_at(path: &Path, theme: ThemeMode) -> Result<(), Error> {
     let value = toml::Value::try_from(theme).expect("an enum of unit variants is a string");
     save_at(path, "theme", value)
+}
+
+/// `path` の設定ファイルの `language` だけを書き換える（[`save_theme_at`] と同じく他のキーは残す）。
+pub fn save_language_at(path: &Path, language: Language) -> Result<(), Error> {
+    let value = toml::Value::try_from(language).expect("an enum of unit variants is a string");
+    save_at(path, "language", value)
 }
 
 /// 数値のキー（`pointer_smoothing` など）を `path` の設定ファイルへ書き戻す（[`save_theme_at`] と同じく他のキーは残す）。
@@ -224,6 +241,9 @@ emulator = false
         assert_eq!(parse("").unwrap().theme, ThemeMode::Dark);
         assert_eq!(parse("theme = \"light\"").unwrap().theme, ThemeMode::Light);
         assert!(parse("theme = \"blue\"").is_err());
+        assert_eq!(parse("").unwrap().language, Language::En);
+        assert_eq!(parse("language = \"ja\"").unwrap().language, Language::Ja);
+        assert!(parse("language = \"fr\"").is_err());
         assert_eq!(ThemeMode::Dark.toggled(), ThemeMode::Light);
     }
 
@@ -255,6 +275,10 @@ emulator = false
         save_number_at(&path, "pointer_smoothing", 0.5).unwrap();
         let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!((c.pointer_smoothing, c.theme), (Some(0.5), ThemeMode::Light));
+        // 言語も同じく書き戻せ、テーマは残る。
+        save_language_at(&path, Language::Ja).unwrap();
+        let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!((c.language, c.theme), (Language::Ja, ThemeMode::Light));
         // 壊れたファイルは上書きしない。
         fs::write(&path, "log = ").unwrap();
         assert!(save_theme_at(&path, ThemeMode::Dark).is_err());

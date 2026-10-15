@@ -1,0 +1,143 @@
+# English. Every key here must also be in ja.toml (i18n's tests check it), with the same {placeholders}.
+
+[common]
+close = "Close"
+default = "Default"
+ok = "OK"
+cancel = "Cancel"
+none = "none"
+
+[theme]
+dark = "Dark"
+light = "Light"
+
+[weekday]
+sun = "Sun"
+mon = "Mon"
+tue = "Tue"
+wed = "Wed"
+thu = "Thu"
+fri = "Fri"
+sat = "Sat"
+
+[wrist]
+# chrono format (https://docs.rs/chrono/latest/chrono/format/strftime) with the weekday as {weekday}.
+date = "{weekday} %b %-d"
+toggle_panel = "Toggle Panel"
+
+[testing]
+title = "Testing"
+status = "{runtime} / attached: {attached} / {lock}"
+locked = "locked"
+unlocked = "unlocked"
+menu_button = "Menu button"
+grabbing = "Grabbing"
+clicked = "Clicked {count}"
+toggle = "Toggle"
+hold = "Hold"
+menu = "Menu: {item}"
+drag_me = "Drag me"
+drop_here = "Drop here (dropped {count})"
+type_hint = "Click, then type"
+row = "Row {index} (scrolled {scrolled})"
+frame = "frame {count}"
+
+[testing.section]
+this_panel = "This panel"
+open = "Open next to this"
+interact = "Interact"
+
+[testing.label]
+view = "View"
+attach_to = "Attach to"
+press = "Press"
+drag = "Drag and drop"
+type = "Type"
+scroll = "Scroll"
+
+[testing.panel]
+animation = "Animation"
+theme = "Theme: {theme}"
+language = "Language: {language}"
+lock = "Lock"
+profiler = "Profiler"
+
+[testing.attach]
+hmd = "HMD"
+left_hand = "Left hand"
+right_hand = "Right hand"
+tracker = "Tracker {id}"
+tracker_none = "Tracker (none)"
+detach = "Detach"
+
+[testing.open]
+testing = "Testing"
+transparent = "Transparent"
+moving = "Moving"
+lod = "LOD"
+font = "Font"
+scrollbar = "Scrollbar"
+pointer = "Pointer"
+laser = "Laser"
+tooltip = "Tooltip"
+dialog = "Dialog"
+stress = "Stress"
+catalog = "Catalog"
+localization = "Localization"
+
+[pointer]
+mode_mouse = "Mode: Mouse"
+mode_touch = "Mode: Touch"
+tapped = "Tapped {count}"
+dropped = "Dropped {count}"
+swipe_row = "Swipe row {index}"
+
+[laser]
+strength = "Strength {now} (0 = off, {max} = strongest). Saved to config.toml."
+off = "Off"
+light = "Light"
+release = "Lets go after lagging {release}° ({tight}° to {loose}°). Larger keeps the smoothing on while the hand shakes."
+length = "Length {length} m ({short} to {long}). The line fades out over this length."
+short = "Short"
+full = "Full"
+reset = "Reset to defaults"
+
+[tooltip]
+short = "Short"
+long = "Long"
+none = "No tooltip"
+far = "Far"
+save = "Save"
+panel_settings = "Open the settings of this panel"
+settings = "Settings"
+favorite = "Add to favorites"
+search = "Search"
+far_away = "Far away"
+
+[dialog]
+open = "Open dialog"
+open_modal = "Open modal dialog"
+answered = "Answered {count} ({answer})"
+dismiss_title = "Click outside to dismiss"
+dismiss_body = "Answer below, or press outside this dialog to close it."
+required_title = "Answer required"
+# Long on purpose: what does not fit scrolls, and the buttons stay.
+required_body = "This dialog stays open until you press OK or Cancel. Pressing outside does nothing, so the parent stays dimmed and cannot be used in the meantime. Use it for questions that must be answered before going on, such as discarding unsaved changes or overwriting a file. Keep the text short in real dialogs: if it does not fit, only this part scrolls while the buttons stay in place at the bottom."
+
+[stress]
+count = "open {open} / limit {limit} (spawned {spawned})"
+fill = "Fill to limit"
+close_all = "Close all"
+scatter = "Scatter"
+grid = "Grid"
+
+[locale]
+title = "Localization"
+current = "Showing in {language}"
+missing = "Missing in {language}: {count}"
+complete = "Every key is translated in every language."
+key = "Key"
+samples = "Samples"
+sample_long = "A long sentence to check that labels wrap or fit, and that buttons grow with longer translations."
+sample_count = "{count} items selected"
+sample_button = "Save changes"

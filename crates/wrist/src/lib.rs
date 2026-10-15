@@ -43,6 +43,22 @@ pub fn spec() -> PanelSpec {
         .locked()
 }
 
+/// 今の言語での日付（書式は文言の `wrist.date`。chrono の書式で、曜日だけを `{weekday}` で訳す）。
+fn date(now: chrono::DateTime<chrono::Local>, cx: &gpui::App) -> String {
+    use chrono::Datelike;
+    let weekday = match now.weekday() {
+        chrono::Weekday::Sun => i18n::t(cx, "weekday.sun"),
+        chrono::Weekday::Mon => i18n::t(cx, "weekday.mon"),
+        chrono::Weekday::Tue => i18n::t(cx, "weekday.tue"),
+        chrono::Weekday::Wed => i18n::t(cx, "weekday.wed"),
+        chrono::Weekday::Thu => i18n::t(cx, "weekday.thu"),
+        chrono::Weekday::Fri => i18n::t(cx, "weekday.fri"),
+        chrono::Weekday::Sat => i18n::t(cx, "weekday.sat"),
+    };
+    let format = i18n::tf(cx, "wrist.date", &[("weekday", &weekday)]);
+    now.format(&format).to_string()
+}
+
 pub struct Wrist {
     /// 召喚中の Testing パネル。
     pub testing: Option<PanelId>,
@@ -110,7 +126,7 @@ impl Render for Wrist {
                     .debug_selector(|| "date".into())
                     .text_size(px(font_size::LG))
                     .text_color(rgba(theme.neutral_text_low))
-                    .child(now.format("%a %b %-d").to_string()),
+                    .child(date(now, cx)),
             )
             .child(
                 div()
@@ -126,7 +142,7 @@ impl Render for Wrist {
                     &theme,
                     "toggle-panel",
                     &icons::APP_WINDOW,
-                    "Toggle Panel",
+                    i18n::t(cx, "wrist.toggle_panel"),
                     Variant::Default,
                 )
                 .mt(px(spacing::SM))

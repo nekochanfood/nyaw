@@ -11,7 +11,7 @@ pub use subsystems::{rendering, vr};
 use std::time::{Duration, Instant};
 use subsystems::os;
 
-pub use config::{Config, LodQuality, PointerMode, ThemeMode};
+pub use config::{Config, Language, LodQuality, PointerMode, ThemeMode};
 pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
@@ -43,6 +43,8 @@ pub enum PanelCommand {
     PointerMode(PointerMode),
     /// テーマを変える。全パネルに効き、設定ファイルへ書き戻される（起動時の設定の場合のみ。テスト用のカーネルは書かない）。
     Theme(ThemeMode),
+    /// 画面の言語を変える。テーマと同じく全パネルに効き、設定ファイルの `language` へ書き戻される。
+    Language(Language),
     /// レーザーの手ブレ抑えの強さを変える（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`）。全パネルに効き、
     /// テーマと同じく設定ファイルの `pointer_smoothing` へ書き戻される。
     PointerSmoothing(f32),
@@ -75,6 +77,8 @@ pub struct PanelStatus {
     pub pointer_mode: PointerMode,
     /// 見た目のテーマ（全パネル共通）。
     pub theme: ThemeMode,
+    /// 画面の言語（全パネル共通）。
+    pub language: Language,
     /// レーザーの手ブレ抑えの強さ（全パネル共通）。
     pub pointer_smoothing: f32,
     /// 手ブレ抑えを緩める角度（度。全パネル共通）。
@@ -348,6 +352,18 @@ impl<B: VrBackend> Kernel<B> {
                     );
                 }
             }
+            PanelCommand::Language(l) => {
+                self.config.language = l;
+                if let Some(path) = &self.config_path
+                    && let Err(e) = config::save_language_at(path, l)
+                {
+                    logger::warn!(
+                        "failed to save language to config file",
+                        path = path.display(),
+                        error = e
+                    );
+                }
+            }
             PanelCommand::PointerSmoothing(s) => {
                 self.overlay.set_pointer_smoothing(s);
                 let s = self.overlay.pointer_smoothing();
@@ -401,6 +417,7 @@ impl<B: VrBackend> Kernel<B> {
             closed: p.closed,
             pointer_mode: self.pointer_mode,
             theme: self.config.theme,
+            language: self.config.language,
             pointer_smoothing: self.overlay.pointer_smoothing(),
             pointer_release_deg: self.overlay.pointer_release(),
             laser_length: self.overlay.laser_length(),
@@ -552,6 +569,24 @@ mod tests {
         k.apply(p, PanelCommand::Theme(ThemeMode::Dark));
         assert_eq!(k.theme(), ThemeMode::Dark);
         assert_eq!(k.status(p).theme, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn language_starts_from_config_and_persists_to_config_path() {
+        let config = Config {
+            language: Language::Ja,
+            ..Default::default()
+        };
+        let mut k = Kernel::with_backend(MockBackend::default(), config);
+        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (4, 4)).unwrap();
+        assert_eq!(k.status(p).language, Language::Ja);
+        let path = std::env::temp_dir().join(format!("nyaw-kernel-lang-{}.toml", std::process::id()));
+        k.config_path = Some(path.clone());
+        k.apply(p, PanelCommand::Language(Language::En));
+        assert_eq!(k.status(p).language, Language::En);
+        let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(saved.language, Language::En);
     }
 
     #[test]

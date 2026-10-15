@@ -17,7 +17,7 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Anchor, Device, Kernel, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode,
+    Anchor, Device, Kernel, Language, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode,
     Pose, ThemeMode, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
@@ -322,12 +322,17 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     if ctl.status == status {
         return false;
     }
-    let theme = status.theme;
+    let (theme, language) = (status.theme, status.language);
     ctl.status = status;
     // テーマは全パネル共通。画面は `design::Theme::current` で引く。
     cx.set_global(match theme {
         ThemeMode::Dark => design::Mode::Dark,
         ThemeMode::Light => design::Mode::Light,
+    });
+    // 言語も全パネル共通。画面は `i18n::t` で引く。
+    cx.set_global(match language {
+        Language::En => i18n::Lang::En,
+        Language::Ja => i18n::Lang::Ja,
     });
     cx.refresh_windows();
     true
@@ -1104,7 +1109,7 @@ struct ProfilerPanel {
 }
 
 impl Render for ProfilerPanel {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .flex()
@@ -1120,7 +1125,7 @@ impl Render for ProfilerPanel {
                         .bg(rgb(0x3a3d46))
                         .hover(|s| s.bg(rgb(0x50545f)))
                         .text_color(rgb(0xd8dae0))
-                        .child("Close")
+                        .child(i18n::t(cx, "common.close"))
                         .on_click(|_, _, cx| {
                             cx.default_global::<PanelControl>().profiling = false;
                         }),

@@ -31,6 +31,7 @@ input = { path = "crates/subsystems/input" }
 overlay = { path = "crates/overlay" }
 ui = { path = "crates/ui" }
 design = { path = "crates/design" }
+i18n = { path = "crates/i18n" }
 profiler = { path = "crates/profiler" }
 testing = { path = "crates/testing" }
 wrist = { path = "crates/wrist" }

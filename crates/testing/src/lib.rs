@@ -20,11 +20,11 @@ use design::components::{self, Variant};
 use design::{Mode, Theme, font_size, radius, spacing};
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, FontWeight, KeyDownEvent, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, Stateful, WeakEntity, Window, anchored, deferred, div, hsla, prelude::*, px,
-    relative, rgb, rgba,
+    ScrollWheelEvent, SharedString, Stateful, WeakEntity, Window, anchored, deferred, div, hsla,
+    prelude::*, px, relative, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
-use kernel::{PanelCommand, PanelId, PointerMode};
+use kernel::{Language, PanelCommand, PanelId, PointerMode};
 use ui::{PanelControl, PanelSpec};
 
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
@@ -105,7 +105,7 @@ impl Render for ChipPreview {
 fn button(
     theme: &Theme,
     id: &'static str,
-    label: impl Into<String>,
+    label: impl Into<SharedString>,
     active: bool,
 ) -> components::Button {
     themed_button(theme, id, label, active)
@@ -114,7 +114,7 @@ fn button(
 fn themed_button(
     theme: &Theme,
     id: &'static str,
-    label: impl Into<String>,
+    label: impl Into<SharedString>,
     active: bool,
 ) -> components::Button {
     components::button(theme, id, label.into(), Variant::Default).selected(active)
@@ -198,6 +198,26 @@ fn spawn_catalog(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) 
     }
 }
 
+/// カーネルの言語に対応する i18n の言語。
+fn lang(l: Language) -> i18n::Lang {
+    match l {
+        Language::En => i18n::Lang::En,
+        Language::Ja => i18n::Lang::Ja,
+    }
+}
+
+/// 言語の切り替えボタンが次に選ぶ言語（i18n の対応言語を順に回る）。
+fn next_language(l: Language) -> Language {
+    language(lang(l).next())
+}
+
+fn language(l: i18n::Lang) -> Language {
+    match l {
+        i18n::Lang::En => Language::En,
+        i18n::Lang::Ja => Language::Ja,
+    }
+}
+
 fn attach_offset(panel: PanelId, base: Pose) -> Pose {
     Pose::new(
         base.position + Vec3::new(1.2 * panel as f32, 0.0, 0.0),
@@ -210,7 +230,7 @@ fn row() -> Div {
 }
 
 /// 見出し付きのカード。中身は縦に並べる。
-fn section(theme: &Theme, title: &'static str) -> Div {
+fn section(theme: &Theme, title: impl Into<SharedString>) -> Div {
     components::card(theme)
         .p(px(spacing::LG))
         .flex()
@@ -220,12 +240,12 @@ fn section(theme: &Theme, title: &'static str) -> Div {
             div()
                 .text_size(px(font_size::MD))
                 .font_weight(FontWeight::BOLD)
-                .child(title),
+                .child(title.into()),
         )
 }
 
 /// 小見出しと、その下の中身。
-fn labeled(theme: &Theme, label: &'static str, body: impl IntoElement) -> Div {
+fn labeled(theme: &Theme, label: impl Into<SharedString>, body: impl IntoElement) -> Div {
     div()
         .flex()
         .flex_col()
@@ -234,14 +254,19 @@ fn labeled(theme: &Theme, label: &'static str, body: impl IntoElement) -> Div {
             div()
                 .text_size(px(font_size::SM))
                 .text_color(rgba(theme.neutral_text_low))
-                .child(label),
+                .child(label.into()),
         )
         .child(body)
 }
 
 /// 押せない状態の表示。ボタンと見分けられるよう低く、先頭に点を置く（点は入っている間だけ強調色）。
 /// 面の色は入っている間 `control-active`、それ以外 `control`（テストは中心の色を見る）。
-fn indicator(theme: &Theme, id: &'static str, label: &'static str, on: bool) -> Stateful<Div> {
+fn indicator(
+    theme: &Theme,
+    id: &'static str,
+    label: impl Into<SharedString>,
+    on: bool,
+) -> Stateful<Div> {
     div()
         .id(id)
         .debug_selector(move || id.into())
@@ -261,7 +286,7 @@ fn indicator(theme: &Theme, id: &'static str, label: &'static str, on: bool) -> 
         } else {
             theme.neutral_text_low
         })))
-        .child(label)
+        .child(label.into())
 }
 
 impl Render for Testing {
@@ -283,22 +308,48 @@ impl Render for Testing {
             };
         }
 
-        // このパネル自身の操作（表示・テーマ・ロック・計測）。
+        let theme_label = i18n::tf(
+            cx,
+            "testing.panel.theme",
+            &[(
+                "theme",
+                &i18n::t(
+                    cx,
+                    match st.theme {
+                        kernel::ThemeMode::Dark => "theme.dark",
+                        kernel::ThemeMode::Light => "theme.light",
+                    },
+                ),
+            )],
+        );
+        let language_label = i18n::tf(
+            cx,
+            "testing.panel.language",
+            &[("language", &lang(st.language).native_name())],
+        );
+        // このパネル自身の操作（表示・テーマ・言語・ロック・計測）。
         let panel_row = row()
             .child(
-                button!("animate-panel", "Animation", st.animated)
+                button!("animate-panel", i18n::t(cx, "testing.panel.animation"), st.animated)
                     .on_click(command(self.panel, PanelCommand::Animated(!st.animated))),
             )
             .child(
-                button!("toggle-theme", format!("Theme: {:?}", st.theme), false)
+                button!("toggle-theme", theme_label, false)
                     .on_click(command(self.panel, PanelCommand::Theme(st.theme.toggled()))),
             )
             .child(
-                button!("lock", "Lock", st.locked)
+                // 言語の名前はその言語自身で出す（どの言語で表示していても読める）。
+                button!("toggle-language", language_label, false).on_click(command(
+                    self.panel,
+                    PanelCommand::Language(next_language(st.language)),
+                )),
+            )
+            .child(
+                button!("lock", i18n::t(cx, "testing.panel.lock"), st.locked)
                     .on_click(command(self.panel, PanelCommand::Lock(!st.locked))),
             )
             .child(
-                button!("toggle-profiler", "Profiler", profiling).on_click(|_, _, cx| {
+                button!("toggle-profiler", i18n::t(cx, "testing.panel.profiler"), profiling).on_click(|_, _, cx| {
                     let c = cx.default_global::<PanelControl>();
                     c.profiling = !c.profiling;
                 }),
@@ -306,7 +357,7 @@ impl Render for Testing {
         // 取り付け先（今どこに付いているかで光る）。
         let attach_row = row()
             .child(
-                button!("attach-hmd", "HMD", on(&Device::Hmd)).on_click(command(
+                button!("attach-hmd", i18n::t(cx, "testing.attach.hmd"), on(&Device::Hmd)).on_click(command(
                     self.panel,
                     PanelCommand::Attach(Device::Hmd, attach_offset(self.panel, HMD_OFFSET)),
                 )),
@@ -314,7 +365,7 @@ impl Render for Testing {
             .child(
                 button!(
                     "attach-left",
-                    "Left hand",
+                    i18n::t(cx, "testing.attach.left_hand"),
                     on(&Device::Controller(Hand::Left)),
                 )
                 .on_click(command(
@@ -328,7 +379,7 @@ impl Render for Testing {
             .child(
                 button!(
                     "attach-right",
-                    "Right hand",
+                    i18n::t(cx, "testing.attach.right_hand"),
                     on(&Device::Controller(Hand::Right)),
                 )
                 .on_click(command(
@@ -344,8 +395,10 @@ impl Render for Testing {
                 let b = button!(
                     "attach-tracker",
                     match &tracker {
-                        Some(Device::Tracker(id)) => format!("Tracker {id}"),
-                        _ => "Tracker (none)".into(),
+                        Some(Device::Tracker(id)) => {
+                            i18n::tf(cx, "testing.attach.tracker", &[("id", id)])
+                        }
+                        _ => i18n::t(cx, "testing.attach.tracker_none"),
                     },
                     tracker.as_ref().is_some_and(on),
                 );
@@ -358,59 +411,71 @@ impl Render for Testing {
                 }
             })
             .child(
-                button!("detach", "Detach", false)
+                button!("detach", i18n::t(cx, "testing.attach.detach"), false)
                     .on_click(command(self.panel, PanelCommand::Detach)),
             );
         // コントローラの入力の表示（押せない）。見出しの行に置く。
         let input_row = row()
-            .child(indicator(&theme, "menu-held", "Menu button", st.menu))
-            .child(indicator(&theme, "grabbed", "Grabbing", st.grabbed));
+            .child(indicator(&theme, "menu-held", i18n::t(cx, "testing.menu_button"), st.menu))
+            .child(indicator(&theme, "grabbed", i18n::t(cx, "testing.grabbing"), st.grabbed));
 
         // 隣に開く画面。
         let open_row = row()
-            .child(button!("spawn-panel", "Testing", false).on_click(spawn(self.panel)))
+            .child(button!("spawn-panel", i18n::t(cx, "testing.open.testing"), false).on_click(spawn(self.panel)))
             .child(
-                button!("spawn-transparent", "Transparent", false)
+                button!("spawn-transparent", i18n::t(cx, "testing.open.transparent"), false)
                     .on_click(spawn_transparent(self.panel)),
             )
             .child(
-                button!("spawn-anim", "Moving", false)
+                button!("spawn-anim", i18n::t(cx, "testing.open.moving"), false)
                     .on_click(spawn_view(self.panel, TestingAnim::new)),
             )
             .child(
-                button!("spawn-lod", "LOD", false)
+                button!("spawn-lod", i18n::t(cx, "testing.open.lod"), false)
                     .on_click(spawn_view(self.panel, |id, _| TestingLod::new(id))),
             )
             .child(
-                button!("spawn-font", "Font", false)
+                button!("spawn-font", i18n::t(cx, "testing.open.font"), false)
                     .on_click(spawn_view(self.panel, |id, _| TestingFont::new(id))),
             )
             .child(
-                button!("spawn-scrollbar", "Scrollbar", false)
+                button!("spawn-scrollbar", i18n::t(cx, "testing.open.scrollbar"), false)
                     .on_click(spawn_view(self.panel, |id, _| TestingScrollbar::new(id))),
             )
             .child(
-                button!("pointer-test", "Pointer", false).on_click(spawn_pointer_test(self.panel)),
+                button!("pointer-test", i18n::t(cx, "testing.open.pointer"), false).on_click(spawn_pointer_test(self.panel)),
             )
             .child(
-                button!("smoothing-test", "Laser", false)
+                button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false)
                     .on_click(spawn_view(self.panel, |id, _| SmoothingTest::new(id))),
             )
             .child(
-                button!("tooltip-test", "Tooltip", false)
+                button!("tooltip-test", i18n::t(cx, "testing.open.tooltip"), false)
                     .on_click(spawn_view(self.panel, |id, _| TooltipTest::new(id))),
             )
-            .child(button!("dialog-test", "Dialog", false).on_click(spawn_dialog_test(self.panel)))
+            .child(button!("dialog-test", i18n::t(cx, "testing.open.dialog"), false).on_click(spawn_dialog_test(self.panel)))
             .child(
-                button!("stress-test", "Stress", false)
+                button!("stress-test", i18n::t(cx, "testing.open.stress"), false)
                     .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
             )
-            .child(button!("spawn-catalog", "Catalog", false).on_click(spawn_catalog(self.panel)));
+            .child(button!("spawn-catalog", i18n::t(cx, "testing.open.catalog"), false).on_click(spawn_catalog(self.panel)))
+            .child(
+                button!("locale-test", i18n::t(cx, "testing.open.localization"), false).on_click({
+                    let panel = self.panel;
+                    move |_, _, cx| {
+                        // 全キーの表を並べるので Testing と同じ大きさ。
+                        cx.default_global::<PanelControl>().spawns.push(
+                            PanelSpec::spawn(panel, |id, _, _| LocaleTest::new(id))
+                                .sized(TESTING_SIZE, TESTING_PX),
+                        )
+                    }
+                }),
+            );
 
         // ボタン・切り替え・長押し・ポップアップ。
         let press_row = row()
             .child(
-                button!("click-me", format!("Clicked {}", self.clicks), false).on_click(
+                button!("click-me", i18n::tf(cx, "testing.clicked", &[("count", &self.clicks)]), false).on_click(
                     cx.listener(|this, _, _, cx| {
                         this.clicks += 1;
                         cx.notify();
@@ -418,20 +483,20 @@ impl Render for Testing {
                 ),
             )
             .child(
-                button!("toggle", "Toggle", self.toggled).on_click(cx.listener(
+                button!("toggle", i18n::t(cx, "testing.toggle"), self.toggled).on_click(cx.listener(
                     |this, _, _, cx| {
                         this.toggled = !this.toggled;
                         cx.notify();
                     },
                 )),
             )
-            .child(button!("hold-me", "Hold", false).active(|s| s.bg(rgba(theme.control_active))))
+            .child(button!("hold-me", i18n::t(cx, "testing.hold"), false).active(|s| s.bg(rgba(theme.control_active))))
             .child(
                 div()
                     .child(
                         button!(
                             "open-menu",
-                            format!("Menu: {}", self.picked.unwrap_or("-")),
+                            i18n::tf(cx, "testing.menu", &[("item", &self.picked.unwrap_or("-"))]),
                             self.menu_open,
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
@@ -471,7 +536,7 @@ impl Render for Testing {
         // ドラッグ＆ドロップ: 左を右へ運ぶ。
         let drag_row = row()
             .child(
-                button!("drag-chip", "Drag me", false)
+                button!("drag-chip", i18n::t(cx, "testing.drag_me"), false)
                     .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
             )
             .child(
@@ -493,7 +558,7 @@ impl Render for Testing {
                         this.dropped += 1;
                         cx.notify();
                     }))
-                    .child(format!("Drop here (dropped {})", self.dropped)),
+                    .child(i18n::tf(cx, "testing.drop_here", &[("count", &self.dropped)])),
             );
 
         let field = div()
@@ -524,11 +589,15 @@ impl Render for Testing {
             .child(if self.text.is_empty() {
                 div()
                     .text_color(rgba(theme.neutral_text_low))
-                    .child("Click, then type")
+                    .child(i18n::t(cx, "testing.type_hint"))
             } else {
                 div().child(self.text.clone())
             });
 
+        let scrolled = format!("{:.1}", self.scrolled);
+        let rows: Vec<SharedString> = (0..LIST_ROWS)
+            .map(|i| i18n::tf(cx, "testing.row", &[("index", &i), ("scrolled", &scrolled)]))
+            .collect();
         let list = div()
             .id("scroll-list")
             .debug_selector(|| "scroll-list".into())
@@ -545,13 +614,13 @@ impl Render for Testing {
                 cx.notify();
             }))
             .child(
-                components::elastic("pull-list", &self.list).children((0..LIST_ROWS).map(|i| {
+                components::elastic("pull-list", &self.list).children(rows.into_iter().map(|row| {
                     div()
                         .h(gpui::px(ROW_PX))
                         .px(px(spacing::LG))
                         .flex()
                         .items_center()
-                        .child(format!("Row {i} (scrolled {:.1})", self.scrolled))
+                        .child(row)
                 })),
             );
 
@@ -570,24 +639,44 @@ impl Render for Testing {
                         div()
                             .text_size(px(font_size::LG))
                             .font_weight(FontWeight::BOLD)
-                            .child("Testing"),
+                            .child(i18n::t(cx, "testing.title")),
                     )
                     .child(
                         div()
                             .debug_selector(|| "panel-status".into())
                             .text_color(rgba(theme.neutral_text_low))
-                            .child(format!(
-                                "{:?} / attached: {} / {}",
-                                st.runtime,
-                                st.attached.as_ref().map_or("none".into(), |d| format!("{d:?}")),
-                                if st.locked { "locked" } else { "unlocked" },
+                            .child(i18n::tf(
+                                cx,
+                                "testing.status",
+                                &[
+                                    ("runtime", &format!("{:?}", st.runtime)),
+                                    (
+                                        "attached",
+                                        &st.attached
+                                            .as_ref()
+                                            .map_or(i18n::t(cx, "common.none"), |d| {
+                                                format!("{d:?}").into()
+                                            }),
+                                    ),
+                                    (
+                                        "lock",
+                                        &i18n::t(
+                                            cx,
+                                            if st.locked {
+                                                "testing.locked"
+                                            } else {
+                                                "testing.unlocked"
+                                            },
+                                        ),
+                                    ),
+                                ],
                             )),
                     )
                     .child(input_row),
             )
             .child(
                 // カードではなく背景に置くので、背景用の色。
-                components::button(&theme, "close-panel", "Close", Variant::OnBackground)
+                components::button(&theme, "close-panel", i18n::t(cx, "common.close"), Variant::OnBackground)
                     .on_click(command(self.panel, PanelCommand::Close)),
             );
 
@@ -613,23 +702,30 @@ impl Render for Testing {
                             .flex_col()
                             .gap(px(spacing::MD))
                             .child(
-                                section(&theme, "This panel")
-                                    .child(labeled(&theme, "View", panel_row))
-                                    .child(labeled(&theme, "Attach to", attach_row)),
+                                section(&theme, i18n::t(cx, "testing.section.this_panel"))
+                                    .child(labeled(&theme, i18n::t(cx, "testing.label.view"), panel_row))
+                                    .child(labeled(
+                                        &theme,
+                                        i18n::t(cx, "testing.label.attach_to"),
+                                        attach_row,
+                                    )),
                             )
-                            .child(section(&theme, "Open next to this").child(open_row)),
+                            .child(
+                                section(&theme, i18n::t(cx, "testing.section.open"))
+                                    .child(open_row),
+                            ),
                     )
                     .child(
-                        section(&theme, "Interact")
+                        section(&theme, i18n::t(cx, "testing.section.interact"))
                             .flex_1()
                             .min_w_0()
-                            .child(labeled(&theme, "Press", press_row))
-                            .child(labeled(&theme, "Drag and drop", drag_row))
-                            .child(labeled(&theme, "Type", field))
+                            .child(labeled(&theme, i18n::t(cx, "testing.label.press"), press_row))
+                            .child(labeled(&theme, i18n::t(cx, "testing.label.drag"), drag_row))
+                            .child(labeled(&theme, i18n::t(cx, "testing.label.type"), field))
                             .child(
                                 labeled(
                                     &theme,
-                                    "Scroll",
+                                    i18n::t(cx, "testing.label.scroll"),
                                     div().relative().flex_1().min_h_0().child(list).child(
                                         components::scrollbars(&theme, "scroll-bars", &self.list)
                                             .pulled_by("pull-list"),
@@ -674,9 +770,12 @@ impl Render for PointerTest {
             .map(|c| c.status.pointer_mode)
             .unwrap_or_default();
         let (label, next) = match mode {
-            PointerMode::Mouse => ("Mode: Mouse", PointerMode::Touch),
-            PointerMode::Touch => ("Mode: Touch", PointerMode::Mouse),
+            PointerMode::Mouse => (i18n::t(cx, "pointer.mode_mouse"), PointerMode::Touch),
+            PointerMode::Touch => (i18n::t(cx, "pointer.mode_touch"), PointerMode::Mouse),
         };
+        let swipe_rows: Vec<SharedString> = (0..LIST_ROWS)
+            .map(|i| i18n::tf(cx, "pointer.swipe_row", &[("index", &i)]))
+            .collect();
         components::card_panel(&theme)
             .flex()
             .flex_col()
@@ -691,7 +790,7 @@ impl Render for PointerTest {
                             .on_click(command(self.panel, PanelCommand::PointerMode(next))),
                     )
                     .child(
-                        button(&theme, "tap-me", format!("Tapped {}", self.taps), false).on_click(
+                        button(&theme, "tap-me", i18n::tf(cx, "pointer.tapped", &[("count", &self.taps)]), false).on_click(
                             cx.listener(|this, _, _, cx| {
                                 this.taps += 1;
                                 cx.notify();
@@ -699,14 +798,14 @@ impl Render for PointerTest {
                         ),
                     )
                     .child(
-                        button(&theme, "close-pointer-test", "Close", false)
+                        button(&theme, "close-pointer-test", i18n::t(cx, "common.close"), false)
                             .on_click(command(self.panel, PanelCommand::Close)),
                     ),
             )
             .child(
                 row()
                     .child(
-                        button(&theme, "drag-chip", "Drag me", false)
+                        button(&theme, "drag-chip", i18n::t(cx, "testing.drag_me"), false)
                             .on_drag(Chip, |_, _, _, cx| ui::drag_preview(cx, ChipPreview)),
                     )
                     .child(
@@ -720,7 +819,7 @@ impl Render for PointerTest {
                                 this.dropped += 1;
                                 cx.notify();
                             }))
-                            .child(format!("Dropped {}", self.dropped)),
+                            .child(i18n::tf(cx, "pointer.dropped", &[("count", &self.dropped)])),
                     ),
             )
             .child(
@@ -731,12 +830,11 @@ impl Render for PointerTest {
                     .overflow_y_scroll()
                     .track_scroll(&self.list)
                     .bg(rgba(theme.control))
-                    .children((0..LIST_ROWS).map(|i| {
-                        div()
-                            .h(gpui::px(ROW_PX))
-                            .px_2()
-                            .child(format!("Swipe row {i}"))
-                    })),
+                    .children(
+                        swipe_rows
+                            .into_iter()
+                            .map(|row| div().h(gpui::px(ROW_PX)).px_2().child(row)),
+                    ),
             )
     }
 }
@@ -784,11 +882,11 @@ impl Render for SmoothingTest {
             kernel::overlay::POINTER_RELEASE_DEG_MIN,
             kernel::overlay::POINTER_RELEASE_DEG_MAX,
         );
-        let preset = |id: &'static str, label: &'static str, v: f32| {
+        let preset = |id: &'static str, label: SharedString, v: f32| {
             button(&theme, id, label, (now - v).abs() < 1e-3)
                 .on_click(command(panel, PanelCommand::PointerSmoothing(v)))
         };
-        let length_preset = |id: &'static str, label: &'static str, v: f32| {
+        let length_preset = |id: &'static str, label: SharedString, v: f32| {
             button(&theme, id, label, (length - v).abs() < 1e-3)
                 .on_click(command(panel, PanelCommand::LaserLength(v)))
         };
@@ -805,13 +903,21 @@ impl Render for SmoothingTest {
             .flex_col()
             .gap(px(spacing::LG))
             .p(px(spacing::XL))
-            .child(title_bar(&theme, panel, "Laser", "close-smoothing"))
+            .child(title_bar(
+                &theme,
+                panel,
+                i18n::t(cx, "testing.open.laser"),
+                "close-smoothing",
+                cx,
+            ))
             .child(
                 div()
                     .debug_selector(|| "smoothing-value".into())
                     .text_color(rgba(theme.neutral_text_low))
-                    .child(format!(
-                        "Strength {now:.2} (0 = off, {max:.2} = strongest). Saved to config.toml."
+                    .child(i18n::tf(
+                        cx,
+                        "laser.strength",
+                        &[("now", &format!("{now:.2}")), ("max", &format!("{max:.2}"))],
                     )),
             )
             .child(
@@ -822,21 +928,26 @@ impl Render for SmoothingTest {
             )
             .child(
                 row()
-                    .child(preset("smoothing-off", "Off", 0.0))
+                    .child(preset("smoothing-off", i18n::t(cx, "laser.off"), 0.0))
                     .child(preset(
                         "smoothing-default",
-                        "Default",
+                        i18n::t(cx, "common.default"),
                         kernel::overlay::POINTER_SMOOTHING,
                     ))
-                    .child(preset("smoothing-strong", "Light", 0.95)),
+                    .child(preset("smoothing-strong", i18n::t(cx, "laser.light"), 0.95)),
             )
             .child(
                 div()
                     .debug_selector(|| "release-value".into())
                     .text_color(rgba(theme.neutral_text_low))
-                    .child(format!(
-                        "Lets go after lagging {release:.1}° ({tight:.1}° to {loose:.0}°). \
-                         Larger keeps the smoothing on while the hand shakes."
+                    .child(i18n::tf(
+                        cx,
+                        "laser.release",
+                        &[
+                            ("release", &format!("{release:.1}")),
+                            ("tight", &format!("{tight:.1}")),
+                            ("loose", &format!("{loose:.0}")),
+                        ],
                     )),
             )
             .child(
@@ -854,8 +965,14 @@ impl Render for SmoothingTest {
                 div()
                     .debug_selector(|| "laser-length-value".into())
                     .text_color(rgba(theme.neutral_text_low))
-                    .child(format!(
-                        "Length {length:.2} m ({short:.2} to {long:.2}). The line fades out over this length."
+                    .child(i18n::tf(
+                        cx,
+                        "laser.length",
+                        &[
+                            ("length", &format!("{length:.2}")),
+                            ("short", &format!("{short:.2}")),
+                            ("long", &format!("{long:.2}")),
+                        ],
                     )),
             )
             .child(
@@ -869,17 +986,17 @@ impl Render for SmoothingTest {
             )
             .child(
                 row()
-                    .child(length_preset("laser-short", "Short", 0.15))
+                    .child(length_preset("laser-short", i18n::t(cx, "laser.short"), 0.15))
                     .child(length_preset(
                         "laser-medium",
-                        "Default",
+                        i18n::t(cx, "common.default"),
                         kernel::overlay::LASER_LENGTH,
                     ))
-                    .child(length_preset("laser-full", "Full", long)),
+                    .child(length_preset("laser-full", i18n::t(cx, "laser.full"), long)),
             )
             .child(
                 // 3 つとも既定値へ戻す（設定ファイルにも既定値が書き戻される）。
-                row().child(button(&theme, "laser-reset", "Reset to defaults", false).on_click(
+                row().child(button(&theme, "laser-reset", i18n::t(cx, "laser.reset"), false).on_click(
                     move |_, _, cx| {
                         for c in [
                             PanelCommand::PointerSmoothing(kernel::overlay::POINTER_SMOOTHING),
@@ -935,8 +1052,9 @@ impl Render for TooltipTest {
                 format!("{h:?}: {} ({anchor:?})", text.map_or("-", |t| t.as_ref()))
             })
             .join(" / ");
-        let icon =
-            |id, glyph, tip| components::icon_button(&theme, id, glyph, tip, Variant::Default);
+        let icon = |id, glyph, tip: SharedString| {
+            components::icon_button(&theme, id, glyph, tip, Variant::Default)
+        };
         components::card_panel(&theme)
             .flex()
             .flex_col()
@@ -946,37 +1064,45 @@ impl Render for TooltipTest {
                 row()
                     .child(div().debug_selector(|| "tip-status".into()).child(status))
                     .child(
-                        button(&theme, "close-tooltip-test", "Close", false)
+                        button(&theme, "close-tooltip-test", i18n::t(cx, "common.close"), false)
                             .on_click(command(self.panel, PanelCommand::Close)),
                     ),
             )
             .child(
                 row()
-                    .child(button(&theme, "tip-short", "Short", false).tooltip("Save"))
                     .child(
-                        button(&theme, "tip-long", "Long", false)
-                            .tooltip("Open the settings of this panel"),
+                        button(&theme, "tip-short", i18n::t(cx, "tooltip.short"), false)
+                            .tooltip(i18n::t(cx, "tooltip.save")),
                     )
-                    .child(button(&theme, "no-tip", "No tooltip", false)),
+                    .child(
+                        button(&theme, "tip-long", i18n::t(cx, "tooltip.long"), false)
+                            .tooltip(i18n::t(cx, "tooltip.panel_settings")),
+                    )
+                    .child(button(&theme, "no-tip", i18n::t(cx, "tooltip.none"), false)),
             )
             .child(
                 row()
-                    .child(icon("tip-icon-gear", &design::icons::GEAR, "Settings"))
+                    .child(icon(
+                        "tip-icon-gear",
+                        &design::icons::GEAR,
+                        i18n::t(cx, "tooltip.settings"),
+                    ))
                     .child(icon(
                         "tip-icon-heart",
                         &design::icons::HEART,
-                        "Add to favorites",
+                        i18n::t(cx, "tooltip.favorite"),
                     ))
                     .child(icon(
                         "tip-icon-search",
                         &design::icons::MAGNIFYING_GLASS,
-                        "検索",
+                        i18n::t(cx, "tooltip.search"),
                     )),
             )
             .child(
                 row()
                     .justify_end()
-                    .child(button(&theme, "tip-far", "Far", false).tooltip("Far away")),
+                    .child(button(&theme, "tip-far", i18n::t(cx, "tooltip.far"), false)
+                            .tooltip(i18n::t(cx, "tooltip.far_away"))),
             )
     }
 }
@@ -1024,12 +1150,18 @@ impl Render for DialogTest {
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, panel, "dialog-test", "close-dialog-test"))
+            .child(title_bar(
+                &theme,
+                panel,
+                i18n::t(cx, "testing.open.dialog"),
+                "close-dialog-test",
+                cx,
+            ))
             .child(
                 row()
                     .child({
                         let me = me.clone();
-                        button(&theme, "open-dialog", "Open dialog", false).on_click(
+                        button(&theme, "open-dialog", i18n::t(cx, "dialog.open"), false).on_click(
                             move |_, _, cx| {
                                 let me = me.clone();
                                 cx.default_global::<PanelControl>().spawns.push(
@@ -1038,8 +1170,8 @@ impl Render for DialogTest {
                                             id,
                                             me,
                                             &design::icons::INFO,
-                                            "Click outside to dismiss",
-                                            "Answer below, or press outside this dialog to close it.",
+                                            "dialog.dismiss_title",
+                                            "dialog.dismiss_body",
                                         )
                                     })
                                     .sized(DIALOG_SIZE, DIALOG_PX),
@@ -1048,7 +1180,7 @@ impl Render for DialogTest {
                         )
                     })
                     .child(
-                        button(&theme, "open-modal-dialog", "Open modal dialog", false)
+                        button(&theme, "open-modal-dialog", i18n::t(cx, "dialog.open_modal"), false)
                             .on_click(move |_, _, cx| {
                                 let me = me.clone();
                                 cx.default_global::<PanelControl>().spawns.push(
@@ -1057,15 +1189,9 @@ impl Render for DialogTest {
                                             id,
                                             me,
                                             &design::icons::WARNING,
-                                            "Answer required",
+                                            "dialog.required_title",
                                             // わざと長い文。収まらない分は文の側だけがスクロールし、ボタンは残る。
-                                            "This dialog stays open until you press OK or Cancel. \
-                                             Pressing outside does nothing, so the parent stays dimmed \
-                                             and cannot be used in the meantime. Use it for questions \
-                                             that must be answered before going on, such as discarding \
-                                             unsaved changes or overwriting a file. Keep the text short \
-                                             in real dialogs: if it does not fit, only this part scrolls \
-                                             while the buttons stay in place at the bottom.",
+                                            "dialog.required_body",
                                         )
                                     })
                                     .without_dismiss()
@@ -1077,17 +1203,33 @@ impl Render for DialogTest {
             .child(
                 div()
                     .debug_selector(|| "dialog-answer".into())
-                    .child(format!(
-                        "Answered {} ({})",
-                        self.answered,
-                        self.answer.unwrap_or("-")
+                    .child(i18n::tf(
+                        cx,
+                        "dialog.answered",
+                        &[
+                            ("count", &self.answered),
+                            (
+                                "answer",
+                                &self
+                                    .answer
+                                    .map_or("-".into(), |a| i18n::t(cx, answer_key(a))),
+                            ),
+                        ],
                     )),
             )
     }
 }
 
+/// ダイアログの答え（`OK` / `Cancel`）を出すときの文言のキー。
+fn answer_key(answer: &str) -> &'static str {
+    match answer {
+        "OK" => "common.ok",
+        _ => "common.cancel",
+    }
+}
+
 /// [`DialogTest`] が開く、OK / Cancel だけのダイアログ（`components::dialog`）。押した答えを親へ渡して自分を閉じる。
-/// `title` は種類の見分け用。
+/// `title` は種類の見分け用。`title` / `description` は文言のキー（描くときに今の言語で引く）。
 pub struct Dialog {
     panel: PanelId,
     parent: WeakEntity<DialogTest>,
@@ -1117,14 +1259,15 @@ impl Dialog {
 impl Render for Dialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let answer = |id: &'static str, label: &'static str, variant| {
+        // 答えの値（親に渡す）は言語によらず、見出しだけを訳す。
+        let answer = |id: &'static str, value: &'static str, label: SharedString, variant| {
             let parent = self.parent.clone();
             let close = command(self.panel, PanelCommand::Close);
             components::button(&theme, id, label, variant).on_click(move |e, w, cx| {
                 parent
                     .update(cx, |t, cx| {
                         t.answered += 1;
-                        t.answer = Some(label);
+                        t.answer = Some(value);
                         cx.notify();
                     })
                     .ok();
@@ -1135,11 +1278,16 @@ impl Render for Dialog {
             &theme,
             "dialog",
             self.glyph,
-            self.title,
-            self.description,
+            i18n::t(cx, self.title),
+            i18n::t(cx, self.description),
             [
-                answer("dialog-ok", "OK", Variant::Primary),
-                answer("dialog-cancel", "Cancel", Variant::Default),
+                answer("dialog-ok", "OK", i18n::t(cx, "common.ok"), Variant::Primary),
+                answer(
+                    "dialog-cancel",
+                    "Cancel",
+                    i18n::t(cx, "common.cancel"),
+                    Variant::Default,
+                ),
             ],
         )
     }
@@ -1174,9 +1322,9 @@ impl Render for TestingTransparent {
                     .flex()
                     .justify_between()
                     .items_start()
-                    .child("testing-transparent")
+                    .child(i18n::t(cx, "testing.open.transparent"))
                     .child(
-                        button(&theme, "close-transparent", "Close", false)
+                        button(&theme, "close-transparent", i18n::t(cx, "common.close"), false)
                             .on_click(command(self.panel, PanelCommand::Close)),
                     ),
             )
@@ -1187,8 +1335,9 @@ impl Render for TestingTransparent {
 fn title_bar(
     theme: &Theme,
     panel: PanelId,
-    title: impl Into<String>,
+    title: impl Into<SharedString>,
     close_id: &'static str,
+    cx: &App,
 ) -> Div {
     div()
         .flex()
@@ -1196,7 +1345,8 @@ fn title_bar(
         .items_start()
         .child(title.into())
         .child(
-            button(theme, close_id, "Close", false).on_click(command(panel, PanelCommand::Close)),
+            button(theme, close_id, i18n::t(cx, "common.close"), false)
+                .on_click(command(panel, PanelCommand::Close)),
         )
 }
 
@@ -1238,12 +1388,18 @@ impl Render for TestingAnim {
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, self.panel, "testing-anim", "close-anim"))
+            .child(title_bar(
+                &theme,
+                self.panel,
+                i18n::t(cx, "testing.open.moving"),
+                "close-anim",
+                cx,
+            ))
             .child(
                 div()
                     .debug_selector(|| "anim-frames".into())
                     .text_size(px(64.0))
-                    .child(format!("frame {}", self.frames)),
+                    .child(i18n::tf(cx, "testing.frame", &[("count", &self.frames)])),
             )
             .child(
                 div()
@@ -1284,7 +1440,13 @@ impl Render for TestingLod {
             .p_3()
             .bg(rgb(LOD_COLORS[(lod as usize).min(3)]))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, self.panel, "testing-lod", "close-lod"))
+            .child(title_bar(
+                &theme,
+                self.panel,
+                i18n::t(cx, "testing.open.lod"),
+                "close-lod",
+                cx,
+            ))
             .child(
                 div()
                     .debug_selector(|| "lod-level".into())
@@ -1460,8 +1622,9 @@ impl Render for TestingScrollbar {
             .child(title_bar(
                 &theme,
                 self.panel,
-                "testing-scrollbar",
+                i18n::t(cx, "testing.open.scrollbar"),
                 "close-scrollbar",
+                cx,
             ))
             .child(
                 div()
@@ -1513,7 +1676,13 @@ impl Render for TestingFont {
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, self.panel, "testing-font", "close-font"))
+            .child(title_bar(
+                &theme,
+                self.panel,
+                i18n::t(cx, "testing.open.font"),
+                "close-font",
+                cx,
+            ))
             .child(sample(
                 "font-latin",
                 24.0,
@@ -1550,6 +1719,164 @@ impl Render for TestingFont {
                 FontWeight::NORMAL,
                 "Small 14px: 小さい文字の読みやすさ — ABC abc 漢字かな",
             ))
+    }
+}
+
+/// ローカライズを確かめる画面（`locale-test`）。
+/// - `lang-en` / `lang-ja` で言語を切り替える（全パネルに効き、設定ファイルの `language` に残る。`PanelCommand::Language`）。
+///   ボタンの名前はその言語自身で出す。今の言語のボタンが光る。
+/// - `locale-current` に今の言語、`locale-missing` に訳の抜け（言語ごとに表に無いキー）を出す。
+/// - 見本（`locale-samples`）: 長い文の折り返し、差し込み（`{count}`）、訳で長さの変わるボタン。
+/// - `locale-table` に全キーを、言語ごとの文言と並べて出す（今の言語の列を強調）。抜けは赤字で `—`。
+pub struct LocaleTest {
+    panel: PanelId,
+    pub table: ScrollHandle,
+}
+
+impl LocaleTest {
+    pub fn new(panel: PanelId) -> Self {
+        Self {
+            panel,
+            table: ScrollHandle::new(),
+        }
+    }
+}
+
+impl Render for LocaleTest {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let now = cx
+            .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&self.panel))
+            .map_or(Language::default(), |c| c.status.language);
+        let current = lang(now);
+        let switch = row().children(i18n::Lang::ALL.map(|l| {
+            let id = match l {
+                i18n::Lang::En => "lang-en",
+                i18n::Lang::Ja => "lang-ja",
+            };
+            button(&theme, id, l.native_name(), l == current).on_click(command(
+                self.panel,
+                PanelCommand::Language(language(l)),
+            ))
+        }));
+        let missing: Vec<(i18n::Lang, Vec<&'static str>)> = i18n::Lang::ALL
+            .into_iter()
+            .map(|l| (l, i18n::missing(l)))
+            .filter(|(_, keys)| !keys.is_empty())
+            .collect();
+        let missing = div()
+            .debug_selector(|| "locale-missing".into())
+            .flex()
+            .flex_col()
+            .gap(px(spacing::XS))
+            .when(missing.is_empty(), |d| {
+                d.text_color(rgba(theme.neutral_text_low))
+                    .child(i18n::t(cx, "locale.complete"))
+            })
+            .children(missing.into_iter().map(|(l, keys)| {
+                div()
+                    .text_color(rgba(theme.danger_text))
+                    .child(i18n::tf(
+                        cx,
+                        "locale.missing",
+                        &[("language", &l.native_name()), ("count", &keys.len())],
+                    ))
+                    .child(div().text_size(px(font_size::SM)).child(keys.join(", ")))
+            }));
+        let samples = div()
+            .debug_selector(|| "locale-samples".into())
+            .flex()
+            .flex_col()
+            .gap(px(spacing::SM))
+            .child(div().child(i18n::t(cx, "locale.sample_long")))
+            .child(div().child(i18n::tf(cx, "locale.sample_count", &[("count", &3)])))
+            .child(row().child(button(
+                &theme,
+                "locale-sample-button",
+                i18n::t(cx, "locale.sample_button"),
+                false,
+            )));
+        // 全キーの表: キーと、言語ごとの文言。
+        let cell = |text: SharedString, strong: bool| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .px(px(spacing::SM))
+                .when(!strong, |d| d.text_color(rgba(theme.neutral_text_low)))
+                .child(text)
+        };
+        let header = div()
+            .flex()
+            .py(px(spacing::XS))
+            .font_weight(FontWeight::BOLD)
+            .child(cell(i18n::t(cx, "locale.key"), true))
+            .children(i18n::Lang::ALL.map(|l| cell(l.native_name().into(), l == current)));
+        let rows = i18n::keys().into_iter().map(|key| {
+            div()
+                .flex()
+                .py(px(spacing::XS))
+                .text_size(px(font_size::SM))
+                .child(cell(key.into(), false))
+                .children(i18n::Lang::ALL.map(|l| match i18n::get(l, key) {
+                    Some(text) => cell(text.into(), l == current),
+                    None => cell("—".into(), true).text_color(rgba(theme.danger_text)),
+                }))
+        });
+        let table = div()
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .child(
+                div()
+                    .id("locale-table")
+                    .debug_selector(|| "locale-table".into())
+                    .size_full()
+                    .overflow_y_scroll()
+                    .track_scroll(&self.table)
+                    .child(
+                        components::elastic("pull-locale", &self.table)
+                            .flex()
+                            .flex_col()
+                            .child(header)
+                            .children(rows),
+                    ),
+            )
+            .child(
+                components::scrollbars(&theme, "locale-bars", &self.table)
+                    .pulled_by("pull-locale"),
+            );
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap(px(spacing::MD))
+            .p(px(spacing::XL))
+            .text_color(rgba(theme.neutral_text))
+            .child(title_bar(
+                &theme,
+                self.panel,
+                i18n::t(cx, "locale.title"),
+                "close-locale",
+                cx,
+            ))
+            .child(switch)
+            .child(
+                div()
+                    .debug_selector(|| "locale-current".into())
+                    .child(i18n::tf(
+                        cx,
+                        "locale.current",
+                        &[("language", &current.native_name())],
+                    )),
+            )
+            .child(missing)
+            .child(
+                div()
+                    .font_weight(FontWeight::BOLD)
+                    .child(i18n::t(cx, "locale.samples")),
+            )
+            .child(samples)
+            .child(table)
     }
 }
 
@@ -1677,26 +2004,36 @@ impl Render for StressTest {
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(&theme, self.panel, "stress-test", "close-stress"))
+            .child(title_bar(
+                &theme,
+                self.panel,
+                i18n::t(cx, "testing.open.stress"),
+                "close-stress",
+                cx,
+            ))
             .child(
                 div()
                     .debug_selector(|| "stress-count".into())
-                    .child(format!("open {open} / limit {limit} (spawned {alive})")),
+                    .child(i18n::tf(
+                        cx,
+                        "stress.count",
+                        &[("open", &open), ("limit", &limit), ("spawned", &alive)],
+                    )),
             )
             .child(
                 row()
                     .child(
-                        button(&theme, "stress-fill", "Fill to limit", false)
+                        button(&theme, "stress-fill", i18n::t(cx, "stress.fill"), false)
                             .on_click(cx.listener(|this, _, _, cx| this.spawn(usize::MAX, cx))),
                     )
                     .child(
                         button(&theme, "stress-add", format!("+{STRESS_STEP}"), false)
                             .on_click(cx.listener(|this, _, _, cx| this.spawn(STRESS_STEP, cx))),
                     )
-                    .child(button(&theme, "stress-close", "Close all", false).on_click(
+                    .child(button(&theme, "stress-close", i18n::t(cx, "stress.close_all"), false).on_click(
                         cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
                     ))
-                    .child(button(&theme, "stress-scatter", "Scatter", false).on_click(
+                    .child(button(&theme, "stress-scatter", i18n::t(cx, "stress.scatter"), false).on_click(
                         cx.listener(|this, _, _, cx| {
                             // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
                             let poses: Vec<_> = (0..this.alive(cx).len())
@@ -1712,7 +2049,7 @@ impl Render for StressTest {
                         }),
                     ))
                     .child(
-                        button(&theme, "stress-grid", "Grid", false).on_click(cx.listener(
+                        button(&theme, "stress-grid", i18n::t(cx, "stress.grid"), false).on_click(cx.listener(
                             |this, _, _, cx| this.each(cx, |i| PanelCommand::Place(grid_pose(i))),
                         )),
                     ),
@@ -1752,6 +2089,54 @@ mod tests {
         cx.update(|_, cx| cx.set_global(Mode::Light));
         cx.run_until_parked();
         assert!(cx.update(|_, cx| Theme::current(cx)) == Theme::LIGHT);
+    }
+
+    /// 言語ボタンは次の言語へ切り替える要求を積む（設定ファイルへの書き戻しはカーネルの仕事）。
+    #[gpui::test]
+    fn language_button_requests_the_next_language(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| Testing::default());
+        cx.run_until_parked();
+        let c = cx.debug_bounds("toggle-language").unwrap().center();
+        cx.simulate_click(c, Modifiers::none());
+        let queued = cx.update(|_, cx| {
+            cx.global::<PanelControl>().panels[&PanelId::default()]
+                .commands
+                .clone()
+        });
+        assert_eq!(queued, [PanelCommand::Language(Language::Ja)]);
+    }
+
+    /// ローカライズの画面: 言語のボタンが切り替えを要求し、言語が変わると文言が訳されて長さも変わる。
+    #[gpui::test]
+    fn locale_screen_switches_language_and_text_follows(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| LocaleTest::new(0));
+        cx.simulate_resize(gpui::size(px(1200.0), px(1000.0)));
+        cx.run_until_parked();
+        let width = |cx: &mut gpui::VisualTestContext| {
+            cx.debug_bounds("locale-sample-button").unwrap().size.width
+        };
+        let english = width(cx);
+        let c = cx.debug_bounds("lang-ja").unwrap().center();
+        cx.simulate_click(c, Modifiers::none());
+        let queued = cx.update(|_, cx| cx.global::<PanelControl>().panels[&0].commands.clone());
+        assert_eq!(queued, [PanelCommand::Language(Language::Ja)]);
+        // フレームループ（ui::sync_panel）の代わりに、状態とグローバルの言語を反映する。
+        cx.update(|window, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(0)
+                .or_default()
+                .status
+                .language = Language::Ja;
+            cx.set_global(i18n::Lang::Ja);
+            window.refresh();
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|_, cx| i18n::t(cx, "locale.sample_button")),
+            "変更を保存"
+        );
+        assert_ne!(width(cx), english, "the button is laid out with the translation");
     }
 
     /// あふれた一覧にはスクロールバーが出て、棒を掴んで引くと一覧が動く。

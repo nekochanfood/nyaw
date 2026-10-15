@@ -2453,6 +2453,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "i18n"
+version = "2026.0.1"
+dependencies = [
+ "gpui",
+ "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.65"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5301,6 +5309,7 @@ version = "2026.0.1"
 dependencies = [
  "design",
  "gpui",
+ "i18n",
  "kernel",
  "ui",
 ]
@@ -5635,6 +5644,7 @@ dependencies = [
  "design",
  "gpui",
  "gpui_platform",
+ "i18n",
  "kernel",
  "logger",
  "profiler",
@@ -6686,6 +6696,7 @@ dependencies = [
  "chrono",
  "design",
  "gpui",
+ "i18n",
  "kernel",
  "testing",
  "ui",

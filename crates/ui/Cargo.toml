@@ -13,6 +13,7 @@ gpui_platform = { workspace = true, features = ["test-support", "x11", "wayland"
 kernel = { workspace = true, features = ["rendering-host"] }
 profiler.workspace = true
 design.workspace = true
+i18n.workspace = true
 logger.workspace = true
 
 [dev-dependencies]
