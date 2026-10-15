@@ -146,7 +146,21 @@ impl PointerBridge {
                     out.extend(self.mouse(PointerEvent::Up { pos }));
                     return out;
                 }
-                PointerEvent::Leave => self.touch = None,
+                PointerEvent::Leave => {
+                    // スワイプ中に外れたら、指のスライドが終わったことを知らせる。
+                    let swiped = t.swiping.then_some(t.start);
+                    self.touch = None;
+                    if let Some(position) = swiped {
+                        let mut out = vec![PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position,
+                            delta: ScrollDelta::Pixels(Point::default()),
+                            modifiers: Default::default(),
+                            touch_phase: TouchPhase::Ended,
+                        })];
+                        out.extend(self.mouse(ev));
+                        return out;
+                    }
+                }
                 // スティックのスクロールはマウスと同じ。押し直しは来ない。
                 PointerEvent::Scroll { .. } | PointerEvent::Down { .. } => {}
             }

@@ -14,13 +14,16 @@
 //!     .child(scrollbars(&theme, "list-bars", &handle))
 //! ```
 
-use std::time::{Duration, Instant};
+use std::{
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use gpui::{
-    AnyElement, App, Axis, Bounds, Div, Element, ElementId, GlobalElementId, InspectorElementId,
-    IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
-    Point, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Styled,
-    TouchPhase, Window, canvas, div, point, prelude::*, px, rgba,
+    AnyElement, App, Axis, Bounds, DispatchPhase, Div, Element, ElementId, GlobalElementId,
+    InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, Pixels, Point, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+    SharedString, Styled, TouchPhase, Window, canvas, div, point, prelude::*, px, rgba,
 };
 
 use super::{Fade, keep_drawing};
@@ -240,9 +243,13 @@ struct ElasticState {
 
 /// 描画だけを `offset` ずらす。レイアウトは動かないので、スクロールの範囲や位置に影響しない
 /// （`top` などで動かすと、末尾側ではスクロール範囲が縮んで引っ張りが打ち消される）。
+///
+/// ホイールの受け口もここに置く。中身と一緒にずれる要素に付けると、ポインタが端の空いた所へ出たときに届かなくなり、
+/// それ以上引っ張れなくなる。ずらす前の位置とスクロール領域の範囲で、ポインタが触れているかを見る。
 struct Shift {
     offset: Point<Pixels>,
     child: AnyElement,
+    on_wheel: Rc<dyn Fn(&ScrollWheelEvent, &mut Window, &mut App)>,
 }
 
 impl IntoElement for Shift {
@@ -292,12 +299,21 @@ impl Element for Shift {
         &mut self,
         _: Option<&GlobalElementId>,
         _: Option<&InspectorElementId>,
-        _: Bounds<Pixels>,
+        bounds: Bounds<Pixels>,
         _: &mut (),
         _: &mut (),
         window: &mut Window,
         cx: &mut App,
     ) {
+        // 子より先に登録する。ホイールは後に登録したものから受け取るので、入れ子の内側（子）が先、外側のスクロール要素
+        // 自身の処理（これより前に登録済み）が後になる。
+        let visible = bounds.intersect(&window.content_mask().bounds);
+        let on_wheel = self.on_wheel.clone();
+        window.on_mouse_event(move |e: &ScrollWheelEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble && visible.contains(&e.position) {
+                on_wheel(e, window, cx);
+            }
+        });
         self.child.paint(window, cx);
     }
 }
@@ -381,7 +397,7 @@ impl RenderOnce for Elastic {
             keep_drawing(window, cx);
         }
         // 子はホイールを中身より先に受け取る（スクロールする前の状態で見られる）。
-        let child = base.on_scroll_wheel(
+        let on_wheel = Rc::new(
             move |e: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
                 if !cx.has_global::<Motion>() {
                     return;
@@ -436,7 +452,8 @@ impl RenderOnce for Elastic {
         );
         Shift {
             offset: point(px(v[1]), px(v[0])),
-            child: child.into_any_element(),
+            child: base.into_any_element(),
+            on_wheel,
         }
     }
 }

@@ -1439,6 +1439,58 @@ mod tests {
         assert_eq!(top(cx), rest, "離したら戻る");
     }
 
+    /// 末尾でも上限なく引っ張れ、タッチは手を止めても（離すまで）戻らない。
+    #[gpui::test]
+    fn pull_at_the_end_is_unlimited_and_held_while_touching(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| TestingScrollbar::new(0));
+        cx.update(|_, cx| cx.set_global(design::Motion::default()));
+        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        // 一番下までスクロールしておく。
+        view.read_with(cx, |t, _| {
+            let m = t.vertical.max_offset();
+            t.vertical.set_offset(gpui::point(px(0.0), -m.y));
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let area = cx.debug_bounds("scrollbar-v").unwrap();
+        let at = gpui::point(area.center().x, area.bottom() - px(20.0));
+        let top = |cx: &mut gpui::VisualTestContext| {
+            cx.debug_bounds("scrollbar-nested").unwrap().origin.y
+        };
+        let rest = top(cx);
+        let wheel = |dy: f32, phase| ScrollWheelEvent {
+            position: at,
+            delta: ScrollDelta::Pixels(gpui::point(px(0.0), px(dy))),
+            modifiers: gpui::Modifiers::none(),
+            touch_phase: phase,
+        };
+        cx.simulate_event(wheel(-40.0, gpui::TouchPhase::Started));
+        for _ in 0..20 {
+            cx.simulate_event(wheel(-40.0, gpui::TouchPhase::Moved));
+        }
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(
+            top(cx) < rest - px(200.0),
+            "末尾でも上限なく引っ張れる: {:?}",
+            top(cx)
+        );
+        // 手を止めても、離す合図が来るまで戻らない。
+        let held = top(cx);
+        std::thread::sleep(std::time::Duration::from_millis(700));
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert_eq!(top(cx), held, "タッチ中は手を止めても戻らない");
+        cx.simulate_event(wheel(0.0, gpui::TouchPhase::Ended));
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert_eq!(top(cx), rest, "離したら戻る");
+    }
+
     /// 入れ子の内側を引っ張っても、外側の棒は反応しない。
     #[gpui::test]
     fn pulling_the_inner_does_not_squash_the_outer_bar(cx: &mut TestAppContext) {
