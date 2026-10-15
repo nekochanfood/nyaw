@@ -18,8 +18,8 @@ use std::time::Instant;
 
 use gpui::{
     App, Axis, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Point,
-    Pixels, RenderOnce, ScrollHandle, ScrollWheelEvent, SharedString, Window, canvas, div,
-    prelude::*, px, rgba,
+    Pixels, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent, SharedString, Styled,
+    TouchPhase, Window, canvas, div, prelude::*, px, rgba,
 };
 
 use super::{Fade, keep_drawing};
@@ -120,6 +120,8 @@ struct Bar {
     over: bool,
     /// 掴んでいる（棒の先頭からカーソルまでの px）。
     grab: Option<f32>,
+    /// 指のスライド（タッチのスワイプ）で動かしている。掴むのに長押しは要らない。
+    slide: bool,
     thick: Smooth,
     color: Fade,
     squash: Smooth,
@@ -170,6 +172,13 @@ fn set_offset(handle: &ScrollHandle, axis: Axis, v: f32) {
     handle.set_offset(o);
 }
 
+/// 斜めにも滑らかに動くスクロール領域にする。gpui は既定で、縦横が同時に動くとき大きい側の軸だけを使うので、
+/// 縦横ともあふれる領域で斜めや円を描くとカクつく。縦横ともスクロールする要素にはこれを通す。
+pub fn free_scroll<E: Styled>(mut element: E) -> E {
+    element.style().allow_concurrent_scroll = Some(true);
+    element
+}
+
 /// 重ねるスクロールバー。[`scrollbars`] で作る。
 #[derive(IntoElement)]
 pub struct Scrollbars {
@@ -206,6 +215,7 @@ impl RenderOnce for Scrollbars {
                 zone: false,
                 over: false,
                 grab: None,
+                slide: false,
                 thick: Smooth::rest(0.0),
                 color: Fade {
                     from: rest,
@@ -222,8 +232,8 @@ impl RenderOnce for Scrollbars {
         let st = state.update(cx, |s, _| {
             for (i, b) in s.bars.iter_mut().enumerate() {
                 b.thick
-                    .go(if b.zone || b.grab.is_some() { 1.0 } else { 0.0 }, now, animated);
-                let to = if b.grab.is_some() {
+                    .go(if b.zone || b.slide || b.grab.is_some() { 1.0 } else { 0.0 }, now, animated);
+                let to = if b.grab.is_some() || b.slide {
                     active
                 } else if b.over {
                     hover
@@ -275,6 +285,7 @@ impl RenderOnce for Scrollbars {
                     window.refresh();
                 }
             };
+            let zone_leave = state.clone();
             let over = {
                 let state = state.clone();
                 move |on: &bool, window: &mut Window, cx: &mut App| {
@@ -303,6 +314,36 @@ impl RenderOnce for Scrollbars {
                 }
             };
 
+            // 指のスライド: 押してそのまま動かすとタッチはスクロールとして届く。棒の上で始まったものは棒を動かす
+            // （長押しは要らない）。届く位置は押した所に固定されるので、カーソルが外へ出ても続く。
+            let slide = {
+                let (state, handle) = (state.clone(), handle.clone());
+                move |e: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
+                    let ScrollDelta::Pixels(d) = e.delta else {
+                        return; // ホイールの目盛りは中身をスクロールする。
+                    };
+                    let d = f32::from(if v { d.y } else { d.x });
+                    match e.touch_phase {
+                        TouchPhase::Started | TouchPhase::Moved => {
+                            let (view, max, off, reserve) = read(&handle, axis);
+                            let Some(t) = thumb(view, max, off, reserve, 0.0) else {
+                                return;
+                            };
+                            let free = t.track - t.len;
+                            if d == 0.0 || free <= 0.0 {
+                                return;
+                            }
+                            // 指が d 動くと棒も d 動く。中身はその max / free 倍、逆向きに進む。
+                            set_offset(&handle, axis, (off - d * max / free).clamp(-max, 0.0));
+                            state.update(cx, |s, _| s.bars[i].slide = true);
+                        }
+                        // 終わり（惰性も含む）。中身を惰性で流さない。
+                        _ => state.update(cx, |s, _| s.bars[i].slide = false),
+                    }
+                    window.refresh();
+                    cx.stop_propagation();
+                }
+            };
             let strip = div()
                 .id(SharedString::from(name.clone()))
                 .debug_selector({
@@ -311,7 +352,14 @@ impl RenderOnce for Scrollbars {
                 })
                 .absolute()
                 .block_mouse_except_scroll()
-                .on_hover(move |on, w, cx| zone(on, w, cx))
+                .on_hover(move |on, w, cx| {
+                    if !*on {
+                        // カーソルが離れたら、終わりの知らせが来なかったスライドも解く。
+                        zone_leave.update(cx, |s, _| s.bars[i].slide = false);
+                    }
+                    zone(on, w, cx)
+                })
+                .on_scroll_wheel(slide)
                 .on_mouse_down(MouseButton::Left, press);
             let strip = if v {
                 strip.top_0().right_0().bottom(px(reserve)).w(px(band))

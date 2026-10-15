@@ -184,6 +184,19 @@ fn spawn_view<V: Render>(
     }
 }
 
+/// design のカタログを隣に開く（Close はこのパネルを閉じる）。
+fn spawn_catalog(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        cx.default_global::<PanelControl>()
+            .spawns
+            .push(PanelSpec::spawn(panel, |id, _, cx| {
+                // 動きの見本を毎フレーム描く。
+                cx.default_global::<PanelControl>().panels.entry(id).or_default().live = true;
+                design::catalog::Catalog::with_close(command(id, PanelCommand::Close))
+            }))
+    }
+}
+
 fn attach_offset(panel: PanelId, base: Pose) -> Pose {
     Pose::new(
         base.position + Vec3::new(1.2 * panel as f32, 0.0, 0.0),
@@ -239,6 +252,9 @@ impl Render for Testing {
             .child(
                 button!("spawn-scrollbar", "Spawn scrollbar", false)
                     .on_click(spawn_view(self.panel, |id, _| TestingScrollbar::new(id))),
+            )
+            .child(
+                button!("spawn-catalog", "Spawn catalog", false).on_click(spawn_catalog(self.panel)),
             )
             .child(
                 button!("stress-test", "Stress test", false)
@@ -925,8 +941,7 @@ impl Render for TestingScrollbar {
         let both = area(
             "bars-both",
             &self.both,
-            div()
-                .id("scrollbar-both")
+            components::free_scroll(div().id("scrollbar-both"))
                 .debug_selector(|| "scrollbar-both".into())
                 .overflow_scroll()
                 .flex()
@@ -1262,6 +1277,28 @@ mod tests {
         );
         let y = view.read_with(cx, |t, _| t.list.offset().y);
         assert!(y < px(0.0), "引いた分だけ一覧が進む: {y:?}");
+    }
+
+    /// タッチのスライド（長押しなし）で棒の上から動かすと、棒が動いて中身が進み、中身は惰性で流れない。
+    #[gpui::test]
+    fn scrollbar_follows_a_touch_slide_without_long_press(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| Testing::default());
+        cx.simulate_resize(gpui::size(px(800.0), px(600.0)));
+        cx.run_until_parked();
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let at = cx.debug_bounds("scroll-bars-v-thumb").unwrap().center();
+        let wheel = |phase| ScrollWheelEvent {
+            position: at,
+            delta: ScrollDelta::Pixels(gpui::point(px(0.0), px(30.0))),
+            modifiers: gpui::Modifiers::none(),
+            touch_phase: phase,
+        };
+        cx.simulate_event(wheel(gpui::TouchPhase::Started));
+        let y = view.read_with(cx, |t, _| t.list.offset().y);
+        assert!(y < px(-30.0), "棒が 30px 動くと中身はそれ以上進む: {y:?}");
+        cx.simulate_event(wheel(gpui::TouchPhase::Ended));
+        assert_eq!(view.read_with(cx, |t, _| t.list.offset().y), y, "惰性では動かない");
     }
 
     /// スクロールバーの試験画面は 3 つの領域それぞれに棒が出る（縦横の領域は両方出る）。

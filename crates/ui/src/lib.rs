@@ -22,7 +22,7 @@ use std::{
 use gpui::{
     AnyView, AnyWindowHandle, App, Context, Entity, MouseButton, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
-    Window, div, prelude::*, px, rgb,
+    TouchPhase, Window, div, prelude::*, px, rgb,
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
@@ -86,6 +86,7 @@ impl PointerBridge {
                 PointerEvent::Move { pos } => {
                     let (last, pos) = (self.pos, at(pos));
                     let d = pos - t.start;
+                    let was_swiping = t.swiping;
                     t.swiping |= f32::from(d.x).hypot(f32::from(d.y)) > SWIPE_SLOP;
                     if !t.swiping {
                         if t.at.elapsed() < LONG_PRESS {
@@ -113,7 +114,12 @@ impl PointerBridge {
                         position: t.start,
                         delta: ScrollDelta::Pixels(pos - last),
                         modifiers: Default::default(),
-                        touch_phase: Default::default(),
+                        // スクロールバーなどが、指のスライドの始まりと終わりを知れるように段階を付ける。
+                        touch_phase: if was_swiping {
+                            TouchPhase::Moved
+                        } else {
+                            TouchPhase::Started
+                        },
                     })];
                 }
                 PointerEvent::Up { .. } if t.held => {
@@ -125,7 +131,14 @@ impl PointerBridge {
                     if t.swiping {
                         // 離した後も慣性で滑る（フレームごとの momentum）。GPUI のマウスは離した所へ。
                         self.momentum = Some((t.start, t.velocity));
-                        return self.mouse(PointerEvent::Move { pos });
+                        let mut out = vec![PlatformInput::ScrollWheel(ScrollWheelEvent {
+                            position: t.start,
+                            delta: ScrollDelta::Pixels(Point::default()),
+                            modifiers: Default::default(),
+                            touch_phase: TouchPhase::Ended,
+                        })];
+                        out.extend(self.mouse(PointerEvent::Move { pos }));
+                        return out;
                     }
                     // タップ: 押して離す。
                     let mut out = self.mouse(PointerEvent::Move { pos });
@@ -180,7 +193,8 @@ impl PointerBridge {
             position: *position,
             delta: ScrollDelta::Pixels(*v),
             modifiers: Default::default(),
-            touch_phase: Default::default(),
+            // 指を離した後の惰性（指のスライドそのものではない）。
+            touch_phase: TouchPhase::Ended,
         }))
     }
 
@@ -1459,6 +1473,7 @@ mod tests {
             panic!("{swipe:?}")
         };
         assert_eq!(e.delta.pixel_delta(px(1.0)), Point::new(px(0.0), px(30.0)));
+        assert_eq!(e.touch_phase, TouchPhase::Started);
         assert_eq!(
             e.position,
             Point::new(px(10.0), px(10.0)),
@@ -1471,7 +1486,7 @@ mod tests {
                 },
                 touch
             )),
-            ["move"]
+            ["scroll", "move"]
         );
         assert!(!b.pressed);
         // 離した後も慣性で同じ向きに滑り、だんだん止まる。
