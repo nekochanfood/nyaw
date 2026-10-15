@@ -80,9 +80,13 @@ impl Render for Wrist {
                 .rounded(px(radius::FULL))
                 .bg(rgba(color))
         };
-        let ticks = (0..60)
-            .step_by(5)
-            .map(|i| dot(i, if i % 15 == 0 { 14.0 } else { 8.0 }, theme.neutral_text_low));
+        let ticks = (0..60).step_by(5).map(|i| {
+            dot(
+                i,
+                if i % 15 == 0 { 14.0 } else { 8.0 },
+                theme.neutral_text_low,
+            )
+        });
         let second = dot(now.second(), 12.0, theme.accent_solid);
         components::card_panel(&theme)
             .rounded(px(radius::FULL))

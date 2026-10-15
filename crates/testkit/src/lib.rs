@@ -63,8 +63,6 @@ pub trait Driver<V> {
     fn read<R>(&mut self, f: impl FnOnce(&V) -> R) -> R;
     /// Color (0xRRGGBB) at the center of an element as visible to the user. novr: emulator screen; VR: panel texture.
     fn color_at(&mut self, selector: &'static str) -> u32;
-    /// Web pages the screen asked to open (not opened on the test platform; only the name is kept).
-    fn web_spawns(&self) -> &[String];
 }
 
 /// Creates tests that run a basic-operation scenario `scenario(&mut impl Driver<V>)` with the kit of every runtime.

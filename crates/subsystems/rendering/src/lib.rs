@@ -3,8 +3,6 @@
 
 #[cfg(feature = "gpui")]
 pub mod gpui;
-#[cfg(feature = "web")]
-pub mod web;
 
 use vr::{Device, OverlayId, Pose, VrBackend, VrError};
 

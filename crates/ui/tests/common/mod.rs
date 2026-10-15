@@ -1,11 +1,8 @@
-//! Shared parts of the web panel E2E tests. As in production, GPUI's event loop owns the main thread and Tauri runs on top of it, so
-//! the test steps run on another thread. Page state is read via Tauri events (`testing:probe` -> `testing:state`), and
-//! the GPUI side is touched by injecting work into the frame loop with `ui::Hooks::remote`.
+//! 本番の GPUI フレームループで動かす E2E の共有処理。
 
 #![allow(dead_code)] // each test uses a different subset
 
 use std::{
-    panic::AssertUnwindSafe,
     sync::{
         Arc, Mutex,
         mpsc::{Receiver, channel},
@@ -15,10 +12,8 @@ use std::{
 
 use kernel::vr::novr::{Button, Emulator};
 use kernel::vr::{Frame, OverlayId, Quat, RawController, Vec3, mock::MockBackend};
-use kernel::{Hand, Kernel, Pose, Runtime, Vec2, VrBackend, VrError};
-use serde_json::Value;
+use kernel::{Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 use std::sync::mpsc::Sender;
-use tauri::{AppHandle, Emitter, Listener};
 
 /// where to run. On Linux every time if there is a display (X / Wayland), on other OSes only with `--ignored`
 /// (since it includes paths such as readback that have only been verified on Linux).
@@ -82,68 +77,8 @@ impl VrBackend for SharedMock {
     }
 }
 
-/// queries to the page (web/src/probe.ts) and its replies.
-pub const PROBE_EVENT: &str = "testing:probe";
-pub const STATE_EVENT: &str = "testing:state";
-
-/// a way for the test thread to touch GPUI on the frame loop (main thread).
-pub type Remote = std::sync::mpsc::Sender<ui::Remote>;
-
-/// start with the production `ui::run_with` (Tauri also runs on top of GPUI's event loop). Run `kick` on the first frame, and
-/// once web (Tauri) is up, run `scenario` on another thread. The first panel read is `label`.
-/// when done (printing the panic message on failure), ask the app to quit (it closes the WebView first) and return the exit code.
-pub fn run(
-    name: &'static str,
-    kernel: Kernel,
-    panels: Vec<ui::PanelSpec>,
-    label: &'static str,
-    kick: Option<ui::Remote>,
-    scenario: impl FnOnce(&mut Page, &Remote) + Send + 'static,
-) -> std::process::ExitCode {
-    let (remote, rx) = channel::<ui::Remote>();
-    if let Some(k) = kick {
-        remote.send(k).unwrap();
-    }
-    let result: Arc<Mutex<Option<bool>>> = Arc::default();
-    let done = result.clone();
-    let hooks = ui::Hooks {
-        on_web: Some(Box::new(move |app: &AppHandle| {
-            let (tx, replies) = channel();
-            app.listen_any(STATE_EVENT, move |e| {
-                if let Ok(v) = serde_json::from_str::<Value>(e.payload()) {
-                    let _ = tx.send(v);
-                }
-            });
-            let app = app.clone();
-            std::thread::spawn(move || {
-                let mut page = Page {
-                    app,
-                    label: label.into(),
-                    replies,
-                    seq: 0,
-                };
-                let ok = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    // wait for the page to load and its first status.
-                    page.until("page loaded and status arrived", |s| {
-                        !s["state"]["status"].is_null()
-                    });
-                    scenario(&mut page, &remote)
-                }))
-                .is_ok();
-                println!("{name}: {}", if ok { "ok" } else { "FAILED" });
-                *done.lock().unwrap() = Some(ok);
-                quit(&remote, ok);
-            });
-        })),
-        remote: Some(rx),
-        hide_profiler: false,
-    };
-    ui::run_with(kernel, panels, None, webpages::FILES, hooks);
-    exit_code(name, &result)
-}
-
-/// ask the app to quit (the frame loop closes the WebView first). If it does not quit, end the process after 15 seconds.
-pub fn quit(remote: &Remote, ok: bool) {
+/// 終了を頼み、15 秒経っても終わらなければプロセスを終了する。
+pub fn quit(remote: &Sender<ui::Remote>, ok: bool) {
     let _ = remote.send(Box::new(|cx| {
         cx.default_global::<ui::PanelControl>().quit = true;
     }));
@@ -168,77 +103,7 @@ pub fn exit_code(name: &str, result: &Mutex<Option<bool>>) -> std::process::Exit
     }
 }
 
-/// a way to read one web page (the panel `label`).
-pub struct Page {
-    pub app: AppHandle,
-    pub label: String,
-    replies: Receiver<Value>,
-    seq: u64,
-}
-
 pub const TIMEOUT: Duration = Duration::from_secs(15);
-
-impl Page {
-    /// page state and element positions (the contents of `webtesting:state`).
-    pub fn probe(&mut self) -> Value {
-        self.seq += 1;
-        let deadline = Instant::now() + Duration::from_secs(2);
-        self.app
-            .emit_to(self.label.as_str(), PROBE_EVENT, self.seq)
-            .unwrap();
-        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
-            match self.replies.recv_timeout(left) {
-                Ok(v) if v["seq"] == self.seq => return v,
-                Ok(_) => {}
-                Err(_) => break,
-            }
-        }
-        Value::Null // still loading, etc. The caller waits with until
-    }
-
-    /// keep querying until `cond` holds. If it never does, fail with the last status attached.
-    pub fn until(&mut self, what: &str, cond: impl Fn(&Value) -> bool) -> Value {
-        let deadline = Instant::now() + TIMEOUT;
-        loop {
-            let v = self.probe();
-            if !v.is_null() && cond(&v) {
-                return v;
-            }
-            if Instant::now() > deadline {
-                panic!("{what}: did not hold in time. Last status: {v:#}");
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-
-    /// center of the element (CSS px = the panel's logical pixels).
-    pub fn center(&mut self, id: &str) -> (f32, f32) {
-        let v = self.until(&format!("element {id} exists"), |v| {
-            v["rects"][id].is_object()
-        });
-        let r = &v["rects"][id];
-        let f = |k: &str| r[k].as_f64().unwrap() as f32;
-        (f("x") + f("w") / 2.0, f("y") + f("h") / 2.0)
-    }
-
-    /// `dx` px inside the element's left edge, vertically centered (to check a color away from the text).
-    pub fn left_edge(&mut self, id: &str, dx: f32) -> (f32, f32) {
-        let v = self.until(&format!("element {id} exists"), |v| {
-            v["rects"][id].is_object()
-        });
-        let r = &v["rects"][id];
-        let f = |k: &str| r[k].as_f64().unwrap() as f32;
-        (f("x") + dx, f("y") + f("h") / 2.0)
-    }
-}
-
-/// a numeric value in the status.
-pub fn num(v: &Value, path: &[&str]) -> f64 {
-    path.iter()
-        .fold(v, |v, k| &v[*k])
-        .as_f64()
-        .unwrap_or(f64::NAN)
-}
 
 pub const PANEL_POS: Vec3 = Vec3::new(0.0, 0.0, -1.0);
 /// pixels per meter (800px = 0.8m). Unchanged by resizing.
@@ -277,7 +142,7 @@ impl Vr {
         }];
     }
 
-    /// aim the laser at a pixel (CSS px) on the panel.
+    /// パネルの論理ピクセルへレーザーを向ける。
     pub fn point_at(&mut self, (x, y): (f32, f32)) {
         let (w, h) = (self.resolution.0 as f32, self.resolution.1 as f32);
         let target =
@@ -295,70 +160,14 @@ impl Vr {
         self.send();
     }
 
-    /// color at logical pixel `(x, y)` of the texture last sent to the VR panel (overlay 0).
-    pub fn color_at(&self, (x, y): (f32, f32)) -> Option<[u8; 4]> {
-        let mock = self.mock.lock().unwrap();
-        let tex = mock.overlays[0].texture.as_ref()?;
-        let (rw, rh) = self.resolution;
-        let tx = ((x / rw as f32 * tex.width as f32) as u32).min(tex.width - 1);
-        let ty = ((y / rh as f32 * tex.height as f32) as u32).min(tex.height - 1);
-        Some(tex.pixel(tx, ty))
-    }
-
-    pub fn texture_size(&self) -> Option<(u32, u32)> {
-        self.texture_size_of(0)
-    }
-
     pub fn texture_size_of(&self, overlay: usize) -> Option<(u32, u32)> {
         let mock = self.mock.lock().unwrap();
-        mock.overlays[overlay]
+        mock.overlays
+            .get(overlay)?
             .texture
             .as_ref()
             .map(|t| (t.width, t.height))
     }
-
-    /// wait until `(x, y)` of the VR panel is close to `rgb`.
-    pub fn until_color(&self, what: &str, at: (f32, f32), rgb: [u8; 3]) {
-        let deadline = Instant::now() + TIMEOUT;
-        loop {
-            let c = self.color_at(at);
-            if c.is_some_and(|[r, g, b, _]| {
-                [r, g, b]
-                    .iter()
-                    .zip(rgb)
-                    .all(|(a, b)| (*a as i32 - b as i32).abs() <= 8)
-            }) {
-                return;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "{what}: VR panel at {at:?} never became {rgb:02x?} ({c:02x?})"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    }
-}
-
-/// point at the element's center, press and release the select button, and wait for click to arrive.
-pub fn click(page: &mut Page, vr: &mut Vr, id: &str) {
-    press(page, vr, id);
-    page.until(&format!("released {id}"), |s| {
-        s["state"]["last"]["type"] == "click" || s["state"]["last"]["type"] == "lostpointercapture"
-    });
-}
-
-/// point at the element's center, press and release the select button (don't wait for the page after release）。
-pub fn press(page: &mut Page, vr: &mut Vr, id: &str) {
-    vr.point_at(page.center(id));
-    page.until(&format!("hover over {id}"), |s| {
-        s["state"]["last"]["target"] == id
-    });
-    let downs = num(&page.probe(), &["state", "counts", "pointerdown"]);
-    vr.set("trigger/value", 1.0);
-    page.until(&format!("pressed {id}"), |s| {
-        num(s, &["state", "counts", "pointerdown"]) > downs
-    });
-    vr.set("trigger/value", 0.0);
 }
 
 pub type Job = Box<dyn FnOnce(&mut Emulator) + Send>;

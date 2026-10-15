@@ -2235,7 +2235,11 @@ mod tests {
         let resize = |r| [("squeeze/value", 1.0), (RESIZE, r)];
         controller(&mut vr, Pose::IDENTITY, &resize(0.0));
         settle(&mut vr, &mut ov);
-        let (w0, h0, pos) = (ov.panel(0).size.x, ov.panel(0).size.y, ov.panel(0).pose.position);
+        let (w0, h0, pos) = (
+            ov.panel(0).size.x,
+            ov.panel(0).size.y,
+            ov.panel(0).pose.position,
+        );
         // 押している間、tick ごとに大きくなる。縦横比は保ち、その場に留まる。
         controller(&mut vr, Pose::IDENTITY, &resize(1.0));
         for _ in 0..10 {

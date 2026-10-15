@@ -232,7 +232,14 @@ impl Emulator {
                 (crate::RESIZE_INPUT.to_owned(), resize),
             ],
         };
-        let mut out = vec![raw(Hand::Left, LEFT_HAND, false, false, self.sticks[0], 0.0)];
+        let mut out = vec![raw(
+            Hand::Left,
+            LEFT_HAND,
+            false,
+            false,
+            self.sticks[0],
+            0.0,
+        )];
         if let Some(at) = self.pointer {
             let dir = self.ray(at).normalize();
             let aim = Pose::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::NEG_Z, dir));
