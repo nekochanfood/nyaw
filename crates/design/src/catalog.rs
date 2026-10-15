@@ -402,7 +402,7 @@ impl Catalog {
     }
 
     fn components_section(&self, t: &Theme, cx: &mut Context<Self>) -> Div {
-        let (a, b, c) = (cx.entity(), cx.entity(), cx.entity());
+        let (a, b, c, d) = (cx.entity(), cx.entity(), cx.entity(), cx.entity());
         let on = self.toggle;
         let body = div()
             .flex()
@@ -461,7 +461,6 @@ impl Catalog {
                         t,
                         "cat-slider",
                         self.slider,
-                        6,
                         move |v, _, cx| {
                             c.update(cx, |s, cx| {
                                 s.slider = v;
@@ -469,7 +468,17 @@ impl Catalog {
                             })
                         },
                     ))
-                    .child(caption(t, format!("slider: {:.2}", self.slider))),
+                    .child(caption(t, format!("slider: {:.2}", self.slider)))
+                    .child(
+                        components::slider(t, "cat-slider-v", self.slider, move |v, _, cx| {
+                            d.update(cx, |s, cx| {
+                                s.slider = v;
+                                cx.notify()
+                            })
+                        })
+                        .vertical()
+                        .length(80.0),
+                    ),
             )
             .child(caption(t, "scrollbars（縦・横）"))
             .child(scroll_demo(t, &self.scroll));

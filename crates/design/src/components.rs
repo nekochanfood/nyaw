@@ -12,7 +12,9 @@ use gpui::{
 use palette::{FromColor, Mix, Oklab, Srgb};
 
 mod scrollbar;
+mod slider;
 pub use scrollbar::{Elastic, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
+pub use slider::{Slider, slider};
 
 use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 
@@ -260,47 +262,6 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
             .rounded(px(radius::FULL))
             .bg(rgba(if on { theme.on_accent } else { theme.panel })),
     )
-}
-
-/// `steps` 個の段に分けたスライダー（`value` は 0..=1）。段を押すとその段の値で `on_change` が呼ばれる。
-/// 段は `{id}-{i}` で指せる。
-// ponytail: ドラッグで連続に動かすのではなく段を押す方式。連続値が要るならポインタの位置から値を出す版にする。
-pub fn slider(
-    theme: &Theme,
-    id: &'static str,
-    value: f32,
-    steps: usize,
-    on_change: impl Fn(f32, &mut Window, &mut App) + 'static,
-) -> Stateful<Div> {
-    assert!(steps >= 2, "スライダーは 2 段以上");
-    let on_change = std::rc::Rc::new(on_change);
-    let filled = (value.clamp(0.0, 1.0) * (steps - 1) as f32).round() as usize;
-    let mut row = div()
-        .id(id)
-        .flex()
-        .items_center()
-        .gap(px(spacing::XS))
-        .h(px(24.0));
-    for i in 0..steps {
-        let v = i as f32 / (steps - 1) as f32;
-        let on_change = on_change.clone();
-        let name = format!("{id}-{i}");
-        row = row.child(
-            div()
-                .id(SharedString::from(name.clone()))
-                .debug_selector(move || name.clone())
-                .w(px(20.0))
-                .h(px(if i == filled { 24.0 } else { 8.0 }))
-                .rounded(px(radius::SM))
-                .bg(rgba(if i <= filled {
-                    theme.accent_solid
-                } else {
-                    theme.track
-                }))
-                .on_click(move |_, w, cx| on_change(v, w, cx)),
-        );
-    }
-    row
 }
 
 /// 画面やパネルの地。文字色も役割から決まる。
