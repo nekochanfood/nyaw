@@ -14,7 +14,10 @@ fn main() -> ExitCode {
         Ok(c) => c,
         Err(e) => {
             logger::warn!("failed to read config file, starting with defaults", path = ?config::path(), error = e);
-            config::Config::default()
+            config::Config {
+                runtime: config::salvage_runtime(),
+                ..Default::default()
+            }
         }
     };
     let args = Args::parse(std::env::args().skip(1));

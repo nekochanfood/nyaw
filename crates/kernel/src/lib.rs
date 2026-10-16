@@ -114,11 +114,16 @@ impl Kernel {
     /// ランタイムを選んで起動する。`requested` は `"--novr"` / `"novr"` のような指定（コマンドライン > 設定ファイル。決めるのは呼び出し側）。
     /// 指定なしで VR ランタイムが無ければ novr で起動する（`novr` フィーチャーがあれば常に使える）。指定したのに繋がらなければエラー。
     pub fn boot(requested: Option<&str>, config: Config) -> Result<Self, VrError> {
-        let prefer = match requested {
-            Some("--novr" | "novr") => Some(Runtime::NoVr),
-            Some("--openxr" | "openxr") => Some(Runtime::OpenXr),
-            Some("--openvr" | "openvr") => Some(Runtime::OpenVr),
-            _ => None,
+        let prefer = match requested.map(runtime_name).as_deref() {
+            None | Some("") => None,
+            Some("novr") => Some(Runtime::NoVr),
+            Some("openxr") => Some(Runtime::OpenXr),
+            Some("openvr") => Some(Runtime::OpenVr),
+            // 読めない指定を「指定なし」として扱うと、VR ランタイムに繋ぎに行って SteamVR を起こしてしまう。
+            Some(_) => {
+                logger::error!("unknown runtime", requested = requested.unwrap_or_default());
+                return Err(VrError::NoRuntime);
+            }
         };
         let vr = match vr::connect(prefer, config.gpu.emulator) {
             Ok(b) => b,
@@ -137,6 +142,14 @@ impl Kernel {
         kernel.config_path = config::path();
         Ok(kernel)
     }
+}
+
+/// ランタイムの指定を比べられる形にする（`--NoVr` / `no-vr` / `no_vr` → `novr`）。
+fn runtime_name(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
 }
 
 impl<B: VrBackend> Kernel<B> {
@@ -441,7 +454,7 @@ mod tests {
     #[cfg(feature = "novr")]
     #[test]
     fn boot_novr_by_name() {
-        for name in ["novr", "--novr"] {
+        for name in ["novr", "--novr", "--no-vr", "NoVr", "no_vr"] {
             for gpu in [false, true] {
                 let mut config = Config::default();
                 config.gpu.emulator = gpu;
@@ -449,6 +462,11 @@ mod tests {
                 assert_eq!(k.runtime(), Runtime::NoVr);
             }
         }
+    }
+
+    #[test]
+    fn boot_rejects_unknown_runtime_instead_of_connecting_to_vr() {
+        assert!(Kernel::boot(Some("--nvr"), Config::default()).is_err());
     }
 
     #[cfg(feature = "novr")]

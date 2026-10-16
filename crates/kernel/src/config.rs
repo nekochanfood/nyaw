@@ -152,6 +152,17 @@ pub fn load() -> Result<Config, Error> {
     }
 }
 
+/// 設定ファイルが読めなかった（どこかの値が壊れている）ときに、`runtime` だけ拾い出す。
+/// 既定値で起動すると novr の指定が消え、VR ランタイム（SteamVR）に繋ぎに行ってしまうので。
+pub fn salvage_runtime() -> Option<String> {
+    runtime_from(&fs::read_to_string(path()?).ok()?)
+}
+
+fn runtime_from(text: &str) -> Option<String> {
+    let table = text.parse::<toml::Table>().ok()?;
+    table.get("runtime")?.as_str().map(str::to_owned)
+}
+
 /// `path` の設定ファイルの `theme` だけを書き換える（他のキーは残す。ファイルが無ければ作る）。
 /// 既存のファイルが読めない・TOML として壊れているときは、上書きせずにエラーを返す。
 pub fn save_theme_at(path: &Path, theme: ThemeMode) -> Result<(), Error> {
@@ -188,6 +199,15 @@ fn save_at(path: &Path, key: &str, value: toml::Value) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_survives_a_broken_value() {
+        let text = "runtime = \"novr\"
+lod_quality = 9
+";
+        assert!(parse(text).is_err());
+        assert_eq!(runtime_from(text).as_deref(), Some("novr"));
+    }
 
     #[test]
     fn lod_quality_defaults_to_mid_and_validates_numbers() {
