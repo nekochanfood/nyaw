@@ -8,8 +8,11 @@ use std::{
         mpsc::{self, Receiver, SyncSender},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+pub const DEFAULT_FRAME_RATE: u32 = 60;
+pub const MAX_FRAME_RATE: u32 = 240;
 
 #[cfg(target_os = "linux")]
 mod linux;
@@ -187,17 +190,21 @@ pub struct Stream {
 
 impl Stream {
     pub fn start(source: Source) -> Result<Self, Error> {
+        Self::start_at(source, DEFAULT_FRAME_RATE)
+    }
+
+    pub fn start_at(source: Source, frame_rate: u32) -> Result<Self, Error> {
         #[cfg(windows)]
         {
-            Self::spawn(move |_| windows::Capture::new(source))
+            Self::spawn(frame_rate, move |_| windows::Capture::new(source))
         }
         #[cfg(target_os = "linux")]
         {
-            Self::spawn(move |stop| linux::Capture::new(source, stop))
+            Self::spawn(frame_rate, move |stop| linux::Capture::new(source, stop))
         }
         #[cfg(not(any(windows, target_os = "linux")))]
         {
-            let _ = source;
+            let _ = (source, frame_rate);
             Err(Error(
                 "desktop capture is not available on this platform yet".into(),
             ))
@@ -205,8 +212,15 @@ impl Stream {
     }
 
     fn spawn<S: Session + 'static>(
+        frame_rate: u32,
         open: impl FnOnce(Arc<AtomicBool>) -> Result<S, Error> + Send + 'static,
     ) -> Result<Self, Error> {
+        if !(1..=MAX_FRAME_RATE).contains(&frame_rate) {
+            return Err(Error(format!(
+                "desktop frame rate must be between 1 and {MAX_FRAME_RATE}"
+            )));
+        }
+        let interval = Duration::from_secs_f64(1. / f64::from(frame_rate));
         let update = Arc::new(Mutex::new(Some(Update {
             status: Status::Starting,
             frame: None,
@@ -220,16 +234,25 @@ impl Stream {
             .spawn(move || {
                 let result = (|| {
                     let mut session = open(stopping.clone())?;
+                    let mut next_frame = Instant::now();
                     while !stopping.load(Ordering::Acquire) {
                         if session.closed() {
                             break;
                         }
-                        match rx.recv_timeout(Duration::from_millis(8)) {
+                        let wait = next_frame
+                            .saturating_duration_since(Instant::now())
+                            .min(Duration::from_millis(8));
+                        match rx.recv_timeout(wait) {
                             Ok(touch) => session.touch(touch)?,
                             Err(mpsc::RecvTimeoutError::Disconnected) => break,
                             Err(mpsc::RecvTimeoutError::Timeout) => (),
                         }
                         session.heartbeat()?;
+                        let now = Instant::now();
+                        if now < next_frame {
+                            continue;
+                        }
+                        next_frame = now + interval;
                         if let Some(frame) = session.frame()? {
                             *output.lock().unwrap() = Some(Update {
                                 status: Status::Streaming,
@@ -361,7 +384,7 @@ mod tests {
         let dropped = Arc::new(AtomicBool::new(false));
         let observer = dropped.clone();
         let (tx, rx) = mpsc::sync_channel(4);
-        let stream = Stream::spawn(move |_| {
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_| {
             Ok(Fake {
                 dropped,
                 input: tx,
@@ -384,11 +407,59 @@ mod tests {
 
     #[test]
     fn worker_reports_open_failure() {
-        let stream = Stream::spawn::<Fake>(|_| Err(Error("permission denied".into()))).unwrap();
+        let stream = Stream::spawn::<Fake>(DEFAULT_FRAME_RATE, |_| {
+            Err(Error("permission denied".into()))
+        })
+        .unwrap();
         until(|| {
             stream
                 .poll()
                 .is_some_and(|u| u.status == Status::Failed(Error("permission denied".into())))
+        });
+    }
+
+    #[test]
+    fn invalid_frame_rates_do_not_open_an_os_session() {
+        for rate in [0, MAX_FRAME_RATE + 1, u32::MAX] {
+            assert!(
+                Stream::spawn::<Fake>(rate, |_| panic!("invalid rate must not open a session"))
+                    .is_err()
+            );
+        }
+    }
+
+    #[test]
+    fn low_frame_rate_limits_capture_without_delaying_touch() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (tx, rx) = mpsc::sync_channel(4);
+        let stream = Stream::spawn(1, move |_| {
+            Ok(Fake {
+                dropped,
+                input: tx,
+                frame: 0,
+            })
+        })
+        .unwrap();
+        until(|| stream.poll().is_some_and(|u| u.frame.is_some()));
+        let touch = Touch {
+            id: 0,
+            phase: TouchPhase::Down,
+            x: 0.5,
+            y: 0.5,
+        };
+        let sent = Instant::now();
+        stream.touch(touch).unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_millis(250)).unwrap(), touch);
+        assert!(sent.elapsed() < Duration::from_millis(250));
+        thread::sleep(Duration::from_millis(80));
+        assert!(
+            stream.poll().is_none(),
+            "1 FPS must not capture a second frame immediately"
+        );
+        until(|| {
+            stream
+                .poll()
+                .is_some_and(|u| u.frame.is_some_and(|f| f.rgba == [2; 4]))
         });
     }
 
@@ -411,7 +482,7 @@ mod tests {
     fn injection_failure_reports_error_and_releases_the_os_session() {
         let dropped = Arc::new(AtomicBool::new(false));
         let observer = dropped.clone();
-        let stream = Stream::spawn(move |_| Ok(TouchFailure(dropped))).unwrap();
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_| Ok(TouchFailure(dropped))).unwrap();
         stream
             .touch(Touch {
                 id: 0,

@@ -7,7 +7,7 @@ use ::windows::{
         SizeInt32,
     },
     Win32::{
-        Foundation::{E_POINTER, ERROR_NOT_READY, HMODULE, HWND, LPARAM, POINT, RECT},
+        Foundation::{ERROR_NOT_READY, HMODULE, HWND, LPARAM, POINT, RECT},
         Graphics::{
             Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP},
             Direct3D11::*,
@@ -15,10 +15,14 @@ use ::windows::{
             Dxgi::IDXGIDevice,
             Gdi::*,
         },
-        System::WinRT::{
-            Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess},
-            Graphics::Capture::IGraphicsCaptureItemInterop,
-            RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize,
+        System::{
+            Com::CoIncrementMTAUsage,
+            Threading::{AttachThreadInput, GetCurrentThreadId},
+            WinRT::{
+                Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess},
+                Graphics::Capture::IGraphicsCaptureItemInterop,
+                RO_INIT_MULTITHREADED, RoInitialize, RoUninitialize,
+            },
         },
         UI::{
             Controls::*,
@@ -32,7 +36,7 @@ use ::windows::{
 use std::{
     mem::size_of,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
 };
@@ -133,6 +137,14 @@ pub(super) struct Capture {
 
 impl Capture {
     pub fn new(source: Source) -> Result<Self, Error> {
+        // WinRT の静的キャッシュと MTA の寿命を揃え、全配信停止後の再開でも参照を有効に保つ。
+        static MTA: OnceLock<Result<(), Error>> = OnceLock::new();
+        MTA.get_or_init(|| {
+            unsafe { CoIncrementMTAUsage() }
+                .map(|_| ())
+                .map_err(Into::into)
+        })
+        .clone()?;
         unsafe {
             RoInitialize(RO_INIT_MULTITHREADED)?;
         }
@@ -245,22 +257,100 @@ impl Capture {
         }
         Ok(rect)
     }
+
+    fn activate_touch_target(&mut self, touch: Touch) -> Result<Option<POINT>, Error> {
+        let hwnd = HWND(self.source.target as _);
+        unsafe {
+            if IsIconic(hwnd).as_bool() {
+                let _ = ShowWindowAsync(hwnd, SW_RESTORE);
+            }
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOP),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+            );
+            if !SetForegroundWindow(hwnd).as_bool() {
+                // VR の入力だけでは前面化の権限がない場合がある。切り替え中だけ入力キューを共有する。
+                let current = GetCurrentThreadId();
+                let foreground = GetWindowThreadProcessId(GetForegroundWindow(), None);
+                let mut message = MSG::default();
+                let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+                if foreground != 0
+                    && foreground != current
+                    && AttachThreadInput(current, foreground, true).as_bool()
+                {
+                    let _ = SetForegroundWindow(hwnd);
+                    let _ = AttachThreadInput(current, foreground, false);
+                }
+            }
+        }
+        // 前面化は相手の UI スレッドで反映されるため、直後の一回の判定では拒否しない。
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
+        loop {
+            if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+                return Ok(None);
+            }
+            if let Ok(bounds) = self.bounds() {
+                let point = normalized_point(bounds, touch.x, touch.y);
+                if unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) } == hwnd {
+                    return Ok(Some(point));
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Ok(None);
+            }
+            self.heartbeat()?;
+            std::thread::sleep(std::time::Duration::from_millis(4));
+        }
+    }
+
+    fn next_frame(
+        &self,
+    ) -> Result<Option<::windows::Graphics::Capture::Direct3D11CaptureFrame>, Error> {
+        // WinRT の正常な null 戻り値を「フレームなし」として扱う。非 nullable な Rust API は Error(0) に変換する。
+        unsafe {
+            let mut frame = std::ptr::null_mut();
+            (Interface::vtable(&self.pool).TryGetNextFrame)(
+                Interface::as_raw(&self.pool),
+                &mut frame,
+            )
+            .ok()?;
+            Ok((!frame.is_null())
+                .then(|| ::windows::Graphics::Capture::Direct3D11CaptureFrame::from_raw(frame)))
+        }
+    }
 }
 
 impl Session for Capture {
     fn closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
+            || (self.source.kind == SourceKind::Window
+                && !unsafe { IsWindow(Some(HWND(self.source.target as _))) }.as_bool())
     }
 
     fn frame(&mut self) -> Result<Option<Frame>, Error> {
         if !self.ready.swap(false, Ordering::AcqRel) {
             return Ok(None);
         }
-        let frame = match self.pool.TryGetNextFrame() {
-            Ok(frame) => frame,
-            Err(e) if e.code() == E_POINTER => return Ok(None),
-            Err(e) => return Err(e.into()),
+        let Some(mut frame) = self.next_frame()? else {
+            return Ok(None);
         };
+        // プールは二枚なので、低 FPS で溜まったもう一枚があれば最新の方だけコピーする。
+        match self.next_frame() {
+            Ok(Some(newer)) => {
+                frame.Close()?;
+                frame = newer;
+            }
+            Ok(None) => (),
+            Err(e) => {
+                let _ = frame.Close();
+                return Err(e);
+            }
+        }
         let result = (|| {
             let size = frame.ContentSize()?;
             if size.Width <= 0 || size.Height <= 0 {
@@ -327,6 +417,7 @@ impl Session for Capture {
             }
         })();
         frame.Close()?;
+        drop(frame);
         // リサイズ途中の画像は捨て、フレームの参照を解放してからプールを作り直す。
         if self.staging.is_none() {
             self.pool.Recreate(
@@ -340,21 +431,23 @@ impl Session for Capture {
     }
 
     fn touch(&mut self, touch: Touch) -> Result<(), Error> {
-        let bounds = self.bounds()?;
-        let point = normalized_point(bounds, touch.x, touch.y);
-        if touch.phase == TouchPhase::Down && self.source.kind == SourceKind::Window {
-            let hwnd = HWND(self.source.target as _);
-            unsafe {
-                let _ = SetForegroundWindow(hwnd);
-            }
-            // タッチはデスクトップへ届くため、選んだ窓が隠れたまま別の窓を操作しないよう確認する。
-            let hit = unsafe { WindowFromPoint(point) };
-            if unsafe { GetAncestor(hit, GA_ROOT) } != hwnd {
-                return Err(Error(
-                    "capture window must be visible at the touch point".into(),
-                ));
-            }
+        if touch.phase != TouchPhase::Down
+            && !self
+                .touch
+                .as_ref()
+                .is_some_and(|device| device.contacts[touch.id as usize].is_some())
+        {
+            return Ok(());
         }
+        let point = if touch.phase == TouchPhase::Down && self.source.kind == SourceKind::Window {
+            let Some(point) = self.activate_touch_target(touch)? else {
+                // 他の窓への誤入力を避ける。前面化できないクリックだけを捨て、画像配信は続ける。
+                return Ok(());
+            };
+            point
+        } else {
+            normalized_point(self.bounds()?, touch.x, touch.y)
+        };
         if self.touch.is_none() {
             self.touch = Some(TouchDevice::new()?);
         }

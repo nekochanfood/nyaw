@@ -1,9 +1,8 @@
 use super::*;
-use kernel::desktop::{Source, SourceKind, Sources, Status};
+use kernel::desktop::{DEFAULT_FRAME_RATE, MAX_FRAME_RATE, Source, SourceKind, Sources, Status};
 use std::cell::Cell;
 
 /// 取得元を選び、独立したパネルへの配信と停止・再接続を試す。
-#[derive(Default)]
 pub struct DesktopTest {
     panel: PanelId,
     sources: Vec<Source>,
@@ -11,6 +10,21 @@ pub struct DesktopTest {
     error: Option<String>,
     viewer: Rc<Cell<Option<PanelId>>>,
     scroll: ScrollHandle,
+    frame_rate: u32,
+}
+
+impl Default for DesktopTest {
+    fn default() -> Self {
+        Self {
+            panel: 0,
+            sources: Vec::new(),
+            pending: None,
+            error: None,
+            viewer: Rc::default(),
+            scroll: ScrollHandle::new(),
+            frame_rate: DEFAULT_FRAME_RATE,
+        }
+    }
 }
 
 impl DesktopTest {
@@ -84,6 +98,8 @@ impl Render for DesktopTest {
         }
         let theme = Theme::current(cx);
         let viewer = self.viewer.get();
+        let frame_rate = self.frame_rate;
+        let view = cx.entity().downgrade();
         let status = viewer
             .and_then(|id| {
                 cx.try_global::<PanelControl>()
@@ -138,7 +154,7 @@ impl Render for DesktopTest {
                                         .push(if closed {
                                             PanelCommand::Close
                                         } else {
-                                            PanelCommand::Stream(Some(source.clone()))
+                                            PanelCommand::Stream(Some(source.clone()), frame_rate)
                                         });
                                     DesktopViewer {
                                         panel,
@@ -189,6 +205,29 @@ impl Render for DesktopTest {
                     ),
             )
             .child(div().child(i18n::t(cx, "desktop.instructions")))
+            .child(
+                row()
+                    .child(
+                        div()
+                            .debug_selector(|| "desktop-frame-rate-value".into())
+                            .child(i18n::tf(cx, "desktop.frame_rate", &[("rate", &frame_rate)])),
+                    )
+                    .child(
+                        components::slider(
+                            &theme,
+                            "desktop-frame-rate",
+                            (frame_rate - 1) as f32 / (MAX_FRAME_RATE - 1) as f32,
+                            move |value, _, cx| {
+                                let _ = view.update(cx, |this, cx| {
+                                    this.frame_rate =
+                                        1 + (value * (MAX_FRAME_RATE - 1) as f32).round() as u32;
+                                    cx.notify();
+                                });
+                            },
+                        )
+                        .length(240.),
+                    ),
+            )
             .child(
                 row()
                     .child(
@@ -273,7 +312,7 @@ mod tests {
             let _ = spec.build(1, window, cx);
             assert_eq!(
                 cx.global::<PanelControl>().panels[&1].commands,
-                [PanelCommand::Stream(Some(source))]
+                [PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE)]
             );
         });
         let at = cx.debug_bounds("desktop-stop").unwrap().center();
@@ -325,6 +364,39 @@ mod tests {
             assert_eq!(
                 cx.global::<PanelControl>().panels[&3].commands,
                 [PanelCommand::Close]
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn frame_rate_slider_is_applied_to_the_next_stream(cx: &mut TestAppContext) {
+        let source = mock::source("Test window", SourceKind::Window);
+        let (view, cx) = cx.add_window_view(|_, _| DesktopTest {
+            sources: vec![source.clone()],
+            ..Default::default()
+        });
+        cx.run_until_parked();
+        assert_eq!(view.read_with(cx, |v, _| v.frame_rate), DEFAULT_FRAME_RATE);
+        for (right, expected) in [(true, MAX_FRAME_RATE), (false, 1)] {
+            let handle = cx
+                .debug_bounds("desktop-frame-rate-handle")
+                .unwrap()
+                .center();
+            let track = cx.debug_bounds("desktop-frame-rate").unwrap();
+            let end = gpui::point(if right { track.right() } else { track.left() }, handle.y);
+            cx.simulate_mouse_down(handle, gpui::MouseButton::Left, Modifiers::none());
+            cx.simulate_mouse_move(end, gpui::MouseButton::Left, Modifiers::none());
+            cx.simulate_mouse_up(end, gpui::MouseButton::Left, Modifiers::none());
+            assert_eq!(view.read_with(cx, |v, _| v.frame_rate), expected);
+        }
+        let at = cx.debug_bounds("desktop-source-0").unwrap().center();
+        cx.simulate_click(at, Modifiers::none());
+        cx.update(|window, cx| {
+            let spec = cx.default_global::<PanelControl>().spawns.pop().unwrap();
+            let _ = spec.build(1, window, cx);
+            assert_eq!(
+                cx.global::<PanelControl>().panels[&1].commands,
+                [PanelCommand::Stream(Some(source), 1)]
             );
         });
     }

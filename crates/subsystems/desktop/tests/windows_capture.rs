@@ -21,6 +21,8 @@ use windows::{
 };
 
 static TOUCHES: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+static TARGETS: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+static NATIVE_INPUT: Mutex<()> = Mutex::new(());
 
 #[test]
 #[ignore = "captures the real desktop with WGC; run explicitly on an interactive Windows desktop"]
@@ -68,6 +70,7 @@ unsafe extern "system" fn procedure(
         let mut info = Default::default();
         if unsafe { GetPointerTouchInfo((wparam.0 & 0xffff) as u32, &mut info) }.is_ok() {
             TOUCHES.lock().unwrap().push(message);
+            TARGETS.lock().unwrap().push(hwnd.0 as isize);
         }
         return LRESULT(0);
     }
@@ -85,6 +88,7 @@ impl Drop for TestWindow {
     }
 }
 
+#[track_caller]
 fn until(mut check: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(15);
     loop {
@@ -106,6 +110,7 @@ fn until(mut check: impl FnMut() -> bool) {
 #[test]
 #[ignore = "opens a real window, captures WGC frames and injects OS touch; run on an interactive Windows desktop"]
 fn wgc_window_resize_native_touch_and_source_close() {
+    let _guard = NATIVE_INPUT.lock().unwrap();
     TOUCHES.lock().unwrap().clear();
     unsafe {
         SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -119,7 +124,7 @@ fn wgc_window_resize_native_touch_and_source_close() {
     }
     let mut window = TestWindow(Some(unsafe {
         CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
+            WS_EX_TOPMOST,
             w!("nyaw.desktop.e2e"),
             w!("nyaw desktop capture E2E"),
             WS_OVERLAPPEDWINDOW | WS_VISIBLE,
@@ -177,7 +182,10 @@ fn wgc_window_resize_native_touch_and_source_close() {
     until(|| {
         stream
             .poll()
-            .and_then(|u| u.frame)
+            .and_then(|u| {
+                assert!(!matches!(u.status, Status::Failed(_)), "{:?}", u.status);
+                u.frame
+            })
             .is_some_and(|f| f.width > first.width && f.height > first.height)
     });
     stream
@@ -210,5 +218,176 @@ fn wgc_window_resize_native_touch_and_source_close() {
     unsafe {
         DestroyWindow(window.0.take().unwrap()).unwrap();
     }
-    until(|| stream.poll().is_some_and(|u| u.status == Status::Closed));
+    until(|| {
+        stream.poll().is_some_and(|u| {
+            assert!(!matches!(u.status, Status::Failed(_)), "{:?}", u.status);
+            u.status == Status::Closed
+        })
+    });
+}
+
+#[test]
+#[ignore = "uses isolated native windows, WGC and OS touch to verify activation and occlusion"]
+fn occluded_window_activation_and_rejected_touch_do_not_stop_capture() {
+    let _guard = NATIVE_INPUT.lock().unwrap();
+    TOUCHES.lock().unwrap().clear();
+    TARGETS.lock().unwrap().clear();
+    unsafe {
+        SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(procedure),
+            lpszClassName: w!("nyaw.desktop.visibility.e2e"),
+            hbrBackground: HBRUSH(GetStockObject(WHITE_BRUSH).0),
+            ..Default::default()
+        };
+        assert_ne!(RegisterClassW(&class), 0);
+    }
+    let create = |title, ex_style| {
+        TestWindow(Some(unsafe {
+            CreateWindowExW(
+                ex_style,
+                w!("nyaw.desktop.visibility.e2e"),
+                title,
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                100,
+                100,
+                400,
+                300,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap()
+        }))
+    };
+    let mut source_window = create(
+        w!("nyaw desktop visibility source"),
+        WINDOW_EX_STYLE::default(),
+    );
+    let hwnd = source_window.0.unwrap();
+    let sources = Sources::refresh().unwrap();
+    let mut list = None;
+    until(|| {
+        list = sources.poll();
+        list.is_some()
+    });
+    let source = list
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "nyaw desktop visibility source")
+        .unwrap();
+    let stream = Stream::start(source).unwrap();
+    let poll_frame = || {
+        stream.poll().is_some_and(|u| {
+            assert!(
+                !matches!(u.status, Status::Failed(_) | Status::Closed),
+                "{:?}",
+                u.status
+            );
+            u.frame.is_some()
+        })
+    };
+    until(poll_frame);
+    let mut cover = create(
+        w!("nyaw desktop visibility cover"),
+        WINDOW_EX_STYLE::default(),
+    );
+    unsafe {
+        let _ = SetForegroundWindow(cover.0.unwrap());
+    }
+    let down = Touch {
+        id: 0,
+        phase: TouchPhase::Down,
+        x: 0.5,
+        y: 0.5,
+    };
+    stream.touch(down).unwrap();
+    until(|| {
+        poll_frame();
+        TOUCHES.lock().unwrap().contains(&WM_POINTERDOWN)
+    });
+    assert!(
+        TARGETS
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|&t| t == hwnd.0 as isize)
+    );
+    stream
+        .touch(Touch {
+            phase: TouchPhase::Up,
+            ..down
+        })
+        .unwrap();
+    until(|| TOUCHES.lock().unwrap().contains(&WM_POINTERUP));
+    TOUCHES.lock().unwrap().clear();
+    TARGETS.lock().unwrap().clear();
+    unsafe {
+        SetWindowPos(
+            cover.0.unwrap(),
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE,
+        )
+        .unwrap();
+    }
+    stream.touch(down).unwrap();
+    let deadline = Instant::now() + Duration::from_millis(350);
+    until(|| Instant::now() >= deadline);
+    assert!(
+        TARGETS.lock().unwrap().is_empty(),
+        "a blocked click must never hit the covering window"
+    );
+    stream
+        .touch(Touch {
+            phase: TouchPhase::Up,
+            ..down
+        })
+        .unwrap();
+    unsafe {
+        SetWindowPos(
+            hwnd,
+            None,
+            100,
+            100,
+            420,
+            300,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+        .unwrap();
+    }
+    until(poll_frame);
+    unsafe {
+        DestroyWindow(cover.0.take().unwrap()).unwrap();
+    }
+    stream.touch(down).unwrap();
+    until(|| TOUCHES.lock().unwrap().contains(&WM_POINTERDOWN));
+    assert!(
+        TARGETS
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|&t| t == hwnd.0 as isize)
+    );
+    stream
+        .touch(Touch {
+            phase: TouchPhase::Up,
+            ..down
+        })
+        .unwrap();
+    until(|| TOUCHES.lock().unwrap().contains(&WM_POINTERUP));
+    unsafe {
+        DestroyWindow(source_window.0.take().unwrap()).unwrap();
+    }
+    until(|| {
+        stream.poll().is_some_and(|u| {
+            assert!(!matches!(u.status, Status::Failed(_)), "{:?}", u.status);
+            u.status == Status::Closed
+        })
+    });
 }
