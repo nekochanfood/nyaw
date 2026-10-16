@@ -6,6 +6,7 @@
 
 pub mod config;
 mod desktop_panels;
+pub use desktop_panels::DesktopStats;
 pub use subsystems::{self, Subsystems};
 pub use subsystems::{desktop, rendering, vr};
 
@@ -97,6 +98,8 @@ pub struct PanelStatus {
     /// レーザーが指している（`Overlay::pointed`。ナビゲーションバーは持ち主を指していても）。
     pub pointed: bool,
     pub desktop: Option<desktop::Status>,
+    /// 配信中なら、直近一秒の統計（最初の一秒は `None`）。
+    pub desktop_stats: Option<DesktopStats>,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -416,7 +419,9 @@ impl<B: VrBackend> Kernel<B> {
                 self.config.laser_length = Some(l);
                 self.save_number("laser_length", l);
             }
-            PanelCommand::Parent(parent) => self.overlay.set_parent(panel, parent),
+            PanelCommand::Parent(parent) => {
+                self.overlay.set_parent(&mut self.subsystems.backend, panel, parent)
+            }
             PanelCommand::NavBar(owner) => self.overlay.set_nav_bar(panel, owner),
             PanelCommand::Place(offset) => {
                 self.overlay.detach(panel);
@@ -463,6 +468,7 @@ impl<B: VrBackend> Kernel<B> {
             parent: p.parent.map(|q| q.panel),
             pointed: self.overlay.pointed(panel),
             desktop: self.desktop_panels.get(&panel).map(|p| p.status.clone()),
+            desktop_stats: self.desktop_panels.get(&panel).and_then(|p| p.stats),
         }
     }
 }

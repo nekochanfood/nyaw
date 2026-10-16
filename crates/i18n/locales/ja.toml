@@ -15,6 +15,11 @@ starting = "キャプチャを開始中…"
 streaming = "配信中・タッチ操作が有効"
 closed = "配信元が閉じられました"
 failed = "キャプチャに失敗: {error}"
+stats_measuring = "計測中…"
+stats_fps = "FPS: {fps}"
+stats_latency = "遅延: {ms} ms"
+stats_upload = "転送: {ms} ms"
+stats_size = "解像度: {width}×{height}"
 
 [common]
 close = "閉じる"

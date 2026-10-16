@@ -83,6 +83,60 @@ impl Render for DesktopViewer {
     }
 }
 
+/// 統計の大きさ（m）と解像度（px）。文字が収まる最小限にし、余白は透明にする。
+const STATS_SIZE: Vec2 = Vec2::new(0.16, 0.08);
+const STATS_RESOLUTION: (u32, u32) = (160, 80);
+
+/// 配信パネルの左上の角に重ねる統計（FPS・遅延・転送・解像度）。行ごとに薄い下地を敷く。
+struct StreamStats {
+    panel: PanelId,
+}
+impl Render for StreamStats {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::DARK;
+        let stats = cx
+            .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&self.panel))
+            .and_then(|s| s.status.desktop_stats);
+        let lines = match stats {
+            None => vec![i18n::t(cx, "desktop.stats_measuring")],
+            Some(s) => vec![
+                i18n::tf(cx, "desktop.stats_fps", &[("fps", &format!("{:.1}", s.fps))]),
+                i18n::tf(
+                    cx,
+                    "desktop.stats_latency",
+                    &[("ms", &format!("{:.1}", s.latency_ms))],
+                ),
+                i18n::tf(
+                    cx,
+                    "desktop.stats_upload",
+                    &[("ms", &format!("{:.1}", s.upload_ms))],
+                ),
+                i18n::tf(
+                    cx,
+                    "desktop.stats_size",
+                    &[("width", &s.width), ("height", &s.height)],
+                ),
+            ],
+        };
+        div()
+            .debug_selector(|| "desktop-stats".into())
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_start()
+            .text_color(rgba(theme.on_tooltip))
+            .font(design::font::mono())
+            .text_size(px(font_size::SM))
+            .children(lines.into_iter().map(|line| {
+                div()
+                    .px(px(spacing::XS))
+                    .bg(rgba(theme.tooltip & !0xff | 0x80))
+                    .child(line)
+            }))
+    }
+}
+
 impl Render for DesktopTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(result) = self.pending.as_ref().and_then(Sources::poll) {
@@ -156,6 +210,15 @@ impl Render for DesktopTest {
                                         } else {
                                             PanelCommand::Stream(Some(source.clone()), frame_rate)
                                         });
+                                    if !closed {
+                                        ctl.spawns.push(
+                                            PanelSpec::child(panel, true, move |_, _, _| {
+                                                StreamStats { panel }
+                                            })
+                                            .hud()
+                                            .sized(STATS_SIZE, STATS_RESOLUTION),
+                                        );
+                                    }
                                     DesktopViewer {
                                         panel,
                                         name: source.name,

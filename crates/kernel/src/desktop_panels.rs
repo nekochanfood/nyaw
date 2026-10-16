@@ -1,11 +1,84 @@
 use super::*;
 use desktop::{Status, Stream, Touch, TouchPhase};
+use std::time::{Duration, Instant};
 
 pub(super) struct DesktopPanel {
     stream: Option<Stream>,
     pub status: Status,
     contacts: [Option<Vec2>; 2],
     original_resolution: (u32, u32),
+    meter: Meter,
+    pub stats: Option<DesktopStats>,
+}
+
+/// 配信の直近一秒の統計。表示用。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct DesktopStats {
+    /// VR へ渡した画像の数（毎秒）。
+    pub fps: f32,
+    /// OS が画面を取り込んでから VR へ渡し終えるまで（ms。平均）。
+    pub latency_ms: f32,
+    /// VR への画像の転送にかかった時間（ms。平均）。
+    pub upload_ms: f32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// 一秒ごとに区切って [`DesktopStats`] にする。
+struct Meter {
+    since: Instant,
+    frames: u32,
+    latency: Duration,
+    upload: Duration,
+}
+
+impl Meter {
+    fn new(now: Instant) -> Self {
+        Self {
+            since: now,
+            frames: 0,
+            latency: Duration::ZERO,
+            upload: Duration::ZERO,
+        }
+    }
+
+    fn add(&mut self, latency: Duration, upload: Duration) {
+        self.frames += 1;
+        self.latency += latency;
+        self.upload += upload;
+    }
+
+    /// 一秒たっていれば区切る。画像が来なかった区間（画面が止まっている）は、遅延と転送を前の値のまま残す。
+    fn roll(
+        &mut self,
+        now: Instant,
+        last: Option<DesktopStats>,
+        size: (u32, u32),
+    ) -> Option<DesktopStats> {
+        let span = now.saturating_duration_since(self.since);
+        if span < Duration::from_secs(1) {
+            return last;
+        }
+        let last = last.unwrap_or_default();
+        let ms = |d: Duration| d.as_secs_f32() * 1000.0 / self.frames as f32;
+        let stats = DesktopStats {
+            fps: self.frames as f32 / span.as_secs_f32(),
+            latency_ms: if self.frames == 0 {
+                last.latency_ms
+            } else {
+                ms(self.latency)
+            },
+            upload_ms: if self.frames == 0 {
+                last.upload_ms
+            } else {
+                ms(self.upload)
+            },
+            width: size.0,
+            height: size.1,
+        };
+        *self = Self::new(now);
+        Some(stats)
+    }
 }
 
 impl<B: VrBackend> Kernel<B> {
@@ -32,6 +105,8 @@ impl<B: VrBackend> Kernel<B> {
                 status: Status::Starting,
                 contacts: [None; 2],
                 original_resolution,
+                meter: Meter::new(Instant::now()),
+                stats: None,
             },
         );
         self.overlay.set_panel_capture(panel, true);
@@ -71,6 +146,8 @@ impl<B: VrBackend> Kernel<B> {
                             status: Status::Failed(error),
                             contacts: [None; 2],
                             original_resolution,
+                            meter: Meter::new(Instant::now()),
+                            stats: None,
                         },
                     );
                 }
@@ -85,10 +162,19 @@ impl<B: VrBackend> Kernel<B> {
     pub(super) fn poll_desktop(&mut self) {
         self.desktop_panels
             .retain(|id, _| !self.overlay.panel(*id).closed);
+        let now = Instant::now();
         for (&id, panel) in &mut self.desktop_panels {
+            if panel.stream.is_some() && panel.status == Status::Streaming {
+                let size = self.overlay.panel(id).resolution;
+                panel.stats = panel.meter.roll(now, panel.stats, size);
+            }
             let Some(update) = panel.stream.as_ref().and_then(Stream::poll) else {
                 continue;
             };
+            if panel.status != Status::Streaming && update.status == Status::Streaming {
+                // 開始待ち（Linux ではポータルの選択）の時間を最初の一秒に混ぜない。
+                panel.meter = Meter::new(now);
+            }
             panel.status = update.status;
             if let Status::Failed(error) = &panel.status {
                 logger::warn!("desktop capture stopped", panel = id, error = error);
@@ -96,6 +182,7 @@ impl<B: VrBackend> Kernel<B> {
             if let Some(frame) = update.frame {
                 self.overlay
                     .set_content_resolution(id, (frame.width, frame.height));
+                let started = Instant::now();
                 self.overlay.submit(
                     &mut self.subsystems.backend,
                     id,
@@ -103,9 +190,15 @@ impl<B: VrBackend> Kernel<B> {
                     frame.height,
                     &frame.rgba,
                 );
+                let done = Instant::now();
+                panel.meter.add(
+                    done.saturating_duration_since(frame.captured),
+                    done - started,
+                );
             }
             if matches!(panel.status, Status::Closed | Status::Failed(_)) {
                 panel.stream = None;
+                panel.stats = None;
                 panel.contacts = [None; 2];
                 self.overlay.set_panel_capture(id, false);
             }
@@ -312,6 +405,27 @@ mod tests {
                 .iter()
                 .all(|t| t.id != 0 || t.phase == TouchPhase::Move)
         );
+    }
+
+    #[test]
+    fn meter_averages_each_second_and_keeps_latency_while_the_screen_is_still() {
+        let t0 = Instant::now();
+        let mut meter = Meter::new(t0);
+        meter.add(Duration::from_millis(10), Duration::from_millis(2));
+        meter.add(Duration::from_millis(30), Duration::from_millis(4));
+        assert_eq!(meter.roll(t0 + Duration::from_millis(500), None, (4, 2)), None);
+        let stats = meter
+            .roll(t0 + Duration::from_secs(2), None, (4, 2))
+            .unwrap();
+        assert_eq!(stats.fps, 1.0);
+        assert!((stats.latency_ms - 20.0).abs() < 1e-3);
+        assert!((stats.upload_ms - 3.0).abs() < 1e-3);
+        assert_eq!((stats.width, stats.height), (4, 2));
+        let still = meter
+            .roll(t0 + Duration::from_secs(3), Some(stats), (4, 2))
+            .unwrap();
+        assert_eq!(still.fps, 0.0);
+        assert_eq!(still.latency_ms, stats.latency_ms);
     }
 
     #[test]

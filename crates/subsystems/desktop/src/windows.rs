@@ -1,6 +1,6 @@
 use super::{Error, Frame, Session, Source, SourceKind, Touch, TouchPhase, Wake};
 use ::windows::{
-    Foundation::TypedEventHandler,
+    Foundation::{TimeSpan, TypedEventHandler},
     Graphics::{
         Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem, GraphicsCaptureSession},
         DirectX::{Direct3D11::IDirect3DDevice, DirectXPixelFormat},
@@ -17,6 +17,7 @@ use ::windows::{
         },
         System::{
             Com::CoIncrementMTAUsage,
+            Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
             Threading::{AttachThreadInput, GetCurrentThreadId},
             WinRT::{
                 Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess},
@@ -361,6 +362,7 @@ impl Session for Capture {
                 return Err(e);
             }
         }
+        let captured = frame.SystemRelativeTime().map(captured_at);
         let result = (|| {
             let size = frame.ContentSize()?;
             if size.Width <= 0 || size.Height <= 0 {
@@ -428,6 +430,12 @@ impl Session for Capture {
         })();
         frame.Close()?;
         drop(frame);
+        let result = result.map(|f| {
+            f.map(|f| Frame {
+                captured: captured.unwrap_or(f.captured),
+                ..f
+            })
+        });
         // リサイズ途中の画像は捨て、フレームの参照を解放してからプールを作り直す。
         if self.staging.is_none() {
             self.pool.Recreate(
@@ -481,6 +489,18 @@ impl Drop for Capture {
         let _ = self.session.Close();
         let _ = self.pool.Close();
     }
+}
+
+/// WGC のフレーム時刻（QPC を 100ns 単位にしたもの）を `Instant` にする。
+fn captured_at(time: TimeSpan) -> Instant {
+    let (mut now, mut frequency) = (0i64, 0i64);
+    unsafe {
+        let _ = QueryPerformanceCounter(&mut now);
+        let _ = QueryPerformanceFrequency(&mut frequency);
+    }
+    let now = (now as i128 * 10_000_000 / frequency.max(1) as i128) as i64;
+    let age = Duration::from_nanos(now.saturating_sub(time.Duration).max(0) as u64 * 100);
+    Instant::now().checked_sub(age).unwrap_or_else(Instant::now)
 }
 
 fn normalized_point(bounds: RECT, x: f32, y: f32) -> POINT {
