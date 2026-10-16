@@ -1,8 +1,9 @@
 //! カーネルの最下部。OS・ランタイム・コントローラ入力・描画の差を吸収するサブシステム群。
+//! 音声の出力・立体化は audio が担う。
 //! 上位のパネル管理や設定には依存せず、既存の各実装を共通の入口から提供する。
 //! 新しい環境への対応は各サブシステム内に閉じ、上位層で環境ごとに分岐しない。
 
-pub use {desktop, input, keyboard, os, rendering, vr};
+pub use {audio, desktop, input, keyboard, os, rendering, vr};
 
 use std::collections::HashMap;
 
