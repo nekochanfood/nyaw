@@ -147,6 +147,9 @@ default xkb_keycodes "evdev" {
 	<AB11> =  97;	// backslash/underscore
 	<HENK> = 100;	// Henkan
 	<MUHE> = 102;	// Muhenkan
+	// symbols/jp が使用する旧名を evdev のキーへ結び付ける。
+	alias <XFER> = <HENK>;
+	alias <NFER> = <MUHE>;
 	<AE13> = 132;	// Yen
 	<KATA> =  98;	// Katakana
 	<HIRA> =  99;	// Hiragana

@@ -58,10 +58,13 @@ impl Backend {
                 );
             }
             let mut mapped = map_layout(&klid, layout.0 as usize as u16);
-            if let Some((name, variant)) = &mut mapped {
-                if name == "jp" && open != 0 && mode & 1 != 0 && mode & 16 == 0 {
-                    *variant = "kana".into();
-                }
+            if let Some((name, variant)) = &mut mapped
+                && name == "jp"
+                && open != 0
+                && mode & 1 != 0
+                && mode & 16 == 0
+            {
+                *variant = "kana".into();
             }
             Settings {
                 layout: mapped,
