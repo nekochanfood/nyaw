@@ -410,11 +410,13 @@ impl Overlay {
 
     /// どちらかの手のレーザーが `id` を指している。ナビゲーションバーは、持ち主かバー自身を指していれば（持ち主から
     /// バーへ移っても途切れない。バーの上端は持ち主の影の余白に重なっている）。子が開いて入力を受けない間は指していない扱い。
+    /// 掴んでいる間も指している扱い（掴んで動かしている間もバーは広がったまま）。
     pub fn pointed(&self, id: PanelId) -> bool {
         let owner = self.panels[id].nav_bar_of;
+        let is = |x: PanelId| x == id || Some(x) == owner;
         self.hands
             .values()
-            .any(|h| h.hover.is_some_and(|x| x == id || Some(x) == owner))
+            .any(|h| h.hover.is_some_and(is) || h.dragging.is_some_and(|d| is(d.0)))
     }
 
     /// `id` をどちらかの手で掴んでいる。
@@ -1750,6 +1752,7 @@ mod tests {
         );
         ov.tick(&mut vr);
         assert!(ov.grabbed(0));
+        assert!(ov.pointed(bar), "掴んでいる間も広がったまま");
         ov.close(&mut vr.backend, 0);
         assert!(ov.panel(bar).closed);
     }
