@@ -70,7 +70,9 @@ fn main() -> ExitCode {
             Pose::new(common::PANEL_POS, Default::default()),
             |id, _, _| testing::Testing::new(id),
         )
-        .sized(testing::TESTING_SIZE, testing::TESTING_PX),
+        .sized(testing::TESTING_SIZE, testing::TESTING_PX)
+        // PanelId と開いている数を数えるので、ナビゲーションバー（これもパネル）は付けない。
+        .without_nav_bar(),
     ];
     let (remote, rx) = channel::<ui::Remote>();
     let result: Arc<Mutex<Option<bool>>> = Arc::default();
@@ -81,7 +83,7 @@ fn main() -> ExitCode {
             on_app(&remote, |cx| {
                 cx.default_global::<PanelControl>()
                     .spawns
-                    .push(testing::KeyboardTest::spec());
+                    .push(testing::KeyboardTest::spec().without_nav_bar());
             });
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {

@@ -60,7 +60,6 @@ fn status_text(status: Option<&Status>, cx: &App) -> SharedString {
 
 struct DesktopViewer {
     panel: PanelId,
-    name: String,
 }
 impl Render for DesktopViewer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -74,7 +73,6 @@ impl Render for DesktopViewer {
             .flex_col()
             .gap(px(spacing::LG))
             .p(px(spacing::XL))
-            .child(self.name.clone())
             .child(
                 div()
                     .debug_selector(|| "desktop-viewer-status".into())
@@ -194,6 +192,7 @@ impl Render for DesktopTest {
                             }
                             let source = source.clone();
                             let viewer = viewer.clone();
+                            let title = source.name.clone();
                             cx.default_global::<PanelControl>().spawns.push(
                                 PanelSpec::new(Pose::IDENTITY, move |panel, _, cx| {
                                     let ctl = cx.default_global::<PanelControl>();
@@ -221,57 +220,28 @@ impl Render for DesktopTest {
                                                 StreamStats { panel }
                                             })
                                             .hud()
+                                            // 統計は表示だけの子。ナビゲーションバーは付けない。
+                                            .without_nav_bar()
                                             .sized(STATS_SIZE, STATS_RESOLUTION),
                                         );
                                     }
                                     DesktopViewer {
                                         panel,
-                                        name: source.name,
                                     }
                                 })
-                                .in_view(Pose::new(Vec3::new(0.75, 0.0, -1.2), Quat::IDENTITY)),
+                                .in_view(Pose::new(Vec3::new(0.75, 0.0, -1.2), Quat::IDENTITY))
+                                // 配信のパネルは取得元の名前をタイトルに、ナビゲーションバーで閉じる（配信も止まる）。
+                                .titled_text(title),
                             );
                         }),
                 )
             })
             .collect::<Vec<_>>();
-        let panel = self.panel;
-        let viewer = self.viewer.clone();
         components::card_panel(&theme)
             .flex()
             .flex_col()
             .gap(px(spacing::LG))
             .p(px(spacing::XL))
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(i18n::t(cx, "desktop.title"))
-                    .child(
-                        button(
-                            &theme,
-                            "close-desktop-test",
-                            i18n::t(cx, "common.close"),
-                            false,
-                        )
-                        .on_click(move |_, _, cx| {
-                            let ctl = cx.default_global::<PanelControl>();
-                            if let Some(id) = viewer.take() {
-                                ctl.panels
-                                    .entry(id)
-                                    .or_default()
-                                    .commands
-                                    .push(PanelCommand::Close);
-                            }
-                            ctl.panels
-                                .entry(panel)
-                                .or_default()
-                                .commands
-                                .push(PanelCommand::Close);
-                        }),
-                    ),
-            )
             .child(div().child(i18n::t(cx, "desktop.instructions")))
             .child(
                 row()
