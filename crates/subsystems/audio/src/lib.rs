@@ -142,6 +142,12 @@ impl Clip {
         self.sample_rate
     }
 
+    /// 速さを `pitch` 倍にした音（1 = そのまま。上げると高く短くなる）。中身は共有したまま、標本化レートだけを変える。
+    pub fn pitched(mut self, pitch: f32) -> Self {
+        self.sample_rate = (self.sample_rate as f32 * pitch).round().max(1.0) as u32;
+        self
+    }
+
     pub fn frames(&self) -> usize {
         self.samples.len() / self.channels as usize
     }
@@ -348,6 +354,17 @@ impl Engine {
 
     /// 音を別スレッドで読み込んでから鳴らす。読めなければログに出し、鳴らずに終わる。
     pub fn play_sound(&mut self, speaker: SpeakerId, sound: Sound, looping: bool) -> VoiceId {
+        self.play_sound_pitched(speaker, sound, looping, 1.0)
+    }
+
+    /// [`Self::play_sound`] を、速さを `pitch` 倍にして（[`Clip::pitched`]）鳴らす。
+    pub fn play_sound_pitched(
+        &mut self,
+        speaker: SpeakerId,
+        sound: Sound,
+        looping: bool,
+        pitch: f32,
+    ) -> VoiceId {
         let id = self.reserve(speaker);
         let commands = self.commands.clone();
         let done = self.done_tx.clone();
@@ -355,6 +372,7 @@ impl Engine {
             .name("audio-decode".into())
             .spawn(move || match Clip::load(&sound) {
                 Ok(clip) => {
+                    let clip = clip.pitched(pitch);
                     if let Err(mpsc::SendError(Command::Play { clip, .. })) =
                         commands.send(Command::Play {
                             id,

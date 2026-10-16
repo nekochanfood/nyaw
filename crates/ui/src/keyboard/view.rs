@@ -16,6 +16,34 @@ use std::{sync::mpsc, thread, time::Duration};
 
 pub(super) const KEY_UNIT: f32 = 64.;
 
+/// キーを押した音。押したキーの位置（パネルの中の点）から鳴らす。
+const TAP_SOUND: &[u8] = include_bytes!("../../assets/keyboard/tap.wav");
+const ENTER_SOUND: &[u8] = include_bytes!("../../assets/keyboard/enter.wav");
+const BACKSPACE_SOUND: &[u8] = include_bytes!("../../assets/keyboard/backspace.wav");
+const SPACEBAR_SOUND: &[u8] = include_bytes!("../../assets/keyboard/spacebar.wav");
+/// 押すたびに音の高さを揺らす幅（速さの倍率 1 ± これ）。同じ音の繰り返しを機械的に聞こえさせない。
+const PITCH_JITTER: f32 = 0.1;
+
+/// XKB のキー名ごとの音。Enter・Backspace・Space だけ専用で、ほかは共通。
+fn key_sound(name: &str) -> &'static [u8] {
+    match name {
+        "RTRN" | "KPEN" => ENTER_SOUND,
+        "BKSP" => BACKSPACE_SOUND,
+        "SPCE" => SPACEBAR_SOUND,
+        _ => TAP_SOUND,
+    }
+}
+
+/// 1 ± [`PITCH_JITTER`] の一様な乱数。乱数のクレートは使わず、標準のハッシュの乱数の鍵を使う。
+fn jittered_pitch() -> f32 {
+    use std::hash::{BuildHasher, Hasher};
+    let bits = std::collections::hash_map::RandomState::new()
+        .build_hasher()
+        .finish();
+    let unit = (bits >> 40) as f32 / (1u64 << 24) as f32;
+    1. + PITCH_JITTER * (2. * unit - 1.)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KeyAppearance {
     pub gap: f32,
@@ -68,6 +96,8 @@ enum Loaded {
 
 /// どの画面にも載せられるキーボード。配列の読み込みは専用スレッド、入力先の決定は UI に任せる。
 pub struct KeyboardView {
+    /// このキーボードが載っているパネル（キーの音を鳴らす）。
+    panel: PanelId,
     pub target: PanelId,
     pub appearance: Option<KeyAppearance>,
     pub show_settings: bool,
@@ -139,6 +169,7 @@ impl KeyboardView {
         })
         .detach();
         Self {
+            panel,
             target: panel,
             appearance: None,
             show_settings: true,
@@ -417,6 +448,8 @@ impl Render for KeyboardView {
                 .h(px(self.kind.height() * unit))
                 .children(keys.into_iter().map(|key| {
                     let code = key.code;
+                    let sound = key_sound(&key.name);
+                    let panel = self.panel;
                     let label = keyboard.label(code);
                     let selector = format!("legend-{}-{label}", key.name);
                     let mut content = div()
@@ -474,7 +507,18 @@ impl Render for KeyboardView {
                     .top(px(key.y * unit + gap / 2.))
                     .w(px(key.width * unit - gap))
                     .h(px(key.height * unit - gap))
-                    .on_click(cx.listener(move |this, _, _, cx| {
+                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, _, cx| {
+                        let at = event.position();
+                        cx.default_global::<crate::PanelControl>()
+                            .panels
+                            .entry(panel)
+                            .or_default()
+                            .commands
+                            .push(kernel::PanelCommand::PlayAt {
+                                sound: kernel::audio::Sound::Wav(sound),
+                                at: kernel::Vec2::new(f32::from(at.x), f32::from(at.y)),
+                                pitch: jittered_pitch(),
+                            });
                         this.press(code, cx);
                         cx.notify();
                     }));
@@ -515,6 +559,7 @@ mod tests {
         let (request, _) = mpsc::channel();
         let (_, loaded) = mpsc::channel();
         KeyboardView {
+            panel: 0,
             target: 0,
             appearance: None,
             show_settings: true,
@@ -598,6 +643,35 @@ mod tests {
                 assert_eq!(cx.debug_bounds("key-HENK").is_some(), layout == "jp");
             }
         }
+    }
+
+    #[test]
+    fn key_sounds_vary_in_pitch_within_the_jitter() {
+        let pitches: Vec<f32> = (0..64).map(|_| jittered_pitch()).collect();
+        assert!(pitches.iter().all(|p| (p - 1.).abs() <= PITCH_JITTER));
+        assert!(pitches.iter().any(|p| *p != pitches[0]));
+        assert_eq!(key_sound("SPCE"), SPACEBAR_SOUND);
+        assert_eq!(key_sound("AC01"), TAP_SOUND);
+    }
+
+    /// キーを押すと、載っているパネルにそのキーの点から鳴らす要求を積む。
+    #[gpui::test]
+    fn pressing_a_key_plays_its_sound_from_the_key(cx: &mut TestAppContext) {
+        let db = Database::load().unwrap();
+        let view = ready(&db, "us", KeyboardType::Compact);
+        let (_, cx) = cx.add_window_view(|_, _| view);
+        cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
+        cx.run_until_parked();
+        let key = cx.debug_bounds("key-SPCE").unwrap().center();
+        cx.simulate_click(key, gpui::Modifiers::none());
+        let commands =
+            cx.update(|_, cx| cx.global::<crate::PanelControl>().panels[&0].commands.clone());
+        let Some(kernel::PanelCommand::PlayAt { sound, at, pitch }) = commands.first() else {
+            panic!("{commands:?}");
+        };
+        assert_eq!(*sound, kernel::audio::Sound::Wav(SPACEBAR_SOUND));
+        assert_eq!(*at, kernel::Vec2::new(f32::from(key.x), f32::from(key.y)));
+        assert!((pitch - 1.).abs() <= PITCH_JITTER);
     }
 
     #[test]

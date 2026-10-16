@@ -43,6 +43,16 @@ impl Default for AudioStatus {
     }
 }
 
+/// 点の音（[`PanelCommand::PlayAt`]）に使うスピーカーの数（パネルごと）。順に使い回すので、続けて鳴らしても
+/// 前の音の残りは元の点から聞こえる。
+// ponytail: 8 個を超えて同時に鳴らすと、いちばん古い音が新しい点へ移る。足りなければ増やす。
+const POINT_SPEAKERS: u64 = 8;
+
+/// 点の音のスピーカー。パネルのスピーカー（`panel as u64`）とは重ならない。
+fn point_speaker(panel: PanelId, slot: u64) -> audio::SpeakerId {
+    1 << 32 | (panel as u64) << 8 | slot
+}
+
 impl<B: VrBackend> Kernel<B> {
     fn speaker(&self, panel: PanelId) -> audio::Speaker {
         let p = self.overlay.panel(panel);
@@ -69,6 +79,38 @@ impl<B: VrBackend> Kernel<B> {
         self.audio.play_sound(panel as u64, sound, looping);
     }
 
+    /// パネルの中の点から鳴らす。音源はその点の 1 点（左右を混ぜる）で、鳴らした時の置き場所に留まる（短い音のため）。
+    pub(super) fn play_audio_at(&mut self, panel: PanelId, sound: Sound, at: Vec2, pitch: f32) {
+        if self.overlay.panel(panel).closed {
+            return;
+        }
+        let config = *self.speakers.entry(panel).or_default();
+        let slot = self.point_slots.entry(panel).or_default();
+        let id = point_speaker(panel, *slot);
+        *slot = (*slot + 1) % POINT_SPEAKERS;
+        let p = self.overlay.panel(panel);
+        let speaker = audio::Speaker {
+            position: p.pixel_to_world(at),
+            rotation: p.pose.orientation,
+            width: 0.0,
+            spatial: config.spatial,
+            layout: Layout::Mono,
+            volume: 1.0,
+        };
+        self.audio
+            .set_listener(self.hmd().position, self.hmd().orientation);
+        self.audio.set_speaker(id, speaker);
+        self.audio.play_sound_pitched(id, sound, false, pitch);
+    }
+
+    /// パネルのスピーカーと点の音を止める。
+    pub(super) fn stop_audio(&self, panel: PanelId) {
+        self.audio.stop_speaker(panel as u64);
+        for slot in 0..POINT_SPEAKERS {
+            self.audio.stop_speaker(point_speaker(panel, slot));
+        }
+    }
+
     pub(super) fn configure_speaker(&mut self, panel: PanelId, f: impl FnOnce(&mut SpeakerConfig)) {
         f(self.speakers.entry(panel).or_default());
         self.audio.set_speaker(panel as u64, self.speaker(panel));
@@ -87,6 +129,11 @@ impl<B: VrBackend> Kernel<B> {
         for p in closed {
             self.speakers.remove(&p);
             self.audio.remove_speaker(p as u64);
+            if self.point_slots.remove(&p).is_some() {
+                for slot in 0..POINT_SPEAKERS {
+                    self.audio.remove_speaker(point_speaker(p, slot));
+                }
+            }
         }
         let playing: Vec<PanelId> = self
             .speakers
@@ -106,8 +153,11 @@ impl<B: VrBackend> Kernel<B> {
 
     pub(super) fn audio_status(&self, panel: PanelId) -> AudioStatus {
         let c = self.speakers.get(&panel).copied().unwrap_or_default();
+        let points: usize = (0..POINT_SPEAKERS)
+            .map(|slot| self.audio.playing(point_speaker(panel, slot)))
+            .sum();
         AudioStatus {
-            playing: self.audio.playing(panel as u64),
+            playing: self.audio.playing(panel as u64) + points,
             spatial: c.spatial,
             layout: c.layout,
             spatializer: self.audio.spatializer(),
@@ -205,6 +255,44 @@ mod tests {
         k.tick();
         let (l, r) = render_until_sounding(&mut k);
         assert!(l > r * 10.0, "{l} {r}");
+    }
+
+    /// 点の音はパネルの中のその点から聞こえる（右のパネルの、さらに左端・右端）。
+    #[test]
+    fn point_sound_comes_from_the_point_in_the_panel() {
+        let mut k = Kernel::with_backend(MockBackend::default(), Config::default());
+        // 正面 1m の幅 2m のパネル。左端と右端は頭から左右 45°。
+        let p = k
+            .add_panel(
+                "t",
+                Pose::new(vr::Vec3::new(0.0, 0.0, -1.0), vr::Quat::IDENTITY),
+                Vec2::new(2.0, 1.0),
+                (200, 100),
+            )
+            .unwrap();
+        let play = |k: &mut Kernel<MockBackend>, x: f32| {
+            k.apply(
+                p,
+                PanelCommand::PlayAt {
+                    sound: tone(),
+                    at: Vec2::new(x, 50.0),
+                    pitch: 1.0,
+                },
+            );
+        };
+        play(&mut k, 0.0);
+        assert_eq!(k.status(p).audio.playing, 1);
+        let (l, r) = render_until_sounding(&mut k);
+        assert!(l > r * 2.0, "左端から聞こえる: {l} {r}");
+        k.apply(p, PanelCommand::StopAudio);
+        settle(&mut k, p);
+        play(&mut k, 200.0);
+        let (l, r) = render_until_sounding(&mut k);
+        assert!(r > l * 2.0, "右端から聞こえる: {l} {r}");
+        k.apply(p, PanelCommand::Close);
+        k.tick();
+        settle(&mut k, p);
+        assert_eq!(k.status(p).audio.playing, 0);
     }
 
     #[test]
