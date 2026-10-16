@@ -27,8 +27,8 @@ struct HeadlessWindowState {
     /// NYAW: 描いて読み戻す先。作れなければ（GPU が無い）従来どおり何も描かない。
     #[cfg(feature = "test-support")]
     renderer: Option<gpui_wgpu::WgpuHeadlessRenderer>,
-    #[cfg(feature = "test-support")]
-    transparent: bool,
+    /// NYAW: 透過の窓は透明で塗る（gpui が開いた直後に `set_background_appearance` で伝える）。
+    background: WindowBackgroundAppearance,
 }
 
 pub(crate) struct HeadlessWindow(Rc<RefCell<HeadlessWindowState>>);
@@ -62,8 +62,7 @@ impl HeadlessWindow {
             renderer: gpui_wgpu::WgpuHeadlessRenderer::new()
                 .inspect_err(|e| log::warn!("headless renderer unavailable: {e:#}"))
                 .ok(),
-            #[cfg(feature = "test-support")]
-            transparent: params.window_background != WindowBackgroundAppearance::Opaque,
+            background: WindowBackgroundAppearance::Opaque,
         })))
     }
 }
@@ -148,7 +147,7 @@ impl PlatformWindow for HeadlessWindow {
     }
 
     fn background_appearance(&self) -> WindowBackgroundAppearance {
-        WindowBackgroundAppearance::Opaque
+        self.0.borrow().background
     }
 
     fn set_title(&mut self, title: &str) {
@@ -159,7 +158,9 @@ impl PlatformWindow for HeadlessWindow {
         self.0.borrow().title.clone().unwrap_or_default()
     }
 
-    fn set_background_appearance(&self, _background: WindowBackgroundAppearance) {}
+    fn set_background_appearance(&self, background: WindowBackgroundAppearance) {
+        self.0.borrow_mut().background = background;
+    }
 
     fn minimize(&self) {}
 
@@ -218,7 +219,7 @@ impl PlatformWindow for HeadlessWindow {
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
         let mut state = self.0.borrow_mut();
         let size = state.bounds.size.to_device_pixels(1.0);
-        let transparent = state.transparent;
+        let transparent = state.background != WindowBackgroundAppearance::Opaque;
         let renderer = state
             .renderer
             .as_mut()
