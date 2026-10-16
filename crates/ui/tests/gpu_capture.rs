@@ -1,7 +1,6 @@
 //! Checks that a hidden panel window's render can be read back through the production path (real platform + GPU).
 //! The GUI event loop must run on the main thread, so this runs in main without the test harness.
 
-#[cfg(windows)]
 fn main() {
     use std::{
         cell::{Cell, RefCell},
@@ -52,7 +51,9 @@ fn main() {
                     break;
                 }
             }
-            for lod in [0, 1, 2, 3, 0] {
+            // ponytail: set_render_lod is Windows-only for now; check LOD on Linux once it is implemented there.
+            let lods: &[u8] = if cfg!(windows) { &[0, 1, 2, 3, 0] } else { &[] };
+            for &lod in lods {
                 cx.update_window(window.into(), |_, window, cx| ui::set_render_lod(window, cx, RES, lod)).unwrap();
                 for attempt in 0..100 {
                     cx.background_executor().timer(Duration::from_millis(50)).await;
@@ -136,10 +137,4 @@ fn main() {
         "collect returns the picture just drawn"
     );
     println!("gpu_capture: delayed readback ok");
-}
-
-// ponytail: render_to_image is only implemented for Windows in gpui. Remove this branch when Linux is supported.
-#[cfg(not(windows))]
-fn main() {
-    println!("gpu_capture: skipped (non-Windows unsupported)");
 }
