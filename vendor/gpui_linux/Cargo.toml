@@ -1,6 +1,7 @@
 # zed の crates/gpui_linux（rev 26363aab）の写し。ワークスペース継承を具体的な指定に展開し、dev-dependencies を外してある。
 # 変更点（NYAW: の印）:
 # - test-support のとき、headless のウィンドウが wgpu で描いて `render_to_image` で読み戻せる（窓を出さずに描く）。
+# - headless のウィンドウの描画の拡大率を `with_render_scale` で変えられる（パネルの LOD）。
 # zed を上げるときは、新しい版を写し直して NYAW: の箇所を当て直す。
 [package]
 name = "gpui_linux"

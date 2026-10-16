@@ -17,7 +17,24 @@ use gpui::{
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, WindowVisibility,
 };
 
+thread_local! {
+    /// NYAW: 次の `resize` で使う描画の拡大率（[`with_render_scale`]）。
+    static RENDER_SCALE: std::cell::Cell<Option<f32>> = const { std::cell::Cell::new(None) };
+}
+
+/// NYAW: `f`（`Window::resize` を呼ぶ）の間の resize で、headless のウィンドウの拡大率を `scale` にする。
+/// 論理サイズはそのままで、描く解像度だけが変わる。headless は resize を gpui に知らせないので、
+/// 呼んだ後に `Window::bounds_changed` で拡大率と論理サイズを gpui に取り込ませる。
+pub fn with_render_scale<R>(scale: f32, f: impl FnOnce() -> R) -> R {
+    RENDER_SCALE.with(|s| s.set(Some(scale)));
+    let r = f();
+    RENDER_SCALE.with(|s| s.set(None));
+    r
+}
+
 struct HeadlessWindowState {
+    /// NYAW: 描画の拡大率（[`with_render_scale`]）。
+    scale: f32,
     bounds: Bounds<Pixels>,
     /// Held while this window exists, so the platform can tell that headless windows are open.
     _lease: Rc<()>,
@@ -58,6 +75,7 @@ impl HeadlessWindow {
             input_handler: None,
             title: None,
             is_fullscreen: false,
+            scale: 1.0,
             #[cfg(feature = "test-support")]
             renderer: gpui_wgpu::WgpuHeadlessRenderer::new()
                 .inspect_err(|e| log::warn!("headless renderer unavailable: {e:#}"))
@@ -85,11 +103,15 @@ impl PlatformWindow for HeadlessWindow {
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
-        self.0.borrow_mut().bounds.size = size;
+        let mut state = self.0.borrow_mut();
+        state.bounds.size = size;
+        if let Some(scale) = RENDER_SCALE.with(|s| s.get()) {
+            state.scale = scale;
+        }
     }
 
     fn scale_factor(&self) -> f32 {
-        1.0
+        self.0.borrow().scale
     }
 
     fn appearance(&self) -> WindowAppearance {
@@ -218,7 +240,7 @@ impl PlatformWindow for HeadlessWindow {
     #[cfg(feature = "test-support")]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
         let mut state = self.0.borrow_mut();
-        let size = state.bounds.size.to_device_pixels(1.0);
+        let size = state.bounds.size.to_device_pixels(state.scale);
         let transparent = state.background != WindowBackgroundAppearance::Opaque;
         let renderer = state
             .renderer

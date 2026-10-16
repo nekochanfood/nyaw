@@ -17,6 +17,7 @@ mod xdg_desktop_portal;
 pub use dispatcher::*;
 pub(crate) use display_connection::{Backend, DisplayConnection, select_backend};
 pub(crate) use headless::*;
+pub use headless::with_render_scale;
 pub(crate) use keyboard::*;
 pub(crate) use platform::*;
 #[cfg(any(feature = "wayland", feature = "x11"))]

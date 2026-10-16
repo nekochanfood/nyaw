@@ -51,9 +51,7 @@ fn main() {
                     break;
                 }
             }
-            // ponytail: set_render_lod is Windows-only for now; check LOD on Linux once it is implemented there.
-            let lods: &[u8] = if cfg!(windows) { &[0, 1, 2, 3, 0] } else { &[] };
-            for &lod in lods {
+            for lod in [0, 1, 2, 3, 0] {
                 cx.update_window(window.into(), |_, window, cx| ui::set_render_lod(window, cx, RES, lod)).unwrap();
                 for attempt in 0..100 {
                     cx.background_executor().timer(Duration::from_millis(50)).await;

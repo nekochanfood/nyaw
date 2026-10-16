@@ -4,7 +4,7 @@ use gpui::{App, Window};
 /// LOD0〜3 の描画密度。ウィンドウの変更は次のイベント処理で反映する。
 // shortcut: Windows DPI 経路は端数サイズの viewport を丸める。GPUI に独立した描画密度 API が追加されたら置き換える。
 #[cfg(windows)]
-pub fn set_render_lod(window: &Window, cx: &App, resolution: (u32, u32), lod: u8) {
+pub fn set_render_lod(window: &mut Window, cx: &mut App, resolution: (u32, u32), lod: u8) {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -46,6 +46,11 @@ pub fn set_render_lod(window: &Window, cx: &App, resolution: (u32, u32), lod: u8
         .detach();
 }
 
-// GPUI の render_to_image 自体が Windows 以外では未実装。
-#[cfg(not(windows))]
-pub fn set_render_lod(_: &Window, _: &App, _: (u32, u32), _: u8) {}
+/// LOD0〜3 の描画密度。Linux の headless のウィンドウは拡大率を直接書き換え、すぐに反映する。
+#[cfg(target_os = "linux")]
+pub fn set_render_lod(window: &mut Window, cx: &mut App, resolution: (u32, u32), lod: u8) {
+    let scale = 1.0 / (1u32 << lod.min(3)) as f32;
+    let size = gpui::size(gpui::px(resolution.0 as f32), gpui::px(resolution.1 as f32));
+    gpui_linux::with_render_scale(scale, || window.resize(size));
+    window.bounds_changed(cx);
+}

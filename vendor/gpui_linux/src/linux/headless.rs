@@ -5,6 +5,7 @@ use std::rc::Rc;
 use gpui::{AnyWindowHandle, PlatformDisplay, PlatformWindow, WindowParams};
 
 pub(crate) use window::HeadlessWindow;
+pub use window::with_render_scale;
 
 /// The state of a `LinuxPlatform` with no display server.
 ///
