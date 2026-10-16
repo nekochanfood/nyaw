@@ -6,6 +6,7 @@ default = "既定"
 ok = "OK"
 cancel = "キャンセル"
 none = "なし"
+back = "戻る"
 
 [theme]
 dark = "ダーク"
@@ -86,6 +87,7 @@ stress = "負荷"
 catalog = "カタログ"
 localization = "ローカライズ"
 settings = "設定"
+navigation = "積み重ね"
 
 [emoji]
 inline = "テキスト内の SVG 絵文字 · 14 / 19 / 24 px"
@@ -155,6 +157,7 @@ sample_button = "変更を保存"
 title = "設定"
 # 本物の設定が載るまでのダミー。
 item = "設定項目 {n}"
+detail = "オプション {n}"
 
 [settings.category]
 general = "一般"
@@ -163,3 +166,10 @@ privacy = "プライバシー"
 appearance = "外観"
 security = "セキュリティ"
 about = "情報"
+
+[nav]
+title = "積み重ね"
+item = "項目 {n}"
+deeper = "項目 {n} をさらに詳しく"
+deep = "項目 {n} の詳細。押したまま右から左へ動かすと戻ります。"
+tap = "押す"

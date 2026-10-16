@@ -6,6 +6,7 @@ default = "Default"
 ok = "OK"
 cancel = "Cancel"
 none = "none"
+back = "Back"
 
 [theme]
 dark = "Dark"
@@ -86,6 +87,7 @@ stress = "Stress"
 catalog = "Catalog"
 localization = "Localization"
 settings = "Settings"
+navigation = "Navigation"
 
 [emoji]
 inline = "Inline SVG emoji · 14 / 19 / 24 px"
@@ -155,6 +157,7 @@ sample_button = "Save changes"
 title = "Settings"
 # Dummy items until real settings land.
 item = "Setting {n}"
+detail = "Option {n}"
 
 [settings.category]
 general = "General"
@@ -163,3 +166,10 @@ privacy = "Privacy"
 appearance = "Appearance"
 security = "Security"
 about = "About"
+
+[nav]
+title = "Navigation"
+item = "Item {n}"
+deeper = "More about item {n}"
+deep = "Details of item {n}. Swipe right while holding to go back."
+tap = "Tap me"

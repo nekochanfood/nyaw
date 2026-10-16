@@ -6,6 +6,7 @@
 //! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
 //! - レーザー: [`SmoothingTest`] でレーザーの手ブレ抑えの強さと線の長さを変え、小さな的で揺れと遅れを見る
 //! - ツールチップ: [`TooltipTest`] で、カーソルに付いて出る説明（向き・猶予・文字の差し替え・幅の伸び縮み）を見る
+//! - 積み重ね: [`NavTest`] で、右から入る画面（push 遷移）と、押したまま右から左へ動かして戻るスワイプバック（設定画面の中身と同じ部品）
 //! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
 //! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）・[`TestingFont`]（フォントの見本）・[`TestingScrollbar`]（縦・横・両方のスクロールバー）
 //! - 負荷: [`StressTest`] で上限いっぱいまでパネルを出し、閉じる・ちりばめる・並べる
@@ -515,6 +516,10 @@ impl Render for Testing {
                         )
                     }
                 }),
+            )
+            .child(
+                button!("nav-test", i18n::t(cx, "testing.open.navigation"), false)
+                    .on_click(spawn_view(self.panel, |id, _| NavTest::new(id))),
             )
             .child(
                 button!("stress-test", i18n::t(cx, "testing.open.stress"), false)
@@ -1289,35 +1294,60 @@ const SETTINGS_ITEMS: [(&str, &design::Icon); 5] = [
 
 /// 設定画面（`settings-test`）。左のサイドバーにカテゴリの一覧、区切り線を挟んで右に選んだカテゴリの項目の一覧。
 /// 地は背景色（`components::panel`）、一覧の行はカード色（`components::list`）。選んでいるカテゴリは `selected` で光る。
+/// 中身は積み重ね（[`components::navigation`]）: 項目を押すと右から詳しい画面が入り、`settings-back` か右から左へのスワイプで戻る。
 #[derive(Default)]
 pub struct Settings {
     panel: PanelId,
     /// 選んでいるカテゴリ（[`SETTINGS_CATEGORIES`] の添字）。
     pub category: usize,
+    /// 中身に積んだ画面。先頭はカテゴリの項目の一覧（`None`）、その上に項目の詳しい画面（`Some(項目)`）。
+    pub pages: Vec<Option<usize>>,
 }
 
 impl Settings {
     pub fn new(panel: PanelId) -> Self {
-        Self { panel, category: 0 }
+        Self {
+            panel,
+            category: 0,
+            pages: vec![None],
+        }
+    }
+}
+
+/// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。
+fn heading(text: impl IntoElement) -> Div {
+    div()
+        .h(px(54.0))
+        .px(px(spacing::LG))
+        .flex()
+        .items_center()
+        .justify_between()
+        .text_size(px(font_size::LG))
+        .font_weight(FontWeight::BOLD)
+        .child(text)
+}
+
+/// 押すと `view` の積み重ねに `page` を積む・下ろす（`None`）。
+fn stack_op<V: 'static, P: 'static + Copy>(
+    view: &gpui::Entity<V>,
+    stack: fn(&mut V) -> &mut Vec<P>,
+    page: Option<P>,
+) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    let view = view.clone();
+    move |_, _, cx| {
+        view.update(cx, |v, cx| {
+            match page {
+                Some(p) => stack(v).push(p),
+                None => drop(stack(v).pop()),
+            }
+            cx.notify()
+        })
     }
 }
 
 impl Render for Settings {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let (_, _, title, count) = SETTINGS_CATEGORIES[self.category];
-        // 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。
-        let heading = |text: SharedString| {
-            div()
-                .h(px(54.0))
-                .px(px(spacing::LG))
-                .flex()
-                .items_center()
-                .justify_between()
-                .text_size(px(font_size::LG))
-                .font_weight(FontWeight::BOLD)
-                .child(text)
-        };
         let categories = SETTINGS_CATEGORIES
             .iter()
             .enumerate()
@@ -1326,22 +1356,86 @@ impl Render for Settings {
                     .selected(i == self.category)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.category = i;
+                        this.pages = vec![None];
                         cx.notify();
                     }))
             })
             .collect::<Vec<_>>();
-        let items = SETTINGS_ITEMS[..count]
-            .iter()
-            .enumerate()
-            .map(|(n, &(id, glyph))| {
-                components::list_item(
-                    &theme,
-                    id,
-                    glyph,
-                    i18n::tf(cx, "settings.item", &[("n", &(n + 1))]),
-                )
-            })
-            .collect::<Vec<_>>();
+        let (this, panel, category) = (cx.entity(), self.panel, self.category);
+        let pages: fn(&mut Settings) -> &mut Vec<Option<usize>> = |v| &mut v.pages;
+        // 中身の画面 1 枚。
+        let page = move |p: &Option<usize>, _: &mut Window, cx: &mut App| {
+            let theme = Theme::current(cx);
+            let (_, _, title, count) = SETTINGS_CATEGORIES[category];
+            let close = components::icon_button(
+                &theme,
+                "close-settings",
+                &design::icons::X,
+                i18n::t(cx, "common.close"),
+                Variant::OnBackground,
+            )
+            .on_click(command(panel, PanelCommand::Close));
+            let (head, rows) = match *p {
+                // カテゴリの項目の一覧。押すと詳しい画面を積む。
+                None => (
+                    heading(i18n::t(cx, title)),
+                    SETTINGS_ITEMS[..count]
+                        .iter()
+                        .enumerate()
+                        .map(|(n, &(id, glyph))| {
+                            components::list_item(
+                                &theme,
+                                id,
+                                glyph,
+                                i18n::tf(cx, "settings.item", &[("n", &(n + 1))]),
+                            )
+                            .on_click(stack_op(&this, pages, Some(Some(n))))
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+                // 項目の詳しい画面（ダミー）。
+                Some(n) => (
+                    heading(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(spacing::SM))
+                            .child(
+                                components::icon_button(
+                                    &theme,
+                                    "settings-back",
+                                    &design::icons::CARET_LEFT,
+                                    i18n::t(cx, "common.back"),
+                                    Variant::OnBackground,
+                                )
+                                .on_click(stack_op(&this, pages, None)),
+                            )
+                            .child(i18n::tf(cx, "settings.item", &[("n", &(n + 1))])),
+                    ),
+                    SETTINGS_ITEMS[..3]
+                        .iter()
+                        .enumerate()
+                        .map(|(m, &(_, glyph))| {
+                            components::list_item(
+                                &theme,
+                                ["setting-detail-0", "setting-detail-1", "setting-detail-2"][m],
+                                glyph,
+                                i18n::tf(cx, "settings.detail", &[("n", &(m + 1))]),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                ),
+            };
+            div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap(px(spacing::MD))
+                .child(head.child(close))
+                .child(components::list(&theme, rows))
+                .into_any_element()
+        };
+        let back = cx.entity();
         components::panel(&theme)
             .flex()
             .child(
@@ -1362,26 +1456,183 @@ impl Render for Settings {
                     .mx(px(spacing::MD))
                     .bg(rgba(theme.neutral_border_subtle)),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .flex()
-                    .flex_col()
-                    .gap(px(spacing::MD))
-                    .child(
-                        heading(i18n::t(cx, title)).child(
-                            components::icon_button(
+            .child(div().flex_1().child(components::navigation(
+                &theme,
+                "settings-content",
+                &self.pages,
+                page,
+                move |_, cx| {
+                    back.update(cx, |v, cx| {
+                        v.pages.pop();
+                        cx.notify()
+                    })
+                },
+            )))
+    }
+}
+
+/// 画面の積み重ね（[`components::navigation`]）を試す画面 [`NavTest`] の画面 1 枚。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NavPage {
+    /// 一番下。項目（`nav-item-0..`）を押すと [`NavPage::Detail`] を積む。
+    Root,
+    /// 項目の詳しい画面。`nav-deeper` で [`NavPage::Deep`] を積む。`nav-tap`（押した回数を数える）と `nav-slider` がある。
+    Detail(usize),
+    /// 一番上。
+    Deep(usize),
+}
+
+/// 画面の積み重ね（push 遷移とスワイプバック）を試す画面（`nav-test`）。設定画面の中身と同じ部品。
+/// - 項目を押すと右から次の画面が入り、`nav-back` か、押したまま右から左へ動かす（スワイプバック）と戻る。`nav-depth` に積んだ数。
+/// - スワイプして離した所のボタン（`nav-tap`）は押されない。スライダー（`nav-slider`）のハンドルを左へ動かしても戻らない。
+/// - パネルを掴んでいる手のポインタは無視する（掴みながらトリガーで動かしても戻らず、もう一方の手ではスワイプできる）。
+#[derive(Default)]
+pub struct NavTest {
+    panel: PanelId,
+    pub stack: Vec<NavPage>,
+    /// `nav-tap` を押した回数。
+    pub taps: usize,
+    /// `nav-slider` の値。
+    pub value: f32,
+    /// スワイプバックで戻った回数。
+    pub swiped_back: usize,
+}
+
+impl NavTest {
+    pub fn new(panel: PanelId) -> Self {
+        Self {
+            panel,
+            stack: vec![NavPage::Root],
+            taps: 0,
+            value: 0.5,
+            swiped_back: 0,
+        }
+    }
+}
+
+impl Render for NavTest {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let this = cx.entity();
+        let stack: fn(&mut NavTest) -> &mut Vec<NavPage> = |v| &mut v.stack;
+        let page = move |p: &NavPage, _: &mut Window, cx: &mut App| {
+            let theme = Theme::current(cx);
+            let body = div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .gap(px(spacing::MD))
+                .p(px(spacing::MD));
+            match *p {
+                NavPage::Root => body.child(components::list(
+                    &theme,
+                    (0..3).map(|n| {
+                        components::list_item(
+                            &theme,
+                            ["nav-item-0", "nav-item-1", "nav-item-2"][n],
+                            &design::icons::GEAR,
+                            i18n::tf(cx, "nav.item", &[("n", &(n + 1))]),
+                        )
+                        .on_click(stack_op(&this, stack, Some(NavPage::Detail(n))))
+                    }),
+                )),
+                NavPage::Detail(n) => {
+                    let (tap, set) = (this.clone(), this.clone());
+                    body.child(components::list(
+                        &theme,
+                        [
+                            components::list_item(
                                 &theme,
-                                "close-settings",
-                                &design::icons::X,
-                                i18n::t(cx, "common.close"),
-                                Variant::OnBackground,
+                                "nav-deeper",
+                                &design::icons::INFO,
+                                i18n::tf(cx, "nav.deeper", &[("n", &(n + 1))]),
                             )
-                            .on_click(command(self.panel, PanelCommand::Close)),
-                        ),
+                            .on_click(stack_op(&this, stack, Some(NavPage::Deep(n)))),
+                            components::list_item(
+                                &theme,
+                                "nav-tap",
+                                &design::icons::BELL,
+                                i18n::t(cx, "nav.tap"),
+                            )
+                            .on_click(move |_, _, cx| {
+                                tap.update(cx, |v, cx| {
+                                    v.taps += 1;
+                                    cx.notify()
+                                })
+                            }),
+                        ],
+                    ))
+                    .child(
+                        components::slider(&theme, "nav-slider", this.read(cx).value, {
+                            move |v, _, cx| {
+                                set.update(cx, |s, cx| {
+                                    s.value = v;
+                                    cx.notify()
+                                })
+                            }
+                        })
+                        .length(400.0),
                     )
-                    .child(components::list(&theme, items)),
+                }
+                NavPage::Deep(n) => body.child(i18n::tf(cx, "nav.deep", &[("n", &(n + 1))])),
+            }
+            .into_any_element()
+        };
+        let depth = self.stack.len() - 1;
+        let title = match self.stack[depth] {
+            NavPage::Root => i18n::t(cx, "nav.title"),
+            NavPage::Detail(n) => i18n::tf(cx, "nav.item", &[("n", &(n + 1))]),
+            NavPage::Deep(n) => i18n::tf(cx, "nav.deeper", &[("n", &(n + 1))]),
+        };
+        let mut head = div().flex().items_center().gap(px(spacing::SM));
+        if depth > 0 {
+            head = head.child(
+                components::icon_button(
+                    &theme,
+                    "nav-back",
+                    &design::icons::CARET_LEFT,
+                    i18n::t(cx, "common.back"),
+                    Variant::OnBackground,
+                )
+                .on_click(stack_op(&cx.entity(), stack, None)),
+            );
+        }
+        let back = cx.entity();
+        components::panel(&theme)
+            .flex()
+            .flex_col()
+            .gap(px(spacing::MD))
+            .child(
+                heading(head.child(title))
+                    .child(
+                        div()
+                            .debug_selector(|| "nav-depth".into())
+                            .child(format!("{depth}")),
+                    )
+                    .child(
+                        components::icon_button(
+                            &theme,
+                            "close-nav",
+                            &design::icons::X,
+                            i18n::t(cx, "common.close"),
+                            Variant::OnBackground,
+                        )
+                        .on_click(command(self.panel, PanelCommand::Close)),
+                    ),
             )
+            .child(div().flex_1().child(components::navigation(
+                &theme,
+                "nav",
+                &self.stack,
+                page,
+                move |_, cx| {
+                    back.update(cx, |v, cx| {
+                        v.stack.pop();
+                        v.swiped_back += 1;
+                        cx.notify()
+                    })
+                },
+            )))
     }
 }
 

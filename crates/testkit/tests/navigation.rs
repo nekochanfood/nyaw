@@ -1,0 +1,119 @@
+//! E2E for the page stack (push transition and swipe back) on the NavTest screen and in the Settings content, with the VR laser.
+//! Pressing an item slides the next page in from the right; holding the trigger and moving from right to left goes back.
+//! The hand that holds (grips) the panel is ignored: only the other hand's laser can swipe.
+
+use gpui::{Render, TestAppContext};
+use kernel::{PanelCommand, PointerMode};
+use testing::{NavPage, NavTest, Settings};
+use testkit::{Action, Driver, Hand, Vec2, VrKit};
+
+/// Holds the trigger near the right end of `selector`'s row and moves left by a bit more than half the page width, then releases.
+fn swipe_back<V: Render>(kit: &mut VrKit<V>, page: &'static str, selector: &'static str) {
+    let b = kit.bounds(page);
+    let width = f32::from(b.size.width);
+    let c = kit.bounds(selector).center();
+    let from = Vec2::new(f32::from(b.origin.x) + width - 30.0, f32::from(c.y));
+    kit.point_at(from).press(Action::Select);
+    for i in 1..=20 {
+        kit.point_at(from - Vec2::new(width * 0.6 * i as f32 / 20.0, 0.0));
+    }
+    kit.release(Action::Select).step();
+}
+
+fn stack(kit: &mut VrKit<NavTest>) -> Vec<NavPage> {
+    kit.read(|v| v.stack.clone())
+}
+
+#[gpui::test]
+fn items_push_pages_and_the_back_button_pops(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
+    kit.click("nav-item-1");
+    assert_eq!(stack(&mut kit), [NavPage::Root, NavPage::Detail(1)]);
+    kit.click("nav-deeper");
+    assert_eq!(stack(&mut kit).len(), 3);
+    kit.click("nav-back").click("nav-back");
+    assert_eq!(stack(&mut kit), [NavPage::Root]);
+    assert_eq!(kit.read(|v| v.swiped_back), 0);
+}
+
+#[gpui::test]
+fn laser_swipe_goes_back_without_pressing_what_is_under_it(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
+    kit.click("nav-item-0");
+    swipe_back(&mut kit, "nav", "nav-tap");
+    assert_eq!(stack(&mut kit), [NavPage::Root]);
+    assert_eq!(kit.read(|v| (v.swiped_back, v.taps)), (1, 0));
+}
+
+#[gpui::test]
+fn touch_swipe_goes_back(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
+    kit.kernel
+        .apply(0, PanelCommand::PointerMode(PointerMode::Touch));
+    kit.step();
+    kit.click("nav-item-2").click("nav-deeper");
+    assert_eq!(stack(&mut kit).len(), 3);
+    swipe_back(&mut kit, "nav", "nav");
+    assert_eq!(stack(&mut kit), [NavPage::Root, NavPage::Detail(2)]);
+    // Sliding the slider's handle to the left moves the slider, not the page.
+    let before = kit.read(|v| v.value);
+    let h = kit.bounds("nav-slider-handle").center();
+    let from = Vec2::new(f32::from(h.x), f32::from(h.y));
+    kit.point_at(from).press(Action::Select);
+    for i in 1..=10 {
+        kit.point_at(from - Vec2::new(10.0 * i as f32, 0.0));
+    }
+    kit.release(Action::Select).step();
+    assert_eq!(stack(&mut kit).len(), 2);
+    assert!(kit.read(|v| v.value) < before);
+}
+
+#[gpui::test]
+fn the_hand_holding_the_panel_is_ignored(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
+    kit.click("nav-item-0");
+    // The left hand grips the panel, then pulls the trigger and sweeps left (that scales the held panel).
+    let tap = kit.bounds("nav-tap").center();
+    kit.hand(Hand::Left)
+        .point_at(Vec2::new(f32::from(tap.x), f32::from(tap.y)))
+        .press(Action::Grab)
+        .press(Action::Select);
+    let mut aim = kit
+        .kernel
+        .subsystems
+        .backend
+        .frame
+        .controllers
+        .iter()
+        .find(|c| c.hand == Hand::Left)
+        .expect("left hand")
+        .aim;
+    for _ in 0..20 {
+        aim.position.x -= 0.02;
+        kit.move_hand(aim);
+    }
+    kit.release(Action::Select).step();
+    assert_eq!(stack(&mut kit).len(), 2, "the holding hand does not swipe");
+    assert!(kit.kernel.panel(0).pose.position.x < -0.1, "it moved the panel");
+
+    // While the left hand keeps holding, the right hand can still swipe back.
+    kit.hand(Hand::Right);
+    swipe_back(&mut kit, "nav", "nav-tap");
+    assert_eq!(stack(&mut kit), [NavPage::Root]);
+    assert_eq!(kit.read(|v| (v.swiped_back, v.taps)), (1, 0));
+    kit.hand(Hand::Left).release(Action::Grab);
+}
+
+#[gpui::test]
+fn settings_content_pushes_details_and_swipes_back(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.click("setting-1");
+    assert_eq!(kit.read(|v| v.pages.clone()), [None, Some(1)]);
+    swipe_back(&mut kit, "settings-content", "setting-detail-0");
+    assert_eq!(kit.read(|v| v.pages.clone()), [None]);
+    kit.click("setting-0").click("settings-back");
+    assert_eq!(kit.read(|v| v.pages.clone()), [None]);
+    // Switching category starts again from its list.
+    kit.click("setting-2").click("settings-account");
+    assert_eq!(kit.read(|v| (v.category, v.pages.clone())), (1, vec![None]));
+}
