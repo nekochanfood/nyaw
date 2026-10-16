@@ -311,6 +311,8 @@ mod tests {
         );
         assert_eq!(scan_code(100), Some((0xe038, 0)));
         assert_eq!(scan_code(124), Some((0x7d, 0)));
+        assert_eq!(scan_code(125), Some((0xe05b, 0)));
+        assert_eq!(scan_code(126), Some((0xe05c, 0)));
     }
 
     #[test]
@@ -320,7 +322,10 @@ mod tests {
             thread,
             time::{Duration, Instant},
         };
-        use windows::core::w;
+        use windows::{
+            Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId},
+            core::w,
+        };
         // SAFETY: テスト専用の標準 EDIT ウィンドウを作り、同じスレッドでメッセージを処理する。
         unsafe {
             let previous = GetKeyboardLayout(0);
@@ -351,17 +356,41 @@ mod tests {
             }
             let _cleanup = Cleanup(window, previous);
             assert!(!layout.0.is_null());
+            let current = GetCurrentThreadId();
+            let foreground_thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
+            let attached = current != foreground_thread
+                && AttachThreadInput(current, foreground_thread, true).as_bool();
             let _ = SetForegroundWindow(window);
+            if attached {
+                let _ = AttachThreadInput(current, foreground_thread, false);
+            }
             let _ = SetFocus(Some(window));
-            let mut backend = Backend::new();
-            assert_eq!(backend.settings().foreground, window.0 as usize as u64);
-            backend
-                .send(Output::Keys(super::super::chord(&[], 30)))
+            let watcher = super::super::Watcher::new();
+            let foreground = window.0 as usize as u64;
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while watcher.settings().foreground != foreground {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "test window did not gain focus: {:?}",
+                    watcher.settings()
+                );
+                thread::sleep(Duration::from_millis(1));
+            }
+            assert!(watcher.settings().own_process);
+            watcher
+                .send(foreground, Output::Keys(super::super::chord(&[], 30)))
                 .unwrap();
-            backend
-                .send(Output::Keys(super::super::chord(&[42], 48)))
+            watcher
+                .send(foreground, Output::Keys(super::super::chord(&[42], 48)))
                 .unwrap();
-            backend.send(Output::Text("Ω🐈".into())).unwrap();
+            watcher
+                .send(foreground, Output::Text("Ω🐈".into()))
+                .unwrap();
             let deadline = Instant::now() + Duration::from_secs(2);
             loop {
                 let mut message = MSG::default();
