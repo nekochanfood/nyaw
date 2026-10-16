@@ -18,6 +18,8 @@ pub struct ControllerState {
     pub grab: bool,
     pub menu: bool,
     pub scroll: Vec2,
+    /// 掴んでいるパネルの拡大縮小（-1..1、+ で大きく）。機種の割り当ては無く、[`vr::RESIZE_INPUT`] をそのまま読む。
+    pub resize: f32,
 }
 
 /// アクションごとの入力名（OpenXR の語彙）。報告された候補のうち最も大きい値を採用する。
@@ -133,6 +135,7 @@ pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerSta
         scroll: p.scroll.map_or(Vec2::ZERO, |(x, y)| {
             Vec2::new(raw.input(x).unwrap_or(0.0), raw.input(y).unwrap_or(0.0))
         }),
+        resize: raw.input(vr::RESIZE_INPUT).unwrap_or(0.0).clamp(-1.0, 1.0),
     }
 }
 

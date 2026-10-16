@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use subsystems::os;
@@ -49,6 +49,33 @@ pub enum PointerMode {
     Touch,
 }
 
+/// 見た目のテーマ（ライト / ダーク）。`design::Mode` に対応する。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl ThemeMode {
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Dark => Self::Light,
+            Self::Light => Self::Dark,
+        }
+    }
+}
+
+/// 画面の言語（`en` / `ja`）。`i18n::Lang` に対応する。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Language {
+    #[default]
+    En,
+    Ja,
+}
+
 /// `config.toml` の中身。どのキーも省略でき、知らないキーは無視する。
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default)]
@@ -61,10 +88,18 @@ pub struct Config {
     pub runtime: Option<String>,
     /// レーザーの手ブレ抑え（0 = 抑えない 〜 1 未満。大きいほど強く、遅れる）。省略で既定値。
     pub pointer_smoothing: Option<f32>,
+    /// 手ブレ抑えを緩める角度（度）。抑えたレーザーが手の向きからこれだけ遅れると抑えが半分になる。省略で既定値。
+    pub pointer_release_deg: Option<f32>,
+    /// レーザーの見える長さ（m）。手元からこの長さで消える（カーソルが近ければその手前で消える）。省略で既定値。
+    pub laser_length: Option<f32>,
     /// レーザーのエミュレート方式（`mouse` / `touch`）。省略でタッチ。
     pub pointer_mode: Option<PointerMode>,
     /// 機能ごとに GPU を使うか（`[gpu]` の表。互換性のため CPU に落とせる）。
     pub gpu: Gpu,
+    /// 見た目のテーマ（`dark` / `light`）。省略で `dark`。画面での切り替えはここへ書き戻される。
+    pub theme: ThemeMode,
+    /// 画面の言語（`en` / `ja`）。省略で `en`。画面での切り替えはここへ書き戻される。
+    pub language: Language,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -117,9 +152,62 @@ pub fn load() -> Result<Config, Error> {
     }
 }
 
+/// 設定ファイルが読めなかった（どこかの値が壊れている）ときに、`runtime` だけ拾い出す。
+/// 既定値で起動すると novr の指定が消え、VR ランタイム（SteamVR）に繋ぎに行ってしまうので。
+pub fn salvage_runtime() -> Option<String> {
+    runtime_from(&fs::read_to_string(path()?).ok()?)
+}
+
+fn runtime_from(text: &str) -> Option<String> {
+    let table = text.parse::<toml::Table>().ok()?;
+    table.get("runtime")?.as_str().map(str::to_owned)
+}
+
+/// `path` の設定ファイルの `theme` だけを書き換える（他のキーは残す。ファイルが無ければ作る）。
+/// 既存のファイルが読めない・TOML として壊れているときは、上書きせずにエラーを返す。
+pub fn save_theme_at(path: &Path, theme: ThemeMode) -> Result<(), Error> {
+    let value = toml::Value::try_from(theme).expect("an enum of unit variants is a string");
+    save_at(path, "theme", value)
+}
+
+/// `path` の設定ファイルの `language` だけを書き換える（[`save_theme_at`] と同じく他のキーは残す）。
+pub fn save_language_at(path: &Path, language: Language) -> Result<(), Error> {
+    let value = toml::Value::try_from(language).expect("an enum of unit variants is a string");
+    save_at(path, "language", value)
+}
+
+/// 数値のキー（`pointer_smoothing` など）を `path` の設定ファイルへ書き戻す（[`save_theme_at`] と同じく他のキーは残す）。
+pub fn save_number_at(path: &Path, key: &str, value: f32) -> Result<(), Error> {
+    save_at(path, key, toml::Value::Float(f64::from(value)))
+}
+
+/// 設定ファイルの 1 つのキーだけを書き換える。ファイルが無ければ作り、壊れていれば上書きしない。
+fn save_at(path: &Path, key: &str, value: toml::Value) -> Result<(), Error> {
+    let mut table = match fs::read_to_string(path) {
+        Ok(text) => text.parse::<toml::Table>().map_err(Error::Parse)?,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => toml::Table::new(),
+        Err(e) => return Err(Error::Io(e)),
+    };
+    table.insert(key.into(), value);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).map_err(Error::Io)?;
+    }
+    // ponytail: 書き換えでコメントは消える。残したければ toml_edit。
+    fs::write(path, table.to_string()).map_err(Error::Io)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn runtime_survives_a_broken_value() {
+        let text = "runtime = \"novr\"
+lod_quality = 9
+";
+        assert!(parse(text).is_err());
+        assert_eq!(runtime_from(text).as_deref(), Some("novr"));
+    }
 
     #[test]
     fn lod_quality_defaults_to_mid_and_validates_numbers() {
@@ -166,6 +254,59 @@ emulator = false
     fn empty_is_default_and_bad_toml_is_error() {
         assert_eq!(parse("").unwrap(), Config::default());
         assert!(parse("log = ").is_err());
+    }
+
+    #[test]
+    fn theme_defaults_to_dark_and_parses() {
+        assert_eq!(parse("").unwrap().theme, ThemeMode::Dark);
+        assert_eq!(parse("theme = \"light\"").unwrap().theme, ThemeMode::Light);
+        assert!(parse("theme = \"blue\"").is_err());
+        assert_eq!(parse("").unwrap().language, Language::En);
+        assert_eq!(parse("language = \"ja\"").unwrap().language, Language::Ja);
+        assert!(parse("language = \"fr\"").is_err());
+        assert_eq!(ThemeMode::Dark.toggled(), ThemeMode::Light);
+    }
+
+    #[test]
+    fn save_theme_keeps_other_keys_and_round_trips() {
+        let dir = std::env::temp_dir().join(format!("nyaw-config-{}", std::process::id()));
+        let path = dir.join("nested").join("config.toml");
+        // ファイルもディレクトリも無くても作る。
+        save_theme_at(&path, ThemeMode::Light).unwrap();
+        assert_eq!(
+            parse(&fs::read_to_string(&path).unwrap()).unwrap().theme,
+            ThemeMode::Light
+        );
+        fs::write(
+            &path,
+            "log = \"debug\"
+[gpu]
+emulator = false
+",
+        )
+        .unwrap();
+        save_theme_at(&path, ThemeMode::Light).unwrap();
+        let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            (c.theme, c.log.as_deref(), c.gpu.emulator),
+            (ThemeMode::Light, Some("debug"), false)
+        );
+        // 手ブレ抑えも同じく書き戻せ、テーマは残る。
+        save_number_at(&path, "pointer_smoothing", 0.5).unwrap();
+        let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            (c.pointer_smoothing, c.theme),
+            (Some(0.5), ThemeMode::Light)
+        );
+        // 言語も同じく書き戻せ、テーマは残る。
+        save_language_at(&path, Language::Ja).unwrap();
+        let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!((c.language, c.theme), (Language::Ja, ThemeMode::Light));
+        // 壊れたファイルは上書きしない。
+        fs::write(&path, "log = ").unwrap();
+        assert!(save_theme_at(&path, ThemeMode::Dark).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "log = ");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

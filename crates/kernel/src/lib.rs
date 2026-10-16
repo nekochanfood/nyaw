@@ -11,8 +11,8 @@ pub use subsystems::{rendering, vr};
 use std::time::{Duration, Instant};
 use subsystems::os;
 
-pub use config::{Config, LodQuality, PointerMode};
-pub use overlay::{self, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
+pub use config::{Config, Language, LodQuality, PointerMode, ThemeMode};
+pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
 /// [`Kernel::tick`] 1 回の内訳。
@@ -41,6 +41,17 @@ pub enum PanelCommand {
     Resize(u32, u32),
     /// レーザーのエミュレート方式を変える。パネルを問わずすべてのパネルに効く。
     PointerMode(PointerMode),
+    /// テーマを変える。全パネルに効き、設定ファイルへ書き戻される（起動時の設定の場合のみ。テスト用のカーネルは書かない）。
+    Theme(ThemeMode),
+    /// 画面の言語を変える。テーマと同じく全パネルに効き、設定ファイルの `language` へ書き戻される。
+    Language(Language),
+    /// レーザーの手ブレ抑えの強さを変える（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`）。全パネルに効き、
+    /// テーマと同じく設定ファイルの `pointer_smoothing` へ書き戻される。
+    PointerSmoothing(f32),
+    /// 手ブレ抑えを緩める角度（度）を変える。全パネルに効き、設定ファイルの `pointer_release_deg` へ書き戻される。
+    PointerRelease(f32),
+    /// レーザーの見える長さ（m）を変える。全パネルに効き、設定ファイルの `laser_length` へ書き戻される。
+    LaserLength(f32),
     /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
     Place(Pose),
     /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
@@ -64,6 +75,16 @@ pub struct PanelStatus {
     pub closed: bool,
     /// レーザーのエミュレート方式（全パネル共通）。
     pub pointer_mode: PointerMode,
+    /// 見た目のテーマ（全パネル共通）。
+    pub theme: ThemeMode,
+    /// 画面の言語（全パネル共通）。
+    pub language: Language,
+    /// レーザーの手ブレ抑えの強さ（全パネル共通）。
+    pub pointer_smoothing: f32,
+    /// 手ブレ抑えを緩める角度（度。全パネル共通）。
+    pub pointer_release_deg: f32,
+    /// レーザーの見える長さ（m。全パネル共通）。
+    pub laser_length: f32,
     /// 描画解像度の段階（[`Kernel::panel_lod`]）。
     pub lod: u8,
     /// 親パネル（このパネルが子のとき）。
@@ -78,19 +99,31 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     overlay: Overlay,
     timing: TickTiming,
     pointer_mode: PointerMode,
+    /// テーマの変更を書き戻す設定ファイル。`boot` だけが設定する（テスト用のカーネルは実ファイルを触らない）。
+    config_path: Option<std::path::PathBuf>,
     /// 進めたフレームの数（[`Self::panel_frame_due`]）。
     frame: u64,
+    /// パネルごとの LOD（[`Self::panel_lod`]）。tick ごとに前の値から決める。
+    lods: Vec<u8>,
 }
+
+/// LOD を下げる（近づいて解像度を上げる）のは、閾値のこの割合まで近づいてから。
+const LOD_HYSTERESIS: f32 = 0.9;
 
 impl Kernel {
     /// ランタイムを選んで起動する。`requested` は `"--novr"` / `"novr"` のような指定（コマンドライン > 設定ファイル。決めるのは呼び出し側）。
     /// 指定なしで VR ランタイムが無ければ novr で起動する（`novr` フィーチャーがあれば常に使える）。指定したのに繋がらなければエラー。
     pub fn boot(requested: Option<&str>, config: Config) -> Result<Self, VrError> {
-        let prefer = match requested {
-            Some("--novr" | "novr") => Some(Runtime::NoVr),
-            Some("--openxr" | "openxr") => Some(Runtime::OpenXr),
-            Some("--openvr" | "openvr") => Some(Runtime::OpenVr),
-            _ => None,
+        let prefer = match requested.map(runtime_name).as_deref() {
+            None | Some("") => None,
+            Some("novr") => Some(Runtime::NoVr),
+            Some("openxr") => Some(Runtime::OpenXr),
+            Some("openvr") => Some(Runtime::OpenVr),
+            // 読めない指定を「指定なし」として扱うと、VR ランタイムに繋ぎに行って SteamVR を起こしてしまう。
+            Some(_) => {
+                logger::error!("unknown runtime", requested = requested.unwrap_or_default());
+                return Err(VrError::NoRuntime);
+            }
         };
         let vr = match vr::connect(prefer, config.gpu.emulator) {
             Ok(b) => b,
@@ -105,8 +138,18 @@ impl Kernel {
             }
         };
         logger::info!("runtime selected", runtime = ?vr.runtime());
-        Ok(Self::with_backend(vr, config))
+        let mut kernel = Self::with_backend(vr, config);
+        kernel.config_path = config::path();
+        Ok(kernel)
     }
+}
+
+/// ランタイムの指定を比べられる形にする（`--NoVr` / `no-vr` / `no_vr` → `novr`）。
+fn runtime_name(s: &str) -> String {
+    s.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
 }
 
 impl<B: VrBackend> Kernel<B> {
@@ -123,16 +166,24 @@ impl<B: VrBackend> Kernel<B> {
         if let Some(s) = config.pointer_smoothing {
             overlay.set_pointer_smoothing(s);
         }
+        if let Some(deg) = config.pointer_release_deg {
+            overlay.set_pointer_release(deg);
+        }
+        if let Some(l) = config.laser_length {
+            overlay.set_laser_length(l);
+        }
         let pointer_mode = config.pointer_mode.unwrap_or_default();
         // タッチではスライドがパネルからはみ出しても続くよう、押している間はポインタを掴んでおく。
         overlay.set_capture(pointer_mode == PointerMode::Touch);
         Self {
             pointer_mode,
+            config_path: None,
             config,
             subsystems,
             overlay,
             timing: TickTiming::default(),
             frame: 0,
+            lods: Vec::new(),
         }
     }
 
@@ -143,6 +194,10 @@ impl<B: VrBackend> Kernel<B> {
     /// レーザーのエミュレート方式。UI がポインタイベントをマウス・タッチのどちらとして流すかを決める。
     pub fn pointer_mode(&self) -> PointerMode {
         self.pointer_mode
+    }
+
+    pub fn theme(&self) -> ThemeMode {
+        self.config.theme
     }
 
     pub fn add_panel(
@@ -160,8 +215,17 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.panel(id)
     }
 
-    /// 距離による描画解像度の段階（LOD0〜3）。Mid は 2 / 4 / 8 m で切り替える。
+    /// 距離による描画解像度の段階（LOD0〜3）。Mid は 2 / 4 / 8 m で切り替える（下げるのは [`LOD_HYSTERESIS`] だけ近づいてから）。
+    /// [`Self::tick`] で決めた値（まだ tick していないパネルはその場で求める）。
     pub fn panel_lod(&self, id: PanelId) -> u8 {
+        self.lods
+            .get(id)
+            .copied()
+            .unwrap_or_else(|| self.lod_for(id, None))
+    }
+
+    /// 前の段階 `prev` から、距離で次の段階を決める。境目の前後で行き来しないよう、下げる側は閾値を縮める。
+    fn lod_for(&self, id: PanelId, prev: Option<u8>) -> u8 {
         let near = match self.config.lod_quality {
             LodQuality::Off => return 0,
             LodQuality::Low => 1.0,
@@ -169,10 +233,18 @@ impl<B: VrBackend> Kernel<B> {
             LodQuality::High => 4.0,
         };
         let distance = self.panel(id).pose.position.distance(self.hmd().position);
-        [near, near * 2.0, near * 4.0]
-            .into_iter()
-            .filter(|&threshold| distance >= threshold)
-            .count() as u8
+        let count = |scale: f32| {
+            [near, near * 2.0, near * 4.0]
+                .into_iter()
+                .filter(|&threshold| distance >= threshold * scale)
+                .count() as u8
+        };
+        let (up, down) = (count(1.0), count(LOD_HYSTERESIS));
+        match prev {
+            // 上げるのは閾値ちょうどで、下げるのは縮めた閾値を割ってから。
+            Some(prev) => prev.clamp(up, down),
+            None => up,
+        }
     }
 
     /// このフレームでパネルを描き直してよいか。LOD0 は毎フレーム、LOD n は 2^n フレームに 1 回。
@@ -188,6 +260,11 @@ impl<B: VrBackend> Kernel<B> {
         let frame = self.subsystems.poll();
         let polled = Instant::now();
         let events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
+        // 段階が変わるとパネルの描き直し・描画先とランタイムのテクスチャの作り直しが走るので、境目で行き来させない。
+        let lods = (0..self.overlay.len())
+            .map(|id| self.lod_for(id, self.lods.get(id).copied()))
+            .collect();
+        self.lods = lods;
         self.timing = TickTiming {
             poll: polled - t,
             overlay: polled.elapsed(),
@@ -233,6 +310,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.hmd()
     }
 
+    /// `hand` のツールチップをカーソルの上下どちらに出すか（`Overlay::tooltip_anchor`）。
+    pub fn tooltip_anchor(&self, hand: Hand) -> Anchor {
+        self.overlay.tooltip_anchor(hand)
+    }
+
     /// `hand` でドラッグしている間、その見た目を幅 `width_m` で出す（`Overlay::set_drag`）。`None` で隠す。
     pub fn set_drag(&mut self, hand: Hand, width_m: Option<f32>) {
         self.overlay.set_drag(hand, width_m)
@@ -271,11 +353,67 @@ impl<B: VrBackend> Kernel<B> {
                 self.pointer_mode = m;
                 self.overlay.set_capture(m == PointerMode::Touch);
             }
+            PanelCommand::Theme(t) => {
+                self.config.theme = t;
+                if let Some(path) = &self.config_path
+                    && let Err(e) = config::save_theme_at(path, t)
+                {
+                    logger::warn!(
+                        "failed to save theme to config file",
+                        path = path.display(),
+                        error = e
+                    );
+                }
+            }
+            PanelCommand::Language(l) => {
+                self.config.language = l;
+                if let Some(path) = &self.config_path
+                    && let Err(e) = config::save_language_at(path, l)
+                {
+                    logger::warn!(
+                        "failed to save language to config file",
+                        path = path.display(),
+                        error = e
+                    );
+                }
+            }
+            PanelCommand::PointerSmoothing(s) => {
+                self.overlay.set_pointer_smoothing(s);
+                let s = self.overlay.pointer_smoothing();
+                self.config.pointer_smoothing = Some(s);
+                self.save_number("pointer_smoothing", s);
+            }
+            PanelCommand::PointerRelease(deg) => {
+                self.overlay.set_pointer_release(deg);
+                let deg = self.overlay.pointer_release();
+                self.config.pointer_release_deg = Some(deg);
+                self.save_number("pointer_release_deg", deg);
+            }
+            PanelCommand::LaserLength(l) => {
+                self.overlay.set_laser_length(l);
+                let l = self.overlay.laser_length();
+                self.config.laser_length = Some(l);
+                self.save_number("laser_length", l);
+            }
             PanelCommand::Parent(parent) => self.overlay.set_parent(panel, parent),
             PanelCommand::Place(offset) => {
                 self.overlay.detach(panel);
                 self.overlay.set_pose(panel, self.hmd().leveled() * offset);
             }
+        }
+    }
+
+    /// 設定ファイルへ数値を書き戻す（起動時の設定の場合のみ。テスト用のカーネルは書かない）。
+    fn save_number(&self, key: &str, value: f32) {
+        if let Some(path) = &self.config_path
+            && let Err(e) = config::save_number_at(path, key, value)
+        {
+            logger::warn!(
+                "failed to save to config file",
+                key = key,
+                path = path.display(),
+                error = e
+            );
         }
     }
 
@@ -291,6 +429,11 @@ impl<B: VrBackend> Kernel<B> {
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
             pointer_mode: self.pointer_mode,
+            theme: self.config.theme,
+            language: self.config.language,
+            pointer_smoothing: self.overlay.pointer_smoothing(),
+            pointer_release_deg: self.overlay.pointer_release(),
+            laser_length: self.overlay.laser_length(),
             lod: self.panel_lod(panel),
             parent: p.parent.map(|q| q.panel),
         }
@@ -311,7 +454,7 @@ mod tests {
     #[cfg(feature = "novr")]
     #[test]
     fn boot_novr_by_name() {
-        for name in ["novr", "--novr"] {
+        for name in ["novr", "--novr", "--no-vr", "NoVr", "no_vr"] {
             for gpu in [false, true] {
                 let mut config = Config::default();
                 config.gpu.emulator = gpu;
@@ -319,6 +462,11 @@ mod tests {
                 assert_eq!(k.runtime(), Runtime::NoVr);
             }
         }
+    }
+
+    #[test]
+    fn boot_rejects_unknown_runtime_instead_of_connecting_to_vr() {
+        assert!(Kernel::boot(Some("--nvr"), Config::default()).is_err());
     }
 
     #[cfg(feature = "novr")]
@@ -344,6 +492,19 @@ mod tests {
         k.apply(p, PanelCommand::Place(to));
         assert_eq!(k.status(p).attached, None);
         assert_eq!(k.panel(p).pose, k.hmd().leveled() * to);
+    }
+
+    /// 境目の前後で行き来しない: 上げるのは閾値で、下げるのは閾値の 9 割を割ってから。
+    #[test]
+    fn lod_does_not_flap_at_the_threshold() {
+        let (mut k, p) = kernel();
+        k.config.lod_quality = LodQuality::Low;
+        let pose = k.panel(p).pose;
+        for (distance, lod) in [(1.0, 1), (0.95, 1), (1.0, 1), (0.85, 0), (0.95, 0)] {
+            k.subsystems.backend.frame.hmd.position = pose.position + vr::Vec3::Z * distance;
+            k.tick();
+            assert_eq!(k.panel_lod(p), lod, "{distance}");
+        }
     }
 
     #[test]
@@ -412,6 +573,50 @@ mod tests {
             PointerMode::Touch,
             "defaults to touch"
         );
+    }
+
+    #[test]
+    fn theme_starts_from_config_and_switches_without_touching_files() {
+        let config = Config {
+            theme: ThemeMode::Light,
+            ..Default::default()
+        };
+        let mut k = Kernel::with_backend(MockBackend::default(), config);
+        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (4, 4)).unwrap();
+        assert_eq!(k.status(p).theme, ThemeMode::Light);
+        k.apply(p, PanelCommand::Theme(ThemeMode::Dark));
+        assert_eq!(k.theme(), ThemeMode::Dark);
+        assert_eq!(k.status(p).theme, ThemeMode::Dark);
+    }
+
+    #[test]
+    fn language_starts_from_config_and_persists_to_config_path() {
+        let config = Config {
+            language: Language::Ja,
+            ..Default::default()
+        };
+        let mut k = Kernel::with_backend(MockBackend::default(), config);
+        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (4, 4)).unwrap();
+        assert_eq!(k.status(p).language, Language::Ja);
+        let path =
+            std::env::temp_dir().join(format!("nyaw-kernel-lang-{}.toml", std::process::id()));
+        k.config_path = Some(path.clone());
+        k.apply(p, PanelCommand::Language(Language::En));
+        assert_eq!(k.status(p).language, Language::En);
+        let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(saved.language, Language::En);
+    }
+
+    #[test]
+    fn theme_command_persists_to_config_path() {
+        let path = std::env::temp_dir().join(format!("nyaw-kernel-{}.toml", std::process::id()));
+        let (mut k, p) = kernel();
+        k.config_path = Some(path.clone());
+        k.apply(p, PanelCommand::Theme(ThemeMode::Light));
+        let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(saved.theme, ThemeMode::Light);
     }
 
     #[test]

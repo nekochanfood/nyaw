@@ -1,0 +1,10 @@
+[package]
+name = "i18n"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# 画面の文言の多言語対応。言語ごとの表（locales/*.toml）を埋め込み、GPUI のグローバルの言語で引く。
+[dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+toml = "0.9"

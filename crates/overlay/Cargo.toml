@@ -15,7 +15,7 @@ required-features = ["openvr"]
 [dependencies]
 subsystems.workspace = true
 logger.workspace = true
-animato = { version = "1.7.2", default-features = false, features = ["tween"] }
+design.workspace = true
 
 [dev-dependencies]
 subsystems = { workspace = true, features = ["test-support"] }

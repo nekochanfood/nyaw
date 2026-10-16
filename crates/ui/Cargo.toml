@@ -4,26 +4,21 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# UI 層。パネルを GPUI のウィンドウか Tauri の WebView（web モジュール）で実体化する。
+# UI 層。パネルを GPUI のウィンドウで実体化する。
 [dependencies]
 # 描画は kernel::rendering が担う。UI の入力注入とテストにも test-support を使う。
 gpui = { workspace = true, features = ["test-support"] }
-# x11 / wayland: Linux で実ウィンドウを開く（無いとヘッドレスになる）。
+# x11 / wayland: Linux で実ウィンドウを開く（design のカタログ用。パネルは headless で描く。`ui::application`）。
 gpui_platform = { workspace = true, features = ["test-support", "x11", "wayland"] }
 kernel = { workspace = true, features = ["rendering-host"] }
 profiler.workspace = true
+design.workspace = true
+i18n.workspace = true
 logger.workspace = true
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tauri = "2.12"
-
-[build-dependencies]
-tauri-build = "2"
 
 [dev-dependencies]
 kernel = { workspace = true, features = ["novr"] }
 vr = { workspace = true, features = ["test-support", "novr"] }
-webpages.workspace = true
 testing.workspace = true
 beam.workspace = true
 
@@ -36,17 +31,13 @@ harness = false
 name = "panel_lod"
 harness = false
 
-# 実プラットフォームの GPUI + Tauri（WebView）で、レーザー・マウスから JS のポインタイベントまでを確かめる。
+# 埋め込みフォントの太さ（NORMAL / MEDIUM / BOLD）がそれぞれの字形で描かれるか（実プラットフォーム + GPU）。
 [[test]]
-name = "web_vr"
+name = "font_weights"
 harness = false
 
 [[test]]
-name = "web_novr"
-harness = false
-
-[[test]]
-name = "web_pointer"
+name = "emoji"
 harness = false
 
 # ベンチマーク。常には流さない（`-- --ignored` のときだけ）。

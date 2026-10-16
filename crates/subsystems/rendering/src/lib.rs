@@ -3,8 +3,6 @@
 
 #[cfg(feature = "gpui")]
 pub mod gpui;
-#[cfg(feature = "web")]
-pub mod web;
 
 use vr::{Device, OverlayId, Pose, VrBackend, VrError};
 
@@ -42,6 +40,11 @@ impl Surface {
     }
     pub fn has_texture(&self) -> bool {
         self.texture.is_some()
+    }
+
+    /// [`Self::show`] で隠している（一度も呼ばれていなければ表示中）。
+    pub fn hidden(&self) -> bool {
+        self.shown.is_some_and(|(visible, _)| !visible)
     }
 
     pub fn store(&mut self, width: u32, height: u32, rgba: &[u8]) {

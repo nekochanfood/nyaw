@@ -1,29 +1,38 @@
 //! Checks that a hidden panel window's render can be read back through the production path (real platform + GPU).
 //! The GUI event loop must run on the main thread, so this runs in main without the test harness.
 
-#[cfg(windows)]
 fn main() {
-    use std::{cell::RefCell, rc::Rc, time::Duration};
+    use std::{
+        cell::{Cell, RefCell},
+        rc::Rc,
+        time::Duration,
+    };
 
     use gpui::{AppContext, Context, IntoElement, Render, Styled, Window, div, rgb};
     use ui::{capture, open_panel_window};
 
     const PANEL_BG: u32 = 0x204060;
     /// A view that only fills the background (views sit above the UI layer, so UI-layer tests provide their own).
-    struct Solid;
+    struct Solid(Rc<Cell<u32>>);
     impl Render for Solid {
         fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-            div().size_full().bg(rgb(PANEL_BG))
+            div().size_full().bg(rgb(self.0.get()))
         }
     }
+    /// the color switched to when checking that readback is one call behind.
+    const OTHER_BG: u32 = 0x602040;
+    let color = Rc::new(Cell::new(PANEL_BG));
+    let view_color = color.clone();
+    let delayed = Rc::new(RefCell::new(None));
+    let delayed_out = delayed.clone();
 
     const RES: (u32, u32) = (200, 104);
     let result = Rc::new(RefCell::new(None));
     let out = result.clone();
     let lod_results = Rc::new(RefCell::new(Vec::new()));
     let lod_out = lod_results.clone();
-    gpui_platform::application().run(move |cx| {
-        let window = open_panel_window(cx, RES, |_, cx| cx.new(|_| Solid))
+    ui::application().run(move |cx| {
+        let window = open_panel_window(cx, RES, |_, cx| cx.new(|_| Solid(view_color)))
             .expect("cannot open panel window");
         cx.spawn(async move |cx| {
             // resizing is applied asynchronously, so wait until the readback has the real size (up to 5 s)
@@ -56,6 +65,18 @@ fn main() {
                     }
                 }
             }
+            // read_back does not wait for the GPU: it returns the previous picture, and collect returns the one just drawn.
+            let pair = cx
+                .update_window(window.into(), |_, window, cx| {
+                    color.set(OTHER_BG);
+                    window.refresh();
+                    window.draw(cx).clear(cx);
+                    let before = ui::read_back(window).map(|f| f.rgba[..4].to_vec());
+                    let after = ui::collect(window).map(|f| f.rgba[..4].to_vec());
+                    (before, after)
+                })
+                .unwrap();
+            *delayed_out.borrow_mut() = Some(pair);
             cx.update(|cx| cx.quit());
         })
         .detach();
@@ -97,10 +118,21 @@ fn main() {
             frame.width, frame.height
         );
     }
-}
-
-// ponytail: render_to_image is only implemented for Windows in gpui. Remove this branch when Linux is supported.
-#[cfg(not(windows))]
-fn main() {
-    println!("gpu_capture: skipped (non-Windows unsupported)");
+    let rgba = |c: u32| {
+        [c >> 16, c >> 8, c, 0xff]
+            .map(|c| (c & 0xff) as u8)
+            .to_vec()
+    };
+    let (before, after) = delayed.take().expect("delayed readback not checked");
+    assert_eq!(
+        before.unwrap(),
+        rgba(PANEL_BG),
+        "read_back returns the previous picture"
+    );
+    assert_eq!(
+        after,
+        Some(rgba(OTHER_BG)),
+        "collect returns the picture just drawn"
+    );
+    println!("gpu_capture: delayed readback ok");
 }

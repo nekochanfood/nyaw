@@ -116,13 +116,6 @@ fn click_focuses_field(kit: &mut impl Driver<Testing>) {
 }
 on_every_runtime!(click_focuses_field, |_, _| Testing::default());
 
-/// GPUI's Testing can ask to open the Web version of Testing (Tauri WebView). Operating what opens is done in crates/ui/tests/web_*.rs.
-fn open_web_testing(kit: &mut impl Driver<Testing>) {
-    kit.click("open-web");
-    assert_eq!(kit.web_spawns(), [testing::WEB_PAGE]);
-}
-on_every_runtime!(open_web_testing, |_, _| Testing::default());
-
 /// `.on_key_down()`: only novr has a keyboard.
 #[gpui::test]
 fn typing_goes_to_focused_field(cx: &mut TestAppContext) {

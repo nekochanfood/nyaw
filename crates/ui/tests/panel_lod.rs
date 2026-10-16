@@ -1,10 +1,7 @@
-//! Move the camera to switch production GPUI / WebView rendering through LOD0–3–0.
+//! 本番の GPUI 描画で LOD0〜3〜0 の解像度・レイアウト・入力を検証する。
 mod common;
 use gpui::{Context, IntoElement, Render, Window, div, prelude::*, px, rgb};
-use kernel::{
-    Config, Kernel, PointerMode, Pose, VrBackend,
-    vr::{Quat, Vec3},
-};
+use kernel::{Config, Kernel, PointerMode, Pose, VrBackend, vr::Quat};
 use std::{
     process::ExitCode,
     sync::{
@@ -42,7 +39,7 @@ fn wait(what: &str, mut ready: impl FnMut() -> bool) {
 }
 
 fn main() -> ExitCode {
-    if !cfg!(windows) || !common::should_run("panel_lod") {
+    if !common::should_run("panel_lod") {
         return ExitCode::SUCCESS;
     }
     let mock = common::SharedMock::default();
@@ -61,24 +58,17 @@ fn main() -> ExitCode {
     };
     let kernel = Kernel::with_backend(Box::new(mock.clone()) as Box<dyn VrBackend>, config);
     let panels = vec![
-        PanelSpec::web(
-            Pose::new(common::PANEL_POS, Quat::IDENTITY),
-            webpages::TESTING,
-        )
-        .without_animation(),
         PanelSpec::new(
-            Pose::new(Vec3::new(0.8, 0.0, -1.0), Quat::IDENTITY),
+            Pose::new(common::PANEL_POS, Quat::IDENTITY),
             move |_, _, _| Probe(clicked),
         )
         .without_animation(),
     ];
-    common::run(
-        "panel_lod",
-        kernel,
-        panels,
-        "panel-0",
-        None,
-        move |page, _| {
+    let (remote, rx) = std::sync::mpsc::channel::<ui::Remote>();
+    let result: Arc<std::sync::Mutex<Option<bool>>> = Arc::default();
+    let done = result.clone();
+    std::thread::spawn(move || {
+        let ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let mut vr = common::Vr::new(mock.clone());
             for (index, (z, lod)) in [(0.0, 0), (2.0, 1), (4.0, 2), (8.0, 3), (0.0, 0)]
                 .into_iter()
@@ -87,38 +77,19 @@ fn main() -> ExitCode {
                 let lod = if off { 0 } else { lod };
                 mock.0.lock().unwrap().frame.hmd.position.z = z;
                 let expected = (800 >> lod, 600 >> lod);
-                wait(
-                    &format!("LOD{lod}: both textures must be {expected:?}"),
-                    || {
-                        vr.texture_size_of(0) == Some(expected)
-                            && vr.texture_size_of(1) == Some(expected)
-                    },
-                );
-                page.until("Web logical viewport is unchanged", |s| {
-                    s["viewport"] == serde_json::json!([800, 600])
+                wait(&format!("LOD{lod}: texture must be {expected:?}"), || {
+                    vr.texture_size_of(0) == Some(expected)
                 });
                 {
                     let m = mock.0.lock().unwrap();
-                    for p in &m.overlays[..2] {
-                        assert!((p.width_m - 0.8).abs() < 1e-5);
-                    }
-                    let tex = m.overlays[1].texture.as_ref().unwrap();
+                    assert!((m.overlays[0].width_m - 0.8).abs() < 1e-5);
+                    let tex = m.overlays[0].texture.as_ref().unwrap();
                     assert_eq!(
                         tex.pixel(632 >> lod, 432 >> lod),
                         [0, 255, 0, 255],
                         "GPUI layout is unchanged"
                     );
                 }
-                vr.panel = common::PANEL_POS;
-                vr.point_at(page.center("click-me"));
-                let before = common::num(&page.probe(), &["state", "clicks"]);
-                vr.set("trigger/value", 1.0);
-                std::thread::sleep(Duration::from_millis(100));
-                vr.set("trigger/value", 0.0);
-                page.until("Web remains clickable after LOD changes", |s| {
-                    common::num(s, &["state", "clicks"]) == before + 1.0
-                });
-                vr.panel = Vec3::new(0.8, 0.0, -1.0);
                 vr.point_at((632., 432.));
                 std::thread::sleep(Duration::from_millis(100));
                 vr.set("trigger/value", 1.0);
@@ -129,6 +100,20 @@ fn main() -> ExitCode {
                 });
                 println!("panel_lod: LOD{lod} {expected:?}, viewport/input OK");
             }
+        }))
+        .is_ok();
+        println!("panel_lod: {}", if ok { "ok" } else { "FAILED" });
+        *done.lock().unwrap() = Some(ok);
+        common::quit(&remote, ok);
+    });
+    ui::run_with(
+        kernel,
+        panels,
+        None,
+        ui::Hooks {
+            remote: Some(rx),
+            ..Default::default()
         },
-    )
+    );
+    common::exit_code("panel_lod", &result)
 }

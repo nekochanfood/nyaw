@@ -52,28 +52,40 @@ pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
         let y0 = b.origin.y.0.max(0.0).round() as u32;
         let x1 = ((b.origin.x.0 + b.size.width.0).round().max(0.0) as u32).min(width);
         let y1 = ((b.origin.y.0 + b.size.height.0).round().max(0.0) as u32).min(height);
-        // Plain rectangles (no corners, no border) skip the per-pixel tests, and opaque ones are a row copy.
+        // Plain rows (inside the rectangle and clear of every corner, no border) skip the per-pixel tests, and opaque ones are a row copy.
         // The window-sized background alone is 8M pixels at 4K, so this is most of the capture time.
+        let plain_row = |rgba: &mut [u8], y: u32, f: Rgba| {
+            let row = &mut rgba[((y * width + x0) * 4) as usize..((y * width + x1) * 4) as usize];
+            if f.a >= 1.0 {
+                let px = [to_u8(f.r), to_u8(f.g), to_u8(f.b), 255];
+                row.as_chunks_mut::<4>().0.fill(px);
+            } else {
+                row.as_chunks_mut::<4>()
+                    .0
+                    .iter_mut()
+                    .for_each(|d| blend(d, f));
+            }
+        };
+        // Rows between the corner bands are inside across the whole width.
+        let band = (
+            outer[1] + radii[0].max(radii[1]),
+            outer[3] - radii[2].max(radii[3]),
+        );
         if !has_border && radii == [0.0; 4] {
             let Some(f) = fill else { continue };
             for y in y0..y1 {
-                let row =
-                    &mut rgba[((y * width + x0) * 4) as usize..((y * width + x1) * 4) as usize];
-                if f.a >= 1.0 {
-                    let px = [to_u8(f.r), to_u8(f.g), to_u8(f.b), 255];
-                    row.as_chunks_mut::<4>().0.fill(px);
-                } else {
-                    row.as_chunks_mut::<4>()
-                        .0
-                        .iter_mut()
-                        .for_each(|d| blend(d, f));
-                }
+                plain_row(&mut rgba, y, f);
             }
             continue;
         }
         for y in y0..y1 {
+            let cy = y as f32 + 0.5;
+            if let (false, Some(f), true) = (has_border, fill, cy >= band.0 && cy <= band.1) {
+                plain_row(&mut rgba, y, f);
+                continue;
+            }
             for x in x0..x1 {
-                let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
+                let cx = x as f32 + 0.5;
                 if !inside(outer, radii, cx, cy) {
                     continue;
                 }

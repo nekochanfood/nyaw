@@ -38,7 +38,7 @@ impl<'a, V: Render> NoVrKit<'a, V> {
         // Turn off hand-jitter smoothing, since it would make pointing miss at the instant of aiming (same as VrKit).
         let config = kernel::config::Config {
             pointer_smoothing: Some(0.0),
-            // Operation scenarios are written for the mouse (the default touch mode is checked in pointer_mode.rs / web_pointer.rs).
+            // Operation scenarios are written for the mouse (the default touch mode is checked in pointer_mode.rs).
             pointer_mode: Some(kernel::PointerMode::Mouse),
             ..Default::default()
         };
@@ -150,10 +150,6 @@ impl<'a, V: Render> NoVrKit<'a, V> {
 }
 
 impl<V: Render> Driver<V> for NoVrKit<'_, V> {
-    fn web_spawns(&self) -> &[String] {
-        &self.panels.web_spawns
-    }
-
     /// Moves the mouse to the center of an element.
     fn hover(&mut self, selector: &'static str) -> &mut Self {
         let at = self.on_screen(selector);

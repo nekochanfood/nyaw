@@ -1,0 +1,151 @@
+# 日本語。en.toml のキーをすべて同じ {差し込み} で持つこと（i18n のテストが確かめる）。
+
+[common]
+close = "閉じる"
+default = "既定"
+ok = "OK"
+cancel = "キャンセル"
+none = "なし"
+
+[theme]
+dark = "ダーク"
+light = "ライト"
+
+[weekday]
+sun = "日"
+mon = "月"
+tue = "火"
+wed = "水"
+thu = "木"
+fri = "金"
+sat = "土"
+
+[wrist]
+# chrono の書式（https://docs.rs/chrono/latest/chrono/format/strftime）。曜日は {weekday}。
+date = "%-m月%-d日（{weekday}）"
+toggle_panel = "パネルを出す・しまう"
+
+[testing]
+title = "テスト"
+status = "{runtime} / 取り付け: {attached} / {lock}"
+locked = "ロック中"
+unlocked = "ロックなし"
+menu_button = "メニューボタン"
+grabbing = "掴み中"
+clicked = "クリック {count} 回"
+toggle = "切り替え"
+hold = "長押し"
+menu = "メニュー: {item}"
+drag_me = "ドラッグ"
+drop_here = "ここに落とす（{count} 回）"
+type_hint = "クリックして入力"
+row = "{index} 行目（スクロール {scrolled}）"
+frame = "{count} フレーム"
+
+[testing.section]
+this_panel = "このパネル"
+open = "隣に開く"
+interact = "操作"
+
+[testing.label]
+view = "表示"
+attach_to = "取り付け先"
+press = "押す"
+drag = "ドラッグ＆ドロップ"
+type = "文字入力"
+scroll = "スクロール"
+
+[testing.panel]
+animation = "アニメーション"
+theme = "テーマ: {theme}"
+language = "言語: {language}"
+lock = "ロック"
+profiler = "プロファイラ"
+
+[testing.attach]
+hmd = "HMD"
+left_hand = "左手"
+right_hand = "右手"
+tracker = "トラッカー {id}"
+tracker_none = "トラッカー（なし）"
+detach = "取り外す"
+
+[testing.open]
+testing = "テスト"
+transparent = "半透明"
+moving = "動く"
+lod = "LOD"
+font = "フォント"
+emoji = "絵文字"
+scrollbar = "スクロールバー"
+pointer = "ポインタ"
+laser = "レーザー"
+tooltip = "ツールチップ"
+dialog = "ダイアログ"
+stress = "負荷"
+catalog = "カタログ"
+localization = "ローカライズ"
+
+[emoji]
+inline = "テキスト内の SVG 絵文字 · 14 / 19 / 24 px"
+icons = "SVG アイコン · 24 / 40 / 64 px"
+favorite = "お気に入りに追加"
+wrap = "絵文字も文章と一緒に折り返します 😀🐈❤️。家族 👨‍👩‍👧‍👦 や国旗 🇯🇵 は分割しません。\n改行も確認 👩‍💻👍🏽。"
+fallback = "テキスト表示指定: ❤︎ ☀︎ · 通常文字: ABC 123 # · 結合文字: é"
+
+[pointer]
+mode_mouse = "方式: マウス"
+mode_touch = "方式: タッチ"
+tapped = "タップ {count} 回"
+dropped = "落とした数 {count}"
+swipe_row = "スワイプ {index} 行目"
+
+[laser]
+strength = "強さ {now}（0 = なし、{max} = 最強）。config.toml に保存されます。"
+off = "なし"
+light = "弱め"
+release = "手から {release}° 遅れると抑えを緩めます（{tight}°〜{loose}°）。大きいほど手が揺れても抑えが続きます。"
+length = "長さ {length} m（{short}〜{long}）。線はこの長さで消えていきます。"
+short = "短い"
+full = "最大"
+reset = "既定に戻す"
+
+[tooltip]
+short = "短い"
+long = "長い"
+none = "説明なし"
+far = "遠い"
+save = "保存"
+panel_settings = "このパネルの設定を開く"
+settings = "設定"
+favorite = "お気に入りに追加"
+search = "検索"
+far_away = "離れたボタン"
+
+[dialog]
+open = "ダイアログを開く"
+open_modal = "答えが要るダイアログを開く"
+answered = "答え {count} 回（{answer}）"
+dismiss_title = "外側を押すと閉じます"
+dismiss_body = "下で答えるか、このダイアログの外側を押すと閉じます。"
+required_title = "答えてください"
+# わざと長い文。収まらない分はスクロールし、ボタンは残る。
+required_body = "このダイアログは OK かキャンセルを押すまで閉じません。外側を押しても何も起きず、その間は親が暗いまま使えません。保存していない変更を捨てる、ファイルを上書きするなど、先へ進む前に答えが要る問いに使います。実際のダイアログでは文を短くしてください。収まらないときはこの部分だけがスクロールし、ボタンは下に残ります。"
+
+[stress]
+count = "開いている {open} / 上限 {limit}（出した数 {spawned}）"
+fill = "上限まで出す"
+close_all = "すべて閉じる"
+scatter = "ちりばめる"
+grid = "並べる"
+
+[locale]
+title = "ローカライズ"
+current = "{language} で表示中"
+missing = "{language} に無いキー: {count}"
+complete = "すべての言語ですべてのキーが訳されています。"
+key = "キー"
+samples = "見本"
+sample_long = "訳が長くなってもラベルが折り返すか収まるか、ボタンが伸びるかを確かめるための長めの文です。"
+sample_count = "{count} 件を選択中"
+sample_button = "変更を保存"

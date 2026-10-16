@@ -219,7 +219,10 @@ impl OpenVrBackend {
             .get(&id)
             .is_none_or(|t| (t.width, t.height) != (width, height))
         {
-            self.release(id);
+            // 前のイメージはランタイムがまだ読んでいるかもしれない。待たずに、後の転送が終わってから捨てる。
+            if let Some(old) = self.textures.remove(&id) {
+                old.images.into_iter().for_each(|i| self.gpu.retire(i));
+            }
             let usage = vk::ImageUsageFlags::TRANSFER_DST
                 | vk::ImageUsageFlags::TRANSFER_SRC
                 | vk::ImageUsageFlags::SAMPLED;

@@ -86,6 +86,23 @@ struct Staging {
     mapped: *mut u8,
 }
 
+/// 転送 1 回分のコマンドバッファ・フェンス・一時バッファ。順番に使い回す。
+struct Slot {
+    cmd: vk::CommandBuffer,
+    fence: vk::Fence,
+    staging: Option<Staging>,
+    /// 送ったまま完了を確かめていない。
+    busy: bool,
+    /// 最後に送った転送の通し番号（[`Gpu::retire`]）。
+    seq: u64,
+}
+
+/// 同時に GPU へ出しておける転送の数。書き込みは完了を待たずに返り、この数だけ後に同じ枠を使うときに待つ。
+/// ゲームが GPU を使い切っている間は完了待ちが長く伸び、フレームループごと止まっていた。
+/// ランタイム（SteamVR / OpenXR）は渡したキューでイメージを読むので、キューの順序で書き込みの後に読まれる。
+// ponytail: 1 フレームの転送がこれを超えると同じフレームの前の転送を待つ。パネルを大量に同時更新するなら増やす。
+const SLOTS: usize = 8;
+
 pub(crate) struct Gpu {
     pub instance: ash::Instance,
     pub physical: vk::PhysicalDevice,
@@ -93,9 +110,12 @@ pub(crate) struct Gpu {
     pub queue: vk::Queue,
     pub queue_family: u32,
     pool: vk::CommandPool,
-    cmd: vk::CommandBuffer,
-    fence: vk::Fence,
-    staging: Option<Staging>,
+    slots: Vec<Slot>,
+    next: usize,
+    /// 送った転送の数（通し番号）。
+    submitted: u64,
+    /// 捨てたイメージと、捨てた時点の通し番号。それより後の転送が終われば、ランタイムの読み出しも済んでいる。
+    retired: Vec<(u64, Image)>,
     /// Vulkan のライブラリ。関数ポインタが指す先なので最後に解放する。
     _entry: ash::Entry,
 }
@@ -118,16 +138,27 @@ impl Gpu {
                     None,
                 )
                 .map_err(vk_err("vkCreateCommandPool"))?;
-            let cmd = device
+            let slots = device
                 .allocate_command_buffers(
                     &vk::CommandBufferAllocateInfo::default()
                         .command_pool(pool)
-                        .command_buffer_count(1),
+                        .command_buffer_count(SLOTS as u32),
                 )
-                .map_err(vk_err("vkAllocateCommandBuffers"))?[0];
-            let fence = device
-                .create_fence(&vk::FenceCreateInfo::default(), None)
-                .map_err(vk_err("vkCreateFence"))?;
+                .map_err(vk_err("vkAllocateCommandBuffers"))?
+                .into_iter()
+                .map(|cmd| {
+                    let fence = device
+                        .create_fence(&vk::FenceCreateInfo::default(), None)
+                        .map_err(vk_err("vkCreateFence"))?;
+                    Ok(Slot {
+                        cmd,
+                        fence,
+                        staging: None,
+                        busy: false,
+                        seq: 0,
+                    })
+                })
+                .collect::<Result<_, VrError>>()?;
             Ok(Self {
                 instance,
                 physical,
@@ -135,9 +166,10 @@ impl Gpu {
                 queue,
                 queue_family,
                 pool,
-                cmd,
-                fence,
-                staging: None,
+                slots,
+                next: 0,
+                submitted: 0,
+                retired: Vec::new(),
                 _entry: entry,
             })
         }
@@ -211,14 +243,44 @@ impl Gpu {
         }
     }
 
-    /// 書き込みに使う、CPU から見える一時バッファを `size` 以上にする。
-    fn staging(&mut self, size: usize) -> Result<*mut u8, VrError> {
-        if let Some(s) = &self.staging
+    /// 次の枠を取る（前にその枠で送った転送の完了を待つ）。CPU から見える一時バッファは `size` 以上にする。
+    /// 枠の番号・コマンドバッファ・一時バッファとその書き込み先を返す。
+    fn slot(
+        &mut self,
+        size: usize,
+    ) -> Result<(usize, vk::CommandBuffer, vk::Buffer, *mut u8), VrError> {
+        let i = self.next;
+        self.next = (i + 1) % SLOTS;
+        let slot = &mut self.slots[i];
+        if slot.busy {
+            unsafe {
+                self.device
+                    .wait_for_fences(&[slot.fence], true, u64::MAX)
+                    .map_err(vk_err("vkWaitForFences"))?;
+                self.device
+                    .reset_fences(&[slot.fence])
+                    .map_err(vk_err("vkResetFences"))?;
+            }
+            slot.busy = false;
+            // キューは順に終わるので、この番号までの転送（とその後ろに積まれたランタイムの読み出し）は済んでいる。
+            let done = slot.seq;
+            for (_, image) in self.retired.extract_if(.., |(at, _)| *at < done) {
+                unsafe {
+                    self.device.destroy_image(image.image, None);
+                    self.device.free_memory(image.memory, None);
+                }
+            }
+        }
+        let slot = &mut self.slots[i];
+        let cmd = slot.cmd;
+        if let Some(s) = &slot.staging
             && s.size >= size
         {
-            return Ok(s.mapped);
+            return Ok((i, cmd, s.buffer, s.mapped));
         }
-        self.drop_staging();
+        if let Some(s) = self.slots[i].staging.take() {
+            self.drop_staging(s);
+        }
         unsafe {
             let buffer = self
                 .device
@@ -250,29 +312,49 @@ impl Gpu {
                 .device
                 .map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
                 .map_err(vk_err("vkMapMemory"))? as *mut u8;
-            self.staging = Some(Staging {
+            self.slots[i].staging = Some(Staging {
                 buffer,
                 memory,
                 size,
                 mapped,
             });
-            Ok(mapped)
+            Ok((i, cmd, buffer, mapped))
         }
     }
 
-    fn drop_staging(&mut self) {
-        if let Some(s) = self.staging.take() {
-            unsafe {
-                self.device.destroy_buffer(s.buffer, None);
-                self.device.free_memory(s.memory, None);
-            }
+    fn drop_staging(&self, s: Staging) {
+        unsafe {
+            self.device.destroy_buffer(s.buffer, None);
+            self.device.free_memory(s.memory, None);
         }
+    }
+
+    /// 枠 `i` に記録したコマンドを送る。完了は待たない（次にその枠を使うときに待つ）。
+    fn submit(&mut self, i: usize) -> Result<(), VrError> {
+        let slot = &mut self.slots[i];
+        let cmds = [slot.cmd];
+        unsafe {
+            self.device
+                .queue_submit(
+                    self.queue,
+                    &[vk::SubmitInfo::default().command_buffers(&cmds)],
+                    slot.fence,
+                )
+                .map_err(vk_err("vkQueueSubmit"))?;
+        }
+        self.submitted += 1;
+        (slot.busy, slot.seq) = (true, self.submitted);
+        Ok(())
+    }
+
+    /// 使い終えたイメージを捨てる。ランタイムがまだ読んでいるかもしれないので、後の転送が終わってから破棄する
+    /// （大きさが変わるたびに GPU 全体の完了を待つと、ゲーム中はそれだけで数十 ms 止まっていた）。
+    pub fn retire(&mut self, image: Image) {
+        self.retired.push((self.submitted, image));
     }
 
     /// `rgba`（行間に詰め物なし）を `image` 全体へ書き込み、`layout` に遷移させる。
-    /// 以前の中身は捨てる。
-    // ponytail: 書き込みのたびに GPU の完了を待つ（1 枚あたり数百 µs）。
-    // パネルが増えて重くなったら、待たずにフェンスを次のフレームで確認する。
+    /// 以前の中身は捨てる。GPU の完了は待たない（[`SLOTS`]）。
     pub fn upload(
         &mut self,
         image: vk::Image,
@@ -281,7 +363,7 @@ impl Gpu {
         rgba: &[u8],
         layout: vk::ImageLayout,
     ) -> Result<(), VrError> {
-        let staging = self.staging(rgba.len())?;
+        let (slot, cmd, buffer, staging) = self.slot(rgba.len())?;
         unsafe {
             std::ptr::copy_nonoverlapping(rgba.as_ptr(), staging, rgba.len());
             let d = &self.device;
@@ -301,13 +383,13 @@ impl Gpu {
                     .subresource_range(range)
             };
             d.begin_command_buffer(
-                self.cmd,
+                cmd,
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )
             .map_err(vk_err("vkBeginCommandBuffer"))?;
             d.cmd_pipeline_barrier(
-                self.cmd,
+                cmd,
                 vk::PipelineStageFlags::ALL_COMMANDS,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::DependencyFlags::empty(),
@@ -321,8 +403,8 @@ impl Gpu {
                 )],
             );
             d.cmd_copy_buffer_to_image(
-                self.cmd,
-                self.staging.as_ref().unwrap().buffer,
+                cmd,
+                buffer,
                 image,
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 &[vk::BufferImageCopy::default()
@@ -338,7 +420,7 @@ impl Gpu {
                     })],
             );
             d.cmd_pipeline_barrier(
-                self.cmd,
+                cmd,
                 vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::ALL_COMMANDS,
                 vk::DependencyFlags::empty(),
@@ -351,21 +433,10 @@ impl Gpu {
                     vk::AccessFlags::MEMORY_READ,
                 )],
             );
-            d.end_command_buffer(self.cmd)
+            d.end_command_buffer(cmd)
                 .map_err(vk_err("vkEndCommandBuffer"))?;
-            let cmds = [self.cmd];
-            d.queue_submit(
-                self.queue,
-                &[vk::SubmitInfo::default().command_buffers(&cmds)],
-                self.fence,
-            )
-            .map_err(vk_err("vkQueueSubmit"))?;
-            d.wait_for_fences(&[self.fence], true, u64::MAX)
-                .map_err(vk_err("vkWaitForFences"))?;
-            d.reset_fences(&[self.fence])
-                .map_err(vk_err("vkResetFences"))?;
         }
-        Ok(())
+        self.submit(slot)
     }
 
     /// `image`（`layout` の状態）の全体を RGBA で読み戻し、`layout` に戻す。テスト用の疎通確認。
@@ -377,7 +448,7 @@ impl Gpu {
         layout: vk::ImageLayout,
     ) -> Result<Vec<u8>, VrError> {
         let len = (width * height * 4) as usize;
-        let staging = self.staging(len)?;
+        let (slot, cmd, buffer, staging) = self.slot(len)?;
         unsafe {
             let d = &self.device;
             let range = vk::ImageSubresourceRange::default()
@@ -397,7 +468,7 @@ impl Gpu {
             };
             let transition = |from, to, src, dst| {
                 d.cmd_pipeline_barrier(
-                    self.cmd,
+                    cmd,
                     vk::PipelineStageFlags::ALL_COMMANDS,
                     vk::PipelineStageFlags::ALL_COMMANDS,
                     vk::DependencyFlags::empty(),
@@ -407,7 +478,7 @@ impl Gpu {
                 )
             };
             d.begin_command_buffer(
-                self.cmd,
+                cmd,
                 &vk::CommandBufferBeginInfo::default()
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
             )
@@ -419,10 +490,10 @@ impl Gpu {
                 vk::AccessFlags::TRANSFER_READ,
             );
             d.cmd_copy_image_to_buffer(
-                self.cmd,
+                cmd,
                 image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                self.staging.as_ref().unwrap().buffer,
+                buffer,
                 &[vk::BufferImageCopy::default()
                     .image_subresource(
                         vk::ImageSubresourceLayers::default()
@@ -441,21 +512,13 @@ impl Gpu {
                 vk::AccessFlags::TRANSFER_READ,
                 vk::AccessFlags::MEMORY_READ,
             );
-            d.end_command_buffer(self.cmd)
+            d.end_command_buffer(cmd)
                 .map_err(vk_err("vkEndCommandBuffer"))?;
-            let cmds = [self.cmd];
-            d.queue_submit(
-                self.queue,
-                &[vk::SubmitInfo::default().command_buffers(&cmds)],
-                self.fence,
-            )
-            .map_err(vk_err("vkQueueSubmit"))?;
-            d.wait_for_fences(&[self.fence], true, u64::MAX)
-                .map_err(vk_err("vkWaitForFences"))?;
-            d.reset_fences(&[self.fence])
-                .map_err(vk_err("vkResetFences"))?;
-            Ok(std::slice::from_raw_parts(staging, len).to_vec())
         }
+        self.submit(slot)?;
+        // 読み戻しは結果が要るのでここで待つ。
+        self.wait_idle();
+        Ok(unsafe { std::slice::from_raw_parts(staging, len) }.to_vec())
     }
 
     pub fn wait_idle(&self) {
@@ -466,9 +529,16 @@ impl Gpu {
 impl Drop for Gpu {
     fn drop(&mut self) {
         self.wait_idle();
-        self.drop_staging();
+        for (_, image) in std::mem::take(&mut self.retired) {
+            self.destroy_image(image);
+        }
+        for slot in std::mem::take(&mut self.slots) {
+            if let Some(s) = slot.staging {
+                self.drop_staging(s);
+            }
+            unsafe { self.device.destroy_fence(slot.fence, None) };
+        }
         unsafe {
-            self.device.destroy_fence(self.fence, None);
             self.device.destroy_command_pool(self.pool, None);
             self.device.destroy_device(None);
             self.instance.destroy_instance(None);
