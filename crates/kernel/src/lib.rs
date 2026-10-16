@@ -149,7 +149,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
 }
 
 /// 二回続けて押したと見なす、押下と次の押下の間隔の上限。
-pub const DOUBLE_PRESS: Duration = Duration::from_millis(400);
+// OS のダブルクリックの既定（Windows）と同じ。
+pub const DOUBLE_PRESS: Duration = Duration::from_millis(500);
 
 /// 押下の立ち上がりを見て、[`DOUBLE_PRESS`] 以内に二回続いたら数える。三回目は次の一回目として数え直す。
 #[derive(Debug, Default)]
@@ -563,7 +564,6 @@ mod tests {
         (k, p)
     }
 
-    #[cfg(feature = "novr")]
     #[test]
     fn double_press_counts_pairs_within_the_window() {
         let t = Instant::now();
@@ -578,10 +578,11 @@ mod tests {
         d.update(false, ms(250));
         d.update(true, ms(300));
         d.update(false, ms(350));
-        d.update(true, ms(300 + 401 + 1));
+        let late = ms(300) + DOUBLE_PRESS + Duration::from_millis(1);
+        d.update(true, late);
         assert_eq!(d.count, 1);
-        d.update(false, ms(800));
-        d.update(true, ms(900));
+        d.update(false, late + Duration::from_millis(50));
+        d.update(true, late + DOUBLE_PRESS);
         assert_eq!(d.count, 2);
     }
 
@@ -604,6 +605,7 @@ mod tests {
         assert_eq!(k.status(p).dashboard, 1);
     }
 
+    #[cfg(feature = "novr")]
     #[test]
     fn boot_novr_by_name() {
         for name in ["novr", "--novr", "--no-vr", "NoVr", "no_vr"] {

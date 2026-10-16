@@ -22,6 +22,7 @@ sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 [dev-dependencies]
 testing.workspace = true
 kernel = { workspace = true, features = ["test-support"] }
+wrist.workspace = true
 
 # E2E on real runtimes. The launched runtime reads environment variables, so run it from a single-threaded custom main
 [[test]]
