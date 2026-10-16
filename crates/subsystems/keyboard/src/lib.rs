@@ -10,13 +10,56 @@ use kbvm::{
     Components, Keycode, Keysym,
     lookup::LookupTable,
     state_machine::{Direction, State, StateMachine},
-    xkb::{Context, rmlvo::Group},
+    xkb::{
+        Context, Keymap,
+        diagnostic::{Diagnostic, DiagnosticKind, Severity},
+        rmlvo::Group,
+    },
 };
 
 pub mod geometry;
 pub use geometry::{KeyShape, KeyboardType, Keycap};
 
 include!(concat!(env!("OUT_DIR"), "/data.rs"));
+
+fn check_diagnostics(diagnostics: Vec<Diagnostic>) -> Result<(), String> {
+    let errors: Vec<_> = diagnostics
+        .into_iter()
+        .filter(|d| {
+            d.kind().severity() == Severity::Error || d.kind() == DiagnosticKind::FileNotFound
+        })
+        .map(|d| d.with_code().to_string())
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("\n"))
+    }
+}
+
+fn compile(context: &Context, layout: &Layout, model: &str) -> Result<Keymap, String> {
+    let mut diagnostics = Vec::new();
+    let keymap = context.keymap_from_names(
+        &mut diagnostics,
+        Some("evdev"),
+        Some(model),
+        Some(&[Group {
+            layout: &layout.name,
+            variant: &layout.variant,
+        }]),
+        Some(&[]),
+    );
+    // 機種限定の追加キーは pc 配列に存在しない場合があるため、XKB と同じくその定義だけを除外する。
+    diagnostics.retain(|d| d.kind() != DiagnosticKind::UnknownKey);
+    check_diagnostics(diagnostics)?;
+    if keymap.keys().next().is_none() {
+        return Err(format!(
+            "Cannot compile XKB layout: {}/{}",
+            layout.name, layout.variant
+        ));
+    }
+    Ok(keymap)
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Layout {
@@ -84,7 +127,9 @@ impl Database {
         builder.append_path(&root);
         builder.load_extra_rules(true);
         let context = builder.build();
-        let registry = context.registry(kbvm::xkb::diagnostic::WriteToLog, "evdev");
+        let mut diagnostics = Vec::new();
+        let registry = context.registry(&mut diagnostics, "evdev");
+        check_diagnostics(diagnostics).map_err(io::Error::other)?;
         let mut layouts = Vec::new();
         for entry in registry.layouts {
             // custom は利用者が別途 symbols/custom を置くための項目で、配布元には配列がない。
@@ -113,23 +158,15 @@ impl Database {
         }
         let mut compose = context.compose_table_builder();
         compose.buffer(include_bytes!("../data/Compose"));
-        let compose = Arc::new(
-            compose
-                .build(kbvm::xkb::diagnostic::WriteToLog)
-                .ok_or_else(|| io::Error::other("Cannot load Compose table"))?,
-        );
+        let mut diagnostics = Vec::new();
+        let compose = compose.build(&mut diagnostics);
+        check_diagnostics(diagnostics).map_err(io::Error::other)?;
+        let compose =
+            Arc::new(compose.ok_or_else(|| io::Error::other("Cannot load Compose table"))?);
         let mut physical_keys = BTreeMap::new();
         for (layout, model) in [("us", "pc105"), ("jp", "jp106"), ("kr", "kr106")] {
-            let keymap = context.keymap_from_names(
-                kbvm::xkb::diagnostic::WriteToLog,
-                Some("evdev"),
-                Some(model),
-                Some(&[Group {
-                    layout,
-                    variant: "",
-                }]),
-                Some(&[]),
-            );
+            let keymap =
+                compile(&context, &Layout::new(layout, ""), model).map_err(io::Error::other)?;
             physical_keys.extend(
                 keymap
                     .keys()
@@ -159,43 +196,17 @@ impl Database {
                 layout.name, layout.variant
             ));
         }
-        let mut diagnostics = Vec::new();
-        let keymap = self.context.keymap_from_names(
-            &mut diagnostics,
-            Some("evdev"),
-            Some(layout.model()),
-            Some(&[Group {
-                layout: &layout.name,
-                variant: &layout.variant,
-            }]),
-            Some(&[]),
-        );
+        let keymap = compile(&self.context, layout, layout.model())?;
         let source_keys: BTreeMap<_, _> = keymap
             .keys()
             .map(|k| (k.name().to_owned(), k.keycode()))
             .collect();
-        if source_keys.is_empty() {
-            return Err(format!(
-                "Cannot compile XKB layout: {}/{}",
-                layout.name, layout.variant
-            ));
-        }
         let mut keys = self.physical_keys.clone();
         keys.extend(source_keys);
         let builder = keymap.to_builder();
         let alphabet = if layout.name == "jp" && layout.variant == "kana" {
             Some(
-                self.context
-                    .keymap_from_names(
-                        kbvm::xkb::diagnostic::WriteToLog,
-                        Some("evdev"),
-                        Some("jp106"),
-                        Some(&[Group {
-                            layout: "jp",
-                            variant: "",
-                        }]),
-                        Some(&[]),
-                    )
+                compile(&self.context, &Layout::new("jp", ""), "jp106")?
                     .to_builder()
                     .build_lookup_table(),
             )
@@ -475,6 +486,100 @@ impl Keyboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_compose_loads_without_errors_and_keeps_rules_after_comments() {
+        use kbvm::{
+            syms,
+            xkb::{compose::FeedResult, diagnostic::Severity},
+        };
+        let context = Context::builder().build();
+        let mut builder = context.compose_table_builder();
+        builder.buffer(include_bytes!("../data/Compose"));
+        let mut diagnostics = Vec::new();
+        let compose = builder.build(&mut diagnostics).unwrap();
+        let errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| d.kind().severity() == Severity::Error)
+            .collect();
+        assert!(errors.is_empty(), "{errors:#?}");
+        for (sequence, expected) in [
+            (
+                vec![syms::Multi_key, syms::minus, syms::period, syms::E],
+                "Ė̄",
+            ),
+            (vec![syms::Multi_key, syms::v, syms::slash], "√"),
+            (vec![syms::dead_grave, syms::ENG], "Ŋ̀"),
+        ] {
+            let mut state = compose.create_state();
+            for symbol in &sequence[..sequence.len() - 1] {
+                assert_eq!(compose.feed(&mut state, *symbol), Some(FeedResult::Pending));
+            }
+            assert!(
+                matches!(compose.feed(&mut state, *sequence.last().unwrap()),
+                Some(FeedResult::Composed { string: Some(text), .. }) if text == expected)
+            );
+        }
+    }
+
+    #[test]
+    fn jis_conversion_keys_keep_their_evdev_codes_and_symbols() {
+        let database = Database::load().unwrap();
+        for variant in ["", "kana", "OADG109A"] {
+            let mut diagnostics = Vec::new();
+            database.context.keymap_from_names(
+                &mut diagnostics,
+                Some("evdev"),
+                Some("jp106"),
+                Some(&[Group {
+                    layout: "jp",
+                    variant,
+                }]),
+                Some(&[]),
+            );
+            check_diagnostics(diagnostics).unwrap();
+            let mut keyboard = database.keyboard(&Layout::new("jp", variant)).unwrap();
+            for (name, code, symbol) in [
+                ("MUHE", 94, kbvm::syms::Muhenkan),
+                ("HENK", 92, kbvm::syms::Henkan_Mode),
+            ] {
+                assert_eq!(keyboard.code(name), Some(code));
+                for kind in KeyboardType::ALL {
+                    assert!(
+                        keyboard
+                            .keycaps(kind)
+                            .iter()
+                            .any(|k| k.name == name && k.code == code)
+                    );
+                }
+                assert_eq!(
+                    keyboard.click(code).unwrap().symbols,
+                    [symbol],
+                    "jp/{variant}: {name}"
+                );
+            }
+            keyboard.click(56);
+            assert_eq!(
+                keyboard.symbols(92),
+                [kbvm::syms::Mode_switch],
+                "jp/{variant}: Alt+Henkan"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_include_is_reported_instead_of_using_a_partial_keymap() {
+        let mut builder = Context::builder();
+        builder.enable_default_includes(false);
+        builder.enable_environment(false);
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        builder.append_path(&root.join("tests/fixtures/xkb"));
+        builder.append_path(&root.join("data"));
+        let result = compile(&builder.build(), &Layout::new("broken", ""), "pc105");
+        let error = result.expect_err("missing include must not produce a usable partial keymap");
+        assert!(error.contains("nyaw-missing-layout"), "{error}");
+    }
+
     #[test]
     fn layouts_and_sticky_chords() {
         let database = Database::load().unwrap();
@@ -527,8 +632,15 @@ mod tests {
     #[test]
     fn every_registered_layout_compiles_for_all_three_types() {
         let database = Database::load().unwrap();
+        let mut failures = Vec::new();
         for layout in &database.layouts {
-            let keyboard = database.keyboard(layout).unwrap_or_else(|e| panic!("{e}"));
+            let keyboard = match database.keyboard(layout) {
+                Ok(keyboard) => keyboard,
+                Err(error) => {
+                    failures.push(format!("{}/{}: {error}", layout.name, layout.variant));
+                    continue;
+                }
+            };
             for kind in KeyboardType::ALL {
                 let keys = keyboard.keycaps(kind);
                 assert!(
@@ -552,5 +664,6 @@ mod tests {
                 }
             }
         }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 }
