@@ -15,15 +15,13 @@ use kernel::vr::{Frame, OverlayId, Quat, RawController, Vec3, mock::MockBackend}
 use kernel::{Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 use std::sync::mpsc::Sender;
 
-/// where to run. On Linux every time if there is a display (X / Wayland), on other OSes only with `--ignored`
-/// (since it includes paths such as readback that have only been verified on Linux).
+/// where to run. On Linux every time (GPUI runs headless and draws offscreen, so no display is needed; a software
+/// GPU such as Mesa's lavapipe is enough), on other OSes only with `--ignored` (they open real hidden windows).
 pub fn should_run(name: &str) -> bool {
     let ignored = std::env::args().any(|a| a == "--ignored" || a == "--include-ignored");
-    let display =
-        std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some();
-    let run = ignored || (cfg!(target_os = "linux") && display);
+    let run = ignored || cfg!(target_os = "linux");
     if !run {
-        println!("{name}: skipped (no display; run with --ignored on non-Linux)");
+        println!("{name}: skipped (run with --ignored on non-Linux)");
         return false;
     }
     // the log level is NYAW_LOG as in production (default info).
