@@ -52,6 +52,30 @@ fn laser_swipe_goes_back_without_pressing_what_is_under_it(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn touch_long_press_then_swipe_goes_back(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
+    kit.kernel
+        .apply(0, PanelCommand::PointerMode(PointerMode::Touch));
+    kit.step();
+    kit.click("nav-item-0");
+    assert_eq!(stack(&mut kit).len(), 2);
+    // Holding still past the long press turns the touch into a mouse press; then moving left swipes back.
+    let b = kit.bounds("nav");
+    let width = f32::from(b.size.width);
+    let c = kit.bounds("nav-tap").center();
+    let from = Vec2::new(f32::from(b.origin.x) + width - 30.0, f32::from(c.y));
+    kit.point_at(from).press(Action::Select);
+    std::thread::sleep(ui::LONG_PRESS + std::time::Duration::from_millis(50));
+    kit.step().step();
+    for i in 1..=20 {
+        kit.point_at(from - Vec2::new(width * 0.6 * i as f32 / 20.0, 0.0));
+    }
+    kit.release(Action::Select).step();
+    assert_eq!(stack(&mut kit), [NavPage::Root]);
+    assert_eq!(kit.read(|v| (v.swiped_back, v.taps)), (1, 0));
+}
+
+#[gpui::test]
 fn touch_swipe_goes_back(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
     kit.kernel
@@ -133,4 +157,32 @@ fn settings_sidebar_colors_only_the_selected_category(cx: &mut TestAppContext) {
     kit.click("settings-privacy").hover("setting-0");
     assert_eq!(kit.color_at("settings-privacy"), SIDEBAR_SELECTED_BG);
     assert_eq!(kit.color_at("settings-general"), BACKGROUND);
+}
+
+#[gpui::test]
+fn touch_swipe_goes_back_with_the_default_smoothing(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
+    kit.kernel
+        .apply(0, PanelCommand::PointerMode(PointerMode::Touch));
+    for hold in [false, true] {
+        // Pressing the item without smoothing (the lag would miss it); the swipe runs with the production smoothing.
+        kit.kernel.apply(0, PanelCommand::PointerSmoothing(0.0));
+        kit.click("nav-item-0");
+        kit.kernel.apply(0, PanelCommand::PointerSmoothing(0.998));
+        kit.step().step();
+        assert_eq!(stack(&mut kit).len(), 2, "pushed (hold {hold})");
+        let b = kit.bounds("nav");
+        let width = f32::from(b.size.width);
+        let from = Vec2::new(f32::from(b.origin.x) + width - 30.0, f32::from(b.center().y));
+        kit.point_at(from).press(Action::Select);
+        if hold {
+            std::thread::sleep(ui::LONG_PRESS + std::time::Duration::from_millis(50));
+            kit.step().step();
+        }
+        for i in 1..=20 {
+            kit.point_at(from - Vec2::new(width * 0.6 * i as f32 / 20.0, 0.0));
+        }
+        kit.release(Action::Select).step().step();
+        assert_eq!(stack(&mut kit), [NavPage::Root], "hold {hold}");
+    }
 }

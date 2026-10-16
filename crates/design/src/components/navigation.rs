@@ -362,7 +362,9 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                                         start: Some(f32::from(at.x)),
                                     }
                                 } else {
-                                    Gesture::Idle
+                                    // 左向きでない動きでは諦めず、ここを起点に置き直して左への動きを待つ。長押しの間の
+                                    // 手ブレや、手ブレ抑えで遅れたレーザーが手に追いつく分で、最初の動きが左とは限らない。
+                                    Gesture::Pressed(e.position)
                                 }
                             });
                             window.refresh();
