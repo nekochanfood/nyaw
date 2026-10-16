@@ -504,7 +504,8 @@ impl WindowsWindow {
         );
 
         let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
-            (WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WINDOW_STYLE(0x0))
+            // NYAW: WS_OVERLAPPED (0) はモニターの作業領域に制限され、非表示パネルも切り詰められる。
+            (WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WS_POPUP)
         } else {
             let mut dwstyle = WS_SYSMENU;
 
