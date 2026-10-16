@@ -157,6 +157,9 @@ fn mouse_swipe_past_half_goes_back_without_clicking(cx: &mut TestAppContext) {
     let from = right_of(cx, "tap");
     let at = drag_left(cx, from, 12, 20.0);
     assert!(top_x(cx) < px(-200.0), "follows the pointer: {:?}", top_x(cx));
+    // 下の画面は上の画面の右隣に隙間なく並び、引っ張られて入ってくる。
+    let below = cx.debug_bounds("nav-below").unwrap().origin.x;
+    assert_eq!(below, top_x(cx) + px(W));
     assert_eq!(depth(&view, cx), 1, "not until released");
     cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
     assert_eq!(depth(&view, cx), 0);

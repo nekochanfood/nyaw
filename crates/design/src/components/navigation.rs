@@ -1,8 +1,8 @@
 //! 画面の積み重ね（push 遷移）。設定の段階的開示のように、選んだ項目の詳しい画面を右から重ねて出す。
 //!
-//! - 積むと新しい画面が右から左へスライドして入り、下の画面は少し左へずれる。戻すと逆に右へ抜ける。
+//! - 積むと新しい画面が右から入り、今の画面を左へ押し出す（2 枚は隙間なく並んで一緒に動く）。戻すと逆に右へ押し戻す。
 //!   積み下ろしは呼び出し側が自分の `Vec` で行い、部品は前の描画との差（増えた・減った）から動きを決める。
-//! - スワイプバック: 1 枚以上積んでいるとき、押したまま右から左へ動かすと上の画面が指に付いて左へずれ、下の画面が右から覗く。
+//! - スワイプバック: 1 枚以上積んでいるとき、押したまま右から左へ動かすと、指に付いて上の画面が左へ抜け、下の画面が右から引っ張られて入ってくる。
 //!   幅の半分を越えるか、勢いよく払って離すと `on_back` を呼ぶ（呼び出し側が下ろすと、離した所から左へ抜ける）。
 //!   足りなければ元に戻る。
 //!   - タッチ（指のスライド = ピクセル単位のスクロール）とマウス（押したまま動かす）のどちらでも動く。
@@ -24,8 +24,6 @@ use gpui::{
 use super::keep_drawing;
 use crate::{Motion, Theme};
 
-/// 下の画面が上の画面の幅に対してずれる割合（奥にあるように、上の画面より遅れて動く）。
-const PARALLAX: f32 = 0.3;
 /// スワイプと決めるまでのマウスの動き（px）。タッチは UI 層が同じだけ待ってから送ってくる。
 const SLOP: f32 = 12.0;
 /// 離したときにこれ以上進んでいれば戻る（幅に対する割合）。
@@ -167,7 +165,7 @@ pub struct Navigation<P: Clone + PartialEq + 'static> {
 
 /// `stack`（先頭が一番下の画面。空にしない）の一番上を見せる。`render` が画面 1 枚の中身を作る。
 /// スワイプバックで戻るときに `on_back` が呼ばれるので、呼び出し側は `stack.pop()` する。
-/// 全体は `{id}`、一番上の画面は `{id}-top` で指せる。
+/// 全体は `{id}`、一番上の画面は `{id}-top`、動いている間に隣に並ぶ下の画面は `{id}-below` で指せる。
 pub fn navigation<P: Clone + PartialEq + 'static>(
     theme: &Theme,
     id: &'static str,
@@ -444,8 +442,11 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
             .overflow_hidden()
             .child(watch);
         if let Some((b, level)) = &below {
-            // 下の画面は、上の画面が抜けきると定位置、乗りきると幅の PARALLAX だけ上の画面の反対側へずれる。
-            root = root.child(page(b, *level, -dir * (1.0 - t) * width * PARALLAX, window, cx));
+            // 下の画面は上の画面の隣に並ぶ（押し出す・引っ張る）。上の画面が抜けきると定位置。
+            root = root.child(
+                page(b, *level, -dir * (1.0 - t) * width, window, cx)
+                    .debug_selector(move || format!("{id}-below")),
+            );
         }
         let (top, level) = top;
         root = root.child(
