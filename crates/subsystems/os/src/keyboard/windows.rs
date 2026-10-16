@@ -19,6 +19,8 @@ impl Backend {
     pub fn settings(&mut self) -> Settings {
         // SAFETY: OS から借用したハンドルだけを使い、固定長バッファを API に渡す。
         unsafe {
+            // GetKeyState の監視スレッド側の状態をメッセージキューと同期する。
+            let _ = PeekMessageW(&mut MSG::default(), None, 0, 0, PM_NOREMOVE);
             let window = GetForegroundWindow();
             let mut process = 0;
             let thread = GetWindowThreadProcessId(window, Some(&mut process));
@@ -60,9 +62,7 @@ impl Backend {
             let mut mapped = map_layout(&klid, layout.0 as usize as u16);
             if let Some((name, variant)) = &mut mapped
                 && name == "jp"
-                && open != 0
-                && mode & 1 != 0
-                && mode & 16 == 0
+                && kana_input(open, mode, GetKeyState(i32::from(VK_KANA.0)) & 1 != 0)
             {
                 *variant = "kana".into();
             }
@@ -199,6 +199,11 @@ fn scan_code(code: u16) -> Option<(u16, u16)> {
     })
 }
 
+fn kana_input(open: usize, mode: usize, kana_lock: bool) -> bool {
+    // IME_CMODE_ROMAN が立たないローマ字入力もあるため、かなロックを確認する。
+    open != 0 && mode & IME_CMODE_NATIVE.0 as usize != 0 && kana_lock
+}
+
 fn map_layout(klid: &str, language: u16) -> Option<(String, String)> {
     let special = match klid.to_ascii_lowercase().as_str() {
         "00010409" => Some(("us", "dvorak")),
@@ -299,6 +304,17 @@ fn map_layout(klid: &str, language: u16) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn hiragana_conversion_does_not_imply_kana_input() {
+        for mode in [0x0009, 0x000b, 0x0019, 0x001b] {
+            assert!(!kana_input(1, mode, false), "romaji: {mode:04x}");
+            assert!(kana_input(1, mode, true), "kana: {mode:04x}");
+            assert!(!kana_input(0, mode, true), "IME off: {mode:04x}");
+        }
+        assert!(!kana_input(1, 0x0000, true));
+        assert!(!kana_input(1, 0x0008, true));
+    }
+
     #[test]
     fn maps_layouts_and_extended_keys() {
         assert_eq!(
