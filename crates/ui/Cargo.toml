@@ -53,3 +53,7 @@ harness = false
 [[test]]
 name = "test_panels"
 harness = false
+
+[[test]]
+name = "keyboard"
+harness = false
