@@ -5,14 +5,16 @@
 //! 入力は片手のコントローラとして模す:
 //! - 右手: レイは目からマウスの方向（レーザーは視線と重なるので見えず、カーソルだけが見える）。
 //!   左クリック = トリガー、右クリック = グリップ（掴む）、矢印キー = スティック、ホイール = スティックの縦。
-//! - 左手: 手元で下を向いていてパネルを指さない。WASD = スティック。
+//! - 左手: 手元で下を向いていてパネルを指さない。WASD = スティック、X キー = X ボタン（二回続けて押すとダッシュボード）。
 //!
 //! デバイスは実在しないので、取り付けたパネルは追従しない（[`Frame::emulated`]）。
 //! testkit 用に、ウィンドウを出さない [`Emulator::headless`] と、入力の注入・スクリーンショットを公開する。
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use minifb::{Key, MouseButton, MouseMode, Window, WindowOptions};
+use minifb::{InputCallback, Key, MouseButton, MouseMode, Window, WindowOptions};
 
 use crate::compositor::{Draw, Gpu};
 
@@ -104,6 +106,8 @@ pub struct Emulator {
     grab: bool,
     /// 左手の X ボタン。
     x: bool,
+    /// 前の poll から X キーが押されたか（[`KeyLatch`]）。
+    x_tapped: Arc<AtomicBool>,
     /// 左手・右手のスティック。
     sticks: [Vec2; 2],
     /// 右手が掴んでいるパネルの拡大縮小（PageUp = +1、PageDown = -1）。
@@ -157,6 +161,7 @@ impl Emulator {
             trigger: false,
             grab: false,
             x: false,
+            x_tapped: Arc::default(),
             sticks: [Vec2::ZERO; 2],
             resize: 0.0,
             quit: false,
@@ -278,6 +283,7 @@ impl Emulator {
                     w.set_target_fps(0);
                     // 指す位置は合成の中にリングで描くので、OS のカーソルは隠す。
                     w.set_cursor_visibility(false);
+                    w.set_input_callback(Box::new(KeyLatch(self.x_tapped.clone())));
                     if self.allow_gpu && std::env::var_os("NYAW_EMULATOR_CPU").is_none() {
                         match Gpu::new(&w, self.size) {
                             Ok(gpu) => {
@@ -326,7 +332,8 @@ impl Emulator {
         self.pointer = w.get_mouse_pos(mode).map(|(x, y)| Vec2::new(x, y));
         self.trigger = w.get_mouse_down(MouseButton::Left);
         self.grab = w.get_mouse_down(MouseButton::Right);
-        self.x = w.is_key_down(Key::X);
+        // 重いフレームの間に押して離した X キーも、押した 1 フレームとして渡す（二回押しを取りこぼさない）。
+        self.x = w.is_key_down(Key::X) || self.x_tapped.swap(false, Ordering::Relaxed);
         let stick = |[left, right, down, up]: [Key; 4]| {
             let axis = |neg, pos| {
                 f32::from(u8::from(w.is_key_down(pos))) - f32::from(u8::from(w.is_key_down(neg)))
@@ -827,6 +834,20 @@ impl VrBackend for Emulator {
 
     fn overlay_seen(&self, id: OverlayId) -> Option<bool> {
         Some(self.quads[id.0 as usize].seen)
+    }
+}
+
+/// minifb はキーの状態を `update` の時点でしか見ないので、その間に押して離したキーは消える。
+/// キーの出来事を受けて、X キーが押されたことを覚えておく。
+struct KeyLatch(Arc<AtomicBool>);
+
+impl InputCallback for KeyLatch {
+    fn add_char(&mut self, _: u32) {}
+
+    fn set_key_state(&mut self, key: Key, down: bool) {
+        if key == Key::X && down {
+            self.0.store(true, Ordering::Relaxed);
+        }
     }
 }
 

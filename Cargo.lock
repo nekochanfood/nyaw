@@ -5859,6 +5859,7 @@ dependencies = [
  "testing",
  "ui",
  "vr",
+ "wrist",
 ]
 
 [[package]]
