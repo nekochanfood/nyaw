@@ -36,6 +36,10 @@ harness = false
 name = "font_weights"
 harness = false
 
+[[test]]
+name = "emoji"
+harness = false
+
 # ベンチマーク。常には流さない（`-- --ignored` のときだけ）。
 [[test]]
 name = "stress"

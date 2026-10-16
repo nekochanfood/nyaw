@@ -76,6 +76,7 @@ transparent = "半透明"
 moving = "動く"
 lod = "LOD"
 font = "フォント"
+emoji = "絵文字"
 scrollbar = "スクロールバー"
 pointer = "ポインタ"
 laser = "レーザー"
@@ -84,6 +85,13 @@ dialog = "ダイアログ"
 stress = "負荷"
 catalog = "カタログ"
 localization = "ローカライズ"
+
+[emoji]
+inline = "テキスト内の SVG 絵文字 · 14 / 19 / 24 px"
+icons = "SVG アイコン · 24 / 40 / 64 px"
+favorite = "お気に入りに追加"
+wrap = "絵文字も文章と一緒に折り返します 😀🐈❤️。家族 👨‍👩‍👧‍👦 や国旗 🇯🇵 は分割しません。\n改行も確認 👩‍💻👍🏽。"
+fallback = "テキスト表示指定: ❤︎ ☀︎ · 通常文字: ABC 123 # · 結合文字: é"
 
 [pointer]
 mode_mouse = "方式: マウス"

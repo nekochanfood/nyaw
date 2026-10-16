@@ -18,8 +18,11 @@ include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
 pub mod animation;
 pub mod catalog;
 pub mod components;
+pub mod emoji;
 pub mod font;
 pub mod icon;
+
+pub use emoji::{emoji, emoji_text};
 
 pub use icon::{Icon, Weight, icon};
 

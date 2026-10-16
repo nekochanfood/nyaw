@@ -22,6 +22,7 @@ type Map = serde_json::Map<String, Value>;
 const THEMES: [&str; 2] = ["light", "dark"];
 
 fn main() {
+    twemoji();
     icons::generate(Path::new(&env::var("OUT_DIR").unwrap()));
     println!("cargo:rerun-if-changed=tokens.json");
     let src = fs::read_to_string("tokens.json").expect("tokens.json を読めない");
@@ -180,6 +181,28 @@ fn main() {
 
     fs::write(
         Path::new(&env::var("OUT_DIR").unwrap()).join("tokens.rs"),
+        out,
+    )
+    .unwrap();
+}
+
+fn twemoji() {
+    println!("cargo:rerun-if-changed=twemoji/index.tsv");
+    println!("cargo:rerun-if-changed=twemoji/svg.bin");
+    let index = fs::read_to_string("twemoji/index.tsv").expect("Twemoji index");
+    let mut out = String::from("static INDEX: &[(&str, usize, usize)] = &[\n");
+    let mut lines: Vec<_> = index.lines().collect();
+    lines.sort_unstable();
+    for line in lines {
+        let fields: Vec<_> = line.split('\t').collect();
+        assert_eq!(fields.len(), 3);
+        let offset: usize = fields[1].parse().unwrap();
+        let len: usize = fields[2].parse().unwrap();
+        writeln!(out, "({:?}, {offset}, {len}),", fields[0]).unwrap();
+    }
+    out += "];\n";
+    fs::write(
+        Path::new(&env::var("OUT_DIR").unwrap()).join("twemoji.rs"),
         out,
     )
     .unwrap();

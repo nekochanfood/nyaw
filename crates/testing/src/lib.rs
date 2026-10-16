@@ -27,6 +27,9 @@ use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{Language, PanelCommand, PanelId, PointerMode};
 use ui::{PanelControl, PanelSpec};
 
+mod emoji;
+pub use emoji::EmojiTest;
+
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
 /// 「手・トラッカーに取り付け」で使う相対姿勢: 0.3m 前（手首の時計のような配置）。
@@ -437,6 +440,10 @@ impl Render for Testing {
             .child(
                 button!("spawn-font", i18n::t(cx, "testing.open.font"), false)
                     .on_click(spawn_view(self.panel, |id, _| TestingFont::new(id))),
+            )
+            .child(
+                button!("emoji-test", i18n::t(cx, "testing.open.emoji"), false)
+                    .on_click(spawn_view(self.panel, |id, _| EmojiTest::new(id))),
             )
             .child(
                 button!("spawn-scrollbar", i18n::t(cx, "testing.open.scrollbar"), false)

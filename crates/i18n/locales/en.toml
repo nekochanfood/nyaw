@@ -76,6 +76,7 @@ transparent = "Transparent"
 moving = "Moving"
 lod = "LOD"
 font = "Font"
+emoji = "Emoji"
 scrollbar = "Scrollbar"
 pointer = "Pointer"
 laser = "Laser"
@@ -84,6 +85,13 @@ dialog = "Dialog"
 stress = "Stress"
 catalog = "Catalog"
 localization = "Localization"
+
+[emoji]
+inline = "Inline SVG emoji · 14 / 19 / 24 px"
+icons = "SVG icons · 24 / 40 / 64 px"
+favorite = "Add to favorites"
+wrap = "Emoji wrap with the surrounding text 😀🐈❤️. Family 👨‍👩‍👧‍👦 and flags 🇯🇵 stay together.\nNew line 👩‍💻👍🏽."
+fallback = "Text presentation: ❤︎ ☀︎ · ordinary text: ABC 123 # · combining: é"
 
 [pointer]
 mode_mouse = "Mode: Mouse"

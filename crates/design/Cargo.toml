@@ -10,6 +10,7 @@ license.workspace = true
 palette = "0.7"
 animato = { version = "1.7.2", default-features = false, features = ["tween"] }
 gpui = { workspace = true, features = ["test-support"] }
+unicode-segmentation = "1.13"
 
 [dev-dependencies]
 gpui_platform = { workspace = true, features = ["test-support"] }

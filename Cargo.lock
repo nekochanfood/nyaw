@@ -1250,6 +1250,7 @@ dependencies = [
  "palette",
  "serde_json",
  "svgtypes 0.15.3",
+ "unicode-segmentation",
 ]
 
 [[package]]

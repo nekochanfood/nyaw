@@ -179,6 +179,22 @@ pub fn icon_button(
     b
 }
 
+/// Twemoji の丸いボタン。アイコンボタンと同じ寸法・状態色・必須の説明を持つ。
+pub fn emoji_button(
+    theme: &Theme,
+    id: &'static str,
+    glyph: impl Into<SharedString>,
+    tooltip: impl Into<SharedString>,
+    variant: Variant,
+) -> Button {
+    let mut b = base_button(theme, id, variant).tooltip(tooltip);
+    b.base = b
+        .base
+        .w(px(BUTTON_HEIGHT))
+        .child(crate::emoji(glyph).size(px(font_size::LG)));
+    b
+}
+
 /// 高さ・角丸・色・文字だけを決めたボタン。中身と横の大きさは呼び出し側が足す。
 fn base_button(theme: &Theme, id: &'static str, variant: Variant) -> Button {
     let (bg, hover, active, fg) = match variant {
