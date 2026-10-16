@@ -31,6 +31,7 @@ const BINDINGS: &[(&str, &[&str])] = &[
         &[
             "trigger/value",
             "squeeze/value",
+            "a/click",
             "b/click",
             "thumbstick/x",
             "thumbstick/y",
@@ -42,6 +43,7 @@ const BINDINGS: &[(&str, &[&str])] = &[
             "trigger/value",
             "squeeze/value",
             "menu/click",
+            "x/click",
             "y/click",
             "b/click",
             "thumbstick/x",

@@ -9,6 +9,7 @@
     { "name": "/actions/nyaw/in/select", "type": "boolean" },
     { "name": "/actions/nyaw/in/grab", "type": "boolean" },
     { "name": "/actions/nyaw/in/menu", "type": "boolean" },
+    { "name": "/actions/nyaw/in/dashboard", "type": "boolean" },
     { "name": "/actions/nyaw/in/scroll", "type": "vector2" }
   ],
   "action_sets": [
@@ -22,6 +23,7 @@
       "/actions/nyaw/in/select": "Click",
       "/actions/nyaw/in/grab": "Grab panel",
       "/actions/nyaw/in/menu": "Menu",
+      "/actions/nyaw/in/dashboard": "Dashboard (press twice)",
       "/actions/nyaw/in/scroll": "Scroll"
     }
   ]

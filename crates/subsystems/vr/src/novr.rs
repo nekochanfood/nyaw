@@ -54,6 +54,8 @@ pub enum Button {
     Trigger,
     /// 右クリック。
     Grab,
+    /// 左手の X ボタン（キーボードの X。二回続けて押すとダッシュボード）。
+    X,
 }
 
 #[derive(Debug)]
@@ -100,6 +102,8 @@ pub struct Emulator {
     pointer: Option<Vec2>,
     trigger: bool,
     grab: bool,
+    /// 左手の X ボタン。
+    x: bool,
     /// 左手・右手のスティック。
     sticks: [Vec2; 2],
     /// 右手が掴んでいるパネルの拡大縮小（PageUp = +1、PageDown = -1）。
@@ -152,6 +156,7 @@ impl Emulator {
             pointer: None,
             trigger: false,
             grab: false,
+            x: false,
             sticks: [Vec2::ZERO; 2],
             resize: 0.0,
             quit: false,
@@ -174,6 +179,7 @@ impl Emulator {
         match button {
             Button::Trigger => self.trigger = down,
             Button::Grab => self.grab = down,
+            Button::X => self.x = down,
         }
     }
 
@@ -220,13 +226,15 @@ impl Emulator {
     }
 
     fn controllers(&self) -> Vec<RawController> {
-        let raw = |hand, aim, trigger: bool, grab: bool, stick: Vec2, resize: f32| RawController {
+        let raw = |hand, aim, trigger: bool, grab: bool, x: bool, stick: Vec2, resize: f32| RawController {
             hand,
             profile: PROFILE.to_owned(),
             aim,
             inputs: vec![
                 ("trigger/value".to_owned(), f32::from(u8::from(trigger))),
                 ("squeeze/value".to_owned(), f32::from(u8::from(grab))),
+                // Index なので左手の X ボタンは A に当たる。
+                ("a/click".to_owned(), f32::from(u8::from(x))),
                 ("thumbstick/x".to_owned(), stick.x),
                 ("thumbstick/y".to_owned(), stick.y),
                 (crate::RESIZE_INPUT.to_owned(), resize),
@@ -237,6 +245,7 @@ impl Emulator {
             LEFT_HAND,
             false,
             false,
+            self.x,
             self.sticks[0],
             0.0,
         )];
@@ -248,6 +257,7 @@ impl Emulator {
                 aim,
                 self.trigger,
                 self.grab,
+                false,
                 self.sticks[1],
                 self.resize,
             ));
@@ -316,6 +326,7 @@ impl Emulator {
         self.pointer = w.get_mouse_pos(mode).map(|(x, y)| Vec2::new(x, y));
         self.trigger = w.get_mouse_down(MouseButton::Left);
         self.grab = w.get_mouse_down(MouseButton::Right);
+        self.x = w.is_key_down(Key::X);
         let stick = |[left, right, down, up]: [Key; 4]| {
             let axis = |neg, pos| {
                 f32::from(u8::from(w.is_key_down(pos))) - f32::from(u8::from(w.is_key_down(neg)))
@@ -1022,6 +1033,10 @@ mod tests {
         assert_eq!(frame.controllers[1].input(crate::RESIZE_INPUT), Some(1.0));
         let left = &frame.controllers[0];
         assert_eq!(left.input("thumbstick/y"), Some(1.0));
+        assert_eq!(left.input("a/click"), Some(0.0));
+        e.set_button(Button::X, true);
+        assert_eq!(e.poll().controllers[0].input("a/click"), Some(1.0));
+        let left = &frame.controllers[0];
         // The left hand points down and does not aim at panels.
         assert!(left.aim.forward().abs_diff_eq(Vec3::NEG_Y, 1e-4));
     }

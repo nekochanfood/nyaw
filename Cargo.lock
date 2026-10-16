@@ -1367,6 +1367,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashboard"
+version = "2026.0.1"
+dependencies = [
+ "design",
+ "gpui",
+ "kernel",
+ "ui",
+]
+
+[[package]]
 name = "dasp_sample"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7308,6 +7318,7 @@ name = "wrist"
 version = "2026.0.1"
 dependencies = [
  "chrono",
+ "dashboard",
  "design",
  "gpui",
  "i18n",

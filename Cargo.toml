@@ -43,6 +43,7 @@ i18n = { path = "crates/i18n" }
 profiler = { path = "crates/profiler" }
 testing = { path = "crates/testing" }
 wrist = { path = "crates/wrist" }
+dashboard = { path = "crates/dashboard" }
 beam = { path = "crates/beam" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
