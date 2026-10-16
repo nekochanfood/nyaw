@@ -231,7 +231,9 @@ impl Render for DesktopTest {
                                 })
                                 .in_view(Pose::new(Vec3::new(0.75, 0.0, -1.2), Quat::IDENTITY))
                                 // 配信のパネルは取得元の名前をタイトルに、ナビゲーションバーで閉じる（配信も止まる）。
-                                .titled_text(title),
+                                .titled_text(title)
+                                // 映しているデスクトップ・ウィンドウへ打てるよう、バーの左端に OS キーボードのトグルを出す。
+                                .with_os_keyboard(),
                             );
                         }),
                 )

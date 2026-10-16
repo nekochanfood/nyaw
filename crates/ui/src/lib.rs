@@ -304,6 +304,8 @@ pub struct PanelControl {
     /// フレームループが毎フレーム書く。
     pub open: usize,
     pub limit: usize,
+    /// 持ち主のパネル → そのナビゲーションバー。バーが開いたときに書く（持ち主の状態でバーを描き直すため）。
+    pub nav_bars: HashMap<PanelId, PanelId>,
 }
 
 impl gpui::Global for PanelControl {}
@@ -512,6 +514,8 @@ pub struct PanelSpec {
     nav_bar: bool,
     /// このパネル自身がナビゲーションバーなら、その持ち主。
     nav_bar_of: Option<PanelId>,
+    /// ナビゲーションバーの左端に OS キーボードのトグルを出す（[`Self::with_os_keyboard`]）。
+    os_keyboard: bool,
     build: Box<PanelBuilder>,
 }
 
@@ -545,6 +549,7 @@ impl PanelSpec {
             title: None,
             nav_bar: true,
             nav_bar_of: None,
+            os_keyboard: false,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -663,21 +668,32 @@ impl PanelSpec {
         self
     }
 
+    /// ナビゲーションバーの左端に、OS キーボード（打った文字を OS の前面のアプリへ送る仮想キーボード）のトグルを出す。
+    /// デスクトップ・ウィンドウを映すパネル用。出ている間はボタンが強調色になる。
+    pub fn with_os_keyboard(mut self) -> Self {
+        self.os_keyboard = true;
+        self
+    }
+
     /// このパネル（PanelId `owner` で開いた）に付けるナビゲーションバー。外していれば `None`。
     /// 開く側（`ui::run`・testkit のキット）が持ち主の直後に開き、[`PanelCommand::NavBar`] で持ち主に付ける。
     pub fn nav_bar_spec(&self, owner: PanelId) -> Option<PanelSpec> {
-        let title = self.title.clone();
+        let (title, os_keyboard) = (self.title.clone(), self.os_keyboard);
         self.nav_bar.then(|| PanelSpec {
             nav_bar: false,
             nav_bar_of: Some(owner),
-            ..PanelSpec::new(Pose::IDENTITY, move |id, _, _| NavBar {
-                id,
-                owner,
-                title,
-                open: 0.0,
-                to: 0.0,
-                anim: None,
-                last: None,
+            ..PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+                cx.default_global::<PanelControl>().nav_bars.insert(owner, id);
+                NavBar {
+                    id,
+                    owner,
+                    title,
+                    os_keyboard,
+                    open: 0.0,
+                    to: 0.0,
+                    anim: None,
+                    last: None,
+                }
             })
                 .sized(
                     Vec2::new(NAV_BAR_M, NAV_BAR_M * NAV_BAR_PX.1 as f32 / NAV_BAR_PX.0 as f32),
@@ -696,11 +712,13 @@ impl PanelSpec {
             Some(from) if self.below.is_some() => {
                 let tilt = self.below.unwrap();
                 let origin = kernel.panel(from);
+                // 持ち主の下にナビゲーションバーがあれば、その下に出す（重ねてバーを隠さない）。
+                let bar = kernel.nav_bar(from).map_or(0., |b| kernel.panel(b).size.y);
                 origin.pose
                     * Pose::new(
                         Vec3::new(
                             0.,
-                            -origin.size.y / 2. - 0.05 - self.size.y * tilt.cos() / 2.,
+                            -origin.size.y / 2. - bar - 0.05 - self.size.y * tilt.cos() / 2.,
                             0.05 + self.size.y * tilt.sin() / 2.,
                         ),
                         Quat::from_rotation_x(-tilt),
@@ -734,6 +752,8 @@ struct NavBar {
     id: PanelId,
     owner: PanelId,
     title: Option<Title>,
+    /// 左端に OS キーボードのトグルを出す。
+    os_keyboard: bool,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
     open: f32,
     to: f32,
@@ -786,20 +806,51 @@ impl Render for NavBar {
             Some(Title::Text(t)) => t.clone(),
             None => Default::default(),
         };
-        div().size_full().child(design::components::nav_bar(
-                &design::Theme::current(cx),
-                self.open,
-                title,
-                i18n::t(cx, "common.close"),
-                move |_, _, cx| {
-                    cx.default_global::<PanelControl>()
-                        .panels
-                        .entry(owner)
-                        .or_default()
-                        .commands
-                        .push(PanelCommand::Close)
+        let theme = design::Theme::current(cx);
+        // OS キーボードのトグル。出ている間（持ち主に向いたキーボードがある）は強調色。
+        // キーボードの出入りでは `keyboard` がこのバーを描き直させるので、キーボード自身の X で閉じても色が戻る。
+        let os_keyboard = self.os_keyboard.then(|| {
+            let on = keyboard::keyboard_visible(owner, cx);
+            design::components::icon_button(
+                &theme,
+                "nav-keyboard",
+                &design::icons::KEYBOARD,
+                i18n::t(cx, "keyboard.os_button"),
+                if on {
+                    design::components::Variant::Primary
+                } else {
+                    design::components::Variant::Default
                 },
-            ))
+            )
+            .on_click(move |_, _, cx| {
+                keyboard::register_input(
+                    owner,
+                    |input, cx| {
+                        let foreground = keyboard::system_keyboard(cx).foreground;
+                        keyboard::send_to_os(input, foreground, cx)
+                    },
+                    cx,
+                );
+                if !keyboard::toggle_keyboard(owner, cx) {
+                    keyboard::unregister_input(owner, cx);
+                }
+            })
+        });
+        div().size_full().child(design::components::nav_bar(
+            &theme,
+            self.open,
+            title,
+            i18n::t(cx, "common.close"),
+            move |_, _, cx| {
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(owner)
+                    .or_default()
+                    .commands
+                    .push(PanelCommand::Close)
+            },
+            os_keyboard,
+        ))
     }
 }
 

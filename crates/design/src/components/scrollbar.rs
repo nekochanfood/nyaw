@@ -5,6 +5,7 @@
 //! - 色は平常 / ホバー / 押下（ドラッグ）で変わる（`track` → `neutral_solid_hover` → `neutral_text_low`）。
 //! - 中身が端で引っ張られている間（[`elastic`]）、棒が端で押しつぶされて縮み、戻る（[`Scrollbars::pulled_by`]）。
 //! - 棒を掴んで動かす・トラックを押すとその位置へ飛ぶ。
+//! - ふだんは見えない。スクロールした・トラックの帯に触れた・掴んだ・引っ張ったときに現れ、止まって [`LINGER`] 経つと消える。
 //!
 //! 使い方: スクロールする要素（`overflow_*_scroll` + `track_scroll(&handle)`）と同じ大きさの `relative()` な入れ物に、
 //! 兄弟として重ねる。
@@ -41,6 +42,8 @@ const RELEASE_TAU: f32 = 0.11;
 const HOLD_WHEEL: Duration = Duration::from_millis(120);
 /// 終わりの合図が無い指の入力（トラックパッドなど）が止まって、これだけ経つと離したとみなす。
 const HOLD_PIXELS: Duration = Duration::from_millis(250);
+/// 動きが止まってから棒が消え始めるまで。
+const LINGER: Duration = Duration::from_millis(1000);
 /// 縦と横が両方出るとき、交わる隅に空ける長さ。
 const CORNER: f32 = spec::THICK + 2.0 * spec::MARGIN;
 const AXES: [Axis; 2] = [Axis::Vertical, Axis::Horizontal];
@@ -143,6 +146,12 @@ struct Bar {
     slide: bool,
     thick: Smooth,
     color: Fade,
+    /// 見え具合 0..=1。
+    vis: Smooth,
+    /// 直近に見たオフセット。変わったらスクロールしたとみなす。
+    seen: f32,
+    /// 最後に何か動きがあった時刻。ここから [`LINGER`] の間は見せる。
+    woke: Option<Instant>,
 }
 
 #[derive(Clone, Copy)]
@@ -523,6 +532,7 @@ pub struct Scrollbars {
     handle: ScrollHandle,
     pull: Option<&'static str>,
     ends: f32,
+    always: bool,
     rest: u32,
     hover: u32,
     active: u32,
@@ -536,6 +546,7 @@ pub fn scrollbars(theme: &Theme, id: impl Into<SharedString>, handle: &ScrollHan
         handle: handle.clone(),
         pull: None,
         ends: 0.0,
+        always: false,
         rest: theme.track,
         hover: theme.neutral_text_low,
         active: theme.neutral_text,
@@ -555,6 +566,12 @@ impl Scrollbars {
         self.ends = r;
         self
     }
+
+    /// 動きが無くても常に見せる（既定では、動きが止まると消える）。
+    pub fn always_visible(mut self) -> Self {
+        self.always = true;
+        self
+    }
 }
 
 impl RenderOnce for Scrollbars {
@@ -564,6 +581,7 @@ impl RenderOnce for Scrollbars {
             handle,
             pull,
             ends,
+            always,
             rest,
             hover,
             active,
@@ -580,14 +598,31 @@ impl RenderOnce for Scrollbars {
                     to: rest,
                     start: None,
                 },
+                vis: Smooth::rest(if always { 1.0 } else { 0.0 }),
+                seen: 0.0,
+                woke: None,
             }; 2],
             shown: [false; 2],
         });
         let now = Instant::now();
         let animated = cx.has_global::<Motion>();
         let reads = AXES.map(|a| read(&handle, a));
+        let pulled = pull
+            .and_then(|p| cx.try_global::<Pulls>()?.0.get(p).copied())
+            .unwrap_or_default();
         let st = state.update(cx, |s, _| {
             for (i, b) in s.bars.iter_mut().enumerate() {
+                let off = reads[i].2;
+                if off != b.seen {
+                    b.seen = off;
+                    b.woke = Some(now);
+                }
+                if b.zone || b.slide || b.grab.is_some() || pulled[i] != 0.0 {
+                    b.woke = Some(now);
+                }
+                let awake = always
+                    || b.woke.is_some_and(|w| now.saturating_duration_since(w) < LINGER);
+                b.vis.go(if awake { 1.0 } else { 0.0 }, now, animated);
                 b.thick.go(
                     if b.zone || b.slide || b.grab.is_some() {
                         1.0
@@ -625,9 +660,6 @@ impl RenderOnce for Scrollbars {
             *s
         });
 
-        let pulled = pull
-            .and_then(|p| cx.try_global::<Pulls>()?.0.get(p).copied())
-            .unwrap_or_default();
         let mut moving = false;
         let mut overlay = div().absolute().inset_0();
         for (i, axis) in AXES.into_iter().enumerate() {
@@ -636,7 +668,10 @@ impl RenderOnce for Scrollbars {
             let squash = (pulled[i].abs() / SQUASH_RANGE).min(1.0);
             let (thick, m2) = bar.thick.at(now);
             let (color, m3) = bar.color.at(now);
-            moving |= m2 | m3;
+            let (vis, m4) = bar.vis.at(now);
+            // 消えるまでの時間切れに気づけるよう、見せている間も描き続ける。
+            let lingering = bar.woke.is_some_and(|w| now.saturating_duration_since(w) < LINGER);
+            moving |= m2 | m3 | m4 | lingering;
             let Some(t) = thumb(view, max, off, reserve, squash, ends) else {
                 continue;
             };
@@ -742,6 +777,7 @@ impl RenderOnce for Scrollbars {
                 .absolute()
                 .rounded(px(radius::FULL))
                 .bg(rgba(color))
+                .opacity(vis)
                 .on_hover(move |on, w, cx| over(on, w, cx));
             let knob = if v {
                 knob.top(px(t.start))

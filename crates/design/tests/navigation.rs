@@ -203,26 +203,34 @@ fn root_page_and_rightward_or_vertical_drags_do_not_go_back(cx: &mut TestAppCont
         cx.notify()
     });
     cx.run_until_parked();
-    // 左から右へは戻らない。
+    // 左から右へ・縦だけに動かしても戻らない。
     let from = point(px(20.0), px(250.0));
     let at = drag_left(cx, from, 10, -20.0);
     cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
-    // 縦に動き出したものはスワイプではない。
-    let from = point(px(W - 20.0), px(150.0));
+    let from = point(px(W - 20.0), px(20.0));
     cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
-    for (x, y) in [(5.0, 290.0), (300.0, 290.0)] {
-        cx.simulate_mouse_move(
-            point(from.x - px(x), px(y)),
-            MouseButton::Left,
-            Modifiers::none(),
-        );
-    }
-    cx.simulate_mouse_up(
-        point(from.x - px(300.0), px(290.0)),
-        MouseButton::Left,
-        Modifiers::none(),
-    );
+    cx.simulate_mouse_move(point(from.x, px(280.0)), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_up(point(from.x, px(280.0)), MouseButton::Left, Modifiers::none());
     assert_eq!(depth(&view, cx), 1);
+}
+
+#[gpui::test]
+fn a_drift_before_moving_left_still_swipes(cx: &mut TestAppContext) {
+    let (view, cx) = setup(cx, vec![0, 1]);
+    // 長押しの間の手ブレや、遅れたレーザーが手に追いつく分で、最初は右下へずれてから左へ動かす。
+    let from = point(px(W - 120.0), px(150.0));
+    cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
+    let drift = point(from.x + px(60.0), from.y + px(30.0));
+    cx.simulate_mouse_move(drift, MouseButton::Left, Modifiers::none());
+    assert_eq!(top_x(cx), px(0.0), "the drift does not move the page");
+    let mut at = drift;
+    for _ in 0..12 {
+        at.x -= px(25.0);
+        cx.simulate_mouse_move(at, MouseButton::Left, Modifiers::none());
+    }
+    assert!(top_x(cx) < px(-200.0), "follows from where it settled: {:?}", top_x(cx));
+    cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+    assert_eq!(depth(&view, cx), 0);
 }
 
 #[gpui::test]
@@ -314,4 +322,42 @@ fn grabbing_the_panel_with_the_swiping_hand_ends_the_swipe(cx: &mut TestAppConte
     cx.simulate_mouse_move(point(px(10.0), at.y), None, Modifiers::none());
     assert_eq!(depth(&view, cx), 1);
     assert_eq!(view.read_with(cx, |v, _| v.taps), 0);
+}
+
+/// 本番と同じく動き（`Motion`）を有効にして、積んだ直後の動きが終わってからスワイプで戻れる。
+#[gpui::test]
+fn with_motion_push_then_swipe_back(cx: &mut TestAppContext) {
+    cx.update(|cx| cx.set_global(design::Motion::default()));
+    let (view, cx) = setup(cx, vec![0]);
+    let at = cx.debug_bounds("push").unwrap().center();
+    cx.simulate_click(at, Modifiers::none());
+    assert_eq!(depth(&view, cx), 1);
+    // 入ってくる動きを待つ（実時間）。
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cx.update(|w, _| w.refresh());
+        cx.run_until_parked();
+    }
+    assert_eq!(top_x(cx), px(0.0), "settled");
+    // 指のスライド
+    let p = point(px(W / 2.0), px(250.0));
+    cx.simulate_event(slide(p, -14.0, 0.0, TouchPhase::Started));
+    for _ in 0..12 {
+        cx.simulate_event(slide(p, -20.0, 0.0, TouchPhase::Moved));
+    }
+    assert!(top_x(cx) < px(-200.0), "follows: {:?}", top_x(cx));
+    cx.simulate_event(slide(p, 0.0, 0.0, TouchPhase::Ended));
+    assert_eq!(depth(&view, cx), 0);
+    // マウス（長押しでマウスの押下になったタッチも同じ）
+    let at = cx.debug_bounds("push").unwrap().center();
+    cx.simulate_click(at, Modifiers::none());
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        cx.update(|w, _| w.refresh());
+        cx.run_until_parked();
+    }
+    let from = right_of(cx, "tap");
+    let at = drag_left(cx, from, 12, 20.0);
+    cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+    assert_eq!(depth(&view, cx), 0);
 }

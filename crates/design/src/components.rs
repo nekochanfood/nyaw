@@ -539,6 +539,7 @@ const NAV_LINE_HEIGHT: f32 = spacing::MD;
 
 /// ナビゲーションバー: パネルの下に付き、パネルを操作する帯。中央にパネルのタイトル、右端に閉じるボタン（アイコンだけ。
 /// id は `nav-close`）。カード 1 枚の帯で、角丸は `FULL`。押したときの処理（パネルを閉じる）は `on_close` で受け取る。
+/// `leading` があれば左端に置く（パネルごとの操作。閉じるボタンと左右対称の位置）。
 /// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
 ///
 /// `open`（0〜1）は広がり具合。0（触れていない）はボタンもタイトルも出さない丸い線で、帯の上端に寄せて置く。
@@ -551,6 +552,7 @@ pub fn nav_bar(
     title: impl Into<SharedString>,
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+    leading: Option<Button>,
 ) -> Div {
     // 前半で動き、後半で広がる。それぞれの区間の中でも ease-in-out にして、つなぎ目で急に変わらないようにする。
     const MOVE_END: f32 = 0.35;
@@ -618,7 +620,14 @@ pub fn nav_bar(
                                         )
                                         .on_click(on_close),
                                     ),
-                            ),
+                            )
+                            .children(leading.map(|b| {
+                                div()
+                                    .absolute()
+                                    .top(px((height - BUTTON_HEIGHT) / 2.0))
+                                    .left(px(spacing::SM))
+                                    .child(b)
+                            })),
                     ),
             ),
     )
