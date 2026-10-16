@@ -13,8 +13,8 @@ pub struct Frame {
 
 /// ウィンドウを描き直し、画面に出さずにオフスクリーンへ描画して読み戻す。
 /// 大きさはデバイスピクセル（論理サイズ × 拡大率）。
-// ponytail: gpui の `render_to_image` は test-support フィーチャー限定かつ Windows のみ実装。
-// 上流で一般公開されたらフィーチャーを外す。Linux は gpui_wgpu のヘッドレスレンダラ経由が次の一手。
+// ponytail: gpui の `render_to_image` は test-support フィーチャー限定。上流で一般公開されたらフィーチャーを外す。
+// Windows は gpui_windows、Linux は headless のウィンドウが gpui_wgpu で描く（どちらも vendor/ で手を入れてある）。
 pub fn capture(window: &mut Window, cx: &mut App) -> gpui::Result<Frame> {
     window.draw(cx).clear(cx);
     let frame = read_back(window)?;
@@ -23,7 +23,7 @@ pub fn capture(window: &mut Window, cx: &mut App) -> gpui::Result<Frame> {
 }
 
 /// 描き直し済みのシーンを GPU で描画し、読み戻しを積む（[`capture`] の後半。プロファイラが別々に測るため分けてある）。
-/// Windows では GPU の完了を待たず、前に積んだ読み戻しの絵（無ければ最後に返した絵）を返す。いま描いた絵は
+/// GPU の完了を待たず、前に積んだ読み戻しの絵（無ければ最後に返した絵）を返す。いま描いた絵は
 /// 次のフレームの [`collect`] か、次の `read_back` で受け取る。
 pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
     let img = window.render_to_image()?;
@@ -37,24 +37,19 @@ pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
 /// 前の [`read_back`] で積んだ読み戻しを、描き直さずに受け取る。積んでいなければ `None`。
 pub fn collect(window: &mut Window) -> Option<Frame> {
     #[cfg(windows)]
-    {
-        gpui_windows::collect_readback(|| window.render_to_image())
-            .ok()
-            .map(|img| Frame {
-                width: img.width(),
-                height: img.height(),
-                rgba: img.into_raw(),
-            })
-    }
-    #[cfg(not(windows))]
-    {
-        let _ = window;
-        None
-    }
+    let img = gpui_windows::collect_readback(|| window.render_to_image());
+    #[cfg(target_os = "linux")]
+    let img = gpui_wgpu::collect_readback(|| window.render_to_image());
+    img.ok().map(|img| Frame {
+        width: img.width(),
+        height: img.height(),
+        rgba: img.into_raw(),
+    })
 }
 
 /// 指定された表示方針でウィンドウを開く。Windows の非表示ウィンドウのレンダーターゲットは
 /// 1x1 のまま作られるので、明示的にリサイズして実寸にする（反映は非同期。最初の数フレームは 1x1）。
+/// Linux は GPUI を headless で動かす（`ui::application`）ので、窓は画面に出ず、開いた大きさで描く。
 pub fn open_window<V: Render>(
     cx: &mut App,
     mut options: WindowOptions,

@@ -30,7 +30,7 @@ fn main() {
 
     let result = Rc::new(RefCell::new(Vec::new()));
     let out = result.clone();
-    gpui_platform::application().run(move |cx| {
+    ui::application().run(move |cx| {
         design::font::install(cx);
         let windows: Vec<_> = WEIGHTS
             .into_iter()

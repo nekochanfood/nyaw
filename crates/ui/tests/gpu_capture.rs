@@ -32,7 +32,7 @@ fn main() {
     let out = result.clone();
     let lod_results = Rc::new(RefCell::new(Vec::new()));
     let lod_out = lod_results.clone();
-    gpui_platform::application().run(move |cx| {
+    ui::application().run(move |cx| {
         let window = open_panel_window(cx, RES, |_, cx| cx.new(|_| Solid(view_color)))
             .expect("cannot open panel window");
         cx.spawn(async move |cx| {

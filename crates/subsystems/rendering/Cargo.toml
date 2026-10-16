@@ -5,7 +5,14 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-gpui = ["dep:gpui", "dep:raw-window-handle", "dep:windows", "dep:gpui_windows"]
+gpui = [
+    "dep:gpui",
+    "dep:raw-window-handle",
+    "dep:windows",
+    "dep:gpui_windows",
+    "dep:gpui_linux",
+    "dep:gpui_wgpu",
+]
 
 [dependencies]
 vr.workspace = true
@@ -20,6 +27,11 @@ windows = { optional = true, version = "0.62", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# Linux は headless のウィンドウを wgpu で描いて読み戻す（vendor/gpui_linux の test-support）。
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_linux = { workspace = true, features = ["test-support"], optional = true }
+gpui_wgpu = { workspace = true, features = ["test-support"], optional = true }
 
 [dev-dependencies]
 vr = { workspace = true, features = ["test-support"] }
