@@ -57,6 +57,8 @@ pub struct Frame {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+    /// OS が画面を取り込んだ時刻。分からなければ受け取った時刻。遅延の計測に使う。
+    pub captured: Instant,
 }
 
 impl Frame {
@@ -72,6 +74,7 @@ impl Frame {
             width,
             height,
             rgba,
+            captured: Instant::now(),
         })
     }
 

@@ -571,6 +571,7 @@ impl PanelSpec {
                 panel: from,
                 carry,
                 dismiss: true,
+                hud: false,
             }),
             ..Self::spawn(from, build)
         }
@@ -580,6 +581,14 @@ impl PanelSpec {
     pub fn without_dismiss(mut self) -> Self {
         if let Some(p) = &mut self.parent {
             p.dismiss = false;
+        }
+        self
+    }
+
+    /// 親の左上に重ねる、表示だけの子にする（[`kernel::Parent::hud`]）。親がなければ何もしない。
+    pub fn hud(mut self) -> Self {
+        if let Some(p) = &mut self.parent {
+            (p.hud, p.dismiss) = (true, false);
         }
         self
     }
@@ -988,8 +997,10 @@ pub fn run_with(
                     }
                     // 遠い（LOD1 以上の）パネルはフレームを間引いて描く。
                     let due = kernel.panel_frame_due(panel);
+                    // 配信中のパネルは GPUI で描かず描いた時刻が進まないので、1 枚の枠を毎フレーム取らせない。
                     let idle_due = !forced
                         && visible
+                        && !kernel.desktop_streaming(panel)
                         && due
                         && idle_slot
                         && drawn[panel].is_some_and(|t| t.elapsed() >= idle[panel]);
@@ -1132,7 +1143,9 @@ pub fn run_with(
                             // 頼まれて描いた分は推測の間隔を縮めない（自分で頼むビューは推測で描かなくてよい）。
                             // 描いたフレームの絵は前の読み戻し（1 回遅れ）なので、変わったかは受け取ったフレームで決める。
                             idle[panel] = if idle_due && same && !changed {
-                                (idle[panel] * 2).min(IDLE_MAX)
+                                // ほかのパネルの状態の変化で 0 に詰めた間隔は、倍にしても 0 のまま毎フレーム描き直して
+                                // 1 枚の枠を取り続け、後ろのパネルが描かれなくなる。下限から伸ばし直す。
+                                (idle[panel] * 2).clamp(IDLE_REDRAW, IDLE_MAX)
                             } else if !changed && (asked || (collected && same)) {
                                 idle[panel]
                             } else {

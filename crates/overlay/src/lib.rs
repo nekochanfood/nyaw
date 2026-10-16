@@ -24,6 +24,8 @@ pub struct Parent {
     pub carry: bool,
     /// 子の外側（親・ほかのパネル・何もない所）を押したとき、子を閉じる。ブロックしたい子だけ `false`。
     pub dismiss: bool,
+    /// 表示だけの子（統計など）。親の左上の角に重ねて置き、親を暗くせず入力も止めない。レーザーは素通りする。
+    pub hud: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -132,6 +134,10 @@ const SNAP: f32 = 1e-5;
 /// 子が開いている間の親の暗さ（黒との混ぜ具合）。子に目が行くよう、読める程度に落とす。
 /// 暗転の時間は子のフェードイン（0.2 秒）・アウト（0.15 秒）と同じ。
 const DIM: f32 = 0.45;
+/// 表示だけの子（[`Parent::hud`]）を、親の面からどれだけ手前（m）に置くか。
+const HUD_LIFT: f32 = 0.002;
+/// 表示だけの子の重なり順。角は親の中心より頭から遠いので、距離で並べると親の裏に回って消える。
+const HUD_SORT: u32 = LASER_SORT;
 /// 手ブレ抑えの既定値: レーザーの向きが 1 tick ごとに前の向きを残す割合（0 = 抑えない）。
 /// ヒット判定もこの向きで行うので、クリック位置も揺れない。
 // ponytail: tick 単位なのでリフレッシュレートで効き方が変わる。気になれば経過時間で決める。
@@ -456,7 +462,7 @@ impl Overlay {
 
     /// `id` を `parent` の子にする（`None` で独立）。今の位置を保ち、以降は親に追従する。取り付けは外す。
     /// 自分自身・子孫・閉じたパネルは親にできない（何もしない）。
-    pub fn set_parent(&mut self, id: PanelId, parent: Option<Parent>) {
+    pub fn set_parent(&mut self, vr: &mut dyn VrBackend, id: PanelId, parent: Option<Parent>) {
         if let Some(p) = parent
             && (p.panel == id
                 || self.panels[p.panel].closed
@@ -467,6 +473,8 @@ impl Overlay {
         let at = parent.map(|p| self.panels[p.panel].pose);
         let q = &mut self.panels[id];
         q.parent = parent;
+        let hud = parent.is_some_and(|p| p.hud);
+        q.surface.set_sort(vr, if hud { HUD_SORT } else { 0 });
         if let Some(at) = at {
             q.attached = None;
             q.offset = at.inverse() * q.pose;
@@ -876,7 +884,9 @@ impl Overlay {
             self.panels
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| !p.closed && p.pointer.is_none())
+                .filter(|(_, p)| {
+                    !p.closed && p.pointer.is_none() && !p.parent.is_some_and(|q| q.hud)
+                })
                 .filter_map(|(id, p)| hit_test(p, &aim).map(|(pos, t)| (id, pos, t)))
                 .min_by(|a, b| a.2.total_cmp(&b.2))
         });
@@ -914,7 +924,7 @@ impl Overlay {
                 event,
             })
         };
-        // 子が開いている親（とそのナビゲーションバー）は入力を受けない（掴むことはできる）。
+        // 子が開いている親（とそのナビゲーションバー）は入力を受けない（掴むことはできる）。HUD の子は塞がない。
         let blocked = |id| has_child(&self.panels, id);
         let swallow = st.swallow;
         let new_hover = hit.map(|h| h.0).filter(|&id| !blocked(id) && !swallow);
@@ -1029,6 +1039,18 @@ impl Overlay {
         kids.sort_by_key(|&i| ancestors(&self.panels, i).len());
         for id in kids {
             if let Some(parent) = self.panels[id].parent {
+                if parent.hud {
+                    // 親の縦横比は配信元に合わせて変わるので、角からの位置を毎 tick 決め直す。
+                    let (outer, inner) = (self.panels[parent.panel].size, self.panels[id].size);
+                    self.panels[id].offset = Pose::new(
+                        Vec3::new(
+                            (inner.x - outer.x) / 2.0,
+                            (outer.y - inner.y) / 2.0,
+                            HUD_LIFT,
+                        ),
+                        Quat::IDENTITY,
+                    );
+                }
                 self.panels[id].pose = self.panels[parent.panel].pose * self.panels[id].offset;
             }
         }
@@ -1202,7 +1224,7 @@ fn has_child(panels: &[Panel], id: PanelId) -> bool {
     let id = panels[id].nav_bar_of.unwrap_or(id);
     panels
         .iter()
-        .any(|q| !q.closed && q.parent.is_some_and(|p| p.panel == id))
+        .any(|q| !q.closed && q.parent.is_some_and(|p| p.panel == id && !p.hud))
 }
 
 /// `id` の親、その親…（近い順）。
@@ -1815,11 +1837,13 @@ mod tests {
             )
             .unwrap();
         ov.set_parent(
+            &mut vr.backend,
             child,
             Some(Parent {
                 panel: 0,
                 carry,
                 dismiss: false,
+                hud: false,
             }),
         );
         (vr, ov)
@@ -1901,6 +1925,25 @@ mod tests {
     }
 
     #[test]
+    fn hud_child_sits_in_the_top_left_corner_without_taking_input() {
+        let (mut vr, mut ov) = with_child(false);
+        ov.panels[1].parent.as_mut().unwrap().hud = true;
+        ov.tick(&mut vr);
+        let corner = Vec3::new(-0.3, 0.3, -0.998);
+        assert!(ov.panel(1).pose.position.abs_diff_eq(corner, 1e-5));
+        // 親の縦横比が変わっても角に付いていく。
+        ov.panels[0].size = Vec2::new(1.0, 0.5);
+        ov.tick(&mut vr);
+        let corner = Vec3::new(-0.3, 0.05, -0.998);
+        assert!(ov.panel(1).pose.position.abs_diff_eq(corner, 1e-5));
+        // 重なった所を押しても、レーザーは素通りして親へ届く（親は止められない）。
+        controller(&mut vr, at(-0.3, 0.05, 0.0), &[("trigger/value", 1.0)]);
+        let events = ov.tick(&mut vr);
+        assert!(!events.is_empty());
+        assert!(events.iter().all(|e| e.panel == 0));
+    }
+
+    #[test]
     fn pressing_outside_the_child_closes_it_unless_blocked() {
         let press = |ov: &mut Overlay, vr: &mut Subsystems<MockBackend>, x: f32| {
             controller(vr, at(x, 0.0, 0.0), &[]);
@@ -1966,11 +2009,13 @@ mod tests {
             )
             .unwrap();
         ov.set_parent(
+            &mut vr.backend,
             inner,
             Some(Parent {
                 panel: 1,
                 carry: false,
                 dismiss: true,
+                hud: false,
             }),
         );
         controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
@@ -2016,11 +2061,13 @@ mod tests {
     fn closing_the_parent_closes_its_children_and_cycles_are_refused() {
         let (mut vr, mut ov) = with_child(false);
         ov.set_parent(
+            &mut vr.backend,
             0,
             Some(Parent {
                 panel: 1,
                 carry: false,
                 dismiss: false,
+                hud: false,
             }),
         );
         assert_eq!(
