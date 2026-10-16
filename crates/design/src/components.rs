@@ -13,10 +13,12 @@ use palette::{FromColor, Mix, Oklab, Srgb};
 
 mod scrollbar;
 mod navigation;
+mod shaped_button;
 mod slider;
 mod tooltip;
-pub use scrollbar::{Elastic, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 pub use navigation::{Navigation, navigation};
+pub use scrollbar::{Elastic, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
+pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_button};
 pub use slider::{Slider, slider};
 pub use tooltip::*;
 
@@ -119,7 +121,7 @@ const BUTTON_PADDING: f32 = 32.0;
 /// 押せるボタン。`id` はそのまま `debug_selector` にもなる。
 #[derive(IntoElement)]
 pub struct Button {
-    id: &'static str,
+    id: SharedString,
     base: Stateful<Div>,
     rest: u32,
     hover: u32,
@@ -155,11 +157,11 @@ impl Button {
 
 pub fn button(
     theme: &Theme,
-    id: &'static str,
+    id: impl Into<SharedString>,
     label: impl Into<SharedString>,
     variant: Variant,
 ) -> Button {
-    let mut b = base_button(theme, id, variant);
+    let mut b = base_button(theme, id.into(), variant);
     b.base = b.base.px(px(BUTTON_PADDING)).child(label.into());
     b
 }
@@ -172,7 +174,7 @@ pub fn icon_button(
     tooltip: impl Into<SharedString>,
     variant: Variant,
 ) -> Button {
-    let mut b = base_button(theme, id, variant).tooltip(tooltip);
+    let mut b = base_button(theme, id.into(), variant).tooltip(tooltip);
     b.base = b.base.w(px(BUTTON_HEIGHT)).child(
         crate::icon(glyph)
             .weight(crate::Weight::Bold)
@@ -189,7 +191,7 @@ pub fn emoji_button(
     tooltip: impl Into<SharedString>,
     variant: Variant,
 ) -> Button {
-    let mut b = base_button(theme, id, variant).tooltip(tooltip);
+    let mut b = base_button(theme, id.into(), variant).tooltip(tooltip);
     b.base = b
         .base
         .w(px(BUTTON_HEIGHT))
@@ -198,7 +200,7 @@ pub fn emoji_button(
 }
 
 /// 高さ・角丸・色・文字だけを決めたボタン。中身と横の大きさは呼び出し側が足す。
-fn base_button(theme: &Theme, id: &'static str, variant: Variant) -> Button {
+fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
     let (bg, hover, active, fg) = match variant {
         Variant::Default => (
             theme.control,
@@ -225,9 +227,10 @@ fn base_button(theme: &Theme, id: &'static str, variant: Variant) -> Button {
             theme.neutral_text,
         ),
     };
+    let selector = id.clone();
     let base = div()
-        .id(id)
-        .debug_selector(move || id.into())
+        .id(id.clone())
+        .debug_selector(move || selector.to_string())
         .h(px(BUTTON_HEIGHT))
         .flex()
         .items_center()
@@ -266,7 +269,7 @@ impl StatefulInteractiveElement for Button {}
 impl RenderOnce for Button {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let rest = self.rest;
-        let state = window.use_keyed_state(self.id, cx, move |_, _| State {
+        let state = window.use_keyed_state(self.id.clone(), cx, move |_, _| State {
             pointer: Pointer::default(),
             fade: Fade {
                 from: rest,
@@ -429,7 +432,7 @@ impl RenderOnce for Button {
             .children(wave)
             .on_hover(move |h, w, cx| {
                 if let Some(tip) = &tip {
-                    hover_tooltip(id, tip.clone(), owner.clone(), *h, w, cx);
+                    hover_tooltip(id.clone(), tip.clone(), owner.clone(), *h, w, cx);
                 }
                 if *h { over(w, cx) } else { leave(w, cx) }
             })
@@ -630,7 +633,7 @@ pub fn list_item(
     glyph: &'static crate::Icon,
     label: impl Into<SharedString>,
 ) -> Button {
-    let mut b = base_button(theme, id, Variant::Default);
+    let mut b = base_button(theme, id.into(), Variant::Default);
     (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
     b.base = b
         .base
@@ -661,7 +664,7 @@ pub fn sidebar_item(
     label: impl Into<SharedString>,
     selected: bool,
 ) -> Button {
-    let mut b = base_button(theme, id, Variant::OnBackground);
+    let mut b = base_button(theme, id.into(), Variant::OnBackground);
     (b.rest, b.hover, b.active) = if selected {
         (
             theme.accent_bg_active,

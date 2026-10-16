@@ -1,0 +1,10 @@
+[package]
+name = "keyboard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+kbvm = { version = "0.2", features = ["registry", "compose"] }
+os.workspace = true
+logger.workspace = true

@@ -23,7 +23,7 @@ pub const TOOLTIP_HEIGHT_M: f32 = 0.024;
 /// ツールチップの要求（GPUI のグローバル）。ウィンドウごとに、ホバーしている要素（`id`）とその文字、持ち主。
 /// 外れたら消す。どの手のカーソルに出すかは UI 層が決める。
 #[derive(Default)]
-pub struct Tooltips(pub HashMap<WindowId, (&'static str, SharedString, AnyWeakEntity)>);
+pub struct Tooltips(pub HashMap<WindowId, (SharedString, SharedString, AnyWeakEntity)>);
 
 impl gpui::Global for Tooltips {}
 
@@ -39,7 +39,7 @@ impl Tooltips {
 /// `owner` は要素が描かれている間だけ生きている状態（`use_keyed_state` の Entity）。
 /// 隣の要素へ移ると、入る・出るの順が前後しても後から入った方が残る。
 pub fn hover_tooltip(
-    id: &'static str,
+    id: impl Into<SharedString>,
     text: SharedString,
     owner: AnyWeakEntity,
     hovered: bool,
@@ -47,6 +47,7 @@ pub fn hover_tooltip(
     cx: &mut App,
 ) {
     let w = window.window_handle().window_id();
+    let id = id.into();
     let map = &mut cx.default_global::<Tooltips>().0;
     if hovered {
         map.insert(w, (id, text, owner));
