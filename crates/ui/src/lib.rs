@@ -17,8 +17,8 @@ use gpui::{
 };
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
-    Anchor, Device, Kernel, Language, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent, PointerMode,
-    Pose, ThemeMode, Vec2, VrBackend,
+    Anchor, Device, Kernel, Language, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent,
+    PointerMode, Pose, ThemeMode, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 
@@ -792,9 +792,8 @@ pub fn run_with(
                     }
                     let hover_due = hover_pending.contains(&panel)
                         && drawn[panel].is_none_or(|t| t.elapsed() >= HOVER_REDRAW);
-                    let forced = (!inputs.is_empty() && !hover_only)
-                        || hover_due
-                        || drawn[panel].is_none();
+                    let forced =
+                        (!inputs.is_empty() && !hover_only) || hover_due || drawn[panel].is_none();
                     if forced {
                         hover_pending.remove(&panel);
                     }
@@ -825,9 +824,8 @@ pub fn run_with(
                         // LOD はそのパネルだけの状態。動かして段階が変わるたびにほかのパネルまで描き直させない。
                         let lod = kernel.panel_lod(panel);
                         others = changed
-                            && before.is_none_or(|b| {
-                                PanelStatus { lod, ..b } != kernel.status(panel)
-                            });
+                            && before
+                                .is_none_or(|b| PanelStatus { lod, ..b } != kernel.status(panel));
                         // 部品のトランジションが動いている間は、毎フレーム描き直す。
                         let transitioning = cx.has_global::<design::Motion>()
                             && cx

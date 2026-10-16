@@ -294,7 +294,10 @@ emulator = false
         // 手ブレ抑えも同じく書き戻せ、テーマは残る。
         save_number_at(&path, "pointer_smoothing", 0.5).unwrap();
         let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!((c.pointer_smoothing, c.theme), (Some(0.5), ThemeMode::Light));
+        assert_eq!(
+            (c.pointer_smoothing, c.theme),
+            (Some(0.5), ThemeMode::Light)
+        );
         // 言語も同じく書き戻せ、テーマは残る。
         save_language_at(&path, Language::Ja).unwrap();
         let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();

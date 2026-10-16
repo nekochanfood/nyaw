@@ -119,10 +119,22 @@ fn main() {
             frame.width, frame.height
         );
     }
-    let rgba = |c: u32| [c >> 16, c >> 8, c, 0xff].map(|c| (c & 0xff) as u8).to_vec();
+    let rgba = |c: u32| {
+        [c >> 16, c >> 8, c, 0xff]
+            .map(|c| (c & 0xff) as u8)
+            .to_vec()
+    };
     let (before, after) = delayed.take().expect("delayed readback not checked");
-    assert_eq!(before.unwrap(), rgba(PANEL_BG), "read_back returns the previous picture");
-    assert_eq!(after, Some(rgba(OTHER_BG)), "collect returns the picture just drawn");
+    assert_eq!(
+        before.unwrap(),
+        rgba(PANEL_BG),
+        "read_back returns the previous picture"
+    );
+    assert_eq!(
+        after,
+        Some(rgba(OTHER_BG)),
+        "collect returns the picture just drawn"
+    );
     println!("gpu_capture: delayed readback ok");
 }
 

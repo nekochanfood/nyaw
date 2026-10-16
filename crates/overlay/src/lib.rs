@@ -2290,7 +2290,9 @@ mod tests {
         assert!(
             p.position
                 .abs_diff_eq(aim.transform_point(Vec3::new(0.0, 0.0, -1.0)), 1e-5),
-            "{} {}", p.position, aim.transform_point(Vec3::new(0.0, 0.0, -1.0))
+            "{} {}",
+            p.position,
+            aim.transform_point(Vec3::new(0.0, 0.0, -1.0))
         );
         let normal = p.orientation * Vec3::Z;
         let to_head = (vr.backend.frame.hmd.position - p.position).normalize();
@@ -2412,8 +2414,12 @@ mod tests {
         controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
         ov.tick(&mut vr);
         let dist = |ov: &Overlay| -ov.panel(0).pose.position.z;
-        let mut pull = |vr: &mut Subsystems<MockBackend>, ov: &mut Overlay| {
-            controller(vr, Pose::IDENTITY, &[("squeeze/value", 1.0), ("thumbstick/y", -1.0)]);
+        let pull = |vr: &mut Subsystems<MockBackend>, ov: &mut Overlay| {
+            controller(
+                vr,
+                Pose::IDENTITY,
+                &[("squeeze/value", 1.0), ("thumbstick/y", -1.0)],
+            );
             for _ in 0..10 {
                 ov.tick(vr);
             }

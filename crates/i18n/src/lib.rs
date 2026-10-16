@@ -141,7 +141,10 @@ pub fn keys() -> Vec<&'static str> {
 
 /// `lang` の表に無いキー（ほかの言語にはあるもの）。
 pub fn missing(lang: Lang) -> Vec<&'static str> {
-    keys().into_iter().filter(|k| get(lang, k).is_none()).collect()
+    keys()
+        .into_iter()
+        .filter(|k| get(lang, k).is_none())
+        .collect()
 }
 
 /// 文言の中の `{name}` の名前（並べ替え済み）。
@@ -204,10 +207,7 @@ mod tests {
             assert_eq!(t(cx, "common.close"), "Close", "English until set");
             cx.set_global(Lang::Ja);
             assert_eq!(t(cx, "common.close"), "閉じる");
-            assert_eq!(
-                tf(cx, "testing.clicked", &[("count", &2)]),
-                "クリック 2 回"
-            );
+            assert_eq!(tf(cx, "testing.clicked", &[("count", &2)]), "クリック 2 回");
         });
     }
 
@@ -268,7 +268,8 @@ mod tests {
 
     #[test]
     fn used_keys_reads_the_literal_after_cx() {
-        let src = r#"let a = i18n::t(cx, "a.b"); let b = i18n::tf(window_cx, "c.d", &[("n", &1)]);"#;
+        let src =
+            r#"let a = i18n::t(cx, "a.b"); let b = i18n::tf(window_cx, "c.d", &[("n", &1)]);"#;
         assert_eq!(used_keys(src), ["a.b", "c.d"]);
     }
 }

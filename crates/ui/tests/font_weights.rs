@@ -7,7 +7,8 @@ fn main() {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
     use gpui::{
-        AppContext, Context, FontWeight, IntoElement, ParentElement, Render, Styled, Window, div, rgb,
+        AppContext, Context, FontWeight, IntoElement, ParentElement, Render, Styled, Window, div,
+        rgb,
     };
     use ui::{PanelRoot, capture, open_panel_window};
 
@@ -68,10 +69,20 @@ fn main() {
         panic!("rendered {} of 3 windows", frames.len());
     };
     // ink = darkness summed over the frame; a heavier face puts down more of it
-    let ink = |f: &ui::Frame| -> u64 { f.rgba.chunks_exact(4).map(|p| 255 - p[0] as u64).sum() };
+    let ink = |f: &ui::Frame| -> u64 {
+        f.rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|p| 255 - p[0] as u64)
+            .sum()
+    };
     let (n, m, b) = (ink(normal), ink(medium), ink(bold));
     assert!(n > 0, "the NORMAL line has ink");
-    assert!(n < m && m < b, "each weight is heavier than the last: {n} / {m} / {b}");
+    assert!(
+        n < m && m < b,
+        "each weight is heavier than the last: {n} / {m} / {b}"
+    );
     println!("font_weights: ok ({n} / {m} / {b})");
 }
 

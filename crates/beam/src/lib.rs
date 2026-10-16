@@ -43,7 +43,8 @@ const DRAG_PX: (u32, u32) = (400, 400);
 /// オーバーレイ層が距離に比例して大きくするので、近くても遠くても見た目の大きさは変わらない。
 /// 箱の高さ（`TOOLTIP_HEIGHT` px）がカーソルの丸 2 個分の高さに見える縮尺にする。
 const TOOLTIP_PX: (u32, u32) = (640, 256);
-const TOOLTIP_M: f32 = TOOLTIP_PX.0 as f32 * 2.0 * CURSOR_DOT_M / design::components::TOOLTIP_HEIGHT;
+const TOOLTIP_M: f32 =
+    TOOLTIP_PX.0 as f32 * 2.0 * CURSOR_DOT_M / design::components::TOOLTIP_HEIGHT;
 /// カーソルの中心の丸の直径（m、1m 先で）。
 const CURSOR_DOT_M: f32 = CURSOR_M * DOT_PX / CURSOR_PX.0 as f32;
 

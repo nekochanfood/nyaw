@@ -19,9 +19,9 @@ use std::time::{Instant, SystemTime};
 use design::components::{self, Variant};
 use design::{Mode, Theme, font_size, radius, spacing};
 use gpui::{
-    App, ClickEvent, Context, Div, FocusHandle, FontWeight, KeyDownEvent, ScrollDelta, ScrollHandle,
-    ScrollWheelEvent, SharedString, Stateful, WeakEntity, Window, anchored, deferred, div, hsla,
-    prelude::*, px, relative, rgb, rgba,
+    App, ClickEvent, Context, Div, FocusHandle, FontWeight, KeyDownEvent, ScrollDelta,
+    ScrollHandle, ScrollWheelEvent, SharedString, Stateful, WeakEntity, Window, anchored, deferred,
+    div, hsla, prelude::*, px, relative, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{Language, PanelCommand, PanelId, PointerMode};
@@ -284,11 +284,16 @@ fn indicator(
         } else {
             theme.control
         }))
-        .child(div().size(px(10.0)).rounded(px(radius::FULL)).bg(rgba(if on {
-            theme.accent_solid
-        } else {
-            theme.neutral_text_low
-        })))
+        .child(
+            div()
+                .size(px(10.0))
+                .rounded(px(radius::FULL))
+                .bg(rgba(if on {
+                    theme.accent_solid
+                } else {
+                    theme.neutral_text_low
+                })),
+        )
         .child(label.into())
 }
 
@@ -333,8 +338,12 @@ impl Render for Testing {
         // このパネル自身の操作（表示・テーマ・言語・ロック・計測）。
         let panel_row = row()
             .child(
-                button!("animate-panel", i18n::t(cx, "testing.panel.animation"), st.animated)
-                    .on_click(command(self.panel, PanelCommand::Animated(!st.animated))),
+                button!(
+                    "animate-panel",
+                    i18n::t(cx, "testing.panel.animation"),
+                    st.animated
+                )
+                .on_click(command(self.panel, PanelCommand::Animated(!st.animated))),
             )
             .child(
                 button!("toggle-theme", theme_label, false)
@@ -352,7 +361,12 @@ impl Render for Testing {
                     .on_click(command(self.panel, PanelCommand::Lock(!st.locked))),
             )
             .child(
-                button!("toggle-profiler", i18n::t(cx, "testing.panel.profiler"), profiling).on_click(|_, _, cx| {
+                button!(
+                    "toggle-profiler",
+                    i18n::t(cx, "testing.panel.profiler"),
+                    profiling
+                )
+                .on_click(|_, _, cx| {
                     let c = cx.default_global::<PanelControl>();
                     c.profiling = !c.profiling;
                 }),
@@ -360,7 +374,12 @@ impl Render for Testing {
         // 取り付け先（今どこに付いているかで光る）。
         let attach_row = row()
             .child(
-                button!("attach-hmd", i18n::t(cx, "testing.attach.hmd"), on(&Device::Hmd)).on_click(command(
+                button!(
+                    "attach-hmd",
+                    i18n::t(cx, "testing.attach.hmd"),
+                    on(&Device::Hmd)
+                )
+                .on_click(command(
                     self.panel,
                     PanelCommand::Attach(Device::Hmd, attach_offset(self.panel, HMD_OFFSET)),
                 )),
@@ -419,15 +438,32 @@ impl Render for Testing {
             );
         // コントローラの入力の表示（押せない）。見出しの行に置く。
         let input_row = row()
-            .child(indicator(&theme, "menu-held", i18n::t(cx, "testing.menu_button"), st.menu))
-            .child(indicator(&theme, "grabbed", i18n::t(cx, "testing.grabbing"), st.grabbed));
+            .child(indicator(
+                &theme,
+                "menu-held",
+                i18n::t(cx, "testing.menu_button"),
+                st.menu,
+            ))
+            .child(indicator(
+                &theme,
+                "grabbed",
+                i18n::t(cx, "testing.grabbing"),
+                st.grabbed,
+            ));
 
         // 隣に開く画面。
         let open_row = row()
-            .child(button!("spawn-panel", i18n::t(cx, "testing.open.testing"), false).on_click(spawn(self.panel)))
             .child(
-                button!("spawn-transparent", i18n::t(cx, "testing.open.transparent"), false)
-                    .on_click(spawn_transparent(self.panel)),
+                button!("spawn-panel", i18n::t(cx, "testing.open.testing"), false)
+                    .on_click(spawn(self.panel)),
+            )
+            .child(
+                button!(
+                    "spawn-transparent",
+                    i18n::t(cx, "testing.open.transparent"),
+                    false
+                )
+                .on_click(spawn_transparent(self.panel)),
             )
             .child(
                 button!("spawn-anim", i18n::t(cx, "testing.open.moving"), false)
@@ -446,11 +482,16 @@ impl Render for Testing {
                     .on_click(spawn_view(self.panel, |id, _| EmojiTest::new(id))),
             )
             .child(
-                button!("spawn-scrollbar", i18n::t(cx, "testing.open.scrollbar"), false)
-                    .on_click(spawn_view(self.panel, |id, _| TestingScrollbar::new(id))),
+                button!(
+                    "spawn-scrollbar",
+                    i18n::t(cx, "testing.open.scrollbar"),
+                    false
+                )
+                .on_click(spawn_view(self.panel, |id, _| TestingScrollbar::new(id))),
             )
             .child(
-                button!("pointer-test", i18n::t(cx, "testing.open.pointer"), false).on_click(spawn_pointer_test(self.panel)),
+                button!("pointer-test", i18n::t(cx, "testing.open.pointer"), false)
+                    .on_click(spawn_pointer_test(self.panel)),
             )
             .child(
                 button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false)
@@ -460,14 +501,25 @@ impl Render for Testing {
                 button!("tooltip-test", i18n::t(cx, "testing.open.tooltip"), false)
                     .on_click(spawn_view(self.panel, |id, _| TooltipTest::new(id))),
             )
-            .child(button!("dialog-test", i18n::t(cx, "testing.open.dialog"), false).on_click(spawn_dialog_test(self.panel)))
+            .child(
+                button!("dialog-test", i18n::t(cx, "testing.open.dialog"), false)
+                    .on_click(spawn_dialog_test(self.panel)),
+            )
             .child(
                 button!("stress-test", i18n::t(cx, "testing.open.stress"), false)
                     .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
             )
-            .child(button!("spawn-catalog", i18n::t(cx, "testing.open.catalog"), false).on_click(spawn_catalog(self.panel)))
             .child(
-                button!("locale-test", i18n::t(cx, "testing.open.localization"), false).on_click({
+                button!("spawn-catalog", i18n::t(cx, "testing.open.catalog"), false)
+                    .on_click(spawn_catalog(self.panel)),
+            )
+            .child(
+                button!(
+                    "locale-test",
+                    i18n::t(cx, "testing.open.localization"),
+                    false
+                )
+                .on_click({
                     let panel = self.panel;
                     move |_, _, cx| {
                         // 全キーの表を並べるので Testing と同じ大きさ。
@@ -482,22 +534,28 @@ impl Render for Testing {
         // ボタン・切り替え・長押し・ポップアップ。
         let press_row = row()
             .child(
-                button!("click-me", i18n::tf(cx, "testing.clicked", &[("count", &self.clicks)]), false).on_click(
+                button!(
+                    "click-me",
+                    i18n::tf(cx, "testing.clicked", &[("count", &self.clicks)]),
+                    false
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.clicks += 1;
+                    cx.notify();
+                })),
+            )
+            .child(
+                button!("toggle", i18n::t(cx, "testing.toggle"), self.toggled).on_click(
                     cx.listener(|this, _, _, cx| {
-                        this.clicks += 1;
+                        this.toggled = !this.toggled;
                         cx.notify();
                     }),
                 ),
             )
             .child(
-                button!("toggle", i18n::t(cx, "testing.toggle"), self.toggled).on_click(cx.listener(
-                    |this, _, _, cx| {
-                        this.toggled = !this.toggled;
-                        cx.notify();
-                    },
-                )),
+                button!("hold-me", i18n::t(cx, "testing.hold"), false)
+                    .active(|s| s.bg(rgba(theme.control_active))),
             )
-            .child(button!("hold-me", i18n::t(cx, "testing.hold"), false).active(|s| s.bg(rgba(theme.control_active))))
             .child(
                 div()
                     .child(
@@ -565,7 +623,11 @@ impl Render for Testing {
                         this.dropped += 1;
                         cx.notify();
                     }))
-                    .child(i18n::tf(cx, "testing.drop_here", &[("count", &self.dropped)])),
+                    .child(i18n::tf(
+                        cx,
+                        "testing.drop_here",
+                        &[("count", &self.dropped)],
+                    )),
             );
 
         let field = div()
@@ -605,31 +667,32 @@ impl Render for Testing {
         let rows: Vec<SharedString> = (0..LIST_ROWS)
             .map(|i| i18n::tf(cx, "testing.row", &[("index", &i), ("scrolled", &scrolled)]))
             .collect();
-        let list = div()
-            .id("scroll-list")
-            .debug_selector(|| "scroll-list".into())
-            .size_full()
-            .overflow_y_scroll()
-            .track_scroll(&self.list)
-            .rounded(px(radius::LG))
-            .bg(rgba(theme.control))
-            .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
-                this.scrolled += match e.delta {
-                    ScrollDelta::Lines(p) => p.y,
-                    ScrollDelta::Pixels(p) => f32::from(p.y) / SCROLL_LINE_PX,
-                };
-                cx.notify();
-            }))
-            .child(
-                components::elastic("pull-list", &self.list).children(rows.into_iter().map(|row| {
-                    div()
-                        .h(gpui::px(ROW_PX))
-                        .px(px(spacing::LG))
-                        .flex()
-                        .items_center()
-                        .child(row)
-                })),
-            );
+        let list =
+            div()
+                .id("scroll-list")
+                .debug_selector(|| "scroll-list".into())
+                .size_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.list)
+                .rounded(px(radius::LG))
+                .bg(rgba(theme.control))
+                .on_scroll_wheel(cx.listener(|this, e: &ScrollWheelEvent, _, cx| {
+                    this.scrolled += match e.delta {
+                        ScrollDelta::Lines(p) => p.y,
+                        ScrollDelta::Pixels(p) => f32::from(p.y) / SCROLL_LINE_PX,
+                    };
+                    cx.notify();
+                }))
+                .child(components::elastic("pull-list", &self.list).children(
+                    rows.into_iter().map(|row| {
+                        div()
+                            .h(gpui::px(ROW_PX))
+                            .px(px(spacing::LG))
+                            .flex()
+                            .items_center()
+                            .child(row)
+                    }),
+                ));
 
         // 見出し: 何の画面か、このパネルの今の状態、閉じる。
         let header = div()
@@ -683,8 +746,13 @@ impl Render for Testing {
             )
             .child(
                 // カードではなく背景に置くので、背景用の色。
-                components::button(&theme, "close-panel", i18n::t(cx, "common.close"), Variant::OnBackground)
-                    .on_click(command(self.panel, PanelCommand::Close)),
+                components::button(
+                    &theme,
+                    "close-panel",
+                    i18n::t(cx, "common.close"),
+                    Variant::OnBackground,
+                )
+                .on_click(command(self.panel, PanelCommand::Close)),
             );
 
         // カードが複数なので地を敷く。左 = このパネルと開く画面、右 = 部品の操作。
@@ -710,7 +778,11 @@ impl Render for Testing {
                             .gap(px(spacing::MD))
                             .child(
                                 section(&theme, i18n::t(cx, "testing.section.this_panel"))
-                                    .child(labeled(&theme, i18n::t(cx, "testing.label.view"), panel_row))
+                                    .child(labeled(
+                                        &theme,
+                                        i18n::t(cx, "testing.label.view"),
+                                        panel_row,
+                                    ))
                                     .child(labeled(
                                         &theme,
                                         i18n::t(cx, "testing.label.attach_to"),
@@ -726,7 +798,11 @@ impl Render for Testing {
                         section(&theme, i18n::t(cx, "testing.section.interact"))
                             .flex_1()
                             .min_w_0()
-                            .child(labeled(&theme, i18n::t(cx, "testing.label.press"), press_row))
+                            .child(labeled(
+                                &theme,
+                                i18n::t(cx, "testing.label.press"),
+                                press_row,
+                            ))
                             .child(labeled(&theme, i18n::t(cx, "testing.label.drag"), drag_row))
                             .child(labeled(&theme, i18n::t(cx, "testing.label.type"), field))
                             .child(
@@ -797,16 +873,25 @@ impl Render for PointerTest {
                             .on_click(command(self.panel, PanelCommand::PointerMode(next))),
                     )
                     .child(
-                        button(&theme, "tap-me", i18n::tf(cx, "pointer.tapped", &[("count", &self.taps)]), false).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                this.taps += 1;
-                                cx.notify();
-                            }),
-                        ),
+                        button(
+                            &theme,
+                            "tap-me",
+                            i18n::tf(cx, "pointer.tapped", &[("count", &self.taps)]),
+                            false,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.taps += 1;
+                            cx.notify();
+                        })),
                     )
                     .child(
-                        button(&theme, "close-pointer-test", i18n::t(cx, "common.close"), false)
-                            .on_click(command(self.panel, PanelCommand::Close)),
+                        button(
+                            &theme,
+                            "close-pointer-test",
+                            i18n::t(cx, "common.close"),
+                            false,
+                        )
+                        .on_click(command(self.panel, PanelCommand::Close)),
                     ),
             )
             .child(
@@ -878,7 +963,10 @@ impl Render for SmoothingTest {
             .try_global::<PanelControl>()
             .and_then(|c| c.panels.get(&panel))
             .map_or(kernel::overlay::LASER_LENGTH, |c| c.status.laser_length);
-        let (short, long) = (kernel::overlay::LASER_LENGTH_MIN, kernel::overlay::LASER_MAX);
+        let (short, long) = (
+            kernel::overlay::LASER_LENGTH_MIN,
+            kernel::overlay::LASER_MAX,
+        );
         let release = cx
             .try_global::<PanelControl>()
             .and_then(|c| c.panels.get(&panel))
@@ -963,7 +1051,10 @@ impl Render for SmoothingTest {
                     "release-slider",
                     (release - tight) / (loose - tight),
                     move |v, _, cx| {
-                        push(PanelCommand::PointerRelease(tight + v * (loose - tight)), cx)
+                        push(
+                            PanelCommand::PointerRelease(tight + v * (loose - tight)),
+                            cx,
+                        )
                     },
                 )
                 .length(560.0),
@@ -993,7 +1084,11 @@ impl Render for SmoothingTest {
             )
             .child(
                 row()
-                    .child(length_preset("laser-short", i18n::t(cx, "laser.short"), 0.15))
+                    .child(length_preset(
+                        "laser-short",
+                        i18n::t(cx, "laser.short"),
+                        0.15,
+                    ))
                     .child(length_preset(
                         "laser-medium",
                         i18n::t(cx, "common.default"),
@@ -1003,17 +1098,19 @@ impl Render for SmoothingTest {
             )
             .child(
                 // 3 つとも既定値へ戻す（設定ファイルにも既定値が書き戻される）。
-                row().child(button(&theme, "laser-reset", i18n::t(cx, "laser.reset"), false).on_click(
-                    move |_, _, cx| {
-                        for c in [
-                            PanelCommand::PointerSmoothing(kernel::overlay::POINTER_SMOOTHING),
-                            PanelCommand::PointerRelease(kernel::overlay::POINTER_RELEASE_DEG),
-                            PanelCommand::LaserLength(kernel::overlay::LASER_LENGTH),
-                        ] {
-                            push(c, cx);
-                        }
-                    },
-                )),
+                row().child(
+                    button(&theme, "laser-reset", i18n::t(cx, "laser.reset"), false).on_click(
+                        move |_, _, cx| {
+                            for c in [
+                                PanelCommand::PointerSmoothing(kernel::overlay::POINTER_SMOOTHING),
+                                PanelCommand::PointerRelease(kernel::overlay::POINTER_RELEASE_DEG),
+                                PanelCommand::LaserLength(kernel::overlay::LASER_LENGTH),
+                            ] {
+                                push(c, cx);
+                            }
+                        },
+                    ),
+                ),
             )
             .child(
                 // 狙う的。指している間だけ強調色になる。
@@ -1071,8 +1168,13 @@ impl Render for TooltipTest {
                 row()
                     .child(div().debug_selector(|| "tip-status".into()).child(status))
                     .child(
-                        button(&theme, "close-tooltip-test", i18n::t(cx, "common.close"), false)
-                            .on_click(command(self.panel, PanelCommand::Close)),
+                        button(
+                            &theme,
+                            "close-tooltip-test",
+                            i18n::t(cx, "common.close"),
+                            false,
+                        )
+                        .on_click(command(self.panel, PanelCommand::Close)),
                     ),
             )
             .child(
@@ -1106,10 +1208,10 @@ impl Render for TooltipTest {
                     )),
             )
             .child(
-                row()
-                    .justify_end()
-                    .child(button(&theme, "tip-far", i18n::t(cx, "tooltip.far"), false)
-                            .tooltip(i18n::t(cx, "tooltip.far_away"))),
+                row().justify_end().child(
+                    button(&theme, "tip-far", i18n::t(cx, "tooltip.far"), false)
+                        .tooltip(i18n::t(cx, "tooltip.far_away")),
+                ),
             )
     }
 }
@@ -1118,10 +1220,7 @@ impl Render for TooltipTest {
 /// 上からアイコン・タイトル・概要・ボタン（2 個）。文の幅 344px。高さは、概要が収まらずスクロールしても
 /// 3 行は見える下限（`components::dialog_height`）。1px = 1mm。
 const DIALOG_PX: (u32, u32) = (440, components::dialog_height(2));
-const DIALOG_SIZE: Vec2 = Vec2::new(
-    DIALOG_PX.0 as f32 / 1000.0,
-    DIALOG_PX.1 as f32 / 1000.0,
-);
+const DIALOG_SIZE: Vec2 = Vec2::new(DIALOG_PX.0 as f32 / 1000.0, DIALOG_PX.1 as f32 / 1000.0);
 
 /// 親子関係を試す画面（`dialog-test`）。ダイアログ（[`Dialog`]）を子として開く 2 種類のボタンがある。
 /// - `open-dialog`: 外側（この画面など）を押すと閉じる（既定）。
@@ -1187,24 +1286,29 @@ impl Render for DialogTest {
                         )
                     })
                     .child(
-                        button(&theme, "open-modal-dialog", i18n::t(cx, "dialog.open_modal"), false)
-                            .on_click(move |_, _, cx| {
-                                let me = me.clone();
-                                cx.default_global::<PanelControl>().spawns.push(
-                                    PanelSpec::child(panel, true, move |id, _, _| {
-                                        Dialog::new(
-                                            id,
-                                            me,
-                                            &design::icons::WARNING,
-                                            "dialog.required_title",
-                                            // わざと長い文。収まらない分は文の側だけがスクロールし、ボタンは残る。
-                                            "dialog.required_body",
-                                        )
-                                    })
-                                    .without_dismiss()
-                                    .sized(DIALOG_SIZE, DIALOG_PX),
-                                )
-                            }),
+                        button(
+                            &theme,
+                            "open-modal-dialog",
+                            i18n::t(cx, "dialog.open_modal"),
+                            false,
+                        )
+                        .on_click(move |_, _, cx| {
+                            let me = me.clone();
+                            cx.default_global::<PanelControl>().spawns.push(
+                                PanelSpec::child(panel, true, move |id, _, _| {
+                                    Dialog::new(
+                                        id,
+                                        me,
+                                        &design::icons::WARNING,
+                                        "dialog.required_title",
+                                        // わざと長い文。収まらない分は文の側だけがスクロールし、ボタンは残る。
+                                        "dialog.required_body",
+                                    )
+                                })
+                                .without_dismiss()
+                                .sized(DIALOG_SIZE, DIALOG_PX),
+                            )
+                        }),
                     ),
             )
             .child(
@@ -1288,7 +1392,12 @@ impl Render for Dialog {
             i18n::t(cx, self.title),
             i18n::t(cx, self.description),
             [
-                answer("dialog-ok", "OK", i18n::t(cx, "common.ok"), Variant::Primary),
+                answer(
+                    "dialog-ok",
+                    "OK",
+                    i18n::t(cx, "common.ok"),
+                    Variant::Primary,
+                ),
                 answer(
                     "dialog-cancel",
                     "Cancel",
@@ -1331,8 +1440,13 @@ impl Render for TestingTransparent {
                     .items_start()
                     .child(i18n::t(cx, "testing.open.transparent"))
                     .child(
-                        button(&theme, "close-transparent", i18n::t(cx, "common.close"), false)
-                            .on_click(command(self.panel, PanelCommand::Close)),
+                        button(
+                            &theme,
+                            "close-transparent",
+                            i18n::t(cx, "common.close"),
+                            false,
+                        )
+                        .on_click(command(self.panel, PanelCommand::Close)),
                     ),
             )
     }
@@ -1762,10 +1876,8 @@ impl Render for LocaleTest {
                 i18n::Lang::En => "lang-en",
                 i18n::Lang::Ja => "lang-ja",
             };
-            button(&theme, id, l.native_name(), l == current).on_click(command(
-                self.panel,
-                PanelCommand::Language(language(l)),
-            ))
+            button(&theme, id, l.native_name(), l == current)
+                .on_click(command(self.panel, PanelCommand::Language(language(l))))
         }));
         let missing: Vec<(i18n::Lang, Vec<&'static str>)> = i18n::Lang::ALL
             .into_iter()
@@ -1850,8 +1962,7 @@ impl Render for LocaleTest {
                     ),
             )
             .child(
-                components::scrollbars(&theme, "locale-bars", &self.table)
-                    .pulled_by("pull-locale"),
+                components::scrollbars(&theme, "locale-bars", &self.table).pulled_by("pull-locale"),
             );
         components::card_panel(&theme)
             .flex()
@@ -2037,11 +2148,25 @@ impl Render for StressTest {
                         button(&theme, "stress-add", format!("+{STRESS_STEP}"), false)
                             .on_click(cx.listener(|this, _, _, cx| this.spawn(STRESS_STEP, cx))),
                     )
-                    .child(button(&theme, "stress-close", i18n::t(cx, "stress.close_all"), false).on_click(
-                        cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
-                    ))
-                    .child(button(&theme, "stress-scatter", i18n::t(cx, "stress.scatter"), false).on_click(
-                        cx.listener(|this, _, _, cx| {
+                    .child(
+                        button(
+                            &theme,
+                            "stress-close",
+                            i18n::t(cx, "stress.close_all"),
+                            false,
+                        )
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.each(cx, |_| PanelCommand::Close)),
+                        ),
+                    )
+                    .child(
+                        button(
+                            &theme,
+                            "stress-scatter",
+                            i18n::t(cx, "stress.scatter"),
+                            false,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
                             // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
                             let poses: Vec<_> = (0..this.alive(cx).len())
                                 .map(|_| {
@@ -2053,12 +2178,14 @@ impl Render for StressTest {
                                 })
                                 .collect();
                             this.each(cx, |i| PanelCommand::Place(poses[i]));
-                        }),
-                    ))
+                        })),
+                    )
                     .child(
-                        button(&theme, "stress-grid", i18n::t(cx, "stress.grid"), false).on_click(cx.listener(
-                            |this, _, _, cx| this.each(cx, |i| PanelCommand::Place(grid_pose(i))),
-                        )),
+                        button(&theme, "stress-grid", i18n::t(cx, "stress.grid"), false).on_click(
+                            cx.listener(|this, _, _, cx| {
+                                this.each(cx, |i| PanelCommand::Place(grid_pose(i)))
+                            }),
+                        ),
                     ),
             )
     }
@@ -2143,7 +2270,11 @@ mod tests {
             cx.update(|_, cx| i18n::t(cx, "locale.sample_button")),
             "変更を保存"
         );
-        assert_ne!(width(cx), english, "the button is laid out with the translation");
+        assert_ne!(
+            width(cx),
+            english,
+            "the button is laid out with the translation"
+        );
     }
 
     /// あふれた一覧にはスクロールバーが出て、棒を掴んで引くと一覧が動く。

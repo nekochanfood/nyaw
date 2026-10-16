@@ -598,7 +598,8 @@ mod tests {
         let mut k = Kernel::with_backend(MockBackend::default(), config);
         let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (4, 4)).unwrap();
         assert_eq!(k.status(p).language, Language::Ja);
-        let path = std::env::temp_dir().join(format!("nyaw-kernel-lang-{}.toml", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("nyaw-kernel-lang-{}.toml", std::process::id()));
         k.config_path = Some(path.clone());
         k.apply(p, PanelCommand::Language(Language::En));
         assert_eq!(k.status(p).language, Language::En);
