@@ -45,6 +45,8 @@ pub struct Panel {
     pub pointer: Option<(Hand, Pointer)>,
     /// このパネルのイン・アウトアニメーション。`Overlay::set_animated` で個別に無効化できる。
     pub animated: bool,
+    /// OS へのタッチを解放まで同じパネルへ届ける。
+    capture: bool,
     /// 親（[`Overlay::set_parent`]）。取り付けより優先して、親の姿勢 * `offset` に追従する。
     pub parent: Option<Parent>,
     /// このパネルがナビゲーションバーになっている持ち主（[`Overlay::set_nav_bar`]）。持ち主の下端にくっつき、
@@ -300,6 +302,7 @@ impl Overlay {
             closed: false,
             pointer: None,
             animated: true,
+            capture: false,
             parent: None,
             nav_bar_of: None,
             nav_bar_size: size,
@@ -381,6 +384,18 @@ impl Overlay {
     /// 押している間のポインタのキャプチャ（はみ出してもスライドが続く）を使うか。タッチ方式で使う。
     pub fn set_capture(&mut self, capture: bool) {
         self.capture = capture;
+    }
+
+    pub fn set_panel_capture(&mut self, id: PanelId, capture: bool) {
+        self.panels[id].capture = capture;
+    }
+
+    /// 配信元の解像度に合わせ、パネルの幅を保って縦横比だけ変える。
+    pub fn set_content_resolution(&mut self, id: PanelId, resolution: (u32, u32)) {
+        assert!(resolution.0 > 0 && resolution.1 > 0);
+        let p = &mut self.panels[id];
+        p.resolution = resolution;
+        p.size.y = p.size.x * resolution.1 as f32 / resolution.0 as f32;
     }
 
     /// `hand` が押している間のキャプチャを外す（ドラッグ＆ドロップでほかのパネルへ運べるように）。離すと戻る。
@@ -849,7 +864,12 @@ impl Overlay {
         // 離したフレームも押していたパネルへ送り、Up を届ける。ドラッグ＆ドロップでほかのパネルへ運ぶときは外す（release_capture）。
         let captured = st
             .hover
-            .filter(|&id| self.capture && !st.free && st.select && !self.panels[id].closed)
+            .filter(|&id| {
+                (self.capture || self.panels[id].capture)
+                    && !st.free
+                    && st.select
+                    && !self.panels[id].closed
+            })
             .and_then(|id| plane_hit(&self.panels[id], &aim).map(|(pos, t)| (id, pos, t)));
         // そうでなければ、レーザー上で最も近いパネル。
         let hit = captured.or_else(|| {

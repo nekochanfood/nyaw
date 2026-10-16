@@ -11,7 +11,7 @@ novr = ["vr/novr"]
 openvr = ["vr/openvr"]
 openxr = ["vr/openxr"]
 rendering-host = ["rendering/gpui"]
-test-support = ["vr/test-support"]
+test-support = ["vr/test-support", "desktop/test-support"]
 
 [dependencies]
 keyboard.workspace = true
@@ -19,6 +19,7 @@ os.workspace = true
 vr.workspace = true
 input.workspace = true
 rendering.workspace = true
+desktop.workspace = true
 logger.workspace = true
 
 [dev-dependencies]

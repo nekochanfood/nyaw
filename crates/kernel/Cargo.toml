@@ -7,6 +7,7 @@ license.workspace = true
 # カーネルの最下部は subsystems。設定とパネル操作を束ね、上位には kernel だけを見せる。
 [features]
 rendering-host = ["subsystems/rendering-host"]
+test-support = ["subsystems/test-support"]
 # 実ランタイムとエミュレーター。既定では無効（型とモックだけで済むテストを軽くする）。起動するバイナリが選ぶ。
 novr = ["subsystems/novr"]
 openvr = ["subsystems/openvr"]
