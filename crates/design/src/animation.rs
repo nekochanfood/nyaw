@@ -16,6 +16,8 @@ pub enum Motion {
     Return,
     /// 位置や明るさの移り変わり（ease-in-out）。
     Move,
+    /// 移動と大きさの変化が続く、形の移り変わり（ease-in-out。段が多いので一番遅い長さ）。
+    Morph,
 }
 
 impl Motion {
@@ -24,6 +26,7 @@ impl Motion {
             Motion::Enter => duration_ms::NORMAL,
             Motion::Exit | Motion::Return => duration_ms::QUICK,
             Motion::Move => duration_ms::NORMAL,
+            Motion::Morph => duration_ms::SLOW,
         }
     }
 
@@ -31,7 +34,7 @@ impl Motion {
         match self {
             Motion::Enter | Motion::Return => Easing::EaseOutCubic,
             Motion::Exit => Easing::EaseInCubic,
-            Motion::Move => Easing::EaseInOutCubic,
+            Motion::Move | Motion::Morph => Easing::EaseInOutCubic,
         }
     }
 }

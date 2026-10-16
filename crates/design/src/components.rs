@@ -531,15 +531,17 @@ pub fn card_panel(theme: &Theme) -> Div {
 pub const NAV_BAR_HEIGHT: f32 = BUTTON_HEIGHT + 2.0 * spacing::SM;
 
 /// 触れていないときのナビゲーションバー（丸い線）の幅（帯に対する割合）と高さ（px）。
-const NAV_LINE_WIDTH: f32 = 0.3;
-const NAV_LINE_HEIGHT: f32 = spacing::SM;
+const NAV_LINE_WIDTH: f32 = 0.4;
+const NAV_LINE_HEIGHT: f32 = spacing::MD;
 
 /// ナビゲーションバー: パネルの下に付き、パネルを操作する帯。中央にパネルのタイトル、右端に閉じるボタン（アイコンだけ。
 /// id は `nav-close`）。カード 1 枚の帯で、角丸は `FULL`。押したときの処理（パネルを閉じる）は `on_close` で受け取る。
 /// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
 ///
-/// `open`（0〜1）は広がり具合。0（触れていない）はボタンもタイトルも出さない丸い線で、上端の左右中央から帯へ広がる。
-/// 中身は位置を変えずに不透明度だけで出入りする（線のときも閉じるボタンの場所を指せば、広がって押せる）。
+/// `open`（0〜1）は広がり具合。0（触れていない）はボタンもタイトルも出さない丸い線で、帯の上端に寄せて置く。
+/// 広がるときは、まず線が帯の上下中央へ下りてから、そこを中心に上下左右へ広がる（縮むときは逆に、縮んでから上がる）。
+/// 置き場所のアンカー（帯の上端の左右中央。持ち主に付ける・頭からの距離で大きくするのに使う）とは別に、
+/// 広がりのアンカー（帯の中心）を持つ。中身は帯の中に置いて帯と一緒に動き、広がりの後半で不透明度だけで現れる。
 pub fn nav_bar(
     theme: &Theme,
     open: f32,
@@ -547,61 +549,76 @@ pub fn nav_bar(
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
+    // 前半で動き、後半で広がる。それぞれの区間の中でも ease-in-out にして、つなぎ目で急に変わらないようにする。
+    const MOVE_END: f32 = 0.35;
+    let smooth = |t: f32| {
+        let t = t.clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
     let open = open.clamp(0.0, 1.0);
-    let lerp = |a: f32, b: f32| a + (b - a) * open;
+    let moved = smooth(open / MOVE_END);
+    let grown = smooth((open - MOVE_END) / (1.0 - MOVE_END));
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let height = lerp(NAV_LINE_HEIGHT, NAV_BAR_HEIGHT, grown);
+    // 広がりの中心（帯の上下中央）。動く前は、線の上端が帯の上端に来るところまで上げておく。
+    let center_offset = lerp(-(NAV_BAR_HEIGHT - NAV_LINE_HEIGHT) / 2.0, 0.0, moved);
     // タイトルは帯の中央。長くても閉じるボタンにかからないよう、左右にボタンの分を空けて省略する。
     let side = BUTTON_HEIGHT + 2.0 * spacing::SM;
-    div()
-        .absolute()
-        .inset(px(PANEL_MARGIN))
-        .flex()
-        .justify_center()
-        .child(
-            card(theme)
-                .shadow(panel_shadow())
-                .rounded(px(radius::FULL))
-                .w(gpui::relative(lerp(NAV_LINE_WIDTH, 1.0)))
-                .h(px(lerp(NAV_LINE_HEIGHT, NAV_BAR_HEIGHT))),
-        )
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left_0()
-                .w_full()
-                .h(px(NAV_BAR_HEIGHT))
-                .opacity(open)
-                .flex()
-                .items_center()
-                .px(px(side))
-                .text_color(rgba(theme.neutral_text))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_center()
-                        .truncate()
-                        .text_size(px(font_size::MD))
-                        .font_weight(FontWeight::BOLD)
-                        .child(title.into()),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(spacing::SM))
-                        .right(px(spacing::SM))
-                        .child(
-                            icon_button(
-                                theme,
-                                "nav-close",
-                                &crate::icons::X,
-                                close_tooltip,
-                                Variant::Default,
+    div().absolute().inset(px(PANEL_MARGIN)).child(
+        div()
+            .absolute()
+            .top(px(center_offset))
+            .left_0()
+            .w_full()
+            .h(px(NAV_BAR_HEIGHT))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                card(theme)
+                    .relative()
+                    .shadow(panel_shadow())
+                    .rounded(px(radius::FULL))
+                    .w(gpui::relative(lerp(NAV_LINE_WIDTH, 1.0, grown)))
+                    .h(px(height))
+                    .child(
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .opacity((grown * 2.0 - 1.0).clamp(0.0, 1.0))
+                            .flex()
+                            .items_center()
+                            .px(px(side))
+                            .text_color(rgba(theme.neutral_text))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .text_center()
+                                    .truncate()
+                                    .text_size(px(font_size::MD))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(title.into()),
                             )
-                            .on_click(on_close),
-                        ),
-                ),
-        )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px((height - BUTTON_HEIGHT) / 2.0))
+                                    .right(px(spacing::SM))
+                                    .child(
+                                        icon_button(
+                                            theme,
+                                            "nav-close",
+                                            &crate::icons::X,
+                                            close_tooltip,
+                                            Variant::Default,
+                                        )
+                                        .on_click(on_close),
+                                    ),
+                            ),
+                    ),
+            ),
+    )
 }
 
 /// 一覧の行: 左にアイコンと文字、右に `>`。行は [`list`] のカードに並べる前提で、安静時はカードと同じ色、

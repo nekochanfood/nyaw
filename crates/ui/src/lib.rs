@@ -694,13 +694,13 @@ impl Render for NavBar {
         let to = if state.status.pointed { 1.0 } else { 0.0 };
         if to != self.to {
             self.to = to;
-            let motion = if to == 1.0 {
-                design::animation::Motion::Enter
-            } else {
-                design::animation::Motion::Exit
-            };
+            // 広がるのも縮むのも落ち着いて動く（ease-in-out）。
             if cx.has_global::<design::Motion>() {
-                self.anim = Some(design::animation::Animation::new(self.open, to, motion));
+                self.anim = Some(design::animation::Animation::new(
+                    self.open,
+                    to,
+                    design::animation::Motion::Morph,
+                ));
             } else {
                 (self.open, self.anim) = (to, None);
             }
