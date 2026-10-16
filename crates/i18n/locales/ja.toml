@@ -39,6 +39,9 @@ thu = "木"
 fri = "金"
 sat = "土"
 
+[dashboard]
+title = "ダッシュボード"
+
 [wrist]
 # chrono の書式（https://docs.rs/chrono/latest/chrono/format/strftime）。曜日は {weekday}。
 date = "%-m月%-d日（{weekday}）"

@@ -39,6 +39,9 @@ thu = "Thu"
 fri = "Fri"
 sat = "Sat"
 
+[dashboard]
+title = "Dashboard"
+
 [wrist]
 # chrono format (https://docs.rs/chrono/latest/chrono/format/strftime) with the weekday as {weekday}.
 date = "{weekday} %b %-d"

@@ -574,6 +574,9 @@ fn inputs(profile: &str, a: HandActions) -> Vec<(String, f32)> {
         ("squeeze/value", on(a.grab)),
         ("squeeze/click", on(a.grab)),
         (menu, on(a.menu)),
+        // X ボタン: Touch は x/click、Index は左手の a/click（入力層が機種ごとに片方を引く）。
+        ("x/click", on(a.dashboard)),
+        ("a/click", on(a.dashboard)),
         ("thumbstick/x", a.scroll.x),
         ("thumbstick/y", a.scroll.y),
         ("trackpad/x", a.scroll.x),
@@ -645,12 +648,14 @@ mod tests {
             select: true,
             grab: true,
             menu: true,
+            dashboard: true,
             scroll: crate::Vec2::new(0.5, -1.0),
         };
         let v = inputs("valve/index_controller", a);
         assert_eq!(value(&v, "select/click"), Some(1.0));
         assert_eq!(value(&v, "squeeze/value"), Some(1.0));
         assert_eq!(value(&v, "b/click"), Some(1.0));
+        assert_eq!(value(&v, "a/click"), Some(1.0));
         assert_eq!(value(&v, "thumbstick/y"), Some(-1.0));
         let v = inputs("htc/vive_controller", a);
         assert_eq!(value(&v, "menu/click"), Some(1.0));
