@@ -66,6 +66,10 @@ opt-level = 2
 [profile.dev.package.vr]
 opt-level = 2
 
+# 配信は毎フレーム全画素を CPU で並べ替えるので、デバッグビルドでも最適化する
+[profile.dev.package.desktop]
+opt-level = 2
+
 # プロファイラは計測する側なので、その描画で計測を重くしないよう最適化する
 [profile.dev.package.profiler]
 opt-level = 2
