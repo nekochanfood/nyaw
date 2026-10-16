@@ -12,9 +12,11 @@ use gpui::{
 use palette::{FromColor, Mix, Oklab, Srgb};
 
 mod scrollbar;
+mod navigation;
 mod slider;
 mod tooltip;
 pub use scrollbar::{Elastic, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
+pub use navigation::{Navigation, navigation};
 pub use slider::{Slider, slider};
 pub use tooltip::*;
 
