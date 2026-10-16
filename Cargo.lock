@@ -4556,9 +4556,7 @@ dependencies = [
  "gpui_wgpu",
  "gpui_windows",
  "logger",
- "raw-window-handle",
  "vr",
- "windows 0.62.2",
 ]
 
 [[package]]
