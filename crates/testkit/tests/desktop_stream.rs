@@ -55,7 +55,10 @@ fn stopped_stream_returns_to_normal_ui_input(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| PointerTest::default());
     let (stream, control) = mock::stream();
     kit.kernel.set_desktop_stream(0, stream).unwrap();
-    kit.kernel.apply(0, PanelCommand::Stream(None));
+    kit.kernel.apply(
+        0,
+        PanelCommand::Stream(None, kernel::desktop::DEFAULT_FRAME_RATE),
+    );
     kit.step().click("tap-me");
     assert_eq!(kit.read(|v| v.taps), 1);
     assert!(control.stopped());

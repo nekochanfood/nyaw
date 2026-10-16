@@ -44,9 +44,16 @@ impl<B: VrBackend> Kernel<B> {
             .is_some_and(|p| p.stream.is_some() && p.status == Status::Streaming)
     }
 
-    pub(super) fn start_desktop(&mut self, panel: PanelId, source: Option<desktop::Source>) {
+    pub(super) fn start_desktop(
+        &mut self,
+        panel: PanelId,
+        source: Option<desktop::Source>,
+        frame_rate: u32,
+    ) {
         if let Some(source) = source {
-            match Stream::start(source).and_then(|stream| self.set_desktop_stream(panel, stream)) {
+            match Stream::start_at(source, frame_rate)
+                .and_then(|stream| self.set_desktop_stream(panel, stream))
+            {
                 Ok(()) => (),
                 Err(error) => {
                     logger::warn!("desktop capture failed", panel = panel, error = error);
@@ -310,7 +317,10 @@ mod tests {
     #[test]
     fn stopping_restores_original_aspect_and_failure_releases_stream() {
         let (mut kernel, panel, control) = setup();
-        kernel.apply(panel, PanelCommand::Stream(None));
+        kernel.apply(
+            panel,
+            PanelCommand::Stream(None, desktop::DEFAULT_FRAME_RATE),
+        );
         assert!(control.stopped());
         assert_eq!(kernel.panel(panel).resolution, (100, 50));
         assert_eq!(kernel.status(panel).desktop, None);

@@ -59,8 +59,8 @@ pub enum PanelCommand {
     Parent(Option<Parent>),
     /// このパネルを、その持ち主のナビゲーションバーにする（持ち主の下端に付き、頭から見た大きさを保つ）。
     NavBar(PanelId),
-    /// デスクトップの配信を開始・停止する。取得と入力注入はサブシステムのワーカーで行う。
-    Stream(Option<desktop::Source>),
+    /// デスクトップの配信を開始・停止する。第2引数は取得の上限 FPS（1〜240）。
+    Stream(Option<desktop::Source>, u32),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -422,7 +422,9 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay.detach(panel);
                 self.overlay.set_pose(panel, self.hmd().leveled() * offset);
             }
-            PanelCommand::Stream(source) => self.start_desktop(panel, source),
+            PanelCommand::Stream(source, frame_rate) => {
+                self.start_desktop(panel, source, frame_rate)
+            }
         }
     }
 
