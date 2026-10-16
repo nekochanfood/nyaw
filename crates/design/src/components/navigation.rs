@@ -1,6 +1,6 @@
 //! 画面の積み重ね（push 遷移）。設定の段階的開示のように、選んだ項目の詳しい画面を右から重ねて出す。
 //!
-//! - 積むと新しい画面が右から左へスライドして入り、下の画面は少し左へずれて暗くなる。戻すと逆に右へ抜ける。
+//! - 積むと新しい画面が右から左へスライドして入り、下の画面は少し左へずれる。戻すと逆に右へ抜ける。
 //!   積み下ろしは呼び出し側が自分の `Vec` で行い、部品は前の描画との差（増えた・減った）から動きを決める。
 //! - スワイプバック: 1 枚以上積んでいるとき、押したまま右から左へ動かすと上の画面が指に付いて左へずれ、下の画面が右から覗く。
 //!   幅の半分を越えるか、勢いよく払って離すと `on_back` を呼ぶ（呼び出し側が下ろすと、離した所から左へ抜ける）。
@@ -22,12 +22,10 @@ use gpui::{
 };
 
 use super::keep_drawing;
-use crate::{Motion, Theme, scale};
+use crate::{Motion, Theme};
 
 /// 下の画面が上の画面の幅に対してずれる割合（奥にあるように、上の画面より遅れて動く）。
 const PARALLAX: f32 = 0.3;
-/// 上の画面が乗っている間の下の画面の暗さ（不透明度 0..=1）。
-const DIM: f32 = 0.35;
 /// スワイプと決めるまでのマウスの動き（px）。タッチは UI 層が同じだけ待ってから送ってくる。
 const SLOP: f32 = 12.0;
 /// 離したときにこれ以上進んでいれば戻る（幅に対する割合）。
@@ -446,16 +444,8 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
             .overflow_hidden()
             .child(watch);
         if let Some((b, level)) = &below {
-            // 下の画面は、上の画面が抜けきると定位置、乗りきると幅の PARALLAX だけ上の画面の反対側へずれて暗い。
-            let alpha = ((1.0 - t) * DIM * 255.0) as u32;
-            root = root
-                .child(page(b, *level, -dir * (1.0 - t) * width * PARALLAX, window, cx))
-                .child(
-                    div()
-                        .absolute()
-                        .size_full()
-                        .bg(rgba(scale::BLACK & 0xffff_ff00 | alpha)),
-                );
+            // 下の画面は、上の画面が抜けきると定位置、乗りきると幅の PARALLAX だけ上の画面の反対側へずれる。
+            root = root.child(page(b, *level, -dir * (1.0 - t) * width * PARALLAX, window, cx));
         }
         let (top, level) = top;
         root = root.child(

@@ -4,7 +4,7 @@
 
 use gpui::{Render, TestAppContext};
 use kernel::{PanelCommand, PointerMode};
-use testing::{NavPage, NavTest, Settings};
+use testing::{BACKGROUND, NavPage, NavTest, SIDEBAR_SELECTED_BG, Settings};
 use testkit::{Action, Driver, Hand, Vec2, VrKit};
 
 /// Holds the trigger near the right end of `selector`'s row and moves left by a bit more than half the page width, then releases.
@@ -31,8 +31,14 @@ fn items_push_pages_and_the_back_button_pops(cx: &mut TestAppContext) {
     assert_eq!(stack(&mut kit), [NavPage::Root, NavPage::Detail(1)]);
     kit.click("nav-deeper");
     assert_eq!(stack(&mut kit).len(), 3);
-    kit.click("nav-back").click("nav-back");
+    kit.click("nav-back");
+    // The back button vanishes with its page while pointed at, so its tooltip must go too.
+    kit.hover("nav-back").step();
+    let tip = |kit: &mut VrKit<NavTest>| kit.panel_control(|c| c.tooltip.get(&Hand::Right).cloned());
+    assert!(tip(&mut kit).is_some(), "the back button has a tooltip");
+    kit.click("nav-back").step().step();
     assert_eq!(stack(&mut kit), [NavPage::Root]);
+    assert_eq!(tip(&mut kit), None, "the tooltip left with the button");
     assert_eq!(kit.read(|v| v.swiped_back), 0);
 }
 
@@ -116,4 +122,15 @@ fn settings_content_pushes_details_and_swipes_back(cx: &mut TestAppContext) {
     // Switching category starts again from its list.
     kit.click("setting-2").click("settings-account");
     assert_eq!(kit.read(|v| (v.category, v.pages.clone())), (1, vec![None]));
+}
+
+#[gpui::test]
+fn settings_sidebar_colors_only_the_selected_category(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.hover("setting-0");
+    assert_eq!(kit.color_at("settings-general"), SIDEBAR_SELECTED_BG);
+    assert_eq!(kit.color_at("settings-privacy"), BACKGROUND, "no background");
+    kit.click("settings-privacy").hover("setting-0");
+    assert_eq!(kit.color_at("settings-privacy"), SIDEBAR_SELECTED_BG);
+    assert_eq!(kit.color_at("settings-general"), BACKGROUND);
 }

@@ -56,6 +56,10 @@ pub const DROP_TARGET_BG: u32 = 0x30a050;
 pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_bg_active);
 /// ダイアログの背景色（親より明るくして重なりが見えるように）。
 pub const DIALOG_BG: u32 = rgb24(THEME.card);
+/// 画面の地（`components::panel`）。設定画面のサイドバーの、選んでいない行も同じ色（背景が無いように見える）。
+pub const BACKGROUND: u32 = rgb24(THEME.background);
+/// 設定画面のサイドバーで選んでいる行の色。
+pub const SIDEBAR_SELECTED_BG: u32 = rgb24(THEME.accent_bg_active);
 /// Testing パネルの大きさ（m）と解像度（px）。ボタンが高い（最小ヒット領域）ので、既定の 0.8m × 0.6m では入りきらない。
 pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 1.0);
 pub const TESTING_PX: (u32, u32) = (1200, 1000);
@@ -1293,7 +1297,7 @@ const SETTINGS_ITEMS: [(&str, &design::Icon); 5] = [
 ];
 
 /// 設定画面（`settings-test`）。左のサイドバーにカテゴリの一覧、区切り線を挟んで右に選んだカテゴリの項目の一覧。
-/// 地は背景色（`components::panel`）、一覧の行はカード色（`components::list`）。選んでいるカテゴリは `selected` で光る。
+/// 地は背景色（`components::panel`）。サイドバーの行（`components::sidebar_item`）は背景が無く、選んでいるカテゴリだけアクセントの色が付く。中身の一覧の行はカード色（`components::list`）。
 /// 中身は積み重ね（[`components::navigation`]）: 項目を押すと右から詳しい画面が入り、`settings-back` か右から左へのスワイプで戻る。
 #[derive(Default)]
 pub struct Settings {
@@ -1314,17 +1318,33 @@ impl Settings {
     }
 }
 
-/// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。
-fn heading(text: impl IntoElement) -> Div {
+/// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。タイトルは左右の中央、`left` / `right` のボタンは端に寄せる。
+/// 高さはアイコンボタンと同じなので、ボタンは上下にも左右にも余白を足さない（パネルの内側の余白だけが四方に揃う）。
+fn heading(
+    title: impl IntoElement,
+    left: Option<gpui::AnyElement>,
+    right: Option<gpui::AnyElement>,
+) -> Div {
     div()
+        .relative()
         .h(px(54.0))
-        .px(px(spacing::LG))
         .flex()
         .items_center()
         .justify_between()
         .text_size(px(font_size::LG))
         .font_weight(FontWeight::BOLD)
-        .child(text)
+        // ボタンの有無で中央がずれないよう、タイトルは重ねて置く。
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(title),
+        )
+        .child(div().flex().children(left))
+        .child(div().flex().children(right))
 }
 
 /// 押すと `view` の積み重ねに `page` を積む・下ろす（`None`）。
@@ -1352,8 +1372,7 @@ impl Render for Settings {
             .iter()
             .enumerate()
             .map(|(i, &(id, glyph, key, _))| {
-                components::list_item(&theme, id, glyph, i18n::t(cx, key))
-                    .selected(i == self.category)
+                components::sidebar_item(&theme, id, glyph, i18n::t(cx, key), i == self.category)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.category = i;
                         this.pages = vec![None];
@@ -1374,11 +1393,12 @@ impl Render for Settings {
                 i18n::t(cx, "common.close"),
                 Variant::OnBackground,
             )
-            .on_click(command(panel, PanelCommand::Close));
+            .on_click(command(panel, PanelCommand::Close))
+            .into_any_element();
             let (head, rows) = match *p {
                 // カテゴリの項目の一覧。押すと詳しい画面を積む。
                 None => (
-                    heading(i18n::t(cx, title)),
+                    heading(i18n::t(cx, title), None, Some(close)),
                     SETTINGS_ITEMS[..count]
                         .iter()
                         .enumerate()
@@ -1396,21 +1416,19 @@ impl Render for Settings {
                 // 項目の詳しい画面（ダミー）。
                 Some(n) => (
                     heading(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(spacing::SM))
-                            .child(
-                                components::icon_button(
-                                    &theme,
-                                    "settings-back",
-                                    &design::icons::CARET_LEFT,
-                                    i18n::t(cx, "common.back"),
-                                    Variant::OnBackground,
-                                )
-                                .on_click(stack_op(&this, pages, None)),
+                        i18n::tf(cx, "settings.item", &[("n", &(n + 1))]),
+                        Some(
+                            components::icon_button(
+                                &theme,
+                                "settings-back",
+                                &design::icons::CARET_LEFT,
+                                i18n::t(cx, "common.back"),
+                                Variant::OnBackground,
                             )
-                            .child(i18n::tf(cx, "settings.item", &[("n", &(n + 1))])),
+                            .on_click(stack_op(&this, pages, None))
+                            .into_any_element(),
+                        ),
+                        Some(close),
                     ),
                     SETTINGS_ITEMS[..3]
                         .iter()
@@ -1431,7 +1449,7 @@ impl Render for Settings {
                 .flex()
                 .flex_col()
                 .gap(px(spacing::MD))
-                .child(head.child(close))
+                .child(head)
                 .child(components::list(&theme, rows))
                 .into_any_element()
         };
@@ -1445,8 +1463,8 @@ impl Render for Settings {
                     .flex()
                     .flex_col()
                     .gap(px(spacing::MD))
-                    .child(heading(i18n::t(cx, "settings.title")))
-                    .child(components::list(&theme, categories)),
+                    .child(heading(i18n::t(cx, "settings.title"), None, None))
+                    .child(div().flex().flex_col().gap(px(spacing::XS)).children(categories)),
             )
             // サイドバーと中身の区切り。
             .child(
@@ -1483,7 +1501,7 @@ pub enum NavPage {
 }
 
 /// 画面の積み重ね（push 遷移とスワイプバック）を試す画面（`nav-test`）。設定画面の中身と同じ部品。
-/// - 項目を押すと右から次の画面が入り、`nav-back` か、押したまま右から左へ動かす（スワイプバック）と戻る。`nav-depth` に積んだ数。
+/// - 項目を押すと右から次の画面が入り、`nav-back` か、押したまま右から左へ動かす（スワイプバック）と戻る。
 /// - スワイプして離した所のボタン（`nav-tap`）は押されない。スライダー（`nav-slider`）のハンドルを左へ動かしても戻らない。
 /// - パネルを掴んでいる手のポインタは無視する（掴みながらトリガーで動かしても戻らず、もう一方の手ではスワイプできる）。
 #[derive(Default)]
@@ -1521,8 +1539,7 @@ impl Render for NavTest {
                 .size_full()
                 .flex()
                 .flex_col()
-                .gap(px(spacing::MD))
-                .p(px(spacing::MD));
+                .gap(px(spacing::MD));
             match *p {
                 NavPage::Root => body.child(components::list(
                     &theme,
@@ -1584,42 +1601,32 @@ impl Render for NavTest {
             NavPage::Detail(n) => i18n::tf(cx, "nav.item", &[("n", &(n + 1))]),
             NavPage::Deep(n) => i18n::tf(cx, "nav.deeper", &[("n", &(n + 1))]),
         };
-        let mut head = div().flex().items_center().gap(px(spacing::SM));
-        if depth > 0 {
-            head = head.child(
-                components::icon_button(
-                    &theme,
-                    "nav-back",
-                    &design::icons::CARET_LEFT,
-                    i18n::t(cx, "common.back"),
-                    Variant::OnBackground,
-                )
-                .on_click(stack_op(&cx.entity(), stack, None)),
-            );
-        }
+        let back_button = (depth > 0).then(|| {
+            components::icon_button(
+                &theme,
+                "nav-back",
+                &design::icons::CARET_LEFT,
+                i18n::t(cx, "common.back"),
+                Variant::OnBackground,
+            )
+            .on_click(stack_op(&cx.entity(), stack, None))
+            .into_any_element()
+        });
+        let close = components::icon_button(
+            &theme,
+            "close-nav",
+            &design::icons::X,
+            i18n::t(cx, "common.close"),
+            Variant::OnBackground,
+        )
+        .on_click(command(self.panel, PanelCommand::Close))
+        .into_any_element();
         let back = cx.entity();
         components::panel(&theme)
             .flex()
             .flex_col()
             .gap(px(spacing::MD))
-            .child(
-                heading(head.child(title))
-                    .child(
-                        div()
-                            .debug_selector(|| "nav-depth".into())
-                            .child(format!("{depth}")),
-                    )
-                    .child(
-                        components::icon_button(
-                            &theme,
-                            "close-nav",
-                            &design::icons::X,
-                            i18n::t(cx, "common.close"),
-                            Variant::OnBackground,
-                        )
-                        .on_click(command(self.panel, PanelCommand::Close)),
-                    ),
-            )
+            .child(heading(title, back_button, Some(close)))
             .child(div().flex_1().child(components::navigation(
                 &theme,
                 "nav",
