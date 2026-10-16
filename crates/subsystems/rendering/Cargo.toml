@@ -7,8 +7,6 @@ license.workspace = true
 [features]
 gpui = [
     "dep:gpui",
-    "dep:raw-window-handle",
-    "dep:windows",
     "dep:gpui_windows",
     "dep:gpui_linux",
     "dep:gpui_wgpu",
@@ -19,14 +17,9 @@ vr.workspace = true
 logger.workspace = true
 # render_to_image が一般公開されたら test-support を外す。
 gpui = { workspace = true, features = ["test-support"], optional = true }
-raw-window-handle = { version = "0.6", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 gpui_windows = { workspace = true, features = ["test-support"], optional = true }
-windows = { optional = true, version = "0.62", features = [
-    "Win32_Foundation",
-    "Win32_UI_WindowsAndMessaging",
-] }
 
 # Linux は headless のウィンドウを wgpu で描いて読み戻す（vendor/gpui_linux の test-support）。
 [target.'cfg(target_os = "linux")'.dependencies]

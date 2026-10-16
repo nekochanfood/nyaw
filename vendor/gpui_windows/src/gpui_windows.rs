@@ -42,5 +42,7 @@ pub use platform::WindowsPlatform;
 // NYAW: 待たない読み戻しの受け取り口。
 #[cfg(any(test, feature = "test-support"))]
 pub use directx_renderer::collect_readback;
+// NYAW: パネルの LOD。
+pub use window::with_render_scale;
 
 pub(crate) use windows::Win32::Foundation::HWND;
