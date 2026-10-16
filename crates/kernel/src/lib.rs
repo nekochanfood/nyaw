@@ -231,6 +231,14 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.panel(id)
     }
 
+    /// `owner` に付いている開いたナビゲーションバー。
+    pub fn nav_bar(&self, owner: PanelId) -> Option<PanelId> {
+        (0..self.overlay.len()).find(|&i| {
+            let p = self.overlay.panel(i);
+            !p.closed && p.nav_bar_of == Some(owner)
+        })
+    }
+
     /// 距離による描画解像度の段階（LOD0〜3）。Mid は 2 / 4 / 8 m で切り替える（下げるのは [`LOD_HYSTERESIS`] だけ近づいてから）。
     /// 距離は密度で換算する（[`LOD_PX_PER_M`]）。2 倍に拡大したパネルは半分の距離として扱う。
     /// [`Self::tick`] で決めた値（まだ tick していないパネルはその場で求める）。

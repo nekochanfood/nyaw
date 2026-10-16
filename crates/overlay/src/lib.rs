@@ -1070,7 +1070,14 @@ impl Overlay {
             let o = &self.panels[owner];
             let (opacity, dim) = (o.opacity, o.dim);
             let up = o.pose.orientation * Vec3::Y;
-            let margin = PANEL_MARGIN * o.displayed_size().y / o.resolution.1 as f32;
+            // 配信中のパネル（`capture`）は絵を窓いっぱいに送り、影の余白が無い。余白があるものとして内側に付けると、
+            // バーが絵に食い込み、ほかのパネルより余白が狭く見える。
+            // ponytail: 配信中かどうかで見分けている。余白の無い中身がほかにも出たら、パネルに余白の有無を持たせる。
+            let margin = if o.capture {
+                0.0
+            } else {
+                PANEL_MARGIN * o.displayed_size().y / o.resolution.1 as f32
+            };
             let anchor = o.pose.position - up * (o.displayed_size().y / 2.0 - margin);
             let rotation = o.pose.orientation;
             let eye = self.hmd.position;

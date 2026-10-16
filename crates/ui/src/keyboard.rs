@@ -163,8 +163,20 @@ pub fn send_key(target: PanelId, input: KeyboardInput, cx: &mut App) {
     });
 }
 
+/// `target` のナビゲーションバーを描き直させる（OS キーボードのトグルの色をキーボードの出入りに合わせる）。
+fn redraw_nav_bar(target: PanelId, cx: &mut App) {
+    let ctl = cx.default_global::<crate::PanelControl>();
+    if let Some(&bar) = ctl.nav_bars.get(&target) {
+        ctl.panels.entry(bar).or_default().redraw = true;
+    }
+}
+
 pub fn dismiss_keyboard(cx: &mut App) {
-    if let Some(session) = cx.default_global::<InputRouting>().active.take()
+    let session = cx.default_global::<InputRouting>().active.take();
+    if let Some(session) = session {
+        redraw_nav_bar(session.target, cx);
+    }
+    if let Some(session) = session
         && let Some(panel) = session.panel
     {
         cx.default_global::<crate::PanelControl>()
@@ -195,6 +207,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         generation,
     });
     routing.error = None;
+    redraw_nav_bar(target, cx);
     let resolution = panel_resolution();
     cx.default_global::<crate::PanelControl>().spawns.push(
         crate::PanelSpec::spawn(target, move |panel, _, cx| {
@@ -267,8 +280,9 @@ pub fn panel_closed(panel: PanelId, cx: &mut App) {
     }
     let routing = cx.global_mut::<InputRouting>();
     routing.receivers.remove(&panel);
-    if routing.active.is_some_and(|s| s.panel == Some(panel)) {
+    if let Some(session) = routing.active.filter(|s| s.panel == Some(panel)) {
         routing.active = None;
+        redraw_nav_bar(session.target, cx);
     } else if routing.active.is_some_and(|s| s.target == panel) {
         dismiss_keyboard(cx);
     }
@@ -364,6 +378,28 @@ mod tests {
                 ..Stroke::default()
             },
         }
+    }
+
+    /// OS キーボードのトグルの色を合わせるため、キーボードを出す・閉じるたびに持ち主のバー（だけ）を描き直させる。
+    #[gpui::test]
+    fn showing_and_dismissing_redraws_the_owners_nav_bar(cx: &mut TestAppContext) {
+        let redraw = |cx: &mut App, id| {
+            std::mem::take(
+                &mut cx
+                    .default_global::<crate::PanelControl>()
+                    .panels
+                    .entry(id)
+                    .or_default()
+                    .redraw,
+            )
+        };
+        cx.update(|cx| {
+            cx.default_global::<crate::PanelControl>().nav_bars.insert(0, 5);
+            assert!(toggle_keyboard(0, cx));
+            assert!(redraw(cx, 5) && !redraw(cx, 0));
+            assert!(!toggle_keyboard(0, cx));
+            assert!(redraw(cx, 5));
+        });
     }
 
     #[gpui::test]
