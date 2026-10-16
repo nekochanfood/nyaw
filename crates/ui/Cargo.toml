@@ -31,9 +31,9 @@ harness = false
 name = "panel_lod"
 harness = false
 
-# フォールバックで描いた日本語が、そのフォントを直に指定したときと同じ字形になるか（実プラットフォーム + GPU）。
+# 埋め込みフォントの太さ（NORMAL / MEDIUM / BOLD）がそれぞれの字形で描かれるか（実プラットフォーム + GPU）。
 [[test]]
-name = "jp_fallback"
+name = "font_weights"
 harness = false
 
 # ベンチマーク。常には流さない（`-- --ignored` のときだけ）。

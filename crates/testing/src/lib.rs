@@ -1687,25 +1687,25 @@ impl Render for TestingFont {
                 "font-latin",
                 24.0,
                 FontWeight::NORMAL,
-                "Noto Sans: The quick brown fox jumps over the lazy dog 0123456789",
+                "Gen Interface JP: The quick brown fox jumps over the lazy dog 0123456789",
             ))
             .child(sample(
                 "font-latin-bold",
                 24.0,
                 FontWeight::BOLD,
-                "Noto Sans Bold: Sphinx of black quartz, judge my vow",
+                "Gen Interface JP Bold: Sphinx of black quartz, judge my vow",
             ))
             .child(sample(
                 "font-ja",
                 24.0,
                 FontWeight::NORMAL,
-                "Noto Sans JP: 吾輩は猫である。名前はまだ無い。",
+                "Gen Interface JP 和文: 吾輩は猫である。名前はまだ無い。",
             ))
             .child(sample(
                 "font-ja-bold",
                 24.0,
                 FontWeight::BOLD,
-                "Noto Sans JP 太字: いろはにほへと ちりぬるを",
+                "Gen Interface JP 太字: いろはにほへと ちりぬるを",
             ))
             .child(sample(
                 "font-mixed",
