@@ -532,7 +532,7 @@ pub const fn dialog_height(actions: u32) -> u32 {
     let h = 2.0 * PANEL_MARGIN
         + 2.0 * spacing::XL
         + DIALOG_ICON
-        + spacing::LG
+        + spacing::XL
         + font_size::LG * DIALOG_LEADING
         + spacing::SM
         + DIALOG_MIN_LINES * font_size::MD * DIALOG_LEADING
@@ -591,7 +591,7 @@ impl RenderOnce for Dialog {
             .read(cx)
             .clone();
         let body_id = format!("{id}-body");
-        // 余白は縁 `XL`、アイコン → タイトル `LG`、タイトル → 概要 `SM`（ひとまとまり）、文 → ボタン `XL`。
+        // 余白は縁 `XL`、アイコン → タイトル `XL`（アイコンの上の縁と揃える）、タイトル → 概要 `SM`（ひとまとまり）、文 → ボタン `XL`。
         // 縮められる（min_h_0）のは概要の枠だけなので、収まらなければ概要だけが縮んでスクロールする。
         // 横の `SM` は、スクロールバーが文にかからないための余白。
         let body = div()
@@ -621,7 +621,7 @@ impl RenderOnce for Dialog {
             .child(
                 div()
                     .flex_none()
-                    .mt(px(spacing::LG))
+                    .mt(px(spacing::XL))
                     .text_center()
                     .text_size(px(font_size::LG))
                     .line_height(px(font_size::LG * DIALOG_LEADING))
