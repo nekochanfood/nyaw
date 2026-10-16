@@ -1208,11 +1208,30 @@ impl Render for TooltipTest {
     }
 }
 
-/// ダイアログの大きさ。
-/// 上からアイコン・タイトル・概要・ボタン（2 個）。文の幅 344px。高さは、概要が収まらずスクロールしても
-/// 3 行は見える下限（`components::dialog_height`）。1px = 1mm。
-const DIALOG_PX: (u32, u32) = (440, components::dialog_height(2));
-const DIALOG_SIZE: Vec2 = Vec2::new(DIALOG_PX.0 as f32 / 1000.0, DIALOG_PX.1 as f32 / 1000.0);
+/// ダイアログの幅（px）。上からアイコン・タイトル・概要・ボタン（2 個）。文の幅 344px。1px = 1mm。
+const DIALOG_WIDTH: u32 = 440;
+
+/// 文言のキーが `title` / `description` のダイアログを、文に合った高さ（`components::dialog_height`）で `spec` に与える。
+fn dialog_sized(
+    spec: PanelSpec,
+    title: &str,
+    description: &str,
+    window: &Window,
+    cx: &App,
+) -> PanelSpec {
+    let h = components::dialog_height(
+        window,
+        DIALOG_WIDTH,
+        &i18n::t(cx, title),
+        &i18n::t(cx, description),
+        2,
+    );
+    spec.sized(
+        Vec2::new(DIALOG_WIDTH as f32 / 1000.0, h as f32 / 1000.0),
+        (DIALOG_WIDTH, h),
+    )
+}
+
 /// 設定画面の大きさ（m）と解像度（px）。1px = 1mm。
 pub const SETTINGS_SIZE: Vec2 = Vec2::new(1.024, 0.768);
 pub const SETTINGS_PX: (u32, u32) = (1024, 768);
@@ -1628,9 +1647,9 @@ impl Render for DialogTest {
                     .child({
                         let me = me.clone();
                         button(&theme, "open-dialog", i18n::t(cx, "dialog.open"), false).on_click(
-                            move |_, _, cx| {
+                            move |_, window, cx| {
                                 let me = me.clone();
-                                cx.default_global::<PanelControl>().spawns.push(
+                                let spec = dialog_sized(
                                     PanelSpec::child(panel, true, move |id, _, _| {
                                         Dialog::new(
                                             id,
@@ -1641,9 +1660,13 @@ impl Render for DialogTest {
                                         )
                                     })
                                     // ダイアログは答えて閉じるもの。ナビゲーションバーは付けない。
-                                    .without_nav_bar()
-                                    .sized(DIALOG_SIZE, DIALOG_PX),
-                                )
+                                    .without_nav_bar(),
+                                    "dialog.dismiss_title",
+                                    "dialog.dismiss_body",
+                                    window,
+                                    cx,
+                                );
+                                cx.default_global::<PanelControl>().spawns.push(spec)
                             },
                         )
                     })
@@ -1654,23 +1677,27 @@ impl Render for DialogTest {
                             i18n::t(cx, "dialog.open_modal"),
                             false,
                         )
-                        .on_click(move |_, _, cx| {
+                        .on_click(move |_, window, cx| {
                             let me = me.clone();
-                            cx.default_global::<PanelControl>().spawns.push(
+                            let spec = dialog_sized(
                                 PanelSpec::child(panel, true, move |id, _, _| {
                                     Dialog::new(
                                         id,
                                         me,
                                         &design::icons::WARNING,
                                         "dialog.required_title",
-                                        // わざと長い文。収まらない分は文の側だけがスクロールし、ボタンは残る。
+                                        // わざと長い文。3 行を超える分は文の側だけがスクロールし、ボタンは残る。
                                         "dialog.required_body",
                                     )
                                 })
                                 .without_dismiss()
-                                .without_nav_bar()
-                                .sized(DIALOG_SIZE, DIALOG_PX),
-                            )
+                                .without_nav_bar(),
+                                "dialog.required_title",
+                                "dialog.required_body",
+                                window,
+                                cx,
+                            );
+                            cx.default_global::<PanelControl>().spawns.push(spec)
                         }),
                     ),
             )
