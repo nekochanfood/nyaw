@@ -1,5 +1,23 @@
 # 日本語。en.toml のキーをすべて同じ {差し込み} で持つこと（i18n のテストが確かめる）。
 
+[audio]
+title = "立体音響"
+instructions = "音はこのパネルのスピーカーから鳴ります。パネルを動かしたり頭を回したりすると、聞こえる向きが変わります。音は重ねて鳴らせます。"
+left = "左"
+centre = "中央"
+right = "右"
+loop = "ループ {n}"
+stop = "すべて止める"
+spatial = "立体化"
+layout_auto = "自動"
+layout_mono = "モノラル"
+layout_stereo = "ステレオ"
+status = "{count} 個再生中 · {spatializer}"
+spatializer_starting = "音声出力を準備中"
+spatializer_steam = "Steam Audio（HRTF）"
+spatializer_panning = "パンニング（Steam Audio が見つからない）"
+spatializer_unavailable = "音声出力なし"
+
 [common]
 close = "閉じる"
 default = "既定"

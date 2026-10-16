@@ -5,6 +5,7 @@ members = [
     "crates/subsystems/vr",
     "crates/subsystems/input",
     "crates/subsystems/rendering",
+    "crates/subsystems/audio",
 ]
 # vendor/ は手を入れた zed のクレートの写し（それぞれの Cargo.toml）。ワークスペースには入れない
 exclude = ["vendor"]
@@ -26,6 +27,7 @@ gpui_wgpu = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31
 logger = { path = "crates/logger" }
 os = { path = "crates/subsystems/os" }
 rendering = { path = "crates/subsystems/rendering" }
+audio = { path = "crates/subsystems/audio" }
 kernel = { path = "crates/kernel", default-features = false }
 subsystems = { path = "crates/subsystems", default-features = false }
 vr = { path = "crates/subsystems/vr", default-features = false }

@@ -12,6 +12,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | カーネル / Subsystems / ランタイム | `crates/subsystems/vr` | OpenVR / OpenXR / novr の差を吸収。`Subsystems` が `VrBackend` を所有し、上位は共通フレームを受け取る。novr はデスクトップのウィンドウで VR を模すエミュレーター | `connect`, `VrBackend`, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`）, `Device`, `RawController`, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
 | カーネル / Subsystems / 入力 | `crates/subsystems/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController, prev) -> ControllerState`, `source(profile, Action)` / `scroll_source(profile)`（逆引き） |
 | カーネル / Subsystems / 描画 | `crates/subsystems/rendering` | GPUI の非表示描画先・読み戻し・描画密度と OS 差、ランタイムへの画像転送・不透明度 / 相対追従の能力差・描画資源の保持と解放。UI は `kernel::rendering` 経由で使う | `Surface::{new, store, present(opacity, dim), place, show, release}`, `gpui::{capture, read_back, open_window, set_render_lod}` |
+| カーネル / Subsystems / 音声 | `crates/subsystems/audio` | OS の音声出力（cpal: Windows は WASAPI、Linux は ALSA）・WAV の読み込み・Steam Audio による立体化（HRTF）。出力・ミックス・立体化は別スレッドで、メインスレッドは命令を送るだけ。音は「スピーカー」（音源）から鳴る | `Engine::{open, offline, render, set_listener, set_speaker, remove_speaker, play, play_sound, stop, stop_speaker, poll, playing, spatializer}`, `Speaker`, `Layout::{Auto, Mono, Stereo}`, `Channels`, `Clip`, `Sound::{File, Wav}`, `Spatializer` |
 | 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動、親子関係（子は親に追従、子が開いている間の親は暗くなり（子のフェードと同じ時間で暗転・復帰）入力を受けない、親が閉じれば子も閉じる）、ナビゲーションバー（持ち主の地の下端の左右中央に、バーの上端の左右中央を合わせて毎 tick 置く。頭からの距離に比例して大きくし見た目の大きさを保つ。持ち主と一緒に閉じ・暗くなり、掴むと持ち主を掴む） | `Overlay::{add_panel, attach, detach, set_locked, set_parent, set_nav_bar, set_resolution, tick, submit}`, `Parent { panel, carry, dismiss }`（`dismiss` = 子の外側を押すと子を閉じる。ブロックしたい子だけ `PanelSpec::without_dismiss`）, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
 | カーネル | `crates/kernel` | 設定・フレーム進行・パネル操作を束ねる。最下部の Subsystems の上に位置し、UI・画面はカーネルだけを見る。設定は `subsystems::os::config_dir()/config.toml`（`theme = "dark" | "light"` は `PanelCommand::Theme` で、`language = "en" | "ja"` は `PanelCommand::Language` で、`pointer_smoothing`（レーザーの手ブレ抑え。0〜0.998、既定 `overlay::POINTER_SMOOTHING` = 上限の 0.998）は `PanelCommand::PointerSmoothing` で、`pointer_release_deg`（抑えたレーザーがこの角度だけ手から遅れると抑えが半分になる。0.5〜45°、既定 11.25°）は `PanelCommand::PointerRelease` で、`laser_length`（レーザーの見える長さ m。0.05〜1.5、既定 0.3）は `PanelCommand::LaserLength` で切り替えると書き戻され、次回起動に残る。`ui::sync_panel` が `design::Mode` のグローバルに反映し、画面は `Theme::current(cx)` で引く）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル） | `Kernel::{boot, with_backend, tick, submit, apply, status, add_panel}`, `PanelCommand`, `PanelStatus`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート |
 | 5 UI | `crates/ui` | パネルを GPUI の非表示ウィンドウで描き、ポインタイベントをマウス入力へ変換する。1 つのフレームループ・カーネルで回し、描画結果を `kernel::rendering` 経由でパネルへ返す。画面の種類は知らない | `run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelSpec::{new, spawn, child, titled, without_nav_bar, nav_bar_spec}`（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelCommand`, `PanelStatus`, `MAX_PANELS` |
@@ -26,7 +27,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 
 重い依存は feature で選ぶ。`vr` の `novr`（wgpu・minifb）/ `openvr` / `openxr` を `subsystems` と `kernel` が同名で転送する。ワークスペースの `vr` / `subsystems` / `kernel` は `default-features = false` で、`kernel` の既定は全部無効（型・`connect`・モックだけ。`overlay` / `kernel` のテストはこれで足りる）。実際に起動する `nyaw` と、エミュレーターや実ランタイムを使う `ui` / `testkit` のテストだけが有効にする。無効なランタイムへの接続は `VrError::NoRuntime`。`vr` / `subsystems` 単体の既定は全部有効。
 
-依存は**必ず下向き**。カーネル内の最下部が Subsystems（`os` / `vr` / `input` / `rendering`）で、その上に設定・フレーム進行・パネル管理を置く。依存の入口は `subsystems ← overlay ← kernel ← ui ← 画面 ← main`。`kernel` は設定やフレーム進行のため `subsystems` にも依存する。Subsystems 内は `os ← vr ← input / rendering` で、上位層への依存は禁止する。
+依存は**必ず下向き**。カーネル内の最下部が Subsystems（`os` / `vr` / `input` / `rendering`）で、その上に設定・フレーム進行・パネル管理を置く。依存の入口は `subsystems ← overlay ← kernel ← ui ← 画面 ← main`。`kernel` は設定やフレーム進行のため `subsystems` にも依存する。Subsystems 内は `os ← vr ← input / rendering` で、上位層への依存は禁止する。`audio` は他のサブシステムに依存しない（座標は glam）。
 描画に必要な OS 分岐は `rendering` に集約する（`gpui` フィーチャー。`kernel/rendering-host` → `subsystems/rendering-host` で有効にし、下位だけのテストではホスト依存を不要にする）。入力変換・画面の構築とイベントループの進行は UI が担う。ランタイム固有の Vulkan 転送・novr 合成は `vr` に残り、`rendering` が `VrBackend` を通して利用する。
 UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
 `logger` は例外で、どの層からも直接依存してよい唯一の横断クレート（`logger` 自身は他の自前クレートに依存しない）。
@@ -117,6 +118,7 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 | VR | `dialog-test` | 隣に親子関係を試す画面（`DialogTest`）を開く。`open-dialog`（外側を押すと閉じる既定のダイアログ）と `open-modal-dialog`（`without_dismiss`。答えるまで残る）でダイアログ（`Dialog`。`PanelSpec::child(.., carry = true, ..)`）を子として出す。開いている間は親が暗くなって押せず（掴んで動かすと子が付いてくる）、ダイアログを掴むと親も付いてくる（独立しない）。`dialog-ok` / `dialog-cancel` で答えて閉じる |
 | VR | `settings-test` | 隣に設定画面（`Settings`。中身はダミー）を開く。左のサイドバーのカテゴリ（`settings-general` など。選んでいるものだけ色が付く）を押すと、区切り線（`settings-separator`）の右に項目の一覧（`setting-0..`）が切り替わる。項目を押すと右から詳しい画面（`setting-detail-0..`）が入り（`components::navigation`）、`settings-back` か押したまま右から左へ動かすと戻る。閉じるのはナビゲーションバー |
 | VR | `nav-test` | 隣に画面の積み重ねを試す画面（`NavTest`）を開く。`nav-item-0..` → `nav-deeper` で右から次の画面が入り（push 遷移）、`nav-back` か押したまま右から左へ動かす（スワイプバック。幅の半分を越えるか払うと戻る）で戻る。離した所の `nav-tap` は押されず、`nav-slider` のハンドルは奪わない。パネルを掴んでいる手のポインタは無視する（E2E は `navigation.rs`） |
+| VR | `audio-test` | 隣に立体音響を試す画面（`AudioTest`）を開く。`audio-left` / `audio-centre` / `audio-right`（片側だけの 2ch・左右が同じ 2ch）と `audio-loop-1..4`（2ch のループ。重ねて鳴る）をこのパネルのスピーカーで鳴らし、`audio-stop` で止める。`audio-spatial` で立体化を外し（有効で光る）、`audio-layout-auto` / `-mono` / `-stereo` でスピーカーの経路を切り替える。`audio-status` に再生中の数と立体化の手段（E2E は `testkit/tests/audio.rs`） |
 | VR | `attach-hmd` / `attach-left` / `attach-right` / `attach-tracker` / `detach` | 取り付け・取り外し（トラッカーは見えている最初のもの） |
 | VR | `lock` | 掴めないようにする |
 | VR | `menu-held` / `grabbed` | メニューボタン・パネルを掴んでいる間光る（表示のみ） |
@@ -278,3 +280,15 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 - パネルを閉じた後、フェード完了で資源を解放する判断は `overlay`。`rendering::Surface` は `release` を実行し、パネルの閉鎖状態を受け取らない。
 - 非表示・透過・フォーカスしないというウィンドウの方針は `ui`。Windows の描画先サイズ補正や Linux の headless での描画、LOD の拡大率の変え方（vendor/ の `with_render_scale`）など、実現手段の違いは描画サブシステムが吸収する。
 - Subsystems とのやり取りがあるだけでは、その共通機能を Subsystems の一部にしない。同名クレートを上下に作らず、ログ・起動・パネル管理などの所有者へ置く。
+
+## 音声（パネルのスピーカー）
+
+- どのパネルにもスピーカー（音源）があり、パネルの中で鳴らす音はそこから聞こえる。`PanelCommand::Play(audio::Sound, looping)` で鳴らし（読み込みは別スレッド。同じパネルでも別のパネルでも、いくつでも重ねて鳴る）、`StopAudio` でそのパネルの音を止める。パネルを閉じると止まる。`PanelStatus::audio` に再生中の数・設定・立体化の手段。
+- 立体化は既定で有効（オプトアウト）。`PanelCommand::Spatial(false)` で外すと、置き場所・頭の向きに関係なくそのまま左右に鳴る。
+- スピーカーはモノラル（パネルの中央の 1 点）とステレオ（パネルの左右の端の 2 点。間隔はパネルの幅）。既定の `Layout::Auto` は鳴らす音に合わせ、1ch と左右がまったく同じ 2ch はモノラル、それ以外はステレオ。`PanelCommand::SpeakerLayout(Layout::Mono | Layout::Stereo)` で固定できる（モノラルは左右を混ぜ、ステレオはモノラルの音を両端から鳴らす）。
+- 聞き手は HMD。カーネルが毎 tick、鳴っているスピーカーだけをパネルの姿勢に合わせて動かす（鳴っていなければ何も送らない）。距離は 1m までは減衰せず、その先は逆距離で減る（Steam Audio の既定の逆距離モデル）。
+- 立体化は Steam Audio の HRTF（バイノーラル）。ライブラリ（Windows `phonon.dll`、Linux `libphonon.so`。Steam Audio 4.8 の SDK の `lib/windows-x64` / `lib/linux-x64`）は実行時に読む。`NYAW_PHONON` でファイルを指すか、実行ファイルの隣（Windows）・ライブラリの探索パスに置く。無ければ左右の等パワーのパンニングに落ちる（`Spatializer::Panning`）。ビルドに clang や Steam Audio は要らない（`audio/src/phonon.rs` が `phonon.h` から使う型と関数だけを写している）。
+- ミックスは 256 フレームごと。HRTF の状態は最初に 64 個（32 音 × L / R）作っておき、コールバックの中では作らない。超えた音はパンニングで鳴る。出力のレートへは線形補間で合わせる。
+- テスト用のカーネル（`Kernel::with_backend`）はデバイスを開かない `audio::Engine::offline`（パンニング）で、テストが `kernel.audio.render` で回して左右に出た音を測る。本番の `Kernel::boot` は `Engine::open`（デバイスを開く・Steam Audio を読むのは別スレッド）。
+- `cargo test -p audio -p kernel --lib`、UI を通すシナリオは `cargo test -p testkit --test audio`。実際の Steam Audio とデバイスは `cargo test -p audio -- --ignored`（音が出る。`NYAW_PHONON` で phonon を指す）。
+- Linux のビルドには `libasound2-dev`（ALSA。cpal が使う）が必要。

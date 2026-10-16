@@ -4,9 +4,11 @@
 //! フレームの進行（[`Kernel::tick`]）・パネルへの操作（[`Kernel::apply`]）・描画結果の受け取り
 //! （[`Kernel::submit`]）を提供する。UI や画面は下位層を直接組み立てない。
 
+mod audio_panels;
 pub mod config;
+pub use audio_panels::AudioStatus;
 pub use subsystems::{self, Subsystems};
-pub use subsystems::{rendering, vr};
+pub use subsystems::{audio, rendering, vr};
 
 use std::time::{Duration, Instant};
 use subsystems::os;
@@ -58,6 +60,14 @@ pub enum PanelCommand {
     Parent(Option<Parent>),
     /// このパネルを、その持ち主のナビゲーションバーにする（持ち主の下端に付き、頭から見た大きさを保つ）。
     NavBar(PanelId),
+    /// このパネルのスピーカーで音を鳴らす（`true` で繰り返す）。読み込みは別スレッドで、いくつでも重ねて鳴らせる。
+    Play(audio::Sound, bool),
+    /// このパネルで鳴っている音をすべて止める。
+    StopAudio,
+    /// このパネルの音を置き場所から聞こえるようにする（既定）。`false` でそのまま左右に鳴らす。
+    Spatial(bool),
+    /// このパネルのスピーカーをモノラル・ステレオのどちらで鳴らすか（既定は音に合わせる）。
+    SpeakerLayout(audio::Layout),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -93,6 +103,8 @@ pub struct PanelStatus {
     pub parent: Option<PanelId>,
     /// レーザーが指している（`Overlay::pointed`。ナビゲーションバーは持ち主を指していても）。
     pub pointed: bool,
+    /// このパネルのスピーカー。
+    pub audio: AudioStatus,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -109,6 +121,10 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     frame: u64,
     /// パネルごとの LOD（[`Self::panel_lod`]）。tick ごとに前の値から決める。
     lods: Vec<u8>,
+    /// 音の出力。テスト用のカーネルはデバイスを開かず（`audio::Engine::offline`）、テストが `render` で回す。
+    pub audio: audio::Engine,
+    /// 音を鳴らした・設定したパネルのスピーカー。
+    speakers: std::collections::HashMap<PanelId, audio_panels::SpeakerConfig>,
 }
 
 /// LOD の切り替え距離を決めた基準の密度（1m あたりの論理ピクセル。既定のパネル 800px / 0.8m）。
@@ -147,6 +163,7 @@ impl Kernel {
         logger::info!("runtime selected", runtime = ?vr.runtime());
         let mut kernel = Self::with_backend(vr, config);
         kernel.config_path = config::path();
+        kernel.audio = audio::Engine::open();
         Ok(kernel)
     }
 }
@@ -191,6 +208,8 @@ impl<B: VrBackend> Kernel<B> {
             timing: TickTiming::default(),
             frame: 0,
             lods: Vec::new(),
+            audio: audio::Engine::offline(48_000, false),
+            speakers: Default::default(),
         }
     }
 
@@ -270,6 +289,7 @@ impl<B: VrBackend> Kernel<B> {
         let frame = self.subsystems.poll();
         let polled = Instant::now();
         let events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
+        self.update_audio();
         // 段階が変わるとパネルの描き直し・描画先とランタイムのテクスチャの作り直しが走るので、境目で行き来させない。
         let lods = (0..self.overlay.len())
             .map(|id| self.lod_for(id, self.lods.get(id).copied()))
@@ -411,6 +431,12 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay.detach(panel);
                 self.overlay.set_pose(panel, self.hmd().leveled() * offset);
             }
+            PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
+            PanelCommand::StopAudio => self.audio.stop_speaker(panel as u64),
+            PanelCommand::Spatial(spatial) => self.configure_speaker(panel, |c| c.spatial = spatial),
+            PanelCommand::SpeakerLayout(layout) => {
+                self.configure_speaker(panel, |c| c.layout = layout)
+            }
         }
     }
 
@@ -448,6 +474,7 @@ impl<B: VrBackend> Kernel<B> {
             lod: self.panel_lod(panel),
             parent: p.parent.map(|q| q.panel),
             pointed: self.overlay.pointed(panel),
+            audio: self.audio_status(panel),
         }
     }
 }
