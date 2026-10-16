@@ -719,24 +719,67 @@ pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
 const DIALOG_ICON: f32 = 64.0;
 /// ダイアログの文の行の高さ（文字の大きさに対する比）。
 const DIALOG_LEADING: f32 = 1.4;
-/// 収まらずにスクロールするときも、概要はこの行数までは見せる。
-const DIALOG_MIN_LINES: f32 = 3.0;
+/// 概要が見える行数の上限。超える分はスクロールする。
+const DIALOG_LINES: usize = 3;
 
-/// ダイアログのパネルの高さ（px。影の余白を含む）の下限。ボタンが `actions` 個、タイトルが 1 行のとき、
-/// 概要が少なくとも 3 行見える。`PanelSpec::sized` の高さはこれ以上にする。
-pub const fn dialog_height(actions: u32) -> u32 {
+/// 幅 `width`（px）のダイアログのパネルの高さ（px。影の余白を含む）。ボタンは `actions` 個。
+/// タイトルと概要を実際に折り返して数える（概要は [`DIALOG_LINES`] 行まで）。開くとき（`PanelSpec::sized`）に使えば、
+/// 余白が潰れも余りもしない高さで開く。
+// ponytail: 開いたあとに言語が変わっても測り直さない（長くなった分は概要がスクロールする）。要るなら描いた配置から測り直す。
+pub fn dialog_height(
+    window: &Window,
+    width: u32,
+    title: &str,
+    description: &str,
+    actions: u32,
+) -> u32 {
+    // 文の幅 = パネル − 影の余白 − 縁（概要はさらに横の `SM`）。
+    let inner = width as f32 - 2.0 * (PANEL_MARGIN + spacing::XL);
+    let lines = |text: &str, size: f32, weight: FontWeight, wrap: f32| {
+        let font = gpui::Font {
+            weight,
+            ..crate::font::font()
+        };
+        let run = gpui::TextRun {
+            len: text.len(),
+            font,
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        window
+            .text_system()
+            .shape_text(
+                SharedString::from(text.to_owned()),
+                px(size),
+                &[run],
+                Some(px(wrap)),
+                None,
+            )
+            .map_or(1, |ls| {
+                ls.iter().map(|l| l.wrap_boundaries().len() + 1).sum()
+            })
+    };
+    let title = lines(title, font_size::LG, FontWeight::BOLD, inner);
+    let body = lines(
+        description,
+        font_size::MD,
+        FontWeight::NORMAL,
+        inner - 2.0 * spacing::SM,
+    )
+    .min(DIALOG_LINES);
     let n = actions as f32;
-    let h = 2.0 * PANEL_MARGIN
-        + 2.0 * spacing::XL
+    let h = 2.0 * (PANEL_MARGIN + spacing::XL)
         + DIALOG_ICON
         + spacing::XL
-        + font_size::LG * DIALOG_LEADING
+        + title as f32 * font_size::LG * DIALOG_LEADING
         + spacing::SM
-        + DIALOG_MIN_LINES * font_size::MD * DIALOG_LEADING
+        + body as f32 * font_size::MD * DIALOG_LEADING
         + spacing::XL
         + n * BUTTON_HEIGHT
         + (n - 1.0) * spacing::SM;
-    h as u32 + 1
+    h.ceil() as u32
 }
 
 /// ダイアログ（子パネル）の中身。[`dialog`] で作る。
@@ -752,7 +795,8 @@ pub struct Dialog {
 
 /// ダイアログ（子パネル）の中身。上からアイコン・タイトル・概要・ボタンを中央揃えで並べる。
 /// ボタンは幅いっぱいで縦に積む。間隔は決まった値で、全体を上下の中央に置く（余った高さは上下の縁に分ける）。
-/// 収まらないときは、アイコン・タイトル・ボタンを残して概要だけがスクロールする（`{id}-body`、棒は `{id}-bars`）。
+/// 概要は [`DIALOG_LINES`] 行まで見せ、超える分やパネルに収まらない分は概要だけがスクロールする（`{id}-body`、棒は `{id}-bars`）。
+/// パネルの高さは [`dialog_height`] で決める。
 /// 並べる順は呼び出し側が決める（主の操作を上に）。`id` はパネルの中で一意に。
 /// 開く・閉じる・答えを返すのは呼び出し側（`ui::PanelSpec::child`）。
 pub fn dialog(
@@ -789,12 +833,14 @@ impl RenderOnce for Dialog {
             .clone();
         let body_id = format!("{id}-body");
         // 余白は縁 `XL`、アイコン → タイトル `XL`（アイコンの上の縁と揃える）、タイトル → 概要 `SM`（ひとまとまり）、文 → ボタン `XL`。
-        // 縮められる（min_h_0）のは概要の枠だけなので、収まらなければ概要だけが縮んでスクロールする。
+        // 概要の枠は [`DIALOG_LINES`] 行までで、超える分はスクロールする。縮められる（min_h_0）のも概要の枠だけなので、
+        // パネルが低くても概要だけが縮む。
         // 横の `SM` は、スクロールバーが文にかからないための余白。
         let body = div()
             .id(SharedString::from(body_id.clone()))
             .debug_selector(move || body_id.clone())
             .min_h_0()
+            .max_h(px(DIALOG_LINES as f32 * font_size::MD * DIALOG_LEADING))
             .overflow_y_scroll()
             .track_scroll(&scroll)
             .px(px(spacing::SM))
