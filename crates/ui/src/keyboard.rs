@@ -15,6 +15,17 @@ use std::{collections::HashMap, rc::Rc};
 mod view;
 pub use view::{KeyAppearance, KeyboardView};
 
+const CLOSE_SIZE: f32 = 48.;
+
+fn panel_resolution() -> (u32, u32) {
+    let inset = 2. * (design::components::PANEL_MARGIN + design::spacing::LG);
+    let kind = kernel::subsystems::keyboard::KeyboardType::Full;
+    (
+        (kind.width() * view::KEY_UNIT + inset).ceil() as u32,
+        (kind.height() * view::KEY_UNIT + inset + CLOSE_SIZE + design::spacing::SM).ceil() as u32,
+    )
+}
+
 #[derive(Clone, Debug)]
 pub struct KeyboardInput {
     pub stroke: Stroke,
@@ -153,15 +164,15 @@ pub fn send_key(target: PanelId, input: KeyboardInput, cx: &mut App) {
 }
 
 pub fn dismiss_keyboard(cx: &mut App) {
-    if let Some(session) = cx.default_global::<InputRouting>().active.take() {
-        if let Some(panel) = session.panel {
-            cx.default_global::<crate::PanelControl>()
-                .panels
-                .entry(panel)
-                .or_default()
-                .commands
-                .push(PanelCommand::Close);
-        }
+    if let Some(session) = cx.default_global::<InputRouting>().active.take()
+        && let Some(panel) = session.panel
+    {
+        cx.default_global::<crate::PanelControl>()
+            .panels
+            .entry(panel)
+            .or_default()
+            .commands
+            .push(PanelCommand::Close);
     }
 }
 
@@ -184,6 +195,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         generation,
     });
     routing.error = None;
+    let resolution = panel_resolution();
     cx.default_global::<crate::PanelControl>().spawns.push(
         crate::PanelSpec::spawn(target, move |panel, _, cx| {
             let current = cx.default_global::<InputRouting>().active.as_mut();
@@ -198,6 +210,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
                     .push(PanelCommand::Close);
             }
             KeyboardPanel {
+                panel,
                 keyboard: cx.new(|cx| {
                     let mut keyboard = KeyboardView::new(panel, cx);
                     keyboard.target = target;
@@ -206,9 +219,11 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
                 }),
             }
         })
-        .sized(Vec2::new(1.52, 0.464), (1520, 464))
-        .below(target, std::f32::consts::FRAC_PI_4)
-        .locked(),
+        .sized(
+            Vec2::new(1., resolution.1 as f32 / resolution.0 as f32),
+            resolution,
+        )
+        .below(target, std::f32::consts::FRAC_PI_4),
     );
 }
 
@@ -258,12 +273,44 @@ pub fn panel_closed(panel: PanelId, cx: &mut App) {
 }
 
 struct KeyboardPanel {
+    panel: PanelId,
     keyboard: gpui::Entity<KeyboardView>,
 }
 impl Render for KeyboardPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        design::components::card_panel(&design::Theme::current(cx))
+        let theme = design::Theme::current(cx);
+        let panel = self.panel;
+        design::components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap(gpui::px(design::spacing::SM))
             .p(gpui::px(design::spacing::LG))
+            .child(
+                gpui::div()
+                    .flex()
+                    .justify_end()
+                    .h(gpui::px(CLOSE_SIZE))
+                    .flex_shrink_0()
+                    .child(
+                        design::components::icon_button(
+                            &theme,
+                            "close-keyboard",
+                            &design::icons::X,
+                            i18n::t(cx, "common.close"),
+                            design::components::Variant::Default,
+                        )
+                        .w(gpui::px(CLOSE_SIZE))
+                        .h(gpui::px(CLOSE_SIZE))
+                        .on_click(move |_, _, cx| {
+                            cx.default_global::<crate::PanelControl>()
+                                .panels
+                                .entry(panel)
+                                .or_default()
+                                .commands
+                                .push(PanelCommand::Close);
+                        }),
+                    ),
+            )
             .child(self.keyboard.clone())
     }
 }
@@ -387,7 +434,7 @@ mod tests {
             assert!(
                 specs
                     .iter()
-                    .all(|s| s.parent().is_none() && s.locked && s.below.is_some())
+                    .all(|s| s.parent().is_none() && !s.locked && s.below.is_some())
             );
             cx.global_mut::<InputRouting>()
                 .active
@@ -440,6 +487,73 @@ mod tests {
             kernel.tick();
             assert_eq!(kernel.panel(panel).pose, pose);
             assert_eq!(kernel.panel(panel).parent, None);
+        });
+    }
+    #[gpui::test]
+    fn summoned_keys_fit_the_card_and_close_button_closes_only_the_keyboard(
+        cx: &mut TestAppContext,
+    ) {
+        let db = kernel::subsystems::keyboard::Database::load().unwrap();
+        let keyboard = db.keyboard(&Layout::new("jp", "")).unwrap();
+        let names: Vec<_> = keyboard
+            .keycaps(kernel::subsystems::keyboard::KeyboardType::Full)
+            .into_iter()
+            .map(|k| k.name)
+            .collect();
+        let resolution = panel_resolution();
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            show_keyboard(0, KeyboardMode::Persistent, cx);
+            let spec = cx
+                .default_global::<crate::PanelControl>()
+                .spawns
+                .pop()
+                .unwrap();
+            assert!(!spec.locked);
+            let view = spec.build(1, window, cx);
+            let panel = view.clone().downcast::<KeyboardPanel>().unwrap();
+            let keys = panel.read(cx).keyboard.clone();
+            keys.update(cx, |view, _| {
+                view.keyboard = Some(keyboard);
+                view.automatic = false;
+                view.loading = false;
+                view.error = Some("A long OS status must not displace any keys".into());
+            });
+            crate::PanelRoot::new(view)
+        });
+        cx.simulate_resize(gpui::size(
+            gpui::px(resolution.0 as f32),
+            gpui::px(resolution.1 as f32),
+        ));
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("keyboard-error").is_none());
+        let keys = cx.debug_bounds("virtual-keyboard").unwrap();
+        let inset = design::components::PANEL_MARGIN + design::spacing::LG;
+        assert_eq!(f32::from(keys.origin.x), inset);
+        assert_eq!(
+            f32::from(keys.origin.y),
+            inset + CLOSE_SIZE + design::spacing::SM
+        );
+        assert!(f32::from(keys.right()) <= resolution.0 as f32 - inset);
+        assert!(f32::from(keys.bottom()) <= resolution.1 as f32 - inset);
+        for name in names {
+            let name = Box::leak(format!("key-{name}").into_boxed_str());
+            let key = cx.debug_bounds(name).unwrap();
+            assert!(key.origin.x >= keys.origin.x && key.origin.y >= keys.origin.y);
+            assert!(
+                key.right() <= keys.right() && key.bottom() <= keys.bottom(),
+                "{name}"
+            );
+        }
+        let close = cx.debug_bounds("close-keyboard").unwrap().center();
+        cx.simulate_click(close, gpui::Modifiers::none());
+        cx.update(|_, cx| {
+            assert_eq!(
+                cx.global::<crate::PanelControl>().panels[&1].commands,
+                [PanelCommand::Close]
+            );
+            assert!(!cx.global::<crate::PanelControl>().panels.contains_key(&0));
+            panel_closed(1, cx);
+            assert!(cx.global::<InputRouting>().active.is_none());
         });
     }
 }

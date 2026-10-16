@@ -14,6 +14,8 @@ use kernel::{
 };
 use std::{sync::mpsc, thread, time::Duration};
 
+pub(super) const KEY_UNIT: f32 = 64.;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct KeyAppearance {
     pub gap: f32,
@@ -60,7 +62,7 @@ impl KeyAppearance {
 
 enum Loaded {
     Catalog(Vec<Layout>),
-    Keyboard(u64, Result<Keyboard, String>),
+    Keyboard(u64, Result<Box<Keyboard>, String>),
     Error(String),
 }
 
@@ -105,7 +107,7 @@ impl KeyboardView {
                 while let Ok(newer) = receiver.try_recv() {
                     request = newer;
                 }
-                let result = database.keyboard(&request.1);
+                let result = database.keyboard(&request.1).map(Box::new);
                 if sender.send(Loaded::Keyboard(request.0, result)).is_err() {
                     return;
                 }
@@ -179,7 +181,7 @@ impl KeyboardView {
                                 keyboard
                                     .sync_locks(self.settings.caps_lock, self.settings.num_lock);
                             }
-                            self.keyboard = Some(keyboard);
+                            self.keyboard = Some(*keyboard);
                         }
                         Err(error) => self.error = Some(error),
                     }
@@ -223,10 +225,10 @@ impl KeyboardView {
                             .cloned()
                     })
             });
-        if let Some(layout) = layout {
-            if layout.name != self.requested.name || layout.variant != self.requested.variant {
-                self.select_layout(layout);
-            }
+        if let Some(layout) = layout
+            && (layout.name != self.requested.name || layout.variant != self.requested.variant)
+        {
+            self.select_layout(layout);
         }
     }
 
@@ -237,17 +239,17 @@ impl KeyboardView {
         {
             return;
         }
-        if let Some(keyboard) = &mut self.keyboard {
-            if let Some(stroke) = keyboard.click(code) {
-                send_key(
-                    self.target,
-                    KeyboardInput {
-                        stroke,
-                        layout: keyboard.layout.clone(),
-                    },
-                    cx,
-                );
-            }
+        if let Some(keyboard) = &mut self.keyboard
+            && let Some(stroke) = keyboard.click(code)
+        {
+            send_key(
+                self.target,
+                KeyboardInput {
+                    stroke,
+                    layout: keyboard.layout.clone(),
+                },
+                cx,
+            );
         }
     }
 }
@@ -380,7 +382,7 @@ impl Render for KeyboardView {
                 .w_full(),
             );
         }
-        if self.loading {
+        if self.show_settings && self.loading {
             root = root.child(div().child(i18n::t(cx, "keyboard.loading")));
         }
         let error = self
@@ -388,18 +390,18 @@ impl Render for KeyboardView {
             .clone()
             .or_else(|| self.settings.error.clone())
             .or_else(|| cx.default_global::<InputRouting>().error.clone());
-        if let Some(error) = error {
+        if let Some(error) = error.filter(|_| self.show_settings) {
             root = root.child(
                 div()
                     .debug_selector(|| "keyboard-error".into())
                     .child(error),
             );
         }
-        if self.automatic && self.settings.layout.is_none() {
+        if self.show_settings && self.automatic && self.settings.layout.is_none() {
             root = root.child(div().child(i18n::t(cx, "keyboard.unmatched")));
         }
         if let Some(keyboard) = &self.keyboard {
-            let unit = 64.;
+            let unit = KEY_UNIT;
             let appearance = self
                 .appearance
                 .unwrap_or_else(|| KeyAppearance::for_type(self.kind))
@@ -410,6 +412,7 @@ impl Render for KeyboardView {
                 .id("virtual-keyboard")
                 .debug_selector(|| "virtual-keyboard".into())
                 .relative()
+                .flex_shrink_0()
                 .w(px(self.kind.width() * unit))
                 .h(px(self.kind.height() * unit))
                 .children(keys.into_iter().map(|key| {
@@ -484,6 +487,8 @@ impl Render for KeyboardView {
             root = root.child(
                 div()
                     .id("keyboard-scroll")
+                    .flex_shrink_0()
+                    .h(px(self.kind.height() * unit))
                     .overflow_x_scroll()
                     .w_full()
                     .child(canvas),

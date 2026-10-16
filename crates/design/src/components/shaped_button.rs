@@ -1,10 +1,12 @@
 //! 任意の直交輪郭を持つキー。描画とヒット判定に同じ角丸の輪郭を使う。
 use crate::{Theme, font_size};
 use gpui::{
-    App, Bounds, ClickEvent, Div, InteractiveElement, Interactivity, IntoElement, MouseButton,
-    PathBuilder, Pixels, RenderOnce, SharedString, Stateful, StatefulInteractiveElement,
-    StyleRefinement, Styled, Window, canvas, div, point, prelude::*, px, rgba,
+    App, Bounds, ClickEvent, ContentMask, Div, InteractiveElement, Interactivity, IntoElement,
+    MouseButton, PathBuilder, Pixels, Point, RenderOnce, SharedString, Stateful,
+    StatefulInteractiveElement, StyleRefinement, Styled, Window, canvas, div, fill, point,
+    prelude::*, px, rgba, size,
 };
+use std::time::Instant;
 
 type Position = (f32, f32);
 type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
@@ -14,6 +16,7 @@ struct State {
     bounds: Bounds<Pixels>,
     hover: bool,
     pressed: bool,
+    ripple: Option<(Point<Pixels>, Instant)>,
 }
 
 /// 各頂点の手前・頂点・直後。短い辺では角丸が隣と交差しない半径に収める。
@@ -40,7 +43,7 @@ pub fn rounded_corners(outline: &[Position], radius: f32) -> Vec<(Position, Posi
     corners
 }
 
-pub fn rounded_contains(outline: &[Position], radius: f32, at: Position) -> bool {
+fn rounded_polygon(outline: &[Position], radius: f32) -> Vec<Position> {
     let mut polygon = Vec::new();
     for (start, control, end) in rounded_corners(outline, radius) {
         for step in 0..=16 {
@@ -52,14 +55,30 @@ pub fn rounded_contains(outline: &[Position], radius: f32, at: Position) -> bool
             ));
         }
     }
-    let mut inside = false;
+    polygon
+}
+
+fn row_spans(polygon: &[Position], y: f32) -> Vec<(f32, f32)> {
+    let mut crossings = Vec::new();
     for (index, &a) in polygon.iter().enumerate() {
         let b = polygon[(index + 1) % polygon.len()];
-        if (a.1 > at.1) != (b.1 > at.1) && at.0 < (b.0 - a.0) * (at.1 - a.1) / (b.1 - a.1) + a.0 {
-            inside = !inside;
+        if (a.1 > y) != (b.1 > y) {
+            crossings.push((b.0 - a.0) * (y - a.1) / (b.1 - a.1) + a.0);
         }
     }
-    inside
+    crossings.sort_by(f32::total_cmp);
+    crossings
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|p| (p[0], p[1]))
+        .collect()
+}
+
+pub fn rounded_contains(outline: &[Position], radius: f32, at: Position) -> bool {
+    row_spans(&rounded_polygon(outline, radius), at.1)
+        .into_iter()
+        .any(|(left, right)| at.0 >= left && at.0 < right)
 }
 
 #[derive(IntoElement)]
@@ -69,6 +88,7 @@ pub struct ShapedButton {
     outline: Vec<Position>,
     radius: f32,
     colors: [u32; 3],
+    ink: u32,
     selected: bool,
     click: Option<Click>,
     tooltip: Option<SharedString>,
@@ -98,6 +118,7 @@ pub fn shaped_button(
         outline,
         radius,
         colors: [theme.control, theme.control_hover, theme.control_active],
+        ink: theme.neutral_text,
         selected: false,
         click: None,
         tooltip: None,
@@ -151,6 +172,14 @@ impl RenderOnce for ShapedButton {
         }];
         let outline = self.outline.clone();
         let radius = self.radius;
+        let animated = cx.has_global::<crate::Motion>();
+        let ripple = current.ripple.filter(|_| animated).filter(|(_, start)| {
+            super::ripple_frame(start.elapsed().as_secs_f32() * 1000., 0.).is_some()
+        });
+        if ripple.is_some() {
+            super::keep_drawing(window, cx);
+        }
+        let ink = self.ink;
         let paint_state = state.clone();
         let mut base = self.base.child(
             canvas(
@@ -169,6 +198,42 @@ impl RenderOnce for ShapedButton {
                     path.close();
                     if let Ok(path) = path.build() {
                         window.paint_path(path, rgba(color));
+                    }
+                    if let Some((origin, start)) = ripple {
+                        let local = origin - bounds.origin;
+                        let reach = outline
+                            .iter()
+                            .map(|&(x, y)| (x - f32::from(local.x)).hypot(y - f32::from(local.y)))
+                            .fold(0., f32::max);
+                        if let Some((r, alpha)) =
+                            super::ripple_frame(start.elapsed().as_secs_f32() * 1000., reach)
+                        {
+                            let circle = Bounds::new(
+                                origin - point(px(r), px(r)),
+                                size(px(2. * r), px(2. * r)),
+                            );
+                            let quad = fill(circle, rgba(ink & !0xff | u32::from(alpha)))
+                                .corner_radii(px(r));
+                            let polygon = rounded_polygon(&outline, radius);
+                            // 長方形のマスクを 1px の帯に分け、段付き Enter の凹みでも波紋を輪郭内に収める。
+                            let top = (f32::from(local.y) - r).floor().max(0.) as u32;
+                            let bottom = (f32::from(local.y) + r)
+                                .ceil()
+                                .min(bounds.size.height.into())
+                                as u32;
+                            for y in top..bottom {
+                                for (left, right) in row_spans(&polygon, y as f32 + 0.5) {
+                                    let mask = Bounds::new(
+                                        bounds.origin + point(px(left), px(y as f32)),
+                                        size(px(right - left), px(1.)),
+                                    );
+                                    window.with_content_mask(
+                                        Some(ContentMask { bounds: mask }),
+                                        |window| window.paint_quad(quad.clone()),
+                                    );
+                                }
+                            }
+                        }
                     }
                 },
             )
@@ -217,12 +282,22 @@ impl RenderOnce for ShapedButton {
         base = base.on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let at = event.position - press.read(cx).bounds.origin;
             let pressed = rounded_contains(&outline, radius, (at.x.into(), at.y.into()));
-            press.update(cx, |s, _| s.pressed = pressed);
+            press.update(cx, |s, _| {
+                s.pressed = pressed;
+                if pressed && animated {
+                    s.ripple = Some((event.position, Instant::now()));
+                }
+            });
             window.refresh();
         });
         let up = state.clone();
         base = base.on_mouse_up(MouseButton::Left, move |_, window, cx| {
             up.update(cx, |s, _| s.pressed = false);
+            window.refresh();
+        });
+        let up_out = state.clone();
+        base = base.on_mouse_up_out(MouseButton::Left, move |_, window, cx| {
+            up_out.update(cx, |s, _| s.pressed = false);
             window.refresh();
         });
         if let Some(click) = self.click {
@@ -241,6 +316,56 @@ impl RenderOnce for ShapedButton {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct Sample;
+    impl Render for Sample {
+        fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+            div().p(px(20.)).child(
+                shaped_button(
+                    &Theme::DARK,
+                    "stepped",
+                    vec![
+                        (0., 0.),
+                        (88., 0.),
+                        (88., 120.),
+                        (16., 120.),
+                        (16., 56.),
+                        (0., 56.),
+                    ],
+                    8.,
+                )
+                .w(px(88.))
+                .h(px(120.)),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn ripple_starts_on_the_key_but_not_in_the_enter_notch(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| cx.set_global(crate::Motion::default()));
+        let (_, cx) = cx.add_window_view(|_, _| Sample);
+        cx.run_until_parked();
+        let origin = cx.debug_bounds("stepped").unwrap().origin;
+        cx.simulate_mouse_down(
+            origin + point(px(4.), px(90.)),
+            MouseButton::Left,
+            gpui::Modifiers::none(),
+        );
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| cx.global::<crate::Motion>().animating.is_empty()));
+        cx.simulate_mouse_up(
+            origin + point(px(4.), px(90.)),
+            MouseButton::Left,
+            gpui::Modifiers::none(),
+        );
+        cx.simulate_mouse_down(
+            origin + point(px(50.), px(90.)),
+            MouseButton::Left,
+            gpui::Modifiers::none(),
+        );
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| !cx.global::<crate::Motion>().animating.is_empty()));
+    }
     #[test]
     fn corners_and_notch_use_the_same_rounded_outline() {
         let outline = [
@@ -258,5 +383,9 @@ mod tests {
         assert!(rounded_contains(&outline, 0., (1., 1.)));
         assert!(!rounded_contains(&outline, 12., (1., 1.)));
         assert!(rounded_contains(&outline, 12., (16., 16.)));
+        let polygon = rounded_polygon(&outline, 12.);
+        assert_eq!(row_spans(&polygon, 30.), [(0., 88.)]);
+        assert_eq!(row_spans(&polygon, 90.), [(16., 88.)]);
+        assert!(row_spans(&polygon, 1.)[0].0 > 0.);
     }
 }
