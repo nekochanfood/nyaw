@@ -18,7 +18,15 @@ pub enum Motion {
     Move,
     /// 移動と大きさの変化が続く、形の移り変わり（ease-in-out。段が多いので一番遅い長さ）。
     Morph,
+    /// ナビゲーションバーの広がり・縮み。上下の移動（[`NAV_BAR_MOVE_MS`]。行き過ぎてから戻る）の後に広がる
+    /// （[`NAV_BAR_GROW_MS`]）。区間ごとのイージングは `components::nav_bar` が付けるので、時間は等速で進める。
+    NavBar,
 }
+
+/// ナビゲーションバーの上下の移動の長さ。行き過ぎてから戻るのが見えるよう、ゆっくり動かす。
+pub const NAV_BAR_MOVE_MS: u64 = 1000;
+/// ナビゲーションバーが線から帯へ広がる長さ（[`Motion::Morph`] のうち広がりに当てていた分）。
+pub const NAV_BAR_GROW_MS: u64 = 195;
 
 impl Motion {
     pub const fn duration_ms(self) -> u64 {
@@ -27,6 +35,7 @@ impl Motion {
             Motion::Exit | Motion::Return => duration_ms::QUICK,
             Motion::Move => duration_ms::NORMAL,
             Motion::Morph => duration_ms::SLOW,
+            Motion::NavBar => NAV_BAR_MOVE_MS + NAV_BAR_GROW_MS,
         }
     }
 
@@ -35,6 +44,7 @@ impl Motion {
             Motion::Enter | Motion::Return => Easing::EaseOutCubic,
             Motion::Exit => Easing::EaseInCubic,
             Motion::Move | Motion::Morph => Easing::EaseInOutCubic,
+            Motion::NavBar => Easing::Linear,
         }
     }
 }

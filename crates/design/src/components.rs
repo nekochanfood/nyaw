@@ -538,25 +538,37 @@ const NAV_LINE_HEIGHT: f32 = spacing::MD;
 /// id は `nav-close`）。カード 1 枚の帯で、角丸は `FULL`。押したときの処理（パネルを閉じる）は `on_close` で受け取る。
 /// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
 ///
-/// `open`（0〜1）は広がり具合。0（触れていない）はボタンもタイトルも出さない丸い線で、帯の上端に寄せて置く。
+/// `open`（0〜1）は広がり具合で、時間に比例して進める（[`crate::animation::Motion::NavBar`]）。0（触れていない）はボタンもタイトルも出さない丸い線で、帯の上端に寄せて置く。
 /// 広がるときは、まず線が帯の上下中央へ下りてから、そこを中心に上下左右へ広がる（縮むときは逆に、縮んでから上がる）。
+/// 上下の移動だけは行き過ぎてから戻る（[`back_out`]）。`opening` は今どちらへ動いているか（広がる = `true`）で、
+/// 行き過ぎる向き（広がるときは下、縮むときは上）を決める。
 /// 置き場所のアンカー（帯の上端の左右中央。持ち主に付ける・頭からの距離で大きくするのに使う）とは別に、
 /// 広がりのアンカー（帯の中心）を持つ。中身は帯の中に置いて帯と一緒に動き、広がりの後半で不透明度だけで現れる。
 pub fn nav_bar(
     theme: &Theme,
     open: f32,
+    opening: bool,
     title: impl Into<SharedString>,
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
-    // 前半で動き、後半で広がる。それぞれの区間の中でも ease-in-out にして、つなぎ目で急に変わらないようにする。
-    const MOVE_END: f32 = 0.35;
+    // 前半で動き、後半で広がる。広がりは区間の中でも ease-in-out にして、つなぎ目で急に変わらないようにする。
+    // 移動は行き過ぎてから止まるので、つなぎ目では止まっている。
+    // ponytail: 移動の途中で向きが変わると、行き過ぎの曲線が切り替わって数 px 跳ぶ。気になれば切り替えた所から曲線を始める。
+    use crate::animation::{NAV_BAR_GROW_MS, NAV_BAR_MOVE_MS};
+    const MOVE_END: f32 = NAV_BAR_MOVE_MS as f32 / (NAV_BAR_MOVE_MS + NAV_BAR_GROW_MS) as f32;
     let smooth = |t: f32| {
         let t = t.clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
     let open = open.clamp(0.0, 1.0);
-    let moved = smooth(open / MOVE_END);
+    // 移動の区間の進み。縮むときは上がり始めから測り、どちらでも動きの終わりで行き過ぎる。
+    let t = (open / MOVE_END).clamp(0.0, 1.0);
+    let moved = if opening {
+        back_out(t)
+    } else {
+        1.0 - back_out(1.0 - t)
+    };
     let grown = smooth((open - MOVE_END) / (1.0 - MOVE_END));
     let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
     let height = lerp(NAV_LINE_HEIGHT, NAV_BAR_HEIGHT, grown);
@@ -620,6 +632,15 @@ pub fn nav_bar(
             ),
     )
 }
+
+/// 行き過ぎてから戻る ease-out（easeOutBack）。0 → 1 で、終わり際に 1 を [`OVERSHOOT`] の強さで越えてから戻る。
+fn back_out(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0) - 1.0;
+    1.0 + (OVERSHOOT + 1.0) * t * t * t + OVERSHOOT * t * t
+}
+
+/// [`back_out`] の行き過ぎの強さ。1.70158 で移動の幅の約 1 割だけ越える（easeOutBack の定番の値）。
+const OVERSHOOT: f32 = 1.70158;
 
 /// 一覧の行: 左にアイコンと文字、右に `>`。行は [`list`] のカードに並べる前提で、安静時はカードと同じ色、
 /// ホバー・押下で `control-hover` / `control-active` に沈む（区切り線とカードの角は [`list`] が付ける）。
@@ -863,6 +884,18 @@ pub fn surface(theme: &Theme) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 行き過ぎるのは動きの終わり際で、広がるときは中央より下、縮むときは上端より上。端では止まっている。
+    #[test]
+    fn nav_bar_move_overshoots_toward_where_it_goes() {
+        assert_eq!((back_out(0.0), back_out(1.0)), (0.0, 1.0));
+        let peak = (1..100).map(|i| back_out(i as f32 / 100.0)).fold(0.0, f32::max);
+        assert!(peak > 1.05 && peak < 1.15, "{peak}");
+        // 縮むとき（open が 1 → 0）の移動は 1 → 0 で、0 を下回ってから戻る。
+        let rising = |t: f32| 1.0 - back_out(1.0 - t);
+        assert!((1..100).any(|i| rising(i as f32 / 100.0) < 0.0));
+        assert!((1..100).all(|i| back_out(i as f32 / 100.0) > 0.0));
+    }
     use std::time::Duration;
 
     #[test]
