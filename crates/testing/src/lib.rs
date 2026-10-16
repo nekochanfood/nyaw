@@ -1233,8 +1233,8 @@ impl Render for TooltipTest {
 const DIALOG_PX: (u32, u32) = (440, components::dialog_height(2));
 const DIALOG_SIZE: Vec2 = Vec2::new(DIALOG_PX.0 as f32 / 1000.0, DIALOG_PX.1 as f32 / 1000.0);
 /// 設定画面の大きさ（m）と解像度（px）。1px = 1mm。
-pub const SETTINGS_SIZE: Vec2 = Vec2::new(1.28, 1.08);
-pub const SETTINGS_PX: (u32, u32) = (1280, 1080);
+pub const SETTINGS_SIZE: Vec2 = Vec2::new(1.024, 0.768);
+pub const SETTINGS_PX: (u32, u32) = (1024, 768);
 /// サイドバーの幅（px）。
 const SIDEBAR_PX: f32 = 320.0;
 
