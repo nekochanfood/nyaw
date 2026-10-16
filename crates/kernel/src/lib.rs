@@ -150,10 +150,12 @@ impl DoublePress {
         if !pressed {
             return;
         }
-        match self.first.take() {
-            Some(t) if now.duration_since(t) <= DOUBLE_PRESS => self.count += 1,
+        let since = self.first.take().map(|t| now.duration_since(t));
+        match since {
+            Some(d) if d <= DOUBLE_PRESS => self.count += 1,
             _ => self.first = Some(now),
         }
+        logger::debug!("dashboard button pressed", since_first = ?since, count = self.count);
     }
 }
 

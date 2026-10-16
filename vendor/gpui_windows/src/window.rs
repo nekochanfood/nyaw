@@ -694,7 +694,9 @@ impl PlatformWindow for WindowsWindow {
                         bounds.origin.y.0,
                         rect.right - rect.left,
                         rect.bottom - rect.top,
-                        SWP_NOMOVE,
+                        // NYAW: 大きさを変えるだけで、前面に出したりフォーカスを奪ったりしない。
+                        // 起動後に開いたパネルの非表示のウィンドウがアクティブになり、novr のエミュレーターの窓がキー入力を失っていた。
+                        SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER,
                     )
                     .context("unable to set window content size")
                     .log_err();
