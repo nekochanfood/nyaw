@@ -93,9 +93,10 @@ impl Frame {
         }
         let mut rgba = Vec::with_capacity(size);
         for y in 0..height as usize {
-            for p in data[y * stride..y * stride + row].as_chunks::<4>().0 {
-                rgba.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
-            }
+            rgba.extend_from_slice(&data[y * stride..y * stride + row]);
+        }
+        for p in rgba.as_chunks_mut::<4>().0 {
+            p.swap(0, 2);
         }
         Self::new(width, height, rgba)
     }
@@ -169,6 +170,27 @@ impl Sources {
     }
 }
 
+enum Input {
+    Touch(Touch),
+    Frame,
+}
+
+/// OS からのフレーム到着でワーカーを起こす。通知は一つだけ溜め、タッチの入る余地を潰さない。
+#[derive(Clone)]
+struct Wake {
+    tx: SyncSender<Input>,
+    pending: Arc<AtomicBool>,
+}
+
+impl Wake {
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn wake(&self) {
+        if !self.pending.swap(true, Ordering::AcqRel) {
+            let _ = self.tx.try_send(Input::Frame);
+        }
+    }
+}
+
 trait Session {
     fn frame(&mut self) -> Result<Option<Frame>, Error>;
     fn touch(&mut self, touch: Touch) -> Result<(), Error>;
@@ -184,9 +206,12 @@ trait Session {
 /// Drop は停止を通知するだけで、OS 資源の解放はワーカーが行う。
 pub struct Stream {
     update: Arc<Mutex<Option<Update>>>,
-    input: SyncSender<Touch>,
+    input: SyncSender<Input>,
     stop: Arc<AtomicBool>,
 }
+
+/// 到着を通知しない OS（PipeWire のポーリング）と接点の維持のため、待ちはこれより長くしない。
+const POLL: Duration = Duration::from_millis(8);
 
 impl Stream {
     pub fn start(source: Source) -> Result<Self, Error> {
@@ -196,11 +221,11 @@ impl Stream {
     pub fn start_at(source: Source, frame_rate: u32) -> Result<Self, Error> {
         #[cfg(windows)]
         {
-            Self::spawn(frame_rate, move |_| windows::Capture::new(source))
+            Self::spawn(frame_rate, move |_, wake| windows::Capture::new(source, wake))
         }
         #[cfg(target_os = "linux")]
         {
-            Self::spawn(frame_rate, move |stop| linux::Capture::new(source, stop))
+            Self::spawn(frame_rate, move |stop, _| linux::Capture::new(source, stop))
         }
         #[cfg(not(any(windows, target_os = "linux")))]
         {
@@ -213,7 +238,7 @@ impl Stream {
 
     fn spawn<S: Session + 'static>(
         frame_rate: u32,
-        open: impl FnOnce(Arc<AtomicBool>) -> Result<S, Error> + Send + 'static,
+        open: impl FnOnce(Arc<AtomicBool>, Wake) -> Result<S, Error> + Send + 'static,
     ) -> Result<Self, Error> {
         if !(1..=MAX_FRAME_RATE).contains(&frame_rate) {
             return Err(Error(format!(
@@ -227,33 +252,62 @@ impl Stream {
         })));
         let stop = Arc::new(AtomicBool::new(false));
         let (input, rx) = mpsc::sync_channel(64);
+        let wake = Wake {
+            tx: input.clone(),
+            pending: Arc::new(AtomicBool::new(false)),
+        };
         let output = update.clone();
         let stopping = stop.clone();
         thread::Builder::new()
             .name("desktop-stream".into())
             .spawn(move || {
                 let result = (|| {
-                    let mut session = open(stopping.clone())?;
+                    let mut session = open(stopping.clone(), wake.clone())?;
                     let mut next_frame = Instant::now();
+                    let mut touches: Vec<Touch> = Vec::new();
                     while !stopping.load(Ordering::Acquire) {
                         if session.closed() {
                             break;
                         }
-                        let wait = next_frame
-                            .saturating_duration_since(Instant::now())
-                            .min(Duration::from_millis(8));
-                        match rx.recv_timeout(wait) {
-                            Ok(touch) => session.touch(touch)?,
+                        // 期限を過ぎていれば到着の通知を待ち、まだなら期限まで待つ。どちらもタッチで起きる。
+                        let wait = match next_frame.saturating_duration_since(Instant::now()) {
+                            Duration::ZERO => POLL,
+                            wait => wait.min(POLL),
+                        };
+                        let first = match rx.recv_timeout(wait) {
+                            Ok(input) => Some(input),
                             Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                            Err(mpsc::RecvTimeoutError::Timeout) => (),
+                            Err(mpsc::RecvTimeoutError::Timeout) => None,
+                        };
+                        // 溜まったタッチを一度に処理し、同じ接点の連続した移動は最新だけ送る。
+                        // 一件ずつだと画像の取得中に移動が溜まり、ポインタが遅れて止まって見え、キューも溢れる。
+                        for input in first.into_iter().chain(rx.try_iter()) {
+                            let Input::Touch(touch) = input else {
+                                continue;
+                            };
+                            match touches.iter_mut().rev().find(|t| t.id == touch.id) {
+                                Some(last)
+                                    if last.phase == TouchPhase::Move
+                                        && touch.phase == TouchPhase::Move =>
+                                {
+                                    *last = touch
+                                }
+                                _ => touches.push(touch),
+                            }
+                        }
+                        for touch in touches.drain(..) {
+                            session.touch(touch)?;
                         }
                         session.heartbeat()?;
                         let now = Instant::now();
                         if now < next_frame {
                             continue;
                         }
-                        next_frame = now + interval;
+                        // 取得の前に下ろし、取得中に届いた画像の通知を落とさない。
+                        wake.pending.store(false, Ordering::Release);
+                        // 画像が無ければ期限を進めず、到着しだい取る（取り逃しで一周期遅れない）。
                         if let Some(frame) = session.frame()? {
+                            next_frame = now + interval;
                             *output.lock().unwrap() = Some(Update {
                                 status: Status::Streaming,
                                 frame: Some(Arc::new(frame)),
@@ -280,7 +334,7 @@ impl Stream {
     }
 
     pub fn touch(&self, touch: Touch) -> Result<(), Error> {
-        self.input.try_send(touch.validated()?).map_err(|e| {
+        self.input.try_send(Input::Touch(touch.validated()?)).map_err(|e| {
             // 押下・解放を落として操作を続けると接点が残るため、入力詰まりはセッションごと停止する。
             self.stop.store(true, Ordering::Release);
             Error(format!("desktop touch delivery failed: {e}"))
@@ -384,7 +438,7 @@ mod tests {
         let dropped = Arc::new(AtomicBool::new(false));
         let observer = dropped.clone();
         let (tx, rx) = mpsc::sync_channel(4);
-        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_| {
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| {
             Ok(Fake {
                 dropped,
                 input: tx,
@@ -407,7 +461,7 @@ mod tests {
 
     #[test]
     fn worker_reports_open_failure() {
-        let stream = Stream::spawn::<Fake>(DEFAULT_FRAME_RATE, |_| {
+        let stream = Stream::spawn::<Fake>(DEFAULT_FRAME_RATE, |_, _| {
             Err(Error("permission denied".into()))
         })
         .unwrap();
@@ -422,7 +476,7 @@ mod tests {
     fn invalid_frame_rates_do_not_open_an_os_session() {
         for rate in [0, MAX_FRAME_RATE + 1, u32::MAX] {
             assert!(
-                Stream::spawn::<Fake>(rate, |_| panic!("invalid rate must not open a session"))
+                Stream::spawn::<Fake>(rate, |_, _| panic!("invalid rate must not open a session"))
                     .is_err()
             );
         }
@@ -432,7 +486,7 @@ mod tests {
     fn low_frame_rate_limits_capture_without_delaying_touch() {
         let dropped = Arc::new(AtomicBool::new(false));
         let (tx, rx) = mpsc::sync_channel(4);
-        let stream = Stream::spawn(1, move |_| {
+        let stream = Stream::spawn(1, move |_, _| {
             Ok(Fake {
                 dropped,
                 input: tx,
@@ -463,6 +517,67 @@ mod tests {
         });
     }
 
+    /// 画像の取得中は止まり、その間に届いたタッチが溜まる。
+    struct Busy {
+        entered: SyncSender<()>,
+        gate: Receiver<()>,
+        input: SyncSender<Touch>,
+    }
+    impl Session for Busy {
+        fn frame(&mut self) -> Result<Option<Frame>, Error> {
+            let _ = self.entered.try_send(());
+            self.gate
+                .recv_timeout(Duration::from_secs(3))
+                .ok()
+                .map(|()| Frame::new(1, 1, vec![0; 4]))
+                .transpose()
+        }
+        fn touch(&mut self, touch: Touch) -> Result<(), Error> {
+            self.input.send(touch).unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn touches_queued_during_capture_are_drained_and_moves_coalesced() {
+        let (entered, entering) = mpsc::sync_channel(1);
+        let (release, gate) = mpsc::sync_channel(1);
+        let (tx, rx) = mpsc::sync_channel(64);
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| {
+            Ok(Busy {
+                entered,
+                gate,
+                input: tx,
+            })
+        })
+        .unwrap();
+        entering.recv_timeout(Duration::from_secs(3)).unwrap();
+        let at = |phase, x| Touch {
+            id: 0,
+            phase,
+            x,
+            y: 0.5,
+        };
+        // 取得中に溜まった移動は、最新の一件にまとめて送る。
+        stream.touch(at(TouchPhase::Down, 0.0)).unwrap();
+        for i in 1..=60 {
+            stream.touch(at(TouchPhase::Move, i as f32 / 100.0)).unwrap();
+        }
+        stream.touch(at(TouchPhase::Up, 0.6)).unwrap();
+        release.send(()).unwrap();
+        let got: Vec<_> = (0..3)
+            .map(|_| rx.recv_timeout(Duration::from_secs(3)).unwrap())
+            .collect();
+        assert_eq!(
+            got,
+            [
+                at(TouchPhase::Down, 0.0),
+                at(TouchPhase::Move, 0.6),
+                at(TouchPhase::Up, 0.6)
+            ]
+        );
+    }
+
     struct TouchFailure(Arc<AtomicBool>);
     impl Drop for TouchFailure {
         fn drop(&mut self) {
@@ -482,7 +597,7 @@ mod tests {
     fn injection_failure_reports_error_and_releases_the_os_session() {
         let dropped = Arc::new(AtomicBool::new(false));
         let observer = dropped.clone();
-        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_| Ok(TouchFailure(dropped))).unwrap();
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| Ok(TouchFailure(dropped))).unwrap();
         stream
             .touch(Touch {
                 id: 0,

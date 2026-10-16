@@ -1,4 +1,4 @@
-use super::{Error, Frame, Session, Source, SourceKind, Touch, TouchPhase};
+use super::{Error, Frame, Session, Source, SourceKind, Touch, TouchPhase, Wake};
 use ::windows::{
     Foundation::TypedEventHandler,
     Graphics::{
@@ -39,6 +39,7 @@ use std::{
         Arc, OnceLock,
         atomic::{AtomicBool, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 impl From<::windows::core::Error> for Error {
@@ -136,7 +137,7 @@ pub(super) struct Capture {
 }
 
 impl Capture {
-    pub fn new(source: Source) -> Result<Self, Error> {
+    pub fn new(source: Source, wake: Wake) -> Result<Self, Error> {
         // WinRT の静的キャッシュと MTA の寿命を揃え、全配信停止後の再開でも参照を有効に保つ。
         static MTA: OnceLock<Result<(), Error>> = OnceLock::new();
         MTA.get_or_init(|| {
@@ -152,6 +153,14 @@ impl Capture {
         // WGC と入力の双方をデバイスピクセルで扱い、異なる DPI のモニター間でも座標を揃える。
         unsafe {
             SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        }
+        if source.kind == SourceKind::Window
+            && unsafe { IsIconic(HWND(source.target as _)) }.as_bool()
+        {
+            // 最小化した窓は WGC が画像を出さず、最初の一枚を待ったまま止まるので元に戻す。
+            unsafe {
+                let _ = ShowWindowAsync(HWND(source.target as _), SW_RESTORE);
+            }
         }
         if !GraphicsCaptureSession::IsSupported()? {
             return Err(Error("Windows Graphics Capture is unavailable".into()));
@@ -199,6 +208,7 @@ impl Capture {
         let signal = ready.clone();
         pool.FrameArrived(&TypedEventHandler::new(move |_, _| {
             signal.store(true, Ordering::Release);
+            wake.wake();
             Ok(())
         }))?;
         let closed = Arc::new(AtomicBool::new(false));
@@ -483,16 +493,18 @@ fn normalized_point(bounds: RECT, x: f32, y: f32) -> POINT {
 struct TouchDevice {
     device: HSYNTHETICPOINTERDEVICE,
     contacts: [Option<POINT>; 2],
+    injected: Instant,
 }
 impl TouchDevice {
     fn new() -> Result<Self, Error> {
         Ok(Self {
             device: unsafe { CreateSyntheticPointerDevice(PT_TOUCH, 2, POINTER_FEEDBACK_NONE)? },
             contacts: [None; 2],
+            injected: Instant::now(),
         })
     }
 
-    fn inject(&self, changed: Option<(usize, POINT, POINTER_FLAGS)>) -> Result<(), Error> {
+    fn inject(&mut self, changed: Option<(usize, POINT, POINTER_FLAGS)>) -> Result<(), Error> {
         let mut pointers = Vec::with_capacity(2);
         for id in 0..2 {
             let contact = changed
@@ -532,9 +544,12 @@ impl TouchDevice {
                             && attempt < 3 =>
                     {
                         // 同じ時刻の接点を Windows が拒む場合だけ、ワーカーで次の時刻まで待つ。
-                        std::thread::sleep(std::time::Duration::from_millis(1));
+                        std::thread::sleep(Duration::from_millis(1));
                     }
-                    result => return result.map_err(Into::into),
+                    result => {
+                        self.injected = Instant::now();
+                        return result.map_err(Into::into);
+                    }
                 }
             }
         }
@@ -573,7 +588,11 @@ impl TouchDevice {
         Ok(())
     }
 
-    fn heartbeat(&self) -> Result<(), Error> {
+    /// 押したままの接点を維持する。移動の直後に重ねると同じ時刻として拒まれるので、注入が途絶えた時だけ送る。
+    fn heartbeat(&mut self) -> Result<(), Error> {
+        if self.injected.elapsed() < Duration::from_millis(8) {
+            return Ok(());
+        }
         self.inject(None)
     }
 }

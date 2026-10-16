@@ -11,7 +11,7 @@ pub fn source(name: &str, kind: SourceKind) -> Source {
 
 pub struct Controller {
     update: Arc<Mutex<Option<Update>>>,
-    input: Receiver<Touch>,
+    input: Receiver<Input>,
     stop: Arc<AtomicBool>,
 }
 
@@ -38,7 +38,13 @@ impl Controller {
         *self.update.lock().unwrap() = Some(update);
     }
     pub fn touches(&self) -> Vec<Touch> {
-        self.input.try_iter().collect()
+        self.input
+            .try_iter()
+            .filter_map(|input| match input {
+                Input::Touch(touch) => Some(touch),
+                Input::Frame => None,
+            })
+            .collect()
     }
     pub fn stopped(&self) -> bool {
         self.stop.load(Ordering::Acquire)
