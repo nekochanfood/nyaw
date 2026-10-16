@@ -552,6 +552,49 @@ pub fn list_item(
     b
 }
 
+/// サイドバーの行: 左にアイコンと文字。どれを選んでいるかを見せるための行で、ふだんは地（`background`）と同じ色
+/// （背景が無いように見える。透明にするとホバーの色から戻るフェードが途中で切れるので地の色を使う）、ホバー・押下で
+/// `control-on-background-*`、選んでいる行（`selected`）はアクセント（`accent-bg-active` に `accent-text`）。高さはボタンと同じ。
+pub fn sidebar_item(
+    theme: &Theme,
+    id: &'static str,
+    glyph: &'static crate::Icon,
+    label: impl Into<SharedString>,
+    selected: bool,
+) -> Button {
+    let mut b = base_button(theme, id, Variant::OnBackground);
+    (b.rest, b.hover, b.active) = if selected {
+        (
+            theme.accent_bg_active,
+            theme.accent_bg_active,
+            theme.accent_bg_active,
+        )
+    } else {
+        (
+            theme.background,
+            theme.control_on_background_hover,
+            theme.control_on_background_active,
+        )
+    };
+    let fg = if selected {
+        theme.accent_text
+    } else {
+        theme.neutral_text
+    };
+    b.ink = fg;
+    b.base = b
+        .base
+        .w_full()
+        .justify_start()
+        .gap(px(spacing::MD))
+        .px(px(spacing::LG))
+        .font_weight(FontWeight::NORMAL)
+        .text_color(rgba(fg))
+        .child(crate::icon(glyph).size(px(font_size::LG)))
+        .child(div().flex_1().child(label.into()));
+    b
+}
+
 /// 行（[`list_item`]）をカード 1 枚に縦に並べ、行の間に 1px の区切り線を引く。
 /// 端の行はカードの角（`LG`）に合わせて丸める（行の塗りがカードの角からはみ出さない）。
 pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
