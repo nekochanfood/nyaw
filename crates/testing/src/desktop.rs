@@ -84,10 +84,10 @@ impl Render for DesktopViewer {
 }
 
 /// 統計の大きさ（m）と解像度（px）。文字が収まる最小限にし、余白は透明にする。
-const STATS_SIZE: Vec2 = Vec2::new(0.16, 0.08);
-const STATS_RESOLUTION: (u32, u32) = (160, 80);
+const STATS_SIZE: Vec2 = Vec2::new(0.16, 0.1);
+const STATS_RESOLUTION: (u32, u32) = (160, 100);
 
-/// 配信パネルの左上の角に重ねる統計（FPS・遅延・転送・解像度）。行ごとに薄い下地を敷く。
+/// 配信パネルの左上の角に重ねる統計（FPS・遅延・取得・転送・解像度）。行ごとに薄い下地を敷く。
 struct StreamStats {
     panel: PanelId,
 }
@@ -106,6 +106,11 @@ impl Render for StreamStats {
                     cx,
                     "desktop.stats_latency",
                     &[("ms", &format!("{:.1}", s.latency_ms))],
+                ),
+                i18n::tf(
+                    cx,
+                    "desktop.stats_capture",
+                    &[("ms", &format!("{:.1}", s.capture_ms))],
                 ),
                 i18n::tf(
                     cx,

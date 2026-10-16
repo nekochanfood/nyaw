@@ -18,6 +18,7 @@ failed = "Capture failed: {error}"
 stats_measuring = "Measuring…"
 stats_fps = "FPS: {fps}"
 stats_latency = "Latency: {ms} ms"
+stats_capture = "Capture: {ms} ms"
 stats_upload = "Upload: {ms} ms"
 stats_size = "Resolution: {width}×{height}"
 
