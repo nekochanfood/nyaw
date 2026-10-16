@@ -81,7 +81,8 @@ fn scenario(emu: &Emu) {
     // so wait until the filled side (just past 12 o'clock) turns bright instead of a fixed time.
     let start = std::time::Instant::now();
     let mut filled = emu.color(on_ring(0.08));
-    while brightness(filled) <= brightness(before) + 40 && start.elapsed() < Duration::from_secs(1) {
+    while brightness(filled) <= brightness(before) + 40 && start.elapsed() < Duration::from_secs(1)
+    {
         std::thread::sleep(Duration::from_millis(5));
         filled = emu.color(on_ring(0.08));
     }
