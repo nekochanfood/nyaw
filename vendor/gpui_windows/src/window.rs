@@ -32,6 +32,20 @@ use crate::direct_manipulation::DirectManipulationHandler;
 use crate::*;
 use gpui::*;
 
+thread_local! {
+    /// NYAW: 次の `resize` で使う描画の拡大率（[`with_render_scale`]）。
+    static RENDER_SCALE: Cell<Option<f32>> = const { Cell::new(None) };
+}
+
+/// NYAW: `f`（`Window::resize` を呼ぶ）の間の resize で、ウィンドウの拡大率を `scale` にする（DPI を偽らずにパネルの LOD を変える）。
+/// 論理サイズはそのままで、描く解像度だけが変わる。反映は resize と同じく非同期（WM_SIZE のとき）。
+pub fn with_render_scale<R>(scale: f32, f: impl FnOnce() -> R) -> R {
+    RENDER_SCALE.with(|s| s.set(Some(scale)));
+    let r = f();
+    RENDER_SCALE.with(|s| s.set(None));
+    r
+}
+
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowInner>);
 
 impl std::ops::Deref for WindowsWindow {
@@ -660,6 +674,11 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
+        // NYAW: 描画の拡大率を書き換える（[`with_render_scale`]）。続く WM_SIZE がこの拡大率で論理サイズと描画先を更新する。
+        if let Some(scale) = RENDER_SCALE.with(|s| s.get()) {
+            self.state.scale_factor.set(scale);
+            self.state.direct_manipulation.set_scale_factor(scale);
+        }
         let hwnd = self.0.hwnd;
         let bounds = gpui::bounds(self.bounds().origin, size).to_device_pixels(self.scale_factor());
         let rect = calculate_window_rect(bounds, &self.state.border_offset);

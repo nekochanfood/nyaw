@@ -66,7 +66,7 @@ novr・SteamVR (OpenVR)・OpenXR はどれも対等な「手段」でしかな�
     右クリック = グリップ（掴む）、矢印キー = 右手のスティック、掴んでいる間の PageUp / PageDown = パネルの拡大 / 縮小（テスト用。`vr::RESIZE_INPUT` → `ControllerState::resize`）。左手は手元で下を向いていてパネルを指さず、WASD = 左手のスティック。
   - デバイスは実在しないので取り付けたパネルは追従しない（Subsystems が返す共通フレームの `pose` が `None`。取り付け先を見失ったのと同じ扱い）。
   - キーボードはスティックなのでパネルには届かない（VR と同じ）。
-  - Linux の GPUI は `render_to_image` が未実装なので、novr でも GPUI のパネルは映らない。
+  - Linux は GPUI を headless で動かし（`ui::application`）、窓を出さずに wgpu で描いて読み戻す（vendor/gpui_linux・vendor/gpui_wgpu）。ディスプレイは要らず、GPU はソフトウェア実装（Mesa の lavapipe / llvmpipe）でも動く。
 - ビューはランタイムを意識しない（どのランタイムでも同じビューが動く）。
 
 ## 1 フレームの流れ（`ui::run`。どのランタイムでも同じ）
@@ -231,7 +231,6 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 ## 未実装（土台のみ）
 
 - 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は Monado（Windows、simulated）でパネルが映るところまで確認済みで、コントローラ入力は未確認。
-- Linux での描画の読み戻し（gpui の `render_to_image` が Windows のみ実装。`gpui_wgpu` のヘッドレスレンダラ経由が候補）。
 - 描画は毎フレーム CPU に読み戻し、変化があれば `vr` が Vulkan のイメージへ上げ直してランタイムへ渡す（`crates/subsystems/vr/src/gpu.rs`。1024x768 で約 1.6ms）。GPUI のテクスチャを読み戻さずに直接共有する経路は未実装。
 - Windows での OpenXR ランタイム検出（レジストリ）。
 - `gpui` は crates.io 版では `Window::dispatch_event` を外部から呼べないため、Zed の git リビジョンに固定している。`render_to_image` のため `rendering` は本番でも gpui の `test-support` フィーチャーを有効にしている。
@@ -273,5 +272,5 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 
 - ログのファイル出力・世代管理は `logger`、`NYAW_LOG` の取得は `kernel::config`。OS サブシステムは保存先の違いを吸収する。
 - パネルを閉じた後、フェード完了で資源を解放する判断は `overlay`。`rendering::Surface` は `release` を実行し、パネルの閉鎖状態を受け取らない。
-- 非表示・透過・フォーカスしないというウィンドウの方針は `ui`。Windows の描画先サイズ補正や Linux のオフスクリーン配置など、実現手段の違いは描画サブシステムが吸収する。
+- 非表示・透過・フォーカスしないというウィンドウの方針は `ui`。Windows の描画先サイズ補正や Linux の headless での描画、LOD の拡大率の変え方（vendor/ の `with_render_scale`）など、実現手段の違いは描画サブシステムが吸収する。
 - Subsystems とのやり取りがあるだけでは、その共通機能を Subsystems の一部にしない。同名クレートを上下に作らず、ログ・起動・パネル管理などの所有者へ置く。

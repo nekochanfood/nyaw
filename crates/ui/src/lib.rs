@@ -630,6 +630,16 @@ pub struct Hooks {
 /// フレームループ（メインスレッド）で実行してもらう処理。
 pub type Remote = Box<dyn FnOnce(&mut App) + Send>;
 
+/// パネルを描く GPUI のアプリ。パネルのウィンドウは画面に出さずに描いて読み戻すだけなので、
+/// Linux はディスプレイサーバーに繋がない headless で動かす（X11 / Wayland は非表示の指定を無視して窓を出す）。
+pub fn application() -> gpui::Application {
+    if cfg!(target_os = "linux") {
+        gpui_platform::headless()
+    } else {
+        gpui_platform::application()
+    }
+}
+
 /// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
 /// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通る（周期は `poll` が vsync まで待って作る）。
 /// パネルに載せる画面（上の層）は `panels` で受け取る。UI 層はどの画面かを知らない。
@@ -653,7 +663,7 @@ pub fn run_with(
         Some(b) => p.with_budget(b),
         None => p,
     };
-    gpui_platform::application().run(move |cx: &mut App| {
+    application().run(move |cx: &mut App| {
         // 部品のトランジションを有効にする（テストのキットは置かない）。
         cx.set_global(design::Motion::default());
         design::font::install(cx);

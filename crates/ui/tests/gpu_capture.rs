@@ -1,7 +1,6 @@
 //! Checks that a hidden panel window's render can be read back through the production path (real platform + GPU).
 //! The GUI event loop must run on the main thread, so this runs in main without the test harness.
 
-#[cfg(windows)]
 fn main() {
     use std::{
         cell::{Cell, RefCell},
@@ -32,7 +31,7 @@ fn main() {
     let out = result.clone();
     let lod_results = Rc::new(RefCell::new(Vec::new()));
     let lod_out = lod_results.clone();
-    gpui_platform::application().run(move |cx| {
+    ui::application().run(move |cx| {
         let window = open_panel_window(cx, RES, |_, cx| cx.new(|_| Solid(view_color)))
             .expect("cannot open panel window");
         cx.spawn(async move |cx| {
@@ -136,10 +135,4 @@ fn main() {
         "collect returns the picture just drawn"
     );
     println!("gpu_capture: delayed readback ok");
-}
-
-// ponytail: render_to_image is only implemented for Windows in gpui. Remove this branch when Linux is supported.
-#[cfg(not(windows))]
-fn main() {
-    println!("gpu_capture: skipped (non-Windows unsupported)");
 }

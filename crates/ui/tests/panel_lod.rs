@@ -39,7 +39,7 @@ fn wait(what: &str, mut ready: impl FnMut() -> bool) {
 }
 
 fn main() -> ExitCode {
-    if !cfg!(windows) || !common::should_run("panel_lod") {
+    if !common::should_run("panel_lod") {
         return ExitCode::SUCCESS;
     }
     let mock = common::SharedMock::default();

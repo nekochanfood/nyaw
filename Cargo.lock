@@ -2081,7 +2081,6 @@ dependencies = [
 [[package]]
 name = "gpui_linux"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed?rev=26363aabdb31a0c016728634202e1ad5067033aa#26363aabdb31a0c016728634202e1ad5067033aa"
 dependencies = [
  "accesskit",
  "accesskit_unix",
@@ -2098,6 +2097,7 @@ dependencies = [
  "gpui_util",
  "gpui_wgpu",
  "http_client",
+ "image",
  "libc",
  "log",
  "notify-rust",
@@ -2239,7 +2239,6 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed?rev=26363aabdb31a0c016728634202e1ad5067033aa#26363aabdb31a0c016728634202e1ad5067033aa"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -4553,11 +4552,11 @@ name = "rendering"
 version = "2026.0.1"
 dependencies = [
  "gpui",
+ "gpui_linux",
+ "gpui_wgpu",
  "gpui_windows",
  "logger",
- "raw-window-handle",
  "vr",
- "windows 0.62.2",
 ]
 
 [[package]]
