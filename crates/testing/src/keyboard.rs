@@ -9,6 +9,13 @@ pub struct KeyboardTest {
 }
 
 impl KeyboardTest {
+    pub fn spec() -> PanelSpec {
+        PanelSpec::new(Pose::IDENTITY, |id, _, cx| Self::new(id, cx))
+            .in_view(Pose::new(Vec3::new(0., 0.23, -0.85), Quat::IDENTITY))
+            .sized(Vec2::new(0.96, 0.66), (1600, 1100))
+            .titled("keyboard.title")
+    }
+
     pub fn new(panel: PanelId, cx: &mut Context<Self>) -> Self {
         let keyboard = cx.new(|cx| ui::keyboard::KeyboardView::new(panel, cx));
         Self {
@@ -36,6 +43,7 @@ impl Render for KeyboardTest {
             .debug_selector(|| "keyboard-test-field".into())
             .track_focus(&self.focus)
             .min_h(px(108.))
+            .flex_shrink_0()
             .p(px(spacing::MD))
             .rounded(px(radius::LG))
             .bg(rgba(theme.control))
@@ -94,22 +102,33 @@ impl Render for KeyboardTest {
                 })),
             )
             .child(
-                components::free_scroll(
-                    div()
-                        .id("keyboard-test-scroll")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .track_scroll(&self.scroll),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap(px(spacing::LG))
-                        .child(field)
-                        .child(self.keyboard.clone()),
-                ),
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(
+                        components::free_scroll(
+                            div()
+                                .id("keyboard-test-scroll")
+                                .debug_selector(|| "keyboard-test-scroll".into())
+                                .size_full()
+                                .overflow_y_scroll()
+                                .track_scroll(&self.scroll),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(spacing::LG))
+                                .child(field)
+                                .child(self.keyboard.clone()),
+                        ),
+                    )
+                    .child(components::scrollbars(
+                        &theme,
+                        "keyboard-test-bars",
+                        &self.scroll,
+                    )),
             )
     }
 }

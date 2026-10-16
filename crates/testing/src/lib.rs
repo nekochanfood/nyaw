@@ -323,7 +323,6 @@ impl Render for Testing {
         let tracker = st.trackers.first().map(|id| Device::Tracker(id.clone()));
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let theme = Theme::current(cx);
-        let self_panel = self.panel;
         // この画面のボタンは現在のテーマで描く（上のモジュール関数 `button` を隠す）。
         macro_rules! button {
             ($($a:expr),+ $(,)?) => {
@@ -499,11 +498,9 @@ impl Render for Testing {
             .child(
                 button!("keyboard-test", i18n::t(cx, "keyboard.title"), false).on_click(
                     move |_, _, cx| {
-                        cx.default_global::<PanelControl>().spawns.push(
-                            PanelSpec::spawn(self_panel, |id, _, cx| KeyboardTest::new(id, cx))
-                                .sized(Vec2::new(1.6, 1.1), (1600, 1100))
-                                .titled("keyboard.title"),
-                        );
+                        cx.default_global::<PanelControl>()
+                            .spawns
+                            .push(KeyboardTest::spec());
                     },
                 ),
             )
@@ -2860,12 +2857,52 @@ mod tests {
     fn test_panel_buttons_spawn_panels(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, _| Testing::default());
         cx.run_until_parked();
-        for id in ["spawn-anim", "spawn-lod", "spawn-font", "stress-test"] {
+        for id in [
+            "spawn-anim",
+            "spawn-lod",
+            "spawn-font",
+            "stress-test",
+            "keyboard-test",
+        ] {
             let c = cx.debug_bounds(id).unwrap().center();
             cx.simulate_click(c, Modifiers::none());
         }
         let spawns = cx.update(|_, cx| cx.global::<PanelControl>().spawns.len());
-        assert_eq!(spawns, 4);
+        assert_eq!(spawns, 5);
+    }
+
+    #[gpui::test]
+    fn keyboard_test_opens_in_front_of_the_view_instead_of_inheriting_the_source_tilt(
+        cx: &mut TestAppContext,
+    ) {
+        let mut kernel = kernel::Kernel::with_backend(
+            kernel::vr::mock::MockBackend::default(),
+            Default::default(),
+        );
+        kernel.subsystems.backend.frame.hmd =
+            Pose::new(Vec3::new(2., 1., 3.), Quat::from_rotation_y(0.8));
+        kernel.tick();
+        let source = kernel
+            .add_panel(
+                "source",
+                Pose::new(Vec3::new(5., -2., -4.), Quat::from_rotation_z(1.)),
+                TESTING_SIZE,
+                TESTING_PX,
+            )
+            .unwrap();
+        let (_, cx) = cx.add_window_view(|_, _| Testing::new(source));
+        cx.run_until_parked();
+        let at = cx.debug_bounds("keyboard-test").unwrap().center();
+        cx.simulate_click(at, Modifiers::none());
+        cx.update(|_, cx| {
+            let spec = cx.default_global::<PanelControl>().spawns.pop().unwrap();
+            let pose = spec.pose_for(&kernel, 1);
+            assert_eq!(
+                pose,
+                kernel.hmd().leveled() * Pose::new(Vec3::new(0., 0.23, -0.85), Quat::IDENTITY)
+            );
+            assert!(spec.parent().is_none());
+        });
     }
 
     /// Fill は上限ちょうどまで出し（待っている分も数える）、Grid・Close all は出したもののうち開いているものだけに効く。
