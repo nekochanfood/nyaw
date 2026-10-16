@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use gpui::{App, Div, SharedString, Window, WindowId, div, prelude::*, px, rgba};
+use gpui::{AnyWeakEntity, App, Div, SharedString, Window, WindowId, div, prelude::*, px, rgba};
 
 use crate::{Theme, font_size, radius, spacing};
 
@@ -17,18 +17,28 @@ const PAD_X: f32 = spacing::XL;
 /// 箱の高さ。
 pub const TOOLTIP_HEIGHT: f32 = LINE + PAD_Y * 2.0;
 
-/// ツールチップの要求（GPUI のグローバル）。ウィンドウごとに、ホバーしている要素（`id`）とその文字。
+/// ツールチップの要求（GPUI のグローバル）。ウィンドウごとに、ホバーしている要素（`id`）とその文字、持ち主。
 /// 外れたら消す。どの手のカーソルに出すかは UI 層が決める。
 #[derive(Default)]
-pub struct Tooltips(pub HashMap<WindowId, (&'static str, SharedString)>);
+pub struct Tooltips(pub HashMap<WindowId, (&'static str, SharedString, AnyWeakEntity)>);
 
 impl gpui::Global for Tooltips {}
 
+impl Tooltips {
+    /// 持ち主が描かれなくなった要求を消す。ホバー中の要素が消えると（押して画面が変わったなど）GPUI は外れたことを
+    /// 知らせないので、要素の状態（持ち主）が捨てられたかで見る。UI 層が毎フレーム呼ぶ。
+    pub fn drop_stale(&mut self) {
+        self.0.retain(|_, (_, _, owner)| owner.upgrade().is_some());
+    }
+}
+
 /// 要素 `id` の `on_hover` から呼ぶ。入ったら `text` を置き、出たら（自分が置いたものなら）消す。
+/// `owner` は要素が描かれている間だけ生きている状態（`use_keyed_state` の Entity）。
 /// 隣の要素へ移ると、入る・出るの順が前後しても後から入った方が残る。
 pub fn hover_tooltip(
     id: &'static str,
     text: SharedString,
+    owner: AnyWeakEntity,
     hovered: bool,
     window: &mut Window,
     cx: &mut App,
@@ -36,8 +46,8 @@ pub fn hover_tooltip(
     let w = window.window_handle().window_id();
     let map = &mut cx.default_global::<Tooltips>().0;
     if hovered {
-        map.insert(w, (id, text));
-    } else if map.get(&w).is_some_and(|(i, _)| *i == id) {
+        map.insert(w, (id, text, owner));
+    } else if map.get(&w).is_some_and(|(i, _, _)| *i == id) {
         map.remove(&w);
     }
 }
@@ -125,13 +135,34 @@ mod tests {
     fn the_last_entered_element_owns_the_tooltip(cx: &mut gpui::TestAppContext) {
         let w = cx.add_empty_window();
         w.update(|window, cx| {
-            hover_tooltip("a", "A".into(), true, window, cx);
+            let owner = cx.new(|_| ());
+            let o = || owner.clone().into_any().downgrade();
+            hover_tooltip("a", "A".into(), o(), true, window, cx);
             // 隣へ移ると、入るのが出るより先に届くことがある。
-            hover_tooltip("b", "B".into(), true, window, cx);
-            hover_tooltip("a", "A".into(), false, window, cx);
+            hover_tooltip("b", "B".into(), o(), true, window, cx);
+            hover_tooltip("a", "A".into(), o(), false, window, cx);
             let id = window.window_handle().window_id();
             assert_eq!(cx.global::<Tooltips>().0[&id].1, "B");
-            hover_tooltip("b", "B".into(), false, window, cx);
+            hover_tooltip("b", "B".into(), o(), false, window, cx);
+            assert!(cx.global::<Tooltips>().0.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn a_vanished_element_drops_its_tooltip(cx: &mut gpui::TestAppContext) {
+        let w = cx.add_empty_window();
+        let owner = w.update(|window, cx| {
+            let owner = cx.new(|_| ());
+            hover_tooltip("a", "A".into(), owner.clone().into_any().downgrade(), true, window, cx);
+            cx.global_mut::<Tooltips>().drop_stale();
+            assert_eq!(cx.global::<Tooltips>().0.len(), 1, "still drawn");
+            owner
+        });
+        // 押して画面が変わり、ホバーが外れた知らせのないまま要素（の状態）が消えた。
+        drop(owner);
+        w.run_until_parked();
+        w.update(|_, cx| {
+            cx.global_mut::<Tooltips>().drop_stale();
             assert!(cx.global::<Tooltips>().0.is_empty());
         });
     }

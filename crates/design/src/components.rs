@@ -320,6 +320,8 @@ impl RenderOnce for Button {
 
         // ポインタの状態を書き換えて描き直す。
         let press = state.clone();
+        // ツールチップの持ち主。このボタンが描かれなくなる（状態が捨てられる）と要求も消える。
+        let owner = state.clone().into_any().downgrade();
         let set = move |hovered: Option<bool>, pressed: Option<bool>| {
             let state = state.clone();
             move |window: &mut Window, cx: &mut App| {
@@ -427,7 +429,7 @@ impl RenderOnce for Button {
             .children(wave)
             .on_hover(move |h, w, cx| {
                 if let Some(tip) = &tip {
-                    hover_tooltip(id, tip.clone(), *h, w, cx);
+                    hover_tooltip(id, tip.clone(), owner.clone(), *h, w, cx);
                 }
                 if *h { over(w, cx) } else { leave(w, cx) }
             })

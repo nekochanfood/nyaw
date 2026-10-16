@@ -348,9 +348,10 @@ pub fn sync_tooltips<B: VrBackend>(
     cx: &mut App,
 ) -> bool {
     let requests = cx.default_global::<design::components::Tooltips>();
+    requests.drop_stale();
     let mut tooltip = HashMap::new();
     for (panel, window) in windows {
-        let Some((_, text)) = requests.0.get(&window) else {
+        let Some((_, text, _)) = requests.0.get(&window) else {
             continue;
         };
         // ponytail: 両手で同じパネルを指すと GPUI のマウスは 1 つなので、どちらの手の要求か見分けられない。両方に出す。
