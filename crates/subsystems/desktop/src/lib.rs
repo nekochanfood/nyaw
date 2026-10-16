@@ -59,6 +59,8 @@ pub struct Frame {
     pub rgba: Vec<u8>,
     /// OS が画面を取り込んだ時刻。分からなければ受け取った時刻。遅延の計測に使う。
     pub captured: Instant,
+    /// ワーカーで GPU から読み出して並べ替えるのに掛かった時間。
+    pub cost: Duration,
 }
 
 impl Frame {
@@ -75,6 +77,7 @@ impl Frame {
             height,
             rgba,
             captured: Instant::now(),
+            cost: Duration::ZERO,
         })
     }
 
@@ -94,12 +97,14 @@ impl Frame {
         if width == 0 || height == 0 || stride < row || required.is_none_or(|n| data.len() < n) {
             return Err(Error("invalid desktop frame stride or buffer".into()));
         }
-        let mut rgba = Vec::with_capacity(size);
-        for y in 0..height as usize {
-            rgba.extend_from_slice(&data[y * stride..y * stride + row]);
-        }
-        for p in rgba.as_chunks_mut::<4>().0 {
-            p.swap(0, 2);
+        // 1 画素を u32 として並べ替え、コピーと同じ 1 回の走査で済ませる（バイト単位の入れ替えはベクトル化されず 3 倍遅い）。
+        let mut rgba = vec![0; size];
+        for (y, dst) in rgba.chunks_exact_mut(row).enumerate() {
+            let src = &data[y * stride..y * stride + row];
+            for (d, s) in dst.as_chunks_mut::<4>().0.iter_mut().zip(src.as_chunks::<4>().0) {
+                let x = u32::from_le_bytes(*s);
+                *d = (x & 0xff00_ff00 | (x >> 16) & 0xff | (x & 0xff) << 16).to_le_bytes();
+            }
         }
         Self::new(width, height, rgba)
     }
@@ -309,8 +314,11 @@ impl Stream {
                         // 取得の前に下ろし、取得中に届いた画像の通知を落とさない。
                         wake.pending.store(false, Ordering::Release);
                         // 画像が無ければ期限を進めず、到着しだい取る（取り逃しで一周期遅れない）。
-                        if let Some(frame) = session.frame()? {
-                            next_frame = now + interval;
+                        if let Some(mut frame) = session.frame()? {
+                            frame.cost = now.elapsed();
+                            // 期限から一定の間隔で進める。取った時刻から数えると、次の画像の到着待ちが毎回足されて
+                            // 上限より遅くなる（60 で 48 になっていた）。止まっていた後は今から数え直す。
+                            next_frame = (next_frame + interval).max(now);
                             *output.lock().unwrap() = Some(Update {
                                 status: Status::Streaming,
                                 frame: Some(Arc::new(frame)),

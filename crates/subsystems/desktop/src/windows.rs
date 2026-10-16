@@ -219,6 +219,10 @@ impl Capture {
             Ok(())
         }))?;
         let session = pool.CreateCaptureSession(&item)?;
+        // 既定では OS がリフレッシュレートより粗く間引く。毎 vsync で出させ、上限 FPS はワーカーで揃える
+        // （上限の間隔を渡すと vsync の倍数へ切り上げられ、143Hz で 60 を頼むと 48 になる）。
+        // Windows 11 24H2 より前には無い設定なので、失敗しても既定のまま続ける。
+        let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000 });
         session.StartCapture()?;
         Ok(Self {
             session,

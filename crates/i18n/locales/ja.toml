@@ -18,6 +18,7 @@ failed = "キャプチャに失敗: {error}"
 stats_measuring = "計測中…"
 stats_fps = "FPS: {fps}"
 stats_latency = "遅延: {ms} ms"
+stats_capture = "取得: {ms} ms"
 stats_upload = "転送: {ms} ms"
 stats_size = "解像度: {width}×{height}"
 

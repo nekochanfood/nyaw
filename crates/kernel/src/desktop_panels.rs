@@ -20,6 +20,8 @@ pub struct DesktopStats {
     pub latency_ms: f32,
     /// VR への画像の転送にかかった時間（ms。平均）。
     pub upload_ms: f32,
+    /// ワーカーで GPU から読み出して並べ替えるのに掛かった時間（ms。平均）。
+    pub capture_ms: f32,
     pub width: u32,
     pub height: u32,
 }
@@ -30,6 +32,7 @@ struct Meter {
     frames: u32,
     latency: Duration,
     upload: Duration,
+    capture: Duration,
 }
 
 impl Meter {
@@ -39,13 +42,15 @@ impl Meter {
             frames: 0,
             latency: Duration::ZERO,
             upload: Duration::ZERO,
+            capture: Duration::ZERO,
         }
     }
 
-    fn add(&mut self, latency: Duration, upload: Duration) {
+    fn add(&mut self, latency: Duration, upload: Duration, capture: Duration) {
         self.frames += 1;
         self.latency += latency;
         self.upload += upload;
+        self.capture += capture;
     }
 
     /// 一秒たっていれば区切る。画像が来なかった区間（画面が止まっている）は、遅延と転送を前の値のまま残す。
@@ -72,6 +77,11 @@ impl Meter {
                 last.upload_ms
             } else {
                 ms(self.upload)
+            },
+            capture_ms: if self.frames == 0 {
+                last.capture_ms
+            } else {
+                ms(self.capture)
             },
             width: size.0,
             height: size.1,
@@ -194,6 +204,7 @@ impl<B: VrBackend> Kernel<B> {
                 panel.meter.add(
                     done.saturating_duration_since(frame.captured),
                     done - started,
+                    frame.cost,
                 );
             }
             if matches!(panel.status, Status::Closed | Status::Failed(_)) {
@@ -411,8 +422,16 @@ mod tests {
     fn meter_averages_each_second_and_keeps_latency_while_the_screen_is_still() {
         let t0 = Instant::now();
         let mut meter = Meter::new(t0);
-        meter.add(Duration::from_millis(10), Duration::from_millis(2));
-        meter.add(Duration::from_millis(30), Duration::from_millis(4));
+        meter.add(
+            Duration::from_millis(10),
+            Duration::from_millis(2),
+            Duration::from_millis(5),
+        );
+        meter.add(
+            Duration::from_millis(30),
+            Duration::from_millis(4),
+            Duration::from_millis(7),
+        );
         assert_eq!(meter.roll(t0 + Duration::from_millis(500), None, (4, 2)), None);
         let stats = meter
             .roll(t0 + Duration::from_secs(2), None, (4, 2))
@@ -420,6 +439,7 @@ mod tests {
         assert_eq!(stats.fps, 1.0);
         assert!((stats.latency_ms - 20.0).abs() < 1e-3);
         assert!((stats.upload_ms - 3.0).abs() < 1e-3);
+        assert!((stats.capture_ms - 6.0).abs() < 1e-3);
         assert_eq!((stats.width, stats.height), (4, 2));
         let still = meter
             .roll(t0 + Duration::from_secs(3), Some(stats), (4, 2))
