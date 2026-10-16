@@ -518,6 +518,57 @@ pub fn card_panel(theme: &Theme) -> Div {
     panel_base(card(theme)).rounded(px(radius::XL))
 }
 
+/// 一覧の行: 左にアイコンと文字、右に `>`。行は [`list`] のカードに並べる前提で、安静時はカードと同じ色、
+/// ホバー・押下で `control-hover` / `control-active` に沈む（区切り線とカードの角は [`list`] が付ける）。
+/// 選んでいる行は `.selected(true)`（押下の色のまま）。高さはボタンと同じ。
+pub fn list_item(
+    theme: &Theme,
+    id: &'static str,
+    glyph: &'static crate::Icon,
+    label: impl Into<SharedString>,
+) -> Button {
+    let mut b = base_button(theme, id, Variant::Default);
+    (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
+    b.base = b
+        .base
+        .w_full()
+        .justify_start()
+        .gap(px(spacing::MD))
+        .px(px(spacing::LG))
+        .rounded(px(0.0))
+        // 行は文字が主役のボタンではないので太字にしない（文字は本文と同じ `MD`）。
+        .font_weight(FontWeight::NORMAL)
+        .child(crate::icon(glyph).size(px(font_size::LG)))
+        .child(div().flex_1().child(label.into()))
+        .child(
+            crate::icon(&crate::icons::CARET_RIGHT)
+                .size(px(font_size::MD))
+                .color(rgba(theme.neutral_text_low)),
+        );
+    b
+}
+
+/// 行（[`list_item`]）をカード 1 枚に縦に並べ、行の間に 1px の区切り線を引く。
+/// 端の行はカードの角（`LG`）に合わせて丸める（行の塗りがカードの角からはみ出さない）。
+pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
+    let items: Vec<Button> = items.into_iter().collect();
+    let last = items.len().saturating_sub(1);
+    let line = theme.neutral_border_subtle;
+    card(theme)
+        .flex()
+        .flex_col()
+        .children(items.into_iter().enumerate().flat_map(move |(i, mut b)| {
+            if i == 0 {
+                b = b.rounded_t(px(radius::LG));
+            }
+            if i == last {
+                b = b.rounded_b(px(radius::LG));
+            }
+            let divider = (i > 0).then(|| div().h(px(1.0)).bg(rgba(line)).into_any_element());
+            divider.into_iter().chain([b.into_any_element()])
+        }))
+}
+
 /// ダイアログのアイコンの大きさ。
 const DIALOG_ICON: f32 = 64.0;
 /// ダイアログの文の行の高さ（文字の大きさに対する比）。
