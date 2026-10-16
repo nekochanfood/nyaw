@@ -17,6 +17,8 @@ pub struct ControllerState {
     /// パネルを掴んで動かす。
     pub grab: bool,
     pub menu: bool,
+    /// ダッシュボードの X ボタン（左手の下のボタン。Touch は X、Index は左手の A）。右手では常に `false`。
+    pub dashboard: bool,
     pub scroll: Vec2,
     /// 掴んでいるパネルの拡大縮小（-1..1、+ で大きく）。機種の割り当ては無く、[`vr::RESIZE_INPUT`] をそのまま読む。
     pub resize: f32,
@@ -28,6 +30,8 @@ struct Profile {
     select: &'static [&'static str],
     grab: &'static [&'static str],
     menu: &'static [&'static str],
+    /// 左手のときだけ読む。
+    dashboard: &'static [&'static str],
     scroll: Option<(&'static str, &'static str)>,
 }
 
@@ -36,6 +40,7 @@ const SIMPLE: Profile = Profile {
     select: &["select/click"],
     grab: &[],
     menu: &["menu/click"],
+    dashboard: &[],
     scroll: None,
 };
 
@@ -47,6 +52,7 @@ const PROFILES: &[Profile] = &[
         select: &["trigger/value", "select/click"],
         grab: &["squeeze/value"],
         menu: &["b/click"],
+        dashboard: &["a/click"],
         scroll: Some(("thumbstick/x", "thumbstick/y")),
     },
     Profile {
@@ -55,6 +61,7 @@ const PROFILES: &[Profile] = &[
         select: &["trigger/value", "select/click"],
         grab: &["squeeze/value"],
         menu: &["menu/click", "y/click", "b/click"],
+        dashboard: &["x/click"],
         scroll: Some(("thumbstick/x", "thumbstick/y")),
     },
     Profile {
@@ -63,6 +70,7 @@ const PROFILES: &[Profile] = &[
         select: &["trigger/value", "select/click"],
         grab: &["squeeze/click"],
         menu: &["menu/click"],
+        dashboard: &[],
         scroll: Some(("trackpad/x", "trackpad/y")),
     },
 ];
@@ -101,6 +109,7 @@ pub enum Action {
     Select,
     Grab,
     Menu,
+    Dashboard,
 }
 
 /// 逆引き: `profile` で `action` を起こす入力名。テストでの入力生成や操作ヒント表示用。
@@ -110,6 +119,7 @@ pub fn source(profile_id: &str, action: Action) -> Option<&'static str> {
         Action::Select => p.select,
         Action::Grab => p.grab,
         Action::Menu => p.menu,
+        Action::Dashboard => p.dashboard,
     }
     .first()
     .copied()
@@ -132,6 +142,8 @@ pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerSta
         trigger,
         grab: held(strongest(raw, p.grab), was(|c| c.grab)),
         menu: held(strongest(raw, p.menu), was(|c| c.menu)),
+        dashboard: raw.hand == Hand::Left
+            && held(strongest(raw, p.dashboard), was(|c| c.dashboard)),
         scroll: p.scroll.map_or(Vec2::ZERO, |(x, y)| {
             Vec2::new(raw.input(x).unwrap_or(0.0), raw.input(y).unwrap_or(0.0))
         }),
@@ -204,6 +216,21 @@ mod tests {
         let s = map(&raw("valve/index_controller", &[(x, 0.5), (y, -1.0)]), None).scroll;
         assert_eq!(s, Vec2::new(0.5, -1.0));
         assert_eq!(scroll_source("khr/simple_controller"), None);
+    }
+
+    /// X ボタンは左手だけ。右手の同じボタン（Index の A）は数えない。
+    #[test]
+    fn dashboard_is_left_hand_x() {
+        let left = |r: RawController| RawController {
+            hand: Hand::Left,
+            ..r
+        };
+        let touch = raw("oculus/touch_controller", &[("x/click", 1.0)]);
+        assert!(map(&left(touch), None).dashboard);
+        let index = raw("valve/index_controller", &[("a/click", 1.0)]);
+        assert!(!map(&index, None).dashboard);
+        assert!(map(&left(index), None).dashboard);
+        assert_eq!(source("htc/vive_controller", Action::Dashboard), None);
     }
 
     #[test]

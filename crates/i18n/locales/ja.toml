@@ -21,6 +21,23 @@ stats_latency = "遅延: {ms} ms"
 stats_capture = "取得: {ms} ms"
 stats_upload = "転送: {ms} ms"
 stats_size = "解像度: {width}×{height}"
+[audio]
+title = "立体音響"
+instructions = "音はこのパネルのスピーカーから鳴ります。パネルを動かしたり頭を回したりすると、聞こえる向きが変わります。音は重ねて鳴らせます。"
+left = "左"
+centre = "中央"
+right = "右"
+loop = "ループ {n}"
+stop = "すべて止める"
+spatial = "立体化"
+layout_auto = "自動"
+layout_mono = "モノラル"
+layout_stereo = "ステレオ"
+status = "{count} 個再生中 · {spatializer}"
+spatializer_starting = "音声出力を準備中"
+spatializer_steam = "Steam Audio（HRTF）"
+spatializer_panning = "パンニング（Steam Audio が見つからない）"
+spatializer_unavailable = "音声出力なし"
 
 [common]
 close = "閉じる"
@@ -42,6 +59,9 @@ wed = "水"
 thu = "木"
 fri = "金"
 sat = "土"
+
+[dashboard]
+title = "ダッシュボード"
 
 [wrist]
 # chrono の書式（https://docs.rs/chrono/latest/chrono/format/strftime）。曜日は {weekday}。

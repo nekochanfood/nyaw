@@ -7,6 +7,7 @@ members = [
     "crates/subsystems/rendering",
     "crates/subsystems/keyboard",
     "crates/subsystems/desktop",
+    "crates/subsystems/audio",
 ]
 # vendor/ は手を入れた zed のクレートの写し（それぞれの Cargo.toml）。ワークスペースには入れない
 exclude = ["vendor"]
@@ -30,6 +31,7 @@ os = { path = "crates/subsystems/os" }
 rendering = { path = "crates/subsystems/rendering" }
 keyboard = { path = "crates/subsystems/keyboard" }
 desktop = { path = "crates/subsystems/desktop" }
+audio = { path = "crates/subsystems/audio" }
 kernel = { path = "crates/kernel", default-features = false }
 subsystems = { path = "crates/subsystems", default-features = false }
 vr = { path = "crates/subsystems/vr", default-features = false }
@@ -41,6 +43,7 @@ i18n = { path = "crates/i18n" }
 profiler = { path = "crates/profiler" }
 testing = { path = "crates/testing" }
 wrist = { path = "crates/wrist" }
+dashboard = { path = "crates/dashboard" }
 beam = { path = "crates/beam" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 

@@ -21,6 +21,23 @@ stats_latency = "Latency: {ms} ms"
 stats_capture = "Capture: {ms} ms"
 stats_upload = "Upload: {ms} ms"
 stats_size = "Resolution: {width}×{height}"
+[audio]
+title = "Spatial audio"
+instructions = "Sound plays from this panel's speaker. Move the panel or turn your head to hear it move. Sounds can overlap."
+left = "Left"
+centre = "Centre"
+right = "Right"
+loop = "Loop {n}"
+stop = "Stop all"
+spatial = "Spatialize"
+layout_auto = "Auto"
+layout_mono = "Mono"
+layout_stereo = "Stereo"
+status = "{count} playing · {spatializer}"
+spatializer_starting = "Starting audio output"
+spatializer_steam = "Steam Audio (HRTF)"
+spatializer_panning = "Panning (Steam Audio not found)"
+spatializer_unavailable = "No audio output"
 
 [common]
 close = "Close"
@@ -42,6 +59,9 @@ wed = "Wed"
 thu = "Thu"
 fri = "Fri"
 sat = "Sat"
+
+[dashboard]
+title = "Dashboard"
 
 [wrist]
 # chrono format (https://docs.rs/chrono/latest/chrono/format/strftime) with the weekday as {weekday}.

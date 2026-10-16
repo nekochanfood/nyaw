@@ -1,5 +1,6 @@
 //! Layer 6 画面: 常駐パネル「wrist」。左手首に腕時計のように取り付き（掴めない）、丸い文字盤に
 //! 日付・時刻・Toggle Panel ボタンを出す（縁に目盛りと秒の点）。ボタンで Testing パネルを召喚 / 閉じる。
+//! 常駐なので、X ボタンの二回連続押しでダッシュボードを開く / 閉じるのもここ（音もこのパネルで鳴らす）。
 
 use std::time::Duration;
 
@@ -7,7 +8,8 @@ use chrono::Timelike;
 use design::components::{self, Variant};
 use design::{Theme, font_size, icons, radius, spacing};
 use gpui::{Context, FontWeight, Window, div, prelude::*, px, rgba};
-use kernel::PanelId;
+use kernel::audio::Sound;
+use kernel::{PanelCommand, PanelId};
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use testing::Testing;
 use ui::{PanelControl, PanelSpec};
@@ -64,6 +66,12 @@ fn date(now: chrono::DateTime<chrono::Local>, cx: &gpui::App) -> String {
 pub struct Wrist {
     /// 召喚中の Testing パネル。
     pub testing: Option<PanelId>,
+    /// 開いているダッシュボード。
+    pub dashboard: Option<PanelId>,
+    /// このパネル。
+    panel: PanelId,
+    /// 反映した X ボタンの二回押しの回数（[`kernel::PanelStatus::dashboard`]）。
+    toggles: u32,
 }
 
 impl Wrist {
@@ -86,7 +94,69 @@ impl Wrist {
             }
         })
         .detach();
-        Self { testing: None }
+        cx.observe_global::<PanelControl>(Self::sync_dashboard)
+            .detach();
+        Self {
+            testing: None,
+            dashboard: None,
+            panel,
+            toggles: 0,
+        }
+    }
+
+    /// X ボタンを二回押すたびにダッシュボードを開く・閉じる。ナビゲーションバーで閉じられたときも閉じる音を鳴らす。
+    /// フレームループが状態を書き戻すたびに呼ばれるので、変わっていなければ何もしない（書き込むと自分がまた呼ばれる）。
+    fn sync_dashboard(&mut self, cx: &mut Context<Self>) {
+        let ctl = cx.global::<PanelControl>();
+        let toggles = ctl.panels.get(&self.panel).map_or(0, |p| p.status.dashboard);
+        let closed = self
+            .dashboard
+            .is_some_and(|id| ctl.panels.get(&id).is_some_and(|p| p.status.closed));
+        let toggled = toggles != self.toggles;
+        if !toggled && !closed {
+            return;
+        }
+        self.toggles = toggles;
+        let mut sounds = Vec::new();
+        let open = self.dashboard.take().filter(|_| !closed);
+        if closed {
+            sounds.push(dashboard::CLOSE_SOUND);
+        }
+        let ctl = cx.default_global::<PanelControl>();
+        if toggled {
+            match open {
+                Some(id) => {
+                    ctl.panels
+                        .entry(id)
+                        .or_default()
+                        .commands
+                        .push(PanelCommand::Close);
+                    sounds.push(dashboard::CLOSE_SOUND);
+                }
+                None => {
+                    let wrist = cx.entity();
+                    cx.default_global::<PanelControl>()
+                        .spawns
+                        .push(dashboard::spec(move |id, cx| {
+                            wrist.update(cx, |w, _| w.dashboard = Some(id));
+                        }));
+                    sounds.push(dashboard::OPEN_SOUND);
+                }
+            }
+        } else {
+            self.dashboard = open;
+        }
+        let commands = &mut cx
+            .default_global::<PanelControl>()
+            .panels
+            .entry(self.panel)
+            .or_default()
+            .commands;
+        commands.extend(
+            sounds
+                .into_iter()
+                .map(|s| PanelCommand::Play(Sound::Wav(s), false)),
+        );
     }
 }
 
@@ -227,6 +297,52 @@ mod tests {
             cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
             1
         );
+    }
+
+    /// X ボタンを二回押すとダッシュボードを開いて開く音を鳴らし、もう一度二回押すと閉じて閉じる音を鳴らす。
+    #[gpui::test]
+    fn double_x_opens_then_closes_dashboard_with_sounds(cx: &mut TestAppContext) {
+        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(0, cx));
+        cx.run_until_parked();
+        let press_twice = |cx: &mut gpui::VisualTestContext, n| {
+            cx.update(|_, cx| {
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(0)
+                    .or_default()
+                    .status
+                    .dashboard = n
+            });
+            cx.run_until_parked();
+        };
+        let take = |cx: &mut gpui::VisualTestContext, id| {
+            cx.update(|_, cx| {
+                std::mem::take(
+                    &mut cx.default_global::<PanelControl>()
+                        .panels
+                        .entry(id)
+                        .or_default()
+                        .commands,
+                )
+            })
+        };
+        press_twice(cx, 1);
+        assert_eq!(
+            cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
+            1
+        );
+        assert_eq!(
+            take(cx, 0),
+            [PanelCommand::Play(Sound::Wav(dashboard::OPEN_SOUND), false)]
+        );
+        wrist.update(cx, |w, _| w.dashboard = Some(3));
+        press_twice(cx, 2);
+        assert_eq!(take(cx, 3), [PanelCommand::Close]);
+        assert_eq!(
+            take(cx, 0),
+            [PanelCommand::Play(Sound::Wav(dashboard::CLOSE_SOUND), false)]
+        );
+        assert_eq!(wrist.read_with(cx, |w, _| w.dashboard), None);
     }
 
     /// 丸い文字盤の中央に、日付・時刻・ボタンを縦に並べる。

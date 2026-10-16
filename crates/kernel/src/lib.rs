@@ -4,11 +4,13 @@
 //! フレームの進行（[`Kernel::tick`]）・パネルへの操作（[`Kernel::apply`]）・描画結果の受け取り
 //! （[`Kernel::submit`]）を提供する。UI や画面は下位層を直接組み立てない。
 
+mod audio_panels;
 pub mod config;
 mod desktop_panels;
 pub use desktop_panels::DesktopStats;
+pub use audio_panels::AudioStatus;
 pub use subsystems::{self, Subsystems};
-pub use subsystems::{desktop, rendering, vr};
+pub use subsystems::{audio, desktop, rendering, vr};
 
 use std::time::{Duration, Instant};
 use subsystems::os;
@@ -62,6 +64,14 @@ pub enum PanelCommand {
     NavBar(PanelId),
     /// デスクトップの配信を開始・停止する。第2引数は取得の上限 FPS（1〜240）。
     Stream(Option<desktop::Source>, u32),
+    /// このパネルのスピーカーで音を鳴らす（`true` で繰り返す）。読み込みは別スレッドで、いくつでも重ねて鳴らせる。
+    Play(audio::Sound, bool),
+    /// このパネルで鳴っている音をすべて止める。
+    StopAudio,
+    /// このパネルの音を置き場所から聞こえるようにする（既定）。`false` でそのまま左右に鳴らす。
+    Spatial(bool),
+    /// このパネルのスピーカーをモノラル・ステレオのどちらで鳴らすか（既定は音に合わせる）。
+    SpeakerLayout(audio::Layout),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -75,6 +85,8 @@ pub struct PanelStatus {
     pub trackers: Vec<String>,
     /// メニューボタンを押している。
     pub menu: bool,
+    /// X ボタンを二回続けて押した回数（全パネル共通。起動から数える）。増えたらダッシュボードを開く・閉じる。
+    pub dashboard: u32,
     /// パネルを掴んでいる。
     pub grabbed: bool,
     /// 閉じられた。
@@ -100,6 +112,8 @@ pub struct PanelStatus {
     pub desktop: Option<desktop::Status>,
     /// 配信中なら、直近一秒の統計（最初の一秒は `None`）。
     pub desktop_stats: Option<DesktopStats>,
+    /// このパネルのスピーカー。
+    pub audio: AudioStatus,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -117,6 +131,37 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     /// パネルごとの LOD（[`Self::panel_lod`]）。tick ごとに前の値から決める。
     lods: Vec<u8>,
     desktop_panels: std::collections::HashMap<PanelId, desktop_panels::DesktopPanel>,
+    /// 音の出力。テスト用のカーネルはデバイスを開かず（`audio::Engine::offline`）、テストが `render` で回す。
+    pub audio: audio::Engine,
+    /// 音を鳴らした・設定したパネルのスピーカー。
+    speakers: std::collections::HashMap<PanelId, audio_panels::SpeakerConfig>,
+    /// X ボタンの二回連続押し（[`PanelStatus::dashboard`]）。
+    dashboard: DoublePress,
+}
+
+/// 二回続けて押したと見なす、押下と次の押下の間隔の上限。
+pub const DOUBLE_PRESS: Duration = Duration::from_millis(400);
+
+/// 押下の立ち上がりを見て、[`DOUBLE_PRESS`] 以内に二回続いたら数える。三回目は次の一回目として数え直す。
+#[derive(Debug, Default)]
+struct DoublePress {
+    held: bool,
+    first: Option<Instant>,
+    count: u32,
+}
+
+impl DoublePress {
+    fn update(&mut self, held: bool, now: Instant) {
+        let pressed = held && !self.held;
+        self.held = held;
+        if !pressed {
+            return;
+        }
+        match self.first.take() {
+            Some(t) if now.duration_since(t) <= DOUBLE_PRESS => self.count += 1,
+            _ => self.first = Some(now),
+        }
+    }
 }
 
 /// LOD の切り替え距離を決めた基準の密度（1m あたりの論理ピクセル。既定のパネル 800px / 0.8m）。
@@ -155,6 +200,7 @@ impl Kernel {
         logger::info!("runtime selected", runtime = ?vr.runtime());
         let mut kernel = Self::with_backend(vr, config);
         kernel.config_path = config::path();
+        kernel.audio = audio::Engine::open();
         Ok(kernel)
     }
 }
@@ -200,6 +246,9 @@ impl<B: VrBackend> Kernel<B> {
             frame: 0,
             lods: Vec::new(),
             desktop_panels: Default::default(),
+            audio: audio::Engine::offline(48_000, false),
+            speakers: Default::default(),
+            dashboard: DoublePress::default(),
         }
     }
 
@@ -287,8 +336,11 @@ impl<B: VrBackend> Kernel<B> {
         let frame = self.subsystems.poll();
         let polled = Instant::now();
         self.poll_desktop();
+        let x = frame.controllers.iter().any(|c| c.dashboard);
+        self.dashboard.update(x, polled);
         let mut events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
         self.route_desktop(&mut events);
+        self.update_audio();
         // 段階が変わるとパネルの描き直し・描画先とランタイムのテクスチャの作り直しが走るので、境目で行き来させない。
         let lods = (0..self.overlay.len())
             .map(|id| self.lod_for(id, self.lods.get(id).copied()))
@@ -438,6 +490,12 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Stream(source, frame_rate) => {
                 self.start_desktop(panel, source, frame_rate)
             }
+            PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
+            PanelCommand::StopAudio => self.audio.stop_speaker(panel as u64),
+            PanelCommand::Spatial(spatial) => self.configure_speaker(panel, |c| c.spatial = spatial),
+            PanelCommand::SpeakerLayout(layout) => {
+                self.configure_speaker(panel, |c| c.layout = layout)
+            }
         }
     }
 
@@ -464,6 +522,7 @@ impl<B: VrBackend> Kernel<B> {
             animated: p.animated,
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
+            dashboard: self.dashboard.count,
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
             pointer_mode: self.pointer_mode,
@@ -477,6 +536,7 @@ impl<B: VrBackend> Kernel<B> {
             pointed: self.overlay.pointed(panel),
             desktop: self.desktop_panels.get(&panel).map(|p| p.status.clone()),
             desktop_stats: self.desktop_panels.get(&panel).and_then(|p| p.stats),
+            audio: self.audio_status(panel),
         }
     }
 }
@@ -493,6 +553,46 @@ mod tests {
     }
 
     #[cfg(feature = "novr")]
+    #[test]
+    fn double_press_counts_pairs_within_the_window() {
+        let t = Instant::now();
+        let ms = |n| t + Duration::from_millis(n);
+        let mut d = DoublePress::default();
+        // 押しっぱなしは一回。
+        for (held, at) in [(true, 0), (true, 50), (false, 100), (true, 200)] {
+            d.update(held, ms(at));
+        }
+        assert_eq!(d.count, 1);
+        // 三回目は数え直しの一回目。間が空きすぎた二回目も一回目になる。
+        d.update(false, ms(250));
+        d.update(true, ms(300));
+        d.update(false, ms(350));
+        d.update(true, ms(300 + 401 + 1));
+        assert_eq!(d.count, 1);
+        d.update(false, ms(800));
+        d.update(true, ms(900));
+        assert_eq!(d.count, 2);
+    }
+
+    /// 左手の X ボタンを二回押すと、どのパネルの状態でも数が増える。
+    #[test]
+    fn x_pressed_twice_shows_in_status() {
+        let (mut k, p) = kernel();
+        let x = |k: &mut Kernel<MockBackend>, held: bool| {
+            k.subsystems.backend.frame.controllers = vec![vr::RawController {
+                hand: Hand::Left,
+                profile: "oculus/touch_controller".into(),
+                aim: Pose::IDENTITY,
+                inputs: vec![("x/click".into(), if held { 1.0 } else { 0.0 })],
+            }];
+            k.tick();
+        };
+        for held in [true, false, true, false] {
+            x(&mut k, held);
+        }
+        assert_eq!(k.status(p).dashboard, 1);
+    }
+
     #[test]
     fn boot_novr_by_name() {
         for name in ["novr", "--novr", "--no-vr", "NoVr", "no_vr"] {
