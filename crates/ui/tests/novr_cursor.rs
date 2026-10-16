@@ -77,9 +77,15 @@ fn scenario(emu: &Emu) {
     let before = emu.color(on_ring(0.02));
 
     emu.button(Button::Trigger, true);
-    std::thread::sleep(Duration::from_millis(250));
-    // about half filled: the filled side (just past 12 o'clock) is bright, the unfilled side (around 10 o'clock) is the dark base.
-    let filled = emu.color(on_ring(0.08));
+    // the ring stays hidden for a moment after pressing, and shows a few frames later (later with a software GPU),
+    // so wait until the filled side (just past 12 o'clock) turns bright instead of a fixed time.
+    let start = std::time::Instant::now();
+    let mut filled = emu.color(on_ring(0.08));
+    while brightness(filled) <= brightness(before) + 40 && start.elapsed() < Duration::from_secs(1) {
+        std::thread::sleep(Duration::from_millis(5));
+        filled = emu.color(on_ring(0.08));
+    }
+    // partly filled: the unfilled side (around 10 o'clock) is still the dark base.
     let empty = emu.color(on_ring(0.85));
     emu.button(Button::Trigger, false);
     println!(
