@@ -74,7 +74,7 @@ impl<V: Render> Panels<V> {
             cx.cx
                 .update_window(window, |_, window, cx| {
                     for input in inputs {
-                        window.dispatch_event(input, cx);
+                        ui::dispatch_input(panel, input, window, cx);
                     }
                     ui::sync_panel(kernel, panel, cx);
                     // As in production, a view that changes every frame is redrawn every frame.

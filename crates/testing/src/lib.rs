@@ -30,6 +30,8 @@ use ui::{PanelControl, PanelSpec};
 
 mod emoji;
 pub use emoji::EmojiTest;
+mod keyboard;
+pub use keyboard::KeyboardTest;
 
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
@@ -319,6 +321,7 @@ impl Render for Testing {
         let tracker = st.trackers.first().map(|id| Device::Tracker(id.clone()));
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let theme = Theme::current(cx);
+        let self_panel = self.panel;
         // この画面のボタンは現在のテーマで描く（上のモジュール関数 `button` を隠す）。
         macro_rules! button {
             ($($a:expr),+ $(,)?) => {
@@ -490,6 +493,17 @@ impl Render for Testing {
             .child(
                 button!("emoji-test", i18n::t(cx, "testing.open.emoji"), false)
                     .on_click(spawn_view(self.panel, "testing.open.emoji", |id, _| EmojiTest::new(id))),
+            )
+            .child(
+                button!("keyboard-test", i18n::t(cx, "keyboard.title"), false).on_click(
+                    move |_, _, cx| {
+                        cx.default_global::<PanelControl>().spawns.push(
+                            PanelSpec::spawn(self_panel, |id, _, cx| KeyboardTest::new(id, cx))
+                                .sized(Vec2::new(1.6, 1.1), (1600, 1100))
+                                .titled("keyboard.title"),
+                        );
+                    },
+                ),
             )
             .child(
                 button!(
@@ -668,7 +682,9 @@ impl Render for Testing {
             .rounded(px(radius::LG))
             .bg(rgba(theme.control))
             .focus(|s| s.bg(rgba(theme.accent_bg_active)))
-            .on_click(cx.listener(move |_, _, window, cx| window.focus(&focus, cx)))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                ui::keyboard::focus_input(this.panel, &focus, window, cx);
+            }))
             .on_key_down(cx.listener(|this, e: &KeyDownEvent, _, cx| {
                 let k = &e.keystroke;
                 match (k.key.as_str(), &k.key_char) {

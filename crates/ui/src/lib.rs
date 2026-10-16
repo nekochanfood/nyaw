@@ -2,6 +2,7 @@
 //! レーザーイベントを GPUI のマウス入力に変換し、描画を読み戻してカーネルへ返す。
 
 pub use kernel::rendering::gpui::{Frame, capture, collect, read_back, set_render_lod};
+pub mod keyboard;
 mod panel_window;
 pub use panel_window::{open_panel_window, panel_window_options};
 
@@ -324,6 +325,9 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     }
     let (theme, language) = (status.theme, status.language);
     ctl.status = status;
+    if ctl.status.closed {
+        keyboard::panel_closed(panel, cx);
+    }
     // テーマは全パネル共通。画面は `design::Theme::current` で引く。
     cx.set_global(match theme {
         ThemeMode::Dark => design::Mode::Dark,
@@ -336,6 +340,14 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     });
     cx.refresh_windows();
     true
+}
+
+/// 配送前にポインタのコンテキストを更新する。本番と各 testkit で同じ消滅条件を使う。
+pub fn dispatch_input(panel: PanelId, input: PlatformInput, window: &mut Window, cx: &mut App) {
+    if matches!(input, PlatformInput::MouseDown(_)) {
+        keyboard::pointer_selected(Some(panel), cx);
+    }
+    window.dispatch_event(input, cx);
 }
 
 /// ウィンドウごとのツールチップの要求（[`design::components::Tooltips`]）を、そのパネルを指している手に振り分け、
@@ -469,6 +481,7 @@ type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
 pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
+    below: Option<f32>,
     /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
     in_view: bool,
     size: Vec2,
@@ -509,6 +522,7 @@ impl PanelSpec {
         Self {
             pose,
             from: None,
+            below: None,
             in_view: false,
             size: Vec2::new(0.8, 0.6),
             resolution: PANEL_PX,
@@ -574,6 +588,13 @@ impl PanelSpec {
     /// 大きさ（m）と解像度（px）を指定する。既定は 0.8m × 0.6m / 800 × 600。
     pub fn sized(mut self, size: Vec2, resolution: (u32, u32)) -> Self {
         (self.size, self.resolution) = (size, resolution);
+        self
+    }
+
+    /// 開いた瞬間の対象パネルの下へ、手前に傾けて置く。親子関係や追従は作らない。
+    pub fn below(mut self, panel: PanelId, tilt: f32) -> Self {
+        self.from = Some(panel);
+        self.below = Some(tilt.clamp(0., std::f32::consts::FRAC_PI_2));
         self
     }
 
@@ -646,6 +667,19 @@ impl PanelSpec {
 
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
         match self.from {
+            Some(from) if self.below.is_some() => {
+                let tilt = self.below.unwrap();
+                let origin = kernel.panel(from);
+                origin.pose
+                    * Pose::new(
+                        Vec3::new(
+                            0.,
+                            -origin.size.y / 2. - 0.05 - self.size.y * tilt.cos() / 2.,
+                            0.05 + self.size.y * tilt.sin() / 2.,
+                        ),
+                        Quat::from_rotation_x(-tilt),
+                    )
+            }
             // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
             Some(from) => kernel.panel(from).pose * Pose::new(SPAWN_GAP, Quat::IDENTITY),
             None if self.in_view => kernel.hmd().leveled() * self.pose,
@@ -957,7 +991,7 @@ pub fn run_with(
                     let Ok(frame) = cx.update_window(window, |_, window, cx| {
                         let t = Instant::now();
                         for input in inputs {
-                            window.dispatch_event(input, cx);
+                            dispatch_input(panel, input, window, cx);
                         }
                         let before = cx
                             .try_global::<PanelControl>()

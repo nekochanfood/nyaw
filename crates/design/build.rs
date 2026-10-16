@@ -84,6 +84,32 @@ fn main() {
         out += "}\n";
     }
 
+    out += "pub mod keyboard {\n";
+    for kind in ["full", "tenkeyless", "compact"] {
+        writeln!(out, "pub mod {kind} {{").unwrap();
+        for property in ["gap", "corner-radius"] {
+            let reference = root["keyboard"][kind][property]
+                .as_str()
+                .expect("キーボードの値は定数への参照");
+            let (module, name) = reference
+                .split_once('.')
+                .expect("定数は module.name で指定");
+            assert!(
+                matches!(module, "spacing" | "radius") && root[module][name].is_number(),
+                "未知のキーボード用トークン: {reference}"
+            );
+            writeln!(
+                out,
+                "pub const {}: f32 = crate::{module}::{};",
+                konst(property),
+                konst(name)
+            )
+            .unwrap();
+        }
+        out += "}\n";
+    }
+    out += "}\n";
+
     // テーマごとに「役割名 → (定数の式, 色)」を作る。
     // 用途エイリアス（accent-solid ...）は名前が全テーマ共通で、mutable は指す先がテーマで変わる。
     let mutable = obj(&root, "mutable");
