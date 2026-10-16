@@ -85,6 +85,7 @@ dialog = "ダイアログ"
 stress = "負荷"
 catalog = "カタログ"
 localization = "ローカライズ"
+settings = "設定"
 
 [emoji]
 inline = "テキスト内の SVG 絵文字 · 14 / 19 / 24 px"
@@ -149,3 +150,16 @@ samples = "見本"
 sample_long = "訳が長くなってもラベルが折り返すか収まるか、ボタンが伸びるかを確かめるための長めの文です。"
 sample_count = "{count} 件を選択中"
 sample_button = "変更を保存"
+
+[settings]
+title = "設定"
+# 本物の設定が載るまでのダミー。
+item = "設定項目 {n}"
+
+[settings.category]
+general = "一般"
+account = "アカウント"
+privacy = "プライバシー"
+appearance = "外観"
+security = "セキュリティ"
+about = "情報"

@@ -506,6 +506,17 @@ impl Render for Testing {
                     .on_click(spawn_dialog_test(self.panel)),
             )
             .child(
+                button!("settings-test", i18n::t(cx, "testing.open.settings"), false).on_click({
+                    let panel = self.panel;
+                    move |_, _, cx| {
+                        cx.default_global::<PanelControl>().spawns.push(
+                            PanelSpec::spawn(panel, |id, _, _| Settings::new(id))
+                                .sized(SETTINGS_SIZE, SETTINGS_PX),
+                        )
+                    }
+                }),
+            )
+            .child(
                 button!("stress-test", i18n::t(cx, "testing.open.stress"), false)
                     .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
             )
@@ -1221,6 +1232,158 @@ impl Render for TooltipTest {
 /// 3 行は見える下限（`components::dialog_height`）。1px = 1mm。
 const DIALOG_PX: (u32, u32) = (440, components::dialog_height(2));
 const DIALOG_SIZE: Vec2 = Vec2::new(DIALOG_PX.0 as f32 / 1000.0, DIALOG_PX.1 as f32 / 1000.0);
+/// 設定画面の大きさ（m）と解像度（px）。1px = 1mm。
+pub const SETTINGS_SIZE: Vec2 = Vec2::new(0.96, 0.56);
+pub const SETTINGS_PX: (u32, u32) = (960, 560);
+/// サイドバーの幅（px）。
+const SIDEBAR_PX: f32 = 320.0;
+
+/// 設定のカテゴリ（ダミー）: `debug_selector`・アイコン・文言のキー・項目の数。
+// ponytail: 中身はダミー。本物の設定を載せるときに、項目の表と `crates/settings` への切り出しを決める。
+const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str, usize); 6] = [
+    (
+        "settings-general",
+        &design::icons::GEAR,
+        "settings.category.general",
+        5,
+    ),
+    (
+        "settings-account",
+        &design::icons::USER_GEAR,
+        "settings.category.account",
+        3,
+    ),
+    (
+        "settings-privacy",
+        &design::icons::EYE_SLASH,
+        "settings.category.privacy",
+        4,
+    ),
+    (
+        "settings-appearance",
+        &design::icons::PALETTE,
+        "settings.category.appearance",
+        5,
+    ),
+    (
+        "settings-security",
+        &design::icons::SHIELD,
+        "settings.category.security",
+        2,
+    ),
+    (
+        "settings-about",
+        &design::icons::INFO,
+        "settings.category.about",
+        1,
+    ),
+];
+/// 項目（ダミー）の `debug_selector` とアイコン。カテゴリが変わっても同じ並びを使う。
+const SETTINGS_ITEMS: [(&str, &design::Icon); 5] = [
+    ("setting-0", &design::icons::BELL),
+    ("setting-1", &design::icons::GLOBE),
+    ("setting-2", &design::icons::SPEAKER_HIGH),
+    ("setting-3", &design::icons::MONITOR),
+    ("setting-4", &design::icons::KEYBOARD),
+];
+
+/// 設定画面（`settings-test`）。左のサイドバーにカテゴリの一覧、区切り線を挟んで右に選んだカテゴリの項目の一覧。
+/// 地は背景色（`components::panel`）、一覧の行はカード色（`components::list`）。選んでいるカテゴリは `selected` で光る。
+#[derive(Default)]
+pub struct Settings {
+    panel: PanelId,
+    /// 選んでいるカテゴリ（[`SETTINGS_CATEGORIES`] の添字）。
+    pub category: usize,
+}
+
+impl Settings {
+    pub fn new(panel: PanelId) -> Self {
+        Self { panel, category: 0 }
+    }
+}
+
+impl Render for Settings {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let (_, _, title, count) = SETTINGS_CATEGORIES[self.category];
+        // 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。
+        let heading = |text: SharedString| {
+            div()
+                .h(px(54.0))
+                .px(px(spacing::LG))
+                .flex()
+                .items_center()
+                .justify_between()
+                .text_size(px(font_size::LG))
+                .font_weight(FontWeight::BOLD)
+                .child(text)
+        };
+        let categories = SETTINGS_CATEGORIES
+            .iter()
+            .enumerate()
+            .map(|(i, &(id, glyph, key, _))| {
+                components::list_item(&theme, id, glyph, i18n::t(cx, key))
+                    .selected(i == self.category)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.category = i;
+                        cx.notify();
+                    }))
+            })
+            .collect::<Vec<_>>();
+        let items = SETTINGS_ITEMS[..count]
+            .iter()
+            .enumerate()
+            .map(|(n, &(id, glyph))| {
+                components::list_item(
+                    &theme,
+                    id,
+                    glyph,
+                    i18n::tf(cx, "settings.item", &[("n", &(n + 1))]),
+                )
+            })
+            .collect::<Vec<_>>();
+        components::panel(&theme)
+            .flex()
+            .child(
+                div()
+                    .w(px(SIDEBAR_PX))
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap(px(spacing::MD))
+                    .child(heading(i18n::t(cx, "settings.title")))
+                    .child(components::list(&theme, categories)),
+            )
+            // サイドバーと中身の区切り。
+            .child(
+                div()
+                    .debug_selector(|| "settings-separator".into())
+                    .w(px(1.0))
+                    .mx(px(spacing::MD))
+                    .bg(rgba(theme.neutral_border_subtle)),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .gap(px(spacing::MD))
+                    .child(
+                        heading(i18n::t(cx, title)).child(
+                            components::icon_button(
+                                &theme,
+                                "close-settings",
+                                &design::icons::X,
+                                i18n::t(cx, "common.close"),
+                                Variant::OnBackground,
+                            )
+                            .on_click(command(self.panel, PanelCommand::Close)),
+                        ),
+                    )
+                    .child(components::list(&theme, items)),
+            )
+    }
+}
 
 /// 親子関係を試す画面（`dialog-test`）。ダイアログ（[`Dialog`]）を子として開く 2 種類のボタンがある。
 /// - `open-dialog`: 外側（この画面など）を押すと閉じる（既定）。

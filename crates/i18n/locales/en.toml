@@ -85,6 +85,7 @@ dialog = "Dialog"
 stress = "Stress"
 catalog = "Catalog"
 localization = "Localization"
+settings = "Settings"
 
 [emoji]
 inline = "Inline SVG emoji · 14 / 19 / 24 px"
@@ -149,3 +150,16 @@ samples = "Samples"
 sample_long = "A long sentence to check that labels wrap or fit, and that buttons grow with longer translations."
 sample_count = "{count} items selected"
 sample_button = "Save changes"
+
+[settings]
+title = "Settings"
+# Dummy items until real settings land.
+item = "Setting {n}"
+
+[settings.category]
+general = "General"
+account = "Account"
+privacy = "Privacy"
+appearance = "Appearance"
+security = "Security"
+about = "About"
