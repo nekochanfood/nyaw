@@ -506,8 +506,8 @@ pub struct PanelSpec {
     animated: bool,
     /// レーザーを描くパネル。
     pointer: Option<(Hand, Pointer)>,
-    /// ナビゲーションバーに出すタイトル（i18n のキー）。
-    title: Option<&'static str>,
+    /// ナビゲーションバーに出すタイトル。
+    title: Option<Title>,
     /// ナビゲーションバーを付けるか（既定は付ける。[`Self::without_nav_bar`] で外す）。
     nav_bar: bool,
     /// このパネル自身がナビゲーションバーなら、その持ち主。
@@ -646,7 +646,13 @@ impl PanelSpec {
 
     /// ナビゲーションバーの中央に出すタイトル（i18n のキー）。
     pub fn titled(mut self, key: &'static str) -> Self {
-        self.title = Some(key);
+        self.title = Some(Title::Key(key));
+        self
+    }
+
+    /// ナビゲーションバーの中央に出すタイトル（訳さない文字列。配信元のウィンドウ名など、実行時に決まるもの）。
+    pub fn titled_text(mut self, text: impl Into<gpui::SharedString>) -> Self {
+        self.title = Some(Title::Text(text.into()));
         self
     }
 
@@ -660,7 +666,7 @@ impl PanelSpec {
     /// このパネル（PanelId `owner` で開いた）に付けるナビゲーションバー。外していれば `None`。
     /// 開く側（`ui::run`・testkit のキット）が持ち主の直後に開き、[`PanelCommand::NavBar`] で持ち主に付ける。
     pub fn nav_bar_spec(&self, owner: PanelId) -> Option<PanelSpec> {
-        let title = self.title;
+        let title = self.title.clone();
         self.nav_bar.then(|| PanelSpec {
             nav_bar: false,
             nav_bar_of: Some(owner),
@@ -715,10 +721,19 @@ impl PanelSpec {
 
 /// ナビゲーションバーの中身: 持ち主のタイトルと閉じるボタン（持ち主を閉じ、バーも一緒に閉じる）。
 /// 持ち主（かバー）をレーザーが指していない間は丸い線に縮み、指すと帯に広がる（[`design::components::nav_bar`] の `open`）。
+/// ナビゲーションバーのタイトル。
+#[derive(Clone)]
+enum Title {
+    /// i18n のキー（言語を切り替えると訳し直す）。
+    Key(&'static str),
+    /// そのまま出す文字列。
+    Text(gpui::SharedString),
+}
+
 struct NavBar {
     id: PanelId,
     owner: PanelId,
-    title: Option<&'static str>,
+    title: Option<Title>,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
     open: f32,
     to: f32,
@@ -766,7 +781,11 @@ impl Render for NavBar {
             .or_default()
             .live = self.anim.is_some();
         let owner = self.owner;
-        let title = self.title.map(|k| i18n::t(cx, k)).unwrap_or_default();
+        let title = match &self.title {
+            Some(Title::Key(k)) => i18n::t(cx, k),
+            Some(Title::Text(t)) => t.clone(),
+            None => Default::default(),
+        };
         div().size_full().child(design::components::nav_bar(
                 &design::Theme::current(cx),
                 self.open,

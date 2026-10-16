@@ -223,7 +223,9 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
             Vec2::new(1., resolution.1 as f32 / resolution.0 as f32),
             resolution,
         )
-        .below(target, std::f32::consts::FRAC_PI_4),
+        .below(target, std::f32::consts::FRAC_PI_4)
+        // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
+        .without_nav_bar(),
     );
 }
 
