@@ -539,7 +539,7 @@ const NAV_LINE_HEIGHT: f32 = spacing::MD;
 /// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
 ///
 /// `open`（0〜1）は広がり具合で、時間に比例して進める（[`crate::animation::Motion::NavBar`]）。0（触れていない）はボタンもタイトルも出さない丸い線で、帯の上端に寄せて置く。
-/// 広がるときは、まず線が帯の上下中央へ下りてから、そこを中心に上下左右へ広がる（縮むときは逆に、縮んでから上がる）。
+/// 広がるときは、線が帯の上下中央へ下りながら、上下左右へ広がる（縮むときは、上がりながら縮む）。
 /// 上下の移動だけは行き過ぎてから戻る（[`back_out`]）。`opening` は今どちらへ動いているか（広がる = `true`）で、
 /// 行き過ぎる向き（広がるときは下、縮むときは上）を決める。
 /// 置き場所のアンカー（帯の上端の左右中央。持ち主に付ける・頭からの距離で大きくするのに使う）とは別に、
@@ -552,24 +552,20 @@ pub fn nav_bar(
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
-    // 前半で動き、後半で広がる。広がりは区間の中でも ease-in-out にして、つなぎ目で急に変わらないようにする。
-    // 移動は行き過ぎてから止まるので、つなぎ目では止まっている。
-    // ponytail: 移動の途中で向きが変わると、行き過ぎの曲線が切り替わって数 px 跳ぶ。気になれば切り替えた所から曲線を始める。
-    use crate::animation::{NAV_BAR_GROW_MS, NAV_BAR_MOVE_MS};
-    const MOVE_END: f32 = NAV_BAR_MOVE_MS as f32 / (NAV_BAR_MOVE_MS + NAV_BAR_GROW_MS) as f32;
+    // 移動と大きさの変化は同時に始まり、同時に終わる。大きさは ease-in-out、移動は行き過ぎてから戻る。
+    // ponytail: 途中で向きが変わると、行き過ぎの曲線が切り替わって数 px 跳ぶ。気になれば切り替えた所から曲線を始める。
     let smooth = |t: f32| {
         let t = t.clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
     let open = open.clamp(0.0, 1.0);
-    // 移動の区間の進み。縮むときは上がり始めから測り、どちらでも動きの終わりで行き過ぎる。
-    let t = (open / MOVE_END).clamp(0.0, 1.0);
+    // 縮むときは上がり始めから測り、どちらでも動きの終わりで行き過ぎる。
     let moved = if opening {
-        back_out(t)
+        back_out(open)
     } else {
-        1.0 - back_out(1.0 - t)
+        1.0 - back_out(1.0 - open)
     };
-    let grown = smooth((open - MOVE_END) / (1.0 - MOVE_END));
+    let grown = smooth(open);
     let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
     let height = lerp(NAV_LINE_HEIGHT, NAV_BAR_HEIGHT, grown);
     // 広がりの中心（帯の上下中央）。動く前は、線の上端が帯の上端に来るところまで上げておく。
