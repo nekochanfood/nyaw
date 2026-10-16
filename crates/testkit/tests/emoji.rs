@@ -13,13 +13,7 @@ fn testing_opens_emoji_screen(cx: &mut TestAppContext) {
     let mut kit = NoVrKit::new(cx, |_, _| Testing::default());
     kit.click("emoji-test");
     assert!(!kit.kernel.panel(1).closed);
-    kit.select_panel(1).click("close-emoji-test");
+    // Closed from its navigation bar (opened right after it).
+    kit.select_panel(2).click("nav-close");
     assert!(kit.kernel.panel(1).closed);
-}
-
-#[gpui::test]
-fn emoji_screen_closes(cx: &mut TestAppContext) {
-    let mut kit = NoVrKit::new(cx, |_, _| EmojiTest::default());
-    kit.click("close-emoji-test");
-    assert!(kit.kernel.panel(0).closed);
 }

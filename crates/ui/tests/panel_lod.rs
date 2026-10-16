@@ -62,7 +62,8 @@ fn main() -> ExitCode {
             Pose::new(common::PANEL_POS, Quat::IDENTITY),
             move |_, _, _| Probe(clicked),
         )
-        .without_animation(),
+        .without_animation()
+        .without_nav_bar(),
     ];
     let (remote, rx) = std::sync::mpsc::channel::<ui::Remote>();
     let result: Arc<std::sync::Mutex<Option<bool>>> = Arc::default();

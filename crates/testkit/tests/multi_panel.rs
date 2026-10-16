@@ -11,7 +11,8 @@ fn panels_have_separate_views_controls_and_textures(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::new(0));
     kit.click("spawn-panel");
     let second = 1;
-    assert_eq!(kit.kernel.subsystems.backend.overlays.len(), 2);
+    // The summoned panel and its navigation bar.
+    assert_eq!(kit.kernel.subsystems.backend.overlays.len(), 3);
 
     kit.panel(second)
         .click("click-me")

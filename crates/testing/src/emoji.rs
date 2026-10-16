@@ -3,15 +3,13 @@ use super::*;
 /// Twemoji のテキスト・アイコン表示を確認する画面。
 #[derive(Default)]
 pub struct EmojiTest {
-    panel: PanelId,
     pub clicks: usize,
     scroll: ScrollHandle,
 }
 
 impl EmojiTest {
-    pub fn new(panel: PanelId) -> Self {
+    pub fn new(_panel: PanelId) -> Self {
         Self {
-            panel,
             ..Self::default()
         }
     }
@@ -47,13 +45,6 @@ impl Render for EmojiTest {
             .flex_col()
             .gap(px(spacing::LG))
             .p(px(spacing::LG))
-            .child(title_bar(
-                &theme,
-                self.panel,
-                i18n::t(cx, "testing.open.emoji"),
-                "close-emoji-test",
-                cx,
-            ))
             .child(div().child(i18n::t(cx, "emoji.icons")))
             .child(
                 row()

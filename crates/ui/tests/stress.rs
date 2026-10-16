@@ -49,9 +49,11 @@ impl Write for Shared {
 }
 
 fn testing_at(x: f32, y: f32, z: f32) -> PanelSpec {
+    // The scenario tracks PanelIds, so no navigation bars (they are panels too).
     PanelSpec::new(Pose::new(Vec3::new(x, y, z), Quat::IDENTITY), |id, _, _| {
         Testing::new(id)
     })
+    .without_nav_bar()
 }
 
 fn main() -> ExitCode {
@@ -240,7 +242,7 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     for k in 1..VOLUME {
         let from = first + k - 1;
         spawn(remote, move || {
-            PanelSpec::spawn(from, |id, _, _| Testing::new(id))
+            PanelSpec::spawn(from, |id, _, _| Testing::new(id)).without_nav_bar()
         });
     }
     next_id += VOLUME;

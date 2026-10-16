@@ -29,7 +29,9 @@ fn main() -> ExitCode {
     let panels = vec![PanelSpec::new(
         Pose::new(PANEL, Quat::IDENTITY),
         |id, _, cx| TestingAnim::new(id, cx),
-    )];
+    )
+    // Counts panels exactly, so no navigation bars (they are panels too).
+    .without_nav_bar()];
     let (remote, rx) = channel::<ui::Remote>();
     let result: Arc<Mutex<Option<bool>>> = Arc::default();
     let done = result.clone();
@@ -93,7 +95,8 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>) {
             c.spawns.push(
                 PanelSpec::new(Pose::IDENTITY, |id, _, _| TestingTransparent::new(id)).in_view(
                     Pose::new(Vec3::new(i as f32 * 0.01, 0.0, -2.0), Quat::IDENTITY),
-                ),
+                )
+                .without_nav_bar(),
             );
         }
     });

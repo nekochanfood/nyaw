@@ -41,6 +41,8 @@ pub fn spec() -> PanelSpec {
         .in_view(IN_VIEW)
         .attached(Device::Controller(Hand::Left), WATCH_OFFSET)
         .locked()
+        // 手首に付いた常駐の時計で、閉じる・動かすものではない。ナビゲーションバーは付けない。
+        .without_nav_bar()
 }
 
 /// 今の言語での日付（書式は文言の `wrist.date`。chrono の書式で、曜日だけを `{weekday}` で訳す）。
@@ -172,7 +174,8 @@ impl Render for Wrist {
                                         Testing::new(id)
                                     })
                                     .sized(testing::TESTING_SIZE, testing::TESTING_PX)
-                                    .in_view(TESTING_POSE),
+                                    .in_view(TESTING_POSE)
+                                    .titled("testing.open.testing"),
                                 );
                             }
                         }

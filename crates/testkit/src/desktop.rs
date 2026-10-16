@@ -97,6 +97,7 @@ impl<'a, V: Render> DesktopKit<'a, V> {
         let id = self.windows.len();
         let pose = spec.pose_for(&self.kernel, id);
         let parent = spec.parent();
+        let (bar, owner) = (spec.nav_bar_spec(id), spec.nav_bar_of());
         let (root, cx) = self
             .cx
             .cx
@@ -114,10 +115,17 @@ impl<'a, V: Render> DesktopKit<'a, V> {
             self.kernel
                 .apply(panel, kernel::PanelCommand::Parent(Some(parent)));
         }
+        if let Some(owner) = owner {
+            self.kernel.apply(panel, kernel::PanelCommand::NavBar(owner));
+        }
         self.views.push(view);
         self.windows.push(window);
         self.mouse.push((Point::default(), false));
         cx.update(|_, cx| ui::sync_panel(&mut self.kernel, panel, cx));
+        // As in production, the navigation bar opens right after its owner (PanelId = owner + 1).
+        if let Some(bar) = bar {
+            self.add_spec(bar);
+        }
     }
 
     /// Selects the panel used for subsequent operations and reads.

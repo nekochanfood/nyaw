@@ -490,13 +490,18 @@ pub const PANEL_MARGIN: f32 = 3.0 * PANEL_SHADOW_BLUR;
 fn panel_base(div: Div) -> Div {
     div.absolute()
         .inset(px(PANEL_MARGIN))
-        .shadow(vec![gpui::BoxShadow {
-            color: gpui::hsla(0.0, 0.0, 0.0, 0.4),
-            offset: point(px(0.0), px(0.0)),
-            blur_radius: px(PANEL_SHADOW_BLUR),
-            spread_radius: px(0.0),
-            inset: false,
-        }])
+        .shadow(panel_shadow())
+}
+
+/// パネルの影（ずらさず四方へ広がる）。
+fn panel_shadow() -> Vec<gpui::BoxShadow> {
+    vec![gpui::BoxShadow {
+        color: gpui::hsla(0.0, 0.0, 0.0, 0.4),
+        offset: point(px(0.0), px(0.0)),
+        blur_radius: px(PANEL_SHADOW_BLUR),
+        spread_radius: px(0.0),
+        inset: false,
+    }]
 }
 
 /// パネル全体の地。角丸は `XL`、中身との間隔は `MD`（12）なので、中のカードの角丸は同心の `XL − MD = LG`。
@@ -520,6 +525,83 @@ pub fn card(theme: &Theme) -> Div {
 /// カードが 1 枚だけの画面: 地（[`panel`]）を敷かず、カードがパネル全体になる。角丸はパネルの `XL`。
 pub fn card_panel(theme: &Theme) -> Div {
     panel_base(card(theme)).rounded(px(radius::XL))
+}
+
+/// ナビゲーションバーの地の高さ（ボタン + 上下 `SM`）。カプセル形なので、ボタン（`FULL`）の角は帯の角と同心になる。
+pub const NAV_BAR_HEIGHT: f32 = BUTTON_HEIGHT + 2.0 * spacing::SM;
+
+/// 触れていないときのナビゲーションバー（丸い線）の幅（帯に対する割合）と高さ（px）。
+const NAV_LINE_WIDTH: f32 = 0.3;
+const NAV_LINE_HEIGHT: f32 = spacing::SM;
+
+/// ナビゲーションバー: パネルの下に付き、パネルを操作する帯。中央にパネルのタイトル、右端に閉じるボタン（アイコンだけ。
+/// id は `nav-close`）。カード 1 枚の帯で、角丸は `FULL`。押したときの処理（パネルを閉じる）は `on_close` で受け取る。
+/// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
+///
+/// `open`（0〜1）は広がり具合。0（触れていない）はボタンもタイトルも出さない丸い線で、上端の左右中央から帯へ広がる。
+/// 中身は位置を変えずに不透明度だけで出入りする（線のときも閉じるボタンの場所を指せば、広がって押せる）。
+pub fn nav_bar(
+    theme: &Theme,
+    open: f32,
+    title: impl Into<SharedString>,
+    close_tooltip: impl Into<SharedString>,
+    on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    let open = open.clamp(0.0, 1.0);
+    let lerp = |a: f32, b: f32| a + (b - a) * open;
+    // タイトルは帯の中央。長くても閉じるボタンにかからないよう、左右にボタンの分を空けて省略する。
+    let side = BUTTON_HEIGHT + 2.0 * spacing::SM;
+    div()
+        .absolute()
+        .inset(px(PANEL_MARGIN))
+        .flex()
+        .justify_center()
+        .child(
+            card(theme)
+                .shadow(panel_shadow())
+                .rounded(px(radius::FULL))
+                .w(gpui::relative(lerp(NAV_LINE_WIDTH, 1.0)))
+                .h(px(lerp(NAV_LINE_HEIGHT, NAV_BAR_HEIGHT))),
+        )
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .w_full()
+                .h(px(NAV_BAR_HEIGHT))
+                .opacity(open)
+                .flex()
+                .items_center()
+                .px(px(side))
+                .text_color(rgba(theme.neutral_text))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_center()
+                        .truncate()
+                        .text_size(px(font_size::MD))
+                        .font_weight(FontWeight::BOLD)
+                        .child(title.into()),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(spacing::SM))
+                        .right(px(spacing::SM))
+                        .child(
+                            icon_button(
+                                theme,
+                                "nav-close",
+                                &crate::icons::X,
+                                close_tooltip,
+                                Variant::Default,
+                            )
+                            .on_click(on_close),
+                        ),
+                ),
+        )
 }
 
 /// 一覧の行: 左にアイコンと文字、右に `>`。行は [`list`] のカードに並べる前提で、安静時はカードと同じ色、

@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use design::animation::{Animation, Motion};
+use design::components::PANEL_MARGIN;
 use subsystems::{Frame, Subsystems, rendering::Surface, vr};
 
 use vr::{Device, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
@@ -46,6 +47,12 @@ pub struct Panel {
     pub animated: bool,
     /// 親（[`Overlay::set_parent`]）。取り付けより優先して、親の姿勢 * `offset` に追従する。
     pub parent: Option<Parent>,
+    /// このパネルがナビゲーションバーになっている持ち主（[`Overlay::set_nav_bar`]）。持ち主の下端にくっつき、
+    /// 頭から見た大きさが変わらないよう離れるほど大きくなる。自分のアニメーションは持たず、出入り（不透明度と 75%〜100% の大きさ）と
+    /// 暗さは毎 tick 持ち主のものを写して一体で動く。持ち主と一緒に閉じ、持ち主が暗い間は押せない。
+    pub nav_bar_of: Option<PanelId>,
+    /// ナビゲーションバーの頭から 1m 先での大きさ（`size` は毎 tick これ * 距離になる）。
+    nav_bar_size: Vec2,
     /// 親から見た相対姿勢。
     offset: Pose,
     /// 今の暗さ（0 = そのまま）と、向かっている先。
@@ -294,6 +301,8 @@ impl Overlay {
             pointer: None,
             animated: true,
             parent: None,
+            nav_bar_of: None,
+            nav_bar_size: size,
             offset: Pose::IDENTITY,
             dim: 0.0,
             dim_to: 0.0,
@@ -399,6 +408,15 @@ impl Overlay {
         self.hands.values().any(|h| h.menu)
     }
 
+    /// どちらかの手のレーザーが `id` を指している。ナビゲーションバーは、持ち主かバー自身を指していれば（持ち主から
+    /// バーへ移っても途切れない。バーの上端は持ち主の影の余白に重なっている）。子が開いて入力を受けない間は指していない扱い。
+    pub fn pointed(&self, id: PanelId) -> bool {
+        let owner = self.panels[id].nav_bar_of;
+        self.hands
+            .values()
+            .any(|h| h.hover.is_some_and(|x| x == id || Some(x) == owner))
+    }
+
     /// `id` をどちらかの手で掴んでいる。
     pub fn grabbed(&self, id: PanelId) -> bool {
         self.hands
@@ -438,11 +456,22 @@ impl Overlay {
         }
     }
 
-    /// 開いている子がいる（暗くして入力を止める）。
+    /// `id` を `owner` のナビゲーションバーにする。以降は毎 tick、持ち主の下端の左右中央に、バーの上端の左右中央を
+    /// 合わせて置かれる。今の `size` を頭から 1m 先での大きさとし、離れるほど大きくする（ツールチップと同じ）。
+    /// 自分自身・閉じたパネルは持ち主にできない（何もしない）。
+    pub fn set_nav_bar(&mut self, id: PanelId, owner: PanelId) {
+        if owner == id || self.panels[owner].closed {
+            return;
+        }
+        let p = &mut self.panels[id];
+        p.nav_bar_of = Some(owner);
+        p.nav_bar_size = p.size;
+        p.attached = None;
+    }
+
+    /// 開いている子がいる（暗くして入力を止める）。ナビゲーションバーは持ち主に子がいれば同じ扱い。
     fn has_child(&self, id: PanelId) -> bool {
-        self.panels
-            .iter()
-            .any(|q| !q.closed && q.parent.is_some_and(|p| p.panel == id))
+        has_child(&self.panels, id)
     }
 
     /// パネルをその姿勢へ置く（次の tick でランタイムへ送る）。取り付け中なら取り付け先に戻される。
@@ -515,15 +544,20 @@ impl Overlay {
             return;
         }
         p.closed = true;
-        // 子は親と一緒に閉じる。
+        // 子とナビゲーションバーは親と一緒に閉じる。
         let kids: Vec<PanelId> = (0..self.panels.len())
-            .filter(|&c| self.panels[c].parent.is_some_and(|q| q.panel == id))
+            .filter(|&c| {
+                let q = &self.panels[c];
+                q.parent.is_some_and(|q| q.panel == id) || q.nav_bar_of == Some(id)
+            })
             .collect();
         for c in kids {
             self.close(vr, c);
         }
         let p = &mut self.panels[id];
-        if p.animated && p.surface.has_texture() && p.opacity > 0.0 {
+        if p.nav_bar_of.is_some() {
+            // 持ち主と一緒にフェードアウトし、持ち主が消えたら解放される（place_nav_bars）。
+        } else if p.animated && p.surface.has_texture() && p.opacity > 0.0 {
             self.animations.insert(
                 id,
                 (Animation::new(p.opacity, 0.0, Motion::Exit), Instant::now()),
@@ -563,7 +597,8 @@ impl Overlay {
         if p.closed {
             return;
         }
-        let entering = !p.surface.has_texture() && p.animated;
+        // ナビゲーションバーは持ち主の出入りに乗る（place_nav_bars）。
+        let entering = !p.surface.has_texture() && p.animated && p.nav_bar_of.is_none();
         if entering {
             p.opacity = 0.0;
         }
@@ -644,7 +679,7 @@ impl Overlay {
         for (id, p) in self.panels.iter_mut().enumerate() {
             p.follow = None;
             // 子は取り付けではなく親に追従する（下の settle_family）。
-            if dragged.contains(&id) || p.parent.is_some() {
+            if dragged.contains(&id) || p.parent.is_some() || p.nav_bar_of.is_some() {
                 continue;
             }
             p.follow = p.attached.clone();
@@ -691,7 +726,8 @@ impl Overlay {
         let now = Instant::now();
         for (id, (p, parent)) in self.panels.iter_mut().zip(parents).enumerate() {
             let to = if parent { DIM } else { 0.0 };
-            if p.dim_to == to {
+            // ナビゲーションバーの暗さは持ち主を写す（place_nav_bars）。
+            if p.dim_to == to || p.nav_bar_of.is_some() {
                 continue;
             }
             p.dim_to = to;
@@ -713,6 +749,7 @@ impl Overlay {
                 Self::present(vr, p, false);
             }
         }
+        self.place_nav_bars(vr);
         self.place_pointers(vr);
         for p in &mut self.panels {
             p.surface.place(vr, p.pose, p.follow.as_ref());
@@ -843,7 +880,7 @@ impl Overlay {
         // ロック中のパネルは掴めない（掴みボタンは無視して普通に指す）。
         let grab_started = grab_started
             && hit.is_some_and(|h| {
-                std::iter::once(h.0)
+                std::iter::once(self.panels[h.0].nav_bar_of.unwrap_or(h.0))
                     .chain(carried(&self.panels, h.0))
                     .all(|q| !self.panels[q].locked)
             });
@@ -855,12 +892,8 @@ impl Overlay {
                 event,
             })
         };
-        // 子が開いている親は入力を受けない（掴むことはできる）。
-        let blocked = |id| {
-            self.panels
-                .iter()
-                .any(|q| !q.closed && q.parent.is_some_and(|p| p.panel == id))
-        };
+        // 子が開いている親（とそのナビゲーションバー）は入力を受けない（掴むことはできる）。
+        let blocked = |id| has_child(&self.panels, id);
         let swallow = st.swallow;
         let new_hover = hit.map(|h| h.0).filter(|&id| !blocked(id) && !swallow);
         if let Some(old) = st
@@ -877,6 +910,8 @@ impl Overlay {
         };
         if grab_started {
             let t = hit.map_or(0.0, |h| h.2);
+            // ナビゲーションバーを掴むと持ち主を掴む（バーは持ち主に付いてくる）。
+            let id = self.panels[id].nav_bar_of.unwrap_or(id);
             let offset = aim.inverse().transform_point(self.panels[id].pose.position);
             st.dragging = Some((id, offset, t));
             st.hover = None;
@@ -973,6 +1008,47 @@ impl Overlay {
         for id in kids {
             if let Some(parent) = self.panels[id].parent {
                 self.panels[id].pose = self.panels[parent.panel].pose * self.panels[id].offset;
+            }
+        }
+    }
+
+    /// ナビゲーションバーを持ち主の下端へ置く。持ち主の地の下端（影の余白 [`PANEL_MARGIN`] の内側）の左右中央を
+    /// アンカーに、バーの上端の左右中央を合わせる。頭から見て同じ大きさに見えるよう、アンカーまでの距離に比例して大きくする。
+    /// 持ち主の出入りのアニメーション（75%〜100%）で縮んだ下端にも付いていく。
+    fn place_nav_bars(&mut self, vr: &mut dyn VrBackend) {
+        for id in 0..self.panels.len() {
+            let Some(owner) = self.panels[id]
+                .nav_bar_of
+                .filter(|_| !self.panels[id].surface.released())
+            else {
+                continue;
+            };
+            let o = &self.panels[owner];
+            let (opacity, dim) = (o.opacity, o.dim);
+            let up = o.pose.orientation * Vec3::Y;
+            let margin = PANEL_MARGIN * o.displayed_size().y / o.resolution.1 as f32;
+            let anchor = o.pose.position - up * (o.displayed_size().y / 2.0 - margin);
+            let rotation = o.pose.orientation;
+            let eye = self.hmd.position;
+            let depth = o.pose.position.distance(eye) - LIFT_STEP;
+            let p = &mut self.panels[id];
+            let mut size = p.nav_bar_size * anchor.distance(eye);
+            // 持ち主の面に沿えた中心。合成は同じ描画順のパネルを中心の頭からの距離で重ねるので、中心が下にずれた分だけ
+            // バーが持ち主より奥に扱われ、持ち主の手前のパネルに埋もれてしまう。視線に沿って動かして中心の距離を持ち主
+            // （の少しだけ手前）にそろえ、同じ比で拡大縮小して頭から見た位置と大きさは保つ。
+            let along = anchor - up * (size.y * (0.75 + 0.25 * opacity) / 2.0) - eye;
+            let k = depth / along.length().max(1e-4);
+            size *= k;
+            let resized = !p.size.abs_diff_eq(size, 1e-4);
+            p.size = size;
+            // 出入りと暗さは持ち主と一体（バーは閉じても、持ち主が消えきるまで残る）。
+            let faded = p.opacity != opacity || p.dim != dim || (p.closed && opacity == 0.0);
+            (p.opacity, p.dim, p.dim_to) = (opacity, dim, dim);
+            p.pose = Pose::new(eye + along * k, rotation);
+            if (faded && p.surface.has_texture()) || (p.closed && opacity == 0.0) {
+                Self::present(vr, p, false);
+            } else if resized {
+                p.surface.set_width(vr, p.displayed_size().x);
             }
         }
     }
@@ -1097,6 +1173,14 @@ fn approach(from: Pose, to: Pose, dt: f32) -> Pose {
         from.position.lerp(to.position, k),
         from.orientation.slerp(to.orientation, k),
     )
+}
+
+/// [`Overlay::has_child`]。
+fn has_child(panels: &[Panel], id: PanelId) -> bool {
+    let id = panels[id].nav_bar_of.unwrap_or(id);
+    panels
+        .iter()
+        .any(|q| !q.closed && q.parent.is_some_and(|p| p.panel == id))
 }
 
 /// `id` の親、その親…（近い順）。
@@ -1622,6 +1706,77 @@ mod tests {
                 .position
                 .abs_diff_eq(expected, 1e-5)
         );
+    }
+
+    #[test]
+    fn nav_bar_hangs_under_its_owner_at_a_constant_apparent_size() {
+        let (mut vr, mut ov) = setup();
+        let bar = ov
+            .add_panel(
+                &mut vr.backend,
+                "bar",
+                Pose::IDENTITY,
+                Vec2::new(0.2, 0.05),
+                (200, 50),
+            )
+            .unwrap();
+        ov.set_nav_bar(bar, 0);
+        for z in [-1.0, -3.0] {
+            ov.set_pose(0, at(0.0, 0.0, z));
+            ov.tick(&mut vr);
+            let p = ov.panel(bar);
+            // 頭（原点）から見て、持ち主の地の下端（影の余白の内側）の左右中央に、バーの上端の左右中央が付く。
+            let anchor = Vec3::new(0.0, -0.5 + PANEL_MARGIN / 100.0, z);
+            let top = p.pose.position + Vec3::Y * p.size.y / 2.0;
+            assert!(top.normalize().abs_diff_eq(anchor.normalize(), 1e-5), "{top}");
+            // 奥行き（中心の頭からの距離）は持ち主と同じで、ほんの少しだけ手前。
+            let depth = p.pose.position.length();
+            assert!((depth - (z.abs() - LIFT_STEP)).abs() < 1e-5, "{depth}");
+            // 頭から見た大きさは距離によらない（1m 先で 0.2m）。
+            assert!((p.size.x / top.length() - 0.2).abs() < 1e-5);
+            assert!((vr.backend.overlays[bar].width_m - p.size.x).abs() < 1e-5);
+        }
+        // 持ち主を指せば、バーも指されている扱い（広がる）。どこも指さなければ縮む。
+        assert!(!ov.pointed(bar));
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        assert!(ov.pointed(0) && ov.pointed(bar));
+        // バーを掴むと持ち主ごと動き、持ち主を閉じるとバーも閉じる。
+        let bar_center = ov.panel(bar).pose.position;
+        controller(
+            &mut vr,
+            Pose::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::NEG_Z, bar_center.normalize())),
+            &[("squeeze/value", 1.0)],
+        );
+        ov.tick(&mut vr);
+        assert!(ov.grabbed(0));
+        ov.close(&mut vr.backend, 0);
+        assert!(ov.panel(bar).closed);
+    }
+
+    #[test]
+    fn nav_bar_enters_and_leaves_with_its_owner() {
+        let (mut vr, mut ov) = setup();
+        let bar = ov
+            .add_panel(&mut vr.backend, "bar", Pose::IDENTITY, Vec2::new(0.2, 0.05), (2, 2))
+            .unwrap();
+        ov.set_nav_bar(bar, 0);
+        let ratio = |ov: &Overlay, id| ov.panel(id).displayed_size().x / ov.panel(id).size.x;
+        let rgba = [255u8; 100 * 100 * 4];
+        ov.submit(&mut vr.backend, 0, 100, 100, &rgba);
+        ov.tick(&mut vr);
+        // バーの描画は後から届いても、自分では入場せず持ち主の途中から一緒に出る。
+        ov.submit(&mut vr.backend, bar, 2, 2, &[255u8; 16]);
+        ov.tick(&mut vr);
+        assert!(ratio(&ov, 0) < 1.0);
+        assert_eq!(ratio(&ov, bar), ratio(&ov, 0));
+        assert_eq!(vr.backend.overlays[bar].alpha, vr.backend.overlays[0].alpha);
+        // 閉じるときも一緒に消え、持ち主が消えきるまでは残る。
+        ov.close(&mut vr.backend, 0);
+        ov.tick(&mut vr);
+        assert!(ov.panel(bar).closed);
+        assert_eq!(ratio(&ov, bar), ratio(&ov, 0));
+        assert_eq!(vr.backend.overlays[bar].alpha, vr.backend.overlays[0].alpha);
     }
 
     /// 親（0 番）の手前に小さな子を置く。

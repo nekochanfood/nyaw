@@ -146,7 +146,9 @@ fn command(
 fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
         cx.default_global::<PanelControl>().spawns.push(
-            PanelSpec::spawn(panel, |id, _, _| Testing::new(id)).sized(TESTING_SIZE, TESTING_PX),
+            PanelSpec::spawn(panel, |id, _, _| Testing::new(id))
+                .sized(TESTING_SIZE, TESTING_PX)
+                .titled("testing.open.testing"),
         )
     }
 }
@@ -155,7 +157,7 @@ fn spawn_dialog_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut A
     move |_, _, cx| {
         cx.default_global::<PanelControl>()
             .spawns
-            .push(PanelSpec::spawn(panel, |id, _, _| DialogTest::new(id)))
+            .push(PanelSpec::spawn(panel, |id, _, _| DialogTest::new(id)).titled("testing.open.dialog"))
     }
 }
 
@@ -163,7 +165,7 @@ fn spawn_pointer_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut 
     move |_, _, cx| {
         cx.default_global::<PanelControl>()
             .spawns
-            .push(PanelSpec::spawn(panel, |id, _, _| PointerTest::new(id)))
+            .push(PanelSpec::spawn(panel, |id, _, _| PointerTest::new(id)).titled("testing.open.pointer"))
     }
 }
 
@@ -171,21 +173,23 @@ fn spawn_transparent(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut A
     move |_, _, cx| {
         cx.default_global::<PanelControl>()
             .spawns
-            .push(PanelSpec::spawn(panel, |id, _, _| {
-                TestingTransparent::new(id)
-            }))
+            .push(
+                PanelSpec::spawn(panel, |id, _, _| TestingTransparent::new(id))
+                    .titled("testing.open.transparent"),
+            )
     }
 }
 
-/// 隣に `build` の画面を開く。
+/// 隣に `build` の画面を開く。`title` はナビゲーションバーのタイトル（i18n のキー）。
 fn spawn_view<V: Render>(
     panel: PanelId,
+    title: &'static str,
     build: fn(PanelId, &mut App) -> V,
 ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
         cx.default_global::<PanelControl>()
             .spawns
-            .push(PanelSpec::spawn(panel, move |id, _, cx| build(id, cx)))
+            .push(PanelSpec::spawn(panel, move |id, _, cx| build(id, cx)).titled(title))
     }
 }
 
@@ -201,8 +205,9 @@ fn spawn_catalog(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) 
                     .entry(id)
                     .or_default()
                     .live = true;
-                design::catalog::Catalog::with_close(command(id, PanelCommand::Close))
-            }))
+                design::catalog::Catalog::default()
+            })
+            .titled("testing.open.catalog"))
     }
 }
 
@@ -472,19 +477,19 @@ impl Render for Testing {
             )
             .child(
                 button!("spawn-anim", i18n::t(cx, "testing.open.moving"), false)
-                    .on_click(spawn_view(self.panel, TestingAnim::new)),
+                    .on_click(spawn_view(self.panel, "testing.open.moving", TestingAnim::new)),
             )
             .child(
                 button!("spawn-lod", i18n::t(cx, "testing.open.lod"), false)
-                    .on_click(spawn_view(self.panel, |id, _| TestingLod::new(id))),
+                    .on_click(spawn_view(self.panel, "testing.open.lod", |id, _| TestingLod::new(id))),
             )
             .child(
                 button!("spawn-font", i18n::t(cx, "testing.open.font"), false)
-                    .on_click(spawn_view(self.panel, |id, _| TestingFont::new(id))),
+                    .on_click(spawn_view(self.panel, "testing.open.font", |id, _| TestingFont::new(id))),
             )
             .child(
                 button!("emoji-test", i18n::t(cx, "testing.open.emoji"), false)
-                    .on_click(spawn_view(self.panel, |id, _| EmojiTest::new(id))),
+                    .on_click(spawn_view(self.panel, "testing.open.emoji", |id, _| EmojiTest::new(id))),
             )
             .child(
                 button!(
@@ -492,7 +497,7 @@ impl Render for Testing {
                     i18n::t(cx, "testing.open.scrollbar"),
                     false
                 )
-                .on_click(spawn_view(self.panel, |id, _| TestingScrollbar::new(id))),
+                .on_click(spawn_view(self.panel, "testing.open.scrollbar", |id, _| TestingScrollbar::new(id))),
             )
             .child(
                 button!("pointer-test", i18n::t(cx, "testing.open.pointer"), false)
@@ -500,11 +505,11 @@ impl Render for Testing {
             )
             .child(
                 button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false)
-                    .on_click(spawn_view(self.panel, |id, _| SmoothingTest::new(id))),
+                    .on_click(spawn_view(self.panel, "testing.open.laser", |id, _| SmoothingTest::new(id))),
             )
             .child(
                 button!("tooltip-test", i18n::t(cx, "testing.open.tooltip"), false)
-                    .on_click(spawn_view(self.panel, |id, _| TooltipTest::new(id))),
+                    .on_click(spawn_view(self.panel, "testing.open.tooltip", |id, _| TooltipTest::new(id))),
             )
             .child(
                 button!("dialog-test", i18n::t(cx, "testing.open.dialog"), false)
@@ -516,18 +521,19 @@ impl Render for Testing {
                     move |_, _, cx| {
                         cx.default_global::<PanelControl>().spawns.push(
                             PanelSpec::spawn(panel, |id, _, _| Settings::new(id))
-                                .sized(SETTINGS_SIZE, SETTINGS_PX),
+                                .sized(SETTINGS_SIZE, SETTINGS_PX)
+                                .titled("testing.open.settings"),
                         )
                     }
                 }),
             )
             .child(
                 button!("nav-test", i18n::t(cx, "testing.open.navigation"), false)
-                    .on_click(spawn_view(self.panel, |id, _| NavTest::new(id))),
+                    .on_click(spawn_view(self.panel, "testing.open.navigation", |id, _| NavTest::new(id))),
             )
             .child(
                 button!("stress-test", i18n::t(cx, "testing.open.stress"), false)
-                    .on_click(spawn_view(self.panel, |id, _| StressTest::new(id))),
+                    .on_click(spawn_view(self.panel, "testing.open.stress", |id, _| StressTest::new(id))),
             )
             .child(
                 button!("spawn-catalog", i18n::t(cx, "testing.open.catalog"), false)
@@ -545,7 +551,8 @@ impl Render for Testing {
                         // 全キーの表を並べるので Testing と同じ大きさ。
                         cx.default_global::<PanelControl>().spawns.push(
                             PanelSpec::spawn(panel, |id, _, _| LocaleTest::new(id))
-                                .sized(TESTING_SIZE, TESTING_PX),
+                                .sized(TESTING_SIZE, TESTING_PX)
+                                .titled("locale.title"),
                         )
                     }
                 }),
@@ -763,16 +770,6 @@ impl Render for Testing {
                             )),
                     )
                     .child(input_row),
-            )
-            .child(
-                // カードではなく背景に置くので、背景用の色。
-                components::button(
-                    &theme,
-                    "close-panel",
-                    i18n::t(cx, "common.close"),
-                    Variant::OnBackground,
-                )
-                .on_click(command(self.panel, PanelCommand::Close)),
             );
 
         // カードが複数なので地を敷く。左 = このパネルと開く画面、右 = 部品の操作。
@@ -904,15 +901,7 @@ impl Render for PointerTest {
                             cx.notify();
                         })),
                     )
-                    .child(
-                        button(
-                            &theme,
-                            "close-pointer-test",
-                            i18n::t(cx, "common.close"),
-                            false,
-                        )
-                        .on_click(command(self.panel, PanelCommand::Close)),
-                    ),
+
             )
             .child(
                 row()
@@ -1018,13 +1007,6 @@ impl Render for SmoothingTest {
             .flex_col()
             .gap(px(spacing::LG))
             .p(px(spacing::XL))
-            .child(title_bar(
-                &theme,
-                panel,
-                i18n::t(cx, "testing.open.laser"),
-                "close-smoothing",
-                cx,
-            ))
             .child(
                 div()
                     .debug_selector(|| "smoothing-value".into())
@@ -1153,12 +1135,11 @@ impl Render for SmoothingTest {
 /// - `tip-status` に、手ごとの今の文字と向き（上下）を出す。手を頭より上に掲げて見上げると下に、下から指すと上に出る。
 #[derive(Default)]
 pub struct TooltipTest {
-    panel: PanelId,
 }
 
 impl TooltipTest {
-    pub fn new(panel: PanelId) -> Self {
-        Self { panel }
+    pub fn new(_panel: PanelId) -> Self {
+        Self {}
     }
 }
 
@@ -1186,16 +1167,7 @@ impl Render for TooltipTest {
             .p_3()
             .child(
                 row()
-                    .child(div().debug_selector(|| "tip-status".into()).child(status))
-                    .child(
-                        button(
-                            &theme,
-                            "close-tooltip-test",
-                            i18n::t(cx, "common.close"),
-                            false,
-                        )
-                        .on_click(command(self.panel, PanelCommand::Close)),
-                    ),
+                    .child(div().debug_selector(|| "tip-status".into()).child(status)),
             )
             .child(
                 row()
@@ -1301,7 +1273,6 @@ const SETTINGS_ITEMS: [(&str, &design::Icon); 5] = [
 /// 中身は積み重ね（[`components::navigation`]）: 項目を押すと右から詳しい画面が入り、`settings-back` か右から左へのスワイプで戻る。
 #[derive(Default)]
 pub struct Settings {
-    panel: PanelId,
     /// 選んでいるカテゴリ（[`SETTINGS_CATEGORIES`] の添字）。
     pub category: usize,
     /// 中身に積んだ画面。先頭はカテゴリの項目の一覧（`None`）、その上に項目の詳しい画面（`Some(項目)`）。
@@ -1309,28 +1280,25 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn new(panel: PanelId) -> Self {
+    pub fn new(_panel: PanelId) -> Self {
         Self {
-            panel,
             category: 0,
             pages: vec![None],
         }
     }
 }
 
-/// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。タイトルは左右の中央、`left` / `right` のボタンは端に寄せる。
+/// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。タイトルは左右の中央、`left` のボタン（戻る）は左端に寄せる（閉じるのはナビゲーションバー）。
 /// 高さはアイコンボタンと同じなので、ボタンは上下にも左右にも余白を足さない（パネルの内側の余白だけが四方に揃う）。
 fn heading(
     title: impl IntoElement,
     left: Option<gpui::AnyElement>,
-    right: Option<gpui::AnyElement>,
 ) -> Div {
     div()
         .relative()
         .h(px(54.0))
         .flex()
         .items_center()
-        .justify_between()
         .text_size(px(font_size::LG))
         .font_weight(FontWeight::BOLD)
         // ボタンの有無で中央がずれないよう、タイトルは重ねて置く。
@@ -1344,7 +1312,6 @@ fn heading(
                 .child(title),
         )
         .child(div().flex().children(left))
-        .child(div().flex().children(right))
 }
 
 /// 押すと `view` の積み重ねに `page` を積む・下ろす（`None`）。
@@ -1380,25 +1347,16 @@ impl Render for Settings {
                     }))
             })
             .collect::<Vec<_>>();
-        let (this, panel, category) = (cx.entity(), self.panel, self.category);
+        let (this, category) = (cx.entity(), self.category);
         let pages: fn(&mut Settings) -> &mut Vec<Option<usize>> = |v| &mut v.pages;
         // 中身の画面 1 枚。
         let page = move |p: &Option<usize>, _: &mut Window, cx: &mut App| {
             let theme = Theme::current(cx);
             let (_, _, title, count) = SETTINGS_CATEGORIES[category];
-            let close = components::icon_button(
-                &theme,
-                "close-settings",
-                &design::icons::X,
-                i18n::t(cx, "common.close"),
-                Variant::OnBackground,
-            )
-            .on_click(command(panel, PanelCommand::Close))
-            .into_any_element();
             let (head, rows) = match *p {
                 // カテゴリの項目の一覧。押すと詳しい画面を積む。
                 None => (
-                    heading(i18n::t(cx, title), None, Some(close)),
+                    heading(i18n::t(cx, title), None),
                     SETTINGS_ITEMS[..count]
                         .iter()
                         .enumerate()
@@ -1428,7 +1386,6 @@ impl Render for Settings {
                             .on_click(stack_op(&this, pages, None))
                             .into_any_element(),
                         ),
-                        Some(close),
                     ),
                     SETTINGS_ITEMS[..3]
                         .iter()
@@ -1463,7 +1420,7 @@ impl Render for Settings {
                     .flex()
                     .flex_col()
                     .gap(px(spacing::MD))
-                    .child(heading(i18n::t(cx, "settings.title"), None, None))
+                    .child(heading(i18n::t(cx, "settings.title"), None))
                     .child(div().flex().flex_col().gap(px(spacing::XS)).children(categories)),
             )
             // サイドバーと中身の区切り。
@@ -1506,7 +1463,6 @@ pub enum NavPage {
 /// - パネルを掴んでいる手のポインタは無視する（掴みながらトリガーで動かしても戻らず、もう一方の手ではスワイプできる）。
 #[derive(Default)]
 pub struct NavTest {
-    panel: PanelId,
     pub stack: Vec<NavPage>,
     /// `nav-tap` を押した回数。
     pub taps: usize,
@@ -1517,9 +1473,8 @@ pub struct NavTest {
 }
 
 impl NavTest {
-    pub fn new(panel: PanelId) -> Self {
+    pub fn new(_panel: PanelId) -> Self {
         Self {
-            panel,
             stack: vec![NavPage::Root],
             taps: 0,
             value: 0.5,
@@ -1612,21 +1567,12 @@ impl Render for NavTest {
             .on_click(stack_op(&cx.entity(), stack, None))
             .into_any_element()
         });
-        let close = components::icon_button(
-            &theme,
-            "close-nav",
-            &design::icons::X,
-            i18n::t(cx, "common.close"),
-            Variant::OnBackground,
-        )
-        .on_click(command(self.panel, PanelCommand::Close))
-        .into_any_element();
         let back = cx.entity();
         components::panel(&theme)
             .flex()
             .flex_col()
             .gap(px(spacing::MD))
-            .child(heading(title, back_button, Some(close)))
+            .child(heading(title, back_button))
             .child(div().flex_1().child(components::navigation(
                 &theme,
                 "nav",
@@ -1677,13 +1623,6 @@ impl Render for DialogTest {
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(
-                &theme,
-                panel,
-                i18n::t(cx, "testing.open.dialog"),
-                "close-dialog-test",
-                cx,
-            ))
             .child(
                 row()
                     .child({
@@ -1701,6 +1640,8 @@ impl Render for DialogTest {
                                             "dialog.dismiss_body",
                                         )
                                     })
+                                    // ダイアログは答えて閉じるもの。ナビゲーションバーは付けない。
+                                    .without_nav_bar()
                                     .sized(DIALOG_SIZE, DIALOG_PX),
                                 )
                             },
@@ -1727,6 +1668,7 @@ impl Render for DialogTest {
                                     )
                                 })
                                 .without_dismiss()
+                                .without_nav_bar()
                                 .sized(DIALOG_SIZE, DIALOG_PX),
                             )
                         }),
@@ -1835,12 +1777,11 @@ pub const TRANSPARENT_BG: u32 = 0x202020a0;
 
 #[derive(Default)]
 pub struct TestingTransparent {
-    panel: PanelId,
 }
 
 impl TestingTransparent {
-    pub fn new(panel: PanelId) -> Self {
-        Self { panel }
+    pub fn new(_panel: PanelId) -> Self {
+        Self {}
     }
 }
 
@@ -1854,42 +1795,8 @@ impl Render for TestingTransparent {
             .p_3()
             .bg(rgba(TRANSPARENT_BG))
             .text_color(rgba(theme.neutral_text))
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_start()
-                    .child(i18n::t(cx, "testing.open.transparent"))
-                    .child(
-                        button(
-                            &theme,
-                            "close-transparent",
-                            i18n::t(cx, "common.close"),
-                            false,
-                        )
-                        .on_click(command(self.panel, PanelCommand::Close)),
-                    ),
-            )
+            .child(i18n::t(cx, "testing.open.transparent"))
     }
-}
-
-/// 閉じるボタン付きの見出し。
-fn title_bar(
-    theme: &Theme,
-    panel: PanelId,
-    title: impl Into<SharedString>,
-    close_id: &'static str,
-    cx: &App,
-) -> Div {
-    div()
-        .flex()
-        .justify_between()
-        .items_start()
-        .child(title.into())
-        .child(
-            button(theme, close_id, i18n::t(cx, "common.close"), false)
-                .on_click(command(panel, PanelCommand::Close)),
-        )
 }
 
 /// ループアニメーションの周期（秒）。
@@ -1898,7 +1805,6 @@ const ANIM_PERIOD: f32 = 2.0;
 /// 毎フレーム中身が変わる画面（`testing-anim`）: 描いた回数と、周期 [`ANIM_PERIOD`] で左右を往復し色の変わる四角。
 /// 見えている間はフレームループが毎フレーム描き直す（[`ui::PanelState::live`]）。
 pub struct TestingAnim {
-    panel: PanelId,
     /// 描いた回数。
     pub frames: u64,
     start: Instant,
@@ -1912,7 +1818,6 @@ impl TestingAnim {
             .or_default()
             .live = true;
         Self {
-            panel,
             frames: 0,
             start: Instant::now(),
         }
@@ -1930,13 +1835,6 @@ impl Render for TestingAnim {
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(
-                &theme,
-                self.panel,
-                i18n::t(cx, "testing.open.moving"),
-                "close-anim",
-                cx,
-            ))
             .child(
                 div()
                     .debug_selector(|| "anim-frames".into())
@@ -1982,13 +1880,6 @@ impl Render for TestingLod {
             .p_3()
             .bg(rgb(LOD_COLORS[(lod as usize).min(3)]))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(
-                &theme,
-                self.panel,
-                i18n::t(cx, "testing.open.lod"),
-                "close-lod",
-                cx,
-            ))
             .child(
                 div()
                     .debug_selector(|| "lod-level".into())
@@ -2005,7 +1896,6 @@ impl Render for TestingLod {
 /// スクロールバーの試験画面（`testing-scrollbar`）: 縦だけ・横だけ・縦横の 3 つのあふれる領域。
 /// 領域は `scrollbar-v` / `scrollbar-h` / `scrollbar-both`、棒は `{領域}-bars-v` / `-h`（`-thumb` 付きが棒）。
 pub struct TestingScrollbar {
-    panel: PanelId,
     pub vertical: ScrollHandle,
     pub horizontal: ScrollHandle,
     pub both: ScrollHandle,
@@ -2014,9 +1904,8 @@ pub struct TestingScrollbar {
 }
 
 impl TestingScrollbar {
-    pub fn new(panel: PanelId) -> Self {
+    pub fn new(_panel: PanelId) -> Self {
         Self {
-            panel,
             vertical: ScrollHandle::new(),
             horizontal: ScrollHandle::new(),
             both: ScrollHandle::new(),
@@ -2161,13 +2050,6 @@ impl Render for TestingScrollbar {
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(
-                &theme,
-                self.panel,
-                i18n::t(cx, "testing.open.scrollbar"),
-                "close-scrollbar",
-                cx,
-            ))
             .child(
                 div()
                     .flex_1()
@@ -2191,12 +2073,11 @@ impl Render for TestingScrollbar {
 
 /// フォントの見本（`testing-font`）: 英数・かな漢字・混在を、太さと大きさを変えて並べる。
 pub struct TestingFont {
-    panel: PanelId,
 }
 
 impl TestingFont {
-    pub fn new(panel: PanelId) -> Self {
-        Self { panel }
+    pub fn new(_panel: PanelId) -> Self {
+        Self {}
     }
 }
 
@@ -2218,13 +2099,6 @@ impl Render for TestingFont {
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(
-                &theme,
-                self.panel,
-                i18n::t(cx, "testing.open.font"),
-                "close-font",
-                cx,
-            ))
             .child(sample(
                 "font-latin",
                 24.0,
@@ -2391,13 +2265,6 @@ impl Render for LocaleTest {
             .gap(px(spacing::MD))
             .p(px(spacing::XL))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(
-                &theme,
-                self.panel,
-                i18n::t(cx, "locale.title"),
-                "close-locale",
-                cx,
-            ))
             .child(switch)
             .child(
                 div()
@@ -2433,19 +2300,17 @@ const GRID_DISTANCE: f32 = 2.0;
 /// ちょうどになるまで出す。ランタイムがそれより手前で作れなくなれば（OpenVR のほかのアプリの分など）そこで止まり、
 /// 届いた数が `stress-count` に出る。
 pub struct StressTest {
-    panel: PanelId,
     /// 出したパネル（閉じたものも含む）。ビルド時に積まれる。
     spawned: Rc<RefCell<Vec<PanelId>>>,
     rng: u64,
 }
 
 impl StressTest {
-    pub fn new(panel: PanelId) -> Self {
+    pub fn new(_panel: PanelId) -> Self {
         let seed = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(1, |d| d.as_nanos() as u64);
         Self {
-            panel,
             spawned: Rc::default(),
             rng: seed | 1,
         }
@@ -2489,7 +2354,12 @@ impl StressTest {
                 }),
             };
             c.spawns
-                .push(spec.in_view(grid_pose(i)).sized(STRESS_SIZE, (800, 600)));
+                .push(
+                    spec.in_view(grid_pose(i))
+                        .sized(STRESS_SIZE, (800, 600))
+                        // 負荷を測るための埋め草で、まとめて閉じる（`stress-close`）。バーを付けると開ける数が半分になる。
+                        .without_nav_bar(),
+                );
         }
     }
 
@@ -2543,13 +2413,6 @@ impl Render for StressTest {
             .p_3()
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
-            .child(title_bar(
-                &theme,
-                self.panel,
-                i18n::t(cx, "testing.open.stress"),
-                "close-stress",
-                cx,
-            ))
             .child(
                 div()
                     .debug_selector(|| "stress-count".into())

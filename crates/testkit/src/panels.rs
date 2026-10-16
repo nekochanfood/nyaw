@@ -130,6 +130,7 @@ impl<V: Render> Panels<V> {
         let id = self.windows.len();
         let pose = spec.pose_for(kernel, id);
         let parent = spec.parent();
+        let (bar, owner) = (spec.nav_bar_spec(id), spec.nav_bar_of());
         let (root, cx) = cx
             .cx
             .add_window_view(|window, cx| PanelRoot::new(spec.build(id, window, cx)));
@@ -138,6 +139,13 @@ impl<V: Render> Panels<V> {
         if let Some(parent) = parent {
             kernel.apply(panel, kernel::PanelCommand::Parent(Some(parent)));
         }
+        if let Some(owner) = owner {
+            kernel.apply(panel, kernel::PanelCommand::NavBar(owner));
+        }
         cx.update(|_, cx| ui::sync_panel(kernel, panel, cx));
+        // As in production, the navigation bar opens right after its owner (PanelId = owner + 1).
+        if let Some(bar) = bar {
+            self.add_spec(cx, kernel, bar);
+        }
     }
 }

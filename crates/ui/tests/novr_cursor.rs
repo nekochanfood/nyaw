@@ -30,7 +30,8 @@ fn main() -> ExitCode {
     let mut panels = vec![PanelSpec::new(
         Pose::new(PANEL, Quat::IDENTITY),
         |id, _, _| Testing::new(id),
-    )];
+    )
+    .without_nav_bar()];
     panels.extend(beam::specs());
     let (remote, rx) = channel::<ui::Remote>();
     let result: Arc<Mutex<Option<bool>>> = Arc::default();

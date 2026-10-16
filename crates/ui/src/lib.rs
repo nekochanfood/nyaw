@@ -482,8 +482,24 @@ pub struct PanelSpec {
     animated: bool,
     /// レーザーを描くパネル。
     pointer: Option<(Hand, Pointer)>,
+    /// ナビゲーションバーに出すタイトル（i18n のキー）。
+    title: Option<&'static str>,
+    /// ナビゲーションバーを付けるか（既定は付ける。[`Self::without_nav_bar`] で外す）。
+    nav_bar: bool,
+    /// このパネル自身がナビゲーションバーなら、その持ち主。
+    nav_bar_of: Option<PanelId>,
     build: Box<PanelBuilder>,
 }
+
+/// ナビゲーションバーの窓（px）。帯（[`design::components::NAV_BAR_HEIGHT`]）の周りに影の余白を取る。
+const NAV_BAR_PX: (u32, u32) = (
+    480 + 2 * design::components::PANEL_MARGIN as u32,
+    design::components::NAV_BAR_HEIGHT as u32 + 2 * design::components::PANEL_MARGIN as u32,
+);
+/// ナビゲーションバーの頭から 1m 先での幅（m）。帯の高さがツールチップの箱の 2 倍に見える縮尺にする。
+/// オーバーレイ層が距離に比例して大きくするので、近くても遠くても見た目の大きさは変わらない。
+const NAV_BAR_M: f32 = NAV_BAR_PX.0 as f32 * 2.0 * design::components::TOOLTIP_HEIGHT_M
+    / design::components::NAV_BAR_HEIGHT;
 
 impl PanelSpec {
     pub fn new<V: Render>(
@@ -501,6 +517,9 @@ impl PanelSpec {
             parent: None,
             animated: true,
             pointer: None,
+            title: None,
+            nav_bar: true,
+            nav_bar_of: None,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -577,9 +596,52 @@ impl PanelSpec {
     }
 
     /// `hand` のレーザー（線またはカーソル）を描くパネルにする。置き場所はオーバーレイ層が決める。
+    /// 操作するパネルではないので、ナビゲーションバーは付けない。
     pub fn pointer(mut self, hand: Hand, part: Pointer) -> Self {
         self.pointer = Some((hand, part));
+        self.nav_bar = false;
         self
+    }
+
+    /// ナビゲーションバーの中央に出すタイトル（i18n のキー）。
+    pub fn titled(mut self, key: &'static str) -> Self {
+        self.title = Some(key);
+        self
+    }
+
+    /// ナビゲーションバーを付けない（オプトアウト）。付けてよいかは `crates/design/GUIDELINES.md` の
+    /// 「ナビゲーションバー」に従う（常駐・取り付けて使うパネルやダイアログなど、閉じる・動かす対象でないもの）。
+    pub fn without_nav_bar(mut self) -> Self {
+        self.nav_bar = false;
+        self
+    }
+
+    /// このパネル（PanelId `owner` で開いた）に付けるナビゲーションバー。外していれば `None`。
+    /// 開く側（`ui::run`・testkit のキット）が持ち主の直後に開き、[`PanelCommand::NavBar`] で持ち主に付ける。
+    pub fn nav_bar_spec(&self, owner: PanelId) -> Option<PanelSpec> {
+        let title = self.title;
+        self.nav_bar.then(|| PanelSpec {
+            nav_bar: false,
+            nav_bar_of: Some(owner),
+            ..PanelSpec::new(Pose::IDENTITY, move |id, _, _| NavBar {
+                id,
+                owner,
+                title,
+                open: 0.0,
+                to: 0.0,
+                anim: None,
+                last: None,
+            })
+                .sized(
+                    Vec2::new(NAV_BAR_M, NAV_BAR_M * NAV_BAR_PX.1 as f32 / NAV_BAR_PX.0 as f32),
+                    NAV_BAR_PX,
+                )
+        })
+    }
+
+    /// このパネルがナビゲーションバーなら、その持ち主（開いた直後に [`PanelCommand::NavBar`] で適用する）。
+    pub fn nav_bar_of(&self) -> Option<PanelId> {
+        self.nav_bar_of
     }
 
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
@@ -594,6 +656,77 @@ impl PanelSpec {
     /// GPUI のビューを組み立てる。
     pub fn build(self, panel: PanelId, window: &mut Window, cx: &mut App) -> AnyView {
         (self.build)(panel, window, cx)
+    }
+}
+
+/// ナビゲーションバーの中身: 持ち主のタイトルと閉じるボタン（持ち主を閉じ、バーも一緒に閉じる）。
+/// 持ち主（かバー）をレーザーが指していない間は丸い線に縮み、指すと帯に広がる（[`design::components::nav_bar`] の `open`）。
+struct NavBar {
+    id: PanelId,
+    owner: PanelId,
+    title: Option<&'static str>,
+    /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
+    open: f32,
+    to: f32,
+    anim: Option<design::animation::Animation>,
+    last: Option<Instant>,
+}
+
+impl Render for NavBar {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = Instant::now();
+        let dt = self
+            .last
+            .map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
+        self.last = Some(now);
+        if let Some(a) = &mut self.anim {
+            self.open = a.advance(dt);
+            if a.is_done() {
+                self.anim = None;
+            }
+        }
+        // 指されているかは `sync_panel` が状態に書き、変わればこのバーを描き直す。
+        let state = cx
+            .default_global::<PanelControl>()
+            .panels
+            .entry(self.id)
+            .or_default();
+        let to = if state.status.pointed { 1.0 } else { 0.0 };
+        if to != self.to {
+            self.to = to;
+            let motion = if to == 1.0 {
+                design::animation::Motion::Enter
+            } else {
+                design::animation::Motion::Exit
+            };
+            if cx.has_global::<design::Motion>() {
+                self.anim = Some(design::animation::Animation::new(self.open, to, motion));
+            } else {
+                (self.open, self.anim) = (to, None);
+            }
+        }
+        // 動いている間だけ毎フレーム描き直す。
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(self.id)
+            .or_default()
+            .live = self.anim.is_some();
+        let owner = self.owner;
+        let title = self.title.map(|k| i18n::t(cx, k)).unwrap_or_default();
+        div().size_full().child(design::components::nav_bar(
+                &design::Theme::current(cx),
+                self.open,
+                title,
+                i18n::t(cx, "common.close"),
+                move |_, _, cx| {
+                    cx.default_global::<PanelControl>()
+                        .panels
+                        .entry(owner)
+                        .or_default()
+                        .commands
+                        .push(PanelCommand::Close)
+                },
+            ))
     }
 }
 
@@ -832,11 +965,16 @@ pub fn run_with(
                             .map(|s| s.status.clone());
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
-                        // LOD はそのパネルだけの状態。動かして段階が変わるたびにほかのパネルまで描き直させない。
-                        let lod = kernel.panel_lod(panel);
+                        // LOD と指されているかはそのパネルだけの状態。変わるたびにほかのパネルまで描き直させない。
+                        let status = kernel.status(panel);
                         others = changed
-                            && before
-                                .is_none_or(|b| PanelStatus { lod, ..b } != kernel.status(panel));
+                            && before.is_none_or(|b| {
+                                PanelStatus {
+                                    lod: status.lod,
+                                    pointed: status.pointed,
+                                    ..b
+                                } != status
+                            });
                         // 部品のトランジションが動いている間は、毎フレーム描き直す。
                         let transitioning = cx.has_global::<design::Motion>()
                             && cx
@@ -1026,10 +1164,10 @@ pub fn run_with(
                 }
                 match profiler_panel {
                     None if profiling && !hide_profiler => {
-                        let spec = PanelSpec::new(Pose::IDENTITY, |panel, _, cx| ProfilerPanel {
-                            panel,
+                        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, cx| ProfilerPanel {
                             view: cx.new(|_| ProfilerView),
                         })
+                        .titled("testing.panel.profiler")
                         .sized(Vec2::new(1.1, 0.56), (1100, 560))
                         .in_view(PROFILER_POSE);
                         let i = windows.len();
@@ -1110,37 +1248,17 @@ fn log_summary(cx: &App) {
     }
 }
 
-/// プロファイラのパネル。グラフの上に閉じるボタン（計測も止める）を出す。
-/// VR ではパネルに OS の閉じるボタンが無いので要る。
+/// プロファイラのパネル。閉じるのはナビゲーションバー（閉じると計測も止まる）。
 struct ProfilerPanel {
-    panel: PanelId,
     view: Entity<ProfilerView>,
 }
 
 impl Render for ProfilerPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
-            .flex()
-            .flex_col()
             .bg(rgb(0x17181c))
-            .child(
-                div().flex().justify_end().p_1().child(
-                    div()
-                        .id(("close-profiler", self.panel))
-                        .debug_selector(|| "close-profiler".into())
-                        .px_3()
-                        .py_1()
-                        .bg(rgb(0x3a3d46))
-                        .hover(|s| s.bg(rgb(0x50545f)))
-                        .text_color(rgb(0xd8dae0))
-                        .child(i18n::t(cx, "common.close"))
-                        .on_click(|_, _, cx| {
-                            cx.default_global::<PanelControl>().profiling = false;
-                        }),
-                ),
-            )
-            .child(div().flex_1().child(self.view.clone()))
+            .child(self.view.clone())
     }
 }
 
@@ -1179,6 +1297,13 @@ fn open_panel(
     }
     if let Some((hand, part)) = spec.pointer {
         kernel.apply(panel, PanelCommand::Pointer(hand, part));
+    }
+    if let Some(owner) = spec.nav_bar_of {
+        kernel.apply(panel, PanelCommand::NavBar(owner));
+    }
+    // ナビゲーションバーは次のフレームで開く（呼び出し側が PanelId の順に窓を積むため、ここでは開かない）。
+    if let Some(bar) = spec.nav_bar_spec(panel) {
+        cx.default_global::<PanelControl>().spawns.push(bar);
     }
     let drag_layer = spec.pointer.is_some_and(|(_, part)| part == Pointer::Drag);
     let window: AnyWindowHandle = open_panel_window(cx, spec.resolution, |w, cx| {

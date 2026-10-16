@@ -41,12 +41,10 @@ const RING_SHOW: f32 = 0.15;
 const DRAG_PX: (u32, u32) = (400, 400);
 /// ツールチップのパネル。中心がカーソルで、カーソルと同じく頭から 1m 先での大きさ（m）。
 /// オーバーレイ層が距離に比例して大きくするので、近くても遠くても見た目の大きさは変わらない。
-/// 箱の高さ（`TOOLTIP_HEIGHT` px）がカーソルの丸 2 個分の高さに見える縮尺にする。
+/// 箱の高さ（`TOOLTIP_HEIGHT` px）が `TOOLTIP_HEIGHT_M`（カーソルの丸 2 個分の高さ）に見える縮尺にする。
 const TOOLTIP_PX: (u32, u32) = (640, 256);
-const TOOLTIP_M: f32 =
-    TOOLTIP_PX.0 as f32 * 2.0 * CURSOR_DOT_M / design::components::TOOLTIP_HEIGHT;
-/// カーソルの中心の丸の直径（m、1m 先で）。
-const CURSOR_DOT_M: f32 = CURSOR_M * DOT_PX / CURSOR_PX.0 as f32;
+const TOOLTIP_M: f32 = TOOLTIP_PX.0 as f32 * design::components::TOOLTIP_HEIGHT_M
+    / design::components::TOOLTIP_HEIGHT;
 
 /// 両手のレーザーとカーソルとドラッグの見た目。
 pub fn specs() -> Vec<PanelSpec> {
@@ -188,6 +186,8 @@ mod tests {
 
     #[test]
     fn tooltip_box_is_two_cursor_dots_tall() {
+        // カーソルの中心の丸の直径（m、1m 先で）。
+        const CURSOR_DOT_M: f32 = CURSOR_M * DOT_PX / CURSOR_PX.0 as f32;
         let box_m = design::components::TOOLTIP_HEIGHT * TOOLTIP_M / TOOLTIP_PX.0 as f32;
         assert!((box_m - 2.0 * CURSOR_DOT_M).abs() < 1e-6, "{box_m}");
     }

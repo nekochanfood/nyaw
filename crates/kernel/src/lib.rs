@@ -56,6 +56,8 @@ pub enum PanelCommand {
     Place(Pose),
     /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
     Parent(Option<Parent>),
+    /// このパネルを、その持ち主のナビゲーションバーにする（持ち主の下端に付き、頭から見た大きさを保つ）。
+    NavBar(PanelId),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -89,6 +91,8 @@ pub struct PanelStatus {
     pub lod: u8,
     /// 親パネル（このパネルが子のとき）。
     pub parent: Option<PanelId>,
+    /// レーザーが指している（`Overlay::pointed`。ナビゲーションバーは持ち主を指していても）。
+    pub pointed: bool,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -107,6 +111,9 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     lods: Vec<u8>,
 }
 
+/// LOD の切り替え距離を決めた基準の密度（1m あたりの論理ピクセル。既定のパネル 800px / 0.8m）。
+/// 拡大して密度が下がったパネルは、そのぶん近くにあるものとして LOD を決める（見た目の粗さは距離 / 密度で決まる）。
+const LOD_PX_PER_M: f32 = 1000.0;
 /// LOD を下げる（近づいて解像度を上げる）のは、閾値のこの割合まで近づいてから。
 const LOD_HYSTERESIS: f32 = 0.9;
 
@@ -216,6 +223,7 @@ impl<B: VrBackend> Kernel<B> {
     }
 
     /// 距離による描画解像度の段階（LOD0〜3）。Mid は 2 / 4 / 8 m で切り替える（下げるのは [`LOD_HYSTERESIS`] だけ近づいてから）。
+    /// 距離は密度で換算する（[`LOD_PX_PER_M`]）。2 倍に拡大したパネルは半分の距離として扱う。
     /// [`Self::tick`] で決めた値（まだ tick していないパネルはその場で求める）。
     pub fn panel_lod(&self, id: PanelId) -> u8 {
         self.lods
@@ -232,7 +240,9 @@ impl<B: VrBackend> Kernel<B> {
             LodQuality::Mid => 2.0,
             LodQuality::High => 4.0,
         };
-        let distance = self.panel(id).pose.position.distance(self.hmd().position);
+        let p = self.panel(id);
+        let density = p.resolution.0 as f32 / p.size.x / LOD_PX_PER_M;
+        let distance = p.pose.position.distance(self.hmd().position) * density;
         let count = |scale: f32| {
             [near, near * 2.0, near * 4.0]
                 .into_iter()
@@ -396,6 +406,7 @@ impl<B: VrBackend> Kernel<B> {
                 self.save_number("laser_length", l);
             }
             PanelCommand::Parent(parent) => self.overlay.set_parent(panel, parent),
+            PanelCommand::NavBar(owner) => self.overlay.set_nav_bar(panel, owner),
             PanelCommand::Place(offset) => {
                 self.overlay.detach(panel);
                 self.overlay.set_pose(panel, self.hmd().leveled() * offset);
@@ -436,6 +447,7 @@ impl<B: VrBackend> Kernel<B> {
             laser_length: self.overlay.laser_length(),
             lod: self.panel_lod(panel),
             parent: p.parent.map(|q| q.panel),
+            pointed: self.overlay.pointed(panel),
         }
     }
 }
@@ -497,7 +509,7 @@ mod tests {
     /// 境目の前後で行き来しない: 上げるのは閾値で、下げるのは閾値の 9 割を割ってから。
     #[test]
     fn lod_does_not_flap_at_the_threshold() {
-        let (mut k, p) = kernel();
+        let (mut k, p) = lod_kernel();
         k.config.lod_quality = LodQuality::Low;
         let pose = k.panel(p).pose;
         for (distance, lod) in [(1.0, 1), (0.95, 1), (1.0, 1), (0.85, 0), (0.95, 0)] {
@@ -507,9 +519,31 @@ mod tests {
         }
     }
 
+    /// 基準の密度（[`LOD_PX_PER_M`]）のパネルを 1 枚。
+    fn lod_kernel() -> (Kernel<MockBackend>, PanelId) {
+        let mut k = Kernel::with_backend(MockBackend::default(), Config::default());
+        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (1000, 1000)).unwrap();
+        (k, p)
+    }
+
+    /// Issue #51: 遠くで LOD が効いたまま拡大すると粗いまま残っていた。拡大して密度が下がれば、同じ距離でも LOD は下がる。
+    #[test]
+    fn scaled_up_panel_gets_a_finer_lod_at_the_same_distance() {
+        let (mut k, p) = lod_kernel();
+        k.config.lod_quality = LodQuality::Low;
+        // 同じ解像度のまま 4 倍に拡大したパネル（密度 1/4）を同じ所に。
+        let big = k
+            .add_panel("big", Pose::IDENTITY, Vec2::splat(4.0), (1000, 1000))
+            .unwrap();
+        k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 3.0;
+        k.tick();
+        assert_eq!(k.panel_lod(p), 2);
+        assert_eq!(k.panel_lod(big), 0, "3m / 4 = 0.75m 相当");
+    }
+
     #[test]
     fn distance_lod_tracks_camera_and_preserves_panel_geometry() {
-        let (mut k, p) = kernel();
+        let (mut k, p) = lod_kernel();
         let pose = k.panel(p).pose;
         let resolution = k.panel(p).resolution;
         let size = k.panel(p).size;
