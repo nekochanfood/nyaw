@@ -93,15 +93,14 @@ impl Watcher {
                     Ok(Command::Send { target, output }) => {
                         let settings = backend.settings();
                         // 遅延中に他のアプリへ切り替わった操作は配送しない。
-                        let result =
-                            if target == 0 || target != settings.foreground || settings.own_process
-                            {
-                                Err(io::Error::other(
-                                    "OS input target changed or is unavailable",
-                                ))
-                            } else {
-                                backend.send(output)
-                            };
+                        // エミュレーターが入力先でも、明示した OS 入力は配送する。
+                        let result = if target == 0 || target != settings.foreground {
+                            Err(io::Error::other(
+                                "OS input target changed or is unavailable",
+                            ))
+                        } else {
+                            backend.send(output)
+                        };
                         let mut updated = settings;
                         last_error = result.err().map(|e| e.to_string());
                         updated.error = last_error.clone().or(updated.error);
@@ -183,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn delayed_input_cannot_reach_a_different_or_own_process() {
+    fn delayed_input_requires_the_selected_foreground_window() {
         let settings = Arc::new(Mutex::new(Settings {
             foreground: 7,
             ..Settings::default()
@@ -211,7 +210,13 @@ mod tests {
         );
         wait(&|s| s.error.is_none());
         settings.lock().unwrap().own_process = true;
-        watcher.send(9, Output::Text("own process".into())).unwrap();
+        let super_key = chord(&[], 125);
+        watcher.send(9, Output::Keys(super_key.clone())).unwrap();
+        assert!(
+            matches!(received.recv_timeout(Duration::from_secs(1)).unwrap(), Output::Keys(keys) if keys == super_key)
+        );
+        wait(&|s| s.own_process && s.error.is_none());
+        watcher.send(0, Output::Text("unavailable".into())).unwrap();
         wait(&|s| s.error.is_some());
         assert!(received.try_recv().is_err());
     }
