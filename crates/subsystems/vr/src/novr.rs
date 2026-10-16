@@ -266,6 +266,8 @@ impl Emulator {
                 Ok(mut w) => {
                     // 周期は poll が自分で作る（minifb の待ちを合成の時間に混ぜない）。
                     w.set_target_fps(0);
+                    // 指す位置は合成の中にリングで描くので、OS のカーソルは隠す。
+                    w.set_cursor_visibility(false);
                     if self.allow_gpu && std::env::var_os("NYAW_EMULATOR_CPU").is_none() {
                         match Gpu::new(&w, self.size) {
                             Ok(gpu) => {
