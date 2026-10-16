@@ -5,8 +5,9 @@
 //! （[`Kernel::submit`]）を提供する。UI や画面は下位層を直接組み立てない。
 
 pub mod config;
+mod desktop_panels;
 pub use subsystems::{self, Subsystems};
-pub use subsystems::{rendering, vr};
+pub use subsystems::{desktop, rendering, vr};
 
 use std::time::{Duration, Instant};
 use subsystems::os;
@@ -58,6 +59,8 @@ pub enum PanelCommand {
     Parent(Option<Parent>),
     /// このパネルを、その持ち主のナビゲーションバーにする（持ち主の下端に付き、頭から見た大きさを保つ）。
     NavBar(PanelId),
+    /// デスクトップの配信を開始・停止する。取得と入力注入はサブシステムのワーカーで行う。
+    Stream(Option<desktop::Source>),
 }
 
 /// パネルの状態。ビューの表示用。
@@ -93,6 +96,7 @@ pub struct PanelStatus {
     pub parent: Option<PanelId>,
     /// レーザーが指している（`Overlay::pointed`。ナビゲーションバーは持ち主を指していても）。
     pub pointed: bool,
+    pub desktop: Option<desktop::Status>,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -109,6 +113,7 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     frame: u64,
     /// パネルごとの LOD（[`Self::panel_lod`]）。tick ごとに前の値から決める。
     lods: Vec<u8>,
+    desktop_panels: std::collections::HashMap<PanelId, desktop_panels::DesktopPanel>,
 }
 
 /// LOD の切り替え距離を決めた基準の密度（1m あたりの論理ピクセル。既定のパネル 800px / 0.8m）。
@@ -191,6 +196,7 @@ impl<B: VrBackend> Kernel<B> {
             timing: TickTiming::default(),
             frame: 0,
             lods: Vec::new(),
+            desktop_panels: Default::default(),
         }
     }
 
@@ -269,7 +275,9 @@ impl<B: VrBackend> Kernel<B> {
         self.frame += 1;
         let frame = self.subsystems.poll();
         let polled = Instant::now();
-        let events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
+        self.poll_desktop();
+        let mut events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
+        self.route_desktop(&mut events);
         // 段階が変わるとパネルの描き直し・描画先とランタイムのテクスチャの作り直しが走るので、境目で行き来させない。
         let lods = (0..self.overlay.len())
             .map(|id| self.lod_for(id, self.lods.get(id).copied()))
@@ -337,6 +345,9 @@ impl<B: VrBackend> Kernel<B> {
 
     /// パネルの描画結果（RGBA8）をランタイムへ送る。
     pub fn submit(&mut self, panel: PanelId, width: u32, height: u32, rgba: &[u8]) {
+        if self.desktop_streaming(panel) {
+            return;
+        }
         self.overlay
             .submit(&mut self.subsystems.backend, panel, width, height, rgba)
     }
@@ -411,6 +422,7 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay.detach(panel);
                 self.overlay.set_pose(panel, self.hmd().leveled() * offset);
             }
+            PanelCommand::Stream(source) => self.start_desktop(panel, source),
         }
     }
 
@@ -448,6 +460,7 @@ impl<B: VrBackend> Kernel<B> {
             lod: self.panel_lod(panel),
             parent: p.parent.map(|q| q.panel),
             pointed: self.overlay.pointed(panel),
+            desktop: self.desktop_panels.get(&panel).map(|p| p.status.clone()),
         }
     }
 }

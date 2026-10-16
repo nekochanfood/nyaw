@@ -1,0 +1,430 @@
+//! デスクトップの画面・ウィンドウ取得とタッチ入力。OS 資源と待ちはワーカーだけが所有する。
+
+use std::{
+    fmt,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, SyncSender},
+    },
+    thread,
+    time::Duration,
+};
+
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(any(test, feature = "test-support"))]
+pub mod mock;
+#[cfg(windows)]
+mod windows;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    Screen,
+    Window,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Source {
+    pub name: String,
+    pub kind: SourceKind,
+    target: isize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Error(pub String);
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for Error {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Status {
+    Starting,
+    Streaming,
+    Closed,
+    Failed(Error),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Frame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+impl Frame {
+    pub fn new(width: u32, height: u32, rgba: Vec<u8>) -> Result<Self, Error> {
+        let bytes = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|n| n.checked_mul(4));
+        if width == 0 || height == 0 || bytes != Some(rgba.len()) || rgba.len() > 256 * 1024 * 1024
+        {
+            return Err(Error("invalid desktop frame dimensions or buffer".into()));
+        }
+        Ok(Self {
+            width,
+            height,
+            rgba,
+        })
+    }
+
+    /// GPU の行パディングを取り除き、事前乗算済み BGRA を RGBA にする。
+    // shortcut: 画像転送は CPU 経由。大きな画面の転送が律速になったら GPU の共有テクスチャへ置き換える。
+    fn from_bgra(width: u32, height: u32, stride: usize, data: &[u8]) -> Result<Self, Error> {
+        let row = (width as usize)
+            .checked_mul(4)
+            .ok_or_else(|| Error("frame overflow".into()))?;
+        let size = row
+            .checked_mul(height as usize)
+            .filter(|n| *n <= 256 * 1024 * 1024)
+            .ok_or_else(|| Error("desktop frame too large".into()))?;
+        let required = stride
+            .checked_mul(height.saturating_sub(1) as usize)
+            .and_then(|n| n.checked_add(row));
+        if width == 0 || height == 0 || stride < row || required.is_none_or(|n| data.len() < n) {
+            return Err(Error("invalid desktop frame stride or buffer".into()));
+        }
+        let mut rgba = Vec::with_capacity(size);
+        for y in 0..height as usize {
+            for p in data[y * stride..y * stride + row].as_chunks::<4>().0 {
+                rgba.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
+            }
+        }
+        Self::new(width, height, rgba)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TouchPhase {
+    Down,
+    Move,
+    Up,
+    Cancel,
+}
+
+/// 左上原点、0〜1 の座標。パネル外へ出た接点は端に留める。ID は左右の手に対応する 0 / 1。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Touch {
+    pub id: u32,
+    pub phase: TouchPhase,
+    pub x: f32,
+    pub y: f32,
+}
+
+impl Touch {
+    fn validated(mut self) -> Result<Self, Error> {
+        if self.id >= 2 || !self.x.is_finite() || !self.y.is_finite() {
+            return Err(Error("invalid desktop touch contact".into()));
+        }
+        self.x = self.x.clamp(0.0, 1.0);
+        self.y = self.y.clamp(0.0, 1.0);
+        Ok(self)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Update {
+    pub status: Status,
+    pub frame: Option<Arc<Frame>>,
+}
+
+/// 一覧の取得もフレームループで OS を待たない。
+pub struct Sources(Receiver<Result<Vec<Source>, Error>>);
+
+impl Sources {
+    pub fn refresh() -> Result<Self, Error> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name("desktop-sources".into())
+            .spawn(move || {
+                #[cfg(windows)]
+                let result = windows::sources();
+                #[cfg(target_os = "linux")]
+                let result = linux::sources();
+                #[cfg(not(any(windows, target_os = "linux")))]
+                let result = Err(Error(
+                    "desktop capture is not available on this platform yet".into(),
+                ));
+                let _ = tx.send(result);
+            })
+            .map_err(|e| Error(e.to_string()))?;
+        Ok(Self(rx))
+    }
+
+    pub fn poll(&self) -> Option<Result<Vec<Source>, Error>> {
+        match self.0.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Some(Err(Error("desktop source worker stopped".into())))
+            }
+        }
+    }
+}
+
+trait Session {
+    fn frame(&mut self) -> Result<Option<Frame>, Error>;
+    fn touch(&mut self, touch: Touch) -> Result<(), Error>;
+    fn heartbeat(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn closed(&self) -> bool {
+        false
+    }
+}
+
+/// 最新画像は常に一枚だけ保持し、遅れたフレームを蓄積しない。
+/// Drop は停止を通知するだけで、OS 資源の解放はワーカーが行う。
+pub struct Stream {
+    update: Arc<Mutex<Option<Update>>>,
+    input: SyncSender<Touch>,
+    stop: Arc<AtomicBool>,
+}
+
+impl Stream {
+    pub fn start(source: Source) -> Result<Self, Error> {
+        #[cfg(windows)]
+        {
+            Self::spawn(move |_| windows::Capture::new(source))
+        }
+        #[cfg(target_os = "linux")]
+        {
+            Self::spawn(move |stop| linux::Capture::new(source, stop))
+        }
+        #[cfg(not(any(windows, target_os = "linux")))]
+        {
+            let _ = source;
+            Err(Error(
+                "desktop capture is not available on this platform yet".into(),
+            ))
+        }
+    }
+
+    fn spawn<S: Session + 'static>(
+        open: impl FnOnce(Arc<AtomicBool>) -> Result<S, Error> + Send + 'static,
+    ) -> Result<Self, Error> {
+        let update = Arc::new(Mutex::new(Some(Update {
+            status: Status::Starting,
+            frame: None,
+        })));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (input, rx) = mpsc::sync_channel(64);
+        let output = update.clone();
+        let stopping = stop.clone();
+        thread::Builder::new()
+            .name("desktop-stream".into())
+            .spawn(move || {
+                let result = (|| {
+                    let mut session = open(stopping.clone())?;
+                    while !stopping.load(Ordering::Acquire) {
+                        if session.closed() {
+                            break;
+                        }
+                        match rx.recv_timeout(Duration::from_millis(8)) {
+                            Ok(touch) => session.touch(touch)?,
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                            Err(mpsc::RecvTimeoutError::Timeout) => (),
+                        }
+                        session.heartbeat()?;
+                        if let Some(frame) = session.frame()? {
+                            *output.lock().unwrap() = Some(Update {
+                                status: Status::Streaming,
+                                frame: Some(Arc::new(frame)),
+                            });
+                        }
+                    }
+                    Ok::<_, Error>(())
+                })();
+                *output.lock().unwrap() = Some(Update {
+                    status: result.err().map_or(Status::Closed, Status::Failed),
+                    frame: None,
+                });
+            })
+            .map_err(|e| Error(e.to_string()))?;
+        Ok(Self {
+            update,
+            input,
+            stop,
+        })
+    }
+
+    pub fn poll(&self) -> Option<Update> {
+        self.update.try_lock().ok()?.take()
+    }
+
+    pub fn touch(&self, touch: Touch) -> Result<(), Error> {
+        self.input.try_send(touch.validated()?).map_err(|e| {
+            // 押下・解放を落として操作を続けると接点が残るため、入力詰まりはセッションごと停止する。
+            self.stop.store(true, Ordering::Release);
+            Error(format!("desktop touch delivery failed: {e}"))
+        })
+    }
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn converts_padded_bgra_and_preserves_premultiplied_alpha() {
+        let frame =
+            Frame::from_bgra(1, 2, 8, &[10, 20, 30, 40, 0, 0, 0, 0, 50, 60, 70, 80]).unwrap();
+        assert_eq!(frame.rgba, [30, 20, 10, 40, 70, 60, 50, 80]);
+        for (w, h, stride, buf) in [
+            (0, 1, 4, &[0; 4][..]),
+            (1, 0, 4, &[][..]),
+            (2, 1, 4, &[0; 8][..]),
+            (1, 2, 8, &[0; 8][..]),
+        ] {
+            assert!(Frame::from_bgra(w, h, stride, buf).is_err());
+        }
+        assert!(Frame::new(u32::MAX, u32::MAX, vec![]).is_err());
+    }
+
+    #[test]
+    fn touch_rejects_nonfinite_coordinates_and_unknown_contacts() {
+        let touch = Touch {
+            id: 0,
+            phase: TouchPhase::Down,
+            x: -1.0,
+            y: 2.0,
+        };
+        assert_eq!(
+            touch.validated().unwrap(),
+            Touch {
+                x: 0.0,
+                y: 1.0,
+                ..touch
+            }
+        );
+        assert!(Touch { id: 2, ..touch }.validated().is_err());
+        assert!(
+            Touch {
+                x: f32::NAN,
+                ..touch
+            }
+            .validated()
+            .is_err()
+        );
+        assert!(
+            Touch {
+                y: f32::INFINITY,
+                ..touch
+            }
+            .validated()
+            .is_err()
+        );
+    }
+
+    struct Fake {
+        dropped: Arc<AtomicBool>,
+        input: SyncSender<Touch>,
+        frame: u8,
+    }
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            self.dropped.store(true, Ordering::Release);
+        }
+    }
+    impl Session for Fake {
+        fn frame(&mut self) -> Result<Option<Frame>, Error> {
+            self.frame = self.frame.wrapping_add(1);
+            Ok(Some(Frame::new(1, 1, vec![self.frame; 4])?))
+        }
+        fn touch(&mut self, touch: Touch) -> Result<(), Error> {
+            self.input.send(touch).unwrap();
+            Ok(())
+        }
+    }
+
+    fn until(mut predicate: impl FnMut() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !predicate() {
+            assert!(Instant::now() < deadline, "worker timed out");
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    #[test]
+    fn worker_delivers_frames_and_touch_and_releases_session_on_drop() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let observer = dropped.clone();
+        let (tx, rx) = mpsc::sync_channel(4);
+        let stream = Stream::spawn(move |_| {
+            Ok(Fake {
+                dropped,
+                input: tx,
+                frame: 0,
+            })
+        })
+        .unwrap();
+        until(|| stream.poll().is_some_and(|u| u.frame.is_some()));
+        let touch = Touch {
+            id: 1,
+            phase: TouchPhase::Down,
+            x: 0.25,
+            y: 0.75,
+        };
+        stream.touch(touch).unwrap();
+        assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), touch);
+        drop(stream);
+        until(|| observer.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn worker_reports_open_failure() {
+        let stream = Stream::spawn::<Fake>(|_| Err(Error("permission denied".into()))).unwrap();
+        until(|| {
+            stream
+                .poll()
+                .is_some_and(|u| u.status == Status::Failed(Error("permission denied".into())))
+        });
+    }
+
+    struct TouchFailure(Arc<AtomicBool>);
+    impl Drop for TouchFailure {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    impl Session for TouchFailure {
+        fn frame(&mut self) -> Result<Option<Frame>, Error> {
+            Ok(None)
+        }
+        fn touch(&mut self, _: Touch) -> Result<(), Error> {
+            Err(Error("injection denied".into()))
+        }
+    }
+
+    #[test]
+    fn injection_failure_reports_error_and_releases_the_os_session() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let observer = dropped.clone();
+        let stream = Stream::spawn(move |_| Ok(TouchFailure(dropped))).unwrap();
+        stream
+            .touch(Touch {
+                id: 0,
+                phase: TouchPhase::Down,
+                x: 0.5,
+                y: 0.5,
+            })
+            .unwrap();
+        until(|| {
+            stream
+                .poll()
+                .is_some_and(|u| u.status == Status::Failed(Error("injection denied".into())))
+        });
+        assert!(observer.load(Ordering::Acquire));
+    }
+}

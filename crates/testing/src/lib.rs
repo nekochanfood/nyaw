@@ -32,6 +32,8 @@ mod emoji;
 pub use emoji::EmojiTest;
 mod keyboard;
 pub use keyboard::KeyboardTest;
+mod desktop;
+pub use desktop::DesktopTest;
 
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
@@ -516,6 +518,10 @@ impl Render for Testing {
             .child(
                 button!("pointer-test", i18n::t(cx, "testing.open.pointer"), false)
                     .on_click(spawn_pointer_test(self.panel)),
+            )
+            .child(
+                button!("desktop-test", i18n::t(cx, "desktop.title"), false)
+                    .on_click(spawn_view(self.panel, "desktop.title", |id, _| DesktopTest::new(id))),
             )
             .child(
                 button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false)

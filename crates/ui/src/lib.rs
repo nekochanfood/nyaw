@@ -401,6 +401,17 @@ pub fn pump<B: VrBackend>(
         gpui.extend(input.into_iter().map(|input| (e.panel, input)));
     }
     for (&(panel, _), b) in bridges.iter_mut() {
+        if kernel.desktop_streaming(panel) {
+            if b.on_panel() || b.pressed || b.touch.is_some() {
+                gpui.extend(
+                    b.translate(PointerEvent::Leave, mode)
+                        .into_iter()
+                        .map(|input| (panel, input)),
+                );
+            }
+            *b = PointerBridge::default();
+            continue;
+        }
         if let Some(input) = b.momentum() {
             gpui.push((panel, input));
         }
@@ -1036,7 +1047,9 @@ pub fn run_with(
                         }
                         let resolution = kernel.panel(panel).resolution;
                         let lod = kernel.panel_lod(panel);
-                        if render_sizes.insert(panel, (resolution, lod)) != Some((resolution, lod))
+                        if !kernel.desktop_streaming(panel)
+                            && render_sizes.insert(panel, (resolution, lod))
+                                != Some((resolution, lod))
                         {
                             set_render_lod(window, cx, resolution, lod);
                             drawn[panel] = None;
@@ -1052,6 +1065,10 @@ pub fn run_with(
                         stages.input += t.elapsed();
                         if kernel.panel(panel).closed {
                             window.remove_window();
+                            return None;
+                        }
+                        // 配信画像はカーネルが直接送る。GPUI の描画・読み戻しで毎フレーム GPU を待たない。
+                        if kernel.desktop_streaming(panel) {
                             return None;
                         }
                         if redraw && !due {
@@ -1358,6 +1375,35 @@ mod tests {
     use design::Theme;
     use gpui::{TestAppContext, div};
     use kernel::{Device, Runtime};
+
+    #[test]
+    fn starting_a_stream_clears_old_gpui_hover_and_scroll_momentum() {
+        use kernel::desktop::{Frame, Status, Update, mock};
+        let mut kernel =
+            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
+        let panel = kernel
+            .add_panel("stream", Pose::IDENTITY, Vec2::ONE, (1, 1))
+            .unwrap();
+        let (stream, control) = mock::stream();
+        kernel.set_desktop_stream(panel, stream).unwrap();
+        control.publish(Update {
+            status: Status::Streaming,
+            frame: Some(std::sync::Arc::new(Frame::new(1, 1, vec![255; 4]).unwrap())),
+        });
+        let bridge = PointerBridge {
+            sent: Some(Point::default()),
+            momentum: Some((Point::default(), Point::new(px(0.0), px(20.0)))),
+            ..Default::default()
+        };
+        let mut bridges = HashMap::from([((panel, Hand::Right), bridge)]);
+        let cleanup = pump(&mut kernel, &mut bridges);
+        assert!(matches!(
+            cleanup.as_slice(),
+            [(_, PlatformInput::MouseExited(_))]
+        ));
+        assert!(pump(&mut kernel, &mut bridges).is_empty());
+        assert!(bridges[&(panel, Hand::Right)].momentum.is_none());
+    }
 
     /// UI 層だけで確かめるための最小の画面。
     #[derive(Default)]

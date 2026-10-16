@@ -277,3 +277,14 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 - パネルを閉じた後、フェード完了で資源を解放する判断は `overlay`。`rendering::Surface` は `release` を実行し、パネルの閉鎖状態を受け取らない。
 - 非表示・透過・フォーカスしないというウィンドウの方針は `ui`。Windows の描画先サイズ補正や Linux の headless での描画、LOD の拡大率の変え方（vendor/ の `with_render_scale`）など、実現手段の違いは描画サブシステムが吸収する。
 - Subsystems とのやり取りがあるだけでは、その共通機能を Subsystems の一部にしない。同名クレートを上下に作らず、ログ・起動・パネル管理などの所有者へ置く。
+
+## 画面・ウィンドウ配信
+
+- `crates/subsystems/desktop` が取得元の一覧、画像取得、OS タッチ注入を担う。Windows は WGC と Synthetic Pointer、Linux は XDG Desktop Portal の ScreenCast / RemoteDesktop と PipeWire。上位へは `kernel::desktop` 経由で公開する。
+- `Sources::refresh` と `Stream::start` はワーカーを起こすだけ。メインスレッドは `poll` で最新画像だけを受け取り、OS の開始・取得・停止・入力注入を待たない。入力キューが詰まったら接点を残さずセッションを止める。
+- `PanelCommand::Stream(Some(source))` で既存パネルを配信先にし、`None` で通常の UI に戻す。`PanelStatus::desktop` が開始中・配信中・終了・エラーを持つ。画像はカーネルから直接 overlay へ渡し、UI の描画で上書きしない。横幅を保って配信元の縦横比に追従する。
+- 配信先のポインタは GPUI のマウス変換を通さず、左右を ID 0 / 1 のタッチ接点としてサブシステムへ送る。パネル外でも解放まで捕捉し、手の追跡喪失・掴み開始でキャンセルする。閉鎖・エラー・再接続では OS セッションを解放する。
+- Testing の `desktop-test` が一覧更新・配信開始・停止と状態表示を持つ。配信パネルは独立して掴んで移動できる。
+- 下位の確認は `cargo test -p desktop -p kernel -p overlay -p subsystems --no-default-features --lib`。UI の単体テストは `cargo test -p testing -p ui -p i18n --lib`。`desktop/test-support` のモックは最新画像とタッチ配送、セッション停止を検査できる。
+- 実デスクトップの E2E は `crates/subsystems/desktop/tests/{windows_capture,linux_capture}.rs`、UI を通すシナリオは `crates/testkit/tests/desktop_stream.rs`。すべて `#[ignore]`。実行には明示的な指定と、ネイティブのテストでは操作できるデスクトップが必要。`cargo check --tests` / Clippy は OS を操作せず型を検査できる。
+- Linux のビルドには `libpipewire-0.3-dev` と `libclang-dev` が必要。Portal がタッチ操作を許可しなければエラーを返す。Windows のウィンドウ操作はデスクトップで対象が見えている場合に限り、別ウィンドウへの誤入力を防ぐ。

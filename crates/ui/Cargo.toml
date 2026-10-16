@@ -17,7 +17,7 @@ i18n.workspace = true
 logger.workspace = true
 
 [dev-dependencies]
-kernel = { workspace = true, features = ["novr"] }
+kernel = { workspace = true, features = ["novr", "test-support"] }
 vr = { workspace = true, features = ["test-support", "novr"] }
 testing.workspace = true
 beam.workspace = true

@@ -1,5 +1,20 @@
 # English. Every key here must also be in ja.toml (i18n's tests check it), with the same {placeholders}.
 
+[desktop]
+title = "Desktop streaming"
+instructions = "Choose a screen or window. Point and press to touch; hold and move to swipe. Use Stop here to close the stream."
+refresh = "Refresh sources"
+stop = "Stop stream"
+screen = "Screen"
+window = "Window"
+idle = "No active stream"
+loading = "Finding screens and windows…"
+empty = "No sources found"
+starting = "Starting capture…"
+streaming = "Streaming · touch enabled"
+closed = "Capture source closed"
+failed = "Capture failed: {error}"
+
 [common]
 close = "Close"
 default = "Default"
