@@ -18,6 +18,8 @@ pub struct Frame {
     /// 骨格が取れている手（スケルタル入力）。
     pub hands: Vec<HandSkeleton>,
     pub trackers: Vec<(String, Pose)>,
+    /// 電池の残量を申告しているデバイス。
+    pub batteries: Vec<vr::Battery>,
     pub quit: bool,
     /// 手ブレのある入力に対して、上位のポインタ補正を有効にする。
     pub stabilize_pointer: bool,
@@ -213,6 +215,7 @@ impl<B: VrBackend> Subsystems<B> {
             controllers,
             hands: raw.hands,
             trackers: raw.trackers,
+            batteries: raw.batteries,
             quit: raw.quit,
             stabilize_pointer: !raw.emulated,
             tracked: !raw.emulated,

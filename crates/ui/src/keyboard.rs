@@ -214,8 +214,11 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     routing.error = None;
     redraw_nav_bar(target, cx);
     let resolution = panel_resolution();
-    cx.default_global::<crate::PanelControl>().spawns.push(
-        crate::PanelSpec::spawn(target, move |panel, _, cx| {
+    // ダッシュボードにはめた画面へ打つなら、キーボードもダッシュボードに固定して、その下に寝かせて置く。
+    let dock = crate::docked(cx)
+        .filter(|&d| d == target)
+        .and(cx.global::<crate::PanelControl>().dock);
+    let spec = crate::PanelSpec::spawn(target, move |panel, _, cx| {
             let current = cx.default_global::<InputRouting>().active.as_mut();
             if let Some(session) = current.filter(|s| s.generation == generation) {
                 session.panel = Some(panel);
@@ -241,10 +244,13 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
             Vec2::new(1., resolution.1 as f32 / resolution.0 as f32),
             resolution,
         )
-        .below(target, std::f32::consts::FRAC_PI_4)
         // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
-        .without_nav_bar(),
-    );
+        .without_nav_bar();
+    let spec = match dock {
+        Some((owner, tilt)) => spec.below(owner, tilt).docked_to(owner),
+        None => spec.below(target, std::f32::consts::FRAC_PI_4),
+    };
+    cx.default_global::<crate::PanelControl>().spawns.push(spec);
 }
 
 /// デスクトップパネルのトグルボタンから呼ぶ。フォーカスが移っても常駐する。

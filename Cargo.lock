@@ -1370,8 +1370,11 @@ dependencies = [
 name = "dashboard"
 version = "2026.0.1"
 dependencies = [
+ "chrono",
  "design",
  "gpui",
+ "i18n",
+ "image",
  "kernel",
  "ui",
 ]

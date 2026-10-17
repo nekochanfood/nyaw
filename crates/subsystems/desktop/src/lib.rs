@@ -31,7 +31,17 @@ pub enum SourceKind {
 pub struct Source {
     pub name: String,
     pub kind: SourceKind,
+    /// ウィンドウのアプリのアイコン（取れなければ `None`。画面には無い）。
+    pub icon: Option<Icon>,
     target: isize,
+}
+
+/// アイコンの画像（RGBA、ストレートアルファ）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Icon {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Arc<[u8]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

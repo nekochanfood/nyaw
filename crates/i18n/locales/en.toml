@@ -74,6 +74,8 @@ tune_click = "Laser damping while clicking: {pct}%"
 tune_hold = "While clicking, ignore hand movement within {deg}°"
 
 [common]
+# chrono format (https://docs.rs/chrono/latest/chrono/format/strftime) with the weekday as {weekday}.
+date = "{weekday} %b %-d"
 close = "Close"
 default = "Default"
 ok = "OK"
@@ -94,13 +96,30 @@ thu = "Thu"
 fri = "Fri"
 sat = "Sat"
 
+[dock]
+undock = "Detach from the dashboard"
+dock = "Return to the dashboard"
+
 [dashboard]
 title = "Dashboard"
-
-[wrist]
-# chrono format (https://docs.rs/chrono/latest/chrono/format/strftime) with the weekday as {weekday}.
-date = "{weekday} %b %-d"
-toggle_panel = "Toggle Panel"
+mirror = "Screen mirroring"
+quick_settings = "Quick settings"
+debug = "Debug"
+settings = "Settings"
+screens = "Screens"
+windows = "Windows"
+refresh = "Refresh"
+loading = "Loading…"
+none = "None"
+failed = "Unavailable: {error}"
+batteries = "Batteries"
+no_batteries = "No devices report their battery level"
+hmd = "Headset"
+left_controller = "Left controller"
+right_controller = "Right controller"
+tracker = "Tracker {n}"
+charging = "Charging"
+theme = "Theme"
 
 [testing]
 title = "Testing"

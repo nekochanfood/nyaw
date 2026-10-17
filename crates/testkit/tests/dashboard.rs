@@ -2,7 +2,7 @@ use gpui::TestAppContext;
 use testkit::{Button, Driver, NoVrKit};
 use wrist::Wrist;
 
-/// Presses the left hand's X button twice in a row (novr: the X key) and lets the summoned panel open.
+/// Presses the left hand's X button twice in a row (novr: the X key) and lets the result show up.
 fn press_x_twice(kit: &mut NoVrKit<Wrist>) {
     for _ in 0..2 {
         kit.press(Button::X).release(Button::X);
@@ -10,10 +10,20 @@ fn press_x_twice(kit: &mut NoVrKit<Wrist>) {
     kit.step();
 }
 
-/// novr: pressing the X key twice opens the dashboard with its sound, and twice again closes it.
+fn wrist(cx: &mut gpui::Context<Wrist>) -> Wrist {
+    Wrist::new(
+        0,
+        |o| testing::spec(o),
+        |o| testing::settings_spec(o),
+        cx,
+    )
+}
+
+/// novr: pressing the X key twice opens the dashboard with its sound; twice again hides it (it stays open,
+/// so it comes back as it was), and twice more shows it again.
 #[gpui::test]
-fn x_key_twice_opens_and_closes_the_dashboard(cx: &mut TestAppContext) {
-    let mut kit = NoVrKit::new(cx, |_, cx| Wrist::new(0, |o| testing::spec(o), cx));
+fn x_key_twice_opens_hides_and_shows_the_dashboard(cx: &mut TestAppContext) {
+    let mut kit = NoVrKit::new(cx, |_, cx| wrist(cx));
     press_x_twice(&mut kit);
     assert_eq!(kit.kernel.status(0).double_press, 1);
     let dashboard = kit.read(|w| w.dashboard).expect("dashboard opened");
@@ -28,12 +38,15 @@ fn x_key_twice_opens_and_closes_the_dashboard(cx: &mut TestAppContext) {
     assert_eq!(kit.kernel.status(0).audio.playing, 0, "not from the wrist");
 
     press_x_twice(&mut kit);
+    kit.step();
     assert_eq!(kit.kernel.status(0).double_press, 2);
-    assert_eq!(kit.read(|w| w.dashboard), None);
-    assert!(kit.kernel.panel(dashboard).closed);
-    assert!(
-        kit.kernel.status(dashboard).audio.playing >= 1,
-        "closing sound outlives the dashboard"
-    );
+    assert_eq!(kit.read(|w| w.dashboard), Some(dashboard));
+    assert!(!kit.kernel.panel(dashboard).closed, "hidden, not closed");
+    assert!(kit.kernel.status(dashboard).hidden);
     assert_eq!(kit.kernel.status(0).audio.playing, 0, "not from the wrist");
+
+    press_x_twice(&mut kit);
+    kit.step();
+    assert!(!kit.kernel.status(dashboard).hidden);
+    assert_eq!(kit.read(|w| w.dashboard), Some(dashboard), "not reopened");
 }

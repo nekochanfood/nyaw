@@ -266,6 +266,12 @@ impl InteractiveElement for Button {
 
 impl StatefulInteractiveElement for Button {}
 
+impl ParentElement for Button {
+    fn extend(&mut self, elements: impl IntoIterator<Item = gpui::AnyElement>) {
+        self.base.extend(elements)
+    }
+}
+
 impl RenderOnce for Button {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let rest = self.rest;
@@ -536,7 +542,7 @@ const NAV_LINE_HEIGHT: f32 = spacing::MD;
 
 /// ナビゲーションバー: パネルの下に付き、パネルを操作する帯。中央にパネルのタイトル、右端に閉じるボタン（アイコンだけ。
 /// id は `nav-close`）。カード 1 枚の帯で、角丸は `FULL`。押したときの処理（パネルを閉じる）は `on_close` で受け取る。
-/// `leading` があれば左端に置く（パネルごとの操作。閉じるボタンと左右対称の位置）。
+/// `leading` は左端に並べる（パネルごとの操作。閉じるボタンと左右対称の位置から右へ）。
 /// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
 ///
 /// `open`（0〜1）は広がり具合。0（触れていない）はボタンもタイトルも出さない丸い線で、帯の上端に寄せて置く。
@@ -549,7 +555,7 @@ pub fn nav_bar(
     title: impl Into<SharedString>,
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    leading: Option<Button>,
+    leading: Vec<Button>,
 ) -> Div {
     // 前半で動き、後半で広がる。それぞれの区間の中でも ease-in-out にして、つなぎ目で急に変わらないようにする。
     const MOVE_END: f32 = 0.35;
@@ -565,7 +571,7 @@ pub fn nav_bar(
     // 広がりの中心（帯の上下中央）。動く前は、線の上端が帯の上端に来るところまで上げておく。
     let center_offset = lerp(-(NAV_BAR_HEIGHT - NAV_LINE_HEIGHT) / 2.0, 0.0, moved);
     // タイトルは帯の中央。長くても閉じるボタンにかからないよう、左右にボタンの分を空けて省略する。
-    let side = BUTTON_HEIGHT + 2.0 * spacing::SM;
+    let side = leading.len().max(1) as f32 * (BUTTON_HEIGHT + spacing::SM) + spacing::SM;
     div().absolute().inset(px(PANEL_MARGIN)).child(
         div()
             .absolute()
@@ -620,13 +626,15 @@ pub fn nav_bar(
                                         .on_click(on_close),
                                     ),
                             )
-                            .children(leading.map(|b| {
+                            .child(
                                 div()
                                     .absolute()
                                     .top(px((height - BUTTON_HEIGHT) / 2.0))
                                     .left(px(spacing::SM))
-                                    .child(b)
-                            })),
+                                    .flex()
+                                    .gap(px(spacing::SM))
+                                    .children(leading),
+                            ),
                     ),
             ),
     )
@@ -659,6 +667,22 @@ pub fn list_item(
                 .size(px(font_size::MD))
                 .color(rgba(theme.neutral_text_low)),
         );
+    b
+}
+
+/// タイル: 押せるカード。グリッドに並べる（ダッシュボードの取得元・クイック設定）。地（[`panel`]）に直接置き、
+/// 安静時はカードと同じ色、ホバー・押下で `control-hover` / `control-active`。有効な切り替えは `.selected(true)`。
+/// 中身は縦に中央揃えで積む。大きさと中身（アイコン・文字）は呼び出し側が足す。
+pub fn tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
+    let mut b = base_button(theme, id.into(), Variant::Default);
+    (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
+    b.base = b
+        .base
+        .flex_col()
+        .gap(px(spacing::SM))
+        .p(px(spacing::MD))
+        .rounded(px(radius::LG))
+        .font_weight(FontWeight::NORMAL);
     b
 }
 

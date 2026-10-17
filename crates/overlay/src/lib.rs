@@ -17,7 +17,7 @@ pub use subsystems::ControllerState;
 pub type PanelId = usize;
 
 /// 親子関係（ダイアログ等）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない（掴んで動かすことはできる）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Parent {
     pub panel: PanelId,
     /// 子を掴んだとき、親も連れていく。`false` なら子だけが離れ、親との相対位置が付け直される。
@@ -26,6 +26,18 @@ pub struct Parent {
     pub dismiss: bool,
     /// 表示だけの子（統計など）。親の左上の角に重ねて置き、親を暗くせず入力も止めない。レーザーは素通りする。
     pub hud: bool,
+    /// 親に固定された子（ダッシュボードのバーや、そこにはめた画面）。親を暗くせず入力も止めない。
+    pub docked: bool,
+    /// 親の上端の上に立てて置く（`docked` の子）。値は親から見て水平軸回りに起こす角度（ラジアン）。
+    /// 子の下端に付くナビゲーションバーの分を空けて、子の地の下端を置く。子の大きさが変わっても毎 tick 置き直す。
+    pub slot: Option<f32>,
+}
+
+impl Parent {
+    /// 親を暗くし入力を止める子か（ダイアログなど。表示だけの子・固定された子は止めない）。
+    fn blocks(&self) -> bool {
+        !self.hud && !self.docked
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,6 +55,8 @@ pub struct Panel {
     pub locked: bool,
     /// 閉じられた。ヒット判定の対象外で、PanelId は詰めずに欠番のまま残る。
     pub closed: bool,
+    /// 隠した（[`Overlay::set_hidden`]）。閉じずにフェードアウトし、ヒット判定・暗転の対象外になる。
+    pub hidden: bool,
     /// どの手のレーザーを描くパネルか。ヒット判定の対象外で、配置は毎 tick ここで決める。
     pub pointer: Option<(Hand, Pointer)>,
     /// このパネルのイン・アウトアニメーション。`Overlay::set_animated` で個別に無効化できる。
@@ -149,6 +163,10 @@ const VEIL_DISTANCE: f32 = 50.0;
 const VEIL_SIZE: f32 = 5000.0;
 /// 表示だけの子（[`Parent::hud`]）を、親の面からどれだけ手前（m）に置くか。
 const HUD_LIFT: f32 = 0.002;
+/// 親の上端に立てた子（[`Parent::slot`]）のナビゲーションバーの下端と、親の地の上端の間（m）。
+const SLOT_GAP: f32 = 0.02;
+/// 親の上端に立てた子を外したとき、離れたと分かるよう面の向き（頭の側）へ動かす距離（m）。
+const UNDOCK_PULL: f32 = 0.2;
 /// 表示だけの子の重なり順。角は親の中心より頭から遠いので、距離で並べると親の裏に回って消える。
 const HUD_SORT: u32 = LASER_SORT;
 /// 手ブレ抑えの既定値: レーザーの向きが 1 tick ごとに前の向きを残す割合（0 = 抑えない）。
@@ -283,6 +301,15 @@ struct HandState {
     anchor: Anchor,
 }
 
+/// 位置のトランジション: `from` から `to` へ動かす。`to` が `None` なら、毎 tick 決まる置き場所（はまる場所）へ向かう。
+#[derive(Debug)]
+struct Glide {
+    from: Pose,
+    to: Option<Pose>,
+    tween: Animation,
+    last: Instant,
+}
+
 #[derive(Debug, Default)]
 pub struct Overlay {
     // shortcut: 閉じた ID の小さな記録は終了まで残す。開閉履歴のメモリが問題になれば世代付き ID に替える。
@@ -314,6 +341,8 @@ pub struct Overlay {
     dismissed: Vec<PanelId>,
     /// 親の暗転。
     dims: HashMap<PanelId, (Animation, Instant)>,
+    /// 位置のトランジション（はめる・外すときの移動）。
+    glides: HashMap<PanelId, Glide>,
     /// 空間全体の暗転。
     veil: Veil,
     /// 前の tick の時刻と、そこからの経過（秒。[`TICK_MIN`]〜[`TICK_MAX`] に丸める）。
@@ -358,6 +387,7 @@ impl Overlay {
             attached: None,
             locked: false,
             closed: false,
+            hidden: false,
             pointer: None,
             animated: true,
             veil: false,
@@ -433,7 +463,7 @@ impl Overlay {
     pub fn in_view(&self, id: PanelId) -> bool {
         let p = &self.panels[id];
         // 隠しているポインタのパネルは最後に出した所に残るので、そちらを向くたびに見えた扱いで描き直していた。
-        if p.closed || p.surface.hidden() {
+        if p.closed || p.hidden || p.surface.hidden() {
             return false;
         }
         let to = p.pose.position - self.hmd.position;
@@ -541,6 +571,33 @@ impl Overlay {
         }
         let at = parent.map(|p| self.panels[p.panel].pose);
         let q = &mut self.panels[id];
+        // はめる・外すときは、見えていれば滑らかに動かす。外すときは離れたと分かるよう手前へ出す。
+        let (was_slot, to_slot) = (
+            q.parent.is_some_and(|p| p.slot.is_some()),
+            parent.is_some_and(|p| p.slot.is_some()),
+        );
+        let to = match (was_slot, to_slot) {
+            (true, false) if parent.is_none() => Some(Some(
+                q.pose * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY),
+            )),
+            (false, true) => Some(None),
+            _ => None,
+        };
+        if let Some(to) = to {
+            if q.animated && q.surface.has_texture() && !q.hidden {
+                self.glides.insert(
+                    id,
+                    Glide {
+                        from: q.pose,
+                        to,
+                        tween: Animation::new(0.0, 1.0, Motion::Move),
+                        last: Instant::now(),
+                    },
+                );
+            } else if let Some(pose) = to {
+                q.pose = pose;
+            }
+        }
         q.parent = parent;
         let hud = parent.is_some_and(|p| p.hud);
         q.surface
@@ -600,7 +657,7 @@ impl Overlay {
             self.dims.remove(&id);
             let p = &mut self.panels[id];
             p.dim = p.dim_to;
-            p.opacity = if p.closed { 0.0 } else { 1.0 };
+            p.opacity = if p.closed || p.hidden { 0.0 } else { 1.0 };
             Self::present(vr, p, false);
         }
     }
@@ -678,6 +735,46 @@ impl Overlay {
         }
     }
 
+    /// パネルを隠す・出し直す。閉じずにフェードアウトし（ビュー・配信・音はそのまま）、出し直すとフェードインする。
+    /// 隠している間は入力・暗転の対象外。子（固定した画面・ダイアログ）も一緒に隠れ、ナビゲーションバーは持ち主を写す。
+    pub fn set_hidden(&mut self, vr: &mut dyn VrBackend, id: PanelId, hidden: bool) {
+        let p = &mut self.panels[id];
+        if p.closed || p.hidden == hidden {
+            return;
+        }
+        p.hidden = hidden;
+        let kids: Vec<PanelId> = self
+            .present
+            .iter()
+            .copied()
+            .filter(|&c| self.panels[c].parent.is_some_and(|q| q.panel == id))
+            .collect();
+        for c in kids {
+            self.set_hidden(vr, c, hidden);
+        }
+        let p = &mut self.panels[id];
+        let to = if hidden { 0.0 } else { 1.0 };
+        if p.animated && p.surface.has_texture() {
+            let motion = if hidden { Motion::Exit } else { Motion::Enter };
+            self.animations
+                .insert(id, (Animation::new(p.opacity, to, motion), Instant::now()));
+        } else {
+            self.animations.remove(&id);
+            p.opacity = to;
+            Self::present(vr, p, false);
+        }
+        if hidden {
+            for h in self.hands.values_mut() {
+                if h.hover == Some(id) {
+                    h.hover = None;
+                }
+                if h.dragging.is_some_and(|d| d.0 == id) {
+                    h.dragging = None;
+                }
+            }
+        }
+    }
+
     /// `panel` の描画済み UI フレームを VR ランタイムへ送る。
     /// テクスチャの大きさは `resolution`（ヒット判定用の論理ピクセル）と独立してよい。
     /// HiDPI では UI が `resolution × 拡大率` で描かれるため。
@@ -700,12 +797,16 @@ impl Overlay {
         }
         // ナビゲーションバーは持ち主の出入りに乗る（place_nav_bars）。
         let entering = !p.surface.has_texture() && p.animated && p.nav_bar_of.is_none();
+        // 隠したまま最初の描画が届いたら、出し直すまで見せない。
+        if !p.surface.has_texture() && p.hidden {
+            p.opacity = 0.0;
+        }
         if entering {
             p.opacity = 0.0;
         }
         p.surface.store(width, height, rgba);
         Self::present(vr, p, true);
-        if entering {
+        if entering && !p.hidden {
             // 初回の GPU 転送が終わってから時計を始める。
             self.animations.insert(
                 panel,
@@ -830,11 +931,12 @@ impl Overlay {
             self.close(vr, id);
         }
         self.settle_family(&dragged);
+        self.glide(&dragged, now);
         let mut parents = std::collections::HashSet::new();
         for &id in &self.present {
             let p = &self.panels[id];
             if !p.closed
-                && let Some(parent) = p.parent.filter(|parent| !parent.hud)
+                && let Some(parent) = p.parent.filter(Parent::blocks)
             {
                 parents.insert(parent.panel);
             }
@@ -885,7 +987,7 @@ impl Overlay {
         // パネルのフェードインと一緒に暗くするので、最初の描画が届くまで待つ。
         let on = self.present.iter().any(|&id| {
             let p = &self.panels[id];
-            p.veil && !p.closed && p.surface.has_texture()
+            p.veil && !p.closed && !p.hidden && p.surface.has_texture()
         });
         let to = if on { VEIL } else { 0.0 };
         let v = &mut self.veil;
@@ -1019,6 +1121,7 @@ impl Overlay {
                     && !st.free
                     && st.select
                     && !self.panels[id].closed
+                    && !self.panels[id].hidden
             })
             .and_then(|id| plane_hit(&self.panels[id], &aim).map(|(pos, t)| (id, pos, t)));
         // そうでなければ、レーザー上で最も近いパネル。
@@ -1027,7 +1130,11 @@ impl Overlay {
                 .iter()
                 .map(|&id| (id, &self.panels[id]))
                 .filter(|(_, p)| {
-                    !p.closed && p.pointer.is_none() && !p.parent.is_some_and(|q| q.hud)
+                    !p.closed
+                        && !p.hidden
+                        && p.pointer.is_none()
+                        && !p.parent.is_some_and(|q| q.hud)
+                        && !p.nav_bar_of.is_some_and(|o| self.panels[o].hidden)
                 })
                 .filter_map(|(id, p)| hit_test(p, &aim).map(|(pos, t)| (id, pos, t)))
                 .min_by(|a, b| a.2.total_cmp(&b.2))
@@ -1038,7 +1145,7 @@ impl Overlay {
             for &i in &self.present {
                 let q = &self.panels[i];
                 let inside = on.is_some_and(|x| x == i || ancestors(&self.panels, x).contains(&i));
-                if !q.closed && !inside && q.parent.is_some_and(|p| p.dismiss) {
+                if !q.closed && !q.hidden && !inside && q.parent.is_some_and(|p| p.dismiss) {
                     self.dismissed.push(i);
                     st.swallow = true;
                 }
@@ -1190,7 +1297,19 @@ impl Overlay {
         kids.sort_by_key(|&i| ancestors(&self.panels, i).len());
         for id in kids {
             if let Some(parent) = self.panels[id].parent {
-                if parent.hud {
+                if let Some(tilt) = parent.slot {
+                    let rotation = Quat::from_rotation_x(tilt);
+                    let up = rotation * Vec3::Y;
+                    let (outer, inner) = (&self.panels[parent.panel], &self.panels[id]);
+                    let bar = self
+                        .present
+                        .iter()
+                        .find(|&&b| self.panels[b].nav_bar_of == Some(id))
+                        .map_or(0.0, |&b| self.panels[b].size.y);
+                    let top = Vec3::Y * (outer.size.y / 2.0 - face_margin(outer));
+                    let lift = SLOT_GAP + bar + inner.size.y / 2.0 - face_margin(inner);
+                    self.panels[id].offset = Pose::new(top + up * lift, rotation);
+                } else if parent.hud {
                     // 親の縦横比は配信元に合わせて変わるので、角からの位置を毎 tick 決め直す。
                     let (outer, inner) = (self.panels[parent.panel].size, self.panels[id].size);
                     self.panels[id].offset = Pose::new(
@@ -1207,6 +1326,25 @@ impl Overlay {
         }
     }
 
+    /// 位置のトランジションを進める（[`Glide`]）。掴まれたら、その場でやめる。
+    fn glide(&mut self, dragged: &[PanelId], now: Instant) {
+        let panels = &mut self.panels;
+        self.glides.retain(|&id, g| {
+            let p = &mut panels[id];
+            if p.closed || dragged.contains(&id) {
+                return false;
+            }
+            let t = g.tween.advance(now.saturating_duration_since(g.last).as_secs_f32());
+            g.last = now;
+            let to = g.to.unwrap_or(p.pose);
+            p.pose = Pose::new(
+                g.from.position.lerp(to.position, t),
+                g.from.orientation.slerp(to.orientation, t),
+            );
+            !g.tween.is_done()
+        });
+    }
+
     /// ナビゲーションバーを持ち主の下端へ置く。持ち主の地の下端（影の余白 [`PANEL_MARGIN`] の内側）の左右中央を
     /// アンカーに、バーの上端の左右中央を合わせる。頭から見て同じ大きさに見えるよう、アンカーまでの距離に比例して大きくする。
     /// 持ち主の出入りのアニメーション（75%〜100%）で縮んだ下端にも付いていく。
@@ -1221,14 +1359,8 @@ impl Overlay {
             let o = &self.panels[owner];
             let (opacity, dim) = (o.opacity, o.dim);
             let up = o.pose.orientation * Vec3::Y;
-            // 配信中のパネル（`capture`）は絵を窓いっぱいに送り、影の余白が無い。余白があるものとして内側に付けると、
-            // バーが絵に食い込み、ほかのパネルより余白が狭く見える。
-            // ponytail: 配信中かどうかで見分けている。余白の無い中身がほかにも出たら、パネルに余白の有無を持たせる。
-            let margin = if o.capture {
-                0.0
-            } else {
-                PANEL_MARGIN * o.displayed_size().y / o.resolution.1 as f32
-            };
+            // 配信中のパネルは影の余白が無い。余白があるものとして内側に付けると、バーが絵に食い込む（face_margin）。
+            let margin = face_margin(o) * o.displayed_size().y / o.size.y;
             let anchor = o.pose.position - up * (o.displayed_size().y / 2.0 - margin);
             let rotation = o.pose.orientation;
             let eye = self.hmd.position;
@@ -1384,13 +1516,23 @@ fn approach(from: Pose, to: Pose, dt: f32) -> Pose {
     )
 }
 
+/// パネルの地の縁と、クアッドの縁の間（m。影の余白）。
+// ponytail: 配信中（`capture`）は絵を窓いっぱいに送り、影の余白が無い。余白の無い中身がほかにも出たら、パネルに余白の有無を持たせる。
+fn face_margin(p: &Panel) -> f32 {
+    if p.capture {
+        0.0
+    } else {
+        PANEL_MARGIN * p.size.y / p.resolution.1 as f32
+    }
+}
+
 /// 開いている子がいる（暗くして入力を止める）。ナビゲーションバーは持ち主に子がいれば同じ扱い。
 fn has_child(panels: &[Panel], present: &[PanelId], id: PanelId) -> bool {
     let id = panels[id].nav_bar_of.unwrap_or(id);
     present
         .iter()
         .map(|&id| &panels[id])
-        .any(|q| !q.closed && q.parent.is_some_and(|p| p.panel == id && !p.hud))
+        .any(|q| !q.closed && !q.hidden && q.parent.is_some_and(|p| p.panel == id && p.blocks()))
 }
 
 /// `id` の親、その親…（近い順）。
@@ -2041,6 +2183,8 @@ mod tests {
                 carry,
                 dismiss: false,
                 hud: false,
+                docked: false,
+                slot: None,
             }),
         );
         (vr, ov)
@@ -2118,6 +2262,82 @@ mod tests {
         ov.tick(&mut vr);
         assert_eq!(pixel(&vr), [200, 100, 50, 255]);
         controller(&mut vr, at(0.45, 0.0, 0.0), &[("trigger/value", 1.0)]);
+        assert!(!ov.tick(&mut vr).is_empty());
+    }
+
+    #[test]
+    fn slot_child_stands_on_its_parent_without_dimming_or_blocking_it() {
+        let (mut vr, mut ov) = with_child(true);
+        let tilt = 0.5;
+        if let Some(p) = ov.panels[1].parent.as_mut() {
+            (p.docked, p.slot) = (true, Some(tilt));
+        }
+        ov.set_animated(&mut vr.backend, 0, false);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
+        ov.tick(&mut vr);
+        // 親は暗くならず、押せる。
+        assert_eq!(ov.panel(0).dim, 0.0);
+        controller(&mut vr, at(0.45, -0.45, 0.0), &[("trigger/value", 1.0)]);
+        assert!(!ov.tick(&mut vr).is_empty());
+        // 子は親の上端の上に、親から見て `tilt` だけ起こして立つ。地の下端は上端から隙間の分だけ上。
+        let (parent, child) = (ov.panel(0).pose, ov.panel(1));
+        let local = parent.inverse() * child.pose;
+        assert!(local.orientation.abs_diff_eq(Quat::from_rotation_x(tilt), 1e-5));
+        let up = local.orientation * Vec3::Y;
+        let bottom = local.position - up * (child.size.y / 2.0 - face_margin(child));
+        let top = 0.5 - face_margin(ov.panel(0));
+        assert!(bottom.abs_diff_eq(Vec3::Y * top + up * SLOT_GAP, 1e-4), "{bottom}");
+        // 親を動かすと付いてくる。
+        ov.set_pose(0, at(0.0, 1.0, -1.0));
+        ov.tick(&mut vr);
+        assert!(
+            (ov.panel(0).pose.inverse() * ov.panel(1).pose)
+                .position
+                .abs_diff_eq(local.position, 1e-4)
+        );
+    }
+
+    #[test]
+    fn undocking_a_slot_child_pulls_it_away_from_its_parent() {
+        let (mut vr, mut ov) = with_child(true);
+        let slot = Parent {
+            panel: 0,
+            carry: true,
+            docked: true,
+            slot: Some(0.0),
+            ..Default::default()
+        };
+        ov.set_parent(&mut vr.backend, 1, Some(slot));
+        ov.set_animated(&mut vr.backend, 1, false);
+        ov.tick(&mut vr);
+        let docked = ov.panel(1).pose;
+        ov.set_parent(&mut vr.backend, 1, None);
+        ov.tick(&mut vr);
+        let pulled = docked * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY);
+        assert!(ov.panel(1).pose.position.abs_diff_eq(pulled.position, 1e-4));
+        // 外したあとは親に付いていかない。
+        ov.set_pose(0, at(0.0, 1.0, -1.0));
+        ov.tick(&mut vr);
+        assert!(ov.panel(1).pose.position.abs_diff_eq(pulled.position, 1e-4));
+    }
+
+    #[test]
+    fn hiding_a_parent_hides_its_children_and_stops_input_until_shown() {
+        let (mut vr, mut ov) = with_child(true);
+        ov.set_animated(&mut vr.backend, 0, false);
+        ov.set_animated(&mut vr.backend, 1, false);
+        ov.set_hidden(&mut vr.backend, 0, true);
+        ov.tick(&mut vr);
+        assert!(ov.panel(0).hidden && ov.panel(1).hidden && !ov.panel(0).closed);
+        assert_eq!(ov.panel(0).opacity, 0.0);
+        controller(&mut vr, at(0.45, -0.45, 0.0), &[("trigger/value", 1.0)]);
+        assert!(ov.tick(&mut vr).is_empty());
+        controller(&mut vr, at(0.45, -0.45, 0.0), &[]);
+        ov.tick(&mut vr);
+        ov.set_hidden(&mut vr.backend, 0, false);
+        ov.tick(&mut vr);
+        assert!(!ov.panel(1).hidden && ov.panel(0).opacity == 1.0);
+        controller(&mut vr, at(0.45, -0.45, 0.0), &[("trigger/value", 1.0)]);
         assert!(!ov.tick(&mut vr).is_empty());
     }
 
@@ -2213,6 +2433,8 @@ mod tests {
                 carry: false,
                 dismiss: true,
                 hud: false,
+                docked: false,
+                slot: None,
             }),
         );
         controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
@@ -2302,6 +2524,8 @@ mod tests {
                 carry: false,
                 dismiss: false,
                 hud: false,
+                docked: false,
+                slot: None,
             }),
         );
         assert_eq!(

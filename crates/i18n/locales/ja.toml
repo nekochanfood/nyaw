@@ -74,6 +74,8 @@ tune_click = "クリック時のレーザーの鈍さ: {pct}%"
 tune_hold = "クリック中は {deg}° 以内の手の動きでポインタを動かさない"
 
 [common]
+# chrono の書式（https://docs.rs/chrono/latest/chrono/format/strftime）。曜日は {weekday}。
+date = "%-m月%-d日（{weekday}）"
 close = "閉じる"
 default = "既定"
 ok = "OK"
@@ -94,13 +96,30 @@ thu = "木"
 fri = "金"
 sat = "土"
 
+[dock]
+undock = "ダッシュボードから外す"
+dock = "ダッシュボードに戻す"
+
 [dashboard]
 title = "ダッシュボード"
-
-[wrist]
-# chrono の書式（https://docs.rs/chrono/latest/chrono/format/strftime）。曜日は {weekday}。
-date = "%-m月%-d日（{weekday}）"
-toggle_panel = "パネルを出す・しまう"
+mirror = "画面のミラーリング"
+quick_settings = "クイック設定"
+debug = "デバッグ"
+settings = "設定"
+screens = "画面"
+windows = "ウィンドウ"
+refresh = "一覧を更新"
+loading = "取得中…"
+none = "ありません"
+failed = "取得できません: {error}"
+batteries = "バッテリー"
+no_batteries = "電池の残量を知らせるデバイスがありません"
+hmd = "ヘッドセット"
+left_controller = "左コントローラー"
+right_controller = "右コントローラー"
+tracker = "トラッカー {n}"
+charging = "充電中"
+theme = "テーマ"
 
 [testing]
 title = "テスト"

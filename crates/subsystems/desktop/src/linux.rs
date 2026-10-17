@@ -42,6 +42,7 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
                 sources.push(Source {
                     name: name.into(),
                     kind,
+                    icon: None,
                     target: 0,
                 });
             }

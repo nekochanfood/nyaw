@@ -1351,6 +1351,16 @@ const SETTINGS_ITEMS: [(&str, &design::Icon); 5] = [
     ("setting-4", &design::icons::KEYBOARD),
 ];
 
+/// 設定画面の起動仕様（ダッシュボードの設定ボタン。main が渡す）。`opened` は作られたパネルの ID を受け取る。
+pub fn settings_spec(opened: impl FnOnce(PanelId, &mut gpui::App) + 'static) -> PanelSpec {
+    PanelSpec::new(Pose::IDENTITY, |id, _, cx| {
+        opened(id, cx);
+        Settings::new(id)
+    })
+        .sized(SETTINGS_SIZE, SETTINGS_PX)
+        .titled("testing.open.settings")
+}
+
 /// 設定画面（`settings-test`）。左のサイドバーにカテゴリの一覧、区切り線を挟んで右に選んだカテゴリの項目の一覧。
 /// 地は背景色（`components::panel`）。サイドバーの行（`components::sidebar_item`）は背景が無く、選んでいるカテゴリだけアクセントの色が付く。中身の一覧の行はカード色（`components::list`）。
 /// 中身は積み重ね（[`components::navigation`]）: 項目を押すと右から詳しい画面が入り、`settings-back` か右から左へのスワイプで戻る。

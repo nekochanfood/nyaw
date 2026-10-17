@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::mem::{MaybeUninit, size_of};
+use std::time::{Duration, Instant};
 
 use ash::vk::{self, Handle};
 use glam::Mat3;
@@ -18,7 +19,7 @@ use input::{HandActions, Input};
 
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
-    Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError,
+    Battery, Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError,
 };
 
 pub(crate) fn available() -> bool {
@@ -48,6 +49,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         fixed: HashMap::new(),
         shown: HashSet::new(),
         dashboard: false,
+        batteries: (None, Vec::new()),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
     }))
@@ -114,6 +116,9 @@ const MAX_DEVICES: usize = sys::k_unMaxTrackedDeviceCount as usize;
 // ponytail: 3 枚あれば足りる想定。絵がちらつく・崩れるなら増やすか、送ったイメージの使用完了を待つ。
 const RING: usize = 3;
 
+/// 電池を読み直す間隔。残量はゆっくりしか変わらないので、毎フレームは読まない。
+const BATTERY_INTERVAL: Duration = Duration::from_secs(5);
+
 struct Textures {
     width: u32,
     height: u32,
@@ -139,6 +144,8 @@ pub(crate) struct OpenVrBackend {
     shown: HashSet<u64>,
     /// 最後の poll で SteamVR のダッシュボードが開いていたか。
     dashboard: bool,
+    /// 最後に電池を読んだ時刻と、その結果（[`BATTERY_INTERVAL`] ごとに読み直す）。
+    batteries: (Option<Instant>, Vec<Battery>),
     gpu: Gpu,
     /// SteamVR との接続。関数表の持ち主なので最後に破棄する。
     client: Client,
@@ -193,6 +200,39 @@ impl OpenVrBackend {
         let aspect = t.height as f32 * w / (t.width as f32 * h);
         let e = unsafe { f(self.overlay().SetOverlayTexelAspect)(id, aspect) };
         log(check("SetOverlayTexelAspect", e));
+    }
+
+    /// 見えているデバイスのうち、電池を申告しているものの残量（順は決まらない）。
+    fn read_batteries(&self, devices: &HashMap<Device, (u32, Pose)>) -> Vec<Battery> {
+        let s = self.system();
+        let flag = |index, prop| {
+            let mut err = Default::default();
+            unsafe { f(s.GetBoolTrackedDeviceProperty)(index, prop, &mut err) }
+        };
+        devices
+            .iter()
+            .filter(|&(_, &(index, _))| {
+                flag(
+                    index,
+                    sys::ETrackedDeviceProperty_Prop_DeviceProvidesBatteryStatus_Bool,
+                )
+            })
+            .map(|(device, &(index, _))| {
+                let mut err = Default::default();
+                let level = unsafe {
+                    f(s.GetFloatTrackedDeviceProperty)(
+                        index,
+                        sys::ETrackedDeviceProperty_Prop_DeviceBatteryPercentage_Float,
+                        &mut err,
+                    )
+                };
+                Battery {
+                    device: device.clone(),
+                    level: level.clamp(0.0, 1.0),
+                    charging: flag(index, sys::ETrackedDeviceProperty_Prop_DeviceIsCharging_Bool),
+                }
+            })
+            .collect()
     }
 
     fn overlay(&self) -> &sys::VR_IVROverlay_FnTable {
@@ -482,6 +522,14 @@ impl VrBackend for OpenVrBackend {
                 .hand_devices
                 .push((hand, pose_from(&pose.mDeviceToAbsoluteTracking.m)));
         }
+        if self
+            .batteries
+            .0
+            .is_none_or(|t| t.elapsed() >= BATTERY_INTERVAL)
+        {
+            self.batteries = (Some(Instant::now()), self.read_batteries(&devices));
+        }
+        frame.batteries.clone_from(&self.batteries.1);
         self.devices = devices;
         frame
     }

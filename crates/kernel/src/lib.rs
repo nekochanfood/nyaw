@@ -43,6 +43,8 @@ pub enum PanelCommand {
     /// このパネルが出ている間、空間全体を暗くする（`Overlay::set_veil`）。
     Veil(bool),
     Close,
+    /// 隠す・出し直す（`Overlay::set_hidden`。閉じずにビュー・配信・音を残す）。
+    Hide(bool),
     /// その手のレーザーを描くパネルにする（ヒット判定の対象外になり、置き場所はオーバーレイが決める）。
     Pointer(Hand, Pointer),
     /// 解像度（UI の論理ピクセル）を変える。1m あたりのピクセル数を保って VR 上の大きさも変わる。
@@ -128,6 +130,8 @@ pub struct PanelStatus {
     pub grabbed: bool,
     /// 閉じられた。
     pub closed: bool,
+    /// 隠している（[`PanelCommand::Hide`]）。
+    pub hidden: bool,
     /// 描画解像度の段階（[`Kernel::panel_lod`]）。
     pub lod: u8,
     /// 親パネル（このパネルが子のとき）。
@@ -170,6 +174,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     hand_shortcut: LongPress,
     /// OS の前面のアプリのキーボードの監視と入力（[`Kernel::os_keyboard`]。使い始めるまで起こさない）。
     os_keyboard: Option<os::keyboard::Watcher>,
+    /// 最後の tick の電池（[`Kernel::batteries`]）。
+    batteries: Vec<vr::Battery>,
 }
 
 /// 二回続けて押したと見なす、押下と次の押下の間隔の上限。
@@ -315,6 +321,7 @@ impl<B: VrBackend> Kernel<B> {
             shortcut: DoublePress::default(),
             hand_shortcut: LongPress::default(),
             os_keyboard: None,
+            batteries: Vec::new(),
         }
     }
 
@@ -479,6 +486,7 @@ impl<B: VrBackend> Kernel<B> {
         };
         self.shortcut.update(held(false), polled);
         self.hand_shortcut.update(held(true), polled);
+        self.batteries.clone_from(&frame.batteries);
         let mut events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
         self.route_desktop(&mut events);
         self.update_audio();
@@ -541,6 +549,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.hands()
     }
 
+    /// 最後の tick で電池の残量を申告していたデバイス。
+    pub fn batteries(&self) -> &[vr::Battery] {
+        &self.batteries
+    }
+
     /// 最後の tick の手ごとの入力の状態（骨格だけの手は判定に使った値 `metrics` 付き）。
     pub fn controllers(&self) -> &[ControllerState] {
         self.overlay.controllers()
@@ -580,6 +593,10 @@ impl<B: VrBackend> Kernel<B> {
                     .set_animated(&mut self.subsystems.backend, panel, animated)
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
+            PanelCommand::Hide(hidden) => {
+                self.overlay
+                    .set_hidden(&mut self.subsystems.backend, panel, hidden)
+            }
             PanelCommand::Close => {
                 if let Some(sound) = self.close_sounds.remove(&panel) {
                     let (w, h) = self.overlay.panel(panel).resolution;
@@ -640,6 +657,7 @@ impl<B: VrBackend> Kernel<B> {
             double_press: self.shortcut.count + self.hand_shortcut.count,
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
+            hidden: p.hidden,
             lod: self.panel_lod(panel),
             parent: p.parent.map(|q| q.panel),
             pointed: self.overlay.pointed(panel),

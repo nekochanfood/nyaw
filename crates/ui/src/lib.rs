@@ -346,6 +346,8 @@ pub struct PanelControl {
     pub hmd: kernel::Pose,
     /// 手ごとの入力の状態（判定の確認用）。`hands` と同じく毎フレーム書く。
     pub controllers: Vec<kernel::ControllerState>,
+    /// 電池の残量を申告しているデバイス。`hands` と同じく毎フレーム書く（変わってもパネルを描き直させない）。
+    pub batteries: Vec<kernel::vr::Battery>,
     /// 終了を頼む。フレームループがアプリを終える（テストのハーネスもこれで終える）。
     pub quit: bool,
     /// 開いているパネルの数（閉じたものは数えない）と、同時に開ける数の上限（[`MAX_PANELS`] とランタイムの上限の小さい方）。
@@ -354,6 +356,69 @@ pub struct PanelControl {
     pub limit: usize,
     /// 持ち主のパネル → そのナビゲーションバー。バーが開いたときに書く（持ち主の状態でバーを描き直すため）。
     pub nav_bars: HashMap<PanelId, PanelId>,
+    /// 画面をはめられる場所（ダッシュボード）: 持ち主と、その上端に立てる角度（[`kernel::Parent::slot`]）。[`dock`] で使う。
+    pub dock: Option<(PanelId, f32)>,
+    /// 今はめている画面（[`docked`] で、まだはまっているか確かめて読む）。
+    docked: Option<PanelId>,
+}
+
+/// 画面をはめる場所（[`PanelControl::dock`]）が出ていれば（閉じても隠してもいなければ）、その持ち主と角度。
+fn dock_slot(cx: &App) -> Option<(PanelId, f32)> {
+    let ctl = cx.try_global::<PanelControl>()?;
+    ctl.dock.filter(|(owner, _)| {
+        !ctl.panels
+            .get(owner)
+            .is_some_and(|p| p.status.closed || p.status.hidden)
+    })
+}
+
+/// はめる場所に今はまっている画面。
+pub fn docked(cx: &App) -> Option<PanelId> {
+    let (owner, _) = dock_slot(cx)?;
+    let ctl = cx.global::<PanelControl>();
+    ctl.docked.filter(|id| {
+        ctl.panels
+            .get(id)
+            .is_none_or(|p| !p.status.closed && p.status.parent.is_none_or(|p| p == owner))
+    })
+}
+
+/// `panel` をはめる場所にはめる（持ち主に付いて動き、掴むと持ち主ごと動く）。はまっていた画面は閉じる。
+/// 場所が開いていなければ何もしない。
+pub fn dock(panel: PanelId, cx: &mut App) {
+    let Some((owner, tilt)) = dock_slot(cx) else {
+        return;
+    };
+    let previous = docked(cx).filter(|&p| p != panel);
+    let ctl = cx.default_global::<PanelControl>();
+    if let Some(p) = previous {
+        ctl.panels.entry(p).or_default().commands.push(PanelCommand::Close);
+    }
+    ctl.docked = Some(panel);
+    ctl.panels
+        .entry(panel)
+        .or_default()
+        .commands
+        .push(PanelCommand::Parent(Some(kernel::Parent {
+            panel: owner,
+            carry: true,
+            docked: true,
+            slot: Some(tilt),
+            ..Default::default()
+        })));
+}
+
+/// はめた `panel` を外して独立させる（その場に残り、持ち主が閉じても閉じない）。
+pub fn undock(panel: PanelId, cx: &mut App) {
+    let ctl = cx.default_global::<PanelControl>();
+    if ctl.docked == Some(panel) {
+        ctl.docked = None;
+    }
+    ctl.panels
+        .entry(panel)
+        .or_default()
+        .commands
+        .push(PanelCommand::Parent(None));
 }
 
 impl gpui::Global for PanelControl {}
@@ -367,6 +432,7 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     ctl.hands = kernel.hands().to_vec();
     ctl.hmd = kernel.hmd();
     ctl.controllers = kernel.controllers().to_vec();
+    ctl.batteries = kernel.batteries().to_vec();
     let settings = ctl.settings;
     let ctl = ctl.panels.entry(panel).or_default();
     for c in ctl.commands.drain(..) {
@@ -598,6 +664,8 @@ pub struct PanelSpec {
     nav_bar_of: Option<PanelId>,
     /// ナビゲーションバーの左端に OS キーボードのトグルを出す（[`Self::with_os_keyboard`]）。
     os_keyboard: bool,
+    /// ナビゲーションバーの左端に、はめる場所から外す・戻すボタンを出す（[`Self::dockable`]）。
+    dockable: bool,
     build: Box<PanelBuilder>,
 }
 
@@ -633,6 +701,7 @@ impl PanelSpec {
             nav_bar: true,
             nav_bar_of: None,
             os_keyboard: false,
+            dockable: false,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -660,6 +729,7 @@ impl PanelSpec {
                 carry,
                 dismiss: true,
                 hud: false,
+                ..Default::default()
             }),
             ..Self::spawn(from, build)
         }
@@ -703,6 +773,19 @@ impl PanelSpec {
     pub fn below(mut self, panel: PanelId, tilt: f32) -> Self {
         self.from = Some(panel);
         self.below = Some(tilt.clamp(0., std::f32::consts::FRAC_PI_2));
+        self
+    }
+
+    /// `panel` に固定する（[`kernel::Parent::docked`]）。開いた時の位置のまま付いて動き、掴むと `panel` ごと動き、
+    /// `panel` を暗くしない。`panel` が閉じれば一緒に閉じる。
+    pub fn docked_to(mut self, panel: PanelId) -> Self {
+        self.from.get_or_insert(panel);
+        self.parent = Some(kernel::Parent {
+            panel,
+            carry: true,
+            docked: true,
+            ..Default::default()
+        });
         self
     }
 
@@ -764,10 +847,16 @@ impl PanelSpec {
         self
     }
 
+    /// ナビゲーションバーの左端に、はめる場所（ダッシュボード。[`dock`]）から外して独立させる・戻すボタンを出す。
+    pub fn dockable(mut self) -> Self {
+        self.dockable = true;
+        self
+    }
+
     /// このパネル（PanelId `owner` で開いた）に付けるナビゲーションバー。外していれば `None`。
     /// 開く側（`ui::run`・testkit のキット）が持ち主の直後に開き、[`PanelCommand::NavBar`] で持ち主に付ける。
     pub fn nav_bar_spec(&self, owner: PanelId) -> Option<PanelSpec> {
-        let (title, os_keyboard) = (self.title.clone(), self.os_keyboard);
+        let (title, os_keyboard, dockable) = (self.title.clone(), self.os_keyboard, self.dockable);
         self.nav_bar.then(|| PanelSpec {
             nav_bar: false,
             nav_bar_of: Some(owner),
@@ -780,6 +869,7 @@ impl PanelSpec {
                     owner,
                     title,
                     os_keyboard,
+                    dockable,
                     open: 0.0,
                     to: 0.0,
                     anim: None,
@@ -848,6 +938,8 @@ struct NavBar {
     title: Option<Title>,
     /// 左端に OS キーボードのトグルを出す。
     os_keyboard: bool,
+    /// 左端に、はめる場所から外す・戻すボタンを出す。
+    dockable: bool,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
     open: f32,
     to: f32,
@@ -920,6 +1012,35 @@ impl Render for NavBar {
                 keyboard::toggle_os_keyboard(owner, cx);
             })
         });
+        // はめる場所から外す（はまっている間）・戻す（外れていて、場所が開いている間）。
+        let dock = self.dockable.then(|| {
+            let ctl = cx.global::<PanelControl>();
+            let parent = ctl.panels.get(&owner).and_then(|p| p.status.parent);
+            let slot = dock_slot(cx);
+            let inside = parent.is_some() && parent == slot.map(|(o, _)| o);
+            (inside || slot.is_some()).then(|| {
+                let (id, glyph, tip) = if inside {
+                    ("nav-undock", &design::icons::ARROW_SQUARE_OUT, i18n::t(cx, "dock.undock"))
+                } else {
+                    ("nav-dock", &design::icons::ARROW_SQUARE_IN, i18n::t(cx, "dock.dock"))
+                };
+                design::components::icon_button(
+                    &theme,
+                    id,
+                    glyph,
+                    tip,
+                    design::components::Variant::Default,
+                )
+                .on_click(move |_, _, cx| {
+                    if inside {
+                        undock(owner, cx)
+                    } else {
+                        dock(owner, cx)
+                    }
+                })
+            })
+        });
+        let leading = dock.flatten().into_iter().chain(os_keyboard).collect();
         div().size_full().child(design::components::nav_bar(
             &theme,
             self.open,
@@ -933,7 +1054,7 @@ impl Render for NavBar {
                     .commands
                     .push(PanelCommand::Close)
             },
-            os_keyboard,
+            leading,
         ))
     }
 }

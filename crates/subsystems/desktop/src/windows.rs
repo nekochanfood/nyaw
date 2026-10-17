@@ -1,4 +1,4 @@
-use super::{Button, Error, Frame, Session, Source, SourceKind, Touch, TouchPhase, Wake};
+use super::{Button, Error, Frame, Icon, Session, Source, SourceKind, Touch, TouchPhase, Wake};
 use ::windows::{
     Foundation::{TimeSpan, TypedEventHandler},
     Graphics::{
@@ -7,7 +7,7 @@ use ::windows::{
         SizeInt32,
     },
     Win32::{
-        Foundation::{HMODULE, HWND, LPARAM, POINT, RECT},
+        Foundation::{CloseHandle, HMODULE, HWND, LPARAM, POINT, RECT, WPARAM},
         Graphics::{
             Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP},
             Direct3D11::*,
@@ -18,7 +18,10 @@ use ::windows::{
         System::{
             Com::CoIncrementMTAUsage,
             Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
-            Threading::{AttachThreadInput, GetCurrentThreadId},
+            Threading::{
+                AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
+                PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+            },
             WinRT::{
                 Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess},
                 Graphics::Capture::IGraphicsCaptureItemInterop,
@@ -28,10 +31,11 @@ use ::windows::{
         UI::{
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext},
             Input::KeyboardAndMouse::*,
+            Shell::ExtractIconExW,
             WindowsAndMessaging::*,
         },
     },
-    core::{BOOL, Interface, factory},
+    core::{BOOL, Interface, PCWSTR, PWSTR, factory},
 };
 use std::{
     mem::size_of,
@@ -68,6 +72,7 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
             sources.push(Source {
                 name: String::from_utf16_lossy(&info.szDevice[..len]),
                 kind: SourceKind::Screen,
+                icon: None,
                 target: monitor.0 as isize,
             });
         }
@@ -95,6 +100,7 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
             unsafe { &mut *(data.0 as *mut Vec<Source>) }.push(Source {
                 name: String::from_utf16_lossy(&title[..len as usize]),
                 kind: SourceKind::Window,
+                icon: unsafe { window_icon(hwnd) },
                 target: hwnd.0 as isize,
             });
         }
@@ -111,6 +117,125 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
         EnumWindows(Some(window), LPARAM(&mut sources as *mut _ as isize))?;
     }
     Ok(sources)
+}
+
+/// ウィンドウのアイコン。ウィンドウ自身のもの（WM_GETICON・クラス）が無ければ、プロセスの実行ファイルのもの。
+unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
+    let mut icon = 0usize;
+    // 固まったウィンドウで一覧の取得ごと止まらないよう、待ちを区切る。
+    let sent = unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            WM_GETICON,
+            WPARAM(ICON_BIG as usize),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            100,
+            Some(&mut icon),
+        )
+    };
+    if sent.0 == 0 || icon == 0 {
+        icon = unsafe { GetClassLongPtrW(hwnd, GCLP_HICON) };
+    }
+    if icon != 0 {
+        // 借りたアイコンなので破棄しない。
+        return unsafe { icon_rgba(HICON(icon as _)) };
+    }
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut path = [0u16; 1024];
+    let mut len = path.len() as u32;
+    let named = unsafe {
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(path.as_mut_ptr()),
+            &mut len,
+        )
+    };
+    let _ = unsafe { CloseHandle(process) };
+    named.ok()?;
+    let mut large = HICON::default();
+    unsafe { ExtractIconExW(PCWSTR(path.as_ptr()), 0, Some(&mut large), None, 1) };
+    if large.is_invalid() {
+        return None;
+    }
+    let rgba = unsafe { icon_rgba(large) };
+    let _ = unsafe { DestroyIcon(large) };
+    rgba
+}
+
+/// アイコンを RGBA で読み出す。アルファを持たない古いアイコンはマスクから透明部分を作る。
+unsafe fn icon_rgba(icon: HICON) -> Option<Icon> {
+    let mut info = ICONINFO::default();
+    unsafe { GetIconInfo(icon, &mut info) }.ok()?;
+    let read = |bitmap: HBITMAP| -> Option<(u32, u32, Vec<u8>)> {
+        let mut bm = BITMAP::default();
+        let got = unsafe {
+            GetObjectW(
+                bitmap.into(),
+                size_of::<BITMAP>() as i32,
+                Some(&mut bm as *mut _ as _),
+            )
+        };
+        let (w, h) = (bm.bmWidth, bm.bmHeight);
+        if got == 0 || w <= 0 || h <= 0 || w > 256 || h > 256 {
+            return None;
+        }
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                // 負の高さで上から下の並びにする。
+                biHeight: -h,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bgra = vec![0u8; (w * h * 4) as usize];
+        let dc = unsafe { GetDC(None) };
+        let lines = unsafe {
+            GetDIBits(
+                dc,
+                bitmap,
+                0,
+                h as u32,
+                Some(bgra.as_mut_ptr() as _),
+                &mut bmi,
+                DIB_RGB_COLORS,
+            )
+        };
+        unsafe { ReleaseDC(None, dc) };
+        (lines == h).then_some((w as u32, h as u32, bgra))
+    };
+    let color = (!info.hbmColor.is_invalid())
+        .then(|| read(info.hbmColor))
+        .flatten();
+    let mask = color
+        .as_ref()
+        .filter(|(_, _, px)| px.chunks_exact(4).all(|p| p[3] == 0))
+        .and_then(|_| read(info.hbmMask));
+    unsafe {
+        let _ = DeleteObject(info.hbmColor.into());
+        let _ = DeleteObject(info.hbmMask.into());
+    }
+    let (width, height, mut px) = color?;
+    for (i, p) in px.chunks_exact_mut(4).enumerate() {
+        p.swap(0, 2);
+        if let Some((_, _, m)) = &mask {
+            // マスクの黒い所が絵、白い所が透明。
+            p[3] = if m[i * 4] == 0 { 255 } else { 0 };
+        }
+    }
+    Some(Icon {
+        width,
+        height,
+        rgba: px.into(),
+    })
 }
 
 struct Apartment;
