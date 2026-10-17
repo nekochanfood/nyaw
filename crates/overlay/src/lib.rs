@@ -47,6 +47,8 @@ pub struct Panel {
     pub pointer: Option<(Hand, Pointer)>,
     /// このパネルのイン・アウトアニメーション。`Overlay::set_animated` で個別に無効化できる。
     pub animated: bool,
+    /// 出ている間、空間全体を暗くする（[`Overlay::set_veil`]）。
+    pub veil: bool,
     /// OS へのタッチを解放まで同じパネルへ届ける。
     capture: bool,
     /// 親（[`Overlay::set_parent`]）。取り付けより優先して、親の姿勢 * `offset` に追従する。
@@ -114,11 +116,13 @@ const LIFT_STEP: f32 = 0.003;
 const LASER_ROT: Quat = Quat::from_xyzw(-0.5, 0.5, 0.5, 0.5);
 /// 見えていそうかの見積もり（[`Overlay::in_view`]）に使う視野の半角（ラジアン、70°。実機の視野より広めに取る）。
 const VIEW_HALF_ANGLE: f32 = 1.221_730_5;
-/// 描画順。パネルは 0。
-const LASER_SORT: u32 = 1;
-const DRAG_SORT: u32 = 2;
-const CURSOR_SORT: u32 = 3;
-const TOOLTIP_SORT: u32 = 4;
+/// 描画順。一番奥が空間全体の暗転の幕（[`Overlay::set_veil`]）で、その上にパネル。
+const VEIL_SORT: u32 = 0;
+const PANEL_SORT: u32 = 1;
+const LASER_SORT: u32 = 2;
+const DRAG_SORT: u32 = 3;
+const CURSOR_SORT: u32 = 4;
+const TOOLTIP_SORT: u32 = 5;
 /// ツールチップをパネル面から浮かせる距離（m）。カーソルより手前。
 const TOOLTIP_LIFT: f32 = LIFT_STEP * 3.0;
 /// ツールチップの向きを変える目安: 頭から見た手の方向が、パネルの上下へ水平からこれ（sin。約 12°）より傾いたら切り替える。
@@ -134,6 +138,15 @@ const SNAP: f32 = 1e-5;
 /// 子が開いている間の親の暗さ（黒との混ぜ具合）。子に目が行くよう、読める程度に落とす。
 /// 暗転の時間は子のフェードイン（0.2 秒）・アウト（0.15 秒）と同じ。
 const DIM: f32 = 0.45;
+/// 空間全体の暗転の濃さ（黒の不透明度）。周りがうっすら見える程度に落とす。
+// ponytail: 固定の濃さ。暗すぎる・明るすぎると感じたらここを調整する。
+const VEIL: f32 = 0.6;
+/// 暗転の幕は黒い正方形で、毎 tick 頭の正面この距離（m）に置き直す。描画順だけでなく奥行きでもパネルより奥にする
+/// （SteamVR は頭に相対配置したオーバーレイを描画順に関係なく手前に合成し、パネルが幕の向こうで消えた）。
+// ponytail: 固定の距離。これより遠いパネルは幕の手前に出ない。
+const VEIL_DISTANCE: f32 = 50.0;
+/// 幕の一辺（m）。正面から atan(2500 / 50) ≈ 89° まで覆う。
+const VEIL_SIZE: f32 = 5000.0;
 /// 表示だけの子（[`Parent::hud`]）を、親の面からどれだけ手前（m）に置くか。
 const HUD_LIFT: f32 = 0.002;
 /// 表示だけの子の重なり順。角は親の中心より頭から遠いので、距離で並べると親の裏に回って消える。
@@ -301,9 +314,22 @@ pub struct Overlay {
     dismissed: Vec<PanelId>,
     /// 親の暗転。
     dims: HashMap<PanelId, (Animation, Instant)>,
+    /// 空間全体の暗転。
+    veil: Veil,
     /// 前の tick の時刻と、そこからの経過（秒。[`TICK_MIN`]〜[`TICK_MAX`] に丸める）。
     last_tick: Option<Instant>,
     dt: f32,
+}
+
+/// 空間全体の暗転の幕（[`Overlay::set_veil`]）。
+#[derive(Debug, Default)]
+struct Veil {
+    /// 頭に付けた黒い幕。最初に暗くするときに作る。
+    surface: Option<Surface>,
+    /// 今の濃さと、向かっている先。
+    opacity: f32,
+    to: f32,
+    fade: Option<(Animation, Instant)>,
 }
 
 /// 1 tick の経過の下限・上限（秒）。テストのように続けて tick しても 1 フレーム分は進め、止まった後に飛ばない。
@@ -324,6 +350,7 @@ impl Overlay {
         resolution: (u32, u32),
     ) -> Result<PanelId, VrError> {
         let surface = Surface::new(vr, key, size.x, pose)?;
+        surface.set_sort(vr, PANEL_SORT);
         self.panels.push(Panel {
             pose,
             size,
@@ -333,6 +360,7 @@ impl Overlay {
             closed: false,
             pointer: None,
             animated: true,
+            veil: false,
             capture: false,
             parent: None,
             nav_bar_of: None,
@@ -515,7 +543,8 @@ impl Overlay {
         let q = &mut self.panels[id];
         q.parent = parent;
         let hud = parent.is_some_and(|p| p.hud);
-        q.surface.set_sort(vr, if hud { HUD_SORT } else { 0 });
+        q.surface
+            .set_sort(vr, if hud { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
             q.attached = None;
             q.offset = at.inverse() * q.pose;
@@ -574,6 +603,12 @@ impl Overlay {
             p.opacity = if p.closed { 0.0 } else { 1.0 };
             Self::present(vr, p, false);
         }
+    }
+
+    /// `id` が出ている間（最初の描画が届いてから閉じるまで）、空間全体を暗くする。暗転・復帰はパネルの出入りと同じ動きで進む。
+    /// 幕はパネルより奥に描くので、パネル・レーザーは暗くならない。
+    pub fn set_veil(&mut self, id: PanelId, veil: bool) {
+        self.panels[id].veil = veil;
     }
 
     /// `hand` のレーザーを描くパネルにする。以降はヒット判定の対象外になり、毎 tick レーザーに合わせて置かれる。
@@ -841,7 +876,51 @@ impl Overlay {
             let p = &mut self.panels[id];
             p.surface.place(vr, p.pose, p.follow.as_ref());
         }
+        self.place_veil(vr, now);
         events
+    }
+
+    /// 暗転を求めるパネルが出ている間だけ幕を出し、頭の正面に置く。
+    fn place_veil(&mut self, vr: &mut dyn VrBackend, now: Instant) {
+        // パネルのフェードインと一緒に暗くするので、最初の描画が届くまで待つ。
+        let on = self.present.iter().any(|&id| {
+            let p = &self.panels[id];
+            p.veil && !p.closed && p.surface.has_texture()
+        });
+        let to = if on { VEIL } else { 0.0 };
+        let v = &mut self.veil;
+        if v.to != to {
+            v.to = to;
+            if on && v.surface.is_none() {
+                match Surface::new(vr, "nyaw.veil", VEIL_SIZE, self.hmd) {
+                    Ok(mut s) => {
+                        s.set_sort(vr, VEIL_SORT);
+                        s.store(1, 1, &[0, 0, 0, 255]);
+                        s.present(vr, 0.0, 0.0, true);
+                        v.surface = Some(s);
+                    }
+                    Err(e) => logger::warn!("暗転の幕を作れない", error = ?e),
+                }
+            }
+            let motion = if on { Motion::Enter } else { Motion::Exit };
+            v.fade = Some((Animation::new(v.opacity, to, motion), now));
+        }
+        let Some(surface) = &mut v.surface else {
+            return;
+        };
+        if let Some((tween, last)) = &mut v.fade {
+            v.opacity = tween.advance((now - *last).as_secs_f32());
+            *last = now;
+            if tween.is_done() {
+                v.fade = None;
+            }
+            surface.show(vr, v.opacity > 0.0, None, VEIL_SIZE);
+            surface.present(vr, v.opacity, 0.0, false);
+        }
+        if v.opacity > 0.0 {
+            let offset = Pose::new(Vec3::new(0.0, 0.0, -VEIL_DISTANCE), Quat::IDENTITY);
+            surface.place(vr, self.hmd * offset, None);
+        }
     }
 
     fn update_hand(&mut self, c: &ControllerState, frame: &Frame, out: &mut Vec<UiEvent>) {
@@ -2173,6 +2252,43 @@ mod tests {
         assert!(0.0 < dim(&ov) && dim(&ov) < DIM);
         step(&mut ov, &mut vr, 0.075);
         assert_eq!(dim(&ov), 0.0);
+    }
+
+    #[test]
+    fn veil_darkens_the_space_behind_the_panels_while_its_panel_is_open() {
+        let (mut vr, mut ov) = setup();
+        ov.set_veil(0, true);
+        ov.tick(&mut vr);
+        assert_eq!(
+            vr.backend.overlays.len(),
+            1,
+            "最初の描画が届くまでは暗くしない"
+        );
+        ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
+        ov.tick(&mut vr);
+        fn veil(vr: &Subsystems<MockBackend>) -> &vr::mock::MockOverlay {
+            &vr.backend.overlays[1]
+        }
+        assert!(veil(&vr).sort < vr.backend.overlays[0].sort);
+        assert_eq!(veil(&vr).texture.as_ref().unwrap().rgba, [0, 0, 0, 255]);
+        let step = |ov: &mut Overlay, vr: &mut Subsystems<MockBackend>, secs: f32| {
+            if let Some((_, last)) = &mut ov.veil.fade {
+                *last -= std::time::Duration::from_secs_f32(secs);
+            }
+            ov.tick(vr);
+        };
+        step(&mut ov, &mut vr, 0.1);
+        assert!(0.0 < veil(&vr).alpha && veil(&vr).alpha < VEIL);
+        step(&mut ov, &mut vr, 0.2);
+        assert_eq!(veil(&vr).alpha, VEIL);
+        assert!(veil(&vr).visible);
+        ov.close(&mut vr.backend, 0);
+        ov.tick(&mut vr);
+        step(&mut ov, &mut vr, 0.075);
+        assert!(0.0 < veil(&vr).alpha && veil(&vr).alpha < VEIL);
+        step(&mut ov, &mut vr, 0.2);
+        assert_eq!(veil(&vr).alpha, 0.0);
+        assert!(!veil(&vr).visible);
     }
 
     #[test]

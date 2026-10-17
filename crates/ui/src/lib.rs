@@ -586,6 +586,8 @@ pub struct PanelSpec {
     /// 親子関係（[`Self::child`]）。
     parent: Option<kernel::Parent>,
     animated: bool,
+    /// 出ている間、空間全体を暗くする（[`Self::with_veil`]）。
+    veil: bool,
     /// レーザーを描くパネル。
     pointer: Option<(Hand, Pointer)>,
     /// ナビゲーションバーに出すタイトル。
@@ -625,6 +627,7 @@ impl PanelSpec {
             locked: false,
             parent: None,
             animated: true,
+            veil: false,
             pointer: None,
             title: None,
             nav_bar: true,
@@ -718,6 +721,12 @@ impl PanelSpec {
     /// このパネルのイン・アウトアニメーションを無効にする。
     pub fn without_animation(mut self) -> Self {
         self.animated = false;
+        self
+    }
+
+    /// 出ている間、空間全体を暗くする（ダッシュボードなど）。暗転・復帰はパネルの出入りと同じ動きで進む。
+    pub fn with_veil(mut self) -> Self {
+        self.veil = true;
         self
     }
 
@@ -1544,6 +1553,9 @@ fn open_panel(
     };
     if !spec.animated {
         kernel.apply(panel, PanelCommand::Animated(false));
+    }
+    if spec.veil {
+        kernel.apply(panel, PanelCommand::Veil(true));
     }
     if let Some((device, offset)) = spec.attach.take() {
         kernel.apply(panel, PanelCommand::Attach(device, offset));
