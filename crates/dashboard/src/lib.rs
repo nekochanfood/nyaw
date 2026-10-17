@@ -12,8 +12,8 @@ use std::time::Duration;
 use design::components::{self, Variant};
 use design::{Theme, font_size, icons, spacing};
 use gpui::{
-    App, Context, Div, FontWeight, RenderImage, ScrollHandle, WeakEntity, Window, div, img,
-    prelude::*, px, rgba,
+    App, Context, Div, FontWeight, RenderImage, ScrollHandle, SharedString, WeakEntity, Window, div,
+    img, prelude::*, px, rgba,
 };
 use kernel::audio::Sound;
 use kernel::desktop::{DEFAULT_FRAME_RATE, Icon, Source, SourceKind, Sources, Status};
@@ -133,13 +133,16 @@ pub enum Page {
     Settings,
 }
 
-/// ダッシュボード（バー）。左から時刻と電池（クイック設定）・画面のミラーリング、右端にデバッグ・設定。
+/// ダッシュボード（バー）。左から時刻と電池（クイック設定）・画面やウィンドウを開く「+」、区切り線を挟んで開いた配信の
+/// ボタン（溜まっていき、はみ出すと横にスクロールする）、区切り線を挟んで右端にデバッグ・設定。
 /// 閉じる（隠す）のは X ボタンの二回押しか、ダッシュボードの外を押したとき。
-/// 今はまっている画面のボタンは強調色。
+/// 今はまっている画面・配信のボタンは強調色。
 pub struct Dashboard {
     panel: PanelId,
     settings: Summon,
     debug: Summon,
+    /// ダッシュボードで開いた配信（画面・ウィンドウ）。押すとはまり、ほかを選ぶと閉じずに隠れる。
+    streams: Vec<Stream>,
     /// 最後にはめた画面（外されたり閉じられたりしていれば、[`Self::current`] は `None`）。
     shown: Option<(Page, PanelId)>,
     /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）。最初に見た値から数える。
@@ -155,9 +158,80 @@ impl Dashboard {
             panel,
             settings,
             debug,
+            streams: Vec::new(),
             shown: None,
             outside: None,
         }
+    }
+
+    /// 配信 `panel` を開いた（はめるのは開く側）。バーにボタンが増える。
+    fn add_stream(
+        &mut self,
+        panel: PanelId,
+        kind: SourceKind,
+        name: SharedString,
+        icon: Option<Arc<RenderImage>>,
+        cx: &mut Context<Self>,
+    ) {
+        self.streams.push(Stream {
+            panel,
+            kind,
+            name,
+            icon,
+            stashed: false,
+            seen_docked: false,
+        });
+        redraw(self.panel, cx);
+    }
+
+    /// はまっている配信を、閉じずに隠して外す（ボタンを押せばまた出せる）。配信でなければ何もしない
+    /// （ほかの画面は、次にはめる画面と入れ替わりに閉じる）。
+    fn stash_docked(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = ui::docked(cx) else {
+            return;
+        };
+        let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) else {
+            return;
+        };
+        stream.stashed = true;
+        // 隠した配信へは打てないので、そこへ打つキーボードも片付ける。
+        if cx
+            .try_global::<ui::keyboard::InputRouting>()
+            .and_then(|r| r.active)
+            .is_some_and(|s| s.target == id)
+        {
+            ui::keyboard::dismiss_keyboard(cx);
+        }
+        // 先に隠してから外す（見えたまま外すと、離れる動きが見えてしまう）。
+        commands(id, [PanelCommand::Hide(true)], cx);
+        ui::undock(id, cx);
+    }
+
+    /// 配信 `id` をはめる（はまっていた配信は隠し、ほかの画面は閉じる）。もうはまっていれば隠す。
+    pub fn toggle_stream(&mut self, id: PanelId, cx: &mut Context<Self>) {
+        let docked = ui::docked(cx) == Some(id);
+        self.stash_docked(cx);
+        if !docked && let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) {
+            // はまったと分かるまでは、外れたとみなして消さない。
+            (stream.stashed, stream.seen_docked) = (false, false);
+            commands(id, [PanelCommand::Hide(false)], cx);
+            ui::dock(id, cx);
+        }
+        redraw(self.panel, cx);
+    }
+
+    /// 閉じた・自分で外して独立させた配信のボタンを消す。隠しているもの（[`Stream::stashed`]）は残す。
+    fn prune_streams(&mut self, cx: &App) {
+        let (ctl, bar) = (cx.global::<PanelControl>(), self.panel);
+        self.streams.retain_mut(|s| {
+            let status = ctl.panels.get(&s.panel).map(|p| &p.status);
+            if status.is_some_and(|st| st.closed) {
+                return false;
+            }
+            let docked = status.and_then(|st| st.parent) == Some(bar);
+            s.seen_docked |= docked;
+            s.stashed || !s.seen_docked || docked
+        });
     }
 
     /// 今はまっている画面。
@@ -176,6 +250,8 @@ impl Dashboard {
             }
             self.shown = None;
         } else {
+            // はまっている配信は閉じずに隠す（ほかの画面は、次の画面と入れ替わりに閉じる）。
+            self.stash_docked(cx);
             let dashboard = cx.weak_entity();
             let opened = Box::new(move |id, cx: &mut App| {
                 ui::dock(id, cx);
@@ -217,10 +293,65 @@ impl Dashboard {
     }
 }
 
+/// ダッシュボードで開いた配信。
+struct Stream {
+    panel: PanelId,
+    kind: SourceKind,
+    name: SharedString,
+    /// ウィンドウのアプリのアイコン（無ければウィンドウの記号）。
+    icon: Option<Arc<RenderImage>>,
+    /// ほかを選んだので隠して外している。
+    stashed: bool,
+    /// ダッシュボードにはまっているのを一度でも見た（その後に外れたら、自分で外して独立させたもの）。
+    seen_docked: bool,
+}
+
+/// バーの区切り線の高さ（px）。
+const SEPARATOR_PX: f32 = 32.0;
+
+fn separator(theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .w(px(1.0))
+        .h(px(SEPARATOR_PX))
+        .bg(rgba(theme.neutral_border_subtle))
+}
+
 impl Render for Dashboard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.prune_streams(cx);
         let theme = Theme::current(cx);
         let current = self.current(cx);
+        let docked = ui::docked(cx);
+        let streams: Vec<_> = self
+            .streams
+            .iter()
+            .map(|s| {
+                let id = s.panel;
+                let variant = if docked == Some(id) {
+                    Variant::Primary
+                } else {
+                    Variant::Default
+                };
+                let glyph = match (s.kind, &s.icon) {
+                    (SourceKind::Window, Some(icon)) => img(icon.clone())
+                        .size(px(font_size::LG))
+                        .into_any_element(),
+                    (SourceKind::Window, None) => design::icon(&icons::APP_WINDOW)
+                        .weight(design::Weight::Bold)
+                        .size(px(font_size::LG))
+                        .into_any_element(),
+                    (SourceKind::Screen, _) => design::icon(&icons::MONITOR)
+                        .weight(design::Weight::Bold)
+                        .size(px(font_size::LG))
+                        .into_any_element(),
+                };
+                components::round_button(&theme, format!("dashboard-stream-{id}"), s.name.clone(), variant)
+                    .flex_none()
+                    .child(glyph)
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_stream(id, cx)))
+            })
+            .collect();
         let variant = |page| {
             if current == Some(page) {
                 Variant::Primary
@@ -242,8 +373,8 @@ impl Render for Dashboard {
         };
         let mirror = page_button(
             "dashboard-mirror",
-            &icons::MONITOR,
-            i18n::t(cx, "dashboard.mirror"),
+            &icons::PLUS,
+            i18n::t(cx, "dashboard.add_screen"),
             Page::Mirror,
         );
         let debug = page_button(
@@ -277,7 +408,21 @@ impl Render for Dashboard {
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
             )
             .child(mirror)
-            .child(div().flex_1())
+            .when(!streams.is_empty(), |d| d.child(separator(&theme)))
+            // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
+            .child(
+                div()
+                    .id("dashboard-streams")
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .overflow_x_scroll()
+                    .flex()
+                    .items_center()
+                    .gap(px(spacing::SM))
+                    .children(streams),
+            )
+            .child(separator(&theme))
             .child(debug)
             .child(settings)
     }
@@ -389,11 +534,16 @@ impl Screen {
                         .min_w_0()
                         .child(glyph)
                         .child(tile_label(source.name.clone()))
-                        .on_click(move |_, _, cx| {
-                            // 映したものは、この一覧と入れ替わりにダッシュボードにはまる。
-                            cx.default_global::<PanelControl>()
-                                .spawns
-                                .push(mirror_spec(source.clone(), dashboard.clone()));
+                        .on_click({
+                            let icon = image.clone();
+                            move |_, _, cx| {
+                                // 映したものは、この一覧と入れ替わりにダッシュボードにはまり、バーにボタンが増える。
+                                cx.default_global::<PanelControl>().spawns.push(mirror_spec(
+                                    source.clone(),
+                                    icon.clone(),
+                                    dashboard.clone(),
+                                ));
+                            }
                         })
                         .into_any_element()
                 })
@@ -617,8 +767,12 @@ impl Render for Mirror {
 
 /// `source` を映すパネルの起動仕様。開くとダッシュボードにはまる（ミラーリングの一覧と入れ替わる）。
 /// タイトルは取得元の名前で、ナビゲーションバーで閉じると配信も止まる。
-fn mirror_spec(source: Source, dashboard: WeakEntity<Dashboard>) -> PanelSpec {
-    let title = source.name.clone();
+fn mirror_spec(
+    source: Source,
+    icon: Option<Arc<RenderImage>>,
+    dashboard: WeakEntity<Dashboard>,
+) -> PanelSpec {
+    let (title, source_title, kind) = (source.name.clone(), source.name.clone(), source.kind);
     PanelSpec::new(Pose::IDENTITY, move |panel, _, cx| {
         cx.default_global::<PanelControl>()
             .panels
@@ -627,13 +781,14 @@ fn mirror_spec(source: Source, dashboard: WeakEntity<Dashboard>) -> PanelSpec {
             .commands
             .push(PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE));
         ui::dock(panel, cx);
-        let _ = dashboard.update(cx, |d, cx| d.track(Page::Mirror, panel, cx));
+        let name = SharedString::from(title.clone());
+        let _ = dashboard.update(cx, |d, cx| d.add_stream(panel, kind, name, icon, cx));
         Mirror { panel }
     })
     // 配信は横幅を保って縦横比を合わせるので、幅をはめる画面とそろえる。
     .sized(SIZE_M, RES_PX)
     .in_view(SCREEN_POSE)
-    .titled_text(title)
+    .titled_text(source_title)
     .dockable()
     // 映しているデスクトップ・ウィンドウへ打てるよう、ナビゲーションバーの左端に OS キーボードのトグルを出す。
     .with_os_keyboard()
@@ -1035,9 +1190,54 @@ mod tests {
         let c = commands(cx, 4);
         assert_eq!(c[0], PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE));
         assert!(docked_to_bar(&c[1]));
-        // 一覧は入れ替わりに閉じ、ダッシュボードは開いたまま。バーのミラーリングのボタンが光る。
+        // 一覧は入れ替わりに閉じ、ダッシュボードは開いたまま。バーに配信のボタンが増える。
         assert!(commands(cx, 2).contains(&PanelCommand::Close));
         assert!(!commands(cx, 1).contains(&PanelCommand::Close));
-        assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), Some(Page::Mirror));
+        let streams = cx.update(|_, cx| bar.read(cx).streams.iter().map(|s| s.panel).collect::<Vec<_>>());
+        assert_eq!(streams, [4]);
+        assert_eq!(cx.update(|_, cx| ui::docked(cx)), Some(4));
+    }
+
+    /// 開いた配信はバーに溜まり、押すとはまる。はまっていた配信は閉じずに隠して外し、もう一度押すと隠す。
+    /// 閉じた配信のボタンは消える。
+    #[gpui::test]
+    fn streams_accumulate_and_switch_without_closing(cx: &mut TestAppContext) {
+        let (bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+            Dashboard::new(1, summon, summon, cx)
+        });
+        bar.update(cx, |d, cx| {
+            d.add_stream(4, SourceKind::Screen, "Display 1".into(), None, cx);
+            d.add_stream(5, SourceKind::Window, "Editor".into(), None, cx);
+        });
+        cx.update(|_, cx| ui::dock(4, cx));
+        cx.run_until_parked();
+        // 配信は区切り線の右に、押せるボタンとして並ぶ。
+        assert!(cx.debug_bounds("dashboard-stream-4").is_some());
+        click(cx, "dashboard-stream-5");
+        assert_eq!(
+            commands(cx, 4)[1..],
+            [PanelCommand::Hide(true), PanelCommand::Parent(None)]
+        );
+        let five = commands(cx, 5);
+        assert_eq!(five[0], PanelCommand::Hide(false));
+        assert!(docked_to_bar(&five[1]));
+        assert!(!commands(cx, 4).contains(&PanelCommand::Close), "隠すだけで閉じない");
+        // もう一度押すと隠す。
+        click(cx, "dashboard-stream-5");
+        assert!(commands(cx, 5).contains(&PanelCommand::Hide(true)));
+        // 閉じた配信のボタンは消える。
+        cx.update(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(4)
+                .or_default()
+                .status
+                .closed = true
+        });
+        bar.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        let streams = cx.update(|_, cx| bar.read(cx).streams.iter().map(|s| s.panel).collect::<Vec<_>>());
+        assert_eq!(streams, [5]);
     }
 }

@@ -102,6 +102,7 @@ dock = "ダッシュボードに戻す"
 
 [dashboard]
 title = "ダッシュボード"
+add_screen = "画面・ウィンドウを開く"
 mirror = "画面のミラーリング"
 quick_settings = "クイック設定"
 debug = "デバッグ"

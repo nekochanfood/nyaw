@@ -169,17 +169,27 @@ pub fn button(
 /// アイコンだけの丸いボタン。見た目だけでは意味が伝わりにくいので、説明（ツールチップ）を必ず持たせる。
 pub fn icon_button(
     theme: &Theme,
-    id: &'static str,
+    id: impl Into<SharedString>,
     glyph: &'static crate::Icon,
     tooltip: impl Into<SharedString>,
     variant: Variant,
 ) -> Button {
-    let mut b = base_button(theme, id.into(), variant).tooltip(tooltip);
-    b.base = b.base.w(px(BUTTON_HEIGHT)).child(
+    round_button(theme, id, tooltip, variant).child(
         crate::icon(glyph)
             .weight(crate::Weight::Bold)
             .size(px(font_size::LG)),
-    );
+    )
+}
+
+/// 中身の無い丸いボタン（アイコンボタンと同じ寸法・状態色・必須の説明）。中身（アプリのアイコンの画像など）は呼び出し側が足す。
+pub fn round_button(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    tooltip: impl Into<SharedString>,
+    variant: Variant,
+) -> Button {
+    let mut b = base_button(theme, id.into(), variant).tooltip(tooltip);
+    b.base = b.base.w(px(BUTTON_HEIGHT));
     b
 }
 
