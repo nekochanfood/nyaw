@@ -94,6 +94,8 @@ pub fn spec(
     .without_nav_bar()
     // 大きさははめる画面に合わせて決めてあるので変えさせない。
     .without_resize()
+    // 画面がはまっていなくても、画面が立つ所を基準に掴んで動かす（はめた画面を掴んだときと同じ動き）。
+    .grab_anchor(pose().inverse() * SCREEN_POSE)
     .with_veil()
 }
 

@@ -55,6 +55,8 @@ pub struct Panel {
     pub locked: bool,
     /// 掴んで大きさを変えられる（[`Overlay::set_resizable`]。既定は変えられる）。
     pub resizable: bool,
+    /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。[`Overlay::set_grab_anchor`]）。`None` ならパネルそのもの。
+    pub grab_anchor: Option<Pose>,
     /// 閉じられた。ヒット判定の対象外で、PanelId は詰めずに欠番のまま残る。
     pub closed: bool,
     /// 隠した（[`Overlay::set_hidden`]）。閉じずにフェードアウトし、ヒット判定・暗転の対象外になる。
@@ -285,9 +287,9 @@ struct HandState {
     /// 外側を押して子を閉じた押下。離すまで、その下にあるパネルへは何も送らない（親のボタンを押したことにしない）。
     swallow: bool,
     menu: bool,
-    /// ドラッグ中のパネルと、レーザーから見たその中心、掴んだ点までのレーザー上の距離。
-    /// 掴んで動かしているパネル・手から見た位置・レーザーに沿った距離・頭に向けた向きから見た傾き・大きさを変えてよいか。
-    dragging: Option<(PanelId, Vec3, f32, Quat, bool)>,
+    /// 掴んで動かしているパネル・手から見た基準の位置・レーザーに沿った距離・基準から見たパネルの姿勢・大きさを変えてよいか。
+    /// 基準（頭へ向けて手で動かすもの）はふつうパネルそのもの（`Pose::IDENTITY`）。[`grab_target`] が決める。
+    dragging: Option<(PanelId, Vec3, f32, Pose, bool)>,
     /// ドラッグの見た目の幅（m）。ドラッグ中だけ。
     drag: Option<f32>,
     /// 掴み中にトリガーで拡大縮小しているとき、前の tick の手の位置。
@@ -390,6 +392,7 @@ impl Overlay {
             attached: None,
             locked: false,
             resizable: true,
+            grab_anchor: None,
             closed: false,
             hidden: false,
             pointer: None,
@@ -641,6 +644,12 @@ impl Overlay {
     /// 掴んで動かせないようにする（`false` で戻す）。レーザーでの操作はそのまま使える。
     pub fn set_locked(&mut self, id: PanelId, locked: bool) {
         self.panels[id].locked = locked;
+    }
+
+    /// 掴んだとき、パネルそのものではなく `anchor`（このパネルから見た姿勢）を手で動かして頭へ向け、パネルはそこに付いてくる。
+    /// ダッシュボードのバーは、画面がはまっていなくても、画面が立つ所を基準に動く。
+    pub fn set_grab_anchor(&mut self, id: PanelId, anchor: Option<Pose>) {
+        self.panels[id].grab_anchor = anchor;
     }
 
     /// 掴んで大きさを変えられるか（ダッシュボードのバーのように、大きさの決まったものは `false`）。
@@ -1068,7 +1077,7 @@ impl Overlay {
         st.grab_held = c.grab;
         st.menu = c.menu;
 
-        if let Some((id, offset, len, lean, resize)) = st.dragging {
+        if let Some((id, offset, len, pivot, resize)) = st.dragging {
             if c.grab {
                 // スティックの上下で、掴んだ点をレーザーに沿って遠く・近くへ。
                 let push = if c.scroll.y.abs() < PUSH_DEADZONE {
@@ -1108,15 +1117,16 @@ impl Overlay {
                 }
                 let new_len = new_len.clamp(GRAB_MIN, GRAB_MAX);
                 let offset = offset + Vec3::NEG_Z * (new_len - len);
-                st.dragging = Some((id, offset, new_len, lean, resize));
+                st.dragging = Some((id, offset, new_len, pivot, resize));
                 // 手に付いて動き、頭の方を向く。頭を傾けてもパネルは傾けない（水平にスナップ）が、
                 // 寝転がっている間は首の傾きに付いてくる（`Pose::panel_up`）。目標へはなめらかに追いつく。
                 let at = aim.transform_point(offset);
+                let reference = p.pose * pivot.inverse();
                 let target = Pose::new(
                     at,
                     facing(at, frame.hmd.position, frame.hmd.panel_up())
-                        .map_or(p.pose.orientation, |q| q * lean),
-                );
+                        .unwrap_or(reference.orientation),
+                ) * pivot;
                 p.pose = approach(p.pose, target, self.dt);
                 st.ray = Some(Ray {
                     hand: c.aim,
@@ -1222,11 +1232,12 @@ impl Overlay {
             let t = hit.map_or(0.0, |h| h.2);
             // ナビゲーションバーを掴むと持ち主を掴む（バーは持ち主に付いてくる）。
             let grabbed = self.panels[id].nav_bar_of.unwrap_or(id);
-            let (id, lean) = grab_target(&self.panels, &self.present, grabbed, frame);
+            let (id, pivot) = grab_target(&self.panels, &self.present, grabbed, frame);
             // 大きさを変えるのは、掴んだものそのものを動かすときだけ（ダッシュボードのバーを掴んで上の画面を変えない）。
             let resize = id == grabbed && self.panels[id].resizable;
-            let offset = aim.inverse().transform_point(self.panels[id].pose.position);
-            st.dragging = Some((id, offset, t, lean, resize));
+            let reference = self.panels[id].pose * pivot.inverse();
+            let offset = aim.inverse().transform_point(reference.position);
+            st.dragging = Some((id, offset, t, pivot, resize));
             st.hover = None;
             st.select = false;
             return;
@@ -1585,17 +1596,21 @@ fn has_child(panels: &[Panel], present: &[PanelId], id: PanelId) -> bool {
         .any(|q| !q.closed && !q.hidden && q.parent.is_some_and(|p| p.panel == id && p.blocks()))
 }
 
-/// `grabbed` を掴んだとき、実際に手で動かすパネルと、頭に向けた向きから見た傾き。
+/// `grabbed` を掴んだとき、実際に手で動かすパネルと、基準（手で動かして頭へ向けるもの）から見たそのパネルの姿勢。
 /// 固定した子（[`Parent::docked`]）でつながったもの（ダッシュボードのバー・そこにはめた画面・キーボード）は、どれを掴んでも
-/// 上にはめた画面を基準に動かす（頭に向けて垂直に立て、ほかは付いてくる）。はめた画面が無ければ根元を、今の傾きのまま動かす。
-fn grab_target(panels: &[Panel], present: &[PanelId], grabbed: PanelId, frame: &Frame) -> (PanelId, Quat) {
+/// 上にはめた画面を基準に動かす（頭に向けて垂直に立て、ほかは付いてくる）。はめた画面が無ければ、根元の
+/// [`Panel::grab_anchor`]（画面が立つ所）を基準にする。それも無ければ根元を今の傾きのまま動かす。
+fn grab_target(panels: &[Panel], present: &[PanelId], grabbed: PanelId, frame: &Frame) -> (PanelId, Pose) {
     let docked = |id: PanelId| {
         present
             .iter()
             .any(|&c| panels[c].parent.is_some_and(|q| q.panel == id && q.docked) && !panels[c].closed)
     };
-    if !panels[grabbed].parent.is_some_and(|q| q.docked) && !docked(grabbed) {
-        return (grabbed, Quat::IDENTITY);
+    if !panels[grabbed].parent.is_some_and(|q| q.docked)
+        && !docked(grabbed)
+        && panels[grabbed].grab_anchor.is_none()
+    {
+        return (grabbed, Pose::IDENTITY);
     }
     let root = carried(&panels, grabbed).last().copied().unwrap_or(grabbed);
     let slot = present.iter().copied().find(|&c| {
@@ -1603,12 +1618,15 @@ fn grab_target(panels: &[Panel], present: &[PanelId], grabbed: PanelId, frame: &
         !q.closed && !q.hidden && q.parent.is_some_and(|q| q.panel == root && q.slot.is_some())
     });
     if let Some(slot) = slot {
-        return (slot, Quat::IDENTITY);
+        return (slot, Pose::IDENTITY);
     }
     let p = &panels[root];
+    if let Some(anchor) = p.grab_anchor {
+        return (root, anchor.inverse());
+    }
     let lean = facing(p.pose.position, frame.hmd.position, frame.hmd.panel_up())
         .map_or(Quat::IDENTITY, |q| q.inverse() * p.pose.orientation);
-    (root, lean)
+    (root, Pose::new(Vec3::ZERO, lean))
 }
 
 /// `id` の親、その親…（近い順）。
@@ -2472,6 +2490,25 @@ mod tests {
         ov.tick(&mut vr);
         assert!(ov.panel(bar).size.abs_diff_eq(near, 1e-5));
         assert!(near.abs_diff_eq(Vec2::new(0.4, 0.05), 1e-5), "1m 先での大きさのまま");
+    }
+
+    /// 基準（`grab_anchor`）を持つパネルは、掴むと基準を手で動かして頭へ向け、パネルはそこに付いてくる。
+    #[test]
+    fn grabbing_a_panel_with_an_anchor_turns_the_anchor_to_the_head() {
+        let (mut vr, mut ov) = setup();
+        // 画面が立つ所: パネルの 0.6m 上で、パネルから見て 0.5 rad 起こした向き。
+        let anchor = Pose::new(Vec3::Y * 0.6, Quat::from_rotation_x(0.5));
+        ov.set_grab_anchor(0, Some(anchor));
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        assert!(ov.grabbed(0));
+        controller(&mut vr, at(0.5, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        let reference = ov.panel(0).pose * anchor;
+        // 基準の面は頭（原点）を向き、パネルは基準から決まる所にある。
+        let to_eye = (Vec3::ZERO - reference.position).normalize();
+        assert!((reference.orientation * Vec3::Z).abs_diff_eq(to_eye, 1e-3));
+        assert!(reference.position.x > 0.4);
     }
 
     #[test]

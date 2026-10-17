@@ -669,6 +669,8 @@ pub struct PanelSpec {
     locked: bool,
     /// 掴んで大きさを変えられる（既定。[`Self::without_resize`] で外す）。
     resizable: bool,
+    /// 掴んだときに手で動かす基準（[`Self::grab_anchor`]）。
+    grab_anchor: Option<Pose>,
     /// 親子関係（[`Self::child`]）。
     parent: Option<kernel::Parent>,
     animated: bool,
@@ -716,6 +718,7 @@ impl PanelSpec {
             attach: None,
             locked: false,
             resizable: true,
+            grab_anchor: None,
             parent: None,
             animated: true,
             veil: false,
@@ -818,6 +821,12 @@ impl PanelSpec {
     /// 起動時から掴めなくする。
     pub fn locked(mut self) -> Self {
         self.locked = true;
+        self
+    }
+
+    /// 掴んだとき、パネルそのものではなく `anchor`（このパネルから見た姿勢）を手で動かして頭へ向ける。パネルはそこに付いてくる。
+    pub fn grab_anchor(mut self, anchor: Pose) -> Self {
+        self.grab_anchor = Some(anchor);
         self
     }
 
@@ -1716,6 +1725,9 @@ fn open_panel(
     }
     if !spec.resizable {
         kernel.apply(panel, PanelCommand::Resizable(false));
+    }
+    if spec.grab_anchor.is_some() {
+        kernel.apply(panel, PanelCommand::GrabAnchor(spec.grab_anchor));
     }
     if let Some(parent) = spec.parent {
         kernel.apply(panel, PanelCommand::Parent(Some(parent)));
