@@ -295,6 +295,8 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 ## 音声（パネルのスピーカー）
 
 - どのパネルにもスピーカー（音源）があり、パネルの中で鳴らす音はそこから聞こえる。`PanelCommand::Play(audio::Sound, looping)` で鳴らし（読み込みは別スレッド。同じパネルでも別のパネルでも、いくつでも重ねて鳴る）、`StopAudio` でそのパネルの音を止める。パネルを閉じると止まる。`PanelStatus::audio` に再生中の数・設定・立体化の手段。
+- `PanelCommand::PlayAt { sound, at, pitch }` はパネルの中の点（ピクセル）から一度だけ鳴らす。その点に置いた 1 点の音源（左右を混ぜる）で、パネルごとに 8 個を順に使い回し、鳴らした時の置き場所に留まる。`pitch` は速さの倍率（`audio::Clip::pitched`）。
+- 仮想キーボード（`ui::keyboard::KeyboardView`）はキーを押すと、押した点から `PlayAt` でキーの音（`crates/ui/assets/keyboard/*.wav`。Enter・Backspace・Space は専用、ほかは tap）を鳴らす。音の高さは押すたびに 1 ± 0.1 で揺らす。
 - 立体化は既定で有効（オプトアウト）。`PanelCommand::Spatial(false)` で外すと、置き場所・頭の向きに関係なくそのまま左右に鳴る。
 - スピーカーはモノラル（パネルの中央の 1 点）とステレオ（パネルの左右の端の 2 点。間隔はパネルの幅）。既定の `Layout::Auto` は鳴らす音に合わせ、1ch と左右がまったく同じ 2ch はモノラル、それ以外はステレオ。`PanelCommand::SpeakerLayout(Layout::Mono | Layout::Stereo)` で固定できる（モノラルは左右を混ぜ、ステレオはモノラルの音を両端から鳴らす）。
 - 聞き手は HMD。カーネルが毎 tick、鳴っているスピーカーだけをパネルの姿勢に合わせて動かす（鳴っていなければ何も送らない）。距離は 1m までは減衰せず、その先は逆距離で減る（Steam Audio の既定の逆距離モデル）。

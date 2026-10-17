@@ -66,6 +66,13 @@ pub enum PanelCommand {
     Stream(Option<desktop::Source>, u32),
     /// このパネルのスピーカーで音を鳴らす（`true` で繰り返す）。読み込みは別スレッドで、いくつでも重ねて鳴らせる。
     Play(audio::Sound, bool),
+    /// このパネルの中の点（パネルのピクセル、左上原点）から一度だけ音を鳴らす。キーボードのキーのように、押した所から聞こえる。
+    /// `pitch` は速さ（1 = そのまま。上げると高く短くなる）。
+    PlayAt {
+        sound: audio::Sound,
+        at: Vec2,
+        pitch: f32,
+    },
     /// このパネルで鳴っている音をすべて止める。
     StopAudio,
     /// このパネルの音を置き場所から聞こえるようにする（既定）。`false` でそのまま左右に鳴らす。
@@ -135,6 +142,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     pub audio: audio::Engine,
     /// 音を鳴らした・設定したパネルのスピーカー。
     speakers: std::collections::HashMap<PanelId, audio_panels::SpeakerConfig>,
+    /// パネルごとの、次に使う点の音のスピーカー（[`PanelCommand::PlayAt`]）。
+    point_slots: std::collections::HashMap<PanelId, u64>,
     /// X ボタンの二回連続押し（[`PanelStatus::dashboard`]）。
     dashboard: DoublePress,
 }
@@ -251,6 +260,7 @@ impl<B: VrBackend> Kernel<B> {
             desktop_panels: Default::default(),
             audio: audio::Engine::offline(48_000, false),
             speakers: Default::default(),
+            point_slots: Default::default(),
             dashboard: DoublePress::default(),
         }
     }
@@ -502,7 +512,8 @@ impl<B: VrBackend> Kernel<B> {
                 self.start_desktop(panel, source, frame_rate)
             }
             PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
-            PanelCommand::StopAudio => self.audio.stop_speaker(panel as u64),
+            PanelCommand::PlayAt { sound, at, pitch } => self.play_audio_at(panel, sound, at, pitch),
+            PanelCommand::StopAudio => self.stop_audio(panel),
             PanelCommand::Spatial(spatial) => self.configure_speaker(panel, |c| c.spatial = spatial),
             PanelCommand::SpeakerLayout(layout) => {
                 self.configure_speaker(panel, |c| c.layout = layout)
