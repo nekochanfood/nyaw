@@ -63,8 +63,8 @@ pub type Summon = fn(Box<dyn FnOnce(PanelId, &mut App)>) -> PanelSpec;
 pub fn pose() -> Pose {
     let margin = |size: Vec2, res: (u32, u32)| components::PANEL_MARGIN * size.y / res.1 as f32;
     let face = SIZE_M.y / 2.0 - margin(SIZE_M, RES_PX);
-    // ナビゲーションバーは、画面の地の下端までの距離に比例して大きくなる。
-    let nav_bar = ui::NAV_BAR_HEIGHT_M * DISTANCE.hypot(face);
+    // はめた画面のナビゲーションバーは、距離で大きさを変えない（1m 先での大きさのまま）。
+    let nav_bar = ui::NAV_BAR_HEIGHT_M;
     let top = Vec3::new(0.0, -(face + nav_bar + kernel::overlay::SLOT_GAP), -DISTANCE);
     let rotation = Quat::from_rotation_x(-BAR_TILT);
     let half = BAR_M.y / 2.0 - margin(BAR_M, BAR_PX);
@@ -92,6 +92,8 @@ pub fn spec(
     .in_view(pose())
     // 閉じる（隠す）操作はバー自身の X にある。
     .without_nav_bar()
+    // 大きさははめる画面に合わせて決めてあるので変えさせない。
+    .without_resize()
     .with_veil()
 }
 

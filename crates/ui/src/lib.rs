@@ -43,6 +43,8 @@ pub struct PointerBridge {
     /// （オーバーレイは指している間 毎 tick Move を出すので、止まっていても描き直しと読み戻しが毎フレーム走ってしまう）。
     sent: Option<Point<Pixels>>,
     rehover: bool,
+    /// スワイプとみなす動き（論理 px）。[`pump`] がパネルの距離と密度から毎フレーム決める（[`SWIPE_SLOP`] を下回らない）。
+    pub slop: f32,
 }
 
 /// タッチで押している間の状態。
@@ -68,9 +70,11 @@ const FRICTION: f32 = 0.95;
 /// 慣性がこれより遅くなったら止める（論理 px / フレーム）。
 const MOMENTUM_STOP: f32 = 0.5;
 
-/// これより動いたらタップではなくスワイプ（論理 px）。
-// ponytail: 手ブレを見込んだ固定値。指す距離で変えたくなったら角度で決める。
+/// これより動いたらタップではなくスワイプ（論理 px）。指す距離・パネルの密度で決める閾値（[`SWIPE_SLOP_DEG`]）の下限。
 pub const SWIPE_SLOP: f32 = 12.0;
+/// これより（頭から見た角度で）動いたらタップではなくスワイプ。遠い・画素の細かいパネル（キーボード）でも、
+/// 手ブレでタップがスワイプにならないよう、角度で決めて毎フレーム px に直す（[`PointerBridge::slop`]）。
+pub const SWIPE_SLOP_DEG: f32 = 1.0;
 
 impl PointerBridge {
     pub fn translate(&mut self, ev: PointerEvent, mode: PointerMode) -> Vec<PlatformInput> {
@@ -82,7 +86,7 @@ impl PointerBridge {
                     let (last, pos) = (self.pos, at(pos));
                     let d = pos - t.start;
                     let was_swiping = t.swiping;
-                    t.swiping |= f32::from(d.x).hypot(f32::from(d.y)) > SWIPE_SLOP;
+                    t.swiping |= f32::from(d.x).hypot(f32::from(d.y)) > self.slop.max(SWIPE_SLOP);
                     if !t.swiping {
                         if t.at.elapsed() < LONG_PRESS {
                             return Vec::new();
@@ -541,6 +545,9 @@ pub fn pump<B: VrBackend>(
     let mut gpui = Vec::new();
     for e in kernel.tick() {
         let bridge = bridges.entry((e.panel, e.hand)).or_default();
+        let p = kernel.panel(e.panel);
+        let distance = p.pose.position.distance(kernel.hmd().position);
+        bridge.slop = SWIPE_SLOP_DEG.to_radians().tan() * distance * p.resolution.0 as f32 / p.size.x;
         let input = bridge.translate(e.event, mode);
         if bridge.held() {
             // 長押しでドラッグになった。ほかのパネルへ運べるよう、オーバーレイのキャプチャを外す。
@@ -649,6 +656,8 @@ pub struct PanelSpec {
     attach: Option<(Device, Pose)>,
     /// 起動時から掴めない。
     locked: bool,
+    /// 掴んで大きさを変えられる（既定。[`Self::without_resize`] で外す）。
+    resizable: bool,
     /// 親子関係（[`Self::child`]）。
     parent: Option<kernel::Parent>,
     animated: bool,
@@ -695,6 +704,7 @@ impl PanelSpec {
             resolution: PANEL_PX,
             attach: None,
             locked: false,
+            resizable: true,
             parent: None,
             animated: true,
             veil: false,
@@ -809,6 +819,12 @@ impl PanelSpec {
     /// 起動時から掴めなくする。
     pub fn locked(mut self) -> Self {
         self.locked = true;
+        self
+    }
+
+    /// 掴んでも大きさを変えられないようにする（大きさの決まったもの。ダッシュボードのバーなど）。
+    pub fn without_resize(mut self) -> Self {
+        self.resizable = false;
         self
     }
 
@@ -1692,6 +1708,9 @@ fn open_panel(
     if spec.locked {
         kernel.apply(panel, PanelCommand::Lock(true));
     }
+    if !spec.resizable {
+        kernel.apply(panel, PanelCommand::Resizable(false));
+    }
     if let Some(parent) = spec.parent {
         kernel.apply(panel, PanelCommand::Parent(Some(parent)));
     }
@@ -1986,6 +2005,22 @@ mod tests {
             (Point::new(px(3.0), px(4.0)), Some(MouseButton::Left))
         );
         assert!(!b.pressed);
+    }
+
+    /// 遠い・画素の細かいパネルでは、スワイプとみなす動き（`slop`）が大きくなり、手ブレ程度の動きはタップのまま。
+    #[test]
+    fn wider_slop_keeps_a_shaky_tap_a_tap() {
+        let touch = PointerMode::Touch;
+        let mut b = PointerBridge {
+            slop: 40.0,
+            ..Default::default()
+        };
+        b.translate(PointerEvent::Down { pos: Vec2::new(10.0, 10.0) }, touch);
+        // 固定の下限（SWIPE_SLOP）は超えるが、このパネルの閾値の内。
+        let moved = b.translate(PointerEvent::Move { pos: Vec2::new(40.0, 10.0) }, touch);
+        assert!(moved.is_empty());
+        let tap = b.translate(PointerEvent::Up { pos: Vec2::new(40.0, 10.0) }, touch);
+        assert!(tap.iter().any(|i| matches!(i, PlatformInput::MouseDown(_))));
     }
 
     /// タッチ: 動かさずに離すとタップ（押して離す）、しきい値を超えて動かすとスワイプ（指に付いてくるスクロール）だけになる。

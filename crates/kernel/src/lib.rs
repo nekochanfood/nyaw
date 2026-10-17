@@ -38,6 +38,8 @@ pub enum PanelCommand {
     Attach(Device, Pose),
     Detach,
     Lock(bool),
+    /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
+    Resizable(bool),
     /// このパネルのイン・アウトアニメーションを有効化・無効化する。
     Animated(bool),
     /// このパネルが出ている間、空間全体を暗くする（`Overlay::set_veil`）。
@@ -593,6 +595,7 @@ impl<B: VrBackend> Kernel<B> {
                     .set_animated(&mut self.subsystems.backend, panel, animated)
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
+            PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
             PanelCommand::Hide(hidden) => {
                 self.overlay
                     .set_hidden(&mut self.subsystems.backend, panel, hidden)
