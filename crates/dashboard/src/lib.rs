@@ -141,16 +141,21 @@ pub struct Dashboard {
     debug: Summon,
     /// 最後にはめた画面（外されたり閉じられたりしていれば、[`Self::current`] は `None`）。
     shown: Option<(Page, PanelId)>,
+    /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）。最初に見た値から数える。
+    outside: Option<u32>,
 }
 
 impl Dashboard {
     fn new(panel: PanelId, settings: Summon, debug: Summon, cx: &mut Context<Self>) -> Self {
         tick_every_second(panel, cx);
+        cx.observe_global::<PanelControl>(Self::close_on_outside_press)
+            .detach();
         Self {
             panel,
             settings,
             debug,
             shown: None,
+            outside: None,
         }
     }
 
@@ -185,6 +190,23 @@ impl Dashboard {
                 .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
         }
         redraw(self.panel, cx);
+    }
+
+    /// 出ている間に何も無い所（ダッシュボードにも、ほかのパネルにも当たらない所）を押したら隠す。
+    /// フレームループが状態を書き戻すたびに呼ばれるので、変わっていなければ何もしない（書き込むと自分がまた呼ばれる）。
+    fn close_on_outside_press(&mut self, cx: &mut Context<Self>) {
+        let Some(status) = cx
+            .global::<PanelControl>()
+            .panels
+            .get(&self.panel)
+            .map(|p| &p.status)
+        else {
+            return;
+        };
+        let (count, hidden) = (status.outside_press, status.hidden);
+        if self.outside.replace(count).is_some_and(|seen| seen != count) && !hidden {
+            hide(self.panel, cx);
+        }
     }
 
     /// `panel` に `page` をはめた。
@@ -952,6 +974,27 @@ mod tests {
         click(cx, "dashboard-close");
         assert!(commands(cx, 1).contains(&PanelCommand::Hide(true)));
         assert!(!commands(cx, 1).contains(&PanelCommand::Close));
+    }
+
+    /// 出ている間に何も無い所を押すと隠す（開いた時点までの数では隠さない）。
+    #[gpui::test]
+    fn pressing_outside_hides_the_dashboard(cx: &mut TestAppContext) {
+        let (_bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
+        let press = |cx: &mut VisualTestContext, n| {
+            cx.update(|_, cx| {
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(1)
+                    .or_default()
+                    .status
+                    .outside_press = n
+            });
+            cx.run_until_parked();
+        };
+        press(cx, 4);
+        assert!(!commands(cx, 1).contains(&PanelCommand::Hide(true)));
+        press(cx, 5);
+        assert!(commands(cx, 1).contains(&PanelCommand::Hide(true)));
     }
 
     #[gpui::test]

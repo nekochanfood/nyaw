@@ -479,7 +479,8 @@ impl VrBackend for OpenVrBackend {
             }
         }
         if let Some(input) = &self.input {
-            if let Err(e) = input.update(self.block_input) {
+            // SteamVR のメニューが開いている間は奪わない（奪うとメニューを操作できない）。
+            if let Err(e) = input.update(self.block_input && !self.dashboard) {
                 logger::warn!("failed to sync SteamVR Input state", error = e);
             }
             for (hand, device, aim, actions) in input.hands(predict) {

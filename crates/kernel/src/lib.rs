@@ -130,6 +130,9 @@ pub struct PanelStatus {
     /// ショートカットボタン（左手の X）を二回続けて押した回数（全パネル共通。起動から数える）。
     /// 押した瞬間を取りこぼさないようカーネルが毎 tick 数え、何をするかは画面が決める（wrist はダッシュボードを開く・閉じる）。
     pub double_press: u32,
+    /// どのパネルにも当たっていない所でトリガーを押した回数（全パネル共通。起動から数える）。何をするかは画面が決める
+    /// （ダッシュボードは出ていれば隠す）。
+    pub outside_press: u32,
     /// パネルを掴んでいる。
     pub grabbed: bool,
     /// 閉じられた。
@@ -661,6 +664,7 @@ impl<B: VrBackend> Kernel<B> {
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
             double_press: self.shortcut.count + self.hand_shortcut.count,
+            outside_press: self.overlay.outside_presses(),
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
             hidden: p.hidden,

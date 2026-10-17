@@ -348,6 +348,8 @@ pub struct Overlay {
     dims: HashMap<PanelId, (Animation, Instant)>,
     /// 位置のトランジション（はめる・外すときの移動）。
     glides: HashMap<PanelId, Glide>,
+    /// どのパネルにも当たっていない所でトリガーを押した回数（[`Overlay::outside_presses`]）。
+    outside_presses: u32,
     /// 空間全体の暗転。
     veil: Veil,
     /// 前の tick の時刻と、そこからの経過（秒。[`TICK_MIN`]〜[`TICK_MAX`] に丸める）。
@@ -539,6 +541,11 @@ impl Overlay {
     /// どちらかの手でメニューボタンを押している。
     pub fn menu_held(&self) -> bool {
         self.hands.values().any(|h| h.menu)
+    }
+
+    /// どのパネルにも当たっていない所でトリガーを押した回数（起動から数える）。
+    pub fn outside_presses(&self) -> u32 {
+        self.outside_presses
     }
 
     /// どちらかの手のレーザーが `id` を指している。ナビゲーションバーは、持ち主かバー自身を指していれば（持ち主から
@@ -1224,6 +1231,10 @@ impl Overlay {
         }
 
         let Some((id, pos, t)) = hit else {
+            // 何も無い所を押した（ダッシュボードの外を押して閉じる。何をするかは画面が決める）。
+            if press && !st.swallow {
+                self.outside_presses += 1;
+            }
             st.hover = None;
             st.select = false;
             return;
@@ -2689,6 +2700,24 @@ mod tests {
         assert!(0.0 < dim(&ov) && dim(&ov) < DIM);
         step(&mut ov, &mut vr, 0.075);
         assert_eq!(dim(&ov), 0.0);
+    }
+
+    /// 何も無い所を押すと数え、パネルを押したときは数えない。
+    #[test]
+    fn presses_on_nothing_are_counted() {
+        let (mut vr, mut ov) = setup();
+        // パネル（正面 1m）を押す。
+        controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
+        ov.tick(&mut vr);
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        assert_eq!(ov.outside_presses(), 0);
+        // 横の何も無い所を押す。
+        controller(&mut vr, at(5.0, 0.0, 0.0), &[]);
+        ov.tick(&mut vr);
+        controller(&mut vr, at(5.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
+        ov.tick(&mut vr);
+        assert_eq!(ov.outside_presses(), 1);
     }
 
     /// 暗転している間（ダッシュボードが出ている間）はゲームへの入力を止め、隠す・閉じると戻す。
