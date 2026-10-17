@@ -43,6 +43,7 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
                     name: name.into(),
                     kind,
                     icon: None,
+                    app: None,
                     target: 0,
                 });
             }

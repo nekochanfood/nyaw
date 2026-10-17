@@ -17,6 +17,7 @@ use gpui::{
 };
 use kernel::audio::Sound;
 use kernel::desktop::{DEFAULT_FRAME_RATE, Icon, Source, SourceKind, Sources, Status};
+use kernel::subsystems::media;
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, Setting};
 use ui::{PanelControl, PanelSpec};
@@ -46,6 +47,12 @@ const TILE_PX: f32 = 120.0;
 const TILE_ICON_PX: f32 = 48.0;
 /// クイック設定の上の時刻の大きさ（px）。
 const QUICK_TIME_PX: f32 = 48.0;
+/// 再生中の画面: ジャケットの一辺、シークバーの幅・棒の太さ・押せる高さ（px）、背景に重ねる地の濃さ（0..=255）。
+const ART_DISPLAY_PX: f32 = 280.0;
+const SEEK_PX: f32 = 560.0;
+const SEEK_BAR_PX: f32 = 6.0;
+const SEEK_HIT_PX: f32 = 32.0;
+const NOW_PLAYING_VEIL: u32 = 0x8c;
 /// これより少ない残量は危険の色にする。
 const LOW_BATTERY: f32 = 0.2;
 
@@ -128,6 +135,8 @@ pub fn show(dashboard: PanelId, cx: &mut App) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     QuickSettings,
+    /// 再生中のメディア（[`Screen`]）。
+    NowPlaying,
     Mirror,
     Debug,
     Settings,
@@ -290,7 +299,9 @@ impl Dashboard {
                 let _ = dashboard.update(cx, |d, cx| d.track(page, id, cx));
             });
             let spec = match page {
-                Page::QuickSettings | Page::Mirror => screen_spec(page, cx.weak_entity(), opened),
+                Page::QuickSettings | Page::NowPlaying | Page::Mirror => {
+                    screen_spec(page, cx.weak_entity(), opened)
+                }
                 Page::Debug => (self.debug)(opened),
                 Page::Settings => (self.settings)(opened),
             };
@@ -472,8 +483,9 @@ fn separator(theme: &Theme) -> Div {
 }
 
 impl Render for Dashboard {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.prune_streams(cx);
+        let time_width = clock_width(window, font_size::MD);
         let theme = Theme::current(cx);
         let current = self.current(cx);
         let docked = ui::docked(cx);
@@ -515,6 +527,7 @@ impl Render for Dashboard {
         };
         // 時刻の横の電池は HMD のもの（無ければ最初のデバイス）。
         let ctl = cx.global::<PanelControl>();
+        let has_media = ctl.media.is_some();
         let battery = ctl
             .batteries
             .iter()
@@ -551,17 +564,27 @@ impl Render for Dashboard {
             .px(px(spacing::SM))
             .child(menu)
             .child(
-                components::button(
-                    &theme,
-                    "dashboard-quick-settings",
-                    chrono::Local::now().format("%H:%M").to_string(),
-                    variant(Page::QuickSettings),
-                )
-                .gap(px(spacing::SM))
+                components::content_button(&theme, "dashboard-quick-settings", variant(Page::QuickSettings))
+                    .px(px(spacing::XL))
+                    // 数字で幅が変わって落ち着かないので、時刻の幅を固定する。
+                    .child(fixed_clock(time_width))
                 .tooltip(i18n::t(cx, "dashboard.quick_settings"))
                 .children(battery.map(|b| design::icon(battery_glyph(&b)).size(px(font_size::LG))))
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
             )
+            // 何か再生しているときだけ、再生中の画面のボタンを出す。
+            .when(has_media, |d| {
+                d.child(
+                    components::icon_button(
+                        &theme,
+                        "dashboard-now-playing",
+                        &icons::PLAYLIST,
+                        i18n::t(cx, "dashboard.now_playing"),
+                        variant(Page::NowPlaying),
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::NowPlaying, cx))),
+                )
+            })
             .child(mirror)
             .when(!streams.is_empty(), |d| d.child(separator(&theme)))
             // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
@@ -589,6 +612,7 @@ fn screen_spec(
 ) -> PanelSpec {
     let title = match page {
         Page::Mirror => "dashboard.mirror",
+        Page::NowPlaying => "dashboard.now_playing",
         _ => "dashboard.quick_settings",
     };
     PanelSpec::new(Pose::IDENTITY, move |id, _, cx: &mut Context<Screen>| {
@@ -609,6 +633,18 @@ pub struct Screen {
     pending: Option<Sources>,
     error: Option<String>,
     scroll: ScrollHandle,
+    /// 再生中の画面の画像（ジャケット・背景・アプリのアイコン）。元の画像が変わったときだけ作り直す。
+    media_images: Option<MediaImages>,
+    /// 取得元の一覧が届いたら、再生中のアプリのウィンドウを開く。
+    open_app: bool,
+}
+
+/// 再生中の画面の画像。`key` は元の画像（[`kernel::subsystems::media::Image`]）の中身の場所。
+struct MediaImages {
+    key: [usize; 3],
+    art: Option<Arc<RenderImage>>,
+    backdrop: Option<Arc<RenderImage>>,
+    icon: Option<Arc<RenderImage>>,
 }
 
 impl Screen {
@@ -627,11 +663,260 @@ impl Screen {
             pending: None,
             error: None,
             scroll: ScrollHandle::new(),
+            media_images: None,
+            open_app: false,
         };
-        if page == Page::Mirror {
+        // 再生中の画面は、アプリのアイコンが OS から取れないとき（デスクトップのアプリ）にウィンドウのものを使う。
+        if matches!(page, Page::Mirror | Page::NowPlaying) {
             this.refresh();
         }
         this
+    }
+
+    /// 再生中のメディアのアプリのウィンドウ（取得元の一覧から。実行ファイル名か、ウィンドウの名前で探す）。
+    fn app_window(&self, app: &media::App) -> Option<&(Source, Option<Arc<RenderImage>>)> {
+        let stem = |s: &str| {
+            let s = s.to_ascii_lowercase();
+            s.strip_suffix(".exe").map(str::to_owned).unwrap_or(s)
+        };
+        let (id, name) = (stem(&app.id), app.name.to_lowercase());
+        self.sources.iter().find(|(s, _)| {
+            s.kind == SourceKind::Window
+                && (s.app.as_deref().is_some_and(|a| stem(a) == id || stem(a) == name)
+                    || (!name.is_empty() && s.name.to_lowercase().contains(&name)))
+        })
+    }
+
+    fn now_playing(&mut self, cx: &mut Context<Self>) -> Div {
+        self.poll_sources();
+        let Some(m) = cx.global::<PanelControl>().media.clone() else {
+            let theme = Theme::current(cx);
+            return components::card_panel(&theme)
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_color(rgba(theme.neutral_text_low))
+                .child(i18n::t(cx, "dashboard.nothing_playing"));
+        };
+        // アプリの画面を開く: Windows はそのアプリのウィンドウをダッシュボードに映す。見つからなければ（Linux も）
+        // アプリに前に出るよう頼む。
+        if self.open_app && self.pending.is_none() {
+            self.open_app = false;
+            match self.app_window(&m.app) {
+                Some((source, icon)) => {
+                    let spec = mirror_spec(source.clone(), icon.clone(), self.dashboard.clone());
+                    cx.default_global::<PanelControl>().spawns.push(spec);
+                }
+                None => commands(self.panel, [PanelCommand::Media(media::Command::Raise)], cx),
+            }
+        }
+        let place = |i: &Option<media::Image>| i.as_ref().map_or(0, |i| i.rgba.as_ptr() as usize);
+        let key = [place(&m.art), place(&m.backdrop), place(&m.app.icon)];
+        if self.media_images.as_ref().is_none_or(|i| i.key != key) {
+            let convert = |i: &Option<media::Image>| {
+                i.as_ref().and_then(|i| rgba_image(i.width, i.height, &i.rgba))
+            };
+            self.media_images = Some(MediaImages {
+                key,
+                art: convert(&m.art),
+                backdrop: convert(&m.backdrop),
+                icon: convert(&m.app.icon),
+            });
+        }
+        let images = self.media_images.as_ref().expect("made above");
+        // 背景がジャケットで変わるので、明るい背景には暗い文字（ライト）、暗い背景には明るい文字（ダーク）を載せる。
+        let theme = match m.light {
+            Some(true) => Theme::LIGHT,
+            Some(false) => Theme::DARK,
+            None => Theme::current(cx),
+        };
+        let low = theme.neutral_text_low;
+        let icon = images
+            .icon
+            .clone()
+            .or_else(|| self.app_window(&m.app).and_then(|(_, i)| i.clone()));
+        let panel = self.panel;
+        let send = move |command| move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
+            commands(panel, [PanelCommand::Media(command)], cx)
+        };
+        let control = |id: &'static str, glyph, key, enabled: bool, command| {
+            components::icon_button(&theme, id, glyph, i18n::t(cx, key), Variant::Ghost)
+                .when(!enabled, |b| b.opacity(0.4))
+                .when(enabled, |b| b.on_click(send(command)))
+        };
+        let (position, duration) = (m.position_now(), m.duration);
+        let fraction = duration.map_or(0.0, |d| {
+            (position.as_secs_f32() / d.as_secs_f32().max(0.001)).clamp(0.0, 1.0)
+        });
+        let seek_bounds = std::rc::Rc::new(std::cell::Cell::new(gpui::Bounds::default()));
+        let bounds_in = seek_bounds.clone();
+        components::card_panel(&theme)
+            .when_some(images.backdrop.clone(), |d, backdrop| {
+                d.child(
+                    img(backdrop)
+                        .absolute()
+                        .inset_0()
+                        .size_full()
+                        .object_fit(gpui::ObjectFit::Cover)
+                        .rounded(px(design::radius::XL)),
+                )
+            })
+            // ぼかしたジャケットの上に地の色を薄く重ね、文字と部品を読みやすくする。
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(design::radius::XL))
+                    .bg(rgba(theme.background & !0xff | NOW_PLAYING_VEIL)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top(px(spacing::LG))
+                    .left(px(spacing::LG))
+                    .child(
+                        components::content_button(&theme, "now-playing-app", Variant::Ghost)
+                            .tooltip(i18n::t(cx, "dashboard.open_app"))
+                            .child(match icon {
+                                Some(icon) => img(icon).size(px(font_size::LG)).into_any_element(),
+                                None => design::icon(&icons::APP_WINDOW)
+                                    .size(px(font_size::LG))
+                                    .into_any_element(),
+                            })
+                            .child(m.app.name.clone())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open_app = true;
+                                this.refresh();
+                                redraw(this.panel, cx);
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(spacing::SM))
+                    .text_color(rgba(theme.neutral_text))
+                    .child(match images.art.clone() {
+                        Some(art) => img(art)
+                            .size(px(ART_DISPLAY_PX))
+                            .rounded(px(design::radius::LG))
+                            .into_any_element(),
+                        None => div()
+                            .size(px(ART_DISPLAY_PX))
+                            .rounded(px(design::radius::LG))
+                            .bg(rgba(theme.control))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(design::icon(&icons::MUSIC_NOTES).size(px(TILE_ICON_PX)))
+                            .into_any_element(),
+                    })
+                    .child(
+                        div()
+                            .debug_selector(|| "now-playing-title".into())
+                            .mt(px(spacing::MD))
+                            .max_w(px(SEEK_PX))
+                            .truncate()
+                            .text_size(px(font_size::LG))
+                            .font_weight(FontWeight::BOLD)
+                            .child(m.title.clone()),
+                    )
+                    .child(
+                        div()
+                            .max_w(px(SEEK_PX))
+                            .truncate()
+                            .text_color(rgba(low))
+                            .child(m.artist.clone()),
+                    )
+                    // シークバー: ハンドルの無い無彩色の棒。押した位置へ移る（シークできるときだけ）。
+                    .child(
+                        div()
+                            .id("now-playing-seek")
+                            .debug_selector(|| "now-playing-seek".into())
+                            .mt(px(spacing::MD))
+                            .w(px(SEEK_PX))
+                            .h(px(SEEK_HIT_PX))
+                            .relative()
+                            .flex()
+                            .items_center()
+                            .child(
+                                gpui::canvas(move |bounds, _, _| bounds_in.set(bounds), |_, _, _, _| {})
+                                    .absolute()
+                                    .inset_0(),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(SEEK_BAR_PX))
+                                    .rounded(px(design::radius::FULL))
+                                    .bg(rgba(theme.neutral_text_low & !0xff | 0x55))
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .w(gpui::relative(fraction))
+                                            .rounded(px(design::radius::FULL))
+                                            .bg(rgba(theme.neutral_text)),
+                                    ),
+                            )
+                            .when_some(duration.filter(|_| m.controls.seek), |d, duration| {
+                                d.on_mouse_down(gpui::MouseButton::Left, move |e, _, cx| {
+                                    let b = seek_bounds.get();
+                                    let at = f32::from(e.position.x - b.origin.x)
+                                        / f32::from(b.size.width).max(1.0);
+                                    let to = duration.mul_f32(at.clamp(0.0, 1.0));
+                                    commands(panel, [PanelCommand::Media(media::Command::Seek(to))], cx);
+                                })
+                            }),
+                    )
+                    // 左端に再生位置、右端に曲の長さ。
+                    .child(
+                        div()
+                            .w(px(SEEK_PX))
+                            .flex()
+                            .justify_between()
+                            .font(design::font::mono())
+                            .text_size(px(font_size::SM))
+                            .text_color(rgba(low))
+                            .child(div().debug_selector(|| "now-playing-position".into()).child(clock(position)))
+                            .child(
+                                div()
+                                    .debug_selector(|| "now-playing-duration".into())
+                                    .child(duration.map_or_else(|| "--:--".to_owned(), clock)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt(px(spacing::SM))
+                            .flex()
+                            .gap(px(spacing::LG))
+                            .child(control(
+                                "now-playing-previous",
+                                &icons::SKIP_BACK,
+                                "dashboard.previous",
+                                m.controls.previous,
+                                media::Command::Previous,
+                            ))
+                            .child(control(
+                                "now-playing-play-pause",
+                                if m.playing { &icons::PAUSE } else { &icons::PLAY },
+                                if m.playing { "dashboard.pause" } else { "dashboard.play" },
+                                m.controls.play_pause,
+                                media::Command::PlayPause,
+                            ))
+                            .child(control(
+                                "now-playing-next",
+                                &icons::SKIP_FORWARD,
+                                "dashboard.next",
+                                m.controls.next,
+                                media::Command::Next,
+                            )),
+                    ),
+            )
     }
 
     /// 取得元を取り直す（取得は別スレッド。届くまでは 1 秒ごとの描き直しで見に来る）。
@@ -754,7 +1039,7 @@ impl Screen {
         )
     }
 
-    fn quick_settings(&self, theme: &Theme, cx: &mut Context<Self>) -> Div {
+    fn quick_settings(&self, theme: &Theme, time_width: gpui::Pixels, cx: &mut Context<Self>) -> Div {
         let now = chrono::Local::now();
         let ctl = cx.global::<PanelControl>();
         let mut batteries = ctl.batteries.clone();
@@ -821,8 +1106,7 @@ impl Screen {
                                     div()
                                         .debug_selector(|| "quick-time".into())
                                         .text_size(px(QUICK_TIME_PX))
-                                        .font_weight(FontWeight::BOLD)
-                                        .child(now.format("%H:%M").to_string()),
+                                        .child(fixed_clock(time_width)),
                                 )
                                 .child(
                                     div()
@@ -879,12 +1163,16 @@ impl Screen {
 }
 
 impl Render for Screen {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
         match self.page {
             Page::Mirror => self.mirror(&theme, cx),
+            Page::NowPlaying => self.now_playing(cx),
             // デバッグ・設定は main が渡す別の画面で、Screen にはならない。
-            _ => self.quick_settings(&theme, cx),
+            _ => {
+                let width = clock_width(window, QUICK_TIME_PX);
+                self.quick_settings(&theme, width, cx)
+            }
         }
     }
 }
@@ -1087,12 +1375,60 @@ fn tile_label(text: impl Into<gpui::SharedString>) -> Div {
 
 /// アイコンの RGBA を GPUI の画像（BGRA）にする。
 fn render_image(icon: &Icon) -> Option<Arc<RenderImage>> {
-    let mut bgra = icon.rgba.to_vec();
+    rgba_image(icon.width, icon.height, &icon.rgba)
+}
+
+/// RGBA の画素を GPUI の画像（BGRA）にする。
+fn rgba_image(width: u32, height: u32, rgba: &[u8]) -> Option<Arc<RenderImage>> {
+    let mut bgra = rgba.to_vec();
     for p in bgra.chunks_exact_mut(4) {
         p.swap(0, 2);
     }
-    let buffer = image::RgbaImage::from_raw(icon.width, icon.height, bgra)?;
+    let buffer = image::RgbaImage::from_raw(width, height, bgra)?;
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
+}
+
+/// 時刻（`時:分`）を太字の `size` px で組んだときの、どの数字でも収まる幅。いちばん広い数字（"00:00"〜"99:99"）で測る。
+fn clock_width(window: &Window, size: f32) -> gpui::Pixels {
+    let font = gpui::Font {
+        weight: FontWeight::BOLD,
+        ..design::font::font()
+    };
+    (0..10)
+        .map(|d| {
+            let text: SharedString = format!("{d}{d}:{d}{d}").into();
+            let run = gpui::TextRun {
+                len: text.len(),
+                font: font.clone(),
+                color: gpui::black(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            window.text_system().shape_line(text, px(size), &[run], None).width
+        })
+        .fold(px(0.0), |a, b| a.max(b))
+}
+
+/// 今の時刻（`時:分`、太字）を、幅 `width` の箱の中央に置く。数字で幅が変わって周りが動かないように。
+fn fixed_clock(width: gpui::Pixels) -> Div {
+    div()
+        .flex_none()
+        .w(width)
+        .flex()
+        .justify_center()
+        .font_weight(FontWeight::BOLD)
+        .child(chrono::Local::now().format("%H:%M").to_string())
+}
+
+/// 再生位置・長さを `分:秒`（1 時間を超えれば `時:分:秒`）で。
+fn clock(d: Duration) -> String {
+    let s = d.as_secs();
+    if s >= 3600 {
+        format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60)
+    } else {
+        format!("{}:{:02}", s / 60, s % 60)
+    }
 }
 
 /// 1 秒ごとに描き直す（時計・電池・取得元の一覧の到着）。ビューが無くなれば止まる。
@@ -1307,6 +1643,73 @@ mod tests {
         assert!(!cx.update(|_, cx| cx.global::<PanelControl>().quit));
         click(cx, "quit-confirm");
         assert!(cx.update(|_, cx| cx.global::<PanelControl>().quit));
+    }
+
+    fn playing() -> std::sync::Arc<media::NowPlaying> {
+        std::sync::Arc::new(media::NowPlaying {
+            title: "Song".into(),
+            artist: "Artist".into(),
+            album: "Album".into(),
+            playing: false,
+            position: Duration::from_secs(65),
+            duration: Some(Duration::from_secs(200)),
+            at: std::time::Instant::now(),
+            app: media::App {
+                id: "Spotify.exe".into(),
+                name: "Spotify".into(),
+                icon: None,
+            },
+            art: None,
+            backdrop: None,
+            light: Some(true),
+            controls: media::Controls {
+                play_pause: true,
+                next: true,
+                previous: false,
+                seek: true,
+            },
+        })
+    }
+
+    /// 何か再生しているときだけ、バーに再生中の画面のボタンが出る。
+    #[gpui::test]
+    fn now_playing_button_shows_only_while_something_plays(cx: &mut TestAppContext) {
+        let (bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("dashboard-now-playing").is_none());
+        cx.update(|_, cx| cx.default_global::<PanelControl>().media = Some(playing()));
+        bar.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("dashboard-now-playing").is_some());
+    }
+
+    /// 再生中の画面: 曲と位置・長さを出し、操作ボタンとシークバーはカーネルへの操作を積む。
+    #[gpui::test]
+    fn now_playing_screen_shows_the_song_and_sends_commands(cx: &mut TestAppContext) {
+        let (_screen, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().media = Some(playing());
+            Screen::new(2, Page::NowPlaying, WeakEntity::new_invalid(), cx)
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("now-playing-title").is_some());
+        assert!(cx.debug_bounds("now-playing-position").is_some());
+        click(cx, "now-playing-play-pause");
+        click(cx, "now-playing-next");
+        // 前へはできないので、押しても何も積まない。
+        click(cx, "now-playing-previous");
+        assert_eq!(
+            commands(cx, 2),
+            [
+                PanelCommand::Media(media::Command::PlayPause),
+                PanelCommand::Media(media::Command::Next),
+            ]
+        );
+        // シークバーの右端近くを押すと、曲の終わり近くへ移る。
+        let bar = cx.debug_bounds("now-playing-seek").unwrap();
+        let at = gpui::point(bar.right() - px(1.0), bar.center().y);
+        cx.simulate_click(at, Modifiers::none());
+        let last = commands(cx, 2).pop();
+        assert!(matches!(last, Some(PanelCommand::Media(media::Command::Seek(d))) if d > Duration::from_secs(190)));
     }
 
     /// テストでバーを別の窓に描くための包み。

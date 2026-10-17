@@ -8,6 +8,7 @@ members = [
     "crates/subsystems/keyboard",
     "crates/subsystems/desktop",
     "crates/subsystems/audio",
+    "crates/subsystems/media",
 ]
 # vendor/ は手を入れた zed のクレートの写し（それぞれの Cargo.toml）。ワークスペースには入れない
 exclude = ["vendor"]
@@ -32,6 +33,7 @@ rendering = { path = "crates/subsystems/rendering" }
 keyboard = { path = "crates/subsystems/keyboard" }
 desktop = { path = "crates/subsystems/desktop" }
 audio = { path = "crates/subsystems/audio" }
+media = { path = "crates/subsystems/media" }
 kernel = { path = "crates/kernel", default-features = false }
 subsystems = { path = "crates/subsystems", default-features = false }
 vr = { path = "crates/subsystems/vr", default-features = false }

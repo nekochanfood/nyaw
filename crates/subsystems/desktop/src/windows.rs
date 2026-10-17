@@ -80,6 +80,7 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
                 name: String::from_utf16_lossy(&info.szDevice[..len]),
                 kind: SourceKind::Screen,
                 icon: None,
+                app: None,
                 target: monitor.0 as isize,
             });
         }
@@ -108,6 +109,10 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
                 name: String::from_utf16_lossy(&title[..len as usize]),
                 kind: SourceKind::Window,
                 icon: unsafe { window_icon(hwnd) },
+                app: unsafe { process_path(hwnd) }.and_then(|p| {
+                    let p = String::from_utf16_lossy(&p);
+                    p.rsplit('\\').next().map(str::to_owned)
+                }),
                 target: hwnd.0 as isize,
             });
         }
@@ -234,6 +239,20 @@ unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
         // 借りたアイコンなので破棄しない。
         return unsafe { icon_rgba(HICON(icon as _)) };
     }
+    let mut path = unsafe { process_path(hwnd) }?;
+    path.push(0);
+    let mut large = HICON::default();
+    unsafe { ExtractIconExW(PCWSTR(path.as_ptr()), 0, Some(&mut large), None, 1) };
+    if large.is_invalid() {
+        return None;
+    }
+    let rgba = unsafe { icon_rgba(large) };
+    let _ = unsafe { DestroyIcon(large) };
+    rgba
+}
+
+/// ウィンドウのプロセスの実行ファイルのパス（UTF-16、終端なし）。
+unsafe fn process_path(hwnd: HWND) -> Option<Vec<u16>> {
     let mut pid = 0;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
@@ -249,14 +268,7 @@ unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
     };
     let _ = unsafe { CloseHandle(process) };
     named.ok()?;
-    let mut large = HICON::default();
-    unsafe { ExtractIconExW(PCWSTR(path.as_ptr()), 0, Some(&mut large), None, 1) };
-    if large.is_invalid() {
-        return None;
-    }
-    let rgba = unsafe { icon_rgba(large) };
-    let _ = unsafe { DestroyIcon(large) };
-    rgba
+    Some(path[..len as usize].to_vec())
 }
 
 /// アイコンを RGBA で読み出す。アルファを持たない古いアイコンはマスクから透明部分を作る。

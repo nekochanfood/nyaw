@@ -6,6 +6,7 @@ pub fn source(name: &str, kind: SourceKind) -> Source {
         name: name.into(),
         kind,
         icon: None,
+        app: None,
         target: 0,
     }
 }

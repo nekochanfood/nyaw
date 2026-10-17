@@ -40,6 +40,8 @@ pub enum PanelCommand {
     Lock(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
+    /// 再生中のメディアを操作する（再生・一時停止・曲送り・シーク・アプリを前に出す。[`Kernel::now_playing`]）。
+    Media(subsystems::media::Command),
     /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。`Overlay::set_grab_anchor`）。
     GrabAnchor(Option<Pose>),
     /// このパネルのイン・アウトアニメーションを有効化・無効化する。
@@ -183,6 +185,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     os_keyboard: Option<os::keyboard::Watcher>,
     /// 最後の tick の電池（[`Kernel::batteries`]）。
     batteries: Vec<vr::Battery>,
+    /// 再生中のメディアの見張り（[`Kernel::now_playing`]）。`boot` だけが起こす（テスト用のカーネルは OS に触らない）。
+    media: Option<subsystems::media::Media>,
 }
 
 /// 二回続けて押したと見なす、押下と次の押下の間隔の上限。
@@ -275,6 +279,7 @@ impl Kernel {
         let mut kernel = Self::with_backend(vr, config);
         kernel.config_path = config::path();
         kernel.audio = audio::Engine::open();
+        kernel.media = Some(subsystems::media::Media::start());
         Ok(kernel)
     }
 }
@@ -329,6 +334,7 @@ impl<B: VrBackend> Kernel<B> {
             hand_shortcut: LongPress::default(),
             os_keyboard: None,
             batteries: Vec::new(),
+            media: None,
         }
     }
 
@@ -556,6 +562,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.hands()
     }
 
+    /// 再生中（一時停止中も含む）のメディア。何も再生していなければ `None`。読み込みは別スレッドで、最後に読んだもの。
+    pub fn now_playing(&self) -> Option<std::sync::Arc<subsystems::media::NowPlaying>> {
+        self.media.as_ref().and_then(|m| m.now())
+    }
+
     /// 最後の tick で電池の残量を申告していたデバイス。
     pub fn batteries(&self) -> &[vr::Battery] {
         &self.batteries
@@ -601,6 +612,11 @@ impl<B: VrBackend> Kernel<B> {
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
+            PanelCommand::Media(command) => {
+                if let Some(media) = &self.media {
+                    media.send(command);
+                }
+            }
             PanelCommand::GrabAnchor(anchor) => self.overlay.set_grab_anchor(panel, anchor),
             PanelCommand::Hide(hidden) => {
                 self.overlay

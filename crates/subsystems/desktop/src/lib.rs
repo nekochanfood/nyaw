@@ -33,6 +33,8 @@ pub struct Source {
     pub kind: SourceKind,
     /// ウィンドウのアプリのアイコン（取れなければ `None`。画面には無い）。
     pub icon: Option<Icon>,
+    /// ウィンドウのアプリの実行ファイル名（"Spotify.exe" など。Windows だけ。再生中のメディアのアプリと突き合わせる）。
+    pub app: Option<String>,
     target: isize,
 }
 

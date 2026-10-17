@@ -352,6 +352,8 @@ pub struct PanelControl {
     pub controllers: Vec<kernel::ControllerState>,
     /// 電池の残量を申告しているデバイス。`hands` と同じく毎フレーム書く（変わってもパネルを描き直させない）。
     pub batteries: Vec<kernel::vr::Battery>,
+    /// 再生中のメディア（[`kernel::Kernel::now_playing`]）。`hands` と同じく毎フレーム書く。
+    pub media: Option<std::sync::Arc<kernel::subsystems::media::NowPlaying>>,
     /// 終了を頼む。フレームループがアプリを終える（テストのハーネスもこれで終える）。
     pub quit: bool,
     /// 開いているパネルの数（閉じたものは数えない）と、同時に開ける数の上限（[`MAX_PANELS`] とランタイムの上限の小さい方）。
@@ -445,6 +447,7 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     ctl.hmd = kernel.hmd();
     ctl.controllers = kernel.controllers().to_vec();
     ctl.batteries = kernel.batteries().to_vec();
+    ctl.media = kernel.now_playing();
     let settings = ctl.settings;
     let ctl = ctl.panels.entry(panel).or_default();
     for c in ctl.commands.drain(..) {

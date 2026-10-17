@@ -32,6 +32,8 @@ pub enum Variant {
     Danger,
     /// カードではなく背景（[`panel`] の地）に直接置くとき。背景から浮くよう、背景との差を取った無彩色。
     OnBackground,
+    /// 背景の無いボタン（画像の上に置く操作など）。ふだんは透明で、ホバー・押下だけ背景用の色が付く。
+    Ghost,
 }
 
 /// 色の移り変わり: `from` から `to` へ `start` から動いている。`start` が `None` なら落ち着いている。
@@ -181,6 +183,13 @@ pub fn icon_button(
     )
 }
 
+/// 中身の無い、横長のボタン（文字のボタンと同じ高さ・角丸・状態色。左右の余白は小さめ）。中身（アイコンと文字など）は呼び出し側が足す。
+pub fn content_button(theme: &Theme, id: impl Into<SharedString>, variant: Variant) -> Button {
+    let mut b = base_button(theme, id.into(), variant);
+    b.base = b.base.px(px(spacing::LG)).gap(px(spacing::SM));
+    b
+}
+
 /// 中身の無い丸いボタン（アイコンボタンと同じ寸法・状態色・必須の説明）。中身（アプリのアイコンの画像など）は呼び出し側が足す。
 pub fn round_button(
     theme: &Theme,
@@ -232,6 +241,12 @@ fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
         ),
         Variant::OnBackground => (
             theme.control_on_background,
+            theme.control_on_background_hover,
+            theme.control_on_background_active,
+            theme.neutral_text,
+        ),
+        Variant::Ghost => (
+            theme.control_on_background_hover & !0xff,
             theme.control_on_background_hover,
             theme.control_on_background_active,
             theme.neutral_text,
