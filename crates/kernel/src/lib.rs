@@ -585,7 +585,10 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay
                     .set_parent(&mut self.subsystems.backend, panel, parent)
             }
-            PanelCommand::NavBar(owner) => self.overlay.set_nav_bar(panel, owner),
+            PanelCommand::NavBar(owner) => {
+                self.overlay
+                    .set_nav_bar(&mut self.subsystems.backend, panel, owner)
+            }
             PanelCommand::Place(offset) => {
                 self.overlay.detach(panel);
                 self.overlay.set_pose(panel, self.hmd().leveled() * offset);
