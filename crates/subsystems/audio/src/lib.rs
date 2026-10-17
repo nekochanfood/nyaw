@@ -264,18 +264,7 @@ impl Engine {
         let done_sender = done_tx.clone();
         let spawned = std::thread::Builder::new()
             .name("audio".into())
-            .spawn(move || match device::start(rx, done_sender) {
-                Ok((_stream, s)) => {
-                    logger::info!("audio output started", spatializer = ?s);
-                    state.store(s.to_u8(), Ordering::Relaxed);
-                    // ストリームはこのスレッドで持ち続ける（cpal のストリームはスレッドをまたげない OS がある）。
-                    let _ = stopped.recv();
-                }
-                Err(e) => {
-                    logger::warn!("audio output unavailable", error = e);
-                    state.store(Spatializer::Unavailable.to_u8(), Ordering::Relaxed);
-                }
-            });
+            .spawn(move || device::run(rx, done_sender, &state, stopped));
         if let Err(e) = spawned {
             logger::warn!("failed to spawn audio thread", error = e);
             spatializer.store(Spatializer::Unavailable.to_u8(), Ordering::Relaxed);
@@ -437,21 +426,87 @@ impl Engine {
 mod device {
     use super::*;
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+    use std::time::Duration;
 
-    /// 既定の出力デバイスを開き、ミキサーをコールバックで回し始める。
-    pub(super) fn start(
+    /// 既定の出力デバイスが替わっていないかを見る間隔。
+    const POLL: Duration = Duration::from_secs(1);
+    /// デバイスが無い間に、音を捨てながらミキサーを進めるレート。
+    const DISCARD_RATE: usize = 48_000;
+
+    fn lock(mixer: &Mutex<Mixer>) -> MutexGuard<'_, Mixer> {
+        mixer.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// 既定の出力デバイスで鳴らし続ける。デバイスが外れた・既定が替わったら開き直す（ミキサーは使い回し、
+    /// 鳴っている音は続く）。`stop` の送り手が落ちたら返る。
+    /// ストリームはこのスレッドで持つ（cpal のストリームはスレッドをまたげない OS がある）。
+    pub(super) fn run(
         commands: Receiver<Command>,
         done: Sender<Done>,
-    ) -> Result<(cpal::Stream, Spatializer), String> {
+        state: &AtomicU8,
+        stop: Receiver<()>,
+    ) {
         let host = cpal::default_host();
-        let device = host
-            .default_output_device()
-            .ok_or("no default output device")?;
+        let mixer = Arc::new(Mutex::new(Mixer::new(
+            DISCARD_RATE as u32,
+            true,
+            commands,
+            done,
+        )));
+        let (lost_tx, lost) = mpsc::channel();
+        let mut discard = Vec::new();
+        loop {
+            let device = host.default_output_device();
+            let name = device.as_ref().map(|d| d.name().unwrap_or_default());
+            let stream = device
+                .ok_or_else(|| "no default output device".to_string())
+                .and_then(|d| open(&d, &mixer, lost_tx.clone()));
+            let s = match &stream {
+                Ok(_) => lock(&mixer).spatializer(),
+                Err(e) => {
+                    logger::warn!("audio output unavailable", error = e);
+                    Spatializer::Unavailable
+                }
+            };
+            logger::info!("audio output state", spatializer = ?s);
+            state.store(s.to_u8(), Ordering::Relaxed);
+            loop {
+                match stop.recv_timeout(POLL) {
+                    Err(RecvTimeoutError::Timeout) => {}
+                    _ => return,
+                }
+                if stream.is_err() {
+                    // 鳴らした音が終わるよう、デバイスの代わりに進める（音は捨てる）。
+                    discard.resize(DISCARD_RATE * POLL.as_secs() as usize * 2, 0.0);
+                    lock(&mixer).render(&mut discard);
+                }
+                let lost = lost.try_iter().count() > 0;
+                let current = host
+                    .default_output_device()
+                    .map(|d| d.name().unwrap_or_default());
+                if lost || current != name {
+                    logger::info!("audio output device changed, reopening");
+                    break;
+                }
+            }
+            // 次のストリームを開く前に、ここで今のストリームを落とす（同じミキサーを 2 つで回さない）。
+            drop(stream);
+        }
+    }
+
+    /// デバイスを開き、ミキサーをコールバックで回し始める。デバイスが外れたら `lost` に知らせる。
+    fn open(
+        device: &cpal::Device,
+        mixer: &Arc<Mutex<Mixer>>,
+        lost: Sender<()>,
+    ) -> Result<cpal::Stream, String> {
         let supported = device.default_output_config().map_err(|e| e.to_string())?;
         let config = supported.config();
         let channels = config.channels as usize;
-        let mut mixer = Mixer::new(config.sample_rate.0, true, commands, done);
-        let spatializer = mixer.spatializer();
+        lock(mixer).set_rate(config.sample_rate.0);
+        let mixer = mixer.clone();
         let mut stereo = Vec::new();
         // ponytail: f32 の出力だけ。WASAPI の共有モードと PipeWire / PulseAudio の ALSA は f32 を受ける。
         // 整数しか受けないデバイスが出たら cpal::Sample で変換する。
@@ -462,7 +517,7 @@ mod device {
                     let frames = out.len() / channels;
                     // 最初の数回だけ伸びる（デバイスのバッファの大きさは変わらない）。
                     stereo.resize(frames * 2, 0.0);
-                    mixer.render(&mut stereo);
+                    lock(&mixer).render(&mut stereo);
                     for (o, s) in out
                         .chunks_exact_mut(channels)
                         .zip(stereo.as_chunks::<2>().0)
@@ -478,7 +533,12 @@ mod device {
                         }
                     }
                 },
-                |e| logger::warn!("audio output error", error = e),
+                move |e| {
+                    if matches!(e, cpal::StreamError::DeviceNotAvailable) {
+                        let _ = lost.send(());
+                    }
+                    logger::warn!("audio output error", error = e);
+                },
                 None,
             )
             .map_err(|e| e.to_string())?;
@@ -489,7 +549,7 @@ mod device {
             sample_rate = config.sample_rate.0,
             channels = channels
         );
-        Ok((stream, spatializer))
+        Ok(stream)
     }
 }
 

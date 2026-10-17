@@ -80,19 +80,7 @@ impl Mixer {
         commands: Receiver<Command>,
         done: Sender<Done>,
     ) -> Self {
-        let phonon = steam_audio
-            .then(|| match Phonon::load(rate, BLOCK) {
-                Ok(p) => Some(p),
-                Err(e) => {
-                    logger::warn!("steam audio unavailable, using panning", error = e);
-                    None
-                }
-            })
-            .flatten();
-        let pool = phonon
-            .as_ref()
-            .map(|p| (0..MAX_VOICES * 2).filter_map(|_| p.binaural()).collect())
-            .unwrap_or_default();
+        let (phonon, pool) = load(rate, steam_audio);
         Self {
             rate,
             commands,
@@ -111,6 +99,38 @@ impl Mixer {
                 right: vec![0.0; BLOCK],
                 out: vec![0.0; BLOCK * 2],
             },
+        }
+    }
+
+    /// 出力のレートを替える（デバイスが替わったとき）。違えば Steam Audio を読み直す。鳴っている音はそのまま続ける。
+    pub(crate) fn set_rate(&mut self, rate: u32) {
+        if rate == self.rate {
+            return;
+        }
+        let steam_audio = self.phonon.is_some();
+        self.release();
+        (self.phonon, self.pool) = load(rate, steam_audio);
+        self.rate = rate;
+        for i in 0..self.voices.len() {
+            self.voices[i].effects = [self.take_effect(), self.take_effect()];
+        }
+    }
+
+    fn take_effect(&mut self) -> Option<Binaural> {
+        let mut e = self.pool.pop()?;
+        self.phonon.as_ref()?.reset(&mut e);
+        Some(e)
+    }
+
+    /// HRTF の状態をすべて Steam Audio へ返し、Steam Audio を落とす。
+    fn release(&mut self) {
+        for v in &mut self.voices {
+            self.pool.extend(v.effects.iter_mut().filter_map(Option::take));
+        }
+        if let Some(p) = self.phonon.take() {
+            for e in self.pool.drain(..) {
+                p.release(e);
+            }
         }
     }
 
@@ -165,12 +185,7 @@ impl Mixer {
                         let _ = self.done.send((id, Some(clip)));
                         continue;
                     }
-                    let mut take = || {
-                        let mut e = self.pool.pop()?;
-                        self.phonon.as_ref()?.reset(&mut e);
-                        Some(e)
-                    };
-                    let effects = [take(), take()];
+                    let effects = [self.take_effect(), self.take_effect()];
                     self.voices.push(Voice {
                         id,
                         speaker,
@@ -292,15 +307,26 @@ impl Mixer {
 
 impl Drop for Mixer {
     fn drop(&mut self) {
-        if let Some(p) = &self.phonon {
-            for v in self.voices.drain(..) {
-                self.pool.extend(v.effects.into_iter().flatten());
-            }
-            for e in self.pool.drain(..) {
-                p.release(e);
-            }
-        }
+        self.release();
     }
+}
+
+/// `steam_audio` なら Steam Audio と HRTF の状態を作る（読めなければパンニング）。
+fn load(rate: u32, steam_audio: bool) -> (Option<Phonon>, Vec<Binaural>) {
+    let phonon = steam_audio
+        .then(|| match Phonon::load(rate, BLOCK) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                logger::warn!("steam audio unavailable, using panning", error = e);
+                None
+            }
+        })
+        .flatten();
+    let pool = phonon
+        .as_ref()
+        .map(|p| (0..MAX_VOICES * 2).filter_map(|_| p.binaural()).collect())
+        .unwrap_or_default();
+    (phonon, pool)
 }
 
 /// 音声データから 1 ブロックを `channels` で読む（出力のレートへ線形補間で合わせる）。鳴り終われば `true`。
