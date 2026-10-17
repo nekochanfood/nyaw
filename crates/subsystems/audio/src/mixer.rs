@@ -125,7 +125,8 @@ impl Mixer {
     /// HRTF の状態をすべて Steam Audio へ返し、Steam Audio を落とす。
     fn release(&mut self) {
         for v in &mut self.voices {
-            self.pool.extend(v.effects.iter_mut().filter_map(Option::take));
+            self.pool
+                .extend(v.effects.iter_mut().filter_map(Option::take));
         }
         if let Some(p) = self.phonon.take() {
             for e in self.pool.drain(..) {
