@@ -463,7 +463,10 @@ mod device {
                     // 最初の数回だけ伸びる（デバイスのバッファの大きさは変わらない）。
                     stereo.resize(frames * 2, 0.0);
                     mixer.render(&mut stereo);
-                    for (o, s) in out.chunks_exact_mut(channels).zip(stereo.chunks_exact(2)) {
+                    for (o, s) in out
+                        .chunks_exact_mut(channels)
+                        .zip(stereo.as_chunks::<2>().0)
+                    {
                         match o {
                             [m] => *m = (s[0] + s[1]) * 0.5,
                             [l, r, rest @ ..] => {

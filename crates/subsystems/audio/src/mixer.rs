@@ -312,14 +312,15 @@ fn read(voice: &mut Voice, rate: u32, channels: Channels, out: &mut [Vec<f32>; 2
     let stride = clip.channels as usize;
     let sample = |frame: usize, ch: usize| clip.samples[frame * stride + ch.min(stride - 1)];
     let mut finished = false;
-    for i in 0..BLOCK {
+    let [left, right] = out;
+    for (lo, ro) in left.iter_mut().zip(right.iter_mut()).take(BLOCK) {
         if voice.position >= frames as f64 {
             if voice.looping && frames > 0 {
                 voice.position -= frames as f64;
             } else {
                 finished = true;
-                out[0][i] = 0.0;
-                out[1][i] = 0.0;
+                *lo = 0.0;
+                *ro = 0.0;
                 continue;
             }
         }
@@ -336,10 +337,10 @@ fn read(voice: &mut Voice, rate: u32, channels: Channels, out: &mut [Vec<f32>; 2
         let lerp = |ch| sample(at, ch) * (1.0 - t) + sample(next, ch) * t;
         let (l, r) = (lerp(0), lerp(1));
         match channels {
-            Channels::Mono => out[0][i] = (l + r) * 0.5,
+            Channels::Mono => *lo = (l + r) * 0.5,
             Channels::Stereo => {
-                out[0][i] = l;
-                out[1][i] = r;
+                *lo = l;
+                *ro = r;
             }
         }
         voice.position += step;

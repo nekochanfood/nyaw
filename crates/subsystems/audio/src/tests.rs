@@ -6,7 +6,9 @@ const RATE: u32 = 48_000;
 fn energy(engine: &mut Engine, frames: usize) -> (f32, f32) {
     let mut out = vec![0.0; frames * 2];
     engine.render(&mut out);
-    out.chunks_exact(2)
+    out.as_chunks::<2>()
+        .0
+        .iter()
         .fold((0.0, 0.0), |(l, r), s| (l + s[0] * s[0], r + s[1] * s[1]))
 }
 
@@ -221,7 +223,12 @@ fn resamples_to_the_output_rate() {
     e.play(1, clip, false);
     let mut out = vec![0.0; 1024 * 2];
     e.render(&mut out);
-    let sounding = out.chunks_exact(2).filter(|s| s[0] != 0.0).count();
+    let sounding = out
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .filter(|s| s[0] != 0.0)
+        .count();
     assert_eq!(sounding, 480);
 }
 
