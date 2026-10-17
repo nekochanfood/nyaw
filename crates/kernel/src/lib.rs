@@ -64,6 +64,8 @@ pub enum PanelCommand {
         at: Vec2,
         pitch: f32,
     },
+    /// このパネルを閉じるときにパネルの中央から一度鳴らす音。閉じた後も鳴り終わるまでその場所から聞こえる。
+    CloseSound(audio::Sound),
     /// このパネルで鳴っている音をすべて止める。
     StopAudio,
     /// このパネルの音を置き場所から聞こえるようにする（既定）。`false` でそのまま左右に鳴らす。
@@ -160,6 +162,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     speakers: std::collections::HashMap<PanelId, audio_panels::SpeakerConfig>,
     /// パネルごとの、次に使う点の音のスピーカー（[`PanelCommand::PlayAt`]）。
     point_slots: std::collections::HashMap<PanelId, u64>,
+    /// 閉じるときに鳴らす音（[`PanelCommand::CloseSound`]）。
+    close_sounds: std::collections::HashMap<PanelId, audio::Sound>,
     /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
     shortcut: DoublePress,
     /// 骨格だけの手のショートカット（親指と小指）の長押し。二回押しと同じく [`PanelStatus::double_press`] に数える。
@@ -307,6 +311,7 @@ impl<B: VrBackend> Kernel<B> {
             audio: audio::Engine::offline(48_000, false),
             speakers: Default::default(),
             point_slots: Default::default(),
+            close_sounds: Default::default(),
             shortcut: DoublePress::default(),
             hand_shortcut: LongPress::default(),
             os_keyboard: None,
@@ -575,7 +580,13 @@ impl<B: VrBackend> Kernel<B> {
                     .set_animated(&mut self.subsystems.backend, panel, animated)
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
-            PanelCommand::Close => self.overlay.close(&mut self.subsystems.backend, panel),
+            PanelCommand::Close => {
+                if let Some(sound) = self.close_sounds.remove(&panel) {
+                    let (w, h) = self.overlay.panel(panel).resolution;
+                    self.play_audio_at(panel, sound, Vec2::new(w as f32, h as f32) / 2.0, 1.0);
+                }
+                self.overlay.close(&mut self.subsystems.backend, panel)
+            }
             PanelCommand::Pointer(hand, part) => {
                 self.overlay
                     .set_pointer(&mut self.subsystems.backend, panel, hand, part)
@@ -602,6 +613,9 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
             PanelCommand::PlayAt { sound, at, pitch } => {
                 self.play_audio_at(panel, sound, at, pitch)
+            }
+            PanelCommand::CloseSound(sound) => {
+                self.close_sounds.insert(panel, sound);
             }
             PanelCommand::StopAudio => self.stop_audio(panel),
             PanelCommand::Spatial(spatial) => {

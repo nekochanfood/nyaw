@@ -129,10 +129,21 @@ impl<B: VrBackend> Kernel<B> {
         for p in closed {
             self.speakers.remove(&p);
             self.audio.remove_speaker(p as u64);
-            if self.point_slots.remove(&p).is_some() {
-                for slot in 0..POINT_SPEAKERS {
-                    self.audio.remove_speaker(point_speaker(p, slot));
-                }
+        }
+        // 点の音は鳴らした場所に留まるので、閉じたパネルでも鳴り終わるまで残す（閉じる音など）。
+        let finished: Vec<PanelId> = self
+            .point_slots
+            .keys()
+            .copied()
+            .filter(|&p| {
+                self.overlay.panel(p).closed
+                    && (0..POINT_SPEAKERS).all(|s| self.audio.playing(point_speaker(p, s)) == 0)
+            })
+            .collect();
+        for p in finished {
+            self.point_slots.remove(&p);
+            for slot in 0..POINT_SPEAKERS {
+                self.audio.remove_speaker(point_speaker(p, slot));
             }
         }
         let playing: Vec<PanelId> = self
@@ -303,6 +314,19 @@ mod tests {
         k.tick();
         settle(&mut k, p);
         assert_eq!(k.status(p).audio.playing, 0);
+    }
+
+    /// 閉じる音は閉じた後も、閉じたパネルの場所（右）から鳴る。
+    #[test]
+    fn close_sound_rings_from_the_closed_panel() {
+        let (mut k, p) = kernel();
+        k.apply(p, PanelCommand::CloseSound(tone()));
+        assert_eq!(k.status(p).audio.playing, 0, "閉じるまで鳴らない");
+        k.apply(p, PanelCommand::Close);
+        k.tick();
+        assert_eq!(k.status(p).audio.playing, 1);
+        let (l, r) = render_until_sounding(&mut k);
+        assert!(r > l * 2.0, "右のパネルから聞こえる: {l} {r}");
     }
 
     #[test]

@@ -18,10 +18,22 @@ fn x_key_twice_opens_and_closes_the_dashboard(cx: &mut TestAppContext) {
     assert_eq!(kit.kernel.status(0).double_press, 1);
     let dashboard = kit.read(|w| w.dashboard).expect("dashboard opened");
     assert!(!kit.kernel.panel(dashboard).closed);
-    assert_eq!(kit.kernel.status(0).audio.playing, 1, "opening sound");
+    // The new panel's commands run on the next frame.
+    kit.step();
+    assert_eq!(
+        kit.kernel.status(dashboard).audio.playing,
+        1,
+        "opening sound from the dashboard"
+    );
+    assert_eq!(kit.kernel.status(0).audio.playing, 0, "not from the wrist");
 
     press_x_twice(&mut kit);
     assert_eq!(kit.kernel.status(0).double_press, 2);
     assert_eq!(kit.read(|w| w.dashboard), None);
     assert!(kit.kernel.panel(dashboard).closed);
+    assert!(
+        kit.kernel.status(dashboard).audio.playing >= 1,
+        "closing sound outlives the dashboard"
+    );
+    assert_eq!(kit.kernel.status(0).audio.playing, 0, "not from the wrist");
 }

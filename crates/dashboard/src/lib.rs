@@ -4,8 +4,10 @@
 
 use design::Theme;
 use gpui::{Context, Window, div, prelude::*, px};
+use kernel::PanelCommand;
+use kernel::audio::Sound;
 use kernel::vr::{Pose, Quat, Vec2, Vec3};
-use ui::PanelSpec;
+use ui::{PanelControl, PanelSpec};
 
 /// 開いた瞬間の頭から見て正面 0.7m、少し下。
 pub const POSE: Pose = Pose::new(Vec3::new(0.0, -0.05, -0.7), Quat::IDENTITY);
@@ -14,7 +16,7 @@ const RES_PX: (u32, u32) = (640, 400);
 /// 🐟 の一辺（px）。
 const FISH_PX: f32 = 160.0;
 
-/// 開くとき・閉じるときの音。閉じるパネルの音は止まるので、開け閉めする側（wrist）のスピーカーで鳴らす。
+/// 開くとき・閉じるときの音。どちらもダッシュボード自身から聞こえる（閉じる音は閉じ方を問わず鳴る）。
 pub const OPEN_SOUND: &[u8] = include_bytes!("../assets/dashboard_open.wav");
 pub const CLOSE_SOUND: &[u8] = include_bytes!("../assets/dashboard_close.wav");
 
@@ -22,6 +24,15 @@ pub const CLOSE_SOUND: &[u8] = include_bytes!("../assets/dashboard_close.wav");
 pub fn spec(opened: impl FnOnce(kernel::PanelId, &mut gpui::App) + 'static) -> PanelSpec {
     PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
         opened(id, cx);
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(id)
+            .or_default()
+            .commands
+            .extend([
+                PanelCommand::Play(Sound::Wav(OPEN_SOUND), false),
+                PanelCommand::CloseSound(Sound::Wav(CLOSE_SOUND)),
+            ]);
         Dashboard
     })
     .sized(SIZE_M, RES_PX)
