@@ -267,11 +267,13 @@ impl KeyboardView {
         }
     }
 
+    /// 配列が読めていて、キーを受け付けられる。
+    fn ready(&self) -> bool {
+        !self.loading && self.error.is_none() && !(self.automatic && self.settings.layout.is_none())
+    }
+
     pub fn press(&mut self, code: u16, cx: &mut App) -> Option<KeyboardInput> {
-        if self.loading
-            || self.error.is_some()
-            || (self.automatic && self.settings.layout.is_none())
-        {
+        if !self.ready() {
             return None;
         }
         if let Some(keyboard) = &mut self.keyboard
@@ -294,9 +296,11 @@ impl KeyboardView {
         at: kernel::Vec2,
         cx: &mut Context<Self>,
     ) {
-        let repeat = self.keyboard.as_ref().is_some_and(|k| !k.is_toggle(code));
+        let toggle = self.keyboard.as_ref().is_some_and(|k| k.is_toggle(code));
+        let ready = self.ready();
         let input = self.press(code, cx);
-        if input.is_some() {
+        // Ctrl・Shift などのトグルは文字を生まない（押した状態になるだけ）が、押したことは音で返す。
+        if input.is_some() || (toggle && ready) {
             cx.default_global::<crate::PanelControl>()
                 .panels
                 .entry(self.panel)
@@ -309,7 +313,7 @@ impl KeyboardView {
                 });
         }
         cx.notify();
-        let Some(input) = input.filter(|i| repeat && !i.stroke.shortcut() && !i.stroke.composing)
+        let Some(input) = input.filter(|i| !toggle && !i.stroke.shortcut() && !i.stroke.composing)
         else {
             return;
         };

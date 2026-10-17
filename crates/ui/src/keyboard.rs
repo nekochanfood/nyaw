@@ -214,7 +214,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     routing.error = None;
     redraw_nav_bar(target, cx);
     let resolution = panel_resolution();
-    // ダッシュボードにはめた画面へ打つなら、キーボードもダッシュボードに固定して、その下に寝かせて置く。
+    // ダッシュボードにはめた画面へ打つなら、ダッシュボードの下に出す（固定はしない。独立して掴んで動かせる）。
     let dock = crate::docked(cx)
         .filter(|&d| d == target)
         .and(cx.global::<crate::PanelControl>().dock);
@@ -247,7 +247,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
         .without_nav_bar();
     let spec = match dock {
-        Some((owner, tilt)) => spec.below(owner, tilt).docked_to(owner),
+        Some((owner, tilt)) => spec.below(owner, tilt),
         None => spec.below(target, std::f32::consts::FRAC_PI_4),
     };
     cx.default_global::<crate::PanelControl>().spawns.push(spec);

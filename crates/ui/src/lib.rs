@@ -553,6 +553,15 @@ pub fn pump<B: VrBackend>(
             // 長押しでドラッグになった。ほかのパネルへ運べるよう、オーバーレイのキャプチャを外す。
             kernel.release_capture(e.hand);
         }
+        // GPUI のマウスはウィンドウに 1 つ。この手が動かしたので、同じパネルのもう一方の手は「マウスはもう自分の所にある」と
+        // 思わず、次は必ず位置から送り直す（送らないと、押下がもう一方の手の位置に届いて押せないことがあった）。
+        if !input.is_empty() {
+            for (&(panel, hand), b) in bridges.iter_mut() {
+                if panel == e.panel && hand != e.hand {
+                    b.sent = None;
+                }
+            }
+        }
         gpui.extend(input.into_iter().map(|input| (e.panel, e.hand, input)));
     }
     for (&(panel, hand), b) in bridges.iter_mut() {
@@ -605,6 +614,8 @@ impl Render for DragPreview {
 const PROFILER_REDRAW: Duration = Duration::from_millis(100);
 /// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 10cm）。
 const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.1);
+/// 下に出すパネル（[`PanelSpec::below`]。キーボード）を向ける先を、目からどれだけ下げるか（m）。
+const BELOW_AIM_DROP: f32 = 0.15;
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
@@ -790,23 +801,11 @@ impl PanelSpec {
         self
     }
 
-    /// 開いた瞬間の対象パネルの下へ、手前に傾けて置く。親子関係や追従は作らない。
+    /// 開いた瞬間の対象パネルの下へ置く（`tilt` だけ手前に傾けた面に沿って下ろした所）。向きは、そこから頭
+    /// （目と手の間）へ向ける（見やすく、レーザーでも押しやすい）。親子関係や追従は作らない。
     pub fn below(mut self, panel: PanelId, tilt: f32) -> Self {
         self.from = Some(panel);
         self.below = Some(tilt.clamp(0., std::f32::consts::FRAC_PI_2));
-        self
-    }
-
-    /// `panel` に固定する（[`kernel::Parent::docked`]）。開いた時の位置のまま付いて動き、掴むと `panel` ごと動き、
-    /// `panel` を暗くしない。`panel` が閉じれば一緒に閉じる。
-    pub fn docked_to(mut self, panel: PanelId) -> Self {
-        self.from.get_or_insert(panel);
-        self.parent = Some(kernel::Parent {
-            panel,
-            carry: true,
-            docked: true,
-            ..Default::default()
-        });
         self
     }
 
@@ -922,15 +921,22 @@ impl PanelSpec {
                 let origin = kernel.panel(from);
                 // 持ち主の下にナビゲーションバーがあれば、その下に出す（重ねてバーを隠さない）。
                 let bar = kernel.nav_bar(from).map_or(0., |b| kernel.panel(b).size.y);
-                origin.pose
-                    * Pose::new(
-                        Vec3::new(
-                            0.,
-                            -origin.size.y / 2. - bar - 0.05 - self.size.y * tilt.cos() / 2.,
-                            0.05 + self.size.y * tilt.sin() / 2.,
-                        ),
-                        Quat::from_rotation_x(-tilt),
-                    )
+                let at = origin.pose.transform_point(Vec3::new(
+                    0.,
+                    -origin.size.y / 2. - bar - 0.05 - self.size.y * tilt.cos() / 2.,
+                    0.05 + self.size.y * tilt.sin() / 2.,
+                ));
+                let hmd = kernel.hmd();
+                let up = hmd.panel_up();
+                // 目より少し下（手の方）へ向ける。目へまっすぐ向けるより、下から来るレーザーが浅くならない。
+                let toward = (hmd.position - up * BELOW_AIM_DROP - at).try_normalize();
+                let fallback = origin.pose.orientation * Quat::from_rotation_x(-tilt);
+                let orientation = toward
+                    .and_then(|z| Some((up.cross(z).try_normalize()?, z)))
+                    .map_or(fallback, |(x, z)| {
+                        Quat::from_mat3(&kernel::vr::Mat3::from_cols(x, z.cross(x), z))
+                    });
+                Pose::new(at, orientation)
             }
             // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
             Some(from) => kernel.panel(from).pose * Pose::new(SPAWN_GAP, Quat::IDENTITY),
@@ -1833,6 +1839,35 @@ mod tests {
         ));
         assert!(pump(&mut kernel, &mut bridges).is_empty());
         assert!(bridges[&(panel, Hand::Right)].momentum.is_none());
+    }
+
+    /// 一方の手がパネルにマウスを動かしたら、もう一方の手は次に位置から送り直す（GPUI のマウスは 1 つ）。
+    #[test]
+    fn one_hand_moving_the_mouse_makes_the_other_resend_its_position() {
+        let mut kernel =
+            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
+        let panel = kernel
+            .add_panel(
+                "keyboard",
+                Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY),
+                Vec2::ONE,
+                (100, 100),
+            )
+            .unwrap();
+        kernel.subsystems.backend.frame.controllers = vec![kernel::vr::RawController {
+            hand: Hand::Right,
+            profile: "valve/index_controller".into(),
+            aim: Pose::IDENTITY,
+            inputs: Vec::new(),
+        }];
+        let left = PointerBridge {
+            sent: Some(Point::default()),
+            ..Default::default()
+        };
+        let mut bridges = HashMap::from([((panel, Hand::Left), left)]);
+        let input = pump(&mut kernel, &mut bridges);
+        assert!(input.iter().any(|(_, h, _)| *h == Hand::Right));
+        assert_eq!(bridges[&(panel, Hand::Left)].sent, None);
     }
 
     /// UI 層だけで確かめるための最小の画面。
