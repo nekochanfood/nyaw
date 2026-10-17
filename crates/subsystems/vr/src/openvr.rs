@@ -50,6 +50,10 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         shown: HashSet::new(),
         dashboard: false,
         block_input: false,
+        settings: client
+            .interface(sys::IVRSettings_Version)
+            .inspect_err(|e| logger::warn!("SteamVR settings unavailable", error = e))
+            .ok(),
         batteries: (None, Vec::new()),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
@@ -147,6 +151,8 @@ pub(crate) struct OpenVrBackend {
     dashboard: bool,
     /// シーンのアプリ（ゲーム）への入力を止めている（[`VrBackend::block_app_input`]）。
     block_input: bool,
+    /// SteamVR の設定（入力を止める仕組みを有効にする）。使ったら `None` にして、二度目からは触らない。
+    settings: Option<*const sys::VR_IVRSettings_FnTable>,
     /// 最後に電池を読んだ時刻と、その結果（[`BATTERY_INTERVAL`] ごとに読み直す）。
     batteries: (Option<Instant>, Vec<Battery>),
     gpu: Gpu,
@@ -539,6 +545,9 @@ impl VrBackend for OpenVrBackend {
 
     fn block_app_input(&mut self, block: bool) {
         self.block_input = block;
+        if block && let Some(settings) = self.settings.take() {
+            enable_global_action_set_priority(unsafe { &*settings });
+        }
     }
 
     fn max_overlays(&self) -> Option<usize> {
@@ -719,6 +728,26 @@ fn check(what: &str, e: sys::EVROverlayError) -> Result<(), VrError> {
 fn log(r: Result<(), VrError>) {
     if let Err(e) = r {
         logger::warn!("OpenVR call failed", error = e);
+    }
+}
+
+/// オーバーレイのアクションセットの全体優先度でゲームの入力を止める仕組みは、SteamVR の開発者向け設定
+/// 「Experimental overlay input overrides」（`steamvr/globalActionSetPriority`）が有効でないと働かない。無効なら有効にする。
+fn enable_global_action_set_priority(settings: &sys::VR_IVRSettings_FnTable) {
+    let section = c"steamvr".as_ptr() as *mut c_char;
+    let key = c"globalActionSetPriority".as_ptr() as *mut c_char;
+    let mut err = sys::EVRSettingsError_VRSettingsError_None;
+    if unsafe { f(settings.GetBool)(section, key, &mut err) } {
+        return;
+    }
+    let mut err = sys::EVRSettingsError_VRSettingsError_None;
+    unsafe { f(settings.SetBool)(section, key, true, &mut err) };
+    if err == sys::EVRSettingsError_VRSettingsError_None {
+        logger::info!(
+            "enabled SteamVR's experimental overlay input overrides to block game input while the dashboard is open"
+        );
+    } else {
+        logger::warn!("cannot enable SteamVR's overlay input overrides", error = err);
     }
 }
 

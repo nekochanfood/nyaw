@@ -489,12 +489,18 @@ impl Overlay {
         self.panels[id].capture = capture;
     }
 
-    /// 配信元の解像度に合わせ、パネルの幅を保って縦横比だけ変える。
+    /// 配信元の解像度に合わせ、パネルの幅を保って縦横比だけ変える（親の上端に立てた画面は縦を保つ）。
     pub fn set_content_resolution(&mut self, id: PanelId, resolution: (u32, u32)) {
         assert!(resolution.0 > 0 && resolution.1 > 0);
         let p = &mut self.panels[id];
         p.resolution = resolution;
-        p.size.y = p.size.x * resolution.1 as f32 / resolution.0 as f32;
+        let aspect = resolution.1 as f32 / resolution.0 as f32;
+        // 親の上端に立てた画面（ダッシュボードにはめたもの）は高さをそろえるので、縦を保って横を合わせる。
+        if p.parent.is_some_and(|q| q.slot.is_some()) {
+            p.size.x = p.size.y / aspect;
+        } else {
+            p.size.y = p.size.x * aspect;
+        }
     }
 
     /// `hand` が押している間のキャプチャを外す（ドラッグ＆ドロップでほかのパネルへ運べるように）。離すと戻る。
@@ -2438,6 +2444,19 @@ mod tests {
         let local = ov.panel(0).pose.inverse() * ov.panel(1).pose;
         let expected = ov.slot_offset(1, 0, 0.0);
         assert!(local.position.abs_diff_eq(expected.position, 1e-3), "{local:?}");
+    }
+
+    #[test]
+    fn a_stream_in_a_slot_keeps_its_height_and_follows_the_aspect_in_width() {
+        let (_vr, mut ov) = with_slot_child();
+        let height = ov.panel(1).size.y;
+        ov.set_content_resolution(1, (1920, 1080));
+        assert_eq!(ov.panel(1).size.y, height);
+        assert!((ov.panel(1).size.x - height * 16.0 / 9.0).abs() < 1e-5);
+        // はめていなければ、これまでどおり幅を保つ。
+        let width = ov.panel(0).size.x;
+        ov.set_content_resolution(0, (1920, 1080));
+        assert_eq!(ov.panel(0).size.x, width);
     }
 
     #[test]
