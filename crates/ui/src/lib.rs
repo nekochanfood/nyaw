@@ -622,6 +622,8 @@ impl Render for DragPreview {
 const PROFILER_REDRAW: Duration = Duration::from_millis(100);
 /// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 10cm）。
 const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.1);
+/// 蝶番のようにつなげるパネル（[`PanelSpec::hinged_below`]）の面どうしの隙間（m。ダッシュボードの画面とバーの間と同じ）。
+const HINGE_GAP: f32 = kernel::overlay::SLOT_GAP;
 /// 下に出すパネル（[`PanelSpec::below`]）と持ち主の下端の間（m）。
 const BELOW_GAP: f32 = 0.05;
 /// 下に出すパネル（[`PanelSpec::below`]。キーボード）を向ける先を、目からどれだけ下げるか（m）。
@@ -669,6 +671,8 @@ pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
     below: Option<f32>,
+    /// `from` の下端に蝶番のようにつなげ、面から手前へ折る角度（[`Self::hinged_below`]）。
+    hinge: Option<f32>,
     /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
     in_view: bool,
     size: Vec2,
@@ -722,6 +726,7 @@ impl PanelSpec {
             pose,
             from: None,
             below: None,
+            hinge: None,
             in_view: false,
             size: Vec2::new(0.8, 0.6),
             resolution: PANEL_PX,
@@ -819,6 +824,14 @@ impl PanelSpec {
     pub fn below(mut self, panel: PanelId, tilt: f32) -> Self {
         self.from = Some(panel);
         self.below = Some(tilt.clamp(0., std::f32::consts::FRAC_PI_2));
+        self
+    }
+
+    /// 開いた瞬間の `panel` の下端に、蝶番のようにつなげて置く（このパネルの上の縁を `panel` の下の縁に小さな隙間で合わせる）。
+    /// `angle` は `panel` の面から手前へ折る角度。隙間は影の余白を除いた面どうしで測る。親子関係や追従は作らない。
+    pub fn hinged_below(mut self, panel: PanelId, angle: f32) -> Self {
+        self.from = Some(panel);
+        self.hinge = Some(angle);
         self
     }
 
@@ -948,6 +961,23 @@ impl PanelSpec {
 
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
         match self.from {
+            Some(from) if self.hinge.is_some() => {
+                let angle = self.hinge.unwrap();
+                let origin = kernel.panel(from);
+                let margin = |size: Vec2, res: (u32, u32)| {
+                    design::components::PANEL_MARGIN * size.y / res.1 as f32
+                };
+                let bar = kernel.nav_bar(from).map_or(0., |b| kernel.panel(b).size.y);
+                let edge = Vec3::new(
+                    0.,
+                    -origin.size.y / 2. + margin(origin.size, origin.resolution) - bar,
+                    0.,
+                );
+                let rotation = Quat::from_rotation_x(-angle);
+                let down = rotation * Vec3::NEG_Y;
+                let lift = HINGE_GAP + self.size.y / 2. - margin(self.size, self.resolution);
+                origin.pose * Pose::new(edge + down * lift, rotation)
+            }
             Some(from) if self.below.is_some() => {
                 let tilt = self.below.unwrap();
                 let origin = kernel.panel(from);
@@ -1875,6 +1905,32 @@ mod tests {
         ));
         assert!(pump(&mut kernel, &mut bridges).is_empty());
         assert!(bridges[&(panel, Hand::Right)].momentum.is_none());
+    }
+
+    /// 蝶番のようにつなげたパネルは、上の縁が持ち主の下の縁から隙間だけ離れ、持ち主から `angle` 手前へ折れる。
+    #[test]
+    fn hinged_panel_hangs_from_the_owners_bottom_edge() {
+        let mut kernel =
+            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
+        // 少し上を向けた持ち主（ダッシュボードのバー）。
+        let tilt = 0.5;
+        let owner_pose = Pose::new(Vec3::new(0.0, -0.4, -1.0), Quat::from_rotation_x(-tilt));
+        let owner = kernel
+            .add_panel("bar", owner_pose, Vec2::new(1.0, 0.1), (1000, 100))
+            .unwrap();
+        let angle = std::f32::consts::FRAC_PI_2 - 0.2 - tilt;
+        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| div())
+            .sized(Vec2::new(1.0, 0.4), (1000, 400))
+            .hinged_below(owner, angle);
+        let pose = spec.pose_for(&kernel, owner + 1);
+        // 水平から 0.2 rad 手前が下がる（面の向きは上やや手前）。
+        let normal = pose.orientation * Vec3::Z;
+        assert!(normal.abs_diff_eq(Vec3::new(0.0, 0.2f32.cos(), 0.2f32.sin()), 1e-4));
+        // 上の縁（影の余白の内側）は、持ち主の下の縁から隙間だけ離れている。
+        let m = |h: f32, px: f32| design::components::PANEL_MARGIN * h / px;
+        let top = pose.transform_point(Vec3::Y * (0.2 - m(0.4, 400.0)));
+        let edge = owner_pose.transform_point(Vec3::NEG_Y * (0.05 - m(0.1, 100.0)));
+        assert!((top.distance(edge) - HINGE_GAP).abs() < 1e-4);
     }
 
     /// 一方の手がパネルにマウスを動かしたら、もう一方の手は次に位置から送り直す（GPUI のマウスは 1 つ）。
