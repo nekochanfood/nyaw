@@ -294,7 +294,7 @@ impl<B: VrBackend> Kernel<B> {
 
     /// `owner` に付いている開いたナビゲーションバー。
     pub fn nav_bar(&self, owner: PanelId) -> Option<PanelId> {
-        (0..self.overlay.len()).find(|&i| {
+        self.overlay.present_ids().iter().copied().find(|&i| {
             let p = self.overlay.panel(i);
             !p.closed && p.nav_bar_of == Some(owner)
         })
@@ -361,10 +361,14 @@ impl<B: VrBackend> Kernel<B> {
         self.route_desktop(&mut events);
         self.update_audio();
         // 段階が変わるとパネルの描き直し・描画先とランタイムのテクスチャの作り直しが走るので、境目で行き来させない。
-        let lods = (0..self.overlay.len())
-            .map(|id| self.lod_for(id, self.lods.get(id).copied()))
-            .collect();
-        self.lods = lods;
+        let old_len = self.lods.len();
+        self.lods.resize(self.overlay.len(), 0);
+        for &id in self.overlay.present_ids() {
+            if !self.overlay.panel(id).closed {
+                let prev = (id < old_len).then_some(self.lods[id]);
+                self.lods[id] = self.lod_for(id, prev);
+            }
+        }
         self.timing = TickTiming {
             poll: polled - t,
             overlay: polled.elapsed(),

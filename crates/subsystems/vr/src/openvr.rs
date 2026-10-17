@@ -214,64 +214,94 @@ impl OpenVrBackend {
     }
 
     fn submit(&mut self, id: u64, width: u32, height: u32, rgba: &[u8]) -> Result<(), VrError> {
-        if self
+        let mut replacement = if self
             .textures
             .get(&id)
             .is_none_or(|t| (t.width, t.height) != (width, height))
         {
-            // 前のイメージはランタイムがまだ読んでいるかもしれない。待たずに、後の転送が終わってから捨てる。
-            if let Some(old) = self.textures.remove(&id) {
-                old.images.into_iter().for_each(|i| self.gpu.retire(i));
-            }
             let usage = vk::ImageUsageFlags::TRANSFER_DST
                 | vk::ImageUsageFlags::TRANSFER_SRC
                 | vk::ImageUsageFlags::SAMPLED;
-            let images = (0..RING)
-                .map(|_| self.gpu.create_image(width, height, usage))
-                .collect::<Result<_, _>>()?;
-            self.textures.insert(
-                id,
-                Textures {
-                    width,
-                    height,
-                    images,
-                    next: 0,
-                },
-            );
-        }
-        let t = self.textures.get_mut(&id).unwrap();
+            let images = create_ring(
+                || self.gpu.create_image(width, height, usage),
+                |image| self.gpu.destroy_image(image),
+            )?;
+            Some(Textures {
+                width,
+                height,
+                images,
+                next: 0,
+            })
+        } else {
+            None
+        };
+        let t = replacement.as_mut().unwrap_or_else(|| self.textures.get_mut(&id).unwrap());
         let image = t.images[t.next].image;
         t.next = (t.next + 1) % RING;
         // SteamVR は Vulkan のテクスチャを TRANSFER_SRC_OPTIMAL で受け取る。
-        self.gpu.upload(
-            image,
-            width,
-            height,
-            rgba,
-            vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-        )?;
-        let g = &self.gpu;
-        let mut data = sys::VRVulkanTextureData_t {
-            m_nImage: image.as_raw(),
-            m_pDevice: g.device.handle().as_raw() as *mut _,
-            m_pPhysicalDevice: g.physical.as_raw() as *mut _,
-            m_pInstance: g.instance.handle().as_raw() as *mut _,
-            m_pQueue: g.queue.as_raw() as *mut _,
-            m_nQueueFamilyIndex: g.queue_family,
-            m_nWidth: width,
-            m_nHeight: height,
-            m_nFormat: gpu::FORMAT.as_raw() as u32,
-            m_nSampleCount: 1,
-        };
-        let mut texture = sys::Texture_t {
-            handle: &mut data as *mut _ as *mut c_void,
-            eType: sys::ETextureType_TextureType_Vulkan,
-            eColorSpace: sys::EColorSpace_ColorSpace_Auto,
-        };
-        check("SetOverlayTexture", unsafe {
-            f(self.overlay().SetOverlayTexture)(id, &mut texture)
-        })
+        let result = (|| {
+            self.gpu.upload(
+                image,
+                width,
+                height,
+                rgba,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            )?;
+            let g = &self.gpu;
+            let mut data = sys::VRVulkanTextureData_t {
+                m_nImage: image.as_raw(),
+                m_pDevice: g.device.handle().as_raw() as *mut _,
+                m_pPhysicalDevice: g.physical.as_raw() as *mut _,
+                m_pInstance: g.instance.handle().as_raw() as *mut _,
+                m_pQueue: g.queue.as_raw() as *mut _,
+                m_nQueueFamilyIndex: g.queue_family,
+                m_nWidth: width,
+                m_nHeight: height,
+                m_nFormat: gpu::FORMAT.as_raw() as u32,
+                m_nSampleCount: 1,
+            };
+            let mut texture = sys::Texture_t {
+                handle: &mut data as *mut _ as *mut c_void,
+                eType: sys::ETextureType_TextureType_Vulkan,
+                eColorSpace: sys::EColorSpace_ColorSpace_Auto,
+            };
+            check("SetOverlayTexture", unsafe {
+                f(self.overlay().SetOverlayTexture)(id, &mut texture)
+            })
+        })();
+        if let Some(new) = replacement {
+            if result.is_ok() {
+                if let Some(old) = self.textures.insert(id, new) {
+                    old.images.into_iter().for_each(|image| self.gpu.retire(image));
+                }
+            } else {
+                self.gpu.wait_idle();
+                for image in new.images {
+                    self.gpu.destroy_image(image);
+                }
+            }
+        }
+        result
     }
+}
+
+fn create_ring<T, E>(
+    mut create: impl FnMut() -> Result<T, E>,
+    mut destroy: impl FnMut(T),
+) -> Result<Vec<T>, E> {
+    let mut images = Vec::with_capacity(RING);
+    for _ in 0..RING {
+        match create() {
+            Ok(image) => images.push(image),
+            Err(e) => {
+                for image in images {
+                    destroy(image);
+                }
+                return Err(e);
+            }
+        }
+    }
+    Ok(images)
 }
 
 impl Drop for OpenVrBackend {
@@ -612,6 +642,21 @@ fn matrix_from(pose: Pose) -> [[f32; 4]; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_ring_creation_releases_earlier_images() {
+        let mut next = 0;
+        let mut destroyed = Vec::new();
+        let result = create_ring(
+            || {
+                next += 1;
+                (next < RING).then_some(next).ok_or("out of memory")
+            },
+            |image| destroyed.push(image),
+        );
+        assert_eq!(result, Err("out of memory"));
+        assert_eq!(destroyed, (1..RING).collect::<Vec<_>>());
+    }
 
     fn value(v: &[(String, f32)], name: &str) -> Option<f32> {
         v.iter().find(|(n, _)| n == name).map(|(_, x)| *x)

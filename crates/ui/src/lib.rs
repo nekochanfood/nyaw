@@ -525,7 +525,9 @@ fn start_drag(
         .map(|((_, h), _)| *h)?;
     let (dp, _) = windows
         .iter()
-        .find(|(id, _)| kernel.panel(*id).pointer == Some((hand, Pointer::Drag)))?;
+        .find(|(id, _)| {
+            !kernel.panel(*id).closed && kernel.panel(*id).pointer == Some((hand, Pointer::Drag))
+        })?;
     let src = kernel.panel(panel);
     let px_per_m = src.resolution.0 as f32 / src.size.x;
     let width = kernel.panel(*dp).resolution.0 as f32 / px_per_m;
@@ -986,6 +988,7 @@ pub fn run_with(
             .enumerate()
             .filter_map(|(i, spec)| open_panel(&mut kernel, spec, i, cx))
             .collect();
+        let mut open_windows: Vec<PanelId> = windows.iter().map(|(id, _)| *id).collect();
 
         cx.spawn(async move |cx| {
             let mut bridges = HashMap::new();
@@ -1024,11 +1027,10 @@ pub fn run_with(
                         cx.update(f);
                     }
                 }
-                let mut inputs: Vec<Vec<(Hand, PlatformInput)>> =
-                    (0..windows.len()).map(|_| Vec::new()).collect();
+                let mut inputs: HashMap<PanelId, Vec<(Hand, PlatformInput)>> = HashMap::new();
                 let gpui_inputs = pump(&mut kernel, &mut bridges);
                 for (panel, hand, input) in gpui_inputs {
-                    inputs[panel].push((hand, input));
+                    inputs.entry(panel).or_default().push((hand, input));
                 }
                 // タッチの長押しの進み具合を手ごとに置き、変わればカーソルを描き直す（リングが満ちていく）。
                 let mut hold: HashMap<Hand, f32> = HashMap::new();
@@ -1046,10 +1048,11 @@ pub fn run_with(
                 });
                 // 前のフレームの配送でホバーした要素のツールチップを手に振り分ける。変わればツールチップのパネルを描き直す。
                 let tooltip_changed = cx.update(|cx| {
-                    let ids = windows.iter().map(|&(p, w)| (p, w.window_id()));
+                    let ids = open_windows.iter().map(|&p| (p, windows[p].1.window_id()));
                     sync_tooltips(&kernel, &bridges, ids, cx)
                 });
-                for &(p, w) in &windows {
+                for &p in &open_windows {
+                    let w = windows[p].1;
                     let part = kernel.panel(p).pointer.map(|(_, part)| part);
                     if hold_changed && part == Some(Pointer::Cursor) {
                         drawn[p] = None;
@@ -1063,7 +1066,7 @@ pub fn run_with(
                 if let Some((_, dp)) = drag {
                     let (w, h) = kernel.panel(dp).resolution;
                     let pos = Vec2::new(w as f32, h as f32) / 2.0;
-                    inputs[dp].extend(
+                    inputs.entry(dp).or_default().extend(
                         PointerBridge::default()
                             .translate(PointerEvent::Move { pos }, PointerMode::Mouse)
                             .into_iter()
@@ -1088,8 +1091,15 @@ pub fn run_with(
                 // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
                 // 何もしていないパネルの描き直しは 1 フレームに 1 枚まで（同じフレームに重なると読み戻しの待ちが積み上がる）。
                 let mut idle_slot = true;
-                for ((panel, window), inputs) in windows.iter().copied().zip(inputs) {
+                for panel in open_windows.iter().copied() {
+                    let window = windows[panel].1;
+                    let inputs = inputs.remove(&panel).unwrap_or_default();
                     if kernel.panel(panel).closed {
+                        cx.update(|cx| {
+                            sync_panel(&mut kernel, panel, cx);
+                            let _ = cx.update_window(window, |_, window, _| window.remove_window());
+                        });
+                        last[panel] = None;
                         continue;
                     }
                     // 描画と読み戻し（GPU の完了待ちを含む）は重いので、入力・状態の変化があったとき、
@@ -1231,6 +1241,7 @@ pub fn run_with(
                     }) else {
                         // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じる（全部閉じたら下で終了する）。
                         kernel.apply(panel, PanelCommand::Close);
+                        last[panel] = None;
                         continue;
                     };
                     if kernel.panel(panel).closed {
@@ -1239,7 +1250,8 @@ pub fn run_with(
                     }
                     if others {
                         // 状態はどのパネルにも表示されうるので、ほかのパネルも描き直す（1 フレームに 1 枚ずつ）。
-                        for (p, t) in drawn.iter_mut().enumerate() {
+                        for &p in &open_windows {
+                            let t = &mut drawn[p];
                             if p != panel
                                 && let Some(t) = t
                             {
@@ -1288,8 +1300,11 @@ pub fn run_with(
                     }
                 }
                 // 終了を頼まれたか、ウィンドウが全部（OS の X などで）閉じられたら終了する。
+                open_windows.retain(|&p| !kernel.panel(p).closed);
+                hover_pending.retain(|p| !kernel.panel(*p).closed);
+                collecting.retain(|p| !kernel.panel(*p).closed);
                 if cx.update(|cx| cx.default_global::<PanelControl>().quit)
-                    || !windows.is_empty() && (0..windows.len()).all(|p| kernel.panel(p).closed)
+                    || !windows.is_empty() && open_windows.is_empty()
                 {
                     cx.update(quit);
                     return;
@@ -1299,11 +1314,9 @@ pub fn run_with(
                 // 閉じたパネルの手ごとの状態（慣性のスクロールなど）は持ち越さない。
                 bridges.retain(|&(p, _), _| !kernel.panel(p).closed);
                 render_sizes.retain(|&p, _| !kernel.panel(p).closed);
-                let open =
-                    |kernel: &Kernel, n: usize| (0..n).filter(|&p| !kernel.panel(p).closed).count();
                 for spec in spawns {
                     // 連打で開きっぱなしのパネルが際限なく増えないように。
-                    if open(&kernel, windows.len()) >= limit {
+                    if open_windows.len() >= limit {
                         logger::error!("too many open panels", max = limit);
                         break;
                     }
@@ -1312,12 +1325,13 @@ pub fn run_with(
                         break;
                     };
                     windows.push(opened);
+                    open_windows.push(i);
                     last.push(None);
                     drawn.push(None);
                     idle.push(IDLE_REDRAW);
                     seen.push(false);
                 }
-                let open = open(&kernel, windows.len());
+                let open = open_windows.len();
                 cx.update(|cx| {
                     let c = cx.default_global::<PanelControl>();
                     (c.open, c.limit) = (open, limit);
@@ -1365,6 +1379,7 @@ pub fn run_with(
                                     pose = ?kernel.panel(panel).pose
                                 );
                                 windows.push((panel, window));
+                                open_windows.push(panel);
                                 last.push(None);
                                 drawn.push(None);
                                 idle.push(IDLE_REDRAW);
@@ -1395,7 +1410,7 @@ pub fn run_with(
                         cx.global_mut::<Profiler>().record(Instant::now(), stages);
                     }
                     if let Some(p) = profiler_panel
-                        && let Some((_, w)) = windows.iter().find(|(id, _)| *id == p)
+                        && let Some((_, w)) = windows.get(p).filter(|(id, _)| *id == p)
                         && drawn[p].is_none_or(|t| t.elapsed() >= PROFILER_REDRAW)
                     {
                         // グラフは毎フレーム変わるが、読むには PROFILER_REDRAW ごとで足りる。毎フレーム描くと、描画・読み戻し・

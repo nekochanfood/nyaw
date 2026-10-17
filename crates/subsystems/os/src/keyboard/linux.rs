@@ -159,25 +159,33 @@ impl Backend {
                         .find(|(_, s)| s.iter().all(|k| *k == 0))
                         .map(|(i, _)| min + i as u8)
                         .ok_or("No unused X11 keycode for Unicode input")?;
-                    for c in text.chars() {
-                        let symbol = if u32::from(c) < 256 {
-                            u32::from(c)
-                        } else {
-                            0x0100_0000 | u32::from(c)
-                        };
-                        connection
-                            .change_keyboard_mapping(1, spare, 1, &[symbol])?
-                            .check()?;
-                        connection
-                            .xtest_fake_input(2, spare, 0, 0, 0, 0, 0)?
-                            .check()?;
-                        connection
-                            .xtest_fake_input(3, spare, 0, 0, 0, 0, 0)?
-                            .check()?;
-                    }
-                    connection
-                        .change_keyboard_mapping(1, spare, stride as u8, &vec![0; stride])?
-                        .check()?;
+                    restore_after(
+                        || -> Result<(), Box<dyn std::error::Error>> {
+                            for c in text.chars() {
+                                let symbol = if u32::from(c) < 256 {
+                                    u32::from(c)
+                                } else {
+                                    0x0100_0000 | u32::from(c)
+                                };
+                                connection
+                                    .change_keyboard_mapping(1, spare, 1, &[symbol])?
+                                    .check()?;
+                                connection
+                                    .xtest_fake_input(2, spare, 0, 0, 0, 0, 0)?
+                                    .check()?;
+                                connection
+                                    .xtest_fake_input(3, spare, 0, 0, 0, 0, 0)?
+                                    .check()?;
+                            }
+                            Ok(())
+                        },
+                        || -> Result<(), Box<dyn std::error::Error>> {
+                            connection
+                                .change_keyboard_mapping(1, spare, stride as u8, &vec![0; stride])?
+                                .check()?;
+                            Ok(())
+                        },
+                    )?;
                 }
             }
             connection.flush()?;
@@ -185,6 +193,15 @@ impl Backend {
         })();
         result.map_err(|e| io::Error::other(e.to_string()))
     }
+}
+
+fn restore_after<T, E>(
+    send: impl FnOnce() -> Result<T, E>,
+    restore: impl FnOnce() -> Result<(), E>,
+) -> Result<T, E> {
+    let sent = send();
+    restore()?;
+    sent
 }
 
 #[derive(Default)]
@@ -384,6 +401,26 @@ fn focused_sway(node: &serde_json::Value) -> Option<(u64, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+
+    #[test]
+    fn restores_mapping_even_if_input_fails() {
+        let restored = Cell::new(false);
+        let result = restore_after(
+            || Err::<(), _>("injection failed"),
+            || {
+                restored.set(true);
+                Ok(())
+            },
+        );
+        assert_eq!(result, Err("injection failed"));
+        assert!(restored.get());
+        assert_eq!(
+            restore_after(|| Ok::<_, &str>(()), || Err("restore failed")),
+            Err("restore failed")
+        );
+    }
+
     #[test]
     fn desktop_layouts_and_focus_are_decoded() {
         assert_eq!(

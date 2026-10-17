@@ -58,8 +58,11 @@ pub(crate) fn create_device(
     let family = unsafe { instance.get_physical_device_queue_family_properties(physical) }
         .iter()
         .position(|q| q.queue_flags.contains(vk::QueueFlags::GRAPHICS))
-        .ok_or_else(|| VrError::Runtime("Vulkan: no graphics queue".into()))?
-        as u32;
+        .map(|i| i as u32);
+    let Some(family) = family else {
+        unsafe { instance.destroy_instance(None) };
+        return Err(VrError::Runtime("Vulkan: no graphics queue".into()));
+    };
     let priorities = [1.0];
     let queues = [vk::DeviceQueueCreateInfo::default()
         .queue_family_index(family)
@@ -68,7 +71,13 @@ pub(crate) fn create_device(
     let info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queues)
         .enabled_extension_names(&ext);
-    let raw = create(&instance, &info)?;
+    let raw = match create(&instance, &info) {
+        Ok(raw) => raw,
+        Err(e) => {
+            unsafe { instance.destroy_instance(None) };
+            return Err(e);
+        }
+    };
     let device = unsafe { ash::Device::load(instance.fp_v1_0(), raw) };
     Gpu::new(entry, instance, physical, device, family)
 }
@@ -130,35 +139,49 @@ impl Gpu {
     ) -> Result<Self, VrError> {
         unsafe {
             let queue = device.get_device_queue(queue_family, 0);
-            let pool = device
-                .create_command_pool(
-                    &vk::CommandPoolCreateInfo::default()
-                        .queue_family_index(queue_family)
-                        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
-                    None,
-                )
-                .map_err(vk_err("vkCreateCommandPool"))?;
-            let slots = device
-                .allocate_command_buffers(
-                    &vk::CommandBufferAllocateInfo::default()
-                        .command_pool(pool)
-                        .command_buffer_count(SLOTS as u32),
-                )
-                .map_err(vk_err("vkAllocateCommandBuffers"))?
-                .into_iter()
-                .map(|cmd| {
+            let mut pool = vk::CommandPool::null();
+            let mut slots = Vec::new();
+            let created = (|| -> Result<(), VrError> {
+                pool = device
+                    .create_command_pool(
+                        &vk::CommandPoolCreateInfo::default()
+                            .queue_family_index(queue_family)
+                            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
+                        None,
+                    )
+                    .map_err(vk_err("vkCreateCommandPool"))?;
+                let cmds = device
+                    .allocate_command_buffers(
+                        &vk::CommandBufferAllocateInfo::default()
+                            .command_pool(pool)
+                            .command_buffer_count(SLOTS as u32),
+                    )
+                    .map_err(vk_err("vkAllocateCommandBuffers"))?;
+                for cmd in cmds {
                     let fence = device
                         .create_fence(&vk::FenceCreateInfo::default(), None)
                         .map_err(vk_err("vkCreateFence"))?;
-                    Ok(Slot {
+                    slots.push(Slot {
                         cmd,
                         fence,
                         staging: None,
                         busy: false,
                         seq: 0,
-                    })
-                })
-                .collect::<Result<_, VrError>>()?;
+                    });
+                }
+                Ok(())
+            })();
+            if let Err(e) = created {
+                for slot in slots {
+                    device.destroy_fence(slot.fence, None);
+                }
+                if pool != vk::CommandPool::null() {
+                    device.destroy_command_pool(pool, None);
+                }
+                device.destroy_device(None);
+                instance.destroy_instance(None);
+                return Err(e);
+            }
             Ok(Self {
                 instance,
                 physical,
@@ -216,23 +239,30 @@ impl Gpu {
                     None,
                 )
                 .map_err(vk_err("vkCreateImage"))?;
-            let req = self.device.get_image_memory_requirements(image);
-            let memory = self
-                .device
-                .allocate_memory(
-                    &vk::MemoryAllocateInfo::default()
-                        .allocation_size(req.size)
-                        .memory_type_index(self.memory_type(
-                            req.memory_type_bits,
-                            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-                        )?),
-                    None,
-                )
-                .map_err(vk_err("vkAllocateMemory"))?;
-            self.device
-                .bind_image_memory(image, memory, 0)
-                .map_err(vk_err("vkBindImageMemory"))?;
-            Ok(Image { image, memory })
+            let result = (|| {
+                let req = self.device.get_image_memory_requirements(image);
+                let memory = self
+                    .device
+                    .allocate_memory(
+                        &vk::MemoryAllocateInfo::default()
+                            .allocation_size(req.size)
+                            .memory_type_index(self.memory_type(
+                                req.memory_type_bits,
+                                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                            )?),
+                        None,
+                    )
+                    .map_err(vk_err("vkAllocateMemory"))?;
+                if let Err(e) = self.device.bind_image_memory(image, memory, 0) {
+                    self.device.free_memory(memory, None);
+                    return Err(vk_err("vkBindImageMemory")(e));
+                }
+                Ok(Image { image, memory })
+            })();
+            if result.is_err() {
+                self.device.destroy_image(image, None);
+            }
+            result
         }
     }
 
@@ -291,27 +321,42 @@ impl Gpu {
                     None,
                 )
                 .map_err(vk_err("vkCreateBuffer"))?;
-            let req = self.device.get_buffer_memory_requirements(buffer);
-            let memory = self
-                .device
-                .allocate_memory(
-                    &vk::MemoryAllocateInfo::default()
-                        .allocation_size(req.size)
-                        .memory_type_index(self.memory_type(
-                            req.memory_type_bits,
-                            vk::MemoryPropertyFlags::HOST_VISIBLE
-                                | vk::MemoryPropertyFlags::HOST_COHERENT,
-                        )?),
-                    None,
-                )
-                .map_err(vk_err("vkAllocateMemory"))?;
-            self.device
-                .bind_buffer_memory(buffer, memory, 0)
-                .map_err(vk_err("vkBindBufferMemory"))?;
-            let mapped = self
-                .device
-                .map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
-                .map_err(vk_err("vkMapMemory"))? as *mut u8;
+            let result = (|| {
+                let req = self.device.get_buffer_memory_requirements(buffer);
+                let memory = self
+                    .device
+                    .allocate_memory(
+                        &vk::MemoryAllocateInfo::default()
+                            .allocation_size(req.size)
+                            .memory_type_index(self.memory_type(
+                                req.memory_type_bits,
+                                vk::MemoryPropertyFlags::HOST_VISIBLE
+                                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+                            )?),
+                        None,
+                    )
+                    .map_err(vk_err("vkAllocateMemory"))?;
+                Ok::<_, VrError>(memory)
+            })();
+            let memory = match result {
+                Ok(memory) => memory,
+                Err(e) => {
+                    self.device.destroy_buffer(buffer, None);
+                    return Err(e);
+                }
+            };
+            let result = self.device.bind_buffer_memory(buffer, memory, 0)
+                .map_err(vk_err("vkBindBufferMemory"))
+                .and_then(|_| self.device.map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
+                    .map_err(vk_err("vkMapMemory")));
+            let mapped = match result {
+                Ok(mapped) => mapped as *mut u8,
+                Err(e) => {
+                    self.device.destroy_buffer(buffer, None);
+                    self.device.free_memory(memory, None);
+                    return Err(e);
+                }
+            };
             self.slots[i].staging = Some(Staging {
                 buffer,
                 memory,
