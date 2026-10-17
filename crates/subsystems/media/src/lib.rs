@@ -24,6 +24,8 @@ const ART_PX: u32 = 512;
 /// 背景用にぼかす前に縮める一辺（px）と、ぼかしの強さ。小さく縮めてからぼかすので軽い。
 const BACKDROP_PX: u32 = 64;
 const BACKDROP_BLUR: f32 = 6.0;
+/// ぼかした背景を渡す一辺（px）。表示で引き伸ばしたときの縁の暗い帯が 1px に満たない大きさ。
+const BACKDROP_OUT_PX: u32 = 512;
 /// アプリのアイコンの一辺（px）。
 const ICON_PX: u32 = 64;
 /// 背景の平均の明るさ（相対輝度 0〜1）がこれより明るければ、載せる文字を暗くする。白と黒の文字のコントラストが釣り合う所。
@@ -218,11 +220,14 @@ impl Cache {
                 .as_ref()
                 .map(|i| to_image(fit(i, ART_PX)));
             let backdrop = decoded.as_ref().map(|i| {
-                to_image(blur_mirrored(&i.resize_exact(
-                    BACKDROP_PX,
-                    BACKDROP_PX,
+                let small = i.resize_exact(BACKDROP_PX, BACKDROP_PX, image::imageops::FilterType::Triangle);
+                // 小さいまま渡すと、表示で引き伸ばすときに縁の半画素が外（透明）と混ざって暗い帯になる。
+                // ぼかした後なので、大きくしても見た目は変わらない。
+                to_image(blur_mirrored(&small).resize_exact(
+                    BACKDROP_OUT_PX,
+                    BACKDROP_OUT_PX,
                     image::imageops::FilterType::Triangle,
-                )))
+                ))
             });
             self.art = Some((raw.art_key.clone(), art, backdrop));
         }
@@ -375,7 +380,7 @@ mod tests {
         let art = first.art.as_ref().unwrap();
         assert_eq!((art.width, art.height), (8, 8));
         let backdrop = first.backdrop.as_ref().unwrap();
-        assert_eq!((backdrop.width, backdrop.height), (BACKDROP_PX, BACKDROP_PX));
+        assert_eq!((backdrop.width, backdrop.height), (BACKDROP_OUT_PX, BACKDROP_OUT_PX));
         cache.resolve(fake.read().unwrap(), &mut fake);
         assert_eq!((fake.art_reads, fake.app_reads), (1, 1));
         fake.raw = raw("B");
