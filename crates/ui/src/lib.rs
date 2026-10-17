@@ -1919,7 +1919,7 @@ mod tests {
             .add_panel("bar", owner_pose, Vec2::new(1.0, 0.1), (1000, 100))
             .unwrap();
         let angle = std::f32::consts::FRAC_PI_2 - 0.2 - tilt;
-        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| div())
+        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| gpui::Empty)
             .sized(Vec2::new(1.0, 0.4), (1000, 400))
             .hinged_below(owner, angle);
         let pose = spec.pose_for(&kernel, owner + 1);
