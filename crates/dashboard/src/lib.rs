@@ -90,7 +90,7 @@ pub fn spec(
     })
     .sized(BAR_M, BAR_PX)
     .in_view(pose())
-    // 閉じる（隠す）操作はバー自身の X にある。
+    // 閉じる（隠す）のは X ボタンの二回押しかダッシュボードの外を押したときで、閉じるボタンは置かない。
     .without_nav_bar()
     // 大きさははめる画面に合わせて決めてあるので変えさせない。
     .without_resize()
@@ -133,7 +133,8 @@ pub enum Page {
     Settings,
 }
 
-/// ダッシュボード（バー）。左から、時刻と電池（クイック設定）・画面のミラーリング・デバッグ・設定、右端に閉じる（隠す）ボタン。
+/// ダッシュボード（バー）。左から時刻と電池（クイック設定）・画面のミラーリング、右端にデバッグ・設定。
+/// 閉じる（隠す）のは X ボタンの二回押しか、ダッシュボードの外を押したとき。
 /// 今はまっている画面のボタンは強調色。
 pub struct Dashboard {
     panel: PanelId,
@@ -257,7 +258,6 @@ impl Render for Dashboard {
             i18n::t(cx, "dashboard.settings"),
             Page::Settings,
         );
-        let dashboard = self.panel;
         components::card_panel(&theme)
             .rounded(px(design::radius::FULL))
             .flex()
@@ -277,19 +277,9 @@ impl Render for Dashboard {
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
             )
             .child(mirror)
+            .child(div().flex_1())
             .child(debug)
             .child(settings)
-            .child(div().flex_1())
-            .child(
-                components::icon_button(
-                    &theme,
-                    "dashboard-close",
-                    &icons::X,
-                    i18n::t(cx, "common.close"),
-                    Variant::Default,
-                )
-                .on_click(move |_, _, cx| hide(dashboard, cx)),
-            )
     }
 }
 
@@ -970,10 +960,6 @@ mod tests {
         click(cx, "dashboard-quick-settings");
         assert!(commands(cx, 3).contains(&PanelCommand::Close));
         assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), None);
-        // X は閉じずに隠す。
-        click(cx, "dashboard-close");
-        assert!(commands(cx, 1).contains(&PanelCommand::Hide(true)));
-        assert!(!commands(cx, 1).contains(&PanelCommand::Close));
     }
 
     /// 出ている間に何も無い所を押すと隠す（開いた時点までの数では隠さない）。
