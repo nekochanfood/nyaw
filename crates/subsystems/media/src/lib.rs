@@ -218,10 +218,11 @@ impl Cache {
                 .as_ref()
                 .map(|i| to_image(fit(i, ART_PX)));
             let backdrop = decoded.as_ref().map(|i| {
-                to_image(
-                    i.resize_exact(BACKDROP_PX, BACKDROP_PX, image::imageops::FilterType::Triangle)
-                        .blur(BACKDROP_BLUR),
-                )
+                to_image(blur_mirrored(&i.resize_exact(
+                    BACKDROP_PX,
+                    BACKDROP_PX,
+                    image::imageops::FilterType::Triangle,
+                )))
             });
             self.art = Some((raw.art_key.clone(), art, backdrop));
         }
@@ -280,6 +281,24 @@ fn fit(image: &image::DynamicImage, max: u32) -> image::DynamicImage {
     } else {
         image.clone()
     }
+}
+
+/// 周りを鏡写しに広げてからぼかし、元の大きさに切り戻す。そのままぼかすと端の画素の引き伸ばしで縁にすじが残る。
+fn blur_mirrored(image: &image::DynamicImage) -> image::DynamicImage {
+    let src = image.to_rgba8();
+    let (w, h) = src.dimensions();
+    let pad = (BACKDROP_BLUR * 3.0).ceil() as u32;
+    let mirror = |i: u32, n: u32| match i.checked_sub(pad) {
+        None => pad - 1 - i,
+        Some(i) if i >= n => 2 * n - 1 - i,
+        Some(i) => i,
+    };
+    let padded = image::RgbaImage::from_fn(w + 2 * pad, h + 2 * pad, |x, y| {
+        *src.get_pixel(mirror(x, w), mirror(y, h))
+    });
+    image::DynamicImage::ImageRgba8(padded)
+        .blur(BACKDROP_BLUR)
+        .crop_imm(pad, pad, w, h)
 }
 
 fn to_image(image: image::DynamicImage) -> Image {
