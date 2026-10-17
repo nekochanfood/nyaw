@@ -484,6 +484,8 @@ fn separator(theme: &Theme) -> Div {
 
 impl Render for Dashboard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // フレームループより先に描くこともあるので、受け渡し口が無ければ作る。
+        cx.default_global::<PanelControl>();
         self.prune_streams(cx);
         let time_width = clock_width(window, font_size::MD);
         let theme = Theme::current(cx);
@@ -575,14 +577,15 @@ impl Render for Dashboard {
             // 何か再生しているときだけ、再生中の画面のボタンを出す。
             .when(has_media, |d| {
                 d.child(
-                    components::icon_button(
-                        &theme,
-                        "dashboard-now-playing",
-                        &icons::PLAYLIST,
-                        i18n::t(cx, "dashboard.now_playing"),
-                        variant(Page::NowPlaying),
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::NowPlaying, cx))),
+                    components::content_button(&theme, "dashboard-now-playing", variant(Page::NowPlaying))
+                        .flex_none()
+                        .child(
+                            design::icon(&icons::PLAYLIST)
+                                .weight(design::Weight::Bold)
+                                .size(px(font_size::LG)),
+                        )
+                        .child(i18n::t(cx, "dashboard.now_playing"))
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::NowPlaying, cx))),
                 )
             })
             .child(mirror)
@@ -1164,6 +1167,7 @@ impl Screen {
 
 impl Render for Screen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        cx.default_global::<PanelControl>();
         let theme = Theme::current(cx);
         match self.page {
             Page::Mirror => self.mirror(&theme, cx),

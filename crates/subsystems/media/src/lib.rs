@@ -216,7 +216,7 @@ impl Cache {
                 .and_then(|bytes| image::load_from_memory(&bytes).ok());
             let art = decoded
                 .as_ref()
-                .map(|i| to_image(i.thumbnail(ART_PX, ART_PX)));
+                .map(|i| to_image(fit(i, ART_PX)));
             let backdrop = decoded.as_ref().map(|i| {
                 to_image(
                     i.resize_exact(BACKDROP_PX, BACKDROP_PX, image::imageops::FilterType::Triangle)
@@ -229,7 +229,7 @@ impl Cache {
             let (name, icon) = backend.app(&raw.app_id);
             let icon = icon
                 .and_then(|bytes| image::load_from_memory(&bytes).ok())
-                .map(|i| to_image(i.thumbnail(ICON_PX, ICON_PX)));
+                .map(|i| to_image(fit(&i, ICON_PX)));
             self.app = Some(App {
                 id: raw.app_id.clone(),
                 name,
@@ -271,6 +271,15 @@ fn luminance(image: &Image) -> f32 {
         .map(|p| 0.2126 * linear(p[0]) + 0.7152 * linear(p[1]) + 0.0722 * linear(p[2]))
         .sum::<f32>()
         / n
+}
+
+/// 一辺が `max` を超えるときだけ、縦横比を保って縮める（小さい画像は大きくしない）。
+fn fit(image: &image::DynamicImage, max: u32) -> image::DynamicImage {
+    if image.width() > max || image.height() > max {
+        image.thumbnail(max, max)
+    } else {
+        image.clone()
+    }
 }
 
 fn to_image(image: image::DynamicImage) -> Image {
