@@ -1,7 +1,7 @@
 //! OpenVR (SteamVR) バックエンド: オーバーレイは `IVROverlay`、入力は SteamVR Input（`IVRInput`、[`input`]）。
 //! C++ の vtable ではなく C API の関数表（`FnTable:IVRSystem_022` 等）を通して呼ぶ。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::mem::{MaybeUninit, size_of};
 
@@ -46,6 +46,8 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         devices: HashMap::new(),
         relative: HashMap::new(),
         fixed: HashMap::new(),
+        shown: HashSet::new(),
+        dashboard: false,
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
     }))
@@ -133,6 +135,10 @@ pub(crate) struct OpenVrBackend {
     relative: HashMap<u64, (u32, Pose)>,
     /// 高さを固定したオーバーレイの（幅, 高さ）（m）。OpenVR は高さを縦横比で決めるので、テクセルの縦横比で合わせる。
     fixed: HashMap<u64, (f32, f32)>,
+    /// アプリが表示したいオーバーレイ。SteamVR のダッシュボードが開いている間は、これらも隠す。
+    shown: HashSet<u64>,
+    /// 最後の poll で SteamVR のダッシュボードが開いていたか。
+    dashboard: bool,
     gpu: Gpu,
     /// SteamVR との接続。関数表の持ち主なので最後に破棄する。
     client: Client,
@@ -230,6 +236,18 @@ impl OpenVrBackend {
             )
         };
         log(check("SetOverlayTransformAbsolute", e));
+    }
+
+    fn apply_visible(&self, id: u64) {
+        let o = self.overlay();
+        let e = unsafe {
+            if self.shown.contains(&id) && !self.dashboard {
+                f(o.ShowOverlay)(id)
+            } else {
+                f(o.HideOverlay)(id)
+            }
+        };
+        log(check("ShowOverlay / HideOverlay", e));
     }
 
     fn release(&mut self, id: u64) {
@@ -360,6 +378,14 @@ impl VrBackend for OpenVrBackend {
         {
             quit |= unsafe { event.assume_init_ref() }.eventType == sys::EVREventType_VREvent_Quit;
         }
+        let dashboard = unsafe { f(self.overlay().IsDashboardVisible)() };
+        if dashboard != self.dashboard {
+            self.dashboard = dashboard;
+            for &id in &self.shown {
+                self.apply_visible(id);
+            }
+        }
+        let s = self.system();
 
         let mut poses: [sys::TrackedDevicePose_t; MAX_DEVICES] =
             unsafe { MaybeUninit::zeroed().assume_init() };
@@ -488,14 +514,16 @@ impl VrBackend for OpenVrBackend {
                 "SetOverlayFlag",
                 f(o.SetOverlayFlag)(handle, sys::VROverlayFlags_IsPremultiplied, true),
             )?;
-            check("ShowOverlay", f(o.ShowOverlay)(handle))?;
         }
+        self.shown.insert(handle);
+        self.apply_visible(handle);
         // OpenVR のハンドルをそのまま ID にする。
         Ok(OverlayId(handle))
     }
 
     fn destroy_overlay(&mut self, id: OverlayId) {
         self.relative.remove(&id.0);
+        self.shown.remove(&id.0);
         unsafe {
             let _ = f(self.overlay().DestroyOverlay)(id.0);
         }
@@ -550,15 +578,12 @@ impl VrBackend for OpenVrBackend {
     }
 
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool) {
-        let o = self.overlay();
-        let e = unsafe {
-            if visible {
-                f(o.ShowOverlay)(id.0)
-            } else {
-                f(o.HideOverlay)(id.0)
-            }
-        };
-        log(check("ShowOverlay / HideOverlay", e));
+        if visible {
+            self.shown.insert(id.0);
+        } else {
+            self.shown.remove(&id.0);
+        }
+        self.apply_visible(id.0);
     }
 
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
