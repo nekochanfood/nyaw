@@ -525,11 +525,13 @@ impl Overlay {
     /// `id` を `owner` のナビゲーションバーにする。以降は毎 tick、持ち主の下端の左右中央に、バーの上端の左右中央を
     /// 合わせて置かれる。今の `size` を頭から 1m 先での大きさとし、離れるほど大きくする（ツールチップと同じ）。
     /// 自分自身・閉じたパネルは持ち主にできない（何もしない）。
-    pub fn set_nav_bar(&mut self, id: PanelId, owner: PanelId) {
+    pub fn set_nav_bar(&mut self, vr: &mut dyn VrBackend, id: PanelId, owner: PanelId) {
         if owner == id || self.panels[owner].closed {
             return;
         }
         let p = &mut self.panels[id];
+        // 持ち主の影の余白に重なるので、表示だけの子と同じく手前に出す（place_nav_bars）。
+        p.surface.set_sort(vr, HUD_SORT);
         p.nav_bar_of = Some(owner);
         p.nav_bar_size = p.size;
         p.attached = None;
@@ -1158,8 +1160,10 @@ impl Overlay {
             // 出入りと暗さは持ち主と一体（バーは閉じても、持ち主が消えきるまで残る）。
             let faded = p.opacity != opacity || p.dim != dim || (p.closed && opacity == 0.0);
             (p.opacity, p.dim, p.dim_to) = (opacity, dim, dim);
+            // 上端は持ち主の影の余白と重なる。同じ面だと Z ファイティングするので、表示だけの子と同じだけ手前に浮かせる。
             p.pose = Pose::new(
-                anchor - up * (size.y * (0.75 + 0.25 * opacity) / 2.0),
+                anchor - up * (size.y * (0.75 + 0.25 * opacity) / 2.0)
+                    + rotation * Vec3::Z * HUD_LIFT,
                 rotation,
             );
             if (faded && p.surface.has_texture()) || (p.closed && opacity == 0.0) {
@@ -1867,20 +1871,20 @@ mod tests {
                 (200, 50),
             )
             .unwrap();
-        ov.set_nav_bar(bar, 0);
+        ov.set_nav_bar(&mut vr.backend, bar, 0);
         for z in [-1.0, -3.0] {
             ov.set_pose(0, at(0.0, 0.0, z));
             ov.tick(&mut vr);
             let p = ov.panel(bar);
             // 頭（原点）から見て、持ち主の地の下端（影の余白の内側）の左右中央に、バーの上端の左右中央が付く。
             let anchor = Vec3::new(0.0, -0.5 + PANEL_MARGIN / 100.0, z);
-            let top = p.pose.position + Vec3::Y * p.size.y / 2.0;
+            let top = p.pose.position + Vec3::Y * p.size.y / 2.0 - Vec3::Z * HUD_LIFT;
             assert!(
                 top.normalize().abs_diff_eq(anchor.normalize(), 1e-5),
                 "{top}"
             );
-            // バーの面は持ち主と同じ奥行き。
-            assert!((p.pose.position.z - z).abs() < 1e-5);
+            // バーの面は持ち主から HUD_LIFT だけ手前（Z ファイティングしない）。
+            assert!((p.pose.position.z - (z + HUD_LIFT)).abs() < 1e-5);
             // 頭から見た大きさは距離によらない（1m 先で 0.2m）。
             assert!((p.size.x / top.length() - 0.2).abs() < 1e-5);
             assert!((vr.backend.overlays[bar].width_m - p.size.x).abs() < 1e-5);
@@ -1919,7 +1923,7 @@ mod tests {
                 (2, 2),
             )
             .unwrap();
-        ov.set_nav_bar(bar, 0);
+        ov.set_nav_bar(&mut vr.backend, bar, 0);
         let ratio = |ov: &Overlay, id| ov.panel(id).displayed_size().x / ov.panel(id).size.x;
         let rgba = [255u8; 100 * 100 * 4];
         ov.submit(&mut vr.backend, 0, 100, 100, &rgba);
