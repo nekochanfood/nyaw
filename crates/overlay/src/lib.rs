@@ -10,7 +10,9 @@ use design::PANEL_MARGIN;
 use design::animation::{Animation, Motion};
 use subsystems::{Frame, Subsystems, rendering::Surface, vr};
 
-use vr::{Device, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
+use vr::{
+    Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError,
+};
 
 pub use subsystems::ControllerState;
 
@@ -279,6 +281,8 @@ pub struct Overlay {
     hands: HashMap<Hand, HandState>,
     /// 最後の tick で見えていたトラッカーの ID（取り付け先の候補）。
     trackers: Vec<String>,
+    /// 最後の tick で骨格が取れていた手。
+    skeletons: Vec<HandSkeleton>,
     quit: bool,
     /// 最後の tick の HMD の姿勢。
     hmd: Pose,
@@ -449,6 +453,11 @@ impl Overlay {
     /// 最後の tick で見えていたトラッカーの ID。
     pub fn trackers(&self) -> &[String] {
         &self.trackers
+    }
+
+    /// 最後の tick で骨格が取れていた手（スケルタル入力）。
+    pub fn hands(&self) -> &[HandSkeleton] {
+        &self.skeletons
     }
 
     /// どちらかの手でメニューボタンを押している。
@@ -716,6 +725,7 @@ impl Overlay {
         self.hmd = frame.hmd;
         self.steadied = frame.stabilize_pointer && self.pointer_smoothing() > 0.0;
         self.trackers = frame.trackers.iter().map(|(id, _)| id.clone()).collect();
+        self.skeletons.clone_from(&frame.hands);
         // 掴み中のパネルは手に従う（離したフレームで update_hand がオフセットを付け直す）。
         // 取り付け先が見失われたフレームは最後の姿勢のまま。
         let mut dragged: Vec<PanelId> = self

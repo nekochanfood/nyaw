@@ -139,10 +139,50 @@ impl RawController {
     }
 }
 
+/// 手の関節の数。並びは OpenXR（XR_EXT_hand_tracking）の `XrHandJointEXT` に揃える:
+/// 0 手のひら、1 手首、2〜5 親指（中手骨・基節・末節・先端）、6〜10 人差し指（中手骨・基節・中節・末節・先端）、
+/// 11〜15 中指、16〜20 薬指、21〜25 小指。OpenVR のボーン（`eBone_*`）も 1〜25 は同じ並び。
+pub const JOINT_COUNT: usize = 26;
+pub const PALM: usize = 0;
+pub const WRIST: usize = 1;
+/// 指ごとの先端の関節（親指・人差し指・中指・薬指・小指）。
+pub const TIPS: [usize; 5] = [5, 10, 15, 20, 25];
+
+/// 関節 `joint` の親（骨でつながる手首側の関節）。手首と手のひらには無い。
+pub const fn joint_parent(joint: usize) -> Option<usize> {
+    match joint {
+        PALM | WRIST => None,
+        // 各指の付け根（中手骨）は手首につながる。
+        2 => Some(WRIST),
+        j if j % 5 == 1 => Some(WRIST),
+        j => Some(j - 1),
+    }
+}
+
+/// 片手の骨格（スケルタル入力）。関節の姿勢はトラッキング空間（[`Pose`] と同じ）。
+/// 向きの軸はランタイムのまま（OpenXR は -Z が指先の向き・+Y が手の甲の外。OpenVR はボーンごとに違う）。
+// ponytail: OpenVR の関節の向きは OpenXR の軸に直していない。向きで判定するものが要るなら eBone ごとの回転を掛けて揃える。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HandSkeleton {
+    pub hand: Hand,
+    pub joints: [Pose; JOINT_COUNT],
+}
+
+impl HandSkeleton {
+    /// 親指の先と `tip`（[`TIPS`] のどれか）の先との距離（m）。つまむ動作の判定に使う。
+    pub fn pinch_distance(&self, tip: usize) -> f32 {
+        self.joints[TIPS[0]]
+            .position
+            .distance(self.joints[tip].position)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Frame {
     pub hmd: Pose,
     pub controllers: Vec<RawController>,
+    /// 骨格が取れている手（スケルタル入力。ランタイムが対応していなければ空）。
+    pub hands: Vec<HandSkeleton>,
     /// コントローラ以外のトラッカー（腰・足など）。ID はランタイムが決める（OpenVR はシリアル番号）。
     pub trackers: Vec<(String, Pose)>,
     /// ランタイムが終了を求めている（SteamVR の終了、OpenXR セッションの EXITING など）。
@@ -503,6 +543,25 @@ mod tests {
             ..frame
         };
         assert_eq!(emulated.pose(&Device::Hmd), None);
+    }
+
+    #[test]
+    fn every_finger_chains_back_to_the_wrist() {
+        for j in 2..JOINT_COUNT {
+            let mut at = j;
+            let mut steps = 0;
+            while let Some(p) = joint_parent(at) {
+                assert!(p < at, "{j}");
+                at = p;
+                steps += 1;
+            }
+            assert_eq!(at, WRIST, "{j}");
+            // 親指は 4 本、ほかの指は 5 本の骨で手首まで。
+            assert!(steps <= 5, "{j}");
+        }
+        assert_eq!(joint_parent(PALM), None);
+        assert_eq!(joint_parent(6), Some(WRIST));
+        assert_eq!(joint_parent(TIPS[0]), Some(4));
     }
 
     #[test]

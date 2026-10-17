@@ -8,7 +8,7 @@ use std::mem::{MaybeUninit, size_of};
 use openvr_bindings as sys;
 
 use super::{f, pose_from};
-use crate::{Hand, Pose, Vec2, VrError};
+use crate::{Hand, HandSkeleton, JOINT_COUNT, PALM, Pose, Quat, Vec2, Vec3, VrError};
 
 const FILES: [(&str, &str); 4] = [
     ("actions.json", include_str!("actions.json")),
@@ -49,6 +49,8 @@ pub(super) struct Input {
     right_touch: u64,
     shortcut: u64,
     scroll: u64,
+    /// 手ごとの骨格（スケルタル入力）のアクション。
+    skeletons: [(Hand, u64); 2],
     /// 手ごとの入力元（`/user/hand/left` 等）のハンドル。
     hands: [(Hand, u64); 2],
 }
@@ -98,6 +100,10 @@ impl Input {
             right_touch: action("/actions/nyaw/in/right_touch")?,
             shortcut: action("/actions/nyaw/in/shortcut")?,
             scroll: action("/actions/nyaw/in/scroll")?,
+            skeletons: [
+                (Hand::Left, action("/actions/nyaw/in/skeleton_left")?),
+                (Hand::Right, action("/actions/nyaw/in/skeleton_right")?),
+            ],
             hands: [
                 (
                     Hand::Left,
@@ -146,12 +152,63 @@ impl Input {
             .collect()
     }
 
+    /// 骨格が取れている手。関節は `predict` 秒後の予測のトラッキング空間で、並びは OpenXR に揃える（[`crate::JOINT_COUNT`]）。
+    pub fn skeletons(&self, predict: f32) -> Vec<HandSkeleton> {
+        self.skeletons
+            .iter()
+            .filter_map(|&(hand, action)| {
+                // 骨格のアクションの姿勢は骨格の根（eBone_Root）。
+                let root = self.pose(action, 0, predict)?.1;
+                let bones = self.bones(action)?;
+                let mut joints = [Pose::IDENTITY; JOINT_COUNT];
+                // OpenVR の eBone_Wrist..eBone_PinkyFinger4（1〜25）は OpenXR の手首〜小指の先と同じ並び。
+                for (joint, bone) in joints.iter_mut().zip(bones.iter()).skip(1) {
+                    *joint = root * *bone;
+                }
+                // OpenVR に手のひらは無いので、中指の中手骨（11）と基節（12）の中点に中手骨の向きで置く。
+                joints[PALM] = Pose::new(
+                    joints[11].position.lerp(joints[12].position, 0.5),
+                    joints[11].orientation,
+                );
+                Some(HandSkeleton { hand, joints })
+            })
+            .collect()
+    }
+
+    /// 骨格の根から見たボーン（OpenVR の 31 本）の姿勢。コントローラを握った形の可動域（WithController）。
+    fn bones(&self, action: u64) -> Option<[Pose; 31]> {
+        let mut raw: [sys::VRBoneTransform_t; 31] = unsafe { MaybeUninit::zeroed().assume_init() };
+        let e = unsafe {
+            f(self.t().GetSkeletalBoneData)(
+                action,
+                sys::EVRSkeletalTransformSpace_VRSkeletalTransformSpace_Model,
+                sys::EVRSkeletalMotionRange_VRSkeletalMotionRange_WithController,
+                raw.as_mut_ptr(),
+                raw.len() as u32,
+            )
+        };
+        (e == sys::EVRInputError_VRInputError_None).then(|| {
+            raw.map(|b| {
+                let (p, q) = (b.position.v, b.orientation);
+                Pose::new(
+                    Vec3::new(p[0], p[1], p[2]),
+                    Quat::from_xyzw(q.x, q.y, q.z, q.w).normalize(),
+                )
+            })
+        })
+    }
+
     fn aim(&self, source: u64, predict: f32) -> Option<(u32, Pose)> {
+        self.pose(self.aim, source, predict)
+    }
+
+    /// 姿勢のアクション（`source` = 0 で手を限らない）の（デバイス番号, 姿勢）。
+    fn pose(&self, action: u64, source: u64, predict: f32) -> Option<(u32, Pose)> {
         let t = self.t();
         let mut data: sys::InputPoseActionData_t = unsafe { MaybeUninit::zeroed().assume_init() };
         let e = unsafe {
             f(t.GetPoseActionDataRelativeToNow)(
-                self.aim,
+                action,
                 sys::ETrackingUniverseOrigin_TrackingUniverseStanding,
                 predict,
                 &mut data,

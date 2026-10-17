@@ -94,6 +94,16 @@
           "output": "/actions/nyaw/in/aim",
           "path": "/user/hand/right/pose/tip"
         }
+      ],
+      "skeleton": [
+        {
+          "output": "/actions/nyaw/in/skeleton_left",
+          "path": "/user/hand/left/input/skeleton/left"
+        },
+        {
+          "output": "/actions/nyaw/in/skeleton_right",
+          "path": "/user/hand/right/input/skeleton/right"
+        }
       ]
     }
   }

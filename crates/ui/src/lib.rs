@@ -340,6 +340,10 @@ pub struct PanelControl {
     /// カーソルの上下どちらに出すか。フレームループが [`sync_tooltips`] で書き、ツールチップのパネルが描く。
     pub tooltip: HashMap<Hand, gpui::SharedString>,
     pub anchor: HashMap<Hand, Anchor>,
+    /// 骨格が取れている手（スケルタル入力）と HMD の姿勢。フレームループが [`sync_panel`] で毎フレーム書く。
+    /// どのパネルの状態でもないので、変わってもパネルを描き直させない（見たいビューは `PanelState::live` で毎フレーム描く）。
+    pub hands: Vec<kernel::vr::HandSkeleton>,
+    pub hmd: kernel::Pose,
     /// 終了を頼む。フレームループがアプリを終える（テストのハーネスもこれで終える）。
     pub quit: bool,
     /// 開いているパネルの数（閉じたものは数えない）と、同時に開ける数の上限（[`MAX_PANELS`] とランタイムの上限の小さい方）。
@@ -358,6 +362,8 @@ impl gpui::Global for PanelControl {}
 pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut App) -> bool {
     sync_settings(kernel, cx);
     let ctl = cx.default_global::<PanelControl>();
+    ctl.hands = kernel.hands().to_vec();
+    ctl.hmd = kernel.hmd();
     let settings = ctl.settings;
     let ctl = ctl.panels.entry(panel).or_default();
     for c in ctl.commands.drain(..) {

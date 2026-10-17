@@ -8,13 +8,15 @@ pub use {audio, desktop, input, keyboard, os, rendering, vr};
 use std::collections::HashMap;
 
 pub use input::ControllerState;
-use vr::{Device, Hand, Pose, VrBackend};
+use vr::{Device, Hand, HandSkeleton, Pose, VrBackend};
 
 /// 上位に渡す共通フレーム。機種名・生入力・ランタイム固有の状態は含めない。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Frame {
     pub hmd: Pose,
     pub controllers: Vec<ControllerState>,
+    /// 骨格が取れている手（スケルタル入力）。
+    pub hands: Vec<HandSkeleton>,
     pub trackers: Vec<(String, Pose)>,
     pub quit: bool,
     /// 手ブレのある入力に対して、上位のポインタ補正を有効にする。
@@ -82,6 +84,7 @@ impl<B: VrBackend> Subsystems<B> {
         Frame {
             hmd: raw.hmd,
             controllers,
+            hands: raw.hands,
             trackers: raw.trackers,
             quit: raw.quit,
             stabilize_pointer: !raw.emulated,

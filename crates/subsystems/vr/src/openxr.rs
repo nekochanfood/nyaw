@@ -8,7 +8,10 @@ use ash::vk::{self, Handle};
 use openxr as xr;
 
 use crate::gpu::{self, Gpu};
-use crate::{Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError};
+use crate::{
+    Frame, Hand, HandSkeleton, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend,
+    VrError,
+};
 
 pub(crate) fn available() -> bool {
     os::openxr_runtime_manifest().is_some()
@@ -131,6 +134,8 @@ pub(crate) struct OpenXrBackend {
     stage: xr::Space,
     view: xr::Space,
     aim_spaces: Vec<xr::Space>,
+    /// 手ごとの骨格のトラッカー（XR_EXT_hand_tracking）。拡張が無いランタイムでは空。
+    hand_trackers: Vec<(Hand, xr::HandTracker)>,
     /// ロールごとのトラッカーの空間。拡張が無いランタイムでは空。
     tracker_spaces: Vec<(&'static str, xr::Space)>,
     actions: Vec<(String, xr::Action<f32>)>,
@@ -179,6 +184,8 @@ impl OpenXrBackend {
         // トラッカーは任意。無いランタイムでもコントローラだけで動く。
         let has_trackers = available.htcx_vive_tracker_interaction;
         extensions.htcx_vive_tracker_interaction = has_trackers;
+        // 骨格（スケルタル入力）も任意。
+        extensions.ext_hand_tracking = available.ext_hand_tracking;
         let instance = entry
             .create_instance(
                 &xr::ApplicationInfo {
@@ -319,6 +326,20 @@ impl OpenXrBackend {
                     .map_err(xr_err("xrCreateActionSpace"))
             })
             .collect::<Result<_, _>>()?;
+        let hand_trackers = if available.ext_hand_tracking {
+            [(Hand::Left, xr::Hand::LEFT), (Hand::Right, xr::Hand::RIGHT)]
+                .into_iter()
+                .filter_map(|(hand, side)| match session.create_hand_tracker(side) {
+                    Ok(t) => Some((hand, t)),
+                    Err(e) => {
+                        logger::warn!("failed to create hand tracker", hand = ?hand, error = e);
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let mut tracker_spaces = Vec::new();
         if let Some((action, role_paths)) = &tracker {
             for (&role, &p) in TRACKER_ROLES.iter().zip(role_paths) {
@@ -336,6 +357,7 @@ impl OpenXrBackend {
             stage,
             view,
             aim_spaces,
+            hand_trackers,
             tracker_spaces,
             actions,
             button_actions,
@@ -485,6 +507,23 @@ impl OpenXrBackend {
                             | xr::SpaceLocationFlags::ORIENTATION_VALID,
                     )
                     .then(|| (role.to_string(), from_posef(l.pose)))
+            })
+            .collect()
+    }
+
+    /// 骨格が取れている手。手首の位置が無効なら（追跡を見失った）落とす。
+    fn hands(&self, time: xr::Time) -> Vec<HandSkeleton> {
+        self.hand_trackers
+            .iter()
+            .filter_map(|(hand, tracker)| {
+                let joints = self.stage.locate_hand_joints(tracker, time).ok()??;
+                joints[crate::WRIST]
+                    .location_flags
+                    .contains(xr::SpaceLocationFlags::POSITION_VALID)
+                    .then(|| HandSkeleton {
+                        hand: *hand,
+                        joints: joints.map(|j| from_posef(j.pose)),
+                    })
             })
             .collect()
     }
@@ -763,6 +802,7 @@ impl VrBackend for OpenXrBackend {
         Frame {
             hmd,
             controllers: self.controllers(time),
+            hands: self.hands(time),
             trackers: self.trackers(time),
             quit: self.quit,
             emulated: false,

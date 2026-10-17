@@ -481,6 +481,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.hmd()
     }
 
+    /// 最後の tick で骨格が取れていた手（スケルタル入力）。
+    pub fn hands(&self) -> &[vr::HandSkeleton] {
+        self.overlay.hands()
+    }
+
     /// `hand` のツールチップをカーソルの上下どちらに出すか（`Overlay::tooltip_anchor`）。
     pub fn tooltip_anchor(&self, hand: Hand) -> Anchor {
         self.overlay.tooltip_anchor(hand)

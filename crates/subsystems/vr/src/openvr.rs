@@ -397,6 +397,7 @@ impl VrBackend for OpenVrBackend {
                     inputs: inputs(profile, hand, actions),
                 });
             }
+            frame.hands = input.skeletons(predict);
         }
         self.devices = devices;
         frame

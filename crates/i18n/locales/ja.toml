@@ -39,6 +39,18 @@ spatializer_steam = "Steam Audio（HRTF）"
 spatializer_panning = "パンニング（Steam Audio が見つからない）"
 spatializer_unavailable = "音声出力なし"
 
+[skeleton]
+title = "スケルタル入力"
+instructions = "頭から見た手の関節を、手のひらを中心に描きます。ギズモの軸は X 赤・Y 緑・Z 青。親指の先をほかの指の先に付けるとつまみになります。"
+left = "左手"
+right = "右手"
+untracked = "骨格なし"
+index = "人差し指"
+middle = "中指"
+ring = "薬指"
+little = "小指"
+pinch = "{finger}: {mm} mm"
+
 [common]
 close = "閉じる"
 default = "既定"

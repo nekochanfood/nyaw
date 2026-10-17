@@ -39,6 +39,18 @@ spatializer_steam = "Steam Audio (HRTF)"
 spatializer_panning = "Panning (Steam Audio not found)"
 spatializer_unavailable = "No audio output"
 
+[skeleton]
+title = "Skeletal input"
+instructions = "Your hand joints as seen from your head, centred on the palm. Gizmo axes: X red, Y green, Z blue. Touch your thumb tip to another fingertip to pinch."
+left = "Left hand"
+right = "Right hand"
+untracked = "No skeleton"
+index = "Index"
+middle = "Middle"
+ring = "Ring"
+little = "Little"
+pinch = "{finger}: {mm} mm"
+
 [common]
 close = "Close"
 default = "Default"
