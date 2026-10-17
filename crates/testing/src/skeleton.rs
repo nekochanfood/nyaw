@@ -1,6 +1,6 @@
 use super::*;
 use gpui::{Bounds, Hsla, PathBuilder, Pixels, Point, canvas, fill, point, size};
-use kernel::vr::{HandSkeleton, JOINT_COUNT, PALM, TIPS, joint_parent};
+use kernel::vr::{Facing, HandSkeleton, JOINT_COUNT, PALM, TIPS, joint_parent};
 
 /// 親指の先とほかの指の先がこれより近ければ、つまんでいるとみなす（m）。
 // ponytail: しきい値 1 つでヒステリシスが無い。境目で点滅して困るなら、離すしきい値を別に持つ。
@@ -10,6 +10,9 @@ const VIEW_M: f32 = 0.25;
 /// 関節のギズモの軸の長さ（m）。
 const AXIS_M: f32 = 0.012;
 const HAND_PX: f32 = 440.0;
+/// 画面の大きさ（m）と解像度（px）。手の図 2 つと指ごとの表示が入る。
+pub const SKELETON_SIZE: Vec2 = Vec2::new(1.1, 0.95);
+pub const SKELETON_PX: (u32, u32) = (1100, 950);
 /// ギズモの軸の色（X 赤・Y 緑・Z 青）。
 const AXIS_COLORS: [u32; 3] = [0xe5484dff, 0x30a46cff, 0x3e63ddff];
 
@@ -35,6 +38,8 @@ pub fn pinches(skeleton: &HandSkeleton) -> [bool; 4] {
 /// スケルタル入力を試す画面（`skeleton-test`）。左右の手（`skeleton-left` / `skeleton-right`）の関節を、
 /// 頭から見た向きで手のひらを中心に描く。関節ごとに向きのギズモ（X 赤・Y 緑・Z 青）、骨は親の関節との線。
 /// 親指の先とほかの指の先が [`PINCH_DISTANCE`] より近いと、その指の表示（`pinch-{left,right}-{index,middle,ring,little}`）と骨が光る。
+/// 顔に向けているのが手のひらなら `facing-{left,right}` が光る（手の甲なら消え、文字も変わる）。左手の手のひらを向けて
+/// 親指と小指で二回つまむと、X ボタンの二回押しと同じくダッシュボードが開く（`input::hand_controller`）。
 /// 骨格が取れないランタイム（novr・拡張の無い OpenXR）では手が出ない。毎フレーム描き直す（[`ui::PanelState::live`]）。
 pub struct SkeletonTest {}
 
@@ -76,6 +81,20 @@ impl Render for SkeletonTest {
                     };
                     indicator(&theme, ids[side], label, on)
                 });
+            let facing = skeleton.map(|s| s.facing(hmd.position));
+            let facing = indicator(
+                &theme,
+                ["facing-left", "facing-right"][side],
+                i18n::t(
+                    cx,
+                    match facing {
+                        Some(Facing::Palm) => "skeleton.palm",
+                        Some(Facing::Back) => "skeleton.back",
+                        None => "skeleton.untracked",
+                    },
+                ),
+                facing == Some(Facing::Palm),
+            );
             labeled(
                 &theme,
                 i18n::t(cx, title),
@@ -113,6 +132,7 @@ impl Render for SkeletonTest {
                                 None => d.child(i18n::t(cx, "skeleton.untracked")),
                             }),
                     )
+                    .child(facing)
                     .children(rows),
             )
         };

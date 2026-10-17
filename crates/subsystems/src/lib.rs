@@ -59,7 +59,15 @@ impl<B: VrBackend> Subsystems<B> {
 
     /// 待ち・生入力の取得・機種別変換・押下のヒステリシスをまとめて処理する。
     pub fn poll(&mut self) -> Frame {
-        let raw = self.backend.poll();
+        let mut raw = self.backend.poll();
+        // コントローラを持っていない手は、骨格から作ったコントローラで操作する（スケルタル入力）。
+        let bare: Vec<_> = raw
+            .hands
+            .iter()
+            .filter(|s| raw.controllers.iter().all(|c| c.hand != s.hand))
+            .map(|s| input::hand_controller(s, raw.hmd))
+            .collect();
+        raw.controllers.extend(bare);
         // 切断後や別の機種への切り替えで、古い押下状態を持ち越さない。
         self.inputs.retain(|hand, (profile, _)| {
             raw.controllers
@@ -149,6 +157,25 @@ mod tests {
             assert_eq!(state.select_progress(), 1.0);
             assert_eq!(*expected.get_or_insert(state), state);
         }
+    }
+
+    /// コントローラを持たない手だけが、骨格から作ったコントローラになる（つまむとクリック）。
+    #[test]
+    fn bare_hands_become_controllers() {
+        let mut systems = Subsystems::with_backend(MockBackend::default());
+        let mut joints = [Pose::IDENTITY; vr::JOINT_COUNT];
+        joints[vr::TIPS[1]].position = Vec3::new(0.0, 0.0, -0.005);
+        let hand = |hand| vr::HandSkeleton { hand, joints };
+        systems.backend.frame.hands = vec![hand(Hand::Left), hand(Hand::Right)];
+        systems.backend.frame.controllers =
+            vec![controller(Hand::Right, "valve/index_controller", &[])];
+        let frame = systems.poll();
+        assert_eq!(frame.controllers.len(), 2);
+        let right = frame.controllers.iter().find(|c| c.hand == Hand::Right).unwrap();
+        assert!(!right.select && right.facing.is_none(), "the controller wins");
+        let left = frame.controllers.iter().find(|c| c.hand == Hand::Left).unwrap();
+        assert!(left.select && left.facing.is_some(), "pinching the bare hand clicks");
+        assert_eq!(frame.hands.len(), 2);
     }
 
     #[test]

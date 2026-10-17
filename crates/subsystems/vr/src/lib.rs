@@ -168,7 +168,46 @@ pub struct HandSkeleton {
     pub joints: [Pose; JOINT_COUNT],
 }
 
+/// 手のひらと手の甲のどちらを（顔に）向けているか（[`HandSkeleton::facing`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Facing {
+    Palm,
+    Back,
+}
+
+/// 人差し指・小指の基節（手のひらの面を張る関節）。
+const INDEX_PROXIMAL: usize = 7;
+const LITTLE_PROXIMAL: usize = 22;
+
 impl HandSkeleton {
+    /// 手のひらから外へ出る向き（単位ベクトル）。関節の位置だけから求めるので、ランタイムの関節の軸の違いによらない。
+    pub fn palm_normal(&self) -> Vec3 {
+        let wrist = self.joints[WRIST].position;
+        let index = self.joints[INDEX_PROXIMAL].position - wrist;
+        let little = self.joints[LITTLE_PROXIMAL].position - wrist;
+        // 右手は人差し指 × 小指が手のひらの側。左手は鏡写しで逆。
+        let n = match self.hand {
+            Hand::Right => index.cross(little),
+            Hand::Left => little.cross(index),
+        };
+        n.normalize_or_zero()
+    }
+
+    /// 手のひらを `eye` へどれだけ向けているか（なす角の cos。1 で正面に手のひら、-1 で手の甲）。
+    pub fn palm_toward(&self, eye: Vec3) -> f32 {
+        let to_eye = (eye - self.joints[PALM].position).normalize_or_zero();
+        self.palm_normal().dot(to_eye)
+    }
+
+    /// `eye` に向けているのは手のひらか手の甲か。
+    pub fn facing(&self, eye: Vec3) -> Facing {
+        if self.palm_toward(eye) >= 0.0 {
+            Facing::Palm
+        } else {
+            Facing::Back
+        }
+    }
+
     /// 親指の先と `tip`（[`TIPS`] のどれか）の先との距離（m）。つまむ動作の判定に使う。
     pub fn pinch_distance(&self, tip: usize) -> f32 {
         self.joints[TIPS[0]]
@@ -562,6 +601,30 @@ mod tests {
         assert_eq!(joint_parent(PALM), None);
         assert_eq!(joint_parent(6), Some(WRIST));
         assert_eq!(joint_parent(TIPS[0]), Some(4));
+    }
+
+    /// 手のひらを下へ向けた手（指は前方 -Z）。右手は親指・人差し指が左（-X）、左手は右。
+    fn palm_down(hand: Hand) -> HandSkeleton {
+        let side = match hand {
+            Hand::Right => -1.0,
+            Hand::Left => 1.0,
+        };
+        let mut joints = [Pose::IDENTITY; JOINT_COUNT];
+        joints[INDEX_PROXIMAL].position = Vec3::new(side * 0.03, 0.0, -0.08);
+        joints[LITTLE_PROXIMAL].position = Vec3::new(-side * 0.03, 0.0, -0.07);
+        joints[PALM].position = Vec3::new(0.0, 0.0, -0.04);
+        HandSkeleton { hand, joints }
+    }
+
+    #[test]
+    fn facing_tells_palm_from_back_for_both_hands() {
+        for hand in [Hand::Left, Hand::Right] {
+            let s = palm_down(hand);
+            assert!(s.palm_normal().abs_diff_eq(Vec3::NEG_Y, 1e-5), "{hand:?}");
+            assert_eq!(s.facing(Vec3::new(0.0, -0.5, 0.0)), Facing::Palm, "{hand:?}");
+            assert_eq!(s.facing(Vec3::new(0.0, 0.5, 0.0)), Facing::Back, "{hand:?}");
+            assert!(s.palm_toward(Vec3::new(0.0, -0.5, -0.04)) > 0.99);
+        }
     }
 
     #[test]

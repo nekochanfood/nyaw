@@ -39,7 +39,7 @@ pub use desktop::DesktopTest;
 mod audio;
 pub use audio::AudioTest;
 mod skeleton;
-pub use skeleton::{PINCH_DISTANCE, SkeletonTest, pinches};
+pub use skeleton::{PINCH_DISTANCE, SKELETON_PX, SKELETON_SIZE, SkeletonTest, pinches};
 
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
@@ -571,9 +571,16 @@ impl Render for Testing {
                     )),
                 )
                 .child(
-                    button!("skeleton-test", i18n::t(cx, "skeleton.title"), false).on_click(
-                        spawn_view(self.panel, "skeleton.title", SkeletonTest::new),
-                    ),
+                    button!("skeleton-test", i18n::t(cx, "skeleton.title"), false).on_click({
+                        let panel = self.panel;
+                        move |_, _, cx| {
+                            cx.default_global::<PanelControl>().spawns.push(
+                                PanelSpec::spawn(panel, |id, _, cx| SkeletonTest::new(id, cx))
+                                    .sized(SKELETON_SIZE, SKELETON_PX)
+                                    .titled("skeleton.title"),
+                            )
+                        }
+                    }),
                 )
                 .child(
                     button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false).on_click(

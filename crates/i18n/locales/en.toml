@@ -41,7 +41,7 @@ spatializer_unavailable = "No audio output"
 
 [skeleton]
 title = "Skeletal input"
-instructions = "Your hand joints as seen from your head, centred on the palm. Gizmo axes: X red, Y green, Z blue. Touch your thumb tip to another fingertip to pinch."
+instructions = "Your hand joints as seen from your head, centred on the palm. Gizmo axes: X red, Y green, Z blue. Touch your thumb tip to another fingertip to pinch. Without controllers, pinch thumb and index to click and close the other three fingers to grab. With your left palm toward your face, pinch thumb and little finger twice to open the dashboard."
 left = "Left hand"
 right = "Right hand"
 untracked = "No skeleton"
@@ -50,6 +50,8 @@ middle = "Middle"
 ring = "Ring"
 little = "Little"
 pinch = "{finger}: {mm} mm"
+palm = "Palm toward you"
+back = "Back of hand toward you"
 
 [common]
 close = "Close"
