@@ -622,6 +622,8 @@ impl Render for DragPreview {
 const PROFILER_REDRAW: Duration = Duration::from_millis(100);
 /// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 10cm）。
 const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.1);
+/// 下に出すパネル（[`PanelSpec::below`]）と持ち主の下端の間（m）。
+const BELOW_GAP: f32 = 0.05;
 /// 下に出すパネル（[`PanelSpec::below`]。キーボード）を向ける先を、目からどれだけ下げるか（m）。
 const BELOW_AIM_DROP: f32 = 0.15;
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
@@ -812,7 +814,7 @@ impl PanelSpec {
         self
     }
 
-    /// 開いた瞬間の対象パネルの下へ置く（`tilt` だけ手前に傾けた面に沿って下ろした所）。向きは、そこから頭
+    /// 開いた瞬間の対象パネルの下へ置く（下端から頭から見て真下へ。`tilt` は下ろす量を、その角度だけ傾けて置いたときの縦の長さで決める）。向きは、そこから頭
     /// （目と手の間）へ向ける（見やすく、レーザーでも押しやすい）。親子関係や追従は作らない。
     pub fn below(mut self, panel: PanelId, tilt: f32) -> Self {
         self.from = Some(panel);
@@ -951,13 +953,14 @@ impl PanelSpec {
                 let origin = kernel.panel(from);
                 // 持ち主の下にナビゲーションバーがあれば、その下に出す（重ねてバーを隠さない）。
                 let bar = kernel.nav_bar(from).map_or(0., |b| kernel.panel(b).size.y);
-                let at = origin.pose.transform_point(Vec3::new(
-                    0.,
-                    -origin.size.y / 2. - bar - 0.05 - self.size.y * tilt.cos() / 2.,
-                    0.05 + self.size.y * tilt.sin() / 2.,
-                ));
+                // 持ち主（とそのバー）の下端から、頭から見て真下へ下ろす。持ち主の面に沿って下ろすと、上を向けた
+                // 持ち主（ダッシュボードのバー）では手前へ出てしまう。
+                let bottom = origin
+                    .pose
+                    .transform_point(Vec3::new(0., -origin.size.y / 2. - bar, 0.));
                 let hmd = kernel.hmd();
                 let up = hmd.panel_up();
+                let at = bottom - up * (BELOW_GAP + self.size.y * tilt.cos() / 2.);
                 // 目より少し下（手の方）へ向ける。目へまっすぐ向けるより、下から来るレーザーが浅くならない。
                 let toward = (hmd.position - up * BELOW_AIM_DROP - at).try_normalize();
                 let fallback = origin.pose.orientation * Quat::from_rotation_x(-tilt);
