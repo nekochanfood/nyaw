@@ -399,7 +399,9 @@ mod tests {
             )
         };
         cx.update(|cx| {
-            cx.default_global::<crate::PanelControl>().nav_bars.insert(0, 5);
+            cx.default_global::<crate::PanelControl>()
+                .nav_bars
+                .insert(0, 5);
             assert!(toggle_keyboard(0, cx));
             assert!(redraw(cx, 5) && !redraw(cx, 0));
             assert!(!toggle_keyboard(0, cx));

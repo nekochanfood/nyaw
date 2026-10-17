@@ -193,7 +193,8 @@ mod tests {
         let mut bytes = std::io::Cursor::new(Vec::new());
         let mut w = hound::WavWriter::new(&mut bytes, spec).unwrap();
         for i in 0..48_000 {
-            w.write_sample(if i % 2 == 0 { 8000i16 } else { -8000 }).unwrap();
+            w.write_sample(if i % 2 == 0 { 8000i16 } else { -8000 })
+                .unwrap();
         }
         w.finalize().unwrap();
         Sound::Wav(bytes.into_inner().leak())
@@ -205,9 +206,9 @@ mod tests {
         loop {
             let mut out = vec![0.0; audio::BLOCK * 2];
             k.audio.render(&mut out);
-            let e = out.chunks_exact(2).fold((0.0, 0.0), |(l, r), s| {
-                (l + s[0] * s[0], r + s[1] * s[1])
-            });
+            let e = out
+                .chunks_exact(2)
+                .fold((0.0, 0.0), |(l, r), s| (l + s[0] * s[0], r + s[1] * s[1]));
             if e.0 + e.1 > 0.0 || std::time::Instant::now() > deadline {
                 return e;
             }
@@ -229,8 +230,15 @@ mod tests {
     fn panel_sound_is_spatial_by_default_and_comes_from_the_panel() {
         let (mut k, p) = kernel();
         let status = k.status(p).audio;
-        assert_eq!((status.playing, status.spatial, status.layout), (0, true, Layout::Auto));
-        assert_eq!(status.spatializer, Spatializer::Panning, "テスト用のカーネルはパンニング");
+        assert_eq!(
+            (status.playing, status.spatial, status.layout),
+            (0, true, Layout::Auto)
+        );
+        assert_eq!(
+            status.spatializer,
+            Spatializer::Panning,
+            "テスト用のカーネルはパンニング"
+        );
         k.apply(p, PanelCommand::Play(tone(), true));
         assert_eq!(k.status(p).audio.playing, 1);
         let (l, r) = render_until_sounding(&mut k);

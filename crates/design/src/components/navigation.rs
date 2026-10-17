@@ -341,7 +341,8 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                 let st = state.clone();
                 window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
                     // ボタンを押していない動きは別の手のもの（GPUI のマウスは 1 つ）。押しているときだけ見る。
-                    if phase != DispatchPhase::Capture || e.pressed_button != Some(MouseButton::Left)
+                    if phase != DispatchPhase::Capture
+                        || e.pressed_button != Some(MouseButton::Left)
                     {
                         return;
                     }
@@ -377,7 +378,11 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                             cx.stop_propagation();
                             let next = (start - x).max(0.0);
                             st.update(cx, |s, _| {
-                                if let Gesture::Swiping { offset: o, velocity, .. } = &mut s.gesture
+                                if let Gesture::Swiping {
+                                    offset: o,
+                                    velocity,
+                                    ..
+                                } = &mut s.gesture
                                 {
                                     *velocity = *velocity * 0.5 + (next - offset) * 0.5;
                                     *o = next;
@@ -452,7 +457,8 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
         }
         let (top, level) = top;
         root = root.child(
-            page(&top, level, dir * t * width, window, cx).debug_selector(move || format!("{id}-top")),
+            page(&top, level, dir * t * width, window, cx)
+                .debug_selector(move || format!("{id}-top")),
         );
         if swiping {
             // スワイプ中は中身を覆う（離したときにボタンの上でもクリックにしない・ホバーを消す）。

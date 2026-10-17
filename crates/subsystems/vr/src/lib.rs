@@ -464,7 +464,8 @@ mod tests {
         assert!(l.forward().abs_diff_eq(Vec3::Y, 1e-5), "{}", l.forward());
         assert!((l.orientation * Vec3::Y).abs_diff_eq(q * Vec3::Y, 1e-5));
         // 立っていて首を傾けている・見上げ気味: これまでどおり水平に立てる。
-        let q = Quat::from_rotation_y(1.0) * Quat::from_rotation_x(0.3) * Quat::from_rotation_z(0.3);
+        let q =
+            Quat::from_rotation_y(1.0) * Quat::from_rotation_x(0.3) * Quat::from_rotation_z(0.3);
         let l = Pose::new(Vec3::ZERO, q).leveled();
         assert!((l.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
         assert!(l.forward().y.abs() < 1e-5);

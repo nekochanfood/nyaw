@@ -156,7 +156,11 @@ fn mouse_swipe_past_half_goes_back_without_clicking(cx: &mut TestAppContext) {
     // `tap` を押して左へ。ページは指に付いてくるので、離す所にも `tap` がある。
     let from = right_of(cx, "tap");
     let at = drag_left(cx, from, 12, 20.0);
-    assert!(top_x(cx) < px(-200.0), "follows the pointer: {:?}", top_x(cx));
+    assert!(
+        top_x(cx) < px(-200.0),
+        "follows the pointer: {:?}",
+        top_x(cx)
+    );
     // 下の画面は上の画面の右隣に隙間なく並び、引っ張られて入ってくる。
     let below = cx.debug_bounds("nav-below").unwrap().origin.x;
     assert_eq!(below, top_x(cx) + px(W));
@@ -196,7 +200,11 @@ fn root_page_and_rightward_or_vertical_drags_do_not_go_back(cx: &mut TestAppCont
     let from = point(px(W - 20.0), px(250.0));
     let at = drag_left(cx, from, 12, 20.0);
     cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
-    assert_eq!(view.read_with(cx, |v, _| v.backs), 0, "nothing below the root");
+    assert_eq!(
+        view.read_with(cx, |v, _| v.backs),
+        0,
+        "nothing below the root"
+    );
 
     view.update(cx, |v, cx| {
         v.stack.push(1);
@@ -209,8 +217,16 @@ fn root_page_and_rightward_or_vertical_drags_do_not_go_back(cx: &mut TestAppCont
     cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
     let from = point(px(W - 20.0), px(20.0));
     cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
-    cx.simulate_mouse_move(point(from.x, px(280.0)), MouseButton::Left, Modifiers::none());
-    cx.simulate_mouse_up(point(from.x, px(280.0)), MouseButton::Left, Modifiers::none());
+    cx.simulate_mouse_move(
+        point(from.x, px(280.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
+    cx.simulate_mouse_up(
+        point(from.x, px(280.0)),
+        MouseButton::Left,
+        Modifiers::none(),
+    );
     assert_eq!(depth(&view, cx), 1);
 }
 
@@ -228,7 +244,11 @@ fn a_drift_before_moving_left_still_swipes(cx: &mut TestAppContext) {
         at.x -= px(25.0);
         cx.simulate_mouse_move(at, MouseButton::Left, Modifiers::none());
     }
-    assert!(top_x(cx) < px(-200.0), "follows from where it settled: {:?}", top_x(cx));
+    assert!(
+        top_x(cx) < px(-200.0),
+        "follows from where it settled: {:?}",
+        top_x(cx)
+    );
     cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
     assert_eq!(depth(&view, cx), 0);
 }

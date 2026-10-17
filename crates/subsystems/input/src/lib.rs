@@ -167,8 +167,7 @@ pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerSta
         trigger,
         grab: held(strongest(raw, p.grab), was(|c| c.grab)),
         menu: held(strongest(raw, p.menu), was(|c| c.menu)),
-        shortcut: raw.hand == Hand::Left
-            && held(strongest(raw, p.shortcut), was(|c| c.shortcut)),
+        shortcut: raw.hand == Hand::Left && held(strongest(raw, p.shortcut), was(|c| c.shortcut)),
         scroll: p.scroll.map_or(Vec2::ZERO, |(x, y)| {
             Vec2::new(raw.input(x).unwrap_or(0.0), raw.input(y).unwrap_or(0.0))
         }),

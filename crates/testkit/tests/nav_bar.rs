@@ -16,7 +16,10 @@ fn summoned_panel_gets_a_bar_that_closes_it(cx: &mut TestAppContext) {
     let up = o.orientation * testkit::Vec3::Y;
     assert!((b.position - o.position).dot(up) < 0.0, "below the owner");
     let right = o.orientation * testkit::Vec3::X;
-    assert!((b.position - o.position).dot(right).abs() < 1e-4, "centered");
+    assert!(
+        (b.position - o.position).dot(right).abs() < 1e-4,
+        "centered"
+    );
 
     kit.panel(bar).click("nav-close").step();
     assert!(kit.kernel.panel(owner).closed);

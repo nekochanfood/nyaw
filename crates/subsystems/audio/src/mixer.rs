@@ -1,7 +1,7 @@
 //! 出力のスレッド（オーディオのコールバック）で回すミキサー。メインスレッドとはチャンネルだけでやり取りする。
 
 use crate::phonon::{Binaural, Phonon};
-use crate::{Channels, Clip, Speaker, SpeakerId, Spatializer, VoiceId};
+use crate::{Channels, Clip, Spatializer, Speaker, SpeakerId, VoiceId};
 use glam::{Quat, Vec3};
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -244,10 +244,9 @@ impl Mixer {
                 let right = speaker.rotation * Vec3::X * (speaker.width * 0.5);
                 let points: &[(Vec3, usize)] = match channels {
                     Channels::Mono => &[(speaker.position, 0)],
-                    Channels::Stereo => &[
-                        (speaker.position - right, 0),
-                        (speaker.position + right, 1),
-                    ],
+                    Channels::Stereo => {
+                        &[(speaker.position - right, 0), (speaker.position + right, 1)]
+                    }
                 };
                 for &(point, ch) in points {
                     // 聞き手の座標（右 +X・上 +Y・前 -Z）での向きと距離。

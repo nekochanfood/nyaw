@@ -27,11 +27,12 @@ fn main() -> ExitCode {
     let (backend, emu) = Driven::headless(SCREEN.0, SCREEN.1);
     // keep the default (touch).
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, Default::default());
-    let mut panels = vec![PanelSpec::new(
-        Pose::new(PANEL, Quat::IDENTITY),
-        |id, _, _| Testing::new(id),
-    )
-    .without_nav_bar()];
+    let mut panels = vec![
+        PanelSpec::new(Pose::new(PANEL, Quat::IDENTITY), |id, _, _| {
+            Testing::new(id)
+        })
+        .without_nav_bar(),
+    ];
     panels.extend(beam::specs());
     let (remote, rx) = channel::<ui::Remote>();
     let result: Arc<Mutex<Option<bool>>> = Arc::default();

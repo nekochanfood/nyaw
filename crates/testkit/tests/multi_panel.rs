@@ -1,10 +1,10 @@
 use gpui::{MouseButton, PlatformInput, TestAppContext};
+use kernel::vr::{RawController, mock::MockBackend};
 use kernel::{Device, Kernel};
 use std::collections::HashMap;
 use testing::{BUTTON_ACTIVE_BG, BUTTON_BG, Testing};
 use testkit::{Driver, Hand, NoVrKit, Pose, Quat, Vec2, Vec3, VrKit};
 use ui::PointerBridge;
-use kernel::vr::{RawController, mock::MockBackend};
 
 #[gpui::test]
 fn panels_have_separate_views_controls_and_textures(cx: &mut TestAppContext) {

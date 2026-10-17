@@ -38,9 +38,9 @@ mod watch;
 
 pub use desktop::DesktopKit;
 pub use kernel::subsystems::input::Action;
-pub use novr::NoVrKit;
 pub use kernel::vr::novr::Button;
 pub use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
+pub use novr::NoVrKit;
 pub use vr_kit::{DEFAULT_PROFILE, VrKit};
 
 /// Basic operations that can be done natively on every runtime.

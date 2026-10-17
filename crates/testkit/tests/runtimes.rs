@@ -15,10 +15,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use kernel::vr::{Device, OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
 use testing::{BUTTON_ACTIVE_BG, Testing, TestingTransparent};
 use testkit::runtimes::{self, Kind, LaunchError};
 use testkit::{DesktopKit, Driver};
-use kernel::vr::{Device, OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();

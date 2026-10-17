@@ -25,9 +25,10 @@ fn main() -> ExitCode {
     }
     let (backend, emu) = Driven::headless(SCREEN.0, SCREEN.1);
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, Default::default());
-    let mut panels = vec![PanelSpec::new(Pose::new(PANEL, Quat::IDENTITY), |id, _, _| {
-        NavTest::new(id)
-    })];
+    let mut panels = vec![PanelSpec::new(
+        Pose::new(PANEL, Quat::IDENTITY),
+        |id, _, _| NavTest::new(id),
+    )];
     panels.extend(beam::specs());
     let (remote, rx) = channel::<ui::Remote>();
     let result: Arc<Mutex<Option<bool>>> = Arc::default();
@@ -73,7 +74,8 @@ fn with_view<R: Send + 'static>(
             let _ = tx.send(r);
         }))
         .expect("frame loop");
-    rx.recv_timeout(common::TIMEOUT).expect("frame loop answers")
+    rx.recv_timeout(common::TIMEOUT)
+        .expect("frame loop answers")
 }
 
 /// Screen point of panel pixel (x, y) (800x600 at 1000px/m).

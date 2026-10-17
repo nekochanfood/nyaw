@@ -11,8 +11,8 @@ use gpui::{
 };
 use palette::{FromColor, Mix, Oklab, Srgb};
 
-mod scrollbar;
 mod navigation;
+mod scrollbar;
 mod shaped_button;
 mod slider;
 mod tooltip;

@@ -340,12 +340,14 @@ impl Engine {
     /// デコード済みの音をスピーカーで鳴らす。同じスピーカーでもいくつでも重ねて鳴らせる。
     pub fn play(&mut self, speaker: SpeakerId, clip: Clip, looping: bool) -> VoiceId {
         let id = self.reserve(speaker);
-        if let Err(mpsc::SendError(Command::Play { clip, .. })) = self.commands.send(Command::Play {
-            id,
-            speaker,
-            clip,
-            looping,
-        }) {
+        if let Err(mpsc::SendError(Command::Play { clip, .. })) =
+            self.commands.send(Command::Play {
+                id,
+                speaker,
+                clip,
+                looping,
+            })
+        {
             // 出力のスレッドが無い（デバイスが無い）。鳴らずに終わったことにする。
             let _ = self.done_tx.send((id, Some(clip)));
         }
@@ -478,8 +480,12 @@ mod device {
             )
             .map_err(|e| e.to_string())?;
         stream.play().map_err(|e| e.to_string())?;
-        logger::info!("audio output device", device = device.name().unwrap_or_default(),
-            sample_rate = config.sample_rate.0, channels = channels);
+        logger::info!(
+            "audio output device",
+            device = device.name().unwrap_or_default(),
+            sample_rate = config.sample_rate.0,
+            channels = channels
+        );
         Ok((stream, spatializer))
     }
 }

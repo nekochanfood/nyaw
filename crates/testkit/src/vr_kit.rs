@@ -3,11 +3,11 @@
 //! The UI's rendering result is also sent to the VR mock every frame (rendering uses the CPU rasterizer in [`crate::raster`]).
 
 use gpui::{Bounds, Context, Pixels, Render, TestAppContext, VisualTestContext, Window};
-use kernel::{Kernel, PanelId};
 use kernel::vr::{
     RawController,
     mock::{MockBackend, MockTexture},
 };
+use kernel::{Kernel, PanelId};
 
 use crate::panels::Panels;
 use crate::watch::Watch;

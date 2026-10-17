@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 use std::time::Instant;
 
-use design::animation::{Animation, Motion};
 use design::PANEL_MARGIN;
+use design::animation::{Animation, Motion};
 use subsystems::{Frame, Subsystems, rendering::Surface, vr};
 
 use vr::{Device, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
@@ -592,7 +592,10 @@ impl Overlay {
         }
         p.closed = true;
         // 子とナビゲーションバーは親と一緒に閉じる。
-        let kids: Vec<PanelId> = self.present.iter().copied()
+        let kids: Vec<PanelId> = self
+            .present
+            .iter()
+            .copied()
             .filter(|&c| {
                 let q = &self.panels[c];
                 q.parent.is_some_and(|q| q.panel == id) || q.nav_bar_of == Some(id)
@@ -702,7 +705,8 @@ impl Overlay {
     pub fn tick_frame(&mut self, vr: &mut dyn VrBackend, frame: Frame) -> Vec<UiEvent> {
         let now = Instant::now();
         self.animate(vr, now);
-        self.present.retain(|&id| !self.panels[id].surface.released());
+        self.present
+            .retain(|&id| !self.panels[id].surface.released());
         self.dt = self
             .last_tick
             .map_or(TICK_MIN, |t| (now - t).as_secs_f32())
@@ -774,7 +778,9 @@ impl Overlay {
         let mut parents = std::collections::HashSet::new();
         for &id in &self.present {
             let p = &self.panels[id];
-            if !p.closed && let Some(parent) = p.parent.filter(|parent| !parent.hud) {
+            if !p.closed
+                && let Some(parent) = p.parent.filter(|parent| !parent.hud)
+            {
                 parents.insert(parent.panel);
             }
         }
@@ -1076,7 +1082,10 @@ impl Overlay {
                 cur = panel;
             }
         }
-        let mut kids: Vec<PanelId> = self.present.iter().copied()
+        let mut kids: Vec<PanelId> = self
+            .present
+            .iter()
+            .copied()
             .filter(|&i| self.panels[i].parent.is_some() && !dragged.contains(&i))
             .collect();
         kids.sort_by_key(|&i| ancestors(&self.panels, i).len());
@@ -2621,7 +2630,10 @@ mod tests {
             let to_head = (vr.backend.frame.hmd.position - p.position).normalize();
             assert!(normal.abs_diff_eq(to_head, 1e-5), "{normal}");
             let head_up = head * Vec3::Y;
-            assert!((p.orientation * Vec3::X).dot(head_up).abs() < 1e-5, "{roll}");
+            assert!(
+                (p.orientation * Vec3::X).dot(head_up).abs() < 1e-5,
+                "{roll}"
+            );
             assert!((p.orientation * Vec3::Y).dot(head_up) > 0.5, "{roll}");
         }
         // 起き上がると、これまでどおり水平に戻る。

@@ -43,8 +43,8 @@ const DRAG_PX: (u32, u32) = (400, 400);
 /// オーバーレイ層が距離に比例して大きくするので、近くても遠くても見た目の大きさは変わらない。
 /// 箱の高さ（`TOOLTIP_HEIGHT` px）が `TOOLTIP_HEIGHT_M`（カーソルの丸 2 個分の高さ）に見える縮尺にする。
 const TOOLTIP_PX: (u32, u32) = (640, 256);
-const TOOLTIP_M: f32 = TOOLTIP_PX.0 as f32 * design::components::TOOLTIP_HEIGHT_M
-    / design::components::TOOLTIP_HEIGHT;
+const TOOLTIP_M: f32 =
+    TOOLTIP_PX.0 as f32 * design::components::TOOLTIP_HEIGHT_M / design::components::TOOLTIP_HEIGHT;
 
 /// 両手のレーザーとカーソルとドラッグの見た目。
 pub fn specs() -> Vec<PanelSpec> {

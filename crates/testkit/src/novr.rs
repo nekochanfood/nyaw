@@ -4,9 +4,9 @@
 //! the emulator screen ([`NoVrKit::screenshot`]). No window is shown (the screen can be viewed with `NYAW_E2E_WATCH`).
 
 use gpui::{Bounds, Context, Pixels, Render, TestAppContext, VisualTestContext, Window};
+use kernel::vr::novr::{Button, Emulator};
 use kernel::{Kernel, PanelId};
 use ui::Frame;
-use kernel::vr::novr::{Button, Emulator};
 
 use crate::panels::Panels;
 use crate::watch::Watch;

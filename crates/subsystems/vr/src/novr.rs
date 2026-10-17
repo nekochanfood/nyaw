@@ -231,19 +231,21 @@ impl Emulator {
     }
 
     fn controllers(&self) -> Vec<RawController> {
-        let raw = |hand, aim, trigger: bool, grab: bool, x: bool, stick: Vec2, resize: f32| RawController {
-            hand,
-            profile: PROFILE.to_owned(),
-            aim,
-            inputs: vec![
-                ("trigger/value".to_owned(), f32::from(u8::from(trigger))),
-                ("squeeze/value".to_owned(), f32::from(u8::from(grab))),
-                // Index なので左手の X ボタンは A に当たる。
-                ("a/click".to_owned(), f32::from(u8::from(x))),
-                ("thumbstick/x".to_owned(), stick.x),
-                ("thumbstick/y".to_owned(), stick.y),
-                (crate::RESIZE_INPUT.to_owned(), resize),
-            ],
+        let raw = |hand, aim, trigger: bool, grab: bool, x: bool, stick: Vec2, resize: f32| {
+            RawController {
+                hand,
+                profile: PROFILE.to_owned(),
+                aim,
+                inputs: vec![
+                    ("trigger/value".to_owned(), f32::from(u8::from(trigger))),
+                    ("squeeze/value".to_owned(), f32::from(u8::from(grab))),
+                    // Index なので左手の X ボタンは A に当たる。
+                    ("a/click".to_owned(), f32::from(u8::from(x))),
+                    ("thumbstick/x".to_owned(), stick.x),
+                    ("thumbstick/y".to_owned(), stick.y),
+                    (crate::RESIZE_INPUT.to_owned(), resize),
+                ],
+            }
         };
         let mut out = vec![raw(
             Hand::Left,

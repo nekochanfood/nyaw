@@ -561,9 +561,11 @@ impl Render for Testing {
                     ),
                 )
                 .child(
-                    button!("audio-test", i18n::t(cx, "audio.title"), false).on_click(
-                        spawn_view(self.panel, "audio.title", |id, _| AudioTest::new(id)),
-                    ),
+                    button!("audio-test", i18n::t(cx, "audio.title"), false).on_click(spawn_view(
+                        self.panel,
+                        "audio.title",
+                        |id, _| AudioTest::new(id),
+                    )),
                 )
                 .child(
                     button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false).on_click(
@@ -1036,7 +1038,9 @@ impl Render for SmoothingTest {
             kernel::overlay::LASER_LENGTH_MIN,
             kernel::overlay::LASER_MAX,
         );
-        let release = current.map_or(kernel::overlay::POINTER_RELEASE_DEG, |s| s.pointer_release_deg);
+        let release = current.map_or(kernel::overlay::POINTER_RELEASE_DEG, |s| {
+            s.pointer_release_deg
+        });
         let (tight, loose) = (
             kernel::overlay::POINTER_RELEASE_DEG_MIN,
             kernel::overlay::POINTER_RELEASE_DEG_MAX,
@@ -1100,10 +1104,7 @@ impl Render for SmoothingTest {
                     "release-slider",
                     (release - tight) / (loose - tight),
                     move |v, _, cx| {
-                        push_setting(
-                            Setting::PointerRelease(tight + v * (loose - tight)),
-                            cx,
-                        )
+                        push_setting(Setting::PointerRelease(tight + v * (loose - tight)), cx)
                     },
                 )
                 .length(560.0),
@@ -1127,7 +1128,9 @@ impl Render for SmoothingTest {
                     &theme,
                     "laser-length-slider",
                     (length - short) / (long - short),
-                    move |v, _, cx| push_setting(Setting::LaserLength(short + v * (long - short)), cx),
+                    move |v, _, cx| {
+                        push_setting(Setting::LaserLength(short + v * (long - short)), cx)
+                    },
                 )
                 .length(560.0),
             )

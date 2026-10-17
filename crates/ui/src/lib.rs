@@ -549,11 +549,9 @@ fn start_drag(
         .iter()
         .find(|((p, _), b)| *p == panel && b.pressed)
         .map(|((_, h), _)| *h)?;
-    let (dp, _) = windows
-        .iter()
-        .find(|(id, _)| {
-            !kernel.panel(*id).closed && kernel.panel(*id).pointer == Some((hand, Pointer::Drag))
-        })?;
+    let (dp, _) = windows.iter().find(|(id, _)| {
+        !kernel.panel(*id).closed && kernel.panel(*id).pointer == Some((hand, Pointer::Drag))
+    })?;
     let src = kernel.panel(panel);
     let px_per_m = src.resolution.0 as f32 / src.size.x;
     let width = kernel.panel(*dp).resolution.0 as f32 / px_per_m;
@@ -1056,7 +1054,10 @@ pub fn run_with(
                 });
                 // 前のフレームの配送でホバーした要素のツールチップを手に振り分ける。変わればツールチップのパネルを描き直す。
                 let tooltip_changed = cx.update(|cx| {
-                    let ids = slots.open.iter().map(|&p| (p, slots.windows[p].1.window_id()));
+                    let ids = slots
+                        .open
+                        .iter()
+                        .map(|&p| (p, slots.windows[p].1.window_id()));
                     sync_tooltips(&kernel, &bridges, ids, cx)
                 });
                 for &p in &slots.open {
@@ -1130,8 +1131,9 @@ pub fn run_with(
                     }
                     let hover_due = hover_pending.contains(&panel)
                         && slots.drawn[panel].is_none_or(|t| t.elapsed() >= HOVER_REDRAW);
-                    let forced =
-                        (!inputs.is_empty() && !hover_only) || hover_due || slots.drawn[panel].is_none();
+                    let forced = (!inputs.is_empty() && !hover_only)
+                        || hover_due
+                        || slots.drawn[panel].is_none();
                     if forced {
                         hover_pending.remove(&panel);
                     }
@@ -1374,7 +1376,11 @@ impl Slots {
     /// 開いたパネルを積む。
     fn push(&mut self, (panel, window): (PanelId, AnyWindowHandle)) {
         // 添字で引くので、ずれたら別のパネルの窓を描いてしまう。
-        assert_eq!(panel, self.windows.len(), "PanelId must match the window index");
+        assert_eq!(
+            panel,
+            self.windows.len(),
+            "PanelId must match the window index"
+        );
         self.windows.push((panel, window));
         self.open.push(panel);
         self.last.push(None);

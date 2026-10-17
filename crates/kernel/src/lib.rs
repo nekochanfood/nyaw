@@ -8,8 +8,8 @@ mod audio_panels;
 pub mod config;
 mod desktop_panels;
 mod os_keyboard;
-pub use desktop_panels::DesktopStats;
 pub use audio_panels::AudioStatus;
+pub use desktop_panels::DesktopStats;
 pub use subsystems::{self, Subsystems};
 pub use subsystems::{audio, desktop, rendering, vr};
 
@@ -536,9 +536,13 @@ impl<B: VrBackend> Kernel<B> {
                 self.start_desktop(panel, source, frame_rate)
             }
             PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
-            PanelCommand::PlayAt { sound, at, pitch } => self.play_audio_at(panel, sound, at, pitch),
+            PanelCommand::PlayAt { sound, at, pitch } => {
+                self.play_audio_at(panel, sound, at, pitch)
+            }
             PanelCommand::StopAudio => self.stop_audio(panel),
-            PanelCommand::Spatial(spatial) => self.configure_speaker(panel, |c| c.spatial = spatial),
+            PanelCommand::Spatial(spatial) => {
+                self.configure_speaker(panel, |c| c.spatial = spatial)
+            }
             PanelCommand::SpeakerLayout(layout) => {
                 self.configure_speaker(panel, |c| c.layout = layout)
             }
@@ -671,9 +675,18 @@ mod tests {
         // 立っていて首を少し傾けている: 正面の目の高さに、まっすぐ立てて出る。
         // 横向き・仰向けに寝転がっている: 顔の正面に、頭の上を上にして出る。
         for (q, upright) in [
-            (vr::Quat::from_rotation_y(0.8) * vr::Quat::from_rotation_z(0.3), true),
-            (vr::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), false),
-            (vr::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2), false),
+            (
+                vr::Quat::from_rotation_y(0.8) * vr::Quat::from_rotation_z(0.3),
+                true,
+            ),
+            (
+                vr::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+                false,
+            ),
+            (
+                vr::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                false,
+            ),
         ] {
             k.subsystems.backend.frame.hmd = Pose::new(head, q);
             k.tick();
@@ -685,7 +698,11 @@ mod tests {
                 assert!((pose.position.y - head.y).abs() < 1e-5, "{q}");
                 assert!(up.abs_diff_eq(vr::Vec3::Y, 1e-5), "{q}");
             } else {
-                assert!(pose.position.abs_diff_eq(ahead, 1e-5), "{q} {}", pose.position);
+                assert!(
+                    pose.position.abs_diff_eq(ahead, 1e-5),
+                    "{q} {}",
+                    pose.position
+                );
                 assert!(up.abs_diff_eq(q * vr::Vec3::Y, 1e-5), "{q}");
             }
             // どちらでも表面は頭を向く。
