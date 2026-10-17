@@ -481,11 +481,8 @@ pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
     )
 }
 
-/// パネルの影のぼかし（ガウスの σ）。ずらさず四方へ広がる影で、重なったパネルどうしの境界を見せる。
-const PANEL_SHADOW_BLUR: f32 = 8.0;
-/// パネルの地をウィンドウの縁から離す幅。影はパネルのテクスチャの中に描くので、ここに収める。
-/// GPUI は影を σ の 3 倍まで描くので、それと同じにして影が切れないようにする。
-pub const PANEL_MARGIN: f32 = 3.0 * PANEL_SHADOW_BLUR;
+pub use crate::PANEL_MARGIN;
+use crate::PANEL_SHADOW_BLUR;
 
 /// パネルの地の置き方: ウィンドウの縁から [`PANEL_MARGIN`] 内側を埋め、その余白に影を落とす。
 /// 大きさは `absolute` と `inset` で決まるので、呼び出し側は `.relative()` や `.size_full()` で上書きしない

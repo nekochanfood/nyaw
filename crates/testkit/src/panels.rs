@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use gpui::{AnyWindowHandle, AppContext, Entity, PlatformInput, Render, VisualTestContext};
 use kernel::{Hand, Kernel, PanelId};
 use ui::{PanelControl, PanelRoot, PanelSpec, PointerBridge};
-use vr::VrBackend;
+use kernel::vr::VrBackend;
 
 use crate::watch::Watch;
 use crate::{Pose, Vec2, raster};

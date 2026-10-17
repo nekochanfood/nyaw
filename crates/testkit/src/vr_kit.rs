@@ -4,7 +4,7 @@
 
 use gpui::{Bounds, Context, Pixels, Render, TestAppContext, VisualTestContext, Window};
 use kernel::{Kernel, PanelId};
-use vr::{
+use kernel::vr::{
     RawController,
     mock::{MockBackend, MockTexture},
 };
@@ -220,13 +220,13 @@ fn raw(c: &VirtualController) -> RawController {
         .held
         .iter()
         .map(|&a| {
-            let name = input::source(&c.profile, a)
+            let name = kernel::subsystems::input::source(&c.profile, a)
                 .unwrap_or_else(|| panic!("{} has no input corresponding to {a:?}", c.profile));
             (name.to_owned(), 1.0)
         })
         .collect::<Vec<_>>();
     if c.stick != Vec2::ZERO {
-        let (x, y) = input::scroll_source(&c.profile)
+        let (x, y) = kernel::subsystems::input::scroll_source(&c.profile)
             .unwrap_or_else(|| panic!("{} has no input corresponding to scrolling", c.profile));
         inputs.extend([(x.to_owned(), c.stick.x), (y.to_owned(), c.stick.y)]);
     }

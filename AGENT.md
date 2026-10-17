@@ -13,18 +13,20 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | カーネル / Subsystems / 入力 | `crates/subsystems/input` | コントローラ機種の差を吸収（ドライバ的役割）。プロファイル表で生入力 → 抽象アクション | `map(&RawController, prev) -> ControllerState`, `source(profile, Action)` / `scroll_source(profile)`（逆引き） |
 | カーネル / Subsystems / 描画 | `crates/subsystems/rendering` | GPUI の非表示描画先・読み戻し・描画密度と OS 差、ランタイムへの画像転送・不透明度 / 相対追従の能力差・描画資源の保持と解放。UI は `kernel::rendering` 経由で使う | `Surface::{new, store, present(opacity, dim), place, show, release}`, `gpui::{capture, read_back, open_window, set_render_lod}` |
 | カーネル / Subsystems / 音声 | `crates/subsystems/audio` | OS の音声出力（cpal: Windows は WASAPI、Linux は ALSA）・WAV の読み込み・Steam Audio による立体化（HRTF）。出力・ミックス・立体化は別スレッドで、メインスレッドは命令を送るだけ。音は「スピーカー」（音源）から鳴る | `Engine::{open, offline, render, set_listener, set_speaker, remove_speaker, play, play_sound, stop, stop_speaker, poll, playing, spatializer}`, `Speaker`, `Layout::{Auto, Mono, Stereo}`, `Channels`, `Clip`, `Sound::{File, Wav}`, `Spatializer` |
-| 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動、親子関係（子は親に追従、子が開いている間の親は暗くなり（子のフェードと同じ時間で暗転・復帰）入力を受けない、親が閉じれば子も閉じる）、ナビゲーションバー（持ち主の地の下端の左右中央に、バーの上端の左右中央を合わせて毎 tick 置く。頭からの距離に比例して大きくし見た目の大きさを保つ。持ち主と一緒に閉じ・暗くなり、掴むと持ち主を掴む） | `Overlay::{add_panel, attach, detach, set_locked, set_parent, set_nav_bar, set_resolution, tick, submit}`, `Parent { panel, carry, dismiss }`（`dismiss` = 子の外側を押すと子を閉じる。ブロックしたい子だけ `PanelSpec::without_dismiss`）, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
-| カーネル | `crates/kernel` | 設定・フレーム進行・パネル操作を束ねる。最下部の Subsystems の上に位置し、UI・画面はカーネルだけを見る。設定は `subsystems::os::config_dir()/config.toml`（`theme = "dark" | "light"` は `PanelCommand::Theme` で、`language = "en" | "ja"` は `PanelCommand::Language` で、`pointer_smoothing`（レーザーの手ブレ抑え。0〜0.998、既定 `overlay::POINTER_SMOOTHING` = 上限の 0.998）は `PanelCommand::PointerSmoothing` で、`pointer_release_deg`（抑えたレーザーがこの角度だけ手から遅れると抑えが半分になる。0.5〜45°、既定 11.25°）は `PanelCommand::PointerRelease` で、`laser_length`（レーザーの見える長さ m。0.05〜1.5、既定 0.3）は `PanelCommand::LaserLength` で切り替えると書き戻され、次回起動に残る。`ui::sync_panel` が `design::Mode` のグローバルに反映し、画面は `Theme::current(cx)` で引く）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル） | `Kernel::{boot, with_backend, tick, submit, apply, status, add_panel}`, `PanelCommand`, `PanelStatus`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート |
-| 5 UI | `crates/ui` | パネルを GPUI の非表示ウィンドウで描き、ポインタイベントをマウス入力へ変換する。1 つのフレームループ・カーネルで回し、描画結果を `kernel::rendering` 経由でパネルへ返す。画面の種類は知らない | `run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelSpec::{new, spawn, child, titled, titled_text, without_nav_bar, with_os_keyboard, nav_bar_spec}`（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelCommand`, `PanelStatus`, `MAX_PANELS` |
+| カーネル / Subsystems / キーボード | `crates/subsystems/keyboard` | 仮想キーボードの配列データ（xkeyboard-config）・文字・トグル状態。OS には触らない（OS への入力は `os::keyboard`） | `Database`, `Keyboard`, `Layout`, `Stroke`, `KeyboardType` |
+| カーネル / Subsystems / 配信 | `crates/subsystems/desktop` | 画面・ウィンドウの取得元の一覧・画像取得・OS タッチ注入（「画面・ウィンドウ配信」） | `Sources`, `Stream`, `Source`, `Status`, `Touch` |
+| 4 オーバーレイ | `crates/overlay` | パネル配置、デバイスへの取り付け（追従）・掴めないようにするロック（空間固定）、レーザーのヒット判定、ポインタイベント生成、パネルの掴み移動、親子関係（子は親に追従、子が開いている間の親は暗くなり（子のフェードと同じ時間で暗転・復帰）入力を受けない、親が閉じれば子も閉じる）、ナビゲーションバー（持ち主の地の下端の左右中央に、バーの上端の左右中央を合わせて毎 tick 置く。頭からの距離に比例して大きくし見た目の大きさを保つ。持ち主と一緒に閉じ・暗くなり、掴むと持ち主を掴む） （パネルの表示アニメーションと影の余白は `design` の GPUI を持たない部分＝値と `design::animation` から引く。`default-features = false`） | `Overlay::{add_panel, attach, detach, set_locked, set_parent, set_nav_bar, set_resolution, tick, submit}`, `Parent { panel, carry, dismiss }`（`dismiss` = 子の外側を押すと子を閉じる。ブロックしたい子だけ `PanelSpec::without_dismiss`）, `Panel::pixel_to_world`, `UiEvent`, `PointerEvent` |
+| カーネル | `crates/kernel` | 設定・フレーム進行・パネル操作を束ねる。最下部の Subsystems の上に位置し、UI・画面はカーネルだけを見る。設定は `subsystems::os::config_dir()/config.toml`（アプリ全体の設定はパネルの操作 `PanelCommand` と分け、`Kernel::set(Setting)` で変えて `Kernel::settings()` で読む。`theme = "dark" | "light"` は `Setting::Theme`、`language = "en" | "ja"` は `Setting::Language`、`pointer_smoothing`（レーザーの手ブレ抑え。0〜0.998、既定 `overlay::POINTER_SMOOTHING` = 上限の 0.998）は `Setting::PointerSmoothing`、`pointer_release_deg`（抑えたレーザーがこの角度だけ手から遅れると抑えが半分になる。0.5〜45°、既定 11.25°）は `Setting::PointerRelease`、`laser_length`（レーザーの見える長さ m。0.05〜1.5、既定 0.3）は `Setting::LaserLength` で切り替えると書き戻され、次回起動に残る。`ui::sync_settings` が `design::Mode` のグローバルに反映し、画面は `Theme::current(cx)` で引く）。OS への入力（配信のタッチ・仮想キーボードのキー）はどちらもカーネル経由（`PanelCommand::Stream` / `PanelCommand::TypeToOs`）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル） | `Kernel::{boot, with_backend, tick, submit, apply, status, set, settings, os_keyboard, add_panel}`, `PanelCommand`, `PanelStatus`, `Setting`, `Settings`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート |
+| 5 UI | `crates/ui` | パネルを GPUI の非表示ウィンドウで描き、ポインタイベントをマウス入力へ変換する。1 つのフレームループ・カーネルで回し、描画結果を `kernel::rendering` 経由でパネルへ返す。画面（アプリ）の種類は知らない。どのパネルにも付くシステムの部品（ナビゲーションバー・仮想キーボード `ui::keyboard`・プロファイラパネル）だけは UI 層が持つ | `run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelSpec::{new, spawn, child, titled, titled_text, without_nav_bar, with_os_keyboard, nav_bar_spec}`（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`, `sync_settings`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelCommand`, `PanelStatus`, `MAX_PANELS` |
 | 5 横 | `crates/design` | UI の見た目の責務。Radix Colors のエイリアスに倣う 3 層。Constants（`scale::{light,dark}::SLATE_1..12` / `BLUE_*` / `RED_*`、`scale::{WHITE,BLACK}`、`radius` / `spacing` / `font_size` / `letter_spacing` / `duration_ms`。段ごとに用途が決まった 12 段の生の値）→ Utilities（`Theme`。`accent` → `blue` のスケールの別名と段の用途名 `accent_solid` など、テーマで指す先が変わる `background`（パネルの地）/ `card` / `control`（ボタンの既定）/ `groove`（スライダーの空き）/ `track` / `on_accent` など。`Mode::{Dark, Light}` と `Theme::of`。部品は役割だけを見る）→ Components（`button` / `switch` / `slider` / `panel` + `card`（カード複数）/ `card_panel`（カード 1 枚）/ `navigation`（画面の積み重ね。右から入る push 遷移と、押したまま右から左へ動かすスワイプバック。タッチ・マウスとも。中の要素が止めた入力は奪わず、縦の一覧は `restrict_scroll_to_axis()` を付ける）/ `dialog`（子パネルの中身: アイコン・タイトル・概要・ボタン）/ `nav_bar`（パネルの下に付くナビゲーションバー: 中央にタイトル、右端に閉じるボタン `nav-close`。持ち主のパネル（かバー）を指していない間は丸い線に縮み、指すと広がる）/ `list` + `list_item`（カード色の行を区切り線で並べる一覧）/ `sidebar_item`（サイドバーの行。背景が無く、選んでいる行だけアクセントの色）/ `surface`）。値は `tokens.json`（色は Radix Colors を OKLCH にしたもの）が唯一の情報源で、build.rs が `palette` クレートで sRGB にしてコードを作り、役割の組が WCAG のコントラスト比を満たさなければビルドを落とす | `icon(&icons::HEART).weight(Weight::Fill).size(..).color(..).rotate(..)`（Phosphor を path で描く。色は `Background` なのでグラデーションでアイコンの形に抜ける。6 ウェイト全対応。**ソースで使われているアイコン・ウェイトだけ**を build.rs が埋め込む。データは `icons/*.tsv`、更新は `icons/vendor.mjs`）, `Theme::{DARK, LIGHT, of}`, `Mode`, `components::{button, icon_button, switch, slider, panel, card, card_panel, dialog, PANEL_MARGIN, surface, tooltip, Tooltips, hover_tooltip, Variant}`（`Variant::{Default, Primary, Danger}`。既定は無彩色）, `scale::*`, `catalog::Catalog`（デバッグ用カタログ。色の段・役割・定数・文字・アイコン・部品・動きを 1 画面で確認する。`cargo run -p design --example catalog`）。見た目の方針は `crates/design/GUIDELINES.md`|
 | 5 横 | `crates/profiler` | 計測中だけ動くプロファイラ（`--profile` で起動時から、または Testing の Profiler ボタン / `PanelControl::profiling` で切り替え）。UI 層のフレームループが段階ごとの所要時間（wait / input / draw / render / upload / overlay / compositor と、プロファイラ表示自身の描画 profiler）を記録し、FPS・フレーム時間・CPU/GPU・ドロップをプロファイラパネル（ナビゲーションバーの閉じるボタンで計測ごと止める）にグラフで出す。`--profile` のときは 1 フレーム 1 行の CSV（`os::log_dir()/profile.csv`）にもダンプする。GPU は同期して待つ段階（描画+読み戻し、VR への転送）の実時間 | `Profiler::{new, with_budget, record, add_self_time, summary}`, `ProfilerView`, `Stages`, `CSV_HEADER` |
 | 5 横 | `crates/i18n` | 画面の文言の多言語対応（英語・日本語）。言語ごとの表 `locales/{en,ja}.toml`（キーは `.` 区切り、差し込みは `{name}`）を埋め込み、GPUI のグローバル `Lang`（`ui::sync_panel` がカーネルの `language` から反映）で引く。無いキーは英語、それも無ければキー。テストが、全言語に全キーと同じ差し込みがあるか、ソースの `i18n::t(cx, "…")` のキーが表にあるかを確かめる | `t(cx, key)`, `tf(cx, key, &[(name, &value)])`, `Lang::{En, Ja, ALL, native_name, current}`, `get`, `keys`, `missing` |
 | 6 画面 | `crates/testing` ほか（n 個） | UI 層の上に載る画面。GPUI のビューで、ランタイムを意識しない | `Testing`（テスト用の画面）, `TestingAnim`（毎フレーム変わる）, `TestingLod`（LOD を数字と色で表示）, `TestingScrollbar`（縦・横・縦横のスクロールバー）, `StressTest`（上限までパネルを出す・閉じる・ちりばめる・並べる）, `TooltipTest`（ツールチップ）, `SmoothingTest`（レーザーの手ブレ抑えの強さと線の長さをスライダーで調整） |
-| 6 画面 | `crates/wrist` | 常駐パネル。左手首に腕時計のように取り付き（掴めない）、丸い文字盤（縁に目盛りと秒の点）に日付・時刻、Toggle Panel のアイコンボタンで Testing を召喚 / 閉じる。常駐なので、X ボタンの二回連続押し（`PanelStatus::dashboard` の回数が増える）でダッシュボードを開く / 閉じ、開閉の音も wrist のスピーカーで鳴らす（閉じたパネルの音は止まるため） | `wrist::spec()`, `Wrist`, `WATCH_OFFSET` |
-| 6 画面 | `crates/dashboard` | ダッシュボード。左手の X ボタン（Touch は X、Index は左手の A、novr はキーボードの X）を `kernel::DOUBLE_PRESS`（250ms）以内に二回押すと開き、もう一度二回押すと閉じる。今は中央に Twemoji の 🐟 を置いただけのパネル | `dashboard::spec(opened)`, `Dashboard`, `OPEN_SOUND`, `CLOSE_SOUND` |
+| 6 画面 | `crates/wrist` | 常駐パネル。左手首に腕時計のように取り付き（掴めない）、丸い文字盤（縁に目盛りと秒の点）に日付・時刻、Toggle Panel のアイコンボタンで、main が渡したパネル（今は Testing。`wrist::spec(summon)`。画面どうしは直接依存しない）を召喚 / 閉じる。常駐なので、X ボタンの二回連続押し（`PanelStatus::double_press` の回数が増える）でダッシュボードを開く / 閉じ、開閉の音も wrist のスピーカーで鳴らす（閉じたパネルの音は止まるため） | `wrist::spec(summon)`, `Summon`, `Wrist`, `WATCH_OFFSET` |
+| 6 画面 | `crates/dashboard` | ダッシュボード。左手の X ボタン（Touch は X、Index は左手の A、novr はキーボードの X）を `kernel::DOUBLE_PRESS`（250ms）以内に二回押すと開き（カーネルは画面を知らず、左手の X をショートカットボタンとして `PanelStatus::double_press` に数えるだけ。開くのは wrist）、もう一度二回押すと閉じる。今は中央に Twemoji の 🐟 を置いただけのパネル | `dashboard::spec(opened)`, `Dashboard`, `OPEN_SOUND`, `CLOSE_SOUND` |
 | 6 画面 | `crates/beam` | コントローラのビーム。手ごとにレーザー（線）とカーソル（パネルに貼り付く円）とドラッグの見た目（ドラッグ中だけ。中身は `ui::drag_preview` で包んだビューを GPUI が描き、パネルの外・ウィンドウをまたいでも見える）とツールチップ（カーソルの子。指している要素が `.tooltip(..)` で置いた説明を、頭から見て手の側（`kernel::Anchor`。手が下なら下）にスライドで出す。離れても 0.125 秒は残り、その間に別の要素を指すと文字と幅が変わる）の 4 枚。見た目だけを描き、置き場所・長さ・表示・描画順は `PanelSpec::pointer` で役割を与えたオーバーレイ層が毎 tick 決める（ヒット判定の対象外）。どのランタイムでも載せる（novr のレーザーは視線と重なって見えない） | `beam::specs()`, `Laser`, `Cursor`, `DragLayer`, `Tooltip`（`tooltip::State`） |
 | - | `crates/testkit` | Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット | `Driver::{click, hover, down, up, drag, scroll, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit::{screenshot, on_screen, color_on_screen, move_mouse, press, release, stick, select_panel, type_keys}`, `DesktopKit::with_backend`, `VrKit::{panel, add_panel, press, drag_panel, move_hand, hand, profile, point_at}`, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け） |
-| - | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして（ランタイムの選択はカーネルの仕事）載せる画面（wrist とビーム）とともに `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
+| - | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして（ランタイムの選択はカーネルの仕事）載せる画面（wrist とビーム。wrist が召喚する画面もここで選ぶ）とともに `ui::run` に引き渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr | — |
 
 重い依存は feature で選ぶ。`vr` の `novr`（wgpu・minifb）/ `openvr` / `openxr` を `subsystems` と `kernel` が同名で転送する。ワークスペースの `vr` / `subsystems` / `kernel` は `default-features = false` で、`kernel` の既定は全部無効（型・`connect`・モックだけ。`overlay` / `kernel` のテストはこれで足りる）。実際に起動する `nyaw` と、エミュレーターや実ランタイムを使う `ui` / `testkit` のテストだけが有効にする。無効なランタイムへの接続は `VrError::NoRuntime`。`vr` / `subsystems` 単体の既定は全部有効。
 
@@ -32,6 +34,8 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 描画に必要な OS 分岐は `rendering` に集約する（`gpui` フィーチャー。`kernel/rendering-host` → `subsystems/rendering-host` で有効にし、下位だけのテストではホスト依存を不要にする）。入力変換・画面の構築とイベントループの進行は UI が担う。ランタイム固有の Vulkan 転送・novr 合成は `vr` に残り、`rendering` が `VrBackend` を通して利用する。
 UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
 `logger` は例外で、どの層からも直接依存してよい唯一の横断クレート（`logger` 自身は他の自前クレートに依存しない）。
+`design` の値（Constants）と動き（`design::animation`）は GPUI を持たない（`gpui` フィーチャーを外した `design`）ので、`overlay` がパネルの表示アニメーションと影の余白に使ってよい。部品・テーマのグローバルなど GPUI のものは UI 層から上だけ。
+`kernel` は `subsystems` を再エクスポートしているが、上位が使ってよいのは型（語彙）とデータ（配列の表など）まで。OS・ランタイムへの副作用（入力の注入・送信）は `PanelCommand` でカーネルに頼む（画面からカーネル本体には届かないので、`PanelControl` に積む）。
 
 ## ログ
 
@@ -102,7 +106,8 @@ ui::run（周期は poll が作る: VR はランタイムの vsync、novr は約
 UI 層（`crates/ui`）は1つで、どの画面かを知らない。画面はその上に何個でも載る別クレートで、`ui::run(kernel, Vec<PanelSpec>, profiler)` /
 testkit のキットに `build` として渡す。画面からパネルへの操作は GPUI のグローバル `PanelControl` に PanelId ごとに `PanelCommand`
 （取り付け・取り外し・ロック）を積み、フレームループが `sync_panel` で反映して `PanelStatus`（ランタイム・取り付け先・ロック・
-見えているトラッカー・メニューボタン・掴み中）を書き戻す。画面の型に依存しないので、本番・どのキットでも同じ経路。
+見えているトラッカー・メニューボタン・掴み中）を書き戻す。全体の設定（テーマ・言語・ポインタ）はパネルを問わないので
+`PanelControl::setting_changes` に `Setting` を積み、`sync_settings` が反映して `PanelControl::settings` に書き戻す。画面の型に依存しないので、本番・どのキットでも同じ経路。
 新しい画面 = `crates/<名前>` を足して `ui` に依存し、`main` で選ぶ。
 
 ### Testing（`crates/testing`。テスト用の画面）
@@ -130,7 +135,7 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 | GPUI | `text-field` | フォーカス（`track_focus` / `.focus()`）と文字入力（`on_key_down`。キーボードは無いので testkit の `NoVrKit::type_keys` で GPUI に直接打って確かめる） |
 | GPUI | `scroll-list` | スクロール（`on_scroll_wheel` / `overflow_y_scroll` + `ScrollHandle`） |
 
-ポインタの方式（`kernel::PointerMode`。カーネルが持ち、`config.toml` の `pointer_mode` が初期値、`PanelCommand::PointerMode` で切り替え、`PanelStatus::pointer_mode` で見える。全パネル共通）:
+ポインタの方式（`kernel::PointerMode`。カーネルが持ち、`config.toml` の `pointer_mode` が初期値、`Setting::PointerMode` で切り替え、`Settings::pointer_mode`（UI では `PanelControl::settings`）で見える。全パネル共通）:
 - タッチ（既定）: 押したまま `ui::SWIPE_SLOP`（12px）より動かすとスワイプ（GPUI にはピクセル単位の `ScrollWheel`、宛先は押した所。
   離すと慣性で滑る: `PointerBridge::momentum` をフレームごとに流す）、動かさずに離すとタップ
   （その時点で押して離す）、動かさずに `ui::LONG_PRESS`（400ms）押し続けるとマウスの押下（そのまま動かせば `on_drag` のドラッグ＆ドロップ）。
@@ -263,7 +268,10 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
     ├ os/         Windows / Linux → 共通のパス・設定・OS 操作
     ├ vr/         OpenVR / OpenXR / novr → 共通のランタイム操作
     ├ input/      コントローラのプロファイル → 共通アクション
-    └ rendering/  GPUI・描画転送・能力差のフォールバック
+    ├ rendering/  GPUI・描画転送・能力差のフォールバック
+    ├ audio/      OS の音声出力・立体化
+    ├ desktop/    画面・ウィンドウの取得と OS タッチ注入
+    └ keyboard/   仮想キーボードの配列データ（OS への入力は os/ の os::keyboard）
 ```
 
 - 各実装クレートは `crates/subsystems/` 配下に置く。共通のライフサイクルトレイトや登録機構は設けない。
@@ -292,6 +300,14 @@ fn left_touch_controller_clicks(cx: &mut TestAppContext) {
 - 下位の確認は `cargo test -p desktop -p kernel -p overlay -p subsystems --no-default-features --lib`。UI の単体テストは `cargo test -p testing -p ui -p i18n --lib`。`desktop/test-support` のモックは最新画像とタッチ配送、セッション停止を検査できる。
 - 実デスクトップの E2E は `crates/subsystems/desktop/tests/{windows_capture,linux_capture}.rs`、UI を通すシナリオは `crates/testkit/tests/desktop_stream.rs`。すべて `#[ignore]`。実行には明示的な指定と、ネイティブのテストでは操作できるデスクトップが必要。`cargo check --tests` / Clippy は OS を操作せず型を検査できる。
 - Linux のビルドには `libpipewire-0.3-dev` と `libclang-dev` が必要。Portal がタッチ操作を許可しなければエラーを返す。Windows のウィンドウ操作はデスクトップで対象が見えている場合に限り、別ウィンドウへの誤入力を防ぐ。
+## 仮想キーボード
+
+キーボードは役割ごとに 3 か所に分かれる。
+
+- `crates/subsystems/keyboard`: 配列データ（xkeyboard-config）と、押したキーから文字・修飾キーの状態を求める（`Stroke`）。OS には触らない。
+- `crates/subsystems/os` の `os::keyboard`: OS の前面のアプリの配列・IME の監視（`Watcher`。別スレッド）と、キー・文字の注入。カーネルが持ち（`Kernel::os_keyboard`。最初に使ったときに監視を始める）、`PanelCommand::TypeToOs` で送る。
+- `crates/ui` の `ui::keyboard`: キーボードのパネル（`KeyboardView`）と、入力をどのパネルへ届けるかの振り分け（`InputRouting`）。GPUI の入力欄は `focus_input`、OS を操作するパネル（配信・`PanelSpec::with_os_keyboard`）は `toggle_os_keyboard` で出す。OS の状態はフレームループが `PanelControl::os_keyboard` に書き写し、`system_keyboard` で読む。
+
 ## 音声（パネルのスピーカー）
 
 - どのパネルにもスピーカー（音源）があり、パネルの中で鳴らす音はそこから聞こえる。`PanelCommand::Play(audio::Sound, looping)` で鳴らし（読み込みは別スレッド。同じパネルでも別のパネルでも、いくつでも重ねて鳴る）、`StopAudio` でそのパネルの音を止める。パネルを閉じると止まる。`PanelStatus::audio` に再生中の数・設定・立体化の手段。

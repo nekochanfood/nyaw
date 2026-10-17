@@ -15,7 +15,8 @@ required-features = ["openvr"]
 [dependencies]
 subsystems.workspace = true
 logger.workspace = true
-design.workspace = true
+# 値と動きだけを使う（GPUI は持ち込まない）
+design = { path = "../design", default-features = false }
 
 [dev-dependencies]
 subsystems = { workspace = true, features = ["test-support"] }

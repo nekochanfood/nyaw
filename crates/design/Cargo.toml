@@ -6,11 +6,17 @@ license.workspace = true
 
 # デザイン層。値（Constants）→ 役割とテーマ（Utilities）→ 部品（Components）の 3 層。
 # 値は tokens.json が唯一の情報源で、build.rs が Rust のコードにする。
+[features]
+# 部品（Components）・アイコン・テーマのグローバルなど GPUI で描くもの。外すと値（Constants）と動き（animation）だけになり、
+# GPUI を持たない下位層（overlay）からも使える。
+default = ["gpui"]
+gpui = ["dep:gpui", "dep:unicode-segmentation"]
+
 [dependencies]
 palette = "0.7"
 animato = { version = "1.7.2", default-features = false, features = ["tween"] }
-gpui = { workspace = true, features = ["test-support"] }
-unicode-segmentation = "1.13"
+gpui = { workspace = true, features = ["test-support"], optional = true }
+unicode-segmentation = { version = "1.13", optional = true }
 
 [dev-dependencies]
 gpui_platform = { workspace = true, features = ["test-support"] }

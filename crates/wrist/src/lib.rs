@@ -1,5 +1,5 @@
 //! Layer 6 画面: 常駐パネル「wrist」。左手首に腕時計のように取り付き（掴めない）、丸い文字盤に
-//! 日付・時刻・Toggle Panel ボタンを出す（縁に目盛りと秒の点）。ボタンで Testing パネルを召喚 / 閉じる。
+//! 日付・時刻・Toggle Panel ボタンを出す（縁に目盛りと秒の点）。ボタンで召喚するパネル（main が選ぶ。今は Testing）を開く / 閉じる。
 //! 常駐なので、X ボタンの二回連続押しでダッシュボードを開く / 閉じるのもここ（音もこのパネルで鳴らす）。
 
 use std::time::Duration;
@@ -11,7 +11,6 @@ use gpui::{Context, FontWeight, Window, div, prelude::*, px, rgba};
 use kernel::audio::Sound;
 use kernel::{PanelCommand, PanelId};
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
-use testing::Testing;
 use ui::{PanelControl, PanelSpec};
 
 /// 手首の甲側に載せた腕時計の相対姿勢: コントローラ原点の少し手首寄り（+Z）・上（+Y）で、
@@ -22,10 +21,10 @@ pub const WATCH_OFFSET: Pose = Pose::new(
     Quat::from_xyzw(-0.707_106_77, 0.0, 0.0, 0.707_106_77),
 );
 /// 取り付け先の手が追えない間（起動直後・novr のエミュレーター）の置き場所。開いた瞬間の頭から見て左下 0.4m。
-/// 召喚する Testing パネル（[`TESTING_POSE`]）とは視線の方向が重ならない。
+/// 召喚するパネル（[`SUMMON_POSE`]）とは視線の方向が重ならない。
 pub const IN_VIEW: Pose = Pose::new(Vec3::new(-0.32, -0.2, -0.4), Quat::IDENTITY);
-/// 召喚する Testing パネルの位置。召喚した瞬間の頭から見て正面 0.8m、少し下。
-pub const TESTING_POSE: Pose = Pose::new(Vec3::new(0.0, -0.1, -0.8), Quat::IDENTITY);
+/// 召喚するパネルの位置。召喚した瞬間の頭から見て正面 0.8m、少し下。
+pub const SUMMON_POSE: Pose = Pose::new(Vec3::new(0.0, -0.1, -0.8), Quat::IDENTITY);
 
 /// 丸い文字盤（直径 0.1m）と、周りの影の余白（[`components::PANEL_MARGIN`]）が収まる正方形。
 /// 4px/mm（旧来の 0.12m / 480px と同じ密度）。
@@ -36,9 +35,13 @@ const DIAL_C: f32 = RES_PX.0 as f32 / 2.0 - components::PANEL_MARGIN;
 /// 文字盤の中心から目盛り（と秒の点）の中心までの半径。縁から `spacing::LG` 内側。
 const DIAL_R: f32 = DIAL_C - spacing::LG - 8.0;
 
+/// Toggle Panel で召喚するパネルの起動仕様を作る。開いたら引数で PanelId を知らせる（`dashboard::spec` と同じ形）。
+/// 画面どうしを直接つながないよう、何を召喚するかは main が渡す。
+pub type Summon = fn(Box<dyn FnOnce(PanelId, &mut gpui::App)>) -> PanelSpec;
+
 /// 左手首に取り付いた状態で起動する wrist の起動仕様。
-pub fn spec() -> PanelSpec {
-    PanelSpec::new(Pose::IDENTITY, |panel, _, cx| Wrist::new(panel, cx))
+pub fn spec(summon: Summon) -> PanelSpec {
+    PanelSpec::new(Pose::IDENTITY, move |panel, _, cx| Wrist::new(panel, summon, cx))
         .sized(SIZE_M, RES_PX)
         .in_view(IN_VIEW)
         .attached(Device::Controller(Hand::Left), WATCH_OFFSET)
@@ -64,18 +67,19 @@ fn date(now: chrono::DateTime<chrono::Local>, cx: &gpui::App) -> String {
 }
 
 pub struct Wrist {
-    /// 召喚中の Testing パネル。
-    pub testing: Option<PanelId>,
+    /// 召喚中のパネル。
+    pub summoned: Option<PanelId>,
+    summon: Summon,
     /// 開いているダッシュボード。
     pub dashboard: Option<PanelId>,
     /// このパネル。
     panel: PanelId,
-    /// 反映した X ボタンの二回押しの回数（[`kernel::PanelStatus::dashboard`]）。
+    /// 反映した X ボタンの二回押しの回数（[`kernel::PanelStatus::double_press`]）。
     toggles: u32,
 }
 
 impl Wrist {
-    pub fn new(panel: PanelId, cx: &mut Context<Self>) -> Self {
+    pub fn new(panel: PanelId, summon: Summon, cx: &mut Context<Self>) -> Self {
         // 時計を進める: 1 秒ごとに描き直す（フレームループはビューの notify を知らないので `redraw` で頼む）。
         cx.spawn(async move |this, cx| {
             loop {
@@ -97,7 +101,8 @@ impl Wrist {
         cx.observe_global::<PanelControl>(Self::sync_dashboard)
             .detach();
         Self {
-            testing: None,
+            summoned: None,
+            summon,
             dashboard: None,
             panel,
             toggles: 0,
@@ -108,7 +113,7 @@ impl Wrist {
     /// フレームループが状態を書き戻すたびに呼ばれるので、変わっていなければ何もしない（書き込むと自分がまた呼ばれる）。
     fn sync_dashboard(&mut self, cx: &mut Context<Self>) {
         let ctl = cx.global::<PanelControl>();
-        let toggles = ctl.panels.get(&self.panel).map_or(0, |p| p.status.dashboard);
+        let toggles = ctl.panels.get(&self.panel).map_or(0, |p| p.status.double_press);
         let closed = self
             .dashboard
             .is_some_and(|id| ctl.panels.get(&id).is_some_and(|p| p.status.closed));
@@ -221,8 +226,8 @@ impl Render for Wrist {
                 .on_click(move |_, _, cx| {
                     let this = this.clone();
                     this.update(cx, |w, cx| {
-                        // Testing 自身のボタンで閉じられていたら、閉じ済みとして扱い次は召喚する。
-                        let open = w.testing.take().filter(|id| {
+                        // 召喚したパネル自身のボタンで閉じられていたら、閉じ済みとして扱い次は召喚する。
+                        let open = w.summoned.take().filter(|id| {
                             !cx.default_global::<PanelControl>()
                                 .panels
                                 .get(id)
@@ -238,15 +243,11 @@ impl Render for Wrist {
                                 .push(kernel::PanelCommand::Close),
                             None => {
                                 let wrist = cx.entity();
-                                cx.default_global::<PanelControl>().spawns.push(
-                                    PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
-                                        wrist.update(cx, |w, _| w.testing = Some(id));
-                                        Testing::new(id)
-                                    })
-                                    .sized(testing::TESTING_SIZE, testing::TESTING_PX)
-                                    .in_view(TESTING_POSE)
-                                    .titled("testing.open.testing"),
-                                );
+                                let spec = (w.summon)(Box::new(move |id, cx| {
+                                    wrist.update(cx, |w, _| w.summoned = Some(id));
+                                }))
+                                .in_view(SUMMON_POSE);
+                                cx.default_global::<PanelControl>().spawns.push(spec);
                             }
                         }
                     });
@@ -260,10 +261,10 @@ mod tests {
     use super::*;
     use gpui::{Modifiers, TestAppContext};
 
-    /// ボタンは Testing の召喚要求を積み、もう一度押すと閉じる要求を積む。
+    /// ボタンは 召喚の要求を積み、もう一度押すと閉じる要求を積む。
     #[gpui::test]
     fn toggle_panel_spawns_then_closes_home(cx: &mut TestAppContext) {
-        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(0, cx));
+        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(0, |_| PanelSpec::new(Pose::IDENTITY, |_, _, _| gpui::Empty), cx));
         cx.run_until_parked();
         let c = cx.debug_bounds("toggle-panel").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
@@ -271,18 +272,18 @@ mod tests {
             cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
             1
         );
-        wrist.update(cx, |w, _| w.testing = Some(3));
+        wrist.update(cx, |w, _| w.summoned = Some(3));
         cx.simulate_click(c, Modifiers::none());
         let q = cx.update(|_, cx| cx.global::<PanelControl>().panels[&3].commands.clone());
         assert_eq!(q, [kernel::PanelCommand::Close]);
     }
 
-    /// Testing が自分のボタンで閉じられた後は、トグルでもう一度召喚される。
+    /// 召喚したパネルが自分のボタンで閉じられた後は、トグルでもう一度召喚される。
     #[gpui::test]
     fn toggle_summons_again_after_home_closed_itself(cx: &mut TestAppContext) {
-        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(0, cx));
+        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(0, |_| PanelSpec::new(Pose::IDENTITY, |_, _, _| gpui::Empty), cx));
         cx.run_until_parked();
-        wrist.update(cx, |w, _| w.testing = Some(3));
+        wrist.update(cx, |w, _| w.summoned = Some(3));
         cx.update(|_, cx| {
             cx.default_global::<PanelControl>()
                 .panels
@@ -302,7 +303,7 @@ mod tests {
     /// X ボタンを二回押すとダッシュボードを開いて開く音を鳴らし、もう一度二回押すと閉じて閉じる音を鳴らす。
     #[gpui::test]
     fn double_x_opens_then_closes_dashboard_with_sounds(cx: &mut TestAppContext) {
-        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(0, cx));
+        let (wrist, cx) = cx.add_window_view(|_, cx| Wrist::new(0, |_| PanelSpec::new(Pose::IDENTITY, |_, _, _| gpui::Empty), cx));
         cx.run_until_parked();
         let press_twice = |cx: &mut gpui::VisualTestContext, n| {
             cx.update(|_, cx| {
@@ -311,7 +312,7 @@ mod tests {
                     .entry(0)
                     .or_default()
                     .status
-                    .dashboard = n
+                    .double_press = n
             });
             cx.run_until_parked();
         };
@@ -348,7 +349,7 @@ mod tests {
     /// 丸い文字盤の中央に、日付・時刻・ボタンを縦に並べる。
     #[gpui::test]
     fn layout_is_date_over_time_over_button(cx: &mut TestAppContext) {
-        let (_, cx) = cx.add_window_view(|_, cx| Wrist::new(0, cx));
+        let (_, cx) = cx.add_window_view(|_, cx| Wrist::new(0, |_| PanelSpec::new(Pose::IDENTITY, |_, _, _| gpui::Empty), cx));
         cx.run_until_parked();
         let [d, t, b] = ["date", "time", "toggle-panel"].map(|s| cx.debug_bounds(s).unwrap());
         assert!(d.bottom() <= t.top());

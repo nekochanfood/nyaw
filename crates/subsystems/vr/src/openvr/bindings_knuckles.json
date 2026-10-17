@@ -44,7 +44,7 @@
           "mode": "button",
           "inputs": {
             "click": {
-              "output": "/actions/nyaw/in/dashboard"
+              "output": "/actions/nyaw/in/shortcut"
             }
           }
         },

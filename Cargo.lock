@@ -3780,6 +3780,7 @@ dependencies = [
  "kernel",
  "logger",
  "profiler",
+ "testing",
  "ui",
  "wrist",
 ]
@@ -5851,14 +5852,12 @@ name = "testkit"
 version = "2026.0.1"
 dependencies = [
  "gpui",
- "input",
  "kernel",
  "logger",
  "minifb",
  "sysinfo",
  "testing",
  "ui",
- "vr",
  "wrist",
 ]
 
@@ -7324,7 +7323,6 @@ dependencies = [
  "gpui",
  "i18n",
  "kernel",
- "testing",
  "ui",
 ]
 

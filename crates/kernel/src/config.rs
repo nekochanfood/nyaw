@@ -163,26 +163,15 @@ fn runtime_from(text: &str) -> Option<String> {
     table.get("runtime")?.as_str().map(str::to_owned)
 }
 
-/// `path` の設定ファイルの `theme` だけを書き換える（他のキーは残す。ファイルが無ければ作る）。
+/// 設定の値（列挙は文字列）を、設定ファイルに書く TOML の値にする。
+pub fn value(v: impl serde::Serialize) -> toml::Value {
+    toml::Value::try_from(v).expect("settings serialize to TOML values")
+}
+
+/// `path` の設定ファイルの 1 つのキーだけを書き換える（他のキーは残す。ファイルが無ければ作る）。
 /// 既存のファイルが読めない・TOML として壊れているときは、上書きせずにエラーを返す。
-pub fn save_theme_at(path: &Path, theme: ThemeMode) -> Result<(), Error> {
-    let value = toml::Value::try_from(theme).expect("an enum of unit variants is a string");
-    save_at(path, "theme", value)
-}
-
-/// `path` の設定ファイルの `language` だけを書き換える（[`save_theme_at`] と同じく他のキーは残す）。
-pub fn save_language_at(path: &Path, language: Language) -> Result<(), Error> {
-    let value = toml::Value::try_from(language).expect("an enum of unit variants is a string");
-    save_at(path, "language", value)
-}
-
-/// 数値のキー（`pointer_smoothing` など）を `path` の設定ファイルへ書き戻す（[`save_theme_at`] と同じく他のキーは残す）。
-pub fn save_number_at(path: &Path, key: &str, value: f32) -> Result<(), Error> {
-    save_at(path, key, toml::Value::Float(f64::from(value)))
-}
-
-/// 設定ファイルの 1 つのキーだけを書き換える。ファイルが無ければ作り、壊れていれば上書きしない。
-fn save_at(path: &Path, key: &str, value: toml::Value) -> Result<(), Error> {
+pub fn save_at(path: &Path, key: &str, value: impl Into<toml::Value>) -> Result<(), Error> {
+    let value = value.into();
     let mut table = match fs::read_to_string(path) {
         Ok(text) => text.parse::<toml::Table>().map_err(Error::Parse)?,
         Err(e) if e.kind() == io::ErrorKind::NotFound => toml::Table::new(),
@@ -272,7 +261,7 @@ emulator = false
         let dir = std::env::temp_dir().join(format!("nyaw-config-{}", std::process::id()));
         let path = dir.join("nested").join("config.toml");
         // ファイルもディレクトリも無くても作る。
-        save_theme_at(&path, ThemeMode::Light).unwrap();
+        save_at(&path, "theme", value(ThemeMode::Light)).unwrap();
         assert_eq!(
             parse(&fs::read_to_string(&path).unwrap()).unwrap().theme,
             ThemeMode::Light
@@ -285,26 +274,26 @@ emulator = false
 ",
         )
         .unwrap();
-        save_theme_at(&path, ThemeMode::Light).unwrap();
+        save_at(&path, "theme", value(ThemeMode::Light)).unwrap();
         let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
             (c.theme, c.log.as_deref(), c.gpu.emulator),
             (ThemeMode::Light, Some("debug"), false)
         );
         // 手ブレ抑えも同じく書き戻せ、テーマは残る。
-        save_number_at(&path, "pointer_smoothing", 0.5).unwrap();
+        save_at(&path, "pointer_smoothing", 0.5).unwrap();
         let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
             (c.pointer_smoothing, c.theme),
             (Some(0.5), ThemeMode::Light)
         );
         // 言語も同じく書き戻せ、テーマは残る。
-        save_language_at(&path, Language::Ja).unwrap();
+        save_at(&path, "language", value(Language::Ja)).unwrap();
         let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!((c.language, c.theme), (Language::Ja, ThemeMode::Light));
         // 壊れたファイルは上書きしない。
         fs::write(&path, "log = ").unwrap();
-        assert!(save_theme_at(&path, ThemeMode::Dark).is_err());
+        assert!(save_at(&path, "theme", value(ThemeMode::Dark)).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), "log = ");
         let _ = fs::remove_dir_all(&dir);
     }

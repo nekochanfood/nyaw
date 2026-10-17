@@ -38,7 +38,7 @@
           "mode": "button",
           "inputs": {
             "click": {
-              "output": "/actions/nyaw/in/dashboard"
+              "output": "/actions/nyaw/in/shortcut"
             },
             "touch": {
               "output": "/actions/nyaw/in/right_touch"
@@ -59,7 +59,7 @@
           "mode": "button",
           "inputs": {
             "click": {
-              "output": "/actions/nyaw/in/dashboard"
+              "output": "/actions/nyaw/in/shortcut"
             }
           }
         },

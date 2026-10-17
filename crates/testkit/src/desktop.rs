@@ -8,7 +8,7 @@ use gpui::{
 };
 use kernel::{Kernel, PanelId};
 use ui::{PanelControl, PanelRoot, PanelSpec};
-use vr::VrBackend;
+use kernel::vr::VrBackend;
 
 use crate::watch::Watch;
 use crate::{Driver, Pose, Quat, Vec2, Vec3, raster};

@@ -5,7 +5,7 @@
 use gpui::TestAppContext;
 use testing::{BUTTON_BG, BUTTON_HOVER_BG, Testing};
 use testkit::{Button, Device, Driver, Hand, NoVrKit, Vec2};
-use vr::VrBackend;
+use kernel::vr::VrBackend;
 
 fn is_gray(c: u32) -> bool {
     let [_, r, g, b] = c.to_be_bytes();

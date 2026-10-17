@@ -87,17 +87,7 @@ impl Render for KeyboardTest {
                     os_visible,
                 )
                 .on_click(cx.listener(|this, _, _, cx| {
-                    ui::keyboard::register_input(
-                        this.panel,
-                        |input, cx| {
-                            let foreground = ui::keyboard::system_keyboard(cx).foreground;
-                            ui::keyboard::send_to_os(input, foreground, cx)
-                        },
-                        cx,
-                    );
-                    if !ui::keyboard::toggle_keyboard(this.panel, cx) {
-                        ui::keyboard::unregister_input(this.panel, cx);
-                    }
+                    ui::keyboard::toggle_os_keyboard(this.panel, cx);
                     cx.notify();
                 })),
             )

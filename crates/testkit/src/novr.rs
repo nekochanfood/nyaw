@@ -6,7 +6,7 @@
 use gpui::{Bounds, Context, Pixels, Render, TestAppContext, VisualTestContext, Window};
 use kernel::{Kernel, PanelId};
 use ui::Frame;
-use vr::novr::{Button, Emulator};
+use kernel::vr::novr::{Button, Emulator};
 
 use crate::panels::Panels;
 use crate::watch::Watch;

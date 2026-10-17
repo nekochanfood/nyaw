@@ -611,8 +611,8 @@ fn inputs(profile: &str, hand: Hand, a: HandActions) -> Vec<(String, f32)> {
         (middle, on(a.middle_touch)),
         (right, on(a.right_touch)),
         // X ボタン: Touch は x/click、Index は左手の a/click。
-        ("x/click", on(a.dashboard)),
-        ("a/click", on(a.dashboard)),
+        ("x/click", on(a.shortcut)),
+        ("a/click", on(a.shortcut)),
         ("thumbstick/x", a.scroll.x),
         ("thumbstick/y", a.scroll.y),
         ("trackpad/x", a.scroll.x),
@@ -701,7 +701,7 @@ mod tests {
             menu: true,
             middle_touch: true,
             right_touch: true,
-            dashboard: true,
+            shortcut: true,
             scroll: crate::Vec2::new(0.5, -1.0),
         };
         let v = inputs("valve/index_controller", Hand::Right, a);

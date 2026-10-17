@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 
 use design::animation::{Animation, Motion};
-use design::components::PANEL_MARGIN;
+use design::PANEL_MARGIN;
 use subsystems::{Frame, Subsystems, rendering::Surface, vr};
 
 use vr::{Device, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
