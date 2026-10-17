@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 chrono.workspace = true
+dashboard.workspace = true
 design.workspace = true
 i18n.workspace = true
 gpui.workspace = true

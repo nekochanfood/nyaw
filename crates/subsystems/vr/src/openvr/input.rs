@@ -34,6 +34,7 @@ pub(super) struct HandActions {
     pub menu: bool,
     pub middle_touch: bool,
     pub right_touch: bool,
+    pub dashboard: bool,
     pub scroll: Vec2,
 }
 
@@ -46,6 +47,7 @@ pub(super) struct Input {
     menu: u64,
     middle_touch: u64,
     right_touch: u64,
+    dashboard: u64,
     scroll: u64,
     /// 手ごとの入力元（`/user/hand/left` 等）のハンドル。
     hands: [(Hand, u64); 2],
@@ -94,6 +96,7 @@ impl Input {
             menu: action("/actions/nyaw/in/menu")?,
             middle_touch: action("/actions/nyaw/in/middle_touch")?,
             right_touch: action("/actions/nyaw/in/right_touch")?,
+            dashboard: action("/actions/nyaw/in/dashboard")?,
             scroll: action("/actions/nyaw/in/scroll")?,
             hands: [
                 (
@@ -210,6 +213,7 @@ impl Input {
             menu: digital(self.menu),
             middle_touch: digital(self.middle_touch),
             right_touch: digital(self.right_touch),
+            dashboard: digital(self.dashboard),
             scroll,
         }
     }

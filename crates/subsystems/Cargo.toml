@@ -20,6 +20,7 @@ vr.workspace = true
 input.workspace = true
 rendering.workspace = true
 desktop.workspace = true
+audio.workspace = true
 logger.workspace = true
 
 [dev-dependencies]
