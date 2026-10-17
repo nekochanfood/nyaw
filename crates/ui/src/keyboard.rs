@@ -554,7 +554,8 @@ mod tests {
             let pose = spec.pose_for(&kernel, 1);
             assert!(pose.position.y < kernel.panel(target).pose.position.y - 0.5);
             let normal = pose.orientation * kernel::vr::Vec3::Z;
-            assert!(normal.y > 0.7 && normal.z > 0.7);
+            let toward_head = (kernel.hmd().position - pose.position).normalize();
+            assert!(normal.dot(toward_head) > 0.8);
             assert!(spec.parent().is_none());
             let panel = kernel
                 .add_panel("keyboard", pose, spec.size, spec.resolution)

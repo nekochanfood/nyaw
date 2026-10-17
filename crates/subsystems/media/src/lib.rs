@@ -56,6 +56,8 @@ pub struct Controls {
     pub next: bool,
     pub previous: bool,
     pub seek: bool,
+    /// プレイヤーのウィンドウを前面に出せる。
+    pub raise: bool,
 }
 
 /// 今再生している（一時停止中も含む）メディア。

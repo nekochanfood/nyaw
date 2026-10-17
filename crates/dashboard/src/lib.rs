@@ -546,12 +546,6 @@ impl Render for Dashboard {
             i18n::t(cx, "dashboard.add_screen"),
             Page::Mirror,
         );
-        let now_playing = page_button(
-            "dashboard-now-playing",
-            &icons::PLAYLIST,
-            i18n::t(cx, "dashboard.now_playing"),
-            Page::NowPlaying,
-        );
         let menu = components::icon_button(
             &theme,
             "dashboard-menu",
@@ -581,7 +575,23 @@ impl Render for Dashboard {
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
             )
             // 何か再生しているときだけ、再生中の画面のボタンを出す。
-            .when(has_media, |d| d.child(now_playing))
+            .when(has_media, |d| {
+                d.child(
+                    components::content_button(
+                        &theme,
+                        "dashboard-now-playing",
+                        variant(Page::NowPlaying),
+                    )
+                        .flex_none()
+                        .child(
+                            design::icon(&icons::PLAYLIST)
+                                .weight(design::Weight::Bold)
+                                .size(px(font_size::LG)),
+                        )
+                        .child(i18n::t(cx, "dashboard.now_playing"))
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::NowPlaying, cx))),
+                )
+            })
             .child(mirror)
             .when(!streams.is_empty(), |d| d.child(separator(&theme)))
             // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
@@ -695,8 +705,7 @@ impl Screen {
                 .text_color(rgba(theme.neutral_text_low))
                 .child(i18n::t(cx, "dashboard.nothing_playing"));
         };
-        // アプリの画面を開く: Windows はそのアプリのウィンドウをダッシュボードに映す。見つからなければ（Linux も）
-        // アプリに前に出るよう頼む。
+        // アプリのウィンドウを映す。無ければ、対応するプレイヤーだけに前面化を頼む。
         if self.open_app && self.pending.is_none() {
             self.open_app = false;
             match self.app_window(&m.app) {
@@ -705,7 +714,10 @@ impl Screen {
                     let spec = mirror_spec(source.clone(), icon.clone(), dashboard, self.panel);
                     cx.default_global::<PanelControl>().spawns.push(spec);
                 }
-                None => commands(self.panel, [PanelCommand::Media(media::Command::Raise)], cx),
+                None if m.controls.raise => {
+                    commands(self.panel, [PanelCommand::Media(media::Command::Raise)], cx)
+                }
+                None => {}
             }
         }
         let place = |i: &Option<media::Image>| i.as_ref().map_or(0, |i| i.rgba.as_ptr() as usize);
@@ -729,10 +741,12 @@ impl Screen {
             None => Theme::current(cx),
         };
         let low = theme.neutral_text_low;
+        let app_window = self.app_window(&m.app);
+        let can_open_app = app_window.is_some() || m.controls.raise;
         let icon = images
             .icon
             .clone()
-            .or_else(|| self.app_window(&m.app).and_then(|(_, i)| i.clone()));
+            .or_else(|| app_window.and_then(|(_, i)| i.clone()));
         let panel = self.panel;
         let send = move |command| move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
             commands(panel, [PanelCommand::Media(command)], cx)
@@ -774,7 +788,15 @@ impl Screen {
                     .left(px(spacing::LG))
                     .child(
                         components::content_button(&theme, "now-playing-app", Variant::Ghost)
-                            .tooltip(i18n::t(cx, "dashboard.open_app"))
+                            .tooltip(i18n::t(
+                                cx,
+                                if can_open_app {
+                                    "dashboard.open_app"
+                                } else {
+                                    "dashboard.app_unavailable"
+                                },
+                            ))
+                            .when(!can_open_app, |b| b.opacity(0.4))
                             .child(match icon {
                                 Some(icon) => img(icon).size(px(font_size::LG)).into_any_element(),
                                 None => design::icon(&icons::APP_WINDOW)
@@ -782,11 +804,13 @@ impl Screen {
                                     .into_any_element(),
                             })
                             .child(m.app.name.clone())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.open_app = true;
-                                this.refresh();
-                                redraw(this.panel, cx);
-                            })),
+                            .when(can_open_app, |b| {
+                                b.on_click(cx.listener(|this, _, _, cx| {
+                                    this.open_app = true;
+                                    this.refresh();
+                                    redraw(this.panel, cx);
+                                }))
+                            }),
                     ),
             )
             .child(
@@ -1686,6 +1710,7 @@ mod tests {
                 next: true,
                 previous: false,
                 seek: true,
+                raise: false,
             },
         })
     }
@@ -1729,6 +1754,21 @@ mod tests {
         cx.simulate_click(at, Modifiers::none());
         let last = commands(cx, 2).pop();
         assert!(matches!(last, Some(PanelCommand::Media(media::Command::Seek(d))) if d > Duration::from_secs(190)));
+    }
+
+    #[gpui::test]
+    fn unavailable_app_window_is_not_clickable(cx: &mut TestAppContext) {
+        let (screen, cx) = cx.add_window_view(|_, cx| {
+            let mut media = (*playing()).clone();
+            media.app.id = "nyaw-unavailable-test.exe".into();
+            media.app.name = "nyaw-unavailable-test".into();
+            cx.default_global::<PanelControl>().media = Some(Arc::new(media));
+            Screen::new(2, Page::NowPlaying, WeakEntity::new_invalid(), cx)
+        });
+        cx.run_until_parked();
+        click(cx, "now-playing-app");
+        assert!(!screen.read_with(cx, |s, _| s.open_app));
+        assert!(commands(cx, 2).is_empty());
     }
 
     /// テストでバーを別の窓に描くための包み。

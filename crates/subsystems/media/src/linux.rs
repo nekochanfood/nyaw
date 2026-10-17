@@ -109,6 +109,10 @@ impl Backend for Mpris {
             next: flag("CanGoNext"),
             previous: flag("CanGoPrevious"),
             seek: flag("CanSeek"),
+            raise: self
+                .get(&name, ROOT, "CanRaise")
+                .and_then(|v| bool::try_from(v).ok())
+                .unwrap_or(false),
         };
         self.track = field("mpris:trackid").and_then(|v| match &**v {
             Value::ObjectPath(p) => Some(OwnedObjectPath::from(p.to_owned())),

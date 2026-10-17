@@ -88,6 +88,7 @@ impl Backend for Session {
             next: can(|c| c.IsNextEnabled()),
             previous: can(|c| c.IsPreviousEnabled()),
             seek: can(|c| c.IsPlaybackPositionEnabled()),
+            raise: false,
         };
         let app_id = text(session.SourceAppUserModelId());
         self.properties = Some(properties);

@@ -993,6 +993,7 @@ impl Overlay {
         for &id in &self.present {
             let p = &self.panels[id];
             if !p.closed
+                && !p.hidden
                 && let Some(parent) = p.parent.filter(Parent::blocks)
             {
                 parents.insert(parent.panel);
@@ -2455,6 +2456,7 @@ mod tests {
     /// 親（ダッシュボードのバー）の上端に立てた子（はめた画面）を持つ組。親は大きさを変えられない。
     fn with_slot_child() -> (Subsystems<MockBackend>, Overlay) {
         let (mut vr, mut ov) = with_child(true);
+        ov.set_animated(&mut vr.backend, 1, false);
         ov.set_parent(
             &mut vr.backend,
             1,
@@ -2467,7 +2469,6 @@ mod tests {
             }),
         );
         ov.set_resizable(0, false);
-        ov.set_animated(&mut vr.backend, 1, false);
         ov.tick(&mut vr);
         // 子が目の高さの正面に来るよう、親を下げる（掴んだ子は目の方を向くので、目の高さなら回らない）。
         let lift = ov.panel(1).pose.position.y;
@@ -2587,6 +2588,20 @@ mod tests {
     fn resizing_a_slot_child_keeps_its_bottom_on_the_parent() {
         const RESIZE: &str = subsystems::vr::RESIZE_INPUT;
         let (mut vr, mut ov) = with_slot_child();
+        // 実際の画素密度で影の余白を計算し、親と子の面が重ならないようにする。
+        ov.panels[0].resolution = (1000, 1000);
+        ov.panels[1].resolution = (400, 400);
+        ov.tick(&mut vr);
+        let eye_level = ov.panel(1).pose.position.y;
+        let parent_pose = ov.panel(0).pose;
+        ov.set_pose(
+            0,
+            Pose::new(
+                parent_pose.position - Vec3::Y * eye_level,
+                parent_pose.orientation,
+            ),
+        );
+        ov.tick(&mut vr);
         // 子を掴んで（掴んだものそのものなので）大きくする。
         let c = ov.panel(1).pose.position;
         let aim = at(c.x, c.y, 0.0);
@@ -2600,8 +2615,13 @@ mod tests {
             ov.tick(&mut vr);
         }
         assert!(ov.panel(1).size.x > size.x);
-        // 下端を動かさずに大きくなるので、親は動かない（離しても跳ねない）。
-        assert!(ov.panel(0).pose.position.abs_diff_eq(parent, 1e-3), "{}", ov.panel(0).pose.position);
+        // 大きくしても親はほぼ動かない（頭を向くためのわずかな回転はある）。
+        assert!(
+            ov.panel(0).pose.position.abs_diff_eq(parent, 1e-2),
+            "{} -> {}",
+            parent,
+            ov.panel(0).pose.position
+        );
         let held = ov.panel(1).pose.position;
         controller(&mut vr, aim, &[]);
         ov.tick(&mut vr);
@@ -2617,15 +2637,25 @@ mod tests {
         ov.tick(&mut vr);
         assert!(ov.panel(0).hidden && ov.panel(1).hidden && !ov.panel(0).closed);
         assert_eq!(ov.panel(0).opacity, 0.0);
-        controller(&mut vr, at(0.45, -0.45, 0.0), &[("trigger/value", 1.0)]);
+        controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
         assert!(ov.tick(&mut vr).is_empty());
-        controller(&mut vr, at(0.45, -0.45, 0.0), &[]);
+        controller(&mut vr, at(0.0, 0.0, 0.0), &[]);
         ov.tick(&mut vr);
         ov.set_hidden(&mut vr.backend, 0, false);
         ov.tick(&mut vr);
         assert!(!ov.panel(1).hidden && ov.panel(0).opacity == 1.0);
-        controller(&mut vr, at(0.45, -0.45, 0.0), &[("trigger/value", 1.0)]);
+        controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
         assert!(!ov.tick(&mut vr).is_empty());
+    }
+
+    #[test]
+    fn hiding_a_dialog_restores_its_parents_brightness() {
+        let (mut vr, mut ov) = with_child(true);
+        ov.tick(&mut vr);
+        assert_eq!(ov.panel(0).dim_to, DIM);
+        ov.set_hidden(&mut vr.backend, 1, true);
+        ov.tick(&mut vr);
+        assert_eq!(ov.panel(0).dim_to, 0.0);
     }
 
     #[test]

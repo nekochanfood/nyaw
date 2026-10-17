@@ -54,6 +54,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
             .interface(sys::IVRSettings_Version)
             .inspect_err(|e| logger::warn!("SteamVR settings unavailable", error = e))
             .ok(),
+        restore_global_priority: None,
         batteries: (None, Vec::new()),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
@@ -153,6 +154,8 @@ pub(crate) struct OpenVrBackend {
     block_input: bool,
     /// SteamVR の設定（入力を止める仕組みを有効にする）。使ったら `None` にして、二度目からは触らない。
     settings: Option<*const sys::VR_IVRSettings_FnTable>,
+    /// この接続で設定を有効にしたときだけ、終了時に元の値へ戻す。
+    restore_global_priority: Option<(*const sys::VR_IVRSettings_FnTable, bool)>,
     /// 最後に電池を読んだ時刻と、その結果（[`BATTERY_INTERVAL`] ごとに読み直す）。
     batteries: (Option<Instant>, Vec<Battery>),
     gpu: Gpu,
@@ -405,6 +408,9 @@ fn create_ring<T, E>(
 
 impl Drop for OpenVrBackend {
     fn drop(&mut self) {
+        if let Some((settings, was_set)) = self.restore_global_priority.take() {
+            restore_global_action_set_priority(unsafe { &*settings }, was_set);
+        }
         for id in self.textures.keys().copied().collect::<Vec<_>>() {
             self.release(id);
         }
@@ -547,7 +553,9 @@ impl VrBackend for OpenVrBackend {
     fn block_app_input(&mut self, block: bool) {
         self.block_input = block;
         if block && let Some(settings) = self.settings.take() {
-            enable_global_action_set_priority(unsafe { &*settings });
+            if let Some(was_set) = enable_global_action_set_priority(unsafe { &*settings }) {
+                self.restore_global_priority = Some((settings, was_set));
+            }
         }
     }
 
@@ -734,12 +742,22 @@ fn log(r: Result<(), VrError>) {
 
 /// オーバーレイのアクションセットの全体優先度でゲームの入力を止める仕組みは、SteamVR の開発者向け設定
 /// 「Experimental overlay input overrides」（`steamvr/globalActionSetPriority`）が有効でないと働かない。無効なら有効にする。
-fn enable_global_action_set_priority(settings: &sys::VR_IVRSettings_FnTable) {
+/// 変更できたら、元の設定項目が存在したかを返す。
+fn enable_global_action_set_priority(settings: &sys::VR_IVRSettings_FnTable) -> Option<bool> {
     let section = c"steamvr".as_ptr() as *mut c_char;
     let key = c"globalActionSetPriority".as_ptr() as *mut c_char;
     let mut err = sys::EVRSettingsError_VRSettingsError_None;
-    if unsafe { f(settings.GetBool)(section, key, &mut err) } {
-        return;
+    let enabled = unsafe { f(settings.GetBool)(section, key, &mut err) };
+    let was_set = match err {
+        sys::EVRSettingsError_VRSettingsError_None => true,
+        sys::EVRSettingsError_VRSettingsError_UnsetSettingHasNoDefault => false,
+        _ => {
+            logger::warn!("cannot read SteamVR's overlay input overrides", error = err);
+            return None;
+        }
+    };
+    if enabled {
+        return None;
     }
     let mut err = sys::EVRSettingsError_VRSettingsError_None;
     unsafe { f(settings.SetBool)(section, key, true, &mut err) };
@@ -747,8 +765,24 @@ fn enable_global_action_set_priority(settings: &sys::VR_IVRSettings_FnTable) {
         logger::info!(
             "enabled SteamVR's experimental overlay input overrides to block game input while the dashboard is open"
         );
+        Some(was_set)
     } else {
         logger::warn!("cannot enable SteamVR's overlay input overrides", error = err);
+        None
+    }
+}
+
+fn restore_global_action_set_priority(settings: &sys::VR_IVRSettings_FnTable, was_set: bool) {
+    let section = c"steamvr".as_ptr() as *mut c_char;
+    let key = c"globalActionSetPriority".as_ptr() as *mut c_char;
+    let mut err = sys::EVRSettingsError_VRSettingsError_None;
+    if was_set {
+        unsafe { f(settings.SetBool)(section, key, false, &mut err) };
+    } else {
+        unsafe { f(settings.RemoveKeyInSection)(section, key, &mut err) };
+    }
+    if err != sys::EVRSettingsError_VRSettingsError_None {
+        logger::warn!("cannot restore SteamVR's overlay input overrides", error = err);
     }
 }
 

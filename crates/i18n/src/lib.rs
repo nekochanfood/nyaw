@@ -252,12 +252,12 @@ mod tests {
         for call in ["i18n::t(", "i18n::tf("] {
             for (at, _) in src.match_indices(call) {
                 let rest = &src[at + call.len()..];
-                let Some(open) = rest.find('"') else { continue };
-                // 第 1 引数（cx）の中に文字列は無いので、`,` より後の最初の `"` がキー。
-                if rest[..open].contains(')') {
+                let Some((_, key)) = rest.split_once(',') else {
                     continue;
-                }
-                let key = &rest[open + 1..];
+                };
+                let Some(key) = key.trim_start().strip_prefix('"') else {
+                    continue;
+                };
                 if let Some(close) = key.find('"') {
                     keys.push(key[..close].to_owned());
                 }
@@ -269,7 +269,7 @@ mod tests {
     #[test]
     fn used_keys_reads_the_literal_after_cx() {
         let src =
-            r#"let a = i18n::t(cx, "a.b"); let b = i18n::tf(window_cx, "c.d", &[("n", &1)]);"#;
+            r#"let a = i18n::t(cx, "a.b"); let b = i18n::tf(window_cx, "c.d", &[("n", &1)]); let c = i18n::tf(cx, key, &[("pct", &1)]);"#;
         assert_eq!(used_keys(src), ["a.b", "c.d"]);
     }
 }
