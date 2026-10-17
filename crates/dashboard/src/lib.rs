@@ -702,7 +702,7 @@ impl Screen {
             match self.app_window(&m.app) {
                 Some((source, icon)) => {
                     let dashboard = (ui::docked(cx) == Some(self.panel)).then(|| self.dashboard.clone());
-                    let spec = mirror_spec(source.clone(), icon.clone(), dashboard);
+                    let spec = mirror_spec(source.clone(), icon.clone(), dashboard, self.panel);
                     cx.default_global::<PanelControl>().spawns.push(spec);
                 }
                 None => commands(self.panel, [PanelCommand::Media(media::Command::Raise)], cx),
@@ -987,6 +987,7 @@ impl Screen {
                                     source.clone(),
                                     icon.clone(),
                                     dashboard,
+                                    panel,
                                 ));
                             }
                         })
@@ -1215,15 +1216,17 @@ impl Render for Mirror {
 }
 
 /// `source` を映すパネルの起動仕様。`dashboard` があれば開くとそこにはまり（ミラーリングの一覧と入れ替わる）、
-/// `None`（独立させた画面から開いた）なら独立して開く。
+/// `None`（独立させた画面から開いた）なら独立して、開いた画面 `from` の手前に重ねて開く。
 /// タイトルは取得元の名前で、ナビゲーションバーで閉じると配信も止まる。
 fn mirror_spec(
     source: Source,
     icon: Option<Arc<RenderImage>>,
     dashboard: Option<WeakEntity<Dashboard>>,
+    from: PanelId,
 ) -> PanelSpec {
     let (title, source_title, kind) = (source.name.clone(), source.name.clone(), source.kind);
-    PanelSpec::new(Pose::IDENTITY, move |panel, _, cx| {
+    let docked = dashboard.is_some();
+    let build = move |panel: PanelId, _: &mut Window, cx: &mut Context<Mirror>| {
         cx.default_global::<PanelControl>()
             .panels
             .entry(panel)
@@ -1236,14 +1239,18 @@ fn mirror_spec(
             let _ = dashboard.update(cx, |d, cx| d.add_stream(panel, kind, name, icon, cx));
         }
         Mirror { panel }
-    })
+    };
+    let spec = if docked {
+        PanelSpec::new(Pose::IDENTITY, build).in_view(SCREEN_POSE)
+    } else {
+        PanelSpec::spawn(from, build)
+    };
     // 配信は横幅を保って縦横比を合わせるので、幅をはめる画面とそろえる。
-    .sized(SIZE_M, RES_PX)
-    .in_view(SCREEN_POSE)
-    .titled_text(source_title)
-    .dockable()
-    // 映しているデスクトップ・ウィンドウへ打てるよう、ナビゲーションバーの左端に OS キーボードのトグルを出す。
-    .with_os_keyboard()
+    spec.sized(SIZE_M, RES_PX)
+        .titled_text(source_title)
+        .dockable()
+        // 映しているデスクトップ・ウィンドウへ打てるよう、ナビゲーションバーの左端に OS キーボードのトグルを出す。
+        .with_os_keyboard()
 }
 
 /// 電池 1 つのカード: デバイスのアイコンと名前、残量（数字と棒）。充電中はアイコンの形と文字でも示す。
