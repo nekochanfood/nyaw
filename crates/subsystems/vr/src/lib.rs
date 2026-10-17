@@ -664,12 +664,26 @@ mod tests {
             s.joints[WRIST].position = Vec3::new(0.0, 0.0, 0.0);
             s.joints[12].position = Vec3::new(0.0, 0.0, -0.08);
             let g = s.grip();
-            assert!(g.forward().abs_diff_eq(Vec3::NEG_Z, 1e-5), "{hand:?} {}", g.forward());
-            assert!((g.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5), "{hand:?}");
+            assert!(
+                g.forward().abs_diff_eq(Vec3::NEG_Z, 1e-5),
+                "{hand:?} {}",
+                g.forward()
+            );
+            assert!(
+                (g.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5),
+                "{hand:?}"
+            );
             // 元は手首から指の方へ 5cm・手のひらの側（下）へ 1.5cm。時計の相対姿勢は手首から腕側・手の甲の側に来る。
-            assert!(g.position.abs_diff_eq(Vec3::new(0.0, -0.015, -0.05), 1e-5), "{}", g.position);
+            assert!(
+                g.position.abs_diff_eq(Vec3::new(0.0, -0.015, -0.05), 1e-5),
+                "{}",
+                g.position
+            );
             let watch = g.transform_point(Vec3::new(0.0, 0.04, 0.08));
-            assert!(watch.abs_diff_eq(Vec3::new(0.0, 0.025, 0.03), 1e-5), "{watch}");
+            assert!(
+                watch.abs_diff_eq(Vec3::new(0.0, 0.025, 0.03), 1e-5),
+                "{watch}"
+            );
         }
     }
 
@@ -678,7 +692,11 @@ mod tests {
         for hand in [Hand::Left, Hand::Right] {
             let s = palm_down(hand);
             assert!(s.palm_normal().abs_diff_eq(Vec3::NEG_Y, 1e-5), "{hand:?}");
-            assert_eq!(s.facing(Vec3::new(0.0, -0.5, 0.0)), Facing::Palm, "{hand:?}");
+            assert_eq!(
+                s.facing(Vec3::new(0.0, -0.5, 0.0)),
+                Facing::Palm,
+                "{hand:?}"
+            );
             assert_eq!(s.facing(Vec3::new(0.0, 0.5, 0.0)), Facing::Back, "{hand:?}");
             assert!(s.palm_toward(Vec3::new(0.0, -0.5, -0.04)) > 0.99);
         }

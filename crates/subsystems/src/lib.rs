@@ -172,13 +172,15 @@ impl<B: VrBackend> Subsystems<B> {
             .hands
             .iter()
             .filter(|s| bare.iter().any(|c| c.hand == s.hand))
-            .map(|s| match raw.hand_devices.iter().find(|(h, _)| *h == s.hand) {
-                Some(&device) => device,
-                None => (
-                    s.hand,
-                    self.grips.entry(s.hand).or_default().steady(s.grip(), dt),
-                ),
-            })
+            .map(
+                |s| match raw.hand_devices.iter().find(|(h, _)| *h == s.hand) {
+                    Some(&device) => device,
+                    None => (
+                        s.hand,
+                        self.grips.entry(s.hand).or_default().steady(s.grip(), dt),
+                    ),
+                },
+            )
             .collect();
         raw.controllers
             .retain(|c| bare.iter().all(|b| b.hand != c.hand));
@@ -296,22 +298,47 @@ mod tests {
             vec![controller(Hand::Right, "valve/index_controller", &[])];
         let frame = systems.poll();
         assert_eq!(frame.controllers.len(), 2);
-        let right = frame.controllers.iter().find(|c| c.hand == Hand::Right).unwrap();
-        assert!(!right.select && right.facing.is_none(), "the held controller wins");
-        let left = frame.controllers.iter().find(|c| c.hand == Hand::Left).unwrap();
-        assert!(left.select && left.facing.is_some(), "pinching the bare hand clicks");
+        let right = frame
+            .controllers
+            .iter()
+            .find(|c| c.hand == Hand::Right)
+            .unwrap();
+        assert!(
+            !right.select && right.facing.is_none(),
+            "the held controller wins"
+        );
+        let left = frame
+            .controllers
+            .iter()
+            .find(|c| c.hand == Hand::Left)
+            .unwrap();
+        assert!(
+            left.select && left.facing.is_some(),
+            "pinching the bare hand clicks"
+        );
         assert_eq!(frame.hands.len(), 2);
         // 指を全部追っている手は、ランタイムがコントローラとして見せていても骨格で操作する。
         systems.backend.frame.hands[1].tracking = vr::FingerTracking::Full;
         // 持ち替えの揺れと区別するため、続いてから切り替わる。
         for _ in 1..SOURCE_SWITCH_FRAMES {
-            let right = systems.poll().controllers.into_iter().find(|c| c.hand == Hand::Right);
+            let right = systems
+                .poll()
+                .controllers
+                .into_iter()
+                .find(|c| c.hand == Hand::Right);
             assert!(right.unwrap().metrics.is_none(), "still the controller");
         }
         let frame = systems.poll();
         assert_eq!(frame.controllers.len(), 2);
-        let right = frame.controllers.iter().find(|c| c.hand == Hand::Right).unwrap();
-        assert!(right.select && right.metrics.is_some(), "the optical hand drives");
+        let right = frame
+            .controllers
+            .iter()
+            .find(|c| c.hand == Hand::Right)
+            .unwrap();
+        assert!(
+            right.select && right.metrics.is_some(),
+            "the optical hand drives"
+        );
         // 骨格で操作している手に取り付けたものは、レーザーではなく手の姿勢に付く。
         // （指の追跡の精度が上がってから SOURCE_SWITCH_FRAMES 続いたので、もう骨格で操作している。）
         let grip = frame.hands[1].grip();
@@ -361,14 +388,24 @@ mod tests {
             joints,
             tracking: vr::FingerTracking::Partial,
         }];
-        let held = controller(Hand::Right, "valve/index_controller", &[("trigger/value", 1.0)]);
+        let held = controller(
+            Hand::Right,
+            "valve/index_controller",
+            &[("trigger/value", 1.0)],
+        );
         systems.backend.frame.controllers = vec![held.clone()];
         assert!(systems.poll().controllers[0].metrics.is_none());
         systems.backend.frame.controllers.clear();
-        assert!(systems.poll().controllers[0].metrics.is_some(), "falls back to the skeleton");
+        assert!(
+            systems.poll().controllers[0].metrics.is_some(),
+            "falls back to the skeleton"
+        );
         systems.backend.frame.controllers = vec![held];
         let c = systems.poll().controllers[0];
-        assert!(c.metrics.is_none() && c.select, "back to the controller at once");
+        assert!(
+            c.metrics.is_none() && c.select,
+            "back to the controller at once"
+        );
     }
 
     #[test]

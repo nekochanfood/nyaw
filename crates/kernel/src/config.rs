@@ -195,10 +195,13 @@ mod tests {
     /// `[hand]` は書いたキーだけ変わり、ほかは既定値。範囲の外はカーネルが範囲に収める。
     #[test]
     fn hand_table_overrides_only_given_keys() {
-        let c = parse("[hand]
+        let c = parse(
+            "[hand]
 pinch_mm = 32.0
 smoothing = 0.2
-").unwrap();
+",
+        )
+        .unwrap();
         assert_eq!(c.hand.pinch_mm, 32.0);
         assert_eq!(c.hand.smoothing, 0.2);
         let d = subsystems::input::HandTuning::default();

@@ -295,10 +295,14 @@ impl PoseFilter {
         let v = v + (pose.position.distance(p.position) / dt - v) * k;
         let w = w + (pose.orientation.angle_between(p.orientation) / dt - w) * k;
         let steadied = Pose::new(
-            p.position
-                .lerp(pose.position, alpha(GRIP_CUTOFF_HZ + SPEED_POSITION * v, dt)),
-            p.orientation
-                .slerp(pose.orientation, alpha(GRIP_CUTOFF_HZ + SPEED_DIRECTION * w, dt)),
+            p.position.lerp(
+                pose.position,
+                alpha(GRIP_CUTOFF_HZ + SPEED_POSITION * v, dt),
+            ),
+            p.orientation.slerp(
+                pose.orientation,
+                alpha(GRIP_CUTOFF_HZ + SPEED_DIRECTION * w, dt),
+            ),
         );
         self.last = Some((steadied, v, w));
         steadied
@@ -328,7 +332,11 @@ impl HandFilter {
         // つまみかけ（押下の手前）〜押している・掴んでいる間は、その分だけ鈍くする。
         let pinch = raw.input("pinch_ext/value").unwrap_or(0.0);
         let held = prev.is_some_and(|p| p.select || p.grab);
-        let progress = if held { 1.0 } else { (pinch / PRESS).clamp(0.0, 1.0) };
+        let progress = if held {
+            1.0
+        } else {
+            (pinch / PRESS).clamp(0.0, 1.0)
+        };
         let damp = (1.0 - tuning.click_steady * progress).max(CLICK_FLOOR);
         let base = CUTOFF_LOOSE_HZ * (CUTOFF_TIGHT_HZ / CUTOFF_LOOSE_HZ).powf(tuning.smoothing);
         // 速さは抑えた値からの離れ / dt を 1Hz で均したもの（One Euro は生の値の微分を使うが、こちらは遅れが溜まるほど速く追いつく）。
@@ -454,13 +462,9 @@ pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerSta
             little: raw.input(LITTLE_RAW_INPUT).unwrap_or(0.0),
             palm_toward,
         }),
-        facing: raw.input(PALM_TOWARD_INPUT).map(|t| {
-            if t >= 0.0 {
-                Facing::Palm
-            } else {
-                Facing::Back
-            }
-        }),
+        facing: raw
+            .input(PALM_TOWARD_INPUT)
+            .map(|t| if t >= 0.0 { Facing::Palm } else { Facing::Back }),
     }
 }
 
@@ -550,7 +554,13 @@ mod tests {
 
     /// 大人の手の目安の長さで組んだ手。手首を `wrist` に、手のひらを下（-Y）・指を前方（-Z）に向け、`turn` で手首の周りに回す。
     /// `bend[f]` は指 f（[`TIPS`] の添字）の関節ごとの曲げ（ラジアン、手のひら側へ）。`pinch` の指先は親指の先に付ける。
-    fn hand(side: Hand, wrist: Vec3, turn: Quat, bend: [f32; 5], pinch: Option<usize>) -> HandSkeleton {
+    fn hand(
+        side: Hand,
+        wrist: Vec3,
+        turn: Quat,
+        bend: [f32; 5],
+        pinch: Option<usize>,
+    ) -> HandSkeleton {
         // 右手は親指が -X 側。左手は鏡写し。
         let m = if side == Hand::Right { 1.0 } else { -1.0 };
         let mut p = [Vec3::ZERO; vr::JOINT_COUNT];
@@ -598,12 +608,23 @@ mod tests {
         let open = state(&right(OPEN, None), head(), None);
         assert!(!open.select && !open.grab);
         // レーザーは手の向き（指を前に伸ばした手なら前方 -Z）。元は親指と人差し指の付け根の間。
-        assert!(open.aim.forward().abs_diff_eq(Vec3::NEG_Z, 1e-5), "{}", open.aim.forward());
+        assert!(
+            open.aim.forward().abs_diff_eq(Vec3::NEG_Z, 1e-5),
+            "{}",
+            open.aim.forward()
+        );
         let h = right(OPEN, None);
-        assert_eq!(open.aim.position, h.joints[3].position.lerp(h.joints[7].position, 0.5));
+        assert_eq!(
+            open.aim.position,
+            h.joints[3].position.lerp(h.joints[7].position, 0.5)
+        );
         // 手首ごと 30° 上へ曲げると、レーザーも 30° 上を向く。
         let up = Quat::from_rotation_x(30f32.to_radians());
-        let bent = state(&hand(Hand::Right, RIGHT_WRIST, up, OPEN, None), head(), None);
+        let bent = state(
+            &hand(Hand::Right, RIGHT_WRIST, up, OPEN, None),
+            head(),
+            None,
+        );
         assert!(bent.aim.forward().abs_diff_eq(up * Vec3::NEG_Z, 1e-5));
 
         let pinch = state(&right(OPEN, Some(1)), head(), Some(&open));
@@ -623,7 +644,8 @@ mod tests {
     #[test]
     fn hand_laser_ignores_pinching_and_curling() {
         let right = |bend, pinch| hand(Hand::Right, RIGHT_WRIST, Quat::IDENTITY, bend, pinch);
-        let aim = |h: &HandSkeleton, head: Pose| hand_controller(h, head, &HandTuning::default()).aim;
+        let aim =
+            |h: &HandSkeleton, head: Pose| hand_controller(h, head, &HandTuning::default()).aim;
         let base = aim(&right(OPEN, None), head());
         assert_eq!(aim(&right(OPEN, Some(1)), head()), base);
         assert_eq!(aim(&right([0.0, 0.0, 1.4, 1.4, 1.4], None), head()), base);
@@ -640,16 +662,40 @@ mod tests {
         assert!(!d.select);
         let m = d.metrics.unwrap();
         assert!(m.pinch > 0.4 && m.pinch < PRESS, "{m:?}");
-        assert!(with(HandTuning { pinch_mm: 35.0, ..Default::default() }).select);
+        assert!(
+            with(HandTuning {
+                pinch_mm: 35.0,
+                ..Default::default()
+            })
+            .select
+        );
         // 握り: 関節ごとに 45° は既定（88°）で掴まず、しきい値を 70° に下げると掴む。
         let b = 45f32.to_radians();
-        let h = hand(Hand::Right, RIGHT_WRIST, Quat::IDENTITY, [0.0, 0.0, b, b, b], None);
+        let h = hand(
+            Hand::Right,
+            RIGHT_WRIST,
+            Quat::IDENTITY,
+            [0.0, 0.0, b, b, b],
+            None,
+        );
         let grip = |t: HandTuning| map(&hand_controller(&h, head(), &t), None).grab;
         assert!(!grip(HandTuning::default()));
-        assert!(grip(HandTuning { grip_deg: 70.0, ..Default::default() }));
+        assert!(grip(HandTuning {
+            grip_deg: 70.0,
+            ..Default::default()
+        }));
         assert_eq!(
-            HandTuning { pinch_mm: 500.0, smoothing: f32::NAN, ..Default::default() }.clamped(),
-            HandTuning { pinch_mm: HandTuning::PINCH_MM.1, smoothing: 0.0, ..Default::default() }
+            HandTuning {
+                pinch_mm: 500.0,
+                smoothing: f32::NAN,
+                ..Default::default()
+            }
+            .clamped(),
+            HandTuning {
+                pinch_mm: HandTuning::PINCH_MM.1,
+                smoothing: 0.0,
+                ..Default::default()
+            }
         );
     }
 
@@ -682,7 +728,10 @@ mod tests {
         aims.extend((0..60).map(|i| (dir(if i % 2 == 0 { 2.0 } else { -2.0 }), 1.0)));
         let out = filtered(aims.clone(), &t);
         let held = out[10];
-        assert!(out[10..].iter().all(|f| f.abs_diff_eq(held, 1e-6)), "止まっている");
+        assert!(
+            out[10..].iter().all(|f| f.abs_diff_eq(held, 1e-6)),
+            "止まっている"
+        );
         // つまんだまま 30° 動かすと付いていく（ドラッグ）。
         aims.extend((0..90).map(|_| (dir(30.0), 1.0)));
         let out = filtered(aims.clone(), &t);
@@ -716,7 +765,11 @@ mod tests {
         for _ in 0..27 {
             last = f.steady(at(0.2), 1.0 / 90.0);
         }
-        assert!(last.position.distance(at(0.2).position) < 0.01, "{}", last.position);
+        assert!(
+            last.position.distance(at(0.2).position) < 0.01,
+            "{}",
+            last.position
+        );
     }
 
     /// 止めた手の細かな揺れは抑え、つまみかけるとさらに鈍くなり、速く振れば付いてくる。
@@ -763,7 +816,8 @@ mod tests {
         assert!(s.shortcut && !s.select);
         // 二回目を数えられるよう、付けてから 2.6cm 離せば離したことになる（1.6cm で押下、2.4cm で離す）。
         let mut apart = left(up, Some(4));
-        apart.joints[TIPS[4]].position = apart.joints[TIPS[0]].position + Vec3::new(0.0, 0.026, 0.0);
+        apart.joints[TIPS[4]].position =
+            apart.joints[TIPS[0]].position + Vec3::new(0.0, 0.026, 0.0);
         assert!(!state(&apart, head(), Some(&s)).shortcut);
         // 2cm まで離しただけなら、まだ付いている。
         apart.joints[TIPS[4]].position = apart.joints[TIPS[0]].position + Vec3::new(0.0, 0.02, 0.0);

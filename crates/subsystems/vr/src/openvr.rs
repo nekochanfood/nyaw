@@ -459,8 +459,14 @@ impl VrBackend for OpenVrBackend {
         // 入力のアクションで取れなかった手も、手の役割に割り当たっているデバイスがあれば取り付け先にする
         // （ハンドトラッキングの手のデバイスなど。ほかのオーバーレイも役割のデバイスに付けて追従している）。
         for (hand, role) in [
-            (Hand::Left, sys::ETrackedControllerRole_TrackedControllerRole_LeftHand),
-            (Hand::Right, sys::ETrackedControllerRole_TrackedControllerRole_RightHand),
+            (
+                Hand::Left,
+                sys::ETrackedControllerRole_TrackedControllerRole_LeftHand,
+            ),
+            (
+                Hand::Right,
+                sys::ETrackedControllerRole_TrackedControllerRole_RightHand,
+            ),
         ] {
             if devices.contains_key(&Device::Controller(hand)) {
                 continue;

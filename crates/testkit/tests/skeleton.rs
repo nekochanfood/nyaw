@@ -29,21 +29,34 @@ fn pinch_lights_only_the_touching_finger(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, cx| SkeletonTest::new(0, cx));
     kit.kernel.subsystems.backend.frame.hands = vec![hand(None)];
     kit.step().step();
-    for id in ["pinch-right-index", "pinch-right-middle", "pinch-left-index"] {
+    for id in [
+        "pinch-right-index",
+        "pinch-right-middle",
+        "pinch-left-index",
+    ] {
         assert_eq!(kit.color_at(id), BUTTON_BG, "{id}");
     }
 
     kit.kernel.subsystems.backend.frame.hands = vec![hand(Some(2))];
     kit.step().step();
     assert_eq!(kit.color_at("pinch-right-middle"), BUTTON_ACTIVE_BG);
-    for id in ["pinch-right-index", "pinch-right-ring", "pinch-right-little", "pinch-left-middle"] {
+    for id in [
+        "pinch-right-index",
+        "pinch-right-ring",
+        "pinch-right-little",
+        "pinch-left-middle",
+    ] {
         assert_eq!(kit.color_at(id), BUTTON_BG, "{id}");
     }
 
     // The bare hand is driven by its skeleton: pinching thumb and index clicks, which the diagnostics show.
     kit.kernel.subsystems.backend.frame.hands = vec![hand(Some(1))];
     kit.step().step();
-    for id in ["input-source-right", "hand-click-right", "pinch-right-index"] {
+    for id in [
+        "input-source-right",
+        "hand-click-right",
+        "pinch-right-index",
+    ] {
         assert_eq!(kit.color_at(id), BUTTON_ACTIVE_BG, "{id}");
     }
     assert_eq!(kit.color_at("input-source-left"), BUTTON_BG);

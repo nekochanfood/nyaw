@@ -10,9 +10,7 @@ use design::PANEL_MARGIN;
 use design::animation::{Animation, Motion};
 use subsystems::{Frame, Subsystems, rendering::Surface, vr};
 
-use vr::{
-    Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError,
-};
+use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
 pub use subsystems::ControllerState;
 

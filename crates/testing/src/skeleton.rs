@@ -173,15 +173,12 @@ impl Render for SkeletonTest {
                 indicator(
                     &theme,
                     id,
-                    i18n::tf(
-                        cx,
-                        key,
-                        &[("pct", &v), ("press", &percent(PRESS))],
-                    ),
+                    i18n::tf(cx, key, &[("pct", &v), ("press", &percent(PRESS))]),
                     on,
                 )
             };
-            let palm_ok = metrics.is_some_and(|m| m.palm_toward >= tuning.palm_deg.to_radians().cos());
+            let palm_ok =
+                metrics.is_some_and(|m| m.palm_toward >= tuning.palm_deg.to_radians().cos());
             let shortcut = indicator(
                 &theme,
                 SHORTCUT_IDS[side],
@@ -189,10 +186,20 @@ impl Render for SkeletonTest {
                     cx,
                     "skeleton.shortcut",
                     &[
-                        ("pct", &metrics.map_or_else(|| "-".into(), |m| percent(m.little))),
+                        (
+                            "pct",
+                            &metrics.map_or_else(|| "-".into(), |m| percent(m.little)),
+                        ),
                         (
                             "palm",
-                            &i18n::t(cx, if palm_ok { "skeleton.palm_ok" } else { "skeleton.palm_ng" }),
+                            &i18n::t(
+                                cx,
+                                if palm_ok {
+                                    "skeleton.palm_ok"
+                                } else {
+                                    "skeleton.palm_ng"
+                                },
+                            ),
                         ),
                     ],
                 ),
@@ -222,7 +229,9 @@ impl Render for SkeletonTest {
                     .child(
                         div()
                             .id(["skeleton-left", "skeleton-right"][side])
-                            .debug_selector(move || ["skeleton-left", "skeleton-right"][side].into())
+                            .debug_selector(move || {
+                                ["skeleton-left", "skeleton-right"][side].into()
+                            })
                             .size(px(HAND_PX))
                             .rounded(px(radius::MD))
                             .bg(rgba(theme.control))
@@ -283,19 +292,24 @@ impl Render for SkeletonTest {
                     .child(
                         div()
                             .debug_selector(|| "double-press-count".into())
-                            .child(i18n::tf(cx, "skeleton.double_press", &[("count", &double_press)])),
+                            .child(i18n::tf(
+                                cx,
+                                "skeleton.double_press",
+                                &[("count", &double_press)],
+                            )),
                     )
                     .child(
-                        button(&theme, "hand-tuning", i18n::t(cx, "skeleton.tuning"), false).on_click({
-                            let panel = self.panel;
-                            move |_, _, cx| {
-                                cx.default_global::<PanelControl>().spawns.push(
-                                    PanelSpec::spawn(panel, |id, _, _| HandTuningTest::new(id))
-                                        .sized(TUNING_SIZE, TUNING_PX)
-                                        .titled("skeleton.tuning"),
-                                )
-                            }
-                        }),
+                        button(&theme, "hand-tuning", i18n::t(cx, "skeleton.tuning"), false)
+                            .on_click({
+                                let panel = self.panel;
+                                move |_, _, cx| {
+                                    cx.default_global::<PanelControl>().spawns.push(
+                                        PanelSpec::spawn(panel, |id, _, _| HandTuningTest::new(id))
+                                            .sized(TUNING_SIZE, TUNING_PX)
+                                            .titled("skeleton.tuning"),
+                                    )
+                                }
+                            }),
                     ),
             )
             .child(
@@ -400,8 +414,13 @@ impl Render for HandTuningTest {
             ))
             .child(
                 row().child(
-                    button(&theme, "tune-reset", i18n::t(cx, "common.default"), now == HandTuning::default())
-                        .on_click(change(Setting::Hand(HandTuning::default()))),
+                    button(
+                        &theme,
+                        "tune-reset",
+                        i18n::t(cx, "common.default"),
+                        now == HandTuning::default(),
+                    )
+                    .on_click(change(Setting::Hand(HandTuning::default()))),
                 ),
             )
     }
@@ -455,7 +474,10 @@ fn paint_hand(
         let at = to_screen(joint.position);
         window.paint_quad(
             fill(
-                Bounds::new(point(at.x - px(r), at.y - px(r)), size(px(r * 2.0), px(r * 2.0))),
+                Bounds::new(
+                    point(at.x - px(r), at.y - px(r)),
+                    size(px(r * 2.0), px(r * 2.0)),
+                ),
                 if lit_joint(j) { accent } else { bone },
             )
             .corner_radii(px(r)),
@@ -506,7 +528,11 @@ mod tests {
         assert_eq!(lit_fingers(&s, Some(&c)), [false; 5]);
         c.grab = true;
         assert_eq!(lit_fingers(&s, Some(&c)), [false, false, true, true, true]);
-        c = ControllerState { grab: false, shortcut: true, ..c };
+        c = ControllerState {
+            grab: false,
+            shortcut: true,
+            ..c
+        };
         assert_eq!(lit_fingers(&s, Some(&c)), [true, false, false, false, true]);
         // 骨格はあるがコントローラで操作している: つまんでいる指（関節がみな同じ点なので全部）。
         assert_eq!(lit_fingers(&s, None), [true; 5]);

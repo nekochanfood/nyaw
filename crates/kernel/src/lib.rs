@@ -669,7 +669,13 @@ mod tests {
         let t = Instant::now();
         let ms = |n| t + Duration::from_millis(n);
         let mut l = LongPress::default();
-        for (held, at) in [(true, 0), (true, 300), (false, 400), (true, 500), (true, 900)] {
+        for (held, at) in [
+            (true, 0),
+            (true, 300),
+            (false, 400),
+            (true, 500),
+            (true, 900),
+        ] {
             l.update(held, ms(at));
         }
         assert_eq!(l.count, 0, "離したので 0.5 秒続いていない");
