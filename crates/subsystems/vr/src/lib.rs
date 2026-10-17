@@ -139,10 +139,125 @@ impl RawController {
     }
 }
 
+/// 手の関節の数。並びは OpenXR（XR_EXT_hand_tracking）の `XrHandJointEXT` に揃える:
+/// 0 手のひら、1 手首、2〜5 親指（中手骨・基節・末節・先端）、6〜10 人差し指（中手骨・基節・中節・末節・先端）、
+/// 11〜15 中指、16〜20 薬指、21〜25 小指。OpenVR のボーン（`eBone_*`）も 1〜25 は同じ並び。
+pub const JOINT_COUNT: usize = 26;
+pub const PALM: usize = 0;
+pub const WRIST: usize = 1;
+/// 指ごとの先端の関節（親指・人差し指・中指・薬指・小指）。
+pub const TIPS: [usize; 5] = [5, 10, 15, 20, 25];
+
+/// 関節 `joint` の親（骨でつながる手首側の関節）。手首と手のひらには無い。
+pub const fn joint_parent(joint: usize) -> Option<usize> {
+    match joint {
+        PALM | WRIST => None,
+        // 各指の付け根（中手骨）は手首につながる。
+        2 => Some(WRIST),
+        j if j % 5 == 1 => Some(WRIST),
+        j => Some(j - 1),
+    }
+}
+
+/// 片手の骨格（スケルタル入力）。関節の姿勢はトラッキング空間（[`Pose`] と同じ）。
+/// 向きの軸はランタイムのまま（OpenXR は -Z が指先の向き・+Y が手の甲の外。OpenVR はボーンごとに違う）。
+// ponytail: OpenVR の関節の向きは OpenXR の軸に直していない。向きで判定するものが要るなら eBone ごとの回転を掛けて揃える。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HandSkeleton {
+    pub hand: Hand,
+    pub joints: [Pose; JOINT_COUNT],
+    /// 指をどれだけ実際に追っているか。
+    pub tracking: FingerTracking,
+}
+
+/// 骨格の指をどれだけ実際に追っているか（OpenVR の `EVRSkeletalTrackingLevel` に揃える）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FingerTracking {
+    /// 指は追っておらず、ボタンなどから推し量った形（Vive のコントローラ）。
+    Estimated,
+    /// コントローラを握ったまま、一部の指を追っている（Index・Touch の静電容量）。
+    Partial,
+    /// 指を全部追っている（光学式のハンドトラッキング・グローブ）。コントローラを握っていない手で、ランタイムがコントローラとして
+    /// 見せていても（Steam Link・Virtual Desktop はつまみをトリガーにする）骨格で操作する。
+    Full,
+}
+
+/// 手のひらと手の甲のどちらを（顔に）向けているか（[`HandSkeleton::facing`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Facing {
+    Palm,
+    Back,
+}
+
+/// 手首の関節から見た [`HandSkeleton::grip`] の元（grip の座標系。m）: 指の方へ 5cm、手のひらの側へ 1.5cm。
+/// コントローラ用の手首の時計の相対姿勢（`wrist::WATCH_OFFSET`。tip から手首寄りへ 8cm・上へ 4cm）が、
+/// 手首の関節から腕側へ 3cm・手の甲の側へ 2.5cm（腕時計の位置）に来る。
+pub const GRIP_FROM_WRIST: Vec3 = Vec3::new(0.0, -0.015, -0.05);
+
+/// 人差し指・小指の基節（手のひらの面を張る関節）。
+const INDEX_PROXIMAL: usize = 7;
+const LITTLE_PROXIMAL: usize = 22;
+
+impl HandSkeleton {
+    /// 手のひらから外へ出る向き（単位ベクトル）。関節の位置だけから求めるので、ランタイムの関節の軸の違いによらない。
+    pub fn palm_normal(&self) -> Vec3 {
+        let wrist = self.joints[WRIST].position;
+        let index = self.joints[INDEX_PROXIMAL].position - wrist;
+        let little = self.joints[LITTLE_PROXIMAL].position - wrist;
+        // 右手は人差し指 × 小指が手のひらの側。左手は鏡写しで逆。
+        let n = match self.hand {
+            Hand::Right => index.cross(little),
+            Hand::Left => little.cross(index),
+        };
+        n.normalize_or_zero()
+    }
+
+    /// 手のひらを `eye` へどれだけ向けているか（なす角の cos。1 で正面に手のひら、-1 で手の甲）。
+    pub fn palm_toward(&self, eye: Vec3) -> f32 {
+        let to_eye = (eye - self.joints[PALM].position).normalize_or_zero();
+        self.palm_normal().dot(to_eye)
+    }
+
+    /// `eye` に向けているのは手のひらか手の甲か。
+    pub fn facing(&self, eye: Vec3) -> Facing {
+        if self.palm_toward(eye) >= 0.0 {
+            Facing::Palm
+        } else {
+            Facing::Back
+        }
+    }
+
+    /// コントローラの座標系に合わせた手の姿勢: 前方（-Z）は手首から中指の付け根への向き、上（+Y）は手の甲の側。元は、手で
+    /// コントローラを握ったときのその先（`/pose/tip`）に当たる所（手首から [`GRIP_FROM_WRIST`]）。コントローラに取り付けた
+    /// パネル（手首の時計など）を、骨格だけの手にも同じ相対姿勢で付けるため。
+    // ponytail: 前腕は追っていないので、手首を曲げると手首の時計も手と一緒に傾く。
+    pub fn grip(&self) -> Pose {
+        let p = |i: usize| self.joints[i].position;
+        let back = (p(WRIST) - p(12)).normalize_or(Vec3::Z);
+        let up = -self.palm_normal();
+        let x = up.cross(back).normalize_or(Vec3::X);
+        let orientation = Quat::from_mat3(&Mat3::from_cols(x, back.cross(x), back));
+        Pose::new(p(WRIST) + orientation * GRIP_FROM_WRIST, orientation)
+    }
+
+    /// 親指の先と `tip`（[`TIPS`] のどれか）の先との距離（m）。つまむ動作の判定に使う。
+    pub fn pinch_distance(&self, tip: usize) -> f32 {
+        self.joints[TIPS[0]]
+            .position
+            .distance(self.joints[tip].position)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Frame {
     pub hmd: Pose,
     pub controllers: Vec<RawController>,
+    /// 骨格が取れている手（スケルタル入力。ランタイムが対応していなければ空）。
+    pub hands: Vec<HandSkeleton>,
+    /// 手ごとの、ランタイムが追っているその手のデバイスの姿勢（[`Device::Controller`] への取り付けの基準。コントローラなら
+    /// [`RawController::aim`] と同じ）。ハンドトラッキングでもランタイムが手をデバイスとして見せていればある
+    /// （Virtual Desktop の `vd_hand_controller`）。無ければ骨格の手は骨格から置く。
+    pub hand_devices: Vec<(Hand, Pose)>,
     /// コントローラ以外のトラッカー（腰・足など）。ID はランタイムが決める（OpenVR はシリアル番号）。
     pub trackers: Vec<(String, Pose)>,
     /// ランタイムが終了を求めている（SteamVR の終了、OpenXR セッションの EXITING など）。
@@ -225,6 +340,7 @@ pub trait VrBackend {
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose);
     /// `device` の姿勢 * `offset` に置き、追従はランタイムに任せる（アプリが poll した姿勢を送るより遅れない）。
     /// 任せられなければ `false` を返し、呼び出し側は毎 tick [`set_overlay_pose`](Self::set_overlay_pose) で送る。
+    /// 呼び出し側は毎 tick 頼み直すので、前と同じならランタイムへ送らないこと。
     fn set_overlay_pose_relative(
         &mut self,
         _id: OverlayId,
@@ -503,6 +619,88 @@ mod tests {
             ..frame
         };
         assert_eq!(emulated.pose(&Device::Hmd), None);
+    }
+
+    #[test]
+    fn every_finger_chains_back_to_the_wrist() {
+        for j in 2..JOINT_COUNT {
+            let mut at = j;
+            let mut steps = 0;
+            while let Some(p) = joint_parent(at) {
+                assert!(p < at, "{j}");
+                at = p;
+                steps += 1;
+            }
+            assert_eq!(at, WRIST, "{j}");
+            // 親指は 4 本、ほかの指は 5 本の骨で手首まで。
+            assert!(steps <= 5, "{j}");
+        }
+        assert_eq!(joint_parent(PALM), None);
+        assert_eq!(joint_parent(6), Some(WRIST));
+        assert_eq!(joint_parent(TIPS[0]), Some(4));
+    }
+
+    /// 手のひらを下へ向けた手（指は前方 -Z）。右手は親指・人差し指が左（-X）、左手は右。
+    fn palm_down(hand: Hand) -> HandSkeleton {
+        let side = match hand {
+            Hand::Right => -1.0,
+            Hand::Left => 1.0,
+        };
+        let mut joints = [Pose::IDENTITY; JOINT_COUNT];
+        joints[INDEX_PROXIMAL].position = Vec3::new(side * 0.03, 0.0, -0.08);
+        joints[LITTLE_PROXIMAL].position = Vec3::new(-side * 0.03, 0.0, -0.07);
+        joints[PALM].position = Vec3::new(0.0, 0.0, -0.04);
+        HandSkeleton {
+            hand,
+            joints,
+            tracking: FingerTracking::Full,
+        }
+    }
+
+    /// 手のひらを下にした手の姿勢は、指の向きが前方（-Z）、手の甲が上（+Y）。
+    #[test]
+    fn grip_faces_along_the_fingers_with_the_back_up() {
+        for hand in [Hand::Left, Hand::Right] {
+            let mut s = palm_down(hand);
+            s.joints[WRIST].position = Vec3::new(0.0, 0.0, 0.0);
+            s.joints[12].position = Vec3::new(0.0, 0.0, -0.08);
+            let g = s.grip();
+            assert!(
+                g.forward().abs_diff_eq(Vec3::NEG_Z, 1e-5),
+                "{hand:?} {}",
+                g.forward()
+            );
+            assert!(
+                (g.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5),
+                "{hand:?}"
+            );
+            // 元は手首から指の方へ 5cm・手のひらの側（下）へ 1.5cm。時計の相対姿勢は手首から腕側・手の甲の側に来る。
+            assert!(
+                g.position.abs_diff_eq(Vec3::new(0.0, -0.015, -0.05), 1e-5),
+                "{}",
+                g.position
+            );
+            let watch = g.transform_point(Vec3::new(0.0, 0.04, 0.08));
+            assert!(
+                watch.abs_diff_eq(Vec3::new(0.0, 0.025, 0.03), 1e-5),
+                "{watch}"
+            );
+        }
+    }
+
+    #[test]
+    fn facing_tells_palm_from_back_for_both_hands() {
+        for hand in [Hand::Left, Hand::Right] {
+            let s = palm_down(hand);
+            assert!(s.palm_normal().abs_diff_eq(Vec3::NEG_Y, 1e-5), "{hand:?}");
+            assert_eq!(
+                s.facing(Vec3::new(0.0, -0.5, 0.0)),
+                Facing::Palm,
+                "{hand:?}"
+            );
+            assert_eq!(s.facing(Vec3::new(0.0, 0.5, 0.0)), Facing::Back, "{hand:?}");
+            assert!(s.palm_toward(Vec3::new(0.0, -0.5, -0.04)) > 0.99);
+        }
     }
 
     #[test]

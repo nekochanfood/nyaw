@@ -10,7 +10,7 @@ use design::PANEL_MARGIN;
 use design::animation::{Animation, Motion};
 use subsystems::{Frame, Subsystems, rendering::Surface, vr};
 
-use vr::{Device, Hand, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
+use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
 pub use subsystems::ControllerState;
 
@@ -279,6 +279,10 @@ pub struct Overlay {
     hands: HashMap<Hand, HandState>,
     /// 最後の tick で見えていたトラッカーの ID（取り付け先の候補）。
     trackers: Vec<String>,
+    /// 最後の tick で骨格が取れていた手。
+    skeletons: Vec<HandSkeleton>,
+    /// 最後の tick の手ごとの入力の状態。
+    controllers: Vec<ControllerState>,
     quit: bool,
     /// 最後の tick の HMD の姿勢。
     hmd: Pose,
@@ -449,6 +453,16 @@ impl Overlay {
     /// 最後の tick で見えていたトラッカーの ID。
     pub fn trackers(&self) -> &[String] {
         &self.trackers
+    }
+
+    /// 最後の tick で骨格が取れていた手（スケルタル入力）。
+    pub fn hands(&self) -> &[HandSkeleton] {
+        &self.skeletons
+    }
+
+    /// 最後の tick の手ごとの入力の状態。
+    pub fn controllers(&self) -> &[ControllerState] {
+        &self.controllers
     }
 
     /// どちらかの手でメニューボタンを押している。
@@ -716,6 +730,8 @@ impl Overlay {
         self.hmd = frame.hmd;
         self.steadied = frame.stabilize_pointer && self.pointer_smoothing() > 0.0;
         self.trackers = frame.trackers.iter().map(|(id, _)| id.clone()).collect();
+        self.skeletons.clone_from(&frame.hands);
+        self.controllers.clone_from(&frame.controllers);
         // 掴み中のパネルは手に従う（離したフレームで update_hand がオフセットを付け直す）。
         // 取り付け先が見失われたフレームは最後の姿勢のまま。
         let mut dragged: Vec<PanelId> = self
@@ -735,6 +751,8 @@ impl Overlay {
             if dragged.contains(&id) || p.parent.is_some() || p.nav_bar_of.is_some() {
                 continue;
             }
+            // 骨格で操作している手も、ランタイムがその手のデバイスを追っていれば相対配置を任せる（`Frame::pose` も同じ姿勢）。
+            // 無ければ `set_overlay_pose_relative` が断るので、骨格から求めた姿勢で置く。
             p.follow = p.attached.clone();
             if let Some(pose) = p
                 .attached
@@ -1158,6 +1176,14 @@ impl Overlay {
         let eye = self.hmd.position;
         let laser_length = self.laser_length();
         let steadied = self.steadied;
+        // 骨格から作ったレーザーの手は、ランタイムのデバイスの姿勢と関係ない（ランタイムに手からの相対で置かせると、デバイスの
+        // 先からずれる）ので、空間に置く。
+        let skeletal: Vec<Hand> = self
+            .controllers
+            .iter()
+            .filter(|c| c.metrics.is_some())
+            .map(|c| c.hand)
+            .collect();
         for h in self.hands.values_mut() {
             if let Some(r) = h.ray
                 && let Some((target, point)) = r.hit
@@ -1213,8 +1239,9 @@ impl Overlay {
                 // カーソルなど面の上のものは、手ブレ抑えが効いていれば空間に置く: 手に追従させると、tick の間
                 // （ゲームで tick が遅れるほど長い）はランタイムが手ブレどおりに動かし、次の tick で抑えた位置へ
                 // 戻されてガタつく。抑えていなければ手に追従させ、レーザーの先とずれないようにする。
-                self.panels[id].follow = (part == Pointer::Laser || !steadied)
-                    .then(|| (Device::Controller(hand), r.hand.inverse() * pose));
+                self.panels[id].follow = ((part == Pointer::Laser || !steadied)
+                    && !skeletal.contains(&hand))
+                .then(|| (Device::Controller(hand), r.hand.inverse() * pose));
                 (pose, width)
             });
             let p = &mut self.panels[id];

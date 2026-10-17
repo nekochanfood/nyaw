@@ -92,6 +92,9 @@ pub struct Config {
     pub pointer_release_deg: Option<f32>,
     /// レーザーの見える長さ（m）。手元からこの長さで消える（カーソルが近ければその手前で消える）。省略で既定値。
     pub laser_length: Option<f32>,
+    /// コントローラを持たない手（スケルタル入力）の判定のしきい値とレーザーの揺れの抑え（`[hand]` の表）。
+    /// 画面での調整はここへ表ごと書き戻される。
+    pub hand: subsystems::input::HandTuning,
     /// レーザーのエミュレート方式（`mouse` / `touch`）。省略でタッチ。
     pub pointer_mode: Option<PointerMode>,
     /// 機能ごとに GPU を使うか（`[gpu]` の表。互換性のため CPU に落とせる）。
@@ -188,6 +191,23 @@ pub fn save_at(path: &Path, key: &str, value: impl Into<toml::Value>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `[hand]` は書いたキーだけ変わり、ほかは既定値。範囲の外はカーネルが範囲に収める。
+    #[test]
+    fn hand_table_overrides_only_given_keys() {
+        let c = parse(
+            "[hand]
+pinch_mm = 32.0
+smoothing = 0.2
+",
+        )
+        .unwrap();
+        assert_eq!(c.hand.pinch_mm, 32.0);
+        assert_eq!(c.hand.smoothing, 0.2);
+        let d = subsystems::input::HandTuning::default();
+        assert_eq!(c.hand.grip_deg, d.grip_deg);
+        assert_eq!(parse("").unwrap().hand, d);
+    }
 
     #[test]
     fn runtime_survives_a_broken_value() {

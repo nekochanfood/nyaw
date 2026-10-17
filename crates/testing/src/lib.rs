@@ -9,6 +9,7 @@
 //! - 積み重ね: [`NavTest`] で、右から入る画面（push 遷移）と、押したまま右から左へ動かして戻るスワイプバック（設定画面の中身と同じ部品）
 //! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
 //! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）・[`TestingFont`]（フォントの見本）・[`TestingScrollbar`]（縦・横・両方のスクロールバー）
+//! - スケルタル入力: [`SkeletonTest`] で、手の関節をギズモで描き、親指とほかの指でつまめているかを見る
 //! - 音: [`AudioTest`] で、パネルのスピーカーから立体的に鳴る音（同時再生・立体化のオプトアウト・モノラル / ステレオ）を聞く
 //! - 負荷: [`StressTest`] で上限いっぱいまでパネルを出し、閉じる・ちりばめる・並べる
 //!
@@ -37,6 +38,11 @@ mod desktop;
 pub use desktop::DesktopTest;
 mod audio;
 pub use audio::AudioTest;
+mod skeleton;
+pub use skeleton::{
+    HandTuningTest, PINCH_DISTANCE, SKELETON_PX, SKELETON_SIZE, SkeletonTest, TUNING_PX,
+    TUNING_SIZE, pinches,
+};
 
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
@@ -566,6 +572,18 @@ impl Render for Testing {
                         "audio.title",
                         |id, _| AudioTest::new(id),
                     )),
+                )
+                .child(
+                    button!("skeleton-test", i18n::t(cx, "skeleton.title"), false).on_click({
+                        let panel = self.panel;
+                        move |_, _, cx| {
+                            cx.default_global::<PanelControl>().spawns.push(
+                                PanelSpec::spawn(panel, |id, _, cx| SkeletonTest::new(id, cx))
+                                    .sized(SKELETON_SIZE, SKELETON_PX)
+                                    .titled("skeleton.title"),
+                            )
+                        }
+                    }),
                 )
                 .child(
                     button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false).on_click(

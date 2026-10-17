@@ -44,6 +44,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         overlay: client.interface(sys::IVROverlay_Version)?,
         textures: HashMap::new(),
         devices: HashMap::new(),
+        relative: HashMap::new(),
         fixed: HashMap::new(),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
@@ -127,6 +128,9 @@ pub(crate) struct OpenVrBackend {
     /// 最後の poll で見えていたデバイスの番号と、その生の姿勢から [`Frame::pose`] の姿勢への相対姿勢
     /// （コントローラは `/pose/tip`）。相対配置をランタイムに任せるため。
     devices: HashMap<Device, (u32, Pose)>,
+    /// ランタイムに相対配置を任せたオーバーレイ → 最後に送った（デバイスの番号, デバイスから見た姿勢）。相対配置は毎 tick
+    /// 頼み直されるので、変わったときだけ送る（同じ取り付け先でも、持ち替えで裏のデバイスが入れ替わると番号が変わる）。
+    relative: HashMap<u64, (u32, Pose)>,
     /// 高さを固定したオーバーレイの（幅, 高さ）（m）。OpenVR は高さを縦横比で決めるので、テクセルの縦横比で合わせる。
     fixed: HashMap<u64, (f32, f32)>,
     gpu: Gpu,
@@ -202,6 +206,30 @@ impl OpenVrBackend {
             );
             CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned()
         }
+    }
+
+    fn attach(&self, id: u64, index: u32, offset: Pose) -> Result<(), VrError> {
+        let mut m = sys::HmdMatrix34_t {
+            m: matrix_from(offset),
+        };
+        let e = unsafe {
+            f(self.overlay().SetOverlayTransformTrackedDeviceRelative)(id, index, &mut m)
+        };
+        check("SetOverlayTransformTrackedDeviceRelative", e)
+    }
+
+    fn place_absolute(&self, id: u64, pose: Pose) {
+        let mut m = sys::HmdMatrix34_t {
+            m: matrix_from(pose),
+        };
+        let e = unsafe {
+            f(self.overlay().SetOverlayTransformAbsolute)(
+                id,
+                sys::ETrackingUniverseOrigin_TrackingUniverseStanding,
+                &mut m,
+            )
+        };
+        log(check("SetOverlayTransformAbsolute", e));
     }
 
     fn release(&mut self, id: u64) {
@@ -360,7 +388,8 @@ impl VrBackend for OpenVrBackend {
         }
         for (device, pose) in poses.iter().enumerate().skip(1) {
             let device = device as u32;
-            if !pose.bPoseIsValid {
+            // 切断されていても「姿勢は有効」と申告するドライバがある（standable のボディトラッキング）。
+            if !pose.bPoseIsValid || !pose.bDeviceIsConnected {
                 continue;
             }
             if unsafe { f(s.GetTrackedDeviceClass)(device) }
@@ -389,6 +418,7 @@ impl VrBackend for OpenVrBackend {
                     let tip = pose_from(&raw.mDeviceToAbsoluteTracking.m).inverse() * aim;
                     devices.insert(Device::Controller(hand), (device, tip));
                 }
+                frame.hand_devices.push((hand, aim));
                 frame.controllers.push(RawController {
                     hand,
                     profile: profile.into(),
@@ -397,6 +427,34 @@ impl VrBackend for OpenVrBackend {
                     inputs: inputs(profile, hand, actions),
                 });
             }
+            frame.hands = input.skeletons(predict);
+        }
+        // 入力のアクションで取れなかった手も、手の役割に割り当たっているデバイスがあれば取り付け先にする
+        // （ハンドトラッキングの手のデバイスなど。ほかのオーバーレイも役割のデバイスに付けて追従している）。
+        for (hand, role) in [
+            (
+                Hand::Left,
+                sys::ETrackedControllerRole_TrackedControllerRole_LeftHand,
+            ),
+            (
+                Hand::Right,
+                sys::ETrackedControllerRole_TrackedControllerRole_RightHand,
+            ),
+        ] {
+            if devices.contains_key(&Device::Controller(hand)) {
+                continue;
+            }
+            let device = unsafe { f(s.GetTrackedDeviceIndexForControllerRole)(role) };
+            let Some(pose) = poses
+                .get(device as usize)
+                .filter(|p| p.bPoseIsValid && p.bDeviceIsConnected)
+            else {
+                continue;
+            };
+            devices.insert(Device::Controller(hand), (device, Pose::IDENTITY));
+            frame
+                .hand_devices
+                .push((hand, pose_from(&pose.mDeviceToAbsoluteTracking.m)));
         }
         self.devices = devices;
         frame
@@ -437,36 +495,36 @@ impl VrBackend for OpenVrBackend {
     }
 
     fn destroy_overlay(&mut self, id: OverlayId) {
+        self.relative.remove(&id.0);
         unsafe {
             let _ = f(self.overlay().DestroyOverlay)(id.0);
         }
     }
 
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
-        let mut m = sys::HmdMatrix34_t {
-            m: matrix_from(pose),
-        };
-        let e = unsafe {
-            f(self.overlay().SetOverlayTransformAbsolute)(
-                id.0,
-                sys::ETrackingUniverseOrigin_TrackingUniverseStanding,
-                &mut m,
-            )
-        };
-        log(check("SetOverlayTransformAbsolute", e));
+        self.relative.remove(&id.0);
+        self.place_absolute(id.0, pose);
     }
 
     fn set_overlay_pose_relative(&mut self, id: OverlayId, device: &Device, offset: Pose) -> bool {
         let Some(&(index, to_pose)) = self.devices.get(device) else {
             return false;
         };
-        let mut m = sys::HmdMatrix34_t {
-            m: matrix_from(to_pose * offset),
-        };
-        let e = unsafe {
-            f(self.overlay().SetOverlayTransformTrackedDeviceRelative)(id.0, index, &mut m)
-        };
-        check("SetOverlayTransformTrackedDeviceRelative", e).is_ok()
+        let want = (index, to_pose * offset);
+        // tip（to_pose）は毎フレームの予測から求めるので、わずかに揺れる。それだけなら送り直さない。
+        let same = self.relative.get(&id.0).is_some_and(|&(i, p)| {
+            i == want.0
+                && p.position.abs_diff_eq(want.1.position, 1e-4)
+                && p.orientation.abs_diff_eq(want.1.orientation, 1e-4)
+        });
+        if same {
+            return true;
+        }
+        let ok = self.attach(id.0, want.0, want.1).is_ok();
+        if ok {
+            self.relative.insert(id.0, want);
+        }
+        ok
     }
 
     fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {
