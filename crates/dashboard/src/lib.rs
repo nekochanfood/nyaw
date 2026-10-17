@@ -546,6 +546,12 @@ impl Render for Dashboard {
             i18n::t(cx, "dashboard.add_screen"),
             Page::Mirror,
         );
+        let now_playing = page_button(
+            "dashboard-now-playing",
+            &icons::PLAYLIST,
+            i18n::t(cx, "dashboard.now_playing"),
+            Page::NowPlaying,
+        );
         let menu = components::icon_button(
             &theme,
             "dashboard-menu",
@@ -575,19 +581,7 @@ impl Render for Dashboard {
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
             )
             // 何か再生しているときだけ、再生中の画面のボタンを出す。
-            .when(has_media, |d| {
-                d.child(
-                    components::content_button(&theme, "dashboard-now-playing", variant(Page::NowPlaying))
-                        .flex_none()
-                        .child(
-                            design::icon(&icons::PLAYLIST)
-                                .weight(design::Weight::Bold)
-                                .size(px(font_size::LG)),
-                        )
-                        .child(i18n::t(cx, "dashboard.now_playing"))
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::NowPlaying, cx))),
-                )
-            })
+            .when(has_media, |d| d.child(now_playing))
             .child(mirror)
             .when(!streams.is_empty(), |d| d.child(separator(&theme)))
             // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
@@ -707,7 +701,8 @@ impl Screen {
             self.open_app = false;
             match self.app_window(&m.app) {
                 Some((source, icon)) => {
-                    let spec = mirror_spec(source.clone(), icon.clone(), self.dashboard.clone());
+                    let dashboard = (ui::docked(cx) == Some(self.panel)).then(|| self.dashboard.clone());
+                    let spec = mirror_spec(source.clone(), icon.clone(), dashboard);
                     cx.default_global::<PanelControl>().spawns.push(spec);
                 }
                 None => commands(self.panel, [PanelCommand::Media(media::Command::Raise)], cx),
@@ -836,58 +831,65 @@ impl Screen {
                             .text_color(rgba(low))
                             .child(m.artist.clone()),
                     )
-                    // シークバー: ハンドルの無い無彩色の棒。押した位置へ移る（シークできるときだけ）。
+                    // 1 行に、再生位置・シークバー・曲の長さ。
                     .child(
                         div()
-                            .id("now-playing-seek")
-                            .debug_selector(|| "now-playing-seek".into())
                             .mt(px(spacing::MD))
                             .w(px(SEEK_PX))
-                            .h(px(SEEK_HIT_PX))
-                            .relative()
                             .flex()
                             .items_center()
-                            .child(
-                                gpui::canvas(move |bounds, _, _| bounds_in.set(bounds), |_, _, _, _| {})
-                                    .absolute()
-                                    .inset_0(),
-                            )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(SEEK_BAR_PX))
-                                    .rounded(px(design::radius::FULL))
-                                    .bg(rgba(theme.neutral_text_low & !0xff | 0x55))
-                                    .child(
-                                        div()
-                                            .h_full()
-                                            .w(gpui::relative(fraction))
-                                            .rounded(px(design::radius::FULL))
-                                            .bg(rgba(theme.neutral_text)),
-                                    ),
-                            )
-                            .when_some(duration.filter(|_| m.controls.seek), |d, duration| {
-                                d.on_mouse_down(gpui::MouseButton::Left, move |e, _, cx| {
-                                    let b = seek_bounds.get();
-                                    let at = f32::from(e.position.x - b.origin.x)
-                                        / f32::from(b.size.width).max(1.0);
-                                    let to = duration.mul_f32(at.clamp(0.0, 1.0));
-                                    commands(panel, [PanelCommand::Media(media::Command::Seek(to))], cx);
-                                })
-                            }),
-                    )
-                    // 左端に再生位置、右端に曲の長さ。
-                    .child(
-                        div()
-                            .w(px(SEEK_PX))
-                            .flex()
-                            .justify_between()
-                            .font(design::font::mono())
+                            .gap(px(spacing::SM))
                             .text_size(px(font_size::SM))
                             .text_color(rgba(low))
-                            .child(div().debug_selector(|| "now-playing-position".into()).child(clock(position)))
                             .child(
                                 div()
+                                    .flex_none()
+                                    .debug_selector(|| "now-playing-position".into())
+                                    .child(clock(position)),
+                            )
+                            // シークバー: ハンドルの無い無彩色の棒。押した位置へ移る（シークできるときだけ）。
+                            .child(
+                                div()
+                                    .id("now-playing-seek")
+                                    .debug_selector(|| "now-playing-seek".into())
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h(px(SEEK_HIT_PX))
+                                    .relative()
+                                    .flex()
+                                    .items_center()
+                                    .child(
+                                        gpui::canvas(move |bounds, _, _| bounds_in.set(bounds), |_, _, _, _| {})
+                                            .absolute()
+                                            .inset_0(),
+                                    )
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .h(px(SEEK_BAR_PX))
+                                            .rounded(px(design::radius::FULL))
+                                            .bg(rgba(theme.neutral_text_low & !0xff | 0x55))
+                                            .child(
+                                                div()
+                                                    .h_full()
+                                                    .w(gpui::relative(fraction))
+                                                    .rounded(px(design::radius::FULL))
+                                                    .bg(rgba(theme.neutral_text)),
+                                            ),
+                                    )
+                                    .when_some(duration.filter(|_| m.controls.seek), |d, duration| {
+                                        d.on_mouse_down(gpui::MouseButton::Left, move |e, _, cx| {
+                                            let b = seek_bounds.get();
+                                            let at = f32::from(e.position.x - b.origin.x)
+                                                / f32::from(b.size.width).max(1.0);
+                                            let to = duration.mul_f32(at.clamp(0.0, 1.0));
+                                            commands(panel, [PanelCommand::Media(media::Command::Seek(to))], cx);
+                                        })
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .flex_none()
                                     .debug_selector(|| "now-playing-duration".into())
                                     .child(duration.map_or_else(|| "--:--".to_owned(), clock)),
                             ),
@@ -953,7 +955,7 @@ impl Screen {
 
     fn mirror(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Div {
         self.poll_sources();
-        let dashboard = self.dashboard.clone();
+        let (dashboard, panel) = (self.dashboard.clone(), self.panel);
         let tiles = |kind: SourceKind| {
             let tiles: Vec<_> = self
                 .sources
@@ -978,10 +980,13 @@ impl Screen {
                             let icon = image.clone();
                             move |_, _, cx| {
                                 // 映したものは、この一覧と入れ替わりにダッシュボードにはまり、バーにボタンが増える。
+                                // 一覧を独立させていれば、映したものも独立して開く。
+                                let dashboard =
+                                    (ui::docked(cx) == Some(panel)).then(|| dashboard.clone());
                                 cx.default_global::<PanelControl>().spawns.push(mirror_spec(
                                     source.clone(),
                                     icon.clone(),
-                                    dashboard.clone(),
+                                    dashboard,
                                 ));
                             }
                         })
@@ -1209,12 +1214,13 @@ impl Render for Mirror {
     }
 }
 
-/// `source` を映すパネルの起動仕様。開くとダッシュボードにはまる（ミラーリングの一覧と入れ替わる）。
+/// `source` を映すパネルの起動仕様。`dashboard` があれば開くとそこにはまり（ミラーリングの一覧と入れ替わる）、
+/// `None`（独立させた画面から開いた）なら独立して開く。
 /// タイトルは取得元の名前で、ナビゲーションバーで閉じると配信も止まる。
 fn mirror_spec(
     source: Source,
     icon: Option<Arc<RenderImage>>,
-    dashboard: WeakEntity<Dashboard>,
+    dashboard: Option<WeakEntity<Dashboard>>,
 ) -> PanelSpec {
     let (title, source_title, kind) = (source.name.clone(), source.name.clone(), source.kind);
     PanelSpec::new(Pose::IDENTITY, move |panel, _, cx| {
@@ -1224,9 +1230,11 @@ fn mirror_spec(
             .or_default()
             .commands
             .push(PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE));
-        ui::dock(panel, cx);
-        let name = SharedString::from(title.clone());
-        let _ = dashboard.update(cx, |d, cx| d.add_stream(panel, kind, name, icon, cx));
+        if let Some(dashboard) = dashboard {
+            ui::dock(panel, cx);
+            let name = SharedString::from(title.clone());
+            let _ = dashboard.update(cx, |d, cx| d.add_stream(panel, kind, name, icon, cx));
+        }
         Mirror { panel }
     })
     // 配信は横幅を保って縦横比を合わせるので、幅をはめる画面とそろえる。
