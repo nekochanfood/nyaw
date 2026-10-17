@@ -272,7 +272,10 @@ struct HandState {
 
 #[derive(Debug, Default)]
 pub struct Overlay {
+    // shortcut: 閉じた ID の小さな記録は終了まで残す。開閉履歴のメモリが問題になれば世代付き ID に替える。
     panels: Vec<Panel>,
+    /// 解放前のパネルだけ。ID の履歴は `panels` に残すが、毎 tick はここだけを走査する。
+    present: Vec<PanelId>,
     hands: HashMap<Hand, HandState>,
     /// 最後の tick で見えていたトラッカーの ID（取り付け先の候補）。
     trackers: Vec<String>,
@@ -337,12 +340,18 @@ impl Overlay {
             surface,
             follow: None,
         });
-        Ok(self.panels.len() - 1)
+        let id = self.panels.len() - 1;
+        self.present.push(id);
+        Ok(id)
     }
 
     /// パネルの数（閉じたものも含む。PanelId は 0..len）。
     pub fn len(&self) -> usize {
         self.panels.len()
+    }
+
+    pub fn present_ids(&self) -> &[PanelId] {
+        &self.present
     }
 
     pub fn is_empty(&self) -> bool {
@@ -512,11 +521,6 @@ impl Overlay {
         p.attached = None;
     }
 
-    /// 開いている子がいる（暗くして入力を止める）。ナビゲーションバーは持ち主に子がいれば同じ扱い。
-    fn has_child(&self, id: PanelId) -> bool {
-        has_child(&self.panels, id)
-    }
-
     /// パネルをその姿勢へ置く（次の tick でランタイムへ送る）。取り付け中なら取り付け先に戻される。
     pub fn set_pose(&mut self, id: PanelId, pose: Pose) {
         self.panels[id].pose = pose;
@@ -588,7 +592,7 @@ impl Overlay {
         }
         p.closed = true;
         // 子とナビゲーションバーは親と一緒に閉じる。
-        let kids: Vec<PanelId> = (0..self.panels.len())
+        let kids: Vec<PanelId> = self.present.iter().copied()
             .filter(|&c| {
                 let q = &self.panels[c];
                 q.parent.is_some_and(|q| q.panel == id) || q.nav_bar_of == Some(id)
@@ -698,6 +702,7 @@ impl Overlay {
     pub fn tick_frame(&mut self, vr: &mut dyn VrBackend, frame: Frame) -> Vec<UiEvent> {
         let now = Instant::now();
         self.animate(vr, now);
+        self.present.retain(|&id| !self.panels[id].surface.released());
         self.dt = self
             .last_tick
             .map_or(TICK_MIN, |t| (now - t).as_secs_f32())
@@ -719,7 +724,8 @@ impl Overlay {
         for d in dragged.clone() {
             dragged.extend(carried(&self.panels, d));
         }
-        for (id, p) in self.panels.iter_mut().enumerate() {
+        for &id in &self.present {
+            let p = &mut self.panels[id];
             p.follow = None;
             // 子は取り付けではなく親に追従する（下の settle_family）。
             if dragged.contains(&id) || p.parent.is_some() || p.nav_bar_of.is_some() {
@@ -765,9 +771,20 @@ impl Overlay {
             self.close(vr, id);
         }
         self.settle_family(&dragged);
-        let parents: Vec<bool> = (0..self.panels.len()).map(|i| self.has_child(i)).collect();
+        let mut parents = std::collections::HashSet::new();
+        for &id in &self.present {
+            let p = &self.panels[id];
+            if !p.closed && let Some(parent) = p.parent.filter(|parent| !parent.hud) {
+                parents.insert(parent.panel);
+            }
+        }
         let now = Instant::now();
-        for (id, (p, parent)) in self.panels.iter_mut().zip(parents).enumerate() {
+        for &id in &self.present {
+            let p = &mut self.panels[id];
+            if p.closed {
+                continue;
+            }
+            let parent = parents.contains(&p.nav_bar_of.unwrap_or(id));
             let to = if parent { DIM } else { 0.0 };
             // ナビゲーションバーの暗さは持ち主を写す（place_nav_bars）。
             if p.dim_to == to || p.nav_bar_of.is_some() {
@@ -794,7 +811,8 @@ impl Overlay {
         }
         self.place_nav_bars(vr);
         self.place_pointers(vr);
-        for p in &mut self.panels {
+        for &id in &self.present {
+            let p = &mut self.panels[id];
             p.surface.place(vr, p.pose, p.follow.as_ref());
         }
         events
@@ -900,9 +918,9 @@ impl Overlay {
             .and_then(|id| plane_hit(&self.panels[id], &aim).map(|(pos, t)| (id, pos, t)));
         // そうでなければ、レーザー上で最も近いパネル。
         let hit = captured.or_else(|| {
-            self.panels
+            self.present
                 .iter()
-                .enumerate()
+                .map(|&id| (id, &self.panels[id]))
                 .filter(|(_, p)| {
                     !p.closed && p.pointer.is_none() && !p.parent.is_some_and(|q| q.hud)
                 })
@@ -912,7 +930,8 @@ impl Overlay {
         // 押した瞬間、そこが子の外側ならその子を閉じる（`Parent::dismiss`）。
         if press {
             let on = hit.map(|h| h.0);
-            for (i, q) in self.panels.iter().enumerate() {
+            for &i in &self.present {
+                let q = &self.panels[i];
                 let inside = on.is_some_and(|x| x == i || ancestors(&self.panels, x).contains(&i));
                 if !q.closed && !inside && q.parent.is_some_and(|p| p.dismiss) {
                     self.dismissed.push(i);
@@ -944,7 +963,7 @@ impl Overlay {
             })
         };
         // 子が開いている親（とそのナビゲーションバー）は入力を受けない（掴むことはできる）。HUD の子は塞がない。
-        let blocked = |id| has_child(&self.panels, id);
+        let blocked = |id| has_child(&self.panels, &self.present, id);
         let swallow = st.swallow;
         let new_hover = hit.map(|h| h.0).filter(|&id| !blocked(id) && !swallow);
         if let Some(old) = st
@@ -1057,7 +1076,7 @@ impl Overlay {
                 cur = panel;
             }
         }
-        let mut kids: Vec<PanelId> = (0..self.panels.len())
+        let mut kids: Vec<PanelId> = self.present.iter().copied()
             .filter(|&i| self.panels[i].parent.is_some() && !dragged.contains(&i))
             .collect();
         kids.sort_by_key(|&i| ancestors(&self.panels, i).len());
@@ -1084,7 +1103,7 @@ impl Overlay {
     /// アンカーに、バーの上端の左右中央を合わせる。頭から見て同じ大きさに見えるよう、アンカーまでの距離に比例して大きくする。
     /// 持ち主の出入りのアニメーション（75%〜100%）で縮んだ下端にも付いていく。
     fn place_nav_bars(&mut self, vr: &mut dyn VrBackend) {
-        for id in 0..self.panels.len() {
+        for &id in &self.present {
             let Some(owner) = self.panels[id]
                 .nav_bar_of
                 .filter(|_| !self.panels[id].surface.released())
@@ -1138,7 +1157,7 @@ impl Overlay {
                 h.anchor = anchor(h.anchor, eye, r.hand.position, point, up);
             }
         }
-        for id in 0..self.panels.len() {
+        for &id in &self.present {
             let p = &self.panels[id];
             let Some((hand, part)) = p.pointer.filter(|_| !p.closed) else {
                 continue;
@@ -1246,11 +1265,12 @@ fn approach(from: Pose, to: Pose, dt: f32) -> Pose {
     )
 }
 
-/// [`Overlay::has_child`]。
-fn has_child(panels: &[Panel], id: PanelId) -> bool {
+/// 開いている子がいる（暗くして入力を止める）。ナビゲーションバーは持ち主に子がいれば同じ扱い。
+fn has_child(panels: &[Panel], present: &[PanelId], id: PanelId) -> bool {
     let id = panels[id].nav_bar_of.unwrap_or(id);
-    panels
+    present
         .iter()
+        .map(|&id| &panels[id])
         .any(|q| !q.closed && q.parent.is_some_and(|p| p.panel == id && !p.hud))
 }
 
@@ -1440,6 +1460,26 @@ mod tests {
         ov.close(&mut vr.backend, 0);
         advance(&mut ov, &mut vr, 0.075);
         assert!(!vr.backend.overlays[0].visible && ov.animations.is_empty());
+    }
+
+    #[test]
+    fn closed_panel_history_does_not_stay_in_tick_set() {
+        let (mut vr, mut ov) = setup();
+        for i in 0..32 {
+            let id = ov
+                .add_panel(
+                    &mut vr.backend,
+                    &format!("closed-{i}"),
+                    Pose::IDENTITY,
+                    Vec2::ONE,
+                    (1, 1),
+                )
+                .unwrap();
+            ov.close(&mut vr.backend, id);
+        }
+        ov.tick(&mut vr);
+        assert_eq!(ov.len(), 33);
+        assert_eq!(ov.present_ids(), &[0]);
     }
 
     #[test]
