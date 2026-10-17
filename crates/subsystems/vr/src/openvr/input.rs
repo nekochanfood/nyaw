@@ -124,13 +124,19 @@ impl Input {
     }
 
     /// このフレームのアクションの状態を取り込む。手ごとの値を読む前に毎フレーム呼ぶ。
-    pub fn update(&self) -> Result<(), VrError> {
+    /// アクションの状態を読み直す。`exclusive` なら、オーバーレイの全体優先度で更新して、このアクションセットが使う入力を
+    /// シーンのアプリ（ゲーム）から奪う。
+    pub fn update(&self, exclusive: bool) -> Result<(), VrError> {
         let mut active = sys::VRActiveActionSet_t {
             ulActionSet: self.set,
             ulRestrictedToDevice: 0,
             ulSecondaryActionSet: 0,
             unPadding: 0,
-            nPriority: 0,
+            nPriority: if exclusive {
+                sys::k_nActionSetOverlayGlobalPriorityMax
+            } else {
+                0
+            },
         };
         check("UpdateActionState", unsafe {
             f(self.t().UpdateActionState)(

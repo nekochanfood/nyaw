@@ -396,6 +396,9 @@ pub trait VrBackend {
     fn overlay_seen(&self, _id: OverlayId) -> Option<bool> {
         None
     }
+    /// シーンのアプリ（ゲーム）への入力を止める・戻す（ダッシュボードが出ている間）。止められるのは OpenVR だけ
+    /// （SteamVR Input のアクションセットをオーバーレイの全体優先度で更新し、使う入力を奪う）。ほかは何もしない。
+    fn block_app_input(&mut self, _block: bool) {}
     /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
     /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読めるので、これは OpenXR 用。
     fn overlay_image(&mut self, _id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
@@ -458,6 +461,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn frame_interval(&self) -> Option<std::time::Duration> {
         (**self).frame_interval()
+    }
+    fn block_app_input(&mut self, block: bool) {
+        (**self).block_app_input(block)
     }
 }
 

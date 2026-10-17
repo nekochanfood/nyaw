@@ -46,6 +46,8 @@ pub struct MockBackend {
     pub frame: Frame,
     /// 作成されたオーバーレイ。添字は `OverlayId.0`。
     pub overlays: Vec<MockOverlay>,
+    /// シーンのアプリへの入力を止めている（[`VrBackend::block_app_input`]）。
+    pub app_input_blocked: bool,
 }
 
 impl VrBackend for MockBackend {
@@ -55,6 +57,10 @@ impl VrBackend for MockBackend {
 
     fn poll(&mut self) -> Frame {
         self.frame.clone()
+    }
+
+    fn block_app_input(&mut self, block: bool) {
+        self.app_input_blocked = block;
     }
 
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError> {

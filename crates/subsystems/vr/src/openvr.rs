@@ -49,6 +49,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         fixed: HashMap::new(),
         shown: HashSet::new(),
         dashboard: false,
+        block_input: false,
         batteries: (None, Vec::new()),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
@@ -144,6 +145,8 @@ pub(crate) struct OpenVrBackend {
     shown: HashSet<u64>,
     /// 最後の poll で SteamVR のダッシュボードが開いていたか。
     dashboard: bool,
+    /// シーンのアプリ（ゲーム）への入力を止めている（[`VrBackend::block_app_input`]）。
+    block_input: bool,
     /// 最後に電池を読んだ時刻と、その結果（[`BATTERY_INTERVAL`] ごとに読み直す）。
     batteries: (Option<Instant>, Vec<Battery>),
     gpu: Gpu,
@@ -470,7 +473,7 @@ impl VrBackend for OpenVrBackend {
             }
         }
         if let Some(input) = &self.input {
-            if let Err(e) = input.update() {
+            if let Err(e) = input.update(self.block_input) {
                 logger::warn!("failed to sync SteamVR Input state", error = e);
             }
             for (hand, device, aim, actions) in input.hands(predict) {
@@ -532,6 +535,10 @@ impl VrBackend for OpenVrBackend {
         frame.batteries.clone_from(&self.batteries.1);
         self.devices = devices;
         frame
+    }
+
+    fn block_app_input(&mut self, block: bool) {
+        self.block_input = block;
     }
 
     fn max_overlays(&self) -> Option<usize> {

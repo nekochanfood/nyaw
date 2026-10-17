@@ -1002,6 +1002,8 @@ impl Overlay {
         let v = &mut self.veil;
         if v.to != to {
             v.to = to;
+            // 暗転している間（ダッシュボードが出ている間）は、ゲームへの入力も止める。
+            vr.block_app_input(on);
             if on && v.surface.is_none() {
                 match Surface::new(vr, "nyaw.veil", VEIL_SIZE, self.hmd) {
                     Ok(mut s) => {
@@ -2631,6 +2633,25 @@ mod tests {
         assert!(0.0 < dim(&ov) && dim(&ov) < DIM);
         step(&mut ov, &mut vr, 0.075);
         assert_eq!(dim(&ov), 0.0);
+    }
+
+    /// 暗転している間（ダッシュボードが出ている間）はゲームへの入力を止め、隠す・閉じると戻す。
+    #[test]
+    fn app_input_is_blocked_while_the_veil_is_up() {
+        let (mut vr, mut ov) = setup();
+        ov.set_veil(0, true);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
+        ov.tick(&mut vr);
+        assert!(vr.backend.app_input_blocked);
+        ov.set_hidden(&mut vr.backend, 0, true);
+        ov.tick(&mut vr);
+        assert!(!vr.backend.app_input_blocked);
+        ov.set_hidden(&mut vr.backend, 0, false);
+        ov.tick(&mut vr);
+        assert!(vr.backend.app_input_blocked);
+        ov.close(&mut vr.backend, 0);
+        ov.tick(&mut vr);
+        assert!(!vr.backend.app_input_blocked);
     }
 
     #[test]
