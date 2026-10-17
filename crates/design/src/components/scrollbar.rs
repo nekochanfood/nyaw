@@ -621,7 +621,8 @@ impl RenderOnce for Scrollbars {
                     b.woke = Some(now);
                 }
                 let awake = always
-                    || b.woke.is_some_and(|w| now.saturating_duration_since(w) < LINGER);
+                    || b.woke
+                        .is_some_and(|w| now.saturating_duration_since(w) < LINGER);
                 b.vis.go(if awake { 1.0 } else { 0.0 }, now, animated);
                 b.thick.go(
                     if b.zone || b.slide || b.grab.is_some() {
@@ -670,7 +671,9 @@ impl RenderOnce for Scrollbars {
             let (color, m3) = bar.color.at(now);
             let (vis, m4) = bar.vis.at(now);
             // 消えるまでの時間切れに気づけるよう、見せている間も描き続ける。
-            let lingering = bar.woke.is_some_and(|w| now.saturating_duration_since(w) < LINGER);
+            let lingering = bar
+                .woke
+                .is_some_and(|w| now.saturating_duration_since(w) < LINGER);
             moving |= m2 | m3 | m4 | lingering;
             let Some(t) = thumb(view, max, off, reserve, squash, ends) else {
                 continue;

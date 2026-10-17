@@ -59,6 +59,7 @@ kernel = { workspace = true, features = ["novr", "openvr", "openxr"] }
 ui.workspace = true
 profiler.workspace = true
 wrist.workspace = true
+testing.workspace = true
 beam.workspace = true
 
 # testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する

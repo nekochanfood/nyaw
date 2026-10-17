@@ -99,7 +99,11 @@ impl Render for StreamStats {
         let lines = match stats {
             None => vec![i18n::t(cx, "desktop.stats_measuring")],
             Some(s) => vec![
-                i18n::tf(cx, "desktop.stats_fps", &[("fps", &format!("{:.1}", s.fps))]),
+                i18n::tf(
+                    cx,
+                    "desktop.stats_fps",
+                    &[("fps", &format!("{:.1}", s.fps))],
+                ),
                 i18n::tf(
                     cx,
                     "desktop.stats_latency",
@@ -225,9 +229,7 @@ impl Render for DesktopTest {
                                             .sized(STATS_SIZE, STATS_RESOLUTION),
                                         );
                                     }
-                                    DesktopViewer {
-                                        panel,
-                                    }
+                                    DesktopViewer { panel }
                                 })
                                 .in_view(Pose::new(Vec3::new(0.75, 0.0, -1.2), Quat::IDENTITY))
                                 // 配信のパネルは取得元の名前をタイトルに、ナビゲーションバーで閉じる（配信も止まる）。

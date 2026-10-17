@@ -564,15 +564,17 @@ impl Render for KeyboardView {
                     .top(px(key.y * unit + gap / 2.))
                     .w(px(key.width * unit - gap))
                     .h(px(key.height * unit - gap))
-                    .on_press(cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                        let at = event.position;
-                        this.press_down(
-                            code,
-                            sound,
-                            kernel::Vec2::new(f32::from(at.x), f32::from(at.y)),
-                            cx,
-                        );
-                    }))
+                    .on_press(
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                            let at = event.position;
+                            this.press_down(
+                                code,
+                                sound,
+                                kernel::Vec2::new(f32::from(at.x), f32::from(at.y)),
+                                cx,
+                            );
+                        }),
+                    )
                     .on_release(cx.listener(move |this, _, _, _| {
                         if this
                             .repeating
@@ -727,8 +729,11 @@ mod tests {
         cx.run_until_parked();
         let key = cx.debug_bounds("key-SPCE").unwrap().center();
         cx.simulate_click(key, gpui::Modifiers::none());
-        let commands =
-            cx.update(|_, cx| cx.global::<crate::PanelControl>().panels[&0].commands.clone());
+        let commands = cx.update(|_, cx| {
+            cx.global::<crate::PanelControl>().panels[&0]
+                .commands
+                .clone()
+        });
         let Some(kernel::PanelCommand::PlayAt { sound, at, pitch }) = commands.first() else {
             panic!("{commands:?}");
         };

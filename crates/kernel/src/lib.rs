@@ -7,8 +7,9 @@
 mod audio_panels;
 pub mod config;
 mod desktop_panels;
-pub use desktop_panels::DesktopStats;
+mod os_keyboard;
 pub use audio_panels::AudioStatus;
+pub use desktop_panels::DesktopStats;
 pub use subsystems::{self, Subsystems};
 pub use subsystems::{audio, desktop, rendering, vr};
 
@@ -43,19 +44,6 @@ pub enum PanelCommand {
     Pointer(Hand, Pointer),
     /// 解像度（UI の論理ピクセル）を変える。1m あたりのピクセル数を保って VR 上の大きさも変わる。
     Resize(u32, u32),
-    /// レーザーのエミュレート方式を変える。パネルを問わずすべてのパネルに効く。
-    PointerMode(PointerMode),
-    /// テーマを変える。全パネルに効き、設定ファイルへ書き戻される（起動時の設定の場合のみ。テスト用のカーネルは書かない）。
-    Theme(ThemeMode),
-    /// 画面の言語を変える。テーマと同じく全パネルに効き、設定ファイルの `language` へ書き戻される。
-    Language(Language),
-    /// レーザーの手ブレ抑えの強さを変える（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`）。全パネルに効き、
-    /// テーマと同じく設定ファイルの `pointer_smoothing` へ書き戻される。
-    PointerSmoothing(f32),
-    /// 手ブレ抑えを緩める角度（度）を変える。全パネルに効き、設定ファイルの `pointer_release_deg` へ書き戻される。
-    PointerRelease(f32),
-    /// レーザーの見える長さ（m）を変える。全パネルに効き、設定ファイルの `laser_length` へ書き戻される。
-    LaserLength(f32),
     /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
     Place(Pose),
     /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
@@ -79,9 +67,42 @@ pub enum PanelCommand {
     Spatial(bool),
     /// このパネルのスピーカーをモノラル・ステレオのどちらで鳴らすか（既定は音に合わせる）。
     SpeakerLayout(audio::Layout),
+    /// 仮想キーボードの一操作を OS の前面のアプリへ送る（このパネルが OS を操作するパネルのとき）。
+    TypeToOs {
+        stroke: subsystems::keyboard::Stroke,
+        layout: subsystems::keyboard::Layout,
+    },
 }
 
-/// パネルの状態。ビューの表示用。
+/// アプリ全体の設定の変更（[`Kernel::set`]）。パネルを問わず効き、`pointer_mode` 以外は設定ファイルへ書き戻される
+/// （起動時の設定の場合のみ。テスト用のカーネルは書かない）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Setting {
+    /// レーザーのエミュレート方式。
+    PointerMode(PointerMode),
+    Theme(ThemeMode),
+    /// 画面の言語（`language`）。
+    Language(Language),
+    /// レーザーの手ブレ抑えの強さ（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`。`pointer_smoothing`）。
+    PointerSmoothing(f32),
+    /// 手ブレ抑えを緩める角度（度。`pointer_release_deg`）。
+    PointerRelease(f32),
+    /// レーザーの見える長さ（m。`laser_length`）。
+    LaserLength(f32),
+}
+
+/// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Settings {
+    pub pointer_mode: PointerMode,
+    pub theme: ThemeMode,
+    pub language: Language,
+    pub pointer_smoothing: f32,
+    pub pointer_release_deg: f32,
+    pub laser_length: f32,
+}
+
+/// パネルの状態。ビューの表示用。全体の設定は [`Settings`]。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct PanelStatus {
     pub runtime: Option<Runtime>,
@@ -92,24 +113,13 @@ pub struct PanelStatus {
     pub trackers: Vec<String>,
     /// メニューボタンを押している。
     pub menu: bool,
-    /// X ボタンを二回続けて押した回数（全パネル共通。起動から数える）。増えたらダッシュボードを開く・閉じる。
-    pub dashboard: u32,
+    /// ショートカットボタン（左手の X）を二回続けて押した回数（全パネル共通。起動から数える）。
+    /// 押した瞬間を取りこぼさないようカーネルが毎 tick 数え、何をするかは画面が決める（wrist はダッシュボードを開く・閉じる）。
+    pub double_press: u32,
     /// パネルを掴んでいる。
     pub grabbed: bool,
     /// 閉じられた。
     pub closed: bool,
-    /// レーザーのエミュレート方式（全パネル共通）。
-    pub pointer_mode: PointerMode,
-    /// 見た目のテーマ（全パネル共通）。
-    pub theme: ThemeMode,
-    /// 画面の言語（全パネル共通）。
-    pub language: Language,
-    /// レーザーの手ブレ抑えの強さ（全パネル共通）。
-    pub pointer_smoothing: f32,
-    /// 手ブレ抑えを緩める角度（度。全パネル共通）。
-    pub pointer_release_deg: f32,
-    /// レーザーの見える長さ（m。全パネル共通）。
-    pub laser_length: f32,
     /// 描画解像度の段階（[`Kernel::panel_lod`]）。
     pub lod: u8,
     /// 親パネル（このパネルが子のとき）。
@@ -144,8 +154,10 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     speakers: std::collections::HashMap<PanelId, audio_panels::SpeakerConfig>,
     /// パネルごとの、次に使う点の音のスピーカー（[`PanelCommand::PlayAt`]）。
     point_slots: std::collections::HashMap<PanelId, u64>,
-    /// X ボタンの二回連続押し（[`PanelStatus::dashboard`]）。
-    dashboard: DoublePress,
+    /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
+    shortcut: DoublePress,
+    /// OS の前面のアプリのキーボードの監視と入力（[`Kernel::os_keyboard`]。使い始めるまで起こさない）。
+    os_keyboard: Option<os::keyboard::Watcher>,
 }
 
 /// 二回続けて押したと見なす、押下と次の押下の間隔の上限。
@@ -171,7 +183,7 @@ impl DoublePress {
             Some(d) if d <= DOUBLE_PRESS => self.count += 1,
             _ => self.first = Some(now),
         }
-        logger::debug!("dashboard button pressed", since_first = ?since, count = self.count);
+        logger::debug!("shortcut button pressed", since_first = ?since, count = self.count);
     }
 }
 
@@ -260,7 +272,8 @@ impl<B: VrBackend> Kernel<B> {
             audio: audio::Engine::offline(48_000, false),
             speakers: Default::default(),
             point_slots: Default::default(),
-            dashboard: DoublePress::default(),
+            shortcut: DoublePress::default(),
+            os_keyboard: None,
         }
     }
 
@@ -273,8 +286,62 @@ impl<B: VrBackend> Kernel<B> {
         self.pointer_mode
     }
 
-    pub fn theme(&self) -> ThemeMode {
-        self.config.theme
+    pub fn settings(&self) -> Settings {
+        Settings {
+            pointer_mode: self.pointer_mode,
+            theme: self.config.theme,
+            language: self.config.language,
+            pointer_smoothing: self.overlay.pointer_smoothing(),
+            pointer_release_deg: self.overlay.pointer_release(),
+            laser_length: self.overlay.laser_length(),
+        }
+    }
+
+    /// アプリ全体の設定を変える。
+    pub fn set(&mut self, setting: Setting) {
+        let (key, value) = match setting {
+            Setting::PointerMode(m) => {
+                self.pointer_mode = m;
+                self.overlay.set_capture(m == PointerMode::Touch);
+                return;
+            }
+            Setting::Theme(t) => {
+                self.config.theme = t;
+                ("theme", config::value(t))
+            }
+            Setting::Language(l) => {
+                self.config.language = l;
+                ("language", config::value(l))
+            }
+            Setting::PointerSmoothing(s) => {
+                self.overlay.set_pointer_smoothing(s);
+                let s = self.overlay.pointer_smoothing();
+                self.config.pointer_smoothing = Some(s);
+                ("pointer_smoothing", config::value(s))
+            }
+            Setting::PointerRelease(deg) => {
+                self.overlay.set_pointer_release(deg);
+                let deg = self.overlay.pointer_release();
+                self.config.pointer_release_deg = Some(deg);
+                ("pointer_release_deg", config::value(deg))
+            }
+            Setting::LaserLength(l) => {
+                self.overlay.set_laser_length(l);
+                let l = self.overlay.laser_length();
+                self.config.laser_length = Some(l);
+                ("laser_length", config::value(l))
+            }
+        };
+        if let Some(path) = &self.config_path
+            && let Err(e) = config::save_at(path, key, value)
+        {
+            logger::warn!(
+                "failed to save to config file",
+                key = key,
+                path = path.display(),
+                error = e
+            );
+        }
     }
 
     pub fn add_panel(
@@ -355,8 +422,8 @@ impl<B: VrBackend> Kernel<B> {
         let frame = self.subsystems.poll();
         let polled = Instant::now();
         self.poll_desktop();
-        let x = frame.controllers.iter().any(|c| c.dashboard);
-        self.dashboard.update(x, polled);
+        let x = frame.controllers.iter().any(|c| c.shortcut);
+        self.shortcut.update(x, polled);
         let mut events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
         self.route_desktop(&mut events);
         self.update_audio();
@@ -456,52 +523,6 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay
                     .set_resolution(&mut self.subsystems.backend, panel, (w, h))
             }
-            PanelCommand::PointerMode(m) => {
-                self.pointer_mode = m;
-                self.overlay.set_capture(m == PointerMode::Touch);
-            }
-            PanelCommand::Theme(t) => {
-                self.config.theme = t;
-                if let Some(path) = &self.config_path
-                    && let Err(e) = config::save_theme_at(path, t)
-                {
-                    logger::warn!(
-                        "failed to save theme to config file",
-                        path = path.display(),
-                        error = e
-                    );
-                }
-            }
-            PanelCommand::Language(l) => {
-                self.config.language = l;
-                if let Some(path) = &self.config_path
-                    && let Err(e) = config::save_language_at(path, l)
-                {
-                    logger::warn!(
-                        "failed to save language to config file",
-                        path = path.display(),
-                        error = e
-                    );
-                }
-            }
-            PanelCommand::PointerSmoothing(s) => {
-                self.overlay.set_pointer_smoothing(s);
-                let s = self.overlay.pointer_smoothing();
-                self.config.pointer_smoothing = Some(s);
-                self.save_number("pointer_smoothing", s);
-            }
-            PanelCommand::PointerRelease(deg) => {
-                self.overlay.set_pointer_release(deg);
-                let deg = self.overlay.pointer_release();
-                self.config.pointer_release_deg = Some(deg);
-                self.save_number("pointer_release_deg", deg);
-            }
-            PanelCommand::LaserLength(l) => {
-                self.overlay.set_laser_length(l);
-                let l = self.overlay.laser_length();
-                self.config.laser_length = Some(l);
-                self.save_number("laser_length", l);
-            }
             PanelCommand::Parent(parent) => {
                 self.overlay
                     .set_parent(&mut self.subsystems.backend, panel, parent)
@@ -515,26 +536,17 @@ impl<B: VrBackend> Kernel<B> {
                 self.start_desktop(panel, source, frame_rate)
             }
             PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
-            PanelCommand::PlayAt { sound, at, pitch } => self.play_audio_at(panel, sound, at, pitch),
+            PanelCommand::PlayAt { sound, at, pitch } => {
+                self.play_audio_at(panel, sound, at, pitch)
+            }
             PanelCommand::StopAudio => self.stop_audio(panel),
-            PanelCommand::Spatial(spatial) => self.configure_speaker(panel, |c| c.spatial = spatial),
+            PanelCommand::Spatial(spatial) => {
+                self.configure_speaker(panel, |c| c.spatial = spatial)
+            }
             PanelCommand::SpeakerLayout(layout) => {
                 self.configure_speaker(panel, |c| c.layout = layout)
             }
-        }
-    }
-
-    /// 設定ファイルへ数値を書き戻す（起動時の設定の場合のみ。テスト用のカーネルは書かない）。
-    fn save_number(&self, key: &str, value: f32) {
-        if let Some(path) = &self.config_path
-            && let Err(e) = config::save_number_at(path, key, value)
-        {
-            logger::warn!(
-                "failed to save to config file",
-                key = key,
-                path = path.display(),
-                error = e
-            );
+            PanelCommand::TypeToOs { stroke, layout } => self.type_to_os(stroke, layout),
         }
     }
 
@@ -547,15 +559,9 @@ impl<B: VrBackend> Kernel<B> {
             animated: p.animated,
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
-            dashboard: self.dashboard.count,
+            double_press: self.shortcut.count,
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
-            pointer_mode: self.pointer_mode,
-            theme: self.config.theme,
-            language: self.config.language,
-            pointer_smoothing: self.overlay.pointer_smoothing(),
-            pointer_release_deg: self.overlay.pointer_release(),
-            laser_length: self.overlay.laser_length(),
             lod: self.panel_lod(panel),
             parent: p.parent.map(|q| q.panel),
             pointed: self.overlay.pointed(panel),
@@ -615,7 +621,7 @@ mod tests {
         for held in [true, false, true, false] {
             x(&mut k, held);
         }
-        assert_eq!(k.status(p).dashboard, 1);
+        assert_eq!(k.status(p).double_press, 1);
     }
 
     #[cfg(feature = "novr")]
@@ -669,9 +675,18 @@ mod tests {
         // 立っていて首を少し傾けている: 正面の目の高さに、まっすぐ立てて出る。
         // 横向き・仰向けに寝転がっている: 顔の正面に、頭の上を上にして出る。
         for (q, upright) in [
-            (vr::Quat::from_rotation_y(0.8) * vr::Quat::from_rotation_z(0.3), true),
-            (vr::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), false),
-            (vr::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2), false),
+            (
+                vr::Quat::from_rotation_y(0.8) * vr::Quat::from_rotation_z(0.3),
+                true,
+            ),
+            (
+                vr::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+                false,
+            ),
+            (
+                vr::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+                false,
+            ),
         ] {
             k.subsystems.backend.frame.hmd = Pose::new(head, q);
             k.tick();
@@ -683,7 +698,11 @@ mod tests {
                 assert!((pose.position.y - head.y).abs() < 1e-5, "{q}");
                 assert!(up.abs_diff_eq(vr::Vec3::Y, 1e-5), "{q}");
             } else {
-                assert!(pose.position.abs_diff_eq(ahead, 1e-5), "{q} {}", pose.position);
+                assert!(
+                    pose.position.abs_diff_eq(ahead, 1e-5),
+                    "{q} {}",
+                    pose.position
+                );
                 assert!(up.abs_diff_eq(q * vr::Vec3::Y, 1e-5), "{q}");
             }
             // どちらでも表面は頭を向く。
@@ -795,9 +814,8 @@ mod tests {
             ..Default::default()
         };
         let mut k = Kernel::with_backend(MockBackend::default(), config);
-        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (4, 4)).unwrap();
-        assert_eq!(k.status(p).pointer_mode, PointerMode::Touch);
-        k.apply(p, PanelCommand::PointerMode(PointerMode::Mouse));
+        assert_eq!(k.settings().pointer_mode, PointerMode::Touch);
+        k.set(Setting::PointerMode(PointerMode::Mouse));
         assert_eq!(k.pointer_mode(), PointerMode::Mouse);
         assert_eq!(
             kernel().0.pointer_mode(),
@@ -813,11 +831,9 @@ mod tests {
             ..Default::default()
         };
         let mut k = Kernel::with_backend(MockBackend::default(), config);
-        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (4, 4)).unwrap();
-        assert_eq!(k.status(p).theme, ThemeMode::Light);
-        k.apply(p, PanelCommand::Theme(ThemeMode::Dark));
-        assert_eq!(k.theme(), ThemeMode::Dark);
-        assert_eq!(k.status(p).theme, ThemeMode::Dark);
+        assert_eq!(k.settings().theme, ThemeMode::Light);
+        k.set(Setting::Theme(ThemeMode::Dark));
+        assert_eq!(k.settings().theme, ThemeMode::Dark);
     }
 
     #[test]
@@ -827,24 +843,23 @@ mod tests {
             ..Default::default()
         };
         let mut k = Kernel::with_backend(MockBackend::default(), config);
-        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (4, 4)).unwrap();
-        assert_eq!(k.status(p).language, Language::Ja);
+        assert_eq!(k.settings().language, Language::Ja);
         let path =
             std::env::temp_dir().join(format!("nyaw-kernel-lang-{}.toml", std::process::id()));
         k.config_path = Some(path.clone());
-        k.apply(p, PanelCommand::Language(Language::En));
-        assert_eq!(k.status(p).language, Language::En);
+        k.set(Setting::Language(Language::En));
+        assert_eq!(k.settings().language, Language::En);
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(saved.language, Language::En);
     }
 
     #[test]
-    fn theme_command_persists_to_config_path() {
+    fn theme_setting_persists_to_config_path() {
         let path = std::env::temp_dir().join(format!("nyaw-kernel-{}.toml", std::process::id()));
-        let (mut k, p) = kernel();
+        let (mut k, _) = kernel();
         k.config_path = Some(path.clone());
-        k.apply(p, PanelCommand::Theme(ThemeMode::Light));
+        k.set(Setting::Theme(ThemeMode::Light));
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(saved.theme, ThemeMode::Light);

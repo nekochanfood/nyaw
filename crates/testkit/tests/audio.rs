@@ -13,7 +13,9 @@ fn heard(kit: &mut VrKit<'_, AudioTest>) -> (f32, f32) {
     let block = |kit: &mut VrKit<'_, AudioTest>| {
         let mut out = [0.0; BLOCK * 2];
         kit.kernel.audio.render(&mut out);
-        out.chunks_exact(2)
+        out.as_chunks::<2>()
+            .0
+            .iter()
             .fold((0.0, 0.0), |(l, r), s| (l + s[0] * s[0], r + s[1] * s[1]))
     };
     let deadline = Instant::now() + Duration::from_secs(5);

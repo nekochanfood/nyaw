@@ -20,7 +20,7 @@ use kernel::subsystems::input::ClickButton;
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
     Anchor, Device, Kernel, Language, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent,
-    PointerMode, Pose, ThemeMode, Vec2, VrBackend,
+    PointerMode, Pose, Setting, Settings, ThemeMode, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 
@@ -312,6 +312,8 @@ pub struct PanelState {
     /// 次のフレームで 1 回描き直す（タイマーなどで自分から変わるビューが立て、フレームループが下ろす）。
     /// 何もしていないパネルの推測の描き直し（[`IDLE_REDRAW`]）を待たずに、変わったときだけ描ける。
     pub redraw: bool,
+    /// このパネルが最後に描き直したときの全体の設定（[`PanelControl::settings`]。変われば描き直す）。
+    seen: Settings,
 }
 
 /// ビューとフレームループの受け渡し口（GPUI のグローバル）。ビューは対象パネルの `commands` に積み、
@@ -320,6 +322,14 @@ pub struct PanelState {
 #[derive(Default)]
 pub struct PanelControl {
     pub panels: HashMap<PanelId, PanelState>,
+    /// アプリ全体の設定（テーマ・言語・ポインタ）。フレームループが [`sync_settings`] で書き戻す。
+    pub settings: Settings,
+    /// ビューが積む、全体の設定の変更要求（パネルを問わない）。フレームループが [`sync_settings`] で反映する。
+    pub setting_changes: Vec<Setting>,
+    /// OS の前面のアプリのキーボードの状態（[`keyboard::system_keyboard`] で読む）。
+    /// 読まれてから（`os_keyboard_wanted`）フレームループが [`sync_settings`] でカーネルから書き写す。
+    pub os_keyboard: kernel::subsystems::os::keyboard::Settings,
+    os_keyboard_wanted: bool,
     pub spawns: Vec<PanelSpec>,
     /// 計測するか。ビューが切り替え、フレームループが計測とプロファイラパネルの開閉を合わせる。
     /// パネルの閉じるボタンでも `false` になる。
@@ -343,36 +353,52 @@ pub struct PanelControl {
 impl gpui::Global for PanelControl {}
 
 /// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す（`true` を返す）。
+/// 全体の設定（[`sync_settings`]）もここで反映するので、呼び出し側はパネルごとにこれだけを呼べばよい。
 /// 入力を配送した後・描画する前に毎フレーム呼ぶ。
 pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut App) -> bool {
-    let ctl = cx
-        .default_global::<PanelControl>()
-        .panels
-        .entry(panel)
-        .or_default();
+    sync_settings(kernel, cx);
+    let ctl = cx.default_global::<PanelControl>();
+    let settings = ctl.settings;
+    let ctl = ctl.panels.entry(panel).or_default();
     for c in ctl.commands.drain(..) {
         kernel.apply(panel, c);
     }
     let status = kernel.status(panel);
-    if ctl.status == status {
+    if ctl.status == status && ctl.seen == settings {
         return false;
     }
-    let (theme, language) = (status.theme, status.language);
     ctl.status = status;
+    ctl.seen = settings;
     if ctl.status.closed {
         keyboard::panel_closed(panel, cx);
     }
-    // テーマは全パネル共通。画面は `design::Theme::current` で引く。
-    cx.set_global(match theme {
+    cx.refresh_windows();
+    true
+}
+
+/// ビューが積んだ全体の設定の変更をカーネルに反映し、今の設定を書き戻す。変わったら `true`。
+/// テーマ・言語は GPUI のグローバルにも置く（画面は `design::Theme::current` / `i18n::t` で引く）。
+pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool {
+    let ctl = cx.default_global::<PanelControl>();
+    for s in ctl.setting_changes.drain(..) {
+        kernel.set(s);
+    }
+    if ctl.os_keyboard_wanted {
+        ctl.os_keyboard = kernel.os_keyboard();
+    }
+    let settings = kernel.settings();
+    if ctl.settings == settings {
+        return false;
+    }
+    ctl.settings = settings;
+    cx.set_global(match settings.theme {
         ThemeMode::Dark => design::Mode::Dark,
         ThemeMode::Light => design::Mode::Light,
     });
-    // 言語も全パネル共通。画面は `i18n::t` で引く。
-    cx.set_global(match language {
+    cx.set_global(match settings.language {
         Language::En => i18n::Lang::En,
         Language::Ja => i18n::Lang::Ja,
     });
-    cx.refresh_windows();
     true
 }
 
@@ -523,11 +549,9 @@ fn start_drag(
         .iter()
         .find(|((p, _), b)| *p == panel && b.pressed)
         .map(|((_, h), _)| *h)?;
-    let (dp, _) = windows
-        .iter()
-        .find(|(id, _)| {
-            !kernel.panel(*id).closed && kernel.panel(*id).pointer == Some((hand, Pointer::Drag))
-        })?;
+    let (dp, _) = windows.iter().find(|(id, _)| {
+        !kernel.panel(*id).closed && kernel.panel(*id).pointer == Some((hand, Pointer::Drag))
+    })?;
     let src = kernel.panel(panel);
     let px_per_m = src.resolution.0 as f32 / src.size.x;
     let width = kernel.panel(*dp).resolution.0 as f32 / px_per_m;
@@ -875,17 +899,7 @@ impl Render for NavBar {
                 },
             )
             .on_click(move |_, _, cx| {
-                keyboard::register_input(
-                    owner,
-                    |input, cx| {
-                        let foreground = keyboard::system_keyboard(cx).foreground;
-                        keyboard::send_to_os(input, foreground, cx)
-                    },
-                    cx,
-                );
-                if !keyboard::toggle_keyboard(owner, cx) {
-                    keyboard::unregister_input(owner, cx);
-                }
+                keyboard::toggle_os_keyboard(owner, cx);
             })
         });
         div().size_full().child(design::components::nav_bar(
@@ -982,24 +996,16 @@ pub fn run_with(
             cx.default_global::<PanelControl>().profiling = true;
         }
         let mut profiler_panel: Option<PanelId> = None;
-        // 添字は PanelId。
-        let mut windows: Vec<(PanelId, AnyWindowHandle)> = panels
-            .into_iter()
-            .enumerate()
-            .filter_map(|(i, spec)| open_panel(&mut kernel, spec, i, cx))
-            .collect();
-        let mut open_windows: Vec<PanelId> = windows.iter().map(|(id, _)| *id).collect();
+        let mut slots = Slots::default();
+        for (i, spec) in panels.into_iter().enumerate() {
+            if let Some(opened) = open_panel(&mut kernel, spec, i, cx) {
+                slots.push(opened);
+            }
+        }
 
         cx.spawn(async move |cx| {
             let mut bridges = HashMap::new();
             let mut warned = false;
-            let mut last = vec![None; windows.len()];
-            // パネルごとの最後に描いた時刻（None = 次のフレームで必ず描く）。
-            let mut drawn: Vec<Option<Instant>> = vec![None; windows.len()];
-            // パネルごとの、入力も変化も無いときに描き直す間隔。描いても変わらなければ IDLE_MAX まで延ばす。
-            let mut idle: Vec<Duration> = vec![IDLE_REDRAW; windows.len()];
-            // パネルごとの、前のフレームで見えていたか（隠れていた・視野の外だったパネルは見えた瞬間に描き直す）。
-            let mut seen: Vec<bool> = vec![false; windows.len()];
             // ホバーだけの Move を受けて、まだ描いていないパネル。
             let mut hover_pending = std::collections::HashSet::new();
             // 描いて読み戻しを積んだまま、まだ受け取っていないパネル。
@@ -1048,18 +1054,21 @@ pub fn run_with(
                 });
                 // 前のフレームの配送でホバーした要素のツールチップを手に振り分ける。変わればツールチップのパネルを描き直す。
                 let tooltip_changed = cx.update(|cx| {
-                    let ids = open_windows.iter().map(|&p| (p, windows[p].1.window_id()));
+                    let ids = slots
+                        .open
+                        .iter()
+                        .map(|&p| (p, slots.windows[p].1.window_id()));
                     sync_tooltips(&kernel, &bridges, ids, cx)
                 });
-                for &p in &open_windows {
-                    let w = windows[p].1;
+                for &p in &slots.open {
+                    let w = slots.windows[p].1;
                     let part = kernel.panel(p).pointer.map(|(_, part)| part);
                     if hold_changed && part == Some(Pointer::Cursor) {
-                        drawn[p] = None;
+                        slots.drawn[p] = None;
                     }
                     if tooltip_changed && part == Some(Pointer::Tooltip) {
                         let _ = cx.update_window(w, |_, w, _| w.refresh());
-                        drawn[p] = None;
+                        slots.drawn[p] = None;
                     }
                 }
                 // ドラッグの見た目は中心がカーソルに来るよう置かれるので、そのウィンドウのマウスを中心に置いて毎フレーム描く。
@@ -1091,25 +1100,25 @@ pub fn run_with(
                 // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
                 // 何もしていないパネルの描き直しは 1 フレームに 1 枚まで（同じフレームに重なると読み戻しの待ちが積み上がる）。
                 let mut idle_slot = true;
-                for panel in open_windows.iter().copied() {
-                    let window = windows[panel].1;
+                for panel in slots.open.iter().copied() {
+                    let window = slots.windows[panel].1;
                     let inputs = inputs.remove(&panel).unwrap_or_default();
                     if kernel.panel(panel).closed {
                         cx.update(|cx| {
                             sync_panel(&mut kernel, panel, cx);
                             let _ = cx.update_window(window, |_, window, _| window.remove_window());
                         });
-                        last[panel] = None;
+                        slots.last[panel] = None;
                         continue;
                     }
                     // 描画と読み戻し（GPU の完了待ちを含む）は重いので、入力・状態の変化があったとき、
                     // 前回描いてから idle[panel] 経ったとき（1 フレームに 1 枚）だけ行う。
                     // 見えていないパネル（ほかのパネルに隠れた・視野の外）は、何もしていないときに描き直さない（カリング）。
                     let visible = kernel.panel_seen(panel);
-                    if visible && !seen[panel] {
-                        drawn[panel] = None;
+                    if visible && !slots.seen[panel] {
+                        slots.drawn[panel] = None;
                     }
-                    seen[panel] = visible;
+                    slots.seen[panel] = visible;
                     // ボタンを押していない Move だけなら、変わりうるのはホバーの見た目だけ（カーソルは別のパネルで毎フレーム動く）。
                     // 描き直しを HOVER_REDRAW ごとに間引き、間引いた分は後で描く（読み戻しはゲーム中 1 回数 ms 掛かる）。
                     let hover_only = !inputs.is_empty()
@@ -1121,9 +1130,10 @@ pub fn run_with(
                         hover_pending.insert(panel);
                     }
                     let hover_due = hover_pending.contains(&panel)
-                        && drawn[panel].is_none_or(|t| t.elapsed() >= HOVER_REDRAW);
-                    let forced =
-                        (!inputs.is_empty() && !hover_only) || hover_due || drawn[panel].is_none();
+                        && slots.drawn[panel].is_none_or(|t| t.elapsed() >= HOVER_REDRAW);
+                    let forced = (!inputs.is_empty() && !hover_only)
+                        || hover_due
+                        || slots.drawn[panel].is_none();
                     if forced {
                         hover_pending.remove(&panel);
                     }
@@ -1135,7 +1145,7 @@ pub fn run_with(
                         && !kernel.desktop_streaming(panel)
                         && due
                         && idle_slot
-                        && drawn[panel].is_some_and(|t| t.elapsed() >= idle[panel]);
+                        && slots.drawn[panel].is_some_and(|t| t.elapsed() >= slots.idle[panel]);
                     idle_slot &= !idle_due;
                     let mut redraw = forced || idle_due;
                     let mut changed = false;
@@ -1195,7 +1205,7 @@ pub fn run_with(
                                 != Some((resolution, lod))
                         {
                             set_render_lod(window, cx, resolution, lod);
-                            drawn[panel] = None;
+                            slots.drawn[panel] = None;
                             redraw = false;
                         }
                         if !cx.has_active_drag() {
@@ -1203,7 +1213,7 @@ pub fn run_with(
                                 kernel.set_drag(hand, None);
                             }
                         } else if drag.is_none() {
-                            drag = start_drag(&mut kernel, &bridges, &windows, panel);
+                            drag = start_drag(&mut kernel, &bridges, &slots.windows, panel);
                         }
                         stages.input += t.elapsed();
                         if kernel.panel(panel).closed {
@@ -1216,7 +1226,7 @@ pub fn run_with(
                         }
                         if redraw && !due {
                             // 間引いたフレーム。次に描いてよいフレームで必ず描く。
-                            drawn[panel] = None;
+                            slots.drawn[panel] = None;
                             redraw = false;
                         }
                         if redraw {
@@ -1241,22 +1251,22 @@ pub fn run_with(
                     }) else {
                         // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じる（全部閉じたら下で終了する）。
                         kernel.apply(panel, PanelCommand::Close);
-                        last[panel] = None;
+                        slots.last[panel] = None;
                         continue;
                     };
                     if kernel.panel(panel).closed {
                         // 閉じたパネルの最後の描画（1 枚 2MB 近い）は手放す。
-                        last[panel] = None;
+                        slots.last[panel] = None;
                     }
                     if others {
                         // 状態はどのパネルにも表示されうるので、ほかのパネルも描き直す（1 フレームに 1 枚ずつ）。
-                        for &p in &open_windows {
-                            let t = &mut drawn[p];
+                        for &p in &slots.open {
+                            let t = &mut slots.drawn[p];
                             if p != panel
                                 && let Some(t) = t
                             {
                                 *t = t.checked_sub(IDLE_MAX).unwrap_or(*t);
-                                idle[p] = Duration::ZERO;
+                                slots.idle[p] = Duration::ZERO;
                             }
                         }
                     }
@@ -1268,20 +1278,20 @@ pub fn run_with(
                                     != ((res.0 >> lod).max(1), (res.1 >> lod).max(1))
                             }) =>
                         {
-                            drawn[panel] = None;
+                            slots.drawn[panel] = None;
                         }
                         // 画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
                         Some(Ok(f)) => {
-                            drawn[panel] = Some(Instant::now());
-                            let same = last[panel].as_ref() == Some(&f);
+                            slots.drawn[panel] = Some(Instant::now());
+                            let same = slots.last[panel].as_ref() == Some(&f);
                             // 頼まれて描いた分は推測の間隔を縮めない（自分で頼むビューは推測で描かなくてよい）。
                             // 描いたフレームの絵は前の読み戻し（1 回遅れ）なので、変わったかは受け取ったフレームで決める。
-                            idle[panel] = if idle_due && same && !changed {
+                            slots.idle[panel] = if idle_due && same && !changed {
                                 // ほかのパネルの状態の変化で 0 に詰めた間隔は、倍にしても 0 のまま毎フレーム描き直して
                                 // 1 枚の枠を取り続け、後ろのパネルが描かれなくなる。下限から伸ばし直す。
-                                (idle[panel] * 2).clamp(IDLE_REDRAW, IDLE_MAX)
+                                (slots.idle[panel] * 2).clamp(IDLE_REDRAW, IDLE_MAX)
                             } else if !changed && (asked || (collected && same)) {
-                                idle[panel]
+                                slots.idle[panel]
                             } else {
                                 IDLE_REDRAW
                             };
@@ -1289,7 +1299,7 @@ pub fn run_with(
                                 let t = Instant::now();
                                 kernel.submit(panel, f.width, f.height, &f.rgba);
                                 stages.upload += t.elapsed();
-                                last[panel] = Some(f);
+                                slots.last[panel] = Some(f);
                             }
                         }
                         Some(Err(e)) if !warned => {
@@ -1300,11 +1310,11 @@ pub fn run_with(
                     }
                 }
                 // 終了を頼まれたか、ウィンドウが全部（OS の X などで）閉じられたら終了する。
-                open_windows.retain(|&p| !kernel.panel(p).closed);
+                slots.open.retain(|&p| !kernel.panel(p).closed);
                 hover_pending.retain(|p| !kernel.panel(*p).closed);
                 collecting.retain(|p| !kernel.panel(*p).closed);
                 if cx.update(|cx| cx.default_global::<PanelControl>().quit)
-                    || !windows.is_empty() && open_windows.is_empty()
+                    || !slots.windows.is_empty() && slots.open.is_empty()
                 {
                     cx.update(quit);
                     return;
@@ -1316,112 +1326,154 @@ pub fn run_with(
                 render_sizes.retain(|&p, _| !kernel.panel(p).closed);
                 for spec in spawns {
                     // 連打で開きっぱなしのパネルが際限なく増えないように。
-                    if open_windows.len() >= limit {
+                    if slots.open.len() >= limit {
                         logger::error!("too many open panels", max = limit);
                         break;
                     }
-                    let i = windows.len();
+                    let i = slots.windows.len();
                     let Some(opened) = cx.update(|cx| open_panel(&mut kernel, spec, i, cx)) else {
                         break;
                     };
-                    windows.push(opened);
-                    open_windows.push(i);
-                    last.push(None);
-                    drawn.push(None);
-                    idle.push(IDLE_REDRAW);
-                    seen.push(false);
+                    slots.push(opened);
                 }
-                let open = open_windows.len();
+                let open = slots.open.len();
                 cx.update(|cx| {
                     let c = cx.default_global::<PanelControl>();
                     (c.open, c.limit) = (open, limit);
                 });
-                // 計測とプロファイラパネルを `profiling` に合わせる。
-                if let Some(p) = profiler_panel
-                    && kernel.panel(p).closed
-                {
-                    // OS の X などで閉じられた。
-                    profiler_panel = None;
-                    cx.update(|cx| cx.default_global::<PanelControl>().profiling = false);
-                }
-                let profiling = cx.update(|cx| cx.default_global::<PanelControl>().profiling);
-                if profiling != cx.update(|cx| cx.has_global::<Profiler>()) {
-                    cx.update(|cx| {
-                        logger::info!("profiler toggled", profiling = profiling);
-                        if profiling {
-                            // --profile 無しで始めたときは CSV に書かない。
-                            let p =
-                                Profiler::new(None).expect("cannot fail without an output path");
-                            cx.set_global(with_budget(p));
-                        } else {
-                            log_summary(cx);
-                            cx.remove_global::<Profiler>();
-                        }
-                        // 切り替えボタンの表示を変えるため、どのパネルも描き直させる。
-                        cx.refresh_windows();
-                    });
-                    drawn.iter_mut().for_each(|t| *t = None);
-                }
-                match profiler_panel {
-                    None if profiling && !hide_profiler => {
-                        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, cx| ProfilerPanel {
-                            view: cx.new(|_| ProfilerView),
-                        })
-                        .titled("testing.panel.profiler")
-                        .sized(Vec2::new(1.1, 0.56), (1100, 560))
-                        .in_view(PROFILER_POSE);
-                        let i = windows.len();
-                        match cx.update(|cx| open_panel(&mut kernel, spec, i, cx)) {
-                            Some((panel, window)) => {
-                                logger::info!(
-                                    "profiler panel opened",
-                                    panel = panel,
-                                    pose = ?kernel.panel(panel).pose
-                                );
-                                windows.push((panel, window));
-                                open_windows.push(panel);
-                                last.push(None);
-                                drawn.push(None);
-                                idle.push(IDLE_REDRAW);
-                                seen.push(false);
-                                profiler_panel = Some(panel);
-                            }
-                            // 開けなかった。毎フレーム作り直そうとしないよう計測ごと止める。
-                            None => cx
-                                .update(|cx| cx.default_global::<PanelControl>().profiling = false),
-                        }
-                    }
-                    Some(p) if !profiling => {
-                        // 次のフレームの sync_panel が閉じてウィンドウを消す。
-                        cx.update(|cx| {
-                            cx.default_global::<PanelControl>()
-                                .panels
-                                .entry(p)
-                                .or_default()
-                                .commands
-                                .push(PanelCommand::Close)
-                        });
-                        profiler_panel = None;
-                    }
-                    _ => {}
-                }
-                cx.update(|cx| {
-                    if cx.has_global::<Profiler>() {
-                        cx.global_mut::<Profiler>().record(Instant::now(), stages);
-                    }
-                    if let Some(p) = profiler_panel
-                        && let Some((_, w)) = windows.get(p).filter(|(id, _)| *id == p)
-                        && drawn[p].is_none_or(|t| t.elapsed() >= PROFILER_REDRAW)
-                    {
-                        // グラフは毎フレーム変わるが、読むには PROFILER_REDRAW ごとで足りる。毎フレーム描くと、描画・読み戻し・
-                        // 合成のコストで計測そのものを重くする（プロファイラの窓だけで 1 フレーム 20ms 近かった）。
-                        let _ = cx.update_window(*w, |_, w, _| w.refresh());
-                        drawn[p] = None;
-                    }
-                });
+                sync_profiler(
+                    &mut kernel,
+                    &mut slots,
+                    &mut profiler_panel,
+                    hide_profiler,
+                    &with_budget,
+                    stages,
+                    cx,
+                );
             }
         })
         .detach();
+    });
+}
+
+/// フレームループがパネルごとに持つ状態。添字は PanelId（カーネルは開いた順に 0 から PanelId を振り、窓も同じ順に積む）。
+#[derive(Default)]
+struct Slots {
+    windows: Vec<(PanelId, AnyWindowHandle)>,
+    /// 開いているパネル（閉じたものは除く）。
+    open: Vec<PanelId>,
+    /// 最後に送った描画（同じなら送らない）。
+    last: Vec<Option<Frame>>,
+    /// 最後に描いた時刻（None = 次のフレームで必ず描く）。
+    drawn: Vec<Option<Instant>>,
+    /// 入力も変化も無いときに描き直す間隔。描いても変わらなければ IDLE_MAX まで延ばす。
+    idle: Vec<Duration>,
+    /// 前のフレームで見えていたか（隠れていた・視野の外だったパネルは見えた瞬間に描き直す）。
+    seen: Vec<bool>,
+}
+
+impl Slots {
+    /// 開いたパネルを積む。
+    fn push(&mut self, (panel, window): (PanelId, AnyWindowHandle)) {
+        // 添字で引くので、ずれたら別のパネルの窓を描いてしまう。
+        assert_eq!(
+            panel,
+            self.windows.len(),
+            "PanelId must match the window index"
+        );
+        self.windows.push((panel, window));
+        self.open.push(panel);
+        self.last.push(None);
+        self.drawn.push(None);
+        self.idle.push(IDLE_REDRAW);
+        self.seen.push(false);
+    }
+}
+
+/// 計測とプロファイラパネルを [`PanelControl::profiling`] に合わせ、このフレームの段階ごとの時間を記録する。
+fn sync_profiler(
+    kernel: &mut Kernel,
+    slots: &mut Slots,
+    profiler_panel: &mut Option<PanelId>,
+    hide_profiler: bool,
+    with_budget: &impl Fn(Profiler) -> Profiler,
+    stages: Stages,
+    cx: &mut gpui::AsyncApp,
+) {
+    if let Some(p) = *profiler_panel
+        && kernel.panel(p).closed
+    {
+        // OS の X などで閉じられた。
+        *profiler_panel = None;
+        cx.update(|cx| cx.default_global::<PanelControl>().profiling = false);
+    }
+    let profiling = cx.update(|cx| cx.default_global::<PanelControl>().profiling);
+    if profiling != cx.update(|cx| cx.has_global::<Profiler>()) {
+        cx.update(|cx| {
+            logger::info!("profiler toggled", profiling = profiling);
+            if profiling {
+                // --profile 無しで始めたときは CSV に書かない。
+                let p = Profiler::new(None).expect("cannot fail without an output path");
+                cx.set_global(with_budget(p));
+            } else {
+                log_summary(cx);
+                cx.remove_global::<Profiler>();
+            }
+            // 切り替えボタンの表示を変えるため、どのパネルも描き直させる。
+            cx.refresh_windows();
+        });
+        slots.drawn.iter_mut().for_each(|t| *t = None);
+    }
+    match *profiler_panel {
+        None if profiling && !hide_profiler => {
+            let spec = PanelSpec::new(Pose::IDENTITY, |_, _, cx| ProfilerPanel {
+                view: cx.new(|_| ProfilerView),
+            })
+            .titled("testing.panel.profiler")
+            .sized(Vec2::new(1.1, 0.56), (1100, 560))
+            .in_view(PROFILER_POSE);
+            let i = slots.windows.len();
+            match cx.update(|cx| open_panel(kernel, spec, i, cx)) {
+                Some(opened) => {
+                    let panel = opened.0;
+                    logger::info!(
+                        "profiler panel opened",
+                        panel = panel,
+                        pose = ?kernel.panel(panel).pose
+                    );
+                    slots.push(opened);
+                    *profiler_panel = Some(panel);
+                }
+                // 開けなかった。毎フレーム作り直そうとしないよう計測ごと止める。
+                None => cx.update(|cx| cx.default_global::<PanelControl>().profiling = false),
+            }
+        }
+        Some(p) if !profiling => {
+            // 次のフレームの sync_panel が閉じてウィンドウを消す。
+            cx.update(|cx| {
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(p)
+                    .or_default()
+                    .commands
+                    .push(PanelCommand::Close)
+            });
+            *profiler_panel = None;
+        }
+        _ => {}
+    }
+    cx.update(|cx| {
+        if cx.has_global::<Profiler>() {
+            cx.global_mut::<Profiler>().record(Instant::now(), stages);
+        }
+        if let Some(p) = *profiler_panel
+            && slots.drawn[p].is_none_or(|t| t.elapsed() >= PROFILER_REDRAW)
+        {
+            // グラフは毎フレーム変わるが、読むには PROFILER_REDRAW ごとで足りる。毎フレーム描くと、描画・読み戻し・
+            // 合成のコストで計測そのものを重くする（プロファイラの窓だけで 1 フレーム 20ms 近かった）。
+            let _ = cx.update_window(slots.windows[p].1, |_, w, _| w.refresh());
+            slots.drawn[p] = None;
+        }
     });
 }
 
@@ -1718,19 +1770,13 @@ mod tests {
                     attached: Some(Device::Hmd),
                     locked: true,
                     animated: true,
-                    pointer_smoothing: kernel::overlay::POINTER_SMOOTHING,
-                    pointer_release_deg: kernel::overlay::POINTER_RELEASE_DEG,
-                    laser_length: kernel::overlay::LASER_LENGTH,
                     ..Default::default()
                 }
             );
             assert_eq!(Theme::current(cx), Theme::DARK);
             cx.default_global::<PanelControl>()
-                .panels
-                .entry(panel)
-                .or_default()
-                .commands
-                .push(PanelCommand::Theme(ThemeMode::Light));
+                .setting_changes
+                .push(Setting::Theme(ThemeMode::Light));
             sync_panel(&mut kernel, panel, cx);
             assert_eq!(Theme::current(cx), Theme::LIGHT, "every screen follows");
             cx.default_global::<PanelControl>()

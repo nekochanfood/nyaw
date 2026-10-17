@@ -14,9 +14,21 @@ impl AudioTest {
 }
 
 const VOICES: [(&str, &str, &[u8]); 3] = [
-    ("audio-left", "audio.left", include_bytes!("../assets/audio/left.wav")),
-    ("audio-centre", "audio.centre", include_bytes!("../assets/audio/centre.wav")),
-    ("audio-right", "audio.right", include_bytes!("../assets/audio/right.wav")),
+    (
+        "audio-left",
+        "audio.left",
+        include_bytes!("../assets/audio/left.wav"),
+    ),
+    (
+        "audio-centre",
+        "audio.centre",
+        include_bytes!("../assets/audio/centre.wav"),
+    ),
+    (
+        "audio-right",
+        "audio.right",
+        include_bytes!("../assets/audio/right.wav"),
+    ),
 ];
 
 const LOOPS: [(&str, &[u8]); 4] = [
@@ -82,8 +94,13 @@ impl Render for AudioTest {
             .child(
                 row()
                     .child(
-                        themed_button(&theme, "audio-spatial", i18n::t(cx, "audio.spatial"), st.spatial)
-                            .on_click(command(panel, PanelCommand::Spatial(!st.spatial))),
+                        themed_button(
+                            &theme,
+                            "audio-spatial",
+                            i18n::t(cx, "audio.spatial"),
+                            st.spatial,
+                        )
+                        .on_click(command(panel, PanelCommand::Spatial(!st.spatial))),
                     )
                     .children(LAYOUTS.map(|(id, label, layout)| {
                         themed_button(&theme, id, i18n::t(cx, label), st.layout == layout)
@@ -91,14 +108,16 @@ impl Render for AudioTest {
                     })),
             )
             .child(
-                div().debug_selector(|| "audio-status".into()).child(i18n::tf(
-                    cx,
-                    "audio.status",
-                    &[
-                        ("count", &st.playing),
-                        ("spatializer", &spatializer_text(st.spatializer, cx)),
-                    ],
-                )),
+                div()
+                    .debug_selector(|| "audio-status".into())
+                    .child(i18n::tf(
+                        cx,
+                        "audio.status",
+                        &[
+                            ("count", &st.playing),
+                            ("spatializer", &spatializer_text(st.spatializer, cx)),
+                        ],
+                    )),
             )
     }
 }

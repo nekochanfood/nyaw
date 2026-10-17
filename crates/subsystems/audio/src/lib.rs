@@ -340,12 +340,14 @@ impl Engine {
     /// デコード済みの音をスピーカーで鳴らす。同じスピーカーでもいくつでも重ねて鳴らせる。
     pub fn play(&mut self, speaker: SpeakerId, clip: Clip, looping: bool) -> VoiceId {
         let id = self.reserve(speaker);
-        if let Err(mpsc::SendError(Command::Play { clip, .. })) = self.commands.send(Command::Play {
-            id,
-            speaker,
-            clip,
-            looping,
-        }) {
+        if let Err(mpsc::SendError(Command::Play { clip, .. })) =
+            self.commands.send(Command::Play {
+                id,
+                speaker,
+                clip,
+                looping,
+            })
+        {
             // 出力のスレッドが無い（デバイスが無い）。鳴らずに終わったことにする。
             let _ = self.done_tx.send((id, Some(clip)));
         }
@@ -461,7 +463,10 @@ mod device {
                     // 最初の数回だけ伸びる（デバイスのバッファの大きさは変わらない）。
                     stereo.resize(frames * 2, 0.0);
                     mixer.render(&mut stereo);
-                    for (o, s) in out.chunks_exact_mut(channels).zip(stereo.chunks_exact(2)) {
+                    for (o, s) in out
+                        .chunks_exact_mut(channels)
+                        .zip(stereo.as_chunks::<2>().0)
+                    {
                         match o {
                             [m] => *m = (s[0] + s[1]) * 0.5,
                             [l, r, rest @ ..] => {
@@ -478,8 +483,12 @@ mod device {
             )
             .map_err(|e| e.to_string())?;
         stream.play().map_err(|e| e.to_string())?;
-        logger::info!("audio output device", device = device.name().unwrap_or_default(),
-            sample_rate = config.sample_rate.0, channels = channels);
+        logger::info!(
+            "audio output device",
+            device = device.name().unwrap_or_default(),
+            sample_rate = config.sample_rate.0,
+            channels = channels
+        );
         Ok((stream, spatializer))
     }
 }

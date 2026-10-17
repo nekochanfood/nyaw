@@ -345,10 +345,15 @@ impl Gpu {
                     return Err(e);
                 }
             };
-            let result = self.device.bind_buffer_memory(buffer, memory, 0)
+            let result = self
+                .device
+                .bind_buffer_memory(buffer, memory, 0)
                 .map_err(vk_err("vkBindBufferMemory"))
-                .and_then(|_| self.device.map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
-                    .map_err(vk_err("vkMapMemory")));
+                .and_then(|_| {
+                    self.device
+                        .map_memory(memory, 0, vk::WHOLE_SIZE, vk::MemoryMapFlags::empty())
+                        .map_err(vk_err("vkMapMemory"))
+                });
             let mapped = match result {
                 Ok(mapped) => mapped as *mut u8,
                 Err(e) => {

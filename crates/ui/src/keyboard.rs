@@ -7,7 +7,7 @@ use kernel::{
     PanelCommand, PanelId, Vec2,
     subsystems::{
         keyboard::{Layout, Stroke},
-        os::keyboard::{Output, Settings, Watcher, chord},
+        os::keyboard::Settings,
     },
 };
 use std::{collections::HashMap, rc::Rc};
@@ -49,15 +49,18 @@ pub struct Session {
 #[derive(Default)]
 pub struct InputRouting {
     receivers: HashMap<PanelId, Receiver>,
-    watcher: Watcher,
     pub active: Option<Session>,
     generation: u64,
     pub error: Option<String>,
 }
 impl gpui::Global for InputRouting {}
 
+/// OS の前面のアプリのキーボードの状態。フレームループがカーネル（[`kernel::Kernel::os_keyboard`]）から書き写す。
+/// 最初に呼ぶとカーネルに監視を始めさせる（それまでは既定値）。
 pub fn system_keyboard(cx: &mut App) -> Settings {
-    cx.default_global::<InputRouting>().watcher.settings()
+    let ctl = cx.default_global::<crate::PanelControl>();
+    ctl.os_keyboard_wanted = true;
+    ctl.os_keyboard.clone()
 }
 
 /// 対象パネルが、そのパネルに届いた入力の処理を登録する。
@@ -111,28 +114,30 @@ pub fn focus_input(panel: PanelId, focus: &FocusHandle, window: &mut Window, cx:
     show_keyboard(panel, KeyboardMode::Transient, cx);
 }
 
-/// OS を操作するパネル用の転送ヘルパー。キーボード自身はこれを呼ばない。
-pub fn send_to_os(input: KeyboardInput, foreground: u64, cx: &mut App) -> Result<(), String> {
-    let settings = system_keyboard(cx);
-    let native = settings.layout.as_ref().is_some_and(|(name, variant)| {
-        *name == input.layout.name && *variant == input.layout.variant
-    });
-    let stroke = input.stroke;
-    let output = if !native
-        && !stroke.shortcut()
-        && !stroke.text.is_empty()
-        && !stroke.text.chars().any(char::is_control)
-    {
-        Output::Text(stroke.text)
-    } else if !native && stroke.composing {
-        return Ok(());
-    } else {
-        Output::Keys(chord(&stroke.held, stroke.code))
-    };
-    cx.default_global::<InputRouting>()
-        .watcher
-        .send(foreground, output)
-        .map_err(|e| e.to_string())
+/// OS を操作するパネル（`panel`）の仮想キーボードを出し入れする（出したら `true`）。
+/// 届いた入力はカーネルに頼んで OS の前面のアプリへ送る（[`PanelCommand::TypeToOs`]）。
+pub fn toggle_os_keyboard(panel: PanelId, cx: &mut App) -> bool {
+    register_input(
+        panel,
+        move |input, cx| {
+            cx.default_global::<crate::PanelControl>()
+                .panels
+                .entry(panel)
+                .or_default()
+                .commands
+                .push(PanelCommand::TypeToOs {
+                    stroke: input.stroke,
+                    layout: input.layout,
+                });
+            Ok(())
+        },
+        cx,
+    );
+    let shown = toggle_keyboard(panel, cx);
+    if !shown {
+        unregister_input(panel, cx);
+    }
+    shown
 }
 
 /// ビューの借用が解けてから対象パネル一つに配送する。宛先を失っても他へ転送しない。
@@ -394,7 +399,9 @@ mod tests {
             )
         };
         cx.update(|cx| {
-            cx.default_global::<crate::PanelControl>().nav_bars.insert(0, 5);
+            cx.default_global::<crate::PanelControl>()
+                .nav_bars
+                .insert(0, 5);
             assert!(toggle_keyboard(0, cx));
             assert!(redraw(cx, 5) && !redraw(cx, 0));
             assert!(!toggle_keyboard(0, cx));

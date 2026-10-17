@@ -16,25 +16,42 @@
 include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
 
 pub mod animation;
+#[cfg(feature = "gpui")]
 pub mod catalog;
+#[cfg(feature = "gpui")]
 pub mod components;
+#[cfg(feature = "gpui")]
 pub mod emoji;
+#[cfg(feature = "gpui")]
 pub mod font;
+#[cfg(feature = "gpui")]
 pub mod icon;
 
+#[cfg(feature = "gpui")]
 pub use emoji::{emoji, emoji_text};
 
+#[cfg(feature = "gpui")]
 pub use icon::{Icon, Weight, icon};
 
+#[cfg(feature = "gpui")]
 include!(concat!(env!("OUT_DIR"), "/icons.rs"));
+
+/// パネルの影のぼかし（ガウスの σ）。ずらさず四方へ広がる影で、重なったパネルどうしの境界を見せる。
+pub const PANEL_SHADOW_BLUR: f32 = 8.0;
+/// パネルの地をウィンドウの縁から離す幅。影はパネルのテクスチャの中に描くので、ここに収める。
+/// GPUI は影を σ の 3 倍まで描くので、それと同じにして影が切れないようにする。
+/// オーバーレイ層もナビゲーションバーの置き場所に使うので、GPUI を持たない値の側に置く。
+pub const PANEL_MARGIN: f32 = 3.0 * PANEL_SHADOW_BLUR;
 
 /// 部品のトランジションを有効にする GPUI のグローバル（置いたときだけ動く。テストは置かないので即座に切り替わる）。
 /// 動いている間のウィンドウを `animating` に積む。フレームループ（`ui`）は、これを見て毎フレーム描き直し、読み出したら消す。
+#[cfg(feature = "gpui")]
 #[derive(Default)]
 pub struct Motion {
     pub animating: std::collections::HashSet<gpui::WindowId>,
 }
 
+#[cfg(feature = "gpui")]
 impl gpui::Global for Motion {}
 
 /// ライトかダークか。`Theme::of(mode)` で役割の色を引く。
@@ -55,8 +72,10 @@ impl Mode {
 }
 
 /// 今のテーマ（GPUI のグローバル）。`ui` のフレームループがカーネルの設定から書く。置かれていなければダーク。
+#[cfg(feature = "gpui")]
 impl gpui::Global for Mode {}
 
+#[cfg(feature = "gpui")]
 impl Theme {
     /// 画面が描くときの今のテーマ。テーマが切り替わるとウィンドウが描き直されるので、`render` で毎回引く。
     pub fn current(cx: &gpui::App) -> Theme {
@@ -81,6 +100,7 @@ mod tests {
         assert_eq!(Theme::DARK.on_accent & 0xff, 0xff);
     }
 
+    #[cfg(feature = "gpui")]
     #[gpui::test]
     fn current_follows_the_global_mode(cx: &mut gpui::TestAppContext) {
         cx.update(|cx| {

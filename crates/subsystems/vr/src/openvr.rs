@@ -235,7 +235,9 @@ impl OpenVrBackend {
         } else {
             None
         };
-        let t = replacement.as_mut().unwrap_or_else(|| self.textures.get_mut(&id).unwrap());
+        let t = replacement
+            .as_mut()
+            .unwrap_or_else(|| self.textures.get_mut(&id).unwrap());
         let image = t.images[t.next].image;
         t.next = (t.next + 1) % RING;
         // SteamVR は Vulkan のテクスチャを TRANSFER_SRC_OPTIMAL で受け取る。
@@ -272,7 +274,9 @@ impl OpenVrBackend {
         if let Some(new) = replacement {
             if result.is_ok() {
                 if let Some(old) = self.textures.insert(id, new) {
-                    old.images.into_iter().for_each(|image| self.gpu.retire(image));
+                    old.images
+                        .into_iter()
+                        .for_each(|image| self.gpu.retire(image));
                 }
             } else {
                 self.gpu.wait_idle();
@@ -611,8 +615,8 @@ fn inputs(profile: &str, hand: Hand, a: HandActions) -> Vec<(String, f32)> {
         (middle, on(a.middle_touch)),
         (right, on(a.right_touch)),
         // X ボタン: Touch は x/click、Index は左手の a/click。
-        ("x/click", on(a.dashboard)),
-        ("a/click", on(a.dashboard)),
+        ("x/click", on(a.shortcut)),
+        ("a/click", on(a.shortcut)),
         ("thumbstick/x", a.scroll.x),
         ("thumbstick/y", a.scroll.y),
         ("trackpad/x", a.scroll.x),
@@ -701,7 +705,7 @@ mod tests {
             menu: true,
             middle_touch: true,
             right_touch: true,
-            dashboard: true,
+            shortcut: true,
             scroll: crate::Vec2::new(0.5, -1.0),
         };
         let v = inputs("valve/index_controller", Hand::Right, a);

@@ -26,7 +26,7 @@ use gpui::{
     div, hsla, prelude::*, px, relative, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
-use kernel::{Language, PanelCommand, PanelId, PointerMode};
+use kernel::{Language, PanelCommand, PanelId, PointerMode, Setting};
 use ui::{PanelControl, PanelSpec};
 
 mod emoji;
@@ -72,6 +72,16 @@ pub const SIDEBAR_SELECTED_BG: u32 = rgb24(THEME.accent_bg_active);
 /// Testing パネルの大きさ（m）と解像度（px）。ボタンが高い（最小ヒット領域）ので、既定の 0.8m × 0.6m では入りきらない。
 pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 1.0);
 pub const TESTING_PX: (u32, u32) = (1200, 1000);
+
+/// Testing パネルの起動仕様（置き場所は開く側が決める）。開いたら `opened` で PanelId を知らせる。
+pub fn spec(opened: impl FnOnce(PanelId, &mut gpui::App) + 'static) -> PanelSpec {
+    PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+        opened(id, cx);
+        Testing::new(id)
+    })
+    .sized(TESTING_SIZE, TESTING_PX)
+    .titled("testing.open.testing")
+}
 /// スクロールする一覧の行数と1行の高さ。
 pub const LIST_ROWS: usize = 30;
 const ROW_PX: f32 = 24.0;
@@ -150,6 +160,22 @@ fn command(
             .commands
             .push(c.clone())
     }
+}
+
+/// 押すと全体の設定の変更を積むクリックハンドラ。
+fn change(s: Setting) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| push_setting(s, cx)
+}
+
+fn push_setting(s: Setting, cx: &mut App) {
+    cx.default_global::<PanelControl>().setting_changes.push(s)
+}
+
+/// 今の全体の設定（フレームループが書き戻したもの。無ければ既定）。
+fn settings(cx: &App) -> kernel::Settings {
+    cx.try_global::<PanelControl>()
+        .map(|c| c.settings)
+        .unwrap_or_default()
 }
 
 fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -321,6 +347,7 @@ impl Render for Testing {
             .and_then(|c| c.panels.get(&self.panel))
             .map(|c| c.status.clone())
             .unwrap_or_default();
+        let settings = settings(cx);
         let on = |d: &Device| st.attached.as_ref() == Some(d);
         let profiling = cx.try_global::<PanelControl>().is_some_and(|c| c.profiling);
         let tracker = st.trackers.first().map(|id| Device::Tracker(id.clone()));
@@ -340,7 +367,7 @@ impl Render for Testing {
                 "theme",
                 &i18n::t(
                     cx,
-                    match st.theme {
+                    match settings.theme {
                         kernel::ThemeMode::Dark => "theme.dark",
                         kernel::ThemeMode::Light => "theme.light",
                     },
@@ -350,7 +377,7 @@ impl Render for Testing {
         let language_label = i18n::tf(
             cx,
             "testing.panel.language",
-            &[("language", &lang(st.language).native_name())],
+            &[("language", &lang(settings.language).native_name())],
         );
         // このパネル自身の操作（表示・テーマ・言語・ロック・計測）。
         let panel_row = row()
@@ -364,14 +391,12 @@ impl Render for Testing {
             )
             .child(
                 button!("toggle-theme", theme_label, false)
-                    .on_click(command(self.panel, PanelCommand::Theme(st.theme.toggled()))),
+                    .on_click(change(Setting::Theme(settings.theme.toggled()))),
             )
             .child(
                 // 言語の名前はその言語自身で出す（どの言語で表示していても読める）。
-                button!("toggle-language", language_label, false).on_click(command(
-                    self.panel,
-                    PanelCommand::Language(next_language(st.language)),
-                )),
+                button!("toggle-language", language_label, false)
+                    .on_click(change(Setting::Language(next_language(settings.language)))),
             )
             .child(
                 button!("lock", i18n::t(cx, "testing.panel.lock"), st.locked)
@@ -536,9 +561,11 @@ impl Render for Testing {
                     ),
                 )
                 .child(
-                    button!("audio-test", i18n::t(cx, "audio.title"), false).on_click(
-                        spawn_view(self.panel, "audio.title", |id, _| AudioTest::new(id)),
-                    ),
+                    button!("audio-test", i18n::t(cx, "audio.title"), false).on_click(spawn_view(
+                        self.panel,
+                        "audio.title",
+                        |id, _| AudioTest::new(id),
+                    )),
                 )
                 .child(
                     button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false).on_click(
@@ -898,7 +925,6 @@ impl Render for Testing {
 /// `tap-me` はどちらでも押せる。
 #[derive(Default)]
 pub struct PointerTest {
-    panel: PanelId,
     pub taps: usize,
     pub dropped: usize,
     /// スワイプする一覧の状態（`offset().y` が負 = 下へスクロール済み）。
@@ -906,22 +932,15 @@ pub struct PointerTest {
 }
 
 impl PointerTest {
-    pub fn new(panel: PanelId) -> Self {
-        Self {
-            panel,
-            ..Self::default()
-        }
+    pub fn new(_panel: PanelId) -> Self {
+        Self::default()
     }
 }
 
 impl Render for PointerTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let mode = cx
-            .try_global::<PanelControl>()
-            .and_then(|c| c.panels.get(&self.panel))
-            .map(|c| c.status.pointer_mode)
-            .unwrap_or_default();
+        let mode = settings(cx).pointer_mode;
         let (label, next) = match mode {
             PointerMode::Mouse => (i18n::t(cx, "pointer.mode_mouse"), PointerMode::Touch),
             PointerMode::Touch => (i18n::t(cx, "pointer.mode_touch"), PointerMode::Mouse),
@@ -940,7 +959,7 @@ impl Render for PointerTest {
                 row()
                     .child(
                         button(&theme, "pointer-mode", label, mode == PointerMode::Touch)
-                            .on_click(command(self.panel, PanelCommand::PointerMode(next))),
+                            .on_click(change(Setting::PointerMode(next))),
                     )
                     .child(
                         button(
@@ -994,14 +1013,12 @@ impl Render for PointerTest {
 
 /// レーザーを調整する画面（`smoothing-test`）。`smoothing-slider` で手ブレ抑えの強さを、`laser-length-slider` で
 /// 線の見える長さを変えるとその場で効き、設定ファイルの `pointer_smoothing` / `laser_length` にも残る
-/// （`PanelCommand::PointerSmoothing` / `LaserLength`）。下の小さな的を狙って、止めたときの揺れと、振ったときの遅れを見比べる。
-pub struct SmoothingTest {
-    panel: PanelId,
-}
+/// （`Setting::PointerSmoothing` / `LaserLength`）。下の小さな的を狙って、止めたときの揺れと、振ったときの遅れを見比べる。
+pub struct SmoothingTest {}
 
 impl SmoothingTest {
-    pub fn new(panel: PanelId) -> Self {
-        Self { panel }
+    pub fn new(_panel: PanelId) -> Self {
+        Self {}
     }
 }
 
@@ -1012,47 +1029,29 @@ const AIM_PX: f32 = 32.0;
 impl Render for SmoothingTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let panel = self.panel;
         let max = kernel::overlay::POINTER_SMOOTHING_MAX;
-        let now = cx
-            .try_global::<PanelControl>()
-            .and_then(|c| c.panels.get(&panel))
-            .map_or(kernel::overlay::POINTER_SMOOTHING, |c| {
-                c.status.pointer_smoothing
-            });
-        let length = cx
-            .try_global::<PanelControl>()
-            .and_then(|c| c.panels.get(&panel))
-            .map_or(kernel::overlay::LASER_LENGTH, |c| c.status.laser_length);
+        // フレームループが書き戻す前（ビューだけのテスト）は既定値。
+        let current = cx.try_global::<PanelControl>().map(|c| c.settings);
+        let now = current.map_or(kernel::overlay::POINTER_SMOOTHING, |s| s.pointer_smoothing);
+        let length = current.map_or(kernel::overlay::LASER_LENGTH, |s| s.laser_length);
         let (short, long) = (
             kernel::overlay::LASER_LENGTH_MIN,
             kernel::overlay::LASER_MAX,
         );
-        let release = cx
-            .try_global::<PanelControl>()
-            .and_then(|c| c.panels.get(&panel))
-            .map_or(kernel::overlay::POINTER_RELEASE_DEG, |c| {
-                c.status.pointer_release_deg
-            });
+        let release = current.map_or(kernel::overlay::POINTER_RELEASE_DEG, |s| {
+            s.pointer_release_deg
+        });
         let (tight, loose) = (
             kernel::overlay::POINTER_RELEASE_DEG_MIN,
             kernel::overlay::POINTER_RELEASE_DEG_MAX,
         );
         let preset = |id: &'static str, label: SharedString, v: f32| {
             button(&theme, id, label, (now - v).abs() < 1e-3)
-                .on_click(command(panel, PanelCommand::PointerSmoothing(v)))
+                .on_click(change(Setting::PointerSmoothing(v)))
         };
         let length_preset = |id: &'static str, label: SharedString, v: f32| {
             button(&theme, id, label, (length - v).abs() < 1e-3)
-                .on_click(command(panel, PanelCommand::LaserLength(v)))
-        };
-        let push = move |c: PanelCommand, cx: &mut App| {
-            cx.default_global::<PanelControl>()
-                .panels
-                .entry(panel)
-                .or_default()
-                .commands
-                .push(c)
+                .on_click(change(Setting::LaserLength(v)))
         };
         components::card_panel(&theme)
             .flex()
@@ -1071,7 +1070,7 @@ impl Render for SmoothingTest {
             )
             .child(
                 components::slider(&theme, "smoothing-slider", now / max, move |v, _, cx| {
-                    push(PanelCommand::PointerSmoothing(v * max), cx)
+                    push_setting(Setting::PointerSmoothing(v * max), cx)
                 })
                 .length(560.0),
             )
@@ -1105,10 +1104,7 @@ impl Render for SmoothingTest {
                     "release-slider",
                     (release - tight) / (loose - tight),
                     move |v, _, cx| {
-                        push(
-                            PanelCommand::PointerRelease(tight + v * (loose - tight)),
-                            cx,
-                        )
+                        push_setting(Setting::PointerRelease(tight + v * (loose - tight)), cx)
                     },
                 )
                 .length(560.0),
@@ -1132,7 +1128,9 @@ impl Render for SmoothingTest {
                     &theme,
                     "laser-length-slider",
                     (length - short) / (long - short),
-                    move |v, _, cx| push(PanelCommand::LaserLength(short + v * (long - short)), cx),
+                    move |v, _, cx| {
+                        push_setting(Setting::LaserLength(short + v * (long - short)), cx)
+                    },
                 )
                 .length(560.0),
             )
@@ -1155,12 +1153,12 @@ impl Render for SmoothingTest {
                 row().child(
                     button(&theme, "laser-reset", i18n::t(cx, "laser.reset"), false).on_click(
                         move |_, _, cx| {
-                            for c in [
-                                PanelCommand::PointerSmoothing(kernel::overlay::POINTER_SMOOTHING),
-                                PanelCommand::PointerRelease(kernel::overlay::POINTER_RELEASE_DEG),
-                                PanelCommand::LaserLength(kernel::overlay::LASER_LENGTH),
+                            for s in [
+                                Setting::PointerSmoothing(kernel::overlay::POINTER_SMOOTHING),
+                                Setting::PointerRelease(kernel::overlay::POINTER_RELEASE_DEG),
+                                Setting::LaserLength(kernel::overlay::LASER_LENGTH),
                             ] {
-                                push(c, cx);
+                                push_setting(s, cx);
                             }
                         },
                     ),
@@ -2223,20 +2221,18 @@ impl Render for TestingFont {
 }
 
 /// ローカライズを確かめる画面（`locale-test`）。
-/// - `lang-en` / `lang-ja` で言語を切り替える（全パネルに効き、設定ファイルの `language` に残る。`PanelCommand::Language`）。
+/// - `lang-en` / `lang-ja` で言語を切り替える（全パネルに効き、設定ファイルの `language` に残る。`Setting::Language`）。
 ///   ボタンの名前はその言語自身で出す。今の言語のボタンが光る。
 /// - `locale-current` に今の言語、`locale-missing` に訳の抜け（言語ごとに表に無いキー）を出す。
 /// - 見本（`locale-samples`）: 長い文の折り返し、差し込み（`{count}`）、訳で長さの変わるボタン。
 /// - `locale-table` に全キーを、言語ごとの文言と並べて出す（今の言語の列を強調）。抜けは赤字で `—`。
 pub struct LocaleTest {
-    panel: PanelId,
     pub table: ScrollHandle,
 }
 
 impl LocaleTest {
-    pub fn new(panel: PanelId) -> Self {
+    pub fn new(_panel: PanelId) -> Self {
         Self {
-            panel,
             table: ScrollHandle::new(),
         }
     }
@@ -2245,10 +2241,7 @@ impl LocaleTest {
 impl Render for LocaleTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let now = cx
-            .try_global::<PanelControl>()
-            .and_then(|c| c.panels.get(&self.panel))
-            .map_or(Language::default(), |c| c.status.language);
+        let now = settings(cx).language;
         let current = lang(now);
         let switch = row().children(i18n::Lang::ALL.map(|l| {
             let id = match l {
@@ -2256,7 +2249,7 @@ impl Render for LocaleTest {
                 i18n::Lang::Ja => "lang-ja",
             };
             button(&theme, id, l.native_name(), l == current)
-                .on_click(command(self.panel, PanelCommand::Language(language(l))))
+                .on_click(change(Setting::Language(language(l))))
         }));
         let missing: Vec<(i18n::Lang, Vec<&'static str>)> = i18n::Lang::ALL
             .into_iter()
@@ -2570,7 +2563,11 @@ mod tests {
         cx.run_until_parked();
         let c = cx.debug_bounds("attach-hmd").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
-        let queued = cx.update(|_, cx| cx.global::<PanelControl>().panels[&0].commands.clone());
+        let queued = cx.update(|_, cx| {
+            cx.global::<PanelControl>().panels[&PanelId::default()]
+                .commands
+                .clone()
+        });
         assert_eq!(queued, [PanelCommand::Attach(Device::Hmd, HMD_OFFSET)]);
     }
 
@@ -2581,12 +2578,8 @@ mod tests {
         cx.run_until_parked();
         let c = cx.debug_bounds("toggle-theme").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
-        let queued = cx.update(|_, cx| {
-            cx.global::<PanelControl>().panels[&PanelId::default()]
-                .commands
-                .clone()
-        });
-        assert_eq!(queued, [PanelCommand::Theme(kernel::ThemeMode::Light)]);
+        let queued = cx.update(|_, cx| cx.global::<PanelControl>().setting_changes.clone());
+        assert_eq!(queued, [Setting::Theme(kernel::ThemeMode::Light)]);
         cx.update(|_, cx| cx.set_global(Mode::Light));
         cx.run_until_parked();
         assert!(cx.update(|_, cx| Theme::current(cx)) == Theme::LIGHT);
@@ -2599,12 +2592,8 @@ mod tests {
         cx.run_until_parked();
         let c = cx.debug_bounds("toggle-language").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
-        let queued = cx.update(|_, cx| {
-            cx.global::<PanelControl>().panels[&PanelId::default()]
-                .commands
-                .clone()
-        });
-        assert_eq!(queued, [PanelCommand::Language(Language::Ja)]);
+        let queued = cx.update(|_, cx| cx.global::<PanelControl>().setting_changes.clone());
+        assert_eq!(queued, [Setting::Language(Language::Ja)]);
     }
 
     /// ローカライズの画面: 言語のボタンが切り替えを要求し、言語が変わると文言が訳されて長さも変わる。
@@ -2619,16 +2608,11 @@ mod tests {
         let english = width(cx);
         let c = cx.debug_bounds("lang-ja").unwrap().center();
         cx.simulate_click(c, Modifiers::none());
-        let queued = cx.update(|_, cx| cx.global::<PanelControl>().panels[&0].commands.clone());
-        assert_eq!(queued, [PanelCommand::Language(Language::Ja)]);
-        // フレームループ（ui::sync_panel）の代わりに、状態とグローバルの言語を反映する。
+        let queued = cx.update(|_, cx| cx.global::<PanelControl>().setting_changes.clone());
+        assert_eq!(queued, [Setting::Language(Language::Ja)]);
+        // フレームループ（ui::sync_settings）の代わりに、設定とグローバルの言語を反映する。
         cx.update(|window, cx| {
-            cx.default_global::<PanelControl>()
-                .panels
-                .entry(0)
-                .or_default()
-                .status
-                .language = Language::Ja;
+            cx.default_global::<PanelControl>().settings.language = Language::Ja;
             cx.set_global(i18n::Lang::Ja);
             window.refresh();
         });

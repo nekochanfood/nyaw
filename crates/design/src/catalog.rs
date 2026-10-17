@@ -5,8 +5,8 @@
 use std::time::Instant;
 
 use gpui::{
-    Context, Div, FontWeight, IntoElement, ParentElement, Render, ScrollHandle,
-    SharedString, Styled, Window, div, prelude::*, px, rgba,
+    Context, Div, FontWeight, IntoElement, ParentElement, Render, ScrollHandle, SharedString,
+    Styled, Window, div, prelude::*, px, rgba,
 };
 
 use crate::{

@@ -11,7 +11,7 @@
     { "name": "/actions/nyaw/in/menu", "type": "boolean" },
     { "name": "/actions/nyaw/in/middle_touch", "type": "boolean", "requirement": "optional" },
     { "name": "/actions/nyaw/in/right_touch", "type": "boolean", "requirement": "optional" },
-    { "name": "/actions/nyaw/in/dashboard", "type": "boolean" },
+    { "name": "/actions/nyaw/in/shortcut", "type": "boolean" },
     { "name": "/actions/nyaw/in/scroll", "type": "vector2" }
   ],
   "action_sets": [
@@ -27,7 +27,7 @@
       "/actions/nyaw/in/menu": "Menu",
       "/actions/nyaw/in/middle_touch": "Middle click modifier",
       "/actions/nyaw/in/right_touch": "Right click modifier",
-      "/actions/nyaw/in/dashboard": "Dashboard (press twice)",
+      "/actions/nyaw/in/shortcut": "Shortcut (press twice)",
       "/actions/nyaw/in/scroll": "Scroll"
     }
   ]

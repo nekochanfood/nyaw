@@ -26,7 +26,8 @@ fn main() -> ExitCode {
     let Ok(kernel) = Kernel::boot(requested.as_deref(), config) else {
         return ExitCode::FAILURE;
     };
-    let mut panels = vec![wrist::spec()];
+    // 手首の Toggle Panel で召喚する画面は Testing。
+    let mut panels = vec![wrist::spec(|opened| testing::spec(opened))];
     // novr もコントローラを模すので、どのランタイムでもビームを載せる（novr のレーザーは視線と重なって見えない）。
     panels.extend(beam::specs());
     let profiler = args.profile.map(start_profiler);

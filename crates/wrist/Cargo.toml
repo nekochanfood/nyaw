@@ -10,7 +10,6 @@ dashboard.workspace = true
 design.workspace = true
 i18n.workspace = true
 gpui.workspace = true
-testing.workspace = true
 kernel.workspace = true
 ui.workspace = true
 

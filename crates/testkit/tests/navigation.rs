@@ -3,7 +3,7 @@
 //! The hand that holds (grips) the panel is ignored: only the other hand's laser can swipe.
 
 use gpui::{Render, TestAppContext};
-use kernel::{PanelCommand, PointerMode};
+use kernel::{PointerMode, Setting};
 use testing::{BACKGROUND, NavPage, NavTest, SIDEBAR_SELECTED_BG, Settings};
 use testkit::{Action, Driver, Hand, Vec2, VrKit};
 
@@ -34,7 +34,8 @@ fn items_push_pages_and_the_back_button_pops(cx: &mut TestAppContext) {
     kit.click("nav-back");
     // The back button vanishes with its page while pointed at, so its tooltip must go too.
     kit.hover("nav-back").step();
-    let tip = |kit: &mut VrKit<NavTest>| kit.panel_control(|c| c.tooltip.get(&Hand::Right).cloned());
+    let tip =
+        |kit: &mut VrKit<NavTest>| kit.panel_control(|c| c.tooltip.get(&Hand::Right).cloned());
     assert!(tip(&mut kit).is_some(), "the back button has a tooltip");
     kit.click("nav-back").step().step();
     assert_eq!(stack(&mut kit), [NavPage::Root]);
@@ -54,8 +55,7 @@ fn laser_swipe_goes_back_without_pressing_what_is_under_it(cx: &mut TestAppConte
 #[gpui::test]
 fn touch_long_press_then_swipe_goes_back(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
-    kit.kernel
-        .apply(0, PanelCommand::PointerMode(PointerMode::Touch));
+    kit.kernel.set(Setting::PointerMode(PointerMode::Touch));
     kit.step();
     kit.click("nav-item-0");
     assert_eq!(stack(&mut kit).len(), 2);
@@ -78,8 +78,7 @@ fn touch_long_press_then_swipe_goes_back(cx: &mut TestAppContext) {
 #[gpui::test]
 fn touch_swipe_goes_back(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
-    kit.kernel
-        .apply(0, PanelCommand::PointerMode(PointerMode::Touch));
+    kit.kernel.set(Setting::PointerMode(PointerMode::Touch));
     kit.step();
     kit.click("nav-item-2").click("nav-deeper");
     assert_eq!(stack(&mut kit).len(), 3);
@@ -124,7 +123,10 @@ fn the_hand_holding_the_panel_is_ignored(cx: &mut TestAppContext) {
     }
     kit.release(Action::Select).step();
     assert_eq!(stack(&mut kit).len(), 2, "the holding hand does not swipe");
-    assert!(kit.kernel.panel(0).pose.position.x < -0.1, "it moved the panel");
+    assert!(
+        kit.kernel.panel(0).pose.position.x < -0.1,
+        "it moved the panel"
+    );
 
     // While the left hand keeps holding, the right hand can still swipe back.
     kit.hand(Hand::Right);
@@ -153,7 +155,11 @@ fn settings_sidebar_colors_only_the_selected_category(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
     kit.hover("setting-0");
     assert_eq!(kit.color_at("settings-general"), SIDEBAR_SELECTED_BG);
-    assert_eq!(kit.color_at("settings-privacy"), BACKGROUND, "no background");
+    assert_eq!(
+        kit.color_at("settings-privacy"),
+        BACKGROUND,
+        "no background"
+    );
     kit.click("settings-privacy").hover("setting-0");
     assert_eq!(kit.color_at("settings-privacy"), SIDEBAR_SELECTED_BG);
     assert_eq!(kit.color_at("settings-general"), BACKGROUND);
@@ -162,18 +168,20 @@ fn settings_sidebar_colors_only_the_selected_category(cx: &mut TestAppContext) {
 #[gpui::test]
 fn touch_swipe_goes_back_with_the_default_smoothing(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| NavTest::new(0));
-    kit.kernel
-        .apply(0, PanelCommand::PointerMode(PointerMode::Touch));
+    kit.kernel.set(Setting::PointerMode(PointerMode::Touch));
     for hold in [false, true] {
         // Pressing the item without smoothing (the lag would miss it); the swipe runs with the production smoothing.
-        kit.kernel.apply(0, PanelCommand::PointerSmoothing(0.0));
+        kit.kernel.set(Setting::PointerSmoothing(0.0));
         kit.click("nav-item-0");
-        kit.kernel.apply(0, PanelCommand::PointerSmoothing(0.998));
+        kit.kernel.set(Setting::PointerSmoothing(0.998));
         kit.step().step();
         assert_eq!(stack(&mut kit).len(), 2, "pushed (hold {hold})");
         let b = kit.bounds("nav");
         let width = f32::from(b.size.width);
-        let from = Vec2::new(f32::from(b.origin.x) + width - 30.0, f32::from(b.center().y));
+        let from = Vec2::new(
+            f32::from(b.origin.x) + width - 30.0,
+            f32::from(b.center().y),
+        );
         kit.point_at(from).press(Action::Select);
         if hold {
             std::thread::sleep(ui::LONG_PRESS + std::time::Duration::from_millis(50));

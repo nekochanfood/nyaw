@@ -9,9 +9,7 @@ pub struct EmojiTest {
 
 impl EmojiTest {
     pub fn new(_panel: PanelId) -> Self {
-        Self {
-            ..Self::default()
-        }
+        Self { ..Self::default() }
     }
 }
 

@@ -8,9 +8,8 @@ publish = false
 # Development only. Production crates must reference this only via dev-dependencies.
 [dependencies]
 gpui = { workspace = true, features = ["test-support"] }
-vr = { workspace = true, features = ["test-support", "novr", "openvr", "openxr"] }
-input.workspace = true
-kernel = { workspace = true, features = ["novr", "openvr", "openxr"] }
+# 下位の型はカーネルの再エクスポート（kernel::vr / kernel::subsystems::input）経由で見る
+kernel = { workspace = true, features = ["novr", "openvr", "openxr", "test-support"] }
 ui.workspace = true
 # NYAW_E2E_WATCH shows rendering during tests in an OS window (watch.rs)
 minifb = "0.29.0"

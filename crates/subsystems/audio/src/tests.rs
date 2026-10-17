@@ -6,7 +6,9 @@ const RATE: u32 = 48_000;
 fn energy(engine: &mut Engine, frames: usize) -> (f32, f32) {
     let mut out = vec![0.0; frames * 2];
     engine.render(&mut out);
-    out.chunks_exact(2)
+    out.as_chunks::<2>()
+        .0
+        .iter()
         .fold((0.0, 0.0), |(l, r), s| (l + s[0] * s[0], r + s[1] * s[1]))
 }
 
@@ -173,7 +175,10 @@ fn voices_mix_simultaneously_and_finish() {
         energy(&mut solo, 64).0
     };
     let (both, _) = energy(&mut e, 64);
-    assert!(both > one * 8.0, "3 つ重なれば振幅 3 倍 = エネルギー 9 倍: {one} {both}");
+    assert!(
+        both > one * 8.0,
+        "3 つ重なれば振幅 3 倍 = エネルギー 9 倍: {one} {both}"
+    );
     energy(&mut e, BLOCK * 2);
     e.poll();
     assert!(!e.is_playing(a) && !e.is_playing(b) && e.is_playing(c));
@@ -218,7 +223,12 @@ fn resamples_to_the_output_rate() {
     e.play(1, clip, false);
     let mut out = vec![0.0; 1024 * 2];
     e.render(&mut out);
-    let sounding = out.chunks_exact(2).filter(|s| s[0] != 0.0).count();
+    let sounding = out
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .filter(|s| s[0] != 0.0)
+        .count();
     assert_eq!(sounding, 480);
 }
 
@@ -267,7 +277,10 @@ fn stopping_while_loading_never_sounds() {
             e.poll();
             std::thread::yield_now();
         }
-        assert!(!e.is_playing(v) && heard == 0.0, "removal={removal}: {heard}");
+        assert!(
+            !e.is_playing(v) && heard == 0.0,
+            "removal={removal}: {heard}"
+        );
     }
 }
 
@@ -301,7 +314,11 @@ fn output_device_plays_to_the_end() {
     while e.spatializer() == Spatializer::Starting && std::time::Instant::now() < deadline {
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert_ne!(e.spatializer(), Spatializer::Unavailable, "出力デバイスが無い");
+    assert_ne!(
+        e.spatializer(),
+        Spatializer::Unavailable,
+        "出力デバイスが無い"
+    );
     e.set_speaker(1, speaker(Vec3::new(1.0, 0.0, -1.0)));
     let v = e.play(1, tone(0.2, 0.2, 1, RATE as usize / 4), false);
     while e.is_playing(v) && std::time::Instant::now() < deadline {

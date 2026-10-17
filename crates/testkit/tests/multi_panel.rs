@@ -1,10 +1,10 @@
 use gpui::{MouseButton, PlatformInput, TestAppContext};
+use kernel::vr::{RawController, mock::MockBackend};
 use kernel::{Device, Kernel};
 use std::collections::HashMap;
 use testing::{BUTTON_ACTIVE_BG, BUTTON_BG, Testing};
 use testkit::{Driver, Hand, NoVrKit, Pose, Quat, Vec2, Vec3, VrKit};
 use ui::PointerBridge;
-use vr::{RawController, mock::MockBackend};
 
 #[gpui::test]
 fn panels_have_separate_views_controls_and_textures(cx: &mut TestAppContext) {
@@ -135,10 +135,8 @@ fn mouse_drags_and_drops_across_panels(cx: &mut TestAppContext) {
 #[gpui::test]
 fn touch_long_press_drags_and_drops_across_panels(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::new(0));
-    kit.kernel.apply(
-        0,
-        kernel::PanelCommand::PointerMode(kernel::PointerMode::Touch),
-    );
+    kit.kernel
+        .set(kernel::Setting::PointerMode(kernel::PointerMode::Touch));
     drag_to_next_panel(
         &mut kit,
         ui::LONG_PRESS + std::time::Duration::from_millis(100),

@@ -1,7 +1,7 @@
 //! 出力のスレッド（オーディオのコールバック）で回すミキサー。メインスレッドとはチャンネルだけでやり取りする。
 
 use crate::phonon::{Binaural, Phonon};
-use crate::{Channels, Clip, Speaker, SpeakerId, Spatializer, VoiceId};
+use crate::{Channels, Clip, Spatializer, Speaker, SpeakerId, VoiceId};
 use glam::{Quat, Vec3};
 use std::sync::mpsc::{Receiver, Sender};
 
@@ -244,10 +244,9 @@ impl Mixer {
                 let right = speaker.rotation * Vec3::X * (speaker.width * 0.5);
                 let points: &[(Vec3, usize)] = match channels {
                     Channels::Mono => &[(speaker.position, 0)],
-                    Channels::Stereo => &[
-                        (speaker.position - right, 0),
-                        (speaker.position + right, 1),
-                    ],
+                    Channels::Stereo => {
+                        &[(speaker.position - right, 0), (speaker.position + right, 1)]
+                    }
                 };
                 for &(point, ch) in points {
                     // 聞き手の座標（右 +X・上 +Y・前 -Z）での向きと距離。
@@ -313,14 +312,15 @@ fn read(voice: &mut Voice, rate: u32, channels: Channels, out: &mut [Vec<f32>; 2
     let stride = clip.channels as usize;
     let sample = |frame: usize, ch: usize| clip.samples[frame * stride + ch.min(stride - 1)];
     let mut finished = false;
-    for i in 0..BLOCK {
+    let [left, right] = out;
+    for (lo, ro) in left.iter_mut().zip(right.iter_mut()).take(BLOCK) {
         if voice.position >= frames as f64 {
             if voice.looping && frames > 0 {
                 voice.position -= frames as f64;
             } else {
                 finished = true;
-                out[0][i] = 0.0;
-                out[1][i] = 0.0;
+                *lo = 0.0;
+                *ro = 0.0;
                 continue;
             }
         }
@@ -337,10 +337,10 @@ fn read(voice: &mut Voice, rate: u32, channels: Channels, out: &mut [Vec<f32>; 2
         let lerp = |ch| sample(at, ch) * (1.0 - t) + sample(next, ch) * t;
         let (l, r) = (lerp(0), lerp(1));
         match channels {
-            Channels::Mono => out[0][i] = (l + r) * 0.5,
+            Channels::Mono => *lo = (l + r) * 0.5,
             Channels::Stereo => {
-                out[0][i] = l;
-                out[1][i] = r;
+                *lo = l;
+                *ro = r;
             }
         }
         voice.position += step;

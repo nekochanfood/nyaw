@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use vr::{Runtime, VrBackend, VrError};
+use kernel::vr::{Runtime, VrBackend, VrError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -57,7 +57,7 @@ impl Kind {
     pub fn locate(self) -> Option<PathBuf> {
         match self {
             Kind::Monado => monado().map(|m| m.service),
-            Kind::SteamVr => vr::openvr_runtime_path().filter(|p| p.exists()),
+            Kind::SteamVr => kernel::vr::openvr_runtime_path().filter(|p| p.exists()),
         }
     }
 
@@ -390,7 +390,7 @@ impl Launched {
                     self.kind, self.log
                 )));
             }
-            match vr::connect_exact(self.kind.runtime()) {
+            match kernel::vr::connect_exact(self.kind.runtime()) {
                 Ok(b) => return Ok(b),
                 Err(e) if start.elapsed() > Duration::from_secs(30) => return Err(e),
                 Err(_) => std::thread::sleep(Duration::from_millis(500)),

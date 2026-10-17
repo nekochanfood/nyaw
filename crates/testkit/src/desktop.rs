@@ -6,9 +6,9 @@ use gpui::{
     AnyWindowHandle, AppContext, Bounds, Context, Entity, Modifiers, MouseButton, Pixels, Point,
     Render, ScrollDelta, ScrollWheelEvent, TestAppContext, VisualTestContext, Window,
 };
+use kernel::vr::VrBackend;
 use kernel::{Kernel, PanelId};
 use ui::{PanelControl, PanelRoot, PanelSpec};
-use vr::VrBackend;
 
 use crate::watch::Watch;
 use crate::{Driver, Pose, Quat, Vec2, Vec3, raster};
@@ -116,7 +116,8 @@ impl<'a, V: Render> DesktopKit<'a, V> {
                 .apply(panel, kernel::PanelCommand::Parent(Some(parent)));
         }
         if let Some(owner) = owner {
-            self.kernel.apply(panel, kernel::PanelCommand::NavBar(owner));
+            self.kernel
+                .apply(panel, kernel::PanelCommand::NavBar(owner));
         }
         self.views.push(view);
         self.windows.push(window);

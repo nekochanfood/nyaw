@@ -15,10 +15,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
+use kernel::vr::{Device, OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
 use testing::{BUTTON_ACTIVE_BG, Testing, TestingTransparent};
 use testkit::runtimes::{self, Kind, LaunchError};
 use testkit::{DesktopKit, Driver};
-use vr::{Device, OverlayId, Pose, Quat, Runtime, Vec3, VrBackend};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -168,7 +168,7 @@ fn home_runs_on_runtime(vr: Box<dyn VrBackend>) {
     let mut got = None;
     while start.elapsed() < Duration::from_secs(5) {
         kit.step();
-        if let Ok((w, h, rgba)) = vr::openvr_overlay_image(id) {
+        if let Ok((w, h, rgba)) = kernel::vr::openvr_overlay_image(id) {
             let x = (f32::from(c.x) / res.0 as f32 * w as f32) as u32;
             let y = (f32::from(c.y) / res.1 as f32 * h as f32) as u32;
             let i = ((y * w + x) * 4) as usize;
@@ -195,7 +195,7 @@ fn transparent_runs_on_runtime(vr: Box<dyn VrBackend>) {
     while start.elapsed() < Duration::from_secs(5) {
         kit.step();
         let image = match runtime {
-            Runtime::OpenVr => vr::openvr_overlay_image(id).ok(),
+            Runtime::OpenVr => kernel::vr::openvr_overlay_image(id).ok(),
             _ => kit.kernel.subsystems.backend.overlay_image(id),
         };
         if let Some((_, _, rgba)) = image {
@@ -218,7 +218,7 @@ fn read_back(vr: &mut dyn VrBackend, id: OverlayId, want: &[u8]) -> Vec<u8> {
     let mut got = vec![];
     while start.elapsed() < Duration::from_secs(5) {
         vr.poll();
-        if let Ok((_, _, rgba)) = vr::openvr_overlay_image(id) {
+        if let Ok((_, _, rgba)) = kernel::vr::openvr_overlay_image(id) {
             got = rgba;
             if got == want {
                 break;
