@@ -806,6 +806,8 @@ impl VrBackend for OpenXrBackend {
             hmd,
             controllers: self.controllers(time),
             hands: self.hands(time),
+            // OpenXR はオーバーレイの相対配置をランタイムに任せられないので、骨格の手は骨格から置く。
+            hand_devices: Vec::new(),
             trackers: self.trackers(time),
             quit: self.quit,
             emulated: false,

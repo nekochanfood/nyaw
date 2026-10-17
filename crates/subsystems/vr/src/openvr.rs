@@ -415,7 +415,8 @@ impl VrBackend for OpenVrBackend {
         }
         for (device, pose) in poses.iter().enumerate().skip(1) {
             let device = device as u32;
-            if !pose.bPoseIsValid {
+            // 切断されていても「姿勢は有効」と申告するドライバがある（standable のボディトラッキング）。
+            if !pose.bPoseIsValid || !pose.bDeviceIsConnected {
                 continue;
             }
             if unsafe { f(s.GetTrackedDeviceClass)(device) }
@@ -444,6 +445,7 @@ impl VrBackend for OpenVrBackend {
                     let tip = pose_from(&raw.mDeviceToAbsoluteTracking.m).inverse() * aim;
                     devices.insert(Device::Controller(hand), (device, tip));
                 }
+                frame.hand_devices.push((hand, aim));
                 frame.controllers.push(RawController {
                     hand,
                     profile: profile.into(),
@@ -453,6 +455,27 @@ impl VrBackend for OpenVrBackend {
                 });
             }
             frame.hands = input.skeletons(predict);
+        }
+        // 入力のアクションで取れなかった手も、手の役割に割り当たっているデバイスがあれば取り付け先にする
+        // （ハンドトラッキングの手のデバイスなど。ほかのオーバーレイも役割のデバイスに付けて追従している）。
+        for (hand, role) in [
+            (Hand::Left, sys::ETrackedControllerRole_TrackedControllerRole_LeftHand),
+            (Hand::Right, sys::ETrackedControllerRole_TrackedControllerRole_RightHand),
+        ] {
+            if devices.contains_key(&Device::Controller(hand)) {
+                continue;
+            }
+            let device = unsafe { f(s.GetTrackedDeviceIndexForControllerRole)(role) };
+            let Some(pose) = poses
+                .get(device as usize)
+                .filter(|p| p.bPoseIsValid && p.bDeviceIsConnected)
+            else {
+                continue;
+            };
+            devices.insert(Device::Controller(hand), (device, Pose::IDENTITY));
+            frame
+                .hand_devices
+                .push((hand, pose_from(&pose.mDeviceToAbsoluteTracking.m)));
         }
         let old = std::mem::replace(&mut self.devices, devices);
         for (device, &(index, to)) in &self.devices {

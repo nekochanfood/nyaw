@@ -254,6 +254,10 @@ pub struct Frame {
     pub controllers: Vec<RawController>,
     /// 骨格が取れている手（スケルタル入力。ランタイムが対応していなければ空）。
     pub hands: Vec<HandSkeleton>,
+    /// 手ごとの、ランタイムが追っているその手のデバイスの姿勢（[`Device::Controller`] への取り付けの基準。コントローラなら
+    /// [`RawController::aim`] と同じ）。ハンドトラッキングでもランタイムが手をデバイスとして見せていればある
+    /// （Virtual Desktop の `vd_hand_controller`）。無ければ骨格の手は骨格から置く。
+    pub hand_devices: Vec<(Hand, Pose)>,
     /// コントローラ以外のトラッカー（腰・足など）。ID はランタイムが決める（OpenVR はシリアル番号）。
     pub trackers: Vec<(String, Pose)>,
     /// ランタイムが終了を求めている（SteamVR の終了、OpenXR セッションの EXITING など）。

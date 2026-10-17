@@ -753,18 +753,9 @@ impl Overlay {
             if dragged.contains(&id) || p.parent.is_some() || p.nav_bar_of.is_some() {
                 continue;
             }
-            // 骨格で操作している手は、ランタイムのデバイス（あれば手のトラッキングが見せているコントローラ）ではなく
-            // 骨格の手の姿勢（`Frame::pose`）に付けるので、ランタイムに相対配置を任せない。
-            let skeletal = |hand: &Hand| {
-                frame
-                    .controllers
-                    .iter()
-                    .any(|c| c.hand == *hand && c.metrics.is_some())
-            };
-            p.follow = p
-                .attached
-                .clone()
-                .filter(|(d, _)| !matches!(d, Device::Controller(h) if skeletal(h)));
+            // 骨格で操作している手も、ランタイムがその手のデバイスを追っていれば相対配置を任せる（`Frame::pose` も同じ姿勢）。
+            // 無ければ `set_overlay_pose_relative` が断るので、骨格から求めた姿勢で置く。
+            p.follow = p.attached.clone();
             if let Some(pose) = p
                 .attached
                 .as_ref()

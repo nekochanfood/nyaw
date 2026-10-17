@@ -22,7 +22,8 @@ pub struct Frame {
     /// 手ブレのある入力に対して、上位のポインタ補正を有効にする。
     pub stabilize_pointer: bool,
     tracked: bool,
-    /// 骨格で操作している手の、取り付け先の姿勢（[`vr::HandSkeleton::grip`] の揺れを抑えたもの）。
+    /// 骨格で操作している手の、取り付け先の姿勢。ランタイムがその手のデバイスを追っていればその姿勢（ランタイムに
+    /// 相対配置を任せられ、コントローラと同じく遅れなく付いてくる）、無ければ [`vr::HandSkeleton::grip`] の揺れを抑えたもの。
     grips: Vec<(Hand, Pose)>,
 }
 
@@ -171,9 +172,12 @@ impl<B: VrBackend> Subsystems<B> {
             .hands
             .iter()
             .filter(|s| bare.iter().any(|c| c.hand == s.hand))
-            .map(|s| {
-                let grip = self.grips.entry(s.hand).or_default().steady(s.grip(), dt);
-                (s.hand, grip)
+            .map(|s| match raw.hand_devices.iter().find(|(h, _)| *h == s.hand) {
+                Some(&device) => device,
+                None => (
+                    s.hand,
+                    self.grips.entry(s.hand).or_default().steady(s.grip(), dt),
+                ),
             })
             .collect();
         raw.controllers
@@ -218,7 +222,7 @@ impl<B: VrBackend> Subsystems<B> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vr::{RawController, Vec2, Vec3, mock::MockBackend};
+    use vr::{Quat, RawController, Vec2, Vec3, mock::MockBackend};
 
     fn controller(hand: Hand, profile: &str, inputs: &[(&str, f32)]) -> RawController {
         RawController {
@@ -313,6 +317,11 @@ mod tests {
         let grip = frame.hands[1].grip();
         assert_eq!(frame.pose(&Device::Controller(Hand::Right)), Some(grip));
         assert_ne!(grip, right.aim);
+        // ランタイムがその手のデバイスを追っていれば、そのデバイスに付く（コントローラと同じく相対配置で追従できる）。
+        let device = Pose::new(Vec3::new(0.3, 1.0, -0.2), Quat::from_rotation_y(0.5));
+        systems.backend.frame.hand_devices = vec![(Hand::Right, device)];
+        let frame = systems.poll();
+        assert_eq!(frame.pose(&Device::Controller(Hand::Right)), Some(device));
     }
 
     /// 持ち替えの間に指の追跡の精度が揺れても、入力の元は入れ替わらず、押下が続く。
