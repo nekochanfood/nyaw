@@ -856,12 +856,13 @@ impl Overlay {
                 let new_len = new_len.clamp(GRAB_MIN, GRAB_MAX);
                 let offset = offset + Vec3::NEG_Z * (new_len - len);
                 st.dragging = Some((id, offset, new_len));
-                // 手に付いて動き、頭の方を向く。頭を傾けてもパネルは傾けない（水平にスナップ）。
-                // 目標へはなめらかに追いつく。
+                // 手に付いて動き、頭の方を向く。頭を傾けてもパネルは傾けない（水平にスナップ）が、
+                // 寝転がっている間は首の傾きに付いてくる（`Pose::panel_up`）。目標へはなめらかに追いつく。
                 let at = aim.transform_point(offset);
                 let target = Pose::new(
                     at,
-                    facing(at, frame.hmd.position, Vec3::Y).unwrap_or(p.pose.orientation),
+                    facing(at, frame.hmd.position, frame.hmd.panel_up())
+                        .unwrap_or(p.pose.orientation),
                 );
                 p.pose = approach(p.pose, target, self.dt);
                 st.ray = Some(Ray {
@@ -2560,6 +2561,34 @@ mod tests {
         let to_head = (vr.backend.frame.hmd.position - p.position).normalize();
         assert!(normal.abs_diff_eq(to_head, 1e-5), "{normal}");
         assert!((p.orientation * Vec3::X).y.abs() < 1e-5, "horizontal");
+    }
+
+    #[test]
+    fn grabbed_panel_follows_the_head_tilt_while_lying() {
+        let (mut vr, mut ov) = setup();
+        ov.set_pointer_smoothing(0.0);
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        let aim = Pose::new(Vec3::ZERO, Quat::from_rotation_y(0.5));
+        // 横向きに寝転がり、首をさらに傾けていく。パネルは頭の方を向き、上は頭の上に付いてくる。
+        for roll in [1.3_f32, 1.57, 1.9] {
+            let head = Quat::from_rotation_z(roll);
+            vr.backend.frame.hmd = Pose::new(Vec3::new(0.5, 0.3, 0.2), head);
+            controller(&mut vr, aim, &[("squeeze/value", 1.0)]);
+            settle(&mut vr, &mut ov);
+            let p = ov.panel(0).pose;
+            let normal = p.orientation * Vec3::Z;
+            let to_head = (vr.backend.frame.hmd.position - p.position).normalize();
+            assert!(normal.abs_diff_eq(to_head, 1e-5), "{normal}");
+            let head_up = head * Vec3::Y;
+            assert!((p.orientation * Vec3::X).dot(head_up).abs() < 1e-5, "{roll}");
+            assert!((p.orientation * Vec3::Y).dot(head_up) > 0.5, "{roll}");
+        }
+        // 起き上がると、これまでどおり水平に戻る。
+        vr.backend.frame.hmd = Pose::new(Vec3::new(0.5, 0.3, 0.2), Quat::from_rotation_z(0.3));
+        controller(&mut vr, aim, &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        assert!((ov.panel(0).pose.orientation * Vec3::X).y.abs() < 1e-5);
     }
 
     #[test]

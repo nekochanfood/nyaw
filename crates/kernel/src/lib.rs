@@ -661,6 +661,37 @@ mod tests {
         assert_eq!(k.panel(p).pose, k.hmd().leveled() * to);
     }
 
+    #[test]
+    fn place_comes_in_front_of_the_face_upright_and_lying() {
+        let (mut k, p) = kernel();
+        let to = Pose::new(vr::Vec3::new(0.0, 0.0, -0.8), vr::Quat::IDENTITY);
+        let head = vr::Vec3::new(0.2, 1.6, 0.1);
+        // 立っていて首を少し傾けている: 正面の目の高さに、まっすぐ立てて出る。
+        // 横向き・仰向けに寝転がっている: 顔の正面に、頭の上を上にして出る。
+        for (q, upright) in [
+            (vr::Quat::from_rotation_y(0.8) * vr::Quat::from_rotation_z(0.3), true),
+            (vr::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2), false),
+            (vr::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2), false),
+        ] {
+            k.subsystems.backend.frame.hmd = Pose::new(head, q);
+            k.tick();
+            k.apply(p, PanelCommand::Place(to));
+            let pose = k.panel(p).pose;
+            let ahead = head + q * vr::Vec3::new(0.0, 0.0, -0.8);
+            let up = pose.orientation * vr::Vec3::Y;
+            if upright {
+                assert!((pose.position.y - head.y).abs() < 1e-5, "{q}");
+                assert!(up.abs_diff_eq(vr::Vec3::Y, 1e-5), "{q}");
+            } else {
+                assert!(pose.position.abs_diff_eq(ahead, 1e-5), "{q} {}", pose.position);
+                assert!(up.abs_diff_eq(q * vr::Vec3::Y, 1e-5), "{q}");
+            }
+            // どちらでも表面は頭を向く。
+            let to_head = (head - pose.position).normalize();
+            assert!((pose.orientation * vr::Vec3::Z).dot(to_head) > 0.99, "{q}");
+        }
+    }
+
     /// 境目の前後で行き来しない: 上げるのは閾値で、下げるのは閾値の 9 割を割ってから。
     #[test]
     fn lod_does_not_flap_at_the_threshold() {

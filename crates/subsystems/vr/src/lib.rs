@@ -32,6 +32,11 @@ use std::fmt;
 
 pub use glam::{Mat3, Quat, Vec2, Vec3};
 
+/// 頭がこの角度（ラジアン）より見上げる・横に倒れると、寝転がりとみなし始める（[`Pose::panel_up`]）。
+const LIE_START: f32 = 35.0 * std::f32::consts::PI / 180.0;
+/// この角度で寝転がりきったとみなす。間はなめらかに移り、境目でパネルが跳ねない。
+const LIE_FULL: f32 = 55.0 * std::f32::consts::PI / 180.0;
+
 /// トラッキング空間での剛体変換（メートル）。前方は -Z（OpenVR / OpenXR 共通）。
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Pose {
@@ -60,11 +65,34 @@ impl Pose {
         self.orientation * Vec3::NEG_Z
     }
 
-    /// 位置はそのまま、向きを水平方向（Y 軸回り）だけにした姿勢。前方は -Z。
-    /// 頭の前にパネルを出すとき、うつむき・首の傾きを無視して立てて置くのに使う。
+    /// 頭の姿勢から決める、パネルを立てる上方向。立っている（座っている）間は真上で、首の傾きを無視する。
+    /// 寝転がる（見上げる・横に倒す）ほど頭の上へ寄せ、寝転がりきれば頭の上そのもの。頭の位置（高さ）は見ず、回転だけで決める。
+    /// うつむきは寝転がりに数えない（手首を見下ろしてもパネルは立てたまま）。
+    /// ponytail: 回転だけなので、立って真上を見上げるのも仰向けと区別しない。
+    pub fn panel_up(&self) -> Vec3 {
+        let (up, right) = (self.orientation * Vec3::Y, self.orientation * Vec3::X);
+        // 見上げる角度と左右に倒す角度の大きい方。
+        let tilt = self.forward().y.max(right.y.abs()).clamp(0.0, 1.0).asin();
+        let t = ((tilt - LIE_START) / (LIE_FULL - LIE_START)).clamp(0.0, 1.0);
+        let t = t * t * (3.0 - 2.0 * t);
+        Vec3::Y.lerp(up, t).normalize_or(Vec3::Y)
+    }
+
+    /// 位置はそのまま、上を [`Pose::panel_up`] に立て、前方（-Z）を頭の前方に寄せた姿勢。
+    /// 頭の前にパネルを出すのに使う。立っている間は水平方向（Y 軸回り）だけで、うつむき・首の傾きを無視する。
+    /// 寝転がっている間は頭の向きそのもので、顔の前に出る。
     pub fn leveled(&self) -> Pose {
+        let up = self.panel_up();
         let f = self.forward();
-        Pose::new(self.position, Quat::from_rotation_y((-f.x).atan2(-f.z)))
+        let Some(back) = (up * f.dot(up) - f).try_normalize() else {
+            // 真上・真下を見ている（立っている間のうつむききり）。向きは決まらないので前方 -Z。
+            return Pose::new(self.position, Quat::IDENTITY);
+        };
+        let x = up.cross(back).normalize();
+        Pose::new(
+            self.position,
+            Quat::from_mat3(&Mat3::from_cols(x, back.cross(x), back)),
+        )
     }
 
     pub fn inverse(&self) -> Pose {
@@ -382,6 +410,65 @@ mod tests {
         assert_eq!(l.position, head.position);
         assert!(l.forward().abs_diff_eq(Vec3::X, 1e-5));
         assert!((l.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
+    }
+
+    #[test]
+    fn panel_up_stays_vertical_while_upright_and_follows_the_head_when_lying() {
+        use std::f32::consts::FRAC_PI_2;
+        let head = |q: Quat| Pose::new(Vec3::new(0.3, 1.6, 0.0), q);
+        // 立っている間: 首を少し傾ける・見上げる・手首を見下ろす（うつむききり手前まで）。真上のまま。
+        for q in [
+            Quat::IDENTITY,
+            Quat::from_rotation_z(0.4),
+            Quat::from_rotation_x(0.4),
+            Quat::from_rotation_y(2.0) * Quat::from_rotation_x(-1.3) * Quat::from_rotation_z(0.3),
+        ] {
+            assert!(head(q).panel_up().abs_diff_eq(Vec3::Y, 1e-5), "{q}");
+        }
+        // 寝転がる: 横向き（右を下に）・仰向け（真上を見る）・仰向けで首を傾ける。頭の上そのもの。
+        for q in [
+            Quat::from_rotation_z(-FRAC_PI_2),
+            Quat::from_rotation_z(FRAC_PI_2),
+            Quat::from_rotation_x(FRAC_PI_2),
+            Quat::from_rotation_x(FRAC_PI_2) * Quat::from_rotation_z(0.5),
+        ] {
+            assert!(
+                head(q).panel_up().abs_diff_eq(q * Vec3::Y, 1e-5),
+                "{q} {}",
+                head(q).panel_up()
+            );
+        }
+        // 間はなめらか: 倒していくと少しずつ頭の上へ寄り、跳ばない。
+        let mut prev = Vec3::Y;
+        for i in 0..=90 {
+            let up = head(Quat::from_rotation_z((i as f32).to_radians())).panel_up();
+            assert!(up.angle_between(prev) < 0.1, "{i}° {up}");
+            prev = up;
+        }
+    }
+
+    #[test]
+    fn leveled_puts_the_panel_in_front_of_the_face_when_lying() {
+        use std::f32::consts::FRAC_PI_2;
+        // 横向きに寝て、さらに少し見下ろす（足の方を見る）: 顔の正面・頭の上を上に。
+        let q = Quat::from_rotation_y(0.7)
+            * Quat::from_rotation_z(-FRAC_PI_2)
+            * Quat::from_rotation_x(-0.3);
+        let head = Pose::new(Vec3::new(0.0, 0.3, 0.0), q);
+        let l = head.leveled();
+        assert_eq!(l.position, head.position);
+        assert!(l.orientation.abs_diff_eq(q, 1e-5), "{} {q}", l.orientation);
+        // 仰向け: 真上に出て、上は頭の上（寝ている向き）。
+        let q = Quat::from_rotation_y(-1.0) * Quat::from_rotation_x(FRAC_PI_2);
+        let l = Pose::new(Vec3::ZERO, q).leveled();
+        assert!(l.forward().abs_diff_eq(Vec3::Y, 1e-5), "{}", l.forward());
+        assert!((l.orientation * Vec3::Y).abs_diff_eq(q * Vec3::Y, 1e-5));
+        // 立っていて首を傾けている・見上げ気味: これまでどおり水平に立てる。
+        let q = Quat::from_rotation_y(1.0) * Quat::from_rotation_x(0.3) * Quat::from_rotation_z(0.3);
+        let l = Pose::new(Vec3::ZERO, q).leveled();
+        assert!((l.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5));
+        assert!(l.forward().y.abs() < 1e-5);
+        assert!(l.forward().dot(q * Vec3::NEG_Z) > 0.9);
     }
 
     #[cfg(feature = "novr")]
