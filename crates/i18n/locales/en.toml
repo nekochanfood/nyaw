@@ -102,6 +102,10 @@ dock = "Return to the dashboard"
 
 [dashboard]
 title = "Dashboard"
+quit = "Quit nyaw"
+quit_title = "Quit nyaw?"
+quit_body = "All open screens and streams will close."
+quit_confirm = "Quit"
 menu = "Menu"
 add_screen = "Open a screen or window"
 mirror = "Screen mirroring"

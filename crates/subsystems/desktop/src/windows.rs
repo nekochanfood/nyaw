@@ -8,6 +8,13 @@ use ::windows::{
     },
     Win32::{
         Foundation::{CloseHandle, HMODULE, HWND, LPARAM, POINT, RECT, WPARAM},
+        Devices::Display::{
+            DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+            DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
+            DISPLAYCONFIG_SOURCE_DEVICE_NAME, DISPLAYCONFIG_TARGET_DEVICE_NAME,
+            DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes, QDC_ONLY_ACTIVE_PATHS,
+            QueryDisplayConfig,
+        },
         Graphics::{
             Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP},
             Direct3D11::*,
@@ -53,7 +60,7 @@ impl From<::windows::core::Error> for Error {
 }
 
 pub(super) fn sources() -> Result<Vec<Source>, Error> {
-    let mut sources = Vec::new();
+    let mut sources: Vec<Source> = Vec::new();
     unsafe extern "system" fn monitor(
         monitor: HMONITOR,
         _: HDC,
@@ -116,7 +123,93 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
         .ok()?;
         EnumWindows(Some(window), LPARAM(&mut sources as *mut _ as isize))?;
     }
+    // 画面の名前は "\\.\DISPLAY2" のような装置名なので、モニターの製品名（無ければ「Display 2」）にする。
+    let products = monitor_products();
+    let screens: Vec<(String, Option<String>)> = sources
+        .iter()
+        .filter(|s| s.kind == SourceKind::Screen)
+        .map(|s| (s.name.clone(), products.get(&s.name).cloned()))
+        .collect();
+    for source in sources.iter_mut().filter(|s| s.kind == SourceKind::Screen) {
+        source.name = screen_label(&source.name, &screens);
+    }
     Ok(sources)
+}
+
+/// GDI の装置名（"\\.\DISPLAY2"）→ そこに映しているモニターの製品名（EDID の名前。"DELL U2720Q" など）。
+fn monitor_products() -> std::collections::HashMap<String, String> {
+    let mut names = std::collections::HashMap::new();
+    let (mut paths, mut modes) = (0u32, 0u32);
+    if unsafe { GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut paths, &mut modes) }.is_err() {
+        return names;
+    }
+    let mut path_info = vec![DISPLAYCONFIG_PATH_INFO::default(); paths as usize];
+    let mut mode_info = vec![DISPLAYCONFIG_MODE_INFO::default(); modes as usize];
+    let queried = unsafe {
+        QueryDisplayConfig(
+            QDC_ONLY_ACTIVE_PATHS,
+            &mut paths,
+            path_info.as_mut_ptr(),
+            &mut modes,
+            mode_info.as_mut_ptr(),
+            None,
+        )
+    };
+    if queried.is_err() {
+        return names;
+    }
+    for path in &path_info[..paths as usize] {
+        let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+            header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+                r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+                size: size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32,
+                adapterId: path.sourceInfo.adapterId,
+                id: path.sourceInfo.id,
+            },
+            ..Default::default()
+        };
+        let mut target = DISPLAYCONFIG_TARGET_DEVICE_NAME {
+            header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+                r#type: DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+                size: size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32,
+                adapterId: path.targetInfo.adapterId,
+                id: path.targetInfo.id,
+            },
+            ..Default::default()
+        };
+        if unsafe { DisplayConfigGetDeviceInfo(&mut source.header) } != 0
+            || unsafe { DisplayConfigGetDeviceInfo(&mut target.header) } != 0
+        {
+            continue;
+        }
+        let text = |w: &[u16]| {
+            String::from_utf16_lossy(&w[..w.iter().position(|c| *c == 0).unwrap_or(w.len())])
+        };
+        let product = text(&target.monitorFriendlyDeviceName);
+        if !product.trim().is_empty() {
+            names.insert(text(&source.viewGdiDeviceName), product.trim().to_owned());
+        }
+    }
+    names
+}
+
+/// 画面の表示名。モニターの製品名（同じ製品名がほかにもあれば番号を添える）か、無ければ「Display 番号」。
+fn screen_label(device: &str, screens: &[(String, Option<String>)]) -> String {
+    let number = device
+        .trim_start_matches(|c: char| !c.is_ascii_digit())
+        .to_owned();
+    let product = screens
+        .iter()
+        .find(|(d, _)| d == device)
+        .and_then(|(_, p)| p.clone());
+    match product {
+        Some(p) if screens.iter().filter(|(_, q)| q.as_ref() == Some(&p)).count() > 1 => {
+            format!("{p} ({number})")
+        }
+        Some(p) => p,
+        None if number.is_empty() => device.to_owned(),
+        None => format!("Display {number}"),
+    }
 }
 
 /// ウィンドウのアイコン。ウィンドウ自身のもの（WM_GETICON・クラス）が無ければ、プロセスの実行ファイルのもの。
@@ -752,5 +845,19 @@ mod tests {
             POINT { x: -1920, y: -100 }
         );
         assert_eq!(normalized_point(bounds, 1.0, 1.0), POINT { x: -1, y: 979 });
+    }
+
+    #[test]
+    fn screens_are_named_after_their_monitors() {
+        let screens = vec![
+            (r"\\.\DISPLAY1".to_owned(), Some("DELL U2720Q".to_owned())),
+            (r"\\.\DISPLAY2".to_owned(), Some("DELL U2720Q".to_owned())),
+            (r"\\.\DISPLAY3".to_owned(), Some("LG HDR 4K".to_owned())),
+            (r"\\.\DISPLAY4".to_owned(), None),
+        ];
+        let label = |d: &str| screen_label(d, &screens);
+        assert_eq!(label(r"\\.\DISPLAY1"), "DELL U2720Q (1)");
+        assert_eq!(label(r"\\.\DISPLAY3"), "LG HDR 4K");
+        assert_eq!(label(r"\\.\DISPLAY4"), "Display 4");
     }
 }

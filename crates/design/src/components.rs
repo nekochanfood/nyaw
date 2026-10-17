@@ -659,6 +659,20 @@ pub fn list_item(
     glyph: &'static crate::Icon,
     label: impl Into<SharedString>,
 ) -> Button {
+    menu_item(theme, id, glyph, label).child(
+        crate::icon(&crate::icons::CARET_RIGHT)
+            .size(px(font_size::MD))
+            .color(rgba(theme.neutral_text_low)),
+    )
+}
+
+/// メニューの行: 一覧の行（[`list_item`]）と同じで、右の `>` が無い（その場で何かをする項目。先へ進む一覧ではない）。
+pub fn menu_item(
+    theme: &Theme,
+    id: &'static str,
+    glyph: &'static crate::Icon,
+    label: impl Into<SharedString>,
+) -> Button {
     let mut b = base_button(theme, id.into(), Variant::Default);
     (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
     b.base = b
@@ -671,12 +685,7 @@ pub fn list_item(
         // 行は文字が主役のボタンではないので太字にしない（文字は本文と同じ `MD`）。
         .font_weight(FontWeight::NORMAL)
         .child(crate::icon(glyph).size(px(font_size::LG)))
-        .child(div().flex_1().child(label.into()))
-        .child(
-            crate::icon(&crate::icons::CARET_RIGHT)
-                .size(px(font_size::MD))
-                .color(rgba(theme.neutral_text_low)),
-        );
+        .child(div().flex_1().child(label.into()));
     b
 }
 

@@ -169,6 +169,8 @@ const VEIL_SIZE: f32 = 5000.0;
 const HUD_LIFT: f32 = 0.002;
 /// 親の上端に立てた子（[`Parent::slot`]）のナビゲーションバーの下端と、親の地の上端の間（m）。
 pub const SLOT_GAP: f32 = 0.02;
+/// 親の上端に立てた画面が入れ替わりで消えるとき、後ろへ下がる距離（m）。
+const SLOT_RETREAT: f32 = 0.15;
 /// 親の上端に立てた子を外したとき、離れたと分かるよう面の向き（頭の側）へ動かす距離（m）。
 const UNDOCK_PULL: f32 = 0.2;
 /// 表示だけの子の重なり順。角は親の中心より頭から遠いので、距離で並べると親の裏に回って消える。
@@ -597,7 +599,7 @@ impl Overlay {
             parent.is_some_and(|p| p.slot.is_some()),
         );
         let to = match (was_slot, to_slot) {
-            (true, false) if parent.is_none() => Some(Some(
+            (true, false) if parent.is_none() && !q.hidden => Some(Some(
                 q.pose * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY),
             )),
             (false, true) => Some(None),
@@ -619,9 +621,11 @@ impl Overlay {
             }
         }
         q.parent = parent;
-        let hud = parent.is_some_and(|p| p.hud);
+        // 表示だけの子と、ポップオーバー（固定して外側を押すと閉じる子）は、ほかのパネルより前に描く。ランタイムは
+        // 奥行きではなく描画順で重ねるので、同じ順だと重なった所がちらつく（はめた画面の上に出すメニューなど）。
+        let front = parent.is_some_and(|p| p.hud || (p.docked && p.dismiss));
         q.surface
-            .set_sort(vr, if hud { HUD_SORT } else { PANEL_SORT });
+            .set_sort(vr, if front { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
             q.attached = None;
             q.offset = at.inverse() * q.pose;
@@ -730,6 +734,7 @@ impl Overlay {
             return;
         }
         p.closed = true;
+        self.retreat(id);
         // 子とナビゲーションバーは親と一緒に閉じる。
         let kids: Vec<PanelId> = self
             .present
@@ -766,6 +771,24 @@ impl Overlay {
         }
     }
 
+    /// 親の上端に立てた画面（[`Parent::slot`]）が見えたまま消えるとき（閉じる・隠す）、フェードアウトしながら後ろへ下がらせる。
+    /// 入れ替わりにはまる画面と同じ所で重なってちらつかないように。
+    fn retreat(&mut self, id: PanelId) {
+        let p = &self.panels[id];
+        if !p.parent.is_some_and(|q| q.slot.is_some()) || !p.animated || p.opacity == 0.0 {
+            return;
+        }
+        self.glides.insert(
+            id,
+            Glide {
+                from: p.pose,
+                to: Some(p.pose * Pose::new(Vec3::NEG_Z * SLOT_RETREAT, Quat::IDENTITY)),
+                tween: Animation::new(0.0, 1.0, Motion::Exit),
+                last: Instant::now(),
+            },
+        );
+    }
+
     /// パネルを隠す・出し直す。閉じずにフェードアウトし（ビュー・配信・音はそのまま）、出し直すとフェードインする。
     /// 隠している間は入力・暗転の対象外。子（固定した画面・ダイアログ）も一緒に隠れ、ナビゲーションバーは持ち主を写す。
     pub fn set_hidden(&mut self, vr: &mut dyn VrBackend, id: PanelId, hidden: bool) {
@@ -774,6 +797,9 @@ impl Overlay {
             return;
         }
         p.hidden = hidden;
+        if hidden {
+            self.retreat(id);
+        }
         let kids: Vec<PanelId> = self
             .present
             .iter()
@@ -1396,7 +1422,7 @@ impl Overlay {
         let panels = &mut self.panels;
         self.glides.retain(|&id, g| {
             let p = &mut panels[id];
-            if p.closed || dragged.contains(&id) {
+            if dragged.contains(&id) {
                 return false;
             }
             let t = g.tween.advance(now.saturating_duration_since(g.last).as_secs_f32());
@@ -2486,6 +2512,41 @@ mod tests {
         let width = ov.panel(0).size.x;
         ov.set_content_resolution(0, (1920, 1080));
         assert_eq!(ov.panel(0).size.x, width);
+    }
+
+    /// はめた画面が入れ替わりで消える（隠す・閉じる）ときは、後ろへ下がる。外しても手前へ出さない。
+    #[test]
+    fn a_slot_child_retreats_while_it_fades_away() {
+        let (mut vr, mut ov) = with_slot_child();
+        ov.set_animated(&mut vr.backend, 1, true);
+        ov.submit(&mut vr.backend, 1, 1, 1, &[200, 100, 50, 255]);
+        ov.panels[1].opacity = 1.0;
+        let before = ov.panel(1).pose;
+        ov.set_hidden(&mut vr.backend, 1, true);
+        ov.set_parent(&mut vr.backend, 1, None);
+        let glide = &ov.glides[&1];
+        let back = before * Pose::new(Vec3::NEG_Z * SLOT_RETREAT, Quat::IDENTITY);
+        assert!(glide.to.is_some_and(|to| to.position.abs_diff_eq(back.position, 1e-5)));
+        assert!(ov.panel(1).pose.position.abs_diff_eq(before.position, 1e-5), "手前へ出さない");
+    }
+
+    /// ポップオーバー（固定して外側を押すと閉じる子）は、ほかのパネルより前の描画順。
+    #[test]
+    fn popovers_are_drawn_in_front_of_panels() {
+        let (mut vr, mut ov) = with_child(true);
+        ov.set_parent(
+            &mut vr.backend,
+            1,
+            Some(Parent {
+                panel: 0,
+                carry: true,
+                docked: true,
+                dismiss: true,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(vr.backend.overlays[1].sort, HUD_SORT);
+        assert_eq!(vr.backend.overlays[0].sort, PANEL_SORT);
     }
 
     #[test]

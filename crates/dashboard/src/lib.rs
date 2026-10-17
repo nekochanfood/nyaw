@@ -341,9 +341,15 @@ struct Stream {
 /// メニューのポップオーバーの大きさと解像度（2 行の一覧が収まる）。
 const MENU_PX: (u32, u32) = (
     320,
-    (2.0 * components::NAV_BAR_HEIGHT - 4.0 * spacing::SM + 1.0 + 2.0 * spacing::MD + 2.0 * components::PANEL_MARGIN)
-        as u32,
+    (MENU_ROWS * (components::NAV_BAR_HEIGHT - 2.0 * spacing::SM)
+        + (MENU_ROWS - 1.0)
+        + 2.0 * components::PANEL_MARGIN) as u32,
 );
+/// メニューの行の数（デバッグ・設定・終了）。
+const MENU_ROWS: f32 = 3.0;
+/// 終了の確かめのダイアログの幅（px。1px = 1mm）と、視界の中での置き場所。
+const QUIT_DIALOG_WIDTH: u32 = 440;
+const QUIT_DIALOG_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
 const MENU_M: Vec2 = Vec2::new(
     MENU_PX.0 as f32 * SIZE_M.x / RES_PX.0 as f32,
     MENU_PX.1 as f32 * SIZE_M.x / RES_PX.0 as f32,
@@ -364,7 +370,8 @@ fn menu_offset() -> Pose {
     Pose::new(top + rotation * Vec3::new(0.0, lift, MENU_LIFT), rotation)
 }
 
-/// メニューのポップオーバー: デバッグ・設定。選ぶとその画面をはめて閉じる。
+/// メニューのポップオーバー: デバッグ・設定（選ぶとその画面をはめる）と、一番下に nyaw の終了（確かめのダイアログを出す）。
+/// 選ぶと閉じる。背景は敷かず、一覧のカードがそのままポップオーバーになる。
 pub struct Menu {
     panel: PanelId,
     dashboard: WeakEntity<Dashboard>,
@@ -375,18 +382,77 @@ impl Render for Menu {
         let theme = Theme::current(cx);
         let item = |id, glyph, key, page| {
             let (dashboard, panel) = (self.dashboard.clone(), self.panel);
-            components::list_item(&theme, id, glyph, i18n::t(cx, key)).on_click(move |_, _, cx| {
+            components::menu_item(&theme, id, glyph, i18n::t(cx, key)).on_click(move |_, _, cx| {
                 close(panel, cx);
                 let _ = dashboard.update(cx, |d, cx| d.toggle(page, cx));
             })
         };
-        components::panel(&theme).child(components::list(
+        let panel = self.panel;
+        let quit = components::menu_item(&theme, "menu-quit", &icons::POWER, i18n::t(cx, "dashboard.quit"))
+            .on_click(move |_, window, cx| {
+                close(panel, cx);
+                let spec = quit_dialog_spec(window, cx);
+                cx.default_global::<PanelControl>().spawns.push(spec);
+            });
+        components::card_panel(&theme)
+            .rounded(px(design::radius::LG))
+            .child(components::list(
+                &theme,
+                [
+                    item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug),
+                    item("menu-settings", &icons::GEAR, "dashboard.settings", Page::Settings),
+                    quit,
+                ],
+            ))
+    }
+}
+
+/// nyaw を終了するかを確かめるダイアログの起動仕様。視界の中央に出す。
+fn quit_dialog_spec(window: &Window, cx: &App) -> PanelSpec {
+    let height = components::dialog_height(
+        window,
+        QUIT_DIALOG_WIDTH,
+        &i18n::t(cx, "dashboard.quit_title"),
+        &i18n::t(cx, "dashboard.quit_body"),
+        2,
+    );
+    PanelSpec::new(Pose::IDENTITY, |panel, _, _| QuitDialog { panel })
+        .sized(
+            Vec2::new(QUIT_DIALOG_WIDTH as f32 / 1000.0, height as f32 / 1000.0),
+            (QUIT_DIALOG_WIDTH, height),
+        )
+        .in_view(QUIT_DIALOG_POSE)
+        // ダイアログは答えて閉じるもの。ナビゲーションバーは付けない。
+        .without_nav_bar()
+}
+
+/// nyaw を終了するかを確かめるダイアログ。終了を選ぶとアプリを終える。
+struct QuitDialog {
+    panel: PanelId,
+}
+
+impl Render for QuitDialog {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let panel = self.panel;
+        components::dialog(
             &theme,
+            "quit-dialog",
+            &icons::POWER,
+            i18n::t(cx, "dashboard.quit_title"),
+            i18n::t(cx, "dashboard.quit_body"),
             [
-                item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug),
-                item("menu-settings", &icons::GEAR, "dashboard.settings", Page::Settings),
+                components::button(
+                    &theme,
+                    "quit-confirm",
+                    i18n::t(cx, "dashboard.quit_confirm"),
+                    Variant::Danger,
+                )
+                .on_click(|_, _, cx| cx.default_global::<PanelControl>().quit = true),
+                components::button(&theme, "quit-cancel", i18n::t(cx, "common.cancel"), Variant::Default)
+                    .on_click(move |_, _, cx| close(panel, cx)),
             ],
-        ))
+        )
     }
 }
 
@@ -394,8 +460,10 @@ impl Render for Menu {
 const SEPARATOR_PX: f32 = 32.0;
 
 fn separator(theme: &Theme) -> Div {
+    // 丸いボタンどうしは縁が離れていくぶん広く見えるので、まっすぐな線の両脇は少し広く取って、見た目の間隔をそろえる。
     div()
         .flex_none()
+        .mx(px(spacing::XS))
         .w(px(1.0))
         .h(px(SEPARATOR_PX))
         .bg(rgba(theme.neutral_border_subtle))
@@ -1225,6 +1293,18 @@ mod tests {
         click(mcx, "menu-settings");
         assert!(commands(mcx, 9).contains(&PanelCommand::Close));
         assert_eq!(mcx.update(|_, cx| cx.global::<PanelControl>().spawns.len()), 1);
+    }
+
+    /// 終了の確かめのダイアログで終了を選ぶとアプリを終え、キャンセルならダイアログだけ閉じる。
+    #[gpui::test]
+    fn quit_dialog_quits_or_cancels(cx: &mut TestAppContext) {
+        let (_dialog, cx) = cx.add_window_view(|_, _| QuitDialog { panel: 7 });
+        cx.run_until_parked();
+        click(cx, "quit-cancel");
+        assert!(commands(cx, 7).contains(&PanelCommand::Close));
+        assert!(!cx.update(|_, cx| cx.global::<PanelControl>().quit));
+        click(cx, "quit-confirm");
+        assert!(cx.update(|_, cx| cx.global::<PanelControl>().quit));
     }
 
     /// テストでバーを別の窓に描くための包み。
