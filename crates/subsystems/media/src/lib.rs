@@ -47,6 +47,9 @@ pub struct App {
     /// 表示名（"Spotify" など）。
     pub name: String,
     pub icon: Option<Image>,
+    /// 実行ファイル名（"chrome.exe" など）。ID が実行ファイル名でないアプリ（ブラウザなど）のウィンドウを探すのに使う。
+    /// ID から引けたときだけ（Windows だけ）。
+    pub exe: Option<String>,
 }
 
 /// できる操作。
@@ -79,6 +82,8 @@ pub struct NowPlaying {
     /// 背景（[`Self::backdrop`]）が明るいか。載せる文字・部品を暗くするか明るくするかの判断に使う。背景が無ければ `None`。
     pub light: Option<bool>,
     pub controls: Controls,
+    /// 再生中・一時停止中のメディア（セッション）の数。2 つ以上なら [`Command::Switch`] で切り替えられる。
+    pub sessions: usize,
 }
 
 impl NowPlaying {
@@ -103,7 +108,12 @@ pub enum Command {
     Seek(Duration),
     /// アプリの画面を前に出す（Linux の MPRIS だけ。Windows は何もしない）。
     Raise,
+    /// 見せる・操作するメディアを、次（`true`）か前（`false`）のセッションに切り替える。ワーカーが扱う。
+    Switch(bool),
 }
+
+/// 切り替えて選んだセッション: アプリの ID と、同じ ID のセッションの中で何番目か（ブラウザはタブごとに出る）。
+type Pick = (String, usize);
 
 /// OS の 1 回分の問い合わせ結果（画像は読む前のもの）。
 #[derive(Debug, Clone, PartialEq)]
@@ -119,17 +129,46 @@ struct Raw {
     controls: Controls,
     /// ジャケットが変わったか見分ける鍵（同じなら読み直さない）。
     art_key: String,
+    /// 再生中・一時停止中のセッションのアプリの ID（OS の並び順）と、読んだのがその何番目か。
+    sessions: Vec<String>,
+    index: usize,
+}
+
+impl Raw {
+    /// 次（`forward`）か前のセッション。1 つしか無ければ `None`。
+    fn switched(&self, forward: bool) -> Option<Pick> {
+        let n = self.sessions.len();
+        if n < 2 {
+            return None;
+        }
+        let i = (self.index + if forward { 1 } else { n - 1 }) % n;
+        let id = &self.sessions[i];
+        Some((id.clone(), self.sessions[..i].iter().filter(|s| *s == id).count()))
+    }
+}
+
+/// `sessions` のうち `pick` に当たるものの番号。当たらなければ（閉じた）`None`。
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+fn picked(sessions: &[String], pick: Option<&Pick>) -> Option<usize> {
+    let (id, nth) = pick?;
+    sessions
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| *s == id)
+        .nth(*nth)
+        .map(|(i, _)| i)
 }
 
 /// OS ごとの問い合わせ先。ワーカーのスレッドだけが持つ。
 #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 trait Backend {
-    /// 今再生している（一時停止中も含む）ものがあれば、その情報。
-    fn read(&mut self) -> Option<Raw>;
+    /// 今再生している（一時停止中も含む）ものがあれば、その情報。`pick` のセッションがあればそれを、無ければ OS が
+    /// いちばん関係があると見たものを読み、以後の操作（[`Backend::command`]）もそれに送る。
+    fn read(&mut self, pick: Option<&Pick>) -> Option<Raw>;
     /// 最後の [`Backend::read`] のジャケットの画像のファイルの中身。
     fn art(&mut self) -> Option<Vec<u8>>;
-    /// アプリ `id` の表示名と、アイコンの画像のファイルの中身。
-    fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>);
+    /// アプリ `id` の表示名と、アイコンの画像のファイルの中身と、実行ファイル名（[`App::exe`]）。
+    fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>, Option<String>);
     fn command(&mut self, command: Command);
 }
 
@@ -153,17 +192,37 @@ impl Media {
                 return;
             };
             let mut cache = Cache::default();
+            // 切り替えて選んだセッション（閉じたら OS の選ぶものに戻る）と、最後に読んだもの。
+            let mut pick: Option<Pick> = None;
+            let mut last: Option<Raw> = None;
+            let mut pending: Vec<Command> = Vec::new();
             while !stopping.load(Ordering::Acquire) {
-                for command in rx.try_iter() {
-                    backend.command(command);
+                pending.extend(rx.try_iter());
+                for command in pending.drain(..) {
+                    match command {
+                        Command::Switch(forward) => {
+                            if let Some(p) = last.as_ref().and_then(|r| r.switched(forward)) {
+                                pick = Some(p);
+                            }
+                        }
+                        command => backend.command(command),
+                    }
                 }
-                let now = backend
-                    .read()
+                last = backend.read(pick.as_ref());
+                // 選んだものが閉じたら選び直さない（また開いても、OS の選ぶものから戻らない）。
+                if last
+                    .as_ref()
+                    .is_none_or(|r| picked(&r.sessions, pick.as_ref()) != Some(r.index))
+                {
+                    pick = None;
+                }
+                let now = last
+                    .clone()
                     .map(|raw| Arc::new(cache.resolve(raw, backend.as_mut())));
                 *out.lock().unwrap() = now;
                 // 操作が来たらすぐ読み直して、押した結果をすぐ見せる。
                 match rx.recv_timeout(POLL) {
-                    Ok(command) => backend.command(command),
+                    Ok(command) => pending.push(command),
                     Err(mpsc::RecvTimeoutError::Timeout) => {}
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 }
@@ -234,7 +293,7 @@ impl Cache {
             self.art = Some((raw.art_key.clone(), art, backdrop));
         }
         if self.app.as_ref().is_none_or(|a| a.id != raw.app_id) {
-            let (name, icon) = backend.app(&raw.app_id);
+            let (name, icon, exe) = backend.app(&raw.app_id);
             let icon = icon
                 .and_then(|bytes| image::load_from_memory(&bytes).ok())
                 .map(|i| to_image(fit(&i, ICON_PX)));
@@ -242,6 +301,7 @@ impl Cache {
                 id: raw.app_id.clone(),
                 name,
                 icon,
+                exe,
             });
         }
         let (_, art, backdrop) = self.art.clone().unwrap_or_default();
@@ -259,6 +319,7 @@ impl Cache {
             backdrop,
             light,
             controls: raw.controls,
+            sessions: raw.sessions.len(),
         }
     }
 }
@@ -337,7 +398,7 @@ mod tests {
     }
 
     impl Backend for Fake {
-        fn read(&mut self) -> Option<Raw> {
+        fn read(&mut self, _: Option<&Pick>) -> Option<Raw> {
             Some(self.raw.clone())
         }
         fn art(&mut self) -> Option<Vec<u8>> {
@@ -348,9 +409,9 @@ mod tests {
                 .unwrap();
             Some(png)
         }
-        fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>) {
+        fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>, Option<String>) {
             self.app_reads += 1;
-            (fallback_name(id), None)
+            (fallback_name(id), None, None)
         }
         fn command(&mut self, _: Command) {}
     }
@@ -366,6 +427,8 @@ mod tests {
             app_id: "Spotify.exe".into(),
             controls: Controls::default(),
             art_key: title.into(),
+            sessions: vec!["Spotify.exe".into()],
+            index: 0,
         }
     }
 
@@ -377,16 +440,16 @@ mod tests {
             app_reads: 0,
         };
         let mut cache = Cache::default();
-        let first = cache.resolve(fake.read().unwrap(), &mut fake);
+        let first = cache.resolve(fake.read(None).unwrap(), &mut fake);
         assert_eq!(first.app.name, "Spotify");
         let art = first.art.as_ref().unwrap();
         assert_eq!((art.width, art.height), (8, 8));
         let backdrop = first.backdrop.as_ref().unwrap();
         assert_eq!((backdrop.width, backdrop.height), (BACKDROP_OUT_PX, BACKDROP_OUT_PX));
-        cache.resolve(fake.read().unwrap(), &mut fake);
+        cache.resolve(fake.read(None).unwrap(), &mut fake);
         assert_eq!((fake.art_reads, fake.app_reads), (1, 1));
         fake.raw = raw("B");
-        cache.resolve(fake.read().unwrap(), &mut fake);
+        cache.resolve(fake.read(None).unwrap(), &mut fake);
         assert_eq!((fake.art_reads, fake.app_reads), (2, 1));
     }
 
@@ -407,6 +470,22 @@ mod tests {
         now.playing = true;
         now.at = Instant::now() - Duration::from_secs(1000);
         assert_eq!(now.position_now(), Duration::from_secs(200));
+    }
+
+    /// 切り替えは前後に一周し、同じアプリのセッション（ブラウザのタブ）も何番目かで見分ける。
+    #[test]
+    fn switching_cycles_through_sessions_of_the_same_app() {
+        let mut r = raw("A");
+        r.sessions = vec!["Chrome".into(), "Spotify.exe".into(), "Chrome".into()];
+        let pick = r.switched(false).unwrap();
+        assert_eq!(pick, ("Chrome".to_owned(), 1));
+        assert_eq!(picked(&r.sessions, Some(&pick)), Some(2));
+        r.index = 2;
+        assert_eq!(r.switched(true), Some(("Chrome".to_owned(), 0)));
+        assert_eq!(picked(&r.sessions, Some(&("Chrome".to_owned(), 2))), None, "閉じた");
+        r.sessions.truncate(1);
+        r.index = 0;
+        assert_eq!(r.switched(true), None, "1 つだけなら切り替えない");
     }
 
     #[test]

@@ -549,6 +549,12 @@ impl Render for Dashboard {
             i18n::t(cx, "dashboard.add_screen"),
             Page::Mirror,
         );
+        let now_playing = page_button(
+            "dashboard-now-playing",
+            &icons::PLAYLIST,
+            i18n::t(cx, "dashboard.now_playing"),
+            Page::NowPlaying,
+        );
         let menu = components::icon_button(
             &theme,
             "dashboard-menu",
@@ -578,23 +584,7 @@ impl Render for Dashboard {
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
             )
             // 何か再生しているときだけ、再生中の画面のボタンを出す。
-            .when(has_media, |d| {
-                d.child(
-                    components::content_button(
-                        &theme,
-                        "dashboard-now-playing",
-                        variant(Page::NowPlaying),
-                    )
-                        .flex_none()
-                        .child(
-                            design::icon(&icons::PLAYLIST)
-                                .weight(design::Weight::Bold)
-                                .size(px(font_size::LG)),
-                        )
-                        .child(i18n::t(cx, "dashboard.now_playing"))
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::NowPlaying, cx))),
-                )
-            })
+            .when(has_media, |d| d.child(now_playing))
             .child(mirror)
             .when(!streams.is_empty(), |d| d.child(separator(&theme)))
             // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
@@ -691,9 +681,13 @@ impl Screen {
             s.strip_suffix(".exe").map(str::to_owned).unwrap_or(s)
         };
         let (id, name) = (stem(&app.id), app.name.to_lowercase());
+        let exe = app.exe.as_deref().map(stem);
         self.sources.iter().find(|(s, _)| {
             s.kind == SourceKind::Window
-                && (s.app.as_deref().is_some_and(|a| stem(a) == id || stem(a) == name)
+                && (s.app.as_deref().is_some_and(|a| {
+                    let a = stem(a);
+                    a == id || a == name || exe.as_ref() == Some(&a)
+                })
                     || (!name.is_empty() && s.name.to_lowercase().contains(&name)))
         })
     }
@@ -817,6 +811,31 @@ impl Screen {
                             }),
                     ),
             )
+            // メディアが複数あるときだけ、右上に前後のメディアへの切り替えを出す。
+            .when(m.sessions > 1, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top(px(spacing::LG))
+                        .right(px(spacing::LG))
+                        .flex()
+                        .gap(px(spacing::SM))
+                        .child(control(
+                            "now-playing-previous-media",
+                            &icons::CARET_LEFT,
+                            "dashboard.previous_media",
+                            true,
+                            media::Command::Switch(false),
+                        ))
+                        .child(control(
+                            "now-playing-next-media",
+                            &icons::CARET_RIGHT,
+                            "dashboard.next_media",
+                            true,
+                            media::Command::Switch(true),
+                        )),
+                )
+            })
             .child(
                 div()
                     .absolute()
@@ -1703,6 +1722,7 @@ mod tests {
                 id: "Spotify.exe".into(),
                 name: "Spotify".into(),
                 icon: None,
+                exe: None,
             },
             art: None,
             backdrop: None,
@@ -1714,6 +1734,7 @@ mod tests {
                 seek: true,
                 raise: false,
             },
+            sessions: 1,
         })
     }
 
@@ -1756,6 +1777,29 @@ mod tests {
         cx.simulate_click(at, Modifiers::none());
         let last = commands(cx, 2).pop();
         assert!(matches!(last, Some(PanelCommand::Media(media::Command::Seek(d))) if d > Duration::from_secs(190)));
+    }
+
+    /// メディアが 1 つなら切り替えを出さず、複数なら右上の前後のボタンで切り替えを積む。
+    #[gpui::test]
+    fn media_switch_shows_only_with_several_sessions(cx: &mut TestAppContext) {
+        let (screen, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().media = Some(playing());
+            Screen::new(2, Page::NowPlaying, WeakEntity::new_invalid(), cx)
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("now-playing-next-media").is_none());
+        cx.update(|_, cx| {
+            let mut media = (*playing()).clone();
+            media.sessions = 2;
+            cx.default_global::<PanelControl>().media = Some(Arc::new(media));
+        });
+        screen.update(cx, |_, cx| cx.notify());
+        cx.run_until_parked();
+        click(cx, "now-playing-previous-media");
+        click(cx, "now-playing-next-media");
+        let c = commands(cx, 2);
+        assert!(c.contains(&PanelCommand::Media(media::Command::Switch(false))));
+        assert!(c.contains(&PanelCommand::Media(media::Command::Switch(true))));
     }
 
     #[gpui::test]

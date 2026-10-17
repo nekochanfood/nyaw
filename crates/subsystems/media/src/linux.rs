@@ -1,4 +1,4 @@
-//! Linux: MPRIS（D-Bus の `org.mpris.MediaPlayer2.*`）。再生中のプレイヤーを優先し、無ければ一時停止中のもの。
+//! Linux: MPRIS（D-Bus の `org.mpris.MediaPlayer2.*`）。切り替えて選んだプレイヤーか、無ければ再生中のもの、それも無ければ一時停止中のもの。
 
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
@@ -7,7 +7,7 @@ use zbus::{
     zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
 
-use super::{Backend, Command, Controls, Raw, fallback_name};
+use super::{Backend, Command, Controls, Pick, Raw, fallback_name, picked};
 
 const PREFIX: &str = "org.mpris.MediaPlayer2.";
 const PATH: &str = "/org/mpris/MediaPlayer2";
@@ -68,23 +68,30 @@ impl Mpris {
 }
 
 impl Backend for Mpris {
-    fn read(&mut self) -> Option<Raw> {
+    fn read(&mut self, pick: Option<&Pick>) -> Option<Raw> {
         let status = |name: &String| {
             self.get(name, PLAYER, "PlaybackStatus")
                 .and_then(|v| text(&v))
                 .unwrap_or_default()
         };
-        let players = self.players();
-        let (name, playing) = players
+        // 再生中・一時停止中のプレイヤーと、再生中か。
+        let players: Vec<(String, bool)> = self
+            .players()
+            .into_iter()
+            .filter_map(|n| match status(&n).as_str() {
+                "Playing" => Some((n, true)),
+                "Paused" => Some((n, false)),
+                _ => None,
+            })
+            .collect();
+        let sessions: Vec<String> = players
             .iter()
-            .find(|n| status(n) == "Playing")
-            .map(|n| (n.clone(), true))
-            .or_else(|| {
-                players
-                    .iter()
-                    .find(|n| status(n) == "Paused")
-                    .map(|n| (n.clone(), false))
-            })?;
+            .map(|(n, _)| n.trim_start_matches(PREFIX).to_owned())
+            .collect();
+        let index = picked(&sessions, pick)
+            .or_else(|| players.iter().position(|(_, playing)| *playing))
+            .or((!players.is_empty()).then_some(0))?;
+        let (name, playing) = players[index].clone();
         let metadata: HashMap<String, OwnedValue> = self
             .get(&name, PLAYER, "Metadata")
             .and_then(|v| HashMap::try_from(v).ok())
@@ -119,7 +126,7 @@ impl Backend for Mpris {
             _ => None,
         });
         self.art_url = field("mpris:artUrl").and_then(|v| text(v));
-        let app_id = name.trim_start_matches(PREFIX).to_owned();
+        let app_id = sessions[index].clone();
         self.player = Some(name);
         Some(Raw {
             art_key: self.art_url.clone().unwrap_or_else(|| format!("{title}\n{artist}")),
@@ -131,6 +138,8 @@ impl Backend for Mpris {
             duration,
             app_id,
             controls,
+            sessions,
+            index,
         })
     }
 
@@ -140,7 +149,7 @@ impl Backend for Mpris {
         std::fs::read(path).ok()
     }
 
-    fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>) {
+    fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>, Option<String>) {
         let name = format!("{PREFIX}{id}");
         let identity = self
             .get(&name, ROOT, "Identity")
@@ -152,7 +161,7 @@ impl Backend for Mpris {
             .and_then(|v| text(&v))
             .and_then(|entry| desktop_icon(&entry))
             .and_then(|path| std::fs::read(path).ok());
-        (identity, icon)
+        (identity, icon, None)
     }
 
     fn command(&mut self, command: Command) {
@@ -161,6 +170,7 @@ impl Backend for Mpris {
             Command::Next => self.call(PLAYER, "Next"),
             Command::Previous => self.call(PLAYER, "Previous"),
             Command::Raise => self.call(ROOT, "Raise"),
+            Command::Switch(_) => {}
             Command::Seek(at) => {
                 let (Some(name), Some(track)) = (&self.player, &self.track) else {
                     return;

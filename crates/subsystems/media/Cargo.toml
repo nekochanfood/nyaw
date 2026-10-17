@@ -15,4 +15,6 @@ zbus = { version = "5", default-features = false, features = ["async-io", "block
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
     "Foundation", "ApplicationModel", "Media_Control", "Storage_Streams", "Win32_System_WinRT",
+    # ブラウザなどデスクトップのアプリの ID を、スタートメニュー（shell:AppsFolder）から名前と実行ファイルに引く。
+    "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_Storage_EnhancedStorage",
 ] }
