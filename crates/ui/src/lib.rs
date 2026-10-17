@@ -412,17 +412,25 @@ pub fn dock(panel: PanelId, cx: &mut App) {
         })));
 }
 
-/// はめた `panel` を外して独立させる（その場に残り、持ち主が閉じても閉じない）。
+/// はめた `panel` を外して独立させる（その場に残り、持ち主が閉じても閉じない）。`panel` へ打つキーボードが
+/// ダッシュボードに固定されていれば、それも一緒に外す。
 pub fn undock(panel: PanelId, cx: &mut App) {
+    let keyboard = cx
+        .try_global::<keyboard::InputRouting>()
+        .and_then(|r| r.active)
+        .filter(|s| s.target == panel)
+        .and_then(|s| s.panel);
     let ctl = cx.default_global::<PanelControl>();
     if ctl.docked == Some(panel) {
         ctl.docked = None;
     }
-    ctl.panels
-        .entry(panel)
-        .or_default()
-        .commands
-        .push(PanelCommand::Parent(None));
+    for p in std::iter::once(panel).chain(keyboard) {
+        ctl.panels
+            .entry(p)
+            .or_default()
+            .commands
+            .push(PanelCommand::Parent(None));
+    }
 }
 
 impl gpui::Global for PanelControl {}
@@ -821,6 +829,19 @@ impl PanelSpec {
     /// 起動時から掴めなくする。
     pub fn locked(mut self) -> Self {
         self.locked = true;
+        self
+    }
+
+    /// `panel` に固定する（[`kernel::Parent::docked`]）。開いた時の位置のまま付いて動き、掴むと `panel` ごと動き、
+    /// `panel` を暗くしない。`panel` が閉じれば一緒に閉じる。
+    pub fn docked_to(mut self, panel: PanelId) -> Self {
+        self.from.get_or_insert(panel);
+        self.parent = Some(kernel::Parent {
+            panel,
+            carry: true,
+            docked: true,
+            ..Default::default()
+        });
         self
     }
 

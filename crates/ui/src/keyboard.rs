@@ -214,7 +214,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     routing.error = None;
     redraw_nav_bar(target, cx);
     let resolution = panel_resolution();
-    // ダッシュボードにはめた画面へ打つなら、ダッシュボードの下に出す（固定はしない。独立して掴んで動かせる）。
+    // ダッシュボードにはめた画面へ打つなら、ダッシュボードの下に出して固定する（画面を外すとキーボードも外れる。`crate::undock`）。
     let dock = crate::docked(cx)
         .filter(|&d| d == target)
         .and(cx.global::<crate::PanelControl>().dock);
@@ -247,7 +247,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
         .without_nav_bar();
     let spec = match dock {
-        Some((owner, tilt)) => spec.below(owner, tilt),
+        Some((owner, tilt)) => spec.below(owner, tilt).docked_to(owner),
         None => spec.below(target, std::f32::consts::FRAC_PI_4),
     };
     cx.default_global::<crate::PanelControl>().spawns.push(spec);
@@ -379,6 +379,24 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use std::cell::RefCell;
+
+    /// ダッシュボードから外した画面へ打つキーボードも、一緒に外れて独立する。
+    #[gpui::test]
+    fn undocking_a_panel_also_undocks_its_keyboard(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.default_global::<InputRouting>().active = Some(Session {
+                target: 5,
+                panel: Some(9),
+                mode: KeyboardMode::Persistent,
+                generation: 1,
+            });
+            crate::undock(5, cx);
+            let ctl = cx.global::<crate::PanelControl>();
+            for p in [5, 9] {
+                assert_eq!(ctl.panels[&p].commands, [PanelCommand::Parent(None)]);
+            }
+        });
+    }
 
     fn input(text: &str) -> KeyboardInput {
         KeyboardInput {
