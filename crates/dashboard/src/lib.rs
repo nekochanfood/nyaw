@@ -1,5 +1,6 @@
 //! Layer 6 画面: ダッシュボード。左手の X ボタンを二回続けて押すと開き、もう一度二回押すと閉じる
-//! （開け閉めは常駐の wrist が [`kernel::PanelStatus::dashboard`] を見て行う）。今は中央に 🐟 を置いただけのパネル。
+//! （開け閉めは常駐の wrist が [`kernel::PanelStatus::dashboard`] を見て行う）。開いている間は空間全体が暗くなる。
+//! 今は中央に 🐟 を置いただけのパネル。
 
 use design::Theme;
 use gpui::{Context, Window, div, prelude::*, px};
@@ -26,6 +27,7 @@ pub fn spec(opened: impl FnOnce(kernel::PanelId, &mut gpui::App) + 'static) -> P
     .sized(SIZE_M, RES_PX)
     .in_view(POSE)
     .titled("dashboard.title")
+    .with_veil()
 }
 
 pub struct Dashboard;
