@@ -16,6 +16,7 @@ use gpui::{
     MouseMoveEvent, MouseUpEvent, Pixels, PlatformInput, Point, ScrollDelta, ScrollWheelEvent,
     TouchPhase, Window, div, prelude::*, px, rgb,
 };
+use kernel::subsystems::input::ClickButton;
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
     Anchor, Device, Kernel, Language, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent,
@@ -34,12 +35,14 @@ use profiler::{Profiler, ProfilerView, Stages};
 pub struct PointerBridge {
     pos: Point<Pixels>,
     pressed: bool,
+    button: Option<MouseButton>,
     touch: Option<Touch>,
     /// スワイプを離した後の慣性（宛先の位置と、1 フレームあたりの移動量）。
     momentum: Option<(Point<Pixels>, Point<Pixels>)>,
     /// GPUI が知っているこの手の位置（最後に送ったイベントの位置。離れたら `None`）。同じ位置への Move は送らない
     /// （オーバーレイは指している間 毎 tick Move を出すので、止まっていても描き直しと読み戻しが毎フレーム走ってしまう）。
     sent: Option<Point<Pixels>>,
+    rehover: bool,
 }
 
 /// タッチで押している間の状態。
@@ -154,7 +157,10 @@ impl PointerBridge {
                     }
                 }
                 // スティックのスクロールはマウスと同じ。押し直しは来ない。
-                PointerEvent::Scroll { .. } | PointerEvent::Down { .. } => {}
+                PointerEvent::Scroll { .. }
+                | PointerEvent::Down { .. }
+                | PointerEvent::DownButton { .. }
+                | PointerEvent::UpButton { .. } => {}
             }
         } else if let (PointerMode::Touch, PointerEvent::Down { pos }) = (mode, ev) {
             // 触れたら慣性は止まる。
@@ -212,38 +218,63 @@ impl PointerBridge {
     /// マウスとして変換する。
     fn mouse(&mut self, ev: PointerEvent) -> Vec<PlatformInput> {
         let at = |p: Vec2| Point::new(px(p.x), px(p.y));
-        let held = |pressed: bool| pressed.then_some(MouseButton::Left);
+        let held = |pressed: bool| pressed.then_some(self.button.unwrap_or(MouseButton::Left));
         match ev {
-            PointerEvent::Move { pos } if self.sent == Some(at(pos)) => return Vec::new(),
-            PointerEvent::Leave => self.sent = None,
+            PointerEvent::Move { pos } if self.sent == Some(at(pos)) && !self.rehover => {
+                return Vec::new();
+            }
+            PointerEvent::Leave => {
+                self.sent = None;
+                self.rehover = false;
+            }
             PointerEvent::Move { pos }
             | PointerEvent::Down { pos }
             | PointerEvent::Up { pos }
-            | PointerEvent::Scroll { pos, .. } => self.sent = Some(at(pos)),
+            | PointerEvent::DownButton { pos, .. }
+            | PointerEvent::UpButton { pos, .. } => self.sent = Some(at(pos)),
+            // スクロールでキーがポインタの下から動く。次の Move でホバーを判定し直す。
+            PointerEvent::Scroll { pos, .. } => {
+                self.sent = Some(at(pos));
+                self.rehover = true;
+            }
         }
         vec![match ev {
             PointerEvent::Move { pos } => {
                 self.pos = at(pos);
+                self.rehover = false;
                 PlatformInput::MouseMove(MouseMoveEvent {
                     position: self.pos,
                     pressed_button: held(self.pressed),
                     modifiers: Default::default(),
                 })
             }
-            PointerEvent::Down { pos } => {
+            PointerEvent::Down { pos } | PointerEvent::DownButton { pos, .. } => {
                 (self.pos, self.pressed) = (at(pos), true);
+                let button = match ev {
+                    PointerEvent::DownButton {
+                        button: ClickButton::Middle,
+                        ..
+                    } => MouseButton::Middle,
+                    PointerEvent::DownButton {
+                        button: ClickButton::Right,
+                        ..
+                    } => MouseButton::Right,
+                    _ => MouseButton::Left,
+                };
+                self.button = Some(button);
                 PlatformInput::MouseDown(MouseDownEvent {
-                    button: MouseButton::Left,
+                    button,
                     position: self.pos,
                     modifiers: Default::default(),
                     click_count: 1,
                     first_mouse: false,
                 })
             }
-            PointerEvent::Up { pos } => {
+            PointerEvent::Up { pos } | PointerEvent::UpButton { pos, .. } => {
                 (self.pos, self.pressed) = (at(pos), false);
+                self.rehover = true;
                 PlatformInput::MouseUp(MouseUpEvent {
-                    button: MouseButton::Left,
+                    button: self.button.take().unwrap_or(MouseButton::Left),
                     position: self.pos,
                     modifiers: Default::default(),
                     click_count: 1,
@@ -260,6 +291,7 @@ impl PointerBridge {
             }
             PointerEvent::Leave => {
                 let pressed_button = held(std::mem::take(&mut self.pressed));
+                self.button = None;
                 PlatformInput::MouseExited(MouseExitEvent {
                     position: self.pos,
                     pressed_button,
@@ -345,11 +377,22 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
 }
 
 /// 配送前にポインタのコンテキストを更新する。本番と各 testkit で同じ消滅条件を使う。
-pub fn dispatch_input(panel: PanelId, input: PlatformInput, window: &mut Window, cx: &mut App) {
+pub fn dispatch_input(
+    panel: PanelId,
+    hand: Hand,
+    input: PlatformInput,
+    window: &mut Window,
+    cx: &mut App,
+) {
     if matches!(input, PlatformInput::MouseDown(_)) {
         keyboard::pointer_selected(Some(panel), cx);
     }
+    cx.default_global::<design::components::TooltipSource>().0 = Some(match hand {
+        Hand::Left => 0,
+        Hand::Right => 1,
+    });
     window.dispatch_event(input, cx);
+    cx.default_global::<design::components::TooltipSource>().0 = None;
 }
 
 /// ウィンドウごとのツールチップの要求（[`design::components::Tooltips`]）を、そのパネルを指している手に振り分け、
@@ -365,12 +408,14 @@ pub fn sync_tooltips<B: VrBackend>(
     requests.drop_stale();
     let mut tooltip = HashMap::new();
     for (panel, window) in windows {
-        let Some((_, text, _)) = requests.0.get(&window) else {
-            continue;
-        };
-        // ponytail: 両手で同じパネルを指すと GPUI のマウスは 1 つなので、どちらの手の要求か見分けられない。両方に出す。
         for hand in [Hand::Left, Hand::Right] {
-            if bridges.get(&(panel, hand)).is_some_and(|b| b.on_panel()) {
+            let index = match hand {
+                Hand::Left => 0,
+                Hand::Right => 1,
+            };
+            if let Some((_, text, _)) = requests.0.get(&(window, index))
+                && bridges.get(&(panel, hand)).is_some_and(|b| b.on_panel())
+            {
                 tooltip.insert(hand, text.clone());
             }
         }
@@ -390,7 +435,7 @@ pub fn sync_tooltips<B: VrBackend>(
 pub fn pump<B: VrBackend>(
     kernel: &mut Kernel<B>,
     bridges: &mut HashMap<(PanelId, Hand), PointerBridge>,
-) -> Vec<(PanelId, PlatformInput)> {
+) -> Vec<(PanelId, Hand, PlatformInput)> {
     let mode = kernel.pointer_mode();
     let mut gpui = Vec::new();
     for e in kernel.tick() {
@@ -400,22 +445,22 @@ pub fn pump<B: VrBackend>(
             // 長押しでドラッグになった。ほかのパネルへ運べるよう、オーバーレイのキャプチャを外す。
             kernel.release_capture(e.hand);
         }
-        gpui.extend(input.into_iter().map(|input| (e.panel, input)));
+        gpui.extend(input.into_iter().map(|input| (e.panel, e.hand, input)));
     }
-    for (&(panel, _), b) in bridges.iter_mut() {
+    for (&(panel, hand), b) in bridges.iter_mut() {
         if kernel.desktop_streaming(panel) {
             if b.on_panel() || b.pressed || b.touch.is_some() {
                 gpui.extend(
                     b.translate(PointerEvent::Leave, mode)
                         .into_iter()
-                        .map(|input| (panel, input)),
+                        .map(|input| (panel, hand, input)),
                 );
             }
             *b = PointerBridge::default();
             continue;
         }
         if let Some(input) = b.momentum() {
-            gpui.push((panel, input));
+            gpui.push((panel, hand, input));
         }
     }
     gpui
@@ -683,7 +728,9 @@ impl PanelSpec {
             nav_bar: false,
             nav_bar_of: Some(owner),
             ..PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
-                cx.default_global::<PanelControl>().nav_bars.insert(owner, id);
+                cx.default_global::<PanelControl>()
+                    .nav_bars
+                    .insert(owner, id);
                 NavBar {
                     id,
                     owner,
@@ -695,10 +742,13 @@ impl PanelSpec {
                     last: None,
                 }
             })
-                .sized(
-                    Vec2::new(NAV_BAR_M, NAV_BAR_M * NAV_BAR_PX.1 as f32 / NAV_BAR_PX.0 as f32),
-                    NAV_BAR_PX,
-                )
+            .sized(
+                Vec2::new(
+                    NAV_BAR_M,
+                    NAV_BAR_M * NAV_BAR_PX.1 as f32 / NAV_BAR_PX.0 as f32,
+                ),
+                NAV_BAR_PX,
+            )
         })
     }
 
@@ -974,11 +1024,11 @@ pub fn run_with(
                         cx.update(f);
                     }
                 }
-                let mut inputs: Vec<Vec<PlatformInput>> =
+                let mut inputs: Vec<Vec<(Hand, PlatformInput)>> =
                     (0..windows.len()).map(|_| Vec::new()).collect();
                 let gpui_inputs = pump(&mut kernel, &mut bridges);
-                for (panel, input) in gpui_inputs {
-                    inputs[panel].push(input);
+                for (panel, hand, input) in gpui_inputs {
+                    inputs[panel].push((hand, input));
                 }
                 // タッチの長押しの進み具合を手ごとに置き、変わればカーソルを描き直す（リングが満ちていく）。
                 let mut hold: HashMap<Hand, f32> = HashMap::new();
@@ -1015,7 +1065,9 @@ pub fn run_with(
                     let pos = Vec2::new(w as f32, h as f32) / 2.0;
                     inputs[dp].extend(
                         PointerBridge::default()
-                            .translate(PointerEvent::Move { pos }, PointerMode::Mouse),
+                            .translate(PointerEvent::Move { pos }, PointerMode::Mouse)
+                            .into_iter()
+                            .map(|input| (Hand::Right, input)),
                     );
                 }
                 // wait = ランタイムの待ち（VR は vsync、novr はエミュレーターの周期）。オーバーレイ層と合成は別に測る。
@@ -1051,7 +1103,7 @@ pub fn run_with(
                     // ボタンを押していない Move だけなら、変わりうるのはホバーの見た目だけ（カーソルは別のパネルで毎フレーム動く）。
                     // 描き直しを HOVER_REDRAW ごとに間引き、間引いた分は後で描く（読み戻しはゲーム中 1 回数 ms 掛かる）。
                     let hover_only = !inputs.is_empty()
-                        && inputs.iter().all(|i| match i {
+                        && inputs.iter().all(|(_, i)| match i {
                             PlatformInput::MouseMove(m) => m.pressed_button.is_none(),
                             _ => false,
                         });
@@ -1082,8 +1134,8 @@ pub fn run_with(
                     let mut collected = false;
                     let Ok(frame) = cx.update_window(window, |_, window, cx| {
                         let t = Instant::now();
-                        for input in inputs {
-                            dispatch_input(panel, input, window, cx);
+                        for (hand, input) in inputs {
+                            dispatch_input(panel, hand, input, window, cx);
                         }
                         let before = cx
                             .try_global::<PanelControl>()
@@ -1389,10 +1441,7 @@ struct ProfilerPanel {
 
 impl Render for ProfilerPanel {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .bg(rgb(0x17181c))
-            .child(self.view.clone())
+        div().size_full().bg(rgb(0x17181c)).child(self.view.clone())
     }
 }
 
@@ -1455,6 +1504,68 @@ fn open_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn click_and_scroll_recheck_stationary_hover() {
+        let mut bridge = PointerBridge::default();
+        let pos = Vec2::new(20.0, 30.0);
+        assert_eq!(
+            bridge
+                .translate(PointerEvent::Move { pos }, PointerMode::Mouse)
+                .len(),
+            1
+        );
+        bridge.translate(PointerEvent::Down { pos }, PointerMode::Mouse);
+        bridge.translate(PointerEvent::Up { pos }, PointerMode::Mouse);
+        assert_eq!(
+            bridge
+                .translate(PointerEvent::Move { pos }, PointerMode::Mouse)
+                .len(),
+            1
+        );
+        assert!(
+            bridge
+                .translate(PointerEvent::Move { pos }, PointerMode::Mouse)
+                .is_empty()
+        );
+        bridge.translate(
+            PointerEvent::Scroll {
+                pos,
+                delta: Vec2::Y,
+            },
+            PointerMode::Mouse,
+        );
+        assert_eq!(
+            bridge
+                .translate(PointerEvent::Move { pos }, PointerMode::Mouse)
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn modified_click_uses_the_requested_button_in_touch_mode() {
+        let mut bridge = PointerBridge::default();
+        let pos = Vec2::new(20.0, 30.0);
+        let down = bridge.translate(
+            PointerEvent::DownButton {
+                pos,
+                button: ClickButton::Right,
+            },
+            PointerMode::Touch,
+        );
+        assert!(
+            matches!(&down[..], [PlatformInput::MouseDown(e)] if e.button == MouseButton::Right)
+        );
+        let up = bridge.translate(
+            PointerEvent::UpButton {
+                pos,
+                button: ClickButton::Right,
+            },
+            PointerMode::Touch,
+        );
+        assert!(matches!(&up[..], [PlatformInput::MouseUp(e)] if e.button == MouseButton::Right));
+    }
     use design::Theme;
     use gpui::{TestAppContext, div};
     use kernel::{Device, Runtime};
@@ -1482,7 +1593,7 @@ mod tests {
         let cleanup = pump(&mut kernel, &mut bridges);
         assert!(matches!(
             cleanup.as_slice(),
-            [(_, PlatformInput::MouseExited(_))]
+            [(_, _, PlatformInput::MouseExited(_))]
         ));
         assert!(pump(&mut kernel, &mut bridges).is_empty());
         assert!(bridges[&(panel, Hand::Right)].momentum.is_none());

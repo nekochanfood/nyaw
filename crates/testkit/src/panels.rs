@@ -65,16 +65,16 @@ impl<V: Render> Panels<V> {
         cx: &mut VisualTestContext,
         kernel: &mut Kernel<B>,
     ) {
-        let mut inputs: Vec<Vec<PlatformInput>> =
+        let mut inputs: Vec<Vec<(kernel::vr::Hand, PlatformInput)>> =
             (0..self.windows.len()).map(|_| Vec::new()).collect();
-        for (panel, input) in ui::pump(kernel, &mut self.bridges) {
-            inputs[panel].push(input);
+        for (panel, hand, input) in ui::pump(kernel, &mut self.bridges) {
+            inputs[panel].push((hand, input));
         }
         for (panel, (window, inputs)) in self.windows.iter().copied().zip(inputs).enumerate() {
             cx.cx
                 .update_window(window, |_, window, cx| {
-                    for input in inputs {
-                        ui::dispatch_input(panel, input, window, cx);
+                    for (hand, input) in inputs {
+                        ui::dispatch_input(panel, hand, input, window, cx);
                     }
                     ui::sync_panel(kernel, panel, cx);
                     // As in production, a view that changes every frame is redrawn every frame.

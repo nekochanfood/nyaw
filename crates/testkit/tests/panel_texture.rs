@@ -1,7 +1,7 @@
 //! VR-specific: the overlay <-> UI round trip. Laser input reaches the UI, and its rendering result appears on the VR panel.
 
 use gpui::TestAppContext;
-use testing::{BUTTON_BG, BUTTON_HOVER_BG, PANEL_BG, Testing};
+use testing::{BUTTON_BG, BUTTON_HOVER_BG, PANEL_GROUND_BG, Testing};
 use testkit::{Driver, Vec2, Vec3, VrKit};
 
 #[gpui::test]
@@ -10,7 +10,7 @@ fn vr_panel_shows_rendered_ui(cx: &mut TestAppContext) {
     assert_eq!(kit.color_at("click-me"), BUTTON_BG);
     // 縁は影の余白、角は角丸で透明なので、影の内側の左の縁（地の余白）を見る。
     let edge = testing::PANEL_MARGIN + 4.0;
-    assert_eq!(kit.vr_color_at_px(Vec2::new(edge, 60.0)), PANEL_BG);
+    assert_eq!(kit.vr_color_at_px(Vec2::new(edge, 60.0)), PANEL_GROUND_BG);
 
     let res = kit.kernel.panel(0).resolution;
     let tex = kit.texture();

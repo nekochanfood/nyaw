@@ -1,11 +1,13 @@
 use super::*;
-use desktop::{Status, Stream, Touch, TouchPhase};
+use desktop::{Button, Status, Stream, Touch, TouchPhase};
 use std::time::{Duration, Instant};
+use subsystems::input::ClickButton;
 
 pub(super) struct DesktopPanel {
     stream: Option<Stream>,
     pub status: Status,
     contacts: [Option<Vec2>; 2],
+    hovered: [Option<Vec2>; 2],
     original_resolution: (u32, u32),
     meter: Meter,
     pub stats: Option<DesktopStats>,
@@ -114,6 +116,7 @@ impl<B: VrBackend> Kernel<B> {
                 stream: Some(stream),
                 status: Status::Starting,
                 contacts: [None; 2],
+                hovered: [None; 2],
                 original_resolution,
                 meter: Meter::new(Instant::now()),
                 stats: None,
@@ -155,6 +158,7 @@ impl<B: VrBackend> Kernel<B> {
                             stream: None,
                             status: Status::Failed(error),
                             contacts: [None; 2],
+                            hovered: [None; 2],
                             original_resolution,
                             meter: Meter::new(Instant::now()),
                             stats: None,
@@ -211,6 +215,7 @@ impl<B: VrBackend> Kernel<B> {
                 panel.stream = None;
                 panel.stats = None;
                 panel.contacts = [None; 2];
+                panel.hovered = [None; 2];
                 self.overlay.set_panel_capture(id, false);
             }
         }
@@ -236,33 +241,70 @@ impl<B: VrBackend> Kernel<B> {
             };
             let resolution = self.overlay.panel(event.panel).resolution;
             let contact = &mut panel.contacts[id];
+            let hovered = &mut panel.hovered[id];
             let touch = match event.event {
-                PointerEvent::Down { pos } if contact.is_none() => {
+                PointerEvent::Down { pos } | PointerEvent::DownButton { pos, .. }
+                    if contact.is_none() =>
+                {
                     *contact = Some(pos);
+                    *hovered = Some(pos);
                     Some((TouchPhase::Down, pos))
                 }
-                PointerEvent::Move { pos } if contact.is_some() => {
-                    *contact = Some(pos);
-                    Some((TouchPhase::Move, pos))
+                PointerEvent::Move { pos } if *hovered != Some(pos) => {
+                    *hovered = Some(pos);
+                    if contact.is_some() {
+                        *contact = Some(pos);
+                    }
+                    (contact.is_some() || cfg!(windows)).then_some((TouchPhase::Move, pos))
                 }
-                PointerEvent::Up { pos } if contact.take().is_some() => Some((TouchPhase::Up, pos)),
-                PointerEvent::Leave => contact.take().map(|p| (TouchPhase::Cancel, p)),
+                PointerEvent::Up { pos } | PointerEvent::UpButton { pos, .. }
+                    if contact.take().is_some() =>
+                {
+                    *hovered = Some(pos);
+                    Some((TouchPhase::Up, pos))
+                }
+                PointerEvent::Leave => {
+                    *hovered = None;
+                    contact.take().map(|p| (TouchPhase::Cancel, p))
+                }
                 _ => None,
             };
-            if let Some((phase, pos)) = touch {
-                let result = stream.touch(Touch {
+            let result = if let Some((phase, pos)) = touch {
+                let touch = Touch {
                     id: id as u32,
                     phase,
                     x: pos.x / resolution.0 as f32,
                     y: pos.y / resolution.1 as f32,
-                });
-                if let Err(error) = result {
-                    logger::warn!("desktop touch failed", panel = event.panel, error = error);
-                    panel.status = Status::Failed(error);
-                    panel.stream = None;
-                    panel.contacts = [None; 2];
-                    self.overlay.set_panel_capture(event.panel, false);
+                };
+                match event.event {
+                    PointerEvent::DownButton { button, .. }
+                    | PointerEvent::UpButton { button, .. } => stream.button(
+                        touch,
+                        match button {
+                            ClickButton::Left => Button::Left,
+                            ClickButton::Middle => Button::Middle,
+                            ClickButton::Right => Button::Right,
+                        },
+                    ),
+                    _ => stream.touch(touch),
                 }
+            } else if let PointerEvent::Scroll { pos, delta } = event.event {
+                stream.scroll(
+                    pos.x / resolution.0 as f32,
+                    pos.y / resolution.1 as f32,
+                    delta.x,
+                    delta.y,
+                )
+            } else {
+                return false;
+            };
+            if let Err(error) = result {
+                logger::warn!("desktop input failed", panel = event.panel, error = error);
+                panel.status = Status::Failed(error);
+                panel.stream = None;
+                panel.contacts = [None; 2];
+                panel.hovered = [None; 2];
+                self.overlay.set_panel_capture(event.panel, false);
             }
             false
         });
@@ -337,18 +379,18 @@ mod tests {
     }
 
     #[test]
-    fn pointer_becomes_native_touch_and_keeps_capture_even_in_mouse_mode() {
+    fn pointer_becomes_desktop_input_and_keeps_capture_even_in_mouse_mode() {
         let (mut kernel, _, control) = setup();
         hand(&mut kernel, 0.0, true);
         assert!(kernel.tick().is_empty());
         assert_eq!(
-            control.touches(),
-            [Touch {
+            control.touches().last(),
+            Some(&Touch {
                 id: 1,
                 phase: TouchPhase::Down,
                 x: 0.5,
                 y: 0.5
-            }]
+            })
         );
         hand(&mut kernel, 0.8, true);
         kernel.tick();
@@ -364,6 +406,55 @@ mod tests {
         hand(&mut kernel, 0.8, false);
         kernel.tick();
         assert!(control.touches().iter().any(|t| t.phase == TouchPhase::Up));
+    }
+
+    #[test]
+    fn mirror_receives_stick_scroll() {
+        let (mut kernel, _, control) = setup();
+        hand(&mut kernel, 0.0, false);
+        let c = &mut kernel.subsystems.backend.frame.controllers[0];
+        c.profile = "oculus/touch_controller".into();
+        c.inputs = vec![("thumbstick/y".into(), 1.0)];
+        kernel.tick();
+        assert_eq!(control.scrolls(), [(0.5, 0.5, 0.0, 1.0)]);
+    }
+
+    #[test]
+    fn mirror_keeps_the_button_chosen_on_press() {
+        let (mut kernel, _, control) = setup();
+        hand(&mut kernel, 0.0, true);
+        let c = &mut kernel.subsystems.backend.frame.controllers[0];
+        c.profile = "oculus/touch_controller".into();
+        c.inputs = vec![("trigger/value".into(), 1.0), ("b/touch".into(), 1.0)];
+        kernel.tick();
+        assert_eq!(control.buttons()[0].1, Button::Middle);
+        kernel.subsystems.backend.frame.controllers[0]
+            .inputs
+            .clear();
+        kernel.tick();
+        assert_eq!(control.buttons()[0].1, Button::Middle);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn desktop_hover_moves_the_windows_mouse_without_pressing() {
+        let (mut kernel, _, control) = setup();
+        hand(&mut kernel, 0.0, false);
+        kernel.tick();
+        assert_eq!(
+            control.touches().as_slice(),
+            &[Touch {
+                id: 1,
+                phase: TouchPhase::Move,
+                x: 0.5,
+                y: 0.5,
+            }]
+        );
+        kernel.tick();
+        assert!(
+            control.touches().is_empty(),
+            "stationary hover should not resend movement"
+        );
     }
 
     #[test]
@@ -389,7 +480,13 @@ mod tests {
         kernel.subsystems.backend.frame.controllers.push(left);
         kernel.tick();
         let touches = control.touches();
-        assert_eq!(touches.len(), 2);
+        assert_eq!(
+            touches
+                .iter()
+                .filter(|t| t.phase == TouchPhase::Down)
+                .count(),
+            2
+        );
         assert!(
             touches
                 .iter()
@@ -432,7 +529,10 @@ mod tests {
             Duration::from_millis(4),
             Duration::from_millis(7),
         );
-        assert_eq!(meter.roll(t0 + Duration::from_millis(500), None, (4, 2)), None);
+        assert_eq!(
+            meter.roll(t0 + Duration::from_millis(500), None, (4, 2)),
+            None
+        );
         let stats = meter
             .roll(t0 + Duration::from_secs(2), None, (4, 2))
             .unwrap();

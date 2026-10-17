@@ -27,6 +27,18 @@
           "inputs": {
             "click": {
               "output": "/actions/nyaw/in/menu"
+            },
+            "touch": {
+              "output": "/actions/nyaw/in/middle_touch"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/left/input/x",
+          "mode": "button",
+          "inputs": {
+            "touch": {
+              "output": "/actions/nyaw/in/right_touch"
             }
           }
         },
@@ -63,6 +75,18 @@
           "inputs": {
             "click": {
               "output": "/actions/nyaw/in/menu"
+            },
+            "touch": {
+              "output": "/actions/nyaw/in/middle_touch"
+            }
+          }
+        },
+        {
+          "path": "/user/hand/right/input/a",
+          "mode": "button",
+          "inputs": {
+            "touch": {
+              "output": "/actions/nyaw/in/right_touch"
             }
           }
         },

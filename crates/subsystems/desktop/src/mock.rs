@@ -42,7 +42,25 @@ impl Controller {
             .try_iter()
             .filter_map(|input| match input {
                 Input::Touch(touch) => Some(touch),
-                Input::Frame => None,
+                _ => None,
+            })
+            .collect()
+    }
+    pub fn buttons(&self) -> Vec<(Touch, Button)> {
+        self.input
+            .try_iter()
+            .filter_map(|input| match input {
+                Input::Button(touch, button) => Some((touch, button)),
+                _ => None,
+            })
+            .collect()
+    }
+    pub fn scrolls(&self) -> Vec<(f32, f32, f32, f32)> {
+        self.input
+            .try_iter()
+            .filter_map(|input| match input {
+                Input::Scroll { x, y, dx, dy } => Some((x, y, dx, dy)),
+                _ => None,
             })
             .collect()
     }

@@ -1,4 +1,4 @@
-use super::{Error, Frame, Session, Source, SourceKind, Touch, TouchPhase, Wake};
+use super::{Button, Error, Frame, Session, Source, SourceKind, Touch, TouchPhase, Wake};
 use ::windows::{
     Foundation::{TimeSpan, TypedEventHandler},
     Graphics::{
@@ -7,7 +7,7 @@ use ::windows::{
         SizeInt32,
     },
     Win32::{
-        Foundation::{ERROR_NOT_READY, HMODULE, HWND, LPARAM, POINT, RECT},
+        Foundation::{HMODULE, HWND, LPARAM, POINT, RECT},
         Graphics::{
             Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP},
             Direct3D11::*,
@@ -26,9 +26,8 @@ use ::windows::{
             },
         },
         UI::{
-            Controls::*,
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext},
-            Input::Pointer::*,
+            Input::KeyboardAndMouse::*,
             WindowsAndMessaging::*,
         },
     },
@@ -133,7 +132,7 @@ pub(super) struct Capture {
     ready: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
     source: Source,
-    touch: Option<TouchDevice>,
+    mouse: MouseDevice,
     _apartment: Apartment,
 }
 
@@ -236,7 +235,7 @@ impl Capture {
             ready,
             closed,
             source,
-            touch: None,
+            mouse: MouseDevice::default(),
             _apartment: apartment,
         })
     }
@@ -273,7 +272,7 @@ impl Capture {
         Ok(rect)
     }
 
-    fn activate_touch_target(&mut self, touch: Touch) -> Result<Option<POINT>, Error> {
+    fn activate_target(&mut self, touch: Touch) -> Result<Option<POINT>, Error> {
         let hwnd = HWND(self.source.target as _);
         unsafe {
             if IsIconic(hwnd).as_bool() {
@@ -453,16 +452,15 @@ impl Session for Capture {
     }
 
     fn touch(&mut self, touch: Touch) -> Result<(), Error> {
-        if touch.phase != TouchPhase::Down
-            && !self
-                .touch
-                .as_ref()
-                .is_some_and(|device| device.contacts[touch.id as usize].is_some())
+        self.button(touch, Button::Left)
+    }
+
+    fn button(&mut self, touch: Touch, button: Button) -> Result<(), Error> {
+        let point = if touch.phase == TouchPhase::Down
+            && self.mouse.pressed_by.is_none()
+            && self.source.kind == SourceKind::Window
         {
-            return Ok(());
-        }
-        let point = if touch.phase == TouchPhase::Down && self.source.kind == SourceKind::Window {
-            let Some(point) = self.activate_touch_target(touch)? else {
+            let Some(point) = self.activate_target(touch)? else {
                 // 他の窓への誤入力を避ける。前面化できないクリックだけを捨て、画像配信は続ける。
                 return Ok(());
             };
@@ -470,26 +468,30 @@ impl Session for Capture {
         } else {
             normalized_point(self.bounds()?, touch.x, touch.y)
         };
-        if self.touch.is_none() {
-            self.touch = Some(TouchDevice::new()?);
-        }
-        self.touch
-            .as_mut()
-            .unwrap()
-            .send(touch.id, touch.phase, point)
+        self.mouse.send(touch.id, touch.phase, point, button)
     }
 
-    fn heartbeat(&mut self) -> Result<(), Error> {
-        if let Some(touch) = &mut self.touch {
-            touch.heartbeat()?;
-        }
-        Ok(())
+    fn scroll(&mut self, x: f32, y: f32, dx: f32, dy: f32) -> Result<(), Error> {
+        let point = if self.source.kind == SourceKind::Window {
+            let Some(point) = self.activate_target(Touch {
+                id: 0,
+                phase: TouchPhase::Move,
+                x,
+                y,
+            })?
+            else {
+                return Ok(());
+            };
+            point
+        } else {
+            normalized_point(self.bounds()?, x, y)
+        };
+        self.mouse.scroll(point, dx, dy)
     }
 }
 
 impl Drop for Capture {
     fn drop(&mut self) {
-        self.touch.take();
         let _ = self.session.Close();
         let _ = self.pool.Close();
     }
@@ -514,121 +516,97 @@ fn normalized_point(bounds: RECT, x: f32, y: f32) -> POINT {
     }
 }
 
-struct TouchDevice {
-    device: HSYNTHETICPOINTERDEVICE,
-    contacts: [Option<POINT>; 2],
-    injected: Instant,
+#[derive(Default)]
+struct MouseDevice {
+    // shortcut: Windows のデスクトップはマウス 1 個として操作する。複数指のジェスチャーが必要になったらタッチ注入を併用する。
+    pressed_by: Option<u32>,
+    button: Option<Button>,
 }
-impl TouchDevice {
-    fn new() -> Result<Self, Error> {
-        Ok(Self {
-            device: unsafe { CreateSyntheticPointerDevice(PT_TOUCH, 2, POINTER_FEEDBACK_NONE)? },
-            contacts: [None; 2],
-            injected: Instant::now(),
-        })
+impl MouseDevice {
+    fn button(flag: MOUSE_EVENT_FLAGS) -> Result<(), Error> {
+        let input = INPUT {
+            r#type: INPUT_MOUSE,
+            Anonymous: INPUT_0 {
+                mi: MOUSEINPUT {
+                    dwFlags: flag,
+                    ..Default::default()
+                },
+            },
+        };
+        if unsafe { SendInput(&[input], size_of::<INPUT>() as i32) } != 1 {
+            return Err(Error("desktop mouse input was rejected by Windows".into()));
+        }
+        Ok(())
     }
 
-    fn inject(&mut self, changed: Option<(usize, POINT, POINTER_FLAGS)>) -> Result<(), Error> {
-        let mut pointers = Vec::with_capacity(2);
-        for id in 0..2 {
-            let contact = changed
-                .filter(|c| c.0 == id)
-                .map(|(_, p, f)| (p, f))
-                .or_else(|| {
-                    self.contacts[id].map(|p| {
-                        (
-                            p,
-                            POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
-                        )
-                    })
-                });
-            if let Some((point, flags)) = contact {
-                pointers.push(POINTER_TYPE_INFO {
-                    r#type: PT_TOUCH,
-                    Anonymous: POINTER_TYPE_INFO_0 {
-                        touchInfo: POINTER_TOUCH_INFO {
-                            pointerInfo: POINTER_INFO {
-                                pointerType: PT_TOUCH,
-                                pointerId: id as u32 + 1,
-                                pointerFlags: flags,
-                                ptPixelLocation: point,
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        },
-                    },
-                });
-            }
+    fn flags(button: Button) -> (MOUSE_EVENT_FLAGS, MOUSE_EVENT_FLAGS) {
+        match button {
+            Button::Left => (MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP),
+            Button::Middle => (MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP),
+            Button::Right => (MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP),
         }
-        if !pointers.is_empty() {
-            for attempt in 0..4 {
-                match unsafe { InjectSyntheticPointerInput(self.device, &pointers) } {
-                    Err(e)
-                        if e.code() == ::windows::core::HRESULT::from_win32(ERROR_NOT_READY.0)
-                            && attempt < 3 =>
-                    {
-                        // 同じ時刻の接点を Windows が拒む場合だけ、ワーカーで次の時刻まで待つ。
-                        std::thread::sleep(Duration::from_millis(1));
-                    }
-                    result => {
-                        self.injected = Instant::now();
-                        return result.map_err(Into::into);
-                    }
+    }
+
+    fn send(
+        &mut self,
+        id: u32,
+        phase: TouchPhase,
+        point: POINT,
+        button: Button,
+    ) -> Result<(), Error> {
+        match phase {
+            TouchPhase::Move if self.pressed_by.is_none() || self.pressed_by == Some(id) => {
+                unsafe { SetCursorPos(point.x, point.y)? };
+            }
+            TouchPhase::Down if self.pressed_by.is_none() => {
+                unsafe { SetCursorPos(point.x, point.y)? };
+                Self::button(Self::flags(button).0)?;
+                self.pressed_by = Some(id);
+                self.button = Some(button);
+            }
+            TouchPhase::Up | TouchPhase::Cancel if self.pressed_by == Some(id) => {
+                if phase == TouchPhase::Up {
+                    unsafe { SetCursorPos(point.x, point.y)? };
                 }
+                Self::button(Self::flags(self.button.unwrap_or(Button::Left)).1)?;
+                self.pressed_by = None;
+                self.button = None;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn scroll(&self, point: POINT, dx: f32, dy: f32) -> Result<(), Error> {
+        unsafe { SetCursorPos(point.x, point.y)? };
+        for (flag, delta) in [(MOUSEEVENTF_WHEEL, dy), (MOUSEEVENTF_HWHEEL, dx)] {
+            let amount = (delta * 40.0).round() as i32;
+            if amount == 0 {
+                continue;
+            }
+            let input = INPUT {
+                r#type: INPUT_MOUSE,
+                Anonymous: INPUT_0 {
+                    mi: MOUSEINPUT {
+                        mouseData: amount as u32,
+                        dwFlags: flag,
+                        ..Default::default()
+                    },
+                },
+            };
+            if unsafe { SendInput(&[input], size_of::<INPUT>() as i32) } != 1 {
+                return Err(Error(
+                    "desktop mouse wheel input was rejected by Windows".into(),
+                ));
             }
         }
         Ok(())
-    }
-
-    fn send(&mut self, id: u32, phase: TouchPhase, point: POINT) -> Result<(), Error> {
-        let id = id as usize;
-        let active = self.contacts[id].is_some();
-        if phase == TouchPhase::Down && active {
-            return Err(Error("duplicate touch down".into()));
-        }
-        if phase != TouchPhase::Down && !active {
-            return Ok(());
-        }
-        if phase == TouchPhase::Up && self.contacts[id] != Some(point) {
-            self.send(id as u32, TouchPhase::Move, point)?;
-        }
-        let flags = match phase {
-            TouchPhase::Down => POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
-            TouchPhase::Move => POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT,
-            TouchPhase::Up => POINTER_FLAG_UP,
-            TouchPhase::Cancel => POINTER_FLAG_UP | POINTER_FLAG_CANCELED,
-        };
-        let point = if phase == TouchPhase::Cancel {
-            self.contacts[id].unwrap()
-        } else {
-            point
-        };
-        self.inject(Some((id, point, flags)))?;
-        self.contacts[id] = if matches!(phase, TouchPhase::Up | TouchPhase::Cancel) {
-            None
-        } else {
-            Some(point)
-        };
-        Ok(())
-    }
-
-    /// 押したままの接点を維持する。移動の直後に重ねると同じ時刻として拒まれるので、注入が途絶えた時だけ送る。
-    fn heartbeat(&mut self) -> Result<(), Error> {
-        if self.injected.elapsed() < Duration::from_millis(8) {
-            return Ok(());
-        }
-        self.inject(None)
     }
 }
-impl Drop for TouchDevice {
+impl Drop for MouseDevice {
     fn drop(&mut self) {
-        for id in 0..2 {
-            if let Some(point) = self.contacts[id] {
-                let _ = self.send(id as u32, TouchPhase::Cancel, point);
-            }
-        }
-        unsafe {
-            DestroySyntheticPointerDevice(self.device);
+        if let Some(button) = self.button {
+            let _ = Self::button(Self::flags(button).1);
         }
     }
 }

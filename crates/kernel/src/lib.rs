@@ -251,6 +251,13 @@ impl<B: VrBackend> Kernel<B> {
 
     /// 前の段階 `prev` から、距離で次の段階を決める。境目の前後で行き来しないよう、下げる側は閾値を縮める。
     fn lod_for(&self, id: PanelId, prev: Option<u8>) -> u8 {
+        if self
+            .panel(id)
+            .pointer
+            .is_some_and(|(_, part)| part == Pointer::Tooltip)
+        {
+            return 0;
+        }
         let near = match self.config.lod_quality {
             LodQuality::Off => return 0,
             LodQuality::Low => 1.0,
@@ -428,7 +435,8 @@ impl<B: VrBackend> Kernel<B> {
                 self.save_number("laser_length", l);
             }
             PanelCommand::Parent(parent) => {
-                self.overlay.set_parent(&mut self.subsystems.backend, panel, parent)
+                self.overlay
+                    .set_parent(&mut self.subsystems.backend, panel, parent)
             }
             PanelCommand::NavBar(owner) => self.overlay.set_nav_bar(panel, owner),
             PanelCommand::Place(offset) => {
@@ -551,7 +559,9 @@ mod tests {
     /// 基準の密度（[`LOD_PX_PER_M`]）のパネルを 1 枚。
     fn lod_kernel() -> (Kernel<MockBackend>, PanelId) {
         let mut k = Kernel::with_backend(MockBackend::default(), Config::default());
-        let p = k.add_panel("t", Pose::IDENTITY, Vec2::ONE, (1000, 1000)).unwrap();
+        let p = k
+            .add_panel("t", Pose::IDENTITY, Vec2::ONE, (1000, 1000))
+            .unwrap();
         (k, p)
     }
 
@@ -568,6 +578,15 @@ mod tests {
         k.tick();
         assert_eq!(k.panel_lod(p), 2);
         assert_eq!(k.panel_lod(big), 0, "3m / 4 = 0.75m 相当");
+    }
+
+    #[test]
+    fn tooltip_keeps_full_resolution_when_far_from_the_head() {
+        let (mut k, p) = lod_kernel();
+        k.apply(p, PanelCommand::Pointer(vr::Hand::Right, Pointer::Tooltip));
+        k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 100.0;
+        k.tick();
+        assert_eq!(k.panel_lod(p), 0);
     }
 
     #[test]

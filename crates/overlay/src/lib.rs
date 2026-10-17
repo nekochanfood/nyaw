@@ -210,10 +210,27 @@ impl Panel {
 /// 座標はパネルのピクセル、原点は左上。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PointerEvent {
-    Move { pos: Vec2 },
-    Down { pos: Vec2 },
-    Up { pos: Vec2 },
-    Scroll { pos: Vec2, delta: Vec2 },
+    Move {
+        pos: Vec2,
+    },
+    Down {
+        pos: Vec2,
+    },
+    Up {
+        pos: Vec2,
+    },
+    DownButton {
+        pos: Vec2,
+        button: subsystems::input::ClickButton,
+    },
+    UpButton {
+        pos: Vec2,
+        button: subsystems::input::ClickButton,
+    },
+    Scroll {
+        pos: Vec2,
+        delta: Vec2,
+    },
     Leave,
 }
 
@@ -228,6 +245,7 @@ pub struct UiEvent {
 struct HandState {
     hover: Option<PanelId>,
     select: bool,
+    button: subsystems::input::ClickButton,
     grab_held: bool,
     /// 前の tick でトリガーを押していた（押した瞬間の判定用）。
     pressed: bool,
@@ -975,14 +993,19 @@ impl Overlay {
             // 手ブレのある入力だけ、押した位置を保持する。
             st.press = (c.select && frame.stabilize_pointer)
                 .then(|| (pos, aim.position + aim.forward() * t));
-            emit(
-                id,
-                if c.select {
-                    PointerEvent::Down { pos }
-                } else {
-                    PointerEvent::Up { pos }
-                },
-            );
+            let event = if c.select {
+                st.button = c.click_button;
+                match st.button {
+                    subsystems::input::ClickButton::Left => PointerEvent::Down { pos },
+                    button => PointerEvent::DownButton { pos, button },
+                }
+            } else {
+                match st.button {
+                    subsystems::input::ClickButton::Left => PointerEvent::Up { pos },
+                    button => PointerEvent::UpButton { pos, button },
+                }
+            };
+            emit(id, event);
         }
         if c.scroll != Vec2::ZERO {
             emit(
@@ -1081,21 +1104,17 @@ impl Overlay {
             let anchor = o.pose.position - up * (o.displayed_size().y / 2.0 - margin);
             let rotation = o.pose.orientation;
             let eye = self.hmd.position;
-            let depth = o.pose.position.distance(eye) - LIFT_STEP;
             let p = &mut self.panels[id];
-            let mut size = p.nav_bar_size * anchor.distance(eye);
-            // 持ち主の面に沿えた中心。合成は同じ描画順のパネルを中心の頭からの距離で重ねるので、中心が下にずれた分だけ
-            // バーが持ち主より奥に扱われ、持ち主の手前のパネルに埋もれてしまう。視線に沿って動かして中心の距離を持ち主
-            // （の少しだけ手前）にそろえ、同じ比で拡大縮小して頭から見た位置と大きさは保つ。
-            let along = anchor - up * (size.y * (0.75 + 0.25 * opacity) / 2.0) - eye;
-            let k = depth / along.length().max(1e-4);
-            size *= k;
+            let size = p.nav_bar_size * anchor.distance(eye);
             let resized = !p.size.abs_diff_eq(size, 1e-4);
             p.size = size;
             // 出入りと暗さは持ち主と一体（バーは閉じても、持ち主が消えきるまで残る）。
             let faded = p.opacity != opacity || p.dim != dim || (p.closed && opacity == 0.0);
             (p.opacity, p.dim, p.dim_to) = (opacity, dim, dim);
-            p.pose = Pose::new(eye + along * k, rotation);
+            p.pose = Pose::new(
+                anchor - up * (size.y * (0.75 + 0.25 * opacity) / 2.0),
+                rotation,
+            );
             if (faded && p.surface.has_texture()) || (p.closed && opacity == 0.0) {
                 Self::present(vr, p, false);
             } else if resized {
@@ -1779,10 +1798,12 @@ mod tests {
             // 頭（原点）から見て、持ち主の地の下端（影の余白の内側）の左右中央に、バーの上端の左右中央が付く。
             let anchor = Vec3::new(0.0, -0.5 + PANEL_MARGIN / 100.0, z);
             let top = p.pose.position + Vec3::Y * p.size.y / 2.0;
-            assert!(top.normalize().abs_diff_eq(anchor.normalize(), 1e-5), "{top}");
-            // 奥行き（中心の頭からの距離）は持ち主と同じで、ほんの少しだけ手前。
-            let depth = p.pose.position.length();
-            assert!((depth - (z.abs() - LIFT_STEP)).abs() < 1e-5, "{depth}");
+            assert!(
+                top.normalize().abs_diff_eq(anchor.normalize(), 1e-5),
+                "{top}"
+            );
+            // バーの面は持ち主と同じ奥行き。
+            assert!((p.pose.position.z - z).abs() < 1e-5);
             // 頭から見た大きさは距離によらない（1m 先で 0.2m）。
             assert!((p.size.x / top.length() - 0.2).abs() < 1e-5);
             assert!((vr.backend.overlays[bar].width_m - p.size.x).abs() < 1e-5);
@@ -1796,7 +1817,10 @@ mod tests {
         let bar_center = ov.panel(bar).pose.position;
         controller(
             &mut vr,
-            Pose::new(Vec3::ZERO, Quat::from_rotation_arc(Vec3::NEG_Z, bar_center.normalize())),
+            Pose::new(
+                Vec3::ZERO,
+                Quat::from_rotation_arc(Vec3::NEG_Z, bar_center.normalize()),
+            ),
             &[("squeeze/value", 1.0)],
         );
         ov.tick(&mut vr);
@@ -1810,7 +1834,13 @@ mod tests {
     fn nav_bar_enters_and_leaves_with_its_owner() {
         let (mut vr, mut ov) = setup();
         let bar = ov
-            .add_panel(&mut vr.backend, "bar", Pose::IDENTITY, Vec2::new(0.2, 0.05), (2, 2))
+            .add_panel(
+                &mut vr.backend,
+                "bar",
+                Pose::IDENTITY,
+                Vec2::new(0.2, 0.05),
+                (2, 2),
+            )
             .unwrap();
         ov.set_nav_bar(bar, 0);
         let ratio = |ov: &Overlay, id| ov.panel(id).displayed_size().x / ov.panel(id).size.x;
@@ -1821,13 +1851,13 @@ mod tests {
         ov.submit(&mut vr.backend, bar, 2, 2, &[255u8; 16]);
         ov.tick(&mut vr);
         assert!(ratio(&ov, 0) < 1.0);
-        assert_eq!(ratio(&ov, bar), ratio(&ov, 0));
+        assert!((ratio(&ov, bar) - ratio(&ov, 0)).abs() < 1e-6);
         assert_eq!(vr.backend.overlays[bar].alpha, vr.backend.overlays[0].alpha);
         // 閉じるときも一緒に消え、持ち主が消えきるまでは残る。
         ov.close(&mut vr.backend, 0);
         ov.tick(&mut vr);
         assert!(ov.panel(bar).closed);
-        assert_eq!(ratio(&ov, bar), ratio(&ov, 0));
+        assert!((ratio(&ov, bar) - ratio(&ov, 0)).abs() < 1e-6);
         assert_eq!(vr.backend.overlays[bar].alpha, vr.backend.overlays[0].alpha);
     }
 

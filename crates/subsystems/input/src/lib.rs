@@ -4,6 +4,14 @@
 
 use vr::{Hand, Pose, RawController, Vec2};
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum ClickButton {
+    #[default]
+    Left,
+    Middle,
+    Right,
+}
+
 /// オーバーレイ処理がどのコントローラからも必要とする状態。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ControllerState {
@@ -12,6 +20,7 @@ pub struct ControllerState {
     pub aim: Pose,
     /// UI 要素のクリック・押下。
     pub select: bool,
+    pub click_button: ClickButton,
     /// select の入力の強さ（0〜1。トリガーの引き具合）。押下の判定前の引き始めを知るため。
     pub trigger: f32,
     /// パネルを掴んで動かす。
@@ -129,6 +138,21 @@ pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerSta
         hand: raw.hand,
         aim: raw.aim,
         select: held(trigger, was(|c| c.select)),
+        click_button: if p.id == "oculus/touch_controller" {
+            let (right, middle) = match raw.hand {
+                Hand::Left => ("x/touch", "y/touch"),
+                Hand::Right => ("a/touch", "b/touch"),
+            };
+            if raw.input(right).unwrap_or(0.0) > 0.5 {
+                ClickButton::Right
+            } else if raw.input(middle).unwrap_or(0.0) > 0.5 {
+                ClickButton::Middle
+            } else {
+                ClickButton::Left
+            }
+        } else {
+            ClickButton::Left
+        },
         trigger,
         grab: held(strongest(raw, p.grab), was(|c| c.grab)),
         menu: held(strongest(raw, p.menu), was(|c| c.menu)),
@@ -219,5 +243,24 @@ mod tests {
             &[("trigger/value", 0.0), ("select/click", 1.0)],
         );
         assert!(map(&r, None).select);
+    }
+
+    #[test]
+    fn touch_click_modifiers_are_scoped_to_their_hand() {
+        for (hand, own_right, own_middle, other_right, other_middle) in [
+            (Hand::Left, "x/touch", "y/touch", "a/touch", "b/touch"),
+            (Hand::Right, "a/touch", "b/touch", "x/touch", "y/touch"),
+        ] {
+            let mut r = raw(
+                "oculus/touch_controller",
+                &[(other_right, 1.0), (other_middle, 1.0)],
+            );
+            r.hand = hand;
+            assert_eq!(map(&r, None).click_button, ClickButton::Left);
+            r.inputs.push((own_middle.into(), 1.0));
+            assert_eq!(map(&r, None).click_button, ClickButton::Middle);
+            r.inputs.push((own_right.into(), 1.0));
+            assert_eq!(map(&r, None).click_button, ClickButton::Right);
+        }
     }
 }

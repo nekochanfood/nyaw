@@ -222,6 +222,7 @@ impl Database {
             state,
             components: Components::default(),
             held: Vec::new(),
+            shift_once: false,
             keys,
             compose: self.compose.clone(),
             compose_state: self.compose.create_state(),
@@ -258,6 +259,7 @@ pub struct Keyboard {
     state: State,
     components: Components,
     held: Vec<(Keycode, bool)>,
+    shift_once: bool,
     keys: BTreeMap<String, Keycode>,
     compose: Arc<kbvm::xkb::compose::ComposeTable>,
     compose_state: kbvm::xkb::compose::State,
@@ -376,11 +378,7 @@ impl Keyboard {
 
     pub fn is_toggle(&self, code: u16) -> bool {
         self.symbols(code).iter().any(|s| {
-            s.is_modifier()
-                || matches!(
-                    s.name(),
-                    Some("Tab" | "ISO_Left_Tab" | "Num_Lock" | "Scroll_Lock" | "Multi_key")
-                )
+            s.is_modifier() || matches!(s.name(), Some("Num_Lock" | "Scroll_Lock" | "Multi_key"))
         })
     }
 
@@ -435,9 +433,29 @@ impl Keyboard {
         stroke
     }
 
-    /// トグルは解除まで維持する。単独入力は on → off、組み合わせに使った解除は入力しない。
+    /// 修飾キーは組み合わせに使う。Shift の一度押しは次のキーだけ、二度押しは固定。
+    /// 単独入力は on → off、組み合わせに使った解除は入力しない。
     pub fn click(&mut self, code: u16) -> Option<Stroke> {
         let key = Keycode::from_evdev(u32::from(code));
+        let shift = self
+            .symbols(code)
+            .iter()
+            .any(|s| matches!(s.name(), Some("Shift_L" | "Shift_R")));
+        if shift
+            && self.held.iter().any(|(held, _)| {
+                matches!(
+                    self.symbol_name(held.to_evdev() as u16),
+                    Some("Shift_L" | "Shift_R")
+                )
+            })
+        {
+            if self.shift_once {
+                self.shift_once = false;
+            } else {
+                self.release_toggles(true);
+            }
+            return None;
+        }
         if let Some(index) = self.held.iter().position(|(k, _)| *k == key) {
             let (_, used) = self.held.remove(index);
             let stroke = (!used).then(|| self.stroke(code));
@@ -460,6 +478,9 @@ impl Keyboard {
         if self.is_toggle(code) {
             self.event(key, Direction::Down);
             self.held.push((key, false));
+            if shift {
+                self.shift_once = true;
+            }
             None
         } else {
             let stroke = self.stroke(code);
@@ -468,8 +489,33 @@ impl Keyboard {
             }
             self.event(key, Direction::Down);
             self.event(key, Direction::Up);
+            if stroke.shortcut() {
+                self.release_toggles(false);
+            } else if self.shift_once {
+                self.release_toggles(true);
+            }
             Some(stroke)
         }
+    }
+
+    fn release_toggles(&mut self, shift_only: bool) {
+        let mut retained = Vec::new();
+        for (key, used) in std::mem::take(&mut self.held) {
+            let code = key.to_evdev() as u16;
+            let name = self.symbol_name(code);
+            let release = if shift_only {
+                matches!(name, Some("Shift_L" | "Shift_R"))
+            } else {
+                !matches!(name, Some("Caps_Lock" | "Num_Lock" | "Scroll_Lock"))
+            };
+            if release {
+                self.event(key, Direction::Up);
+            } else {
+                retained.push((key, used));
+            }
+        }
+        self.held = retained;
+        self.shift_once = false;
     }
 
     pub fn reset(&mut self) {
@@ -477,6 +523,7 @@ impl Keyboard {
         self.state = self.machine.create_state();
         self.components = Components::default();
         self.held.clear();
+        self.shift_once = false;
         self.compose_state = self.compose.create_state();
         self.system_locks = (false, false);
         self.sync_locks(locks.0, locks.1);
@@ -600,6 +647,11 @@ mod tests {
         assert!(keyboard.click(shift).is_none());
         assert_eq!(keyboard.label(a), "A");
         assert_eq!(keyboard.click(a).unwrap().text, "A");
+        assert_eq!(keyboard.label(a), "a");
+        assert!(keyboard.click(shift).is_none());
+        assert!(keyboard.click(shift).is_none());
+        assert_eq!(keyboard.click(a).unwrap().text, "A");
+        assert!(keyboard.is_on(shift));
         assert!(keyboard.click(shift).is_none());
         assert_eq!(keyboard.label(a), "a");
         keyboard.click(ctrl);
@@ -607,9 +659,10 @@ mod tests {
         let stroke = keyboard.click(a).unwrap();
         assert_eq!(stroke.held, [ctrl, shift]);
         assert!(stroke.control && stroke.shift && stroke.text.is_empty());
+        assert!(!keyboard.is_on(ctrl) && !keyboard.is_on(shift));
         keyboard.reset();
-        assert!(keyboard.click(tab).is_none());
         assert_eq!(keyboard.click(tab).unwrap().code, tab);
+        assert!(!keyboard.is_on(tab));
         assert!(keyboard.click(58).is_none());
         assert_eq!(keyboard.label(a), "A");
         keyboard.click(58);

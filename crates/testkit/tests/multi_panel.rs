@@ -92,7 +92,7 @@ fn hands_keep_independent_pressed_state_on_same_panel() {
     }
     let moves: Vec<_> = ui::pump(&mut kernel, &mut bridges)
         .into_iter()
-        .filter_map(|(_, input)| match input {
+        .filter_map(|(_, _, input)| match input {
             PlatformInput::MouseMove(e) => Some(e.pressed_button),
             _ => None,
         })

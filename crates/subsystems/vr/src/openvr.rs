@@ -18,7 +18,7 @@ use input::{HandActions, Input};
 
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
-    Device, Frame, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError,
+    Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError,
 };
 
 pub(crate) fn available() -> bool {
@@ -360,7 +360,7 @@ impl VrBackend for OpenVrBackend {
                     profile: profile.into(),
                     // バインディングの `/pose/tip`（SteamVR が機種ごとに定義するレーザーの出口）。
                     aim,
-                    inputs: inputs(profile, actions),
+                    inputs: inputs(profile, hand, actions),
                 });
             }
         }
@@ -561,7 +561,7 @@ fn profile(controller_type: &str) -> &'static str {
 }
 
 /// SteamVR Input のアクションを、入力層が機種ごとに引く OpenXR の入力名で表す。
-fn inputs(profile: &str, a: HandActions) -> Vec<(String, f32)> {
+fn inputs(profile: &str, hand: Hand, a: HandActions) -> Vec<(String, f32)> {
     let on = |b: bool| if b { 1.0 } else { 0.0 };
     // Index のメニューは B ボタン。他の機種の表では menu/click で引く。
     let menu = if profile == "valve/index_controller" {
@@ -569,11 +569,17 @@ fn inputs(profile: &str, a: HandActions) -> Vec<(String, f32)> {
     } else {
         "menu/click"
     };
+    let (middle, right) = match hand {
+        Hand::Left => ("y/touch", "x/touch"),
+        Hand::Right => ("b/touch", "a/touch"),
+    };
     [
         ("select/click", on(a.select)),
         ("squeeze/value", on(a.grab)),
         ("squeeze/click", on(a.grab)),
         (menu, on(a.menu)),
+        (middle, on(a.middle_touch)),
+        (right, on(a.right_touch)),
         ("thumbstick/x", a.scroll.x),
         ("thumbstick/y", a.scroll.y),
         ("trackpad/x", a.scroll.x),
@@ -645,16 +651,24 @@ mod tests {
             select: true,
             grab: true,
             menu: true,
+            middle_touch: true,
+            right_touch: true,
             scroll: crate::Vec2::new(0.5, -1.0),
         };
-        let v = inputs("valve/index_controller", a);
+        let v = inputs("valve/index_controller", Hand::Right, a);
         assert_eq!(value(&v, "select/click"), Some(1.0));
         assert_eq!(value(&v, "squeeze/value"), Some(1.0));
         assert_eq!(value(&v, "b/click"), Some(1.0));
         assert_eq!(value(&v, "thumbstick/y"), Some(-1.0));
-        let v = inputs("htc/vive_controller", a);
+        let v = inputs("htc/vive_controller", Hand::Left, a);
         assert_eq!(value(&v, "menu/click"), Some(1.0));
         assert_eq!(value(&v, "squeeze/click"), Some(1.0));
         assert_eq!(value(&v, "trackpad/x"), Some(0.5));
+        let left = inputs("oculus/touch_controller", Hand::Left, a);
+        let right = inputs("oculus/touch_controller", Hand::Right, a);
+        assert_eq!(value(&left, "x/touch"), Some(1.0));
+        assert_eq!(value(&left, "a/touch"), None);
+        assert_eq!(value(&right, "b/touch"), Some(1.0));
+        assert_eq!(value(&right, "y/touch"), None);
     }
 }

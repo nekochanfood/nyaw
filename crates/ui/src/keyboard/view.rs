@@ -83,6 +83,8 @@ pub struct KeyboardView {
     request: mpsc::Sender<(u64, Layout)>,
     loaded: mpsc::Receiver<Loaded>,
     picker: bool,
+    repeating: Option<(u16, KeyboardInput, u64)>,
+    repeat_id: u64,
 }
 
 impl KeyboardView {
@@ -154,6 +156,8 @@ impl KeyboardView {
             request,
             loaded,
             picker: false,
+            repeating: None,
+            repeat_id: 0,
         }
     }
 
@@ -232,25 +236,61 @@ impl KeyboardView {
         }
     }
 
-    pub fn press(&mut self, code: u16, cx: &mut App) {
+    pub fn press(&mut self, code: u16, cx: &mut App) -> Option<KeyboardInput> {
         if self.loading
             || self.error.is_some()
             || (self.automatic && self.settings.layout.is_none())
         {
-            return;
+            return None;
         }
         if let Some(keyboard) = &mut self.keyboard
             && let Some(stroke) = keyboard.click(code)
         {
-            send_key(
-                self.target,
-                KeyboardInput {
-                    stroke,
-                    layout: keyboard.layout.clone(),
-                },
-                cx,
-            );
+            let input = KeyboardInput {
+                stroke,
+                layout: keyboard.layout.clone(),
+            };
+            send_key(self.target, input.clone(), cx);
+            return Some(input);
         }
+        None
+    }
+
+    fn press_down(&mut self, code: u16, cx: &mut Context<Self>) {
+        let repeat = self.keyboard.as_ref().is_some_and(|k| !k.is_toggle(code));
+        let input = self.press(code, cx);
+        cx.notify();
+        let Some(input) = input.filter(|i| repeat && !i.stroke.shortcut() && !i.stroke.composing)
+        else {
+            return;
+        };
+        self.repeat_id = self.repeat_id.wrapping_add(1);
+        let repeat_id = self.repeat_id;
+        self.repeating = Some((code, input, repeat_id));
+        cx.spawn(async move |this, cx| {
+            let mut delay = Duration::from_millis(500);
+            loop {
+                cx.background_executor().timer(delay).await;
+                if !this
+                    .update(cx, |this, cx| {
+                        let Some((_, input, _)) = this
+                            .repeating
+                            .as_ref()
+                            .filter(|(key, _, id)| *key == code && *id == repeat_id)
+                        else {
+                            return false;
+                        };
+                        send_key(this.target, input.clone(), cx);
+                        true
+                    })
+                    .unwrap_or(false)
+                {
+                    break;
+                }
+                delay = Duration::from_millis(50);
+            }
+        })
+        .detach();
     }
 }
 
@@ -474,9 +514,15 @@ impl Render for KeyboardView {
                     .top(px(key.y * unit + gap / 2.))
                     .w(px(key.width * unit - gap))
                     .h(px(key.height * unit - gap))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.press(code, cx);
-                        cx.notify();
+                    .on_press(cx.listener(move |this, _, _, cx| this.press_down(code, cx)))
+                    .on_release(cx.listener(move |this, _, _, _| {
+                        if this
+                            .repeating
+                            .as_ref()
+                            .is_some_and(|(key, _, _)| *key == code)
+                        {
+                            this.repeating = None;
+                        }
                     }));
                     if let Some((_, tooltip)) = glyph {
                         button.tooltip(i18n::t(cx, tooltip))
@@ -509,6 +555,7 @@ impl Render for KeyboardView {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use std::{cell::Cell, rc::Rc};
 
     fn ready(db: &Database, layout: &str, kind: KeyboardType) -> KeyboardView {
         let layout = Layout::new(layout, "");
@@ -530,6 +577,8 @@ mod tests {
             request,
             loaded,
             picker: false,
+            repeating: None,
+            repeat_id: 0,
         }
     }
 
@@ -662,5 +711,58 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[gpui::test]
+    fn holding_a_letter_starts_and_releasing_it_stops_repeat(cx: &mut TestAppContext) {
+        let db = Database::load().unwrap();
+        let (view, cx) = cx.add_window_view(|_, _| ready(&db, "us", KeyboardType::Compact));
+        let sent = Rc::new(Cell::new(0));
+        let count = sent.clone();
+        cx.update(|_, cx| {
+            crate::keyboard::register_input(
+                0,
+                move |_, _| {
+                    count.set(count.get() + 1);
+                    Ok(())
+                },
+                cx,
+            )
+        });
+        cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
+        cx.run_until_parked();
+        let at = cx.debug_bounds("key-AC01").unwrap().center();
+        cx.simulate_mouse_down(at, gpui::MouseButton::Left, gpui::Modifiers::none());
+        assert_eq!(
+            view.read_with(cx, |view, _| view
+                .repeating
+                .as_ref()
+                .map(|(_, input, _)| input.stroke.text.clone())),
+            Some("a".into())
+        );
+        cx.run_until_parked();
+        assert_eq!(sent.get(), 1);
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        cx.simulate_mouse_up(at, gpui::MouseButton::Left, gpui::Modifiers::none());
+        assert!(view.read_with(cx, |view, _| view.repeating.is_none()));
+        cx.simulate_mouse_down(at, gpui::MouseButton::Left, gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(sent.get(), 2);
+        cx.executor().advance_clock(Duration::from_millis(400));
+        cx.run_until_parked();
+        assert_eq!(sent.get(), 2, "the previous hold must not repeat");
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        assert_eq!(sent.get(), 3, "the new hold should repeat");
+        cx.simulate_mouse_up(
+            at + gpui::point(px(100.), px(0.)),
+            gpui::MouseButton::Left,
+            gpui::Modifiers::none(),
+        );
+        assert!(view.read_with(cx, |view, _| view.repeating.is_none()));
+        cx.executor().advance_clock(Duration::from_millis(100));
+        cx.run_until_parked();
+        assert_eq!(sent.get(), 3);
     }
 }

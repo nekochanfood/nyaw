@@ -2,14 +2,16 @@
 use crate::{Theme, font_size};
 use gpui::{
     App, Bounds, ClickEvent, ContentMask, Div, InteractiveElement, Interactivity, IntoElement,
-    MouseButton, PathBuilder, Pixels, Point, RenderOnce, SharedString, Stateful,
-    StatefulInteractiveElement, StyleRefinement, Styled, Window, canvas, div, fill, point,
-    prelude::*, px, rgba, size,
+    MouseButton, MouseDownEvent, MouseUpEvent, PathBuilder, Pixels, Point, RenderOnce,
+    SharedString, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Window, canvas,
+    div, fill, point, prelude::*, px, rgba, size,
 };
-use std::time::Instant;
+use std::{rc::Rc, time::Instant};
 
 type Position = (f32, f32);
 type Click = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+type Press = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App)>;
+type Release = Rc<dyn Fn(&MouseUpEvent, &mut Window, &mut App)>;
 
 #[derive(Clone, Copy, Default)]
 struct State {
@@ -91,6 +93,8 @@ pub struct ShapedButton {
     ink: u32,
     selected: bool,
     click: Option<Click>,
+    press: Option<Press>,
+    release: Option<Release>,
     tooltip: Option<SharedString>,
     content: Option<gpui::AnyElement>,
 }
@@ -121,6 +125,8 @@ pub fn shaped_button(
         ink: theme.neutral_text,
         selected: false,
         click: None,
+        press: None,
+        release: None,
         tooltip: None,
         content: None,
     }
@@ -136,6 +142,20 @@ impl ShapedButton {
         click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.click = Some(Box::new(click));
+        self
+    }
+    pub fn on_press(
+        mut self,
+        press: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.press = Some(Box::new(press));
+        self
+    }
+    pub fn on_release(
+        mut self,
+        release: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.release = Some(Rc::new(release));
         self
     }
     pub fn content(mut self, content: impl IntoElement) -> Self {
@@ -279,6 +299,7 @@ impl RenderOnce for ShapedButton {
         });
         let press = state.clone();
         let outline = self.outline.clone();
+        let on_press = self.press;
         base = base.on_mouse_down(MouseButton::Left, move |event, window, cx| {
             let at = event.position - press.read(cx).bounds.origin;
             let pressed = rounded_contains(&outline, radius, (at.x.into(), at.y.into()));
@@ -289,16 +310,27 @@ impl RenderOnce for ShapedButton {
                 }
             });
             window.refresh();
+            if pressed && let Some(on_press) = &on_press {
+                on_press(event, window, cx);
+            }
         });
         let up = state.clone();
-        base = base.on_mouse_up(MouseButton::Left, move |_, window, cx| {
+        let on_release = self.release.clone();
+        base = base.on_mouse_up(MouseButton::Left, move |event, window, cx| {
             up.update(cx, |s, _| s.pressed = false);
             window.refresh();
+            if let Some(on_release) = &on_release {
+                on_release(event, window, cx);
+            }
         });
         let up_out = state.clone();
-        base = base.on_mouse_up_out(MouseButton::Left, move |_, window, cx| {
+        let on_release_out = self.release;
+        base = base.on_mouse_up_out(MouseButton::Left, move |event, window, cx| {
             up_out.update(cx, |s, _| s.pressed = false);
             window.refresh();
+            if let Some(on_release) = &on_release_out {
+                on_release(event, window, cx);
+            }
         });
         if let Some(click) = self.click {
             let outline = self.outline;
@@ -316,6 +348,7 @@ impl RenderOnce for ShapedButton {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{cell::Cell, rc::Rc};
 
     struct Sample;
     impl Render for Sample {
@@ -365,6 +398,38 @@ mod tests {
         );
         cx.run_until_parked();
         assert!(cx.update(|_, cx| !cx.global::<crate::Motion>().animating.is_empty()));
+    }
+
+    #[gpui::test]
+    fn press_is_sent_even_when_pointer_releases_outside(cx: &mut gpui::TestAppContext) {
+        struct Key(Rc<Cell<usize>>);
+        impl Render for Key {
+            fn render(&mut self, _: &mut Window, _: &mut gpui::Context<Self>) -> impl IntoElement {
+                let presses = self.0.clone();
+                div().child(
+                    shaped_button(
+                        &Theme::DARK,
+                        "key",
+                        vec![(0., 0.), (80., 0.), (80., 80.), (0., 80.)],
+                        8.,
+                    )
+                    .w(px(80.))
+                    .h(px(80.))
+                    .on_press(move |_, _, _| presses.set(presses.get() + 1)),
+                )
+            }
+        }
+        let presses = Rc::new(Cell::new(0));
+        let (_, cx) = cx.add_window_view(|_, _| Key(presses.clone()));
+        cx.run_until_parked();
+        let at = cx.debug_bounds("key").unwrap().center();
+        cx.simulate_mouse_down(at, MouseButton::Left, gpui::Modifiers::none());
+        cx.simulate_mouse_up(
+            at + point(px(100.), px(0.)),
+            MouseButton::Left,
+            gpui::Modifiers::none(),
+        );
+        assert_eq!(presses.get(), 1);
     }
     #[test]
     fn corners_and_notch_use_the_same_rounded_outline() {

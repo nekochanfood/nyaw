@@ -44,6 +44,10 @@ const BINDINGS: &[(&str, &[&str])] = &[
             "menu/click",
             "y/click",
             "b/click",
+            "x/touch",
+            "y/touch",
+            "a/touch",
+            "b/touch",
             "thumbstick/x",
             "thumbstick/y",
         ],
@@ -63,8 +67,13 @@ const BINDINGS: &[(&str, &[&str])] = &[
 /// その入力がその手のコントローラにあるか。左右で違うのは Touch のボタンだけ。
 fn on_hand(profile: &str, input: &str, hand: Hand) -> bool {
     match (profile, input) {
-        ("oculus/touch_controller", "menu/click" | "x/click" | "y/click") => hand == Hand::Left,
-        ("oculus/touch_controller", "a/click" | "b/click") => hand == Hand::Right,
+        (
+            "oculus/touch_controller",
+            "menu/click" | "x/click" | "y/click" | "x/touch" | "y/touch",
+        ) => hand == Hand::Left,
+        ("oculus/touch_controller", "a/click" | "b/click" | "a/touch" | "b/touch") => {
+            hand == Hand::Right
+        }
         _ => true,
     }
 }
@@ -123,6 +132,7 @@ pub(crate) struct OpenXrBackend {
     /// ロールごとのトラッカーの空間。拡張が無いランタイムでは空。
     tracker_spaces: Vec<(&'static str, xr::Space)>,
     actions: Vec<(String, xr::Action<f32>)>,
+    button_actions: Vec<(String, xr::Action<bool>)>,
     /// レーザーの姿勢。`aim_spaces` の元なので持っておく。
     _aim: xr::Action<xr::Posef>,
     _tracker: Option<xr::Action<xr::Posef>>,
@@ -218,7 +228,19 @@ impl OpenXrBackend {
             .create_action::<xr::Posef>("aim", "aim", &hand_paths)
             .map_err(xr_err("xrCreateAction"))?;
         let mut actions: Vec<(String, xr::Action<f32>)> = Vec::new();
+        let mut button_actions: Vec<(String, xr::Action<bool>)> = Vec::new();
         for input in BINDINGS.iter().flat_map(|(_, inputs)| inputs.iter()) {
+            if input.ends_with("/touch") || input.ends_with("/click") {
+                if button_actions.iter().any(|(n, _)| n == input) {
+                    continue;
+                }
+                let name = action_name(input);
+                let action = action_set
+                    .create_action::<bool>(&name, &name, &hand_paths)
+                    .map_err(xr_err("xrCreateAction"))?;
+                button_actions.push((input.to_string(), action));
+                continue;
+            }
             if actions.iter().any(|(n, _)| n == input) {
                 continue;
             }
@@ -236,6 +258,13 @@ impl OpenXrBackend {
                     path(&format!("/user/hand/{side}/input/aim/pose"))?,
                 ));
                 for input in inputs.iter().filter(|i| on_hand(profile, i, hand)) {
+                    if let Some((_, action)) = button_actions.iter().find(|(n, _)| n == input) {
+                        bindings.push(xr::Binding::new(
+                            action,
+                            path(&format!("/user/hand/{side}/input/{input}"))?,
+                        ));
+                        continue;
+                    }
                     let (_, action) = actions.iter().find(|(n, _)| n == input).unwrap();
                     bindings.push(xr::Binding::new(
                         action,
@@ -307,6 +336,7 @@ impl OpenXrBackend {
             aim_spaces,
             tracker_spaces,
             actions,
+            button_actions,
             _aim: aim,
             _tracker: tracker.map(|(a, _)| a),
             action_set,
@@ -481,7 +511,7 @@ impl OpenXrBackend {
             ) {
                 continue;
             }
-            let inputs = self
+            let mut inputs: Vec<(String, f32)> = self
                 .actions
                 .iter()
                 .filter_map(|(name, action)| {
@@ -489,6 +519,12 @@ impl OpenXrBackend {
                     state.is_active.then(|| (name.clone(), state.current_state))
                 })
                 .collect();
+            inputs.extend(self.button_actions.iter().filter_map(|(name, action)| {
+                let state = action.state(&self.session, hand_path).ok()?;
+                state
+                    .is_active
+                    .then(|| (name.clone(), f32::from(state.current_state as u8)))
+            }));
             out.push(RawController {
                 hand,
                 profile,
@@ -915,6 +951,10 @@ mod tests {
         assert!(!on_hand(touch, "menu/click", Hand::Right));
         assert!(on_hand(touch, "b/click", Hand::Right));
         assert!(!on_hand(touch, "b/click", Hand::Left));
+        assert!(on_hand(touch, "x/touch", Hand::Left));
+        assert!(!on_hand(touch, "x/touch", Hand::Right));
+        assert!(on_hand(touch, "a/touch", Hand::Right));
+        assert!(!on_hand(touch, "a/touch", Hand::Left));
         assert!(on_hand("valve/index_controller", "b/click", Hand::Left));
     }
 }

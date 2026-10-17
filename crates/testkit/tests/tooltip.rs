@@ -40,14 +40,32 @@ fn hovered_element_tooltip_goes_to_the_pointing_hand(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn two_hands_keep_different_tooltips_on_the_same_panel(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| TooltipTest::default());
+    kit.hand(Hand::Right).hover("tip-short");
+    kit.hand(Hand::Left).hover("tip-long");
+    assert_eq!(tooltip(&mut kit, Hand::Right).as_deref(), Some("Save"));
+    assert_eq!(
+        tooltip(&mut kit, Hand::Left).as_deref(),
+        Some("Open the settings of this panel")
+    );
+    kit.hand(Hand::Left).hover("tip-short");
+    assert_eq!(tooltip(&mut kit, Hand::Left).as_deref(), Some("Save"));
+    assert_eq!(tooltip(&mut kit, Hand::Right).as_deref(), Some("Save"));
+    kit.hover("no-tip");
+    assert_eq!(tooltip(&mut kit, Hand::Left), None);
+    assert_eq!(tooltip(&mut kit, Hand::Right).as_deref(), Some("Save"));
+}
+
+#[gpui::test]
 fn tooltip_side_follows_the_hand_seen_from_the_head(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| TooltipTest::default());
-    // The hand rests below the head: the laser comes from below, so above.
+    // The tooltip stays on the side from which the laser approaches.
     kit.hover("tip-short");
-    assert_eq!(anchor(&mut kit, Hand::Right), Anchor::Above);
-    // Raised above the head and looking up at the cursor: below.
+    assert_eq!(anchor(&mut kit, Hand::Right), Anchor::Below);
+    // Raise the hand above the head.
     kit.move_hand(Pose::new(Vec3::new(0.2, 0.8, 0.0), Quat::IDENTITY))
         .hover("tip-short");
-    assert_eq!(anchor(&mut kit, Hand::Right), Anchor::Below);
+    assert_eq!(anchor(&mut kit, Hand::Right), Anchor::Above);
     assert_eq!(tooltip(&mut kit, Hand::Right).as_deref(), Some("Save"));
 }

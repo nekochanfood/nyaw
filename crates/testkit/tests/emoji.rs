@@ -14,6 +14,6 @@ fn testing_opens_emoji_screen(cx: &mut TestAppContext) {
     kit.click("emoji-test");
     assert!(!kit.kernel.panel(1).closed);
     // Closed from its navigation bar (opened right after it).
-    kit.select_panel(2).click("nav-close");
+    kit.step().select_panel(2).click("nav-close").step();
     assert!(kit.kernel.panel(1).closed);
 }

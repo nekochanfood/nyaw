@@ -45,8 +45,10 @@ const THEME: Theme = Theme::of(Mode::Dark);
 const fn rgb24(rgba: u32) -> u32 {
     rgba >> 8
 }
-/// パネルの地。どの画面もカード 1 枚なので、カードがそのままパネルになる。
+/// カード 1 枚のパネルで使う地の色。
 pub const PANEL_BG: u32 = rgb24(THEME.card);
+/// Testing パネルのカードの外側にある地の色。
+pub const PANEL_GROUND_BG: u32 = rgb24(THEME.background);
 /// パネルの縁の影の余白。地はこの内側から始まる。
 pub use design::components::PANEL_MARGIN;
 pub const BUTTON_BG: u32 = rgb24(THEME.control);
@@ -159,28 +161,26 @@ fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'stati
 
 fn spawn_dialog_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
-        cx.default_global::<PanelControl>()
-            .spawns
-            .push(PanelSpec::spawn(panel, |id, _, _| DialogTest::new(id)).titled("testing.open.dialog"))
+        cx.default_global::<PanelControl>().spawns.push(
+            PanelSpec::spawn(panel, |id, _, _| DialogTest::new(id)).titled("testing.open.dialog"),
+        )
     }
 }
 
 fn spawn_pointer_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
-        cx.default_global::<PanelControl>()
-            .spawns
-            .push(PanelSpec::spawn(panel, |id, _, _| PointerTest::new(id)).titled("testing.open.pointer"))
+        cx.default_global::<PanelControl>().spawns.push(
+            PanelSpec::spawn(panel, |id, _, _| PointerTest::new(id)).titled("testing.open.pointer"),
+        )
     }
 }
 
 fn spawn_transparent(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
-        cx.default_global::<PanelControl>()
-            .spawns
-            .push(
-                PanelSpec::spawn(panel, |id, _, _| TestingTransparent::new(id))
-                    .titled("testing.open.transparent"),
-            )
+        cx.default_global::<PanelControl>().spawns.push(
+            PanelSpec::spawn(panel, |id, _, _| TestingTransparent::new(id))
+                .titled("testing.open.transparent"),
+        )
     }
 }
 
@@ -200,9 +200,8 @@ fn spawn_view<V: Render>(
 /// design のカタログを隣に開く（Close はこのパネルを閉じる）。
 fn spawn_catalog(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
-        cx.default_global::<PanelControl>()
-            .spawns
-            .push(PanelSpec::spawn(panel, |id, _, cx| {
+        cx.default_global::<PanelControl>().spawns.push(
+            PanelSpec::spawn(panel, |id, _, cx| {
                 // 動きの見本を毎フレーム描く。
                 cx.default_global::<PanelControl>()
                     .panels
@@ -211,7 +210,8 @@ fn spawn_catalog(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) 
                     .live = true;
                 design::catalog::Catalog::default()
             })
-            .titled("testing.open.catalog"))
+            .titled("testing.open.catalog"),
+        )
     }
 }
 
@@ -466,114 +466,140 @@ impl Render for Testing {
             ));
 
         // 隣に開く画面。
-        let open_row = row()
-            .child(
-                button!("spawn-panel", i18n::t(cx, "testing.open.testing"), false)
-                    .on_click(spawn(self.panel)),
-            )
-            .child(
-                button!(
-                    "spawn-transparent",
-                    i18n::t(cx, "testing.open.transparent"),
-                    false
+        let open_row =
+            row()
+                .child(
+                    button!("spawn-panel", i18n::t(cx, "testing.open.testing"), false)
+                        .on_click(spawn(self.panel)),
                 )
-                .on_click(spawn_transparent(self.panel)),
-            )
-            .child(
-                button!("spawn-anim", i18n::t(cx, "testing.open.moving"), false)
-                    .on_click(spawn_view(self.panel, "testing.open.moving", TestingAnim::new)),
-            )
-            .child(
-                button!("spawn-lod", i18n::t(cx, "testing.open.lod"), false)
-                    .on_click(spawn_view(self.panel, "testing.open.lod", |id, _| TestingLod::new(id))),
-            )
-            .child(
-                button!("spawn-font", i18n::t(cx, "testing.open.font"), false)
-                    .on_click(spawn_view(self.panel, "testing.open.font", |id, _| TestingFont::new(id))),
-            )
-            .child(
-                button!("emoji-test", i18n::t(cx, "testing.open.emoji"), false)
-                    .on_click(spawn_view(self.panel, "testing.open.emoji", |id, _| EmojiTest::new(id))),
-            )
-            .child(
-                button!("keyboard-test", i18n::t(cx, "keyboard.title"), false).on_click(
-                    move |_, _, cx| {
-                        cx.default_global::<PanelControl>()
-                            .spawns
-                            .push(KeyboardTest::spec());
-                    },
-                ),
-            )
-            .child(
-                button!(
-                    "spawn-scrollbar",
-                    i18n::t(cx, "testing.open.scrollbar"),
-                    false
+                .child(
+                    button!(
+                        "spawn-transparent",
+                        i18n::t(cx, "testing.open.transparent"),
+                        false
+                    )
+                    .on_click(spawn_transparent(self.panel)),
                 )
-                .on_click(spawn_view(self.panel, "testing.open.scrollbar", |id, _| TestingScrollbar::new(id))),
-            )
-            .child(
-                button!("pointer-test", i18n::t(cx, "testing.open.pointer"), false)
-                    .on_click(spawn_pointer_test(self.panel)),
-            )
-            .child(
-                button!("desktop-test", i18n::t(cx, "desktop.title"), false)
-                    .on_click(spawn_view(self.panel, "desktop.title", |id, _| DesktopTest::new(id))),
-            )
-            .child(
-                button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false)
-                    .on_click(spawn_view(self.panel, "testing.open.laser", |id, _| SmoothingTest::new(id))),
-            )
-            .child(
-                button!("tooltip-test", i18n::t(cx, "testing.open.tooltip"), false)
-                    .on_click(spawn_view(self.panel, "testing.open.tooltip", |id, _| TooltipTest::new(id))),
-            )
-            .child(
-                button!("dialog-test", i18n::t(cx, "testing.open.dialog"), false)
-                    .on_click(spawn_dialog_test(self.panel)),
-            )
-            .child(
-                button!("settings-test", i18n::t(cx, "testing.open.settings"), false).on_click({
-                    let panel = self.panel;
-                    move |_, _, cx| {
-                        cx.default_global::<PanelControl>().spawns.push(
-                            PanelSpec::spawn(panel, |id, _, _| Settings::new(id))
-                                .sized(SETTINGS_SIZE, SETTINGS_PX)
-                                .titled("testing.open.settings"),
-                        )
-                    }
-                }),
-            )
-            .child(
-                button!("nav-test", i18n::t(cx, "testing.open.navigation"), false)
-                    .on_click(spawn_view(self.panel, "testing.open.navigation", |id, _| NavTest::new(id))),
-            )
-            .child(
-                button!("stress-test", i18n::t(cx, "testing.open.stress"), false)
-                    .on_click(spawn_view(self.panel, "testing.open.stress", |id, _| StressTest::new(id))),
-            )
-            .child(
-                button!("spawn-catalog", i18n::t(cx, "testing.open.catalog"), false)
-                    .on_click(spawn_catalog(self.panel)),
-            )
-            .child(
-                button!(
-                    "locale-test",
-                    i18n::t(cx, "testing.open.localization"),
-                    false
+                .child(
+                    button!("spawn-anim", i18n::t(cx, "testing.open.moving"), false).on_click(
+                        spawn_view(self.panel, "testing.open.moving", TestingAnim::new),
+                    ),
                 )
-                .on_click({
-                    let panel = self.panel;
-                    move |_, _, cx| {
-                        // 全キーの表を並べるので Testing と同じ大きさ。
-                        cx.default_global::<PanelControl>().spawns.push(
-                            PanelSpec::spawn(panel, |id, _, _| LocaleTest::new(id))
-                                .sized(TESTING_SIZE, TESTING_PX)
-                                .titled("locale.title"),
-                        )
-                    }
-                }),
-            );
+                .child(
+                    button!("spawn-lod", i18n::t(cx, "testing.open.lod"), false).on_click(
+                        spawn_view(self.panel, "testing.open.lod", |id, _| TestingLod::new(id)),
+                    ),
+                )
+                .child(
+                    button!("spawn-font", i18n::t(cx, "testing.open.font"), false).on_click(
+                        spawn_view(self.panel, "testing.open.font", |id, _| {
+                            TestingFont::new(id)
+                        }),
+                    ),
+                )
+                .child(
+                    button!("emoji-test", i18n::t(cx, "testing.open.emoji"), false).on_click(
+                        spawn_view(self.panel, "testing.open.emoji", |id, _| EmojiTest::new(id)),
+                    ),
+                )
+                .child(
+                    button!("keyboard-test", i18n::t(cx, "keyboard.title"), false).on_click(
+                        move |_, _, cx| {
+                            cx.default_global::<PanelControl>()
+                                .spawns
+                                .push(KeyboardTest::spec());
+                        },
+                    ),
+                )
+                .child(
+                    button!(
+                        "spawn-scrollbar",
+                        i18n::t(cx, "testing.open.scrollbar"),
+                        false
+                    )
+                    .on_click(spawn_view(
+                        self.panel,
+                        "testing.open.scrollbar",
+                        |id, _| TestingScrollbar::new(id),
+                    )),
+                )
+                .child(
+                    button!("pointer-test", i18n::t(cx, "testing.open.pointer"), false)
+                        .on_click(spawn_pointer_test(self.panel)),
+                )
+                .child(
+                    button!("desktop-test", i18n::t(cx, "desktop.title"), false).on_click(
+                        spawn_view(self.panel, "desktop.title", |id, _| DesktopTest::new(id)),
+                    ),
+                )
+                .child(
+                    button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false).on_click(
+                        spawn_view(self.panel, "testing.open.laser", |id, _| {
+                            SmoothingTest::new(id)
+                        }),
+                    ),
+                )
+                .child(
+                    button!("tooltip-test", i18n::t(cx, "testing.open.tooltip"), false).on_click(
+                        spawn_view(self.panel, "testing.open.tooltip", |id, _| {
+                            TooltipTest::new(id)
+                        }),
+                    ),
+                )
+                .child(
+                    button!("dialog-test", i18n::t(cx, "testing.open.dialog"), false)
+                        .on_click(spawn_dialog_test(self.panel)),
+                )
+                .child(
+                    button!("settings-test", i18n::t(cx, "testing.open.settings"), false).on_click(
+                        {
+                            let panel = self.panel;
+                            move |_, _, cx| {
+                                cx.default_global::<PanelControl>().spawns.push(
+                                    PanelSpec::spawn(panel, |id, _, _| Settings::new(id))
+                                        .sized(SETTINGS_SIZE, SETTINGS_PX)
+                                        .titled("testing.open.settings"),
+                                )
+                            }
+                        },
+                    ),
+                )
+                .child(
+                    button!("nav-test", i18n::t(cx, "testing.open.navigation"), false).on_click(
+                        spawn_view(self.panel, "testing.open.navigation", |id, _| {
+                            NavTest::new(id)
+                        }),
+                    ),
+                )
+                .child(
+                    button!("stress-test", i18n::t(cx, "testing.open.stress"), false).on_click(
+                        spawn_view(self.panel, "testing.open.stress", |id, _| {
+                            StressTest::new(id)
+                        }),
+                    ),
+                )
+                .child(
+                    button!("spawn-catalog", i18n::t(cx, "testing.open.catalog"), false)
+                        .on_click(spawn_catalog(self.panel)),
+                )
+                .child(
+                    button!(
+                        "locale-test",
+                        i18n::t(cx, "testing.open.localization"),
+                        false
+                    )
+                    .on_click({
+                        let panel = self.panel;
+                        move |_, _, cx| {
+                            // 全キーの表を並べるので Testing と同じ大きさ。
+                            cx.default_global::<PanelControl>().spawns.push(
+                                PanelSpec::spawn(panel, |id, _, _| LocaleTest::new(id))
+                                    .sized(TESTING_SIZE, TESTING_PX)
+                                    .titled("locale.title"),
+                            )
+                        }
+                    }),
+                );
 
         // ボタン・切り替え・長押し・ポップアップ。
         let press_row = row()
@@ -919,8 +945,7 @@ impl Render for PointerTest {
                             this.taps += 1;
                             cx.notify();
                         })),
-                    )
-
+                    ),
             )
             .child(
                 row()
@@ -1153,8 +1178,7 @@ impl Render for SmoothingTest {
 /// - アイコンだけのボタン（`tip-icon-*`）には必ず説明が付く（`components::icon_button`）。
 /// - `tip-status` に、手ごとの今の文字と向き（上下）を出す。手を頭より上に掲げて見上げると下に、下から指すと上に出る。
 #[derive(Default)]
-pub struct TooltipTest {
-}
+pub struct TooltipTest {}
 
 impl TooltipTest {
     pub fn new(_panel: PanelId) -> Self {
@@ -1184,10 +1208,7 @@ impl Render for TooltipTest {
             .flex_col()
             .justify_between()
             .p_3()
-            .child(
-                row()
-                    .child(div().debug_selector(|| "tip-status".into()).child(status)),
-            )
+            .child(row().child(div().debug_selector(|| "tip-status".into()).child(status)))
             .child(
                 row()
                     .child(
@@ -1328,10 +1349,7 @@ impl Settings {
 
 /// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。タイトルは左右の中央、`left` のボタン（戻る）は左端に寄せる（閉じるのはナビゲーションバー）。
 /// 高さはアイコンボタンと同じなので、ボタンは上下にも左右にも余白を足さない（パネルの内側の余白だけが四方に揃う）。
-fn heading(
-    title: impl IntoElement,
-    left: Option<gpui::AnyElement>,
-) -> Div {
+fn heading(title: impl IntoElement, left: Option<gpui::AnyElement>) -> Div {
     div()
         .relative()
         .h(px(54.0))
@@ -1405,7 +1423,11 @@ impl Render for Settings {
                                 glyph,
                                 i18n::tf(cx, "settings.item", &[("n", &(n + 1))]),
                             )
-                            .on_click(stack_op(&this, pages, Some(Some(n))))
+                            .on_click(stack_op(
+                                &this,
+                                pages,
+                                Some(Some(n)),
+                            ))
                         })
                         .collect::<Vec<_>>(),
                 ),
@@ -1459,7 +1481,13 @@ impl Render for Settings {
                     .flex_col()
                     .gap(px(spacing::MD))
                     .child(heading(i18n::t(cx, "settings.title"), None))
-                    .child(div().flex().flex_col().gap(px(spacing::XS)).children(categories)),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(spacing::XS))
+                            .children(categories),
+                    ),
             )
             // サイドバーと中身の区切り。
             .child(
@@ -1528,11 +1556,7 @@ impl Render for NavTest {
         let stack: fn(&mut NavTest) -> &mut Vec<NavPage> = |v| &mut v.stack;
         let page = move |p: &NavPage, _: &mut Window, cx: &mut App| {
             let theme = Theme::current(cx);
-            let body = div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .gap(px(spacing::MD));
+            let body = div().size_full().flex().flex_col().gap(px(spacing::MD));
             match *p {
                 NavPage::Root => body.child(components::list(
                     &theme,
@@ -1543,7 +1567,11 @@ impl Render for NavTest {
                             &design::icons::GEAR,
                             i18n::tf(cx, "nav.item", &[("n", &(n + 1))]),
                         )
-                        .on_click(stack_op(&this, stack, Some(NavPage::Detail(n))))
+                        .on_click(stack_op(
+                            &this,
+                            stack,
+                            Some(NavPage::Detail(n)),
+                        ))
                     }),
                 )),
                 NavPage::Detail(n) => {
@@ -1557,7 +1585,11 @@ impl Render for NavTest {
                                 &design::icons::INFO,
                                 i18n::tf(cx, "nav.deeper", &[("n", &(n + 1))]),
                             )
-                            .on_click(stack_op(&this, stack, Some(NavPage::Deep(n)))),
+                            .on_click(stack_op(
+                                &this,
+                                stack,
+                                Some(NavPage::Deep(n)),
+                            )),
                             components::list_item(
                                 &theme,
                                 "nav-tap",
@@ -1822,8 +1854,7 @@ impl Render for Dialog {
 pub const TRANSPARENT_BG: u32 = 0x202020a0;
 
 #[derive(Default)]
-pub struct TestingTransparent {
-}
+pub struct TestingTransparent {}
 
 impl TestingTransparent {
     pub fn new(_panel: PanelId) -> Self {
@@ -2118,8 +2149,7 @@ impl Render for TestingScrollbar {
 }
 
 /// フォントの見本（`testing-font`）: 英数・かな漢字・混在を、太さと大きさを変えて並べる。
-pub struct TestingFont {
-}
+pub struct TestingFont {}
 
 impl TestingFont {
     pub fn new(_panel: PanelId) -> Self {
@@ -2399,13 +2429,12 @@ impl StressTest {
                     TestingTransparent::new(id)
                 }),
             };
-            c.spawns
-                .push(
-                    spec.in_view(grid_pose(i))
-                        .sized(STRESS_SIZE, (800, 600))
-                        // 負荷を測るための埋め草で、まとめて閉じる（`stress-close`）。バーを付けると開ける数が半分になる。
-                        .without_nav_bar(),
-                );
+            c.spawns.push(
+                spec.in_view(grid_pose(i))
+                    .sized(STRESS_SIZE, (800, 600))
+                    // 負荷を測るための埋め草で、まとめて閉じる（`stress-close`）。バーを付けると開ける数が半分になる。
+                    .without_nav_bar(),
+            );
         }
     }
 

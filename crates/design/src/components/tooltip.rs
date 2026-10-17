@@ -20,10 +20,15 @@ pub const TOOLTIP_HEIGHT: f32 = LINE + PAD_Y * 2.0;
 /// ナビゲーションバーなど、頭から見た大きさを保つものはこれを物差しにする。
 pub const TOOLTIP_HEIGHT_M: f32 = 0.024;
 
-/// ツールチップの要求（GPUI のグローバル）。ウィンドウごとに、ホバーしている要素（`id`）とその文字、持ち主。
+/// 入力を配送しているポインタ。0 = 左手、1 = 右手。
+#[derive(Default)]
+pub struct TooltipSource(pub Option<u8>);
+impl gpui::Global for TooltipSource {}
+
+/// ツールチップの要求（GPUI のグローバル）。ウィンドウと手ごとに、ホバーしている要素（`id`）とその文字、持ち主。
 /// 外れたら消す。どの手のカーソルに出すかは UI 層が決める。
 #[derive(Default)]
-pub struct Tooltips(pub HashMap<WindowId, (SharedString, SharedString, AnyWeakEntity)>);
+pub struct Tooltips(pub HashMap<(WindowId, u8), (SharedString, SharedString, AnyWeakEntity)>);
 
 impl gpui::Global for Tooltips {}
 
@@ -47,12 +52,13 @@ pub fn hover_tooltip(
     cx: &mut App,
 ) {
     let w = window.window_handle().window_id();
+    let hand = cx.default_global::<TooltipSource>().0.unwrap_or(1);
     let id = id.into();
     let map = &mut cx.default_global::<Tooltips>().0;
     if hovered {
-        map.insert(w, (id, text, owner));
-    } else if map.get(&w).is_some_and(|(i, _, _)| *i == id) {
-        map.remove(&w);
+        map.insert((w, hand), (id, text, owner));
+    } else if map.get(&(w, hand)).is_some_and(|(i, _, _)| *i == id) {
+        map.remove(&(w, hand));
     }
 }
 
@@ -146,9 +152,48 @@ mod tests {
             hover_tooltip("b", "B".into(), o(), true, window, cx);
             hover_tooltip("a", "A".into(), o(), false, window, cx);
             let id = window.window_handle().window_id();
-            assert_eq!(cx.global::<Tooltips>().0[&id].1, "B");
+            assert_eq!(cx.global::<Tooltips>().0[&(id, 1)].1, "B");
             hover_tooltip("b", "B".into(), o(), false, window, cx);
             assert!(cx.global::<Tooltips>().0.is_empty());
+        });
+    }
+
+    #[gpui::test]
+    fn each_hand_keeps_its_own_tooltip(cx: &mut gpui::TestAppContext) {
+        let w = cx.add_empty_window();
+        w.update(|window, cx| {
+            let owner = cx.new(|_| ());
+            let id = window.window_handle().window_id();
+            cx.default_global::<TooltipSource>().0 = Some(0);
+            hover_tooltip(
+                "left",
+                "Left".into(),
+                owner.clone().into_any().downgrade(),
+                true,
+                window,
+                cx,
+            );
+            cx.default_global::<TooltipSource>().0 = Some(1);
+            hover_tooltip(
+                "right",
+                "Right".into(),
+                owner.clone().into_any().downgrade(),
+                true,
+                window,
+                cx,
+            );
+            assert_eq!(cx.global::<Tooltips>().0[&(id, 0)].1, "Left");
+            assert_eq!(cx.global::<Tooltips>().0[&(id, 1)].1, "Right");
+            hover_tooltip(
+                "right",
+                "Right".into(),
+                owner.into_any().downgrade(),
+                false,
+                window,
+                cx,
+            );
+            assert!(cx.global::<Tooltips>().0.contains_key(&(id, 0)));
+            cx.default_global::<TooltipSource>().0 = None;
         });
     }
 
@@ -157,7 +202,14 @@ mod tests {
         let w = cx.add_empty_window();
         let owner = w.update(|window, cx| {
             let owner = cx.new(|_| ());
-            hover_tooltip("a", "A".into(), owner.clone().into_any().downgrade(), true, window, cx);
+            hover_tooltip(
+                "a",
+                "A".into(),
+                owner.clone().into_any().downgrade(),
+                true,
+                window,
+                cx,
+            );
             cx.global_mut::<Tooltips>().drop_stale();
             assert_eq!(cx.global::<Tooltips>().0.len(), 1, "still drawn");
             owner

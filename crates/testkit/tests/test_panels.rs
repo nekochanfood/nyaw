@@ -18,8 +18,11 @@ fn anim_panel_redraws_every_frame_without_input(cx: &mut TestAppContext) {
 #[gpui::test]
 fn lod_panel_shows_level_by_color(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| TestingLod::new(0));
-    // Mid (the default) switches at 2 / 4 / 8 m.
-    for (distance, lod) in [(1.0, 0), (3.0, 1), (5.0, 2), (9.0, 3)] {
+    // Mid switches at 2 / 4 / 8 m for a panel with the reference density of 1000 px/m.
+    let panel = kit.kernel.panel(0);
+    let scale = panel.size.x * 1000.0 / panel.resolution.0 as f32;
+    for (relative_distance, lod) in [(1.0, 0), (3.0, 1), (5.0, 2), (9.0, 3)] {
+        let distance = relative_distance * scale;
         kit.kernel.apply(
             0,
             PanelCommand::Place(Pose::new(Vec3::new(0.0, 0.0, -distance), Quat::IDENTITY)),
