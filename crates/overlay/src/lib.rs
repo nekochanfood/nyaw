@@ -141,11 +141,12 @@ const DIM: f32 = 0.45;
 /// 空間全体の暗転の濃さ（黒の不透明度）。周りがうっすら見える程度に落とす。
 // ponytail: 固定の濃さ。暗すぎる・明るすぎると感じたらここを調整する。
 const VEIL: f32 = 0.6;
-/// 暗転の幕は頭に付けた黒い正方形で、頭の正面この距離（m）に置く。描画順でパネルより奥に描くので、距離は見た目に効かない。
-/// 近いほど小さな幕で視野を覆える。
-const VEIL_DISTANCE: f32 = 0.2;
-/// 幕の一辺（m）。正面から atan(10 / 0.2) ≈ 89° まで覆う。
-const VEIL_SIZE: f32 = 20.0;
+/// 暗転の幕は黒い正方形で、毎 tick 頭の正面この距離（m）に置き直す。描画順だけでなく奥行きでもパネルより奥にする
+/// （SteamVR は頭に相対配置したオーバーレイを描画順に関係なく手前に合成し、パネルが幕の向こうで消えた）。
+// ponytail: 固定の距離。これより遠いパネルは幕の手前に出ない。
+const VEIL_DISTANCE: f32 = 50.0;
+/// 幕の一辺（m）。正面から atan(2500 / 50) ≈ 89° まで覆う。
+const VEIL_SIZE: f32 = 5000.0;
 /// 表示だけの子（[`Parent::hud`]）を、親の面からどれだけ手前（m）に置くか。
 const HUD_LIFT: f32 = 0.002;
 /// 表示だけの子の重なり順。角は親の中心より頭から遠いので、距離で並べると親の裏に回って消える。
@@ -918,7 +919,7 @@ impl Overlay {
         }
         if v.opacity > 0.0 {
             let offset = Pose::new(Vec3::new(0.0, 0.0, -VEIL_DISTANCE), Quat::IDENTITY);
-            surface.place(vr, self.hmd * offset, Some(&(Device::Hmd, offset)));
+            surface.place(vr, self.hmd * offset, None);
         }
     }
 
