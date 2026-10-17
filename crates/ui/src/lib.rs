@@ -678,6 +678,8 @@ const NAV_BAR_PX: (u32, u32) = (
 /// オーバーレイ層が距離に比例して大きくするので、近くても遠くても見た目の大きさは変わらない。
 const NAV_BAR_M: f32 = NAV_BAR_PX.0 as f32 * 2.0 * design::components::TOOLTIP_HEIGHT_M
     / design::components::NAV_BAR_HEIGHT;
+/// ナビゲーションバーの窓（影の余白込み）の、頭から 1m 先での高さ（m）。オーバーレイ層が距離に比例して大きくする。
+pub const NAV_BAR_HEIGHT_M: f32 = NAV_BAR_M * NAV_BAR_PX.1 as f32 / NAV_BAR_PX.0 as f32;
 
 impl PanelSpec {
     pub fn new<V: Render>(
@@ -886,10 +888,7 @@ impl PanelSpec {
                 }
             })
             .sized(
-                Vec2::new(
-                    NAV_BAR_M,
-                    NAV_BAR_M * NAV_BAR_PX.1 as f32 / NAV_BAR_PX.0 as f32,
-                ),
+                Vec2::new(NAV_BAR_M, NAV_BAR_HEIGHT_M),
                 NAV_BAR_PX,
             )
         })

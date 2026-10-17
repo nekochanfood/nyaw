@@ -21,14 +21,10 @@ use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, Setting};
 use ui::{PanelControl, PanelSpec};
 
-/// バーを手前に傾ける角度（下から見上げずに読めるよう、少し上を向かせる）。はめた画面はこの分だけ起こして立てる。
+/// バーを手前に傾ける角度（下から見上げずに読めるよう、少し上を向かせる）。はめた画面はこの分だけ起こして垂直に立てる。
 const BAR_TILT: f32 = std::f32::consts::FRAC_PI_6;
-/// バーの位置: 開いた瞬間の頭から見て正面 1.05m・下 0.45m（傾けた手前の縁でも 1m 以上離れ、上にはめる画面の中心がほぼ目の高さに来る）。
-/// 向きは x 軸回りに -[`BAR_TILT`]（const では作れないので値で書く。テストで確かめる）。
-pub const POSE: Pose = Pose::new(
-    Vec3::new(0.0, -0.45, -1.05),
-    Quat::from_xyzw(-0.258_819, 0.0, 0.0, 0.965_925_8),
-);
+/// はめた画面の中心までの距離（m）。画面は目の高さの正面に垂直に立ち、バーはその下に来る（[`pose`]）。
+const DISTANCE: f32 = 1.1;
 /// はめる画面の大きさと解像度（main が渡す設定画面と同じ）。ほかから渡される画面も、縦をこの高さに揃える。
 const SIZE_M: Vec2 = Vec2::new(1.024, 0.768);
 const RES_PX: (u32, u32) = (1024, 768);
@@ -41,8 +37,8 @@ const BAR_M: Vec2 = Vec2::new(
     SIZE_M.x,
     SIZE_M.x * BAR_PX.1 as f32 / BAR_PX.0 as f32,
 );
-/// 画面を開いてからはまるまでの、最初の置き場所（はまる所の近く）。
-const SCREEN_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.1), Quat::IDENTITY);
+/// 画面を開いてからはまるまでの、最初の置き場所（はまる所）。
+const SCREEN_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -DISTANCE), Quat::IDENTITY);
 /// グリッドの列の数とタイルの高さ（px）。
 const COLUMNS: u16 = 4;
 const TILE_PX: f32 = 120.0;
@@ -60,6 +56,20 @@ pub const CLOSE_SOUND: &[u8] = include_bytes!("../assets/dashboard_close.wav");
 /// ダッシュボードから開くほかの画面（デバッグ・設定）の起動仕様を作る。開いたら引数で PanelId を知らせる
 /// （[`spec`] と同じ形）。画面どうしを直接つながないよう、何を開くかは main が選ぶ。
 pub type Summon = fn(Box<dyn FnOnce(PanelId, &mut App)>) -> PanelSpec;
+
+/// バーの置き場所（開いた瞬間の頭から見た相対姿勢）。はめた画面（[`SIZE_M`]）が目の高さの正面 [`DISTANCE`] に垂直に立つよう、
+/// 画面の下半分・そのナビゲーションバー・隙間の分だけ下げ、傾けたバーの上端がその真下に来るように置く
+/// （オーバーレイ層の `Parent::slot` の置き方の逆）。
+pub fn pose() -> Pose {
+    let margin = |size: Vec2, res: (u32, u32)| components::PANEL_MARGIN * size.y / res.1 as f32;
+    let face = SIZE_M.y / 2.0 - margin(SIZE_M, RES_PX);
+    // ナビゲーションバーは、画面の地の下端までの距離に比例して大きくなる。
+    let nav_bar = ui::NAV_BAR_HEIGHT_M * DISTANCE.hypot(face);
+    let top = Vec3::new(0.0, -(face + nav_bar + kernel::overlay::SLOT_GAP), -DISTANCE);
+    let rotation = Quat::from_rotation_x(-BAR_TILT);
+    let half = BAR_M.y / 2.0 - margin(BAR_M, BAR_PX);
+    Pose::new(top - rotation * Vec3::Y * half, rotation)
+}
 
 /// ダッシュボード（バー）の起動仕様。`opened` は作られたパネルの ID を受け取る。
 pub fn spec(
@@ -79,7 +89,7 @@ pub fn spec(
         Dashboard::new(id, settings, debug, cx)
     })
     .sized(BAR_M, BAR_PX)
-    .in_view(POSE)
+    .in_view(pose())
     // 閉じる（隠す）操作はバー自身の X にある。
     .without_nav_bar()
     .with_veil()
@@ -102,7 +112,7 @@ pub fn show(dashboard: PanelId, cx: &mut App) {
     commands(
         dashboard,
         [
-            PanelCommand::Place(POSE),
+            PanelCommand::Place(pose()),
             PanelCommand::Hide(false),
             PanelCommand::Play(Sound::Wav(OPEN_SOUND), false),
         ],
@@ -818,7 +828,53 @@ mod tests {
         assert!(std::ptr::eq(battery_glyph(&battery(0.05, false)), &icons::BATTERY_EMPTY));
         assert!(std::ptr::eq(battery_glyph(&battery(0.05, true)), &icons::BATTERY_CHARGING));
         assert_eq!(percent(0.826), "83%");
-        assert!(POSE.orientation.abs_diff_eq(Quat::from_rotation_x(-BAR_TILT), 1e-5));
+    }
+
+    /// バーを `pose` に置くと、はめた画面は目の高さの正面に垂直に立ち、バーはその下で 1m 以上離れる。
+    #[test]
+    fn docked_screen_stands_upright_at_eye_level_in_front() {
+        use kernel::overlay::{Overlay, Parent};
+        use kernel::subsystems::Subsystems;
+        use kernel::vr::mock::MockBackend;
+        let mut vr = Subsystems::with_backend(MockBackend::default());
+        let mut ov = Overlay::new();
+        let bar = ov
+            .add_panel(&mut vr.backend, "bar", pose(), BAR_M, BAR_PX)
+            .unwrap();
+        let screen = ov
+            .add_panel(&mut vr.backend, "screen", SCREEN_POSE, SIZE_M, RES_PX)
+            .unwrap();
+        let nav = ov
+            .add_panel(
+                &mut vr.backend,
+                "nav",
+                Pose::IDENTITY,
+                Vec2::new(1.0, ui::NAV_BAR_HEIGHT_M),
+                (100, 10),
+            )
+            .unwrap();
+        ov.set_nav_bar(&mut vr.backend, nav, screen);
+        // 出入りのアニメーションの途中は小さく見えるので、出きった状態で測る。
+        ov.set_animated(&mut vr.backend, screen, false);
+        ov.set_parent(
+            &mut vr.backend,
+            screen,
+            Some(Parent {
+                panel: bar,
+                carry: true,
+                docked: true,
+                slot: Some(BAR_TILT),
+                ..Default::default()
+            }),
+        );
+        for _ in 0..3 {
+            ov.tick(&mut vr);
+        }
+        let s = ov.panel(screen).pose;
+        assert!(s.position.abs_diff_eq(SCREEN_POSE.position, 1e-3), "{}", s.position);
+        assert!(s.orientation.abs_diff_eq(Quat::IDENTITY, 1e-4));
+        let b = ov.panel(bar).pose.position;
+        assert!(b.y < -0.3 && b.length() >= 1.0, "{b}");
     }
 
     fn summon(opened: Box<dyn FnOnce(PanelId, &mut App)>) -> PanelSpec {
