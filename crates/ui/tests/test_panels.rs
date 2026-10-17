@@ -27,7 +27,7 @@ fn main() -> ExitCode {
     let (backend, emu) = Driven::headless(SCREEN.0, SCREEN.1);
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, Default::default());
     let panels = vec![
-        PanelSpec::new(Pose::new(PANEL, Quat::IDENTITY), |id, _, cx| {
+        PanelSpec::root(Pose::new(PANEL, Quat::IDENTITY), |id, _, cx| {
             TestingAnim::new(id, cx)
         })
         // Counts panels exactly, so no navigation bars (they are panels too).
@@ -94,7 +94,7 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>) {
         let c = cx.default_global::<PanelControl>();
         for i in 0..limit - open + 5 {
             c.spawns.push(
-                PanelSpec::new(Pose::IDENTITY, |id, _, _| TestingTransparent::new(id))
+                PanelSpec::root(Pose::IDENTITY, |id, _, _| TestingTransparent::new(id))
                     .in_view(Pose::new(
                         Vec3::new(i as f32 * 0.01, 0.0, -2.0),
                         Quat::IDENTITY,

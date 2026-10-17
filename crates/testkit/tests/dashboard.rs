@@ -13,8 +13,8 @@ fn press_x_twice(kit: &mut NoVrKit<Wrist>) {
 fn wrist(cx: &mut gpui::Context<Wrist>) -> Wrist {
     Wrist::new(
         0,
-        |o| testing::spec(o),
-        |o| testing::settings_spec(o),
+        |f, o| testing::spec(f, o),
+        |f, o| testing::settings_spec(f, o),
         cx,
     )
 }

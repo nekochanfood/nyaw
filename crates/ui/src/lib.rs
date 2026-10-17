@@ -723,7 +723,10 @@ const NAV_BAR_M: f32 = NAV_BAR_PX.0 as f32 * 2.0 * design::components::TOOLTIP_H
 pub const NAV_BAR_HEIGHT_M: f32 = NAV_BAR_M * NAV_BAR_PX.1 as f32 / NAV_BAR_PX.0 as f32;
 
 impl PanelSpec {
-    pub fn new<V: Render>(
+    /// 開いた元の無いパネル（起動時に開く常駐のもの、テストの最初のパネル）。`pose` に置く。
+    /// ほかのパネルから開くものは [`Self::spawn`] / [`Self::child`] / [`Self::popover`] で作る（既定で開いた元の手前に
+    /// 重なる）。別の場所に出すときだけ、[`Self::in_view`] などで明示して外す。
+    pub fn root<V: Render>(
         pose: Pose,
         build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
     ) -> Self {
@@ -753,13 +756,14 @@ impl PanelSpec {
         }
     }
 
+    /// パネル `from` から開くパネル。既定で `from` の手前に少し離して重ねる（[`Self::offset`] で変えられる）。
     pub fn spawn<V: Render>(
         from: PanelId,
         build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
     ) -> Self {
         Self {
             from: Some(from),
-            ..Self::new(Pose::IDENTITY, build)
+            ..Self::root(Pose::IDENTITY, build)
         }
     }
 
@@ -830,6 +834,7 @@ impl PanelSpec {
 
     /// 開いた瞬間の目の前に出す。`offset` は頭から見た相対姿勢（頭の傾きは無視し、パネルは立てて置く）。
     /// トラッキング空間の原点は人の居場所と一致しないので、召喚するパネルはこれで出す。
+    /// 開いた元の手前に重ねる既定（[`Self::spawn`]）から外すことになるので、外す理由を呼ぶ側に書く。
     pub fn in_view(mut self, offset: Pose) -> Self {
         (self.pose, self.from, self.in_view) = (offset, None, true);
         self
@@ -962,7 +967,7 @@ impl PanelSpec {
         self.nav_bar.then(|| PanelSpec {
             nav_bar: false,
             nav_bar_of: Some(owner),
-            ..PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+            ..PanelSpec::root(Pose::IDENTITY, move |id, _, cx| {
                 cx.default_global::<PanelControl>()
                     .nav_bars
                     .insert(owner, id);
@@ -1694,7 +1699,7 @@ fn sync_profiler(
     }
     match *profiler_panel {
         None if profiling && !hide_profiler => {
-            let spec = PanelSpec::new(Pose::IDENTITY, |_, _, cx| ProfilerPanel {
+            let spec = PanelSpec::root(Pose::IDENTITY, |_, _, cx| ProfilerPanel {
                 view: cx.new(|_| ProfilerView),
             })
             .titled("testing.panel.profiler")
@@ -1955,7 +1960,7 @@ mod tests {
             .add_panel("bar", owner_pose, Vec2::new(1.0, 0.1), (1000, 100))
             .unwrap();
         let angle = std::f32::consts::FRAC_PI_2 - 0.2 - tilt;
-        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| gpui::Empty)
+        let spec = PanelSpec::root(Pose::IDENTITY, |_, _, _| gpui::Empty)
             .sized(Vec2::new(1.0, 0.4), (1000, 400))
             .hinged_below(owner, angle);
         let pose = spec.pose_for(&kernel, owner + 1);
@@ -2061,7 +2066,7 @@ mod tests {
     fn spec_attaches_locks_and_sizes_panel(cx: &mut TestAppContext) {
         let mut kernel = Kernel::boot(Some("novr"), Default::default()).unwrap();
         let hand = Device::Controller(Hand::Left);
-        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default())
+        let spec = PanelSpec::root(Pose::IDENTITY, |_, _, _| Probe::default())
             .sized(Vec2::new(0.1, 0.05), (10, 5))
             .attached(hand.clone(), Pose::IDENTITY)
             .locked()

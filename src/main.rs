@@ -28,8 +28,8 @@ fn main() -> ExitCode {
     };
     // ダッシュボードのデバッグボタンで開く画面は Testing、設定ボタンで開くのは Testing の設定画面（中身はダミー）。
     let mut panels = vec![wrist::spec(
-        |opened| testing::spec(opened),
-        |opened| testing::settings_spec(opened),
+        |from, opened| testing::spec(from, opened),
+        |from, opened| testing::settings_spec(from, opened),
     )];
     // novr もコントローラを模すので、どのランタイムでもビームを載せる（novr のレーザーは視線と重なって見えない）。
     panels.extend(beam::specs());

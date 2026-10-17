@@ -28,7 +28,7 @@ fn main() -> ExitCode {
     // keep the default (touch).
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, Default::default());
     let mut panels = vec![
-        PanelSpec::new(Pose::new(PANEL, Quat::IDENTITY), |id, _, _| {
+        PanelSpec::root(Pose::new(PANEL, Quat::IDENTITY), |id, _, _| {
             Testing::new(id)
         })
         .without_nav_bar(),

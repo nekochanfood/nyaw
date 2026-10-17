@@ -35,7 +35,7 @@ const DIAL_R: f32 = DIAL_C - spacing::LG - 8.0;
 /// 左手首に取り付いた状態で起動する wrist の起動仕様。`debug` と `settings` はダッシュボードから開く
 /// デバッグ画面と設定画面（画面どうしを直接つながないよう、main が選ぶ）。
 pub fn spec(debug: dashboard::Summon, settings: dashboard::Summon) -> PanelSpec {
-    PanelSpec::new(Pose::IDENTITY, move |panel, _, cx| {
+    PanelSpec::root(Pose::IDENTITY, move |panel, _, cx| {
         Wrist::new(panel, debug, settings, cx)
     })
     .sized(SIZE_M, RES_PX)
@@ -187,8 +187,8 @@ mod tests {
     fn wrist(cx: &mut Context<Wrist>) -> Wrist {
         Wrist::new(
             0,
-            |_| PanelSpec::new(Pose::IDENTITY, |_, _, _| gpui::Empty),
-            |_| PanelSpec::new(Pose::IDENTITY, |_, _, _| gpui::Empty),
+            |f, _| PanelSpec::spawn(f, |_, _, _| gpui::Empty),
+            |f, _| PanelSpec::spawn(f, |_, _, _| gpui::Empty),
             cx,
         )
     }

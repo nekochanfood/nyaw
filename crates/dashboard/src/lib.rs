@@ -60,9 +60,10 @@ const LOW_BATTERY: f32 = 0.2;
 pub const OPEN_SOUND: &[u8] = include_bytes!("../assets/dashboard_open.wav");
 pub const CLOSE_SOUND: &[u8] = include_bytes!("../assets/dashboard_close.wav");
 
-/// ダッシュボードから開くほかの画面（デバッグ・設定）の起動仕様を作る。開いたら引数で PanelId を知らせる
-/// （[`spec`] と同じ形）。画面どうしを直接つながないよう、何を開くかは main が選ぶ。
-pub type Summon = fn(Box<dyn FnOnce(PanelId, &mut App)>) -> PanelSpec;
+/// ダッシュボードから開くほかの画面（デバッグ・設定）の起動仕様を作る。第 1 引数は開いた元のパネル
+/// （[`PanelSpec::spawn`] に渡す）。開いたら引数で PanelId を知らせる（[`spec`] と同じ形）。
+/// 画面どうしを直接つながないよう、何を開くかは main が選ぶ。
+pub type Summon = fn(PanelId, Box<dyn FnOnce(PanelId, &mut App)>) -> PanelSpec;
 
 /// バーの置き場所（開いた瞬間の頭から見た相対姿勢）。はめた画面（[`SIZE_M`]）が目の高さの正面 [`DISTANCE`] に垂直に立つよう、
 /// 画面の下半分・そのナビゲーションバー・隙間の分だけ下げ、傾けたバーの上端がその真下に来るように置く
@@ -84,7 +85,7 @@ pub fn spec(
     settings: Summon,
     debug: Summon,
 ) -> PanelSpec {
-    PanelSpec::new(Pose::IDENTITY, move |id, _, cx: &mut Context<Dashboard>| {
+    PanelSpec::root(Pose::IDENTITY, move |id, _, cx: &mut Context<Dashboard>| {
         opened(id, cx);
         let ctl = cx.default_global::<PanelControl>();
         ctl.panels.entry(id).or_default().commands.extend([
@@ -300,11 +301,12 @@ impl Dashboard {
             });
             let spec = match page {
                 Page::QuickSettings | Page::NowPlaying | Page::Mirror => {
-                    screen_spec(page, cx.weak_entity(), opened)
+                    screen_spec(self.panel, page, cx.weak_entity(), opened)
                 }
-                Page::Debug => (self.debug)(opened),
-                Page::Settings => (self.settings)(opened),
+                Page::Debug => (self.debug)(self.panel, opened),
+                Page::Settings => (self.settings)(self.panel, opened),
             };
+            // はめる画面は、開いた元（バー）の手前ではなく、はめる場所に合わせて目の前に出す。
             cx.default_global::<PanelControl>()
                 .spawns
                 .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
@@ -402,7 +404,7 @@ impl Render for Menu {
         let quit = components::menu_item(&theme, "menu-quit", &icons::POWER, i18n::t(cx, "dashboard.quit"))
             .on_click(move |_, window, cx| {
                 close(panel, cx);
-                let spec = quit_dialog_spec(window, cx);
+                let spec = quit_dialog_spec(panel, window, cx);
                 cx.default_global::<PanelControl>().spawns.push(spec);
             });
         components::card_panel(&theme)
@@ -419,7 +421,7 @@ impl Render for Menu {
 }
 
 /// アプリを終了するかを確かめるダイアログの起動仕様。視界の中央に出す。
-fn quit_dialog_spec(window: &Window, cx: &App) -> PanelSpec {
+fn quit_dialog_spec(from: PanelId, window: &Window, cx: &App) -> PanelSpec {
     let height = components::dialog_height(
         window,
         QUIT_DIALOG_WIDTH,
@@ -427,11 +429,12 @@ fn quit_dialog_spec(window: &Window, cx: &App) -> PanelSpec {
         &i18n::t(cx, "dashboard.quit_body"),
         2,
     );
-    PanelSpec::new(Pose::IDENTITY, |panel, _, _| QuitDialog { panel })
+    PanelSpec::spawn(from, |panel, _, _| QuitDialog { panel })
         .sized(
             Vec2::new(QUIT_DIALOG_WIDTH as f32 / 1000.0, height as f32 / 1000.0),
             (QUIT_DIALOG_WIDTH, height),
         )
+        // 開いた元のメニューはすぐ閉じるので、その手前ではなく視界の中央に出す。
         .in_view(QUIT_DIALOG_POSE)
         // ダイアログは答えて閉じるもの。ナビゲーションバーは付けない。
         .without_nav_bar()
@@ -613,6 +616,7 @@ impl Render for Dashboard {
 /// クイック設定・画面のミラーリングの起動仕様（`page` はそのどちらか）。開くと `opened` でダッシュボードにはまる。
 /// 閉じるのはナビゲーションバーかバーの同じボタン。
 fn screen_spec(
+    from: PanelId,
     page: Page,
     dashboard: WeakEntity<Dashboard>,
     opened: Box<dyn FnOnce(PanelId, &mut App)>,
@@ -622,7 +626,7 @@ fn screen_spec(
         Page::NowPlaying => "dashboard.now_playing",
         _ => "dashboard.quick_settings",
     };
-    PanelSpec::new(Pose::IDENTITY, move |id, _, cx: &mut Context<Screen>| {
+    PanelSpec::spawn(from, move |id, _, cx: &mut Context<Screen>| {
         opened(id, cx);
         Screen::new(id, page, dashboard, cx)
     })
@@ -1264,11 +1268,9 @@ fn mirror_spec(
         }
         Mirror { panel }
     };
-    let spec = if docked {
-        PanelSpec::new(Pose::IDENTITY, build).in_view(SCREEN_POSE)
-    } else {
-        PanelSpec::spawn(from, build)
-    };
+    let spec = PanelSpec::spawn(from, build);
+    // はめるものは、開いた元の手前ではなく、はめる場所に合わせて目の前に出す。
+    let spec = if docked { spec.in_view(SCREEN_POSE) } else { spec };
     // 配信は横幅を保って縦横比を合わせるので、幅をはめる画面とそろえる。
     spec.sized(SIZE_M, RES_PX)
         .titled_text(source_title)
@@ -1579,8 +1581,8 @@ mod tests {
         assert!(b.y < -0.3 && b.length() >= 1.0, "{b}");
     }
 
-    fn summon(opened: Box<dyn FnOnce(PanelId, &mut App)>) -> PanelSpec {
-        PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+    fn summon(from: PanelId, opened: Box<dyn FnOnce(PanelId, &mut App)>) -> PanelSpec {
+        PanelSpec::spawn(from, move |id, _, cx| {
             opened(id, cx);
             Mirror { panel: id }
         })
