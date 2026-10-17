@@ -542,7 +542,8 @@ impl Overlay {
         let q = &mut self.panels[id];
         q.parent = parent;
         let hud = parent.is_some_and(|p| p.hud);
-        q.surface.set_sort(vr, if hud { HUD_SORT } else { PANEL_SORT });
+        q.surface
+            .set_sort(vr, if hud { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
             q.attached = None;
             q.offset = at.inverse() * q.pose;
@@ -2257,7 +2258,11 @@ mod tests {
         let (mut vr, mut ov) = setup();
         ov.set_veil(0, true);
         ov.tick(&mut vr);
-        assert_eq!(vr.backend.overlays.len(), 1, "最初の描画が届くまでは暗くしない");
+        assert_eq!(
+            vr.backend.overlays.len(),
+            1,
+            "最初の描画が届くまでは暗くしない"
+        );
         ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
         ov.tick(&mut vr);
         fn veil(vr: &Subsystems<MockBackend>) -> &vr::mock::MockOverlay {
