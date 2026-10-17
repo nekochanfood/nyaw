@@ -59,19 +59,17 @@ impl Surface {
     }
 
     /// ネイティブの追従が無ければ、呼び出し側で計算した絶対姿勢へフォールバックする。
+    /// 追従は毎回頼み直す（同じなら送らないのはバックエンドの仕事）。取り付け先の裏のデバイスが消えた・入れ替わった
+    /// （ハンドトラッキングとコントローラの持ち替え）フレームは断られて、当たり判定と同じ `pose` に置かれる。
     pub fn place(&mut self, vr: &mut dyn VrBackend, pose: Pose, follow: Option<&(Device, Pose)>) {
         if self.released {
             return;
         }
-        if let Some((device, offset)) = follow {
-            let want = Some((Some(device.clone()), *offset));
-            if self.sent == want {
-                return;
-            }
-            if vr.set_overlay_pose_relative(self.id, device, *offset) {
-                self.sent = want;
-                return;
-            }
+        if let Some((device, offset)) = follow
+            && vr.set_overlay_pose_relative(self.id, device, *offset)
+        {
+            self.sent = Some((Some(device.clone()), *offset));
+            return;
         }
         let want = Some((None, pose));
         if self.sent != want {

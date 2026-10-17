@@ -45,7 +45,6 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         textures: HashMap::new(),
         devices: HashMap::new(),
         relative: HashMap::new(),
-        last_seen: HashMap::new(),
         fixed: HashMap::new(),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
@@ -129,11 +128,9 @@ pub(crate) struct OpenVrBackend {
     /// 最後の poll で見えていたデバイスの番号と、その生の姿勢から [`Frame::pose`] の姿勢への相対姿勢
     /// （コントローラは `/pose/tip`）。相対配置をランタイムに任せるため。
     devices: HashMap<Device, (u32, Pose)>,
-    /// ランタイムに相対配置を任せたオーバーレイ → （取り付け先, 相対姿勢）。同じ取り付け先（左手のコントローラなど）の
-    /// 裏のデバイスは入れ替わる（ハンドトラッキングとコントローラの持ち替え）ので、そのとき付け直す。
-    relative: HashMap<u64, (Device, Pose)>,
-    /// 取り付け先ごとの、最後に見えていたときの [`Frame::pose`] の姿勢。デバイスが消えたら、そこに空間固定する。
-    last_seen: HashMap<Device, Pose>,
+    /// ランタイムに相対配置を任せたオーバーレイ → 最後に送った（デバイスの番号, デバイスから見た姿勢）。相対配置は毎 tick
+    /// 頼み直されるので、変わったときだけ送る（同じ取り付け先でも、持ち替えで裏のデバイスが入れ替わると番号が変わる）。
+    relative: HashMap<u64, (u32, Pose)>,
     /// 高さを固定したオーバーレイの（幅, 高さ）（m）。OpenVR は高さを縦横比で決めるので、テクセルの縦横比で合わせる。
     fixed: HashMap<u64, (f32, f32)>,
     gpu: Gpu,
@@ -208,30 +205,6 @@ impl OpenVrBackend {
                 &mut err,
             );
             CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned()
-        }
-    }
-
-    /// 相対配置を任せたオーバーレイのうち、取り付け先の裏のデバイスが入れ替わった・消えたものを付け直す
-    /// （そのままだと、もう追われていない前のデバイスに付いたまま見えなくなる）。消えたら最後の姿勢に空間固定する。
-    fn reattach(&mut self, old: &HashMap<Device, (u32, Pose)>) {
-        let index = |m: &HashMap<Device, (u32, Pose)>, d: &Device| m.get(d).map(|&(i, _)| i);
-        let moved: Vec<(u64, Device, Pose)> = self
-            .relative
-            .iter()
-            .filter(|(_, (d, _))| index(old, d) != index(&self.devices, d))
-            .map(|(&id, (d, offset))| (id, d.clone(), *offset))
-            .collect();
-        for (id, device, offset) in moved {
-            match self.devices.get(&device) {
-                Some(&(index, to)) => {
-                    log(self.attach(id, index, to * offset));
-                }
-                None => {
-                    if let Some(&at) = self.last_seen.get(&device) {
-                        self.place_absolute(id, at * offset);
-                    }
-                }
-            }
         }
     }
 
@@ -483,12 +456,7 @@ impl VrBackend for OpenVrBackend {
                 .hand_devices
                 .push((hand, pose_from(&pose.mDeviceToAbsoluteTracking.m)));
         }
-        let old = std::mem::replace(&mut self.devices, devices);
-        for (device, &(index, to)) in &self.devices {
-            let raw = pose_from(&poses[index as usize].mDeviceToAbsoluteTracking.m);
-            self.last_seen.insert(device.clone(), raw * to);
-        }
-        self.reattach(&old);
+        self.devices = devices;
         frame
     }
 
@@ -542,9 +510,19 @@ impl VrBackend for OpenVrBackend {
         let Some(&(index, to_pose)) = self.devices.get(device) else {
             return false;
         };
-        let ok = self.attach(id.0, index, to_pose * offset).is_ok();
+        let want = (index, to_pose * offset);
+        // tip（to_pose）は毎フレームの予測から求めるので、わずかに揺れる。それだけなら送り直さない。
+        let same = self.relative.get(&id.0).is_some_and(|&(i, p)| {
+            i == want.0
+                && p.position.abs_diff_eq(want.1.position, 1e-4)
+                && p.orientation.abs_diff_eq(want.1.orientation, 1e-4)
+        });
+        if same {
+            return true;
+        }
+        let ok = self.attach(id.0, want.0, want.1).is_ok();
         if ok {
-            self.relative.insert(id.0, (device.clone(), offset));
+            self.relative.insert(id.0, want);
         }
         ok
     }

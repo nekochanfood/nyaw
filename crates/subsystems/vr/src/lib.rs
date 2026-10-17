@@ -340,6 +340,7 @@ pub trait VrBackend {
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose);
     /// `device` の姿勢 * `offset` に置き、追従はランタイムに任せる（アプリが poll した姿勢を送るより遅れない）。
     /// 任せられなければ `false` を返し、呼び出し側は毎 tick [`set_overlay_pose`](Self::set_overlay_pose) で送る。
+    /// 呼び出し側は毎 tick 頼み直すので、前と同じならランタイムへ送らないこと。
     fn set_overlay_pose_relative(
         &mut self,
         _id: OverlayId,
