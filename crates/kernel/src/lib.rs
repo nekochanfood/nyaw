@@ -149,8 +149,7 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
 }
 
 /// 二回続けて押したと見なす、押下と次の押下の間隔の上限。
-// OS のダブルクリックの既定（Windows）と同じ。
-pub const DOUBLE_PRESS: Duration = Duration::from_millis(500);
+pub const DOUBLE_PRESS: Duration = Duration::from_millis(250);
 
 /// 押下の立ち上がりを見て、[`DOUBLE_PRESS`] 以内に二回続いたら数える。三回目は次の一回目として数え直す。
 #[derive(Debug, Default)]
@@ -588,11 +587,11 @@ mod tests {
         d.update(false, ms(250));
         d.update(true, ms(300));
         d.update(false, ms(350));
-        let late = ms(300) + DOUBLE_PRESS + Duration::from_millis(1);
+        let late = ms(300) + Duration::from_millis(251);
         d.update(true, late);
         assert_eq!(d.count, 1);
         d.update(false, late + Duration::from_millis(50));
-        d.update(true, late + DOUBLE_PRESS);
+        d.update(true, late + Duration::from_millis(250));
         assert_eq!(d.count, 2);
     }
 

@@ -495,9 +495,9 @@ impl Render for DragPreview {
 }
 /// プロファイラパネルのグラフを描き直す間隔（約 10Hz）。
 const PROFILER_REDRAW: Duration = Duration::from_millis(100);
+/// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 10cm）。
+const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.1);
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
-/// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 5cm）。
-const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.05);
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
 // ponytail: GPUI はウィンドウの dirty を公開していないので推測で描く。公開されたら dirty なときだけにする。
