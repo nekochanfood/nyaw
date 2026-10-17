@@ -207,7 +207,9 @@ mod tests {
             let mut out = vec![0.0; audio::BLOCK * 2];
             k.audio.render(&mut out);
             let e = out
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .fold((0.0, 0.0), |(l, r), s| (l + s[0] * s[0], r + s[1] * s[1]));
             if e.0 + e.1 > 0.0 || std::time::Instant::now() > deadline {
                 return e;
