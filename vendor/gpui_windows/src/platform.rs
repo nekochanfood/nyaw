@@ -478,6 +478,11 @@ impl WindowsPlatform {
                     };
                     for hwnd in all_windows.read().iter() {
                         unsafe {
+                            // 破棄したウィンドウは WM_GPUI_CLOSE_ONE_WINDOW が届くまで一覧に残る。その間に
+                            // 触ると "Invalid window handle. (0x80070578)" がログに出るので、生きているものだけにする。
+                            if !IsWindow(Some(hwnd.as_raw())).as_bool() {
+                                continue;
+                            }
                             if let Some(signal_at) = signal_at {
                                 if IsWindowVisible(hwnd.as_raw()).as_bool()
                                     && !IsIconic(hwnd.as_raw()).as_bool()
