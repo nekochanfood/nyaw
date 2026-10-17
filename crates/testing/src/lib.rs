@@ -39,7 +39,10 @@ pub use desktop::DesktopTest;
 mod audio;
 pub use audio::AudioTest;
 mod skeleton;
-pub use skeleton::{PINCH_DISTANCE, SKELETON_PX, SKELETON_SIZE, SkeletonTest, pinches};
+pub use skeleton::{
+    HandTuningTest, PINCH_DISTANCE, SKELETON_PX, SKELETON_SIZE, SkeletonTest, TUNING_PX,
+    TUNING_SIZE, pinches,
+};
 
 /// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);

@@ -44,6 +44,8 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         overlay: client.interface(sys::IVROverlay_Version)?,
         textures: HashMap::new(),
         devices: HashMap::new(),
+        relative: HashMap::new(),
+        last_seen: HashMap::new(),
         fixed: HashMap::new(),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
@@ -127,6 +129,11 @@ pub(crate) struct OpenVrBackend {
     /// 最後の poll で見えていたデバイスの番号と、その生の姿勢から [`Frame::pose`] の姿勢への相対姿勢
     /// （コントローラは `/pose/tip`）。相対配置をランタイムに任せるため。
     devices: HashMap<Device, (u32, Pose)>,
+    /// ランタイムに相対配置を任せたオーバーレイ → （取り付け先, 相対姿勢）。同じ取り付け先（左手のコントローラなど）の
+    /// 裏のデバイスは入れ替わる（ハンドトラッキングとコントローラの持ち替え）ので、そのとき付け直す。
+    relative: HashMap<u64, (Device, Pose)>,
+    /// 取り付け先ごとの、最後に見えていたときの [`Frame::pose`] の姿勢。デバイスが消えたら、そこに空間固定する。
+    last_seen: HashMap<Device, Pose>,
     /// 高さを固定したオーバーレイの（幅, 高さ）（m）。OpenVR は高さを縦横比で決めるので、テクセルの縦横比で合わせる。
     fixed: HashMap<u64, (f32, f32)>,
     gpu: Gpu,
@@ -202,6 +209,54 @@ impl OpenVrBackend {
             );
             CStr::from_ptr(buf.as_ptr()).to_string_lossy().into_owned()
         }
+    }
+
+    /// 相対配置を任せたオーバーレイのうち、取り付け先の裏のデバイスが入れ替わった・消えたものを付け直す
+    /// （そのままだと、もう追われていない前のデバイスに付いたまま見えなくなる）。消えたら最後の姿勢に空間固定する。
+    fn reattach(&mut self, old: &HashMap<Device, (u32, Pose)>) {
+        let index = |m: &HashMap<Device, (u32, Pose)>, d: &Device| m.get(d).map(|&(i, _)| i);
+        let moved: Vec<(u64, Device, Pose)> = self
+            .relative
+            .iter()
+            .filter(|(_, (d, _))| index(old, d) != index(&self.devices, d))
+            .map(|(&id, (d, offset))| (id, d.clone(), *offset))
+            .collect();
+        for (id, device, offset) in moved {
+            match self.devices.get(&device) {
+                Some(&(index, to)) => {
+                    log(self.attach(id, index, to * offset));
+                }
+                None => {
+                    if let Some(&at) = self.last_seen.get(&device) {
+                        self.place_absolute(id, at * offset);
+                    }
+                }
+            }
+        }
+    }
+
+    fn attach(&self, id: u64, index: u32, offset: Pose) -> Result<(), VrError> {
+        let mut m = sys::HmdMatrix34_t {
+            m: matrix_from(offset),
+        };
+        let e = unsafe {
+            f(self.overlay().SetOverlayTransformTrackedDeviceRelative)(id, index, &mut m)
+        };
+        check("SetOverlayTransformTrackedDeviceRelative", e)
+    }
+
+    fn place_absolute(&self, id: u64, pose: Pose) {
+        let mut m = sys::HmdMatrix34_t {
+            m: matrix_from(pose),
+        };
+        let e = unsafe {
+            f(self.overlay().SetOverlayTransformAbsolute)(
+                id,
+                sys::ETrackingUniverseOrigin_TrackingUniverseStanding,
+                &mut m,
+            )
+        };
+        log(check("SetOverlayTransformAbsolute", e));
     }
 
     fn release(&mut self, id: u64) {
@@ -399,7 +454,12 @@ impl VrBackend for OpenVrBackend {
             }
             frame.hands = input.skeletons(predict);
         }
-        self.devices = devices;
+        let old = std::mem::replace(&mut self.devices, devices);
+        for (device, &(index, to)) in &self.devices {
+            let raw = pose_from(&poses[index as usize].mDeviceToAbsoluteTracking.m);
+            self.last_seen.insert(device.clone(), raw * to);
+        }
+        self.reattach(&old);
         frame
     }
 
@@ -438,36 +498,26 @@ impl VrBackend for OpenVrBackend {
     }
 
     fn destroy_overlay(&mut self, id: OverlayId) {
+        self.relative.remove(&id.0);
         unsafe {
             let _ = f(self.overlay().DestroyOverlay)(id.0);
         }
     }
 
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose) {
-        let mut m = sys::HmdMatrix34_t {
-            m: matrix_from(pose),
-        };
-        let e = unsafe {
-            f(self.overlay().SetOverlayTransformAbsolute)(
-                id.0,
-                sys::ETrackingUniverseOrigin_TrackingUniverseStanding,
-                &mut m,
-            )
-        };
-        log(check("SetOverlayTransformAbsolute", e));
+        self.relative.remove(&id.0);
+        self.place_absolute(id.0, pose);
     }
 
     fn set_overlay_pose_relative(&mut self, id: OverlayId, device: &Device, offset: Pose) -> bool {
         let Some(&(index, to_pose)) = self.devices.get(device) else {
             return false;
         };
-        let mut m = sys::HmdMatrix34_t {
-            m: matrix_from(to_pose * offset),
-        };
-        let e = unsafe {
-            f(self.overlay().SetOverlayTransformTrackedDeviceRelative)(id.0, index, &mut m)
-        };
-        check("SetOverlayTransformTrackedDeviceRelative", e).is_ok()
+        let ok = self.attach(id.0, index, to_pose * offset).is_ok();
+        if ok {
+            self.relative.insert(id.0, (device.clone(), offset));
+        }
+        ok
     }
 
     fn set_overlay_width(&mut self, id: OverlayId, width_m: f32) {

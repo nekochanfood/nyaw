@@ -523,6 +523,9 @@ impl OpenXrBackend {
                     .then(|| HandSkeleton {
                         hand: *hand,
                         joints: joints.map(|j| from_posef(j.pose)),
+                        // ponytail: 骨格の元（光学式かコントローラか）を聞いていない（XR_EXT_hand_tracking_data_source）。
+                        // コントローラのプロファイルが出ている手はコントローラで操作する。
+                        tracking: crate::FingerTracking::Partial,
                     })
             })
             .collect()

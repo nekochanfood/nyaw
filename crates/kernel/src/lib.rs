@@ -18,6 +18,7 @@ use subsystems::os;
 
 pub use config::{Config, Language, LodQuality, PointerMode, ThemeMode};
 pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
+pub use subsystems::ControllerState;
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
 /// [`Kernel::tick`] 1 回の内訳。
@@ -89,6 +90,8 @@ pub enum Setting {
     PointerRelease(f32),
     /// レーザーの見える長さ（m。`laser_length`）。
     LaserLength(f32),
+    /// コントローラを持たない手の調整値（`[hand]`）。範囲の外の値は範囲に収める。
+    Hand(subsystems::input::HandTuning),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -100,6 +103,7 @@ pub struct Settings {
     pub pointer_smoothing: f32,
     pub pointer_release_deg: f32,
     pub laser_length: f32,
+    pub hand: subsystems::input::HandTuning,
 }
 
 /// パネルの状態。ビューの表示用。全体の設定は [`Settings`]。
@@ -156,12 +160,40 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     point_slots: std::collections::HashMap<PanelId, u64>,
     /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
     shortcut: DoublePress,
+    /// 骨格だけの手のショートカット（親指と小指）の長押し。二回押しと同じく [`PanelStatus::double_press`] に数える。
+    hand_shortcut: LongPress,
     /// OS の前面のアプリのキーボードの監視と入力（[`Kernel::os_keyboard`]。使い始めるまで起こさない）。
     os_keyboard: Option<os::keyboard::Watcher>,
 }
 
 /// 二回続けて押したと見なす、押下と次の押下の間隔の上限。
 pub const DOUBLE_PRESS: Duration = Duration::from_millis(250);
+/// 骨格だけの手のショートカット（親指と小指を付ける）を、この時間押し続けると一回と数える。指を付け直す二回押しは、
+/// ハンドトラッキングでは離したかどうかが曖昧で数え損ねるので、手は長押しにする。
+pub const HAND_LONG_PRESS: Duration = Duration::from_millis(500);
+
+/// 押し続けて [`HAND_LONG_PRESS`] たったら一回数える（離すまで次は数えない）。
+#[derive(Debug, Default)]
+struct LongPress {
+    since: Option<Instant>,
+    fired: bool,
+    count: u32,
+}
+
+impl LongPress {
+    fn update(&mut self, held: bool, now: Instant) {
+        if !held {
+            (self.since, self.fired) = (None, false);
+            return;
+        }
+        let since = *self.since.get_or_insert(now);
+        if !self.fired && now.duration_since(since) >= HAND_LONG_PRESS {
+            self.fired = true;
+            self.count += 1;
+            logger::debug!("hand shortcut held", count = self.count);
+        }
+    }
+}
 
 /// 押下の立ち上がりを見て、[`DOUBLE_PRESS`] 以内に二回続いたら数える。三回目は次の一回目として数え直す。
 #[derive(Debug, Default)]
@@ -245,7 +277,8 @@ impl<B: VrBackend> Kernel<B> {
         if !os::high_gpu_priority() {
             logger::warn!("cannot raise GPU scheduling priority");
         }
-        let subsystems = Subsystems::with_backend(vr);
+        let mut subsystems = Subsystems::with_backend(vr);
+        subsystems.hand = config.hand.clamped();
         let mut overlay = Overlay::new();
         if let Some(s) = config.pointer_smoothing {
             overlay.set_pointer_smoothing(s);
@@ -273,6 +306,7 @@ impl<B: VrBackend> Kernel<B> {
             speakers: Default::default(),
             point_slots: Default::default(),
             shortcut: DoublePress::default(),
+            hand_shortcut: LongPress::default(),
             os_keyboard: None,
         }
     }
@@ -294,6 +328,7 @@ impl<B: VrBackend> Kernel<B> {
             pointer_smoothing: self.overlay.pointer_smoothing(),
             pointer_release_deg: self.overlay.pointer_release(),
             laser_length: self.overlay.laser_length(),
+            hand: self.subsystems.hand,
         }
     }
 
@@ -330,6 +365,12 @@ impl<B: VrBackend> Kernel<B> {
                 let l = self.overlay.laser_length();
                 self.config.laser_length = Some(l);
                 ("laser_length", config::value(l))
+            }
+            Setting::Hand(h) => {
+                let h = h.clamped();
+                self.subsystems.hand = h;
+                self.config.hand = h;
+                ("hand", config::value(h))
             }
         };
         if let Some(path) = &self.config_path
@@ -422,8 +463,15 @@ impl<B: VrBackend> Kernel<B> {
         let frame = self.subsystems.poll();
         let polled = Instant::now();
         self.poll_desktop();
-        let x = frame.controllers.iter().any(|c| c.shortcut);
-        self.shortcut.update(x, polled);
+        // ボタン（左手の X）は二回押し、骨格だけの手（向きが分かる）は長押し。
+        let held = |hand: bool| {
+            frame
+                .controllers
+                .iter()
+                .any(|c| c.shortcut && c.facing.is_some() == hand)
+        };
+        self.shortcut.update(held(false), polled);
+        self.hand_shortcut.update(held(true), polled);
         let mut events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
         self.route_desktop(&mut events);
         self.update_audio();
@@ -484,6 +532,11 @@ impl<B: VrBackend> Kernel<B> {
     /// 最後の tick で骨格が取れていた手（スケルタル入力）。
     pub fn hands(&self) -> &[vr::HandSkeleton] {
         self.overlay.hands()
+    }
+
+    /// 最後の tick の手ごとの入力の状態（骨格だけの手は判定に使った値 `metrics` 付き）。
+    pub fn controllers(&self) -> &[ControllerState] {
+        self.overlay.controllers()
     }
 
     /// `hand` のツールチップをカーソルの上下どちらに出すか（`Overlay::tooltip_anchor`）。
@@ -564,7 +617,7 @@ impl<B: VrBackend> Kernel<B> {
             animated: p.animated,
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
-            double_press: self.shortcut.count,
+            double_press: self.shortcut.count + self.hand_shortcut.count,
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
             lod: self.panel_lod(panel),
@@ -608,6 +661,45 @@ mod tests {
         d.update(false, late + Duration::from_millis(50));
         d.update(true, late + Duration::from_millis(250));
         assert_eq!(d.count, 2);
+    }
+
+    /// 手の長押しは 0.5 秒で一回。押し続けても増えず、途中で離すと数え直し。
+    #[test]
+    fn long_press_counts_once_per_hold() {
+        let t = Instant::now();
+        let ms = |n| t + Duration::from_millis(n);
+        let mut l = LongPress::default();
+        for (held, at) in [(true, 0), (true, 300), (false, 400), (true, 500), (true, 900)] {
+            l.update(held, ms(at));
+        }
+        assert_eq!(l.count, 0, "離したので 0.5 秒続いていない");
+        l.update(true, ms(1000));
+        assert_eq!(l.count, 1);
+        l.update(true, ms(3000));
+        assert_eq!(l.count, 1, "押し続けても一回");
+        l.update(false, ms(3100));
+        l.update(true, ms(3200));
+        l.update(true, ms(3700));
+        assert_eq!(l.count, 2);
+    }
+
+    /// 手の調整は範囲に収めて入力層へ渡り、設定として読める。
+    #[test]
+    fn hand_setting_reaches_the_input_layer() {
+        let (mut k, _) = kernel();
+        let h = subsystems::input::HandTuning {
+            pinch_mm: 1000.0,
+            grip_deg: 75.0,
+            ..Default::default()
+        };
+        k.set(Setting::Hand(h));
+        let expected = subsystems::input::HandTuning {
+            pinch_mm: subsystems::input::HandTuning::PINCH_MM.1,
+            ..h
+        };
+        assert_eq!(k.settings().hand, expected);
+        assert_eq!(k.subsystems.hand, expected);
+        assert_eq!(k.config.hand, expected);
     }
 
     /// 左手の X ボタンを二回押すと、どのパネルの状態でも数が増える。

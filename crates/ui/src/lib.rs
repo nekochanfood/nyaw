@@ -344,6 +344,8 @@ pub struct PanelControl {
     /// どのパネルの状態でもないので、変わってもパネルを描き直させない（見たいビューは `PanelState::live` で毎フレーム描く）。
     pub hands: Vec<kernel::vr::HandSkeleton>,
     pub hmd: kernel::Pose,
+    /// 手ごとの入力の状態（判定の確認用）。`hands` と同じく毎フレーム書く。
+    pub controllers: Vec<kernel::ControllerState>,
     /// 終了を頼む。フレームループがアプリを終える（テストのハーネスもこれで終える）。
     pub quit: bool,
     /// 開いているパネルの数（閉じたものは数えない）と、同時に開ける数の上限（[`MAX_PANELS`] とランタイムの上限の小さい方）。
@@ -364,6 +366,7 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     let ctl = cx.default_global::<PanelControl>();
     ctl.hands = kernel.hands().to_vec();
     ctl.hmd = kernel.hmd();
+    ctl.controllers = kernel.controllers().to_vec();
     let settings = ctl.settings;
     let ctl = ctl.panels.entry(panel).or_default();
     for c in ctl.commands.drain(..) {

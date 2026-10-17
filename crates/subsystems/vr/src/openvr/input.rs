@@ -8,7 +8,9 @@ use std::mem::{MaybeUninit, size_of};
 use openvr_bindings as sys;
 
 use super::{f, pose_from};
-use crate::{Hand, HandSkeleton, JOINT_COUNT, PALM, Pose, Quat, Vec2, Vec3, VrError};
+use crate::{
+    FingerTracking, Hand, HandSkeleton, JOINT_COUNT, PALM, Pose, Quat, Vec2, Vec3, VrError,
+};
 
 const FILES: [(&str, &str); 4] = [
     ("actions.json", include_str!("actions.json")),
@@ -170,19 +172,36 @@ impl Input {
                     joints[11].position.lerp(joints[12].position, 0.5),
                     joints[11].orientation,
                 );
-                Some(HandSkeleton { hand, joints })
+                Some(HandSkeleton {
+                    hand,
+                    joints,
+                    tracking: self.tracking(action),
+                })
             })
             .collect()
     }
 
-    /// 骨格の根から見たボーン（OpenVR の 31 本）の姿勢。コントローラを握った形の可動域（WithController）。
+    /// 骨格の指をどれだけ実際に追っているか。聞けなければ、コントローラを握っているとみなす。
+    fn tracking(&self, action: u64) -> FingerTracking {
+        let mut level = sys::EVRSkeletalTrackingLevel_VRSkeletalTracking_Partial;
+        let e = unsafe { f(self.t().GetSkeletalTrackingLevel)(action, &mut level) };
+        match level {
+            _ if e != sys::EVRInputError_VRInputError_None => FingerTracking::Partial,
+            sys::EVRSkeletalTrackingLevel_VRSkeletalTracking_Estimated => FingerTracking::Estimated,
+            sys::EVRSkeletalTrackingLevel_VRSkeletalTracking_Full => FingerTracking::Full,
+            _ => FingerTracking::Partial,
+        }
+    }
+
+    /// 骨格の根から見たボーン（OpenVR の 31 本）の姿勢。コントローラを握った形に縛らない可動域（WithoutController）で、
+    /// 握りこぶし・指を伸ばしきった形まで出る（握る・つまむの判定に要る）。
     fn bones(&self, action: u64) -> Option<[Pose; 31]> {
         let mut raw: [sys::VRBoneTransform_t; 31] = unsafe { MaybeUninit::zeroed().assume_init() };
         let e = unsafe {
             f(self.t().GetSkeletalBoneData)(
                 action,
                 sys::EVRSkeletalTransformSpace_VRSkeletalTransformSpace_Model,
-                sys::EVRSkeletalMotionRange_VRSkeletalMotionRange_WithController,
+                sys::EVRSkeletalMotionRange_VRSkeletalMotionRange_WithoutController,
                 raw.as_mut_ptr(),
                 raw.len() as u32,
             )

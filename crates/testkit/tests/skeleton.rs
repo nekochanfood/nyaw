@@ -1,7 +1,7 @@
 //! Skeletal input: the hand skeleton the runtime reports reaches the skeleton test screen, and a pinch between the thumb and each finger lights up.
 
 use gpui::TestAppContext;
-use kernel::vr::{HandSkeleton, JOINT_COUNT, TIPS};
+use kernel::vr::{FingerTracking, HandSkeleton, JOINT_COUNT, TIPS};
 use testing::{BUTTON_ACTIVE_BG, BUTTON_BG, SkeletonTest};
 use testkit::{Driver, Hand, Pose, Vec3, VrKit};
 
@@ -20,6 +20,7 @@ fn hand(pinched: Option<usize>) -> HandSkeleton {
     HandSkeleton {
         hand: Hand::Right,
         joints,
+        tracking: FingerTracking::Full,
     }
 }
 
@@ -38,6 +39,14 @@ fn pinch_lights_only_the_touching_finger(cx: &mut TestAppContext) {
     for id in ["pinch-right-index", "pinch-right-ring", "pinch-right-little", "pinch-left-middle"] {
         assert_eq!(kit.color_at(id), BUTTON_BG, "{id}");
     }
+
+    // The bare hand is driven by its skeleton: pinching thumb and index clicks, which the diagnostics show.
+    kit.kernel.subsystems.backend.frame.hands = vec![hand(Some(1))];
+    kit.step().step();
+    for id in ["input-source-right", "hand-click-right", "pinch-right-index"] {
+        assert_eq!(kit.color_at(id), BUTTON_ACTIVE_BG, "{id}");
+    }
+    assert_eq!(kit.color_at("input-source-left"), BUTTON_BG);
 
     // Losing the skeleton turns the pinch off.
     kit.kernel.subsystems.backend.frame.hands.clear();
