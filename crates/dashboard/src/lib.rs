@@ -370,7 +370,7 @@ fn menu_offset() -> Pose {
     Pose::new(top + rotation * Vec3::new(0.0, lift, MENU_LIFT), rotation)
 }
 
-/// メニューのポップオーバー: デバッグ・設定（選ぶとその画面をはめる）と、一番下に nyaw の終了（確かめのダイアログを出す）。
+/// メニューのポップオーバー: デバッグ・設定（選ぶとその画面をはめる）と、一番下にアプリの終了（確かめのダイアログを出す）。
 /// 選ぶと閉じる。背景は敷かず、一覧のカードがそのままポップオーバーになる。
 pub struct Menu {
     panel: PanelId,
@@ -407,7 +407,7 @@ impl Render for Menu {
     }
 }
 
-/// nyaw を終了するかを確かめるダイアログの起動仕様。視界の中央に出す。
+/// アプリを終了するかを確かめるダイアログの起動仕様。視界の中央に出す。
 fn quit_dialog_spec(window: &Window, cx: &App) -> PanelSpec {
     let height = components::dialog_height(
         window,
@@ -426,7 +426,7 @@ fn quit_dialog_spec(window: &Window, cx: &App) -> PanelSpec {
         .without_nav_bar()
 }
 
-/// nyaw を終了するかを確かめるダイアログ。終了を選ぶとアプリを終える。
+/// アプリを終了するかを確かめるダイアログ。終了を選ぶとアプリを終える。
 struct QuitDialog {
     panel: PanelId,
 }

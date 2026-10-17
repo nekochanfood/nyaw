@@ -102,8 +102,8 @@ dock = "ダッシュボードに戻す"
 
 [dashboard]
 title = "ダッシュボード"
-quit = "nyaw を終了"
-quit_title = "nyaw を終了しますか？"
+quit = "アプリを終了"
+quit_title = "アプリを終了しますか？"
 quit_body = "開いている画面や配信もすべて閉じます。"
 quit_confirm = "終了"
 menu = "メニュー"
