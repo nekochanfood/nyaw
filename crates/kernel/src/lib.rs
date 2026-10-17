@@ -40,6 +40,8 @@ pub enum PanelCommand {
     Lock(bool),
     /// このパネルのイン・アウトアニメーションを有効化・無効化する。
     Animated(bool),
+    /// このパネルが出ている間、空間全体を暗くする（`Overlay::set_veil`）。
+    Veil(bool),
     Close,
     /// その手のレーザーを描くパネルにする（ヒット判定の対象外になり、置き場所はオーバーレイが決める）。
     Pointer(Hand, Pointer),
@@ -572,6 +574,7 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay
                     .set_animated(&mut self.subsystems.backend, panel, animated)
             }
+            PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
             PanelCommand::Close => self.overlay.close(&mut self.subsystems.backend, panel),
             PanelCommand::Pointer(hand, part) => {
                 self.overlay
