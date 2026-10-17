@@ -116,7 +116,7 @@ VR 空間のパネルをレーザーで操作する前提の方針。値は `tok
 子パネル（`ui::PanelSpec::child`）として開き、中身は `components::dialog` で組む。
 
 - **並び**: 上からアイコン・タイトル・概要・ボタン。すべて中央揃え。
-- **アイコン**: 64px、`Weight::Fill`、`accent-solid`。何についての問いかを形で伝える（情報 = `INFO`、注意 = `WARNING` など）。
+- **アイコン**: 64px、`Weight::Fill`、`accent-solid`。何についての問いかを形で伝える（情報 = `INFO`、注意 = `WARNING` など）。塗りだと形が潰れて分かりにくいもの（電源など）は `Dialog::weight` で線（`Weight::Regular`）にする。
 - **タイトル**: `font_size::LG`・太字。問いそのものを書く。
 - **概要**: `font_size::MD`・`text-low`。選んだ結果どうなるかを書く。
 - **ボタン**: 幅いっぱいで縦に積む。下に寄せない（余った高さが文とボタンの間に溜まって間延びする）。主の操作（`Variant::Primary`）を一番上に。破壊的な操作は `danger` にする。

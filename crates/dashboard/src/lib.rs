@@ -453,6 +453,8 @@ impl Render for QuitDialog {
                     .on_click(move |_, _, cx| close(panel, cx)),
             ],
         )
+        // 電源のアイコンは塗りだと形が潰れて分かりにくいので、線で描く。
+        .weight(design::Weight::Regular)
     }
 }
 

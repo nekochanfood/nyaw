@@ -1148,7 +1148,7 @@ impl Render for NavBar {
                 let (id, glyph, tip) = if inside {
                     ("nav-undock", &design::icons::ARROW_SQUARE_OUT, i18n::t(cx, "dock.undock"))
                 } else {
-                    ("nav-dock", &design::icons::ARROW_SQUARE_IN, i18n::t(cx, "dock.dock"))
+                    ("nav-dock", &design::icons::CARET_LINE_DOWN, i18n::t(cx, "dock.dock"))
                 };
                 design::components::icon_button(
                     &theme,

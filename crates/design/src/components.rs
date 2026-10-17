@@ -842,9 +842,19 @@ pub struct Dialog {
     id: &'static str,
     theme: Theme,
     glyph: &'static crate::Icon,
+    /// アイコンのウェイト（既定は塗り。[`Dialog::weight`]）。
+    weight: crate::Weight,
     title: SharedString,
     description: SharedString,
     actions: Vec<Button>,
+}
+
+impl Dialog {
+    /// アイコンのウェイトを変える（既定は塗り）。塗りだと強すぎる・形が分かりにくいアイコン（電源など）に。
+    pub fn weight(mut self, weight: crate::Weight) -> Self {
+        self.weight = weight;
+        self
+    }
 }
 
 /// ダイアログ（子パネル）の中身。上からアイコン・タイトル・概要・ボタンを中央揃えで並べる。
@@ -865,6 +875,7 @@ pub fn dialog(
         id,
         theme: *theme,
         glyph,
+        weight: crate::Weight::Fill,
         title: title.into(),
         description: description.into(),
         actions: actions.into_iter().collect(),
@@ -877,6 +888,7 @@ impl RenderOnce for Dialog {
             id,
             theme,
             glyph,
+            weight,
             title,
             description,
             actions,
@@ -911,7 +923,7 @@ impl RenderOnce for Dialog {
             .p(px(spacing::XL))
             .child(
                 crate::icon(glyph)
-                    .weight(crate::Weight::Fill)
+                    .weight(weight)
                     .size(px(DIALOG_ICON))
                     .color(rgba(theme.accent_solid)),
             )
