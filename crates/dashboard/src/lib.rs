@@ -23,15 +23,15 @@ use ui::{PanelControl, PanelSpec};
 
 /// バーを手前に傾ける角度（下から見上げずに読めるよう、少し上を向かせる）。はめた画面はこの分だけ起こして立てる。
 const BAR_TILT: f32 = std::f32::consts::FRAC_PI_6;
-/// バーの位置: 開いた瞬間の頭から見て正面 0.6m・下 0.3m（上にはめる画面が目の高さに来る）。
+/// バーの位置: 開いた瞬間の頭から見て正面 1.05m・下 0.45m（傾けた手前の縁でも 1m 以上離れ、上にはめる画面の中心がほぼ目の高さに来る）。
 /// 向きは x 軸回りに -[`BAR_TILT`]（const では作れないので値で書く。テストで確かめる）。
 pub const POSE: Pose = Pose::new(
-    Vec3::new(0.0, -0.3, -0.6),
+    Vec3::new(0.0, -0.45, -1.05),
     Quat::from_xyzw(-0.258_819, 0.0, 0.0, 0.965_925_8),
 );
-/// はめる画面の大きさと解像度。
-const SIZE_M: Vec2 = Vec2::new(0.8, 0.5);
-const RES_PX: (u32, u32) = (800, 500);
+/// はめる画面の大きさと解像度（main が渡す設定画面と同じ）。ほかから渡される画面も、縦をこの高さに揃える。
+const SIZE_M: Vec2 = Vec2::new(1.024, 0.768);
+const RES_PX: (u32, u32) = (1024, 768);
 /// バーの窓（px）。帯（ナビゲーションバーと同じ高さ）の周りに影の余白を取る。幅は画面と同じ密度。
 const BAR_PX: (u32, u32) = (
     RES_PX.0,
@@ -42,7 +42,7 @@ const BAR_M: Vec2 = Vec2::new(
     SIZE_M.x * BAR_PX.1 as f32 / BAR_PX.0 as f32,
 );
 /// 画面を開いてからはまるまでの、最初の置き場所（はまる所の近く）。
-const SCREEN_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.7), Quat::IDENTITY);
+const SCREEN_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.1), Quat::IDENTITY);
 /// グリッドの列の数とタイルの高さ（px）。
 const COLUMNS: u16 = 4;
 const TILE_PX: f32 = 120.0;
@@ -168,7 +168,7 @@ impl Dashboard {
             };
             cx.default_global::<PanelControl>()
                 .spawns
-                .push(spec.in_view(SCREEN_POSE).dockable());
+                .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
         }
         redraw(self.panel, cx);
     }

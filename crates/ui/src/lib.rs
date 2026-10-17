@@ -769,6 +769,15 @@ impl PanelSpec {
         self
     }
 
+    /// 解像度の縦横比を保ったまま、縦の大きさを `height` m にする（中身の組み方を変えずに大きさだけ揃える）。
+    pub fn fit_height(mut self, height: f32) -> Self {
+        self.size = Vec2::new(
+            height * self.resolution.0 as f32 / self.resolution.1 as f32,
+            height,
+        );
+        self
+    }
+
     /// 開いた瞬間の対象パネルの下へ、手前に傾けて置く。親子関係や追従は作らない。
     pub fn below(mut self, panel: PanelId, tilt: f32) -> Self {
         self.from = Some(panel);
