@@ -578,6 +578,8 @@ pub fn nav_bar(
             .justify_center()
             .child(
                 card(theme)
+                    // 縮んだ線はダークでも暗い背景に埋もれないよう、ライトの色で描き、広がるにつれて今のテーマの色へ移る。
+                    .bg(rgba(mix(Theme::LIGHT.card, theme.card, grown)))
                     .relative()
                     .shadow(panel_shadow())
                     .rounded(px(radius::FULL))
