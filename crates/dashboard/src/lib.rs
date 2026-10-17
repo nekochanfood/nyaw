@@ -133,8 +133,8 @@ pub enum Page {
     Settings,
 }
 
-/// ダッシュボード（バー）。左から時刻と電池（クイック設定）・画面やウィンドウを開く「+」、区切り線を挟んで開いた配信の
-/// ボタン（溜まっていき、はみ出すと横にスクロールする）、区切り線を挟んで右端にデバッグ・設定。
+/// ダッシュボード（バー）。左からメニュー（デバッグ・設定のポップオーバー）・時刻と電池（クイック設定）・画面やウィンドウを
+/// 開く「+」、区切り線を挟んで開いた配信のボタン（溜まっていき、はみ出すと横にスクロールする）。
 /// 閉じる（隠す）のは X ボタンの二回押しか、ダッシュボードの外を押したとき。
 /// 今はまっている画面・配信のボタンは強調色。
 pub struct Dashboard {
@@ -143,6 +143,8 @@ pub struct Dashboard {
     debug: Summon,
     /// ダッシュボードで開いた配信（画面・ウィンドウ）。押すとはまり、ほかを選ぶと閉じずに隠れる。
     streams: Vec<Stream>,
+    /// 開いているメニューのポップオーバー（[`Menu`]）。
+    menu: Option<PanelId>,
     /// 最後にはめた画面（外されたり閉じられたりしていれば、[`Self::current`] は `None`）。
     shown: Option<(Page, PanelId)>,
     /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）。最初に見た値から数える。
@@ -159,9 +161,39 @@ impl Dashboard {
             settings,
             debug,
             streams: Vec::new(),
+            menu: None,
             shown: None,
             outside: None,
         }
+    }
+
+    /// 開いているメニューのポップオーバー（外側を押して閉じていれば `None`）。
+    fn open_menu(&self, cx: &App) -> Option<PanelId> {
+        self.menu.filter(|id| {
+            !cx.global::<PanelControl>()
+                .panels
+                .get(id)
+                .is_some_and(|p| p.status.closed)
+        })
+    }
+
+    /// メニューを開く・閉じる。開いている間にボタンを押すと、外側を押したことになってオーバーレイが閉じる。
+    fn toggle_menu(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.open_menu(cx) {
+            close(id, cx);
+            self.menu = None;
+        } else {
+            let (bar, dashboard) = (self.panel, cx.weak_entity());
+            let spec = PanelSpec::popover(bar, move |id, _, cx: &mut Context<Menu>| {
+                let _ = dashboard.update(cx, |d, _| d.menu = Some(id));
+                Menu { panel: id, dashboard }
+            })
+            .sized(MENU_M, MENU_PX)
+            .offset(menu_offset())
+            .without_resize();
+            cx.default_global::<PanelControl>().spawns.push(spec);
+        }
+        redraw(self.panel, cx);
     }
 
     /// 配信 `panel` を開いた（はめるのは開く側）。バーにボタンが増える。
@@ -306,6 +338,58 @@ struct Stream {
     seen_docked: bool,
 }
 
+/// メニューのポップオーバーの大きさと解像度（2 行の一覧が収まる）。
+const MENU_PX: (u32, u32) = (
+    320,
+    (2.0 * components::NAV_BAR_HEIGHT - 4.0 * spacing::SM + 1.0 + 2.0 * spacing::MD + 2.0 * components::PANEL_MARGIN)
+        as u32,
+);
+const MENU_M: Vec2 = Vec2::new(
+    MENU_PX.0 as f32 * SIZE_M.x / RES_PX.0 as f32,
+    MENU_PX.1 as f32 * SIZE_M.x / RES_PX.0 as f32,
+);
+/// メニューを、はまっている画面よりどれだけ手前に出すか（m）。
+const MENU_LIFT: f32 = 0.03;
+
+/// メニューのポップオーバーの、バーから見た置き場所: バーの左端の上に、はめた画面と同じく垂直に立て、画面より少し手前に出す。
+fn menu_offset() -> Pose {
+    let margin = |size: Vec2, res: (u32, u32)| components::PANEL_MARGIN * size.y / res.1 as f32;
+    let rotation = Quat::from_rotation_x(BAR_TILT);
+    let top = Vec3::new(
+        (MENU_M.x - BAR_M.x) / 2.0,
+        BAR_M.y / 2.0 - margin(BAR_M, BAR_PX),
+        0.0,
+    );
+    let lift = kernel::overlay::SLOT_GAP + MENU_M.y / 2.0 - margin(MENU_M, MENU_PX);
+    Pose::new(top + rotation * Vec3::new(0.0, lift, MENU_LIFT), rotation)
+}
+
+/// メニューのポップオーバー: デバッグ・設定。選ぶとその画面をはめて閉じる。
+pub struct Menu {
+    panel: PanelId,
+    dashboard: WeakEntity<Dashboard>,
+}
+
+impl Render for Menu {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let item = |id, glyph, key, page| {
+            let (dashboard, panel) = (self.dashboard.clone(), self.panel);
+            components::list_item(&theme, id, glyph, i18n::t(cx, key)).on_click(move |_, _, cx| {
+                close(panel, cx);
+                let _ = dashboard.update(cx, |d, cx| d.toggle(page, cx));
+            })
+        };
+        components::panel(&theme).child(components::list(
+            &theme,
+            [
+                item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug),
+                item("menu-settings", &icons::GEAR, "dashboard.settings", Page::Settings),
+            ],
+        ))
+    }
+}
+
 /// バーの区切り線の高さ（px）。
 const SEPARATOR_PX: f32 = 32.0;
 
@@ -377,24 +461,25 @@ impl Render for Dashboard {
             i18n::t(cx, "dashboard.add_screen"),
             Page::Mirror,
         );
-        let debug = page_button(
-            "dashboard-debug",
-            &icons::BUG,
-            i18n::t(cx, "dashboard.debug"),
-            Page::Debug,
-        );
-        let settings = page_button(
-            "dashboard-settings",
-            &icons::GEAR,
-            i18n::t(cx, "dashboard.settings"),
-            Page::Settings,
-        );
+        let menu = components::icon_button(
+            &theme,
+            "dashboard-menu",
+            &icons::LIST,
+            i18n::t(cx, "dashboard.menu"),
+            if self.open_menu(cx).is_some() {
+                Variant::Primary
+            } else {
+                Variant::Default
+            },
+        )
+        .on_click(cx.listener(|this, _, _, cx| this.toggle_menu(cx)));
         components::card_panel(&theme)
             .rounded(px(design::radius::FULL))
             .flex()
             .items_center()
             .gap(px(spacing::SM))
             .px(px(spacing::SM))
+            .child(menu)
             .child(
                 components::button(
                     &theme,
@@ -422,9 +507,6 @@ impl Render for Dashboard {
                     .gap(px(spacing::SM))
                     .children(streams),
             )
-            .child(separator(&theme))
-            .child(debug)
-            .child(settings)
     }
 }
 
@@ -1098,8 +1180,8 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()), 0);
-        // 設定を押すと、main が渡した設定画面がバーの上にはまる。
-        click(cx, "dashboard-settings");
+        // 設定を選ぶと（メニューから。`menu_items_open_screens_and_close_the_menu`）、main が渡した設定画面がバーの上にはまる。
+        bar.update(cx, |d, cx| d.toggle(Page::Settings, cx));
         open_spawned(cx, 2);
         assert!(commands(cx, 2).iter().any(docked_to_bar));
         assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), Some(Page::Settings));
@@ -1115,6 +1197,42 @@ mod tests {
         click(cx, "dashboard-quick-settings");
         assert!(commands(cx, 3).contains(&PanelCommand::Close));
         assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), None);
+    }
+
+    /// メニューボタンはバーに固定したポップオーバーを開き、その項目を選ぶと画面をはめてメニューを閉じる。
+    #[gpui::test]
+    fn menu_items_open_screens_and_close_the_menu(cx: &mut TestAppContext) {
+        let bar = cx
+            .add_window(|_, cx| {
+                cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+                Dashboard::new(1, summon, summon, cx)
+            })
+            .root(cx)
+            .unwrap();
+        let (_bar_view, bcx) = cx.add_window_view({
+            let bar = bar.clone();
+            move |_, _| BarView(bar)
+        });
+        bcx.run_until_parked();
+        click(bcx, "dashboard-menu");
+        let spec = bcx.update(|_, cx| cx.default_global::<PanelControl>().spawns.pop().unwrap());
+        assert!(spec.parent().is_some_and(|p| p.panel == 1 && p.docked && p.dismiss));
+        let (_menu, mcx) = cx.add_window_view(|_, _| Menu {
+            panel: 9,
+            dashboard: bar.downgrade(),
+        });
+        mcx.run_until_parked();
+        click(mcx, "menu-settings");
+        assert!(commands(mcx, 9).contains(&PanelCommand::Close));
+        assert_eq!(mcx.update(|_, cx| cx.global::<PanelControl>().spawns.len()), 1);
+    }
+
+    /// テストでバーを別の窓に描くための包み。
+    struct BarView(gpui::Entity<Dashboard>);
+    impl Render for BarView {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            self.0.clone()
+        }
     }
 
     /// 出ている間に何も無い所を押すと隠す（開いた時点までの数では隠さない）。

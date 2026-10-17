@@ -673,6 +673,8 @@ pub struct PanelSpec {
     below: Option<f32>,
     /// `from` の下端に蝶番のようにつなげ、面から手前へ折る角度（[`Self::hinged_below`]）。
     hinge: Option<f32>,
+    /// `from` から見た置き場所（[`Self::offset`]）。無ければ `from` の手前に少し離して重ねる。
+    offset: Option<Pose>,
     /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
     in_view: bool,
     size: Vec2,
@@ -727,6 +729,7 @@ impl PanelSpec {
             from: None,
             below: None,
             hinge: None,
+            offset: None,
             in_view: false,
             size: Vec2::new(0.8, 0.6),
             resolution: PANEL_PX,
@@ -755,6 +758,31 @@ impl PanelSpec {
             from: Some(from),
             ..Self::new(Pose::IDENTITY, build)
         }
+    }
+
+    /// `from` に固定したポップオーバー（メニューなど）として出す。`from` を暗くせず入力も止めず、外側を押すと閉じる。
+    /// 置き場所は [`Self::offset`] で決める。ナビゲーションバーは付けない。
+    pub fn popover<V: Render>(
+        from: PanelId,
+        build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
+    ) -> Self {
+        Self {
+            parent: Some(kernel::Parent {
+                panel: from,
+                carry: true,
+                dismiss: true,
+                docked: true,
+                ..Default::default()
+            }),
+            nav_bar: false,
+            ..Self::spawn(from, build)
+        }
+    }
+
+    /// 開いた瞬間の `from`（[`Self::spawn`] / [`Self::child`] / [`Self::popover`] の親）から見た置き場所。
+    pub fn offset(mut self, offset: Pose) -> Self {
+        self.offset = Some(offset);
+        self
     }
 
     /// `from` の子として出す（ダイアログなど）。親に追従し、開いている間の親は暗くなって入力を受けない。
@@ -1002,7 +1030,12 @@ impl PanelSpec {
                 Pose::new(at, orientation)
             }
             // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
-            Some(from) => kernel.panel(from).pose * Pose::new(SPAWN_GAP, Quat::IDENTITY),
+            Some(from) => {
+                kernel.panel(from).pose
+                    * self
+                        .offset
+                        .unwrap_or(Pose::new(SPAWN_GAP, Quat::IDENTITY))
+            }
             None if self.in_view => kernel.hmd().leveled() * self.pose,
             None => self.pose,
         }

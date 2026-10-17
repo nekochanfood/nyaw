@@ -102,6 +102,7 @@ dock = "Return to the dashboard"
 
 [dashboard]
 title = "Dashboard"
+menu = "Menu"
 add_screen = "Open a screen or window"
 mirror = "Screen mirroring"
 quick_settings = "Quick settings"
