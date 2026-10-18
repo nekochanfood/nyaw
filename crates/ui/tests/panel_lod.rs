@@ -58,7 +58,7 @@ fn main() -> ExitCode {
     };
     let kernel = Kernel::with_backend(Box::new(mock.clone()) as Box<dyn VrBackend>, config);
     let panels = vec![
-        PanelSpec::new(
+        PanelSpec::root(
             Pose::new(common::PANEL_POS, Quat::IDENTITY),
             move |_, _, _| Probe(clicked),
         )

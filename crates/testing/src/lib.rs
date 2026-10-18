@@ -79,9 +79,9 @@ pub const SIDEBAR_SELECTED_BG: u32 = rgb24(THEME.accent_bg_active);
 pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 1.0);
 pub const TESTING_PX: (u32, u32) = (1200, 1000);
 
-/// Testing パネルの起動仕様（置き場所は開く側が決める）。開いたら `opened` で PanelId を知らせる。
-pub fn spec(opened: impl FnOnce(PanelId, &mut gpui::App) + 'static) -> PanelSpec {
-    PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+/// パネル `from` から開く Testing パネルの起動仕様。開いたら `opened` で PanelId を知らせる。
+pub fn spec(from: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'static) -> PanelSpec {
+    PanelSpec::spawn(from, move |id, _, cx| {
         opened(id, cx);
         Testing::new(id)
     })
@@ -537,13 +537,14 @@ impl Render for Testing {
                     ),
                 )
                 .child(
-                    button!("keyboard-test", i18n::t(cx, "keyboard.title"), false).on_click(
+                    button!("keyboard-test", i18n::t(cx, "keyboard.title"), false).on_click({
+                        let panel = self.panel;
                         move |_, _, cx| {
                             cx.default_global::<PanelControl>()
                                 .spawns
-                                .push(KeyboardTest::spec());
-                        },
-                    ),
+                                .push(KeyboardTest::spec(panel));
+                        }
+                    }),
                 )
                 .child(
                     button!(
@@ -1350,6 +1351,19 @@ const SETTINGS_ITEMS: [(&str, &design::Icon); 5] = [
     ("setting-3", &design::icons::MONITOR),
     ("setting-4", &design::icons::KEYBOARD),
 ];
+
+/// 設定画面の起動仕様（ダッシュボードの設定ボタン。main が渡す）。`opened` は作られたパネルの ID を受け取る。
+pub fn settings_spec(
+    from: PanelId,
+    opened: impl FnOnce(PanelId, &mut gpui::App) + 'static,
+) -> PanelSpec {
+    PanelSpec::spawn(from, |id, _, cx| {
+        opened(id, cx);
+        Settings::new(id)
+    })
+        .sized(SETTINGS_SIZE, SETTINGS_PX)
+        .titled("testing.open.settings")
+}
 
 /// 設定画面（`settings-test`）。左のサイドバーにカテゴリの一覧、区切り線を挟んで右に選んだカテゴリの項目の一覧。
 /// 地は背景色（`components::panel`）。サイドバーの行（`components::sidebar_item`）は背景が無く、選んでいるカテゴリだけアクセントの色が付く。中身の一覧の行はカード色（`components::list`）。
@@ -2395,17 +2409,20 @@ const GRID_DISTANCE: f32 = 2.0;
 /// ちょうどになるまで出す。ランタイムがそれより手前で作れなくなれば（OpenVR のほかのアプリの分など）そこで止まり、
 /// 届いた数が `stress-count` に出る。
 pub struct StressTest {
+    /// このパネル（出すパネルの開いた元）。
+    panel: PanelId,
     /// 出したパネル（閉じたものも含む）。ビルド時に積まれる。
     spawned: Rc<RefCell<Vec<PanelId>>>,
     rng: u64,
 }
 
 impl StressTest {
-    pub fn new(_panel: PanelId) -> Self {
+    pub fn new(panel: PanelId) -> Self {
         let seed = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_or(1, |d| d.as_nanos() as u64);
         Self {
+            panel,
             spawned: Rc::default(),
             rng: seed | 1,
         }
@@ -2435,20 +2452,21 @@ impl StressTest {
             let ids = self.spawned.clone();
             let track = move |id| ids.borrow_mut().push(id);
             let spec = match i % 3 {
-                0 => PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+                0 => PanelSpec::spawn(self.panel, move |id, _, cx| {
                     track(id);
                     TestingAnim::new(id, cx)
                 }),
-                1 => PanelSpec::new(Pose::IDENTITY, move |id, _, _| {
+                1 => PanelSpec::spawn(self.panel, move |id, _, _| {
                     track(id);
                     TestingLod::new(id)
                 }),
-                _ => PanelSpec::new(Pose::IDENTITY, move |id, _, _| {
+                _ => PanelSpec::spawn(self.panel, move |id, _, _| {
                     track(id);
                     TestingTransparent::new(id)
                 }),
             };
             c.spawns.push(
+                // 並べて数えるので、開いた元の手前に重ねず格子に出す。
                 spec.in_view(grid_pose(i))
                     .sized(STRESS_SIZE, (800, 600))
                     // 負荷を測るための埋め草で、まとめて閉じる（`stress-close`）。バーを付けると開ける数が半分になる。

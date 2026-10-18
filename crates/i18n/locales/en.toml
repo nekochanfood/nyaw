@@ -74,7 +74,10 @@ tune_click = "Laser damping while clicking: {pct}%"
 tune_hold = "While clicking, ignore hand movement within {deg}°"
 
 [common]
+# chrono format (https://docs.rs/chrono/latest/chrono/format/strftime) with the weekday as {weekday}.
+date = "{weekday} %b %-d"
 close = "Close"
+minimize = "Minimize"
 default = "Default"
 ok = "OK"
 cancel = "Cancel"
@@ -94,13 +97,47 @@ thu = "Thu"
 fri = "Fri"
 sat = "Sat"
 
+[dock]
+undock = "Detach from the dashboard"
+dock = "Return to the dashboard"
+
 [dashboard]
 title = "Dashboard"
-
-[wrist]
-# chrono format (https://docs.rs/chrono/latest/chrono/format/strftime) with the weekday as {weekday}.
-date = "{weekday} %b %-d"
-toggle_panel = "Toggle Panel"
+quit = "Quit the app"
+quit_title = "Quit the app?"
+quit_body = "All open screens and streams will close."
+quit_confirm = "Quit"
+now_playing = "Now Playing"
+nothing_playing = "Nothing is playing"
+open_app = "Open the app"
+app_unavailable = "App window unavailable"
+previous = "Previous"
+next = "Next"
+previous_media = "Previous media"
+next_media = "Next media"
+play = "Play"
+pause = "Pause"
+menu = "Menu"
+launcher = "Launcher"
+quick_settings = "Quick settings"
+debug = "Debug"
+settings = "Settings"
+running = "Running"
+all_apps = "All apps"
+search_apps = "Search apps…"
+clear_search = "Clear search"
+refresh = "Refresh"
+loading = "Loading…"
+none = "None"
+failed = "Unavailable: {error}"
+batteries = "Batteries"
+no_batteries = "No devices report their battery level"
+hmd = "Headset"
+left_controller = "Left controller"
+right_controller = "Right controller"
+tracker = "Tracker {n}"
+charging = "Charging"
+theme = "Theme"
 
 [testing]
 title = "Testing"

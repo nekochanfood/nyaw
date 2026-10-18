@@ -1,4 +1,4 @@
-use super::{Button, Error, Frame, Session, Source, SourceKind, Touch, TouchPhase, Wake};
+use super::{Button, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch, TouchPhase, Wake};
 use ::windows::{
     Foundation::{TimeSpan, TypedEventHandler},
     Graphics::{
@@ -7,7 +7,14 @@ use ::windows::{
         SizeInt32,
     },
     Win32::{
-        Foundation::{HMODULE, HWND, LPARAM, POINT, RECT},
+        Foundation::{CloseHandle, HMODULE, HWND, LPARAM, POINT, RECT, SIZE, WPARAM},
+        Devices::Display::{
+            DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+            DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
+            DISPLAYCONFIG_SOURCE_DEVICE_NAME, DISPLAYCONFIG_TARGET_DEVICE_NAME,
+            DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes, QDC_ONLY_ACTIVE_PATHS,
+            QueryDisplayConfig,
+        },
         Graphics::{
             Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP},
             Direct3D11::*,
@@ -15,10 +22,14 @@ use ::windows::{
             Dxgi::IDXGIDevice,
             Gdi::*,
         },
+        Storage::EnhancedStorage::{PKEY_AppUserModel_ID, PKEY_Link_TargetParsingPath},
         System::{
-            Com::CoIncrementMTAUsage,
+            Com::{COINIT_APARTMENTTHREADED, CoIncrementMTAUsage, CoInitializeEx, CoTaskMemFree},
             Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
-            Threading::{AttachThreadInput, GetCurrentThreadId},
+            Threading::{
+                AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
+                PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+            },
             WinRT::{
                 Direct3D11::{CreateDirect3D11DeviceFromDXGIDevice, IDirect3DDxgiInterfaceAccess},
                 Graphics::Capture::IGraphicsCaptureItemInterop,
@@ -28,10 +39,15 @@ use ::windows::{
         UI::{
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext},
             Input::KeyboardAndMouse::*,
+            Shell::{
+                BHID_EnumItems, ExtractIconExW, FOLDERID_AppsFolder, IEnumShellItems, IShellItem,
+                IShellItem2, IShellItemImageFactory, KF_FLAG_DEFAULT, SHGetKnownFolderItem,
+                SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY, ShellExecuteW,
+            },
             WindowsAndMessaging::*,
         },
     },
-    core::{BOOL, Interface, factory},
+    core::{BOOL, Interface, PCWSTR, PWSTR, factory},
 };
 use std::{
     mem::size_of,
@@ -49,7 +65,7 @@ impl From<::windows::core::Error> for Error {
 }
 
 pub(super) fn sources() -> Result<Vec<Source>, Error> {
-    let mut sources = Vec::new();
+    let mut sources: Vec<Source> = Vec::new();
     unsafe extern "system" fn monitor(
         monitor: HMONITOR,
         _: HDC,
@@ -68,6 +84,8 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
             sources.push(Source {
                 name: String::from_utf16_lossy(&info.szDevice[..len]),
                 kind: SourceKind::Screen,
+                icon: None,
+                app: None,
                 target: monitor.0 as isize,
             });
         }
@@ -95,6 +113,11 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
             unsafe { &mut *(data.0 as *mut Vec<Source>) }.push(Source {
                 name: String::from_utf16_lossy(&title[..len as usize]),
                 kind: SourceKind::Window,
+                icon: unsafe { window_icon(hwnd) },
+                app: unsafe { process_path(hwnd) }.and_then(|p| {
+                    let p = String::from_utf16_lossy(&p);
+                    p.rsplit('\\').next().map(str::to_owned)
+                }),
                 target: hwnd.0 as isize,
             });
         }
@@ -110,7 +133,307 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
         .ok()?;
         EnumWindows(Some(window), LPARAM(&mut sources as *mut _ as isize))?;
     }
+    // 画面の名前は "\\.\DISPLAY2" のような装置名なので、モニターの製品名（無ければ「Display 2」）にする。
+    let products = monitor_products();
+    let screens: Vec<(String, Option<String>)> = sources
+        .iter()
+        .filter(|s| s.kind == SourceKind::Screen)
+        .map(|s| (s.name.clone(), products.get(&s.name).cloned()))
+        .collect();
+    for source in sources.iter_mut().filter(|s| s.kind == SourceKind::Screen) {
+        source.name = screen_label(&source.name, &screens);
+    }
     Ok(sources)
+}
+
+/// GDI の装置名（"\\.\DISPLAY2"）→ そこに映しているモニターの製品名（EDID の名前。"DELL U2720Q" など）。
+fn monitor_products() -> std::collections::HashMap<String, String> {
+    let mut names = std::collections::HashMap::new();
+    let (mut paths, mut modes) = (0u32, 0u32);
+    if unsafe { GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut paths, &mut modes) }.is_err() {
+        return names;
+    }
+    let mut path_info = vec![DISPLAYCONFIG_PATH_INFO::default(); paths as usize];
+    let mut mode_info = vec![DISPLAYCONFIG_MODE_INFO::default(); modes as usize];
+    let queried = unsafe {
+        QueryDisplayConfig(
+            QDC_ONLY_ACTIVE_PATHS,
+            &mut paths,
+            path_info.as_mut_ptr(),
+            &mut modes,
+            mode_info.as_mut_ptr(),
+            None,
+        )
+    };
+    if queried.is_err() {
+        return names;
+    }
+    for path in &path_info[..paths as usize] {
+        let mut source = DISPLAYCONFIG_SOURCE_DEVICE_NAME {
+            header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+                r#type: DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
+                size: size_of::<DISPLAYCONFIG_SOURCE_DEVICE_NAME>() as u32,
+                adapterId: path.sourceInfo.adapterId,
+                id: path.sourceInfo.id,
+            },
+            ..Default::default()
+        };
+        let mut target = DISPLAYCONFIG_TARGET_DEVICE_NAME {
+            header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+                r#type: DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
+                size: size_of::<DISPLAYCONFIG_TARGET_DEVICE_NAME>() as u32,
+                adapterId: path.targetInfo.adapterId,
+                id: path.targetInfo.id,
+            },
+            ..Default::default()
+        };
+        if unsafe { DisplayConfigGetDeviceInfo(&mut source.header) } != 0
+            || unsafe { DisplayConfigGetDeviceInfo(&mut target.header) } != 0
+        {
+            continue;
+        }
+        let text = |w: &[u16]| {
+            String::from_utf16_lossy(&w[..w.iter().position(|c| *c == 0).unwrap_or(w.len())])
+        };
+        let product = text(&target.monitorFriendlyDeviceName);
+        if !product.trim().is_empty() {
+            names.insert(text(&source.viewGdiDeviceName), product.trim().to_owned());
+        }
+    }
+    names
+}
+
+/// 画面の表示名。モニターの製品名（同じ製品名がほかにもあれば番号を添える）か、無ければ「Display 番号」。
+fn screen_label(device: &str, screens: &[(String, Option<String>)]) -> String {
+    let number = device
+        .trim_start_matches(|c: char| !c.is_ascii_digit())
+        .to_owned();
+    let product = screens
+        .iter()
+        .find(|(d, _)| d == device)
+        .and_then(|(_, p)| p.clone());
+    match product {
+        Some(p) if screens.iter().filter(|(_, q)| q.as_ref() == Some(&p)).count() > 1 => {
+            format!("{p} ({number})")
+        }
+        Some(p) => p,
+        None if number.is_empty() => device.to_owned(),
+        None => format!("Display {number}"),
+    }
+}
+
+/// ウィンドウのアイコン。ウィンドウ自身のもの（WM_GETICON・クラス）が無ければ、プロセスの実行ファイルのもの。
+unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
+    let mut icon = 0usize;
+    // 固まったウィンドウで一覧の取得ごと止まらないよう、待ちを区切る。
+    let sent = unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            WM_GETICON,
+            WPARAM(ICON_BIG as usize),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG | SMTO_BLOCK,
+            100,
+            Some(&mut icon),
+        )
+    };
+    if sent.0 == 0 || icon == 0 {
+        icon = unsafe { GetClassLongPtrW(hwnd, GCLP_HICON) };
+    }
+    if icon != 0 {
+        // 借りたアイコンなので破棄しない。
+        return unsafe { icon_rgba(HICON(icon as _)) };
+    }
+    let mut path = unsafe { process_path(hwnd) }?;
+    path.push(0);
+    let mut large = HICON::default();
+    unsafe { ExtractIconExW(PCWSTR(path.as_ptr()), 0, Some(&mut large), None, 1) };
+    if large.is_invalid() {
+        return None;
+    }
+    let rgba = unsafe { icon_rgba(large) };
+    let _ = unsafe { DestroyIcon(large) };
+    rgba
+}
+
+/// ウィンドウのプロセスの実行ファイルのパス（UTF-16、終端なし）。
+unsafe fn process_path(hwnd: HWND) -> Option<Vec<u16>> {
+    let mut pid = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+    let mut path = [0u16; 1024];
+    let mut len = path.len() as u32;
+    let named = unsafe {
+        QueryFullProcessImageNameW(
+            process,
+            PROCESS_NAME_WIN32,
+            PWSTR(path.as_mut_ptr()),
+            &mut len,
+        )
+    };
+    let _ = unsafe { CloseHandle(process) };
+    named.ok()?;
+    Some(path[..len as usize].to_vec())
+}
+
+/// アイコンを RGBA で読み出す。アルファを持たない古いアイコンはマスクから透明部分を作る。
+unsafe fn icon_rgba(icon: HICON) -> Option<Icon> {
+    let mut info = ICONINFO::default();
+    unsafe { GetIconInfo(icon, &mut info) }.ok()?;
+    let read = |bitmap: HBITMAP| unsafe { bitmap_bgra(bitmap) };
+    let color = (!info.hbmColor.is_invalid())
+        .then(|| read(info.hbmColor))
+        .flatten();
+    let mask = color
+        .as_ref()
+        .filter(|(_, _, px)| px.chunks_exact(4).all(|p| p[3] == 0))
+        .and_then(|_| read(info.hbmMask));
+    unsafe {
+        let _ = DeleteObject(info.hbmColor.into());
+        let _ = DeleteObject(info.hbmMask.into());
+    }
+    let (width, height, mut px) = color?;
+    for (i, p) in px.chunks_exact_mut(4).enumerate() {
+        p.swap(0, 2);
+        if let Some((_, _, m)) = &mask {
+            // マスクの黒い所が絵、白い所が透明。
+            p[3] = if m[i * 4] == 0 { 255 } else { 0 };
+        }
+    }
+    Some(Icon {
+        width,
+        height,
+        rgba: px.into(),
+    })
+}
+
+/// ビットマップを上から下の並びの BGRA で読み出す（一辺 256 まで）。
+unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
+    {
+        let mut bm = BITMAP::default();
+        let got = unsafe {
+            GetObjectW(
+                bitmap.into(),
+                size_of::<BITMAP>() as i32,
+                Some(&mut bm as *mut _ as _),
+            )
+        };
+        let (w, h) = (bm.bmWidth, bm.bmHeight);
+        if got == 0 || w <= 0 || h <= 0 || w > 256 || h > 256 {
+            return None;
+        }
+        let mut bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: w,
+                // 負の高さで上から下の並びにする。
+                biHeight: -h,
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bgra = vec![0u8; (w * h * 4) as usize];
+        let dc = unsafe { GetDC(None) };
+        let lines = unsafe {
+            GetDIBits(
+                dc,
+                bitmap,
+                0,
+                h as u32,
+                Some(bgra.as_mut_ptr() as _),
+                &mut bmi,
+                DIB_RGB_COLORS,
+            )
+        };
+        unsafe { ReleaseDC(None, dc) };
+        (lines == h).then_some((w as u32, h as u32, bgra))
+    }
+}
+
+/// スタートメニューのアプリ（`shell:AppsFolder`）を並べる。名前・AppUserModelId・ショートカットの指す実行ファイル名と、
+/// アイコン（64px）を読む。
+pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
+    // シェルの項目は STA で読む（このワーカーのスレッドだけで使う）。
+    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    let folder: IShellItem = unsafe { SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None) }?;
+    let items: IEnumShellItems = unsafe { folder.BindToHandler(None, &BHID_EnumItems) }?;
+    let take = |s: ::windows::core::Result<PWSTR>| {
+        let s = s.ok()?;
+        let text = unsafe { s.to_string() }.ok();
+        unsafe { CoTaskMemFree(Some(s.0 as *const _)) };
+        text
+    };
+    let mut apps = Vec::new();
+    loop {
+        let mut item = [None];
+        let mut fetched = 0u32;
+        if unsafe { items.Next(&mut item, Some(&mut fetched as *mut u32)) }.is_err() || fetched == 0 {
+            break;
+        }
+        let Some(item) = item[0].take().and_then(|i| i.cast::<IShellItem2>().ok()) else {
+            continue;
+        };
+        let (Some(name), Some(id)) = (
+            take(unsafe { item.GetDisplayName(SIGDN_NORMALDISPLAY) }),
+            take(unsafe { item.GetString(&PKEY_AppUserModel_ID) }),
+        ) else {
+            continue;
+        };
+        let exe = take(unsafe { item.GetString(&PKEY_Link_TargetParsingPath) })
+            .filter(|p| p.to_ascii_lowercase().ends_with(".exe"))
+            .and_then(|p| p.rsplit('\\').next().map(str::to_owned));
+        let icon = item
+            .cast::<IShellItemImageFactory>()
+            .ok()
+            .and_then(|f| unsafe { f.GetImage(SIZE { cx: 64, cy: 64 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK) }.ok())
+            .and_then(|bitmap| {
+                let read = unsafe { bitmap_bgra(bitmap) };
+                unsafe {
+                    let _ = DeleteObject(bitmap.into());
+                }
+                let (width, height, mut px) = read?;
+                // シェルの絵は乗算済みのアルファなので、ストレートに戻す。
+                for p in px.chunks_exact_mut(4) {
+                    p.swap(0, 2);
+                    let a = p[3] as u32;
+                    if a > 0 {
+                        for c in &mut p[..3] {
+                            *c = (*c as u32 * 255 / a).min(255) as u8;
+                        }
+                    }
+                }
+                Some(Icon {
+                    width,
+                    height,
+                    rgba: px.into(),
+                })
+            });
+        apps.push(InstalledApp { name, id, exe, icon });
+    }
+    Ok(apps)
+}
+
+/// アプリを AppUserModelId で起動する（ストアのアプリもデスクトップのアプリも `shell:AppsFolder` 経由で開ける）。
+pub(super) fn launch(id: &str) -> Result<(), Error> {
+    let path = ::windows::core::HSTRING::from(format!("shell:AppsFolder\\{id}"));
+    let done = unsafe {
+        ShellExecuteW(
+            None,
+            ::windows::core::w!("open"),
+            &path,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // 32 以下はエラー（ShellExecute の決まり）。
+    if done.0 as isize <= 32 {
+        return Err(Error(format!("cannot launch {id} ({})", done.0 as isize)));
+    }
+    Ok(())
 }
 
 struct Apartment;
@@ -627,5 +950,19 @@ mod tests {
             POINT { x: -1920, y: -100 }
         );
         assert_eq!(normalized_point(bounds, 1.0, 1.0), POINT { x: -1, y: 979 });
+    }
+
+    #[test]
+    fn screens_are_named_after_their_monitors() {
+        let screens = vec![
+            (r"\\.\DISPLAY1".to_owned(), Some("DELL U2720Q".to_owned())),
+            (r"\\.\DISPLAY2".to_owned(), Some("DELL U2720Q".to_owned())),
+            (r"\\.\DISPLAY3".to_owned(), Some("LG HDR 4K".to_owned())),
+            (r"\\.\DISPLAY4".to_owned(), None),
+        ];
+        let label = |d: &str| screen_label(d, &screens);
+        assert_eq!(label(r"\\.\DISPLAY1"), "DELL U2720Q (1)");
+        assert_eq!(label(r"\\.\DISPLAY3"), "LG HDR 4K");
+        assert_eq!(label(r"\\.\DISPLAY4"), "Display 4");
     }
 }

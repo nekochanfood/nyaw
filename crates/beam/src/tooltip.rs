@@ -196,7 +196,7 @@ impl Render for Tooltip {
 
 /// [`Pointer::Tooltip`] のパネル。
 pub fn spec(hand: Hand) -> ui::PanelSpec {
-    ui::PanelSpec::new(kernel::Pose::IDENTITY, move |panel, _, _| Tooltip {
+    ui::PanelSpec::root(kernel::Pose::IDENTITY, move |panel, _, _| Tooltip {
         hand,
         panel,
         state: State::default(),

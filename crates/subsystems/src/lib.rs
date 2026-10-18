@@ -3,7 +3,7 @@
 //! 上位のパネル管理や設定には依存せず、既存の各実装を共通の入口から提供する。
 //! 新しい環境への対応は各サブシステム内に閉じ、上位層で環境ごとに分岐しない。
 
-pub use {audio, desktop, input, keyboard, os, rendering, vr};
+pub use {audio, desktop, input, keyboard, media, os, rendering, vr};
 
 use std::collections::HashMap;
 
@@ -18,6 +18,8 @@ pub struct Frame {
     /// 骨格が取れている手（スケルタル入力）。
     pub hands: Vec<HandSkeleton>,
     pub trackers: Vec<(String, Pose)>,
+    /// 電池の残量を申告しているデバイス。
+    pub batteries: Vec<vr::Battery>,
     pub quit: bool,
     /// 手ブレのある入力に対して、上位のポインタ補正を有効にする。
     pub stabilize_pointer: bool,
@@ -213,6 +215,7 @@ impl<B: VrBackend> Subsystems<B> {
             controllers,
             hands: raw.hands,
             trackers: raw.trackers,
+            batteries: raw.batteries,
             quit: raw.quit,
             stabilize_pointer: !raw.emulated,
             tracked: !raw.emulated,

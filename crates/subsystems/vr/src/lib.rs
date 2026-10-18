@@ -260,6 +260,8 @@ pub struct Frame {
     pub hand_devices: Vec<(Hand, Pose)>,
     /// コントローラ以外のトラッカー（腰・足など）。ID はランタイムが決める（OpenVR はシリアル番号）。
     pub trackers: Vec<(String, Pose)>,
+    /// 電池の残量を申告しているデバイス（OpenVR だけ。OpenXR には標準の手段が無い）。
+    pub batteries: Vec<Battery>,
     /// ランタイムが終了を求めている（SteamVR の終了、OpenXR セッションの EXITING など）。
     pub quit: bool,
     /// デバイスは実在せず模したもの（novr のエミュレーター）。取り付けたパネルは追従しない（[`Frame::pose`] が `None`）。
@@ -282,6 +284,15 @@ impl Frame {
             Device::Tracker(id) => self.trackers.iter().find(|(i, _)| i == id).map(|(_, p)| *p),
         }
     }
+}
+
+/// デバイスの電池。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Battery {
+    pub device: Device,
+    /// 残量（0〜1）。
+    pub level: f32,
+    pub charging: bool,
 }
 
 /// トラッキングされるデバイス。オーバーレイを取り付ける先として使う。
@@ -385,6 +396,9 @@ pub trait VrBackend {
     fn overlay_seen(&self, _id: OverlayId) -> Option<bool> {
         None
     }
+    /// シーンのアプリ（ゲーム）への入力を止める・戻す（ダッシュボードが出ている間）。止められるのは OpenVR だけ
+    /// （SteamVR Input のアクションセットをオーバーレイの全体優先度で更新し、使う入力を奪う）。ほかは何もしない。
+    fn block_app_input(&mut self, _block: bool) {}
     /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
     /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読めるので、これは OpenXR 用。
     fn overlay_image(&mut self, _id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
@@ -447,6 +461,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn frame_interval(&self) -> Option<std::time::Duration> {
         (**self).frame_interval()
+    }
+    fn block_app_input(&mut self, block: bool) {
+        (**self).block_app_input(block)
     }
 }
 

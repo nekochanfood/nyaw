@@ -214,8 +214,12 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     routing.error = None;
     redraw_nav_bar(target, cx);
     let resolution = panel_resolution();
-    cx.default_global::<crate::PanelControl>().spawns.push(
-        crate::PanelSpec::spawn(target, move |panel, _, cx| {
+    // ダッシュボードにはめた画面へ打つなら、ダッシュボードのバーの下端につなげて頭へ向け、固定する
+    // （画面・バー・キーボードがつながって見える。画面を外すとキーボードも外れる。`crate::undock`）。
+    let dock = crate::docked(cx)
+        .filter(|&d| d == target)
+        .and(cx.global::<crate::PanelControl>().dock);
+    let spec = crate::PanelSpec::spawn(target, move |panel, _, cx| {
             let current = cx.default_global::<InputRouting>().active.as_mut();
             if let Some(session) = current.filter(|s| s.generation == generation) {
                 session.panel = Some(panel);
@@ -241,10 +245,14 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
             Vec2::new(1., resolution.1 as f32 / resolution.0 as f32),
             resolution,
         )
-        .below(target, std::f32::consts::FRAC_PI_4)
         // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
-        .without_nav_bar(),
-    );
+        .without_nav_bar();
+    let spec = match dock {
+        // 角度は外したときと同じく、開いた瞬間の頭の位置に向ける。
+        Some((owner, _)) => spec.hinged_below(owner).docked_to(owner),
+        None => spec.below(target, std::f32::consts::FRAC_PI_4),
+    };
+    cx.default_global::<crate::PanelControl>().spawns.push(spec);
 }
 
 /// デスクトップパネルのトグルボタンから呼ぶ。フォーカスが移っても常駐する。
@@ -373,6 +381,24 @@ mod tests {
     use super::*;
     use gpui::TestAppContext;
     use std::cell::RefCell;
+
+    /// ダッシュボードから外した画面へ打つキーボードも、一緒に外れて独立する。
+    #[gpui::test]
+    fn undocking_a_panel_also_undocks_its_keyboard(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            cx.default_global::<InputRouting>().active = Some(Session {
+                target: 5,
+                panel: Some(9),
+                mode: KeyboardMode::Persistent,
+                generation: 1,
+            });
+            crate::undock(5, cx);
+            let ctl = cx.global::<crate::PanelControl>();
+            for p in [5, 9] {
+                assert_eq!(ctl.panels[&p].commands, [PanelCommand::Parent(None)]);
+            }
+        });
+    }
 
     fn input(text: &str) -> KeyboardInput {
         KeyboardInput {
@@ -523,7 +549,8 @@ mod tests {
             let pose = spec.pose_for(&kernel, 1);
             assert!(pose.position.y < kernel.panel(target).pose.position.y - 0.5);
             let normal = pose.orientation * kernel::vr::Vec3::Z;
-            assert!(normal.y > 0.7 && normal.z > 0.7);
+            let toward_head = (kernel.hmd().position - pose.position).normalize();
+            assert!(normal.dot(toward_head) > 0.8);
             assert!(spec.parent().is_none());
             let panel = kernel
                 .add_panel("keyboard", pose, spec.size, spec.resolution)

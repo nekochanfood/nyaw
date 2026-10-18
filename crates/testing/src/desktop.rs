@@ -198,7 +198,7 @@ impl Render for DesktopTest {
                             let viewer = viewer.clone();
                             let title = source.name.clone();
                             cx.default_global::<PanelControl>().spawns.push(
-                                PanelSpec::new(Pose::IDENTITY, move |panel, _, cx| {
+                                PanelSpec::spawn(manager, move |panel, _, cx| {
                                     let ctl = cx.default_global::<PanelControl>();
                                     if let Some(previous) = viewer.replace(Some(panel)) {
                                         ctl.panels
@@ -231,6 +231,7 @@ impl Render for DesktopTest {
                                     }
                                     DesktopViewer { panel }
                                 })
+                                // 一覧（開いた元）を隠さないよう、その手前ではなく右に並べる。
                                 .in_view(Pose::new(Vec3::new(0.75, 0.0, -1.2), Quat::IDENTITY))
                                 // 配信のパネルは取得元の名前をタイトルに、ナビゲーションバーで閉じる（配信も止まる）。
                                 .titled_text(title)

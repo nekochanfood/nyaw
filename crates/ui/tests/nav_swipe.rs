@@ -25,7 +25,7 @@ fn main() -> ExitCode {
     }
     let (backend, emu) = Driven::headless(SCREEN.0, SCREEN.1);
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, Default::default());
-    let mut panels = vec![PanelSpec::new(
+    let mut panels = vec![PanelSpec::root(
         Pose::new(PANEL, Quat::IDENTITY),
         |id, _, _| NavTest::new(id),
     )];

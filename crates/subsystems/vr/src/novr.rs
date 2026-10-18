@@ -19,7 +19,7 @@ use minifb::{InputCallback, Key, MouseButton, MouseMode, Window, WindowOptions};
 use crate::compositor::{Draw, Gpu};
 
 use crate::{
-    Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec2, Vec3, VrBackend, VrError,
+    Battery, Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec2, Vec3, VrBackend, VrError,
 };
 
 const TITLE: &str = "nyaw (novr)";
@@ -33,6 +33,22 @@ const CHECKER: u32 = 16;
 const CHECKER_GRAY: [u32; 2] = [0x6b6b6b, 0x8a8a8a];
 /// フレームの周期（約 90Hz）。VR ランタイムの vsync 待ちと同じく、poll はここまで待つ。
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 90);
+
+/// 模したデバイスの電池（固定の値。電池を見せる画面を novr でも確かめられるように）。
+fn batteries() -> Vec<Battery> {
+    [
+        (Device::Hmd, 0.82, false),
+        (Device::Controller(Hand::Left), 0.64, false),
+        (Device::Controller(Hand::Right), 0.18, true),
+    ]
+    .into_iter()
+    .map(|(device, level, charging)| Battery {
+        device,
+        level,
+        charging,
+    })
+    .collect()
+}
 /// ホイール 1 刻みで右手のスティックを倒す量（1 フレームだけ）。オーバーレイはスティックの値をそのまま行数として送るので、
 /// 1 刻み = 3 行（一般的なホイールの既定）になる。
 // ponytail: 刻みの大きさ（Windows は 120 単位、ほかは OS ごと）は見ず向きだけ。滑らかなスクロールのホイールでは速すぎるかもしれない。
@@ -748,6 +764,7 @@ impl VrBackend for Emulator {
         Frame {
             hmd: Pose::IDENTITY,
             controllers: self.controllers(),
+            batteries: batteries(),
             quit: self.quit,
             emulated: true,
             ..Frame::default()

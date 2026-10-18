@@ -50,7 +50,7 @@ impl Write for Shared {
 
 fn testing_at(x: f32, y: f32, z: f32) -> PanelSpec {
     // The scenario tracks PanelIds, so no navigation bars (they are panels too).
-    PanelSpec::new(Pose::new(Vec3::new(x, y, z), Quat::IDENTITY), |id, _, _| {
+    PanelSpec::root(Pose::new(Vec3::new(x, y, z), Quat::IDENTITY), |id, _, _| {
         Testing::new(id)
     })
     .without_nav_bar()

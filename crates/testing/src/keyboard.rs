@@ -9,8 +9,9 @@ pub struct KeyboardTest {
 }
 
 impl KeyboardTest {
-    pub fn spec() -> PanelSpec {
-        PanelSpec::new(Pose::IDENTITY, |id, _, cx| Self::new(id, cx))
+    /// パネル `from` から開く。打つ指が届くよう、開いた元の手前ではなく目の前の低めに出す。
+    pub fn spec(from: PanelId) -> PanelSpec {
+        PanelSpec::spawn(from, |id, _, cx| Self::new(id, cx))
             .in_view(Pose::new(Vec3::new(0., 0.23, -0.85), Quat::IDENTITY))
             .sized(Vec2::new(0.96, 0.66), (1600, 1100))
             .titled("keyboard.title")

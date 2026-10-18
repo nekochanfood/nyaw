@@ -32,6 +32,8 @@ pub enum Variant {
     Danger,
     /// カードではなく背景（[`panel`] の地）に直接置くとき。背景から浮くよう、背景との差を取った無彩色。
     OnBackground,
+    /// 背景の無いボタン（画像の上に置く操作など）。ふだんは透明で、ホバー・押下だけ背景用の色が付く。
+    Ghost,
 }
 
 /// 色の移り変わり: `from` から `to` へ `start` から動いている。`start` が `None` なら落ち着いている。
@@ -169,17 +171,34 @@ pub fn button(
 /// アイコンだけの丸いボタン。見た目だけでは意味が伝わりにくいので、説明（ツールチップ）を必ず持たせる。
 pub fn icon_button(
     theme: &Theme,
-    id: &'static str,
+    id: impl Into<SharedString>,
     glyph: &'static crate::Icon,
     tooltip: impl Into<SharedString>,
     variant: Variant,
 ) -> Button {
-    let mut b = base_button(theme, id.into(), variant).tooltip(tooltip);
-    b.base = b.base.w(px(BUTTON_HEIGHT)).child(
+    round_button(theme, id, tooltip, variant).child(
         crate::icon(glyph)
             .weight(crate::Weight::Bold)
             .size(px(font_size::LG)),
-    );
+    )
+}
+
+/// 中身の無い、横長のボタン（文字のボタンと同じ高さ・角丸・状態色。左右の余白は小さめ）。中身（アイコンと文字など）は呼び出し側が足す。
+pub fn content_button(theme: &Theme, id: impl Into<SharedString>, variant: Variant) -> Button {
+    let mut b = base_button(theme, id.into(), variant);
+    b.base = b.base.px(px(spacing::LG)).gap(px(spacing::SM));
+    b
+}
+
+/// 中身の無い丸いボタン（アイコンボタンと同じ寸法・状態色・必須の説明）。中身（アプリのアイコンの画像など）は呼び出し側が足す。
+pub fn round_button(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    tooltip: impl Into<SharedString>,
+    variant: Variant,
+) -> Button {
+    let mut b = base_button(theme, id.into(), variant).tooltip(tooltip);
+    b.base = b.base.w(px(BUTTON_HEIGHT));
     b
 }
 
@@ -226,6 +245,12 @@ fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
             theme.control_on_background_active,
             theme.neutral_text,
         ),
+        Variant::Ghost => (
+            theme.control_on_background_hover & !0xff,
+            theme.control_on_background_hover,
+            theme.control_on_background_active,
+            theme.neutral_text,
+        ),
     };
     let selector = id.clone();
     let base = div()
@@ -265,6 +290,12 @@ impl InteractiveElement for Button {
 }
 
 impl StatefulInteractiveElement for Button {}
+
+impl ParentElement for Button {
+    fn extend(&mut self, elements: impl IntoIterator<Item = gpui::AnyElement>) {
+        self.base.extend(elements)
+    }
+}
 
 impl RenderOnce for Button {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
@@ -535,8 +566,9 @@ const NAV_LINE_WIDTH: f32 = 0.4;
 const NAV_LINE_HEIGHT: f32 = spacing::MD;
 
 /// ナビゲーションバー: パネルの下に付き、パネルを操作する帯。中央にパネルのタイトル、右端に閉じるボタン（アイコンだけ。
-/// id は `nav-close`）。カード 1 枚の帯で、角丸は `FULL`。押したときの処理（パネルを閉じる）は `on_close` で受け取る。
-/// `leading` があれば左端に置く（パネルごとの操作。閉じるボタンと左右対称の位置）。
+/// id は `nav-close`）。`minimize` なら閉じる代わりにしまうボタン（マイナス。id は `nav-minimize`）。
+/// カード 1 枚の帯で、角丸は `FULL`。押したときの処理（閉じる・しまう）は `on_close` で受け取る。
+/// `leading` は左端に並べる（パネルごとの操作。閉じるボタンと左右対称の位置から右へ）。
 /// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
 ///
 /// `open`（0〜1）は広がり具合。0（触れていない）はボタンもタイトルも出さない丸い線で、帯の上端に寄せて置く。
@@ -547,10 +579,16 @@ pub fn nav_bar(
     theme: &Theme,
     open: f32,
     title: impl Into<SharedString>,
+    minimize: bool,
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
-    leading: Option<Button>,
+    leading: Vec<Button>,
 ) -> Div {
+    let (close_id, close_glyph) = if minimize {
+        ("nav-minimize", &crate::icons::MINUS)
+    } else {
+        ("nav-close", &crate::icons::X)
+    };
     // 前半で動き、後半で広がる。それぞれの区間の中でも ease-in-out にして、つなぎ目で急に変わらないようにする。
     const MOVE_END: f32 = 0.35;
     let smooth = |t: f32| {
@@ -565,7 +603,7 @@ pub fn nav_bar(
     // 広がりの中心（帯の上下中央）。動く前は、線の上端が帯の上端に来るところまで上げておく。
     let center_offset = lerp(-(NAV_BAR_HEIGHT - NAV_LINE_HEIGHT) / 2.0, 0.0, moved);
     // タイトルは帯の中央。長くても閉じるボタンにかからないよう、左右にボタンの分を空けて省略する。
-    let side = BUTTON_HEIGHT + 2.0 * spacing::SM;
+    let side = leading.len().max(1) as f32 * (BUTTON_HEIGHT + spacing::SM) + spacing::SM;
     div().absolute().inset(px(PANEL_MARGIN)).child(
         div()
             .absolute()
@@ -612,21 +650,23 @@ pub fn nav_bar(
                                     .child(
                                         icon_button(
                                             theme,
-                                            "nav-close",
-                                            &crate::icons::X,
+                                            close_id,
+                                            close_glyph,
                                             close_tooltip,
                                             Variant::Default,
                                         )
                                         .on_click(on_close),
                                     ),
                             )
-                            .children(leading.map(|b| {
+                            .child(
                                 div()
                                     .absolute()
                                     .top(px((height - BUTTON_HEIGHT) / 2.0))
                                     .left(px(spacing::SM))
-                                    .child(b)
-                            })),
+                                    .flex()
+                                    .gap(px(spacing::SM))
+                                    .children(leading),
+                            ),
                     ),
             ),
     )
@@ -636,6 +676,20 @@ pub fn nav_bar(
 /// ホバー・押下で `control-hover` / `control-active` に沈む（区切り線とカードの角は [`list`] が付ける）。
 /// 選んでいる行は `.selected(true)`（押下の色のまま）。高さはボタンと同じ。
 pub fn list_item(
+    theme: &Theme,
+    id: &'static str,
+    glyph: &'static crate::Icon,
+    label: impl Into<SharedString>,
+) -> Button {
+    menu_item(theme, id, glyph, label).child(
+        crate::icon(&crate::icons::CARET_RIGHT)
+            .size(px(font_size::MD))
+            .color(rgba(theme.neutral_text_low)),
+    )
+}
+
+/// メニューの行: 一覧の行（[`list_item`]）と同じで、右の `>` が無い（その場で何かをする項目。先へ進む一覧ではない）。
+pub fn menu_item(
     theme: &Theme,
     id: &'static str,
     glyph: &'static crate::Icon,
@@ -653,12 +707,35 @@ pub fn list_item(
         // 行は文字が主役のボタンではないので太字にしない（文字は本文と同じ `MD`）。
         .font_weight(FontWeight::NORMAL)
         .child(crate::icon(glyph).size(px(font_size::LG)))
-        .child(div().flex_1().child(label.into()))
-        .child(
-            crate::icon(&crate::icons::CARET_RIGHT)
-                .size(px(font_size::MD))
-                .color(rgba(theme.neutral_text_low)),
-        );
+        .child(div().flex_1().child(label.into()));
+    b
+}
+
+/// タイル: 押せるカード。グリッドに並べる（ダッシュボードの取得元・クイック設定）。地（[`panel`]）に直接置き、
+/// 安静時はカードと同じ色、ホバー・押下で `control-hover` / `control-active`。有効な切り替えは `.selected(true)`。
+/// 中身は縦に中央揃えで積む。大きさと中身（アイコン・文字）は呼び出し側が足す。
+pub fn tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
+    let mut b = base_button(theme, id.into(), Variant::Default);
+    (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
+    b.base = b
+        .base
+        .flex_col()
+        .gap(px(spacing::SM))
+        .p(px(spacing::MD))
+        .rounded(px(radius::LG))
+        .font_weight(FontWeight::NORMAL);
+    b
+}
+
+/// 地の上に置くタイル（アプリ一覧のアプリなど）: [`tile`] と同じく縦に並べるが、カードの地を敷かず、ホバー・押下のときだけ
+/// 色が付く。ふだんは地（`background`）と同じ色（透明にするとホバーの色から戻るフェードが途中で切れる。[`sidebar_item`]）。
+pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
+    let mut b = tile(theme, id);
+    (b.rest, b.hover, b.active) = (
+        theme.background,
+        theme.control_on_background_hover,
+        theme.control_on_background_active,
+    );
     b
 }
 
@@ -799,9 +876,19 @@ pub struct Dialog {
     id: &'static str,
     theme: Theme,
     glyph: &'static crate::Icon,
+    /// アイコンのウェイト（既定は塗り。[`Dialog::weight`]）。
+    weight: crate::Weight,
     title: SharedString,
     description: SharedString,
     actions: Vec<Button>,
+}
+
+impl Dialog {
+    /// アイコンのウェイトを変える（既定は塗り）。塗りだと強すぎる・形が分かりにくいアイコン（電源など）に。
+    pub fn weight(mut self, weight: crate::Weight) -> Self {
+        self.weight = weight;
+        self
+    }
 }
 
 /// ダイアログ（子パネル）の中身。上からアイコン・タイトル・概要・ボタンを中央揃えで並べる。
@@ -822,6 +909,7 @@ pub fn dialog(
         id,
         theme: *theme,
         glyph,
+        weight: crate::Weight::Fill,
         title: title.into(),
         description: description.into(),
         actions: actions.into_iter().collect(),
@@ -834,6 +922,7 @@ impl RenderOnce for Dialog {
             id,
             theme,
             glyph,
+            weight,
             title,
             description,
             actions,
@@ -868,7 +957,7 @@ impl RenderOnce for Dialog {
             .p(px(spacing::XL))
             .child(
                 crate::icon(glyph)
-                    .weight(crate::Weight::Fill)
+                    .weight(weight)
                     .size(px(DIALOG_ICON))
                     .color(rgba(theme.accent_solid)),
             )

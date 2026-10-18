@@ -43,6 +43,8 @@ pub struct PointerBridge {
     /// （オーバーレイは指している間 毎 tick Move を出すので、止まっていても描き直しと読み戻しが毎フレーム走ってしまう）。
     sent: Option<Point<Pixels>>,
     rehover: bool,
+    /// スワイプとみなす動き（論理 px）。[`pump`] がパネルの距離と密度から毎フレーム決める（[`SWIPE_SLOP`] を下回らない）。
+    pub slop: f32,
 }
 
 /// タッチで押している間の状態。
@@ -68,9 +70,11 @@ const FRICTION: f32 = 0.95;
 /// 慣性がこれより遅くなったら止める（論理 px / フレーム）。
 const MOMENTUM_STOP: f32 = 0.5;
 
-/// これより動いたらタップではなくスワイプ（論理 px）。
-// ponytail: 手ブレを見込んだ固定値。指す距離で変えたくなったら角度で決める。
+/// これより動いたらタップではなくスワイプ（論理 px）。指す距離・パネルの密度で決める閾値（[`SWIPE_SLOP_DEG`]）の下限。
 pub const SWIPE_SLOP: f32 = 12.0;
+/// これより（頭から見た角度で）動いたらタップではなくスワイプ。遠い・画素の細かいパネル（キーボード）でも、
+/// 手ブレでタップがスワイプにならないよう、角度で決めて毎フレーム px に直す（[`PointerBridge::slop`]）。
+pub const SWIPE_SLOP_DEG: f32 = 1.0;
 
 impl PointerBridge {
     pub fn translate(&mut self, ev: PointerEvent, mode: PointerMode) -> Vec<PlatformInput> {
@@ -82,7 +86,7 @@ impl PointerBridge {
                     let (last, pos) = (self.pos, at(pos));
                     let d = pos - t.start;
                     let was_swiping = t.swiping;
-                    t.swiping |= f32::from(d.x).hypot(f32::from(d.y)) > SWIPE_SLOP;
+                    t.swiping |= f32::from(d.x).hypot(f32::from(d.y)) > self.slop.max(SWIPE_SLOP);
                     if !t.swiping {
                         if t.at.elapsed() < LONG_PRESS {
                             return Vec::new();
@@ -346,6 +350,10 @@ pub struct PanelControl {
     pub hmd: kernel::Pose,
     /// 手ごとの入力の状態（判定の確認用）。`hands` と同じく毎フレーム書く。
     pub controllers: Vec<kernel::ControllerState>,
+    /// 電池の残量を申告しているデバイス。`hands` と同じく毎フレーム書く（変わってもパネルを描き直させない）。
+    pub batteries: Vec<kernel::vr::Battery>,
+    /// 再生中のメディア（[`kernel::Kernel::now_playing`]）。`hands` と同じく毎フレーム書く。
+    pub media: Option<std::sync::Arc<kernel::subsystems::media::NowPlaying>>,
     /// 終了を頼む。フレームループがアプリを終える（テストのハーネスもこれで終える）。
     pub quit: bool,
     /// 開いているパネルの数（閉じたものは数えない）と、同時に開ける数の上限（[`MAX_PANELS`] とランタイムの上限の小さい方）。
@@ -354,6 +362,77 @@ pub struct PanelControl {
     pub limit: usize,
     /// 持ち主のパネル → そのナビゲーションバー。バーが開いたときに書く（持ち主の状態でバーを描き直すため）。
     pub nav_bars: HashMap<PanelId, PanelId>,
+    /// 画面をはめられる場所（ダッシュボード）: 持ち主と、その上端に立てる角度（[`kernel::Parent::slot`]）。[`dock`] で使う。
+    pub dock: Option<(PanelId, f32)>,
+    /// 今はめている画面（[`docked`] で、まだはまっているか確かめて読む）。
+    docked: Option<PanelId>,
+}
+
+/// 画面をはめる場所（[`PanelControl::dock`]）が出ていれば（閉じても隠してもいなければ）、その持ち主と角度。
+fn dock_slot(cx: &App) -> Option<(PanelId, f32)> {
+    let ctl = cx.try_global::<PanelControl>()?;
+    ctl.dock.filter(|(owner, _)| {
+        !ctl.panels
+            .get(owner)
+            .is_some_and(|p| p.status.closed || p.status.hidden)
+    })
+}
+
+/// はめる場所に今はまっている画面。
+pub fn docked(cx: &App) -> Option<PanelId> {
+    let (owner, _) = dock_slot(cx)?;
+    let ctl = cx.global::<PanelControl>();
+    ctl.docked.filter(|id| {
+        ctl.panels
+            .get(id)
+            .is_none_or(|p| !p.status.closed && p.status.parent.is_none_or(|p| p == owner))
+    })
+}
+
+/// `panel` をはめる場所にはめる（持ち主に付いて動き、掴むと持ち主ごと動く）。はまっていた画面は閉じる。
+/// 場所が開いていなければ何もしない。
+pub fn dock(panel: PanelId, cx: &mut App) {
+    let Some((owner, tilt)) = dock_slot(cx) else {
+        return;
+    };
+    let previous = docked(cx).filter(|&p| p != panel);
+    let ctl = cx.default_global::<PanelControl>();
+    if let Some(p) = previous {
+        ctl.panels.entry(p).or_default().commands.push(PanelCommand::Close);
+    }
+    ctl.docked = Some(panel);
+    ctl.panels
+        .entry(panel)
+        .or_default()
+        .commands
+        .push(PanelCommand::Parent(Some(kernel::Parent {
+            panel: owner,
+            carry: true,
+            docked: true,
+            slot: Some(tilt),
+            ..Default::default()
+        })));
+}
+
+/// はめた `panel` を外して独立させる（その場に残り、持ち主が閉じても閉じない）。`panel` へ打つキーボードが
+/// ダッシュボードに固定されていれば、それも一緒に外す。
+pub fn undock(panel: PanelId, cx: &mut App) {
+    let keyboard = cx
+        .try_global::<keyboard::InputRouting>()
+        .and_then(|r| r.active)
+        .filter(|s| s.target == panel)
+        .and_then(|s| s.panel);
+    let ctl = cx.default_global::<PanelControl>();
+    if ctl.docked == Some(panel) {
+        ctl.docked = None;
+    }
+    for p in std::iter::once(panel).chain(keyboard) {
+        ctl.panels
+            .entry(p)
+            .or_default()
+            .commands
+            .push(PanelCommand::Parent(None));
+    }
 }
 
 impl gpui::Global for PanelControl {}
@@ -367,6 +446,8 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     ctl.hands = kernel.hands().to_vec();
     ctl.hmd = kernel.hmd();
     ctl.controllers = kernel.controllers().to_vec();
+    ctl.batteries = kernel.batteries().to_vec();
+    ctl.media = kernel.now_playing();
     let settings = ctl.settings;
     let ctl = ctl.panels.entry(panel).or_default();
     for c in ctl.commands.drain(..) {
@@ -475,10 +556,22 @@ pub fn pump<B: VrBackend>(
     let mut gpui = Vec::new();
     for e in kernel.tick() {
         let bridge = bridges.entry((e.panel, e.hand)).or_default();
+        let p = kernel.panel(e.panel);
+        let distance = p.pose.position.distance(kernel.hmd().position);
+        bridge.slop = SWIPE_SLOP_DEG.to_radians().tan() * distance * p.resolution.0 as f32 / p.size.x;
         let input = bridge.translate(e.event, mode);
         if bridge.held() {
             // 長押しでドラッグになった。ほかのパネルへ運べるよう、オーバーレイのキャプチャを外す。
             kernel.release_capture(e.hand);
+        }
+        // GPUI のマウスはウィンドウに 1 つ。この手が動かしたので、同じパネルのもう一方の手は「マウスはもう自分の所にある」と
+        // 思わず、次は必ず位置から送り直す（送らないと、押下がもう一方の手の位置に届いて押せないことがあった）。
+        if !input.is_empty() {
+            for (&(panel, hand), b) in bridges.iter_mut() {
+                if panel == e.panel && hand != e.hand {
+                    b.sent = None;
+                }
+            }
         }
         gpui.extend(input.into_iter().map(|input| (e.panel, e.hand, input)));
     }
@@ -532,6 +625,12 @@ impl Render for DragPreview {
 const PROFILER_REDRAW: Duration = Duration::from_millis(100);
 /// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 10cm）。
 const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.1);
+/// 蝶番のようにつなげるパネル（[`PanelSpec::hinged_below`]）の面どうしの隙間（m。ダッシュボードの画面とバーの間と同じ）。
+const HINGE_GAP: f32 = kernel::overlay::SLOT_GAP;
+/// 下に出すパネル（[`PanelSpec::below`]）と持ち主の下端の間（m）。
+const BELOW_GAP: f32 = 0.05;
+/// 下に出すパネル（[`PanelSpec::below`]。キーボード）を向ける先を、目からどれだけ下げるか（m）。
+const BELOW_AIM_DROP: f32 = 0.15;
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
@@ -569,12 +668,18 @@ fn start_drag(
 }
 
 type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
+/// ナビゲーションバーのしまうボタンで呼ぶ処理（[`PanelSpec::minimizable`]）。引数はしまうパネル。
+type Minimize = std::rc::Rc<dyn Fn(PanelId, &mut App)>;
 
 /// 画面と VR 空間での配置。異なる画面型を同じ起動リストに入れられる。
 pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
     below: Option<f32>,
+    /// `from` の下端に蝶番のようにつなげる（[`Self::hinged_below`]）。
+    hinge: bool,
+    /// `from` から見た置き場所（[`Self::offset`]）。無ければ `from` の手前に少し離して重ねる。
+    offset: Option<Pose>,
     /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
     in_view: bool,
     size: Vec2,
@@ -583,6 +688,10 @@ pub struct PanelSpec {
     attach: Option<(Device, Pose)>,
     /// 起動時から掴めない。
     locked: bool,
+    /// 掴んで大きさを変えられる（既定。[`Self::without_resize`] で外す）。
+    resizable: bool,
+    /// 掴んだときに手で動かす基準（[`Self::grab_anchor`]）。
+    grab_anchor: Option<Pose>,
     /// 親子関係（[`Self::child`]）。
     parent: Option<kernel::Parent>,
     animated: bool,
@@ -598,6 +707,10 @@ pub struct PanelSpec {
     nav_bar_of: Option<PanelId>,
     /// ナビゲーションバーの左端に OS キーボードのトグルを出す（[`Self::with_os_keyboard`]）。
     os_keyboard: bool,
+    /// ナビゲーションバーの左端に、はめる場所から外す・戻すボタンを出す（[`Self::dockable`]）。
+    dockable: bool,
+    /// ナビゲーションバーの右端を、閉じる代わりにしまうボタンにする（[`Self::minimizable`]）。
+    minimize: Option<Minimize>,
     build: Box<PanelBuilder>,
 }
 
@@ -610,9 +723,14 @@ const NAV_BAR_PX: (u32, u32) = (
 /// オーバーレイ層が距離に比例して大きくするので、近くても遠くても見た目の大きさは変わらない。
 const NAV_BAR_M: f32 = NAV_BAR_PX.0 as f32 * 2.0 * design::components::TOOLTIP_HEIGHT_M
     / design::components::NAV_BAR_HEIGHT;
+/// ナビゲーションバーの窓（影の余白込み）の、頭から 1m 先での高さ（m）。オーバーレイ層が距離に比例して大きくする。
+pub const NAV_BAR_HEIGHT_M: f32 = NAV_BAR_M * NAV_BAR_PX.1 as f32 / NAV_BAR_PX.0 as f32;
 
 impl PanelSpec {
-    pub fn new<V: Render>(
+    /// 開いた元の無いパネル（起動時に開く常駐のもの、テストの最初のパネル）。`pose` に置く。
+    /// ほかのパネルから開くものは [`Self::spawn`] / [`Self::child`] / [`Self::popover`] で作る（既定で開いた元の手前に
+    /// 重なる）。別の場所に出すときだけ、[`Self::in_view`] などで明示して外す。
+    pub fn root<V: Render>(
         pose: Pose,
         build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
     ) -> Self {
@@ -620,11 +738,15 @@ impl PanelSpec {
             pose,
             from: None,
             below: None,
+            hinge: false,
+            offset: None,
             in_view: false,
             size: Vec2::new(0.8, 0.6),
             resolution: PANEL_PX,
             attach: None,
             locked: false,
+            resizable: true,
+            grab_anchor: None,
             parent: None,
             animated: true,
             veil: false,
@@ -633,18 +755,46 @@ impl PanelSpec {
             nav_bar: true,
             nav_bar_of: None,
             os_keyboard: false,
+            dockable: false,
+            minimize: None,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
 
+    /// パネル `from` から開くパネル。既定で `from` の手前に少し離して重ねる（[`Self::offset`] で変えられる）。
     pub fn spawn<V: Render>(
         from: PanelId,
         build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
     ) -> Self {
         Self {
             from: Some(from),
-            ..Self::new(Pose::IDENTITY, build)
+            ..Self::root(Pose::IDENTITY, build)
         }
+    }
+
+    /// `from` に固定したポップオーバー（メニューなど）として出す。`from` を暗くせず入力も止めず、外側を押すと閉じる。
+    /// 置き場所は [`Self::offset`] で決める。ナビゲーションバーは付けない。
+    pub fn popover<V: Render>(
+        from: PanelId,
+        build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
+    ) -> Self {
+        Self {
+            parent: Some(kernel::Parent {
+                panel: from,
+                carry: true,
+                dismiss: true,
+                docked: true,
+                ..Default::default()
+            }),
+            nav_bar: false,
+            ..Self::spawn(from, build)
+        }
+    }
+
+    /// 開いた瞬間の `from`（[`Self::spawn`] / [`Self::child`] / [`Self::popover`] の親）から見た置き場所。
+    pub fn offset(mut self, offset: Pose) -> Self {
+        self.offset = Some(offset);
+        self
     }
 
     /// `from` の子として出す（ダイアログなど）。親に追従し、開いている間の親は暗くなって入力を受けない。
@@ -660,6 +810,7 @@ impl PanelSpec {
                 carry,
                 dismiss: true,
                 hud: false,
+                ..Default::default()
             }),
             ..Self::spawn(from, build)
         }
@@ -688,6 +839,7 @@ impl PanelSpec {
 
     /// 開いた瞬間の目の前に出す。`offset` は頭から見た相対姿勢（頭の傾きは無視し、パネルは立てて置く）。
     /// トラッキング空間の原点は人の居場所と一致しないので、召喚するパネルはこれで出す。
+    /// 開いた元の手前に重ねる既定（[`Self::spawn`]）から外すことになるので、外す理由を呼ぶ側に書く。
     pub fn in_view(mut self, offset: Pose) -> Self {
         (self.pose, self.from, self.in_view) = (offset, None, true);
         self
@@ -699,10 +851,29 @@ impl PanelSpec {
         self
     }
 
-    /// 開いた瞬間の対象パネルの下へ、手前に傾けて置く。親子関係や追従は作らない。
+    /// 解像度の縦横比を保ったまま、縦の大きさを `height` m にする（中身の組み方を変えずに大きさだけ揃える）。
+    pub fn fit_height(mut self, height: f32) -> Self {
+        self.size = Vec2::new(
+            height * self.resolution.0 as f32 / self.resolution.1 as f32,
+            height,
+        );
+        self
+    }
+
+    /// 開いた瞬間の対象パネルの下へ置く（下端から頭から見て真下へ。`tilt` は下ろす量を、その角度だけ傾けて置いたときの縦の長さで決める）。向きは、そこから頭
+    /// （目と手の間）へ向ける（見やすく、レーザーでも押しやすい）。親子関係や追従は作らない。
     pub fn below(mut self, panel: PanelId, tilt: f32) -> Self {
         self.from = Some(panel);
         self.below = Some(tilt.clamp(0., std::f32::consts::FRAC_PI_2));
+        self
+    }
+
+    /// 開いた瞬間の `panel` の下端に、蝶番のようにつなげて置く（このパネルの上の縁を `panel` の下の縁に小さな隙間で合わせる）。
+    /// 折る角度は、[`Self::below`] と同じく面が目より少し下を向くように、開いた瞬間の頭の位置から決める。
+    /// 隙間は影の余白を除いた面どうしで測る。親子関係や追従は作らない。
+    pub fn hinged_below(mut self, panel: PanelId) -> Self {
+        self.from = Some(panel);
+        self.hinge = true;
         self
     }
 
@@ -715,6 +886,31 @@ impl PanelSpec {
     /// 起動時から掴めなくする。
     pub fn locked(mut self) -> Self {
         self.locked = true;
+        self
+    }
+
+    /// `panel` に固定する（[`kernel::Parent::docked`]）。開いた時の位置のまま付いて動き、掴むと `panel` ごと動き、
+    /// `panel` を暗くしない。`panel` が閉じれば一緒に閉じる。
+    pub fn docked_to(mut self, panel: PanelId) -> Self {
+        self.from.get_or_insert(panel);
+        self.parent = Some(kernel::Parent {
+            panel,
+            carry: true,
+            docked: true,
+            ..Default::default()
+        });
+        self
+    }
+
+    /// 掴んだとき、パネルそのものではなく `anchor`（このパネルから見た姿勢）を手で動かして頭へ向ける。パネルはそこに付いてくる。
+    pub fn grab_anchor(mut self, anchor: Pose) -> Self {
+        self.grab_anchor = Some(anchor);
+        self
+    }
+
+    /// 掴んでも大きさを変えられないようにする（大きさの決まったもの。ダッシュボードのバーなど）。
+    pub fn without_resize(mut self) -> Self {
+        self.resizable = false;
         self
     }
 
@@ -764,14 +960,28 @@ impl PanelSpec {
         self
     }
 
+    /// ナビゲーションバーの左端に、はめる場所（ダッシュボード。[`dock`]）から外して独立させる・戻すボタンを出す。
+    pub fn dockable(mut self) -> Self {
+        self.dockable = true;
+        self
+    }
+
+    /// ナビゲーションバーの右端を、閉じる代わりにしまうボタン（マイナス）にする。押すと `minimize` を呼ぶ。
+    /// ダッシュボードから出す常駐のパネル（閉じずに置いておくもの）だけに使う。
+    pub fn minimizable(mut self, minimize: impl Fn(PanelId, &mut App) + 'static) -> Self {
+        self.minimize = Some(std::rc::Rc::new(minimize));
+        self
+    }
+
     /// このパネル（PanelId `owner` で開いた）に付けるナビゲーションバー。外していれば `None`。
     /// 開く側（`ui::run`・testkit のキット）が持ち主の直後に開き、[`PanelCommand::NavBar`] で持ち主に付ける。
     pub fn nav_bar_spec(&self, owner: PanelId) -> Option<PanelSpec> {
-        let (title, os_keyboard) = (self.title.clone(), self.os_keyboard);
+        let (title, os_keyboard, dockable, minimize) =
+            (self.title.clone(), self.os_keyboard, self.dockable, self.minimize.clone());
         self.nav_bar.then(|| PanelSpec {
             nav_bar: false,
             nav_bar_of: Some(owner),
-            ..PanelSpec::new(Pose::IDENTITY, move |id, _, cx| {
+            ..PanelSpec::root(Pose::IDENTITY, move |id, _, cx| {
                 cx.default_global::<PanelControl>()
                     .nav_bars
                     .insert(owner, id);
@@ -780,6 +990,8 @@ impl PanelSpec {
                     owner,
                     title,
                     os_keyboard,
+                    dockable,
+                    minimize,
                     open: 0.0,
                     to: 0.0,
                     anim: None,
@@ -787,10 +999,7 @@ impl PanelSpec {
                 }
             })
             .sized(
-                Vec2::new(
-                    NAV_BAR_M,
-                    NAV_BAR_M * NAV_BAR_PX.1 as f32 / NAV_BAR_PX.0 as f32,
-                ),
+                Vec2::new(NAV_BAR_M, NAV_BAR_HEIGHT_M),
                 NAV_BAR_PX,
             )
         })
@@ -803,23 +1012,64 @@ impl PanelSpec {
 
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
         match self.from {
+            Some(from) if self.hinge => {
+                let origin = kernel.panel(from);
+                let margin = |size: Vec2, res: (u32, u32)| {
+                    design::components::PANEL_MARGIN * size.y / res.1 as f32
+                };
+                let bar = kernel.nav_bar(from).map_or(0., |b| kernel.panel(b).size.y);
+                let edge = Vec3::new(
+                    0.,
+                    -origin.size.y / 2. + margin(origin.size, origin.resolution) - bar,
+                    0.,
+                );
+                let lift = HINGE_GAP + self.size.y / 2. - margin(self.size, self.resolution);
+                // 面（持ち主の面から手前へ `angle` 折った向き）が、中心から目より少し下へ向く角度。中心は角度で動くので、
+                // 数回詰める（持ち主から見た座標で、蝶番の軸は X）。上を向けた持ち主（ダッシュボードのバー）では
+                // 奥へ折り返す（負の角度）こともあるので、持ち主の面から前後 90° に収める。
+                let hmd = kernel.hmd();
+                let aim = origin
+                    .pose
+                    .inverse()
+                    .transform_point(hmd.position - hmd.panel_up() * BELOW_AIM_DROP);
+                let center = |angle: f32| edge + Quat::from_rotation_x(-angle) * Vec3::NEG_Y * lift;
+                let mut angle = 0.;
+                for _ in 0..4 {
+                    let d = aim - center(angle);
+                    angle = d.y.atan2(d.z).clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
+                }
+                origin.pose * Pose::new(center(angle), Quat::from_rotation_x(-angle))
+            }
             Some(from) if self.below.is_some() => {
                 let tilt = self.below.unwrap();
                 let origin = kernel.panel(from);
                 // 持ち主の下にナビゲーションバーがあれば、その下に出す（重ねてバーを隠さない）。
                 let bar = kernel.nav_bar(from).map_or(0., |b| kernel.panel(b).size.y);
-                origin.pose
-                    * Pose::new(
-                        Vec3::new(
-                            0.,
-                            -origin.size.y / 2. - bar - 0.05 - self.size.y * tilt.cos() / 2.,
-                            0.05 + self.size.y * tilt.sin() / 2.,
-                        ),
-                        Quat::from_rotation_x(-tilt),
-                    )
+                // 持ち主（とそのバー）の下端から、頭から見て真下へ下ろす。持ち主の面に沿って下ろすと、上を向けた
+                // 持ち主（ダッシュボードのバー）では手前へ出てしまう。
+                let bottom = origin
+                    .pose
+                    .transform_point(Vec3::new(0., -origin.size.y / 2. - bar, 0.));
+                let hmd = kernel.hmd();
+                let up = hmd.panel_up();
+                let at = bottom - up * (BELOW_GAP + self.size.y * tilt.cos() / 2.);
+                // 目より少し下（手の方）へ向ける。目へまっすぐ向けるより、下から来るレーザーが浅くならない。
+                let toward = (hmd.position - up * BELOW_AIM_DROP - at).try_normalize();
+                let fallback = origin.pose.orientation * Quat::from_rotation_x(-tilt);
+                let orientation = toward
+                    .and_then(|z| Some((up.cross(z).try_normalize()?, z)))
+                    .map_or(fallback, |(x, z)| {
+                        Quat::from_mat3(&kernel::vr::Mat3::from_cols(x, z.cross(x), z))
+                    });
+                Pose::new(at, orientation)
             }
             // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
-            Some(from) => kernel.panel(from).pose * Pose::new(SPAWN_GAP, Quat::IDENTITY),
+            Some(from) => {
+                kernel.panel(from).pose
+                    * self
+                        .offset
+                        .unwrap_or(Pose::new(SPAWN_GAP, Quat::IDENTITY))
+            }
             None if self.in_view => kernel.hmd().leveled() * self.pose,
             None => self.pose,
         }
@@ -848,6 +1098,10 @@ struct NavBar {
     title: Option<Title>,
     /// 左端に OS キーボードのトグルを出す。
     os_keyboard: bool,
+    /// 左端に、はめる場所から外す・戻すボタンを出す。
+    dockable: bool,
+    /// 右端を、閉じる代わりにしまうボタンにする。
+    minimize: Option<Minimize>,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
     open: f32,
     to: f32,
@@ -920,20 +1174,53 @@ impl Render for NavBar {
                 keyboard::toggle_os_keyboard(owner, cx);
             })
         });
+        // はめる場所から外す（はまっている間）・戻す（外れていて、場所が開いている間）。
+        let dock = self.dockable.then(|| {
+            let ctl = cx.global::<PanelControl>();
+            let parent = ctl.panels.get(&owner).and_then(|p| p.status.parent);
+            let slot = dock_slot(cx);
+            let inside = parent.is_some() && parent == slot.map(|(o, _)| o);
+            (inside || slot.is_some()).then(|| {
+                let (id, glyph, tip) = if inside {
+                    ("nav-undock", &design::icons::ARROW_SQUARE_OUT, i18n::t(cx, "dock.undock"))
+                } else {
+                    ("nav-dock", &design::icons::CARET_LINE_DOWN, i18n::t(cx, "dock.dock"))
+                };
+                design::components::icon_button(
+                    &theme,
+                    id,
+                    glyph,
+                    tip,
+                    design::components::Variant::Default,
+                )
+                .on_click(move |_, _, cx| {
+                    if inside {
+                        undock(owner, cx)
+                    } else {
+                        dock(owner, cx)
+                    }
+                })
+            })
+        });
+        let leading = dock.flatten().into_iter().chain(os_keyboard).collect();
+        let minimize = self.minimize.clone();
         div().size_full().child(design::components::nav_bar(
             &theme,
             self.open,
             title,
-            i18n::t(cx, "common.close"),
-            move |_, _, cx| {
-                cx.default_global::<PanelControl>()
+            minimize.is_some(),
+            i18n::t(cx, if minimize.is_some() { "common.minimize" } else { "common.close" }),
+            move |_, _, cx| match &minimize {
+                Some(minimize) => minimize(owner, cx),
+                None => cx
+                    .default_global::<PanelControl>()
                     .panels
                     .entry(owner)
                     .or_default()
                     .commands
-                    .push(PanelCommand::Close)
+                    .push(PanelCommand::Close),
             },
-            os_keyboard,
+            leading,
         ))
     }
 }
@@ -1444,7 +1731,7 @@ fn sync_profiler(
     }
     match *profiler_panel {
         None if profiling && !hide_profiler => {
-            let spec = PanelSpec::new(Pose::IDENTITY, |_, _, cx| ProfilerPanel {
+            let spec = PanelSpec::root(Pose::IDENTITY, |_, _, cx| ProfilerPanel {
                 view: cx.new(|_| ProfilerView),
             })
             .titled("testing.panel.profiler")
@@ -1562,6 +1849,12 @@ fn open_panel(
     }
     if spec.locked {
         kernel.apply(panel, PanelCommand::Lock(true));
+    }
+    if !spec.resizable {
+        kernel.apply(panel, PanelCommand::Resizable(false));
+    }
+    if spec.grab_anchor.is_some() {
+        kernel.apply(panel, PanelCommand::GrabAnchor(spec.grab_anchor));
     }
     if let Some(parent) = spec.parent {
         kernel.apply(panel, PanelCommand::Parent(Some(parent)));
@@ -1687,6 +1980,62 @@ mod tests {
         assert!(bridges[&(panel, Hand::Right)].momentum.is_none());
     }
 
+    /// 蝶番のようにつなげたパネルは、上の縁が持ち主の下の縁から隙間だけ離れ、面が目より少し下を向くように折れる。
+    #[test]
+    fn hinged_panel_hangs_from_the_owners_bottom_edge() {
+        let mut kernel =
+            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
+        // 少し上を向けた持ち主（ダッシュボードのバー）。
+        let tilt = 0.5;
+        let owner_pose = Pose::new(Vec3::new(0.0, -0.4, -1.0), Quat::from_rotation_x(-tilt));
+        let owner = kernel
+            .add_panel("bar", owner_pose, Vec2::new(1.0, 0.1), (1000, 100))
+            .unwrap();
+        let spec = PanelSpec::root(Pose::IDENTITY, |_, _, _| gpui::Empty)
+            .sized(Vec2::new(1.0, 0.4), (1000, 400))
+            .hinged_below(owner);
+        let pose = spec.pose_for(&kernel, owner + 1);
+        // 面は中心から、目（原点）より少し下へ向く。
+        let hmd = kernel.hmd();
+        let aim = hmd.position - hmd.panel_up() * BELOW_AIM_DROP;
+        let normal = pose.orientation * Vec3::Z;
+        assert!(normal.dot((aim - pose.position).normalize()) > 1.0 - 1e-4, "{normal}");
+        // 上の縁（影の余白の内側）は、持ち主の下の縁から隙間だけ離れている。
+        let m = |h: f32, px: f32| design::components::PANEL_MARGIN * h / px;
+        let top = pose.transform_point(Vec3::Y * (0.2 - m(0.4, 400.0)));
+        let edge = owner_pose.transform_point(Vec3::NEG_Y * (0.05 - m(0.1, 100.0)));
+        assert!((top.distance(edge) - HINGE_GAP).abs() < 1e-4);
+    }
+
+    /// 一方の手がパネルにマウスを動かしたら、もう一方の手は次に位置から送り直す（GPUI のマウスは 1 つ）。
+    #[test]
+    fn one_hand_moving_the_mouse_makes_the_other_resend_its_position() {
+        let mut kernel =
+            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
+        let panel = kernel
+            .add_panel(
+                "keyboard",
+                Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY),
+                Vec2::ONE,
+                (100, 100),
+            )
+            .unwrap();
+        kernel.subsystems.backend.frame.controllers = vec![kernel::vr::RawController {
+            hand: Hand::Right,
+            profile: "valve/index_controller".into(),
+            aim: Pose::IDENTITY,
+            inputs: Vec::new(),
+        }];
+        let left = PointerBridge {
+            sent: Some(Point::default()),
+            ..Default::default()
+        };
+        let mut bridges = HashMap::from([((panel, Hand::Left), left)]);
+        let input = pump(&mut kernel, &mut bridges);
+        assert!(input.iter().any(|(_, h, _)| *h == Hand::Right));
+        assert_eq!(bridges[&(panel, Hand::Left)].sent, None);
+    }
+
     /// UI 層だけで確かめるための最小の画面。
     #[derive(Default)]
     struct Probe {
@@ -1750,7 +2099,7 @@ mod tests {
     fn spec_attaches_locks_and_sizes_panel(cx: &mut TestAppContext) {
         let mut kernel = Kernel::boot(Some("novr"), Default::default()).unwrap();
         let hand = Device::Controller(Hand::Left);
-        let spec = PanelSpec::new(Pose::IDENTITY, |_, _, _| Probe::default())
+        let spec = PanelSpec::root(Pose::IDENTITY, |_, _, _| Probe::default())
             .sized(Vec2::new(0.1, 0.05), (10, 5))
             .attached(hand.clone(), Pose::IDENTITY)
             .locked()
@@ -1857,6 +2206,22 @@ mod tests {
             (Point::new(px(3.0), px(4.0)), Some(MouseButton::Left))
         );
         assert!(!b.pressed);
+    }
+
+    /// 遠い・画素の細かいパネルでは、スワイプとみなす動き（`slop`）が大きくなり、手ブレ程度の動きはタップのまま。
+    #[test]
+    fn wider_slop_keeps_a_shaky_tap_a_tap() {
+        let touch = PointerMode::Touch;
+        let mut b = PointerBridge {
+            slop: 40.0,
+            ..Default::default()
+        };
+        b.translate(PointerEvent::Down { pos: Vec2::new(10.0, 10.0) }, touch);
+        // 固定の下限（SWIPE_SLOP）は超えるが、このパネルの閾値の内。
+        let moved = b.translate(PointerEvent::Move { pos: Vec2::new(40.0, 10.0) }, touch);
+        assert!(moved.is_empty());
+        let tap = b.translate(PointerEvent::Up { pos: Vec2::new(40.0, 10.0) }, touch);
+        assert!(tap.iter().any(|i| matches!(i, PlatformInput::MouseDown(_))));
     }
 
     /// タッチ: 動かさずに離すとタップ（押して離す）、しきい値を超えて動かすとスワイプ（指に付いてくるスクロール）だけになる。

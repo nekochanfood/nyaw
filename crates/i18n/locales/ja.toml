@@ -74,7 +74,10 @@ tune_click = "クリック時のレーザーの鈍さ: {pct}%"
 tune_hold = "クリック中は {deg}° 以内の手の動きでポインタを動かさない"
 
 [common]
+# chrono の書式（https://docs.rs/chrono/latest/chrono/format/strftime）。曜日は {weekday}。
+date = "%-m月%-d日（{weekday}）"
 close = "閉じる"
+minimize = "しまう"
 default = "既定"
 ok = "OK"
 cancel = "キャンセル"
@@ -94,13 +97,47 @@ thu = "木"
 fri = "金"
 sat = "土"
 
+[dock]
+undock = "ダッシュボードから外す"
+dock = "ダッシュボードに戻す"
+
 [dashboard]
 title = "ダッシュボード"
-
-[wrist]
-# chrono の書式（https://docs.rs/chrono/latest/chrono/format/strftime）。曜日は {weekday}。
-date = "%-m月%-d日（{weekday}）"
-toggle_panel = "パネルを出す・しまう"
+quit = "アプリを終了"
+quit_title = "アプリを終了しますか？"
+quit_body = "開いている画面や配信もすべて閉じます。"
+quit_confirm = "終了"
+now_playing = "再生中"
+nothing_playing = "再生中のメディアはありません"
+open_app = "アプリの画面を開く"
+app_unavailable = "アプリの画面を開けません"
+previous = "前へ"
+next = "次へ"
+previous_media = "前のメディア"
+next_media = "次のメディア"
+play = "再生"
+pause = "一時停止"
+menu = "メニュー"
+launcher = "ランチャー"
+quick_settings = "クイック設定"
+debug = "デバッグ"
+settings = "設定"
+running = "起動中のアプリ"
+all_apps = "すべてのアプリ"
+search_apps = "アプリを検索…"
+clear_search = "検索を消す"
+refresh = "一覧を更新"
+loading = "取得中…"
+none = "ありません"
+failed = "取得できません: {error}"
+batteries = "バッテリー"
+no_batteries = "電池の残量を知らせるデバイスがありません"
+hmd = "ヘッドセット"
+left_controller = "左コントローラー"
+right_controller = "右コントローラー"
+tracker = "トラッカー {n}"
+charging = "充電中"
+theme = "テーマ"
 
 [testing]
 title = "テスト"

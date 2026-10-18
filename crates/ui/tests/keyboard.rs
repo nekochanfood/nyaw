@@ -66,7 +66,7 @@ fn main() -> ExitCode {
         },
     );
     let panels = vec![
-        PanelSpec::new(
+        PanelSpec::root(
             Pose::new(common::PANEL_POS, Default::default()),
             |id, _, _| testing::Testing::new(id),
         )
@@ -83,7 +83,7 @@ fn main() -> ExitCode {
             on_app(&remote, |cx| {
                 cx.default_global::<PanelControl>()
                     .spawns
-                    .push(testing::KeyboardTest::spec().without_nav_bar());
+                    .push(testing::KeyboardTest::spec(0).without_nav_bar());
             });
             let deadline = Instant::now() + Duration::from_secs(10);
             loop {

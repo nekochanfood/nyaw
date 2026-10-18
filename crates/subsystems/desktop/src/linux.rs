@@ -42,6 +42,8 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
                 sources.push(Source {
                     name: name.into(),
                     kind,
+                    icon: None,
+                    app: None,
                     target: 0,
                 });
             }
@@ -399,9 +401,86 @@ impl Session for Capture {
     }
 }
 
+/// デスクトップエントリ（`applications/*.desktop`）のアプリを並べる。隠すもの（`NoDisplay`・`Hidden`）は除く。
+// ponytail: アイコンは読まない（テーマの探し方が要る）。要れば media の desktop_icon と同じ探し方を足す。
+pub(super) fn installed_apps() -> Result<Vec<super::InstalledApp>, Error> {
+    let home = std::env::var("XDG_DATA_HOME")
+        .ok()
+        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.local/share")));
+    let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    let mut seen = std::collections::HashSet::new();
+    let mut apps = Vec::new();
+    for root in home.into_iter().chain(dirs.split(':').map(str::to_owned)) {
+        let Ok(entries) = std::fs::read_dir(std::path::Path::new(&root).join("applications")) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // 同じ名前のエントリは、先に見つけた（利用者の）ものを使う。
+            if path.extension().is_none_or(|e| e != "desktop") || !seen.insert(entry.file_name()) {
+                continue;
+            }
+            if let Some(app) = std::fs::read_to_string(&path).ok().and_then(|t| desktop_entry(&t)) {
+                apps.push(app);
+            }
+        }
+    }
+    Ok(apps)
+}
+
+/// デスクトップエントリの `[Desktop Entry]` の項目から、起動できるアプリを作る。
+fn desktop_entry(text: &str) -> Option<super::InstalledApp> {
+    let mut fields = std::collections::HashMap::new();
+    let mut main = false;
+    for line in text.lines().map(str::trim) {
+        if line.starts_with('[') {
+            main = line == "[Desktop Entry]";
+        } else if main && let Some((k, v)) = line.split_once('=') {
+            fields.entry(k.trim()).or_insert(v.trim());
+        }
+    }
+    let hidden = |k| fields.get(k).is_some_and(|v| *v == "true");
+    if fields.get("Type") != Some(&"Application") || hidden("NoDisplay") || hidden("Hidden") {
+        return None;
+    }
+    // %f・%U などの引数の置き場は、引数を渡さないので消す。
+    let exec: Vec<&str> = fields
+        .get("Exec")?
+        .split_whitespace()
+        .filter(|w| !(w.len() == 2 && w.starts_with('%')))
+        .collect();
+    Some(super::InstalledApp {
+        name: fields.get("Name")?.to_string(),
+        id: exec.join(" "),
+        exe: None,
+        icon: None,
+    })
+}
+
+/// デスクトップエントリの Exec でアプリを起動する（待たない）。
+pub(super) fn launch(exec: &str) -> Result<(), Error> {
+    std::process::Command::new("sh")
+        .args(["-c", exec])
+        .spawn()
+        .map(drop)
+        .map_err(|e| Error(e.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 起動できるアプリだけを読み、Exec の引数の置き場を消す。
+    #[test]
+    fn reads_launchable_desktop_entries() {
+        let app = desktop_entry(
+            "[Desktop Entry]\nType=Application\nName=Firefox\nExec=firefox %u\n[Desktop Action new]\nName=New\n",
+        )
+        .unwrap();
+        assert_eq!((app.name.as_str(), app.id.as_str()), ("Firefox", "firefox"));
+        assert!(desktop_entry("[Desktop Entry]\nType=Application\nName=X\nExec=x\nNoDisplay=true\n").is_none());
+        assert!(desktop_entry("[Desktop Entry]\nType=Link\nName=X\nURL=y\n").is_none());
+    }
     #[test]
     fn validates_pipewire_chunk_and_makes_bgrx_opaque() {
         let mut format = spa::param::video::VideoInfoRaw::new();

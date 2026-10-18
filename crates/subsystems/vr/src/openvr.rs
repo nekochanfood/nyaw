@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::mem::{MaybeUninit, size_of};
+use std::time::{Duration, Instant};
 
 use ash::vk::{self, Handle};
 use glam::Mat3;
@@ -18,7 +19,7 @@ use input::{HandActions, Input};
 
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
-    Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError,
+    Battery, Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError,
 };
 
 pub(crate) fn available() -> bool {
@@ -48,6 +49,13 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         fixed: HashMap::new(),
         shown: HashSet::new(),
         dashboard: false,
+        block_input: false,
+        settings: client
+            .interface(sys::IVRSettings_Version)
+            .inspect_err(|e| logger::warn!("SteamVR settings unavailable", error = e))
+            .ok(),
+        restore_global_priority: None,
+        batteries: (None, Vec::new()),
         gpu: create_gpu(unsafe { &*system }, unsafe { &*compositor })?,
         client,
     }))
@@ -114,6 +122,9 @@ const MAX_DEVICES: usize = sys::k_unMaxTrackedDeviceCount as usize;
 // ponytail: 3 枚あれば足りる想定。絵がちらつく・崩れるなら増やすか、送ったイメージの使用完了を待つ。
 const RING: usize = 3;
 
+/// 電池を読み直す間隔。残量はゆっくりしか変わらないので、毎フレームは読まない。
+const BATTERY_INTERVAL: Duration = Duration::from_secs(5);
+
 struct Textures {
     width: u32,
     height: u32,
@@ -139,6 +150,14 @@ pub(crate) struct OpenVrBackend {
     shown: HashSet<u64>,
     /// 最後の poll で SteamVR のダッシュボードが開いていたか。
     dashboard: bool,
+    /// シーンのアプリ（ゲーム）への入力を止めている（[`VrBackend::block_app_input`]）。
+    block_input: bool,
+    /// SteamVR の設定（入力を止める仕組みを有効にする）。使ったら `None` にして、二度目からは触らない。
+    settings: Option<*const sys::VR_IVRSettings_FnTable>,
+    /// この接続で設定を有効にしたときだけ、終了時に元の値へ戻す。
+    restore_global_priority: Option<(*const sys::VR_IVRSettings_FnTable, bool)>,
+    /// 最後に電池を読んだ時刻と、その結果（[`BATTERY_INTERVAL`] ごとに読み直す）。
+    batteries: (Option<Instant>, Vec<Battery>),
     gpu: Gpu,
     /// SteamVR との接続。関数表の持ち主なので最後に破棄する。
     client: Client,
@@ -193,6 +212,39 @@ impl OpenVrBackend {
         let aspect = t.height as f32 * w / (t.width as f32 * h);
         let e = unsafe { f(self.overlay().SetOverlayTexelAspect)(id, aspect) };
         log(check("SetOverlayTexelAspect", e));
+    }
+
+    /// 見えているデバイスのうち、電池を申告しているものの残量（順は決まらない）。
+    fn read_batteries(&self, devices: &HashMap<Device, (u32, Pose)>) -> Vec<Battery> {
+        let s = self.system();
+        let flag = |index, prop| {
+            let mut err = Default::default();
+            unsafe { f(s.GetBoolTrackedDeviceProperty)(index, prop, &mut err) }
+        };
+        devices
+            .iter()
+            .filter(|&(_, &(index, _))| {
+                flag(
+                    index,
+                    sys::ETrackedDeviceProperty_Prop_DeviceProvidesBatteryStatus_Bool,
+                )
+            })
+            .map(|(device, &(index, _))| {
+                let mut err = Default::default();
+                let level = unsafe {
+                    f(s.GetFloatTrackedDeviceProperty)(
+                        index,
+                        sys::ETrackedDeviceProperty_Prop_DeviceBatteryPercentage_Float,
+                        &mut err,
+                    )
+                };
+                Battery {
+                    device: device.clone(),
+                    level: level.clamp(0.0, 1.0),
+                    charging: flag(index, sys::ETrackedDeviceProperty_Prop_DeviceIsCharging_Bool),
+                }
+            })
+            .collect()
     }
 
     fn overlay(&self) -> &sys::VR_IVROverlay_FnTable {
@@ -356,6 +408,9 @@ fn create_ring<T, E>(
 
 impl Drop for OpenVrBackend {
     fn drop(&mut self) {
+        if let Some((settings, was_set)) = self.restore_global_priority.take() {
+            restore_global_action_set_priority(unsafe { &*settings }, was_set);
+        }
         for id in self.textures.keys().copied().collect::<Vec<_>>() {
             self.release(id);
         }
@@ -430,7 +485,8 @@ impl VrBackend for OpenVrBackend {
             }
         }
         if let Some(input) = &self.input {
-            if let Err(e) = input.update() {
+            // SteamVR のメニューが開いている間は奪わない（奪うとメニューを操作できない）。
+            if let Err(e) = input.update(self.block_input && !self.dashboard) {
                 logger::warn!("failed to sync SteamVR Input state", error = e);
             }
             for (hand, device, aim, actions) in input.hands(predict) {
@@ -482,8 +538,25 @@ impl VrBackend for OpenVrBackend {
                 .hand_devices
                 .push((hand, pose_from(&pose.mDeviceToAbsoluteTracking.m)));
         }
+        if self
+            .batteries
+            .0
+            .is_none_or(|t| t.elapsed() >= BATTERY_INTERVAL)
+        {
+            self.batteries = (Some(Instant::now()), self.read_batteries(&devices));
+        }
+        frame.batteries.clone_from(&self.batteries.1);
         self.devices = devices;
         frame
+    }
+
+    fn block_app_input(&mut self, block: bool) {
+        self.block_input = block;
+        if block && let Some(settings) = self.settings.take() {
+            if let Some(was_set) = enable_global_action_set_priority(unsafe { &*settings }) {
+                self.restore_global_priority = Some((settings, was_set));
+            }
+        }
     }
 
     fn max_overlays(&self) -> Option<usize> {
@@ -664,6 +737,52 @@ fn check(what: &str, e: sys::EVROverlayError) -> Result<(), VrError> {
 fn log(r: Result<(), VrError>) {
     if let Err(e) = r {
         logger::warn!("OpenVR call failed", error = e);
+    }
+}
+
+/// オーバーレイのアクションセットの全体優先度でゲームの入力を止める仕組みは、SteamVR の開発者向け設定
+/// 「Experimental overlay input overrides」（`steamvr/globalActionSetPriority`）が有効でないと働かない。無効なら有効にする。
+/// 変更できたら、元の設定項目が存在したかを返す。
+fn enable_global_action_set_priority(settings: &sys::VR_IVRSettings_FnTable) -> Option<bool> {
+    let section = c"steamvr".as_ptr() as *mut c_char;
+    let key = c"globalActionSetPriority".as_ptr() as *mut c_char;
+    let mut err = sys::EVRSettingsError_VRSettingsError_None;
+    let enabled = unsafe { f(settings.GetBool)(section, key, &mut err) };
+    let was_set = match err {
+        sys::EVRSettingsError_VRSettingsError_None => true,
+        sys::EVRSettingsError_VRSettingsError_UnsetSettingHasNoDefault => false,
+        _ => {
+            logger::warn!("cannot read SteamVR's overlay input overrides", error = err);
+            return None;
+        }
+    };
+    if enabled {
+        return None;
+    }
+    let mut err = sys::EVRSettingsError_VRSettingsError_None;
+    unsafe { f(settings.SetBool)(section, key, true, &mut err) };
+    if err == sys::EVRSettingsError_VRSettingsError_None {
+        logger::info!(
+            "enabled SteamVR's experimental overlay input overrides to block game input while the dashboard is open"
+        );
+        Some(was_set)
+    } else {
+        logger::warn!("cannot enable SteamVR's overlay input overrides", error = err);
+        None
+    }
+}
+
+fn restore_global_action_set_priority(settings: &sys::VR_IVRSettings_FnTable, was_set: bool) {
+    let section = c"steamvr".as_ptr() as *mut c_char;
+    let key = c"globalActionSetPriority".as_ptr() as *mut c_char;
+    let mut err = sys::EVRSettingsError_VRSettingsError_None;
+    if was_set {
+        unsafe { f(settings.SetBool)(section, key, false, &mut err) };
+    } else {
+        unsafe { f(settings.RemoveKeyInSection)(section, key, &mut err) };
+    }
+    if err != sys::EVRSettingsError_VRSettingsError_None {
+        logger::warn!("cannot restore SteamVR's overlay input overrides", error = err);
     }
 }
 

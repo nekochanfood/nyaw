@@ -31,7 +31,32 @@ pub enum SourceKind {
 pub struct Source {
     pub name: String,
     pub kind: SourceKind,
+    /// ウィンドウのアプリのアイコン（取れなければ `None`。画面には無い）。
+    pub icon: Option<Icon>,
+    /// ウィンドウのアプリの実行ファイル名（"Spotify.exe" など。Windows だけ。再生中のメディアのアプリと突き合わせる）。
+    pub app: Option<String>,
     target: isize,
+}
+
+impl Source {
+    /// 特定の画面・ウィンドウを指す。Linux の一覧は選択ダイアログの入口で、開くとダイアログが出る（指さない）。
+    pub fn concrete(&self) -> bool {
+        self.target != 0
+    }
+
+    /// `other` と同じ画面・ウィンドウを指すか（名前はウィンドウのタイトルで変わるので見ない）。
+    /// 特定のものを指さない一覧（[`Self::concrete`]）は、どれとも同じにならない。
+    pub fn same_target(&self, other: &Source) -> bool {
+        self.concrete() && self.kind == other.kind && self.target == other.target
+    }
+}
+
+/// アイコンの画像（RGBA、ストレートアルファ）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Icon {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Arc<[u8]>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +213,74 @@ impl Sources {
             }
         }
     }
+}
+
+/// インストールされているアプリ（Windows はスタートメニュー、Linux はデスクトップエントリのもの）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstalledApp {
+    pub name: String,
+    /// 起動に使う ID（Windows は AppUserModelId、Linux はデスクトップエントリの Exec）。
+    pub id: String,
+    /// 実行ファイル名（"chrome.exe" など）。起動中のウィンドウ（[`Source::app`]）と突き合わせる。取れなければ `None`。
+    pub exe: Option<String>,
+    pub icon: Option<Icon>,
+}
+
+/// アプリの一覧の取得。アイコンを読むので時間が掛かる。フレームループで待たない。
+pub struct InstalledApps(Receiver<Result<Vec<InstalledApp>, Error>>);
+
+impl InstalledApps {
+    pub fn refresh() -> Result<Self, Error> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name("installed-apps".into())
+            .spawn(move || {
+                #[cfg(windows)]
+                let result = windows::installed_apps();
+                #[cfg(target_os = "linux")]
+                let result = linux::installed_apps();
+                #[cfg(not(any(windows, target_os = "linux")))]
+                let result = Err(Error("listing apps is not available on this platform yet".into()));
+                let _ = tx.send(result.map(|mut apps| {
+                    apps.sort_by_key(|a| a.name.to_lowercase());
+                    apps
+                }));
+            })
+            .map_err(|e| Error(e.to_string()))?;
+        Ok(Self(rx))
+    }
+
+    pub fn poll(&self) -> Option<Result<Vec<InstalledApp>, Error>> {
+        match self.0.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Empty) => None,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Some(Err(Error("installed app worker stopped".into())))
+            }
+        }
+    }
+}
+
+/// アプリを起動する（待たない）。
+pub fn launch(app: &InstalledApp) -> Result<(), Error> {
+    #[cfg(windows)]
+    return windows::launch(&app.id);
+    #[cfg(target_os = "linux")]
+    return linux::launch(&app.id);
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        let _ = app;
+        Err(Error("launching apps is not available on this platform yet".into()))
+    }
+}
+
+/// `items` を、名前に `query` を含むもの（大文字小文字を区別しない）に絞る。空なら全部。
+pub fn matching<'a, T>(items: &'a [T], name: impl Fn(&T) -> &str, query: &str) -> Vec<&'a T> {
+    let query = query.trim().to_lowercase();
+    items
+        .iter()
+        .filter(|i| query.is_empty() || name(i).to_lowercase().contains(&query))
+        .collect()
 }
 
 enum Input {
@@ -409,6 +502,16 @@ impl Drop for Stream {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    /// 検索は名前に含むものに絞り（大文字小文字を区別しない）、空なら全部を残す。
+    #[test]
+    fn search_keeps_names_containing_the_query() {
+        let names = ["Google Chrome", "Spotify", "Steam"];
+        let found = |q| matching(&names, |n: &&str| *n, q).into_iter().copied().collect::<Vec<_>>();
+        assert_eq!(found(" st "), ["Steam"]);
+        assert_eq!(found("O"), ["Google Chrome", "Spotify"]);
+        assert_eq!(found(""), names);
+    }
 
     #[test]
     fn converts_padded_bgra_and_preserves_premultiplied_alpha() {

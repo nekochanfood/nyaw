@@ -43,6 +43,7 @@ impl Tooltips {
 /// 要素 `id` の `on_hover` から呼ぶ。入ったら `text` を置き、出たら（自分が置いたものなら）消す。
 /// `owner` は要素が描かれている間だけ生きている状態（`use_keyed_state` の Entity）。
 /// 隣の要素へ移ると、入る・出るの順が前後しても後から入った方が残る。
+/// 出たときは、どの手が置いたものでも消す（GPUI のホバーはウィンドウに 1 つで、もう一方の手の入力で外れることがある）。
 pub fn hover_tooltip(
     id: impl Into<SharedString>,
     text: SharedString,
@@ -57,8 +58,8 @@ pub fn hover_tooltip(
     let map = &mut cx.default_global::<Tooltips>().0;
     if hovered {
         map.insert((w, hand), (id, text, owner));
-    } else if map.get(&(w, hand)).is_some_and(|(i, _, _)| *i == id) {
-        map.remove(&(w, hand));
+    } else {
+        map.retain(|&(window, _), (i, _, _)| window != w || *i != id);
     }
 }
 

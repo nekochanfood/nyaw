@@ -52,13 +52,13 @@ pub fn specs() -> Vec<PanelSpec> {
         .into_iter()
         .flat_map(|hand| {
             [
-                PanelSpec::new(Pose::IDENTITY, |_, _, _| Laser)
+                PanelSpec::root(Pose::IDENTITY, |_, _, _| Laser)
                     .sized(Vec2::new(LASER_MAX, LASER_THICK_M), LASER_PX)
                     .pointer(hand, Pointer::Laser),
-                PanelSpec::new(Pose::IDENTITY, move |_, _, _| Cursor { hand })
+                PanelSpec::root(Pose::IDENTITY, move |_, _, _| Cursor { hand })
                     .sized(Vec2::splat(CURSOR_M), CURSOR_PX)
                     .pointer(hand, Pointer::Cursor),
-                PanelSpec::new(Pose::IDENTITY, |_, _, _| DragLayer)
+                PanelSpec::root(Pose::IDENTITY, |_, _, _| DragLayer)
                     .sized(Vec2::splat(0.4), DRAG_PX)
                     .pointer(hand, Pointer::Drag),
                 tooltip::spec(hand),
