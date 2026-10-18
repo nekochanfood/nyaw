@@ -566,7 +566,8 @@ const NAV_LINE_WIDTH: f32 = 0.4;
 const NAV_LINE_HEIGHT: f32 = spacing::MD;
 
 /// ナビゲーションバー: パネルの下に付き、パネルを操作する帯。中央にパネルのタイトル、右端に閉じるボタン（アイコンだけ。
-/// id は `nav-close`）。カード 1 枚の帯で、角丸は `FULL`。押したときの処理（パネルを閉じる）は `on_close` で受け取る。
+/// id は `nav-close`）。`minimize` なら閉じる代わりにしまうボタン（マイナス。id は `nav-minimize`）。
+/// カード 1 枚の帯で、角丸は `FULL`。押したときの処理（閉じる・しまう）は `on_close` で受け取る。
 /// `leading` は左端に並べる（パネルごとの操作。閉じるボタンと左右対称の位置から右へ）。
 /// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
 ///
@@ -578,10 +579,16 @@ pub fn nav_bar(
     theme: &Theme,
     open: f32,
     title: impl Into<SharedString>,
+    minimize: bool,
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     leading: Vec<Button>,
 ) -> Div {
+    let (close_id, close_glyph) = if minimize {
+        ("nav-minimize", &crate::icons::MINUS)
+    } else {
+        ("nav-close", &crate::icons::X)
+    };
     // 前半で動き、後半で広がる。それぞれの区間の中でも ease-in-out にして、つなぎ目で急に変わらないようにする。
     const MOVE_END: f32 = 0.35;
     let smooth = |t: f32| {
@@ -643,8 +650,8 @@ pub fn nav_bar(
                                     .child(
                                         icon_button(
                                             theme,
-                                            "nav-close",
-                                            &crate::icons::X,
+                                            close_id,
+                                            close_glyph,
                                             close_tooltip,
                                             Variant::Default,
                                         )

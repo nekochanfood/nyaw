@@ -668,6 +668,8 @@ fn start_drag(
 }
 
 type PanelBuilder = dyn FnOnce(PanelId, &mut Window, &mut App) -> AnyView;
+/// ナビゲーションバーのしまうボタンで呼ぶ処理（[`PanelSpec::minimizable`]）。引数はしまうパネル。
+type Minimize = std::rc::Rc<dyn Fn(PanelId, &mut App)>;
 
 /// 画面と VR 空間での配置。異なる画面型を同じ起動リストに入れられる。
 pub struct PanelSpec {
@@ -707,6 +709,8 @@ pub struct PanelSpec {
     os_keyboard: bool,
     /// ナビゲーションバーの左端に、はめる場所から外す・戻すボタンを出す（[`Self::dockable`]）。
     dockable: bool,
+    /// ナビゲーションバーの右端を、閉じる代わりにしまうボタンにする（[`Self::minimizable`]）。
+    minimize: Option<Minimize>,
     build: Box<PanelBuilder>,
 }
 
@@ -752,6 +756,7 @@ impl PanelSpec {
             nav_bar_of: None,
             os_keyboard: false,
             dockable: false,
+            minimize: None,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -961,10 +966,18 @@ impl PanelSpec {
         self
     }
 
+    /// ナビゲーションバーの右端を、閉じる代わりにしまうボタン（マイナス）にする。押すと `minimize` を呼ぶ。
+    /// ダッシュボードから出す常駐のパネル（閉じずに置いておくもの）だけに使う。
+    pub fn minimizable(mut self, minimize: impl Fn(PanelId, &mut App) + 'static) -> Self {
+        self.minimize = Some(std::rc::Rc::new(minimize));
+        self
+    }
+
     /// このパネル（PanelId `owner` で開いた）に付けるナビゲーションバー。外していれば `None`。
     /// 開く側（`ui::run`・testkit のキット）が持ち主の直後に開き、[`PanelCommand::NavBar`] で持ち主に付ける。
     pub fn nav_bar_spec(&self, owner: PanelId) -> Option<PanelSpec> {
-        let (title, os_keyboard, dockable) = (self.title.clone(), self.os_keyboard, self.dockable);
+        let (title, os_keyboard, dockable, minimize) =
+            (self.title.clone(), self.os_keyboard, self.dockable, self.minimize.clone());
         self.nav_bar.then(|| PanelSpec {
             nav_bar: false,
             nav_bar_of: Some(owner),
@@ -978,6 +991,7 @@ impl PanelSpec {
                     title,
                     os_keyboard,
                     dockable,
+                    minimize,
                     open: 0.0,
                     to: 0.0,
                     anim: None,
@@ -1086,6 +1100,8 @@ struct NavBar {
     os_keyboard: bool,
     /// 左端に、はめる場所から外す・戻すボタンを出す。
     dockable: bool,
+    /// 右端を、閉じる代わりにしまうボタンにする。
+    minimize: Option<Minimize>,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
     open: f32,
     to: f32,
@@ -1187,18 +1203,22 @@ impl Render for NavBar {
             })
         });
         let leading = dock.flatten().into_iter().chain(os_keyboard).collect();
+        let minimize = self.minimize.clone();
         div().size_full().child(design::components::nav_bar(
             &theme,
             self.open,
             title,
-            i18n::t(cx, "common.close"),
-            move |_, _, cx| {
-                cx.default_global::<PanelControl>()
+            minimize.is_some(),
+            i18n::t(cx, if minimize.is_some() { "common.minimize" } else { "common.close" }),
+            move |_, _, cx| match &minimize {
+                Some(minimize) => minimize(owner, cx),
+                None => cx
+                    .default_global::<PanelControl>()
                     .panels
                     .entry(owner)
                     .or_default()
                     .commands
-                    .push(PanelCommand::Close)
+                    .push(PanelCommand::Close),
             },
             leading,
         ))

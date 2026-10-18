@@ -231,14 +231,14 @@ impl Dashboard {
         redraw(self.panel, cx);
     }
 
-    /// 配信 `panel` を開いた（はめる・隠すのは開く側。`stashed` なら隠して開いた）。バーにボタンが増える。
+    /// 配信 `panel` を開いた（はめる・隠すのは開く側。`resident` なら常駐のもので、隠して開いた）。バーにボタンが増える。
     fn add_stream(
         &mut self,
         panel: PanelId,
         kind: SourceKind,
         name: SharedString,
         icon: Option<Arc<RenderImage>>,
-        stashed: bool,
+        resident: bool,
         cx: &mut Context<Self>,
     ) {
         self.streams.push(Stream {
@@ -246,13 +246,15 @@ impl Dashboard {
             kind,
             name,
             icon,
-            stashed,
+            stashed: resident,
+            resident,
             seen_docked: false,
         });
         redraw(self.panel, cx);
     }
 
-    /// 画面（モニター）をすべて、配信として隠して開いておく（バーのボタンで出せる）。もう映しているものは開かない。
+    /// 画面（モニター）をすべて、常駐の配信として隠して開いておく（バーのボタンで出せる。閉じずにしまう）。
+    /// もう映しているものは開かない。
     fn open_screens(&mut self, mut sources: Vec<Source>, cx: &mut Context<Self>) {
         sources.sort_by(|a, b| a.name.cmp(&b.name));
         for source in sources {
@@ -266,9 +268,19 @@ impl Dashboard {
     /// はまっている配信を、閉じずに隠して外す（ボタンを押せばまた出せる）。配信でなければ何もしない
     /// （ほかの画面は、次にはめる画面と入れ替わりに閉じる）。
     fn stash_docked(&mut self, cx: &mut Context<Self>) {
-        let Some(id) = ui::docked(cx) else {
-            return;
-        };
+        if let Some(id) = ui::docked(cx) {
+            self.stash(id, cx);
+        }
+    }
+
+    /// 常駐の配信 `id` をしまう（ナビゲーションバーのしまうボタン）。はまっていても独立させていても、隠してバーに残す。
+    fn minimize(&mut self, id: PanelId, cx: &mut Context<Self>) {
+        self.stash(id, cx);
+        redraw(self.panel, cx);
+    }
+
+    /// 配信 `id` を、閉じずに隠して外す。配信でなければ何もしない。
+    fn stash(&mut self, id: PanelId, cx: &mut Context<Self>) {
         let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) else {
             return;
         };
@@ -308,7 +320,7 @@ impl Dashboard {
         }
     }
 
-    /// 閉じた・自分で外して独立させた配信のボタンを消す。隠しているもの（[`Stream::stashed`]）は残す。
+    /// 閉じた・自分で外して独立させた配信のボタンを消す。隠しているもの（[`Stream::stashed`]）と常駐のものは残す。
     fn prune_streams(&mut self, cx: &App) {
         let (ctl, bar) = (cx.global::<PanelControl>(), self.panel);
         self.streams.retain_mut(|s| {
@@ -318,7 +330,7 @@ impl Dashboard {
             }
             let docked = status.and_then(|st| st.parent) == Some(bar);
             s.seen_docked |= docked;
-            s.stashed || !s.seen_docked || docked
+            s.resident || s.stashed || !s.seen_docked || docked
         });
     }
 
@@ -396,6 +408,8 @@ struct Stream {
     icon: Option<Arc<RenderImage>>,
     /// ほかを選んだので隠して外している。
     stashed: bool,
+    /// 常駐（起動時に用意した画面）。閉じずにしまい、独立させてもバーに残る。
+    resident: bool,
     /// ダッシュボードにはまっているのを一度でも見た（その後に外れたら、自分で外して独立させたもの）。
     seen_docked: bool,
 }
@@ -756,7 +770,7 @@ impl Screen {
         if self.open_app && self.pending.is_none() {
             self.open_app = false;
             let window = self.app_window(&m.app);
-            match window.map(|(source, icon)| (source, icon, mirror_of(source, cx))) {
+            match window.map(|(source, icon)| (source, icon, mirror_of(source, cx).map(|(id, _)| id))) {
                 // もう映していれば新しく開かない。ダッシュボードに隠している配信なら、それを出す。
                 Some((_, _, Some(id))) => {
                     let _ = self.dashboard.update(cx, |d, cx| d.show_stream(id, cx));
@@ -1063,6 +1077,8 @@ impl Screen {
                 .iter()
                 .enumerate()
                 .filter(|(_, (s, _))| s.kind == kind)
+                // 常駐の画面（起動時にダッシュボードへ置いたもの）は、いつもバーにあるので一覧に出さない。
+                .filter(|(_, (s, _))| !mirror_of(s, cx).is_some_and(|(_, resident)| resident))
                 .map(|(i, (source, image))| {
                     let glyph = match (kind, image) {
                         (_, Some(image)) => img(image.clone())
@@ -1320,36 +1336,38 @@ impl Render for Mirror {
     }
 }
 
-/// 開いている配信のパネルと、その取得元。同じ画面・ウィンドウは 1 枚だけ映す（[`mirror_of`]）。
+/// 開いている配信のパネルと、その取得元・常駐か。同じ画面・ウィンドウは 1 枚だけ映す（[`mirror_of`]）。
 #[derive(Default)]
-struct Mirrors(Vec<(Source, PanelId)>);
+struct Mirrors(Vec<(Source, PanelId, bool)>);
 
 impl gpui::Global for Mirrors {}
 
-/// `source` を映している、閉じていないパネル。
+/// `source` を映している、閉じていないパネルと、それが常駐（起動時に用意した画面）か。
 // ponytail: 開くのは次のフレームなので、同じフレームに 2 回押すと 2 枚開く。困れば開く前の分も数える。
-fn mirror_of(source: &Source, cx: &App) -> Option<PanelId> {
+fn mirror_of(source: &Source, cx: &App) -> Option<(PanelId, bool)> {
     let panels = &cx.try_global::<PanelControl>()?.panels;
     cx.try_global::<Mirrors>()?
         .0
         .iter()
-        .find(|(s, id)| s.same_target(source) && !panels.get(id).is_some_and(|p| p.status.closed))
-        .map(|&(_, id)| id)
+        .find(|(s, id, _)| s.same_target(source) && !panels.get(id).is_some_and(|p| p.status.closed))
+        .map(|&(_, id, resident)| (id, resident))
 }
 
 /// `source` を映すパネルの起動仕様。`dashboard` があれば開くとそこにはまり（ミラーリングの一覧と入れ替わる）、
-/// `None`（独立させた画面から開いた）なら独立して、開いた画面 `from` の手前に重ねて開く。`stash` なら（`dashboard` があるとき）
-/// はめずに隠して開き、バーのボタンで出せるようにしておく。
+/// `None`（独立させた画面から開いた）なら独立して、開いた画面 `from` の手前に重ねて開く。
+/// `resident` なら（`dashboard` があるとき）常駐のもの: はめずに隠して開き、バーのボタンで出す。ナビゲーションバーでは
+/// 閉じずにしまう。
 /// タイトルは取得元の名前で、ナビゲーションバーで閉じると配信も止まる。
 fn mirror_spec(
     source: Source,
     icon: Option<Arc<RenderImage>>,
     dashboard: Option<WeakEntity<Dashboard>>,
     from: PanelId,
-    stash: bool,
+    resident: bool,
 ) -> PanelSpec {
     let (title, source_title, kind) = (source.name.clone(), source.name.clone(), source.kind);
     let docked = dashboard.is_some();
+    let minimize = dashboard.clone().filter(|_| resident);
     let build = move |panel: PanelId, _: &mut Window, cx: &mut Context<Mirror>| {
         // 閉じたものは忘れ、これを覚える。
         let closed = |id: &PanelId| {
@@ -1359,9 +1377,9 @@ fn mirror_spec(
         };
         let mut mirrors: Vec<_> = cx
             .try_global::<Mirrors>()
-            .map(|m| m.0.iter().filter(|(_, id)| !closed(id)).cloned().collect())
+            .map(|m| m.0.iter().filter(|(_, id, _)| !closed(id)).cloned().collect())
             .unwrap_or_default();
-        mirrors.push((source.clone(), panel));
+        mirrors.push((source.clone(), panel, resident && dashboard.is_some()));
         cx.set_global(Mirrors(mirrors));
         cx.default_global::<PanelControl>()
             .panels
@@ -1370,19 +1388,25 @@ fn mirror_spec(
             .commands
             .push(PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE));
         if let Some(dashboard) = dashboard {
-            if stash {
+            if resident {
                 commands(panel, [PanelCommand::Hide(true)], cx);
             } else {
                 ui::dock(panel, cx);
             }
             let name = SharedString::from(title.clone());
-            let _ = dashboard.update(cx, |d, cx| d.add_stream(panel, kind, name, icon, stash, cx));
+            let _ = dashboard.update(cx, |d, cx| d.add_stream(panel, kind, name, icon, resident, cx));
         }
         Mirror { panel }
     };
     let spec = PanelSpec::spawn(from, build);
     // はめるものは、開いた元の手前ではなく、はめる場所に合わせて目の前に出す。
     let spec = if docked { spec.in_view(SCREEN_POSE) } else { spec };
+    let spec = match minimize {
+        Some(dashboard) => spec.minimizable(move |id, cx| {
+            let _ = dashboard.update(cx, |d, cx| d.minimize(id, cx));
+        }),
+        None => spec,
+    };
     // 配信は横幅を保って縦横比を合わせるので、幅をはめる画面とそろえる。
     spec.sized(SIZE_M, RES_PX)
         .titled_text(source_title)
@@ -2027,8 +2051,8 @@ mod tests {
             Dashboard::new(1, summon, summon, cx)
         });
         bar.update(cx, |d, cx| {
-            d.add_stream(4, SourceKind::Screen, "Display 1".into(), None, cx);
-            d.add_stream(5, SourceKind::Window, "Editor".into(), None, cx);
+            d.add_stream(4, SourceKind::Screen, "Display 1".into(), None, false, cx);
+            d.add_stream(5, SourceKind::Window, "Editor".into(), None, false, cx);
         });
         cx.update(|_, cx| ui::dock(4, cx));
         cx.run_until_parked();
@@ -2039,9 +2063,10 @@ mod tests {
             commands(cx, 4)[1..],
             [PanelCommand::Hide(true), PanelCommand::Parent(None)]
         );
+        // 隠したままはめてから出す。
         let five = commands(cx, 5);
-        assert_eq!(five[0], PanelCommand::Hide(false));
-        assert!(docked_to_bar(&five[1]));
+        assert!(docked_to_bar(&five[0]));
+        assert_eq!(five[1], PanelCommand::Hide(false));
         assert!(!commands(cx, 4).contains(&PanelCommand::Close), "隠すだけで閉じない");
         // もう一度押すと隠す。
         click(cx, "dashboard-stream-5");
@@ -2059,5 +2084,30 @@ mod tests {
         cx.run_until_parked();
         let streams = cx.update(|_, cx| bar.read(cx).streams.iter().map(|s| s.panel).collect::<Vec<_>>());
         assert_eq!(streams, [5]);
+    }
+
+    /// 常駐の配信は、独立させてもバーに残り、しまうと閉じずに隠れる。
+    #[gpui::test]
+    fn resident_streams_stay_on_the_bar_and_minimize(cx: &mut TestAppContext) {
+        let (bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+            Dashboard::new(1, summon, summon, cx)
+        });
+        bar.update(cx, |d, cx| d.add_stream(4, SourceKind::Screen, "Display 1".into(), None, true, cx));
+        // はめてから自分で外した（独立させた）。
+        let set_parent = |cx: &mut VisualTestContext, parent| {
+            cx.update(|_, cx| {
+                cx.default_global::<PanelControl>().panels.entry(4).or_default().status.parent = parent
+            });
+            bar.update(cx, |d, cx| d.prune_streams(cx));
+        };
+        set_parent(cx, Some(1));
+        set_parent(cx, None);
+        assert_eq!(bar.read_with(cx, |d, _| d.streams.len()), 1, "独立させても残る");
+        bar.update(cx, |d, cx| d.minimize(4, cx));
+        let c = commands(cx, 4);
+        assert!(c.contains(&PanelCommand::Hide(true)));
+        assert!(!c.contains(&PanelCommand::Close), "閉じない");
+        assert!(bar.read_with(cx, |d, _| d.streams[0].stashed));
     }
 }

@@ -77,6 +77,7 @@ tune_hold = "クリック中は {deg}° 以内の手の動きでポインタを�
 # chrono の書式（https://docs.rs/chrono/latest/chrono/format/strftime）。曜日は {weekday}。
 date = "%-m月%-d日（{weekday}）"
 close = "閉じる"
+minimize = "しまう"
 default = "既定"
 ok = "OK"
 cancel = "キャンセル"
