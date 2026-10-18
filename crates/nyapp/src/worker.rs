@@ -16,6 +16,8 @@ use crate::{
 };
 
 mod platform;
+#[cfg(windows)]
+pub(crate) use platform::delete_profile;
 
 const MAX_PACKAGE: usize = 64 << 20;
 const MAX_STORAGE_FILE: usize = STORAGE_FILE_MAX;
@@ -399,6 +401,10 @@ pub fn main() -> Result<(), Error> {
     let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout().lock();
     let start: Start = read_json(&mut input, MAX_MESSAGE)?;
+    #[cfg(windows)]
+    if std::env::var("NYAW_WORKER_ID").as_deref() != Ok(start.id.as_str()) {
+        return Err(Error::new("nyapp worker ID mismatch"));
+    }
     if !crate::manifest::valid_id(&start.id) {
         return Err(Error::new("invalid nyapp id"));
     }

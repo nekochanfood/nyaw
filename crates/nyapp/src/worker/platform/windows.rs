@@ -10,11 +10,11 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation,
 };
 use windows_sys::Win32::Security::Isolation::{
-    CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
+    CreateAppContainerProfile, DeleteAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
 use windows_sys::Win32::Security::{
-    FreeSid, GetTokenInformation, PSID, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, TOKEN_QUERY,
-    TokenIsAppContainer,
+    EqualSid, FreeSid, GetTokenInformation, PSID, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES,
+    TOKEN_APPCONTAINER_INFORMATION, TOKEN_QUERY, TokenAppContainerSid, TokenIsAppContainer,
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
@@ -104,6 +104,28 @@ fn win_error(context: &str) -> Error {
     Error::new(format!("{context}: {}", std::io::Error::last_os_error()))
 }
 
+fn profile_name(id: &str) -> String {
+    let digest = Sha256::digest(id.as_bytes());
+    format!(
+        "nyaw.nyapp.{}",
+        digest[..24]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    )
+}
+
+pub(crate) fn delete_profile(id: &str) -> Result<(), Error> {
+    let profile = wide(std::ffi::OsStr::new(&profile_name(id)));
+    let hr = unsafe { DeleteAppContainerProfile(profile.as_ptr()) };
+    if hr < 0 {
+        return Err(Error::new(format!(
+            "cannot delete AppContainer: 0x{hr:08x}"
+        )));
+    }
+    Ok(())
+}
+
 pub fn spawn(exe: &std::path::Path, id: &str) -> Result<super::Pipes, Error> {
     let exe_w = wide(exe.as_os_str());
     let mut command = wide(std::ffi::OsStr::new(&format!(
@@ -114,20 +136,14 @@ pub fn spawn(exe: &std::path::Path, id: &str) -> Result<super::Pipes, Error> {
         .ok_or_else(|| Error::new("LOCALAPPDATA is required to launch an AppContainer"))?;
     let mut environment = std::ffi::OsString::from("LOCALAPPDATA=");
     environment.push(local_app_data);
+    environment.push("\0NYAW_WORKER_ID=");
+    environment.push(id);
     environment.push("\0SystemRoot=");
     environment.push(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()));
     let mut environment = wide(&environment);
     environment.push(0);
     // AppContainer 名の 64 文字制限と、ニャプリ ID の 128 文字上限を両立する。
-    let digest = Sha256::digest(id.as_bytes());
-    let profile_name = format!(
-        "nyaw.nyapp.{}",
-        digest[..24]
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect::<String>()
-    );
-    let profile = wide(std::ffi::OsStr::new(&profile_name));
+    let profile = wide(std::ffi::OsStr::new(&profile_name(id)));
     let mut sid: PSID = ptr::null_mut();
     let hr = unsafe {
         CreateAppContainerProfile(
@@ -298,6 +314,10 @@ pub fn spawn(exe: &std::path::Path, id: &str) -> Result<super::Pipes, Error> {
 
 /// 誤った引数や直接起動で通常のトークンのまま Wasm を実行しない。
 pub fn confine() -> Result<(), Error> {
+    let id = std::env::var("NYAW_WORKER_ID").map_err(|_| Error::new("missing nyapp worker ID"))?;
+    if !crate::manifest::valid_id(&id) || crate::system::is_system(&id) {
+        return Err(Error::new("invalid nyapp worker ID"));
+    }
     let mut raw = ptr::null_mut();
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut raw) } == 0 {
         return Err(win_error("OpenProcessToken"));
@@ -319,6 +339,48 @@ pub fn confine() -> Result<(), Error> {
     }
     if is_app_container != 1 {
         return Err(Error::new("the nyapp worker is not in an AppContainer"));
+    }
+    let profile = wide(std::ffi::OsStr::new(&profile_name(&id)));
+    let mut expected = ptr::null_mut();
+    let hr = unsafe { DeriveAppContainerSidFromAppContainerName(profile.as_ptr(), &mut expected) };
+    if hr < 0 {
+        return Err(Error::new(format!(
+            "cannot derive AppContainer SID: 0x{hr:08x}"
+        )));
+    }
+    let expected = Sid(expected);
+    let mut size = 0;
+    unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenAppContainerSid,
+            ptr::null_mut(),
+            0,
+            &mut size,
+        )
+    };
+    if (size as usize) < std::mem::size_of::<TOKEN_APPCONTAINER_INFORMATION>() {
+        return Err(win_error("GetTokenInformation AppContainer SID size"));
+    }
+    let mut info = vec![0usize; (size as usize).div_ceil(std::mem::size_of::<usize>())];
+    if unsafe {
+        GetTokenInformation(
+            token.as_raw_handle(),
+            TokenAppContainerSid,
+            info.as_mut_ptr().cast(),
+            (info.len() * std::mem::size_of::<usize>()) as u32,
+            &mut size,
+        )
+    } == 0
+    {
+        return Err(win_error("GetTokenInformation AppContainer SID"));
+    }
+    let actual =
+        unsafe { (*(info.as_ptr() as *const TOKEN_APPCONTAINER_INFORMATION)).TokenAppContainer };
+    if actual.is_null() || unsafe { EqualSid(actual, expected.0) } == 0 {
+        return Err(Error::new(
+            "the nyapp worker has an unexpected AppContainer SID",
+        ));
     }
     Ok(())
 }

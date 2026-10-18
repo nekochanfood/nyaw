@@ -131,6 +131,8 @@ pub fn uninstall(id: &str) -> Result<(), Error> {
     if system::is_system(id) || !crate::manifest::valid_id(id) {
         return Err(Error::new(format!("{id} cannot be uninstalled")));
     }
+    #[cfg(windows)]
+    crate::worker::delete_profile(id)?;
     if let Some(dir) = dir() {
         let path = dir.join(format!("{id}.{}", package::EXTENSION));
         if path.exists() {

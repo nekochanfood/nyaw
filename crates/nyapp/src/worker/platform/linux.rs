@@ -178,9 +178,7 @@ unsafe fn seccomp() -> Result<(), Error> {
         libc::SYS_futex,
         libc::SYS_clock_gettime,
         libc::SYS_getrandom,
-        libc::SYS_mmap,
         libc::SYS_munmap,
-        libc::SYS_mprotect,
         libc::SYS_brk,
         libc::SYS_mremap,
         libc::SYS_rt_sigaction,
@@ -195,6 +193,16 @@ unsafe fn seccomp() -> Result<(), Error> {
     ] {
         filter.push(jump(0x15, nr as u32, 0, 1));
         filter.push(stmt(0x06, ALLOW));
+    }
+    for nr in [libc::SYS_mmap, libc::SYS_mprotect] {
+        filter.extend([
+            stmt(0x20, 0), // seccomp_data.nr
+            jump(0x15, nr as u32, 0, 4),
+            stmt(0x20, 32), // seccomp_data.args[2]: prot
+            stmt(0x54, libc::PROT_EXEC as u32),
+            jump(0x15, 0, 0, 1),
+            stmt(0x06, ALLOW),
+        ]);
     }
     filter.push(stmt(0x06, ERRNO | libc::EPERM as u32));
     let program = libc::sock_fprog {

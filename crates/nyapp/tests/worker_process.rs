@@ -7,6 +7,12 @@ use nyapp::{package, worker::RemoteSandbox};
 #[path = "../src/worker/platform/linux.rs"]
 #[allow(dead_code)]
 mod linux_worker;
+#[cfg(target_os = "linux")]
+type Pipes = (
+    Box<dyn std::io::Write + Send>,
+    Box<dyn std::io::Read + Send>,
+    linux_worker::Guard,
+);
 
 fn main() {
     #[cfg(target_os = "linux")]
@@ -60,6 +66,49 @@ fn probe_linux_confinement() {
         std::io::Error::last_os_error().raw_os_error(),
         Some(libc::EPERM)
     );
+    let executable = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            4096,
+            libc::PROT_READ | libc::PROT_EXEC,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_eq!(
+        executable,
+        libc::MAP_FAILED,
+        "worker mapped executable memory"
+    );
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EPERM)
+    );
+    let writable = unsafe {
+        libc::mmap(
+            std::ptr::null_mut(),
+            4096,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
+            -1,
+            0,
+        )
+    };
+    assert_ne!(
+        writable,
+        libc::MAP_FAILED,
+        "worker cannot map writable memory"
+    );
+    assert_eq!(
+        unsafe { libc::mprotect(writable, 4096, libc::PROT_READ | libc::PROT_EXEC) },
+        -1
+    );
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EPERM)
+    );
+    assert_eq!(unsafe { libc::munmap(writable, 4096) }, 0);
 }
 
 fn external_nyapp_runs_in_a_restricted_worker() {
@@ -96,7 +145,9 @@ fn external_nyapp_runs_in_a_restricted_worker() {
             .unwrap();
     assert!(worker.is_alive());
     assert!(format!("{:?}", initial.view).contains("worker"));
-    worker.event(nyapp_sdk::Event::Tick, "en", None, Vec::new()).unwrap();
+    worker
+        .event(nyapp_sdk::Event::Tick, "en", None, Vec::new())
+        .unwrap();
     let next = results
         .recv_timeout(std::time::Duration::from_secs(5))
         .unwrap()
