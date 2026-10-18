@@ -107,7 +107,7 @@ pub(crate) fn update_into(dir: &Path, app: &Installed) -> Result<Option<Installe
         .as_ref()
         .map(|u| u.url.as_str())
         .unwrap_or_default();
-    let bytes = fetch(&resolve(base, &feed.package), MAX_PACKAGE)?;
+    let bytes = fetch(&resolve(base, &feed.package)?, MAX_PACKAGE)?;
     let digest: String = Sha256::digest(&bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
@@ -135,14 +135,12 @@ pub(crate) fn update_into(dir: &Path, app: &Installed) -> Result<Option<Installe
     result.map(Some)
 }
 
-/// フィードの中のパッケージの場所を、フィードの URL `base` から見た絶対 URL にする。
-fn resolve(base: &str, package: &str) -> String {
-    if package.contains("://") {
-        package.to_owned()
-    } else {
-        let dir = base.rsplit_once('/').map_or(base, |(dir, _)| dir);
-        format!("{dir}/{}", package.trim_start_matches('/'))
-    }
+/// フィードの中のパッケージの場所を、フィードの URL `base` から見た絶対 URL にする（`/` 始まり・`//` 始まりも URL の規則どおり）。
+fn resolve(base: &str, package: &str) -> Result<String, Error> {
+    let base = url::Url::parse(base).map_err(|e| Error::new(format!("bad update url {base}: {e}")))?;
+    base.join(package)
+        .map(String::from)
+        .map_err(|e| Error::new(format!("bad package url {package}: {e}")))
 }
 
 /// `url` を `max` バイトまで取る。
@@ -198,11 +196,15 @@ mod tests {
     fn package_urls_resolve_against_the_feed() {
         let feed = "https://example.com/nyapps/clock/latest.toml";
         assert_eq!(
-            resolve(feed, "clock-2.nyapp"),
+            resolve(feed, "clock-2.nyapp").unwrap(),
             "https://example.com/nyapps/clock/clock-2.nyapp"
         );
         assert_eq!(
-            resolve(feed, "https://cdn.example.com/c.nyapp"),
+            resolve(feed, "/releases/clock.nyapp").unwrap(),
+            "https://example.com/releases/clock.nyapp"
+        );
+        assert_eq!(
+            resolve(feed, "https://cdn.example.com/c.nyapp").unwrap(),
             "https://cdn.example.com/c.nyapp"
         );
     }

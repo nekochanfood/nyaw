@@ -23,6 +23,7 @@ sha2 = "0.10"
 toml = "0.9"
 ui.workspace = true
 # 更新情報・パッケージを落とす（rustls なので OS の TLS に依らない）。
+url = "2"
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 # インタプリタなので JIT の無い環境でも同じように動き、燃料（命令数の上限）でニャプリを止められる。
 # `validate` は外から来たバイナリを検証するので外さない。命令の振り分けはループ（`portable-dispatch`）にする。
