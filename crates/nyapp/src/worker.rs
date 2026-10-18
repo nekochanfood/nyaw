@@ -12,13 +12,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Error, Sandbox, installed, package,
-    sandbox::{MAX_ACTIVITY_CHARS, STORAGE_QUOTA},
+    sandbox::{MAX_ACTIVITY_CHARS, STORAGE_FILE_MAX, STORAGE_QUOTA},
 };
 
 mod platform;
 
 const MAX_PACKAGE: usize = 64 << 20;
-const MAX_STORAGE_FILE: usize = STORAGE_QUOTA * 2;
+const MAX_STORAGE_FILE: usize = STORAGE_FILE_MAX;
 const MAX_MESSAGE: usize = 6 << 20;
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
@@ -47,6 +47,8 @@ pub struct Step {
     /// 外側が `None` なら変更なし、`Some(None)` なら消す（JSON の省略と `null` で分ける）。
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present")]
     pub activity: Option<Option<Activity>>,
+    /// 保存領域のスナップショット。JSON に載せると膨らむので、返事のあとに生の 1 フレームで送る（空は変更なし）。
+    #[serde(skip)]
     pub storage: Option<Vec<u8>>,
 }
 
@@ -315,9 +317,21 @@ fn validate_step(step: &Step) -> Result<(), Error> {
 
 fn read_reply(input: &mut impl Read) -> Result<Step, Error> {
     match read_json::<Reply>(input, MAX_MESSAGE)? {
-        Reply::Ok(step) => Ok(step),
+        Reply::Ok(mut step) => {
+            let storage = read_frame(input, MAX_STORAGE_FILE)?;
+            step.storage = (!storage.is_empty()).then_some(storage);
+            Ok(step)
+        }
         Reply::Err(e) => Err(Error::new(e)),
     }
+}
+
+fn write_reply(out: &mut impl Write, reply: &Reply) -> Result<(), Error> {
+    write_json(out, reply)?;
+    if let Reply::Ok(step) = reply {
+        write_frame(out, step.storage.as_deref().unwrap_or_default())?;
+    }
+    Ok(())
 }
 
 fn write_json<T: Serialize>(out: &mut impl Write, value: &T) -> Result<(), Error> {
@@ -380,12 +394,12 @@ pub fn main() -> Result<(), Error> {
     let (mut sandbox, first) = match result {
         Ok(v) => v,
         Err(e) => {
-            write_json(&mut output, &Reply::Err(e.to_string()))?;
+            write_reply(&mut output, &Reply::Err(e.to_string()))?;
             output.flush()?;
             return Ok(());
         }
     };
-    write_json(&mut output, &Reply::Ok(step(&mut sandbox, first)))?;
+    write_reply(&mut output, &Reply::Ok(step(&mut sandbox, first)))?;
     output.flush()?;
     loop {
         let call: Call = match read_json(&mut input, MAX_MESSAGE) {
@@ -400,7 +414,7 @@ pub fn main() -> Result<(), Error> {
             Ok(view) => Reply::Ok(step(&mut sandbox, view)),
             Err(e) => Reply::Err(e.to_string()),
         };
-        write_json(&mut output, &reply)?;
+        write_reply(&mut output, &reply)?;
         output.flush()?;
         if matches!(reply, Reply::Err(_)) {
             return Ok(());
@@ -502,6 +516,30 @@ mod tests {
             let back: Step = serde_json::from_slice(&wire).unwrap();
             assert_eq!(back.activity, activity);
         }
+    }
+
+    /// クォータいっぱいの NUL は JSON で 6 倍になるが、枠に収まって往復できる。
+    #[test]
+    fn quota_sized_storage_survives_the_wire() {
+        let key = "k";
+        let values = std::collections::BTreeMap::from([(
+            key.to_owned(),
+            " ".repeat(STORAGE_QUOTA - key.len()),
+        )]);
+        let snapshot = serde_json::to_vec(&values).unwrap();
+        assert!(snapshot.len() > STORAGE_QUOTA * 2 && snapshot.len() <= MAX_STORAGE_FILE);
+        let reply = Reply::Ok(Step {
+            view: Node::Spacer,
+            ticker: None,
+            beeps: 0,
+            activity: None,
+            storage: Some(snapshot.clone()),
+        });
+        let mut wire = Vec::new();
+        write_reply(&mut wire, &reply).unwrap();
+        assert!(wire.len() < MAX_MESSAGE + snapshot.len() + 8);
+        let step = read_reply(&mut wire.as_slice()).unwrap();
+        assert_eq!(step.storage, Some(snapshot));
     }
 
     #[test]
