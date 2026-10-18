@@ -5,9 +5,10 @@
 //! 表示は終わる時刻・始めた時刻から nyaw が数え続ける。カウントダウンが終わると、ニャプリが開いていなければ
 //! （開いていればニャプリ自身が知らせる）権限 `audio` があるとき手首（wrist）から音を鳴らし、「終わった」状態で残す。
 
+use std::collections::HashMap;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use gpui::App;
+use gpui::{App, Task};
 use kernel::PanelCommand;
 use kernel::audio::Sound;
 use nyapp_sdk::Activity;
@@ -57,9 +58,9 @@ impl Live {
     }
 }
 
-/// 出ている知らせ（出した順）。
+/// 出ている知らせ（出した順）と、ニャプリごとのカウントダウンのタイマー（置き換え・消去で捨てて止める）。
 #[derive(Default)]
-pub struct Activities(Vec<Live>);
+pub struct Activities(Vec<Live>, HashMap<String, (i64, Task<()>)>);
 
 impl gpui::Global for Activities {}
 
@@ -71,13 +72,17 @@ pub fn all(cx: &App) -> &[Live] {
 /// ニャプリ `app` の知らせを出す・置き換える（`None` で消す）。
 pub fn set(app: &Installed, activity: Option<Activity>, cx: &mut App) {
     let id = app.manifest.id.clone();
-    let list = &mut cx.default_global::<Activities>().0;
+    let activities = cx.default_global::<Activities>();
+    let armed = activities.1.get(&id).map(|(ends, _)| *ends);
+    let list = &mut activities.0;
     let at = list.iter().position(|l| l.app.manifest.id == id);
     match (activity, at) {
-        (None, Some(at)) => {
-            list.remove(at);
+        (None, at) => {
+            if let Some(at) = at {
+                list.remove(at);
+            }
+            activities.1.remove(&id);
         }
-        (None, None) => {}
         (Some(activity), at) => {
             let countdown = match &activity {
                 Activity::Countdown { ends_at_ms, .. } => Some(*ends_at_ms),
@@ -92,8 +97,12 @@ pub fn set(app: &Installed, activity: Option<Activity>, cx: &mut App) {
                 Some(at) => list[at] = live,
                 None => list.push(live),
             }
-            if let Some(ends) = countdown {
-                watch_countdown(id, ends, cx);
+            match countdown {
+                Some(ends) if armed == Some(ends) => {}
+                Some(ends) => watch_countdown(id, ends, cx),
+                None => {
+                    activities.1.remove(&id);
+                }
             }
         }
     }
@@ -104,9 +113,9 @@ pub fn clear(id: &str, cx: &mut App) {
     if let Some(a) = cx.try_global::<Activities>()
         && a.0.iter().any(|l| l.app.manifest.id == id)
     {
-        cx.default_global::<Activities>()
-            .0
-            .retain(|l| l.app.manifest.id != id);
+        let a = cx.default_global::<Activities>();
+        a.0.retain(|l| l.app.manifest.id != id);
+        a.1.remove(id);
     }
 }
 
@@ -117,7 +126,8 @@ fn watch_countdown(id: String, ends: i64, cx: &mut App) {
     let remaining = ends.saturating_sub(now_ms()).max(0);
     let capped = remaining > MAX_WAIT_MS;
     let wait = Duration::from_millis(remaining.min(MAX_WAIT_MS) as u64);
-    cx.spawn(async move |cx| {
+    let key = id.clone();
+    let task = cx.spawn(async move |cx| {
         cx.background_executor().timer(wait).await;
         cx.update(|cx| {
             if capped {
@@ -135,8 +145,8 @@ fn watch_countdown(id: String, ends: i64, cx: &mut App) {
                 finish(&id, ends, cx);
             }
         });
-    })
-    .detach();
+    });
+    cx.default_global::<Activities>().1.insert(key, (ends, task));
 }
 
 /// ニャプリ `id` の、`ends` に終わるカウントダウンを終わったことにする。開いていなければ手首から音を鳴らす。
