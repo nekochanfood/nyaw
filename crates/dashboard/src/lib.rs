@@ -12,8 +12,8 @@ use std::time::{Duration, Instant};
 use design::components::{self, Variant};
 use design::{Theme, font_size, icons, spacing};
 use gpui::{
-    App, Context, Div, FocusHandle, FontWeight, KeyDownEvent, RenderImage, ScrollHandle, SharedString,
-    WeakEntity, Window, div, img, prelude::*, px, rgba,
+    App, Context, Div, FocusHandle, FontWeight, KeyDownEvent, RenderImage, ScrollHandle,
+    SharedString, WeakEntity, Window, div, img, prelude::*, px, rgba,
 };
 use kernel::audio::Sound;
 use kernel::desktop::{
@@ -36,10 +36,7 @@ const BAR_PX: (u32, u32) = (
     RES_PX.0,
     (components::NAV_BAR_HEIGHT + 2.0 * components::PANEL_MARGIN) as u32,
 );
-const BAR_M: Vec2 = Vec2::new(
-    SIZE_M.x,
-    SIZE_M.x * BAR_PX.1 as f32 / BAR_PX.0 as f32,
-);
+const BAR_M: Vec2 = Vec2::new(SIZE_M.x, SIZE_M.x * BAR_PX.1 as f32 / BAR_PX.0 as f32);
 /// 画面を開いてからはまるまでの、最初の置き場所（はまる所）。
 const SCREEN_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -DISTANCE), Quat::IDENTITY);
 /// グリッドの列の数とタイルの高さ（px）。
@@ -80,7 +77,11 @@ pub fn pose() -> Pose {
     let face = SIZE_M.y / 2.0 - margin(SIZE_M, RES_PX);
     // はめた画面のナビゲーションバーは、距離で大きさを変えない（1m 先での大きさのまま）。
     let nav_bar = ui::NAV_BAR_HEIGHT_M;
-    let top = Vec3::new(0.0, -(face + nav_bar + kernel::overlay::SLOT_GAP), -DISTANCE);
+    let top = Vec3::new(
+        0.0,
+        -(face + nav_bar + kernel::overlay::SLOT_GAP),
+        -DISTANCE,
+    );
     let rotation = Quat::from_rotation_x(-BAR_TILT);
     let half = BAR_M.y / 2.0 - margin(BAR_M, BAR_PX);
     Pose::new(top - rotation * Vec3::Y * half, rotation)
@@ -95,6 +96,7 @@ pub fn spec(
     hidden: bool,
 ) -> PanelSpec {
     PanelSpec::root(Pose::IDENTITY, move |id, _, cx: &mut Context<Dashboard>| {
+        nyapp::opened(nyapp::system::DASHBOARD.id, id, cx);
         opened(id, cx);
         let ctl = cx.default_global::<PanelControl>();
         ctl.panels.entry(id).or_default().commands.extend([
@@ -188,7 +190,9 @@ impl Dashboard {
                     if let Some(result) = pending.poll() {
                         break result;
                     }
-                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(100))
+                        .await;
                 };
                 match sources {
                     Ok(sources) => {
@@ -229,7 +233,10 @@ impl Dashboard {
             let (bar, dashboard) = (self.panel, cx.weak_entity());
             let spec = PanelSpec::popover(bar, move |id, _, cx: &mut Context<Menu>| {
                 let _ = dashboard.update(cx, |d, _| d.menu = Some(id));
-                Menu { panel: id, dashboard }
+                Menu {
+                    panel: id,
+                    dashboard,
+                }
             })
             .sized(MENU_M, MENU_PX)
             .offset(menu_offset())
@@ -266,7 +273,10 @@ impl Dashboard {
     fn open_screens(&mut self, mut sources: Vec<Source>, cx: &mut Context<Self>) {
         sources.sort_by(|a, b| a.name.cmp(&b.name));
         for source in sources {
-            if source.kind == SourceKind::Screen && source.concrete() && mirror_of(&source, cx).is_none() {
+            if source.kind == SourceKind::Screen
+                && source.concrete()
+                && mirror_of(&source, cx).is_none()
+            {
                 let spec = mirror_spec(source, None, Some(cx.weak_entity()), self.panel, true);
                 cx.default_global::<PanelControl>().spawns.push(spec);
             }
@@ -380,6 +390,25 @@ impl Dashboard {
         redraw(self.panel, cx);
     }
 
+    /// ニャプリ `app` をはめる（はまっていた画面は閉じ、配信は隠す）。もう開いていれば、そのパネルをはめる。
+    pub fn open_nyapp(&mut self, app: nyapp::Installed, cx: &mut Context<Self>) {
+        self.stash_docked(cx);
+        self.shown = None;
+        if let Some(panel) = nyapp::panel_of(&app.manifest.id, cx) {
+            ui::dock(panel, cx);
+            commands(panel, [PanelCommand::Hide(false)], cx);
+        } else {
+            let spec = nyapp::spec(self.panel, app, i18n::Lang::current(cx), |id, cx| {
+                ui::dock(id, cx)
+            });
+            // はめる画面は、開いた元（ランチャー）の手前ではなく、はめる場所に合わせて目の前に出す。
+            cx.default_global::<PanelControl>()
+                .spawns
+                .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
+        }
+        redraw(self.panel, cx);
+    }
+
     /// 出ている間に何も無い所（ダッシュボードにも、ほかのパネルにも当たらない所）を押したら隠す。
     /// フレームループが状態を書き戻すたびに呼ばれるので、変わっていなければ何もしない（書き込むと自分がまた呼ばれる）。
     fn close_on_outside_press(&mut self, cx: &mut Context<Self>) {
@@ -400,8 +429,15 @@ impl Dashboard {
         }
     }
 
-    /// `panel` に `page` をはめた。
+    /// `panel` に `page` をはめた。その画面のシステムのニャプリとして覚える。
     fn track(&mut self, page: Page, panel: PanelId, cx: &mut Context<Self>) {
+        let system = match page {
+            Page::Launcher => nyapp::system::LAUNCHER,
+            Page::Debug => nyapp::system::DEBUG,
+            Page::Settings => nyapp::system::SETTINGS,
+            Page::QuickSettings | Page::NowPlaying => nyapp::system::DASHBOARD,
+        };
+        nyapp::opened(system.id, panel, cx);
         self.shown = Some((page, panel));
         redraw(self.panel, cx);
     }
@@ -472,19 +508,29 @@ impl Render for Menu {
             })
         };
         let panel = self.panel;
-        let quit = components::menu_item(&theme, "menu-quit", &icons::POWER, i18n::t(cx, "dashboard.quit"))
-            .on_click(move |_, window, cx| {
-                close(panel, cx);
-                let spec = quit_dialog_spec(panel, window, cx);
-                cx.default_global::<PanelControl>().spawns.push(spec);
-            });
+        let quit = components::menu_item(
+            &theme,
+            "menu-quit",
+            &icons::POWER,
+            i18n::t(cx, "dashboard.quit"),
+        )
+        .on_click(move |_, window, cx| {
+            close(panel, cx);
+            let spec = quit_dialog_spec(panel, window, cx);
+            cx.default_global::<PanelControl>().spawns.push(spec);
+        });
         components::card_panel(&theme)
             .rounded(px(design::radius::LG))
             .child(components::list(
                 &theme,
                 [
                     item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug),
-                    item("menu-settings", &icons::GEAR, "dashboard.settings", Page::Settings),
+                    item(
+                        "menu-settings",
+                        &icons::GEAR,
+                        "dashboard.settings",
+                        Page::Settings,
+                    ),
                     quit,
                 ],
             ))
@@ -534,8 +580,13 @@ impl Render for QuitDialog {
                     Variant::Danger,
                 )
                 .on_click(|_, _, cx| cx.default_global::<PanelControl>().quit = true),
-                components::button(&theme, "quit-cancel", i18n::t(cx, "common.cancel"), Variant::Default)
-                    .on_click(move |_, _, cx| close(panel, cx)),
+                components::button(
+                    &theme,
+                    "quit-cancel",
+                    i18n::t(cx, "common.cancel"),
+                    Variant::Default,
+                )
+                .on_click(move |_, _, cx| close(panel, cx)),
             ],
         )
         // 電源のアイコンは塗りだと形が潰れて分かりにくいので、線で描く。
@@ -576,9 +627,9 @@ impl Render for Dashboard {
                     Variant::Default
                 };
                 let glyph = match (s.kind, &s.icon) {
-                    (SourceKind::Window, Some(icon)) => img(icon.clone())
-                        .size(px(font_size::LG))
-                        .into_any_element(),
+                    (SourceKind::Window, Some(icon)) => {
+                        img(icon.clone()).size(px(font_size::LG)).into_any_element()
+                    }
                     (SourceKind::Window, None) => design::icon(&icons::APP_WINDOW)
                         .weight(design::Weight::Bold)
                         .size(px(font_size::LG))
@@ -588,10 +639,15 @@ impl Render for Dashboard {
                         .size(px(font_size::LG))
                         .into_any_element(),
                 };
-                components::round_button(&theme, format!("dashboard-stream-{id}"), s.name.clone(), variant)
-                    .flex_none()
-                    .child(glyph)
-                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_stream(id, cx)))
+                components::round_button(
+                    &theme,
+                    format!("dashboard-stream-{id}"),
+                    s.name.clone(),
+                    variant,
+                )
+                .flex_none()
+                .child(glyph)
+                .on_click(cx.listener(move |this, _, _, cx| this.toggle_stream(id, cx)))
             })
             .collect();
         let variant = |page| {
@@ -646,10 +702,14 @@ impl Render for Dashboard {
             .px(px(spacing::SM))
             .child(menu)
             .child(
-                components::content_button(&theme, "dashboard-quick-settings", variant(Page::QuickSettings))
-                    .px(px(spacing::XL))
-                    // 数字で幅が変わって落ち着かないので、時刻の幅を固定する。
-                    .child(fixed_clock(time_width))
+                components::content_button(
+                    &theme,
+                    "dashboard-quick-settings",
+                    variant(Page::QuickSettings),
+                )
+                .px(px(spacing::XL))
+                // 数字で幅が変わって落ち着かないので、時刻の幅を固定する。
+                .child(fixed_clock(time_width))
                 .tooltip(i18n::t(cx, "dashboard.quick_settings"))
                 .children(battery.map(|b| design::icon(battery_glyph(&b)).size(px(font_size::LG))))
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
@@ -717,6 +777,13 @@ pub struct Screen {
     search: FocusHandle,
     /// 起動して、ウィンドウが出るのを待っているアプリと、起動した時刻。
     launching: Option<(InstalledApp, Instant)>,
+    /// 入っているニャプリ（名前の順）と、読み直している最中か。
+    nyapps: Vec<nyapp::Installed>,
+    nyapps_pending: bool,
+    /// ニャプリを消す状態（タイルを押すと消す）。
+    removing: bool,
+    /// 更新の確認の結果（確認中も）。
+    update_note: Option<SharedString>,
 }
 
 /// 読んだアプリ一覧。次に開いたときに、取り直すまでの間それを出す（アイコンを読むので時間が掛かる）。
@@ -750,11 +817,18 @@ impl Screen {
             scroll: ScrollHandle::new(),
             media_images: None,
             open_app: false,
-            apps: cx.try_global::<AppCatalog>().map(|c| c.0.clone()).unwrap_or_default(),
+            apps: cx
+                .try_global::<AppCatalog>()
+                .map(|c| c.0.clone())
+                .unwrap_or_default(),
             apps_pending: None,
             query: String::new(),
             search: cx.focus_handle(),
             launching: None,
+            nyapps: Vec::new(),
+            nyapps_pending: false,
+            removing: false,
+            update_note: None,
         };
         // 再生中の画面は、アプリのアイコンが OS から取れないとき（デスクトップのアプリ）にウィンドウのものを使う。
         if matches!(page, Page::Launcher | Page::NowPlaying) {
@@ -765,8 +839,180 @@ impl Screen {
                 Ok(pending) => this.apps_pending = Some(pending),
                 Err(e) => this.error = Some(e.to_string()),
             }
+            this.scan_nyapps(cx);
         }
         this
+    }
+
+    /// 入っているニャプリを読み直す（パッケージを読むので別スレッド）。
+    fn scan_nyapps(&mut self, cx: &mut Context<Self>) {
+        self.nyapps_pending = true;
+        cx.spawn(async move |this, cx| {
+            let found = cx
+                .background_executor()
+                .spawn(async { nyapp::installed::scan() })
+                .await;
+            let _ = this.update(cx, |s, cx| {
+                (s.nyapps, s.nyapps_pending) = (found, false);
+                redraw(s.panel, cx);
+            });
+        })
+        .detach();
+    }
+
+    /// ニャプリ `app` を消す（開いていれば閉じる）。消したら一覧を読み直す。
+    fn uninstall_nyapp(&mut self, app: nyapp::Installed, cx: &mut Context<Self>) {
+        if let Some(panel) = nyapp::panel_of(&app.manifest.id, cx) {
+            close(panel, cx);
+        }
+        let id = app.manifest.id.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { nyapp::installed::uninstall(&id) })
+                .await;
+            if let Err(e) = result {
+                logger::warn!("cannot uninstall nyapp", app = app.manifest.id, error = e);
+            }
+            let _ = this.update(cx, |s, cx| s.scan_nyapps(cx));
+        })
+        .detach();
+    }
+
+    /// 更新情報を持つニャプリの最新版を確かめ、新しければ入れ替える（ネットワークを使うので別スレッド）。
+    fn update_nyapps(&mut self, cx: &mut Context<Self>) {
+        self.update_note = Some(i18n::t(cx, "dashboard.nyapps_checking"));
+        let apps = self.nyapps.clone();
+        cx.spawn(async move |this, cx| {
+            let results: Vec<_> = cx
+                .background_executor()
+                .spawn(async move { apps.iter().map(nyapp::update::update).collect() })
+                .await;
+            let _ = this.update(cx, |s, cx| {
+                let updated = results.iter().filter(|r| matches!(r, Ok(Some(_)))).count();
+                let error = results.iter().find_map(|r| r.as_ref().err());
+                s.update_note = Some(match (error, updated) {
+                    (Some(e), _) => i18n::tf(cx, "dashboard.nyapps_update_failed", &[("error", e)]),
+                    (None, 0) => i18n::t(cx, "dashboard.nyapps_up_to_date"),
+                    (None, n) => i18n::tf(cx, "dashboard.nyapps_updated", &[("count", &n)]),
+                });
+                s.scan_nyapps(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// ランチャーのニャプリのセクション: 見出し（更新の確認・消す）と、タイルのグリッド。消す状態ではタイルを押すと消す。
+    fn nyapps_section(
+        &self,
+        theme: &Theme,
+        query: &str,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let lang = i18n::Lang::current(cx);
+        let tiles: Vec<_> =
+            kernel::desktop::matching(&self.nyapps, |a| a.manifest.name_in(lang.code()), query)
+                .into_iter()
+                .map(|app| {
+                    let name = app.manifest.name_in(lang.code()).to_owned();
+                    let running = nyapp::panel_of(&app.manifest.id, cx).is_some();
+                    let icon = if self.removing {
+                        design::icon(&icons::TRASH)
+                            .size(px(TILE_ICON_PX))
+                            .color(rgba(theme.danger_solid))
+                            .into_any_element()
+                    } else {
+                        app.icon(lang.code(), TILE_ICON_PX, theme)
+                    };
+                    let tooltip = self
+                        .removing
+                        .then(|| i18n::tf(cx, "dashboard.nyapps_uninstall", &[("name", &name)]));
+                    let app = app.clone();
+                    let tile = app_tile(
+                        theme,
+                        format!("dashboard-nyapp-{}", app.manifest.id),
+                        icon,
+                        &name,
+                        running,
+                    );
+                    match tooltip {
+                        Some(t) => tile.tooltip(t),
+                        None => tile,
+                    }
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.removing {
+                            this.uninstall_nyapp(app.clone(), cx);
+                        } else {
+                            let app = app.clone();
+                            let _ = this.dashboard.update(cx, |d, cx| d.open_nyapp(app, cx));
+                        }
+                        redraw(this.panel, cx);
+                    }))
+                    .into_any_element()
+                })
+                .collect();
+        let (remove_glyph, remove_key, remove_variant) = if self.removing {
+            (&icons::CHECK, "dashboard.nyapps_done", Variant::Primary)
+        } else {
+            (
+                &icons::PENCIL_SIMPLE,
+                "dashboard.nyapps_edit",
+                Variant::OnBackground,
+            )
+        };
+        let header = section(theme, i18n::t(cx, "dashboard.nyapps")).child(
+            div()
+                .flex()
+                .gap(px(spacing::XS))
+                .child(
+                    components::icon_button(
+                        theme,
+                        "dashboard-nyapps-update",
+                        &icons::ARROW_CIRCLE_UP,
+                        i18n::t(cx, "dashboard.nyapps_update"),
+                        Variant::OnBackground,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.update_nyapps(cx);
+                        redraw(this.panel, cx);
+                    })),
+                )
+                .child(
+                    components::icon_button(
+                        theme,
+                        "dashboard-nyapps-remove",
+                        remove_glyph,
+                        i18n::t(cx, remove_key),
+                        remove_variant,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.removing = !this.removing;
+                        redraw(this.panel, cx);
+                    })),
+                ),
+        );
+        let note = |text: SharedString| {
+            div()
+                .px(px(spacing::SM))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(text)
+                .into_any_element()
+        };
+        let mut out = vec![header.into_any_element()];
+        out.extend(self.update_note.clone().map(note));
+        out.push(if !tiles.is_empty() {
+            app_grid().children(tiles).into_any_element()
+        } else if self.nyapps_pending {
+            note(i18n::t(cx, "dashboard.loading"))
+        } else if self.nyapps.is_empty() {
+            let dir = nyapp::installed::dir()
+                .map(|d| d.display().to_string())
+                .unwrap_or_default();
+            note(i18n::tf(cx, "dashboard.nyapps_none", &[("dir", &dir)]))
+        } else {
+            note(i18n::t(cx, "dashboard.none"))
+        });
+        out
     }
 
     /// 再生中のメディアのアプリのウィンドウ（取得元の一覧から。実行ファイル名か、ウィンドウの名前で探す）。
@@ -782,8 +1028,7 @@ impl Screen {
                 && (s.app.as_deref().is_some_and(|a| {
                     let a = stem(a);
                     a == id || a == name || exe.as_ref() == Some(&a)
-                })
-                    || (!name.is_empty() && s.name.to_lowercase().contains(&name)))
+                }) || (!name.is_empty() && s.name.to_lowercase().contains(&name)))
         })
     }
 
@@ -802,14 +1047,18 @@ impl Screen {
         if self.open_app && self.pending.is_none() {
             self.open_app = false;
             let window = self.app_window(&m.app);
-            match window.map(|(source, icon)| (source, icon, mirror_of(source, cx).map(|(id, _)| id))) {
+            match window
+                .map(|(source, icon)| (source, icon, mirror_of(source, cx).map(|(id, _)| id)))
+            {
                 // もう映していれば新しく開かない。ダッシュボードに隠している配信なら、それを出す。
                 Some((_, _, Some(id))) => {
                     let _ = self.dashboard.update(cx, |d, cx| d.show_stream(id, cx));
                 }
                 Some((source, icon, None)) => {
-                    let dashboard = (ui::docked(cx) == Some(self.panel)).then(|| self.dashboard.clone());
-                    let spec = mirror_spec(source.clone(), icon.clone(), dashboard, self.panel, false);
+                    let dashboard =
+                        (ui::docked(cx) == Some(self.panel)).then(|| self.dashboard.clone());
+                    let spec =
+                        mirror_spec(source.clone(), icon.clone(), dashboard, self.panel, false);
                     cx.default_global::<PanelControl>().spawns.push(spec);
                 }
                 None if m.controls.raise => {
@@ -822,7 +1071,8 @@ impl Screen {
         let key = [place(&m.art), place(&m.backdrop), place(&m.app.icon)];
         if self.media_images.as_ref().is_none_or(|i| i.key != key) {
             let convert = |i: &Option<media::Image>| {
-                i.as_ref().and_then(|i| rgba_image(i.width, i.height, &i.rgba))
+                i.as_ref()
+                    .and_then(|i| rgba_image(i.width, i.height, &i.rgba))
             };
             self.media_images = Some(MediaImages {
                 key,
@@ -846,8 +1096,10 @@ impl Screen {
             .clone()
             .or_else(|| app_window.and_then(|(_, i)| i.clone()));
         let panel = self.panel;
-        let send = move |command| move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
-            commands(panel, [PanelCommand::Media(command)], cx)
+        let send = move |command| {
+            move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
+                commands(panel, [PanelCommand::Media(command)], cx)
+            }
         };
         let control = |id: &'static str, glyph, key, enabled: bool, command| {
             components::icon_button(&theme, id, glyph, i18n::t(cx, key), Variant::Ghost)
@@ -1006,9 +1258,12 @@ impl Screen {
                                     .flex()
                                     .items_center()
                                     .child(
-                                        gpui::canvas(move |bounds, _, _| bounds_in.set(bounds), |_, _, _, _| {})
-                                            .absolute()
-                                            .inset_0(),
+                                        gpui::canvas(
+                                            move |bounds, _, _| bounds_in.set(bounds),
+                                            |_, _, _, _| {},
+                                        )
+                                        .absolute()
+                                        .inset_0(),
                                     )
                                     .child(
                                         div()
@@ -1024,15 +1279,27 @@ impl Screen {
                                                     .bg(rgba(theme.neutral_text)),
                                             ),
                                     )
-                                    .when_some(duration.filter(|_| m.controls.seek), |d, duration| {
-                                        d.on_mouse_down(gpui::MouseButton::Left, move |e, _, cx| {
-                                            let b = seek_bounds.get();
-                                            let at = f32::from(e.position.x - b.origin.x)
-                                                / f32::from(b.size.width).max(1.0);
-                                            let to = duration.mul_f32(at.clamp(0.0, 1.0));
-                                            commands(panel, [PanelCommand::Media(media::Command::Seek(to))], cx);
-                                        })
-                                    }),
+                                    .when_some(
+                                        duration.filter(|_| m.controls.seek),
+                                        |d, duration| {
+                                            d.on_mouse_down(
+                                                gpui::MouseButton::Left,
+                                                move |e, _, cx| {
+                                                    let b = seek_bounds.get();
+                                                    let at = f32::from(e.position.x - b.origin.x)
+                                                        / f32::from(b.size.width).max(1.0);
+                                                    let to = duration.mul_f32(at.clamp(0.0, 1.0));
+                                                    commands(
+                                                        panel,
+                                                        [PanelCommand::Media(
+                                                            media::Command::Seek(to),
+                                                        )],
+                                                        cx,
+                                                    );
+                                                },
+                                            )
+                                        },
+                                    ),
                             )
                             .child(
                                 div()
@@ -1055,8 +1322,16 @@ impl Screen {
                             ))
                             .child(control(
                                 "now-playing-play-pause",
-                                if m.playing { &icons::PAUSE } else { &icons::PLAY },
-                                if m.playing { "dashboard.pause" } else { "dashboard.play" },
+                                if m.playing {
+                                    &icons::PAUSE
+                                } else {
+                                    &icons::PLAY
+                                },
+                                if m.playing {
+                                    "dashboard.pause"
+                                } else {
+                                    "dashboard.play"
+                                },
                                 m.controls.play_pause,
                                 media::Command::PlayPause,
                             ))
@@ -1128,7 +1403,10 @@ impl Screen {
         self.sources.iter().find(|(s, _)| {
             s.kind == SourceKind::Window
                 && match &app.exe {
-                    Some(exe) => s.app.as_deref().is_some_and(|a| a.eq_ignore_ascii_case(exe)),
+                    Some(exe) => s
+                        .app
+                        .as_deref()
+                        .is_some_and(|a| a.eq_ignore_ascii_case(exe)),
                     None => !name.is_empty() && s.name.to_lowercase().contains(&name),
                 }
         })
@@ -1175,7 +1453,8 @@ impl Screen {
         }
     }
 
-    /// ランチャー: 上に検索欄、その下に起動中のアプリ、区切り線を挟んで全部のアプリ（名前の順）。
+    /// ランチャー: 上に検索欄、その下にニャプリ（[`Self::nyapps_section`]）、区切り線を挟んで起動中のアプリ、
+    /// 区切り線を挟んで全部のアプリ（名前の順）。
     /// 検索すると、どちらも名前に打った文字を含むものだけになる。スクロールするのはアプリ一覧だけ。
     fn apps_page(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Div {
         self.poll_sources();
@@ -1193,7 +1472,10 @@ impl Screen {
             if mirror_of(source, cx).is_some_and(|(_, resident)| resident) {
                 continue;
             }
-            let key = source.app.as_deref().map_or_else(|| source.name.clone(), stem);
+            let key = source
+                .app
+                .as_deref()
+                .map_or_else(|| source.name.clone(), stem);
             if running.iter().any(|r| r.key == key) {
                 continue;
             }
@@ -1215,50 +1497,65 @@ impl Screen {
             });
         }
         let query = self.query.clone();
-        let running_tiles: Vec<_> = kernel::desktop::matching(&running, |r| r.name.as_str(), &query)
-            .into_iter()
-            .enumerate()
-            .map(|(i, r)| {
-                let (source, image) = (r.source.clone(), r.window_icon.clone());
-                let glyph = match source.kind {
-                    SourceKind::Screen => &icons::MONITOR,
-                    SourceKind::Window => &icons::APP_WINDOW,
-                };
-                app_tile(theme, format!("dashboard-running-{i}"), r.icon.clone(), glyph, &r.name, true)
+        let running_tiles: Vec<_> =
+            kernel::desktop::matching(&running, |r| r.name.as_str(), &query)
+                .into_iter()
+                .enumerate()
+                .map(|(i, r)| {
+                    let (source, image) = (r.source.clone(), r.window_icon.clone());
+                    let glyph = match source.kind {
+                        SourceKind::Screen => &icons::MONITOR,
+                        SourceKind::Window => &icons::APP_WINDOW,
+                    };
+                    app_tile(
+                        theme,
+                        format!("dashboard-running-{i}"),
+                        tile_image(r.icon.clone(), glyph),
+                        &r.name,
+                        true,
+                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_window(source.clone(), image.clone(), cx);
                         redraw(this.panel, cx);
                     }))
                     .into_any_element()
-            })
-            .collect();
-        let app_tiles: Vec<_> = kernel::desktop::matching(&self.apps, |(a, _)| a.name.as_str(), &query)
-            .into_iter()
-            .enumerate()
-            .map(|(i, (app, icon))| {
-                let running = self.window_for(app).is_some();
-                let app = app.clone();
-                app_tile(
-                    theme,
-                    format!("dashboard-app-{i}"),
-                    icon.clone(),
-                    &icons::APP_WINDOW,
-                    &app.name,
-                    running,
-                )
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.launch_app(app.clone(), cx);
-                    redraw(this.panel, cx);
-                }))
-                .into_any_element()
-            })
-            .collect();
+                })
+                .collect();
+        let app_tiles: Vec<_> =
+            kernel::desktop::matching(&self.apps, |(a, _)| a.name.as_str(), &query)
+                .into_iter()
+                .enumerate()
+                .map(|(i, (app, icon))| {
+                    let running = self.window_for(app).is_some();
+                    let app = app.clone();
+                    app_tile(
+                        theme,
+                        format!("dashboard-app-{i}"),
+                        tile_image(icon.clone(), &icons::APP_WINDOW),
+                        &app.name,
+                        running,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.launch_app(app.clone(), cx);
+                        redraw(this.panel, cx);
+                    }))
+                    .into_any_element()
+                })
+                .collect();
         let note = |loading: bool, cx: &App| {
             div()
                 .px(px(spacing::SM))
                 .text_color(rgba(theme.neutral_text_low))
-                .child(i18n::t(cx, if loading { "dashboard.loading" } else { "dashboard.none" }))
+                .child(i18n::t(
+                    cx,
+                    if loading {
+                        "dashboard.loading"
+                    } else {
+                        "dashboard.none"
+                    },
+                ))
         };
+        let nyapps = self.nyapps_section(theme, &query, cx);
         let running = if running_tiles.is_empty() {
             note(self.pending.is_some(), cx)
         } else {
@@ -1284,6 +1581,14 @@ impl Screen {
                             .child(i18n::tf(cx, "dashboard.failed", &[("error", &error)])),
                     )
                 })
+                .children(nyapps)
+                .child(
+                    div()
+                        .flex_none()
+                        .h(px(1.0))
+                        .mx(px(spacing::SM))
+                        .bg(rgba(theme.neutral_border_subtle)),
+                )
                 .child(
                     section(theme, i18n::t(cx, "dashboard.running")).child(
                         components::icon_button(
@@ -1386,7 +1691,12 @@ impl Screen {
             })
     }
 
-    fn quick_settings(&self, theme: &Theme, time_width: gpui::Pixels, cx: &mut Context<Self>) -> Div {
+    fn quick_settings(
+        &self,
+        theme: &Theme,
+        time_width: gpui::Pixels,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let now = chrono::Local::now();
         let ctl = cx.global::<PanelControl>();
         let mut batteries = ctl.batteries.clone();
@@ -1566,7 +1876,9 @@ fn mirror_of(source: &Source, cx: &App) -> Option<(PanelId, bool)> {
     cx.try_global::<Mirrors>()?
         .0
         .iter()
-        .find(|(s, id, _)| s.same_target(source) && !panels.get(id).is_some_and(|p| p.status.closed))
+        .find(|(s, id, _)| {
+            s.same_target(source) && !panels.get(id).is_some_and(|p| p.status.closed)
+        })
         .map(|&(_, id, resident)| (id, resident))
 }
 
@@ -1594,7 +1906,12 @@ fn mirror_spec(
         };
         let mut mirrors: Vec<_> = cx
             .try_global::<Mirrors>()
-            .map(|m| m.0.iter().filter(|(_, id, _)| !closed(id)).cloned().collect())
+            .map(|m| {
+                m.0.iter()
+                    .filter(|(_, id, _)| !closed(id))
+                    .cloned()
+                    .collect()
+            })
             .unwrap_or_default();
         mirrors.push((source.clone(), panel, resident && dashboard.is_some()));
         cx.set_global(Mirrors(mirrors));
@@ -1611,13 +1928,19 @@ fn mirror_spec(
                 ui::dock(panel, cx);
             }
             let name = SharedString::from(title.clone());
-            let _ = dashboard.update(cx, |d, cx| d.add_stream(panel, kind, name, icon, resident, cx));
+            let _ = dashboard.update(cx, |d, cx| {
+                d.add_stream(panel, kind, name, icon, resident, cx)
+            });
         }
         Mirror { panel }
     };
     let spec = PanelSpec::spawn(from, build);
     // はめるものは、開いた元の手前ではなく、はめる場所に合わせて目の前に出す。
-    let spec = if docked { spec.in_view(SCREEN_POSE) } else { spec };
+    let spec = if docked {
+        spec.in_view(SCREEN_POSE)
+    } else {
+        spec
+    };
     let spec = match minimize {
         Some(dashboard) => spec.minimizable(move |id, cx| {
             let _ = dashboard.update(cx, |d, cx| d.minimize(id, cx));
@@ -1771,23 +2094,19 @@ struct RunningApp {
     window_icon: Option<Arc<RenderImage>>,
 }
 
-/// アプリ一覧のアプリ: アイコンの下に名前（地を敷かず、ホバー・押下だけ色が付く）。起動中・オーバーレイで開いて
-/// いるもの（`running`）は、その下に点を付ける。アイコンが無ければ `glyph` を出す。
+/// アプリ一覧のアプリ: アイコン（`icon`）の下に名前（地を敷かず、ホバー・押下だけ色が付く）。起動中・オーバーレイで
+/// 開いているもの（`running`）は、その下に点を付ける。
 fn app_tile(
     theme: &Theme,
     id: String,
-    icon: Option<Arc<RenderImage>>,
-    glyph: &'static design::Icon,
+    icon: gpui::AnyElement,
     name: &str,
     running: bool,
 ) -> components::Button {
     components::ghost_tile(theme, id)
         .h(px(TILE_PX))
         .min_w_0()
-        .child(match icon {
-            Some(icon) => img(icon).size(px(TILE_ICON_PX)).into_any_element(),
-            None => tile_icon(glyph),
-        })
+        .child(icon)
         .child(tile_label(name.to_owned()))
         // 点が無くても場所は取り、アイコンと名前の高さをそろえる。
         .child(
@@ -1798,6 +2117,14 @@ fn app_tile(
                 .rounded(px(design::radius::FULL))
                 .when(running, |d| d.bg(rgba(theme.neutral_text))),
         )
+}
+
+/// アプリのアイコンの画像。無ければ `glyph`。
+fn tile_image(icon: Option<Arc<RenderImage>>, glyph: &'static design::Icon) -> gpui::AnyElement {
+    match icon {
+        Some(icon) => img(icon).size(px(TILE_ICON_PX)).into_any_element(),
+        None => tile_icon(glyph),
+    }
 }
 
 fn tile_icon(glyph: &'static design::Icon) -> gpui::AnyElement {
@@ -1848,7 +2175,10 @@ fn clock_width(window: &Window, size: f32) -> gpui::Pixels {
                 underline: None,
                 strikethrough: None,
             };
-            window.text_system().shape_line(text, px(size), &[run], None).width
+            window
+                .text_system()
+                .shape_line(text, px(size), &[run], None)
+                .width
         })
         .fold(px(0.0), |a, b| a.max(b))
 }
@@ -1925,10 +2255,22 @@ mod tests {
 
     #[test]
     fn helpers_format_and_pick_glyphs() {
-        assert!(std::ptr::eq(battery_glyph(&battery(1.0, false)), &icons::BATTERY_FULL));
-        assert!(std::ptr::eq(battery_glyph(&battery(0.5, false)), &icons::BATTERY_MEDIUM));
-        assert!(std::ptr::eq(battery_glyph(&battery(0.05, false)), &icons::BATTERY_EMPTY));
-        assert!(std::ptr::eq(battery_glyph(&battery(0.05, true)), &icons::BATTERY_CHARGING));
+        assert!(std::ptr::eq(
+            battery_glyph(&battery(1.0, false)),
+            &icons::BATTERY_FULL
+        ));
+        assert!(std::ptr::eq(
+            battery_glyph(&battery(0.5, false)),
+            &icons::BATTERY_MEDIUM
+        ));
+        assert!(std::ptr::eq(
+            battery_glyph(&battery(0.05, false)),
+            &icons::BATTERY_EMPTY
+        ));
+        assert!(std::ptr::eq(
+            battery_glyph(&battery(0.05, true)),
+            &icons::BATTERY_CHARGING
+        ));
         assert_eq!(percent(0.826), "83%");
     }
 
@@ -1973,7 +2315,11 @@ mod tests {
             ov.tick(&mut vr);
         }
         let s = ov.panel(screen).pose;
-        assert!(s.position.abs_diff_eq(SCREEN_POSE.position, 1e-3), "{}", s.position);
+        assert!(
+            s.position.abs_diff_eq(SCREEN_POSE.position, 1e-3),
+            "{}",
+            s.position
+        );
         assert!(s.orientation.abs_diff_eq(Quat::IDENTITY, 1e-4));
         let b = ov.panel(bar).pose.position;
         assert!(b.y < -0.3 && b.length() >= 1.0, "{b}");
@@ -2028,12 +2374,18 @@ mod tests {
             Dashboard::new(1, summon, summon, cx)
         });
         cx.run_until_parked();
-        assert_eq!(cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()), 0);
+        assert_eq!(
+            cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
+            0
+        );
         // 設定を選ぶと（メニューから。`menu_items_open_screens_and_close_the_menu`）、main が渡した設定画面がバーの上にはまる。
         bar.update(cx, |d, cx| d.toggle(Page::Settings, cx));
         open_spawned(cx, 2);
         assert!(commands(cx, 2).iter().any(docked_to_bar));
-        assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), Some(Page::Settings));
+        assert_eq!(
+            cx.update(|_, cx| bar.read(cx).current(cx)),
+            Some(Page::Settings)
+        );
         // クイック設定を押すと、設定と入れ替わる。
         click(cx, "dashboard-quick-settings");
         open_spawned(cx, 3);
@@ -2065,7 +2417,10 @@ mod tests {
         bcx.run_until_parked();
         click(bcx, "dashboard-menu");
         let spec = bcx.update(|_, cx| cx.default_global::<PanelControl>().spawns.pop().unwrap());
-        assert!(spec.parent().is_some_and(|p| p.panel == 1 && p.docked && p.dismiss));
+        assert!(
+            spec.parent()
+                .is_some_and(|p| p.panel == 1 && p.docked && p.dismiss)
+        );
         let (_menu, mcx) = cx.add_window_view(|_, _| Menu {
             panel: 9,
             dashboard: bar.downgrade(),
@@ -2073,7 +2428,10 @@ mod tests {
         mcx.run_until_parked();
         click(mcx, "menu-settings");
         assert!(commands(mcx, 9).contains(&PanelCommand::Close));
-        assert_eq!(mcx.update(|_, cx| cx.global::<PanelControl>().spawns.len()), 1);
+        assert_eq!(
+            mcx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
+            1
+        );
     }
 
     /// 終了の確かめのダイアログで終了を選ぶとアプリを終え、キャンセルならダイアログだけ閉じる。
@@ -2155,7 +2513,9 @@ mod tests {
         let at = gpui::point(bar.right() - px(1.0), bar.center().y);
         cx.simulate_click(at, Modifiers::none());
         let last = commands(cx, 2).pop();
-        assert!(matches!(last, Some(PanelCommand::Media(media::Command::Seek(d))) if d > Duration::from_secs(190)));
+        assert!(
+            matches!(last, Some(PanelCommand::Media(media::Command::Seek(d))) if d > Duration::from_secs(190))
+        );
     }
 
     /// メディアが 1 つなら切り替えを出さず、複数なら右上の前後のボタンで切り替えを積む。
@@ -2231,7 +2591,12 @@ mod tests {
         let (_bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
         let set = |cx: &mut VisualTestContext, n, hidden| {
             cx.update(|_, cx| {
-                let status = &mut cx.default_global::<PanelControl>().panels.entry(1).or_default().status;
+                let status = &mut cx
+                    .default_global::<PanelControl>()
+                    .panels
+                    .entry(1)
+                    .or_default()
+                    .status;
                 (status.outside_press, status.hidden) = (n, hidden);
             });
             cx.run_until_parked();
@@ -2276,10 +2641,18 @@ mod tests {
         let (list, cx) = cx.add_window_view(|_, cx| {
             let mut list = Screen::new(2, Page::Launcher, WeakEntity::new_invalid(), cx);
             (list.pending, list.apps_pending) = (None, None);
-            list.sources = vec![(kernel::desktop::mock::source("Editor", SourceKind::Window), None)];
+            list.sources = vec![(
+                kernel::desktop::mock::source("Editor", SourceKind::Window),
+                None,
+            )];
             list.apps = ["Editor", "Paint"]
                 .map(|name| {
-                    let app = InstalledApp { name: name.into(), id: name.into(), exe: None, icon: None };
+                    let app = InstalledApp {
+                        name: name.into(),
+                        id: name.into(),
+                        exe: None,
+                        icon: None,
+                    };
                     (app, None)
                 })
                 .into();
@@ -2287,10 +2660,16 @@ mod tests {
         });
         cx.run_until_parked();
         assert!(cx.debug_bounds("dashboard-running-0").is_some());
-        assert!(cx.debug_bounds("dashboard-app-0").is_some() && cx.debug_bounds("dashboard-app-1").is_some());
+        assert!(
+            cx.debug_bounds("dashboard-app-0").is_some()
+                && cx.debug_bounds("dashboard-app-1").is_some()
+        );
         list.read_with(cx, |l, _| {
             assert!(l.window_for(&l.apps[0].0).is_some(), "Editor は起動中");
-            assert!(l.window_for(&l.apps[1].0).is_none(), "Paint は起動していない");
+            assert!(
+                l.window_for(&l.apps[1].0).is_none(),
+                "Paint は起動していない"
+            );
         });
         let search = list.read_with(cx, |l, _| l.search.clone());
         cx.update(|window, cx| window.focus(&search, cx));
@@ -2307,9 +2686,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn choosing_a_source_docks_its_mirror_without_closing_the_dashboard(
-        cx: &mut TestAppContext,
-    ) {
+    fn choosing_a_source_docks_its_mirror_without_closing_the_dashboard(cx: &mut TestAppContext) {
         let source = kernel::desktop::mock::source("Editor", SourceKind::Window);
         let bar = cx
             .add_window(|_, cx| {
@@ -2336,9 +2713,65 @@ mod tests {
         // 一覧は入れ替わりに閉じ、ダッシュボードは開いたまま。バーに配信のボタンが増える。
         assert!(commands(cx, 2).contains(&PanelCommand::Close));
         assert!(!commands(cx, 1).contains(&PanelCommand::Close));
-        let streams = cx.update(|_, cx| bar.read(cx).streams.iter().map(|s| s.panel).collect::<Vec<_>>());
+        let streams = cx.update(|_, cx| {
+            bar.read(cx)
+                .streams
+                .iter()
+                .map(|s| s.panel)
+                .collect::<Vec<_>>()
+        });
         assert_eq!(streams, [4]);
         assert_eq!(cx.update(|_, cx| ui::docked(cx)), Some(4));
+    }
+
+    /// ランチャーのニャプリのセクション: アイコンの無いものは頭文字の代わりのアイコンで並び、押すとランチャーと入れ替わりに
+    /// ニャプリのパネルがはまり、そのニャプリのものとして起動中の表に載る。
+    #[gpui::test]
+    fn launcher_lists_nyapps_and_docks_the_chosen_one(cx: &mut TestAppContext) {
+        let bar = cx
+            .add_window(|_, cx| {
+                cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+                Dashboard::new(1, summon, summon, cx)
+            })
+            .root(cx)
+            .unwrap();
+        let (list, cx) = cx.add_window_view(|_, cx| {
+            ui::dock(2, cx);
+            let mut list = Screen::new(2, Page::Launcher, bar.downgrade(), cx);
+            list.pending = None;
+            list
+        });
+        cx.run_until_parked();
+        let manifest = nyapp::Manifest::parse(
+            "id = \"net.bettaworx.calc\"\nname = \"Calc\"\nversion = \"1\"\napi = 1\n",
+        )
+        .unwrap();
+        list.update(cx, |l, cx| {
+            // 本物のフォルダを読んだ結果を置き換える。
+            l.nyapps = vec![nyapp::Installed {
+                manifest,
+                path: std::env::temp_dir().join("net.bettaworx.calc.nyapp"),
+                icon: None,
+            }];
+            l.nyapps_pending = false;
+            redraw(2, cx);
+        });
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("nyapp-icon-fallback").is_some(),
+            "アイコンが無ければ代わりを描く"
+        );
+        click(cx, "dashboard-nyapp-net.bettaworx.calc");
+        open_spawned(cx, 4);
+        assert!(commands(cx, 4).iter().any(docked_to_bar));
+        assert!(
+            commands(cx, 2).contains(&PanelCommand::Close),
+            "ランチャーは入れ替わりに閉じる"
+        );
+        assert_eq!(
+            cx.update(|_, cx| nyapp::panel_of("net.bettaworx.calc", cx)),
+            Some(4)
+        );
     }
 
     /// 開いた配信はバーに溜まり、押すとはまる。はまっていた配信は閉じずに隠して外し、もう一度押すと隠す。
@@ -2366,7 +2799,10 @@ mod tests {
         let five = commands(cx, 5);
         assert!(docked_to_bar(&five[0]));
         assert_eq!(five[1], PanelCommand::Hide(false));
-        assert!(!commands(cx, 4).contains(&PanelCommand::Close), "隠すだけで閉じない");
+        assert!(
+            !commands(cx, 4).contains(&PanelCommand::Close),
+            "隠すだけで閉じない"
+        );
         // もう一度押すと隠す。
         click(cx, "dashboard-stream-5");
         assert!(commands(cx, 5).contains(&PanelCommand::Hide(true)));
@@ -2381,7 +2817,13 @@ mod tests {
         });
         bar.update(cx, |_, cx| cx.notify());
         cx.run_until_parked();
-        let streams = cx.update(|_, cx| bar.read(cx).streams.iter().map(|s| s.panel).collect::<Vec<_>>());
+        let streams = cx.update(|_, cx| {
+            bar.read(cx)
+                .streams
+                .iter()
+                .map(|s| s.panel)
+                .collect::<Vec<_>>()
+        });
         assert_eq!(streams, [5]);
     }
 
@@ -2392,17 +2834,28 @@ mod tests {
             cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
             Dashboard::new(1, summon, summon, cx)
         });
-        bar.update(cx, |d, cx| d.add_stream(4, SourceKind::Screen, "Display 1".into(), None, true, cx));
+        bar.update(cx, |d, cx| {
+            d.add_stream(4, SourceKind::Screen, "Display 1".into(), None, true, cx)
+        });
         // はめてから自分で外した（独立させた）。
         let set_parent = |cx: &mut VisualTestContext, parent| {
             cx.update(|_, cx| {
-                cx.default_global::<PanelControl>().panels.entry(4).or_default().status.parent = parent
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(4)
+                    .or_default()
+                    .status
+                    .parent = parent
             });
             bar.update(cx, |d, cx| d.prune_streams(cx));
         };
         set_parent(cx, Some(1));
         set_parent(cx, None);
-        assert_eq!(bar.read_with(cx, |d, _| d.streams.len()), 1, "独立させても残る");
+        assert_eq!(
+            bar.read_with(cx, |d, _| d.streams.len()),
+            1,
+            "独立させても残る"
+        );
         bar.update(cx, |d, cx| d.minimize(4, cx));
         let c = commands(cx, 4);
         assert!(c.contains(&PanelCommand::Hide(true)));

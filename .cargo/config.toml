@@ -5,3 +5,5 @@ CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 [alias]
 # E2E 用の実ランタイム（Monado / SteamVR）を入れるウィザード。crates/testkit/src/bin/runtimes.rs
 runtimes = "run -q -p testkit --bin runtimes --"
+# ニャプリの試作（nyapps/）をビルドして .nyapp にまとめる・入れる。crates/nyapp/src/bin/nyapp.rs
+nyapps = "run -q -p nyapp --bin nyapp --"

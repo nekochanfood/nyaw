@@ -1,0 +1,8 @@
+id = "net.bettaworx.clock"
+name = "Clock"
+version = "2026.0.1"
+api = 1
+permissions = ["audio"]
+
+[names]
+ja = "時計"

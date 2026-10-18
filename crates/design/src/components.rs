@@ -488,12 +488,13 @@ fn keep_drawing(window: &mut Window, cx: &mut App) {
 }
 
 /// オン / オフのスイッチ。押したときの処理は呼び出し側が `on_click` で足す。
-pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
+pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<Div> {
     let (w, h, pad) = (44.0, 24.0, 2.0);
     let knob = h - pad * 2.0;
+    let id: SharedString = id.into();
     let mut track = div()
-        .id(id)
-        .debug_selector(move || id.into())
+        .id(id.clone())
+        .debug_selector(move || id.to_string())
         .flex()
         .items_center()
         .w(px(w))

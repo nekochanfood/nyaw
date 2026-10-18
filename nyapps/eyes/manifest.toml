@@ -1,0 +1,8 @@
+id = "net.bettaworx.eyes"
+name = "Eyes"
+version = "2026.0.1"
+api = 1
+permissions = []
+
+[names]
+ja = "目玉"

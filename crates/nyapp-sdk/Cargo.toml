@@ -1,0 +1,10 @@
+[package]
+name = "nyapp-sdk"
+description = "ニャプリ（nyapp）を書くための SDK。画面の語彙・イベント・ホスト関数。ホスト（crates/nyapp）とも型を共有する"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -3,3 +3,6 @@
 
 # ローカルの入れ子の worktree
 /.worktrees/
+
+# ニャプリの試作（別のワークスペース）のビルド結果
+/nyapps/target
