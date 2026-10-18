@@ -1,8 +1,10 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", windows))]
 use nyapp::Error;
 use nyapp::{package, worker::RemoteSandbox};
+#[cfg(windows)]
+use std::io::Read;
 #[cfg(target_os = "linux")]
 #[path = "../src/worker/platform/linux.rs"]
 #[allow(dead_code)]
@@ -13,6 +15,24 @@ type Pipes = (
     Box<dyn std::io::Read + Send>,
     linux_worker::Guard,
 );
+#[cfg(windows)]
+mod manifest {
+    pub use nyapp::manifest::valid_id;
+}
+#[cfg(windows)]
+mod system {
+    pub use nyapp::system::is_system;
+}
+#[cfg(windows)]
+#[path = "../src/worker/platform/windows.rs"]
+#[allow(dead_code)]
+mod windows_worker;
+#[cfg(windows)]
+type Pipes = (
+    Box<dyn std::io::Write + Send>,
+    Box<dyn std::io::Read + Send>,
+    windows_worker::Guard,
+);
 
 fn main() {
     #[cfg(target_os = "linux")]
@@ -21,6 +41,14 @@ fn main() {
         return;
     }
     if std::env::args().nth(1).as_deref() == Some("--nyapp-worker") {
+        #[cfg(windows)]
+        if std::env::var("NYAW_WORKER_ID")
+            .is_ok_and(|id| id.starts_with("net.bettaworx.auditforeign_"))
+        {
+            unsafe { std::env::set_var("NYAW_WORKER_ID", "net.bettaworx.workertest") };
+            println!("{}", nyapp::worker::main().unwrap_err());
+            return;
+        }
         if std::env::var_os("NYAW_TEST_PARENT_SECRET").is_some() {
             std::process::exit(2);
         }
@@ -34,6 +62,60 @@ fn main() {
     worker_cannot_run_without_the_restricted_launcher();
     #[cfg(target_os = "linux")]
     linux_confinement_denies_files_and_sockets();
+    #[cfg(windows)]
+    windows_foreign_sid_and_profile_cleanup();
+}
+
+#[cfg(windows)]
+fn windows_foreign_sid_and_profile_cleanup() {
+    use windows_sys::Win32::Security::Isolation::CreateAppContainerProfile;
+    use windows_sys::Win32::Security::{FreeSid, PSID};
+
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let id = format!(
+        "net.bettaworx.auditforeign_{}_{}",
+        std::process::id(),
+        stamp
+    );
+    let profile: Vec<u16> = windows_worker::profile_name(&id)
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
+    let (input, mut output, guard) =
+        windows_worker::spawn(&std::env::current_exe().unwrap(), &id).unwrap();
+    drop(input);
+    let mut message = String::new();
+    output.read_to_string(&mut message).unwrap();
+    drop(guard);
+
+    let create = || {
+        let mut sid: PSID = std::ptr::null_mut();
+        let hr = unsafe {
+            CreateAppContainerProfile(
+                profile.as_ptr(),
+                profile.as_ptr(),
+                profile.as_ptr(),
+                std::ptr::null(),
+                0,
+                &mut sid,
+            )
+        };
+        if !sid.is_null() {
+            unsafe { FreeSid(sid) };
+        }
+        hr
+    };
+    let existed = create();
+    let removed = nyapp::installed::uninstall(&id);
+    let recreated = create();
+    windows_worker::delete_profile(&id).unwrap();
+    assert!(message.contains("unexpected AppContainer SID"), "{message}");
+    assert_eq!(existed as u32, 0x8007_00b7, "profile was not created");
+    removed.unwrap();
+    assert_eq!(recreated, 0, "profile still exists after uninstall");
 }
 
 #[cfg(target_os = "linux")]

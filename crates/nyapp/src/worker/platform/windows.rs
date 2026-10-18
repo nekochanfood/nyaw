@@ -104,7 +104,7 @@ fn win_error(context: &str) -> Error {
     Error::new(format!("{context}: {}", std::io::Error::last_os_error()))
 }
 
-fn profile_name(id: &str) -> String {
+pub(crate) fn profile_name(id: &str) -> String {
     let digest = Sha256::digest(id.as_bytes());
     format!(
         "nyaw.nyapp.{}",

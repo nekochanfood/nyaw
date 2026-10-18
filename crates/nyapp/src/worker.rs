@@ -22,7 +22,7 @@ pub(crate) use platform::delete_profile;
 const MAX_PACKAGE: usize = 64 << 20;
 const MAX_STORAGE_FILE: usize = STORAGE_FILE_MAX;
 const MAX_MESSAGE: usize = 6 << 20;
-const START_TIMEOUT: Duration = Duration::from_secs(15);
+const START_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_LOG_CHARS: usize = 4 << 10;
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 static STORAGE_TEMP_ID: AtomicU64 = AtomicU64::new(0);
