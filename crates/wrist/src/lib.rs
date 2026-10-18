@@ -84,6 +84,8 @@ impl Wrist {
         .detach();
         cx.observe_global::<PanelControl>(Self::sync_dashboard)
             .detach();
+        // ダッシュボードは起動時に隠したまま作っておく（画面の配信を用意しておき、X の二回押しでは出すだけ）。
+        open_dashboard(settings, debug, true, cx);
         Self {
             debug,
             settings,
@@ -93,7 +95,7 @@ impl Wrist {
         }
     }
 
-    /// X ボタンを二回押すたびにダッシュボードを出す・隠す（最初の一回は開く。音はダッシュボード自身が鳴らす）。
+    /// X ボタンを二回押すたびにダッシュボードを出す・隠す（閉じられていれば開き直す。音はダッシュボード自身が鳴らす）。
     /// フレームループが状態を書き戻すたびに呼ばれるので、変わっていなければ何もしない（書き込むと自分がまた呼ばれる）。
     fn sync_dashboard(&mut self, cx: &mut Context<Self>) {
         let ctl = cx.global::<PanelControl>();
@@ -112,19 +114,28 @@ impl Wrist {
         match open {
             Some((id, status)) if status.is_some_and(|s| s.hidden) => dashboard::show(id, cx),
             Some((id, _)) => dashboard::hide(id, cx),
-            None => {
-                let wrist = cx.entity();
-                let spec = dashboard::spec(
-                    move |id, cx| {
-                        wrist.update(cx, |w, _| w.dashboard = Some(id));
-                    },
-                    self.settings,
-                    self.debug,
-                );
-                cx.default_global::<PanelControl>().spawns.push(spec);
-            }
+            None => open_dashboard(self.settings, self.debug, false, cx),
         }
     }
+}
+
+/// ダッシュボードを開く（`hidden` なら隠したまま）。開いたら [`Wrist::dashboard`] に覚える。
+fn open_dashboard(
+    settings: dashboard::Summon,
+    debug: dashboard::Summon,
+    hidden: bool,
+    cx: &mut Context<Wrist>,
+) {
+    let wrist = cx.entity();
+    let spec = dashboard::spec(
+        move |id, cx| {
+            wrist.update(cx, |w, _| w.dashboard = Some(id));
+        },
+        settings,
+        debug,
+        hidden,
+    );
+    cx.default_global::<PanelControl>().spawns.push(spec);
 }
 
 impl Render for Wrist {
@@ -193,9 +204,9 @@ mod tests {
         )
     }
 
-    /// X ボタンを二回押すとダッシュボードを開き、次からは隠す・出し直すを繰り返す（閉じない）。
+    /// ダッシュボードは起動時に隠したまま開き、X ボタンを二回押すたびに出す・隠すを繰り返す（閉じない）。
     #[gpui::test]
-    fn double_x_opens_then_hides_and_shows_the_dashboard(cx: &mut TestAppContext) {
+    fn double_x_shows_and_hides_the_dashboard_opened_at_startup(cx: &mut TestAppContext) {
         let (wrist, cx) = cx.add_window_view(|_, cx| wrist(cx));
         cx.run_until_parked();
         let press_twice = |cx: &mut gpui::VisualTestContext, n| {
@@ -221,23 +232,30 @@ mod tests {
                 )
             })
         };
-        press_twice(cx, 1);
+        // 起動時に隠したまま開いておく。
         assert_eq!(
             cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
             1
         );
         wrist.update(cx, |w, _| w.dashboard = Some(3));
+        let set_hidden = |cx: &mut gpui::VisualTestContext, hidden| {
+            cx.update(|_, cx| {
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(3)
+                    .or_default()
+                    .status
+                    .hidden = hidden
+            })
+        };
+        set_hidden(cx, true);
+        press_twice(cx, 1);
+        assert!(take(cx, 3).contains(&PanelCommand::Hide(false)));
+        assert!(take(cx, 0).is_empty(), "音は手首からは鳴らさない");
+        set_hidden(cx, false);
         press_twice(cx, 2);
         assert!(take(cx, 3).contains(&PanelCommand::Hide(true)));
-        assert!(take(cx, 0).is_empty(), "音は手首からは鳴らさない");
-        cx.update(|_, cx| {
-            cx.default_global::<PanelControl>()
-                .panels
-                .entry(3)
-                .or_default()
-                .status
-                .hidden = true
-        });
+        set_hidden(cx, true);
         press_twice(cx, 3);
         assert!(take(cx, 3).contains(&PanelCommand::Hide(false)));
         assert_eq!(wrist.read_with(cx, |w, _| w.dashboard), Some(3));

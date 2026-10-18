@@ -38,6 +38,19 @@ pub struct Source {
     target: isize,
 }
 
+impl Source {
+    /// 特定の画面・ウィンドウを指す。Linux の一覧は選択ダイアログの入口で、開くとダイアログが出る（指さない）。
+    pub fn concrete(&self) -> bool {
+        self.target != 0
+    }
+
+    /// `other` と同じ画面・ウィンドウを指すか（名前はウィンドウのタイトルで変わるので見ない）。
+    /// 特定のものを指さない一覧（[`Self::concrete`]）は、どれとも同じにならない。
+    pub fn same_target(&self, other: &Source) -> bool {
+        self.concrete() && self.kind == other.kind && self.target == other.target
+    }
+}
+
 /// アイコンの画像（RGBA、ストレートアルファ）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Icon {

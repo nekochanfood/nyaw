@@ -79,17 +79,23 @@ pub fn pose() -> Pose {
     Pose::new(top - rotation * Vec3::Y * half, rotation)
 }
 
-/// ダッシュボード（バー）の起動仕様。`opened` は作られたパネルの ID を受け取る。
+/// ダッシュボード（バー）の起動仕様。`opened` は作られたパネルの ID を受け取る。`hidden` なら隠したまま開く
+/// （起動時に作っておき、画面の配信を用意しておく。出すのは [`show`]）。
 pub fn spec(
     opened: impl FnOnce(PanelId, &mut App) + 'static,
     settings: Summon,
     debug: Summon,
+    hidden: bool,
 ) -> PanelSpec {
     PanelSpec::root(Pose::IDENTITY, move |id, _, cx: &mut Context<Dashboard>| {
         opened(id, cx);
         let ctl = cx.default_global::<PanelControl>();
         ctl.panels.entry(id).or_default().commands.extend([
-            PanelCommand::Play(Sound::Wav(OPEN_SOUND), false),
+            if hidden {
+                PanelCommand::Hide(true)
+            } else {
+                PanelCommand::Play(Sound::Wav(OPEN_SOUND), false)
+            },
             PanelCommand::CloseSound(Sound::Wav(CLOSE_SOUND)),
         ]);
         // バーの上を、画面をはめる場所にする。
@@ -157,8 +163,9 @@ pub struct Dashboard {
     menu: Option<PanelId>,
     /// 最後にはめた画面（外されたり閉じられたりしていれば、[`Self::current`] は `None`）。
     shown: Option<(Page, PanelId)>,
-    /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）。最初に見た値から数える。
-    outside: Option<u32>,
+    /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）と、そのとき隠していたか。
+    /// 最初に見た値から数える。
+    outside: Option<(u32, bool)>,
 }
 
 impl Dashboard {
@@ -166,6 +173,24 @@ impl Dashboard {
         tick_every_second(panel, cx);
         cx.observe_global::<PanelControl>(Self::close_on_outside_press)
             .detach();
+        // 画面（モニター）の一覧が届いたら、すべて配信として開いておく。隠している間は描かないので、描画とは別に待つ。
+        if let Ok(pending) = Sources::refresh() {
+            cx.spawn(async move |this, cx| {
+                let sources = loop {
+                    if let Some(result) = pending.poll() {
+                        break result;
+                    }
+                    cx.background_executor().timer(Duration::from_millis(100)).await;
+                };
+                match sources {
+                    Ok(sources) => {
+                        let _ = this.update(cx, |d, cx| d.open_screens(sources, cx));
+                    }
+                    Err(e) => logger::warn!("cannot list screens to mirror", error = e),
+                }
+            })
+            .detach();
+        }
         Self {
             panel,
             settings,
@@ -206,13 +231,14 @@ impl Dashboard {
         redraw(self.panel, cx);
     }
 
-    /// 配信 `panel` を開いた（はめるのは開く側）。バーにボタンが増える。
+    /// 配信 `panel` を開いた（はめる・隠すのは開く側。`stashed` なら隠して開いた）。バーにボタンが増える。
     fn add_stream(
         &mut self,
         panel: PanelId,
         kind: SourceKind,
         name: SharedString,
         icon: Option<Arc<RenderImage>>,
+        stashed: bool,
         cx: &mut Context<Self>,
     ) {
         self.streams.push(Stream {
@@ -220,10 +246,21 @@ impl Dashboard {
             kind,
             name,
             icon,
-            stashed: false,
+            stashed,
             seen_docked: false,
         });
         redraw(self.panel, cx);
+    }
+
+    /// 画面（モニター）をすべて、配信として隠して開いておく（バーのボタンで出せる）。もう映しているものは開かない。
+    fn open_screens(&mut self, mut sources: Vec<Source>, cx: &mut Context<Self>) {
+        sources.sort_by(|a, b| a.name.cmp(&b.name));
+        for source in sources {
+            if source.kind == SourceKind::Screen && source.concrete() && mirror_of(&source, cx).is_none() {
+                let spec = mirror_spec(source, None, Some(cx.weak_entity()), self.panel, true);
+                cx.default_global::<PanelControl>().spawns.push(spec);
+            }
+        }
     }
 
     /// はまっている配信を、閉じずに隠して外す（ボタンを押せばまた出せる）。配信でなければ何もしない
@@ -256,10 +293,19 @@ impl Dashboard {
         if !docked && let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) {
             // はまったと分かるまでは、外れたとみなして消さない。
             (stream.stashed, stream.seen_docked) = (false, false);
-            commands(id, [PanelCommand::Hide(false)], cx);
+            // 隠したままはめてから出す。先に出すと、隠した時の場所（その後ダッシュボードを動かしていれば遠く）から
+            // はめる場所へ滑って・回って入ってくる。
             ui::dock(id, cx);
+            commands(id, [PanelCommand::Hide(false)], cx);
         }
         redraw(self.panel, cx);
+    }
+
+    /// 配信 `id` がダッシュボードの配信で、はまっていなければはめる（独立させたものは動かさない）。
+    fn show_stream(&mut self, id: PanelId, cx: &mut Context<Self>) {
+        if ui::docked(cx) != Some(id) && self.streams.iter().any(|s| s.panel == id) {
+            self.toggle_stream(id, cx);
+        }
     }
 
     /// 閉じた・自分で外して独立させた配信のボタンを消す。隠しているもの（[`Stream::stashed`]）は残す。
@@ -326,7 +372,10 @@ impl Dashboard {
             return;
         };
         let (count, hidden) = (status.outside_press, status.hidden);
-        if self.outside.replace(count).is_some_and(|seen| seen != count) && !hidden {
+        // 前に見たときも出ていたときだけ。隠している間（出し直したのと同じフレームを含む）に押した分で、
+        // 出した直後に隠さない（開く音だけ鳴って出ない）。
+        let seen = self.outside.replace((count, hidden));
+        if seen.is_some_and(|(seen, was_hidden)| seen != count && !was_hidden) && !hidden {
             hide(self.panel, cx);
         }
     }
@@ -706,10 +755,15 @@ impl Screen {
         // アプリのウィンドウを映す。無ければ、対応するプレイヤーだけに前面化を頼む。
         if self.open_app && self.pending.is_none() {
             self.open_app = false;
-            match self.app_window(&m.app) {
-                Some((source, icon)) => {
+            let window = self.app_window(&m.app);
+            match window.map(|(source, icon)| (source, icon, mirror_of(source, cx))) {
+                // もう映していれば新しく開かない。ダッシュボードに隠している配信なら、それを出す。
+                Some((_, _, Some(id))) => {
+                    let _ = self.dashboard.update(cx, |d, cx| d.show_stream(id, cx));
+                }
+                Some((source, icon, None)) => {
                     let dashboard = (ui::docked(cx) == Some(self.panel)).then(|| self.dashboard.clone());
-                    let spec = mirror_spec(source.clone(), icon.clone(), dashboard, self.panel);
+                    let spec = mirror_spec(source.clone(), icon.clone(), dashboard, self.panel, false);
                     cx.default_global::<PanelControl>().spawns.push(spec);
                 }
                 None if m.controls.raise => {
@@ -1017,13 +1071,16 @@ impl Screen {
                         (SourceKind::Screen, None) => tile_icon(&icons::MONITOR),
                         (SourceKind::Window, None) => tile_icon(&icons::APP_WINDOW),
                     };
+                    // もう映しているもの（同じ画面・ウィンドウは 1 枚だけ）は押せない。
+                    let open = mirror_of(source, cx).is_some();
                     let (source, dashboard) = (source.clone(), dashboard.clone());
                     components::tile(theme, format!("dashboard-source-{i}"))
                         .h(px(TILE_PX))
                         .min_w_0()
                         .child(glyph)
                         .child(tile_label(source.name.clone()))
-                        .on_click({
+                        .when(open, |t| t.opacity(0.4))
+                        .when(!open, |t| t.on_click({
                             let icon = image.clone();
                             move |_, _, cx| {
                                 // 映したものは、この一覧と入れ替わりにダッシュボードにはまり、バーにボタンが増える。
@@ -1035,9 +1092,10 @@ impl Screen {
                                     icon.clone(),
                                     dashboard,
                                     panel,
+                                    false,
                                 ));
                             }
-                        })
+                        }))
                         .into_any_element()
                 })
                 .collect();
@@ -1262,18 +1320,49 @@ impl Render for Mirror {
     }
 }
 
+/// 開いている配信のパネルと、その取得元。同じ画面・ウィンドウは 1 枚だけ映す（[`mirror_of`]）。
+#[derive(Default)]
+struct Mirrors(Vec<(Source, PanelId)>);
+
+impl gpui::Global for Mirrors {}
+
+/// `source` を映している、閉じていないパネル。
+// ponytail: 開くのは次のフレームなので、同じフレームに 2 回押すと 2 枚開く。困れば開く前の分も数える。
+fn mirror_of(source: &Source, cx: &App) -> Option<PanelId> {
+    let panels = &cx.try_global::<PanelControl>()?.panels;
+    cx.try_global::<Mirrors>()?
+        .0
+        .iter()
+        .find(|(s, id)| s.same_target(source) && !panels.get(id).is_some_and(|p| p.status.closed))
+        .map(|&(_, id)| id)
+}
+
 /// `source` を映すパネルの起動仕様。`dashboard` があれば開くとそこにはまり（ミラーリングの一覧と入れ替わる）、
-/// `None`（独立させた画面から開いた）なら独立して、開いた画面 `from` の手前に重ねて開く。
+/// `None`（独立させた画面から開いた）なら独立して、開いた画面 `from` の手前に重ねて開く。`stash` なら（`dashboard` があるとき）
+/// はめずに隠して開き、バーのボタンで出せるようにしておく。
 /// タイトルは取得元の名前で、ナビゲーションバーで閉じると配信も止まる。
 fn mirror_spec(
     source: Source,
     icon: Option<Arc<RenderImage>>,
     dashboard: Option<WeakEntity<Dashboard>>,
     from: PanelId,
+    stash: bool,
 ) -> PanelSpec {
     let (title, source_title, kind) = (source.name.clone(), source.name.clone(), source.kind);
     let docked = dashboard.is_some();
     let build = move |panel: PanelId, _: &mut Window, cx: &mut Context<Mirror>| {
+        // 閉じたものは忘れ、これを覚える。
+        let closed = |id: &PanelId| {
+            cx.try_global::<PanelControl>()
+                .and_then(|c| c.panels.get(id))
+                .is_some_and(|p| p.status.closed)
+        };
+        let mut mirrors: Vec<_> = cx
+            .try_global::<Mirrors>()
+            .map(|m| m.0.iter().filter(|(_, id)| !closed(id)).cloned().collect())
+            .unwrap_or_default();
+        mirrors.push((source.clone(), panel));
+        cx.set_global(Mirrors(mirrors));
         cx.default_global::<PanelControl>()
             .panels
             .entry(panel)
@@ -1281,9 +1370,13 @@ fn mirror_spec(
             .commands
             .push(PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE));
         if let Some(dashboard) = dashboard {
-            ui::dock(panel, cx);
+            if stash {
+                commands(panel, [PanelCommand::Hide(true)], cx);
+            } else {
+                ui::dock(panel, cx);
+            }
             let name = SharedString::from(title.clone());
-            let _ = dashboard.update(cx, |d, cx| d.add_stream(panel, kind, name, icon, cx));
+            let _ = dashboard.update(cx, |d, cx| d.add_stream(panel, kind, name, icon, stash, cx));
         }
         Mirror { panel }
     };
@@ -1843,6 +1936,25 @@ mod tests {
         press(cx, 4);
         assert!(!commands(cx, 1).contains(&PanelCommand::Hide(true)));
         press(cx, 5);
+        assert!(commands(cx, 1).contains(&PanelCommand::Hide(true)));
+    }
+
+    /// 隠している間に押した分は、出し直したのと同じ状態の書き戻しで届いても隠さない（開く音だけ鳴って出ない）。
+    #[gpui::test]
+    fn press_while_hidden_does_not_hide_the_reshown_dashboard(cx: &mut TestAppContext) {
+        let (_bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
+        let set = |cx: &mut VisualTestContext, n, hidden| {
+            cx.update(|_, cx| {
+                let status = &mut cx.default_global::<PanelControl>().panels.entry(1).or_default().status;
+                (status.outside_press, status.hidden) = (n, hidden);
+            });
+            cx.run_until_parked();
+        };
+        set(cx, 4, true);
+        // 出し直したのと同じフレームに、何も無い所を押した数も増えた。
+        set(cx, 5, false);
+        assert!(!commands(cx, 1).contains(&PanelCommand::Hide(true)));
+        set(cx, 6, false);
         assert!(commands(cx, 1).contains(&PanelCommand::Hide(true)));
     }
 

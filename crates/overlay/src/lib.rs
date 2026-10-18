@@ -143,6 +143,12 @@ const CURSOR_SORT: u32 = 4;
 const TOOLTIP_SORT: u32 = 5;
 /// ツールチップをパネル面から浮かせる距離（m）。カーソルより手前。
 const TOOLTIP_LIFT: f32 = LIFT_STEP * 3.0;
+
+/// 両手のツールチップが重なったとき前後が決まるよう、右手のものを描画順・浮かせる距離とも一段手前にする
+/// （同じ順・同じ面だと Z ファイティングする）。
+fn tooltip_step(hand: Hand) -> u32 {
+    u32::from(hand == Hand::Right)
+}
 /// ツールチップの向きを変える目安: 頭から見た手の方向が、パネルの上下へ水平からこれ（sin。約 12°）より傾いたら切り替える。
 /// 間は前の向きのまま（水平近くで行ったり来たりしないように）。
 // ponytail: 固定の幅。切り替わりが敏感・鈍いと感じたらここを調整する。
@@ -712,7 +718,7 @@ impl Overlay {
             Pointer::Laser => LASER_SORT,
             Pointer::Cursor => CURSOR_SORT,
             Pointer::Drag => DRAG_SORT,
-            Pointer::Tooltip => TOOLTIP_SORT,
+            Pointer::Tooltip => TOOLTIP_SORT + tooltip_step(hand),
         };
         p.surface.set_sort(vr, sort);
         // レーザーは長さ（幅）だけ変え、太さ（高さ）は作ったときのまま。
@@ -799,6 +805,9 @@ impl Overlay {
         p.hidden = hidden;
         if hidden {
             self.retreat(id);
+        } else {
+            // 隠すときの退き（隠した時の場所へ向かう）が残っていれば、出し直した場所から引き戻さないよう打ち切る。
+            self.glides.remove(&id);
         }
         let kids: Vec<PanelId> = self
             .present
@@ -1529,7 +1538,7 @@ impl Overlay {
                         let lift = if part == Pointer::Cursor {
                             CURSOR_LIFT
                         } else {
-                            TOOLTIP_LIFT
+                            TOOLTIP_LIFT + LIFT_STEP * tooltip_step(hand) as f32
                         };
                         let pose = on_panel(&self.panels[target].pose, &aim, len, lift);
                         // 頭から見て同じ大きさに見えるよう、離れるほど大きくする（`size` は 1m 先での大きさ）。
