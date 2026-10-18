@@ -119,7 +119,7 @@ pub(crate) fn update_into(dir: &Path, app: &Installed) -> Result<Option<Installe
         )));
     }
     fs::create_dir_all(dir)?;
-    let download = dir.join(format!("{}.download", app.manifest.id));
+    let download = installed::staging(dir, &app.manifest.id, "download");
     fs::write(&download, &bytes)?;
     let result = (|| {
         let manifest = package::read_manifest(&download)?;
