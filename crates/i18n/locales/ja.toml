@@ -1,6 +1,8 @@
 # 日本語。en.toml のキーをすべて同じ {差し込み} で持つこと（i18n のテストが確かめる）。
 
 [desktop]
+launching = "アプリを起動しています…"
+launch_failed = "アプリのウィンドウが見つかりませんでした"
 title = "画面・ウィンドウ配信"
 instructions = "画面またはウィンドウを選択。ポインタで押して操作し、押したまま動かすとドラッグやスワイプができます。ここで「配信を停止」を押すと閉じます。"
 refresh = "一覧を更新"
@@ -322,7 +324,7 @@ loading = "起動しています…"
 crashed_title = "{name} を強制終了しました"
 crashed_body = "ニャプリが応答しなくなったか、エラーで止まったため、nyaw が閉じました。理由: {reason}"
 restart = "再起動"
-dismiss = "閉じる"
+close = "閉じる"
 
 [nyapp.system]
 wrist = "腕時計"

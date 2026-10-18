@@ -487,6 +487,50 @@ fn keep_drawing(window: &mut Window, cx: &mut App) {
     window.request_animation_frame();
 }
 
+/// 円の進み具合: 一辺 `size` px・太さ `stroke` px の線の輪。溝（`groove`）の上に、上から時計回りに `progress`（0〜1）
+/// だけアクセントの色で満ちる。中身（残り時間など）は呼び出し側が `relative` の親で重ねる。
+pub fn progress_ring(theme: &Theme, size: f32, stroke: f32, progress: f32) -> impl IntoElement {
+    let (track, fill) = (theme.groove, theme.accent_solid);
+    let progress = if progress.is_finite() {
+        progress.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let center = bounds.center();
+            let r = (bounds.size.width.min(bounds.size.height) - px(stroke)) / 2.0;
+            // 円弧は細かい折れ線で描く（180° を超える弧の向きの取り違えが無い）。
+            let arc = |to: f32| {
+                let mut path = gpui::PathBuilder::stroke(px(stroke));
+                let steps = (to * 96.0).ceil().max(1.0) as usize;
+                for i in 0..=steps {
+                    let a = to * i as f32 / steps as f32 * std::f32::consts::TAU
+                        - std::f32::consts::FRAC_PI_2;
+                    let p = point(center.x + r * a.cos(), center.y + r * a.sin());
+                    if i == 0 {
+                        path.move_to(p)
+                    } else {
+                        path.line_to(p)
+                    }
+                }
+                path.build().ok()
+            };
+            if let Some(path) = arc(1.0) {
+                window.paint_path(path, rgba(track));
+            }
+            if progress > 0.0
+                && let Some(path) = arc(progress)
+            {
+                window.paint_path(path, rgba(fill));
+            }
+        },
+    )
+    .flex_none()
+    .size(px(size))
+}
+
 /// オン / オフのスイッチ。押したときの処理は呼び出し側が `on_click` で足す。
 pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<Div> {
     let (w, h, pad) = (44.0, 24.0, 2.0);

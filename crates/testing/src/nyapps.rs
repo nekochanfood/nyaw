@@ -148,7 +148,7 @@ impl NyappTest {
                 label("nyapp_test.icon"),
                 i18n::t(
                     cx,
-                    if app.icon.is_some() {
+                    if app.icon.is_packaged() {
                         "nyapp_test.icon_package"
                     } else {
                         "nyapp_test.icon_fallback"

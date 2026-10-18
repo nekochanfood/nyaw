@@ -1,6 +1,8 @@
 # English. Every key here must also be in ja.toml (i18n's tests check it), with the same {placeholders}.
 
 [desktop]
+launching = "Starting the app…"
+launch_failed = "The app window did not appear"
 title = "Desktop streaming"
 instructions = "Choose a screen or window. Point and press to interact; hold and move to drag or swipe. Use Stop here to close the stream."
 refresh = "Refresh sources"
@@ -322,7 +324,7 @@ loading = "Starting…"
 crashed_title = "{name} was force-quit"
 crashed_body = "The nyapp stopped responding or hit an error, so nyaw closed it. Reason: {reason}"
 restart = "Restart"
-dismiss = "Close"
+close = "Close"
 
 [nyapp.system]
 wrist = "Wrist"

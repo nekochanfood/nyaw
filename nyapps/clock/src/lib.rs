@@ -1,5 +1,5 @@
 //! 時計（net.bettaworx.clock）。時計・アラーム・タイマー・ストップウォッチ。
-//! タイマー・ストップウォッチが動いている間は、進行中の作業の知らせ（`host::set_activity`）をダッシュボードに出す。
+//! タイマーを使っている間は、進行中の作業の知らせ（`host::set_activity`）をダッシュボードに出す（ストップウォッチは出さない）。
 //! 知らせはニャプリを閉じても残り、nyaw が数え続ける（タイマーが終われば nyaw が手首から鳴らす）。
 //! タイマー・ストップウォッチ・アラームは保存領域に残し、開き直すと続きから。
 //! アラームが鳴るのはニャプリを開いている間だけ（ホストにバックグラウンドの仕組みがまだ無い）。
@@ -193,7 +193,7 @@ impl Clock {
                 host::log(host::Level::Warn, &format!("cannot save {key}: {e:?}"));
             }
         }
-        match self.activity(host::now_ms()) {
+        match self.activity() {
             Some(a) => {
                 let _ = host::set_activity(&a);
             }
@@ -201,30 +201,19 @@ impl Clock {
         }
     }
 
-    /// 出す知らせ: 動いているタイマー（カウントダウン）、なければ動いているストップウォッチ、なければ止めたタイマー
-    /// （残りと進み具合）。どれも無ければ出さない。
-    pub fn activity(&self, now: i64) -> Option<Activity> {
-        let timer = self.t("Timer", "タイマー").to_owned();
+    /// 出す知らせ（タイマーだけ。ストップウォッチは出さない）: 動いていればカウントダウン、止めていれば残りと進み具合
+    /// （文字は輪の中に収まる残りだけ）。どちらでもなければ出さない。
+    pub fn activity(&self) -> Option<Activity> {
         if let Some(end) = self.timer.end {
             return Some(Activity::Countdown {
-                title: timer,
+                title: self.t("Timer", "タイマー").to_owned(),
                 ends_at_ms: end,
                 total_ms: self.timer.set,
             });
         }
-        if self.watch_start.is_some() {
-            return Some(Activity::Stopwatch {
-                title: self.t("Stopwatch", "ストップウォッチ").to_owned(),
-                started_at_ms: now - self.watch_ms(now),
-            });
-        }
         (self.timer.left < self.timer.set).then(|| Activity::Progress {
-            title: timer,
-            text: format!(
-                "{} {}",
-                self.t("Paused", "一時停止"),
-                timer_text(self.timer.left)
-            ),
+            title: self.t("Timer (paused)", "タイマー（一時停止）").to_owned(),
+            text: timer_text(self.timer.left),
             progress: Some(1.0 - self.timer.left as f32 / self.timer.set as f32),
         })
     }
@@ -664,32 +653,29 @@ mod tests {
         }
     }
 
-    /// 動いているタイマーはカウントダウン、無ければ動いているストップウォッチ（積み重ねの分だけ前から数える）、
-    /// 無ければ止めたタイマーの残り、どれも無ければ知らせない。
+    /// 動いているタイマーはカウントダウン、止めたタイマーは残り。ストップウォッチは動いていても知らせない。
     #[test]
-    fn activity_follows_the_timer_and_stopwatch() {
+    fn activity_follows_the_timer_only() {
         let idle = Timer {
             set: 60_000,
             end: None,
             left: 60_000,
         };
-        assert_eq!(clock(idle, None).activity(0), None);
+        assert_eq!(clock(idle, None).activity(), None);
+        assert_eq!(
+            clock(idle, Some(10_000)).activity(),
+            None,
+            "ストップウォッチは知らせない"
+        );
         let running = Timer {
             end: Some(90_000),
             ..idle
         };
         assert!(matches!(
-            clock(running, Some(0)).activity(0),
+            clock(running, Some(0)).activity(),
             Some(Activity::Countdown {
                 ends_at_ms: 90_000,
                 total_ms: 60_000,
-                ..
-            })
-        ));
-        assert!(matches!(
-            clock(idle, Some(10_000)).activity(20_000),
-            Some(Activity::Stopwatch {
-                started_at_ms: 5_000,
                 ..
             })
         ));
@@ -697,11 +683,18 @@ mod tests {
             left: 15_000,
             ..idle
         };
-        let Some(Activity::Progress { text, progress, .. }) = clock(paused, None).activity(0)
+        let Some(Activity::Progress {
+            title,
+            text,
+            progress,
+        }) = clock(paused, None).activity()
         else {
             panic!("止めたタイマーは残りを出す");
         };
-        assert_eq!((text.as_str(), progress), ("一時停止 00:15", Some(0.75)));
+        assert_eq!(
+            (title.as_str(), text.as_str(), progress),
+            ("タイマー（一時停止）", "00:15", Some(0.75))
+        );
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! - `cargo nyapps build`: `nyapps/` の試作を wasm にビルドし、`target/nyapps/<id>.nyapp` にまとめる
 //! - `cargo nyapps install`: build して、nyaw のパッケージのフォルダ（`data_dir()/nyapps`）に入れる
 //! - `cargo nyapps pack <ニャプリのフォルダ> <wasm> [出力先]`: 1 つをまとめる（フォルダに `manifest.toml`、
-//!   あればアイコンの `icon.svg` / `icon.png`）
+//!   あればアイコンの `icon-background.*` / `icon-foreground.*`（svg か png））
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -94,17 +94,24 @@ fn pack(dir: &Path, wasm: &Path, out: &Path) -> Result<PathBuf, String> {
     let read = |p: &Path| std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()));
     let manifest = String::from_utf8(read(&dir.join(package::MANIFEST))?)
         .map_err(|_| "manifest.toml is not UTF-8".to_string())?;
-    let icon = if dir.join(package::ICON_SVG).exists() {
-        Some(package::Icon::Svg(read(&dir.join(package::ICON_SVG))?))
-    } else if dir.join(package::ICON_PNG).exists() {
-        Some(package::Icon::Png(read(&dir.join(package::ICON_PNG))?))
-    } else {
-        None
+    // アイコンの背景と前景（それぞれ SVG があればそれ、無ければ PNG）。
+    let layer = |[svg, png]: [&str; 2]| -> Result<Option<package::Image>, String> {
+        Ok(if dir.join(svg).exists() {
+            Some(package::Image::Svg(read(&dir.join(svg))?))
+        } else if dir.join(png).exists() {
+            Some(package::Image::Png(read(&dir.join(png))?))
+        } else {
+            None
+        })
+    };
+    let icon = package::Icon {
+        background: layer(package::ICON_BACKGROUND)?,
+        foreground: layer(package::ICON_FOREGROUND)?,
     };
     std::fs::create_dir_all(out).map_err(|e| e.to_string())?;
     // ID が決まるまで仮の名前で書き、最後に `<id>.nyapp` にする。
     let partial = out.join("pack.partial");
-    let m = package::write(&partial, &manifest, &read(wasm)?, icon.as_ref())
+    let m = package::write(&partial, &manifest, &read(wasm)?, &icon)
         .map_err(|e| format!("{}: {e}", dir.display()))?;
     let path = out.join(format!("{}.{}", m.id, package::EXTENSION));
     std::fs::rename(&partial, &path).map_err(|e| e.to_string())?;

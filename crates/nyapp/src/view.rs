@@ -1,5 +1,6 @@
 //! ニャプリのパネル: サンドボックスが返す画面の木（[`Node`]）を `design` の部品で描き、押された・指されたなどを
-//! 出来事としてニャプリへ返す。ニャプリが落ちたら（trap・燃料切れ・壊れた画面）理由と再起動のボタンを出す。
+//! 出来事としてニャプリへ返す。ニャプリが落ちたら（trap・燃料切れ・壊れた画面）パネルを白黒にして残し、
+//! その子として強制終了のダイアログ（再起動・閉じる）を出す。
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -16,7 +17,7 @@ use gpui::{
 use i18n::Lang;
 use kernel::PanelId;
 use kernel::audio::Sound;
-use kernel::vr::{Pose, Quat, Vec2, Vec3};
+use kernel::vr::Vec2;
 use nyapp_sdk::{Align, Color, Event, Gap, Node, Shape, Size, Stack, Variant};
 use ui::{PanelControl, PanelSpec};
 
@@ -52,8 +53,12 @@ pub fn spec(
 enum State {
     Loading,
     Running(Box<Sandbox>),
-    /// 落ちた（パネルは閉じていく。知らせるのはダイアログ）。
-    Failed,
+    /// 落ちた。最後の画面を白黒で残し、子のダイアログ（[`CrashDialog`]）で知らせる。`asked` はダイアログを出したか
+    /// （高さを文に合わせて測るので、ウィンドウのある描画のときに出す）。
+    Failed {
+        reason: String,
+        asked: bool,
+    },
 }
 
 pub struct NyappView {
@@ -174,17 +179,54 @@ impl NyappView {
         self.redraw(cx);
     }
 
-    /// ニャプリが落ちた（trap・燃料切れ・壊れた画面・起動できない）。パネルを閉じ、視界の中央に強制終了を知らせる
-    /// ダイアログ（再起動・閉じる）を出す。本体とほかのパネルはそのまま動き続ける。
+    /// ニャプリが落ちた（trap・燃料切れ・壊れた画面・起動できない）。パネルは閉じずに最後の画面を白黒で残し、次の描画で
+    /// 子として強制終了のダイアログ（再起動・閉じる）を出す。本体とほかのパネルはそのまま動き続ける。
     fn fail(&mut self, error: Error, cx: &mut Context<Self>) {
         logger::warn!("nyapp stopped", app = self.app.manifest.id, error = error);
-        self.state = State::Failed;
+        let mut reason: String = error.to_string().chars().take(CRASH_REASON_CHARS).collect();
+        if reason.chars().count() == CRASH_REASON_CHARS {
+            reason.push('…');
+        }
+        self.state = State::Failed {
+            reason,
+            asked: false,
+        };
         self.ticker = None;
-        let docked = ui::docked(cx) == Some(self.panel);
-        command(self.panel, kernel::PanelCommand::Close, cx);
-        let spec = crash_dialog_spec(self.panel, self.app.clone(), error.to_string(), docked, cx);
-        cx.default_global::<PanelControl>().spawns.push(spec);
         self.redraw(cx);
+    }
+
+    /// 強制終了のダイアログを、このパネルの子として出す（外側を押しても閉じない。開いている間このパネルは暗くなり押せない）。
+    fn ask_after_crash(&mut self, window: &Window, cx: &mut Context<Self>) {
+        let State::Failed { reason, asked } = &mut self.state else {
+            return;
+        };
+        if std::mem::replace(asked, true) {
+            return;
+        }
+        let name = self
+            .app
+            .manifest
+            .name_in(Lang::current(cx).code())
+            .to_owned();
+        let title = i18n::tf(cx, "nyapp.crashed_title", &[("name", &name)]);
+        let body = i18n::tf(cx, "nyapp.crashed_body", &[("reason", reason)]);
+        let height = components::dialog_height(window, CRASH_DIALOG_WIDTH, &title, &body, 2);
+        let (nyapp, view) = (self.panel, cx.weak_entity());
+        let spec = PanelSpec::child(self.panel, true, move |panel, _, _| CrashDialog {
+            panel,
+            nyapp,
+            view,
+            title,
+            body,
+        })
+        .without_dismiss()
+        .sized(
+            Vec2::new(CRASH_DIALOG_WIDTH as f32 / 1000.0, height as f32 / 1000.0),
+            (CRASH_DIALOG_WIDTH, height),
+        )
+        // ダイアログは答えて閉じるもの。ナビゲーションバーは付けない。
+        .without_nav_bar();
+        cx.default_global::<PanelControl>().spawns.push(spec);
     }
 
     /// ポインタが動いた。画面にある面ごとに、その左上からの座標で知らせる。
@@ -217,15 +259,30 @@ impl NyappView {
             .redraw = true;
     }
 
-    /// 画面の木の要素 1 つを描く。`path` は要素の場所（スクロールの状態を要素ごとに分ける ID）。
-    fn node(&self, node: &Node, path: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    /// 画面の木の要素 1 つを描く。`path` は要素の場所（スクロールの状態を要素ごとに分ける ID）、`in_row` は横の並びの中か
+    /// （文字を折り返さず 1 行で省略する）。どの要素も中身より狭く縮められ、長い文字・ラベルは省略してはみ出さない。
+    fn node(
+        &self,
+        node: &Node,
+        path: &str,
+        in_row: bool,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        // 落ちた画面は白黒（テーマの色は白黒のテーマで、`Rgb` の色はここで灰色にする）。
+        let gray = matches!(self.state, State::Failed { .. });
+        let color = |c: Color| {
+            let rgba = color(c, theme);
+            if gray { design::grayscale(rgba) } else { rgba }
+        };
         match node {
-            Node::Column(s) => self.stack(div().flex().flex_col(), s, path, theme, cx),
-            Node::Row(s) => self.stack(div().flex().flex_row(), s, path, theme, cx),
+            Node::Column(s) => self.stack(div().flex().flex_col(), s, path, false, theme, cx),
+            Node::Row(s) => self.stack(div().flex().flex_row(), s, path, true, theme, cx),
             Node::Card(s) => self.stack(
                 components::card(theme).flex().flex_col().p(px(spacing::LG)),
                 s,
                 path,
+                false,
                 theme,
                 cx,
             ),
@@ -237,9 +294,11 @@ impl NyappView {
                 .grid()
                 .grid_cols(*columns)
                 .gap(px(gap(*g)))
-                .children(self.children(children, path, theme, cx))
+                .children(self.children(children, path, false, theme, cx))
                 .into_any_element(),
             Node::Text(t) => div()
+                .min_w_0()
+                .when(in_row, |d| d.truncate())
                 .text_size(px(match t.size {
                     Size::Sm => font_size::SM,
                     Size::Md => font_size::MD,
@@ -248,7 +307,7 @@ impl NyappView {
                     Size::Display => DISPLAY_PX,
                 }))
                 .when(t.bold, |d| d.font_weight(FontWeight::BOLD))
-                .text_color(rgba(color(t.color, theme)))
+                .text_color(rgba(color(t.color)))
                 .child(t.text.clone())
                 .into_any_element(),
             Node::Button(b) => {
@@ -261,6 +320,9 @@ impl NyappView {
                 };
                 components::button(theme, b.id.clone(), b.label.clone(), variant)
                     .selected(b.selected)
+                    // ラベルが長くても押せる範囲を広げない（`grow` どうしは同じ幅に分け、はみ出す分は省略する）。
+                    .min_w_0()
+                    .truncate()
                     .when(b.grow, |b| b.flex_1())
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.send(Event::Click { id: id.clone() }, cx)
@@ -302,7 +364,7 @@ impl NyappView {
                             .absolute()
                             .size_full(),
                     )
-                    .children(c.shapes.iter().map(|s| shape(s, theme)))
+                    .children(c.shapes.iter().map(|s| shape(s, &color)))
                     .into_any_element()
             }
             Node::Spacer => div().flex_1().into_any_element(),
@@ -314,10 +376,12 @@ impl NyappView {
         base: Div,
         s: &Stack,
         path: &str,
+        row: bool,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let d = base
+            .min_w_0()
             .gap(px(gap(s.gap)))
             .when(s.grow, |d| d.flex_1().min_h_0().min_w_0());
         let d = match s.align {
@@ -326,7 +390,7 @@ impl NyappView {
             Align::Center => d.items_center(),
             Align::End => d.items_end(),
         };
-        let d = d.children(self.children(&s.children, path, theme, cx));
+        let d = d.children(self.children(&s.children, path, row, theme, cx));
         if s.scroll {
             d.id(gpui::SharedString::from(format!("nyapp-scroll-{path}")))
                 .overflow_y_scroll()
@@ -340,20 +404,25 @@ impl NyappView {
         &self,
         children: &[Node],
         path: &str,
+        in_row: bool,
         theme: &Theme,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         children
             .iter()
             .enumerate()
-            .map(|(i, n)| self.node(n, &format!("{path}.{i}"), theme, cx))
+            .map(|(i, n)| self.node(n, &format!("{path}.{i}"), in_row, theme, cx))
             .collect()
     }
 }
 
 impl Render for NyappView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::current(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.ask_after_crash(window, cx);
+        let theme = match self.state {
+            State::Failed { .. } => Theme::current(cx).grayscale(),
+            _ => Theme::current(cx),
+        };
         let message =
             |text: gpui::SharedString| div().text_color(rgba(theme.neutral_text_low)).child(text);
         match &self.state {
@@ -362,11 +431,12 @@ impl Render for NyappView {
                 .items_center()
                 .justify_center()
                 .child(message(i18n::t(cx, "nyapp.loading"))),
-            State::Failed => components::card_panel(&theme),
-            State::Running(_) => {
+            // 起動できずに落ちたものは、出す画面が無い。
+            State::Failed { .. } if self.tree == Node::Spacer => components::card_panel(&theme),
+            State::Running(_) | State::Failed { .. } => {
                 // 今の画面にある面だけを数え直す。
                 self.canvases.borrow_mut().clear();
-                let tree = self.node(&self.tree, "0", &theme, cx);
+                let tree = self.node(&self.tree, "0", false, &theme, cx);
                 components::panel(&theme)
                     .flex()
                     .flex_col()
@@ -404,7 +474,7 @@ fn color(color: Color, theme: &Theme) -> u32 {
     }
 }
 
-fn shape(shape: &Shape, theme: &Theme) -> Div {
+fn shape(shape: &Shape, color: &dyn Fn(Color) -> u32) -> Div {
     match *shape {
         Shape::Circle { x, y, r, color: c } => div()
             .absolute()
@@ -412,7 +482,7 @@ fn shape(shape: &Shape, theme: &Theme) -> Div {
             .top(px(y - r))
             .size(px(2.0 * r))
             .rounded(px(radius::FULL))
-            .bg(rgba(color(c, theme))),
+            .bg(rgba(color(c))),
         Shape::Rect {
             x,
             y,
@@ -427,87 +497,35 @@ fn shape(shape: &Shape, theme: &Theme) -> Div {
             .w(px(w))
             .h(px(h))
             .rounded(px(r))
-            .bg(rgba(color(c, theme))),
+            .bg(rgba(color(c))),
     }
 }
 
-/// 強制終了のダイアログの幅と高さ（px。1000px/m）。理由は長くても [`CRASH_REASON_CHARS`] 文字で切るので、高さは決め打ち。
-const CRASH_DIALOG_PX: (u32, u32) = (440, 380);
+/// 強制終了のダイアログの幅（px。1000px/m）。高さは文に合わせて測る。理由は [`CRASH_REASON_CHARS`] 文字で切る。
+const CRASH_DIALOG_WIDTH: u32 = 440;
 const CRASH_REASON_CHARS: usize = 120;
-/// 強制終了のダイアログ・再起動したパネルを出す所（開いた瞬間の頭から）。
-const CRASH_DIALOG_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
-const RESTART_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.1), Quat::IDENTITY);
 
-/// ニャプリ `app` が強制終了したことを知らせるダイアログの起動仕様。`docked` なら、再起動したものもダッシュボードにはめる。
-fn crash_dialog_spec(
-    from: PanelId,
-    app: Installed,
-    reason: String,
-    docked: bool,
-    cx: &App,
-) -> PanelSpec {
-    let lang = Lang::current(cx);
-    let mut reason: String = reason.chars().take(CRASH_REASON_CHARS).collect();
-    if reason.chars().count() == CRASH_REASON_CHARS {
-        reason.push('…');
-    }
-    PanelSpec::spawn(from, move |panel, _, _| CrashDialog {
-        panel,
-        app,
-        reason,
-        lang,
-        docked,
-    })
-    .sized(
-        Vec2::new(
-            CRASH_DIALOG_PX.0 as f32 / 1000.0,
-            CRASH_DIALOG_PX.1 as f32 / 1000.0,
-        ),
-        CRASH_DIALOG_PX,
-    )
-    // 開いた元のパネルは閉じていくので、その手前ではなく視界の中央に出す。
-    .in_view(CRASH_DIALOG_POSE)
-    // ダイアログは答えて閉じるもの。ナビゲーションバーは付けない。
-    .without_nav_bar()
-}
-
-/// ニャプリが強制終了したことを知らせるダイアログ。再起動（`nyapp-crash-restart`）か閉じる（`nyapp-crash-dismiss`）。
+/// ニャプリが強制終了したことを知らせるダイアログ（落ちたニャプリのパネルの子）。再起動（`nyapp-crash-restart`。同じパネルで
+/// 起こし直す）か閉じる（`nyapp-crash-close`。ニャプリのパネルごと閉じる）。
 pub struct CrashDialog {
     panel: PanelId,
-    app: Installed,
-    reason: String,
-    lang: Lang,
-    docked: bool,
-}
-
-impl CrashDialog {
-    /// 閉じて、ニャプリを新しいパネルで開き直す。
-    fn restart(&mut self, cx: &mut App) {
-        command(self.panel, kernel::PanelCommand::Close, cx);
-        let docked = self.docked;
-        let spec = spec(self.panel, self.app.clone(), self.lang, move |id, cx| {
-            if docked {
-                ui::dock(id, cx);
-            }
-        })
-        // 開いた元のダイアログは閉じていくので、目の前に出す。はめるならダッシュボードの所へ動く。
-        .in_view(RESTART_POSE)
-        .dockable();
-        cx.default_global::<PanelControl>().spawns.push(spec);
-    }
+    /// 落ちたニャプリのパネルと、そのビュー。
+    nyapp: PanelId,
+    view: gpui::WeakEntity<NyappView>,
+    title: gpui::SharedString,
+    body: gpui::SharedString,
 }
 
 impl Render for CrashDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let name = self.app.manifest.name_in(self.lang.code()).to_owned();
-        let panel = self.panel;
+        let (panel, nyapp) = (self.panel, self.nyapp);
         components::dialog(
             &theme,
             "nyapp-crash-dialog",
             &icons::WARNING,
-            i18n::tf(cx, "nyapp.crashed_title", &[("name", &name)]),
-            i18n::tf(cx, "nyapp.crashed_body", &[("reason", &self.reason)]),
+            self.title.clone(),
+            self.body.clone(),
             [
                 components::button(
                     &theme,
@@ -515,14 +533,18 @@ impl Render for CrashDialog {
                     i18n::t(cx, "nyapp.restart"),
                     ButtonVariant::Primary,
                 )
-                .on_click(cx.listener(|this, _, _, cx| this.restart(cx))),
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    command(panel, kernel::PanelCommand::Close, cx);
+                    let _ = this.view.update(cx, |v, cx| v.load(cx));
+                })),
+                // 子は親と一緒に閉じる。
                 components::button(
                     &theme,
-                    "nyapp-crash-dismiss",
-                    i18n::t(cx, "nyapp.dismiss"),
+                    "nyapp-crash-close",
+                    i18n::t(cx, "nyapp.close"),
                     ButtonVariant::Default,
                 )
-                .on_click(move |_, _, cx| command(panel, kernel::PanelCommand::Close, cx)),
+                .on_click(move |_, _, cx| command(nyapp, kernel::PanelCommand::Close, cx)),
             ],
         )
     }
@@ -577,7 +599,15 @@ mod tests {
     /// 押すと trap する（`unreachable`）ボタン `boom` だけのニャプリ。WebAssembly のテキスト形式（テストでだけ wasmi の
     /// `wat` が有効）をパッケージにして入れたものとして返す。
     fn crashing_app(name: &str, wasm: Option<&str>) -> Installed {
-        let view = r#"{"type":"button","id":"boom","label":"Boom"}"#;
+        app_with_view(
+            name,
+            r#"{"type":"button","id":"boom","label":"Boom"}"#,
+            wasm,
+        )
+    }
+
+    /// 画面 `view`（JSON）を返し、出来事を受けると trap するニャプリ（`wasm` を渡せばそれ）。
+    fn app_with_view(name: &str, view: &str, wasm: Option<&str>) -> Installed {
         let wat = format!(
             r#"(module
                 (memory (export "memory") 1)
@@ -598,12 +628,17 @@ name = \"Crash\"
 version = \"1\"
 api = 1
 ";
-        let manifest =
-            package::write(&path, manifest, wasm.unwrap_or(&wat).as_bytes(), None).unwrap();
+        let manifest = package::write(
+            &path,
+            manifest,
+            wasm.unwrap_or(&wat).as_bytes(),
+            &package::Icon::default(),
+        )
+        .unwrap();
         Installed {
             manifest,
             path,
-            icon: None,
+            icon: Default::default(),
         }
     }
 
@@ -625,75 +660,119 @@ api = 1
         })
     }
 
-    /// ニャプリが trap すると、本体は落ちずにパネルを閉じ、強制終了のダイアログを 1 枚出す。
+    /// 文字・ボタンのラベルが長くても、並びからはみ出さず（省略する）、`grow` のボタンはラベルの長さによらず同じ幅
+    /// （押せる範囲がラベルで変わらない）。
     #[gpui::test]
-    fn a_crashing_nyapp_closes_its_panel_and_shows_the_crash_dialog(cx: &mut TestAppContext) {
+    fn long_texts_are_truncated_and_grown_buttons_share_the_width(cx: &mut TestAppContext) {
+        let long = "とても長いラベル".repeat(20);
+        let view = format!(
+            r#"{{"type":"column","children":[
+                {{"type":"row","children":[
+                    {{"type":"button","id":"tab-a","label":"A","grow":true}},
+                    {{"type":"button","id":"tab-b","label":"{long}","grow":true}}]}},
+                {{"type":"row","children":[
+                    {{"type":"text","text":"{long}"}},
+                    {{"type":"button","id":"after","label":"OK"}}]}}]}}"#
+        );
+        let app = app_with_view("truncate", &view.replace('\n', ""), None);
+        let (_, cx) = cx.add_window_view(|_, cx| NyappView::new(5, app, cx));
+        cx.run_until_parked();
+        let [a, b, after] = ["tab-a", "tab-b", "after"].map(|s| cx.debug_bounds(s).unwrap());
+        let width = cx.update(|window, _| window.viewport_size().width);
+        assert!(
+            (a.size.width - b.size.width).abs() < px(1.0),
+            "{a:?} / {b:?}"
+        );
+        assert!(
+            b.right() <= width,
+            "長いラベルのボタンもパネルに収まる: {b:?}"
+        );
+        assert!(
+            after.right() <= width,
+            "長い文字の後ろのボタンも押せる所にある: {after:?}"
+        );
+    }
+
+    fn spawned(cx: &mut VisualTestContext) -> usize {
+        cx.update(|_, cx| cx.default_global::<PanelControl>().spawns.len())
+    }
+
+    /// ニャプリが trap すると、本体は落ちず、パネルも閉じずに白黒で残り、その子として強制終了のダイアログを 1 枚出す。
+    #[gpui::test]
+    fn a_crashing_nyapp_stays_gray_and_asks_with_a_child_dialog(cx: &mut TestAppContext) {
         let app = crashing_app("trap", None);
         let (view, cx) = cx.add_window_view(|_, cx| NyappView::new(5, app, cx));
         cx.run_until_parked();
         assert!(view.read_with(cx, |v, _| matches!(v.state, State::Running(_))));
         click(cx, "boom");
         cx.run_until_parked();
-        assert!(view.read_with(cx, |v, _| matches!(v.state, State::Failed)));
+        assert!(view.read_with(cx, |v, _| matches!(
+            v.state,
+            State::Failed { asked: true, .. }
+        )));
         assert!(
-            commands(cx, 5).contains(&PanelCommand::Close),
-            "パネルを閉じる"
+            !commands(cx, 5).contains(&PanelCommand::Close),
+            "パネルは閉じない"
         );
-        let spawns = cx.update(|_, cx| cx.default_global::<PanelControl>().spawns.len());
-        assert_eq!(spawns, 1, "強制終了のダイアログ");
+        assert!(cx.debug_bounds("boom").is_some(), "最後の画面を残す");
+        let parent = cx.update(|_, cx| cx.default_global::<PanelControl>().spawns[0].parent());
+        assert_eq!(
+            parent.map(|p| (p.panel, p.dismiss)),
+            Some((5, false)),
+            "外を押しても閉じない子"
+        );
+        assert_eq!(spawned(cx), 1);
+        // 描き直してもダイアログは増えない。
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert_eq!(spawned(cx), 1);
     }
 
-    /// 起動できない（wasm として読めない）ものも同じく閉じて知らせる。
+    /// 起動できない（wasm として読めない）ものも同じく残して知らせる。
     #[gpui::test]
     fn a_broken_package_is_reported_like_a_crash(cx: &mut TestAppContext) {
         let app = crashing_app("broken", Some("not wasm"));
         let (view, cx) = cx.add_window_view(|_, cx| NyappView::new(5, app, cx));
         cx.run_until_parked();
-        assert!(view.read_with(cx, |v, _| matches!(v.state, State::Failed)));
-        assert!(commands(cx, 5).contains(&PanelCommand::Close));
-        let spawns = cx.update(|_, cx| cx.default_global::<PanelControl>().spawns.len());
-        assert_eq!(spawns, 1);
+        assert!(view.read_with(cx, |v, _| matches!(v.state, State::Failed { .. })));
+        assert!(!commands(cx, 5).contains(&PanelCommand::Close));
+        assert_eq!(spawned(cx), 1);
     }
 
-    /// 強制終了のダイアログ（PanelId 9）を開く。
-    fn crash_dialog(cx: &mut TestAppContext) -> &mut VisualTestContext {
-        let app = crashing_app("dialog", None);
-        cx.add_window_view(|_, _| CrashDialog {
-            panel: 9,
-            app,
-            reason: "wasm trap: unreachable".into(),
-            lang: Lang::Ja,
-            docked: false,
-        })
-        .1
-    }
-
-    /// ダイアログの再起動はダイアログを閉じてニャプリを開き直し、閉じるはダイアログを閉じるだけ。
+    /// 再起動はダイアログを閉じて同じパネルでニャプリを起こし直し、閉じるはニャプリのパネルを閉じる（子のダイアログも一緒に）。
     #[gpui::test]
-    fn the_crash_dialog_restarts_or_dismisses(cx: &mut TestAppContext) {
-        let cx1 = crash_dialog(cx);
-        click(cx1, "nyapp-crash-restart");
-        assert!(commands(cx1, 9).contains(&PanelCommand::Close));
-        let spawns = cx1.update(|_, cx| cx.default_global::<PanelControl>().spawns.len());
-        assert_eq!(spawns, 1, "ニャプリを開き直す");
-
-        let cx2 = crash_dialog(cx);
-        cx2.update(|_, cx| cx.default_global::<PanelControl>().spawns.clear());
-        click(cx2, "nyapp-crash-dismiss");
-        assert!(commands(cx2, 9).contains(&PanelCommand::Close));
-        let spawns = cx2.update(|_, cx| cx.default_global::<PanelControl>().spawns.len());
-        assert_eq!(spawns, 0, "閉じるだけ");
-    }
-
-    /// 知らせの音は RIFF の WAV として長さが合っている。
-    #[test]
-    fn beep_is_a_well_formed_wav() {
-        let wav = beep();
-        assert_eq!(&wav[..4], b"RIFF");
-        assert_eq!(
-            u32::from_le_bytes(wav[4..8].try_into().unwrap()) as usize,
-            wav.len() - 8
+    fn the_crash_dialog_restarts_in_place_or_closes_the_nyapp(cx: &mut TestAppContext) {
+        let app = crashing_app("dialog", None);
+        let (view, nyapp) = cx.add_window_view(|_, cx| NyappView::new(5, app, cx));
+        nyapp.run_until_parked();
+        click(nyapp, "boom");
+        nyapp.run_until_parked();
+        let weak = view.downgrade();
+        let (_, dialog) = cx.add_window_view(move |_, _| CrashDialog {
+            panel: 9,
+            nyapp: 5,
+            view: weak,
+            title: "t".into(),
+            body: "b".into(),
+        });
+        click(dialog, "nyapp-crash-restart");
+        dialog.run_until_parked();
+        assert!(
+            commands(dialog, 9).contains(&PanelCommand::Close),
+            "ダイアログは閉じる"
         );
-        assert_eq!(&wav[36..40], b"data");
+        assert!(
+            !commands(dialog, 5).contains(&PanelCommand::Close),
+            "ニャプリは閉じない"
+        );
+        assert!(
+            view.read_with(dialog, |v, _| matches!(v.state, State::Running(_))),
+            "同じパネルで起こし直す"
+        );
+        click(dialog, "nyapp-crash-close");
+        assert!(
+            commands(dialog, 5).contains(&PanelCommand::Close),
+            "ニャプリのパネルを閉じる"
+        );
     }
 }

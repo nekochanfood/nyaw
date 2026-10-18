@@ -178,7 +178,7 @@ mod tests {
                 update: None,
             },
             path: "clock.nyapp".into(),
-            icon: None,
+            icon: Default::default(),
         }
     }
 

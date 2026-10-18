@@ -1,4 +1,4 @@
-//! `.nyapp` パッケージ: `manifest.toml` と `app.wasm`、あればアイコン（`icon.svg` か `icon.png`）を入れた zip
+//! `.nyapp` パッケージ: `manifest.toml` と `app.wasm`、あればアイコンの背景と前景を入れた zip
 //! （jar・apk と同じ考え方）。
 //! ファイル名はマニフェストの ID と同じ `<id>.nyapp`。
 
@@ -14,10 +14,15 @@ use crate::{Error, Manifest};
 pub const EXTENSION: &str = "nyapp";
 pub const MANIFEST: &str = "manifest.toml";
 pub const WASM: &str = "app.wasm";
-/// アプリのアイコン。ベクター（SVG）かラスター（PNG。正方形で 192px 程度）。両方あれば SVG を使う。
-/// 無ければ nyaw が名前の頭文字で代わりを描く（[`crate::icon`]）。
-pub const ICON_SVG: &str = "icon.svg";
-pub const ICON_PNG: &str = "icon.png";
+/// アプリのアイコンは背景と前景の 2 枚を重ねる（Android のアダプティブアイコンと同じ考え方）。どちらも正方形で、
+/// ベクター（SVG）かラスター（PNG。192px 程度）。両方あれば SVG を使う。
+/// - 背景（`icon-background.*`）: 端まで塗った地。nyaw が角丸の四角に切る。
+/// - 前景（`icon-foreground.*`）: 地を透明にした絵。真ん中の 2/3 に収める（角丸で切られないように）。前景だけでも使う
+///   （進行中の作業の知らせなど）。
+///
+/// 無ければ nyaw が代わりを描く（[`crate::icon`]。前景が無ければ名前の頭文字、背景が無ければアクセントの色）。
+pub const ICON_BACKGROUND: [&str; 2] = ["icon-background.svg", "icon-background.png"];
+pub const ICON_FOREGROUND: [&str; 2] = ["icon-foreground.svg", "icon-foreground.png"];
 /// 展開した大きさの上限（壊れた・悪意のある zip で展開しすぎないように）。
 const MAX_MANIFEST: u64 = 64 << 10;
 const MAX_WASM: u64 = 32 << 20;
@@ -29,38 +34,52 @@ pub fn read_manifest(path: &Path) -> Result<Manifest, Error> {
     Manifest::parse(&read_text(&mut zip, MANIFEST, MAX_MANIFEST)?)
 }
 
-/// パッケージに入ったアイコン（中身はファイルのまま）。
+/// パッケージに入った画像 1 枚（中身はファイルのまま）。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Icon {
+pub enum Image {
     Svg(Vec<u8>),
     Png(Vec<u8>),
 }
 
-impl Icon {
-    fn name(&self) -> &'static str {
+impl Image {
+    fn bytes(&self) -> &[u8] {
         match self {
-            Icon::Svg(_) => ICON_SVG,
-            Icon::Png(_) => ICON_PNG,
+            Image::Svg(b) | Image::Png(b) => b,
         }
     }
 
-    fn bytes(&self) -> &[u8] {
+    /// `names`（`[svg, png]`）のうちこの形式の名前。
+    fn name(&self, names: [&'static str; 2]) -> &'static str {
         match self {
-            Icon::Svg(b) | Icon::Png(b) => b,
+            Image::Svg(_) => names[0],
+            Image::Png(_) => names[1],
         }
     }
 }
 
-/// マニフェストとアイコン（あれば）を読む。一覧に出すため。
-pub fn read_listing(path: &Path) -> Result<(Manifest, Option<Icon>), Error> {
+/// パッケージに入ったアイコンの背景と前景（どちらも無くてよい）。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Icon {
+    pub background: Option<Image>,
+    pub foreground: Option<Image>,
+}
+
+/// マニフェストとアイコンを読む。一覧に出すため。
+pub fn read_listing(path: &Path) -> Result<(Manifest, Icon), Error> {
     let mut zip = ZipArchive::new(File::open(path)?)?;
     let manifest = Manifest::parse(&read_text(&mut zip, MANIFEST, MAX_MANIFEST)?)?;
-    let icon = if zip.index_for_name(ICON_SVG).is_some() {
-        Some(Icon::Svg(read_entry(&mut zip, ICON_SVG, MAX_ICON)?))
-    } else if zip.index_for_name(ICON_PNG).is_some() {
-        Some(Icon::Png(read_entry(&mut zip, ICON_PNG, MAX_ICON)?))
-    } else {
-        None
+    let mut layer = |[svg, png]: [&str; 2]| -> Result<Option<Image>, Error> {
+        Ok(if zip.index_for_name(svg).is_some() {
+            Some(Image::Svg(read_entry(&mut zip, svg, MAX_ICON)?))
+        } else if zip.index_for_name(png).is_some() {
+            Some(Image::Png(read_entry(&mut zip, png, MAX_ICON)?))
+        } else {
+            None
+        })
+    };
+    let icon = Icon {
+        background: layer(ICON_BACKGROUND)?,
+        foreground: layer(ICON_FOREGROUND)?,
     };
     Ok((manifest, icon))
 }
@@ -74,12 +93,7 @@ pub fn read(path: &Path) -> Result<(Manifest, Vec<u8>), Error> {
 }
 
 /// パッケージを作る。マニフェストは書く前に確かめる。
-pub fn write(
-    path: &Path,
-    manifest: &str,
-    wasm: &[u8],
-    icon: Option<&Icon>,
-) -> Result<Manifest, Error> {
+pub fn write(path: &Path, manifest: &str, wasm: &[u8], icon: &Icon) -> Result<Manifest, Error> {
     let parsed = Manifest::parse(manifest)?;
     let mut zip = ZipWriter::new(File::create(path)?);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
@@ -87,9 +101,14 @@ pub fn write(
     zip.write_all(manifest.as_bytes())?;
     zip.start_file(WASM, options)?;
     zip.write_all(wasm)?;
-    if let Some(icon) = icon {
-        zip.start_file(icon.name(), options)?;
-        zip.write_all(icon.bytes())?;
+    for (image, names) in [
+        (&icon.background, ICON_BACKGROUND),
+        (&icon.foreground, ICON_FOREGROUND),
+    ] {
+        if let Some(image) = image {
+            zip.start_file(image.name(names), options)?;
+            zip.write_all(image.bytes())?;
+        }
     }
     zip.finish()?;
     Ok(parsed)
@@ -120,6 +139,7 @@ fn read_entry(zip: &mut ZipArchive<File>, name: &str, max: u64) -> Result<Vec<u8
 mod tests {
     use super::*;
 
+    const WASM_BYTES: &[u8] = b"\0asm";
     const MANIFEST_TOML: &str =
         "id = \"net.bettaworx.test\"\nname = \"Test\"\nversion = \"1\"\napi = 1\n";
 
@@ -128,17 +148,34 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("nyapp-package-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("net.bettaworx.test.nyapp");
-        let svg = Icon::Svg(b"<svg/>".to_vec());
-        write(&path, MANIFEST_TOML, b"\0asm", Some(&svg)).unwrap();
+        let icon = Icon {
+            background: Some(Image::Png(b"png".to_vec())),
+            foreground: Some(Image::Svg(b"<svg/>".to_vec())),
+        };
+        write(&path, MANIFEST_TOML, WASM_BYTES, &icon).unwrap();
         assert_eq!(read_manifest(&path).unwrap().id, "net.bettaworx.test");
-        assert_eq!(read_listing(&path).unwrap().1, Some(svg));
+        assert_eq!(
+            read_listing(&path).unwrap().1,
+            icon,
+            "背景と前景を分けて読む"
+        );
         let (manifest, wasm) = read(&path).unwrap();
         assert_eq!(manifest.name, "Test");
-        assert_eq!(wasm, b"\0asm");
-        write(&path, MANIFEST_TOML, b"", None).unwrap();
-        assert_eq!(read_listing(&path).unwrap().1, None, "アイコンは無くてよい");
+        assert_eq!(wasm, WASM_BYTES);
+        let foreground_only = Icon {
+            background: None,
+            foreground: Some(Image::Png(b"png".to_vec())),
+        };
+        write(&path, MANIFEST_TOML, b"", &foreground_only).unwrap();
+        assert_eq!(read_listing(&path).unwrap().1, foreground_only);
+        write(&path, MANIFEST_TOML, b"", &Icon::default()).unwrap();
+        assert_eq!(
+            read_listing(&path).unwrap().1,
+            Icon::default(),
+            "アイコンは無くてよい"
+        );
         assert!(
-            write(&path, "id = \"bad\"", b"", None).is_err(),
+            write(&path, "id = \"bad\"", b"", &Icon::default()).is_err(),
             "壊れたマニフェストでは作らない"
         );
         std::fs::remove_dir_all(dir).unwrap();

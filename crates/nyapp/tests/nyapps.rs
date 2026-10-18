@@ -160,46 +160,37 @@ fn eyes_follow_the_pointer() {
     assert_ne!(before, after, "黒目が動く");
 }
 
-/// パッケージにまとめると、SVG・PNG のアイコンは画像になり、アイコンの無いもの（サンドボックス診断）は代わりを描く。
+/// `cargo nyapps build` でまとめたパッケージのアイコン: SVG（電卓・時計）・PNG（目玉）の背景と前景はどちらも画像になり、
+/// アイコンの無いもの（サンドボックス診断）は代わりを描く。
 #[test]
 #[ignore]
 fn packaged_icons_decode_or_fall_back() {
-    build();
-    let out = std::env::temp_dir().join(format!("nyapps-icons-{}", std::process::id()));
-    std::fs::create_dir_all(&out).unwrap();
-    for (name, has_icon) in [
+    let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .args(["run", "-q", "-p", "nyapp", "--bin", "nyapp", "--", "build"])
+        .current_dir(root())
+        .status()
+        .unwrap();
+    assert!(status.success(), "cargo nyapps build");
+    for (name, packaged) in [
         ("calculator", true),
         ("clock", true),
         ("eyes", true),
         ("sandbox", false),
     ] {
-        let dir = root().join("nyapps").join(name);
-        let icon = ["icon.svg", "icon.png"].iter().find_map(|f| {
-            let bytes = std::fs::read(dir.join(f)).ok()?;
-            Some(if f.ends_with("svg") {
-                package::Icon::Svg(bytes)
-            } else {
-                package::Icon::Png(bytes)
-            })
-        });
-        let wasm = std::fs::read(
-            root()
-                .join("nyapps/target/wasm32-unknown-unknown/release")
-                .join(format!("{name}.wasm")),
-        )
-        .unwrap();
-        let path = out.join(format!("{name}.nyapp"));
-        let manifest = std::fs::read_to_string(dir.join("manifest.toml")).unwrap();
-        package::write(&path, &manifest, &wasm, icon.as_ref()).unwrap();
+        let path = root().join(format!("target/nyapps/net.bettaworx.{name}.nyapp"));
         let (_, icon) = package::read_listing(&path).unwrap();
-        assert_eq!(icon.is_some(), has_icon, "{name}");
         assert_eq!(
-            icon.as_ref().and_then(nyapp::icon::decode).is_some(),
-            has_icon,
-            "{name} のアイコンが読める"
+            icon.background.is_some() && icon.foreground.is_some(),
+            packaged,
+            "{name}"
+        );
+        let decoded = nyapp::icon::decode(&icon);
+        assert_eq!(
+            decoded.background.is_some() && decoded.foreground.is_some(),
+            packaged,
+            "{name} の背景と前景が読める"
         );
     }
-    std::fs::remove_dir_all(out).unwrap();
 }
 
 /// ニャプリはそれぞれ別のサンドボックス（メモリ・状態・保存領域）で動き、互いに見えない（マルチテナント）。

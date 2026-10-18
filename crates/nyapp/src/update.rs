@@ -274,10 +274,22 @@ mod tests {
         let files = Arc::new(Mutex::new(HashMap::new()));
         let feed_url = format!("{}/clock/latest.toml", serve(files.clone()));
         let src = root.join("old.nyapp");
-        package::write(&src, &manifest("2026.0.1", &feed_url), b"old", None).unwrap();
+        package::write(
+            &src,
+            &manifest("2026.0.1", &feed_url),
+            b"old",
+            &package::Icon::default(),
+        )
+        .unwrap();
         let app = installed::install_into(&dir, &src).unwrap();
         let new = root.join("new.nyapp");
-        package::write(&new, &manifest("2026.1.0", &feed_url), b"new", None).unwrap();
+        package::write(
+            &new,
+            &manifest("2026.1.0", &feed_url),
+            b"new",
+            &package::Icon::default(),
+        )
+        .unwrap();
         let new = fs::read(new).unwrap();
         let feed = format!(
             "id = \"net.bettaworx.clock\"\nversion = \"2026.1.0\"\npackage = \"clock-2026.1.0.nyapp\"\nsha256 = \"{}\"\n",

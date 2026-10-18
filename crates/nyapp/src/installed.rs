@@ -5,9 +5,6 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-
-use gpui::RenderImage;
 
 use kernel::subsystems::os;
 
@@ -18,14 +15,19 @@ use crate::{Error, Manifest, package, system};
 pub struct Installed {
     pub manifest: Manifest,
     pub path: PathBuf,
-    /// パッケージのアイコン（無い・読めなければ `None`。描くときは [`crate::icon::element`] が代わりを描く）。
-    pub icon: Option<Arc<RenderImage>>,
+    /// パッケージのアイコン（背景と前景。無い・読めない層は描くときに [`crate::icon`] が代わりを描く）。
+    pub icon: crate::icon::AppIcon,
 }
 
 impl Installed {
     /// 一辺 `size` px のアイコン（無ければ代わりのもの）。名前は `lang` のもの。
     pub fn icon(&self, lang: &str, size: f32, theme: &design::Theme) -> gpui::AnyElement {
-        crate::icon::element(self.icon.clone(), self.manifest.name_in(lang), size, theme)
+        crate::icon::element(&self.icon, self.manifest.name_in(lang), size, theme)
+    }
+
+    /// 前景だけの一辺 `size` px のアイコン（無ければ頭文字）。背景の無い所に置くもの。
+    pub fn foreground(&self, lang: &str, size: f32, theme: &design::Theme) -> gpui::AnyElement {
+        crate::icon::foreground(&self.icon, self.manifest.name_in(lang), size, theme)
     }
 }
 
@@ -56,7 +58,7 @@ fn scan_dir(dir: &Path) -> Vec<Installed> {
         .filter_map(|path| match check(&path) {
             Ok((manifest, icon)) => Some(Installed {
                 manifest,
-                icon: icon.as_ref().and_then(crate::icon::decode),
+                icon: crate::icon::decode(&icon),
                 path,
             }),
             Err(e) => {
@@ -71,7 +73,7 @@ fn scan_dir(dir: &Path) -> Vec<Installed> {
 
 /// 入っているパッケージとして正しいか（マニフェストが読め、ファイル名が `<id>.nyapp` で、システムの ID でない）。
 /// 正しければマニフェストとアイコンを返す。
-fn check(path: &Path) -> Result<(Manifest, Option<package::Icon>), Error> {
+fn check(path: &Path) -> Result<(Manifest, package::Icon), Error> {
     let (manifest, icon) = package::read_listing(path)?;
     let stem = path
         .file_stem()
@@ -110,7 +112,7 @@ pub(crate) fn install_into(dir: &Path, src: &Path) -> Result<Installed, Error> {
     Ok(Installed {
         manifest,
         path,
-        icon: icon.as_ref().and_then(crate::icon::decode),
+        icon: crate::icon::decode(&icon),
     })
 }
 
@@ -138,7 +140,7 @@ mod tests {
     fn package(dir: &Path, file: &str, id: &str) -> PathBuf {
         let path = dir.join(file);
         let manifest = format!("id = \"{id}\"\nname = \"{id}\"\nversion = \"1\"\napi = 1\n");
-        package::write(&path, &manifest, b"", None).unwrap();
+        package::write(&path, &manifest, b"", &package::Icon::default()).unwrap();
         path
     }
 

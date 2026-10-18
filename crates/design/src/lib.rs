@@ -90,9 +90,34 @@ impl Theme {
     }
 }
 
+impl Theme {
+    /// 白黒にしたテーマ（止まった画面など、もう操作できないものに使う）。
+    pub fn grayscale(self) -> Theme {
+        self.map(grayscale)
+    }
+}
+
+/// 色（0xRRGGBBAA）を同じ明るさの灰色にする（Rec. 709 の重み。不透明度は保つ）。
+pub fn grayscale(rgba: u32) -> u32 {
+    let [r, g, b, a] = rgba.to_be_bytes();
+    let y = (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32).round() as u8;
+    u32::from_be_bytes([y, y, y, a])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grayscale_keeps_brightness_and_alpha() {
+        assert_eq!(grayscale(0xffffff80), 0xffffff80);
+        assert_eq!(grayscale(0x00000000), 0x00000000);
+        let [r, g, b, a] = grayscale(0x3e63ddff).to_be_bytes();
+        assert!(r == g && g == b && a == 0xff);
+        let gray = Theme::DARK.grayscale();
+        let [r, g, b, _] = gray.accent_solid.to_be_bytes();
+        assert!(r == g && g == b, "アクセントも灰色になる");
+    }
 
     #[test]
     fn themes_differ_but_share_roles() {

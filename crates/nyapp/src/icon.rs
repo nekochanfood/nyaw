@@ -1,6 +1,6 @@
-//! ニャプリのアイコン。パッケージのアイコン（ベクターの `icon.svg` かラスターの `icon.png`。[`package::Icon`]）を
-//! GPUI の画像にし、無い・読めないときは
-//! nyaw が代わりを描く（アクセントの色の角丸の四角に、名前の頭文字。Android の既定のアイコンと同じ考え方）。
+//! ニャプリのアイコン。背景と前景の 2 枚を重ねる（Android のアダプティブアイコンと同じ考え方。[`package::Icon`]）。
+//! 背景は nyaw が角丸の四角に切り、前景をその上に重ねる。前景だけでも出せる（進行中の作業の知らせなど）。
+//! 無い・読めないものは nyaw が代わりを描く: 背景はアクセントの色、前景は名前の頭文字。
 
 use std::sync::Arc;
 
@@ -15,17 +15,38 @@ const MAX_SIDE: u32 = 1024;
 /// SVG を描く一辺（px）。ランチャーのタイルの倍あれば、どの大きさで出してもぼやけない。
 const SVG_SIDE: u32 = 256;
 
-/// アイコンを GPUI の画像にする。壊れている・大きすぎるなら `None`（代わりを描く）。
-pub fn decode(icon: &package::Icon) -> Option<Arc<RenderImage>> {
-    let rgba = match icon {
-        package::Icon::Png(png) => {
+/// GPUI の画像にしたアイコン（読めなかった層は `None`）。
+#[derive(Clone, Default)]
+pub struct AppIcon {
+    pub background: Option<Arc<RenderImage>>,
+    pub foreground: Option<Arc<RenderImage>>,
+}
+
+impl AppIcon {
+    /// パッケージのものか（どちらも無ければ、全部 nyaw の代わりのもの）。
+    pub fn is_packaged(&self) -> bool {
+        self.background.is_some() || self.foreground.is_some()
+    }
+}
+
+/// パッケージのアイコンを GPUI の画像にする。壊れている・大きすぎる層は無いものとする（代わりを描く）。
+pub fn decode(icon: &package::Icon) -> AppIcon {
+    AppIcon {
+        background: icon.background.as_ref().and_then(decode_image),
+        foreground: icon.foreground.as_ref().and_then(decode_image),
+    }
+}
+
+fn decode_image(image: &package::Image) -> Option<Arc<RenderImage>> {
+    let rgba = match image {
+        package::Image::Png(png) => {
             let decoded = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;
             if decoded.width() > MAX_SIDE || decoded.height() > MAX_SIDE {
                 return None;
             }
             decoded.into_rgba8()
         }
-        package::Icon::Svg(svg) => rasterize(svg)?,
+        package::Image::Svg(svg) => rasterize(svg)?,
     };
     let mut bgra = rgba;
     for p in bgra.chunks_exact_mut(4) {
@@ -59,33 +80,68 @@ fn rasterize(svg: &[u8]) -> Option<image::RgbaImage> {
     image::RgbaImage::from_raw(SVG_SIDE, SVG_SIDE, rgba)
 }
 
-/// 一辺 `size` px のアイコン。`image` が無ければ `name` の頭文字の代わりのアイコン。
-pub fn element(
-    image: Option<Arc<RenderImage>>,
-    name: &str,
-    size: f32,
-    theme: &Theme,
-) -> AnyElement {
-    match image {
-        Some(image) => img(image).size(px(size)).into_any_element(),
-        None => fallback(name, size, theme),
+/// 角丸の大きさ（一辺 `size` のアイコン）。
+fn corner(size: f32) -> f32 {
+    radius::LG.min(size / 4.0)
+}
+
+/// 一辺 `size` px のアイコン: 角丸に切った背景（無ければアクセントの色）に前景（無ければ名前 `name` の頭文字）。
+pub fn element(icon: &AppIcon, name: &str, size: f32, theme: &Theme) -> AnyElement {
+    let background = match &icon.background {
+        Some(image) => img(image.clone())
+            .absolute()
+            .size_full()
+            .rounded(px(corner(size)))
+            .into_any_element(),
+        None => div()
+            .absolute()
+            .size_full()
+            .rounded(px(corner(size)))
+            .bg(rgba(theme.accent_solid))
+            .into_any_element(),
+    };
+    let foreground = match &icon.foreground {
+        Some(image) => img(image.clone()).absolute().size_full().into_any_element(),
+        None => initial_element(name, size, theme.on_accent),
+    };
+    div()
+        .debug_selector(|| "nyapp-icon".into())
+        .relative()
+        .flex_none()
+        .size(px(size))
+        .child(background)
+        .child(foreground)
+        .into_any_element()
+}
+
+/// 前景だけの一辺 `size` px のアイコン（無ければ名前 `name` の頭文字を文字の色で）。背景の無い所に置くもの。
+pub fn foreground(icon: &AppIcon, name: &str, size: f32, theme: &Theme) -> AnyElement {
+    match &icon.foreground {
+        Some(image) => img(image.clone())
+            .flex_none()
+            .size(px(size))
+            .into_any_element(),
+        None => div()
+            .relative()
+            .flex_none()
+            .size(px(size))
+            .child(initial_element(name, size, theme.neutral_text))
+            .into_any_element(),
     }
 }
 
-/// 代わりのアイコン: アクセントの色の角丸の四角に、名前の頭文字（大文字）。
-pub fn fallback(name: &str, size: f32, theme: &Theme) -> AnyElement {
+/// 代わりの前景: 名前の頭文字（大文字）を `color` で真ん中に。
+fn initial_element(name: &str, size: f32, color: u32) -> AnyElement {
     div()
         .debug_selector(|| "nyapp-icon-fallback".into())
-        .flex_none()
-        .size(px(size))
-        .rounded(px(radius::LG.min(size / 4.0)))
-        .bg(rgba(theme.accent_solid))
-        .text_color(rgba(theme.on_accent))
+        .absolute()
+        .size_full()
         .flex()
         .items_center()
         .justify_center()
         .text_size(px(size / 2.0))
         .font_weight(FontWeight::BOLD)
+        .text_color(rgba(color))
         .child(initial(name))
         .into_any_element()
 }
@@ -109,16 +165,30 @@ mod tests {
         assert_eq!(initial(""), "?");
     }
 
-    /// 正しい PNG・SVG は画像になり、壊れたものは代わりのアイコンに回す（`None`）。
-    #[test]
-    fn decodes_raster_and_vector_icons_and_rejects_garbage() {
+    fn png() -> Vec<u8> {
         let mut png = Vec::new();
         image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]))
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        assert!(decode(&package::Icon::Png(png)).is_some());
-        assert!(decode(&package::Icon::Png(b"not a png".to_vec())).is_none());
-        assert!(decode(&package::Icon::Svg(b"not an svg".to_vec())).is_none());
+        png
+    }
+
+    /// 背景と前景はそれぞれ読み、壊れた層だけを代わりに回す（`None`）。
+    #[test]
+    fn decodes_each_layer_and_drops_broken_ones() {
+        let icon = decode(&package::Icon {
+            background: Some(package::Image::Png(png())),
+            foreground: Some(package::Image::Svg(b"not an svg".to_vec())),
+        });
+        assert!(icon.background.is_some() && icon.foreground.is_none());
+        assert!(icon.is_packaged());
+        let none = decode(&package::Icon::default());
+        assert!(!none.is_packaged());
+        let broken = decode(&package::Icon {
+            background: Some(package::Image::Png(b"not a png".to_vec())),
+            foreground: None,
+        });
+        assert!(!broken.is_packaged());
     }
 
     /// SVG は縦横比を保って正方形の中央に描き、周りは透明のまま。
@@ -135,5 +205,33 @@ mod tests {
             "中央は塗られる"
         );
         assert_eq!(image.get_pixel(mid, 2).0[3], 0, "横長なので上の端は空く");
+    }
+
+    /// 全部のアイコンは背景と前景を同じ大きさに重ね、前景だけのものはその大きさ。どちらも無ければ頭文字。
+    #[gpui::test]
+    fn layered_and_foreground_only_elements(cx: &mut gpui::TestAppContext) {
+        let icon = AppIcon::default();
+        let (_, cx) = cx.add_window_view(move |_, _| Icons(icon));
+        cx.run_until_parked();
+        let full = cx.debug_bounds("nyapp-icon").unwrap();
+        assert_eq!(full.size.width, px(48.0));
+        assert!(
+            cx.debug_bounds("nyapp-icon-fallback").is_some(),
+            "前景が無ければ頭文字"
+        );
+    }
+
+    struct Icons(AppIcon);
+
+    impl gpui::Render for Icons {
+        fn render(
+            &mut self,
+            _: &mut gpui::Window,
+            _: &mut gpui::Context<Self>,
+        ) -> impl IntoElement {
+            div()
+                .child(element(&self.0, "eyes", 48.0, &Theme::DARK))
+                .child(foreground(&self.0, "eyes", 24.0, &Theme::DARK))
+        }
     }
 }
