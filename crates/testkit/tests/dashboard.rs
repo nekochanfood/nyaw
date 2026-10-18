@@ -3,9 +3,12 @@ use testkit::{Button, Driver, NoVrKit};
 use wrist::Wrist;
 
 /// Presses the left hand's X button twice in a row (novr: the X key) and lets the result show up.
+/// A double press counts only within `kernel::DOUBLE_PRESS` of real time, and a full step (which draws every
+/// panel) can take longer than that in a debug build, so the presses tick only the kernel.
 fn press_x_twice(kit: &mut NoVrKit<Wrist>) {
-    for _ in 0..2 {
-        kit.press(Button::X).release(Button::X);
+    for held in [true, false, true, false] {
+        kit.kernel.subsystems.backend.set_button(Button::X, held);
+        kit.kernel.tick();
     }
     kit.step();
 }
