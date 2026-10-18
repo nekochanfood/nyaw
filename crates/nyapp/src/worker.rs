@@ -21,8 +21,15 @@ const MAX_PACKAGE: usize = 64 << 20;
 const MAX_STORAGE_FILE: usize = STORAGE_FILE_MAX;
 const MAX_MESSAGE: usize = 6 << 20;
 const START_TIMEOUT: Duration = Duration::from_secs(15);
+const MAX_LOG_CHARS: usize = 4 << 10;
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
 static STORAGE_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+static FORWARD_LOGS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// このプロセスはワーカーか（ログは自分で出さず、返事に載せて親に出してもらう）。
+pub(crate) fn forwarding_logs() -> bool {
+    FORWARD_LOGS.load(Ordering::Relaxed)
+}
 
 #[derive(Serialize, Deserialize)]
 struct Start {
@@ -44,6 +51,9 @@ pub struct Step {
     pub view: Node,
     pub ticker: Option<u32>,
     pub beeps: u32,
+    /// ワーカーでたまったログ（レベル, 文字列）。親が検証して出す。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<(i32, String)>,
     /// 外側が `None` なら変更なし、`Some(None)` なら消す（JSON の省略と `null` で分ける）。
     #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present")]
     pub activity: Option<Option<Activity>>,
@@ -118,11 +128,13 @@ impl RemoteSandbox {
         let initial = read_reply(&mut output)?;
         guard.deadline(None);
         validate_step(&initial)?;
+        emit_logs(id, &initial);
         persist(&storage_path, &initial)?;
 
         let (tx, requests) = mpsc::sync_channel::<Call>(32);
         let (results, rx) = mpsc::channel();
         let weak = Arc::downgrade(&guard);
+        let id = id.to_owned();
         std::thread::spawn(move || {
             while let Ok(call) = requests.recv() {
                 let Some(g) = weak.upgrade() else { break };
@@ -137,6 +149,7 @@ impl RemoteSandbox {
                 }
                 let result = reply.and_then(|step| {
                     validate_step(&step)?;
+                    emit_logs(&id, &step);
                     persist(&storage_path, &step)?;
                     Ok(step)
                 });
@@ -167,6 +180,13 @@ impl RemoteSandbox {
 
     pub fn is_alive(&self) -> bool {
         self.guard.is_alive()
+    }
+}
+
+fn emit_logs(id: &str, step: &Step) {
+    for (level, message) in step.logs.iter().take(crate::sandbox::MAX_LOGS_PER_CALL) {
+        let end = message.floor_char_boundary(MAX_LOG_CHARS);
+        crate::sandbox::emit_log(id, *level, &message[..end]);
     }
 }
 
@@ -370,6 +390,7 @@ fn read_frame(input: &mut impl Read, max: usize) -> Result<Vec<u8>, Error> {
 
 /// `--nyapp-worker` の入口。入力を読む前に OS の制限を掛ける。
 pub fn main() -> Result<(), Error> {
+    FORWARD_LOGS.store(true, Ordering::Relaxed);
     platform::confine()?;
     let mut input = std::io::stdin().lock();
     let mut output = std::io::stdout().lock();
@@ -435,6 +456,7 @@ pub(crate) fn step(sandbox: &mut Sandbox, view: Node) -> Step {
         view,
         ticker: host.ticker.take(),
         beeps: std::mem::take(&mut host.beeps),
+        logs: std::mem::take(&mut host.logs),
         activity: host.activity.take(),
         storage: host.take_storage(),
     }
@@ -467,6 +489,7 @@ mod tests {
             view,
             ticker: None,
             beeps: 0,
+            logs: Vec::new(),
             activity: None,
             storage: None,
         };
@@ -487,6 +510,7 @@ mod tests {
                 view,
                 ticker: None,
                 beeps: 0,
+                logs: Vec::new(),
                 activity: None,
                 storage: None,
             })
@@ -500,6 +524,7 @@ mod tests {
             view: Node::Spacer,
             ticker: None,
             beeps: 0,
+            logs: Vec::new(),
             activity: Some(Some(Activity::Progress {
                 title: "a".repeat(MAX_ACTIVITY_CHARS + 1),
                 text: String::new(),
@@ -528,6 +553,7 @@ mod tests {
             view: Node::Spacer,
             ticker: None,
             beeps: 0,
+            logs: Vec::new(),
             activity,
             storage: None,
         };
@@ -557,6 +583,7 @@ mod tests {
             view: Node::Spacer,
             ticker: None,
             beeps: 0,
+            logs: Vec::new(),
             activity: None,
             storage: Some(snapshot.clone()),
         });
@@ -582,6 +609,7 @@ mod tests {
             view: Node::Spacer,
             ticker: None,
             beeps: 0,
+            logs: Vec::new(),
             activity: None,
             storage: Some(br#"{"one":"1"}"#.to_vec()),
         };
