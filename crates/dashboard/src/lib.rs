@@ -1166,6 +1166,7 @@ impl Screen {
         &self,
         app: &nyapp::Installed,
         theme: &Theme,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let lang = i18n::Lang::current(cx);
@@ -1189,6 +1190,7 @@ impl Screen {
             icon,
             &name,
             running,
+            window,
         );
         match tooltip {
             Some(t) => tile.tooltip(t),
@@ -1652,7 +1654,9 @@ impl Screen {
                 .child(
                     list(
                         self.list.clone(),
-                        cx.processor(|this, ix: usize, _, cx| this.launcher_row(ix, cx)),
+                        cx.processor(|this, ix: usize, window, cx| {
+                            this.launcher_row(ix, window, cx)
+                        }),
                     )
                     .flex_1()
                     .min_h_0(),
@@ -1804,7 +1808,12 @@ impl Screen {
 
     /// ランチャーの `ix` 行目を組み立てる（リストが見えている行だけ呼ぶ）。リストの行は中身の幅に縮むので、
     /// 幅いっぱいに広げる（見出しのボタンを右端に、区切り線・タイルの格子を端から端まで）。
-    fn launcher_row(&mut self, ix: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn launcher_row(
+        &mut self,
+        ix: usize,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         let theme = Theme::current(cx);
         let Some(row) = self.launcher.rows.get(ix).cloned() else {
             return div().into_any_element();
@@ -1845,7 +1854,9 @@ impl Screen {
                 )
                 .into_any_element(),
             LauncherRow::Tiles(range) => {
-                let tiles: Vec<_> = range.map(|i| self.launcher_tile(i, &theme, cx)).collect();
+                let tiles: Vec<_> = range
+                    .map(|i| self.launcher_tile(i, &theme, window, cx))
+                    .collect();
                 app_grid()
                     .pb(px(spacing::XS))
                     .children(tiles)
@@ -1855,9 +1866,15 @@ impl Screen {
         div().w_full().child(row).into_any_element()
     }
 
-    fn launcher_tile(&self, i: usize, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn launcher_tile(
+        &self,
+        i: usize,
+        theme: &Theme,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
         match self.launcher.tiles[i] {
-            Tile::Nyapp(at) => self.nyapp_tile(&self.nyapps[at], theme, cx),
+            Tile::Nyapp(at) => self.nyapp_tile(&self.nyapps[at], theme, window, cx),
             Tile::Running { at, n } => {
                 let r = &self.launcher.running[at];
                 let (source, image) = (r.source.clone(), r.window_icon.clone());
@@ -1871,6 +1888,7 @@ impl Screen {
                     tile_image(r.icon.clone(), glyph),
                     &r.name,
                     true,
+                    window,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.open_window(source.clone(), image.clone(), cx);
@@ -1887,6 +1905,7 @@ impl Screen {
                     tile_image(icon.clone(), &icons::APP_WINDOW),
                     &app.name,
                     running,
+                    window,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.launch_app(app.clone(), cx);
@@ -2529,10 +2548,16 @@ fn launch_spec(
     } else {
         spec
     };
-    spec.sized(SIZE_M, RES_PX)
+    let spec = spec
+        .sized(SIZE_M, RES_PX)
         .titled_text(title)
         .dockable()
-        .with_os_keyboard()
+        .with_os_keyboard();
+    if cfg!(windows) {
+        spec.source_minimizable()
+    } else {
+        spec
+    }
 }
 
 /// 開いている配信のパネルと、その取得元・常駐か。同じ画面・ウィンドウは 1 枚だけ映す（[`mirror_of`]）。
@@ -2751,8 +2776,9 @@ fn app_tile(
     icon: gpui::AnyElement,
     name: &str,
     running: bool,
+    window: &Window,
 ) -> components::Button {
-    components::ghost_tile(theme, id)
+    let tile = components::ghost_tile(theme, id)
         .h(px(TILE_PX))
         .min_w_0()
         .child(icon)
@@ -2765,7 +2791,35 @@ fn app_tile(
                 .size(px(RUNNING_DOT_PX))
                 .rounded(px(design::radius::FULL))
                 .when(running, |d| d.bg(rgba(theme.neutral_text))),
-        )
+        );
+    if app_label_clipped(name, window) {
+        tile.tooltip(name.to_owned())
+    } else {
+        tile
+    }
+}
+
+fn app_label_clipped(name: &str, window: &Window) -> bool {
+    let width = f32::from(window.viewport_size().width);
+    let available = (width
+        - 2.0 * (components::PANEL_MARGIN + spacing::MD)
+        - (APP_COLUMNS as f32 - 1.0) * spacing::XS)
+        / APP_COLUMNS as f32
+        - 2.0 * spacing::MD;
+    let run = gpui::TextRun {
+        len: name.len(),
+        font: design::font::font(),
+        color: gpui::black(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    f32::from(
+        window
+            .text_system()
+            .shape_line(name.to_owned().into(), px(font_size::MD), &[run], None)
+            .width,
+    ) > available
 }
 
 /// アプリのアイコンの画像。無ければ `glyph`。
@@ -3543,24 +3597,28 @@ mod tests {
             icon: None,
         };
         let spec = launch_spec(app, None, Some(bar.downgrade()), 2, true);
-        let (mirror, cx) = cx.add_window_view(|window, cx| {
+        let nav_spec = spec.nav_bar_spec(4).unwrap();
+        let (mirror, mcx) = cx.add_window_view(|window, cx| {
             Waiter(spec.build(4, window, cx).downcast::<Mirror>().unwrap())
         });
-        cx.run_until_parked();
+        mcx.run_until_parked();
         assert!(
-            cx.debug_bounds("mirror-waiting").is_some(),
+            mcx.debug_bounds("mirror-waiting").is_some(),
             "待っている間の中身"
         );
-        assert!(take_commands(cx, 4).iter().any(docked_to_bar), "すぐはまる");
+        assert!(
+            take_commands(mcx, 4).iter().any(docked_to_bar),
+            "すぐはまる"
+        );
         let mut window = kernel::desktop::mock::source("Editor - file.txt", SourceKind::Window);
         window.app = Some("Editor.exe".into());
-        let inner = mirror.read_with(cx, |w, _| w.0.clone());
-        inner.update(cx, |m, cx| m.found(window.clone(), cx));
+        let inner = mirror.read_with(mcx, |w, _| w.0.clone());
+        inner.update(mcx, |m, cx| m.found(window.clone(), cx));
         assert_eq!(
-            take_commands(cx, 4),
+            take_commands(mcx, 4),
             [PanelCommand::Stream(Some(window), DEFAULT_FRAME_RATE)]
         );
-        let streams = cx.update(|_, cx| {
+        let streams = mcx.update(|_, cx| {
             bar.read(cx)
                 .streams
                 .iter()
@@ -3568,6 +3626,29 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(streams, [4], "バーに配信のボタンが増える");
+        if cfg!(windows) {
+            let (_nav, ncx) =
+                cx.add_window_view(|window, cx| ui::PanelRoot::new(nav_spec.build(5, window, cx)));
+            ncx.update(|window, cx| {
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(4)
+                    .or_default()
+                    .status
+                    .desktop = Some(Status::Streaming);
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(5)
+                    .or_default()
+                    .status
+                    .pointed = true;
+                window.refresh();
+            });
+            ncx.run_until_parked();
+            assert!(ncx.debug_bounds("nav-minimize-source").is_some());
+            click(ncx, "nav-minimize-source");
+            assert_eq!(take_commands(ncx, 4), [PanelCommand::MinimizeSource]);
+        }
     }
 
     /// テストで [`Mirror`] を窓に載せる入れ物。
@@ -3595,24 +3676,22 @@ mod tests {
     /// アプリの名前が長くても、タイル（押せる範囲）は列の幅のままで、名前は省略される。
     #[gpui::test]
     fn long_app_names_do_not_widen_tiles(cx: &mut TestAppContext) {
+        const LONG_APP: &str =
+            "A very very very very very very very very very very long application name";
         let (_list, cx) = cx.add_window_view(|_, cx| {
             let mut list = Screen::new(2, Page::Launcher, WeakEntity::new_invalid(), cx);
             (list.pending, list.apps_pending) = (None, false);
-            list.apps = [
-                "A very very very very very very very very very very long application name"
-                    .to_owned(),
-                "Short".to_owned(),
-            ]
-            .map(|name| {
-                let app = InstalledApp {
-                    name: name.clone(),
-                    id: name,
-                    exe: None,
-                    icon: None,
-                };
-                (app, None)
-            })
-            .into();
+            list.apps = [LONG_APP.to_owned(), "Short".to_owned()]
+                .map(|name| {
+                    let app = InstalledApp {
+                        name: name.clone(),
+                        id: name,
+                        exe: None,
+                        icon: None,
+                    };
+                    (app, None)
+                })
+                .into();
             list
         });
         cx.run_until_parked();
@@ -3629,6 +3708,19 @@ mod tests {
             long.size.width * APP_COLUMNS as f32 > width * 0.8,
             "{long:?} / {width:?}"
         );
+        let window_id = cx.update(|window, _| window.window_handle().window_id());
+        cx.simulate_mouse_move(long.center(), None, Modifiers::none());
+        let tooltip = |cx: &mut VisualTestContext| {
+            cx.update(|_, cx| {
+                cx.global::<components::Tooltips>()
+                    .0
+                    .get(&(window_id, 1))
+                    .map(|(_, text, _)| text.to_string())
+            })
+        };
+        assert_eq!(tooltip(cx).as_deref(), Some(LONG_APP));
+        cx.simulate_mouse_move(short.center(), None, Modifiers::none());
+        assert_eq!(tooltip(cx), None, "省略されないラベルには出さない");
     }
 
     /// 見出しの行は幅いっぱいで、見出しの文字は左、操作のボタンは右端に離れて並ぶ。

@@ -1234,7 +1234,17 @@ impl Render for NavBar {
         });
         let leading = dock.flatten().into_iter().chain(os_keyboard).collect();
         let minimize = self.minimize.clone();
-        let beside_close = self.source_minimize.then(|| {
+        let source_streaming = cx
+            .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&owner))
+            .and_then(|p| p.status.desktop.as_ref())
+            .is_some_and(|s| {
+                matches!(
+                    s,
+                    kernel::desktop::Status::Starting | kernel::desktop::Status::Streaming
+                )
+            });
+        let beside_close = (self.source_minimize && source_streaming).then(|| {
             design::components::icon_button(
                 &theme,
                 "nav-minimize-source",
@@ -2028,6 +2038,17 @@ mod tests {
                 anim: None,
                 last: None,
             }
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("nav-minimize-source").is_none());
+        cx.update(|window, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(1)
+                .or_default()
+                .status
+                .desktop = Some(kernel::desktop::Status::Streaming);
+            window.refresh();
         });
         cx.run_until_parked();
         let minimize = cx.debug_bounds("nav-minimize-source").unwrap();
