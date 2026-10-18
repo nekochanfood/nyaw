@@ -20,7 +20,7 @@ use i18n::Lang;
 use kernel::PanelId;
 use kernel::audio::Sound;
 use kernel::vr::Vec2;
-use nyapp_sdk::{Align, Color, Event, Gap, Node, Shape, Size, Stack, Variant};
+use nyapp_sdk::{Align, Color, Controller, Event, Gap, Node, Shape, Size, Stack, Variant};
 use ui::{PanelControl, PanelSpec};
 
 use crate::{Error, Installed, worker};
@@ -157,12 +157,13 @@ impl NyappView {
                 format!("{} - {}", m.title, m.artist)
             }
         });
+        let controllers = pointed_controllers(cx.default_global::<PanelControl>(), self.panel);
         #[cfg(test)]
         let mut local_result = None;
         match &mut self.state {
             #[cfg(not(test))]
             State::Running(remote) => {
-                if let Err(e) = remote.event(event, Lang::current(cx).code(), now_playing) {
+                if let Err(e) = remote.event(event, Lang::current(cx).code(), now_playing, controllers) {
                     self.fail(e, cx);
                 }
             }
@@ -171,6 +172,7 @@ impl NyappView {
                 let host = sandbox.host();
                 host.language = Lang::current(cx).code();
                 host.now_playing = now_playing;
+                host.controllers = controllers;
                 local_result = Some(
                     sandbox
                         .event(&event)
@@ -527,6 +529,29 @@ impl Render for NyappView {
     }
 }
 
+/// `panel` をレーザーで指している手のコントローラの入力だけ。指していなければ空（パネルの外の入力はニャプリに見せない）。
+fn pointed_controllers(ctl: &PanelControl, panel: PanelId) -> Vec<Controller> {
+    let Some(state) = ctl.panels.get(&panel) else {
+        return Vec::new();
+    };
+    ctl.controllers
+        .iter()
+        .filter(|c| state.pointing.contains(&c.hand))
+        .map(|c| Controller {
+            hand: match c.hand {
+                kernel::vr::Hand::Left => nyapp_sdk::Hand::Left,
+                kernel::vr::Hand::Right => nyapp_sdk::Hand::Right,
+            },
+            select: c.select,
+            trigger: c.trigger,
+            grab: c.grab,
+            menu: c.menu,
+            shortcut: c.shortcut,
+            scroll: (c.scroll.x, c.scroll.y),
+        })
+        .collect()
+}
+
 fn gap(gap: Gap) -> f32 {
     match gap {
         Gap::None => 0.0,
@@ -768,6 +793,44 @@ api = 1
         assert!(
             after.right() <= width,
             "長い文字の後ろのボタンも押せる所にある: {after:?}"
+        );
+    }
+
+    /// コントローラの入力が見えるのは、レーザーでそのパネルを指している手だけ（指していなければ何も見えない）。
+    #[test]
+    fn controllers_are_visible_only_while_pointing_at_the_panel() {
+        let state = |hand, select| kernel::ControllerState {
+            hand,
+            aim: kernel::Pose::IDENTITY,
+            select,
+            click_button: Default::default(),
+            trigger: 1.0,
+            grab: false,
+            menu: false,
+            shortcut: false,
+            scroll: Vec2::new(0.5, -0.5),
+            resize: 0.0,
+            facing: None,
+            metrics: None,
+        };
+        let mut ctl = PanelControl {
+            controllers: vec![
+                state(kernel::vr::Hand::Left, false),
+                state(kernel::vr::Hand::Right, true),
+            ],
+            ..Default::default()
+        };
+        assert!(pointed_controllers(&ctl, 5).is_empty(), "パネルの状態が無い");
+        ctl.panels.entry(5).or_default();
+        assert!(pointed_controllers(&ctl, 5).is_empty(), "指していない");
+        ctl.panels.entry(5).or_default().pointing = vec![kernel::vr::Hand::Right];
+        let seen = pointed_controllers(&ctl, 5);
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].hand, nyapp_sdk::Hand::Right);
+        assert!(seen[0].select && seen[0].scroll == (0.5, -0.5));
+        assert!(
+            pointed_controllers(&ctl, 6).is_empty(),
+            "別のパネルを指している手の入力は見えない"
         );
     }
 

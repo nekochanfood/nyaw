@@ -567,6 +567,15 @@ impl Overlay {
             .any(|h| h.hover.is_some_and(is) || h.dragging.is_some_and(|d| is(d.0)))
     }
 
+    /// `id` そのもの（ナビゲーションバーや子ではなく）をレーザーで指している手。
+    pub fn pointing_hands(&self, id: PanelId) -> Vec<Hand> {
+        self.hands
+            .iter()
+            .filter(|(_, h)| h.hover == Some(id))
+            .map(|(&hand, _)| hand)
+            .collect()
+    }
+
     /// `id` をどちらかの手で掴んでいる。
     pub fn grabbed(&self, id: PanelId) -> bool {
         self.hands
@@ -2283,6 +2292,34 @@ mod tests {
         assert!(ov.pointed(bar), "掴んでいる間も広がったまま");
         ov.close(&mut vr.backend, 0);
         assert!(ov.panel(bar).closed);
+    }
+
+    /// `pointing_hands` はパネルそのものを指している手だけ（ナビゲーションバーを指していても持ち主は含めない。外れれば空）。
+    #[test]
+    fn pointing_hands_are_those_aiming_at_the_panel_itself() {
+        let (mut vr, mut ov) = setup();
+        let bar = ov
+            .add_panel(
+                &mut vr.backend,
+                "bar",
+                Pose::IDENTITY,
+                Vec2::new(0.2, 0.05),
+                (200, 50),
+            )
+            .unwrap();
+        ov.set_nav_bar(&mut vr.backend, bar, 0);
+        assert!(ov.pointing_hands(0).is_empty());
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        assert_eq!(ov.pointing_hands(0), vec![Hand::Right]);
+        assert!(ov.pointing_hands(bar).is_empty(), "バーは指していない");
+        controller(
+            &mut vr,
+            Pose::new(Vec3::ZERO, Quat::from_rotation_y(1.5)),
+            &[],
+        );
+        ov.tick(&mut vr);
+        assert!(ov.pointing_hands(0).is_empty(), "外れれば空");
     }
 
     #[test]

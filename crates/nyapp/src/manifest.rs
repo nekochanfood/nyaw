@@ -57,6 +57,8 @@ pub enum Permission {
     Audio,
     /// 再生中のメディアのタイトルを読む（`host::now_playing`）。
     Media,
+    /// レーザーで指しているパネルへの、コントローラの入力を読む（`host::controllers`）。
+    Controller,
 }
 
 impl Permission {
@@ -64,6 +66,7 @@ impl Permission {
         match name {
             "audio" => Some(Self::Audio),
             "media" => Some(Self::Media),
+            "controller" => Some(Self::Controller),
             _ => None,
         }
     }

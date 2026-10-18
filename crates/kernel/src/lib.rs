@@ -575,6 +575,11 @@ impl<B: VrBackend> Kernel<B> {
         &self.batteries
     }
 
+    /// `panel` そのものをレーザーで指している手（[`Overlay::pointing_hands`]）。
+    pub fn pointing_hands(&self, panel: PanelId) -> Vec<Hand> {
+        self.overlay.pointing_hands(panel)
+    }
+
     /// 最後の tick の手ごとの入力の状態（骨格だけの手は判定に使った値 `metrics` 付き）。
     pub fn controllers(&self) -> &[ControllerState] {
         self.overlay.controllers()

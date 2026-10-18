@@ -70,7 +70,7 @@ id = "net.bettaworx.clock"
 name = "Clock"
 version = "2026.0.1"            # `.` / `-` で区切った部分を数として比べる（更新の判定）
 api = 1                         # nyapp_sdk::API
-permissions = ["audio"]         # audio（音を鳴らす）/ media（再生中のタイトルを読む）
+permissions = ["audio"]         # audio（音を鳴らす）/ media（再生中のタイトルを読む）/ controller（コントローラの入力を読む）
 
 [names]                         # 言語ごとの名前（無ければ name）
 ja = "時計"
@@ -98,9 +98,17 @@ sha256 = "…"                                     # 必須
 
 ホストが用意する（import モジュール `nyaw`）: `log`、`now_ms`、`utc_offset`、`random`（暗号用ではない）、`language`、
 `set_ticker`（周期の `Tick`。16ms 未満は延ばす）、`has_permission`、`storage_get` / `storage_set` / `storage_remove`
-（ニャプリごとの保存領域。キーと値の合計 1 MiB まで）、`beep`（権限 `audio`）、`now_playing`（権限 `media`）。
+（ニャプリごとの保存領域。キーと値の合計 1 MiB まで）、`beep`（権限 `audio`）、`now_playing`（権限 `media`）、`controllers`（権限 `controller`。下）。
 `set_activity` / `clear_activity`（進行中の作業の知らせ。下）。
 文字列を返すものは「バッファに書けるだけ書き、本当の長さを返す」形。失敗は負の値（`nyapp_sdk::code`）。
+
+### コントローラの入力（`controllers`）
+
+権限 `controller` があるニャプリだけが、コントローラ（トリガー・グリップ・メニュー・ショートカット・スクロール）の入力を読める。
+**レーザーでそのパネルそのものを指している手の分だけ**が届く（`ui::PanelState::pointing` → `view.rs` の `pointed_controllers`）。
+指していなければ空で、パネルの外の入力・ほかのパネルを指している手・ナビゲーションバーや子を指しているだけの手は読めない
+（Android のフォーカスの無いウィンドウがキー入力を受けないのと同じ）。値は出来事（`Tick` など）を渡す時点の写しで、1 回の呼び出しの
+間は変わらない。画面に動きが要るときは `set_ticker` で周期を頼む。
 
 ### 進行中の作業の知らせ（ライブアクティビティ。`activity.rs`）
 

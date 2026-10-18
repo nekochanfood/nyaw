@@ -69,6 +69,30 @@ pub enum Event {
     Tick,
 }
 
+/// コントローラを持つ手。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Hand {
+    Left,
+    Right,
+}
+
+/// コントローラ 1 本の入力（[`host::controllers`]）。レーザーがこのパネルを指している手のものだけが届く。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Controller {
+    pub hand: Hand,
+    /// トリガー（UI のクリック・押下）を押している。
+    pub select: bool,
+    /// トリガーの引き具合（0〜1）。
+    pub trigger: f32,
+    pub grab: bool,
+    pub menu: bool,
+    /// 左手の下のボタン。右手では常に `false`。
+    pub shortcut: bool,
+    /// スティック・トラックパッドのスクロール（x, y）。
+    pub scroll: (f32, f32),
+}
+
 /// 進行中の作業の知らせ（ライブアクティビティ）。ダッシュボードのバーのクイック設定と再生中の間に出る
 /// （iPhone の Dynamic Island のような進み具合の表示）。[`host::set_activity`] で出し、[`host::clear_activity`] で消す。
 ///

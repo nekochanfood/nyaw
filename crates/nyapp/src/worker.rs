@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak, mpsc};
 use std::time::{Duration, Instant};
 
-use nyapp_sdk::{Activity, Event, Node};
+use nyapp_sdk::{Activity, Controller, Event, Node};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -43,6 +43,8 @@ struct Call {
     event: Event,
     language: String,
     now_playing: Option<String>,
+    #[serde(default)]
+    controllers: Vec<Controller>,
     utc_offset: i32,
 }
 
@@ -167,12 +169,14 @@ impl RemoteSandbox {
         event: Event,
         language: &'static str,
         now_playing: Option<String>,
+        controllers: Vec<Controller>,
     ) -> Result<(), Error> {
         self.tx
             .try_send(Call {
                 event,
                 language: language.into(),
                 now_playing,
+                controllers,
                 utc_offset: chrono::Local::now().offset().local_minus_utc(),
             })
             .map_err(|_| Error::new("the nyapp worker is not responding"))
@@ -433,6 +437,7 @@ pub fn main() -> Result<(), Error> {
         let host = sandbox.host();
         host.language = language(&call.language);
         host.now_playing = call.now_playing;
+        host.controllers = call.controllers;
         host.utc_offset = call.utc_offset;
         let reply = match sandbox.event(&call.event) {
             Ok(view) => Reply::Ok(step(&mut sandbox, view)),

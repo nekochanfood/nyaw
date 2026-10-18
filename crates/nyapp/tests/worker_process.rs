@@ -96,7 +96,7 @@ fn external_nyapp_runs_in_a_restricted_worker() {
             .unwrap();
     assert!(worker.is_alive());
     assert!(format!("{:?}", initial.view).contains("worker"));
-    worker.event(nyapp_sdk::Event::Tick, "en", None).unwrap();
+    worker.event(nyapp_sdk::Event::Tick, "en", None, Vec::new()).unwrap();
     let next = results
         .recv_timeout(std::time::Duration::from_secs(5))
         .unwrap()

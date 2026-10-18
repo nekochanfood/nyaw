@@ -316,6 +316,9 @@ pub struct PanelState {
     /// 次のフレームで 1 回描き直す（タイマーなどで自分から変わるビューが立て、フレームループが下ろす）。
     /// 何もしていないパネルの推測の描き直し（[`IDLE_REDRAW`]）を待たずに、変わったときだけ描ける。
     pub redraw: bool,
+    /// このパネルそのものをレーザーで指している手。フレームループが [`sync_panel`] で毎フレーム書く（変わっても描き直させない）。
+    /// コントローラの入力をパネルに見せてよいかの条件（[`PanelControl::controllers`] を絞る）。
+    pub pointing: Vec<Hand>,
     /// このパネルが最後に描き直したときの全体の設定（[`PanelControl::settings`]。変われば描き直す）。
     seen: Settings,
 }
@@ -454,6 +457,7 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     ctl.media = kernel.now_playing();
     let settings = ctl.settings;
     let ctl = ctl.panels.entry(panel).or_default();
+    ctl.pointing = kernel.pointing_hands(panel);
     for c in ctl.commands.drain(..) {
         kernel.apply(panel, c);
     }

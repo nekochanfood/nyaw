@@ -1,5 +1,5 @@
 //! ホスト関数（import モジュール `nyaw`）。ニャプリが外の世界に触れる手段はこれだけで、ファイル・ネットワーク・
-//! 環境変数・ほかのアプリには届かない。権限の要るもの（`audio` / `media`）は、マニフェストの `permissions` に
+//! 環境変数・ほかのアプリには届かない。権限の要るもの（`audio` / `media` / `controller`）は、マニフェストの `permissions` に
 //! 書いていなければ [`Error::Denied`] になる。
 //!
 //! 文字列を受け取る関数は「バッファに書けるだけ書き、本当の長さを返す」形（足りなければ広げて呼び直す）。
@@ -117,6 +117,14 @@ pub fn now_playing() -> Result<Option<String>, Error> {
     }
 }
 
+/// このパネルをレーザーで指している手のコントローラの入力（権限 `controller`）。指していなければ空
+/// （パネルの外の入力は読めない）。値は出来事を受けた時点のもので、呼び出しの間は変わらない。
+pub fn controllers() -> Result<Vec<crate::Controller>, Error> {
+    let json = read_string(|buf, cap| unsafe { sys::controllers(buf, cap) })
+        .map_err(Error::from_code)?;
+    serde_json::from_str(&json).map_err(|_| Error::Invalid)
+}
+
 /// 進行中の作業の知らせ（[`crate::Activity`]）を出す・置き換える。ニャプリを閉じても残る。
 pub fn set_activity(activity: &crate::Activity) -> Result<(), Error> {
     let json = serde_json::to_vec(activity).map_err(|_| Error::Invalid)?;
@@ -160,6 +168,7 @@ mod sys {
         pub fn storage_remove(key: *const u8, key_len: i32) -> i32;
         pub fn beep() -> i32;
         pub fn now_playing(buf: *mut u8, cap: i32) -> i32;
+        pub fn controllers(buf: *mut u8, cap: i32) -> i32;
         pub fn set_activity(ptr: *const u8, len: i32) -> i32;
         pub fn clear_activity();
     }
@@ -201,6 +210,9 @@ mod sys {
         code::DENIED
     }
     pub unsafe fn now_playing(_: *mut u8, _: i32) -> i32 {
+        code::DENIED
+    }
+    pub unsafe fn controllers(_: *mut u8, _: i32) -> i32 {
         code::DENIED
     }
     pub unsafe fn set_activity(_: *const u8, _: i32) -> i32 {
