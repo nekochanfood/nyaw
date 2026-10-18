@@ -44,6 +44,8 @@ pub struct Host {
     storage: Storage,
     /// 画面の言語（`en` / `ja`）。呼ぶ前にビューが書く。
     pub language: &'static str,
+    /// 親プロセスから渡されたローカル時差。ワーカーはタイムゾーンのファイルを開けない。
+    pub utc_offset: i32,
     /// 再生中のメディア（「タイトル - アーティスト」）。呼ぶ前にビューが書く。
     pub now_playing: Option<String>,
     /// ニャプリが頼んだ周期（ms。0 で止める）。呼んだ後にビューが取る。
@@ -75,7 +77,14 @@ impl Sandbox {
         appdata: Option<PathBuf>,
         language: &'static str,
     ) -> Result<(Self, Node), Error> {
-        Self::load_with_storage(manifest, wasm, appdata, None, language)
+        Self::load_with_storage(
+            manifest,
+            wasm,
+            appdata,
+            None,
+            language,
+            chrono::Local::now().offset().local_minus_utc(),
+        )
     }
 
     /// 別プロセスのワーカー用。保存領域は親から受け取り、変更分を親へ返す。
@@ -85,6 +94,7 @@ impl Sandbox {
         appdata: Option<PathBuf>,
         initial_storage: Option<&[u8]>,
         language: &'static str,
+        utc_offset: i32,
     ) -> Result<(Self, Node), Error> {
         let mut config = Config::default();
         config.consume_fuel(true);
@@ -99,6 +109,7 @@ impl Sandbox {
                 .build(),
             storage: Storage::open(appdata.map(|d| d.join("storage.json")), initial_storage),
             language,
+            utc_offset,
             now_playing: None,
             ticker: None,
             beeps: 0,
@@ -195,8 +206,8 @@ fn linker(engine: &Engine) -> Result<Linker<Host>, Error> {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_millis() as i64)
     })?;
-    l.func_wrap("nyaw", "utc_offset", || {
-        chrono::Local::now().offset().local_minus_utc()
+    l.func_wrap("nyaw", "utc_offset", |caller: Caller<'_, Host>| {
+        caller.data().utc_offset
     })?;
     // 暗号には使えない（予測されてよいもの: ゲームの乱数・ID など）。
     l.func_wrap("nyaw", "random", |mut caller: Caller<'_, Host>| {

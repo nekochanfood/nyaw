@@ -6,14 +6,15 @@ use std::ptr;
 use std::sync::Mutex;
 use std::time::Instant;
 
+use sha2::{Digest, Sha256};
 use windows_sys::Win32::Foundation::{
-    CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, LocalFree, SetHandleInformation,
+    CloseHandle, HANDLE, HANDLE_FLAG_INHERIT, SetHandleInformation,
 };
 use windows_sys::Win32::Security::Isolation::{
     CreateAppContainerProfile, DeriveAppContainerSidFromAppContainerName,
 };
 use windows_sys::Win32::Security::{
-    GetTokenInformation, PSID, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, TOKEN_QUERY,
+    FreeSid, GetTokenInformation, PSID, SECURITY_ATTRIBUTES, SECURITY_CAPABILITIES, TOKEN_QUERY,
     TokenIsAppContainer,
 };
 use windows_sys::Win32::System::JobObjects::{
@@ -24,11 +25,12 @@ use windows_sys::Win32::System::JobObjects::{
 };
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
-    CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessW, DeleteProcThreadAttributeList,
-    EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess, GetExitCodeProcess,
-    InitializeProcThreadAttributeList, OpenProcessToken, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
-    PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_INFORMATION, ResumeThread,
-    STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
+    CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
+    DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
+    GetExitCodeProcess, InitializeProcThreadAttributeList, OpenProcessToken,
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
+    PROCESS_INFORMATION, ResumeThread, STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess,
+    UpdateProcThreadAttribute,
 };
 
 use crate::Error;
@@ -74,7 +76,7 @@ impl Drop for Guard {
 struct Sid(PSID);
 impl Drop for Sid {
     fn drop(&mut self) {
-        unsafe { LocalFree(self.0 as *mut c_void) };
+        unsafe { FreeSid(self.0) };
     }
 }
 
@@ -103,14 +105,33 @@ fn win_error(context: &str) -> Error {
     Error::new(format!("{context}: {}", std::io::Error::last_os_error()))
 }
 
-pub fn spawn(id: &str) -> Result<(Box<dyn Write + Send>, Box<dyn Read + Send>, Guard), Error> {
-    let exe = std::env::current_exe()?;
+pub fn spawn(
+    exe: &std::path::Path,
+    id: &str,
+) -> Result<(Box<dyn Write + Send>, Box<dyn Read + Send>, Guard), Error> {
     let exe_w = wide(exe.as_os_str());
     let mut command = wide(std::ffi::OsStr::new(&format!(
         "\"{}\" --nyapp-worker",
         exe.display()
     )));
-    let profile = wide(std::ffi::OsStr::new(&format!("nyaw.nyapp.{id}")));
+    let local_app_data = std::env::var_os("LOCALAPPDATA")
+        .ok_or_else(|| Error::new("LOCALAPPDATA is required to launch an AppContainer"))?;
+    let mut environment = std::ffi::OsString::from("LOCALAPPDATA=");
+    environment.push(local_app_data);
+    environment.push("\0SystemRoot=");
+    environment.push(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()));
+    let mut environment = wide(&environment);
+    environment.push(0);
+    // AppContainer 名の 64 文字制限と、ニャプリ ID の 128 文字上限を両立する。
+    let digest = Sha256::digest(id.as_bytes());
+    let profile_name = format!(
+        "nyaw.nyapp.{}",
+        digest[..24]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    let profile = wide(std::ffi::OsStr::new(&profile_name));
     let mut sid: PSID = ptr::null_mut();
     let hr = unsafe {
         CreateAppContainerProfile(
@@ -241,8 +262,11 @@ pub fn spawn(id: &str) -> Result<(Box<dyn Write + Send>, Box<dyn Read + Send>, G
             ptr::null(),
             ptr::null(),
             1,
-            EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED | CREATE_NO_WINDOW,
-            ptr::null(),
+            EXTENDED_STARTUPINFO_PRESENT
+                | CREATE_SUSPENDED
+                | CREATE_NO_WINDOW
+                | CREATE_UNICODE_ENVIRONMENT,
+            environment.as_ptr().cast(),
             ptr::null(),
             (&startup as *const STARTUPINFOEXW).cast(),
             &mut process,

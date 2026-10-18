@@ -5,7 +5,9 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, OnceLock, mpsc};
+use std::sync::OnceLock;
+#[cfg(not(test))]
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use design::components::{self, Variant as ButtonVariant};
@@ -54,6 +56,7 @@ pub fn spec(
 
 enum State {
     Loading,
+    #[cfg(not(test))]
     Running(worker::RemoteSandbox),
     #[cfg(test)]
     TestRunning(Box<Sandbox>),
@@ -100,7 +103,6 @@ impl NyappView {
         self.state = State::Loading;
         self.ticker = None;
         self.generation += 1;
-        #[cfg(not(test))]
         let generation = self.generation;
         let path = self.app.path.clone();
         #[cfg(not(test))]
@@ -120,24 +122,26 @@ impl NyappView {
                 .background_executor()
                 .spawn(async move { worker::RemoteSandbox::start(&path, &id, language) })
                 .await;
-            let _ = this.update(cx, |v, cx| match loaded {
-                #[cfg(test)]
-                Ok((sandbox, tree)) => {
-                    let mut sandbox = Box::new(sandbox);
-                    let step = worker::step(&mut sandbox, tree);
-                    v.state = State::TestRunning(sandbox);
-                    v.after_step(step, cx);
+            let _ = this.update(cx, |v, cx| {
+                if v.generation != generation {
+                    return;
                 }
-                #[cfg(not(test))]
-                Ok((remote, step, rx)) => {
-                    if v.generation != generation {
-                        return;
+                match loaded {
+                    #[cfg(test)]
+                    Ok((sandbox, tree)) => {
+                        let mut sandbox = Box::new(sandbox);
+                        let step = worker::step(&mut sandbox, tree);
+                        v.state = State::TestRunning(sandbox);
+                        v.after_step(step, cx);
                     }
-                    v.state = State::Running(remote);
-                    v.after_step(step, cx);
-                    v.listen(rx, generation, cx);
+                    #[cfg(not(test))]
+                    Ok((remote, step, rx)) => {
+                        v.state = State::Running(remote);
+                        v.after_step(step, cx);
+                        v.listen(rx, generation, cx);
+                    }
+                    Err(e) => v.fail(e, cx),
                 }
-                Err(e) => v.fail(e, cx),
             });
         })
         .detach();
@@ -156,6 +160,7 @@ impl NyappView {
         #[cfg(test)]
         let mut local_result = None;
         match &mut self.state {
+            #[cfg(not(test))]
             State::Running(remote) => {
                 if let Err(e) = remote.event(event, Lang::current(cx).code(), now_playing) {
                     self.fail(e, cx);
@@ -183,6 +188,7 @@ impl NyappView {
         }
     }
 
+    #[cfg(not(test))]
     fn listen(
         &self,
         rx: mpsc::Receiver<Result<worker::Step, Error>>,

@@ -1,8 +1,9 @@
 //! 外部ニャプリ専用プロセスとの通信。権限境界を越える値は全て長さを確かめる。
 
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Weak, mpsc};
 use std::time::{Duration, Instant};
 
@@ -18,11 +19,13 @@ const MAX_STORAGE_FILE: usize = STORAGE_QUOTA * 2;
 const MAX_MESSAGE: usize = 6 << 20;
 const START_TIMEOUT: Duration = Duration::from_secs(15);
 const CALL_TIMEOUT: Duration = Duration::from_secs(2);
+static STORAGE_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Serialize, Deserialize)]
 struct Start {
     id: String,
     language: String,
+    utc_offset: i32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -30,6 +33,7 @@ struct Call {
     event: Event,
     language: String,
     now_playing: Option<String>,
+    utc_offset: i32,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -59,6 +63,20 @@ impl RemoteSandbox {
         id: &str,
         language: &'static str,
     ) -> Result<(Self, Step, mpsc::Receiver<Result<Step, Error>>), Error> {
+        Self::start_with_executable(&std::env::current_exe()?, path, id, language)
+    }
+
+    /// 実プロセスを使う結合テスト用。`executable` は信頼できる nyaw バイナリを指定する。
+    #[doc(hidden)]
+    pub fn start_with_executable(
+        executable: &Path,
+        path: &Path,
+        id: &str,
+        language: &'static str,
+    ) -> Result<(Self, Step, mpsc::Receiver<Result<Step, Error>>), Error> {
+        if !crate::manifest::valid_id(id) || crate::system::is_system(id) {
+            return Err(Error::new("invalid external nyapp id"));
+        }
         let file = fs::File::open(path)?;
         if file.metadata()?.len() > MAX_PACKAGE as u64 {
             return Err(Error::new("the nyapp package is too large"));
@@ -71,10 +89,9 @@ impl RemoteSandbox {
         let storage_path = installed::appdata(id).map(|p| p.join("storage.json"));
         let storage = storage_path
             .as_ref()
-            .and_then(|p| fs::read(p).ok())
-            .filter(|b| b.len() <= MAX_STORAGE_FILE)
+            .and_then(|p| read_storage(p).ok())
             .unwrap_or_default();
-        let (mut input, mut output, guard) = platform::spawn(id)?;
+        let (mut input, mut output, guard) = platform::spawn(executable, id)?;
         let guard = Arc::new(guard);
         watchdog(Arc::downgrade(&guard));
         guard.deadline(Some(Instant::now() + START_TIMEOUT));
@@ -83,6 +100,7 @@ impl RemoteSandbox {
             &Start {
                 id: id.into(),
                 language: language.into(),
+                utc_offset: chrono::Local::now().offset().local_minus_utc(),
             },
         )?;
         write_frame(&mut input, &bytes)?;
@@ -132,6 +150,7 @@ impl RemoteSandbox {
                 event,
                 language: language.into(),
                 now_playing,
+                utc_offset: chrono::Local::now().offset().local_minus_utc(),
             })
             .map_err(|_| Error::new("the nyapp worker is not responding"))
     }
@@ -165,12 +184,84 @@ fn persist(path: &Option<PathBuf>, step: &Step) -> Result<(), Error> {
     if values.iter().map(|(k, v)| k.len() + v.len()).sum::<usize>() > STORAGE_QUOTA {
         return Err(Error::new("the nyapp storage quota was exceeded"));
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::new("invalid nyapp storage path"))?;
+    let base = parent
+        .parent()
+        .ok_or_else(|| Error::new("invalid nyapp storage path"))?;
+    fs::create_dir_all(base)?;
+    reject_reparse(base)?;
+    if parent.exists() {
+        reject_reparse(parent)?;
+    } else {
+        fs::create_dir(parent)?;
     }
-    let partial = path.with_extension("partial");
-    fs::write(&partial, bytes)?;
-    fs::rename(partial, path)?;
+    reject_reparse(parent)?;
+    if path.exists() {
+        reject_reparse(path)?;
+    }
+    let suffix = STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+    let partial = path.with_extension(format!("{}.{}.partial", std::process::id(), suffix));
+    let mut output = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&partial)?;
+    let result = output.write_all(bytes).and_then(|_| output.sync_all());
+    drop(output);
+    let result = result.and_then(|_| fs::rename(&partial, path));
+    if result.is_err() {
+        let _ = fs::remove_file(&partial);
+    }
+    result?;
+    Ok(())
+}
+
+fn read_storage(path: &Path) -> Result<Vec<u8>, Error> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| Error::new("invalid nyapp storage path"))?;
+    let base = parent
+        .parent()
+        .ok_or_else(|| Error::new("invalid nyapp storage path"))?;
+    reject_reparse(base)?;
+    reject_reparse(parent)?;
+    reject_reparse(path)?;
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x0020_0000); // FILE_FLAG_OPEN_REPARSE_POINT
+    }
+    let input = options.open(path)?;
+    let mut bytes = Vec::new();
+    input
+        .take(MAX_STORAGE_FILE as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_STORAGE_FILE {
+        return Err(Error::new("the nyapp storage is too large"));
+    }
+    Ok(bytes)
+}
+
+fn reject_reparse(path: &Path) -> Result<(), Error> {
+    let meta = fs::symlink_metadata(path)?;
+    #[cfg(windows)]
+    let linked = {
+        use std::os::windows::fs::MetadataExt;
+        meta.file_attributes() & 0x400 != 0
+    };
+    #[cfg(not(windows))]
+    let linked = meta.file_type().is_symlink();
+    if linked {
+        return Err(Error::new("nyapp storage directory must not be a symlink"));
+    }
     Ok(())
 }
 
@@ -257,6 +348,7 @@ pub fn main() -> Result<(), Error> {
             None,
             Some(&storage),
             language(&start.language),
+            start.utc_offset,
         )?;
         Ok((sandbox, view))
     })();
@@ -278,6 +370,7 @@ pub fn main() -> Result<(), Error> {
         let host = sandbox.host();
         host.language = language(&call.language);
         host.now_playing = call.now_playing;
+        host.utc_offset = call.utc_offset;
         let reply = match sandbox.event(&call.event) {
             Ok(view) => Reply::Ok(step(&mut sandbox, view)),
             Err(e) => Reply::Err(e.to_string()),
@@ -335,5 +428,50 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn storage_snapshots_replace_the_previous_file() {
+        let root = std::env::temp_dir().join(format!(
+            "nyapp-worker-storage-{}-{}",
+            std::process::id(),
+            STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed),
+        ));
+        let path = root
+            .join("appdata")
+            .join("net.bettaworx.test")
+            .join("storage.json");
+        let mut step = Step {
+            view: Node::Spacer,
+            ticker: None,
+            beeps: 0,
+            activity: None,
+            storage: Some(br#"{"one":"1"}"#.to_vec()),
+        };
+        persist(&Some(path.clone()), &step).unwrap();
+        step.storage = Some(br#"{"one":"2"}"#.to_vec());
+        persist(&Some(path.clone()), &step).unwrap();
+        assert_eq!(fs::read(path).unwrap(), br#"{"one":"2"}"#);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn storage_does_not_follow_a_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let root = std::env::temp_dir().join(format!(
+            "nyapp-worker-link-{}-{}",
+            std::process::id(),
+            STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed),
+        ));
+        let parent = root.join("appdata").join("net.bettaworx.test");
+        fs::create_dir_all(&parent).unwrap();
+        let secret = root.join("secret.json");
+        fs::write(&secret, br#"{"secret":"private"}"#).unwrap();
+        let storage = parent.join("storage.json");
+        symlink(secret, &storage).unwrap();
+        assert!(read_storage(&storage).is_err());
+        fs::remove_dir_all(root).unwrap();
     }
 }

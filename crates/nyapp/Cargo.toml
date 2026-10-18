@@ -38,5 +38,10 @@ libc = "0.2"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+wat = "1"
 # テストのニャプリを WebAssembly のテキスト形式で書くため。
 wasmi = { version = "2", features = ["wat"] }
+
+[[test]]
+name = "worker_process"
+harness = false

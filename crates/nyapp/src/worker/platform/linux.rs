@@ -27,13 +27,7 @@ impl Guard {
     }
 
     pub fn is_alive(&self) -> bool {
-        self.child
-            .lock()
-            .unwrap()
-            .try_wait()
-            .ok()
-            .flatten()
-            .is_none()
+        matches!(self.child.lock().unwrap().try_wait(), Ok(None))
     }
 }
 
@@ -46,14 +40,17 @@ impl Drop for Guard {
     }
 }
 
-pub fn spawn(_: &str) -> Result<(Box<dyn Write + Send>, Box<dyn Read + Send>, Guard), Error> {
-    let exe = std::env::current_exe()?;
+pub fn spawn(
+    exe: &std::path::Path,
+    _: &str,
+) -> Result<(Box<dyn Write + Send>, Box<dyn Read + Send>, Guard), Error> {
     let mut child = Command::new(exe)
         .arg("--nyapp-worker")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .env_clear()
+        .env("NYAW_WORKER_PARENT_PID", std::process::id().to_string())
         .spawn()?;
     let input = child
         .stdin
@@ -75,6 +72,10 @@ pub fn spawn(_: &str) -> Result<(Box<dyn Write + Send>, Box<dyn Read + Send>, Gu
 
 /// ワーカーはパッケージのバイト列を受け取る前に、ファイル・ネットワーク・プロセス操作を閉じる。
 pub fn confine() -> Result<(), Error> {
+    let parent: u32 = std::env::var("NYAW_WORKER_PARENT_PID")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| Error::new("missing nyapp parent PID"))?;
     unsafe {
         if libc::geteuid() == 0 {
             if libc::setgroups(0, std::ptr::null()) != 0
@@ -90,7 +91,9 @@ pub fn confine() -> Result<(), Error> {
         if libc::prctl(libc::PR_SET_DUMPABLE, 0) != 0 {
             return Err(std::io::Error::last_os_error().into());
         }
-        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0 || libc::getppid() == 1 {
+        if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL) != 0
+            || libc::getppid() as u32 != parent
+        {
             return Err(Error::new("nyapp parent is gone"));
         }
         limit(libc::RLIMIT_AS, 512 << 20)?;
