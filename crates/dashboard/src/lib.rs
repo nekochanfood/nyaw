@@ -1067,10 +1067,16 @@ impl Screen {
                 .background_executor()
                 .spawn(async move { nyapp::installed::uninstall(&id) })
                 .await;
+            let removed = result.is_ok();
             if let Err(e) = result {
                 logger::warn!("cannot uninstall nyapp", app = app.manifest.id, error = e);
             }
-            let _ = this.update(cx, |s, cx| s.scan_nyapps(cx));
+            let _ = this.update(cx, |s, cx| {
+                if removed {
+                    nyapp::activity::clear(&app.manifest.id, cx);
+                }
+                s.scan_nyapps(cx)
+            });
         })
         .detach();
     }
