@@ -40,11 +40,17 @@ pub fn decode(icon: &package::Icon) -> AppIcon {
 fn decode_image(image: &package::Image) -> Option<Arc<RenderImage>> {
     let rgba = match image {
         package::Image::Png(png) => {
-            let decoded = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;
-            if decoded.width() > MAX_SIDE || decoded.height() > MAX_SIDE {
-                return None;
-            }
-            decoded.into_rgba8()
+            // 確保の前に寸法で弾く（圧縮率の高い巨大 PNG でホストのメモリを食わせない）。
+            let mut reader = image::ImageReader::with_format(
+                std::io::Cursor::new(png),
+                image::ImageFormat::Png,
+            );
+            let mut limits = image::Limits::default();
+            limits.max_image_width = Some(MAX_SIDE);
+            limits.max_image_height = Some(MAX_SIDE);
+            limits.max_alloc = Some(u64::from(MAX_SIDE) * u64::from(MAX_SIDE) * 8);
+            reader.limits(limits);
+            reader.decode().ok()?.into_rgba8()
         }
         package::Image::Svg(svg) => rasterize(svg)?,
     };
