@@ -10,7 +10,10 @@ use std::time::{Duration, Instant};
 use nyapp_sdk::{Activity, Event, Node};
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Sandbox, installed, package, sandbox::STORAGE_QUOTA};
+use crate::{
+    Error, Sandbox, installed, package,
+    sandbox::{MAX_ACTIVITY_CHARS, STORAGE_QUOTA},
+};
 
 mod platform;
 
@@ -285,6 +288,24 @@ fn validate_step(step: &Step) -> Result<(), Error> {
     if step.beeps > 1_000 {
         return Err(Error::new("too many nyapp beep requests"));
     }
+    if let Some(Some(activity)) = &step.activity {
+        if activity.title().chars().count() > MAX_ACTIVITY_CHARS {
+            return Err(Error::new("the nyapp activity title is too long"));
+        }
+        match activity {
+            Activity::Countdown { total_ms, .. } if *total_ms <= 0 => {
+                return Err(Error::new("invalid nyapp countdown duration"));
+            }
+            Activity::Progress { text, progress, .. } => {
+                if text.chars().count() > MAX_ACTIVITY_CHARS
+                    || progress.is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
+                {
+                    return Err(Error::new("invalid nyapp progress activity"));
+                }
+            }
+            _ => {}
+        }
+    }
     Ok(())
 }
 
@@ -428,6 +449,34 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn activity_from_worker_is_validated_again() {
+        let mut step = Step {
+            view: Node::Spacer,
+            ticker: None,
+            beeps: 0,
+            activity: Some(Some(Activity::Progress {
+                title: "a".repeat(MAX_ACTIVITY_CHARS + 1),
+                text: String::new(),
+                progress: None,
+            })),
+            storage: None,
+        };
+        assert!(validate_step(&step).is_err());
+        step.activity = Some(Some(Activity::Countdown {
+            title: "timer".into(),
+            ends_at_ms: 1,
+            total_ms: 0,
+        }));
+        assert!(validate_step(&step).is_err());
+        step.activity = Some(Some(Activity::Progress {
+            title: "progress".into(),
+            text: "ok".into(),
+            progress: Some(1.5),
+        }));
+        assert!(validate_step(&step).is_err());
     }
 
     #[test]

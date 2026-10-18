@@ -34,7 +34,7 @@ const MAX_VIEW: usize = 4 << 20;
 const MAX_LOG: usize = 4 << 10;
 /// 進行中の作業の知らせの JSON と、その文字の上限。
 const MAX_ACTIVITY: usize = 4 << 10;
-const MAX_ACTIVITY_CHARS: usize = 64;
+pub(crate) const MAX_ACTIVITY_CHARS: usize = 64;
 
 /// ホスト関数から見える、ニャプリ 1 つ分の状態。
 pub struct Host {

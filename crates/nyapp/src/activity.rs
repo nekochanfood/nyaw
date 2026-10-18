@@ -30,8 +30,12 @@ impl Live {
     pub fn text(&self, now: i64) -> Option<String> {
         match &self.activity {
             Activity::Countdown { .. } if self.finished => None,
-            Activity::Countdown { ends_at_ms, .. } => Some(clock((ends_at_ms - now).max(0) + 999)),
-            Activity::Stopwatch { started_at_ms, .. } => Some(clock((now - started_at_ms).max(0))),
+            Activity::Countdown { ends_at_ms, .. } => Some(clock(
+                ends_at_ms.saturating_sub(now).max(0).saturating_add(999),
+            )),
+            Activity::Stopwatch { started_at_ms, .. } => {
+                Some(clock(now.saturating_sub(*started_at_ms).max(0)))
+            }
             Activity::Progress { text, .. } => Some(text.clone()),
         }
     }
@@ -44,7 +48,9 @@ impl Live {
                 ends_at_ms,
                 total_ms,
                 ..
-            } => Some((1.0 - (ends_at_ms - now) as f32 / *total_ms as f32).clamp(0.0, 1.0)),
+            } => Some(
+                (1.0 - ends_at_ms.saturating_sub(now) as f32 / *total_ms as f32).clamp(0.0, 1.0),
+            ),
             Activity::Stopwatch { .. } => None,
             Activity::Progress { progress, .. } => *progress,
         }
@@ -106,10 +112,29 @@ pub fn clear(id: &str, cx: &mut App) {
 
 /// カウントダウンが `ends` に終わったら知らせる。それまでに置き換え・消されていれば何もしない。
 fn watch_countdown(id: String, ends: i64, cx: &mut App) {
-    let wait = Duration::from_millis((ends - now_ms()).max(0) as u64);
+    // 長大な時刻でもタイマーの Instant 加算を溢れさせず、毎日残りを再確認する。
+    const MAX_WAIT_MS: i64 = 24 * 60 * 60 * 1_000;
+    let remaining = ends.saturating_sub(now_ms()).max(0);
+    let capped = remaining > MAX_WAIT_MS;
+    let wait = Duration::from_millis(remaining.min(MAX_WAIT_MS) as u64);
     cx.spawn(async move |cx| {
         cx.background_executor().timer(wait).await;
-        cx.update(|cx| finish(&id, ends, cx));
+        cx.update(|cx| {
+            if capped {
+                let current = cx.try_global::<Activities>().is_some_and(|activities| {
+                    activities.0.iter().any(|live| {
+                        live.app.manifest.id == id
+                            && matches!(live.activity, Activity::Countdown { ends_at_ms, .. } if ends_at_ms == ends)
+                            && !live.finished
+                    })
+                });
+                if current {
+                    watch_countdown(id, ends, cx);
+                }
+            } else {
+                finish(&id, ends, cx);
+            }
+        });
     })
     .detach();
 }
@@ -216,6 +241,29 @@ mod tests {
         };
         assert_eq!(watch.text(3_723_000).as_deref(), Some("1:02:03"));
         assert_eq!(watch.progress(1), None);
+    }
+
+    #[test]
+    fn extreme_activity_times_do_not_overflow() {
+        let countdown = Live {
+            app: app(vec![]),
+            activity: Activity::Countdown {
+                title: "t".into(),
+                ends_at_ms: i64::MIN,
+                total_ms: 1,
+            },
+            finished: false,
+        };
+        assert_eq!(countdown.text(i64::MAX).as_deref(), Some("0:00"));
+        assert_eq!(countdown.progress(i64::MAX), Some(1.0));
+        let stopwatch = Live {
+            activity: Activity::Stopwatch {
+                title: "t".into(),
+                started_at_ms: i64::MIN,
+            },
+            ..countdown
+        };
+        assert!(stopwatch.text(i64::MAX).is_some());
     }
 
     /// ニャプリごとに 1 つで、出し直すと置き換わり、消すと無くなる。
