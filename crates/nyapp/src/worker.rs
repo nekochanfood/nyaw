@@ -280,6 +280,9 @@ fn validate_step(step: &Step) -> Result<(), Error> {
     let mut count = 0usize;
     while let Some((node, depth)) = stack.pop() {
         count += 1;
+        if let Node::Canvas(canvas) = node {
+            count += canvas.shapes.len();
+        }
         if count > 10_000 || depth > 64 {
             return Err(Error::new("the nyapp view is too complex"));
         }
@@ -446,6 +449,28 @@ mod tests {
         let header = (7u32).to_le_bytes();
         let mut input = header.as_slice();
         assert!(read_frame(&mut input, 6).is_err());
+    }
+
+    #[test]
+    fn canvas_shapes_count_toward_the_view_budget() {
+        let shapes = vec![
+            nyapp_sdk::Shape::Circle {
+                x: 0.0,
+                y: 0.0,
+                r: 1.0,
+                color: Default::default(),
+            };
+            10_001
+        ];
+        let view = nyapp_sdk::canvas("c", 10.0, 10.0, shapes);
+        let step = Step {
+            view,
+            ticker: None,
+            beeps: 0,
+            activity: None,
+            storage: None,
+        };
+        assert!(validate_step(&step).is_err());
     }
 
     #[test]
