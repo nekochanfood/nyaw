@@ -44,8 +44,14 @@ pub struct Step {
     pub view: Node,
     pub ticker: Option<u32>,
     pub beeps: u32,
+    /// 外側が `None` なら変更なし、`Some(None)` なら消す（JSON の省略と `null` で分ける）。
+    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present")]
     pub activity: Option<Option<Activity>>,
     pub storage: Option<Vec<u8>>,
+}
+
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<Activity>>, D::Error> {
+    Option::<Activity>::deserialize(d).map(Some)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -475,6 +481,27 @@ mod tests {
             progress: Some(1.5),
         }));
         assert!(validate_step(&step).is_err());
+    }
+
+    #[test]
+    fn activity_unchanged_and_cleared_survive_the_wire() {
+        let step = |activity| Step {
+            view: Node::Spacer,
+            ticker: None,
+            beeps: 0,
+            activity,
+            storage: None,
+        };
+        let live = Activity::Progress {
+            title: "a".into(),
+            text: String::new(),
+            progress: None,
+        };
+        for activity in [None, Some(None), Some(Some(live))] {
+            let wire = serde_json::to_vec(&step(activity.clone())).unwrap();
+            let back: Step = serde_json::from_slice(&wire).unwrap();
+            assert_eq!(back.activity, activity);
+        }
     }
 
     #[test]
