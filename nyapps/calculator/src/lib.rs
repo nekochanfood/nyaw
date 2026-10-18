@@ -41,6 +41,8 @@ pub struct Calculator {
     pending: Option<(f64, Op)>,
     /// 次の数字で表示を打ち直す（演算子・= の直後）。
     fresh: bool,
+    /// 演算子を押してから、まだ右の数が無い（押し直しは演算子だけ替える）。
+    awaiting: bool,
 }
 
 impl Calculator {
@@ -60,13 +62,14 @@ impl Calculator {
         if let Some(op) = op {
             let value = match self.pending {
                 // 続けて演算子を押したら、そこまでを計算する（押し直しは演算子だけ替える）。
-                Some((left, prev)) if !self.fresh => prev.apply(left, self.value()),
+                Some((left, prev)) if !self.awaiting => prev.apply(left, self.value()),
                 Some((left, _)) => left,
                 None => self.value(),
             };
             self.entry = format(value);
             self.pending = Some((value, op));
             self.fresh = true;
+            self.awaiting = true;
             return;
         }
         match key {
@@ -87,6 +90,7 @@ impl Calculator {
             "pct" => {
                 self.entry = format(self.value() / 100.0);
                 self.fresh = true;
+                self.awaiting = false;
             }
             "back" if !self.fresh => {
                 self.entry.pop();
@@ -99,6 +103,7 @@ impl Calculator {
                     self.entry = "0".into();
                     self.fresh = false;
                 }
+                self.awaiting = false;
                 if !self.entry.contains('.') {
                     self.entry.push('.');
                 }
@@ -108,6 +113,7 @@ impl Calculator {
                     self.entry = "0".into();
                     self.fresh = false;
                 }
+                self.awaiting = false;
                 if self.entry == "0" {
                     self.entry = d.into();
                 } else if self.entry.chars().filter(char::is_ascii_digit).count() < MAX_DIGITS {
@@ -123,7 +129,7 @@ impl Calculator {
     }
 }
 
-/// 計算結果を表示の文字列にする（整数は小数点なし、そうでなければ末尾の 0 を落とす）。
+/// 計算結果を表示の文字列にする（整数は小数点なし、そうでなければ有効数字 10 桁。小さすぎる数は指数表記）。
 fn format(v: f64) -> String {
     if !v.is_finite() {
         return "Error".into();
@@ -131,8 +137,12 @@ fn format(v: f64) -> String {
     if v.fract() == 0.0 && v.abs() < 1e15 {
         return format!("{}", v as i64);
     }
-    let s = format!("{v:.10}");
-    s.trim_end_matches('0').trim_end_matches('.').to_owned()
+    let rounded: f64 = format!("{v:.9e}").parse().unwrap_or(v);
+    if rounded.abs() < 1e-6 {
+        format!("{rounded:e}")
+    } else {
+        format!("{rounded}")
+    }
 }
 
 /// 並べるキー: (ID, 表示, 見た目)。
@@ -165,6 +175,7 @@ impl App for Calculator {
             entry: "0".into(),
             pending: None,
             fresh: false,
+            awaiting: false,
         }
     }
 
@@ -175,7 +186,7 @@ impl App for Calculator {
         };
         let current_op = self
             .pending
-            .filter(|_| self.fresh)
+            .filter(|_| self.awaiting)
             .map(|(_, op)| op.symbol());
         let keys = KEYS.iter().map(|&(id, label, variant)| {
             button(format!("key-{id}"), label)
@@ -226,6 +237,12 @@ mod tests {
         assert_eq!(run("1 / 0 = 5"), "5", "エラーの後は打ち直せる");
         assert_eq!(run("5 + * 2 ="), "10", "演算子の押し直しは演算子だけ替える");
         assert_eq!(run("0 . 1 + 0 . 2 ="), "0.3");
+        assert_eq!(
+            run("2 * 5 0 pct * 4 ="),
+            run("2 * 5 0 pct = * 4 ="),
+            "% の結果を右の数として使う"
+        );
+        assert_eq!(run("1 / 1 0 0 0 0 0 0 0 0 0 0 0 = * 1 0 0 0 0 0 0 0 0 0 0 0 ="), "1");
     }
 
     #[test]
