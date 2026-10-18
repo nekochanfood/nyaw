@@ -2308,6 +2308,8 @@ mod tests {
             )
             .unwrap();
         ov.set_nav_bar(&mut vr.backend, bar, 0);
+        // バーが持ち主の下に付くまで 1 回回す。
+        ov.tick(&mut vr);
         assert!(ov.pointing_hands(0).is_empty());
         controller(&mut vr, Pose::IDENTITY, &[]);
         ov.tick(&mut vr);

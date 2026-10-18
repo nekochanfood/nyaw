@@ -813,13 +813,11 @@ api = 1
             facing: None,
             metrics: None,
         };
-        let mut ctl = PanelControl {
-            controllers: vec![
-                state(kernel::vr::Hand::Left, false),
-                state(kernel::vr::Hand::Right, true),
-            ],
-            ..Default::default()
-        };
+        let mut ctl = PanelControl::default();
+        ctl.controllers = vec![
+            state(kernel::vr::Hand::Left, false),
+            state(kernel::vr::Hand::Right, true),
+        ];
         assert!(pointed_controllers(&ctl, 5).is_empty(), "パネルの状態が無い");
         ctl.panels.entry(5).or_default();
         assert!(pointed_controllers(&ctl, 5).is_empty(), "指していない");
