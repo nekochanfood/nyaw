@@ -120,17 +120,18 @@ impl RemoteSandbox {
                 let Some(g) = weak.upgrade() else { break };
                 g.deadline(Some(Instant::now() + CALL_TIMEOUT));
                 drop(g);
-                let result = write_json(&mut input, &call)
+                let reply = write_json(&mut input, &call)
                     .and_then(|_| input.flush().map_err(Error::from))
-                    .and_then(|_| read_reply(&mut output))
-                    .and_then(|step| {
-                        validate_step(&step)?;
-                        persist(&storage_path, &step)?;
-                        Ok(step)
-                    });
+                    .and_then(|_| read_reply(&mut output));
+                // 返事を受けたら期限を外す。親側の検証と保存（ディスク待ち）でワーカーを殺さない。
                 if let Some(g) = weak.upgrade() {
                     g.deadline(None);
                 }
+                let result = reply.and_then(|step| {
+                    validate_step(&step)?;
+                    persist(&storage_path, &step)?;
+                    Ok(step)
+                });
                 let failed = result.is_err();
                 if results.send(result).is_err() || failed {
                     break;
