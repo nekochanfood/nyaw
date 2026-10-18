@@ -20,6 +20,7 @@ pub mod sandbox;
 pub mod system;
 pub mod update;
 pub mod view;
+pub mod worker;
 
 use std::collections::HashMap;
 use std::fmt;

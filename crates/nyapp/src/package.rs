@@ -3,7 +3,7 @@
 //! ファイル名はマニフェストの ID と同じ `<id>.nyapp`。
 
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::Path;
 
 use zip::write::SimpleFileOptions;
@@ -87,8 +87,18 @@ pub fn read_listing(path: &Path) -> Result<(Manifest, Icon), Error> {
 /// マニフェストと wasm を読む。
 pub fn read(path: &Path) -> Result<(Manifest, Vec<u8>), Error> {
     let mut zip = ZipArchive::new(File::open(path)?)?;
-    let manifest = Manifest::parse(&read_text(&mut zip, MANIFEST, MAX_MANIFEST)?)?;
-    let wasm = read_entry(&mut zip, WASM, MAX_WASM)?;
+    read_archive(&mut zip)
+}
+
+/// ワーカーが親から受け取ったパッケージを、ファイルを開かずに読む。
+pub fn read_bytes(bytes: &[u8]) -> Result<(Manifest, Vec<u8>), Error> {
+    let mut zip = ZipArchive::new(std::io::Cursor::new(bytes))?;
+    read_archive(&mut zip)
+}
+
+fn read_archive<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<(Manifest, Vec<u8>), Error> {
+    let manifest = Manifest::parse(&read_text(zip, MANIFEST, MAX_MANIFEST)?)?;
+    let wasm = read_entry(zip, WASM, MAX_WASM)?;
     Ok((manifest, wasm))
 }
 
@@ -114,12 +124,20 @@ pub fn write(path: &Path, manifest: &str, wasm: &[u8], icon: &Icon) -> Result<Ma
     Ok(parsed)
 }
 
-fn read_text(zip: &mut ZipArchive<File>, name: &str, max: u64) -> Result<String, Error> {
+fn read_text<R: Read + Seek>(
+    zip: &mut ZipArchive<R>,
+    name: &str,
+    max: u64,
+) -> Result<String, Error> {
     String::from_utf8(read_entry(zip, name, max)?)
         .map_err(|_| Error::new(format!("{name} is not UTF-8")))
 }
 
-fn read_entry(zip: &mut ZipArchive<File>, name: &str, max: u64) -> Result<Vec<u8>, Error> {
+fn read_entry<R: Read + Seek>(
+    zip: &mut ZipArchive<R>,
+    name: &str,
+    max: u64,
+) -> Result<Vec<u8>, Error> {
     let entry = zip
         .by_name(name)
         .map_err(|e| Error::new(format!("{name}: {e}")))?;

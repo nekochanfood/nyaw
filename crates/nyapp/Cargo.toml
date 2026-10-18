@@ -30,6 +30,12 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 wasmi = { version = "2", default-features = false, features = ["std", "stable", "validate", "portable-dispatch"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Isolation", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 # テストのニャプリを WebAssembly のテキスト形式で書くため。

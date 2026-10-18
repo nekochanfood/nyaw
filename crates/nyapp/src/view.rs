@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, mpsc};
 use std::time::Duration;
 
 use design::components::{self, Variant as ButtonVariant};
@@ -21,7 +21,9 @@ use kernel::vr::Vec2;
 use nyapp_sdk::{Align, Color, Event, Gap, Node, Shape, Size, Stack, Variant};
 use ui::{PanelControl, PanelSpec};
 
-use crate::{Error, Installed, Sandbox, installed, package};
+use crate::{Error, Installed, worker};
+#[cfg(test)]
+use crate::{Sandbox, installed, package};
 
 /// パネルの大きさと解像度（ダッシュボードにはめる画面と同じ）。
 const SIZE_M: Vec2 = Vec2::new(1.024, 0.768);
@@ -52,7 +54,9 @@ pub fn spec(
 
 enum State {
     Loading,
-    Running(Box<Sandbox>),
+    Running(worker::RemoteSandbox),
+    #[cfg(test)]
+    TestRunning(Box<Sandbox>),
     /// 落ちた。最後の画面を白黒で残し、子のダイアログ（[`CrashDialog`]）で知らせる。`asked` はダイアログを出したか
     /// （高さを文に合わせて測るので、ウィンドウのある描画のときに出す）。
     Failed {
@@ -72,6 +76,7 @@ pub struct NyappView {
     canvases: RefCell<HashMap<String, Rc<Cell<Bounds<Pixels>>>>>,
     /// 最後に知らせたポインタの位置（同じ所なら送らない）。
     pointer: Option<Point<Pixels>>,
+    generation: u64,
 }
 
 impl NyappView {
@@ -84,6 +89,7 @@ impl NyappView {
             ticker: None,
             canvases: RefCell::default(),
             pointer: None,
+            generation: 0,
         };
         this.load(cx);
         this
@@ -93,9 +99,15 @@ impl NyappView {
     fn load(&mut self, cx: &mut Context<Self>) {
         self.state = State::Loading;
         self.ticker = None;
+        self.generation += 1;
+        #[cfg(not(test))]
+        let generation = self.generation;
         let path = self.app.path.clone();
+        #[cfg(not(test))]
+        let id = self.app.manifest.id.clone();
         let language = Lang::current(cx).code();
         cx.spawn(async move |this, cx| {
+            #[cfg(test)]
             let loaded = cx
                 .background_executor()
                 .spawn(async move {
@@ -103,11 +115,27 @@ impl NyappView {
                     Sandbox::load(&manifest, &wasm, installed::appdata(&manifest.id), language)
                 })
                 .await;
+            #[cfg(not(test))]
+            let loaded = cx
+                .background_executor()
+                .spawn(async move { worker::RemoteSandbox::start(&path, &id, language) })
+                .await;
             let _ = this.update(cx, |v, cx| match loaded {
+                #[cfg(test)]
                 Ok((sandbox, tree)) => {
-                    v.state = State::Running(Box::new(sandbox));
-                    v.tree = tree;
-                    v.after_call(cx);
+                    let mut sandbox = Box::new(sandbox);
+                    let step = worker::step(&mut sandbox, tree);
+                    v.state = State::TestRunning(sandbox);
+                    v.after_step(step, cx);
+                }
+                #[cfg(not(test))]
+                Ok((remote, step, rx)) => {
+                    if v.generation != generation {
+                        return;
+                    }
+                    v.state = State::Running(remote);
+                    v.after_step(step, cx);
+                    v.listen(rx, generation, cx);
                 }
                 Err(e) => v.fail(e, cx),
             });
@@ -118,38 +146,82 @@ impl NyappView {
 
     /// 出来事をニャプリへ渡し、返ってきた画面に替える。
     fn send(&mut self, event: Event, cx: &mut Context<Self>) {
-        let State::Running(sandbox) = &mut self.state else {
-            return;
-        };
-        let host = sandbox.host();
-        host.language = Lang::current(cx).code();
-        host.now_playing = cx.default_global::<PanelControl>().media.as_ref().map(|m| {
+        let now_playing = cx.default_global::<PanelControl>().media.as_ref().map(|m| {
             if m.artist.is_empty() {
                 m.title.clone()
             } else {
                 format!("{} - {}", m.title, m.artist)
             }
         });
-        match sandbox.event(&event) {
-            Ok(tree) => {
-                self.tree = tree;
-                self.after_call(cx);
+        #[cfg(test)]
+        let mut local_result = None;
+        match &mut self.state {
+            State::Running(remote) => {
+                if let Err(e) = remote.event(event, Lang::current(cx).code(), now_playing) {
+                    self.fail(e, cx);
+                }
             }
-            Err(e) => self.fail(e, cx),
+            #[cfg(test)]
+            State::TestRunning(sandbox) => {
+                let host = sandbox.host();
+                host.language = Lang::current(cx).code();
+                host.now_playing = now_playing;
+                local_result = Some(
+                    sandbox
+                        .event(&event)
+                        .map(|tree| worker::step(sandbox, tree)),
+                );
+            }
+            _ => {}
+        }
+        #[cfg(test)]
+        if let Some(result) = local_result {
+            match result {
+                Ok(step) => self.after_step(step, cx),
+                Err(e) => self.fail(e, cx),
+            }
         }
     }
 
+    fn listen(
+        &self,
+        rx: mpsc::Receiver<Result<worker::Step, Error>>,
+        generation: u64,
+        cx: &mut Context<Self>,
+    ) {
+        let rx = Arc::new(Mutex::new(rx));
+        cx.spawn(async move |this, cx| {
+            loop {
+                let input = rx.clone();
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { input.lock().unwrap().recv() })
+                    .await;
+                let Ok(keep_listening) = this.update(cx, |v, cx| {
+                    if v.generation != generation {
+                        return false;
+                    }
+                    match result {
+                        Ok(Ok(step)) => v.after_step(step, cx),
+                        Ok(Err(e)) => v.fail(e, cx),
+                        Err(_) => v.fail(Error::new("the nyapp worker stopped"), cx),
+                    }
+                    matches!(v.state, State::Running(_))
+                }) else {
+                    return;
+                };
+                if !keep_listening {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
     /// 呼び出しの間にニャプリが頼んだこと（周期・音）を反映して描き直す。
-    fn after_call(&mut self, cx: &mut Context<Self>) {
-        let State::Running(sandbox) = &mut self.state else {
-            return;
-        };
-        let host = sandbox.host();
-        let (ticker, beeps, activity) = (
-            host.ticker.take(),
-            std::mem::take(&mut host.beeps),
-            host.activity.take(),
-        );
+    fn after_step(&mut self, step: worker::Step, cx: &mut Context<Self>) {
+        self.tree = step.view;
+        let (ticker, beeps, activity) = (step.ticker, step.beeps, step.activity);
         if let Some(activity) = activity {
             crate::activity::set(&self.app, activity, cx);
         }
@@ -433,7 +505,7 @@ impl Render for NyappView {
                 .child(message(i18n::t(cx, "nyapp.loading"))),
             // 起動できずに落ちたものは、出す画面が無い。
             State::Failed { .. } if self.tree == Node::Spacer => components::card_panel(&theme),
-            State::Running(_) | State::Failed { .. } => {
+            _ => {
                 // 今の画面にある面だけを数え直す。
                 self.canvases.borrow_mut().clear();
                 let tree = self.node(&self.tree, "0", false, &theme, cx);
@@ -703,7 +775,7 @@ api = 1
         let app = crashing_app("trap", None);
         let (view, cx) = cx.add_window_view(|_, cx| NyappView::new(5, app, cx));
         cx.run_until_parked();
-        assert!(view.read_with(cx, |v, _| matches!(v.state, State::Running(_))));
+        assert!(view.read_with(cx, |v, _| matches!(v.state, State::TestRunning(_))));
         click(cx, "boom");
         cx.run_until_parked();
         assert!(view.read_with(cx, |v, _| matches!(
@@ -766,7 +838,7 @@ api = 1
             "ニャプリは閉じない"
         );
         assert!(
-            view.read_with(dialog, |v, _| matches!(v.state, State::Running(_))),
+            view.read_with(dialog, |v, _| matches!(v.state, State::TestRunning(_))),
             "同じパネルで起こし直す"
         );
         click(dialog, "nyapp-crash-close");

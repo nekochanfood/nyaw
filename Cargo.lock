@@ -3828,6 +3828,7 @@ dependencies = [
  "i18n",
  "image",
  "kernel",
+ "libc",
  "logger",
  "nyapp-sdk",
  "resvg",
@@ -3838,6 +3839,7 @@ dependencies = [
  "ui",
  "ureq",
  "wasmi",
+ "windows-sys 0.61.2",
  "zip",
 ]
 
@@ -3856,6 +3858,7 @@ dependencies = [
  "beam",
  "kernel",
  "logger",
+ "nyapp",
  "profiler",
  "testing",
  "ui",

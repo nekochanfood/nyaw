@@ -66,6 +66,7 @@ profiler.workspace = true
 wrist.workspace = true
 testing.workspace = true
 beam.workspace = true
+nyapp.workspace = true
 
 # testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する
 [profile.dev.package.testkit]

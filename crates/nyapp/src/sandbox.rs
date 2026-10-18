@@ -75,6 +75,17 @@ impl Sandbox {
         appdata: Option<PathBuf>,
         language: &'static str,
     ) -> Result<(Self, Node), Error> {
+        Self::load_with_storage(manifest, wasm, appdata, None, language)
+    }
+
+    /// 別プロセスのワーカー用。保存領域は親から受け取り、変更分を親へ返す。
+    pub fn load_with_storage(
+        manifest: &Manifest,
+        wasm: &[u8],
+        appdata: Option<PathBuf>,
+        initial_storage: Option<&[u8]>,
+        language: &'static str,
+    ) -> Result<(Self, Node), Error> {
         let mut config = Config::default();
         config.consume_fuel(true);
         let engine = Engine::new(&config);
@@ -86,7 +97,7 @@ impl Sandbox {
                 .memory_size(MEMORY_LIMIT)
                 .instances(1)
                 .build(),
-            storage: Storage::open(appdata.map(|d| d.join("storage.json"))),
+            storage: Storage::open(appdata.map(|d| d.join("storage.json")), initial_storage),
             language,
             now_playing: None,
             ticker: None,
@@ -150,6 +161,12 @@ impl Sandbox {
 
     pub fn host(&mut self) -> &mut Host {
         self.store.data_mut()
+    }
+}
+
+impl Host {
+    pub fn take_storage(&mut self) -> Option<Vec<u8>> {
+        self.storage.take_changed()
     }
 }
 
@@ -361,18 +378,21 @@ fn write(caller: &mut Caller<'_, Host>, buf: i32, cap: i32, bytes: &[u8]) -> i32
 struct Storage {
     values: BTreeMap<String, String>,
     writer: Option<mpsc::Sender<Vec<u8>>>,
+    dirty: bool,
 }
 
 impl Storage {
-    fn open(path: Option<PathBuf>) -> Self {
-        let values = path
-            .as_ref()
-            .and_then(|p| std::fs::read(p).ok())
+    fn open(path: Option<PathBuf>, initial: Option<&[u8]>) -> Self {
+        let from_disk = path.as_ref().and_then(|p| std::fs::read(p).ok());
+        let values = initial
+            .or(from_disk.as_deref())
+            .filter(|b| b.len() <= STORAGE_QUOTA * 2)
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
         Self {
             values,
             writer: path.map(spawn_writer),
+            dirty: false,
         }
     }
 
@@ -400,10 +420,19 @@ impl Storage {
         0
     }
 
-    fn save(&self) {
+    fn save(&mut self) {
+        self.dirty = true;
         if let (Some(tx), Ok(bytes)) = (&self.writer, serde_json::to_vec(&self.values)) {
             let _ = tx.send(bytes);
         }
+    }
+
+    fn take_changed(&mut self) -> Option<Vec<u8>> {
+        if !self.dirty {
+            return None;
+        }
+        self.dirty = false;
+        serde_json::to_vec(&self.values).ok()
     }
 }
 
@@ -549,7 +578,7 @@ mod tests {
     /// 書ける量には上限があり、空のキーは受け付けない。
     #[test]
     fn storage_has_a_quota() {
-        let mut storage = Storage::open(None);
+        let mut storage = Storage::open(None, None);
         assert_eq!(storage.set("k".into(), "v".into()), 0);
         assert_eq!(storage.set(String::new(), "v".into()), code::INVALID);
         assert_eq!(

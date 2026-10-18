@@ -8,6 +8,18 @@ use kernel::{Kernel, config, subsystems::os};
 use logger::{Level, Logger, StderrSink};
 
 fn main() -> ExitCode {
+    if std::env::args_os()
+        .nth(1)
+        .is_some_and(|arg| arg == "--nyapp-worker")
+    {
+        return match nyapp::worker::main() {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("nyapp worker: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let config = config::load();
     init_logger(config.as_ref().ok().and_then(|c| c.log.clone()));
     let config = match config {
