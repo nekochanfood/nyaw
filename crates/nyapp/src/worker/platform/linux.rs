@@ -96,7 +96,7 @@ pub fn confine() -> Result<(), Error> {
         limit(libc::RLIMIT_NOFILE, 4)?;
         limit(libc::RLIMIT_FSIZE, 0)?;
         limit(libc::RLIMIT_CORE, 0)?;
-        limit(libc::RLIMIT_CPU, 300)?;
+        // CPU は RLIMIT_CPU では縛らない（累積なので長く動く正しいニャプリを殺す）。1 回ごとの上限は親の 2 秒の期限とワスムの燃料。
         if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
             return Err(std::io::Error::last_os_error().into());
         }
