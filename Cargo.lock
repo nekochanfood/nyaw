@@ -1376,6 +1376,7 @@ dependencies = [
  "i18n",
  "image",
  "kernel",
+ "logger",
  "ui",
 ]
 

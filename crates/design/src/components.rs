@@ -727,6 +727,18 @@ pub fn tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
     b
 }
 
+/// 地の上に置くタイル（アプリ一覧のアプリなど）: [`tile`] と同じく縦に並べるが、カードの地を敷かず、ホバー・押下のときだけ
+/// 色が付く。ふだんは地（`background`）と同じ色（透明にするとホバーの色から戻るフェードが途中で切れる。[`sidebar_item`]）。
+pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
+    let mut b = tile(theme, id);
+    (b.rest, b.hover, b.active) = (
+        theme.background,
+        theme.control_on_background_hover,
+        theme.control_on_background_active,
+    );
+    b
+}
+
 /// サイドバーの行: 左にアイコンと文字。どれを選んでいるかを見せるための行で、ふだんは地（`background`）と同じ色
 /// （背景が無いように見える。透明にするとホバーの色から戻るフェードが途中で切れるので地の色を使う）、ホバー・押下で
 /// `control-on-background-*`、選んでいる行（`selected`）はアクセント（`accent-bg-active` に `accent-text`）。高さはボタンと同じ。

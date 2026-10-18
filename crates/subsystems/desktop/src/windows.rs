@@ -1,4 +1,4 @@
-use super::{Button, Error, Frame, Icon, Session, Source, SourceKind, Touch, TouchPhase, Wake};
+use super::{Button, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch, TouchPhase, Wake};
 use ::windows::{
     Foundation::{TimeSpan, TypedEventHandler},
     Graphics::{
@@ -7,7 +7,7 @@ use ::windows::{
         SizeInt32,
     },
     Win32::{
-        Foundation::{CloseHandle, HMODULE, HWND, LPARAM, POINT, RECT, WPARAM},
+        Foundation::{CloseHandle, HMODULE, HWND, LPARAM, POINT, RECT, SIZE, WPARAM},
         Devices::Display::{
             DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
             DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
@@ -22,8 +22,9 @@ use ::windows::{
             Dxgi::IDXGIDevice,
             Gdi::*,
         },
+        Storage::EnhancedStorage::{PKEY_AppUserModel_ID, PKEY_Link_TargetParsingPath},
         System::{
-            Com::CoIncrementMTAUsage,
+            Com::{COINIT_APARTMENTTHREADED, CoIncrementMTAUsage, CoInitializeEx, CoTaskMemFree},
             Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
             Threading::{
                 AttachThreadInput, GetCurrentThreadId, OpenProcess, PROCESS_NAME_WIN32,
@@ -38,7 +39,11 @@ use ::windows::{
         UI::{
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext},
             Input::KeyboardAndMouse::*,
-            Shell::ExtractIconExW,
+            Shell::{
+                BHID_EnumItems, ExtractIconExW, FOLDERID_AppsFolder, IEnumShellItems, IShellItem,
+                IShellItem2, IShellItemImageFactory, KF_FLAG_DEFAULT, SHGetKnownFolderItem,
+                SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY, ShellExecuteW,
+            },
             WindowsAndMessaging::*,
         },
     },
@@ -275,7 +280,36 @@ unsafe fn process_path(hwnd: HWND) -> Option<Vec<u16>> {
 unsafe fn icon_rgba(icon: HICON) -> Option<Icon> {
     let mut info = ICONINFO::default();
     unsafe { GetIconInfo(icon, &mut info) }.ok()?;
-    let read = |bitmap: HBITMAP| -> Option<(u32, u32, Vec<u8>)> {
+    let read = |bitmap: HBITMAP| unsafe { bitmap_bgra(bitmap) };
+    let color = (!info.hbmColor.is_invalid())
+        .then(|| read(info.hbmColor))
+        .flatten();
+    let mask = color
+        .as_ref()
+        .filter(|(_, _, px)| px.chunks_exact(4).all(|p| p[3] == 0))
+        .and_then(|_| read(info.hbmMask));
+    unsafe {
+        let _ = DeleteObject(info.hbmColor.into());
+        let _ = DeleteObject(info.hbmMask.into());
+    }
+    let (width, height, mut px) = color?;
+    for (i, p) in px.chunks_exact_mut(4).enumerate() {
+        p.swap(0, 2);
+        if let Some((_, _, m)) = &mask {
+            // マスクの黒い所が絵、白い所が透明。
+            p[3] = if m[i * 4] == 0 { 255 } else { 0 };
+        }
+    }
+    Some(Icon {
+        width,
+        height,
+        rgba: px.into(),
+    })
+}
+
+/// ビットマップを上から下の並びの BGRA で読み出す（一辺 256 まで）。
+unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
+    {
         let mut bm = BITMAP::default();
         let got = unsafe {
             GetObjectW(
@@ -316,31 +350,90 @@ unsafe fn icon_rgba(icon: HICON) -> Option<Icon> {
         };
         unsafe { ReleaseDC(None, dc) };
         (lines == h).then_some((w as u32, h as u32, bgra))
+    }
+}
+
+/// スタートメニューのアプリ（`shell:AppsFolder`）を並べる。名前・AppUserModelId・ショートカットの指す実行ファイル名と、
+/// アイコン（64px）を読む。
+pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
+    // シェルの項目は STA で読む（このワーカーのスレッドだけで使う）。
+    let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    let folder: IShellItem = unsafe { SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None) }?;
+    let items: IEnumShellItems = unsafe { folder.BindToHandler(None, &BHID_EnumItems) }?;
+    let take = |s: ::windows::core::Result<PWSTR>| {
+        let s = s.ok()?;
+        let text = unsafe { s.to_string() }.ok();
+        unsafe { CoTaskMemFree(Some(s.0 as *const _)) };
+        text
     };
-    let color = (!info.hbmColor.is_invalid())
-        .then(|| read(info.hbmColor))
-        .flatten();
-    let mask = color
-        .as_ref()
-        .filter(|(_, _, px)| px.chunks_exact(4).all(|p| p[3] == 0))
-        .and_then(|_| read(info.hbmMask));
-    unsafe {
-        let _ = DeleteObject(info.hbmColor.into());
-        let _ = DeleteObject(info.hbmMask.into());
-    }
-    let (width, height, mut px) = color?;
-    for (i, p) in px.chunks_exact_mut(4).enumerate() {
-        p.swap(0, 2);
-        if let Some((_, _, m)) = &mask {
-            // マスクの黒い所が絵、白い所が透明。
-            p[3] = if m[i * 4] == 0 { 255 } else { 0 };
+    let mut apps = Vec::new();
+    loop {
+        let mut item = [None];
+        let mut fetched = 0u32;
+        if unsafe { items.Next(&mut item, Some(&mut fetched as *mut u32)) }.is_err() || fetched == 0 {
+            break;
         }
+        let Some(item) = item[0].take().and_then(|i| i.cast::<IShellItem2>().ok()) else {
+            continue;
+        };
+        let (Some(name), Some(id)) = (
+            take(unsafe { item.GetDisplayName(SIGDN_NORMALDISPLAY) }),
+            take(unsafe { item.GetString(&PKEY_AppUserModel_ID) }),
+        ) else {
+            continue;
+        };
+        let exe = take(unsafe { item.GetString(&PKEY_Link_TargetParsingPath) })
+            .filter(|p| p.to_ascii_lowercase().ends_with(".exe"))
+            .and_then(|p| p.rsplit('\\').next().map(str::to_owned));
+        let icon = item
+            .cast::<IShellItemImageFactory>()
+            .ok()
+            .and_then(|f| unsafe { f.GetImage(SIZE { cx: 64, cy: 64 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK) }.ok())
+            .and_then(|bitmap| {
+                let read = unsafe { bitmap_bgra(bitmap) };
+                unsafe {
+                    let _ = DeleteObject(bitmap.into());
+                }
+                let (width, height, mut px) = read?;
+                // シェルの絵は乗算済みのアルファなので、ストレートに戻す。
+                for p in px.chunks_exact_mut(4) {
+                    p.swap(0, 2);
+                    let a = p[3] as u32;
+                    if a > 0 {
+                        for c in &mut p[..3] {
+                            *c = (*c as u32 * 255 / a).min(255) as u8;
+                        }
+                    }
+                }
+                Some(Icon {
+                    width,
+                    height,
+                    rgba: px.into(),
+                })
+            });
+        apps.push(InstalledApp { name, id, exe, icon });
     }
-    Some(Icon {
-        width,
-        height,
-        rgba: px.into(),
-    })
+    Ok(apps)
+}
+
+/// アプリを AppUserModelId で起動する（ストアのアプリもデスクトップのアプリも `shell:AppsFolder` 経由で開ける）。
+pub(super) fn launch(id: &str) -> Result<(), Error> {
+    let path = ::windows::core::HSTRING::from(format!("shell:AppsFolder\\{id}"));
+    let done = unsafe {
+        ShellExecuteW(
+            None,
+            ::windows::core::w!("open"),
+            &path,
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    // 32 以下はエラー（ShellExecute の決まり）。
+    if done.0 as isize <= 32 {
+        return Err(Error(format!("cannot launch {id} ({})", done.0 as isize)));
+    }
+    Ok(())
 }
 
 struct Apartment;
