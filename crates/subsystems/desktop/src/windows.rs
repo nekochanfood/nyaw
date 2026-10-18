@@ -510,6 +510,14 @@ impl Capture {
                 let _ = ShowWindowAsync(HWND(source.target as _), SW_RESTORE);
             }
         }
+        if source.kind == SourceKind::Window {
+            let hwnd = HWND(source.target as _);
+            if !unsafe { IsWindow(Some(hwnd)) }.as_bool()
+                || !unsafe { IsWindowVisible(hwnd) }.as_bool()
+            {
+                return Err(Error("capture window is closed or hidden".into()));
+            }
+        }
         if !GraphicsCaptureSession::IsSupported()? {
             return Err(Error("Windows Graphics Capture is unavailable".into()));
         }
@@ -630,28 +638,36 @@ impl Capture {
             if IsIconic(hwnd).as_bool() {
                 let _ = ShowWindowAsync(hwnd, SW_RESTORE);
             }
-            let _ = SetWindowPos(
-                hwnd,
-                Some(HWND_TOP),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
-            );
-            if !SetForegroundWindow(hwnd).as_bool() {
+            let _ = BringWindowToTop(hwnd);
+            if !SetForegroundWindow(hwnd).as_bool() || GetForegroundWindow() != hwnd {
                 // VR の入力だけでは前面化の権限がない場合がある。切り替え中だけ入力キューを共有する。
                 let current = GetCurrentThreadId();
                 let foreground = GetWindowThreadProcessId(GetForegroundWindow(), None);
+                let target = GetWindowThreadProcessId(hwnd, None);
                 let mut message = MSG::default();
                 let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
-                if foreground != 0
+                let joined_foreground = foreground != 0
                     && foreground != current
-                    && AttachThreadInput(current, foreground, true).as_bool()
-                {
-                    let _ = SetForegroundWindow(hwnd);
+                    && AttachThreadInput(current, foreground, true).as_bool();
+                let joined_target = target != 0
+                    && target != current
+                    && target != foreground
+                    && AttachThreadInput(current, target, true).as_bool();
+                let _ = BringWindowToTop(hwnd);
+                let _ = SetActiveWindow(hwnd);
+                let _ = SetForegroundWindow(hwnd);
+                if joined_target {
+                    let _ = AttachThreadInput(current, target, false);
+                }
+                if joined_foreground {
                     let _ = AttachThreadInput(current, foreground, false);
                 }
+            }
+            if GetForegroundWindow() != hwnd {
+                // フォーカス権限が拒否されても、モニター上の重なりは前に出す。
+                let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+                let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
             }
         }
     }
@@ -702,10 +718,26 @@ impl Session for Capture {
         Ok(())
     }
 
+    fn minimize(&mut self) -> Result<(), Error> {
+        if self.source.kind == SourceKind::Window {
+            unsafe {
+                let _ = ShowWindowAsync(HWND(self.source.target as _), SW_MINIMIZE);
+            }
+        }
+        Ok(())
+    }
+
+    fn minimized(&self) -> bool {
+        self.source.kind == SourceKind::Window
+            && unsafe { IsIconic(HWND(self.source.target as _)) }.as_bool()
+    }
+
     fn closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
             || (self.source.kind == SourceKind::Window
-                && !unsafe { IsWindow(Some(HWND(self.source.target as _))) }.as_bool())
+                && (!unsafe { IsWindow(Some(HWND(self.source.target as _))) }.as_bool()
+                    || !unsafe { IsWindowVisible(HWND(self.source.target as _)) }.as_bool()
+                        && !self.minimized()))
     }
 
     fn frame(&mut self) -> Result<Option<Frame>, Error> {
@@ -818,6 +850,9 @@ impl Session for Capture {
     }
 
     fn button(&mut self, touch: Touch, button: Button) -> Result<(), Error> {
+        if self.minimized() {
+            return Ok(());
+        }
         let point = if touch.phase == TouchPhase::Down
             && self.mouse.pressed_by.is_none()
             && self.source.kind == SourceKind::Window

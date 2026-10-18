@@ -188,6 +188,21 @@ impl<B: VrBackend> Kernel<B> {
         }
     }
 
+    pub(super) fn minimize_desktop(&mut self, panel: PanelId) {
+        if let Some(stream) = self
+            .desktop_panels
+            .get(&panel)
+            .and_then(|p| p.stream.as_ref())
+            && let Err(error) = stream.minimize()
+        {
+            logger::warn!(
+                "cannot minimize desktop source",
+                panel = panel,
+                error = error
+            );
+        }
+    }
+
     pub(super) fn poll_desktop(&mut self) {
         self.desktop_panels
             .retain(|id, _| !self.overlay.panel(*id).closed);
@@ -226,7 +241,10 @@ impl<B: VrBackend> Kernel<B> {
                     frame.cost,
                 );
             }
-            if matches!(panel.status, Status::Closed | Status::Failed(_)) {
+            if matches!(
+                panel.status,
+                Status::Closed | Status::Minimized | Status::Failed(_)
+            ) {
                 panel.stream = None;
                 panel.stats = None;
                 panel.contacts = [None; 2];
@@ -575,6 +593,20 @@ mod tests {
         );
         kernel.apply(panel, PanelCommand::FocusSource);
         assert_eq!(control.focuses(), 0);
+    }
+
+    #[test]
+    fn minimize_source_asks_the_stream_and_releases_it_on_os_minimize() {
+        let (mut kernel, panel, control) = setup();
+        kernel.apply(panel, PanelCommand::MinimizeSource);
+        assert_eq!(control.minimizes(), 1);
+        control.publish(Update {
+            status: Status::Minimized,
+            frame: None,
+        });
+        kernel.tick();
+        assert!(control.stopped());
+        assert_eq!(kernel.status(panel).desktop, Some(Status::Minimized));
     }
 
     #[test]

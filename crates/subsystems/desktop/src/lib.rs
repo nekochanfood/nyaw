@@ -73,6 +73,7 @@ impl std::error::Error for Error {}
 pub enum Status {
     Starting,
     Streaming,
+    Minimized,
     Closed,
     Failed(Error),
 }
@@ -298,6 +299,7 @@ enum Input {
     },
     /// 取得元のウィンドウを前に出してフォーカスする（[`Stream::focus`]）。
     Focus,
+    Minimize,
     Frame,
 }
 
@@ -334,6 +336,12 @@ trait Session {
     // ponytail: Linux のポータルはウィンドウを前に出す手段を持たないので何もしない。要ればコンポジタごとの手段（sway の IPC など）を足す。
     fn focus(&mut self) -> Result<(), Error> {
         Ok(())
+    }
+    fn minimize(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn minimized(&self) -> bool {
+        false
     }
     fn closed(&self) -> bool {
         false
@@ -405,7 +413,12 @@ impl Stream {
                     let mut session = open(stopping.clone(), wake.clone())?;
                     let mut next_frame = Instant::now();
                     let mut inputs: Vec<Input> = Vec::new();
+                    let mut minimized = false;
                     while !stopping.load(Ordering::Acquire) {
+                        if session.minimized() {
+                            minimized = true;
+                            break;
+                        }
                         if session.closed() {
                             break;
                         }
@@ -442,10 +455,15 @@ impl Stream {
                                 Input::Focus => {
                                     let _ = session.focus();
                                 }
+                                Input::Minimize => session.minimize()?,
                                 Input::Frame => {}
                             }
                         }
                         session.heartbeat()?;
+                        if session.minimized() {
+                            minimized = true;
+                            break;
+                        }
                         let now = Instant::now();
                         if now < next_frame {
                             continue;
@@ -464,10 +482,14 @@ impl Stream {
                             });
                         }
                     }
-                    Ok::<_, Error>(())
+                    Ok::<_, Error>(minimized)
                 })();
                 *output.lock().unwrap() = Some(Update {
-                    status: result.err().map_or(Status::Closed, Status::Failed),
+                    status: match result {
+                        Ok(true) => Status::Minimized,
+                        Ok(false) => Status::Closed,
+                        Err(error) => Status::Failed(error),
+                    },
                     frame: None,
                 });
             })
@@ -507,6 +529,10 @@ impl Stream {
     /// 前面化はワーカーが行い、待たない。
     pub fn focus(&self) -> Result<(), Error> {
         self.send(Input::Focus)
+    }
+
+    pub fn minimize(&self) -> Result<(), Error> {
+        self.send(Input::Minimize)
     }
 
     fn send(&self, input: Input) -> Result<(), Error> {
@@ -706,6 +732,51 @@ mod tests {
         // 前に出せなくても配信は続く。
         stream.focus().unwrap();
         rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    }
+
+    #[test]
+    fn worker_reports_minimized_window_separately_from_closed() {
+        struct Window(bool);
+        impl Session for Window {
+            fn frame(&mut self) -> Result<Option<Frame>, Error> {
+                Ok(None)
+            }
+            fn touch(&mut self, _: Touch) -> Result<(), Error> {
+                Ok(())
+            }
+            fn minimize(&mut self) -> Result<(), Error> {
+                self.0 = true;
+                Ok(())
+            }
+            fn minimized(&self) -> bool {
+                self.0
+            }
+        }
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| Ok(Window(false))).unwrap();
+        stream.minimize().unwrap();
+        until(|| stream.poll().is_some_and(|u| u.status == Status::Minimized));
+    }
+
+    #[test]
+    fn worker_reports_a_closed_window_instead_of_holding_its_last_frame() {
+        struct Closed;
+        impl Session for Closed {
+            fn frame(&mut self) -> Result<Option<Frame>, Error> {
+                Ok(None)
+            }
+            fn touch(&mut self, _: Touch) -> Result<(), Error> {
+                Ok(())
+            }
+            fn closed(&self) -> bool {
+                true
+            }
+        }
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| Ok(Closed)).unwrap();
+        until(|| {
+            stream
+                .poll()
+                .is_some_and(|u| u.status == Status::Closed && u.frame.is_none())
+        });
     }
 
     #[test]

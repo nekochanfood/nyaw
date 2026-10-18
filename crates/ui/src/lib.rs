@@ -720,6 +720,7 @@ pub struct PanelSpec {
     dockable: bool,
     /// ナビゲーションバーの右端を、閉じる代わりにしまうボタンにする（[`Self::minimizable`]）。
     minimize: Option<Minimize>,
+    source_minimize: bool,
     build: Box<PanelBuilder>,
 }
 
@@ -766,6 +767,7 @@ impl PanelSpec {
             os_keyboard: false,
             dockable: false,
             minimize: None,
+            source_minimize: false,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -982,14 +984,21 @@ impl PanelSpec {
         self
     }
 
+    /// 閉じるボタンの隣に、配信元ウィンドウの最小化ボタンを出す。
+    pub fn source_minimizable(mut self) -> Self {
+        self.source_minimize = true;
+        self
+    }
+
     /// このパネル（PanelId `owner` で開いた）に付けるナビゲーションバー。外していれば `None`。
     /// 開く側（`ui::run`・testkit のキット）が持ち主の直後に開き、[`PanelCommand::NavBar`] で持ち主に付ける。
     pub fn nav_bar_spec(&self, owner: PanelId) -> Option<PanelSpec> {
-        let (title, os_keyboard, dockable, minimize) = (
+        let (title, os_keyboard, dockable, minimize, source_minimize) = (
             self.title.clone(),
             self.os_keyboard,
             self.dockable,
             self.minimize.clone(),
+            self.source_minimize,
         );
         self.nav_bar.then(|| PanelSpec {
             nav_bar: false,
@@ -1005,6 +1014,7 @@ impl PanelSpec {
                     os_keyboard,
                     dockable,
                     minimize,
+                    source_minimize,
                     open: 0.0,
                     to: 0.0,
                     anim: None,
@@ -1113,6 +1123,7 @@ struct NavBar {
     dockable: bool,
     /// 右端を、閉じる代わりにしまうボタンにする。
     minimize: Option<Minimize>,
+    source_minimize: bool,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
     open: f32,
     to: f32,
@@ -1223,6 +1234,23 @@ impl Render for NavBar {
         });
         let leading = dock.flatten().into_iter().chain(os_keyboard).collect();
         let minimize = self.minimize.clone();
+        let beside_close = self.source_minimize.then(|| {
+            design::components::icon_button(
+                &theme,
+                "nav-minimize-source",
+                &design::icons::MINUS,
+                i18n::t(cx, "common.minimize"),
+                design::components::Variant::Default,
+            )
+            .on_click(move |_, _, cx| {
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(owner)
+                    .or_default()
+                    .commands
+                    .push(PanelCommand::MinimizeSource);
+            })
+        });
         div().size_full().child(design::components::nav_bar(
             &theme,
             self.open,
@@ -1247,6 +1275,7 @@ impl Render for NavBar {
                     .push(PanelCommand::Close),
             },
             leading,
+            beside_close,
         ))
     }
 }
@@ -1976,6 +2005,42 @@ mod tests {
     use design::Theme;
     use gpui::{TestAppContext, div};
     use kernel::{Device, Runtime};
+
+    #[gpui::test]
+    fn source_nav_bar_has_minimize_beside_close(cx: &mut TestAppContext) {
+        let (_bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(2)
+                .or_default()
+                .status
+                .pointed = true;
+            NavBar {
+                id: 2,
+                owner: 1,
+                title: None,
+                os_keyboard: false,
+                dockable: false,
+                minimize: None,
+                source_minimize: true,
+                open: 1.0,
+                to: 1.0,
+                anim: None,
+                last: None,
+            }
+        });
+        cx.run_until_parked();
+        let minimize = cx.debug_bounds("nav-minimize-source").unwrap();
+        let close = cx.debug_bounds("nav-close").unwrap();
+        assert!(minimize.right() <= close.left());
+        cx.simulate_click(minimize.center(), gpui::Modifiers::none());
+        cx.simulate_click(close.center(), gpui::Modifiers::none());
+        let commands = &cx.update(|_, cx| cx.global::<PanelControl>().panels[&1].commands.clone());
+        assert_eq!(
+            commands,
+            &[PanelCommand::MinimizeSource, PanelCommand::Close]
+        );
+    }
 
     #[test]
     fn starting_a_stream_clears_old_gpui_hover_and_scroll_momentum() {

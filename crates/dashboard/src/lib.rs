@@ -304,7 +304,14 @@ impl Dashboard {
                 && source.concrete()
                 && mirror_of(&source, cx).is_none()
             {
-                let spec = mirror_spec(source, None, Some(cx.weak_entity()), self.panel, true);
+                let spec = mirror_spec(
+                    source,
+                    None,
+                    Some(cx.weak_entity()),
+                    self.panel,
+                    true,
+                    false,
+                );
                 cx.default_global::<PanelControl>().spawns.push(spec);
             }
         }
@@ -356,7 +363,11 @@ impl Dashboard {
             // 出したウィンドウを OS で前に出す（そのまま操作できるように）。
             commands(
                 id,
-                [PanelCommand::Hide(false), PanelCommand::FocusSource],
+                [
+                    PanelCommand::FitHeight(SIZE_M.y),
+                    PanelCommand::Hide(false),
+                    PanelCommand::FocusSource,
+                ],
                 cx,
             );
         }
@@ -1235,10 +1246,15 @@ impl Screen {
                     let _ = self.dashboard.update(cx, |d, cx| d.show_stream(id, cx));
                 }
                 Some((source, icon, None)) => {
-                    let dashboard =
-                        (ui::docked(cx) == Some(self.panel)).then(|| self.dashboard.clone());
-                    let spec =
-                        mirror_spec(source.clone(), icon.clone(), dashboard, self.panel, false);
+                    let docked = ui::docked(cx) == Some(self.panel);
+                    let spec = mirror_spec(
+                        source.clone(),
+                        icon.clone(),
+                        Some(self.dashboard.clone()),
+                        self.panel,
+                        false,
+                        docked,
+                    );
                     cx.default_global::<PanelControl>().spawns.push(spec);
                 }
                 None if m.controls.raise => {
@@ -1567,10 +1583,15 @@ impl Screen {
             let _ = self.dashboard.update(cx, |d, cx| d.show_stream(id, cx));
             return;
         }
-        let dashboard = (ui::docked(cx) == Some(self.panel)).then(|| self.dashboard.clone());
-        cx.default_global::<PanelControl>()
-            .spawns
-            .push(mirror_spec(source, icon, dashboard, self.panel, false));
+        let docked = ui::docked(cx) == Some(self.panel);
+        cx.default_global::<PanelControl>().spawns.push(mirror_spec(
+            source,
+            icon,
+            Some(self.dashboard.clone()),
+            self.panel,
+            false,
+            docked,
+        ));
     }
 
     /// アプリを開く: 起動していればそのウィンドウを映す。していなければ起動して、すぐそのアプリの画面を開いて待つ
@@ -1588,11 +1609,14 @@ impl Screen {
                     .iter()
                     .find(|(a, _)| a.id == app.id)
                     .and_then(|(_, i)| i.clone());
-                let dashboard =
-                    (ui::docked(cx) == Some(self.panel)).then(|| self.dashboard.clone());
-                cx.default_global::<PanelControl>()
-                    .spawns
-                    .push(launch_spec(app, icon, dashboard, self.panel));
+                let docked = ui::docked(cx) == Some(self.panel);
+                cx.default_global::<PanelControl>().spawns.push(launch_spec(
+                    app,
+                    icon,
+                    Some(self.dashboard.clone()),
+                    self.panel,
+                    docked,
+                ));
             }
             Err(e) => self.error = Some(e.to_string()),
         }
@@ -1734,9 +1758,7 @@ impl Screen {
         l
     }
 
-    /// 起動中のアプリ: ウィンドウをアプリ（実行ファイル）ごとにまとめ、最初のウィンドウを開く。常駐の画面は
-    /// バーにあるので出さない。
-    // ponytail: アプリのどのウィンドウを開くかは選べない（最初のもの）。要ればウィンドウを選ばせる。
+    /// 起動中のウィンドウを個別に出す。常駐の画面はバーにあるので出さない。
     fn running_apps(&self, cx: &App) -> Vec<RunningApp> {
         let stem = |s: &str| {
             let s = s.to_ascii_lowercase();
@@ -1757,18 +1779,21 @@ impl Screen {
                 .app
                 .as_deref()
                 .map_or_else(|| source.name.clone(), stem);
-            if running.iter().any(|r| r.key == key) {
-                continue;
-            }
             let app = by_exe.get(&key).copied();
-            let name = match (app, &source.app) {
-                (Some((a, _)), _) => a.name.clone(),
-                (None, Some(_)) => key.clone(),
-                (None, None) => source.name.clone(),
+            let mut name = match app {
+                Some((a, _)) => format!("{} · {}", a.name, source.name),
+                None => source.name.clone(),
             };
+            let number = running
+                .iter()
+                .filter(|r| r.source.name == source.name && r.source.app == source.app)
+                .count()
+                + 1;
+            if number > 1 {
+                name.push_str(&format!(" ({number})"));
+            }
             running.push(RunningApp {
                 icon: image.clone().or_else(|| app.and_then(|(_, i)| i.clone())),
-                key,
                 name,
                 source: source.clone(),
                 window_icon: image.clone(),
@@ -2090,10 +2115,12 @@ struct Mirror {
     source: Option<Source>,
     /// 起動したアプリのウィンドウを待っている。
     waiting: Option<Waiting>,
-    /// 映し始めたら配信のボタンを足すダッシュボード（はめて開いたときだけ）。
+    /// 映し始めたら配信のボタンを足し、最小化時にしまうダッシュボード。
     dashboard: Option<WeakEntity<Dashboard>>,
-    /// 終わった配信の後始末を始めた（状態が書き戻されるたびに繰り返さない）。
+    /// 配信の再接続を探している（状態が書き戻されるたびに繰り返さない）。
     ending: bool,
+    was_hidden: bool,
+    watch_generation: u64,
 }
 
 /// 起動したアプリのウィンドウを待っている間の中身。
@@ -2114,58 +2141,155 @@ impl Mirror {
     ) -> Self {
         cx.observe_global::<PanelControl>(Self::follow_status)
             .detach();
-        let this = Self {
+        let mut this = Self {
             panel,
             source,
             waiting,
             dashboard,
             ending: false,
+            was_hidden: false,
+            watch_generation: 0,
         };
         if this.waiting.is_some() {
             this.wait_for_window(cx);
+        } else {
+            this.watch_successor(cx);
         }
         this
     }
 
-    /// 配信が終わった（映しているウィンドウが閉じた）らパネルを閉じる。失敗は最小化でも起きるので、取得元を取り直して
-    /// ウィンドウが無くなっていたときだけ閉じる（あれば失敗を出したまま残す）。
+    /// 最小化されたパネルはしまい、取得元が入れ替わったら配信をつなぎ直す。
     fn follow_status(&mut self, cx: &mut Context<Self>) {
-        if self.ending {
-            return;
-        }
-        let status = cx
+        let panel_status = cx
             .global::<PanelControl>()
             .panels
             .get(&self.panel)
-            .and_then(|p| p.status.desktop.clone());
-        match status {
-            Some(Status::Closed) => {
-                self.ending = true;
-                close(self.panel, cx);
+            .map(|p| &p.status);
+        let status = panel_status.and_then(|s| s.desktop.clone());
+        let hidden = panel_status.is_some_and(|s| s.hidden);
+        if self.was_hidden && !hidden && matches!(status, Some(Status::Minimized)) {
+            self.was_hidden = false;
+            if let Some(source) = self.source.clone() {
+                self.restart(source, cx);
             }
-            Some(Status::Failed(_)) => {
+            return;
+        }
+        self.was_hidden = hidden;
+        if matches!(status, Some(Status::Starting | Status::Streaming)) {
+            self.ending = false;
+            return;
+        }
+        if self.ending {
+            return;
+        }
+        match status {
+            Some(Status::Minimized) => {
                 self.ending = true;
-                let (Some(source), Ok(pending)) = (self.source.clone(), Sources::refresh()) else {
-                    return;
-                };
-                let panel = self.panel;
-                cx.spawn(async move |_, cx| {
-                    let sources = loop {
-                        if let Some(result) = pending.poll() {
-                            break result;
-                        }
-                        cx.background_executor()
-                            .timer(Duration::from_millis(100))
-                            .await;
-                    };
-                    if sources.is_ok_and(|s| !s.iter().any(|s| s.same_target(&source))) {
-                        cx.update(|cx| close(panel, cx));
-                    }
-                })
-                .detach();
+                self.watch_generation += 1;
+                if let Some(dashboard) = &self.dashboard {
+                    let _ = dashboard.update(cx, |d, cx| d.minimize(self.panel, cx));
+                } else {
+                    close(self.panel, cx);
+                }
+            }
+            Some(Status::Closed | Status::Failed(_))
+                if self
+                    .source
+                    .as_ref()
+                    .is_some_and(|s| s.kind == SourceKind::Window) =>
+            {
+                self.ending = true;
+                redraw(self.panel, cx);
+                self.watch_successor(cx);
             }
             _ => {}
         }
+    }
+
+    fn restart(&mut self, source: Source, cx: &mut Context<Self>) {
+        self.source = Some(source.clone());
+        if let Some(mirrors) = cx.try_global::<Mirrors>() {
+            let mut mirrors = mirrors.0.clone();
+            if let Some((current, _, _)) = mirrors.iter_mut().find(|(_, id, _)| *id == self.panel) {
+                *current = source.clone();
+            }
+            cx.set_global(Mirrors(mirrors));
+        }
+        commands(
+            self.panel,
+            [PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE)],
+            cx,
+        );
+        redraw(self.panel, cx);
+        self.watch_successor(cx);
+    }
+
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = self.source.clone() else {
+            return;
+        };
+        self.ending = true;
+        self.restart(source, cx);
+    }
+
+    /// 起動直後に本画面が別窓へ移るアプリを追う。既存の別窓は候補にしない。
+    fn watch_successor(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = self
+            .source
+            .clone()
+            .filter(|s| s.kind == SourceKind::Window && s.concrete())
+        else {
+            return;
+        };
+        self.watch_generation += 1;
+        let generation = self.watch_generation;
+        cx.spawn(async move |this, cx| {
+            let Ok(pending) = Sources::refresh() else {
+                return;
+            };
+            let known = loop {
+                if let Some(result) = pending.poll() {
+                    break result;
+                }
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+            };
+            let Ok(known) = known else { return };
+            let started = Instant::now();
+            while started.elapsed() < LAUNCH_WAIT {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let active = this.update(cx, |m, _| {
+                    m.watch_generation == generation
+                        && m.source.as_ref().is_some_and(|s| s.same_target(&source))
+                });
+                if !matches!(active, Ok(true)) {
+                    return;
+                }
+                let Ok(pending) = Sources::refresh() else {
+                    continue;
+                };
+                let sources = loop {
+                    if let Some(result) = pending.poll() {
+                        break result;
+                    }
+                    cx.background_executor()
+                        .timer(Duration::from_millis(50))
+                        .await;
+                };
+                if let Ok(sources) = sources
+                    && let Some(next) = successor(&source, &known, &sources)
+                {
+                    let _ = this.update(cx, |m, cx| {
+                        if m.watch_generation == generation {
+                            m.restart(next, cx);
+                        }
+                    });
+                    return;
+                }
+            }
+        })
+        .detach();
     }
 
     /// 起動したアプリのウィンドウを探し続け、出たら映し始める。[`LAUNCH_WAIT`] の間に出なければ諦める。
@@ -2219,6 +2343,7 @@ impl Mirror {
         self.source = Some(source.clone());
         start_mirror(self.panel, source, icon, self.dashboard.clone(), false, cx);
         redraw(self.panel, cx);
+        self.watch_successor(cx);
     }
 }
 
@@ -2256,19 +2381,34 @@ impl Render for Mirror {
             .try_global::<PanelControl>()
             .and_then(|c| c.panels.get(&self.panel))
             .and_then(|s| s.status.desktop.clone());
+        let stopped = matches!(status, Some(Status::Closed | Status::Failed(_)));
         let text = match status {
             None | Some(Status::Starting) => i18n::t(cx, "desktop.starting"),
             Some(Status::Streaming) => i18n::t(cx, "desktop.streaming"),
+            Some(Status::Minimized) => i18n::t(cx, "desktop.minimized"),
             Some(Status::Closed) => i18n::t(cx, "desktop.closed"),
             Some(Status::Failed(e)) => i18n::tf(cx, "desktop.failed", &[("error", &e)]),
         };
         components::card_panel(&theme)
             .flex()
+            .flex_col()
             .items_center()
             .justify_center()
+            .gap(px(spacing::MD))
             .p(px(spacing::XL))
             .text_color(rgba(theme.neutral_text_low))
             .child(text)
+            .when(stopped, |d| {
+                d.child(
+                    components::button(
+                        &theme,
+                        "mirror-retry",
+                        i18n::t(cx, "desktop.retry"),
+                        Variant::Default,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
+                )
+            })
     }
 }
 
@@ -2286,6 +2426,41 @@ fn is_window_of(app: &InstalledApp, source: &Source) -> bool {
                 !name.is_empty() && source.name.to_lowercase().contains(&name)
             }
         }
+}
+
+/// 元のウィンドウが消えた後、同じアプリの後継ウィンドウを選ぶ。
+fn replacement(source: &Source, sources: &[Source]) -> Option<Source> {
+    let app = source.app.as_deref().unwrap_or("");
+    let title = source.name.to_lowercase();
+    let app_name = app.to_ascii_lowercase();
+    let app_name = app_name.strip_suffix(".exe").unwrap_or(&app_name);
+    // shortcut: タイトルと実行ファイル名が結び付かない後継窓は追えない。実例で外れたらプロセスの親子関係も調べる。
+    sources
+        .iter()
+        .filter(|s| s.kind == SourceKind::Window && !s.same_target(source))
+        .find(|s| {
+            let candidate = s.name.to_lowercase();
+            title.len() >= 5 && candidate.contains(&title)
+                || app_name.len() >= 5
+                    && title.contains(app_name)
+                    && candidate.contains(app_name)
+                    && s.app
+                        .as_deref()
+                        .is_some_and(|a| a.eq_ignore_ascii_case(app))
+        })
+        .cloned()
+}
+
+fn successor(source: &Source, known: &[Source], current: &[Source]) -> Option<Source> {
+    let still_open = current.iter().any(|s| s.same_target(source));
+    replacement(
+        source,
+        &current
+            .iter()
+            .filter(|s| !still_open || !known.iter().any(|k| k.same_target(s)))
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// パネル `panel` で `source` を映し始める: 映しているものとして覚え、配信を頼み、`dashboard` があれば配信のボタンを足す。
@@ -2334,8 +2509,9 @@ fn launch_spec(
     icon: Option<Arc<RenderImage>>,
     dashboard: Option<WeakEntity<Dashboard>>,
     from: PanelId,
+    docked: bool,
 ) -> PanelSpec {
-    let (title, docked) = (app.name.clone(), dashboard.is_some());
+    let title = app.name.clone();
     let spec = PanelSpec::spawn(from, move |panel, _, cx: &mut Context<Mirror>| {
         if docked {
             ui::dock(panel, cx);
@@ -2378,8 +2554,8 @@ fn mirror_of(source: &Source, cx: &App) -> Option<(PanelId, bool)> {
         .map(|&(_, id, resident)| (id, resident))
 }
 
-/// `source` を映すパネルの起動仕様。`dashboard` があれば開くとそこにはまり（ランチャーと入れ替わる）、
-/// `None`（独立させた画面から開いた）なら独立して、開いた画面 `from` の手前に重ねて開く。
+/// `source` を映すパネルの起動仕様。`docked` ならランチャーと入れ替わりにはまり、
+/// そうでなければ開いた画面 `from` の手前に重ねて開く。
 /// `resident` なら（`dashboard` があるとき）常駐のもの: はめずに隠して開き、バーのボタンで出す。ナビゲーションバーでは
 /// 閉じずにしまう。
 /// タイトルは取得元の名前で、ナビゲーションバーで閉じると配信も止まる。
@@ -2389,24 +2565,23 @@ fn mirror_spec(
     dashboard: Option<WeakEntity<Dashboard>>,
     from: PanelId,
     resident: bool,
+    docked: bool,
 ) -> PanelSpec {
     let source_title = source.name.clone();
-    let docked = dashboard.is_some();
+    let source_kind = source.kind;
     let minimize = dashboard.clone().filter(|_| resident);
     let build = move |panel: PanelId, _: &mut Window, cx: &mut Context<Mirror>| {
         start_mirror(panel, source.clone(), icon, dashboard.clone(), resident, cx);
-        if dashboard.is_some() {
-            if resident {
-                commands(panel, [PanelCommand::Hide(true)], cx);
-            } else {
-                ui::dock(panel, cx);
-            }
+        if resident {
+            commands(panel, [PanelCommand::Hide(true)], cx);
+        } else if docked {
+            ui::dock(panel, cx);
         }
-        Mirror::new(panel, Some(source), None, None, cx)
+        Mirror::new(panel, Some(source), None, dashboard, cx)
     };
     let spec = PanelSpec::spawn(from, build);
     // はめるものは、開いた元の手前ではなく、はめる場所に合わせて目の前に出す。
-    let spec = if docked {
+    let spec = if docked || resident {
         spec.in_view(SCREEN_POSE)
     } else {
         spec
@@ -2418,11 +2593,17 @@ fn mirror_spec(
         None => spec,
     };
     // 配信は横幅を保って縦横比を合わせるので、幅をはめる画面とそろえる。
-    spec.sized(SIZE_M, RES_PX)
+    let spec = spec
+        .sized(SIZE_M, RES_PX)
         .titled_text(source_title)
         .dockable()
         // 映しているデスクトップ・ウィンドウへ打てるよう、ナビゲーションバーの左端に OS キーボードのトグルを出す。
-        .with_os_keyboard()
+        .with_os_keyboard();
+    if source_kind == SourceKind::Window && cfg!(windows) {
+        spec.source_minimizable()
+    } else {
+        spec
+    }
 }
 
 /// 電池 1 つのカード: デバイスのアイコンと名前、残量（数字と棒）。充電中はアイコンの形と文字でも示す。
@@ -2553,13 +2734,11 @@ fn app_grid() -> Div {
     div().grid().grid_cols(APP_COLUMNS).gap(px(spacing::XS))
 }
 
-/// アプリ一覧の起動中のアプリ: ウィンドウをアプリ（実行ファイル）ごとにまとめたもの。
+/// アプリ一覧の起動中のウィンドウ。
 struct RunningApp {
-    /// まとめる鍵（実行ファイル名。無ければウィンドウの名前）。
-    key: String,
     name: String,
     icon: Option<Arc<RenderImage>>,
-    /// 開くウィンドウ（アプリの最初のもの）と、そのアイコン。
+    /// 開くウィンドウと、そのアイコン。
     source: Source,
     window_icon: Option<Arc<RenderImage>>,
 }
@@ -3286,9 +3465,9 @@ mod tests {
         println!("launcher redraw: {:?} per frame", start.elapsed() / n);
     }
 
-    /// 映しているウィンドウが閉じて配信が終わったら、パネルも閉じる（一度だけ）。
+    /// 配信が終わってもパネルに再試行を出す。
     #[gpui::test]
-    fn mirror_closes_when_its_window_closes(cx: &mut TestAppContext) {
+    fn mirror_offers_retry_when_its_window_closes(cx: &mut TestAppContext) {
         let source = kernel::desktop::mock::source("Editor", SourceKind::Window);
         let (_, cx) = cx.add_window_view(|_, cx| Mirror::new(4, Some(source), None, None, cx));
         cx.run_until_parked();
@@ -3301,7 +3480,16 @@ mod tests {
                 .desktop = Some(Status::Closed)
         });
         cx.run_until_parked();
-        assert_eq!(take_commands(cx, 4), [PanelCommand::Close]);
+        assert!(take_commands(cx, 4).is_empty());
+        assert!(cx.debug_bounds("mirror-retry").is_some());
+        click(cx, "mirror-retry");
+        assert_eq!(
+            take_commands(cx, 4),
+            [PanelCommand::Stream(
+                Some(kernel::desktop::mock::source("Editor", SourceKind::Window)),
+                DEFAULT_FRAME_RATE
+            )]
+        );
         cx.update(|_, cx| {
             cx.default_global::<PanelControl>()
                 .panels
@@ -3310,8 +3498,31 @@ mod tests {
                 .redraw = true
         });
         cx.run_until_parked();
-        let again = take_commands(cx, 4);
-        assert!(again.is_empty(), "閉じるのは一度だけ: {again:?}");
+        assert!(take_commands(cx, 4).is_empty());
+    }
+
+    #[gpui::test]
+    fn mirror_offers_retry_when_capture_fails(cx: &mut TestAppContext) {
+        let source = kernel::desktop::mock::source("Editor", SourceKind::Window);
+        let (_, cx) =
+            cx.add_window_view(|_, cx| Mirror::new(4, Some(source.clone()), None, None, cx));
+        cx.update(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(4)
+                .or_default()
+                .status
+                .desktop = Some(Status::Failed(kernel::desktop::Error(
+                "capture stopped".into(),
+            )))
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("mirror-retry").is_some());
+        click(cx, "mirror-retry");
+        assert_eq!(
+            take_commands(cx, 4),
+            [PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE)]
+        );
     }
 
     /// 起動していないアプリを開くと、すぐその画面がはまって待ち（名前と「起動しています」）、ウィンドウが出たら
@@ -3331,7 +3542,7 @@ mod tests {
             exe: Some("editor.exe".into()),
             icon: None,
         };
-        let spec = launch_spec(app, None, Some(bar.downgrade()), 2);
+        let spec = launch_spec(app, None, Some(bar.downgrade()), 2, true);
         let (mirror, cx) = cx.add_window_view(|window, cx| {
             Waiter(spec.build(4, window, cx).downcast::<Mirror>().unwrap())
         });
@@ -3552,9 +3763,9 @@ mod tests {
         // 隠したままはめてから出す。
         let five = commands(cx, 5);
         assert!(docked_to_bar(&five[0]));
-        assert_eq!(five[1], PanelCommand::Hide(false));
+        assert_eq!(five[1], PanelCommand::FitHeight(SIZE_M.y));
         assert_eq!(
-            five[2],
+            five[3],
             PanelCommand::FocusSource,
             "出したウィンドウを前に出す"
         );
@@ -3584,6 +3795,218 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(streams, [5]);
+    }
+
+    #[gpui::test]
+    fn launcher_lists_each_window_of_the_same_app(cx: &mut TestAppContext) {
+        let (list, cx) = cx.add_window_view(|_, cx| {
+            let mut list = Screen::new(2, Page::Launcher, WeakEntity::new_invalid(), cx);
+            list.pending = None;
+            list.apps = vec![(
+                InstalledApp {
+                    id: "chrome".into(),
+                    name: "Chrome".into(),
+                    exe: Some("chrome.exe".into()),
+                    icon: None,
+                },
+                None,
+            )];
+            list.sources = ["Tab A", "Tab B", "Tab C"]
+                .into_iter()
+                .map(|title| {
+                    let mut source = kernel::desktop::mock::source(title, SourceKind::Window);
+                    source.app = Some("chrome.exe".into());
+                    (source, None)
+                })
+                .collect();
+            list
+        });
+        let names = list.read_with(cx, |list, cx| {
+            list.running_apps(cx)
+                .into_iter()
+                .map(|r| r.name)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            names,
+            ["Chrome · Tab A", "Chrome · Tab B", "Chrome · Tab C"]
+        );
+        list.update(cx, |list, _| {
+            for (source, _) in &mut list.sources {
+                source.name = "New Tab".into();
+            }
+        });
+        let names = list.read_with(cx, |list, cx| {
+            list.running_apps(cx)
+                .into_iter()
+                .map(|r| r.name)
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            names,
+            [
+                "Chrome · New Tab",
+                "Chrome · New Tab (2)",
+                "Chrome · New Tab (3)"
+            ]
+        );
+    }
+
+    #[test]
+    fn replacement_prefers_matching_title_when_an_app_has_multiple_windows() {
+        let mut original = kernel::desktop::mock::source("Project", SourceKind::Window);
+        original.app = Some("Adobe.exe".into());
+        let mut other = kernel::desktop::mock::source("Other", SourceKind::Window);
+        other.app = Some("Adobe.exe".into());
+        let mut next = kernel::desktop::mock::source("Project", SourceKind::Window);
+        next.app = Some("adobe.exe".into());
+        assert_eq!(replacement(&original, &[other, next.clone()]), Some(next));
+    }
+
+    #[test]
+    fn replacement_does_not_switch_to_an_unrelated_chrome_window() {
+        let mut original = kernel::desktop::mock::source("Tab A", SourceKind::Window);
+        original.app = Some("chrome.exe".into());
+        let mut other = kernel::desktop::mock::source("Tab B", SourceKind::Window);
+        other.app = Some("chrome.exe".into());
+        assert_eq!(replacement(&original, &[other]), None);
+    }
+
+    #[test]
+    fn replacement_follows_an_adobe_window_across_executables() {
+        let mut original = kernel::desktop::mock::source("Adobe Photoshop", SourceKind::Window);
+        original.app = Some("AdobeLauncher.exe".into());
+        let mut next =
+            kernel::desktop::mock::source("Untitled - Adobe Photoshop", SourceKind::Window);
+        next.app = Some("Photoshop.exe".into());
+        assert_eq!(replacement(&original, &[next.clone()]), Some(next));
+    }
+
+    #[test]
+    fn successor_tracks_a_new_adobe_window_while_the_splash_stays_open() {
+        use kernel::desktop::mock::with_target;
+        let mut splash = with_target(
+            kernel::desktop::mock::source("Adobe Photoshop", SourceKind::Window),
+            1,
+        );
+        splash.app = Some("Photoshop.exe".into());
+        let mut previous = with_target(
+            kernel::desktop::mock::source("Another - Adobe Photoshop", SourceKind::Window),
+            2,
+        );
+        previous.app = Some("Photoshop.exe".into());
+        let mut opened = with_target(
+            kernel::desktop::mock::source("Untitled - Adobe Photoshop", SourceKind::Window),
+            3,
+        );
+        opened.app = Some("Photoshop.exe".into());
+        assert_eq!(
+            successor(
+                &splash,
+                &[splash.clone(), previous.clone()],
+                &[splash.clone(), previous, opened.clone()]
+            ),
+            Some(opened)
+        );
+    }
+
+    #[test]
+    fn successor_does_not_replace_chrome_with_an_existing_window() {
+        use kernel::desktop::mock::with_target;
+        let mut chosen = with_target(
+            kernel::desktop::mock::source("New Tab - Google Chrome", SourceKind::Window),
+            1,
+        );
+        chosen.app = Some("chrome.exe".into());
+        let mut other = with_target(
+            kernel::desktop::mock::source("New Tab - Google Chrome", SourceKind::Window),
+            2,
+        );
+        other.app = Some("chrome.exe".into());
+        assert_eq!(
+            successor(
+                &chosen,
+                &[chosen.clone(), other.clone()],
+                &[chosen.clone(), other]
+            ),
+            None
+        );
+    }
+
+    #[gpui::test]
+    fn reconnecting_updates_the_mirrored_window_and_stream(cx: &mut TestAppContext) {
+        let old = kernel::desktop::mock::source("Adobe Photoshop", SourceKind::Window);
+        let next = kernel::desktop::mock::source("Untitled - Adobe Photoshop", SourceKind::Window);
+        let (mirror, cx) = cx.add_window_view(|_, cx| {
+            cx.set_global(Mirrors(vec![(old.clone(), 4, false)]));
+            Mirror::new(4, Some(old), None, None, cx)
+        });
+        mirror.update(cx, |mirror, cx| mirror.restart(next.clone(), cx));
+        assert_eq!(
+            take_commands(cx, 4),
+            [PanelCommand::Stream(Some(next.clone()), DEFAULT_FRAME_RATE)]
+        );
+        assert_eq!(
+            cx.update(|_, cx| cx.global::<Mirrors>().0[0].0.name.clone()),
+            next.name
+        );
+    }
+
+    #[gpui::test]
+    fn minimized_window_is_stashed_and_restarted_when_shown(cx: &mut TestAppContext) {
+        let source = kernel::desktop::mock::source("Editor", SourceKind::Window);
+        let bar = cx
+            .add_window(|_, cx| {
+                cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+                Dashboard::new(1, summon, summon, cx)
+            })
+            .root(cx)
+            .unwrap();
+        let spec = mirror_spec(source.clone(), None, Some(bar.downgrade()), 2, false, false);
+        let (_mirror, cx) = cx.add_window_view(|window, cx| {
+            Waiter(spec.build(4, window, cx).downcast::<Mirror>().unwrap())
+        });
+        assert_eq!(
+            take_commands(cx, 4),
+            [PanelCommand::Stream(
+                Some(source.clone()),
+                DEFAULT_FRAME_RATE
+            )],
+            "独立表示ではバーにドッキングしない"
+        );
+        assert_eq!(bar.read_with(cx, |d, _| d.streams.len()), 1);
+        cx.update(|_, cx| {
+            let panel = cx
+                .default_global::<PanelControl>()
+                .panels
+                .entry(4)
+                .or_default();
+            panel.status.desktop = Some(Status::Minimized);
+        });
+        cx.run_until_parked();
+        assert!(take_commands(cx, 4).contains(&PanelCommand::Hide(true)));
+        assert!(bar.read_with(cx, |d, _| d.streams[0].stashed));
+        cx.update(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(4)
+                .or_default()
+                .status
+                .hidden = true
+        });
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(4)
+                .or_default()
+                .status
+                .hidden = false
+        });
+        cx.run_until_parked();
+        assert!(
+            take_commands(cx, 4).contains(&PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE))
+        );
     }
 
     /// 常駐の配信は、独立させてもバーに残り、しまうと閉じずに隠れる。

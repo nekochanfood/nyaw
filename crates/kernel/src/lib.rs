@@ -55,6 +55,8 @@ pub enum PanelCommand {
     Pointer(Hand, Pointer),
     /// 解像度（UI の論理ピクセル）を変える。1m あたりのピクセル数を保って VR 上の大きさも変わる。
     Resize(u32, u32),
+    /// 現在の縦横比のまま、VR 上の高さだけを揃える。
+    FitHeight(f32),
     /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
     Place(Pose),
     /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
@@ -66,6 +68,8 @@ pub enum PanelCommand {
     /// 配信しているウィンドウを OS で前に出してフォーカスする（OS のキーボード・マウスの操作が届くように）。
     /// ウィンドウの配信を始めたときはカーネルが自分で前に出すので、隠していた配信を出し直したときなどに使う。
     FocusSource,
+    /// 配信中のウィンドウを OS で最小化する。
+    MinimizeSource,
     /// このパネルのスピーカーで音を鳴らす（`true` で繰り返す）。読み込みは別スレッドで、いくつでも重ねて鳴らせる。
     Play(audio::Sound, bool),
     /// このパネルの中の点（パネルのピクセル、左上原点）から一度だけ音を鳴らす。キーボードのキーのように、押した所から聞こえる。
@@ -645,6 +649,10 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay
                     .set_resolution(&mut self.subsystems.backend, panel, (w, h))
             }
+            PanelCommand::FitHeight(height) => {
+                self.overlay
+                    .fit_height(&mut self.subsystems.backend, panel, height)
+            }
             PanelCommand::Parent(parent) => {
                 self.overlay
                     .set_parent(&mut self.subsystems.backend, panel, parent)
@@ -661,6 +669,7 @@ impl<B: VrBackend> Kernel<B> {
                 self.start_desktop(panel, source, frame_rate)
             }
             PanelCommand::FocusSource => self.focus_desktop(panel),
+            PanelCommand::MinimizeSource => self.minimize_desktop(panel),
             PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
             PanelCommand::PlayAt { sound, at, pitch } => {
                 self.play_audio_at(panel, sound, at, pitch)

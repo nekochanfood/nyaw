@@ -53,6 +53,7 @@ fn status_text(status: Option<&Status>, cx: &App) -> SharedString {
         None => i18n::t(cx, "desktop.idle"),
         Some(Status::Starting) => i18n::t(cx, "desktop.starting"),
         Some(Status::Streaming) => i18n::t(cx, "desktop.streaming"),
+        Some(Status::Minimized) => i18n::t(cx, "desktop.minimized"),
         Some(Status::Closed) => i18n::t(cx, "desktop.closed"),
         Some(Status::Failed(error)) => i18n::tf(cx, "desktop.failed", &[("error", &error)]),
     }

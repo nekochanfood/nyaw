@@ -11,6 +11,11 @@ pub fn source(name: &str, kind: SourceKind) -> Source {
     }
 }
 
+pub fn with_target(mut source: Source, target: isize) -> Source {
+    source.target = target;
+    source
+}
+
 pub struct Controller {
     update: Arc<Mutex<Option<Update>>>,
     input: Receiver<Input>,
@@ -71,6 +76,12 @@ impl Controller {
         self.input
             .try_iter()
             .filter(|input| matches!(input, Input::Focus))
+            .count()
+    }
+    pub fn minimizes(&self) -> usize {
+        self.input
+            .try_iter()
+            .filter(|input| matches!(input, Input::Minimize))
             .count()
     }
     pub fn stopped(&self) -> bool {

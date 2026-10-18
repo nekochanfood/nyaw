@@ -516,6 +516,18 @@ impl Overlay {
         }
     }
 
+    pub fn fit_height(&mut self, vr: &mut dyn VrBackend, id: PanelId, height: f32) {
+        if !height.is_finite() || height <= 0.0 {
+            return;
+        }
+        let p = &mut self.panels[id];
+        p.size = Vec2::new(
+            height * p.resolution.0 as f32 / p.resolution.1 as f32,
+            height,
+        );
+        p.surface.set_width(vr, p.displayed_size().x);
+    }
+
     /// `hand` が押している間のキャプチャを外す（ドラッグ＆ドロップでほかのパネルへ運べるように）。離すと戻る。
     pub fn release_capture(&mut self, hand: Hand) {
         self.hands.entry(hand).or_default().free = true;
@@ -1481,8 +1493,11 @@ impl Overlay {
             // 固定した子（ダッシュボードにはめた画面）のバーは、頭からの距離で大きさを変えない（1m 先での大きさのまま。
             // ダッシュボードと一体の部品として、画面との比を保つ）。
             let docked = o.parent.is_some_and(|q| q.docked);
+            let leaving = o.hidden || o.closed;
             let p = &mut self.panels[id];
-            let size = if docked {
+            let size = if leaving {
+                p.size
+            } else if docked {
                 p.nav_bar_size
             } else {
                 p.nav_bar_size * anchor.distance(eye)
@@ -2355,6 +2370,27 @@ mod tests {
         assert_eq!(vr.backend.overlays[bar].alpha, vr.backend.overlays[0].alpha);
     }
 
+    #[test]
+    fn hidden_docked_panel_keeps_its_nav_bar_size_while_undocking() {
+        let (mut vr, mut ov) = with_slot_child();
+        let bar = ov
+            .add_panel(
+                &mut vr.backend,
+                "nav",
+                Pose::IDENTITY,
+                Vec2::new(0.2, 0.05),
+                (200, 50),
+            )
+            .unwrap();
+        ov.set_nav_bar(&mut vr.backend, bar, 1);
+        ov.tick(&mut vr);
+        let size = ov.panel(bar).size;
+        ov.set_hidden(&mut vr.backend, 1, true);
+        ov.set_parent(&mut vr.backend, 1, None);
+        ov.tick(&mut vr);
+        assert_eq!(ov.panel(bar).size, size);
+    }
+
     /// 親（0 番）の手前に小さな子を置く。
     fn with_child(carry: bool) -> (Subsystems<MockBackend>, Overlay) {
         let (mut vr, mut ov) = setup();
@@ -2587,6 +2623,27 @@ mod tests {
         let width = ov.panel(0).size.x;
         ov.set_content_resolution(0, (1920, 1080));
         assert_eq!(ov.panel(0).size.x, width);
+    }
+
+    #[test]
+    fn fitting_height_restores_a_stream_captured_before_docking() {
+        let (mut vr, mut ov) = with_slot_child();
+        ov.set_parent(&mut vr.backend, 1, None);
+        ov.set_content_resolution(1, (1920, 1080));
+        assert!(ov.panel(1).size.y < 0.768);
+        ov.set_parent(
+            &mut vr.backend,
+            1,
+            Some(Parent {
+                panel: 0,
+                docked: true,
+                slot: Some(0.0),
+                ..Default::default()
+            }),
+        );
+        ov.fit_height(&mut vr.backend, 1, 0.768);
+        assert!((ov.panel(1).size.y - 0.768).abs() < 1e-5);
+        assert!((ov.panel(1).size.x - 0.768 * 16.0 / 9.0).abs() < 1e-5);
     }
 
     /// はめた画面が入れ替わりで消える（隠す・閉じる）ときは、後ろへ下がる。外しても手前へ出さない。

@@ -628,6 +628,7 @@ pub fn nav_bar(
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     leading: Vec<Button>,
+    beside_close: Option<Button>,
 ) -> Div {
     let (close_id, close_glyph) = if minimize {
         ("nav-minimize", &crate::icons::MINUS)
@@ -648,7 +649,9 @@ pub fn nav_bar(
     // 広がりの中心（帯の上下中央）。動く前は、線の上端が帯の上端に来るところまで上げておく。
     let center_offset = lerp(-(NAV_BAR_HEIGHT - NAV_LINE_HEIGHT) / 2.0, 0.0, moved);
     // タイトルは帯の中央。長くても閉じるボタンにかからないよう、左右にボタンの分を空けて省略する。
-    let side = leading.len().max(1) as f32 * (BUTTON_HEIGHT + spacing::SM) + spacing::SM;
+    let side = leading.len().max(1 + usize::from(beside_close.is_some())) as f32
+        * (BUTTON_HEIGHT + spacing::SM)
+        + spacing::SM;
     div().absolute().inset(px(PANEL_MARGIN)).child(
         div()
             .absolute()
@@ -692,6 +695,9 @@ pub fn nav_bar(
                                     .absolute()
                                     .top(px((height - BUTTON_HEIGHT) / 2.0))
                                     .right(px(spacing::SM))
+                                    .flex()
+                                    .gap(px(spacing::SM))
+                                    .when_some(beside_close, |d, button| d.child(button))
                                     .child(
                                         icon_button(
                                             theme,
