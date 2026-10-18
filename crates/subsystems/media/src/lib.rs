@@ -143,7 +143,10 @@ impl Raw {
         }
         let i = (self.index + if forward { 1 } else { n - 1 }) % n;
         let id = &self.sessions[i];
-        Some((id.clone(), self.sessions[..i].iter().filter(|s| *s == id).count()))
+        Some((
+            id.clone(),
+            self.sessions[..i].iter().filter(|s| *s == id).count(),
+        ))
     }
 }
 
@@ -273,15 +276,21 @@ struct Cache {
 
 impl Cache {
     fn resolve(&mut self, raw: Raw, backend: &mut dyn Backend) -> NowPlaying {
-        if self.art.as_ref().is_none_or(|(key, _, _)| *key != raw.art_key) {
+        if self
+            .art
+            .as_ref()
+            .is_none_or(|(key, _, _)| *key != raw.art_key)
+        {
             let decoded = backend
                 .art()
                 .and_then(|bytes| image::load_from_memory(&bytes).ok());
-            let art = decoded
-                .as_ref()
-                .map(|i| to_image(fit(i, ART_PX)));
+            let art = decoded.as_ref().map(|i| to_image(fit(i, ART_PX)));
             let backdrop = decoded.as_ref().map(|i| {
-                let small = i.resize_exact(BACKDROP_PX, BACKDROP_PX, image::imageops::FilterType::Triangle);
+                let small = i.resize_exact(
+                    BACKDROP_PX,
+                    BACKDROP_PX,
+                    image::imageops::FilterType::Triangle,
+                );
                 // 小さいまま渡すと、表示で引き伸ばすときに縁の半画素が外（透明）と混ざって暗い帯になる。
                 // ぼかした後なので、大きくしても見た目は変わらない。
                 to_image(blur_mirrored(&small).resize_exact(
@@ -334,9 +343,10 @@ fn luminance(image: &Image) -> f32 {
             ((c + 0.055) / 1.055).powf(2.4)
         }
     };
-    let pixels = image.rgba.chunks_exact(4);
+    let pixels = image.rgba.as_chunks::<4>().0;
     let n = pixels.len().max(1) as f32;
     pixels
+        .iter()
         .map(|p| 0.2126 * linear(p[0]) + 0.7152 * linear(p[1]) + 0.0722 * linear(p[2]))
         .sum::<f32>()
         / n
@@ -382,7 +392,10 @@ fn to_image(image: image::DynamicImage) -> Image {
 #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 fn fallback_name(id: &str) -> String {
     let id = id.rsplit(['!', '\\', '/']).next().unwrap_or(id);
-    let id = id.strip_suffix(".exe").or(id.strip_suffix(".EXE")).unwrap_or(id);
+    let id = id
+        .strip_suffix(".exe")
+        .or(id.strip_suffix(".EXE"))
+        .unwrap_or(id);
     id.rsplit('.').next().unwrap_or(id).to_owned()
 }
 
@@ -445,7 +458,10 @@ mod tests {
         let art = first.art.as_ref().unwrap();
         assert_eq!((art.width, art.height), (8, 8));
         let backdrop = first.backdrop.as_ref().unwrap();
-        assert_eq!((backdrop.width, backdrop.height), (BACKDROP_OUT_PX, BACKDROP_OUT_PX));
+        assert_eq!(
+            (backdrop.width, backdrop.height),
+            (BACKDROP_OUT_PX, BACKDROP_OUT_PX)
+        );
         cache.resolve(fake.read(None).unwrap(), &mut fake);
         assert_eq!((fake.art_reads, fake.app_reads), (1, 1));
         fake.raw = raw("B");
@@ -482,7 +498,11 @@ mod tests {
         assert_eq!(picked(&r.sessions, Some(&pick)), Some(2));
         r.index = 2;
         assert_eq!(r.switched(true), Some(("Chrome".to_owned(), 0)));
-        assert_eq!(picked(&r.sessions, Some(&("Chrome".to_owned(), 2))), None, "閉じた");
+        assert_eq!(
+            picked(&r.sessions, Some(&("Chrome".to_owned(), 2))),
+            None,
+            "閉じた"
+        );
         r.sessions.truncate(1);
         r.index = 0;
         assert_eq!(r.switched(true), None, "1 つだけなら切り替えない");

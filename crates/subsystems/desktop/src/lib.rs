@@ -240,7 +240,9 @@ impl InstalledApps {
                 #[cfg(target_os = "linux")]
                 let result = linux::installed_apps();
                 #[cfg(not(any(windows, target_os = "linux")))]
-                let result = Err(Error("listing apps is not available on this platform yet".into()));
+                let result = Err(Error(
+                    "listing apps is not available on this platform yet".into(),
+                ));
                 let _ = tx.send(result.map(|mut apps| {
                     apps.sort_by_key(|a| a.name.to_lowercase());
                     apps
@@ -270,7 +272,9 @@ pub fn launch(app: &InstalledApp) -> Result<(), Error> {
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = app;
-        Err(Error("launching apps is not available on this platform yet".into()))
+        Err(Error(
+            "launching apps is not available on this platform yet".into(),
+        ))
     }
 }
 
@@ -286,7 +290,12 @@ pub fn matching<'a, T>(items: &'a [T], name: impl Fn(&T) -> &str, query: &str) -
 enum Input {
     Touch(Touch),
     Button(Touch, Button),
-    Scroll { x: f32, y: f32, dx: f32, dy: f32 },
+    Scroll {
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+    },
     /// 取得元のウィンドウを前に出してフォーカスする（[`Stream::focus`]）。
     Focus,
     Frame,
@@ -524,7 +533,12 @@ mod tests {
     #[test]
     fn search_keeps_names_containing_the_query() {
         let names = ["Google Chrome", "Spotify", "Steam"];
-        let found = |q| matching(&names, |n: &&str| *n, q).into_iter().copied().collect::<Vec<_>>();
+        let found = |q| {
+            matching(&names, |n: &&str| *n, q)
+                .into_iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
         assert_eq!(found(" st "), ["Steam"]);
         assert_eq!(found("O"), ["Google Chrome", "Spotify"]);
         assert_eq!(found(""), names);

@@ -1,4 +1,3 @@
-use std::io::{Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::Instant;
@@ -40,10 +39,7 @@ impl Drop for Guard {
     }
 }
 
-pub fn spawn(
-    exe: &std::path::Path,
-    _: &str,
-) -> Result<(Box<dyn Write + Send>, Box<dyn Read + Send>, Guard), Error> {
+pub fn spawn(exe: &std::path::Path, _: &str) -> Result<super::Pipes, Error> {
     let mut child = Command::new(exe)
         .arg("--nyapp-worker")
         .stdin(Stdio::piped())

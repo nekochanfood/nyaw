@@ -24,7 +24,9 @@ fn main() {
                 m.app.name,
                 m.app.id,
                 m.app.icon.is_some(),
-                m.art.as_ref().map_or("none".into(), |a| format!("{}x{}", a.width, a.height)),
+                m.art
+                    .as_ref()
+                    .map_or("none".into(), |a| format!("{}x{}", a.width, a.height)),
                 m.backdrop.is_some(),
                 m.light,
                 m.controls,

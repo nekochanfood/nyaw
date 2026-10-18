@@ -404,14 +404,18 @@ impl Session for Capture {
 /// デスクトップエントリ（`applications/*.desktop`）のアプリを並べる。隠すもの（`NoDisplay`・`Hidden`）は除く。
 // ponytail: アイコンは読まない（テーマの探し方が要る）。要れば media の desktop_icon と同じ探し方を足す。
 pub(super) fn installed_apps() -> Result<Vec<super::InstalledApp>, Error> {
-    let home = std::env::var("XDG_DATA_HOME")
-        .ok()
-        .or_else(|| std::env::var("HOME").ok().map(|h| format!("{h}/.local/share")));
-    let dirs = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    let home = std::env::var("XDG_DATA_HOME").ok().or_else(|| {
+        std::env::var("HOME")
+            .ok()
+            .map(|h| format!("{h}/.local/share"))
+    });
+    let dirs =
+        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
     let mut seen = std::collections::HashSet::new();
     let mut apps = Vec::new();
     for root in home.into_iter().chain(dirs.split(':').map(str::to_owned)) {
-        let Ok(entries) = std::fs::read_dir(std::path::Path::new(&root).join("applications")) else {
+        let Ok(entries) = std::fs::read_dir(std::path::Path::new(&root).join("applications"))
+        else {
             continue;
         };
         for entry in entries.flatten() {
@@ -420,7 +424,10 @@ pub(super) fn installed_apps() -> Result<Vec<super::InstalledApp>, Error> {
             if path.extension().is_none_or(|e| e != "desktop") || !seen.insert(entry.file_name()) {
                 continue;
             }
-            if let Some(app) = std::fs::read_to_string(&path).ok().and_then(|t| desktop_entry(&t)) {
+            if let Some(app) = std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|t| desktop_entry(&t))
+            {
                 apps.push(app);
             }
         }
@@ -478,7 +485,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!((app.name.as_str(), app.id.as_str()), ("Firefox", "firefox"));
-        assert!(desktop_entry("[Desktop Entry]\nType=Application\nName=X\nExec=x\nNoDisplay=true\n").is_none());
+        assert!(
+            desktop_entry("[Desktop Entry]\nType=Application\nName=X\nExec=x\nNoDisplay=true\n")
+                .is_none()
+        );
         assert!(desktop_entry("[Desktop Entry]\nType=Link\nName=X\nURL=y\n").is_none());
     }
     #[test]

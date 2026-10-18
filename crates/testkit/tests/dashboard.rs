@@ -29,7 +29,9 @@ fn x_key_twice_opens_hides_and_shows_the_dashboard(cx: &mut TestAppContext) {
     let mut kit = NoVrKit::new(cx, |_, cx| wrist(cx));
     // One frame opens it, the next applies its first commands.
     kit.step().step();
-    let hidden = kit.read(|w| w.dashboard).expect("dashboard opened at startup");
+    let hidden = kit
+        .read(|w| w.dashboard)
+        .expect("dashboard opened at startup");
     assert!(kit.kernel.status(hidden).hidden);
     press_x_twice(&mut kit);
     assert_eq!(kit.kernel.status(0).double_press, 1);

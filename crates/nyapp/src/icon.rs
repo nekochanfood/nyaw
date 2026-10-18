@@ -49,7 +49,7 @@ fn decode_image(image: &package::Image) -> Option<Arc<RenderImage>> {
         package::Image::Svg(svg) => rasterize(svg)?,
     };
     let mut bgra = rgba;
-    for p in bgra.chunks_exact_mut(4) {
+    for p in bgra.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
     }
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(bgra)])))

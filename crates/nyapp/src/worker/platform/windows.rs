@@ -1,5 +1,4 @@
 use std::ffi::c_void;
-use std::io::{Read, Write};
 use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::ptr;
@@ -105,10 +104,7 @@ fn win_error(context: &str) -> Error {
     Error::new(format!("{context}: {}", std::io::Error::last_os_error()))
 }
 
-pub fn spawn(
-    exe: &std::path::Path,
-    id: &str,
-) -> Result<(Box<dyn Write + Send>, Box<dyn Read + Send>, Guard), Error> {
+pub fn spawn(exe: &std::path::Path, id: &str) -> Result<super::Pipes, Error> {
     let exe_w = wide(exe.as_os_str());
     let mut command = wide(std::ffi::OsStr::new(&format!(
         "\"{}\" --nyapp-worker",

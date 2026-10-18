@@ -77,7 +77,8 @@ pub const CLOSE_SOUND: &[u8] = include_bytes!("../assets/dashboard_close.wav");
 /// ダッシュボードから開くほかの画面（デバッグ・設定）の起動仕様を作る。第 1 引数は開いた元のパネル
 /// （[`PanelSpec::spawn`] に渡す）。開いたら引数で PanelId を知らせる（[`spec`] と同じ形）。
 /// 画面どうしを直接つながないよう、何を開くかは main が選ぶ。
-pub type Summon = fn(PanelId, Box<dyn FnOnce(PanelId, &mut App)>) -> PanelSpec;
+pub type Summon = fn(PanelId, Opened) -> PanelSpec;
+pub type Opened = Box<dyn FnOnce(PanelId, &mut App)>;
 
 /// バーの置き場所（開いた瞬間の頭から見た相対姿勢）。はめた画面（[`SIZE_M`]）が目の高さの正面 [`DISTANCE`] に垂直に立つよう、
 /// 画面の下半分・そのナビゲーションバー・隙間の分だけ下げ、傾けたバーの上端がその真下に来るように置く
@@ -836,7 +837,7 @@ fn screen_spec(
     from: PanelId,
     page: Page,
     dashboard: WeakEntity<Dashboard>,
-    opened: Box<dyn FnOnce(PanelId, &mut App)>,
+    opened: Opened,
 ) -> PanelSpec {
     let title = match page {
         Page::Launcher => "dashboard.launcher",
@@ -2614,7 +2615,7 @@ fn render_image(icon: &Icon) -> Option<Arc<RenderImage>> {
 /// RGBA の画素を GPUI の画像（BGRA）にする。
 fn rgba_image(width: u32, height: u32, rgba: &[u8]) -> Option<Arc<RenderImage>> {
     let mut bgra = rgba.to_vec();
-    for p in bgra.chunks_exact_mut(4) {
+    for p in bgra.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
     }
     let buffer = image::RgbaImage::from_raw(width, height, bgra)?;
@@ -2788,7 +2789,7 @@ mod tests {
         assert!(b.y < -0.3 && b.length() >= 1.0, "{b}");
     }
 
-    fn summon(from: PanelId, opened: Box<dyn FnOnce(PanelId, &mut App)>) -> PanelSpec {
+    fn summon(from: PanelId, opened: Opened) -> PanelSpec {
         PanelSpec::spawn(from, move |id, _, cx| {
             opened(id, cx);
             Mirror::new(id, None, None, None, cx)

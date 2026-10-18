@@ -14,7 +14,9 @@ fn main() {
             s.kind,
             s.name,
             s.app,
-            s.icon.as_ref().map_or("none".into(), |i| format!("{}x{}", i.width, i.height)),
+            s.icon
+                .as_ref()
+                .map_or("none".into(), |i| format!("{}x{}", i.width, i.height)),
         );
     }
 }

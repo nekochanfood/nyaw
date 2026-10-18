@@ -60,12 +60,10 @@ pub struct RemoteSandbox {
     guard: Arc<platform::Guard>,
 }
 
+type Channel = (RemoteSandbox, Step, mpsc::Receiver<Result<Step, Error>>);
+
 impl RemoteSandbox {
-    pub fn start(
-        path: &Path,
-        id: &str,
-        language: &'static str,
-    ) -> Result<(Self, Step, mpsc::Receiver<Result<Step, Error>>), Error> {
+    pub fn start(path: &Path, id: &str, language: &'static str) -> Result<Channel, Error> {
         Self::start_with_executable(&std::env::current_exe()?, path, id, language)
     }
 
@@ -76,7 +74,7 @@ impl RemoteSandbox {
         path: &Path,
         id: &str,
         language: &'static str,
-    ) -> Result<(Self, Step, mpsc::Receiver<Result<Step, Error>>), Error> {
+    ) -> Result<Channel, Error> {
         if !crate::manifest::valid_id(id) || crate::system::is_system(id) {
             return Err(Error::new("invalid external nyapp id"));
         }
@@ -296,12 +294,11 @@ fn validate_step(step: &Step) -> Result<(), Error> {
             Activity::Countdown { total_ms, .. } if *total_ms <= 0 => {
                 return Err(Error::new("invalid nyapp countdown duration"));
             }
-            Activity::Progress { text, progress, .. } => {
-                if text.chars().count() > MAX_ACTIVITY_CHARS
-                    || progress.is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
-                {
-                    return Err(Error::new("invalid nyapp progress activity"));
-                }
+            Activity::Progress { text, progress, .. }
+                if (text.chars().count() > MAX_ACTIVITY_CHARS
+                    || progress.is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))) =>
+            {
+                return Err(Error::new("invalid nyapp progress activity"));
             }
             _ => {}
         }

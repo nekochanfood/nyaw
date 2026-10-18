@@ -398,7 +398,7 @@ impl Storage {
         let values = initial
             .or(from_disk.as_deref())
             .filter(|b| b.len() <= STORAGE_QUOTA * 2)
-            .and_then(|b| serde_json::from_slice(&b).ok())
+            .and_then(|b| serde_json::from_slice(b).ok())
             .unwrap_or_default();
         Self {
             values,

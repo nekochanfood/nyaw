@@ -19,7 +19,8 @@ use minifb::{InputCallback, Key, MouseButton, MouseMode, Window, WindowOptions};
 use crate::compositor::{Draw, Gpu};
 
 use crate::{
-    Battery, Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec2, Vec3, VrBackend, VrError,
+    Battery, Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec2, Vec3,
+    VrBackend, VrError,
 };
 
 const TITLE: &str = "nyaw (novr)";

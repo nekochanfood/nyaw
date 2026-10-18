@@ -19,7 +19,8 @@ use input::{HandActions, Input};
 
 use crate::gpu::{self, Gpu, vk_err};
 use crate::{
-    Battery, Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend, VrError,
+    Battery, Device, Frame, Hand, OverlayId, Pose, Quat, RawController, Runtime, Vec3, VrBackend,
+    VrError,
 };
 
 pub(crate) fn available() -> bool {
@@ -241,7 +242,10 @@ impl OpenVrBackend {
                 Battery {
                     device: device.clone(),
                     level: level.clamp(0.0, 1.0),
-                    charging: flag(index, sys::ETrackedDeviceProperty_Prop_DeviceIsCharging_Bool),
+                    charging: flag(
+                        index,
+                        sys::ETrackedDeviceProperty_Prop_DeviceIsCharging_Bool,
+                    ),
                 }
             })
             .collect()
@@ -552,10 +556,11 @@ impl VrBackend for OpenVrBackend {
 
     fn block_app_input(&mut self, block: bool) {
         self.block_input = block;
-        if block && let Some(settings) = self.settings.take() {
-            if let Some(was_set) = enable_global_action_set_priority(unsafe { &*settings }) {
-                self.restore_global_priority = Some((settings, was_set));
-            }
+        if block
+            && let Some(settings) = self.settings.take()
+            && let Some(was_set) = enable_global_action_set_priority(unsafe { &*settings })
+        {
+            self.restore_global_priority = Some((settings, was_set));
         }
     }
 
@@ -767,7 +772,10 @@ fn enable_global_action_set_priority(settings: &sys::VR_IVRSettings_FnTable) -> 
         );
         Some(was_set)
     } else {
-        logger::warn!("cannot enable SteamVR's overlay input overrides", error = err);
+        logger::warn!(
+            "cannot enable SteamVR's overlay input overrides",
+            error = err
+        );
         None
     }
 }
@@ -782,7 +790,10 @@ fn restore_global_action_set_priority(settings: &sys::VR_IVRSettings_FnTable, wa
         unsafe { f(settings.RemoveKeyInSection)(section, key, &mut err) };
     }
     if err != sys::EVRSettingsError_VRSettingsError_None {
-        logger::warn!("cannot restore SteamVR's overlay input overrides", error = err);
+        logger::warn!(
+            "cannot restore SteamVR's overlay input overrides",
+            error = err
+        );
     }
 }
 

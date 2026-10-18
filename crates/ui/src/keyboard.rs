@@ -220,33 +220,33 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         .filter(|&d| d == target)
         .and(cx.global::<crate::PanelControl>().dock);
     let spec = crate::PanelSpec::spawn(target, move |panel, _, cx| {
-            let current = cx.default_global::<InputRouting>().active.as_mut();
-            if let Some(session) = current.filter(|s| s.generation == generation) {
-                session.panel = Some(panel);
-            } else {
-                cx.default_global::<crate::PanelControl>()
-                    .panels
-                    .entry(panel)
-                    .or_default()
-                    .commands
-                    .push(PanelCommand::Close);
-            }
-            KeyboardPanel {
-                panel,
-                keyboard: cx.new(|cx| {
-                    let mut keyboard = KeyboardView::new(panel, cx);
-                    keyboard.target = target;
-                    keyboard.show_settings = false;
-                    keyboard
-                }),
-            }
-        })
-        .sized(
-            Vec2::new(1., resolution.1 as f32 / resolution.0 as f32),
-            resolution,
-        )
-        // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
-        .without_nav_bar();
+        let current = cx.default_global::<InputRouting>().active.as_mut();
+        if let Some(session) = current.filter(|s| s.generation == generation) {
+            session.panel = Some(panel);
+        } else {
+            cx.default_global::<crate::PanelControl>()
+                .panels
+                .entry(panel)
+                .or_default()
+                .commands
+                .push(PanelCommand::Close);
+        }
+        KeyboardPanel {
+            panel,
+            keyboard: cx.new(|cx| {
+                let mut keyboard = KeyboardView::new(panel, cx);
+                keyboard.target = target;
+                keyboard.show_settings = false;
+                keyboard
+            }),
+        }
+    })
+    .sized(
+        Vec2::new(1., resolution.1 as f32 / resolution.0 as f32),
+        resolution,
+    )
+    // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
+    .without_nav_bar();
     let spec = match dock {
         // 角度は外したときと同じく、開いた瞬間の頭の位置に向ける。
         Some((owner, _)) => spec.hinged_below(owner).docked_to(owner),

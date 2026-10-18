@@ -1153,7 +1153,9 @@ impl Overlay {
                     p.size *= width / p.size.x;
                     // 親の上端に立てた画面は、親に接する下端を動かさずに大きさを変える（中心を基準にすると、離した時に跳ねる）。
                     if p.parent.is_some_and(|q| q.slot.is_some()) {
-                        let lift = p.pose.orientation * Vec3::Y * (p.size.y / 2.0 - face_margin(p) - bottom);
+                        let lift = p.pose.orientation
+                            * Vec3::Y
+                            * (p.size.y / 2.0 - face_margin(p) - bottom);
                         p.pose.position += lift;
                         offset += aim.orientation.inverse() * lift;
                     }
@@ -1435,7 +1437,9 @@ impl Overlay {
             if dragged.contains(&id) {
                 return false;
             }
-            let t = g.tween.advance(now.saturating_duration_since(g.last).as_secs_f32());
+            let t = g
+                .tween
+                .advance(now.saturating_duration_since(g.last).as_secs_f32());
             g.last = now;
             let to = g.to.unwrap_or(p.pose);
             p.pose = Pose::new(
@@ -1647,11 +1651,16 @@ fn has_child(panels: &[Panel], present: &[PanelId], id: PanelId) -> bool {
 /// 固定した子（[`Parent::docked`]）でつながったもの（ダッシュボードのバー・そこにはめた画面・キーボード）は、どれを掴んでも
 /// 上にはめた画面を基準に動かす（頭に向けて垂直に立て、ほかは付いてくる）。はめた画面が無ければ、根元の
 /// [`Panel::grab_anchor`]（画面が立つ所）を基準にする。それも無ければ根元を今の傾きのまま動かす。
-fn grab_target(panels: &[Panel], present: &[PanelId], grabbed: PanelId, frame: &Frame) -> (PanelId, Pose) {
+fn grab_target(
+    panels: &[Panel],
+    present: &[PanelId],
+    grabbed: PanelId,
+    frame: &Frame,
+) -> (PanelId, Pose) {
     let docked = |id: PanelId| {
-        present
-            .iter()
-            .any(|&c| panels[c].parent.is_some_and(|q| q.panel == id && q.docked) && !panels[c].closed)
+        present.iter().any(|&c| {
+            panels[c].parent.is_some_and(|q| q.panel == id && q.docked) && !panels[c].closed
+        })
     };
     if !panels[grabbed].parent.is_some_and(|q| q.docked)
         && !docked(grabbed)
@@ -1659,10 +1668,13 @@ fn grab_target(panels: &[Panel], present: &[PanelId], grabbed: PanelId, frame: &
     {
         return (grabbed, Pose::IDENTITY);
     }
-    let root = carried(&panels, grabbed).last().copied().unwrap_or(grabbed);
+    let root = carried(panels, grabbed).last().copied().unwrap_or(grabbed);
     let slot = present.iter().copied().find(|&c| {
         let q = &panels[c];
-        !q.closed && !q.hidden && q.parent.is_some_and(|q| q.panel == root && q.slot.is_some())
+        !q.closed
+            && !q.hidden
+            && q.parent
+                .is_some_and(|q| q.panel == root && q.slot.is_some())
     });
     if let Some(slot) = slot {
         return (slot, Pose::IDENTITY);
@@ -2423,11 +2435,18 @@ mod tests {
         // 子は親の上端の上に、親から見て `tilt` だけ起こして立つ。地の下端は上端から隙間の分だけ上。
         let (parent, child) = (ov.panel(0).pose, ov.panel(1));
         let local = parent.inverse() * child.pose;
-        assert!(local.orientation.abs_diff_eq(Quat::from_rotation_x(tilt), 1e-5));
+        assert!(
+            local
+                .orientation
+                .abs_diff_eq(Quat::from_rotation_x(tilt), 1e-5)
+        );
         let up = local.orientation * Vec3::Y;
         let bottom = local.position - up * (child.size.y / 2.0 - face_margin(child));
         let top = 0.5 - face_margin(ov.panel(0));
-        assert!(bottom.abs_diff_eq(Vec3::Y * top + up * SLOT_GAP, 1e-4), "{bottom}");
+        assert!(
+            bottom.abs_diff_eq(Vec3::Y * top + up * SLOT_GAP, 1e-4),
+            "{bottom}"
+        );
         // 親を動かすと付いてくる。
         ov.set_pose(0, at(0.0, 1.0, -1.0));
         ov.tick(&mut vr);
@@ -2493,7 +2512,11 @@ mod tests {
         let sizes = (ov.panel(0).size, ov.panel(1).size);
         // 親だけがある所を掴むと、上の子を掴んだことになる。
         let p = ov.panel(0).pose.position;
-        controller(&mut vr, at(p.x + 0.45, p.y - 0.45, 0.0), &[("squeeze/value", 1.0)]);
+        controller(
+            &mut vr,
+            at(p.x + 0.45, p.y - 0.45, 0.0),
+            &[("squeeze/value", 1.0)],
+        );
         ov.tick(&mut vr);
         assert!(ov.grabbed(1) && !ov.grabbed(0));
         // 拡大縮小を入れても、掴んだもの（親）とは違うので大きさは変わらない。
@@ -2508,7 +2531,10 @@ mod tests {
         assert!(ov.panel(1).pose.position.x > 0.9);
         let local = ov.panel(0).pose.inverse() * ov.panel(1).pose;
         let expected = ov.slot_offset(1, 0, 0.0);
-        assert!(local.position.abs_diff_eq(expected.position, 1e-3), "{local:?}");
+        assert!(
+            local.position.abs_diff_eq(expected.position, 1e-3),
+            "{local:?}"
+        );
     }
 
     #[test]
@@ -2536,8 +2562,15 @@ mod tests {
         ov.set_parent(&mut vr.backend, 1, None);
         let glide = &ov.glides[&1];
         let back = before * Pose::new(Vec3::NEG_Z * SLOT_RETREAT, Quat::IDENTITY);
-        assert!(glide.to.is_some_and(|to| to.position.abs_diff_eq(back.position, 1e-5)));
-        assert!(ov.panel(1).pose.position.abs_diff_eq(before.position, 1e-5), "手前へ出さない");
+        assert!(
+            glide
+                .to
+                .is_some_and(|to| to.position.abs_diff_eq(back.position, 1e-5))
+        );
+        assert!(
+            ov.panel(1).pose.position.abs_diff_eq(before.position, 1e-5),
+            "手前へ出さない"
+        );
     }
 
     /// ポップオーバー（固定して外側を押すと閉じる子）は、ほかのパネルより前の描画順。
@@ -2563,7 +2596,13 @@ mod tests {
     fn docked_panels_nav_bar_keeps_its_size_at_any_distance() {
         let (mut vr, mut ov) = with_slot_child();
         let bar = ov
-            .add_panel(&mut vr.backend, "bar", Pose::IDENTITY, Vec2::new(0.4, 0.05), (40, 5))
+            .add_panel(
+                &mut vr.backend,
+                "bar",
+                Pose::IDENTITY,
+                Vec2::new(0.4, 0.05),
+                (40, 5),
+            )
             .unwrap();
         ov.set_nav_bar(&mut vr.backend, bar, 1);
         ov.tick(&mut vr);
@@ -2571,7 +2610,10 @@ mod tests {
         vr.backend.frame.hmd.position = Vec3::Z * 3.0;
         ov.tick(&mut vr);
         assert!(ov.panel(bar).size.abs_diff_eq(near, 1e-5));
-        assert!(near.abs_diff_eq(Vec2::new(0.4, 0.05), 1e-5), "1m 先での大きさのまま");
+        assert!(
+            near.abs_diff_eq(Vec2::new(0.4, 0.05), 1e-5),
+            "1m 先での大きさのまま"
+        );
     }
 
     /// 基準（`grab_anchor`）を持つパネルは、掴むと基準を手で動かして頭へ向け、パネルはそこに付いてくる。
