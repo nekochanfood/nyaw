@@ -140,7 +140,14 @@ impl NyappView {
             return;
         };
         let host = sandbox.host();
-        let (ticker, beeps) = (host.ticker.take(), std::mem::take(&mut host.beeps));
+        let (ticker, beeps, activity) = (
+            host.ticker.take(),
+            std::mem::take(&mut host.beeps),
+            host.activity.take(),
+        );
+        if let Some(activity) = activity {
+            crate::activity::set(&self.app, activity, cx);
+        }
         match ticker {
             Some(0) => self.ticker = None,
             Some(ms) if self.ticker.as_ref().is_none_or(|(now, _)| *now != ms) => {
@@ -531,7 +538,7 @@ fn command(panel: PanelId, command: kernel::PanelCommand, cx: &mut App) {
 }
 
 /// 知らせの音（880Hz・0.2 秒、終わりを弱めた正弦波の WAV）。最初に使ったときに作る。
-fn beep() -> &'static [u8] {
+pub(crate) fn beep() -> &'static [u8] {
     static WAV: OnceLock<Vec<u8>> = OnceLock::new();
     WAV.get_or_init(|| {
         const RATE: u32 = 48_000;

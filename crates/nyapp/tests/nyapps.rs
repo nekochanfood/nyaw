@@ -235,3 +235,59 @@ fn each_nyapp_runs_in_its_own_sandbox() {
         "a が落ちても b は動く"
     );
 }
+
+/// 時計のタイマーは、開始すると進行中の作業の知らせ（カウントダウン）を出し、閉じて開き直すと保存領域から続きを
+/// 読んで同じ知らせを出し直す。リセットすると消す。
+#[test]
+#[ignore]
+fn clock_timer_posts_a_live_activity_that_survives_reopening() {
+    build();
+    let dir = root().join("nyapps").join("clock");
+    let manifest =
+        Manifest::parse(&std::fs::read_to_string(dir.join("manifest.toml")).unwrap()).unwrap();
+    let wasm =
+        std::fs::read(root().join("nyapps/target/wasm32-unknown-unknown/release/clock.wasm"))
+            .unwrap();
+    let appdata =
+        std::env::temp_dir().join(format!("nyapps-test-clock-activity-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&appdata);
+    let open = || {
+        Sandbox::load(&manifest, &wasm, Some(appdata.clone()), "ja")
+            .unwrap()
+            .0
+    };
+
+    let mut clock = open();
+    assert_eq!(
+        clock.host().activity.take(),
+        Some(None),
+        "何も動いていなければ知らせない"
+    );
+    click(&mut clock, "tab-timer");
+    click(&mut clock, "timer-start");
+    let Some(Some(nyapp::Activity::Countdown {
+        title,
+        total_ms,
+        ends_at_ms,
+    })) = clock.host().activity.take()
+    else {
+        panic!("タイマーを始めるとカウントダウンの知らせ");
+    };
+    assert_eq!((title.as_str(), total_ms), ("タイマー", 180_000));
+    drop(clock);
+    // 保存は別スレッドなので、書き終わるのを待つ。
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    let mut reopened = open();
+    assert!(
+        matches!(reopened.host().activity.take(), Some(Some(nyapp::Activity::Countdown { ends_at_ms: e, .. })) if e == ends_at_ms),
+        "開き直すと同じ終わる時刻で出し直す"
+    );
+    click(&mut reopened, "timer-reset");
+    assert_eq!(
+        reopened.host().activity.take(),
+        Some(None),
+        "リセットで消す"
+    );
+    let _ = std::fs::remove_dir_all(appdata);
+}

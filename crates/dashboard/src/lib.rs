@@ -6,14 +6,16 @@
 //! はめた画面はダッシュボードに固定され（一緒に動き、掴むとダッシュボードごと動く）、ナビゲーションバーから外して
 //! 独立させたり、戻したりできる。閉じる（バーの X・X ボタンの二回押し）と、はめた画面ごと隠すだけで、次は同じ状態で出る。
 
+use std::collections::HashSet;
+use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use design::components::{self, Variant};
 use design::{Theme, font_size, icons, spacing};
 use gpui::{
-    App, Context, Div, FocusHandle, FontWeight, KeyDownEvent, RenderImage, ScrollHandle,
-    SharedString, WeakEntity, Window, div, img, prelude::*, px, rgba,
+    App, Context, Div, FocusHandle, FontWeight, KeyDownEvent, ListAlignment, ListState,
+    RenderImage, SharedString, Task, WeakEntity, Window, div, img, list, prelude::*, px, rgba,
 };
 use kernel::audio::Sound;
 use kernel::desktop::{
@@ -57,6 +59,8 @@ const SEEK_PX: f32 = 560.0;
 const SEEK_BAR_PX: f32 = 6.0;
 const SEEK_HIT_PX: f32 = 32.0;
 const NOW_PLAYING_VEIL: u32 = 0x8c;
+/// 進行中の作業の知らせ（ライブアクティビティ）の進み具合のバーの幅と太さ（px）。
+const ACTIVITY_BAR_PX: (f32, f32) = (64.0, 4.0);
 /// これより少ない残量は危険の色にする。
 const LOW_BATTERY: f32 = 0.2;
 
@@ -183,6 +187,19 @@ impl Dashboard {
         tick_every_second(panel, cx);
         cx.observe_global::<PanelControl>(Self::close_on_outside_press)
             .detach();
+        // アプリ一覧は取得に数秒かかるので、起動時に読んでおく（ランチャーを開いたときにはもう出せる）。
+        let fetch = fetch_apps(cx);
+        cx.spawn(async move |_, cx| match fetch.await {
+            Ok(apps) => {
+                cx.update(|cx| {
+                    if !cx.has_global::<AppCatalog>() {
+                        cx.set_global(AppCatalog(apps));
+                    }
+                });
+            }
+            Err(e) => logger::warn!("cannot list installed apps", error = e),
+        })
+        .detach();
         // 画面（モニター）の一覧が届いたら、すべて配信として開いておく。隠している間は描かないので、描画とは別に待つ。
         if let Ok(pending) = Sources::refresh() {
             cx.spawn(async move |this, cx| {
@@ -407,6 +424,14 @@ impl Dashboard {
                 .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
         }
         redraw(self.panel, cx);
+    }
+
+    /// 進行中の作業の知らせを押した: 出したニャプリを開く。終わったカウントダウンは知らせを片付ける。
+    fn open_activity(&mut self, live: nyapp::activity::Live, cx: &mut Context<Self>) {
+        if live.finished {
+            nyapp::activity::clear(&live.app.manifest.id, cx);
+        }
+        self.open_nyapp(live.app, cx);
     }
 
     /// 出ている間に何も無い所（ダッシュボードにも、ほかのパネルにも当たらない所）を押したら隠す。
@@ -670,6 +695,56 @@ impl Render for Dashboard {
             components::icon_button(&theme, id, glyph, tooltip, variant(page))
                 .on_click(cx.listener(move |this, _, _, cx| this.toggle(page, cx)))
         };
+        // 進行中の作業の知らせ（Dynamic Island のような進み具合の表示）: アプリのアイコン・残り時間などの文字・進み具合。
+        let now = nyapp::activity::now_ms();
+        let lang = i18n::Lang::current(cx).code();
+        let activities: Vec<_> = nyapp::activity::all(cx)
+            .iter()
+            .cloned()
+            .map(|live| {
+                let text = live.text(now).map_or_else(
+                    || i18n::t(cx, "dashboard.activity_done"),
+                    SharedString::from,
+                );
+                let progress = live.progress(now).map(|p| {
+                    div()
+                        .w(px(ACTIVITY_BAR_PX.0))
+                        .h(px(ACTIVITY_BAR_PX.1))
+                        .rounded(px(design::radius::FULL))
+                        .bg(rgba(theme.groove))
+                        .child(
+                            div()
+                                .h_full()
+                                .w(px(ACTIVITY_BAR_PX.0 * p))
+                                .rounded(px(design::radius::FULL))
+                                .bg(rgba(theme.accent_solid)),
+                        )
+                });
+                let variant = if live.finished {
+                    Variant::Primary
+                } else {
+                    Variant::Default
+                };
+                components::content_button(
+                    &theme,
+                    format!("dashboard-activity-{}", live.app.manifest.id),
+                    variant,
+                )
+                .flex_none()
+                .tooltip(live.activity.title().to_owned())
+                .child(live.app.icon(lang, font_size::LG, &theme))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(spacing::XS))
+                        .child(div().font_weight(FontWeight::BOLD).child(text))
+                        .children(progress),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| this.open_activity(live.clone(), cx)))
+            })
+            .collect();
         let mirror = page_button(
             "dashboard-launcher",
             &icons::DOTS_NINE,
@@ -714,6 +789,8 @@ impl Render for Dashboard {
                 .children(battery.map(|b| design::icon(battery_glyph(&b)).size(px(font_size::LG))))
                 .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
             )
+            // 進行中の作業の知らせは、クイック設定と再生中の間。
+            .children(activities)
             // 何か再生しているときだけ、再生中の画面のボタンを出す。
             .when(has_media, |d| d.child(now_playing))
             .child(mirror)
@@ -764,14 +841,17 @@ pub struct Screen {
     sources: Vec<(Source, Option<Arc<RenderImage>>)>,
     pending: Option<Sources>,
     error: Option<String>,
-    scroll: ScrollHandle,
+    /// ランチャーの中身（見出し・タイルの行を並べた仮想化したリスト。見えている行だけを組み立てる）と、その行。
+    list: ListState,
+    launcher: Launcher,
     /// 再生中の画面の画像（ジャケット・背景・アプリのアイコン）。元の画像が変わったときだけ作り直す。
     media_images: Option<MediaImages>,
     /// 取得元の一覧が届いたら、再生中のアプリのウィンドウを開く。
     open_app: bool,
     /// アプリ一覧（名前の順）と、そのアイコンの画像。前に読んだもの（[`AppCatalog`]）を出しておき、取り直したら替える。
     apps: Vec<(InstalledApp, Option<Arc<RenderImage>>)>,
-    apps_pending: Option<InstalledApps>,
+    /// アプリ一覧を取り直している最中か。
+    apps_pending: bool,
     /// アプリ一覧の検索欄に打った文字。
     query: String,
     search: FocusHandle,
@@ -787,9 +867,80 @@ pub struct Screen {
 }
 
 /// 読んだアプリ一覧。次に開いたときに、取り直すまでの間それを出す（アイコンを読むので時間が掛かる）。
-struct AppCatalog(Vec<(InstalledApp, Option<Arc<RenderImage>>)>);
+struct AppCatalog(AppList);
+
+/// アプリ一覧（名前の順）と、そのアイコンの画像。
+type AppList = Vec<(InstalledApp, Option<Arc<RenderImage>>)>;
 
 impl gpui::Global for AppCatalog {}
+
+/// アプリ一覧を OS から取り直し、アイコンを画像にする（どちらも別スレッド。取得はアイコンを読むので数秒かかる）。
+fn fetch_apps(cx: &App) -> Task<Result<AppList, String>> {
+    let pending = InstalledApps::refresh();
+    let executor = cx.background_executor().clone();
+    cx.background_executor().spawn(async move {
+        let pending = pending.map_err(|e| e.to_string())?;
+        let apps = loop {
+            if let Some(result) = pending.poll() {
+                break result.map_err(|e| e.to_string())?;
+            }
+            executor.timer(Duration::from_millis(100)).await;
+        };
+        Ok(apps
+            .into_iter()
+            .map(|a| {
+                let image = a.icon.as_ref().and_then(render_image);
+                (a, image)
+            })
+            .collect())
+    })
+}
+
+/// ランチャーの中身: 行（リストの 1 行）と、行が並べるタイル。
+#[derive(Default)]
+struct Launcher {
+    rows: Vec<LauncherRow>,
+    tiles: Vec<Tile>,
+    /// 起動中のアプリ（[`Tile::Running`] が指す）。
+    running: Vec<RunningApp>,
+}
+
+impl Launcher {
+    /// タイルを足し、[`APP_COLUMNS`] 個ずつの行にする。
+    fn push_tiles(&mut self, tiles: Vec<Tile>) {
+        let start = self.tiles.len();
+        self.tiles.extend(tiles);
+        let end = self.tiles.len();
+        for row in (start..end).step_by(APP_COLUMNS as usize) {
+            self.rows.push(LauncherRow::Tiles(
+                row..(row + APP_COLUMNS as usize).min(end),
+            ));
+        }
+    }
+}
+
+/// ランチャーのリストの 1 行。
+#[derive(Debug, Clone, PartialEq)]
+enum LauncherRow {
+    NyappsHeader,
+    RunningHeader,
+    AllAppsHeader,
+    Note(SharedString),
+    Separator,
+    /// [`Launcher::tiles`] のこの範囲を 1 行に並べる。
+    Tiles(Range<usize>),
+}
+
+/// ランチャーのタイル。`n` は検索で絞った中での順番（`debug_selector` の番号）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Tile {
+    /// [`Screen::nyapps`] の添字。
+    Nyapp(usize),
+    /// [`Launcher::running`] の添字。
+    Running { at: usize, n: usize },
+    /// [`Screen::apps`] の添字と、起動中か。
+    App { at: usize, n: usize, running: bool },
+}
 
 /// 再生中の画面の画像。`key` は元の画像（[`kernel::subsystems::media::Image`]）の中身の場所。
 struct MediaImages {
@@ -806,7 +957,21 @@ impl Screen {
         dashboard: WeakEntity<Dashboard>,
         cx: &mut Context<Self>,
     ) -> Self {
-        tick_every_second(panel, cx);
+        // 時計・電池・再生位置は 1 秒ごとに描き直す。ランチャーは取得元の到着・起動したアプリのウィンドウを待つ間だけ。
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                let tick = |s: &mut Self, cx: &mut Context<Self>| {
+                    if s.page != Page::Launcher || s.pending.is_some() || s.launching.is_some() {
+                        redraw(panel, cx);
+                    }
+                };
+                if this.update(cx, tick).is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
         let mut this = Self {
             panel,
             page,
@@ -814,14 +979,15 @@ impl Screen {
             sources: Vec::new(),
             pending: None,
             error: None,
-            scroll: ScrollHandle::new(),
+            list: ListState::new(0, ListAlignment::Top, px(2.0 * TILE_PX)),
+            launcher: Launcher::default(),
             media_images: None,
             open_app: false,
             apps: cx
                 .try_global::<AppCatalog>()
                 .map(|c| c.0.clone())
                 .unwrap_or_default(),
-            apps_pending: None,
+            apps_pending: false,
             query: String::new(),
             search: cx.focus_handle(),
             launching: None,
@@ -835,10 +1001,23 @@ impl Screen {
             this.refresh();
         }
         if page == Page::Launcher {
-            match InstalledApps::refresh() {
-                Ok(pending) => this.apps_pending = Some(pending),
-                Err(e) => this.error = Some(e.to_string()),
-            }
+            this.apps_pending = true;
+            let fetch = fetch_apps(cx);
+            cx.spawn(async move |this, cx| {
+                let fetched = fetch.await;
+                let _ = this.update(cx, |s, cx| {
+                    match fetched {
+                        Ok(apps) => {
+                            cx.set_global(AppCatalog(apps.clone()));
+                            s.apps = apps;
+                        }
+                        Err(e) => s.error = Some(e),
+                    }
+                    s.apps_pending = false;
+                    redraw(s.panel, cx);
+                });
+            })
+            .detach();
             this.scan_nyapps(cx);
         }
         this
@@ -902,55 +1081,8 @@ impl Screen {
         .detach();
     }
 
-    /// ランチャーのニャプリのセクション: 見出し（更新の確認・消す）と、タイルのグリッド。消す状態ではタイルを押すと消す。
-    fn nyapps_section(
-        &self,
-        theme: &Theme,
-        query: &str,
-        cx: &mut Context<Self>,
-    ) -> Vec<gpui::AnyElement> {
-        let lang = i18n::Lang::current(cx);
-        let tiles: Vec<_> =
-            kernel::desktop::matching(&self.nyapps, |a| a.manifest.name_in(lang.code()), query)
-                .into_iter()
-                .map(|app| {
-                    let name = app.manifest.name_in(lang.code()).to_owned();
-                    let running = nyapp::panel_of(&app.manifest.id, cx).is_some();
-                    let icon = if self.removing {
-                        design::icon(&icons::TRASH)
-                            .size(px(TILE_ICON_PX))
-                            .color(rgba(theme.danger_solid))
-                            .into_any_element()
-                    } else {
-                        app.icon(lang.code(), TILE_ICON_PX, theme)
-                    };
-                    let tooltip = self
-                        .removing
-                        .then(|| i18n::tf(cx, "dashboard.nyapps_uninstall", &[("name", &name)]));
-                    let app = app.clone();
-                    let tile = app_tile(
-                        theme,
-                        format!("dashboard-nyapp-{}", app.manifest.id),
-                        icon,
-                        &name,
-                        running,
-                    );
-                    match tooltip {
-                        Some(t) => tile.tooltip(t),
-                        None => tile,
-                    }
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        if this.removing {
-                            this.uninstall_nyapp(app.clone(), cx);
-                        } else {
-                            let app = app.clone();
-                            let _ = this.dashboard.update(cx, |d, cx| d.open_nyapp(app, cx));
-                        }
-                        redraw(this.panel, cx);
-                    }))
-                    .into_any_element()
-                })
-                .collect();
+    /// ランチャーのニャプリの見出し: 更新の確認と、消す状態の切り替え。
+    fn nyapps_header(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let (remove_glyph, remove_key, remove_variant) = if self.removing {
             (&icons::CHECK, "dashboard.nyapps_done", Variant::Primary)
         } else {
@@ -960,59 +1092,84 @@ impl Screen {
                 Variant::OnBackground,
             )
         };
-        let header = section(theme, i18n::t(cx, "dashboard.nyapps")).child(
-            div()
-                .flex()
-                .gap(px(spacing::XS))
-                .child(
-                    components::icon_button(
-                        theme,
-                        "dashboard-nyapps-update",
-                        &icons::ARROW_CIRCLE_UP,
-                        i18n::t(cx, "dashboard.nyapps_update"),
-                        Variant::OnBackground,
+        section(theme, i18n::t(cx, "dashboard.nyapps"))
+            .child(
+                div()
+                    .flex()
+                    .gap(px(spacing::XS))
+                    .child(
+                        components::icon_button(
+                            theme,
+                            "dashboard-nyapps-update",
+                            &icons::ARROW_CIRCLE_UP,
+                            i18n::t(cx, "dashboard.nyapps_update"),
+                            Variant::OnBackground,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.update_nyapps(cx);
+                            redraw(this.panel, cx);
+                        })),
                     )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.update_nyapps(cx);
-                        redraw(this.panel, cx);
-                    })),
-                )
-                .child(
-                    components::icon_button(
-                        theme,
-                        "dashboard-nyapps-remove",
-                        remove_glyph,
-                        i18n::t(cx, remove_key),
-                        remove_variant,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.removing = !this.removing;
-                        redraw(this.panel, cx);
-                    })),
-                ),
-        );
-        let note = |text: SharedString| {
-            div()
-                .px(px(spacing::SM))
-                .text_color(rgba(theme.neutral_text_low))
-                .child(text)
+                    .child(
+                        components::icon_button(
+                            theme,
+                            "dashboard-nyapps-remove",
+                            remove_glyph,
+                            i18n::t(cx, remove_key),
+                            remove_variant,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.removing = !this.removing;
+                            redraw(this.panel, cx);
+                        })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    /// ニャプリ `app` のタイル。押すと開く（消す状態なら消す。アイコンはごみ箱になる）。
+    fn nyapp_tile(
+        &self,
+        app: &nyapp::Installed,
+        theme: &Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let lang = i18n::Lang::current(cx);
+        let name = app.manifest.name_in(lang.code()).to_owned();
+        let running = nyapp::panel_of(&app.manifest.id, cx).is_some();
+        let icon = if self.removing {
+            design::icon(&icons::TRASH)
+                .size(px(TILE_ICON_PX))
+                .color(rgba(theme.danger_solid))
                 .into_any_element()
-        };
-        let mut out = vec![header.into_any_element()];
-        out.extend(self.update_note.clone().map(note));
-        out.push(if !tiles.is_empty() {
-            app_grid().children(tiles).into_any_element()
-        } else if self.nyapps_pending {
-            note(i18n::t(cx, "dashboard.loading"))
-        } else if self.nyapps.is_empty() {
-            let dir = nyapp::installed::dir()
-                .map(|d| d.display().to_string())
-                .unwrap_or_default();
-            note(i18n::tf(cx, "dashboard.nyapps_none", &[("dir", &dir)]))
         } else {
-            note(i18n::t(cx, "dashboard.none"))
-        });
-        out
+            app.icon(lang.code(), TILE_ICON_PX, theme)
+        };
+        let tooltip = self
+            .removing
+            .then(|| i18n::tf(cx, "dashboard.nyapps_uninstall", &[("name", &name)]));
+        let app = app.clone();
+        let tile = app_tile(
+            theme,
+            format!("dashboard-nyapp-{}", app.manifest.id),
+            icon,
+            &name,
+            running,
+        );
+        match tooltip {
+            Some(t) => tile.tooltip(t),
+            None => tile,
+        }
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if this.removing {
+                this.uninstall_nyapp(app.clone(), cx);
+            } else {
+                let app = app.clone();
+                let _ = this.dashboard.update(cx, |d, cx| d.open_nyapp(app, cx));
+            }
+            redraw(this.panel, cx);
+        }))
+        .into_any_element()
     }
 
     /// 再生中のメディアのアプリのウィンドウ（取得元の一覧から。実行ファイル名か、ウィンドウの名前で探す）。
@@ -1375,27 +1532,6 @@ impl Screen {
         }
     }
 
-    /// アプリ一覧を読み終えていれば受け取り、次に開くときのために覚える。
-    fn poll_apps(&mut self, cx: &mut App) {
-        let Some(result) = self.apps_pending.as_ref().and_then(InstalledApps::poll) else {
-            return;
-        };
-        self.apps_pending = None;
-        match result {
-            Ok(apps) => {
-                self.apps = apps
-                    .into_iter()
-                    .map(|a| {
-                        let image = a.icon.as_ref().and_then(render_image);
-                        (a, image)
-                    })
-                    .collect();
-                cx.set_global(AppCatalog(self.apps.clone()));
-            }
-            Err(e) => self.error = Some(e.to_string()),
-        }
-    }
-
     /// アプリ `app` のウィンドウ（取得元の一覧から）。実行ファイル名で探し、分からないアプリ（ストアのアプリなど）は
     /// ウィンドウの名前にアプリの名前を含むもので探す。
     fn window_for(&self, app: &InstalledApp) -> Option<&(Source, Option<Arc<RenderImage>>)> {
@@ -1453,119 +1589,19 @@ impl Screen {
         }
     }
 
-    /// ランチャー: 上に検索欄、その下にニャプリ（[`Self::nyapps_section`]）、区切り線を挟んで起動中のアプリ、
-    /// 区切り線を挟んで全部のアプリ（名前の順）。
-    /// 検索すると、どちらも名前に打った文字を含むものだけになる。スクロールするのはアプリ一覧だけ。
+    /// ランチャー: 上に検索欄、その下をスクロールする 1 本のリストにして、ニャプリ・区切り線・起動中のアプリ・区切り線・
+    /// 全部のアプリ（名前の順）を並べる。検索すると、どれも名前に打った文字を含むものだけになる。
+    /// リストは見えている行だけを組み立てる（アプリは数百個あり、全部のタイルを毎回組むと 1 フレームに収まらない）。
     fn apps_page(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Div {
         self.poll_sources();
-        self.poll_apps(cx);
         self.open_launched(cx);
-        let stem = |s: &str| {
-            let s = s.to_ascii_lowercase();
-            s.strip_suffix(".exe").map(str::to_owned).unwrap_or(s)
-        };
-        // 起動中のアプリ: ウィンドウをアプリ（実行ファイル）ごとにまとめ、最初のウィンドウを開く。常駐の画面は
-        // バーにあるので出さない。
-        // ponytail: アプリのどのウィンドウを開くかは選べない（最初のもの）。要ればウィンドウを選ばせる。
-        let mut running: Vec<RunningApp> = Vec::new();
-        for (source, image) in &self.sources {
-            if mirror_of(source, cx).is_some_and(|(_, resident)| resident) {
-                continue;
-            }
-            let key = source
-                .app
-                .as_deref()
-                .map_or_else(|| source.name.clone(), stem);
-            if running.iter().any(|r| r.key == key) {
-                continue;
-            }
-            let app = self
-                .apps
-                .iter()
-                .find(|(a, _)| a.exe.as_deref().is_some_and(|e| stem(e) == key));
-            let name = match (app, &source.app) {
-                (Some((a, _)), _) => a.name.clone(),
-                (None, Some(_)) => key.clone(),
-                (None, None) => source.name.clone(),
-            };
-            running.push(RunningApp {
-                icon: image.clone().or_else(|| app.and_then(|(_, i)| i.clone())),
-                key,
-                name,
-                source: source.clone(),
-                window_icon: image.clone(),
-            });
+        let launcher = self.layout_launcher(cx);
+        if launcher.rows != self.launcher.rows {
+            // 行が変わったときだけ測り直す（同じなら、見えている行を描き直すだけ）。
+            self.list
+                .splice(0..self.launcher.rows.len(), launcher.rows.len());
         }
-        let query = self.query.clone();
-        let running_tiles: Vec<_> =
-            kernel::desktop::matching(&running, |r| r.name.as_str(), &query)
-                .into_iter()
-                .enumerate()
-                .map(|(i, r)| {
-                    let (source, image) = (r.source.clone(), r.window_icon.clone());
-                    let glyph = match source.kind {
-                        SourceKind::Screen => &icons::MONITOR,
-                        SourceKind::Window => &icons::APP_WINDOW,
-                    };
-                    app_tile(
-                        theme,
-                        format!("dashboard-running-{i}"),
-                        tile_image(r.icon.clone(), glyph),
-                        &r.name,
-                        true,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_window(source.clone(), image.clone(), cx);
-                        redraw(this.panel, cx);
-                    }))
-                    .into_any_element()
-                })
-                .collect();
-        let app_tiles: Vec<_> =
-            kernel::desktop::matching(&self.apps, |(a, _)| a.name.as_str(), &query)
-                .into_iter()
-                .enumerate()
-                .map(|(i, (app, icon))| {
-                    let running = self.window_for(app).is_some();
-                    let app = app.clone();
-                    app_tile(
-                        theme,
-                        format!("dashboard-app-{i}"),
-                        tile_image(icon.clone(), &icons::APP_WINDOW),
-                        &app.name,
-                        running,
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.launch_app(app.clone(), cx);
-                        redraw(this.panel, cx);
-                    }))
-                    .into_any_element()
-                })
-                .collect();
-        let note = |loading: bool, cx: &App| {
-            div()
-                .px(px(spacing::SM))
-                .text_color(rgba(theme.neutral_text_low))
-                .child(i18n::t(
-                    cx,
-                    if loading {
-                        "dashboard.loading"
-                    } else {
-                        "dashboard.none"
-                    },
-                ))
-        };
-        let nyapps = self.nyapps_section(theme, &query, cx);
-        let running = if running_tiles.is_empty() {
-            note(self.pending.is_some(), cx)
-        } else {
-            app_grid().children(running_tiles)
-        };
-        let apps = if app_tiles.is_empty() {
-            note(self.apps_pending.is_some(), cx)
-        } else {
-            app_grid().children(app_tiles)
-        };
+        self.launcher = launcher;
         components::panel(theme).child(
             div()
                 .size_full()
@@ -1581,48 +1617,249 @@ impl Screen {
                             .child(i18n::tf(cx, "dashboard.failed", &[("error", &error)])),
                     )
                 })
-                .children(nyapps)
                 .child(
-                    div()
-                        .flex_none()
-                        .h(px(1.0))
-                        .mx(px(spacing::SM))
-                        .bg(rgba(theme.neutral_border_subtle)),
-                )
-                .child(
-                    section(theme, i18n::t(cx, "dashboard.running")).child(
-                        components::icon_button(
-                            theme,
-                            "dashboard-refresh",
-                            &icons::ARROW_CLOCKWISE,
-                            i18n::t(cx, "dashboard.refresh"),
-                            Variant::OnBackground,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.refresh();
-                            redraw(this.panel, cx);
-                        })),
-                    ),
-                )
-                .child(running)
-                .child(
-                    div()
-                        .flex_none()
-                        .h(px(1.0))
-                        .mx(px(spacing::SM))
-                        .bg(rgba(theme.neutral_border_subtle)),
-                )
-                .child(section(theme, i18n::t(cx, "dashboard.all_apps")))
-                .child(
-                    div()
-                        .id("dashboard-apps")
-                        .flex_1()
-                        .min_h_0()
-                        .overflow_y_scroll()
-                        .track_scroll(&self.scroll)
-                        .child(apps),
+                    list(
+                        self.list.clone(),
+                        cx.processor(|this, ix: usize, _, cx| this.launcher_row(ix, cx)),
+                    )
+                    .flex_1()
+                    .min_h_0(),
                 ),
         )
+    }
+
+    /// ランチャーの行とタイルを、今の一覧と検索から決める（要素は作らない。描くのは見えている行だけ）。
+    fn layout_launcher(&self, cx: &App) -> Launcher {
+        let query = self.query.trim().to_lowercase();
+        let matches = |name: &str| query.is_empty() || name.to_lowercase().contains(&query);
+        let lang = i18n::Lang::current(cx).code();
+        let mut l = Launcher::default();
+        let note = |key: &str| LauncherRow::Note(i18n::t(cx, key));
+
+        l.rows.push(LauncherRow::NyappsHeader);
+        if let Some(n) = &self.update_note {
+            l.rows.push(LauncherRow::Note(n.clone()));
+        }
+        let nyapps: Vec<_> = (0..self.nyapps.len())
+            .filter(|&i| matches(self.nyapps[i].manifest.name_in(lang)))
+            .map(Tile::Nyapp)
+            .collect();
+        if !nyapps.is_empty() {
+            l.push_tiles(nyapps);
+        } else if self.nyapps_pending {
+            l.rows.push(note("dashboard.loading"));
+        } else if self.nyapps.is_empty() {
+            let dir = nyapp::installed::dir()
+                .map(|d| d.display().to_string())
+                .unwrap_or_default();
+            l.rows.push(LauncherRow::Note(i18n::tf(
+                cx,
+                "dashboard.nyapps_none",
+                &[("dir", &dir)],
+            )));
+        } else {
+            l.rows.push(note("dashboard.none"));
+        }
+
+        l.rows
+            .extend([LauncherRow::Separator, LauncherRow::RunningHeader]);
+        l.running = self.running_apps(cx);
+        let running: Vec<_> = l
+            .running
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| matches(&r.name))
+            .enumerate()
+            .map(|(n, (at, _))| Tile::Running { at, n })
+            .collect();
+        if running.is_empty() {
+            l.rows.push(note(if self.pending.is_some() {
+                "dashboard.loading"
+            } else {
+                "dashboard.none"
+            }));
+        } else {
+            l.push_tiles(running);
+        }
+
+        l.rows
+            .extend([LauncherRow::Separator, LauncherRow::AllAppsHeader]);
+        // 起動中か（点を付ける）は、ウィンドウの実行ファイル名・名前を一度だけ小文字にして突き合わせる。
+        let window_exes: HashSet<String> = self
+            .sources
+            .iter()
+            .filter(|(s, _)| s.kind == SourceKind::Window)
+            .filter_map(|(s, _)| s.app.as_deref().map(str::to_ascii_lowercase))
+            .collect();
+        let window_names: Vec<String> = self
+            .sources
+            .iter()
+            .filter(|(s, _)| s.kind == SourceKind::Window)
+            .map(|(s, _)| s.name.to_lowercase())
+            .collect();
+        let apps: Vec<_> = self
+            .apps
+            .iter()
+            .enumerate()
+            .filter(|(_, (a, _))| matches(&a.name))
+            .enumerate()
+            .map(|(n, (at, (a, _)))| {
+                let running = match &a.exe {
+                    Some(exe) => window_exes.contains(&exe.to_ascii_lowercase()),
+                    None => {
+                        let name = a.name.to_lowercase();
+                        !name.is_empty() && window_names.iter().any(|w| w.contains(&name))
+                    }
+                };
+                Tile::App { at, n, running }
+            })
+            .collect();
+        if apps.is_empty() {
+            l.rows.push(note(if self.apps_pending {
+                "dashboard.loading"
+            } else {
+                "dashboard.none"
+            }));
+        } else {
+            l.push_tiles(apps);
+        }
+        l
+    }
+
+    /// 起動中のアプリ: ウィンドウをアプリ（実行ファイル）ごとにまとめ、最初のウィンドウを開く。常駐の画面は
+    /// バーにあるので出さない。
+    // ponytail: アプリのどのウィンドウを開くかは選べない（最初のもの）。要ればウィンドウを選ばせる。
+    fn running_apps(&self, cx: &App) -> Vec<RunningApp> {
+        let stem = |s: &str| {
+            let s = s.to_ascii_lowercase();
+            s.strip_suffix(".exe").map(str::to_owned).unwrap_or(s)
+        };
+        // 実行ファイル名（小文字・.exe 抜き）→ アプリ。ウィンドウごとに全アプリを探さないよう、先に一度だけ作る。
+        let by_exe: std::collections::HashMap<String, &(InstalledApp, Option<Arc<RenderImage>>)> =
+            self.apps
+                .iter()
+                .filter_map(|a| Some((stem(a.0.exe.as_deref()?), a)))
+                .collect();
+        let mut running: Vec<RunningApp> = Vec::new();
+        for (source, image) in &self.sources {
+            if mirror_of(source, cx).is_some_and(|(_, resident)| resident) {
+                continue;
+            }
+            let key = source
+                .app
+                .as_deref()
+                .map_or_else(|| source.name.clone(), stem);
+            if running.iter().any(|r| r.key == key) {
+                continue;
+            }
+            let app = by_exe.get(&key).copied();
+            let name = match (app, &source.app) {
+                (Some((a, _)), _) => a.name.clone(),
+                (None, Some(_)) => key.clone(),
+                (None, None) => source.name.clone(),
+            };
+            running.push(RunningApp {
+                icon: image.clone().or_else(|| app.and_then(|(_, i)| i.clone())),
+                key,
+                name,
+                source: source.clone(),
+                window_icon: image.clone(),
+            });
+        }
+        running
+    }
+
+    /// ランチャーの `ix` 行目を組み立てる（リストが見えている行だけ呼ぶ）。
+    fn launcher_row(&mut self, ix: usize, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = Theme::current(cx);
+        let Some(row) = self.launcher.rows.get(ix).cloned() else {
+            return div().into_any_element();
+        };
+        match row {
+            LauncherRow::NyappsHeader => self.nyapps_header(&theme, cx),
+            LauncherRow::RunningHeader => section(&theme, i18n::t(cx, "dashboard.running"))
+                .child(
+                    components::icon_button(
+                        &theme,
+                        "dashboard-refresh",
+                        &icons::ARROW_CLOCKWISE,
+                        i18n::t(cx, "dashboard.refresh"),
+                        Variant::OnBackground,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.refresh();
+                        redraw(this.panel, cx);
+                    })),
+                )
+                .into_any_element(),
+            LauncherRow::AllAppsHeader => {
+                section(&theme, i18n::t(cx, "dashboard.all_apps")).into_any_element()
+            }
+            LauncherRow::Note(text) => div()
+                .px(px(spacing::SM))
+                .pb(px(spacing::SM))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(text)
+                .into_any_element(),
+            LauncherRow::Separator => div()
+                .py(px(spacing::SM))
+                .child(
+                    div()
+                        .h(px(1.0))
+                        .mx(px(spacing::SM))
+                        .bg(rgba(theme.neutral_border_subtle)),
+                )
+                .into_any_element(),
+            LauncherRow::Tiles(range) => {
+                let tiles: Vec<_> = range.map(|i| self.launcher_tile(i, &theme, cx)).collect();
+                app_grid()
+                    .pb(px(spacing::XS))
+                    .children(tiles)
+                    .into_any_element()
+            }
+        }
+    }
+
+    fn launcher_tile(&self, i: usize, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        match self.launcher.tiles[i] {
+            Tile::Nyapp(at) => self.nyapp_tile(&self.nyapps[at], theme, cx),
+            Tile::Running { at, n } => {
+                let r = &self.launcher.running[at];
+                let (source, image) = (r.source.clone(), r.window_icon.clone());
+                let glyph = match source.kind {
+                    SourceKind::Screen => &icons::MONITOR,
+                    SourceKind::Window => &icons::APP_WINDOW,
+                };
+                app_tile(
+                    theme,
+                    format!("dashboard-running-{n}"),
+                    tile_image(r.icon.clone(), glyph),
+                    &r.name,
+                    true,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.open_window(source.clone(), image.clone(), cx);
+                    redraw(this.panel, cx);
+                }))
+                .into_any_element()
+            }
+            Tile::App { at, n, running } => {
+                let (app, icon) = &self.apps[at];
+                let app = app.clone();
+                app_tile(
+                    theme,
+                    format!("dashboard-app-{n}"),
+                    tile_image(icon.clone(), &icons::APP_WINDOW),
+                    &app.name,
+                    running,
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.launch_app(app.clone(), cx);
+                    redraw(this.panel, cx);
+                }))
+                .into_any_element()
+            }
+        }
     }
 
     /// アプリ一覧の検索欄。押すと文字を打てる（仮想キーボードが出る）。打っている間は右端に消すボタンを出す。
@@ -2487,6 +2724,76 @@ mod tests {
         assert!(cx.debug_bounds("dashboard-now-playing").is_some());
     }
 
+    /// 進行中の作業の知らせは、バーのクイック設定と再生中の間に出る。押すと出したニャプリがはまり、
+    /// 終わったカウントダウンの知らせは片付く。
+    #[gpui::test]
+    fn activities_sit_between_quick_settings_and_now_playing(cx: &mut TestAppContext) {
+        let (_bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+            cx.default_global::<PanelControl>().media = Some(playing());
+            Dashboard::new(1, summon, summon, cx)
+        });
+        let manifest = nyapp::Manifest::parse(
+            "id = \"net.bettaworx.clock\"\nname = \"Clock\"\nversion = \"1\"\napi = 1\n",
+        )
+        .unwrap();
+        let clock = nyapp::Installed {
+            manifest,
+            path: std::env::temp_dir().join("net.bettaworx.clock.nyapp"),
+            icon: None,
+        };
+        cx.update(|_, cx| {
+            let ends = nyapp::activity::now_ms() + 90_000;
+            let countdown = nyapp::Activity::Countdown {
+                title: "Timer".into(),
+                ends_at_ms: ends,
+                total_ms: 120_000,
+            };
+            nyapp::activity::set(&clock, Some(countdown), cx);
+        });
+        redraw_bar(cx);
+        let x = |cx: &mut VisualTestContext, s: &'static str| cx.debug_bounds(s).unwrap().origin.x;
+        let (quick, activity, playing) = (
+            x(cx, "dashboard-quick-settings"),
+            x(cx, "dashboard-activity-net.bettaworx.clock"),
+            x(cx, "dashboard-now-playing"),
+        );
+        assert!(
+            quick < activity && activity < playing,
+            "{quick:?} < {activity:?} < {playing:?}"
+        );
+        // 終わったものを押すと片付き、ニャプリがはまる。
+        cx.update(|_, cx| {
+            let live = nyapp::activity::all(cx)[0].clone();
+            nyapp::activity::set(&live.app, None, cx);
+            let ends = nyapp::activity::now_ms() - 1;
+            let done = nyapp::Activity::Countdown {
+                title: "Timer".into(),
+                ends_at_ms: ends,
+                total_ms: 1,
+            };
+            nyapp::activity::set(&live.app, Some(done), cx);
+        });
+        cx.run_until_parked();
+        assert!(cx.update(|_, cx| nyapp::activity::all(cx)[0].finished));
+        redraw_bar(cx);
+        click(cx, "dashboard-activity-net.bettaworx.clock");
+        assert!(
+            cx.update(|_, cx| nyapp::activity::all(cx).is_empty()),
+            "終わったものは片付く"
+        );
+        open_spawned(cx, 4);
+        assert!(
+            commands(cx, 4).iter().any(docked_to_bar),
+            "ニャプリがはまる"
+        );
+    }
+
+    fn redraw_bar(cx: &mut VisualTestContext) {
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+    }
+
     /// 再生中の画面: 曲と位置・長さを出し、操作ボタンとシークバーはカーネルへの操作を積む。
     #[gpui::test]
     fn now_playing_screen_shows_the_song_and_sends_commands(cx: &mut TestAppContext) {
@@ -2640,7 +2947,7 @@ mod tests {
     fn apps_list_marks_running_apps_and_filters_by_search(cx: &mut TestAppContext) {
         let (list, cx) = cx.add_window_view(|_, cx| {
             let mut list = Screen::new(2, Page::Launcher, WeakEntity::new_invalid(), cx);
-            (list.pending, list.apps_pending) = (None, None);
+            (list.pending, list.apps_pending) = (None, false);
             list.sources = vec![(
                 kernel::desktop::mock::source("Editor", SourceKind::Window),
                 None,
@@ -2683,6 +2990,49 @@ mod tests {
         cx.run_until_parked();
         assert!(list.read_with(cx, |l, _| l.query.is_empty()));
         assert!(cx.debug_bounds("dashboard-running-0").is_some());
+    }
+
+    /// ランチャーの描き直しの重さ（計測。常には流さない: `cargo test -p dashboard --lib launcher_redraw_cost -- --ignored --nocapture`）。
+    /// アプリ 450 個・ウィンドウ 30 個で、描き直し 1 回の平均を出す。
+    #[gpui::test]
+    #[ignore]
+    fn launcher_redraw_cost(cx: &mut TestAppContext) {
+        let icon = || {
+            let rgba = vec![200u8; 64 * 64 * 4];
+            rgba_image(64, 64, &rgba)
+        };
+        let (_list, cx) = cx.add_window_view(|_, cx| {
+            let mut list = Screen::new(2, Page::Launcher, WeakEntity::new_invalid(), cx);
+            (list.pending, list.apps_pending) = (None, false);
+            list.sources = (0..30)
+                .map(|i| {
+                    (
+                        kernel::desktop::mock::source(&format!("Window {i}"), SourceKind::Window),
+                        icon(),
+                    )
+                })
+                .collect();
+            list.apps = (0..450)
+                .map(|i| {
+                    let app = InstalledApp {
+                        name: format!("App {i}"),
+                        id: format!("app-{i}"),
+                        exe: (i % 2 == 0).then(|| format!("app{i}.exe")),
+                        icon: None,
+                    };
+                    (app, icon())
+                })
+                .collect();
+            list
+        });
+        cx.run_until_parked();
+        let n = 30;
+        let start = Instant::now();
+        for _ in 0..n {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+        println!("launcher redraw: {:?} per frame", start.elapsed() / n);
     }
 
     #[gpui::test]

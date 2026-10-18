@@ -69,6 +69,42 @@ pub enum Event {
     Tick,
 }
 
+/// 進行中の作業の知らせ（ライブアクティビティ）。ダッシュボードのバーのクイック設定と再生中の間に出る
+/// （iPhone の Dynamic Island のような進み具合の表示）。[`host::set_activity`] で出し、[`host::clear_activity`] で消す。
+///
+/// ニャプリを閉じても残り、nyaw が時刻から数え続ける（ニャプリが居なくても表示を進められるよう、残り時間ではなく
+/// 終わる時刻・始めた時刻で渡す）。押すとニャプリが開く。ニャプリごとに 1 つ。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Activity {
+    /// `ends_at_ms`（UNIX 時間の ms）に終わる、長さ `total_ms` のカウントダウン。終わると nyaw が知らせる
+    /// （ニャプリを閉じていれば、権限 `audio` があれば手首から音を鳴らす）。
+    Countdown {
+        title: String,
+        ends_at_ms: i64,
+        total_ms: i64,
+    },
+    /// `started_at_ms` から数えるストップウォッチ。
+    Stopwatch { title: String, started_at_ms: i64 },
+    /// 文字と、あれば進み具合（0〜1）。止めたタイマーなど、時刻で進まないもの。
+    Progress {
+        title: String,
+        text: String,
+        #[serde(default)]
+        progress: Option<f32>,
+    },
+}
+
+impl Activity {
+    pub fn title(&self) -> &str {
+        match self {
+            Activity::Countdown { title, .. }
+            | Activity::Stopwatch { title, .. }
+            | Activity::Progress { title, .. } => title,
+        }
+    }
+}
+
 /// ニャプリ本体。
 pub trait App {
     /// 起動したとき（`nyapp_init`）に 1 回作る。

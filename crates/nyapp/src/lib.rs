@@ -5,11 +5,13 @@
 //! - [`installed`] — 入っているニャプリ（`data_dir()/nyapps/<id>.nyapp`）と保存領域
 //! - [`sandbox`] — wasm を wasmi で動かすサンドボックスとホスト関数
 //! - [`view`] — 画面の木を `design` の部品で描くパネル・強制終了のダイアログ
+//! - [`activity`] — 進行中の作業の知らせ（ダッシュボードのバーに出る。閉じても残る）
 //! - [`icon`] — パッケージのアイコンと、無いときの代わりのアイコン
 //! - [`update`] — 更新情報から最新版を確かめ、落として入れ替える
 //! - [`system`] — システムのニャプリ（本体に組み込まれた wrist・ダッシュボード・ランチャー・デバッグ・設定）
 //! - [`Running`] — 起動中のニャプリの表（パネル → ID）
 
+pub mod activity;
 pub mod icon;
 pub mod installed;
 pub mod manifest;
@@ -28,6 +30,7 @@ use ui::PanelControl;
 
 pub use installed::Installed;
 pub use manifest::{Manifest, Permission};
+pub use nyapp_sdk::Activity;
 pub use sandbox::Sandbox;
 pub use view::{NyappView, spec};
 

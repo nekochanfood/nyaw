@@ -98,7 +98,22 @@ sha256 = "…"                                     # 必須
 ホストが用意する（import モジュール `nyaw`）: `log`、`now_ms`、`utc_offset`、`random`（暗号用ではない）、`language`、
 `set_ticker`（周期の `Tick`。16ms 未満は延ばす）、`has_permission`、`storage_get` / `storage_set` / `storage_remove`
 （ニャプリごとの保存領域。キーと値の合計 1 MiB まで）、`beep`（権限 `audio`）、`now_playing`（権限 `media`）。
+`set_activity` / `clear_activity`（進行中の作業の知らせ。下）。
 文字列を返すものは「バッファに書けるだけ書き、本当の長さを返す」形。失敗は負の値（`nyapp_sdk::code`）。
+
+### 進行中の作業の知らせ（ライブアクティビティ。`activity.rs`）
+
+タイマーのように、ニャプリを閉じても進み続けるものを、ダッシュボードのバーのクイック設定と再生中の間に出す
+（iPhone の Dynamic Island のような進み具合の表示。`dashboard-activity-<id>`。アイコン・残り時間などの文字・進み具合のバー）。
+押すとそのニャプリがはまる。ニャプリごとに 1 つ。
+
+- サンドボックスはパネルを閉じると消えるので、知らせは nyaw（GPUI のグローバル `activity::Activities`）が持ち、閉じても残る。
+- だからニャプリは残り時間ではなく、nyaw が数え続けられる形で渡す（`nyapp_sdk::Activity`）:
+  `Countdown { ends_at_ms, total_ms }`（終わる時刻）/ `Stopwatch { started_at_ms }`（始めた時刻）/
+  `Progress { text, progress }`（時刻で進まないもの。止めたタイマーなど）。
+- カウントダウンが終わると「終わりました」の状態で残る（押すと片付く）。ニャプリを閉じていれば、権限 `audio` があるとき
+  手首（wrist）から知らせの音を鳴らす（開いていればニャプリ自身が知らせる）。
+- ニャプリを開き直したら、保存領域から状態を読んで知らせを出し直す・消す（時計の試作がそうしている）。消したニャプリの知らせは消える。
 
 Component Model（WIT）ではなく、素の wasm と JSON にしている。ツールチェーンに標準の `wasm32-unknown-unknown` だけで済み、
 WASI を渡さないのでサンドボックスが最初から閉じていて、画面の木を再帰のまま受け渡せる。言語をまたいで型付きの約束が要るように
@@ -133,6 +148,7 @@ WASI を渡さないのでサンドボックスが最初から閉じていて、
 | `view.rs` | 画面の木を `design` で描くパネル（`NyappView`）・強制終了のダイアログ（`CrashDialog`）・知らせの音 |
 | `icon.rs` | アイコン（SVG・PNG）と代わりのアイコン |
 | `update.rs` | 更新情報から最新版を確かめて入れ替える |
+| `activity.rs` | 進行中の作業の知らせ（閉じても残る。カウントダウンの終わりを知らせる） |
 | `system.rs` | システムのニャプリの ID |
 | `lib.rs` | `Error`・起動中の表 `Running`（`opened` / `panel_of`） |
 | `bin/nyapp.rs` | 開発用の道具 `cargo nyapps`（下） |
@@ -157,12 +173,13 @@ cargo nyapps pack <フォルダ> <wasm> [出力先]
 | ID | | 確かめること |
 |---|---|---|
 | `net.bettaworx.calculator` | 電卓（押した順に計算） | ふつうに使えるアプリ・格子・SVG のアイコン |
-| `net.bettaworx.clock` | 時計・アラーム・タイマー・ストップウォッチ | 周期（`set_ticker`）・保存領域（アラーム）・権限 `audio`（鳴らす）・言語。アラームはニャプリを開いている間だけ鳴る |
+| `net.bettaworx.clock` | 時計・アラーム・タイマー・ストップウォッチ | 周期（`set_ticker`）・保存領域（アラーム・タイマー・ストップウォッチ。開き直すと続きから）・進行中の作業の知らせ（タイマーはカウントダウン、止めると残り、ストップウォッチ）・権限 `audio`（鳴らす）・言語。アラームはニャプリを開いている間だけ鳴る |
 | `net.bettaworx.eyes` | 目玉（xeyes） | 図形の面とポインタ・PNG のアイコン |
 | `net.bettaworx.sandbox` | サンドボックス診断 | ホスト関数を全部確かめて一覧にする（権限の有無・保存領域の上限・メモリ）。意図的なクラッシュ（panic・無限ループ・512 MiB・スタックあふれ）。部品の見本。アイコンを持たない（代わりのアイコンの確認） |
 
 ## UI への入口
 
+- ダッシュボードのバーの、クイック設定と再生中の間: 進行中の作業の知らせ（上）。
 - ランチャー（ダッシュボードの `Page::Launcher`）の「ニャプリ」: 入っているものをタイルで並べ（検索も効く）、押すとランチャーと
   入れ替わりにはまる（もう開いていればそのパネルをはめる）。見出しに「更新を確認」（`dashboard-nyapps-update`）と、
   消す状態の切り替え（`dashboard-nyapps-remove`。消す状態ではタイルがごみ箱になり、押すと消す）。
@@ -176,7 +193,7 @@ cargo nyapps pack <フォルダ> <wasm> [出力先]
   （ループバックの HTTP サーバーから落として入れ替える・改ざんを拒む））。ニャプリ自身のロジックは `cd nyapps && cargo test`。
 - 本物の wasm: `cargo test -p nyapp --test nyapps -- --ignored`（`nyapps/` をビルドして載せる。電卓の計算・サンドボックス診断が
   全部通る・意図的なクラッシュ 4 種がエラーで返りホストは動く・ニャプリどうしが見えない・周期・ポインタ・アイコン）。
-- UI: `cargo test -p dashboard --lib launcher_lists_nyapps`、`cargo test -p testing --lib nyapps`。
+- UI: `cargo test -p dashboard --lib launcher_lists_nyapps activities_sit`、`cargo test -p testing --lib nyapps`。
 
 ## 気をつけること
 
@@ -188,7 +205,7 @@ cargo nyapps pack <フォルダ> <wasm> [出力先]
 
 ## まだ無いもの
 
-- バックグラウンドで動くニャプリ（アラームは開いている間だけ）・通知
+- バックグラウンドで動くニャプリ（アラームは開いている間だけ。知らせのカウントダウンは nyaw が数えるので閉じても終わりを知らせる）・通知
 - 権限を使う時点で尋ねること（今はマニフェストに書けば認める）
 - パッケージの署名（今は更新のときの SHA-256 だけ。同じ ID の別の作者のパッケージを入れられてしまう）
 - ニャプリごとのスレッド（今はメインスレッドで呼び、燃料で抑える）

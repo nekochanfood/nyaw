@@ -344,4 +344,19 @@ mod tests {
         let short: Node = serde_json::from_str(r#"{"type":"text","text":"hi"}"#).unwrap();
         assert_eq!(short, text("hi"));
     }
+
+    /// 進行中の作業の知らせも JSON を行き来しても変わらない。
+    #[test]
+    fn activity_round_trips_through_json() {
+        let a = crate::Activity::Countdown {
+            title: "Timer".into(),
+            ends_at_ms: 10,
+            total_ms: 5,
+        };
+        let json = serde_json::to_string(&a).unwrap();
+        assert_eq!(serde_json::from_str::<crate::Activity>(&json).unwrap(), a);
+        let p: crate::Activity =
+            serde_json::from_str(r#"{"type":"progress","title":"t","text":"x"}"#).unwrap();
+        assert_eq!(p.title(), "t");
+    }
 }

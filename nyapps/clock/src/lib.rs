@@ -1,5 +1,8 @@
 //! 時計（net.bettaworx.clock）。時計・アラーム・タイマー・ストップウォッチ。
-//! アラームは保存領域に残し、鳴るのはニャプリを開いている間だけ（ホストにバックグラウンドの仕組みがまだ無い）。
+//! タイマー・ストップウォッチが動いている間は、進行中の作業の知らせ（`host::set_activity`）をダッシュボードに出す。
+//! 知らせはニャプリを閉じても残り、nyaw が数え続ける（タイマーが終われば nyaw が手首から鳴らす）。
+//! タイマー・ストップウォッチ・アラームは保存領域に残し、開き直すと続きから。
+//! アラームが鳴るのはニャプリを開いている間だけ（ホストにバックグラウンドの仕組みがまだ無い）。
 
 use nyapp_sdk::host;
 use nyapp_sdk::*;
@@ -19,8 +22,46 @@ pub struct Alarm {
     pub on: bool,
 }
 
-/// 保存領域のアラームのキー。
+/// 保存領域のキー。
 const ALARMS_KEY: &str = "alarms";
+const TIMER_KEY: &str = "timer";
+const WATCH_KEY: &str = "watch";
+
+/// タイマーの状態: 設定した長さと、動いていれば終わる時刻、止めていれば残り（ms）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Timer {
+    pub set: i64,
+    pub end: Option<i64>,
+    pub left: i64,
+}
+
+/// タイマーを `180000,end=…` / `180000,left=…` の形にする / 戻す。
+pub fn encode_timer(t: &Timer) -> String {
+    match t.end {
+        Some(end) => format!("{},end={end}", t.set),
+        None => format!("{},left={}", t.set, t.left),
+    }
+}
+
+pub fn decode_timer(s: &str) -> Option<Timer> {
+    let (set, rest) = s.split_once(',')?;
+    let set = set.parse().ok()?;
+    let (key, value) = rest.split_once('=')?;
+    let value: i64 = value.parse().ok()?;
+    match key {
+        "end" => Some(Timer {
+            set,
+            end: Some(value),
+            left: set,
+        }),
+        "left" => Some(Timer {
+            set,
+            end: None,
+            left: value,
+        }),
+        _ => None,
+    }
+}
 
 /// アラームを `07:30:1;08:00:0` の形にする / 戻す。
 pub fn encode_alarms(alarms: &[Alarm]) -> String {
@@ -124,10 +165,7 @@ pub struct Clock {
     fired: Option<(i64, u32, u32)>,
     /// 鳴っている知らせ（止めるまで毎秒鳴らす）。
     ringing: Option<String>,
-    /// タイマーに設定した長さと、動いていれば終わる時刻（ms）、止めていれば残り。
-    timer_set: i64,
-    timer_end: Option<i64>,
-    timer_left: i64,
+    timer: Timer,
     /// ストップウォッチの積み重ねと、動いていれば始めた時刻、ラップ。
     watch_acc: i64,
     watch_start: Option<i64>,
@@ -145,6 +183,50 @@ impl Clock {
         if let Err(e) = host::storage_set(ALARMS_KEY, &encode_alarms(&self.alarms)) {
             host::log(host::Level::Warn, &format!("cannot save alarms: {e:?}"));
         }
+    }
+
+    /// タイマー・ストップウォッチを保存領域に残し、知らせを今の状態に合わせる。
+    fn save_progress(&self) {
+        let watch = format!("{},{}", self.watch_acc, self.watch_start.unwrap_or(-1));
+        for (key, value) in [(TIMER_KEY, encode_timer(&self.timer)), (WATCH_KEY, watch)] {
+            if let Err(e) = host::storage_set(key, &value) {
+                host::log(host::Level::Warn, &format!("cannot save {key}: {e:?}"));
+            }
+        }
+        match self.activity(host::now_ms()) {
+            Some(a) => {
+                let _ = host::set_activity(&a);
+            }
+            None => host::clear_activity(),
+        }
+    }
+
+    /// 出す知らせ: 動いているタイマー（カウントダウン）、なければ動いているストップウォッチ、なければ止めたタイマー
+    /// （残りと進み具合）。どれも無ければ出さない。
+    pub fn activity(&self, now: i64) -> Option<Activity> {
+        let timer = self.t("Timer", "タイマー").to_owned();
+        if let Some(end) = self.timer.end {
+            return Some(Activity::Countdown {
+                title: timer,
+                ends_at_ms: end,
+                total_ms: self.timer.set,
+            });
+        }
+        if self.watch_start.is_some() {
+            return Some(Activity::Stopwatch {
+                title: self.t("Stopwatch", "ストップウォッチ").to_owned(),
+                started_at_ms: now - self.watch_ms(now),
+            });
+        }
+        (self.timer.left < self.timer.set).then(|| Activity::Progress {
+            title: timer,
+            text: format!(
+                "{} {}",
+                self.t("Paused", "一時停止"),
+                timer_text(self.timer.left)
+            ),
+            progress: Some(1.0 - self.timer.left as f32 / self.timer.set as f32),
+        })
     }
 
     fn watch_ms(&self, now: i64) -> i64 {
@@ -168,12 +250,13 @@ impl Clock {
                 a.minute
             ));
         }
-        if let Some(end) = self.timer_end
+        if let Some(end) = self.timer.end
             && now >= end
         {
-            self.timer_end = None;
-            self.timer_left = self.timer_set;
+            self.timer.end = None;
+            self.timer.left = self.timer.set;
             self.ringing = Some(self.t("Time's up", "時間です").to_owned());
+            self.save_progress();
         }
         if self.ringing.is_some() {
             let _ = host::beep();
@@ -185,7 +268,7 @@ impl Clock {
         if self.tab == Tab::Stopwatch && self.watch_start.is_some() {
             50
         } else if self.tab == Tab::Clock
-            || self.timer_end.is_some()
+            || self.timer.end.is_some()
             || self.ringing.is_some()
             || self.alarms.iter().any(|a| a.on)
         {
@@ -264,8 +347,8 @@ impl Clock {
     }
 
     fn timer_page(&self, now: i64) -> Node {
-        let left = self.timer_end.map_or(self.timer_left, |end| end - now);
-        let running = self.timer_end.is_some();
+        let left = self.timer.end.map_or(self.timer.left, |end| end - now);
+        let running = self.timer.end.is_some();
         column([
             spacer(),
             text(timer_text(left)).size(Size::Display).bold(),
@@ -332,7 +415,28 @@ impl Clock {
 
 impl App for Clock {
     fn new() -> Self {
-        Self {
+        let now = host::now_ms();
+        let mut timer = host::storage_get(TIMER_KEY)
+            .and_then(|s| decode_timer(&s))
+            .unwrap_or(Timer {
+                set: 3 * 60_000,
+                end: None,
+                left: 3 * 60_000,
+            });
+        // 閉じている間に終わっていれば、知らせは nyaw が済ませている。最初に戻す。
+        if timer.end.is_some_and(|end| end <= now) {
+            (timer.end, timer.left) = (None, timer.set);
+        }
+        let (watch_acc, watch_start) = host::storage_get(WATCH_KEY)
+            .and_then(|s| {
+                let (acc, start) = s.split_once(',')?;
+                Some((
+                    acc.parse().ok()?,
+                    start.parse::<i64>().ok().filter(|&s| s >= 0),
+                ))
+            })
+            .unwrap_or((0, None));
+        let clock = Self {
             ja: host::language() == "ja",
             tab: Tab::Clock,
             alarms: host::storage_get(ALARMS_KEY)
@@ -341,14 +445,15 @@ impl App for Clock {
             draft: (7, 0),
             fired: None,
             ringing: None,
-            timer_set: 3 * 60_000,
-            timer_end: None,
-            timer_left: 3 * 60_000,
-            watch_acc: 0,
-            watch_start: None,
+            timer,
+            watch_acc,
+            watch_start,
             laps: Vec::new(),
             ticker: 0,
-        }
+        };
+        // 知らせを今の状態に合わせる（前の起動の知らせが残っていれば置き換える・消す）。
+        clock.save_progress();
+        clock
     }
 
     fn view(&mut self) -> Node {
@@ -431,32 +536,41 @@ impl App for Clock {
                     self.save_alarms();
                 }
                 "timer-plus-minute" | "timer-plus-10s" | "timer-minus-minute"
-                    if self.timer_end.is_none() =>
+                    if self.timer.end.is_none() =>
                 {
                     let delta = match id.as_str() {
                         "timer-plus-minute" => 60_000,
                         "timer-plus-10s" => 10_000,
                         _ => -60_000,
                     };
-                    self.timer_set = (self.timer_set + delta).clamp(10_000, 24 * 3_600_000);
-                    self.timer_left = self.timer_set;
+                    self.timer.set = (self.timer.set + delta).clamp(10_000, 24 * 3_600_000);
+                    self.timer.left = self.timer.set;
+                    self.save_progress();
                 }
-                "timer-start" => match self.timer_end.take() {
-                    Some(end) => self.timer_left = (end - now).max(0),
-                    None => self.timer_end = Some(now + self.timer_left),
-                },
+                "timer-start" => {
+                    match self.timer.end.take() {
+                        Some(end) => self.timer.left = (end - now).max(0),
+                        None => self.timer.end = Some(now + self.timer.left),
+                    }
+                    self.save_progress();
+                }
                 "timer-reset" => {
-                    self.timer_end = None;
-                    self.timer_left = self.timer_set;
+                    self.timer.end = None;
+                    self.timer.left = self.timer.set;
+                    self.save_progress();
                 }
-                "watch-start" => match self.watch_start.take() {
-                    Some(start) => self.watch_acc += now - start,
-                    None => self.watch_start = Some(now),
-                },
+                "watch-start" => {
+                    match self.watch_start.take() {
+                        Some(start) => self.watch_acc += now - start,
+                        None => self.watch_start = Some(now),
+                    }
+                    self.save_progress();
+                }
                 "watch-lap" if self.watch_start.is_some() => self.laps.push(self.watch_ms(now)),
                 "watch-reset" => {
                     (self.watch_acc, self.watch_start) = (0, None);
                     self.laps.clear();
+                    self.save_progress();
                 }
                 other => {
                     if let Some(i) = other
@@ -514,6 +628,80 @@ mod tests {
                 on: true
             }]
         );
+    }
+
+    #[test]
+    fn timer_round_trips_through_storage_text() {
+        let running = Timer {
+            set: 180_000,
+            end: Some(1_000_000),
+            left: 180_000,
+        };
+        let paused = Timer {
+            set: 180_000,
+            end: None,
+            left: 61_000,
+        };
+        for t in [running, paused] {
+            assert_eq!(decode_timer(&encode_timer(&t)), Some(t));
+        }
+        assert_eq!(decode_timer("bad"), None);
+    }
+
+    fn clock(timer: Timer, watch_start: Option<i64>) -> Clock {
+        Clock {
+            ja: true,
+            tab: Tab::Timer,
+            alarms: Vec::new(),
+            draft: (7, 0),
+            fired: None,
+            ringing: None,
+            timer,
+            watch_acc: 5_000,
+            watch_start,
+            laps: Vec::new(),
+            ticker: 0,
+        }
+    }
+
+    /// 動いているタイマーはカウントダウン、無ければ動いているストップウォッチ（積み重ねの分だけ前から数える）、
+    /// 無ければ止めたタイマーの残り、どれも無ければ知らせない。
+    #[test]
+    fn activity_follows_the_timer_and_stopwatch() {
+        let idle = Timer {
+            set: 60_000,
+            end: None,
+            left: 60_000,
+        };
+        assert_eq!(clock(idle, None).activity(0), None);
+        let running = Timer {
+            end: Some(90_000),
+            ..idle
+        };
+        assert!(matches!(
+            clock(running, Some(0)).activity(0),
+            Some(Activity::Countdown {
+                ends_at_ms: 90_000,
+                total_ms: 60_000,
+                ..
+            })
+        ));
+        assert!(matches!(
+            clock(idle, Some(10_000)).activity(20_000),
+            Some(Activity::Stopwatch {
+                started_at_ms: 5_000,
+                ..
+            })
+        ));
+        let paused = Timer {
+            left: 15_000,
+            ..idle
+        };
+        let Some(Activity::Progress { text, progress, .. }) = clock(paused, None).activity(0)
+        else {
+            panic!("止めたタイマーは残りを出す");
+        };
+        assert_eq!((text.as_str(), progress), ("一時停止 00:15", Some(0.75)));
     }
 
     #[test]

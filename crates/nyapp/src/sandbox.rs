@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nyapp_sdk::{Event, Node, code};
+use nyapp_sdk::{Activity, Event, Node, code};
 use wasmi::{
     Caller, Config, Engine, Linker, Memory, Module, Store, StoreLimits, StoreLimitsBuilder,
     TypedFunc,
@@ -32,6 +32,9 @@ pub const CALL_FUEL: u64 = 20_000_000;
 const MAX_VIEW: usize = 4 << 20;
 /// ログ 1 件の上限。
 const MAX_LOG: usize = 4 << 10;
+/// 進行中の作業の知らせの JSON と、その文字の上限。
+const MAX_ACTIVITY: usize = 4 << 10;
+const MAX_ACTIVITY_CHARS: usize = 64;
 
 /// ホスト関数から見える、ニャプリ 1 つ分の状態。
 pub struct Host {
@@ -47,6 +50,8 @@ pub struct Host {
     pub ticker: Option<u32>,
     /// 鳴らしてと頼まれた回数。呼んだ後にビューが取る。
     pub beeps: u32,
+    /// 進行中の作業の知らせを出す（`Some(Some)`）・消す（`Some(None)`）と頼まれた。呼んだ後にビューが取る。
+    pub activity: Option<Option<Activity>>,
     random: u64,
     /// ニャプリのメモリ（インスタンスを作った後に入れる）。ホスト関数はこれで読み書きする。
     // `Caller::get_export` はインスタンスを生のポインタで引くので、Store を動かした後に呼ぶと壊れたポインタを読む
@@ -86,6 +91,7 @@ impl Sandbox {
             now_playing: None,
             ticker: None,
             beeps: 0,
+            activity: None,
             random: 0,
             memory: None,
         };
@@ -263,7 +269,59 @@ fn linker(engine: &Engine) -> Result<Linker<Host>, Error> {
             }
         },
     )?;
+    l.func_wrap(
+        "nyaw",
+        "set_activity",
+        |mut caller: Caller<'_, Host>, ptr: i32, len: i32| {
+            if len as u32 as usize > MAX_ACTIVITY {
+                return code::INVALID;
+            }
+            let Some(activity) = read(&caller, ptr, len)
+                .and_then(|b| serde_json::from_slice::<Activity>(&b).ok())
+                .and_then(tidy_activity)
+            else {
+                return code::INVALID;
+            };
+            caller.data_mut().activity = Some(Some(activity));
+            0
+        },
+    )?;
+    l.func_wrap("nyaw", "clear_activity", |mut caller: Caller<'_, Host>| {
+        caller.data_mut().activity = Some(None);
+    })?;
     Ok(l)
+}
+
+/// 知らせの文字を [`MAX_ACTIVITY_CHARS`] で切り、進み具合を 0〜1 に収める。長さが 0 以下のカウントダウンは受け付けない。
+fn tidy_activity(mut activity: Activity) -> Option<Activity> {
+    let cut = |s: &mut String| *s = s.chars().take(MAX_ACTIVITY_CHARS).collect();
+    match &mut activity {
+        Activity::Countdown {
+            title, total_ms, ..
+        } => {
+            cut(title);
+            if *total_ms <= 0 {
+                return None;
+            }
+        }
+        Activity::Stopwatch { title, .. } => cut(title),
+        Activity::Progress {
+            title,
+            text,
+            progress,
+        } => {
+            cut(title);
+            cut(text);
+            *progress = progress.map(|p| {
+                if p.is_finite() {
+                    p.clamp(0.0, 1.0)
+                } else {
+                    0.0
+                }
+            });
+        }
+    }
+    Some(activity)
 }
 
 fn memory(caller: &Caller<'_, Host>) -> Option<Memory> {
@@ -400,6 +458,7 @@ mod tests {
             r#"(module
                 (import "nyaw" "beep" (func $beep (result i32)))
                 (import "nyaw" "language" (func $language (param i32 i32) (result i32)))
+                (import "nyaw" "set_activity" (func $set_activity (param i32 i32) (result i32)))
                 (memory (export "memory") 1)
                 (data (i32.const 16) "{view}")
                 (global $next (mut i32) (i32.const 1024))
@@ -452,6 +511,39 @@ mod tests {
         let body = "(drop (call $language (i32.const 70000) (i32.const 16)))";
         let (mut sandbox, _) = load(body, vec![]).unwrap();
         sandbox.event(&Event::Tick).unwrap();
+    }
+
+    /// 進行中の作業の知らせを頼めて、壊れた JSON は INVALID（何も出さない）。文字は切り、進み具合は 0〜1 に収める。
+    #[test]
+    fn nyapps_can_post_an_activity() {
+        // 画面の JSON の領域（16..）を知らせとして渡すと壊れているので INVALID、何も頼まない。
+        let body = "(drop (call $set_activity (i32.const 16) (i32.const 8)))";
+        let (mut sandbox, _) = load(body, vec![]).unwrap();
+        sandbox.event(&Event::Tick).unwrap();
+        assert_eq!(sandbox.host().activity, None);
+        let long = "x".repeat(100);
+        let tidy = tidy_activity(Activity::Progress {
+            title: long.clone(),
+            text: long,
+            progress: Some(3.0),
+        })
+        .unwrap();
+        let Activity::Progress {
+            title, progress, ..
+        } = tidy
+        else {
+            unreachable!()
+        };
+        assert_eq!(
+            (title.chars().count(), progress),
+            (MAX_ACTIVITY_CHARS, Some(1.0))
+        );
+        let empty = Activity::Countdown {
+            title: "t".into(),
+            ends_at_ms: 0,
+            total_ms: 0,
+        };
+        assert_eq!(tidy_activity(empty), None);
     }
 
     /// 書ける量には上限があり、空のキーは受け付けない。

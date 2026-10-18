@@ -117,6 +117,17 @@ pub fn now_playing() -> Result<Option<String>, Error> {
     }
 }
 
+/// 進行中の作業の知らせ（[`crate::Activity`]）を出す・置き換える。ニャプリを閉じても残る。
+pub fn set_activity(activity: &crate::Activity) -> Result<(), Error> {
+    let json = serde_json::to_vec(activity).map_err(|_| Error::Invalid)?;
+    check(unsafe { sys::set_activity(json.as_ptr(), json.len() as i32) })
+}
+
+/// 進行中の作業の知らせを消す。
+pub fn clear_activity() {
+    unsafe { sys::clear_activity() }
+}
+
 fn read_string(call: impl Fn(*mut u8, i32) -> i32) -> Result<String, i32> {
     let mut buf = vec![0u8; 256];
     loop {
@@ -149,6 +160,8 @@ mod sys {
         pub fn storage_remove(key: *const u8, key_len: i32) -> i32;
         pub fn beep() -> i32;
         pub fn now_playing(buf: *mut u8, cap: i32) -> i32;
+        pub fn set_activity(ptr: *const u8, len: i32) -> i32;
+        pub fn clear_activity();
     }
 }
 
@@ -190,4 +203,8 @@ mod sys {
     pub unsafe fn now_playing(_: *mut u8, _: i32) -> i32 {
         code::DENIED
     }
+    pub unsafe fn set_activity(_: *const u8, _: i32) -> i32 {
+        code::DENIED
+    }
+    pub unsafe fn clear_activity() {}
 }
