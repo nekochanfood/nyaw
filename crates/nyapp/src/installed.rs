@@ -105,15 +105,25 @@ pub(crate) fn install_into(dir: &Path, src: &Path) -> Result<Installed, Error> {
     }
     fs::create_dir_all(dir)?;
     let path = dir.join(format!("{}.{}", manifest.id, package::EXTENSION));
-    // 書きかけのパッケージを読まないよう、隣に写してから入れ替える。
-    let partial = path.with_extension("partial");
-    fs::copy(src, &partial)?;
-    fs::rename(&partial, &path)?;
+    // 書きかけのパッケージを読まないよう、隣に（この操作だけの名前で）写してから入れ替える。
+    let partial = staging(dir, &manifest.id, "partial");
+    let result = fs::copy(src, &partial).and_then(|_| fs::rename(&partial, &path));
+    if result.is_err() {
+        let _ = fs::remove_file(&partial);
+    }
+    result?;
     Ok(Installed {
         manifest,
         path,
         icon: crate::icon::decode(&icon),
     })
+}
+
+/// `dir` の中の、この操作だけが使う作業ファイルの場所（同じニャプリの入れ替えが重なっても混ざらない）。
+pub(crate) fn staging(dir: &Path, id: &str, ext: &str) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    dir.join(format!("{id}.{}.{n}.{ext}", std::process::id()))
 }
 
 /// ニャプリ `id` を消す（パッケージと保存領域）。システムのニャプリは消せない。
