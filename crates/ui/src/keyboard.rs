@@ -17,9 +17,6 @@ pub use view::{KeyAppearance, KeyboardView};
 
 const CLOSE_SIZE: f32 = 48.;
 
-/// ダッシュボードに固定したキーボードの、水平から手前が下がる角度（机に置いたキーボードの向き）。
-const DOCKED_SLOPE: f32 = 10.0 * std::f32::consts::PI / 180.0;
-
 fn panel_resolution() -> (u32, u32) {
     let inset = 2. * (design::components::PANEL_MARGIN + design::spacing::LG);
     let kind = kernel::subsystems::keyboard::KeyboardType::Full;
@@ -217,7 +214,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     routing.error = None;
     redraw_nav_bar(target, cx);
     let resolution = panel_resolution();
-    // ダッシュボードにはめた画面へ打つなら、ダッシュボードのバーの下端につなげて手前へ寝かせ、固定する
+    // ダッシュボードにはめた画面へ打つなら、ダッシュボードのバーの下端につなげて頭へ向け、固定する
     // （画面・バー・キーボードがつながって見える。画面を外すとキーボードも外れる。`crate::undock`）。
     let dock = crate::docked(cx)
         .filter(|&d| d == target)
@@ -251,10 +248,8 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
         .without_nav_bar();
     let spec = match dock {
-        // バーは画面から `tilt` 傾いているので、そこからさらに倒して水平から DOCKED_SLOPE にする。
-        Some((owner, tilt)) => spec
-            .hinged_below(owner, std::f32::consts::FRAC_PI_2 - DOCKED_SLOPE - tilt)
-            .docked_to(owner),
+        // 角度は外したときと同じく、開いた瞬間の頭の位置に向ける。
+        Some((owner, _)) => spec.hinged_below(owner).docked_to(owner),
         None => spec.below(target, std::f32::consts::FRAC_PI_4),
     };
     cx.default_global::<crate::PanelControl>().spawns.push(spec);

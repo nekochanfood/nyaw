@@ -674,8 +674,8 @@ pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
     below: Option<f32>,
-    /// `from` の下端に蝶番のようにつなげ、面から手前へ折る角度（[`Self::hinged_below`]）。
-    hinge: Option<f32>,
+    /// `from` の下端に蝶番のようにつなげる（[`Self::hinged_below`]）。
+    hinge: bool,
     /// `from` から見た置き場所（[`Self::offset`]）。無ければ `from` の手前に少し離して重ねる。
     offset: Option<Pose>,
     /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
@@ -734,7 +734,7 @@ impl PanelSpec {
             pose,
             from: None,
             below: None,
-            hinge: None,
+            hinge: false,
             offset: None,
             in_view: false,
             size: Vec2::new(0.8, 0.6),
@@ -864,10 +864,11 @@ impl PanelSpec {
     }
 
     /// 開いた瞬間の `panel` の下端に、蝶番のようにつなげて置く（このパネルの上の縁を `panel` の下の縁に小さな隙間で合わせる）。
-    /// `angle` は `panel` の面から手前へ折る角度。隙間は影の余白を除いた面どうしで測る。親子関係や追従は作らない。
-    pub fn hinged_below(mut self, panel: PanelId, angle: f32) -> Self {
+    /// 折る角度は、[`Self::below`] と同じく面が目より少し下を向くように、開いた瞬間の頭の位置から決める。
+    /// 隙間は影の余白を除いた面どうしで測る。親子関係や追従は作らない。
+    pub fn hinged_below(mut self, panel: PanelId) -> Self {
         self.from = Some(panel);
-        self.hinge = Some(angle);
+        self.hinge = true;
         self
     }
 
@@ -997,8 +998,7 @@ impl PanelSpec {
 
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
         match self.from {
-            Some(from) if self.hinge.is_some() => {
-                let angle = self.hinge.unwrap();
+            Some(from) if self.hinge => {
                 let origin = kernel.panel(from);
                 let margin = |size: Vec2, res: (u32, u32)| {
                     design::components::PANEL_MARGIN * size.y / res.1 as f32
@@ -1009,10 +1009,22 @@ impl PanelSpec {
                     -origin.size.y / 2. + margin(origin.size, origin.resolution) - bar,
                     0.,
                 );
-                let rotation = Quat::from_rotation_x(-angle);
-                let down = rotation * Vec3::NEG_Y;
                 let lift = HINGE_GAP + self.size.y / 2. - margin(self.size, self.resolution);
-                origin.pose * Pose::new(edge + down * lift, rotation)
+                // 面（持ち主の面から手前へ `angle` 折った向き）が、中心から目より少し下へ向く角度。中心は角度で動くので、
+                // 数回詰める（持ち主から見た座標で、蝶番の軸は X）。上を向けた持ち主（ダッシュボードのバー）では
+                // 奥へ折り返す（負の角度）こともあるので、持ち主の面から前後 90° に収める。
+                let hmd = kernel.hmd();
+                let aim = origin
+                    .pose
+                    .inverse()
+                    .transform_point(hmd.position - hmd.panel_up() * BELOW_AIM_DROP);
+                let center = |angle: f32| edge + Quat::from_rotation_x(-angle) * Vec3::NEG_Y * lift;
+                let mut angle = 0.;
+                for _ in 0..4 {
+                    let d = aim - center(angle);
+                    angle = d.y.atan2(d.z).clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
+                }
+                origin.pose * Pose::new(center(angle), Quat::from_rotation_x(-angle))
             }
             Some(from) if self.below.is_some() => {
                 let tilt = self.below.unwrap();
@@ -1948,7 +1960,7 @@ mod tests {
         assert!(bridges[&(panel, Hand::Right)].momentum.is_none());
     }
 
-    /// 蝶番のようにつなげたパネルは、上の縁が持ち主の下の縁から隙間だけ離れ、持ち主から `angle` 手前へ折れる。
+    /// 蝶番のようにつなげたパネルは、上の縁が持ち主の下の縁から隙間だけ離れ、面が目より少し下を向くように折れる。
     #[test]
     fn hinged_panel_hangs_from_the_owners_bottom_edge() {
         let mut kernel =
@@ -1959,14 +1971,15 @@ mod tests {
         let owner = kernel
             .add_panel("bar", owner_pose, Vec2::new(1.0, 0.1), (1000, 100))
             .unwrap();
-        let angle = std::f32::consts::FRAC_PI_2 - 0.2 - tilt;
         let spec = PanelSpec::root(Pose::IDENTITY, |_, _, _| gpui::Empty)
             .sized(Vec2::new(1.0, 0.4), (1000, 400))
-            .hinged_below(owner, angle);
+            .hinged_below(owner);
         let pose = spec.pose_for(&kernel, owner + 1);
-        // 水平から 0.2 rad 手前が下がる（面の向きは上やや手前）。
+        // 面は中心から、目（原点）より少し下へ向く。
+        let hmd = kernel.hmd();
+        let aim = hmd.position - hmd.panel_up() * BELOW_AIM_DROP;
         let normal = pose.orientation * Vec3::Z;
-        assert!(normal.abs_diff_eq(Vec3::new(0.0, 0.2f32.cos(), 0.2f32.sin()), 1e-4));
+        assert!(normal.dot((aim - pose.position).normalize()) > 1.0 - 1e-4, "{normal}");
         // 上の縁（影の余白の内側）は、持ち主の下の縁から隙間だけ離れている。
         let m = |h: f32, px: f32| design::components::PANEL_MARGIN * h / px;
         let top = pose.transform_point(Vec3::Y * (0.2 - m(0.4, 400.0)));
