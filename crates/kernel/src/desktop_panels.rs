@@ -139,9 +139,12 @@ impl<B: VrBackend> Kernel<B> {
         frame_rate: u32,
     ) {
         if let Some(source) = source {
+            let window = source.kind == desktop::SourceKind::Window;
             match Stream::start_at(source, frame_rate)
                 .and_then(|stream| self.set_desktop_stream(panel, stream))
             {
+                // 映し始めたウィンドウは前に出す（そのまま操作できるように）。
+                Ok(()) if window => self.focus_desktop(panel),
                 Ok(()) => (),
                 Err(error) => {
                     logger::warn!("desktop capture failed", panel = panel, error = error);
@@ -170,6 +173,18 @@ impl<B: VrBackend> Kernel<B> {
             self.overlay.set_panel_capture(panel, false);
             self.overlay
                 .set_content_resolution(panel, p.original_resolution);
+        }
+    }
+
+    /// パネル `panel` で配信しているウィンドウを前に出す。配信していなければ何もしない。
+    pub(super) fn focus_desktop(&mut self, panel: PanelId) {
+        if let Some(stream) = self
+            .desktop_panels
+            .get(&panel)
+            .and_then(|p| p.stream.as_ref())
+            && let Err(error) = stream.focus()
+        {
+            logger::warn!("cannot focus desktop source", panel = panel, error = error);
         }
     }
 
@@ -546,6 +561,20 @@ mod tests {
             .unwrap();
         assert_eq!(still.fps, 0.0);
         assert_eq!(still.latency_ms, stats.latency_ms);
+    }
+
+    /// `FocusSource` は配信しているウィンドウを前に出すよう配信に頼む。配信していないパネルでは何もしない。
+    #[test]
+    fn focus_source_asks_the_stream_to_raise_its_window() {
+        let (mut kernel, panel, control) = setup();
+        kernel.apply(panel, PanelCommand::FocusSource);
+        assert_eq!(control.focuses(), 1);
+        kernel.apply(
+            panel,
+            PanelCommand::Stream(None, desktop::DEFAULT_FRAME_RATE),
+        );
+        kernel.apply(panel, PanelCommand::FocusSource);
+        assert_eq!(control.focuses(), 0);
     }
 
     #[test]

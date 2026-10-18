@@ -63,6 +63,9 @@ pub enum PanelCommand {
     NavBar(PanelId),
     /// デスクトップの配信を開始・停止する。第2引数は取得の上限 FPS（1〜240）。
     Stream(Option<desktop::Source>, u32),
+    /// 配信しているウィンドウを OS で前に出してフォーカスする（OS のキーボード・マウスの操作が届くように）。
+    /// ウィンドウの配信を始めたときはカーネルが自分で前に出すので、隠していた配信を出し直したときなどに使う。
+    FocusSource,
     /// このパネルのスピーカーで音を鳴らす（`true` で繰り返す）。読み込みは別スレッドで、いくつでも重ねて鳴らせる。
     Play(audio::Sound, bool),
     /// このパネルの中の点（パネルのピクセル、左上原点）から一度だけ音を鳴らす。キーボードのキーのように、押した所から聞こえる。
@@ -652,6 +655,7 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Stream(source, frame_rate) => {
                 self.start_desktop(panel, source, frame_rate)
             }
+            PanelCommand::FocusSource => self.focus_desktop(panel),
             PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
             PanelCommand::PlayAt { sound, at, pitch } => {
                 self.play_audio_at(panel, sound, at, pitch)

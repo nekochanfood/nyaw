@@ -595,7 +595,11 @@ impl Capture {
         Ok(rect)
     }
 
-    fn activate_target(&mut self, touch: Touch) -> Result<Option<POINT>, Error> {
+    /// 取得元のウィンドウを前に出してフォーカスする（最小化していれば戻す）。画面なら何もしない。
+    fn bring_to_front(&self) {
+        if self.source.kind != SourceKind::Window {
+            return;
+        }
         let hwnd = HWND(self.source.target as _);
         unsafe {
             if IsIconic(hwnd).as_bool() {
@@ -625,6 +629,11 @@ impl Capture {
                 }
             }
         }
+    }
+
+    fn activate_target(&mut self, touch: Touch) -> Result<Option<POINT>, Error> {
+        let hwnd = HWND(self.source.target as _);
+        self.bring_to_front();
         // 前面化は相手の UI スレッドで反映されるため、直後の一回の判定では拒否しない。
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
         loop {
@@ -663,6 +672,11 @@ impl Capture {
 }
 
 impl Session for Capture {
+    fn focus(&mut self) -> Result<(), Error> {
+        self.bring_to_front();
+        Ok(())
+    }
+
     fn closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
             || (self.source.kind == SourceKind::Window

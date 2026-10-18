@@ -144,8 +144,11 @@ pub fn hide(dashboard: PanelId, cx: &mut App) {
     );
 }
 
-/// 隠したダッシュボードを、今の目の前に同じ状態で出し直す。
+/// 隠したダッシュボードを、今の目の前に同じ状態で出し直す。はまっているのが配信なら、そのウィンドウを OS で前に出す。
 pub fn show(dashboard: PanelId, cx: &mut App) {
+    if let Some(docked) = ui::docked(cx) {
+        commands(docked, [PanelCommand::FocusSource], cx);
+    }
     commands(
         dashboard,
         [
@@ -349,7 +352,12 @@ impl Dashboard {
             // 隠したままはめてから出す。先に出すと、隠した時の場所（その後ダッシュボードを動かしていれば遠く）から
             // はめる場所へ滑って・回って入ってくる。
             ui::dock(id, cx);
-            commands(id, [PanelCommand::Hide(false)], cx);
+            // 出したウィンドウを OS で前に出す（そのまま操作できるように）。
+            commands(
+                id,
+                [PanelCommand::Hide(false), PanelCommand::FocusSource],
+                cx,
+            );
         }
         redraw(self.panel, cx);
     }
@@ -3353,6 +3361,19 @@ mod tests {
         }
     }
 
+    /// ダッシュボードを出し直すと、はまっている画面（配信なら、そのウィンドウ）を前に出すよう頼む。
+    #[gpui::test]
+    fn showing_the_dashboard_focuses_the_docked_stream(cx: &mut TestAppContext) {
+        let (_bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+            Dashboard::new(1, summon, summon, cx)
+        });
+        cx.update(|_, cx| ui::dock(4, cx));
+        take_commands(cx, 4);
+        cx.update(|_, cx| show(1, cx));
+        assert_eq!(take_commands(cx, 4), [PanelCommand::FocusSource]);
+    }
+
     /// アプリの名前が長くても、タイル（押せる範囲）は列の幅のままで、名前は省略される。
     #[gpui::test]
     fn long_app_names_do_not_widen_tiles(cx: &mut TestAppContext) {
@@ -3525,6 +3546,11 @@ mod tests {
         let five = commands(cx, 5);
         assert!(docked_to_bar(&five[0]));
         assert_eq!(five[1], PanelCommand::Hide(false));
+        assert_eq!(
+            five[2],
+            PanelCommand::FocusSource,
+            "出したウィンドウを前に出す"
+        );
         assert!(
             !commands(cx, 4).contains(&PanelCommand::Close),
             "隠すだけで閉じない"

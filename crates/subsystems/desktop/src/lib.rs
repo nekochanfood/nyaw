@@ -287,6 +287,8 @@ enum Input {
     Touch(Touch),
     Button(Touch, Button),
     Scroll { x: f32, y: f32, dx: f32, dy: f32 },
+    /// 取得元のウィンドウを前に出してフォーカスする（[`Stream::focus`]）。
+    Focus,
     Frame,
 }
 
@@ -317,6 +319,11 @@ trait Session {
         Ok(())
     }
     fn heartbeat(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    /// 取得元のウィンドウを前に出してフォーカスする（画面は何もしない）。
+    // ponytail: Linux のポータルはウィンドウを前に出す手段を持たないので何もしない。要ればコンポジタごとの手段（sway の IPC など）を足す。
+    fn focus(&mut self) -> Result<(), Error> {
         Ok(())
     }
     fn closed(&self) -> bool {
@@ -422,6 +429,10 @@ impl Stream {
                                 Input::Touch(touch) => session.touch(touch)?,
                                 Input::Button(touch, button) => session.button(touch, button)?,
                                 Input::Scroll { x, y, dx, dy } => session.scroll(x, y, dx, dy)?,
+                                // 前に出せなくても配信は続ける（操作のときにもう一度前に出す）。
+                                Input::Focus => {
+                                    let _ = session.focus();
+                                }
                                 Input::Frame => {}
                             }
                         }
@@ -481,6 +492,12 @@ impl Stream {
             dx,
             dy,
         })
+    }
+
+    /// 取得元のウィンドウを前に出してフォーカスする（OS のキーボード・マウスの操作がそのウィンドウへ届くように）。
+    /// 前面化はワーカーが行い、待たない。
+    pub fn focus(&self) -> Result<(), Error> {
+        self.send(Input::Focus)
     }
 
     fn send(&self, input: Input) -> Result<(), Error> {
@@ -650,6 +667,31 @@ mod tests {
         stream.scroll(0.5, 0.5, 0.0, 1.0).unwrap();
         assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), "button");
         assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), "scroll");
+    }
+
+    /// 前に出す頼みはワーカーが取得元のセッションに渡す（メインスレッドは待たない）。
+    #[test]
+    fn worker_delivers_focus() {
+        struct Focus(SyncSender<()>);
+        impl Session for Focus {
+            fn frame(&mut self) -> Result<Option<Frame>, Error> {
+                Ok(None)
+            }
+            fn touch(&mut self, _: Touch) -> Result<(), Error> {
+                Ok(())
+            }
+            fn focus(&mut self) -> Result<(), Error> {
+                self.0.send(()).unwrap();
+                Err(Error("refused".into()))
+            }
+        }
+        let (tx, rx) = mpsc::sync_channel(2);
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| Ok(Focus(tx))).unwrap();
+        stream.focus().unwrap();
+        rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        // 前に出せなくても配信は続く。
+        stream.focus().unwrap();
+        rx.recv_timeout(Duration::from_secs(3)).unwrap();
     }
 
     #[test]

@@ -66,6 +66,13 @@ impl Controller {
             })
             .collect()
     }
+    /// 前に出すよう頼まれた回数（[`Stream::focus`]）。
+    pub fn focuses(&self) -> usize {
+        self.input
+            .try_iter()
+            .filter(|input| matches!(input, Input::Focus))
+            .count()
+    }
     pub fn stopped(&self) -> bool {
         self.stop.load(Ordering::Acquire)
     }
