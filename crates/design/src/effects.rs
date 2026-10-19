@@ -240,13 +240,14 @@ fn paint_light(
         for (band, left, right, lower) in [(top, tl, tr, false), (bottom, bl, br, true)] {
             for row in 0..band.ceil() as u32 {
                 let d = row as f32;
-                let l = super::components::corner_inset(left, d + 0.5);
-                let r = super::components::corner_inset(right, d + 0.5);
+                let row_height = (band - d).min(1.);
+                let l = super::components::corner_inset(left, d + row_height / 2.);
+                let r = super::components::corner_inset(right, d + row_height / 2.);
                 paint(at(
                     l,
-                    if lower { height - d - 1. } else { d },
+                    if lower { height - d - row_height } else { d },
                     width - l - r,
-                    1.,
+                    row_height,
                 ));
             }
         }

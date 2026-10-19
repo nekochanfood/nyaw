@@ -62,8 +62,18 @@ fn scenario(emu: &Emu) {
     let at = emu
         .run(|e| e.project(PANEL + Vec3::new(0.3, -0.2, 0.0)))
         .expect("panel is in front of the eyes");
+    // カーソル自体の外で、面を照らす光が本番の入力・描画ループに追従することを確かめる。
+    let spill = at + Vec2::new(20., 0.);
+    emu.point(None);
+    std::thread::sleep(Duration::from_millis(200));
+    let unlit = emu.color(spill);
     emu.point(Some(at));
     std::thread::sleep(Duration::from_millis(300));
+    let illuminated = emu.color(spill);
+    assert!(
+        brightness(illuminated) > brightness(unlit) + 8,
+        "ポインタの周囲の面が明るくなる: {unlit:?} -> {illuminated:?}"
+    );
     // ring radius (screen px): the cursor panel is 36mm at 1m, and the ring's center line is 1/3 of that (80/240 px).
     let ring = emu.run(move |e| {
         let edge = e
@@ -108,5 +118,12 @@ fn scenario(emu: &Emu) {
     assert!(
         brightness(after) + 40 < brightness(filled),
         "disappears on release ({after:02x?})"
+    );
+    emu.point(None);
+    std::thread::sleep(Duration::from_millis(300));
+    let left = emu.color(spill);
+    assert!(
+        brightness(left).abs_diff(brightness(unlit)) <= 3,
+        "離れると面の照明も消える: {unlit:?} -> {left:?}"
     );
 }
