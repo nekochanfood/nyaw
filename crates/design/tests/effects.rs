@@ -31,7 +31,7 @@ fn effects_toggle_independently_without_fading_content(cx: &mut TestAppContext) 
                 let card = quads
                     .iter()
                     .find_map(|q| {
-                        (q.bounds.size.width == px(352.))
+                        (q.bounds.size.width.0 == 352. * window.scale_factor())
                             .then(|| q.background.as_solid())
                             .flatten()
                     })

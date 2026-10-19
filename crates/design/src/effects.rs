@@ -1,9 +1,10 @@
 //! 面の透過と、面の上を照らすポインタ光。文字や操作部品の不透明度は変えない。
 
 use gpui::{
-    App, Bounds, ContentMask, Div, InteractiveElement, Interactivity, IntoElement, ParentElement,
-    Pixels, Point, RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled, Window,
-    WindowId, canvas, fill, point, px, rgba, size,
+    App, Bounds, ContentMask, Div, Element, ElementId, GlobalElementId, InspectorElementId,
+    InteractiveElement, Interactivity, IntoElement, ParentElement, Pixels, Point,
+    StatefulInteractiveElement, StyleRefinement, Styled, Window, WindowId, canvas, fill, point, px,
+    rgba, size,
 };
 use std::collections::HashMap;
 
@@ -72,7 +73,6 @@ impl SurfacePointers {
 }
 
 /// Div と同じように組める面。描画時のフラグと、呼び出し側が上書きした角丸も反映する。
-#[derive(IntoElement)]
 pub struct Surface {
     base: Div,
     children: Vec<gpui::AnyElement>,
@@ -107,8 +107,33 @@ impl ParentElement for Surface {
     }
 }
 
-impl RenderOnce for Surface {
-    fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+impl IntoElement for Surface {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for Surface {
+    type RequestLayoutState = <Div as Element>::RequestLayoutState;
+    type PrepaintState = <Div as Element>::PrepaintState;
+
+    fn id(&self) -> Option<ElementId> {
+        Element::id(&self.base)
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        Element::source_location(&self.base)
+    }
+
+    fn request_layout(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let effects = Effects::current(cx);
         if effects.translucent {
             if let Some(gpui::Fill::Color(background)) = self.base.style().background.as_mut() {
@@ -139,7 +164,35 @@ impl RenderOnce for Surface {
             .inset_0()
             .size_full()
         });
-        self.base.children(light).children(self.children)
+        self.base.extend(light.map(IntoElement::into_any_element));
+        self.base.extend(std::mem::take(&mut self.children));
+        self.base.request_layout(id, inspector, window, cx)
+    }
+
+    fn prepaint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::RequestLayoutState,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Self::PrepaintState {
+        self.base.prepaint(id, inspector, bounds, state, window, cx)
+    }
+
+    fn paint(
+        &mut self,
+        id: Option<&GlobalElementId>,
+        inspector: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        state: &mut Self::RequestLayoutState,
+        prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.base
+            .paint(id, inspector, bounds, state, prepaint, window, cx)
     }
 }
 

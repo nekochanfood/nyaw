@@ -838,7 +838,7 @@ pub fn sidebar_item(
 
 /// 行（[`list_item`]）をカード 1 枚に縦に並べ、行の間に 1px の区切り線を引く。
 /// 端の行はカードの角（`LG`）に合わせて丸める（行の塗りがカードの角からはみ出さない）。
-pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
+pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> crate::Surface {
     let items: Vec<Button> = items.into_iter().collect();
     let last = items.len().saturating_sub(1);
     let line = theme.neutral_border_subtle;
