@@ -2,7 +2,7 @@
 mod common;
 
 use design::{Effects, Mode, Theme, components};
-use gpui::{AppContext, Context, IntoElement, Render, Window, div, point, prelude::*, px, rgba};
+use gpui::{AppContext, Context, IntoElement, Render, Window, div, prelude::*, px, rgba};
 use kernel::{Hand, Vec2};
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
@@ -45,15 +45,43 @@ fn move_pointer(hand: Hand, position: Option<Vec2>, window: &mut Window, cx: &mu
     }
 }
 
+fn snapshot(name: &str, frame: &ui::Frame) {
+    let directory = std::path::Path::new("target/tmp/surface-effects");
+    std::fs::create_dir_all(directory).unwrap();
+    let mut ppm = format!("P6\n{} {}\n255\n", frame.width, frame.height).into_bytes();
+    for (index, pixel) in frame.rgba.chunks_exact(4).enumerate() {
+        let x = index as u32 % frame.width;
+        let y = index as u32 / frame.width;
+        let background = if (x / 32 + y / 32) % 2 == 0 {
+            [75, 94, 126]
+        } else {
+            [112, 83, 119]
+        };
+        for channel in 0..3 {
+            ppm.push(
+                ((pixel[channel] as u32 * pixel[3] as u32
+                    + background[channel] * (255 - pixel[3] as u32))
+                    / 255) as u8,
+            );
+        }
+    }
+    std::fs::write(directory.join(format!("{name}.ppm")), ppm).unwrap();
+}
+
 fn main() {
     if !common::should_run("surface_effects") {
         return;
     }
     let results = Rc::new(RefCell::new(Vec::new()));
     let output = results.clone();
+    let screen = Rc::new(RefCell::new(None));
+    let screen_output = screen.clone();
     ui::application().run(move |cx| {
         design::font::install(cx);
         let window = ui::open_panel_window(cx, (480, 320), |_, cx| cx.new(|_| View)).unwrap();
+        let test_screen =
+            ui::open_panel_window(cx, (800, 600), |_, cx| cx.new(|_| testing::EffectsTest))
+                .unwrap();
         cx.spawn(async move |cx| {
             for _ in 0..100 {
                 cx.background_executor()
@@ -112,11 +140,26 @@ fn main() {
                     output.borrow_mut().push(frames);
                 }
             }
+            let frame = cx
+                .update_window(test_screen.into(), |_, window, cx| {
+                    cx.set_global(Mode::Dark);
+                    cx.set_global(i18n::Lang::Ja);
+                    Effects::ENABLED.set(cx);
+                    move_pointer(Hand::Right, Some(Vec2::new(400., 360.)), window, cx);
+                    window.refresh();
+                    ui::capture(window, cx).unwrap()
+                })
+                .unwrap();
+            *screen_output.borrow_mut() = Some(frame);
             cx.update(|cx| cx.quit());
         })
         .detach();
     });
     let results = results.borrow();
+    snapshot(
+        "test-screen",
+        screen.borrow().as_ref().expect("確認画面を描画する"),
+    );
     assert_eq!(results.len(), 4);
     for (mode, translucent, scale, baseline, lit, right, leave, corner) in results.iter() {
         let p = |frame, x, y| pixel(frame, *scale, x, y);
@@ -156,5 +199,7 @@ fn main() {
         println!(
             "surface_effects: {mode:?} translucent={translucent} center={center:?} lit={illuminated:?}"
         );
+        snapshot(&format!("{mode:?}-{translucent}-baseline"), baseline);
+        snapshot(&format!("{mode:?}-{translucent}-lit"), lit);
     }
 }

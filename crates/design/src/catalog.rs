@@ -633,6 +633,7 @@ impl Render for Catalog {
         );
         let page = self.page.clone();
         components::surface(&t)
+            .id("catalog-surface")
             .size_full()
             .child(
                 div()
@@ -676,11 +677,19 @@ impl Render for Catalog {
                     ),
             )
             .on_mouse_move(|event, window, cx| {
-                crate::SurfacePointers::set(window, 0, Some(event.position), cx);
+                let source = cx
+                    .try_global::<components::TooltipSource>()
+                    .and_then(|s| s.0)
+                    .unwrap_or(0);
+                crate::SurfacePointers::set(window, source, Some(event.position), cx);
             })
             .on_hover(|hovered, window, cx| {
                 if !hovered {
-                    crate::SurfacePointers::set(window, 0, None, cx);
+                    let source = cx
+                        .try_global::<components::TooltipSource>()
+                        .and_then(|s| s.0)
+                        .unwrap_or(0);
+                    crate::SurfacePointers::set(window, source, None, cx);
                 }
             })
     }

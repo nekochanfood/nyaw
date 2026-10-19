@@ -135,10 +135,10 @@ impl Element for Surface {
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         let effects = Effects::current(cx);
-        if effects.translucent {
-            if let Some(gpui::Fill::Color(background)) = self.base.style().background.as_mut() {
-                *background = background.opacity(0.86);
-            }
+        if effects.translucent
+            && let Some(gpui::Fill::Color(background)) = self.base.style().background.as_mut()
+        {
+            *background = background.opacity(0.86);
         }
         let radii = &self.base.style().corner_radii;
         let corners = [
