@@ -3,8 +3,7 @@
 use gpui::{
     App, Bounds, ContentMask, Div, Element, ElementId, GlobalElementId, InspectorElementId,
     InteractiveElement, Interactivity, IntoElement, ParentElement, Pixels, Point,
-    StatefulInteractiveElement, StyleRefinement, Styled, Window, WindowId, canvas, fill, point, px,
-    rgba, size,
+    StatefulInteractiveElement, StyleRefinement, Styled, Window, WindowId, canvas, point, px, size,
 };
 use std::collections::HashMap;
 
@@ -206,12 +205,17 @@ fn paint_light(
     let height = f32::from(bounds.size.height);
     let [tl, tr, br, bl] = super::components::clamp_corners(corners, width, height);
     let (top, bottom) = (tl.max(tr), bl.max(br));
-    // 同心円を薄く重ね、中心ほど明るくする。影の余白や角の外には描かない。
+    // GPU のぼかした白い影を光として使う。影の余白や角の外には描かない。
     for center in pointers.into_iter().flatten() {
-        let radius = 128.;
-        let reach = Bounds::new(
+        let radius = 48.;
+        let blur = 28.;
+        let circle = Bounds::new(
             center - point(px(radius), px(radius)),
             size(px(radius * 2.), px(radius * 2.)),
+        );
+        let reach = Bounds::new(
+            center - point(px(radius + 3. * blur), px(radius + 3. * blur)),
+            size(px((radius + 3. * blur) * 2.), px((radius + 3. * blur) * 2.)),
         );
         if !bounds.intersects(&reach) {
             continue;
@@ -221,14 +225,14 @@ fn paint_light(
                 return;
             }
             window.with_content_mask(Some(ContentMask { bounds: mask }), |window| {
-                for step in (1..=32).rev() {
-                    let r = radius * step as f32 / 32.;
-                    let circle =
-                        Bounds::new(center - point(px(r), px(r)), size(px(r * 2.), px(r * 2.)));
-                    window.paint_quad(
-                        fill(circle, rgba(crate::scale::WHITE & !0xff | 2)).corner_radii(px(r)),
-                    );
-                }
+                window.paint_drop_shadows(
+                    circle,
+                    gpui::Corners::all(px(radius)),
+                    &[
+                        gpui::BoxShadow::new(px(0.), px(0.), gpui::hsla(0., 0., 1., 0.30))
+                            .blur_radius(px(blur)),
+                    ],
+                );
             });
         };
         let at = |x, y, w, h| Bounds::new(bounds.origin + point(px(x), px(y)), size(px(w), px(h)));

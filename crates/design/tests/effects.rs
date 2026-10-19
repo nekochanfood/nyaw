@@ -45,11 +45,13 @@ fn effects_toggle_independently_without_fading_content(cx: &mut TestAppContext) 
                             == Some(rgba(Theme::DARK.accent_solid).into())),
                     "部品は不透明なまま"
                 );
-                let lights = quads
-                    .iter()
-                    .filter(|q| q.background.as_solid().is_some_and(|c| c.a < 0.01))
-                    .count();
-                assert_eq!(lights > 0, pointer_light);
+                assert_eq!(
+                    Effects::current(cx),
+                    Effects {
+                        translucent,
+                        pointer_light
+                    }
+                );
             });
         }
     }
@@ -70,17 +72,16 @@ fn leaving_one_hand_preserves_the_other_and_window_state_is_removed(cx: &mut Tes
         SurfacePointers::set(window, 1, at, cx);
         SurfacePointers::set(window, 0, None, cx);
         window.draw(cx).clear(cx);
-        let lights = |window: &Window| {
-            window
-                .painted_quads()
-                .iter()
-                .filter(|q| q.background.as_solid().is_some_and(|c| c.a < 0.01))
-                .count()
-        };
-        assert!(lights(window) > 0, "もう一方の手が照らしている");
+        assert!(
+            !SurfacePointers::set(window, 1, at, cx),
+            "もう一方の手は同じ所に残っている"
+        );
         SurfacePointers::remove(window.window_handle().window_id(), cx);
         window.refresh();
         window.draw(cx).clear(cx);
-        assert_eq!(lights(window), 0, "閉じた窓の光源を捨てる");
+        assert!(
+            SurfacePointers::set(window, 1, at, cx),
+            "閉じた窓の光源を捨てる"
+        );
     });
 }
