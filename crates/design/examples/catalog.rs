@@ -6,6 +6,7 @@ use gpui::{AppContext, WindowOptions};
 fn main() {
     gpui_platform::application().run(|cx| {
         cx.set_global(design::Motion::default());
+        cx.set_global(design::Effects::ENABLED);
         design::font::install(cx);
         cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|_| Catalog::default())

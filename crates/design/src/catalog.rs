@@ -572,6 +572,29 @@ impl Catalog {
 impl Render for Catalog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = Theme::of(self.mode);
+        let effects = crate::Effects::current(cx);
+        let effect_controls = wrap()
+            .items_center()
+            .child(caption(&t, "Translucent"))
+            .child(
+                components::switch(&t, "cat-translucent", effects.translucent).on_click(
+                    |_, _, cx| {
+                        let mut effects = crate::Effects::current(cx);
+                        effects.translucent = !effects.translucent;
+                        effects.set(cx);
+                    },
+                ),
+            )
+            .child(caption(&t, "Pointer light"))
+            .child(
+                components::switch(&t, "cat-pointer-light", effects.pointer_light).on_click(
+                    |_, _, cx| {
+                        let mut effects = crate::Effects::current(cx);
+                        effects.pointer_light = !effects.pointer_light;
+                        effects.set(cx);
+                    },
+                ),
+            );
         let this = cx.entity();
         let header = div()
             .flex()
@@ -609,40 +632,56 @@ impl Render for Catalog {
             wrap().children(theme_roles(&t).iter().map(|(n, c)| swatch(&t, n, *c))),
         );
         let page = self.page.clone();
-        components::surface(&t).size_full().child(
-            div()
-                .relative()
-                .size_full()
-                .child(
-                    div()
-                        .id("catalog")
-                        .size_full()
-                        .overflow_y_scroll()
-                        .flex()
-                        .flex_col()
-                        .track_scroll(&page)
-                        .child(
-                            components::elastic("cat-pull-page", &page)
-                                .flex_none()
-                                .flex()
-                                .flex_col()
-                                .gap(px(spacing::XL))
-                                .p(px(spacing::XL))
-                                .child(header)
-                                .child(roles)
-                                .child(scale_section(&t))
-                                .child(constants_section(&t))
-                                .child(text_section(&t))
-                                .child(icon_section(&t))
-                                .child(components)
-                                .child(motion),
-                        ),
-                )
-                .child(
-                    components::scrollbars(&t, "cat-page-bars", &page)
-                        .pulled_by("cat-pull-page")
-                        .corner_radius(radius::XL),
-                ),
-        )
+        components::surface(&t)
+            .size_full()
+            .child(
+                div()
+                    .relative()
+                    .size_full()
+                    .child(
+                        div()
+                            .id("catalog")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .track_scroll(&page)
+                            .child(
+                                components::elastic("cat-pull-page", &page)
+                                    .flex_none()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(spacing::XL))
+                                    .p(px(spacing::XL))
+                                    .child(header)
+                                    .child(effect_controls)
+                                    .child(
+                                        components::card(&t)
+                                            .p(px(spacing::XL))
+                                            .child("Surface / ポインタを動かすと面を照らします"),
+                                    )
+                                    .child(roles)
+                                    .child(scale_section(&t))
+                                    .child(constants_section(&t))
+                                    .child(text_section(&t))
+                                    .child(icon_section(&t))
+                                    .child(components)
+                                    .child(motion),
+                            ),
+                    )
+                    .child(
+                        components::scrollbars(&t, "cat-page-bars", &page)
+                            .pulled_by("cat-pull-page")
+                            .corner_radius(radius::XL),
+                    ),
+            )
+            .on_mouse_move(|event, window, cx| {
+                crate::SurfacePointers::set(window, 0, Some(event.position), cx);
+            })
+            .on_hover(|hovered, window, cx| {
+                if !hovered {
+                    crate::SurfacePointers::set(window, 0, None, cx);
+                }
+            })
     }
 }

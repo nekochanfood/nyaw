@@ -21,6 +21,10 @@ pub mod catalog;
 #[cfg(feature = "gpui")]
 pub mod components;
 #[cfg(feature = "gpui")]
+pub mod effects;
+#[cfg(feature = "gpui")]
+pub use effects::{Effects, Surface, SurfacePointers};
+#[cfg(feature = "gpui")]
 pub mod emoji;
 #[cfg(feature = "gpui")]
 pub mod font;

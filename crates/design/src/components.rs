@@ -94,13 +94,13 @@ fn ripple_frame(elapsed_ms: f32, reach: f32) -> Option<(f32, u8)> {
 }
 
 /// 角丸を半分の幅・高さに収める（CSS と同じく、大きすぎる角丸は丸めた長さに縮む）。[左上, 右上, 右下, 左下]。
-fn clamp_corners(c: [f32; 4], width: f32, height: f32) -> [f32; 4] {
+pub(super) fn clamp_corners(c: [f32; 4], width: f32, height: f32) -> [f32; 4] {
     let max = (width.min(height) / 2.0).max(0.0);
     c.map(|r| r.clamp(0.0, max))
 }
 
 /// 半径 `r` の角で、辺から `d` の高さの行が内側へ削られる長さ。`d >= r` なら 0。
-fn corner_inset(r: f32, d: f32) -> f32 {
+pub(super) fn corner_inset(r: f32, d: f32) -> f32 {
     if d >= r {
         return 0.0;
     }
@@ -563,7 +563,7 @@ use crate::PANEL_SHADOW_BLUR;
 /// パネルの地の置き方: ウィンドウの縁から [`PANEL_MARGIN`] 内側を埋め、その余白に影を落とす。
 /// 大きさは `absolute` と `inset` で決まるので、呼び出し側は `.relative()` や `.size_full()` で上書きしない
 /// （`absolute` のままで、中の `absolute` の子の基準になる）。
-fn panel_base(div: Div) -> Div {
+fn panel_base(div: crate::Surface) -> crate::Surface {
     div.absolute()
         .inset(px(PANEL_MARGIN))
         .shadow(panel_shadow())
@@ -582,8 +582,8 @@ fn panel_shadow() -> Vec<gpui::BoxShadow> {
 
 /// パネル全体の地。角丸は `XL`、中身との間隔は `MD`（12）なので、中のカードの角丸は同心の `XL − MD = LG`。
 /// カードを複数並べる画面だけが使い、中身は [`card`] に入れる。カードが 1 枚なら [`card_panel`]。
-pub fn panel(theme: &Theme) -> Div {
-    panel_base(div())
+pub fn panel(theme: &Theme) -> crate::Surface {
+    panel_base(crate::Surface::new(div()))
         .p(px(spacing::MD))
         .rounded(px(radius::XL))
         .bg(rgba(theme.background))
@@ -591,15 +591,15 @@ pub fn panel(theme: &Theme) -> Div {
 }
 
 /// 地（[`panel`]）の上に置くカード。要素は基本的にカードの中に置く。
-pub fn card(theme: &Theme) -> Div {
-    div()
+pub fn card(theme: &Theme) -> crate::Surface {
+    crate::Surface::new(div())
         .rounded(px(radius::LG))
         .bg(rgba(theme.card))
         .text_color(rgba(theme.neutral_text))
 }
 
 /// カードが 1 枚だけの画面: 地（[`panel`]）を敷かず、カードがパネル全体になる。角丸はパネルの `XL`。
-pub fn card_panel(theme: &Theme) -> Div {
+pub fn card_panel(theme: &Theme) -> crate::Surface {
     panel_base(card(theme)).rounded(px(radius::XL))
 }
 
@@ -1049,8 +1049,8 @@ impl RenderOnce for Dialog {
 }
 
 /// 画面やパネルの地。文字色も役割から決まる。
-pub fn surface(theme: &Theme) -> Div {
-    div()
+pub fn surface(theme: &Theme) -> crate::Surface {
+    crate::Surface::new(div())
         .font(crate::font::font())
         .bg(rgba(theme.background))
         .rounded(px(radius::XL))
