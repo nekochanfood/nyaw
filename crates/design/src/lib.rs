@@ -164,56 +164,59 @@ mod tests {
                         luminance(card) > luminance(background),
                         "カードは背景より明るい"
                     );
-                    for states in [
-                        [theme.control, theme.control_hover, theme.control_active],
-                        [
-                            theme.control_on_background,
-                            theme.control_on_background_hover,
-                            theme.control_on_background_active,
-                        ],
-                        [
-                            theme.accent_control,
-                            theme.accent_control_hover,
-                            theme.accent_control_active,
-                        ],
-                        [
-                            theme.danger_control,
-                            theme.danger_control_hover,
-                            theme.danger_control_active,
-                        ],
-                    ] {
-                        let mut previous = luminance(card);
-                        for color in states {
-                            let shown = over(color, card);
-                            let lightness = luminance(shown);
-                            assert!(
-                                lightness > previous,
-                                "透過後もカード < 部品 < ホバー < 押下: {color:08x} {lightness} <= {previous}"
-                            );
-                            let text = if states[0] == theme.accent_control {
-                                theme.on_accent_control
-                            } else if states[0] == theme.danger_control {
-                                theme.on_danger_control
-                            } else {
-                                theme.neutral_text
-                            };
-                            let ink = luminance(rgb(text));
-                            let ratio = (ink.max(lightness) + 0.05) / (ink.min(lightness) + 0.05);
-                            let min = if text == theme.neutral_text { 7. } else { 3. };
-                            assert!(ratio >= min, "合成後の文字のコントラスト {ratio} < {min}");
-                            previous = lightness;
+                    for card in [card, over(theme.card, backdrop)] {
+                        for states in [
+                            [theme.control, theme.control_hover, theme.control_active],
+                            [
+                                theme.control_on_background,
+                                theme.control_on_background_hover,
+                                theme.control_on_background_active,
+                            ],
+                            [
+                                theme.accent_control,
+                                theme.accent_control_hover,
+                                theme.accent_control_active,
+                            ],
+                            [
+                                theme.danger_control,
+                                theme.danger_control_hover,
+                                theme.danger_control_active,
+                            ],
+                        ] {
+                            let mut previous = luminance(card);
+                            for color in states {
+                                let shown = over(color, card);
+                                let lightness = luminance(shown);
+                                assert!(
+                                    lightness > previous,
+                                    "透過後もカード < 部品 < ホバー < 押下: {color:08x} {lightness} <= {previous}"
+                                );
+                                let text = if states[0] == theme.accent_control {
+                                    theme.on_accent_control
+                                } else if states[0] == theme.danger_control {
+                                    theme.on_danger_control
+                                } else {
+                                    theme.neutral_text
+                                };
+                                let ink = luminance(rgb(text));
+                                let ratio =
+                                    (ink.max(lightness) + 0.05) / (ink.min(lightness) + 0.05);
+                                let min = if text == theme.neutral_text { 7. } else { 3. };
+                                assert!(ratio >= min, "合成後の文字のコントラスト {ratio} < {min}");
+                                previous = lightness;
+                            }
                         }
-                    }
-                    let text = luminance(rgb(theme.neutral_text));
-                    let low = luminance(rgb(theme.neutral_text_low));
-                    for surface in [background, card] {
-                        let y = luminance(surface);
-                        for (ink, min) in [(text, 7.), (low, 4.5)] {
-                            let ratio = (ink.max(y) + 0.05) / (ink.min(y) + 0.05);
-                            assert!(
-                                ratio >= min,
-                                "透過した面の文字のコントラスト {ratio} < {min}"
-                            );
+                        let text = luminance(rgb(theme.neutral_text));
+                        let low = luminance(rgb(theme.neutral_text_low));
+                        for surface in [background, card] {
+                            let y = luminance(surface);
+                            for (ink, min) in [(text, 7.), (low, 4.5)] {
+                                let ratio = (ink.max(y) + 0.05) / (ink.min(y) + 0.05);
+                                assert!(
+                                    ratio >= min,
+                                    "透過した面の文字のコントラスト {ratio} < {min}"
+                                );
+                            }
                         }
                     }
                 }
@@ -236,6 +239,14 @@ mod tests {
             assert_eq!(Theme::current(cx), Theme::DARK, "dark until set");
             cx.set_global(Mode::Light);
             assert_eq!(Theme::current(cx), Theme::LIGHT);
+            Effects::ENABLED.set(cx);
+            assert_eq!(Theme::current(cx), Theme::LIGHT.translucent());
+            Effects::default().set(cx);
+            assert_eq!(
+                Theme::current(cx),
+                Theme::LIGHT,
+                "効果を切ると不透明な基準色に戻る"
+            );
         });
     }
 

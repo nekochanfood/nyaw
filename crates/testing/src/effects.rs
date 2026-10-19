@@ -20,16 +20,22 @@ impl Render for EffectsTest {
                     .justify_between()
                     .child(i18n::t(cx, "effects.light_theme"))
                     .child(
-                        components::switch(&theme, "effects-light-theme", theme == Theme::LIGHT)
-                            .on_click(|_, _, cx| {
-                                let mode = if Theme::current(cx) == Theme::LIGHT {
-                                    Mode::Dark
-                                } else {
-                                    Mode::Light
-                                };
-                                cx.set_global(mode);
-                                cx.refresh_windows();
-                            }),
+                        components::switch(
+                            &theme,
+                            "effects-light-theme",
+                            cx.try_global::<Mode>().copied().unwrap_or_default() == Mode::Light,
+                        )
+                        .on_click(|_, _, cx| {
+                            let mode = if cx.try_global::<Mode>().copied().unwrap_or_default()
+                                == Mode::Light
+                            {
+                                Mode::Dark
+                            } else {
+                                Mode::Light
+                            };
+                            cx.set_global(mode);
+                            cx.refresh_windows();
+                        }),
                     ),
             )
             .child(
@@ -65,52 +71,97 @@ impl Render for EffectsTest {
         let preview = div()
             .id("effects-preview")
             .debug_selector(|| "effects-preview".into())
-            .relative()
+            .flex()
+            .gap(px(spacing::SM))
             .flex_1()
-            .min_h(px(160.))
-            .child(div().absolute().inset_0().flex().children((0..96).map(|i| {
-                div().h_full().flex_1().bg(rgba(if i % 2 == 0 {
-                    theme.accent_solid
-                } else {
-                    theme.danger_solid
-                }))
-            })))
-            .child(
-                components::card(&theme)
-                    .id("effects-sample")
-                    .debug_selector(|| "effects-sample".into())
-                    .absolute()
-                    .inset(px(spacing::LG))
-                    .rounded(px(radius::LG))
-                    .p(px(spacing::LG))
-                    .flex()
-                    .flex_col()
-                    .justify_between()
-                    .child(i18n::t(cx, "effects.sample"))
-                    .child(components::button(
-                        &theme,
-                        "effects-sample-button",
-                        i18n::t(cx, "effects.control"),
-                        components::Variant::Default,
-                    ))
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(spacing::SM))
-                            .child(components::button(
-                                &theme,
-                                "effects-primary",
-                                "Primary",
-                                components::Variant::Primary,
-                            ))
-                            .child(components::button(
-                                &theme,
-                                "effects-ghost",
-                                "Ghost",
-                                components::Variant::Ghost,
-                            ))
-                            .child(components::switch(&theme, "effects-switch", true)),
-                    ),
+            .min_h(px(260.))
+            .children(
+                [
+                    ("dark", 0x101820ff),
+                    ("light", 0xffffffff),
+                    ("color", theme.accent_solid),
+                ]
+                .into_iter()
+                .map(|(name, color)| {
+                    let prefix = format!("effects-{name}");
+                    div()
+                        .relative()
+                        .flex_1()
+                        .min_w_0()
+                        .p(px(spacing::XS))
+                        .bg(rgba(color))
+                        .child(if name == "color" {
+                            div().absolute().inset_0().flex().children((0..32).map(|i| {
+                                div().h_full().flex_1().bg(rgba(if i % 2 == 0 {
+                                    theme.accent_solid
+                                } else {
+                                    theme.danger_solid
+                                }))
+                            }))
+                        } else {
+                            div()
+                        })
+                        .child(
+                            div()
+                                .relative()
+                                .size_full()
+                                .bg(rgba(theme.background))
+                                .rounded(px(radius::MD))
+                                .p(px(spacing::SM))
+                                .flex()
+                                .flex_col()
+                                .gap(px(spacing::SM))
+                                .child(i18n::t(cx, &format!("effects.{name}_backdrop")))
+                                .child(
+                                    components::card(&theme)
+                                        .rounded(px(radius::SM))
+                                        .p(px(spacing::SM))
+                                        .flex_1()
+                                        .flex()
+                                        .flex_col()
+                                        .justify_between()
+                                        .child(i18n::t(cx, "effects.card"))
+                                        .child(
+                                            components::button(
+                                                &theme,
+                                                format!("{prefix}-button"),
+                                                i18n::t(cx, "effects.button"),
+                                                components::Variant::Default,
+                                            )
+                                            .px(px(spacing::SM)),
+                                        )
+                                        .child(
+                                            components::button(
+                                                &theme,
+                                                format!("{prefix}-primary"),
+                                                "Primary",
+                                                components::Variant::Primary,
+                                            )
+                                            .px(px(spacing::SM)),
+                                        )
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .justify_between()
+                                                .child(
+                                                    components::button(
+                                                        &theme,
+                                                        format!("{prefix}-ghost"),
+                                                        "Ghost",
+                                                        components::Variant::Ghost,
+                                                    )
+                                                    .px(px(spacing::SM)),
+                                                )
+                                                .child(components::switch(
+                                                    &theme,
+                                                    format!("{prefix}-switch"),
+                                                    true,
+                                                )),
+                                        ),
+                                ),
+                        )
+                }),
             );
         components::panel(&theme)
             .flex()
@@ -164,7 +215,7 @@ mod tests {
         cx.simulate_click(at, Modifiers::none());
         cx.run_until_parked();
         cx.update(|_, cx| {
-            assert_eq!(Theme::current(cx), Theme::LIGHT);
+            assert_eq!(Theme::current(cx), Theme::LIGHT.translucent());
             assert_eq!(
                 Effects::current(cx),
                 effects,

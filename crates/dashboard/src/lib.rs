@@ -1286,6 +1286,11 @@ impl Screen {
             Some(false) => Theme::DARK,
             None => Theme::current(cx),
         };
+        let theme = if design::Effects::current(cx).translucent {
+            theme.translucent()
+        } else {
+            theme
+        };
         let low = theme.neutral_text_low;
         let app_window = self.app_window(&m.app);
         let can_open_app = app_window.is_some() || m.controls.raise;

@@ -29,7 +29,7 @@ impl Render for Frost {
                             gpui::point(px(30.), px(30.)),
                             gpui::size(px(260.), px(140.)),
                         ),
-                        gpui::rgba(Theme::DARK.card),
+                        gpui::rgba(Theme::DARK.translucent().card),
                     )
                     .corner_radii(px(24.)),
                 );

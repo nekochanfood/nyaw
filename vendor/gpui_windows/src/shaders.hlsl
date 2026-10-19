@@ -880,8 +880,8 @@ float3 material_lighting(float3 rgb, float2 position, float2 normal, float depth
             float2 pointer = hand == 0 ? material_pointers.xy : material_pointers.zw;
             float2 delta = pointer - position;
             float distance = length(delta) / scale;
-            float indirect = pow(saturate(1 - distance / 240), 2);
-            float direct = pow(saturate(1 - distance / 96), 2);
+            float indirect = pow(saturate(1 - distance / 180), 2);
+            float direct = pow(saturate(1 - distance / 72), 2);
             float facing = dot(normal, normalize(delta + float2(0.001, 0.001)));
             float rim = exp(-depth / 1.5) * indirect;
             rgb = lerp(rgb, lerp(float3(1, 1, 1), float3(0.88, 0.95, 1), light_surface),
@@ -914,17 +914,15 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
         float depth = max(-sdf, 0) / scale;
         float2 normal = length(outside) > 0.001 ? normalize(outside) * sign(p)
             : (q.x > q.y ? float2(sign(p.x), 0) : float2(0, sign(p.y)));
-        float brightness = dot(color.rgb, float3(0.2126, 0.7152, 0.0722));
-        float light_surface = smoothstep(0.55, 0.9, brightness);
         float edge = exp(-depth / 1.2);
         if (material_translucent != 0) {
             float4 blurred = frosted_backdrop(input.position.xy, scale);
             // ぼかしをアルファの輪郭へにじませない。透明なパネル外は従来のまま。
             float coverage = saturate(0.5 - sdf) * strength;
             behind = lerp(original, blurred, coverage);
-            color.a *= lerp(1, min(quad.bounds.size.x, quad.bounds.size.y) > 100 * scale ? 0.88 : 0.94, strength);
-            // 白い地でも操作部品が溶けない、細い材質の縁。
-            color.rgb = lerp(color.rgb, lerp(float3(1, 1, 1), float3(0, 0, 0), light_surface), edge * 0.13 * strength);
+            // 上縁は反射、下縁は陰影。全面を暗く囲って凹面に見せない。
+            float lower_edge = saturate(dot(normal, normalize(float2(0.35, 1))) * 0.5 + 0.5);
+            color.rgb = lerp(color.rgb, lerp(float3(1, 1, 1), float3(0, 0, 0), lower_edge), edge * 0.10 * strength);
         }
         color.rgb = lerp(color.rgb, material_lighting(color.rgb, input.position.xy, normal, depth, scale), strength);
     }
@@ -1155,9 +1153,8 @@ float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
     float alpha = sample.a;
     if (material_translucent != 0) {
         behind = lerp(original, frosted_backdrop(input.position.xy, scale), saturate(sample.a));
-        alpha *= 0.94;
-        float light_surface = smoothstep(0.55, 0.9, dot(color, float3(0.2126, 0.7152, 0.0722)));
-        color = lerp(color, lerp(float3(1, 1, 1), float3(0, 0, 0), light_surface), edge * 0.13);
+        float lower_edge = saturate(dot(normal, normalize(float2(0.35, 1))) * 0.5 + 0.5);
+        color = lerp(color, lerp(float3(1, 1, 1), float3(0, 0, 0), lower_edge), edge * 0.10);
     }
     color = material_lighting(color, input.position.xy, normal, -1.5 * log(max(edge, 0.00001)), scale);
     return float4(color * alpha + behind.rgb * (1 - alpha), alpha + behind.a * (1 - alpha));

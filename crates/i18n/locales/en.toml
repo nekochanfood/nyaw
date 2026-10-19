@@ -220,6 +220,11 @@ navigation = "Navigation"
 nyapps = "Nyapps"
 
 [effects]
+dark_backdrop = "Dark backdrop"
+light_backdrop = "Light backdrop"
+color_backdrop = "Color backdrop"
+card = "Card"
+button = "Button"
 light_theme = "Compare in light theme"
 translucent = "Frosted glass"
 pointer_light = "Pointer lighting"

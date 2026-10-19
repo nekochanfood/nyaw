@@ -202,6 +202,41 @@ fn main() {
                     "テーマ {theme}: {fg} と {bg} のコントラスト比 {got:.2} が {min} に足りない"
                 ));
             }
+            // 実描画と同じ符号化済み RGB の source-over。文字は不透明のまま。
+            if root["contrast"].as_array().unwrap().contains(rule) {
+                let over = |role: &str, behind: Srgb| {
+                    let rgb: Srgb = c(role).into_format::<u8>().into_format();
+                    let alpha = root["surface-opacity"][role].as_f64().unwrap_or(1.);
+                    let alpha = (alpha * 255.).round() as f32 / 255.;
+                    Srgb::new(
+                        rgb.red * alpha + behind.red * (1. - alpha),
+                        rgb.green * alpha + behind.green * (1. - alpha),
+                        rgb.blue * alpha + behind.blue * (1. - alpha),
+                    )
+                };
+                for backdrop in [
+                    Srgb::new(0., 0., 0.),
+                    Srgb::new(1., 1., 1.),
+                    Srgb::new(0., 0.3, 1.),
+                    Srgb::new(1., 0.2, 0.),
+                ] {
+                    let background = over("background", backdrop);
+                    // 単独カードと、背景の上のカードの両方を検査する。
+                    for card in [over("card", backdrop), over("card", background)] {
+                        let shown = |role: &str| match role {
+                            "background" => background,
+                            "card" => card,
+                            r if r.starts_with("control-on-background") => over(r, background),
+                            _ => over(role, card),
+                        };
+                        let got = f64::from(shown(fg).relative_contrast(shown(bg)));
+                        if got < min {
+                            failures.push(format!("テーマ {theme}: 半透明の {fg} と {bg} のコントラスト比 {got:.2} が {min} に足りない"));
+                            break;
+                        }
+                    }
+                }
+            }
         }
     }
     out += "    /// どの役割の色にも `f` を当てたテーマ（白黒にするなど）。\n";

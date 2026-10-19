@@ -41,21 +41,12 @@ fn stripes() -> Scene {
 #[ignore = "実 GPU が必要"]
 fn wgpu_material_blurs_backdrop_and_lights_controls_in_both_themes() {
     let mut renderer = gpui_wgpu::WgpuHeadlessRenderer::new().unwrap();
-    for color in [0x282b2eff, 0xfefefeff] {
+    for theme in [design::Theme::DARK, design::Theme::LIGHT] {
+        let glass = theme.translucent();
+        let color = glass.card;
         let mut scene = stripes();
         scene.insert_primitive(quad(30., 30., 260., 140., color, 24.));
-        scene.insert_primitive(quad(
-            180.,
-            60.,
-            90.,
-            54.,
-            if color == 0x282b2eff {
-                0x42464aff
-            } else {
-                0xe0e1e5ff
-            },
-            27.,
-        ));
+        scene.insert_primitive(quad(180., 60., 90., 54., glass.control, 27.));
         let mut path = gpui::PathBuilder::fill();
         path.move_to(point(gpui::px(50.), gpui::px(60.)));
         for (x, y) in [
@@ -73,30 +64,39 @@ fn wgpu_material_blurs_backdrop_and_lights_controls_in_both_themes() {
         path.content_mask = quad(0., 0., 320., 200., color, 0.).content_mask;
         scene.insert_primitive(path);
         scene.finish();
-        let render = |renderer: &mut gpui_wgpu::WgpuHeadlessRenderer, translucent, light| {
-            paint::set(
-                99,
-                paint::Material {
-                    pointers: [[200., 85.], [80., 85.]],
-                    translucent,
-                    light,
-                    scale: 1.,
-                    padding: 0,
-                },
-            );
-            paint::with_window(99, || {
-                renderer
-                    .render_scene_to_image(&scene, size(DevicePixels(320), DevicePixels(200)))
-                    .unwrap()
-            })
-        };
-        let baseline = render(&mut renderer, 0, 0);
-        let frosted = render(&mut renderer, 1, 0);
-        let lit = render(&mut renderer, 1, 1);
+        let render =
+            |renderer: &mut gpui_wgpu::WgpuHeadlessRenderer, translucent, light, pointers| {
+                paint::set(
+                    99,
+                    paint::Material {
+                        pointers,
+                        translucent,
+                        light,
+                        scale: 1.,
+                        padding: 0,
+                    },
+                );
+                paint::with_window(99, || {
+                    renderer
+                        .render_scene_to_image(&scene, size(DevicePixels(320), DevicePixels(200)))
+                        .unwrap()
+                })
+            };
+        let pointers = [[200., 85.], [80., 85.]];
+        let baseline = render(&mut renderer, 0, 0, pointers);
+        let frosted = render(&mut renderer, 1, 0, pointers);
+        let lit = render(&mut renderer, 1, 1, pointers);
+        let distant = render(&mut renderer, 1, 1, [[80., 85.], [-1e6; 2]]);
         let contrast = |a, b| {
             (frosted.get_pixel(a, 140).0[0] as i32 - frosted.get_pixel(b, 140).0[0] as i32).abs()
         };
-        // 単なる 12% の透過なら白黒の差は約 30。ぼかしにより細部を落とす。
+        // 8% の透過だけなら白黒の差は約 20。ぼかしで細部を落とす。
+        assert!(
+            (baseline.get_pixel(100, 140).0[0] as i32 - baseline.get_pixel(102, 140).0[0] as i32)
+                .abs()
+                > 10,
+            "ぼかし前は半透明な面を通して背面の縞が見える"
+        );
         assert!(
             contrast(100, 102) < 10,
             "すりガラスの背後の細かい縞が拡散する: {} {:?} {:?}",
@@ -115,7 +115,7 @@ fn wgpu_material_blurs_backdrop_and_lights_controls_in_both_themes() {
             (a[0] as i32 - b[0] as i32).abs() > 8,
             "明暗の両テーマで操作部品の輪郭が照らされる: {a:?} -> {b:?}"
         );
-        if color == 0x282b2eff {
+        if theme == design::Theme::DARK {
             assert!(b[0] > a[0], "暗い部品の輪郭は反射で明るくなる");
         }
         assert_ne!(
@@ -123,14 +123,53 @@ fn wgpu_material_blurs_backdrop_and_lights_controls_in_both_themes() {
             lit.get_pixel(50, 85),
             "任意の輪郭を持つキーのパスも照らす"
         );
-        if color == 0xfefefeff {
-            assert!(
-                (frosted.get_pixel(230, 85).0[0] as i32 - frosted.get_pixel(230, 130).0[0] as i32)
-                    .abs()
-                    > 10,
-                "透過中も明るい地とボタンを識別できる"
-            );
-        }
+        let control = frosted.get_pixel(250, 87).0;
+        let card = frosted.get_pixel(250, 140).0;
+        assert!(
+            control[0] > card[0] + 10,
+            "両テーマでカードよりボタンが明るい: {control:?} {card:?}"
+        );
+        let top = frosted.get_pixel(225, 61).0;
+        let bottom = frosted.get_pixel(225, 112).0;
+        assert!(
+            top[0] > bottom[0],
+            "上の反射と下の陰影で凸面を示す: {top:?} {bottom:?}"
+        );
+        assert_eq!(
+            distant.get_pixel(280, 155),
+            frosted.get_pixel(280, 155),
+            "180px より遠くの面はポインタで照らさない"
+        );
+    }
+    let mut surfaces = Scene::default();
+    surfaces.insert_primitive(quad(
+        20.,
+        20.,
+        130.,
+        130.,
+        design::Theme::LIGHT.translucent().card,
+        12.,
+    ));
+    surfaces.insert_primitive(quad(
+        180.,
+        20.,
+        100.,
+        54.,
+        design::Theme::LIGHT.translucent().card,
+        27.,
+    ));
+    surfaces.finish();
+    let alpha = paint::with_window(99, || {
+        renderer
+            .render_to_image_deferred(&surfaces, size(DevicePixels(320), DevicePixels(200)), true)
+            .unwrap()
+    });
+    for (x, y) in [(80, 80), (230, 47)] {
+        assert_eq!(
+            alpha.get_pixel(x, y).0[3],
+            (design::Theme::LIGHT.translucent().card & 255) as u8,
+            "同じ役割の不透明度をサイズや照明で変えない"
+        );
     }
     let mut scene = stripes();
     scene.insert_primitive(quad(30., 30., 260., 140., 0xffffff01, 24.));

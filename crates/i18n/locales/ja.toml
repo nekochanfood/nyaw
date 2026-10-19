@@ -220,6 +220,11 @@ navigation = "積み重ね"
 nyapps = "ニャプリ"
 
 [effects]
+dark_backdrop = "暗い背面"
+light_backdrop = "明るい背面"
+color_backdrop = "色付きの背面"
+card = "カード"
+button = "ボタン"
 light_theme = "ライトテーマで比較する"
 translucent = "すりガラスを有効にする"
 pointer_light = "ポインタ照明を有効にする"

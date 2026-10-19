@@ -134,7 +134,7 @@ macro_rules! roles {
     ($t:expr, $($f:ident),+ $(,)?) => { [$((stringify!($f), $t.$f)),+] };
 }
 
-fn theme_roles(t: &Theme) -> [(&'static str, u32); 51] {
+fn theme_roles(t: &Theme) -> [(&'static str, u32); 59] {
     roles!(
         t,
         accent_base,
@@ -178,6 +178,14 @@ fn theme_roles(t: &Theme) -> [(&'static str, u32); 51] {
         focus_ring,
         on_accent,
         on_danger,
+        accent_control,
+        accent_control_hover,
+        accent_control_active,
+        on_accent_control,
+        danger_control,
+        danger_control_hover,
+        danger_control_active,
+        on_danger_control,
         background,
         card,
         control,
