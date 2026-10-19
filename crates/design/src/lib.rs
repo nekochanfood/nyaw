@@ -83,7 +83,12 @@ impl gpui::Global for Mode {}
 impl Theme {
     /// 画面が描くときの今のテーマ。テーマが切り替わるとウィンドウが描き直されるので、`render` で毎回引く。
     pub fn current(cx: &gpui::App) -> Theme {
-        Theme::of(cx.try_global::<Mode>().copied().unwrap_or_default())
+        let theme = Theme::of(cx.try_global::<Mode>().copied().unwrap_or_default());
+        if Effects::current(cx).translucent {
+            theme.translucent()
+        } else {
+            theme
+        }
     }
 
     pub const fn of(mode: Mode) -> Theme {
@@ -127,6 +132,101 @@ mod tests {
     fn themes_differ_but_share_roles() {
         assert_ne!(Theme::DARK.neutral_base, Theme::LIGHT.neutral_base);
         assert_eq!(Theme::DARK.on_accent & 0xff, 0xff);
+    }
+
+    #[test]
+    fn translucent_surfaces_get_brighter_toward_the_controls() {
+        fn rgb(c: u32) -> [f32; 3] {
+            let [r, g, b, _] = c.to_be_bytes();
+            [r, g, b].map(|c| c as f32 / 255.)
+        }
+        fn over(c: u32, behind: [f32; 3]) -> [f32; 3] {
+            let alpha = (c & 255) as f32 / 255.;
+            let color = rgb(c);
+            std::array::from_fn(|i| color[i] * alpha + behind[i] * (1. - alpha))
+        }
+        fn luminance(rgb: [f32; 3]) -> f32 {
+            let linear = rgb.map(|c| {
+                if c <= 0.04045 {
+                    c / 12.92
+                } else {
+                    ((c + 0.055) / 1.055).powf(2.4)
+                }
+            });
+            linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722
+        }
+        for original in [Theme::DARK, Theme::LIGHT] {
+            for theme in [original, original.translucent()] {
+                for backdrop in [[0.; 3], [1.; 3], [0., 0.3, 1.], [1., 0.2, 0.]] {
+                    let background = over(theme.background, backdrop);
+                    let card = over(theme.card, background);
+                    assert!(
+                        luminance(card) > luminance(background),
+                        "カードは背景より明るい"
+                    );
+                    for states in [
+                        [theme.control, theme.control_hover, theme.control_active],
+                        [
+                            theme.control_on_background,
+                            theme.control_on_background_hover,
+                            theme.control_on_background_active,
+                        ],
+                        [
+                            theme.accent_control,
+                            theme.accent_control_hover,
+                            theme.accent_control_active,
+                        ],
+                        [
+                            theme.danger_control,
+                            theme.danger_control_hover,
+                            theme.danger_control_active,
+                        ],
+                    ] {
+                        let mut previous = luminance(card);
+                        for color in states {
+                            let shown = over(color, card);
+                            let lightness = luminance(shown);
+                            assert!(
+                                lightness > previous,
+                                "透過後もカード < 部品 < ホバー < 押下: {color:08x} {lightness} <= {previous}"
+                            );
+                            let text = if states[0] == theme.accent_control {
+                                theme.on_accent_control
+                            } else if states[0] == theme.danger_control {
+                                theme.on_danger_control
+                            } else {
+                                theme.neutral_text
+                            };
+                            let ink = luminance(rgb(text));
+                            let ratio = (ink.max(lightness) + 0.05) / (ink.min(lightness) + 0.05);
+                            let min = if text == theme.neutral_text { 7. } else { 3. };
+                            assert!(ratio >= min, "合成後の文字のコントラスト {ratio} < {min}");
+                            previous = lightness;
+                        }
+                    }
+                    let text = luminance(rgb(theme.neutral_text));
+                    let low = luminance(rgb(theme.neutral_text_low));
+                    for surface in [background, card] {
+                        let y = luminance(surface);
+                        for (ink, min) in [(text, 7.), (low, 4.5)] {
+                            let ratio = (ink.max(y) + 0.05) / (ink.min(y) + 0.05);
+                            assert!(
+                                ratio >= min,
+                                "透過した面の文字のコントラスト {ratio} < {min}"
+                            );
+                        }
+                    }
+                }
+            }
+            let glass = original.translucent();
+            assert!(glass.background & 255 < glass.card & 255);
+            assert!(glass.card & 255 < glass.control & 255);
+            assert!(glass.control & 255 < 255);
+            assert_eq!(
+                glass.neutral_text, original.neutral_text,
+                "文字は透過させない"
+            );
+        }
     }
 
     #[cfg(feature = "gpui")]

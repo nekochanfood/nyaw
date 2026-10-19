@@ -26,11 +26,11 @@ use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Variant {
-    /// 既定。カードに載せる前提で、カードよりわずかに暗い無彩色。
+    /// 既定。背景・カードより明るい操作面。
     Default,
     Primary,
     Danger,
-    /// カードではなく背景（[`panel`] の地）に直接置くとき。背景から浮くよう、背景との差を取った無彩色。
+    /// 背景（[`panel`] の地）に直接置くとき。同じ明るい操作面を使う。
     OnBackground,
     /// 背景の無いボタン（画像の上に置く操作など）。ふだんは透明で、ホバー・押下だけ背景用の色が付く。
     Ghost,
@@ -229,16 +229,16 @@ fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
             theme.neutral_text,
         ),
         Variant::Primary => (
-            theme.accent_solid,
-            theme.accent_solid_hover,
-            theme.accent_solid_active,
-            theme.on_accent,
+            theme.accent_control,
+            theme.accent_control_hover,
+            theme.accent_control_active,
+            theme.on_accent_control,
         ),
         Variant::Danger => (
-            theme.danger_solid,
-            theme.danger_solid_hover,
-            theme.danger_solid_active,
-            theme.on_danger,
+            theme.danger_control,
+            theme.danger_control_hover,
+            theme.danger_control_active,
+            theme.on_danger_control,
         ),
         Variant::OnBackground => (
             theme.control_on_background,

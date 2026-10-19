@@ -572,6 +572,11 @@ impl Catalog {
 impl Render for Catalog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = Theme::of(self.mode);
+        let t = if crate::Effects::current(cx).translucent {
+            t.translucent()
+        } else {
+            t
+        };
         let effects = crate::Effects::current(cx);
         let effect_controls = wrap()
             .items_center()

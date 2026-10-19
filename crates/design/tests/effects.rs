@@ -6,9 +6,10 @@ use gpui::{
 struct View;
 
 impl Render for View {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
         div().size_full().child(
-            components::card_panel(&Theme::DARK)
+            components::card_panel(&theme)
                 .rounded(px(40.))
                 .child(div().size(px(20.)).bg(rgba(Theme::DARK.accent_solid))),
         )
@@ -39,7 +40,13 @@ fn effects_toggle_independently_without_fading_content(cx: &mut TestAppContext) 
                             .filter(|c| (c.h, c.s, c.l) == (original.h, original.s, original.l))
                     })
                     .expect("カードの面");
-                assert_eq!(card.a, 1., "材質の透過は描画バックエンドが担当する");
+                let expected = if translucent {
+                    Theme::DARK.translucent()
+                } else {
+                    Theme::DARK
+                };
+                let expected: gpui::Hsla = rgba(expected.card).into();
+                assert_eq!(card.a, expected.a, "面だけに役割の不透明度を渡す");
                 assert!(
                     quads
                         .iter()

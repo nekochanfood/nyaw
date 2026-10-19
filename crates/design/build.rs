@@ -120,6 +120,8 @@ fn main() {
         }
     }
     fields.extend(mutable["light"].as_object().unwrap().keys().cloned());
+    fields.sort();
+    fields.dedup();
 
     let mut resolved: BTreeMap<&str, BTreeMap<String, (String, Srgb)>> = BTreeMap::new();
     for theme in THEMES {
@@ -208,6 +210,17 @@ fn main() {
         writeln!(out, "            {0}: f(self.{0}),", field(f)).unwrap();
     }
     out += "        }\n    }\n}\n";
+    // 透明度も色と同じ役割から引く。文字や子要素全体をフェードさせない。
+    out += "impl Theme {\n    pub fn translucent(mut self) -> Self {\n";
+    for (role, opacity) in obj(&root, "surface-opacity") {
+        assert!(fields.contains(role), "不透明度: 未知の役割 {role}");
+        let opacity = opacity.as_f64().expect("不透明度は数値");
+        assert!((0.0..1.0).contains(&opacity), "面は半透明にする");
+        let alpha = (opacity * 255.).round() as u8;
+        let f = field(role);
+        writeln!(out, "        self.{f} = (self.{f} & !0xff) | {alpha};").unwrap();
+    }
+    out += "        self\n    }\n}\n";
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 
     fs::write(
