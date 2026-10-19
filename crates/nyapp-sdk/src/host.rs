@@ -120,8 +120,8 @@ pub fn now_playing() -> Result<Option<String>, Error> {
 /// このパネルをレーザーで指している手のコントローラの入力（権限 `controller`）。指していなければ空
 /// （パネルの外の入力は読めない）。値は出来事を受けた時点のもので、呼び出しの間は変わらない。
 pub fn controllers() -> Result<Vec<crate::Controller>, Error> {
-    let json = read_string(|buf, cap| unsafe { sys::controllers(buf, cap) })
-        .map_err(Error::from_code)?;
+    let json =
+        read_string(|buf, cap| unsafe { sys::controllers(buf, cap) }).map_err(Error::from_code)?;
     serde_json::from_str(&json).map_err(|_| Error::Invalid)
 }
 

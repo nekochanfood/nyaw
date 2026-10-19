@@ -163,7 +163,9 @@ impl NyappView {
         match &mut self.state {
             #[cfg(not(test))]
             State::Running(remote) => {
-                if let Err(e) = remote.event(event, Lang::current(cx).code(), now_playing, controllers) {
+                if let Err(e) =
+                    remote.event(event, Lang::current(cx).code(), now_playing, controllers)
+                {
                     self.fail(e, cx);
                 }
             }
@@ -818,7 +820,10 @@ api = 1
             state(kernel::vr::Hand::Left, false),
             state(kernel::vr::Hand::Right, true),
         ];
-        assert!(pointed_controllers(&ctl, 5).is_empty(), "パネルの状態が無い");
+        assert!(
+            pointed_controllers(&ctl, 5).is_empty(),
+            "パネルの状態が無い"
+        );
         ctl.panels.entry(5).or_default();
         assert!(pointed_controllers(&ctl, 5).is_empty(), "指していない");
         ctl.panels.entry(5).or_default().pointing = vec![kernel::vr::Hand::Right];

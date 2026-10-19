@@ -59,7 +59,11 @@ pub struct Step {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub logs: Vec<(i32, String)>,
     /// 外側が `None` なら変更なし、`Some(None)` なら消す（JSON の省略と `null` で分ける）。
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "present")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
     pub activity: Option<Option<Activity>>,
     /// 保存領域のスナップショット。JSON に載せると膨らむので、返事のあとに生の 1 フレームで送る（空は変更なし）。
     #[serde(skip)]

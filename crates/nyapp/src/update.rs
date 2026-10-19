@@ -141,7 +141,8 @@ pub(crate) fn update_into(dir: &Path, app: &Installed) -> Result<Option<Installe
 
 /// フィードの中のパッケージの場所を、フィードの URL `base` から見た絶対 URL にする（`/` 始まり・`//` 始まりも URL の規則どおり）。
 fn resolve(base: &str, package: &str) -> Result<String, Error> {
-    let base = url::Url::parse(base).map_err(|e| Error::new(format!("bad update url {base}: {e}")))?;
+    let base =
+        url::Url::parse(base).map_err(|e| Error::new(format!("bad update url {base}: {e}")))?;
     base.join(package)
         .map(String::from)
         .map_err(|e| Error::new(format!("bad package url {package}: {e}")))

@@ -41,10 +41,8 @@ fn decode_image(image: &package::Image) -> Option<Arc<RenderImage>> {
     let rgba = match image {
         package::Image::Png(png) => {
             // 確保の前に寸法で弾く（圧縮率の高い巨大 PNG でホストのメモリを食わせない）。
-            let mut reader = image::ImageReader::with_format(
-                std::io::Cursor::new(png),
-                image::ImageFormat::Png,
-            );
+            let mut reader =
+                image::ImageReader::with_format(std::io::Cursor::new(png), image::ImageFormat::Png);
             let mut limits = image::Limits::default();
             limits.max_image_width = Some(MAX_SIDE);
             limits.max_image_height = Some(MAX_SIDE);

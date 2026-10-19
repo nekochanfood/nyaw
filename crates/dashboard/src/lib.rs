@@ -3738,7 +3738,10 @@ mod tests {
         let width = cx.update(|window, _| window.viewport_size().width);
         for button in ["dashboard-refresh", "dashboard-nyapps-remove"] {
             if !nyapp::NORMAL_NYAPPS_ENABLED && button == "dashboard-nyapps-remove" {
-                assert!(cx.debug_bounds(button).is_none(), "ロック中はニャプリの見出しを出さない");
+                assert!(
+                    cx.debug_bounds(button).is_none(),
+                    "ロック中はニャプリの見出しを出さない"
+                );
                 continue;
             }
             let b = cx.debug_bounds(button).unwrap();
@@ -3823,7 +3826,8 @@ mod tests {
         cx.run_until_parked();
         if !nyapp::NORMAL_NYAPPS_ENABLED {
             assert!(
-                cx.debug_bounds("dashboard-nyapp-net.bettaworx.calc").is_none(),
+                cx.debug_bounds("dashboard-nyapp-net.bettaworx.calc")
+                    .is_none(),
                 "ロック中は入っているニャプリを並べない"
             );
             return;

@@ -32,7 +32,10 @@ fn every_entry_follows_the_lock() {
     if nyapp::NORMAL_NYAPPS_ENABLED {
         for (entry, result) in [("start", start), ("install", install), ("update", update)] {
             assert!(
-                result.as_ref().err().is_none_or(|e| e.to_string() != DISABLED),
+                result
+                    .as_ref()
+                    .err()
+                    .is_none_or(|e| e.to_string() != DISABLED),
                 "{entry} はロックで断らない: {result:?}"
             );
         }

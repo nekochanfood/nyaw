@@ -146,7 +146,9 @@ fn watch_countdown(id: String, ends: i64, cx: &mut App) {
             }
         });
     });
-    cx.default_global::<Activities>().1.insert(key, (ends, task));
+    cx.default_global::<Activities>()
+        .1
+        .insert(key, (ends, task));
 }
 
 /// ニャプリ `id` の、`ends` に終わるカウントダウンを終わったことにする。開いていなければ手首から音を鳴らす。
