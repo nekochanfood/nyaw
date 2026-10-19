@@ -677,19 +677,14 @@ impl Render for Catalog {
                     ),
             )
             .on_mouse_move(|event, window, cx| {
-                let source = cx
-                    .try_global::<components::TooltipSource>()
-                    .and_then(|s| s.0)
-                    .unwrap_or(0);
-                crate::SurfacePointers::set(window, usize::from(source), Some(event.position), cx);
+                // UI は変換前の左右の座標を書く。単独のカタログだけ OS のマウスから読む。
+                if !cx.has_global::<components::TooltipSource>() {
+                    crate::SurfacePointers::set(window, 0, Some(event.position), cx);
+                }
             })
             .on_hover(|hovered, window, cx| {
-                if !hovered {
-                    let source = cx
-                        .try_global::<components::TooltipSource>()
-                        .and_then(|s| s.0)
-                        .unwrap_or(0);
-                    crate::SurfacePointers::set(window, usize::from(source), None, cx);
+                if !hovered && !cx.has_global::<components::TooltipSource>() {
+                    crate::SurfacePointers::set(window, 0, None, cx);
                 }
             })
     }
