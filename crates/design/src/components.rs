@@ -487,13 +487,58 @@ fn keep_drawing(window: &mut Window, cx: &mut App) {
     window.request_animation_frame();
 }
 
+/// 円の進み具合: 一辺 `size` px・太さ `stroke` px の線の輪。溝（`groove`）の上に、上から時計回りに `progress`（0〜1）
+/// だけアクセントの色で満ちる。中身（残り時間など）は呼び出し側が `relative` の親で重ねる。
+pub fn progress_ring(theme: &Theme, size: f32, stroke: f32, progress: f32) -> impl IntoElement {
+    let (track, fill) = (theme.groove, theme.accent_solid);
+    let progress = if progress.is_finite() {
+        progress.clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, _| {
+            let center = bounds.center();
+            let r = (bounds.size.width.min(bounds.size.height) - px(stroke)) / 2.0;
+            // 円弧は細かい折れ線で描く（180° を超える弧の向きの取り違えが無い）。
+            let arc = |to: f32| {
+                let mut path = gpui::PathBuilder::stroke(px(stroke));
+                let steps = (to * 96.0).ceil().max(1.0) as usize;
+                for i in 0..=steps {
+                    let a = to * i as f32 / steps as f32 * std::f32::consts::TAU
+                        - std::f32::consts::FRAC_PI_2;
+                    let p = point(center.x + r * a.cos(), center.y + r * a.sin());
+                    if i == 0 {
+                        path.move_to(p)
+                    } else {
+                        path.line_to(p)
+                    }
+                }
+                path.build().ok()
+            };
+            if let Some(path) = arc(1.0) {
+                window.paint_path(path, rgba(track));
+            }
+            if progress > 0.0
+                && let Some(path) = arc(progress)
+            {
+                window.paint_path(path, rgba(fill));
+            }
+        },
+    )
+    .flex_none()
+    .size(px(size))
+}
+
 /// オン / オフのスイッチ。押したときの処理は呼び出し側が `on_click` で足す。
-pub fn switch(theme: &Theme, id: &'static str, on: bool) -> Stateful<Div> {
+pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<Div> {
     let (w, h, pad) = (44.0, 24.0, 2.0);
     let knob = h - pad * 2.0;
+    let id: SharedString = id.into();
     let mut track = div()
-        .id(id)
-        .debug_selector(move || id.into())
+        .id(id.clone())
+        .debug_selector(move || id.to_string())
         .flex()
         .items_center()
         .w(px(w))
@@ -575,6 +620,8 @@ const NAV_LINE_HEIGHT: f32 = spacing::MD;
 /// 広がるときは、まず線が帯の上下中央へ下りてから、そこを中心に上下左右へ広がる（縮むときは逆に、縮んでから上がる）。
 /// 置き場所のアンカー（帯の上端の左右中央。持ち主に付ける・頭からの距離で大きくするのに使う）とは別に、
 /// 広がりのアンカー（帯の中心）を持つ。中身は帯の中に置いて帯と一緒に動き、広がりの後半で不透明度だけで現れる。
+// ponytail: 呼び出しが 34 か所あるので引数は並べたまま。増えるようなら構造体にまとめる。
+#[allow(clippy::too_many_arguments)]
 pub fn nav_bar(
     theme: &Theme,
     open: f32,
@@ -583,6 +630,7 @@ pub fn nav_bar(
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     leading: Vec<Button>,
+    beside_close: Option<Button>,
 ) -> Div {
     let (close_id, close_glyph) = if minimize {
         ("nav-minimize", &crate::icons::MINUS)
@@ -603,7 +651,9 @@ pub fn nav_bar(
     // 広がりの中心（帯の上下中央）。動く前は、線の上端が帯の上端に来るところまで上げておく。
     let center_offset = lerp(-(NAV_BAR_HEIGHT - NAV_LINE_HEIGHT) / 2.0, 0.0, moved);
     // タイトルは帯の中央。長くても閉じるボタンにかからないよう、左右にボタンの分を空けて省略する。
-    let side = leading.len().max(1) as f32 * (BUTTON_HEIGHT + spacing::SM) + spacing::SM;
+    let side = leading.len().max(1 + usize::from(beside_close.is_some())) as f32
+        * (BUTTON_HEIGHT + spacing::SM)
+        + spacing::SM;
     div().absolute().inset(px(PANEL_MARGIN)).child(
         div()
             .absolute()
@@ -647,6 +697,9 @@ pub fn nav_bar(
                                     .absolute()
                                     .top(px((height - BUTTON_HEIGHT) / 2.0))
                                     .right(px(spacing::SM))
+                                    .flex()
+                                    .gap(px(spacing::SM))
+                                    .when_some(beside_close, |d, button| d.child(button))
                                     .child(
                                         icon_button(
                                             theme,

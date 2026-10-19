@@ -1,4 +1,6 @@
-use super::{Button, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch, TouchPhase, Wake};
+use super::{
+    Button, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch, TouchPhase, Wake,
+};
 use ::windows::{
     Foundation::{TimeSpan, TypedEventHandler},
     Graphics::{
@@ -7,7 +9,6 @@ use ::windows::{
         SizeInt32,
     },
     Win32::{
-        Foundation::{CloseHandle, HMODULE, HWND, LPARAM, POINT, RECT, SIZE, WPARAM},
         Devices::Display::{
             DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME, DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME,
             DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
@@ -15,6 +16,7 @@ use ::windows::{
             DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes, QDC_ONLY_ACTIVE_PATHS,
             QueryDisplayConfig,
         },
+        Foundation::{CloseHandle, HMODULE, HWND, LPARAM, POINT, RECT, SIZE, WPARAM},
         Graphics::{
             Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP},
             Direct3D11::*,
@@ -150,7 +152,9 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
 fn monitor_products() -> std::collections::HashMap<String, String> {
     let mut names = std::collections::HashMap::new();
     let (mut paths, mut modes) = (0u32, 0u32);
-    if unsafe { GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut paths, &mut modes) }.is_err() {
+    if unsafe { GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &mut paths, &mut modes) }
+        .is_err()
+    {
         return names;
     }
     let mut path_info = vec![DISPLAYCONFIG_PATH_INFO::default(); paths as usize];
@@ -213,7 +217,13 @@ fn screen_label(device: &str, screens: &[(String, Option<String>)]) -> String {
         .find(|(d, _)| d == device)
         .and_then(|(_, p)| p.clone());
     match product {
-        Some(p) if screens.iter().filter(|(_, q)| q.as_ref() == Some(&p)).count() > 1 => {
+        Some(p)
+            if screens
+                .iter()
+                .filter(|(_, q)| q.as_ref() == Some(&p))
+                .count()
+                > 1 =>
+        {
             format!("{p} ({number})")
         }
         Some(p) => p,
@@ -286,14 +296,14 @@ unsafe fn icon_rgba(icon: HICON) -> Option<Icon> {
         .flatten();
     let mask = color
         .as_ref()
-        .filter(|(_, _, px)| px.chunks_exact(4).all(|p| p[3] == 0))
+        .filter(|(_, _, px)| px.as_chunks::<4>().0.iter().all(|p| p[3] == 0))
         .and_then(|_| read(info.hbmMask));
     unsafe {
         let _ = DeleteObject(info.hbmColor.into());
         let _ = DeleteObject(info.hbmMask.into());
     }
     let (width, height, mut px) = color?;
-    for (i, p) in px.chunks_exact_mut(4).enumerate() {
+    for (i, p) in px.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         p.swap(0, 2);
         if let Some((_, _, m)) = &mask {
             // マスクの黒い所が絵、白い所が透明。
@@ -358,7 +368,8 @@ unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
 pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
     // シェルの項目は STA で読む（このワーカーのスレッドだけで使う）。
     let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-    let folder: IShellItem = unsafe { SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None) }?;
+    let folder: IShellItem =
+        unsafe { SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None) }?;
     let items: IEnumShellItems = unsafe { folder.BindToHandler(None, &BHID_EnumItems) }?;
     let take = |s: ::windows::core::Result<PWSTR>| {
         let s = s.ok()?;
@@ -370,7 +381,8 @@ pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
     loop {
         let mut item = [None];
         let mut fetched = 0u32;
-        if unsafe { items.Next(&mut item, Some(&mut fetched as *mut u32)) }.is_err() || fetched == 0 {
+        if unsafe { items.Next(&mut item, Some(&mut fetched as *mut u32)) }.is_err() || fetched == 0
+        {
             break;
         }
         let Some(item) = item[0].take().and_then(|i| i.cast::<IShellItem2>().ok()) else {
@@ -388,7 +400,15 @@ pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
         let icon = item
             .cast::<IShellItemImageFactory>()
             .ok()
-            .and_then(|f| unsafe { f.GetImage(SIZE { cx: 64, cy: 64 }, SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK) }.ok())
+            .and_then(|f| {
+                unsafe {
+                    f.GetImage(
+                        SIZE { cx: 64, cy: 64 },
+                        SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
+                    )
+                }
+                .ok()
+            })
             .and_then(|bitmap| {
                 let read = unsafe { bitmap_bgra(bitmap) };
                 unsafe {
@@ -396,12 +416,12 @@ pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
                 }
                 let (width, height, mut px) = read?;
                 // シェルの絵は乗算済みのアルファなので、ストレートに戻す。
-                for p in px.chunks_exact_mut(4) {
+                for p in px.as_chunks_mut::<4>().0 {
                     p.swap(0, 2);
                     let a = p[3] as u32;
                     if a > 0 {
                         for c in &mut p[..3] {
-                            *c = (*c as u32 * 255 / a).min(255) as u8;
+                            *c = (u32::from(*c) * 255).checked_div(a).unwrap_or(255).min(255) as u8;
                         }
                     }
                 }
@@ -411,7 +431,12 @@ pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
                     rgba: px.into(),
                 })
             });
-        apps.push(InstalledApp { name, id, exe, icon });
+        apps.push(InstalledApp {
+            name,
+            id,
+            exe,
+            icon,
+        });
     }
     Ok(apps)
 }
@@ -483,6 +508,14 @@ impl Capture {
             // 最小化した窓は WGC が画像を出さず、最初の一枚を待ったまま止まるので元に戻す。
             unsafe {
                 let _ = ShowWindowAsync(HWND(source.target as _), SW_RESTORE);
+            }
+        }
+        if source.kind == SourceKind::Window {
+            let hwnd = HWND(source.target as _);
+            if !unsafe { IsWindow(Some(hwnd)) }.as_bool()
+                || !unsafe { IsWindowVisible(hwnd) }.as_bool()
+            {
+                return Err(Error("capture window is closed or hidden".into()));
             }
         }
         if !GraphicsCaptureSession::IsSupported()? {
@@ -595,36 +628,53 @@ impl Capture {
         Ok(rect)
     }
 
-    fn activate_target(&mut self, touch: Touch) -> Result<Option<POINT>, Error> {
+    /// 取得元のウィンドウを前に出してフォーカスする（最小化していれば戻す）。画面なら何もしない。
+    fn bring_to_front(&self) {
+        if self.source.kind != SourceKind::Window {
+            return;
+        }
         let hwnd = HWND(self.source.target as _);
         unsafe {
             if IsIconic(hwnd).as_bool() {
                 let _ = ShowWindowAsync(hwnd, SW_RESTORE);
             }
-            let _ = SetWindowPos(
-                hwnd,
-                Some(HWND_TOP),
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
-            );
-            if !SetForegroundWindow(hwnd).as_bool() {
+            let _ = BringWindowToTop(hwnd);
+            if !SetForegroundWindow(hwnd).as_bool() || GetForegroundWindow() != hwnd {
                 // VR の入力だけでは前面化の権限がない場合がある。切り替え中だけ入力キューを共有する。
                 let current = GetCurrentThreadId();
                 let foreground = GetWindowThreadProcessId(GetForegroundWindow(), None);
+                let target = GetWindowThreadProcessId(hwnd, None);
                 let mut message = MSG::default();
                 let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
-                if foreground != 0
+                let joined_foreground = foreground != 0
                     && foreground != current
-                    && AttachThreadInput(current, foreground, true).as_bool()
-                {
-                    let _ = SetForegroundWindow(hwnd);
+                    && AttachThreadInput(current, foreground, true).as_bool();
+                let joined_target = target != 0
+                    && target != current
+                    && target != foreground
+                    && AttachThreadInput(current, target, true).as_bool();
+                let _ = BringWindowToTop(hwnd);
+                let _ = SetActiveWindow(hwnd);
+                let _ = SetForegroundWindow(hwnd);
+                if joined_target {
+                    let _ = AttachThreadInput(current, target, false);
+                }
+                if joined_foreground {
                     let _ = AttachThreadInput(current, foreground, false);
                 }
             }
+            if GetForegroundWindow() != hwnd {
+                // フォーカス権限が拒否されても、モニター上の重なりは前に出す。
+                let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
+                let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
+                let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
+            }
         }
+    }
+
+    fn activate_target(&mut self, touch: Touch) -> Result<Option<POINT>, Error> {
+        let hwnd = HWND(self.source.target as _);
+        self.bring_to_front();
         // 前面化は相手の UI スレッドで反映されるため、直後の一回の判定では拒否しない。
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
         loop {
@@ -663,10 +713,31 @@ impl Capture {
 }
 
 impl Session for Capture {
+    fn focus(&mut self) -> Result<(), Error> {
+        self.bring_to_front();
+        Ok(())
+    }
+
+    fn minimize(&mut self) -> Result<(), Error> {
+        if self.source.kind == SourceKind::Window {
+            unsafe {
+                let _ = ShowWindowAsync(HWND(self.source.target as _), SW_MINIMIZE);
+            }
+        }
+        Ok(())
+    }
+
+    fn minimized(&self) -> bool {
+        self.source.kind == SourceKind::Window
+            && unsafe { IsIconic(HWND(self.source.target as _)) }.as_bool()
+    }
+
     fn closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
             || (self.source.kind == SourceKind::Window
-                && !unsafe { IsWindow(Some(HWND(self.source.target as _))) }.as_bool())
+                && (!unsafe { IsWindow(Some(HWND(self.source.target as _))) }.as_bool()
+                    || !unsafe { IsWindowVisible(HWND(self.source.target as _)) }.as_bool()
+                        && !self.minimized()))
     }
 
     fn frame(&mut self) -> Result<Option<Frame>, Error> {
@@ -779,6 +850,9 @@ impl Session for Capture {
     }
 
     fn button(&mut self, touch: Touch, button: Button) -> Result<(), Error> {
+        if self.minimized() {
+            return Ok(());
+        }
         let point = if touch.phase == TouchPhase::Down
             && self.mouse.pressed_by.is_none()
             && self.source.kind == SourceKind::Window

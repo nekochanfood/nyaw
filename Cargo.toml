@@ -11,7 +11,8 @@ members = [
     "crates/subsystems/media",
 ]
 # vendor/ は手を入れた zed のクレートの写し（それぞれの Cargo.toml）。ワークスペースには入れない
-exclude = ["vendor"]
+# nyapps/ は wasm 向けにビルドするニャプリの試作（別のワークスペース。crates/nyapp/AGENT.md）
+exclude = ["vendor", "nyapps"]
 
 [workspace.package]
 version = "2026.0.1"
@@ -47,6 +48,8 @@ testing = { path = "crates/testing" }
 wrist = { path = "crates/wrist" }
 dashboard = { path = "crates/dashboard" }
 beam = { path = "crates/beam" }
+nyapp = { path = "crates/nyapp" }
+nyapp-sdk = { path = "crates/nyapp-sdk" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [package]
@@ -63,6 +66,7 @@ profiler.workspace = true
 wrist.workspace = true
 testing.workspace = true
 beam.workspace = true
+nyapp.workspace = true
 
 # testkit の CPU ラスタライザは毎フレーム全画素を塗るので、デバッグビルドでも最適化する
 [profile.dev.package.testkit]

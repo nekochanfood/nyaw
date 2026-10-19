@@ -202,7 +202,12 @@ fn main() {
             }
         }
     }
-    out += "}\n";
+    out += "    /// どの役割の色にも `f` を当てたテーマ（白黒にするなど）。\n";
+    out += "    pub fn map(self, f: impl Fn(u32) -> u32) -> Theme {\n        Theme {\n";
+    for f in &fields {
+        writeln!(out, "            {0}: f(self.{0}),", field(f)).unwrap();
+    }
+    out += "        }\n    }\n}\n";
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 
     fs::write(

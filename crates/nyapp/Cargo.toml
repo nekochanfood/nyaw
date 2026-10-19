@@ -1,0 +1,48 @@
+[package]
+name = "nyapp"
+description = "ニャプリ（nyapp）の基盤: マニフェスト・.nyapp パッケージ・インストール・サンドボックス（wasm）・画面の描画・システムのニャプリ"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+chrono.workspace = true
+design.workspace = true
+gpui.workspace = true
+i18n.workspace = true
+# パッケージのアイコン（PNG・SVG）を GPUI の画像にするため（どちらも gpui と同じ版）。
+image = { version = "0.25", default-features = false, features = ["png"] }
+resvg = { version = "0.46", default-features = false }
+kernel.workspace = true
+logger.workspace = true
+nyapp-sdk.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 更新したパッケージが更新情報のとおりかを確かめる。
+sha2 = "0.10"
+toml = "0.9"
+ui.workspace = true
+# 更新情報・パッケージを落とす（rustls なので OS の TLS に依らない）。
+url = "2"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+# インタプリタなので JIT の無い環境でも同じように動き、燃料（命令数の上限）でニャプリを止められる。
+# `validate` は外から来たバイナリを検証するので外さない。命令の振り分けはループ（`portable-dispatch`）にする。
+# `auto-dispatch` の末尾呼び出しは最適化の無いビルドでは積み上がり、止まらないニャプリでホストのスタックがあふれる。
+wasmi = { version = "2", default-features = false, features = ["std", "stable", "validate", "portable-dispatch"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Isolation", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+wat = "1"
+# テストのニャプリを WebAssembly のテキスト形式で書くため。
+wasmi = { version = "2", features = ["wat"] }
+
+[[test]]
+name = "worker_process"
+harness = false

@@ -268,8 +268,7 @@ mod tests {
 
     #[test]
     fn used_keys_reads_the_literal_after_cx() {
-        let src =
-            r#"let a = i18n::t(cx, "a.b"); let b = i18n::tf(window_cx, "c.d", &[("n", &1)]); let c = i18n::tf(cx, key, &[("pct", &1)]);"#;
+        let src = r#"let a = i18n::t(cx, "a.b"); let b = i18n::tf(window_cx, "c.d", &[("n", &1)]); let c = i18n::tf(cx, key, &[("pct", &1)]);"#;
         assert_eq!(used_keys(src), ["a.b", "c.d"]);
     }
 }

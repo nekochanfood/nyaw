@@ -97,11 +97,15 @@ impl Backend for Mpris {
             .and_then(|v| HashMap::try_from(v).ok())
             .unwrap_or_default();
         let field = |key: &str| metadata.get(key);
-        let title = field("xesam:title").and_then(|v| text(v)).unwrap_or_default();
-        let artist = field("xesam:artist").map(|v| texts(v).join(", ")).unwrap_or_default();
-        let album = field("xesam:album").and_then(|v| text(v)).unwrap_or_default();
+        let title = field("xesam:title").and_then(text).unwrap_or_default();
+        let artist = field("xesam:artist")
+            .map(|v| texts(v).join(", "))
+            .unwrap_or_default();
+        let album = field("xesam:album").and_then(text).unwrap_or_default();
         let micros = |v: &OwnedValue| number(v).map(|n| Duration::from_micros(n.max(0) as u64));
-        let duration = field("mpris:length").and_then(micros).filter(|d| !d.is_zero());
+        let duration = field("mpris:length")
+            .and_then(micros)
+            .filter(|d| !d.is_zero());
         let position = self
             .get(&name, PLAYER, "Position")
             .and_then(|v| micros(&v))
@@ -125,11 +129,14 @@ impl Backend for Mpris {
             Value::ObjectPath(p) => Some(OwnedObjectPath::from(p.to_owned())),
             _ => None,
         });
-        self.art_url = field("mpris:artUrl").and_then(|v| text(v));
+        self.art_url = field("mpris:artUrl").and_then(text);
         let app_id = sessions[index].clone();
         self.player = Some(name);
         Some(Raw {
-            art_key: self.art_url.clone().unwrap_or_else(|| format!("{title}\n{artist}")),
+            art_key: self
+                .art_url
+                .clone()
+                .unwrap_or_else(|| format!("{title}\n{artist}")),
             title,
             artist,
             album,
@@ -243,8 +250,8 @@ fn file_path(url: &str) -> Option<PathBuf> {
 /// 絶対パスならそれ、名前なら hicolor のテーマ・pixmaps から探す。
 // ponytail: アイコンテーマの継承と SVG は見ない。足りなければ freedesktop のアイコンの探し方を足す。
 fn desktop_icon(entry: &str) -> Option<PathBuf> {
-    let dirs = std::env::var("XDG_DATA_DIRS")
-        .unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    let dirs =
+        std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
     let home = std::env::var("XDG_DATA_HOME").ok().or_else(|| {
         std::env::var("HOME")
             .ok()
@@ -257,7 +264,9 @@ fn desktop_icon(entry: &str) -> Option<PathBuf> {
         .collect();
     let icon = roots
         .iter()
-        .find_map(|r| std::fs::read_to_string(r.join("applications").join(format!("{entry}.desktop"))).ok())
+        .find_map(|r| {
+            std::fs::read_to_string(r.join("applications").join(format!("{entry}.desktop"))).ok()
+        })
         .and_then(|desktop| {
             desktop
                 .lines()

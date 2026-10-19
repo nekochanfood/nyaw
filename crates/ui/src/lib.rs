@@ -316,6 +316,9 @@ pub struct PanelState {
     /// 次のフレームで 1 回描き直す（タイマーなどで自分から変わるビューが立て、フレームループが下ろす）。
     /// 何もしていないパネルの推測の描き直し（[`IDLE_REDRAW`]）を待たずに、変わったときだけ描ける。
     pub redraw: bool,
+    /// このパネルそのものをレーザーで指している手。フレームループが [`sync_panel`] で毎フレーム書く（変わっても描き直させない）。
+    /// コントローラの入力をパネルに見せてよいかの条件（[`PanelControl::controllers`] を絞る）。
+    pub pointing: Vec<Hand>,
     /// このパネルが最後に描き直したときの全体の設定（[`PanelControl::settings`]。変われば描き直す）。
     seen: Settings,
 }
@@ -398,7 +401,11 @@ pub fn dock(panel: PanelId, cx: &mut App) {
     let previous = docked(cx).filter(|&p| p != panel);
     let ctl = cx.default_global::<PanelControl>();
     if let Some(p) = previous {
-        ctl.panels.entry(p).or_default().commands.push(PanelCommand::Close);
+        ctl.panels
+            .entry(p)
+            .or_default()
+            .commands
+            .push(PanelCommand::Close);
     }
     ctl.docked = Some(panel);
     ctl.panels
@@ -450,6 +457,7 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     ctl.media = kernel.now_playing();
     let settings = ctl.settings;
     let ctl = ctl.panels.entry(panel).or_default();
+    ctl.pointing = kernel.pointing_hands(panel);
     for c in ctl.commands.drain(..) {
         kernel.apply(panel, c);
     }
@@ -558,7 +566,8 @@ pub fn pump<B: VrBackend>(
         let bridge = bridges.entry((e.panel, e.hand)).or_default();
         let p = kernel.panel(e.panel);
         let distance = p.pose.position.distance(kernel.hmd().position);
-        bridge.slop = SWIPE_SLOP_DEG.to_radians().tan() * distance * p.resolution.0 as f32 / p.size.x;
+        bridge.slop =
+            SWIPE_SLOP_DEG.to_radians().tan() * distance * p.resolution.0 as f32 / p.size.x;
         let input = bridge.translate(e.event, mode);
         if bridge.held() {
             // 長押しでドラッグになった。ほかのパネルへ運べるよう、オーバーレイのキャプチャを外す。
@@ -711,6 +720,7 @@ pub struct PanelSpec {
     dockable: bool,
     /// ナビゲーションバーの右端を、閉じる代わりにしまうボタンにする（[`Self::minimizable`]）。
     minimize: Option<Minimize>,
+    source_minimize: bool,
     build: Box<PanelBuilder>,
 }
 
@@ -757,6 +767,7 @@ impl PanelSpec {
             os_keyboard: false,
             dockable: false,
             minimize: None,
+            source_minimize: false,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -973,11 +984,22 @@ impl PanelSpec {
         self
     }
 
+    /// 閉じるボタンの隣に、配信元ウィンドウの最小化ボタンを出す。
+    pub fn source_minimizable(mut self) -> Self {
+        self.source_minimize = true;
+        self
+    }
+
     /// このパネル（PanelId `owner` で開いた）に付けるナビゲーションバー。外していれば `None`。
     /// 開く側（`ui::run`・testkit のキット）が持ち主の直後に開き、[`PanelCommand::NavBar`] で持ち主に付ける。
     pub fn nav_bar_spec(&self, owner: PanelId) -> Option<PanelSpec> {
-        let (title, os_keyboard, dockable, minimize) =
-            (self.title.clone(), self.os_keyboard, self.dockable, self.minimize.clone());
+        let (title, os_keyboard, dockable, minimize, source_minimize) = (
+            self.title.clone(),
+            self.os_keyboard,
+            self.dockable,
+            self.minimize.clone(),
+            self.source_minimize,
+        );
         self.nav_bar.then(|| PanelSpec {
             nav_bar: false,
             nav_bar_of: Some(owner),
@@ -992,16 +1014,14 @@ impl PanelSpec {
                     os_keyboard,
                     dockable,
                     minimize,
+                    source_minimize,
                     open: 0.0,
                     to: 0.0,
                     anim: None,
                     last: None,
                 }
             })
-            .sized(
-                Vec2::new(NAV_BAR_M, NAV_BAR_HEIGHT_M),
-                NAV_BAR_PX,
-            )
+            .sized(Vec2::new(NAV_BAR_M, NAV_BAR_HEIGHT_M), NAV_BAR_PX)
         })
     }
 
@@ -1036,7 +1056,9 @@ impl PanelSpec {
                 let mut angle = 0.;
                 for _ in 0..4 {
                     let d = aim - center(angle);
-                    angle = d.y.atan2(d.z).clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
+                    angle =
+                        d.y.atan2(d.z)
+                            .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
                 }
                 origin.pose * Pose::new(center(angle), Quat::from_rotation_x(-angle))
             }
@@ -1047,9 +1069,10 @@ impl PanelSpec {
                 let bar = kernel.nav_bar(from).map_or(0., |b| kernel.panel(b).size.y);
                 // 持ち主（とそのバー）の下端から、頭から見て真下へ下ろす。持ち主の面に沿って下ろすと、上を向けた
                 // 持ち主（ダッシュボードのバー）では手前へ出てしまう。
-                let bottom = origin
-                    .pose
-                    .transform_point(Vec3::new(0., -origin.size.y / 2. - bar, 0.));
+                let bottom =
+                    origin
+                        .pose
+                        .transform_point(Vec3::new(0., -origin.size.y / 2. - bar, 0.));
                 let hmd = kernel.hmd();
                 let up = hmd.panel_up();
                 let at = bottom - up * (BELOW_GAP + self.size.y * tilt.cos() / 2.);
@@ -1066,9 +1089,7 @@ impl PanelSpec {
             // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
             Some(from) => {
                 kernel.panel(from).pose
-                    * self
-                        .offset
-                        .unwrap_or(Pose::new(SPAWN_GAP, Quat::IDENTITY))
+                    * self.offset.unwrap_or(Pose::new(SPAWN_GAP, Quat::IDENTITY))
             }
             None if self.in_view => kernel.hmd().leveled() * self.pose,
             None => self.pose,
@@ -1102,6 +1123,7 @@ struct NavBar {
     dockable: bool,
     /// 右端を、閉じる代わりにしまうボタンにする。
     minimize: Option<Minimize>,
+    source_minimize: bool,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
     open: f32,
     to: f32,
@@ -1182,9 +1204,17 @@ impl Render for NavBar {
             let inside = parent.is_some() && parent == slot.map(|(o, _)| o);
             (inside || slot.is_some()).then(|| {
                 let (id, glyph, tip) = if inside {
-                    ("nav-undock", &design::icons::ARROW_SQUARE_OUT, i18n::t(cx, "dock.undock"))
+                    (
+                        "nav-undock",
+                        &design::icons::ARROW_SQUARE_OUT,
+                        i18n::t(cx, "dock.undock"),
+                    )
                 } else {
-                    ("nav-dock", &design::icons::CARET_LINE_DOWN, i18n::t(cx, "dock.dock"))
+                    (
+                        "nav-dock",
+                        &design::icons::CARET_LINE_DOWN,
+                        i18n::t(cx, "dock.dock"),
+                    )
                 };
                 design::components::icon_button(
                     &theme,
@@ -1204,12 +1234,46 @@ impl Render for NavBar {
         });
         let leading = dock.flatten().into_iter().chain(os_keyboard).collect();
         let minimize = self.minimize.clone();
+        let source_streaming = cx
+            .try_global::<PanelControl>()
+            .and_then(|c| c.panels.get(&owner))
+            .and_then(|p| p.status.desktop.as_ref())
+            .is_some_and(|s| {
+                matches!(
+                    s,
+                    kernel::desktop::Status::Starting | kernel::desktop::Status::Streaming
+                )
+            });
+        let beside_close = (self.source_minimize && source_streaming).then(|| {
+            design::components::icon_button(
+                &theme,
+                "nav-minimize-source",
+                &design::icons::MINUS,
+                i18n::t(cx, "common.minimize"),
+                design::components::Variant::Default,
+            )
+            .on_click(move |_, _, cx| {
+                cx.default_global::<PanelControl>()
+                    .panels
+                    .entry(owner)
+                    .or_default()
+                    .commands
+                    .push(PanelCommand::MinimizeSource);
+            })
+        });
         div().size_full().child(design::components::nav_bar(
             &theme,
             self.open,
             title,
             minimize.is_some(),
-            i18n::t(cx, if minimize.is_some() { "common.minimize" } else { "common.close" }),
+            i18n::t(
+                cx,
+                if minimize.is_some() {
+                    "common.minimize"
+                } else {
+                    "common.close"
+                },
+            ),
             move |_, _, cx| match &minimize {
                 Some(minimize) => minimize(owner, cx),
                 None => cx
@@ -1221,6 +1285,7 @@ impl Render for NavBar {
                     .push(PanelCommand::Close),
             },
             leading,
+            beside_close,
         ))
     }
 }
@@ -1951,6 +2016,53 @@ mod tests {
     use gpui::{TestAppContext, div};
     use kernel::{Device, Runtime};
 
+    #[gpui::test]
+    fn source_nav_bar_has_minimize_beside_close(cx: &mut TestAppContext) {
+        let (_bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(2)
+                .or_default()
+                .status
+                .pointed = true;
+            NavBar {
+                id: 2,
+                owner: 1,
+                title: None,
+                os_keyboard: false,
+                dockable: false,
+                minimize: None,
+                source_minimize: true,
+                open: 1.0,
+                to: 1.0,
+                anim: None,
+                last: None,
+            }
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("nav-minimize-source").is_none());
+        cx.update(|window, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(1)
+                .or_default()
+                .status
+                .desktop = Some(kernel::desktop::Status::Streaming);
+            window.refresh();
+        });
+        cx.run_until_parked();
+        let minimize = cx.debug_bounds("nav-minimize-source").unwrap();
+        let close = cx.debug_bounds("nav-close").unwrap();
+        assert!(minimize.right() <= close.left());
+        cx.simulate_click(minimize.center(), gpui::Modifiers::none());
+        cx.simulate_click(close.center(), gpui::Modifiers::none());
+        let commands = &cx.update(|_, cx| cx.global::<PanelControl>().panels[&1].commands.clone());
+        assert_eq!(
+            commands,
+            &[PanelCommand::MinimizeSource, PanelCommand::Close]
+        );
+    }
+
     #[test]
     fn starting_a_stream_clears_old_gpui_hover_and_scroll_momentum() {
         use kernel::desktop::{Frame, Status, Update, mock};
@@ -1999,7 +2111,10 @@ mod tests {
         let hmd = kernel.hmd();
         let aim = hmd.position - hmd.panel_up() * BELOW_AIM_DROP;
         let normal = pose.orientation * Vec3::Z;
-        assert!(normal.dot((aim - pose.position).normalize()) > 1.0 - 1e-4, "{normal}");
+        assert!(
+            normal.dot((aim - pose.position).normalize()) > 1.0 - 1e-4,
+            "{normal}"
+        );
         // 上の縁（影の余白の内側）は、持ち主の下の縁から隙間だけ離れている。
         let m = |h: f32, px: f32| design::components::PANEL_MARGIN * h / px;
         let top = pose.transform_point(Vec3::Y * (0.2 - m(0.4, 400.0)));
@@ -2216,11 +2331,26 @@ mod tests {
             slop: 40.0,
             ..Default::default()
         };
-        b.translate(PointerEvent::Down { pos: Vec2::new(10.0, 10.0) }, touch);
+        b.translate(
+            PointerEvent::Down {
+                pos: Vec2::new(10.0, 10.0),
+            },
+            touch,
+        );
         // 固定の下限（SWIPE_SLOP）は超えるが、このパネルの閾値の内。
-        let moved = b.translate(PointerEvent::Move { pos: Vec2::new(40.0, 10.0) }, touch);
+        let moved = b.translate(
+            PointerEvent::Move {
+                pos: Vec2::new(40.0, 10.0),
+            },
+            touch,
+        );
         assert!(moved.is_empty());
-        let tap = b.translate(PointerEvent::Up { pos: Vec2::new(40.0, 10.0) }, touch);
+        let tap = b.translate(
+            PointerEvent::Up {
+                pos: Vec2::new(40.0, 10.0),
+            },
+            touch,
+        );
         assert!(tap.iter().any(|i| matches!(i, PlatformInput::MouseDown(_))));
     }
 

@@ -85,6 +85,17 @@ pub fn config_dir() -> Option<PathBuf> {
     log_dir().and_then(|d| d.parent().map(Path::to_path_buf))
 }
 
+/// ユーザーのデータ（ニャプリのパッケージとその保存領域）の置き場: Windows は `%LOCALAPPDATA%\nyaw`、
+/// Linux は `$XDG_DATA_HOME/nyaw` か `~/.local/share/nyaw`。
+pub fn data_dir() -> Option<PathBuf> {
+    let root = match CURRENT {
+        Os::Windows => env_path("LOCALAPPDATA")?,
+        Os::Linux => env_path("XDG_DATA_HOME")
+            .or_else(|| env_path("HOME").map(|h| h.join(".local").join("share")))?,
+    };
+    Some(root.join("nyaw"))
+}
+
 /// ログファイルの置き場: Windows は `%LOCALAPPDATA%\nyaw\logs`、
 /// Linux は `$XDG_STATE_HOME/nyaw/logs` か `~/.local/state/nyaw/logs`。
 pub fn log_dir() -> Option<PathBuf> {

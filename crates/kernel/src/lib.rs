@@ -55,6 +55,8 @@ pub enum PanelCommand {
     Pointer(Hand, Pointer),
     /// 解像度（UI の論理ピクセル）を変える。1m あたりのピクセル数を保って VR 上の大きさも変わる。
     Resize(u32, u32),
+    /// 現在の縦横比のまま、VR 上の高さだけを揃える。
+    FitHeight(f32),
     /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
     Place(Pose),
     /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
@@ -63,6 +65,11 @@ pub enum PanelCommand {
     NavBar(PanelId),
     /// デスクトップの配信を開始・停止する。第2引数は取得の上限 FPS（1〜240）。
     Stream(Option<desktop::Source>, u32),
+    /// 配信しているウィンドウを OS で前に出してフォーカスする（OS のキーボード・マウスの操作が届くように）。
+    /// ウィンドウの配信を始めたときはカーネルが自分で前に出すので、隠していた配信を出し直したときなどに使う。
+    FocusSource,
+    /// 配信中のウィンドウを OS で最小化する。
+    MinimizeSource,
     /// このパネルのスピーカーで音を鳴らす（`true` で繰り返す）。読み込みは別スレッドで、いくつでも重ねて鳴らせる。
     Play(audio::Sound, bool),
     /// このパネルの中の点（パネルのピクセル、左上原点）から一度だけ音を鳴らす。キーボードのキーのように、押した所から聞こえる。
@@ -572,6 +579,11 @@ impl<B: VrBackend> Kernel<B> {
         &self.batteries
     }
 
+    /// `panel` そのものをレーザーで指している手（[`Overlay::pointing_hands`]）。
+    pub fn pointing_hands(&self, panel: PanelId) -> Vec<Hand> {
+        self.overlay.pointing_hands(panel)
+    }
+
     /// 最後の tick の手ごとの入力の状態（骨格だけの手は判定に使った値 `metrics` 付き）。
     pub fn controllers(&self) -> &[ControllerState] {
         self.overlay.controllers()
@@ -637,6 +649,10 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay
                     .set_resolution(&mut self.subsystems.backend, panel, (w, h))
             }
+            PanelCommand::FitHeight(height) => {
+                self.overlay
+                    .fit_height(&mut self.subsystems.backend, panel, height)
+            }
             PanelCommand::Parent(parent) => {
                 self.overlay
                     .set_parent(&mut self.subsystems.backend, panel, parent)
@@ -652,6 +668,8 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Stream(source, frame_rate) => {
                 self.start_desktop(panel, source, frame_rate)
             }
+            PanelCommand::FocusSource => self.focus_desktop(panel),
+            PanelCommand::MinimizeSource => self.minimize_desktop(panel),
             PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
             PanelCommand::PlayAt { sound, at, pitch } => {
                 self.play_audio_at(panel, sound, at, pitch)

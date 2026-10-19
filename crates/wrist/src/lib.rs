@@ -36,6 +36,7 @@ const DIAL_R: f32 = DIAL_C - spacing::LG - 8.0;
 /// デバッグ画面と設定画面（画面どうしを直接つながないよう、main が選ぶ）。
 pub fn spec(debug: dashboard::Summon, settings: dashboard::Summon) -> PanelSpec {
     PanelSpec::root(Pose::IDENTITY, move |panel, _, cx| {
+        nyapp::opened(nyapp::system::WRIST.id, panel, cx);
         Wrist::new(panel, debug, settings, cx)
     })
     .sized(SIZE_M, RES_PX)

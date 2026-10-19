@@ -117,7 +117,9 @@ impl Backend for Session {
             position += ticks(now - updated.UniversalTime);
         }
         let controls = info.Controls().ok();
-        let can = |f: fn(&windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackControls) -> windows::core::Result<bool>| {
+        let can = |f: fn(
+            &windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackControls,
+        ) -> windows::core::Result<bool>| {
             controls.as_ref().is_some_and(|c| f(c).unwrap_or(false))
         };
         let controls = Controls {
@@ -166,7 +168,13 @@ impl Backend for Session {
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| fallback_name(id));
         let logo = info
-            .and_then(|d| d.GetLogo(Size { Width: 64.0, Height: 64.0 }).ok())
+            .and_then(|d| {
+                d.GetLogo(Size {
+                    Width: 64.0,
+                    Height: 64.0,
+                })
+                .ok()
+            })
             .and_then(|r| read_stream(&r.into()));
         (name, logo, shell.and_then(|(_, exe)| exe))
     }

@@ -38,6 +38,8 @@ mod desktop;
 pub use desktop::DesktopTest;
 mod audio;
 pub use audio::AudioTest;
+mod nyapps;
+pub use nyapps::NyappTest;
 mod skeleton;
 pub use skeleton::{
     HandTuningTest, PINCH_DISTANCE, SKELETON_PX, SKELETON_SIZE, SkeletonTest, TUNING_PX,
@@ -617,6 +619,19 @@ impl Render for Testing {
                             }
                         },
                     ),
+                )
+                .child(
+                    button!("nyapp-test", i18n::t(cx, "testing.open.nyapps"), false).on_click({
+                        let panel = self.panel;
+                        move |_, _, cx| {
+                            // 一覧と詳細を左右に並べるので、設定画面と同じ大きさ。
+                            cx.default_global::<PanelControl>().spawns.push(
+                                PanelSpec::spawn(panel, |id, _, cx| NyappTest::new(id, cx))
+                                    .sized(SETTINGS_SIZE, SETTINGS_PX)
+                                    .titled("testing.open.nyapps"),
+                            )
+                        }
+                    }),
                 )
                 .child(
                     button!("nav-test", i18n::t(cx, "testing.open.navigation"), false).on_click(
@@ -1361,8 +1376,8 @@ pub fn settings_spec(
         opened(id, cx);
         Settings::new(id)
     })
-        .sized(SETTINGS_SIZE, SETTINGS_PX)
-        .titled("testing.open.settings")
+    .sized(SETTINGS_SIZE, SETTINGS_PX)
+    .titled("testing.open.settings")
 }
 
 /// 設定画面（`settings-test`）。左のサイドバーにカテゴリの一覧、区切り線を挟んで右に選んだカテゴリの項目の一覧。

@@ -73,6 +73,7 @@ impl std::error::Error for Error {}
 pub enum Status {
     Starting,
     Streaming,
+    Minimized,
     Closed,
     Failed(Error),
 }
@@ -240,7 +241,9 @@ impl InstalledApps {
                 #[cfg(target_os = "linux")]
                 let result = linux::installed_apps();
                 #[cfg(not(any(windows, target_os = "linux")))]
-                let result = Err(Error("listing apps is not available on this platform yet".into()));
+                let result = Err(Error(
+                    "listing apps is not available on this platform yet".into(),
+                ));
                 let _ = tx.send(result.map(|mut apps| {
                     apps.sort_by_key(|a| a.name.to_lowercase());
                     apps
@@ -270,7 +273,9 @@ pub fn launch(app: &InstalledApp) -> Result<(), Error> {
     #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = app;
-        Err(Error("launching apps is not available on this platform yet".into()))
+        Err(Error(
+            "launching apps is not available on this platform yet".into(),
+        ))
     }
 }
 
@@ -286,7 +291,15 @@ pub fn matching<'a, T>(items: &'a [T], name: impl Fn(&T) -> &str, query: &str) -
 enum Input {
     Touch(Touch),
     Button(Touch, Button),
-    Scroll { x: f32, y: f32, dx: f32, dy: f32 },
+    Scroll {
+        x: f32,
+        y: f32,
+        dx: f32,
+        dy: f32,
+    },
+    /// 取得元のウィンドウを前に出してフォーカスする（[`Stream::focus`]）。
+    Focus,
+    Minimize,
     Frame,
 }
 
@@ -318,6 +331,17 @@ trait Session {
     }
     fn heartbeat(&mut self) -> Result<(), Error> {
         Ok(())
+    }
+    /// 取得元のウィンドウを前に出してフォーカスする（画面は何もしない）。
+    // ponytail: Linux のポータルはウィンドウを前に出す手段を持たないので何もしない。要ればコンポジタごとの手段（sway の IPC など）を足す。
+    fn focus(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn minimize(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn minimized(&self) -> bool {
+        false
     }
     fn closed(&self) -> bool {
         false
@@ -389,7 +413,12 @@ impl Stream {
                     let mut session = open(stopping.clone(), wake.clone())?;
                     let mut next_frame = Instant::now();
                     let mut inputs: Vec<Input> = Vec::new();
+                    let mut minimized = false;
                     while !stopping.load(Ordering::Acquire) {
+                        if session.minimized() {
+                            minimized = true;
+                            break;
+                        }
                         if session.closed() {
                             break;
                         }
@@ -422,10 +451,19 @@ impl Stream {
                                 Input::Touch(touch) => session.touch(touch)?,
                                 Input::Button(touch, button) => session.button(touch, button)?,
                                 Input::Scroll { x, y, dx, dy } => session.scroll(x, y, dx, dy)?,
+                                // 前に出せなくても配信は続ける（操作のときにもう一度前に出す）。
+                                Input::Focus => {
+                                    let _ = session.focus();
+                                }
+                                Input::Minimize => session.minimize()?,
                                 Input::Frame => {}
                             }
                         }
                         session.heartbeat()?;
+                        if session.minimized() {
+                            minimized = true;
+                            break;
+                        }
                         let now = Instant::now();
                         if now < next_frame {
                             continue;
@@ -444,10 +482,14 @@ impl Stream {
                             });
                         }
                     }
-                    Ok::<_, Error>(())
+                    Ok::<_, Error>(minimized)
                 })();
                 *output.lock().unwrap() = Some(Update {
-                    status: result.err().map_or(Status::Closed, Status::Failed),
+                    status: match result {
+                        Ok(true) => Status::Minimized,
+                        Ok(false) => Status::Closed,
+                        Err(error) => Status::Failed(error),
+                    },
                     frame: None,
                 });
             })
@@ -483,6 +525,16 @@ impl Stream {
         })
     }
 
+    /// 取得元のウィンドウを前に出してフォーカスする（OS のキーボード・マウスの操作がそのウィンドウへ届くように）。
+    /// 前面化はワーカーが行い、待たない。
+    pub fn focus(&self) -> Result<(), Error> {
+        self.send(Input::Focus)
+    }
+
+    pub fn minimize(&self) -> Result<(), Error> {
+        self.send(Input::Minimize)
+    }
+
     fn send(&self, input: Input) -> Result<(), Error> {
         self.input.try_send(input).map_err(|e| {
             // 押下・解放を落として操作を続けると接点が残るため、入力詰まりはセッションごと停止する。
@@ -507,7 +559,12 @@ mod tests {
     #[test]
     fn search_keeps_names_containing_the_query() {
         let names = ["Google Chrome", "Spotify", "Steam"];
-        let found = |q| matching(&names, |n: &&str| *n, q).into_iter().copied().collect::<Vec<_>>();
+        let found = |q| {
+            matching(&names, |n: &&str| *n, q)
+                .into_iter()
+                .copied()
+                .collect::<Vec<_>>()
+        };
         assert_eq!(found(" st "), ["Steam"]);
         assert_eq!(found("O"), ["Google Chrome", "Spotify"]);
         assert_eq!(found(""), names);
@@ -650,6 +707,76 @@ mod tests {
         stream.scroll(0.5, 0.5, 0.0, 1.0).unwrap();
         assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), "button");
         assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), "scroll");
+    }
+
+    /// 前に出す頼みはワーカーが取得元のセッションに渡す（メインスレッドは待たない）。
+    #[test]
+    fn worker_delivers_focus() {
+        struct Focus(SyncSender<()>);
+        impl Session for Focus {
+            fn frame(&mut self) -> Result<Option<Frame>, Error> {
+                Ok(None)
+            }
+            fn touch(&mut self, _: Touch) -> Result<(), Error> {
+                Ok(())
+            }
+            fn focus(&mut self) -> Result<(), Error> {
+                self.0.send(()).unwrap();
+                Err(Error("refused".into()))
+            }
+        }
+        let (tx, rx) = mpsc::sync_channel(2);
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| Ok(Focus(tx))).unwrap();
+        stream.focus().unwrap();
+        rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        // 前に出せなくても配信は続く。
+        stream.focus().unwrap();
+        rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    }
+
+    #[test]
+    fn worker_reports_minimized_window_separately_from_closed() {
+        struct Window(bool);
+        impl Session for Window {
+            fn frame(&mut self) -> Result<Option<Frame>, Error> {
+                Ok(None)
+            }
+            fn touch(&mut self, _: Touch) -> Result<(), Error> {
+                Ok(())
+            }
+            fn minimize(&mut self) -> Result<(), Error> {
+                self.0 = true;
+                Ok(())
+            }
+            fn minimized(&self) -> bool {
+                self.0
+            }
+        }
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| Ok(Window(false))).unwrap();
+        stream.minimize().unwrap();
+        until(|| stream.poll().is_some_and(|u| u.status == Status::Minimized));
+    }
+
+    #[test]
+    fn worker_reports_a_closed_window_instead_of_holding_its_last_frame() {
+        struct Closed;
+        impl Session for Closed {
+            fn frame(&mut self) -> Result<Option<Frame>, Error> {
+                Ok(None)
+            }
+            fn touch(&mut self, _: Touch) -> Result<(), Error> {
+                Ok(())
+            }
+            fn closed(&self) -> bool {
+                true
+            }
+        }
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| Ok(Closed)).unwrap();
+        until(|| {
+            stream
+                .poll()
+                .is_some_and(|u| u.status == Status::Closed && u.frame.is_none())
+        });
     }
 
     #[test]
