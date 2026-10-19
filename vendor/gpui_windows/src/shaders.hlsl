@@ -861,11 +861,11 @@ float4 backdrop_at(float2 position) {
 
 float4 frosted_backdrop(float2 position, float scale) {
     // 対称なガウス核。サブピクセルの線形補間で細かい背面の模様も拡散する。
-    float weights[7] = {0.052711, 0.139440, 0.239337, 0.137023, 0.239337, 0.139440, 0.052711};
-    float offsets[7] = {-5.351806, -3.403985, -1.458430, 0, 1.458430, 3.403985, 5.351806};
+    float weights[5] = {0.155873, 0.267542, 0.153170, 0.267542, 0.155873};
+    float offsets[5] = {-3.403985, -1.458430, 0, 1.458430, 3.403985};
     float4 result = 0;
-    [unroll] for (int y = 0; y < 7; ++y) {
-        [unroll] for (int x = 0; x < 7; ++x) {
+    [unroll] for (int y = 0; y < 5; ++y) {
+        [unroll] for (int x = 0; x < 5; ++x) {
             result += backdrop_at(position + float2(offsets[x], offsets[y]) * scale)
                 * weights[x] * weights[y];
         }
@@ -875,21 +875,21 @@ float4 frosted_backdrop(float2 position, float scale) {
 
 float3 material_lighting(float3 rgb, float2 position, float2 normal, float depth, float scale) {
     float light_surface = smoothstep(0.55, 0.9, dot(rgb, float3(0.2126, 0.7152, 0.0722)));
-        if (material_light != 0) {
-            [unroll] for (int hand = 0; hand < 2; ++hand) {
-                float2 pointer = hand == 0 ? material_pointers.xy : material_pointers.zw;
-                float2 delta = pointer - position;
-                float distance = length(delta) / scale;
-                float indirect = pow(saturate(1 - distance / 240), 2);
-                float direct = pow(saturate(1 - distance / 96), 2);
-                float facing = dot(normal, normalize(delta + float2(0.001, 0.001)));
-                float rim = exp(-depth / 1.5) * indirect;
-                rgb = lerp(rgb, lerp(float3(1, 1, 1), float3(0.88, 0.95, 1), light_surface),
-                    indirect * 0.065 + direct * 0.025);
-                rgb = lerp(rgb, float3(1, 1, 1), rim * (0.5 + 0.5 * saturate(facing)) * 0.55);
-                rgb *= 1 - rim * (0.12 + light_surface * 0.18) * saturate(-facing);
-            }
+    if (material_light != 0) {
+        [unroll] for (int hand = 0; hand < 2; ++hand) {
+            float2 pointer = hand == 0 ? material_pointers.xy : material_pointers.zw;
+            float2 delta = pointer - position;
+            float distance = length(delta) / scale;
+            float indirect = pow(saturate(1 - distance / 240), 2);
+            float direct = pow(saturate(1 - distance / 96), 2);
+            float facing = dot(normal, normalize(delta + float2(0.001, 0.001)));
+            float rim = exp(-depth / 1.5) * indirect;
+            rgb = lerp(rgb, lerp(float3(1, 1, 1), float3(0.88, 0.95, 1), light_surface),
+                indirect * 0.065 + direct * 0.025);
+            rgb = lerp(rgb, float3(1, 1, 1), rim * (0.5 + 0.5 * saturate(facing)) * 0.55);
+            rgb *= 1 - rim * (0.12 + light_surface * 0.18) * saturate(-facing);
         }
+    }
     return rgb;
 }
 

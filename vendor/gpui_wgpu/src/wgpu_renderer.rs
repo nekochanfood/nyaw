@@ -1640,7 +1640,7 @@ impl WgpuRendererCore {
                             let length =
                                 paint::batch_len(&scene.quads[index..index + count], |q| {
                                     let b = q.bounds.intersect(&q.content_mask.bounds);
-                                    let pad = 8. * material.scale + 1.;
+                                    let pad = 4. * material.scale + 1.;
                                     [
                                         b.origin.x.0 - pad,
                                         b.origin.y.0 - pad,
@@ -1658,7 +1658,8 @@ impl WgpuRendererCore {
                                 .map(|q| q.bounds.intersect(&q.content_mask.bounds))
                                 .reduce(|a, b| a.union(&b))
                                 .unwrap();
-                            let pad = 16. * material.scale;
+                            // ぼかしの半径 4 論理 px と、線形補間の 1 デバイス px。
+                            let pad = 4. * material.scale + 1.;
                             let left = (b.origin.x.0 - pad).max(0.) as u32;
                             let top = (b.origin.y.0 - pad).max(0.) as u32;
                             let right = (b.origin.x.0 + b.size.width.0 + pad)

@@ -1377,11 +1377,11 @@ fn backdrop_at(source: texture_2d<f32>, position: vec2<f32>) -> vec4<f32> {
 }
 
 fn frosted_backdrop(source: texture_2d<f32>, position: vec2<f32>, scale: f32) -> vec4<f32> {
-    let weights = array<f32, 7>(0.052711, 0.139440, 0.239337, 0.137023, 0.239337, 0.139440, 0.052711);
-    let offsets = array<f32, 7>(-5.351806, -3.403985, -1.458430, 0.0, 1.458430, 3.403985, 5.351806);
+    let weights = array<f32, 5>(0.155873, 0.267542, 0.153170, 0.267542, 0.155873);
+    let offsets = array<f32, 5>(-3.403985, -1.458430, 0.0, 1.458430, 3.403985);
     var result = vec4<f32>(0.0);
-    for (var y = 0; y < 7; y++) {
-        for (var x = 0; x < 7; x++) {
+    for (var y = 0; y < 5; y++) {
+        for (var x = 0; x < 5; x++) {
             result += backdrop_at(source, position + vec2<f32>(offsets[x], offsets[y]) * scale)
                 * weights[x] * weights[y];
         }
@@ -1392,21 +1392,21 @@ fn frosted_backdrop(source: texture_2d<f32>, position: vec2<f32>, scale: f32) ->
 fn material_lighting(rgb_in: vec3<f32>, position: vec2<f32>, normal: vec2<f32>, depth: f32, scale: f32) -> vec3<f32> {
     var color = vec4<f32>(rgb_in, 1.0);
     let light_surface = smoothstep(0.55, 0.9, dot(rgb_in, vec3<f32>(0.2126, 0.7152, 0.0722)));
-        if (globals.light != 0u) {
-            for (var hand = 0; hand < 2; hand++) {
-                let pointer = select(globals.pointers.xy, globals.pointers.zw, hand == 1);
-                let delta = pointer - position;
-                let distance = length(delta) / scale;
-                let indirect = pow(saturate(1.0 - distance / 240.0), 2.0);
-                let direct = pow(saturate(1.0 - distance / 96.0), 2.0);
-                let facing = dot(normal, normalize(delta + vec2<f32>(0.001)));
-                let rim = exp(-depth / 1.5) * indirect;
-                var rgb = mix(color.rgb, mix(vec3<f32>(1.0), vec3<f32>(0.88, 0.95, 1.0), light_surface), indirect * 0.065 + direct * 0.025);
-                rgb = mix(rgb, vec3<f32>(1.0), rim * (0.5 + 0.5 * saturate(facing)) * 0.55);
-                rgb *= 1.0 - rim * (0.12 + light_surface * 0.18) * saturate(-facing);
-                color = vec4<f32>(rgb, color.a);
-            }
+    if (globals.light != 0u) {
+        for (var hand = 0; hand < 2; hand++) {
+            let pointer = select(globals.pointers.xy, globals.pointers.zw, hand == 1);
+            let delta = pointer - position;
+            let distance = length(delta) / scale;
+            let indirect = pow(saturate(1.0 - distance / 240.0), 2.0);
+            let direct = pow(saturate(1.0 - distance / 96.0), 2.0);
+            let facing = dot(normal, normalize(delta + vec2<f32>(0.001)));
+            let rim = exp(-depth / 1.5) * indirect;
+            var rgb = mix(color.rgb, mix(vec3<f32>(1.0), vec3<f32>(0.88, 0.95, 1.0), light_surface), indirect * 0.065 + direct * 0.025);
+            rgb = mix(rgb, vec3<f32>(1.0), rim * (0.5 + 0.5 * saturate(facing)) * 0.55);
+            rgb *= 1.0 - rim * (0.12 + light_surface * 0.18) * saturate(-facing);
+            color = vec4<f32>(rgb, color.a);
         }
+    }
     return color.rgb;
 }
 
