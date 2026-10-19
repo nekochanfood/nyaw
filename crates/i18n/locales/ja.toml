@@ -220,11 +220,12 @@ navigation = "積み重ね"
 nyapps = "ニャプリ"
 
 [effects]
-translucent = "透過を有効にする"
+light_theme = "ライトテーマで比較する"
+translucent = "すりガラスを有効にする"
 pointer_light = "ポインタ照明を有効にする"
 instructions = "効果を切り替えて、見本の上でポインタを動かしてください。変更はすべてのパネルに反映されます。"
-sample = "この面の向こうに、背景の2色が透けます。照明はそれぞれのポインタに追従します。"
-control = "不透明な操作部品"
+sample = "背面の縞模様のぼけ方と、ボタンの角丸に沿う照明を比較してください。"
+control = "操作部品の輪郭と照明"
 
 [emoji]
 inline = "テキスト内の SVG 絵文字 · 14 / 19 / 24 px"

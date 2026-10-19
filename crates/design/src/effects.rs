@@ -1,4 +1,4 @@
-//! 背景の材質とポインタ光。文字・アイコンは通常の経路で鮮明に描く。
+//! 背景の材質とポインタ光。文字は通常の経路で鮮明に描く。
 
 use gpui::{
     App, Bounds, Div, Element, ElementId, GlobalElementId, InspectorElementId, InteractiveElement,

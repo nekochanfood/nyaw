@@ -11,13 +11,31 @@ struct View;
 struct Frost;
 impl Render for Frost {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        gpui::canvas(|_, _, _| (), |_, _, window, _| {
-            for x in 0..160 {
-                window.paint_quad(gpui::fill(gpui::Bounds::new(gpui::point(px(x as f32 * 2.), px(0.)), gpui::size(px(2.), px(200.))),
-                    gpui::rgba(if x % 2 == 0 { 0x000000ff } else { 0xffffffff })));
-            }
-            window.paint_quad(gpui::fill(gpui::Bounds::new(gpui::point(px(30.), px(30.)), gpui::size(px(260.), px(140.))), gpui::rgba(Theme::DARK.card)).corner_radii(px(24.)));
-        }).size_full()
+        gpui::canvas(
+            |_, _, _| (),
+            |_, _, window, _| {
+                for x in 0..160 {
+                    window.paint_quad(gpui::fill(
+                        gpui::Bounds::new(
+                            gpui::point(px(x as f32 * 2.), px(0.)),
+                            gpui::size(px(2.), px(200.)),
+                        ),
+                        gpui::rgba(if x % 2 == 0 { 0x000000ff } else { 0xffffffff }),
+                    ));
+                }
+                window.paint_quad(
+                    gpui::fill(
+                        gpui::Bounds::new(
+                            gpui::point(px(30.), px(30.)),
+                            gpui::size(px(260.), px(140.)),
+                        ),
+                        gpui::rgba(Theme::DARK.card),
+                    )
+                    .corner_radii(px(24.)),
+                );
+            },
+        )
+        .size_full()
     }
 }
 impl Render for View {
@@ -111,7 +129,8 @@ fn main() {
         let frost_window = ui::open_panel_window(cx, (320, 200), |_, cx| {
             let view = cx.new(|_| Frost).into();
             cx.new(|_| ui::PanelRoot::new(view))
-        }).unwrap();
+        })
+        .unwrap();
         cx.spawn(async move |cx| {
             for _ in 0..100 {
                 cx.background_executor()
@@ -173,15 +192,22 @@ fn main() {
                     output.borrow_mut().push(frames);
                 }
             }
-            *frost_output.borrow_mut() = Some(cx.update_window(frost_window.into(), |_, window, cx| {
-                Effects::default().set(cx);
-                window.refresh();
-                let baseline = ui::capture(window, cx).unwrap();
-                Effects { translucent: true, pointer_light: false }.set(cx);
-                window.refresh();
-                let blurred = ui::capture(window, cx).unwrap();
-                (window.scale_factor(), baseline, blurred)
-            }).unwrap());
+            *frost_output.borrow_mut() = Some(
+                cx.update_window(frost_window.into(), |_, window, cx| {
+                    Effects::default().set(cx);
+                    window.refresh();
+                    let baseline = ui::capture(window, cx).unwrap();
+                    Effects {
+                        translucent: true,
+                        pointer_light: false,
+                    }
+                    .set(cx);
+                    window.refresh();
+                    let blurred = ui::capture(window, cx).unwrap();
+                    (window.scale_factor(), baseline, blurred)
+                })
+                .unwrap(),
+            );
             let frame = cx
                 .update_window(test_screen.into(), |_, window, cx| {
                     cx.set_global(Mode::Dark);
@@ -189,7 +215,11 @@ fn main() {
                     Effects::ENABLED.set(cx);
                     move_pointer(Hand::Right, Some(Vec2::new(400., 360.)), window, cx);
                     window.refresh();
-                    ui::capture(window, cx).unwrap()
+                    let dark = ui::capture(window, cx).unwrap();
+                    cx.set_global(Mode::Light);
+                    window.refresh();
+                    let light = ui::capture(window, cx).unwrap();
+                    (dark, light)
                 })
                 .unwrap();
             *screen_output.borrow_mut() = Some(frame);
@@ -202,13 +232,20 @@ fn main() {
     let (scale, baseline, blurred) = frost.as_ref().unwrap();
     let a = pixel(blurred, *scale, 100., 140.);
     let b = pixel(blurred, *scale, 102., 140.);
-    assert!((a[0] as i32 - b[0] as i32).abs() < 10, "ネイティブ GPU でも背面がぼける {a:?} {b:?}");
-    assert_eq!(pixel(baseline, *scale, 30., 30.), pixel(blurred, *scale, 30., 30.), "ぼかしを角丸の外へ漏らさない");
-    snapshot("native-frosted", blurred);
-    snapshot(
-        "test-screen",
-        screen.borrow().as_ref().expect("確認画面を描画する"),
+    assert!(
+        (a[0] as i32 - b[0] as i32).abs() < 10,
+        "ネイティブ GPU でも背面がぼける {a:?} {b:?}"
     );
+    assert_eq!(
+        pixel(baseline, *scale, 30., 30.),
+        pixel(blurred, *scale, 30., 30.),
+        "ぼかしを角丸の外へ漏らさない"
+    );
+    snapshot("native-frosted", blurred);
+    let screen = screen.borrow();
+    let (dark, light) = screen.as_ref().expect("確認画面を描画する");
+    snapshot("test-screen", dark);
+    snapshot("test-screen-light", light);
     assert_eq!(results.len(), 4);
     for (mode, translucent, scale, baseline, lit, right, leave, corner, foreground) in
         results.iter()
