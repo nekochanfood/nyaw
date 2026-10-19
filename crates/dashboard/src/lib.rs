@@ -3737,6 +3737,10 @@ mod tests {
         cx.run_until_parked();
         let width = cx.update(|window, _| window.viewport_size().width);
         for button in ["dashboard-refresh", "dashboard-nyapps-remove"] {
+            if !nyapp::NORMAL_NYAPPS_ENABLED && button == "dashboard-nyapps-remove" {
+                assert!(cx.debug_bounds(button).is_none(), "ロック中はニャプリの見出しを出さない");
+                continue;
+            }
             let b = cx.debug_bounds(button).unwrap();
             assert!(
                 b.right() > width * 0.9,
@@ -3817,6 +3821,13 @@ mod tests {
             redraw(2, cx);
         });
         cx.run_until_parked();
+        if !nyapp::NORMAL_NYAPPS_ENABLED {
+            assert!(
+                cx.debug_bounds("dashboard-nyapp-net.bettaworx.calc").is_none(),
+                "ロック中は入っているニャプリを並べない"
+            );
+            return;
+        }
         assert!(
             cx.debug_bounds("nyapp-icon-fallback").is_some(),
             "アイコンが無ければ代わりを描く"

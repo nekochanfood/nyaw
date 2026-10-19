@@ -40,6 +40,10 @@ fn main() {
         probe_linux_confinement();
         return;
     }
+    // ロック中はワーカーを起こせない（tests/lock.rs が確かめる）。
+    if !nyapp::NORMAL_NYAPPS_ENABLED {
+        return;
+    }
     if std::env::args().nth(1).as_deref() == Some("--nyapp-worker") {
         #[cfg(windows)]
         if std::env::var("NYAW_WORKER_ID")

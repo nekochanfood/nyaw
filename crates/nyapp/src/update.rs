@@ -317,6 +317,10 @@ mod tests {
     /// 新しい版があれば落として入れ替え、入れ替えた後は最新とみなす。
     #[test]
     fn updates_to_the_newer_version_from_the_feed() {
+        // ロック中は入れられない（tests/lock.rs が確かめる）。
+        if !crate::NORMAL_NYAPPS_ENABLED {
+            return;
+        }
         let f = fixture("newer");
         assert_eq!(
             check(&f.app).unwrap().map(|feed| feed.version).as_deref(),
@@ -342,6 +346,10 @@ mod tests {
     /// 落としたものがフィードの SHA-256 と違えば入れず、入っているものはそのまま。
     #[test]
     fn rejects_a_package_that_does_not_match_the_feed() {
+        // ロック中は入れられない（tests/lock.rs が確かめる）。
+        if !crate::NORMAL_NYAPPS_ENABLED {
+            return;
+        }
         let f = fixture("tampered");
         f.files
             .lock()
@@ -355,6 +363,10 @@ mod tests {
     /// ほかのニャプリのフィード・届かないフィードはエラー。更新情報の無いものは確かめない。
     #[test]
     fn feed_errors_and_apps_without_update_information() {
+        // ロック中は入れられない（tests/lock.rs が確かめる）。
+        if !crate::NORMAL_NYAPPS_ENABLED {
+            return;
+        }
         let f = fixture("errors");
         let other =
             "id = \"net.bettaworx.other\"\nversion = \"9\"\npackage = \"x\"\nsha256 = \"0\"\n";

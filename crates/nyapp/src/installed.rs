@@ -165,6 +165,10 @@ mod tests {
     /// 入れると `<id>.nyapp` になって一覧に出る。ファイル名と ID が違うもの・システムの ID は一覧にも入れない。
     #[test]
     fn installs_and_lists_only_well_named_user_packages() {
+        // ロック中は入れられない（tests/lock.rs が確かめる）。
+        if !crate::NORMAL_NYAPPS_ENABLED {
+            return;
+        }
         let root = std::env::temp_dir().join(format!("nyapp-installed-{}", std::process::id()));
         let (src, dir) = (root.join("src"), root.join("nyapps"));
         fs::create_dir_all(&src).unwrap();
