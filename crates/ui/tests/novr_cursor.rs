@@ -55,6 +55,16 @@ fn brightness(c: [u8; 3]) -> u32 {
     c.iter().map(|&v| v as u32).sum::<u32>() / 3
 }
 
+fn snapshot(emu: &Emu, name: &str) {
+    let (width, height, rgba) = emu.run(|e| e.screenshot());
+    let directory =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/surface-effects");
+    std::fs::create_dir_all(&directory).unwrap();
+    let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
+    ppm.extend(rgba.chunks_exact(4).flat_map(|p| p[..3].iter().copied()));
+    std::fs::write(directory.join(format!("{name}.ppm")), ppm).unwrap();
+}
+
 fn scenario(emu: &Emu) {
     // wait for startup and the panel's first render.
     std::thread::sleep(Duration::from_secs(2));
@@ -67,8 +77,13 @@ fn scenario(emu: &Emu) {
     emu.point(None);
     std::thread::sleep(Duration::from_millis(200));
     let unlit = emu.color(spill);
+    snapshot(emu, "emulator-unlit");
     emu.point(Some(at));
-    std::thread::sleep(Duration::from_millis(300));
+    std::thread::sleep(Duration::from_millis(400));
+    snapshot(emu, "emulator-lit");
+    emu.until_color("ポインタ周囲の面を照らす", spill, |color| {
+        brightness(color) > brightness(unlit) + 8
+    });
     let illuminated = emu.color(spill);
     assert!(
         brightness(illuminated) > brightness(unlit) + 8,

@@ -2619,6 +2619,13 @@ mod tests {
         let (_, cx) = cx.add_window_view(|_, _| Testing::default());
         cx.simulate_resize(gpui::size(px(TESTING_PX.0 as f32), px(TESTING_PX.1 as f32)));
         cx.run_until_parked();
+        cx.simulate_event(ScrollWheelEvent {
+            position: gpui::point(px(300.), px(500.)),
+            delta: ScrollDelta::Pixels(gpui::point(px(0.), px(-1000.))),
+            modifiers: Modifiers::none(),
+            touch_phase: gpui::TouchPhase::Moved,
+        });
+        cx.run_until_parked();
         let at = cx
             .debug_bounds("effects-test")
             .expect("Testing に入口がある")

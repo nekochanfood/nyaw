@@ -7,9 +7,11 @@ struct View;
 
 impl Render for View {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        components::card_panel(&Theme::DARK)
-            .rounded(px(40.))
-            .child(div().size(px(20.)).bg(rgba(Theme::DARK.accent_solid)))
+        div().size_full().child(
+            components::card_panel(&Theme::DARK)
+                .rounded(px(40.))
+                .child(div().size(px(20.)).bg(rgba(Theme::DARK.accent_solid))),
+        )
     }
 }
 

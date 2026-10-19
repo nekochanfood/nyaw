@@ -62,17 +62,6 @@ fn straight_alpha(width: u32, height: u32, mut rgba: Vec<u8>) -> Frame {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn readback_uses_straight_alpha_without_darkening_translucent_colors() {
-        let frame = straight_alpha(3, 1, vec![32, 64, 96, 128, 12, 34, 56, 255, 12, 34, 56, 0]);
-        assert_eq!(frame.rgba, [64, 128, 191, 128, 12, 34, 56, 255, 0, 0, 0, 0]);
-    }
-}
-
 /// 指定された表示方針でウィンドウを開く。Windows の非表示ウィンドウのレンダーターゲットは
 /// 1x1 のまま作られるので、明示的にリサイズして実寸にする（反映は非同期。最初の数フレームは 1x1）。
 /// Linux は GPUI を headless で動かす（`ui::application`）ので、窓は画面に出ず、開いた大きさで描く。
@@ -89,4 +78,15 @@ pub fn open_window<V: Render>(
     let size = size(px(resolution.0 as f32), px(resolution.1 as f32));
     cx.update_window(window.into(), |_, window, _| window.resize(size))?;
     Ok(window)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readback_uses_straight_alpha_without_darkening_translucent_colors() {
+        let frame = straight_alpha(3, 1, vec![32, 64, 96, 128, 12, 34, 56, 255, 12, 34, 56, 0]);
+        assert_eq!(frame.rgba, [64, 128, 191, 128, 12, 34, 56, 255, 0, 0, 0, 0]);
+    }
 }
