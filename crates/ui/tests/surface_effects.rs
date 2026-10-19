@@ -177,6 +177,12 @@ fn main() {
             !translucent,
             "{mode:?}: 透過フラグがアルファに反映される {center:?}"
         );
+        if *translucent {
+            assert!(
+                illuminated[3] > center[3],
+                "明るいテーマでも光が面のアルファに反映される"
+            );
+        }
         if *mode == Mode::Dark {
             assert!(
                 illuminated[0] > center[0] + 15,

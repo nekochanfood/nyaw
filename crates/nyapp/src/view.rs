@@ -455,7 +455,7 @@ impl NyappView {
 
     fn stack(
         &self,
-        base: impl gpui::Element + Styled + ParentElement + InteractiveElement + IntoElement,
+        base: impl gpui::Element + Styled + ParentElement + InteractiveElement,
         s: &Stack,
         path: &str,
         row: bool,

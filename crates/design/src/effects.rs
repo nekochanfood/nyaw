@@ -6,7 +6,28 @@ use gpui::{
     StatefulInteractiveElement, StyleRefinement, Styled, Window, WindowId, canvas, fill, point, px,
     rgba, size,
 };
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+};
+
+fn light_image(cx: &App) -> Arc<gpui::RenderImage> {
+    static IMAGE: OnceLock<Arc<gpui::RenderImage>> = OnceLock::new();
+    IMAGE
+        .get_or_init(|| {
+            let renderer = cx.svg_renderer();
+            let svg = renderer
+                .parse_svg(include_bytes!("../assets/pointer-light.svg"))
+                .expect("組み込みの光源 SVG は有効");
+            renderer
+                .render_parsed(
+                    &svg,
+                    gpui::SvgSize::Size(size(gpui::DevicePixels(256), gpui::DevicePixels(256))),
+                )
+                .expect("組み込みの光源 SVG を描ける")
+        })
+        .clone()
+}
 
 /// Design が所有する見た目のフラグ。未設定時は従来の不透明な表示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -156,8 +177,8 @@ impl Element for Surface {
         let light = (effects.pointer_light && pointers.iter().any(Option::is_some)).then(|| {
             canvas(
                 |_, _, _| (),
-                move |bounds, _, window, _| {
-                    paint_light(bounds, corners, pointers, window);
+                move |bounds, _, window, cx| {
+                    paint_light(bounds, corners, pointers, window, cx);
                 },
             )
             .absolute()
@@ -201,13 +222,15 @@ fn paint_light(
     corners: [f32; 4],
     pointers: [Option<Point<Pixels>>; 2],
     window: &mut Window,
+    cx: &App,
 ) {
     let width = f32::from(bounds.size.width);
     let height = f32::from(bounds.size.height);
     let [tl, tr, br, bl] = super::components::clamp_corners(corners, width, height);
     let (top, bottom) = (tl.max(tr), bl.max(br));
     let at = |x, y, w, h| Bounds::new(bounds.origin + point(px(x), px(y)), size(px(w), px(h)));
-    // 同心円を薄く重ねる。GPUI の影は小さい角丸マスクでぼかしの裾が欠けるので使わない。
+    // 光を一度だけ合成する。薄い円の重ね描きでは 8bit のアルファが丸め落ち、明るい面を照らせない。
+    let image = light_image(cx);
     for center in pointers.into_iter().flatten() {
         let radius = 128.;
         let reach = Bounds::new(
@@ -222,12 +245,21 @@ fn paint_light(
                 return;
             }
             window.with_content_mask(Some(ContentMask { bounds: mask }), |window| {
-                for step in (1..=32).rev() {
-                    let r = radius * step as f32 / 32.;
-                    let circle =
-                        Bounds::new(center - point(px(r), px(r)), size(px(r * 2.), px(r * 2.)));
+                if window
+                    .paint_image(
+                        reach,
+                        reach,
+                        gpui::Corners::default(),
+                        image.clone(),
+                        0,
+                        false,
+                    )
+                    .is_err()
+                {
+                    // 画像を GPU に置けない場合も、ポインタの位置は薄い円で示す。
                     window.paint_quad(
-                        fill(circle, rgba(crate::scale::WHITE & !0xff | 2)).corner_radii(px(r)),
+                        fill(reach, rgba(crate::scale::WHITE & !0xff | 24))
+                            .corner_radii(px(radius)),
                     );
                 }
             });
