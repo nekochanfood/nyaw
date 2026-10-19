@@ -73,16 +73,15 @@ pub fn confine() -> Result<(), Error> {
         .and_then(|value| value.parse().ok())
         .ok_or_else(|| Error::new("missing nyapp parent PID"))?;
     unsafe {
-        if libc::geteuid() == 0 {
-            if libc::setgroups(0, std::ptr::null()) != 0
+        if libc::geteuid() == 0
+            && (libc::setgroups(0, std::ptr::null()) != 0
                 || libc::setresgid(65534, 65534, 65534) != 0
-                || libc::setresuid(65534, 65534, 65534) != 0
-            {
-                return Err(Error::new(format!(
-                    "cannot drop root: {}",
-                    std::io::Error::last_os_error()
-                )));
-            }
+                || libc::setresuid(65534, 65534, 65534) != 0)
+        {
+            return Err(Error::new(format!(
+                "cannot drop root: {}",
+                std::io::Error::last_os_error()
+            )));
         }
         if libc::prctl(libc::PR_SET_DUMPABLE, 0) != 0 {
             return Err(std::io::Error::last_os_error().into());
