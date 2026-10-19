@@ -1450,6 +1450,7 @@ dependencies = [
  "animato",
  "gpui",
  "gpui_platform",
+ "paint",
  "palette",
  "serde_json",
  "svgtypes 0.15.3",
@@ -2329,6 +2330,7 @@ dependencies = [
  "notify-rust",
  "oo7",
  "open",
+ "paint",
  "parking_lot",
  "raw-window-handle",
  "smallvec",
@@ -2476,6 +2478,7 @@ dependencies = [
  "image",
  "itertools 0.14.0",
  "log",
+ "paint",
  "parking_lot",
  "profiling",
  "raw-window-handle",
@@ -2504,6 +2507,7 @@ dependencies = [
  "image",
  "itertools 0.14.0",
  "log",
+ "paint",
  "parking_lot",
  "rand 0.9.5",
  "raw-window-handle",
@@ -4314,6 +4318,10 @@ dependencies = [
  "logger",
  "subsystems",
 ]
+
+[[package]]
+name = "paint"
+version = "2026.0.1"
 
 [[package]]
 name = "palette"
@@ -6325,9 +6333,11 @@ dependencies = [
  "design",
  "gpui",
  "gpui_platform",
+ "gpui_wgpu",
  "i18n",
  "kernel",
  "logger",
+ "paint",
  "profiler",
  "testing",
  "vr",

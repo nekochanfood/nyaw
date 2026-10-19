@@ -1328,7 +1328,8 @@ impl PanelRoot {
 }
 
 impl Render for PanelRoot {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        design::Effects::sync(window, cx);
         // 全パネル共通の書体（子は継承する）。
         div()
             .size_full()

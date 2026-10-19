@@ -17,6 +17,8 @@ i18n.workspace = true
 logger.workspace = true
 
 [dev-dependencies]
+gpui_wgpu = { workspace = true, features = ["test-support"] }
+paint = { path = "../paint" }
 kernel = { workspace = true, features = ["novr", "test-support"] }
 vr = { workspace = true, features = ["test-support", "novr"] }
 testing.workspace = true

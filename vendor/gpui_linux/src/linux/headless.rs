@@ -37,10 +37,11 @@ impl HeadlessConnection {
 
     pub(crate) fn open_window(
         &self,
-        _handle: AnyWindowHandle,
+        handle: AnyWindowHandle,
         params: WindowParams,
     ) -> anyhow::Result<Box<dyn PlatformWindow>> {
         Ok(Box::new(HeadlessWindow::new(
+            handle.window_id().as_u64(),
             params,
             self.window_lease.clone(),
         )))

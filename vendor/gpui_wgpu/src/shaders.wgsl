@@ -81,6 +81,11 @@ struct GlobalParams {
     viewport_size: vec2<f32>,
     premultiplied_alpha: u32,
     pad: u32,
+    pointers: vec4<f32>,
+    translucent: u32,
+    light: u32,
+    scale: f32,
+    material_pad: u32,
 }
 
 struct GammaParams {
@@ -561,8 +566,7 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     return out;
 }
 
-@fragment
-fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
+fn quad_color(input: QuadVarying) -> vec4<f32> {
     // Alpha clip first, since we don't have `clip_distance`.
     if (any(input.clip_distances < vec4<f32>(0.0))) {
         return vec4<f32>(0.0);
@@ -1359,4 +1363,110 @@ fn fs_surface(input: SurfaceVarying) -> @location(0) vec4<f32> {
         1.0);
 
     return ycbcr_to_RGB * y_cb_cr;
+}
+
+@fragment
+fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
+    return quad_color(input);
+}
+
+// NYAW: t_sprite はこのパイプラインでは直前までの描画先を指す。
+fn backdrop_at(source: texture_2d<f32>, position: vec2<f32>) -> vec4<f32> {
+    let uv = clamp(position, vec2<f32>(0.5), globals.viewport_size - 0.5) / globals.viewport_size;
+    return textureSampleLevel(source, s_sprite, uv, 0.0);
+}
+
+fn frosted_backdrop(source: texture_2d<f32>, position: vec2<f32>, scale: f32) -> vec4<f32> {
+    let weights = array<f32, 7>(0.052711, 0.139440, 0.239337, 0.137023, 0.239337, 0.139440, 0.052711);
+    let offsets = array<f32, 7>(-5.351806, -3.403985, -1.458430, 0.0, 1.458430, 3.403985, 5.351806);
+    var result = vec4<f32>(0.0);
+    for (var y = 0; y < 7; y++) {
+        for (var x = 0; x < 7; x++) {
+            result += backdrop_at(source, position + vec2<f32>(offsets[x], offsets[y]) * scale)
+                * weights[x] * weights[y];
+        }
+    }
+    return result;
+}
+
+fn material_lighting(rgb_in: vec3<f32>, position: vec2<f32>, normal: vec2<f32>, depth: f32, scale: f32) -> vec3<f32> {
+    var color = vec4<f32>(rgb_in, 1.0);
+    let light_surface = smoothstep(0.55, 0.9, dot(rgb_in, vec3<f32>(0.2126, 0.7152, 0.0722)));
+        if (globals.light != 0u) {
+            for (var hand = 0; hand < 2; hand++) {
+                let pointer = select(globals.pointers.xy, globals.pointers.zw, hand == 1);
+                let delta = pointer - position;
+                let distance = length(delta) / scale;
+                let indirect = pow(saturate(1.0 - distance / 240.0), 2.0);
+                let direct = pow(saturate(1.0 - distance / 96.0), 2.0);
+                let facing = dot(normal, normalize(delta + vec2<f32>(0.001)));
+                let rim = exp(-depth / 1.5) * indirect;
+                var rgb = mix(color.rgb, mix(vec3<f32>(1.0), vec3<f32>(0.88, 0.95, 1.0), light_surface), indirect * 0.065 + direct * 0.025);
+                rgb = mix(rgb, vec3<f32>(1.0), rim * saturate(facing) * 0.55);
+                rgb *= 1.0 - rim * (0.12 + light_surface * 0.18) * saturate(-facing);
+                color = vec4<f32>(rgb, color.a);
+            }
+        }
+    return color.rgb;
+}
+
+@fragment
+fn fs_material(input: QuadVarying) -> @location(0) vec4<f32> {
+    if (any(input.clip_distances < vec4<f32>(0.0))) { discard; }
+    var color = quad_color(input);
+    if (globals.premultiplied_alpha != 0u && color.a > 0.0) { color = vec4<f32>(color.rgb / color.a, color.a); }
+    let quad = load_quad(input.quad_id);
+    let original = backdrop_at(t_sprite, input.position.xy);
+    var behind = original;
+    let scale = max(globals.scale, 0.125);
+    let surface = quad.background.solid.a > 0.0 && min(quad.bounds.size.x, quad.bounds.size.y) >= 8.0 * scale;
+    if (surface && color.a > 0.0) {
+        let p = input.position.xy - quad.bounds.origin - quad.bounds.size / 2.0;
+        let radius = pick_corner_radius(p, quad.corner_radii);
+        let q = abs(p) - quad.bounds.size / 2.0 + radius;
+        let outside = max(q, vec2<f32>(0.0));
+        let sdf = length(outside) + min(max(q.x, q.y), 0.0) - radius;
+        let depth = max(-sdf, 0.0) / scale;
+        var normal = select(vec2<f32>(0.0, sign(p.y)), vec2<f32>(sign(p.x), 0.0), q.x > q.y);
+        if (length(outside) > 0.001) { normal = normalize(outside) * sign(p); }
+        let brightness = dot(color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let light_surface = smoothstep(0.55, 0.9, brightness);
+        let edge = exp(-depth / 1.2);
+        if (globals.translucent != 0u) {
+            let blurred = frosted_backdrop(t_sprite, input.position.xy, scale);
+            behind = mix(original, blurred, saturate(0.5 - sdf));
+            color.a *= select(0.94, 0.88, min(quad.bounds.size.x, quad.bounds.size.y) > 100.0 * scale);
+            color = vec4<f32>(mix(color.rgb, mix(vec3<f32>(1.0), vec3<f32>(0.0), light_surface), edge * 0.13), color.a);
+        }
+        color = vec4<f32>(material_lighting(color.rgb, input.position.xy, normal, depth, scale), color.a);
+    }
+    return vec4<f32>(color.rgb * color.a + behind.rgb * (1.0 - color.a), color.a + behind.a * (1.0 - color.a));
+}
+
+@group(3) @binding(0) var t_material: texture_2d<f32>;
+
+@fragment
+fn fs_material_path(input: PathVarying) -> @location(0) vec4<f32> {
+    let sample = textureSampleLevel(t_sprite, s_sprite, input.texture_coords, 0.0);
+    let original = backdrop_at(t_material, input.position.xy);
+    if (sample.a <= 0.0) { return original; }
+    let scale = max(globals.scale, 0.125);
+    let step = 2.0 * scale / globals.viewport_size;
+    let left = textureSampleLevel(t_sprite, s_sprite, input.texture_coords - vec2<f32>(step.x, 0.0), 0.0).a;
+    let right = textureSampleLevel(t_sprite, s_sprite, input.texture_coords + vec2<f32>(step.x, 0.0), 0.0).a;
+    let top = textureSampleLevel(t_sprite, s_sprite, input.texture_coords - vec2<f32>(0.0, step.y), 0.0).a;
+    let bottom = textureSampleLevel(t_sprite, s_sprite, input.texture_coords + vec2<f32>(0.0, step.y), 0.0).a;
+    let edge = saturate(1.0 - min(min(left, right), min(top, bottom)) / sample.a);
+    let normal = normalize(vec2<f32>(left - right, top - bottom) + 0.00001);
+    var color = sample.rgb / sample.a;
+    var behind = original;
+    var alpha = sample.a;
+    if (globals.translucent != 0u) {
+        behind = mix(original, frosted_backdrop(t_material, input.position.xy, scale), saturate(sample.a));
+        alpha *= 0.94;
+        let light_surface = smoothstep(0.55, 0.9, dot(color, vec3<f32>(0.2126, 0.7152, 0.0722)));
+        color = mix(color, mix(vec3<f32>(1.0), vec3<f32>(0.0), light_surface), edge * 0.13);
+    }
+    color = material_lighting(color, input.position.xy, normal, -1.5 * log(max(edge, 0.00001)), scale);
+    return vec4<f32>(color * alpha + behind.rgb * (1.0 - alpha), alpha + behind.a * (1.0 - alpha));
 }

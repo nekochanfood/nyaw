@@ -7,6 +7,11 @@ cbuffer GlobalParams: register(b0) {
     float subpixel_enhanced_contrast;
     uint is_bgr;
     uint3 global_pad;
+    float4 material_pointers;
+    uint material_translucent;
+    uint material_light;
+    float material_scale;
+    uint material_pad;
 };
 
 cbuffer BatchParams: register(b1) {
@@ -15,6 +20,7 @@ cbuffer BatchParams: register(b1) {
 };
 
 Texture2D<float4> t_sprite: register(t0);
+Texture2D<float4> t_backdrop: register(t2);
 SamplerState s_sprite: register(s0);
 
 struct SubpixelSpriteFragmentOutput {
@@ -556,7 +562,7 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
     return output;
 }
 
-float4 quad_fragment(QuadFragmentInput input): SV_Target {
+float4 quad_color(QuadFragmentInput input) {
     Quad quad = quads[input.quad_id];
     float4 background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
@@ -847,6 +853,81 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
     return color * float4(1.0, 1.0, 1.0, saturate(antialias_threshold - outer_sdf));
 }
 
+// NYAW: 材質は背景だけに適用する。文字・画像のスプライトはこの経路を通らない。
+float4 backdrop_at(float2 position) {
+    float2 uv = clamp(position, 0.5, global_viewport_size - 0.5) / global_viewport_size;
+    return t_backdrop.SampleLevel(s_sprite, uv, 0);
+}
+
+float4 frosted_backdrop(float2 position, float scale) {
+    // 対称なガウス核。サブピクセルの線形補間で細かい背面の模様も拡散する。
+    float weights[7] = {0.052711, 0.139440, 0.239337, 0.137023, 0.239337, 0.139440, 0.052711};
+    float offsets[7] = {-5.351806, -3.403985, -1.458430, 0, 1.458430, 3.403985, 5.351806};
+    float4 result = 0;
+    [unroll] for (int y = 0; y < 7; ++y) {
+        [unroll] for (int x = 0; x < 7; ++x) {
+            result += backdrop_at(position + float2(offsets[x], offsets[y]) * scale)
+                * weights[x] * weights[y];
+        }
+    }
+    return result;
+}
+
+float3 material_lighting(float3 rgb, float2 position, float2 normal, float depth, float scale) {
+    float light_surface = smoothstep(0.55, 0.9, dot(rgb, float3(0.2126, 0.7152, 0.0722)));
+        if (material_light != 0) {
+            [unroll] for (int hand = 0; hand < 2; ++hand) {
+                float2 pointer = hand == 0 ? material_pointers.xy : material_pointers.zw;
+                float2 delta = pointer - position;
+                float distance = length(delta) / scale;
+                float indirect = pow(saturate(1 - distance / 240), 2);
+                float direct = pow(saturate(1 - distance / 96), 2);
+                float facing = dot(normal, normalize(delta + float2(0.001, 0.001)));
+                float rim = exp(-depth / 1.5) * indirect;
+                rgb = lerp(rgb, lerp(float3(1, 1, 1), float3(0.88, 0.95, 1), light_surface),
+                    indirect * 0.065 + direct * 0.025);
+                rgb = lerp(rgb, float3(1, 1, 1), rim * saturate(facing) * 0.55);
+                rgb *= 1 - rim * (0.12 + light_surface * 0.18) * saturate(-facing);
+            }
+        }
+    return rgb;
+}
+
+float4 quad_fragment(QuadFragmentInput input): SV_Target {
+    float4 color = quad_color(input);
+    if (material_translucent == 0 && material_light == 0) return color;
+    Quad quad = quads[input.quad_id];
+    float4 original = backdrop_at(input.position.xy);
+    float4 behind = original;
+    float scale = max(material_scale, 0.125);
+    bool surface = quad.background.solid.a > 0 && min(quad.bounds.size.x, quad.bounds.size.y) >= 8 * scale;
+    if (surface && color.a > 0) {
+        float2 p = input.position.xy - quad.bounds.origin - quad.bounds.size / 2;
+        float radius = pick_corner_radius(p, quad.corner_radii);
+        float2 q = abs(p) - quad.bounds.size / 2 + radius;
+        float2 outside = max(q, 0);
+        float sdf = length(outside) + min(max(q.x, q.y), 0) - radius;
+        float depth = max(-sdf, 0) / scale;
+        float2 normal = length(outside) > 0.001 ? normalize(outside) * sign(p)
+            : (q.x > q.y ? float2(sign(p.x), 0) : float2(0, sign(p.y)));
+        float brightness = dot(color.rgb, float3(0.2126, 0.7152, 0.0722));
+        float light_surface = smoothstep(0.55, 0.9, brightness);
+        float edge = exp(-depth / 1.2);
+        if (material_translucent != 0) {
+            float4 blurred = frosted_backdrop(input.position.xy, scale);
+            // ぼかしをアルファの輪郭へにじませない。透明なパネル外は従来のまま。
+            float coverage = saturate(0.5 - sdf);
+            behind = lerp(original, blurred, coverage);
+            color.a *= min(quad.bounds.size.x, quad.bounds.size.y) > 100 * scale ? 0.88 : 0.94;
+            // 白い地でも操作部品が溶けない、細い材質の縁。
+            color.rgb = lerp(color.rgb, lerp(float3(1, 1, 1), float3(0, 0, 0), light_surface), edge * 0.13);
+        }
+        color.rgb = material_lighting(color.rgb, input.position.xy, normal, depth, scale);
+    }
+    // 背景を置換してから合成する。通常の source-over では鮮明な背面が残ってしまう。
+    return float4(color.rgb * color.a + behind.rgb * (1 - color.a), color.a + behind.a * (1 - color.a));
+}
+
 /*
 **
 **              Shadows
@@ -1053,7 +1134,29 @@ PathSpriteVertexOutput path_sprite_vertex(uint vertex_id: SV_VertexID, uint spri
 }
 
 float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
-    return t_sprite.Sample(s_sprite, input.texture_coords);
+    float4 sample = t_sprite.Sample(s_sprite, input.texture_coords);
+    if (material_translucent == 0 && material_light == 0) return sample;
+    float4 original = backdrop_at(input.position.xy);
+    if (sample.a <= 0) return original;
+    float scale = max(material_scale, 0.125);
+    float2 step = 2 * scale / global_viewport_size;
+    float left = t_sprite.SampleLevel(s_sprite, input.texture_coords - float2(step.x, 0), 0).a;
+    float right = t_sprite.SampleLevel(s_sprite, input.texture_coords + float2(step.x, 0), 0).a;
+    float top = t_sprite.SampleLevel(s_sprite, input.texture_coords - float2(0, step.y), 0).a;
+    float bottom = t_sprite.SampleLevel(s_sprite, input.texture_coords + float2(0, step.y), 0).a;
+    float edge = saturate(1 - min(min(left, right), min(top, bottom)) / sample.a);
+    float2 normal = normalize(float2(left - right, top - bottom) + 0.00001);
+    float3 color = sample.rgb / sample.a;
+    float4 behind = original;
+    float alpha = sample.a;
+    if (material_translucent != 0) {
+        behind = lerp(original, frosted_backdrop(input.position.xy, scale), saturate(sample.a));
+        alpha *= 0.94;
+        float light_surface = smoothstep(0.55, 0.9, dot(color, float3(0.2126, 0.7152, 0.0722)));
+        color = lerp(color, lerp(float3(1, 1, 1), float3(0, 0, 0), light_surface), edge * 0.13);
+    }
+    color = material_lighting(color, input.position.xy, normal, -1.5 * log(max(edge, 0.00001)), scale);
+    return float4(color * alpha + behind.rgb * (1 - alpha), alpha + behind.a * (1 - alpha));
 }
 
 /*

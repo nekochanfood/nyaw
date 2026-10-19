@@ -773,6 +773,7 @@ impl Drop for WaylandWindow {
 
         let mut state = self.0.state.borrow_mut();
         let surface_id = state.surface.id();
+        paint::remove(state.handle.window_id().as_u64());
 
         if let Some(parent) = state.parent.as_ref() {
             parent.state.borrow_mut().children.remove(&surface_id);
@@ -2043,7 +2044,7 @@ impl PlatformWindow for WaylandWindow {
             let callback = state.surface.frame(&state.globals.qh, state.surface.id());
             state.pending_frame_callback = Some(callback);
         }
-        if renderer.draw(scene) {
+        if paint::with_window(state.handle.window_id().as_u64(), || renderer.draw(scene)) {
             state.presentation = PresentationState::Presented;
             self.0.frame_loop.set(FrameLoop::AwaitingCallback);
         } else {

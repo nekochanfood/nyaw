@@ -14,6 +14,7 @@ gpui = ["dep:gpui", "dep:unicode-segmentation"]
 
 [dependencies]
 palette = "0.7"
+paint = { path = "../paint" }
 animato = { version = "1.7.2", default-features = false, features = ["tween"] }
 gpui = { workspace = true, features = ["test-support"], optional = true }
 unicode-segmentation = { version = "1.13", optional = true }

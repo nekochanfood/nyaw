@@ -22,6 +22,7 @@ font-kit = ["dep:font-kit"]
 test-support = ["gpui/test-support", "dep:image"]
 
 [dependencies]
+paint = { path = "../../crates/paint" }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa", default-features = false }
 anyhow = "1.0.86"
 bytemuck = "1"

@@ -33,6 +33,7 @@ pub fn with_render_scale<R>(scale: f32, f: impl FnOnce() -> R) -> R {
 }
 
 struct HeadlessWindowState {
+    material_window: u64,
     /// NYAW: 描画の拡大率（[`with_render_scale`]）。
     scale: f32,
     bounds: Bounds<Pixels>,
@@ -49,6 +50,12 @@ struct HeadlessWindowState {
 }
 
 pub(crate) struct HeadlessWindow(Rc<RefCell<HeadlessWindowState>>);
+
+impl Drop for HeadlessWindow {
+    fn drop(&mut self) {
+        paint::remove(self.0.borrow().material_window);
+    }
+}
 
 impl raw_window_handle::HasWindowHandle for HeadlessWindow {
     fn window_handle(
@@ -68,8 +75,9 @@ impl raw_window_handle::HasDisplayHandle for HeadlessWindow {
 }
 
 impl HeadlessWindow {
-    pub(crate) fn new(params: WindowParams, lease: Rc<()>) -> Self {
+    pub(crate) fn new(material_window: u64, params: WindowParams, lease: Rc<()>) -> Self {
         Self(Rc::new(RefCell::new(HeadlessWindowState {
+            material_window,
             bounds: params.bounds,
             _lease: lease,
             input_handler: None,
@@ -242,11 +250,14 @@ impl PlatformWindow for HeadlessWindow {
         let mut state = self.0.borrow_mut();
         let size = state.bounds.size.to_device_pixels(state.scale);
         let transparent = state.background != WindowBackgroundAppearance::Opaque;
+        let material_window = state.material_window;
         let renderer = state
             .renderer
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("headless renderer unavailable"))?;
-        renderer.render_to_image_deferred(scene, size, transparent)
+        paint::with_window(material_window, || {
+            renderer.render_to_image_deferred(scene, size, transparent)
+        })
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {

@@ -104,6 +104,7 @@ struct DirectXResources {
     swap_chain: IDXGISwapChain1,
     render_target: Option<ID3D11Texture2D>,
     render_target_view: Option<ID3D11RenderTargetView>,
+    material_backdrop: Option<(ID3D11Texture2D, ID3D11ShaderResourceView)>,
 
     // Path intermediate textures (with MSAA)
     path_intermediate_texture: ID3D11Texture2D,
@@ -130,6 +131,7 @@ struct DirectXGlobalElements {
     global_params_buffer: Option<ID3D11Buffer>,
     batch_params_buffer: Option<ID3D11Buffer>,
     sampler: Option<ID3D11SamplerState>,
+    material_blend: ID3D11BlendState,
 }
 
 struct Annotation<'a>(&'a ID3DUserDefinedAnnotation);
@@ -252,6 +254,7 @@ impl DirectXRenderer {
                 subpixel_enhanced_contrast: self.font_info.subpixel_enhanced_contrast,
                 is_bgr: self.font_info.is_bgr as u32,
                 _pad: [0; 3],
+                material: paint::current(),
             }],
         )?;
         unsafe {
@@ -407,7 +410,7 @@ impl DirectXRenderer {
                 .map(|annotation| Annotation::new(annotation, HSTRING::from(batch.label())));
             match batch {
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
-                PrimitiveBatch::Quads(range) => self.draw_quads(range.start, range.len()),
+                PrimitiveBatch::Quads(range) => self.draw_material_quads(scene, range),
                 PrimitiveBatch::Paths(range) => {
                     let paths = &scene.paths[range];
                     self.draw_paths_to_intermediate(paths)?;
@@ -546,7 +549,11 @@ impl DirectXRenderer {
     /// NYAW: 読み戻し用のテクスチャ `slot` を CPU に写し、BGRA を RGBA にする（コピーが済むまで待つ）。
     #[cfg(any(test, feature = "test-support"))]
     fn map_readback(&self, slot: usize) -> Result<image::RgbaImage> {
-        let context = &self.devices.as_ref().context("devices missing")?.device_context;
+        let context = &self
+            .devices
+            .as_ref()
+            .context("devices missing")?
+            .device_context;
         let rb = self.readback.as_ref().context("no readback")?;
         let (width, height) = (rb.width, rb.height);
         let staging = &rb.staging[slot];
@@ -690,6 +697,120 @@ impl DirectXRenderer {
         )
     }
 
+    // NYAW: 元の絵をぼかす前に退避する。コピーは部品とカーネルの届く範囲だけ。
+    fn prepare_material_backdrop(&mut self, b: Bounds<ScaledPixels>) -> Result<bool> {
+        let material = paint::current();
+        let devices = self.devices.as_ref().context("devices missing")?;
+        let resources = self.resources.as_mut().context("resources missing")?;
+        if resources.material_backdrop.is_none() {
+            let mut desc = D3D11_TEXTURE2D_DESC::default();
+            unsafe {
+                resources.render_target.as_ref().unwrap().GetDesc(&mut desc);
+            }
+            desc.BindFlags = D3D11_BIND_SHADER_RESOURCE.0 as u32;
+            let mut texture = None;
+            unsafe {
+                devices
+                    .device
+                    .CreateTexture2D(&desc, None, Some(&mut texture))?;
+            }
+            let texture = texture.context("material backdrop missing")?;
+            let mut srv = None;
+            unsafe {
+                devices
+                    .device
+                    .CreateShaderResourceView(&texture, None, Some(&mut srv))?;
+            }
+            resources.material_backdrop =
+                Some((texture, srv.context("material backdrop view missing")?));
+        }
+        let context = &devices.device_context;
+        let (texture, srv) = resources.material_backdrop.as_ref().unwrap();
+        let pad = 16. * material.scale;
+        let left = (b.origin.x.0 - pad).max(0.) as u32;
+        let top = (b.origin.y.0 - pad).max(0.) as u32;
+        let right = (b.origin.x.0 + b.size.width.0 + pad)
+            .ceil()
+            .min(resources.viewport.Width) as u32;
+        let bottom = (b.origin.y.0 + b.size.height.0 + pad)
+            .ceil()
+            .min(resources.viewport.Height) as u32;
+        if left >= right || top >= bottom {
+            return Ok(false);
+        }
+        let area = D3D11_BOX {
+            left,
+            top,
+            front: 0,
+            right,
+            bottom,
+            back: 1,
+        };
+        unsafe {
+            context.PSSetShaderResources(2, Some(&[None]));
+            context.OMSetRenderTargets(None, None);
+            context.CopySubresourceRegion(
+                texture,
+                0,
+                left,
+                top,
+                0,
+                resources.render_target.as_ref().unwrap(),
+                0,
+                Some(&area),
+            );
+            context.OMSetRenderTargets(Some(slice::from_ref(&resources.render_target_view)), None);
+            context.PSSetShaderResources(2, Some(&[Some(srv.clone())]));
+            context.PSSetSamplers(0, Some(slice::from_ref(&self.globals.sampler)));
+        }
+        Ok(true)
+    }
+
+    fn draw_material_quads(&mut self, scene: &Scene, range: std::ops::Range<usize>) -> Result<()> {
+        let material = paint::current();
+        if material.translucent == 0 && material.light == 0 {
+            return self.draw_quads(range.start, range.len());
+        }
+        for index in range {
+            let b = scene.quads[index]
+                .bounds
+                .intersect(&scene.quads[index].content_mask.bounds);
+            if !self.prepare_material_backdrop(b)? {
+                continue;
+            }
+            let context = &self
+                .devices
+                .as_ref()
+                .context("devices missing")?
+                .device_context;
+            let pipeline = &self.pipelines.quad_pipeline;
+            update_batch_start(
+                context,
+                self.globals.batch_params_buffer.as_ref().unwrap(),
+                index as u32,
+            )?;
+            set_pipeline_state(
+                context,
+                slice::from_ref(&pipeline.view),
+                D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+                &pipeline.vertex,
+                &pipeline.fragment,
+                &self.globals.material_blend,
+            );
+            unsafe {
+                context.DrawInstanced(4, 1, 0, 0);
+            }
+        }
+        unsafe {
+            self.devices
+                .as_ref()
+                .unwrap()
+                .device_context
+                .PSSetShaderResources(2, Some(&[None]));
+        }
+        Ok(())
+    }
+
     fn draw_quads(&mut self, start: usize, len: usize) -> Result<()> {
         if len == 0 {
             return Ok(());
@@ -796,6 +917,16 @@ impl DirectXRenderer {
             vec![PathSprite { bounds }]
         };
 
+        let material = paint::current();
+        let effects = material.translucent != 0 || material.light != 0;
+        if effects {
+            let bounds = sprites
+                .iter()
+                .map(|s| s.bounds)
+                .reduce(|a, b| a.union(&b))
+                .unwrap();
+            self.prepare_material_backdrop(bounds)?;
+        }
         let devices = self.devices.as_ref().context("devices missing")?;
         let resources = self.resources.as_ref().context("resources missing")?;
         self.pipelines.path_sprite_pipeline.update_buffer(
@@ -805,12 +936,18 @@ impl DirectXRenderer {
         )?;
 
         // Draw the sprites with the path texture
-        self.pipelines.path_sprite_pipeline.draw_with_texture(
+        let saved = self.pipelines.path_sprite_pipeline.blend_state.clone();
+        if effects {
+            self.pipelines.path_sprite_pipeline.blend_state = self.globals.material_blend.clone();
+        }
+        let result = self.pipelines.path_sprite_pipeline.draw_with_texture(
             &devices.device_context,
             slice::from_ref(&resources.path_intermediate_srv),
             slice::from_ref(&self.globals.sampler),
             sprites.len() as u32,
-        )
+        );
+        self.pipelines.path_sprite_pipeline.blend_state = saved;
+        result
     }
 
     fn draw_underlines(&mut self, start: usize, len: usize) -> Result<()> {
@@ -996,6 +1133,7 @@ impl DirectXResources {
 
         Ok(Self {
             swap_chain,
+            material_backdrop: None,
             render_target: Some(render_target),
             render_target_view,
             path_intermediate_texture,
@@ -1022,6 +1160,7 @@ impl DirectXResources {
             path_intermediate_msaa_view,
             viewport,
         ) = create_resources(devices, &self.swap_chain, width, height)?;
+        self.material_backdrop = None;
         self.render_target = Some(render_target);
         self.render_target_view = render_target_view;
         self.path_intermediate_texture = path_intermediate_texture;
@@ -1151,7 +1290,14 @@ impl DirectXGlobalElements {
             output
         };
 
+        let mut desc = D3D11_BLEND_DESC::default();
+        desc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL.0 as u8;
+        let mut material_blend = None;
+        unsafe {
+            device.CreateBlendState(&desc, Some(&mut material_blend))?;
+        }
         Ok(Self {
+            material_blend: material_blend.context("material blend missing")?,
             global_params_buffer,
             batch_params_buffer,
             sampler,
@@ -1168,6 +1314,7 @@ struct GlobalParams {
     subpixel_enhanced_contrast: f32,
     is_bgr: u32,
     _pad: [u32; 3],
+    material: paint::Material,
 }
 
 #[derive(Clone, Copy, Debug, Default)]

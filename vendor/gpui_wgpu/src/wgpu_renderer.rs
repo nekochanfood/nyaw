@@ -61,6 +61,11 @@ struct GlobalParams {
     viewport_size: [f32; 2],
     premultiplied_alpha: u32,
     pad: u32,
+    pointers: [[f32; 2]; 2],
+    translucent: u32,
+    light: u32,
+    scale: f32,
+    material_pad: u32,
 }
 
 #[repr(C)]
@@ -125,9 +130,11 @@ pub struct WgpuSurfaceConfig {
 
 struct WgpuPipelines {
     quads: wgpu::RenderPipeline,
+    material_quads: wgpu::RenderPipeline,
     shadows: wgpu::RenderPipeline,
     path_rasterization: wgpu::RenderPipeline,
     paths: wgpu::RenderPipeline,
+    material_paths: wgpu::RenderPipeline,
     underlines: wgpu::RenderPipeline,
     mono_sprites: wgpu::RenderPipeline,
     subpixel_sprites: Option<wgpu::RenderPipeline>,
@@ -194,6 +201,7 @@ struct WgpuResources {
     path_intermediate_view: Option<wgpu::TextureView>,
     path_msaa_texture: Option<wgpu::Texture>,
     path_msaa_view: Option<wgpu::TextureView>,
+    material_backdrop: Option<(wgpu::Texture, wgpu::BindGroup)>,
 }
 
 struct CachedTextureBindGroup {
@@ -445,7 +453,7 @@ impl WgpuRenderer {
         }
 
         let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             format: surface_format,
             width: clamped_width.max(1),
             height: clamped_height.max(1),
@@ -730,6 +738,9 @@ impl WgpuRendererCore {
                                module: &wgpu::ShaderModule| {
             let mut bind_group_layouts = vec![Some(globals_layout), Some(data_layout)];
             bind_group_layouts.extend(texture_layout.map(Some));
+            if name == "material_paths" {
+                bind_group_layouts.push(Some(&layouts.texture));
+            }
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some(&format!("{name}_layout")),
                 bind_group_layouts: &bind_group_layouts,
@@ -780,6 +791,22 @@ impl WgpuRendererCore {
             None,
             wgpu::PrimitiveTopology::TriangleStrip,
             &[Some(color_target.clone())],
+            1,
+            &shader_module,
+        );
+
+        let material_quads = create_pipeline(
+            "material_quads",
+            "vs_quad",
+            "fs_material",
+            &layouts.globals,
+            &layouts.instances,
+            Some(&layouts.texture),
+            wgpu::PrimitiveTopology::TriangleStrip,
+            &[Some(wgpu::ColorTargetState {
+                blend: None,
+                ..color_target.clone()
+            })],
             1,
             &shader_module,
         );
@@ -839,6 +866,22 @@ impl WgpuRendererCore {
                 format: surface_format,
                 blend: Some(paths_blend),
                 write_mask: wgpu::ColorWrites::ALL,
+            })],
+            1,
+            &shader_module,
+        );
+
+        let material_paths = create_pipeline(
+            "material_paths",
+            "vs_path",
+            "fs_material_path",
+            &layouts.globals,
+            &layouts.instances,
+            Some(&layouts.texture),
+            wgpu::PrimitiveTopology::TriangleStrip,
+            &[Some(wgpu::ColorTargetState {
+                blend: None,
+                ..color_target.clone()
             })],
             1,
             &shader_module,
@@ -932,9 +975,11 @@ impl WgpuRendererCore {
 
         WgpuPipelines {
             quads,
+            material_quads,
             shadows,
             path_rasterization,
             paths,
+            material_paths,
             underlines,
             mono_sprites,
             subpixel_sprites,
@@ -1199,6 +1244,7 @@ impl WgpuRenderer {
         if let Err(error) = core.render_frame(
             scene,
             &frame_view,
+            &frame.texture,
             size,
             premultiplied_alpha,
             wgpu::Color::TRANSPARENT,
@@ -1353,6 +1399,7 @@ impl WgpuRendererCore {
                 path_intermediate_view: None,
                 path_msaa_texture: None,
                 path_msaa_view: None,
+                material_backdrop: None,
             },
             atlas,
             path_globals_offset,
@@ -1418,6 +1465,7 @@ impl WgpuRendererCore {
         &mut self,
         scene: &Scene,
         target_view: &wgpu::TextureView,
+        target_texture: &wgpu::Texture,
         size: Size<DevicePixels>,
         premultiplied_alpha: bool,
         clear_color: wgpu::Color,
@@ -1443,10 +1491,16 @@ impl WgpuRendererCore {
             is_bgr: self.is_bgr as u32,
             _pad: 0,
         };
+        let material = paint::current();
         let globals = GlobalParams {
             viewport_size: [size.width.0 as f32, size.height.0 as f32],
             premultiplied_alpha: premultiplied_alpha as u32,
             pad: 0,
+            pointers: material.pointers,
+            translucent: material.translucent,
+            light: material.light,
+            scale: material.scale,
+            material_pad: 0,
         };
         let path_globals = GlobalParams {
             premultiplied_alpha: 0,
@@ -1468,7 +1522,7 @@ impl WgpuRendererCore {
             bytemuck::bytes_of(&gamma_params),
         );
 
-        self.record_frame(scene, target_view, clear_color)
+        self.record_frame(scene, target_view, target_texture, clear_color)
             .inspect_err(|_| {
                 // Queue writes are staged before encoding; flush them even if the frame fails.
                 self.resources.queue.submit(std::iter::empty());
@@ -1479,8 +1533,50 @@ impl WgpuRendererCore {
         &mut self,
         scene: &Scene,
         frame_view: &wgpu::TextureView,
+        frame_texture: &wgpu::Texture,
         clear_color: wgpu::Color,
     ) -> Result<wgpu::SubmissionIndex> {
+        let material = paint::current();
+        let effects = material.translucent != 0 || material.light != 0;
+        if effects {
+            let size = frame_texture.size();
+            let recreate = self
+                .resources
+                .material_backdrop
+                .as_ref()
+                .is_none_or(|(t, _)| t.size() != size);
+            if recreate {
+                let resources = &mut self.resources;
+                let texture = resources.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("material_backdrop"),
+                    size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: self.target_format,
+                    usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                });
+                let view = texture.create_view(&Default::default());
+                let group = resources
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("material_backdrop"),
+                        layout: &resources.bind_group_layouts.texture,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(&view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&resources.atlas_sampler),
+                            },
+                        ],
+                    });
+                resources.material_backdrop = Some((texture, group));
+            }
+        }
         let mut instance_offset = 0;
         let instance_bindings = self
             .write_instances(scene, &mut instance_offset)
@@ -1523,6 +1619,70 @@ impl WgpuRendererCore {
 
             for batch in scene.batches() {
                 match batch {
+                    PrimitiveBatch::Quads(range) if effects => {
+                        for index in range {
+                            drop(pass);
+                            let (backdrop, group) =
+                                self.resources.material_backdrop.as_ref().unwrap();
+                            let quad = &scene.quads[index];
+                            let b = quad.bounds.intersect(&quad.content_mask.bounds);
+                            let pad = 16. * material.scale;
+                            let left = (b.origin.x.0 - pad).max(0.) as u32;
+                            let top = (b.origin.y.0 - pad).max(0.) as u32;
+                            let right = (b.origin.x.0 + b.size.width.0 + pad)
+                                .ceil()
+                                .min(frame_texture.width() as f32)
+                                as u32;
+                            let bottom = (b.origin.y.0 + b.size.height.0 + pad)
+                                .ceil()
+                                .min(frame_texture.height() as f32)
+                                as u32;
+                            if left < right && top < bottom {
+                                let origin = wgpu::Origin3d {
+                                    x: left,
+                                    y: top,
+                                    z: 0,
+                                };
+                                encoder.copy_texture_to_texture(
+                                    wgpu::TexelCopyTextureInfo {
+                                        origin,
+                                        ..frame_texture.as_image_copy()
+                                    },
+                                    wgpu::TexelCopyTextureInfo {
+                                        origin,
+                                        ..backdrop.as_image_copy()
+                                    },
+                                    wgpu::Extent3d {
+                                        width: right - left,
+                                        height: bottom - top,
+                                        depth_or_array_layers: 1,
+                                    },
+                                );
+                            }
+                            pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("material_pass"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: frame_view,
+                                    resolve_target: None,
+                                    depth_slice: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                })],
+                                ..Default::default()
+                            });
+                            if left < right && top < bottom {
+                                pass.set_bind_group(2, group, &[]);
+                                self.draw_instances(
+                                    &instance_bindings.quads,
+                                    &self.resources.pipelines.material_quads,
+                                    index as u32..index as u32 + 1,
+                                    &mut pass,
+                                );
+                            }
+                        }
+                    }
                     PrimitiveBatch::Quads(range) => self.draw_instances(
                         &instance_bindings.quads,
                         &self.resources().pipelines.quads,
@@ -1542,6 +1702,14 @@ impl WgpuRendererCore {
                         }
 
                         drop(pass);
+                        if effects {
+                            let (backdrop, _) = self.resources.material_backdrop.as_ref().unwrap();
+                            encoder.copy_texture_to_texture(
+                                frame_texture.as_image_copy(),
+                                backdrop.as_image_copy(),
+                                frame_texture.size(),
+                            );
+                        }
                         let rasterized = self.draw_paths_to_intermediate(
                             &mut encoder,
                             paths,
@@ -1822,7 +1990,13 @@ impl WgpuRendererCore {
             &path_intermediate_view,
         );
         let resources = self.resources();
-        pass.set_pipeline(&resources.pipelines.paths);
+        let material = paint::current();
+        if material.translucent != 0 || material.light != 0 {
+            pass.set_pipeline(&resources.pipelines.material_paths);
+            pass.set_bind_group(3, &resources.material_backdrop.as_ref().unwrap().1, &[]);
+        } else {
+            pass.set_pipeline(&resources.pipelines.paths);
+        }
         pass.set_bind_group(0, &resources.globals_bind_group, &[]);
         pass.set_bind_group(1, &instances.bind_group, &[]);
         pass.set_bind_group(2, &texture, &[]);
@@ -2464,8 +2638,14 @@ impl WgpuHeadlessRenderer {
             .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
             .view
             .clone();
-        self.core
-            .render_frame(scene, &view, size, false, clear_color)?;
+        self.core.render_frame(
+            scene,
+            &view,
+            &self.render_target.as_ref().unwrap().texture,
+            size,
+            false,
+            clear_color,
+        )?;
         Ok(())
     }
 

@@ -39,13 +39,13 @@ fn effects_toggle_independently_without_fading_content(cx: &mut TestAppContext) 
                             .filter(|c| (c.h, c.s, c.l) == (original.h, original.s, original.l))
                     })
                     .expect("カードの面");
-                assert!((card.a - if translucent { 0.86 } else { 1. }).abs() < 0.001);
+                assert_eq!(card.a, 1., "材質の透過は描画バックエンドが担当する");
                 assert!(
                     quads
                         .iter()
                         .any(|q| q.background.as_solid()
                             == Some(rgba(Theme::DARK.accent_solid).into())),
-                    "部品は不透明なまま"
+                    "元の部品の色は GPU へそのまま渡す"
                 );
                 assert_eq!(
                     Effects::current(cx),

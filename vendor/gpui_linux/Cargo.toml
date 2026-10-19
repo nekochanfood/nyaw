@@ -58,6 +58,9 @@ screen-capture = [
     "scap",
 ]
 
+[dependencies]
+paint = { path = "../../crates/paint" }
+
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 accesskit = { version = "0.24.0", features = ["enumn"] }
 accesskit_unix = { version = "0.22", optional = true }

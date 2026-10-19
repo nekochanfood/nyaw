@@ -1,33 +1,11 @@
-//! 面の透過と、面の上を照らすポインタ光。文字や操作部品の不透明度は変えない。
+//! 背景の材質とポインタ光。文字・アイコンは通常の経路で鮮明に描く。
 
 use gpui::{
-    App, Bounds, ContentMask, Div, Element, ElementId, GlobalElementId, InspectorElementId,
-    InteractiveElement, Interactivity, IntoElement, ParentElement, Pixels, Point,
-    StatefulInteractiveElement, StyleRefinement, Styled, Window, WindowId, canvas, fill, point, px,
-    rgba, size,
+    App, Bounds, Div, Element, ElementId, GlobalElementId, InspectorElementId, InteractiveElement,
+    Interactivity, IntoElement, ParentElement, Pixels, Point, StatefulInteractiveElement,
+    StyleRefinement, Styled, Window, WindowId,
 };
-use std::{
-    collections::HashMap,
-    sync::{Arc, OnceLock},
-};
-
-fn light_image(cx: &App) -> Arc<gpui::RenderImage> {
-    static IMAGE: OnceLock<Arc<gpui::RenderImage>> = OnceLock::new();
-    IMAGE
-        .get_or_init(|| {
-            let renderer = cx.svg_renderer();
-            let svg = renderer
-                .parse_svg(include_bytes!("../assets/pointer-light.svg"))
-                .expect("組み込みの光源 SVG は有効");
-            renderer
-                .render_parsed(
-                    &svg,
-                    gpui::SvgSize::Size(size(gpui::DevicePixels(256), gpui::DevicePixels(256))),
-                )
-                .expect("組み込みの光源 SVG を描ける")
-        })
-        .clone()
-}
+use std::collections::HashMap;
 
 /// Design が所有する見た目のフラグ。未設定時は従来の不透明な表示。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -47,6 +25,32 @@ impl Effects {
 
     pub fn current(cx: &App) -> Self {
         cx.try_global::<Self>().copied().unwrap_or_default()
+    }
+
+    /// 描画バックエンドに渡す材質。OS・ランタイムには依存しない。
+    pub fn sync(window: &Window, cx: &App) {
+        let effects = Self::current(cx);
+        let id = window.window_handle().window_id();
+        let scale = window.scale_factor();
+        let pointers = cx
+            .try_global::<SurfacePointers>()
+            .and_then(|p| p.0.get(&id))
+            .copied()
+            .unwrap_or_default();
+        paint::set(
+            id.as_u64(),
+            paint::Material {
+                pointers: pointers.map(|p| {
+                    p.map_or([-1e6; 2], |p| {
+                        [f32::from(p.x) * scale, f32::from(p.y) * scale]
+                    })
+                }),
+                translucent: u32::from(effects.translucent),
+                light: u32::from(effects.pointer_light && pointers.iter().any(Option::is_some)),
+                scale,
+                padding: 0,
+            },
+        );
     }
 
     /// 開いている画面にも即座に反映する。
@@ -90,6 +94,7 @@ impl SurfacePointers {
         if cx.has_global::<Self>() {
             cx.global_mut::<Self>().0.remove(&window);
         }
+        paint::remove(window.as_u64());
     }
 }
 
@@ -155,37 +160,7 @@ impl Element for Surface {
         window: &mut Window,
         cx: &mut App,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
-        let effects = Effects::current(cx);
-        if effects.translucent
-            && let Some(gpui::Fill::Color(background)) = self.base.style().background.as_mut()
-        {
-            *background = background.opacity(0.86);
-        }
-        let radii = &self.base.style().corner_radii;
-        let corners = [
-            radii.top_left,
-            radii.top_right,
-            radii.bottom_right,
-            radii.bottom_left,
-        ]
-        .map(|r| r.map_or(0., |r| f32::from(r.to_pixels(window.rem_size()))));
-        let pointers = cx
-            .try_global::<SurfacePointers>()
-            .and_then(|p| p.0.get(&window.window_handle().window_id()))
-            .copied()
-            .unwrap_or_default();
-        let light = (effects.pointer_light && pointers.iter().any(Option::is_some)).then(|| {
-            canvas(
-                |_, _, _| (),
-                move |bounds, _, window, cx| {
-                    paint_light(bounds, corners, pointers, window, cx);
-                },
-            )
-            .absolute()
-            .inset_0()
-            .size_full()
-        });
-        self.base.extend(light.map(IntoElement::into_any_element));
+        Effects::sync(window, cx);
         self.base.extend(std::mem::take(&mut self.children));
         self.base.request_layout(id, inspector, window, cx)
     }
@@ -214,82 +189,5 @@ impl Element for Surface {
     ) {
         self.base
             .paint(id, inspector, bounds, state, prepaint, window, cx)
-    }
-}
-
-fn paint_light(
-    bounds: Bounds<Pixels>,
-    corners: [f32; 4],
-    pointers: [Option<Point<Pixels>>; 2],
-    window: &mut Window,
-    cx: &App,
-) {
-    let width = f32::from(bounds.size.width);
-    let height = f32::from(bounds.size.height);
-    let [tl, tr, br, bl] = super::components::clamp_corners(corners, width, height);
-    let (top, bottom) = (tl.max(tr), bl.max(br));
-    let at = |x, y, w, h| Bounds::new(bounds.origin + point(px(x), px(y)), size(px(w), px(h)));
-    // 光を一度だけ合成する。薄い円の重ね描きでは 8bit のアルファが丸め落ち、明るい面を照らせない。
-    let image = light_image(cx);
-    for center in pointers.into_iter().flatten() {
-        let radius = 128.;
-        let reach = Bounds::new(
-            center - point(px(radius), px(radius)),
-            size(px(radius * 2.), px(radius * 2.)),
-        );
-        if !bounds.intersects(&reach) {
-            continue;
-        }
-        let mut paint = |mask: Bounds<Pixels>| {
-            if !mask.intersects(&reach) {
-                return;
-            }
-            window.with_content_mask(Some(ContentMask { bounds: mask }), |window| {
-                if window
-                    .paint_image(
-                        reach,
-                        reach,
-                        gpui::Corners::default(),
-                        image.clone(),
-                        0,
-                        false,
-                    )
-                    .is_err()
-                {
-                    // 画像を GPU に置けない場合も、ポインタの位置は薄い円で示す。
-                    window.paint_quad(
-                        fill(reach, rgba(crate::scale::WHITE & !0xff | 24))
-                            .corner_radii(px(radius)),
-                    );
-                }
-            });
-        };
-        let touches_corner = [
-            (0., 0., tl),
-            (width - tr, 0., tr),
-            (width - br, height - br, br),
-            (0., height - bl, bl),
-        ]
-        .into_iter()
-        .any(|(x, y, r)| r > 0. && reach.intersects(&at(x, y, r, r)));
-        if !touches_corner {
-            paint(bounds);
-            continue;
-        }
-        paint(at(0., top, width, height - top - bottom));
-        for (band, left, right, lower) in [(top, tl, tr, false), (bottom, bl, br, true)] {
-            for row in 0..band.ceil() as u32 {
-                let d = row as f32;
-                let row_height = (band - d).min(1.);
-                let l = super::components::corner_inset(left, d + row_height / 2.);
-                let r = super::components::corner_inset(right, d + row_height / 2.);
-                paint(at(
-                    l,
-                    if lower { height - d - row_height } else { d },
-                    width - l - r,
-                    row_height,
-                ));
-            }
-        }
     }
 }

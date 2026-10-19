@@ -2,23 +2,40 @@
 mod common;
 
 use design::{Effects, Mode, Theme, components};
-use gpui::{AppContext, Context, IntoElement, Render, Window, div, prelude::*, px, rgba};
+use gpui::{AppContext, Context, IntoElement, Render, Window, div, prelude::*, px};
 use kernel::{Hand, Vec2};
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 struct View;
+
+struct Frost;
+impl Render for Frost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        gpui::canvas(|_, _, _| (), |_, _, window, _| {
+            for x in 0..160 {
+                window.paint_quad(gpui::fill(gpui::Bounds::new(gpui::point(px(x as f32 * 2.), px(0.)), gpui::size(px(2.), px(200.))),
+                    gpui::rgba(if x % 2 == 0 { 0x000000ff } else { 0xffffffff })));
+            }
+            window.paint_quad(gpui::fill(gpui::Bounds::new(gpui::point(px(30.), px(30.)), gpui::size(px(260.), px(140.))), gpui::rgba(Theme::DARK.card)).corner_radii(px(24.)));
+        }).size_full()
+    }
+}
 impl Render for View {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
         components::card_panel(&theme)
             .rounded(px(48.))
             .child(
-                div()
-                    .absolute()
-                    .left(px(280.))
-                    .top(px(80.))
-                    .size(px(48.))
-                    .bg(rgba(theme.accent_solid)),
+                components::button(
+                    &theme,
+                    "material-button",
+                    "Button",
+                    components::Variant::Default,
+                )
+                .absolute()
+                .left(px(280.))
+                .top(px(80.))
+                .w(px(130.)),
             )
             .child(
                 div()
@@ -77,6 +94,8 @@ fn main() {
     let output = results.clone();
     let screen = Rc::new(RefCell::new(None));
     let screen_output = screen.clone();
+    let frost = Rc::new(RefCell::new(None));
+    let frost_output = frost.clone();
     ui::application().run(move |cx| {
         design::font::install(cx);
         let window = ui::open_panel_window(cx, (480, 320), |_, cx| {
@@ -89,6 +108,10 @@ fn main() {
             cx.new(|_| ui::PanelRoot::new(view))
         })
         .unwrap();
+        let frost_window = ui::open_panel_window(cx, (320, 200), |_, cx| {
+            let view = cx.new(|_| Frost).into();
+            cx.new(|_| ui::PanelRoot::new(view))
+        }).unwrap();
         cx.spawn(async move |cx| {
             for _ in 0..100 {
                 cx.background_executor()
@@ -132,6 +155,8 @@ fn main() {
                             let leave = take(window, cx);
                             move_pointer(Hand::Left, Some(Vec2::new(40., 40.)), window, cx);
                             let corner = take(window, cx);
+                            move_pointer(Hand::Left, Some(Vec2::new(330., 125.)), window, cx);
+                            let foreground = take(window, cx);
                             (
                                 mode,
                                 translucent,
@@ -141,12 +166,22 @@ fn main() {
                                 right,
                                 leave,
                                 corner,
+                                foreground,
                             )
                         })
                         .unwrap();
                     output.borrow_mut().push(frames);
                 }
             }
+            *frost_output.borrow_mut() = Some(cx.update_window(frost_window.into(), |_, window, cx| {
+                Effects::default().set(cx);
+                window.refresh();
+                let baseline = ui::capture(window, cx).unwrap();
+                Effects { translucent: true, pointer_light: false }.set(cx);
+                window.refresh();
+                let blurred = ui::capture(window, cx).unwrap();
+                (window.scale_factor(), baseline, blurred)
+            }).unwrap());
             let frame = cx
                 .update_window(test_screen.into(), |_, window, cx| {
                     cx.set_global(Mode::Dark);
@@ -163,12 +198,21 @@ fn main() {
         .detach();
     });
     let results = results.borrow();
+    let frost = frost.borrow();
+    let (scale, baseline, blurred) = frost.as_ref().unwrap();
+    let a = pixel(blurred, *scale, 100., 140.);
+    let b = pixel(blurred, *scale, 102., 140.);
+    assert!((a[0] as i32 - b[0] as i32).abs() < 10, "ネイティブ GPU でも背面がぼける {a:?} {b:?}");
+    assert_eq!(pixel(baseline, *scale, 30., 30.), pixel(blurred, *scale, 30., 30.), "ぼかしを角丸の外へ漏らさない");
+    snapshot("native-frosted", blurred);
     snapshot(
         "test-screen",
         screen.borrow().as_ref().expect("確認画面を描画する"),
     );
     assert_eq!(results.len(), 4);
-    for (mode, translucent, scale, baseline, lit, right, leave, corner) in results.iter() {
+    for (mode, translucent, scale, baseline, lit, right, leave, corner, foreground) in
+        results.iter()
+    {
         let p = |frame, x, y| pixel(frame, *scale, x, y);
         let center = p(baseline, 120., 140.);
         let illuminated = p(lit, 120., 140.);
@@ -177,12 +221,10 @@ fn main() {
             !translucent,
             "{mode:?}: 透過フラグがアルファに反映される {center:?}"
         );
-        if *translucent {
-            assert!(
-                illuminated[3] > center[3],
-                "明るいテーマでも光が面のアルファに反映される"
-            );
-        }
+        assert_eq!(
+            illuminated[3], center[3],
+            "照明だけでは材質の不透明度を変えない"
+        );
         if *mode == Mode::Dark {
             assert!(
                 illuminated[0] > center[0] + 15,
@@ -204,11 +246,16 @@ fn main() {
             p(baseline, 25., 25.),
             "角丸の外には漏れない"
         );
-        assert_eq!(
-            p(lit, 320., 120.),
-            p(baseline, 320., 120.),
-            "操作部品の色は変えない"
+        let edge = p(baseline, 305., 130.);
+        let lit_edge = p(foreground, 305., 130.);
+        assert!(
+            (edge[0] as i32 - lit_edge[0] as i32).abs() > 8,
+            "{mode:?}: ボタンの輪郭にも照明が当たる {edge:?} -> {lit_edge:?}"
         );
+        if *mode == Mode::Light {
+            assert_ne!(illuminated[..3], center[..3], "白い面でも照明を識別できる");
+        }
+        snapshot(&format!("{mode:?}-{translucent}-foreground"), foreground);
         println!(
             "surface_effects: {mode:?} translucent={translucent} center={center:?} lit={illuminated:?}"
         );

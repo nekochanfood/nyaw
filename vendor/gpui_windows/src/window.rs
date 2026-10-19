@@ -625,6 +625,7 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
+        paint::remove(self.handle.window_id().as_u64());
         self.0.dialog_owner.close();
         // ユーザーが閉じたウィンドウは Windows がもう破棄している。そのハンドルを触ると
         // "Invalid window handle. (0x80070578)" がログに出るので、生きているときだけ片付ける。
@@ -1063,19 +1064,23 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn draw(&self, scene: &Scene) {
-        self.state
-            .renderer
-            .borrow_mut()
-            .draw(scene, self.state.background_appearance.get())
-            .log_err();
+        paint::with_window(self.handle.window_id().as_u64(), || {
+            self.state
+                .renderer
+                .borrow_mut()
+                .draw(scene, self.state.background_appearance.get())
+                .log_err();
+        });
     }
 
     #[cfg(any(test, feature = "test-support"))]
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
-        self.state
-            .renderer
-            .borrow_mut()
-            .render_to_image(scene, self.state.background_appearance.get())
+        paint::with_window(self.handle.window_id().as_u64(), || {
+            self.state
+                .renderer
+                .borrow_mut()
+                .render_to_image(scene, self.state.background_appearance.get())
+        })
     }
 
     fn sprite_atlas(&self) -> Arc<dyn PlatformAtlas> {
