@@ -73,7 +73,7 @@ fn scenario(emu: &Emu) {
         .run(|e| e.project(PANEL + Vec3::new(0.3, -0.2, 0.0)))
         .expect("panel is in front of the eyes");
     // カーソル自体の外で、面を照らす光が本番の入力・描画ループに追従することを確かめる。
-    let spill = at + Vec2::new(20., 0.);
+    let spill = at + Vec2::new(25., 0.);
     emu.point(None);
     std::thread::sleep(Duration::from_millis(200));
     let unlit = emu.color(spill);
