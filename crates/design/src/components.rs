@@ -1,6 +1,6 @@
 //! Components: 役割（[`Theme`]）と Constants だけで組む部品。生の色は書かない。
 //! 部品は `on_click` などをそのまま足せる（`Styled` / `InteractiveElement` を中の `Stateful<Div>` に委ねている）。
-//! ホバー・押下の色は [`duration_ms::NORMAL`] かけて OKLab で補間する（[`Motion`] が有効なときだけ）。
+//! 色は OKLab で補間し、押下は FAST、ホバーと復帰は NORMAL（[`Motion`] が有効なときだけ）。
 
 use std::time::Instant;
 
@@ -9,6 +9,7 @@ use gpui::{
     MouseButton, Pixels, Point, RenderOnce, SharedString, Stateful, StatefulInteractiveElement,
     StyleRefinement, Styled, Window, canvas, div, fill, point, prelude::*, px, rgba, size,
 };
+use palette::color_difference::Wcag21RelativeContrast;
 use palette::{FromColor, Mix, Oklab, Srgb};
 
 mod navigation;
@@ -42,6 +43,7 @@ struct Fade {
     from: u32,
     to: u32,
     start: Option<Instant>,
+    duration_ms: u64,
 }
 
 impl Fade {
@@ -50,8 +52,8 @@ impl Fade {
         let Some(start) = self.start else {
             return (self.to, false);
         };
-        let t = now.saturating_duration_since(start).as_secs_f32() * 1000.0
-            / duration_ms::NORMAL as f32;
+        let t =
+            now.saturating_duration_since(start).as_secs_f32() * 1000.0 / self.duration_ms as f32;
         if t >= 1.0 {
             return (self.to, false);
         }
@@ -71,6 +73,16 @@ fn mix(a: u32, b: u32, t: f32) -> u32 {
     let s: Srgb<u8> = Srgb::from_color(m).into_format();
     let alpha = ((a & 0xff) as f32 + ((b & 0xff) as f32 - (a & 0xff) as f32) * t).round() as u32;
     u32::from(s.red) << 24 | u32::from(s.green) << 16 | u32::from(s.blue) << 8 | alpha
+}
+
+// 強調ボタンは明暗が反転する。波紋・照明の余地も残して文字色を切り替える。
+fn button_ink(background: u32, normal: u32, pressed: u32) -> u32 {
+    let rgb = |c: u32| -> Srgb { Srgb::<u8>::from(c >> 8).into_format() };
+    if rgb(normal).relative_contrast(rgb(background)) >= 4. {
+        normal
+    } else {
+        pressed
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -131,6 +143,8 @@ pub struct Button {
     active: u32,
     /// 波紋の色（文字色）。
     ink: u32,
+    pressed_ink: Option<u32>,
+    selected: bool,
     ripple: bool,
     /// ホバー中にカーソルへ出す説明（[`Tooltips`]）。
     tooltip: Option<SharedString>,
@@ -153,6 +167,7 @@ impl Button {
     pub fn selected(mut self, selected: bool) -> Self {
         if selected {
             self.rest = self.active;
+            self.selected = true;
         }
         self
     }
@@ -273,6 +288,9 @@ fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
         hover,
         active,
         ink: fg,
+        pressed_ink: matches!(variant, Variant::Primary | Variant::Danger)
+            .then_some(theme.on_control_active),
+        selected: false,
         ripple: true,
         tooltip: None,
     }
@@ -307,6 +325,7 @@ impl RenderOnce for Button {
                 from: rest,
                 to: rest,
                 start: None,
+                duration_ms: duration_ms::NORMAL,
             },
             ripple: None,
         });
@@ -338,6 +357,11 @@ impl RenderOnce for Button {
                     from,
                     to: target,
                     start: Some(now),
+                    duration_ms: if p.pressed {
+                        duration_ms::FAST
+                    } else {
+                        duration_ms::NORMAL
+                    },
                 }
             });
             keep_drawing(window, cx);
@@ -348,6 +372,7 @@ impl RenderOnce for Button {
                     from: target,
                     to: target,
                     start: None,
+                    duration_ms: duration_ms::NORMAL,
                 }
             });
             target
@@ -376,7 +401,10 @@ impl RenderOnce for Button {
             }
         };
         let animated = cx.has_global::<Motion>();
-        let (ink, enabled) = (self.ink, self.ripple && animated);
+        let ink = self
+            .pressed_ink
+            .map_or(self.ink, |pressed| button_ink(color, self.ink, pressed));
+        let enabled = self.ripple && animated;
         let (over, leave) = (set(Some(true), None), set(Some(false), None));
         let (id, tip) = (self.id, self.tooltip.clone());
         let (down, up) = (set(None, Some(true)), set(None, Some(false)));
@@ -418,6 +446,7 @@ impl RenderOnce for Button {
                         let Some((r, a)) = ripple_frame(ms, reach) else {
                             return;
                         };
+                        let a = if p.pressed { a / 4 } else { a };
                         let circle = Bounds::new(
                             point(origin.x - px(r), origin.y - px(r)),
                             size(px(r * 2.0), px(r * 2.0)),
@@ -461,6 +490,17 @@ impl RenderOnce for Button {
         });
         self.base
             .bg(rgba(color))
+            .when(ink != self.ink, |base| base.text_color(rgba(ink)))
+            .when(p.pressed || self.selected, |base| {
+                base.shadow(vec![
+                    gpui::BoxShadow::new(px(0.), px(2.), gpui::hsla(0., 0., 0., 0.22))
+                        .blur_radius(px(2.))
+                        .inset(),
+                    gpui::BoxShadow::new(px(0.), px(-1.), gpui::hsla(0., 0., 1., 0.10))
+                        .blur_radius(px(1.))
+                        .inset(),
+                ])
+            })
             .children(wave)
             .on_hover(move |h, w, cx| {
                 if let Some(tip) = &tip {
@@ -808,7 +848,7 @@ pub fn sidebar_item(
         (
             theme.accent_bg_active,
             theme.accent_bg_active,
-            theme.accent_bg_active,
+            theme.control_on_background_active,
         )
     } else {
         (
@@ -1072,6 +1112,7 @@ mod tests {
             from: 0x000000ff,
             to: 0xffffffff,
             start: Some(t0),
+            duration_ms: duration_ms::NORMAL,
         };
         assert_eq!(f.at(t0), (0x000000ff, true));
         let (mid, moving) = f.at(t0 + Duration::from_millis(duration_ms::NORMAL / 2));
@@ -1087,6 +1128,56 @@ mod tests {
         // Ghost: 休止色は透明。ホバーへ向かう途中の背景は半透明であるべき。
         let mid = mix(0x80808000, 0x808080ff, 0.5);
         assert_eq!(mid & 0xff, 0x80, "{mid:08x}");
+    }
+
+    #[test]
+    fn press_settles_faster_than_hover_and_release() {
+        let start = Instant::now();
+        let press = Fade {
+            from: Theme::DARK.control_hover,
+            to: Theme::DARK.background,
+            start: Some(start),
+            duration_ms: duration_ms::FAST,
+        };
+        let returning = Fade {
+            duration_ms: duration_ms::NORMAL,
+            ..press
+        };
+        let at = start + Duration::from_millis(duration_ms::FAST);
+        assert_eq!(press.at(at), (Theme::DARK.background, false));
+        assert!(returning.at(at).1);
+    }
+
+    #[test]
+    fn all_buttons_sink_and_colored_ink_stays_readable_during_the_fade() {
+        for opaque in [Theme::DARK, Theme::LIGHT] {
+            for theme in [opaque, opaque.translucent()] {
+                for variant in [
+                    Variant::Default,
+                    Variant::OnBackground,
+                    Variant::Ghost,
+                    Variant::Primary,
+                    Variant::Danger,
+                ] {
+                    let button = base_button(&theme, "sample".into(), variant);
+                    assert_eq!(button.active, theme.background);
+                    if let Some(pressed_ink) = button.pressed_ink {
+                        for from in [button.rest, button.hover] {
+                            for step in 0..=100 {
+                                let background = mix(from, button.active, step as f32 / 100.);
+                                let ink = button_ink(background, button.ink, pressed_ink);
+                                let rgb =
+                                    |c: u32| -> Srgb { Srgb::<u8>::from(c >> 8).into_format() };
+                                assert!(
+                                    rgb(ink).relative_contrast(rgb(background)) >= 3.,
+                                    "明暗が反転する途中も太字の文字を読める"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -1120,6 +1211,7 @@ mod tests {
             from: 1,
             to: 0x3060c0ff,
             start: None,
+            duration_ms: duration_ms::NORMAL,
         };
         assert_eq!(f.at(Instant::now()), (0x3060c0ff, false));
     }

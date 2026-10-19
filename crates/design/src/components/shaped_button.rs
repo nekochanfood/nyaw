@@ -228,6 +228,7 @@ impl RenderOnce for ShapedButton {
                         if let Some((r, alpha)) =
                             super::ripple_frame(start.elapsed().as_secs_f32() * 1000., reach)
                         {
+                            let alpha = if current.pressed { alpha / 4 } else { alpha };
                             let circle = Bounds::new(
                                 origin - point(px(r), px(r)),
                                 size(px(2. * r), px(2. * r)),

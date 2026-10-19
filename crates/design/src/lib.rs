@@ -184,14 +184,18 @@ mod tests {
                             ],
                         ] {
                             let mut previous = luminance(card);
-                            for color in states {
+                            for (index, color) in states.into_iter().enumerate() {
                                 let shown = over(color, card);
                                 let lightness = luminance(shown);
-                                assert!(
-                                    lightness > previous,
-                                    "透過後もカード < 部品 < ホバー < 押下: {color:08x} {lightness} <= {previous}"
-                                );
-                                let text = if states[0] == theme.accent_control {
+                                if index < 2 {
+                                    assert!(lightness > previous, "透過後もカード < 部品 < ホバー");
+                                } else {
+                                    assert_eq!(color, theme.background, "押下は背景の色へ沈む");
+                                    assert!(lightness < luminance(card), "押下はカードより深い面");
+                                }
+                                let text = if index == 2 {
+                                    theme.on_control_active
+                                } else if states[0] == theme.accent_control {
                                     theme.on_accent_control
                                 } else if states[0] == theme.danger_control {
                                     theme.on_danger_control

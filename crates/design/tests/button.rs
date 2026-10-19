@@ -45,3 +45,62 @@ fn press_starts_a_ripple_unless_opted_out(cx: &mut TestAppContext) {
 fn no_ripple_opts_out(cx: &mut TestAppContext) {
     assert!(!animating_after_press(cx, true));
 }
+
+struct PressSample(Theme, Variant);
+
+impl Render for PressSample {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        design::components::card(&self.0)
+            .p(px(40.))
+            .child(button(&self.0, "press", "Press", self.1))
+    }
+}
+
+#[gpui::test]
+fn press_sinks_and_release_restores_hover_without_moving_the_hit_area(cx: &mut TestAppContext) {
+    for original in [Theme::DARK, Theme::LIGHT] {
+        for theme in [original, original.translucent()] {
+            for variant in [
+                Variant::Default,
+                Variant::OnBackground,
+                Variant::Ghost,
+                Variant::Primary,
+                Variant::Danger,
+            ] {
+                let (_, cx) = cx.add_window_view(|_, _| PressSample(theme, variant));
+                cx.simulate_resize(gpui::size(px(400.), px(200.)));
+                cx.run_until_parked();
+                let bounds = cx.debug_bounds("press").unwrap();
+                let at = bounds.center();
+                cx.simulate_mouse_move(at, None, Modifiers::none());
+                cx.run_until_parked();
+                let hover = cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                    window.painted_quads().last().unwrap().background
+                });
+                cx.simulate_mouse_down(at, MouseButton::Left, Modifiers::none());
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                    assert_eq!(
+                        window.painted_quads().last().unwrap().background.as_solid(),
+                        Some(gpui::rgba(theme.background).into()),
+                        "押している間は背景の色"
+                    );
+                });
+                assert_eq!(cx.debug_bounds("press").unwrap(), bounds);
+                cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+                cx.run_until_parked();
+                cx.update(|window, cx| {
+                    window.draw(cx).clear(cx);
+                    assert_eq!(
+                        window.painted_quads().last().unwrap().background,
+                        hover,
+                        "離すとホバーの色へ戻る"
+                    );
+                });
+                assert_eq!(cx.debug_bounds("press").unwrap(), bounds);
+            }
+        }
+    }
+}

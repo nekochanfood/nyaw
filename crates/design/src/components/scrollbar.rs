@@ -597,6 +597,7 @@ impl RenderOnce for Scrollbars {
                     from: rest,
                     to: rest,
                     start: None,
+                    duration_ms: crate::duration_ms::NORMAL,
                 },
                 vis: Smooth::rest(if always { 1.0 } else { 0.0 }),
                 seen: 0.0,
@@ -647,12 +648,14 @@ impl RenderOnce for Scrollbars {
                             from,
                             to,
                             start: Some(now),
+                            duration_ms: crate::duration_ms::NORMAL,
                         }
                     } else {
                         Fade {
                             from: to,
                             to,
                             start: None,
+                            duration_ms: crate::duration_ms::NORMAL,
                         }
                     };
                 }

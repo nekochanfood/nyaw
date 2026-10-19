@@ -80,6 +80,18 @@ fn move_pointer(hand: Hand, position: Option<Vec2>, window: &mut Window, cx: &mu
     }
 }
 
+fn button_event(down: bool, pos: Vec2, window: &mut Window, cx: &mut gpui::App) {
+    let mut bridge = ui::PointerBridge::default();
+    let event = if down {
+        kernel::PointerEvent::Down { pos }
+    } else {
+        kernel::PointerEvent::Up { pos }
+    };
+    for input in bridge.translate(event, kernel::PointerMode::Mouse) {
+        ui::dispatch_input(0, Hand::Left, input, window, cx);
+    }
+}
+
 fn snapshot(name: &str, frame: &ui::Frame) {
     let directory =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/surface-effects");
@@ -114,6 +126,8 @@ fn main() {
     let screen_output = screen.clone();
     let frost = Rc::new(RefCell::new(None));
     let frost_output = frost.clone();
+    let pressed = Rc::new(RefCell::new(Vec::new()));
+    let pressed_output = pressed.clone();
     ui::application().run(move |cx| {
         design::font::install(cx);
         let window = ui::open_panel_window(cx, (480, 320), |_, cx| {
@@ -223,6 +237,46 @@ fn main() {
                 })
                 .unwrap();
             *screen_output.borrow_mut() = Some(frame);
+            cx.update(|cx| cx.set_global(design::Motion::default()));
+            for mode in [Mode::Dark, Mode::Light] {
+                for (name, y) in [("default", 388.), ("primary", 452.)] {
+                    let pos = Vec2::new(150., y);
+                    cx.update_window(test_screen.into(), |_, window, cx| {
+                        cx.set_global(mode);
+                        move_pointer(Hand::Right, None, window, cx);
+                        move_pointer(Hand::Left, Some(pos), window, cx);
+                        button_event(true, pos, window, cx);
+                        window.refresh();
+                        ui::capture(window, cx).unwrap();
+                    })
+                    .unwrap();
+                    cx.background_executor()
+                        .timer(Duration::from_millis(150))
+                        .await;
+                    let (scale, down) = cx
+                        .update_window(test_screen.into(), |_, window, cx| {
+                            window.refresh();
+                            let frame = ui::capture(window, cx).unwrap();
+                            button_event(false, pos, window, cx);
+                            window.refresh();
+                            ui::capture(window, cx).unwrap();
+                            (window.scale_factor(), frame)
+                        })
+                        .unwrap();
+                    cx.background_executor()
+                        .timer(Duration::from_millis(230))
+                        .await;
+                    let up = cx
+                        .update_window(test_screen.into(), |_, window, cx| {
+                            window.refresh();
+                            ui::capture(window, cx).unwrap()
+                        })
+                        .unwrap();
+                    pressed_output
+                        .borrow_mut()
+                        .push((mode, name, y, scale, down, up));
+                }
+            }
             cx.update(|cx| cx.quit());
         })
         .detach();
@@ -246,6 +300,30 @@ fn main() {
     let (dark, light) = screen.as_ref().expect("確認画面を描画する");
     snapshot("test-screen", dark);
     snapshot("test-screen-light", light);
+    for (mode, name, y, scale, down, up) in pressed.borrow().iter() {
+        snapshot(&format!("{mode:?}-{name}-pressed"), down);
+        snapshot(&format!("{mode:?}-{name}-released"), up);
+        let surface = pixel(down, *scale, 80., *y);
+        let card = pixel(down, *scale, 80., 420.);
+        let released = pixel(up, *scale, 80., *y);
+        let brightness =
+            |p: [u8; 4]| p[0] as f32 * 0.2126 + p[1] as f32 * 0.7152 + p[2] as f32 * 0.0722;
+        assert!(
+            brightness(surface) < brightness(card),
+            "{mode:?} {name}: 押下はカードより深い色 {surface:?} {card:?}"
+        );
+        assert!(
+            brightness(released) > brightness(card),
+            "解放するとホバーの明るい面へ戻る {released:?} {card:?}"
+        );
+        // 見本の中心はポインタより 1px 下。上下の縁の同じ深さで比較する。
+        let top = pixel(down, *scale, 150., *y - 25.);
+        let bottom = pixel(down, *scale, 150., *y + 26.);
+        assert!(
+            brightness(top) < brightness(bottom),
+            "{mode:?} {name}: 押下は上が暗く下が明るい内側の影 {top:?} {bottom:?}"
+        );
+    }
     assert_eq!(results.len(), 4);
     for (mode, translucent, scale, baseline, lit, right, leave, corner, foreground) in
         results.iter()
