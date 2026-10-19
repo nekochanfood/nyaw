@@ -50,10 +50,10 @@ fn snapshot(name: &str, frame: &ui::Frame) {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/surface-effects");
     std::fs::create_dir_all(&directory).unwrap();
     let mut ppm = format!("P6\n{} {}\n255\n", frame.width, frame.height).into_bytes();
-    for (index, pixel) in frame.rgba.chunks_exact(4).enumerate() {
+    for (index, pixel) in frame.rgba.as_chunks::<4>().0.iter().enumerate() {
         let x = index as u32 % frame.width;
         let y = index as u32 / frame.width;
-        let background = if (x / 32 + y / 32) % 2 == 0 {
+        let background = if (x / 32 + y / 32).is_multiple_of(2) {
             [75, 94, 126]
         } else {
             [112, 83, 119]

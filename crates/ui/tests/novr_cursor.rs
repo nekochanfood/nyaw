@@ -61,7 +61,12 @@ fn snapshot(emu: &Emu, name: &str) {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp/surface-effects");
     std::fs::create_dir_all(&directory).unwrap();
     let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
-    ppm.extend(rgba.chunks_exact(4).flat_map(|p| p[..3].iter().copied()));
+    ppm.extend(
+        rgba.as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|p| p[..3].iter().copied()),
+    );
     std::fs::write(directory.join(format!("{name}.ppm")), ppm).unwrap();
 }
 
