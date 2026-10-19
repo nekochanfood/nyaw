@@ -1620,12 +1620,44 @@ impl WgpuRendererCore {
             for batch in scene.batches() {
                 match batch {
                     PrimitiveBatch::Quads(range) if effects => {
-                        for index in range {
+                        let mut index = range.start;
+                        while index < range.end {
+                            let eligible = is_material_quad(&scene.quads[index], material.scale);
+                            let count = scene.quads[index..range.end]
+                                .iter()
+                                .take_while(|q| is_material_quad(q, material.scale) == eligible)
+                                .count();
+                            if !eligible {
+                                self.draw_instances(
+                                    &instance_bindings.quads,
+                                    &self.resources.pipelines.quads,
+                                    index as u32..(index + count) as u32,
+                                    &mut pass,
+                                );
+                                index += count;
+                                continue;
+                            }
+                            let length =
+                                paint::batch_len(&scene.quads[index..index + count], |q| {
+                                    let b = q.bounds.intersect(&q.content_mask.bounds);
+                                    let pad = 8. * material.scale + 1.;
+                                    [
+                                        b.origin.x.0 - pad,
+                                        b.origin.y.0 - pad,
+                                        b.origin.x.0 + b.size.width.0 + pad,
+                                        b.origin.y.0 + b.size.height.0 + pad,
+                                    ]
+                                });
+                            let start = index;
+                            index += length;
                             drop(pass);
                             let (backdrop, group) =
                                 self.resources.material_backdrop.as_ref().unwrap();
-                            let quad = &scene.quads[index];
-                            let b = quad.bounds.intersect(&quad.content_mask.bounds);
+                            let b = scene.quads[start..index]
+                                .iter()
+                                .map(|q| q.bounds.intersect(&q.content_mask.bounds))
+                                .reduce(|a, b| a.union(&b))
+                                .unwrap();
                             let pad = 16. * material.scale;
                             let left = (b.origin.x.0 - pad).max(0.) as u32;
                             let top = (b.origin.y.0 - pad).max(0.) as u32;
@@ -1677,7 +1709,7 @@ impl WgpuRendererCore {
                                 self.draw_instances(
                                     &instance_bindings.quads,
                                     &self.resources.pipelines.material_quads,
-                                    index as u32..index as u32 + 1,
+                                    start as u32..index as u32,
                                     &mut pass,
                                 );
                             }
@@ -3328,4 +3360,15 @@ mod tests {
             ]
         );
     }
+}
+
+// NYAW: レイアウトの枠・区切り線・薄い波紋には材質の退避を増やさない。
+fn is_material_quad(q: &gpui::Quad, scale: f32) -> bool {
+    q.background.as_solid().is_some_and(|c| c.a > 0.25)
+        && (q.bounds.size.width.0.min(q.bounds.size.height.0) >= 8. * scale
+            || q.corner_radii.top_left.0
+                + q.corner_radii.top_right.0
+                + q.corner_radii.bottom_left.0
+                + q.corner_radii.bottom_right.0
+                > 0.)
 }

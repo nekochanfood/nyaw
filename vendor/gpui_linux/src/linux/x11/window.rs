@@ -881,8 +881,8 @@ pub(crate) struct X11Window(pub X11WindowStatePtr);
 
 impl Drop for X11Window {
     fn drop(&mut self) {
-        paint::remove(self.0.handle.window_id().as_u64());
         let mut state = self.0.state.borrow_mut();
+        paint::remove(state.handle.window_id().as_u64());
 
         if let Some(parent) = state.parent.as_ref() {
             parent.state.borrow_mut().children.remove(&self.0.x_window);
@@ -1776,7 +1776,7 @@ impl PlatformWindow for X11Window {
             return;
         }
 
-        paint::with_window(self.0.handle.window_id().as_u64(), || renderer.draw(scene));
+        paint::with_window(inner.handle.window_id().as_u64(), || renderer.draw(scene));
 
         if renderer.needs_redraw() {
             inner.force_render_after_recovery = true;

@@ -22,22 +22,27 @@ fn quad(x: f32, y: f32, width: f32, height: f32, color: u32, radius: f32) -> Qua
     }
 }
 
+fn stripes() -> Scene {
+    let mut scene = Scene::default();
+    for x in 0..160 {
+        scene.insert_primitive(quad(
+            x as f32 * 2.,
+            0.,
+            2.,
+            200.,
+            if x % 2 == 0 { 0x000000ff } else { 0xffffffff },
+            0.,
+        ));
+    }
+    scene
+}
+
 #[test]
 #[ignore = "実 GPU が必要"]
 fn wgpu_material_blurs_backdrop_and_lights_controls_in_both_themes() {
     let mut renderer = gpui_wgpu::WgpuHeadlessRenderer::new().unwrap();
     for color in [0x282b2eff, 0xfefefeff] {
-        let mut scene = Scene::default();
-        for x in 0..160 {
-            scene.insert_primitive(quad(
-                x as f32 * 2.,
-                0.,
-                2.,
-                200.,
-                if x % 2 == 0 { 0x000000ff } else { 0xffffffff },
-                0.,
-            ));
-        }
+        let mut scene = stripes();
         scene.insert_primitive(quad(30., 30., 260., 140., color, 24.));
         scene.insert_primitive(quad(
             180.,
@@ -53,7 +58,13 @@ fn wgpu_material_blurs_backdrop_and_lights_controls_in_both_themes() {
         ));
         let mut path = gpui::PathBuilder::fill();
         path.move_to(point(gpui::px(50.), gpui::px(60.)));
-        for (x, y) in [(135., 60.), (135., 85.), (115., 85.), (115., 114.), (50., 114.)] {
+        for (x, y) in [
+            (135., 60.),
+            (135., 85.),
+            (115., 85.),
+            (115., 114.),
+            (50., 114.),
+        ] {
             path.line_to(point(gpui::px(x), gpui::px(y)));
         }
         path.close();
@@ -104,11 +115,34 @@ fn wgpu_material_blurs_backdrop_and_lights_controls_in_both_themes() {
             (a[0] as i32 - b[0] as i32).abs() > 8,
             "明暗の両テーマで操作部品の輪郭が照らされる: {a:?} -> {b:?}"
         );
-        assert_ne!(frosted.get_pixel(50, 85), lit.get_pixel(50, 85), "任意の輪郭を持つキーのパスも照らす");
+        if color == 0x282b2eff {
+            assert!(b[0] > a[0], "暗い部品の輪郭は反射で明るくなる");
+        }
+        assert_ne!(
+            frosted.get_pixel(50, 85),
+            lit.get_pixel(50, 85),
+            "任意の輪郭を持つキーのパスも照らす"
+        );
         if color == 0xfefefeff {
-            assert!((frosted.get_pixel(230, 85).0[0] as i32 - frosted.get_pixel(230, 130).0[0] as i32).abs() > 10,
-                "透過中も明るい地とボタンを識別できる");
+            assert!(
+                (frosted.get_pixel(230, 85).0[0] as i32 - frosted.get_pixel(230, 130).0[0] as i32)
+                    .abs()
+                    > 10,
+                "透過中も明るい地とボタンを識別できる"
+            );
         }
     }
+    let mut scene = stripes();
+    scene.insert_primitive(quad(30., 30., 260., 140., 0xffffff01, 24.));
+    scene.finish();
+    let ghost = paint::with_window(99, || {
+        renderer
+            .render_scene_to_image(&scene, size(DevicePixels(320), DevicePixels(200)))
+            .unwrap()
+    });
+    assert!(
+        ghost.get_pixel(100, 140).0[0] < 3,
+        "ghost のフェード末尾に、ぼかしだけを残さない"
+    );
     paint::remove(99);
 }

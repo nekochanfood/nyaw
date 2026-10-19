@@ -771,10 +771,35 @@ impl DirectXRenderer {
         if material.translucent == 0 && material.light == 0 {
             return self.draw_quads(range.start, range.len());
         }
-        for index in range {
-            let b = scene.quads[index]
-                .bounds
-                .intersect(&scene.quads[index].content_mask.bounds);
+        let mut index = range.start;
+        while index < range.end {
+            let eligible = is_material_quad(&scene.quads[index], material.scale);
+            let count = scene.quads[index..range.end]
+                .iter()
+                .take_while(|q| is_material_quad(q, material.scale) == eligible)
+                .count();
+            if !eligible {
+                self.draw_quads(index, count)?;
+                index += count;
+                continue;
+            }
+            let length = paint::batch_len(&scene.quads[index..index + count], |q| {
+                let b = q.bounds.intersect(&q.content_mask.bounds);
+                let pad = 8. * material.scale + 1.;
+                [
+                    b.origin.x.0 - pad,
+                    b.origin.y.0 - pad,
+                    b.origin.x.0 + b.size.width.0 + pad,
+                    b.origin.y.0 + b.size.height.0 + pad,
+                ]
+            });
+            let start = index;
+            index += length;
+            let b = scene.quads[start..index]
+                .iter()
+                .map(|q| q.bounds.intersect(&q.content_mask.bounds))
+                .reduce(|a, b| a.union(&b))
+                .unwrap();
             if !self.prepare_material_backdrop(b)? {
                 continue;
             }
@@ -787,7 +812,7 @@ impl DirectXRenderer {
             update_batch_start(
                 context,
                 self.globals.batch_params_buffer.as_ref().unwrap(),
-                index as u32,
+                start as u32,
             )?;
             set_pipeline_state(
                 context,
@@ -798,7 +823,7 @@ impl DirectXRenderer {
                 &self.globals.material_blend,
             );
             unsafe {
-                context.DrawInstanced(4, 1, 0, 0);
+                context.DrawInstanced(4, length as u32, 0, 0);
             }
         }
         unsafe {
@@ -2309,4 +2334,15 @@ mod dxgi {
             number & 0xFFFF
         ))
     }
+}
+
+// NYAW: レイアウトの枠・区切り線・薄い波紋には材質の退避を増やさない。
+fn is_material_quad(q: &Quad, scale: f32) -> bool {
+    q.background.as_solid().is_some_and(|c| c.a > 0.25)
+        && (q.bounds.size.width.0.min(q.bounds.size.height.0) >= 8. * scale
+            || q.corner_radii.top_left.0
+                + q.corner_radii.top_right.0
+                + q.corner_radii.bottom_left.0
+                + q.corner_radii.bottom_right.0
+                > 0.)
 }

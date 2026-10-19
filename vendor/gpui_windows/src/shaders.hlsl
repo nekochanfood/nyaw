@@ -886,7 +886,7 @@ float3 material_lighting(float3 rgb, float2 position, float2 normal, float depth
                 float rim = exp(-depth / 1.5) * indirect;
                 rgb = lerp(rgb, lerp(float3(1, 1, 1), float3(0.88, 0.95, 1), light_surface),
                     indirect * 0.065 + direct * 0.025);
-                rgb = lerp(rgb, float3(1, 1, 1), rim * saturate(facing) * 0.55);
+                rgb = lerp(rgb, float3(1, 1, 1), rim * (0.5 + 0.5 * saturate(facing)) * 0.55);
                 rgb *= 1 - rim * (0.12 + light_surface * 0.18) * saturate(-facing);
             }
         }
@@ -897,11 +897,15 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
     float4 color = quad_color(input);
     if (material_translucent == 0 && material_light == 0) return color;
     Quad quad = quads[input.quad_id];
+    bool surface = quad.background.tag == 0 && quad.background.solid.a > 0.25 && (min(quad.bounds.size.x, quad.bounds.size.y) >= 8 * max(material_scale, 0.125) ||
+        quad.corner_radii.top_left + quad.corner_radii.top_right + quad.corner_radii.bottom_left + quad.corner_radii.bottom_right > 0);
+    if (!surface) return color;
     float4 original = backdrop_at(input.position.xy);
     float4 behind = original;
     float scale = max(material_scale, 0.125);
-    bool surface = quad.background.solid.a > 0 && min(quad.bounds.size.x, quad.bounds.size.y) >= 8 * scale;
+
     if (surface && color.a > 0) {
+        float strength = smoothstep(0.25, 1, quad.background.solid.a);
         float2 p = input.position.xy - quad.bounds.origin - quad.bounds.size / 2;
         float radius = pick_corner_radius(p, quad.corner_radii);
         float2 q = abs(p) - quad.bounds.size / 2 + radius;
@@ -916,13 +920,13 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
         if (material_translucent != 0) {
             float4 blurred = frosted_backdrop(input.position.xy, scale);
             // ぼかしをアルファの輪郭へにじませない。透明なパネル外は従来のまま。
-            float coverage = saturate(0.5 - sdf);
+            float coverage = saturate(0.5 - sdf) * strength;
             behind = lerp(original, blurred, coverage);
-            color.a *= min(quad.bounds.size.x, quad.bounds.size.y) > 100 * scale ? 0.88 : 0.94;
+            color.a *= lerp(1, min(quad.bounds.size.x, quad.bounds.size.y) > 100 * scale ? 0.88 : 0.94, strength);
             // 白い地でも操作部品が溶けない、細い材質の縁。
-            color.rgb = lerp(color.rgb, lerp(float3(1, 1, 1), float3(0, 0, 0), light_surface), edge * 0.13);
+            color.rgb = lerp(color.rgb, lerp(float3(1, 1, 1), float3(0, 0, 0), light_surface), edge * 0.13 * strength);
         }
-        color.rgb = material_lighting(color.rgb, input.position.xy, normal, depth, scale);
+        color.rgb = lerp(color.rgb, material_lighting(color.rgb, input.position.xy, normal, depth, scale), strength);
     }
     // 背景を置換してから合成する。通常の source-over では鮮明な背面が残ってしまう。
     return float4(color.rgb * color.a + behind.rgb * (1 - color.a), color.a + behind.a * (1 - color.a));

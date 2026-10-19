@@ -36,6 +36,28 @@ pub fn current() -> Material {
     CURRENT.get()
 }
 
+/// 読み書きの範囲が重ならない連続した部品は、背面の退避をまとめられる。
+/// 各矩形はぼかしの届く余白を含む [左, 上, 右, 下]。
+pub fn batch_len<T>(items: &[T], bounds: impl Fn(&T) -> [f32; 4]) -> usize {
+    let Some(first) = items.first() else {
+        return 0;
+    };
+    let mut union = bounds(first);
+    for (index, item) in items.iter().enumerate().skip(1) {
+        let b = bounds(item);
+        if b[0] < union[2] && b[2] > union[0] && b[1] < union[3] && b[3] > union[1] {
+            return index;
+        }
+        union = [
+            union[0].min(b[0]),
+            union[1].min(b[1]),
+            union[2].max(b[2]),
+            union[3].max(b[3]),
+        ];
+    }
+    items.len()
+}
+
 /// 同じスレッドの複数ウィンドウ・入れ子の描画でも、光源を取り違えない。
 pub fn with_window<R>(window: u64, draw: impl FnOnce() -> R) -> R {
     struct Restore(Material);
@@ -52,6 +74,14 @@ pub fn with_window<R>(window: u64, draw: impl FnOnce() -> R) -> R {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batches_only_independent_reads_and_writes() {
+        let rectangles = [[0., 0., 10., 10.], [12., 0., 22., 10.], [20., 0., 30., 10.]];
+        assert_eq!(batch_len(&rectangles, |b| *b), 2);
+        assert_eq!(batch_len(&rectangles[..2], |b| *b), 2);
+        assert_eq!(batch_len(&rectangles[..0], |b| *b), 0);
+    }
 
     #[test]
     fn isolates_windows_and_restores_after_nested_draws_and_unwind() {
