@@ -1225,7 +1225,7 @@ impl Screen {
         })
     }
 
-    fn now_playing(&mut self, cx: &mut Context<Self>) -> Div {
+    fn now_playing(&mut self, cx: &mut Context<Self>) -> design::Surface {
         self.poll_sources();
         let Some(m) = cx.global::<PanelControl>().media.clone() else {
             let theme = Theme::current(cx);
@@ -1627,7 +1627,7 @@ impl Screen {
     /// ランチャー: 上に検索欄、その下をスクロールする 1 本のリストにして、ニャプリ・区切り線・起動中のアプリ・区切り線・
     /// 全部のアプリ（名前の順）を並べる。検索すると、どれも名前に打った文字を含むものだけになる。
     /// リストは見えている行だけを組み立てる（アプリは数百個あり、全部のタイルを毎回組むと 1 フレームに収まらない）。
-    fn apps_page(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Div {
+    fn apps_page(&mut self, theme: &Theme, cx: &mut Context<Self>) -> design::Surface {
         self.poll_sources();
         let launcher = self.layout_launcher(cx);
         if launcher.rows != self.launcher.rows {
@@ -1990,7 +1990,7 @@ impl Screen {
         theme: &Theme,
         time_width: gpui::Pixels,
         cx: &mut Context<Self>,
-    ) -> Div {
+    ) -> design::Surface {
         let now = chrono::Local::now();
         let ctl = cx.global::<PanelControl>();
         let mut batteries = ctl.batteries.clone();

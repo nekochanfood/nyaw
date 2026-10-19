@@ -455,7 +455,7 @@ impl NyappView {
 
     fn stack(
         &self,
-        base: Div,
+        base: impl Styled + ParentElement + InteractiveElement + IntoElement,
         s: &Stack,
         path: &str,
         row: bool,

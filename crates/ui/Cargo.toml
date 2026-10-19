@@ -61,3 +61,7 @@ harness = false
 [[test]]
 name = "nav_swipe"
 harness = false
+
+[[test]]
+name = "surface_effects"
+harness = false

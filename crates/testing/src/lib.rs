@@ -284,7 +284,7 @@ fn row() -> Div {
 }
 
 /// 見出し付きのカード。中身は縦に並べる。
-fn section(theme: &Theme, title: impl Into<SharedString>) -> Div {
+fn section(theme: &Theme, title: impl Into<SharedString>) -> design::Surface {
     components::card(theme)
         .p(px(spacing::LG))
         .flex()

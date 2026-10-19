@@ -33,6 +33,8 @@ use profiler::{Profiler, ProfilerView, Stages};
 /// 方式は押した瞬間に決め、離すまで変えない。
 #[derive(Debug, Default)]
 pub struct PointerBridge {
+    /// 入力の解釈（スワイプなど）によらない、面を照らす位置。
+    light: Option<Point<Pixels>>,
     pos: Point<Pixels>,
     pressed: bool,
     button: Option<MouseButton>,
@@ -79,6 +81,15 @@ pub const SWIPE_SLOP_DEG: f32 = 1.0;
 impl PointerBridge {
     pub fn translate(&mut self, ev: PointerEvent, mode: PointerMode) -> Vec<PlatformInput> {
         let at = |p: Vec2| Point::new(px(p.x), px(p.y));
+        self.light = match ev {
+            PointerEvent::Leave => None,
+            PointerEvent::Move { pos }
+            | PointerEvent::Down { pos }
+            | PointerEvent::Up { pos }
+            | PointerEvent::DownButton { pos, .. }
+            | PointerEvent::UpButton { pos, .. }
+            | PointerEvent::Scroll { pos, .. } => Some(at(pos)),
+        };
         if let Some(t) = &mut self.touch {
             match ev {
                 PointerEvent::Move { .. } if t.held => return self.mouse(ev),
@@ -508,6 +519,20 @@ pub fn dispatch_input(
     window: &mut Window,
     cx: &mut App,
 ) {
+    let source = match hand {
+        Hand::Left => 0,
+        Hand::Right => 1,
+    };
+    let position = match &input {
+        PlatformInput::MouseMove(e) => Some(Some(e.position)),
+        PlatformInput::MouseDown(e) => Some(Some(e.position)),
+        PlatformInput::MouseUp(e) => Some(Some(e.position)),
+        PlatformInput::MouseExited(_) => Some(None),
+        _ => None,
+    };
+    if let Some(position) = position {
+        design::SurfacePointers::set(window, source, position, cx);
+    }
     if matches!(input, PlatformInput::MouseDown(_)) {
         keyboard::pointer_selected(Some(panel), cx);
     }
@@ -1360,6 +1385,7 @@ pub fn run_with(
     application().run(move |cx: &mut App| {
         // 部品のトランジションを有効にする（テストのキットは置かない）。
         cx.set_global(design::Motion::default());
+        cx.set_global(design::Effects::ENABLED);
         design::font::install(cx);
         if let Some(p) = profiler {
             cx.set_global(with_budget(p));
@@ -1476,6 +1502,7 @@ pub fn run_with(
                     if kernel.panel(panel).closed {
                         cx.update(|cx| {
                             sync_panel(&mut kernel, panel, cx);
+                            design::SurfacePointers::remove(window.window_id(), cx);
                             let _ = cx.update_window(window, |_, window, _| window.remove_window());
                         });
                         slots.last[panel] = None;
@@ -1489,6 +1516,19 @@ pub fn run_with(
                         slots.drawn[panel] = None;
                     }
                     slots.seen[panel] = visible;
+                    let light_changed = cx
+                        .update_window(window, |_, window, cx| {
+                            [Hand::Left, Hand::Right].into_iter().enumerate().fold(
+                                false,
+                                |changed, (source, hand)| {
+                                    let position =
+                                        bridges.get(&(panel, hand)).and_then(|b| b.light);
+                                    design::SurfacePointers::set(window, source, position, cx)
+                                        || changed
+                                },
+                            )
+                        })
+                        .unwrap_or(false);
                     // ボタンを押していない Move だけなら、変わりうるのはホバーの見た目だけ（カーソルは別のパネルで毎フレーム動く）。
                     // 描き直しを HOVER_REDRAW ごとに間引き、間引いた分は後で描く（読み戻しはゲーム中 1 回数 ms 掛かる）。
                     let hover_only = !inputs.is_empty()
@@ -1496,7 +1536,7 @@ pub fn run_with(
                             PlatformInput::MouseMove(m) => m.pressed_button.is_none(),
                             _ => false,
                         });
-                    if hover_only {
+                    if hover_only || light_changed {
                         hover_pending.insert(panel);
                     }
                     let hover_due = hover_pending.contains(&panel)
@@ -1950,6 +1990,38 @@ fn open_panel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn touch_light_tracks_the_finger_even_when_input_is_deferred() {
+        let mut bridge = PointerBridge::default();
+        let start = Vec2::new(100., 100.);
+        assert!(
+            bridge
+                .translate(PointerEvent::Down { pos: start }, PointerMode::Touch)
+                .is_empty()
+        );
+        assert_eq!(bridge.light, Some(Point::new(px(100.), px(100.))));
+        let pos = Vec2::new(104., 103.);
+        assert!(
+            bridge
+                .translate(PointerEvent::Move { pos }, PointerMode::Touch)
+                .is_empty()
+        );
+        assert_eq!(bridge.light, Some(Point::new(px(104.), px(103.))));
+        bridge.translate(
+            PointerEvent::Move {
+                pos: Vec2::new(104., 160.),
+            },
+            PointerMode::Touch,
+        );
+        assert_eq!(
+            bridge.light,
+            Some(Point::new(px(104.), px(160.))),
+            "スワイプも現在位置で照らす"
+        );
+        bridge.translate(PointerEvent::Leave, PointerMode::Touch);
+        assert_eq!(bridge.light, None);
+    }
 
     #[test]
     fn click_and_scroll_recheck_stationary_hover() {
