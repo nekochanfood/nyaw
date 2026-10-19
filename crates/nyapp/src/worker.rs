@@ -399,6 +399,9 @@ fn read_frame(input: &mut impl Read, max: usize) -> Result<Vec<u8>, Error> {
 
 /// `--nyapp-worker` の入口。入力を読む前に OS の制限を掛ける。
 pub fn main() -> Result<(), Error> {
+    if !crate::NORMAL_NYAPPS_ENABLED {
+        return Err(Error::new("nyapps are disabled"));
+    }
     FORWARD_LOGS.store(true, Ordering::Relaxed);
     platform::confine()?;
     let mut input = std::io::stdin().lock();

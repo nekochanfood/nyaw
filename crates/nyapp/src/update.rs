@@ -98,6 +98,10 @@ pub fn update(app: &Installed) -> Result<Option<Installed>, Error> {
 }
 
 pub(crate) fn update_into(dir: &Path, app: &Installed) -> Result<Option<Installed>, Error> {
+    // 更新情報を取りに行く前に止める（落としてから install_into で断るのは無駄）。
+    if !crate::NORMAL_NYAPPS_ENABLED {
+        return Err(Error::new("nyapps are disabled"));
+    }
     let Some(feed) = check(app)? else {
         return Ok(None);
     };
