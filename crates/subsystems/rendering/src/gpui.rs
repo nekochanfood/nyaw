@@ -27,11 +27,7 @@ pub fn capture(window: &mut Window, cx: &mut App) -> gpui::Result<Frame> {
 /// 次のフレームの [`collect`] か、次の `read_back` で受け取る。
 pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
     let img = window.render_to_image()?;
-    Ok(Frame {
-        width: img.width(),
-        height: img.height(),
-        rgba: img.into_raw(),
-    })
+    Ok(straight_alpha(img.width(), img.height(), img.into_raw()))
 }
 
 /// 前の [`read_back`] で積んだ読み戻しを、描き直さずに受け取る。積んでいなければ `None`。
@@ -40,11 +36,41 @@ pub fn collect(window: &mut Window) -> Option<Frame> {
     let img = gpui_windows::collect_readback(|| window.render_to_image());
     #[cfg(target_os = "linux")]
     let img = gpui_wgpu::collect_readback(|| window.render_to_image());
-    img.ok().map(|img| Frame {
-        width: img.width(),
-        height: img.height(),
-        rgba: img.into_raw(),
-    })
+    img.ok()
+        .map(|img| straight_alpha(img.width(), img.height(), img.into_raw()))
+}
+
+/// GPU の合成結果は premultiplied alpha。VR / novr に渡す RGBA は straight alpha にそろえる。
+fn straight_alpha(width: u32, height: u32, mut rgba: Vec<u8>) -> Frame {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        match pixel[3] {
+            255 => {}
+            0 => pixel[..3].fill(0),
+            alpha => {
+                for channel in &mut pixel[..3] {
+                    *channel = ((u32::from(*channel) * 255 + u32::from(alpha) / 2)
+                        / u32::from(alpha))
+                    .min(255) as u8;
+                }
+            }
+        }
+    }
+    Frame {
+        width,
+        height,
+        rgba,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn readback_uses_straight_alpha_without_darkening_translucent_colors() {
+        let frame = straight_alpha(3, 1, vec![32, 64, 96, 128, 12, 34, 56, 255, 12, 34, 56, 0]);
+        assert_eq!(frame.rgba, [64, 128, 191, 128, 12, 34, 56, 255, 0, 0, 0, 0]);
+    }
 }
 
 /// 指定された表示方針でウィンドウを開く。Windows の非表示ウィンドウのレンダーターゲットは

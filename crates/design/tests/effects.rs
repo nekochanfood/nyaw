@@ -28,12 +28,13 @@ fn effects_toggle_independently_without_fading_content(cx: &mut TestAppContext) 
                 SurfacePointers::set(window, 0, Some(point(px(160.), px(140.))), cx);
                 window.draw(cx).clear(cx);
                 let quads = window.painted_quads();
+                let original: gpui::Hsla = rgba(Theme::DARK.card).into();
                 let card = quads
                     .iter()
                     .find_map(|q| {
-                        (q.bounds.size.width.0 == 352. * window.scale_factor())
-                            .then(|| q.background.as_solid())
-                            .flatten()
+                        q.background
+                            .as_solid()
+                            .filter(|c| (c.h, c.s, c.l) == (original.h, original.s, original.l))
                     })
                     .expect("カードの面");
                 assert!((card.a - if translucent { 0.86 } else { 1. }).abs() < 0.001);

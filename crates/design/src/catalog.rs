@@ -681,7 +681,7 @@ impl Render for Catalog {
                     .try_global::<components::TooltipSource>()
                     .and_then(|s| s.0)
                     .unwrap_or(0);
-                crate::SurfacePointers::set(window, source, Some(event.position), cx);
+                crate::SurfacePointers::set(window, usize::from(source), Some(event.position), cx);
             })
             .on_hover(|hovered, window, cx| {
                 if !hovered {
@@ -689,7 +689,7 @@ impl Render for Catalog {
                         .try_global::<components::TooltipSource>()
                         .and_then(|s| s.0)
                         .unwrap_or(0);
-                    crate::SurfacePointers::set(window, source, None, cx);
+                    crate::SurfacePointers::set(window, usize::from(source), None, cx);
                 }
             })
     }

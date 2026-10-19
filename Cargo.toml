@@ -72,6 +72,10 @@ nyapp.workspace = true
 [profile.dev.package.testkit]
 opt-level = 2
 
+# 半透明の UI は読み戻し時に全画素のアルファ形式を直すので、デバッグでも画素処理を最適化する。
+[profile.dev.package.rendering]
+opt-level = 2
+
 # novr のエミュレーターは毎フレーム全画素を CPU で合成するので、デバッグビルドでも最適化する
 [profile.dev.package.vr]
 opt-level = 2
