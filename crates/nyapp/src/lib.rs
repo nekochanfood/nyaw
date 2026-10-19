@@ -29,6 +29,10 @@ use gpui::App;
 use kernel::PanelId;
 use ui::PanelControl;
 
+/// 通常のニャプリ（システムのもの以外、`installed` から読むパッケージ）を読み込むか。`false` にすると、debug でも
+/// release でも、一覧に出さず・入れさせず・起動させない。万一のときにリリースで止めるためのもの。
+pub const NORMAL_NYAPPS_ENABLED: bool = true;
+
 pub use installed::Installed;
 pub use manifest::{Manifest, Permission};
 pub use nyapp_sdk::Activity;

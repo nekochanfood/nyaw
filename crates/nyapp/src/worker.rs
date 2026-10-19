@@ -97,6 +97,9 @@ impl RemoteSandbox {
         id: &str,
         language: &'static str,
     ) -> Result<Channel, Error> {
+        if !crate::NORMAL_NYAPPS_ENABLED {
+            return Err(Error::new("nyapps are disabled"));
+        }
         if !crate::manifest::valid_id(id) || crate::system::is_system(id) {
             return Err(Error::new("invalid external nyapp id"));
         }

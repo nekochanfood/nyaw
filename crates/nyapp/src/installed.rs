@@ -44,6 +44,9 @@ pub fn appdata(id: &str) -> Option<PathBuf> {
 /// 入っているものを名前の順に。読めないもの・ファイル名と ID が違うもの・システムの ID を名乗るものは、
 /// ログに残して外す。
 pub fn scan() -> Vec<Installed> {
+    if !crate::NORMAL_NYAPPS_ENABLED {
+        return Vec::new();
+    }
     dir().map(|d| scan_dir(&d)).unwrap_or_default()
 }
 
@@ -99,6 +102,9 @@ pub fn install(src: &Path) -> Result<Installed, Error> {
 }
 
 pub(crate) fn install_into(dir: &Path, src: &Path) -> Result<Installed, Error> {
+    if !crate::NORMAL_NYAPPS_ENABLED {
+        return Err(Error::new("nyapps are disabled"));
+    }
     let (manifest, icon) = package::read_listing(src)?;
     if system::is_system(&manifest.id) {
         return Err(Error::new(format!("{} is a system nyapp", manifest.id)));

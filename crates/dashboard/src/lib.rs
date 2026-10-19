@@ -1672,33 +1672,36 @@ impl Screen {
         let mut l = Launcher::default();
         let note = |key: &str| LauncherRow::Note(i18n::t(cx, key));
 
-        l.rows.push(LauncherRow::NyappsHeader);
-        if let Some(n) = &self.update_note {
-            l.rows.push(LauncherRow::Note(n.clone()));
-        }
-        let nyapps: Vec<_> = (0..self.nyapps.len())
-            .filter(|&i| matches(self.nyapps[i].manifest.name_in(lang)))
-            .map(Tile::Nyapp)
-            .collect();
-        if !nyapps.is_empty() {
-            l.push_tiles(nyapps);
-        } else if self.nyapps_pending {
-            l.rows.push(note("dashboard.loading"));
-        } else if self.nyapps.is_empty() {
-            let dir = nyapp::installed::dir()
-                .map(|d| d.display().to_string())
-                .unwrap_or_default();
-            l.rows.push(LauncherRow::Note(i18n::tf(
-                cx,
-                "dashboard.nyapps_none",
-                &[("dir", &dir)],
-            )));
-        } else {
-            l.rows.push(note("dashboard.none"));
+        // 通常のニャプリを止めているときは、見出しごと出さない。
+        if nyapp::NORMAL_NYAPPS_ENABLED {
+            l.rows.push(LauncherRow::NyappsHeader);
+            if let Some(n) = &self.update_note {
+                l.rows.push(LauncherRow::Note(n.clone()));
+            }
+            let nyapps: Vec<_> = (0..self.nyapps.len())
+                .filter(|&i| matches(self.nyapps[i].manifest.name_in(lang)))
+                .map(Tile::Nyapp)
+                .collect();
+            if !nyapps.is_empty() {
+                l.push_tiles(nyapps);
+            } else if self.nyapps_pending {
+                l.rows.push(note("dashboard.loading"));
+            } else if self.nyapps.is_empty() {
+                let dir = nyapp::installed::dir()
+                    .map(|d| d.display().to_string())
+                    .unwrap_or_default();
+                l.rows.push(LauncherRow::Note(i18n::tf(
+                    cx,
+                    "dashboard.nyapps_none",
+                    &[("dir", &dir)],
+                )));
+            } else {
+                l.rows.push(note("dashboard.none"));
+            }
+            l.rows.push(LauncherRow::Separator);
         }
 
-        l.rows
-            .extend([LauncherRow::Separator, LauncherRow::RunningHeader]);
+        l.rows.push(LauncherRow::RunningHeader);
         l.running = self.running_apps(cx);
         let running: Vec<_> = l
             .running
