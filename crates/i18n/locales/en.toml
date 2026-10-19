@@ -213,10 +213,18 @@ tooltip = "Tooltip"
 dialog = "Dialog"
 stress = "Stress"
 catalog = "Catalog"
+effects = "Translucency / Lighting"
 localization = "Localization"
 settings = "Settings"
 navigation = "Navigation"
 nyapps = "Nyapps"
+
+[effects]
+translucent = "Translucency"
+pointer_light = "Pointer lighting"
+instructions = "Toggle each effect, then move the pointer across the sample. Changes apply to every panel."
+sample = "The two background colors show through this surface. Light follows each pointer."
+control = "Opaque control"
 
 [emoji]
 inline = "Inline SVG emoji · 14 / 19 / 24 px"

@@ -213,10 +213,18 @@ tooltip = "ツールチップ"
 dialog = "ダイアログ"
 stress = "負荷"
 catalog = "カタログ"
+effects = "透過・照明"
 localization = "ローカライズ"
 settings = "設定"
 navigation = "積み重ね"
 nyapps = "ニャプリ"
+
+[effects]
+translucent = "透過を有効にする"
+pointer_light = "ポインタ照明を有効にする"
+instructions = "効果を切り替えて、見本の上でポインタを動かしてください。変更はすべてのパネルに反映されます。"
+sample = "この面の向こうに、背景の2色が透けます。照明はそれぞれのポインタに追従します。"
+control = "不透明な操作部品"
 
 [emoji]
 inline = "テキスト内の SVG 絵文字 · 14 / 19 / 24 px"

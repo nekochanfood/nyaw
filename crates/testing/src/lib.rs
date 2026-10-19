@@ -32,6 +32,8 @@ use ui::{PanelControl, PanelSpec};
 
 mod emoji;
 pub use emoji::EmojiTest;
+mod effects;
+pub use effects::EffectsTest;
 mod keyboard;
 pub use keyboard::KeyboardTest;
 mod desktop;
@@ -650,6 +652,11 @@ impl Render for Testing {
                 .child(
                     button!("spawn-catalog", i18n::t(cx, "testing.open.catalog"), false)
                         .on_click(spawn_catalog(self.panel)),
+                )
+                .child(
+                    button!("effects-test", i18n::t(cx, "testing.open.effects"), false).on_click(
+                        spawn_view(self.panel, "testing.open.effects", |_, _| EffectsTest),
+                    ),
                 )
                 .child(
                     button!(
@@ -2606,6 +2613,29 @@ impl Render for StressTest {
 mod tests {
     use super::*;
     use gpui::{Modifiers, TestAppContext};
+
+    #[gpui::test]
+    fn testing_opens_the_effects_screen_with_a_navigation_bar(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, _| Testing::default());
+        cx.simulate_resize(gpui::size(px(TESTING_PX.0 as f32), px(TESTING_PX.1 as f32)));
+        cx.run_until_parked();
+        let at = cx
+            .debug_bounds("effects-test")
+            .expect("Testing に入口がある")
+            .center();
+        cx.simulate_click(at, Modifiers::none());
+        cx.update(|_, cx| {
+            let spec = cx
+                .default_global::<PanelControl>()
+                .spawns
+                .pop()
+                .expect("確認画面を開く");
+            assert!(
+                spec.nav_bar_spec(1).is_some(),
+                "閉じる操作はナビゲーションバーにある"
+            );
+        });
+    }
 
     /// ボタンは操作要求を積むだけで、反映はフレームループ（`ui::sync_panel`）の仕事。
     #[gpui::test]
