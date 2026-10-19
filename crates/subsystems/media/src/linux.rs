@@ -98,13 +98,13 @@ impl Backend for Mpris {
             .unwrap_or_default();
         let field = |key: &str| metadata.get(key);
         let title = field("xesam:title")
-            .and_then(|v| text(v))
+            .and_then(text)
             .unwrap_or_default();
         let artist = field("xesam:artist")
             .map(|v| texts(v).join(", "))
             .unwrap_or_default();
         let album = field("xesam:album")
-            .and_then(|v| text(v))
+            .and_then(text)
             .unwrap_or_default();
         let micros = |v: &OwnedValue| number(v).map(|n| Duration::from_micros(n.max(0) as u64));
         let duration = field("mpris:length")
@@ -133,7 +133,7 @@ impl Backend for Mpris {
             Value::ObjectPath(p) => Some(OwnedObjectPath::from(p.to_owned())),
             _ => None,
         });
-        self.art_url = field("mpris:artUrl").and_then(|v| text(v));
+        self.art_url = field("mpris:artUrl").and_then(text);
         let app_id = sessions[index].clone();
         self.player = Some(name);
         Some(Raw {
