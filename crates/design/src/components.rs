@@ -61,7 +61,7 @@ impl Fade {
     }
 }
 
-/// 0xRRGGBBAA を OKLab で混ぜる（アルファは混ぜない）。
+/// 0xRRGGBBAA を OKLab で混ぜる（アルファは線形に混ぜる）。
 fn mix(a: u32, b: u32, t: f32) -> u32 {
     let lab = |c: u32| -> Oklab {
         let s: Srgb<f32> = Srgb::<u8>::from(c >> 8).into_format();
@@ -69,7 +69,8 @@ fn mix(a: u32, b: u32, t: f32) -> u32 {
     };
     let m = lab(a).mix(lab(b), t);
     let s: Srgb<u8> = Srgb::from_color(m).into_format();
-    u32::from(s.red) << 24 | u32::from(s.green) << 16 | u32::from(s.blue) << 8 | (b & 0xff)
+    let alpha = ((a & 0xff) as f32 + ((b & 0xff) as f32 - (a & 0xff) as f32) * t).round() as u32;
+    u32::from(s.red) << 24 | u32::from(s.green) << 16 | u32::from(s.blue) << 8 | alpha
 }
 
 #[derive(Clone, Copy)]
@@ -1026,6 +1027,13 @@ mod tests {
             f.at(t0 + Duration::from_millis(duration_ms::NORMAL)),
             (0xffffffff, false)
         );
+    }
+
+    #[test]
+    fn fade_blends_alpha_for_transparent_rest() {
+        // Ghost: 休止色は透明。ホバーへ向かう途中の背景は半透明であるべき。
+        let mid = mix(0x80808000, 0x808080ff, 0.5);
+        assert_eq!(mid & 0xff, 0x80, "{mid:08x}");
     }
 
     #[test]
