@@ -3,7 +3,7 @@
 use gpui::{
     App, Bounds, ContentMask, Div, InteractiveElement, Interactivity, IntoElement, ParentElement,
     Pixels, Point, RenderOnce, StatefulInteractiveElement, StyleRefinement, Styled, Window,
-    WindowId, canvas, div, fill, point, px, rgba, size,
+    WindowId, canvas, fill, point, px, rgba, size,
 };
 use std::collections::HashMap;
 

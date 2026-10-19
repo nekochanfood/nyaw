@@ -51,6 +51,25 @@ lod_quality = 2 # 遠くのパネルの解像度を下げる度合い。0 = Off�
 
 開発者向けの情報は [AGENT.md](AGENT.md) を参照。
 
+## UI の透過とポインタ照明
+
+パネルとカードの面は半透明で、ポインタの近くが光源のように明るくなります。
+文字・アイコン・操作部品は不透明なままです。左右のポインタはそれぞれの位置を照らします。
+
+見た目のフラグは Design クレートの `design::Effects` が管理します。
+Testing → Design catalog の `Translucent` / `Pointer light` で、開いている UI 全体の効果を個別に切り替えられます。
+この切り替えは実行中だけ有効で、起動時は両方とも有効です。
+
+```rust
+design::Effects { translucent: true, pointer_light: false }.set(cx);
+```
+
+GPU の描画・入力配送を通す検証:
+
+```sh
+cargo test -p ui --test surface_effects -- --ignored
+```
+
 ## 絵文字
 
 UI では `design::emoji("🐈").size(gpui::px(24.))`、文章では
