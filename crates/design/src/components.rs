@@ -766,7 +766,7 @@ pub fn nav_bar(
     )
 }
 
-/// 一覧の行: 左にアイコンと文字、右に `>`。行は [`list`] のカードに並べる前提で、安静時はカードと同じ色、
+/// 一覧の行: 左にアイコンと文字、右に `>`。行は [`list`] のカードに並べる前提で、安静時は透明、
 /// ホバー・押下で `control-hover` / `control-active` に沈む（区切り線とカードの角は [`list`] が付ける）。
 /// 選んでいる行は `.selected(true)`（押下の色のまま）。高さはボタンと同じ。
 pub fn list_item(
@@ -790,7 +790,7 @@ pub fn menu_item(
     label: impl Into<SharedString>,
 ) -> Button {
     let mut b = base_button(theme, id.into(), Variant::Default);
-    (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
+    b.rest = b.hover & !0xff;
     b.base = b
         .base
         .w_full()
@@ -822,19 +822,18 @@ pub fn tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
 }
 
 /// 地の上に置くタイル（アプリ一覧のアプリなど）: [`tile`] と同じく縦に並べるが、カードの地を敷かず、ホバー・押下のときだけ
-/// 色が付く。ふだんは地（`background`）と同じ色（透明にするとホバーの色から戻るフェードが途中で切れる。[`sidebar_item`]）。
+/// 色が付く。ふだんは透明で、親の地をそのまま見せる。
 pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
     let mut b = tile(theme, id);
     (b.rest, b.hover, b.active) = (
-        theme.background,
+        theme.control_on_background_hover & !0xff,
         theme.control_on_background_hover,
         theme.control_on_background_active,
     );
     b
 }
 
-/// サイドバーの行: 左にアイコンと文字。どれを選んでいるかを見せるための行で、ふだんは地（`background`）と同じ色
-/// （背景が無いように見える。透明にするとホバーの色から戻るフェードが途中で切れるので地の色を使う）、ホバー・押下で
+/// サイドバーの行: 左にアイコンと文字。どれを選んでいるかを見せるための行で、ふだんは透明、ホバー・押下で
 /// `control-on-background-*`、選んでいる行（`selected`）はアクセント（`accent-bg-active` に `accent-text`）。高さはボタンと同じ。
 pub fn sidebar_item(
     theme: &Theme,
@@ -852,7 +851,7 @@ pub fn sidebar_item(
         )
     } else {
         (
-            theme.background,
+            theme.control_on_background_hover & !0xff,
             theme.control_on_background_hover,
             theme.control_on_background_active,
         )
@@ -1104,6 +1103,30 @@ pub fn surface(theme: &Theme) -> crate::Surface {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn unfilled_rows_do_not_paint_a_second_surface() {
+        for opaque in [Theme::DARK, Theme::LIGHT] {
+            for theme in [opaque, opaque.translucent()] {
+                for button in [
+                    menu_item(&theme, "menu", &crate::icons::HEART, "Menu"),
+                    list_item(&theme, "list", &crate::icons::HEART, "List"),
+                    ghost_tile(&theme, "tile"),
+                    sidebar_item(&theme, "sidebar", &crate::icons::HEART, "Side", false),
+                ] {
+                    assert_eq!(button.rest & 255, 0);
+                    assert_eq!(button.rest & !255, button.hover & !255);
+                    assert_ne!(button.hover & 255, 0);
+                    assert_ne!(button.active & 255, 0);
+                }
+                assert_ne!(tile(&theme, "filled").rest & 255, 0);
+                assert_ne!(
+                    sidebar_item(&theme, "selected", &crate::icons::HEART, "Side", true).rest & 255,
+                    0
+                );
+            }
+        }
+    }
 
     #[test]
     fn fade_runs_from_start_to_target_over_normal() {

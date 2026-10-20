@@ -11,7 +11,7 @@ cbuffer GlobalParams: register(b0) {
     uint material_translucent;
     uint material_light;
     float material_scale;
-    uint material_pad;
+    float material_edge_strength;
 };
 
 cbuffer BatchParams: register(b1) {
@@ -874,7 +874,6 @@ float4 frosted_backdrop(float2 position, float scale) {
 }
 
 float3 material_lighting(float3 rgb, float2 position, float2 normal, float depth, float scale) {
-    float light_surface = smoothstep(0.55, 0.9, dot(rgb, float3(0.2126, 0.7152, 0.0722)));
     if (material_light != 0) {
         [unroll] for (int hand = 0; hand < 2; ++hand) {
             float2 pointer = hand == 0 ? material_pointers.xy : material_pointers.zw;
@@ -882,12 +881,13 @@ float3 material_lighting(float3 rgb, float2 position, float2 normal, float depth
             float distance = length(delta) / scale;
             float indirect = pow(saturate(1 - distance / 180), 2);
             float direct = pow(saturate(1 - distance / 72), 2);
-            float facing = dot(normal, normalize(delta + float2(0.001, 0.001)));
+            // 光源は面の手前。凸面の法線に高さを持たせ、内側のポインタを凹面の影にしない。
+            float3 bevel = normalize(float3(normal * exp(-depth / 1.5) * 0.65, 1));
+            float3 light = normalize(float3(delta / scale, 48));
+            float facing = saturate(dot(bevel, light));
             float rim = exp(-depth / 1.5) * indirect;
-            rgb = lerp(rgb, lerp(float3(1, 1, 1), float3(0.88, 0.95, 1), light_surface),
-                indirect * 0.065 + direct * 0.025);
-            rgb = lerp(rgb, float3(1, 1, 1), rim * (0.5 + 0.5 * saturate(facing)) * 0.55);
-            rgb *= 1 - rim * (0.12 + light_surface * 0.18) * saturate(-facing);
+            rgb = lerp(rgb, float3(1, 1, 1), indirect * 0.065 + direct * 0.025);
+            rgb = lerp(rgb, float3(1, 1, 1), saturate(rim * (0.25 + 0.75 * facing) * 0.55 * material_edge_strength));
         }
     }
     return rgb;
@@ -922,7 +922,7 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
             behind = lerp(original, blurred, coverage);
             // 上縁は反射、下縁は陰影。全面を暗く囲って凹面に見せない。
             float lower_edge = saturate(dot(normal, normalize(float2(0.35, 1))) * 0.5 + 0.5);
-            color.rgb = lerp(color.rgb, lerp(float3(1, 1, 1), float3(0, 0, 0), lower_edge), edge * 0.10 * strength);
+            color.rgb = lerp(color.rgb, lerp(float3(1, 1, 1), float3(0, 0, 0), lower_edge), edge * 0.10 * strength * material_edge_strength);
         }
         color.rgb = lerp(color.rgb, material_lighting(color.rgb, input.position.xy, normal, depth, scale), strength);
     }
@@ -1110,11 +1110,14 @@ float4 path_rasterization_fragment(PathFragmentInput input): SV_Target {
 
 struct PathSprite {
     Bounds bounds;
+    uint material;
+    uint pad;
 };
 
 struct PathSpriteVertexOutput {
     float4 position: SV_Position;
     float2 texture_coords: TEXCOORD0;
+    nointerpolation uint material: TEXCOORD1;
 };
 
 StructuredBuffer<PathSprite> path_sprites: register(t1);
@@ -1132,12 +1135,13 @@ PathSpriteVertexOutput path_sprite_vertex(uint vertex_id: SV_VertexID, uint spri
     PathSpriteVertexOutput output;
     output.position = device_position;
     output.texture_coords = texture_coords;
+    output.material = sprite.material;
     return output;
 }
 
 float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
     float4 sample = t_sprite.Sample(s_sprite, input.texture_coords);
-    if (material_translucent == 0 && material_light == 0) return sample;
+    if (input.material == 0) return sample;
     float4 original = backdrop_at(input.position.xy);
     if (sample.a <= 0) return original;
     float scale = max(material_scale, 0.125);
@@ -1154,7 +1158,7 @@ float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
     if (material_translucent != 0) {
         behind = lerp(original, frosted_backdrop(input.position.xy, scale), saturate(sample.a));
         float lower_edge = saturate(dot(normal, normalize(float2(0.35, 1))) * 0.5 + 0.5);
-        color = lerp(color, lerp(float3(1, 1, 1), float3(0, 0, 0), lower_edge), edge * 0.10);
+        color = lerp(color, lerp(float3(1, 1, 1), float3(0, 0, 0), lower_edge), edge * 0.10 * material_edge_strength);
     }
     color = material_lighting(color, input.position.xy, normal, -1.5 * log(max(edge, 0.00001)), scale);
     return float4(color * alpha + behind.rgb * (1 - alpha), alpha + behind.a * (1 - alpha));

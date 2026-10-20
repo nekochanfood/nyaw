@@ -73,7 +73,7 @@ fn wgpu_material_blurs_backdrop_and_lights_controls_in_both_themes() {
                         translucent,
                         light,
                         scale: 1.,
-                        padding: 0,
+                        edge_strength: 1.,
                     },
                 );
                 paint::with_window(99, || {

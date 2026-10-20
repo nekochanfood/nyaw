@@ -412,9 +412,13 @@ impl DirectXRenderer {
                 PrimitiveBatch::Shadows(range) => self.draw_shadows(range.start, range.len()),
                 PrimitiveBatch::Quads(range) => self.draw_material_quads(scene, range),
                 PrimitiveBatch::Paths(range) => {
-                    let paths = &scene.paths[range];
-                    self.draw_paths_to_intermediate(paths)?;
-                    self.draw_paths_from_intermediate(paths)
+                    for paths in scene.paths[range].chunk_by(|a, b| {
+                        a.color.as_solid().is_some() == b.color.as_solid().is_some()
+                    }) {
+                        self.draw_paths_to_intermediate(paths)?;
+                        self.draw_paths_from_intermediate(paths)?;
+                    }
+                    Ok(())
                 }
                 PrimitiveBatch::Underlines(range) => self.draw_underlines(range.start, range.len()),
                 PrimitiveBatch::MonochromeSprites { texture_id, range } => {
@@ -920,6 +924,9 @@ impl DirectXRenderer {
         let Some(first_path) = paths.first() else {
             return Ok(());
         };
+        let material = paint::current();
+        let effects = first_path.color.as_solid().is_some()
+            && (material.translucent != 0 || material.light != 0);
 
         // When copying paths from the intermediate texture to the drawable,
         // each pixel must only be copied once, in case of transparent paths.
@@ -933,6 +940,8 @@ impl DirectXRenderer {
                 .iter()
                 .map(|path| PathSprite {
                     bounds: path.clipped_bounds(),
+                    material: u32::from(effects),
+                    pad: 0,
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -940,11 +949,13 @@ impl DirectXRenderer {
             for path in paths.iter().skip(1) {
                 bounds = bounds.union(&path.clipped_bounds());
             }
-            vec![PathSprite { bounds }]
+            vec![PathSprite {
+                bounds,
+                material: u32::from(effects),
+                pad: 0,
+            }]
         };
 
-        let material = paint::current();
-        let effects = material.translucent != 0 || material.light != 0;
         if effects {
             let bounds = sprites
                 .iter()
@@ -1546,6 +1557,8 @@ struct PathRasterizationSprite {
 #[repr(C)]
 struct PathSprite {
     bounds: Bounds<ScaledPixels>,
+    material: u32,
+    pad: u32,
 }
 
 impl Drop for DirectXRenderer {

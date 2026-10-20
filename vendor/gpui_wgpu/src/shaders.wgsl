@@ -85,7 +85,7 @@ struct GlobalParams {
     translucent: u32,
     light: u32,
     scale: f32,
-    material_pad: u32,
+    edge_strength: f32,
 }
 
 struct GammaParams {
@@ -1391,7 +1391,6 @@ fn frosted_backdrop(source: texture_2d<f32>, position: vec2<f32>, scale: f32) ->
 
 fn material_lighting(rgb_in: vec3<f32>, position: vec2<f32>, normal: vec2<f32>, depth: f32, scale: f32) -> vec3<f32> {
     var color = vec4<f32>(rgb_in, 1.0);
-    let light_surface = smoothstep(0.55, 0.9, dot(rgb_in, vec3<f32>(0.2126, 0.7152, 0.0722)));
     if (globals.light != 0u) {
         for (var hand = 0; hand < 2; hand++) {
             let pointer = select(globals.pointers.xy, globals.pointers.zw, hand == 1);
@@ -1399,11 +1398,13 @@ fn material_lighting(rgb_in: vec3<f32>, position: vec2<f32>, normal: vec2<f32>, 
             let distance = length(delta) / scale;
             let indirect = pow(saturate(1.0 - distance / 180.0), 2.0);
             let direct = pow(saturate(1.0 - distance / 72.0), 2.0);
-            let facing = dot(normal, normalize(delta + vec2<f32>(0.001)));
+            // 光源は面の手前。凸面の法線に高さを持たせる。
+            let bevel = normalize(vec3<f32>(normal * exp(-depth / 1.5) * 0.65, 1.0));
+            let light = normalize(vec3<f32>(delta / scale, 48.0));
+            let facing = saturate(dot(bevel, light));
             let rim = exp(-depth / 1.5) * indirect;
-            var rgb = mix(color.rgb, mix(vec3<f32>(1.0), vec3<f32>(0.88, 0.95, 1.0), light_surface), indirect * 0.065 + direct * 0.025);
-            rgb = mix(rgb, vec3<f32>(1.0), rim * (0.5 + 0.5 * saturate(facing)) * 0.55);
-            rgb *= 1.0 - rim * (0.12 + light_surface * 0.18) * saturate(-facing);
+            var rgb = mix(color.rgb, vec3<f32>(1.0), indirect * 0.065 + direct * 0.025);
+            rgb = mix(rgb, vec3<f32>(1.0), saturate(rim * (0.25 + 0.75 * facing) * 0.55 * globals.edge_strength));
             color = vec4<f32>(rgb, color.a);
         }
     }
@@ -1437,7 +1438,7 @@ fn fs_material(input: QuadVarying) -> @location(0) vec4<f32> {
             behind = mix(original, blurred, saturate(0.5 - sdf) * strength);
             // 上縁は反射、下縁は陰影。
             let lower_edge = saturate(dot(normal, normalize(vec2<f32>(0.35, 1.0))) * 0.5 + 0.5);
-            color = vec4<f32>(mix(color.rgb, mix(vec3<f32>(1.0), vec3<f32>(0.0), lower_edge), edge * 0.10 * strength), color.a);
+            color = vec4<f32>(mix(color.rgb, mix(vec3<f32>(1.0), vec3<f32>(0.0), lower_edge), edge * 0.10 * strength * globals.edge_strength), color.a);
         }
         color = vec4<f32>(mix(color.rgb, material_lighting(color.rgb, input.position.xy, normal, depth, scale), strength), color.a);
     }
@@ -1465,7 +1466,7 @@ fn fs_material_path(input: PathVarying) -> @location(0) vec4<f32> {
     if (globals.translucent != 0u) {
         behind = mix(original, frosted_backdrop(t_material, input.position.xy, scale), saturate(sample.a));
         let lower_edge = saturate(dot(normal, normalize(vec2<f32>(0.35, 1.0))) * 0.5 + 0.5);
-        color = mix(color, mix(vec3<f32>(1.0), vec3<f32>(0.0), lower_edge), edge * 0.10);
+        color = mix(color, mix(vec3<f32>(1.0), vec3<f32>(0.0), lower_edge), edge * 0.10 * globals.edge_strength);
     }
     color = material_lighting(color, input.position.xy, normal, -1.5 * log(max(edge, 0.00001)), scale);
     return vec4<f32>(color * alpha + behind.rgb * (1.0 - alpha), alpha + behind.a * (1.0 - alpha));

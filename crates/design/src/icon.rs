@@ -195,6 +195,14 @@ impl RenderOnce for IconView {
                 let color = self
                     .color
                     .unwrap_or_else(|| window.text_style().color.into());
+                // 前景はグラデーション経路へ統一し、単色でも背景材質として扱わせない。
+                let color = color.as_solid().map_or(color, |c| {
+                    gpui::linear_gradient(
+                        0.,
+                        gpui::linear_color_stop(c, 0.),
+                        gpui::linear_color_stop(c, 1.),
+                    )
+                });
                 for (path, layer_opacity) in self.paths(bounds.origin) {
                     window.paint_path(path, color.opacity(self.opacity * layer_opacity));
                 }

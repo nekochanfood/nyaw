@@ -5,6 +5,21 @@ use gpui::{
 
 struct View;
 
+#[gpui::test]
+fn edge_strength_is_bounded_and_reaches_the_renderer(cx: &mut TestAppContext) {
+    let (_, cx) = cx.add_window_view(|_, _| View);
+    cx.update(|window, cx| {
+        assert_eq!(Effects::edge_strength(cx), Effects::DEFAULT_EDGE_STRENGTH);
+        for (input, expected) in [(2., 2.), (-1., 0.), (10., 3.), (f32::NAN, 3.)] {
+            Effects::set_edge_strength(input, cx);
+            Effects::sync(window, cx);
+            paint::with_window(window.window_handle().window_id().as_u64(), || {
+                assert_eq!(paint::current().edge_strength, expected);
+            });
+        }
+    });
+}
+
 impl Render for View {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);

@@ -8,11 +8,12 @@ impl Render for EffectsTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
         let effects = Effects::current(cx);
+        let edge_strength = Effects::edge_strength(cx);
         let controls = components::card(&theme)
             .p(px(spacing::LG))
             .flex()
             .flex_col()
-            .gap(px(spacing::LG))
+            .gap(px(spacing::SM))
             .child(
                 div()
                     .flex()
@@ -67,6 +68,34 @@ impl Render for EffectsTest {
                                 effects.set(cx);
                             }),
                     ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(i18n::t(cx, "effects.edge_strength"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(spacing::LG))
+                            .child(
+                                components::slider(
+                                    &theme,
+                                    "effects-edge-strength",
+                                    edge_strength / Effects::MAX_EDGE_STRENGTH,
+                                    |v, _, cx| {
+                                        Effects::set_edge_strength(
+                                            (v * Effects::MAX_EDGE_STRENGTH * 100.).round() / 100.,
+                                            cx,
+                                        )
+                                    },
+                                )
+                                .length(300.),
+                            )
+                            .child(div().w(px(72.)).child(format!("{edge_strength:.2}×"))),
+                    ),
             );
         let preview = div()
             .id("effects-preview")
@@ -120,7 +149,17 @@ impl Render for EffectsTest {
                                         .flex()
                                         .flex_col()
                                         .justify_between()
-                                        .child(i18n::t(cx, "effects.card"))
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .items_center()
+                                                .gap(px(spacing::SM))
+                                                .child(
+                                                    design::icon(&design::icons::HEART)
+                                                        .size(px(font_size::MD)),
+                                                )
+                                                .child(i18n::t(cx, "effects.card")),
+                                        )
                                         .child(
                                             components::button(
                                                 &theme,
@@ -180,7 +219,36 @@ impl Render for EffectsTest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Modifiers, TestAppContext};
+    use gpui::{Modifiers, MouseButton, TestAppContext};
+
+    #[gpui::test]
+    fn edge_slider_updates_the_material_without_changing_effect_flags(cx: &mut TestAppContext) {
+        cx.update(|cx| Effects::ENABLED.set(cx));
+        let (_, cx) = cx.add_window_view(|_, _| EffectsTest);
+        cx.simulate_resize(gpui::size(px(800.), px(600.)));
+        cx.run_until_parked();
+        assert_eq!(cx.update(|_, cx| Effects::edge_strength(cx)), 1.);
+        let handle = cx
+            .debug_bounds("effects-edge-strength-handle")
+            .unwrap()
+            .center();
+        let track = cx.debug_bounds("effects-edge-strength").unwrap();
+        cx.simulate_mouse_down(handle, MouseButton::Left, Modifiers::none());
+        for (x, expected) in [(track.right(), 3.), (track.left(), 0.)] {
+            cx.simulate_mouse_move(
+                gpui::point(x, handle.y),
+                MouseButton::Left,
+                Modifiers::none(),
+            );
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                Effects::sync(window, cx);
+                assert_eq!(Effects::edge_strength(cx), expected);
+                assert_eq!(Effects::current(cx), Effects::ENABLED);
+            });
+        }
+        cx.simulate_mouse_up(handle, MouseButton::Left, Modifiers::none());
+    }
 
     #[gpui::test]
     fn switches_change_design_flags_independently(cx: &mut TestAppContext) {

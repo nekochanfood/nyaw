@@ -16,7 +16,30 @@ pub struct Effects {
 
 impl gpui::Global for Effects {}
 
+struct EdgeStrength(f32);
+impl gpui::Global for EdgeStrength {}
+
 impl Effects {
+    pub const DEFAULT_EDGE_STRENGTH: f32 = 1.;
+    pub const MAX_EDGE_STRENGTH: f32 = 3.;
+
+    /// 見た目を決めるための一時調整。保存せず、起動時は既定値へ戻す。
+    pub fn edge_strength(cx: &App) -> f32 {
+        cx.try_global::<EdgeStrength>()
+            .map_or(Self::DEFAULT_EDGE_STRENGTH, |v| v.0)
+    }
+
+    pub fn set_edge_strength(value: f32, cx: &mut App) {
+        if !value.is_finite() {
+            return;
+        }
+        let value = value.clamp(0., Self::MAX_EDGE_STRENGTH);
+        if Self::edge_strength(cx) != value {
+            cx.set_global(EdgeStrength(value));
+            cx.refresh_windows();
+        }
+    }
+
     /// 本番の既定。各効果は独立に切り替えられる。
     pub const ENABLED: Self = Self {
         translucent: true,
@@ -48,7 +71,7 @@ impl Effects {
                 translucent: u32::from(effects.translucent),
                 light: u32::from(effects.pointer_light && pointers.iter().any(Option::is_some)),
                 scale,
-                padding: 0,
+                edge_strength: Self::edge_strength(cx),
             },
         );
     }

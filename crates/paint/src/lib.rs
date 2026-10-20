@@ -6,13 +6,26 @@ use std::{
 
 /// シェーダーと同じ配置。座標・距離は描画先のピクセル。
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Material {
     pub pointers: [[f32; 2]; 2],
     pub translucent: u32,
     pub light: u32,
     pub scale: f32,
-    pub padding: u32,
+    /// 縁の陰影・反射の倍率。1 は基準、0 は縁だけを無効にする。
+    pub edge_strength: f32,
+}
+
+impl Default for Material {
+    fn default() -> Self {
+        Self {
+            pointers: [[0.; 2]; 2],
+            translucent: 0,
+            light: 0,
+            scale: 0.,
+            edge_strength: 1.,
+        }
+    }
 }
 
 thread_local! {
@@ -112,5 +125,6 @@ mod tests {
         with_window(1, || assert_eq!(current(), Material::default()));
         remove(2);
         assert_eq!(std::mem::size_of::<Material>(), 32);
+        assert_eq!(Material::default().edge_strength, 1.);
     }
 }

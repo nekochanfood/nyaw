@@ -8,6 +8,81 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 
 struct View;
 
+struct Foreground;
+impl Render for Foreground {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        div()
+            .size_full()
+            .relative()
+            .children(
+                design::Weight::ALL
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, weight)| {
+                        div()
+                            .absolute()
+                            .left(px(i as f32 * 32.))
+                            .top(px(20.))
+                            .child(
+                                design::icon(&design::icons::HEART)
+                                    .weight(weight)
+                                    .size(px(32.))
+                                    .color(gpui::rgba(theme.neutral_text)),
+                            )
+                    }),
+            )
+            .child(
+                div().absolute().top(px(90.)).child(
+                    design::icon(&design::icons::HEART)
+                        .size(px(64.))
+                        .rotate(25.)
+                        .opacity(0.6)
+                        .color(gpui::linear_gradient(
+                            90.,
+                            gpui::linear_color_stop(gpui::rgba(theme.accent_solid), 0.),
+                            gpui::linear_color_stop(gpui::rgba(theme.danger_solid), 1.),
+                        )),
+                ),
+            )
+            .child(div().absolute().left(px(80.)).top(px(110.)).child("Text"))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(204.))
+                    .top(px(8.))
+                    .w(px(144.))
+                    .h(px(156.))
+                    .rounded(px(24.))
+                    .border_1()
+                    .border_color(gpui::rgba(theme.neutral_text_low)),
+            )
+            .child(
+                gpui::canvas(
+                    |_, _, _| (),
+                    move |_, _, w, _| {
+                        let mut path = gpui::PathBuilder::fill();
+                        path.move_to(gpui::point(px(250.), px(40.)));
+                        path.line_to(gpui::point(px(330.), px(40.)));
+                        path.line_to(gpui::point(px(330.), px(140.)));
+                        path.line_to(gpui::point(px(250.), px(140.)));
+                        path.close();
+                        w.paint_path(path.build().unwrap(), gpui::rgba(theme.control));
+                    },
+                )
+                .size_full(),
+            )
+            .child(
+                div().absolute().left(px(265.)).top(px(60.)).child(
+                    design::icon(&design::icons::HEART)
+                        .weight(design::Weight::Fill)
+                        .size(px(48.))
+                        .color(gpui::rgba(theme.neutral_text)),
+                ),
+            )
+    }
+}
+
 struct Frost;
 impl Render for Frost {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -128,6 +203,8 @@ fn main() {
     let frost_output = frost.clone();
     let pressed = Rc::new(RefCell::new(Vec::new()));
     let pressed_output = pressed.clone();
+    let foregrounds = Rc::new(RefCell::new(Vec::new()));
+    let foreground_output = foregrounds.clone();
     ui::application().run(move |cx| {
         design::font::install(cx);
         let window = ui::open_panel_window(cx, (480, 320), |_, cx| {
@@ -142,6 +219,11 @@ fn main() {
         .unwrap();
         let frost_window = ui::open_panel_window(cx, (320, 200), |_, cx| {
             let view = cx.new(|_| Frost).into();
+            cx.new(|_| ui::PanelRoot::new(view))
+        })
+        .unwrap();
+        let foreground_window = ui::open_panel_window(cx, (360, 180), |_, cx| {
+            let view = cx.new(|_| Foreground).into();
             cx.new(|_| ui::PanelRoot::new(view))
         })
         .unwrap();
@@ -160,6 +242,43 @@ fn main() {
                 }
             }
             for mode in [Mode::Dark, Mode::Light] {
+                let frames = cx
+                    .update_window(foreground_window.into(), |_, window, cx| {
+                        cx.set_global(mode);
+                        move_pointer(Hand::Left, Some(Vec2::new(80., 40.)), window, cx);
+                        move_pointer(Hand::Right, Some(Vec2::new(290., 90.)), window, cx);
+                        let mut frames = Vec::new();
+                        for effects in [
+                            Effects::default(),
+                            Effects {
+                                translucent: true,
+                                pointer_light: false,
+                            },
+                            Effects {
+                                translucent: false,
+                                pointer_light: true,
+                            },
+                            Effects::ENABLED,
+                        ] {
+                            effects.set(cx);
+                            window.refresh();
+                            frames.push(ui::capture(window, cx).unwrap());
+                        }
+                        Effects {
+                            translucent: true,
+                            pointer_light: false,
+                        }
+                        .set(cx);
+                        for strength in [0., 3.] {
+                            Effects::set_edge_strength(strength, cx);
+                            window.refresh();
+                            frames.push(ui::capture(window, cx).unwrap());
+                        }
+                        Effects::set_edge_strength(1., cx);
+                        (mode, window.scale_factor(), frames)
+                    })
+                    .unwrap();
+                foreground_output.borrow_mut().push(frames);
                 for translucent in [false, true] {
                     let frames = cx
                         .update_window(window.into(), |_, window, cx| {
@@ -190,6 +309,11 @@ fn main() {
                             let corner = take(window, cx);
                             move_pointer(Hand::Left, Some(Vec2::new(330., 125.)), window, cx);
                             let foreground = take(window, cx);
+                            Effects::set_edge_strength(0., cx);
+                            let weak_edge = take(window, cx);
+                            Effects::set_edge_strength(3., cx);
+                            let strong_edge = take(window, cx);
+                            Effects::set_edge_strength(1., cx);
                             (
                                 mode,
                                 translucent,
@@ -200,6 +324,8 @@ fn main() {
                                 leave,
                                 corner,
                                 foreground,
+                                weak_edge,
+                                strong_edge,
                             )
                         })
                         .unwrap();
@@ -239,7 +365,7 @@ fn main() {
             *screen_output.borrow_mut() = Some(frame);
             cx.update(|cx| cx.set_global(design::Motion::default()));
             for mode in [Mode::Dark, Mode::Light] {
-                for (name, y) in [("default", 388.), ("primary", 452.)] {
+                for (name, y) in [("default", 400.), ("primary", 458.)] {
                     let pos = Vec2::new(150., y);
                     cx.update_window(test_screen.into(), |_, window, cx| {
                         cx.set_global(mode);
@@ -282,6 +408,67 @@ fn main() {
         .detach();
     });
     let results = results.borrow();
+    for (mode, scale, frames) in foregrounds.borrow().iter() {
+        assert!(
+            frames[0].rgba.as_chunks::<4>().0.iter().any(|p| p[3] > 128),
+            "前景を描画する"
+        );
+        for frame in &frames[1..] {
+            assert_eq!(
+                pixel(frame, *scale, 289., 84.),
+                pixel(&frames[0], *scale, 289., 84.),
+                "照らされた操作面上でもアイコンの色を保つ"
+            );
+            assert_eq!(
+                pixel(frame, *scale, 220., 80.)[3],
+                0,
+                "背景のないコンテナ内に面を作らない"
+            );
+            assert_eq!(
+                pixel(frame, *scale, 204., 80.),
+                pixel(&frames[0], *scale, 204., 80.),
+                "塗りのない枠線を材質から除外する"
+            );
+            for y in 0..frame.height {
+                for x in 0..(200. * scale) as u32 {
+                    let i = ((y * frame.width + x) * 4) as usize;
+                    assert_eq!(
+                        &frame.rgba[i..i + 4],
+                        &frames[0].rgba[i..i + 4],
+                        "{mode:?}: 文字と全ウェイト・半透明・グラデーションのアイコンを材質から除外 ({x}, {y})"
+                    );
+                }
+            }
+        }
+        let base = pixel(&frames[0], *scale, 320., 110.);
+        let lit = pixel(&frames[2], *scale, 320., 110.);
+        assert!(
+            lit[0] > base[0],
+            "任意形状の操作面は照明を維持 {base:?} -> {lit:?}"
+        );
+        let weak = pixel(&frames[4], *scale, 290., 138.);
+        let strong = pixel(&frames[5], *scale, 290., 138.);
+        assert!(
+            strong[0] < weak[0],
+            "任意形状の縁の強さを調整できる {weak:?} -> {strong:?}"
+        );
+        assert_eq!(
+            pixel(&frames[4], *scale, 320., 110.),
+            pixel(&frames[5], *scale, 320., 110.),
+            "エッジの調整は面の中央の色を変えない"
+        );
+        for (base, lit) in [(&frames[0], &frames[2]), (&frames[1], &frames[3])] {
+            for (x, y) in [(251., 90.), (328., 90.), (290., 41.), (290., 138.)] {
+                let a = pixel(base, *scale, x, y);
+                let b = pixel(lit, *scale, x, y);
+                assert!(
+                    (0..3).all(|c| b[c] >= a[c]) && b[..3] != a[..3],
+                    "{mode:?}: 内側のポインタは全周を照らし、凹面の暗い縁を作らない ({x}, {y}): {a:?} -> {b:?}"
+                );
+            }
+        }
+        snapshot(&format!("{mode:?}-foreground-exclusion"), &frames[3]);
+    }
     let frost = frost.borrow();
     let (scale, baseline, blurred) = frost.as_ref().unwrap();
     let a = pixel(blurred, *scale, 100., 140.);
@@ -304,7 +491,7 @@ fn main() {
         snapshot(&format!("{mode:?}-{name}-pressed"), down);
         snapshot(&format!("{mode:?}-{name}-released"), up);
         let surface = pixel(down, *scale, 80., *y);
-        let card = pixel(down, *scale, 80., 420.);
+        let card = pixel(down, *scale, 80., 350.);
         let released = pixel(up, *scale, 80., *y);
         let brightness =
             |p: [u8; 4]| p[0] as f32 * 0.2126 + p[1] as f32 * 0.7152 + p[2] as f32 * 0.0722;
@@ -325,10 +512,32 @@ fn main() {
         );
     }
     assert_eq!(results.len(), 4);
-    for (mode, translucent, scale, baseline, lit, right, leave, corner, foreground) in
-        results.iter()
+    for (
+        mode,
+        translucent,
+        scale,
+        baseline,
+        lit,
+        right,
+        leave,
+        corner,
+        foreground,
+        weak_edge,
+        strong_edge,
+    ) in results.iter()
     {
         let p = |frame, x, y| pixel(frame, *scale, x, y);
+        assert_eq!(
+            p(weak_edge, 120., 140.),
+            p(strong_edge, 120., 140.),
+            "エッジの調整は面の照明とアルファを変えない"
+        );
+        if *translucent {
+            assert!(
+                p(strong_edge, 240., 294.)[0] < p(weak_edge, 240., 294.)[0],
+                "角丸の面の縁の強さを調整できる"
+            );
+        }
         let center = p(baseline, 120., 140.);
         let illuminated = p(lit, 120., 140.);
         assert_eq!(

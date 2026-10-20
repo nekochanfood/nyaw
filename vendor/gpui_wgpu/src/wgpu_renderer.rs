@@ -65,7 +65,7 @@ struct GlobalParams {
     translucent: u32,
     light: u32,
     scale: f32,
-    material_pad: u32,
+    edge_strength: f32,
 }
 
 #[repr(C)]
@@ -1500,7 +1500,7 @@ impl WgpuRendererCore {
             translucent: material.translucent,
             light: material.light,
             scale: material.scale,
-            material_pad: 0,
+            edge_strength: material.edge_strength,
         };
         let path_globals = GlobalParams {
             premultiplied_alpha: 0,
@@ -1729,47 +1729,50 @@ impl WgpuRendererCore {
                         &mut pass,
                     ),
                     PrimitiveBatch::Paths(range) => {
-                        let paths = &scene.paths[range];
-                        if paths.is_empty() {
-                            continue;
-                        }
+                        for paths in scene.paths[range].chunk_by(|a, b| {
+                            a.color.as_solid().is_some() == b.color.as_solid().is_some()
+                        }) {
+                            let material_path = effects && paths[0].color.as_solid().is_some();
 
-                        drop(pass);
-                        if effects {
-                            let (backdrop, _) = self.resources.material_backdrop.as_ref().unwrap();
-                            encoder.copy_texture_to_texture(
-                                frame_texture.as_image_copy(),
-                                backdrop.as_image_copy(),
-                                frame_texture.size(),
-                            );
-                        }
-                        let rasterized = self.draw_paths_to_intermediate(
-                            &mut encoder,
-                            paths,
-                            &mut instance_offset,
-                        )?;
-
-                        pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                            label: Some("main_pass_continued"),
-                            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                                view: frame_view,
-                                resolve_target: None,
-                                ops: wgpu::Operations {
-                                    load: wgpu::LoadOp::Load,
-                                    store: wgpu::StoreOp::Store,
-                                },
-                                depth_slice: None,
-                            })],
-                            depth_stencil_attachment: None,
-                            ..Default::default()
-                        });
-
-                        if rasterized {
-                            self.draw_paths_from_intermediate(
+                            drop(pass);
+                            if material_path {
+                                let (backdrop, _) =
+                                    self.resources.material_backdrop.as_ref().unwrap();
+                                encoder.copy_texture_to_texture(
+                                    frame_texture.as_image_copy(),
+                                    backdrop.as_image_copy(),
+                                    frame_texture.size(),
+                                );
+                            }
+                            let rasterized = self.draw_paths_to_intermediate(
+                                &mut encoder,
                                 paths,
                                 &mut instance_offset,
-                                &mut pass,
                             )?;
+
+                            pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                                label: Some("main_pass_continued"),
+                                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                                    view: frame_view,
+                                    resolve_target: None,
+                                    ops: wgpu::Operations {
+                                        load: wgpu::LoadOp::Load,
+                                        store: wgpu::StoreOp::Store,
+                                    },
+                                    depth_slice: None,
+                                })],
+                                depth_stencil_attachment: None,
+                                ..Default::default()
+                            });
+
+                            if rasterized {
+                                self.draw_paths_from_intermediate(
+                                    paths,
+                                    material_path,
+                                    &mut instance_offset,
+                                    &mut pass,
+                                )?;
+                            }
                         }
                     }
                     PrimitiveBatch::Underlines(range) => self.draw_instances(
@@ -1993,6 +1996,7 @@ impl WgpuRendererCore {
     fn draw_paths_from_intermediate(
         &mut self,
         paths: &[Path<ScaledPixels>],
+        material_path: bool,
         instance_offset: &mut u64,
         pass: &mut wgpu::RenderPass<'_>,
     ) -> Result<()> {
@@ -2023,8 +2027,7 @@ impl WgpuRendererCore {
             &path_intermediate_view,
         );
         let resources = self.resources();
-        let material = paint::current();
-        if material.translucent != 0 || material.light != 0 {
+        if material_path {
             pass.set_pipeline(&resources.pipelines.material_paths);
             pass.set_bind_group(3, &resources.material_backdrop.as_ref().unwrap().1, &[]);
         } else {

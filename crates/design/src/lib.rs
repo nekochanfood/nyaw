@@ -135,6 +135,23 @@ mod tests {
     }
 
     #[test]
+    fn neutral_materials_leave_tint_to_the_backdrop_and_semantic_colors() {
+        for theme in [Theme::DARK, Theme::LIGHT] {
+            for color in [
+                theme.background,
+                theme.card,
+                theme.control,
+                theme.control_hover,
+            ] {
+                let [r, g, b, _] = color.to_be_bytes();
+                assert_eq!((r, g), (g, b), "無彩色の面を青く染めない");
+            }
+            assert_ne!(theme.accent_control, theme.control);
+            assert_ne!(theme.danger_control, theme.control);
+        }
+    }
+
+    #[test]
     fn translucent_surfaces_get_brighter_toward_the_controls() {
         fn rgb(c: u32) -> [f32; 3] {
             let [r, g, b, _] = c.to_be_bytes();
