@@ -97,6 +97,8 @@ impl Render for EffectsTest {
                             .child(div().w(px(72.)).child(format!("{edge_strength:.2}×"))),
                     ),
             );
+        // 背面の模様は、操作色の調整から独立させる。
+        let color_backdrop = design::scale::dark::BLUE_9;
         let preview = div()
             .id("effects-preview")
             .debug_selector(|| "effects-preview".into())
@@ -108,7 +110,7 @@ impl Render for EffectsTest {
                 [
                     ("dark", 0x101820ff),
                     ("light", 0xffffffff),
-                    ("color", theme.accent_solid),
+                    ("color", color_backdrop),
                 ]
                 .into_iter()
                 .map(|(name, color)| {
@@ -120,9 +122,9 @@ impl Render for EffectsTest {
                         .p(px(spacing::XS))
                         .bg(rgba(color))
                         .child(if name == "color" {
-                            div().absolute().inset_0().flex().children((0..32).map(|i| {
+                            div().absolute().inset_0().flex().children((0..8).map(|i| {
                                 div().h_full().flex_1().bg(rgba(if i % 2 == 0 {
-                                    theme.accent_solid
+                                    color_backdrop
                                 } else {
                                     theme.danger_solid
                                 }))
@@ -149,6 +151,29 @@ impl Render for EffectsTest {
                                         .flex()
                                         .flex_col()
                                         .justify_between()
+                                        .relative()
+                                        .when(name == "color", |card| {
+                                            card.child(
+                                                div()
+                                                    .absolute()
+                                                    .left_0()
+                                                    .right_0()
+                                                    .top(px(32.))
+                                                    .bottom(px(64.))
+                                                    .rounded(px(radius::SM))
+                                                    .overflow_hidden()
+                                                    .flex()
+                                                    .children((0..8).map(|i| {
+                                                        div().h_full().flex_1().bg(rgba(
+                                                            if i % 2 == 0 {
+                                                                color_backdrop
+                                                            } else {
+                                                                theme.danger_solid
+                                                            },
+                                                        ))
+                                                    })),
+                                            )
+                                        })
                                         .child(
                                             div()
                                                 .flex()
@@ -227,7 +252,7 @@ mod tests {
         let (_, cx) = cx.add_window_view(|_, _| EffectsTest);
         cx.simulate_resize(gpui::size(px(800.), px(600.)));
         cx.run_until_parked();
-        assert_eq!(cx.update(|_, cx| Effects::edge_strength(cx)), 1.);
+        assert_eq!(cx.update(|_, cx| Effects::edge_strength(cx)), 2.);
         let handle = cx
             .debug_bounds("effects-edge-strength-handle")
             .unwrap()

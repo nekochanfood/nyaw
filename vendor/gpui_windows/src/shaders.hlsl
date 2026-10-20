@@ -873,7 +873,18 @@ float4 frosted_backdrop(float2 position, float scale) {
     return result;
 }
 
-float3 material_lighting(float3 rgb, float2 position, float2 normal, float depth, float scale) {
+// shortcut: 同じ描画先にある背面だけを屈折する。VR の背面画像が取得可能になったら拡張する。
+float glass_lens(float depth) {
+    return (1 - exp(-depth / 0.65)) * (1 - smoothstep(0, 12, depth));
+}
+
+float4 refracted_backdrop(float2 position, float2 normal, float depth, float scale) {
+    float lens = glass_lens(depth);
+    return frosted_backdrop(position - normal * (10 * lens * scale), scale * (1 - 0.75 * lens));
+}
+
+float4 material_lighting(float4 color, float2 position, float2 normal, float depth, float scale, float coverage) {
+    float3 rgb = color.rgb;
     if (material_light != 0) {
         [unroll] for (int hand = 0; hand < 2; ++hand) {
             float2 pointer = hand == 0 ? material_pointers.xy : material_pointers.zw;
@@ -885,27 +896,32 @@ float3 material_lighting(float3 rgb, float2 position, float2 normal, float depth
             float3 bevel = normalize(float3(normal * exp(-depth / 1.5) * 0.65, 1));
             float3 light = normalize(float3(delta / scale, 48));
             float facing = saturate(dot(bevel, light));
-            float rim = exp(-depth / 1.5) * indirect;
-            rgb = lerp(rgb, float3(1, 1, 1), indirect * 0.065 + direct * 0.025);
+            float rim = exp(-depth / 3) * indirect;
+            // 白までの余裕で光を配分し、明るい面でも反射を見せる。白飛びさせない。
+            float headroom = max(1 - dot(rgb, float3(0.2126, 0.7152, 0.0722)), 0.15);
+            float illumination = 1 - exp(-(indirect * 0.065 + direct * 0.025) / headroom);
+            rgb = lerp(rgb, float3(1, 1, 1), illumination);
             rgb = lerp(rgb, float3(1, 1, 1), saturate(rim * (0.25 + 0.75 * facing) * 0.55 * material_edge_strength));
+            // 白い面でも反射を見せる。縁だけ透過を減らし、面の中央は変えない。
+            color.a = lerp(color.a, coverage, saturate(rim * 0.9 * material_edge_strength));
         }
     }
-    return rgb;
+    return float4(rgb, color.a);
 }
 
 float4 quad_fragment(QuadFragmentInput input): SV_Target {
     float4 color = quad_color(input);
     if (material_translucent == 0 && material_light == 0) return color;
     Quad quad = quads[input.quad_id];
-    bool surface = quad.background.tag == 0 && quad.background.solid.a > 0.25 && (min(quad.bounds.size.x, quad.bounds.size.y) >= 8 * max(material_scale, 0.125) ||
+    float face_alpha = quad.background.tag == 0 ? quad.background.solid.a : min(quad.background.colors[0].color.a, quad.background.colors[1].color.a);
+    bool surface = quad.background.tag <= 1 && face_alpha > 0.25 && (min(quad.bounds.size.x, quad.bounds.size.y) >= 8 * max(material_scale, 0.125) ||
         quad.corner_radii.top_left + quad.corner_radii.top_right + quad.corner_radii.bottom_left + quad.corner_radii.bottom_right > 0);
-    if (!surface) return color;
     float4 original = backdrop_at(input.position.xy);
     float4 behind = original;
     float scale = max(material_scale, 0.125);
 
     if (surface && color.a > 0) {
-        float strength = smoothstep(0.25, 1, quad.background.solid.a);
+        float strength = smoothstep(0.25, 0.35, face_alpha);
         float2 p = input.position.xy - quad.bounds.origin - quad.bounds.size / 2;
         float radius = pick_corner_radius(p, quad.corner_radii);
         float2 q = abs(p) - quad.bounds.size / 2 + radius;
@@ -914,17 +930,20 @@ float4 quad_fragment(QuadFragmentInput input): SV_Target {
         float depth = max(-sdf, 0) / scale;
         float2 normal = length(outside) > 0.001 ? normalize(outside) * sign(p)
             : (q.x > q.y ? float2(sign(p.x), 0) : float2(0, sign(p.y)));
-        float edge = exp(-depth / 1.2);
+        float edge = exp(-depth / 0.9);
         if (material_translucent != 0) {
-            float4 blurred = frosted_backdrop(input.position.xy, scale);
+            float4 blurred = refracted_backdrop(input.position.xy, normal, depth, scale);
             // ぼかしをアルファの輪郭へにじませない。透明なパネル外は従来のまま。
             float coverage = saturate(0.5 - sdf) * strength;
             behind = lerp(original, blurred, coverage);
-            // 上縁は反射、下縁は陰影。全面を暗く囲って凹面に見せない。
-            float lower_edge = saturate(dot(normal, normalize(float2(0.35, 1))) * 0.5 + 0.5);
-            color.rgb = lerp(color.rgb, lerp(float3(1, 1, 1), float3(0, 0, 0), lower_edge), edge * 0.10 * strength * material_edge_strength);
+            // 厚い縁ほど背面を通す。面のアルファと文字の読みやすい中央は変えない。
+            color.rgb = max(color.rgb, lerp(color.rgb, behind.rgb / max(behind.a, 0.00001), 0.32 * glass_lens(depth) * behind.a * strength));
+            // 縁は面色より暗くせず、細い白い反射だけで輪郭を示す。
+            float reflection = saturate(edge * 0.28 * strength * material_edge_strength);
+            color.rgb = lerp(color.rgb, float3(1, 1, 1), reflection);
+            color.a = lerp(color.a, saturate(0.5 - sdf), reflection);
         }
-        color.rgb = lerp(color.rgb, material_lighting(color.rgb, input.position.xy, normal, depth, scale), strength);
+        color = lerp(color, material_lighting(color, input.position.xy, normal, depth, scale, saturate(0.5 - sdf)), strength);
     }
     // 背景を置換してから合成する。通常の source-over では鮮明な背面が残ってしまう。
     return float4(color.rgb * color.a + behind.rgb * (1 - color.a), color.a + behind.a * (1 - color.a));
@@ -1024,13 +1043,13 @@ float4 shadow_fragment(ShadowFragmentInput input): SV_TARGET {
         }
     }
 
+    float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
+                                      shadow.element_corner_radii);
     if (shadow.inset != 0u) {
-        // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
-        // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
-        alpha = 1.0 - alpha;
-        float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
-                                          shadow.element_corner_radii);
-        alpha *= saturate(0.5 - element_distance);
+        alpha = (1.0 - alpha) * saturate(0.5 - element_distance);
+    } else {
+        // 外側の影を面の下へ敷くと、半透明の塗り越しに内側の影として見える。
+        alpha *= saturate(0.5 + element_distance);
     }
 
     return input.color * float4(1., 1., 1., alpha);
@@ -1152,15 +1171,16 @@ float4 path_sprite_fragment(PathSpriteVertexOutput input): SV_Target {
     float bottom = t_sprite.SampleLevel(s_sprite, input.texture_coords + float2(0, step.y), 0).a;
     float edge = saturate(1 - min(min(left, right), min(top, bottom)) / sample.a);
     float2 normal = normalize(float2(left - right, top - bottom) + 0.00001);
+    float depth = -1.5 * log(max(edge, 0.00001));
     float3 color = sample.rgb / sample.a;
     float4 behind = original;
     float alpha = sample.a;
     if (material_translucent != 0) {
-        behind = lerp(original, frosted_backdrop(input.position.xy, scale), saturate(sample.a));
-        float lower_edge = saturate(dot(normal, normalize(float2(0.35, 1))) * 0.5 + 0.5);
-        color = lerp(color, lerp(float3(1, 1, 1), float3(0, 0, 0), lower_edge), edge * 0.10 * material_edge_strength);
+        behind = lerp(original, refracted_backdrop(input.position.xy, normal, depth, scale), saturate(sample.a));
+        color = max(color, lerp(color, behind.rgb / max(behind.a, 0.00001), 0.32 * glass_lens(depth) * behind.a));
+        color = lerp(color, float3(1, 1, 1), saturate(edge * 0.28 * material_edge_strength));
     }
-    color = material_lighting(color, input.position.xy, normal, -1.5 * log(max(edge, 0.00001)), scale);
+    color = material_lighting(float4(color, alpha), input.position.xy, normal, depth, scale, alpha).rgb;
     return float4(color * alpha + behind.rgb * (1 - alpha), alpha + behind.a * (1 - alpha));
 }
 

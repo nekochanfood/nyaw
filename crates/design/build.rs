@@ -225,6 +225,9 @@ fn main() {
                     for card in [over("card", backdrop), over("card", background)] {
                         let shown = |role: &str| match role {
                             "background" => background,
+                            "background-top" | "background-bottom" | "card-top" | "card-bottom" => {
+                                over(role, backdrop)
+                            }
                             "card" => card,
                             r if r.starts_with("control-on-background") => over(r, background),
                             _ => over(role, card),
@@ -250,7 +253,7 @@ fn main() {
     for (role, opacity) in obj(&root, "surface-opacity") {
         assert!(fields.contains(role), "不透明度: 未知の役割 {role}");
         let opacity = opacity.as_f64().expect("不透明度は数値");
-        assert!((0.0..1.0).contains(&opacity), "面は半透明にする");
+        assert!((0.0..=1.0).contains(&opacity), "不透明度は 0..=1");
         let alpha = (opacity * 255.).round() as u8;
         let f = field(role);
         writeln!(out, "        self.{f} = (self.{f} & !0xff) | {alpha};").unwrap();

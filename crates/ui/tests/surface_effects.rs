@@ -108,6 +108,53 @@ impl Render for Frost {
                     )
                     .corner_radii(px(24.)),
                 );
+                for x in 0..160 {
+                    window.paint_quad(gpui::fill(
+                        gpui::Bounds::new(
+                            gpui::point(px(x as f32 * 2.), px(200.)),
+                            gpui::size(px(2.), px(200.)),
+                        ),
+                        gpui::rgba(if x < 19 { 0x000000ff } else { 0xffffffff }),
+                    ));
+                }
+                window.paint_quad(
+                    gpui::fill(
+                        gpui::Bounds::new(
+                            gpui::point(px(30.), px(230.)),
+                            gpui::size(px(260.), px(140.)),
+                        ),
+                        gpui::linear_gradient(
+                            180.,
+                            gpui::linear_color_stop(
+                                gpui::rgba(Theme::DARK.translucent().card_top),
+                                0.,
+                            ),
+                            gpui::linear_color_stop(
+                                gpui::rgba(Theme::DARK.translucent().card_bottom),
+                                1.,
+                            ),
+                        ),
+                    )
+                    .corner_radii(px(24.)),
+                );
+                window.paint_quad(gpui::fill(
+                    gpui::Bounds::new(gpui::point(px(0.), px(400.)), gpui::size(px(320.), px(80.))),
+                    gpui::rgba(0xffffffff),
+                ));
+                window.paint_drop_shadows(
+                    gpui::Bounds::new(
+                        gpui::point(px(80.), px(410.)),
+                        gpui::size(px(160.), px(40.)),
+                    ),
+                    gpui::Corners::all(px(20.)),
+                    &[gpui::BoxShadow {
+                        color: gpui::hsla(0., 0., 0., 0.24),
+                        offset: gpui::point(px(0.), px(2.)),
+                        blur_radius: px(3.),
+                        spread_radius: px(0.),
+                        inset: false,
+                    }],
+                );
             },
         )
         .size_full()
@@ -116,7 +163,9 @@ impl Render for Frost {
 impl Render for View {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        components::card_panel(&theme)
+        components::card(&theme)
+            .absolute()
+            .inset(px(components::PANEL_MARGIN))
             .rounded(px(48.))
             .child(
                 components::button(
@@ -217,7 +266,7 @@ fn main() {
             cx.new(|_| ui::PanelRoot::new(view))
         })
         .unwrap();
-        let frost_window = ui::open_panel_window(cx, (320, 200), |_, cx| {
+        let frost_window = ui::open_panel_window(cx, (320, 480), |_, cx| {
             let view = cx.new(|_| Frost).into();
             cx.new(|_| ui::PanelRoot::new(view))
         })
@@ -274,7 +323,7 @@ fn main() {
                             window.refresh();
                             frames.push(ui::capture(window, cx).unwrap());
                         }
-                        Effects::set_edge_strength(1., cx);
+                        Effects::set_edge_strength(Effects::DEFAULT_EDGE_STRENGTH, cx);
                         (mode, window.scale_factor(), frames)
                     })
                     .unwrap();
@@ -313,7 +362,7 @@ fn main() {
                             let weak_edge = take(window, cx);
                             Effects::set_edge_strength(3., cx);
                             let strong_edge = take(window, cx);
-                            Effects::set_edge_strength(1., cx);
+                            Effects::set_edge_strength(Effects::DEFAULT_EDGE_STRENGTH, cx);
                             (
                                 mode,
                                 translucent,
@@ -443,13 +492,13 @@ fn main() {
         let base = pixel(&frames[0], *scale, 320., 110.);
         let lit = pixel(&frames[2], *scale, 320., 110.);
         assert!(
-            lit[0] > base[0],
-            "任意形状の操作面は照明を維持 {base:?} -> {lit:?}"
+            lit[0] >= base[0],
+            "照明は面を暗くしない {base:?} -> {lit:?}"
         );
         let weak = pixel(&frames[4], *scale, 290., 138.);
         let strong = pixel(&frames[5], *scale, 290., 138.);
         assert!(
-            strong[0] < weak[0],
+            strong[0] > weak[0],
             "任意形状の縁の強さを調整できる {weak:?} -> {strong:?}"
         );
         assert_eq!(
@@ -462,7 +511,8 @@ fn main() {
                 let a = pixel(base, *scale, x, y);
                 let b = pixel(lit, *scale, x, y);
                 assert!(
-                    (0..3).all(|c| b[c] >= a[c]) && b[..3] != a[..3],
+                    (0..3).all(|c| b[c] >= a[c])
+                        && (b[..3] != a[..3] || a[..3].iter().all(|c| *c >= 254)),
                     "{mode:?}: 内側のポインタは全周を照らし、凹面の暗い縁を作らない ({x}, {y}): {a:?} -> {b:?}"
                 );
             }
@@ -482,11 +532,43 @@ fn main() {
         pixel(blurred, *scale, 30., 30.),
         "ぼかしを角丸の外へ漏らさない"
     );
+    assert!(
+        pixel(blurred, *scale, 34., 300.)[0] > pixel(blurred, *scale, 80., 300.)[0] + 15,
+        "縁越しに、元の座標では黒い背面の内側にある白が屈折して映る"
+    );
+    assert!(
+        pixel(baseline, *scale, 34., 300.)[0] < pixel(baseline, *scale, 80., 300.)[0],
+        "効果を切ると背面は元の座標で透過する"
+    );
+    assert_eq!(
+        pixel(blurred, *scale, 160., 430.),
+        [255; 4],
+        "外側の影を面の内側へ描かない"
+    );
+    assert!(
+        pixel(blurred, *scale, 160., 452.)[0] < 250,
+        "外周の影は残す"
+    );
     snapshot("native-frosted", blurred);
     let screen = screen.borrow();
     let (dark, light) = screen.as_ref().expect("確認画面を描画する");
     snapshot("test-screen", dark);
     snapshot("test-screen-light", light);
+    for frame in [dark, light] {
+        let scale = frame.width as f32 / 800.;
+        let top = pixel(frame, scale, 30., 100.);
+        let bottom = pixel(frame, scale, 30., 500.);
+        assert!(
+            [top[3], bottom[3]]
+                .into_iter()
+                .all(|alpha| (230..255).contains(&alpha)),
+            "下地も半透明で、縁の反射だけ透過を減らす: {top:?} {bottom:?}"
+        );
+        assert!(
+            top[0] > bottom[0],
+            "下地は上から下へ暗くする {top:?} {bottom:?}"
+        );
+    }
     for (mode, name, y, scale, down, up) in pressed.borrow().iter() {
         snapshot(&format!("{mode:?}-{name}-pressed"), down);
         snapshot(&format!("{mode:?}-{name}-released"), up);
@@ -500,8 +582,12 @@ fn main() {
             "{mode:?} {name}: 押下はカードより深い色 {surface:?} {card:?}"
         );
         assert!(
-            brightness(released) > brightness(card),
-            "解放するとホバーの明るい面へ戻る {released:?} {card:?}"
+            if *mode == Mode::Light {
+                brightness(released) < brightness(surface)
+            } else {
+                brightness(released) > brightness(surface)
+            },
+            "解放すると各テーマの操作色へ戻る {released:?} {surface:?}"
         );
         // 見本の中心はポインタより 1px 下。上下の縁の同じ深さで比較する。
         let top = pixel(down, *scale, 150., *y - 25.);
@@ -534,8 +620,8 @@ fn main() {
         );
         if *translucent {
             assert!(
-                p(strong_edge, 240., 294.)[0] < p(weak_edge, 240., 294.)[0],
-                "角丸の面の縁の強さを調整できる"
+                p(strong_edge, 360., 156.)[0] > p(weak_edge, 360., 156.)[0],
+                "ボタンの白い縁の強さを調整できる"
             );
         }
         let center = p(baseline, 120., 140.);
@@ -570,14 +656,24 @@ fn main() {
             p(baseline, 25., 25.),
             "角丸の外には漏れない"
         );
+        if *mode == Mode::Light && *translucent {
+            assert!(
+                p(corner, 60., 30.)[3] > p(baseline, 60., 30.)[3],
+                "白い面も縁の反射を濃くして光を見せる"
+            );
+        }
         let edge = p(baseline, 305., 130.);
         let lit_edge = p(foreground, 305., 130.);
         assert!(
-            (edge[0] as i32 - lit_edge[0] as i32).abs() > 8,
+            (edge[0] as i32 - lit_edge[0] as i32).abs() >= if *mode == Mode::Light { 3 } else { 8 }
+                || edge[..3].iter().all(|c| *c >= 254),
             "{mode:?}: ボタンの輪郭にも照明が当たる {edge:?} -> {lit_edge:?}"
         );
-        if *mode == Mode::Light {
-            assert_ne!(illuminated[..3], center[..3], "白い面でも照明を識別できる");
+        if !translucent {
+            assert!(
+                p(baseline, 360., 160.)[0] < p(baseline, 260., 160.)[0],
+                "面色に加えてボタンの外側の薄い影で区切る"
+            );
         }
         snapshot(&format!("{mode:?}-{translucent}-foreground"), foreground);
         println!(

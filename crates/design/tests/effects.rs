@@ -24,7 +24,9 @@ impl Render for View {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
         div().size_full().child(
-            components::card_panel(&theme)
+            components::card(&theme)
+                .absolute()
+                .inset(px(components::PANEL_MARGIN))
                 .rounded(px(40.))
                 .child(div().size(px(20.)).bg(rgba(Theme::DARK.accent_solid))),
         )

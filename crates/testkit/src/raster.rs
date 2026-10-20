@@ -18,7 +18,7 @@ pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
     let mut quads = window.painted_quads();
     quads.sort_by_key(|q| q.order);
     for q in quads {
-        let fill = q.background.as_solid().map(Rgba::from);
+        let fill = fill_color(q.background);
         let border = Rgba::from(q.border_color);
         let w = &q.border_widths;
         let (w_t, w_r, w_b, w_l) = (w.top.0, w.right.0, w.bottom.0, w.left.0);
@@ -124,6 +124,19 @@ pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
     }
 }
 
+fn fill_color(background: gpui::Background) -> Option<Rgba> {
+    background.as_solid().map(Rgba::from).or_else(|| {
+        // shortcut: 操作テストはグラデーションの終点を代表色とする。見た目の補間は実 GPU で検証する。
+        let value = serde_json::to_value(background).ok()?;
+        if value["tag"] != "LinearGradient" {
+            return None;
+        }
+        let stops: [gpui::LinearColorStop; 2] =
+            serde_json::from_value(value["colors"].clone()).ok()?;
+        Some(Rgba::from(stops[1].color))
+    })
+}
+
 /// Whether the rounded rectangle `[x0, y0, x1, y1]` (corners in the order top-left, top-right, bottom-right, bottom-left) contains the point.
 fn inside([x0, y0, x1, y1]: [f32; 4], [tl, tr, br, bl]: [f32; 4], x: f32, y: f32) -> bool {
     if x < x0 || x >= x1 || y < y0 || y >= y1 {
@@ -177,6 +190,21 @@ fn blend(dst: &mut [u8; 4], src: Rgba) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gradient_backdrops_keep_their_base_color_in_interaction_tests() {
+        let bottom = gpui::rgba(0x112233ff);
+        let gradient = gpui::linear_gradient(
+            180.,
+            gpui::linear_color_stop(gpui::rgba(0x445566ff), 0.),
+            gpui::linear_color_stop(bottom, 1.),
+        );
+        let color = fill_color(gradient).expect("不透明な下地を描く");
+        assert_eq!(
+            [color.r, color.g, color.b, color.a].map(to_u8),
+            [0x11, 0x22, 0x33, 255]
+        );
+    }
 
     fn rgba(r: f32, g: f32, b: f32, a: f32) -> Rgba {
         Rgba { r, g, b, a }

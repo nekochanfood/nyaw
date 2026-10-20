@@ -23,7 +23,7 @@ impl Default for Material {
             translucent: 0,
             light: 0,
             scale: 0.,
-            edge_strength: 1.,
+            edge_strength: 2.,
         }
     }
 }
@@ -125,6 +125,6 @@ mod tests {
         with_window(1, || assert_eq!(current(), Material::default()));
         remove(2);
         assert_eq!(std::mem::size_of::<Material>(), 32);
-        assert_eq!(Material::default().edge_strength, 1.);
+        assert_eq!(Material::default().edge_strength, 2.);
     }
 }

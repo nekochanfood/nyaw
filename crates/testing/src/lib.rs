@@ -72,13 +72,13 @@ pub const BUTTON_ACTIVE_BG: u32 = rgb24(THEME.control_active);
 /// ドラッグ中の値を落とせる場所の上にいるときの色。
 pub const DROP_TARGET_BG: u32 = 0x30a050;
 /// フォーカスのある入力欄の色。
-pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_bg_active);
+pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_control);
 /// ダイアログの背景色（親より明るくして重なりが見えるように）。
 pub const DIALOG_BG: u32 = rgb24(THEME.card);
 /// 画面の地（`components::panel`）。設定画面のサイドバーの、選んでいない行も同じ色（背景が無いように見える）。
 pub const BACKGROUND: u32 = rgb24(THEME.background);
 /// 設定画面のサイドバーで選んでいる行の色。
-pub const SIDEBAR_SELECTED_BG: u32 = rgb24(THEME.accent_bg_active);
+pub const SIDEBAR_SELECTED_BG: u32 = rgb24(THEME.accent_control);
 /// Testing パネルの大きさ（m）と解像度（px）。ボタンが高い（最小ヒット領域）ので、既定の 0.8m × 0.6m では入りきらない。
 pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 1.0);
 pub const TESTING_PX: (u32, u32) = (1200, 1000);
@@ -786,7 +786,11 @@ impl Render for Testing {
             .items_center()
             .rounded(px(radius::LG))
             .bg(rgba(theme.control))
-            .focus(|s| s.bg(rgba(theme.accent_bg_active)))
+            .focus(|s| {
+                s.bg(rgba(theme.accent_control))
+                    .text_color(rgba(theme.on_accent_control))
+                    .font_weight(gpui::FontWeight::BOLD)
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 ui::keyboard::focus_input(this.panel, &focus, window, cx);
             }))
@@ -804,9 +808,7 @@ impl Render for Testing {
                 cx.notify();
             }))
             .child(if self.text.is_empty() {
-                div()
-                    .text_color(rgba(theme.neutral_text_low))
-                    .child(i18n::t(cx, "testing.type_hint"))
+                div().child(i18n::t(cx, "testing.type_hint"))
             } else {
                 div().child(self.text.clone())
             });

@@ -48,7 +48,11 @@ impl Render for KeyboardTest {
             .p(px(spacing::MD))
             .rounded(px(radius::LG))
             .bg(rgba(theme.control))
-            .focus(|s| s.bg(rgba(theme.accent_bg_active)))
+            .focus(|s| {
+                s.bg(rgba(theme.accent_control))
+                    .text_color(rgba(theme.on_accent_control))
+                    .font_weight(gpui::FontWeight::BOLD)
+            })
             .on_click(cx.listener(move |this, _, window, cx| {
                 ui::keyboard::focus_input(this.panel, &focus, window, cx)
             }))

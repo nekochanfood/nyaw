@@ -144,7 +144,10 @@ mod tests {
                 theme.control_hover,
             ] {
                 let [r, g, b, _] = color.to_be_bytes();
-                assert_eq!((r, g), (g, b), "無彩色の面を青く染めない");
+                assert!(
+                    r.abs_diff(g) <= 3 && g.abs_diff(b) <= 3,
+                    "面に強い色を足さない"
+                );
             }
             assert_ne!(theme.accent_control, theme.control);
             assert_ne!(theme.danger_control, theme.control);
@@ -152,7 +155,7 @@ mod tests {
     }
 
     #[test]
-    fn translucent_surfaces_get_brighter_toward_the_controls() {
+    fn translucent_surfaces_keep_readable_ink_without_a_brightness_ladder() {
         fn rgb(c: u32) -> [f32; 3] {
             let [r, g, b, _] = c.to_be_bytes();
             [r, g, b].map(|c| c as f32 / 255.)
@@ -200,15 +203,11 @@ mod tests {
                                 theme.danger_control_active,
                             ],
                         ] {
-                            let mut previous = luminance(card);
                             for (index, color) in states.into_iter().enumerate() {
                                 let shown = over(color, card);
                                 let lightness = luminance(shown);
-                                if index < 2 {
-                                    assert!(lightness > previous, "透過後もカード < 部品 < ホバー");
-                                } else {
+                                if index == 2 {
                                     assert_eq!(color, theme.background, "押下は背景の色へ沈む");
-                                    assert!(lightness < luminance(card), "押下はカードより深い面");
                                 }
                                 let text = if index == 2 {
                                     theme.on_control_active
@@ -222,9 +221,14 @@ mod tests {
                                 let ink = luminance(rgb(text));
                                 let ratio =
                                     (ink.max(lightness) + 0.05) / (ink.min(lightness) + 0.05);
-                                let min = if text == theme.neutral_text { 7. } else { 3. };
+                                let min = if states[0] == theme.control
+                                    || states[0] == theme.control_on_background
+                                {
+                                    7.
+                                } else {
+                                    3.
+                                };
                                 assert!(ratio >= min, "合成後の文字のコントラスト {ratio} < {min}");
-                                previous = lightness;
                             }
                         }
                         let text = luminance(rgb(theme.neutral_text));
@@ -242,14 +246,92 @@ mod tests {
                     }
                 }
             }
+            assert_ne!(
+                original.control, original.card,
+                "通常のボタンはカードと異なる面色を持つ"
+            );
+            assert_ne!(original.control_on_background, original.background);
+            assert_ne!(original.control, original.control_hover);
+            assert_eq!(original.control_on_background, original.control);
             let glass = original.translucent();
             assert!(glass.background & 255 < glass.card & 255);
-            assert!(glass.card & 255 < glass.control & 255);
-            assert!(glass.control & 255 < 255);
+            assert!(glass.control & 255 < glass.control_hover & 255);
+            assert!(glass.control_hover & 255 < glass.card & 255);
+            assert_eq!(glass.control & 255, 89, "通常の操作面は 35% の薄い塗り");
             assert_eq!(
                 glass.neutral_text, original.neutral_text,
                 "文字は透過させない"
             );
+        }
+    }
+
+    #[test]
+    fn active_colors_are_vivid_and_normal_controls_stay_translucent() {
+        assert_eq!(Theme::LIGHT.background, scale::light::SLATE_3);
+        assert_eq!(Theme::LIGHT.card, 0xffffffff);
+        for theme in [Theme::LIGHT, Theme::DARK] {
+            let ink = 0xffffffff;
+            assert_eq!(theme.on_accent_control, ink);
+            assert_eq!(theme.on_accent, ink);
+            for color in [theme.danger_control, theme.danger_control_hover] {
+                let [r, g, b, _] = color.to_be_bytes();
+                assert!(
+                    r > g.saturating_add(100) && r > b.saturating_add(100),
+                    "赤も淡色にしない"
+                );
+            }
+            let glass = theme.translucent();
+            let [rest, hover] = [glass.control, glass.control_hover].map(|color| {
+                let alpha = (color & 255) as f32 / 255.;
+                (color >> 24) as f32 * alpha + (theme.card >> 24) as f32 * (1. - alpha)
+            });
+            assert!((rest - hover).abs() >= 10., "合成後もホバーの明度差を取る");
+            assert_eq!(glass.accent_control & 255, 255);
+            assert_eq!(glass.danger_control & 255, 255);
+            assert_eq!(theme.on_danger_control, ink);
+            for color in [
+                theme.accent_control,
+                theme.accent_control_hover,
+                theme.danger_control,
+                theme.danger_control_hover,
+            ] {
+                let [r, g, b, _] = color.to_be_bytes();
+                assert_eq!(r.max(g).max(b), 255, "指示色は HSV の明度 100%");
+                assert!(r.min(g).min(b) >= 40, "原色に寄りすぎない彩度");
+            }
+            for color in [
+                theme.accent_solid,
+                theme.accent_solid_hover,
+                theme.accent_solid_active,
+            ] {
+                let [r, g, b, _] = color.to_be_bytes();
+                assert!(
+                    b > r.saturating_add(100) && b > g.saturating_add(40),
+                    "淡い青を使わない"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn gradient_backdrops_darkening_downward_keep_glass_opacity() {
+        for original in [Theme::DARK, Theme::LIGHT] {
+            let glass = original.translucent();
+            for (top, bottom, original_top) in [
+                (
+                    glass.background_top,
+                    glass.background_bottom,
+                    original.background_top,
+                ),
+                (glass.card_top, glass.card_bottom, original.card_top),
+            ] {
+                assert!(top & 255 < 255);
+                assert_eq!(top & 255, bottom & 255);
+                assert_eq!(top & !255, original_top & !255);
+                assert!(top >> 8 > bottom >> 8);
+            }
+            assert!(glass.control & 255 < 255);
+            assert!(glass.card & 255 < 255);
         }
     }
 

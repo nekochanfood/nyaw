@@ -1640,7 +1640,7 @@ impl WgpuRendererCore {
                             let length =
                                 paint::batch_len(&scene.quads[index..index + count], |q| {
                                     let b = q.bounds.intersect(&q.content_mask.bounds);
-                                    let pad = 4. * material.scale + 1.;
+                                    let pad = 14. * material.scale + 1.;
                                     [
                                         b.origin.x.0 - pad,
                                         b.origin.y.0 - pad,
@@ -1658,8 +1658,8 @@ impl WgpuRendererCore {
                                 .map(|q| q.bounds.intersect(&q.content_mask.bounds))
                                 .reduce(|a, b| a.union(&b))
                                 .unwrap();
-                            // ぼかしの半径 4 論理 px と、線形補間の 1 デバイス px。
-                            let pad = 4. * material.scale + 1.;
+                            // 屈折 10px + ぼかし 4px と、線形補間の 1 デバイス px。
+                            let pad = 14. * material.scale + 1.;
                             let left = (b.origin.x.0 - pad).max(0.) as u32;
                             let top = (b.origin.y.0 - pad).max(0.) as u32;
                             let right = (b.origin.x.0 + b.size.width.0 + pad)
@@ -3368,7 +3368,9 @@ mod tests {
 
 // NYAW: レイアウトの枠・区切り線・薄い波紋には材質の退避を増やさない。
 fn is_material_quad(q: &gpui::Quad, scale: f32) -> bool {
-    q.background.as_solid().is_some_and(|c| c.a > 0.25)
+    q.background
+        .as_solid()
+        .map_or_else(|| !q.background.is_transparent(), |c| c.a > 0.25)
         && (q.bounds.size.width.0.min(q.bounds.size.height.0) >= 8. * scale
             || q.corner_radii.top_left.0
                 + q.corner_radii.top_right.0

@@ -1037,13 +1037,13 @@ fn fs_shadow(input: ShadowVarying) -> @location(0) vec4<f32> {
         }
     }
 
+    let element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
+                                      shadow.element_corner_radii);
     if (shadow.inset != 0u) {
-        // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
-        // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
-        alpha = 1.0 - alpha;
-        let element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
-                                        shadow.element_corner_radii);
-        alpha *= saturate(0.5 - element_distance);
+        alpha = (1.0 - alpha) * saturate(0.5 - element_distance);
+    } else {
+        // 外側の影を面の下へ敷くと、半透明の塗り越しに内側の影として見える。
+        alpha *= saturate(0.5 + element_distance);
     }
 
     return blend_color(input.color, alpha);
@@ -1389,8 +1389,18 @@ fn frosted_backdrop(source: texture_2d<f32>, position: vec2<f32>, scale: f32) ->
     return result;
 }
 
-fn material_lighting(rgb_in: vec3<f32>, position: vec2<f32>, normal: vec2<f32>, depth: f32, scale: f32) -> vec3<f32> {
-    var color = vec4<f32>(rgb_in, 1.0);
+// shortcut: 同じ描画先にある背面だけを屈折する。VR の背面画像が取得可能になったら拡張する。
+fn glass_lens(depth: f32) -> f32 {
+    return (1.0 - exp(-depth / 0.65)) * (1.0 - smoothstep(0.0, 12.0, depth));
+}
+
+fn refracted_backdrop(source: texture_2d<f32>, position: vec2<f32>, normal: vec2<f32>, depth: f32, scale: f32) -> vec4<f32> {
+    let lens = glass_lens(depth);
+    return frosted_backdrop(source, position - normal * (10.0 * lens * scale), scale * (1.0 - 0.75 * lens));
+}
+
+fn material_lighting(color_in: vec4<f32>, position: vec2<f32>, normal: vec2<f32>, depth: f32, scale: f32, coverage: f32) -> vec4<f32> {
+    var color = color_in;
     if (globals.light != 0u) {
         for (var hand = 0; hand < 2; hand++) {
             let pointer = select(globals.pointers.xy, globals.pointers.zw, hand == 1);
@@ -1402,13 +1412,17 @@ fn material_lighting(rgb_in: vec3<f32>, position: vec2<f32>, normal: vec2<f32>, 
             let bevel = normalize(vec3<f32>(normal * exp(-depth / 1.5) * 0.65, 1.0));
             let light = normalize(vec3<f32>(delta / scale, 48.0));
             let facing = saturate(dot(bevel, light));
-            let rim = exp(-depth / 1.5) * indirect;
-            var rgb = mix(color.rgb, vec3<f32>(1.0), indirect * 0.065 + direct * 0.025);
+            let rim = exp(-depth / 3.0) * indirect;
+            // 白までの余裕で光を配分し、明るい面でも反射を見せる。
+            let headroom = max(1.0 - dot(color.rgb, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.15);
+            let illumination = 1.0 - exp(-(indirect * 0.065 + direct * 0.025) / headroom);
+            var rgb = mix(color.rgb, vec3<f32>(1.0), illumination);
             rgb = mix(rgb, vec3<f32>(1.0), saturate(rim * (0.25 + 0.75 * facing) * 0.55 * globals.edge_strength));
-            color = vec4<f32>(rgb, color.a);
+            // 白い面は縁の透過を減らして反射を見せ、中央は変えない。
+            color = vec4<f32>(rgb, mix(color.a, coverage, saturate(rim * 0.9 * globals.edge_strength)));
         }
     }
-    return color.rgb;
+    return color;
 }
 
 @fragment
@@ -1420,10 +1434,11 @@ fn fs_material(input: QuadVarying) -> @location(0) vec4<f32> {
     let original = backdrop_at(t_sprite, input.position.xy);
     var behind = original;
     let scale = max(globals.scale, 0.125);
-    let surface = quad.background.solid.a > 0.25 && (min(quad.bounds.size.x, quad.bounds.size.y) >= 8.0 * scale ||
+    let face_alpha = select(min(quad.background.colors[0].color.a, quad.background.colors[1].color.a), quad.background.solid.a, quad.background.tag == 0u);
+    let surface = quad.background.tag <= 1u && face_alpha > 0.25 && (min(quad.bounds.size.x, quad.bounds.size.y) >= 8.0 * scale ||
         quad.corner_radii.top_left + quad.corner_radii.top_right + quad.corner_radii.bottom_left + quad.corner_radii.bottom_right > 0.0);
     if (surface && color.a > 0.0) {
-        let strength = smoothstep(0.25, 1.0, quad.background.solid.a);
+        let strength = smoothstep(0.25, 0.35, face_alpha);
         let p = input.position.xy - quad.bounds.origin - quad.bounds.size / 2.0;
         let radius = pick_corner_radius(p, quad.corner_radii);
         let q = abs(p) - quad.bounds.size / 2.0 + radius;
@@ -1432,15 +1447,17 @@ fn fs_material(input: QuadVarying) -> @location(0) vec4<f32> {
         let depth = max(-sdf, 0.0) / scale;
         var normal = select(vec2<f32>(0.0, sign(p.y)), vec2<f32>(sign(p.x), 0.0), q.x > q.y);
         if (length(outside) > 0.001) { normal = normalize(outside) * sign(p); }
-        let edge = exp(-depth / 1.2);
+        let edge = exp(-depth / 0.9);
         if (globals.translucent != 0u) {
-            let blurred = frosted_backdrop(t_sprite, input.position.xy, scale);
+            let blurred = refracted_backdrop(t_sprite, input.position.xy, normal, depth, scale);
             behind = mix(original, blurred, saturate(0.5 - sdf) * strength);
-            // 上縁は反射、下縁は陰影。
-            let lower_edge = saturate(dot(normal, normalize(vec2<f32>(0.35, 1.0))) * 0.5 + 0.5);
-            color = vec4<f32>(mix(color.rgb, mix(vec3<f32>(1.0), vec3<f32>(0.0), lower_edge), edge * 0.10 * strength * globals.edge_strength), color.a);
+            // 厚い縁ほど背面を通す。面のアルファと中央は変えない。
+            color = vec4<f32>(max(color.rgb, mix(color.rgb, behind.rgb / max(behind.a, 0.00001), 0.32 * glass_lens(depth) * behind.a * strength)), color.a);
+            // 縁は面色より暗くせず、細い白い反射だけで輪郭を示す。
+            let reflection = saturate(edge * 0.28 * strength * globals.edge_strength);
+            color = vec4<f32>(mix(color.rgb, vec3<f32>(1.0), reflection), mix(color.a, saturate(0.5 - sdf), reflection));
         }
-        color = vec4<f32>(mix(color.rgb, material_lighting(color.rgb, input.position.xy, normal, depth, scale), strength), color.a);
+        color = mix(color, material_lighting(color, input.position.xy, normal, depth, scale, saturate(0.5 - sdf)), strength);
     }
     return vec4<f32>(color.rgb * color.a + behind.rgb * (1.0 - color.a), color.a + behind.a * (1.0 - color.a));
 }
@@ -1460,14 +1477,15 @@ fn fs_material_path(input: PathVarying) -> @location(0) vec4<f32> {
     let bottom = textureSampleLevel(t_sprite, s_sprite, input.texture_coords + vec2<f32>(0.0, step.y), 0.0).a;
     let edge = saturate(1.0 - min(min(left, right), min(top, bottom)) / sample.a);
     let normal = normalize(vec2<f32>(left - right, top - bottom) + 0.00001);
+    let depth = -1.5 * log(max(edge, 0.00001));
     var color = sample.rgb / sample.a;
     var behind = original;
     var alpha = sample.a;
     if (globals.translucent != 0u) {
-        behind = mix(original, frosted_backdrop(t_material, input.position.xy, scale), saturate(sample.a));
-        let lower_edge = saturate(dot(normal, normalize(vec2<f32>(0.35, 1.0))) * 0.5 + 0.5);
-        color = mix(color, mix(vec3<f32>(1.0), vec3<f32>(0.0), lower_edge), edge * 0.10 * globals.edge_strength);
+        behind = mix(original, refracted_backdrop(t_material, input.position.xy, normal, depth, scale), saturate(sample.a));
+        color = max(color, mix(color, behind.rgb / max(behind.a, 0.00001), 0.32 * glass_lens(depth) * behind.a));
+        color = mix(color, vec3<f32>(1.0), saturate(edge * 0.28 * globals.edge_strength));
     }
-    color = material_lighting(color, input.position.xy, normal, -1.5 * log(max(edge, 0.00001)), scale);
+    color = material_lighting(vec4<f32>(color, alpha), input.position.xy, normal, depth, scale, alpha).rgb;
     return vec4<f32>(color * alpha + behind.rgb * (1.0 - alpha), alpha + behind.a * (1.0 - alpha));
 }

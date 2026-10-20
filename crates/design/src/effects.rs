@@ -20,7 +20,7 @@ struct EdgeStrength(f32);
 impl gpui::Global for EdgeStrength {}
 
 impl Effects {
-    pub const DEFAULT_EDGE_STRENGTH: f32 = 1.;
+    pub const DEFAULT_EDGE_STRENGTH: f32 = 2.;
     pub const MAX_EDGE_STRENGTH: f32 = 3.;
 
     /// 見た目を決めるための一時調整。保存せず、起動時は既定値へ戻す。

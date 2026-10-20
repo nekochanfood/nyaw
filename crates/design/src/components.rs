@@ -78,7 +78,7 @@ fn mix(a: u32, b: u32, t: f32) -> u32 {
 // 強調ボタンは明暗が反転する。波紋・照明の余地も残して文字色を切り替える。
 fn button_ink(background: u32, normal: u32, pressed: u32) -> u32 {
     let rgb = |c: u32| -> Srgb { Srgb::<u8>::from(c >> 8).into_format() };
-    if rgb(normal).relative_contrast(rgb(background)) >= 4. {
+    if rgb(normal).relative_contrast(rgb(background)) >= 3. {
         normal
     } else {
         pressed
@@ -491,6 +491,16 @@ impl RenderOnce for Button {
         self.base
             .bg(rgba(color))
             .when(ink != self.ink, |base| base.text_color(rgba(ink)))
+            .when(color & 255 != 0 && !p.pressed && !self.selected, |base| {
+                base.shadow(vec![
+                    gpui::BoxShadow::new(
+                        px(0.),
+                        px(2.),
+                        gpui::hsla(0., 0., 0., if p.hovered { 0.30 } else { 0.24 }),
+                    )
+                    .blur_radius(px(3.)),
+                ])
+            })
             .when(p.pressed || self.selected, |base| {
                 base.shadow(vec![
                     gpui::BoxShadow::new(px(0.), px(2.), gpui::hsla(0., 0., 0., 0.22))
@@ -586,7 +596,11 @@ pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<
         .h(px(h))
         .px(px(pad))
         .rounded(px(radius::FULL))
-        .bg(rgba(if on { theme.accent_solid } else { theme.groove }));
+        .bg(rgba(if on {
+            theme.accent_control
+        } else {
+            theme.groove
+        }));
     if on {
         track = track.justify_end();
     }
@@ -594,7 +608,11 @@ pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<
         div()
             .size(px(knob))
             .rounded(px(radius::FULL))
-            .bg(rgba(if on { theme.on_accent } else { theme.card })),
+            .bg(rgba(if on {
+                theme.on_accent_control
+            } else {
+                theme.card
+            })),
     )
 }
 
@@ -622,12 +640,15 @@ fn panel_shadow() -> Vec<gpui::BoxShadow> {
 }
 
 /// パネル全体の地。角丸は `XL`、中身との間隔は `MD`（12）なので、中のカードの角丸は同心の `XL − MD = LG`。
-/// カードを複数並べる画面だけが使い、中身は [`card`] に入れる。カードが 1 枚なら [`card_panel`]。
+/// 半透明の下地を上から下へ暗くする。中身は半透明の [`card`] に入れる。カードが 1 枚なら [`card_panel`]。
 pub fn panel(theme: &Theme) -> crate::Surface {
     panel_base(crate::Surface::new(div()))
         .p(px(spacing::MD))
         .rounded(px(radius::XL))
-        .bg(rgba(theme.background))
+        .bg(background_gradient(
+            theme.background_top,
+            theme.background_bottom,
+        ))
         .text_color(rgba(theme.neutral_text))
 }
 
@@ -639,9 +660,19 @@ pub fn card(theme: &Theme) -> crate::Surface {
         .text_color(rgba(theme.neutral_text))
 }
 
-/// カードが 1 枚だけの画面: 地（[`panel`]）を敷かず、カードがパネル全体になる。角丸はパネルの `XL`。
+/// カードが 1 枚だけの画面: カード用の半透明グラデーションを下地にする。角丸はパネルの `XL`。
 pub fn card_panel(theme: &Theme) -> crate::Surface {
-    panel_base(card(theme)).rounded(px(radius::XL))
+    panel_base(card(theme))
+        .rounded(px(radius::XL))
+        .bg(background_gradient(theme.card_top, theme.card_bottom))
+}
+
+fn background_gradient(top: u32, bottom: u32) -> gpui::Background {
+    gpui::linear_gradient(
+        180.,
+        gpui::linear_color_stop(rgba(top), 0.),
+        gpui::linear_color_stop(rgba(bottom), 1.),
+    )
 }
 
 /// ナビゲーションバーの地の高さ（ボタン + 上下 `SM`）。カプセル形なので、ボタン（`FULL`）の角は帯の角と同心になる。
@@ -834,7 +865,7 @@ pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
 }
 
 /// サイドバーの行: 左にアイコンと文字。どれを選んでいるかを見せるための行で、ふだんは透明、ホバー・押下で
-/// `control-on-background-*`、選んでいる行（`selected`）はアクセント（`accent-bg-active` に `accent-text`）。高さはボタンと同じ。
+/// `control-on-background-*`、選んでいる行（`selected`）は彩度の高い青い操作色。高さはボタンと同じ。
 pub fn sidebar_item(
     theme: &Theme,
     id: &'static str,
@@ -845,8 +876,8 @@ pub fn sidebar_item(
     let mut b = base_button(theme, id.into(), Variant::OnBackground);
     (b.rest, b.hover, b.active) = if selected {
         (
-            theme.accent_bg_active,
-            theme.accent_bg_active,
+            theme.accent_control,
+            theme.accent_control,
             theme.control_on_background_active,
         )
     } else {
@@ -857,18 +888,23 @@ pub fn sidebar_item(
         )
     };
     let fg = if selected {
-        theme.accent_text
+        theme.on_accent_control
     } else {
         theme.neutral_text
     };
     b.ink = fg;
+    b.pressed_ink = selected.then_some(theme.on_control_active);
     b.base = b
         .base
         .w_full()
         .justify_start()
         .gap(px(spacing::MD))
         .px(px(spacing::LG))
-        .font_weight(FontWeight::NORMAL)
+        .font_weight(if selected {
+            FontWeight::BOLD
+        } else {
+            FontWeight::NORMAL
+        })
         .text_color(rgba(fg))
         .child(crate::icon(glyph).size(px(font_size::LG)))
         .child(div().flex_1().child(label.into()));
@@ -1120,10 +1156,18 @@ mod tests {
                     assert_ne!(button.active & 255, 0);
                 }
                 assert_ne!(tile(&theme, "filled").rest & 255, 0);
-                assert_ne!(
-                    sidebar_item(&theme, "selected", &crate::icons::HEART, "Side", true).rest & 255,
-                    0
-                );
+                let selected = sidebar_item(&theme, "selected", &crate::icons::HEART, "Side", true);
+                assert_eq!(selected.rest, theme.accent_control);
+                assert_eq!(selected.ink, theme.on_accent_control);
+                for step in 0..=100 {
+                    let background = mix(selected.rest, selected.active, step as f32 / 100.);
+                    let ink = button_ink(background, selected.ink, selected.pressed_ink.unwrap());
+                    let rgb = |c: u32| -> Srgb { Srgb::<u8>::from(c >> 8).into_format() };
+                    assert!(
+                        rgb(ink).relative_contrast(rgb(background)) >= 3.,
+                        "太字の選択行も、明暗が反転する途中で読める"
+                    );
+                }
             }
         }
     }

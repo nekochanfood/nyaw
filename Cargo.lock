@@ -6006,6 +6006,7 @@ dependencies = [
  "kernel",
  "logger",
  "minifb",
+ "serde_json",
  "sysinfo",
  "testing",
  "ui",
