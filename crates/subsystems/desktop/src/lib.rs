@@ -321,6 +321,10 @@ impl Wake {
 
 trait Session {
     fn frame(&mut self) -> Result<Option<Frame>, Error>;
+    /// 閲覧だけ許可された配信では入力を送らず、映像の取得を続ける。
+    fn input_allowed(&self) -> bool {
+        true
+    }
     fn touch(&mut self, touch: Touch) -> Result<(), Error>;
     fn button(&mut self, touch: Touch, _button: Button) -> Result<(), Error> {
         self.touch(touch)
@@ -448,6 +452,8 @@ impl Stream {
                         }
                         for input in inputs.drain(..) {
                             match input {
+                                Input::Touch(_) | Input::Button(_, _) | Input::Scroll { .. }
+                                    if !session.input_allowed() => {}
                                 Input::Touch(touch) => session.touch(touch)?,
                                 Input::Button(touch, button) => session.button(touch, button)?,
                                 Input::Scroll { x, y, dx, dy } => session.scroll(x, y, dx, dy)?,
@@ -707,6 +713,50 @@ mod tests {
         stream.scroll(0.5, 0.5, 0.0, 1.0).unwrap();
         assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), "button");
         assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), "scroll");
+    }
+
+    #[test]
+    fn read_only_stream_ignores_input_and_keeps_delivering_frames() {
+        struct ReadOnly(SyncSender<()>);
+        impl Session for ReadOnly {
+            fn input_allowed(&self) -> bool {
+                false
+            }
+            fn frame(&mut self) -> Result<Option<Frame>, Error> {
+                Ok(Some(Frame::new(1, 1, vec![255; 4])?))
+            }
+            fn touch(&mut self, _: Touch) -> Result<(), Error> {
+                panic!("閲覧のみのセッションへ入力してはいけない")
+            }
+            fn scroll(&mut self, _: f32, _: f32, _: f32, _: f32) -> Result<(), Error> {
+                panic!("閲覧のみのセッションへスクロールしてはいけない")
+            }
+            fn focus(&mut self) -> Result<(), Error> {
+                self.0.send(()).unwrap();
+                Ok(())
+            }
+        }
+        let (tx, rx) = mpsc::sync_channel(1);
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| Ok(ReadOnly(tx))).unwrap();
+        until(|| stream.poll().is_some_and(|u| u.frame.is_some()));
+        let touch = Touch {
+            id: 0,
+            phase: TouchPhase::Down,
+            x: 0.5,
+            y: 0.5,
+        };
+        stream.touch(touch).unwrap();
+        stream.button(touch, Button::Left).unwrap();
+        stream.scroll(0.5, 0.5, 0.0, 1.0).unwrap();
+        // 入力の後に積んだ命令の到着を待ち、その後も映像が届くことを確かめる。
+        stream.focus().unwrap();
+        rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        until(|| {
+            stream.poll().is_some_and(|u| {
+                assert_eq!(u.status, Status::Streaming);
+                u.frame.is_some()
+            })
+        });
     }
 
     /// 前に出す頼みはワーカーが取得元のセッションに渡す（メインスレッドは待たない）。

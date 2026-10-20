@@ -56,6 +56,7 @@ struct Portal {
     remote: RemoteDesktop,
     session: PortalSession<RemoteDesktop>,
     contacts: [bool; 2],
+    touch_allowed: bool,
     capture_session: Option<PortalSession<Screencast>>,
 }
 impl Portal {
@@ -66,6 +67,7 @@ impl Portal {
             remote,
             session,
             contacts: [false; 2],
+            touch_allowed: false,
             capture_session: None,
         })
     }
@@ -151,11 +153,8 @@ impl Capture {
                     .start(&portal.session, None, Default::default())
                     .await?
                     .response()?;
-                if !response.devices().contains(DeviceType::Touchscreen) {
-                    return Err(Error(
-                        "desktop touch control was not granted by the portal".into(),
-                    ));
-                }
+                // 共有だけ許可されても表示を続ける。入力の許可はタッチを送るときに確認する。
+                portal.touch_allowed = response.devices().contains(DeviceType::Touchscreen);
                 let capture_response = if let Some(session) = capture_session {
                     Some(
                         cast.start(session, None, Default::default())
@@ -380,6 +379,10 @@ fn read_frame(
 }
 
 impl Session for Capture {
+    fn input_allowed(&self) -> bool {
+        self.portal.touch_allowed
+    }
+
     fn frame(&mut self) -> Result<Option<Frame>, Error> {
         if self.main_loop.loop_().iterate(pw::loop_::Timeout::None) < 0 {
             return Err(Error("PipeWire loop failed".into()));
@@ -392,6 +395,11 @@ impl Session for Capture {
     }
 
     fn touch(&mut self, touch: Touch) -> Result<(), Error> {
+        if !self.portal.touch_allowed {
+            return Err(Error(
+                "desktop touch control was not granted by the portal".into(),
+            ));
+        }
         let id = touch.id as usize;
         let active = self.portal.contacts[id];
         if touch.phase == TouchPhase::Down && active {

@@ -183,6 +183,8 @@ pub struct Dashboard {
     debug: Summon,
     /// ダッシュボードで開いた配信（画面・ウィンドウ）。押すとはまり、ほかを選ぶと閉じずに隠れる。
     streams: Vec<Stream>,
+    /// Portal で画面を選ぶ入口。起動時には共有ダイアログを出さず、バーから開く。
+    screen_picker: Option<Source>,
     /// 開いているメニューのポップオーバー（[`Menu`]）。
     menu: Option<PanelId>,
     /// 最後にはめた画面（外されたり閉じられたりしていれば、[`Self::current`] は `None`）。
@@ -235,6 +237,7 @@ impl Dashboard {
             settings,
             debug,
             streams: Vec::new(),
+            screen_picker: None,
             menu: None,
             shown: None,
             outside: None,
@@ -298,6 +301,10 @@ impl Dashboard {
     /// 画面（モニター）をすべて、常駐の配信として隠して開いておく（バーのボタンで出せる。閉じずにしまう）。
     /// もう映しているものは開かない。
     fn open_screens(&mut self, mut sources: Vec<Source>, cx: &mut Context<Self>) {
+        self.screen_picker = sources
+            .iter()
+            .find(|s| s.kind == SourceKind::Screen && !s.concrete())
+            .cloned();
         sources.sort_by(|a, b| a.name.cmp(&b.name));
         for source in sources {
             if source.kind == SourceKind::Screen
@@ -315,6 +322,24 @@ impl Dashboard {
                 cx.default_global::<PanelControl>().spawns.push(spec);
             }
         }
+        redraw(self.panel, cx);
+    }
+
+    /// 共有ダイアログから画面を選び、バーの上に映す。選んだ配信は通常の配信ボタンで切り替えられる。
+    fn select_screen(&mut self, cx: &mut Context<Self>) {
+        let Some(source) = self.screen_picker.clone() else {
+            return;
+        };
+        self.stash_docked(cx);
+        let spec = mirror_spec(
+            source,
+            None,
+            Some(cx.weak_entity()),
+            self.panel,
+            false,
+            true,
+        );
+        cx.default_global::<PanelControl>().spawns.push(spec);
     }
 
     /// はまっている配信を、閉じずに隠して外す（ボタンを押せばまた出せる）。配信でなければ何もしない
@@ -825,6 +850,18 @@ impl Render for Dashboard {
             // 何か再生しているときだけ、再生中の画面のボタンを出す。
             .when(has_media, |d| d.child(now_playing))
             .child(mirror)
+            .when(self.screen_picker.is_some(), |d| {
+                d.child(
+                    components::icon_button(
+                        &theme,
+                        "dashboard-screen",
+                        &icons::MONITOR,
+                        i18n::t(cx, "dashboard.share_screen"),
+                        Variant::Default,
+                    )
+                    .on_click(cx.listener(|this, _, _, cx| this.select_screen(cx))),
+                )
+            })
             .when(!streams.is_empty(), |d| d.child(separator(&theme)))
             // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
             .child(
@@ -2314,49 +2351,67 @@ impl Mirror {
         .detach();
     }
 
-    /// 起動したアプリのウィンドウを探し続け、出たら映し始める。[`LAUNCH_WAIT`] の間に出なければ諦める。
+    /// 起動したアプリのウィンドウを探す。一覧を取得できない環境では Portal の選択へ進む。
     fn wait_for_window(&self, cx: &mut Context<Self>) {
-        let Some(app) = self.waiting.as_ref().map(|w| w.app.clone()) else {
+        if self.waiting.is_none() {
             return;
-        };
+        }
         let started = Instant::now();
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(LAUNCH_POLL).await;
-                let found = match Sources::refresh() {
+                if !matches!(this.update(cx, |m, cx| m.launch_pending(cx)), Ok(true)) {
+                    return;
+                }
+                let sources = match Sources::refresh() {
                     Ok(pending) => loop {
                         if let Some(result) = pending.poll() {
-                            break result
-                                .ok()
-                                .and_then(|s| s.into_iter().find(|s| is_window_of(&app, s)));
+                            break result.unwrap_or_default();
                         }
                         cx.background_executor()
                             .timer(Duration::from_millis(50))
                             .await;
                     },
-                    Err(_) => None,
+                    Err(_) => Vec::new(),
                 };
                 let gave_up = started.elapsed() > LAUNCH_WAIT;
-                let done = this.update(cx, |m, cx| match found {
-                    Some(source) => {
-                        m.found(source, cx);
-                        true
-                    }
-                    None if gave_up => {
-                        if let Some(w) = &mut m.waiting {
-                            w.gave_up = true;
-                        }
-                        redraw(m.panel, cx);
-                        true
-                    }
-                    None => false,
-                });
+                let done = this.update(cx, |m, cx| m.finish_launch(&sources, gave_up, cx));
                 if !matches!(done, Ok(false)) {
                     return;
                 }
             }
         })
         .detach();
+    }
+
+    fn launch_pending(&self, cx: &App) -> bool {
+        self.waiting.as_ref().is_some_and(|w| !w.gave_up)
+            && !cx
+                .try_global::<PanelControl>()
+                .and_then(|ctl| ctl.panels.get(&self.panel))
+                .is_some_and(|p| p.status.closed)
+    }
+
+    /// 起動待ちを続ける必要がなければ true。Portal の入口はアプリ名と突き合わせない。
+    fn finish_launch(&mut self, sources: &[Source], gave_up: bool, cx: &mut Context<Self>) -> bool {
+        if !self.launch_pending(cx) {
+            return true;
+        }
+        let app = &self.waiting.as_ref().unwrap().app;
+        let source = sources.iter().find(|s| is_window_of(app, s)).or_else(|| {
+            sources
+                .iter()
+                .find(|s| s.kind == SourceKind::Window && !s.concrete())
+        });
+        if let Some(source) = source {
+            self.found(source.clone(), cx);
+            return true;
+        }
+        if gave_up {
+            self.waiting.as_mut().unwrap().gave_up = true;
+            redraw(self.panel, cx);
+        }
+        gave_up
     }
 
     /// 待っていたウィンドウ `source` が出た: このパネルで映し始め、ダッシュボードに配信のボタンを足す。
@@ -3086,6 +3141,82 @@ mod tests {
         )
     }
 
+    /// OS の非同期な一覧取得で、テストが渡した取得元を上書きしないようにする。
+    fn dashboard_without_os_sources() -> Dashboard {
+        Dashboard {
+            panel: 1,
+            settings: summon,
+            debug: summon,
+            streams: Vec::new(),
+            screen_picker: None,
+            menu: None,
+            shown: None,
+            outside: None,
+        }
+    }
+
+    /// Portal の入口しかない環境でも、アプリ一覧を経由せず画面全体を選べる。
+    #[gpui::test]
+    fn portal_screen_button_starts_a_docked_screen_stream_on_click(cx: &mut TestAppContext) {
+        let source = kernel::desktop::mock::source("Select a screen…", SourceKind::Screen);
+        let (bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+            let mut bar = dashboard_without_os_sources();
+            bar.open_screens(
+                vec![
+                    source.clone(),
+                    kernel::desktop::mock::source("Select a window…", SourceKind::Window),
+                ],
+                cx,
+            );
+            bar
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("dashboard-screen").is_some());
+        assert!(
+            cx.read(|cx| cx.global::<PanelControl>().spawns.is_empty()),
+            "起動時には共有ダイアログを出さない"
+        );
+        click(cx, "dashboard-screen");
+        open_spawned(cx, 4);
+        let c = commands(cx, 4);
+        assert!(c.contains(&PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE)));
+        assert!(c.iter().any(docked_to_bar));
+        assert!(!c.contains(&PanelCommand::Hide(true)));
+        assert_eq!(bar.read_with(cx, |d, _| d.streams.len()), 1);
+        assert_eq!(
+            bar.read_with(cx, |d, _| d.streams[0].kind),
+            SourceKind::Screen
+        );
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("dashboard-stream-4").is_some());
+        click(cx, "dashboard-stream-4");
+        assert!(commands(cx, 4).contains(&PanelCommand::Hide(true)));
+    }
+
+    /// 取得元を列挙できる環境では、従来どおりモニターごとに常駐の配信を用意する。
+    #[gpui::test]
+    fn concrete_screens_are_opened_without_a_portal_picker(cx: &mut TestAppContext) {
+        let source = kernel::desktop::mock::with_target(
+            kernel::desktop::mock::source("Display 1", SourceKind::Screen),
+            42,
+        );
+        let (bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+            let mut bar = dashboard_without_os_sources();
+            bar.open_screens(vec![source.clone()], cx);
+            bar
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("dashboard-screen").is_none());
+        open_spawned(cx, 4);
+        let c = commands(cx, 4);
+        assert!(c.contains(&PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE)));
+        assert!(c.contains(&PanelCommand::Hide(true)));
+        assert!(!c.iter().any(docked_to_bar));
+        assert!(bar.read_with(cx, |d, _| d.streams[0].resident));
+    }
+
     #[gpui::test]
     fn opening_shows_nothing_and_buttons_toggle_docked_screens(cx: &mut TestAppContext) {
         // バー（PanelId 1）の上を、画面をはめる場所にする。
@@ -3582,6 +3713,87 @@ mod tests {
         );
     }
 
+    /// OS を問い合わせず、起動待ちの結果の処理だけを検証する。
+    fn waiting_editor(cx: &mut Context<Mirror>) -> Mirror {
+        cx.default_global::<PanelControl>();
+        Mirror {
+            panel: 4,
+            source: None,
+            waiting: Some(Waiting {
+                app: InstalledApp {
+                    name: "Editor".into(),
+                    id: "editor".into(),
+                    exe: Some("editor.exe".into()),
+                    icon: None,
+                },
+                icon: None,
+                gave_up: false,
+            }),
+            dashboard: None,
+            ending: false,
+            was_hidden: false,
+            watch_generation: 0,
+        }
+    }
+
+    /// Portal が具体的なウィンドウを返さなくても、最初の一覧から共有の選択へ進む。
+    #[gpui::test]
+    fn launching_app_uses_portal_selection_instead_of_polling_for_its_name(
+        cx: &mut TestAppContext,
+    ) {
+        let picker = kernel::desktop::mock::source("Select a window…", SourceKind::Window);
+        let sources = [
+            kernel::desktop::mock::source("Select a screen…", SourceKind::Screen),
+            picker.clone(),
+        ];
+        let (mirror, cx) = cx.add_window_view(|_, cx| waiting_editor(cx));
+        assert!(mirror.update(cx, |m, cx| m.finish_launch(&sources, false, cx)));
+        assert_eq!(
+            take_commands(cx, 4),
+            [PanelCommand::Stream(
+                Some(picker.clone()),
+                DEFAULT_FRAME_RATE
+            )]
+        );
+        mirror.read_with(cx, |m, _| {
+            assert!(m.waiting.is_none());
+            assert_eq!(m.source, Some(picker));
+        });
+        // 次の検索結果が来ても、ダイアログや配信を重複して開かない。
+        assert!(mirror.update(cx, |m, cx| m.finish_launch(&sources, false, cx)));
+        assert!(take_commands(cx, 4).is_empty());
+    }
+
+    #[gpui::test]
+    fn launching_app_still_waits_for_a_matching_native_window(cx: &mut TestAppContext) {
+        let unrelated = kernel::desktop::mock::with_target(
+            kernel::desktop::mock::source("Other app", SourceKind::Window),
+            42,
+        );
+        let (mirror, cx) = cx.add_window_view(|_, cx| waiting_editor(cx));
+        assert!(!mirror.update(cx, |m, cx| m.finish_launch(&[unrelated], false, cx)));
+        assert!(take_commands(cx, 4).is_empty());
+        assert!(mirror.update(cx, |m, cx| m.finish_launch(&[], true, cx)));
+        assert!(mirror.read_with(cx, |m, _| m.waiting.as_ref().unwrap().gave_up));
+        assert!(take_commands(cx, 4).is_empty());
+    }
+
+    #[gpui::test]
+    fn launching_closed_panel_does_not_start_capture(cx: &mut TestAppContext) {
+        let picker = kernel::desktop::mock::source("Select a window…", SourceKind::Window);
+        let (mirror, cx) = cx.add_window_view(|_, cx| waiting_editor(cx));
+        cx.update(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(4)
+                .or_default()
+                .status
+                .closed = true;
+        });
+        assert!(mirror.update(cx, |m, cx| m.finish_launch(&[picker], false, cx)));
+        assert!(take_commands(cx, 4).is_empty());
+    }
+
     /// 起動していないアプリを開くと、すぐその画面がはまって待ち（名前と「起動しています」）、ウィンドウが出たら
     /// その画面で映し始めてバーに配信のボタンが増える。
     #[gpui::test]
@@ -3616,7 +3828,7 @@ mod tests {
         let mut window = kernel::desktop::mock::source("Editor - file.txt", SourceKind::Window);
         window.app = Some("Editor.exe".into());
         let inner = mirror.read_with(mcx, |w, _| w.0.clone());
-        inner.update(mcx, |m, cx| m.found(window.clone(), cx));
+        assert!(inner.update(mcx, |m, cx| m.finish_launch(&[window.clone()], false, cx)));
         assert_eq!(
             take_commands(mcx, 4),
             [PanelCommand::Stream(Some(window), DEFAULT_FRAME_RATE)]

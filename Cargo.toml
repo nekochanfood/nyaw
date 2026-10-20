@@ -100,3 +100,7 @@ gpui_windows = { path = "vendor/gpui_windows" }
 # Linux の GPUI を窓を出さずに描き、読み戻せるようにする（vendor/gpui_linux, vendor/gpui_wgpu）
 gpui_linux = { path = "vendor/gpui_linux" }
 gpui_wgpu = { path = "vendor/gpui_wgpu" }
+
+[patch.crates-io]
+# Portal の Request はプロパティを持たず、作成前の問い合わせで警告が出るため修正する。
+ashpd = { path = "vendor/ashpd" }

@@ -49,13 +49,13 @@ fn capture(kind: SourceKind) {
 }
 
 #[test]
-#[ignore = "requires an interactive Linux desktop with ScreenCast and RemoteDesktop touchscreen permissions; select a screen in the portal dialog"]
+#[ignore = "requires an interactive Linux desktop; select a screen in the portal dialog (remote interaction is optional)"]
 fn portal_screen_produces_frames() {
     capture(SourceKind::Screen);
 }
 
 #[test]
-#[ignore = "requires an interactive Linux desktop with ScreenCast and RemoteDesktop touchscreen permissions; select a window in the portal dialog"]
+#[ignore = "requires an interactive Linux desktop; select a window in the portal dialog (remote interaction is optional)"]
 fn portal_window_produces_frames() {
     capture(SourceKind::Window);
 }
