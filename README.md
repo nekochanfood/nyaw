@@ -6,6 +6,16 @@ VR オーバーレイアプリ。SteamVR（OpenVR）と OpenXR に対応。
 
 必要なもの: Rust（stable）、cmake と C++ コンパイラ。
 
+Linux では、ビルド前にネイティブ依存もインストールします。
+
+```sh
+# Arch Linux / EndeavourOS
+sudo pacman -S --needed base-devel cmake clang alsa-lib fontconfig glib2 wayland libx11 libxcb libxkbcommon libxkbcommon-x11 zstd pipewire
+
+# Ubuntu / Debian
+sudo apt-get install build-essential cmake pkg-config libasound2-dev libfontconfig-dev libglib2.0-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libzstd-dev libpipewire-0.3-dev libclang-dev
+```
+
 ```sh
 cargo run --release              # VR ランタイムを自動検出（無ければウィンドウで動くエミュレーターで起動）
 cargo run --release -- --openvr  # SteamVR を使う（--openxr で OpenXR、--novr でエミュレーター）
@@ -22,6 +32,8 @@ Windows は WGC を使います。ウィンドウのタッチ操作は、その�
 
 Linux は PipeWire と XDG Desktop Portal の ScreenCast / RemoteDesktop を使います。
 画面またはウィンドウを選ぶと OS の共有ダイアログが開きます。Portal の実装が画面共有とタッチ操作に対応している必要があります。
+KDE では、入力操作の許可と共有する画面・ウィンドウの選択が別々のダイアログで開きます。
+KDE のウィンドウ共有は表示に対応しますが、Portal がウィンドウの座標を返さないためタッチ操作はエラーになります。タッチ操作には画面共有を使ってください。
 Linux のビルドには `libpipewire-0.3-dev` と `libclang-dev` も必要です。
 現在の画像転送は CPU に読み戻した RGBA を使用します。
 

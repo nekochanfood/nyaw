@@ -56,6 +56,7 @@ struct Portal {
     remote: RemoteDesktop,
     session: PortalSession<RemoteDesktop>,
     contacts: [bool; 2],
+    capture_session: Option<PortalSession<Screencast>>,
 }
 impl Portal {
     async fn new() -> Result<Self, Error> {
@@ -65,6 +66,7 @@ impl Portal {
             remote,
             session,
             contacts: [false; 2],
+            capture_session: None,
         })
     }
 }
@@ -80,6 +82,9 @@ impl Drop for Portal {
                 }
             }
             let _ = self.session.close().await;
+            if let Some(session) = &self.capture_session {
+                let _ = session.close().await;
+            }
         });
     }
 }
@@ -101,12 +106,17 @@ pub(super) struct Capture {
     portal: Portal,
     node: u32,
     logical_size: Option<(i32, i32)>,
+    touch_origin: Option<(i32, i32)>,
 }
 
 impl Capture {
     pub fn new(source: Source, stop: Arc<AtomicBool>) -> Result<Self, Error> {
-        let portal = block_on(Portal::new())?;
-        let (fd, node, logical_size) = block_on(future::race(
+        let mut portal = block_on(Portal::new())?;
+        // KDE の RemoteDesktop は単一ストリームだと全出力を連結する。
+        // 画面・ウィンドウ選択は独立した ScreenCast に任せ、RemoteDesktop は入力だけに使う。
+        let separate_capture =
+            std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| is_kde(&desktop));
+        let (fd, node, logical_size, touch_origin) = block_on(future::race(
             async {
                 let cast = Screencast::new().await?;
                 portal
@@ -122,15 +132,20 @@ impl Capture {
                     SourceKind::Screen => SourceType::Monitor,
                     SourceKind::Window => SourceType::Window,
                 };
-                cast.select_sources(
-                    &portal.session,
-                    SelectSourcesOptions::default()
-                        .set_sources(Some(source.into()))
-                        .set_multiple(false)
-                        .set_cursor_mode(CursorMode::Embedded),
-                )
-                .await?
-                .response()?;
+                if separate_capture {
+                    portal.capture_session = Some(cast.create_session(Default::default()).await?);
+                }
+                let capture_session = portal.capture_session.as_ref();
+                let options = SelectSourcesOptions::default()
+                    .set_sources(Some(source.into()))
+                    .set_multiple(false)
+                    .set_cursor_mode(CursorMode::Embedded);
+                let request = if let Some(session) = capture_session {
+                    cast.select_sources(session, options).await?
+                } else {
+                    cast.select_sources(&portal.session, options).await?
+                };
+                request.response()?;
                 let response = portal
                     .remote
                     .start(&portal.session, None, Default::default())
@@ -141,14 +156,32 @@ impl Capture {
                         "desktop touch control was not granted by the portal".into(),
                     ));
                 }
-                let stream = response
-                    .streams()
-                    .first()
-                    .ok_or_else(|| Error("portal returned no capture stream".into()))?;
-                let fd = cast
-                    .open_pipe_wire_remote(&portal.session, Default::default())
-                    .await?;
-                Ok((fd, stream.pipe_wire_node_id(), stream.size()))
+                let capture_response = if let Some(session) = capture_session {
+                    Some(
+                        cast.start(session, None, Default::default())
+                            .await?
+                            .response()?,
+                    )
+                } else {
+                    None
+                };
+                let streams = capture_response
+                    .as_ref()
+                    .map_or(response.streams(), |r| r.streams());
+                let stream = single_stream(streams)?;
+                let touch_origin = if separate_capture {
+                    stream.position()
+                } else {
+                    Some((0, 0))
+                };
+                let fd = if let Some(session) = capture_session {
+                    cast.open_pipe_wire_remote(session, Default::default())
+                        .await?
+                } else {
+                    cast.open_pipe_wire_remote(&portal.session, Default::default())
+                        .await?
+                };
+                Ok((fd, stream.pipe_wire_node_id(), stream.size(), touch_origin))
             },
             async {
                 while !stop.load(Ordering::Acquire) {
@@ -276,8 +309,32 @@ impl Capture {
             portal,
             node,
             logical_size,
+            touch_origin,
         })
     }
+}
+
+fn is_kde(desktop: &str) -> bool {
+    desktop
+        .split(':')
+        .any(|name| name.eq_ignore_ascii_case("KDE"))
+}
+
+fn single_stream<T>(streams: &[T]) -> Result<&T, Error> {
+    match streams {
+        [stream] => Ok(stream),
+        [] => Err(Error("portal returned no capture stream".into())),
+        _ => Err(Error(
+            "portal returned multiple streams for a single source".into(),
+        )),
+    }
+}
+
+fn touch_position(origin: (i32, i32), size: (i32, i32), point: (f32, f32)) -> (f64, f64) {
+    (
+        origin.0 as f64 + (size.0 - 1) as f64 * point.0 as f64,
+        origin.1 as f64 + (size.1 - 1) as f64 * point.1 as f64,
+    )
 }
 
 fn read_frame(
@@ -351,10 +408,10 @@ impl Session for Capture {
         if width <= 0 || height <= 0 {
             return Err(Error("desktop touch needs a negotiated video size".into()));
         }
-        let (x, y) = (
-            (width - 1) as f64 * touch.x as f64,
-            (height - 1) as f64 * touch.y as f64,
-        );
+        let origin = self.touch_origin.ok_or_else(|| {
+            Error("the KDE portal does not provide window coordinates for touch control".into())
+        })?;
+        let (x, y) = touch_position(origin, (width, height), (touch.x, touch.y));
         let portal = &self.portal;
         block_on(async {
             match touch.phase {
@@ -476,6 +533,41 @@ pub(super) fn launch(exec: &str) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recognizes_kde_in_desktop_list() {
+        assert!(is_kde("KDE"));
+        assert!(is_kde("foo:kde"));
+        assert!(!is_kde("GNOME"));
+        assert!(!is_kde("notKDE"));
+    }
+
+    #[test]
+    fn requires_exactly_one_selected_stream() {
+        assert!(single_stream::<u32>(&[]).is_err());
+        assert_eq!(*single_stream(&[42]).unwrap(), 42);
+        assert!(single_stream(&[42, 43]).is_err());
+    }
+
+    #[test]
+    fn maps_touch_to_selected_monitor_in_logical_coordinates() {
+        assert_eq!(
+            touch_position((1920, -200), (1280, 720), (0., 0.)),
+            (1920., -200.)
+        );
+        assert_eq!(
+            touch_position((1920, -200), (1280, 720), (1., 1.)),
+            (3199., 519.)
+        );
+        assert_eq!(
+            touch_position((-1280, 0), (1280, 720), (0., 1.)),
+            (-1280., 719.)
+        );
+        assert_eq!(
+            touch_position((0, 0), (1920, 1080), (1., 1.)),
+            (1919., 1079.)
+        );
+    }
 
     /// 起動できるアプリだけを読み、Exec の引数の置き場を消す。
     #[test]
