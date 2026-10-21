@@ -216,7 +216,7 @@ impl<B: VrBackend> Kernel<B> {
                 continue;
             };
             if panel.status != Status::Streaming && update.status == Status::Streaming {
-                // 開始待ち（Linux ではポータルの選択）の時間を最初の一秒に混ぜない。
+                // 開始待ちの時間を最初の一秒に混ぜない。
                 panel.meter = Meter::new(now);
             }
             panel.status = update.status;
@@ -288,7 +288,8 @@ impl<B: VrBackend> Kernel<B> {
                     if contact.is_some() {
                         *contact = Some(pos);
                     }
-                    (contact.is_some() || cfg!(windows)).then_some((TouchPhase::Move, pos))
+                    (contact.is_some() || desktop::capabilities().hover)
+                        .then_some((TouchPhase::Move, pos))
                 }
                 PointerEvent::Up { pos } | PointerEvent::UpButton { pos, .. }
                     if contact.take().is_some() =>
@@ -468,9 +469,11 @@ mod tests {
         assert_eq!(control.buttons()[0].1, Button::Middle);
     }
 
-    #[cfg(windows)]
     #[test]
-    fn desktop_hover_moves_the_windows_mouse_without_pressing() {
+    fn desktop_hover_moves_without_pressing_when_supported() {
+        if !desktop::capabilities().hover {
+            return;
+        }
         let (mut kernel, _, control) = setup();
         hand(&mut kernel, 0.0, false);
         kernel.tick();

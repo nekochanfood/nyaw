@@ -8,8 +8,7 @@ license.workspace = true
 [dependencies]
 # 描画は kernel::rendering が担う。UI の入力注入とテストにも test-support を使う。
 gpui = { workspace = true, features = ["test-support"] }
-# x11 / wayland: Linux で実ウィンドウを開く（design のカタログ用。パネルは headless で描く。`ui::application`）。
-gpui_platform = { workspace = true, features = ["test-support", "x11", "wayland"] }
+gpui_platform = { workspace = true, features = ["test-support"] }
 kernel = { workspace = true, features = ["rendering-host"] }
 profiler.workspace = true
 design.workspace = true

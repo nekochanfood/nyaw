@@ -14,7 +14,6 @@ pub struct Frame {
 /// ウィンドウを描き直し、画面に出さずにオフスクリーンへ描画して読み戻す。
 /// 大きさはデバイスピクセル（論理サイズ × 拡大率）。
 // ponytail: gpui の `render_to_image` は test-support フィーチャー限定。上流で一般公開されたらフィーチャーを外す。
-// Windows は gpui_windows、Linux は headless のウィンドウが gpui_wgpu で描く（どちらも vendor/ で手を入れてある）。
 pub fn capture(window: &mut Window, cx: &mut App) -> gpui::Result<Frame> {
     window.draw(cx).clear(cx);
     let frame = read_back(window)?;
@@ -38,8 +37,6 @@ pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
 pub fn collect(window: &mut Window) -> Option<Frame> {
     #[cfg(windows)]
     let img = gpui_windows::collect_readback(|| window.render_to_image());
-    #[cfg(target_os = "linux")]
-    let img = gpui_wgpu::collect_readback(|| window.render_to_image());
     img.ok().map(|img| Frame {
         width: img.width(),
         height: img.height(),
@@ -49,7 +46,6 @@ pub fn collect(window: &mut Window) -> Option<Frame> {
 
 /// 指定された表示方針でウィンドウを開く。Windows の非表示ウィンドウのレンダーターゲットは
 /// 1x1 のまま作られるので、明示的にリサイズして実寸にする（反映は非同期。最初の数フレームは 1x1）。
-/// Linux は GPUI を headless で動かす（`ui::application`）ので、窓は画面に出ず、開いた大きさで描く。
 pub fn open_window<V: Render>(
     cx: &mut App,
     mut options: WindowOptions,

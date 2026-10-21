@@ -26,8 +26,6 @@ log = "0.4"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_windows = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
-gpui_linux = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
-gpui_wgpu = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 logger = { path = "crates/logger" }
 os = { path = "crates/subsystems/os" }
 rendering = { path = "crates/subsystems/rendering" }
@@ -97,6 +95,3 @@ opt-level = 2
 # Windows の GPUI の読み戻しを GPU の完了を待たないものにする（vendor/gpui_windows/Cargo.toml）
 [patch."https://github.com/zed-industries/zed"]
 gpui_windows = { path = "vendor/gpui_windows" }
-# Linux の GPUI を窓を出さずに描き、読み戻せるようにする（vendor/gpui_linux, vendor/gpui_wgpu）
-gpui_linux = { path = "vendor/gpui_linux" }
-gpui_wgpu = { path = "vendor/gpui_wgpu" }

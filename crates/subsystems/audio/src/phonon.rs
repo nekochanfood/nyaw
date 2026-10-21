@@ -117,11 +117,12 @@ unsafe impl Send for Binaural {}
 /// ライブラリを探す名前。`NYAW_PHONON` で場所を指せる。無ければ OS の既定の探し方（Windows は実行ファイルの隣が最初）。
 fn library_name() -> std::ffi::OsString {
     std::env::var_os("NYAW_PHONON").unwrap_or_else(|| {
-        if cfg!(windows) {
-            "phonon.dll".into()
-        } else {
-            "libphonon.so".into()
-        }
+        format!(
+            "{}phonon{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        )
+        .into()
     })
 }
 

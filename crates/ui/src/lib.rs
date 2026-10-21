@@ -1324,14 +1324,9 @@ pub struct Hooks {
 /// フレームループ（メインスレッド）で実行してもらう処理。
 pub type Remote = Box<dyn FnOnce(&mut App) + Send>;
 
-/// パネルを描く GPUI のアプリ。パネルのウィンドウは画面に出さずに描いて読み戻すだけなので、
-/// Linux はディスプレイサーバーに繋がない headless で動かす（X11 / Wayland は非表示の指定を無視して窓を出す）。
+/// パネルを描く GPUI のアプリ。プラットフォームの選択は GPUI に任せる。
 pub fn application() -> gpui::Application {
-    if cfg!(target_os = "linux") {
-        gpui_platform::headless()
-    } else {
-        gpui_platform::application()
-    }
+    gpui_platform::application()
 }
 
 /// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。

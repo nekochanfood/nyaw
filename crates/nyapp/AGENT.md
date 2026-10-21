@@ -18,7 +18,7 @@ nyaw の上で動くアプリを **ニャプリ（nyapp）** と呼ぶ。この�
 ```
 
 - **ニャプリはプラットフォームに依らない 1 つのバイナリ**（jar・apk と同じ）。`wasm32-unknown-unknown` の wasm を
-  `.nyapp` に入れて配り、nyaw の中の VM（wasmi）で動かす。Windows でも Linux でも同じ `.nyapp` が動く。
+  `.nyapp` に入れて配り、nyaw の中の VM（wasmi）で動かす。OS バックエンドを追加しても `.nyapp` の形式は変えない。
 - **カーネルはプラットフォームごとにビルドする**。ニャプリはカーネルに直接触れず、このクレートのホスト関数だけを通る。
 - **UI は「何を出すか」だけをニャプリが宣言する**。ニャプリは画面の木（`nyapp_sdk::Node`。行・列・カード・格子・文字・
   ボタン・スイッチ・図形の面）を返し、見た目（色・寸法・ホバー・押下・波紋・テーマ）はホストが `design` の部品で決める。
@@ -144,7 +144,7 @@ WASI を渡さないのでサンドボックスが最初から閉じていて、
 
 | | |
 |---|---|
-| パッケージ | `os::data_dir()/nyapps/<id>.nyapp`（Windows `%LOCALAPPDATA%\nyaw\nyapps`、Linux `$XDG_DATA_HOME/nyaw/nyapps`）。置けば入り、消せば消える |
+| パッケージ | `os::data_dir()/nyapps/<id>.nyapp`（Windows `%LOCALAPPDATA%\nyaw\nyapps`）。置けば入り、消せば消える |
 | 保存領域 | `os::data_dir()/appdata/<id>/storage.json` |
 
 ## クレートの中

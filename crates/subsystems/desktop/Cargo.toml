@@ -7,12 +7,6 @@ license.workspace = true
 [features]
 test-support = []
 
-[target.'cfg(target_os = "linux")'.dependencies]
-ashpd = { version = "0.13.13", default-features = false, features = ["async-io", "screencast", "remote_desktop"] }
-pipewire = "0.10.1"
-futures-lite = "2.6"
-async-io = "2"
-
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
     "Foundation", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Devices_Display",

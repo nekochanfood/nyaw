@@ -148,8 +148,6 @@ impl Input {
     }
 
     /// 見えている手ごとに（手, デバイス番号, レーザーの姿勢, アクション）。姿勢は `predict` 秒後の予測。
-    // ponytail: openvr_bindings の構造体は Windows の詰め物で定義されている。Linux で大きさが合わず
-    // エラーになるなら、ControllerState と同じく自前で定義し直す。
     pub fn hands(&self, predict: f32) -> Vec<(Hand, u32, Pose, HandActions)> {
         self.hands
             .iter()

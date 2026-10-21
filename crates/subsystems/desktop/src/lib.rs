@@ -14,8 +14,20 @@ use std::{
 pub const DEFAULT_FRAME_RATE: u32 = 60;
 pub const MAX_FRAME_RATE: u32 = 240;
 
-#[cfg(target_os = "linux")]
-mod linux;
+/// 配信バックエンドが提供する操作。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Capabilities {
+    pub hover: bool,
+    pub minimize: bool,
+}
+
+pub fn capabilities() -> Capabilities {
+    #[cfg(windows)]
+    return windows::CAPABILITIES;
+    #[cfg(not(windows))]
+    Capabilities::default()
+}
+
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 #[cfg(windows)]
@@ -39,7 +51,7 @@ pub struct Source {
 }
 
 impl Source {
-    /// 特定の画面・ウィンドウを指す。Linux の一覧は選択ダイアログの入口で、開くとダイアログが出る（指さない）。
+    /// 特定の画面・ウィンドウを指す。
     pub fn concrete(&self) -> bool {
         self.target != 0
     }
@@ -193,9 +205,7 @@ impl Sources {
             .spawn(move || {
                 #[cfg(windows)]
                 let result = windows::sources();
-                #[cfg(target_os = "linux")]
-                let result = linux::sources();
-                #[cfg(not(any(windows, target_os = "linux")))]
+                #[cfg(not(windows))]
                 let result = Err(Error(
                     "desktop capture is not available on this platform yet".into(),
                 ));
@@ -216,11 +226,11 @@ impl Sources {
     }
 }
 
-/// インストールされているアプリ（Windows はスタートメニュー、Linux はデスクトップエントリのもの）。
+/// インストールされているアプリ。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledApp {
     pub name: String,
-    /// 起動に使う ID（Windows は AppUserModelId、Linux はデスクトップエントリの Exec）。
+    /// 起動に使うバックエンド固有の ID。
     pub id: String,
     /// 実行ファイル名（"chrome.exe" など）。起動中のウィンドウ（[`Source::app`]）と突き合わせる。取れなければ `None`。
     pub exe: Option<String>,
@@ -238,9 +248,7 @@ impl InstalledApps {
             .spawn(move || {
                 #[cfg(windows)]
                 let result = windows::installed_apps();
-                #[cfg(target_os = "linux")]
-                let result = linux::installed_apps();
-                #[cfg(not(any(windows, target_os = "linux")))]
+                #[cfg(not(windows))]
                 let result = Err(Error(
                     "listing apps is not available on this platform yet".into(),
                 ));
@@ -268,9 +276,7 @@ impl InstalledApps {
 pub fn launch(app: &InstalledApp) -> Result<(), Error> {
     #[cfg(windows)]
     return windows::launch(&app.id);
-    #[cfg(target_os = "linux")]
-    return linux::launch(&app.id);
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(not(windows))]
     {
         let _ = app;
         Err(Error(
@@ -325,7 +331,6 @@ trait Session {
     fn button(&mut self, touch: Touch, _button: Button) -> Result<(), Error> {
         self.touch(touch)
     }
-    // shortcut: Linux portal session requests touchscreen only; request pointer access when Linux wheel input is needed.
     fn scroll(&mut self, _x: f32, _y: f32, _dx: f32, _dy: f32) -> Result<(), Error> {
         Ok(())
     }
@@ -333,7 +338,6 @@ trait Session {
         Ok(())
     }
     /// 取得元のウィンドウを前に出してフォーカスする（画面は何もしない）。
-    // ponytail: Linux のポータルはウィンドウを前に出す手段を持たないので何もしない。要ればコンポジタごとの手段（sway の IPC など）を足す。
     fn focus(&mut self) -> Result<(), Error> {
         Ok(())
     }
@@ -356,7 +360,7 @@ pub struct Stream {
     stop: Arc<AtomicBool>,
 }
 
-/// 到着を通知しない OS（PipeWire のポーリング）と接点の維持のため、待ちはこれより長くしない。
+/// 接点の維持と停止要求の処理のため、待ちはこれより長くしない。
 const POLL: Duration = Duration::from_millis(8);
 
 impl Stream {
@@ -371,11 +375,7 @@ impl Stream {
                 windows::Capture::new(source, wake)
             })
         }
-        #[cfg(target_os = "linux")]
-        {
-            Self::spawn(frame_rate, move |stop, _| linux::Capture::new(source, stop))
-        }
-        #[cfg(not(any(windows, target_os = "linux")))]
+        #[cfg(not(windows))]
         {
             let _ = (source, frame_rate);
             Err(Error(

@@ -19,7 +19,8 @@ use gpui::{
 };
 use kernel::audio::Sound;
 use kernel::desktop::{
-    DEFAULT_FRAME_RATE, Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status,
+    self, DEFAULT_FRAME_RATE, Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources,
+    Status,
 };
 use kernel::subsystems::media;
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
@@ -2556,7 +2557,7 @@ fn launch_spec(
         .titled_text(title)
         .dockable()
         .with_os_keyboard();
-    if cfg!(windows) {
+    if desktop::capabilities().minimize {
         spec.source_minimizable()
     } else {
         spec
@@ -2627,7 +2628,7 @@ fn mirror_spec(
         .dockable()
         // 映しているデスクトップ・ウィンドウへ打てるよう、ナビゲーションバーの左端に OS キーボードのトグルを出す。
         .with_os_keyboard();
-    if source_kind == SourceKind::Window && cfg!(windows) {
+    if source_kind == SourceKind::Window && desktop::capabilities().minimize {
         spec.source_minimizable()
     } else {
         spec
@@ -3629,7 +3630,7 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(streams, [4], "バーに配信のボタンが増える");
-        if cfg!(windows) {
+        if desktop::capabilities().minimize {
             let (_nav, ncx) =
                 cx.add_window_view(|window, cx| ui::PanelRoot::new(nav_spec.build(5, window, cx)));
             ncx.update(|window, cx| {

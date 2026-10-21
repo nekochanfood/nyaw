@@ -1,4 +1,4 @@
-//! カーネル内の設定: 設定ファイル。`os::config_dir()/config.toml`（Windows `%APPDATA%\nyaw`、Linux `$XDG_CONFIG_HOME/nyaw`）を読む。
+//! カーネル内の設定: 設定ファイル。`os::config_dir()/config.toml`（現在のバックエンドでは `%LOCALAPPDATA%\nyaw`）を読む。
 //! ファイルが無ければ既定値。優先順位（コマンドライン > 環境変数 > ここ）は呼び出し側が決める。
 
 use std::fs;

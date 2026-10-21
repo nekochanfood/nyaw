@@ -9,9 +9,6 @@ logger.workspace = true
 # ジャケット・アプリのアイコンを読み、背景用にぼかす（gpui と同じ版）。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
-
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
     "Foundation", "ApplicationModel", "Media_Control", "Storage_Streams", "Win32_System_WinRT",
