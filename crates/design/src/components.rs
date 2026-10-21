@@ -459,9 +459,23 @@ impl RenderOnce for Button {
                 .size_full(),
             )
         });
+        // GPUI の on_hover はウィンドウに一つなので、手ごとの移動でも要求を更新する。
+        let (move_id, move_tip, move_owner) = (id.clone(), tip.clone(), owner.clone());
         self.base
             .bg(rgba(color))
             .children(wave)
+            .on_mouse_move(move |_, w, cx| {
+                if let Some(tip) = &move_tip {
+                    hover_tooltip(
+                        move_id.clone(),
+                        tip.clone(),
+                        move_owner.clone(),
+                        true,
+                        w,
+                        cx,
+                    );
+                }
+            })
             .on_hover(move |h, w, cx| {
                 if let Some(tip) = &tip {
                     hover_tooltip(id.clone(), tip.clone(), owner.clone(), *h, w, cx);

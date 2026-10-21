@@ -39,7 +39,7 @@ pub struct PointerBridge {
     touch: Option<Touch>,
     /// スワイプを離した後の慣性（宛先の位置と、1 フレームあたりの移動量）。
     momentum: Option<(Point<Pixels>, Point<Pixels>)>,
-    /// GPUI が知っているこの手の位置（最後に送ったイベントの位置。離れたら `None`）。同じ位置への Move は送らない
+    /// この手が最後に送った位置（パネルを離れたら `None`）。同じ位置への Move は送らない
     /// （オーバーレイは指している間 毎 tick Move を出すので、止まっていても描き直しと読み戻しが毎フレーム走ってしまう）。
     sent: Option<Point<Pixels>>,
     rehover: bool,
@@ -192,7 +192,7 @@ impl PointerBridge {
         Some((e.as_secs_f32() / (LONG_PRESS - RING_DELAY).as_secs_f32()).min(1.0))
     }
 
-    /// この手のレーザーがパネルの上にある（GPUI がこの手のマウスの位置を知っている）。
+    /// この手のレーザーがパネルの上にある。
     pub fn on_panel(&self) -> bool {
         self.sent.is_some()
     }
@@ -511,10 +511,22 @@ pub fn dispatch_input(
     if matches!(input, PlatformInput::MouseDown(_)) {
         keyboard::pointer_selected(Some(panel), cx);
     }
-    cx.default_global::<design::components::TooltipSource>().0 = Some(match hand {
+    let source = match hand {
         Hand::Left => 0,
         Hand::Right => 1,
-    });
+    };
+    if matches!(
+        input,
+        PlatformInput::MouseMove(_) | PlatformInput::MouseExited(_)
+    ) {
+        let id = window.window_handle().window_id();
+        cx.default_global::<design::components::Tooltips>()
+            .0
+            .retain(|&(window, hand), _| window != id || hand != source);
+    }
+    let context = cx.default_global::<design::components::TooltipSource>();
+    context.0 = Some(source);
+    context.1.insert(window.window_handle().window_id());
     window.dispatch_event(input, cx);
     cx.default_global::<design::components::TooltipSource>().0 = None;
 }
@@ -528,6 +540,10 @@ pub fn sync_tooltips<B: VrBackend>(
     windows: impl IntoIterator<Item = (PanelId, gpui::WindowId)>,
     cx: &mut App,
 ) -> bool {
+    let windows: Vec<_> = windows.into_iter().collect();
+    cx.default_global::<design::components::TooltipSource>()
+        .1
+        .retain(|id| windows.iter().any(|(_, window)| window == id));
     let requests = cx.default_global::<design::components::Tooltips>();
     requests.drop_stale();
     let mut tooltip = HashMap::new();
@@ -578,7 +594,7 @@ pub fn pump<B: VrBackend>(
         if !input.is_empty() {
             for (&(panel, hand), b) in bridges.iter_mut() {
                 if panel == e.panel && hand != e.hand {
-                    b.sent = None;
+                    b.rehover = true;
                 }
             }
         }
@@ -2143,7 +2159,15 @@ mod tests {
         let mut bridges = HashMap::from([((panel, Hand::Left), left)]);
         let input = pump(&mut kernel, &mut bridges);
         assert!(input.iter().any(|(_, h, _)| *h == Hand::Right));
-        assert_eq!(bridges[&(panel, Hand::Left)].sent, None);
+        let left = bridges.get_mut(&(panel, Hand::Left)).unwrap();
+        assert!(left.on_panel());
+        assert!(matches!(
+            left.translate(PointerEvent::Move { pos: Vec2::ZERO }, PointerMode::Mouse)
+                .as_slice(),
+            [PlatformInput::MouseMove(_)]
+        ));
+        left.translate(PointerEvent::Leave, PointerMode::Mouse);
+        assert!(!left.on_panel());
     }
 
     /// UI 層だけで確かめるための最小の画面。

@@ -1,7 +1,7 @@
 //! ツールチップ。ホバー中の要素が [`Tooltips`] に文字を置き、カーソル側（`beam`）が [`tooltip`] の箱で描く。
 //! 箱は黒の半透明に白い文字のカプセル形で、テーマによらない。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use gpui::{AnyWeakEntity, App, Div, SharedString, Window, WindowId, div, prelude::*, px, rgba};
 
@@ -20,9 +20,9 @@ pub const TOOLTIP_HEIGHT: f32 = LINE + PAD_Y * 2.0;
 /// ナビゲーションバーなど、頭から見た大きさを保つものはこれを物差しにする。
 pub const TOOLTIP_HEIGHT_M: f32 = 0.024;
 
-/// 入力を配送しているポインタ。0 = 左手、1 = 右手。
+/// 入力を配送しているポインタ（0 = 左手、1 = 右手）と、配送先のウィンドウ。
 #[derive(Default)]
-pub struct TooltipSource(pub Option<u8>);
+pub struct TooltipSource(pub Option<u8>, pub HashSet<WindowId>);
 impl gpui::Global for TooltipSource {}
 
 /// ツールチップの要求（GPUI のグローバル）。ウィンドウと手ごとに、ホバーしている要素（`id`）とその文字、持ち主。
@@ -40,10 +40,10 @@ impl Tooltips {
     }
 }
 
-/// 要素 `id` の `on_hover` から呼ぶ。入ったら `text` を置き、出たら（自分が置いたものなら）消す。
+/// 要素 `id` のポインタ入力から呼ぶ。入ったら `text` を置き、出たら（自分が置いたものなら）消す。
 /// `owner` は要素が描かれている間だけ生きている状態（`use_keyed_state` の Entity）。
 /// 隣の要素へ移ると、入る・出るの順が前後しても後から入った方が残る。
-/// 出たときは、どの手が置いたものでも消す（GPUI のホバーはウィンドウに 1 つで、もう一方の手の入力で外れることがある）。
+/// 出たときは、その手が置いた要求だけを消す。もう一方の手は同じ要素を指していることがある。
 pub fn hover_tooltip(
     id: impl Into<SharedString>,
     text: SharedString,
@@ -53,13 +53,18 @@ pub fn hover_tooltip(
     cx: &mut App,
 ) {
     let w = window.window_handle().window_id();
-    let hand = cx.default_global::<TooltipSource>().0.unwrap_or(1);
+    let source = cx.default_global::<TooltipSource>();
+    // 配送が終わった後の GPUI の通知には、どの手が動いたかの情報が無い。
+    if source.0.is_none() && source.1.contains(&w) {
+        return;
+    }
+    let hand = source.0.unwrap_or(1);
     let id = id.into();
     let map = &mut cx.default_global::<Tooltips>().0;
     if hovered {
         map.insert((w, hand), (id, text, owner));
     } else {
-        map.retain(|&(window, _), (i, _, _)| window != w || *i != id);
+        map.retain(|&(window, source), (i, _, _)| window != w || source != hand || *i != id);
     }
 }
 
@@ -167,8 +172,8 @@ mod tests {
             let id = window.window_handle().window_id();
             cx.default_global::<TooltipSource>().0 = Some(0);
             hover_tooltip(
-                "left",
-                "Left".into(),
+                "shared",
+                "Shared".into(),
                 owner.clone().into_any().downgrade(),
                 true,
                 window,
@@ -176,25 +181,36 @@ mod tests {
             );
             cx.default_global::<TooltipSource>().0 = Some(1);
             hover_tooltip(
-                "right",
-                "Right".into(),
+                "shared",
+                "Shared".into(),
                 owner.clone().into_any().downgrade(),
                 true,
                 window,
                 cx,
             );
-            assert_eq!(cx.global::<Tooltips>().0[&(id, 0)].1, "Left");
-            assert_eq!(cx.global::<Tooltips>().0[&(id, 1)].1, "Right");
+            assert_eq!(cx.global::<Tooltips>().0[&(id, 0)].1, "Shared");
+            assert_eq!(cx.global::<Tooltips>().0[&(id, 1)].1, "Shared");
             hover_tooltip(
-                "right",
-                "Right".into(),
-                owner.into_any().downgrade(),
+                "shared",
+                "Shared".into(),
+                owner.clone().into_any().downgrade(),
                 false,
                 window,
                 cx,
             );
             assert!(cx.global::<Tooltips>().0.contains_key(&(id, 0)));
+            assert!(!cx.global::<Tooltips>().0.contains_key(&(id, 1)));
             cx.default_global::<TooltipSource>().0 = None;
+            cx.default_global::<TooltipSource>().1.insert(id);
+            hover_tooltip(
+                "shared",
+                "Deferred".into(),
+                owner.into_any().downgrade(),
+                true,
+                window,
+                cx,
+            );
+            assert!(!cx.global::<Tooltips>().0.contains_key(&(id, 1)));
         });
     }
 
