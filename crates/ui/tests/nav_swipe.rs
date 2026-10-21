@@ -1,6 +1,6 @@
 //! E2E for the page stack's swipe back on the production `ui::run_with` (novr emulator, real hidden windows, touch by default).
 //! Pushes a page, then holds the trigger and moves right to left, both right away (finger slide) and after a long press
-//! (which turns into a mouse press), and checks that the page went back. Only runs with `--ignored` on non-Linux.
+//! (which turns into a mouse press), and checks that the page went back. Only runs with `--ignored`.
 
 mod common;
 

@@ -1,5 +1,5 @@
-//! 再生中のメディア（音楽・動画）の情報と操作。Windows は GSMTC（`GlobalSystemMediaTransportControlsSessionManager`）、
-//! Linux は MPRIS（D-Bus）。OS への問い合わせ・画像の読み込みとぼかしはワーカーが行い、メインスレッドは最新の結果を
+//! 再生中のメディア（音楽・動画）の情報と操作。Windows バックエンドは GSMTC（`GlobalSystemMediaTransportControlsSessionManager`）。
+//! OS への問い合わせ・画像の読み込みとぼかしはワーカーが行い、メインスレッドは最新の結果を
 //! 受け取るだけ（[`Media::now`]）。操作（[`Command`]）もワーカーへ送るだけで待たない。
 
 use std::{
@@ -12,8 +12,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(target_os = "linux")]
-mod linux;
 #[cfg(windows)]
 mod windows;
 
@@ -42,7 +40,7 @@ pub struct Image {
 /// 再生しているアプリ。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct App {
-    /// OS が付けた名前（Windows は AppUserModelId（"Spotify.exe" など）、Linux は D-Bus の名前の末尾）。
+    /// OS が付けた ID（バックエンド固有）。
     pub id: String,
     /// 表示名（"Spotify" など）。
     pub name: String,
@@ -106,7 +104,7 @@ pub enum Command {
     Previous,
     /// 曲の頭からの位置へ移る。
     Seek(Duration),
-    /// アプリの画面を前に出す（Linux の MPRIS だけ。Windows は何もしない）。
+    /// アプリの画面を前に出す（[`Controls::raise`] が有効な場合）。
     Raise,
     /// 見せる・操作するメディアを、次（`true`）か前（`false`）のセッションに切り替える。ワーカーが扱う。
     Switch(bool),
@@ -117,7 +115,7 @@ type Pick = (String, usize);
 
 /// OS の 1 回分の問い合わせ結果（画像は読む前のもの）。
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+#[cfg_attr(not(windows), allow(dead_code))]
 struct Raw {
     title: String,
     artist: String,
@@ -151,7 +149,7 @@ impl Raw {
 }
 
 /// `sessions` のうち `pick` に当たるものの番号。当たらなければ（閉じた）`None`。
-#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+#[cfg_attr(not(windows), allow(dead_code))]
 fn picked(sessions: &[String], pick: Option<&Pick>) -> Option<usize> {
     let (id, nth) = pick?;
     sessions
@@ -163,7 +161,7 @@ fn picked(sessions: &[String], pick: Option<&Pick>) -> Option<usize> {
 }
 
 /// OS ごとの問い合わせ先。ワーカーのスレッドだけが持つ。
-#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+#[cfg_attr(not(windows), allow(dead_code))]
 trait Backend {
     /// 今再生している（一時停止中も含む）ものがあれば、その情報。`pick` のセッションがあればそれを、無ければ OS が
     /// いちばん関係があると見たものを読み、以後の操作（[`Backend::command`]）もそれに送る。
@@ -261,9 +259,7 @@ impl Drop for Media {
 fn backend() -> Option<Box<dyn Backend>> {
     #[cfg(windows)]
     return windows::Session::new().map(|b| Box::new(b) as Box<dyn Backend>);
-    #[cfg(target_os = "linux")]
-    return linux::Mpris::new().map(|b| Box::new(b) as Box<dyn Backend>);
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(not(windows))]
     None
 }
 
@@ -388,8 +384,8 @@ fn to_image(image: image::DynamicImage) -> Image {
     }
 }
 
-/// アプリの ID から表示名を作る（"Spotify.exe" → "Spotify"、"org.mpris.MediaPlayer2.vlc" → "vlc"）。表示名が取れないときに使う。
-#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+/// アプリの ID から表示名を作る（"Spotify.exe" → "Spotify"、"org.example.Player" → "Player"）。表示名が取れないときに使う。
+#[cfg_attr(not(windows), allow(dead_code))]
 fn fallback_name(id: &str) -> String {
     let id = id.rsplit(['!', '\\', '/']).next().unwrap_or(id);
     let id = id
@@ -524,7 +520,7 @@ mod tests {
     #[test]
     fn names_fall_back_to_the_app_id() {
         assert_eq!(fallback_name("Spotify.exe"), "Spotify");
-        assert_eq!(fallback_name("org.mpris.MediaPlayer2.vlc"), "vlc");
+        assert_eq!(fallback_name("org.example.Player"), "Player");
         assert_eq!(
             fallback_name("Microsoft.ZuneMusic_8wekyb3d8bbwe!Microsoft.ZuneMusic"),
             "ZuneMusic"

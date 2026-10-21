@@ -1,20 +1,9 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[cfg(any(target_os = "linux", windows))]
 use nyapp::Error;
 use nyapp::{package, worker::RemoteSandbox};
 #[cfg(windows)]
 use std::io::Read;
-#[cfg(target_os = "linux")]
-#[path = "../src/worker/platform/linux.rs"]
-#[allow(dead_code)]
-mod linux_worker;
-#[cfg(target_os = "linux")]
-type Pipes = (
-    Box<dyn std::io::Write + Send>,
-    Box<dyn std::io::Read + Send>,
-    linux_worker::Guard,
-);
 #[cfg(windows)]
 mod manifest {
     pub use nyapp::manifest::valid_id;
@@ -35,11 +24,6 @@ type Pipes = (
 );
 
 fn main() {
-    #[cfg(target_os = "linux")]
-    if std::env::args().nth(1).as_deref() == Some("--confinement-probe") {
-        probe_linux_confinement();
-        return;
-    }
     // ロック中はワーカーを起こせない（tests/lock.rs が確かめる）。
     if !nyapp::NORMAL_NYAPPS_ENABLED {
         return;
@@ -64,8 +48,6 @@ fn main() {
     }
     external_nyapp_runs_in_a_restricted_worker();
     worker_cannot_run_without_the_restricted_launcher();
-    #[cfg(target_os = "linux")]
-    linux_confinement_denies_files_and_sockets();
     #[cfg(windows)]
     windows_foreign_sid_and_profile_cleanup();
 }
@@ -120,81 +102,6 @@ fn windows_foreign_sid_and_profile_cleanup() {
     assert_eq!(existed as u32, 0x8007_00b7, "profile was not created");
     removed.unwrap();
     assert_eq!(recreated, 0, "profile still exists after uninstall");
-}
-
-#[cfg(target_os = "linux")]
-fn linux_confinement_denies_files_and_sockets() {
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .arg("--confinement-probe")
-        .env_clear()
-        .env("NYAW_WORKER_PARENT_PID", std::process::id().to_string())
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "confinement probe failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[cfg(target_os = "linux")]
-fn probe_linux_confinement() {
-    linux_worker::confine().unwrap();
-    let file = unsafe { libc::open(c"/etc/passwd".as_ptr(), libc::O_RDONLY) };
-    assert_eq!(file, -1, "worker opened a host file");
-    assert_eq!(
-        std::io::Error::last_os_error().raw_os_error(),
-        Some(libc::EPERM)
-    );
-    let socket = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
-    assert_eq!(socket, -1, "worker opened a network socket");
-    assert_eq!(
-        std::io::Error::last_os_error().raw_os_error(),
-        Some(libc::EPERM)
-    );
-    let executable = unsafe {
-        libc::mmap(
-            std::ptr::null_mut(),
-            4096,
-            libc::PROT_READ | libc::PROT_EXEC,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-            -1,
-            0,
-        )
-    };
-    assert_eq!(
-        executable,
-        libc::MAP_FAILED,
-        "worker mapped executable memory"
-    );
-    assert_eq!(
-        std::io::Error::last_os_error().raw_os_error(),
-        Some(libc::EPERM)
-    );
-    let writable = unsafe {
-        libc::mmap(
-            std::ptr::null_mut(),
-            4096,
-            libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS,
-            -1,
-            0,
-        )
-    };
-    assert_ne!(
-        writable,
-        libc::MAP_FAILED,
-        "worker cannot map writable memory"
-    );
-    assert_eq!(
-        unsafe { libc::mprotect(writable, 4096, libc::PROT_READ | libc::PROT_EXEC) },
-        -1
-    );
-    assert_eq!(
-        std::io::Error::last_os_error().raw_os_error(),
-        Some(libc::EPERM)
-    );
-    assert_eq!(unsafe { libc::munmap(writable, 4096) }, 0);
 }
 
 fn external_nyapp_runs_in_a_restricted_worker() {

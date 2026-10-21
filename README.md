@@ -1,6 +1,7 @@
 # nyaw (にゃう)
 
 VR オーバーレイアプリ。SteamVR（OpenVR）と OpenXR に対応。
+現在の OS バックエンドは Windows のみです。OS 固有の実装はサブシステムに分離しています。
 
 ## ビルドと起動
 
@@ -20,9 +21,6 @@ Testing の「画面・ウィンドウ配信」から対象を選ぶと、別の
 Windows は WGC を使います。ウィンドウのタッチ操作は、その窓がデスクトップ上で見えている必要があります。
 最初のタッチで前面化を試み、対象が別の窓に隠れている場合は入力を止めてエラーを表示します。
 
-Linux は PipeWire と XDG Desktop Portal の ScreenCast / RemoteDesktop を使います。
-画面またはウィンドウを選ぶと OS の共有ダイアログが開きます。Portal の実装が画面共有とタッチ操作に対応している必要があります。
-Linux のビルドには `libpipewire-0.3-dev` と `libclang-dev` も必要です。
 現在の画像転送は CPU に読み戻した RGBA を使用します。
 
 バックエンドとカーネルのテスト:
@@ -35,19 +33,18 @@ cargo test -p desktop -p kernel -p overlay -p subsystems --no-default-features -
 
 ```sh
 cargo test -p desktop --test windows_capture -- --ignored
-cargo test -p desktop --test linux_capture -- --ignored --test-threads=1
 cargo test -p testkit --test desktop_stream -- --ignored
 ```
 
 ## 設定
 
-`config.toml`（Windows は `%LOCALAPPDATA%\nyaw\`、Linux は `$XDG_STATE_HOME/nyaw/`）に書く。
+`config.toml`（Windows は `%LOCALAPPDATA%\nyaw\`）に書く。
 
 ```toml
 lod_quality = 2 # 遠くのパネルの解像度を下げる度合い。0 = Off、1 = Low、2 = Mid（既定）、3 = High
 ```
 
-ログは `%LOCALAPPDATA%\nyaw\logs\nyaw.log`（Linux は `$XDG_STATE_HOME/nyaw/logs`）に出る。
+ログは `%LOCALAPPDATA%\nyaw\logs\nyaw.log` に出る。
 
 開発者向けの情報は [AGENT.md](AGENT.md) を参照。
 

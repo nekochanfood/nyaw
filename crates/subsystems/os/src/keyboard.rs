@@ -9,9 +9,6 @@ use std::{
 #[cfg(windows)]
 #[path = "keyboard/windows.rs"]
 mod platform;
-#[cfg(target_os = "linux")]
-#[path = "keyboard/linux.rs"]
-mod platform;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
@@ -28,7 +25,7 @@ pub struct Settings {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyEvent {
-    /// Linux evdev の番号（XKB の +8 を含まない）。
+    /// 配列データで使う evdev の番号（XKB の +8 を含まない）。
     pub code: u16,
     pub down: bool,
 }

@@ -272,11 +272,6 @@ fn read_storage(path: &Path) -> Result<Vec<u8>, Error> {
     reject_reparse(path)?;
     let mut options = OpenOptions::new();
     options.read(true);
-    #[cfg(target_os = "linux")]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW);
-    }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -638,26 +633,6 @@ mod tests {
         step.storage = Some(br#"{"one":"2"}"#.to_vec());
         persist(&Some(path.clone()), &step).unwrap();
         assert_eq!(fs::read(path).unwrap(), br#"{"one":"2"}"#);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn storage_does_not_follow_a_symlink() {
-        use std::os::unix::fs::symlink;
-
-        let root = std::env::temp_dir().join(format!(
-            "nyapp-worker-link-{}-{}",
-            std::process::id(),
-            STORAGE_TEMP_ID.fetch_add(1, Ordering::Relaxed),
-        ));
-        let parent = root.join("appdata").join("net.bettaworx.test");
-        fs::create_dir_all(&parent).unwrap();
-        let secret = root.join("secret.json");
-        fs::write(&secret, br#"{"secret":"private"}"#).unwrap();
-        let storage = parent.join("storage.json");
-        symlink(secret, &storage).unwrap();
-        assert!(read_storage(&storage).is_err());
         fs::remove_dir_all(root).unwrap();
     }
 }

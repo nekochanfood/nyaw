@@ -8,8 +8,6 @@ license.workspace = true
 gpui = [
     "dep:gpui",
     "dep:gpui_windows",
-    "dep:gpui_linux",
-    "dep:gpui_wgpu",
 ]
 
 [dependencies]
@@ -20,11 +18,6 @@ gpui = { workspace = true, features = ["test-support"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 gpui_windows = { workspace = true, features = ["test-support"], optional = true }
-
-# Linux は headless のウィンドウを wgpu で描いて読み戻す（vendor/gpui_linux の test-support）。
-[target.'cfg(target_os = "linux")'.dependencies]
-gpui_linux = { workspace = true, features = ["test-support"], optional = true }
-gpui_wgpu = { workspace = true, features = ["test-support"], optional = true }
 
 [dev-dependencies]
 vr = { workspace = true, features = ["test-support"] }

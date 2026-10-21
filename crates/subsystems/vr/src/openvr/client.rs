@@ -12,7 +12,7 @@ use openvr_bindings as sys;
 use crate::VrError;
 
 /// `vr::IVRClientCore`（ivrclientcore.h）の仮想関数表。順番が ABI そのもの。
-/// x64 の Windows / Linux では、メンバ関数は `this` を第 1 引数にした C の呼び出し規約と同じ。
+/// x64 の Windows では、メンバ関数は `this` を第 1 引数にした C の呼び出し規約と同じ。
 #[repr(C)]
 struct CoreVtbl {
     init: unsafe extern "C" fn(
@@ -61,11 +61,8 @@ impl Client {
         let runtime = runtime_path().ok_or_else(|| {
             VrError::Runtime("SteamVR location unknown (openvrpaths.vrpath)".into())
         })?;
-        let dll = if cfg!(windows) {
-            runtime.join("bin").join("vrclient_x64.dll")
-        } else {
-            runtime.join("bin").join("linux64").join("vrclient.so")
-        };
+        #[cfg(windows)]
+        let dll = runtime.join("bin").join("vrclient_x64.dll");
         let lib = unsafe { Library::new(&dll) }
             .map_err(|e| VrError::Runtime(format!("{}: {e}", dll.display())))?;
         let factory = unsafe { lib.get::<Factory>(b"VRClientCoreFactory\0") }

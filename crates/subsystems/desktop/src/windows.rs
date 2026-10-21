@@ -1,5 +1,11 @@
 use super::{
-    Button, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch, TouchPhase, Wake,
+    Button, Capabilities, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch,
+    TouchPhase, Wake,
+};
+
+pub(super) const CAPABILITIES: Capabilities = Capabilities {
+    hover: true,
+    minimize: true,
 };
 use ::windows::{
     Foundation::{TimeSpan, TypedEventHandler},

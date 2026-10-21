@@ -1,8 +1,8 @@
 //! Prepares real runtimes (Monado / SteamVR) for E2E tests. The equivalent of Playwright's
 //! `npx playwright install` ([`install`]) and `webServer` ([`Launched`] returned by [`launch`]).
 //!
-//! - The install location is `NYAW_RUNTIMES_PATH`, or if unset, `%LOCALAPPDATA%\nyaw\runtimes` on Windows and
-//!   `$XDG_CACHE_HOME/nyaw/runtimes` (`~/.cache/...`) on Linux. testkit owns only what is inside this directory.
+//! ランタイムの準備は現在 Windows 向け。保存先は `NYAW_RUNTIMES_PATH`、未指定なら
+//! `%LOCALAPPDATA%\nyaw\runtimes`。testkit はこの中だけを管理する。
 //! - SteamVR is managed by Steam, so testkit neither installs nor removes it (it only locates it and gives guidance).
 //! - Only one real runtime can run on a machine, so tests run one at a time (like Playwright's `workers: 1`).
 //!
@@ -25,7 +25,7 @@ use kernel::vr::{Runtime, VrBackend, VrError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// OpenXR. On Windows testkit installs the GitLab CI artifacts; on Linux, the distro package.
+    /// OpenXR。Windows 向けの GitLab CI 成果物を入れる。
     Monado,
     /// OpenVR. To run without an HMD, it is launched with a config that enables the bundled null driver.
     SteamVr,
@@ -75,10 +75,14 @@ impl Kind {
 
     /// Guidance shown to the user when it is not found.
     pub fn install_hint(self) -> String {
-        match (self, cfg!(windows)) {
-            (Kind::Monado, true) => format!("`cargo runtimes install monado` installs it to {}", root().join("monado").display()),
-            (Kind::Monado, false) => "Install the distro package (e.g. `sudo apt install monado-service libopenxr1-monado`)".into(),
-            (Kind::SteamVr, _) => format!("Install SteamVR via Steam (`cargo runtimes install steamvr` opens {STEAMVR_INSTALL_URL})"),
+        match self {
+            Kind::Monado => format!(
+                "`cargo runtimes install monado` installs it to {}",
+                root().join("monado").display()
+            ),
+            Kind::SteamVr => format!(
+                "Install SteamVR via Steam (`cargo runtimes install steamvr` opens {STEAMVR_INSTALL_URL})"
+            ),
         }
     }
 }
@@ -99,14 +103,8 @@ pub fn root() -> PathBuf {
     if let Some(p) = env("NYAW_RUNTIMES_PATH") {
         return p;
     }
-    let cache = if cfg!(windows) {
-        env("LOCALAPPDATA")
-    } else {
-        env("XDG_CACHE_HOME").or_else(|| env("HOME").map(|h| h.join(".cache")))
-    };
-    cache
-        .unwrap_or_else(std::env::temp_dir)
-        .join("nyaw")
+    kernel::subsystems::os::data_dir()
+        .unwrap_or_else(|| std::env::temp_dir().join("nyaw"))
         .join("runtimes")
 }
 
@@ -141,8 +139,7 @@ pub fn install(kind: Kind, dry_run: bool) -> Result<(), String> {
             }
             Ok(())
         }
-        // What testkit does not own (under the package manager's or Steam's control) gets guidance only.
-        Kind::Monado => Err(kind.install_hint()),
+        Kind::Monado => Err("no runtime installer is implemented for this target".into()),
         Kind::SteamVr => {
             if let Some(p) = kind.locate() {
                 println!("steamvr: installed ({}). Update it via Steam", p.display());
@@ -217,11 +214,15 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 }
 
 fn open_url(url: &str) -> Result<(), String> {
-    if cfg!(windows) {
-        // the first argument of start is the window title
+    #[cfg(windows)]
+    {
+        // start の最初の引数はウィンドウタイトル。
         run(Command::new("cmd").args(["/C", "start", "", url]))
-    } else {
-        run(Command::new("xdg-open").arg(url))
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url;
+        Err("no URL opener is implemented for this target".into())
     }
 }
 
@@ -233,28 +234,14 @@ struct Monado {
 }
 
 fn monado() -> Option<Monado> {
-    if let Some(m) = monado_in(&root().join("monado")) {
-        return Some(m);
-    }
-    // On Linux, the distro package
-    let service = std::env::split_paths(&std::env::var_os("PATH")?)
-        .map(|d| d.join("monado-service"))
-        .find(|p| p.is_file())?;
-    let manifest = ["/usr/share", "/usr/local/share"]
-        .iter()
-        .map(|d| Path::new(d).join("openxr/1/openxr_monado.json"))
-        .find(|p| p.is_file())?;
-    Some(Monado { service, manifest })
+    monado_in(&root().join("monado"))
 }
 
 /// Monado extracted by testkit (`<dir>/install/...`).
 fn monado_in(dir: &Path) -> Option<Monado> {
     let install = dir.join("install");
-    let service = install.join("bin").join(if cfg!(windows) {
-        "monado-service.exe"
-    } else {
-        "monado-service"
-    });
+    #[cfg(windows)]
+    let service = install.join("bin").join("monado-service.exe");
     let manifest = install.join("openxr_monado.json");
     (service.is_file() && manifest.is_file()).then_some(Monado { service, manifest })
 }
@@ -448,7 +435,6 @@ impl Drop for Launched {
 // --- Processes ------------------------------------------------------------------------------
 
 /// Processes (from one snapshot) whose executable name (without extension) is in `names`.
-/// Linux process names (comm) are truncated to 15 characters.
 fn running(names: &[&str]) -> Vec<sysinfo::Pid> {
     let mut sys = sysinfo::System::new();
     sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
@@ -457,13 +443,7 @@ fn running(names: &[&str]) -> Vec<sysinfo::Pid> {
         .filter(|(_, p)| {
             let n = p.name().to_string_lossy().to_lowercase();
             let n = n.strip_suffix(".exe").unwrap_or(&n);
-            names.iter().any(|w| {
-                n == if cfg!(windows) {
-                    w
-                } else {
-                    &w[..w.len().min(15)]
-                }
-            })
+            names.contains(&n)
         })
         .map(|(pid, _)| *pid)
         .collect()
@@ -504,11 +484,7 @@ mod tests {
         fs::create_dir_all(&bin).unwrap();
         assert!(monado_in(&dir).is_none());
 
-        let exe = if cfg!(windows) {
-            "monado-service.exe"
-        } else {
-            "monado-service"
-        };
+        let exe = "monado-service.exe";
         fs::write(bin.join(exe), "").unwrap();
         assert!(
             monado_in(&dir).is_none(),

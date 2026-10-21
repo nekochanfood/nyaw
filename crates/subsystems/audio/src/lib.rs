@@ -1,4 +1,4 @@
-//! 音声サブシステム。OS の出力デバイス（cpal: Windows は WASAPI、Linux は ALSA）・音声ファイルの読み込み・
+//! 音声サブシステム。OS の出力デバイス（cpal）・音声ファイルの読み込み・
 //! Steam Audio による立体化（HRTF）の差を吸収する。
 //!
 //! 音は「スピーカー」（音源）から鳴る。スピーカーは置き場所・向き・幅を持ち、モノラルなら中央の 1 点、
@@ -508,7 +508,7 @@ mod device {
         lock(mixer).set_rate(config.sample_rate.0);
         let mixer = mixer.clone();
         let mut stereo = Vec::new();
-        // ponytail: f32 の出力だけ。WASAPI の共有モードと PipeWire / PulseAudio の ALSA は f32 を受ける。
+        // ponytail: f32 の出力だけ。出力先が別の形式を要求するときに対応を足す。
         // 整数しか受けないデバイスが出たら cpal::Sample で変換する。
         let stream = device
             .build_output_stream::<f32, _, _>(

@@ -15,13 +15,11 @@ use kernel::vr::{Frame, OverlayId, Quat, RawController, Vec3, mock::MockBackend}
 use kernel::{Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 use std::sync::mpsc::Sender;
 
-/// where to run. On Linux every time (GPUI runs headless and draws offscreen, so no display is needed; a software
-/// GPU such as Mesa's lavapipe is enough), on other OSes only with `--ignored` (they open real hidden windows).
+/// 実際の描画先を使うため、`--ignored` で明示されたときだけ実行する。
 pub fn should_run(name: &str) -> bool {
     let ignored = std::env::args().any(|a| a == "--ignored" || a == "--include-ignored");
-    let run = ignored || cfg!(target_os = "linux");
-    if !run {
-        println!("{name}: skipped (run with --ignored on non-Linux)");
+    if !ignored {
+        println!("{name}: skipped (run with --ignored)");
         return false;
     }
     // the log level is NYAW_LOG as in production (default info).
