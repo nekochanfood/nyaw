@@ -3,6 +3,7 @@
 
 pub use kernel::rendering::gpui::{Frame, capture, collect, read_back, set_render_lod};
 pub mod keyboard;
+pub mod mirror;
 mod panel_window;
 pub use panel_window::{open_panel_window, panel_window_options};
 

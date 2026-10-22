@@ -81,6 +81,61 @@ impl fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 
+/// 取り込みが止まった理由の分類。画面に出すときのローカライズに使う（元のメッセージは英語の自由文）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reason {
+    /// 取り込み元のウィンドウが閉じた・隠れた・最小化された。
+    WindowUnavailable,
+    /// この環境では画面の取り込みが使えない。
+    Unsupported,
+    /// 取り込み元から映像が来ない。
+    NoPixels,
+    /// 取り込み元の大きさが取れない。
+    InvalidBounds,
+    /// グラフィックスの処理で失敗した。
+    Graphics,
+    /// 上のどれでもない。
+    Other,
+}
+
+impl Reason {
+    pub const ALL: [Reason; 6] = [
+        Reason::WindowUnavailable,
+        Reason::Unsupported,
+        Reason::NoPixels,
+        Reason::InvalidBounds,
+        Reason::Graphics,
+        Reason::Other,
+    ];
+}
+
+/// 取り込みの失敗メッセージ。[`Error::reason`] がこれで分類する。
+pub mod failure {
+    pub const WINDOW_HIDDEN: &str = "capture window is closed or hidden";
+    pub const WINDOW_MINIMIZED: &str = "capture window is minimized or closed";
+    pub const UNSUPPORTED: &str = "Windows Graphics Capture is unavailable";
+    pub const NO_PIXELS: &str = "capture source has no pixels";
+    pub const INVALID_BOUNDS: &str = "capture source has invalid bounds";
+    pub const D3D_DEVICE: &str = "D3D11 device missing";
+    pub const D3D_CONTEXT: &str = "D3D11 context missing";
+    pub const D3D_STAGING: &str = "D3D11 staging texture missing";
+    pub const INVALID_TEXTURE: &str = "invalid mapped desktop texture";
+}
+
+impl Error {
+    pub fn reason(&self) -> Reason {
+        use failure::*;
+        match self.0.as_str() {
+            WINDOW_HIDDEN | WINDOW_MINIMIZED => Reason::WindowUnavailable,
+            UNSUPPORTED => Reason::Unsupported,
+            NO_PIXELS => Reason::NoPixels,
+            INVALID_BOUNDS => Reason::InvalidBounds,
+            D3D_DEVICE | D3D_CONTEXT | D3D_STAGING | INVALID_TEXTURE => Reason::Graphics,
+            _ => Reason::Other,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Starting,
@@ -554,6 +609,20 @@ impl Drop for Stream {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    /// 取り込みの失敗メッセージは理由に分類され、知らないものは `Other`。
+    #[test]
+    fn failure_messages_are_classified() {
+        use failure::*;
+        let reason = |m: &str| Error(m.into()).reason();
+        assert_eq!(reason(WINDOW_HIDDEN), Reason::WindowUnavailable);
+        assert_eq!(reason(WINDOW_MINIMIZED), Reason::WindowUnavailable);
+        assert_eq!(reason(UNSUPPORTED), Reason::Unsupported);
+        assert_eq!(reason(NO_PIXELS), Reason::NoPixels);
+        assert_eq!(reason(INVALID_BOUNDS), Reason::InvalidBounds);
+        assert_eq!(reason(D3D_STAGING), Reason::Graphics);
+        assert_eq!(reason("something else"), Reason::Other);
+    }
 
     /// 検索は名前に含むものに絞り（大文字小文字を区別しない）、空なら全部を残す。
     #[test]

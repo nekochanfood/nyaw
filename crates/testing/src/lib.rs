@@ -35,7 +35,7 @@ pub use emoji::EmojiTest;
 mod keyboard;
 pub use keyboard::KeyboardTest;
 mod desktop;
-pub use desktop::DesktopTest;
+pub use desktop::{DesktopTest, MirrorPreview, MirrorShared, MirrorTest, spawn_mirror_test};
 mod audio;
 pub use audio::AudioTest;
 mod nyapps;
@@ -638,6 +638,11 @@ impl Render for Testing {
                         spawn_view(self.panel, "testing.open.navigation", |id, _| {
                             NavTest::new(id)
                         }),
+                    ),
+                )
+                .child(
+                    button!("mirror-test", i18n::t(cx, "testing.open.mirror"), false).on_click(
+                        spawn_mirror_test(self.panel),
                     ),
                 )
                 .child(
@@ -2606,6 +2611,49 @@ impl Render for StressTest {
 mod tests {
     use super::*;
     use gpui::{Modifiers, TestAppContext};
+
+    /// ミラーリング画面の確認用: 操作のパネルで選ぶと、表示のパネルが描き直しを頼まれ、選んだ状態の表示になる。
+    /// どの状態でも表示が出て、止まった状態（最小化・閉じた・失敗）のときだけボタン（戻す・再試行）が出る。
+    #[gpui::test]
+    fn mirror_test_controls_the_preview_panel(cx: &mut TestAppContext) {
+        let shared = Rc::new(MirrorShared::default());
+        let (_, cx) = cx.add_window_view(|_, _| MirrorTest { shared: shared.clone() });
+        cx.run_until_parked();
+        let ids = [
+            ("mirror-case-launching", false),
+            ("mirror-case-launch-failed", false),
+            ("mirror-case-starting", false),
+            ("mirror-case-streaming", false),
+            ("mirror-case-minimized", true),
+            ("mirror-case-closed", true),
+            ("mirror-case-failed-windowunavailable", true),
+            ("mirror-case-failed-unsupported", true),
+            ("mirror-case-failed-nopixels", true),
+            ("mirror-case-failed-invalidbounds", true),
+            ("mirror-case-failed-graphics", true),
+            ("mirror-case-failed-other", true),
+        ];
+        let mut seen = Vec::new();
+        for (id, _) in ids {
+            let c = cx.debug_bounds(id).unwrap_or_else(|| panic!("{id}")).center();
+            cx.simulate_click(c, Modifiers::none());
+            cx.run_until_parked();
+            seen.push(shared.shown());
+        }
+        // 全部違う状態になっている。
+        for (i, a) in seen.iter().enumerate() {
+            assert!(seen[i + 1..].iter().all(|b| a != b), "{}", ids[i].0);
+        }
+        // 表示側: 各状態で画面が出て、再試行は止まった状態のときだけ。
+        let (_, cx) = cx.add_window_view(|_, _| MirrorPreview { shared: shared.clone() });
+        for (state, (id, retry)) in seen.into_iter().zip(ids) {
+            *shared.state.borrow_mut() = Some(state);
+            cx.update(|w, _| w.refresh());
+            cx.run_until_parked();
+            assert!(cx.debug_bounds("mirror-test-screen").is_some(), "{id}");
+            assert_eq!(cx.debug_bounds("mirror-test-action").is_some(), retry, "{id}");
+        }
+    }
 
     /// ボタンは操作要求を積むだけで、反映はフレームループ（`ui::sync_panel`）の仕事。
     #[gpui::test]

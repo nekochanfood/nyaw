@@ -547,7 +547,7 @@ pub fn progress_ring(theme: &Theme, size: f32, stroke: f32, progress: f32) -> im
 }
 
 /// 読み込み中のスピナー。一辺 `size` px の輪（溝 `groove`）の上を、1/4 周の丸い端の弧（`accent_solid`）が 0.5 秒で一周する。
-/// ciel / website_V3 のスピナーと同じ形（50 角の中に半径 20・線幅 6、弧は周の 1/4）と速さ。時刻は全部品で共通なので、
+/// ciel / website_V3 のスピナーと同じ形（半径 20・線幅 6、弧は周の 1/4）と速さ。時刻は全部品で共通なので、
 /// 複数並べても同じ角度で回る。
 pub fn spinner(theme: &Theme, size: f32) -> impl IntoElement {
     let (track, fill) = (theme.groove, theme.accent_solid);
@@ -619,6 +619,55 @@ fn spinner_turns(now: Instant) -> f32 {
     let origin = *ORIGIN.get_or_init(|| now);
     let ms = now.saturating_duration_since(origin).as_millis() % SPINNER_PERIOD_MS;
     ms as f32 / SPINNER_PERIOD_MS as f32
+}
+
+/// 状態の画面: 上下左右中央に、縦へ「アイコン・タイトル・（あれば）理由・（必要なら）ボタン」。読み込み中は [`spinner`]、
+/// エラーは X のアイコンを `icon` に渡す。パネル全体を使う（[`card_panel`]）。
+pub fn status_screen(
+    theme: &Theme,
+    icon: impl IntoElement,
+    title: impl IntoElement,
+    reason: Option<SharedString>,
+    action: Option<gpui::AnyElement>,
+) -> Div {
+    card_panel(theme)
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_center()
+        .gap(px(spacing::LG))
+        .p(px(spacing::XL))
+        .child(icon)
+        .child(
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(spacing::XS))
+                .text_center()
+                .child(div().font_weight(FontWeight::BOLD).child(title))
+                .children(reason.map(|reason| {
+                    div()
+                        .text_color(rgba(theme.neutral_text_low))
+                        .child(reason)
+                })),
+        )
+        .children(action)
+}
+
+/// [`status_screen`] の上に置くアイコン。一辺 `size` px の枠の中に、[`spinner`] の輪と同じ見た目の大きさ（輪の外径）で
+/// グリフを出す。Phosphor のグリフは枠の 208/256 しか使わないので、その分だけ大きく描いて、枠の大きさは変えない
+/// （スピナーと入れ替わっても、並びがずれない）。
+pub fn status_icon(glyph: &'static crate::Icon, size: f32) -> impl IntoElement {
+    let ring = (2.0 * SPINNER_RADIUS + SPINNER_STROKE) / SPINNER_VIEW;
+    let drawn = size * ring / (208.0 / 256.0);
+    div()
+        .flex_none()
+        .size(px(size))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(div().flex_none().child(crate::icon(glyph).size(px(drawn))))
 }
 
 /// オン / オフのスイッチ。押したときの処理は呼び出し側が `on_click` で足す。

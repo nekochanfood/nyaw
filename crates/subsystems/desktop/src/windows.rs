@@ -521,11 +521,11 @@ impl Capture {
             if !unsafe { IsWindow(Some(hwnd)) }.as_bool()
                 || !unsafe { IsWindowVisible(hwnd) }.as_bool()
             {
-                return Err(Error("capture window is closed or hidden".into()));
+                return Err(Error(super::failure::WINDOW_HIDDEN.into()));
             }
         }
         if !GraphicsCaptureSession::IsSupported()? {
-            return Err(Error("Windows Graphics Capture is unavailable".into()));
+            return Err(Error(super::failure::UNSUPPORTED.into()));
         }
         let interop: IGraphicsCaptureItemInterop =
             factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
@@ -537,7 +537,7 @@ impl Capture {
         };
         let size = item.Size()?;
         if size.Width <= 0 || size.Height <= 0 {
-            return Err(Error("capture source has no pixels".into()));
+            return Err(Error(super::failure::NO_PIXELS.into()));
         }
         let (mut device, mut context) = (None, None);
         let create = |driver, device: &mut _, context: &mut _| unsafe {
@@ -555,8 +555,8 @@ impl Capture {
         };
         create(D3D_DRIVER_TYPE_HARDWARE, &mut device, &mut context)
             .or_else(|_| create(D3D_DRIVER_TYPE_WARP, &mut device, &mut context))?;
-        let device: ID3D11Device = device.ok_or_else(|| Error("D3D11 device missing".into()))?;
-        let context = context.ok_or_else(|| Error("D3D11 context missing".into()))?;
+        let device: ID3D11Device = device.ok_or_else(|| Error(super::failure::D3D_DEVICE.into()))?;
+        let context = context.ok_or_else(|| Error(super::failure::D3D_CONTEXT.into()))?;
         let dxgi: IDXGIDevice = device.cast()?;
         let direct: IDirect3DDevice =
             unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi)? }.cast()?;
@@ -609,7 +609,7 @@ impl Capture {
                 SourceKind::Window => {
                     let hwnd = HWND(self.source.target as _);
                     if IsIconic(hwnd).as_bool() || !IsWindow(Some(hwnd)).as_bool() {
-                        return Err(Error("capture window is minimized or closed".into()));
+                        return Err(Error(super::failure::WINDOW_MINIMIZED.into()));
                     }
                     DwmGetWindowAttribute(
                         hwnd,
@@ -629,7 +629,7 @@ impl Capture {
             }
         }
         if rect.right <= rect.left || rect.bottom <= rect.top {
-            return Err(Error("capture source has invalid bounds".into()));
+            return Err(Error(super::failure::INVALID_BOUNDS.into()));
         }
         Ok(rect)
     }
@@ -808,7 +808,7 @@ impl Session for Capture {
             let staging = self
                 .staging
                 .as_ref()
-                .ok_or_else(|| Error("D3D11 staging texture missing".into()))?;
+                .ok_or_else(|| Error(super::failure::D3D_STAGING.into()))?;
             unsafe {
                 self.context.CopyResource(staging, &texture);
                 let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
@@ -818,7 +818,7 @@ impl Session for Capture {
                 let result = if mapped.pData.is_null()
                     || bytes.is_none_or(|n| n > 256 * 1024 * 1024 || n > isize::MAX as usize)
                 {
-                    Err(Error("invalid mapped desktop texture".into()))
+                    Err(Error(super::failure::INVALID_TEXTURE.into()))
                 } else {
                     Frame::from_bgra(
                         width,

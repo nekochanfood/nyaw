@@ -1,6 +1,9 @@
 use super::*;
 use kernel::desktop::{DEFAULT_FRAME_RATE, MAX_FRAME_RATE, Source, SourceKind, Sources, Status};
-use std::cell::Cell;
+use kernel::desktop::Error;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+use ui::mirror::{MirrorState, mirror_screen};
 
 /// 取得元を選び、独立したパネルへの配信と停止・再接続を試す。
 pub struct DesktopTest {
@@ -450,5 +453,120 @@ mod tests {
                 [PanelCommand::Stream(Some(source), 1)]
             );
         });
+    }
+}
+
+/// ミラーリング画面（[`ui::mirror`]）の全ての状態を見比べる画面。操作の [`MirrorTest`] と、実物と同じ表示の [`MirrorPreview`] の
+/// 2 枚のパネルに分かれる（重ならない）。[`spawn_mirror_test`] が両方を出す。
+/// 操作の上段は状態、下段は「キャプチャに失敗」の理由ごと（理由の分類は `kernel::desktop::Reason`）。
+#[derive(Default)]
+pub struct MirrorShared {
+    pub(crate) state: RefCell<Option<MirrorState>>,
+    /// 表示のパネル（出たら入る）。操作が変えたら描き直しを頼む相手。
+    preview: Cell<Option<PanelId>>,
+}
+
+impl MirrorShared {
+    pub(crate) fn shown(&self) -> MirrorState {
+        self.state.borrow().clone().unwrap_or(MirrorState::Launching)
+    }
+}
+
+/// 操作のパネルと表示のパネルを並べて出す。
+pub fn spawn_mirror_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        let shared = Rc::new(MirrorShared::default());
+        let control = cx.default_global::<PanelControl>();
+        control.spawns.push({
+            let shared = shared.clone();
+            PanelSpec::spawn(panel, move |_, _, _| MirrorTest { shared })
+                .titled("testing.open.mirror")
+        });
+        control.spawns.push(
+            PanelSpec::spawn(panel, move |id, _, _| {
+                shared.preview.set(Some(id));
+                MirrorPreview { shared }
+            })
+            // 操作のパネルを隠さないよう、その右に並べる。
+            .in_view(Pose::new(Vec3::new(0.75, 0.0, -1.2), Quat::IDENTITY))
+            .titled("testing.open.mirror"),
+        );
+    }
+}
+
+/// 選んだ状態の、実物（ダッシュボードのミラーリング画面）と同じ表示。
+pub struct MirrorPreview {
+    pub(crate) shared: Rc<MirrorShared>,
+}
+
+impl Render for MirrorPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let state = self.shared.shown();
+        let action = state.action().map(|action| {
+            button(&theme, "mirror-test-action", action.label(cx), false).into_any_element()
+        });
+        mirror_screen(&theme, &state, action, cx).debug_selector(|| "mirror-test-screen".into())
+    }
+}
+
+/// 理由ごとの見本の失敗（本物のメッセージを使うので、分類が崩れたらここで気づける）。
+fn failure_samples() -> [(&'static str, Error); 6] {
+    use kernel::desktop::failure::*;
+    [
+        ("mirror-case-failed-windowunavailable", Error(WINDOW_HIDDEN.into())),
+        ("mirror-case-failed-unsupported", Error(UNSUPPORTED.into())),
+        ("mirror-case-failed-nopixels", Error(NO_PIXELS.into())),
+        ("mirror-case-failed-invalidbounds", Error(INVALID_BOUNDS.into())),
+        ("mirror-case-failed-graphics", Error(D3D_DEVICE.into())),
+        ("mirror-case-failed-other", Error("unexpected failure (0x80004005)".into())),
+    ]
+}
+
+const MIRROR_STATES: [(MirrorState, &str); 6] = [
+    (MirrorState::Launching, "mirror-case-launching"),
+    (MirrorState::LaunchFailed, "mirror-case-launch-failed"),
+    (MirrorState::Starting, "mirror-case-starting"),
+    (MirrorState::Streaming, "mirror-case-streaming"),
+    (MirrorState::Minimized, "mirror-case-minimized"),
+    (MirrorState::Closed, "mirror-case-closed"),
+];
+
+/// 状態を選ぶ操作のパネル。
+pub struct MirrorTest {
+    pub(crate) shared: Rc<MirrorShared>,
+}
+
+impl Render for MirrorTest {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let shown = self.shared.shown();
+        let choose = |state: MirrorState, shared: Rc<MirrorShared>| {
+            move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                *shared.state.borrow_mut() = Some(state.clone());
+                if let Some(preview) = shared.preview.get() {
+                    cx.default_global::<PanelControl>()
+                        .panels
+                        .entry(preview)
+                        .or_default()
+                        .redraw = true;
+                }
+            }
+        };
+        components::card_panel(&theme)
+            .flex()
+            .flex_col()
+            .gap(px(spacing::LG))
+            .p(px(spacing::XL))
+            .child(row().flex_wrap().children(MIRROR_STATES.map(|(state, id)| {
+                button(&theme, id, state.title(cx), state == shown)
+                    .on_click(choose(state, self.shared.clone()))
+            })))
+            .child(row().flex_wrap().children(failure_samples().map(|(id, error)| {
+                let state = MirrorState::Failed(error);
+                let label = state.reason(cx).unwrap_or_default();
+                button(&theme, id, label, state == shown)
+                    .on_click(choose(state, self.shared.clone()))
+            })))
     }
 }

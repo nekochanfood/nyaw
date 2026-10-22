@@ -23,6 +23,7 @@ use kernel::desktop::{
     Status,
 };
 use kernel::subsystems::media;
+use ui::mirror::{MirrorState, mirror_screen};
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, Setting};
 use ui::{PanelControl, PanelSpec};
@@ -2221,6 +2222,7 @@ impl Mirror {
             Some(Status::Minimized) => {
                 self.ending = true;
                 self.watch_generation += 1;
+                redraw(self.panel, cx);
                 if let Some(dashboard) = &self.dashboard {
                     let _ = dashboard.update(cx, |d, cx| d.minimize(self.panel, cx));
                 } else {
@@ -2385,65 +2387,26 @@ impl Mirror {
 impl Render for Mirror {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        if let Some(w) = &self.waiting {
-            let note = if w.gave_up {
-                "desktop.launch_failed"
-            } else {
-                "desktop.launching"
-            };
-            return components::card_panel(&theme)
-                .flex()
-                .flex_col()
-                .items_center()
-                .justify_center()
-                .gap(px(spacing::LG))
-                .p(px(spacing::XL))
-                .child(tile_image(w.icon.clone(), &icons::APP_WINDOW))
-                .child(
-                    div()
-                        .text_size(px(font_size::LG))
-                        .font_weight(FontWeight::BOLD)
-                        .child(w.app.name.clone()),
-                )
-                .child(
-                    div()
-                        .debug_selector(|| "mirror-waiting".into())
-                        .text_color(rgba(theme.neutral_text_low))
-                        .child(i18n::t(cx, note)),
-                );
-        }
-        let status = cx
-            .try_global::<PanelControl>()
-            .and_then(|c| c.panels.get(&self.panel))
-            .and_then(|s| s.status.desktop.clone());
-        let stopped = matches!(status, Some(Status::Closed | Status::Failed(_)));
-        let text = match status {
-            None | Some(Status::Starting) => i18n::t(cx, "desktop.starting"),
-            Some(Status::Streaming) => i18n::t(cx, "desktop.streaming"),
-            Some(Status::Minimized) => i18n::t(cx, "desktop.minimized"),
-            Some(Status::Closed) => i18n::t(cx, "desktop.closed"),
-            Some(Status::Failed(e)) => i18n::tf(cx, "desktop.failed", &[("error", &e)]),
+        let state = match &self.waiting {
+            Some(w) if w.gave_up => MirrorState::LaunchFailed,
+            Some(_) => MirrorState::Launching,
+            None => MirrorState::from_status(
+                cx.try_global::<PanelControl>()
+                    .and_then(|c| c.panels.get(&self.panel))
+                    .and_then(|s| s.status.desktop.clone()),
+            ),
         };
-        components::card_panel(&theme)
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .gap(px(spacing::MD))
-            .p(px(spacing::XL))
-            .text_color(rgba(theme.neutral_text_low))
-            .child(text)
-            .when(stopped, |d| {
-                d.child(
-                    components::button(
-                        &theme,
-                        "mirror-retry",
-                        i18n::t(cx, "desktop.retry"),
-                        Variant::Default,
-                    )
-                    .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
-                )
-            })
+        let selector = if self.waiting.is_some() {
+            "mirror-waiting"
+        } else {
+            "mirror-status"
+        };
+        let action = state.action().map(|action| {
+            components::button(&theme, action.id(), action.label(cx), Variant::Default)
+                .on_click(cx.listener(|this, _, _, cx| this.retry(cx)))
+                .into_any_element()
+        });
+        mirror_screen(&theme, &state, action, cx).debug_selector(move || selector.into())
     }
 }
 
@@ -3533,6 +3496,34 @@ mod tests {
             cx.run_until_parked();
         }
         println!("launcher redraw: {:?} per frame", start.elapsed() / n);
+    }
+
+    /// 最小化された窓の画面には「戻す」ボタンが出て、押すと同じ窓を映し直す（映し直しが最小化を戻す）。
+    #[gpui::test]
+    fn mirror_offers_restore_when_its_window_is_minimized(cx: &mut TestAppContext) {
+        let source = kernel::desktop::mock::source("Editor", SourceKind::Window);
+        let (_, cx) = cx.add_window_view(|_, cx| Mirror::new(4, Some(source), None, None, cx));
+        cx.run_until_parked();
+        cx.update(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(4)
+                .or_default()
+                .status
+                .desktop = Some(Status::Minimized)
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("mirror-retry").is_none());
+        assert!(cx.debug_bounds("mirror-restore").is_some());
+        take_commands(cx, 4);
+        click(cx, "mirror-restore");
+        assert_eq!(
+            take_commands(cx, 4),
+            [PanelCommand::Stream(
+                Some(kernel::desktop::mock::source("Editor", SourceKind::Window)),
+                DEFAULT_FRAME_RATE
+            )]
+        );
     }
 
     /// 配信が終わってもパネルに再試行を出す。
