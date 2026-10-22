@@ -476,7 +476,14 @@ impl Render for KeyboardView {
             );
         }
         if self.show_settings && self.loading {
-            root = root.child(div().child(i18n::t(cx, "keyboard.loading")));
+            root = root.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(spacing::SM))
+                    .child(components::spinner(&theme, 16.0))
+                    .child(i18n::t(cx, "keyboard.loading")),
+            );
         }
         let error = self
             .error

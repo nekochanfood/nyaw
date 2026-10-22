@@ -546,6 +546,81 @@ pub fn progress_ring(theme: &Theme, size: f32, stroke: f32, progress: f32) -> im
     .size(px(size))
 }
 
+/// 読み込み中のスピナー。一辺 `size` px の輪（溝 `groove`）の上を、1/4 周の丸い端の弧（`accent_solid`）が 0.5 秒で一周する。
+/// ciel / website_V3 のスピナーと同じ形（50 角の中に半径 20・線幅 6、弧は周の 1/4）と速さ。時刻は全部品で共通なので、
+/// 複数並べても同じ角度で回る。
+pub fn spinner(theme: &Theme, size: f32) -> impl IntoElement {
+    let (track, fill) = (theme.groove, theme.accent_solid);
+    canvas(
+        |_, _, _| {},
+        move |bounds, _, window, cx| {
+            keep_drawing(window, cx);
+            let side = f32::from(bounds.size.width.min(bounds.size.height));
+            let scale = side / SPINNER_VIEW;
+            let stroke = px(SPINNER_STROKE * scale);
+            let r = px(SPINNER_RADIUS * scale);
+            let center = bounds.center();
+            let turns = spinner_turns(Instant::now());
+            // 円弧は細かい折れ線で描く（progress_ring と同じ）。`from` は始点、`len` は長さ（どちらも周の割合）。
+            let arc = |from: f32, len: f32| {
+                let mut path = gpui::PathBuilder::stroke(stroke);
+                let steps = (len * 96.0).ceil().max(1.0) as usize;
+                for i in 0..=steps {
+                    let a = (from + len * i as f32 / steps as f32) * std::f32::consts::TAU;
+                    let p = point(center.x + r * a.cos(), center.y + r * a.sin());
+                    if i == 0 {
+                        path.move_to(p)
+                    } else {
+                        path.line_to(p)
+                    }
+                }
+                path.build().ok()
+            };
+            if let Some(path) = arc(0.0, 1.0) {
+                window.paint_path(path, rgba(track));
+            }
+            // 弧は真上（-90°）から始まり、時計回りに回る。丸い端は線の両端に半円を足して作る。
+            let start = turns - 0.25;
+            if let Some(path) = arc(start, SPINNER_ARC) {
+                window.paint_path(path, rgba(fill));
+            }
+            for turn in [start, start + SPINNER_ARC] {
+                let a = turn * std::f32::consts::TAU;
+                let cap = point(center.x + r * a.cos(), center.y + r * a.sin());
+                let rad = stroke / 2.0;
+                let mut path = gpui::PathBuilder::fill();
+                path.move_to(point(cap.x + rad, cap.y));
+                for i in 1..=24 {
+                    let t = i as f32 / 24.0 * std::f32::consts::TAU;
+                    path.line_to(point(cap.x + rad * t.cos(), cap.y + rad * t.sin()));
+                }
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, rgba(fill));
+                }
+            }
+        },
+    )
+    .flex_none()
+    .size(px(size))
+}
+
+/// ciel の SVG（`viewBox="0 0 50 50"`、`r=20`、`stroke-width=6`、`stroke-dasharray="31.4 94.2"`）の寸法。
+const SPINNER_VIEW: f32 = 50.0;
+const SPINNER_RADIUS: f32 = 20.0;
+const SPINNER_STROKE: f32 = 6.0;
+/// 弧の長さ（周の割合）。31.4 / (31.4 + 94.2) = 1/4。
+const SPINNER_ARC: f32 = 0.25;
+/// 一周する時間（ms）。
+const SPINNER_PERIOD_MS: u128 = 500;
+
+/// 時刻 `now` での回転量（周の割合 0..1）。一定の速さ（linear）。
+fn spinner_turns(now: Instant) -> f32 {
+    static ORIGIN: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let origin = *ORIGIN.get_or_init(|| now);
+    let ms = now.saturating_duration_since(origin).as_millis() % SPINNER_PERIOD_MS;
+    ms as f32 / SPINNER_PERIOD_MS as f32
+}
+
 /// オン / オフのスイッチ。押したときの処理は呼び出し側が `on_click` で足す。
 pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<Div> {
     let (w, h, pad) = (44.0, 24.0, 2.0);
@@ -1078,6 +1153,16 @@ pub fn surface(theme: &Theme) -> Div {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn spinner_turns_once_per_half_second() {
+        let t0 = Instant::now();
+        let a = spinner_turns(t0);
+        let quarter = spinner_turns(t0 + Duration::from_millis(125));
+        let full = spinner_turns(t0 + Duration::from_millis(500));
+        assert!(((quarter - a).rem_euclid(1.0) - 0.25).abs() < 1e-3);
+        assert!((full - a).abs() < 1e-3);
+    }
 
     #[test]
     fn fade_runs_from_start_to_target_over_normal() {

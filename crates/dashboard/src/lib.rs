@@ -956,6 +956,8 @@ enum LauncherRow {
     RunningHeader,
     AllAppsHeader,
     Note(SharedString),
+    /// 読み込み中（スピナー付きの注記）。
+    Loading(SharedString),
     Separator,
     /// [`Launcher::tiles`] のこの範囲を 1 行に並べる。
     Tiles(Range<usize>),
@@ -1686,7 +1688,7 @@ impl Screen {
             if !nyapps.is_empty() {
                 l.push_tiles(nyapps);
             } else if self.nyapps_pending {
-                l.rows.push(note("dashboard.loading"));
+                l.rows.push(LauncherRow::Loading(i18n::t(cx, "dashboard.loading")));
             } else if self.nyapps.is_empty() {
                 let dir = nyapp::installed::dir()
                     .map(|d| d.display().to_string())
@@ -1713,11 +1715,11 @@ impl Screen {
             .map(|(n, (at, _))| Tile::Running { at, n })
             .collect();
         if running.is_empty() {
-            l.rows.push(note(if self.pending.is_some() {
-                "dashboard.loading"
+            l.rows.push(if self.pending.is_some() {
+                LauncherRow::Loading(i18n::t(cx, "dashboard.loading"))
             } else {
-                "dashboard.none"
-            }));
+                note("dashboard.none")
+            });
         } else {
             l.push_tiles(running);
         }
@@ -1755,11 +1757,11 @@ impl Screen {
             })
             .collect();
         if apps.is_empty() {
-            l.rows.push(note(if self.apps_pending {
-                "dashboard.loading"
+            l.rows.push(if self.apps_pending {
+                LauncherRow::Loading(i18n::t(cx, "dashboard.loading"))
             } else {
-                "dashboard.none"
-            }));
+                note("dashboard.none")
+            });
         } else {
             l.push_tiles(apps);
         }
@@ -1846,6 +1848,16 @@ impl Screen {
                 .px(px(spacing::SM))
                 .pb(px(spacing::SM))
                 .text_color(rgba(theme.neutral_text_low))
+                .child(text)
+                .into_any_element(),
+            LauncherRow::Loading(text) => div()
+                .flex()
+                .items_center()
+                .gap(px(spacing::SM))
+                .px(px(spacing::SM))
+                .pb(px(spacing::SM))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(components::spinner(&theme, 16.0))
                 .child(text)
                 .into_any_element(),
             LauncherRow::Separator => div()

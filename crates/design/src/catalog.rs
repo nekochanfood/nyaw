@@ -503,6 +503,15 @@ impl Catalog {
                         .length(80.0),
                     ),
             )
+            .child(
+                wrap()
+                    .items_center()
+                    .child(components::spinner(t, 16.0))
+                    .child(components::spinner(t, 32.0))
+                    .child(components::spinner(t, 48.0))
+                    .child(components::spinner(t, 64.0))
+                    .child(caption(t, "spinner（0.5 秒で一周）")),
+            )
             .child(caption(t, "scrollbars（縦・横）"))
             .child(scroll_demo(t, &self.scroll));
         section(t, "Components", body)

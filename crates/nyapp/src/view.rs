@@ -512,6 +512,8 @@ impl Render for NyappView {
                 .flex()
                 .items_center()
                 .justify_center()
+                .gap(px(spacing::SM))
+                .child(components::spinner(&theme, 24.0))
                 .child(message(i18n::t(cx, "nyapp.loading"))),
             // 起動できずに落ちたものは、出す画面が無い。
             State::Failed { .. } if self.tree == Node::Spacer => components::card_panel(&theme),

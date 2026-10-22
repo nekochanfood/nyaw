@@ -182,7 +182,18 @@ impl Render for NyappTest {
         }
         rows.push(section_label(&theme, i18n::t(cx, "nyapp_test.user")));
         match self.installed.clone() {
-            None => rows.push(section_label(&theme, i18n::t(cx, "dashboard.loading"))),
+            None => rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(spacing::SM))
+                    .px(px(spacing::SM))
+                    .pt(px(spacing::SM))
+                    .text_color(rgba(theme.neutral_text_low))
+                    .child(components::spinner(&theme, 16.0))
+                    .child(i18n::t(cx, "dashboard.loading"))
+                    .into_any_element(),
+            ),
             Some(apps) if apps.is_empty() => {
                 rows.push(section_label(&theme, i18n::t(cx, "nyapp_test.none")))
             }

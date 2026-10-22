@@ -307,7 +307,14 @@ impl Render for DesktopTest {
                     .child(status),
             )
             .when(self.pending.is_some(), |d| {
-                d.child(i18n::t(cx, "desktop.loading"))
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(spacing::SM))
+                        .child(components::spinner(&theme, 16.0))
+                        .child(i18n::t(cx, "desktop.loading")),
+                )
             })
             .when(
                 self.pending.is_none() && self.sources.is_empty() && self.error.is_none(),
