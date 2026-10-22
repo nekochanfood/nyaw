@@ -61,6 +61,12 @@ impl Fade {
     }
 }
 
+/// 0xRRGGBBAA の不透明度に `opacity`（0..=1）を掛ける。
+fn scale_alpha(color: u32, opacity: f32) -> u32 {
+    let alpha = ((color & 0xff) as f32 * opacity).round() as u32;
+    color & !0xff | alpha
+}
+
 /// 0xRRGGBBAA を OKLab で混ぜる（アルファは線形に混ぜる）。
 fn mix(a: u32, b: u32, t: f32) -> u32 {
     let lab = |c: u32| -> Oklab {
@@ -132,6 +138,10 @@ pub struct Button {
     /// 波紋の色（文字色）。
     ink: u32,
     ripple: bool,
+    /// [`Variant::Ghost`] のボタンか（[`Button::background_opacity`] と [`Button::ghost_background`] はこれだけに効く）。
+    ghost: bool,
+    /// [`Variant::Ghost`] のホバー・押下の背景の不透明度（0..=1）。
+    background_opacity: f32,
     /// ホバー中にカーソルへ出す説明（[`Tooltips`]）。
     tooltip: Option<SharedString>,
 }
@@ -147,6 +157,39 @@ impl Button {
     pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
         self.tooltip = Some(text.into());
         self
+    }
+
+    /// [`Variant::Ghost`] のホバー・押下の背景の不透明度（0..=1。範囲外は丸める）。指定しなければ 100%。
+    /// ふだんは透明なので変わらない。ほかの種類のボタンでは何もしない。要素全体の `opacity`（文字や中身も薄くなる）とは別。
+    pub fn background_opacity(mut self, opacity: f32) -> Self {
+        self.background_opacity = if opacity.is_finite() {
+            opacity.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        self
+    }
+
+    /// [`Variant::Ghost`] のホバー・押下の背景色を `theme` のものにする。背景が今のテーマと同じ明るさで、背景に紛れて見えない
+    /// ときに、反対のテーマ（ライトの上ではダーク、ダークの上ではライト）の色を渡す。ほかの種類のボタンでは何もしない。
+    pub fn ghost_background(mut self, theme: &Theme) -> Self {
+        if self.ghost {
+            self.hover = theme.control_on_background_hover;
+            self.active = theme.control_on_background_active;
+        }
+        self
+    }
+
+    /// 平常・ホバー・押下の背景色（[`Button::background_opacity`] を掛けたもの）。
+    fn colors(&self) -> (u32, u32, u32) {
+        let scale = |c| {
+            if self.ghost {
+                scale_alpha(c, self.background_opacity)
+            } else {
+                c
+            }
+        };
+        (scale(self.rest), scale(self.hover), scale(self.active))
     }
 
     /// 切り替えボタンが有効なときの見た目（平常時の色が押下の色になる）。
@@ -274,6 +317,8 @@ fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
         active,
         ink: fg,
         ripple: true,
+        ghost: matches!(variant, Variant::Ghost),
+        background_opacity: 1.0,
         tooltip: None,
     }
 }
@@ -300,7 +345,7 @@ impl ParentElement for Button {
 
 impl RenderOnce for Button {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let rest = self.rest;
+        let (rest, hover, active) = self.colors();
         let state = window.use_keyed_state(self.id.clone(), cx, move |_, _| State {
             pointer: Pointer::default(),
             fade: Fade {
@@ -316,9 +361,9 @@ impl RenderOnce for Button {
             ripple,
         } = *state.read(cx);
         let target = if p.pressed {
-            self.active
+            active
         } else if p.hovered {
-            self.hover
+            hover
         } else {
             rest
         };
@@ -1202,6 +1247,41 @@ pub fn surface(theme: &Theme) -> Div {
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn ghost_background_opacity_and_theme_apply_only_to_ghost() {
+        let (dark, light) = (&Theme::DARK, &Theme::LIGHT);
+        let ghost = || base_button(light, "g".into(), Variant::Ghost);
+        let (rest, hover, active) = ghost().colors();
+        assert_eq!(hover, light.control_on_background_hover);
+        let (r, h, a) = ghost().background_opacity(0.5).colors();
+        assert_eq!(r & 0xff, 0, "ふだんは透明のまま");
+        assert_eq!((rest & 0xff, r), (0, rest));
+        assert_eq!(h, scale_alpha(hover, 0.5));
+        assert_eq!(a, scale_alpha(active, 0.5));
+        assert_eq!(ghost().background_opacity(7.0).colors().1, hover, "範囲外は 100%");
+        // 色の取り換えと不透明度は、どの順でも同じ。
+        let swapped = (dark.control_on_background_hover, dark.control_on_background_active);
+        let one = ghost().ghost_background(dark).background_opacity(0.5).colors();
+        let two = ghost().background_opacity(0.5).ghost_background(dark).colors();
+        assert_eq!(one, two);
+        assert_eq!(
+            (one.1, one.2),
+            (scale_alpha(swapped.0, 0.5), scale_alpha(swapped.1, 0.5))
+        );
+        // Ghost 以外は何も変わらない。
+        let plain = base_button(light, "d".into(), Variant::Default)
+            .ghost_background(dark)
+            .background_opacity(0.5);
+        assert_eq!(plain.colors().1, light.control_hover);
+    }
+
+    #[test]
+    fn scale_alpha_scales_only_the_alpha() {
+        assert_eq!(scale_alpha(0x11223380, 0.5), 0x11223340);
+        assert_eq!(scale_alpha(0x112233ff, 1.0), 0x112233ff);
+        assert_eq!(scale_alpha(0x112233ff, 0.0), 0x11223300);
+    }
 
     #[test]
     fn spinner_turns_once_per_half_second() {

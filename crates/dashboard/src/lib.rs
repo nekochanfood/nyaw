@@ -48,6 +48,8 @@ const COLUMNS: u16 = 4;
 const TILE_PX: f32 = 120.0;
 /// タイルのアイコンの大きさ（px）。
 const TILE_ICON_PX: f32 = 48.0;
+/// 再生中の画面（背景に大きな画像が載る）の Ghost ボタンの、ホバー・押下の背景の不透明度。
+const NOW_PLAYING_BACKGROUND_OPACITY: f32 = 0.125;
 /// アプリ一覧の列の数と、起動中のアプリの印（点）の大きさ（px）。
 const APP_COLUMNS: u16 = 6;
 const RUNNING_DOT_PX: f32 = 6.0;
@@ -1291,6 +1293,12 @@ impl Screen {
             None => Theme::current(cx),
         };
         let low = theme.neutral_text_low;
+        // Ghost ボタンの背景は、背景に紛れないよう反対のテーマの色にする（明るい背景には暗く、暗い背景には明るく）。
+        let contrast = if theme == Theme::LIGHT {
+            Theme::DARK
+        } else {
+            Theme::LIGHT
+        };
         let app_window = self.app_window(&m.app);
         let can_open_app = app_window.is_some() || m.controls.raise;
         let icon = images
@@ -1305,6 +1313,8 @@ impl Screen {
         };
         let control = |id: &'static str, glyph, key, enabled: bool, command| {
             components::icon_button(&theme, id, glyph, i18n::t(cx, key), Variant::Ghost)
+                .ghost_background(&contrast)
+                .background_opacity(NOW_PLAYING_BACKGROUND_OPACITY)
                 .when(!enabled, |b| b.opacity(0.4))
                 .when(enabled, |b| b.on_click(send(command)))
         };
@@ -1340,6 +1350,8 @@ impl Screen {
                     .left(px(spacing::LG))
                     .child(
                         components::content_button(&theme, "now-playing-app", Variant::Ghost)
+                            .ghost_background(&contrast)
+                            .background_opacity(NOW_PLAYING_BACKGROUND_OPACITY)
                             .tooltip(i18n::t(
                                 cx,
                                 if can_open_app {
