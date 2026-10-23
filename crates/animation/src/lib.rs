@@ -46,7 +46,15 @@ impl Pair {
     pub fn new(from: f32, to: f32, rise: Motion, entering: bool) -> Self {
         Self {
             rise: Animation::new(from, to, rise),
-            grow: Animation::new(from, to, Motion::Grow),
+            grow: Animation::new(
+                from,
+                to,
+                if entering {
+                    Motion::Grow
+                } else {
+                    Motion::Shrink
+                },
+            ),
             wait: LAG.as_secs_f32(),
             rise_waits: entering,
         }
@@ -76,7 +84,7 @@ impl Pair {
 pub enum Motion {
     /// 現れる。ゆっくり着地する（ease-out）。
     Enter,
-    /// 消える。速く離れる（ease-in）。
+    /// 消える。現れるの逆再生（同じ長さで ease-in）。
     Exit,
     /// 元に戻る。消えるときと同じ長さで、終わり際にゆっくり着地する（ease-out）。
     Return,
@@ -90,15 +98,16 @@ pub enum Motion {
     SlideOut,
     /// ボタンの幅が開く・閉じる。行き過ぎず、すぐ動き出して滑らかに止まる（ease-out。滑り込みと同じ長さ）。
     Grow,
+    /// ボタンの幅が閉じる。開くの逆再生（ease-in。同じ長さ）。
+    Shrink,
 }
 
 impl Motion {
     pub const fn duration_ms(self) -> u64 {
         match self {
-            Motion::Enter => duration_ms::NORMAL,
-            Motion::Exit | Motion::Return => duration_ms::QUICK,
-            Motion::SlideIn | Motion::SlideOut | Motion::Grow => SLIDE_MS,
-            Motion::Move => duration_ms::NORMAL,
+            Motion::Return => duration_ms::QUICK,
+            Motion::Enter | Motion::Exit | Motion::Move => duration_ms::NORMAL,
+            Motion::SlideIn | Motion::SlideOut | Motion::Grow | Motion::Shrink => SLIDE_MS,
             Motion::Morph => duration_ms::SLOW,
         }
     }
@@ -111,7 +120,7 @@ impl Motion {
     fn easing(self) -> Easing {
         match self {
             Motion::Enter | Motion::Return | Motion::Grow => Easing::EaseOutCubic,
-            Motion::Exit => Easing::EaseInCubic,
+            Motion::Exit | Motion::Shrink => Easing::EaseInCubic,
             Motion::Move | Motion::Morph => Easing::EaseInOutCubic,
             Motion::SlideIn => Easing::EaseOutBack,
             // 滑り込みを逆に再生した動き（ease-in-back は 1 - ease-out-back(1 - t)）。
@@ -233,7 +242,7 @@ mod tests {
     fn grow_never_overshoots() {
         let (mut i, mut o) = (
             Animation::new(0.0, 1.0, Motion::Grow),
-            Animation::new(1.0, 0.0, Motion::Grow),
+            Animation::new(1.0, 0.0, Motion::Shrink),
         );
         for _ in 0..100 {
             let (a, b) = (i.advance(0.005), o.advance(0.005));
@@ -249,9 +258,23 @@ mod tests {
         assert_eq!(Motion::Grow.duration_ms(), 350);
     }
 
+    /// 出は入りの逆再生: 同じ長さで、時間を裏返した値になる。
     #[test]
-    fn exit_is_faster_than_enter() {
-        assert!(Motion::Exit.duration_ms() < Motion::Enter.duration_ms());
+    fn out_is_in_played_backwards() {
+        for (i, o) in [
+            (Motion::Enter, Motion::Exit),
+            (Motion::SlideIn, Motion::SlideOut),
+            (Motion::Grow, Motion::Shrink),
+        ] {
+            assert_eq!(i.duration_ms(), o.duration_ms());
+            for k in 0..=10 {
+                let t = k as f32 / 10.0;
+                assert!(
+                    (o.ease(t) - (1.0 - i.ease(1.0 - t))).abs() < 1e-5,
+                    "{i:?} {t}"
+                );
+            }
+        }
     }
 
     #[test]
