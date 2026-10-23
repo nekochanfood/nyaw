@@ -737,7 +737,8 @@ pub struct PanelSpec {
     dockable: bool,
     /// ナビゲーションバーの右端を、閉じる代わりにしまうボタンにする（[`Self::minimizable`]）。
     minimize: Option<Minimize>,
-    source_minimize: bool,
+    /// 閉じるボタンの隣にしまうボタンを出す（[`Self::source_minimizable`]）。
+    source_minimize: Option<Minimize>,
     build: Box<PanelBuilder>,
 }
 
@@ -784,7 +785,7 @@ impl PanelSpec {
             os_keyboard: false,
             dockable: false,
             minimize: None,
-            source_minimize: false,
+            source_minimize: None,
             build: Box::new(move |panel, window, cx| cx.new(|cx| build(panel, window, cx)).into()),
         }
     }
@@ -1001,9 +1002,9 @@ impl PanelSpec {
         self
     }
 
-    /// 閉じるボタンの隣に、配信元ウィンドウの最小化ボタンを出す。
-    pub fn source_minimizable(mut self) -> Self {
-        self.source_minimize = true;
+    /// 閉じるボタンの隣に、しまうボタン（マイナス）を出す。押すと `minimize` を呼ぶ。配信元ウィンドウは最小化しない。
+    pub fn source_minimizable(mut self, minimize: impl Fn(PanelId, &mut App) + 'static) -> Self {
+        self.source_minimize = Some(std::rc::Rc::new(minimize));
         self
     }
 
@@ -1015,7 +1016,7 @@ impl PanelSpec {
             self.os_keyboard,
             self.dockable,
             self.minimize.clone(),
-            self.source_minimize,
+            self.source_minimize.clone(),
         );
         self.nav_bar.then(|| PanelSpec {
             nav_bar: false,
@@ -1137,7 +1138,7 @@ struct NavBar {
     dockable: bool,
     /// 右端を、閉じる代わりにしまうボタンにする。
     minimize: Option<Minimize>,
-    source_minimize: bool,
+    source_minimize: Option<Minimize>,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
     open: design::animation::Transition,
 }
@@ -1227,17 +1228,7 @@ impl Render for NavBar {
         });
         let leading = dock.flatten().into_iter().chain(os_keyboard).collect();
         let minimize = self.minimize.clone();
-        let source_streaming = cx
-            .try_global::<PanelControl>()
-            .and_then(|c| c.panels.get(&owner))
-            .and_then(|p| p.status.desktop.as_ref())
-            .is_some_and(|s| {
-                matches!(
-                    s,
-                    kernel::desktop::Status::Starting | kernel::desktop::Status::Streaming
-                )
-            });
-        let beside_close = (self.source_minimize && source_streaming).then(|| {
+        let beside_close = self.source_minimize.clone().map(|minimize| {
             design::components::icon_button(
                 &theme,
                 "nav-minimize-source",
@@ -1245,14 +1236,7 @@ impl Render for NavBar {
                 i18n::t(cx, "common.minimize"),
                 design::components::Variant::Default,
             )
-            .on_click(move |_, _, cx| {
-                cx.default_global::<PanelControl>()
-                    .panels
-                    .entry(owner)
-                    .or_default()
-                    .commands
-                    .push(PanelCommand::MinimizeSource);
-            })
+            .on_click(move |_, _, cx| minimize(owner, cx))
         });
         div().size_full().child(design::components::nav_bar(
             &theme,
@@ -2020,20 +2004,16 @@ mod tests {
                 os_keyboard: false,
                 dockable: false,
                 minimize: None,
-                source_minimize: true,
+                source_minimize: Some(std::rc::Rc::new(|id, cx| {
+                    cx.default_global::<PanelControl>()
+                        .panels
+                        .entry(id)
+                        .or_default()
+                        .commands
+                        .push(PanelCommand::Hide(true))
+                })),
                 open: design::animation::Transition::rest(1.0),
             }
-        });
-        cx.run_until_parked();
-        assert!(cx.debug_bounds("nav-minimize-source").is_none());
-        cx.update(|window, cx| {
-            cx.default_global::<PanelControl>()
-                .panels
-                .entry(1)
-                .or_default()
-                .status
-                .desktop = Some(kernel::desktop::Status::Streaming);
-            window.refresh();
         });
         cx.run_until_parked();
         let minimize = cx.debug_bounds("nav-minimize-source").unwrap();
@@ -2042,10 +2022,7 @@ mod tests {
         cx.simulate_click(minimize.center(), gpui::Modifiers::none());
         cx.simulate_click(close.center(), gpui::Modifiers::none());
         let commands = &cx.update(|_, cx| cx.global::<PanelControl>().panels[&1].commands.clone());
-        assert_eq!(
-            commands,
-            &[PanelCommand::MinimizeSource, PanelCommand::Close]
-        );
+        assert_eq!(commands, &[PanelCommand::Hide(true), PanelCommand::Close]);
     }
 
     #[test]

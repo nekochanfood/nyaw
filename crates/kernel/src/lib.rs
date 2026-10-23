@@ -684,7 +684,7 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::SpeakerLayout(layout) => {
                 self.configure_speaker(panel, |c| c.layout = layout)
             }
-            PanelCommand::TypeToOs { stroke, layout } => self.type_to_os(stroke, layout),
+            PanelCommand::TypeToOs { stroke, layout } => self.type_to_os(panel, stroke, layout),
         }
     }
 

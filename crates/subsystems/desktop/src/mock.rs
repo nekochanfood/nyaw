@@ -23,6 +23,15 @@ pub struct Controller {
 }
 
 pub fn stream() -> (Stream, Controller) {
+    stream_of(None)
+}
+
+/// ウィンドウ `window` を映している配信（[`Stream::window`]）。
+pub fn window_stream(window: u64) -> (Stream, Controller) {
+    stream_of(Some(window))
+}
+
+fn stream_of(window: Option<u64>) -> (Stream, Controller) {
     let update = Arc::new(Mutex::new(None));
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = mpsc::sync_channel(64);
@@ -31,6 +40,7 @@ pub fn stream() -> (Stream, Controller) {
             update: update.clone(),
             input: tx,
             stop: stop.clone(),
+            window,
         },
         Controller {
             update,

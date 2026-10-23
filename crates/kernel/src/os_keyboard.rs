@@ -10,13 +10,26 @@ impl<B: VrBackend> Kernel<B> {
         self.os_keyboard.get_or_insert_with(Watcher::new).settings()
     }
 
-    pub(super) fn type_to_os(&mut self, stroke: Stroke, layout: Layout) {
+    /// ウィンドウを映すパネルからの入力は、そのウィンドウが前面のときだけ送る（別のアプリへ入らないように）。
+    /// 前面でなければ入力は捨て、ウィンドウを前に出す。送る先もそのウィンドウに固定するので、配送までに前面が移っても入らない。
+    pub(super) fn type_to_os(&mut self, panel: PanelId, stroke: Stroke, layout: Layout) {
         let settings = self.os_keyboard();
         let Some(output) = os_output(stroke, &layout, &settings) else {
             return;
         };
+        let target = self.mirrored_window(panel);
+        if let Some(window) = target
+            && window != settings.foreground
+        {
+            logger::warn!(
+                "mirrored window is not in the foreground; input dropped",
+                panel = panel
+            );
+            self.focus_desktop(panel);
+            return;
+        }
         let watcher = self.os_keyboard.as_ref().expect("started above");
-        if let Err(e) = watcher.send(settings.foreground, output) {
+        if let Err(e) = watcher.send(target.unwrap_or(settings.foreground), output) {
             logger::warn!("failed to send keys to the OS", error = e);
         }
     }
@@ -72,5 +85,65 @@ mod tests {
             ..stroke
         };
         assert!(os_output(composing, &us, &os(None)).is_none());
+    }
+
+    struct FakeOs {
+        foreground: std::sync::Arc<std::sync::atomic::AtomicU64>,
+        sent: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl subsystems::os::keyboard::Host for FakeOs {
+        fn settings(&mut self) -> Settings {
+            Settings {
+                foreground: self.foreground.load(std::sync::atomic::Ordering::SeqCst),
+                ..Settings::default()
+            }
+        }
+        fn send(&mut self, _: Output) -> std::io::Result<()> {
+            self.sent.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// ウィンドウを映すパネルからの入力は、そのウィンドウが前面のときだけ OS へ送る。
+    /// 前面でなければ捨てて、ウィンドウを前に出すよう頼む。
+    #[test]
+    fn mirrored_window_receives_keys_only_while_in_the_foreground() {
+        use std::sync::{Arc, atomic::AtomicU64, atomic::AtomicUsize, atomic::Ordering};
+        let mut kernel = Kernel::with_backend(vr::mock::MockBackend::default(), Default::default());
+        let panel = kernel
+            .add_panel("mirror", Pose::IDENTITY, Vec2::ONE, (4, 2))
+            .unwrap();
+        let (stream, control) = desktop::mock::window_stream(77);
+        kernel.set_desktop_stream(panel, stream).unwrap();
+        let (foreground, sent) = (Arc::new(AtomicU64::new(9)), Arc::new(AtomicUsize::new(0)));
+        kernel.os_keyboard = Some(Watcher::with_host(FakeOs {
+            foreground: foreground.clone(),
+            sent: sent.clone(),
+        }));
+        let key = || Stroke {
+            code: 30,
+            text: "a".into(),
+            ..Stroke::default()
+        };
+        let wait = |count: usize| {
+            for _ in 0..200 {
+                if sent.load(Ordering::SeqCst) == count {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            // 余計に送られていないことも確かめるため、少し待つ。
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            assert_eq!(sent.load(Ordering::SeqCst), count);
+        };
+        kernel.type_to_os(panel, key(), Layout::new("us", ""));
+        wait(0);
+        assert_eq!(control.focuses(), 1, "前面でなければウィンドウを前に出す");
+        foreground.store(77, Ordering::SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        kernel.type_to_os(panel, key(), Layout::new("us", ""));
+        wait(1);
+        assert_eq!(control.focuses(), 0);
     }
 }
