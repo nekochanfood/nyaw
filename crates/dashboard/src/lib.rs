@@ -23,9 +23,9 @@ use kernel::desktop::{
     Status,
 };
 use kernel::subsystems::media;
-use ui::mirror::{MirrorState, mirror_screen};
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, Setting};
+use ui::mirror::{MirrorState, mirror_screen};
 use ui::{PanelControl, PanelSpec};
 
 /// バーを手前に傾ける角度（下から見上げずに読めるよう、少し上を向かせる）。はめた画面はこの分だけ起こして垂直に立てる。
@@ -804,44 +804,58 @@ impl Render for Dashboard {
             },
         )
         .on_click(cx.listener(|this, _, _, cx| this.toggle_menu(cx)));
-        components::card_panel(&theme)
-            .rounded(px(design::radius::FULL))
+        // 窓は固定の幅だが、バーは中身の幅に収めて中央に置く（配信が溜まって窓の幅を超えたら、そこで頭打ちにして横にスクロール）。
+        div()
+            .absolute()
+            .inset(px(components::PANEL_MARGIN))
             .flex()
-            .items_center()
-            .gap(px(spacing::SM))
-            .px(px(spacing::SM))
-            .child(menu)
+            .justify_center()
             .child(
-                components::content_button(
-                    &theme,
-                    "dashboard-quick-settings",
-                    variant(Page::QuickSettings),
-                )
-                .px(px(spacing::XL))
-                // 数字で幅が変わって落ち着かないので、時刻の幅を固定する。
-                .child(fixed_clock(time_width))
-                .tooltip(i18n::t(cx, "dashboard.quick_settings"))
-                .children(battery.map(|b| design::icon(battery_glyph(&b)).size(px(font_size::LG))))
-                .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
-            )
-            // 進行中の作業の知らせは、クイック設定と再生中の間。
-            .children(activities)
-            // 何か再生しているときだけ、再生中の画面のボタンを出す。
-            .when(has_media, |d| d.child(now_playing))
-            .child(mirror)
-            .when(!streams.is_empty(), |d| d.child(separator(&theme)))
-            // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
-            .child(
-                div()
-                    .id("dashboard-streams")
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .overflow_x_scroll()
+                components::card_panel_fit(&theme)
+                    .rounded(px(design::radius::FULL))
+                    .max_w_full()
                     .flex()
                     .items_center()
                     .gap(px(spacing::SM))
-                    .children(streams),
+                    .px(px(spacing::SM))
+                    .child(menu)
+                    .child(
+                        components::content_button(
+                            &theme,
+                            "dashboard-quick-settings",
+                            variant(Page::QuickSettings),
+                        )
+                        .px(px(spacing::XL))
+                        // 数字で幅が変わって落ち着かないので、時刻の幅を固定する。
+                        .child(fixed_clock(time_width))
+                        .tooltip(i18n::t(cx, "dashboard.quick_settings"))
+                        .children(
+                            battery
+                                .map(|b| design::icon(battery_glyph(&b)).size(px(font_size::LG))),
+                        )
+                        .on_click(
+                            cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx)),
+                        ),
+                    )
+                    // 進行中の作業の知らせは、クイック設定と再生中の間。
+                    .children(activities)
+                    // 何か再生しているときだけ、再生中の画面のボタンを出す。
+                    .when(has_media, |d| d.child(now_playing))
+                    .child(mirror)
+                    .when(!streams.is_empty(), |d| d.child(separator(&theme)))
+                    // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
+                    // 空の箱でも隙間が空くので、配信があるときだけ置く。
+                    .children((!streams.is_empty()).then(|| {
+                        div()
+                            .id("dashboard-streams")
+                            .min_w_0()
+                            .h_full()
+                            .overflow_x_scroll()
+                            .flex()
+                            .items_center()
+                            .gap(px(spacing::SM))
+                            .children(streams)
+                    })),
             )
     }
 }
@@ -1701,7 +1715,8 @@ impl Screen {
             if !nyapps.is_empty() {
                 l.push_tiles(nyapps);
             } else if self.nyapps_pending {
-                l.rows.push(LauncherRow::Loading(i18n::t(cx, "dashboard.loading")));
+                l.rows
+                    .push(LauncherRow::Loading(i18n::t(cx, "dashboard.loading")));
             } else if self.nyapps.is_empty() {
                 let dir = nyapp::installed::dir()
                     .map(|d| d.display().to_string())
@@ -3766,6 +3781,28 @@ mod tests {
                 "{button} は右端: {b:?} / {width:?}"
             );
         }
+    }
+
+    /// バーは窓いっぱいに広がらず、中身の幅に収まって中央に置かれる。
+    #[gpui::test]
+    fn bar_fits_its_contents_and_is_centered(cx: &mut TestAppContext) {
+        let (_bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
+        cx.run_until_parked();
+        let width = cx.update(|window, _| window.viewport_size().width);
+        let (first, last) = (
+            cx.debug_bounds("dashboard-menu").unwrap(),
+            cx.debug_bounds("dashboard-launcher").unwrap(),
+        );
+        let content = last.right() - first.left();
+        assert!(
+            content < width * 0.8,
+            "窓いっぱいに広がらない: {content:?} / {width:?}"
+        );
+        let (left, right) = (first.left(), width - last.right());
+        assert!(
+            (left - right).abs() <= px(2.0),
+            "中央に置く: {left:?} / {right:?}"
+        );
     }
 
     #[gpui::test]

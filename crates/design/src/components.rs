@@ -691,11 +691,10 @@ pub fn status_screen(
                 .gap(px(spacing::XS))
                 .text_center()
                 .child(div().font_weight(FontWeight::BOLD).child(title))
-                .children(reason.map(|reason| {
-                    div()
-                        .text_color(rgba(theme.neutral_text_low))
-                        .child(reason)
-                })),
+                .children(
+                    reason
+                        .map(|reason| div().text_color(rgba(theme.neutral_text_low)).child(reason)),
+                ),
         )
         .children(action)
 }
@@ -780,6 +779,11 @@ pub fn card(theme: &Theme) -> Div {
         .rounded(px(radius::LG))
         .bg(rgba(theme.card))
         .text_color(rgba(theme.neutral_text))
+}
+
+/// 中身の幅に収まるカードのパネル（[`card_panel`] の、窓いっぱいに広がらない版）。置き場所は呼ぶ側が決める。
+pub fn card_panel_fit(theme: &Theme) -> Div {
+    card(theme).rounded(px(radius::XL)).shadow(panel_shadow())
 }
 
 /// カードが 1 枚だけの画面: 地（[`panel`]）を敷かず、カードがパネル全体になる。角丸はパネルの `XL`。
@@ -1259,11 +1263,24 @@ mod tests {
         assert_eq!((rest & 0xff, r), (0, rest));
         assert_eq!(h, scale_alpha(hover, 0.5));
         assert_eq!(a, scale_alpha(active, 0.5));
-        assert_eq!(ghost().background_opacity(7.0).colors().1, hover, "範囲外は 100%");
+        assert_eq!(
+            ghost().background_opacity(7.0).colors().1,
+            hover,
+            "範囲外は 100%"
+        );
         // 色の取り換えと不透明度は、どの順でも同じ。
-        let swapped = (dark.control_on_background_hover, dark.control_on_background_active);
-        let one = ghost().ghost_background(dark).background_opacity(0.5).colors();
-        let two = ghost().background_opacity(0.5).ghost_background(dark).colors();
+        let swapped = (
+            dark.control_on_background_hover,
+            dark.control_on_background_active,
+        );
+        let one = ghost()
+            .ghost_background(dark)
+            .background_opacity(0.5)
+            .colors();
+        let two = ghost()
+            .background_opacity(0.5)
+            .ghost_background(dark)
+            .colors();
         assert_eq!(one, two);
         assert_eq!(
             (one.1, one.2),
