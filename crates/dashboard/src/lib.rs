@@ -11,9 +11,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use design::components::slide::{
-    Entering, Slide, fade_in, fit_bar, scroll_to_slot, slide_in, with_leaving,
-};
+use design::components::slide::{Entering, Slide, fade_in, fit_bar, slide_in, with_leaving};
 use design::components::{self, Variant};
 use design::{Theme, font_size, icons, spacing};
 use gpui::{
@@ -141,8 +139,32 @@ pub fn spec(
     .with_veil()
 }
 
-/// ダッシュボードを、はめた画面ごと隠す（閉じない。配信も止めない）。
+/// 引っ込む動きの途中のダッシュボード（動きが終わってから隠す）。
+#[derive(Default)]
+struct Closing(HashSet<PanelId>);
+
+impl gpui::Global for Closing {}
+
+/// ダッシュボードを、はめた画面ごと隠す（閉じない。配信も止めない）。出すときの動きの逆（右のボタンから順に引っ込む）を
+/// 見せてから隠す。
 pub fn hide(dashboard: PanelId, cx: &mut App) {
+    let shown = cx
+        .try_global::<PanelControl>()
+        .and_then(|c| c.panels.get(&dashboard))
+        .is_some_and(|p| !p.status.hidden && !p.status.closed);
+    // 画面のテストは動かさず、すぐ隠す。
+    if cfg!(test) || !shown {
+        hide_now(dashboard, cx);
+    } else if cx.default_global::<Closing>().0.insert(dashboard) {
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(dashboard)
+            .or_default()
+            .redraw = true;
+    }
+}
+
+fn hide_now(dashboard: PanelId, cx: &mut App) {
     commands(
         dashboard,
         [
@@ -155,6 +177,7 @@ pub fn hide(dashboard: PanelId, cx: &mut App) {
 
 /// 隠したダッシュボードを、今の目の前に同じ状態で出し直す。はまっているのが配信なら、そのウィンドウを OS で前に出す。
 pub fn show(dashboard: PanelId, cx: &mut App) {
+    cx.default_global::<Closing>().0.remove(&dashboard);
     if let Some(docked) = ui::docked(cx) {
         commands(docked, [PanelCommand::FocusSource], cx);
     }
@@ -719,6 +742,16 @@ impl Render for Dashboard {
             .get(&self.panel)
             .is_some_and(|p| p.status.hidden);
         enter.begin(hidden, now_at);
+        let closing = cx
+            .try_global::<Closing>()
+            .is_some_and(|c| c.0.contains(&self.panel));
+        if hidden {
+            cx.default_global::<Closing>().0.remove(&self.panel);
+        } else if closing {
+            enter.close(now_at);
+        } else if enter.is_closing() {
+            enter.cancel_close();
+        }
         // 左から数えたボタンの順番: メニュー 0・クイック設定 1・進行中の作業・再生中・ランチャー・区切り線と配信。
         let activities_now = with_leaving(
             nyapp::activity::all(cx).to_vec(),
@@ -902,10 +935,12 @@ impl Render for Dashboard {
         };
         // 出ているボタンが動いている間は、次のフレームも描く。
         self.enter = enter;
-        if let Some(ix) = self.enter.take_fresh() {
-            scroll_to_slot(&self.scroll, ix);
+        let scrolling = self.enter.follow_scroll(&self.scroll, now_at);
+        if self.enter.take_closed(now_at) {
+            cx.default_global::<Closing>().0.remove(&self.panel);
+            hide_now(self.panel, cx);
         }
-        if self.enter.finish() {
+        if self.enter.finish() || scrolling {
             components::keep_drawing(window, cx);
         }
         let menu = components::icon_button(

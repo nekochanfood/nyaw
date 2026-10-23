@@ -1,5 +1,5 @@
 use super::*;
-use design::components::slide::{Entering, fit_bar, scroll_to_slot, slide_in, with_leaving};
+use design::components::slide::{Entering, fit_bar, slide_in, with_leaving};
 
 /// カプセルの最大幅（px）。ボタンが増えてこれを超えそうなら、横にスクロールする。
 const MAX_BAR_PX: f32 = 360.0;
@@ -75,10 +75,13 @@ impl Render for SlideTest {
                 )
             })
             .collect();
-        if let Some(ix) = self.enter.take_fresh() {
-            scroll_to_slot(&self.scroll, ix);
+        let scrolling = self.enter.follow_scroll(&self.scroll, now);
+        // 閉じる動きが終わったら、出し直す（本物のダッシュボードは、ここで隠す）。
+        if self.enter.take_closed(now) {
+            self.enter.cancel_close();
+            self.enter.replay();
         }
-        if self.enter.finish() {
+        if self.enter.finish() || scrolling {
             components::keep_drawing(window, cx);
         }
         let act = |f: fn(&mut Self)| {
@@ -145,6 +148,15 @@ impl Render for SlideTest {
                             false,
                         )
                         .on_click(act(|t| t.enter.replay())),
+                    )
+                    .child(
+                        button(
+                            &theme,
+                            "slide-close",
+                            i18n::t(cx, "testing.slide.close"),
+                            false,
+                        )
+                        .on_click(act(|t| t.enter.close(Instant::now()))),
                     ),
             )
             .child(
@@ -266,6 +278,15 @@ mod tests {
         );
     }
 
+    /// 20ms ごとに `n` フレーム描く（スクロールなど、フレームごとに進む動きを進める）。
+    fn frames(cx: &mut VisualTestContext, n: usize) {
+        for _ in 0..n {
+            std::thread::sleep(Duration::from_millis(20));
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+    }
+
     fn offset_x(view: &Entity<SlideTest>, cx: &mut VisualTestContext) -> f32 {
         -f32::from(view.read_with(cx, |v, _| v.scroll.offset().x))
     }
@@ -279,15 +300,18 @@ mod tests {
         for _ in 0..6 {
             click(cx, "slide-add");
         }
-        settle(cx);
-        settle(cx);
+        frames(cx, 60);
         let max = f32::from(view.read_with(cx, |v, _| v.scroll.max_offset().x));
         assert!(max > 0.0);
         let at = offset_x(&view, cx);
         assert!((at - max).abs() <= 1.0, "末尾へ: {at} / {max}");
         click(cx, "slide-add-first");
-        settle(cx);
-        settle(cx);
+        // 一瞬では着かず、時間をかけて戻る。
+        let start = offset_x(&view, cx);
+        frames(cx, 3);
+        let early = offset_x(&view, cx);
+        assert!(early > 1.0 && early < start, "途中: {start} -> {early}");
+        frames(cx, 40);
         let at = offset_x(&view, cx);
         assert!(at.abs() <= 1.0, "先頭へ（左の余白まで）: {at}");
     }
