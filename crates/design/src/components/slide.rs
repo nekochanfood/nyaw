@@ -98,14 +98,6 @@ pub struct Entering {
     /// 足されたばかりのボタンが開き終わるまで、それを追いかけてスクロールするための印: そのボタンと、このフレームの位置。
     follow: Option<SharedString>,
     fresh: Option<usize>,
-    /// 閉じ始めた時刻（出す動きの逆を、右のボタンから順に行う）と、全部が引っ込み終わる時刻。
-    closing: Option<Instant>,
-    close_end: Option<Instant>,
-    /// 閉じる合図（隠す）をもう出したか。
-    close_sent: bool,
-    /// 前のフレームに並んでいたボタンの数と、このフレームの分（閉じるときの順番に使う）。
-    slots: usize,
-    frame_slots: usize,
     /// スクロールの行き先（バーの子の番号）と、前に進めた時刻。
     scroll_to: Option<usize>,
     scroll_t: Option<Instant>,
@@ -140,14 +132,12 @@ impl Entering {
             self.seen.clear();
             self.running.clear();
             self.leaving.clear();
-            self.cancel_close();
         }
         self.last = Some(now);
     }
 
     /// このフレームの `key` のボタン（左から数えて `slot` 番目。バーの子の番号と同じ）の出具合。
     pub fn progress(&mut self, key: &SharedString, slot: usize, now: Instant) -> Slide {
-        self.frame_slots = self.frame_slots.max(slot + 1);
         let s = self.step(key, slot, now);
         self.frame_max = self.frame_max.max(s.grow.clamp(0.0, 1.0));
         s
@@ -156,9 +146,6 @@ impl Entering {
     fn step(&mut self, key: &SharedString, slot: usize, now: Instant) -> Slide {
         if self.off {
             return Slide::SHOWN;
-        }
-        if let Some(t0) = self.closing {
-            return self.step_close(key, slot, t0, now);
         }
         self.touched.insert(key.clone());
         self.leaving.remove(key);
@@ -225,65 +212,10 @@ impl Entering {
         };
         let t = anim.advance(now.saturating_duration_since(*last).as_secs_f32());
         *last = now;
-        // 閉じている間は、引っ込み終わったボタンも残す（消すと、また出し直しが始まる）。
-        if anim.is_done() && self.closing.is_none() {
+        if anim.is_done() {
             self.leaving.remove(key);
         }
         t
-    }
-
-    /// 閉じている間の `key` のボタン: 出す動きの逆（右のボタンから順に引っ込む）。
-    fn step_close(&mut self, key: &SharedString, slot: usize, t0: Instant, now: Instant) -> Slide {
-        self.touched.insert(key.clone());
-        self.running.remove(key);
-        if !self.leaving.contains_key(key) {
-            let behind = self.slots.saturating_sub(1).saturating_sub(slot);
-            self.leaving.insert(
-                key.clone(),
-                (
-                    Pair::new(1.0, 0.0, Motion::SlideOut, false),
-                    t0 + STAGGER * behind as u32,
-                ),
-            );
-        }
-        self.step_out(key, now)
-    }
-
-    /// 閉じ始める（出す動きの逆を、右のボタンから順に行う）。何度呼んでもよい。
-    pub fn close(&mut self, now: Instant) {
-        if self.closing.is_some() {
-            return;
-        }
-        self.closing = Some(now);
-        let last = STAGGER * self.slots.saturating_sub(1) as u32;
-        let motion = Duration::from_millis(Motion::SlideOut.duration_ms()) + LAG;
-        self.close_end = Some(
-            now + if self.off {
-                Duration::ZERO
-            } else {
-                last + motion
-            },
-        );
-    }
-
-    /// 閉じるのをやめる（ボタンは出た状態に戻る）。
-    pub fn cancel_close(&mut self) {
-        if self.closing.take().is_some() {
-            self.leaving.clear();
-        }
-        self.close_end = None;
-        self.close_sent = false;
-    }
-
-    pub fn is_closing(&self) -> bool {
-        self.closing.is_some()
-    }
-
-    /// 閉じる動きが終わった最初の 1 回だけ `true`（呼ぶ側が、ダッシュボードを隠す）。
-    pub fn take_closed(&mut self, now: Instant) -> bool {
-        let done = self.close_end.is_some_and(|e| now >= e) && !self.close_sent;
-        self.close_sent |= done;
-        done
     }
 
     /// 足されたばかりのボタンまで、バーを時間をかけてスクロールする（`fit_bar` の `scroll`）。ボタンが開き終わるまで毎フレーム
@@ -326,11 +258,7 @@ impl Entering {
         self.seen.retain(|k| touched.contains(k));
         self.running.retain(|k, _| touched.contains(k));
         self.revealing = false;
-        self.slots = std::mem::take(&mut self.frame_slots);
-        if self.closing.is_some() && self.close_sent {
-            return false;
-        }
-        self.closing.is_some() || !self.running.is_empty() || !self.leaving.is_empty()
+        !self.running.is_empty() || !self.leaving.is_empty()
     }
 }
 
@@ -600,41 +528,5 @@ mod tests {
         let mut leave = Pair::new(1.0, 0.0, Motion::SlideOut, false);
         let s = leave.advance(early);
         assert!(s.grow == 1.0 && s.rise != 1.0, "{s:?}");
-    }
-
-    /// 閉じるときは出す動きの逆: 右のボタンから順に引っ込み、全部引っ込んだら合図が 1 回だけ出る。
-    #[test]
-    fn closing_plays_the_reveal_backwards_from_the_right() {
-        let (mut e, t0) = (Entering::default(), Instant::now());
-        let done = t0 + Duration::from_secs(2);
-        let keys = [key("a"), key("b"), key("c")];
-        for now in [t0, done] {
-            e.begin(false, now);
-            for (i, k) in keys.iter().enumerate() {
-                e.progress(k, i, now);
-            }
-            e.finish();
-        }
-        e.begin(false, done);
-        e.close(done);
-        let mid = done + STAGGER / 2;
-        let rise: Vec<_> = keys
-            .iter()
-            .enumerate()
-            .map(|(i, k)| e.progress(k, i, mid).rise)
-            .collect();
-        assert!(
-            rise[2] != 1.0 && rise[1] == 1.0 && rise[0] == 1.0,
-            "右のボタンが先に動く: {rise:?}"
-        );
-        assert!(e.finish(), "引っ込み終わるまで描き続ける");
-        assert!(!e.take_closed(mid));
-        let end = done + Duration::from_secs(2);
-        e.begin(false, end);
-        for (i, k) in keys.iter().enumerate() {
-            assert_eq!(e.progress(k, i, end), Slide::GONE);
-        }
-        assert!(e.take_closed(end) && !e.take_closed(end), "合図は 1 回だけ");
-        assert!(!e.finish(), "合図を出したら描かない");
     }
 }

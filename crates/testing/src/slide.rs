@@ -76,11 +76,6 @@ impl Render for SlideTest {
             })
             .collect();
         let scrolling = self.enter.follow_scroll(&self.scroll, now);
-        // 閉じる動きが終わったら、出し直す（本物のダッシュボードは、ここで隠す）。
-        if self.enter.take_closed(now) {
-            self.enter.cancel_close();
-            self.enter.replay();
-        }
         if self.enter.finish() || scrolling {
             components::keep_drawing(window, cx);
         }
@@ -148,15 +143,6 @@ impl Render for SlideTest {
                             false,
                         )
                         .on_click(act(|t| t.enter.replay())),
-                    )
-                    .child(
-                        button(
-                            &theme,
-                            "slide-close",
-                            i18n::t(cx, "testing.slide.close"),
-                            false,
-                        )
-                        .on_click(act(|t| t.enter.close(Instant::now()))),
                     ),
             )
             .child(
