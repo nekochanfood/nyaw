@@ -301,17 +301,28 @@ sample_button = "変更を保存"
 
 [settings]
 title = "設定"
-# 本物の設定が載るまでのダミー。
-item = "設定項目 {n}"
-detail = "オプション {n}"
+language = "言語"
+language_hint = "すべての画面の言語"
+pointer_mode = "ポインタ"
+pointer_mode_hint = "トリガーを押したまま動かしたときの動作"
+mouse = "マウス"
+touch = "タッチ"
+theme = "テーマ"
+theme_hint = "ダークまたはライト"
+laser = "レーザー"
+smoothing = "手ブレ抑え"
+release = "抑えを緩める角度"
+length = "長さ"
+hand = "手の調整"
+version = "バージョン"
+license = "ライセンス"
+platform = "プラットフォーム"
 
 [settings.category]
 general = "一般"
-account = "アカウント"
-privacy = "プライバシー"
 appearance = "外観"
-security = "セキュリティ"
-about = "情報"
+controls = "操作"
+about = "このアプリについて"
 
 [nav]
 title = "積み重ね"

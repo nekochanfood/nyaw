@@ -301,16 +301,27 @@ sample_button = "Save changes"
 
 [settings]
 title = "Settings"
-# Dummy items until real settings land.
-item = "Setting {n}"
-detail = "Option {n}"
+language = "Language"
+language_hint = "Language of every screen"
+pointer_mode = "Pointer"
+pointer_mode_hint = "What holding the trigger and moving does"
+mouse = "Mouse"
+touch = "Touch"
+theme = "Theme"
+theme_hint = "Dark or light"
+laser = "Laser"
+smoothing = "Steadiness"
+release = "Release angle"
+length = "Length"
+hand = "Hand tracking"
+version = "Version"
+license = "License"
+platform = "Platform"
 
 [settings.category]
 general = "General"
-account = "Account"
-privacy = "Privacy"
 appearance = "Appearance"
-security = "Security"
+controls = "Controls"
 about = "About"
 
 [nav]

@@ -4,7 +4,7 @@
 
 use gpui::{Render, TestAppContext};
 use kernel::{PointerMode, Setting};
-use testing::{BACKGROUND, NavPage, NavTest, SIDEBAR_SELECTED_BG, Settings};
+use testing::{BACKGROUND, NavPage, NavTest, SIDEBAR_SELECTED_BG, Settings, SettingsPage};
 use testkit::{Action, Driver, Hand, Vec2, VrKit};
 
 /// Holds the trigger near the right end of `selector`'s row and moves left by a bit more than half the page width, then releases.
@@ -139,29 +139,53 @@ fn the_hand_holding_the_panel_is_ignored(cx: &mut TestAppContext) {
 #[gpui::test]
 fn settings_content_pushes_details_and_swipes_back(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
-    kit.click("setting-1");
-    assert_eq!(kit.read(|v| v.pages.clone()), [None, Some(1)]);
-    swipe_back(&mut kit, "settings-content", "setting-detail-0");
-    assert_eq!(kit.read(|v| v.pages.clone()), [None]);
-    kit.click("setting-0").click("settings-back");
-    assert_eq!(kit.read(|v| v.pages.clone()), [None]);
-    // Switching category starts again from its list.
-    kit.click("setting-2").click("settings-account");
-    assert_eq!(kit.read(|v| (v.category, v.pages.clone())), (1, vec![None]));
+    kit.click("settings-controls").click("setting-hand");
+    assert_eq!(
+        kit.read(|v| v.pages.clone()),
+        [SettingsPage::Category, SettingsPage::Hand]
+    );
+    swipe_back(&mut kit, "settings-content", "tune-reset");
+    assert_eq!(kit.read(|v| v.pages.clone()), [SettingsPage::Category]);
+    kit.click("setting-hand").click("settings-back");
+    assert_eq!(kit.read(|v| v.pages.clone()), [SettingsPage::Category]);
+    // Switching category starts again from its page.
+    kit.click("setting-hand").click("settings-about");
+    assert_eq!(
+        kit.read(|v| (v.category, v.pages.clone())),
+        (3, vec![SettingsPage::Category])
+    );
+}
+
+#[gpui::test]
+fn settings_change_the_kernel_settings(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.click("settings-appearance").click("theme-light").step();
+    assert_eq!(kit.kernel.settings().theme, kernel::ThemeMode::Light);
+    kit.click("settings-general").click("pointer-mouse").step();
+    assert_eq!(kit.kernel.settings().pointer_mode, PointerMode::Mouse);
+}
+
+#[gpui::test]
+fn settings_about_shows_the_version(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.click("settings-about");
+    kit.bounds("about-version");
+    kit.bounds("about-row-license");
 }
 
 #[gpui::test]
 fn settings_sidebar_colors_only_the_selected_category(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
-    kit.hover("setting-0");
+    kit.hover("settings-about");
     assert_eq!(kit.color_at("settings-general"), SIDEBAR_SELECTED_BG);
+    kit.hover("setting-language");
     assert_eq!(
-        kit.color_at("settings-privacy"),
+        kit.color_at("settings-controls"),
         BACKGROUND,
         "no background"
     );
-    kit.click("settings-privacy").hover("setting-0");
-    assert_eq!(kit.color_at("settings-privacy"), SIDEBAR_SELECTED_BG);
+    kit.click("settings-controls").hover("setting-smoothing");
+    assert_eq!(kit.color_at("settings-controls"), SIDEBAR_SELECTED_BG);
     assert_eq!(kit.color_at("settings-general"), BACKGROUND);
 }
 
