@@ -6,7 +6,7 @@
 //! はめた画面はダッシュボードに固定され（一緒に動き、掴むとダッシュボードごと動く）、ナビゲーションバーから外して
 //! 独立させたり、戻したりできる。閉じる（バーの X・X ボタンの二回押し）と、はめた画面ごと隠すだけで、次は同じ状態で出る。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -194,6 +194,108 @@ pub struct Dashboard {
     /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）と、そのとき隠していたか。
     /// 最初に見た値から数える。
     outside: Option<(u32, bool)>,
+    /// 足されたボタンの出方（[`Entering`]）。
+    enter: Entering,
+}
+
+/// ボタンを 1 つずつ順に出すときの間隔。
+const STAGGER: Duration = Duration::from_millis(40);
+/// これだけ描かれなかったら、隠れていた（出し直した）とみなす。
+const IDLE_GAP: Duration = Duration::from_secs(3);
+
+/// ボタンの出方: 下から上へ滑り込む。ダッシュボードを出すときは、左のボタンから [`STAGGER`] ずつ遅れて順に。
+/// ボタンが足されたときは、それに加えて幅が開いて隣を押し広げる（バーは中身の幅に収まるので、幅も滑らかに変わる）。
+/// 消えたボタンは忘れ、また足されたらもう一度滑り込む。
+#[derive(Default)]
+struct Entering {
+    seen: HashSet<SharedString>,
+    /// 動いているボタン: 出具合・始まる時刻（遅れて始めるものは未来）・幅も開くか。
+    running: HashMap<SharedString, (design::animation::Animation, Instant, bool)>,
+    /// このフレームに描いたボタン。
+    touched: HashSet<SharedString>,
+    /// 最後に描いた時刻と、隠れていたか。
+    last: Option<Instant>,
+    hid: bool,
+    /// このフレームは、ダッシュボードを出した直後（全部のボタンが順に出る）。
+    revealing: bool,
+    /// 動かさない（出きった状態で描く）。画面のテストが、動いている途中のボタンを押さないように。
+    off: bool,
+}
+
+impl Entering {
+    /// フレームの初めに呼ぶ。隠れていた（または初めての）ダッシュボードが出たなら、全部のボタンを出し直す。
+    fn begin(&mut self, hidden: bool, now: Instant) {
+        if hidden {
+            self.hid = true;
+        } else if self.hid
+            || self
+                .last
+                .is_none_or(|l| now.saturating_duration_since(l) > IDLE_GAP)
+        {
+            (self.hid, self.revealing) = (false, true);
+            self.seen.clear();
+            self.running.clear();
+        }
+        self.last = Some(now);
+    }
+
+    /// このフレームの `key` のボタン（左から数えて `slot` 番目）の出具合（0..=1。1 で出きっている）と、幅も開くか。
+    fn progress(&mut self, key: &SharedString, slot: usize, now: Instant) -> (f32, bool) {
+        if self.off {
+            return (1.0, false);
+        }
+        self.touched.insert(key.clone());
+        if self.seen.insert(key.clone()) {
+            let start = if self.revealing {
+                now + STAGGER * slot as u32
+            } else {
+                now
+            };
+            let enter =
+                design::animation::Animation::new(0.0, 1.0, design::animation::Motion::Enter);
+            self.running
+                .insert(key.clone(), (enter, start, !self.revealing));
+        }
+        let Some((anim, last, grow)) = self.running.get_mut(key) else {
+            return (1.0, false);
+        };
+        let grow = *grow;
+        if now < *last {
+            return (0.0, grow);
+        }
+        let t = anim.advance(now.duration_since(*last).as_secs_f32());
+        *last = now;
+        if anim.is_done() {
+            self.running.remove(key);
+        }
+        (t, grow)
+    }
+
+    /// 1 フレーム描き終えた。描かなかったボタンは忘れる。動いているものがあるか（次のフレームも描くか）を返す。
+    fn finish(&mut self) -> bool {
+        let touched = std::mem::take(&mut self.touched);
+        self.seen.retain(|k| touched.contains(k));
+        self.running.retain(|k, _| touched.contains(k));
+        self.revealing = false;
+        !self.running.is_empty()
+    }
+}
+
+/// 出具合 `t`（0..=1）のボタンを、下から上へ滑り込ませる。`grow` なら幅も `t` に絞った箱に入れ、
+/// 隣との隙間も `t` に比例して開く（負の余白で、残りの隙間を打ち消す）。
+fn slide_in(t: f32, grow: bool, child: impl IntoElement) -> Div {
+    let h = components::BUTTON_HEIGHT;
+    div()
+        .flex_none()
+        .overflow_hidden()
+        .when(grow, |d| d.w(px(h * t)).mr(px(-spacing::SM * (1.0 - t))))
+        .child(
+            div()
+                .relative()
+                .top(px(h * (1.0 - t)))
+                .opacity(t)
+                .child(child),
+        )
 }
 
 impl Dashboard {
@@ -242,6 +344,10 @@ impl Dashboard {
             menu: None,
             shown: None,
             outside: None,
+            enter: Entering {
+                off: cfg!(test),
+                ..Entering::default()
+            },
         }
     }
 
@@ -668,13 +774,25 @@ impl Render for Dashboard {
         cx.default_global::<PanelControl>();
         self.prune_streams(cx);
         let time_width = clock_width(window, font_size::MD);
+        let (mut enter, now_at) = (std::mem::take(&mut self.enter), Instant::now());
+        let hidden = cx
+            .global::<PanelControl>()
+            .panels
+            .get(&self.panel)
+            .is_some_and(|p| p.status.hidden);
+        enter.begin(hidden, now_at);
+        // 左から数えたボタンの順番: メニュー 0・クイック設定 1・進行中の作業・再生中・ランチャー・区切り線と配信。
+        let n_activity = nyapp::activity::all(cx).len();
+        let media = usize::from(cx.global::<PanelControl>().media.is_some());
+        let stream_slot = 3 + n_activity + media;
         let theme = Theme::current(cx);
         let current = self.current(cx);
         let docked = ui::docked(cx);
         let streams: Vec<_> = self
             .streams
             .iter()
-            .map(|s| {
+            .enumerate()
+            .map(|(i, s)| {
                 let id = s.panel;
                 let variant = if docked == Some(id) {
                     Variant::Primary
@@ -694,15 +812,16 @@ impl Render for Dashboard {
                         .size(px(font_size::LG))
                         .into_any_element(),
                 };
-                components::round_button(
-                    &theme,
-                    format!("dashboard-stream-{id}"),
-                    s.name.clone(),
-                    variant,
+                let key = SharedString::from(format!("dashboard-stream-{id}"));
+                let (t, grow) = enter.progress(&key, stream_slot + i, now_at);
+                slide_in(
+                    t,
+                    grow,
+                    components::round_button(&theme, key, s.name.clone(), variant)
+                        .flex_none()
+                        .child(glyph)
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_stream(id, cx))),
                 )
-                .flex_none()
-                .child(glyph)
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle_stream(id, cx)))
             })
             .collect();
         let variant = |page| {
@@ -732,7 +851,8 @@ impl Render for Dashboard {
         let activities: Vec<_> = nyapp::activity::all(cx)
             .iter()
             .cloned()
-            .map(|live| {
+            .enumerate()
+            .map(|(i, live)| {
                 let text = live.text(now);
                 let tooltip = match &text {
                     Some(t) => format!("{} · {t}", live.activity.title()),
@@ -754,30 +874,31 @@ impl Render for Dashboard {
                         .into_any_element(),
                     _ => live.app.foreground(lang, ACTIVITY_ICON_PX, &theme),
                 };
-                components::round_button(
-                    &theme,
-                    format!("dashboard-activity-{}", live.app.manifest.id),
-                    tooltip,
-                    Variant::Default,
-                )
-                .flex_none()
-                .relative()
-                .children(live.progress(now).map(|p| {
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(components::progress_ring(
-                            &theme,
-                            ACTIVITY_RING_PX,
-                            ACTIVITY_RING_STROKE,
-                            p,
-                        ))
-                }))
-                .child(middle)
-                .on_click(cx.listener(move |this, _, _, cx| this.open_activity(live.clone(), cx)))
+                let key =
+                    SharedString::from(format!("dashboard-activity-{}", live.app.manifest.id));
+                let (t, grow) = enter.progress(&key, 2 + i, now_at);
+                let button = components::round_button(&theme, key, tooltip, Variant::Default)
+                    .flex_none()
+                    .relative()
+                    .children(live.progress(now).map(|p| {
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(components::progress_ring(
+                                &theme,
+                                ACTIVITY_RING_PX,
+                                ACTIVITY_RING_STROKE,
+                                p,
+                            ))
+                    }))
+                    .child(middle)
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.open_activity(live.clone(), cx)),
+                    );
+                slide_in(t, grow, button)
             })
             .collect();
         let mirror = page_button(
@@ -792,6 +913,28 @@ impl Render for Dashboard {
             i18n::t(cx, "dashboard.now_playing"),
             Page::NowPlaying,
         );
+        let (t, grow) = if has_media {
+            enter.progress(&"dashboard-now-playing".into(), 2 + n_activity, now_at)
+        } else {
+            (1.0, false)
+        };
+        let now_playing = slide_in(t, grow, now_playing);
+        let (t, grow) =
+            enter.progress(&"dashboard-launcher".into(), 2 + n_activity + media, now_at);
+        let mirror = slide_in(t, grow, mirror);
+        let menu_slide = enter.progress(&"dashboard-menu".into(), 0, now_at);
+        let quick_slide = enter.progress(&"dashboard-quick-settings".into(), 1, now_at);
+        // 区切り線は滑り込まず、透明度だけが変わる。
+        let (separator_t, _) = if streams.is_empty() {
+            (1.0, false)
+        } else {
+            enter.progress(&"dashboard-separator".into(), stream_slot, now_at)
+        };
+        // 出ているボタンが動いている間は、次のフレームも描く。
+        self.enter = enter;
+        if self.enter.finish() {
+            components::keep_drawing(window, cx);
+        }
         let menu = components::icon_button(
             &theme,
             "dashboard-menu",
@@ -804,6 +947,7 @@ impl Render for Dashboard {
             },
         )
         .on_click(cx.listener(|this, _, _, cx| this.toggle_menu(cx)));
+        let menu = slide_in(menu_slide.0, menu_slide.1, menu);
         // 窓は固定の幅だが、バーは中身の幅に収めて中央に置く（配信が溜まって窓の幅を超えたら、そこで頭打ちにして横にスクロール）。
         div()
             .absolute()
@@ -819,7 +963,9 @@ impl Render for Dashboard {
                     .gap(px(spacing::SM))
                     .px(px(spacing::SM))
                     .child(menu)
-                    .child(
+                    .child(slide_in(
+                        quick_slide.0,
+                        quick_slide.1,
                         components::content_button(
                             &theme,
                             "dashboard-quick-settings",
@@ -836,13 +982,15 @@ impl Render for Dashboard {
                         .on_click(
                             cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx)),
                         ),
-                    )
+                    ))
                     // 進行中の作業の知らせは、クイック設定と再生中の間。
                     .children(activities)
                     // 何か再生しているときだけ、再生中の画面のボタンを出す。
                     .when(has_media, |d| d.child(now_playing))
                     .child(mirror)
-                    .when(!streams.is_empty(), |d| d.child(separator(&theme)))
+                    .when(!streams.is_empty(), |d| {
+                        d.child(separator(&theme).opacity(separator_t))
+                    })
                     // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
                     // 空の箱でも隙間が空くので、配信があるときだけ置く。
                     .children((!streams.is_empty()).then(|| {
@@ -3781,6 +3929,77 @@ mod tests {
                 "{button} は右端: {b:?} / {width:?}"
             );
         }
+    }
+
+    fn key(s: &str) -> SharedString {
+        s.to_owned().into()
+    }
+
+    /// 出したときは左のボタンから順に滑り込み（幅は変えない）、全部出きったら止まる。
+    #[test]
+    fn buttons_slide_in_from_the_left_when_shown() {
+        let (mut e, t0) = (Entering::default(), Instant::now());
+        e.begin(false, t0);
+        let (a, b) = (key("a"), key("b"));
+        assert_eq!(e.progress(&a, 0, t0), (0.0, false));
+        assert_eq!(e.progress(&b, 3, t0), (0.0, false));
+        assert!(e.finish());
+        let later = t0 + STAGGER * 2;
+        e.begin(false, later);
+        let ((ta, _), (tb, _)) = (e.progress(&a, 0, later), e.progress(&b, 3, later));
+        assert!(ta > 0.0 && tb == 0.0, "左が先: {ta} / {tb}");
+        e.finish();
+        let end = t0 + Duration::from_secs(2);
+        e.begin(false, end);
+        assert_eq!(e.progress(&a, 0, end), (1.0, false));
+        assert_eq!(e.progress(&b, 3, end), (1.0, false));
+        assert!(!e.finish(), "出きったら次のフレームは要らない");
+    }
+
+    /// 足されたボタンだけが、幅も開きながら滑り込む。消えて戻ってくればもう一度。
+    #[test]
+    fn added_button_grows_while_the_others_stay() {
+        let (mut e, t0) = (Entering::default(), Instant::now());
+        let done = t0 + Duration::from_secs(2);
+        e.begin(false, t0);
+        e.progress(&key("a"), 0, t0);
+        e.finish();
+        e.begin(false, done);
+        e.progress(&key("a"), 0, done);
+        e.finish();
+        e.begin(false, done);
+        assert_eq!(e.progress(&key("a"), 0, done), (1.0, false));
+        assert_eq!(e.progress(&key("b"), 1, done), (0.0, true));
+        e.finish();
+        let mid = done + Duration::from_millis(50);
+        e.begin(false, mid);
+        let (t, grow) = e.progress(&key("b"), 1, mid);
+        assert!(t > 0.0 && t < 1.0 && grow, "途中: {t}");
+        e.finish();
+        // 消えて、また足された。
+        e.begin(false, mid);
+        e.progress(&key("a"), 0, mid);
+        e.finish();
+        e.begin(false, mid);
+        assert_eq!(e.progress(&key("b"), 1, mid), (0.0, true));
+    }
+
+    /// 隠れていたダッシュボードを出し直すと、出ていたボタンも順に出し直す。
+    #[test]
+    fn showing_again_replays_the_slide() {
+        let (mut e, t0) = (Entering::default(), Instant::now());
+        let done = t0 + Duration::from_secs(2);
+        e.begin(false, t0);
+        e.progress(&key("a"), 0, t0);
+        e.finish();
+        e.begin(false, done);
+        assert_eq!(e.progress(&key("a"), 0, done).0, 1.0);
+        e.finish();
+        e.begin(true, done);
+        e.progress(&key("a"), 0, done);
+        e.finish();
+        e.begin(false, done);
+        assert_eq!(e.progress(&key("a"), 0, done), (0.0, false));
     }
 
     /// バーは窓いっぱいに広がらず、中身の幅に収まって中央に置かれる。

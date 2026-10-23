@@ -124,7 +124,7 @@ struct Pointer {
 }
 
 /// ボタンの高さと左右の余白（文字 `font_size::MD` に対して、高さ ≒ 2.8 倍、左右 ≒ 1.7 倍）。最小ヒット領域（48）を下回らない。
-const BUTTON_HEIGHT: f32 = 54.0;
+pub const BUTTON_HEIGHT: f32 = 54.0;
 const BUTTON_PADDING: f32 = 32.0;
 
 /// 押せるボタン。`id` はそのまま `debug_selector` にもなる。
@@ -539,7 +539,7 @@ impl RenderOnce for Button {
 }
 
 /// 色が動いている間は次のフレームも描く。VR のフレームループにも伝える（[`Motion`]）。
-fn keep_drawing(window: &mut Window, cx: &mut App) {
+pub fn keep_drawing(window: &mut Window, cx: &mut App) {
     if cx.has_global::<Motion>() {
         let id = window.window_handle().window_id();
         cx.global_mut::<Motion>().animating.insert(id);
