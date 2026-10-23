@@ -1,6 +1,8 @@
 //! アニメーション。animato をここで包み、呼び出し側は [`Motion`] と [`Animation`] だけを見る。
 //! 長さは `duration_ms`（tokens.json）、イージングは用途ごとに 1 つ決めてある。
 
+use std::time::Instant;
+
 use animato::{Easing, Tween, Update};
 
 use crate::duration_ms;
@@ -81,6 +83,58 @@ impl Animation {
     }
 }
 
+/// `Animation` と違い毎フレーム進めず、始めた時刻と「今」から値を引く。呼び出し側は `Instant::now()` を渡すだけ。
+/// 動いている間（`at` の 2 つ目が `true`）は描き続けること。
+#[derive(Clone, Copy, Debug)]
+pub struct Transition {
+    from: f32,
+    to: f32,
+    start: Option<(Instant, Motion)>,
+}
+
+impl Transition {
+    pub const fn rest(v: f32) -> Self {
+        Self {
+            from: v,
+            to: v,
+            start: None,
+        }
+    }
+
+    /// 今の値と、まだ動いているか。
+    pub fn at(&self, now: Instant) -> (f32, bool) {
+        let Some((start, motion)) = self.start else {
+            return (self.to, false);
+        };
+        let p = now.saturating_duration_since(start).as_secs_f32() * 1000.0
+            / motion.duration_ms() as f32;
+        if p >= 1.0 {
+            return (self.to, false);
+        }
+        (
+            self.from + (self.to - self.from) * motion.easing().apply(p),
+            true,
+        )
+    }
+
+    /// 今の値から `to` へ `motion` で動き直す。行き先が同じなら何もしない。`animated` でなければ即座。
+    pub fn go(&mut self, to: f32, motion: Motion, now: Instant, animated: bool) {
+        if self.to == to {
+            return;
+        }
+        let (cur, _) = self.at(now);
+        *self = if animated && cur != to {
+            Self {
+                from: cur,
+                to,
+                start: Some((now, motion)),
+            }
+        } else {
+            Self::rest(to)
+        };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -135,5 +189,18 @@ mod tests {
     #[test]
     fn exit_is_faster_than_enter() {
         assert!(Motion::Exit.duration_ms() < Motion::Enter.duration_ms());
+    }
+
+    #[test]
+    fn transition_eases_and_snaps_without_motion() {
+        use std::time::Duration;
+        let now = Instant::now();
+        let mut t = Transition::rest(1.0);
+        t.go(0.0, Motion::Enter, now, true);
+        let (v, moving) = t.at(now + Duration::from_millis(50));
+        assert!(moving && v > 0.0 && v < 1.0, "{v}");
+        assert_eq!(t.at(now + Duration::from_secs(1)), (0.0, false));
+        t.go(1.0, Motion::Return, now, false);
+        assert_eq!(t.at(now), (1.0, false));
     }
 }
