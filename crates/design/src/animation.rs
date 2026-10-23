@@ -42,6 +42,11 @@ impl Motion {
         }
     }
 
+    /// 進み具合 `p`（0..=1）をこの動きのイージングに通した値。長さは呼び出し側が持つ（色の移り変わりや波紋）。
+    pub fn ease(self, p: f32) -> f32 {
+        self.easing().apply(p)
+    }
+
     fn easing(self) -> Easing {
         match self {
             Motion::Enter | Motion::Return | Motion::Grow => Easing::EaseOutCubic,
@@ -111,10 +116,7 @@ impl Transition {
         if p >= 1.0 {
             return (self.to, false);
         }
-        (
-            self.from + (self.to - self.from) * motion.easing().apply(p),
-            true,
-        )
+        (self.from + (self.to - self.from) * motion.ease(p), true)
     }
 
     /// 今の値から `to` へ `motion` で動き直す。行き先が同じなら何もしない。`animated` でなければ即座。

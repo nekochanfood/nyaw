@@ -56,9 +56,10 @@ impl Fade {
         if t >= 1.0 {
             return (self.to, false);
         }
-        // ease-out（立ち上がりが速く、着地がやわらかい）
-        let e = 1.0 - (1.0 - t).powi(3);
-        (mix(self.from, self.to, e), true)
+        (
+            mix(self.from, self.to, crate::animation::Motion::Enter.ease(t)),
+            true,
+        )
     }
 }
 
@@ -96,7 +97,7 @@ fn ripple_frame(elapsed_ms: f32, reach: f32) -> Option<(f32, u8)> {
         return None;
     }
     Some((
-        reach * (1.0 - (1.0 - t).powi(3)),
+        reach * crate::animation::Motion::Enter.ease(t),
         (RIPPLE_ALPHA * (1.0 - t)) as u8,
     ))
 }
