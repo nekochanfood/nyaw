@@ -150,7 +150,7 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
             background,
         } = self;
         let animated = cx.has_global::<Motion>();
-        let now = Instant::now();
+        let now = crate::drive::now();
         let state = window.use_keyed_state(id, cx, {
             let stack = stack.clone();
             move |_, _| State {
@@ -226,7 +226,7 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                         return;
                     };
                     let (dx, dy) = (f32::from(d.x), f32::from(d.y));
-                    let now = Instant::now();
+                    let now = crate::drive::now();
                     let gesture = s.read(cx).gesture;
                     match (phase, gesture, e.touch_phase) {
                         // スワイプ中・離した後の慣性は中身へ流さない。
@@ -284,7 +284,7 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                 });
                 let st = state.clone();
                 window.on_mouse_event(move |e: &MouseDownEvent, phase, _, cx| {
-                    let now = Instant::now();
+                    let now = crate::drive::now();
                     let s = st.read(cx);
                     if phase == DispatchPhase::Bubble
                         && e.button == MouseButton::Left
@@ -359,7 +359,7 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                             Gesture::Pressed(_) => st.update(cx, |s, _| s.gesture = Gesture::Idle),
                             Gesture::Swiping { start: Some(_), .. } => {
                                 let animated = cx.has_global::<Motion>();
-                                let now = Instant::now();
+                                let now = crate::drive::now();
                                 if st.update(cx, |s, _| s.release(now, animated)) {
                                     back(window, cx);
                                 }

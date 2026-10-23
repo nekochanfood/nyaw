@@ -376,11 +376,11 @@ impl RenderOnce for Elastic {
         let state = window.use_keyed_state(id, cx, |_, _| ElasticState {
             pull: [Pull::Release {
                 from: 0.0,
-                start: Instant::now(),
+                start: crate::drive::now(),
             }; 2],
             touching: false,
         });
-        let now = Instant::now();
+        let now = crate::drive::now();
         let mut moving = false;
         // 離したとみなせるものは戻し始め、いまの値を出す。
         let v = state.update(cx, |s, _| {
@@ -406,7 +406,7 @@ impl RenderOnce for Elastic {
                 if !cx.has_global::<Motion>() {
                     return;
                 }
-                let now = Instant::now();
+                let now = crate::drive::now();
                 let ended = matches!(e.touch_phase, TouchPhase::Ended | TouchPhase::Cancelled);
                 let ds = axis_deltas(&handle, e, window);
                 let mut used = false;
@@ -558,7 +558,7 @@ impl RenderOnce for Scrollbars {
             }; 2],
             shown: [false; 2],
         });
-        let now = Instant::now();
+        let now = crate::drive::now();
         let animated = cx.has_global::<Motion>();
         let reads = AXES.map(|a| read(&handle, a));
         let pulled = pull

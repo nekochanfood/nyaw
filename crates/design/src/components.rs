@@ -370,7 +370,7 @@ impl RenderOnce for Button {
             rest
         };
 
-        let now = Instant::now();
+        let now = crate::drive::now();
         let color = if f.to == target {
             let (c, moving) = f.at(now);
             if moving {
@@ -458,7 +458,7 @@ impl RenderOnce for Button {
                                 .max((origin.y - b.bottom()).abs()),
                         );
                         let reach = f32::from(dx).hypot(f32::from(dy));
-                        let ms = Instant::now()
+                        let ms = crate::drive::now()
                             .saturating_duration_since(start)
                             .as_secs_f32()
                             * 1000.0;
@@ -531,7 +531,9 @@ impl RenderOnce for Button {
             })
             .on_mouse_down(MouseButton::Left, move |e, w, cx| {
                 if enabled {
-                    press.update(cx, |s, _| s.ripple = Some((e.position, Instant::now())));
+                    press.update(cx, |s, _| {
+                        s.ripple = Some((e.position, crate::drive::now()))
+                    });
                 }
                 down(w, cx)
             })
@@ -540,14 +542,7 @@ impl RenderOnce for Button {
     }
 }
 
-/// 色が動いている間は次のフレームも描く。VR のフレームループにも伝える（[`Motion`]）。
-pub fn keep_drawing(window: &mut Window, cx: &mut App) {
-    if cx.has_global::<Motion>() {
-        let id = window.window_handle().window_id();
-        cx.global_mut::<Motion>().animating.insert(id);
-    }
-    window.request_animation_frame();
-}
+pub use crate::drive::keep_drawing;
 
 /// 円の進み具合: 一辺 `size` px・太さ `stroke` px の線の輪。溝（`groove`）の上に、上から時計回りに `progress`（0〜1）
 /// だけアクセントの色で満ちる。中身（残り時間など）は呼び出し側が `relative` の親で重ねる。
@@ -607,7 +602,7 @@ pub fn spinner(theme: &Theme, size: f32) -> impl IntoElement {
             let stroke = px(SPINNER_STROKE * scale);
             let r = px(SPINNER_RADIUS * scale);
             let center = bounds.center();
-            let turns = spinner_turns(Instant::now());
+            let turns = spinner_turns(crate::drive::now());
             // 円弧は細かい折れ線で描く（progress_ring と同じ）。`from` は始点、`len` は長さ（どちらも周の割合）。
             let arc = |from: f32, len: f32| {
                 let mut path = gpui::PathBuilder::stroke(stroke);

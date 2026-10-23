@@ -47,7 +47,7 @@ impl SlideTest {
 impl Render for SlideTest {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let now = Instant::now();
+        let now = design::drive::now();
         self.enter.begin(false, now);
         let shown = with_leaving(
             self.items.clone(),

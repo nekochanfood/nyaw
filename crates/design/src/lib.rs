@@ -22,6 +22,8 @@ pub mod catalog;
 #[cfg(feature = "gpui")]
 pub mod components;
 #[cfg(feature = "gpui")]
+pub mod drive;
+#[cfg(feature = "gpui")]
 pub mod emoji;
 #[cfg(feature = "gpui")]
 pub mod font;

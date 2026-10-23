@@ -1144,7 +1144,7 @@ struct NavBar {
 
 impl Render for NavBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let now = Instant::now();
+        let now = design::drive::now();
         // 指されているかは `sync_panel` が状態に書き、変わればこのバーを描き直す。
         let state = cx
             .default_global::<PanelControl>()

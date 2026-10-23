@@ -306,7 +306,7 @@ impl RenderOnce for ShapedButton {
             press.update(cx, |s, _| {
                 s.pressed = pressed;
                 if pressed && animated {
-                    s.ripple = Some((event.position, Instant::now()));
+                    s.ripple = Some((event.position, crate::drive::now()));
                 }
             });
             window.refresh();

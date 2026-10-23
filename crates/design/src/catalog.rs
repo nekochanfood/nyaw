@@ -519,7 +519,7 @@ impl Catalog {
 
     fn motion_section(&mut self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
         // 再生中なら進めて、終わるまで描き直す。
-        let now = Instant::now();
+        let now = crate::drive::now();
         let dt = self
             .last
             .map_or(0.0, |l| now.duration_since(l).as_secs_f32());

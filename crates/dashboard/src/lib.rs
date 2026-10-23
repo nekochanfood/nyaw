@@ -710,7 +710,7 @@ impl Render for Dashboard {
         cx.default_global::<PanelControl>();
         self.prune_streams(cx);
         let time_width = clock_width(window, font_size::MD);
-        let (mut enter, now_at) = (std::mem::take(&mut self.enter), Instant::now());
+        let (mut enter, now_at) = (std::mem::take(&mut self.enter), design::drive::now());
         let hidden = cx
             .global::<PanelControl>()
             .panels
