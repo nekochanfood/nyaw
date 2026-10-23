@@ -287,7 +287,8 @@ impl Dashboard {
                 }
             })
             .sized(MENU_M, MENU_PX)
-            .offset(menu_offset())
+            // バーは中身の幅で中央に置かれ、幅は配信などで変わる。開く今のバーの左端に合わせる。
+            .offset(menu_offset(f32::from(self.scroll.bounds().left())))
             .without_resize();
             cx.default_global::<PanelControl>().spawns.push(spec);
         }
@@ -559,7 +560,7 @@ struct Stream {
 const MENU_PX: (u32, u32) = (
     320,
     (MENU_ROWS * (components::NAV_BAR_HEIGHT - 2.0 * spacing::SM)
-        + (MENU_ROWS - 1.0)
+        + 2.0 * components::MENU_PADDING
         + 2.0 * components::PANEL_MARGIN) as u32,
 );
 /// メニューの行の数（デバッグ・設定・終了）。
@@ -574,12 +575,15 @@ const MENU_M: Vec2 = Vec2::new(
 /// メニューを、はまっている画面よりどれだけ手前に出すか（m）。
 const MENU_LIFT: f32 = 0.03;
 
-/// メニューのポップオーバーの、バーから見た置き場所: バーの左端の上に、はめた画面と同じく垂直に立て、画面より少し手前に出す。
-fn menu_offset() -> Pose {
+/// メニューのポップオーバーの、バーから見た置き場所: バーのカプセルの左端（窓の左から `bar_left` px）の上に、
+/// はめた画面と同じく垂直に立て、画面より少し手前に出す。
+fn menu_offset(bar_left: f32) -> Pose {
     let margin = |size: Vec2, res: (u32, u32)| components::PANEL_MARGIN * size.y / res.1 as f32;
     let rotation = Quat::from_rotation_x(BAR_TILT);
+    // ポップオーバーの窓はカードの外に影の余白を持つので、その分だけ左にはみ出させて、カードの左端をカプセルに揃える。
+    let shift = (bar_left - components::PANEL_MARGIN).max(0.0) * BAR_M.x / BAR_PX.0 as f32;
     let top = Vec3::new(
-        (MENU_M.x - BAR_M.x) / 2.0,
+        (MENU_M.x - BAR_M.x) / 2.0 + shift,
         BAR_M.y / 2.0 - margin(BAR_M, BAR_PX),
         0.0,
     );
@@ -611,14 +615,15 @@ impl Render for Menu {
             &icons::POWER,
             i18n::t(cx, "dashboard.quit"),
         )
+        .text_color(rgba(theme.danger_text))
         .on_click(move |_, window, cx| {
             close(panel, cx);
             let spec = quit_dialog_spec(panel, window, cx);
             cx.default_global::<PanelControl>().spawns.push(spec);
         });
         components::card_panel(&theme)
-            .rounded(px(design::radius::LG))
-            .child(components::list(
+            .rounded(px(components::MENU_RADIUS))
+            .child(components::menu(
                 &theme,
                 [
                     item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug),
@@ -3960,6 +3965,14 @@ mod tests {
             (left - right).abs() <= px(2.0),
             "中央に置く: {left:?} / {right:?}"
         );
+    }
+
+    /// メニューは、中央に寄ったバーの左端に揃えて開く（幅が狭いほど右にずれる）。
+    #[test]
+    fn menu_follows_the_bar_left_edge() {
+        let full = menu_offset(components::PANEL_MARGIN).position.x;
+        let narrow = menu_offset(components::PANEL_MARGIN + 100.0).position.x;
+        assert!((narrow - full - 100.0 * BAR_M.x / BAR_PX.0 as f32).abs() < 1e-5);
     }
 
     #[gpui::test]
