@@ -2,6 +2,7 @@
 //! レーザーイベントを GPUI のマウス入力に変換し、描画を読み戻してカーネルへ返す。
 
 pub use kernel::rendering::gpui::{Frame, capture, collect, read_back, set_render_lod};
+mod cue;
 pub mod keyboard;
 pub mod mirror;
 mod panel_window;
@@ -501,10 +502,6 @@ pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool
     true
 }
 
-/// 押せる要素に触れた音と押した音。
-const HOVER_SOUND: &[u8] = include_bytes!("../assets/pointer/hover.wav");
-const CLICK_SOUND: &[u8] = include_bytes!("../assets/pointer/click.wav");
-
 /// 配送前にポインタのコンテキストを更新する。本番と各 testkit で同じ消滅条件を使う。
 pub fn dispatch_input(
     panel: PanelId,
@@ -528,30 +525,14 @@ pub fn dispatch_input(
         cx.default_global::<design::components::Tooltips>()
             .0
             .retain(|&(window, hand), _| window != id || hand != source);
-        design::components::begin_hover_cue(window, source, cx);
+        design::cue::begin_hover(window, source, cx);
     }
     let context = cx.default_global::<design::components::TooltipSource>();
     context.0 = Some(source);
     context.1.insert(window.window_handle().window_id());
     window.dispatch_event(input, cx);
     cx.default_global::<design::components::TooltipSource>().0 = None;
-    // 押せる要素の効果音は、鳴らす点（ポインタの位置）から聞こえるようパネルへ積む。
-    let id = window.window_handle().window_id();
-    let cues = &mut cx.default_global::<design::components::Cues>().0;
-    let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(cues).into_iter().partition(|c| c.0 == id);
-    *cues = rest;
-    let commands = &mut cx.default_global::<PanelControl>().panels.entry(panel).or_default().commands;
-    for (_, kind, at) in mine {
-        let wav = match kind {
-            design::components::Cue::Hover => HOVER_SOUND,
-            design::components::Cue::Click => CLICK_SOUND,
-        };
-        commands.push(PanelCommand::PlayAt {
-            sound: kernel::audio::Sound::Wav(wav),
-            at: kernel::Vec2::new(f32::from(at.x), f32::from(at.y)),
-            pitch: 1.,
-        });
-    }
+    cue::flush(panel, window, cx);
 }
 
 /// ウィンドウごとのツールチップの要求（[`design::components::Tooltips`]）を、そのパネルを指している手に振り分け、
