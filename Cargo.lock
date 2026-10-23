@@ -5992,6 +5992,7 @@ dependencies = [
  "os",
  "pollster 0.4.0",
  "raw-window-handle",
+ "serde_json",
  "wgpu",
 ]
 

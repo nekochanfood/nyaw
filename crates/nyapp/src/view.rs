@@ -814,6 +814,7 @@ api = 1
             shortcut: false,
             scroll: Vec2::new(0.5, -0.5),
             resize: 0.0,
+            double_press: false,
             facing: None,
             metrics: None,
         };

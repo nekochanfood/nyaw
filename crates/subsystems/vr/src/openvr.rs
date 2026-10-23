@@ -827,13 +827,12 @@ fn inputs(profile: &str, hand: Hand, a: HandActions) -> Vec<(String, f32)> {
         (menu, on(a.menu)),
         (middle, on(a.middle_touch)),
         (right, on(a.right_touch)),
-        // X ボタン: Touch は x/click、Index は左手の a/click。
-        ("x/click", on(a.shortcut)),
-        ("a/click", on(a.shortcut)),
+        (crate::DOUBLE_PRESS_INPUT, on(a.shortcut)),
         ("thumbstick/x", a.scroll.x),
         ("thumbstick/y", a.scroll.y),
         ("trackpad/x", a.scroll.x),
         ("trackpad/y", a.scroll.y),
+        (crate::RESIZE_INPUT, a.resize),
     ]
     .into_iter()
     .map(|(n, v)| (n.to_owned(), v))
@@ -920,13 +919,18 @@ mod tests {
             right_touch: true,
             shortcut: true,
             scroll: crate::Vec2::new(0.5, -1.0),
+            resize: -0.25,
         };
         let v = inputs("valve/index_controller", Hand::Right, a);
         assert_eq!(value(&v, "select/click"), Some(1.0));
         assert_eq!(value(&v, "squeeze/value"), Some(1.0));
         assert_eq!(value(&v, "b/click"), Some(1.0));
-        assert_eq!(value(&v, "a/click"), Some(1.0));
+        assert_eq!(value(&v, crate::DOUBLE_PRESS_INPUT), Some(1.0));
+        // ボタンの押下そのものは渡さない（二回押しの数えはバインドの側）。
+        assert_eq!(value(&v, "a/click"), None);
+        assert_eq!(value(&v, "x/click"), None);
         assert_eq!(value(&v, "thumbstick/y"), Some(-1.0));
+        assert_eq!(value(&v, crate::RESIZE_INPUT), Some(-0.25));
         let v = inputs("htc/vive_controller", Hand::Left, a);
         assert_eq!(value(&v, "menu/click"), Some(1.0));
         assert_eq!(value(&v, "squeeze/click"), Some(1.0));
