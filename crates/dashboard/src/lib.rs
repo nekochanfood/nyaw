@@ -560,7 +560,7 @@ struct Stream {
 const MENU_PX: (u32, u32) = (
     320,
     (MENU_ROWS * (components::NAV_BAR_HEIGHT - 2.0 * spacing::SM)
-        + (MENU_ROWS - 1.0)
+        + 2.0 * components::MENU_PADDING
         + 2.0 * components::PANEL_MARGIN) as u32,
 );
 /// メニューの行の数（デバッグ・設定・終了）。
@@ -615,6 +615,7 @@ impl Render for Menu {
             &icons::POWER,
             i18n::t(cx, "dashboard.quit"),
         )
+        .text_color(rgba(theme.danger_text))
         .on_click(move |_, window, cx| {
             close(panel, cx);
             let spec = quit_dialog_spec(panel, window, cx);
@@ -622,7 +623,7 @@ impl Render for Menu {
         });
         components::card_panel(&theme)
             .rounded(px(design::radius::LG))
-            .child(components::list(
+            .child(components::menu(
                 &theme,
                 [
                     item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug),
