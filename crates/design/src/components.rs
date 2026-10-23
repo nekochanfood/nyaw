@@ -1043,13 +1043,15 @@ pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
 
 /// メニューの外側の余白（カードの縁と行のあいだ）。
 pub const MENU_PADDING: f32 = spacing::SM;
+/// メニューのカードの角丸。バーのカプセル（`FULL`）に寄せつつ、丸めすぎない。行の角丸は、これから余白を引いた同心の丸み。
+pub const MENU_RADIUS: f32 = 32.0;
 
 /// メニューの行（[`menu_item`]）を縦に並べる。区切り線は引かず、行はカード（`XL`）と同心の角丸にし、ホバー・押下のときだけ沈む。
 pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
     card(theme).flex().flex_col().p(px(MENU_PADDING)).children(
         items
             .into_iter()
-            .map(|b| b.rounded(px(radius::XL - MENU_PADDING))),
+            .map(|b| b.rounded(px(MENU_RADIUS - MENU_PADDING))),
     )
 }
 
