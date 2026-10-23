@@ -225,7 +225,15 @@ localization = "ローカライズ"
 settings = "設定"
 navigation = "積み重ね"
 mirror = "ミラーリング画面"
+slide = "ボタンの滑り込み"
 nyapps = "ニャプリ"
+
+[testing.slide]
+add = "末尾に追加"
+add_first = "先頭に追加"
+remove_first = "先頭を削除"
+remove_last = "末尾を削除"
+replay = "出し直す"
 
 [emoji]
 inline = "テキスト内の SVG 絵文字 · 14 / 19 / 24 px"

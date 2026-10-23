@@ -36,6 +36,8 @@ mod keyboard;
 pub use keyboard::KeyboardTest;
 mod desktop;
 pub use desktop::{DesktopTest, MirrorPreview, MirrorShared, MirrorTest, spawn_mirror_test};
+mod slide;
+pub use slide::SlideTest;
 mod audio;
 pub use audio::AudioTest;
 mod nyapps;
@@ -641,8 +643,12 @@ impl Render for Testing {
                     ),
                 )
                 .child(
-                    button!("mirror-test", i18n::t(cx, "testing.open.mirror"), false).on_click(
-                        spawn_mirror_test(self.panel),
+                    button!("mirror-test", i18n::t(cx, "testing.open.mirror"), false)
+                        .on_click(spawn_mirror_test(self.panel)),
+                )
+                .child(
+                    button!("slide-test", i18n::t(cx, "testing.open.slide"), false).on_click(
+                        spawn_view(self.panel, "testing.open.slide", |id, _| SlideTest::new(id)),
                     ),
                 )
                 .child(
@@ -2617,7 +2623,9 @@ mod tests {
     #[gpui::test]
     fn mirror_test_controls_the_preview_panel(cx: &mut TestAppContext) {
         let shared = Rc::new(MirrorShared::default());
-        let (_, cx) = cx.add_window_view(|_, _| MirrorTest { shared: shared.clone() });
+        let (_, cx) = cx.add_window_view(|_, _| MirrorTest {
+            shared: shared.clone(),
+        });
         cx.run_until_parked();
         let ids = [
             ("mirror-case-launching", false),
@@ -2635,7 +2643,10 @@ mod tests {
         ];
         let mut seen = Vec::new();
         for (id, _) in ids {
-            let c = cx.debug_bounds(id).unwrap_or_else(|| panic!("{id}")).center();
+            let c = cx
+                .debug_bounds(id)
+                .unwrap_or_else(|| panic!("{id}"))
+                .center();
             cx.simulate_click(c, Modifiers::none());
             cx.run_until_parked();
             seen.push(shared.shown());
@@ -2645,13 +2656,19 @@ mod tests {
             assert!(seen[i + 1..].iter().all(|b| a != b), "{}", ids[i].0);
         }
         // 表示側: 各状態で画面が出て、再試行は止まった状態のときだけ。
-        let (_, cx) = cx.add_window_view(|_, _| MirrorPreview { shared: shared.clone() });
+        let (_, cx) = cx.add_window_view(|_, _| MirrorPreview {
+            shared: shared.clone(),
+        });
         for (state, (id, retry)) in seen.into_iter().zip(ids) {
             *shared.state.borrow_mut() = Some(state);
             cx.update(|w, _| w.refresh());
             cx.run_until_parked();
             assert!(cx.debug_bounds("mirror-test-screen").is_some(), "{id}");
-            assert_eq!(cx.debug_bounds("mirror-test-action").is_some(), retry, "{id}");
+            assert_eq!(
+                cx.debug_bounds("mirror-test-action").is_some(),
+                retry,
+                "{id}"
+            );
         }
     }
 

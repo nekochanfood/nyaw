@@ -14,6 +14,7 @@ use palette::{FromColor, Mix, Oklab, Srgb};
 mod navigation;
 mod scrollbar;
 mod shaped_button;
+pub mod slide;
 mod slider;
 mod tooltip;
 pub use navigation::{Navigation, navigation};
