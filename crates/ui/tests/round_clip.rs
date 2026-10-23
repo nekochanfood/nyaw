@@ -46,7 +46,7 @@ fn main() {
                     let frame = cx
                         .update_window(window.into(), |_, window, cx| capture(window, cx))
                         .expect("window is closed");
-                    if matches!(&frame, Ok(f) if f.width as u32 == RES.0) {
+                    if matches!(&frame, Ok(f) if f.width == RES.0) {
                         out.borrow_mut().push((clip, frame.unwrap()));
                         break;
                     }
