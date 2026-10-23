@@ -338,7 +338,9 @@ pub fn fit_bar(
         .py(px((super::NAV_BAR_HEIGHT - BUTTON_HEIGHT) / 2.0))
         // ボタンが開ききる前（`grow` < 1）は、カプセルも中身に合わせて低く、狭く始まる。
         .self_center()
-        .overflow_hidden();
+        .overflow_hidden()
+        // カプセルの丸い端で中身を切る（gpui の改造: vendor/gpui）。
+        .clip_rounded();
     let bar = if grow < 1.0 {
         bar.h(px(super::NAV_BAR_HEIGHT * grow.max(0.0)))
     } else {
