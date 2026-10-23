@@ -10,7 +10,7 @@ use crate::animation::{Animation, Motion};
 use crate::{Theme, radius, spacing};
 
 /// ボタンを 1 つずつ順に出すときの間隔。
-pub const STAGGER: Duration = Duration::from_millis(40);
+pub const STAGGER: Duration = Duration::from_millis(60);
 /// これだけ描かれなかったら、隠れていた（出し直した）とみなす。
 const IDLE_GAP: Duration = Duration::from_secs(3);
 
@@ -72,6 +72,9 @@ pub struct Entering {
     hid: bool,
     /// このフレームは、ダッシュボードを出した直後（全部のボタンが順に出る）。
     revealing: bool,
+    /// このフレームに出ていたボタンのうち一番開いたものの出具合と、前のフレームの分（[`Entering::peak`]）。
+    frame_max: f32,
+    peak: f32,
     /// 動かさない（出きった状態で描く）。画面のテストが、動いている途中のボタンを押さないように。
     off: bool,
 }
@@ -109,6 +112,12 @@ impl Entering {
 
     /// このフレームの `key` のボタン（左から数えて `slot` 番目）の出具合。
     pub fn progress(&mut self, key: &SharedString, slot: usize, now: Instant) -> Slide {
+        let s = self.step(key, slot, now);
+        self.frame_max = self.frame_max.max(s.grow.clamp(0.0, 1.0));
+        s
+    }
+
+    fn step(&mut self, key: &SharedString, slot: usize, now: Instant) -> Slide {
         if self.off {
             return Slide::SHOWN;
         }
@@ -153,6 +162,12 @@ impl Entering {
 
     /// 消えていくボタンの出具合（1 から 0 へ。終われば忘れる）。
     pub fn progress_out(&mut self, key: &SharedString, now: Instant) -> Slide {
+        let s = self.step_out(key, now);
+        self.frame_max = self.frame_max.max(s.grow.clamp(0.0, 1.0));
+        s
+    }
+
+    fn step_out(&mut self, key: &SharedString, now: Instant) -> Slide {
         let Some((anim, last)) = self.leaving.get_mut(key) else {
             return Slide::GONE;
         };
@@ -164,8 +179,15 @@ impl Entering {
         t
     }
 
+    /// 直前の [`Entering::finish`] までのフレームで、一番開いていたボタンの出具合（0 から 1）。
+    /// ボタンが 1 つも開いていないうちは 0 で、カプセル自体も開かない（`fit_bar` の `grow`）。
+    pub fn peak(&self) -> f32 {
+        self.peak
+    }
+
     /// 1 フレーム描き終えた。描かなかったボタンは忘れる。動いているものがあるか（次のフレームも描くか）を返す。
     pub fn finish(&mut self) -> bool {
+        self.peak = std::mem::take(&mut self.frame_max);
         let touched = std::mem::take(&mut self.touched);
         self.seen.retain(|k| touched.contains(k));
         self.running.retain(|k, _| touched.contains(k));
@@ -204,7 +226,8 @@ pub fn with_leaving<T: Clone>(
 const OVERSHOOT_PAD: f32 = 8.0;
 
 /// 出具合 `s` のボタン（自然な幅 `width` px）を、下から上へ滑り込ませる（`s.rise` が減れば逆に滑り出る。少し行き過ぎてもよい）。
-/// 幅も `s.grow` に比例して開き（隣との隙間も、負の余白で残りの隙間を打ち消して一緒に開く）、バーの幅が滑らかに変わる。
+/// 幅も `s.grow` に比例して開き（隣との隙間 [`spacing::SM`] も一緒に。隙間はボタンの右に付く余白で、バーの `gap` は使わない）、
+/// バーの幅が滑らかに変わる。
 /// 幅は行き過ぎさせない（行き過ぎると、バー全体が広がって縮み、ガクつく）。
 pub fn slide_in(s: Slide, width: f32, child: impl IntoElement) -> Div {
     reveal(s, width, true, child)
@@ -223,27 +246,28 @@ fn reveal(s: Slide, width: f32, rise: bool, child: impl IntoElement) -> Div {
         .py(px(OVERSHOOT_PAD))
         .my(px(-OVERSHOOT_PAD))
         // 出きったら自然な幅に任せる（中身の幅が変わっても追従する）。
-        .when(w < 1.0, |d| {
-            d.w(px(width * w)).mr(px(-spacing::SM * (1.0 - w)))
-        })
+        .when(w < 1.0, |d| d.w(px((width + spacing::SM) * w)))
         .child(
             div()
                 .relative()
                 .flex_none()
                 .w(px(width))
+                // 隣との隙間。出きったら自然な幅の一部になり、開く間は枠が狭くて切られる。
+                .mr(px(spacing::SM))
                 .when(rise, |d| d.top(px(BUTTON_HEIGHT * (1.0 - s.rise))))
                 .opacity(if rise { s.rise.clamp(0.0, 1.0) } else { w })
                 .child(child),
         )
 }
 
-/// 中身の幅に収まるカプセルのバー。中身が `max_width`（px。任意だが、ほぼ指定する）を超えそうなら、そこで頭打ちにして
+/// 中身の幅に収まるカプセルのバー。`grow` はボタンの開き具合（[`Entering::peak`]。開ききったら 1）で、開く前は小さく始まる。中身が `max_width`（px。任意だが、ほぼ指定する）を超えそうなら、そこで頭打ちにして
 /// 横にスクロールでき、スクロールバーが出る。`id` はスクロール要素の id（棒は `{id}-bars-h`）。
 /// 置き場所（中央寄せなど）は呼ぶ側が決める。
 pub fn fit_bar(
     theme: &Theme,
     id: &'static str,
     scroll: &ScrollHandle,
+    grow: f32,
     max_width: Option<f32>,
     children: impl IntoIterator<Item = impl IntoElement>,
 ) -> Div {
@@ -254,7 +278,8 @@ pub fn fit_bar(
         .min_w_0()
         .flex()
         .items_center()
-        .gap(px(spacing::SM))
+        // 左の余白（右の余白は、末尾のボタンの右の隙間）。棒の長さの基準になる箱の中に取る。
+        .pl(px(spacing::SM * grow))
         .py(px(OVERSHOOT_PAD))
         .my(px(-OVERSHOOT_PAD))
         .overflow_x_scroll()
@@ -266,7 +291,14 @@ pub fn fit_bar(
         .items_center()
         // ナビゲーションバーと同じ高さ（ボタンの上下に余白）にする。
         .py(px((super::NAV_BAR_HEIGHT - BUTTON_HEIGHT) / 2.0))
-        .px(px(spacing::SM));
+        // ボタンが開ききる前（`grow` < 1）は、カプセルも中身に合わせて低く、狭く始まる。
+        .self_center()
+        .overflow_hidden();
+    let bar = if grow < 1.0 {
+        bar.h(px(super::NAV_BAR_HEIGHT * grow.max(0.0)))
+    } else {
+        bar
+    };
     let bar = match max_width {
         Some(w) => bar.max_w(px(w)),
         None => bar.max_w_full(),

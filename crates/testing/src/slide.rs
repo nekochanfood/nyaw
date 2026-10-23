@@ -150,6 +150,7 @@ impl Render for SlideTest {
                         &theme,
                         "slide-scroll",
                         &self.scroll,
+                        self.enter.peak(),
                         Some(MAX_BAR_PX),
                         buttons,
                     )
@@ -213,6 +214,26 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.debug_bounds("slide-item-4").is_none(), "終われば外れる");
         assert!((bar_width(cx) - three).abs() <= 1.0, "幅が元に戻る");
+    }
+
+    /// 足している間、カプセルの幅は一度も縮まず、広がりきるまで増え続ける（隣が動いても幅が揺れない）。
+    #[gpui::test]
+    fn bar_width_grows_steadily_when_a_button_is_added(cx: &mut TestAppContext) {
+        let (_view, cx) = cx.add_window_view(|_, _| SlideTest::new(1));
+        cx.run_until_parked();
+        settle(cx);
+        let before = bar_width(cx);
+        click(cx, "slide-add");
+        let mut last = before;
+        for _ in 0..20 {
+            std::thread::sleep(Duration::from_millis(20));
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+            let w = bar_width(cx);
+            assert!(w >= last - 0.5, "縮んだ: {last} -> {w}");
+            last = w;
+        }
+        assert!(last >= before + components::BUTTON_HEIGHT);
     }
 
     /// 最大幅を超えそうなら、カプセルはそこで頭打ちになり、横にスクロールできる。

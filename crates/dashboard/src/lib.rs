@@ -954,6 +954,7 @@ impl Render for Dashboard {
                     &theme,
                     "dashboard-bar",
                     &self.scroll,
+                    self.enter.peak(),
                     Some(MAX_BAR_PX),
                     items,
                 )
