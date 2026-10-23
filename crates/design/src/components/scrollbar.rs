@@ -28,7 +28,8 @@ use gpui::{
 };
 
 use super::{Fade, keep_drawing};
-use crate::{Motion, Theme, duration_ms, radius, scrollbar as spec};
+use crate::animation::{Motion as Kind, Transition};
+use crate::{Motion, Theme, radius, scrollbar as spec};
 
 /// 中身がこれだけ（px）引っ張られると、棒の押しつぶしが最大になる。
 const SQUASH_RANGE: f32 = 48.0;
@@ -87,53 +88,6 @@ fn offset_for(t: &Thumb, pointer: f32, grab: f32, max: f32) -> f32 {
     -((pointer - grab - t.lead) / free).clamp(0.0, 1.0) * max
 }
 
-/// 値が `NORMAL` かけて ease-out で動く。
-#[derive(Clone, Copy)]
-struct Smooth {
-    from: f32,
-    to: f32,
-    start: Option<Instant>,
-}
-
-impl Smooth {
-    const fn rest(v: f32) -> Self {
-        Smooth {
-            from: v,
-            to: v,
-            start: None,
-        }
-    }
-
-    fn at(&self, now: Instant) -> (f32, bool) {
-        let Some(start) = self.start else {
-            return (self.to, false);
-        };
-        let t = now.saturating_duration_since(start).as_secs_f32() * 1000.0
-            / duration_ms::NORMAL as f32;
-        if t >= 1.0 {
-            return (self.to, false);
-        }
-        let e = 1.0 - (1.0 - t).powi(3);
-        (self.from + (self.to - self.from) * e, true)
-    }
-
-    /// 今の値から `to` へ動き直す（`animated` でなければ即座）。
-    fn go(&mut self, to: f32, now: Instant, animated: bool) {
-        if self.to != to {
-            let (cur, _) = self.at(now);
-            *self = if animated {
-                Smooth {
-                    from: cur,
-                    to,
-                    start: Some(now),
-                }
-            } else {
-                Smooth::rest(to)
-            };
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 struct Bar {
     /// トラックの帯にカーソルがある。
@@ -144,10 +98,10 @@ struct Bar {
     grab: Option<f32>,
     /// 指のスライド（タッチのスワイプ）で動かしている。掴むのに長押しは要らない。
     slide: bool,
-    thick: Smooth,
+    thick: Transition,
     color: Fade,
     /// 見え具合 0..=1。
-    vis: Smooth,
+    vis: Transition,
     /// 直近に見たオフセット。変わったらスクロールしたとみなす。
     seen: f32,
     /// 最後に何か動きがあった時刻。ここから [`LINGER`] の間は見せる。
@@ -422,11 +376,11 @@ impl RenderOnce for Elastic {
         let state = window.use_keyed_state(id, cx, |_, _| ElasticState {
             pull: [Pull::Release {
                 from: 0.0,
-                start: Instant::now(),
+                start: crate::drive::now(),
             }; 2],
             touching: false,
         });
-        let now = Instant::now();
+        let now = crate::drive::now();
         let mut moving = false;
         // 離したとみなせるものは戻し始め、いまの値を出す。
         let v = state.update(cx, |s, _| {
@@ -452,7 +406,7 @@ impl RenderOnce for Elastic {
                 if !cx.has_global::<Motion>() {
                     return;
                 }
-                let now = Instant::now();
+                let now = crate::drive::now();
                 let ended = matches!(e.touch_phase, TouchPhase::Ended | TouchPhase::Cancelled);
                 let ds = axis_deltas(&handle, e, window);
                 let mut used = false;
@@ -592,19 +546,19 @@ impl RenderOnce for Scrollbars {
                 over: false,
                 grab: None,
                 slide: false,
-                thick: Smooth::rest(0.0),
+                thick: Transition::rest(0.0),
                 color: Fade {
                     from: rest,
                     to: rest,
                     start: None,
                 },
-                vis: Smooth::rest(if always { 1.0 } else { 0.0 }),
+                vis: Transition::rest(if always { 1.0 } else { 0.0 }),
                 seen: 0.0,
                 woke: None,
             }; 2],
             shown: [false; 2],
         });
-        let now = Instant::now();
+        let now = crate::drive::now();
         let animated = cx.has_global::<Motion>();
         let reads = AXES.map(|a| read(&handle, a));
         let pulled = pull
@@ -623,13 +577,15 @@ impl RenderOnce for Scrollbars {
                 let awake = always
                     || b.woke
                         .is_some_and(|w| now.saturating_duration_since(w) < LINGER);
-                b.vis.go(if awake { 1.0 } else { 0.0 }, now, animated);
+                b.vis
+                    .go(if awake { 1.0 } else { 0.0 }, Kind::Enter, now, animated);
                 b.thick.go(
                     if b.zone || b.slide || b.grab.is_some() {
                         1.0
                     } else {
                         0.0
                     },
+                    Kind::Enter,
                     now,
                     animated,
                 );

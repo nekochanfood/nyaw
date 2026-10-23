@@ -14,6 +14,7 @@ use palette::{FromColor, Mix, Oklab, Srgb};
 mod navigation;
 mod scrollbar;
 mod shaped_button;
+pub mod slide;
 mod slider;
 mod tooltip;
 pub use navigation::{Navigation, navigation};
@@ -55,9 +56,10 @@ impl Fade {
         if t >= 1.0 {
             return (self.to, false);
         }
-        // ease-out（立ち上がりが速く、着地がやわらかい）
-        let e = 1.0 - (1.0 - t).powi(3);
-        (mix(self.from, self.to, e), true)
+        (
+            mix(self.from, self.to, crate::animation::Motion::Enter.ease(t)),
+            true,
+        )
     }
 }
 
@@ -95,7 +97,7 @@ fn ripple_frame(elapsed_ms: f32, reach: f32) -> Option<(f32, u8)> {
         return None;
     }
     Some((
-        reach * (1.0 - (1.0 - t).powi(3)),
+        reach * crate::animation::Motion::Enter.ease(t),
         (RIPPLE_ALPHA * (1.0 - t)) as u8,
     ))
 }
@@ -124,7 +126,7 @@ struct Pointer {
 }
 
 /// ボタンの高さと左右の余白（文字 `font_size::MD` に対して、高さ ≒ 2.8 倍、左右 ≒ 1.7 倍）。最小ヒット領域（48）を下回らない。
-const BUTTON_HEIGHT: f32 = 54.0;
+pub const BUTTON_HEIGHT: f32 = 54.0;
 const BUTTON_PADDING: f32 = 32.0;
 
 /// 押せるボタン。`id` はそのまま `debug_selector` にもなる。
@@ -368,7 +370,7 @@ impl RenderOnce for Button {
             rest
         };
 
-        let now = Instant::now();
+        let now = crate::drive::now();
         let color = if f.to == target {
             let (c, moving) = f.at(now);
             if moving {
@@ -456,7 +458,7 @@ impl RenderOnce for Button {
                                 .max((origin.y - b.bottom()).abs()),
                         );
                         let reach = f32::from(dx).hypot(f32::from(dy));
-                        let ms = Instant::now()
+                        let ms = crate::drive::now()
                             .saturating_duration_since(start)
                             .as_secs_f32()
                             * 1000.0;
@@ -478,7 +480,7 @@ impl RenderOnce for Button {
                             Bounds::new(b.origin + point(px(x), px(y)), size(px(w), px(h)))
                         };
                         let mut paint = |mask: Bounds<Pixels>| {
-                            w.with_content_mask(Some(ContentMask { bounds: mask }), |w| {
+                            w.with_content_mask(Some(ContentMask::from_bounds(mask)), |w| {
                                 w.paint_quad(quad.clone())
                             })
                         };
@@ -529,7 +531,9 @@ impl RenderOnce for Button {
             })
             .on_mouse_down(MouseButton::Left, move |e, w, cx| {
                 if enabled {
-                    press.update(cx, |s, _| s.ripple = Some((e.position, Instant::now())));
+                    press.update(cx, |s, _| {
+                        s.ripple = Some((e.position, crate::drive::now()))
+                    });
                 }
                 down(w, cx)
             })
@@ -538,14 +542,7 @@ impl RenderOnce for Button {
     }
 }
 
-/// 色が動いている間は次のフレームも描く。VR のフレームループにも伝える（[`Motion`]）。
-fn keep_drawing(window: &mut Window, cx: &mut App) {
-    if cx.has_global::<Motion>() {
-        let id = window.window_handle().window_id();
-        cx.global_mut::<Motion>().animating.insert(id);
-    }
-    window.request_animation_frame();
-}
+pub use crate::drive::keep_drawing;
 
 /// 円の進み具合: 一辺 `size` px・太さ `stroke` px の線の輪。溝（`groove`）の上に、上から時計回りに `progress`（0〜1）
 /// だけアクセントの色で満ちる。中身（残り時間など）は呼び出し側が `relative` の親で重ねる。
@@ -605,7 +602,7 @@ pub fn spinner(theme: &Theme, size: f32) -> impl IntoElement {
             let stroke = px(SPINNER_STROKE * scale);
             let r = px(SPINNER_RADIUS * scale);
             let center = bounds.center();
-            let turns = spinner_turns(Instant::now());
+            let turns = spinner_turns(crate::drive::now());
             // 円弧は細かい折れ線で描く（progress_ring と同じ）。`from` は始点、`len` は長さ（どちらも周の割合）。
             let arc = |from: f32, len: f32| {
                 let mut path = gpui::PathBuilder::stroke(stroke);
@@ -691,11 +688,10 @@ pub fn status_screen(
                 .gap(px(spacing::XS))
                 .text_center()
                 .child(div().font_weight(FontWeight::BOLD).child(title))
-                .children(reason.map(|reason| {
-                    div()
-                        .text_color(rgba(theme.neutral_text_low))
-                        .child(reason)
-                })),
+                .children(
+                    reason
+                        .map(|reason| div().text_color(rgba(theme.neutral_text_low)).child(reason)),
+                ),
         )
         .children(action)
 }
@@ -780,6 +776,11 @@ pub fn card(theme: &Theme) -> Div {
         .rounded(px(radius::LG))
         .bg(rgba(theme.card))
         .text_color(rgba(theme.neutral_text))
+}
+
+/// 中身の幅に収まるカードのパネル（[`card_panel`] の、窓いっぱいに広がらない版）。置き場所は呼ぶ側が決める。
+pub fn card_panel_fit(theme: &Theme) -> Div {
+    card(theme).rounded(px(radius::XL)).shadow(panel_shadow())
 }
 
 /// カードが 1 枚だけの画面: 地（[`panel`]）を敷かず、カードがパネル全体になる。角丸はパネルの `XL`。
@@ -1259,11 +1260,24 @@ mod tests {
         assert_eq!((rest & 0xff, r), (0, rest));
         assert_eq!(h, scale_alpha(hover, 0.5));
         assert_eq!(a, scale_alpha(active, 0.5));
-        assert_eq!(ghost().background_opacity(7.0).colors().1, hover, "範囲外は 100%");
+        assert_eq!(
+            ghost().background_opacity(7.0).colors().1,
+            hover,
+            "範囲外は 100%"
+        );
         // 色の取り換えと不透明度は、どの順でも同じ。
-        let swapped = (dark.control_on_background_hover, dark.control_on_background_active);
-        let one = ghost().ghost_background(dark).background_opacity(0.5).colors();
-        let two = ghost().background_opacity(0.5).ghost_background(dark).colors();
+        let swapped = (
+            dark.control_on_background_hover,
+            dark.control_on_background_active,
+        );
+        let one = ghost()
+            .ghost_background(dark)
+            .background_opacity(0.5)
+            .colors();
+        let two = ghost()
+            .background_opacity(0.5)
+            .ghost_background(dark)
+            .colors();
         assert_eq!(one, two);
         assert_eq!(
             (one.1, one.2),

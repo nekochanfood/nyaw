@@ -49,50 +49,7 @@ enum Gesture {
 }
 
 /// 上の画面のずれ（幅に対する割合。0 = 定位置、1 = 抜けた。向きは `State::dir`）の動き。
-#[derive(Clone, Copy, Debug)]
-struct Slide {
-    from: f32,
-    to: f32,
-    start: Option<(Instant, f32)>,
-}
-
-impl Slide {
-    const fn rest(t: f32) -> Self {
-        Slide {
-            from: t,
-            to: t,
-            start: None,
-        }
-    }
-
-    /// 今のずれと、まだ動いているか。
-    fn at(&self, now: Instant) -> (f32, bool) {
-        let Some((start, secs)) = self.start else {
-            return (self.to, false);
-        };
-        let p = now.saturating_duration_since(start).as_secs_f32() / secs;
-        if p >= 1.0 {
-            return (self.to, false);
-        }
-        // ease-out（指から離れた所から速く動き出し、やわらかく着地する）
-        let e = 1.0 - (1.0 - p).powi(3);
-        (self.from + (self.to - self.from) * e, true)
-    }
-
-    /// 今のずれから `to` へ `motion` の長さで動く（動きが無効なら即座）。
-    fn go(&mut self, to: f32, motion: crate::animation::Motion, now: Instant, animated: bool) {
-        let (cur, _) = self.at(now);
-        *self = if animated && cur != to {
-            Slide {
-                from: cur,
-                to,
-                start: Some((now, motion.duration_ms() as f32 / 1000.0)),
-            }
-        } else {
-            Slide::rest(to)
-        };
-    }
-}
+type Slide = crate::animation::Transition;
 
 struct State<P> {
     /// 前の描画での積み重ね。
@@ -193,7 +150,7 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
             background,
         } = self;
         let animated = cx.has_global::<Motion>();
-        let now = Instant::now();
+        let now = crate::drive::now();
         let state = window.use_keyed_state(id, cx, {
             let stack = stack.clone();
             move |_, _| State {
@@ -269,7 +226,7 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                         return;
                     };
                     let (dx, dy) = (f32::from(d.x), f32::from(d.y));
-                    let now = Instant::now();
+                    let now = crate::drive::now();
                     let gesture = s.read(cx).gesture;
                     match (phase, gesture, e.touch_phase) {
                         // スワイプ中・離した後の慣性は中身へ流さない。
@@ -327,7 +284,7 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                 });
                 let st = state.clone();
                 window.on_mouse_event(move |e: &MouseDownEvent, phase, _, cx| {
-                    let now = Instant::now();
+                    let now = crate::drive::now();
                     let s = st.read(cx);
                     if phase == DispatchPhase::Bubble
                         && e.button == MouseButton::Left
@@ -402,7 +359,7 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                             Gesture::Pressed(_) => st.update(cx, |s, _| s.gesture = Gesture::Idle),
                             Gesture::Swiping { start: Some(_), .. } => {
                                 let animated = cx.has_global::<Motion>();
-                                let now = Instant::now();
+                                let now = crate::drive::now();
                                 if st.update(cx, |s, _| s.release(now, animated)) {
                                     back(window, cx);
                                 }

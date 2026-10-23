@@ -70,7 +70,6 @@ fn main() {
         ("font_size", "f32"),
         ("letter_spacing", "f32"),
         ("scrollbar", "f32"),
-        ("duration_ms", "u64"),
     ] {
         writeln!(out, "pub mod {module} {{").unwrap();
         for (name, v) in obj(&root, &module.replace('_', "-")) {

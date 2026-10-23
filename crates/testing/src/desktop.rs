@@ -1,6 +1,6 @@
 use super::*;
-use kernel::desktop::{DEFAULT_FRAME_RATE, MAX_FRAME_RATE, Source, SourceKind, Sources, Status};
 use kernel::desktop::Error;
+use kernel::desktop::{DEFAULT_FRAME_RATE, MAX_FRAME_RATE, Source, SourceKind, Sources, Status};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use ui::mirror::{MirrorState, mirror_screen};
@@ -468,7 +468,10 @@ pub struct MirrorShared {
 
 impl MirrorShared {
     pub(crate) fn shown(&self) -> MirrorState {
-        self.state.borrow().clone().unwrap_or(MirrorState::Launching)
+        self.state
+            .borrow()
+            .clone()
+            .unwrap_or(MirrorState::Launching)
     }
 }
 
@@ -514,12 +517,21 @@ impl Render for MirrorPreview {
 fn failure_samples() -> [(&'static str, Error); 6] {
     use kernel::desktop::failure::*;
     [
-        ("mirror-case-failed-windowunavailable", Error(WINDOW_HIDDEN.into())),
+        (
+            "mirror-case-failed-windowunavailable",
+            Error(WINDOW_HIDDEN.into()),
+        ),
         ("mirror-case-failed-unsupported", Error(UNSUPPORTED.into())),
         ("mirror-case-failed-nopixels", Error(NO_PIXELS.into())),
-        ("mirror-case-failed-invalidbounds", Error(INVALID_BOUNDS.into())),
+        (
+            "mirror-case-failed-invalidbounds",
+            Error(INVALID_BOUNDS.into()),
+        ),
         ("mirror-case-failed-graphics", Error(D3D_DEVICE.into())),
-        ("mirror-case-failed-other", Error("unexpected failure (0x80004005)".into())),
+        (
+            "mirror-case-failed-other",
+            Error("unexpected failure (0x80004005)".into()),
+        ),
     ]
 }
 
@@ -562,11 +574,15 @@ impl Render for MirrorTest {
                 button(&theme, id, state.title(cx), state == shown)
                     .on_click(choose(state, self.shared.clone()))
             })))
-            .child(row().flex_wrap().children(failure_samples().map(|(id, error)| {
-                let state = MirrorState::Failed(error);
-                let label = state.reason(cx).unwrap_or_default();
-                button(&theme, id, label, state == shown)
-                    .on_click(choose(state, self.shared.clone()))
-            })))
+            .child(
+                row()
+                    .flex_wrap()
+                    .children(failure_samples().map(|(id, error)| {
+                        let state = MirrorState::Failed(error);
+                        let label = state.reason(cx).unwrap_or_default();
+                        button(&theme, id, label, state == shown)
+                            .on_click(choose(state, self.shared.clone()))
+                    })),
+            )
     }
 }

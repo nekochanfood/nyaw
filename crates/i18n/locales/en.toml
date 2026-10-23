@@ -225,7 +225,15 @@ localization = "Localization"
 settings = "Settings"
 navigation = "Navigation"
 mirror = "Mirroring screen"
+slide = "Button slide"
 nyapps = "Nyapps"
+
+[testing.slide]
+add = "Add at end"
+add_first = "Add at start"
+remove_first = "Remove first"
+remove_last = "Remove last"
+replay = "Replay reveal"
 
 [emoji]
 inline = "Inline SVG emoji · 14 / 19 / 24 px"

@@ -248,7 +248,7 @@ impl RenderOnce for ShapedButton {
                                         size(px(right - left), px(1.)),
                                     );
                                     window.with_content_mask(
-                                        Some(ContentMask { bounds: mask }),
+                                        Some(ContentMask::from_bounds(mask)),
                                         |window| window.paint_quad(quad.clone()),
                                     );
                                 }
@@ -306,7 +306,7 @@ impl RenderOnce for ShapedButton {
             press.update(cx, |s, _| {
                 s.pressed = pressed;
                 if pressed && animated {
-                    s.ripple = Some((event.position, Instant::now()));
+                    s.ripple = Some((event.position, crate::drive::now()));
                 }
             });
             window.refresh();

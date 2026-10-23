@@ -20,7 +20,8 @@ VR 空間のパネルをレーザーで操作する前提の方針。値は `tok
 
 ## 動きの統一
 
-- 動きは `animation::Motion`（Enter / Exit / Return / Move）の 4 種だけ。
+- 動きは `animation::Motion`（Enter / Exit / Return / Move / Morph / SlideIn / SlideOut / Grow）だけ。足すときは `animation` クレートの `Motion` に 1 つ足し、長さとイージングをそこで決める。
+- 部品は `Transition`（時刻から値を引く）か `Animation`（毎フレーム進める）を持つだけにする。イージングの式・手書きの補間は書かない（`animation/tests/boundaries.rs` が落とす）。
 - 時間は `duration_ms` から選ぶ: 状態変化（ホバー等）= `fast` / `quick`、出入り = `normal`、大きな移動 = `slow`。
 - 動きは毎フレームの描き直しを伴うので、不要な動きは足さない。
 

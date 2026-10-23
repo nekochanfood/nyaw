@@ -11,11 +11,13 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use design::components::slide::{Entering, Slide, fade_in, fit_bar, slide_in, with_leaving};
 use design::components::{self, Variant};
 use design::{Theme, font_size, icons, spacing};
 use gpui::{
-    App, Context, Div, FocusHandle, FontWeight, KeyDownEvent, ListAlignment, ListState,
-    RenderImage, SharedString, Task, WeakEntity, Window, div, img, list, prelude::*, px, rgba,
+    AnyElement, App, Context, Div, FocusHandle, FontWeight, KeyDownEvent, ListAlignment, ListState,
+    RenderImage, ScrollHandle, SharedString, Task, WeakEntity, Window, div, img, list, prelude::*,
+    px, rgba,
 };
 use kernel::audio::Sound;
 use kernel::desktop::{
@@ -23,9 +25,9 @@ use kernel::desktop::{
     Status,
 };
 use kernel::subsystems::media;
-use ui::mirror::{MirrorState, mirror_screen};
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, Setting};
+use ui::mirror::{MirrorState, mirror_screen};
 use ui::{PanelControl, PanelSpec};
 
 /// バーを手前に傾ける角度（下から見上げずに読めるよう、少し上を向かせる）。はめた画面はこの分だけ起こして垂直に立てる。
@@ -194,6 +196,15 @@ pub struct Dashboard {
     /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）と、そのとき隠していたか。
     /// 最初に見た値から数える。
     outside: Option<(u32, bool)>,
+    /// 足されたボタンの出方（[`Entering`]）。
+    enter: Entering,
+    /// 前のフレームに並べていたもの（消えていくものを含む）。消えたものを、滑り出る間だけ同じ場所に描き残すのに使う。
+    prev_streams: Vec<Stream>,
+    prev_activities: Vec<nyapp::activity::Live>,
+    prev_media: bool,
+    prev_sep: bool,
+    /// バーの横スクロール（最大幅を超えたとき）。
+    scroll: ScrollHandle,
 }
 
 impl Dashboard {
@@ -242,6 +253,12 @@ impl Dashboard {
             menu: None,
             shown: None,
             outside: None,
+            prev_streams: Vec::new(),
+            prev_activities: Vec::new(),
+            prev_media: false,
+            prev_sep: false,
+            scroll: ScrollHandle::new(),
+            enter: Entering::new(cfg!(test)),
         }
     }
 
@@ -498,7 +515,32 @@ impl Dashboard {
     }
 }
 
+fn stream_key(panel: PanelId) -> SharedString {
+    format!("dashboard-stream-{panel}").into()
+}
+
+fn activity_key(live: &nyapp::activity::Live) -> SharedString {
+    format!("dashboard-activity-{}", live.app.manifest.id).into()
+}
+
+/// バーの最大幅（px）。窓の幅（[`BAR_PX`]）から影の余白を引いたもので、配信などが溜まってこれを超えそうなら、横にスクロールする。
+const MAX_BAR_PX: f32 = BAR_PX.0 as f32 - 2.0 * components::PANEL_MARGIN;
+/// 区切り線の自然な幅（線と両脇の余白）。
+const SEPARATOR_W: f32 = 1.0 + 2.0 * spacing::XS;
+
+/// クイック設定のボタンの自然な幅（px）: 左右の余白と時刻、電池があればその記号（と隙間）。
+fn quick_settings_width(time_width: f32, battery: bool) -> f32 {
+    2.0 * spacing::XL
+        + time_width
+        + if battery {
+            spacing::SM + font_size::LG
+        } else {
+            0.0
+        }
+}
+
 /// ダッシュボードで開いた配信。
+#[derive(Clone)]
 struct Stream {
     panel: PanelId,
     kind: SourceKind,
@@ -668,13 +710,48 @@ impl Render for Dashboard {
         cx.default_global::<PanelControl>();
         self.prune_streams(cx);
         let time_width = clock_width(window, font_size::MD);
+        let (mut enter, now_at) = (std::mem::take(&mut self.enter), design::drive::now());
+        let hidden = cx
+            .global::<PanelControl>()
+            .panels
+            .get(&self.panel)
+            .is_some_and(|p| p.status.hidden);
+        enter.begin(hidden, now_at);
+        // 左から数えたボタンの順番: メニュー 0・クイック設定 1・進行中の作業・再生中・ランチャー・区切り線と配信。
+        let activities_now = with_leaving(
+            nyapp::activity::all(cx).to_vec(),
+            &self.prev_activities,
+            activity_key,
+            &mut enter,
+            now_at,
+        );
+        self.prev_activities = activities_now.iter().map(|(l, _)| l.clone()).collect();
+        let streams_now = with_leaving(
+            self.streams.clone(),
+            &self.prev_streams,
+            |s| stream_key(s.panel),
+            &mut enter,
+            now_at,
+        );
+        self.prev_streams = streams_now.iter().map(|(s, _)| s.clone()).collect();
+        let n_activity = activities_now.len();
+        let has_media = cx.global::<PanelControl>().media.is_some();
+        let media_key = SharedString::from("dashboard-now-playing");
+        let media_exit = !has_media && self.prev_media && enter.start_exit(&media_key, now_at);
+        self.prev_media = has_media || media_exit;
+        let media = usize::from(self.prev_media);
+        let sep_key = SharedString::from("dashboard-separator");
+        let sep_now = streams_now.iter().any(|(_, leaving)| !leaving);
+        let sep_exit = !sep_now && self.prev_sep && enter.start_exit(&sep_key, now_at);
+        self.prev_sep = sep_now || sep_exit;
+        let stream_slot = 3 + n_activity + media;
         let theme = Theme::current(cx);
         let current = self.current(cx);
         let docked = ui::docked(cx);
-        let streams: Vec<_> = self
-            .streams
+        let streams: Vec<_> = streams_now
             .iter()
-            .map(|s| {
+            .enumerate()
+            .map(|(i, (s, leaving))| {
                 let id = s.panel;
                 let variant = if docked == Some(id) {
                     Variant::Primary
@@ -694,15 +771,20 @@ impl Render for Dashboard {
                         .size(px(font_size::LG))
                         .into_any_element(),
                 };
-                components::round_button(
-                    &theme,
-                    format!("dashboard-stream-{id}"),
-                    s.name.clone(),
-                    variant,
+                let key = stream_key(id);
+                let t = if *leaving {
+                    enter.progress_out(&key, now_at)
+                } else {
+                    enter.progress(&key, stream_slot + 1 + i, now_at)
+                };
+                slide_in(
+                    t,
+                    components::BUTTON_HEIGHT,
+                    components::round_button(&theme, key, s.name.clone(), variant)
+                        .flex_none()
+                        .child(glyph)
+                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_stream(id, cx))),
                 )
-                .flex_none()
-                .child(glyph)
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle_stream(id, cx)))
             })
             .collect();
         let variant = |page| {
@@ -714,7 +796,6 @@ impl Render for Dashboard {
         };
         // 時刻の横の電池は HMD のもの（無ければ最初のデバイス）。
         let ctl = cx.global::<PanelControl>();
-        let has_media = ctl.media.is_some();
         let battery = ctl
             .batteries
             .iter()
@@ -729,10 +810,10 @@ impl Render for Dashboard {
         // その中に残り時間などの文字。終わったものと文字の無いものは、アプリのアイコンの前景。
         let now = nyapp::activity::now_ms();
         let lang = i18n::Lang::current(cx).code();
-        let activities: Vec<_> = nyapp::activity::all(cx)
-            .iter()
-            .cloned()
-            .map(|live| {
+        let activities: Vec<_> = activities_now
+            .into_iter()
+            .enumerate()
+            .map(|(i, (live, leaving))| {
                 let text = live.text(now);
                 let tooltip = match &text {
                     Some(t) => format!("{} · {t}", live.activity.title()),
@@ -754,30 +835,34 @@ impl Render for Dashboard {
                         .into_any_element(),
                     _ => live.app.foreground(lang, ACTIVITY_ICON_PX, &theme),
                 };
-                components::round_button(
-                    &theme,
-                    format!("dashboard-activity-{}", live.app.manifest.id),
-                    tooltip,
-                    Variant::Default,
-                )
-                .flex_none()
-                .relative()
-                .children(live.progress(now).map(|p| {
-                    div()
-                        .absolute()
-                        .inset_0()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(components::progress_ring(
-                            &theme,
-                            ACTIVITY_RING_PX,
-                            ACTIVITY_RING_STROKE,
-                            p,
-                        ))
-                }))
-                .child(middle)
-                .on_click(cx.listener(move |this, _, _, cx| this.open_activity(live.clone(), cx)))
+                let key = activity_key(&live);
+                let t = if leaving {
+                    enter.progress_out(&key, now_at)
+                } else {
+                    enter.progress(&key, 2 + i, now_at)
+                };
+                let button = components::round_button(&theme, key, tooltip, Variant::Default)
+                    .flex_none()
+                    .relative()
+                    .children(live.progress(now).map(|p| {
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(components::progress_ring(
+                                &theme,
+                                ACTIVITY_RING_PX,
+                                ACTIVITY_RING_STROKE,
+                                p,
+                            ))
+                    }))
+                    .child(middle)
+                    .on_click(
+                        cx.listener(move |this, _, _, cx| this.open_activity(live.clone(), cx)),
+                    );
+                slide_in(t, components::BUTTON_HEIGHT, button)
             })
             .collect();
         let mirror = page_button(
@@ -792,6 +877,33 @@ impl Render for Dashboard {
             i18n::t(cx, "dashboard.now_playing"),
             Page::NowPlaying,
         );
+        let t = if has_media {
+            enter.progress(&media_key, 2 + n_activity, now_at)
+        } else if media_exit {
+            enter.progress_out(&media_key, now_at)
+        } else {
+            Slide::SHOWN
+        };
+        let now_playing = slide_in(t, components::BUTTON_HEIGHT, now_playing);
+        let t = enter.progress(&"dashboard-launcher".into(), 2 + n_activity + media, now_at);
+        let mirror = slide_in(t, components::BUTTON_HEIGHT, mirror);
+        let menu_t = enter.progress(&"dashboard-menu".into(), 0, now_at);
+        let quick_t = enter.progress(&"dashboard-quick-settings".into(), 1, now_at);
+        let quick_w = quick_settings_width(f32::from(time_width), battery.is_some());
+        // 区切り線は滑り込まず、透明度と幅だけが変わる。
+        let separator_t = if sep_now {
+            enter.progress(&sep_key, stream_slot, now_at)
+        } else if sep_exit {
+            enter.progress_out(&sep_key, now_at)
+        } else {
+            Slide::SHOWN
+        };
+        // 出ているボタンが動いている間は、次のフレームも描く。
+        self.enter = enter;
+        let scrolling = self.enter.follow_scroll(&self.scroll, now_at);
+        if self.enter.finish() || scrolling {
+            components::keep_drawing(window, cx);
+        }
         let menu = components::icon_button(
             &theme,
             "dashboard-menu",
@@ -804,44 +916,50 @@ impl Render for Dashboard {
             },
         )
         .on_click(cx.listener(|this, _, _, cx| this.toggle_menu(cx)));
-        components::card_panel(&theme)
-            .rounded(px(design::radius::FULL))
-            .flex()
-            .items_center()
-            .gap(px(spacing::SM))
-            .px(px(spacing::SM))
-            .child(menu)
-            .child(
-                components::content_button(
-                    &theme,
-                    "dashboard-quick-settings",
-                    variant(Page::QuickSettings),
-                )
-                .px(px(spacing::XL))
-                // 数字で幅が変わって落ち着かないので、時刻の幅を固定する。
-                .child(fixed_clock(time_width))
-                .tooltip(i18n::t(cx, "dashboard.quick_settings"))
-                .children(battery.map(|b| design::icon(battery_glyph(&b)).size(px(font_size::LG))))
-                .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
+        let menu = slide_in(menu_t, components::BUTTON_HEIGHT, menu);
+        let quick = slide_in(
+            quick_t,
+            quick_w,
+            components::content_button(
+                &theme,
+                "dashboard-quick-settings",
+                variant(Page::QuickSettings),
             )
-            // 進行中の作業の知らせは、クイック設定と再生中の間。
-            .children(activities)
-            // 何か再生しているときだけ、再生中の画面のボタンを出す。
-            .when(has_media, |d| d.child(now_playing))
-            .child(mirror)
-            .when(!streams.is_empty(), |d| d.child(separator(&theme)))
-            // 開いた配信はここに溜まり、はみ出すと横にスクロールする。
+            .px(px(spacing::XL))
+            // 数字で幅が変わって落ち着かないので、時刻の幅を固定する。
+            .child(fixed_clock(time_width))
+            .tooltip(i18n::t(cx, "dashboard.quick_settings"))
+            .children(battery.map(|b| design::icon(battery_glyph(&b)).size(px(font_size::LG))))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
+        );
+        // 左から: メニュー・クイック設定・進行中の作業（クイック設定と再生中の間）・再生中（何か再生しているときだけ）・
+        // ランチャー・区切り線と、開いた配信。
+        let mut items: Vec<AnyElement> = vec![menu.into_any_element(), quick.into_any_element()];
+        items.extend(activities.into_iter().map(IntoElement::into_any_element));
+        if self.prev_media {
+            items.push(now_playing.into_any_element());
+        }
+        items.push(mirror.into_any_element());
+        if self.prev_sep {
+            items.push(fade_in(separator_t, SEPARATOR_W, separator(&theme)).into_any_element());
+        }
+        items.extend(streams.into_iter().map(IntoElement::into_any_element));
+        // 窓は固定の幅だが、バーは中身の幅に収めて中央に置く（[`MAX_BAR_PX`] を超えそうなら、そこで頭打ちにして横にスクロール）。
+        div()
+            .absolute()
+            .inset(px(components::PANEL_MARGIN))
+            .flex()
+            .justify_center()
             .child(
-                div()
-                    .id("dashboard-streams")
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .overflow_x_scroll()
-                    .flex()
-                    .items_center()
-                    .gap(px(spacing::SM))
-                    .children(streams),
+                fit_bar(
+                    &theme,
+                    "dashboard-bar",
+                    &self.scroll,
+                    self.enter.peak(),
+                    Some(MAX_BAR_PX),
+                    items,
+                )
+                .debug_selector(|| "dashboard-bar".into()),
             )
     }
 }
@@ -1701,7 +1819,8 @@ impl Screen {
             if !nyapps.is_empty() {
                 l.push_tiles(nyapps);
             } else if self.nyapps_pending {
-                l.rows.push(LauncherRow::Loading(i18n::t(cx, "dashboard.loading")));
+                l.rows
+                    .push(LauncherRow::Loading(i18n::t(cx, "dashboard.loading")));
             } else if self.nyapps.is_empty() {
                 let dir = nyapp::installed::dir()
                     .map(|d| d.display().to_string())
@@ -3766,6 +3885,81 @@ mod tests {
                 "{button} は右端: {b:?} / {width:?}"
             );
         }
+    }
+
+    /// 滑り込みの間の幅の計算（クイック設定の自然な幅）が、出きったときの実際の幅と合う。合わないと出きる瞬間に飛ぶ。
+    #[gpui::test]
+    fn quick_settings_width_matches_the_laid_out_button(cx: &mut TestAppContext) {
+        for with_battery in [false, true] {
+            let (_bar, cx) = cx.add_window_view(|_, cx| {
+                cx.default_global::<PanelControl>().batteries = if with_battery {
+                    vec![battery(0.9, false)]
+                } else {
+                    vec![]
+                };
+                Dashboard::new(1, summon, summon, cx)
+            });
+            cx.run_until_parked();
+            let time = cx.update(|window, _| clock_width(window, font_size::MD));
+            let actual = f32::from(
+                cx.debug_bounds("dashboard-quick-settings")
+                    .unwrap()
+                    .size
+                    .width,
+            );
+            let expected = quick_settings_width(f32::from(time), with_battery);
+            assert!(
+                (actual - expected).abs() <= 1.0,
+                "電池 {with_battery}: {actual} / {expected}"
+            );
+        }
+    }
+
+    /// 配信が溜まって最大幅を超えそうでも、バーはそこで頭打ちになり、横にスクロールできる。
+    #[gpui::test]
+    fn bar_stops_at_the_max_width_and_scrolls(cx: &mut TestAppContext) {
+        let (bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+            Dashboard::new(1, summon, summon, cx)
+        });
+        bar.update(cx, |d, cx| {
+            for id in 4..16 {
+                d.add_stream(
+                    id,
+                    SourceKind::Window,
+                    format!("W{id}").into(),
+                    None,
+                    false,
+                    cx,
+                );
+            }
+        });
+        cx.run_until_parked();
+        let width = f32::from(cx.debug_bounds("dashboard-bar").unwrap().size.width);
+        assert!(width <= MAX_BAR_PX + 1.0, "頭打ち: {width}");
+        assert!(bar.read_with(cx, |d, _| d.scroll.max_offset().x) > px(0.0));
+    }
+
+    /// バーは窓いっぱいに広がらず、中身の幅に収まって中央に置かれる。
+    #[gpui::test]
+    fn bar_fits_its_contents_and_is_centered(cx: &mut TestAppContext) {
+        let (_bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
+        cx.run_until_parked();
+        let width = cx.update(|window, _| window.viewport_size().width);
+        let (first, last) = (
+            cx.debug_bounds("dashboard-menu").unwrap(),
+            cx.debug_bounds("dashboard-launcher").unwrap(),
+        );
+        let content = last.right() - first.left();
+        assert!(
+            content < width * 0.8,
+            "窓いっぱいに広がらない: {content:?} / {width:?}"
+        );
+        let (left, right) = (first.left(), width - last.right());
+        assert!(
+            (left - right).abs() <= px(2.0),
+            "中央に置く: {left:?} / {right:?}"
+        );
     }
 
     #[gpui::test]
