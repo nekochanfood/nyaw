@@ -512,6 +512,7 @@ impl RenderOnce for Button {
             .bg(rgba(color))
             .children(wave)
             .on_mouse_move(move |_, w, cx| {
+                hover_cue(&move_id, w, cx);
                 if let Some(tip) = &move_tip {
                     hover_tooltip(
                         move_id.clone(),
@@ -524,12 +525,16 @@ impl RenderOnce for Button {
                 }
             })
             .on_hover(move |h, w, cx| {
+                if *h {
+                    hover_cue(&id, w, cx);
+                }
                 if let Some(tip) = &tip {
                     hover_tooltip(id.clone(), tip.clone(), owner.clone(), *h, w, cx);
                 }
                 if *h { over(w, cx) } else { leave(w, cx) }
             })
             .on_mouse_down(MouseButton::Left, move |e, w, cx| {
+                cue(Cue::Click, w, cx);
                 if enabled {
                     press.update(cx, |s, _| {
                         s.ripple = Some((e.position, crate::drive::now()))
@@ -543,6 +548,72 @@ impl RenderOnce for Button {
 }
 
 pub use crate::drive::keep_drawing;
+
+/// 押せる要素の効果音の種類。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Cue {
+    Hover,
+    Click,
+}
+
+/// 押せる要素が鳴らしてほしい効果音の要求（GPUI のグローバル）。ウィンドウごとに、種類と鳴らす点（ウィンドウのピクセル）。
+/// 入力を配送した直後に UI 層が取り出し、そのパネルのスピーカーへ渡す。
+#[derive(Default)]
+pub struct Cues(pub Vec<(gpui::WindowId, Cue, Point<Pixels>)>, [Option<Instant>; 2]);
+impl gpui::Global for Cues {}
+
+/// 手ごとの、ホバー中の要素（ウィンドウごと）。GPUI のホバーはウィンドウに一つで、片手が押している間などは入る・出るが
+/// 届かないので、手ごとの移動（`on_mouse_move`）で見る。`now` はこの移動で指している要素、`prev` は一つ前の移動のもの。
+/// 前の移動で指していなかった要素に入ったときだけ鳴らす。
+#[derive(Default)]
+struct HoverCues {
+    now: std::collections::HashMap<(gpui::WindowId, u8), SharedString>,
+    prev: std::collections::HashMap<(gpui::WindowId, u8), SharedString>,
+}
+impl gpui::Global for HoverCues {}
+
+/// 手 `hand`（0 = 左、1 = 右）の移動を配送する前に呼ぶ。
+pub fn begin_hover_cue(window: &Window, hand: u8, cx: &mut App) {
+    let key = (window.window_handle().window_id(), hand);
+    let c = cx.default_global::<HoverCues>();
+    c.prev.remove(&key);
+    if let Some(id) = c.now.remove(&key) {
+        c.prev.insert(key, id);
+    }
+}
+
+fn hover_cue(id: &SharedString, window: &Window, cx: &mut App) {
+    let w = window.window_handle().window_id();
+    let source = cx.default_global::<TooltipSource>();
+    // 配送が終わった後の GPUI の通知には、どの手が動いたかの情報が無い。
+    if source.0.is_none() && source.1.contains(&w) {
+        return;
+    }
+    let key = (w, source.0.unwrap_or(1));
+    let c = cx.default_global::<HoverCues>();
+    if c.now.get(&key) == Some(id) {
+        return;
+    }
+    c.now.insert(key, id.clone());
+    if c.prev.get(&key) != Some(id) {
+        cue(Cue::Hover, window, cx);
+    }
+}
+
+/// 同じ種類の音の最短の間隔（秒）。続けて鳴ると聞こえが悪くなる。
+const CUE_GAP: f32 = 0.05;
+
+fn cue(kind: Cue, window: &Window, cx: &mut App) {
+    let id = window.window_handle().window_id();
+    let now = crate::drive::now();
+    let cues = cx.default_global::<Cues>();
+    let last = &mut cues.1[kind as usize];
+    if last.is_some_and(|t| now.saturating_duration_since(t).as_secs_f32() < CUE_GAP) {
+        return;
+    }
+    *last = Some(now);
+    cues.0.push((id, kind, window.mouse_position()));
+}
 
 /// 円の進み具合: 一辺 `size` px・太さ `stroke` px の線の輪。溝（`groove`）の上に、上から時計回りに `progress`（0〜1）
 /// だけアクセントの色で満ちる。中身（残り時間など）は呼び出し側が `relative` の親で重ねる。
