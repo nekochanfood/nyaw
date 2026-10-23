@@ -445,10 +445,10 @@ mod tests {
         let (mut e, t0) = (Entering::default(), Instant::now());
         let done = t0 + Duration::from_secs(2);
         e.begin(false, t0);
-        e.progress(&key("a"), 0, t0).rise;
+        e.progress(&key("a"), 0, t0);
         e.finish();
         e.begin(false, done);
-        e.progress(&key("a"), 0, done).rise;
+        e.progress(&key("a"), 0, done);
         e.finish();
         e.begin(false, done);
         assert_eq!(e.progress(&key("a"), 0, done).rise, 1.0);
@@ -461,7 +461,7 @@ mod tests {
         e.finish();
         // 消えて、また足された。
         e.begin(false, mid);
-        e.progress(&key("a"), 0, mid).rise;
+        e.progress(&key("a"), 0, mid);
         e.finish();
         e.begin(false, mid);
         assert_eq!(e.progress(&key("b"), 1, mid).rise, 0.0);
@@ -473,13 +473,13 @@ mod tests {
         let (mut e, t0) = (Entering::default(), Instant::now());
         let done = t0 + Duration::from_secs(2);
         e.begin(false, t0);
-        e.progress(&key("a"), 0, t0).rise;
+        e.progress(&key("a"), 0, t0);
         e.finish();
         e.begin(false, done);
         assert_eq!(e.progress(&key("a"), 0, done).rise, 1.0);
         e.finish();
         e.begin(true, done);
-        e.progress(&key("a"), 0, done).rise;
+        e.progress(&key("a"), 0, done);
         e.finish();
         e.begin(false, done);
         assert_eq!(e.progress(&key("a"), 0, done).rise, 0.0);
@@ -494,7 +494,7 @@ mod tests {
         for now in [t0, done] {
             e.begin(false, now);
             for (i, k) in keys.iter().enumerate() {
-                e.progress(k, i, now).rise;
+                e.progress(k, i, now);
             }
             e.finish();
         }
@@ -506,8 +506,8 @@ mod tests {
         let out = e.progress_out(&key("b"), mid).rise;
         assert!(out > 0.0, "途中: {out}");
         e.begin(false, mid);
-        e.progress(&key("a"), 0, mid).rise;
-        e.progress(&key("c"), 2, mid).rise;
+        e.progress(&key("a"), 0, mid);
+        e.progress(&key("c"), 2, mid);
         assert!(e.finish(), "消えている間は次のフレームも描く");
         // 終われば、並びから外れる。
         let end = done + Duration::from_secs(2);
