@@ -7,6 +7,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 層 | クレート | 責務 | 主な公開 API |
 |---|---|---|---|
 | - | `crates/logger` | logfmt 形式の構造化ロガー（横断）。整形・レベル・出力先 `Sink` の抽象と、`log` クレート（gpui 等）からの橋渡し | `trace!/debug!/info!/warn!/error!`, `Logger`, `Sink`, `StderrSink`, `FileSink`, `create_rotated`, `init`, `format` |
+| - | `crates/animation` | 動きの責務。用途 `Motion`（長さとイージングを決める。長さは design の `tokens.json` の `duration-ms`）、毎フレーム進める `Animation`、始めた時刻と今から値を引く `Transition`、ボタンの滑り込みの `Pair` / `Slide`。GPUI にも `design` にも依存しない（境界は `tests/boundaries.rs`）。時刻を読む・再描画を要求する・何を動かすか決めるのは呼び出し側（`design` の部品、`overlay`）。イージングの式はここにだけ書く | `Motion::{duration_ms, ease}`, `Animation::{new, advance, value, is_done}`, `Transition::{rest, go, at}`, `Pair`, `Slide`, `duration_ms` |
 | カーネル最下部 / Subsystems | `crates/subsystems` | OS・ランタイム・コントローラ入力・描画の差を吸収。ランタイムと入力履歴を所有し、上位には生入力のない共通フレームを渡す。設定・パネル管理・UI には依存しない | `Subsystems::{with_backend, poll}`, `Frame`, `ControllerState`, `os`, `rendering` |
 | カーネル / Subsystems / OS | `crates/subsystems/os` | 保存先、ランタイム検出、タイマー精度・GPU 優先度を提供。現在は Windows バックエンドを実装。OS の一般的な `#[cfg]` はここに書く（描画固有は `rendering`） | `config_dir`, `log_dir`, `data_dir`（ニャプリのパッケージと保存領域）, `precise_timers`, `high_gpu_priority`, `openvr_paths_file`, `openxr_runtime_manifest` |
 | カーネル / Subsystems / ランタイム | `crates/subsystems/vr` | OpenVR / OpenXR / novr の差を吸収。`Subsystems` が `VrBackend` を所有し、上位は共通フレームを受け取る。novr はデスクトップのウィンドウで VR を模すエミュレーター | `connect`, `VrBackend`, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`。`hands` に骨格、`batteries` に電池の残量 `Battery`（OpenVR は 5 秒ごとに読み直す。OpenXR は標準の手段が無く空、novr は固定の模擬値））, `Device`, `RawController`, `HandSkeleton`（スケルタル入力。関節 `JOINT_COUNT` = 26 は OpenXR の並び、`joint_parent`, `TIPS`, `pinch_distance`。OpenXR は XR_EXT_hand_tracking、OpenVR は骨格のアクション。novr には無い）, `mock::MockBackend`（`test-support` フィーチャー時のみ） |
@@ -37,7 +38,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 描画に必要な OS 分岐は `rendering` に集約する（`gpui` フィーチャー。`kernel/rendering-host` → `subsystems/rendering-host` で有効にし、下位だけのテストではホスト依存を不要にする）。入力変換・画面の構築とイベントループの進行は UI が担う。ランタイム固有の Vulkan 転送・novr 合成は `vr` に残り、`rendering` が `VrBackend` を通して利用する。
 UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
 `logger` は例外で、どの層からも直接依存してよい唯一の横断クレート（`logger` 自身は他の自前クレートに依存しない）。
-`design` の値（Constants）と動き（`design::animation`）は GPUI を持たない（`gpui` フィーチャーを外した `design`）ので、`overlay` がパネルの表示アニメーションと影の余白に使ってよい。部品・テーマのグローバルなど GPUI のものは UI 層から上だけ。
+`design` の値（Constants）と動き（`animation` クレート。`design::animation` で再エクスポート）は GPUI を持たない（`gpui` フィーチャーを外した `design`）ので、`overlay` がパネルの表示アニメーションと影の余白に使ってよい。部品・テーマのグローバルなど GPUI のものは UI 層から上だけ。
 `kernel` は `subsystems` を再エクスポートしているが、上位が使ってよいのは型（語彙）とデータ（配列の表など）まで。OS・ランタイムへの副作用（入力の注入・送信）は `PanelCommand` でカーネルに頼む（画面からカーネル本体には届かないので、`PanelControl` に積む）。
 
 ## ログ
