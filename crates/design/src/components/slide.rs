@@ -255,7 +255,8 @@ fn reveal(s: Slide, width: f32, rise: bool, child: impl IntoElement) -> Div {
                 // 隣との隙間。出きったら自然な幅の一部になり、開く間は枠が狭くて切られる。
                 .mr(px(spacing::SM))
                 .when(rise, |d| d.top(px(BUTTON_HEIGHT * (1.0 - s.rise))))
-                .opacity(if rise { s.rise.clamp(0.0, 1.0) } else { w })
+                // 透明度は幅と同じ動きにして、カプセルの伸び縮みと足並みを揃える（縦のずれだけが行き過ぎる）。
+                .opacity(w)
                 .child(child),
         )
 }
