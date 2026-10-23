@@ -1,6 +1,6 @@
 # crates/kernel
 
-層: カーネル
+層: 3 カーネル
 
 設定・フレーム進行・パネル操作を束ねる。最下部の Subsystems の上に位置し、UI・画面はカーネルだけを見る。設定は `subsystems::os::config_dir()/config.toml`（アプリ全体の設定はパネルの操作 `PanelCommand` と分け、`Kernel::set(Setting)` で変えて `Kernel::settings()` で読む。`theme = "dark" | "light"` は `Setting::Theme`、`language = "en" | "ja"` は `Setting::Language`、`pointer_smoothing`（レーザーの手ブレ抑え。0〜0.998、既定 `overlay::POINTER_SMOOTHING` = 上限の 0.998）は `Setting::PointerSmoothing`、`pointer_release_deg`（抑えたレーザーがこの角度だけ手から遅れると抑えが半分になる。0.5〜45°、既定 11.25°）は `Setting::PointerRelease`、`laser_length`（レーザーの見える長さ m。0.05〜1.5、既定 0.3）は `Setting::LaserLength` で切り替えると書き戻され、次回起動に残る。`ui::sync_settings` が `design::Mode` のグローバルに反映し、画面は `Theme::current(cx)` で引く）。OS への入力（配信のタッチ・仮想キーボードのキー）はどちらもカーネル経由（`PanelCommand::Stream` / `PanelCommand::TypeToOs`）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル）
 

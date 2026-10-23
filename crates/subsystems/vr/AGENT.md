@@ -1,6 +1,6 @@
 # crates/subsystems/vr
 
-層: カーネル / Subsystems / ランタイム
+層: 1 Subsystems
 
 OpenVR / OpenXR / novr の差を吸収。`Subsystems` が `VrBackend` を所有し、上位は共通フレームを受け取る。novr はデスクトップのウィンドウで VR を模すエミュレーター
 

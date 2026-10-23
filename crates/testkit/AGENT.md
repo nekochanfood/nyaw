@@ -1,6 +1,6 @@
 # crates/testkit
 
-層: -
+層: T テスト
 
 Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット
 

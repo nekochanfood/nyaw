@@ -1,6 +1,6 @@
 # crates/subsystems/os
 
-層: カーネル / Subsystems / OS
+層: 1 Subsystems
 
 保存先、ランタイム検出、タイマー精度・GPU 優先度を提供。現在は Windows バックエンドを実装。OS の一般的な `#[cfg]` はここに書く（描画固有は `rendering`）
 

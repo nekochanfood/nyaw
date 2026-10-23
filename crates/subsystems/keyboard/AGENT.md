@@ -1,6 +1,6 @@
 # crates/subsystems/keyboard
 
-層: カーネル / Subsystems / キーボード
+層: 1 Subsystems
 
 仮想キーボードの配列データ（xkeyboard-config）・文字・トグル状態。OS には触らない（OS への入力は `os::keyboard`）
 

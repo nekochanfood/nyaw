@@ -1,6 +1,6 @@
 # crates/subsystems/audio
 
-層: カーネル / Subsystems / 音声
+層: 1 Subsystems
 
 OS の音声出力（cpal）・WAV の読み込み・Steam Audio による立体化（HRTF）。出力・ミックス・立体化は別スレッドで、メインスレッドは命令を送るだけ。音は「スピーカー」（音源）から鳴る
 

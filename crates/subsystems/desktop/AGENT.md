@@ -1,6 +1,6 @@
 # crates/subsystems/desktop
 
-層: カーネル / Subsystems / 配信
+層: 1 Subsystems
 
 画面・ウィンドウの取得元の一覧・画像取得・OS タッチ注入（「画面・ウィンドウ配信」）
 

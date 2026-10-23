@@ -1,6 +1,6 @@
 # crates/subsystems/rendering
 
-層: カーネル / Subsystems / 描画
+層: 1 Subsystems
 
 GPUI の非表示描画先・読み戻し・描画密度と OS 差、ランタイムへの画像転送・不透明度 / 相対追従の能力差・描画資源の保持と解放。UI は `kernel::rendering` 経由で使う
 
