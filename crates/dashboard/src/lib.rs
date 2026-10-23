@@ -621,21 +621,19 @@ impl Render for Menu {
             let spec = quit_dialog_spec(panel, window, cx);
             cx.default_global::<PanelControl>().spawns.push(spec);
         });
-        components::card_panel(&theme)
-            .rounded(px(design::radius::LG))
-            .child(components::menu(
-                &theme,
-                [
-                    item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug),
-                    item(
-                        "menu-settings",
-                        &icons::GEAR,
-                        "dashboard.settings",
-                        Page::Settings,
-                    ),
-                    quit,
-                ],
-            ))
+        components::card_panel(&theme).child(components::menu(
+            &theme,
+            [
+                item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug),
+                item(
+                    "menu-settings",
+                    &icons::GEAR,
+                    "dashboard.settings",
+                    Page::Settings,
+                ),
+                quit,
+            ],
+        ))
     }
 }
 

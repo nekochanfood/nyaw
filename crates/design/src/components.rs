@@ -1044,13 +1044,13 @@ pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
 /// メニューの外側の余白（カードの縁と行のあいだ）。
 pub const MENU_PADDING: f32 = spacing::SM;
 
-/// メニューの行（[`menu_item`]）を縦に並べる。区切り線は引かず、行は余白を挟んで角を丸め、ホバー・押下のときだけ沈む。
+/// メニューの行（[`menu_item`]）を縦に並べる。区切り線は引かず、行はカード（`XL`）と同心の角丸にし、ホバー・押下のときだけ沈む。
 pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
-    card(theme)
-        .flex()
-        .flex_col()
-        .p(px(MENU_PADDING))
-        .children(items.into_iter().map(|b| b.rounded(px(radius::MD))))
+    card(theme).flex().flex_col().p(px(MENU_PADDING)).children(
+        items
+            .into_iter()
+            .map(|b| b.rounded(px(radius::XL - MENU_PADDING))),
+    )
 }
 
 /// ダイアログのアイコンの大きさ。
