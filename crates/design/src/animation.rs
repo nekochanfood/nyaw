@@ -18,14 +18,18 @@ pub enum Motion {
     Move,
     /// 移動と大きさの変化が続く、形の移り変わり（ease-in-out。段が多いので一番遅い長さ）。
     Morph,
+    /// ボタンが滑り込む。少し行き過ぎてから収まる（ease-out-back）。
+    SlideIn,
+    /// ボタンが滑り出る。少し逆に引いてから離れる（ease-in-back。消えるときと同じ長さ）。
+    SlideOut,
 }
 
 impl Motion {
     pub const fn duration_ms(self) -> u64 {
         match self {
             Motion::Enter => duration_ms::NORMAL,
-            Motion::Exit | Motion::Return => duration_ms::QUICK,
-            Motion::Move => duration_ms::NORMAL,
+            Motion::Exit | Motion::Return | Motion::SlideOut => duration_ms::QUICK,
+            Motion::Move | Motion::SlideIn => duration_ms::NORMAL,
             Motion::Morph => duration_ms::SLOW,
         }
     }
@@ -35,6 +39,8 @@ impl Motion {
             Motion::Enter | Motion::Return => Easing::EaseOutCubic,
             Motion::Exit => Easing::EaseInCubic,
             Motion::Move | Motion::Morph => Easing::EaseInOutCubic,
+            Motion::SlideIn => Easing::EaseOutBack,
+            Motion::SlideOut => Easing::EaseInBack,
         }
     }
 }
@@ -81,6 +87,22 @@ mod tests {
         assert!(mid > 0.0 && mid < 1.0);
         assert_eq!(a.advance(1.0), 1.0);
         assert!(a.is_done());
+    }
+
+    #[test]
+    fn slide_overshoots_both_ways_and_settles() {
+        let (mut i, mut o) = (
+            Animation::new(0.0, 1.0, Motion::SlideIn),
+            Animation::new(1.0, 0.0, Motion::SlideOut),
+        );
+        let (mut max_in, mut max_out) = (0.0f32, 0.0f32);
+        for _ in 0..100 {
+            max_in = max_in.max(i.advance(0.005));
+            max_out = max_out.max(o.advance(0.005));
+        }
+        assert!(max_in > 1.0, "入りは行き過ぎる: {max_in}");
+        assert!(max_out > 1.0, "出は一度引く: {max_out}");
+        assert_eq!((i.value(), o.value()), (1.0, 0.0));
     }
 
     #[test]
