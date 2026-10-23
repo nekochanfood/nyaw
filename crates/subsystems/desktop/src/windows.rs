@@ -555,7 +555,8 @@ impl Capture {
         };
         create(D3D_DRIVER_TYPE_HARDWARE, &mut device, &mut context)
             .or_else(|_| create(D3D_DRIVER_TYPE_WARP, &mut device, &mut context))?;
-        let device: ID3D11Device = device.ok_or_else(|| Error(super::failure::D3D_DEVICE.into()))?;
+        let device: ID3D11Device =
+            device.ok_or_else(|| Error(super::failure::D3D_DEVICE.into()))?;
         let context = context.ok_or_else(|| Error(super::failure::D3D_CONTEXT.into()))?;
         let dxgi: IDXGIDevice = device.cast()?;
         let direct: IDirect3DDevice =
