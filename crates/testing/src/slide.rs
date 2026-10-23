@@ -75,6 +75,9 @@ impl Render for SlideTest {
                 )
             })
             .collect();
+        if let Some(ix) = self.enter.take_fresh() {
+            self.scroll.scroll_to_item(ix);
+        }
         if self.enter.finish() {
             components::keep_drawing(window, cx);
         }
@@ -163,7 +166,7 @@ impl Render for SlideTest {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Modifiers, TestAppContext, VisualTestContext};
+    use gpui::{Entity, Modifiers, TestAppContext, VisualTestContext};
     use std::time::Duration;
 
     fn settle(cx: &mut VisualTestContext) {
@@ -252,9 +255,41 @@ mod tests {
             "頭打ち: {}",
             bar_width(cx)
         );
+        assert_eq!(
+            view.read_with(cx, |v, _| v.scroll.max_offset().y),
+            px(0.0),
+            "縦にはあふれない"
+        );
         assert!(
             view.read_with(cx, |v, _| v.scroll.max_offset().x) > px(0.0),
             "あふれた分はスクロールできる"
         );
+    }
+
+    fn offset_x(view: &Entity<SlideTest>, cx: &mut VisualTestContext) -> f32 {
+        -f32::from(view.read_with(cx, |v, _| v.scroll.offset().x))
+    }
+
+    /// 足したボタンの場所までスクロールする（末尾に足せば末尾へ、先頭に足せば先頭へ）。
+    #[gpui::test]
+    fn bar_scrolls_to_a_newly_added_button(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| SlideTest::new(1));
+        cx.run_until_parked();
+        settle(cx);
+        for _ in 0..6 {
+            click(cx, "slide-add");
+        }
+        settle(cx);
+        settle(cx);
+        let max = f32::from(view.read_with(cx, |v, _| v.scroll.max_offset().x));
+        assert!(max > 0.0);
+        let at = offset_x(&view, cx);
+        assert!((at - max).abs() <= 1.0, "末尾へ: {at} / {max}");
+        click(cx, "slide-add-first");
+        settle(cx);
+        settle(cx);
+        let at = offset_x(&view, cx);
+        // 先頭のボタンの左は、バーの左の余白の分だけ内側にある。
+        assert!(at.abs() <= spacing::SM + 1.0, "先頭へ: {at}");
     }
 }

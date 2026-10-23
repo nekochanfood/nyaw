@@ -21,9 +21,9 @@ pub enum Motion {
     Move,
     /// 移動と大きさの変化が続く、形の移り変わり（ease-in-out。段が多いので一番遅い長さ）。
     Morph,
-    /// ボタンが滑り込む。少し行き過ぎてから収まる（ease-out-back）。
+    /// ボタンが滑り込む。鋭く立ち上がって行き過ぎ、収まる（ease-out-back より強い cubic-bezier）。
     SlideIn,
-    /// ボタンが滑り出る。少し逆に引いてから離れる（ease-in-back。滑り込みと同じ長さ）。
+    /// ボタンが滑り出る。大きく逆に引いてから加速して離れる（ease-in-back より強い cubic-bezier。滑り込みと同じ長さ）。
     SlideOut,
     /// ボタンの幅が開く・閉じる。行き過ぎず、すぐ動き出して滑らかに止まる（ease-out。滑り込みと同じ長さ）。
     Grow,
@@ -45,8 +45,10 @@ impl Motion {
             Motion::Enter | Motion::Return | Motion::Grow => Easing::EaseOutCubic,
             Motion::Exit => Easing::EaseInCubic,
             Motion::Move | Motion::Morph => Easing::EaseInOutCubic,
-            Motion::SlideIn => Easing::EaseOutBack,
-            Motion::SlideOut => Easing::EaseInBack,
+            // 立ち上がりが鋭く、2 割ほど行き過ぎてから収まる（標準の ease-out-back は 1 割ほどで、短い間だと直線に見える）。
+            Motion::SlideIn => Easing::CubicBezier(0.2, 1.9, 0.3, 1.0),
+            // 一度大きく引いてから、加速して離れる。
+            Motion::SlideOut => Easing::CubicBezier(0.7, -0.7, 0.8, 0.0),
         }
     }
 }

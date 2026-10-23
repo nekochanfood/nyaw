@@ -95,6 +95,9 @@ pub struct Entering {
     /// このフレームに出ていたボタンのうち一番開いたものの出具合と、前のフレームの分（[`Entering::peak`]）。
     frame_max: f32,
     peak: f32,
+    /// 足されたばかりのボタンが開き終わるまで、それを追いかけてスクロールするための印: そのボタンと、このフレームの位置。
+    follow: Option<SharedString>,
+    fresh: Option<usize>,
     /// 動かさない（出きった状態で描く）。画面のテストが、動いている途中のボタンを押さないように。
     off: bool,
 }
@@ -130,7 +133,7 @@ impl Entering {
         self.last = Some(now);
     }
 
-    /// このフレームの `key` のボタン（左から数えて `slot` 番目）の出具合。
+    /// このフレームの `key` のボタン（左から数えて `slot` 番目。バーの子の番号と同じ）の出具合。
     pub fn progress(&mut self, key: &SharedString, slot: usize, now: Instant) -> Slide {
         let s = self.step(key, slot, now);
         self.frame_max = self.frame_max.max(s.grow.clamp(0.0, 1.0));
@@ -153,8 +156,17 @@ impl Entering {
                 key.clone(),
                 (Pair::new(0.0, 1.0, Motion::SlideIn, true), start),
             );
+            if !self.revealing {
+                self.follow = Some(key.clone());
+            }
+        }
+        if self.follow.as_ref() == Some(key) {
+            self.fresh = Some(slot);
         }
         let Some((anim, last)) = self.running.get_mut(key) else {
+            if self.follow.as_ref() == Some(key) {
+                self.follow = None;
+            }
             return Slide::SHOWN;
         };
         if now < *last {
@@ -201,6 +213,12 @@ impl Entering {
             self.leaving.remove(key);
         }
         t
+    }
+
+    /// 足されたばかりのボタンの位置（`progress` に渡した `slot`）。開き終わるまで毎フレーム返すので、呼ぶ側はそのたびに
+    /// `ScrollHandle::scroll_to_item` でそこまでスクロールする（開く途中は幅が小さいので、追いかける）。
+    pub fn take_fresh(&mut self) -> Option<usize> {
+        self.fresh.take()
     }
 
     /// 直前の [`Entering::finish`] までのフレームで、一番開いていたボタンの出具合（0 から 1）。
@@ -280,7 +298,8 @@ fn reveal(s: Slide, width: f32, rise: bool, child: impl IntoElement) -> Div {
                 .mr(px(spacing::SM))
                 .when(rise, |d| d.top(px(BUTTON_HEIGHT * (1.0 - s.rise))))
                 // 透明度は縦のずれと同じ動き（入りは幅より [`LAG`] 遅れて、出は幅より [`LAG`] 先に）。
-                .opacity(s.rise.clamp(0.0, 1.0))
+                // 枠がまだ狭いうちは、ボタンの地が細い四角（円の端の切れ端）に見えるので出さない。
+                .opacity(s.rise.clamp(0.0, 1.0) * ((w - 0.4) / 0.6).clamp(0.0, 1.0))
                 .child(child),
         )
 }
@@ -305,7 +324,8 @@ pub fn fit_bar(
         .items_center()
         // 左の余白（右の余白は、末尾のボタンの右の隙間）。棒の長さの基準になる箱の中に取る。
         .pl(px(spacing::SM * grow))
-        .py(px(OVERSHOOT_PAD))
+        // ボタンの枠（上下に余白つき）がちょうど収まる高さ。縦にはあふれない（縦の棒の分を横の棒が譲らない）。
+        .h(px(BUTTON_HEIGHT + 2.0 * OVERSHOOT_PAD))
         .my(px(-OVERSHOOT_PAD))
         .overflow_x_scroll()
         .children(children);

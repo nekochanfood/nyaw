@@ -775,7 +775,7 @@ impl Render for Dashboard {
                 let t = if *leaving {
                     enter.progress_out(&key, now_at)
                 } else {
-                    enter.progress(&key, stream_slot + i, now_at)
+                    enter.progress(&key, stream_slot + 1 + i, now_at)
                 };
                 slide_in(
                     t,
@@ -900,6 +900,9 @@ impl Render for Dashboard {
         };
         // 出ているボタンが動いている間は、次のフレームも描く。
         self.enter = enter;
+        if let Some(ix) = self.enter.take_fresh() {
+            self.scroll.scroll_to_item(ix);
+        }
         if self.enter.finish() {
             components::keep_drawing(window, cx);
         }
