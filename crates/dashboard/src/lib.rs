@@ -11,7 +11,9 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use design::components::slide::{Entering, Slide, fade_in, fit_bar, slide_in, with_leaving};
+use design::components::slide::{
+    Entering, Slide, fade_in, fit_bar, scroll_to_slot, slide_in, with_leaving,
+};
 use design::components::{self, Variant};
 use design::{Theme, font_size, icons, spacing};
 use gpui::{
@@ -901,7 +903,7 @@ impl Render for Dashboard {
         // 出ているボタンが動いている間は、次のフレームも描く。
         self.enter = enter;
         if let Some(ix) = self.enter.take_fresh() {
-            self.scroll.scroll_to_item(ix);
+            scroll_to_slot(&self.scroll, ix);
         }
         if self.enter.finish() {
             components::keep_drawing(window, cx);

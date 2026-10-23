@@ -304,6 +304,15 @@ fn reveal(s: Slide, width: f32, rise: bool, child: impl IntoElement) -> Div {
         )
 }
 
+/// `fit_bar` の `ix` 番目のボタンが見えるところまでスクロールする（先頭は左の余白まで戻る）。
+pub fn scroll_to_slot(scroll: &ScrollHandle, ix: usize) {
+    if ix == 0 {
+        scroll.set_offset(gpui::Point::default());
+    } else {
+        scroll.scroll_to_item(ix);
+    }
+}
+
 /// 中身の幅に収まるカプセルのバー。`grow` はボタンの開き具合（[`Entering::peak`]。開ききったら 1）で、開く前は小さく始まる。中身が `max_width`（px。任意だが、ほぼ指定する）を超えそうなら、そこで頭打ちにして
 /// 横にスクロールでき、スクロールバーが出る。`id` はスクロール要素の id（棒は `{id}-bars-h`）。
 /// 置き場所（中央寄せなど）は呼ぶ側が決める。

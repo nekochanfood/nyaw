@@ -1,5 +1,5 @@
 use super::*;
-use design::components::slide::{Entering, fit_bar, slide_in, with_leaving};
+use design::components::slide::{Entering, fit_bar, scroll_to_slot, slide_in, with_leaving};
 
 /// カプセルの最大幅（px）。ボタンが増えてこれを超えそうなら、横にスクロールする。
 const MAX_BAR_PX: f32 = 360.0;
@@ -76,7 +76,7 @@ impl Render for SlideTest {
             })
             .collect();
         if let Some(ix) = self.enter.take_fresh() {
-            self.scroll.scroll_to_item(ix);
+            scroll_to_slot(&self.scroll, ix);
         }
         if self.enter.finish() {
             components::keep_drawing(window, cx);
@@ -289,7 +289,6 @@ mod tests {
         settle(cx);
         settle(cx);
         let at = offset_x(&view, cx);
-        // 先頭のボタンの左は、バーの左の余白の分だけ内側にある。
-        assert!(at.abs() <= spacing::SM + 1.0, "先頭へ: {at}");
+        assert!(at.abs() <= 1.0, "先頭へ（左の余白まで）: {at}");
     }
 }
