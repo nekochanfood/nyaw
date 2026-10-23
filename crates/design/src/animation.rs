@@ -5,6 +5,9 @@ use animato::{Easing, Tween, Update};
 
 use crate::duration_ms;
 
+/// ボタンの滑り込み・滑り出しの長さ（ms）。
+const SLIDE_MS: u64 = 500;
+
 /// 動きの用途。長さとイージングはここで決まる。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Motion {
@@ -20,7 +23,7 @@ pub enum Motion {
     Morph,
     /// ボタンが滑り込む。少し行き過ぎてから収まる（ease-out-back）。
     SlideIn,
-    /// ボタンが滑り出る。少し逆に引いてから離れる（ease-in-back。消えるときと同じ長さ）。
+    /// ボタンが滑り出る。少し逆に引いてから離れる（ease-in-back。滑り込みと同じ長さ）。
     SlideOut,
 }
 
@@ -28,8 +31,9 @@ impl Motion {
     pub const fn duration_ms(self) -> u64 {
         match self {
             Motion::Enter => duration_ms::NORMAL,
-            Motion::Exit | Motion::Return | Motion::SlideOut => duration_ms::QUICK,
-            Motion::Move | Motion::SlideIn => duration_ms::NORMAL,
+            Motion::Exit | Motion::Return => duration_ms::QUICK,
+            Motion::SlideIn | Motion::SlideOut => SLIDE_MS,
+            Motion::Move => duration_ms::NORMAL,
             Motion::Morph => duration_ms::SLOW,
         }
     }
@@ -97,12 +101,18 @@ mod tests {
         );
         let (mut max_in, mut max_out) = (0.0f32, 0.0f32);
         for _ in 0..100 {
-            max_in = max_in.max(i.advance(0.005));
-            max_out = max_out.max(o.advance(0.005));
+            max_in = max_in.max(i.advance(0.01));
+            max_out = max_out.max(o.advance(0.01));
         }
         assert!(max_in > 1.0, "入りは行き過ぎる: {max_in}");
         assert!(max_out > 1.0, "出は一度引く: {max_out}");
         assert_eq!((i.value(), o.value()), (1.0, 0.0));
+    }
+
+    #[test]
+    fn slide_takes_half_a_second() {
+        assert_eq!(Motion::SlideIn.duration_ms(), 500);
+        assert_eq!(Motion::SlideOut.duration_ms(), 500);
     }
 
     #[test]

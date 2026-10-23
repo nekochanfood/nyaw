@@ -1,5 +1,8 @@
 use super::*;
-use design::components::slide::{Entering, slide_in, with_leaving};
+use design::components::slide::{Entering, fit_bar, slide_in, with_leaving};
+
+/// カプセルの最大幅（px）。ボタンが増えてこれを超えそうなら、横にスクロールする。
+const MAX_BAR_PX: f32 = 360.0;
 
 /// ボタンの滑り込み・滑り出しと、それに合わせて広がる・閉じる幅を試す画面（ダッシュボードのバーと同じ部品）。
 /// 上の操作で丸いボタンを足す・消す・全部出し直す。下のカプセルは中身の幅に収まる（バーと同じ）。
@@ -12,6 +15,7 @@ pub struct SlideTest {
     /// 前のフレームに並べていたもの（消えていくものを含む）。
     prev: Vec<u32>,
     enter: Entering,
+    scroll: ScrollHandle,
 }
 
 impl SlideTest {
@@ -22,6 +26,7 @@ impl SlideTest {
             next: 4,
             prev: Vec::new(),
             enter: Entering::new(false),
+            scroll: ScrollHandle::new(),
         }
     }
 
@@ -57,14 +62,14 @@ impl Render for SlideTest {
             .enumerate()
             .map(|(i, (n, leaving))| {
                 let key = Self::key(*n);
-                let (t, grow) = if *leaving {
-                    (self.enter.progress_out(&key, now), true)
+                let t = if *leaving {
+                    self.enter.progress_out(&key, now)
                 } else {
                     self.enter.progress(&key, i, now)
                 };
                 slide_in(
                     t,
-                    grow,
+                    components::BUTTON_HEIGHT,
                     components::round_button(&theme, key, format!("#{n}"), Variant::Default)
                         .child(n.to_string()),
                 )
@@ -141,15 +146,14 @@ impl Render for SlideTest {
             )
             .child(
                 div().flex().justify_center().child(
-                    components::card_panel_fit(&theme)
-                        .rounded(px(radius::FULL))
-                        .max_w_full()
-                        .flex()
-                        .items_center()
-                        .gap(px(spacing::SM))
-                        .p(px(spacing::SM))
-                        .debug_selector(|| "slide-bar".into())
-                        .children(buttons),
+                    fit_bar(
+                        &theme,
+                        "slide-scroll",
+                        &self.scroll,
+                        Some(MAX_BAR_PX),
+                        buttons,
+                    )
+                    .debug_selector(|| "slide-bar".into()),
                 ),
             )
     }
@@ -163,7 +167,7 @@ mod tests {
 
     fn settle(cx: &mut VisualTestContext) {
         // 動きの長さ（design::duration_ms）を実時間で待つ。
-        std::thread::sleep(Duration::from_millis(600));
+        std::thread::sleep(Duration::from_millis(700));
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
     }
@@ -209,5 +213,27 @@ mod tests {
         cx.run_until_parked();
         assert!(cx.debug_bounds("slide-item-4").is_none(), "終われば外れる");
         assert!((bar_width(cx) - three).abs() <= 1.0, "幅が元に戻る");
+    }
+
+    /// 最大幅を超えそうなら、カプセルはそこで頭打ちになり、横にスクロールできる。
+    #[gpui::test]
+    fn bar_stops_at_the_max_width_and_scrolls(cx: &mut TestAppContext) {
+        let (view, cx) = cx.add_window_view(|_, _| SlideTest::new(1));
+        cx.run_until_parked();
+        settle(cx);
+        assert_eq!(view.read_with(cx, |v, _| v.scroll.max_offset().x), px(0.0));
+        for _ in 0..6 {
+            click(cx, "slide-add");
+        }
+        settle(cx);
+        assert!(
+            bar_width(cx) <= MAX_BAR_PX + 1.0,
+            "頭打ち: {}",
+            bar_width(cx)
+        );
+        assert!(
+            view.read_with(cx, |v, _| v.scroll.max_offset().x) > px(0.0),
+            "あふれた分はスクロールできる"
+        );
     }
 }
