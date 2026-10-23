@@ -60,3 +60,8 @@ harness = false
 [[test]]
 name = "nav_swipe"
 harness = false
+
+# overflow を隠した角丸の要素が、中身を角丸で切るか（gpui の改造: vendor/gpui）を実際の GPU で確かめる。
+[[test]]
+name = "round_clip"
+harness = false

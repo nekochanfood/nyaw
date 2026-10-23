@@ -192,6 +192,9 @@ pub struct Style {
     pub scrollbar_width: AbsoluteLength,
     /// Whether both x and y axis should be scrollable at the same time.
     pub allow_concurrent_scroll: bool,
+    /// NYAW: whether the contents are also clipped to this element's rounded corners (CSS `overflow: hidden` with
+    /// `border-radius`). Only takes effect together with a hidden overflow.
+    pub clip_rounded: bool,
     /// Whether scrolling should be restricted to the input gesture's axis.
     ///
     /// Pixel-based scroll gestures are locked to their initially dominant axis. The lock may be
@@ -646,6 +649,7 @@ impl Style {
                 y: Overflow::Visible,
             } => None,
             _ => {
+                let full = bounds;
                 let mut min = bounds.origin;
                 let mut max = bounds.bottom_right();
 
@@ -679,7 +683,16 @@ impl Style {
                     (false, false) => Bounds::from_corners(min, max),
                 };
 
-                Some(ContentMask { bounds })
+                if self.clip_rounded {
+                    let radii = self
+                        .corner_radii
+                        .to_pixels(rem_size)
+                        .clamp_radii_for_quad_size(full.size);
+                    if radii != Corners::default() {
+                        return Some(ContentMask::rounded(bounds, full, radii));
+                    }
+                }
+                Some(ContentMask::from_bounds(bounds))
             }
         }
     }
@@ -778,6 +791,7 @@ impl Default for Style {
                 y: Overflow::Visible,
             },
             allow_concurrent_scroll: false,
+            clip_rounded: false,
             restrict_scroll_to_axis: false,
             scrollbar_width: AbsoluteLength::default(),
             position: Position::Relative,

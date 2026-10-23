@@ -1,3 +1,9 @@
+# zed の crates/gpui（rev 26363aab）の写し。ワークスペース継承を具体的な指定に展開してある。
+# 変更点（NYAW: の印）:
+# - `ContentMask` が角丸の切り抜き（`round` と `radii`）を持てる。`Styled::clip_rounded()` で、角丸の overflow を隠した要素が
+#   中身をその角丸で切る（シェーダーで 1px ごとに端を削る。vendor/gpui_windows/src/shaders.hlsl）。
+#   経路（Path）は角丸で切らない（四角形のまま）。
+# zed を上げるときは、新しい版を写し直して NYAW: の箇所を当て直す。
 [package]
 name = "gpui"
 version = "0.2.2"

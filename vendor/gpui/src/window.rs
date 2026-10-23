@@ -2224,13 +2224,42 @@ pub struct DispatchEventResult {
 }
 
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
-/// rendered. Currently, only rectangular content masks are supported, but we give the mask its own type
-/// to leave room to support more complex shapes in the future.
+/// rendered. The visible region is a rectangle (`bounds`), optionally further cut to a rounded rectangle
+/// (`round` with `radii`; NYAW: added, the renderer anti-aliases the rounded edge per pixel).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 #[repr(C)]
 pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
     pub bounds: Bounds<P>,
+    /// The rounded rectangle that also clips. Only used when `radii` is not all zero.
+    pub round: Bounds<P>,
+    /// The corner radii of `round`. All zero means no rounded clip.
+    pub radii: Corners<P>,
+}
+
+impl<P: Clone + Debug + Default + PartialEq> ContentMask<P> {
+    /// A rectangular mask without a rounded clip.
+    pub fn from_bounds(bounds: Bounds<P>) -> Self {
+        Self {
+            bounds,
+            round: Bounds::default(),
+            radii: Corners::default(),
+        }
+    }
+
+    /// A rectangular mask also cut to the rounded rectangle `round`.
+    pub fn rounded(bounds: Bounds<P>, round: Bounds<P>, radii: Corners<P>) -> Self {
+        Self {
+            bounds,
+            round,
+            radii,
+        }
+    }
+
+    /// Whether the mask has a rounded clip.
+    pub fn is_rounded(&self) -> bool {
+        self.radii != Corners::default()
+    }
 }
 
 impl ContentMask<Pixels> {
@@ -2238,13 +2267,21 @@ impl ContentMask<Pixels> {
     pub fn scale(&self, factor: f32) -> ContentMask<ScaledPixels> {
         ContentMask {
             bounds: self.bounds.scale(factor),
+            round: self.round.scale(factor),
+            radii: self.radii.scale(factor),
         }
     }
 
     /// Intersect the content mask with the given content mask.
+    /// The rounded clip is a single level: this mask's if it has one, else `other`'s.
     pub fn intersect(&self, other: &Self) -> Self {
         let bounds = self.bounds.intersect(&other.bounds);
-        ContentMask { bounds }
+        let rounded = if self.is_rounded() { self } else { other };
+        ContentMask {
+            bounds,
+            round: rounded.round,
+            radii: rounded.radii,
+        }
     }
 }
 
@@ -3254,6 +3291,7 @@ impl Window {
                         point(start, bounds.top()),
                         point(end, bounds.bottom()),
                     ),
+                    ..underline.content_mask
                 },
                 ..underline
             });
@@ -3325,8 +3363,11 @@ impl Window {
 
     #[inline]
     fn snapped_content_mask(&self) -> ContentMask<ScaledPixels> {
+        let mask = self.content_mask();
+        let scaled = mask.scale(self.scale_factor());
         ContentMask {
-            bounds: self.cover_bounds(self.content_mask().bounds),
+            bounds: self.cover_bounds(mask.bounds),
+            ..scaled
         }
     }
 
@@ -4313,11 +4354,11 @@ impl Window {
         self.content_mask_stack
             .last()
             .cloned()
-            .unwrap_or_else(|| ContentMask {
-                bounds: Bounds {
+            .unwrap_or_else(|| {
+                ContentMask::from_bounds(Bounds {
                     origin: Point::default(),
                     size: self.viewport_size,
-                },
+                })
             })
     }
 
@@ -4742,6 +4783,7 @@ impl Window {
                 self.next_frame.scene.insert_primitive(Quad {
                     content_mask: ContentMask {
                         bounds: content_mask_bounds,
+                        ..quad.content_mask
                     },
                     ..quad
                 });

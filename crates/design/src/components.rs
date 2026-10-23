@@ -479,7 +479,7 @@ impl RenderOnce for Button {
                             Bounds::new(b.origin + point(px(x), px(y)), size(px(w), px(h)))
                         };
                         let mut paint = |mask: Bounds<Pixels>| {
-                            w.with_content_mask(Some(ContentMask { bounds: mask }), |w| {
+                            w.with_content_mask(Some(ContentMask::from_bounds(mask)), |w| {
                                 w.paint_quad(quad.clone())
                             })
                         };

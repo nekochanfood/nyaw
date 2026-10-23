@@ -742,6 +742,12 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Also clips the contents (with a hidden overflow) to this element's rounded corners. NYAW: added.
+    fn clip_rounded(mut self) -> Self {
+        self.style().clip_rounded = Some(true);
+        self
+    }
+
     /// Sets the opacity of this element and its children.
     fn opacity(mut self, opacity: f32) -> Self {
         self.style().opacity = Some(opacity);
