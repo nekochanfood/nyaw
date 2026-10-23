@@ -11,7 +11,7 @@ use std::ops::Range;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use design::components::slide::{Entering, fade_in, fit_bar, slide_in, with_leaving};
+use design::components::slide::{Entering, Slide, fade_in, fit_bar, slide_in, with_leaving};
 use design::components::{self, Variant};
 use design::{Theme, font_size, icons, spacing};
 use gpui::{
@@ -523,8 +523,8 @@ fn activity_key(live: &nyapp::activity::Live) -> SharedString {
     format!("dashboard-activity-{}", live.app.manifest.id).into()
 }
 
-/// バーの最大幅（px）。窓（[`RES_PX`]）より狭く取り、配信などが溜まってこれを超えそうなら、横にスクロールする。
-const MAX_BAR_PX: f32 = 760.0;
+/// バーの最大幅（px）。窓の幅（[`BAR_PX`]）から影の余白を引いたもので、配信などが溜まってこれを超えそうなら、横にスクロールする。
+const MAX_BAR_PX: f32 = BAR_PX.0 as f32 - 2.0 * components::PANEL_MARGIN;
 /// 区切り線の自然な幅（線と両脇の余白）。
 const SEPARATOR_W: f32 = 1.0 + 2.0 * spacing::XS;
 
@@ -882,7 +882,7 @@ impl Render for Dashboard {
         } else if media_exit {
             enter.progress_out(&media_key, now_at)
         } else {
-            1.0
+            Slide::SHOWN
         };
         let now_playing = slide_in(t, components::BUTTON_HEIGHT, now_playing);
         let t = enter.progress(&"dashboard-launcher".into(), 2 + n_activity + media, now_at);
@@ -896,7 +896,7 @@ impl Render for Dashboard {
         } else if sep_exit {
             enter.progress_out(&sep_key, now_at)
         } else {
-            1.0
+            Slide::SHOWN
         };
         // 出ているボタンが動いている間は、次のフレームも描く。
         self.enter = enter;

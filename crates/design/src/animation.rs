@@ -6,7 +6,7 @@ use animato::{Easing, Tween, Update};
 use crate::duration_ms;
 
 /// ボタンの滑り込み・滑り出しの長さ（ms）。
-const SLIDE_MS: u64 = 500;
+const SLIDE_MS: u64 = 350;
 
 /// 動きの用途。長さとイージングはここで決まる。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,6 +25,8 @@ pub enum Motion {
     SlideIn,
     /// ボタンが滑り出る。少し逆に引いてから離れる（ease-in-back。滑り込みと同じ長さ）。
     SlideOut,
+    /// ボタンの幅が開く・閉じる。行き過ぎず、すぐ動き出して滑らかに止まる（ease-out。滑り込みと同じ長さ）。
+    Grow,
 }
 
 impl Motion {
@@ -32,7 +34,7 @@ impl Motion {
         match self {
             Motion::Enter => duration_ms::NORMAL,
             Motion::Exit | Motion::Return => duration_ms::QUICK,
-            Motion::SlideIn | Motion::SlideOut => SLIDE_MS,
+            Motion::SlideIn | Motion::SlideOut | Motion::Grow => SLIDE_MS,
             Motion::Move => duration_ms::NORMAL,
             Motion::Morph => duration_ms::SLOW,
         }
@@ -40,7 +42,7 @@ impl Motion {
 
     fn easing(self) -> Easing {
         match self {
-            Motion::Enter | Motion::Return => Easing::EaseOutCubic,
+            Motion::Enter | Motion::Return | Motion::Grow => Easing::EaseOutCubic,
             Motion::Exit => Easing::EaseInCubic,
             Motion::Move | Motion::Morph => Easing::EaseInOutCubic,
             Motion::SlideIn => Easing::EaseOutBack,
@@ -110,9 +112,23 @@ mod tests {
     }
 
     #[test]
-    fn slide_takes_half_a_second() {
-        assert_eq!(Motion::SlideIn.duration_ms(), 500);
-        assert_eq!(Motion::SlideOut.duration_ms(), 500);
+    fn grow_never_overshoots() {
+        let (mut i, mut o) = (
+            Animation::new(0.0, 1.0, Motion::Grow),
+            Animation::new(1.0, 0.0, Motion::Grow),
+        );
+        for _ in 0..100 {
+            let (a, b) = (i.advance(0.005), o.advance(0.005));
+            assert!((0.0..=1.0).contains(&a) && (0.0..=1.0).contains(&b));
+        }
+        assert_eq!((i.value(), o.value()), (1.0, 0.0));
+    }
+
+    #[test]
+    fn slide_takes_350_ms() {
+        assert_eq!(Motion::SlideIn.duration_ms(), 350);
+        assert_eq!(Motion::SlideOut.duration_ms(), 350);
+        assert_eq!(Motion::Grow.duration_ms(), 350);
     }
 
     #[test]

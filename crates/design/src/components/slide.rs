@@ -6,12 +6,53 @@ use std::time::{Duration, Instant};
 use gpui::{Div, ScrollHandle, SharedString, div, prelude::*, px};
 
 use super::BUTTON_HEIGHT;
+use crate::animation::{Animation, Motion};
 use crate::{Theme, radius, spacing};
 
 /// ボタンを 1 つずつ順に出すときの間隔。
 pub const STAGGER: Duration = Duration::from_millis(40);
 /// これだけ描かれなかったら、隠れていた（出し直した）とみなす。
 const IDLE_GAP: Duration = Duration::from_secs(3);
+
+/// ボタンの出具合。`rise`（縦のずれと透明度。行き過ぎる）と `grow`（幅。行き過ぎない）は別々に動く。1 で出きっている。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Slide {
+    pub rise: f32,
+    pub grow: f32,
+}
+
+impl Slide {
+    pub const GONE: Self = Self {
+        rise: 0.0,
+        grow: 0.0,
+    };
+    pub const SHOWN: Self = Self {
+        rise: 1.0,
+        grow: 1.0,
+    };
+}
+
+/// 縦の動き（行き過ぎる）と幅の動き（行き過ぎない）の組。
+struct Pair {
+    rise: Animation,
+    grow: Animation,
+}
+
+impl Pair {
+    fn new(from: f32, to: f32, rise: Motion) -> Self {
+        Self {
+            rise: Animation::new(from, to, rise),
+            grow: Animation::new(from, to, Motion::Grow),
+        }
+    }
+
+    fn advance(&mut self, dt: f32) -> Slide {
+        Slide {
+            rise: self.rise.advance(dt),
+            grow: self.grow.advance(dt),
+        }
+    }
+}
 
 /// ボタンの出方: 下から上へ滑り込む。ダッシュボードを出すときは、左のボタンから [`STAGGER`] ずつ遅れて順に。
 /// ボタンが足されたときは、それに加えて幅が開いて隣を押し広げる（バーは中身の幅に収まるので、幅も滑らかに変わる）。
@@ -21,11 +62,11 @@ const IDLE_GAP: Duration = Duration::from_secs(3);
 pub struct Entering {
     seen: HashSet<SharedString>,
     /// 動いているボタン: 出具合・始まる時刻（遅れて始めるものは未来）。
-    running: HashMap<SharedString, (crate::animation::Animation, Instant)>,
+    running: HashMap<SharedString, (Pair, Instant)>,
     /// このフレームに描いたボタン。
     touched: HashSet<SharedString>,
     /// 消えていくボタン: 出具合（1 から 0 へ）と、前に進めた時刻。
-    leaving: HashMap<SharedString, (crate::animation::Animation, Instant)>,
+    leaving: HashMap<SharedString, (Pair, Instant)>,
     /// 最後に描いた時刻と、隠れていたか。
     last: Option<Instant>,
     hid: bool,
@@ -66,10 +107,10 @@ impl Entering {
         self.last = Some(now);
     }
 
-    /// このフレームの `key` のボタン（左から数えて `slot` 番目）の出具合（0 から 1。行き過ぎれば少し超える。1 で出きっている）。
-    pub fn progress(&mut self, key: &SharedString, slot: usize, now: Instant) -> f32 {
+    /// このフレームの `key` のボタン（左から数えて `slot` 番目）の出具合。
+    pub fn progress(&mut self, key: &SharedString, slot: usize, now: Instant) -> Slide {
         if self.off {
-            return 1.0;
+            return Slide::SHOWN;
         }
         self.touched.insert(key.clone());
         self.leaving.remove(key);
@@ -79,19 +120,18 @@ impl Entering {
             } else {
                 now
             };
-            let enter =
-                crate::animation::Animation::new(0.0, 1.0, crate::animation::Motion::SlideIn);
-            self.running.insert(key.clone(), (enter, start));
+            self.running
+                .insert(key.clone(), (Pair::new(0.0, 1.0, Motion::SlideIn), start));
         }
         let Some((anim, last)) = self.running.get_mut(key) else {
-            return 1.0;
+            return Slide::SHOWN;
         };
         if now < *last {
-            return 0.0;
+            return Slide::GONE;
         }
         let t = anim.advance(now.duration_since(*last).as_secs_f32());
         *last = now;
-        if anim.is_done() {
+        if anim.grow.is_done() {
             self.running.remove(key);
         }
         t
@@ -106,19 +146,19 @@ impl Entering {
             return false;
         }
         self.running.remove(key);
-        let exit = crate::animation::Animation::new(1.0, 0.0, crate::animation::Motion::SlideOut);
-        self.leaving.insert(key.clone(), (exit, now));
+        self.leaving
+            .insert(key.clone(), (Pair::new(1.0, 0.0, Motion::SlideOut), now));
         true
     }
 
     /// 消えていくボタンの出具合（1 から 0 へ。終われば忘れる）。
-    pub fn progress_out(&mut self, key: &SharedString, now: Instant) -> f32 {
+    pub fn progress_out(&mut self, key: &SharedString, now: Instant) -> Slide {
         let Some((anim, last)) = self.leaving.get_mut(key) else {
-            return 0.0;
+            return Slide::GONE;
         };
         let t = anim.advance(now.saturating_duration_since(*last).as_secs_f32());
         *last = now;
-        if anim.is_done() {
+        if anim.grow.is_done() {
             self.leaving.remove(key);
         }
         t
@@ -163,20 +203,20 @@ pub fn with_leaving<T: Clone>(
 /// 縦に行き過ぎた分が切られないよう、箱の上下に取る余白（px。余白の分は負の余白で打ち消す）。
 const OVERSHOOT_PAD: f32 = 8.0;
 
-/// 出具合 `t` のボタン（自然な幅 `width` px）を、下から上へ滑り込ませる（`t` が減れば逆に滑り出る。少し行き過ぎてもよい）。
-/// 幅も `t` に比例して開き（隣との隙間も、負の余白で残りの隙間を打ち消して一緒に開く）、バーの幅が滑らかに変わる。
+/// 出具合 `s` のボタン（自然な幅 `width` px）を、下から上へ滑り込ませる（`s.rise` が減れば逆に滑り出る。少し行き過ぎてもよい）。
+/// 幅も `s.grow` に比例して開き（隣との隙間も、負の余白で残りの隙間を打ち消して一緒に開く）、バーの幅が滑らかに変わる。
 /// 幅は行き過ぎさせない（行き過ぎると、バー全体が広がって縮み、ガクつく）。
-pub fn slide_in(t: f32, width: f32, child: impl IntoElement) -> Div {
-    reveal(t, width, true, child)
+pub fn slide_in(s: Slide, width: f32, child: impl IntoElement) -> Div {
+    reveal(s, width, true, child)
 }
 
 /// [`slide_in`] の、滑らず透明度と幅だけが変わる版（区切り線など）。
-pub fn fade_in(t: f32, width: f32, child: impl IntoElement) -> Div {
-    reveal(t, width, false, child)
+pub fn fade_in(s: Slide, width: f32, child: impl IntoElement) -> Div {
+    reveal(s, width, false, child)
 }
 
-fn reveal(t: f32, width: f32, rise: bool, child: impl IntoElement) -> Div {
-    let w = t.clamp(0.0, 1.0);
+fn reveal(s: Slide, width: f32, rise: bool, child: impl IntoElement) -> Div {
+    let w = s.grow.clamp(0.0, 1.0);
     div()
         .flex_none()
         .overflow_hidden()
@@ -191,8 +231,8 @@ fn reveal(t: f32, width: f32, rise: bool, child: impl IntoElement) -> Div {
                 .relative()
                 .flex_none()
                 .w(px(width))
-                .when(rise, |d| d.top(px(BUTTON_HEIGHT * (1.0 - t))))
-                .opacity(w)
+                .when(rise, |d| d.top(px(BUTTON_HEIGHT * (1.0 - s.rise))))
+                .opacity(if rise { s.rise.clamp(0.0, 1.0) } else { w })
                 .child(child),
         )
 }
@@ -224,6 +264,8 @@ pub fn fit_bar(
         .relative()
         .flex()
         .items_center()
+        // ナビゲーションバーと同じ高さ（ボタンの上下に余白）にする。
+        .py(px((super::NAV_BAR_HEIGHT - BUTTON_HEIGHT) / 2.0))
         .px(px(spacing::SM));
     let bar = match max_width {
         Some(w) => bar.max_w(px(w)),
@@ -249,18 +291,18 @@ mod tests {
         let (mut e, t0) = (Entering::default(), Instant::now());
         e.begin(false, t0);
         let (a, b) = (key("a"), key("b"));
-        assert_eq!(e.progress(&a, 0, t0), 0.0);
-        assert_eq!(e.progress(&b, 3, t0), 0.0);
+        assert_eq!(e.progress(&a, 0, t0).rise, 0.0);
+        assert_eq!(e.progress(&b, 3, t0).rise, 0.0);
         assert!(e.finish());
         let later = t0 + STAGGER * 2;
         e.begin(false, later);
-        let (ta, tb) = (e.progress(&a, 0, later), e.progress(&b, 3, later));
+        let (ta, tb) = (e.progress(&a, 0, later).rise, e.progress(&b, 3, later).rise);
         assert!(ta > 0.0 && tb == 0.0, "左が先: {ta} / {tb}");
         e.finish();
         let end = t0 + Duration::from_secs(2);
         e.begin(false, end);
-        assert_eq!(e.progress(&a, 0, end), 1.0);
-        assert_eq!(e.progress(&b, 3, end), 1.0);
+        assert_eq!(e.progress(&a, 0, end).rise, 1.0);
+        assert_eq!(e.progress(&b, 3, end).rise, 1.0);
         assert!(!e.finish(), "出きったら次のフレームは要らない");
     }
 
@@ -270,26 +312,26 @@ mod tests {
         let (mut e, t0) = (Entering::default(), Instant::now());
         let done = t0 + Duration::from_secs(2);
         e.begin(false, t0);
-        e.progress(&key("a"), 0, t0);
+        e.progress(&key("a"), 0, t0).rise;
         e.finish();
         e.begin(false, done);
-        e.progress(&key("a"), 0, done);
+        e.progress(&key("a"), 0, done).rise;
         e.finish();
         e.begin(false, done);
-        assert_eq!(e.progress(&key("a"), 0, done), 1.0);
-        assert_eq!(e.progress(&key("b"), 1, done), 0.0);
+        assert_eq!(e.progress(&key("a"), 0, done).rise, 1.0);
+        assert_eq!(e.progress(&key("b"), 1, done).rise, 0.0);
         e.finish();
         let mid = done + Duration::from_millis(100);
         e.begin(false, mid);
-        let t = e.progress(&key("b"), 1, mid);
+        let t = e.progress(&key("b"), 1, mid).rise;
         assert!(t > 0.0 && t < 1.0, "途中: {t}");
         e.finish();
         // 消えて、また足された。
         e.begin(false, mid);
-        e.progress(&key("a"), 0, mid);
+        e.progress(&key("a"), 0, mid).rise;
         e.finish();
         e.begin(false, mid);
-        assert_eq!(e.progress(&key("b"), 1, mid), 0.0);
+        assert_eq!(e.progress(&key("b"), 1, mid).rise, 0.0);
     }
 
     /// 隠れていたダッシュボードを出し直すと、出ていたボタンも順に出し直す。
@@ -298,16 +340,16 @@ mod tests {
         let (mut e, t0) = (Entering::default(), Instant::now());
         let done = t0 + Duration::from_secs(2);
         e.begin(false, t0);
-        e.progress(&key("a"), 0, t0);
+        e.progress(&key("a"), 0, t0).rise;
         e.finish();
         e.begin(false, done);
-        assert_eq!(e.progress(&key("a"), 0, done), 1.0);
+        assert_eq!(e.progress(&key("a"), 0, done).rise, 1.0);
         e.finish();
         e.begin(true, done);
-        e.progress(&key("a"), 0, done);
+        e.progress(&key("a"), 0, done).rise;
         e.finish();
         e.begin(false, done);
-        assert_eq!(e.progress(&key("a"), 0, done), 0.0);
+        assert_eq!(e.progress(&key("a"), 0, done).rise, 0.0);
     }
 
     /// 消えるボタンは、下へ滑り出ながら（幅も閉じて）終われば忘れる。前の場所に描き残す。
@@ -319,7 +361,7 @@ mod tests {
         for now in [t0, done] {
             e.begin(false, now);
             for (i, k) in keys.iter().enumerate() {
-                e.progress(k, i, now);
+                e.progress(k, i, now).rise;
             }
             e.finish();
         }
@@ -328,15 +370,15 @@ mod tests {
         let items = with_leaving(cur, &prev, |k| key(k), &mut e, done);
         assert_eq!(items, [("a", false), ("b", true), ("c", false)]);
         let mid = done + Duration::from_millis(100);
-        let out = e.progress_out(&key("b"), mid);
+        let out = e.progress_out(&key("b"), mid).rise;
         assert!(out > 0.0, "途中: {out}");
         e.begin(false, mid);
-        e.progress(&key("a"), 0, mid);
-        e.progress(&key("c"), 2, mid);
+        e.progress(&key("a"), 0, mid).rise;
+        e.progress(&key("c"), 2, mid).rise;
         assert!(e.finish(), "消えている間は次のフレームも描く");
         // 終われば、並びから外れる。
         let end = done + Duration::from_secs(2);
-        assert_eq!(e.progress_out(&key("b"), end), 0.0);
+        assert_eq!(e.progress_out(&key("b"), end).rise, 0.0);
         e.begin(false, end);
         let items = with_leaving(vec!["a", "c"], &prev, |k| key(k), &mut e, end);
         assert_eq!(items, [("a", false), ("c", false)]);
