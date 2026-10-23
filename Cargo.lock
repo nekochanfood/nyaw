@@ -142,6 +142,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "animation"
+version = "2026.0.1"
+dependencies = [
+ "animato",
+ "serde_json",
+]
+
+[[package]]
 name = "animato"
 version = "1.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1233,7 +1241,7 @@ dependencies = [
 name = "design"
 version = "2026.0.1"
 dependencies = [
- "animato",
+ "animation",
  "gpui",
  "gpui_platform",
  "palette",
@@ -3880,6 +3888,7 @@ dependencies = [
 name = "overlay"
 version = "2026.0.1"
 dependencies = [
+ "animation",
  "design",
  "logger",
  "subsystems",

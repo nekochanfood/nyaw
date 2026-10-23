@@ -26,6 +26,7 @@ log = "0.4"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_windows = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
+animation = { path = "crates/animation" }
 logger = { path = "crates/logger" }
 os = { path = "crates/subsystems/os" }
 rendering = { path = "crates/subsystems/rendering" }

@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use animato::{Easing, Tween, Update};
 
-use crate::duration_ms;
+include!(concat!(env!("OUT_DIR"), "/duration_ms.rs"));
 
 /// ボタンの滑り込み・滑り出しの長さ（ms）。
 const SLIDE_MS: u64 = 350;

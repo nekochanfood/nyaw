@@ -1,0 +1,13 @@
+[package]
+name = "animation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# 動きの責務。用途（Motion）→ 長さとイージング、時間で動く値（Animation / Transition）、その組み合わせ（Pair）。
+# GPUI にも描画にも依存しない。再描画の駆動と「何を動かすか」は呼び出し側（design の部品、overlay）が持つ。
+[dependencies]
+animato = { version = "1.7.2", default-features = false, features = ["tween"] }
+
+[build-dependencies]
+serde_json = "1"
