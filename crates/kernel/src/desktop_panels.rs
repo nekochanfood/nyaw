@@ -176,6 +176,11 @@ impl<B: VrBackend> Kernel<B> {
         }
     }
 
+    /// パネル `panel` が映しているウィンドウ（画面や配信していないときは `None`）。
+    pub(super) fn mirrored_window(&self, panel: PanelId) -> Option<u64> {
+        self.desktop_panels.get(&panel)?.stream.as_ref()?.window()
+    }
+
     /// パネル `panel` で配信しているウィンドウを前に出す。配信していなければ何もしない。
     pub(super) fn focus_desktop(&mut self, panel: PanelId) {
         if let Some(stream) = self
@@ -273,6 +278,21 @@ impl<B: VrBackend> Kernel<B> {
                 Hand::Right => 1,
             };
             let resolution = self.overlay.panel(event.panel).resolution;
+            // どちらの手も乗っていなかったパネルにポインタが入ったら、そのウィンドウを前に出す（配信元を操作できるように）。
+            if matches!(
+                event.event,
+                PointerEvent::Move { .. }
+                    | PointerEvent::Down { .. }
+                    | PointerEvent::DownButton { .. }
+            ) && panel.hovered == [None; 2]
+                && let Err(error) = stream.focus()
+            {
+                logger::warn!(
+                    "cannot focus desktop source",
+                    panel = event.panel,
+                    error = error
+                );
+            }
             let contact = &mut panel.contacts[id];
             let hovered = &mut panel.hovered[id];
             let touch = match event.event {
@@ -491,6 +511,19 @@ mod tests {
             control.touches().is_empty(),
             "stationary hover should not resend movement"
         );
+    }
+
+    /// ポインタが入ったときに一度だけ、配信しているウィンドウを前に出す。
+    #[test]
+    fn pointer_entering_focuses_the_source_once() {
+        let (mut kernel, _, control) = setup();
+        control.focuses();
+        hand(&mut kernel, 0.0, false);
+        kernel.tick();
+        assert_eq!(control.focuses(), 1);
+        hand(&mut kernel, 0.4, false);
+        kernel.tick();
+        assert_eq!(control.focuses(), 0);
     }
 
     #[test]

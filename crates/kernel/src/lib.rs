@@ -190,6 +190,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     hand_shortcut: LongPress,
     /// OS の前面のアプリのキーボードの監視と入力（[`Kernel::os_keyboard`]。使い始めるまで起こさない）。
     os_keyboard: Option<os::keyboard::Watcher>,
+    /// 映しているウィンドウが前面になるのを待つ OS への入力（[`os_keyboard::PendingKey`]）。
+    pending_os_input: Vec<os_keyboard::PendingKey>,
     /// 最後の tick の電池（[`Kernel::batteries`]）。
     batteries: Vec<vr::Battery>,
     /// 再生中のメディアの見張り（[`Kernel::now_playing`]）。`boot` だけが起こす（テスト用のカーネルは OS に触らない）。
@@ -340,6 +342,7 @@ impl<B: VrBackend> Kernel<B> {
             shortcut: DoublePress::default(),
             hand_shortcut: LongPress::default(),
             os_keyboard: None,
+            pending_os_input: Vec::new(),
             batteries: Vec::new(),
             media: None,
         }
@@ -497,6 +500,7 @@ impl<B: VrBackend> Kernel<B> {
         let frame = self.subsystems.poll();
         let polled = Instant::now();
         self.poll_desktop();
+        self.flush_os_input();
         // ボタン（左手の X）は二回押し、骨格だけの手（向きが分かる）は長押し。
         let held = |hand: bool| {
             frame
@@ -684,7 +688,7 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::SpeakerLayout(layout) => {
                 self.configure_speaker(panel, |c| c.layout = layout)
             }
-            PanelCommand::TypeToOs { stroke, layout } => self.type_to_os(stroke, layout),
+            PanelCommand::TypeToOs { stroke, layout } => self.type_to_os(panel, stroke, layout),
         }
     }
 

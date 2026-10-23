@@ -21,8 +21,7 @@ use gpui::{
 };
 use kernel::audio::Sound;
 use kernel::desktop::{
-    self, DEFAULT_FRAME_RATE, Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources,
-    Status,
+    DEFAULT_FRAME_RATE, Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status,
 };
 use kernel::subsystems::media;
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
@@ -311,8 +310,6 @@ impl Dashboard {
             name,
             icon,
             stashed: resident,
-            resident,
-            seen_docked: false,
         });
         redraw(self.panel, cx);
     }
@@ -377,8 +374,7 @@ impl Dashboard {
         let docked = ui::docked(cx) == Some(id);
         self.stash_docked(cx);
         if !docked && let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) {
-            // はまったと分かるまでは、外れたとみなして消さない。
-            (stream.stashed, stream.seen_docked) = (false, false);
+            stream.stashed = false;
             // 隠したままはめてから出す。先に出すと、隠した時の場所（その後ダッシュボードを動かしていれば遠く）から
             // はめる場所へ滑って・回って入ってくる。
             ui::dock(id, cx);
@@ -403,18 +399,11 @@ impl Dashboard {
         }
     }
 
-    /// 閉じた・自分で外して独立させた配信のボタンを消す。隠しているもの（[`Stream::stashed`]）と常駐のものは残す。
+    /// 閉じた配信のボタンを消す。独立させたものは残す（ボタンで戻せる）。
     fn prune_streams(&mut self, cx: &App) {
-        let (ctl, bar) = (cx.global::<PanelControl>(), self.panel);
-        self.streams.retain_mut(|s| {
-            let status = ctl.panels.get(&s.panel).map(|p| &p.status);
-            if status.is_some_and(|st| st.closed) {
-                return false;
-            }
-            let docked = status.and_then(|st| st.parent) == Some(bar);
-            s.seen_docked |= docked;
-            s.resident || s.stashed || !s.seen_docked || docked
-        });
+        let ctl = cx.global::<PanelControl>();
+        self.streams
+            .retain(|s| !ctl.panels.get(&s.panel).is_some_and(|p| p.status.closed));
     }
 
     /// 今はまっている画面。
@@ -550,10 +539,6 @@ struct Stream {
     icon: Option<Arc<RenderImage>>,
     /// ほかを選んだので隠して外している。
     stashed: bool,
-    /// 常駐（起動時に用意した画面）。閉じずにしまい、独立させてもバーに残る。
-    resident: bool,
-    /// ダッシュボードにはまっているのを一度でも見た（その後に外れたら、自分で外して独立させたもの）。
-    seen_docked: bool,
 }
 
 /// メニューのポップオーバーの大きさと解像度（2 行の一覧が収まる）。
@@ -2291,7 +2276,6 @@ struct Mirror {
     dashboard: Option<WeakEntity<Dashboard>>,
     /// 配信の再接続を探している（状態が書き戻されるたびに繰り返さない）。
     ending: bool,
-    was_hidden: bool,
     watch_generation: u64,
 }
 
@@ -2319,7 +2303,6 @@ impl Mirror {
             waiting,
             dashboard,
             ending: false,
-            was_hidden: false,
             watch_generation: 0,
         };
         if this.waiting.is_some() {
@@ -2330,23 +2313,13 @@ impl Mirror {
         this
     }
 
-    /// 最小化されたパネルはしまい、取得元が入れ替わったら配信をつなぎ直す。
+    /// 取得元が入れ替わったら配信をつなぎ直す。OS での最小化は、ダッシュボードのしまう動作とは連動しない。
     fn follow_status(&mut self, cx: &mut Context<Self>) {
-        let panel_status = cx
+        let status = cx
             .global::<PanelControl>()
             .panels
             .get(&self.panel)
-            .map(|p| &p.status);
-        let status = panel_status.and_then(|s| s.desktop.clone());
-        let hidden = panel_status.is_some_and(|s| s.hidden);
-        if self.was_hidden && !hidden && matches!(status, Some(Status::Minimized)) {
-            self.was_hidden = false;
-            if let Some(source) = self.source.clone() {
-                self.restart(source, cx);
-            }
-            return;
-        }
-        self.was_hidden = hidden;
+            .and_then(|p| p.status.desktop.clone());
         if matches!(status, Some(Status::Starting | Status::Streaming)) {
             self.ending = false;
             return;
@@ -2359,11 +2332,6 @@ impl Mirror {
                 self.ending = true;
                 self.watch_generation += 1;
                 redraw(self.panel, cx);
-                if let Some(dashboard) = &self.dashboard {
-                    let _ = dashboard.update(cx, |d, cx| d.minimize(self.panel, cx));
-                } else {
-                    close(self.panel, cx);
-                }
             }
             Some(Status::Closed | Status::Failed(_))
                 if self
@@ -2646,6 +2614,7 @@ fn launch_spec(
     docked: bool,
 ) -> PanelSpec {
     let title = app.name.clone();
+    let stash = dashboard.clone();
     let spec = PanelSpec::spawn(from, move |panel, _, cx: &mut Context<Mirror>| {
         if docked {
             ui::dock(panel, cx);
@@ -2668,10 +2637,11 @@ fn launch_spec(
         .titled_text(title)
         .dockable()
         .with_os_keyboard();
-    if desktop::capabilities().minimize {
-        spec.source_minimizable()
-    } else {
-        spec
+    match stash {
+        Some(dashboard) => spec.source_minimizable(move |id, cx| {
+            let _ = dashboard.update(cx, |d, cx| d.minimize(id, cx));
+        }),
+        None => spec,
     }
 }
 
@@ -2710,6 +2680,7 @@ fn mirror_spec(
     let source_title = source.name.clone();
     let source_kind = source.kind;
     let minimize = dashboard.clone().filter(|_| resident);
+    let stash = dashboard.clone();
     let build = move |panel: PanelId, _: &mut Window, cx: &mut Context<Mirror>| {
         start_mirror(panel, source.clone(), icon, dashboard.clone(), resident, cx);
         if resident {
@@ -2739,10 +2710,13 @@ fn mirror_spec(
         .dockable()
         // 映しているデスクトップ・ウィンドウへ打てるよう、ナビゲーションバーの左端に OS キーボードのトグルを出す。
         .with_os_keyboard();
-    if source_kind == SourceKind::Window && desktop::capabilities().minimize {
-        spec.source_minimizable()
-    } else {
-        spec
+    match stash {
+        Some(dashboard) if source_kind == SourceKind::Window => {
+            spec.source_minimizable(move |id, cx| {
+                let _ = dashboard.update(cx, |d, cx| d.minimize(id, cx));
+            })
+        }
+        _ => spec,
     }
 }
 
@@ -3769,7 +3743,7 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(streams, [4], "バーに配信のボタンが増える");
-        if desktop::capabilities().minimize {
+        {
             let (_nav, ncx) =
                 cx.add_window_view(|window, cx| ui::PanelRoot::new(nav_spec.build(5, window, cx)));
             ncx.update(|window, cx| {
@@ -3790,7 +3764,11 @@ mod tests {
             ncx.run_until_parked();
             assert!(ncx.debug_bounds("nav-minimize-source").is_some());
             click(ncx, "nav-minimize-source");
-            assert_eq!(take_commands(ncx, 4), [PanelCommand::MinimizeSource]);
+            assert_eq!(
+                take_commands(ncx, 4),
+                [PanelCommand::Hide(true), PanelCommand::Parent(None)]
+            );
+            assert!(bar.read_with(ncx, |d, _| d.streams[0].stashed));
         }
     }
 
@@ -4285,8 +4263,9 @@ mod tests {
         );
     }
 
+    /// OS でウィンドウが最小化されても、ダッシュボード側ではしまわない（互いに連動しない）。
     #[gpui::test]
-    fn minimized_window_is_stashed_and_restarted_when_shown(cx: &mut TestAppContext) {
+    fn os_minimizing_a_window_does_not_stash_it(cx: &mut TestAppContext) {
         let source = kernel::desktop::mock::source("Editor", SourceKind::Window);
         let bar = cx
             .add_window(|_, cx| {
@@ -4299,47 +4278,49 @@ mod tests {
         let (_mirror, cx) = cx.add_window_view(|window, cx| {
             Waiter(spec.build(4, window, cx).downcast::<Mirror>().unwrap())
         });
-        assert_eq!(
-            take_commands(cx, 4),
-            [PanelCommand::Stream(
-                Some(source.clone()),
-                DEFAULT_FRAME_RATE
-            )],
-            "独立表示ではバーにドッキングしない"
-        );
+        take_commands(cx, 4);
+        cx.update(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(4)
+                .or_default()
+                .status
+                .desktop = Some(Status::Minimized);
+        });
+        cx.run_until_parked();
+        assert!(!take_commands(cx, 4).contains(&PanelCommand::Hide(true)));
+        assert!(!bar.read_with(cx, |d, _| d.streams[0].stashed));
+    }
+
+    /// 自分で外して独立させた配信のボタンは残り、閉じたときだけ消える。押すとダッシュボードに戻る。
+    #[gpui::test]
+    fn undocked_stream_keeps_its_button_until_closed(cx: &mut TestAppContext) {
+        let (bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+            Dashboard::new(1, summon, summon, cx)
+        });
+        bar.update(cx, |d, cx| {
+            d.add_stream(4, SourceKind::Window, "Editor".into(), None, false, cx)
+        });
+        let status = |cx: &mut VisualTestContext, parent, closed| {
+            cx.update(|_, cx| {
+                let s = &mut cx
+                    .default_global::<PanelControl>()
+                    .panels
+                    .entry(4)
+                    .or_default()
+                    .status;
+                (s.parent, s.closed) = (parent, closed);
+            });
+            bar.update(cx, |d, cx| d.prune_streams(cx));
+        };
+        status(cx, Some(1), false);
+        status(cx, None, false);
         assert_eq!(bar.read_with(cx, |d, _| d.streams.len()), 1);
-        cx.update(|_, cx| {
-            let panel = cx
-                .default_global::<PanelControl>()
-                .panels
-                .entry(4)
-                .or_default();
-            panel.status.desktop = Some(Status::Minimized);
-        });
-        cx.run_until_parked();
-        assert!(take_commands(cx, 4).contains(&PanelCommand::Hide(true)));
-        assert!(bar.read_with(cx, |d, _| d.streams[0].stashed));
-        cx.update(|_, cx| {
-            cx.default_global::<PanelControl>()
-                .panels
-                .entry(4)
-                .or_default()
-                .status
-                .hidden = true
-        });
-        cx.run_until_parked();
-        cx.update(|_, cx| {
-            cx.default_global::<PanelControl>()
-                .panels
-                .entry(4)
-                .or_default()
-                .status
-                .hidden = false
-        });
-        cx.run_until_parked();
-        assert!(
-            take_commands(cx, 4).contains(&PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE))
-        );
+        bar.update(cx, |d, cx| d.toggle_stream(4, cx));
+        assert!(take_commands(cx, 4).contains(&PanelCommand::Hide(false)));
+        status(cx, None, true);
+        assert_eq!(bar.read_with(cx, |d, _| d.streams.len()), 0);
     }
 
     /// 常駐の配信は、独立させてもバーに残り、しまうと閉じずに隠れる。

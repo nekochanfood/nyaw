@@ -413,6 +413,8 @@ pub struct Stream {
     update: Arc<Mutex<Option<Update>>>,
     input: SyncSender<Input>,
     stop: Arc<AtomicBool>,
+    /// ウィンドウを映しているとき、そのウィンドウ（OS のウィンドウ識別子）。画面や特定できないものは `None`。
+    window: Option<u64>,
 }
 
 /// 接点の維持と停止要求の処理のため、待ちはこれより長くしない。
@@ -426,9 +428,13 @@ impl Stream {
     pub fn start_at(source: Source, frame_rate: u32) -> Result<Self, Error> {
         #[cfg(windows)]
         {
-            Self::spawn(frame_rate, move |_, wake| {
+            let window = (source.kind == SourceKind::Window && source.concrete())
+                .then_some(source.target as usize as u64);
+            let mut stream = Self::spawn(frame_rate, move |_, wake| {
                 windows::Capture::new(source, wake)
-            })
+            })?;
+            stream.window = window;
+            Ok(stream)
         }
         #[cfg(not(windows))]
         {
@@ -553,6 +559,7 @@ impl Stream {
             update,
             input,
             stop,
+            window: None,
         })
     }
 
@@ -584,6 +591,11 @@ impl Stream {
     /// 前面化はワーカーが行い、待たない。
     pub fn focus(&self) -> Result<(), Error> {
         self.send(Input::Focus)
+    }
+
+    /// 映しているウィンドウ（画面や特定できないものは `None`）。
+    pub fn window(&self) -> Option<u64> {
+        self.window
     }
 
     pub fn minimize(&self) -> Result<(), Error> {
