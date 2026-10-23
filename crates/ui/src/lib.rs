@@ -1032,10 +1032,7 @@ impl PanelSpec {
                     dockable,
                     minimize,
                     source_minimize,
-                    open: 0.0,
-                    to: 0.0,
-                    anim: None,
-                    last: None,
+                    open: design::animation::Transition::rest(0.0),
                 }
             })
             .sized(Vec2::new(NAV_BAR_M, NAV_BAR_HEIGHT_M), NAV_BAR_PX)
@@ -1142,25 +1139,12 @@ struct NavBar {
     minimize: Option<Minimize>,
     source_minimize: bool,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
-    open: f32,
-    to: f32,
-    anim: Option<design::animation::Animation>,
-    last: Option<Instant>,
+    open: design::animation::Transition,
 }
 
 impl Render for NavBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = Instant::now();
-        let dt = self
-            .last
-            .map_or(0.0, |t| now.saturating_duration_since(t).as_secs_f32());
-        self.last = Some(now);
-        if let Some(a) = &mut self.anim {
-            self.open = a.advance(dt);
-            if a.is_done() {
-                self.anim = None;
-            }
-        }
         // 指されているかは `sync_panel` が状態に書き、変わればこのバーを描き直す。
         let state = cx
             .default_global::<PanelControl>()
@@ -1168,25 +1152,17 @@ impl Render for NavBar {
             .entry(self.id)
             .or_default();
         let to = if state.status.pointed { 1.0 } else { 0.0 };
-        if to != self.to {
-            self.to = to;
-            // 広がるのも縮むのも落ち着いて動く（ease-in-out）。
-            if cx.has_global::<design::Motion>() {
-                self.anim = Some(design::animation::Animation::new(
-                    self.open,
-                    to,
-                    design::animation::Motion::Morph,
-                ));
-            } else {
-                (self.open, self.anim) = (to, None);
-            }
-        }
+        // 広がるのも縮むのも落ち着いて動く（ease-in-out）。
+        let animated = cx.has_global::<design::Motion>();
+        self.open
+            .go(to, design::animation::Motion::Morph, now, animated);
+        let (open, moving) = self.open.at(now);
         // 動いている間だけ毎フレーム描き直す。
         cx.default_global::<PanelControl>()
             .panels
             .entry(self.id)
             .or_default()
-            .live = self.anim.is_some();
+            .live = moving;
         let owner = self.owner;
         let title = match &self.title {
             Some(Title::Key(k)) => i18n::t(cx, k),
@@ -1280,7 +1256,7 @@ impl Render for NavBar {
         });
         div().size_full().child(design::components::nav_bar(
             &theme,
-            self.open,
+            open,
             title,
             minimize.is_some(),
             i18n::t(
@@ -2045,10 +2021,7 @@ mod tests {
                 dockable: false,
                 minimize: None,
                 source_minimize: true,
-                open: 1.0,
-                to: 1.0,
-                anim: None,
-                last: None,
+                open: design::animation::Transition::rest(1.0),
             }
         });
         cx.run_until_parked();

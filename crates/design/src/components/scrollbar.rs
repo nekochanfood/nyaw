@@ -29,7 +29,7 @@ use gpui::{
 
 use super::{Fade, keep_drawing};
 use crate::animation::{Motion as Kind, Transition};
-use crate::{Motion, Theme, duration_ms, radius, scrollbar as spec};
+use crate::{Motion, Theme, radius, scrollbar as spec};
 
 /// 中身がこれだけ（px）引っ張られると、棒の押しつぶしが最大になる。
 const SQUASH_RANGE: f32 = 48.0;
