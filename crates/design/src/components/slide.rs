@@ -11,6 +11,8 @@ use crate::{Theme, radius, spacing};
 
 /// ボタンを 1 つずつ順に出すときの間隔。
 pub const STAGGER: Duration = Duration::from_millis(60);
+/// 幅の動きと中身の動きのずれ（入りは幅が先、出は中身が先）。
+const LAG: Duration = Duration::from_millis(80);
 /// これだけ描かれなかったら、隠れていた（出し直した）とみなす。
 const IDLE_GAP: Duration = Duration::from_secs(3);
 
@@ -36,21 +38,39 @@ impl Slide {
 struct Pair {
     rise: Animation,
     grow: Animation,
+    /// まだ動き出していない側（入りなら `rise`、出なら `grow`）があと何秒待つか。
+    wait: f32,
+    /// 待っているのは `rise` か（そうでなければ `grow`）。
+    rise_waits: bool,
 }
 
 impl Pair {
-    fn new(from: f32, to: f32, rise: Motion) -> Self {
+    /// 入り（`entering`）は幅が先に開き始め、少し遅れて中身が出る。出は中身が先に消え始め、少し遅れて幅が閉じる。
+    fn new(from: f32, to: f32, rise: Motion, entering: bool) -> Self {
         Self {
             rise: Animation::new(from, to, rise),
             grow: Animation::new(from, to, Motion::Grow),
+            wait: LAG.as_secs_f32(),
+            rise_waits: entering,
         }
     }
 
     fn advance(&mut self, dt: f32) -> Slide {
+        let late = dt.min(self.wait);
+        self.wait -= late;
+        let (rise_dt, grow_dt) = if self.rise_waits {
+            (dt - late, dt)
+        } else {
+            (dt, dt - late)
+        };
         Slide {
-            rise: self.rise.advance(dt),
-            grow: self.grow.advance(dt),
+            rise: self.rise.advance(rise_dt),
+            grow: self.grow.advance(grow_dt),
         }
+    }
+
+    fn is_done(&self) -> bool {
+        self.rise.is_done() && self.grow.is_done()
     }
 }
 
@@ -129,8 +149,10 @@ impl Entering {
             } else {
                 now
             };
-            self.running
-                .insert(key.clone(), (Pair::new(0.0, 1.0, Motion::SlideIn), start));
+            self.running.insert(
+                key.clone(),
+                (Pair::new(0.0, 1.0, Motion::SlideIn, true), start),
+            );
         }
         let Some((anim, last)) = self.running.get_mut(key) else {
             return Slide::SHOWN;
@@ -140,7 +162,7 @@ impl Entering {
         }
         let t = anim.advance(now.duration_since(*last).as_secs_f32());
         *last = now;
-        if anim.grow.is_done() {
+        if anim.is_done() {
             self.running.remove(key);
         }
         t
@@ -155,8 +177,10 @@ impl Entering {
             return false;
         }
         self.running.remove(key);
-        self.leaving
-            .insert(key.clone(), (Pair::new(1.0, 0.0, Motion::SlideOut), now));
+        self.leaving.insert(
+            key.clone(),
+            (Pair::new(1.0, 0.0, Motion::SlideOut, false), now),
+        );
         true
     }
 
@@ -173,7 +197,7 @@ impl Entering {
         };
         let t = anim.advance(now.saturating_duration_since(*last).as_secs_f32());
         *last = now;
-        if anim.grow.is_done() {
+        if anim.is_done() {
             self.leaving.remove(key);
         }
         t
@@ -255,8 +279,8 @@ fn reveal(s: Slide, width: f32, rise: bool, child: impl IntoElement) -> Div {
                 // 隣との隙間。出きったら自然な幅の一部になり、開く間は枠が狭くて切られる。
                 .mr(px(spacing::SM))
                 .when(rise, |d| d.top(px(BUTTON_HEIGHT * (1.0 - s.rise))))
-                // 透明度は幅と同じ動きにして、カプセルの伸び縮みと足並みを揃える（縦のずれだけが行き過ぎる）。
-                .opacity(w)
+                // 透明度は縦のずれと同じ動き（入りは幅より [`LAG`] 遅れて、出は幅より [`LAG`] 先に）。
+                .opacity(s.rise.clamp(0.0, 1.0))
                 .child(child),
         )
 }
@@ -416,5 +440,17 @@ mod tests {
         let items = with_leaving(vec!["a", "c"], &prev, |k| key(k), &mut e, end);
         assert_eq!(items, [("a", false), ("c", false)]);
         assert!(!e.finish());
+    }
+
+    /// 入りは幅が先に開いてから中身が出て、出は中身が先に消えてから幅が閉じる。
+    #[test]
+    fn width_leads_when_entering_and_trails_when_leaving() {
+        let early = LAG.as_secs_f32() / 2.0;
+        let mut enter = Pair::new(0.0, 1.0, Motion::SlideIn, true);
+        let s = enter.advance(early);
+        assert!(s.grow > 0.0 && s.rise == 0.0, "{s:?}");
+        let mut leave = Pair::new(1.0, 0.0, Motion::SlideOut, false);
+        let s = leave.advance(early);
+        assert!(s.grow == 1.0 && s.rise != 1.0, "{s:?}");
     }
 }
