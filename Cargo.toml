@@ -95,3 +95,4 @@ opt-level = 2
 # Windows の GPUI の読み戻しを GPU の完了を待たないものにする（vendor/gpui_windows/Cargo.toml）
 [patch."https://github.com/zed-industries/zed"]
 gpui_windows = { path = "vendor/gpui_windows" }
+gpui = { path = "vendor/gpui" }
