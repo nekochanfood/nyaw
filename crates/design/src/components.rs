@@ -512,6 +512,7 @@ impl RenderOnce for Button {
             .bg(rgba(color))
             .children(wave)
             .on_mouse_move(move |_, w, cx| {
+                crate::cue::hover(&move_id, w, cx);
                 if let Some(tip) = &move_tip {
                     hover_tooltip(
                         move_id.clone(),
@@ -524,12 +525,16 @@ impl RenderOnce for Button {
                 }
             })
             .on_hover(move |h, w, cx| {
+                if *h {
+                    crate::cue::hover(&id, w, cx);
+                }
                 if let Some(tip) = &tip {
                     hover_tooltip(id.clone(), tip.clone(), owner.clone(), *h, w, cx);
                 }
                 if *h { over(w, cx) } else { leave(w, cx) }
             })
             .on_mouse_down(MouseButton::Left, move |e, w, cx| {
+                crate::cue::emit(crate::cue::Cue::Click, w, cx);
                 if enabled {
                     press.update(cx, |s, _| {
                         s.ripple = Some((e.position, crate::drive::now()))

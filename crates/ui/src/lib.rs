@@ -2,6 +2,7 @@
 //! レーザーイベントを GPUI のマウス入力に変換し、描画を読み戻してカーネルへ返す。
 
 pub use kernel::rendering::gpui::{Frame, capture, collect, read_back, set_render_lod};
+mod cue;
 pub mod keyboard;
 pub mod mirror;
 mod panel_window;
@@ -524,12 +525,14 @@ pub fn dispatch_input(
         cx.default_global::<design::components::Tooltips>()
             .0
             .retain(|&(window, hand), _| window != id || hand != source);
+        design::cue::begin_hover(window, source, cx);
     }
     let context = cx.default_global::<design::components::TooltipSource>();
     context.0 = Some(source);
     context.1.insert(window.window_handle().window_id());
     window.dispatch_event(input, cx);
     cx.default_global::<design::components::TooltipSource>().0 = None;
+    cue::flush(panel, window, cx);
 }
 
 /// ウィンドウごとのツールチップの要求（[`design::components::Tooltips`]）を、そのパネルを指している手に振り分け、
