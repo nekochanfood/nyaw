@@ -1,4 +1,4 @@
-//! Layer 6 画面: 常駐パネル「wrist」。左手首に腕時計のように取り付き（掴めない）、丸い文字盤に
+//! Layer 6 画面: 常駐パネル「wrist」。利き手でない方（既定は左）の手首に腕時計のように取り付き（掴めない）、丸い文字盤に
 //! 日付・時刻を出す（縁に目盛りと秒の点）。
 //! 常駐なので、X ボタンの二回連続押しでダッシュボードを出す / 隠すのもここ（ダッシュボードは閉じずに隠し、次も同じ状態で出す）。
 
@@ -20,7 +20,8 @@ pub const WATCH_OFFSET: Pose = Pose::new(
     Vec3::new(0.0, 0.04, 0.08),
     Quat::from_xyzw(-0.707_106_77, 0.0, 0.0, 0.707_106_77),
 );
-/// 取り付け先の手が追えない間（起動直後・novr のエミュレーター）の置き場所。開いた瞬間の頭から見て左下 0.4m。
+/// 取り付け先の手が追えない間（起動直後・novr のエミュレーター）の置き場所。開いた瞬間の頭から見て左下 0.4m
+/// （右手首に付けるときは右下）。
 pub const IN_VIEW: Pose = Pose::new(Vec3::new(-0.32, -0.2, -0.4), Quat::IDENTITY);
 
 /// 丸い文字盤（直径 0.1m）と、周りの影の余白（[`components::PANEL_MARGIN`]）が収まる正方形。
@@ -32,16 +33,18 @@ const DIAL_C: f32 = RES_PX.0 as f32 / 2.0 - components::PANEL_MARGIN;
 /// 文字盤の中心から目盛り（と秒の点）の中心までの半径。縁から `spacing::LG` 内側。
 const DIAL_R: f32 = DIAL_C - spacing::LG - 8.0;
 
-/// 左手首に取り付いた状態で起動する wrist の起動仕様。`debug` と `settings` はダッシュボードから開く
-/// デバッグ画面と設定画面（画面どうしを直接つながないよう、main が選ぶ）。
-pub fn spec(debug: dashboard::Summon, settings: dashboard::Summon) -> PanelSpec {
+/// `hand` の手首に取り付いた状態で起動する wrist の起動仕様（main が利き手でない方を渡す）。`debug` と `settings` は
+/// ダッシュボードから開くデバッグ画面と設定画面（画面どうしを直接つながないよう、main が選ぶ）。
+pub fn spec(hand: Hand, debug: dashboard::Summon, settings: dashboard::Summon) -> PanelSpec {
+    let side = if hand == Hand::Left { 1.0 } else { -1.0 };
+    let in_view = Pose::new(IN_VIEW.position * Vec3::new(side, 1.0, 1.0), IN_VIEW.orientation);
     PanelSpec::root(Pose::IDENTITY, move |panel, _, cx| {
         nyapp::opened(nyapp::system::WRIST.id, panel, cx);
         Wrist::new(panel, debug, settings, cx)
     })
     .sized(SIZE_M, RES_PX)
-    .in_view(IN_VIEW)
-    .attached(Device::Controller(Hand::Left), WATCH_OFFSET)
+    .in_view(in_view)
+    .attached(Device::Controller(hand), WATCH_OFFSET)
     .locked()
     // 手首に付いた常駐の時計で、閉じる・動かすものではない。ナビゲーションバーは付けない。
     .without_nav_bar()

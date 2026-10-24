@@ -39,7 +39,9 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     };
     // ダッシュボードのデバッグボタンで開く画面は Testing、設定ボタンで開くのは Testing の設定画面（中身はダミー）。
+    // wrist は利き手でない方の手首に付ける。
     let mut panels = vec![wrist::spec(
+        kernel.settings().dominant_hand.off_hand(),
         |from, opened| testing::spec(from, opened),
         |from, opened| testing::settings_spec(from, opened),
     )];

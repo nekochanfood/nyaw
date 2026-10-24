@@ -70,8 +70,8 @@ pub struct Panel {
     pub veil: bool,
     /// OS へのタッチを解放まで同じパネルへ届ける。
     capture: bool,
-    /// 指している間、カーソルの代わりに出す OS のカーソル（[`Overlay::set_os_cursor`]）。
-    pub os_cursor: Option<Arc<Cursor>>,
+    /// その手で指している間、カーソルの代わりに出す OS のカーソル（[`Overlay::set_os_cursor`]）。
+    pub os_cursor: Option<(Hand, Arc<Cursor>)>,
     /// 親（[`Overlay::set_parent`]）。取り付けより優先して、親の姿勢 * `offset` に追従する。
     pub parent: Option<Parent>,
     /// このパネルがナビゲーションバーになっている持ち主（[`Overlay::set_nav_bar`]）。持ち主の下端にくっつき、
@@ -758,8 +758,9 @@ impl Overlay {
         }
     }
 
-    /// `id` を指している手のカーソルを、OS のカーソル `cursor`（パネルと同じ縮尺、ホットスポットをヒット点に）に差し替える。`None` で戻す。
-    pub fn set_os_cursor(&mut self, id: PanelId, cursor: Option<Arc<Cursor>>) {
+    /// `id` を手 `hand` で指している間、その手のカーソルを OS のカーソル `cursor`（パネルと同じ縮尺、ホットスポットをヒット点に）に
+    /// 差し替える（もう片方の手は nyaw のカーソルのまま）。`None` で戻す。
+    pub fn set_os_cursor(&mut self, id: PanelId, cursor: Option<(Hand, Arc<Cursor>)>) {
         self.panels[id].os_cursor = cursor;
     }
 
@@ -1585,7 +1586,9 @@ impl Overlay {
                 }
                 // OS のカーソルを持つパネルの上では、代わりにその絵を出す（place_os_cursors）。
                 (Pointer::Cursor, Some((r, ..)))
-                    if r.hit.is_some_and(|(t, _)| self.panels[t].os_cursor.is_some()) =>
+                    if r.hit.is_some_and(|(t, _)| {
+                        self.panels[t].os_cursor.as_ref().is_some_and(|(h, _)| *h == hand)
+                    }) =>
                 {
                     None
                 }
@@ -1643,7 +1646,8 @@ impl Overlay {
         for (&hand, h) in &self.hands {
             let target = h.ray.and_then(|r| {
                 let t = r.hit?.0;
-                Some((r, t, self.panels[t].os_cursor.clone()?))
+                let (owner, cursor) = self.panels[t].os_cursor.clone()?;
+                (owner == hand).then_some((r, t, cursor))
             });
             let Some((r, target, cursor)) = target else {
                 if let Some((surface, _)) = self.os_cursors.get_mut(&hand) {
@@ -3418,8 +3422,13 @@ mod tests {
             height: 2,
             rgba: rgba.into(),
         };
-        ov.set_os_cursor(0, Some(Arc::new(Cursor { image, hotspot: (0, 0) })));
+        let image = Arc::new(Cursor { image, hotspot: (0, 0) });
+        // OS のカーソルを持たない手（左）が指すと、nyaw のカーソルのまま。
+        ov.set_os_cursor(0, Some((Hand::Left, image.clone())));
         controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        assert!(vr.backend.overlays[cursor].visible);
+        ov.set_os_cursor(0, Some((Hand::Right, image)));
         ov.tick(&mut vr);
         assert!(!vr.backend.overlays[cursor].visible);
         let os = vr.backend.overlays.last().unwrap();
@@ -3444,7 +3453,10 @@ mod tests {
             height: 2,
             rgba: vec![255; 16].into(),
         };
-        ov.set_os_cursor(0, Some(Arc::new(Cursor { image, hotspot: (1, 1) })));
+        ov.set_os_cursor(
+            0,
+            Some((Hand::Right, Arc::new(Cursor { image, hotspot: (1, 1) }))),
+        );
         ov.tick(&mut vr);
         let os = vr.backend.overlays.last().unwrap();
         assert_eq!((os.pose, os.width_m), before);
