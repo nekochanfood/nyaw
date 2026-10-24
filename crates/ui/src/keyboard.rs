@@ -223,6 +223,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     routing.error = None;
     redraw_nav_bar(target, cx);
     let resolution = panel_resolution();
+    let home = home_offset(resolution);
     let spec = crate::PanelSpec::spawn(target, move |panel, _, cx| {
         let current = cx.default_global::<InputRouting>().active.as_mut();
         if let Some(session) = current.filter(|s| s.generation == generation) {
@@ -255,7 +256,12 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     .pointer_mode(kernel::PointerMode::Mouse)
     // 開いた瞬間の手元の打ちやすい高さに、対象パネル（ダッシュボードにはめた画面も）と同じ向きで、
     // ホームポジションを対象の中心の左右に合わせて出す。親子関係は作らない（対象を動かしても付いて行かない）。
-    .typing(home_offset(resolution));
+    .typing(home)
+    // 掴むとパネルの中心ではなくホームポジションを手で動かして頭へ向ける（ホームポジションを中心に角度が付く）。
+    .grab_anchor(kernel::Pose::new(
+        kernel::vr::Vec3::X * home,
+        kernel::vr::Quat::IDENTITY,
+    ));
     cx.default_global::<crate::PanelControl>().spawns.push(spec);
 }
 
