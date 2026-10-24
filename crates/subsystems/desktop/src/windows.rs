@@ -943,6 +943,23 @@ struct MouseDevice {
     // shortcut: Windows のデスクトップはマウス 1 個として操作する。複数指のジェスチャーが必要になったらタッチ注入を併用する。
     pressed_by: Option<u32>,
     button: Option<Button>,
+    /// 1 ノッチに満たないホイール量の貯め（縦, 横）。
+    wheel: [f32; 2],
+}
+
+/// スティックの量を貯め、送れるだけのノッチ（`WHEEL_DELTA` の倍数）を返す。
+/// 120 未満の量を整数割りで捨てるアプリがある（コンソールのターミナル、Win32 のスライダーなど）。
+fn wheel_notches(acc: &mut f32, delta: f32) -> i32 {
+    const WHEEL_DELTA: f32 = 120.0;
+    let amount = delta * 40.0;
+    // 向きを変えたら、逆向きの貯めは待たせずに捨てる。
+    if *acc * amount < 0.0 {
+        *acc = 0.0;
+    }
+    *acc += amount;
+    let notches = (*acc / WHEEL_DELTA).trunc();
+    *acc -= notches * WHEEL_DELTA;
+    (notches * WHEEL_DELTA) as i32
 }
 impl MouseDevice {
     fn input(mi: MOUSEINPUT) -> Result<(), Error> {
@@ -1020,10 +1037,10 @@ impl MouseDevice {
         Ok(())
     }
 
-    fn scroll(&self, point: POINT, dx: f32, dy: f32) -> Result<(), Error> {
+    fn scroll(&mut self, point: POINT, dx: f32, dy: f32) -> Result<(), Error> {
         Self::move_to(point)?;
-        for (flag, delta) in [(MOUSEEVENTF_WHEEL, dy), (MOUSEEVENTF_HWHEEL, dx)] {
-            let amount = (delta * 40.0).round() as i32;
+        for (i, flag, delta) in [(0, MOUSEEVENTF_WHEEL, dy), (1, MOUSEEVENTF_HWHEEL, dx)] {
+            let amount = wheel_notches(&mut self.wheel[i], delta);
             if amount == 0 {
                 continue;
             }
@@ -1057,6 +1074,22 @@ impl Drop for MouseDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn wheel_sends_whole_notches_only() {
+        let mut acc = 0.0;
+        let sent: Vec<_> = (0..6).map(|_| wheel_notches(&mut acc, 1.0)).collect();
+        assert_eq!(sent, [0, 0, 120, 0, 0, 120]);
+        // 浅く倒しても、貯まれば届く。
+        let mut acc = 0.0;
+        assert_eq!((0..12).map(|_| wheel_notches(&mut acc, 0.25)).sum::<i32>(), 120);
+        // 逆へ倒したら前の貯めは残さない。
+        let mut acc = 0.0;
+        wheel_notches(&mut acc, 1.0);
+        wheel_notches(&mut acc, 1.0);
+        assert_eq!(wheel_notches(&mut acc, -1.0), 0);
+        assert_eq!(acc, -40.0);
+    }
+
     #[test]
     fn maps_negative_monitor_origin_and_clamps_to_last_pixel() {
         let bounds = RECT {
