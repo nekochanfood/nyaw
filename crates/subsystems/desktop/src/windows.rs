@@ -923,6 +923,14 @@ fn captured_at(time: TimeSpan) -> Instant {
     Instant::now().checked_sub(age).unwrap_or_else(Instant::now)
 }
 
+/// 仮想デスクトップ上の画素を `MOUSEEVENTF_ABSOLUTE` の 0..=65535 に写す。
+fn virtual_desk_point(point: POINT, left: i32, top: i32, width: i32, height: i32) -> (i32, i32) {
+    let scale = |v: i32, origin: i32, size: i32| {
+        ((v - origin) as i64 * 65535 / (size - 1).max(1) as i64).clamp(0, 65535) as i32
+    };
+    (scale(point.x, left, width), scale(point.y, top, height))
+}
+
 fn normalized_point(bounds: RECT, x: f32, y: f32) -> POINT {
     POINT {
         x: bounds.left + ((bounds.right - bounds.left - 1) as f32 * x).round() as i32,
@@ -937,20 +945,41 @@ struct MouseDevice {
     button: Option<Button>,
 }
 impl MouseDevice {
-    fn button(flag: MOUSE_EVENT_FLAGS) -> Result<(), Error> {
+    fn input(mi: MOUSEINPUT) -> Result<(), Error> {
         let input = INPUT {
             r#type: INPUT_MOUSE,
-            Anonymous: INPUT_0 {
-                mi: MOUSEINPUT {
-                    dwFlags: flag,
-                    ..Default::default()
-                },
-            },
+            Anonymous: INPUT_0 { mi },
         };
         if unsafe { SendInput(&[input], size_of::<INPUT>() as i32) } != 1 {
             return Err(Error("desktop mouse input was rejected by Windows".into()));
         }
         Ok(())
+    }
+
+    fn button(flag: MOUSE_EVENT_FLAGS) -> Result<(), Error> {
+        Self::input(MOUSEINPUT {
+            dwFlags: flag,
+            ..Default::default()
+        })
+    }
+
+    /// 移動も入力として注入する。`SetCursorPos` だけでは押下中の移動を受け取らないアプリがある（ターミナルの範囲選択など）。
+    fn move_to(point: POINT) -> Result<(), Error> {
+        let (left, top, width, height) = unsafe {
+            (
+                GetSystemMetrics(SM_XVIRTUALSCREEN),
+                GetSystemMetrics(SM_YVIRTUALSCREEN),
+                GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            )
+        };
+        let (dx, dy) = virtual_desk_point(point, left, top, width, height);
+        Self::input(MOUSEINPUT {
+            dx,
+            dy,
+            dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+            ..Default::default()
+        })
     }
 
     fn flags(button: Button) -> (MOUSE_EVENT_FLAGS, MOUSE_EVENT_FLAGS) {
@@ -970,17 +999,17 @@ impl MouseDevice {
     ) -> Result<(), Error> {
         match phase {
             TouchPhase::Move if self.pressed_by.is_none() || self.pressed_by == Some(id) => {
-                unsafe { SetCursorPos(point.x, point.y)? };
+                Self::move_to(point)?;
             }
             TouchPhase::Down if self.pressed_by.is_none() => {
-                unsafe { SetCursorPos(point.x, point.y)? };
+                Self::move_to(point)?;
                 Self::button(Self::flags(button).0)?;
                 self.pressed_by = Some(id);
                 self.button = Some(button);
             }
             TouchPhase::Up | TouchPhase::Cancel if self.pressed_by == Some(id) => {
                 if phase == TouchPhase::Up {
-                    unsafe { SetCursorPos(point.x, point.y)? };
+                    Self::move_to(point)?;
                 }
                 Self::button(Self::flags(self.button.unwrap_or(Button::Left)).1)?;
                 self.pressed_by = None;
@@ -992,7 +1021,7 @@ impl MouseDevice {
     }
 
     fn scroll(&self, point: POINT, dx: f32, dy: f32) -> Result<(), Error> {
-        unsafe { SetCursorPos(point.x, point.y)? };
+        Self::move_to(point)?;
         for (flag, delta) in [(MOUSEEVENTF_WHEEL, dy), (MOUSEEVENTF_HWHEEL, dx)] {
             let amount = (delta * 40.0).round() as i32;
             if amount == 0 {
@@ -1041,6 +1070,14 @@ mod tests {
             POINT { x: -1920, y: -100 }
         );
         assert_eq!(normalized_point(bounds, 1.0, 1.0), POINT { x: -1, y: 979 });
+    }
+
+    #[test]
+    fn maps_pixels_onto_absolute_virtual_desk() {
+        let at = |x, y| virtual_desk_point(POINT { x, y }, -1920, -100, 3840, 1180);
+        assert_eq!(at(-1920, -100), (0, 0));
+        assert_eq!(at(1919, 1079), (65535, 65535));
+        assert_eq!(at(-1, 0).0, 32759);
     }
 
     #[test]
