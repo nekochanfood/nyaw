@@ -186,6 +186,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     close_sounds: std::collections::HashMap<PanelId, audio::Sound>,
     /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
     shortcut: DoublePress,
+    /// ランタイムが数えた二回押しの合計（[`vr::DOUBLE_PRESS_INPUT`]）。
+    runtime_double_press: u32,
     /// 骨格だけの手のショートカット（親指と小指）の長押し。二回押しと同じく [`PanelStatus::double_press`] に数える。
     hand_shortcut: LongPress,
     /// OS の前面のアプリのキーボードの監視と入力（[`Kernel::os_keyboard`]。使い始めるまで起こさない）。
@@ -340,6 +342,7 @@ impl<B: VrBackend> Kernel<B> {
             point_slots: Default::default(),
             close_sounds: Default::default(),
             shortcut: DoublePress::default(),
+            runtime_double_press: 0,
             hand_shortcut: LongPress::default(),
             os_keyboard: None,
             pending_os_input: Vec::new(),
@@ -509,6 +512,7 @@ impl<B: VrBackend> Kernel<B> {
                 .any(|c| c.shortcut && c.facing.is_some() == hand)
         };
         self.shortcut.update(held(false), polled);
+        self.runtime_double_press += frame.controllers.iter().filter(|c| c.double_press).count() as u32;
         self.hand_shortcut.update(held(true), polled);
         self.batteries.clone_from(&frame.batteries);
         let mut events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
@@ -701,7 +705,7 @@ impl<B: VrBackend> Kernel<B> {
             animated: p.animated,
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
-            double_press: self.shortcut.count + self.hand_shortcut.count,
+            double_press: self.shortcut.count + self.hand_shortcut.count + self.runtime_double_press,
             outside_press: self.overlay.outside_presses(),
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
@@ -811,6 +815,23 @@ mod tests {
             x(&mut k, held);
         }
         assert_eq!(k.status(p).double_press, 1);
+    }
+
+    /// ランタイムが数えた二回押し（SteamVR のダブルタップ）は、押下の間隔を見ずにそのまま一回と数える。
+    #[test]
+    fn runtime_double_press_counts_once_per_pulse() {
+        let (mut k, p) = kernel();
+        for pulse in [1.0, 1.0, 0.0] {
+            k.subsystems.backend.frame.controllers = vec![vr::RawController {
+                hand: Hand::Left,
+                profile: "valve/index_controller".into(),
+                aim: Pose::IDENTITY,
+                inputs: vec![(vr::DOUBLE_PRESS_INPUT.into(), pulse)],
+            }];
+            k.tick();
+        }
+        // 1 フレームだけ立つ入力なので、実際には 2 回目の 1.0 は別のダブルタップ。
+        assert_eq!(k.status(p).double_press, 2);
     }
 
     #[cfg(feature = "novr")]
