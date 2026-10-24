@@ -251,6 +251,8 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     )
     // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
     .without_nav_bar()
+    // タッチの方式では離すまで押されず、押している間の手ブレでスワイプになって押し損じる。押した瞬間に押す。
+    .pointer_mode(kernel::PointerMode::Mouse)
     // 対象パネル（ダッシュボードにはめた画面も）の下ではなく、開いた瞬間の頭の前の打ちやすい位置に、
     // ホームポジションを頭の正面に合わせて出す。親子関係は作らない（対象を動かしても付いて行かない）。
     .typing(home_offset(resolution));

@@ -574,9 +574,9 @@ pub fn pump<B: VrBackend>(
     kernel: &mut Kernel<B>,
     bridges: &mut HashMap<(PanelId, Hand), PointerBridge>,
 ) -> Vec<(PanelId, Hand, PlatformInput)> {
-    let mode = kernel.pointer_mode();
     let mut gpui = Vec::new();
     for e in kernel.tick() {
+        let mode = kernel.panel_pointer_mode(e.panel);
         let bridge = bridges.entry((e.panel, e.hand)).or_default();
         let p = kernel.panel(e.panel);
         let distance = p.pose.position.distance(kernel.hmd().position);
@@ -602,7 +602,7 @@ pub fn pump<B: VrBackend>(
         if kernel.desktop_streaming(panel) {
             if b.on_panel() || b.pressed || b.touch.is_some() {
                 gpui.extend(
-                    b.translate(PointerEvent::Leave, mode)
+                    b.translate(PointerEvent::Leave, kernel.panel_pointer_mode(panel))
                         .into_iter()
                         .map(|input| (panel, hand, input)),
                 );
@@ -711,6 +711,8 @@ pub struct PanelSpec {
     locked: bool,
     /// 掴んで大きさを変えられる（既定。[`Self::without_resize`] で外す）。
     resizable: bool,
+    /// 全体の設定によらないポインタの方式（[`Self::pointer_mode`]）。
+    pointer_mode: Option<PointerMode>,
     /// 掴んだときに手で動かす基準（[`Self::grab_anchor`]）。
     grab_anchor: Option<Pose>,
     /// 親子関係（[`Self::child`]）。
@@ -768,6 +770,7 @@ impl PanelSpec {
             attach: None,
             locked: false,
             resizable: true,
+            pointer_mode: None,
             grab_anchor: None,
             parent: None,
             animated: true,
@@ -925,6 +928,12 @@ impl PanelSpec {
     /// 掴んでも大きさを変えられないようにする（大きさの決まったもの。ダッシュボードのバーなど）。
     pub fn without_resize(mut self) -> Self {
         self.resizable = false;
+        self
+    }
+
+    /// 全体の設定によらず、このパネルでは `mode` でポインタを流す（キーボードは押した瞬間に押せるようマウス）。
+    pub fn pointer_mode(mut self, mode: PointerMode) -> Self {
+        self.pointer_mode = Some(mode);
         self
     }
 
@@ -1833,6 +1842,9 @@ fn open_panel(
     }
     if !spec.resizable {
         kernel.apply(panel, PanelCommand::Resizable(false));
+    }
+    if let Some(mode) = spec.pointer_mode {
+        kernel.apply(panel, PanelCommand::PointerMode(mode));
     }
     if spec.grab_anchor.is_some() {
         kernel.apply(panel, PanelCommand::GrabAnchor(spec.grab_anchor));

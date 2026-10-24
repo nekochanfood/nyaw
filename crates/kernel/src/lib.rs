@@ -40,6 +40,8 @@ pub enum PanelCommand {
     Lock(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
+    /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
+    PointerMode(PointerMode),
     /// 再生中のメディアを操作する（再生・一時停止・曲送り・シーク・アプリを前に出す。[`Kernel::now_playing`]）。
     Media(subsystems::media::Command),
     /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。`Overlay::set_grab_anchor`）。
@@ -184,6 +186,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     point_slots: std::collections::HashMap<PanelId, u64>,
     /// 閉じるときに鳴らす音（[`PanelCommand::CloseSound`]）。
     close_sounds: std::collections::HashMap<PanelId, audio::Sound>,
+    /// 全体の設定によらないポインタの方式（[`PanelCommand::PointerMode`]）。
+    pointer_modes: std::collections::HashMap<PanelId, PointerMode>,
     /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
     shortcut: DoublePress,
     /// ランタイムが数えた二回押しの合計（[`vr::DOUBLE_PRESS_INPUT`]）。
@@ -341,6 +345,7 @@ impl<B: VrBackend> Kernel<B> {
             speakers: Default::default(),
             point_slots: Default::default(),
             close_sounds: Default::default(),
+            pointer_modes: Default::default(),
             shortcut: DoublePress::default(),
             runtime_double_press: 0,
             hand_shortcut: LongPress::default(),
@@ -358,6 +363,14 @@ impl<B: VrBackend> Kernel<B> {
     /// レーザーのエミュレート方式。UI がポインタイベントをマウス・タッチのどちらとして流すかを決める。
     pub fn pointer_mode(&self) -> PointerMode {
         self.pointer_mode
+    }
+
+    /// `panel` でのレーザーのエミュレート方式（[`PanelCommand::PointerMode`] で決めていなければ全体の設定）。
+    pub fn panel_pointer_mode(&self, panel: PanelId) -> PointerMode {
+        self.pointer_modes
+            .get(&panel)
+            .copied()
+            .unwrap_or(self.pointer_mode)
     }
 
     pub fn settings(&self) -> Settings {
@@ -632,6 +645,9 @@ impl<B: VrBackend> Kernel<B> {
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
+            PanelCommand::PointerMode(mode) => {
+                self.pointer_modes.insert(panel, mode);
+            }
             PanelCommand::Media(command) => {
                 if let Some(media) = &self.media {
                     media.send(command);
@@ -1032,6 +1048,11 @@ mod tests {
             PointerMode::Touch,
             "defaults to touch"
         );
+        // パネルごとに決めた方式は、全体の設定より優先する。
+        let (mut k, p) = kernel();
+        k.apply(p, PanelCommand::PointerMode(PointerMode::Mouse));
+        assert_eq!(k.panel_pointer_mode(p), PointerMode::Mouse);
+        assert_eq!(k.pointer_mode(), PointerMode::Touch);
     }
 
     #[test]
