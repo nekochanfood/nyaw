@@ -648,11 +648,27 @@ impl Render for DragPreview {
 const PROFILER_REDRAW: Duration = Duration::from_millis(100);
 /// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 10cm）。
 const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.1);
-/// 打ちやすい位置に出すパネル（[`PanelSpec::typing`]。キーボード）の、開いた瞬間の頭（水平方向だけ）から見た位置（m）。
-/// 手を軽く前に出したあたり。
+/// 打ちやすい位置に出すパネル（[`PanelSpec::typing`]。キーボード）の、開いた瞬間の頭から見た前への距離と、手が分からないときの
+/// 高さ（m。手を軽く前に出したあたり）。左右は呼び出し元に合わせるので `x` は使わない。
 const TYPING_AT: Vec3 = Vec3::new(0.0, -0.4, -0.8);
-/// 打ちやすい位置に出すパネル（[`PanelSpec::typing`]）を向ける先を、目からどれだけ下げるか（m）。
+/// 打ちやすい位置に出すパネル（[`PanelSpec::typing`]）を向ける先を、目からどれだけ下げるか（m。コントローラが無いとき）。
 const TYPING_AIM_DROP: f32 = 0.15;
+/// 打ちやすい位置に出すパネルの中心を、手（コントローラ）の高さからどれだけ上げるか（m）。手を動かさず、
+/// 手首を少し起こすだけで指せる高さ。
+const TYPING_ABOVE_HANDS: f32 = 0.1;
+/// 打ちやすい位置に出すパネルの中心の、目から見た高さの下限（m）。手を下ろしきって開いても見える所に収める。
+const TYPING_LOWEST: f32 = -0.6;
+/// 立っているとき、打ちやすい位置に出すパネルの上端を目の高さからどれだけ下げるか（m）。手を上げていても目線より下に出す。
+const TYPING_CLEARANCE: f32 = 0.05;
+/// 寝ているとき、打ちやすい位置に出すパネルの上端を視線からどれだけ下げるか（m。頭から見て）。視界には入れつつ、
+/// 正面のパネルに重ねない。寝ていると手の高さは当てにならないので、手には合わせない。
+const TYPING_LYING_CLEARANCE: f32 = 0.25;
+/// 打ちやすい位置に出すパネルの上端と、呼び出し元（とそのナビゲーションバー・はめた先）の下端の、頭から見た角度の隙間（rad）。
+/// 視界の中で呼び出し元の真下に、重ならずに見える。
+const TYPING_PANEL_GAP: f32 = 3.0 * std::f32::consts::PI / 180.0;
+/// 打ちやすい位置に出すパネルの面を向ける先の、目から手への寄せ具合（0 = 目、1 = 手）。読みやすさ（頭）を重く見つつ、
+/// 手から来るレーザーが浅く当たらないよう手の方へも少し向ける。
+const TYPING_TOWARD_HANDS: f32 = 0.3;
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
@@ -697,7 +713,7 @@ type Minimize = std::rc::Rc<dyn Fn(PanelId, &mut App)>;
 pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
-    /// 開いた瞬間の頭の前の打ちやすい位置に出す（[`Self::typing`]）。値はパネルの中心から見た、頭の正面に合わせる点の横位置（m）。
+    /// 開いた瞬間の頭の前の打ちやすい位置に出す（[`Self::typing`]）。値はパネルの中心から見た、呼び出し元の中心の左右に合わせる点の横位置（m）。
     typing: Option<f32>,
     /// `from` から見た置き場所（[`Self::offset`]）。無ければ `from` の手前に少し離して重ねる。
     offset: Option<Pose>,
@@ -886,9 +902,9 @@ impl PanelSpec {
         self
     }
 
-    /// 開いた瞬間の頭の前、手を軽く前に出したあたり（打ちやすい位置）に出し、目より少し下（手の方）へ向ける
-    /// （下から来るレーザーが浅くならない）。`center` はパネルの中心から見た横位置（m）で、そこを頭の正面に合わせる
-    /// （キーボードならホームポジション）。親子関係や追従は作らない。
+    /// 開いた瞬間の頭から手を軽く前に出したあたり（打ちやすい位置）に出す。高さと仰ぐ角度だけを頭（と手）から決め、
+    /// 左右の向きと位置は呼び出し元（[`Self::spawn`] の `from`）に合わせる。`center` はパネルの中心から見た横位置（m）で、
+    /// そこを呼び出し元の中心の左右に合わせる（キーボードならホームポジション）。親子関係や追従は作らない。
     pub fn typing(mut self, center: f32) -> Self {
         self.typing = Some(center);
         self
@@ -1042,10 +1058,79 @@ impl PanelSpec {
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
         if let Some(center) = self.typing {
             let hmd = kernel.hmd();
-            let head = hmd.leveled();
             let up = hmd.panel_up();
-            let at = head.transform_point(TYPING_AT);
-            let toward = (hmd.position - up * TYPING_AIM_DROP - at).try_normalize();
+            // 頭から見るのは上下（高さ・仰ぐ角度）だけ。左右の向きと位置は呼び出し元に合わせ、頭の回転に付いて行かない
+            // （呼び出し元の面を水平にした向きで、頭を原点に置いた座標）。呼び出し元が無い・寝かせてあれば頭の向き。
+            let caller = self.from.map(|p| kernel.panel(p).pose);
+            let head = caller
+                .and_then(|c| {
+                    let n = c.orientation * Vec3::Z;
+                    let back = (n - up * n.dot(up)).try_normalize()?;
+                    let back = if back.dot(hmd.position - c.position) < 0. {
+                        -back
+                    } else {
+                        back
+                    };
+                    let x = up.cross(back).normalize();
+                    Some(Pose::new(
+                        hmd.position,
+                        Quat::from_mat3(&kernel::vr::Mat3::from_cols(x, back.cross(x), back)),
+                    ))
+                })
+                .unwrap_or_else(|| hmd.leveled());
+            let inverse = head.inverse();
+            // 呼び出し元の中心の左右の位置に、ホームポジションを合わせる。
+            let lateral = caller.map_or(0., |c| inverse.transform_point(c.position).x);
+            // 手（コントローラ。両手なら間）。高さを手に合わせ、面を少し手へ向ける。左右・距離は頭の向きで決める。
+            let (sum, count) = kernel
+                .controllers()
+                .iter()
+                .fold((Vec3::ZERO, 0.), |(sum, n), c| (sum + c.aim.position, n + 1.));
+            let hands = (count > 0.).then(|| sum / count);
+            // 寝ている（上が頭の上へ倒れている）ほど 1。立っている間は手の高さ、寝ている間は視界の下寄りへ移る。
+            let lying = (1. - up.dot(Vec3::Y)).clamp(0., 1.);
+            let upright = hands.map_or(TYPING_AT.y, |hands| {
+                ((hands - hmd.position).dot(up) + TYPING_ABOVE_HANDS)
+                    .max(TYPING_LOWEST)
+                    .min(-self.size.y / 2. - TYPING_CLEARANCE)
+            });
+            let mut height =
+                upright + (-self.size.y / 2. - TYPING_LYING_CLEARANCE - upright) * lying;
+            // 頭から見て呼び出し元の下端より下に見えるよう、必要なら下げる（呼び出し元の邪魔をしない）。呼び出し元を
+            // はめた先（ダッシュボードのバー）も含め、ナビゲーションバーの分も下端とみなす。下げても見える所までに収める。
+            let callers =
+                std::iter::successors(self.from, |&p| kernel.panel(p).parent.map(|q| q.panel));
+            let bottom = callers
+                .flat_map(|p| std::iter::once(p).chain(kernel.nav_bar(p)))
+                .flat_map(|p| {
+                    let panel = kernel.panel(p);
+                    let (w, y) = (panel.size.x / 2., -panel.size.y / 2.);
+                    [-w, 0., w].map(|x| panel.pose.transform_point(Vec3::new(x, y, 0.)))
+                })
+                .map(|p| inverse.transform_point(p))
+                .filter(|p| p.z < 0.)
+                .map(|p| p.y.atan2(p.x.hypot(p.z)))
+                .reduce(f32::min);
+            if let Some(bottom) = bottom {
+                let reach = lateral.hypot(TYPING_AT.z);
+                // 自分の見かけの高さ（の半分）は距離で変わるので、数回詰める。真下近くでは tan が発散するので 80° で止める。
+                let mut limit = height;
+                for _ in 0..3 {
+                    let half = (self.size.y / 2.).atan2(reach.hypot(limit));
+                    let center = (bottom - TYPING_PANEL_GAP - half).max(-80f32.to_radians());
+                    limit = reach * center.tan();
+                }
+                height = height.min(limit).max(TYPING_LOWEST);
+            }
+            let at = head.transform_point(Vec3::new(lateral, height, TYPING_AT.z));
+            let aim = hands.map_or(hmd.position - up * TYPING_AIM_DROP, |hands| {
+                hmd.position.lerp(hands, TYPING_TOWARD_HANDS * (1. - lying))
+            });
+            // 仰ぐ角度だけ目（と手）へ向け、左右の向きは呼び出し元のまま。
+            let toward = aim - at;
+            let rise = toward.dot(up);
+            let back = head.orientation * Vec3::Z;
+            let toward = (back * (toward - up * rise).length() + up * rise).try_normalize();
             let orientation = toward
                 .and_then(|z| Some((up.cross(z).try_normalize()?, z)))
                 .map_or(head.orientation, |(x, z)| {
@@ -2008,6 +2093,147 @@ mod tests {
         ));
         assert!(pump(&mut kernel, &mut bridges).is_empty());
         assert!(bridges[&(panel, Hand::Right)].momentum.is_none());
+    }
+
+    /// 打ちやすい位置に出すパネルは、手の少し上の高さに出し、面は目を重く見つつ手の方へも少し向ける。
+    #[test]
+    fn typing_panel_sits_just_above_the_hands_and_faces_mostly_the_eyes() {
+        let mut kernel =
+            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
+        kernel.tick();
+        let eye = kernel.hmd().position;
+        let hand = |hand, x| kernel::vr::RawController {
+            hand,
+            profile: "valve/index_controller".into(),
+            aim: Pose::new(eye + Vec3::new(x, -0.45, -0.3), Quat::IDENTITY),
+            inputs: Vec::new(),
+        };
+        kernel.subsystems.backend.frame.controllers =
+            vec![hand(Hand::Left, -0.2), hand(Hand::Right, 0.2)];
+        kernel.tick();
+        let spec = PanelSpec::root(Pose::IDENTITY, |_, _, _| gpui::Empty)
+            .sized(Vec2::new(1.0, 0.2), (100, 20))
+            .typing(0.0);
+        let pose = spec.pose_for(&kernel, 0);
+        let height = pose.position.y - eye.y;
+        assert!((height - (-0.45 + TYPING_ABOVE_HANDS)).abs() < 1e-4, "{height}");
+        let hands = eye + Vec3::new(0.0, -0.45, -0.3);
+        let normal = pose.orientation * Vec3::Z;
+        let aim = eye.lerp(hands, TYPING_TOWARD_HANDS);
+        assert!(normal.dot((aim - pose.position).normalize()) > 1.0 - 1e-4);
+        // 目へまっすぐより手の方（下）へ寄る。
+        assert!(normal.dot((eye - pose.position).normalize()) < 1.0 - 1e-4);
+        // 手を下ろしきっていても、見やすい高さより下には出さない。
+        let mut low = hand(Hand::Right, 0.2);
+        low.aim.position.y = eye.y - 1.2;
+        kernel.subsystems.backend.frame.controllers = vec![low];
+        kernel.tick();
+        let height = spec.pose_for(&kernel, 0).position.y - eye.y;
+        assert!((height - TYPING_LOWEST).abs() < 1e-4, "{height}");
+        // 手を上げていても、上端は目線より下。
+        let mut high = hand(Hand::Right, 0.2);
+        high.aim.position.y = eye.y + 0.3;
+        kernel.subsystems.backend.frame.controllers = vec![high];
+        kernel.tick();
+        let height = spec.pose_for(&kernel, 0).position.y - eye.y;
+        assert!((height - (-0.1 - TYPING_CLEARANCE)).abs() < 1e-4, "{height}");
+    }
+
+    /// 呼び出し元より手前に出すので、頭から見て呼び出し元の下端（ナビゲーションバー込み）より下に見えるよう下げる。
+    #[test]
+    fn typing_panel_shows_below_the_caller_without_covering_it() {
+        let mut kernel =
+            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
+        kernel.tick();
+        let eye = kernel.hmd().position;
+        let caller = kernel
+            .add_panel(
+                "caller",
+                Pose::new(eye + Vec3::new(0.0, -0.1, -1.2), Quat::IDENTITY),
+                Vec2::new(1.2, 0.8),
+                (1200, 800),
+            )
+            .unwrap();
+        let spec = PanelSpec::spawn(caller, |_, _, _| gpui::Empty)
+            .sized(Vec2::new(1.0, 0.33), (1000, 330))
+            .typing(0.0);
+        let pose = spec.pose_for(&kernel, caller + 1);
+        let elevation = |p: Vec3| (p.y - eye.y).atan2(eye.z - p.z);
+        let top = elevation(pose.transform_point(Vec3::Y * 0.165));
+        let bottom = elevation(eye + Vec3::new(0.0, -0.5, -1.2));
+        assert!(top < bottom - TYPING_PANEL_GAP * 0.5, "{top} {bottom}");
+        // 必要な分だけ下げる（離れすぎない）。
+        assert!(top > bottom - TYPING_PANEL_GAP * 2.0, "{top} {bottom}");
+    }
+
+    /// 左右の向きと位置は呼び出し元に合わせ、頭を左右に向けても変わらない（頭から見るのは上下だけ）。
+    #[test]
+    fn typing_panel_follows_the_callers_heading_not_the_heads() {
+        let mut kernel =
+            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
+        kernel.tick();
+        let eye = kernel.hmd().position;
+        let yaw = Quat::from_rotation_y(0.3);
+        let caller = kernel
+            .add_panel(
+                "caller",
+                Pose::new(eye + yaw * Vec3::new(0.0, 0.3, -1.2), yaw),
+                Vec2::new(1.0, 0.6),
+                (1000, 600),
+            )
+            .unwrap();
+        let spec = PanelSpec::spawn(caller, |_, _, _| gpui::Empty)
+            .sized(Vec2::new(1.0, 0.2), (100, 20))
+            .typing(0.1);
+        let mut poses = Vec::new();
+        for head_yaw in [-0.5, 0.0, 0.6] {
+            kernel.subsystems.backend.frame.hmd =
+                Pose::new(eye, Quat::from_rotation_y(head_yaw));
+            kernel.tick();
+            poses.push(spec.pose_for(&kernel, caller + 1));
+        }
+        for pose in &poses {
+            assert!(pose.position.abs_diff_eq(poses[0].position, 1e-4), "{pose:?}");
+            assert!(pose.orientation.abs_diff_eq(poses[0].orientation, 1e-4));
+            // 面の左右の向きは呼び出し元と同じ。
+            let normal = pose.orientation * Vec3::Z;
+            let flat = Vec3::new(normal.x, 0.0, normal.z).normalize();
+            assert!(flat.abs_diff_eq(yaw * Vec3::Z, 1e-4), "{flat}");
+            // ホームポジション（中心から 0.1m）が呼び出し元の中心の左右に来る。
+            let home = yaw.inverse() * (pose.transform_point(Vec3::X * 0.1) - eye);
+            assert!(home.x.abs() < 1e-4, "{home}");
+        }
+    }
+
+    /// 寝ているときは手の高さによらず、視界に入る頭の正面の下寄り（正面のパネルに重ならない所）に出す。
+    #[test]
+    fn typing_panel_sits_low_in_view_while_lying() {
+        let mut kernel =
+            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
+        // 仰向け（真上を見る）。
+        let head = Pose::new(
+            Vec3::new(0.0, 0.3, 0.0),
+            Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+        );
+        kernel.subsystems.backend.frame.hmd = head;
+        kernel.subsystems.backend.frame.controllers = vec![kernel::vr::RawController {
+            hand: Hand::Right,
+            profile: "valve/index_controller".into(),
+            aim: Pose::new(Vec3::new(0.2, 0.6, 0.0), Quat::IDENTITY),
+            inputs: Vec::new(),
+        }];
+        kernel.tick();
+        let spec = PanelSpec::root(Pose::IDENTITY, |_, _, _| gpui::Empty)
+            .sized(Vec2::new(1.0, 0.2), (100, 20))
+            .typing(0.0);
+        let pose = spec.pose_for(&kernel, 0);
+        let local = kernel.hmd().inverse().transform_point(pose.position);
+        let expected = Vec3::new(0.0, -0.1 - TYPING_LYING_CLEARANCE, TYPING_AT.z);
+        assert!(local.abs_diff_eq(expected, 1e-3), "{local}");
+        // 面は目へ向く。
+        let normal = pose.orientation * Vec3::Z;
+        let toward = (kernel.hmd().position - pose.position).normalize();
+        assert!(normal.dot(toward) > 1.0 - 1e-4);
     }
 
     /// 一方の手がパネルにマウスを動かしたら、もう一方の手は次に位置から送り直す（GPUI のマウスは 1 つ）。
