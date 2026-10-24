@@ -16,7 +16,7 @@ pub use subsystems::{audio, desktop, rendering, vr};
 use std::time::{Duration, Instant};
 use subsystems::os;
 
-pub use config::{Config, Language, LodQuality, PointerMode, ThemeMode};
+pub use config::{Config, DominantHand, Language, LodQuality, PointerMode, ThemeMode};
 pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use subsystems::ControllerState;
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
@@ -125,6 +125,7 @@ pub struct Settings {
     pub pointer_release_deg: f32,
     pub laser_length: f32,
     pub hand: subsystems::input::HandTuning,
+    pub dominant_hand: DominantHand,
 }
 
 /// パネルの状態。ビューの表示用。全体の設定は [`Settings`]。
@@ -382,6 +383,7 @@ impl<B: VrBackend> Kernel<B> {
             pointer_release_deg: self.overlay.pointer_release(),
             laser_length: self.overlay.laser_length(),
             hand: self.subsystems.hand,
+            dominant_hand: self.config.dominant_hand,
         }
     }
 
