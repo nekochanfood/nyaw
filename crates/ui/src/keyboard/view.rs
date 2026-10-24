@@ -289,6 +289,17 @@ impl KeyboardView {
         None
     }
 
+    /// 押していたキーを離した（離した所がキーの外でも）。キーリピートを止める。
+    fn release(&mut self, code: u16) {
+        if self
+            .repeating
+            .as_ref()
+            .is_some_and(|(key, _, _)| *key == code)
+        {
+            self.repeating = None;
+        }
+    }
+
     fn press_down(
         &mut self,
         code: u16,
@@ -515,7 +526,7 @@ impl Render for KeyboardView {
                 .flex_shrink_0()
                 .w(px(self.kind.width() * unit))
                 .h(px(self.kind.height() * unit))
-                .children(keys.into_iter().map(|key| {
+                .children(keys.into_iter().flat_map(|key| {
                     let code = key.code;
                     let sound = key_sound(&key.name);
                     let label = keyboard.label(code);
@@ -574,32 +585,46 @@ impl Render for KeyboardView {
                     .left(px(key.x * unit + gap / 2.))
                     .top(px(key.y * unit + gap / 2.))
                     .w(px(key.width * unit - gap))
-                    .h(px(key.height * unit - gap))
-                    .on_press(
-                        cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
-                            let at = event.position;
-                            this.press_down(
-                                code,
-                                sound,
-                                kernel::Vec2::new(f32::from(at.x), f32::from(at.y)),
-                                cx,
-                            );
-                        }),
-                    )
-                    .on_release(cx.listener(move |this, _, _, _| {
-                        if this
-                            .repeating
-                            .as_ref()
-                            .is_some_and(|(key, _, _)| *key == code)
-                        {
-                            this.repeating = None;
-                        }
-                    }));
-                    if let Some((_, tooltip)) = glyph {
+                    .h(px(key.height * unit - gap));
+                    let button = if let Some((_, tooltip)) = glyph {
                         button.tooltip(i18n::t(cx, tooltip))
                     } else {
                         button
-                    }
+                    };
+                    // 押す判定はキーの見た目（隙間と角丸を除く）ではなく、隙間の半分まで含めたキーの升目全体で取る。
+                    // レーザーは手ブレするので、隙間や角に当たって押し損じないように。
+                    let cells = key.regions().into_iter().map(|(x, y, w, h)| {
+                        div()
+                            .absolute()
+                            .left(px(x * unit))
+                            .top(px(y * unit))
+                            .w(px(w * unit))
+                            .h(px(h * unit))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                                    let at = event.position;
+                                    this.press_down(
+                                        code,
+                                        sound,
+                                        kernel::Vec2::new(f32::from(at.x), f32::from(at.y)),
+                                        cx,
+                                    );
+                                }),
+                            )
+                            .on_mouse_up(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, _, _| this.release(code)),
+                            )
+                            .on_mouse_up_out(
+                                gpui::MouseButton::Left,
+                                cx.listener(move |this, _, _, _| this.release(code)),
+                            )
+                            .into_any_element()
+                    });
+                    std::iter::once(button.into_any_element())
+                        .chain(cells.collect::<Vec<_>>())
+                        .collect::<Vec<_>>()
                 }));
             root = root.child(
                 div()
@@ -751,6 +776,35 @@ mod tests {
         assert_eq!(*sound, kernel::audio::Sound::Wav(SPACEBAR_SOUND));
         assert_eq!(*at, kernel::Vec2::new(f32::from(key.x), f32::from(key.y)));
         assert!((pitch - 1.).abs() <= PITCH_JITTER);
+    }
+
+    /// キーの見た目の外でも、隙間（の半分まで）や角丸の外に当たればそのキーを押す（レーザーの手ブレで押し損じない）。
+    #[gpui::test]
+    fn pressing_the_gap_or_corner_next_to_a_key_presses_it(cx: &mut TestAppContext) {
+        let db = Database::load().unwrap();
+        let view = ready(&db, "us", KeyboardType::Compact);
+        let (_, cx) = cx.add_window_view(|_, _| view);
+        cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
+        cx.run_until_parked();
+        let key = cx.debug_bounds("key-SPCE").unwrap();
+        for at in [
+            key.bottom_left() + gpui::point(key.size.width / 2., px(2.)),
+            key.origin + gpui::point(px(1.), px(1.)),
+        ] {
+            cx.simulate_click(at, gpui::Modifiers::none());
+            let commands = cx.update(|_, cx| {
+                let ctl = cx.global_mut::<crate::PanelControl>();
+                std::mem::take(&mut ctl.panels.get_mut(&0).unwrap().commands)
+            });
+            assert!(
+                matches!(
+                    commands.first(),
+                    Some(kernel::PanelCommand::PlayAt { sound, .. })
+                        if *sound == kernel::audio::Sound::Wav(SPACEBAR_SOUND)
+                ),
+                "{at:?}: {commands:?}"
+            );
+        }
     }
 
     #[test]
