@@ -29,6 +29,8 @@ pub struct State {
     /// 箱の幅（px）と、文字を変えたときの伸び縮み。
     pub width: f32,
     width_anim: Option<Animation>,
+    /// 今の文字を出した時刻（収まらない文字を流し始める起点）。
+    pub since: Option<Instant>,
     /// 要素から離れた時刻（猶予の始まり）。
     left: Option<Instant>,
     last: Option<Instant>,
@@ -43,6 +45,7 @@ impl Default for State {
             vis_anim: None,
             width: 0.0,
             width_anim: None,
+            since: None,
             left: None,
             last: None,
         }
@@ -100,6 +103,7 @@ impl State {
                 if *text != t {
                     let to = measure(&t);
                     *text = t;
+                    self.since = Some(now);
                     if animated {
                         self.width_anim = Some(Animation::new(self.width, to, Motion::Move));
                     } else {
@@ -114,6 +118,7 @@ impl State {
                 self.width = measure(&t);
                 self.width_anim = None;
                 self.shown = Some((t, anchor));
+                self.since = Some(now);
                 self.vis_to = 0.0;
                 self.go(1.0, Motion::Enter, animated);
             }
@@ -160,18 +165,24 @@ impl Render for Tooltip {
             .unwrap_or_default();
         let animated = cx.has_global::<design::Motion>();
         let max = super::TOOLTIP_PX.0 as f32;
+        let now = Instant::now();
         let busy = self
             .state
-            .step(Instant::now(), request.as_ref(), anchor, animated, |t| {
+            .step(now, request.as_ref(), anchor, animated, |t| {
                 tooltip_width(t, window).min(max)
             });
-        // 動いている・猶予を数えている間は毎フレーム描き直してもらう。
+        let s = &self.state;
+        // 収まらない文字は流す。
+        let scroll = s.shown.as_ref().zip(s.since).and_then(|((t, _), since)| {
+            let t0 = now.saturating_duration_since(since).as_secs_f32();
+            design::components::tooltip_scroll(tooltip_width(t, window), s.width, t0)
+        });
+        // 動いている・猶予を数えている・流している間は毎フレーム描き直してもらう。
         cx.default_global::<ui::PanelControl>()
             .panels
             .entry(self.panel)
             .or_default()
-            .live = busy;
-        let s = &self.state;
+            .live = busy || scroll.is_some();
         let (w, h) = (super::TOOLTIP_PX.0 as f32, super::TOOLTIP_PX.1 as f32);
         let hide = (1.0 - s.vis) * SLIDE;
         let top = match s.shown.as_ref().map(|(_, a)| *a) {
@@ -184,7 +195,7 @@ impl Render for Tooltip {
             .debug_selector(|| "tooltip".into())
             .when_some(s.shown.clone(), |d, (text, _)| {
                 d.child(
-                    tooltip(text, s.width)
+                    tooltip(text, s.width, scroll)
                         .absolute()
                         .left(px((w - s.width) / 2.0))
                         .top(px(top))
