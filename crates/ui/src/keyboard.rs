@@ -253,8 +253,8 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     .without_nav_bar()
     // タッチの方式では離すまで押されず、押している間の手ブレでスワイプになって押し損じる。押した瞬間に押す。
     .pointer_mode(kernel::PointerMode::Mouse)
-    // 対象パネル（ダッシュボードにはめた画面も）の下ではなく、開いた瞬間の頭の前の打ちやすい位置に、
-    // ホームポジションを頭の正面に合わせて出す。親子関係は作らない（対象を動かしても付いて行かない）。
+    // 開いた瞬間の手元の打ちやすい高さに、対象パネル（ダッシュボードにはめた画面も）と同じ向きで、
+    // ホームポジションを対象の中心の左右に合わせて出す。親子関係は作らない（対象を動かしても付いて行かない）。
     .typing(home_offset(resolution));
     cx.default_global::<crate::PanelControl>().spawns.push(spec);
 }
@@ -571,13 +571,13 @@ mod tests {
             let hmd = kernel.hmd();
             let local = hmd.leveled().inverse().transform_point(pose.position);
             assert!(local.y < -0.2 && local.z < -0.4, "{local}");
-            // ホームポジションが頭の正面（左右の中央）に来る。
+            // ホームポジションが対象の中心の左右に来る（頭の正面ではなく）。
             let home = pose.transform_point(kernel::vr::Vec3::X * home_offset(spec.resolution));
-            let home = hmd.leveled().inverse().transform_point(home);
-            assert!(home.x.abs() < 1e-4, "{home}");
+            let target_x = kernel.panel(target).pose.position.x;
+            assert!((home.x - target_x).abs() < 1e-4, "{home}");
+            // 左右の向きは対象と同じ（頭の方へ回り込まない）で、仰ぐ角度だけ頭へ向ける。
             let normal = pose.orientation * kernel::vr::Vec3::Z;
-            let toward_head = (hmd.position - pose.position).normalize();
-            assert!(normal.dot(toward_head) > 0.8);
+            assert!(normal.x.abs() < 1e-4 && normal.z > 0.5, "{normal}");
             assert!(spec.parent().is_none());
             let panel = kernel
                 .add_panel("keyboard", pose, spec.size, spec.resolution)
