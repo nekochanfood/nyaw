@@ -211,6 +211,12 @@ impl<B: VrBackend> Kernel<B> {
     pub(super) fn poll_desktop(&mut self) {
         self.desktop_panels
             .retain(|id, _| !self.overlay.panel(*id).closed);
+        // 見えていない配信は取得を止める。見え直すと止めている間の最新の画像から再開する。
+        for (&id, panel) in &self.desktop_panels {
+            if let Some(stream) = &panel.stream {
+                stream.set_paused(!self.panel_seen(id));
+            }
+        }
         let now = Instant::now();
         for (&id, panel) in &mut self.desktop_panels {
             if panel.stream.is_some() && panel.status == Status::Streaming {
@@ -629,6 +635,18 @@ mod tests {
         );
         kernel.apply(panel, PanelCommand::FocusSource);
         assert_eq!(control.focuses(), 0);
+    }
+
+    #[test]
+    fn hidden_panel_pauses_its_stream() {
+        let (mut kernel, panel, control) = setup();
+        assert!(!control.paused());
+        kernel.apply(panel, PanelCommand::Hide(true));
+        kernel.tick();
+        assert!(control.paused());
+        kernel.apply(panel, PanelCommand::Hide(false));
+        kernel.tick();
+        assert!(!control.paused());
     }
 
     #[test]

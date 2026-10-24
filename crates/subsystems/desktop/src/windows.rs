@@ -483,6 +483,8 @@ pub(super) struct Capture {
     direct: IDirect3DDevice,
     size: SizeInt32,
     staging: Option<ID3D11Texture2D>,
+    /// 一時停止中に取っておいた最新の画像（[`Session::skip`]）。プールの一枚を占めるが、もう一枚に次が届く。
+    held: Option<::windows::Graphics::Capture::Direct3D11CaptureFrame>,
     ready: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
     source: Source,
@@ -595,6 +597,7 @@ impl Capture {
             direct,
             size,
             staging: None,
+            held: None,
             ready,
             closed,
             source,
@@ -717,6 +720,23 @@ impl Capture {
                 .then(|| ::windows::Graphics::Capture::Direct3D11CaptureFrame::from_raw(frame)))
         }
     }
+
+    /// 届いている中で最新の画像（取っておいたものを含む）。古い方は閉じてプールへ返す。
+    fn latest(
+        &mut self,
+    ) -> Result<Option<::windows::Graphics::Capture::Direct3D11CaptureFrame>, Error> {
+        let mut latest = self.held.take();
+        if !self.ready.swap(false, Ordering::AcqRel) {
+            return Ok(latest);
+        }
+        // プールは二枚なので、低 FPS や一時停止で溜まったもう一枚があれば最新の方だけ残す。
+        while let Some(newer) = self.next_frame()? {
+            if let Some(older) = latest.replace(newer) {
+                older.Close()?;
+            }
+        }
+        Ok(latest)
+    }
 }
 
 impl Session for Capture {
@@ -747,25 +767,15 @@ impl Session for Capture {
                         && !self.minimized()))
     }
 
+    fn skip(&mut self) -> Result<(), Error> {
+        self.held = self.latest()?;
+        Ok(())
+    }
+
     fn frame(&mut self) -> Result<Option<Frame>, Error> {
-        if !self.ready.swap(false, Ordering::AcqRel) {
-            return Ok(None);
-        }
-        let Some(mut frame) = self.next_frame()? else {
+        let Some(frame) = self.latest()? else {
             return Ok(None);
         };
-        // プールは二枚なので、低 FPS で溜まったもう一枚があれば最新の方だけコピーする。
-        match self.next_frame() {
-            Ok(Some(newer)) => {
-                frame.Close()?;
-                frame = newer;
-            }
-            Ok(None) => (),
-            Err(e) => {
-                let _ = frame.Close();
-                return Err(e);
-            }
-        }
         let captured = frame.SystemRelativeTime().map(captured_at);
         let result = (|| {
             let size = frame.ContentSize()?;

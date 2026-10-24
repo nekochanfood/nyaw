@@ -382,6 +382,10 @@ impl Wake {
 
 trait Session {
     fn frame(&mut self) -> Result<Option<Frame>, Error>;
+    /// 一時停止中（[`Stream::set_paused`]）に `frame` の代わりに呼ぶ。読み戻さずに最新の画像だけ持ち、再開したらそれを返す。
+    fn skip(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
     fn touch(&mut self, touch: Touch) -> Result<(), Error>;
     fn button(&mut self, touch: Touch, _button: Button) -> Result<(), Error> {
         self.touch(touch)
@@ -413,6 +417,7 @@ pub struct Stream {
     update: Arc<Mutex<Option<Update>>>,
     input: SyncSender<Input>,
     stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
     /// ウィンドウを映しているとき、そのウィンドウ（OS のウィンドウ識別子）。画面や特定できないものは `None`。
     window: Option<u64>,
 }
@@ -460,6 +465,8 @@ impl Stream {
             frame: None,
         })));
         let stop = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(false));
+        let pausing = paused.clone();
         let (input, rx) = mpsc::sync_channel(64);
         let wake = Wake {
             tx: input.clone(),
@@ -525,6 +532,11 @@ impl Stream {
                             minimized = true;
                             break;
                         }
+                        if pausing.load(Ordering::Acquire) {
+                            wake.pending.store(false, Ordering::Release);
+                            session.skip()?;
+                            continue;
+                        }
                         let now = Instant::now();
                         if now < next_frame {
                             continue;
@@ -559,8 +571,14 @@ impl Stream {
             update,
             input,
             stop,
+            paused,
             window: None,
         })
+    }
+
+    /// 見えていない間は画像の取得（GPU からの読み戻し）を止める。入力と終了の検知は続ける。
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Release);
     }
 
     pub fn poll(&self) -> Option<Update> {
@@ -755,6 +773,28 @@ mod tests {
         assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), touch);
         drop(stream);
         until(|| observer.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn paused_worker_skips_frames_until_resumed() {
+        let (tx, _rx) = mpsc::sync_channel(4);
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| {
+            Ok(Fake {
+                dropped: Arc::new(AtomicBool::new(false)),
+                input: tx,
+                frame: 0,
+            })
+        })
+        .unwrap();
+        until(|| stream.poll().is_some_and(|u| u.frame.is_some()));
+        stream.set_paused(true);
+        // 止める直前に取りかかっていた一枚は届いてよい。
+        thread::sleep(Duration::from_millis(100));
+        stream.poll();
+        thread::sleep(Duration::from_millis(100));
+        assert!(stream.poll().is_none());
+        stream.set_paused(false);
+        until(|| stream.poll().is_some_and(|u| u.frame.is_some()));
     }
 
     #[test]
