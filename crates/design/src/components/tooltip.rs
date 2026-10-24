@@ -84,10 +84,27 @@ pub fn tooltip_width(text: &SharedString, window: &mut Window) -> f32 {
     f32::from(line.width).ceil() + PAD_X * 2.0
 }
 
+/// 箱に収まらない文字を流す速さ（px/秒。1 秒に 3 文字ほど）と、一周ごとに止まる時間（秒）。
+pub const SCROLL_SPEED: f32 = font_size::MD * 3.0;
+pub const SCROLL_PAUSE: f32 = 1.5;
+/// 流すときに並べる 2 つの文字の間。
+const SCROLL_GAP: f32 = PAD_X * 2.0;
+
+/// 1 行の幅 `natural`（[`tooltip_width`]）が箱の幅 `width` を超えるとき、出してから `t` 秒後に文字を左へ流した量（px）。
+/// 止まる → 後ろに続く 2 つ目の文字が先頭の位置に来るまで流す（一周）→ 止まる、を繰り返す。収まるなら `None`。
+pub fn tooltip_scroll(natural: f32, width: f32, t: f32) -> Option<f32> {
+    if natural <= width + 0.5 {
+        return None;
+    }
+    let lap = natural - PAD_X * 2.0 + SCROLL_GAP;
+    let phase = t % (SCROLL_PAUSE + lap / SCROLL_SPEED);
+    Some(((phase - SCROLL_PAUSE).max(0.0) * SCROLL_SPEED).min(lap))
+}
+
 /// 幅 `width`（[`tooltip_width`]。動かしている間は途中の値）の箱。収まらない文字は省略せず箱で切る
 /// （幅が伸び縮みする間に省略記号が出ないように。中央から開いていくように見える）。
-// ponytail: 1 行だけ。パネルの幅（640px）を超える文字は切れる。長い説明が要るなら折り返しを入れる。
-pub fn tooltip(text: SharedString, width: f32) -> Div {
+/// `scroll`（[`tooltip_scroll`]）があれば、文字を 2 つ並べて左詰めで流す。
+pub fn tooltip(text: SharedString, width: f32, scroll: Option<f32>) -> Div {
     let theme = Theme::DARK;
     div()
         .w(px(width))
@@ -104,7 +121,24 @@ pub fn tooltip(text: SharedString, width: f32) -> Div {
         .text_size(px(font_size::MD))
         .line_height(px(LINE))
         .whitespace_nowrap()
-        .child(div().flex_none().child(text))
+        .child(match scroll {
+            None => div().flex_none().child(text),
+            Some(x) => div()
+                .flex_none()
+                .relative()
+                .w(px(width - PAD_X * 2.0))
+                .h(px(LINE))
+                .overflow_hidden()
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(-x))
+                        .flex()
+                        .gap(px(SCROLL_GAP))
+                        .child(div().flex_none().child(text.clone()))
+                        .child(div().flex_none().child(text)),
+                ),
+        })
 }
 
 #[cfg(test)]
@@ -145,6 +179,22 @@ mod tests {
     #[test]
     fn capsule_ends_clear_the_text() {
         const { assert!(PAD_X >= TOOLTIP_HEIGHT / 2.0 && PAD_X > PAD_Y) };
+    }
+
+    #[test]
+    fn overflowing_text_pauses_then_scrolls_one_lap() {
+        assert_eq!(tooltip_scroll(100.0, 100.0, 9.0), None, "収まれば流さない");
+        let (natural, width) = (400.0, 200.0);
+        let lap = natural - PAD_X * 2.0 + SCROLL_GAP;
+        let period = SCROLL_PAUSE + lap / SCROLL_SPEED;
+        assert_eq!(tooltip_scroll(natural, width, 0.0), Some(0.0));
+        assert_eq!(tooltip_scroll(natural, width, SCROLL_PAUSE * 0.9), Some(0.0), "初めは止まる");
+        let mid = tooltip_scroll(natural, width, SCROLL_PAUSE + 1.0).unwrap();
+        assert!((mid - SCROLL_SPEED).abs() < 0.01, "{mid}");
+        // 一周の終わりは 2 つ目の文字が先頭の位置にあり、次の始まり（0）と見た目が同じ。
+        let end = tooltip_scroll(natural, width, period - 0.001).unwrap();
+        assert!((end - lap).abs() < 0.1, "{end}");
+        assert_eq!(tooltip_scroll(natural, width, period + 0.1), Some(0.0), "また止まる");
     }
 
     #[gpui::test]
