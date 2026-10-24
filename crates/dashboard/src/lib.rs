@@ -371,7 +371,17 @@ impl Dashboard {
 
     /// 配信 `id` をはめる（はまっていた配信は隠し、ほかの画面は閉じる）。もうはまっていれば隠す。
     pub fn toggle_stream(&mut self, id: PanelId, cx: &mut Context<Self>) {
-        let docked = ui::docked(cx) == Some(id);
+        let previous = ui::docked(cx);
+        let docked = previous == Some(id);
+        // 配信から配信へ切り替えるなら、出ている OS キーボードは閉じずに次の配信へ譲る（隠す配信と一緒に片付けない）。
+        if !docked
+            && let Some(previous) = previous
+            && [previous, id]
+                .iter()
+                .all(|p| self.streams.iter().any(|s| s.panel == *p))
+        {
+            ui::keyboard::hand_over_os_keyboard(previous, id, cx);
+        }
         self.stash_docked(cx);
         if !docked && let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) {
             stream.stashed = false;

@@ -126,6 +126,44 @@ pub fn focus_input(panel: PanelId, focus: &FocusHandle, window: &mut Window, cx:
 /// OS を操作するパネル（`panel`）の仮想キーボードを出し入れする（出したら `true`）。
 /// 届いた入力はカーネルに頼んで OS の前面のアプリへ送る（[`PanelCommand::TypeToOs`]）。
 pub fn toggle_os_keyboard(panel: PanelId, cx: &mut App) -> bool {
+    register_os_input(panel, cx);
+    let shown = toggle_keyboard(panel, cx);
+    if !shown {
+        unregister_input(panel, cx);
+    }
+    shown
+}
+
+/// `from` へ打つ OS キーボードが出ていれば、閉じずに `to`（OS を操作するパネル）へ打つものにする（譲ったら `true`）。
+/// どちらも同じ OS キーボードなので、出し直さずに同じ場所のまま使い続けられる。
+pub fn hand_over_os_keyboard(from: PanelId, to: PanelId, cx: &mut App) -> bool {
+    let routing = cx.default_global::<InputRouting>();
+    let Some(session) = routing
+        .active
+        .as_mut()
+        .filter(|s| s.target == from && s.mode == KeyboardMode::Persistent)
+    else {
+        return false;
+    };
+    session.target = to;
+    let keyboard = session.panel;
+    routing.error = None;
+    unregister_input(from, cx);
+    register_os_input(to, cx);
+    redraw_nav_bar(from, cx);
+    redraw_nav_bar(to, cx);
+    if let Some(keyboard) = keyboard {
+        cx.default_global::<crate::PanelControl>()
+            .panels
+            .entry(keyboard)
+            .or_default()
+            .redraw = true;
+    }
+    true
+}
+
+/// `panel` に届いた入力を、カーネルに頼んで OS の前面のアプリへ送る（[`PanelCommand::TypeToOs`]）。
+fn register_os_input(panel: PanelId, cx: &mut App) {
     register_input(
         panel,
         move |input, cx| {
@@ -142,11 +180,6 @@ pub fn toggle_os_keyboard(panel: PanelId, cx: &mut App) -> bool {
         },
         cx,
     );
-    let shown = toggle_keyboard(panel, cx);
-    if !shown {
-        unregister_input(panel, cx);
-    }
-    shown
 }
 
 /// ビューの借用が解けてから対象パネル一つに配送する。宛先を失っても他へ転送しない。
@@ -331,6 +364,20 @@ impl Render for KeyboardPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = design::Theme::current(cx);
         let panel = self.panel;
+        // 譲られたら（[`hand_over_os_keyboard`]）打つ先を合わせる。
+        let target = cx
+            .try_global::<InputRouting>()
+            .and_then(|r| r.active)
+            .filter(|s| s.panel == Some(panel))
+            .map(|s| s.target);
+        if let Some(target) = target {
+            self.keyboard.update(cx, |keyboard, cx| {
+                if keyboard.target != target {
+                    keyboard.target = target;
+                    cx.notify();
+                }
+            });
+        }
         design::components::card_panel(&theme)
             .flex()
             .flex_col()
@@ -456,6 +503,22 @@ mod tests {
             assert!(redraw(cx, 5) && !redraw(cx, 0));
             assert!(!toggle_keyboard(0, cx));
             assert!(redraw(cx, 5));
+        });
+    }
+
+    /// OS キーボードを譲ると、閉じずに打つ先だけが変わり、元のパネルへはもう届かない。
+    #[gpui::test]
+    fn handing_over_the_os_keyboard_keeps_it_open_for_the_new_target(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            assert!(toggle_os_keyboard(0, cx));
+            let spawns = cx.global::<crate::PanelControl>().spawns.len();
+            assert!(!hand_over_os_keyboard(7, 1, cx), "出ていない先からは譲らない");
+            assert!(hand_over_os_keyboard(0, 1, cx));
+            let routing = cx.global::<InputRouting>();
+            assert_eq!(routing.active.unwrap().target, 1);
+            assert!(!routing.receivers.contains_key(&0) && routing.receivers.contains_key(&1));
+            assert_eq!(cx.global::<crate::PanelControl>().spawns.len(), spawns);
+            assert!(!toggle_os_keyboard(1, cx));
         });
     }
 

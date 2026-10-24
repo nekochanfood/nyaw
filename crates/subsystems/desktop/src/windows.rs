@@ -1,5 +1,5 @@
 use super::{
-    Button, Capabilities, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch,
+    Button, Capabilities, Cursor, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch,
     TouchPhase, Wake,
 };
 
@@ -258,7 +258,7 @@ unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
     }
     if icon != 0 {
         // 借りたアイコンなので破棄しない。
-        return unsafe { icon_rgba(HICON(icon as _)) };
+        return unsafe { icon_rgba(HICON(icon as _)) }.map(|(i, _)| i);
     }
     let mut path = unsafe { process_path(hwnd) }?;
     path.push(0);
@@ -269,7 +269,7 @@ unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
     }
     let rgba = unsafe { icon_rgba(large) };
     let _ = unsafe { DestroyIcon(large) };
-    rgba
+    rgba.map(|(i, _)| i)
 }
 
 /// ウィンドウのプロセスの実行ファイルのパス（UTF-16、終端なし）。
@@ -292,23 +292,42 @@ unsafe fn process_path(hwnd: HWND) -> Option<Vec<u16>> {
     Some(path[..len as usize].to_vec())
 }
 
-/// アイコンを RGBA で読み出す。アルファを持たない古いアイコンはマスクから透明部分を作る。
-unsafe fn icon_rgba(icon: HICON) -> Option<Icon> {
+/// アイコン・カーソルを RGBA で読み出し、ホットスポットと返す。アルファを持たない古いものはマスクから透明部分を作る。
+unsafe fn icon_rgba(icon: HICON) -> Option<(Icon, (u32, u32))> {
     let mut info = ICONINFO::default();
     unsafe { GetIconInfo(icon, &mut info) }.ok()?;
+    let hotspot = (info.xHotspot, info.yHotspot);
     let read = |bitmap: HBITMAP| unsafe { bitmap_bgra(bitmap) };
     let color = (!info.hbmColor.is_invalid())
         .then(|| read(info.hbmColor))
         .flatten();
-    let mask = color
-        .as_ref()
-        .filter(|(_, _, px)| px.as_chunks::<4>().0.iter().all(|p| p[3] == 0))
-        .and_then(|_| read(info.hbmMask));
+    let mask = match &color {
+        Some((_, _, px)) if px.as_chunks::<4>().0.iter().any(|p| p[3] != 0) => None,
+        _ => read(info.hbmMask),
+    };
     unsafe {
         let _ = DeleteObject(info.hbmColor.into());
         let _ = DeleteObject(info.hbmMask.into());
     }
-    let (width, height, mut px) = color?;
+    let Some((width, height, mut px)) = color else {
+        // 白黒のカーソル: マスクの上半分が AND、下半分が XOR。
+        let (width, double, m) = mask?;
+        let n = (width * (double / 2)) as usize;
+        let rgba: Vec<u8> = (0..n)
+            .flat_map(|i| match (m[i * 4] != 0, m[(n + i) * 4] != 0) {
+                (true, false) => [0, 0, 0, 0],
+                (false, true) => [255; 4],
+                // ponytail: 反転（AND も XOR も 1）は下地が分からないので黒。目立たなければ縁取りを足す。
+                _ => [0, 0, 0, 255],
+            })
+            .collect();
+        let image = Icon {
+            width,
+            height: double / 2,
+            rgba: rgba.into(),
+        };
+        return Some((image, hotspot));
+    };
     for (i, p) in px.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         p.swap(0, 2);
         if let Some((_, _, m)) = &mask {
@@ -316,11 +335,14 @@ unsafe fn icon_rgba(icon: HICON) -> Option<Icon> {
             p[3] = if m[i * 4] == 0 { 255 } else { 0 };
         }
     }
-    Some(Icon {
-        width,
-        height,
-        rgba: px.into(),
-    })
+    Some((
+        Icon {
+            width,
+            height,
+            rgba: px.into(),
+        },
+        hotspot,
+    ))
 }
 
 /// ビットマップを上から下の並びの BGRA で読み出す（一辺 256 まで）。
@@ -489,6 +511,8 @@ pub(super) struct Capture {
     closed: Arc<AtomicBool>,
     source: Source,
     mouse: MouseDevice,
+    /// 最後に読んだカーソルのハンドルと絵（同じハンドルなら読み直さない）。
+    cursor: Option<(isize, Option<Arc<Cursor>>)>,
     _apartment: Apartment,
 }
 
@@ -587,6 +611,8 @@ impl Capture {
         // （上限の間隔を渡すと vsync の倍数へ切り上げられ、143Hz で 60 を頼むと 48 になる）。
         // Windows 11 24H2 より前には無い設定なので、失敗しても既定のまま続ける。
         let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000 });
+        // カーソルは映像に入れず、上の層がポインタとして描く（Windows 10 2004 より前は入ったまま）。
+        let _ = session.SetIsCursorCaptureEnabled(false);
         session.StartCapture()?;
         Ok(Self {
             session,
@@ -602,6 +628,7 @@ impl Capture {
             closed,
             source,
             mouse: MouseDevice::default(),
+            cursor: None,
             _apartment: apartment,
         })
     }
@@ -765,6 +792,28 @@ impl Session for Capture {
                 && (!unsafe { IsWindow(Some(HWND(self.source.target as _))) }.as_bool()
                     || !unsafe { IsWindowVisible(HWND(self.source.target as _)) }.as_bool()
                         && !self.minimized()))
+    }
+
+    fn cursor(&mut self) -> Option<Arc<Cursor>> {
+        let mut info = CURSORINFO {
+            cbSize: size_of::<CURSORINFO>() as u32,
+            ..Default::default()
+        };
+        unsafe { GetCursorInfo(&mut info) }.ok()?;
+        if info.flags.0 & CURSOR_SHOWING.0 == 0 || info.hCursor.is_invalid() {
+            return None;
+        }
+        let handle = info.hCursor.0 as isize;
+        if let Some((h, cursor)) = &self.cursor
+            && *h == handle
+        {
+            return cursor.clone();
+        }
+        // ponytail: アニメーションするカーソル（待ちの輪など）は最初のコマだけ。動かしたくなったら DrawIconEx でコマを描く。
+        let cursor = unsafe { icon_rgba(HICON(info.hCursor.0)) }
+            .map(|(image, hotspot)| Arc::new(Cursor { image, hotspot }));
+        self.cursor = Some((handle, cursor.clone()));
+        cursor
     }
 
     fn skip(&mut self) -> Result<(), Error> {

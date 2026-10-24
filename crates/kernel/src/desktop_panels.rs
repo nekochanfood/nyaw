@@ -171,6 +171,7 @@ impl<B: VrBackend> Kernel<B> {
             }
         } else if let Some(p) = self.desktop_panels.remove(&panel) {
             self.overlay.set_panel_capture(panel, false);
+            self.overlay.set_os_cursor(panel, None);
             self.overlay
                 .set_content_resolution(panel, p.original_resolution);
         }
@@ -262,6 +263,15 @@ impl<B: VrBackend> Kernel<B> {
                 panel.hovered = [None; 2];
                 self.overlay.set_panel_capture(id, false);
             }
+        }
+        // OS のカーソルは映像に入れず、指している手のカーソルを差し替えて描く。
+        for (&id, panel) in &self.desktop_panels {
+            let cursor = panel
+                .stream
+                .as_ref()
+                .filter(|_| panel.status == Status::Streaming)
+                .and_then(Stream::cursor);
+            self.overlay.set_os_cursor(id, cursor);
         }
     }
 
@@ -588,6 +598,28 @@ mod tests {
                 .iter()
                 .all(|t| t.id != 0 || t.phase == TouchPhase::Move)
         );
+    }
+
+    /// 配信中は OS のカーソルをパネルに渡し、止めたら外す。
+    #[test]
+    fn os_cursor_follows_the_stream() {
+        let (mut kernel, panel, control) = setup();
+        let cursor = desktop::Cursor {
+            image: desktop::Icon {
+                width: 1,
+                height: 1,
+                rgba: [255; 4].into(),
+            },
+            hotspot: (0, 0),
+        };
+        control.set_cursor(Some(cursor.clone()));
+        kernel.tick();
+        assert_eq!(kernel.panel(panel).os_cursor.as_deref(), Some(&cursor));
+        kernel.apply(
+            panel,
+            PanelCommand::Stream(None, desktop::DEFAULT_FRAME_RATE),
+        );
+        assert_eq!(kernel.panel(panel).os_cursor, None);
     }
 
     #[test]

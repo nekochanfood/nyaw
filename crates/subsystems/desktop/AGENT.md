@@ -6,13 +6,14 @@
 
 ## 主な公開 API
 
-`capabilities`（ホバー・最小化の対応）, `Sources`, `Stream`, `Source`（ウィンドウは `app` に実行ファイル名（Windows）、`icon` にアプリのアイコン。Windows はウィンドウのもの、無ければ実行ファイルのもの。画面の `name` はモニターの製品名（`QueryDisplayConfig`。同じ製品名が並べば番号を添える）、無ければ「Display 番号」）, `Icon`, `Status`, `Touch`
+`capabilities`（ホバー・最小化の対応）, `Sources`, `Stream`, `Source`（ウィンドウは `app` に実行ファイル名（Windows）、`icon` にアプリのアイコン。Windows はウィンドウのもの、無ければ実行ファイルのもの。画面の `name` はモニターの製品名（`QueryDisplayConfig`。同じ製品名が並べば番号を添える）、無ければ「Display 番号」）, `Icon`, `Cursor`（OS のカーソルの絵とホットスポット。`Stream::cursor`）, `Status`, `Touch`
 
 ## 画面・ウィンドウ配信
 
 - `crates/subsystems/desktop` が取得元の一覧、画像取得、OS タッチ注入を担う。Windows は WGC と Synthetic Pointer。上位へは `kernel::desktop` 経由で公開する。
 - `Sources::refresh` と `Stream::start` はワーカーを起こすだけ。メインスレッドは `poll` で最新画像だけを受け取り、OS の開始・取得・停止・入力注入を待たない。入力キューが詰まったら接点を残さずセッションを止める。
 - `PanelCommand::Stream(Some(source))` で既存パネルを配信先にし、`None` で通常の UI に戻す。`PanelStatus::desktop` が開始中・配信中・終了・エラーを持つ。画像はカーネルから直接 overlay へ渡し、UI の描画で上書きしない。横幅を保って配信元の縦横比に追従する（ダッシュボードにはめている間は縦を保つ）。
+- OS のカーソルは映像に入れない（WGC の `IsCursorCaptureEnabled` を切る）。ワーカーが `GetCursorInfo` で今のカーソルを見て、ハンドルが変わったときだけ絵（白黒のカーソルはマスクから作る）とホットスポットを読み、`Stream::cursor` に置く。カーネルが配信中のパネルへ渡し（`Overlay::set_os_cursor`）、指している手のカーソルがその絵になる。OS がカーソルを隠していればいつものカーソルのまま。
 - 配信先のポインタは GPUI のマウス変換を通さず、左右を ID 0 / 1 のタッチ接点としてサブシステムへ送る。パネル外でも解放まで捕捉し、手の追跡喪失・掴み開始でキャンセルする。閉鎖・エラー・再接続では OS セッションを解放する。
 - ウィンドウの配信を始めたとき・隠していた配信をバーのボタンで出したとき・ダッシュボードを出し直したとき（はまっている配信）は、そのウィンドウを OS で前に出してフォーカスする（OS のキーボード・マウスの操作が届くように。`PanelCommand::FocusSource` → `desktop::Stream::focus`。前面化はワーカーが行い、メインスレッドは待たない。Windows は最小化を戻して `SetForegroundWindow`（拒まれたら入力キューを一時的に共有して））。
 - 映しているウィンドウが閉じたら（配信が終了）、配信のパネルも閉じる。失敗は最小化でも起きるので、取得元を取り直してウィンドウが無くなっていたときだけ閉じる（ダッシュボードの `Mirror`）。

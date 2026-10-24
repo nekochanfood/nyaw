@@ -21,6 +21,7 @@ pub struct Controller {
     input: Receiver<Input>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    cursor: Arc<Mutex<Option<Arc<Cursor>>>>,
 }
 
 pub fn stream() -> (Stream, Controller) {
@@ -36,6 +37,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
     let update = Arc::new(Mutex::new(None));
     let stop = Arc::new(AtomicBool::new(false));
     let paused = Arc::new(AtomicBool::new(false));
+    let cursor = Arc::new(Mutex::new(None));
     let (tx, rx) = mpsc::sync_channel(64);
     (
         Stream {
@@ -43,6 +45,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
             input: tx,
             stop: stop.clone(),
             paused: paused.clone(),
+            cursor: cursor.clone(),
             window,
         },
         Controller {
@@ -50,6 +53,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
             input: rx,
             stop,
             paused,
+            cursor,
         },
     )
 }
@@ -57,6 +61,10 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
 impl Controller {
     pub fn publish(&self, update: Update) {
         *self.update.lock().unwrap() = Some(update);
+    }
+    /// OS のカーソルが変わったことにする（[`Stream::cursor`]）。
+    pub fn set_cursor(&self, cursor: Option<Cursor>) {
+        *self.cursor.lock().unwrap() = cursor.map(Arc::new);
     }
     pub fn touches(&self) -> Vec<Touch> {
         self.input
