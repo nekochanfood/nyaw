@@ -4,11 +4,12 @@
 //! [`Overlay::tick`] が下位パイプライン1フレーム分: Subsystems の共通フレーム → 取り付け先への追従 → ヒット判定 → イベント。
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Instant;
 
 use animation::{Animation, Motion};
 use design::PANEL_MARGIN;
-use subsystems::{Frame, Subsystems, rendering::Surface, vr};
+use subsystems::{Frame, Subsystems, desktop::Cursor, rendering::Surface, vr};
 
 use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
@@ -69,6 +70,8 @@ pub struct Panel {
     pub veil: bool,
     /// OS へのタッチを解放まで同じパネルへ届ける。
     capture: bool,
+    /// 指している間、カーソルの代わりに出す OS のカーソル（[`Overlay::set_os_cursor`]）。
+    pub os_cursor: Option<Arc<Cursor>>,
     /// 親（[`Overlay::set_parent`]）。取り付けより優先して、親の姿勢 * `offset` に追従する。
     pub parent: Option<Parent>,
     /// このパネルがナビゲーションバーになっている持ち主（[`Overlay::set_nav_bar`]）。持ち主の下端にくっつき、
@@ -127,9 +130,10 @@ pub const LASER_LENGTH_MIN: f32 = 0.05;
 /// 奥行きで並べるランタイムでも同じ面に乗って Z ファイティングしないように離す。
 /// パネル・ドラッグの見た目・カーソル・ツールチップの順に手前へ、どの間も [`LIFT_STEP`] ずつ均等に空ける。
 const CURSOR_LIFT: f32 = LIFT_STEP * 2.0;
-/// 面の上に重ねるものどうしの間隔（m）。広いと浮いて見え、狭いとちらつく（Z ファイティング）。
+/// 面の上に重ねるものどうしの間隔（m）。広いと浮いて見えて視差で狙いがずれ、狭いとちらつく（Z ファイティング）。
+/// 1mm は 10m 先でも 24bit の深度で 8 段ほどの差がある。
 // ponytail: 固定の幅。実機でちらつくなら広げる。
-const LIFT_STEP: f32 = 0.003;
+const LIFT_STEP: f32 = 0.001;
 /// レーザーのクアッドの向き: ローカル +X（テクスチャの右）を前方 -Z へ、面の法線 +Z を上 +Y へ。
 const LASER_ROT: Quat = Quat::from_xyzw(-0.5, 0.5, 0.5, 0.5);
 /// 見えていそうかの見積もり（[`Overlay::in_view`]）に使う視野の半角（ラジアン、70°。実機の視野より広めに取る）。
@@ -141,6 +145,8 @@ const LASER_SORT: u32 = 2;
 const DRAG_SORT: u32 = 3;
 const CURSOR_SORT: u32 = 4;
 const TOOLTIP_SORT: u32 = 5;
+/// OS のカーソルを最近傍で拡大する目安の一辺（px）。
+const OS_CURSOR_PX: u32 = 256;
 /// ツールチップをパネル面から浮かせる距離（m）。カーソルより手前。
 const TOOLTIP_LIFT: f32 = LIFT_STEP * 3.0;
 
@@ -171,8 +177,9 @@ const VEIL: f32 = 0.5;
 const VEIL_DISTANCE: f32 = 50.0;
 /// 幕の一辺（m）。正面から atan(2500 / 50) ≈ 89° まで覆う。
 const VEIL_SIZE: f32 = 5000.0;
-/// 表示だけの子（[`Parent::hud`]）を、親の面からどれだけ手前（m）に置くか。
-const HUD_LIFT: f32 = 0.002;
+/// 表示だけの子（[`Parent::hud`]）とナビゲーションバーを、親の面からどれだけ手前（m）に置くか。
+/// その上を指したカーソル（[`CURSOR_LIFT`]）より奥にする。
+const HUD_LIFT: f32 = LIFT_STEP;
 /// 親の上端に立てた子（[`Parent::slot`]）のナビゲーションバーの下端と、親の地の上端の間（m）。
 pub const SLOT_GAP: f32 = 0.02;
 /// 親の上端に立てた画面が入れ替わりで消えるとき、後ろへ下がる距離（m）。
@@ -360,6 +367,8 @@ pub struct Overlay {
     outside_presses: u32,
     /// 空間全体の暗転。
     veil: Veil,
+    /// 手ごとの OS のカーソルの面と、送ってある絵。最初に出すときに作る。
+    os_cursors: HashMap<Hand, (Surface, Option<Arc<Cursor>>)>,
     /// 前の tick の時刻と、そこからの経過（秒。[`TICK_MIN`]〜[`TICK_MAX`] に丸める）。
     last_tick: Option<Instant>,
     dt: f32,
@@ -409,6 +418,7 @@ impl Overlay {
             animated: true,
             veil: false,
             capture: false,
+            os_cursor: None,
             parent: None,
             nav_bar_of: None,
             nav_bar_size: size,
@@ -746,6 +756,11 @@ impl Overlay {
         if part == Pointer::Laser {
             p.surface.set_height(vr, p.size.y);
         }
+    }
+
+    /// `id` を指している手のカーソルを、OS のカーソル `cursor`（パネルと同じ縮尺、ホットスポットをヒット点に）に差し替える。`None` で戻す。
+    pub fn set_os_cursor(&mut self, id: PanelId, cursor: Option<Arc<Cursor>>) {
+        self.panels[id].os_cursor = cursor;
     }
 
     /// `hand` でドラッグしている間、その見た目（[`Pointer::Drag`] のパネル）を幅 `width_m` で出す。`None` で隠す。
@@ -1568,6 +1583,12 @@ impl Overlay {
                     let pose = aim * Pose::new(Vec3::new(0.0, 0.0, -len / 2.0), roll * LASER_ROT);
                     Some((r, pose, len))
                 }
+                // OS のカーソルを持つパネルの上では、代わりにその絵を出す（place_os_cursors）。
+                (Pointer::Cursor, Some((r, ..)))
+                    if r.hit.is_some_and(|(t, _)| self.panels[t].os_cursor.is_some()) =>
+                {
+                    None
+                }
                 (Pointer::Cursor | Pointer::Tooltip, Some((r, aim, len))) => {
                     r.hit.map(|(target, _)| {
                         // ツールチップはカーソルの子: 同じ点に、同じ縮尺で、少しだけ手前に置く。
@@ -1614,7 +1635,91 @@ impl Overlay {
                 p.size.x,
             );
         }
+        self.place_os_cursors(vr, &skeletal);
     }
+
+    /// OS のカーソルを持つパネルを指している手に、その絵をホットスポットがヒット点に来るよう置く。
+    fn place_os_cursors(&mut self, vr: &mut dyn VrBackend, skeletal: &[Hand]) {
+        for (&hand, h) in &self.hands {
+            let target = h.ray.and_then(|r| {
+                let t = r.hit?.0;
+                Some((r, t, self.panels[t].os_cursor.clone()?))
+            });
+            let Some((r, target, cursor)) = target else {
+                if let Some((surface, _)) = self.os_cursors.get_mut(&hand) {
+                    surface.show(vr, false, None, 0.0);
+                }
+                continue;
+            };
+            let (surface, sent) = match self.os_cursors.entry(hand) {
+                std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    let key = format!("nyaw.os-cursor.{hand:?}");
+                    match Surface::new(vr, &key, 0.01, Pose::IDENTITY) {
+                        Ok(s) => {
+                            s.set_sort(vr, CURSOR_SORT);
+                            e.insert((s, None))
+                        }
+                        Err(err) => {
+                            logger::warn!("OS のカーソルの面を作れない", error = ?err);
+                            continue;
+                        }
+                    }
+                }
+            };
+            if sent.as_ref() != Some(&cursor) {
+                let (side, rgba) = hotspot_canvas(&cursor);
+                surface.store(side, side, &rgba);
+                surface.present(vr, 1.0, 0.0, true);
+                *sent = Some(cursor.clone());
+            }
+            // 絵はホットスポットを中心にした正方形なので、形が変わっても置き場所と大きさは変わらない
+            // （変えると、新しい絵が届くまでの間に古い絵がずれた所へ出てちらつく）。
+            let p = &self.panels[target];
+            let m = p.displayed_size().x / p.resolution.0 as f32;
+            let width = canvas_px(&cursor.image) as f32 * m;
+            let pose = on_panel(&p.pose, &r.aim, r.len, CURSOR_LIFT);
+            // カーソルと同じく、手ブレ抑えが効いていなければ手に追従させる（place_pointers）。
+            let follow = (!self.steadied && !skeletal.contains(&hand))
+                .then(|| (Device::Controller(hand), r.hand.inverse() * pose));
+            surface.show(vr, true, Some(width), width);
+            surface.place(vr, pose, follow.as_ref());
+        }
+    }
+}
+
+/// OS のカーソルを載せる正方形の一辺（元の画素）。ホットスポットが絵のどこにあっても収まる。
+fn canvas_px(image: &subsystems::desktop::Icon) -> u32 {
+    image.width.max(image.height).max(1) * 2
+}
+
+/// ホットスポットを中心にした正方形に絵を置き、一辺がおよそ 2 × [`OS_CURSOR_PX`] になるまで画素を整数倍に複製する
+/// （事前乗算アルファ）。ランタイムの合成は双線形で拡大するので、先に最近傍で大きくしておけば画素の境目がぼけない。
+fn hotspot_canvas(cursor: &Cursor) -> (u32, Vec<u8>) {
+    let image = &cursor.image;
+    let n = canvas_px(image) as usize;
+    let k = (OS_CURSOR_PX as usize * 2 / n).max(1);
+    let (w, h) = (image.width as usize, image.height as usize);
+    // 絵の左上の、正方形の中での位置。
+    let (ox, oy) = (
+        (n / 2) as isize - cursor.hotspot.0 as isize,
+        (n / 2) as isize - cursor.hotspot.1 as isize,
+    );
+    let side = n * k;
+    let mut out = vec![0; side * side * 4];
+    for y in 0..side {
+        for x in 0..side {
+            let (sx, sy) = ((x / k) as isize - ox, (y / k) as isize - oy);
+            if sx < 0 || sy < 0 || sx >= w as isize || sy >= h as isize {
+                continue;
+            }
+            let i = (sy as usize * w + sx as usize) * 4;
+            let [r, g, b, a] = [0, 1, 2, 3].map(|c| image.rgba[i + c] as u32);
+            let pm = |v: u32| ((v * a + 127) / 255) as u8;
+            out[(y * side + x) * 4..][..4].copy_from_slice(&[pm(r), pm(g), pm(b), a as u8]);
+        }
+    }
+    (side as u32, out)
 }
 
 /// レーザーの先（`aim` の前方 `len`）で、パネルの面に沿わせてレーザーの来る側（裏から指していれば裏側）へ `lift` 浮かせた姿勢。
@@ -3299,6 +3404,54 @@ mod tests {
         let laser = add(&mut ov, Pointer::Laser);
         let cursor = add(&mut ov, Pointer::Cursor);
         (vr, ov, laser, cursor)
+    }
+
+    /// OS のカーソルを持つパネルを指すと、カーソルの代わりにその絵をホットスポットに合わせ、最近傍で拡大して出す。
+    #[test]
+    fn os_cursor_replaces_the_cursor_at_its_hotspot() {
+        let (mut vr, mut ov, _, cursor) = with_pointers();
+        let red = [255, 0, 0, 255];
+        let mut rgba = vec![0; 16];
+        rgba[..4].copy_from_slice(&red);
+        let image = subsystems::desktop::Icon {
+            width: 2,
+            height: 2,
+            rgba: rgba.into(),
+        };
+        ov.set_os_cursor(0, Some(Arc::new(Cursor { image, hotspot: (0, 0) })));
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        assert!(!vr.backend.overlays[cursor].visible);
+        let os = vr.backend.overlays.last().unwrap();
+        // パネルは 1m / 100px。面はホットスポットを中心にした 4px 四方で、中心がヒット点。
+        let px = 0.01;
+        assert!(os.visible && (os.width_m - 4.0 * px).abs() < 1e-6);
+        assert!(
+            os.pose
+                .position
+                .abs_diff_eq(Vec3::new(0.0, 0.0, -1.0 + CURSOR_LIFT), 1e-5)
+        );
+        // 1px を 128 倍に。ホットスポット（左上の画素の角）がテクスチャの中心に来る。
+        let t = os.texture.as_ref().unwrap();
+        assert_eq!((t.width, t.height), (512, 512));
+        let at = |x: usize, y: usize| &t.rgba[(y * 512 + x) * 4..][..4];
+        assert_eq!((at(256, 256), at(383, 383)), (&red[..], &red[..]));
+        assert_eq!((at(255, 256), at(384, 256)), (&[0; 4][..], &[0; 4][..]));
+        // 形が変わっても（ホットスポットが違っても）置き場所と大きさは変わらない。
+        let before = (os.pose, os.width_m);
+        let image = subsystems::desktop::Icon {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 16].into(),
+        };
+        ov.set_os_cursor(0, Some(Arc::new(Cursor { image, hotspot: (1, 1) })));
+        ov.tick(&mut vr);
+        let os = vr.backend.overlays.last().unwrap();
+        assert_eq!((os.pose, os.width_m), before);
+        ov.set_os_cursor(0, None);
+        ov.tick(&mut vr);
+        assert!(vr.backend.overlays[cursor].visible);
+        assert!(!vr.backend.overlays.last().unwrap().visible);
     }
 
     /// 隠したポインタは最後に出した所（目の前）に残っても見えない扱い（描き直さない）。

@@ -71,6 +71,14 @@ pub struct Icon {
     pub rgba: Arc<[u8]>,
 }
 
+/// OS のマウスカーソル。映像には入れず、上の層がポインタの代わりに描く。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cursor {
+    pub image: Icon,
+    /// 指している点（画像の左上からの画素）。
+    pub hotspot: (u32, u32),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);
 
@@ -409,6 +417,10 @@ trait Session {
     fn closed(&self) -> bool {
         false
     }
+    /// 今の OS のカーソル（隠れていれば `None`）。変わっていなければ同じ `Arc` を返す。
+    fn cursor(&mut self) -> Option<Arc<Cursor>> {
+        None
+    }
 }
 
 /// 最新画像は常に一枚だけ保持し、遅れたフレームを蓄積しない。
@@ -418,6 +430,7 @@ pub struct Stream {
     input: SyncSender<Input>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    cursor: Arc<Mutex<Option<Arc<Cursor>>>>,
     /// ウィンドウを映しているとき、そのウィンドウ（OS のウィンドウ識別子）。画面や特定できないものは `None`。
     window: Option<u64>,
 }
@@ -467,6 +480,8 @@ impl Stream {
         let stop = Arc::new(AtomicBool::new(false));
         let paused = Arc::new(AtomicBool::new(false));
         let pausing = paused.clone();
+        let cursor = Arc::new(Mutex::new(None));
+        let cursor_out = cursor.clone();
         let (input, rx) = mpsc::sync_channel(64);
         let wake = Wake {
             tx: input.clone(),
@@ -482,6 +497,7 @@ impl Stream {
                     let mut next_frame = Instant::now();
                     let mut inputs: Vec<Input> = Vec::new();
                     let mut minimized = false;
+                    let mut shown = None;
                     while !stopping.load(Ordering::Acquire) {
                         if session.minimized() {
                             minimized = true;
@@ -528,6 +544,11 @@ impl Stream {
                             }
                         }
                         session.heartbeat()?;
+                        let now_cursor = session.cursor();
+                        if now_cursor != shown {
+                            shown = now_cursor;
+                            *cursor_out.lock().unwrap() = shown.clone();
+                        }
                         if session.minimized() {
                             minimized = true;
                             break;
@@ -557,6 +578,7 @@ impl Stream {
                     }
                     Ok::<_, Error>(minimized)
                 })();
+                *cursor_out.lock().unwrap() = None;
                 *output.lock().unwrap() = Some(Update {
                     status: match result {
                         Ok(true) => Status::Minimized,
@@ -572,6 +594,7 @@ impl Stream {
             input,
             stop,
             paused,
+            cursor,
             window: None,
         })
     }
@@ -583,6 +606,11 @@ impl Stream {
 
     pub fn poll(&self) -> Option<Update> {
         self.update.try_lock().ok()?.take()
+    }
+
+    /// 今の OS のカーソル（隠れている・取れなければ `None`）。
+    pub fn cursor(&self) -> Option<Arc<Cursor>> {
+        self.cursor.lock().ok()?.clone()
     }
 
     pub fn touch(&self, touch: Touch) -> Result<(), Error> {
