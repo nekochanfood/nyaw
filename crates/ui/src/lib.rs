@@ -423,25 +423,17 @@ pub fn dock(panel: PanelId, cx: &mut App) {
         })));
 }
 
-/// はめた `panel` を外して独立させる（その場に残り、持ち主が閉じても閉じない）。`panel` へ打つキーボードが
-/// ダッシュボードに固定されていれば、それも一緒に外す。
+/// はめた `panel` を外して独立させる（その場に残り、持ち主が閉じても閉じない）。
 pub fn undock(panel: PanelId, cx: &mut App) {
-    let keyboard = cx
-        .try_global::<keyboard::InputRouting>()
-        .and_then(|r| r.active)
-        .filter(|s| s.target == panel)
-        .and_then(|s| s.panel);
     let ctl = cx.default_global::<PanelControl>();
     if ctl.docked == Some(panel) {
         ctl.docked = None;
     }
-    for p in std::iter::once(panel).chain(keyboard) {
-        ctl.panels
-            .entry(p)
-            .or_default()
-            .commands
-            .push(PanelCommand::Parent(None));
-    }
+    ctl.panels
+        .entry(panel)
+        .or_default()
+        .commands
+        .push(PanelCommand::Parent(None));
 }
 
 impl gpui::Global for PanelControl {}
@@ -471,6 +463,8 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     ctl.seen = settings;
     if ctl.status.closed {
         keyboard::panel_closed(panel, cx);
+    } else if ctl.status.hidden {
+        keyboard::panel_hidden(panel, cx);
     }
     cx.refresh_windows();
     true
@@ -654,12 +648,11 @@ impl Render for DragPreview {
 const PROFILER_REDRAW: Duration = Duration::from_millis(100);
 /// 親パネルから見た、スポーンしたパネルの位置（親の中心の手前 10cm）。
 const SPAWN_GAP: Vec3 = Vec3::new(0.0, 0.0, 0.1);
-/// 蝶番のようにつなげるパネル（[`PanelSpec::hinged_below`]）の面どうしの隙間（m。ダッシュボードの画面とバーの間と同じ）。
-const HINGE_GAP: f32 = kernel::overlay::SLOT_GAP;
-/// 下に出すパネル（[`PanelSpec::below`]）と持ち主の下端の間（m）。
-const BELOW_GAP: f32 = 0.05;
-/// 下に出すパネル（[`PanelSpec::below`]。キーボード）を向ける先を、目からどれだけ下げるか（m）。
-const BELOW_AIM_DROP: f32 = 0.15;
+/// 打ちやすい位置に出すパネル（[`PanelSpec::typing`]。キーボード）の、開いた瞬間の頭（水平方向だけ）から見た位置（m）。
+/// 手を軽く前に出したあたり。
+const TYPING_AT: Vec3 = Vec3::new(0.0, -0.4, -0.8);
+/// 打ちやすい位置に出すパネル（[`PanelSpec::typing`]）を向ける先を、目からどれだけ下げるか（m）。
+const TYPING_AIM_DROP: f32 = 0.15;
 /// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
 /// 入力も状態の変化も無いパネルを描き直す間隔。時計のようにビューが自分で描き直すものはこれで反映される。
@@ -704,9 +697,8 @@ type Minimize = std::rc::Rc<dyn Fn(PanelId, &mut App)>;
 pub struct PanelSpec {
     pose: Pose,
     from: Option<PanelId>,
-    below: Option<f32>,
-    /// `from` の下端に蝶番のようにつなげる（[`Self::hinged_below`]）。
-    hinge: bool,
+    /// 開いた瞬間の頭の前の打ちやすい位置に出す（[`Self::typing`]）。値はパネルの中心から見た、頭の正面に合わせる点の横位置（m）。
+    typing: Option<f32>,
     /// `from` から見た置き場所（[`Self::offset`]）。無ければ `from` の手前に少し離して重ねる。
     offset: Option<Pose>,
     /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
@@ -768,8 +760,7 @@ impl PanelSpec {
         Self {
             pose,
             from: None,
-            below: None,
-            hinge: false,
+            typing: None,
             offset: None,
             in_view: false,
             size: Vec2::new(0.8, 0.6),
@@ -892,20 +883,11 @@ impl PanelSpec {
         self
     }
 
-    /// 開いた瞬間の対象パネルの下へ置く（下端から頭から見て真下へ。`tilt` は下ろす量を、その角度だけ傾けて置いたときの縦の長さで決める）。向きは、そこから頭
-    /// （目と手の間）へ向ける（見やすく、レーザーでも押しやすい）。親子関係や追従は作らない。
-    pub fn below(mut self, panel: PanelId, tilt: f32) -> Self {
-        self.from = Some(panel);
-        self.below = Some(tilt.clamp(0., std::f32::consts::FRAC_PI_2));
-        self
-    }
-
-    /// 開いた瞬間の `panel` の下端に、蝶番のようにつなげて置く（このパネルの上の縁を `panel` の下の縁に小さな隙間で合わせる）。
-    /// 折る角度は、[`Self::below`] と同じく面が目より少し下を向くように、開いた瞬間の頭の位置から決める。
-    /// 隙間は影の余白を除いた面どうしで測る。親子関係や追従は作らない。
-    pub fn hinged_below(mut self, panel: PanelId) -> Self {
-        self.from = Some(panel);
-        self.hinge = true;
+    /// 開いた瞬間の頭の前、手を軽く前に出したあたり（打ちやすい位置）に出し、目より少し下（手の方）へ向ける
+    /// （下から来るレーザーが浅くならない）。`center` はパネルの中心から見た横位置（m）で、そこを頭の正面に合わせる
+    /// （キーボードならホームポジション）。親子関係や追従は作らない。
+    pub fn typing(mut self, center: f32) -> Self {
+        self.typing = Some(center);
         self
     }
 
@@ -1049,61 +1031,20 @@ impl PanelSpec {
     }
 
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
+        if let Some(center) = self.typing {
+            let hmd = kernel.hmd();
+            let head = hmd.leveled();
+            let up = hmd.panel_up();
+            let at = head.transform_point(TYPING_AT);
+            let toward = (hmd.position - up * TYPING_AIM_DROP - at).try_normalize();
+            let orientation = toward
+                .and_then(|z| Some((up.cross(z).try_normalize()?, z)))
+                .map_or(head.orientation, |(x, z)| {
+                    Quat::from_mat3(&kernel::vr::Mat3::from_cols(x, z.cross(x), z))
+                });
+            return Pose::new(at - orientation * Vec3::X * center, orientation);
+        }
         match self.from {
-            Some(from) if self.hinge => {
-                let origin = kernel.panel(from);
-                let margin = |size: Vec2, res: (u32, u32)| {
-                    design::components::PANEL_MARGIN * size.y / res.1 as f32
-                };
-                let bar = kernel.nav_bar(from).map_or(0., |b| kernel.panel(b).size.y);
-                let edge = Vec3::new(
-                    0.,
-                    -origin.size.y / 2. + margin(origin.size, origin.resolution) - bar,
-                    0.,
-                );
-                let lift = HINGE_GAP + self.size.y / 2. - margin(self.size, self.resolution);
-                // 面（持ち主の面から手前へ `angle` 折った向き）が、中心から目より少し下へ向く角度。中心は角度で動くので、
-                // 数回詰める（持ち主から見た座標で、蝶番の軸は X）。上を向けた持ち主（ダッシュボードのバー）では
-                // 奥へ折り返す（負の角度）こともあるので、持ち主の面から前後 90° に収める。
-                let hmd = kernel.hmd();
-                let aim = origin
-                    .pose
-                    .inverse()
-                    .transform_point(hmd.position - hmd.panel_up() * BELOW_AIM_DROP);
-                let center = |angle: f32| edge + Quat::from_rotation_x(-angle) * Vec3::NEG_Y * lift;
-                let mut angle = 0.;
-                for _ in 0..4 {
-                    let d = aim - center(angle);
-                    angle =
-                        d.y.atan2(d.z)
-                            .clamp(-std::f32::consts::FRAC_PI_2, std::f32::consts::FRAC_PI_2);
-                }
-                origin.pose * Pose::new(center(angle), Quat::from_rotation_x(-angle))
-            }
-            Some(from) if self.below.is_some() => {
-                let tilt = self.below.unwrap();
-                let origin = kernel.panel(from);
-                // 持ち主の下にナビゲーションバーがあれば、その下に出す（重ねてバーを隠さない）。
-                let bar = kernel.nav_bar(from).map_or(0., |b| kernel.panel(b).size.y);
-                // 持ち主（とそのバー）の下端から、頭から見て真下へ下ろす。持ち主の面に沿って下ろすと、上を向けた
-                // 持ち主（ダッシュボードのバー）では手前へ出てしまう。
-                let bottom =
-                    origin
-                        .pose
-                        .transform_point(Vec3::new(0., -origin.size.y / 2. - bar, 0.));
-                let hmd = kernel.hmd();
-                let up = hmd.panel_up();
-                let at = bottom - up * (BELOW_GAP + self.size.y * tilt.cos() / 2.);
-                // 目より少し下（手の方）へ向ける。目へまっすぐ向けるより、下から来るレーザーが浅くならない。
-                let toward = (hmd.position - up * BELOW_AIM_DROP - at).try_normalize();
-                let fallback = origin.pose.orientation * Quat::from_rotation_x(-tilt);
-                let orientation = toward
-                    .and_then(|z| Some((up.cross(z).try_normalize()?, z)))
-                    .map_or(fallback, |(x, z)| {
-                        Quat::from_mat3(&kernel::vr::Mat3::from_cols(x, z.cross(x), z))
-                    });
-                Pose::new(at, orientation)
-            }
             // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
             Some(from) => {
                 kernel.panel(from).pose
@@ -2055,36 +1996,6 @@ mod tests {
         ));
         assert!(pump(&mut kernel, &mut bridges).is_empty());
         assert!(bridges[&(panel, Hand::Right)].momentum.is_none());
-    }
-
-    /// 蝶番のようにつなげたパネルは、上の縁が持ち主の下の縁から隙間だけ離れ、面が目より少し下を向くように折れる。
-    #[test]
-    fn hinged_panel_hangs_from_the_owners_bottom_edge() {
-        let mut kernel =
-            Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
-        // 少し上を向けた持ち主（ダッシュボードのバー）。
-        let tilt = 0.5;
-        let owner_pose = Pose::new(Vec3::new(0.0, -0.4, -1.0), Quat::from_rotation_x(-tilt));
-        let owner = kernel
-            .add_panel("bar", owner_pose, Vec2::new(1.0, 0.1), (1000, 100))
-            .unwrap();
-        let spec = PanelSpec::root(Pose::IDENTITY, |_, _, _| gpui::Empty)
-            .sized(Vec2::new(1.0, 0.4), (1000, 400))
-            .hinged_below(owner);
-        let pose = spec.pose_for(&kernel, owner + 1);
-        // 面は中心から、目（原点）より少し下へ向く。
-        let hmd = kernel.hmd();
-        let aim = hmd.position - hmd.panel_up() * BELOW_AIM_DROP;
-        let normal = pose.orientation * Vec3::Z;
-        assert!(
-            normal.dot((aim - pose.position).normalize()) > 1.0 - 1e-4,
-            "{normal}"
-        );
-        // 上の縁（影の余白の内側）は、持ち主の下の縁から隙間だけ離れている。
-        let m = |h: f32, px: f32| design::components::PANEL_MARGIN * h / px;
-        let top = pose.transform_point(Vec3::Y * (0.2 - m(0.4, 400.0)));
-        let edge = owner_pose.transform_point(Vec3::NEG_Y * (0.05 - m(0.1, 100.0)));
-        assert!((top.distance(edge) - HINGE_GAP).abs() < 1e-4);
     }
 
     /// 一方の手がパネルにマウスを動かしたら、もう一方の手は次に位置から送り直す（GPUI のマウスは 1 つ）。
