@@ -593,13 +593,19 @@ impl Render for KeyboardView {
                     };
                     // 押す判定はキーの見た目（隙間と角丸を除く）ではなく、隙間の半分まで含めたキーの升目全体で取る。
                     // レーザーは手ブレするので、隙間や角に当たって押し損じないように。
+                    // ホバー音も升目で鳴らす（升目は隙間なく並ぶので、隙間のそばの手ブレで鳴り直さない）。
+                    let hover: gpui::SharedString = format!("key-{}", key.name).into();
                     let cells = key.regions().into_iter().map(|(x, y, w, h)| {
+                        let hover = hover.clone();
                         div()
                             .absolute()
                             .left(px(x * unit))
                             .top(px(y * unit))
                             .w(px(w * unit))
                             .h(px(h * unit))
+                            .on_mouse_move(move |_, window, cx| {
+                                design::cue::hover(&hover, window, cx)
+                            })
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
@@ -776,6 +782,30 @@ mod tests {
         assert_eq!(*sound, kernel::audio::Sound::Wav(SPACEBAR_SOUND));
         assert_eq!(*at, kernel::Vec2::new(f32::from(key.x), f32::from(key.y)));
         assert!((pitch - 1.).abs() <= PITCH_JITTER);
+    }
+
+    /// キーに入るとホバー音を要求する。同じキーの隙間へ手ブレしても鳴り直さず、隣のキーへ移ると鳴る。
+    #[gpui::test]
+    fn hovering_a_key_requests_the_hover_sound_once_per_key(cx: &mut TestAppContext) {
+        let db = Database::load().unwrap();
+        let view = ready(&db, "us", KeyboardType::Compact);
+        let (_, cx) = cx.add_window_view(|_, _| view);
+        cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
+        cx.run_until_parked();
+        let a = cx.debug_bounds("key-AC01").unwrap();
+        let s = cx.debug_bounds("key-AC02").unwrap();
+        let mut hovers = |at| {
+            cx.simulate_mouse_move(at, None, gpui::Modifiers::none());
+            design::drive::advance(Duration::from_millis(100));
+            cx.update(|window, cx| design::cue::take(window, cx))
+                .into_iter()
+                .filter(|(cue, _)| *cue == design::cue::Cue::Hover)
+                .count()
+        };
+        assert_eq!(hovers(a.center()), 1);
+        assert_eq!(hovers(a.top_right() + gpui::point(px(2.), px(4.))), 0);
+        assert_eq!(hovers(a.center()), 0);
+        assert_eq!(hovers(s.center()), 1);
     }
 
     /// キーの見た目の外でも、隙間（の半分まで）や角丸の外に当たればそのキーを押す（レーザーの手ブレで押し損じない）。
