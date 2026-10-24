@@ -1167,9 +1167,17 @@ impl Overlay {
                 if c.resize != 0.0 && resize {
                     width *= (c.resize * RESIZE_STEP).exp();
                 }
-                let mut offset = offset;
+                let (mut offset, mut pivot) = (offset, pivot);
                 let width = width.clamp(SCALE_MIN, SCALE_MAX);
                 if width != p.size.x {
+                    // 基準は中身の決まった点（キーボードのホームポジション）なので、大きさに合わせて動かす。
+                    if let Some(anchor) = &mut p.grab_anchor {
+                        let before = anchor.inverse();
+                        anchor.position *= width / p.size.x;
+                        if pivot == before {
+                            pivot = anchor.inverse();
+                        }
+                    }
                     let bottom = p.size.y / 2.0 - face_margin(p);
                     p.size *= width / p.size.x;
                     // 親の上端に立てた画面は、親に接する下端を動かさずに大きさを変える（中心を基準にすると、離した時に跳ねる）。
@@ -2729,6 +2737,28 @@ mod tests {
         let to_eye = (Vec3::ZERO - reference.position).normalize();
         assert!((reference.orientation * Vec3::Z).abs_diff_eq(to_eye, 1e-3));
         assert!(reference.position.x > 0.4);
+    }
+
+    /// 基準を持つパネルを掴んで大きさを変えると、基準も大きさに合わせて動く（キーボードのホームポジションに付いたまま）。
+    #[test]
+    fn resizing_moves_the_grab_anchor_with_the_panel() {
+        const RESIZE: &str = subsystems::vr::RESIZE_INPUT;
+        let (mut vr, mut ov) = setup();
+        ov.set_grab_anchor(0, Some(Pose::new(Vec3::X * 0.3, Quat::IDENTITY)));
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        assert!(ov.grabbed(0));
+        let width = ov.panel(0).size.x;
+        controller(
+            &mut vr,
+            Pose::IDENTITY,
+            &[("squeeze/value", 1.0), (RESIZE, 1.0)],
+        );
+        ov.tick(&mut vr);
+        let scale = ov.panel(0).size.x / width;
+        assert!(scale > 1.0);
+        let anchor = ov.panel(0).grab_anchor.unwrap();
+        assert!((anchor.position.x - 0.3 * scale).abs() < 1e-5, "{anchor:?}");
     }
 
     #[test]
