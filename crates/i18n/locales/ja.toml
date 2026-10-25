@@ -303,16 +303,20 @@ sample_button = "変更を保存"
 
 [settings]
 title = "設定"
-# 本物の設定が載るまでのダミー。
-item = "設定項目 {n}"
-detail = "オプション {n}"
+language = "言語"
+theme = "テーマ"
+pointer_mode = "ポインタの方式"
+mouse = "マウス"
+touch = "タッチ"
+smoothing = "手ブレ抑え"
+release = "抑えを緩める角度"
+laser_length = "レーザーの長さ"
+version = "バージョン"
 
 [settings.category]
 general = "一般"
-account = "アカウント"
-privacy = "プライバシー"
 appearance = "外観"
-security = "セキュリティ"
+pointer = "ポインタ"
 about = "情報"
 
 [nav]

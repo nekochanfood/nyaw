@@ -303,16 +303,20 @@ sample_button = "Save changes"
 
 [settings]
 title = "Settings"
-# Dummy items until real settings land.
-item = "Setting {n}"
-detail = "Option {n}"
+language = "Language"
+theme = "Theme"
+pointer_mode = "Pointer mode"
+mouse = "Mouse"
+touch = "Touch"
+smoothing = "Smoothing"
+release = "Release angle"
+laser_length = "Laser length"
+version = "Version"
 
 [settings.category]
 general = "General"
-account = "Account"
-privacy = "Privacy"
 appearance = "Appearance"
-security = "Security"
+pointer = "Pointer"
 about = "About"
 
 [nav]

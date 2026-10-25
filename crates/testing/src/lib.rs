@@ -75,10 +75,12 @@ pub const DROP_TARGET_BG: u32 = 0x30a050;
 pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_bg_active);
 /// ダイアログの背景色（親より明るくして重なりが見えるように）。
 pub const DIALOG_BG: u32 = rgb24(THEME.card);
-/// 画面の地（`components::panel`）。設定画面のサイドバーの、選んでいない行も同じ色（背景が無いように見える）。
+/// 画面の地（`components::panel`）。設定画面の中身（右側）の地。
 pub const BACKGROUND: u32 = rgb24(THEME.background);
-/// 設定画面のサイドバーで選んでいる行の色。
-pub const SIDEBAR_SELECTED_BG: u32 = rgb24(THEME.accent_bg_active);
+/// 設定画面のサイドバーの地。行は選んでいてもいなくても同じ色（背景が無いように見える）。
+pub const SIDEBAR_BG: u32 = rgb24(THEME.sidebar);
+/// 設定画面のサイドバーで選んでいる行の左端の印の色。
+pub const SIDEBAR_INDICATOR: u32 = rgb24(THEME.accent_solid);
 /// Testing パネルの大きさ（m）と解像度（px）。ボタンが高い（最小ヒット領域）ので、既定の 0.8m × 0.6m では入りきらない。
 pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 1.0);
 pub const TESTING_PX: (u32, u32) = (1200, 1000);
@@ -1333,54 +1335,27 @@ pub const SETTINGS_SIZE: Vec2 = Vec2::new(1.024, 0.768);
 pub const SETTINGS_PX: (u32, u32) = (1024, 768);
 /// サイドバーの幅（px）。
 const SIDEBAR_PX: f32 = 320.0;
+/// 中身のスライダーの長さ（px）。中身の幅（パネル − サイドバー − 余白）に収まる。
+const SETTINGS_SLIDER_PX: f32 = 520.0;
 
-/// 設定のカテゴリ（ダミー）: `debug_selector`・アイコン・文言のキー・項目の数。
-// ponytail: 中身はダミー。本物の設定を載せるときに、項目の表と `crates/settings` への切り出しを決める。
-const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str, usize); 6] = [
+/// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
+const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 4] = [
     (
         "settings-general",
         &design::icons::GEAR,
         "settings.category.general",
-        5,
-    ),
-    (
-        "settings-account",
-        &design::icons::USER_GEAR,
-        "settings.category.account",
-        3,
-    ),
-    (
-        "settings-privacy",
-        &design::icons::EYE_SLASH,
-        "settings.category.privacy",
-        4,
     ),
     (
         "settings-appearance",
         &design::icons::PALETTE,
         "settings.category.appearance",
-        5,
     ),
     (
-        "settings-security",
-        &design::icons::SHIELD,
-        "settings.category.security",
-        2,
+        "settings-pointer",
+        &design::icons::CURSOR,
+        "settings.category.pointer",
     ),
-    (
-        "settings-about",
-        &design::icons::INFO,
-        "settings.category.about",
-        1,
-    ),
-];
-/// 項目（ダミー）の `debug_selector` とアイコン。カテゴリが変わっても同じ並びを使う。
-const SETTINGS_ITEMS: [(&str, &design::Icon); 5] = [
-    ("setting-0", &design::icons::BELL),
-    ("setting-1", &design::icons::GLOBE),
-    ("setting-2", &design::icons::SPEAKER_HIGH),
-    ("setting-3", &design::icons::MONITOR),
-    ("setting-4", &design::icons::KEYBOARD),
+    ("settings-about", &design::icons::INFO, "settings.category.about"),
 ];
 
 /// 設定画面の起動仕様（ダッシュボードの設定ボタン。main が渡す）。`opened` は作られたパネルの ID を受け取る。
@@ -1396,24 +1371,254 @@ pub fn settings_spec(
     .titled("testing.open.settings")
 }
 
-/// 設定画面（`settings-test`）。左のサイドバーにカテゴリの一覧、区切り線を挟んで右に選んだカテゴリの項目の一覧。
-/// 地は背景色（`components::panel`）。サイドバーの行（`components::sidebar_item`）は背景が無く、選んでいるカテゴリだけアクセントの色が付く。中身の一覧の行はカード色（`components::list`）。
-/// 中身は積み重ね（[`components::navigation`]）: 項目を押すと右から詳しい画面が入り、`settings-back` か右から左へのスワイプで戻る。
+/// 設定画面（`settings-test`）。GNOME の設定のようなツートーン: 左のサイドバー（地は `sidebar`）にカテゴリの一覧、
+/// 右（地は `background`）に選んだカテゴリの設定。サイドバーの行（`components::sidebar_item`）は選んでいるものだけ
+/// 文字が濃く、左端に印が付く。中身はグループ（見出し + カード）を縦に並べ、押すとすぐ全体の設定（`Setting`）に反映する。
 #[derive(Default)]
 pub struct Settings {
     /// 選んでいるカテゴリ（[`SETTINGS_CATEGORIES`] の添字）。
     pub category: usize,
-    /// 中身に積んだ画面。先頭はカテゴリの項目の一覧（`None`）、その上に項目の詳しい画面（`Some(項目)`）。
-    pub pages: Vec<Option<usize>>,
 }
 
 impl Settings {
     pub fn new(_panel: PanelId) -> Self {
-        Self {
-            category: 0,
-            pages: vec![None],
+        Self::default()
+    }
+
+    /// 選んでいるカテゴリの中身（グループの並び）。
+    fn category_page(&self, theme: &Theme, cx: &App) -> Vec<Div> {
+        let now = settings(cx);
+        match self.category {
+            // 一般: 言語。言語の名前はその言語自身で出す（どの言語で表示していても読める）。
+            0 => vec![setting_group(
+                theme,
+                i18n::t(cx, "settings.language"),
+                components::list(
+                    theme,
+                    i18n::Lang::ALL.map(|l| {
+                        let id = match l {
+                            i18n::Lang::En => "setting-lang-en",
+                            i18n::Lang::Ja => "setting-lang-ja",
+                        };
+                        choice(
+                            theme,
+                            id,
+                            &design::icons::TRANSLATE,
+                            l.native_name(),
+                            l == lang(now.language),
+                        )
+                        .on_click(change(Setting::Language(language(l))))
+                    }),
+                ),
+            )],
+            // 外観: テーマ。
+            1 => vec![setting_group(
+                theme,
+                i18n::t(cx, "settings.theme"),
+                components::list(
+                    theme,
+                    [
+                        (
+                            "setting-theme-dark",
+                            &design::icons::MOON,
+                            "theme.dark",
+                            kernel::ThemeMode::Dark,
+                        ),
+                        (
+                            "setting-theme-light",
+                            &design::icons::SUN,
+                            "theme.light",
+                            kernel::ThemeMode::Light,
+                        ),
+                    ]
+                    .map(|(id, glyph, key, mode)| {
+                        choice(theme, id, glyph, i18n::t(cx, key), now.theme == mode)
+                            .on_click(change(Setting::Theme(mode)))
+                    }),
+                ),
+            )],
+            // ポインタ: 方式と、レーザーの手ブレ抑え・長さ（Laser の画面と同じ範囲）。
+            2 => {
+                let max = kernel::overlay::POINTER_SMOOTHING_MAX;
+                let (tight, loose) = (
+                    kernel::overlay::POINTER_RELEASE_DEG_MIN,
+                    kernel::overlay::POINTER_RELEASE_DEG_MAX,
+                );
+                let (short, long) = (
+                    kernel::overlay::LASER_LENGTH_MIN,
+                    kernel::overlay::LASER_MAX,
+                );
+                vec![
+                    setting_group(
+                        theme,
+                        i18n::t(cx, "settings.pointer_mode"),
+                        components::list(
+                            theme,
+                            [
+                                (
+                                    "setting-pointer-mouse",
+                                    &design::icons::CURSOR,
+                                    "settings.mouse",
+                                    PointerMode::Mouse,
+                                ),
+                                (
+                                    "setting-pointer-touch",
+                                    &design::icons::HAND_POINTING,
+                                    "settings.touch",
+                                    PointerMode::Touch,
+                                ),
+                            ]
+                            .map(|(id, glyph, key, mode)| {
+                                choice(theme, id, glyph, i18n::t(cx, key), now.pointer_mode == mode)
+                                    .on_click(change(Setting::PointerMode(mode)))
+                            }),
+                        ),
+                    ),
+                    setting_group(
+                        theme,
+                        i18n::t(cx, "settings.smoothing"),
+                        setting_slider(
+                            theme,
+                            i18n::tf(
+                                cx,
+                                "laser.strength",
+                                &[
+                                    ("now", &format!("{:.2}", now.pointer_smoothing)),
+                                    ("max", &format!("{max:.2}")),
+                                ],
+                            ),
+                            components::slider(
+                                theme,
+                                "setting-smoothing",
+                                now.pointer_smoothing / max,
+                                move |v, _, cx| push_setting(Setting::PointerSmoothing(v * max), cx),
+                            ),
+                        ),
+                    ),
+                    setting_group(
+                        theme,
+                        i18n::t(cx, "settings.release"),
+                        setting_slider(
+                            theme,
+                            i18n::tf(
+                                cx,
+                                "laser.release",
+                                &[
+                                    ("release", &format!("{:.1}", now.pointer_release_deg)),
+                                    ("tight", &format!("{tight:.1}")),
+                                    ("loose", &format!("{loose:.0}")),
+                                ],
+                            ),
+                            components::slider(
+                                theme,
+                                "setting-release",
+                                (now.pointer_release_deg - tight) / (loose - tight),
+                                move |v, _, cx| {
+                                    push_setting(
+                                        Setting::PointerRelease(tight + v * (loose - tight)),
+                                        cx,
+                                    )
+                                },
+                            ),
+                        ),
+                    ),
+                    setting_group(
+                        theme,
+                        i18n::t(cx, "settings.laser_length"),
+                        setting_slider(
+                            theme,
+                            i18n::tf(
+                                cx,
+                                "laser.length",
+                                &[
+                                    ("length", &format!("{:.2}", now.laser_length)),
+                                    ("short", &format!("{short:.2}")),
+                                    ("long", &format!("{long:.2}")),
+                                ],
+                            ),
+                            components::slider(
+                                theme,
+                                "setting-laser-length",
+                                (now.laser_length - short) / (long - short),
+                                move |v, _, cx| {
+                                    push_setting(
+                                        Setting::LaserLength(short + v * (long - short)),
+                                        cx,
+                                    )
+                                },
+                            ),
+                        ),
+                    ),
+                ]
+            }
+            // 情報: バージョン。
+            _ => vec![setting_group(
+                theme,
+                i18n::t(cx, "settings.category.about"),
+                components::list(
+                    theme,
+                    [components::menu_item(
+                        theme,
+                        "setting-version",
+                        &design::icons::INFO,
+                        i18n::t(cx, "settings.version"),
+                    )
+                    .child(
+                        div()
+                            .text_color(rgba(theme.neutral_text_low))
+                            .child(env!("CARGO_PKG_VERSION")),
+                    )],
+                ),
+            )],
         }
     }
+}
+
+/// 設定のグループ: 小さな見出しの下にカード（`body`）。
+fn setting_group(theme: &Theme, title: SharedString, body: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(spacing::SM))
+        .child(
+            div()
+                .px(px(spacing::LG))
+                .text_size(px(font_size::SM))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(title),
+        )
+        .child(body)
+}
+
+/// 選択肢の行（一覧の行）。選んでいる行だけ右端にチェックが付く。
+fn choice(
+    theme: &Theme,
+    id: &'static str,
+    glyph: &'static design::Icon,
+    label: impl Into<SharedString>,
+    on: bool,
+) -> components::Button {
+    components::menu_item(theme, id, glyph, label).children(on.then(|| {
+        design::icon(&design::icons::CHECK)
+            .size(px(font_size::LG))
+            .color(rgba(theme.accent_text))
+    }))
+}
+
+/// スライダーのカード: 今の値の説明の下にスライダー。
+fn setting_slider(theme: &Theme, value: SharedString, slider: components::Slider) -> Div {
+    components::card(theme)
+        .p(px(spacing::LG))
+        .flex()
+        .flex_col()
+        .gap(px(spacing::MD))
+        .child(
+            div()
+                .text_size(px(font_size::SM))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(value),
+        )
+        .child(slider.length(SETTINGS_SLIDER_PX))
 }
 
 /// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。タイトルは左右の中央、`left` のボタン（戻る）は左端に寄せる（閉じるのはナビゲーションバー）。
@@ -1463,84 +1668,18 @@ impl Render for Settings {
         let categories = SETTINGS_CATEGORIES
             .iter()
             .enumerate()
-            .map(|(i, &(id, glyph, key, _))| {
+            .map(|(i, &(id, glyph, key))| {
                 components::sidebar_item(&theme, id, glyph, i18n::t(cx, key), i == self.category)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.category = i;
-                        this.pages = vec![None];
                         cx.notify();
                     }))
             })
             .collect::<Vec<_>>();
-        let (this, category) = (cx.entity(), self.category);
-        let pages: fn(&mut Settings) -> &mut Vec<Option<usize>> = |v| &mut v.pages;
-        // 中身の画面 1 枚。
-        let page = move |p: &Option<usize>, _: &mut Window, cx: &mut App| {
-            let theme = Theme::current(cx);
-            let (_, _, title, count) = SETTINGS_CATEGORIES[category];
-            let (head, rows) = match *p {
-                // カテゴリの項目の一覧。押すと詳しい画面を積む。
-                None => (
-                    heading(i18n::t(cx, title), None),
-                    SETTINGS_ITEMS[..count]
-                        .iter()
-                        .enumerate()
-                        .map(|(n, &(id, glyph))| {
-                            components::list_item(
-                                &theme,
-                                id,
-                                glyph,
-                                i18n::tf(cx, "settings.item", &[("n", &(n + 1))]),
-                            )
-                            .on_click(stack_op(
-                                &this,
-                                pages,
-                                Some(Some(n)),
-                            ))
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-                // 項目の詳しい画面（ダミー）。
-                Some(n) => (
-                    heading(
-                        i18n::tf(cx, "settings.item", &[("n", &(n + 1))]),
-                        Some(
-                            components::icon_button(
-                                &theme,
-                                "settings-back",
-                                &design::icons::CARET_LEFT,
-                                i18n::t(cx, "common.back"),
-                                Variant::OnBackground,
-                            )
-                            .on_click(stack_op(&this, pages, None))
-                            .into_any_element(),
-                        ),
-                    ),
-                    SETTINGS_ITEMS[..3]
-                        .iter()
-                        .enumerate()
-                        .map(|(m, &(_, glyph))| {
-                            components::list_item(
-                                &theme,
-                                ["setting-detail-0", "setting-detail-1", "setting-detail-2"][m],
-                                glyph,
-                                i18n::tf(cx, "settings.detail", &[("n", &(m + 1))]),
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                ),
-            };
-            div()
-                .size_full()
-                .flex()
-                .flex_col()
-                .gap(px(spacing::MD))
-                .child(head)
-                .child(components::list(&theme, rows))
-                .into_any_element()
-        };
-        let back = cx.entity();
+        let (_, _, title) = SETTINGS_CATEGORIES[self.category];
+        // パネルの地は中身側（`background`）。サイドバーだけ `sidebar` で塗り、左の角をパネルに合わせて丸める。
         components::panel(&theme)
+            .p(px(0.0))
             .flex()
             .child(
                 div()
@@ -1549,6 +1688,9 @@ impl Render for Settings {
                     .flex()
                     .flex_col()
                     .gap(px(spacing::MD))
+                    .p(px(spacing::MD))
+                    .rounded_l(px(radius::XL))
+                    .bg(rgba(theme.sidebar))
                     .child(heading(i18n::t(cx, "settings.title"), None))
                     .child(
                         div()
@@ -1558,26 +1700,20 @@ impl Render for Settings {
                             .children(categories),
                     ),
             )
-            // サイドバーと中身の区切り。
             .child(
                 div()
-                    .debug_selector(|| "settings-separator".into())
-                    .w(px(1.0))
-                    .mx(px(spacing::MD))
-                    .bg(rgba(theme.neutral_border_subtle)),
+                    .id("settings-content")
+                    .debug_selector(|| "settings-content".into())
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .gap(px(spacing::LG))
+                    .p(px(spacing::MD))
+                    .pb(px(spacing::XL))
+                    .overflow_y_scroll()
+                    .child(heading(i18n::t(cx, title), None))
+                    .children(self.category_page(&theme, cx)),
             )
-            .child(div().flex_1().child(components::navigation(
-                &theme,
-                "settings-content",
-                &self.pages,
-                page,
-                move |_, cx| {
-                    back.update(cx, |v, cx| {
-                        v.pages.pop();
-                        cx.notify()
-                    })
-                },
-            )))
     }
 }
 
