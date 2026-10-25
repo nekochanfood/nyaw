@@ -312,6 +312,8 @@ right = "Right"
 left = "Left"
 mirror_frame_rate = "Frame rate"
 keyboard = "Keyboard type"
+licenses = "Licenses"
+source_code = "Source code"
 
 [settings.category]
 general = "General"
