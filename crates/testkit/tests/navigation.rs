@@ -3,7 +3,8 @@
 //! The hand that holds (grips) the panel is ignored: only the other hand's laser can swipe.
 
 use gpui::{Render, TestAppContext};
-use kernel::{Language, PointerMode, Setting, ThemeMode};
+use kernel::subsystems::keyboard::KeyboardType;
+use kernel::{DominantHand, Language, PointerMode, Setting, ThemeMode};
 use testing::{BACKGROUND, NavPage, NavTest, SIDEBAR_BG, SIDEBAR_INDICATOR, Settings};
 use testkit::{Action, Driver, Hand, Vec2, VrKit};
 
@@ -150,9 +151,17 @@ fn settings_selects_change_the_settings(cx: &mut TestAppContext) {
     assert_eq!(kit.read(|v| v.category), 1);
     assert_eq!(kit.kernel.settings().theme, ThemeMode::Light);
     kit.click("settings-pointer")
-        .click("setting-pointer-mode")
-        .click("setting-pointer-touch");
-    assert_eq!(kit.kernel.settings().pointer_mode, PointerMode::Touch);
+        .click("setting-dominant-hand")
+        .click("setting-hand-left");
+    assert_eq!(kit.kernel.settings().dominant_hand, DominantHand::Left);
+    kit.click("settings-mirroring")
+        .click("setting-mirror-fps")
+        .click("setting-fps-30");
+    assert_eq!(kit.kernel.settings().mirror_frame_rate, 30);
+    kit.click("settings-keyboard")
+        .click("setting-keyboard")
+        .click("setting-keyboard-compact");
+    assert_eq!(kit.kernel.settings().keyboard, KeyboardType::Compact);
 }
 
 #[gpui::test]

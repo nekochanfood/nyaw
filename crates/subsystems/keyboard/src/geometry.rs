@@ -1,7 +1,9 @@
 //! xkeyboard-config の pc104 / pc105 / jp106 に対応するキー名と物理位置（1u 単位）。
 use super::Keyboard;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// キーボードの種類。設定ファイルでは `full` / `tenkeyless` / `compact`。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum KeyboardType {
     #[default]
     Full,
