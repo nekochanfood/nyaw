@@ -485,10 +485,13 @@ pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool
         return false;
     }
     ctl.settings = settings;
-    cx.set_global(match settings.theme {
-        ThemeMode::Dark => design::Mode::Dark,
-        ThemeMode::Light => design::Mode::Light,
-    });
+    design::Theme::set_mode(
+        match settings.theme {
+            ThemeMode::Dark => design::Mode::Dark,
+            ThemeMode::Light => design::Mode::Light,
+        },
+        cx,
+    );
     cx.set_global(match settings.language {
         Language::En => i18n::Lang::En,
         Language::Ja => i18n::Lang::Ja,
@@ -1553,12 +1556,13 @@ pub fn run_with(
                                     ..b
                                 } != status
                             });
-                        // 部品のトランジションが動いている間は、毎フレーム描き直す。
+                        // 部品やテーマの切り替えのトランジションが動いている間は、毎フレーム描き直す。
                         let transitioning = cx.has_global::<design::Motion>()
                             && cx
                                 .global_mut::<design::Motion>()
                                 .animating
-                                .remove(&window.window_handle().window_id());
+                                .remove(&window.window_handle().window_id())
+                            || design::Theme::fading(cx);
                         // 頼まれた描き直しは、見えていなければ捨てる（見えた瞬間に描き直す）。
                         asked = cx.has_global::<PanelControl>()
                             && cx

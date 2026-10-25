@@ -206,6 +206,12 @@ fn main() {
     for f in &fields {
         writeln!(out, "            {0}: f(self.{0}),", field(f)).unwrap();
     }
+    out += "        }\n    }\n\n";
+    out += "    /// 役割ごとに `self` と `other` の色を `f` で合わせたテーマ（2 つのテーマの間を補間するなど）。\n";
+    out += "    pub fn zip(self, other: Theme, f: impl Fn(u32, u32) -> u32) -> Theme {\n        Theme {\n";
+    for f in &fields {
+        writeln!(out, "            {0}: f(self.{0}, other.{0}),", field(f)).unwrap();
+    }
     out += "        }\n    }\n}\n";
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 
