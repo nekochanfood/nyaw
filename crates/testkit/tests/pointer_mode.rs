@@ -1,10 +1,10 @@
 //! E2E for the pointer mode (mouse / touch emulation). Operates the PointerTest screen with the VR laser.
-//! The default is mouse (moving while held is a drag). Switching to touch with `pointer-mode` makes moving while held a swipe,
+//! The kit's default is mouse (moving while held is a drag). Switching to touch makes moving while held a swipe,
 //! and releasing without moving a tap.
 
 use gpui::TestAppContext;
-use kernel::PointerMode;
-use testing::{BUTTON_ACTIVE_BG, BUTTON_BG, PointerTest};
+use kernel::{PointerMode, Setting};
+use testing::PointerTest;
 use testkit::{Action, Driver, Vec2, VrKit};
 
 /// Presses toward the bottom of `swipe-list`, moves up gradually by 1/2 of its height, and releases.
@@ -35,7 +35,6 @@ fn mouse_mode_drags_and_does_not_swipe(cx: &mut TestAppContext) {
         PointerMode::Mouse,
         "mouse by default"
     );
-    assert_eq!(kit.color_at("pointer-mode"), BUTTON_BG);
     kit.drag("drag-chip", "drop-zone");
     assert_eq!(kit.read(|v| v.dropped), 1);
     swipe_up(&mut kit);
@@ -51,13 +50,7 @@ fn mouse_mode_drags_and_does_not_swipe(cx: &mut TestAppContext) {
 #[gpui::test]
 fn touch_mode_swipes_and_taps(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| PointerTest::default());
-    kit.click("pointer-mode");
-    assert_eq!(kit.kernel.pointer_mode(), PointerMode::Touch);
-    // With the laser on it the color becomes the hover color, so move it off before looking.
-    assert_eq!(
-        kit.hover("tap-me").color_at("pointer-mode"),
-        BUTTON_ACTIVE_BG
-    );
+    kit.kernel.set(Setting::PointerMode(PointerMode::Touch));
 
     swipe_up(&mut kit);
     let s = scrolled(&mut kit);
@@ -66,9 +59,4 @@ fn touch_mode_swipes_and_taps(cx: &mut TestAppContext) {
     assert_eq!(kit.read(|v| v.taps), 1, "releasing without moving is a tap");
     kit.drag("drag-chip", "drop-zone");
     assert_eq!(kit.read(|v| v.dropped), 0, "touch does not make a drag");
-
-    // Even in touch mode it can be switched back with the button.
-    kit.click("pointer-mode");
-    assert_eq!(kit.kernel.pointer_mode(), PointerMode::Mouse);
-    assert_eq!(kit.hover("tap-me").color_at("pointer-mode"), BUTTON_BG);
 }
