@@ -982,9 +982,13 @@ pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
     b
 }
 
-/// サイドバーの行: 左にアイコンと文字。どれを選んでいるかを見せるための行で、ふだんは地（`background`）と同じ色
-/// （背景が無いように見える。透明にするとホバーの色から戻るフェードが途中で切れるので地の色を使う）、ホバー・押下で
-/// `control-on-background-*`、選んでいる行（`selected`）はアクセント（`accent-bg-active` に `accent-text`）。高さはボタンと同じ。
+/// サイドバーの行の左端の印（選んでいる行だけ）の高さと幅（px）。
+pub const SIDEBAR_INDICATOR: (f32, f32) = (24.0, 4.0);
+
+/// サイドバーの行: 左にアイコンと文字。サイドバーの地（`sidebar`）に置く前提で、ふだんは地と同じ色（背景が無いように
+/// 見える。透明にするとホバーの色から戻るフェードが途中で切れるので地の色を使う）、ホバー・押下で `control-on-background-*`。
+/// 選んでいる行（`selected`）は文字が `neutral-text`（ダークでは白）になり、左端にアクセント（`accent-solid`）の印が付く。選んでいない行は
+/// `neutral-text-low`（選んだ行より薄いが、地とのコントラスト比 4.5 を保つ）。高さはボタンと同じ。
 pub fn sidebar_item(
     theme: &Theme,
     id: &'static str,
@@ -993,33 +997,43 @@ pub fn sidebar_item(
     selected: bool,
 ) -> Button {
     let mut b = base_button(theme, id.into(), Variant::OnBackground);
-    (b.rest, b.hover, b.active) = if selected {
-        (
-            theme.accent_bg_active,
-            theme.accent_bg_active,
-            theme.accent_bg_active,
-        )
-    } else {
-        (
-            theme.background,
-            theme.control_on_background_hover,
-            theme.control_on_background_active,
-        )
-    };
+    (b.rest, b.hover, b.active) = (
+        theme.sidebar,
+        theme.control_on_background_hover,
+        theme.control_on_background_active,
+    );
     let fg = if selected {
-        theme.accent_text
-    } else {
         theme.neutral_text
+    } else {
+        theme.neutral_text_low
     };
+    let (h, w) = SIDEBAR_INDICATOR;
     b.ink = fg;
     b.base = b
         .base
+        .relative()
         .w_full()
         .justify_start()
         .gap(px(spacing::MD))
         .px(px(spacing::LG))
-        .font_weight(FontWeight::NORMAL)
+        .font_weight(if selected {
+            FontWeight::MEDIUM
+        } else {
+            FontWeight::NORMAL
+        })
         .text_color(rgba(fg))
+        .when(selected, |d| {
+            d.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px((BUTTON_HEIGHT - h) / 2.0))
+                    .w(px(w))
+                    .h(px(h))
+                    .rounded(px(radius::FULL))
+                    .bg(rgba(theme.accent_solid)),
+            )
+        })
         .child(crate::icon(glyph).size(px(font_size::LG)))
         .child(div().flex_1().child(label.into()));
     b
