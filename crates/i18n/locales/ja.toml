@@ -312,6 +312,8 @@ right = "右手"
 left = "左手"
 mirror_frame_rate = "フレームレート"
 keyboard = "キーボードの種類"
+licenses = "ライセンス"
+source_code = "ソースコード"
 
 [settings.category]
 general = "一般"
