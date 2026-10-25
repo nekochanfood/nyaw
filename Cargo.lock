@@ -5455,6 +5455,7 @@ dependencies = [
  "i18n",
  "kernel",
  "nyapp",
+ "serde_json",
  "ui",
 ]
 

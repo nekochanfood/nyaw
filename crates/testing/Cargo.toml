@@ -3,6 +3,7 @@ name = "testing"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [dependencies]
 design.workspace = true
@@ -11,6 +12,9 @@ gpui.workspace = true
 kernel.workspace = true
 nyapp.workspace = true
 ui.workspace = true
+
+[build-dependencies]
+serde_json = "1"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

@@ -24,7 +24,7 @@ use design::{Mode, Theme, font_size, radius, spacing};
 use gpui::{
     App, ClickEvent, Context, Div, FocusHandle, FontWeight, KeyDownEvent, ScrollDelta,
     ScrollHandle, ScrollWheelEvent, SharedString, Stateful, WeakEntity, Window, anchored, deferred,
-    div, hsla, prelude::*, px, relative, rgb, rgba,
+    div, hsla, prelude::*, px, relative, rgb, rgba, uniform_list,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{Language, PanelCommand, PanelId, Setting};
@@ -1359,6 +1359,9 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 6] = [
     ("settings-about", &design::icons::INFO, "settings.category.about"),
 ];
 
+// 依存のライセンスの表 `LICENSES`: `(名前, バージョン, ライセンス, URL)`。build.rs がビルド時に作る。
+include!(concat!(env!("OUT_DIR"), "/licenses.rs"));
+
 /// ミラーリングの FPS の選択肢。
 const MIRROR_FRAME_RATES: [(&str, u32); 5] = [
     ("setting-fps-30", 30),
@@ -1391,6 +1394,11 @@ pub struct Settings {
     pub category: usize,
     /// 選択肢を開いている選択の行（`debug_selector`）。
     pub open: Option<&'static str>,
+    /// 情報からライセンスの一覧を開いている。
+    pub licenses: bool,
+    /// 中身とライセンスの一覧のスクロール（スクロールバーが見る）。
+    scroll: ScrollHandle,
+    licenses_scroll: gpui::UniformListScrollHandle,
 }
 
 impl Settings {
@@ -1652,23 +1660,109 @@ impl Settings {
                     )],
                 )]
             }
-            // 情報: バージョン。
-            _ => vec![components::list(
-                theme,
-                [components::menu_item(
+            // ライセンス: 依存ごとの行。押すとそのリポジトリをブラウザで開く。数百行あるので、見えている行だけを
+            // 作る `uniform_list` で並べる（行の高さは揃える。区切り線は先頭の行だけ透明にして高さを変えない）。
+            _ if self.licenses => {
+                let last = LICENSES.len() - 1;
+                let rows = uniform_list("licenses", LICENSES.len(), move |range, _, cx| {
+                    let theme = Theme::current(cx);
+                    range
+                        .map(|i| {
+                            let (name, version, license, url) = LICENSES[i];
+                            let mut row = components::menu_item(
+                                &theme,
+                                format!("license-{name}-{version}"),
+                                &design::icons::PACKAGE,
+                                name,
+                            )
+                            .child(
+                                div()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_size(px(font_size::SM))
+                                    .text_color(rgba(theme.neutral_text_low))
+                                    .child(format!("{version} · {license}")),
+                            )
+                            .child(external_icon(&theme))
+                            .on_click(move |_, _, cx| cx.open_url(url));
+                            if i == 0 {
+                                row = row.rounded_t(px(radius::LG));
+                            }
+                            if i == last {
+                                row = row.rounded_b(px(radius::LG));
+                            }
+                            let line = if i == 0 { 0 } else { theme.neutral_border_subtle };
+                            div().border_t_1().border_color(rgba(line)).child(row)
+                        })
+                        .collect()
+                });
+                let bars = self.licenses_scroll.0.borrow().base_handle.clone();
+                vec![
+                    div().flex_1().min_h_0().child(
+                        components::card(theme)
+                            .relative()
+                            .size_full()
+                            .child(rows.track_scroll(&self.licenses_scroll).size_full())
+                            .child(
+                                components::scrollbars(theme, "licenses-bars", &bars)
+                                    .corner_radius(radius::LG),
+                            ),
+                    ),
+                ]
+            }
+            // 情報: バージョンと、ライセンスの一覧・リポジトリ（ブラウザで開く）。
+            _ => vec![
+                components::list(
                     theme,
-                    "setting-version",
-                    &design::icons::INFO,
-                    i18n::t(cx, "settings.version"),
-                )
-                .child(
-                    div()
-                        .text_color(rgba(theme.neutral_text_low))
-                        .child(env!("CARGO_PKG_VERSION")),
-                )],
-            )],
+                    [components::menu_item(
+                        theme,
+                        "setting-version",
+                        &design::icons::INFO,
+                        i18n::t(cx, "settings.version"),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_color(rgba(theme.neutral_text_low))
+                            .child(env!("CARGO_PKG_VERSION")),
+                    )],
+                ),
+                // バージョンと、ライセンス・ソースコードの間の区切り線。
+                div().h(px(1.0)).bg(rgba(theme.neutral_border_subtle)),
+                components::list(
+                    theme,
+                    [
+                        components::list_item(
+                            theme,
+                            "setting-licenses",
+                            &design::icons::SCROLL,
+                            i18n::t(cx, "settings.licenses"),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.licenses = true;
+                            cx.notify();
+                        })),
+                        components::menu_item(
+                            theme,
+                            "setting-source",
+                            &design::icons::CODE,
+                            i18n::t(cx, "settings.source_code"),
+                        )
+                        .child(external_icon(theme))
+                        .on_click(|_, _, cx| cx.open_url(env!("CARGO_PKG_REPOSITORY"))),
+                    ],
+                ),
+            ],
         }
     }
+}
+
+/// 外部（ブラウザ）で開く行の右端の印。
+fn external_icon(theme: &Theme) -> impl IntoElement {
+    design::icon(&design::icons::ARROW_SQUARE_OUT)
+        .size(px(font_size::MD))
+        .color(rgba(theme.neutral_text_low))
 }
 
 /// 設定のグループ: 小さな見出しの下にカード（`body`）。
@@ -1706,24 +1800,24 @@ fn setting_slider(theme: &Theme, value: SharedString, slider: components::Slider
 /// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。タイトルは左右の中央、`left` のボタン（戻る）は左端に寄せる（閉じるのはナビゲーションバー）。
 /// 高さはアイコンボタンと同じなので、ボタンは上下にも左右にも余白を足さない（パネルの内側の余白だけが四方に揃う）。
 fn heading(title: impl IntoElement, left: Option<gpui::AnyElement>) -> Div {
+    // ボタンの有無で中央がずれないよう、左右にボタンと同じ幅の枠を常に取り、タイトルはその間の中央に置く（長ければ省略）。
+    let slot = || div().w(px(components::BUTTON_HEIGHT)).flex_none().flex();
     div()
-        .relative()
-        .h(px(54.0))
+        .h(px(components::BUTTON_HEIGHT))
         .flex()
         .items_center()
         .text_size(px(font_size::LG))
         .font_weight(FontWeight::BOLD)
-        // ボタンの有無で中央がずれないよう、タイトルは重ねて置く。
+        .child(slot().children(left))
         .child(
             div()
-                .absolute()
-                .inset_0()
+                .flex_1()
+                .min_w_0()
                 .flex()
-                .items_center()
                 .justify_center()
-                .child(title),
+                .child(div().min_w_0().truncate().child(title)),
         )
-        .child(div().flex().children(left))
+        .child(slot())
 }
 
 /// 押すと `view` の積み重ねに `page` を積む・下ろす（`None`）。
@@ -1755,11 +1849,28 @@ impl Render for Settings {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.category = i;
                         this.open = None;
+                        this.licenses = false;
                         cx.notify();
                     }))
             })
             .collect::<Vec<_>>();
         let (_, _, title) = SETTINGS_CATEGORIES[self.category];
+        let (title, back) = if self.licenses {
+            let back = components::icon_button(
+                &theme,
+                "settings-back",
+                &design::icons::CARET_LEFT,
+                i18n::t(cx, "common.back"),
+                Variant::OnBackground,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.licenses = false;
+                cx.notify();
+            }));
+            ("settings.licenses", Some(back.into_any_element()))
+        } else {
+            (title, None)
+        };
         // パネルの地は中身側（`background`）。サイドバーだけ `sidebar` で塗り、左の角をパネルに合わせて丸める。
         components::panel(&theme)
             .p(px(0.0))
@@ -1786,17 +1897,29 @@ impl Render for Settings {
             )
             .child(
                 div()
-                    .id("settings-content")
-                    .debug_selector(|| "settings-content".into())
+                    .relative()
                     .flex_1()
-                    .flex()
-                    .flex_col()
-                    .gap(px(spacing::LG))
-                    .p(px(spacing::MD))
-                    .pb(px(spacing::XL))
-                    .overflow_y_scroll()
-                    .child(heading(i18n::t(cx, title), None))
-                    .children(self.category_page(&theme, window, cx)),
+                    // 中身の幅で広がらず、パネルの残りに収める（長い文字は行の中で省略する）。
+                    .min_w_0()
+                    .child(
+                        div()
+                            .id("settings-content")
+                            .debug_selector(|| "settings-content".into())
+                            .size_full()
+                            .flex()
+                            .flex_col()
+                            .gap(px(spacing::LG))
+                            .p(px(spacing::MD))
+                            .pb(px(spacing::XL))
+                            .overflow_y_scroll()
+                            .track_scroll(&self.scroll)
+                            .child(heading(i18n::t(cx, title), back))
+                            .children(self.category_page(&theme, window, cx)),
+                    )
+                    .child(
+                        components::scrollbars(&theme, "settings-bars", &self.scroll)
+                            .corner_radius(radius::XL),
+                    ),
             )
     }
 }
