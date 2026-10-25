@@ -19,7 +19,7 @@ pub mod slide;
 mod slider;
 mod tooltip;
 pub use navigation::{Navigation, navigation};
-pub use scrollbar::{Elastic, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
+pub use scrollbar::{Elastic, Scroll, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_button};
 pub use slider::{Slider, slider};
 pub use tooltip::*;
@@ -935,7 +935,7 @@ pub fn list_item(
 /// メニューの行: 一覧の行（[`list_item`]）と同じで、右の `>` が無い（その場で何かをする項目。先へ進む一覧ではない）。
 pub fn menu_item(
     theme: &Theme,
-    id: &'static str,
+    id: impl Into<SharedString>,
     glyph: &'static crate::Icon,
     label: impl Into<SharedString>,
 ) -> Button {
@@ -951,7 +951,7 @@ pub fn menu_item(
         // 行は文字が主役のボタンではないので太字にしない（文字は本文と同じ `MD`）。
         .font_weight(FontWeight::NORMAL)
         .child(crate::icon(glyph).size(px(font_size::LG)))
-        .child(div().flex_1().child(label.into()));
+        .child(div().flex_1().min_w_0().truncate().child(label.into()));
     b
 }
 
@@ -1025,7 +1025,7 @@ pub fn sidebar_item(
         })
         .text_color(rgba(fg))
         .child(crate::icon(glyph).size(px(font_size::LG)))
-        .child(div().flex_1().child(label.into()));
+        .child(div().flex_1().min_w_0().truncate().child(label.into()));
     b
 }
 
@@ -1137,6 +1137,8 @@ pub fn select(
         .relative()
         .child(
             div()
+                .min_w_0()
+                .truncate()
                 .text_color(rgba(theme.neutral_text_low))
                 .child(value.into()),
         )
@@ -1169,7 +1171,7 @@ pub fn select_option(
         .justify_start()
         .gap(px(spacing::LG))
         .font_weight(FontWeight::NORMAL)
-        .child(div().flex_1().child(label.into()))
+        .child(div().flex_1().min_w_0().truncate().child(label.into()))
         .children(selected.then(|| crate::icon(&crate::icons::CHECK).size(px(font_size::MD))));
     b
 }

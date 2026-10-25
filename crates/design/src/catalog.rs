@@ -5,8 +5,8 @@
 use std::time::Instant;
 
 use gpui::{
-    Context, Div, FontWeight, IntoElement, ParentElement, Render, ScrollHandle, SharedString,
-    Styled, Window, div, prelude::*, px, rgba,
+    AnyElement, Context, Div, FontWeight, IntoElement, ListAlignment, ListState, ParentElement,
+    Render, ScrollHandle, SharedString, Styled, Window, div, list, prelude::*, px, rgba,
 };
 
 use crate::{
@@ -18,7 +18,8 @@ use crate::{
 
 pub struct Catalog {
     mode: Mode,
-    page: ScrollHandle,
+    /// 節ごとの一覧（見えている節だけを作る）。
+    page: ListState,
     scroll: ScrollHandle,
     slider: f32,
     toggle: bool,
@@ -32,7 +33,8 @@ impl Default for Catalog {
     fn default() -> Self {
         Self {
             mode: Mode::Dark,
-            page: ScrollHandle::new(),
+            // 描いていない節は高さ 0 と数えられ、スクロールの量（棒の長さ）が足りなくなるので、最初に一度だけ全節を測る。
+            page: ListState::new(SECTIONS, ListAlignment::Top, px(0.0)).measure_all(),
             scroll: ScrollHandle::new(),
             slider: 0.5,
             toggle: false,
@@ -42,6 +44,9 @@ impl Default for Catalog {
         }
     }
 }
+
+/// ページの節の数（見出し・役割・段・定数・文字・アイコン・部品・動き）。
+const SECTIONS: usize = 8;
 
 const MOTIONS: [Motion; 4] = [Motion::Enter, Motion::Exit, Motion::Return, Motion::Move];
 
@@ -578,74 +583,77 @@ impl Catalog {
     }
 }
 
-impl Render for Catalog {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+impl Catalog {
+    /// ページの `i` 番目の節。
+    fn page_item(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let t = Theme::of(self.mode);
-        let this = cx.entity();
-        let header = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .child(
+        let item = match i {
+            0 => {
+                let this = cx.entity();
                 div()
-                    .text_size(px(font_size::LG))
-                    .font_weight(FontWeight::BOLD)
-                    .child("design catalog"),
-            )
-            .child(
-                wrap()
+                    .flex()
                     .items_center()
-                    .child(caption(
-                        &t,
-                        format!("{:?}（スイッチで切り替え）", self.mode),
-                    ))
+                    .justify_between()
                     .child(
-                        components::switch(&t, "cat-mode", self.mode == Mode::Light).on_click(
-                            move |_, _, cx| {
-                                this.update(cx, |s, cx| {
-                                    s.mode = s.mode.toggled();
-                                    cx.notify()
-                                })
-                            },
-                        ),
-                    ),
-            );
-        let components = self.components_section(&t, cx);
-        let motion = self.motion_section(&t, window, cx);
-        let roles = section(
-            &t,
-            "Utilities / Theme の役割",
-            wrap().children(theme_roles(&t).iter().map(|(n, c)| swatch(&t, n, *c))),
-        );
+                        div()
+                            .text_size(px(font_size::LG))
+                            .font_weight(FontWeight::BOLD)
+                            .child("design catalog"),
+                    )
+                    .child(
+                        wrap()
+                            .items_center()
+                            .child(caption(
+                                &t,
+                                format!("{:?}（スイッチで切り替え）", self.mode),
+                            ))
+                            .child(
+                                components::switch(&t, "cat-mode", self.mode == Mode::Light)
+                                    .on_click(move |_, _, cx| {
+                                        this.update(cx, |s, cx| {
+                                            s.mode = s.mode.toggled();
+                                            cx.notify()
+                                        })
+                                    }),
+                            ),
+                    )
+            }
+            1 => section(
+                &t,
+                "Utilities / Theme の役割",
+                wrap().children(theme_roles(&t).iter().map(|(n, c)| swatch(&t, n, *c))),
+            ),
+            2 => scale_section(&t),
+            3 => constants_section(&t),
+            4 => text_section(&t),
+            5 => icon_section(&t),
+            6 => self.components_section(&t, cx),
+            _ => self.motion_section(&t, window, cx),
+        };
+        // 節の間と上下の余白は節の側に持たせる（一覧の余白はスクロールの量に入らない）。
+        div()
+            .px(px(spacing::XL))
+            .pt(px(spacing::XL))
+            .when(i == SECTIONS - 1, |d| d.pb(px(spacing::XL)))
+            .child(item)
+            .into_any_element()
+    }
+}
+
+impl Render for Catalog {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = Theme::of(self.mode);
         let page = self.page.clone();
+        // 節を一覧に並べ、見えている節だけを作る（アイコンや部品の節は大きく、全部を毎フレーム作ると重い）。
         components::surface(&t).size_full().child(
             div()
                 .relative()
                 .size_full()
                 .child(
-                    div()
-                        .id("catalog")
-                        .size_full()
-                        .overflow_y_scroll()
-                        .flex()
-                        .flex_col()
-                        .track_scroll(&page)
-                        .child(
-                            components::elastic("cat-pull-page", &page)
-                                .flex_none()
-                                .flex()
-                                .flex_col()
-                                .gap(px(spacing::XL))
-                                .p(px(spacing::XL))
-                                .child(header)
-                                .child(roles)
-                                .child(scale_section(&t))
-                                .child(constants_section(&t))
-                                .child(text_section(&t))
-                                .child(icon_section(&t))
-                                .child(components)
-                                .child(motion),
-                        ),
+                    components::elastic("cat-pull-page", &page).size_full().child(
+                        list(page.clone(), cx.processor(Self::page_item))
+                            .size_full(),
+                    ),
                 )
                 .child(
                     components::scrollbars(&t, "cat-page-bars", &page)
