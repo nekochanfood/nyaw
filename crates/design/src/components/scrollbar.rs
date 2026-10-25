@@ -14,6 +14,9 @@
 //!     .child(div().id("list").size_full().overflow_y_scroll().track_scroll(&handle).children(rows))
 //!     .child(scrollbars(&theme, "list-bars", &handle))
 //! ```
+//!
+//! 見えている行だけを作る gpui の `list` にも付けられる（`handle` の代わりに `&ListState`。[`Scroll`]）。
+//! そのときは [`elastic`] で `list` を包む（中身ではなく一覧ごと引っ張る）。
 
 use std::{
     rc::Rc,
@@ -23,7 +26,7 @@ use std::{
 use gpui::{
     AnyElement, App, Axis, Bounds, DispatchPhase, Div, Element, ElementId, GlobalElementId,
     InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent,
+    ListState, MouseUpEvent, Pixels, Point, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent,
     SharedString, Styled, TouchPhase, Window, canvas, div, point, prelude::*, px, rgba,
 };
 
@@ -115,8 +118,58 @@ struct State {
     shown: [bool; 2],
 }
 
+/// スクロールの位置を持つもの: 普通のスクロール要素（`track_scroll` の [`ScrollHandle`]）か、見えている行だけを作る
+/// gpui の `list`（[`ListState`]。縦だけ）。オフセットはどちらも負（中身が上・左へずれた量）。
+#[derive(Clone)]
+pub enum Scroll {
+    Handle(ScrollHandle),
+    List(ListState),
+}
+
+impl From<&ScrollHandle> for Scroll {
+    fn from(h: &ScrollHandle) -> Self {
+        Self::Handle(h.clone())
+    }
+}
+
+impl From<&ListState> for Scroll {
+    fn from(l: &ListState) -> Self {
+        Self::List(l.clone())
+    }
+}
+
+impl Scroll {
+    fn bounds(&self) -> Bounds<Pixels> {
+        match self {
+            Self::Handle(h) => h.bounds(),
+            Self::List(l) => l.viewport_bounds(),
+        }
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        match self {
+            Self::Handle(h) => h.offset(),
+            Self::List(l) => l.scroll_px_offset_for_scrollbar(),
+        }
+    }
+
+    fn max_offset(&self) -> Point<Pixels> {
+        match self {
+            Self::Handle(h) => h.max_offset(),
+            Self::List(l) => l.max_offset_for_scrollbar(),
+        }
+    }
+
+    fn set_offset(&self, o: Point<Pixels>) {
+        match self {
+            Self::Handle(h) => h.set_offset(o),
+            Self::List(l) => l.set_offset_from_scrollbar(o),
+        }
+    }
+}
+
 /// (ビューポートの長さ, あふれる量, オフセット, 反対の軸に譲る隅)
-fn read(handle: &ScrollHandle, axis: Axis) -> (f32, f32, f32, f32) {
+fn read(handle: &Scroll, axis: Axis) -> (f32, f32, f32, f32) {
     let (b, o, m) = (handle.bounds(), handle.offset(), handle.max_offset());
     let corner = |other: Pixels| if f32::from(other) >= 1.0 { CORNER } else { 0.0 };
     match axis {
@@ -136,7 +189,7 @@ fn read(handle: &ScrollHandle, axis: Axis) -> (f32, f32, f32, f32) {
 }
 
 /// ウィンドウ上の点を、ビューポートの端から軸に沿って測った px にする。
-fn along(handle: &ScrollHandle, axis: Axis, p: Point<Pixels>) -> f32 {
+fn along(handle: &Scroll, axis: Axis, p: Point<Pixels>) -> f32 {
     let o = handle.bounds().origin;
     match axis {
         Axis::Vertical => f32::from(p.y - o.y),
@@ -144,7 +197,7 @@ fn along(handle: &ScrollHandle, axis: Axis, p: Point<Pixels>) -> f32 {
     }
 }
 
-fn set_offset(handle: &ScrollHandle, axis: Axis, v: f32) {
+fn set_offset(handle: &Scroll, axis: Axis, v: f32) {
     let mut o = handle.offset();
     match axis {
         Axis::Vertical => o.y = px(v),
@@ -161,7 +214,7 @@ pub fn free_scroll<E: Styled>(mut element: E) -> E {
 }
 
 /// ホイール（や指のスライド）の、軸ごとの動き量（gpui と同じ割り当て: 横だけあふれているときは縦のホイールも横を動かす）。
-fn axis_deltas(handle: &ScrollHandle, e: &ScrollWheelEvent, window: &Window) -> [f32; 2] {
+fn axis_deltas(handle: &Scroll, e: &ScrollWheelEvent, window: &Window) -> [f32; 2] {
     let d = e.delta.pixel_delta(window.line_height());
     let (dx, dy) = (f32::from(d.x), f32::from(d.y));
     let only_x = f32::from(handle.max_offset().y) < 1.0;
@@ -179,7 +232,7 @@ fn axis_deltas(handle: &ScrollHandle, e: &ScrollWheelEvent, window: &Window) -> 
 
 /// 先頭か末尾に着いたまま、さらに外へ押しているか（`d` > 0 = 先頭を越えて引く向き）。
 /// 内側の要素がホイールを受け取る前の状態で見る必要がある。
-fn at_edge(handle: &ScrollHandle, axis: Axis, d: f32) -> bool {
+fn at_edge(handle: &Scroll, axis: Axis, d: f32) -> bool {
     let (_, max, off, _) = read(handle, axis);
     max >= 1.0 && ((off >= -0.5 && d > 0.0) || (off <= -max + 0.5 && d < 0.0))
 }
@@ -242,6 +295,9 @@ struct Shift {
     offset: Point<Pixels>,
     child: AnyElement,
     on_wheel: OnWheel,
+    /// 子より後に登録して、子より先にホイールを受け取る（`list` を包むとき。`list` は自分の描画でホイールを登録するので、
+    /// 先に登録すると一覧が先にスクロールしてしまう）。
+    before_child: bool,
 }
 
 impl IntoElement for Shift {
@@ -301,12 +357,22 @@ impl Element for Shift {
         // 自身の処理（これより前に登録済み）が後になる。
         let visible = bounds.intersect(&window.content_mask().bounds);
         let on_wheel = self.on_wheel.clone();
-        window.on_mouse_event(move |e: &ScrollWheelEvent, phase, window, cx| {
-            if phase == DispatchPhase::Bubble && visible.contains(&e.position) {
-                on_wheel(e, window, cx);
-            }
-        });
-        self.child.paint(window, cx);
+        let register = move |window: &mut Window| {
+            window.on_mouse_event(move |e: &ScrollWheelEvent, phase, window, cx| {
+                if phase == DispatchPhase::Bubble && visible.contains(&e.position) {
+                    on_wheel(e, window, cx);
+                }
+            })
+        };
+        if self.before_child {
+            // ponytail: 一覧の中の入れ子のスクロール要素（claim_scroll）より先に受け取るので、一覧が端に着いているときは
+            // 内側を縦にスクロールしても一覧ごと引っ張る。困ったら claim_scroll を捕捉フェーズで印を付ける形にする。
+            self.child.paint(window, cx);
+            register(window);
+        } else {
+            register(window);
+            self.child.paint(window, cx);
+        }
     }
 }
 
@@ -346,14 +412,14 @@ impl Pull {
 #[derive(IntoElement)]
 pub struct Elastic {
     id: &'static str,
-    handle: ScrollHandle,
+    handle: Scroll,
     base: Div,
 }
 
-pub fn elastic(id: &'static str, handle: &ScrollHandle) -> Elastic {
+pub fn elastic(id: &'static str, handle: impl Into<Scroll>) -> Elastic {
     Elastic {
         id,
-        handle: handle.clone(),
+        handle: handle.into(),
         base: div().relative().min_w_full().min_h_full(),
     }
 }
@@ -373,6 +439,7 @@ impl ParentElement for Elastic {
 impl RenderOnce for Elastic {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Elastic { id, handle, base } = self;
+        let before_child = matches!(handle, Scroll::List(_));
         let state = window.use_keyed_state(id, cx, |_, _| ElasticState {
             pull: [Pull::Release {
                 from: 0.0,
@@ -458,6 +525,7 @@ impl RenderOnce for Elastic {
             offset: point(px(v[1]), px(v[0])),
             child: base.into_any_element(),
             on_wheel,
+            before_child,
         }
     }
 }
@@ -465,8 +533,8 @@ impl RenderOnce for Elastic {
 /// 入れ子のスクロール要素のうち、内側の要素にこれを通す。gpui はポインタの下にあるスクロール要素すべてに同じホイールを配るので、
 /// 通さないと内側と外側が同時に動いて操作しづらい。通すと、ポインタが触れている最も内側のあふれる要素だけが受け取る
 /// （内側が端に着いていても外側へは流さない）。`handle` はその要素の `track_scroll` と同じもの。
-pub fn claim_scroll<E: InteractiveElement>(element: E, handle: &ScrollHandle) -> E {
-    let handle = handle.clone();
+pub fn claim_scroll<E: InteractiveElement>(element: E, handle: impl Into<Scroll>) -> E {
+    let handle = handle.into();
     element.on_scroll_wheel(move |e, window, cx| {
         let d = e.delta.pixel_delta(window.line_height());
         let (dx, dy) = (f32::from(d.x) != 0.0, f32::from(d.y) != 0.0);
@@ -483,7 +551,7 @@ pub fn claim_scroll<E: InteractiveElement>(element: E, handle: &ScrollHandle) ->
 #[derive(IntoElement)]
 pub struct Scrollbars {
     id: SharedString,
-    handle: ScrollHandle,
+    handle: Scroll,
     pull: Option<&'static str>,
     ends: f32,
     always: bool,
@@ -494,10 +562,14 @@ pub struct Scrollbars {
 
 /// `handle` がスクロールする要素のスクロールバー（縦・横とも）。`id` は部品ごとに一意に。
 /// 縦は `{id}-v`、横は `{id}-h`（棒は `-thumb` 付き）で指せる。
-pub fn scrollbars(theme: &Theme, id: impl Into<SharedString>, handle: &ScrollHandle) -> Scrollbars {
+pub fn scrollbars(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    handle: impl Into<Scroll>,
+) -> Scrollbars {
     Scrollbars {
         id: id.into(),
-        handle: handle.clone(),
+        handle: handle.into(),
         pull: None,
         ends: 0.0,
         always: false,
