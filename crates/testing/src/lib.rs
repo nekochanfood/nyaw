@@ -1722,13 +1722,14 @@ impl Render for Settings {
                     .rounded_l(px(radius::XL))
                     .bg(rgba(theme.sidebar))
                     .child(heading(i18n::t(cx, "settings.title"), None))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(spacing::XS))
-                            .children(categories),
-                    ),
+                    .child(components::sidebar(
+                        &theme,
+                        window,
+                        cx,
+                        "settings-sidebar",
+                        self.category,
+                        categories,
+                    )),
             )
             .child(
                 div()

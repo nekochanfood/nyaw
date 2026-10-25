@@ -10,6 +10,9 @@ include!(concat!(env!("OUT_DIR"), "/duration_ms.rs"));
 /// ボタンの滑り込み・滑り出しの長さ（ms）。
 const SLIDE_MS: u64 = 350;
 
+/// サイドバーの印が行から行へ跳ぶ長さ（ms）。
+const HOP_MS: u64 = 500;
+
 /// 幅の動きと中身の動きのずれ（入りは幅が先、出は中身が先）。
 pub const LAG: Duration = Duration::from_millis(80);
 
@@ -100,6 +103,8 @@ pub enum Motion {
     Grow,
     /// ボタンの幅が閉じる。開くの逆再生（ease-in。同じ長さ）。
     Shrink,
+    /// 選んでいる印が行から行へ跳ぶ。すぐ動き出し、少し行き過ぎてから収まる（ease-out-back）。
+    Hop,
 }
 
 impl Motion {
@@ -109,6 +114,7 @@ impl Motion {
             Motion::Enter | Motion::Exit | Motion::Move => duration_ms::NORMAL,
             Motion::SlideIn | Motion::SlideOut | Motion::Grow | Motion::Shrink => SLIDE_MS,
             Motion::Morph => duration_ms::SLOW,
+            Motion::Hop => HOP_MS,
         }
     }
 
@@ -122,7 +128,7 @@ impl Motion {
             Motion::Enter | Motion::Return | Motion::Grow => Easing::EaseOutCubic,
             Motion::Exit | Motion::Shrink => Easing::EaseInCubic,
             Motion::Move | Motion::Morph => Easing::EaseInOutCubic,
-            Motion::SlideIn => Easing::EaseOutBack,
+            Motion::SlideIn | Motion::Hop => Easing::EaseOutBack,
             // 滑り込みを逆に再生した動き（ease-in-back は 1 - ease-out-back(1 - t)）。
             Motion::SlideOut => Easing::EaseInBack,
         }
@@ -236,6 +242,18 @@ mod tests {
         assert!(max_in > 1.0, "入りは行き過ぎる: {max_in}");
         assert!(max_out > 1.0, "出は一度引く: {max_out}");
         assert_eq!((i.value(), o.value()), (1.0, 0.0));
+    }
+
+    #[test]
+    fn hop_overshoots_and_settles() {
+        let mut a = Animation::new(0.0, 1.0, Motion::Hop);
+        let mut max = 0.0f32;
+        for _ in 0..100 {
+            max = max.max(a.advance(0.01));
+        }
+        assert!(max > 1.0, "行き過ぎる: {max}");
+        assert_eq!(a.value(), 1.0);
+        assert_eq!(Motion::Hop.duration_ms(), 500);
     }
 
     #[test]
