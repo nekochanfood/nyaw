@@ -988,7 +988,7 @@ pub const SIDEBAR_INDICATOR: (f32, f32) = (24.0, 4.0);
 
 /// サイドバーの行: 左にアイコンと文字。サイドバーの地（`sidebar`）に置く前提で、ふだんは地と同じ色（背景が無いように
 /// 見える。透明にするとホバーの色から戻るフェードが途中で切れるので地の色を使う）、ホバー・押下で `control-on-background-*`。
-/// 選んでいる行（`selected`）は文字が `neutral-text`（ダークでは白）になり、左端にアクセント（`accent-solid`）の印が付く。選んでいない行は
+/// 選んでいる行（`selected`）は文字が `neutral-text`（ダークでは白）になる（左端の印は [`sidebar`] が 1 つだけ描いて行の間を動かす）。選んでいない行は
 /// `neutral-text-low`（選んだ行より薄いが、地とのコントラスト比 4.5 を保つ）。高さはボタンと同じ。
 pub fn sidebar_item(
     theme: &Theme,
@@ -1008,11 +1008,9 @@ pub fn sidebar_item(
     } else {
         theme.neutral_text_low
     };
-    let (h, w) = SIDEBAR_INDICATOR;
     b.ink = fg;
     b.base = b
         .base
-        .relative()
         .w_full()
         .justify_start()
         .gap(px(spacing::MD))
@@ -1023,21 +1021,49 @@ pub fn sidebar_item(
             FontWeight::NORMAL
         })
         .text_color(rgba(fg))
-        .when(selected, |d| {
-            d.child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top(px((BUTTON_HEIGHT - h) / 2.0))
-                    .w(px(w))
-                    .h(px(h))
-                    .rounded(px(radius::FULL))
-                    .bg(rgba(theme.accent_solid)),
-            )
-        })
         .child(crate::icon(glyph).size(px(font_size::LG)))
         .child(div().flex_1().child(label.into()));
     b
+}
+
+/// サイドバーの行（[`sidebar_item`]）を `XS` 空けて縦に並べ、`selected` 番目の行の左端にアクセント（`accent-solid`）の印を 1 つ描く。
+/// 選ぶ行が変わると、印はその行へ跳んで少し行き過ぎてから収まる（`Motion::Hop`）。印の位置は `id` ごとに覚える。
+pub fn sidebar(
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+    id: &'static str,
+    selected: usize,
+    items: impl IntoIterator<Item = Button>,
+) -> Div {
+    use crate::animation::{Motion as Kind, Transition};
+    let (h, w) = SIDEBAR_INDICATOR;
+    let top = selected as f32 * (BUTTON_HEIGHT + spacing::XS) + (BUTTON_HEIGHT - h) / 2.0;
+    let now = crate::drive::now();
+    let animated = cx.has_global::<Motion>();
+    let state = window.use_keyed_state(id, cx, |_, _| Transition::rest(top));
+    state.update(cx, |t, _| t.go(top, Kind::Hop, now, animated));
+    let (at, moving) = state.read(cx).at(now);
+    if moving {
+        keep_drawing(window, cx);
+    }
+    div()
+        .relative()
+        .flex()
+        .flex_col()
+        .gap(px(spacing::XS))
+        .children(items)
+        // 行の後に置き、行の地より上に描く。
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .top(px(at))
+                .w(px(w))
+                .h(px(h))
+                .rounded(px(radius::FULL))
+                .bg(rgba(theme.accent_solid)),
+        )
 }
 
 /// 行（[`list_item`]）をカード 1 枚に縦に並べ、行の間に 1px の区切り線を引く。
