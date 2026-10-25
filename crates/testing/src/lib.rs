@@ -1339,7 +1339,7 @@ const SIDEBAR_PX: f32 = 320.0;
 const SETTINGS_SLIDER_PX: f32 = 520.0;
 
 /// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
-const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 4] = [
+const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 6] = [
     (
         "settings-general",
         &design::icons::GEAR,
@@ -1355,7 +1355,26 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 4] = [
         &design::icons::CURSOR,
         "settings.category.pointer",
     ),
+    (
+        "settings-mirroring",
+        &design::icons::MONITOR,
+        "settings.category.mirroring",
+    ),
+    (
+        "settings-keyboard",
+        &design::icons::KEYBOARD,
+        "settings.category.keyboard",
+    ),
     ("settings-about", &design::icons::INFO, "settings.category.about"),
+];
+
+/// ミラーリングの FPS の選択肢。
+const MIRROR_FRAME_RATES: [(&str, u32); 5] = [
+    ("setting-fps-30", 30),
+    ("setting-fps-60", 60),
+    ("setting-fps-90", 90),
+    ("setting-fps-120", 120),
+    ("setting-fps-144", 144),
 ];
 
 /// 設定画面の起動仕様（ダッシュボードの設定ボタン。main が渡す）。`opened` は作られたパネルの ID を受け取る。
@@ -1498,30 +1517,32 @@ impl Settings {
                     kernel::overlay::LASER_LENGTH_MIN,
                     kernel::overlay::LASER_MAX,
                 );
-                let mode = self.select(
+                // 利き手: 配信のパネルを操作する手。wrist は反対の手首に付く。
+                let hand = self.select(
                     theme,
                     window,
                     cx,
-                    "setting-pointer-mode",
-                    &design::icons::CURSOR,
-                    i18n::t(cx, "settings.pointer_mode"),
-                    now.pointer_mode,
+                    "setting-dominant-hand",
+                    &design::icons::HAND,
+                    i18n::t(cx, "settings.dominant_hand"),
+                    now.dominant_hand,
                     vec![
                         (
-                            "setting-pointer-mouse",
-                            i18n::t(cx, "settings.mouse"),
-                            PointerMode::Mouse,
+                            "setting-hand-right",
+                            i18n::t(cx, "settings.right"),
+                            kernel::DominantHand::Right,
                         ),
                         (
-                            "setting-pointer-touch",
-                            i18n::t(cx, "settings.touch"),
-                            PointerMode::Touch,
+                            "setting-hand-left",
+                            i18n::t(cx, "settings.left"),
+                            kernel::DominantHand::Left,
                         ),
                     ],
-                    Setting::PointerMode,
+                    Setting::DominantHand,
                 );
                 vec![
-                    components::list(theme, [mode]),
+                    // ポインタの方式は選ばせない（マウスは廃止の方向。全体はタッチ）。
+                    components::list(theme, [hand]),
                     setting_group(
                         theme,
                         i18n::t(cx, "settings.smoothing"),
@@ -1598,6 +1619,47 @@ impl Settings {
                         ),
                     ),
                 ]
+            }
+            // ミラーリング: 取得の上限 FPS。
+            3 => vec![components::list(
+                theme,
+                [self.select(
+                    theme,
+                    window,
+                    cx,
+                    "setting-mirror-fps",
+                    &design::icons::GAUGE,
+                    i18n::t(cx, "settings.mirror_frame_rate"),
+                    now.mirror_frame_rate,
+                    MIRROR_FRAME_RATES
+                        .map(|(id, n)| (id, SharedString::from(format!("{n} FPS")), n))
+                        .to_vec(),
+                    Setting::MirrorFrameRate,
+                )],
+            )],
+            // キーボード: 種類。
+            4 => {
+                use kernel::subsystems::keyboard::KeyboardType;
+                vec![components::list(
+                    theme,
+                    [self.select(
+                        theme,
+                        window,
+                        cx,
+                        "setting-keyboard",
+                        &design::icons::KEYBOARD,
+                        i18n::t(cx, "settings.keyboard"),
+                        now.keyboard,
+                        [
+                            ("setting-keyboard-full", "keyboard.full", KeyboardType::Full),
+                            ("setting-keyboard-tkl", "keyboard.tkl", KeyboardType::Tenkeyless),
+                            ("setting-keyboard-compact", "keyboard.compact", KeyboardType::Compact),
+                        ]
+                        .map(|(id, key, k)| (id, i18n::t(cx, key), k))
+                        .to_vec(),
+                        Setting::Keyboard,
+                    )],
+                )]
             }
             // 情報: バージョン。
             _ => vec![components::list(

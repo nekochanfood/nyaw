@@ -129,8 +129,12 @@ pub struct Config {
     pub theme: ThemeMode,
     /// 画面の言語（`en` / `ja`）。省略で `en`。画面での切り替えはここへ書き戻される。
     pub language: Language,
-    /// 利き手（`right` / `left`）。省略で `right`。
+    /// 利き手（`right` / `left`）。省略で `right`。画面での切り替えはここへ書き戻される。
     pub dominant_hand: DominantHand,
+    /// ミラーリング（デスクトップの配信）の取得の上限 FPS（1〜240）。省略で `desktop::DEFAULT_FRAME_RATE`。
+    pub mirror_frame_rate: Option<u32>,
+    /// 仮想キーボードの種類（`full` / `tenkeyless` / `compact`）。省略で `full`。
+    pub keyboard: subsystems::keyboard::KeyboardType,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -306,6 +310,16 @@ emulator = false
         let left = parse("dominant_hand = \"left\"").unwrap().dominant_hand;
         assert_eq!((left.hand(), left.off_hand()), (vr::Hand::Left, vr::Hand::Right));
         assert!(parse("dominant_hand = \"both\"").is_err());
+    }
+
+    #[test]
+    fn mirror_frame_rate_and_keyboard_parse() {
+        use subsystems::keyboard::KeyboardType;
+        let c = parse("").unwrap();
+        assert_eq!((c.mirror_frame_rate, c.keyboard), (None, KeyboardType::Full));
+        let c = parse("mirror_frame_rate = 30\nkeyboard = \"tenkeyless\"").unwrap();
+        assert_eq!((c.mirror_frame_rate, c.keyboard), (Some(30), KeyboardType::Tenkeyless));
+        assert!(parse("keyboard = \"split\"").is_err());
     }
 
     #[test]

@@ -21,7 +21,7 @@ use gpui::{
 };
 use kernel::audio::Sound;
 use kernel::desktop::{
-    DEFAULT_FRAME_RATE, Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status,
+    Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status,
 };
 use kernel::subsystems::media;
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
@@ -2368,7 +2368,7 @@ impl Mirror {
         }
         commands(
             self.panel,
-            [PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE)],
+            [stream(source, cx)],
             cx,
         );
         redraw(self.panel, cx);
@@ -2604,7 +2604,7 @@ fn start_mirror(
     let (name, kind) = (SharedString::from(source.name.clone()), source.kind);
     commands(
         panel,
-        [PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE)],
+        [stream(source, cx)],
         cx,
     );
     if let Some(dashboard) = dashboard {
@@ -3033,6 +3033,12 @@ fn close(panel: PanelId, cx: &mut App) {
     commands(panel, [PanelCommand::Close], cx);
 }
 
+/// `source` の配信を始める操作。FPS は全体の設定（`mirror_frame_rate`）。
+fn stream(source: Source, cx: &mut App) -> PanelCommand {
+    let frame_rate = cx.default_global::<PanelControl>().settings.mirror_frame_rate;
+    PanelCommand::Stream(Some(source), frame_rate)
+}
+
 fn commands(panel: PanelId, commands: impl IntoIterator<Item = PanelCommand>, cx: &mut App) {
     cx.default_global::<PanelControl>()
         .panels
@@ -3045,6 +3051,7 @@ fn commands(panel: PanelId, commands: impl IntoIterator<Item = PanelCommand>, cx
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernel::desktop::DEFAULT_FRAME_RATE;
     use gpui::{Modifiers, TestAppContext, VisualTestContext};
 
     fn battery(level: f32, charging: bool) -> Battery {

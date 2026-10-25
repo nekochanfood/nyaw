@@ -113,10 +113,16 @@ pub enum Setting {
     LaserLength(f32),
     /// コントローラを持たない手の調整値（`[hand]`）。範囲の外の値は範囲に収める。
     Hand(subsystems::input::HandTuning),
+    /// 利き手（`dominant_hand`）。利き手でない側の手首に付いたパネル（wrist）は新しい側へ付け替える。
+    DominantHand(DominantHand),
+    /// ミラーリングの取得の上限 FPS（`mirror_frame_rate`。1〜240 に収める）。配信中のミラーもこの FPS でかけ直す。
+    MirrorFrameRate(u32),
+    /// 仮想キーボードの種類（`keyboard`）。
+    Keyboard(subsystems::keyboard::KeyboardType),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
     pub pointer_mode: PointerMode,
     pub theme: ThemeMode,
@@ -126,6 +132,25 @@ pub struct Settings {
     pub laser_length: f32,
     pub hand: subsystems::input::HandTuning,
     pub dominant_hand: DominantHand,
+    pub mirror_frame_rate: u32,
+    pub keyboard: subsystems::keyboard::KeyboardType,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            pointer_mode: Default::default(),
+            theme: Default::default(),
+            language: Default::default(),
+            pointer_smoothing: Default::default(),
+            pointer_release_deg: Default::default(),
+            laser_length: Default::default(),
+            hand: Default::default(),
+            dominant_hand: Default::default(),
+            mirror_frame_rate: desktop::DEFAULT_FRAME_RATE,
+            keyboard: Default::default(),
+        }
+    }
 }
 
 /// パネルの状態。ビューの表示用。全体の設定は [`Settings`]。
@@ -384,7 +409,17 @@ impl<B: VrBackend> Kernel<B> {
             laser_length: self.overlay.laser_length(),
             hand: self.subsystems.hand,
             dominant_hand: self.config.dominant_hand,
+            mirror_frame_rate: self.mirror_frame_rate(),
+            keyboard: self.config.keyboard,
         }
+    }
+
+    /// ミラーリングの取得の上限 FPS（設定ファイルの値を 1〜240 に収めたもの）。
+    fn mirror_frame_rate(&self) -> u32 {
+        self.config
+            .mirror_frame_rate
+            .unwrap_or(desktop::DEFAULT_FRAME_RATE)
+            .clamp(1, desktop::MAX_FRAME_RATE)
     }
 
     /// アプリ全体の設定を変える。
@@ -426,6 +461,30 @@ impl<B: VrBackend> Kernel<B> {
                 self.subsystems.hand = h;
                 self.config.hand = h;
                 ("hand", config::value(h))
+            }
+            Setting::DominantHand(h) => {
+                let (from, to) = (self.config.dominant_hand.off_hand(), h.off_hand());
+                self.config.dominant_hand = h;
+                for id in self.overlay.present_ids().to_vec() {
+                    if let Some((Device::Controller(hand), offset)) = self.overlay.panel(id).attached
+                        && hand == from
+                        && from != to
+                    {
+                        self.overlay.attach(id, Device::Controller(to), offset);
+                    }
+                }
+                ("dominant_hand", config::value(h))
+            }
+            Setting::MirrorFrameRate(f) => {
+                self.config.mirror_frame_rate = Some(f);
+                let f = self.mirror_frame_rate();
+                self.config.mirror_frame_rate = Some(f);
+                self.restart_desktops(f);
+                ("mirror_frame_rate", config::value(f))
+            }
+            Setting::Keyboard(k) => {
+                self.config.keyboard = k;
+                ("keyboard", config::value(k))
             }
         };
         if let Some(path) = &self.config_path
@@ -833,6 +892,21 @@ mod tests {
             x(&mut k, held);
         }
         assert_eq!(k.status(p).double_press, 1);
+    }
+
+    /// 利き手を替えると、利き手でない側の手首に付いたパネルが反対の手首へ移る。FPS は 1〜240 に収める。
+    #[test]
+    fn dominant_hand_moves_off_hand_panels_and_frame_rate_clamps() {
+        let (mut k, p) = kernel();
+        let offset = Pose::new(vr::Vec3::new(0.0, 0.1, 0.0), vr::Quat::IDENTITY);
+        k.apply(p, PanelCommand::Attach(Device::Controller(Hand::Left), offset));
+        k.set(Setting::DominantHand(DominantHand::Left));
+        assert_eq!(k.panel(p).attached, Some((Device::Controller(Hand::Right), offset)));
+        assert_eq!(k.settings().dominant_hand, DominantHand::Left);
+        k.set(Setting::MirrorFrameRate(1000));
+        assert_eq!(k.settings().mirror_frame_rate, desktop::MAX_FRAME_RATE);
+        k.set(Setting::MirrorFrameRate(0));
+        assert_eq!(k.settings().mirror_frame_rate, 1);
     }
 
     /// ランタイムが数えた二回押し（SteamVR のダブルタップ）は、押下の間隔を見ずにそのまま一回と数える。
