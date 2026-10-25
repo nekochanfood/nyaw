@@ -137,15 +137,33 @@ fn the_hand_holding_the_panel_is_ignored(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn settings_rows_change_the_settings(cx: &mut TestAppContext) {
+fn settings_selects_change_the_settings(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.click("setting-language");
+    assert_eq!(kit.read(|v| v.open), Some("setting-language"));
     kit.click("setting-lang-ja");
     assert_eq!(kit.kernel.settings().language, Language::Ja);
-    kit.click("settings-appearance").click("setting-theme-light");
+    assert_eq!(kit.read(|v| v.open), None, "choosing closes the popover");
+    kit.click("settings-appearance")
+        .click("setting-theme")
+        .click("setting-theme-light");
     assert_eq!(kit.read(|v| v.category), 1);
     assert_eq!(kit.kernel.settings().theme, ThemeMode::Light);
-    kit.click("settings-pointer").click("setting-pointer-touch");
+    kit.click("settings-pointer")
+        .click("setting-pointer-mode")
+        .click("setting-pointer-touch");
     assert_eq!(kit.kernel.settings().pointer_mode, PointerMode::Touch);
+}
+
+#[gpui::test]
+fn settings_popover_closes_on_outside_press(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    // Pressing the open row again closes it (the backdrop takes the press) instead of reopening.
+    kit.click("setting-language").click("setting-language");
+    assert_eq!(kit.read(|v| v.open), None);
+    // A press outside closes it without reaching what is under it.
+    kit.click("setting-language").click("settings-about");
+    assert_eq!(kit.read(|v| (v.open, v.category)), (None, 0));
 }
 
 /// The color 2px in from the left edge of `selector`, halfway down (where the selected row's indicator is).
@@ -160,7 +178,7 @@ fn left_edge(kit: &mut VrKit<Settings>, selector: &'static str) -> u32 {
 #[gpui::test]
 fn settings_sidebar_marks_only_the_selected_category(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
-    kit.hover("setting-lang-en");
+    kit.hover("setting-language");
     assert_ne!(SIDEBAR_BG, BACKGROUND, "two-tone");
     assert_eq!(kit.color_at("settings-general"), SIDEBAR_BG, "no background");
     assert_eq!(kit.color_at("settings-about"), SIDEBAR_BG);

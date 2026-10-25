@@ -1373,11 +1373,14 @@ pub fn settings_spec(
 
 /// 設定画面（`settings-test`）。GNOME の設定のようなツートーン: 左のサイドバー（地は `sidebar`）にカテゴリの一覧、
 /// 右（地は `background`）に選んだカテゴリの設定。サイドバーの行（`components::sidebar_item`）は選んでいるものだけ
-/// 文字が濃く、左端に印が付く。中身はグループ（見出し + カード）を縦に並べ、押すとすぐ全体の設定（`Setting`）に反映する。
+/// 文字が濃く、左端に印が付く。中身はカードを縦に並べる。複数から選ぶ設定は選択の行（`components::select`）で、押すと
+/// 選択肢のポップオーバーが開き、選ぶとすぐ全体の設定（`Setting`）に反映する。
 #[derive(Default)]
 pub struct Settings {
     /// 選んでいるカテゴリ（[`SETTINGS_CATEGORIES`] の添字）。
     pub category: usize,
+    /// 選択肢を開いている選択の行（`debug_selector`）。
+    pub open: Option<&'static str>,
 }
 
 impl Settings {
@@ -1385,57 +1388,104 @@ impl Settings {
         Self::default()
     }
 
+    /// 選択の行（`components::select`）。押すと選択肢のポップオーバーを開き、選ぶと `set` で全体の設定に反映して閉じる。
+    #[allow(clippy::too_many_arguments)]
+    fn select<T: Copy + PartialEq + 'static>(
+        &self,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        id: &'static str,
+        glyph: &'static design::Icon,
+        label: SharedString,
+        now: T,
+        options: Vec<(&'static str, SharedString, T)>,
+        set: fn(T) -> Setting,
+    ) -> components::Button {
+        let value = options
+            .iter()
+            .find(|(_, _, v)| *v == now)
+            .map(|(_, l, _)| l.clone())
+            .unwrap_or_default();
+        // 閉じる動きのために、閉じていても毎回渡す（消えきると何も描かない）。
+        let items = options
+            .into_iter()
+            .map(|(oid, l, v)| {
+                components::select_option(theme, oid, l, v == now).on_click(cx.listener(
+                    move |this, _, _, cx| {
+                        push_setting(set(v), cx);
+                        this.open = None;
+                        cx.notify();
+                    },
+                ))
+            })
+            .collect::<Vec<_>>();
+        let dismiss = cx.listener(|this, _, _, cx| {
+            this.open = None;
+            cx.notify();
+        });
+        let popover =
+            components::select_popover(theme, window, cx, id, self.open == Some(id), items, dismiss);
+        components::select(theme, id, glyph, label, value)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open = Some(id);
+                cx.notify();
+            }))
+            .child(popover)
+    }
+
     /// 選んでいるカテゴリの中身（グループの並び）。
-    fn category_page(&self, theme: &Theme, cx: &App) -> Vec<Div> {
+    fn category_page(&self, theme: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
         let now = settings(cx);
         match self.category {
             // 一般: 言語。言語の名前はその言語自身で出す（どの言語で表示していても読める）。
-            0 => vec![setting_group(
+            0 => vec![components::list(
                 theme,
-                i18n::t(cx, "settings.language"),
-                components::list(
+                [self.select(
                     theme,
-                    i18n::Lang::ALL.map(|l| {
-                        let id = match l {
-                            i18n::Lang::En => "setting-lang-en",
-                            i18n::Lang::Ja => "setting-lang-ja",
-                        };
-                        choice(
-                            theme,
-                            id,
-                            &design::icons::TRANSLATE,
-                            l.native_name(),
-                            l == lang(now.language),
-                        )
-                        .on_click(change(Setting::Language(language(l))))
-                    }),
-                ),
+                    window,
+                    cx,
+                    "setting-language",
+                    &design::icons::TRANSLATE,
+                    i18n::t(cx, "settings.language"),
+                    lang(now.language),
+                    i18n::Lang::ALL
+                        .map(|l| {
+                            let id = match l {
+                                i18n::Lang::En => "setting-lang-en",
+                                i18n::Lang::Ja => "setting-lang-ja",
+                            };
+                            (id, SharedString::from(l.native_name()), l)
+                        })
+                        .to_vec(),
+                    |l| Setting::Language(language(l)),
+                )],
             )],
             // 外観: テーマ。
-            1 => vec![setting_group(
+            1 => vec![components::list(
                 theme,
-                i18n::t(cx, "settings.theme"),
-                components::list(
+                [self.select(
                     theme,
-                    [
+                    window,
+                    cx,
+                    "setting-theme",
+                    &design::icons::PALETTE,
+                    i18n::t(cx, "settings.theme"),
+                    now.theme,
+                    vec![
                         (
                             "setting-theme-dark",
-                            &design::icons::MOON,
-                            "theme.dark",
+                            i18n::t(cx, "theme.dark"),
                             kernel::ThemeMode::Dark,
                         ),
                         (
                             "setting-theme-light",
-                            &design::icons::SUN,
-                            "theme.light",
+                            i18n::t(cx, "theme.light"),
                             kernel::ThemeMode::Light,
                         ),
-                    ]
-                    .map(|(id, glyph, key, mode)| {
-                        choice(theme, id, glyph, i18n::t(cx, key), now.theme == mode)
-                            .on_click(change(Setting::Theme(mode)))
-                    }),
-                ),
+                    ],
+                    Setting::Theme,
+                )],
             )],
             // ポインタ: 方式と、レーザーの手ブレ抑え・長さ（Laser の画面と同じ範囲）。
             2 => {
@@ -1448,32 +1498,30 @@ impl Settings {
                     kernel::overlay::LASER_LENGTH_MIN,
                     kernel::overlay::LASER_MAX,
                 );
-                vec![
-                    setting_group(
-                        theme,
-                        i18n::t(cx, "settings.pointer_mode"),
-                        components::list(
-                            theme,
-                            [
-                                (
-                                    "setting-pointer-mouse",
-                                    &design::icons::CURSOR,
-                                    "settings.mouse",
-                                    PointerMode::Mouse,
-                                ),
-                                (
-                                    "setting-pointer-touch",
-                                    &design::icons::HAND_POINTING,
-                                    "settings.touch",
-                                    PointerMode::Touch,
-                                ),
-                            ]
-                            .map(|(id, glyph, key, mode)| {
-                                choice(theme, id, glyph, i18n::t(cx, key), now.pointer_mode == mode)
-                                    .on_click(change(Setting::PointerMode(mode)))
-                            }),
+                let mode = self.select(
+                    theme,
+                    window,
+                    cx,
+                    "setting-pointer-mode",
+                    &design::icons::CURSOR,
+                    i18n::t(cx, "settings.pointer_mode"),
+                    now.pointer_mode,
+                    vec![
+                        (
+                            "setting-pointer-mouse",
+                            i18n::t(cx, "settings.mouse"),
+                            PointerMode::Mouse,
                         ),
-                    ),
+                        (
+                            "setting-pointer-touch",
+                            i18n::t(cx, "settings.touch"),
+                            PointerMode::Touch,
+                        ),
+                    ],
+                    Setting::PointerMode,
+                );
+                vec![
+                    components::list(theme, [mode]),
                     setting_group(
                         theme,
                         i18n::t(cx, "settings.smoothing"),
@@ -1552,23 +1600,19 @@ impl Settings {
                 ]
             }
             // 情報: バージョン。
-            _ => vec![setting_group(
+            _ => vec![components::list(
                 theme,
-                i18n::t(cx, "settings.category.about"),
-                components::list(
+                [components::menu_item(
                     theme,
-                    [components::menu_item(
-                        theme,
-                        "setting-version",
-                        &design::icons::INFO,
-                        i18n::t(cx, "settings.version"),
-                    )
-                    .child(
-                        div()
-                            .text_color(rgba(theme.neutral_text_low))
-                            .child(env!("CARGO_PKG_VERSION")),
-                    )],
-                ),
+                    "setting-version",
+                    &design::icons::INFO,
+                    i18n::t(cx, "settings.version"),
+                )
+                .child(
+                    div()
+                        .text_color(rgba(theme.neutral_text_low))
+                        .child(env!("CARGO_PKG_VERSION")),
+                )],
             )],
         }
     }
@@ -1588,21 +1632,6 @@ fn setting_group(theme: &Theme, title: SharedString, body: impl IntoElement) -> 
                 .child(title),
         )
         .child(body)
-}
-
-/// 選択肢の行（一覧の行）。選んでいる行だけ右端にチェックが付く。
-fn choice(
-    theme: &Theme,
-    id: &'static str,
-    glyph: &'static design::Icon,
-    label: impl Into<SharedString>,
-    on: bool,
-) -> components::Button {
-    components::menu_item(theme, id, glyph, label).children(on.then(|| {
-        design::icon(&design::icons::CHECK)
-            .size(px(font_size::LG))
-            .color(rgba(theme.accent_text))
-    }))
 }
 
 /// スライダーのカード: 今の値の説明の下にスライダー。
@@ -1663,7 +1692,7 @@ fn stack_op<V: 'static, P: 'static + Copy>(
 }
 
 impl Render for Settings {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
         let categories = SETTINGS_CATEGORIES
             .iter()
@@ -1672,6 +1701,7 @@ impl Render for Settings {
                 components::sidebar_item(&theme, id, glyph, i18n::t(cx, key), i == self.category)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.category = i;
+                        this.open = None;
                         cx.notify();
                     }))
             })
@@ -1712,7 +1742,7 @@ impl Render for Settings {
                     .pb(px(spacing::XL))
                     .overflow_y_scroll()
                     .child(heading(i18n::t(cx, title), None))
-                    .children(self.category_page(&theme, cx)),
+                    .children(self.category_page(&theme, window, cx)),
             )
     }
 }

@@ -7,7 +7,8 @@ use std::time::Instant;
 use gpui::{
     App, Bounds, ContentMask, Div, FontWeight, InteractiveElement, Interactivity, IntoElement,
     MouseButton, Pixels, Point, RenderOnce, SharedString, Stateful, StatefulInteractiveElement,
-    StyleRefinement, Styled, Window, canvas, div, fill, point, prelude::*, px, rgba, size,
+    StyleRefinement, Styled, Window, anchored, canvas, deferred, div, fill, point, prelude::*, px,
+    rgba, size,
 };
 use palette::{FromColor, Mix, Oklab, Srgb};
 
@@ -1060,12 +1061,141 @@ pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
         }))
 }
 
-/// メニューの外側の余白（カードの縁と行のあいだ）。
-pub const MENU_PADDING: f32 = spacing::SM;
-/// メニューのカードの角丸。バーのカプセル（`FULL`）に寄せつつ、丸めすぎない。行の角丸は、これから余白を引いた同心の丸み。
-pub const MENU_RADIUS: f32 = 20.0;
+/// メニューの外側の余白（カードの縁と行のあいだ）。行のホバーの色がカードの縁から少しだけ離れる幅。
+pub const MENU_PADDING: f32 = spacing::XS;
+/// メニューのカードの角丸。行の角丸（`LG`）に余白を足した同心の丸み。
+pub const MENU_RADIUS: f32 = radius::LG + MENU_PADDING;
+/// メニューの行の高さ。一覧の行（ボタンの高さ）より詰め、最小ヒット領域（48）ちょうどにする。
+pub const MENU_ITEM_HEIGHT: f32 = 48.0;
+/// メニューの行の左右の余白。カードの余白と足して、文字がカードの縁から `LG` 離れる。
+const MENU_ITEM_PADDING: f32 = spacing::MD;
+
+/// 選択の行: 一覧の行（[`menu_item`]）の右に今の値と開閉の印（`caret-up-down`）。押したら呼び出し側が
+/// [`select_popover`] を `.child` で足して選択肢を開く（行の右下に右端を揃えて浮かぶ）。
+pub fn select(
+    theme: &Theme,
+    id: &'static str,
+    glyph: &'static crate::Icon,
+    label: impl Into<SharedString>,
+    value: impl Into<SharedString>,
+) -> Button {
+    let mut b = menu_item(theme, id, glyph, label);
+    b.base = b
+        .base
+        .relative()
+        .child(
+            div()
+                .text_color(rgba(theme.neutral_text_low))
+                .child(value.into()),
+        )
+        .child(
+            crate::icon(&crate::icons::CARET_UP_DOWN)
+                .size(px(font_size::MD))
+                .color(rgba(theme.neutral_text_low)),
+        );
+    b
+}
+
+/// 選択肢のポップオーバーが開くときに下りてくる距離（px）。
+pub const SELECT_POPOVER_RISE: f32 = spacing::SM;
+
+/// 選択肢のポップオーバーの最小の幅（px）。幅は中身（いちばん長い選択肢）に合わせ、短いときだけこれまで広げる。
+pub const SELECT_POPOVER_MIN_WIDTH: f32 = 200.0;
+
+/// 選択肢の行（[`select_popover`] に並べる）: 文字だけで、選んでいる行は右端にチェック。
+pub fn select_option(
+    theme: &Theme,
+    id: &'static str,
+    label: impl Into<SharedString>,
+    selected: bool,
+) -> Button {
+    let mut b = base_button(theme, id.into(), Variant::Default);
+    (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
+    b.base = b
+        .base
+        .w_full()
+        .justify_start()
+        .gap(px(spacing::LG))
+        .font_weight(FontWeight::NORMAL)
+        .child(div().flex_1().child(label.into()))
+        .children(selected.then(|| crate::icon(&crate::icons::CHECK).size(px(font_size::MD))));
+    b
+}
+
+/// 選択肢のポップオーバー（[`select`] の子に置く）: 行の右下に右端を揃え、メニューのカード（[`menu`]）に影と縁取りを付けて浮かべる。
+/// 後ろにウィンドウ全体（`viewport`）を覆う透明な板を敷き、外を押すとそれが受けて `on_dismiss` を呼ぶ（下の要素は押されない。
+/// 開いている行をもう一度押しても、閉じてすぐ開き直さない）。
+/// 行（`id`）ごとに毎回呼び、`open` で開閉する。開くと [`SELECT_POPOVER_RISE`] 上から下りながら現れ（`Motion::Enter`）、
+/// 閉じるとその逆で消える（`Motion::Exit`）。消えきるまでは描き続け、閉じ始めた時点で外の板は外す。
+#[allow(clippy::too_many_arguments)]
+pub fn select_popover(
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+    id: &'static str,
+    open: bool,
+    items: impl IntoIterator<Item = Button>,
+    on_dismiss: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    use crate::animation::{Motion as Kind, Transition};
+    let now = crate::drive::now();
+    let animated = cx.has_global::<Motion>();
+    let state = window.use_keyed_state(
+        SharedString::from(format!("{id}-popover")),
+        cx,
+        |_, _| Transition::rest(0.0),
+    );
+    let to = if open { 1.0 } else { 0.0 };
+    state.update(cx, |t, _| {
+        t.go(to, if open { Kind::Enter } else { Kind::Exit }, now, animated)
+    });
+    let (shown, moving) = state.read(cx).at(now);
+    if moving {
+        keep_drawing(window, cx);
+    }
+    if !open && !moving {
+        // 行の並びに割り込まないよう、空でも浮かせる。
+        return div().absolute();
+    }
+    let viewport = window.viewport_size();
+    div()
+        .absolute()
+        .right_0()
+        .bottom_0()
+        .children(open.then(|| deferred(
+            anchored()
+                .position_mode(gpui::AnchoredPositionMode::Window)
+                .position(point(px(0.0), px(0.0)))
+                .child(
+                    div()
+                        .id("select-backdrop")
+                        .w(viewport.width)
+                        .h(viewport.height)
+                        .occlude()
+                        .on_mouse_down(MouseButton::Left, on_dismiss),
+                ),
+        )))
+        .child(
+            deferred(
+                anchored().anchor(gpui::Anchor::TopRight).snap_to_window().child(
+                    menu(theme, items)
+                        .id("select-popover")
+                        .occlude()
+                        .min_w(px(SELECT_POPOVER_MIN_WIDTH))
+                        .mt(px(spacing::XS - SELECT_POPOVER_RISE * (1.0 - shown)))
+                        .opacity(shown)
+                        // ダークではカードの上に重なると同じ色で境目が消えるので、影に加えて薄い線で縁取る。
+                        .border_1()
+                        .border_color(rgba(theme.neutral_border_subtle))
+                        .shadow_md(),
+                ),
+            )
+            .priority(1),
+        )
+}
 
 /// メニューの行（[`menu_item`]）を縦に並べる。区切り線は引かず、行はカード（[`MENU_RADIUS`]）と同心の角丸にし、ホバー・押下のときだけ沈む。
+/// 行は一覧より詰める（高さ [`MENU_ITEM_HEIGHT`]、左右 [`MENU_ITEM_PADDING`]）。
 pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
     // 内側のカードも外のパネルと同じ角丸にする（小さいと、外の角を地で塗りつぶして丸みが変わらないように見える）。
     card(theme)
@@ -1076,7 +1206,11 @@ pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
         .children(
             items
                 .into_iter()
-                .map(|b| b.rounded(px(MENU_RADIUS - MENU_PADDING))),
+                .map(|b| {
+                    b.h(px(MENU_ITEM_HEIGHT))
+                        .px(px(MENU_ITEM_PADDING))
+                        .rounded(px(MENU_RADIUS - MENU_PADDING))
+                }),
         )
 }
 
