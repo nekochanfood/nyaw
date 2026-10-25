@@ -5,7 +5,9 @@
 use gpui::{Render, TestAppContext};
 use kernel::subsystems::keyboard::KeyboardType;
 use kernel::{DominantHand, Language, PointerMode, Setting, ThemeMode};
-use testing::{BACKGROUND, NavPage, NavTest, SIDEBAR_BG, SIDEBAR_INDICATOR, Settings};
+use testing::{
+    BACKGROUND, NavPage, NavTest, SIDEBAR_BG, SIDEBAR_INDICATOR, SIDEBAR_INDICATOR_INSET, Settings,
+};
 use testkit::{Action, Driver, Hand, Vec2, VrKit};
 
 /// Holds the trigger near the right end of `selector`'s row and moves left by a bit more than half the page width, then releases.
@@ -179,7 +181,7 @@ fn settings_popover_closes_on_outside_press(cx: &mut TestAppContext) {
 fn left_edge(kit: &mut VrKit<Settings>, selector: &'static str) -> u32 {
     let b = kit.bounds(selector);
     kit.vr_color_at_px(Vec2::new(
-        f32::from(b.origin.x) + 2.0,
+        f32::from(b.origin.x) + SIDEBAR_INDICATOR_INSET + 2.0,
         f32::from(b.center().y),
     ))
 }

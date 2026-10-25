@@ -243,8 +243,6 @@ wrap = "Emoji wrap with the surrounding text 😀🐈❤️. Family 👨‍👩�
 fallback = "Text presentation: ❤︎ ☀︎ · ordinary text: ABC 123 # · combining: é"
 
 [pointer]
-mode_mouse = "Mode: Mouse"
-mode_touch = "Mode: Touch"
 tapped = "Tapped {count}"
 dropped = "Dropped {count}"
 swipe_row = "Swipe row {index}"

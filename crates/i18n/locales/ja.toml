@@ -243,8 +243,6 @@ wrap = "絵文字も文章と一緒に折り返します 😀🐈❤️。家族
 fallback = "テキスト表示指定: ❤︎ ☀︎ · 通常文字: ABC 123 # · 結合文字: é"
 
 [pointer]
-mode_mouse = "方式: マウス"
-mode_touch = "方式: タッチ"
 tapped = "タップ {count} 回"
 dropped = "落とした数 {count}"
 swipe_row = "スワイプ {index} 行目"

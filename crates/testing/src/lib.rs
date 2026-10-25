@@ -27,7 +27,7 @@ use gpui::{
     div, hsla, prelude::*, px, relative, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
-use kernel::{Language, PanelCommand, PanelId, PointerMode, Setting};
+use kernel::{Language, PanelCommand, PanelId, Setting};
 use ui::{PanelControl, PanelSpec};
 
 mod emoji;
@@ -81,6 +81,7 @@ pub const BACKGROUND: u32 = rgb24(THEME.background);
 pub const SIDEBAR_BG: u32 = rgb24(THEME.sidebar);
 /// 設定画面のサイドバーで選んでいる行の左端の印の色。
 pub const SIDEBAR_INDICATOR: u32 = rgb24(THEME.accent_solid);
+pub use design::components::SIDEBAR_INDICATOR_INSET;
 /// Testing パネルの大きさ（m）と解像度（px）。ボタンが高い（最小ヒット領域）ので、既定の 0.8m × 0.6m では入りきらない。
 pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 1.0);
 pub const TESTING_PX: (u32, u32) = (1200, 1000);
@@ -967,7 +968,7 @@ impl Render for Testing {
 }
 
 /// ポインタの方式（マウス / タッチのエミュレート）を試す画面（`pointer-test`）。
-/// `pointer-mode` で方式を切り替え（タッチのとき光る）、同じ操作がどう効くかを見る:
+/// 方式は全体の設定に従う（画面からは切り替えない）。同じ操作がどう効くかを見る:
 /// マウスでは `drag-chip` を `drop-zone` へ運べ、タッチでは `swipe-list` を押したまま動かすとスクロールする。
 /// `tap-me` はどちらでも押せる。
 #[derive(Default)]
@@ -987,11 +988,6 @@ impl PointerTest {
 impl Render for PointerTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let mode = settings(cx).pointer_mode;
-        let (label, next) = match mode {
-            PointerMode::Mouse => (i18n::t(cx, "pointer.mode_mouse"), PointerMode::Touch),
-            PointerMode::Touch => (i18n::t(cx, "pointer.mode_touch"), PointerMode::Mouse),
-        };
         let swipe_rows: Vec<SharedString> = (0..LIST_ROWS)
             .map(|i| i18n::tf(cx, "pointer.swipe_row", &[("index", &i)]))
             .collect();
@@ -1003,23 +999,18 @@ impl Render for PointerTest {
             .bg(rgba(theme.card))
             .text_color(rgba(theme.neutral_text))
             .child(
-                row()
-                    .child(
-                        button(&theme, "pointer-mode", label, mode == PointerMode::Touch)
-                            .on_click(change(Setting::PointerMode(next))),
+                row().child(
+                    button(
+                        &theme,
+                        "tap-me",
+                        i18n::tf(cx, "pointer.tapped", &[("count", &self.taps)]),
+                        false,
                     )
-                    .child(
-                        button(
-                            &theme,
-                            "tap-me",
-                            i18n::tf(cx, "pointer.tapped", &[("count", &self.taps)]),
-                            false,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.taps += 1;
-                            cx.notify();
-                        })),
-                    ),
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.taps += 1;
+                        cx.notify();
+                    })),
+                ),
             )
             .child(
                 row()
