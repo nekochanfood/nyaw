@@ -5,6 +5,8 @@ use subsystems::input::ClickButton;
 
 pub(super) struct DesktopPanel {
     stream: Option<Stream>,
+    /// 映しているもの（[`Kernel::start_desktop`] で始めたときだけ。FPS を変えたときにかけ直す）。
+    source: Option<desktop::Source>,
     pub status: Status,
     contacts: [Option<Vec2>; 2],
     hovered: [Option<Vec2>; 2],
@@ -117,6 +119,7 @@ impl<B: VrBackend> Kernel<B> {
             panel,
             DesktopPanel {
                 stream: Some(stream),
+                source: None,
                 status: Status::Starting,
                 contacts: [None; 2],
                 hovered: [None; 2],
@@ -144,12 +147,18 @@ impl<B: VrBackend> Kernel<B> {
     ) {
         if let Some(source) = source {
             let window = source.kind == desktop::SourceKind::Window;
-            match Stream::start_at(source, frame_rate)
+            match Stream::start_at(source.clone(), frame_rate)
                 .and_then(|stream| self.set_desktop_stream(panel, stream))
             {
-                // 映し始めたウィンドウは前に出す（そのまま操作できるように）。
-                Ok(()) if window => self.focus_desktop(panel),
-                Ok(()) => (),
+                Ok(()) => {
+                    if let Some(p) = self.desktop_panels.get_mut(&panel) {
+                        p.source = Some(source);
+                    }
+                    // 映し始めたウィンドウは前に出す（そのまま操作できるように）。
+                    if window {
+                        self.focus_desktop(panel);
+                    }
+                }
                 Err(error) => {
                     logger::warn!("desktop capture failed", panel = panel, error = error);
                     let original_resolution = self
@@ -163,6 +172,7 @@ impl<B: VrBackend> Kernel<B> {
                         panel,
                         DesktopPanel {
                             stream: None,
+                            source: None,
                             status: Status::Failed(error),
                             contacts: [None; 2],
                             hovered: [None; 2],
@@ -179,6 +189,28 @@ impl<B: VrBackend> Kernel<B> {
             self.overlay.set_os_cursor(panel, None);
             self.overlay
                 .set_content_resolution(panel, p.original_resolution);
+        }
+    }
+
+    /// 配信中のミラーを `frame_rate` でかけ直す（ウィンドウは前に出し直さない）。
+    pub(super) fn restart_desktops(&mut self, frame_rate: u32) {
+        let running: Vec<_> = self
+            .desktop_panels
+            .iter()
+            .filter(|(_, p)| p.stream.is_some())
+            .filter_map(|(&id, p)| Some((id, p.source.clone()?)))
+            .collect();
+        for (panel, source) in running {
+            match Stream::start_at(source.clone(), frame_rate)
+                .and_then(|stream| self.set_desktop_stream(panel, stream))
+            {
+                Ok(()) => {
+                    if let Some(p) = self.desktop_panels.get_mut(&panel) {
+                        p.source = Some(source);
+                    }
+                }
+                Err(error) => logger::warn!("desktop restart failed", panel = panel, error = error),
+            }
         }
     }
 

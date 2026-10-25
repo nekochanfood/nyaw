@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 kbvm = { version = "0.2", features = ["registry", "compose"] }
 os.workspace = true
 logger.workspace = true
