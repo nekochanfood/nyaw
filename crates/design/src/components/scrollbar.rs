@@ -501,9 +501,10 @@ pub fn scrollbars(theme: &Theme, id: impl Into<SharedString>, handle: &ScrollHan
         pull: None,
         ends: 0.0,
         always: false,
+        // ボタンと同じく一段ずつ濃くする（text まで行くと黒・白になって強すぎる）。
         rest: theme.track,
-        hover: theme.neutral_text_low,
-        active: theme.neutral_text,
+        hover: super::mix(theme.track, theme.neutral_text_low, 0.5),
+        active: theme.neutral_text_low,
     }
 }
 
