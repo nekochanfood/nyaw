@@ -554,7 +554,7 @@ struct Stream {
 /// メニューのポップオーバーの大きさと解像度（2 行の一覧が収まる）。
 const MENU_PX: (u32, u32) = (
     320,
-    (MENU_ROWS * (components::NAV_BAR_HEIGHT - 2.0 * spacing::SM)
+    (MENU_ROWS * components::MENU_ITEM_HEIGHT
         + 2.0 * components::MENU_PADDING
         + 2.0 * components::PANEL_MARGIN) as u32,
 );
