@@ -10,8 +10,8 @@ include!(concat!(env!("OUT_DIR"), "/duration_ms.rs"));
 /// ボタンの滑り込み・滑り出しの長さ（ms）。
 const SLIDE_MS: u64 = 350;
 
-/// サイドバーの印が行から行へ跳ぶ長さ（ms）。
-const HOP_MS: u64 = 500;
+/// サイドバーの印が出る・消える長さ（ms）。
+const HOP_MS: u64 = 300;
 
 /// 幅の動きと中身の動きのずれ（入りは幅が先、出は中身が先）。
 pub const LAG: Duration = Duration::from_millis(80);
@@ -103,8 +103,10 @@ pub enum Motion {
     Grow,
     /// ボタンの幅が閉じる。開くの逆再生（ease-in。同じ長さ）。
     Shrink,
-    /// 選んでいる印が行から行へ跳ぶ。すぐ動き出し、少し行き過ぎてから収まる（ease-out-back）。
+    /// 選んでいる印が消える。すぐ動き出し、行き過ぎずに滑らかに止まる（ease-out）。
     Hop,
+    /// 選んでいる印が出る。ゆっくり動き出し、行き過ぎずに滑らかに止まる（ease-in-out。消えると同じ長さ）。
+    HopIn,
 }
 
 impl Motion {
@@ -114,7 +116,7 @@ impl Motion {
             Motion::Enter | Motion::Exit | Motion::Move => duration_ms::NORMAL,
             Motion::SlideIn | Motion::SlideOut | Motion::Grow | Motion::Shrink => SLIDE_MS,
             Motion::Morph => duration_ms::SLOW,
-            Motion::Hop => HOP_MS,
+            Motion::Hop | Motion::HopIn => HOP_MS,
         }
     }
 
@@ -125,10 +127,10 @@ impl Motion {
 
     fn easing(self) -> Easing {
         match self {
-            Motion::Enter | Motion::Return | Motion::Grow => Easing::EaseOutCubic,
+            Motion::Enter | Motion::Return | Motion::Grow | Motion::Hop => Easing::EaseOutCubic,
             Motion::Exit | Motion::Shrink => Easing::EaseInCubic,
-            Motion::Move | Motion::Morph => Easing::EaseInOutCubic,
-            Motion::SlideIn | Motion::Hop => Easing::EaseOutBack,
+            Motion::Move | Motion::Morph | Motion::HopIn => Easing::EaseInOutCubic,
+            Motion::SlideIn => Easing::EaseOutBack,
             // 滑り込みを逆に再生した動き（ease-in-back は 1 - ease-out-back(1 - t)）。
             Motion::SlideOut => Easing::EaseInBack,
         }
@@ -245,15 +247,22 @@ mod tests {
     }
 
     #[test]
-    fn hop_overshoots_and_settles() {
+    fn hop_settles_without_overshoot() {
         let mut a = Animation::new(0.0, 1.0, Motion::Hop);
         let mut max = 0.0f32;
         for _ in 0..100 {
             max = max.max(a.advance(0.01));
         }
-        assert!(max > 1.0, "行き過ぎる: {max}");
+        assert!(max <= 1.0, "行き過ぎない: {max}");
         assert_eq!(a.value(), 1.0);
-        assert_eq!(Motion::Hop.duration_ms(), 500);
+        assert_eq!(Motion::Hop.duration_ms(), 300);
+        let mut a = Animation::new(0.0, 1.0, Motion::HopIn);
+        let mut max = 0.0f32;
+        for _ in 0..100 {
+            max = max.max(a.advance(0.01));
+        }
+        assert!(max <= 1.0, "出るときも行き過ぎない: {max}");
+        assert_eq!(a.value(), 1.0);
     }
 
     #[test]

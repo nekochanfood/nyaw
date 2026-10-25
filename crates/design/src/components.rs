@@ -985,10 +985,12 @@ pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
 
 /// サイドバーの行の左端の印（選んでいる行だけ）の高さと幅（px）。
 pub const SIDEBAR_INDICATOR: (f32, f32) = (24.0, 4.0);
+/// 印と行の左端の間。行の背景（丸い端）の内側に収め、アイコンとも `MD` 空ける。
+pub const SIDEBAR_INDICATOR_INSET: f32 = spacing::SM;
 
 /// サイドバーの行: 左にアイコンと文字。サイドバーの地（`sidebar`）に置く前提で、ふだんは地と同じ色（背景が無いように
 /// 見える。透明にするとホバーの色から戻るフェードが途中で切れるので地の色を使う）、ホバー・押下で `control-on-background-*`。
-/// 選んでいる行（`selected`）は文字が `neutral-text`（ダークでは白）になる（左端の印は [`sidebar`] が 1 つだけ描いて行の間を動かす）。選んでいない行は
+/// 選んでいる行（`selected`）は文字が `neutral-text`（ダークでは白）になる（左端の印は [`sidebar`] が行ごとに描き、出し入れする）。選んでいない行は
 /// `neutral-text-low`（選んだ行より薄いが、地とのコントラスト比 4.5 を保つ）。高さはボタンと同じ。
 pub fn sidebar_item(
     theme: &Theme,
@@ -1014,7 +1016,8 @@ pub fn sidebar_item(
         .w_full()
         .justify_start()
         .gap(px(spacing::MD))
-        .px(px(spacing::LG))
+        .pl(px(SIDEBAR_INDICATOR_INSET + SIDEBAR_INDICATOR.1 + spacing::MD))
+        .pr(px(spacing::LG))
         .font_weight(if selected {
             FontWeight::MEDIUM
         } else {
@@ -1026,8 +1029,10 @@ pub fn sidebar_item(
     b
 }
 
-/// サイドバーの行（[`sidebar_item`]）を `XS` 空けて縦に並べ、`selected` 番目の行の左端にアクセント（`accent-solid`）の印を 1 つ描く。
-/// 選ぶ行が変わると、印はその行へ跳んで少し行き過ぎてから収まる（`Motion::Hop`）。印の位置は `id` ごとに覚える。
+/// サイドバーの行（[`sidebar_item`]）を `XS` 空けて縦に並べ、`selected` 番目の行の左端にアクセント（`accent-solid`）の印を描く。
+/// 印は行ごとに持ち、選ぶ行が変わると、前の行の印は行の中央へ向かって縮んで消え、同時に新しい行の印が中央から伸びて出る
+/// （消えるのは `Motion::Hop`（ease-out）、出るのは `Motion::HopIn`（ease-in-out））。縮むときは上下に縮んで幅と同じ高さ（1:1）になってから全体が小さくなり、出るときはその逆
+/// （幅より低く潰れることはない）。印の出方は `id` ごとに覚える。
 pub fn sidebar(
     theme: &Theme,
     window: &mut Window,
@@ -1038,15 +1043,45 @@ pub fn sidebar(
 ) -> Div {
     use crate::animation::{Motion as Kind, Transition};
     let (h, w) = SIDEBAR_INDICATOR;
-    let top = selected as f32 * (BUTTON_HEIGHT + spacing::XS) + (BUTTON_HEIGHT - h) / 2.0;
+    let items: Vec<Button> = items.into_iter().collect();
+    let shown = |i: usize| if i == selected { 1.0 } else { 0.0 };
     let now = crate::drive::now();
     let animated = cx.has_global::<Motion>();
-    let state = window.use_keyed_state(id, cx, |_, _| Transition::rest(top));
-    state.update(cx, |t, _| t.go(top, Kind::Hop, now, animated));
-    let (at, moving) = state.read(cx).at(now);
-    if moving {
+    // 行ごとの印の出具合（0 = 無い、1 = 出きった）。
+    let state = window.use_keyed_state(id, cx, |_, _| Vec::<Transition>::new());
+    let shapes: Vec<(f32, bool)> = state.update(cx, |ts, _| {
+        // 開いたときから選んでいる行の印は出ている。
+        while ts.len() < items.len() {
+            ts.push(Transition::rest(shown(ts.len())));
+        }
+        ts.iter_mut()
+            .enumerate()
+            .map(|(i, t)| {
+                let kind = if i == selected { Kind::HopIn } else { Kind::Hop };
+                t.go(shown(i), kind, now, animated);
+                t.at(now)
+            })
+            .collect()
+    });
+    if shapes.iter().any(|&(_, moving)| moving) {
         keep_drawing(window, cx);
     }
+    // 出具合 `p` の印の大きさ: 高さは `p` に比例し、幅は高さに届くまで同じ（1:1 の点から縦に伸びる）。
+    let marks = shapes.into_iter().enumerate().filter_map(move |(i, (p, _))| {
+        let height = p.max(0.0) * h;
+        let width = height.min(w);
+        let center = i as f32 * (BUTTON_HEIGHT + spacing::XS) + BUTTON_HEIGHT / 2.0;
+        (height > 0.0).then(|| {
+            div()
+                .absolute()
+                .left(px(SIDEBAR_INDICATOR_INSET + (w - width) / 2.0))
+                .top(px(center - height / 2.0))
+                .w(px(width))
+                .h(px(height))
+                .rounded(px(radius::FULL))
+                .bg(rgba(theme.accent_solid))
+        })
+    });
     div()
         .relative()
         .flex()
@@ -1054,16 +1089,7 @@ pub fn sidebar(
         .gap(px(spacing::XS))
         .children(items)
         // 行の後に置き、行の地より上に描く。
-        .child(
-            div()
-                .absolute()
-                .left_0()
-                .top(px(at))
-                .w(px(w))
-                .h(px(h))
-                .rounded(px(radius::FULL))
-                .bg(rgba(theme.accent_solid)),
-        )
+        .children(marks)
 }
 
 /// 行（[`list_item`]）をカード 1 枚に縦に並べ、行の間に 1px の区切り線を引く。
