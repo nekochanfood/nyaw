@@ -13,6 +13,7 @@
     { "name": "/actions/nyaw/in/right_touch", "type": "boolean", "requirement": "optional" },
     { "name": "/actions/nyaw/in/shortcut", "type": "boolean" },
     { "name": "/actions/nyaw/in/scroll", "type": "vector2" },
+    { "name": "/actions/nyaw/in/resize", "type": "vector1", "requirement": "optional" },
     { "name": "/actions/nyaw/in/skeleton_left", "type": "skeleton", "skeleton": "/skeleton/hand/left", "requirement": "optional" },
     { "name": "/actions/nyaw/in/skeleton_right", "type": "skeleton", "skeleton": "/skeleton/hand/right", "requirement": "optional" }
   ],
@@ -29,8 +30,9 @@
       "/actions/nyaw/in/menu": "Menu",
       "/actions/nyaw/in/middle_touch": "Middle click modifier",
       "/actions/nyaw/in/right_touch": "Right click modifier",
-      "/actions/nyaw/in/shortcut": "Shortcut (press twice)",
+      "/actions/nyaw/in/shortcut": "Shortcut (double tap)",
       "/actions/nyaw/in/scroll": "Scroll",
+      "/actions/nyaw/in/resize": "Resize grabbed panel (unbound by default)",
       "/actions/nyaw/in/skeleton_left": "Left hand skeleton",
       "/actions/nyaw/in/skeleton_right": "Right hand skeleton"
     }

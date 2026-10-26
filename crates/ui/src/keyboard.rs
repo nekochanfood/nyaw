@@ -26,6 +26,15 @@ fn panel_resolution() -> (u32, u32) {
     )
 }
 
+/// ホームポジション（F と J の間。G と H の境目）の、キーの並びの左端からの位置（1u。`geometry::keycaps` の AC 段）。
+const HOME_U: f32 = 6.75;
+
+/// パネル（幅 1m）の中心から見た、ホームポジションの横位置（m）。キーの並びはパネルの左の余白の内側から始まる。
+fn home_offset(resolution: (u32, u32)) -> f32 {
+    let left = design::components::PANEL_MARGIN + design::spacing::LG;
+    (left + HOME_U * view::KEY_UNIT) / resolution.0 as f32 - 0.5
+}
+
 #[derive(Clone, Debug)]
 pub struct KeyboardInput {
     pub stroke: Stroke,
@@ -117,6 +126,44 @@ pub fn focus_input(panel: PanelId, focus: &FocusHandle, window: &mut Window, cx:
 /// OS を操作するパネル（`panel`）の仮想キーボードを出し入れする（出したら `true`）。
 /// 届いた入力はカーネルに頼んで OS の前面のアプリへ送る（[`PanelCommand::TypeToOs`]）。
 pub fn toggle_os_keyboard(panel: PanelId, cx: &mut App) -> bool {
+    register_os_input(panel, cx);
+    let shown = toggle_keyboard(panel, cx);
+    if !shown {
+        unregister_input(panel, cx);
+    }
+    shown
+}
+
+/// `from` へ打つ OS キーボードが出ていれば、閉じずに `to`（OS を操作するパネル）へ打つものにする（譲ったら `true`）。
+/// どちらも同じ OS キーボードなので、出し直さずに同じ場所のまま使い続けられる。
+pub fn hand_over_os_keyboard(from: PanelId, to: PanelId, cx: &mut App) -> bool {
+    let routing = cx.default_global::<InputRouting>();
+    let Some(session) = routing
+        .active
+        .as_mut()
+        .filter(|s| s.target == from && s.mode == KeyboardMode::Persistent)
+    else {
+        return false;
+    };
+    session.target = to;
+    let keyboard = session.panel;
+    routing.error = None;
+    unregister_input(from, cx);
+    register_os_input(to, cx);
+    redraw_nav_bar(from, cx);
+    redraw_nav_bar(to, cx);
+    if let Some(keyboard) = keyboard {
+        cx.default_global::<crate::PanelControl>()
+            .panels
+            .entry(keyboard)
+            .or_default()
+            .redraw = true;
+    }
+    true
+}
+
+/// `panel` に届いた入力を、カーネルに頼んで OS の前面のアプリへ送る（[`PanelCommand::TypeToOs`]）。
+fn register_os_input(panel: PanelId, cx: &mut App) {
     register_input(
         panel,
         move |input, cx| {
@@ -133,11 +180,6 @@ pub fn toggle_os_keyboard(panel: PanelId, cx: &mut App) -> bool {
         },
         cx,
     );
-    let shown = toggle_keyboard(panel, cx);
-    if !shown {
-        unregister_input(panel, cx);
-    }
-    shown
 }
 
 /// ビューの借用が解けてから対象パネル一つに配送する。宛先を失っても他へ転送しない。
@@ -214,11 +256,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     routing.error = None;
     redraw_nav_bar(target, cx);
     let resolution = panel_resolution();
-    // ダッシュボードにはめた画面へ打つなら、ダッシュボードのバーの下端につなげて頭へ向け、固定する
-    // （画面・バー・キーボードがつながって見える。画面を外すとキーボードも外れる。`crate::undock`）。
-    let dock = crate::docked(cx)
-        .filter(|&d| d == target)
-        .and(cx.global::<crate::PanelControl>().dock);
+    let home = home_offset(resolution);
     let spec = crate::PanelSpec::spawn(target, move |panel, _, cx| {
         let current = cx.default_global::<InputRouting>().active.as_mut();
         if let Some(session) = current.filter(|s| s.generation == generation) {
@@ -246,12 +284,17 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         resolution,
     )
     // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
-    .without_nav_bar();
-    let spec = match dock {
-        // 角度は外したときと同じく、開いた瞬間の頭の位置に向ける。
-        Some((owner, _)) => spec.hinged_below(owner).docked_to(owner),
-        None => spec.below(target, std::f32::consts::FRAC_PI_4),
-    };
+    .without_nav_bar()
+    // タッチの方式では離すまで押されず、押している間の手ブレでスワイプになって押し損じる。押した瞬間に押す。
+    .pointer_mode(kernel::PointerMode::Mouse)
+    // 開いた瞬間の手元の打ちやすい高さに、対象パネル（ダッシュボードにはめた画面も）と同じ向きで、
+    // ホームポジションを対象の中心の左右に合わせて出す。親子関係は作らない（対象を動かしても付いて行かない）。
+    .typing(home)
+    // 掴むとパネルの中心ではなくホームポジションを手で動かして頭へ向ける（ホームポジションを中心に角度が付く）。
+    .grab_anchor(kernel::Pose::new(
+        kernel::vr::Vec3::X * home,
+        kernel::vr::Quat::IDENTITY,
+    ));
     cx.default_global::<crate::PanelControl>().spawns.push(spec);
 }
 
@@ -301,6 +344,18 @@ pub fn panel_closed(panel: PanelId, cx: &mut App) {
     }
 }
 
+/// 呼び出し元が隠れたら（ダッシュボードごと隠したはめた画面など）、そこへ打つキーボードも閉じる。
+/// キーボードは呼び出し元の子ではないので、一緒には隠れない。
+pub fn panel_hidden(panel: PanelId, cx: &mut App) {
+    if cx
+        .try_global::<InputRouting>()
+        .and_then(|r| r.active)
+        .is_some_and(|s| s.target == panel)
+    {
+        dismiss_keyboard(cx);
+    }
+}
+
 struct KeyboardPanel {
     panel: PanelId,
     keyboard: gpui::Entity<KeyboardView>,
@@ -309,6 +364,20 @@ impl Render for KeyboardPanel {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = design::Theme::current(cx);
         let panel = self.panel;
+        // 譲られたら（[`hand_over_os_keyboard`]）打つ先を合わせる。
+        let target = cx
+            .try_global::<InputRouting>()
+            .and_then(|r| r.active)
+            .filter(|s| s.panel == Some(panel))
+            .map(|s| s.target);
+        if let Some(target) = target {
+            self.keyboard.update(cx, |keyboard, cx| {
+                if keyboard.target != target {
+                    keyboard.target = target;
+                    cx.notify();
+                }
+            });
+        }
         design::components::card_panel(&theme)
             .flex()
             .flex_col()
@@ -382,20 +451,22 @@ mod tests {
     use gpui::TestAppContext;
     use std::cell::RefCell;
 
-    /// ダッシュボードから外した画面へ打つキーボードも、一緒に外れて独立する。
+    /// 呼び出し元が閉じても隠れても、キーボードは閉じる（子ではないので自分では消えない）。
     #[gpui::test]
-    fn undocking_a_panel_also_undocks_its_keyboard(cx: &mut TestAppContext) {
+    fn closing_or_hiding_the_caller_closes_its_keyboard(cx: &mut TestAppContext) {
         cx.update(|cx| {
-            cx.default_global::<InputRouting>().active = Some(Session {
-                target: 5,
-                panel: Some(9),
-                mode: KeyboardMode::Persistent,
-                generation: 1,
-            });
-            crate::undock(5, cx);
-            let ctl = cx.global::<crate::PanelControl>();
-            for p in [5, 9] {
-                assert_eq!(ctl.panels[&p].commands, [PanelCommand::Parent(None)]);
+            for gone in [panel_closed, panel_hidden] {
+                cx.default_global::<InputRouting>().active = Some(Session {
+                    target: 5,
+                    panel: Some(9),
+                    mode: KeyboardMode::Persistent,
+                    generation: 1,
+                });
+                gone(5, cx);
+                assert!(cx.global::<InputRouting>().active.is_none());
+                let ctl = cx.global_mut::<crate::PanelControl>();
+                let commands = &mut ctl.panels.get_mut(&9).unwrap().commands;
+                assert_eq!(std::mem::take(commands), [PanelCommand::Close]);
             }
         });
     }
@@ -432,6 +503,22 @@ mod tests {
             assert!(redraw(cx, 5) && !redraw(cx, 0));
             assert!(!toggle_keyboard(0, cx));
             assert!(redraw(cx, 5));
+        });
+    }
+
+    /// OS キーボードを譲ると、閉じずに打つ先だけが変わり、元のパネルへはもう届かない。
+    #[gpui::test]
+    fn handing_over_the_os_keyboard_keeps_it_open_for_the_new_target(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            assert!(toggle_os_keyboard(0, cx));
+            let spawns = cx.global::<crate::PanelControl>().spawns.len();
+            assert!(!hand_over_os_keyboard(7, 1, cx), "出ていない先からは譲らない");
+            assert!(hand_over_os_keyboard(0, 1, cx));
+            let routing = cx.global::<InputRouting>();
+            assert_eq!(routing.active.unwrap().target, 1);
+            assert!(!routing.receivers.contains_key(&0) && routing.receivers.contains_key(&1));
+            assert_eq!(cx.global::<crate::PanelControl>().spawns.len(), spawns);
+            assert!(!toggle_os_keyboard(1, cx));
         });
     }
 
@@ -505,7 +592,7 @@ mod tests {
             assert!(
                 specs
                     .iter()
-                    .all(|s| s.parent().is_none() && !s.locked && s.below.is_some())
+                    .all(|s| s.parent().is_none() && !s.locked && s.typing.is_some())
             );
             cx.global_mut::<InputRouting>()
                 .active
@@ -527,7 +614,9 @@ mod tests {
     }
 
     #[gpui::test]
-    fn spawned_keyboard_is_below_tilted_and_independent(cx: &mut TestAppContext) {
+    fn spawned_keyboard_is_in_front_of_the_head_with_home_centered_and_independent(
+        cx: &mut TestAppContext,
+    ) {
         let mut kernel = kernel::Kernel::with_backend(
             kernel::vr::mock::MockBackend::default(),
             kernel::Config::default(),
@@ -547,10 +636,17 @@ mod tests {
             show_keyboard(target, KeyboardMode::Transient, cx);
             let spec = cx.global::<crate::PanelControl>().spawns.last().unwrap();
             let pose = spec.pose_for(&kernel, 1);
-            assert!(pose.position.y < kernel.panel(target).pose.position.y - 0.5);
+            // 対象パネル（右上）ではなく、頭の前の少し下に出る。
+            let hmd = kernel.hmd();
+            let local = hmd.leveled().inverse().transform_point(pose.position);
+            assert!(local.y < -0.2 && local.z < -0.4, "{local}");
+            // ホームポジションが対象の中心の左右に来る（頭の正面ではなく）。
+            let home = pose.transform_point(kernel::vr::Vec3::X * home_offset(spec.resolution));
+            let target_x = kernel.panel(target).pose.position.x;
+            assert!((home.x - target_x).abs() < 1e-4, "{home}");
+            // 左右の向きは対象と同じ（頭の方へ回り込まない）で、仰ぐ角度だけ頭へ向ける。
             let normal = pose.orientation * kernel::vr::Vec3::Z;
-            let toward_head = (kernel.hmd().position - pose.position).normalize();
-            assert!(normal.dot(toward_head) > 0.8);
+            assert!(normal.x.abs() < 1e-4 && normal.z > 0.5, "{normal}");
             assert!(spec.parent().is_none());
             let panel = kernel
                 .add_panel("keyboard", pose, spec.size, spec.resolution)

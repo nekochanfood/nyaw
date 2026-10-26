@@ -24,6 +24,10 @@ OpenVR / OpenXR / novr の差を吸収。`Subsystems` が `VrBackend` を所有�
   - キーボードはスティックなのでパネルには届かない（VR と同じ）。
 - ビューはランタイムを意識しない（どのランタイムでも同じビューが動く）。
 
+## SteamVR のバインド
+
+OpenVR のコントローラ操作は SteamVR Input のアクション（`openvr/actions.json`）だけを読み、割り当ては SteamVR の「コントローラーのバインド」画面で変えられる（機種ごとの既定は `bindings_*.json`）。ショートカット（`/actions/nyaw/in/shortcut`）の二回押しは SteamVR のバインドの「ダブルタップ」が数え、`DOUBLE_PRESS_INPUT` を 1 フレームだけ立てる（ボタンの押下そのものは渡さない。`kernel` はそれをそのまま一回と数え、ほかのランタイムは従来どおり押下の間隔から数える）。`/actions/nyaw/in/resize`（掴んだパネルの拡大縮小。`RESIZE_INPUT` に出る）は既定では割り当てが無く、利用者が割り当てる。
+
 ## 未実装（土台のみ）
 
 - 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は Monado（Windows、simulated）でパネルが映るところまで確認済みで、コントローラ入力は未確認。

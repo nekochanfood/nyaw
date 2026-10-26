@@ -71,6 +71,14 @@ pub struct Icon {
     pub rgba: Arc<[u8]>,
 }
 
+/// OS のマウスカーソル。映像には入れず、上の層がポインタの代わりに描く。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cursor {
+    pub image: Icon,
+    /// 指している点（画像の左上からの画素）。
+    pub hotspot: (u32, u32),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);
 
@@ -382,6 +390,10 @@ impl Wake {
 
 trait Session {
     fn frame(&mut self) -> Result<Option<Frame>, Error>;
+    /// 一時停止中（[`Stream::set_paused`]）に `frame` の代わりに呼ぶ。読み戻さずに最新の画像だけ持ち、再開したらそれを返す。
+    fn skip(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
     fn touch(&mut self, touch: Touch) -> Result<(), Error>;
     fn button(&mut self, touch: Touch, _button: Button) -> Result<(), Error> {
         self.touch(touch)
@@ -405,6 +417,10 @@ trait Session {
     fn closed(&self) -> bool {
         false
     }
+    /// 今の OS のカーソル（隠れていれば `None`）。変わっていなければ同じ `Arc` を返す。
+    fn cursor(&mut self) -> Option<Arc<Cursor>> {
+        None
+    }
 }
 
 /// 最新画像は常に一枚だけ保持し、遅れたフレームを蓄積しない。
@@ -413,6 +429,8 @@ pub struct Stream {
     update: Arc<Mutex<Option<Update>>>,
     input: SyncSender<Input>,
     stop: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    cursor: Arc<Mutex<Option<Arc<Cursor>>>>,
     /// ウィンドウを映しているとき、そのウィンドウ（OS のウィンドウ識別子）。画面や特定できないものは `None`。
     window: Option<u64>,
 }
@@ -460,6 +478,10 @@ impl Stream {
             frame: None,
         })));
         let stop = Arc::new(AtomicBool::new(false));
+        let paused = Arc::new(AtomicBool::new(false));
+        let pausing = paused.clone();
+        let cursor = Arc::new(Mutex::new(None));
+        let cursor_out = cursor.clone();
         let (input, rx) = mpsc::sync_channel(64);
         let wake = Wake {
             tx: input.clone(),
@@ -475,6 +497,7 @@ impl Stream {
                     let mut next_frame = Instant::now();
                     let mut inputs: Vec<Input> = Vec::new();
                     let mut minimized = false;
+                    let mut shown = None;
                     while !stopping.load(Ordering::Acquire) {
                         if session.minimized() {
                             minimized = true;
@@ -521,9 +544,19 @@ impl Stream {
                             }
                         }
                         session.heartbeat()?;
+                        let now_cursor = session.cursor();
+                        if now_cursor != shown {
+                            shown = now_cursor;
+                            *cursor_out.lock().unwrap() = shown.clone();
+                        }
                         if session.minimized() {
                             minimized = true;
                             break;
+                        }
+                        if pausing.load(Ordering::Acquire) {
+                            wake.pending.store(false, Ordering::Release);
+                            session.skip()?;
+                            continue;
                         }
                         let now = Instant::now();
                         if now < next_frame {
@@ -545,6 +578,7 @@ impl Stream {
                     }
                     Ok::<_, Error>(minimized)
                 })();
+                *cursor_out.lock().unwrap() = None;
                 *output.lock().unwrap() = Some(Update {
                     status: match result {
                         Ok(true) => Status::Minimized,
@@ -559,12 +593,24 @@ impl Stream {
             update,
             input,
             stop,
+            paused,
+            cursor,
             window: None,
         })
     }
 
+    /// 見えていない間は画像の取得（GPU からの読み戻し）を止める。入力と終了の検知は続ける。
+    pub fn set_paused(&self, paused: bool) {
+        self.paused.store(paused, Ordering::Release);
+    }
+
     pub fn poll(&self) -> Option<Update> {
         self.update.try_lock().ok()?.take()
+    }
+
+    /// 今の OS のカーソル（隠れている・取れなければ `None`）。
+    pub fn cursor(&self) -> Option<Arc<Cursor>> {
+        self.cursor.lock().ok()?.clone()
     }
 
     pub fn touch(&self, touch: Touch) -> Result<(), Error> {
@@ -755,6 +801,28 @@ mod tests {
         assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), touch);
         drop(stream);
         until(|| observer.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn paused_worker_skips_frames_until_resumed() {
+        let (tx, _rx) = mpsc::sync_channel(4);
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| {
+            Ok(Fake {
+                dropped: Arc::new(AtomicBool::new(false)),
+                input: tx,
+                frame: 0,
+            })
+        })
+        .unwrap();
+        until(|| stream.poll().is_some_and(|u| u.frame.is_some()));
+        stream.set_paused(true);
+        // 止める直前に取りかかっていた一枚は届いてよい。
+        thread::sleep(Duration::from_millis(100));
+        stream.poll();
+        thread::sleep(Duration::from_millis(100));
+        assert!(stream.poll().is_none());
+        stream.set_paused(false);
+        until(|| stream.poll().is_some_and(|u| u.frame.is_some()));
     }
 
     #[test]

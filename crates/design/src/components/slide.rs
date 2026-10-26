@@ -11,7 +11,7 @@ use crate::animation::{Motion, Pair};
 use crate::{Theme, radius, spacing};
 
 /// ボタンを 1 つずつ順に出すときの間隔。
-pub const STAGGER: Duration = Duration::from_millis(60);
+pub const STAGGER: Duration = Duration::from_millis(30);
 /// これだけ描かれなかったら、隠れていた（出し直した）とみなす。
 const IDLE_GAP: Duration = Duration::from_secs(3);
 

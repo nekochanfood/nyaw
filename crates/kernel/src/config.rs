@@ -6,7 +6,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use subsystems::os;
+use subsystems::{os, vr};
 
 /// 環境変数 `NYAW_LOG` で指定されたログレベル（`trace` / `debug` / `info` / `warn` / `error`）。解釈は呼び出し側。
 pub fn log_level() -> Option<String> {
@@ -76,6 +76,32 @@ pub enum Language {
     Ja,
 }
 
+/// 利き手（`right` / `left`）。利き手でない側の手首に wrist を付け、配信のパネルは利き手で操作する。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DominantHand {
+    #[default]
+    Right,
+    Left,
+}
+
+impl DominantHand {
+    pub fn hand(self) -> vr::Hand {
+        match self {
+            Self::Right => vr::Hand::Right,
+            Self::Left => vr::Hand::Left,
+        }
+    }
+
+    /// 利き手でない方の手。
+    pub fn off_hand(self) -> vr::Hand {
+        match self {
+            Self::Right => vr::Hand::Left,
+            Self::Left => vr::Hand::Right,
+        }
+    }
+}
+
 /// `config.toml` の中身。どのキーも省略でき、知らないキーは無視する。
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default)]
@@ -103,6 +129,8 @@ pub struct Config {
     pub theme: ThemeMode,
     /// 画面の言語（`en` / `ja`）。省略で `en`。画面での切り替えはここへ書き戻される。
     pub language: Language,
+    /// 利き手（`right` / `left`）。省略で `right`。
+    pub dominant_hand: DominantHand,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -274,6 +302,10 @@ emulator = false
         assert_eq!(parse("language = \"ja\"").unwrap().language, Language::Ja);
         assert!(parse("language = \"fr\"").is_err());
         assert_eq!(ThemeMode::Dark.toggled(), ThemeMode::Light);
+        assert_eq!(parse("").unwrap().dominant_hand, DominantHand::Right);
+        let left = parse("dominant_hand = \"left\"").unwrap().dominant_hand;
+        assert_eq!((left.hand(), left.off_hand()), (vr::Hand::Left, vr::Hand::Right));
+        assert!(parse("dominant_hand = \"both\"").is_err());
     }
 
     #[test]

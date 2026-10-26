@@ -1229,6 +1229,7 @@ impl Render for SmoothingTest {
 /// - `tip-short` / `tip-long` は隣り合っていて、移ると猶予（0.125 秒）の間に文字が変わり、箱の幅が伸び縮みする。
 /// - `tip-far` は離れていて、届くまでに猶予が過ぎると一度消えてから出直す。`no-tip` には説明が無い（指すと猶予の後に消える）。
 /// - アイコンだけのボタン（`tip-icon-*`）には必ず説明が付く（`components::icon_button`）。
+/// - `tip-overflow` の説明は箱（640px）に収まらず、止まる → 一周流れる、を繰り返す。
 /// - `tip-status` に、手ごとの今の文字と向き（上下）を出す。手を頭より上に掲げて見上げると下に、下から指すと上に出る。
 #[derive(Default)]
 pub struct TooltipTest {}
@@ -1272,7 +1273,11 @@ impl Render for TooltipTest {
                         button(&theme, "tip-long", i18n::t(cx, "tooltip.long"), false)
                             .tooltip(i18n::t(cx, "tooltip.panel_settings")),
                     )
-                    .child(button(&theme, "no-tip", i18n::t(cx, "tooltip.none"), false)),
+                    .child(button(&theme, "no-tip", i18n::t(cx, "tooltip.none"), false))
+                    .child(
+                        button(&theme, "tip-overflow", i18n::t(cx, "tooltip.overflow"), false)
+                            .tooltip(i18n::t(cx, "tooltip.overflow_text")),
+                    ),
             )
             .child(
                 row()

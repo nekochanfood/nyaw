@@ -23,6 +23,9 @@ wgpu = { version = "29.0.4", optional = true }
 pollster = { version = "0.4", optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 
+[dev-dependencies]
+serde_json = "1"
+
 [features]
 # 実ランタイムとエミュレーターは重い依存（wgpu・ash・OpenXR/OpenVR 等）を引くので、使う側が選ぶ。
 # 型・トレイトと `connect` は常にある（無効なランタイムは `VrError::NoRuntime`）。

@@ -124,6 +124,10 @@ pub enum Hand {
 /// novr のエミュレーターが PageUp / PageDown で出す（テスト用。手を前後に動かせないため）。
 pub const RESIZE_INPUT: &str = "nyaw/resize";
 
+/// ショートカットの二回押しを、ランタイムが数えて 1 フレームだけ 1 を立てる入力名。SteamVR ではバインドの「ダブルタップ」が数えるので、
+/// ボタンの押下そのもの（`x/click` 等）は出さない。ほかのランタイムは出さず、`kernel` が押下の間隔から数える。
+pub const DOUBLE_PRESS_INPUT: &str = "nyaw/double_press";
+
 /// ランタイム非依存・バインド前のコントローラのスナップショット。解釈は入力層の仕事。
 #[derive(Debug, Clone, PartialEq)]
 pub struct RawController {

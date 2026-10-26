@@ -1,5 +1,5 @@
 use super::{
-    Button, Capabilities, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch,
+    Button, Capabilities, Cursor, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch,
     TouchPhase, Wake,
 };
 
@@ -258,7 +258,7 @@ unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
     }
     if icon != 0 {
         // 借りたアイコンなので破棄しない。
-        return unsafe { icon_rgba(HICON(icon as _)) };
+        return unsafe { icon_rgba(HICON(icon as _)) }.map(|(i, _)| i);
     }
     let mut path = unsafe { process_path(hwnd) }?;
     path.push(0);
@@ -269,7 +269,7 @@ unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
     }
     let rgba = unsafe { icon_rgba(large) };
     let _ = unsafe { DestroyIcon(large) };
-    rgba
+    rgba.map(|(i, _)| i)
 }
 
 /// ウィンドウのプロセスの実行ファイルのパス（UTF-16、終端なし）。
@@ -292,23 +292,42 @@ unsafe fn process_path(hwnd: HWND) -> Option<Vec<u16>> {
     Some(path[..len as usize].to_vec())
 }
 
-/// アイコンを RGBA で読み出す。アルファを持たない古いアイコンはマスクから透明部分を作る。
-unsafe fn icon_rgba(icon: HICON) -> Option<Icon> {
+/// アイコン・カーソルを RGBA で読み出し、ホットスポットと返す。アルファを持たない古いものはマスクから透明部分を作る。
+unsafe fn icon_rgba(icon: HICON) -> Option<(Icon, (u32, u32))> {
     let mut info = ICONINFO::default();
     unsafe { GetIconInfo(icon, &mut info) }.ok()?;
+    let hotspot = (info.xHotspot, info.yHotspot);
     let read = |bitmap: HBITMAP| unsafe { bitmap_bgra(bitmap) };
     let color = (!info.hbmColor.is_invalid())
         .then(|| read(info.hbmColor))
         .flatten();
-    let mask = color
-        .as_ref()
-        .filter(|(_, _, px)| px.as_chunks::<4>().0.iter().all(|p| p[3] == 0))
-        .and_then(|_| read(info.hbmMask));
+    let mask = match &color {
+        Some((_, _, px)) if px.as_chunks::<4>().0.iter().any(|p| p[3] != 0) => None,
+        _ => read(info.hbmMask),
+    };
     unsafe {
         let _ = DeleteObject(info.hbmColor.into());
         let _ = DeleteObject(info.hbmMask.into());
     }
-    let (width, height, mut px) = color?;
+    let Some((width, height, mut px)) = color else {
+        // 白黒のカーソル: マスクの上半分が AND、下半分が XOR。
+        let (width, double, m) = mask?;
+        let n = (width * (double / 2)) as usize;
+        let rgba: Vec<u8> = (0..n)
+            .flat_map(|i| match (m[i * 4] != 0, m[(n + i) * 4] != 0) {
+                (true, false) => [0, 0, 0, 0],
+                (false, true) => [255; 4],
+                // ponytail: 反転（AND も XOR も 1）は下地が分からないので黒。目立たなければ縁取りを足す。
+                _ => [0, 0, 0, 255],
+            })
+            .collect();
+        let image = Icon {
+            width,
+            height: double / 2,
+            rgba: rgba.into(),
+        };
+        return Some((image, hotspot));
+    };
     for (i, p) in px.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         p.swap(0, 2);
         if let Some((_, _, m)) = &mask {
@@ -316,11 +335,14 @@ unsafe fn icon_rgba(icon: HICON) -> Option<Icon> {
             p[3] = if m[i * 4] == 0 { 255 } else { 0 };
         }
     }
-    Some(Icon {
-        width,
-        height,
-        rgba: px.into(),
-    })
+    Some((
+        Icon {
+            width,
+            height,
+            rgba: px.into(),
+        },
+        hotspot,
+    ))
 }
 
 /// ビットマップを上から下の並びの BGRA で読み出す（一辺 256 まで）。
@@ -483,10 +505,14 @@ pub(super) struct Capture {
     direct: IDirect3DDevice,
     size: SizeInt32,
     staging: Option<ID3D11Texture2D>,
+    /// 一時停止中に取っておいた最新の画像（[`Session::skip`]）。プールの一枚を占めるが、もう一枚に次が届く。
+    held: Option<::windows::Graphics::Capture::Direct3D11CaptureFrame>,
     ready: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
     source: Source,
     mouse: MouseDevice,
+    /// 最後に読んだカーソルのハンドルと絵（同じハンドルなら読み直さない）。
+    cursor: Option<(isize, Option<Arc<Cursor>>)>,
     _apartment: Apartment,
 }
 
@@ -585,6 +611,8 @@ impl Capture {
         // （上限の間隔を渡すと vsync の倍数へ切り上げられ、143Hz で 60 を頼むと 48 になる）。
         // Windows 11 24H2 より前には無い設定なので、失敗しても既定のまま続ける。
         let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000 });
+        // カーソルは映像に入れず、上の層がポインタとして描く（Windows 10 2004 より前は入ったまま）。
+        let _ = session.SetIsCursorCaptureEnabled(false);
         session.StartCapture()?;
         Ok(Self {
             session,
@@ -595,10 +623,12 @@ impl Capture {
             direct,
             size,
             staging: None,
+            held: None,
             ready,
             closed,
             source,
             mouse: MouseDevice::default(),
+            cursor: None,
             _apartment: apartment,
         })
     }
@@ -717,6 +747,23 @@ impl Capture {
                 .then(|| ::windows::Graphics::Capture::Direct3D11CaptureFrame::from_raw(frame)))
         }
     }
+
+    /// 届いている中で最新の画像（取っておいたものを含む）。古い方は閉じてプールへ返す。
+    fn latest(
+        &mut self,
+    ) -> Result<Option<::windows::Graphics::Capture::Direct3D11CaptureFrame>, Error> {
+        let mut latest = self.held.take();
+        if !self.ready.swap(false, Ordering::AcqRel) {
+            return Ok(latest);
+        }
+        // プールは二枚なので、低 FPS や一時停止で溜まったもう一枚があれば最新の方だけ残す。
+        while let Some(newer) = self.next_frame()? {
+            if let Some(older) = latest.replace(newer) {
+                older.Close()?;
+            }
+        }
+        Ok(latest)
+    }
 }
 
 impl Session for Capture {
@@ -747,25 +794,37 @@ impl Session for Capture {
                         && !self.minimized()))
     }
 
-    fn frame(&mut self) -> Result<Option<Frame>, Error> {
-        if !self.ready.swap(false, Ordering::AcqRel) {
-            return Ok(None);
+    fn cursor(&mut self) -> Option<Arc<Cursor>> {
+        let mut info = CURSORINFO {
+            cbSize: size_of::<CURSORINFO>() as u32,
+            ..Default::default()
+        };
+        unsafe { GetCursorInfo(&mut info) }.ok()?;
+        if info.flags.0 & CURSOR_SHOWING.0 == 0 || info.hCursor.is_invalid() {
+            return None;
         }
-        let Some(mut frame) = self.next_frame()? else {
+        let handle = info.hCursor.0 as isize;
+        if let Some((h, cursor)) = &self.cursor
+            && *h == handle
+        {
+            return cursor.clone();
+        }
+        // ponytail: アニメーションするカーソル（待ちの輪など）は最初のコマだけ。動かしたくなったら DrawIconEx でコマを描く。
+        let cursor = unsafe { icon_rgba(HICON(info.hCursor.0)) }
+            .map(|(image, hotspot)| Arc::new(Cursor { image, hotspot }));
+        self.cursor = Some((handle, cursor.clone()));
+        cursor
+    }
+
+    fn skip(&mut self) -> Result<(), Error> {
+        self.held = self.latest()?;
+        Ok(())
+    }
+
+    fn frame(&mut self) -> Result<Option<Frame>, Error> {
+        let Some(frame) = self.latest()? else {
             return Ok(None);
         };
-        // プールは二枚なので、低 FPS で溜まったもう一枚があれば最新の方だけコピーする。
-        match self.next_frame() {
-            Ok(Some(newer)) => {
-                frame.Close()?;
-                frame = newer;
-            }
-            Ok(None) => (),
-            Err(e) => {
-                let _ = frame.Close();
-                return Err(e);
-            }
-        }
         let captured = frame.SystemRelativeTime().map(captured_at);
         let result = (|| {
             let size = frame.ContentSize()?;
@@ -913,6 +972,14 @@ fn captured_at(time: TimeSpan) -> Instant {
     Instant::now().checked_sub(age).unwrap_or_else(Instant::now)
 }
 
+/// 仮想デスクトップ上の画素を `MOUSEEVENTF_ABSOLUTE` の 0..=65535 に写す。
+fn virtual_desk_point(point: POINT, left: i32, top: i32, width: i32, height: i32) -> (i32, i32) {
+    let scale = |v: i32, origin: i32, size: i32| {
+        ((v - origin) as i64 * 65535 / (size - 1).max(1) as i64).clamp(0, 65535) as i32
+    };
+    (scale(point.x, left, width), scale(point.y, top, height))
+}
+
 fn normalized_point(bounds: RECT, x: f32, y: f32) -> POINT {
     POINT {
         x: bounds.left + ((bounds.right - bounds.left - 1) as f32 * x).round() as i32,
@@ -925,22 +992,60 @@ struct MouseDevice {
     // shortcut: Windows のデスクトップはマウス 1 個として操作する。複数指のジェスチャーが必要になったらタッチ注入を併用する。
     pressed_by: Option<u32>,
     button: Option<Button>,
+    /// 1 ノッチに満たないホイール量の貯め（縦, 横）。
+    wheel: [f32; 2],
+}
+
+/// スティックの量を貯め、送れるだけのノッチ（`WHEEL_DELTA` の倍数）を返す。
+/// 120 未満の量を整数割りで捨てるアプリがある（コンソールのターミナル、Win32 のスライダーなど）。
+fn wheel_notches(acc: &mut f32, delta: f32) -> i32 {
+    const WHEEL_DELTA: f32 = 120.0;
+    let amount = delta * 40.0;
+    // 向きを変えたら、逆向きの貯めは待たせずに捨てる。
+    if *acc * amount < 0.0 {
+        *acc = 0.0;
+    }
+    *acc += amount;
+    let notches = (*acc / WHEEL_DELTA).trunc();
+    *acc -= notches * WHEEL_DELTA;
+    (notches * WHEEL_DELTA) as i32
 }
 impl MouseDevice {
-    fn button(flag: MOUSE_EVENT_FLAGS) -> Result<(), Error> {
+    fn input(mi: MOUSEINPUT) -> Result<(), Error> {
         let input = INPUT {
             r#type: INPUT_MOUSE,
-            Anonymous: INPUT_0 {
-                mi: MOUSEINPUT {
-                    dwFlags: flag,
-                    ..Default::default()
-                },
-            },
+            Anonymous: INPUT_0 { mi },
         };
         if unsafe { SendInput(&[input], size_of::<INPUT>() as i32) } != 1 {
             return Err(Error("desktop mouse input was rejected by Windows".into()));
         }
         Ok(())
+    }
+
+    fn button(flag: MOUSE_EVENT_FLAGS) -> Result<(), Error> {
+        Self::input(MOUSEINPUT {
+            dwFlags: flag,
+            ..Default::default()
+        })
+    }
+
+    /// 移動も入力として注入する。`SetCursorPos` だけでは押下中の移動を受け取らないアプリがある（ターミナルの範囲選択など）。
+    fn move_to(point: POINT) -> Result<(), Error> {
+        let (left, top, width, height) = unsafe {
+            (
+                GetSystemMetrics(SM_XVIRTUALSCREEN),
+                GetSystemMetrics(SM_YVIRTUALSCREEN),
+                GetSystemMetrics(SM_CXVIRTUALSCREEN),
+                GetSystemMetrics(SM_CYVIRTUALSCREEN),
+            )
+        };
+        let (dx, dy) = virtual_desk_point(point, left, top, width, height);
+        Self::input(MOUSEINPUT {
+            dx,
+            dy,
+            dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
+            ..Default::default()
+        })
     }
 
     fn flags(button: Button) -> (MOUSE_EVENT_FLAGS, MOUSE_EVENT_FLAGS) {
@@ -960,17 +1065,17 @@ impl MouseDevice {
     ) -> Result<(), Error> {
         match phase {
             TouchPhase::Move if self.pressed_by.is_none() || self.pressed_by == Some(id) => {
-                unsafe { SetCursorPos(point.x, point.y)? };
+                Self::move_to(point)?;
             }
             TouchPhase::Down if self.pressed_by.is_none() => {
-                unsafe { SetCursorPos(point.x, point.y)? };
+                Self::move_to(point)?;
                 Self::button(Self::flags(button).0)?;
                 self.pressed_by = Some(id);
                 self.button = Some(button);
             }
             TouchPhase::Up | TouchPhase::Cancel if self.pressed_by == Some(id) => {
                 if phase == TouchPhase::Up {
-                    unsafe { SetCursorPos(point.x, point.y)? };
+                    Self::move_to(point)?;
                 }
                 Self::button(Self::flags(self.button.unwrap_or(Button::Left)).1)?;
                 self.pressed_by = None;
@@ -981,10 +1086,10 @@ impl MouseDevice {
         Ok(())
     }
 
-    fn scroll(&self, point: POINT, dx: f32, dy: f32) -> Result<(), Error> {
-        unsafe { SetCursorPos(point.x, point.y)? };
-        for (flag, delta) in [(MOUSEEVENTF_WHEEL, dy), (MOUSEEVENTF_HWHEEL, dx)] {
-            let amount = (delta * 40.0).round() as i32;
+    fn scroll(&mut self, point: POINT, dx: f32, dy: f32) -> Result<(), Error> {
+        Self::move_to(point)?;
+        for (i, flag, delta) in [(0, MOUSEEVENTF_WHEEL, dy), (1, MOUSEEVENTF_HWHEEL, dx)] {
+            let amount = wheel_notches(&mut self.wheel[i], delta);
             if amount == 0 {
                 continue;
             }
@@ -1019,6 +1124,22 @@ impl Drop for MouseDevice {
 mod tests {
     use super::*;
     #[test]
+    fn wheel_sends_whole_notches_only() {
+        let mut acc = 0.0;
+        let sent: Vec<_> = (0..6).map(|_| wheel_notches(&mut acc, 1.0)).collect();
+        assert_eq!(sent, [0, 0, 120, 0, 0, 120]);
+        // 浅く倒しても、貯まれば届く。
+        let mut acc = 0.0;
+        assert_eq!((0..12).map(|_| wheel_notches(&mut acc, 0.25)).sum::<i32>(), 120);
+        // 逆へ倒したら前の貯めは残さない。
+        let mut acc = 0.0;
+        wheel_notches(&mut acc, 1.0);
+        wheel_notches(&mut acc, 1.0);
+        assert_eq!(wheel_notches(&mut acc, -1.0), 0);
+        assert_eq!(acc, -40.0);
+    }
+
+    #[test]
     fn maps_negative_monitor_origin_and_clamps_to_last_pixel() {
         let bounds = RECT {
             left: -1920,
@@ -1031,6 +1152,14 @@ mod tests {
             POINT { x: -1920, y: -100 }
         );
         assert_eq!(normalized_point(bounds, 1.0, 1.0), POINT { x: -1, y: 979 });
+    }
+
+    #[test]
+    fn maps_pixels_onto_absolute_virtual_desk() {
+        let at = |x, y| virtual_desk_point(POINT { x, y }, -1920, -100, 3840, 1180);
+        assert_eq!(at(-1920, -100), (0, 0));
+        assert_eq!(at(1919, 1079), (65535, 65535));
+        assert_eq!(at(-1, 0).0, 32759);
     }
 
     #[test]

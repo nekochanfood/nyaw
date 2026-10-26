@@ -16,7 +16,7 @@ pub use subsystems::{audio, desktop, rendering, vr};
 use std::time::{Duration, Instant};
 use subsystems::os;
 
-pub use config::{Config, Language, LodQuality, PointerMode, ThemeMode};
+pub use config::{Config, DominantHand, Language, LodQuality, PointerMode, ThemeMode};
 pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use subsystems::ControllerState;
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
@@ -40,6 +40,8 @@ pub enum PanelCommand {
     Lock(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
+    /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
+    PointerMode(PointerMode),
     /// 再生中のメディアを操作する（再生・一時停止・曲送り・シーク・アプリを前に出す。[`Kernel::now_playing`]）。
     Media(subsystems::media::Command),
     /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。`Overlay::set_grab_anchor`）。
@@ -123,6 +125,7 @@ pub struct Settings {
     pub pointer_release_deg: f32,
     pub laser_length: f32,
     pub hand: subsystems::input::HandTuning,
+    pub dominant_hand: DominantHand,
 }
 
 /// パネルの状態。ビューの表示用。全体の設定は [`Settings`]。
@@ -184,8 +187,12 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     point_slots: std::collections::HashMap<PanelId, u64>,
     /// 閉じるときに鳴らす音（[`PanelCommand::CloseSound`]）。
     close_sounds: std::collections::HashMap<PanelId, audio::Sound>,
+    /// 全体の設定によらないポインタの方式（[`PanelCommand::PointerMode`]）。
+    pointer_modes: std::collections::HashMap<PanelId, PointerMode>,
     /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
     shortcut: DoublePress,
+    /// ランタイムが数えた二回押しの合計（[`vr::DOUBLE_PRESS_INPUT`]）。
+    runtime_double_press: u32,
     /// 骨格だけの手のショートカット（親指と小指）の長押し。二回押しと同じく [`PanelStatus::double_press`] に数える。
     hand_shortcut: LongPress,
     /// OS の前面のアプリのキーボードの監視と入力（[`Kernel::os_keyboard`]。使い始めるまで起こさない）。
@@ -339,7 +346,9 @@ impl<B: VrBackend> Kernel<B> {
             speakers: Default::default(),
             point_slots: Default::default(),
             close_sounds: Default::default(),
+            pointer_modes: Default::default(),
             shortcut: DoublePress::default(),
+            runtime_double_press: 0,
             hand_shortcut: LongPress::default(),
             os_keyboard: None,
             pending_os_input: Vec::new(),
@@ -357,6 +366,14 @@ impl<B: VrBackend> Kernel<B> {
         self.pointer_mode
     }
 
+    /// `panel` でのレーザーのエミュレート方式（[`PanelCommand::PointerMode`] で決めていなければ全体の設定）。
+    pub fn panel_pointer_mode(&self, panel: PanelId) -> PointerMode {
+        self.pointer_modes
+            .get(&panel)
+            .copied()
+            .unwrap_or(self.pointer_mode)
+    }
+
     pub fn settings(&self) -> Settings {
         Settings {
             pointer_mode: self.pointer_mode,
@@ -366,6 +383,7 @@ impl<B: VrBackend> Kernel<B> {
             pointer_release_deg: self.overlay.pointer_release(),
             laser_length: self.overlay.laser_length(),
             hand: self.subsystems.hand,
+            dominant_hand: self.config.dominant_hand,
         }
     }
 
@@ -509,6 +527,7 @@ impl<B: VrBackend> Kernel<B> {
                 .any(|c| c.shortcut && c.facing.is_some() == hand)
         };
         self.shortcut.update(held(false), polled);
+        self.runtime_double_press += frame.controllers.iter().filter(|c| c.double_press).count() as u32;
         self.hand_shortcut.update(held(true), polled);
         self.batteries.clone_from(&frame.batteries);
         let mut events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
@@ -628,6 +647,9 @@ impl<B: VrBackend> Kernel<B> {
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
+            PanelCommand::PointerMode(mode) => {
+                self.pointer_modes.insert(panel, mode);
+            }
             PanelCommand::Media(command) => {
                 if let Some(media) = &self.media {
                     media.send(command);
@@ -701,7 +723,7 @@ impl<B: VrBackend> Kernel<B> {
             animated: p.animated,
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
-            double_press: self.shortcut.count + self.hand_shortcut.count,
+            double_press: self.shortcut.count + self.hand_shortcut.count + self.runtime_double_press,
             outside_press: self.overlay.outside_presses(),
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,
@@ -811,6 +833,23 @@ mod tests {
             x(&mut k, held);
         }
         assert_eq!(k.status(p).double_press, 1);
+    }
+
+    /// ランタイムが数えた二回押し（SteamVR のダブルタップ）は、押下の間隔を見ずにそのまま一回と数える。
+    #[test]
+    fn runtime_double_press_counts_once_per_pulse() {
+        let (mut k, p) = kernel();
+        for pulse in [1.0, 1.0, 0.0] {
+            k.subsystems.backend.frame.controllers = vec![vr::RawController {
+                hand: Hand::Left,
+                profile: "valve/index_controller".into(),
+                aim: Pose::IDENTITY,
+                inputs: vec![(vr::DOUBLE_PRESS_INPUT.into(), pulse)],
+            }];
+            k.tick();
+        }
+        // 1 フレームだけ立つ入力なので、実際には 2 回目の 1.0 は別のダブルタップ。
+        assert_eq!(k.status(p).double_press, 2);
     }
 
     #[cfg(feature = "novr")]
@@ -1011,6 +1050,11 @@ mod tests {
             PointerMode::Touch,
             "defaults to touch"
         );
+        // パネルごとに決めた方式は、全体の設定より優先する。
+        let (mut k, p) = kernel();
+        k.apply(p, PanelCommand::PointerMode(PointerMode::Mouse));
+        assert_eq!(k.panel_pointer_mode(p), PointerMode::Mouse);
+        assert_eq!(k.pointer_mode(), PointerMode::Touch);
     }
 
     #[test]

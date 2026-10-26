@@ -36,8 +36,11 @@ pub(super) struct HandActions {
     pub menu: bool,
     pub middle_touch: bool,
     pub right_touch: bool,
+    /// ショートカットのダブルタップ（バインドが数える）。1 フレームだけ真。
     pub shortcut: bool,
     pub scroll: Vec2,
+    /// 掴んでいるパネルの拡大縮小（-1..1）。既定のバインドは無く、SteamVR の画面で利用者が割り当てる。
+    pub resize: f32,
 }
 
 pub(super) struct Input {
@@ -51,6 +54,7 @@ pub(super) struct Input {
     right_touch: u64,
     shortcut: u64,
     scroll: u64,
+    resize: u64,
     /// 手ごとの骨格（スケルタル入力）のアクション。
     skeletons: [(Hand, u64); 2],
     /// 手ごとの入力元（`/user/hand/left` 等）のハンドル。
@@ -102,6 +106,7 @@ impl Input {
             right_touch: action("/actions/nyaw/in/right_touch")?,
             shortcut: action("/actions/nyaw/in/shortcut")?,
             scroll: action("/actions/nyaw/in/scroll")?,
+            resize: action("/actions/nyaw/in/resize")?,
             skeletons: [
                 (Hand::Left, action("/actions/nyaw/in/skeleton_left")?),
                 (Hand::Right, action("/actions/nyaw/in/skeleton_right")?),
@@ -260,7 +265,8 @@ impl Input {
 
     fn actions(&self, source: u64) -> HandActions {
         let t = self.t();
-        let digital = |action| {
+        // `pulse` は押し続けても状態が変わった 1 フレームだけ真（ダブルタップのバインドの出力）。
+        let digital = |action, pulse: bool| {
             let mut d: sys::InputDigitalActionData_t =
                 unsafe { MaybeUninit::zeroed().assume_init() };
             let e = unsafe {
@@ -271,7 +277,10 @@ impl Input {
                     source,
                 )
             };
-            e == sys::EVRInputError_VRInputError_None && d.bActive && d.bState
+            e == sys::EVRInputError_VRInputError_None
+                && d.bActive
+                && d.bState
+                && (!pulse || d.bChanged)
         };
         let mut a: sys::InputAnalogActionData_t = unsafe { MaybeUninit::zeroed().assume_init() };
         let e = unsafe {
@@ -287,14 +296,29 @@ impl Input {
         } else {
             Vec2::ZERO
         };
+        let mut r: sys::InputAnalogActionData_t = unsafe { MaybeUninit::zeroed().assume_init() };
+        let e = unsafe {
+            f(t.GetAnalogActionData)(
+                self.resize,
+                &mut r,
+                size_of::<sys::InputAnalogActionData_t>() as u32,
+                source,
+            )
+        };
+        let resize = if e == sys::EVRInputError_VRInputError_None && r.bActive {
+            r.x
+        } else {
+            0.0
+        };
         HandActions {
-            select: digital(self.select),
-            grab: digital(self.grab),
-            menu: digital(self.menu),
-            middle_touch: digital(self.middle_touch),
-            right_touch: digital(self.right_touch),
-            shortcut: digital(self.shortcut),
+            select: digital(self.select, false),
+            grab: digital(self.grab, false),
+            menu: digital(self.menu, false),
+            middle_touch: digital(self.middle_touch, false),
+            right_touch: digital(self.right_touch, false),
+            shortcut: digital(self.shortcut, true),
             scroll,
+            resize,
         }
     }
 }
@@ -303,22 +327,60 @@ impl Input {
 mod tests {
     use super::*;
 
+    /// JSON の中の `"output"` を全部集める（sources・poses・skeleton のどこにあっても）。
+    fn outputs(v: &serde_json::Value, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                for (k, x) in m {
+                    match x.as_str() {
+                        Some(s) if k == "output" => out.push(s.to_owned()),
+                        _ => outputs(x, out),
+                    }
+                }
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| outputs(x, out)),
+            _ => {}
+        }
+    }
+
+    fn json(body: &str) -> serde_json::Value {
+        serde_json::from_str(body).expect("valid JSON")
+    }
+
     /// 既定バインディングは manifest に載っていて、出力先はどれも manifest のアクション。
+    /// 利用者が割り当てる `resize` 以外の入力アクションは、どの機種でも最低限バインドされている。
     #[test]
     fn bindings_match_manifest() {
-        let manifest = FILES[0].1;
+        let manifest = json(FILES[0].1);
+        let names: Vec<&str> = manifest["actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["name"].as_str().unwrap())
+            .collect();
+        let listed = manifest["default_bindings"].to_string();
         for (name, body) in &FILES[1..] {
-            assert!(
-                manifest.contains(name),
-                "{name} missing from default_bindings"
-            );
-            for out in body.split("\"output\": \"").skip(1) {
-                let action = &out[..out.find('"').unwrap()];
-                assert!(
-                    manifest.contains(&format!("\"name\": \"{action}\"")),
-                    "{name}: {action}"
-                );
+            assert!(listed.contains(name), "{name} missing from default_bindings");
+            let mut bound = Vec::new();
+            outputs(&json(body), &mut bound);
+            for out in &bound {
+                assert!(names.contains(&out.as_str()), "{name}: {out}");
             }
+            for need in ["aim", "select", "grab", "menu", "scroll"] {
+                let full = format!("/actions/nyaw/in/{need}");
+                assert!(bound.contains(&full), "{name}: {need} unbound");
+            }
+        }
+    }
+
+    /// SteamVR のバインド画面に出る名前が、どのアクションにもある。
+    #[test]
+    fn every_action_is_localized() {
+        let manifest = json(FILES[0].1);
+        let loc = &manifest["localization"][0];
+        for a in manifest["actions"].as_array().unwrap() {
+            let n = a["name"].as_str().unwrap();
+            assert!(loc[n].is_string(), "{n} has no label");
         }
     }
 }

@@ -31,6 +31,8 @@ pub struct ControllerState {
     pub scroll: Vec2,
     /// 掴んでいるパネルの拡大縮小（-1..1、+ で大きく）。機種の割り当ては無く、[`vr::RESIZE_INPUT`] をそのまま読む。
     pub resize: f32,
+    /// ランタイムが数えたショートカットの二回押し（[`vr::DOUBLE_PRESS_INPUT`]。SteamVR）。1 フレームだけ真。
+    pub double_press: bool,
     /// 顔に向けているのが手のひらか手の甲か。骨格だけの手（[`HAND_PROFILE`]）のときだけ分かる。
     pub facing: Option<Facing>,
     /// 骨格だけの手の判定に使った値（確認用）。コントローラでは `None`。
@@ -455,6 +457,7 @@ pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerSta
         scroll: p.scroll.map_or(Vec2::ZERO, |(x, y)| {
             Vec2::new(raw.input(x).unwrap_or(0.0), raw.input(y).unwrap_or(0.0))
         }),
+        double_press: raw.input(vr::DOUBLE_PRESS_INPUT).unwrap_or(0.0) > 0.5,
         resize: raw.input(vr::RESIZE_INPUT).unwrap_or(0.0).clamp(-1.0, 1.0),
         metrics: raw.input(PALM_TOWARD_INPUT).map(|palm_toward| HandMetrics {
             pinch: raw.input("pinch_ext/value").unwrap_or(0.0),
@@ -533,6 +536,14 @@ mod tests {
         let s = map(&raw("valve/index_controller", &[(x, 0.5), (y, -1.0)]), None).scroll;
         assert_eq!(s, Vec2::new(0.5, -1.0));
         assert_eq!(scroll_source("khr/simple_controller"), None);
+    }
+
+    /// ランタイムが数えたダブルタップは、手を問わずそのまま伝わる。
+    #[test]
+    fn runtime_double_press_passes_through() {
+        let r = raw("valve/index_controller", &[(vr::DOUBLE_PRESS_INPUT, 1.0)]);
+        assert!(map(&r, None).double_press);
+        assert!(!map(&raw("valve/index_controller", &[]), None).double_press);
     }
 
     /// X ボタンは左手だけ。右手の同じボタン（Index の A）は数えない。

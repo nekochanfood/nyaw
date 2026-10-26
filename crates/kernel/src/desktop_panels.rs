@@ -8,6 +8,9 @@ pub(super) struct DesktopPanel {
     pub status: Status,
     contacts: [Option<Vec2>; 2],
     hovered: [Option<Vec2>; 2],
+    /// OS のマウスを動かす手。両手で取り合わないよう、もう片方の手の入力は送らない。既定は利き手で、もう片方の手で
+    /// 一度押すとその手に替わる（その押下は送らない）。
+    active: Hand,
     original_resolution: (u32, u32),
     meter: Meter,
     pub stats: Option<DesktopStats>,
@@ -117,6 +120,7 @@ impl<B: VrBackend> Kernel<B> {
                 status: Status::Starting,
                 contacts: [None; 2],
                 hovered: [None; 2],
+                active: self.config.dominant_hand.hand(),
                 original_resolution,
                 meter: Meter::new(Instant::now()),
                 stats: None,
@@ -162,6 +166,7 @@ impl<B: VrBackend> Kernel<B> {
                             status: Status::Failed(error),
                             contacts: [None; 2],
                             hovered: [None; 2],
+                            active: self.config.dominant_hand.hand(),
                             original_resolution,
                             meter: Meter::new(Instant::now()),
                             stats: None,
@@ -171,6 +176,7 @@ impl<B: VrBackend> Kernel<B> {
             }
         } else if let Some(p) = self.desktop_panels.remove(&panel) {
             self.overlay.set_panel_capture(panel, false);
+            self.overlay.set_os_cursor(panel, None);
             self.overlay
                 .set_content_resolution(panel, p.original_resolution);
         }
@@ -211,6 +217,12 @@ impl<B: VrBackend> Kernel<B> {
     pub(super) fn poll_desktop(&mut self) {
         self.desktop_panels
             .retain(|id, _| !self.overlay.panel(*id).closed);
+        // 見えていない配信は取得を止める。見え直すと止めている間の最新の画像から再開する。
+        for (&id, panel) in &self.desktop_panels {
+            if let Some(stream) = &panel.stream {
+                stream.set_paused(!self.panel_seen(id));
+            }
+        }
         let now = Instant::now();
         for (&id, panel) in &mut self.desktop_panels {
             if panel.stream.is_some() && panel.status == Status::Streaming {
@@ -257,6 +269,16 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay.set_panel_capture(id, false);
             }
         }
+        // OS のカーソルは映像に入れず、指している手のカーソルを差し替えて描く。
+        for (&id, panel) in &self.desktop_panels {
+            let cursor = panel
+                .stream
+                .as_ref()
+                .filter(|_| panel.status == Status::Streaming)
+                .and_then(Stream::cursor)
+                .map(|c| (panel.active, c));
+            self.overlay.set_os_cursor(id, cursor);
+        }
     }
 
     pub(super) fn route_desktop(&mut self, events: &mut Vec<UiEvent>) {
@@ -273,11 +295,34 @@ impl<B: VrBackend> Kernel<B> {
             if panel.status != Status::Streaming {
                 return true;
             }
-            let id = match event.hand {
+            let index = |hand| match hand {
                 Hand::Left => 0,
                 Hand::Right => 1,
             };
+            let id = index(event.hand);
             let resolution = self.overlay.panel(event.panel).resolution;
+            if event.hand != panel.active {
+                // 操作していない手は送らない。押したらその手に替え、その押下（と離す）は送らない。
+                if matches!(
+                    event.event,
+                    PointerEvent::Down { .. } | PointerEvent::DownButton { .. }
+                ) {
+                    let old = index(panel.active);
+                    panel.active = event.hand;
+                    panel.hovered[old] = None;
+                    if let Some(pos) = panel.contacts[old].take()
+                        && let Err(error) = stream.touch(Touch {
+                            id: old as u32,
+                            phase: TouchPhase::Cancel,
+                            x: pos.x / resolution.0 as f32,
+                            y: pos.y / resolution.1 as f32,
+                        })
+                    {
+                        logger::warn!("desktop input failed", panel = event.panel, error = error);
+                    }
+                }
+                return false;
+            }
             // どちらの手も乗っていなかったパネルにポインタが入ったら、そのウィンドウを前に出す（配信元を操作できるように）。
             if matches!(
                 event.event,
@@ -540,48 +585,110 @@ mod tests {
         assert!(control.stopped());
     }
 
+    /// OS のマウスは利き手（既定は右）だけが動かす。もう片方の手は一度押すと操作する手に替わり、その押下と離すは送らない
+    /// （前の手の接点は取り消す）。
     #[test]
-    fn both_hands_are_independent_contacts_and_grabbing_cancels_them() {
-        let (mut kernel, _, control) = setup();
+    fn off_hand_takes_over_with_one_unsent_press() {
+        let (mut kernel, panel, control) = setup();
         hand(&mut kernel, 0.0, true);
         let mut left = kernel.subsystems.backend.frame.controllers[0].clone();
         left.hand = Hand::Left;
+        left.inputs.clear();
         kernel.subsystems.backend.frame.controllers.push(left);
         kernel.tick();
-        let touches = control.touches();
+        assert!(control.touches().iter().all(|t| t.id == 1));
+        kernel.subsystems.backend.frame.controllers[1].inputs = vec![("select/click".into(), 1.0)];
+        kernel.tick();
+        let pressed = |touches: Vec<Touch>| -> Vec<Touch> {
+            touches
+                .into_iter()
+                .filter(|t| t.phase != TouchPhase::Move)
+                .collect()
+        };
         assert_eq!(
-            touches
-                .iter()
-                .filter(|t| t.phase == TouchPhase::Down)
-                .count(),
-            2
+            pressed(control.touches()),
+            [Touch {
+                id: 1,
+                phase: TouchPhase::Cancel,
+                x: 0.5,
+                y: 0.5
+            }]
         );
+        let set = |kernel: &mut Kernel<MockBackend>, i: usize, on: bool| {
+            kernel.subsystems.backend.frame.controllers[i].inputs =
+                vec![("select/click".into(), if on { 1.0 } else { 0.0 })];
+            kernel.tick();
+        };
+        set(&mut kernel, 0, false);
+        set(&mut kernel, 1, false);
+        assert!(pressed(control.touches()).is_empty(), "右の離す・左の離すは送らない");
+        set(&mut kernel, 1, true);
         assert!(
-            touches
+            control
+                .touches()
                 .iter()
                 .any(|t| t.id == 0 && t.phase == TouchPhase::Down)
         );
-        assert!(
-            touches
-                .iter()
-                .any(|t| t.id == 1 && t.phase == TouchPhase::Down)
+        // OS のカーソルも操作している手（左）に出す。
+        let cursor = desktop::Cursor {
+            image: desktop::Icon {
+                width: 1,
+                height: 1,
+                rgba: [255; 4].into(),
+            },
+            hotspot: (0, 0),
+        };
+        control.set_cursor(Some(cursor));
+        kernel.tick();
+        assert_eq!(
+            kernel.panel(panel).os_cursor.as_ref().map(|(h, _)| *h),
+            Some(Hand::Left)
         );
+    }
+
+    /// 掴むと押していた接点を取り消す。
+    #[test]
+    fn grabbing_cancels_the_contact() {
+        let (mut kernel, _, control) = setup();
+        hand(&mut kernel, 0.0, true);
+        kernel.tick();
+        control.touches();
         // simple_controller の掴み入力は無いため、ここだけ Index の共通アクション変換を通す。
         kernel.subsystems.backend.frame.controllers[0].profile = "valve/index_controller".into();
         kernel.subsystems.backend.frame.controllers[0].inputs =
             vec![("trigger/value".into(), 1.0), ("squeeze/value".into(), 1.0)];
         kernel.tick();
-        let touches = control.touches();
         assert!(
-            touches
+            control
+                .touches()
                 .iter()
                 .any(|t| t.id == 1 && t.phase == TouchPhase::Cancel)
         );
-        assert!(
-            touches
-                .iter()
-                .all(|t| t.id != 0 || t.phase == TouchPhase::Move)
+    }
+
+    /// 配信中は OS のカーソルをパネルに渡し、止めたら外す。
+    #[test]
+    fn os_cursor_follows_the_stream() {
+        let (mut kernel, panel, control) = setup();
+        let cursor = desktop::Cursor {
+            image: desktop::Icon {
+                width: 1,
+                height: 1,
+                rgba: [255; 4].into(),
+            },
+            hotspot: (0, 0),
+        };
+        control.set_cursor(Some(cursor.clone()));
+        kernel.tick();
+        assert_eq!(
+            kernel.panel(panel).os_cursor.as_ref().map(|(h, c)| (*h, &**c)),
+            Some((Hand::Right, &cursor))
         );
+        kernel.apply(
+            panel,
+            PanelCommand::Stream(None, desktop::DEFAULT_FRAME_RATE),
+        );
+        assert_eq!(kernel.panel(panel).os_cursor, None);
     }
 
     #[test]
@@ -629,6 +736,18 @@ mod tests {
         );
         kernel.apply(panel, PanelCommand::FocusSource);
         assert_eq!(control.focuses(), 0);
+    }
+
+    #[test]
+    fn hidden_panel_pauses_its_stream() {
+        let (mut kernel, panel, control) = setup();
+        assert!(!control.paused());
+        kernel.apply(panel, PanelCommand::Hide(true));
+        kernel.tick();
+        assert!(control.paused());
+        kernel.apply(panel, PanelCommand::Hide(false));
+        kernel.tick();
+        assert!(!control.paused());
     }
 
     #[test]
