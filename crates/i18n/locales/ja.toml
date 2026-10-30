@@ -302,6 +302,7 @@ sample_button = "変更を保存"
 [settings]
 title = "設定"
 language = "言語"
+block_input = "ゲーム入力を止める"
 theme = "テーマ"
 smoothing = "手ブレ抑え"
 release = "抑えを緩める角度"
