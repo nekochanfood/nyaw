@@ -1150,6 +1150,20 @@ pub fn select(
     b
 }
 
+/// オン / オフの行: 一覧の行（[`menu_item`]）の右に [`switch`]（`{id}-switch`）。行のどこを押しても切り替える
+/// （押したときの処理は呼び出し側が `on_click` で足す）。
+pub fn switch_item(
+    theme: &Theme,
+    id: &'static str,
+    glyph: &'static crate::Icon,
+    label: impl Into<SharedString>,
+    on: bool,
+) -> Button {
+    let mut b = menu_item(theme, id, glyph, label);
+    b.base = b.base.child(switch(theme, format!("{id}-switch"), on));
+    b
+}
+
 /// 選択肢のポップオーバーが開くときに下りてくる距離（px）。
 pub const SELECT_POPOVER_RISE: f32 = spacing::SM;
 

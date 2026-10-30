@@ -1456,10 +1456,11 @@ impl Settings {
     fn category_page(&self, theme: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
         let now = settings(cx);
         match self.category {
-            // 一般: 言語。言語の名前はその言語自身で出す（どの言語で表示していても読める）。
+            // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）と、ダッシュボード中のゲーム入力の遮断。
             0 => vec![components::list(
                 theme,
-                [self.select(
+                [
+                    self.select(
                     theme,
                     window,
                     cx,
@@ -1477,7 +1478,16 @@ impl Settings {
                         })
                         .to_vec(),
                     |l| Setting::Language(language(l)),
-                )],
+                    ),
+                    components::switch_item(
+                        theme,
+                        "setting-block-input",
+                        &design::icons::PROHIBIT,
+                        i18n::t(cx, "settings.block_input"),
+                        now.block_input,
+                    )
+                    .on_click(change(Setting::BlockInput(!now.block_input))),
+                ],
             )],
             // 外観: テーマ。
             1 => vec![components::list(

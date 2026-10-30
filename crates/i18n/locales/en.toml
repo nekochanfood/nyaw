@@ -302,6 +302,7 @@ sample_button = "Save changes"
 [settings]
 title = "Settings"
 language = "Language"
+block_input = "Block game input"
 theme = "Theme"
 smoothing = "Smoothing"
 release = "Release angle"

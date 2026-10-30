@@ -119,6 +119,8 @@ pub enum Setting {
     MirrorFrameRate(u32),
     /// 仮想キーボードの種類（`keyboard`）。
     Keyboard(subsystems::keyboard::KeyboardType),
+    /// ダッシュボードが出ている間、ゲームへの入力を止めるか（`block_input`）。
+    BlockInput(bool),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -134,6 +136,7 @@ pub struct Settings {
     pub dominant_hand: DominantHand,
     pub mirror_frame_rate: u32,
     pub keyboard: subsystems::keyboard::KeyboardType,
+    pub block_input: bool,
 }
 
 impl Default for Settings {
@@ -149,6 +152,7 @@ impl Default for Settings {
             dominant_hand: Default::default(),
             mirror_frame_rate: desktop::DEFAULT_FRAME_RATE,
             keyboard: Default::default(),
+            block_input: true,
         }
     }
 }
@@ -354,6 +358,7 @@ impl<B: VrBackend> Kernel<B> {
         if let Some(l) = config.laser_length {
             overlay.set_laser_length(l);
         }
+        overlay.set_block_input(config.block_input.unwrap_or(true));
         let pointer_mode = config.pointer_mode.unwrap_or_default();
         // タッチではスライドがパネルからはみ出しても続くよう、押している間はポインタを掴んでおく。
         overlay.set_capture(pointer_mode == PointerMode::Touch);
@@ -411,6 +416,7 @@ impl<B: VrBackend> Kernel<B> {
             dominant_hand: self.config.dominant_hand,
             mirror_frame_rate: self.mirror_frame_rate(),
             keyboard: self.config.keyboard,
+            block_input: self.overlay.block_input(),
         }
     }
 
@@ -485,6 +491,11 @@ impl<B: VrBackend> Kernel<B> {
             Setting::Keyboard(k) => {
                 self.config.keyboard = k;
                 ("keyboard", config::value(k))
+            }
+            Setting::BlockInput(b) => {
+                self.overlay.set_block_input(b);
+                self.config.block_input = Some(b);
+                ("block_input", config::value(b))
             }
         };
         if let Some(path) = &self.config_path

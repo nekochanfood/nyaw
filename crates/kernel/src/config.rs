@@ -135,6 +135,8 @@ pub struct Config {
     pub mirror_frame_rate: Option<u32>,
     /// 仮想キーボードの種類（`full` / `tenkeyless` / `compact`）。省略で `full`。
     pub keyboard: subsystems::keyboard::KeyboardType,
+    /// ダッシュボードが出ている間、ゲームへの入力を止めるか。省略で `true`。画面での切り替えはここへ書き戻される。
+    pub block_input: Option<bool>,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -320,6 +322,8 @@ emulator = false
         let c = parse("mirror_frame_rate = 30\nkeyboard = \"tenkeyless\"").unwrap();
         assert_eq!((c.mirror_frame_rate, c.keyboard), (Some(30), KeyboardType::Tenkeyless));
         assert!(parse("keyboard = \"split\"").is_err());
+        assert_eq!(parse("").unwrap().block_input, None);
+        assert_eq!(parse("block_input = false").unwrap().block_input, Some(false));
     }
 
     #[test]

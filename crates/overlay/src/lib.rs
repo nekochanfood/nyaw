@@ -354,6 +354,8 @@ pub struct Overlay {
     laser_length: Option<f32>,
     /// 手ブレ抑えを緩める角度（度。[`POINTER_RELEASE_DEG`]）。`None` で既定値。
     release_deg: Option<f32>,
+    /// 暗転中もゲームへの入力を通す（[`Overlay::set_block_input`]）。既定（`false`）は止める。
+    pass_input: bool,
     /// この tick で手ブレ抑えが効いている（ポインタを手に追従させず、空間に置く）。
     steadied: bool,
     animations: HashMap<PanelId, (Animation, Instant)>,
@@ -383,6 +385,8 @@ struct Veil {
     opacity: f32,
     to: f32,
     fade: Option<(Animation, Instant)>,
+    /// ゲームへの入力を今止めている（バックエンドへ最後に伝えた値）。
+    blocked: bool,
 }
 
 /// 1 tick の経過の下限・上限（秒）。テストのように続けて tick しても 1 フレーム分は進め、止まった後に飛ばない。
@@ -464,6 +468,15 @@ impl Overlay {
     /// 今の手ブレ抑えの強さ（設定していなければ既定値 [`POINTER_SMOOTHING`]）。
     pub fn pointer_smoothing(&self) -> f32 {
         self.smoothing.unwrap_or(POINTER_SMOOTHING)
+    }
+
+    /// 暗転している間（ダッシュボードが出ている間）、ゲームへの入力を止めるか。次の tick から効く。
+    pub fn set_block_input(&mut self, block: bool) {
+        self.pass_input = !block;
+    }
+
+    pub fn block_input(&self) -> bool {
+        !self.pass_input
     }
 
     /// 手ブレ抑えを緩める角度（度。[`POINTER_RELEASE_DEG_MIN`] 〜 [`POINTER_RELEASE_DEG_MAX`]）。
@@ -1094,11 +1107,15 @@ impl Overlay {
             p.veil && !p.closed && !p.hidden && p.surface.has_texture()
         });
         let to = if on { VEIL } else { 0.0 };
+        // 暗転している間（ダッシュボードが出ている間）は、ゲームへの入力も止める（設定で通せる）。
+        let block = on && !self.pass_input;
         let v = &mut self.veil;
+        if v.blocked != block {
+            v.blocked = block;
+            vr.block_app_input(block);
+        }
         if v.to != to {
             v.to = to;
-            // 暗転している間（ダッシュボードが出ている間）は、ゲームへの入力も止める。
-            vr.block_app_input(on);
             if on && v.surface.is_none() {
                 match Surface::new(vr, "nyaw.veil", VEIL_SIZE, self.hmd) {
                     Ok(mut s) => {
@@ -1952,7 +1969,7 @@ mod tests {
 
         ov.close(&mut vr.backend, 0);
         assert!(ov.panel(0).closed && vr.backend.overlays[0].visible);
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert!((vr.backend.overlays[0].width_m - 0.96875).abs() < 1e-6);
         assert_eq!(
             vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
@@ -1960,7 +1977,7 @@ mod tests {
         );
         // 閉じた UI から遅れて届く描画は、アウトの絵を上書きしない。
         ov.submit(&mut vr.backend, 0, 1, 1, &[255; 4]);
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert!(!vr.backend.overlays[0].visible);
         assert_eq!(vr.backend.overlays[0].width_m, 0.75);
         assert_eq!(
@@ -1988,14 +2005,14 @@ mod tests {
         advance(&mut ov, &mut vr, 0.1);
         assert_eq!(vr.backend.overlays[0].alpha, 1.0);
         ov.close(&mut vr.backend, 0);
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert_eq!(vr.backend.overlays[0].alpha, 0.875);
         assert_eq!(vr.backend.overlays[0].pixel_submissions, 2);
         assert_eq!(
             vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
             [40, 20, 10, 64]
         );
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert_eq!(vr.backend.overlays[0].alpha, 0.0);
         assert!(!vr.backend.overlays[0].visible);
     }
@@ -2010,10 +2027,10 @@ mod tests {
         assert_eq!(vr.backend.overlays[0].width_m, before);
         controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
         assert!(ov.tick(&mut vr).is_empty());
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert!(vr.backend.overlays[0].width_m < before);
         ov.close(&mut vr.backend, 0);
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert!(!vr.backend.overlays[0].visible && ov.animations.is_empty());
     }
 
@@ -2949,12 +2966,12 @@ mod tests {
         let (mut vr, mut ov) = with_child(false);
         ov.panels[1].parent.as_mut().unwrap().hud = true;
         ov.tick(&mut vr);
-        let corner = Vec3::new(-0.3, 0.3, -0.998);
+        let corner = Vec3::new(-0.3, 0.3, -1.0 + HUD_LIFT);
         assert!(ov.panel(1).pose.position.abs_diff_eq(corner, 1e-5));
         // 親の縦横比が変わっても角に付いていく。
         ov.panels[0].size = Vec2::new(1.0, 0.5);
         ov.tick(&mut vr);
-        let corner = Vec3::new(-0.3, 0.05, -0.998);
+        let corner = Vec3::new(-0.3, 0.05, -1.0 + HUD_LIFT);
         assert!(ov.panel(1).pose.position.abs_diff_eq(corner, 1e-5));
         // 重なった所を押しても、レーザーは素通りして親へ届く（親は止められない）。
         controller(&mut vr, at(-0.3, 0.05, 0.0), &[("trigger/value", 1.0)]);
@@ -3114,6 +3131,22 @@ mod tests {
         ov.close(&mut vr.backend, 0);
         ov.tick(&mut vr);
         assert!(!vr.backend.app_input_blocked);
+    }
+
+    /// 入力の遮断を切ると、暗転していてもゲームへの入力を通す。出ている最中に切り替えても次の tick で効く。
+    #[test]
+    fn app_input_can_pass_through_the_veil() {
+        let (mut vr, mut ov) = setup();
+        ov.set_veil(0, true);
+        ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
+        ov.tick(&mut vr);
+        assert!(vr.backend.app_input_blocked);
+        ov.set_block_input(false);
+        ov.tick(&mut vr);
+        assert!(!vr.backend.app_input_blocked);
+        ov.set_block_input(true);
+        ov.tick(&mut vr);
+        assert!(vr.backend.app_input_blocked);
     }
 
     #[test]
