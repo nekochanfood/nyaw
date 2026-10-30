@@ -368,7 +368,8 @@ mod tests {
         assert_eq!(e.progress(&a, 0, t0).rise, 0.0);
         assert_eq!(e.progress(&b, 3, t0).rise, 0.0);
         assert!(e.finish());
-        let later = t0 + STAGGER * 2;
+        // せり上がりは `LAG` 待ってから動くので、左のボタンが動き出していて、4 番目はまだ待っている時刻にする。
+        let later = t0 + crate::animation::LAG + STAGGER * 2;
         e.begin(false, later);
         let (ta, tb) = (e.progress(&a, 0, later).rise, e.progress(&b, 3, later).rise);
         assert!(ta > 0.0 && tb == 0.0, "左が先: {ta} / {tb}");
