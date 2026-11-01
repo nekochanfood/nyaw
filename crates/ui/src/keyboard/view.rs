@@ -814,6 +814,8 @@ mod tests {
         let db = Database::load().unwrap();
         let view = ready(&db, "us", KeyboardType::Compact);
         let (_, cx) = cx.add_window_view(|_, _| view);
+        // 宛先が無いと押すたびにエラーの行が出てキーが下へずれ、次に押す点が別のキーに当たる。
+        cx.update(|_, cx| crate::keyboard::register_input(0, |_, _| Ok(()), cx));
         cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
         cx.run_until_parked();
         let key = cx.debug_bounds("key-SPCE").unwrap();
