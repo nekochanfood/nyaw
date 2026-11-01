@@ -122,7 +122,8 @@ fn main() -> ExitCode {
                 save(m.overlays[1].texture.as_ref().unwrap(), "keyboard-test.bmp");
                 let keyboard = &m.overlays[2];
                 let texture = keyboard.texture.as_ref().unwrap();
-                assert_eq!((texture.width, texture.height), (1552, 552));
+                // フルサイズはアクション（X ボタン）をテンキーの上に置くので、キーの上に段が無い。
+                assert_eq!((texture.width, texture.height), (1552, 496));
                 save(texture, "keyboard.bmp");
                 keyboard.pose
             };
@@ -133,7 +134,7 @@ fn main() -> ExitCode {
             let mut hand = common::Vr::new(mock);
             let key = pose.transform_point(kernel::vr::Vec3::new(
                 184. / 1552. - 0.5,
-                (0.5 - 352. / 552.) * 552. / 1552.,
+                (0.5 - 296. / 496.) * 496. / 1552.,
                 0.,
             ));
             hand.aim.orientation = kernel::vr::Quat::from_rotation_arc(
@@ -144,7 +145,7 @@ fn main() -> ExitCode {
             wait(|| {
                 let m = observer.lock().unwrap();
                 let frame = m.overlays[2].texture.as_ref().unwrap();
-                frame.pixel(174, 340)[0] > frame.pixel(160, 340)[0].saturating_add(5)
+                frame.pixel(174, 284)[0] > frame.pixel(160, 284)[0].saturating_add(5)
             });
             save(
                 observer.lock().unwrap().overlays[2]

@@ -6,7 +6,7 @@ use gpui::{
 use kernel::{
     PanelCommand, PanelId, Vec2,
     subsystems::{
-        keyboard::{Layout, Stroke},
+        keyboard::{KeyboardType, Layout, Stroke},
         os::keyboard::Settings,
     },
 };
@@ -15,14 +15,51 @@ use std::{collections::HashMap, rc::Rc};
 mod view;
 pub use view::{KeyAppearance, KeyboardView};
 
-const CLOSE_SIZE: f32 = 48.;
+/// アクション（閉じるなど、パネルの操作のボタン）の一辺。
+const ACTION_SIZE: f32 = 48.;
+/// フルサイズの F キーの段の右端（Pause の右端。1u）。ここからテンキーの右端までが空いている。
+const FULL_FUNCTION_ROW_END_U: f32 = 18.5;
 
-fn panel_resolution() -> (u32, u32) {
+/// キーの上に設けるアクションの段（ボタン + キーとの間）の高さ。フルサイズはアクションを
+/// テンキーの上の空きに置くので、段を設けない。
+fn action_row(kind: KeyboardType) -> f32 {
+    if kind == KeyboardType::Full {
+        0.
+    } else {
+        ACTION_SIZE + design::spacing::SM
+    }
+}
+
+/// アクションを右寄せで並べる場所。子に [`ACTION_SIZE`] 角のボタンを足していく。
+/// フルサイズはテンキーの上の空き（F キーの段の右）にキーの段の高さで重ね、右端のボタンがテンキーの − の列にそろう。
+/// ほかはキーの上の段。カードの子として、フルサイズはキーより後（上に重ねる）、ほかはキーより前に置く。
+fn action_area(kind: KeyboardType) -> gpui::Div {
+    let area = gpui::div()
+        .flex()
+        .flex_row()
+        .justify_end()
+        .items_center()
+        .gap(gpui::px(design::spacing::SM))
+        .flex_shrink_0();
+    if action_row(kind) == 0. {
+        let free = (KeyboardType::Full.width() - FULL_FUNCTION_ROW_END_U) * view::KEY_UNIT;
+        area.absolute()
+            .top(gpui::px(design::spacing::LG))
+            .right(gpui::px(design::spacing::LG))
+            .w(gpui::px(free))
+            .h(gpui::px(view::KEY_UNIT))
+            .px(gpui::px((view::KEY_UNIT - ACTION_SIZE) / 2.))
+    } else {
+        area.h(gpui::px(ACTION_SIZE))
+    }
+}
+
+/// 種類（`kind`）のキーがちょうど収まるパネルの解像度。
+fn panel_resolution(kind: KeyboardType) -> (u32, u32) {
     let inset = 2. * (design::components::PANEL_MARGIN + design::spacing::LG);
-    let kind = kernel::subsystems::keyboard::KeyboardType::Full;
     (
         (kind.width() * view::KEY_UNIT + inset).ceil() as u32,
-        (kind.height() * view::KEY_UNIT + inset + CLOSE_SIZE + design::spacing::SM).ceil() as u32,
+        (kind.height() * view::KEY_UNIT + inset + action_row(kind)).ceil() as u32,
     )
 }
 
@@ -255,7 +292,9 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     });
     routing.error = None;
     redraw_nav_bar(target, cx);
-    let resolution = panel_resolution();
+    // 呼び出すキーボードの種類（今はフルサイズだけ。キーボードの画面も既定のフルサイズで描く）。
+    let kind = KeyboardType::Full;
+    let resolution = panel_resolution(kind);
     let home = home_offset(resolution);
     let spec = crate::PanelSpec::spawn(target, move |panel, _, cx| {
         let current = cx.default_global::<InputRouting>().active.as_mut();
@@ -271,6 +310,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         }
         KeyboardPanel {
             panel,
+            kind,
             keyboard: cx.new(|cx| {
                 let mut keyboard = KeyboardView::new(panel, cx);
                 keyboard.target = target;
@@ -358,6 +398,8 @@ pub fn panel_hidden(panel: PanelId, cx: &mut App) {
 
 struct KeyboardPanel {
     panel: PanelId,
+    /// パネルの大きさを合わせてある種類（アクションの置き場所もこれで決まる）。
+    kind: KeyboardType,
     keyboard: gpui::Entity<KeyboardView>,
 }
 impl Render for KeyboardPanel {
@@ -378,38 +420,34 @@ impl Render for KeyboardPanel {
                 }
             });
         }
-        design::components::card_panel(&theme)
+        let close = design::components::icon_button(
+            &theme,
+            "close-keyboard",
+            &design::icons::X,
+            i18n::t(cx, "common.close"),
+            design::components::Variant::Default,
+        )
+        .w(gpui::px(ACTION_SIZE))
+        .h(gpui::px(ACTION_SIZE))
+        .on_click(move |_, _, cx| {
+            cx.default_global::<crate::PanelControl>()
+                .panels
+                .entry(panel)
+                .or_default()
+                .commands
+                .push(PanelCommand::Close);
+        });
+        let actions = action_area(self.kind).child(close);
+        let card = design::components::card_panel(&theme)
             .flex()
             .flex_col()
             .gap(gpui::px(design::spacing::SM))
-            .p(gpui::px(design::spacing::LG))
-            .child(
-                gpui::div()
-                    .flex()
-                    .justify_end()
-                    .h(gpui::px(CLOSE_SIZE))
-                    .flex_shrink_0()
-                    .child(
-                        design::components::icon_button(
-                            &theme,
-                            "close-keyboard",
-                            &design::icons::X,
-                            i18n::t(cx, "common.close"),
-                            design::components::Variant::Default,
-                        )
-                        .w(gpui::px(CLOSE_SIZE))
-                        .h(gpui::px(CLOSE_SIZE))
-                        .on_click(move |_, _, cx| {
-                            cx.default_global::<crate::PanelControl>()
-                                .panels
-                                .entry(panel)
-                                .or_default()
-                                .commands
-                                .push(PanelCommand::Close);
-                        }),
-                    ),
-            )
-            .child(self.keyboard.clone())
+            .p(gpui::px(design::spacing::LG));
+        if action_row(self.kind) == 0. {
+            card.child(self.keyboard.clone()).child(actions)
+        } else {
+            card.child(actions).child(self.keyboard.clone())
+        }
     }
 }
 
@@ -668,7 +706,7 @@ mod tests {
             .into_iter()
             .map(|k| k.name)
             .collect();
-        let resolution = panel_resolution();
+        let resolution = panel_resolution(KeyboardType::Full);
         let (_, cx) = cx.add_window_view(|window, cx| {
             show_keyboard(0, KeyboardMode::Persistent, cx);
             let spec = cx
@@ -699,11 +737,11 @@ mod tests {
         assert_eq!(f32::from(keys.origin.x), inset);
         assert_eq!(
             f32::from(keys.origin.y),
-            inset + CLOSE_SIZE + design::spacing::SM
+            inset + action_row(KeyboardType::Full)
         );
         assert!(f32::from(keys.right()) <= resolution.0 as f32 - inset);
         assert!(f32::from(keys.bottom()) <= resolution.1 as f32 - inset);
-        for name in names {
+        for name in &names {
             let name = Box::leak(format!("key-{name}").into_boxed_str());
             let key = cx.debug_bounds(name).unwrap();
             assert!(key.origin.x >= keys.origin.x && key.origin.y >= keys.origin.y);
@@ -712,7 +750,14 @@ mod tests {
                 "{name}"
             );
         }
-        let close = cx.debug_bounds("close-keyboard").unwrap().center();
+        // フルサイズの X ボタンはキーの並びの右上（テンキーの上の空き）に収まり、どのキーにも重ならない。
+        let close = cx.debug_bounds("close-keyboard").unwrap();
+        assert!(close.top_right().x <= keys.right() && close.origin.y >= keys.origin.y);
+        for name in &names {
+            let name = Box::leak(format!("key-{name}").into_boxed_str());
+            assert!(!cx.debug_bounds(name).unwrap().intersects(&close), "{name}");
+        }
+        let close = close.center();
         cx.simulate_click(close, gpui::Modifiers::none());
         cx.update(|_, cx| {
             assert_eq!(
