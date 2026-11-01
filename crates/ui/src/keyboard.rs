@@ -72,6 +72,21 @@ fn home_offset(resolution: (u32, u32)) -> f32 {
     (left + HOME_U * view::KEY_UNIT) / resolution.0 as f32 - 0.5
 }
 
+/// 掴むとパネルの中心ではなくホームポジションを手で動かして頭へ向ける（ホームポジションを中心に角度が付く）。
+/// 位置はパネルのローカル座標（m）。パネルの幅は解像度に比例する（1m あたりのピクセル数が一定）。
+fn grab_anchor(resolution: (u32, u32), width_m: f32) -> kernel::Pose {
+    kernel::Pose::new(
+        kernel::vr::Vec3::X * home_offset(resolution) * width_m,
+        kernel::vr::Quat::IDENTITY,
+    )
+}
+
+/// 全体の設定のキーボードの種類（設定が無ければ既定）。
+fn keyboard_kind(cx: &App) -> KeyboardType {
+    cx.try_global::<crate::PanelControl>()
+        .map_or_else(KeyboardType::default, |c| c.settings.keyboard)
+}
+
 #[derive(Clone, Debug)]
 pub struct KeyboardInput {
     pub stroke: Stroke,
@@ -292,8 +307,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     });
     routing.error = None;
     redraw_nav_bar(target, cx);
-    // 呼び出すキーボードの種類（今はフルサイズだけ。キーボードの画面も既定のフルサイズで描く）。
-    let kind = KeyboardType::Full;
+    let kind = keyboard_kind(cx);
     let resolution = panel_resolution(kind);
     let home = home_offset(resolution);
     let spec = crate::PanelSpec::spawn(target, move |panel, _, cx| {
@@ -311,6 +325,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         KeyboardPanel {
             panel,
             kind,
+            px_per_m: resolution.0 as f32,
             keyboard: cx.new(|cx| {
                 let mut keyboard = KeyboardView::new(panel, cx);
                 keyboard.target = target;
@@ -330,11 +345,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     // 開いた瞬間の手元の打ちやすい高さに、対象パネル（ダッシュボードにはめた画面も）と同じ向きで、
     // ホームポジションを対象の中心の左右に合わせて出す。親子関係は作らない（対象を動かしても付いて行かない）。
     .typing(home)
-    // 掴むとパネルの中心ではなくホームポジションを手で動かして頭へ向ける（ホームポジションを中心に角度が付く）。
-    .grab_anchor(kernel::Pose::new(
-        kernel::vr::Vec3::X * home,
-        kernel::vr::Quat::IDENTITY,
-    ));
+    .grab_anchor(grab_anchor(resolution, 1.));
     cx.default_global::<crate::PanelControl>().spawns.push(spec);
 }
 
@@ -400,6 +411,8 @@ struct KeyboardPanel {
     panel: PanelId,
     /// パネルの大きさを合わせてある種類（アクションの置き場所もこれで決まる）。
     kind: KeyboardType,
+    /// 1m あたりのピクセル数（幅 1m で出したときの横の解像度）。
+    px_per_m: f32,
     keyboard: gpui::Entity<KeyboardView>,
 }
 impl Render for KeyboardPanel {
@@ -419,6 +432,21 @@ impl Render for KeyboardPanel {
                     cx.notify();
                 }
             });
+        }
+        // 種類が変わったら、キーがちょうど収まる大きさにパネルを変える（1m あたりのピクセル数を保つのでキーの大きさは同じ）。
+        let kind = keyboard_kind(cx);
+        if kind != self.kind {
+            let to = panel_resolution(kind);
+            self.kind = kind;
+            cx.default_global::<crate::PanelControl>()
+                .panels
+                .entry(panel)
+                .or_default()
+                .commands
+                .extend([
+                    PanelCommand::Resize(to.0, to.1),
+                    PanelCommand::GrabAnchor(Some(grab_anchor(to, to.0 as f32 / self.px_per_m))),
+                ]);
         }
         let close = design::components::icon_button(
             &theme,
@@ -698,6 +726,90 @@ mod tests {
             assert_eq!(kernel.panel(panel).parent, None);
         });
     }
+    /// 種類を変えると、出ているキーボードのパネルがその種類の大きさになり、掴む点もホームポジションへ移る。
+    #[gpui::test]
+    fn changing_the_type_resizes_the_open_keyboard(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|window, cx| {
+            show_keyboard(0, KeyboardMode::Persistent, cx);
+            let spec = cx
+                .default_global::<crate::PanelControl>()
+                .spawns
+                .pop()
+                .unwrap();
+            assert_eq!(spec.resolution, panel_resolution(KeyboardType::Full));
+            crate::PanelRoot::new(spec.build(1, window, cx))
+        });
+        cx.run_until_parked();
+        for kind in [KeyboardType::Compact, KeyboardType::Tenkeyless] {
+            cx.update(|window, cx| {
+                cx.global_mut::<crate::PanelControl>().settings.keyboard = kind;
+                window.refresh();
+            });
+            cx.run_until_parked();
+            let to = panel_resolution(kind);
+            let width = to.0 as f32 / panel_resolution(KeyboardType::Full).0 as f32;
+            let commands = cx.update(|_, cx| {
+                std::mem::take(
+                    &mut cx
+                        .global_mut::<crate::PanelControl>()
+                        .panels
+                        .get_mut(&1)
+                        .unwrap()
+                        .commands,
+                )
+            });
+            assert_eq!(
+                commands,
+                [
+                    PanelCommand::Resize(to.0, to.1),
+                    PanelCommand::GrabAnchor(Some(grab_anchor(to, width))),
+                ]
+            );
+        }
+    }
+
+    /// テンキーの上の空きが無い種類では、アクションはキーの上の段に右寄せで並ぶ。
+    /// テンキーの上の空きが無い種類では、アクションはキーの上の段に右寄せで並ぶ。
+    #[gpui::test]
+    fn actions_sit_in_a_row_above_the_keys_without_a_numpad(cx: &mut TestAppContext) {
+        let db = kernel::subsystems::keyboard::Database::load().unwrap();
+        for kind in [KeyboardType::Tenkeyless, KeyboardType::Compact] {
+            let keyboard = db.keyboard(&Layout::new("us", "")).unwrap();
+            let resolution = panel_resolution(kind);
+            let (_, cx) = cx.add_window_view(|window, cx| {
+                cx.default_global::<crate::PanelControl>().settings.keyboard = kind;
+                dismiss_keyboard(cx);
+                show_keyboard(0, KeyboardMode::Persistent, cx);
+                let spec = cx
+                    .default_global::<crate::PanelControl>()
+                    .spawns
+                    .pop()
+                    .unwrap();
+                assert_eq!(spec.resolution, resolution);
+                let view = spec.build(1, window, cx);
+                let panel = view.clone().downcast::<KeyboardPanel>().unwrap();
+                panel.read(cx).keyboard.clone().update(cx, |view, _| {
+                    view.keyboard = Some(keyboard);
+                    view.loading = false;
+                });
+                crate::PanelRoot::new(view)
+            });
+            cx.simulate_resize(gpui::size(
+                gpui::px(resolution.0 as f32),
+                gpui::px(resolution.1 as f32),
+            ));
+            cx.run_until_parked();
+            let inset = design::components::PANEL_MARGIN + design::spacing::LG;
+            let close = cx.debug_bounds("close-keyboard").unwrap();
+            assert_eq!(
+                (f32::from(close.origin.y), f32::from(close.right())),
+                (inset, resolution.0 as f32 - inset),
+                "{kind:?}"
+            );
+            assert!(close.bottom() <= cx.debug_bounds("virtual-keyboard").unwrap().origin.y);
+        }
+    }
+
     #[gpui::test]
     fn summoned_keys_fit_the_card_and_close_button_closes_only_the_keyboard(
         cx: &mut TestAppContext,
