@@ -40,9 +40,10 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # 調査用（一時）: キャッシュ完全一致なのに外部クレートが再ビルドされる理由と、クレートごとのビルド時間を見る。
       # CARGO_LOG はステップ env に置く（ジョブ env だと rust-cache のキー計算に入ってキャッシュが外れる）
-      # -v で各クレートの Fresh / Dirty（再ビルド理由）が出る
-      - run: cargo test --workspace --no-fail-fast --timings -v 2> fingerprint.log
+      - run: cargo test --workspace --no-fail-fast --timings 2> fingerprint.log
         shell: bash
+        env:
+          CARGO_LOG: cargo::core::compiler::fingerprint=info
       - if: always()
         uses: actions/upload-artifact@v4
         with:
