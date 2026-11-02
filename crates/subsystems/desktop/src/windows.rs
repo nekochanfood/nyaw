@@ -975,7 +975,9 @@ fn captured_at(time: TimeSpan) -> Instant {
 /// 仮想デスクトップ上の画素を `MOUSEEVENTF_ABSOLUTE` の 0..=65535 に写す。
 fn virtual_desk_point(point: POINT, left: i32, top: i32, width: i32, height: i32) -> (i32, i32) {
     let scale = |v: i32, origin: i32, size: i32| {
-        ((v - origin) as i64 * 65535 / (size - 1).max(1) as i64).clamp(0, 65535) as i32
+        // 四捨五入する（切り捨てだと Windows が画素に戻したとき 1 画素手前に落ちる）
+        let span = (size - 1).max(1) as i64;
+        (((v - origin) as i64 * 65535 + span / 2) / span).clamp(0, 65535) as i32
     };
     (scale(point.x, left, width), scale(point.y, top, height))
 }

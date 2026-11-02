@@ -31,6 +31,19 @@ fn heard(kit: &mut VrKit<'_, AudioTest>) -> (f32, f32) {
     e
 }
 
+/// `selector` を押し、押したときの効果音（ホバーとクリック。`ui::cue`）が鳴り終わって
+/// 鳴っている音が `sounds` 個になるまで回す。効果音が混ざると左右の測り方が狂う。
+// ponytail: 効果音（0.23 秒）より短いテスト音だと鳴り終わってしまう。そうなったら効果音を止める口を作る
+fn press(kit: &mut VrKit<'_, AudioTest>, selector: &'static str, sounds: usize) {
+    kit.click(selector);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while kit.kernel.status(0).audio.playing > sounds && Instant::now() < deadline {
+        kit.kernel.audio.render(&mut [0.0; BLOCK * 2]);
+        kit.step();
+    }
+    assert_eq!(kit.kernel.status(0).audio.playing, sounds);
+}
+
 /// 鳴っている音が無くなるまで回す。
 fn settle(kit: &mut VrKit<'_, AudioTest>) {
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -44,17 +57,16 @@ fn settle(kit: &mut VrKit<'_, AudioTest>) {
 fn panel_speaker_plays_from_the_panel_edges(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| AudioTest::new(0));
     // 右だけ鳴る 2ch の音は、正面のパネルの右端から聞こえる。
-    kit.click("audio-right");
-    assert_eq!(kit.kernel.status(0).audio.playing, 1);
+    press(&mut kit, "audio-right", 1);
     let (l, r) = heard(&mut kit);
     assert!(r > l * 1.5, "{l} {r}");
     settle(&mut kit);
-    kit.click("audio-left");
+    press(&mut kit, "audio-left", 1);
     let (l, r) = heard(&mut kit);
     assert!(l > r * 1.5, "{l} {r}");
     settle(&mut kit);
     // 左右が同じ音は自動でモノラル（中央の 1 点）になり、正面なら左右同じ。
-    kit.click("audio-centre");
+    press(&mut kit, "audio-centre", 1);
     let (l, r) = heard(&mut kit);
     assert!(l > 0.0 && (l - r).abs() < l * 0.05, "{l} {r}");
     settle(&mut kit);
@@ -67,7 +79,7 @@ fn buttons_switch_spatialization_layout_and_mix_loops(cx: &mut TestAppContext) {
     kit.click("audio-spatial");
     assert!(!kit.kernel.status(0).audio.spatial);
     // 立体化を外すと、片側の音はそのまま片側に鳴る（置き場所に関係しない）。
-    kit.click("audio-right");
+    press(&mut kit, "audio-right", 1);
     let (l, r) = heard(&mut kit);
     assert!(r > l * 1000.0, "{l} {r}");
     settle(&mut kit);
@@ -75,7 +87,7 @@ fn buttons_switch_spatialization_layout_and_mix_loops(cx: &mut TestAppContext) {
     kit.click("audio-layout-mono");
     assert_eq!(kit.kernel.status(0).audio.layout, Layout::Mono);
     // モノラルに固定すると、片側の音も左右に混ぜて鳴る。
-    kit.click("audio-right");
+    press(&mut kit, "audio-right", 1);
     let (l, r) = heard(&mut kit);
     assert!(l > 0.0 && (l - r).abs() < l * 1e-3, "{l} {r}");
     settle(&mut kit);
@@ -85,15 +97,15 @@ fn buttons_switch_spatialization_layout_and_mix_loops(cx: &mut TestAppContext) {
     assert_eq!(kit.kernel.status(0).audio.layout, Layout::Auto);
 
     // ループは重ねて鳴らせ、止めるまで鳴り続ける。
-    kit.click("audio-loop-1").click("audio-loop-2");
-    assert_eq!(kit.kernel.status(0).audio.playing, 2);
+    press(&mut kit, "audio-loop-1", 1);
+    press(&mut kit, "audio-loop-2", 2);
     heard(&mut kit);
     kit.click("audio-stop");
     settle(&mut kit);
     assert_eq!(kit.kernel.status(0).audio.playing, 0);
 
     // パネルを閉じると、そのパネルの音は止まる。
-    kit.click("audio-loop-3");
+    press(&mut kit, "audio-loop-3", 1);
     heard(&mut kit);
     kit.kernel.apply(0, PanelCommand::Close);
     kit.step();

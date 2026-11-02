@@ -1955,7 +1955,7 @@ mod tests {
 
         ov.close(&mut vr.backend, 0);
         assert!(ov.panel(0).closed && vr.backend.overlays[0].visible);
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert!((vr.backend.overlays[0].width_m - 0.96875).abs() < 1e-6);
         assert_eq!(
             vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
@@ -1963,7 +1963,7 @@ mod tests {
         );
         // 閉じた UI から遅れて届く描画は、アウトの絵を上書きしない。
         ov.submit(&mut vr.backend, 0, 1, 1, &[255; 4]);
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert!(!vr.backend.overlays[0].visible);
         assert_eq!(vr.backend.overlays[0].width_m, 0.75);
         assert_eq!(
@@ -1991,14 +1991,14 @@ mod tests {
         advance(&mut ov, &mut vr, 0.1);
         assert_eq!(vr.backend.overlays[0].alpha, 1.0);
         ov.close(&mut vr.backend, 0);
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert_eq!(vr.backend.overlays[0].alpha, 0.875);
         assert_eq!(vr.backend.overlays[0].pixel_submissions, 2);
         assert_eq!(
             vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0),
             [40, 20, 10, 64]
         );
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert_eq!(vr.backend.overlays[0].alpha, 0.0);
         assert!(!vr.backend.overlays[0].visible);
     }
@@ -2013,10 +2013,10 @@ mod tests {
         assert_eq!(vr.backend.overlays[0].width_m, before);
         controller(&mut vr, Pose::IDENTITY, &[("trigger/value", 1.0)]);
         assert!(ov.tick(&mut vr).is_empty());
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert!(vr.backend.overlays[0].width_m < before);
         ov.close(&mut vr.backend, 0);
-        advance(&mut ov, &mut vr, 0.075);
+        advance(&mut ov, &mut vr, 0.1);
         assert!(!vr.backend.overlays[0].visible && ov.animations.is_empty());
     }
 
@@ -2952,12 +2952,12 @@ mod tests {
         let (mut vr, mut ov) = with_child(false);
         ov.panels[1].parent.as_mut().unwrap().hud = true;
         ov.tick(&mut vr);
-        let corner = Vec3::new(-0.3, 0.3, -0.998);
+        let corner = Vec3::new(-0.3, 0.3, -1.0 + HUD_LIFT);
         assert!(ov.panel(1).pose.position.abs_diff_eq(corner, 1e-5));
         // 親の縦横比が変わっても角に付いていく。
         ov.panels[0].size = Vec2::new(1.0, 0.5);
         ov.tick(&mut vr);
-        let corner = Vec3::new(-0.3, 0.05, -0.998);
+        let corner = Vec3::new(-0.3, 0.05, -1.0 + HUD_LIFT);
         assert!(ov.panel(1).pose.position.abs_diff_eq(corner, 1e-5));
         // 重なった所を押しても、レーザーは素通りして親へ届く（親は止められない）。
         controller(&mut vr, at(-0.3, 0.05, 0.0), &[("trigger/value", 1.0)]);
