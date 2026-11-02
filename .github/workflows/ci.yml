@@ -24,6 +24,9 @@ jobs:
 
   test:
     runs-on: windows-latest
+    env:
+      # デバッグ情報（PDB）の生成とリンクがテストバイナリの数だけ効いて重いので切る。panic の位置は出る
+      CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
