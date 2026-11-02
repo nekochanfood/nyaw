@@ -136,7 +136,7 @@ testkit のキットに `build` として渡す。画面からパネルへの操
   - 例: novr のエミュレーターの合成は、画面を横帯に分けて帯ごとに別のスレッドで塗る（`std::thread::scope`。目の前のパネルで 5.5ms → 1.3ms）。
 - **待ちは正確に**。フレームの周期を作る短い待ちは丸められないものを使う（GPUI のタイマーは Windows では 1ms が 6〜12ms になる。
   フレームループはバックグラウンドのスレッドで眠って譲る。`os::precise_timers` でタイマー精度も 1ms にする）。
-- **測ってから直す**。推測ではなく、ストレステスト（`cargo test -p ui --test stress -- --ignored`）とプロファイラ（`--profile`）の
+- **測ってから直す**。推測ではなく、ストレステスト（`cargo test -p ui --test gpu -- --ignored stress`）とプロファイラ（`--profile`）の
   段階ごとの時間を見る。直したらストレステストの数字で効果を確かめ、コミットに書く。
 - 依存クレートのデバッグビルドの罠に注意する。gpui（Windows）は debug-assertions が有効だとウィンドウを作るたびに HLSL を実行時に
   コンパイルする（1 枚 180ms）ので、`Cargo.toml` の `[profile.dev.package.gpui_windows]` で切っている。

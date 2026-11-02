@@ -2,7 +2,7 @@
 //! checking that holding a touch without moving fills a long-press progress ring (donut-shaped; the circle fits in the hole) around the cursor,
 //! and that it shows on the emulator screen. It renders on the real GPU and reads back, so it only runs with `--ignored` on a machine with a display.
 
-mod common;
+use crate::common;
 
 use std::f32::consts::TAU;
 use std::process::ExitCode;
@@ -20,7 +20,7 @@ use ui::PanelSpec;
 const SCREEN: (u32, u32) = (1280, 720);
 const PANEL: Vec3 = Vec3::new(0.0, 0.0, -1.0);
 
-fn main() -> ExitCode {
+pub fn main() -> ExitCode {
     if !common::should_run("novr_cursor") {
         return ExitCode::SUCCESS;
     }

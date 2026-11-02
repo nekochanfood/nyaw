@@ -2,7 +2,7 @@
 //! Pushes a page, then holds the trigger and moves right to left, both right away (finger slide) and after a long press
 //! (which turns into a mouse press), and checks that the page went back. Only runs with `--ignored`.
 
-mod common;
+use crate::common;
 
 use std::process::ExitCode;
 use std::sync::mpsc::{Sender, channel};
@@ -19,7 +19,7 @@ use ui::PanelSpec;
 const SCREEN: (u32, u32) = (1280, 720);
 const PANEL: Vec3 = Vec3::new(0.0, 0.0, -1.0);
 
-fn main() -> ExitCode {
+pub fn main() -> ExitCode {
     if !common::should_run("nav_swipe") {
         return ExitCode::SUCCESS;
     }

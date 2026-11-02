@@ -1,4 +1,4 @@
-//! Stress test (benchmark). Not run by default: `cargo test -p ui --test stress -- --ignored`。
+//! Stress test (benchmark). Not run by default: `cargo test -p ui --test gpu -- --ignored stress`。
 //! Runs the novr emulator (no window, but composites every frame) on the production `ui::run_with` under heavy load and
 //! aggregates the profiler's per-stage times per phase. As a lead for optimization, the cost is split into three:
 //!
@@ -13,7 +13,7 @@
 //! Phase length scales with `NYAW_STRESS_SCALE` (default 1.0). `NYAW_STRESS_WINDOW=1` shows windows as in production and
 //! composites (on GPU if available; by default no window and CPU compositing). `NYAW_STRESS_PROFILER=1` shows the profiler window (for isolating causes).
 
-mod common;
+use crate::common;
 
 use std::f32::consts::TAU;
 use std::fmt::Write as _;
@@ -56,7 +56,7 @@ fn testing_at(x: f32, y: f32, z: f32) -> PanelSpec {
     .without_nav_bar()
 }
 
-fn main() -> ExitCode {
+pub fn main() -> ExitCode {
     if !std::env::args().any(|a| a == "--ignored" || a == "--include-ignored") {
         println!("stress: skipped (benchmark, so only run with --ignored)");
         return ExitCode::SUCCESS;

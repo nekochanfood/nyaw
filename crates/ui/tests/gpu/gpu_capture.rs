@@ -1,7 +1,7 @@
 //! Checks that a hidden panel window's render can be read back through the production path (real platform + GPU).
 //! The GUI event loop must run on the main thread, so this runs in main without the test harness.
 
-fn main() {
+pub fn main() {
     use std::{
         cell::{Cell, RefCell},
         rc::Rc,

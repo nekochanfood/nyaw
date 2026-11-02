@@ -1,5 +1,5 @@
 //! 本番の描画ループで、キーボード画面を追加した後も描画と操作が進むか確認する。
-mod common;
+use crate::common;
 
 use common::SharedMock;
 use kernel::{Kernel, Pose, VrBackend};
@@ -51,7 +51,7 @@ fn on_app<R: Send + 'static>(
         .expect("UI thread stopped responding")
 }
 
-fn main() -> ExitCode {
+pub fn main() -> ExitCode {
     if !common::should_run("keyboard") {
         return ExitCode::SUCCESS;
     }

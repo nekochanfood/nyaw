@@ -4,7 +4,7 @@
 //!
 //! It renders on the real GPU and reads back, so it only runs with `--ignored` on a machine with a display.
 
-mod common;
+use crate::common;
 
 use std::process::ExitCode;
 use std::sync::mpsc::{Sender, channel};
@@ -20,7 +20,7 @@ use ui::{MAX_PANELS, PanelControl, PanelSpec};
 const SCREEN: (u32, u32) = (640, 360);
 const PANEL: Vec3 = Vec3::new(0.0, 0.0, -1.0);
 
-fn main() -> ExitCode {
+pub fn main() -> ExitCode {
     if !common::should_run("test_panels") {
         return ExitCode::SUCCESS;
     }

@@ -3,7 +3,7 @@
 //! The GUI event loop must run on the main thread, so this runs in main without the test harness.
 
 #[cfg(windows)]
-fn main() {
+pub fn main() {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
     use gpui::{
@@ -87,6 +87,6 @@ fn main() {
 }
 
 #[cfg(not(windows))]
-fn main() {
+pub fn main() {
     println!("font_weights: skipped (non-Windows unsupported)");
 }

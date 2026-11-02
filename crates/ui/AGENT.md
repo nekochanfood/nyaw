@@ -24,7 +24,7 @@
 
 ## テスト・ベンチマーク
 
-- **ストレステスト（ベンチマーク）**: `crates/ui/tests/stress.rs`（`harness = false`。常には流さない: `cargo test -p ui --test stress -- --ignored`）。
+- **ストレステスト（ベンチマーク）**: `crates/ui/tests/gpu/stress.rs`（`harness = false`。常には流さない: `cargo test -p ui --test gpu -- --ignored stress`）。
   本番と同じ `ui::run_with` に novr のエミュレーター（ウィンドウは出さないが毎フレーム合成する）と GPUI 8 枚・ビームを載せ、
   マウスで掃く・押したままのスワイプ・パネルの召喚と破棄の繰り返し・目の前のパネルの局面ごとに、FPS・ドロップ率と
   レンダラー（`compositor`）・オーバーレイ（`overlay`）・UI（`input` / `draw` / `render` / `upload`）の平均と p95 を出す。
@@ -32,6 +32,6 @@
   10 枚を重ねて出す物量の局面（`volume`）もある。
   1 フレームごとの CSV と集計は `target/tmp/stress.{csv,txt}`。`NYAW_STRESS_SCALE` で局面の長さ、
   `NYAW_STRESS_WINDOW=1` で本番と同じくウィンドウを出して GPU で合成する、`NYAW_STRESS_PROFILER=1` でプロファイラの窓も載せる。
-- **長押しの輪**: `crates/ui/tests/novr_cursor.rs`（`harness = false`、`-- --ignored`）。タッチで押したまま、カーソルの輪が満ちていくのをエミュレーターの画面で見る。
-- **スワイプバック（本番のフレームループ）**: `crates/ui/tests/nav_swipe.rs`（`harness = false`、`-- --ignored`）。NavTest に画面を積み、タッチのまま右から左へ動かす・長押ししてから動かすの両方で戻ることを確かめる。手ブレ抑えが効いた VR のレーザーでの確認は `testkit/tests/navigation.rs`。
-- **実 GPU での読み戻し**: `crates/ui/tests/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
+- **長押しの輪**: `crates/ui/tests/gpu/novr_cursor.rs`（`harness = false`、`-- --ignored`）。タッチで押したまま、カーソルの輪が満ちていくのをエミュレーターの画面で見る。
+- **スワイプバック（本番のフレームループ）**: `crates/ui/tests/gpu/nav_swipe.rs`（`harness = false`、`-- --ignored`）。NavTest に画面を積み、タッチのまま右から左へ動かす・長押ししてから動かすの両方で戻ることを確かめる。手ブレ抑えが効いた VR のレーザーでの確認は `testkit/tests/scenarios/navigation.rs`。
+- **実 GPU での読み戻し**: `crates/ui/tests/gpu/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。

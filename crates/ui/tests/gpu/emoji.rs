@@ -1,6 +1,6 @@
 //! 実 GPU で SVG の配色・サイズ・文章内の折り返しと改行を確かめる。
 #[cfg(windows)]
-fn main() {
+pub fn main() {
     use gpui::{
         AppContext, Context, IntoElement, ParentElement, Render, Styled, Window, div, px, rgb,
     };
@@ -173,6 +173,6 @@ fn main() {
 }
 
 #[cfg(not(windows))]
-fn main() {
+pub fn main() {
     println!("emoji: skipped (GPU readback requires Windows)");
 }
