@@ -20,13 +20,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # インストーラは Cargo.toml のバージョンを使う。タグ（v 付きでもよい）とずれていたらビルド前に止める
-      - name: Check tag matches Cargo.toml version
+      # インストーラは Cargo.toml のバージョンを使う。本体と nyapps（別のワークスペース）の全パッケージが
+      # タグ（v 付きでもよい）と同じでなければビルド前に止める
+      - name: Check tag matches Cargo.toml versions
         run: |
-          version=$(cargo pkgid -p nyaw)
-          version=${version##*[#@]}
-          if [ "${TAG#v}" != "$version" ]; then
-            echo "::error::tag $TAG does not match Cargo.toml version $version"
+          set -o pipefail
+          pkgs=$(for m in Cargo.toml nyapps/Cargo.toml; do
+            cargo metadata --manifest-path "$m" --no-deps --format-version 1 |
+              grep -o '"name":"[^"]*","version":"[^"]*"'
+          done)
+          # 1 件も拾えないのは metadata の形が変わったとき。素通りさせない
+          if [ -z "$pkgs" ]; then
+            echo "::error::could not read package versions from cargo metadata"
+            exit 1
+          fi
+          bad=$(grep -v "\"version\":\"${TAG#v}\"" <<<"$pkgs" || true)
+          if [ -n "$bad" ]; then
+            echo "::error::tag $TAG does not match these package versions: $bad"
             exit 1
           fi
       - uses: Swatinem/rust-cache@v2
