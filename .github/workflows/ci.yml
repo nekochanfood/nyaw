@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 env:
   # sccache が rustc の出力をキャッシュする。インクリメンタルは sccache と相性が悪いので切る
@@ -23,7 +24,8 @@ jobs:
 
   # clippy は PR と main の push だけ（ブランチの push ごとには走らせない）
   clippy:
-    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    # draft の PR では走らせない（ready_for_review で走る）
+    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || github.ref == 'refs/heads/main'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
