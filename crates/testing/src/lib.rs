@@ -1361,7 +1361,11 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 6] = [
         &design::icons::KEYBOARD,
         "settings.category.keyboard",
     ),
-    ("settings-about", &design::icons::INFO, "settings.category.about"),
+    (
+        "settings-about",
+        &design::icons::INFO,
+        "settings.category.about",
+    ),
 ];
 
 // 依存のライセンスの表 `LICENSES`: `(名前, バージョン, ライセンス, URL)`。build.rs がビルド時に作る。
@@ -1447,8 +1451,15 @@ impl Settings {
             this.open = None;
             cx.notify();
         });
-        let popover =
-            components::select_popover(theme, window, cx, id, self.open == Some(id), items, dismiss);
+        let popover = components::select_popover(
+            theme,
+            window,
+            cx,
+            id,
+            self.open == Some(id),
+            items,
+            dismiss,
+        );
         components::select(theme, id, glyph, label, value)
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open = Some(id);
@@ -1458,7 +1469,12 @@ impl Settings {
     }
 
     /// 選んでいるカテゴリの中身（グループの並び）。
-    fn category_page(&self, theme: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
+    fn category_page(
+        &self,
+        theme: &Theme,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
         let now = settings(cx);
         match self.category {
             // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）と、ダッシュボード中のゲーム入力の遮断。
@@ -1466,23 +1482,23 @@ impl Settings {
                 theme,
                 [
                     self.select(
-                    theme,
-                    window,
-                    cx,
-                    "setting-language",
-                    &design::icons::TRANSLATE,
-                    i18n::t(cx, "settings.language"),
-                    lang(now.language),
-                    i18n::Lang::ALL
-                        .map(|l| {
-                            let id = match l {
-                                i18n::Lang::En => "setting-lang-en",
-                                i18n::Lang::Ja => "setting-lang-ja",
-                            };
-                            (id, SharedString::from(l.native_name()), l)
-                        })
-                        .to_vec(),
-                    |l| Setting::Language(language(l)),
+                        theme,
+                        window,
+                        cx,
+                        "setting-language",
+                        &design::icons::TRANSLATE,
+                        i18n::t(cx, "settings.language"),
+                        lang(now.language),
+                        i18n::Lang::ALL
+                            .map(|l| {
+                                let id = match l {
+                                    i18n::Lang::En => "setting-lang-en",
+                                    i18n::Lang::Ja => "setting-lang-ja",
+                                };
+                                (id, SharedString::from(l.native_name()), l)
+                            })
+                            .to_vec(),
+                        |l| Setting::Language(language(l)),
                     ),
                     components::switch_item(
                         theme,
@@ -1574,7 +1590,9 @@ impl Settings {
                                 theme,
                                 "setting-smoothing",
                                 now.pointer_smoothing / max,
-                                move |v, _, cx| push_setting(Setting::PointerSmoothing(v * max), cx),
+                                move |v, _, cx| {
+                                    push_setting(Setting::PointerSmoothing(v * max), cx)
+                                },
                             ),
                         ),
                     ),
@@ -1666,8 +1684,16 @@ impl Settings {
                         now.keyboard,
                         [
                             ("setting-keyboard-full", "keyboard.full", KeyboardType::Full),
-                            ("setting-keyboard-tkl", "keyboard.tkl", KeyboardType::Tenkeyless),
-                            ("setting-keyboard-compact", "keyboard.compact", KeyboardType::Compact),
+                            (
+                                "setting-keyboard-tkl",
+                                "keyboard.tkl",
+                                KeyboardType::Tenkeyless,
+                            ),
+                            (
+                                "setting-keyboard-compact",
+                                "keyboard.compact",
+                                KeyboardType::Compact,
+                            ),
                         ]
                         .map(|(id, key, k)| (id, i18n::t(cx, key), k))
                         .to_vec(),
@@ -1706,7 +1732,11 @@ impl Settings {
                             if i == last {
                                 row = row.rounded_b(px(radius::LG));
                             }
-                            let line = if i == 0 { 0 } else { theme.neutral_border_subtle };
+                            let line = if i == 0 {
+                                0
+                            } else {
+                                theme.neutral_border_subtle
+                            };
                             div().border_t_1().border_color(rgba(line)).child(row)
                         })
                         .collect()

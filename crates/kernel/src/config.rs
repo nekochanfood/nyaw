@@ -321,12 +321,21 @@ emulator = false
     fn mirror_frame_rate_and_keyboard_parse() {
         use subsystems::keyboard::KeyboardType;
         let c = parse("").unwrap();
-        assert_eq!((c.mirror_frame_rate, c.keyboard), (None, KeyboardType::Full));
+        assert_eq!(
+            (c.mirror_frame_rate, c.keyboard),
+            (None, KeyboardType::Full)
+        );
         let c = parse("mirror_frame_rate = 30\nkeyboard = \"tenkeyless\"").unwrap();
-        assert_eq!((c.mirror_frame_rate, c.keyboard), (Some(30), KeyboardType::Tenkeyless));
+        assert_eq!(
+            (c.mirror_frame_rate, c.keyboard),
+            (Some(30), KeyboardType::Tenkeyless)
+        );
         assert!(parse("keyboard = \"split\"").is_err());
         assert_eq!(parse("").unwrap().block_input, None);
-        assert_eq!(parse("block_input = false").unwrap().block_input, Some(false));
+        assert_eq!(
+            parse("block_input = false").unwrap().block_input,
+            Some(false)
+        );
     }
 
     #[test]

@@ -1016,7 +1016,9 @@ pub fn sidebar_item(
         .w_full()
         .justify_start()
         .gap(px(spacing::MD))
-        .pl(px(SIDEBAR_INDICATOR_INSET + SIDEBAR_INDICATOR.1 + spacing::MD))
+        .pl(px(SIDEBAR_INDICATOR_INSET
+            + SIDEBAR_INDICATOR.1
+            + spacing::MD))
         .pr(px(spacing::LG))
         .font_weight(if selected {
             FontWeight::MEDIUM
@@ -1057,7 +1059,11 @@ pub fn sidebar(
         ts.iter_mut()
             .enumerate()
             .map(|(i, t)| {
-                let kind = if i == selected { Kind::HopIn } else { Kind::Hop };
+                let kind = if i == selected {
+                    Kind::HopIn
+                } else {
+                    Kind::Hop
+                };
                 t.go(shown(i), kind, now, animated);
                 t.at(now)
             })
@@ -1067,21 +1073,24 @@ pub fn sidebar(
         keep_drawing(window, cx);
     }
     // 出具合 `p` の印の大きさ: 高さは `p` に比例し、幅は高さに届くまで同じ（1:1 の点から縦に伸びる）。
-    let marks = shapes.into_iter().enumerate().filter_map(move |(i, (p, _))| {
-        let height = p.max(0.0) * h;
-        let width = height.min(w);
-        let center = i as f32 * (BUTTON_HEIGHT + spacing::XS) + BUTTON_HEIGHT / 2.0;
-        (height > 0.0).then(|| {
-            div()
-                .absolute()
-                .left(px(SIDEBAR_INDICATOR_INSET + (w - width) / 2.0))
-                .top(px(center - height / 2.0))
-                .w(px(width))
-                .h(px(height))
-                .rounded(px(radius::FULL))
-                .bg(rgba(theme.accent_solid))
-        })
-    });
+    let marks = shapes
+        .into_iter()
+        .enumerate()
+        .filter_map(move |(i, (p, _))| {
+            let height = p.max(0.0) * h;
+            let width = height.min(w);
+            let center = i as f32 * (BUTTON_HEIGHT + spacing::XS) + BUTTON_HEIGHT / 2.0;
+            (height > 0.0).then(|| {
+                div()
+                    .absolute()
+                    .left(px(SIDEBAR_INDICATOR_INSET + (w - width) / 2.0))
+                    .top(px(center - height / 2.0))
+                    .w(px(width))
+                    .h(px(height))
+                    .rounded(px(radius::FULL))
+                    .bg(rgba(theme.accent_solid))
+            })
+        });
     div()
         .relative()
         .flex()
@@ -1208,14 +1217,17 @@ pub fn select_popover(
     use crate::animation::{Motion as Kind, Transition};
     let now = crate::drive::now();
     let animated = cx.has_global::<Motion>();
-    let state = window.use_keyed_state(
-        SharedString::from(format!("{id}-popover")),
-        cx,
-        |_, _| Transition::rest(0.0),
-    );
+    let state = window.use_keyed_state(SharedString::from(format!("{id}-popover")), cx, |_, _| {
+        Transition::rest(0.0)
+    });
     let to = if open { 1.0 } else { 0.0 };
     state.update(cx, |t, _| {
-        t.go(to, if open { Kind::Enter } else { Kind::Exit }, now, animated)
+        t.go(
+            to,
+            if open { Kind::Enter } else { Kind::Exit },
+            now,
+            animated,
+        )
     });
     let (shown, moving) = state.read(cx).at(now);
     if moving {
@@ -1230,33 +1242,38 @@ pub fn select_popover(
         .absolute()
         .right_0()
         .bottom_0()
-        .children(open.then(|| deferred(
-            anchored()
-                .position_mode(gpui::AnchoredPositionMode::Window)
-                .position(point(px(0.0), px(0.0)))
-                .child(
-                    div()
-                        .id("select-backdrop")
-                        .w(viewport.width)
-                        .h(viewport.height)
-                        .occlude()
-                        .on_mouse_down(MouseButton::Left, on_dismiss),
-                ),
-        )))
+        .children(open.then(|| {
+            deferred(
+                anchored()
+                    .position_mode(gpui::AnchoredPositionMode::Window)
+                    .position(point(px(0.0), px(0.0)))
+                    .child(
+                        div()
+                            .id("select-backdrop")
+                            .w(viewport.width)
+                            .h(viewport.height)
+                            .occlude()
+                            .on_mouse_down(MouseButton::Left, on_dismiss),
+                    ),
+            )
+        }))
         .child(
             deferred(
-                anchored().anchor(gpui::Anchor::TopRight).snap_to_window().child(
-                    menu(theme, items)
-                        .id("select-popover")
-                        .occlude()
-                        .min_w(px(SELECT_POPOVER_MIN_WIDTH))
-                        .mt(px(spacing::XS - SELECT_POPOVER_RISE * (1.0 - shown)))
-                        .opacity(shown)
-                        // ダークではカードの上に重なると同じ色で境目が消えるので、影に加えて薄い線で縁取る。
-                        .border_1()
-                        .border_color(rgba(theme.neutral_border_subtle))
-                        .shadow_md(),
-                ),
+                anchored()
+                    .anchor(gpui::Anchor::TopRight)
+                    .snap_to_window()
+                    .child(
+                        menu(theme, items)
+                            .id("select-popover")
+                            .occlude()
+                            .min_w(px(SELECT_POPOVER_MIN_WIDTH))
+                            .mt(px(spacing::XS - SELECT_POPOVER_RISE * (1.0 - shown)))
+                            .opacity(shown)
+                            // ダークではカードの上に重なると同じ色で境目が消えるので、影に加えて薄い線で縁取る。
+                            .border_1()
+                            .border_color(rgba(theme.neutral_border_subtle))
+                            .shadow_md(),
+                    ),
             )
             .priority(1),
         )
@@ -1271,15 +1288,11 @@ pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
         .flex()
         .flex_col()
         .p(px(MENU_PADDING))
-        .children(
-            items
-                .into_iter()
-                .map(|b| {
-                    b.h(px(MENU_ITEM_HEIGHT))
-                        .px(px(MENU_ITEM_PADDING))
-                        .rounded(px(MENU_RADIUS - MENU_PADDING))
-                }),
-        )
+        .children(items.into_iter().map(|b| {
+            b.h(px(MENU_ITEM_HEIGHT))
+                .px(px(MENU_ITEM_PADDING))
+                .rounded(px(MENU_RADIUS - MENU_PADDING))
+        }))
 }
 
 /// ダイアログのアイコンの大きさ。

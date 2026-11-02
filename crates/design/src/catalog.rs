@@ -650,10 +650,9 @@ impl Render for Catalog {
                 .relative()
                 .size_full()
                 .child(
-                    components::elastic("cat-pull-page", &page).size_full().child(
-                        list(page.clone(), cx.processor(Self::page_item))
-                            .size_full(),
-                    ),
+                    components::elastic("cat-pull-page", &page)
+                        .size_full()
+                        .child(list(page.clone(), cx.processor(Self::page_item)).size_full()),
                 )
                 .child(
                     components::scrollbars(&t, "cat-page-bars", &page)

@@ -25,9 +25,10 @@ use std::{
 
 use gpui::{
     AnyElement, App, Axis, Bounds, DispatchPhase, Div, Element, ElementId, GlobalElementId,
-    InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    ListState, MouseUpEvent, Pixels, Point, RenderOnce, ScrollDelta, ScrollHandle, ScrollWheelEvent,
-    SharedString, Styled, TouchPhase, Window, canvas, div, point, prelude::*, px, rgba,
+    InspectorElementId, IntoElement, LayoutId, ListState, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, RenderOnce, ScrollDelta, ScrollHandle,
+    ScrollWheelEvent, SharedString, Styled, TouchPhase, Window, canvas, div, point, prelude::*, px,
+    rgba,
 };
 
 use super::{Fade, keep_drawing};

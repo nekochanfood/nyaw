@@ -191,7 +191,11 @@ fn settings_sidebar_marks_only_the_selected_category(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
     kit.hover("setting-language");
     assert_ne!(SIDEBAR_BG, BACKGROUND, "two-tone");
-    assert_eq!(kit.color_at("settings-general"), SIDEBAR_BG, "no background");
+    assert_eq!(
+        kit.color_at("settings-general"),
+        SIDEBAR_BG,
+        "no background"
+    );
     assert_eq!(kit.color_at("settings-about"), SIDEBAR_BG);
     assert_eq!(left_edge(&mut kit, "settings-general"), SIDEBAR_INDICATOR);
     assert_eq!(left_edge(&mut kit, "settings-about"), SIDEBAR_BG);
