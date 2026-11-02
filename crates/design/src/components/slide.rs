@@ -368,7 +368,8 @@ mod tests {
         assert_eq!(e.progress(&a, 0, t0).rise, 0.0);
         assert_eq!(e.progress(&b, 3, t0).rise, 0.0);
         assert!(e.finish());
-        let later = t0 + STAGGER * 2;
+        // 左（slot 0）は LAG の待ちを抜けたところ、右（slot 3）はまだ遅れの中。
+        let later = t0 + crate::animation::LAG + STAGGER;
         e.begin(false, later);
         let (ta, tb) = (e.progress(&a, 0, later).rise, e.progress(&b, 3, later).rise);
         assert!(ta > 0.0 && tb == 0.0, "左が先: {ta} / {tb}");
