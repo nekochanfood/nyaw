@@ -7,3 +7,7 @@ CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 runtimes = "run -q -p testkit --bin runtimes --"
 # ニャプリの試作（nyapps/）をビルドして .nyapp にまとめる・入れる。crates/nyapp/src/bin/nyapp.rs
 nyapps = "run -q -p nyapp --bin nyapp --"
+
+# MSVC の link.exe より速い。テストバイナリが多く、リンクがビルド時間の大きな部分を占める
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"
