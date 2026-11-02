@@ -621,7 +621,10 @@ mod tests {
         };
         set(&mut kernel, 0, false);
         set(&mut kernel, 1, false);
-        assert!(pressed(control.touches()).is_empty(), "右の離す・左の離すは送らない");
+        assert!(
+            pressed(control.touches()).is_empty(),
+            "右の離す・左の離すは送らない"
+        );
         set(&mut kernel, 1, true);
         assert!(
             control
@@ -681,7 +684,11 @@ mod tests {
         control.set_cursor(Some(cursor.clone()));
         kernel.tick();
         assert_eq!(
-            kernel.panel(panel).os_cursor.as_ref().map(|(h, c)| (*h, &**c)),
+            kernel
+                .panel(panel)
+                .os_cursor
+                .as_ref()
+                .map(|(h, c)| (*h, &**c)),
             Some((Hand::Right, &cursor))
         );
         kernel.apply(

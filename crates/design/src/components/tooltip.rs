@@ -188,13 +188,21 @@ mod tests {
         let lap = natural - PAD_X * 2.0 + SCROLL_GAP;
         let period = SCROLL_PAUSE + lap / SCROLL_SPEED;
         assert_eq!(tooltip_scroll(natural, width, 0.0), Some(0.0));
-        assert_eq!(tooltip_scroll(natural, width, SCROLL_PAUSE * 0.9), Some(0.0), "初めは止まる");
+        assert_eq!(
+            tooltip_scroll(natural, width, SCROLL_PAUSE * 0.9),
+            Some(0.0),
+            "初めは止まる"
+        );
         let mid = tooltip_scroll(natural, width, SCROLL_PAUSE + 1.0).unwrap();
         assert!((mid - SCROLL_SPEED).abs() < 0.01, "{mid}");
         // 一周の終わりは 2 つ目の文字が先頭の位置にあり、次の始まり（0）と見た目が同じ。
         let end = tooltip_scroll(natural, width, period - 0.001).unwrap();
         assert!((end - lap).abs() < 0.1, "{end}");
-        assert_eq!(tooltip_scroll(natural, width, period + 0.1), Some(0.0), "また止まる");
+        assert_eq!(
+            tooltip_scroll(natural, width, period + 0.1),
+            Some(0.0),
+            "また止まる"
+        );
     }
 
     #[gpui::test]

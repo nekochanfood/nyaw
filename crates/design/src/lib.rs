@@ -126,7 +126,10 @@ impl Theme {
     /// 切り替えの進み具合（0..1）。落ち着いていれば `None`。
     fn fade_progress(cx: &gpui::App) -> Option<f32> {
         let fade = cx.try_global::<ThemeFade>()?;
-        let t = drive::now().saturating_duration_since(fade.start).as_secs_f32() * 1000.0
+        let t = drive::now()
+            .saturating_duration_since(fade.start)
+            .as_secs_f32()
+            * 1000.0
             / duration_ms::SLOW as f32;
         (t < 1.0).then_some(t)
     }

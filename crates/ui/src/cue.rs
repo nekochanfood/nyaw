@@ -17,7 +17,12 @@ fn sound(cue: Cue) -> (&'static [u8], f32) {
 /// 入力を配送した直後に呼ぶ。`window` 宛ての要求を、ポインタの点から聞こえるよう `panel` の操作要求に積む。
 pub(crate) fn flush(panel: PanelId, window: &Window, cx: &mut App) {
     let cues = design::cue::take(window, cx);
-    let commands = &mut cx.default_global::<PanelControl>().panels.entry(panel).or_default().commands;
+    let commands = &mut cx
+        .default_global::<PanelControl>()
+        .panels
+        .entry(panel)
+        .or_default()
+        .commands;
     commands.extend(cues.into_iter().map(|(cue, at)| {
         let (wav, pitch) = sound(cue);
         PanelCommand::PlayAt {

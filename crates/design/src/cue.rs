@@ -48,8 +48,11 @@ pub fn emit(cue: Cue, window: &Window, cx: &mut App) {
         return;
     }
     cues.last.insert(cue, now);
-    cues.queue
-        .push((window.window_handle().window_id(), cue, window.mouse_position()));
+    cues.queue.push((
+        window.window_handle().window_id(),
+        cue,
+        window.mouse_position(),
+    ));
 }
 
 /// `window` 宛ての要求をすべて取り出す。

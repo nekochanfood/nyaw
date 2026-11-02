@@ -527,7 +527,8 @@ impl<B: VrBackend> Kernel<B> {
                 .any(|c| c.shortcut && c.facing.is_some() == hand)
         };
         self.shortcut.update(held(false), polled);
-        self.runtime_double_press += frame.controllers.iter().filter(|c| c.double_press).count() as u32;
+        self.runtime_double_press +=
+            frame.controllers.iter().filter(|c| c.double_press).count() as u32;
         self.hand_shortcut.update(held(true), polled);
         self.batteries.clone_from(&frame.batteries);
         let mut events = self.overlay.tick_frame(&mut self.subsystems.backend, frame);
@@ -723,7 +724,9 @@ impl<B: VrBackend> Kernel<B> {
             animated: p.animated,
             trackers: self.overlay.trackers().to_vec(),
             menu: self.overlay.menu_held(),
-            double_press: self.shortcut.count + self.hand_shortcut.count + self.runtime_double_press,
+            double_press: self.shortcut.count
+                + self.hand_shortcut.count
+                + self.runtime_double_press,
             outside_press: self.overlay.outside_presses(),
             grabbed: self.overlay.grabbed(panel),
             closed: p.closed,

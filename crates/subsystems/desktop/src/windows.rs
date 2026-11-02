@@ -1,6 +1,6 @@
 use super::{
-    Button, Capabilities, Cursor, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind, Touch,
-    TouchPhase, Wake,
+    Button, Capabilities, Cursor, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind,
+    Touch, TouchPhase, Wake,
 };
 
 pub(super) const CAPABILITIES: Capabilities = Capabilities {
@@ -1130,7 +1130,10 @@ mod tests {
         assert_eq!(sent, [0, 0, 120, 0, 0, 120]);
         // 浅く倒しても、貯まれば届く。
         let mut acc = 0.0;
-        assert_eq!((0..12).map(|_| wheel_notches(&mut acc, 0.25)).sum::<i32>(), 120);
+        assert_eq!(
+            (0..12).map(|_| wheel_notches(&mut acc, 0.25)).sum::<i32>(),
+            120
+        );
         // 逆へ倒したら前の貯めは残さない。
         let mut acc = 0.0;
         wheel_notches(&mut acc, 1.0);

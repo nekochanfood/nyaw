@@ -1088,7 +1088,9 @@ impl PanelSpec {
             let (sum, count) = kernel
                 .controllers()
                 .iter()
-                .fold((Vec3::ZERO, 0.), |(sum, n), c| (sum + c.aim.position, n + 1.));
+                .fold((Vec3::ZERO, 0.), |(sum, n), c| {
+                    (sum + c.aim.position, n + 1.)
+                });
             let hands = (count > 0.).then(|| sum / count);
             // 寝ている（上が頭の上へ倒れている）ほど 1。立っている間は手の高さ、寝ている間は視界の下寄りへ移る。
             let lying = (1. - up.dot(Vec3::Y)).clamp(0., 1.);
@@ -2120,7 +2122,10 @@ mod tests {
             .typing(0.0);
         let pose = spec.pose_for(&kernel, 0);
         let height = pose.position.y - eye.y;
-        assert!((height - (-0.45 + TYPING_ABOVE_HANDS)).abs() < 1e-4, "{height}");
+        assert!(
+            (height - (-0.45 + TYPING_ABOVE_HANDS)).abs() < 1e-4,
+            "{height}"
+        );
         let hands = eye + Vec3::new(0.0, -0.45, -0.3);
         let normal = pose.orientation * Vec3::Z;
         let aim = eye.lerp(hands, TYPING_TOWARD_HANDS);
@@ -2140,7 +2145,10 @@ mod tests {
         kernel.subsystems.backend.frame.controllers = vec![high];
         kernel.tick();
         let height = spec.pose_for(&kernel, 0).position.y - eye.y;
-        assert!((height - (-0.1 - TYPING_CLEARANCE)).abs() < 1e-4, "{height}");
+        assert!(
+            (height - (-0.1 - TYPING_CLEARANCE)).abs() < 1e-4,
+            "{height}"
+        );
     }
 
     /// 呼び出し元より手前に出すので、頭から見て呼び出し元の下端（ナビゲーションバー込み）より下に見えるよう下げる。
@@ -2191,13 +2199,15 @@ mod tests {
             .typing(0.1);
         let mut poses = Vec::new();
         for head_yaw in [-0.5, 0.0, 0.6] {
-            kernel.subsystems.backend.frame.hmd =
-                Pose::new(eye, Quat::from_rotation_y(head_yaw));
+            kernel.subsystems.backend.frame.hmd = Pose::new(eye, Quat::from_rotation_y(head_yaw));
             kernel.tick();
             poses.push(spec.pose_for(&kernel, caller + 1));
         }
         for pose in &poses {
-            assert!(pose.position.abs_diff_eq(poses[0].position, 1e-4), "{pose:?}");
+            assert!(
+                pose.position.abs_diff_eq(poses[0].position, 1e-4),
+                "{pose:?}"
+            );
             assert!(pose.orientation.abs_diff_eq(poses[0].orientation, 1e-4));
             // 面の左右の向きは呼び出し元と同じ。
             let normal = pose.orientation * Vec3::Z;

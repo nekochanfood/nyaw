@@ -1273,8 +1273,13 @@ impl Render for TooltipTest {
                     )
                     .child(button(&theme, "no-tip", i18n::t(cx, "tooltip.none"), false))
                     .child(
-                        button(&theme, "tip-overflow", i18n::t(cx, "tooltip.overflow"), false)
-                            .tooltip(i18n::t(cx, "tooltip.overflow_text")),
+                        button(
+                            &theme,
+                            "tip-overflow",
+                            i18n::t(cx, "tooltip.overflow"),
+                            false,
+                        )
+                        .tooltip(i18n::t(cx, "tooltip.overflow_text")),
                     ),
             )
             .child(

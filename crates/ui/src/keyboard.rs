@@ -550,7 +550,10 @@ mod tests {
         cx.update(|cx| {
             assert!(toggle_os_keyboard(0, cx));
             let spawns = cx.global::<crate::PanelControl>().spawns.len();
-            assert!(!hand_over_os_keyboard(7, 1, cx), "出ていない先からは譲らない");
+            assert!(
+                !hand_over_os_keyboard(7, 1, cx),
+                "出ていない先からは譲らない"
+            );
             assert!(hand_over_os_keyboard(0, 1, cx));
             let routing = cx.global::<InputRouting>();
             assert_eq!(routing.active.unwrap().target, 1);

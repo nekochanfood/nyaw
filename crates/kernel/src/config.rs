@@ -304,7 +304,10 @@ emulator = false
         assert_eq!(ThemeMode::Dark.toggled(), ThemeMode::Light);
         assert_eq!(parse("").unwrap().dominant_hand, DominantHand::Right);
         let left = parse("dominant_hand = \"left\"").unwrap().dominant_hand;
-        assert_eq!((left.hand(), left.off_hand()), (vr::Hand::Left, vr::Hand::Right));
+        assert_eq!(
+            (left.hand(), left.off_hand()),
+            (vr::Hand::Left, vr::Hand::Right)
+        );
         assert!(parse("dominant_hand = \"both\"").is_err());
     }
 

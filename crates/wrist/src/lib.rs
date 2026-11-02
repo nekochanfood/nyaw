@@ -37,7 +37,10 @@ const DIAL_R: f32 = DIAL_C - spacing::LG - 8.0;
 /// ダッシュボードから開くデバッグ画面と設定画面（画面どうしを直接つながないよう、main が選ぶ）。
 pub fn spec(hand: Hand, debug: dashboard::Summon, settings: dashboard::Summon) -> PanelSpec {
     let side = if hand == Hand::Left { 1.0 } else { -1.0 };
-    let in_view = Pose::new(IN_VIEW.position * Vec3::new(side, 1.0, 1.0), IN_VIEW.orientation);
+    let in_view = Pose::new(
+        IN_VIEW.position * Vec3::new(side, 1.0, 1.0),
+        IN_VIEW.orientation,
+    );
     PanelSpec::root(Pose::IDENTITY, move |panel, _, cx| {
         nyapp::opened(nyapp::system::WRIST.id, panel, cx);
         Wrist::new(panel, debug, settings, cx)

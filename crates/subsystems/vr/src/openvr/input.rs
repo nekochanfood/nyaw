@@ -360,7 +360,10 @@ mod tests {
             .collect();
         let listed = manifest["default_bindings"].to_string();
         for (name, body) in &FILES[1..] {
-            assert!(listed.contains(name), "{name} missing from default_bindings");
+            assert!(
+                listed.contains(name),
+                "{name} missing from default_bindings"
+            );
             let mut bound = Vec::new();
             outputs(&json(body), &mut bound);
             for out in &bound {
