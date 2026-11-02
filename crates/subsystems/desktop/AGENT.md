@@ -20,5 +20,5 @@
 - ランチャーで起動していないアプリを押すと、起動を頼むと同時にそのアプリの画面（`launch_spec`）がはまり、アイコン・名前・「起動しています」を出して待つ。画面自身が 0.5 秒ごとにウィンドウを探し、出たらそこで映し始める（20 秒出なければ見つからないと出す）。
 - Testing の `desktop-test` が一覧更新・配信開始・停止と状態表示を持つ。配信パネルは独立して掴んで移動でき、ナビゲーションバー（タイトルは取得元の名前）で閉じると配信も止まる。バーの左端の `nav-keyboard`（`PanelSpec::with_os_keyboard`）で OS キーボード（OS の前面のアプリへ送る仮想キーボード）を出し入れし、出ている間は強調色になる。キーボードは頭の前の打ちやすい位置に出る。統計の HUD と仮想キーボード（自前の X）はバーを付けない。
 - 下位の確認は `cargo test -p desktop -p kernel -p overlay -p subsystems --no-default-features --lib`。UI の単体テストは `cargo test -p testing -p ui -p i18n --lib`。`desktop/test-support` のモックは最新画像とタッチ配送、セッション停止を検査できる。
-- 実デスクトップの E2E は `crates/subsystems/desktop/tests/windows_capture.rs`、UI を通すシナリオは `crates/testkit/tests/desktop_stream.rs`。すべて `#[ignore]`。実行には明示的な指定と、ネイティブのテストでは操作できるデスクトップが必要。`cargo check --tests` / Clippy は OS を操作せず型を検査できる。
+- 実デスクトップの E2E は `crates/subsystems/desktop/tests/windows_capture.rs`、UI を通すシナリオは `crates/testkit/tests/scenarios/desktop_stream.rs`。すべて `#[ignore]`。実行には明示的な指定と、ネイティブのテストでは操作できるデスクトップが必要。`cargo check --tests` / Clippy は OS を操作せず型を検査できる。
 - Windows のウィンドウ操作はデスクトップで対象が見えている場合に限り、別ウィンドウへの誤入力を防ぐ。

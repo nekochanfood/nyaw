@@ -2,7 +2,7 @@
 //! in one OS window per panel. The value is the display time per frame (ms; 100 if not a number).
 //!
 //! ```text
-//! NYAW_E2E_WATCH=300 cargo test -p testkit --test testing -- --test-threads=1
+//! NYAW_E2E_WATCH=300 cargo test -p testkit --test scenarios -- testing:: --test-threads=1
 //! ```
 //!
 //! What you see is the image painted by [`crate::raster`] (rectangles only; no text).
