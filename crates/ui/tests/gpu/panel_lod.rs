@@ -1,5 +1,5 @@
 //! 本番の GPUI 描画で LOD0〜3〜0 の解像度・レイアウト・入力を検証する。
-mod common;
+use crate::common;
 use gpui::{Context, IntoElement, Render, Window, div, prelude::*, px, rgb};
 use kernel::{Config, Kernel, PointerMode, Pose, VrBackend, vr::Quat};
 use std::{
@@ -38,7 +38,7 @@ fn wait(what: &str, mut ready: impl FnMut() -> bool) {
     }
 }
 
-fn main() -> ExitCode {
+pub fn main() -> ExitCode {
     if !common::should_run("panel_lod") {
         return ExitCode::SUCCESS;
     }

@@ -1,7 +1,7 @@
 //! `clip_rounded` (vendor/gpui) cuts the contents of a rounded `overflow_hidden` element to its rounded corners.
 //! Real platform + GPU, so it needs a display. The GUI event loop must run on the main thread, so it has its own main.
 
-fn main() {
+pub fn main() {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
     use gpui::{

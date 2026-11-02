@@ -21,47 +21,8 @@ vr = { workspace = true, features = ["test-support", "novr"] }
 testing.workspace = true
 beam.workspace = true
 
-# 実プラットフォーム + GPU で描画を読み戻す。GUI はメインスレッドで回すため独自 main。
+# 実プラットフォーム + GPU で動かすテスト（tests/gpu）。GUI はメインスレッドで回すため独自 main。
+# ケースごとに子プロセスで起こす。ストレステスト（ベンチマーク）などは `-- --ignored` のときだけ流す。
 [[test]]
-name = "gpu_capture"
-harness = false
-
-[[test]]
-name = "panel_lod"
-harness = false
-
-# 埋め込みフォントの太さ（NORMAL / MEDIUM / BOLD）がそれぞれの字形で描かれるか（実プラットフォーム + GPU）。
-[[test]]
-name = "font_weights"
-harness = false
-
-[[test]]
-name = "emoji"
-harness = false
-
-# ベンチマーク。常には流さない（`-- --ignored` のときだけ）。
-[[test]]
-name = "stress"
-harness = false
-
-# novr（エミュレーター）でのポインタの見た目（長押しのリング）を実際の GPU で確かめる。
-[[test]]
-name = "novr_cursor"
-harness = false
-# テスト用パネル（毎フレーム描き直すパネル・開けるパネルの数の上限）を本番のフレームループで確かめる。
-[[test]]
-name = "test_panels"
-harness = false
-
-[[test]]
-name = "keyboard"
-harness = false
-
-[[test]]
-name = "nav_swipe"
-harness = false
-
-# overflow を隠した角丸の要素が、中身を角丸で切るか（gpui の改造: vendor/gpui）を実際の GPU で確かめる。
-[[test]]
-name = "round_clip"
+name = "gpu"
 harness = false
