@@ -1,9 +1,19 @@
 name: CI
 
-on: push
+on:
+  push:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+env:
+  # sccache が rustc の出力をキャッシュする。インクリメンタルは sccache と相性が悪いので切る
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
+  CARGO_INCREMENTAL: "0"
 
 jobs:
   fmt:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -12,13 +22,17 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all --check
 
+  # clippy は PR と main の push だけ（ブランチの push ごとには走らせない）
   clippy:
+    # draft の PR では走らせない（ready_for_review で走る）
+    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || github.ref == 'refs/heads/main'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           # ブランチは main のキャッシュを読むだけ（ブランチごとに 1GB 超を保存すると 10GB の上限で main のが追い出される）
@@ -26,6 +40,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
+    if: github.event_name == 'push'
     runs-on: windows-latest
     env:
       # デバッグ情報（PDB）の生成とリンクがテストバイナリの数だけ効いて重いので切る。panic の位置は出る
@@ -33,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           # v0 はキャンセルされた run が途中までの target を保存し、以後キーが完全一致して上書きされず外部クレートを毎回ビルドしていた
