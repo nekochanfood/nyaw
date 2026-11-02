@@ -1,0 +1,37 @@
+name: Release
+
+# リリースを公開すると、インストーラをビルドしてそのリリースに添付する
+# （GITHUB_TOKEN で作ったリリースではワークフローが発火しないので、画面か自分の gh で作る）
+on:
+  release:
+    types: [published]
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # インストーラは Cargo.toml のバージョンを使う。タグ（v 付きでもよい）とずれていたらビルド前に止める
+      - name: Check tag matches Cargo.toml version
+        run: |
+          version=$(cargo pkgid -p nyaw)
+          version=${version##*[#@]}
+          if [ "${TAG#v}" != "$version" ]; then
+            echo "::error::tag $TAG does not match Cargo.toml version $version"
+            exit 1
+          fi
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      # ランナーに Inno Setup が無いイメージでも動くように
+      - run: command -v iscc || choco install innosetup -y --no-progress
+      - run: iscc installer/nyaw.iss
+      - run: gh release upload "$TAG" target/installer/*.exe --clobber
