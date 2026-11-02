@@ -20,6 +20,9 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # ブランチは main のキャッシュを読むだけ（ブランチごとに 1GB 超を保存すると 10GB の上限で main のが追い出される）
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
@@ -34,4 +37,5 @@ jobs:
         with:
           # 落ちた run でもキャッシュを残す（無いと毎回 25 分のフルビルドになる）
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --no-fail-fast

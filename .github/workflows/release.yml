@@ -30,6 +30,9 @@ jobs:
             exit 1
           fi
       - uses: Swatinem/rust-cache@v2
+        with:
+          # タグのスコープに保存しても次のタグからは読めない
+          save-if: false
       - run: cargo build --release
       # ランナーに Inno Setup が無いイメージでも動くように
       - run: command -v iscc || choco install innosetup -y --no-progress
