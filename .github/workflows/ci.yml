@@ -35,7 +35,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # 落ちた run でもキャッシュを残す（無いと毎回 25 分のフルビルドになる）
-          cache-on-failure: true
+          # v0 はキャンセルされた run が途中までの target を保存し、以後キーが完全一致して上書きされず外部クレートを毎回ビルドしていた
+          prefix-key: v1-rust
+          # cache-on-failure は付けない。キャンセルされた run でも保存され、途中までの target がキャッシュになる。
+          # テストが落ちた run も保存しないので、キーが変わった直後は main が通るまでフルビルドになる
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --no-fail-fast
