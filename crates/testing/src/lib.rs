@@ -1764,6 +1764,13 @@ impl Settings {
             }
             // 情報: バージョンと、ライセンスの一覧・リポジトリ（ブラウザで開く）。
             _ => vec![
+                // 先頭にフルサイズのロゴ。上下の余白は同じだけ取り、狭くしない。
+                div()
+                    .flex()
+                    .justify_center()
+                    .py(px(spacing::XL))
+                    .debug_selector(|| "about-logo".into())
+                    .child(design::logo(design::Logo::Full).height(px(ABOUT_LOGO_PX))),
                 components::list(
                     theme,
                     [components::menu_item(
@@ -1809,6 +1816,9 @@ impl Settings {
         }
     }
 }
+
+/// 情報画面のロゴの高さ（px）。
+const ABOUT_LOGO_PX: f32 = 72.0;
 
 /// 外部（ブラウザ）で開く行の右端の印。
 fn external_icon(theme: &Theme) -> impl IntoElement {

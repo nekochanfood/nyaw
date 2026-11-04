@@ -233,3 +233,18 @@ fn touch_swipe_goes_back_with_the_default_smoothing(cx: &mut TestAppContext) {
         assert_eq!(stack(&mut kit), [NavPage::Root], "hold {hold}");
     }
 }
+
+/// The About screen starts with the full logo, centered, with equal space above and below it.
+#[gpui::test]
+fn settings_about_shows_centered_logo(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.click("settings-about");
+    let logo = kit.bounds("about-logo");
+    let version = kit.bounds("setting-version");
+    assert!(
+        logo.bottom() <= version.top(),
+        "logo sits above the version row"
+    );
+    // The block is 72px of logo plus 24px of padding on both sides.
+    assert_eq!(f32::from(logo.size.height), 72.0 + 48.0);
+}
