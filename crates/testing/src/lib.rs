@@ -1818,7 +1818,7 @@ impl Settings {
 }
 
 /// 情報画面のロゴの高さ（px）。
-const ABOUT_LOGO_PX: f32 = 72.0;
+const ABOUT_LOGO_PX: f32 = 144.0;
 
 /// 外部（ブラウザ）で開く行の右端の印。
 fn external_icon(theme: &Theme) -> impl IntoElement {

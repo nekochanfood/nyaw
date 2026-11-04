@@ -245,6 +245,6 @@ fn settings_about_shows_centered_logo(cx: &mut TestAppContext) {
         logo.bottom() <= version.top(),
         "logo sits above the version row"
     );
-    // The block is 72px of logo plus 24px of padding on both sides.
-    assert_eq!(f32::from(logo.size.height), 72.0 + 48.0);
+    // The block is 144px of logo plus 24px of padding on both sides.
+    assert_eq!(f32::from(logo.size.height), 144.0 + 48.0);
 }
