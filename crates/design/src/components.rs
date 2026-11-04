@@ -141,6 +141,8 @@ pub struct Button {
     /// 波紋の色（文字色）。
     ink: u32,
     ripple: bool,
+    /// ホバーの効果音を出さない（行のように、中の要素が代わりにホバーの演出をするとき）。
+    quiet: bool,
     /// [`Variant::Ghost`] のボタンか（[`Button::background_opacity`] と [`Button::ghost_background`] はこれだけに効く）。
     ghost: bool,
     /// [`Variant::Ghost`] のホバー・押下の背景の不透明度（0..=1）。
@@ -320,6 +322,7 @@ fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
         active,
         ink: fg,
         ripple: true,
+        quiet: false,
         ghost: matches!(variant, Variant::Ghost),
         background_opacity: 1.0,
         tooltip: None,
@@ -426,7 +429,7 @@ impl RenderOnce for Button {
         let animated = cx.has_global::<Motion>();
         let (ink, enabled) = (self.ink, self.ripple && animated);
         let (over, leave) = (set(Some(true), None), set(Some(false), None));
-        let (id, tip) = (self.id, self.tooltip.clone());
+        let (id, tip, quiet) = (self.id, self.tooltip.clone(), self.quiet);
         let (down, up) = (set(None, Some(true)), set(None, Some(false)));
         let up_out = set(None, Some(false));
         // ボタンごとに違う角丸（`rounded*` で上書きされたものも含む）。指定が無い角は 0。
@@ -513,7 +516,9 @@ impl RenderOnce for Button {
             .bg(rgba(color))
             .children(wave)
             .on_mouse_move(move |_, w, cx| {
-                crate::cue::hover(&move_id, w, cx);
+                if !quiet {
+                    crate::cue::hover(&move_id, w, cx);
+                }
                 if let Some(tip) = &move_tip {
                     hover_tooltip(
                         move_id.clone(),
@@ -526,7 +531,7 @@ impl RenderOnce for Button {
                 }
             })
             .on_hover(move |h, w, cx| {
-                if *h {
+                if *h && !quiet {
                     crate::cue::hover(&id, w, cx);
                 }
                 if let Some(tip) = &tip {
@@ -722,25 +727,75 @@ pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<
     let (w, h, pad) = (44.0, 24.0, 2.0);
     let knob = h - pad * 2.0;
     let id: SharedString = id.into();
-    let mut track = div()
+    let knob = SwitchKnob {
+        id: format!("{id}-knob").into(),
+        on,
+        size: knob,
+        // ノブが動く距離。
+        travel: w - pad * 2.0 - knob,
+        pad,
+        track: (theme.groove, theme.accent_solid),
+        knob_color: (theme.card, theme.on_accent),
+    };
+    div()
         .id(id.clone())
         .debug_selector(move || id.to_string())
         .flex()
         .items_center()
         .w(px(w))
         .h(px(h))
-        .px(px(pad))
         .rounded(px(radius::FULL))
-        .bg(rgba(if on { theme.accent_solid } else { theme.groove }));
-    if on {
-        track = track.justify_end();
-    }
-    track.child(
+        .relative()
+        .child(knob)
+}
+
+/// [`switch`] のノブ。オンオフが変わると `Motion::Toggle` で滑る（行き過ぎない）。
+#[derive(IntoElement)]
+struct SwitchKnob {
+    id: SharedString,
+    on: bool,
+    size: f32,
+    travel: f32,
+    /// ノブの外側の余白。
+    pad: f32,
+    /// 背景の色（オフ, オン）。
+    track: (u32, u32),
+    /// ノブの色（オフ, オン）。
+    knob_color: (u32, u32),
+}
+
+impl RenderOnce for SwitchKnob {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        use crate::animation::{Motion as Kind, Transition};
+        let now = crate::drive::now();
+        let animated = cx.has_global::<Motion>();
+        let to = if self.on { 1.0 } else { 0.0 };
+        let state = window.use_keyed_state(self.id, cx, move |_, _| Transition::rest(to));
+        state.update(cx, |t, _| t.go(to, Kind::Toggle, now, animated));
+        let (at, moving) = state.read(cx).at(now);
+        if moving {
+            keep_drawing(window, cx);
+        }
+        let at = at.clamp(0.0, 1.0);
+        let c = |(off, on): (u32, u32)| rgba(mix(off, on, at));
+        // 背景はスイッチ全体に敷き、ノブと同じ進み具合で色が移る。
         div()
-            .size(px(knob))
+            .flex()
+            .items_center()
+            .absolute()
+            .inset_0()
+            .px(px(self.pad))
             .rounded(px(radius::FULL))
-            .bg(rgba(if on { theme.on_accent } else { theme.card })),
-    )
+            .bg(c(self.track))
+            .child(
+                div()
+                    .flex_none()
+                    .size(px(self.size))
+                    .rounded(px(radius::FULL))
+                    .bg(c(self.knob_color))
+                    .ml(px(self.travel * at)),
+            )
+    }
 }
 
 pub use crate::PANEL_MARGIN;
@@ -1015,6 +1070,7 @@ pub fn sidebar_item(
         .base
         .w_full()
         .justify_start()
+        .rounded(px(radius::LG))
         .gap(px(spacing::MD))
         .pl(px(SIDEBAR_INDICATOR_INSET
             + SIDEBAR_INDICATOR.1
@@ -1140,27 +1196,40 @@ pub fn select(
     label: impl Into<SharedString>,
     value: impl Into<SharedString>,
 ) -> Button {
-    let mut b = menu_item(theme, id, glyph, label);
-    b.base = b
+    // 右の要素が自分の余白を持つので、行の右の余白は詰める。
+    let mut b = inert(menu_item(theme, id, glyph, label)).pr(px(spacing::SM));
+    let pick_h = BUTTON_HEIGHT - spacing::SM * 2.0;
+    let mut pick = base_button(theme, format!("{id}-pick").into(), Variant::Default);
+    (pick.rest, pick.hover, pick.active) = (theme.card, theme.control_hover, theme.control_active);
+    pick.base = pick
         .base
         .relative()
-        .child(
-            div()
-                .min_w_0()
-                .truncate()
-                .text_color(rgba(theme.neutral_text_low))
-                .child(value.into()),
-        )
+        .gap(px(spacing::SM))
+        // 余白は縦横 1:1: 行の縁との間は上下右とも `SM`、文字の周りも上下と左右が同じ。
+        .px(px((pick_h - font_size::MD) / 2.0))
+        .h(px(pick_h))
+        .rounded(px(radius::MD))
+        .font_weight(FontWeight::NORMAL)
+        .text_color(rgba(theme.neutral_text_low))
+        .child(div().min_w_0().truncate().child(value.into()))
         .child(
             crate::icon(&crate::icons::CARET_UP_DOWN)
                 .size(px(font_size::MD))
                 .color(rgba(theme.neutral_text_low)),
         );
+    // 押した動きは行が受ける（行の `on_click`）。ホバーと押下の演出はこの要素だけ。
+    b.base = b.base.relative().child(pick);
     b
 }
 
-/// オン / オフの行: 一覧の行（[`menu_item`]）の右に [`switch`]（`{id}-switch`）。行のどこを押しても切り替える
-/// （押したときの処理は呼び出し側が `on_click` で足す）。
+/// 行はボタンのままだが、ホバー・押下の色と波紋は出さない（演出は中の要素に任せる）。
+fn inert(mut b: Button) -> Button {
+    (b.hover, b.active, b.ripple, b.quiet) = (b.rest, b.rest, false, true);
+    b
+}
+
+/// オン / オフの行: 一覧の行（[`menu_item`]）の右に [`switch`]（`{id}-switch`）。行のどこを押しても切り替える（行のホバーの色に
+/// スイッチが紛れないよう、行はホバーの色を出さない）。押したときの処理は呼び出し側が `on_click` で足す。
 pub fn switch_item(
     theme: &Theme,
     id: &'static str,
@@ -1168,7 +1237,7 @@ pub fn switch_item(
     label: impl Into<SharedString>,
     on: bool,
 ) -> Button {
-    let mut b = menu_item(theme, id, glyph, label);
+    let mut b = inert(menu_item(theme, id, glyph, label));
     b.base = b.base.child(switch(theme, format!("{id}-switch"), on));
     b
 }

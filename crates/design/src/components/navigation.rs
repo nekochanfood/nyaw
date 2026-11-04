@@ -118,6 +118,24 @@ pub struct Navigation<P: Clone + PartialEq + 'static> {
     on_back: OnBack,
     /// 画面の地（上の画面が下の画面を隠す）。
     background: u32,
+    /// 画面の右の角丸（px）。親の角丸に合わせる。
+    right_radius: f32,
+    /// 積み下ろしで画面が動く距離（幅に対する割合）を抑え、代わりに透明度を入れ替える。指に付くスワイプは常に全幅。
+    fade_shift: Option<f32>,
+}
+
+impl<P: Clone + PartialEq + 'static> Navigation<P> {
+    /// 積み下ろしを、幅の `shift` 倍だけ動きながら重なって入れ替わる（フェード）動きにする。
+    pub fn fading(mut self, shift: f32) -> Self {
+        self.fade_shift = Some(shift);
+        self
+    }
+
+    /// 画面の右の角を丸める（親のパネルの角を、画面の地が覆わないように）。
+    pub fn rounded_right(mut self, radius: f32) -> Self {
+        self.right_radius = radius;
+        self
+    }
 }
 
 /// `stack`（先頭が一番下の画面。空にしない）の一番上を見せる。`render` が画面 1 枚の中身を作る。
@@ -137,6 +155,8 @@ pub fn navigation<P: Clone + PartialEq + 'static>(
         render: Rc::new(render),
         on_back: Rc::new(on_back),
         background: theme.background,
+        right_radius: 0.0,
+        fade_shift: None,
     }
 }
 
@@ -148,6 +168,8 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
             render,
             on_back,
             background,
+            right_radius,
+            fade_shift,
         } = self;
         let animated = cx.has_global::<Motion>();
         let now = crate::drive::now();
@@ -165,21 +187,23 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
 
         // 前の描画からの積み下ろしで動きを決める。
         let (t, moving, top, below, swiping) = state.update(cx, |s, _| {
-            use crate::animation::Motion::{Enter, Return};
+            use crate::animation::Motion::{Page, Return};
             if stack.len() > s.shown.len() {
                 // 積んだ: 右から入る。
                 s.leaving = None;
                 s.dir = 1.0;
                 s.gesture = Gesture::Idle;
                 s.slide = Slide::rest(1.0);
-                s.slide.go(0.0, Enter, now, animated);
+                s.slide.go(0.0, Page, now, animated);
             } else if stack.len() < s.shown.len() {
                 // 下ろした: 今の位置（スワイプで離した所）から抜ける（ボタンなら右、スワイプなら左）。
                 let (cur, _) = s.offset(now);
                 s.leaving = s.shown.last().cloned();
                 s.gesture = Gesture::Idle;
                 s.slide = Slide::rest(cur);
-                s.slide.go(1.0, Return, now, animated);
+                // ボタンで下ろしたとき（定位置から）は画面の動き。スワイプで離した所からは、続きを短く。
+                s.slide
+                    .go(1.0, if cur == 0.0 { Page } else { Return }, now, animated);
             }
             s.shown = stack.clone();
             let swiping = matches!(s.gesture, Gesture::Swiping { .. });
@@ -387,8 +411,8 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
         .absolute()
         .size_full();
 
-        let page = |p: &P, level: usize, x: f32, window: &mut Window, cx: &mut App| {
-            div()
+        let page = |p: &P, level: usize, x: f32, alpha: f32, window: &mut Window, cx: &mut App| {
+            let mut d = div()
                 .id(ElementId::NamedInteger("nav-page".into(), level as u64))
                 .absolute()
                 .top_0()
@@ -396,7 +420,21 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                 .w_full()
                 .left(px(x))
                 .bg(rgba(background))
-                .child(render(p, window, cx))
+                .rounded_r(px(right_radius))
+                .child(render(p, window, cx));
+            if alpha < 1.0 {
+                d = d.opacity(alpha);
+            }
+            d
+        };
+        // フェードの動きは積み下ろしだけ（スワイプは指に付いて全幅で動く）。
+        let fade = fade_shift.filter(|_| dir > 0.0 && !swiping);
+        let (top_x, below_x, top_a, below_a) = match fade {
+            Some(shift) => {
+                let d = shift * width;
+                (dir * t * d, -dir * (1.0 - t) * d, 1.0 - t, t)
+            }
+            None => (dir * t * width, -dir * (1.0 - t) * width, 1.0, 1.0),
         };
         let mut root = div()
             .id(id)
@@ -408,14 +446,13 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
         if let Some((b, level)) = &below {
             // 下の画面は上の画面の隣に並ぶ（押し出す・引っ張る）。上の画面が抜けきると定位置。
             root = root.child(
-                page(b, *level, -dir * (1.0 - t) * width, window, cx)
+                page(b, *level, below_x, below_a, window, cx)
                     .debug_selector(move || format!("{id}-below")),
             );
         }
         let (top, level) = top;
         root = root.child(
-            page(&top, level, dir * t * width, window, cx)
-                .debug_selector(move || format!("{id}-top")),
+            page(&top, level, top_x, top_a, window, cx).debug_selector(move || format!("{id}-top")),
         );
         if swiping {
             // スワイプ中は中身を覆う（離したときにボタンの上でもクリックにしない・ホバーを消す）。

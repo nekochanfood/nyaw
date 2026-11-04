@@ -1415,6 +1415,8 @@ pub struct Settings {
     /// 中身とライセンスの一覧のスクロール（スクロールバーが見る）。
     scroll: ScrollHandle,
     licenses_scroll: gpui::UniformListScrollHandle,
+    /// カテゴリを替えた直後の入れ替え: 前のカテゴリと、その進み具合（0 → 1）。
+    swap: Option<(usize, design::animation::Transition)>,
 }
 
 impl Settings {
@@ -1479,11 +1481,13 @@ impl Settings {
     fn category_page(
         &self,
         theme: &Theme,
+        licenses: bool,
+        category: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Div> {
         let now = settings(cx);
-        match self.category {
+        match category {
             // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）と、ダッシュボード中のゲーム入力の遮断。
             0 => vec![components::list(
                 theme,
@@ -1710,7 +1714,7 @@ impl Settings {
             }
             // ライセンス: 依存ごとの行。押すとそのリポジトリをブラウザで開く。数百行あるので、見えている行だけを
             // 作る `uniform_list` で並べる（行の高さは揃える。区切り線は先頭の行だけ透明にして高さを変えない）。
-            _ if self.licenses => {
+            _ if licenses => {
                 let last = LICENSES.len() - 1;
                 let rows = uniform_list("licenses", LICENSES.len(), move |range, _, cx| {
                     let theme = Theme::current(cx);
@@ -1817,6 +1821,9 @@ impl Settings {
     }
 }
 
+/// 画面の入れ替えで動く距離（画面の幅・高さに対する割合）。全幅は動かず、透明度の入れ替えで見せる。
+const PAGE_SHIFT: f32 = 0.5;
+
 /// 情報画面のロゴの高さ（px）。
 const ABOUT_LOGO_PX: f32 = 144.0;
 
@@ -1843,20 +1850,24 @@ fn setting_group(theme: &Theme, title: SharedString, body: impl IntoElement) -> 
         .child(body)
 }
 
-/// スライダーのカード: 今の値の説明の下にスライダー。
+/// スライダーのカード: スライダーだけをカードに入れ、今の値の説明はカードの下に置く。
 fn setting_slider(theme: &Theme, value: SharedString, slider: components::Slider) -> Div {
-    components::card(theme)
-        .p(px(spacing::LG))
+    div()
         .flex()
         .flex_col()
-        .gap(px(spacing::MD))
+        .gap(px(spacing::SM))
+        .child(
+            components::card(theme)
+                .p(px(spacing::LG))
+                .child(slider.length(SETTINGS_SLIDER_PX)),
+        )
         .child(
             div()
+                .px(px(spacing::LG))
                 .text_size(px(font_size::SM))
                 .text_color(rgba(theme.neutral_text_low))
                 .child(value),
         )
-        .child(slider.length(SETTINGS_SLIDER_PX))
 }
 
 /// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。タイトルは左右の中央、`left` のボタン（戻る）は左端に寄せる（閉じるのはナビゲーションバー）。
@@ -1909,6 +1920,13 @@ impl Render for Settings {
             .map(|(i, &(id, glyph, key))| {
                 components::sidebar_item(&theme, id, glyph, i18n::t(cx, key), i == self.category)
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        if i != this.category {
+                            let mut t = design::animation::Transition::rest(0.0);
+                            let animated = cx.has_global::<design::Motion>();
+                            let now = design::drive::now();
+                            t.go(1.0, design::animation::Motion::Page, now, animated);
+                            this.swap = Some((this.category, t));
+                        }
                         this.category = i;
                         this.open = None;
                         this.licenses = false;
@@ -1916,22 +1934,25 @@ impl Render for Settings {
                     }))
             })
             .collect::<Vec<_>>();
-        let (_, _, title) = SETTINGS_CATEGORIES[self.category];
-        let (title, back) = if self.licenses {
-            let back = components::icon_button(
-                &theme,
-                "settings-back",
-                &design::icons::CARET_LEFT,
-                i18n::t(cx, "common.back"),
-                Variant::OnBackground,
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.licenses = false;
-                cx.notify();
-            }));
-            ("settings.licenses", Some(back.into_any_element()))
+        // 画面の積み重ね: 一番下がカテゴリの中身（`false`）、ライセンスの一覧（`true`）を積むと右から入る。
+        let this = cx.entity();
+        let stack = if self.licenses {
+            vec![false, true]
         } else {
-            (title, None)
+            vec![false]
+        };
+        let page = {
+            let this = this.clone();
+            move |&licenses: &bool, window: &mut Window, cx: &mut App| {
+                this.update(cx, |s, cx| s.page(licenses, window, cx))
+                    .into_any_element()
+            }
+        };
+        let swipe_back = move |_: &mut Window, cx: &mut App| {
+            this.update(cx, |s, cx| {
+                s.licenses = false;
+                cx.notify();
+            })
         };
         // パネルの地は中身側（`background`）。サイドバーだけ `sidebar` で塗り、左の角をパネルに合わせて丸める。
         components::panel(&theme)
@@ -1964,25 +1985,102 @@ impl Render for Settings {
                     // 中身の幅で広がらず、パネルの残りに収める（長い文字は行の中で省略する）。
                     .min_w_0()
                     .child(
-                        div()
-                            .id("settings-content")
-                            .debug_selector(|| "settings-content".into())
-                            .size_full()
-                            .flex()
-                            .flex_col()
-                            .gap(px(spacing::LG))
-                            .p(px(spacing::MD))
-                            .pb(px(spacing::XL))
-                            .overflow_y_scroll()
-                            .track_scroll(&self.scroll)
-                            .child(heading(i18n::t(cx, title), back))
-                            .children(self.category_page(&theme, window, cx)),
-                    )
-                    .child(
-                        components::scrollbars(&theme, "settings-bars", &self.scroll)
-                            .corner_radius(radius::XL),
+                        components::navigation(&theme, "settings-nav", &stack, page, swipe_back)
+                            // ページの地がパネルの右の角丸を覆わない。
+                            .rounded_right(radius::XL)
+                            .fading(PAGE_SHIFT),
                     ),
             )
+    }
+}
+
+impl Settings {
+    /// 積み重ねの画面 1 枚: 見出しの下にカテゴリの中身、または（`licenses`）ライセンスの一覧。
+    /// カテゴリを替えた直後は、前のカテゴリの画面と上下にスライドして入れ替わる（サイドバーで下の行を選ぶと上へ、上の行なら下へ）。
+    fn page(&self, licenses: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let swap = self.swap.filter(|_| !licenses);
+        if let Some((from, tr)) = swap {
+            let (t, moving) = tr.at(design::drive::now());
+            if moving {
+                components::keep_drawing(window, cx);
+                let dir = if self.category > from { 1.0 } else { -1.0 };
+                let old = self.page_of(false, from, true, window, cx);
+                let new = self.page_of(false, self.category, false, window, cx);
+                // 出る側も入る側も、動きは小さく、透明度を入れ替える。
+                let slot = |top: f32, alpha: f32, page: Div| {
+                    div()
+                        .absolute()
+                        .size_full()
+                        .top(relative(top * PAGE_SHIFT))
+                        .opacity(alpha)
+                        .child(page)
+                };
+                return div()
+                    .relative()
+                    .size_full()
+                    .overflow_hidden()
+                    .child(slot(-dir * t, 1.0 - t, old))
+                    .child(slot(dir * (1.0 - t), t, new));
+            }
+        }
+        self.page_of(licenses, self.category, false, window, cx)
+    }
+
+    /// 画面 1 枚。`leaving` は入れ替えで抜けていく側（スクロールの追跡とスクロールバーは持たない）。
+    fn page_of(
+        &self,
+        licenses: bool,
+        category: usize,
+        leaving: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = Theme::current(cx);
+        let (title, back) = if licenses {
+            let back = components::icon_button(
+                &theme,
+                "settings-back",
+                &design::icons::CARET_LEFT,
+                i18n::t(cx, "common.back"),
+                Variant::OnBackground,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.licenses = false;
+                cx.notify();
+            }));
+            ("settings.licenses", Some(back.into_any_element()))
+        } else {
+            (SETTINGS_CATEGORIES[category].2, None)
+        };
+        let content = div()
+            .id(if licenses {
+                "settings-licenses"
+            } else if leaving {
+                "settings-leaving"
+            } else {
+                "settings-content"
+            })
+            .size_full()
+            .flex()
+            .flex_col()
+            .gap(px(spacing::LG))
+            .p(px(spacing::MD))
+            .pb(px(spacing::XL))
+            .overflow_y_scroll()
+            .child(heading(i18n::t(cx, title), back))
+            .children(self.category_page(&theme, licenses, category, window, cx));
+        let page = div().relative().size_full();
+        if licenses || leaving {
+            return page.child(content);
+        }
+        page.child(
+            content
+                .debug_selector(|| "settings-content".into())
+                .track_scroll(&self.scroll),
+        )
+        .child(
+            components::scrollbars(&theme, "settings-bars", &self.scroll).corner_radius(radius::XL),
+        )
     }
 }
 

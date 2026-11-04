@@ -13,6 +13,9 @@ const SLIDE_MS: u64 = 350;
 /// サイドバーの印が出る・消える長さ（ms）。
 const HOP_MS: u64 = 300;
 
+/// 画面の入れ替え・積み下ろしの長さ（ms）。
+const PAGE_MS: u64 = 300;
+
 /// 幅の動きと中身の動きのずれ（入りは幅が先、出は中身が先）。
 pub const LAG: Duration = Duration::from_millis(80);
 
@@ -107,6 +110,10 @@ pub enum Motion {
     Hop,
     /// 選んでいる印が出る。ゆっくり動き出し、行き過ぎずに滑らかに止まる（ease-in-out。消えると同じ長さ）。
     HopIn,
+    /// スイッチのノブ。行き過ぎずに滑らかに止まる（ease-out）。
+    Toggle,
+    /// 画面の積み下ろし・入れ替え。ゆっくり動き出してゆっくり止まる、緩急の強い ease-in-out（quint）。
+    Page,
 }
 
 impl Motion {
@@ -116,7 +123,8 @@ impl Motion {
             Motion::Enter | Motion::Exit | Motion::Move => duration_ms::NORMAL,
             Motion::SlideIn | Motion::SlideOut | Motion::Grow | Motion::Shrink => SLIDE_MS,
             Motion::Morph => duration_ms::SLOW,
-            Motion::Hop | Motion::HopIn => HOP_MS,
+            Motion::Page => PAGE_MS,
+            Motion::Hop | Motion::HopIn | Motion::Toggle => HOP_MS,
         }
     }
 
@@ -127,9 +135,13 @@ impl Motion {
 
     fn easing(self) -> Easing {
         match self {
-            Motion::Enter | Motion::Return | Motion::Grow | Motion::Hop => Easing::EaseOutCubic,
+            Motion::Enter | Motion::Return | Motion::Grow | Motion::Hop | Motion::Toggle => {
+                Easing::EaseOutCubic
+            }
             Motion::Exit | Motion::Shrink => Easing::EaseInCubic,
             Motion::Move | Motion::Morph | Motion::HopIn => Easing::EaseInOutCubic,
+            // 緩急を強めに（始めも終わりもゆっくり、真ん中が速い）。
+            Motion::Page => Easing::EaseInOutQuint,
             Motion::SlideIn => Easing::EaseOutBack,
             // 滑り込みを逆に再生した動き（ease-in-back は 1 - ease-out-back(1 - t)）。
             Motion::SlideOut => Easing::EaseInBack,
@@ -263,6 +275,16 @@ mod tests {
         }
         assert!(max <= 1.0, "出るときも行き過ぎない: {max}");
         assert_eq!(a.value(), 1.0);
+    }
+
+    #[test]
+    fn toggle_never_overshoots() {
+        let mut a = Animation::new(0.0, 1.0, Motion::Toggle);
+        let mut max = 0.0f32;
+        for _ in 0..100 {
+            max = max.max(a.advance(0.01));
+        }
+        assert!(max <= 1.0, "{max}");
     }
 
     #[test]
