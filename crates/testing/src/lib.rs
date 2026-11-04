@@ -32,6 +32,8 @@ use ui::{PanelControl, PanelSpec};
 
 mod emoji;
 pub use emoji::EmojiTest;
+mod logo;
+pub use logo::LogoTest;
 mod keyboard;
 pub use keyboard::KeyboardTest;
 mod desktop;
@@ -541,6 +543,11 @@ impl Render for Testing {
                 .child(
                     button!("emoji-test", i18n::t(cx, "testing.open.emoji"), false).on_click(
                         spawn_view(self.panel, "testing.open.emoji", |id, _| EmojiTest::new(id)),
+                    ),
+                )
+                .child(
+                    button!("logo-test", i18n::t(cx, "testing.open.logo"), false).on_click(
+                        spawn_view(self.panel, "testing.open.logo", |id, _| LogoTest::new(id)),
                     ),
                 )
                 .child(

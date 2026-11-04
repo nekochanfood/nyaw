@@ -214,6 +214,7 @@ moving = "動く"
 lod = "LOD"
 font = "フォント"
 emoji = "絵文字"
+logo = "ロゴ"
 scrollbar = "スクロールバー"
 pointer = "ポインタ"
 laser = "レーザー"
@@ -234,6 +235,10 @@ add_first = "先頭に追加"
 remove_first = "先頭を削除"
 remove_last = "末尾を削除"
 replay = "出し直す"
+
+[logo]
+current = "ロゴ（今のテーマに合わせる） · Full / Mini"
+sizes = "大きさごとの Mini ロゴ（左: ライト用、右: ダーク用。それぞれの地色の上）"
 
 [emoji]
 inline = "テキスト内の SVG 絵文字 · 14 / 19 / 24 px"

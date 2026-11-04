@@ -1635,19 +1635,35 @@ fn file_save_dialog(
     Ok(Some(PathBuf::from(file_path_string)))
 }
 
+/// アプリのテーマがライトか（レジストリが読めなければライト）。
+fn apps_use_light_theme() -> bool {
+    windows_registry::CURRENT_USER
+        .open(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
+        .and_then(|key| key.get_u32("AppsUseLightTheme"))
+        .map(|v| v != 0)
+        .unwrap_or(true)
+}
+
+/// nyaw 改造: exe に埋め込んだアイコンのうち、ID 1 = ライト用、ID 2 = ダーク用を選ぶ
+/// （ルートの build.rs）。ダーク用が無ければ ID 1 に戻る。ウィンドウを作るときに 1 回だけ決める。
 fn load_icon() -> Result<HICON> {
     let module = unsafe { GetModuleHandleW(None).context("unable to get module handle")? };
-    let handle = unsafe {
+    let load = |id: usize| unsafe {
         LoadImageW(
             Some(module.into()),
-            windows::core::PCWSTR(1 as _),
+            windows::core::PCWSTR(id as _),
             IMAGE_ICON,
             0,
             0,
             LR_DEFAULTSIZE | LR_SHARED,
         )
-        .context("unable to load icon file")?
     };
+    let handle = if apps_use_light_theme() {
+        load(1)
+    } else {
+        load(2).or_else(|_| load(1))
+    }
+    .context("unable to load icon file")?;
     Ok(HICON(handle.0))
 }
 

@@ -31,12 +31,17 @@ pub mod emoji;
 pub mod font;
 #[cfg(feature = "gpui")]
 pub mod icon;
+#[cfg(feature = "gpui")]
+pub mod logo;
 
 #[cfg(feature = "gpui")]
 pub use emoji::{emoji, emoji_text};
 
 #[cfg(feature = "gpui")]
 pub use icon::{Icon, Weight, icon};
+
+#[cfg(feature = "gpui")]
+pub use logo::{Logo, logo};
 
 #[cfg(feature = "gpui")]
 include!(concat!(env!("OUT_DIR"), "/icons.rs"));
@@ -60,7 +65,7 @@ pub struct Motion {
 impl gpui::Global for Motion {}
 
 /// ライトかダークか。`Theme::of(mode)` で役割の色を引く。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Mode {
     #[default]
     Dark,

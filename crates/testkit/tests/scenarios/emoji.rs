@@ -17,3 +17,10 @@ fn testing_opens_emoji_screen(cx: &mut TestAppContext) {
     kit.step().select_panel(2).click("nav-close").step();
     assert!(kit.kernel.panel(1).closed);
 }
+
+#[gpui::test]
+fn testing_opens_logo_screen(cx: &mut TestAppContext) {
+    let mut kit = NoVrKit::new(cx, |_, _| Testing::default());
+    kit.click("logo-test");
+    assert!(!kit.kernel.panel(1).closed);
+}
