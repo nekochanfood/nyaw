@@ -24,6 +24,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\nyaw.exe
+SetupIconFile=..\assets\icons\nyaw-light.ico
 OutputDir=..\target\installer
 OutputBaseFilename=nyaw-{#AppVersion}-setup
 Compression=lzma2

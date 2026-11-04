@@ -214,6 +214,7 @@ moving = "Moving"
 lod = "LOD"
 font = "Font"
 emoji = "Emoji"
+logo = "Logo"
 scrollbar = "Scrollbar"
 pointer = "Pointer"
 laser = "Laser"
@@ -234,6 +235,10 @@ add_first = "Add at start"
 remove_first = "Remove first"
 remove_last = "Remove last"
 replay = "Replay reveal"
+
+[logo]
+current = "Logo (follows the current theme) · Full / Mini"
+sizes = "Mini logo by size, on the light / dark background it is made for"
 
 [emoji]
 inline = "Inline SVG emoji · 14 / 19 / 24 px"
