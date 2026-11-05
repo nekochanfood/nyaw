@@ -24,6 +24,12 @@ pub enum LodQuality {
     High = 3,
 }
 
+impl Serialize for LodQuality {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u8(*self as u8)
+    }
+}
+
 impl TryFrom<u8> for LodQuality {
     type Error = &'static str;
     fn try_from(value: u8) -> Result<Self, Self::Error> {

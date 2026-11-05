@@ -319,6 +319,7 @@ right = "Right"
 left = "Left"
 mirror_frame_rate = "Frame rate"
 keyboard = "Keyboard type"
+lod_quality = "Distance LOD quality"
 licenses = "Licenses"
 source_code = "Source code"
 
@@ -328,7 +329,14 @@ appearance = "Appearance"
 pointer = "Pointer"
 mirroring = "Mirroring"
 keyboard = "Keyboard"
+graphics = "Graphics"
 about = "About"
+
+[settings.lod]
+off = "Off"
+low = "Low"
+mid = "Medium"
+high = "High"
 
 [nav]
 title = "Navigation"

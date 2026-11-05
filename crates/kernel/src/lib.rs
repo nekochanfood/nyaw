@@ -121,6 +121,8 @@ pub enum Setting {
     Keyboard(subsystems::keyboard::KeyboardType),
     /// ダッシュボードが出ている間、ゲームへの入力を止めるか（`block_input`）。
     BlockInput(bool),
+    /// 距離 LOD の品質（`lod_quality`）。
+    LodQuality(LodQuality),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -137,6 +139,7 @@ pub struct Settings {
     pub mirror_frame_rate: u32,
     pub keyboard: subsystems::keyboard::KeyboardType,
     pub block_input: bool,
+    pub lod_quality: LodQuality,
 }
 
 impl Default for Settings {
@@ -153,6 +156,7 @@ impl Default for Settings {
             mirror_frame_rate: desktop::DEFAULT_FRAME_RATE,
             keyboard: Default::default(),
             block_input: true,
+            lod_quality: Default::default(),
         }
     }
 }
@@ -417,6 +421,7 @@ impl<B: VrBackend> Kernel<B> {
             mirror_frame_rate: self.mirror_frame_rate(),
             keyboard: self.config.keyboard,
             block_input: self.overlay.block_input(),
+            lod_quality: self.config.lod_quality,
         }
     }
 
@@ -497,6 +502,10 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay.set_block_input(b);
                 self.config.block_input = Some(b);
                 ("block_input", config::value(b))
+            }
+            Setting::LodQuality(q) => {
+                self.config.lod_quality = q;
+                ("lod_quality", config::value(q))
             }
         };
         if let Some(path) = &self.config_path
@@ -1035,6 +1044,13 @@ mod tests {
     }
 
     /// 境目の前後で行き来しない: 上げるのは閾値で、下げるのは閾値の 9 割を割ってから。
+    #[test]
+    fn lod_quality_setting_is_reflected() {
+        let (mut k, _) = lod_kernel();
+        k.set(Setting::LodQuality(LodQuality::High));
+        assert_eq!(k.settings().lod_quality, LodQuality::High);
+    }
+
     #[test]
     fn lod_does_not_flap_at_the_threshold() {
         let (mut k, p) = lod_kernel();

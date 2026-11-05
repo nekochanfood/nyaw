@@ -1356,7 +1356,7 @@ const SIDEBAR_PX: f32 = 320.0;
 const SETTINGS_SLIDER_PX: f32 = 520.0;
 
 /// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
-const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 6] = [
+const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 7] = [
     (
         "settings-general",
         &design::icons::GEAR,
@@ -1381,6 +1381,11 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 6] = [
         "settings-keyboard",
         &design::icons::KEYBOARD,
         "settings.category.keyboard",
+    ),
+    (
+        "settings-graphics",
+        &design::icons::IMAGE,
+        "settings.category.graphics",
     ),
     (
         "settings-about",
@@ -1726,6 +1731,44 @@ impl Settings {
                     )],
                 )]
             }
+            // グラフィックス: 距離 LOD の品質。
+            5 => vec![components::list(
+                theme,
+                [self.select(
+                    theme,
+                    window,
+                    cx,
+                    "setting-lod-quality",
+                    &design::icons::IMAGE,
+                    i18n::t(cx, "settings.lod_quality"),
+                    now.lod_quality,
+                    [
+                        (
+                            "setting-lod-off",
+                            "settings.lod.off",
+                            kernel::LodQuality::Off,
+                        ),
+                        (
+                            "setting-lod-low",
+                            "settings.lod.low",
+                            kernel::LodQuality::Low,
+                        ),
+                        (
+                            "setting-lod-mid",
+                            "settings.lod.mid",
+                            kernel::LodQuality::Mid,
+                        ),
+                        (
+                            "setting-lod-high",
+                            "settings.lod.high",
+                            kernel::LodQuality::High,
+                        ),
+                    ]
+                    .map(|(id, key, q)| (id, i18n::t(cx, key), q))
+                    .to_vec(),
+                    Setting::LodQuality,
+                )],
+            )],
             // ライセンス: 依存ごとの行。押すとそのリポジトリをブラウザで開く。数百行あるので、見えている行だけを
             // 作る `uniform_list` で並べる（行の高さは揃える。区切り線は先頭の行だけ透明にして高さを変えない）。
             _ if licenses => {
