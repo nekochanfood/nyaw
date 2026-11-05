@@ -2226,7 +2226,7 @@ pub struct DispatchEventResult {
 /// Indicates which region of the window is visible. Content falling outside of this mask will not be
 /// rendered. The visible region is a rectangle (`bounds`), optionally further cut to a rounded rectangle
 /// (`round` with `radii`; NYAW: added, the renderer anti-aliases the rounded edge per pixel).
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
 #[repr(C)]
 pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     /// The bounds
@@ -2235,6 +2235,8 @@ pub struct ContentMask<P: Clone + Debug + Default + PartialEq> {
     pub round: Bounds<P>,
     /// The corner radii of `round`. All zero means no rounded clip.
     pub radii: Corners<P>,
+    /// Superellipse exponent `2^k` of `round`'s corners (NYAW; 0 or 2 = circular).
+    pub exponent: f32,
 }
 
 impl<P: Clone + Debug + Default + PartialEq> ContentMask<P> {
@@ -2244,15 +2246,17 @@ impl<P: Clone + Debug + Default + PartialEq> ContentMask<P> {
             bounds,
             round: Bounds::default(),
             radii: Corners::default(),
+            exponent: 0.0,
         }
     }
 
     /// A rectangular mask also cut to the rounded rectangle `round`.
-    pub fn rounded(bounds: Bounds<P>, round: Bounds<P>, radii: Corners<P>) -> Self {
+    pub fn rounded(bounds: Bounds<P>, round: Bounds<P>, radii: Corners<P>, exponent: f32) -> Self {
         Self {
             bounds,
             round,
             radii,
+            exponent,
         }
     }
 
@@ -2269,6 +2273,7 @@ impl ContentMask<Pixels> {
             bounds: self.bounds.scale(factor),
             round: self.round.scale(factor),
             radii: self.radii.scale(factor),
+            exponent: self.exponent,
         }
     }
 
@@ -2281,6 +2286,7 @@ impl ContentMask<Pixels> {
             bounds,
             round: rounded.round,
             radii: rounded.radii,
+            exponent: rounded.exponent,
         }
     }
 }
@@ -4600,6 +4606,7 @@ impl Window {
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
+        corner_exponent: f32,
         shadows: &[BoxShadow],
     ) {
         self.invalidator.debug_assert_paint();
@@ -4624,7 +4631,7 @@ impl Window {
                 element_bounds,
                 element_corner_radii,
                 inset: 0,
-                pad: 0,
+                corner_exponent,
             });
         }
     }
@@ -4636,6 +4643,7 @@ impl Window {
         &mut self,
         bounds: Bounds<Pixels>,
         corner_radii: Corners<Pixels>,
+        corner_exponent: f32,
         shadows: &[BoxShadow],
     ) {
         self.invalidator.debug_assert_paint();
@@ -4669,7 +4677,7 @@ impl Window {
                 element_bounds,
                 element_corner_radii,
                 inset: 1,
-                pad: 0,
+                corner_exponent,
             });
         }
     }
