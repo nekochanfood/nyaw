@@ -249,8 +249,6 @@ wrap = "Emoji wrap with the surrounding text 😀🐈❤️. Family 👨‍👩�
 fallback = "Text presentation: ❤︎ ☀︎ · ordinary text: ABC 123 # · combining: é"
 
 [pointer]
-mode_mouse = "Mode: Mouse"
-mode_touch = "Mode: Touch"
 tapped = "Tapped {count}"
 dropped = "Dropped {count}"
 swipe_row = "Swipe row {index}"
@@ -309,17 +307,36 @@ sample_button = "Save changes"
 
 [settings]
 title = "Settings"
-# Dummy items until real settings land.
-item = "Setting {n}"
-detail = "Option {n}"
+language = "Language"
+block_input = "Block game input"
+theme = "Theme"
+smoothing = "Smoothing"
+release = "Release angle"
+laser_length = "Laser length"
+version = "Version"
+dominant_hand = "Dominant hand"
+right = "Right"
+left = "Left"
+mirror_frame_rate = "Frame rate"
+keyboard = "Keyboard type"
+lod_quality = "Distance LOD quality"
+licenses = "Licenses"
+source_code = "Source code"
 
 [settings.category]
 general = "General"
-account = "Account"
-privacy = "Privacy"
 appearance = "Appearance"
-security = "Security"
+pointer = "Pointer"
+mirroring = "Mirroring"
+keyboard = "Keyboard"
+graphics = "Graphics"
 about = "About"
+
+[settings.lod]
+off = "Off"
+low = "Low"
+mid = "Medium"
+high = "High"
 
 [nav]
 title = "Navigation"

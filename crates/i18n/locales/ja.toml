@@ -249,8 +249,6 @@ wrap = "絵文字も文章と一緒に折り返します 😀🐈❤️。家族
 fallback = "テキスト表示指定: ❤︎ ☀︎ · 通常文字: ABC 123 # · 結合文字: é"
 
 [pointer]
-mode_mouse = "方式: マウス"
-mode_touch = "方式: タッチ"
 tapped = "タップ {count} 回"
 dropped = "落とした数 {count}"
 swipe_row = "スワイプ {index} 行目"
@@ -309,17 +307,36 @@ sample_button = "変更を保存"
 
 [settings]
 title = "設定"
-# 本物の設定が載るまでのダミー。
-item = "設定項目 {n}"
-detail = "オプション {n}"
+language = "言語"
+block_input = "ゲーム入力を止める"
+theme = "テーマ"
+smoothing = "手ブレ抑え"
+release = "抑えを緩める角度"
+laser_length = "レーザーの長さ"
+version = "バージョン"
+dominant_hand = "利き手"
+right = "右手"
+left = "左手"
+mirror_frame_rate = "フレームレート"
+keyboard = "キーボードの種類"
+lod_quality = "距離 LOD の品質"
+licenses = "ライセンス"
+source_code = "ソースコード"
 
 [settings.category]
 general = "一般"
-account = "アカウント"
-privacy = "プライバシー"
 appearance = "外観"
-security = "セキュリティ"
+pointer = "ポインタ"
+mirroring = "ミラーリング"
+keyboard = "キーボード"
+graphics = "グラフィックス"
 about = "情報"
+
+[settings.lod]
+off = "オフ"
+low = "低"
+mid = "中"
+high = "高"
 
 [nav]
 title = "積み重ね"

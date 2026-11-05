@@ -24,6 +24,12 @@ pub enum LodQuality {
     High = 3,
 }
 
+impl Serialize for LodQuality {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u8(*self as u8)
+    }
+}
+
 impl TryFrom<u8> for LodQuality {
     type Error = &'static str;
     fn try_from(value: u8) -> Result<Self, Self::Error> {
@@ -129,8 +135,14 @@ pub struct Config {
     pub theme: ThemeMode,
     /// 画面の言語（`en` / `ja`）。省略で `en`。画面での切り替えはここへ書き戻される。
     pub language: Language,
-    /// 利き手（`right` / `left`）。省略で `right`。
+    /// 利き手（`right` / `left`）。省略で `right`。画面での切り替えはここへ書き戻される。
     pub dominant_hand: DominantHand,
+    /// ミラーリング（デスクトップの配信）の取得の上限 FPS（1〜240）。省略で `desktop::DEFAULT_FRAME_RATE`。
+    pub mirror_frame_rate: Option<u32>,
+    /// 仮想キーボードの種類（`full` / `tenkeyless` / `compact`）。省略で `full`。
+    pub keyboard: subsystems::keyboard::KeyboardType,
+    /// ダッシュボードが出ている間、ゲームへの入力を止めるか。省略で `true`。画面での切り替えはここへ書き戻される。
+    pub block_input: Option<bool>,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -309,6 +321,27 @@ emulator = false
             (vr::Hand::Left, vr::Hand::Right)
         );
         assert!(parse("dominant_hand = \"both\"").is_err());
+    }
+
+    #[test]
+    fn mirror_frame_rate_and_keyboard_parse() {
+        use subsystems::keyboard::KeyboardType;
+        let c = parse("").unwrap();
+        assert_eq!(
+            (c.mirror_frame_rate, c.keyboard),
+            (None, KeyboardType::Full)
+        );
+        let c = parse("mirror_frame_rate = 30\nkeyboard = \"tenkeyless\"").unwrap();
+        assert_eq!(
+            (c.mirror_frame_rate, c.keyboard),
+            (Some(30), KeyboardType::Tenkeyless)
+        );
+        assert!(parse("keyboard = \"split\"").is_err());
+        assert_eq!(parse("").unwrap().block_input, None);
+        assert_eq!(
+            parse("block_input = false").unwrap().block_input,
+            Some(false)
+        );
     }
 
     #[test]

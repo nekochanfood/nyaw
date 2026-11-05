@@ -103,7 +103,10 @@ pub struct KeyboardView {
     pub show_settings: bool,
     pub keyboard: Option<Keyboard>,
     pub layouts: Vec<Layout>,
+    /// 今の種類。全体の設定（`keyboard`）に従い、設定が変わると切り替わる。
     pub kind: KeyboardType,
+    /// 最後に見た全体の設定の種類（変わったときだけ [`Self::kind`] に写す）。
+    seen_kind: KeyboardType,
     pub automatic: bool,
     pub loading: bool,
     pub error: Option<String>,
@@ -145,6 +148,9 @@ impl KeyboardView {
                 }
             }
         });
+        let kind = cx
+            .try_global::<crate::PanelControl>()
+            .map_or_else(KeyboardType::default, |c| c.settings.keyboard);
         let initial = Layout::new("us", "");
         let _ = request.send((0, initial.clone()));
         cx.spawn(async move |this, cx| {
@@ -177,7 +183,8 @@ impl KeyboardView {
             show_settings: true,
             keyboard: None,
             layouts: Vec::new(),
-            kind: KeyboardType::Full,
+            kind,
+            seen_kind: kind,
             automatic: true,
             loading: true,
             error: None,
@@ -360,6 +367,15 @@ impl KeyboardView {
 
 impl Render for KeyboardView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let want = cx
+            .try_global::<crate::PanelControl>()
+            .map_or(self.seen_kind, |c| c.settings.keyboard);
+        if want != self.seen_kind {
+            (self.seen_kind, self.kind) = (want, want);
+            if let Some(keyboard) = &mut self.keyboard {
+                keyboard.reset();
+            }
+        }
         let theme = Theme::current(cx);
         let selected = self
             .layouts
@@ -402,15 +418,14 @@ impl Render for KeyboardView {
                     KeyboardType::Tenkeyless => ("keyboard-tkl", "keyboard.tkl"),
                     KeyboardType::Compact => ("keyboard-compact", "keyboard.compact"),
                 };
+                // 全体の設定を変える（フレームループが反映し、描き直しで [`Self::kind`] に写る）。
                 components::button(&theme, id, i18n::t(cx, label), Variant::Default)
                     .selected(self.kind == kind)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.kind = kind;
-                        if let Some(keyboard) = &mut this.keyboard {
-                            keyboard.reset();
-                        }
-                        cx.notify();
-                    }))
+                    .on_click(move |_, _, cx| {
+                        cx.default_global::<crate::PanelControl>()
+                            .setting_changes
+                            .push(kernel::Setting::Keyboard(kind))
+                    })
             }))
             .child(
                 components::button(
@@ -671,6 +686,7 @@ mod tests {
             keyboard: Some(db.keyboard(&layout).unwrap()),
             layouts: db.layouts.clone(),
             kind,
+            seen_kind: KeyboardType::default(),
             automatic: false,
             loading: false,
             error: None,

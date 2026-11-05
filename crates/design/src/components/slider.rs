@@ -65,8 +65,9 @@ pub fn slider(
         length: 200.0,
         groove: theme.groove,
         fill: theme.accent_solid,
-        knob: theme.on_accent,
-        knob_active: theme.accent_solid_active,
+        // つまみはどのテーマでも白（カードの色に紛れないよう、影で縁取る）。つかむと少し沈む。
+        knob: crate::scale::WHITE,
+        knob_active: 0xe6e6e6ff,
         on_change: Rc::new(on_change),
     }
 }
@@ -202,9 +203,16 @@ impl RenderOnce for Slider {
             .absolute()
             .size(px(HANDLE))
             .rounded(px(radius::FULL))
-            .border_2()
-            .border_color(rgba(if grabbed { knob_active } else { fill }))
-            .bg(rgba(knob))
+            .border_1()
+            .border_color(rgba(0x0000001f))
+            .shadow(vec![gpui::BoxShadow {
+                color: gpui::hsla(0.0, 0.0, 0.0, 0.25),
+                offset: gpui::point(px(0.0), px(1.0)),
+                blur_radius: px(4.0),
+                spread_radius: px(0.0),
+                inset: false,
+            }])
+            .bg(rgba(if grabbed { knob_active } else { knob }))
             .on_mouse_down(MouseButton::Left, press);
         if vertical {
             track = track.left(px(groove)).w(px(GROOVE)).top_0().bottom_0();

@@ -2741,6 +2741,7 @@ dependencies = [
  "kbvm",
  "logger",
  "os",
+ "serde",
 ]
 
 [[package]]
@@ -5455,6 +5456,7 @@ dependencies = [
  "i18n",
  "kernel",
  "nyapp",
+ "serde_json",
  "ui",
 ]
 

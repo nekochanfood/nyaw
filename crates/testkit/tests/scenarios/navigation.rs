@@ -3,8 +3,11 @@
 //! The hand that holds (grips) the panel is ignored: only the other hand's laser can swipe.
 
 use gpui::{Render, TestAppContext};
-use kernel::{PointerMode, Setting};
-use testing::{BACKGROUND, NavPage, NavTest, SIDEBAR_SELECTED_BG, Settings};
+use kernel::subsystems::keyboard::KeyboardType;
+use kernel::{DominantHand, Language, PointerMode, Setting, ThemeMode};
+use testing::{
+    BACKGROUND, NavPage, NavTest, SIDEBAR_BG, SIDEBAR_INDICATOR, SIDEBAR_INDICATOR_INSET, Settings,
+};
 use testkit::{Action, Driver, Hand, Vec2, VrKit};
 
 /// Holds the trigger near the right end of `selector`'s row and moves left by a bit more than half the page width, then releases.
@@ -137,32 +140,68 @@ fn the_hand_holding_the_panel_is_ignored(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn settings_content_pushes_details_and_swipes_back(cx: &mut TestAppContext) {
+fn settings_selects_change_the_settings(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
-    kit.click("setting-1");
-    assert_eq!(kit.read(|v| v.pages.clone()), [None, Some(1)]);
-    swipe_back(&mut kit, "settings-content", "setting-detail-0");
-    assert_eq!(kit.read(|v| v.pages.clone()), [None]);
-    kit.click("setting-0").click("settings-back");
-    assert_eq!(kit.read(|v| v.pages.clone()), [None]);
-    // Switching category starts again from its list.
-    kit.click("setting-2").click("settings-account");
-    assert_eq!(kit.read(|v| (v.category, v.pages.clone())), (1, vec![None]));
+    kit.click("setting-language");
+    assert_eq!(kit.read(|v| v.open), Some("setting-language"));
+    kit.click("setting-lang-ja");
+    assert_eq!(kit.kernel.settings().language, Language::Ja);
+    assert_eq!(kit.read(|v| v.open), None, "choosing closes the popover");
+    kit.click("settings-appearance")
+        .click("setting-theme")
+        .click("setting-theme-light");
+    assert_eq!(kit.read(|v| v.category), 1);
+    assert_eq!(kit.kernel.settings().theme, ThemeMode::Light);
+    kit.click("settings-pointer")
+        .click("setting-dominant-hand")
+        .click("setting-hand-left");
+    assert_eq!(kit.kernel.settings().dominant_hand, DominantHand::Left);
+    kit.click("settings-mirroring")
+        .click("setting-mirror-fps")
+        .click("setting-fps-30");
+    assert_eq!(kit.kernel.settings().mirror_frame_rate, 30);
+    kit.click("settings-keyboard")
+        .click("setting-keyboard")
+        .click("setting-keyboard-compact");
+    assert_eq!(kit.kernel.settings().keyboard, KeyboardType::Compact);
 }
 
 #[gpui::test]
-fn settings_sidebar_colors_only_the_selected_category(cx: &mut TestAppContext) {
+fn settings_popover_closes_on_outside_press(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
-    kit.hover("setting-0");
-    assert_eq!(kit.color_at("settings-general"), SIDEBAR_SELECTED_BG);
+    // Pressing the open row again closes it (the backdrop takes the press) instead of reopening.
+    kit.click("setting-language").click("setting-language");
+    assert_eq!(kit.read(|v| v.open), None);
+    // A press outside closes it without reaching what is under it.
+    kit.click("setting-language").click("settings-about");
+    assert_eq!(kit.read(|v| (v.open, v.category)), (None, 0));
+}
+
+/// The color 2px in from the left edge of `selector`, halfway down (where the selected row's indicator is).
+fn left_edge(kit: &mut VrKit<Settings>, selector: &'static str) -> u32 {
+    let b = kit.bounds(selector);
+    kit.vr_color_at_px(Vec2::new(
+        f32::from(b.origin.x) + SIDEBAR_INDICATOR_INSET + 2.0,
+        f32::from(b.center().y),
+    ))
+}
+
+#[gpui::test]
+fn settings_sidebar_marks_only_the_selected_category(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.hover("setting-language");
+    assert_ne!(SIDEBAR_BG, BACKGROUND, "two-tone");
     assert_eq!(
-        kit.color_at("settings-privacy"),
-        BACKGROUND,
+        kit.color_at("settings-general"),
+        SIDEBAR_BG,
         "no background"
     );
-    kit.click("settings-privacy").hover("setting-0");
-    assert_eq!(kit.color_at("settings-privacy"), SIDEBAR_SELECTED_BG);
-    assert_eq!(kit.color_at("settings-general"), BACKGROUND);
+    assert_eq!(kit.color_at("settings-about"), SIDEBAR_BG);
+    assert_eq!(left_edge(&mut kit, "settings-general"), SIDEBAR_INDICATOR);
+    assert_eq!(left_edge(&mut kit, "settings-about"), SIDEBAR_BG);
+    kit.click("settings-about").hover("setting-version");
+    assert_eq!(left_edge(&mut kit, "settings-about"), SIDEBAR_INDICATOR);
+    assert_eq!(left_edge(&mut kit, "settings-general"), SIDEBAR_BG);
 }
 
 #[gpui::test]
@@ -193,4 +232,19 @@ fn touch_swipe_goes_back_with_the_default_smoothing(cx: &mut TestAppContext) {
         kit.release(Action::Select).step().step();
         assert_eq!(stack(&mut kit), [NavPage::Root], "hold {hold}");
     }
+}
+
+/// The About screen starts with the full logo, centered, with equal space above and below it.
+#[gpui::test]
+fn settings_about_shows_centered_logo(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.click("settings-about");
+    let logo = kit.bounds("about-logo");
+    let version = kit.bounds("setting-version");
+    assert!(
+        logo.bottom() <= version.top(),
+        "logo sits above the version row"
+    );
+    // The block is 144px of logo plus 24px of padding on both sides.
+    assert_eq!(f32::from(logo.size.height), 144.0 + 48.0);
 }

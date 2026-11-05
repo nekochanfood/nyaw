@@ -20,9 +20,7 @@ use gpui::{
     px, rgba,
 };
 use kernel::audio::Sound;
-use kernel::desktop::{
-    DEFAULT_FRAME_RATE, Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status,
-};
+use kernel::desktop::{Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status};
 use kernel::subsystems::media;
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, Setting};
@@ -554,7 +552,7 @@ struct Stream {
 /// メニューのポップオーバーの大きさと解像度（2 行の一覧が収まる）。
 const MENU_PX: (u32, u32) = (
     320,
-    (MENU_ROWS * (components::NAV_BAR_HEIGHT - 2.0 * spacing::SM)
+    (MENU_ROWS * components::MENU_ITEM_HEIGHT
         + 2.0 * components::MENU_PADDING
         + 2.0 * components::PANEL_MARGIN) as u32,
 );
@@ -2366,11 +2364,7 @@ impl Mirror {
             }
             cx.set_global(Mirrors(mirrors));
         }
-        commands(
-            self.panel,
-            [PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE)],
-            cx,
-        );
+        commands(self.panel, [stream(source, cx)], cx);
         redraw(self.panel, cx);
         self.watch_successor(cx);
     }
@@ -2602,11 +2596,7 @@ fn start_mirror(
     mirrors.push((source.clone(), panel, resident && dashboard.is_some()));
     cx.set_global(Mirrors(mirrors));
     let (name, kind) = (SharedString::from(source.name.clone()), source.kind);
-    commands(
-        panel,
-        [PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE)],
-        cx,
-    );
+    commands(panel, [stream(source, cx)], cx);
     if let Some(dashboard) = dashboard {
         let _ = dashboard.update(cx, |d, cx| {
             d.add_stream(panel, kind, name, icon, resident, cx)
@@ -3033,6 +3023,15 @@ fn close(panel: PanelId, cx: &mut App) {
     commands(panel, [PanelCommand::Close], cx);
 }
 
+/// `source` の配信を始める操作。FPS は全体の設定（`mirror_frame_rate`）。
+fn stream(source: Source, cx: &mut App) -> PanelCommand {
+    let frame_rate = cx
+        .default_global::<PanelControl>()
+        .settings
+        .mirror_frame_rate;
+    PanelCommand::Stream(Some(source), frame_rate)
+}
+
 fn commands(panel: PanelId, commands: impl IntoIterator<Item = PanelCommand>, cx: &mut App) {
     cx.default_global::<PanelControl>()
         .panels
@@ -3046,6 +3045,7 @@ fn commands(panel: PanelId, commands: impl IntoIterator<Item = PanelCommand>, cx
 mod tests {
     use super::*;
     use gpui::{Modifiers, TestAppContext, VisualTestContext};
+    use kernel::desktop::DEFAULT_FRAME_RATE;
 
     fn battery(level: f32, charging: bool) -> Battery {
         Battery {
