@@ -174,6 +174,19 @@ pub struct GridTemplate {
     pub min_size: GridTemplateMinSize,
 }
 
+static DEFAULT_CORNER_SUPERELLIPSE: std::sync::atomic::AtomicU32 =
+    std::sync::atomic::AtomicU32::new(0x3f80_0000); // 1.0f32
+
+/// NYAW: sets the corner shape every rounded element gets unless it sets `corner_superellipse`
+/// (CSS `superellipse(k)`; 1 = circular, the initial value). The design crate calls this once at startup.
+pub fn set_default_corner_superellipse(k: f32) {
+    DEFAULT_CORNER_SUPERELLIPSE.store(k.to_bits(), std::sync::atomic::Ordering::Relaxed);
+}
+
+fn default_corner_superellipse() -> f32 {
+    f32::from_bits(DEFAULT_CORNER_SUPERELLIPSE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -291,7 +304,7 @@ pub struct Style {
     #[refineable]
     pub corner_radii: Corners<AbsoluteLength>,
 
-    /// NYAW: CSS `superellipse(k)` strength of the rounded corners. 1 is a circular corner, 2 a squircle, 0 a bevel, larger is squarer.
+    /// NYAW: CSS `superellipse(k)` strength of the rounded corners (default [`set_default_corner_superellipse`]). 1 is a circular corner, 2 a squircle, 0 a bevel, larger is squarer.
     pub corner_superellipse: f32,
 
     /// Box shadow of the element
@@ -822,7 +835,7 @@ impl Default for Style {
             border_color: None,
             border_style: BorderStyle::default(),
             corner_radii: Corners::default(),
-            corner_superellipse: 1.0,
+            corner_superellipse: default_corner_superellipse(),
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
             mouse_cursor: None,

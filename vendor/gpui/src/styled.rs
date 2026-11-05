@@ -754,6 +754,11 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Opts this element out of the global superellipse corners: plain circular arcs (`corner_superellipse(1.0)`). NYAW: added.
+    fn circular_corners(self) -> Self {
+        self.corner_superellipse(1.0)
+    }
+
     /// Sets the opacity of this element and its children.
     fn opacity(mut self, opacity: f32) -> Self {
         self.style().opacity = Some(opacity);

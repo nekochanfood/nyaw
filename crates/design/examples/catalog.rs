@@ -7,6 +7,7 @@ fn main() {
     gpui_platform::application().run(|cx| {
         cx.set_global(design::Motion::default());
         design::font::install(cx);
+        design::corner::install();
         cx.open_window(WindowOptions::default(), |_, cx| {
             cx.new(|_| Catalog::default())
         })
