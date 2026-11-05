@@ -17,7 +17,7 @@ impl SuperellipseTest {
     pub fn new(_panel: PanelId) -> Self {
         Self {
             radius: 48.0,
-            k: 2.0,
+            k: 1.2,
         }
     }
 }
