@@ -14,6 +14,7 @@ mod novr_cursor;
 mod panel_lod;
 mod round_clip;
 mod stress;
+mod superellipse;
 mod test_panels;
 
 use std::process::{Command, ExitCode, Termination};
@@ -37,6 +38,7 @@ const CASES: &[Case] = &[
     ("panel_lod", || report(panel_lod::main)),
     ("round_clip", || report(round_clip::main)),
     ("stress", || report(stress::main)),
+    ("superellipse", || report(superellipse::main)),
     ("test_panels", || report(test_panels::main)),
 ];
 
