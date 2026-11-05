@@ -39,6 +39,7 @@ struct ContentMask {
     Bounds bounds;
     Bounds round;
     Corners radii;
+    float exponent;
 };
 
 struct Edges {
@@ -242,9 +243,14 @@ float2 erf(float2 x) {
     return s - s / (x * x);
 }
 
-float blur_along_x(float x, float y, float sigma, float corner, float2 half_size) {
+float blur_along_x(float x, float y, float sigma, float corner, float2 half_size, float n) {
     float delta = min(half_size.y - corner - abs(y), 0.);
-    float curved = half_size.x - corner + sqrt(max(0., corner * corner - delta * delta));
+    // NYAW: the corner arc is a superellipse when n is set (<= 0 or 2 = circular).
+    float arc = sqrt(max(0., corner * corner - delta * delta));
+    if (n > 0. && n != 2. && corner > 0.) {
+        arc = corner * pow(max(0., 1. - pow(abs(delta) / corner, n)), 1. / n);
+    }
+    float curved = half_size.x - corner + arc;
     float2 integral = 0.5 + 0.5 * erf((x + float2(-curved, curved)) * (sqrt(0.5) / sigma));
     return integral.y - integral.x;
 }
@@ -311,14 +317,32 @@ float quad_sdf_impl(float2 corner_center_to_point, float corner_radius) {
     }
 }
 
-float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
+// NYAW: approximate signed distance to a superellipse corner |x/r|^n + |y/r|^n = 1
+// (first-order: (F - 1) / |grad F|). `p` is the point relative to the corner's center, both >= 0.
+float superellipse_sdf(float2 p, float2 radii, float n) {
+    float2 a = max(p, 1e-4) / max(radii, 1e-4);
+    float f = pow(a.x, n) + pow(a.y, n);
+    float2 grad = n * pow(a, n - 1.0) / max(radii, 1e-4);
+    return (f - 1.0) / max(length(grad), 1e-6);
+}
+
+// NYAW: `n` is the superellipse exponent 2^k of the corners (<= 0 or 2 = circular).
+float quad_sdf_n(float2 pt, Bounds bounds, Corners corner_radii, float n) {
     float2 half_size = bounds.size / 2.;
     float2 center = bounds.origin + half_size;
     float2 center_to_point = pt - center;
     float corner_radius = pick_corner_radius(center_to_point, corner_radii);
     float2 corner_to_point = abs(center_to_point) - half_size;
     float2 corner_center_to_point = corner_to_point + corner_radius;
+    if (n > 0.0 && n != 2.0 && corner_radius > 0.0 &&
+        corner_center_to_point.x >= 0.0 && corner_center_to_point.y >= 0.0) {
+        return superellipse_sdf(corner_center_to_point, float2(corner_radius, corner_radius), n);
+    }
     return quad_sdf_impl(corner_center_to_point, corner_radius);
+}
+
+float quad_sdf(float2 pt, Bounds bounds, Corners corner_radii) {
+    return quad_sdf_n(pt, bounds, corner_radii, 0.0);
 }
 
 // NYAW: coverage (0..1) of the rounded part of a content mask at a pixel.
@@ -327,7 +351,7 @@ float round_clip(float2 pt, ContentMask mask) {
         mask.radii.bottom_right == 0.0 && mask.radii.bottom_left == 0.0) {
         return 1.0;
     }
-    return saturate(0.5 - quad_sdf(pt, mask.round, mask.radii));
+    return saturate(0.5 - quad_sdf_n(pt, mask.round, mask.radii, mask.exponent));
 }
 
 GradientColor prepare_gradient_color(uint tag, uint color_space, Hsla solid, LinearColorStop colors[2]) {
@@ -506,15 +530,6 @@ float quarter_ellipse_sdf(float2 pt, float2 radii) {
     // TODO: A better solution would be to use the gradient of the implicit
     // function for an ellipse to approximate a scaling factor.
     return unit_circle_sdf * (radii.x + radii.y) * -0.5;
-}
-
-// NYAW: approximate signed distance to a superellipse corner |x/r|^n + |y/r|^n = 1
-// (first-order: (F - 1) / |grad F|). `p` is the point relative to the corner's center, both >= 0.
-float superellipse_sdf(float2 p, float2 radii, float n) {
-    float2 a = max(p, 1e-4) / max(radii, 1e-4);
-    float f = pow(a.x, n) + pow(a.y, n);
-    float2 grad = n * pow(a, n - 1.0) / max(radii, 1e-4);
-    return (f - 1.0) / max(length(grad), 1e-6);
 }
 
 /*
@@ -903,7 +918,7 @@ struct Shadow {
     Bounds element_bounds;
     Corners element_corner_radii;
     uint inset;
-    uint pad; // align to 8 bytes
+    float corner_exponent;
 };
 
 struct ShadowVertexOutput {
@@ -960,7 +975,7 @@ float4 shadow_fragment_impl(ShadowFragmentInput input) {
 
     float alpha;
     if (shadow.blur_radius == 0.) {
-        float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+        float distance = quad_sdf_n(input.position.xy, shadow.bounds, shadow.corner_radii, shadow.corner_exponent);
         alpha = saturate(0.5 - distance);
     } else {
         // The signal is only non-zero in a limited range, so don't waste samples
@@ -975,7 +990,7 @@ float4 shadow_fragment_impl(ShadowFragmentInput input) {
         alpha = 0.;
         for (int i = 0; i < 4; i++) {
             alpha += blur_along_x(point0.x, point0.y - y, shadow.blur_radius,
-                                corner_radius, half_size) *
+                                corner_radius, half_size, shadow.corner_exponent) *
                     gaussian(y, shadow.blur_radius) * step;
             y += step;
         }
@@ -985,8 +1000,8 @@ float4 shadow_fragment_impl(ShadowFragmentInput input) {
         // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
         // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
         alpha = 1.0 - alpha;
-        float element_distance = quad_sdf(input.position.xy, shadow.element_bounds,
-                                          shadow.element_corner_radii);
+        float element_distance = quad_sdf_n(input.position.xy, shadow.element_bounds,
+                                            shadow.element_corner_radii, shadow.corner_exponent);
         alpha *= saturate(0.5 - element_distance);
     }
 

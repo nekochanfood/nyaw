@@ -584,7 +584,8 @@ pub struct Shadow {
     pub element_corner_radii: Corners<ScaledPixels>,
     /// 0 = drop shadow (rendered outside the element), 1 = inset shadow (rendered inside).
     pub inset: u32,
-    pub pad: u32, // align to 8 bytes
+    /// NYAW: superellipse exponent `2^k` of the corners (0 or 2 = circular); also keeps the struct 8-byte aligned.
+    pub corner_exponent: f32,
 }
 
 impl From<Shadow> for Primitive {

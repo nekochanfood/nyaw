@@ -705,7 +705,7 @@ impl Style {
                         .to_pixels(rem_size)
                         .clamp_radii_for_quad_size(full.size);
                     if radii != Corners::default() {
-                        return Some(ContentMask::rounded(bounds, full, radii));
+                        return Some(ContentMask::rounded(bounds, full, radii, self.corner_superellipse.exp2()));
                     }
                 }
                 Some(ContentMask::from_bounds(bounds))
@@ -737,7 +737,12 @@ impl Style {
             .to_pixels(rem_size)
             .clamp_radii_for_quad_size(bounds.size);
 
-        window.paint_drop_shadows(bounds, corner_radii, &self.box_shadow);
+        window.paint_drop_shadows(
+            bounds,
+            corner_radii,
+            self.corner_superellipse.exp2(),
+            &self.box_shadow,
+        );
 
         let background_color = self.background.as_ref().and_then(Fill::color);
         if background_color.is_some_and(|color| !color.is_transparent()) {
@@ -766,7 +771,12 @@ impl Style {
             ).superellipse(self.corner_superellipse));
         }
 
-        window.paint_inset_shadows(bounds, corner_radii, &self.box_shadow);
+        window.paint_inset_shadows(
+            bounds,
+            corner_radii,
+            self.corner_superellipse.exp2(),
+            &self.box_shadow,
+        );
 
         continuation(window, cx);
 
