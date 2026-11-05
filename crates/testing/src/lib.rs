@@ -34,6 +34,8 @@ mod emoji;
 pub use emoji::EmojiTest;
 mod logo;
 pub use logo::LogoTest;
+mod superellipse;
+pub use superellipse::SuperellipseTest;
 mod keyboard;
 pub use keyboard::KeyboardTest;
 mod desktop;
@@ -549,6 +551,18 @@ impl Render for Testing {
                     button!("logo-test", i18n::t(cx, "testing.open.logo"), false).on_click(
                         spawn_view(self.panel, "testing.open.logo", |id, _| LogoTest::new(id)),
                     ),
+                )
+                .child(
+                    button!(
+                        "superellipse-test",
+                        i18n::t(cx, "testing.open.superellipse"),
+                        false
+                    )
+                    .on_click(spawn_view(
+                        self.panel,
+                        "testing.open.superellipse",
+                        |id, _| SuperellipseTest::new(id),
+                    )),
                 )
                 .child(
                     button!("keyboard-test", i18n::t(cx, "keyboard.title"), false).on_click({

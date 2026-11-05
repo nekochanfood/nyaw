@@ -1376,6 +1376,7 @@ pub fn run_with(
         // 部品のトランジションを有効にする（テストのキットは置かない）。
         cx.set_global(design::Motion::default());
         design::font::install(cx);
+        design::corner::install();
         if let Some(p) = profiler {
             cx.set_global(with_budget(p));
             cx.default_global::<PanelControl>().profiling = true;

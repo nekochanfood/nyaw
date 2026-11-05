@@ -158,6 +158,7 @@ impl Render for Wrist {
                 .top(px(DIAL_C - DIAL_R * a.cos() - d / 2.0))
                 .size(px(d))
                 .rounded(px(radius::FULL))
+                .circular_corners()
                 .bg(rgba(color))
         };
         let ticks = (0..60).step_by(5).map(|i| {
@@ -170,6 +171,8 @@ impl Render for Wrist {
         let second = dot(now.second(), 12.0, theme.accent_solid);
         components::card_panel(&theme)
             .rounded(px(radius::FULL))
+            // 腕時計の文字盤は正円。全域のスーパーエリプスからは外す。
+            .circular_corners()
             .flex()
             .flex_col()
             .items_center()

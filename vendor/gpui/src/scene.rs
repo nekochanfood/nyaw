@@ -541,6 +541,8 @@ pub struct Quad {
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
+    /// NYAW: superellipse exponent `n = 2^k` of the rounded corners (CSS `superellipse(k)`). 2 (or 0, the default) is a circular corner.
+    pub corner_exponent: f32,
 }
 
 impl From<Quad> for Primitive {
