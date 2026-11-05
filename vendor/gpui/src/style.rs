@@ -291,6 +291,9 @@ pub struct Style {
     #[refineable]
     pub corner_radii: Corners<AbsoluteLength>,
 
+    /// NYAW: CSS `superellipse(k)` strength of the rounded corners. 1 is a circular corner, 2 a squircle, 0 a bevel, larger is squarer.
+    pub corner_superellipse: f32,
+
     /// Box shadow of the element
     pub box_shadow: Vec<BoxShadow>,
 
@@ -747,7 +750,7 @@ impl Style {
                 Edges::default(),
                 border_color,
                 self.border_style,
-            ));
+            ).superellipse(self.corner_superellipse));
         }
 
         window.paint_inset_shadows(bounds, corner_radii, &self.box_shadow);
@@ -765,7 +768,7 @@ impl Style {
                 border_widths,
                 self.border_color.unwrap_or_default(),
                 self.border_style,
-            ));
+            ).superellipse(self.corner_superellipse));
         }
 
         #[cfg(debug_assertions)]
@@ -819,6 +822,7 @@ impl Default for Style {
             border_color: None,
             border_style: BorderStyle::default(),
             corner_radii: Corners::default(),
+            corner_superellipse: 1.0,
             box_shadow: Default::default(),
             text: TextStyleRefinement::default(),
             mouse_cursor: None,

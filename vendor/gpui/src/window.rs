@@ -4737,6 +4737,7 @@ impl Window {
             corner_radii: quad.corner_radii.scale(self.scale_factor()),
             border_widths: snapped_border_widths,
             border_style: quad.border_style,
+            corner_exponent: quad.superellipse.exp2(),
         };
 
         if !quad.background.is_transparent() {
@@ -7815,9 +7816,16 @@ pub struct PaintQuad {
     pub border_color: Hsla,
     /// The style of the quad's borders.
     pub border_style: BorderStyle,
+    /// NYAW: CSS `superellipse(k)` strength of the rounded corners (1 = circular).
+    pub superellipse: f32,
 }
 
 impl PaintQuad {
+    /// Sets the superellipse strength `k` of the rounded corners (1 = circular, 2 = squircle).
+    pub fn superellipse(self, k: f32) -> Self {
+        PaintQuad { superellipse: k, ..self }
+    }
+
     /// Sets the corner radii of the quad.
     pub fn corner_radii(self, corner_radii: impl Into<Corners<Pixels>>) -> Self {
         PaintQuad {
@@ -7867,6 +7875,7 @@ pub fn quad(
         border_widths: border_widths.into(),
         border_color: border_color.into(),
         border_style,
+        superellipse: 1.0,
     }
 }
 
@@ -7879,6 +7888,7 @@ pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Background>
         border_widths: (0.).into(),
         border_color: transparent_black(),
         border_style: BorderStyle::default(),
+        superellipse: 1.0,
     }
 }
 
@@ -7895,6 +7905,7 @@ pub fn outline(
         border_widths: (1.).into(),
         border_color: border_color.into(),
         border_style,
+        superellipse: 1.0,
     }
 }
 

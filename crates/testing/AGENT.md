@@ -6,7 +6,7 @@ UI 層の上に載る画面。GPUI のビューで、ランタイムを意識し
 
 ## 主な公開 API
 
-`Testing`（テスト用の画面）, `TestingAnim`（毎フレーム変わる）, `TestingLod`（LOD を数字と色で表示）, `TestingScrollbar`（縦・横・縦横のスクロールバー）, `StressTest`（上限までパネルを出す・閉じる・ちりばめる・並べる）, `TooltipTest`（ツールチップ）, `SmoothingTest`（レーザーの手ブレ抑えの強さと線の長さをスライダーで調整）, `LogoTest`（ロゴの Full / Mini と、16〜256 px のサイズ違いをライト用・ダーク用の地の上に並べる。`logo-test` で開く）
+`Testing`（テスト用の画面）, `TestingAnim`（毎フレーム変わる）, `TestingLod`（LOD を数字と色で表示）, `TestingScrollbar`（縦・横・縦横のスクロールバー）, `StressTest`（上限までパネルを出す・閉じる・ちりばめる・並べる）, `TooltipTest`（ツールチップ）, `SmoothingTest`（レーザーの手ブレ抑えの強さと線の長さをスライダーで調整）, `LogoTest`（ロゴの Full / Mini と、16〜256 px のサイズ違いをライト用・ダーク用の地の上に並べる。`logo-test` で開く）, `SuperellipseTest`（角丸のスーパーエリプス。`superellipse-radius` で大きさ、`superellipse-k` で強さ k を動かし、`superellipse-preview` / `superellipse-outline` と固定 k の見本で見る。`superellipse-test` で開く。描画は vendor/gpui の `corner_superellipse(k)`、GPU テストは `ui/tests/gpu/superellipse.rs`）
 
 ## Testing（テスト用の画面）
 

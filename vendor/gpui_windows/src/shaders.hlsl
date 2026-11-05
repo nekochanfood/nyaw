@@ -508,6 +508,15 @@ float quarter_ellipse_sdf(float2 pt, float2 radii) {
     return unit_circle_sdf * (radii.x + radii.y) * -0.5;
 }
 
+// NYAW: approximate signed distance to a superellipse corner |x/r|^n + |y/r|^n = 1
+// (first-order: (F - 1) / |grad F|). `p` is the point relative to the corner's center, both >= 0.
+float superellipse_sdf(float2 p, float2 radii, float n) {
+    float2 a = max(p, 1e-4) / max(radii, 1e-4);
+    float f = pow(a.x, n) + pow(a.y, n);
+    float2 grad = n * pow(a, n - 1.0) / max(radii, 1e-4);
+    return (f - 1.0) / max(length(grad), 1e-6);
+}
+
 /*
 **
 **              Quads
@@ -523,6 +532,7 @@ struct Quad {
     Hsla border_color;
     Corners corner_radii;
     Edges border_widths;
+    float corner_exponent;
 };
 
 struct QuadVertexOutput {
@@ -652,6 +662,11 @@ float4 quad_fragment_impl(QuadFragmentInput input) {
 
     // Signed distance of the point to the outside edge of the quad's border
     float outer_sdf = quad_sdf_impl(corner_center_to_point, corner_radius);
+    // NYAW: n = 0 (unset) and n = 2 are circular corners.
+    bool superellipse = quad.corner_exponent > 0.0 && quad.corner_exponent != 2.0 && corner_radius > 0.0;
+    if (superellipse && is_near_rounded_corner) {
+        outer_sdf = superellipse_sdf(corner_center_to_point, float2(corner_radius, corner_radius), quad.corner_exponent);
+    }
 
     // Approximate signed distance of the point to the inside edge of the quad's
     // border. It is negative outside this edge (within the border), and
@@ -669,6 +684,9 @@ float4 quad_fragment_impl(QuadFragmentInput input) {
     } else if (is_beyond_inner_straight_border) {
         // Fast path for points that must be outside the inner edge
         inner_sdf = -1.0;
+    } else if (superellipse) {
+        float2 inner_radii = max(float2(0.0, 0.0), float2(corner_radius, corner_radius) - reduced_border);
+        inner_sdf = -superellipse_sdf(corner_center_to_point, inner_radii, quad.corner_exponent);
     } else if (reduced_border.x == reduced_border.y) {
         // Fast path for circular inner edge.
         inner_sdf = -(outer_sdf + reduced_border.x);
