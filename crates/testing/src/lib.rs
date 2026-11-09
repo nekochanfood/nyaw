@@ -32,6 +32,8 @@ use ui::{PanelControl, PanelSpec};
 
 mod emoji;
 pub use emoji::EmojiTest;
+mod wizard;
+pub use wizard::WizardTest;
 mod logo;
 pub use logo::LogoTest;
 mod superellipse;
@@ -545,6 +547,13 @@ impl Render for Testing {
                 .child(
                     button!("emoji-test", i18n::t(cx, "testing.open.emoji"), false).on_click(
                         spawn_view(self.panel, "testing.open.emoji", |id, _| EmojiTest::new(id)),
+                    ),
+                )
+                .child(
+                    button!("wizard-test", i18n::t(cx, "testing.open.wizard"), false).on_click(
+                        spawn_view(self.panel, "testing.open.wizard", |id, _| {
+                            WizardTest::new(id)
+                        }),
                     ),
                 )
                 .child(
