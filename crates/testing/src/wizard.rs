@@ -60,7 +60,7 @@ impl Render for WizardTest {
                     return components::wizard_welcome(
                         &theme,
                         "wizard",
-                        &icons::STAR,
+                        components::wizard_icon(&theme, &icons::STAR),
                         i18n::t(cx, "wizard.welcome_title"),
                         i18n::t(cx, "wizard.welcome_description"),
                         [next],
@@ -84,7 +84,7 @@ impl Render for WizardTest {
                     return components::wizard_welcome(
                         &theme,
                         "wizard",
-                        &icons::CHECK_CIRCLE,
+                        components::wizard_icon(&theme, &icons::CHECK_CIRCLE),
                         i18n::t(cx, "wizard.done_title"),
                         i18n::t(cx, "wizard.done_description"),
                         [b],
@@ -101,7 +101,7 @@ impl Render for WizardTest {
                 components::wizard_step(
                     &theme,
                     "wizard",
-                    &icons::STAR,
+                    components::wizard_icon(&theme, &icons::STAR),
                     i18n::tf(cx, "wizard.step_title", &[("n", &step.to_string())]),
                     i18n::t(cx, "wizard.step_description"),
                     form,

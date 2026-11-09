@@ -131,7 +131,7 @@ fn arrow_button(
 fn heading(
     theme: &Theme,
     id: &str,
-    glyph: &'static Icon,
+    hero: impl IntoElement,
     title: SharedString,
     description: SharedString,
     centered: bool,
@@ -142,34 +142,35 @@ fn heading(
     } else {
         col
     };
-    col.child(
-        div().mb(px(spacing::SM)).child(
-            crate::icon(glyph)
-                .size(px(ICON))
-                .color(rgba(theme.accent_solid)),
-        ),
-    )
-    .child(
-        div()
-            .id(SharedString::from(format!("{id}-title")))
-            .text_size(px(font_size::LG))
-            .line_height(px(font_size::LG * LEADING))
-            .font_weight(FontWeight::BOLD)
-            .child(title),
-    )
-    .child(
-        div()
-            .id(SharedString::from(format!("{id}-description")))
-            .text_color(rgba(theme.neutral_text_low))
-            .child(description),
-    )
+    col.child(div().mb(px(spacing::SM)).child(hero))
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}-title")))
+                .text_size(px(font_size::LG))
+                .line_height(px(font_size::LG * LEADING))
+                .font_weight(FontWeight::BOLD)
+                .child(title),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!("{id}-description")))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(description),
+        )
+}
+
+/// 画面の上に出すアイコン（アクセント色。大きさは全画面で共通）。ロゴなど別のものを出すときは `hero` に直接渡す。
+pub fn wizard_icon(theme: &Theme, glyph: &'static Icon) -> impl IntoElement {
+    crate::icon(glyph)
+        .size(px(ICON))
+        .color(rgba(theme.accent_solid))
 }
 
 /// 「welcome」画面（完了画面にも使える）: アイコン・タイトル・説明と、その下に中央寄せのボタン。全体を上下中央に置く。
 pub fn wizard_welcome(
     theme: &Theme,
     id: &str,
-    glyph: &'static Icon,
+    hero: impl IntoElement,
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
     actions: impl IntoIterator<Item = Button>,
@@ -185,7 +186,7 @@ pub fn wizard_welcome(
         .child(heading(
             theme,
             id,
-            glyph,
+            hero,
             title.into(),
             description.into(),
             true,
@@ -198,7 +199,7 @@ pub fn wizard_welcome(
 pub fn wizard_step(
     theme: &Theme,
     id: &str,
-    glyph: &'static Icon,
+    hero: impl IntoElement,
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
     body: impl IntoElement,
@@ -223,7 +224,7 @@ pub fn wizard_step(
                 .child(heading(
                     theme,
                     id,
-                    glyph,
+                    hero,
                     title.into(),
                     description.into(),
                     false,

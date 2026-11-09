@@ -123,6 +123,8 @@ pub enum Setting {
     BlockInput(bool),
     /// 距離 LOD の品質（`lod_quality`）。
     LodQuality(LodQuality),
+    /// セットアップウィザードを終えたか（`setup_done`）。
+    SetupDone(bool),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -140,6 +142,7 @@ pub struct Settings {
     pub keyboard: subsystems::keyboard::KeyboardType,
     pub block_input: bool,
     pub lod_quality: LodQuality,
+    pub setup_done: bool,
 }
 
 impl Default for Settings {
@@ -157,6 +160,7 @@ impl Default for Settings {
             keyboard: Default::default(),
             block_input: true,
             lod_quality: Default::default(),
+            setup_done: false,
         }
     }
 }
@@ -422,6 +426,7 @@ impl<B: VrBackend> Kernel<B> {
             keyboard: self.config.keyboard,
             block_input: self.overlay.block_input(),
             lod_quality: self.config.lod_quality,
+            setup_done: self.config.setup_done,
         }
     }
 
@@ -506,6 +511,10 @@ impl<B: VrBackend> Kernel<B> {
             Setting::LodQuality(q) => {
                 self.config.lod_quality = q;
                 ("lod_quality", config::value(q))
+            }
+            Setting::SetupDone(b) => {
+                self.config.setup_done = b;
+                ("setup_done", config::value(b))
             }
         };
         if let Some(path) = &self.config_path
@@ -1044,6 +1053,14 @@ mod tests {
     }
 
     /// 境目の前後で行き来しない: 上げるのは閾値で、下げるのは閾値の 9 割を割ってから。
+    #[test]
+    fn setup_done_starts_false_and_is_reflected() {
+        let (mut k, _) = lod_kernel();
+        assert!(!k.settings().setup_done);
+        k.set(Setting::SetupDone(true));
+        assert!(k.settings().setup_done);
+    }
+
     #[test]
     fn lod_quality_setting_is_reflected() {
         let (mut k, _) = lod_kernel();

@@ -238,6 +238,20 @@ remove_first = "先頭を削除"
 remove_last = "末尾を削除"
 replay = "出し直す"
 
+[setup]
+title = "セットアップ"
+welcome_title = "nyaw へようこそ"
+welcome_description = "はじめにセットアップをします。少しの間で終わります。"
+start = "はじめる"
+step_title = "セットアップ"
+step_description = "初回起動のための設定がここに入ります。"
+placeholder = "セットアップ用の画面は準備中です。"
+back = "戻る"
+next = "次へ"
+done_title = "準備ができました！"
+done_description = "セットアップが完了しました。nyaw をお楽しみください。"
+finish = "完了"
+
 [wizard]
 welcome_title = "ようこそ"
 welcome_description = "ウィザードが 1 つずつ順番に案内します。"

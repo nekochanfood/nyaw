@@ -238,6 +238,20 @@ remove_first = "Remove first"
 remove_last = "Remove last"
 replay = "Replay reveal"
 
+[setup]
+title = "Setup"
+welcome_title = "Welcome to nyaw"
+welcome_description = "Let's get you set up. It only takes a moment."
+start = "Get started"
+step_title = "Setup"
+step_description = "Settings for your first launch will go here."
+placeholder = "Setup screens are coming soon."
+back = "Back"
+next = "Next"
+done_title = "You're all set!"
+done_description = "Setup is complete. Enjoy nyaw."
+finish = "Finish"
+
 [wizard]
 welcome_title = "Welcome"
 welcome_description = "This wizard guides you one step at a time."

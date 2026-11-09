@@ -143,6 +143,8 @@ pub struct Config {
     pub keyboard: subsystems::keyboard::KeyboardType,
     /// ダッシュボードが出ている間、ゲームへの入力を止めるか。省略で `true`。画面での切り替えはここへ書き戻される。
     pub block_input: Option<bool>,
+    /// セットアップウィザードを終えたか。省略で `false`（初回起動でウィザードを出す）。終えるとここへ書き戻される。
+    pub setup_done: bool,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -256,6 +258,12 @@ lod_quality = 9
 ";
         assert!(parse(text).is_err());
         assert_eq!(runtime_from(text).as_deref(), Some("novr"));
+    }
+
+    #[test]
+    fn setup_done_defaults_to_false() {
+        assert!(!parse("").unwrap().setup_done);
+        assert!(parse("setup_done = true").unwrap().setup_done);
     }
 
     #[test]
