@@ -17,6 +17,9 @@ mod design_prelude {
 pub const WIZARD_MARGIN: f32 = spacing::XL;
 // アイコンの大きさと行の高さはダイアログと同じ（画面の種類で見た目を揃える）。
 use crate::components::{DIALOG_ICON as ICON, DIALOG_LEADING as LEADING};
+/// 「次へ」「戻る」の最小幅（文字とアイコンの間に隙間ができる幅）と、アイコンの大きさ。
+const NAV_BUTTON_MIN_WIDTH: f32 = 140.0;
+const ARROW: f32 = font_size::LG;
 
 /// ウィザードの進み具合（0 始まりの現在の手順と全体の数）。UI を持たないので単体でテストできる。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +69,7 @@ impl Wizard {
     }
 }
 
-/// 「次へ」ボタン（文字 + 右矢印）。ポジティブな意味のボタンは青（`Variant::Primary` = accent）。完了・開始などにも使う。id は呼び出し側が決める。
+/// 「次へ」ボタン（文字は中央、右端に caret）。ポジティブな意味のボタンは青（`Variant::Primary` = accent）。完了・開始などにも使う。id は呼び出し側が決める。
 pub fn wizard_next(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -76,13 +79,13 @@ pub fn wizard_next(
         theme,
         id,
         label,
-        &crate::icons::ARROW_RIGHT,
+        &crate::icons::CARET_RIGHT,
         true,
         Variant::Primary,
     )
 }
 
-/// 「戻る」ボタン（左矢印 + 文字）。
+/// 「戻る」ボタン（左端に caret、文字は中央）。
 pub fn wizard_back(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -92,7 +95,7 @@ pub fn wizard_back(
         theme,
         id,
         label,
-        &crate::icons::ARROW_LEFT,
+        &crate::icons::CARET_LEFT,
         false,
         Variant::Default,
     )
@@ -106,15 +109,18 @@ fn arrow_button(
     after: bool,
     variant: Variant,
 ) -> Button {
-    let arrow = || {
-        crate::icon(glyph)
-            .weight(crate::Weight::Bold)
-            .size(px(font_size::LG))
-    };
-    let b = content_button(theme, id, variant);
-    let b = if after { b } else { b.child(arrow()) };
-    let b = b.child(div().child(label.into()));
-    if after { b.child(arrow()) } else { b }
+    let arrow = crate::icon(glyph)
+        .weight(crate::Weight::Bold)
+        .size(px(ARROW));
+    // 文字は中央、アイコンは左右どちらかの端。反対側に同じ幅の空きを置いて文字を中央に保つ。
+    let gap = || div().w(px(ARROW));
+    let label = div().flex_1().text_center().child(label.into());
+    let b = content_button(theme, id, variant).min_w(px(NAV_BUTTON_MIN_WIDTH));
+    if after {
+        b.child(gap()).child(label).child(arrow)
+    } else {
+        b.child(arrow).child(label).child(gap())
+    }
 }
 
 fn heading(
