@@ -17,8 +17,7 @@ mod design_prelude {
 pub const WIZARD_MARGIN: f32 = spacing::XL;
 // アイコンの大きさと行の高さはダイアログと同じ（画面の種類で見た目を揃える）。
 use crate::components::{DIALOG_ICON as ICON, DIALOG_LEADING as LEADING};
-/// 「次へ」「戻る」の最小幅（文字とアイコンの間に隙間ができる幅）と、アイコンの大きさ。
-const NAV_BUTTON_MIN_WIDTH: f32 = 140.0;
+/// 「次へ」「戻る」のアイコンの大きさ。
 const ARROW: f32 = font_size::LG;
 
 /// ウィザードの進み具合（0 始まりの現在の手順と全体の数）。UI を持たないので単体でテストできる。
@@ -77,7 +76,7 @@ pub fn wizard_panel(theme: &Theme) -> Div {
         .clip_rounded()
 }
 
-/// 「次へ」ボタン（文字は左、caret は右端）。ポジティブな意味のボタンは青（`Variant::Primary` = accent）。完了・開始などにも使う。id は呼び出し側が決める。
+/// 「次へ」ボタン（文字 + 右の caret）。ポジティブな意味のボタンは青（`Variant::Primary` = accent）。完了・開始などにも使う。id は呼び出し側が決める。
 pub fn wizard_next(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -93,7 +92,7 @@ pub fn wizard_next(
     )
 }
 
-/// 「戻る」ボタン（caret は左端、文字は右）。
+/// 「戻る」ボタン（左の caret + 文字）。
 pub fn wizard_back(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -120,15 +119,12 @@ fn arrow_button(
     let arrow = crate::icon(glyph)
         .weight(crate::Weight::Bold)
         .size(px(ARROW));
-    // 文字とアイコンは両端に寄せる（between）。最小幅があるので間に隙間ができる。
-    let label = div().child(label.into());
-    let b = content_button(theme, id, variant)
-        .min_w(px(NAV_BUTTON_MIN_WIDTH))
-        .justify_between();
+    // アイコン付きボタンの標準の並び（余白・間隔は `content_button` のまま）。
+    let b = content_button(theme, id, variant);
     if after {
-        b.child(label).child(arrow)
+        b.child(label.into()).child(arrow)
     } else {
-        b.child(arrow).child(label)
+        b.child(arrow).child(label.into())
     }
 }
 
