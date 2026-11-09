@@ -120,7 +120,17 @@ impl Wrist {
             .filter(|(_, s)| !s.as_ref().is_some_and(|s| s.closed));
         // ロックダウンに入った瞬間、出ているダッシュボードを隠す（解けても出し直さない）。
         let entered = locked && !self.locked;
+        // ロックダウンの出入りに合わせて、手首自身も隠す・出す。
+        let changed = locked != self.locked;
         self.locked = locked;
+        if changed {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(self.panel)
+                .or_default()
+                .commands
+                .push(kernel::PanelCommand::Hide(locked));
+        }
         if entered
             && let Some((id, status)) = &open
             && !status.as_ref().is_some_and(|s| s.hidden)
@@ -136,7 +146,9 @@ impl Wrist {
             return;
         }
         match open {
-            Some((id, status)) if status.as_ref().is_some_and(|s| s.hidden) => dashboard::show(id, cx),
+            Some((id, status)) if status.as_ref().is_some_and(|s| s.hidden) => {
+                dashboard::show(id, cx)
+            }
             Some((id, _)) => dashboard::hide(id, cx),
             None => open_dashboard(self.settings, self.debug, false, cx),
         }
@@ -357,6 +369,34 @@ mod tests {
         // 解けても出し直さない。
         set_lockdown(cx, false);
         assert!(commands(cx).is_empty());
+    }
+
+    /// ロックダウン中は手首自身も隠れ、解けると出る。
+    #[gpui::test]
+    fn lockdown_hides_the_wrist_itself(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        cx.run_until_parked();
+        let commands = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                std::mem::take(
+                    &mut cx
+                        .default_global::<PanelControl>()
+                        .panels
+                        .entry(0)
+                        .or_default()
+                        .commands,
+                )
+            })
+        };
+        let set_lockdown = |cx: &mut gpui::VisualTestContext, on| {
+            cx.update(|_, cx| cx.default_global::<PanelControl>().settings.lockdown = on);
+            cx.run_until_parked();
+        };
+        commands(cx);
+        set_lockdown(cx, true);
+        assert!(commands(cx).contains(&PanelCommand::Hide(true)));
+        set_lockdown(cx, false);
+        assert!(commands(cx).contains(&PanelCommand::Hide(false)));
     }
 
     /// 丸い文字盤の中央に、日付・時刻を縦に並べる。
