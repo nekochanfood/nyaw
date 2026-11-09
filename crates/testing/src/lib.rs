@@ -550,11 +550,8 @@ impl Render for Testing {
                     ),
                 )
                 .child(
-                    button!("wizard-test", i18n::t(cx, "testing.open.wizard"), false).on_click(
-                        spawn_view(self.panel, "testing.open.wizard", |id, _| {
-                            WizardTest::new(id)
-                        }),
-                    ),
+                    button!("wizard-test", i18n::t(cx, "testing.open.wizard"), false)
+                        .on_click(wizard::spawn(self.panel)),
                 )
                 .child(
                     button!("logo-test", i18n::t(cx, "testing.open.logo"), false).on_click(

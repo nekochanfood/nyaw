@@ -1,7 +1,14 @@
 use super::*;
 use design::icons;
+use kernel::vr::Vec2;
+
+/// ウィザードのパネルは 1:1。
+const SIZE: Vec2 = Vec2::new(0.8, 0.8);
+const PX: (u32, u32) = (800, 800);
+const STEPS: usize = 4;
 
 /// ウィザードの試験画面: ようこそ → 手順 1 → 手順 2 → 完了。`wizard-next` / `wizard-back` / `wizard-restart`。
+/// 画面は `navigation` の積み重ね（右から入る。押したまま右から左へ動かすとスワイプバック）。
 pub struct WizardTest {
     pub wizard: components::Wizard,
 }
@@ -9,77 +16,114 @@ pub struct WizardTest {
 impl WizardTest {
     pub fn new(_panel: PanelId) -> Self {
         Self {
-            wizard: components::Wizard::new(4),
+            wizard: components::Wizard::new(STEPS),
         }
+    }
+}
+
+/// `from` の隣に 1:1 のウィザードを開く。
+pub fn spawn(from: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
+    move |_, _, cx| {
+        cx.default_global::<PanelControl>().spawns.push(
+            PanelSpec::spawn(from, |id, _, _| WizardTest::new(id))
+                .sized(SIZE, PX)
+                .titled("testing.open.wizard"),
+        )
     }
 }
 
 impl Render for WizardTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let w = self.wizard;
-        let go = |forward: bool| {
-            cx.listener(move |this, _: &ClickEvent, _, cx| {
-                if forward {
-                    this.wizard.next()
-                } else {
-                    this.wizard.back()
+        let this = cx.entity();
+        let stack: Vec<usize> = (0..=self.wizard.step()).collect();
+        let page = {
+            let this = this.clone();
+            move |&step: &usize, _: &mut Window, cx: &mut App| {
+                let go = |forward: bool| {
+                    let this = this.clone();
+                    move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        this.update(cx, |v, cx| {
+                            if forward {
+                                v.wizard.next()
+                            } else {
+                                v.wizard.back()
+                            };
+                            cx.notify();
+                        })
+                    }
                 };
+                if step == 0 {
+                    let next =
+                        components::wizard_next(&theme, "wizard-next", i18n::t(cx, "wizard.start"))
+                            .on_click(go(true));
+                    return components::wizard_welcome(
+                        &theme,
+                        "wizard",
+                        &icons::STAR,
+                        i18n::t(cx, "wizard.welcome_title"),
+                        i18n::t(cx, "wizard.welcome_description"),
+                        [next],
+                    )
+                    .into_any_element();
+                }
+                if step == STEPS - 1 {
+                    let this = this.clone();
+                    let again = move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                        this.update(cx, |v, cx| {
+                            v.wizard = components::Wizard::new(STEPS);
+                            cx.notify();
+                        })
+                    };
+                    let b = components::wizard_next(
+                        &theme,
+                        "wizard-restart",
+                        i18n::t(cx, "wizard.restart"),
+                    )
+                    .on_click(again);
+                    return components::wizard_welcome(
+                        &theme,
+                        "wizard",
+                        &icons::CHECK_CIRCLE,
+                        i18n::t(cx, "wizard.done_title"),
+                        i18n::t(cx, "wizard.done_description"),
+                        [b],
+                    )
+                    .into_any_element();
+                }
+                let form = div()
+                    .id("wizard-form")
+                    .debug_selector(|| "wizard-form".into())
+                    .p(px(spacing::XL))
+                    .rounded(px(radius::LG))
+                    .bg(rgba(theme.control))
+                    .child(i18n::t(cx, "wizard.form"));
+                components::wizard_step(
+                    &theme,
+                    "wizard",
+                    &icons::STAR,
+                    i18n::tf(cx, "wizard.step_title", &[("n", &step.to_string())]),
+                    i18n::t(cx, "wizard.step_description"),
+                    form,
+                    Some(
+                        components::wizard_back(&theme, "wizard-back", i18n::t(cx, "wizard.back"))
+                            .on_click(go(false)),
+                    ),
+                    components::wizard_next(&theme, "wizard-next", i18n::t(cx, "wizard.next"))
+                        .on_click(go(true)),
+                )
+                .into_any_element()
+            }
+        };
+        let swipe_back = move |_: &mut Window, cx: &mut App| {
+            this.update(cx, |v, cx| {
+                v.wizard.back();
                 cx.notify();
             })
         };
-        if w.is_first() {
-            let next = components::wizard_next(&theme, "wizard-next", i18n::t(cx, "wizard.start"))
-                .on_click(go(true));
-            return components::wizard_welcome(
-                &theme,
-                "wizard",
-                &icons::STAR,
-                i18n::t(cx, "wizard.welcome_title"),
-                i18n::t(cx, "wizard.welcome_description"),
-                [next],
-            )
-            .into_any_element();
-        }
-        if w.is_last() {
-            let again = cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.wizard = components::Wizard::new(4);
-                cx.notify();
-            });
-            let b =
-                components::wizard_next(&theme, "wizard-restart", i18n::t(cx, "wizard.restart"))
-                    .on_click(again);
-            return components::wizard_welcome(
-                &theme,
-                "wizard",
-                &icons::CHECK_CIRCLE,
-                i18n::t(cx, "wizard.done_title"),
-                i18n::t(cx, "wizard.done_description"),
-                [b],
-            )
-            .into_any_element();
-        }
-        let form = div()
-            .id("wizard-form")
-            .debug_selector(|| "wizard-form".into())
-            .p(px(spacing::XL))
-            .rounded(px(radius::LG))
-            .bg(rgba(theme.control))
-            .child(i18n::t(cx, "wizard.form"));
-        components::wizard_step(
-            &theme,
-            "wizard",
-            &icons::STAR,
-            i18n::tf(cx, "wizard.step_title", &[("n", &w.step().to_string())]),
-            i18n::t(cx, "wizard.step_description"),
-            form,
-            Some(
-                components::wizard_back(&theme, "wizard-back", i18n::t(cx, "wizard.back"))
-                    .on_click(go(false)),
-            ),
-            components::wizard_next(&theme, "wizard-next", i18n::t(cx, "wizard.next"))
-                .on_click(go(true)),
+        components::card_panel(&theme).overflow_hidden().child(
+            components::navigation(&theme, "wizard-nav", &stack, page, swipe_back)
+                .background(theme.card),
         )
-        .into_any_element()
     }
 }

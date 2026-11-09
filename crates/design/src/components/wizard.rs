@@ -1,10 +1,11 @@
 //! ウィザード: ユーザーに順番に操作させる画面。どこでも使えるよう、状態（[`Wizard`]）と見た目（[`wizard_welcome`] / [`wizard_step`]）を分ける。
+//! 画面は中身だけ（地は無い）。パネルの地（`card_panel`）と `navigation`（右から入る遷移・スワイプバック）で包んで使う。
 //! 見た目は全画面で揃える: 縁の余白は [`WIZARD_MARGIN`]、内容は上下中央寄せ、ナビゲーションのボタンは下の帯（フッター）。
 
 use design_prelude::*;
 
 mod design_prelude {
-    pub use crate::components::{Button, Variant, card_panel, content_button};
+    pub use crate::components::{Button, Variant, content_button};
     pub use crate::{Icon, Theme, font_size, spacing};
     pub use gpui::{
         Div, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, div,
@@ -16,8 +17,6 @@ mod design_prelude {
 pub const WIZARD_MARGIN: f32 = spacing::XL;
 // アイコンの大きさと行の高さはダイアログと同じ（画面の種類で見た目を揃える）。
 use crate::components::{DIALOG_ICON as ICON, DIALOG_LEADING as LEADING};
-/// 「次へ」「戻る」の最小幅（ラベルの長さが違っても並びが揃う）。
-const NAV_BUTTON_MIN_WIDTH: f32 = 160.0;
 
 /// ウィザードの進み具合（0 始まりの現在の手順と全体の数）。UI を持たないので単体でテストできる。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,7 +111,7 @@ fn arrow_button(
             .weight(crate::Weight::Bold)
             .size(px(font_size::LG))
     };
-    let b = content_button(theme, id, variant).min_w(px(NAV_BUTTON_MIN_WIDTH));
+    let b = content_button(theme, id, variant);
     let b = if after { b } else { b.child(arrow()) };
     let b = b.child(div().child(label.into()));
     if after { b.child(arrow()) } else { b }
@@ -164,7 +163,8 @@ pub fn wizard_welcome(
     description: impl Into<SharedString>,
     actions: impl IntoIterator<Item = Button>,
 ) -> Div {
-    card_panel(theme)
+    div()
+        .size_full()
         .flex()
         .flex_col()
         .items_center()
@@ -194,7 +194,8 @@ pub fn wizard_step(
     back: Option<Button>,
     next: Button,
 ) -> Div {
-    card_panel(theme)
+    div()
+        .size_full()
         .flex()
         .flex_col()
         .p(px(WIZARD_MARGIN))
