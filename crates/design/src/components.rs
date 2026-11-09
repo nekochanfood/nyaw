@@ -24,7 +24,9 @@ pub use scrollbar::{Elastic, Scroll, Scrollbars, claim_scroll, elastic, free_scr
 pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_button};
 pub use slider::{Slider, slider};
 pub use tooltip::*;
-pub use wizard::{WIZARD_MARGIN, Wizard, wizard_back, wizard_next, wizard_step, wizard_welcome};
+pub use wizard::{
+    WIZARD_MARGIN, Wizard, wizard_back, wizard_next, wizard_panel, wizard_step, wizard_welcome,
+};
 
 use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 

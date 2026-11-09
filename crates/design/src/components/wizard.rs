@@ -69,7 +69,15 @@ impl Wizard {
     }
 }
 
-/// 「次へ」ボタン（文字は中央、右端に caret）。ポジティブな意味のボタンは青（`Variant::Primary` = accent）。完了・開始などにも使う。id は呼び出し側が決める。
+/// ウィザードのパネル: カード 1 枚のパネルで、中の画面（[`navigation`](crate::components::navigation) の地）をパネルの角丸で切る。
+/// `navigation` の画面は四角い地を持つので、切らないとパネルの角丸を覆ってしまう。
+pub fn wizard_panel(theme: &Theme) -> Div {
+    crate::components::card_panel(theme)
+        .overflow_hidden()
+        .clip_rounded()
+}
+
+/// 「次へ」ボタン（文字は左、caret は右端）。ポジティブな意味のボタンは青（`Variant::Primary` = accent）。完了・開始などにも使う。id は呼び出し側が決める。
 pub fn wizard_next(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -85,7 +93,7 @@ pub fn wizard_next(
     )
 }
 
-/// 「戻る」ボタン（左端に caret、文字は中央）。
+/// 「戻る」ボタン（caret は左端、文字は右）。
 pub fn wizard_back(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -112,14 +120,15 @@ fn arrow_button(
     let arrow = crate::icon(glyph)
         .weight(crate::Weight::Bold)
         .size(px(ARROW));
-    // 文字は中央、アイコンは左右どちらかの端。反対側に同じ幅の空きを置いて文字を中央に保つ。
-    let gap = || div().w(px(ARROW));
-    let label = div().flex_1().text_center().child(label.into());
-    let b = content_button(theme, id, variant).min_w(px(NAV_BUTTON_MIN_WIDTH));
+    // 文字とアイコンは両端に寄せる（between）。最小幅があるので間に隙間ができる。
+    let label = div().child(label.into());
+    let b = content_button(theme, id, variant)
+        .min_w(px(NAV_BUTTON_MIN_WIDTH))
+        .justify_between();
     if after {
-        b.child(gap()).child(label).child(arrow)
+        b.child(label).child(arrow)
     } else {
-        b.child(arrow).child(label).child(gap())
+        b.child(arrow).child(label)
     }
 }
 

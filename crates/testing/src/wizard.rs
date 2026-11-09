@@ -121,7 +121,7 @@ impl Render for WizardTest {
                 cx.notify();
             })
         };
-        components::card_panel(&theme).overflow_hidden().child(
+        components::wizard_panel(&theme).child(
             components::navigation(&theme, "wizard-nav", &stack, page, swipe_back)
                 .background(theme.card),
         )
