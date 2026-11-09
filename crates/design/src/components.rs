@@ -18,11 +18,13 @@ mod shaped_button;
 pub mod slide;
 mod slider;
 mod tooltip;
+mod wizard;
 pub use navigation::{Navigation, navigation};
 pub use scrollbar::{Elastic, Scroll, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_button};
 pub use slider::{Slider, slider};
 pub use tooltip::*;
+pub use wizard::{WIZARD_MARGIN, Wizard, wizard_back, wizard_next, wizard_step, wizard_welcome};
 
 use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 
