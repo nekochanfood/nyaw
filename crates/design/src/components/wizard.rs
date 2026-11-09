@@ -14,8 +14,10 @@ mod design_prelude {
 
 /// 画面の縁から内容・フッターまでの余白（全画面で共通）。
 pub const WIZARD_MARGIN: f32 = spacing::XL;
-const ICON: f32 = 72.0;
-const LEADING: f32 = 1.4;
+// アイコンの大きさと行の高さはダイアログと同じ（画面の種類で見た目を揃える）。
+use crate::components::{DIALOG_ICON as ICON, DIALOG_LEADING as LEADING};
+/// 「次へ」「戻る」の最小幅（ラベルの長さが違っても並びが揃う）。
+const NAV_BUTTON_MIN_WIDTH: f32 = 160.0;
 
 /// ウィザードの進み具合（0 始まりの現在の手順と全体の数）。UI を持たないので単体でテストできる。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,7 +112,7 @@ fn arrow_button(
             .weight(crate::Weight::Bold)
             .size(px(font_size::LG))
     };
-    let b = content_button(theme, id, variant).min_w(px(160.0));
+    let b = content_button(theme, id, variant).min_w(px(NAV_BUTTON_MIN_WIDTH));
     let b = if after { b } else { b.child(arrow()) };
     let b = b.child(div().child(label.into()));
     if after { b.child(arrow()) } else { b }

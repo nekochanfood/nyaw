@@ -1367,9 +1367,9 @@ pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
 }
 
 /// ダイアログのアイコンの大きさ。
-const DIALOG_ICON: f32 = 64.0;
+pub(crate) const DIALOG_ICON: f32 = 64.0;
 /// ダイアログの文の行の高さ（文字の大きさに対する比）。
-const DIALOG_LEADING: f32 = 1.4;
+pub(crate) const DIALOG_LEADING: f32 = 1.4;
 /// 概要が見える行数の上限。超える分はスクロールする。
 const DIALOG_LINES: usize = 3;
 
