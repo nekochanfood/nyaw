@@ -5,7 +5,7 @@ use design::components::{self, Wizard};
 use design::{Logo, Theme, icons, radius, spacing};
 use gpui::{App, ClickEvent, Context, IntoElement, Render, Window, div, prelude::*, px, rgba};
 use kernel::vr::{Pose, Quat, Vec2, Vec3};
-use kernel::{PanelCommand, PanelId, Setting};
+use kernel::{LazyFollow, PanelCommand, PanelId, Setting};
 use ui::{PanelControl, PanelSpec};
 
 /// 1:1 のパネル。
@@ -15,22 +15,32 @@ const PX: (u32, u32) = (800, 800);
 pub const STEPS: usize = 3;
 const FULL_LOGO_HEIGHT: f32 = 72.0;
 /// 目の前（頭から 1m 先）。
+/// 頭から水平にこの距離（m）を保って付いてくる。
+const FOLLOW_DISTANCE: f32 = 1.0;
 const IN_FRONT: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
+
+/// 頭の向き（左右だけ）と歩きに付いてくる設定。本番の起動仕様とテストで同じものを使う。
+pub fn follow() -> LazyFollow {
+    LazyFollow::new(FOLLOW_DISTANCE)
+}
 
 /// 初回起動で、目の前に出すウィザードの起動仕様。
 pub fn spec() -> PanelSpec {
     // 開いた元の無いパネルなので、頭の前に出す。
-    PanelSpec::root(IN_FRONT, |id, _, _| SetupWizard::new(id))
+    PanelSpec::root(IN_FRONT, |id, _, cx| SetupWizard::new(id, cx))
         .in_view(IN_FRONT)
         .sized(SIZE, PX)
-        .titled("setup.title")
+        // 閉じられない（ロックダウン中は閉じる要求も無視される）ので、閉じるボタンの付いたバーは付けない。
+        .without_nav_bar()
+        .lazy_follow(follow())
 }
 
 /// デバッグから強制的にやり直す: パネル `from` の隣に開く。
 pub fn spawn_spec(from: PanelId) -> PanelSpec {
-    PanelSpec::spawn(from, |id, _, _| SetupWizard::new(id))
+    PanelSpec::spawn(from, |id, _, cx| SetupWizard::new(id, cx))
         .sized(SIZE, PX)
-        .titled("setup.title")
+        .without_nav_bar()
+        .lazy_follow(follow())
 }
 
 pub struct SetupWizard {
@@ -39,7 +49,11 @@ pub struct SetupWizard {
 }
 
 impl SetupWizard {
-    pub fn new(panel: PanelId) -> Self {
+    /// 開いた時点からロックダウンに入る（[`finish`] で外す）。
+    pub fn new(panel: PanelId, cx: &mut App) -> Self {
+        cx.default_global::<PanelControl>()
+            .setting_changes
+            .push(Setting::Lockdown(true));
         Self {
             panel,
             wizard: Wizard::new(STEPS),
@@ -47,9 +61,10 @@ impl SetupWizard {
     }
 }
 
-/// 終えたことを設定に残し、このパネルを閉じる。
+/// ロックダウンを外し（閉じる前に。同じフレームの中で設定が先に反映される）、終えたことを設定に残してこのパネルを閉じる。
 fn finish(panel: PanelId, cx: &mut App) {
     let control = cx.default_global::<PanelControl>();
+    control.setting_changes.push(Setting::Lockdown(false));
     control.setting_changes.push(Setting::SetupDone(true));
     control
         .panels

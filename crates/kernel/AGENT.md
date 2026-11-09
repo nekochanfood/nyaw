@@ -16,3 +16,9 @@
 - GPUI は非表示ウィンドウの DPI と実ピクセルサイズを変える。カーネルの論理解像度と物理サイズは変えない。8 の倍数でないサイズは表示領域に最大 7 論理ピクセルの丸めがある。
 - `cargo test -p ui --test gpu -- --ignored panel_lod` で実描画と入力を確認し、`--off` を追加して無効時も確認する（Windows）。
 - ストレステストは `NYAW_STRESS_LOD=0` と `2` で同じ負荷を比較できる。
+
+## ロックダウン
+
+`Setting::Lockdown(bool)`（設定ファイルには残さない。`Settings::lockdown`）。入っている間は `PanelCommand::Close` を無視する（パネルを閉じられない）。ダッシュボードを開閉する wrist も、`Settings::lockdown` を見て二回押しを無視する。セットアップウィザードのように終えるまで逃がさない画面が入れ、終えたら外す（外してから閉じる。`sync_panel` は設定を先に反映してからコマンドを処理する）。
+
+`Setting::SetupDone(bool)`（`setup_done`）はセットアップウィザードを終えたか。省略で `false`。

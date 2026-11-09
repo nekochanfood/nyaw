@@ -17,7 +17,9 @@ use std::time::{Duration, Instant};
 use subsystems::os;
 
 pub use config::{Config, DominantHand, Language, LodQuality, PointerMode, ThemeMode};
-pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
+pub use overlay::{
+    self, Anchor, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent,
+};
 pub use subsystems::ControllerState;
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
@@ -38,6 +40,8 @@ pub enum PanelCommand {
     Attach(Device, Pose),
     Detach,
     Lock(bool),
+    /// 頭の向き（左右だけ）と歩きにゆるく追従する（[`overlay::LazyFollow`]。`None` で外す）。
+    LazyFollow(Option<LazyFollow>),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
     /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
@@ -125,6 +129,9 @@ pub enum Setting {
     LodQuality(LodQuality),
     /// セットアップウィザードを終えたか（`setup_done`）。
     SetupDone(bool),
+    /// ロックダウン（設定ファイルには残さない）。入っている間は、パネルを閉じられず（[`PanelCommand::Close`] は無視する）、
+    /// ダッシュボードも開けない（wrist が見る）。セットアップウィザードのように、終えるまで逃がさない画面が入れ、終えたら外す。
+    Lockdown(bool),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -143,6 +150,8 @@ pub struct Settings {
     pub block_input: bool,
     pub lod_quality: LodQuality,
     pub setup_done: bool,
+    /// ロックダウン中か（[`Setting::Lockdown`]）。
+    pub lockdown: bool,
 }
 
 impl Default for Settings {
@@ -161,6 +170,7 @@ impl Default for Settings {
             block_input: true,
             lod_quality: Default::default(),
             setup_done: false,
+            lockdown: false,
         }
     }
 }
@@ -226,6 +236,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     close_sounds: std::collections::HashMap<PanelId, audio::Sound>,
     /// 全体の設定によらないポインタの方式（[`PanelCommand::PointerMode`]）。
     pointer_modes: std::collections::HashMap<PanelId, PointerMode>,
+    /// ロックダウン中か（[`Setting::Lockdown`]）。
+    lockdown: bool,
     /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
     shortcut: DoublePress,
     /// ランタイムが数えた二回押しの合計（[`vr::DOUBLE_PRESS_INPUT`]）。
@@ -385,6 +397,7 @@ impl<B: VrBackend> Kernel<B> {
             point_slots: Default::default(),
             close_sounds: Default::default(),
             pointer_modes: Default::default(),
+            lockdown: false,
             shortcut: DoublePress::default(),
             runtime_double_press: 0,
             hand_shortcut: LongPress::default(),
@@ -427,6 +440,7 @@ impl<B: VrBackend> Kernel<B> {
             block_input: self.overlay.block_input(),
             lod_quality: self.config.lod_quality,
             setup_done: self.config.setup_done,
+            lockdown: self.lockdown,
         }
     }
 
@@ -511,6 +525,10 @@ impl<B: VrBackend> Kernel<B> {
             Setting::LodQuality(q) => {
                 self.config.lod_quality = q;
                 ("lod_quality", config::value(q))
+            }
+            Setting::Lockdown(b) => {
+                self.lockdown = b;
+                return;
             }
             Setting::SetupDone(b) => {
                 self.config.setup_done = b;
@@ -731,6 +749,7 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Attach(device, offset) => self.overlay.attach(panel, device, offset),
             PanelCommand::Detach => self.overlay.detach(panel),
             PanelCommand::Lock(locked) => self.overlay.set_locked(panel, locked),
+            PanelCommand::LazyFollow(follow) => self.overlay.set_lazy_follow(panel, follow),
             PanelCommand::Animated(animated) => {
                 self.overlay
                     .set_animated(&mut self.subsystems.backend, panel, animated)
@@ -749,6 +768,9 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Hide(hidden) => {
                 self.overlay
                     .set_hidden(&mut self.subsystems.backend, panel, hidden)
+            }
+            PanelCommand::Close if self.lockdown => {
+                logger::debug!("ignoring close while in lockdown", panel = panel);
             }
             PanelCommand::Close => {
                 if let Some(sound) = self.close_sounds.remove(&panel) {
@@ -1053,6 +1075,22 @@ mod tests {
     }
 
     /// 境目の前後で行き来しない: 上げるのは閾値で、下げるのは閾値の 9 割を割ってから。
+    #[test]
+    fn lockdown_ignores_close_until_released_and_is_not_saved() {
+        let (mut k, _) = lod_kernel();
+        let p = k
+            .add_panel("p", Pose::IDENTITY, Vec2::new(1.0, 1.0), (100, 100))
+            .unwrap();
+        k.set(Setting::Lockdown(true));
+        assert!(k.settings().lockdown);
+        k.apply(p, PanelCommand::Close);
+        assert!(!k.panel(p).closed, "closing is ignored in lockdown");
+        k.set(Setting::Lockdown(false));
+        assert!(!k.settings().lockdown);
+        k.apply(p, PanelCommand::Close);
+        assert!(k.panel(p).closed);
+    }
+
     #[test]
     fn setup_done_starts_false_and_is_reflected() {
         let (mut k, _) = lod_kernel();

@@ -114,6 +114,10 @@ impl Wrist {
             return;
         }
         self.toggles = toggles;
+        // ロックダウン中はダッシュボードを開けない（押したことだけ受け取って捨てる）。
+        if ctl.settings.lockdown {
+            return;
+        }
         let open = self
             .dashboard
             .map(|id| (id, ctl.panels.get(&id).map(|p| &p.status)))
@@ -273,6 +277,35 @@ mod tests {
             cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
             1,
             "開き直さない"
+        );
+    }
+
+    /// ロックダウン中は X ボタンを二回押してもダッシュボードを出さない（押したことは受け取る）。
+    #[gpui::test]
+    fn double_x_does_nothing_in_lockdown(cx: &mut TestAppContext) {
+        let (wrist, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        cx.run_until_parked();
+        wrist.update(cx, |w, _| w.dashboard = Some(3));
+        cx.update(|_, cx| {
+            let ctl = cx.default_global::<PanelControl>();
+            ctl.settings.lockdown = true;
+            ctl.panels.entry(3).or_default().status.hidden = true;
+            ctl.panels.entry(0).or_default().status.double_press = 1;
+        });
+        cx.run_until_parked();
+        let commands = cx.update(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(3)
+                .or_default()
+                .commands
+                .clone()
+        });
+        assert!(commands.is_empty(), "{commands:?}");
+        assert_eq!(
+            cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
+            1,
+            "開かない"
         );
     }
 

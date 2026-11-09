@@ -13,6 +13,8 @@ use subsystems::{Frame, Subsystems, desktop::Cursor, rendering::Surface, vr};
 
 use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
+mod lazy_follow;
+pub use lazy_follow::LazyFollow;
 pub use subsystems::ControllerState;
 
 pub type PanelId = usize;
@@ -90,6 +92,8 @@ pub struct Panel {
     surface: Surface,
     /// この tick で追従させるデバイスと相対姿勢。ランタイムに任せられればそうする。
     follow: Option<(Device, Pose)>,
+    /// 頭の向きにゆるく追従する（[`Overlay::set_lazy_follow`]）。取り付けより優先する。
+    pub lazy_follow: Option<LazyFollow>,
 }
 
 /// レーザーを描くパネルの役割。見た目は上の層の画面が描き、置き場所はオーバーレイ層が決める。
@@ -432,6 +436,7 @@ impl Overlay {
             opacity: 1.0,
             surface,
             follow: None,
+            lazy_follow: None,
         });
         let id = self.panels.len() - 1;
         self.present.push(id);
@@ -700,6 +705,11 @@ impl Overlay {
     /// パネルをその姿勢へ置く（次の tick でランタイムへ送る）。取り付け中なら取り付け先に戻される。
     pub fn set_pose(&mut self, id: PanelId, pose: Pose) {
         self.panels[id].pose = pose;
+    }
+
+    /// 頭の向き（左右だけ）と歩きにゆるく追従させる（`None` で外す）。取り付けより優先する。掴んでいる間は手に従う。
+    pub fn set_lazy_follow(&mut self, id: PanelId, follow: Option<LazyFollow>) {
+        self.panels[id].lazy_follow = follow;
     }
 
     /// 掴んで動かせないようにする（`false` で戻す）。レーザーでの操作はそのまま使える。
@@ -998,11 +1008,17 @@ impl Overlay {
         for d in dragged.clone() {
             dragged.extend(carried(&self.panels, d));
         }
+        let dt = self.dt;
         for &id in &self.present {
             let p = &mut self.panels[id];
             p.follow = None;
             // 子は取り付けではなく親に追従する（下の settle_family）。
             if dragged.contains(&id) || p.parent.is_some() || p.nav_bar_of.is_some() {
+                continue;
+            }
+            // 頭にゆるく追従するパネルは、取り付けではなく頭の向きと位置から置く（ランタイムには任せず毎 tick 置く）。
+            if let Some(lazy) = p.lazy_follow.as_mut() {
+                p.pose = lazy.step(&frame.hmd, dt);
                 continue;
             }
             // 骨格で操作している手も、ランタイムがその手のデバイスを追っていれば相対配置を任せる（`Frame::pose` も同じ姿勢）。
