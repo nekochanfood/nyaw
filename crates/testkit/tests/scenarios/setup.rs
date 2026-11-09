@@ -5,9 +5,10 @@ use testkit::{Driver, NoVrKit};
 
 #[gpui::test]
 fn setup_walks_through_three_screens_and_marks_done(cx: &mut TestAppContext) {
-    let mut kit = NoVrKit::new(cx, |_, cx| SetupWizard::new(0, cx));
+    let mut kit = NoVrKit::new(cx, |_, _| SetupWizard::new(0));
     assert!(!kit.kernel.settings().setup_done);
-    // 開いている間はロックダウン: 閉じられない。
+    // 起動仕様（`setup::spec`）と同じく、開いた時点からロックダウンを取る。開いている間は閉じられない。
+    kit.kernel.apply(0, kernel::PanelCommand::Lockdown(true));
     kit.step();
     assert!(kit.kernel.settings().lockdown);
     kit.kernel.apply(0, kernel::PanelCommand::Close);

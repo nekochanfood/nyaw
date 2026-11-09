@@ -13,7 +13,7 @@ const SIZE: Vec2 = Vec2::new(0.8, 0.8);
 const PX: (u32, u32) = (800, 800);
 /// ようこそ → 設定（仮置き）→ 完了。
 pub const STEPS: usize = 3;
-const FULL_LOGO_HEIGHT: f32 = 72.0;
+const FULL_LOGO_HEIGHT: f32 = 144.0;
 /// 目の前（頭から 1m 先）。
 /// 頭から水平にこの距離（m）を保って付いてくる。
 const FOLLOW_DISTANCE: f32 = 1.0;
@@ -27,19 +27,21 @@ pub fn follow() -> LazyFollow {
 /// 初回起動で、目の前に出すウィザードの起動仕様。
 pub fn spec() -> PanelSpec {
     // 開いた元の無いパネルなので、頭の前に出す。
-    PanelSpec::root(IN_FRONT, |id, _, cx| SetupWizard::new(id, cx))
+    PanelSpec::root(IN_FRONT, |id, _, _| SetupWizard::new(id))
         .in_view(IN_FRONT)
         .sized(SIZE, PX)
         // 閉じられない（ロックダウン中は閉じる要求も無視される）ので、閉じるボタンの付いたバーは付けない。
         .without_nav_bar()
+        .lockdown()
         .lazy_follow(follow())
 }
 
 /// デバッグから強制的にやり直す: パネル `from` の隣に開く。
 pub fn spawn_spec(from: PanelId) -> PanelSpec {
-    PanelSpec::spawn(from, |id, _, cx| SetupWizard::new(id, cx))
+    PanelSpec::spawn(from, |id, _, _| SetupWizard::new(id))
         .sized(SIZE, PX)
         .without_nav_bar()
+        .lockdown()
         .lazy_follow(follow())
 }
 
@@ -49,11 +51,7 @@ pub struct SetupWizard {
 }
 
 impl SetupWizard {
-    /// 開いた時点からロックダウンに入る（[`finish`] で外す）。
-    pub fn new(panel: PanelId, cx: &mut App) -> Self {
-        cx.default_global::<PanelControl>()
-            .setting_changes
-            .push(Setting::Lockdown(true));
+    pub fn new(panel: PanelId) -> Self {
         Self {
             panel,
             wizard: Wizard::new(STEPS),
@@ -61,17 +59,13 @@ impl SetupWizard {
     }
 }
 
-/// ロックダウンを外し（閉じる前に。同じフレームの中で設定が先に反映される）、終えたことを設定に残してこのパネルを閉じる。
+/// 終えたことを設定に残し、ロックダウンを放してからこのパネルを閉じる（同じパネルのコマンドは積んだ順に処理される）。
 fn finish(panel: PanelId, cx: &mut App) {
     let control = cx.default_global::<PanelControl>();
-    control.setting_changes.push(Setting::Lockdown(false));
     control.setting_changes.push(Setting::SetupDone(true));
-    control
-        .panels
-        .entry(panel)
-        .or_default()
-        .commands
-        .push(PanelCommand::Close);
+    let commands = &mut control.panels.entry(panel).or_default().commands;
+    commands.push(PanelCommand::Lockdown(false));
+    commands.push(PanelCommand::Close);
 }
 
 impl Render for SetupWizard {

@@ -42,6 +42,11 @@ pub enum PanelCommand {
     Lock(bool),
     /// 頭の向き（左右だけ）と歩きにゆるく追従する（[`overlay::LazyFollow`]。`None` で外す）。
     LazyFollow(Option<LazyFollow>),
+    /// このパネルがロックダウンを取る・放す。取っている間、このパネルは（自分が放すまで）閉じられず（[`PanelCommand::Close`] は無視する）、
+    /// カーネルはロックダウン中（[`Settings::lockdown`]）になる。シェル（ダッシュボードなど）はそれを見て開閉を控える。
+    /// 取り手は何枚でもよく、全員が放す（か閉じる）までロックダウンは続く。閉じる前に放すなら、同じパネルのコマンドに
+    /// `Lockdown(false)`、`Close` の順で積む。設定ファイルには残さない。
+    Lockdown(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
     /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
@@ -129,9 +134,6 @@ pub enum Setting {
     LodQuality(LodQuality),
     /// セットアップウィザードを終えたか（`setup_done`）。
     SetupDone(bool),
-    /// ロックダウン（設定ファイルには残さない）。入っている間は、パネルを閉じられず（[`PanelCommand::Close`] は無視する）、
-    /// ダッシュボードも開けない（wrist が見る）。セットアップウィザードのように、終えるまで逃がさない画面が入れ、終えたら外す。
-    Lockdown(bool),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -150,7 +152,7 @@ pub struct Settings {
     pub block_input: bool,
     pub lod_quality: LodQuality,
     pub setup_done: bool,
-    /// ロックダウン中か（[`Setting::Lockdown`]）。
+    /// ロックダウン中か（[`Kernel::lockdown`]）。シェル（ダッシュボードなど）はこれを見て、開閉を控える。
     pub lockdown: bool,
 }
 
@@ -236,8 +238,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     close_sounds: std::collections::HashMap<PanelId, audio::Sound>,
     /// 全体の設定によらないポインタの方式（[`PanelCommand::PointerMode`]）。
     pointer_modes: std::collections::HashMap<PanelId, PointerMode>,
-    /// ロックダウン中か（[`Setting::Lockdown`]）。
-    lockdown: bool,
+    /// ロックダウンを取っているパネル（[`PanelCommand::Lockdown`]）。
+    lockdown_holders: std::collections::BTreeSet<PanelId>,
     /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
     shortcut: DoublePress,
     /// ランタイムが数えた二回押しの合計（[`vr::DOUBLE_PRESS_INPUT`]）。
@@ -397,7 +399,7 @@ impl<B: VrBackend> Kernel<B> {
             point_slots: Default::default(),
             close_sounds: Default::default(),
             pointer_modes: Default::default(),
-            lockdown: false,
+            lockdown_holders: Default::default(),
             shortcut: DoublePress::default(),
             runtime_double_press: 0,
             hand_shortcut: LongPress::default(),
@@ -425,6 +427,14 @@ impl<B: VrBackend> Kernel<B> {
             .unwrap_or(self.pointer_mode)
     }
 
+    /// ロックダウン中か: 開いているパネルのどれかがロックダウンを取っている（[`PanelCommand::Lockdown`]）。
+    /// 取ったパネルが閉じれば自然に外れる。
+    pub fn lockdown(&self) -> bool {
+        self.lockdown_holders
+            .iter()
+            .any(|&p| !self.overlay.panel(p).closed)
+    }
+
     pub fn settings(&self) -> Settings {
         Settings {
             pointer_mode: self.pointer_mode,
@@ -440,7 +450,7 @@ impl<B: VrBackend> Kernel<B> {
             block_input: self.overlay.block_input(),
             lod_quality: self.config.lod_quality,
             setup_done: self.config.setup_done,
-            lockdown: self.lockdown,
+            lockdown: self.lockdown(),
         }
     }
 
@@ -525,10 +535,6 @@ impl<B: VrBackend> Kernel<B> {
             Setting::LodQuality(q) => {
                 self.config.lod_quality = q;
                 ("lod_quality", config::value(q))
-            }
-            Setting::Lockdown(b) => {
-                self.lockdown = b;
-                return;
             }
             Setting::SetupDone(b) => {
                 self.config.setup_done = b;
@@ -769,8 +775,18 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay
                     .set_hidden(&mut self.subsystems.backend, panel, hidden)
             }
-            PanelCommand::Close if self.lockdown => {
-                logger::debug!("ignoring close while in lockdown", panel = panel);
+            PanelCommand::Lockdown(on) => {
+                if on {
+                    self.lockdown_holders.insert(panel);
+                } else {
+                    self.lockdown_holders.remove(&panel);
+                }
+            }
+            PanelCommand::Close if self.lockdown_holders.contains(&panel) => {
+                logger::debug!(
+                    "ignoring close of a panel holding the lockdown",
+                    panel = panel
+                );
             }
             PanelCommand::Close => {
                 if let Some(sound) = self.close_sounds.remove(&panel) {
@@ -1076,19 +1092,44 @@ mod tests {
 
     /// 境目の前後で行き来しない: 上げるのは閾値で、下げるのは閾値の 9 割を割ってから。
     #[test]
-    fn lockdown_ignores_close_until_released_and_is_not_saved() {
+    fn lockdown_protects_only_its_holders_and_lasts_until_all_release() {
+        let (mut k, _) = lod_kernel();
+        let mut panel = |name| {
+            k.add_panel(name, Pose::IDENTITY, Vec2::new(1.0, 1.0), (100, 100))
+                .unwrap()
+        };
+        let (a, b, other) = (panel("a"), panel("b"), panel("other"));
+        assert!(!k.lockdown());
+        k.apply(a, PanelCommand::Lockdown(true));
+        k.apply(b, PanelCommand::Lockdown(true));
+        assert!(k.settings().lockdown);
+        // 取っているパネルだけが閉じられない。ほかは閉じられる。
+        k.apply(a, PanelCommand::Close);
+        assert!(!k.panel(a).closed);
+        k.apply(other, PanelCommand::Close);
+        assert!(k.panel(other).closed);
+        // 1 枚放しても、もう 1 枚が取っている間は続く。放したパネルは閉じられる。
+        k.apply(a, PanelCommand::Lockdown(false));
+        assert!(k.lockdown());
+        k.apply(a, PanelCommand::Close);
+        assert!(k.panel(a).closed);
+        k.apply(b, PanelCommand::Lockdown(false));
+        assert!(!k.lockdown());
+    }
+
+    #[test]
+    fn lockdown_is_released_then_the_holder_closes() {
         let (mut k, _) = lod_kernel();
         let p = k
             .add_panel("p", Pose::IDENTITY, Vec2::new(1.0, 1.0), (100, 100))
             .unwrap();
-        k.set(Setting::Lockdown(true));
-        assert!(k.settings().lockdown);
-        k.apply(p, PanelCommand::Close);
-        assert!(!k.panel(p).closed, "closing is ignored in lockdown");
-        k.set(Setting::Lockdown(false));
-        assert!(!k.settings().lockdown);
-        k.apply(p, PanelCommand::Close);
-        assert!(k.panel(p).closed);
+        k.apply(p, PanelCommand::Lockdown(true));
+        assert!(k.lockdown());
+        // 放してから閉じる（同じパネルのコマンド列の順）。
+        for cmd in [PanelCommand::Lockdown(false), PanelCommand::Close] {
+            k.apply(p, cmd);
+        }
+        assert!(k.panel(p).closed && !k.lockdown());
     }
 
     #[test]

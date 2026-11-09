@@ -36,3 +36,4 @@
 - **スワイプバック（本番のフレームループ）**: `crates/ui/tests/gpu/nav_swipe.rs`（`harness = false`、`-- --ignored`）。NavTest に画面を積み、タッチのまま右から左へ動かす・長押ししてから動かすの両方で戻ることを確かめる。手ブレ抑えが効いた VR のレーザーでの確認は `testkit/tests/scenarios/navigation.rs`。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
 - **ゆるい追従**: `PanelSpec::lazy_follow(kernel::LazyFollow)` で、パネルを頭の向き（左右だけ）と歩きにゆるく追従させる（どのパネルでも使える。仕組みは `../overlay/AGENT.md`）。
+- **ロックダウン**: `PanelSpec::lockdown()` で、開いた時点から `PanelCommand::Lockdown` を取る（放すのはビュー。仕組みは `../kernel/AGENT.md`）。
