@@ -318,6 +318,22 @@ hue = "色相"
 chroma = "鮮やかさ"
 lightness = "明るさ"
 
+[wrist.face]
+standard = "スタンダード"
+digital = "デジタル"
+analog = "アナログ"
+
+[wrist.design]
+dots = "ドット"
+ring = "リング"
+gauge = "ゲージ"
+lcd = "液晶"
+flip = "フリップ時計"
+terminal = "ターミナル"
+minimal = "ミニマル"
+dress = "ドレス"
+railway = "鉄道時計"
+
 [settings]
 title = "設定"
 language = "言語"
@@ -326,6 +342,8 @@ theme = "テーマ"
 personal_color = "パーソナルカラー"
 preview = "プレビュー"
 preview_body = "ボタンやスイッチ、スライダーにパーソナルカラーが使われます。"
+wrist_face = "腕時計の文字盤"
+wrist_design = "腕時計のデザイン"
 smoothing = "手ブレ抑え"
 release = "抑えを緩める角度"
 laser_length = "レーザーの長さ"

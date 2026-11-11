@@ -105,6 +105,58 @@ impl PersonalColor {
     }
 }
 
+/// wrist（腕時計）の文字盤の種類と、種類ごとのデザインの表。ここに 1 行足すと、選ぶ画面の一覧にも並ぶ
+/// （描くのは `wrist` クレート。足し方は `crates/wrist/AGENT.md`）。名前は設定ファイルの値と文言のキーになる。
+macro_rules! wrist_designs {
+    ($($face:ident = $face_key:literal { $($design:ident = $key:literal),+ $(,)? })+) => {
+        /// wrist の文字盤の種類。
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum WristFace { $($face),+ }
+
+        /// wrist の文字盤のデザイン（`wrist_design`）。どれも 1 つの種類（[`WristDesign::face`]）に属する。
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        pub enum WristDesign { $($(#[serde(rename = $key)] $design),+),+ }
+
+        impl WristFace {
+            pub const ALL: &[WristFace] = &[$(Self::$face),+];
+
+            /// 文言のキーに使う名前（`wrist.face.<名前>`）。
+            pub const fn key(self) -> &'static str {
+                match self { $(Self::$face => $face_key),+ }
+            }
+
+            /// この種類のデザイン（先頭がこの種類の既定）。
+            pub const fn designs(self) -> &'static [WristDesign] {
+                match self { $(Self::$face => &[$(WristDesign::$design),+]),+ }
+            }
+        }
+
+        impl WristDesign {
+            /// 設定ファイルの値で、文言のキーにも使う名前（`wrist.design.<名前>`）。
+            pub const fn key(self) -> &'static str {
+                match self { $($(Self::$design => $key),+),+ }
+            }
+
+            pub const fn face(self) -> WristFace {
+                match self { $($(Self::$design => WristFace::$face),+),+ }
+            }
+        }
+    };
+}
+
+wrist_designs! {
+    Standard = "standard" { Dots = "dots", Ring = "ring", Gauge = "gauge" }
+    Digital = "digital" { Lcd = "lcd", Flip = "flip", Terminal = "terminal" }
+    Analog = "analog" { Minimal = "minimal", Dress = "dress", Railway = "railway" }
+}
+
+impl Default for WristDesign {
+    /// 既定は先頭の種類の先頭のデザイン。
+    fn default() -> Self {
+        WristFace::ALL[0].designs()[0]
+    }
+}
+
 /// 利き手（`right` / `left`）。主に操作する手。左右で振る舞いが変わる機能が、それぞれこれを見て決める。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -162,6 +214,8 @@ pub struct Config {
     pub language: Language,
     /// 利き手（`right` / `left`）。省略で `right`。画面での切り替えはここへ書き戻される。
     pub dominant_hand: DominantHand,
+    /// wrist の文字盤のデザイン（[`WristDesign::key`]。`dots` / `lcd` / `minimal` など）。省略で `dots`。画面での切り替えはここへ書き戻される。
+    pub wrist_design: WristDesign,
     /// ミラーリング（デスクトップの配信）の取得の上限 FPS（1〜240）。省略で `desktop::DEFAULT_FRAME_RATE`。
     pub mirror_frame_rate: Option<u32>,
     /// 仮想キーボードの種類（`full` / `tenkeyless` / `compact`）。省略で `full`。
@@ -346,6 +400,7 @@ emulator = false
             (vr::Hand::Left, vr::Hand::Right)
         );
         assert!(parse("dominant_hand = \"both\"").is_err());
+        assert!(parse("wrist_design = \"sundial\"").is_err());
     }
 
     #[test]
@@ -384,6 +439,24 @@ emulator = false
         let back = parse(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(back.personal_color, Some(blue));
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 文字盤のデザインは表の名前で読み書きでき、どれも自分の種類の一覧に 1 度だけ載っている。
+    #[test]
+    fn wrist_designs_round_trip_and_belong_to_one_face() {
+        assert_eq!(parse("").unwrap().wrist_design, WristDesign::Dots);
+        let mut seen = Vec::new();
+        for &face in WristFace::ALL {
+            assert!(face.designs().len() >= 3, "{face:?}: 種類ごとに 3 つ以上");
+            for &design in face.designs() {
+                assert_eq!(design.face(), face);
+                let text = format!("wrist_design = \"{}\"", design.key());
+                assert_eq!(parse(&text).unwrap().wrist_design, design);
+                assert_eq!(value(design).as_str(), Some(design.key()));
+                assert!(!seen.contains(&design.key()), "{} が重複", design.key());
+                seen.push(design.key());
+            }
+        }
     }
 
     #[test]

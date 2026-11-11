@@ -20,6 +20,7 @@ kernel = { workspace = true, features = ["novr", "test-support"] }
 vr = { workspace = true, features = ["test-support", "novr"] }
 testing.workspace = true
 beam.workspace = true
+wrist.workspace = true
 
 # 実プラットフォーム + GPU で動かすテスト（tests/gpu）。GUI はメインスレッドで回すため独自 main。
 # ケースごとに子プロセスで起こす。ストレステスト（ベンチマーク）などは `-- --ignored` のときだけ流す。
