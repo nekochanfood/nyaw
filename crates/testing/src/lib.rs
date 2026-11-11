@@ -1466,7 +1466,7 @@ impl Settings {
 
     /// 選択の行（`components::select`）。押すと選択肢のポップオーバーを開き、選ぶと `set` で全体の設定に反映して閉じる。
     #[allow(clippy::too_many_arguments)]
-    fn select<T: Copy + PartialEq + 'static>(
+    fn select<T: Copy + PartialEq + 'static, I: Into<SharedString>>(
         &self,
         theme: &Theme,
         window: &mut Window,
@@ -1475,7 +1475,7 @@ impl Settings {
         glyph: &'static design::Icon,
         label: SharedString,
         now: T,
-        options: Vec<(&'static str, SharedString, T)>,
+        options: Vec<(I, SharedString, T)>,
         set: fn(T) -> Setting,
     ) -> components::Button {
         let value = options
@@ -1528,7 +1528,8 @@ impl Settings {
     ) -> Vec<Div> {
         let now = settings(cx);
         match category {
-            // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）と、ダッシュボード中のゲーム入力の遮断。
+            // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）、利き手（主に操作する手）、
+            // ダッシュボード中のゲーム入力の遮断。
             0 => vec![components::list(
                 theme,
                 [
@@ -1551,6 +1552,28 @@ impl Settings {
                             .to_vec(),
                         |l| Setting::Language(language(l)),
                     ),
+                    self.select(
+                        theme,
+                        window,
+                        cx,
+                        "setting-dominant-hand",
+                        &design::icons::HAND,
+                        i18n::t(cx, "settings.dominant_hand"),
+                        now.dominant_hand,
+                        vec![
+                            (
+                                "setting-hand-right",
+                                i18n::t(cx, "settings.right"),
+                                kernel::DominantHand::Right,
+                            ),
+                            (
+                                "setting-hand-left",
+                                i18n::t(cx, "settings.left"),
+                                kernel::DominantHand::Left,
+                            ),
+                        ],
+                        Setting::DominantHand,
+                    ),
                     components::switch_item(
                         theme,
                         "setting-block-input",
@@ -1561,32 +1584,115 @@ impl Settings {
                     .on_click(change(Setting::BlockInput(!now.block_input))),
                 ],
             )],
-            // 外観: テーマ。
-            1 => vec![components::list(
-                theme,
-                [self.select(
+            // 外観: テーマと、パーソナルカラー（ボタンなどの塗りの色）。下の見本で、選んだ結果を確かめられる。
+            1 => {
+                let accent = now.personal_color.map_or(design::Accent::DEFAULT, |c| {
+                    design::Accent::new(c.lightness, c.chroma, c.hue)
+                });
+                let face = now.wrist_design.face();
+                let picker = components::accent_picker(
                     theme,
-                    window,
-                    cx,
-                    "setting-theme",
-                    &design::icons::PALETTE,
-                    i18n::t(cx, "settings.theme"),
-                    now.theme,
-                    vec![
-                        (
-                            "setting-theme-dark",
-                            i18n::t(cx, "theme.dark"),
-                            kernel::ThemeMode::Dark,
+                    accent,
+                    SETTINGS_SLIDER_PX,
+                    |name| i18n::t(cx, &format!("color.{name}")),
+                    |a, _, cx| {
+                        push_setting(
+                            Setting::PersonalColor(kernel::PersonalColor {
+                                lightness: a.lightness,
+                                chroma: a.chroma,
+                                hue: a.hue,
+                            }),
+                            cx,
+                        )
+                    },
+                );
+                vec![
+                    components::list(
+                        theme,
+                        [self.select(
+                            theme,
+                            window,
+                            cx,
+                            "setting-theme",
+                            &design::icons::PALETTE,
+                            i18n::t(cx, "settings.theme"),
+                            now.theme,
+                            vec![
+                                (
+                                    "setting-theme-dark",
+                                    i18n::t(cx, "theme.dark"),
+                                    kernel::ThemeMode::Dark,
+                                ),
+                                (
+                                    "setting-theme-light",
+                                    i18n::t(cx, "theme.light"),
+                                    kernel::ThemeMode::Light,
+                                ),
+                            ],
+                            Setting::Theme,
+                        )],
+                    ),
+                    // 腕時計: 文字盤の種類と、その種類のデザイン。選択肢は `kernel` の表から並べる（足しても、ここは変えない）。
+                    components::list(
+                        theme,
+                        [
+                            self.select(
+                                theme,
+                                window,
+                                cx,
+                                "setting-wrist-face",
+                                &design::icons::WATCH,
+                                i18n::t(cx, "settings.wrist_face"),
+                                face,
+                                kernel::WristFace::ALL
+                                    .iter()
+                                    .map(|&f| {
+                                        let name = format!("wrist.face.{}", f.key());
+                                        let id = format!("setting-wrist-face-{}", f.key());
+                                        (id, i18n::t(cx, &name), f)
+                                    })
+                                    .collect(),
+                                // 種類を替えたら、その種類の先頭のデザインにする。
+                                |f| Setting::WristDesign(f.designs()[0]),
+                            ),
+                            self.select(
+                                theme,
+                                window,
+                                cx,
+                                "setting-wrist-design",
+                                &design::icons::PAINT_BRUSH,
+                                i18n::t(cx, "settings.wrist_design"),
+                                now.wrist_design,
+                                face.designs()
+                                    .iter()
+                                    .map(|&d| {
+                                        let name = format!("wrist.design.{}", d.key());
+                                        let id = format!("setting-wrist-{}", d.key());
+                                        (id, i18n::t(cx, &name), d)
+                                    })
+                                    .collect(),
+                                Setting::WristDesign,
+                            ),
+                        ],
+                    ),
+                    setting_group(
+                        theme,
+                        i18n::t(cx, "settings.personal_color"),
+                        components::card(theme).p(px(spacing::LG)).child(picker),
+                    ),
+                    setting_group(
+                        theme,
+                        i18n::t(cx, "settings.preview"),
+                        components::theme_preview(
+                            theme,
+                            "setting-preview",
+                            i18n::t(cx, "settings.personal_color"),
+                            i18n::t(cx, "settings.preview_body"),
+                            i18n::t(cx, "common.ok"),
                         ),
-                        (
-                            "setting-theme-light",
-                            i18n::t(cx, "theme.light"),
-                            kernel::ThemeMode::Light,
-                        ),
-                    ],
-                    Setting::Theme,
-                )],
-            )],
+                    ),
+                ]
+            }
             // ポインタ: 方式と、レーザーの手ブレ抑え・長さ（Laser の画面と同じ範囲）。
             2 => {
                 let max = kernel::overlay::POINTER_SMOOTHING_MAX;
@@ -1598,32 +1704,8 @@ impl Settings {
                     kernel::overlay::LASER_LENGTH_MIN,
                     kernel::overlay::LASER_MAX,
                 );
-                // 利き手: 配信のパネルを操作する手。wrist は反対の手首に付く。
-                let hand = self.select(
-                    theme,
-                    window,
-                    cx,
-                    "setting-dominant-hand",
-                    &design::icons::HAND,
-                    i18n::t(cx, "settings.dominant_hand"),
-                    now.dominant_hand,
-                    vec![
-                        (
-                            "setting-hand-right",
-                            i18n::t(cx, "settings.right"),
-                            kernel::DominantHand::Right,
-                        ),
-                        (
-                            "setting-hand-left",
-                            i18n::t(cx, "settings.left"),
-                            kernel::DominantHand::Left,
-                        ),
-                    ],
-                    Setting::DominantHand,
-                );
                 vec![
                     // ポインタの方式は選ばせない（マウスは廃止の方向。全体はタッチ）。
-                    components::list(theme, [hand]),
                     setting_group(
                         theme,
                         i18n::t(cx, "settings.smoothing"),

@@ -1,4 +1,5 @@
 use gpui::TestAppContext;
+use kernel::{Device, DominantHand, Hand, Setting};
 use testkit::{Button, Driver, NoVrKit};
 use wrist::Wrist;
 
@@ -58,4 +59,23 @@ fn x_key_twice_opens_hides_and_shows_the_dashboard(cx: &mut TestAppContext) {
     kit.step();
     assert!(!kit.kernel.status(dashboard).hidden);
     assert_eq!(kit.read(|w| w.dashboard), Some(dashboard), "not reopened");
+}
+
+/// The wrist sits on the wrist opposite the dominant hand and moves there by itself when the setting changes.
+#[gpui::test]
+fn wrist_follows_the_dominant_hand(cx: &mut TestAppContext) {
+    let mut kit = NoVrKit::new(cx, |_, cx| wrist(cx));
+    kit.step().step();
+    for (dominant, wrist_on) in [
+        (DominantHand::Left, Hand::Right),
+        (DominantHand::Right, Hand::Left),
+    ] {
+        kit.kernel.set(Setting::DominantHand(dominant));
+        // One frame hands the setting to the wrist, the next applies its attach command.
+        kit.step().step();
+        assert_eq!(
+            kit.kernel.panel(0).attached,
+            Some((Device::Controller(wrist_on), wrist::WATCH_OFFSET))
+        );
+    }
 }

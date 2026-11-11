@@ -82,7 +82,82 @@ pub enum Language {
     Ja,
 }
 
-/// 利き手（`right` / `left`）。利き手でない側の手首に wrist を付け、配信のパネルは利き手で操作する。
+/// パーソナルカラー: ボタンなどの塗りに使う、ユーザーの色（OKLCH）。`design::Accent` に対応する。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PersonalColor {
+    /// 明るさ（0〜1）。
+    pub lightness: f32,
+    /// 鮮やかさ（0〜0.4。画面に出せる範囲を越える分は、描くときに落とす）。
+    pub chroma: f32,
+    /// 色相（度。0〜360）。
+    pub hue: f32,
+}
+
+impl PersonalColor {
+    /// 範囲に収める（色相は 0〜360 に巻く。数でない値は 0）。
+    pub fn clamped(self) -> Self {
+        let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+        Self {
+            lightness: finite(self.lightness).clamp(0.0, 1.0),
+            chroma: finite(self.chroma).clamp(0.0, 0.4),
+            hue: finite(self.hue).rem_euclid(360.0),
+        }
+    }
+}
+
+/// wrist（腕時計）の文字盤の種類と、種類ごとのデザインの表。ここに 1 行足すと、選ぶ画面の一覧にも並ぶ
+/// （描くのは `wrist` クレート。足し方は `crates/wrist/AGENT.md`）。名前は設定ファイルの値と文言のキーになる。
+macro_rules! wrist_designs {
+    ($($face:ident = $face_key:literal { $($design:ident = $key:literal),+ $(,)? })+) => {
+        /// wrist の文字盤の種類。
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum WristFace { $($face),+ }
+
+        /// wrist の文字盤のデザイン（`wrist_design`）。どれも 1 つの種類（[`WristDesign::face`]）に属する。
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+        pub enum WristDesign { $($(#[serde(rename = $key)] $design),+),+ }
+
+        impl WristFace {
+            pub const ALL: &[WristFace] = &[$(Self::$face),+];
+
+            /// 文言のキーに使う名前（`wrist.face.<名前>`）。
+            pub const fn key(self) -> &'static str {
+                match self { $(Self::$face => $face_key),+ }
+            }
+
+            /// この種類のデザイン（先頭がこの種類の既定）。
+            pub const fn designs(self) -> &'static [WristDesign] {
+                match self { $(Self::$face => &[$(WristDesign::$design),+]),+ }
+            }
+        }
+
+        impl WristDesign {
+            /// 設定ファイルの値で、文言のキーにも使う名前（`wrist.design.<名前>`）。
+            pub const fn key(self) -> &'static str {
+                match self { $($(Self::$design => $key),+),+ }
+            }
+
+            pub const fn face(self) -> WristFace {
+                match self { $($(Self::$design => WristFace::$face),+),+ }
+            }
+        }
+    };
+}
+
+wrist_designs! {
+    Standard = "standard" { Dots = "dots", Ring = "ring", Gauge = "gauge" }
+    Digital = "digital" { Lcd = "lcd", Flip = "flip", Terminal = "terminal" }
+    Analog = "analog" { Minimal = "minimal", Dress = "dress", Railway = "railway" }
+}
+
+impl Default for WristDesign {
+    /// 既定は先頭の種類の先頭のデザイン。
+    fn default() -> Self {
+        WristFace::ALL[0].designs()[0]
+    }
+}
+
+/// 利き手（`right` / `left`）。主に操作する手。左右で振る舞いが変わる機能が、それぞれこれを見て決める。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DominantHand {
@@ -133,10 +208,14 @@ pub struct Config {
     pub gpu: Gpu,
     /// 見た目のテーマ（`dark` / `light`）。省略で `dark`。画面での切り替えはここへ書き戻される。
     pub theme: ThemeMode,
+    /// パーソナルカラー（`[personal_color]` の表: `lightness` / `chroma` / `hue`）。省略で既定の色。画面での切り替えはここへ書き戻される。
+    pub personal_color: Option<PersonalColor>,
     /// 画面の言語（`en` / `ja`）。省略で `en`。画面での切り替えはここへ書き戻される。
     pub language: Language,
     /// 利き手（`right` / `left`）。省略で `right`。画面での切り替えはここへ書き戻される。
     pub dominant_hand: DominantHand,
+    /// wrist の文字盤のデザイン（[`WristDesign::key`]。`dots` / `lcd` / `minimal` など）。省略で `dots`。画面での切り替えはここへ書き戻される。
+    pub wrist_design: WristDesign,
     /// ミラーリング（デスクトップの配信）の取得の上限 FPS（1〜240）。省略で `desktop::DEFAULT_FRAME_RATE`。
     pub mirror_frame_rate: Option<u32>,
     /// 仮想キーボードの種類（`full` / `tenkeyless` / `compact`）。省略で `full`。
@@ -329,6 +408,63 @@ emulator = false
             (vr::Hand::Left, vr::Hand::Right)
         );
         assert!(parse("dominant_hand = \"both\"").is_err());
+        assert!(parse("wrist_design = \"sundial\"").is_err());
+    }
+
+    #[test]
+    fn personal_color_parses_clamps_and_round_trips() {
+        assert_eq!(parse("").unwrap().personal_color, None);
+        let c = parse("personal_color = { lightness = 0.66, chroma = 0.21, hue = 350.0 }").unwrap();
+        let pink = PersonalColor {
+            lightness: 0.66,
+            chroma: 0.21,
+            hue: 350.0,
+        };
+        assert_eq!(c.personal_color, Some(pink));
+        assert!(
+            parse("personal_color = { hue = 350.0 }").is_err(),
+            "3 つとも要る"
+        );
+        let wild = PersonalColor {
+            lightness: 2.0,
+            chroma: 7.0,
+            hue: -30.0,
+        };
+        let tame = wild.clamped();
+        assert_eq!((tame.lightness, tame.chroma, tame.hue), (1.0, 0.4, 330.0));
+        let nan = parse("personal_color = { lightness = nan, chroma = nan, hue = nan }").unwrap();
+        let sane = nan.personal_color.unwrap().clamped();
+        assert_eq!((sane.lightness, sane.chroma, sane.hue), (0.0, 0.0, 0.0));
+        // 表ごと書き戻せ、読み直すと同じ値になる（f32 を TOML に通しても変わらない）。
+        let dir = std::env::temp_dir().join(format!("nyaw-color-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let blue = PersonalColor {
+            lightness: 0.6493,
+            chroma: 0.193,
+            hue: 251.78,
+        };
+        save_at(&path, "personal_color", value(blue)).unwrap();
+        let back = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(back.personal_color, Some(blue));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 文字盤のデザインは表の名前で読み書きでき、どれも自分の種類の一覧に 1 度だけ載っている。
+    #[test]
+    fn wrist_designs_round_trip_and_belong_to_one_face() {
+        assert_eq!(parse("").unwrap().wrist_design, WristDesign::Dots);
+        let mut seen = Vec::new();
+        for &face in WristFace::ALL {
+            assert!(face.designs().len() >= 3, "{face:?}: 種類ごとに 3 つ以上");
+            for &design in face.designs() {
+                assert_eq!(design.face(), face);
+                let text = format!("wrist_design = \"{}\"", design.key());
+                assert_eq!(parse(&text).unwrap().wrist_design, design);
+                assert_eq!(value(design).as_str(), Some(design.key()));
+                assert!(!seen.contains(&design.key()), "{} が重複", design.key());
+                seen.push(design.key());
+            }
+        }
     }
 
     #[test]

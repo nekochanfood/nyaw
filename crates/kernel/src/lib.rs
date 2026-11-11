@@ -16,7 +16,10 @@ pub use subsystems::{audio, desktop, rendering, vr};
 use std::time::{Duration, Instant};
 use subsystems::os;
 
-pub use config::{Config, DominantHand, Language, LodQuality, PointerMode, ThemeMode};
+pub use config::{
+    Config, DominantHand, Language, LodQuality, PersonalColor, PointerMode, ThemeMode, WristDesign,
+    WristFace,
+};
 pub use overlay::{
     self, Anchor, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent,
 };
@@ -112,6 +115,8 @@ pub enum Setting {
     /// レーザーのエミュレート方式。
     PointerMode(PointerMode),
     Theme(ThemeMode),
+    /// パーソナルカラー（`personal_color`）。範囲の外の値は範囲に収める。
+    PersonalColor(PersonalColor),
     /// 画面の言語（`language`）。
     Language(Language),
     /// レーザーの手ブレ抑えの強さ（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`。`pointer_smoothing`）。
@@ -122,8 +127,10 @@ pub enum Setting {
     LaserLength(f32),
     /// コントローラを持たない手の調整値（`[hand]`）。範囲の外の値は範囲に収める。
     Hand(subsystems::input::HandTuning),
-    /// 利き手（`dominant_hand`）。利き手でない側の手首に付いたパネル（wrist）は新しい側へ付け替える。
+    /// 利き手（`dominant_hand`）。カーネルは値を持つだけで、パネルは動かさない（従うのは左右で振る舞いが変わる側）。
     DominantHand(DominantHand),
+    /// wrist の文字盤のデザイン（`wrist_design`）。
+    WristDesign(WristDesign),
     /// ミラーリングの取得の上限 FPS（`mirror_frame_rate`。1〜240 に収める）。配信中のミラーもこの FPS でかけ直す。
     MirrorFrameRate(u32),
     /// 仮想キーボードの種類（`keyboard`）。
@@ -141,12 +148,15 @@ pub enum Setting {
 pub struct Settings {
     pub pointer_mode: PointerMode,
     pub theme: ThemeMode,
+    /// パーソナルカラー。選んでいなければ `None`（既定の色味）。
+    pub personal_color: Option<PersonalColor>,
     pub language: Language,
     pub pointer_smoothing: f32,
     pub pointer_release_deg: f32,
     pub laser_length: f32,
     pub hand: subsystems::input::HandTuning,
     pub dominant_hand: DominantHand,
+    pub wrist_design: WristDesign,
     pub mirror_frame_rate: u32,
     pub keyboard: subsystems::keyboard::KeyboardType,
     pub block_input: bool,
@@ -161,12 +171,14 @@ impl Default for Settings {
         Self {
             pointer_mode: Default::default(),
             theme: Default::default(),
+            personal_color: None,
             language: Default::default(),
             pointer_smoothing: Default::default(),
             pointer_release_deg: Default::default(),
             laser_length: Default::default(),
             hand: Default::default(),
             dominant_hand: Default::default(),
+            wrist_design: Default::default(),
             mirror_frame_rate: desktop::DEFAULT_FRAME_RATE,
             keyboard: Default::default(),
             block_input: true,
@@ -439,12 +451,14 @@ impl<B: VrBackend> Kernel<B> {
         Settings {
             pointer_mode: self.pointer_mode,
             theme: self.config.theme,
+            personal_color: self.config.personal_color.map(PersonalColor::clamped),
             language: self.config.language,
             pointer_smoothing: self.overlay.pointer_smoothing(),
             pointer_release_deg: self.overlay.pointer_release(),
             laser_length: self.overlay.laser_length(),
             hand: self.subsystems.hand,
             dominant_hand: self.config.dominant_hand,
+            wrist_design: self.config.wrist_design,
             mirror_frame_rate: self.mirror_frame_rate(),
             keyboard: self.config.keyboard,
             block_input: self.overlay.block_input(),
@@ -473,6 +487,11 @@ impl<B: VrBackend> Kernel<B> {
             Setting::Theme(t) => {
                 self.config.theme = t;
                 ("theme", config::value(t))
+            }
+            Setting::PersonalColor(c) => {
+                let c = c.clamped();
+                self.config.personal_color = Some(c);
+                ("personal_color", config::value(c))
             }
             Setting::Language(l) => {
                 self.config.language = l;
@@ -503,18 +522,12 @@ impl<B: VrBackend> Kernel<B> {
                 ("hand", config::value(h))
             }
             Setting::DominantHand(h) => {
-                let (from, to) = (self.config.dominant_hand.off_hand(), h.off_hand());
                 self.config.dominant_hand = h;
-                for id in self.overlay.present_ids().to_vec() {
-                    if let Some((Device::Controller(hand), offset)) =
-                        self.overlay.panel(id).attached
-                        && hand == from
-                        && from != to
-                    {
-                        self.overlay.attach(id, Device::Controller(to), offset);
-                    }
-                }
                 ("dominant_hand", config::value(h))
+            }
+            Setting::WristDesign(d) => {
+                self.config.wrist_design = d;
+                ("wrist_design", config::value(d))
             }
             Setting::MirrorFrameRate(f) => {
                 self.config.mirror_frame_rate = Some(f);
@@ -965,9 +978,9 @@ mod tests {
         assert_eq!(k.status(p).double_press, 1);
     }
 
-    /// 利き手を替えると、利き手でない側の手首に付いたパネルが反対の手首へ移る。FPS は 1〜240 に収める。
+    /// 利き手を替えても、カーネルは手に付いたパネルを動かさない（従うかは画面が決める）。FPS は 1〜240 に収める。
     #[test]
-    fn dominant_hand_moves_off_hand_panels_and_frame_rate_clamps() {
+    fn dominant_hand_leaves_attached_panels_and_frame_rate_clamps() {
         let (mut k, p) = kernel();
         let offset = Pose::new(vr::Vec3::new(0.0, 0.1, 0.0), vr::Quat::IDENTITY);
         k.apply(
@@ -977,9 +990,11 @@ mod tests {
         k.set(Setting::DominantHand(DominantHand::Left));
         assert_eq!(
             k.panel(p).attached,
-            Some((Device::Controller(Hand::Right), offset))
+            Some((Device::Controller(Hand::Left), offset))
         );
         assert_eq!(k.settings().dominant_hand, DominantHand::Left);
+        k.set(Setting::WristDesign(WristDesign::Lcd));
+        assert_eq!(k.settings().wrist_design, WristDesign::Lcd);
         k.set(Setting::MirrorFrameRate(1000));
         assert_eq!(k.settings().mirror_frame_rate, desktop::MAX_FRAME_RATE);
         k.set(Setting::MirrorFrameRate(0));
@@ -1292,6 +1307,30 @@ mod tests {
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(saved.language, Language::En);
+    }
+
+    /// パーソナルカラーは選ぶまで `None`。範囲に収めて覚え、設定ファイルへ表ごと書き戻す。
+    #[test]
+    fn personal_color_is_clamped_and_persists() {
+        let path =
+            std::env::temp_dir().join(format!("nyaw-kernel-color-{}.toml", std::process::id()));
+        let (mut k, _) = kernel();
+        assert_eq!(k.settings().personal_color, None);
+        k.config_path = Some(path.clone());
+        k.set(Setting::PersonalColor(PersonalColor {
+            lightness: 0.87,
+            chroma: 2.0,
+            hue: 370.0,
+        }));
+        let want = Some(PersonalColor {
+            lightness: 0.87,
+            chroma: 0.4,
+            hue: 10.0,
+        });
+        assert_eq!(k.settings().personal_color, want);
+        let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(saved.personal_color, want);
     }
 
     #[test]

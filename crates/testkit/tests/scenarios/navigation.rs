@@ -4,7 +4,7 @@
 
 use gpui::{Render, TestAppContext};
 use kernel::subsystems::keyboard::KeyboardType;
-use kernel::{DominantHand, Language, PointerMode, Setting, ThemeMode};
+use kernel::{DominantHand, Language, PointerMode, Setting, ThemeMode, WristDesign};
 use testing::{
     BACKGROUND, NavPage, NavTest, SIDEBAR_BG, SIDEBAR_INDICATOR, SIDEBAR_INDICATOR_INSET, Settings,
 };
@@ -147,15 +147,25 @@ fn settings_selects_change_the_settings(cx: &mut TestAppContext) {
     kit.click("setting-lang-ja");
     assert_eq!(kit.kernel.settings().language, Language::Ja);
     assert_eq!(kit.read(|v| v.open), None, "choosing closes the popover");
+    kit.click("setting-dominant-hand")
+        .click("setting-hand-left");
+    assert_eq!(kit.kernel.settings().dominant_hand, DominantHand::Left);
     kit.click("settings-appearance")
         .click("setting-theme")
         .click("setting-theme-light");
     assert_eq!(kit.read(|v| v.category), 1);
     assert_eq!(kit.kernel.settings().theme, ThemeMode::Light);
-    kit.click("settings-pointer")
-        .click("setting-dominant-hand")
-        .click("setting-hand-left");
-    assert_eq!(kit.kernel.settings().dominant_hand, DominantHand::Left);
+    assert_eq!(kit.kernel.settings().personal_color, None);
+    kit.click("accent-pink");
+    let pink = kit.kernel.settings().personal_color.expect("picked");
+    assert_eq!(pink.hue, 350.0);
+    // Choosing a face switches to its first design; the design row then lists that face's designs.
+    kit.click("setting-wrist-face")
+        .click("setting-wrist-face-analog");
+    assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Minimal);
+    kit.click("setting-wrist-design")
+        .click("setting-wrist-railway");
+    assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Railway);
     kit.click("settings-mirroring")
         .click("setting-mirror-fps")
         .click("setting-fps-30");

@@ -1,15 +1,17 @@
-//! Layer 6 画面: 常駐パネル「wrist」。利き手でない方（既定は左）の手首に腕時計のように取り付き（掴めない）、丸い文字盤に
-//! 日付・時刻を出す（縁に目盛りと秒の点）。
+//! Layer 6 画面: 常駐パネル「wrist」。利き手の反対（既定は左）の手首に腕時計のように取り付き（掴めない）、丸い文字盤に
+//! 日付・時刻を出す（デザインは設定の `wrist_design`。[`face`]）。利き手の設定が変われば、自分で反対の手首へ付け替える。
 //! 常駐なので、X ボタンの二回連続押しでダッシュボードを出す / 隠すのもここ（ダッシュボードは閉じずに隠し、次も同じ状態で出す）。
+
+mod face;
+pub use face::preview;
 
 use std::time::Duration;
 
-use chrono::Timelike;
 use design::components;
-use design::{Theme, font_size, radius, spacing};
-use gpui::{Context, FontWeight, Window, div, prelude::*, px, rgba};
-use kernel::PanelId;
+use design::{Theme, radius};
+use gpui::{Context, Window, prelude::*, px};
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
+use kernel::{DominantHand, PanelCommand, PanelId};
 use ui::{PanelControl, PanelSpec};
 
 /// 手首の甲側に載せた腕時計の相対姿勢: コントローラ原点の少し手首寄り（+Z）・上（+Y）で、
@@ -28,14 +30,17 @@ pub const IN_VIEW: Pose = Pose::new(Vec3::new(-0.32, -0.2, -0.4), Quat::IDENTITY
 /// 4px/mm（旧来の 0.12m / 480px と同じ密度）。
 const SIZE_M: Vec2 = Vec2::new(0.112, 0.112);
 const RES_PX: (u32, u32) = (448, 448);
-/// 文字盤（カード）の中での中心。
-const DIAL_C: f32 = RES_PX.0 as f32 / 2.0 - components::PANEL_MARGIN;
-/// 文字盤の中心から目盛り（と秒の点）の中心までの半径。縁から `spacing::LG` 内側。
-const DIAL_R: f32 = DIAL_C - spacing::LG - 8.0;
+// 文字盤（カード）の直径は、文字盤の寸法を決めた基準と同じ。
+const _: () = assert!(RES_PX.0 as f32 - 2.0 * components::PANEL_MARGIN == face::BASE);
 
-/// `hand` の手首に取り付いた状態で起動する wrist の起動仕様（main が利き手でない方を渡す）。`debug` と `settings` は
+/// 利き手 `dominant` の反対の手首に取り付いた状態で起動する wrist の起動仕様。`debug` と `settings` は
 /// ダッシュボードから開くデバッグ画面と設定画面（画面どうしを直接つながないよう、main が選ぶ）。
-pub fn spec(hand: Hand, debug: dashboard::Summon, settings: dashboard::Summon) -> PanelSpec {
+pub fn spec(
+    dominant: DominantHand,
+    debug: dashboard::Summon,
+    settings: dashboard::Summon,
+) -> PanelSpec {
+    let hand = dominant.off_hand();
     let side = if hand == Hand::Left { 1.0 } else { -1.0 };
     let in_view = Pose::new(
         IN_VIEW.position * Vec3::new(side, 1.0, 1.0),
@@ -64,6 +69,8 @@ pub struct Wrist {
     toggles: u32,
     /// 前回見たときにロックダウン中だったか（入った瞬間にダッシュボードを隠す）。
     locked: bool,
+    /// 付いている手首（利き手の反対。設定が変われば自分で付け替える）。
+    hand: Hand,
 }
 
 impl Wrist {
@@ -93,6 +100,9 @@ impl Wrist {
         .detach();
         cx.observe_global::<PanelControl>(Self::sync_dashboard)
             .detach();
+        cx.observe_global::<PanelControl>(Self::follow_dominant_hand)
+            .detach();
+        let hand = off_hand(cx);
         // ダッシュボードは起動時に隠したまま作っておく（画面の配信を用意しておき、X の二回押しでは出すだけ）。
         open_dashboard(settings, debug, true, cx);
         Self {
@@ -102,7 +112,23 @@ impl Wrist {
             panel,
             toggles: 0,
             locked: false,
+            hand,
         }
+    }
+
+    /// 利き手の設定が変わったら、反対の手首へ付け替える（変わっていなければ何もしない。書き込むと自分がまた呼ばれる）。
+    fn follow_dominant_hand(&mut self, cx: &mut Context<Self>) {
+        let hand = off_hand(cx);
+        if hand == self.hand {
+            return;
+        }
+        self.hand = hand;
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(self.panel)
+            .or_default()
+            .commands
+            .push(PanelCommand::Attach(Device::Controller(hand), WATCH_OFFSET));
     }
 
     /// X ボタンを二回押すたびにダッシュボードを出す・隠す（閉じられていれば開き直す。音はダッシュボード自身が鳴らす）。
@@ -155,6 +181,14 @@ impl Wrist {
     }
 }
 
+/// 今の設定で wrist を付ける手（利き手の反対）。
+fn off_hand(cx: &gpui::App) -> Hand {
+    cx.try_global::<PanelControl>()
+        .map(|ctl| ctl.settings.dominant_hand)
+        .unwrap_or_default()
+        .off_hand()
+}
+
 /// ダッシュボードを開く（`hidden` なら隠したまま）。開いたら [`Wrist::dashboard`] に覚える。
 fn open_dashboard(
     settings: dashboard::Summon,
@@ -178,53 +212,22 @@ impl Render for Wrist {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = chrono::Local::now();
         let theme = Theme::current(cx);
-        // 腕時計の文字盤: 丸いカード 1 枚がパネル全体（地は敷かない）。縁に 12 の目盛りと、今の秒を指す点。
-        let dot = |i: u32, d: f32, color: u32| {
-            let a = i as f32 * std::f32::consts::TAU / 60.0;
-            div()
-                .absolute()
-                .left(px(DIAL_C + DIAL_R * a.sin() - d / 2.0))
-                .top(px(DIAL_C - DIAL_R * a.cos() - d / 2.0))
-                .size(px(d))
-                .rounded(px(radius::FULL))
-                .circular_corners()
-                .bg(rgba(color))
-        };
-        let ticks = (0..60).step_by(5).map(|i| {
-            dot(
-                i,
-                if i % 15 == 0 { 14.0 } else { 8.0 },
-                theme.neutral_text_low,
-            )
-        });
-        let second = dot(now.second(), 12.0, theme.accent_solid);
+        let design = cx.try_global::<PanelControl>();
+        let design = design
+            .map(|ctl| ctl.settings.wrist_design)
+            .unwrap_or_default();
+        // 腕時計の文字盤: 丸いカード 1 枚がパネル全体（地は敷かない）。中身は選んだデザイン。
         components::card_panel(&theme)
             .rounded(px(radius::FULL))
             // 腕時計の文字盤は正円。全域のスーパーエリプスからは外す。
             .circular_corners()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .children(ticks)
-            .child(second)
-            .child(
-                div()
-                    .id("date")
-                    .debug_selector(|| "date".into())
-                    .text_size(px(font_size::LG))
-                    .text_color(rgba(theme.neutral_text_low))
-                    .child(dashboard::date(now, cx)),
-            )
-            .child(
-                div()
-                    .id("time")
-                    .debug_selector(|| "time".into())
-                    .text_size(px(96.0))
-                    .font_weight(FontWeight::BOLD)
-                    .line_height(px(104.0))
-                    .child(now.format("%H:%M").to_string()),
-            )
+            .child(face::dial(
+                design,
+                &theme,
+                now,
+                dashboard::date(now, cx).into(),
+                face::BASE,
+            ))
     }
 }
 
@@ -232,7 +235,6 @@ impl Render for Wrist {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use kernel::PanelCommand;
 
     fn wrist(cx: &mut Context<Wrist>) -> Wrist {
         Wrist::new(
@@ -397,6 +399,46 @@ mod tests {
         assert!(commands(cx).contains(&PanelCommand::Hide(true)));
         set_lockdown(cx, false);
         assert!(commands(cx).contains(&PanelCommand::Hide(false)));
+    }
+
+    /// 利き手を替えると、反対の手首へ自分で付け替える（設定が同じままなら何もしない）。
+    #[gpui::test]
+    fn follows_the_dominant_hand_to_the_other_wrist(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        cx.run_until_parked();
+        let mut set = |hand| {
+            cx.update(|_, cx| {
+                cx.default_global::<PanelControl>().settings.dominant_hand = hand;
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let ctl = cx.default_global::<PanelControl>();
+                std::mem::take(&mut ctl.panels.entry(0).or_default().commands)
+            })
+        };
+        let attach = |hand| PanelCommand::Attach(Device::Controller(hand), WATCH_OFFSET);
+        assert_eq!(set(DominantHand::Left), [attach(Hand::Right)]);
+        assert_eq!(set(DominantHand::Left), []);
+        assert_eq!(set(DominantHand::Right), [attach(Hand::Left)]);
+    }
+
+    /// 設定のデザインで文字盤が替わる。どのデザインも日付を出し、針の無い種類は時刻を数字で出す。
+    #[gpui::test]
+    fn the_face_follows_the_wrist_design(cx: &mut TestAppContext) {
+        use kernel::WristFace;
+        let (_, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        for &face in WristFace::ALL {
+            for &design in face.designs() {
+                cx.update(|window, cx| {
+                    cx.default_global::<PanelControl>().settings.wrist_design = design;
+                    window.refresh();
+                });
+                cx.run_until_parked();
+                assert!(cx.debug_bounds("date").is_some(), "{design:?}");
+                let digits = cx.debug_bounds("time").is_some();
+                assert_eq!(digits, face != WristFace::Analog, "{design:?}");
+            }
+        }
     }
 
     /// 丸い文字盤の中央に、日付・時刻を縦に並べる。
