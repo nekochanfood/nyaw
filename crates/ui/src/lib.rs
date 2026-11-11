@@ -492,6 +492,10 @@ pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool
         },
         cx,
     );
+    let accent = settings
+        .personal_color
+        .map(|c| design::Accent::new(c.lightness, c.chroma, c.hue));
+    design::Theme::set_accent(accent.unwrap_or_default(), cx);
     cx.set_global(match settings.language {
         Language::En => i18n::Lang::En,
         Language::Ja => i18n::Lang::Ja,
@@ -2404,6 +2408,23 @@ mod tests {
                 .push(Setting::Theme(ThemeMode::Light));
             sync_panel(&mut kernel, panel, cx);
             assert_eq!(Theme::current(cx), Theme::LIGHT, "every screen follows");
+            let color = kernel::PersonalColor {
+                lightness: 0.87,
+                chroma: 0.18,
+                hue: 95.0,
+            };
+            cx.default_global::<PanelControl>()
+                .setting_changes
+                .push(Setting::PersonalColor(color));
+            sync_panel(&mut kernel, panel, cx);
+            let yellow = design::Accent::new(0.87, 0.18, 95.0);
+            let now = Theme::current(cx);
+            assert_eq!(now, Theme::with(design::Mode::Light, yellow));
+            assert_eq!(
+                now.on_accent,
+                design::scale::BLACK,
+                "dark text on a light fill"
+            );
             cx.default_global::<PanelControl>()
                 .panels
                 .get_mut(&panel)

@@ -305,11 +305,27 @@ sample_long = "訳が長くなってもラベルが折り返すか収まるか�
 sample_count = "{count} 件を選択中"
 sample_button = "変更を保存"
 
+[color]
+blue = "ブルー"
+purple = "パープル"
+pink = "ピンク"
+red = "レッド"
+orange = "オレンジ"
+yellow = "イエロー"
+green = "グリーン"
+teal = "ティール"
+hue = "色相"
+chroma = "鮮やかさ"
+lightness = "明るさ"
+
 [settings]
 title = "設定"
 language = "言語"
 block_input = "ゲーム入力を止める"
 theme = "テーマ"
+personal_color = "パーソナルカラー"
+preview = "プレビュー"
+preview_body = "ボタンやスイッチ、スライダーにパーソナルカラーが使われます。"
 smoothing = "手ブレ抑え"
 release = "抑えを緩める角度"
 laser_length = "レーザーの長さ"

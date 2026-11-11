@@ -305,11 +305,27 @@ sample_long = "A long sentence to check that labels wrap or fit, and that button
 sample_count = "{count} items selected"
 sample_button = "Save changes"
 
+[color]
+blue = "Blue"
+purple = "Purple"
+pink = "Pink"
+red = "Red"
+orange = "Orange"
+yellow = "Yellow"
+green = "Green"
+teal = "Teal"
+hue = "Hue"
+chroma = "Vividness"
+lightness = "Lightness"
+
 [settings]
 title = "Settings"
 language = "Language"
 block_input = "Block game input"
 theme = "Theme"
+personal_color = "Personal color"
+preview = "Preview"
+preview_body = "Buttons, switches and sliders use your personal color."
 smoothing = "Smoothing"
 release = "Release angle"
 laser_length = "Laser length"
