@@ -2,7 +2,7 @@
 //! フォントはバイナリに埋め込む（静的フォント、OFL。`fonts/LICENSE-gen-interface-jp`）。
 //! 使う太さ（NORMAL / MEDIUM / BOLD）だけを積む。ほかの太さを使うなら同じ配布物から足す。
 //! 数字を桁揃えで見せる計測表示には等幅の 0xProto（OFL。`fonts/LICENSE-0xproto`）の Regular だけを使う。
-//! 飾りの書体（時計の文字盤など）は [`serif`]（DM Serif Display）と [`segment`]（DSEG7 Classic）。どちらも OFL で、
+//! 飾りの書体（時計の文字盤など）は [`serif`]（Vercel の Geist Serif）と [`segment`]（DSEG7 Classic）。どちらも OFL で、
 //! 画面の本文には使わない。足すときも OFL のものに限り、`fonts/` にライセンスを置く。
 
 use std::borrow::Cow;
@@ -11,7 +11,7 @@ use gpui::{App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight};
 
 pub const FAMILY: &str = "Gen Interface JP";
 pub const MONO_FAMILY: &str = "0xProto";
-pub const SERIF_FAMILY: &str = "DM Serif Display";
+pub const SERIF_FAMILY: &str = "Geist Serif";
 pub const SEGMENT_FAMILY: &str = "DSEG7 Classic";
 
 /// フォントを GPUI に登録する。ウィンドウを作る前に一度呼ぶ。
@@ -22,7 +22,7 @@ pub fn install(cx: &mut App) {
             Cow::Borrowed(include_bytes!("../fonts/GenInterfaceJP-Medium.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../fonts/GenInterfaceJP-Bold.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../fonts/0xProto-Regular.ttf").as_slice()),
-            Cow::Borrowed(include_bytes!("../fonts/DMSerifDisplay-Regular.ttf").as_slice()),
+            Cow::Borrowed(include_bytes!("../fonts/GeistSerif-Regular.ttf").as_slice()),
             Cow::Borrowed(include_bytes!("../fonts/DSEG7Classic-Bold.ttf").as_slice()),
         ])
         .expect("embedded fonts are valid");
@@ -54,7 +54,7 @@ pub fn mono() -> Font {
     with_fallback(MONO_FAMILY, FontWeight::NORMAL)
 }
 
-/// セリフの見出し書体（DM Serif Display。OFL、`fonts/LICENSE-dm-serif-display`）。欧文と数字だけ。
+/// セリフの見出し書体（Vercel の Geist Serif。OFL、`fonts/LICENSE-geist`）。欧文と数字だけ。
 pub fn serif() -> Font {
     with_fallback(SERIF_FAMILY, FontWeight::NORMAL)
 }
