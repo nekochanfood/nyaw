@@ -105,6 +105,9 @@ impl PersonalColor {
     }
 }
 
+/// 自分で作ったパーソナルカラーを覚えておく数（[`Config::color_history`]）。
+pub const COLOR_HISTORY: usize = 8;
+
 /// wrist（腕時計）の文字盤の種類と、種類ごとのデザインの表。ここに 1 行足すと、選ぶ画面の一覧にも並ぶ
 /// （描くのは `wrist` クレート。足し方は `crates/wrist/AGENT.md`）。名前は設定ファイルの値と文言のキーになる。
 macro_rules! wrist_designs {
@@ -210,6 +213,8 @@ pub struct Config {
     pub theme: ThemeMode,
     /// パーソナルカラー（`[personal_color]` の表: `lightness` / `chroma` / `hue`）。省略で既定の色。画面での切り替えはここへ書き戻される。
     pub personal_color: Option<PersonalColor>,
+    /// 自分で作ったパーソナルカラーの履歴（`[[color_history]]`。新しい順で [`COLOR_HISTORY`] 個まで）。省略で空。作るたびにここへ書き戻される。
+    pub color_history: Vec<PersonalColor>,
     /// 画面の言語（`en` / `ja`）。省略で `en`。画面での切り替えはここへ書き戻される。
     pub language: Language,
     /// 利き手（`right` / `left`）。省略で `right`。画面での切り替えはここへ書き戻される。
@@ -436,8 +441,12 @@ emulator = false
             hue: 251.78,
         };
         save_at(&path, "personal_color", value(blue)).unwrap();
+        // 履歴は色の表の並び。
+        assert_eq!(parse("").unwrap().color_history, []);
+        save_at(&path, "color_history", value(vec![pink, blue])).unwrap();
         let back = parse(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(back.personal_color, Some(blue));
+        assert_eq!(back.color_history, [pink, blue]);
         let _ = fs::remove_dir_all(&dir);
     }
 
