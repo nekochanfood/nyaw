@@ -82,7 +82,7 @@ pub enum Language {
     Ja,
 }
 
-/// 利き手（`right` / `left`）。利き手でない側の手首に wrist を付け、配信のパネルは利き手で操作する。
+/// 利き手（`right` / `left`）。主に操作する手。左右で振る舞いが変わる機能が、それぞれこれを見て決める。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DominantHand {

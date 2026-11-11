@@ -113,7 +113,7 @@ pub enum Setting {
     LaserLength(f32),
     /// コントローラを持たない手の調整値（`[hand]`）。範囲の外の値は範囲に収める。
     Hand(subsystems::input::HandTuning),
-    /// 利き手（`dominant_hand`）。利き手でない側の手首に付いたパネル（wrist）は新しい側へ付け替える。
+    /// 利き手（`dominant_hand`）。カーネルは値を持つだけで、パネルは動かさない（従うのは左右で振る舞いが変わる側）。
     DominantHand(DominantHand),
     /// ミラーリングの取得の上限 FPS（`mirror_frame_rate`。1〜240 に収める）。配信中のミラーもこの FPS でかけ直す。
     MirrorFrameRate(u32),
@@ -474,17 +474,7 @@ impl<B: VrBackend> Kernel<B> {
                 ("hand", config::value(h))
             }
             Setting::DominantHand(h) => {
-                let (from, to) = (self.config.dominant_hand.off_hand(), h.off_hand());
                 self.config.dominant_hand = h;
-                for id in self.overlay.present_ids().to_vec() {
-                    if let Some((Device::Controller(hand), offset)) =
-                        self.overlay.panel(id).attached
-                        && hand == from
-                        && from != to
-                    {
-                        self.overlay.attach(id, Device::Controller(to), offset);
-                    }
-                }
                 ("dominant_hand", config::value(h))
             }
             Setting::MirrorFrameRate(f) => {
@@ -918,9 +908,9 @@ mod tests {
         assert_eq!(k.status(p).double_press, 1);
     }
 
-    /// 利き手を替えると、利き手でない側の手首に付いたパネルが反対の手首へ移る。FPS は 1〜240 に収める。
+    /// 利き手を替えても、カーネルは手に付いたパネルを動かさない（従うかは画面が決める）。FPS は 1〜240 に収める。
     #[test]
-    fn dominant_hand_moves_off_hand_panels_and_frame_rate_clamps() {
+    fn dominant_hand_leaves_attached_panels_and_frame_rate_clamps() {
         let (mut k, p) = kernel();
         let offset = Pose::new(vr::Vec3::new(0.0, 0.1, 0.0), vr::Quat::IDENTITY);
         k.apply(
@@ -930,7 +920,7 @@ mod tests {
         k.set(Setting::DominantHand(DominantHand::Left));
         assert_eq!(
             k.panel(p).attached,
-            Some((Device::Controller(Hand::Right), offset))
+            Some((Device::Controller(Hand::Left), offset))
         );
         assert_eq!(k.settings().dominant_hand, DominantHand::Left);
         k.set(Setting::MirrorFrameRate(1000));
