@@ -5803,6 +5803,7 @@ dependencies = [
  "kernel",
  "logger",
  "profiler",
+ "setup",
  "testing",
  "vr",
  "wrist",

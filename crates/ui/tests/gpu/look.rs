@@ -1,4 +1,4 @@
-//! 見た目の確認用: 設定画面の「外観」と wrist の文字盤の見本を、テーマとパーソナルカラーを替えながら実 GPU で描き、
+//! 見た目の確認用: 設定画面の「外観」・wrist の文字盤の見本・セットアップウィザードの各画面を、テーマとパーソナルカラーを替えながら実 GPU で描き、
 //! `target/tmp/look-*.bmp` に書き出す。塗りが選んだ色そのままで描かれていることだけ検査する（細かい見た目は絵を目で見る）。
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
@@ -11,6 +11,8 @@ use ui::{PanelControl, capture, open_panel_window};
 struct Faces;
 
 const FACES_PX: (u32, u32) = (900, 900);
+/// セットアップウィザードのパネルの大きさ。
+const SETUP_PX: (u32, u32) = (800, 800);
 
 impl Render for Faces {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -32,7 +34,7 @@ impl Render for Faces {
     }
 }
 
-/// 書き出す状態: 名前、テーマ、パーソナルカラー（[`Accent::PRESETS`] の名前）。
+/// 書き出す状態: 名前、テーマ、パーソナルカラー（[`Accent::PRESETS`] の名前）。ダークは英語、ライトは日本語で描く。
 const STATES: [(&str, Mode, &str); 4] = [
     ("dark-blue", Mode::Dark, "blue"),
     ("dark-yellow", Mode::Dark, "yellow"),
@@ -65,17 +67,44 @@ pub fn main() {
         let faces = open_panel_window(cx, FACES_PX, |_, cx| cx.new(|_| Faces))
             .expect("cannot open panel window");
         // 描く窓: 書き出す名前の前置き、窓、塗りの色で描かれているはずの画素の下限。
-        let windows: [(&str, gpui::AnyWindowHandle, u32, usize); 2] = [
-            ("", window.into(), testing::SETTINGS_PX.0, 1000),
-            ("faces-", faces.into(), FACES_PX.0, 100),
+        let mut windows: Vec<(String, gpui::AnyWindowHandle, u32, usize)> = vec![
+            (String::new(), window.into(), testing::SETTINGS_PX.0, 1000),
+            ("faces-".into(), faces.into(), FACES_PX.0, 100),
         ];
+        // セットアップウィザードの画面を、手順ごとに 1 枚ずつ。
+        for (i, step) in setup::STEPS.iter().enumerate() {
+            let page = open_panel_window(cx, SETUP_PX, move |_, cx| {
+                cx.new(|_| {
+                    let mut wizard = setup::SetupWizard::new(0, wrist::preview);
+                    for _ in 0..i {
+                        wizard.wizard.next();
+                    }
+                    wizard
+                })
+            })
+            .expect("cannot open panel window");
+            let name = format!("setup-{i}-{step:?}-").to_lowercase();
+            windows.push((name, page.into(), SETUP_PX.0, 100));
+        }
+
         cx.spawn(async move |cx| {
             for (name, mode, color) in STATES {
                 let accent = preset(color);
                 cx.update(|cx| {
                     cx.set_global(mode);
                     cx.set_global(accent);
+                    let japanese = mode == Mode::Light;
+                    cx.set_global(if japanese {
+                        i18n::Lang::Ja
+                    } else {
+                        i18n::Lang::En
+                    });
                     let settings = &mut cx.default_global::<PanelControl>().settings;
+                    settings.language = if japanese {
+                        kernel::Language::Ja
+                    } else {
+                        kernel::Language::En
+                    };
                     settings.theme = match mode {
                         Mode::Dark => kernel::ThemeMode::Dark,
                         Mode::Light => kernel::ThemeMode::Light,
@@ -86,7 +115,7 @@ pub fn main() {
                         hue: accent.hue,
                     });
                 });
-                for (prefix, window, width, min) in windows {
+                for (prefix, window, width, min) in windows.clone() {
                     // 読み戻しは 1 回遅れなので、間を空けて何度か描き、最後の絵を使う。
                     let mut last = None;
                     for _ in 0..6 {
@@ -109,7 +138,7 @@ pub fn main() {
     });
 
     let shots = shots.take();
-    assert_eq!(shots.len(), 2 * STATES.len());
+    assert_eq!(shots.len(), (2 + setup::STEPS.len()) * STATES.len());
     for (name, accent, min, frame) in shots {
         save(&frame, &format!("target/tmp/look-{name}.bmp"));
         let [r, g, b, _] = accent.color().to_be_bytes();

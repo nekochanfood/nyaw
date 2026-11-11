@@ -1033,6 +1033,85 @@ pub fn tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
     b
 }
 
+/// 選べるカード（[`choice`]）の、選んでいる印の枠の太さと、右上のチェックの丸の大きさ（px）。
+const CHOICE_RING: f32 = 3.0;
+const CHOICE_BADGE: f32 = 24.0;
+
+/// 選べるカード: いくつかの中から 1 つ選ぶ、見本や絵を載せた箱（カードの上に置く。地は `control`）。
+/// 選んでいるものは塗りの色の枠で囲み、右上にチェックの印を出す（色の差だけに頼らない）。
+/// 中身 `content` は中央に置く（印は中身の上に重ねるので、中身はここで受け取る）。高さは中身に合わせ、幅は呼び出し側が足す。
+pub fn choice(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    selected: bool,
+    content: impl IntoElement,
+) -> Button {
+    let mut b = base_button(theme, id.into(), Variant::Default);
+    let ring = if selected { theme.accent_solid } else { 0 };
+    b.base = b
+        .base
+        .relative()
+        .h_auto()
+        .flex_col()
+        .gap(px(spacing::SM))
+        .p(px(spacing::MD))
+        .rounded(px(radius::LG))
+        .border(px(CHOICE_RING))
+        .border_color(rgba(ring))
+        .font_weight(FontWeight::NORMAL)
+        .child(content);
+    if selected {
+        let check = crate::icon(&crate::icons::CHECK)
+            .weight(crate::Weight::Bold)
+            .size(px(font_size::SM))
+            .color(rgba(theme.on_accent));
+        b.base = b.base.child(
+            div()
+                .absolute()
+                .top(px(spacing::SM))
+                .right(px(spacing::SM))
+                .size(px(CHOICE_BADGE))
+                .rounded(px(radius::FULL))
+                .bg(rgba(theme.accent_solid))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(check),
+        );
+    }
+    b
+}
+
+/// テーマの小さな見本（文字の無い絵）: 地の上のカードに、文字に見立てた線と、塗りの色のボタン。
+/// 選べるカード（[`choice`]）に載せて、テーマを選ぶ前に見せる。幅は置いた所に合わせる。
+pub fn theme_thumbnail(theme: &Theme) -> Div {
+    let line = |width: f32, color: u32| {
+        div()
+            .w(px(width))
+            .h(px(8.0))
+            .rounded(px(radius::FULL))
+            .bg(rgba(color))
+    };
+    let button = line(56.0, theme.accent_solid).h(px(20.0));
+    div()
+        .w_full()
+        .p(px(spacing::MD))
+        .rounded(px(radius::MD))
+        .bg(rgba(theme.background))
+        .child(
+            div()
+                .p(px(spacing::MD))
+                .rounded(px(radius::MD))
+                .bg(rgba(theme.card))
+                .flex()
+                .flex_col()
+                .gap(px(spacing::SM))
+                .child(line(96.0, theme.neutral_text))
+                .child(line(140.0, theme.neutral_text_low))
+                .child(div().flex().justify_end().child(button)),
+        )
+}
+
 /// 地の上に置くタイル（アプリ一覧のアプリなど）: [`tile`] と同じく縦に並べるが、カードの地を敷かず、ホバー・押下のときだけ
 /// 色が付く。ふだんは地（`background`）と同じ色（透明にするとホバーの色から戻るフェードが途中で切れる。[`sidebar_item`]）。
 pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {

@@ -30,7 +30,7 @@ fn flat_distance(a: Vec3, b: Vec3) -> f32 {
 
 #[gpui::test]
 fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppContext) {
-    let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
+    let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0, wrist::preview));
     // 起動仕様（`setup::spec`）と同じロックダウンと追従を付ける。
     kit.kernel.apply(0, PanelCommand::Lockdown(true));
     kit.kernel.apply(
@@ -80,7 +80,9 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
     assert!((p.y - 1.0).abs() < 5e-2, "高さ {}", p.y);
 
     // 追従しても操作できる: 最後まで進めて完了すると、ロックダウンが外れて閉じる。
-    kit.click("setup-next").click("setup-next");
+    for _ in 1..setup::STEPS.len() {
+        kit.click("setup-next");
+    }
     assert!(kit.read(|v| v.wizard.is_last()));
     assert!(kit.kernel.settings().lockdown, "完了を押すまでは続く");
     kit.click("setup-finish");

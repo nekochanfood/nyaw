@@ -19,3 +19,7 @@ UI の見た目の責務。Radix Colors のエイリアスに倣う 3 層。Cons
 - `Theme::with(mode, accent)` がその 4 つを差し替えたテーマ。今の色は GPUI のグローバル `Accent`（`Theme::set_accent`。テーマと同じく今の色から移り変わる）で、`Theme::current(cx)` が反映する。既定（`Accent::DEFAULT` = tokens.json の `accent-solid`）なら tokens.json のテーマそのもの。
 - 用意した色は `Accent::PRESETS`（名前は i18n の `color.<名前>`）。選ぶ部品は `components::accent_picker`（見本 `swatch` と、色相・鮮やかさ・明るさのスライダー。上の帯は動かすとどう変わるか）、結果を見せるのは `components::theme_preview`。
 - テスト: `accent::tests`（色相・鮮やかさ・明るさを一巡りして、上の色が読めること・状態が見分けられること）。実 GPU の絵は `cargo test -p ui --test gpu -- --ignored look`（`target/tmp/look-*.bmp`）。
+
+## 選べるカード
+
+`components::choice(theme, id, selected, content)`: いくつかの中から 1 つ選ぶ箱（カードの上に置く。地は `control`）。選んでいるものは塗りの色の枠で囲み、右上にチェックの印を出す（色の差だけに頼らない）。印は中身の上に重ねるので、中身（見本・アイコン・名前）は `content` で渡す。テーマの小さな見本（文字の無い絵）は `components::theme_thumbnail(theme)`。セットアップウィザード（`../setup/AGENT.md`）が使う。

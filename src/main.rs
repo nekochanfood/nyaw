@@ -44,7 +44,9 @@ fn main() -> ExitCode {
         |from, opened| {
             testing::spec(from, move |id, cx| {
                 // デバッグ画面からセットアップウィザードを強制的にやり直せるようにする。
-                cx.set_global(testing::SetupWizardSpawn(setup::spawn_spec));
+                cx.set_global(testing::SetupWizardSpawn(|from| {
+                    setup::spawn_spec(from, wrist::preview)
+                }));
                 opened(id, cx)
             })
         },
@@ -54,7 +56,7 @@ fn main() -> ExitCode {
     panels.extend(beam::specs());
     // 初回起動（セットアップを終えていない）ときは、セットアップウィザードを出す。
     if !kernel.settings().setup_done {
-        panels.push(setup::spec());
+        panels.push(setup::spec(wrist::preview));
     }
     let profiler = args.profile.map(start_profiler);
     ui::run(kernel, panels, profiler);
