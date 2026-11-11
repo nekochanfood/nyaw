@@ -330,7 +330,11 @@ const LOD_HYSTERESIS: f32 = 0.9;
 impl Kernel {
     /// ランタイムを選んで起動する。`requested` は `"--novr"` / `"novr"` のような指定（コマンドライン > 設定ファイル。決めるのは呼び出し側）。
     /// 指定なしで VR ランタイムが無ければ novr で起動する（`novr` フィーチャーがあれば常に使える）。指定したのに繋がらなければエラー。
-    pub fn boot(requested: Option<&str>, config: Config) -> Result<Self, VrError> {
+    pub fn boot(requested: Option<&str>, mut config: Config) -> Result<Self, VrError> {
+        // 言語を決めていなければ、OS の表示言語で始める（決めるまで設定ファイルには書かない）。
+        if config.language.is_none() {
+            config.language = os::ui_language().and_then(Language::from_code);
+        }
         let prefer = match requested.map(runtime_name).as_deref() {
             None | Some("") => None,
             Some("novr") => Some(Runtime::NoVr),
@@ -452,7 +456,7 @@ impl<B: VrBackend> Kernel<B> {
             pointer_mode: self.pointer_mode,
             theme: self.config.theme,
             personal_color: self.config.personal_color.map(PersonalColor::clamped),
-            language: self.config.language,
+            language: self.config.language.unwrap_or_default(),
             pointer_smoothing: self.overlay.pointer_smoothing(),
             pointer_release_deg: self.overlay.pointer_release(),
             laser_length: self.overlay.laser_length(),
@@ -494,7 +498,7 @@ impl<B: VrBackend> Kernel<B> {
                 ("personal_color", config::value(c))
             }
             Setting::Language(l) => {
-                self.config.language = l;
+                self.config.language = Some(l);
                 ("language", config::value(l))
             }
             Setting::PointerSmoothing(s) => {
@@ -1294,7 +1298,7 @@ mod tests {
     #[test]
     fn language_starts_from_config_and_persists_to_config_path() {
         let config = Config {
-            language: Language::Ja,
+            language: Some(Language::Ja),
             ..Default::default()
         };
         let mut k = Kernel::with_backend(MockBackend::default(), config);
@@ -1306,7 +1310,7 @@ mod tests {
         assert_eq!(k.settings().language, Language::En);
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(saved.language, Language::En);
+        assert_eq!(saved.language, Some(Language::En));
     }
 
     /// パーソナルカラーは選ぶまで `None`。範囲に収めて覚え、設定ファイルへ表ごと書き戻す。

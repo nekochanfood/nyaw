@@ -14,6 +14,25 @@ pub fn precise_timers() {
     }
 }
 
+/// OS の表示言語（ISO 639-1 の 2 文字）。知っている言語（`ja` / `en`）でなければ `None`。
+pub fn ui_language() -> Option<&'static str> {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetUserDefaultUILanguage() -> u16;
+    }
+    // SAFETY: 引数の無い Win32 API。
+    primary_language(unsafe { GetUserDefaultUILanguage() })
+}
+
+/// 言語 ID（LANGID）の下位 10 ビットが言語（LANG_JAPANESE = 0x11、LANG_ENGLISH = 0x09）。地域は見ない。
+fn primary_language(langid: u16) -> Option<&'static str> {
+    match langid & 0x3ff {
+        0x11 => Some("ja"),
+        0x09 => Some("en"),
+        _ => None,
+    }
+}
+
 /// このプロセスの GPU スケジューリングの優先度を上げる（プロセスが終わるまで有効。D3D11 も Vulkan も対象）。
 /// 既定（通常）のままだと、ゲームが GPU を使い切っている間は小さな描画もゲームのフレームの後ろに並ばされ、
 /// 読み戻しの完了待ちが 1 回 100ms 近くになってフレームループごと止まる。
@@ -99,6 +118,18 @@ fn active_runtime_from_registry() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn language_id_maps_to_the_known_languages() {
+        assert_eq!(primary_language(0x0411), Some("ja"));
+        assert_eq!(primary_language(0x0409), Some("en"));
+        assert_eq!(
+            primary_language(0x0809),
+            Some("en"),
+            "地域（en-GB）は見ない"
+        );
+        assert_eq!(primary_language(0x040c), None, "知らない言語（fr）");
+    }
 
     #[test]
     fn parses_reg_query_output() {
