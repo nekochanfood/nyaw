@@ -34,5 +34,6 @@
   1 フレームごとの CSV と集計は `target/tmp/stress.{csv,txt}`。`NYAW_STRESS_SCALE` で局面の長さ、
   `NYAW_STRESS_WINDOW=1` で本番と同じくウィンドウを出して GPU で合成する、`NYAW_STRESS_PROFILER=1` でプロファイラの窓も載せる。
 - **長押しの輪**: `crates/ui/tests/gpu/novr_cursor.rs`（`harness = false`、`-- --ignored`）。タッチで押したまま、カーソルの輪が満ちていくのをエミュレーターの画面で見る。
+- **novr のキー入力**: `crates/ui/tests/gpu/novr_keys.rs`（`harness = false`、`-- --ignored`。Windows のみ）。本番と同じ窓付きのエミュレーターに X キーの押下を投げ、二回押しがすべてカーネルに届くことを確かめる（GPUI のメッセージループが、同じスレッドにいるエミュレーターの窓宛ての `WM_KEYDOWN` を捨てていた。`vendor/gpui_windows` の `translate_accelerator`）。
 - **スワイプバック（本番のフレームループ）**: `crates/ui/tests/gpu/nav_swipe.rs`（`harness = false`、`-- --ignored`）。NavTest に画面を積み、タッチのまま右から左へ動かす・長押ししてから動かすの両方で戻ることを確かめる。手ブレ抑えが効いた VR のレーザーでの確認は `testkit/tests/scenarios/navigation.rs`。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
