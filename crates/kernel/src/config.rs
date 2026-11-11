@@ -82,6 +82,29 @@ pub enum Language {
     Ja,
 }
 
+/// パーソナルカラー: ボタンなどの塗りに使う、ユーザーの色（OKLCH）。`design::Accent` に対応する。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct PersonalColor {
+    /// 明るさ（0〜1）。
+    pub lightness: f32,
+    /// 鮮やかさ（0〜0.4。画面に出せる範囲を越える分は、描くときに落とす）。
+    pub chroma: f32,
+    /// 色相（度。0〜360）。
+    pub hue: f32,
+}
+
+impl PersonalColor {
+    /// 範囲に収める（色相は 0〜360 に巻く。数でない値は 0）。
+    pub fn clamped(self) -> Self {
+        let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+        Self {
+            lightness: finite(self.lightness).clamp(0.0, 1.0),
+            chroma: finite(self.chroma).clamp(0.0, 0.4),
+            hue: finite(self.hue).rem_euclid(360.0),
+        }
+    }
+}
+
 /// 利き手（`right` / `left`）。主に操作する手。左右で振る舞いが変わる機能が、それぞれこれを見て決める。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -133,6 +156,8 @@ pub struct Config {
     pub gpu: Gpu,
     /// 見た目のテーマ（`dark` / `light`）。省略で `dark`。画面での切り替えはここへ書き戻される。
     pub theme: ThemeMode,
+    /// パーソナルカラー（`[personal_color]` の表: `lightness` / `chroma` / `hue`）。省略で既定の色。画面での切り替えはここへ書き戻される。
+    pub personal_color: Option<PersonalColor>,
     /// 画面の言語（`en` / `ja`）。省略で `en`。画面での切り替えはここへ書き戻される。
     pub language: Language,
     /// 利き手（`right` / `left`）。省略で `right`。画面での切り替えはここへ書き戻される。
@@ -321,6 +346,44 @@ emulator = false
             (vr::Hand::Left, vr::Hand::Right)
         );
         assert!(parse("dominant_hand = \"both\"").is_err());
+    }
+
+    #[test]
+    fn personal_color_parses_clamps_and_round_trips() {
+        assert_eq!(parse("").unwrap().personal_color, None);
+        let c = parse("personal_color = { lightness = 0.66, chroma = 0.21, hue = 350.0 }").unwrap();
+        let pink = PersonalColor {
+            lightness: 0.66,
+            chroma: 0.21,
+            hue: 350.0,
+        };
+        assert_eq!(c.personal_color, Some(pink));
+        assert!(
+            parse("personal_color = { hue = 350.0 }").is_err(),
+            "3 つとも要る"
+        );
+        let wild = PersonalColor {
+            lightness: 2.0,
+            chroma: 7.0,
+            hue: -30.0,
+        };
+        let tame = wild.clamped();
+        assert_eq!((tame.lightness, tame.chroma, tame.hue), (1.0, 0.4, 330.0));
+        let nan = parse("personal_color = { lightness = nan, chroma = nan, hue = nan }").unwrap();
+        let sane = nan.personal_color.unwrap().clamped();
+        assert_eq!((sane.lightness, sane.chroma, sane.hue), (0.0, 0.0, 0.0));
+        // 表ごと書き戻せ、読み直すと同じ値になる（f32 を TOML に通しても変わらない）。
+        let dir = std::env::temp_dir().join(format!("nyaw-color-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        let blue = PersonalColor {
+            lightness: 0.6493,
+            chroma: 0.193,
+            hue: 251.78,
+        };
+        save_at(&path, "personal_color", value(blue)).unwrap();
+        let back = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(back.personal_color, Some(blue));
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

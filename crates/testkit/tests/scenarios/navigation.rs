@@ -155,6 +155,10 @@ fn settings_selects_change_the_settings(cx: &mut TestAppContext) {
         .click("setting-theme-light");
     assert_eq!(kit.read(|v| v.category), 1);
     assert_eq!(kit.kernel.settings().theme, ThemeMode::Light);
+    assert_eq!(kit.kernel.settings().personal_color, None);
+    kit.click("accent-pink");
+    let pink = kit.kernel.settings().personal_color.expect("picked");
+    assert_eq!(pink.hue, 350.0);
     kit.click("settings-mirroring")
         .click("setting-mirror-fps")
         .click("setting-fps-30");

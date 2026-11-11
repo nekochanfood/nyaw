@@ -1563,32 +1563,71 @@ impl Settings {
                     .on_click(change(Setting::BlockInput(!now.block_input))),
                 ],
             )],
-            // 外観: テーマ。
-            1 => vec![components::list(
-                theme,
-                [self.select(
+            // 外観: テーマと、パーソナルカラー（ボタンなどの塗りの色）。下の見本で、選んだ結果を確かめられる。
+            1 => {
+                let accent = now.personal_color.map_or(design::Accent::DEFAULT, |c| {
+                    design::Accent::new(c.lightness, c.chroma, c.hue)
+                });
+                let picker = components::accent_picker(
                     theme,
-                    window,
-                    cx,
-                    "setting-theme",
-                    &design::icons::PALETTE,
-                    i18n::t(cx, "settings.theme"),
-                    now.theme,
-                    vec![
-                        (
-                            "setting-theme-dark",
-                            i18n::t(cx, "theme.dark"),
-                            kernel::ThemeMode::Dark,
+                    accent,
+                    SETTINGS_SLIDER_PX,
+                    |name| i18n::t(cx, &format!("color.{name}")),
+                    |a, _, cx| {
+                        push_setting(
+                            Setting::PersonalColor(kernel::PersonalColor {
+                                lightness: a.lightness,
+                                chroma: a.chroma,
+                                hue: a.hue,
+                            }),
+                            cx,
+                        )
+                    },
+                );
+                vec![
+                    components::list(
+                        theme,
+                        [self.select(
+                            theme,
+                            window,
+                            cx,
+                            "setting-theme",
+                            &design::icons::PALETTE,
+                            i18n::t(cx, "settings.theme"),
+                            now.theme,
+                            vec![
+                                (
+                                    "setting-theme-dark",
+                                    i18n::t(cx, "theme.dark"),
+                                    kernel::ThemeMode::Dark,
+                                ),
+                                (
+                                    "setting-theme-light",
+                                    i18n::t(cx, "theme.light"),
+                                    kernel::ThemeMode::Light,
+                                ),
+                            ],
+                            Setting::Theme,
+                        )],
+                    ),
+                    setting_group(
+                        theme,
+                        i18n::t(cx, "settings.personal_color"),
+                        components::card(theme).p(px(spacing::LG)).child(picker),
+                    ),
+                    setting_group(
+                        theme,
+                        i18n::t(cx, "settings.preview"),
+                        components::theme_preview(
+                            theme,
+                            "setting-preview",
+                            i18n::t(cx, "settings.personal_color"),
+                            i18n::t(cx, "settings.preview_body"),
+                            i18n::t(cx, "common.ok"),
                         ),
-                        (
-                            "setting-theme-light",
-                            i18n::t(cx, "theme.light"),
-                            kernel::ThemeMode::Light,
-                        ),
-                    ],
-                    Setting::Theme,
-                )],
-            )],
+                    ),
+                ]
+            }
             // ポインタ: 方式と、レーザーの手ブレ抑え・長さ（Laser の画面と同じ範囲）。
             2 => {
                 let max = kernel::overlay::POINTER_SMOOTHING_MAX;

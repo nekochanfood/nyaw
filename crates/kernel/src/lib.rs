@@ -16,7 +16,9 @@ pub use subsystems::{audio, desktop, rendering, vr};
 use std::time::{Duration, Instant};
 use subsystems::os;
 
-pub use config::{Config, DominantHand, Language, LodQuality, PointerMode, ThemeMode};
+pub use config::{
+    Config, DominantHand, Language, LodQuality, PersonalColor, PointerMode, ThemeMode,
+};
 pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use subsystems::ControllerState;
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
@@ -103,6 +105,8 @@ pub enum Setting {
     /// レーザーのエミュレート方式。
     PointerMode(PointerMode),
     Theme(ThemeMode),
+    /// パーソナルカラー（`personal_color`）。範囲の外の値は範囲に収める。
+    PersonalColor(PersonalColor),
     /// 画面の言語（`language`）。
     Language(Language),
     /// レーザーの手ブレ抑えの強さ（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`。`pointer_smoothing`）。
@@ -130,6 +134,8 @@ pub enum Setting {
 pub struct Settings {
     pub pointer_mode: PointerMode,
     pub theme: ThemeMode,
+    /// パーソナルカラー。選んでいなければ `None`（既定の色味）。
+    pub personal_color: Option<PersonalColor>,
     pub language: Language,
     pub pointer_smoothing: f32,
     pub pointer_release_deg: f32,
@@ -147,6 +153,7 @@ impl Default for Settings {
         Self {
             pointer_mode: Default::default(),
             theme: Default::default(),
+            personal_color: None,
             language: Default::default(),
             pointer_smoothing: Default::default(),
             pointer_release_deg: Default::default(),
@@ -412,6 +419,7 @@ impl<B: VrBackend> Kernel<B> {
         Settings {
             pointer_mode: self.pointer_mode,
             theme: self.config.theme,
+            personal_color: self.config.personal_color.map(PersonalColor::clamped),
             language: self.config.language,
             pointer_smoothing: self.overlay.pointer_smoothing(),
             pointer_release_deg: self.overlay.pointer_release(),
@@ -444,6 +452,11 @@ impl<B: VrBackend> Kernel<B> {
             Setting::Theme(t) => {
                 self.config.theme = t;
                 ("theme", config::value(t))
+            }
+            Setting::PersonalColor(c) => {
+                let c = c.clamped();
+                self.config.personal_color = Some(c);
+                ("personal_color", config::value(c))
             }
             Setting::Language(l) => {
                 self.config.language = l;
@@ -1186,6 +1199,30 @@ mod tests {
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(saved.language, Language::En);
+    }
+
+    /// パーソナルカラーは選ぶまで `None`。範囲に収めて覚え、設定ファイルへ表ごと書き戻す。
+    #[test]
+    fn personal_color_is_clamped_and_persists() {
+        let path =
+            std::env::temp_dir().join(format!("nyaw-kernel-color-{}.toml", std::process::id()));
+        let (mut k, _) = kernel();
+        assert_eq!(k.settings().personal_color, None);
+        k.config_path = Some(path.clone());
+        k.set(Setting::PersonalColor(PersonalColor {
+            lightness: 0.87,
+            chroma: 2.0,
+            hue: 370.0,
+        }));
+        let want = Some(PersonalColor {
+            lightness: 0.87,
+            chroma: 0.4,
+            hue: 10.0,
+        });
+        assert_eq!(k.settings().personal_color, want);
+        let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(saved.personal_color, want);
     }
 
     #[test]

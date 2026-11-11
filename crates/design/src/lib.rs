@@ -17,6 +17,8 @@ include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
 
 pub use ::animation;
 pub use animation::duration_ms;
+mod accent;
+pub use accent::{Accent, Fill, fill};
 #[cfg(feature = "gpui")]
 pub mod catalog;
 #[cfg(feature = "gpui")]
@@ -87,7 +89,11 @@ impl Mode {
 #[cfg(feature = "gpui")]
 impl gpui::Global for Mode {}
 
-/// テーマの切り替えの移り変わり: 切り替えた時点の色 `from` から今の [`Mode`] のテーマへ `start` から動いている。
+/// 今のアクセントの塗りの色（GPUI のグローバル）。[`Mode`] と同じく `ui` が書く。置かれていなければ既定（青）。
+#[cfg(feature = "gpui")]
+impl gpui::Global for Accent {}
+
+/// テーマの切り替えの移り変わり: 切り替えた時点の色 `from` から今の [`Mode`] と [`Accent`] のテーマへ `start` から動いている。
 #[cfg(feature = "gpui")]
 struct ThemeFade {
     from: Theme,
@@ -101,7 +107,10 @@ impl gpui::Global for ThemeFade {}
 impl Theme {
     /// 画面が描くときの今のテーマ。テーマの切り替え中は前の色から補間した色になるので、`render` で毎回引く。
     pub fn current(cx: &gpui::App) -> Theme {
-        let to = Theme::of(cx.try_global::<Mode>().copied().unwrap_or_default());
+        let to = Theme::with(
+            cx.try_global::<Mode>().copied().unwrap_or_default(),
+            cx.try_global::<Accent>().copied().unwrap_or_default(),
+        );
         match Theme::fade_progress(cx) {
             Some(t) => cx.global::<ThemeFade>().from.zip(to, |a, b| {
                 components::mix(a, b, animation::Motion::Enter.ease(t))
@@ -115,6 +124,21 @@ impl Theme {
         if cx.try_global::<Mode>().copied().unwrap_or_default() == mode {
             return;
         }
+        Theme::begin_fade(cx);
+        cx.set_global(mode);
+    }
+
+    /// アクセントの塗りを `accent` に切り替える（[`Self::set_mode`] と同じく、今の色から移る）。
+    pub fn set_accent(accent: Accent, cx: &mut gpui::App) {
+        if cx.try_global::<Accent>().copied().unwrap_or_default() == accent {
+            return;
+        }
+        Theme::begin_fade(cx);
+        cx.set_global(accent);
+    }
+
+    /// 今の色を起点に、移り変わりを始める（[`Motion`] が無ければ即座に切り替わる）。
+    fn begin_fade(cx: &mut gpui::App) {
         if cx.has_global::<Motion>() {
             let from = Theme::current(cx);
             cx.set_global(ThemeFade {
@@ -122,7 +146,6 @@ impl Theme {
                 start: drive::now(),
             });
         }
-        cx.set_global(mode);
     }
 
     /// テーマが移り変わっている途中か。フレームループはこの間、全パネルを毎フレーム描き直す。
@@ -140,16 +163,46 @@ impl Theme {
             / duration_ms::SLOW as f32;
         (t < 1.0).then_some(t)
     }
+}
 
+impl Theme {
     pub const fn of(mode: Mode) -> Theme {
         match mode {
             Mode::Dark => Theme::DARK,
             Mode::Light => Theme::LIGHT,
         }
     }
-}
 
-impl Theme {
+    /// `mode` のテーマの、アクセントの塗りと上に載る色を `accent` にしたもの（[`fill`]）。毎回の描画で引けるよう、作ったものは覚えておく。
+    pub fn with(mode: Mode, accent: Accent) -> Theme {
+        // 直前の色の（ダーク, ライト）。画面は描くたびに同じ色で引くので、1 つ覚えれば足りる。
+        thread_local! {
+            static LAST: std::cell::Cell<Option<(Accent, [Theme; 2])>> = const { std::cell::Cell::new(None) };
+        }
+        if accent == Accent::DEFAULT {
+            return Theme::of(mode);
+        }
+        let make = |m| {
+            let f = fill(m, accent);
+            Theme {
+                accent_solid: f.solid,
+                accent_solid_hover: f.hover,
+                accent_solid_active: f.active,
+                on_accent: f.on,
+                ..Theme::of(m)
+            }
+        };
+        let themes = match LAST.get() {
+            Some((a, themes)) if a == accent => themes,
+            _ => {
+                let themes = [make(Mode::Dark), make(Mode::Light)];
+                LAST.set(Some((accent, themes)));
+                themes
+            }
+        };
+        themes[usize::from(mode == Mode::Light)]
+    }
+
     /// 白黒にしたテーマ（止まった画面など、もう操作できないものに使う）。
     pub fn grayscale(self) -> Theme {
         self.map(grayscale)
@@ -211,6 +264,46 @@ mod tests {
             assert!(!Theme::fading(cx));
             assert_eq!(Theme::current(cx), Theme::DARK);
         });
+    }
+
+    #[cfg(feature = "gpui")]
+    #[gpui::test]
+    fn set_accent_retints_and_fades(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| {
+            let (_, red) = Accent::PRESETS[3];
+            Theme::set_accent(red, cx);
+            let now = Theme::current(cx);
+            assert_eq!(now, Theme::with(Mode::Dark, red), "Motion が無ければ即座に");
+            assert_ne!(now.accent_solid, Theme::DARK.accent_solid);
+            assert_eq!(now.accent_text, Theme::DARK.accent_text, "塗りのほかは同じ");
+            cx.set_global(Mode::Light);
+            assert_eq!(Theme::current(cx), Theme::with(Mode::Light, red));
+            cx.set_global(Motion::default());
+            Theme::set_accent(Accent::DEFAULT, cx);
+            assert!(Theme::fading(cx));
+            drive::advance(std::time::Duration::from_millis(duration_ms::SLOW));
+            assert_eq!(Theme::current(cx), Theme::LIGHT);
+        });
+    }
+
+    #[test]
+    fn with_default_accent_is_the_token_theme_and_repeats() {
+        assert_eq!(Theme::with(Mode::Dark, Accent::DEFAULT), Theme::DARK);
+        let (_, pink) = Accent::PRESETS[2];
+        let first = Theme::with(Mode::Light, pink);
+        // 覚えているのは直前の色だけ。ほかの色を挟んでも、同じ色は同じテーマになる。
+        assert_ne!(Theme::with(Mode::Light, Accent::PRESETS[5].1), first);
+        assert_eq!(Theme::with(Mode::Light, pink), first);
+        assert_ne!(first.accent_solid, Theme::LIGHT.accent_solid);
+        // 塗りと上に載る色のほかは変えない。
+        let rest = Theme {
+            accent_solid: Theme::LIGHT.accent_solid,
+            accent_solid_hover: Theme::LIGHT.accent_solid_hover,
+            accent_solid_active: Theme::LIGHT.accent_solid_active,
+            on_accent: Theme::LIGHT.on_accent,
+            ..first
+        };
+        assert_eq!(rest, Theme::LIGHT);
     }
 
     #[test]

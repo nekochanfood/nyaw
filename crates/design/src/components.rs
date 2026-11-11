@@ -12,12 +12,14 @@ use gpui::{
 };
 use palette::{FromColor, Mix, Oklab, Srgb};
 
+mod color;
 mod navigation;
 mod scrollbar;
 mod shaped_button;
 pub mod slide;
 mod slider;
 mod tooltip;
+pub use color::{accent_picker, swatch};
 pub use navigation::{Navigation, navigation};
 pub use scrollbar::{Elastic, Scroll, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_button};
@@ -1554,6 +1556,75 @@ impl RenderOnce for Dialog {
                     .children(actions.into_iter().map(|b| b.w_full())),
             )
     }
+}
+
+/// テーマの見本: `theme` で描いた小さな画面（地の上のカードに、アイコン・文字・スイッチ・スライダー・ボタン）。
+/// テーマやパーソナルカラーを選ぶ画面で、選んだ結果を見せる。文言は呼び出し側が渡す（`id` は中の部品の接頭辞）。
+pub fn theme_preview(
+    theme: &Theme,
+    id: &'static str,
+    title: impl Into<SharedString>,
+    body: impl Into<SharedString>,
+    action: impl Into<SharedString>,
+) -> Div {
+    // 動かせない、見た目だけのスライダー（埋まった側は塗りの色）。
+    let bar = div()
+        .flex_1()
+        .h(px(6.0))
+        .rounded(px(radius::FULL))
+        .bg(rgba(theme.groove))
+        .child(
+            div()
+                .w(gpui::relative(0.6))
+                .h_full()
+                .rounded(px(radius::FULL))
+                .bg(rgba(theme.accent_solid)),
+        );
+    let heading = div()
+        .flex()
+        .items_center()
+        .gap(px(spacing::SM))
+        .font_weight(FontWeight::BOLD)
+        .child(
+            crate::icon(&crate::icons::SPARKLE)
+                .weight(crate::Weight::Fill)
+                .size(px(font_size::LG))
+                .color(rgba(theme.accent_solid)),
+        )
+        .child(div().min_w_0().truncate().child(title.into()));
+    div()
+        .debug_selector(move || id.to_string())
+        .p(px(spacing::MD))
+        .rounded(px(radius::LG))
+        .bg(rgba(theme.background))
+        .child(
+            card(theme)
+                .p(px(spacing::LG))
+                .flex()
+                .flex_col()
+                .gap(px(spacing::MD))
+                .child(heading)
+                .child(
+                    div()
+                        .text_size(px(font_size::SM))
+                        .text_color(rgba(theme.neutral_text_low))
+                        .child(body.into()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(spacing::LG))
+                        .child(switch(theme, format!("{id}-switch"), true))
+                        .child(bar),
+                )
+                .child(div().flex().justify_end().child(button(
+                    theme,
+                    format!("{id}-action"),
+                    action,
+                    Variant::Primary,
+                ))),
+        )
 }
 
 /// 画面やパネルの地。文字色も役割から決まる。
