@@ -9,6 +9,7 @@ mod emoji;
 mod font_weights;
 mod gpu_capture;
 mod keyboard;
+mod look;
 mod nav_swipe;
 mod novr_cursor;
 mod panel_lod;
@@ -33,6 +34,7 @@ const CASES: &[Case] = &[
     ("font_weights", || report(font_weights::main)),
     ("gpu_capture", || report(gpu_capture::main)),
     ("keyboard", || report(keyboard::main)),
+    ("look", || report(look::main)),
     ("nav_swipe", || report(nav_swipe::main)),
     ("novr_cursor", || report(novr_cursor::main)),
     ("panel_lod", || report(panel_lod::main)),
