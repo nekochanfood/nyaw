@@ -1,10 +1,10 @@
-//! 色を選ぶ部品: 色の見本（[`swatch`]）と、パーソナルカラーの選択（[`accent_picker`]）。
+//! 色を選ぶ部品: 色の見本（[`swatch`]）、パーソナルカラーの履歴の行（[`accent_row`]）、自分で色を作るスライダー（[`accent_sliders`]）。
 
 use std::rc::Rc;
 
-use gpui::{App, Div, SharedString, Window, div, prelude::*, px, rgba};
+use gpui::{App, ClickEvent, Div, SharedString, Window, div, prelude::*, px, rgba};
 
-use super::{Button, Variant, round_button, slider};
+use super::{Button, Variant, icon_button, round_button, slider};
 use crate::{Accent, Theme, font_size, radius, spacing};
 
 /// 色の見本（[`swatch`]）の丸の直径と、選んでいる見本を囲む輪の太さ（丸との間も同じだけ空ける）。
@@ -26,26 +26,72 @@ pub fn swatch(
     selected: bool,
 ) -> Button {
     let ring = if selected { theme.neutral_text } else { 0 };
-    round_button(theme, id, name, Variant::Ghost).child(
-        div()
-            .flex_none()
-            .p(px(SWATCH_RING))
-            .border(px(SWATCH_RING))
-            .border_color(rgba(ring))
-            .rounded(px(radius::FULL))
-            .child(
-                div()
-                    .size(px(SWATCH))
-                    .rounded(px(radius::FULL))
-                    .bg(rgba(color)),
-            ),
-    )
+    // 見本は正円（全域のスーパーエリプスからは外す）。
+    round_button(theme, id, name, Variant::Ghost)
+        .circular_corners()
+        .child(
+            div()
+                .flex_none()
+                .p(px(SWATCH_RING))
+                .border(px(SWATCH_RING))
+                .border_color(rgba(ring))
+                .rounded(px(radius::FULL))
+                .circular_corners()
+                .child(
+                    div()
+                        .size(px(SWATCH))
+                        .rounded(px(radius::FULL))
+                        .circular_corners()
+                        .bg(rgba(color)),
+                ),
+        )
 }
 
-/// パーソナルカラーの選択: 用意した色の見本（`accent-<名前>`）と、色相・鮮やかさ・明るさのスライダー
-/// （`accent-hue` / `accent-chroma` / `accent-lightness`）。選ぶ・動かすたびに `on_pick` が新しい色で呼ばれる。
-/// `label` は名前（`blue` などの色の名前と `hue` / `chroma` / `lightness`）から文言を引く。`width` はスライダーの長さ（px）。
-pub fn accent_picker(
+/// パーソナルカラーの履歴の行: `colors`（[`Accent::history`]）の見本（`accent-<名前>`。作った色は `accent-<RRGGBB>`）を左右中央に
+/// 並べ、右端に自分で色を作るボタン（`accent-custom`）。見本を押すと `on_pick`、プラスを押すと `on_custom`（色を作る画面を開くのは
+/// 呼び出し側）。`label` は名前（色の名前と `custom`）から文言を引く。名前の無い色は `#RRGGBB` を説明に出す。
+pub fn accent_row(
+    theme: &Theme,
+    accent: Accent,
+    colors: &[Accent],
+    label: impl Fn(&str) -> SharedString,
+    on_pick: impl Fn(Accent, &mut Window, &mut App) + 'static,
+    on_custom: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    let on_pick = Rc::new(on_pick);
+    let swatches = colors.iter().map(|&color| {
+        let on_pick = on_pick.clone();
+        let hex = color.hex();
+        let (id, name) = match color.name() {
+            Some(name) => (format!("accent-{name}"), label(name)),
+            None => (format!("accent-{}", &hex[1..]), hex.into()),
+        };
+        swatch(theme, id, color.color(), name, color == accent)
+            .on_click(move |_, window, cx| on_pick(color, window, cx))
+    });
+    let custom = icon_button(
+        theme,
+        "accent-custom",
+        &crate::icons::PLUS,
+        label("custom"),
+        Variant::Default,
+    )
+    .circular_corners()
+    .on_click(on_custom);
+    div()
+        .flex()
+        .flex_wrap()
+        .items_center()
+        .justify_center()
+        .children(swatches)
+        // 見本の丸（ボタンより小さい）と同じだけ、プラスの丸も見本から離す。
+        .child(div().pl(px(spacing::SM)).child(custom))
+}
+
+/// 自分で色を作るスライダー: 色相・鮮やかさ・明るさ（`accent-hue` / `accent-chroma` / `accent-lightness`）。動かすたびに
+/// `on_pick` が新しい色で呼ばれる。上の帯は動かすとどう変わるか。`label` は名前（`hue` / `chroma` / `lightness`）から
+/// 文言を引く。`width` はスライダーの長さ（px）。
+pub fn accent_sliders(
     theme: &Theme,
     accent: Accent,
     width: f32,
@@ -53,17 +99,6 @@ pub fn accent_picker(
     on_pick: impl Fn(Accent, &mut Window, &mut App) + 'static,
 ) -> Div {
     let on_pick = Rc::new(on_pick);
-    let swatches = Accent::PRESETS.map(|(name, preset)| {
-        let on_pick = on_pick.clone();
-        swatch(
-            theme,
-            format!("accent-{name}"),
-            preset.color(),
-            label(name),
-            preset == accent,
-        )
-        .on_click(move |_, window, cx| on_pick(preset, window, cx))
-    });
     // スライダー 1 本: 名前、動かすとどう変わるかを見せる色の帯、スライダー。`at` は位置（0〜1）からその色。
     let row = |id: &'static str, name: &str, value: f32, at: fn(Accent, f32) -> Accent| {
         let on_pick = on_pick.clone();
@@ -102,7 +137,6 @@ pub fn accent_picker(
         .flex()
         .flex_col()
         .gap(px(spacing::MD))
-        .child(div().flex().flex_wrap().children(swatches))
         .child(row("accent-hue", "hue", accent.hue / HUE_MAX, |a, t| {
             Accent::new(a.lightness, a.chroma, t * HUE_MAX)
         }))

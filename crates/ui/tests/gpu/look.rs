@@ -1,4 +1,4 @@
-//! 見た目の確認用: 設定画面の「外観」と wrist の文字盤の見本を、テーマとパーソナルカラーを替えながら実 GPU で描き、
+//! 見た目の確認用: 設定画面の「外観」「時計」・色を作るダイアログ・wrist の文字盤の見本を、テーマとパーソナルカラーを替えながら実 GPU で描き、
 //! `target/tmp/look-*.bmp` に書き出す。塗りが選んだ色そのままで描かれていることだけ検査する（細かい見た目は絵を目で見る）。
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
@@ -54,19 +54,32 @@ pub fn main() {
     ui::application().run(move |cx| {
         design::font::install(cx);
         design::corner::install();
-        let window = open_panel_window(cx, testing::SETTINGS_PX, |_, cx| {
-            cx.new(|_| {
-                let mut settings = testing::Settings::new(0);
-                settings.category = 1;
-                settings
+        // 本番では wrist が置く、文字盤の見本の描き方。
+        cx.set_global(ui::prefs::FacePreview(wrist::preview));
+        // 設定画面のカテゴリ `category` を開いた窓。
+        let settings = |category: usize, cx: &mut gpui::App| {
+            open_panel_window(cx, testing::SETTINGS_PX, move |_, cx| {
+                cx.new(|_| {
+                    let mut settings = testing::Settings::new(0);
+                    settings.category = category;
+                    settings
+                })
             })
+            .expect("cannot open panel window")
+        };
+        let (appearance, watch) = (settings(1, cx), settings(2, cx));
+        // 色を作るダイアログ（作りかけの色は、今のパーソナルカラーと違う緑）。
+        let dialog = open_panel_window(cx, ui::prefs::COLOR_DIALOG_PX, |_, cx| {
+            cx.new(|_| ui::prefs::ColorDialog::new(0, preset("green")))
         })
         .expect("cannot open panel window");
         let faces = open_panel_window(cx, FACES_PX, |_, cx| cx.new(|_| Faces))
             .expect("cannot open panel window");
         // 描く窓: 書き出す名前の前置き、窓、塗りの色で描かれているはずの画素の下限。
-        let windows: [(&str, gpui::AnyWindowHandle, u32, usize); 2] = [
-            ("", window.into(), testing::SETTINGS_PX.0, 1000),
+        let windows: [(&str, gpui::AnyWindowHandle, u32, usize); 4] = [
+            ("", appearance.into(), testing::SETTINGS_PX.0, 1000),
+            ("watch-", watch.into(), testing::SETTINGS_PX.0, 100),
+            ("color-", dialog.into(), ui::prefs::COLOR_DIALOG_PX.0, 1000),
             ("faces-", faces.into(), FACES_PX.0, 100),
         ];
         cx.spawn(async move |cx| {
@@ -109,7 +122,7 @@ pub fn main() {
     });
 
     let shots = shots.take();
-    assert_eq!(shots.len(), 2 * STATES.len());
+    assert_eq!(shots.len(), 4 * STATES.len());
     for (name, accent, min, frame) in shots {
         save(&frame, &format!("target/tmp/look-{name}.bmp"));
         let [r, g, b, _] = accent.color().to_be_bytes();
