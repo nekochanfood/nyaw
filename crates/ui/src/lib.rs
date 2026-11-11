@@ -1373,6 +1373,9 @@ pub fn run_with(
         None => p,
     };
     application().run(move |cx: &mut App| {
+        // 画面が作られた時から本当の設定（テーマ・言語・利き手）を見られるよう、パネルを開く前に一度反映する。
+        // トランジションを有効にする前なので、起動時のテーマは移り変わらずに決まる。
+        sync_settings(&mut kernel, cx);
         // 部品のトランジションを有効にする（テストのキットは置かない）。
         cx.set_global(design::Motion::default());
         design::font::install(cx);

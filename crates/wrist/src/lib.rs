@@ -1,5 +1,5 @@
-//! Layer 6 画面: 常駐パネル「wrist」。利き手でない方（既定は左）の手首に腕時計のように取り付き（掴めない）、丸い文字盤に
-//! 日付・時刻を出す（縁に目盛りと秒の点）。
+//! Layer 6 画面: 常駐パネル「wrist」。利き手の反対（既定は左）の手首に腕時計のように取り付き（掴めない）、丸い文字盤に
+//! 日付・時刻を出す（縁に目盛りと秒の点）。利き手の設定が変われば、自分で反対の手首へ付け替える。
 //! 常駐なので、X ボタンの二回連続押しでダッシュボードを出す / 隠すのもここ（ダッシュボードは閉じずに隠し、次も同じ状態で出す）。
 
 use std::time::Duration;
@@ -8,8 +8,8 @@ use chrono::Timelike;
 use design::components;
 use design::{Theme, font_size, radius, spacing};
 use gpui::{Context, FontWeight, Window, div, prelude::*, px, rgba};
-use kernel::PanelId;
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
+use kernel::{DominantHand, PanelCommand, PanelId};
 use ui::{PanelControl, PanelSpec};
 
 /// 手首の甲側に載せた腕時計の相対姿勢: コントローラ原点の少し手首寄り（+Z）・上（+Y）で、
@@ -33,9 +33,14 @@ const DIAL_C: f32 = RES_PX.0 as f32 / 2.0 - components::PANEL_MARGIN;
 /// 文字盤の中心から目盛り（と秒の点）の中心までの半径。縁から `spacing::LG` 内側。
 const DIAL_R: f32 = DIAL_C - spacing::LG - 8.0;
 
-/// `hand` の手首に取り付いた状態で起動する wrist の起動仕様（main が利き手でない方を渡す）。`debug` と `settings` は
+/// 利き手 `dominant` の反対の手首に取り付いた状態で起動する wrist の起動仕様。`debug` と `settings` は
 /// ダッシュボードから開くデバッグ画面と設定画面（画面どうしを直接つながないよう、main が選ぶ）。
-pub fn spec(hand: Hand, debug: dashboard::Summon, settings: dashboard::Summon) -> PanelSpec {
+pub fn spec(
+    dominant: DominantHand,
+    debug: dashboard::Summon,
+    settings: dashboard::Summon,
+) -> PanelSpec {
+    let hand = dominant.off_hand();
     let side = if hand == Hand::Left { 1.0 } else { -1.0 };
     let in_view = Pose::new(
         IN_VIEW.position * Vec3::new(side, 1.0, 1.0),
@@ -62,6 +67,8 @@ pub struct Wrist {
     panel: PanelId,
     /// 反映した X ボタンの二回押しの回数（[`kernel::PanelStatus::double_press`]）。
     toggles: u32,
+    /// 付いている手首（利き手の反対。設定が変われば自分で付け替える）。
+    hand: Hand,
 }
 
 impl Wrist {
@@ -91,6 +98,9 @@ impl Wrist {
         .detach();
         cx.observe_global::<PanelControl>(Self::sync_dashboard)
             .detach();
+        cx.observe_global::<PanelControl>(Self::follow_dominant_hand)
+            .detach();
+        let hand = off_hand(cx);
         // ダッシュボードは起動時に隠したまま作っておく（画面の配信を用意しておき、X の二回押しでは出すだけ）。
         open_dashboard(settings, debug, true, cx);
         Self {
@@ -99,7 +109,23 @@ impl Wrist {
             dashboard: None,
             panel,
             toggles: 0,
+            hand,
         }
+    }
+
+    /// 利き手の設定が変わったら、反対の手首へ付け替える（変わっていなければ何もしない。書き込むと自分がまた呼ばれる）。
+    fn follow_dominant_hand(&mut self, cx: &mut Context<Self>) {
+        let hand = off_hand(cx);
+        if hand == self.hand {
+            return;
+        }
+        self.hand = hand;
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(self.panel)
+            .or_default()
+            .commands
+            .push(PanelCommand::Attach(Device::Controller(hand), WATCH_OFFSET));
     }
 
     /// X ボタンを二回押すたびにダッシュボードを出す・隠す（閉じられていれば開き直す。音はダッシュボード自身が鳴らす）。
@@ -124,6 +150,14 @@ impl Wrist {
             None => open_dashboard(self.settings, self.debug, false, cx),
         }
     }
+}
+
+/// 今の設定で wrist を付ける手（利き手の反対）。
+fn off_hand(cx: &gpui::App) -> Hand {
+    cx.try_global::<PanelControl>()
+        .map(|ctl| ctl.settings.dominant_hand)
+        .unwrap_or_default()
+        .off_hand()
 }
 
 /// ダッシュボードを開く（`hidden` なら隠したまま）。開いたら [`Wrist::dashboard`] に覚える。
@@ -203,7 +237,6 @@ impl Render for Wrist {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use kernel::PanelCommand;
 
     fn wrist(cx: &mut Context<Wrist>) -> Wrist {
         Wrist::new(
@@ -274,6 +307,27 @@ mod tests {
             1,
             "開き直さない"
         );
+    }
+
+    /// 利き手を替えると、反対の手首へ自分で付け替える（設定が同じままなら何もしない）。
+    #[gpui::test]
+    fn follows_the_dominant_hand_to_the_other_wrist(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        cx.run_until_parked();
+        let mut set = |hand| {
+            cx.update(|_, cx| {
+                cx.default_global::<PanelControl>().settings.dominant_hand = hand;
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let ctl = cx.default_global::<PanelControl>();
+                std::mem::take(&mut ctl.panels.entry(0).or_default().commands)
+            })
+        };
+        let attach = |hand| PanelCommand::Attach(Device::Controller(hand), WATCH_OFFSET);
+        assert_eq!(set(DominantHand::Left), [attach(Hand::Right)]);
+        assert_eq!(set(DominantHand::Left), []);
+        assert_eq!(set(DominantHand::Right), [attach(Hand::Left)]);
     }
 
     /// 丸い文字盤の中央に、日付・時刻を縦に並べる。

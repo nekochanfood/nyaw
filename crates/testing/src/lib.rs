@@ -1507,7 +1507,8 @@ impl Settings {
     ) -> Vec<Div> {
         let now = settings(cx);
         match category {
-            // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）と、ダッシュボード中のゲーム入力の遮断。
+            // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）、利き手（主に操作する手）、
+            // ダッシュボード中のゲーム入力の遮断。
             0 => vec![components::list(
                 theme,
                 [
@@ -1529,6 +1530,28 @@ impl Settings {
                             })
                             .to_vec(),
                         |l| Setting::Language(language(l)),
+                    ),
+                    self.select(
+                        theme,
+                        window,
+                        cx,
+                        "setting-dominant-hand",
+                        &design::icons::HAND,
+                        i18n::t(cx, "settings.dominant_hand"),
+                        now.dominant_hand,
+                        vec![
+                            (
+                                "setting-hand-right",
+                                i18n::t(cx, "settings.right"),
+                                kernel::DominantHand::Right,
+                            ),
+                            (
+                                "setting-hand-left",
+                                i18n::t(cx, "settings.left"),
+                                kernel::DominantHand::Left,
+                            ),
+                        ],
+                        Setting::DominantHand,
                     ),
                     components::switch_item(
                         theme,
@@ -1577,32 +1600,8 @@ impl Settings {
                     kernel::overlay::LASER_LENGTH_MIN,
                     kernel::overlay::LASER_MAX,
                 );
-                // 利き手: 配信のパネルを操作する手。wrist は反対の手首に付く。
-                let hand = self.select(
-                    theme,
-                    window,
-                    cx,
-                    "setting-dominant-hand",
-                    &design::icons::HAND,
-                    i18n::t(cx, "settings.dominant_hand"),
-                    now.dominant_hand,
-                    vec![
-                        (
-                            "setting-hand-right",
-                            i18n::t(cx, "settings.right"),
-                            kernel::DominantHand::Right,
-                        ),
-                        (
-                            "setting-hand-left",
-                            i18n::t(cx, "settings.left"),
-                            kernel::DominantHand::Left,
-                        ),
-                    ],
-                    Setting::DominantHand,
-                );
                 vec![
                     // ポインタの方式は選ばせない（マウスは廃止の方向。全体はタッチ）。
-                    components::list(theme, [hand]),
                     setting_group(
                         theme,
                         i18n::t(cx, "settings.smoothing"),
