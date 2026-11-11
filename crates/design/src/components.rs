@@ -1253,7 +1253,7 @@ pub const SELECT_POPOVER_MIN_WIDTH: f32 = 200.0;
 /// 選択肢の行（[`select_popover`] に並べる）: 文字だけで、選んでいる行は右端にチェック。
 pub fn select_option(
     theme: &Theme,
-    id: &'static str,
+    id: impl Into<SharedString>,
     label: impl Into<SharedString>,
     selected: bool,
 ) -> Button {

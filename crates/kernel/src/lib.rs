@@ -17,7 +17,8 @@ use std::time::{Duration, Instant};
 use subsystems::os;
 
 pub use config::{
-    Config, DominantHand, Language, LodQuality, PersonalColor, PointerMode, ThemeMode,
+    Config, DominantHand, Language, LodQuality, PersonalColor, PointerMode, ThemeMode, WristDesign,
+    WristFace,
 };
 pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use subsystems::ControllerState;
@@ -119,6 +120,8 @@ pub enum Setting {
     Hand(subsystems::input::HandTuning),
     /// 利き手（`dominant_hand`）。カーネルは値を持つだけで、パネルは動かさない（従うのは左右で振る舞いが変わる側）。
     DominantHand(DominantHand),
+    /// wrist の文字盤のデザイン（`wrist_design`）。
+    WristDesign(WristDesign),
     /// ミラーリングの取得の上限 FPS（`mirror_frame_rate`。1〜240 に収める）。配信中のミラーもこの FPS でかけ直す。
     MirrorFrameRate(u32),
     /// 仮想キーボードの種類（`keyboard`）。
@@ -142,6 +145,7 @@ pub struct Settings {
     pub laser_length: f32,
     pub hand: subsystems::input::HandTuning,
     pub dominant_hand: DominantHand,
+    pub wrist_design: WristDesign,
     pub mirror_frame_rate: u32,
     pub keyboard: subsystems::keyboard::KeyboardType,
     pub block_input: bool,
@@ -160,6 +164,7 @@ impl Default for Settings {
             laser_length: Default::default(),
             hand: Default::default(),
             dominant_hand: Default::default(),
+            wrist_design: Default::default(),
             mirror_frame_rate: desktop::DEFAULT_FRAME_RATE,
             keyboard: Default::default(),
             block_input: true,
@@ -426,6 +431,7 @@ impl<B: VrBackend> Kernel<B> {
             laser_length: self.overlay.laser_length(),
             hand: self.subsystems.hand,
             dominant_hand: self.config.dominant_hand,
+            wrist_design: self.config.wrist_design,
             mirror_frame_rate: self.mirror_frame_rate(),
             keyboard: self.config.keyboard,
             block_input: self.overlay.block_input(),
@@ -489,6 +495,10 @@ impl<B: VrBackend> Kernel<B> {
             Setting::DominantHand(h) => {
                 self.config.dominant_hand = h;
                 ("dominant_hand", config::value(h))
+            }
+            Setting::WristDesign(d) => {
+                self.config.wrist_design = d;
+                ("wrist_design", config::value(d))
             }
             Setting::MirrorFrameRate(f) => {
                 self.config.mirror_frame_rate = Some(f);
@@ -936,6 +946,8 @@ mod tests {
             Some((Device::Controller(Hand::Left), offset))
         );
         assert_eq!(k.settings().dominant_hand, DominantHand::Left);
+        k.set(Setting::WristDesign(WristDesign::Lcd));
+        assert_eq!(k.settings().wrist_design, WristDesign::Lcd);
         k.set(Setting::MirrorFrameRate(1000));
         assert_eq!(k.settings().mirror_frame_rate, desktop::MAX_FRAME_RATE);
         k.set(Setting::MirrorFrameRate(0));

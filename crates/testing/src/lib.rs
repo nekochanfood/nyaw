@@ -1445,7 +1445,7 @@ impl Settings {
 
     /// 選択の行（`components::select`）。押すと選択肢のポップオーバーを開き、選ぶと `set` で全体の設定に反映して閉じる。
     #[allow(clippy::too_many_arguments)]
-    fn select<T: Copy + PartialEq + 'static>(
+    fn select<T: Copy + PartialEq + 'static, I: Into<SharedString>>(
         &self,
         theme: &Theme,
         window: &mut Window,
@@ -1454,7 +1454,7 @@ impl Settings {
         glyph: &'static design::Icon,
         label: SharedString,
         now: T,
-        options: Vec<(&'static str, SharedString, T)>,
+        options: Vec<(I, SharedString, T)>,
         set: fn(T) -> Setting,
     ) -> components::Button {
         let value = options
@@ -1568,6 +1568,7 @@ impl Settings {
                 let accent = now.personal_color.map_or(design::Accent::DEFAULT, |c| {
                     design::Accent::new(c.lightness, c.chroma, c.hue)
                 });
+                let face = now.wrist_design.face();
                 let picker = components::accent_picker(
                     theme,
                     accent,
@@ -1609,6 +1610,49 @@ impl Settings {
                             ],
                             Setting::Theme,
                         )],
+                    ),
+                    // 腕時計: 文字盤の種類と、その種類のデザイン。選択肢は `kernel` の表から並べる（足しても、ここは変えない）。
+                    components::list(
+                        theme,
+                        [
+                            self.select(
+                                theme,
+                                window,
+                                cx,
+                                "setting-wrist-face",
+                                &design::icons::WATCH,
+                                i18n::t(cx, "settings.wrist_face"),
+                                face,
+                                kernel::WristFace::ALL
+                                    .iter()
+                                    .map(|&f| {
+                                        let name = format!("wrist.face.{}", f.key());
+                                        let id = format!("setting-wrist-face-{}", f.key());
+                                        (id, i18n::t(cx, &name), f)
+                                    })
+                                    .collect(),
+                                // 種類を替えたら、その種類の先頭のデザインにする。
+                                |f| Setting::WristDesign(f.designs()[0]),
+                            ),
+                            self.select(
+                                theme,
+                                window,
+                                cx,
+                                "setting-wrist-design",
+                                &design::icons::PAINT_BRUSH,
+                                i18n::t(cx, "settings.wrist_design"),
+                                now.wrist_design,
+                                face.designs()
+                                    .iter()
+                                    .map(|&d| {
+                                        let name = format!("wrist.design.{}", d.key());
+                                        let id = format!("setting-wrist-{}", d.key());
+                                        (id, i18n::t(cx, &name), d)
+                                    })
+                                    .collect(),
+                                Setting::WristDesign,
+                            ),
+                        ],
                     ),
                     setting_group(
                         theme,

@@ -16,3 +16,4 @@ ui.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+i18n.workspace = true
