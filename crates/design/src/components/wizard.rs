@@ -51,6 +51,8 @@ impl Wizard {
         self.step + 1 == self.len
     }
     /// 次へ。最後なら動かず `false`（呼び出し側が完了として扱う）。
+    // 手順を進める操作で、イテレータの `next` ではない。
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> bool {
         let ok = !self.is_last();
         if ok {
@@ -196,6 +198,7 @@ pub fn wizard_welcome(
 
 /// 「step」画面: 内容（アイコン・タイトル・説明・`body` のフォームなど）を上下中央寄せにし、下に左「戻る」・右「次へ」のフッター。
 /// 最初の手順は `back` を `None` にする（フッターの左は空き）。
+#[allow(clippy::too_many_arguments)]
 pub fn wizard_step(
     theme: &Theme,
     id: &str,
