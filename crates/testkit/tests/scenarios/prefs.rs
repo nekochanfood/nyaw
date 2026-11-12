@@ -121,13 +121,14 @@ fn watch_faces_turn_loop_filter_and_set(cx: &mut TestAppContext) {
     assert!(name.bottom() <= set.top());
     let dots = kit.bounds("watch-face-dots");
     assert!((dots.center().x - faces.center().x).abs() < px(1.0));
-    // Its neighbors sit lower along the arc, and the ends are joined (the last design is on the left).
+    // Its neighbors sit lower along the arc, at the same size, and the ends are joined (the last design is on the left).
     let (left, right) = (
         kit.bounds("watch-face-railway"),
         kit.bounds("watch-face-ring"),
     );
     assert!(left.center().x < dots.left() && right.center().x > dots.right());
-    assert!(right.center().y > dots.center().y && right.size.width < dots.size.width);
+    assert!(right.center().y > dots.center().y);
+    assert!((right.size.width - dots.size.width).abs() < px(1.0));
     // The carets sit at both ends.
     let (prev, next) = (kit.bounds("watch-prev"), kit.bounds("watch-next"));
     assert!(prev.right() <= dots.left() && next.left() >= dots.right());

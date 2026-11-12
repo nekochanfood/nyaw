@@ -11,7 +11,7 @@ use gpui::{
 };
 
 const LEN: usize = 5;
-/// 中央の項目の一辺。項目 1 つ分の動きは、その 0.96 倍（96px）。
+/// 項目の一辺（どの位置でも同じ）。項目 1 つ分の動きは、その 1.1 倍（110px）。
 const SIDE: f32 = 100.0;
 const W: f32 = 600.0;
 
@@ -126,11 +126,11 @@ fn the_selected_item_sits_at_the_top_of_the_arc(cx: &mut TestAppContext) {
         "centered whatever the width"
     );
     assert_eq!(center.size.width, px(SIDE));
-    // 隣は左右対称に、弧に沿って下がり、小さくなる。端はつながっているので、先頭の左には最後の項目。
+    // 隣は左右対称に、弧に沿って下がる（大きさは同じ）。端はつながっているので、先頭の左には最後の項目。
     assert!(right.center().x > center.right() && left.center().x < center.left());
     assert_eq!(right.center().y, left.center().y);
     assert!(right.center().y > center.center().y);
-    assert!(right.size.width < center.size.width);
+    assert_eq!(right.size.width, center.size.width);
     // 隣より先は見えない。
     assert!(cx.debug_bounds("c-item-2").is_none());
 }
@@ -140,7 +140,7 @@ fn dragging_past_half_an_item_selects_the_next_and_a_short_drag_snaps_back(
     cx: &mut TestAppContext,
 ) {
     let (view, cx) = setup(cx);
-    // 左へ 60px（項目 1 つ分は 96px）: 次の項目に収まる。
+    // 左へ 60px（項目 1 つ分は 110px）: 次の項目に収まる。
     drag(cx, 12, -5.0);
     assert_eq!(state(&view, cx), (1, vec![1]));
     assert_eq!(item(cx, 1).center().x, px(W / 2.0));
@@ -159,11 +159,11 @@ fn the_items_follow_the_pointer_while_held(cx: &mut TestAppContext) {
     let from = point(px(W / 2.0), px(SIDE / 2.0));
     cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
     let mut at = from;
-    for _ in 0..8 {
-        at.x -= px(6.0);
+    for _ in 0..11 {
+        at.x -= px(5.0);
         cx.simulate_mouse_move(at, MouseButton::Left, Modifiers::none());
     }
-    // 48px = 項目半分: 中央にいた項目は左へ、次の項目は中央へ、同じだけ寄っている。
+    // 55px = 項目半分: 中央にいた項目は左へ、次の項目は中央へ、同じだけ寄っている。
     let (leaving, coming) = (item(cx, 0).center().x, item(cx, 1).center().x);
     assert!(leaving < px(W / 2.0) && coming > px(W / 2.0));
     let gap = (px(W) - leaving - coming).abs();
@@ -257,7 +257,7 @@ fn vertical_slides_pass_through(cx: &mut TestAppContext) {
 fn dragging_the_carousel_does_not_swipe_the_page_back(cx: &mut TestAppContext) {
     let (view, cx) = setup(cx);
     // 画面を 1 枚積んだ上のカルーセルを、右から左へ大きく動かす（スワイプバックと同じ向き）。
-    drag(cx, 10, -20.0);
+    drag(cx, 12, -20.0);
     assert_eq!(
         view.read_with(cx, |v, _| v.stack.len()),
         2,

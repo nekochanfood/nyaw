@@ -231,7 +231,7 @@ impl Render for ColorDialog {
 }
 
 /// 文字盤の見本（中央）の直径と、使っている文字盤を囲む輪の太さ・見本との間（px。中央の大きさでの値）。
-const FACE_PX: f32 = 200.0;
+const FACE_PX: f32 = 168.0;
 const FACE_RING: f32 = 4.0;
 const FACE_RING_GAP: f32 = 6.0;
 
