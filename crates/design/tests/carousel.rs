@@ -11,7 +11,7 @@ use gpui::{
 };
 
 const LEN: usize = 5;
-/// 項目の一辺（どの位置でも同じ）。項目 1 つ分の動きは、その 1.1 倍（110px）。
+/// 項目の一辺（どの位置でも同じ）。項目 1 つ分の動きは、その 0.87 倍（87px）。
 const SIDE: f32 = 100.0;
 const W: f32 = 600.0;
 
@@ -140,7 +140,7 @@ fn dragging_past_half_an_item_selects_the_next_and_a_short_drag_snaps_back(
     cx: &mut TestAppContext,
 ) {
     let (view, cx) = setup(cx);
-    // 左へ 60px（項目 1 つ分は 110px）: 次の項目に収まる。
+    // 左へ 60px（項目 1 つ分は 87px）: 次の項目に収まる。
     drag(cx, 12, -5.0);
     assert_eq!(state(&view, cx), (1, vec![1]));
     assert_eq!(item(cx, 1).center().x, px(W / 2.0));
@@ -159,11 +159,11 @@ fn the_items_follow_the_pointer_while_held(cx: &mut TestAppContext) {
     let from = point(px(W / 2.0), px(SIDE / 2.0));
     cx.simulate_mouse_down(from, MouseButton::Left, Modifiers::none());
     let mut at = from;
-    for _ in 0..11 {
-        at.x -= px(5.0);
+    for _ in 0..3 {
+        at.x -= px(14.5);
         cx.simulate_mouse_move(at, MouseButton::Left, Modifiers::none());
     }
-    // 55px = 項目半分: 中央にいた項目は左へ、次の項目は中央へ、同じだけ寄っている。
+    // 43.5px = 項目半分: 中央にいた項目は左へ、次の項目は中央へ、同じだけ寄っている。
     let (leaving, coming) = (item(cx, 0).center().x, item(cx, 1).center().x);
     assert!(leaving < px(W / 2.0) && coming > px(W / 2.0));
     let gap = (px(W) - leaving - coming).abs();
