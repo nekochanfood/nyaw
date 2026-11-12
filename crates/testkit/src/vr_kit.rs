@@ -112,9 +112,14 @@ impl<'a, V: Render> VrKit<'a, V> {
 
     /// The bounds in the window of the element tagged with `debug_selector`.
     pub fn bounds(&mut self, selector: &'static str) -> Bounds<Pixels> {
+        self.try_bounds(selector)
+            .unwrap_or_else(|| panic!("element {selector:?} is not rendered"))
+    }
+
+    /// Like [`Self::bounds`], but `None` when the element is not rendered (to check that something is gone).
+    pub fn try_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
         VisualTestContext::from_window(self.panels.windows[self.panel], &self.cx.cx)
             .debug_bounds(selector)
-            .unwrap_or_else(|| panic!("element {selector:?} is not rendered"))
     }
 
     /// Aims the laser at a pixel on the panel and steps one frame.

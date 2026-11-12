@@ -2,11 +2,12 @@
 //! テスト用のカーネルは出力デバイスを開かないので、`kernel.audio.render` で回して左右に出た音を測る。
 
 use gpui::TestAppContext;
-use kernel::PanelCommand;
 use kernel::audio::{BLOCK, Layout};
+use kernel::subsystems::keyboard::{Database, Layout as KeyLayout};
+use kernel::{PanelCommand, Setting};
 use std::time::{Duration, Instant};
-use testing::AudioTest;
-use testkit::{Driver, VrKit};
+use testing::{AudioTest, Settings};
+use testkit::{Action, Driver, VrKit};
 
 /// 鳴り始めるまで（読み込みは別スレッド）描き、そこから約 0.3 秒の左右の二乗和を返す。
 fn heard(kit: &mut VrKit<'_, AudioTest>) -> (f32, f32) {
@@ -111,4 +112,58 @@ fn buttons_switch_spatialization_layout_and_mix_loops(cx: &mut TestAppContext) {
     kit.step();
     settle(&mut kit);
     assert_eq!(kit.kernel.status(0).audio.playing, 0);
+}
+
+/// 鳴っている音が無くなるまで描き、その間に左右に出た音の二乗和を返す。
+fn drain(kit: &mut VrKit<'_, Settings>) -> f32 {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut energy = 0.0;
+    while kit.kernel.status(0).audio.playing > 0 && Instant::now() < deadline {
+        let mut out = [0.0; BLOCK * 2];
+        kit.kernel.audio.render(&mut out);
+        energy += out.iter().map(|s| s * s).sum::<f32>();
+        kit.step();
+    }
+    assert_eq!(kit.kernel.status(0).audio.playing, 0);
+    energy
+}
+
+/// 設定画面のキーボードの見本のキーは、キーの音の設定どおりに鳴る: 音量を半分にすると振幅が半分になり、オフでは鳴らない。
+#[gpui::test]
+fn preview_key_sound_is_as_loud_as_the_volume_setting(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, cx| {
+        // 読み込みのスレッドと OS の配列を待たず、同じ配列から始める。
+        let layout = KeyLayout::new("us", "");
+        let keyboard = Database::load().unwrap().keyboard(&layout).unwrap();
+        let settings = Settings::new(0);
+        let keys = ui::prefs::new_keyboard_preview(0, cx);
+        keys.update(cx, |view, _| {
+            view.automatic = false;
+            view.select_layout(layout);
+            view.keyboard = Some(keyboard);
+            view.loading = false;
+        });
+        assert!(settings.keyboard_preview.set(keys).is_ok());
+        settings
+    });
+    kit.click("settings-keyboard");
+    // レーザーをキーに載せてホバー音が鳴り終わってから押し、キーの音だけを測る。
+    let heard = |kit: &mut VrKit<'_, Settings>, setting: Option<Setting>| {
+        if let Some(setting) = setting {
+            kit.kernel.set(setting);
+            kit.step();
+        }
+        kit.hover("key-AC01");
+        drain(kit);
+        kit.press(Action::Select).release(Action::Select);
+        drain(kit)
+    };
+    let full = heard(&mut kit, None);
+    let half = heard(&mut kit, Some(Setting::KeySoundVolume(0.5)));
+    let off = heard(&mut kit, Some(Setting::KeySound(false)));
+    assert!(full > 0.0, "既定では鳴る");
+    // 二乗和は音量の二乗に比例する。押すたびに高さが 1 ± 0.1 で揺れ、その分だけ長さ（二乗和）も変わる。
+    let ratio = half / full;
+    assert!((0.15..0.4).contains(&ratio), "{half} / {full} = {ratio}");
+    assert_eq!(off, 0.0, "オフでは鳴らない");
 }
