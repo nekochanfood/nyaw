@@ -187,6 +187,78 @@ fn default_corner_superellipse() -> f32 {
     f32::from_bits(DEFAULT_CORNER_SUPERELLIPSE.load(std::sync::atomic::Ordering::Relaxed))
 }
 
+// NYAW: accessibility text settings. Sizes and weights written in code are always the design values; the text
+// system applies these where glyphs are shaped and fonts are resolved, so no caller can forget them.
+// Per thread, not per process: GPUI lays out and paints on the one thread that runs the app, and tests
+// (one thread each) stay independent of each other.
+thread_local! {
+    static TEXT_SCALE: std::cell::Cell<f32> = const { std::cell::Cell::new(1.0) };
+    static BOLD_TEXT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Whether the text being laid out belongs to a [`Styled::text_exact`] subtree ([`with_text_exact`]).
+    static TEXT_EXACT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// NYAW: sets the factor every text is drawn at: the text system multiplies each font size it shapes (and
+/// [`TextStyle::line_height_in_pixels`] each line height) by it, unless the text is [`Styled::text_exact`].
+/// Non-finite or non-positive values mean 1. Call it on the thread that runs the app, then redraw the windows.
+pub fn set_text_scale(scale: f32) {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    TEXT_SCALE.set(scale);
+}
+
+/// NYAW: makes the text system draw every text lighter than bold in bold, unless the text is
+/// [`Styled::text_exact`]. Call it on the thread that runs the app, then redraw the windows.
+pub fn set_bold_text(bold: bool) {
+    BOLD_TEXT.set(bold);
+}
+
+/// NYAW: the values last given to [`set_text_scale`] and [`set_bold_text`].
+pub fn text_settings() -> (f32, bool) {
+    (TEXT_SCALE.get(), BOLD_TEXT.get())
+}
+
+/// NYAW: the factor texts are drawn at here ([`set_text_scale`]; 1 inside a [`Styled::text_exact`] subtree).
+/// Text itself needs nothing; things sized to go with text (icons, hand-computed line boxes) multiply by it.
+pub fn text_scale() -> f32 {
+    if TEXT_EXACT.get() {
+        1.0
+    } else {
+        TEXT_SCALE.get()
+    }
+}
+
+/// NYAW: the weight a text of `weight` is drawn in here ([`set_bold_text`]).
+pub fn adjusted_weight(weight: FontWeight) -> FontWeight {
+    if BOLD_TEXT.get() && !TEXT_EXACT.get() && weight.0 < FontWeight::BOLD.0 {
+        FontWeight::BOLD
+    } else {
+        weight
+    }
+}
+
+/// NYAW: the size a text of design size `size` is shaped at here.
+pub(crate) fn drawn_font_size(size: Pixels) -> Pixels {
+    size * text_scale()
+}
+
+/// NYAW: runs `f` with the global text scale and bold turned off (`exact`) or back on, as a
+/// [`Styled::text_exact`] subtree does. `Window::with_text_style` and the text element call it; code that shapes
+/// text for such a subtree outside its layout or paint (a deferred measurement) wraps the shaping in it.
+pub fn with_text_exact<R>(exact: bool, f: impl FnOnce() -> R) -> R {
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            TEXT_EXACT.set(self.0);
+        }
+    }
+    let _restore = Restore(TEXT_EXACT.replace(exact));
+    f()
+}
+
 /// The CSS styling that can be applied to an element via the `Styled` trait
 #[derive(Clone, Refineable, Debug)]
 #[refineable(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -499,6 +571,10 @@ pub struct TextStyle {
 
     /// The number of lines to display before truncating the text
     pub line_clamp: Option<usize>,
+
+    /// NYAW: draw the size and weight exactly as given, opting out of the global text scale and bold
+    /// ([`set_text_scale`] / [`set_bold_text`]). For text that is part of a drawing (a clock dial).
+    pub exact: bool,
 }
 
 impl Default for TextStyle {
@@ -520,11 +596,17 @@ impl Default for TextStyle {
             text_overflow: None,
             text_align: TextAlign::default(),
             line_clamp: None,
+            exact: false,
         }
     }
 }
 
 impl TextStyle {
+    /// NYAW: the factor the text of this style is drawn at (the global text scale; 1 if `exact`).
+    pub fn drawn_scale(&self) -> f32 {
+        if self.exact { 1.0 } else { TEXT_SCALE.get() }
+    }
+
     /// Create a new text style with the given highlighting applied.
     pub fn highlight(mut self, style: impl Into<HighlightStyle>) -> Self {
         let style = style.into();
@@ -570,8 +652,9 @@ impl TextStyle {
     }
 
     /// Returns the rounded line height in pixels.
+    /// NYAW: as drawn, so it follows the global text scale like the glyphs do (unless `exact`).
     pub fn line_height_in_pixels(&self, rem_size: Pixels) -> Pixels {
-        self.line_height.to_pixels(self.font_size, rem_size).round()
+        (self.line_height.to_pixels(self.font_size, rem_size) * self.drawn_scale()).round()
     }
 
     /// Convert this text style into a [`TextRun`], for the given length of the text.

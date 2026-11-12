@@ -1498,6 +1498,8 @@ pub fn dialog_height(
 ) -> u32 {
     // 文の幅 = パネル − 影の余白 − 縁（概要はさらに横の `SM`）。
     let inner = width as f32 - 2.0 * (PANEL_MARGIN + spacing::XL);
+    // 行の高さとアイコンから作る高さなので、文字の大きさの倍率に合わせる（文字の折り返しはテキストシステムが同じ倍率で測る）。
+    let scale = gpui::text_scale();
     let lines = |text: &str, size: f32, weight: FontWeight, wrap: f32| {
         let font = gpui::Font {
             weight,
@@ -1534,11 +1536,11 @@ pub fn dialog_height(
     .min(DIALOG_LINES);
     let n = actions as f32;
     let h = 2.0 * (PANEL_MARGIN + spacing::XL)
-        + DIALOG_ICON
+        + DIALOG_ICON * scale
         + spacing::XL
-        + title as f32 * font_size::LG * DIALOG_LEADING
+        + title as f32 * font_size::LG * DIALOG_LEADING * scale
         + spacing::SM
-        + body as f32 * font_size::MD * DIALOG_LEADING
+        + body as f32 * font_size::MD * DIALOG_LEADING * scale
         + spacing::XL
         + n * BUTTON_HEIGHT
         + (n - 1.0) * spacing::SM;
@@ -1615,7 +1617,9 @@ impl RenderOnce for Dialog {
             .id(SharedString::from(body_id.clone()))
             .debug_selector(move || body_id.clone())
             .min_h_0()
-            .max_h(px(DIALOG_LINES as f32 * font_size::MD * DIALOG_LEADING))
+            .max_h(crate::font::scaled(
+                DIALOG_LINES as f32 * font_size::MD * DIALOG_LEADING,
+            ))
             .overflow_y_scroll()
             .track_scroll(&scroll)
             .px(px(spacing::SM))

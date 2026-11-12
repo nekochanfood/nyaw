@@ -334,6 +334,18 @@ impl TextSystem {
             }
         }
 
+        // NYAW: the global bold setting applies here, where every font is resolved, so no caller can miss it.
+        let bold;
+        let font = if crate::adjusted_weight(font.weight) == font.weight {
+            font
+        } else {
+            bold = Font {
+                weight: crate::adjusted_weight(font.weight),
+                ..font.clone()
+            };
+            &bold
+        };
+
         let font_id = self
             .font_ids_by_font
             .read()
@@ -542,7 +554,9 @@ impl TextSystem {
     }
 
     /// Returns a handle to a line wrapper, for the given font and font size.
+    /// NYAW: `font_size` is the design size; the wrapper measures at the drawn size (the global text scale).
     pub fn line_wrapper(self: &Arc<Self>, font: Font, font_size: Pixels) -> LineWrapperHandle {
+        let font_size = crate::drawn_font_size(font_size);
         let lock = &mut self.wrapper_pool.lock();
         let font_id = self.resolve_font(&font);
         let wrappers = lock
@@ -755,6 +769,8 @@ impl WindowTextSystem {
         wrap_width: Option<Pixels>,
         line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
+        // NYAW: `font_size` is the design size; glyphs are shaped at the drawn size (the global text scale).
+        let font_size = crate::drawn_font_size(font_size);
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
@@ -890,6 +906,8 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Arc<LineLayout> {
+        // NYAW: `font_size` is the design size; glyphs are shaped at the drawn size (the global text scale).
+        let font_size = crate::drawn_font_size(font_size);
         let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
@@ -972,6 +990,8 @@ impl WindowTextSystem {
         runs: &[TextRun],
         force_width: Option<Pixels>,
     ) -> Option<Arc<LineLayout>> {
+        // NYAW: as in `layout_line`.
+        let font_size = crate::drawn_font_size(font_size);
         let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
@@ -1034,6 +1054,8 @@ impl WindowTextSystem {
         force_width: Option<Pixels>,
         materialize_text: impl FnOnce() -> SharedString,
     ) -> Arc<LineLayout> {
+        // NYAW: as in `layout_line`.
+        let font_size = crate::drawn_font_size(font_size);
         let mut last_run = None::<&TextRun>;
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         font_runs.clear();
