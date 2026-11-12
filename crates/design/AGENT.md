@@ -6,7 +6,7 @@ UI の見た目の責務。Radix Colors のエイリアスに倣う 3 層。Cons
 
 ## 主な公開 API
 
-`icon(&icons::HEART).weight(Weight::Fill).size(..).color(..).rotate(..)`（Phosphor を path で描く。色は `Background` なのでグラデーションでアイコンの形に抜ける。6 ウェイト全対応。**ソースで使われているアイコン・ウェイトだけ**を build.rs が埋め込む。データは `icons/*.tsv`、更新は `icons/vendor.mjs`）, `Theme::{DARK, LIGHT, of, current, set_mode, fading, map, zip, grayscale}`（`grayscale` は白黒にしたテーマ。止まったニャプリの画面。`set_mode` でテーマを切り替えると、`Motion` があれば `current` が全役割を前の色から `duration_ms::SLOW` かけて OKLab で補間する。その間 `fading` が真で、`ui` のフレームループは全パネルを描き直す）, `Mode`, `logo(Logo::{Full, Mini}).height(..)`（nyaw のロゴ。今のテーマに合う SVG を `assets/logos/` から埋め込み、裏のスレッドで描く。`.mode(..)` で固定。exe のアイコンは別で `assets/icons/*.ico` をルートの `build.rs` が埋め込み、ウィンドウ側は `vendor/gpui_windows` の `load_icon` がアプリのテーマを見て ID 1（ライト）/ 2（ダーク）を選ぶ。Explorer のファイルアイコンはテーマで切り替わらない）, `logo(Logo::{Full, Mini}).height(..)`（nyaw のロゴ。今のテーマに合う SVG を `assets/logos/` から埋め込み、裏のスレッドで描く。`.mode(..)` で固定。exe のアイコンは別で `assets/icons/*.ico` をルートの `build.rs` が埋め込み、ウィンドウ側は `vendor/gpui_windows` の `load_icon` がアプリのテーマを見て ID 1（ライト）/ 2（ダーク）を選ぶ。Explorer のファイルアイコンはテーマで切り替わらない）, `components::{button, icon_button, round_button, switch, slider, panel, card, card_panel, dialog, PANEL_MARGIN, surface, tooltip, Tooltips, hover_tooltip, Variant}`（`Variant::{Default, Primary, Danger, OnBackground, Ghost}`。既定は無彩色。`Ghost` は背景の無いボタン）, `content_button`（中身を足す横長のボタン）, `progress_ring`（線の円の進み具合。上から時計回り）, `scale::*`, `drive::{now, advance, keep_drawing}`（動きの駆動: 時計と再描画の要求。部品は `Instant::now()` を直接読まない）, `cue::{Cue, emit, take, hover, begin_hover}`（効果音の要求。部品は種類 `Cue` を置くだけで音は知らない。同じ種類は 50ms 以内なら捨てる。音の割り当ては `ui::cue`）, `corner::{SUPERELLIPSE, ENABLED, install}`（UI 全域の角丸をスーパーエリプス k=1.2 にする。`ENABLED` で全域を切り替え、`ui::run` が `install` を呼ぶので呼び出し側は `.rounded(..)` だけでよい。個別に変えるのは `.corner_superellipse(k)`、オプトアウトは実装側で `.circular_corners()`（円の角丸。円であるべき丸ボタン・カプセルなど）。実装は vendor/gpui のシェーダー）, `components::{scrollbars, elastic, claim_scroll, Scroll}`（スクロールバーと端の引っ張り。`&ScrollHandle` のほか、見えている行だけを作る gpui の `list` の `&ListState` も渡せる。`list` は `elastic` で一覧ごと包む）, `catalog::Catalog`（デバッグ用カタログ。色の段・役割・定数・文字・アイコン・部品・動きを 1 画面で確認する。節を gpui の `list` に並べ、見えている節だけを作る。`cargo run -p design --example catalog`）。見た目の方針は `crates/design/GUIDELINES.md
+`icon(&icons::HEART).weight(Weight::Fill).size(..).color(..).rotate(..)`（Phosphor を path で描く。色は `Background` なのでグラデーションでアイコンの形に抜ける。6 ウェイト全対応。**ソースで使われているアイコン・ウェイトだけ**を build.rs が埋め込む。データは `icons/*.tsv`、更新は `icons/vendor.mjs`）, `Theme::{DARK, LIGHT, of, current, set_mode, fading, map, zip, grayscale, on_card}`（`on_card` はカードの上に直接置く中身のためのテーマ。下の「置く面に合わせる」。`grayscale` は白黒にしたテーマ。止まったニャプリの画面。`set_mode` でテーマを切り替えると、`Motion` があれば `current` が全役割を前の色から `duration_ms::SLOW` かけて OKLab で補間する。その間 `fading` が真で、`ui` のフレームループは全パネルを描き直す）, `Mode`, `logo(Logo::{Full, Mini}).height(..)`（nyaw のロゴ。今のテーマに合う SVG を `assets/logos/` から埋め込み、裏のスレッドで描く。`.mode(..)` で固定。exe のアイコンは別で `assets/icons/*.ico` をルートの `build.rs` が埋め込み、ウィンドウ側は `vendor/gpui_windows` の `load_icon` がアプリのテーマを見て ID 1（ライト）/ 2（ダーク）を選ぶ。Explorer のファイルアイコンはテーマで切り替わらない）, `logo(Logo::{Full, Mini}).height(..)`（nyaw のロゴ。今のテーマに合う SVG を `assets/logos/` から埋め込み、裏のスレッドで描く。`.mode(..)` で固定。exe のアイコンは別で `assets/icons/*.ico` をルートの `build.rs` が埋め込み、ウィンドウ側は `vendor/gpui_windows` の `load_icon` がアプリのテーマを見て ID 1（ライト）/ 2（ダーク）を選ぶ。Explorer のファイルアイコンはテーマで切り替わらない）, `components::{button, icon_button, round_button, switch, slider, panel, card, card_panel, dialog, PANEL_MARGIN, surface, tooltip, Tooltips, hover_tooltip, Variant}`（`Variant::{Default, Primary, Danger, OnBackground, Ghost}`。既定は無彩色。`Ghost` は背景の無いボタン）, `content_button`（中身を足す横長のボタン）, `progress_ring`（線の円の進み具合。上から時計回り）, `scale::*`, `drive::{now, advance, keep_drawing}`（動きの駆動: 時計と再描画の要求。部品は `Instant::now()` を直接読まない）, `cue::{Cue, emit, take, hover, begin_hover}`（効果音の要求。部品は種類 `Cue` を置くだけで音は知らない。同じ種類は 50ms 以内なら捨てる。音の割り当ては `ui::cue`）, `corner::{SUPERELLIPSE, ENABLED, install}`（UI 全域の角丸をスーパーエリプス k=1.2 にする。`ENABLED` で全域を切り替え、`ui::run` が `install` を呼ぶので呼び出し側は `.rounded(..)` だけでよい。個別に変えるのは `.corner_superellipse(k)`、オプトアウトは実装側で `.circular_corners()`（円の角丸。円であるべき丸ボタン・カプセルなど）。実装は vendor/gpui のシェーダー）, `components::{scrollbars, elastic, claim_scroll, Scroll}`（スクロールバーと端の引っ張り。`&ScrollHandle` のほか、見えている行だけを作る gpui の `list` の `&ListState` も渡せる。`list` は `elastic` で一覧ごと包む）, `catalog::Catalog`（デバッグ用カタログ。色の段・役割・定数・文字・アイコン・部品・動きを 1 画面で確認する。節を gpui の `list` に並べ、見えている節だけを作る。`cargo run -p design --example catalog`）。見た目の方針は `crates/design/GUIDELINES.md
 
 ## パーソナルカラー
 
@@ -26,11 +26,25 @@ UI の見た目の責務。Radix Colors のエイリアスに倣う 3 層。Cons
 
 `components::choice(theme, id, selected, content)`: いくつかの中から 1 つ選ぶ箱（カードの上に置く。地は `control`）。選んでいるものは塗りの色の枠で囲み、右上にチェックの印を出す（色の差だけに頼らない）。印は中身の上に重ねるので、中身（アイコン・名前）は `content` で渡す。セットアップウィザード（`../setup/AGENT.md`）の利き手の選択が使う。
 
+## 置く面に合わせる（`Theme::on_card`）
+
+部品は役割（`Theme`）だけを見るので、置く面が変われば渡すテーマを替える。地（`background`）の上に置く前提で組んだまとまり（設定の部品 `ui::prefs` など）をカードの上に置くときは、地の色の枠で囲まずに `theme.on_card()` を渡す。面の明るさが 1 段ずれる。
+
+| 役割 | `on_card` での値 | 何になるか |
+|---|---|---|
+| `background` | `card` | 置いた面そのもの（枠が面に溶ける。カルーセルの幕の色もこれ） |
+| `card` | `control` | 面の上の入れ物（カードより少し暗い。選べるカードと同じ） |
+| `control` / `-hover` / `-active` | `control-on-background-*` | 入れ物の中の部品 |
+| `control-on-background-*` | `control` / `-hover` / `-active` | 面に直接置く部品（カードの上の既定のボタンと同じ） |
+| `groove` | `control-on-background` | 入れ物とも面とも見分けられる溝 |
+
+文字・塗り・枠線の色は変えない。隣り合う面と部品が見分けられること・文字が読めることは `tests::on_card_keeps_surfaces_distinct_and_text_readable` が両テーマで確かめる。セットアップウィザード（`../setup/AGENT.md`）が使う。
+
 ## カルーセル
 
 横に並ぶ項目を左右に滑らせて 1 つ選ぶ（端はつながって回る）。責務を 2 つに分ける。
 
-- **`components::carousel(id, len, selected, shape, render, on_select)`**（`components/carousel.rs`）: どんな並べ方でも通用する部分。項目のループ（`offset`）、押したまま左右に動かす操作（タッチの指のスライドとマウスの両方）、離したときに収まる項目（近い項目。払っていればその先。`settle`）、選ぶ項目が外から変わったときに近い向きへ回る動き、中央でない項目を押すと中央に来ること。ここで始まった横の動きは外へ渡さない（`navigation` のスワイプバックと取り合わない。縦の動きは渡す）。選ぶ項目は呼び出し側が持つ。
+- **`components::carousel(id, len, selected, shape, render, on_select)`**（`components/carousel.rs`）: どんな並べ方でも通用する部分。項目のループ（`offset`）、押したまま左右に動かす操作（タッチの指のスライドとマウスの両方）、離したときに収まる項目（近い項目。払っていればその先。`settle`）、選ぶ項目が外から変わったときに近い向きへ回る動き、中央でない項目を押すと中央に来ること。ここで始まった横の動きは外へ渡さない（`navigation` のスワイプバックと取り合わない。縦の動きは渡す）。選ぶ項目は呼び出し側が持つ。薄い項目に重ねる幕は置いた面の色で、地以外に置くなら `.backdrop(色)` で渡す。
 - **並べ方 `Shape`**: 中央から `d` 個ずれた項目（小数は動いている途中）の置き場所 `Place`（中心・一辺・不透明度）と、項目 1 つ分の指の動き `step`・高さ・描く範囲 `reach`。形に特化した計算はここにだけ書く。
   - **`components::arc(diameter)`**（`components/carousel/arc.rs`）: 大きな円の弧に沿う並べ方。中央（弧の頂点）の項目の一辺が `diameter`。隣は弧に沿って下がり、薄くなり、弧の向きに傾く（大きさはどこでも同じ）（`Place::angle`。描くときに `Window::with_rotation` で回す）。その先は消えて見えない。wrist の文字盤を選ぶ画面（`ui::prefs::watch_faces`）が使う。
 - 別の形（一直線・カバーフローなど）が要るときは、`Shape::new` を返す関数を足す（`carousel` は変えない）。

@@ -6,7 +6,7 @@
 
 ## 主な公開 API
 
-`wrist::spec(dominant, debug, settings)`, `Wrist`, `WATCH_OFFSET`, `wrist::preview(design, d, cx)`（選ぶ画面に出す文字盤の見本。画面どうしは直接依存しないので、`Wrist::new` が UI 層のグローバル `ui::prefs::FacePreview` に置き、選ぶ画面（`ui::prefs::watch_faces`）がそこから引く）
+`wrist::spec(dominant, debug, settings)`, `Wrist`, `WATCH_OFFSET`, `wrist::preview(design, d, theme, cx)`（選ぶ画面に出す文字盤の見本。`theme` は置く面のテーマ。画面どうしは直接依存しないので、`Wrist::new` が UI 層のグローバル `ui::prefs::FacePreview` に置き、選ぶ画面（`ui::prefs::watch_faces`）がそこから引く）
 
 ## 文字盤とデザイン
 

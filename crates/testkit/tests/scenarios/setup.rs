@@ -1,8 +1,8 @@
 use gpui::{TestAppContext, px};
 use kernel::{DominantHand, Language, PanelCommand, ThemeMode, WristDesign};
 use setup::{SetupWizard, Step};
-use testing::{SetupWizardSpawn, Testing};
-use testkit::{Driver, NoVrKit, VrKit};
+use testing::{BUTTON_BG, PANEL_BG, SetupWizardSpawn, Testing};
+use testkit::{Driver, NoVrKit, Vec2, VrKit};
 
 /// The wizard walks through every decision. Each choice applies at once, and only Finish marks the setup done.
 #[gpui::test]
@@ -121,6 +121,26 @@ fn setup_makes_a_custom_color_in_a_child_dialog(cx: &mut TestAppContext) {
     );
     kit.panel(0).click("setup-next");
     assert_eq!(kit.read(|v| v.step()), Step::Wrist);
+}
+
+/// The appearance and watch parts sit straight on the wizard's card, with no backdrop box behind them: their own
+/// surfaces take the control color (a step off the card), like the choice cards of the hand step.
+#[gpui::test]
+fn settings_parts_sit_on_the_wizard_card_without_a_backdrop(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
+    kit.click("setup-next").click("setup-next");
+    assert_eq!(kit.read(|v| v.step()), Step::Appearance);
+    let row = kit.bounds("setting-theme");
+    let x = f32::from(row.left()) + 4.0;
+    let inside = kit.vr_color_at_px(Vec2::new(x, f32::from(row.center().y)));
+    let between = kit.vr_color_at_px(Vec2::new(x, f32::from(row.bottom()) + 8.0));
+    assert_eq!(inside, BUTTON_BG, "the row is a step off the card");
+    assert_eq!(between, PANEL_BG, "only the card between the groups");
+    // The watch faces too: around them is the card itself.
+    kit.click("setup-next");
+    let faces = kit.bounds("watch-faces");
+    let corner = Vec2::new(f32::from(faces.left()) + 2.0, f32::from(faces.top()) + 2.0);
+    assert_eq!(kit.vr_color_at_px(corner), PANEL_BG);
 }
 
 #[gpui::test]

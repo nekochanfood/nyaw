@@ -47,9 +47,8 @@ pub fn dial(
     }
 }
 
-/// 選ぶ画面に出す見本: 直径 `d` の丸いカードに、決まった時刻（10:09:36）の文字盤。カードと見分けられる地の上に置く。
-pub fn preview(design: WristDesign, d: f32, cx: &App) -> Div {
-    let theme = Theme::current(cx);
+/// 選ぶ画面に出す見本: 直径 `d` の丸いカードに、決まった時刻（10:09:36）の文字盤。`theme` は置く面のテーマ（カードと見分けられる地の上に置く）。
+pub fn preview(design: WristDesign, d: f32, theme: &Theme, cx: &App) -> Div {
     let now = Local::now();
     let sample = now.with_hour(10).and_then(|t| t.with_minute(9));
     let sample = sample.and_then(|t| t.with_second(36)).unwrap_or(now);
@@ -61,7 +60,7 @@ pub fn preview(design: WristDesign, d: f32, cx: &App) -> Div {
         .bg(rgba(theme.card))
         .child(dial(
             design,
-            &theme,
+            theme,
             sample,
             dashboard::date(sample, cx).into(),
             d,

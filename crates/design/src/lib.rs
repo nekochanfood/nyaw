@@ -203,6 +203,25 @@ impl Theme {
         themes[usize::from(mode == Mode::Light)]
     }
 
+    /// カードの上に直接置く中身のためのテーマ。地の上に置く前提で組んだ部品（設定の部品など）を、地の色の枠で囲まずに
+    /// カードの上へ置けるよう、面の明るさを 1 段ずらす: 地 → カード、カード → `control`（カードより少し暗い）。
+    /// その中の部品と、面に直接置く部品の色（`control-*` と `control-on-background-*`）は入れ替わる。
+    pub fn on_card(self) -> Theme {
+        Theme {
+            background: self.card,
+            card: self.control,
+            control: self.control_on_background,
+            control_hover: self.control_on_background_hover,
+            control_active: self.control_on_background_active,
+            control_on_background: self.control,
+            control_on_background_hover: self.control_hover,
+            control_on_background_active: self.control_active,
+            // 溝は、新しいカード（`control`）とも、面（カード）とも見分けられる色に。
+            groove: self.control_on_background,
+            ..self
+        }
+    }
+
     /// 白黒にしたテーマ（止まった画面など、もう操作できないものに使う）。
     pub fn grayscale(self) -> Theme {
         self.map(grayscale)
@@ -304,6 +323,49 @@ mod tests {
             ..first
         };
         assert_eq!(rest, Theme::LIGHT);
+    }
+
+    /// カードの上に置く中身のテーマ（`on_card`）でも、隣り合う面と部品は見分けられ、文字は読める。
+    #[test]
+    fn on_card_keeps_surfaces_distinct_and_text_readable() {
+        use palette::{Srgb, color_difference::Wcag21RelativeContrast};
+        let contrast = |a: u32, b: u32| {
+            let c = |c: u32| -> Srgb { Srgb::<u8>::from(c >> 8).into_format() };
+            c(a).relative_contrast(c(b))
+        };
+        for base in [Theme::DARK, Theme::LIGHT] {
+            let t = base.on_card();
+            assert_eq!((t.background, t.card), (base.card, base.control));
+            for (name, a, b, min) in [
+                ("card / surface", t.card, t.background, 1.05),
+                ("control / card", t.control, t.card, 1.05),
+                ("control hover / card", t.control_hover, t.card, 1.05),
+                ("control active / card", t.control_active, t.card, 1.05),
+                ("control / hover", t.control, t.control_hover, 1.05),
+                ("hover / active", t.control_hover, t.control_active, 1.05),
+                (
+                    "on surface / surface",
+                    t.control_on_background,
+                    t.background,
+                    1.05,
+                ),
+                (
+                    "on surface hover / surface",
+                    t.control_on_background_hover,
+                    t.background,
+                    1.05,
+                ),
+                ("groove / card", t.groove, t.card, 1.05),
+                ("groove / surface", t.groove, t.background, 1.05),
+                ("text / surface", t.neutral_text, t.background, 7.0),
+                ("text / card", t.neutral_text, t.card, 7.0),
+                ("text low / surface", t.neutral_text_low, t.background, 4.5),
+                ("text low / card", t.neutral_text_low, t.card, 4.5),
+            ] {
+                let got = contrast(a, b);
+                assert!(got >= min, "{name}: {got} < {min}");
+            }
+        }
     }
 
     #[test]

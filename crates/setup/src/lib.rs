@@ -3,10 +3,10 @@
 //! （`ui::prefs`）。選んだものは、その場で全体の設定に反映する。
 
 use design::components::{self, Button, Variant, Wizard};
-use design::{Icon, Logo, Theme, font_size, icons, radius, spacing};
+use design::{Icon, Logo, Theme, font_size, icons, spacing};
 use gpui::{
     App, ClickEvent, Context, Div, Entity, FontWeight, IntoElement, MouseDownEvent, Render,
-    SharedString, Window, div, prelude::*, px, rgba,
+    SharedString, Window, div, prelude::*, px,
 };
 use kernel::vr::{Pose, Quat, Vec2, Vec3};
 use kernel::{DominantHand, Language, LazyFollow, PanelCommand, PanelId, Setting};
@@ -170,15 +170,6 @@ fn text_choice(
     components::choice(theme, id, selected, content).py(px(spacing::XL))
 }
 
-/// 設定画面と同じ部品（`ui::prefs`。地の上に置く前提）を、カードの上に出すための地の色の枠。
-fn well(theme: &Theme, body: Div) -> Div {
-    div()
-        .p(px(spacing::MD))
-        .rounded(px(radius::LG))
-        .bg(rgba(theme.background))
-        .child(body)
-}
-
 /// 手順 `step` の画面 1 枚。今の設定（[`PanelControl::settings`]）から選んでいるものを示す。
 fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut App) -> Div {
     let theme = Theme::current(cx);
@@ -283,23 +274,24 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
         }
         Step::Appearance => {
             let set = update(wizard, |v: &mut SetupWizard, state| v.appearance = state);
-            let body = ui::prefs::appearance(panel, appearance, set, window, cx);
+            // 設定画面と同じ部品を、このカードの上に合う明るさ（`Theme::on_card`）で出す（地の色の枠は敷かない）。
+            let body = ui::prefs::appearance(&theme.on_card(), panel, appearance, set, window, cx);
             choose(
                 &icons::PALETTE,
                 "setup.appearance_title",
                 "setup.appearance_description",
-                well(&theme, body),
+                body,
                 cx,
             )
         }
         Step::Wrist => {
             let set = update(wizard, |v: &mut SetupWizard, state| v.watch = state);
-            let body = ui::prefs::watch_faces(watch, set, window, cx);
+            let body = ui::prefs::watch_faces(&theme.on_card(), watch, set, window, cx);
             choose(
                 &icons::WATCH,
                 "setup.wrist_title",
                 "setup.wrist_description",
-                well(&theme, body),
+                body,
                 cx,
             )
         }

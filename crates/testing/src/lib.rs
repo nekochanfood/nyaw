@@ -1607,6 +1607,7 @@ impl Settings {
                     })
                 };
                 vec![ui::prefs::appearance(
+                    theme,
                     self.panel,
                     self.appearance,
                     set,
@@ -1623,7 +1624,7 @@ impl Settings {
                         cx.notify();
                     })
                 };
-                vec![ui::prefs::watch_faces(self.watch, set, window, cx)]
+                vec![ui::prefs::watch_faces(theme, self.watch, set, window, cx)]
             }
             // ポインタ: 方式と、レーザーの手ブレ抑え・長さ（Laser の画面と同じ範囲）。
             3 => {

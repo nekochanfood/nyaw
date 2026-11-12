@@ -1,5 +1,5 @@
 //! 設定の部品: 設定画面とセットアップウィザードが共有する、全体の設定（[`Setting`]）を選ぶ画面の一部（[`appearance`] /
-//! [`watch_faces`]）。今の設定を見せ、選ぶとすぐ反映する。地（`background`）の上に置く。開閉などの小さな状態は呼び出し側が
+//! [`watch_faces`]）。今の設定を見せ、選ぶとすぐ反映する。色は置く面のテーマ `theme` で描く。開閉などの小さな状態は呼び出し側が
 //! 持ち、変えるときは `set` で受け取る（ビューの型を問わない）。詳しくは `crates/ui/AGENT.md` の「設定の部品」。
 
 use design::components::{self, Variant};
@@ -18,7 +18,7 @@ use crate::{PanelControl, PanelSpec};
 /// wrist の文字盤の見本（デザインと直径 px）を描く関数。画面どうしは直接依存しないので、文字盤を持つ wrist が GPUI の
 /// グローバルに置き、選ぶ画面（[`watch_faces`]）が引く。置かれていなければ、見本は地の丸だけになる。
 #[derive(Clone, Copy)]
-pub struct FacePreview(pub fn(WristDesign, f32, &App) -> Div);
+pub struct FacePreview(pub fn(WristDesign, f32, &Theme, &App) -> Div);
 
 impl gpui::Global for FacePreview {}
 
@@ -54,13 +54,14 @@ pub struct Appearance {
 /// 外観: 上からテーマの見本（`theme-preview`）、テーマ（`setting-theme` → `setting-theme-dark` / `-light`）、パーソナルカラー
 /// （履歴の見本 `accent-<名前>` と、自分で色を作る `accent-custom`）。色を作るダイアログは `panel` の子として開く。
 pub fn appearance(
+    theme: &Theme,
     panel: PanelId,
     state: Appearance,
     set: impl Fn(Appearance, &mut Window, &mut App) + Clone + 'static,
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
-    let theme = Theme::current(cx);
+    let theme = *theme;
     let now = settings(cx);
     let current = now.personal_color.map_or(Accent::DEFAULT, accent);
     let open = move |theme_open: bool| {
@@ -271,7 +272,7 @@ fn face(design: WristDesign, used: bool, side: f32, theme: &Theme, cx: &App) -> 
     let color = if used { theme.neutral_text_low } else { 0 };
     let d = side - 2.0 * (ring + gap);
     let dial = match cx.try_global::<FacePreview>() {
-        Some(preview) => preview.0(design, d, cx),
+        Some(preview) => preview.0(design, d, theme, cx),
         None => div()
             .size(px(d))
             .rounded(px(radius::FULL))
@@ -296,12 +297,13 @@ fn face(design: WristDesign, used: bool, side: f32, theme: &Theme, cx: &App) -> 
 /// 左右に動かす。端はつながる）、中央のデザインの名前（左右の `watch-prev` / `watch-next` でも回す）、`watch-set`（押すとその
 /// デザインにする。使っているデザインでは押せない見た目で「設定中」）。使っているデザインの見本は輪で囲む。
 pub fn watch_faces(
+    theme: &Theme,
     state: WatchFaces,
     set: impl Fn(WatchFaces, &mut Window, &mut App) + Clone + 'static,
     window: &mut Window,
     cx: &mut App,
 ) -> Div {
-    let theme = Theme::current(cx);
+    let theme = *theme;
     let used = settings(cx).wrist_design;
     let designs = state.designs();
     let shown = state.shown(used);
@@ -371,7 +373,6 @@ pub fn watch_faces(
     let faces = {
         let designs = designs.clone();
         move |i: usize, side: f32, _: &mut Window, cx: &mut App| {
-            let theme = Theme::current(cx);
             face(designs[i], designs[i] == used, side, &theme, cx).into_any_element()
         }
     };
@@ -382,7 +383,9 @@ pub fn watch_faces(
         components::arc(FACE_PX),
         faces,
         pick.clone(),
-    );
+    )
+    // 薄くする幕は、置いた面の色。
+    .backdrop(theme.background);
     let turn = |id: &'static str, glyph, tip: SharedString, to: usize| {
         let pick = pick.clone();
         components::icon_button(&theme, id, glyph, tip, Variant::OnBackground)

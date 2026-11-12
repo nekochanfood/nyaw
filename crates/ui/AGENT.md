@@ -10,11 +10,11 @@
 
 ## 設定の部品（`ui::prefs`）
 
-全体の設定（`Setting`）を選ぶ画面の一部。設定画面とセットアップウィザードの両方が同じものを出す（画面どうしは直接依存しないので、共有する部品は UI 層に置く）。今の設定（`PanelControl::settings`）を見せ、選ぶとすぐ `PanelControl::setting_changes` に積む。地（`background`）の上に置く前提。開閉などの小さな状態（`Appearance` / `WatchFaces`。どちらも `Copy`）は呼び出し側が持ち、変えるときは `set` で受け取る（ビューの型を問わない）。
+全体の設定（`Setting`）を選ぶ画面の一部。設定画面とセットアップウィザードの両方が同じものを出す（画面どうしは直接依存しないので、共有する部品は UI 層に置く）。今の設定（`PanelControl::settings`）を見せ、選ぶとすぐ `PanelControl::setting_changes` に積む。色は渡されたテーマ `theme` で描く: 地（`background`）の上に置くなら今のテーマ、カードの上に置くなら `theme.on_card()`（`../design/AGENT.md` の「置く面に合わせる」。地の色の枠は敷かない）。開閉などの小さな状態（`Appearance` / `WatchFaces`。どちらも `Copy`）は呼び出し側が持ち、変えるときは `set` で受け取る（ビューの型を問わない）。
 
-- **`prefs::appearance(panel, state, set, window, cx)`**: 外観。上からテーマの見本（`theme-preview`）、テーマ（`setting-theme`）、パーソナルカラー（履歴の見本 `accent-<名前>` を左右中央に並べ、右端のプラス `accent-custom`）。プラスを押すと、色を作るダイアログ `prefs::ColorDialog` を `panel` の子として開く（開いている間、元の画面は暗くなって入力を受けない）。ダイアログはスライダーと見本を出し、`color-ok` で `Setting::CustomColor`（パーソナルカラーにして履歴の先頭に覚える）、`color-cancel` か外側を押すと何も変えずに閉じる。決めるまで、ほかの画面の色は変えない。
-- **`prefs::watch_faces(state, set, window, cx)`**: wrist の文字盤。上から種類の絞り込み（`watch-kind`: すべて / スタンダード / デジタル / アナログ）、弧に並ぶ見本（`watch-faces`。`design::components::carousel` + `arc`。押したまま左右に動かすか、左右のキャレット `watch-prev` / `watch-next` で回す。端はつながる）、中央のデザインの名前、`watch-set`（押すとそのデザインにする。使っているデザインでは押せない見た目で「設定中」）。回すだけでは設定は変わらない。使っているデザインの見本は、塗りの色の輪で囲む。
-- **文字盤の見本**: 描き方は wrist が GPUI のグローバル `prefs::FacePreview` に置く（`Wrist::new`）。置かれていなければ地の丸だけになる（wrist を載せないテスト）。
+- **`prefs::appearance(theme, panel, state, set, window, cx)`**: 外観。上からテーマの見本（`theme-preview`）、テーマ（`setting-theme`）、パーソナルカラー（履歴の見本 `accent-<名前>` を左右中央に並べ、右端のプラス `accent-custom`）。プラスを押すと、色を作るダイアログ `prefs::ColorDialog` を `panel` の子として開く（開いている間、元の画面は暗くなって入力を受けない）。ダイアログはスライダーと見本を出し、`color-ok` で `Setting::CustomColor`（パーソナルカラーにして履歴の先頭に覚える）、`color-cancel` か外側を押すと何も変えずに閉じる。決めるまで、ほかの画面の色は変えない。
+- **`prefs::watch_faces(theme, state, set, window, cx)`**: wrist の文字盤。上から種類の絞り込み（`watch-kind`: すべて / スタンダード / デジタル / アナログ）、弧に並ぶ見本（`watch-faces`。`design::components::carousel` + `arc`。押したまま左右に動かすか、左右のキャレット `watch-prev` / `watch-next` で回す。端はつながる）、中央のデザインの名前、`watch-set`（押すとそのデザインにする。使っているデザインでは押せない見た目で「設定中」）。回すだけでは設定は変わらない。使っているデザインの見本は、塗りの色の輪で囲む。
+- **文字盤の見本**: 描き方（デザイン・直径・置く面のテーマから描く関数）は wrist が GPUI のグローバル `prefs::FacePreview` に置く（`Wrist::new`）。置かれていなければ地の丸だけになる（wrist を載せないテスト）。
 - テスト: `prefs::tests`、操作は `crates/testkit/tests/scenarios/prefs.rs`、見た目は `look`（`look-*.bmp` / `look-watch-*.bmp` / `look-color-*.bmp`）。
 
 ## ポインタの方式

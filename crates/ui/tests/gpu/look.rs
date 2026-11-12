@@ -19,7 +19,7 @@ impl Render for Faces {
         let theme = design::Theme::current(cx);
         let rows = kernel::WristFace::ALL.iter().map(|face| {
             let designs = face.designs().iter();
-            let previews = designs.map(|&design| wrist::preview(design, 268.0, cx));
+            let previews = designs.map(|&design| wrist::preview(design, 268.0, &theme, cx));
             div().flex().gap(px(24.0)).children(previews)
         });
         div()
