@@ -6,9 +6,7 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 env:
-  # sccache が rustc の出力をキャッシュする。インクリメンタルは sccache と相性が悪いので切る
-  RUSTC_WRAPPER: sccache
-  SCCACHE_GHA_ENABLED: "true"
+  # インクリメンタルは CI では使い回さない（sccache とも相性が悪い）
   CARGO_INCREMENTAL: "0"
   # audio の build.rs が Steam Audio の SDK（180MB）を落とさないように。テストは phonon を使わない
   NYAW_SKIP_PHONON: "1"
@@ -29,6 +27,10 @@ jobs:
     # draft の PR では走らせない（ready_for_review で走る）
     if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || github.ref == 'refs/heads/main'
     runs-on: windows-latest
+    env:
+      # sccache が rustc の出力をキャッシュする
+      RUSTC_WRAPPER: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -47,10 +49,12 @@ jobs:
     env:
       # デバッグ情報（PDB）の生成とリンクがテストバイナリの数だけ効いて重いので切る。panic の位置は出る
       CARGO_PROFILE_DEV_DEBUG: 0
+    # sccache は使わない。Rust 1.100 の build-dir の新レイアウトで rustc に依存クレートごとの -L dependency= が付き、
+    # nyapp のコマンドラインが Windows の上限（32767 文字）を超える。cargo は引数ファイル（@file）に逃がすが、
+    # sccache はそれを展開して rustc を直に起動し、os error 206 で落ちる
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           # v0 はキャンセルされた run が途中までの target を保存し、以後キーが完全一致して上書きされず外部クレートを毎回ビルドしていた
