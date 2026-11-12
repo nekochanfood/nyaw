@@ -1302,8 +1302,8 @@ pub fn select_option(
     b
 }
 
-/// ドロップダウンのボタン: 今の値と開く向きの印（`caret-down`。上へ開く `up` なら `caret-up`）。行の中ではなく単独で置く、複数から
-/// 1 つ選ぶ操作（行の中なら [`select`]）。`glyph` があれば値の左に出す。押したら呼び出し側が [`dropdown_popover`]（同じ `up`）を
+/// ドロップダウンのボタン: 今の値と開閉の印（[`select`] と同じ `caret-up-down`）。行の中ではなく単独で置く、複数から
+/// 1 つ選ぶ操作（行の中なら [`select`]）。`glyph` があれば値の左に出す。押したら呼び出し側が [`dropdown_popover`] を
 /// `.child` で足して選択肢を開く。
 pub fn dropdown(
     theme: &Theme,
@@ -1311,15 +1311,9 @@ pub fn dropdown(
     variant: Variant,
     glyph: Option<&'static crate::Icon>,
     value: impl Into<SharedString>,
-    up: bool,
 ) -> Button {
     let mut b = content_button(theme, id, variant);
-    let caret = if up {
-        &crate::icons::CARET_UP
-    } else {
-        &crate::icons::CARET_DOWN
-    };
-    let caret = crate::icon(caret).size(px(font_size::MD));
+    let caret = crate::icon(&crate::icons::CARET_UP_DOWN).size(px(font_size::MD));
     b.base = b
         .base
         .relative()

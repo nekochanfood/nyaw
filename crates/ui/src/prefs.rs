@@ -352,7 +352,6 @@ pub fn watch_faces(
         Variant::OnBackground,
         None,
         kind(state.face, cx),
-        false,
     )
     .on_click(move |_, window, cx| show(window, cx))
     .child(popover);
