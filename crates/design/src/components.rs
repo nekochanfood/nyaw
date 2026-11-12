@@ -12,6 +12,7 @@ use gpui::{
 };
 use palette::{FromColor, Mix, Oklab, Srgb};
 
+mod carousel;
 mod color;
 mod navigation;
 mod scrollbar;
@@ -20,7 +21,8 @@ pub mod slide;
 mod slider;
 mod tooltip;
 mod wizard;
-pub use color::{accent_picker, swatch};
+pub use carousel::{Carousel, Place, Shape, arc, carousel};
+pub use color::{accent_row, accent_sliders, swatch};
 pub use navigation::{Navigation, navigation};
 pub use scrollbar::{Elastic, Scroll, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_button};
@@ -156,6 +158,8 @@ pub struct Button {
     background_opacity: f32,
     /// ホバー中にカーソルへ出す説明（[`Tooltips`]）。
     tooltip: Option<SharedString>,
+    /// 押せない（[`disabled_button`]）。押した音を出さない。
+    disabled: bool,
 }
 
 impl Button {
@@ -221,6 +225,30 @@ pub fn button(
 ) -> Button {
     let mut b = base_button(theme, id.into(), variant);
     b.base = b.base.px(px(BUTTON_PADDING)).child(label.into());
+    b
+}
+
+/// 押せないボタン: 今その状態であること（「設定中」など）を、ボタンのあった場所に示す。塗りの無い枠だけのカプセルに、
+/// チェックの印と文字（`neutral-text-low`）。ホバー・押下で色が変わらず、波紋も音も出ない。地・カードのどちらにも置ける。
+pub fn disabled_button(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+) -> Button {
+    let mut b = inert(base_button(theme, id.into(), Variant::Ghost));
+    b.disabled = true;
+    let check = crate::icon(&crate::icons::CHECK)
+        .weight(crate::Weight::Bold)
+        .size(px(font_size::MD));
+    b.base = b
+        .base
+        .px(px(BUTTON_PADDING))
+        .gap(px(spacing::SM))
+        .border_1()
+        .border_color(rgba(theme.neutral_border))
+        .text_color(rgba(theme.neutral_text_low))
+        .child(check)
+        .child(label.into());
     b
 }
 
@@ -333,6 +361,7 @@ fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
         ghost: matches!(variant, Variant::Ghost),
         background_opacity: 1.0,
         tooltip: None,
+        disabled: false,
     }
 }
 
@@ -437,6 +466,7 @@ impl RenderOnce for Button {
         let (ink, enabled) = (self.ink, self.ripple && animated);
         let (over, leave) = (set(Some(true), None), set(Some(false), None));
         let (id, tip, quiet) = (self.id, self.tooltip.clone(), self.quiet);
+        let disabled = self.disabled;
         let (down, up) = (set(None, Some(true)), set(None, Some(false)));
         let up_out = set(None, Some(false));
         // ボタンごとに違う角丸（`rounded*` で上書きされたものも含む）。指定が無い角は 0。
@@ -547,7 +577,9 @@ impl RenderOnce for Button {
                 if *h { over(w, cx) } else { leave(w, cx) }
             })
             .on_mouse_down(MouseButton::Left, move |e, w, cx| {
-                crate::cue::emit(crate::cue::Cue::Click, w, cx);
+                if !disabled {
+                    crate::cue::emit(crate::cue::Cue::Click, w, cx);
+                }
                 if enabled {
                     press.update(cx, |s, _| {
                         s.ripple = Some((e.position, crate::drive::now()))
@@ -1354,18 +1386,92 @@ pub fn select_option(
     b
 }
 
+/// ドロップダウンのボタン: 今の値と開閉の印（[`select`] と同じ `caret-up-down`）。行の中ではなく単独で置く、複数から
+/// 1 つ選ぶ操作（行の中なら [`select`]）。`glyph` があれば値の左に出す。押したら呼び出し側が [`dropdown_popover`] を
+/// `.child` で足して選択肢を開く。
+pub fn dropdown(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    variant: Variant,
+    glyph: Option<&'static crate::Icon>,
+    value: impl Into<SharedString>,
+) -> Button {
+    let mut b = content_button(theme, id, variant);
+    let caret = crate::icon(&crate::icons::CARET_UP_DOWN).size(px(font_size::MD));
+    b.base = b
+        .base
+        .relative()
+        // 文字の側は広く、印の側は少し詰める（印は自分の余白を持つ）。
+        .pl(px(spacing::XL))
+        .pr(px(spacing::LG))
+        .font_weight(FontWeight::NORMAL)
+        .children(glyph.map(|g| crate::icon(g).size(px(font_size::LG))))
+        .child(div().min_w_0().truncate().child(value.into()))
+        .child(caret);
+    b
+}
+
+/// 選択肢のポップオーバーを出す場所（開いた要素から見て）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Popover {
+    /// 右下に右端を揃える（[`select`] の行）。
+    BelowEnd,
+    /// 下に左右中央を揃える（[`dropdown`]）。
+    Below,
+    /// 上に左右中央を揃える（画面の下の方に置いた [`dropdown`]）。
+    Above,
+}
+
+/// [`dropdown`] の選択肢のポップオーバー: [`select_popover`] と同じもので、ボタンの下（`up` なら上）に左右中央を揃えて出す。
+#[allow(clippy::too_many_arguments)]
+pub fn dropdown_popover(
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+    id: &'static str,
+    open: bool,
+    up: bool,
+    items: impl IntoIterator<Item = Button>,
+    on_dismiss: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    let place = if up { Popover::Above } else { Popover::Below };
+    popover(theme, window, cx, id, open, place, items, on_dismiss)
+}
+
 /// 選択肢のポップオーバー（[`select`] の子に置く）: 行の右下に右端を揃え、メニューのカード（[`menu`]）に影と縁取りを付けて浮かべる。
 /// 後ろにウィンドウ全体（`viewport`）を覆う透明な板を敷き、外を押すとそれが受けて `on_dismiss` を呼ぶ（下の要素は押されない。
 /// 開いている行をもう一度押しても、閉じてすぐ開き直さない）。
 /// 行（`id`）ごとに毎回呼び、`open` で開閉する。開くと [`SELECT_POPOVER_RISE`] 上から下りながら現れ（`Motion::Enter`）、
 /// 閉じるとその逆で消える（`Motion::Exit`）。消えきるまでは描き続け、閉じ始めた時点で外の板は外す。
-#[allow(clippy::too_many_arguments)]
 pub fn select_popover(
     theme: &Theme,
     window: &mut Window,
     cx: &mut App,
     id: &'static str,
     open: bool,
+    items: impl IntoIterator<Item = Button>,
+    on_dismiss: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    popover(
+        theme,
+        window,
+        cx,
+        id,
+        open,
+        Popover::BelowEnd,
+        items,
+        on_dismiss,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn popover(
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+    id: &'static str,
+    open: bool,
+    place: Popover,
     items: impl IntoIterator<Item = Button>,
     on_dismiss: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
@@ -1393,10 +1499,35 @@ pub fn select_popover(
         return div().absolute();
     }
     let viewport = window.viewport_size();
-    div()
-        .absolute()
-        .right_0()
-        .bottom_0()
+    // 開いた要素の縁の上の、大きさの無い点。ここにカードの角（か辺の中央）を合わせる。
+    let (at, anchor) = match place {
+        Popover::BelowEnd => (div().right_0().bottom_0(), gpui::Anchor::TopRight),
+        Popover::Below => (
+            div().left(gpui::relative(0.5)).bottom_0(),
+            gpui::Anchor::TopCenter,
+        ),
+        Popover::Above => (
+            div().left(gpui::relative(0.5)).top_0(),
+            gpui::Anchor::BottomCenter,
+        ),
+    };
+    // 開いた要素との間は `XS`。現れるときは、その向こうから [`SELECT_POPOVER_RISE`] だけ寄ってくる。
+    let gap = px(spacing::XS - SELECT_POPOVER_RISE * (1.0 - shown));
+    let card = menu(theme, items)
+        .id("select-popover")
+        .occlude()
+        .min_w(px(SELECT_POPOVER_MIN_WIDTH))
+        .opacity(shown)
+        // ダークではカードの上に重なると同じ色で境目が消えるので、影に加えて薄い線で縁取る。
+        .border_1()
+        .border_color(rgba(theme.neutral_border_subtle))
+        .shadow_md();
+    let card = if place == Popover::Above {
+        card.mb(gap)
+    } else {
+        card.mt(gap)
+    };
+    at.absolute()
         .children(open.then(|| {
             deferred(
                 anchored()
@@ -1412,26 +1543,7 @@ pub fn select_popover(
                     ),
             )
         }))
-        .child(
-            deferred(
-                anchored()
-                    .anchor(gpui::Anchor::TopRight)
-                    .snap_to_window()
-                    .child(
-                        menu(theme, items)
-                            .id("select-popover")
-                            .occlude()
-                            .min_w(px(SELECT_POPOVER_MIN_WIDTH))
-                            .mt(px(spacing::XS - SELECT_POPOVER_RISE * (1.0 - shown)))
-                            .opacity(shown)
-                            // ダークではカードの上に重なると同じ色で境目が消えるので、影に加えて薄い線で縁取る。
-                            .border_1()
-                            .border_color(rgba(theme.neutral_border_subtle))
-                            .shadow_md(),
-                    ),
-            )
-            .priority(1),
-        )
+        .child(deferred(anchored().anchor(anchor).snap_to_window().child(card)).priority(1))
 }
 
 /// メニューの行（[`menu_item`]）を縦に並べる。区切り線は引かず、行はカード（[`MENU_RADIUS`]）と同心の角丸にし、ホバー・押下のときだけ沈む。
@@ -1642,73 +1754,95 @@ impl RenderOnce for Dialog {
     }
 }
 
-/// テーマの見本: `theme` で描いた小さな画面（地の上のカードに、アイコン・文字・スイッチ・スライダー・ボタン）。
-/// テーマやパーソナルカラーを選ぶ画面で、選んだ結果を見せる。文言は呼び出し側が渡す（`id` は中の部品の接頭辞）。
-pub fn theme_preview(
-    theme: &Theme,
-    id: &'static str,
-    title: impl Into<SharedString>,
-    body: impl Into<SharedString>,
-    action: impl Into<SharedString>,
-) -> Div {
-    // 動かせない、見た目だけのスライダー（埋まった側は塗りの色）。
-    let bar = div()
-        .flex_1()
-        .h(px(6.0))
+/// テーマの見本の窓 1 枚の大きさと、手前の窓を奥の窓からずらす量（px）。
+const PREVIEW_WINDOW: (f32, f32) = (176.0, 120.0);
+const PREVIEW_SHIFT: (f32, f32) = (96.0, 44.0);
+
+/// テーマの見本（文字の無い絵。`theme-preview`）: 地の上に重なった 2 枚の窓。手前の窓に、文字に見立てた線と塗りの色のボタン。
+/// テーマやパーソナルカラーを選ぶ画面で、`theme` にした結果を見せる。大きさは決まっていて、置き場所は呼び出し側が決める。
+pub fn theme_preview(theme: &Theme) -> Div {
+    let line = |width: f32, color: u32| {
+        div()
+            .w(px(width))
+            .h(px(6.0))
+            .rounded(px(radius::FULL))
+            .bg(rgba(color))
+    };
+    let window = || {
+        div()
+            .absolute()
+            .w(px(PREVIEW_WINDOW.0))
+            .h(px(PREVIEW_WINDOW.1))
+            .p(px(spacing::LG))
+            .flex()
+            .flex_col()
+            .gap(px(spacing::SM))
+            .rounded(px(radius::LG))
+            // 窓は影で地から浮かせる（枠線は使わない）。
+            .shadow_md()
+            .bg(rgba(theme.card))
+    };
+    // ボタンの上に載る色（`on-accent`）も、短い線で見せる。
+    let button = div()
+        .w(px(52.0))
+        .h(px(22.0))
         .rounded(px(radius::FULL))
-        .bg(rgba(theme.groove))
-        .child(
-            div()
-                .w(gpui::relative(0.6))
-                .h_full()
-                .rounded(px(radius::FULL))
-                .bg(rgba(theme.accent_solid)),
-        );
-    let heading = div()
+        .circular_corners()
+        .bg(rgba(theme.accent_solid))
         .flex()
         .items_center()
-        .gap(px(spacing::SM))
-        .font_weight(FontWeight::BOLD)
+        .justify_center()
+        .child(line(24.0, theme.on_accent).h(px(4.0)));
+    let back = window()
+        .top_0()
+        .left_0()
+        .child(line(56.0, theme.neutral_text_low))
+        .child(line(96.0, theme.groove))
+        .child(line(72.0, theme.groove));
+    let front = window()
+        .left(px(PREVIEW_SHIFT.0))
+        .top(px(PREVIEW_SHIFT.1))
+        .child(line(72.0, theme.neutral_text))
+        .child(line(132.0, theme.neutral_text_low))
+        .child(line(108.0, theme.neutral_text_low))
         .child(
-            crate::icon(&crate::icons::SPARKLE)
-                .weight(crate::Weight::Fill)
-                .size(px(font_size::LG))
-                .color(rgba(theme.accent_solid)),
-        )
-        .child(div().min_w_0().truncate().child(title.into()));
+            div()
+                .flex_1()
+                .flex()
+                .items_end()
+                .justify_end()
+                .child(button),
+        );
     div()
-        .debug_selector(move || id.to_string())
-        .p(px(spacing::MD))
+        .debug_selector(|| "theme-preview".into())
+        .flex_none()
+        .p(px(spacing::LG))
         .rounded(px(radius::LG))
         .bg(rgba(theme.background))
         .child(
-            card(theme)
-                .p(px(spacing::LG))
-                .flex()
-                .flex_col()
-                .gap(px(spacing::MD))
-                .child(heading)
-                .child(
-                    div()
-                        .text_size(px(font_size::SM))
-                        .text_color(rgba(theme.neutral_text_low))
-                        .child(body.into()),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(spacing::LG))
-                        .child(switch(theme, format!("{id}-switch"), true))
-                        .child(bar),
-                )
-                .child(div().flex().justify_end().child(button(
-                    theme,
-                    format!("{id}-action"),
-                    action,
-                    Variant::Primary,
-                ))),
+            div()
+                .relative()
+                .w(px(PREVIEW_WINDOW.0 + PREVIEW_SHIFT.0))
+                .h(px(PREVIEW_WINDOW.1 + PREVIEW_SHIFT.1))
+                .child(back)
+                .child(front),
         )
+}
+
+/// グループ: 小さな見出しの下に中身（カードや一覧）。設定の項目をまとめる。
+pub fn group(theme: &Theme, title: impl Into<SharedString>, body: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(spacing::SM))
+        .child(
+            div()
+                .px(px(spacing::LG))
+                .text_size(px(font_size::SM))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(title.into()),
+        )
+        .child(body)
 }
 
 /// 画面やパネルの地。文字色も役割から決まる。

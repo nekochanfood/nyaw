@@ -1452,6 +1452,13 @@ enum WindowOpenState {
 
 const WINDOW_CLASS_NAME: PCWSTR = w!("Zed::Window");
 
+/// NYAW: `hwnd` が GPUI の窓か（ウィンドウクラスで見分ける）。
+pub(crate) fn is_gpui_window(hwnd: HWND) -> bool {
+    let mut class_name = [0u16; 32];
+    let length = unsafe { GetClassNameW(hwnd, &mut class_name) } as usize;
+    class_name.get(..length) == Some(unsafe { WINDOW_CLASS_NAME.as_wide() })
+}
+
 fn register_window_class(icon_handle: HICON) {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {

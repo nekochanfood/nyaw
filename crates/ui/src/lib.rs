@@ -6,6 +6,7 @@ mod cue;
 pub mod keyboard;
 pub mod mirror;
 mod panel_window;
+pub mod prefs;
 pub use panel_window::{open_panel_window, panel_window_options};
 
 use std::{

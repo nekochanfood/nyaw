@@ -20,7 +20,7 @@ impl Accent {
     /// 鮮やかさの上限（sRGB で出せる最も鮮やかな色のあたり）。
     pub const MAX_CHROMA: f32 = 0.3;
 
-    /// 用意した色（名前は i18n の `color.<名前>`）。先頭が既定。
+    /// 用意した色（名前は i18n の `color.<名前>`）。先頭が既定。選ぶ画面に並ぶ履歴（[`Accent::history`]）の最初の中身。
     pub const PRESETS: [(&'static str, Accent); 8] = [
         ("blue", Accent::DEFAULT),
         ("purple", Accent::new(0.6, 0.2, 300.0)),
@@ -38,6 +38,35 @@ impl Accent {
             chroma,
             hue,
         }
+    }
+
+    /// 選ぶ画面に並べる履歴（[`Accent::PRESETS`] と同じ数）: 自分で作った色 `custom`（新しい順）の後ろを、用意した色で埋める。
+    /// 同じ色は 1 つだけ。作っていなければ用意した色そのもの。今の色 `current` が並びに無ければ（履歴が無いころに作った色）先頭に置く。
+    pub fn history(current: Accent, custom: impl IntoIterator<Item = Accent>) -> Vec<Accent> {
+        let len = Accent::PRESETS.len();
+        let presets = Accent::PRESETS.map(|(_, a)| a);
+        let mut row: Vec<Accent> = Vec::with_capacity(len + 1);
+        for a in custom.into_iter().chain(presets) {
+            if row.len() < len && !row.contains(&a) {
+                row.push(a);
+            }
+        }
+        if !row.contains(&current) {
+            row.insert(0, current);
+            row.truncate(len);
+        }
+        row
+    }
+
+    /// 用意した色ならその名前（[`Accent::PRESETS`]）。
+    pub fn name(self) -> Option<&'static str> {
+        let found = Accent::PRESETS.iter().find(|(_, a)| *a == self);
+        found.map(|(name, _)| *name)
+    }
+
+    /// 色の表記（`#RRGGBB`）。名前の無い色を、文字でも伝えるのに使う。
+    pub fn hex(self) -> String {
+        format!("#{:06X}", self.color() >> 8)
     }
 
     /// この色そのもの（0xRRGGBBAA。画面に出せない鮮やかさは落とす）。塗りにはこれをそのまま使う。
@@ -252,6 +281,29 @@ mod tests {
         let ink = fill(Mode::Dark, Accent::new(0.15, 0.0, 0.0));
         assert_eq!(ink.on, scale::WHITE);
         assert!(contrast(ink.active, scale::BLACK) > contrast(ink.solid, scale::BLACK));
+    }
+
+    /// 履歴の最初の中身は用意した色。作った色は先頭に入り、用意した色が後ろから落ちる。
+    #[test]
+    fn history_starts_as_the_presets_and_takes_custom_colors_first() {
+        let presets = Accent::PRESETS.map(|(_, a)| a);
+        assert_eq!(Accent::history(Accent::DEFAULT, []), presets);
+        let (mine, older) = (Accent::new(0.5, 0.1, 10.0), Accent::new(0.4, 0.1, 20.0));
+        // 用意した色と同じ色を作っても、2 つは並ばない。
+        let row = Accent::history(mine, [mine, older, presets[2]]);
+        assert_eq!(row.len(), presets.len());
+        assert_eq!(row[..5], [mine, older, presets[2], presets[0], presets[1]]);
+        assert!(!row.contains(&presets[7]), "後ろから落ちる");
+        // 並びに無い今の色（履歴が無いころに作った色）は先頭に見せる。
+        let row = Accent::history(mine, []);
+        assert_eq!(
+            (row[0], row[1], row.len()),
+            (mine, presets[0], presets.len())
+        );
+        assert_eq!(presets[2].name(), Some("pink"));
+        assert_eq!(mine.name(), None);
+        let hex = Accent::new(1.0, 0.0, 0.0).hex();
+        assert_eq!(hex, "#FFFFFF");
     }
 
     #[test]

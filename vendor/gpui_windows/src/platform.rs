@@ -508,6 +508,11 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
     if msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN {
         return None;
     }
+    // NYAW: 同じスレッドの GPUI 以外の窓（novr のエミュレーター）は WM_GPUI_KEYDOWN を知らず、DefWindowProc の 0 が
+    // 「処理済み」に見えて WM_KEYDOWN が配られずに消えていた。GPUI の窓にだけ聞く。
+    if !is_gpui_window(msg.hwnd) {
+        return None;
+    }
 
     let result = unsafe {
         SendMessageW(

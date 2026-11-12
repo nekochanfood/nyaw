@@ -232,16 +232,17 @@ pub enum Primitive {
 
 #[expect(missing_docs)]
 impl Primitive {
-    pub fn bounds(&self) -> &Bounds<ScaledPixels> {
+    /// NYAW: where it is drawn (a transformed primitive's bounding box), so overlapping draws keep their order.
+    pub fn bounds(&self) -> Bounds<ScaledPixels> {
         match self {
-            Primitive::Shadow(shadow) => &shadow.bounds,
-            Primitive::Quad(quad) => &quad.bounds,
-            Primitive::Path(path) => &path.bounds,
-            Primitive::Underline(underline) => &underline.bounds,
-            Primitive::MonochromeSprite(sprite) => &sprite.bounds,
-            Primitive::SubpixelSprite(sprite) => &sprite.bounds,
-            Primitive::PolychromeSprite(sprite) => &sprite.bounds,
-            Primitive::Surface(surface) => &surface.bounds,
+            Primitive::Shadow(shadow) => shadow.transformation.transform_bounds(shadow.bounds),
+            Primitive::Quad(quad) => quad.transformation.transform_bounds(quad.bounds),
+            Primitive::Path(path) => path.bounds,
+            Primitive::Underline(underline) => underline.bounds,
+            Primitive::MonochromeSprite(sprite) => sprite.transformation.transform_bounds(sprite.bounds),
+            Primitive::SubpixelSprite(sprite) => sprite.transformation.transform_bounds(sprite.bounds),
+            Primitive::PolychromeSprite(sprite) => sprite.bounds,
+            Primitive::Surface(surface) => surface.bounds,
         }
     }
 
@@ -543,6 +544,8 @@ pub struct Quad {
     pub border_widths: Edges<ScaledPixels>,
     /// NYAW: superellipse exponent `n = 2^k` of the rounded corners (CSS `superellipse(k)`). 2 (or 0, the default) is a circular corner.
     pub corner_exponent: f32,
+    /// NYAW: where the quad is drawn (`bounds` and the corners are before it). See [`crate::Window::with_rotation`].
+    pub transformation: TransformationMatrix,
 }
 
 impl From<Quad> for Primitive {
@@ -586,6 +589,8 @@ pub struct Shadow {
     pub inset: u32,
     /// NYAW: superellipse exponent `2^k` of the corners (0 or 2 = circular); also keeps the struct 8-byte aligned.
     pub corner_exponent: f32,
+    /// NYAW: where the shadow is drawn (the bounds are before it). See [`crate::Window::with_rotation`].
+    pub transformation: TransformationMatrix,
 }
 
 impl From<Shadow> for Primitive {
@@ -687,6 +692,29 @@ impl TransformationMatrix {
                     + self.rotation_scale[1][1] * other.translation[1],
             ],
         }
+    }
+
+    /// NYAW: the axis-aligned box around `bounds` once transformed.
+    pub fn transform_bounds(&self, bounds: Bounds<ScaledPixels>) -> Bounds<ScaledPixels> {
+        if *self == Self::unit() {
+            return bounds;
+        }
+        let corners = [
+            bounds.origin,
+            bounds.top_right(),
+            bounds.bottom_left(),
+            bounds.bottom_right(),
+        ]
+        .map(|p| self.apply_scaled(p));
+        let min = corners.iter().fold(corners[0], |a, p| a.min(p));
+        let max = corners.iter().fold(corners[0], |a, p| a.max(p));
+        Bounds::from_corners(min, max)
+    }
+
+    /// NYAW: [`Self::apply`] in scaled pixels.
+    pub fn apply_scaled(&self, point: Point<ScaledPixels>) -> Point<ScaledPixels> {
+        let p = self.apply(Point::new(Pixels(point.x.0), Pixels(point.y.0)));
+        Point::new(ScaledPixels(p.x.0), ScaledPixels(p.y.0))
     }
 
     /// Apply transformation to a point, mainly useful for debugging
@@ -922,6 +950,20 @@ where
     #[expect(missing_docs)]
     pub fn clipped_bounds(&self) -> Bounds<T> {
         self.bounds.intersect(&self.content_mask.bounds)
+    }
+}
+
+impl Path<ScaledPixels> {
+    /// NYAW: the path moved by `transformation` (the vertices, and the bounds to the box around them).
+    pub fn transform(mut self, transformation: &TransformationMatrix) -> Self {
+        if *transformation == TransformationMatrix::unit() {
+            return self;
+        }
+        for vertex in &mut self.vertices {
+            vertex.xy_position = transformation.apply_scaled(vertex.xy_position);
+        }
+        self.bounds = transformation.transform_bounds(self.bounds);
+        self
     }
 }
 

@@ -17,8 +17,8 @@ use std::time::{Duration, Instant};
 use subsystems::os;
 
 pub use config::{
-    Config, DominantHand, Language, LodQuality, PersonalColor, PointerMode, ThemeMode, WristDesign,
-    WristFace,
+    COLOR_HISTORY, Config, DominantHand, Language, LodQuality, PersonalColor, PointerMode,
+    ThemeMode, WristDesign, WristFace,
 };
 pub use overlay::{
     self, Anchor, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent,
@@ -117,6 +117,8 @@ pub enum Setting {
     Theme(ThemeMode),
     /// パーソナルカラー（`personal_color`）。範囲の外の値は範囲に収める。
     PersonalColor(PersonalColor),
+    /// 自分で作った色をパーソナルカラーにし、履歴（`color_history`）の先頭に覚える。同じ色は 1 つだけ残り、古いものから落ちる。
+    CustomColor(PersonalColor),
     /// 画面の言語（`language`）。
     Language(Language),
     /// レーザーの手ブレ抑えの強さ（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`。`pointer_smoothing`）。
@@ -150,6 +152,8 @@ pub struct Settings {
     pub theme: ThemeMode,
     /// パーソナルカラー。選んでいなければ `None`（既定の色味）。
     pub personal_color: Option<PersonalColor>,
+    /// 自分で作ったパーソナルカラーの履歴（新しい順。空きは `None`）。
+    pub color_history: [Option<PersonalColor>; COLOR_HISTORY],
     pub language: Language,
     pub pointer_smoothing: f32,
     pub pointer_release_deg: f32,
@@ -172,6 +176,7 @@ impl Default for Settings {
             pointer_mode: Default::default(),
             theme: Default::default(),
             personal_color: None,
+            color_history: [None; COLOR_HISTORY],
             language: Default::default(),
             pointer_smoothing: Default::default(),
             pointer_release_deg: Default::default(),
@@ -456,6 +461,10 @@ impl<B: VrBackend> Kernel<B> {
             pointer_mode: self.pointer_mode,
             theme: self.config.theme,
             personal_color: self.config.personal_color.map(PersonalColor::clamped),
+            color_history: std::array::from_fn(|i| {
+                let color = self.config.color_history.get(i);
+                color.copied().map(PersonalColor::clamped)
+            }),
             language: self.config.language.unwrap_or_default(),
             pointer_smoothing: self.overlay.pointer_smoothing(),
             pointer_release_deg: self.overlay.pointer_release(),
@@ -496,6 +505,16 @@ impl<B: VrBackend> Kernel<B> {
                 let c = c.clamped();
                 self.config.personal_color = Some(c);
                 ("personal_color", config::value(c))
+            }
+            Setting::CustomColor(c) => {
+                // 選ぶのは `PersonalColor` と同じ（先に書き戻す）。続けて履歴を書き戻す。
+                self.set(Setting::PersonalColor(c));
+                let c = c.clamped();
+                let history = &mut self.config.color_history;
+                history.retain(|h| h.clamped() != c);
+                history.insert(0, c);
+                history.truncate(COLOR_HISTORY);
+                ("color_history", config::value(history.clone()))
             }
             Setting::Language(l) => {
                 self.config.language = Some(l);
@@ -1335,6 +1354,41 @@ mod tests {
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(saved.personal_color, want);
+    }
+
+    /// 自分で作った色は選ばれ、履歴の先頭に残る（同じ色は 1 つ、古いものから落ちる）。選ぶだけなら履歴は変わらない。
+    #[test]
+    fn custom_colors_are_selected_and_remembered_newest_first() {
+        let path =
+            std::env::temp_dir().join(format!("nyaw-kernel-history-{}.toml", std::process::id()));
+        let (mut k, _) = kernel();
+        k.config_path = Some(path.clone());
+        let color = |hue: f32| PersonalColor {
+            lightness: 0.6,
+            chroma: 0.2,
+            hue,
+        };
+        assert_eq!(k.settings().color_history, [None; COLOR_HISTORY]);
+        k.set(Setting::PersonalColor(color(1.0)));
+        assert_eq!(k.settings().color_history[0], None, "選ぶだけでは覚えない");
+        for hue in [10.0, 20.0, 10.0] {
+            k.set(Setting::CustomColor(color(hue)));
+        }
+        let s = k.settings();
+        assert_eq!(s.personal_color, Some(color(10.0)));
+        let newest = [Some(color(10.0)), Some(color(20.0)), None];
+        assert_eq!(s.color_history[..3], newest);
+        let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(saved.personal_color, Some(color(10.0)));
+        assert_eq!(saved.color_history, [color(10.0), color(20.0)]);
+        for n in 0..COLOR_HISTORY + 2 {
+            k.set(Setting::CustomColor(color(100.0 + n as f32)));
+        }
+        let history = k.settings().color_history;
+        assert_eq!(history[0], Some(color(101.0 + COLOR_HISTORY as f32)));
+        let oldest = Some(color(102.0));
+        assert_eq!(history[COLOR_HISTORY - 1], oldest, "古いものから落ちる");
     }
 
     #[test]

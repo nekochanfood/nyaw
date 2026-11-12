@@ -1377,7 +1377,7 @@ const SIDEBAR_PX: f32 = 320.0;
 const SETTINGS_SLIDER_PX: f32 = 520.0;
 
 /// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
-const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 7] = [
+const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 8] = [
     (
         "settings-general",
         &design::icons::GEAR,
@@ -1387,6 +1387,11 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 7] = [
         "settings-appearance",
         &design::icons::PALETTE,
         "settings.category.appearance",
+    ),
+    (
+        "settings-watch",
+        &design::icons::WATCH,
+        "settings.category.watch",
     ),
     (
         "settings-pointer",
@@ -1443,11 +1448,16 @@ pub fn settings_spec(
 /// 設定画面（`settings-test`）。GNOME の設定のようなツートーン: 左のサイドバー（地は `sidebar`）にカテゴリの一覧、
 /// 右（地は `background`）に選んだカテゴリの設定。サイドバーの行（`components::sidebar_item`）は選んでいるものだけ
 /// 文字が濃く、左端に印が付く。中身はカードを縦に並べる。複数から選ぶ設定は選択の行（`components::select`）で、押すと
-/// 選択肢のポップオーバーが開き、選ぶとすぐ全体の設定（`Setting`）に反映する。
+/// 選択肢のポップオーバーが開き、選ぶとすぐ全体の設定（`Setting`）に反映する。外観と時計は `ui::prefs` の部品。
 #[derive(Default)]
 pub struct Settings {
+    /// このパネル（色を作るダイアログを子として開く）。
+    panel: PanelId,
     /// 選んでいるカテゴリ（[`SETTINGS_CATEGORIES`] の添字）。
     pub category: usize,
+    /// 外観・時計の部品の状態。
+    pub appearance: ui::prefs::Appearance,
+    pub watch: ui::prefs::WatchFaces,
     /// 選択肢を開いている選択の行（`debug_selector`）。
     pub open: Option<&'static str>,
     /// 情報からライセンスの一覧を開いている。
@@ -1460,8 +1470,11 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn new(_panel: PanelId) -> Self {
-        Self::default()
+    pub fn new(panel: PanelId) -> Self {
+        Self {
+            panel,
+            ..Self::default()
+        }
     }
 
     /// 選択の行（`components::select`）。押すと選択肢のポップオーバーを開き、選ぶと `set` で全体の設定に反映して閉じる。
@@ -1584,117 +1597,36 @@ impl Settings {
                     .on_click(change(Setting::BlockInput(!now.block_input))),
                 ],
             )],
-            // 外観: テーマと、パーソナルカラー（ボタンなどの塗りの色）。下の見本で、選んだ結果を確かめられる。
+            // 外観: テーマの見本・テーマ・パーソナルカラー（セットアップウィザードと同じ部品）。
             1 => {
-                let accent = now.personal_color.map_or(design::Accent::DEFAULT, |c| {
-                    design::Accent::new(c.lightness, c.chroma, c.hue)
-                });
-                let face = now.wrist_design.face();
-                let picker = components::accent_picker(
-                    theme,
-                    accent,
-                    SETTINGS_SLIDER_PX,
-                    |name| i18n::t(cx, &format!("color.{name}")),
-                    |a, _, cx| {
-                        push_setting(
-                            Setting::PersonalColor(kernel::PersonalColor {
-                                lightness: a.lightness,
-                                chroma: a.chroma,
-                                hue: a.hue,
-                            }),
-                            cx,
-                        )
-                    },
-                );
-                vec![
-                    components::list(
-                        theme,
-                        [self.select(
-                            theme,
-                            window,
-                            cx,
-                            "setting-theme",
-                            &design::icons::PALETTE,
-                            i18n::t(cx, "settings.theme"),
-                            now.theme,
-                            vec![
-                                (
-                                    "setting-theme-dark",
-                                    i18n::t(cx, "theme.dark"),
-                                    kernel::ThemeMode::Dark,
-                                ),
-                                (
-                                    "setting-theme-light",
-                                    i18n::t(cx, "theme.light"),
-                                    kernel::ThemeMode::Light,
-                                ),
-                            ],
-                            Setting::Theme,
-                        )],
-                    ),
-                    // 腕時計: 文字盤の種類と、その種類のデザイン。選択肢は `kernel` の表から並べる（足しても、ここは変えない）。
-                    components::list(
-                        theme,
-                        [
-                            self.select(
-                                theme,
-                                window,
-                                cx,
-                                "setting-wrist-face",
-                                &design::icons::WATCH,
-                                i18n::t(cx, "settings.wrist_face"),
-                                face,
-                                kernel::WristFace::ALL
-                                    .iter()
-                                    .map(|&f| {
-                                        let name = format!("wrist.face.{}", f.key());
-                                        let id = format!("setting-wrist-face-{}", f.key());
-                                        (id, i18n::t(cx, &name), f)
-                                    })
-                                    .collect(),
-                                // 種類を替えたら、その種類の先頭のデザインにする。
-                                |f| Setting::WristDesign(f.designs()[0]),
-                            ),
-                            self.select(
-                                theme,
-                                window,
-                                cx,
-                                "setting-wrist-design",
-                                &design::icons::PAINT_BRUSH,
-                                i18n::t(cx, "settings.wrist_design"),
-                                now.wrist_design,
-                                face.designs()
-                                    .iter()
-                                    .map(|&d| {
-                                        let name = format!("wrist.design.{}", d.key());
-                                        let id = format!("setting-wrist-{}", d.key());
-                                        (id, i18n::t(cx, &name), d)
-                                    })
-                                    .collect(),
-                                Setting::WristDesign,
-                            ),
-                        ],
-                    ),
-                    setting_group(
-                        theme,
-                        i18n::t(cx, "settings.personal_color"),
-                        components::card(theme).p(px(spacing::LG)).child(picker),
-                    ),
-                    setting_group(
-                        theme,
-                        i18n::t(cx, "settings.preview"),
-                        components::theme_preview(
-                            theme,
-                            "setting-preview",
-                            i18n::t(cx, "settings.personal_color"),
-                            i18n::t(cx, "settings.preview_body"),
-                            i18n::t(cx, "common.ok"),
-                        ),
-                    ),
-                ]
+                let this = cx.entity();
+                let set = move |state, _: &mut Window, cx: &mut App| {
+                    this.update(cx, |v, cx| {
+                        v.appearance = state;
+                        cx.notify();
+                    })
+                };
+                vec![ui::prefs::appearance(
+                    self.panel,
+                    self.appearance,
+                    set,
+                    window,
+                    cx,
+                )]
+            }
+            // 時計: wrist の文字盤。選択肢は `kernel` の表から並ぶ（足しても、ここは変えない）。
+            2 => {
+                let this = cx.entity();
+                let set = move |state, _: &mut Window, cx: &mut App| {
+                    this.update(cx, |v, cx| {
+                        v.watch = state;
+                        cx.notify();
+                    })
+                };
+                vec![ui::prefs::watch_faces(self.watch, set, window, cx)]
             }
             // ポインタ: 方式と、レーザーの手ブレ抑え・長さ（Laser の画面と同じ範囲）。
-            2 => {
+            3 => {
                 let max = kernel::overlay::POINTER_SMOOTHING_MAX;
                 let (tight, loose) = (
                     kernel::overlay::POINTER_RELEASE_DEG_MIN,
@@ -1706,7 +1638,7 @@ impl Settings {
                 );
                 vec![
                     // ポインタの方式は選ばせない（マウスは廃止の方向。全体はタッチ）。
-                    setting_group(
+                    components::group(
                         theme,
                         i18n::t(cx, "settings.smoothing"),
                         setting_slider(
@@ -1729,7 +1661,7 @@ impl Settings {
                             ),
                         ),
                     ),
-                    setting_group(
+                    components::group(
                         theme,
                         i18n::t(cx, "settings.release"),
                         setting_slider(
@@ -1756,7 +1688,7 @@ impl Settings {
                             ),
                         ),
                     ),
-                    setting_group(
+                    components::group(
                         theme,
                         i18n::t(cx, "settings.laser_length"),
                         setting_slider(
@@ -1786,7 +1718,7 @@ impl Settings {
                 ]
             }
             // ミラーリング: 取得の上限 FPS。
-            3 => vec![components::list(
+            4 => vec![components::list(
                 theme,
                 [self.select(
                     theme,
@@ -1803,7 +1735,7 @@ impl Settings {
                 )],
             )],
             // キーボード: 種類。
-            4 => {
+            5 => {
                 use kernel::subsystems::keyboard::KeyboardType;
                 vec![components::list(
                     theme,
@@ -1835,7 +1767,7 @@ impl Settings {
                 )]
             }
             // グラフィックス: 距離 LOD の品質。
-            5 => vec![components::list(
+            6 => vec![components::list(
                 theme,
                 [self.select(
                     theme,
@@ -1994,22 +1926,6 @@ fn external_icon(theme: &Theme) -> impl IntoElement {
         .color(rgba(theme.neutral_text_low))
 }
 
-/// 設定のグループ: 小さな見出しの下にカード（`body`）。
-fn setting_group(theme: &Theme, title: SharedString, body: impl IntoElement) -> Div {
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(spacing::SM))
-        .child(
-            div()
-                .px(px(spacing::LG))
-                .text_size(px(font_size::SM))
-                .text_color(rgba(theme.neutral_text_low))
-                .child(title),
-        )
-        .child(body)
-}
-
 /// スライダーのカード: スライダーだけをカードに入れ、今の値の説明はカードの下に置く。
 fn setting_slider(theme: &Theme, value: SharedString, slider: components::Slider) -> Div {
     div()
@@ -2080,6 +1996,11 @@ impl Render for Settings {
             .map(|(i, &(id, glyph, key))| {
                 components::sidebar_item(&theme, id, glyph, i18n::t(cx, key), i == self.category)
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        // 時計に入り直したら、見ていた文字盤と絞り込みは忘れ、使っている文字盤を中央に戻す（出ていく画面は
+                        // 滑り去る間も描くので、出るときではなく入るときに戻す）。
+                        if id == "settings-watch" && i != this.category {
+                            this.watch = Default::default();
+                        }
                         if i != this.category {
                             let mut t = design::animation::Transition::rest(0.0);
                             let animated = cx.has_global::<design::Motion>();
@@ -2089,6 +2010,8 @@ impl Render for Settings {
                         }
                         this.category = i;
                         this.open = None;
+                        this.appearance = Default::default();
+                        this.watch.open = false;
                         this.licenses = false;
                         cx.notify();
                     }))
