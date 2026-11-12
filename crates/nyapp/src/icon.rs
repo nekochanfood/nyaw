@@ -143,6 +143,8 @@ fn initial_element(name: &str, size: f32, color: u32) -> AnyElement {
         .flex()
         .items_center()
         .justify_center()
+        // アイコンの絵の一部なので、全域の文字の大きさには従わない（枠の大きさで決まる）。
+        .text_exact()
         .text_size(px(size / 2.0))
         .font_weight(FontWeight::BOLD)
         .text_color(rgba(color))

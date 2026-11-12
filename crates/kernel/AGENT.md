@@ -16,3 +16,15 @@
 - GPUI は非表示ウィンドウの DPI と実ピクセルサイズを変える。カーネルの論理解像度と物理サイズは変えない。8 の倍数でないサイズは表示領域に最大 7 論理ピクセルの丸めがある。
 - `cargo test -p ui --test gpu -- --ignored panel_lod` で実描画と入力を確認し、`--off` を追加して無効時も確認する（Windows）。
 - ストレステストは `NYAW_STRESS_LOD=0` と `2` で同じ負荷を比較できる。
+
+## アクセシビリティの設定
+
+対等な 3 つの設定。どれも独立したキーで、互いに依らない（どの値の組でも、それぞれが範囲に収まってそのまま効く）。
+
+| 設定ファイル | `Setting` / `Settings` | 範囲（既定） | 効かせる所 |
+|---|---|---|---|
+| `text_scale` | `TextScale(f32)` / `text_scale` | `TEXT_SCALE_MIN`〜`TEXT_SCALE_MAX` = 0.8〜1.5（1.0） | カーネルは値を持つだけ。`ui::sync_settings` が `design::font::set_text` へ渡し、テキストシステムが全部の文字に掛ける（`../design/AGENT.md` の「文字の大きさと太字化」） |
+| `ui_scale` | `UiScale(f32)` / `ui_scale` | `UI_SCALE_MIN`〜`UI_SCALE_MAX` = 0.7〜1.5（1.0） | `Overlay::set_scale`（`../overlay/AGENT.md` の「UI スケール」）。開いているパネルもその場で変わり、以降 `add_panel` の大きさに掛かる（`Kernel::ui_scale`） |
+| `bold_text` | `BoldText(bool)` / `bold_text` | `true` / `false`（`false`） | `text_scale` と同じ経路 |
+
+倍率は `SCALE_STEP` = 0.1 の刻みに丸める（`config::clamp_scale`。数でない値は等倍）。文字の大きさは画面の中の組み方を変えないので、入れ物に収まる 1.5 倍まで。UI スケールはパネルごと大きくするので、視野に収まる 1.5 倍まで。

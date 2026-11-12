@@ -640,11 +640,14 @@ impl TextLayout {
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
+        // NYAW: `font_size` stays the design size (shaping scales it); the line box follows the drawn size.
         let line_height = window.pixel_snap(
             text_style
                 .line_height
-                .to_pixels(font_size.into(), window.rem_size()),
+                .to_pixels(font_size.into(), window.rem_size())
+                * text_style.drawn_scale(),
         );
+        let exact = text_style.exact;
 
         let runs = if let Some(runs) = runs {
             runs
@@ -654,7 +657,8 @@ impl TextLayout {
         window.request_measured_layout(Default::default(), {
             let element_state = self.clone();
 
-            move |known_dimensions, available_space, window, cx| {
+            // NYAW: this runs after the element's style scope has ended, so the opt-out is carried in here.
+            move |known_dimensions, available_space, window, cx| crate::with_text_exact(exact, || {
                 let wrap_width = if text_style.white_space == WhiteSpace::Normal {
                     known_dimensions.width.or(match available_space.width {
                         crate::AvailableSpace::Definite(x) => Some(x),
@@ -783,7 +787,7 @@ impl TextLayout {
                 });
 
                 size
-            }
+            })
         })
     }
 

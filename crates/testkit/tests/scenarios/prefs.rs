@@ -196,3 +196,140 @@ fn watch_faces_follow_a_touch_slide(cx: &mut TestAppContext) {
     kit.click("watch-set");
     assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Railway);
 }
+
+/// Grabs the handle of slider `id` and moves it to `at` along its travel (0 = start, 1 = end), still holding.
+fn grab_to(kit: &mut VrKit<'_, Settings>, id: &'static str, handle: &'static str, at: f32) {
+    let (h, s) = (kit.bounds(handle), kit.bounds(id));
+    let from = Vec2::new(f32::from(h.center().x), f32::from(h.center().y));
+    let travel = f32::from(s.size.width - h.size.width);
+    let to = f32::from(s.left() + h.size.width / 2.0) + at * travel;
+    kit.point_at(from).press(Action::Select);
+    for i in 1..=5 {
+        kit.point_at(from + Vec2::new((to - from.x) * i as f32 / 5.0, 0.0));
+    }
+    kit.step();
+}
+
+const TEXT_SLIDER: (&str, &str) = (
+    "setting-text-size-slider",
+    "setting-text-size-slider-handle",
+);
+const UI_SLIDER: (&str, &str) = ("setting-ui-scale-slider", "setting-ui-scale-slider-handle");
+
+/// The accessibility category: a text sample on top, then three equal rows. Text size applies while dragging, UI scale
+/// only previews while dragging and applies on release, bold is a switch. None of them changes another.
+#[gpui::test]
+fn accessibility_is_a_sample_then_text_size_ui_scale_and_bold(cx: &mut TestAppContext) {
+    use kernel::{TEXT_SCALE_MAX, TEXT_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_MIN};
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.click("settings-accessibility");
+    assert_eq!(kit.read(|v| v.category), 3);
+    let [preview, sample, text, ui, bold] = [
+        "a11y-preview",
+        "a11y-sample",
+        "setting-text-size",
+        "setting-ui-scale",
+        "setting-bold-text",
+    ]
+    .map(|s| kit.bounds(s));
+    assert!(preview.bottom() <= text.top(), "the sample is on top");
+    assert!(sample.top() >= preview.top() && sample.bottom() <= preview.bottom());
+    assert!(text.bottom() <= ui.top() && ui.bottom() <= bold.top());
+    assert_eq!((text.size, ui.size), (ui.size, bold.size), "equal rows");
+
+    // Text size: applies while the handle is held, snapped to the steps. The sample grows inside its box, and
+    // neither the box nor the slider under the laser moves.
+    let slider = kit.bounds(TEXT_SLIDER.0);
+    grab_to(&mut kit, TEXT_SLIDER.0, TEXT_SLIDER.1, 1.0);
+    assert_eq!(kit.kernel.settings().text_scale, TEXT_SCALE_MAX);
+    let grown = kit.bounds("a11y-sample");
+    assert!(grown.size.height > sample.size.height && grown.size.width > sample.size.width);
+    assert!(grown.top() >= preview.top() && grown.bottom() <= preview.bottom());
+    assert_eq!(kit.bounds("a11y-preview"), preview);
+    assert_eq!(kit.bounds(TEXT_SLIDER.0), slider);
+    assert_eq!(kit.bounds("setting-ui-scale").size, ui.size);
+    kit.release(Action::Select).step();
+    grab_to(&mut kit, TEXT_SLIDER.0, TEXT_SLIDER.1, 0.0);
+    kit.release(Action::Select).step();
+    assert_eq!(kit.kernel.settings().text_scale, TEXT_SCALE_MIN);
+    let small = kit.bounds("a11y-sample");
+    assert!(small.size.height < sample.size.height);
+    let s = kit.kernel.settings();
+    assert_eq!((s.ui_scale, s.bold_text), (1.0, false), "the others stay");
+
+    // Bold: the row is a switch.
+    kit.click("setting-bold-text");
+    let s = kit.kernel.settings();
+    assert_eq!(
+        (s.bold_text, s.text_scale, s.ui_scale),
+        (true, TEXT_SCALE_MIN, 1.0)
+    );
+    kit.click("setting-bold-text");
+    assert!(!kit.kernel.settings().bold_text);
+
+    // UI scale: the panel would move under the laser, so while the handle is held only the sample is zoomed to the
+    // size it will have. Letting go applies it: the panel itself grows, and the sample is back at its own size.
+    let (size, resolution) = (kit.kernel.panel(0).size, kit.kernel.panel(0).resolution);
+    let before = kit.bounds("a11y-sample");
+    grab_to(&mut kit, UI_SLIDER.0, UI_SLIDER.1, 1.0);
+    assert_eq!(kit.kernel.settings().ui_scale, 1.0, "not while dragging");
+    assert_eq!(kit.kernel.panel(0).size, size);
+    let zoomed = kit.bounds("a11y-sample");
+    let ratio = f32::from(zoomed.size.width) / f32::from(before.size.width);
+    assert!((ratio - UI_SCALE_MAX).abs() < 0.1, "{ratio}");
+    kit.release(Action::Select).step().step();
+    assert_eq!(kit.kernel.settings().ui_scale, UI_SCALE_MAX);
+    assert!(
+        kit.kernel
+            .panel(0)
+            .size
+            .abs_diff_eq(size * UI_SCALE_MAX, 1e-5)
+    );
+    assert_eq!(kit.kernel.panel(0).resolution, resolution, "same layout");
+    assert_eq!(kit.bounds("a11y-sample").size, before.size);
+    assert_eq!(kit.kernel.settings().text_scale, TEXT_SCALE_MIN);
+
+    // Both at their far ends, in every combination, the screen still works: the rows stay inside the content and
+    // every control still answers the laser.
+    for (text_at, ui_at) in [(1.0, 0.0), (0.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+        grab_to(&mut kit, TEXT_SLIDER.0, TEXT_SLIDER.1, text_at);
+        kit.release(Action::Select).step();
+        grab_to(&mut kit, UI_SLIDER.0, UI_SLIDER.1, ui_at);
+        kit.release(Action::Select).step().step();
+        let s = kit.kernel.settings();
+        let want_text = TEXT_SCALE_MIN + text_at * (TEXT_SCALE_MAX - TEXT_SCALE_MIN);
+        let want_ui = UI_SCALE_MIN + ui_at * (UI_SCALE_MAX - UI_SCALE_MIN);
+        assert!((s.text_scale - want_text).abs() < 1e-5, "{text_at} {ui_at}");
+        assert!((s.ui_scale - want_ui).abs() < 1e-5, "{text_at} {ui_at}");
+        let content = kit.bounds("settings-content");
+        for row in ["setting-text-size", "setting-ui-scale", "setting-bold-text"] {
+            let b = kit.bounds(row);
+            assert!(b.left() >= content.left() && b.right() <= content.right());
+            assert_eq!(b.size, text.size, "{row}: {text_at} {ui_at}");
+        }
+        let on = kit.kernel.settings().bold_text;
+        kit.click("setting-bold-text");
+        assert_eq!(kit.kernel.settings().bold_text, !on, "{text_at} {ui_at}");
+    }
+}
+
+/// With touch, holding and moving on the handle is a finger slide. The UI scale still applies only on release.
+#[gpui::test]
+fn ui_scale_applies_when_a_touch_slide_ends(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.kernel.set(Setting::PointerMode(PointerMode::Touch));
+    kit.step();
+    kit.click("settings-accessibility");
+    let size = kit.kernel.panel(0).size;
+    grab_to(&mut kit, UI_SLIDER.0, UI_SLIDER.1, 0.0);
+    assert_eq!(kit.kernel.settings().ui_scale, 1.0);
+    assert_eq!(kit.kernel.panel(0).size, size);
+    kit.release(Action::Select).step().step();
+    assert_eq!(kit.kernel.settings().ui_scale, kernel::UI_SCALE_MIN);
+    assert!(
+        kit.kernel
+            .panel(0)
+            .size
+            .abs_diff_eq(size * kernel::UI_SCALE_MIN, 1e-5)
+    );
+}

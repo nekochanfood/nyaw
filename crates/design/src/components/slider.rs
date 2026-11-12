@@ -35,6 +35,7 @@ struct State {
 }
 
 type OnChange = Rc<dyn Fn(f32, &mut Window, &mut App)>;
+type OnRelease = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct Slider {
@@ -48,6 +49,7 @@ pub struct Slider {
     knob: u32,
     knob_active: u32,
     on_change: OnChange,
+    on_release: Option<OnRelease>,
 }
 
 /// `value`（0..=1）を軸に沿って動かすスライダー。動かすたびに `on_change` が新しい値で呼ばれる。
@@ -69,6 +71,7 @@ pub fn slider(
         knob: crate::scale::WHITE,
         knob_active: 0xe6e6e6ff,
         on_change: Rc::new(on_change),
+        on_release: None,
     }
 }
 
@@ -82,6 +85,13 @@ impl Slider {
     /// 軸に沿った長さ（px）。
     pub fn length(mut self, length: f32) -> Self {
         self.length = length.max(HANDLE * 2.0);
+        self
+    }
+
+    /// ハンドルを離したときに呼ぶ（つかんで動かしたとき・指のスライドのどちらでも、1 回の操作に 1 回）。動かしている間は
+    /// 見せるだけにして、離したときに決めたい値に使う（決めると自分の置き場所が変わってしまうものなど）。
+    pub fn on_release(mut self, on_release: impl Fn(&mut Window, &mut App) + 'static) -> Self {
+        self.on_release = Some(Rc::new(on_release));
         self
     }
 }
@@ -112,7 +122,14 @@ impl RenderOnce for Slider {
             knob,
             knob_active,
             on_change,
+            on_release,
         } = self;
+        // 離した（つかんでいた・滑らせていたのが終わった）ことを知らせる。
+        let released = move |window: &mut Window, cx: &mut App| {
+            if let Some(on_release) = &on_release {
+                on_release(window, cx)
+            }
+        };
         let state = window.use_keyed_state(id, cx, |_, _| State::default());
         // つかんでいる間は自分の値が正（呼び出し側が反映するまでの間に戻らない）。
         let (shown, grabbed) = state.update(cx, |s, _| {
@@ -151,7 +168,7 @@ impl RenderOnce for Slider {
         };
         // 指のスライド（ハンドルの上で始まったもの）。ホイールの目盛りはページへ流す。
         let slide = {
-            let (state, set) = (state.clone(), set.clone());
+            let (state, set, released) = (state.clone(), set.clone(), released.clone());
             move |e: &ScrollWheelEvent, window: &mut Window, cx: &mut App| {
                 let ScrollDelta::Pixels(d) = e.delta else {
                     return;
@@ -178,7 +195,12 @@ impl RenderOnce for Slider {
                         });
                         set(value_at(length, base + moved), window, cx);
                     }
-                    _ => state.update(cx, |s, _| s.slide = None),
+                    _ => {
+                        // 離した後の惰性でも届くので、滑らせていたときだけ知らせる。
+                        if state.update(cx, |s, _| s.slide.take()).is_some() {
+                            released(window, cx);
+                        }
+                    }
                 }
             }
         };
@@ -241,11 +263,12 @@ impl RenderOnce for Slider {
                     move |bounds, _, cx| state.update(cx, |s, _| s.bounds = bounds)
                 },
                 move |_, _, window, _| {
-                    let (s, set) = (state.clone(), set.clone());
+                    let (s, set, lost) = (state.clone(), set.clone(), released.clone());
                     window.on_mouse_event(move |e: &MouseMoveEvent, _, window, cx| {
                         let Some(grab) = s.read(cx).grab else { return };
                         if e.pressed_button != Some(MouseButton::Left) {
                             s.update(cx, |s, _| s.grab = None);
+                            lost(window, cx);
                             window.refresh();
                             return;
                         }
@@ -253,10 +276,11 @@ impl RenderOnce for Slider {
                         let p = along(&b, vertical, e.position);
                         set(value_at(length, p - grab), window, cx);
                     });
-                    let s = state.clone();
+                    let (s, released) = (state.clone(), released.clone());
                     window.on_mouse_event(move |e: &MouseUpEvent, _, window, cx| {
                         if e.button == MouseButton::Left && s.read(cx).grab.is_some() {
                             s.update(cx, |s, _| s.grab = None);
+                            released(window, cx);
                             window.refresh();
                         }
                     });

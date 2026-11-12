@@ -1300,7 +1300,7 @@ impl Screen {
                 .color(rgba(theme.danger_solid))
                 .into_any_element()
         } else {
-            app.icon(lang.code(), TILE_ICON_PX, theme)
+            app.icon(lang.code(), f32::from(tile_icon_size()), theme)
         };
         let tooltip = self
             .removing
@@ -2226,7 +2226,7 @@ impl Screen {
                 .child(
                     grid().child(
                         components::tile(theme, "quick-theme")
-                            .h(px(TILE_PX))
+                            .h(tile_height())
                             .min_w_0()
                             .child(tile_icon(match mode {
                                 kernel::ThemeMode::Dark => &icons::MOON,
@@ -2741,7 +2741,7 @@ fn battery_card(
     };
     components::card(theme)
         .debug_selector(move || id)
-        .h(px(TILE_PX))
+        .h(tile_height())
         .min_w_0()
         .p(px(spacing::MD))
         .flex()
@@ -2868,7 +2868,7 @@ fn app_tile(
     window: &Window,
 ) -> components::Button {
     let tile = components::ghost_tile(theme, id)
-        .h(px(TILE_PX))
+        .h(tile_height())
         .min_w_0()
         .child(icon)
         .child(tile_label(name.to_owned()))
@@ -2911,10 +2911,20 @@ fn app_label_clipped(name: &str, window: &Window) -> bool {
     ) > available
 }
 
+/// タイルの高さ。アイコンと 1 行の文字を入れる箱なので、文字の大きさの倍率に付いていく。
+fn tile_height() -> gpui::Pixels {
+    design::font::scaled(TILE_PX)
+}
+
+/// タイルに載せる画像のアイコンの一辺。隣に並ぶ Phosphor のアイコン（`design::icon`）と同じく、文字の大きさの倍率に付いていく。
+fn tile_icon_size() -> gpui::Pixels {
+    design::font::scaled(TILE_ICON_PX)
+}
+
 /// アプリのアイコンの画像。無ければ `glyph`。
 fn tile_image(icon: Option<Arc<RenderImage>>, glyph: &'static design::Icon) -> gpui::AnyElement {
     match icon {
-        Some(icon) => img(icon).size(px(TILE_ICON_PX)).into_any_element(),
+        Some(icon) => img(icon).size(tile_icon_size()).into_any_element(),
         None => tile_icon(glyph),
     }
 }

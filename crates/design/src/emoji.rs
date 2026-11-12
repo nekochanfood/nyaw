@@ -87,8 +87,9 @@ impl Emoji {
 
 impl RenderOnce for Emoji {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        // 枠は、中の文字（テキストシステムが倍率を掛ける）と同じだけ大きくする。
         div()
-            .size(self.edge)
+            .size(self.edge * gpui::text_scale())
             .flex_none()
             .text_size(self.edge)
             .line_height(self.edge)
@@ -156,7 +157,8 @@ impl Element for EmojiText {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let (layout, ()) = self.text.request_layout(id, inspector, window, cx);
-        let edge = window.text_style().font_size.to_pixels(window.rem_size());
+        // 絵は、組まれた文字（倍率が掛かっている）と同じ大きさにする。
+        let edge = window.text_style().font_size.to_pixels(window.rem_size()) * gpui::text_scale();
         let icons = self
             .icons
             .iter()
@@ -184,7 +186,8 @@ impl Element for EmojiText {
     ) -> Self::PrepaintState {
         self.text
             .prepaint(id, inspector, bounds, &mut (), window, cx);
-        let edge = window.text_style().font_size.to_pixels(window.rem_size());
+        // 絵は、組まれた文字（倍率が掛かっている）と同じ大きさにする。
+        let edge = window.text_style().font_size.to_pixels(window.rem_size()) * gpui::text_scale();
         let line_height = self.text.layout().line_height();
         let inset = (line_height - edge) / 2.;
         let mut shifts = Vec::new();

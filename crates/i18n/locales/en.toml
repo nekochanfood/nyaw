@@ -342,6 +342,14 @@ minimal = "Minimal"
 dress = "Dress"
 railway = "Railway"
 
+[accessibility]
+text_size = "Text size"
+ui_scale = "UI scale"
+bold_text = "Bold text"
+sample_title = "Sample text"
+sample_body = "Text is shown at this size and weight"
+sample_caption = "Small text looks like this"
+
 [settings]
 title = "Settings"
 language = "Language"
@@ -366,6 +374,7 @@ source_code = "Source code"
 general = "General"
 appearance = "Appearance"
 watch = "Watch"
+accessibility = "Accessibility"
 pointer = "Pointer"
 mirroring = "Mirroring"
 keyboard = "Keyboard"

@@ -4,24 +4,25 @@ use gpui::{
     TestAppContext, TouchPhase, Window, div, point, prelude::*, px,
 };
 
-struct View(f32);
+/// 値と、離した知らせ（`on_release`）の回数。
+struct View(f32, u32);
 
 impl Render for View {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let this = cx.entity();
-        div()
-            .p(px(40.0))
-            .child(slider(&Theme::DARK, "s", self.0, move |v, _, cx| {
-                this.update(cx, |s, cx| {
-                    s.0 = v;
-                    cx.notify()
-                })
-            }))
+        let (this, released) = (cx.entity(), cx.entity());
+        let slider = slider(&Theme::DARK, "s", self.0, move |v, _, cx| {
+            this.update(cx, |s, cx| {
+                s.0 = v;
+                cx.notify()
+            })
+        })
+        .on_release(move |_, cx| released.update(cx, |s, _| s.1 += 1));
+        div().p(px(40.0)).child(slider)
     }
 }
 
 fn setup(cx: &mut TestAppContext) -> (gpui::Entity<View>, &mut gpui::VisualTestContext) {
-    let (view, cx) = cx.add_window_view(|_, _| View(0.5));
+    let (view, cx) = cx.add_window_view(|_, _| View(0.5, 0));
     cx.simulate_resize(gpui::size(px(400.0), px(200.0)));
     cx.run_until_parked();
     cx.update(|w, _| w.refresh());
@@ -62,6 +63,8 @@ fn grab_follows_outside_the_window_until_release(cx: &mut TestAppContext) {
         Modifiers::none(),
     );
     assert_eq!(view.read_with(cx, |v, _| v.0), held);
+    // 離した知らせは、動かしている間は来ず、離したときに 1 回だけ。
+    assert_eq!(view.read_with(cx, |v, _| v.1), 1);
 }
 
 #[gpui::test]
@@ -72,6 +75,8 @@ fn lost_release_is_noticed_on_the_next_move(cx: &mut TestAppContext) {
     // 離した知らせが来ないまま、ボタンを押していない動きが来た。
     cx.simulate_mouse_move(point(px(5000.0), px(0.0)), None, Modifiers::none());
     assert_eq!(view.read_with(cx, |v, _| v.0), 0.5);
+    // 離したとみなした時点で、離した知らせも届く（決めるのを取りこぼさない）。
+    assert_eq!(view.read_with(cx, |v, _| v.1), 1);
 }
 
 #[gpui::test]
@@ -113,7 +118,11 @@ fn touch_slide_on_the_handle_follows_the_finger(cx: &mut TestAppContext) {
     cx.simulate_event(slide(at, -900.0, TouchPhase::Moved));
     assert!((view.read_with(cx, |v, _| v.0) - 0.6).abs() < 0.01);
     // 終わったら次のスライドは今の位置から。
+    assert_eq!(view.read_with(cx, |v, _| v.1), 0, "滑らせている間は来ない");
     cx.simulate_event(slide(at, 0.0, TouchPhase::Ended));
+    // 離した後の惰性（同じ段階の入力）が続いても、離した知らせは 1 回。
+    cx.simulate_event(slide(at, 3.0, TouchPhase::Ended));
+    assert_eq!(view.read_with(cx, |v, _| v.1), 1);
     let now = cx.debug_bounds("s-handle").unwrap().center();
     cx.simulate_event(slide(now, -18.0, TouchPhase::Started));
     assert!((view.read_with(cx, |v, _| v.0) - 0.5).abs() < 0.01);
@@ -125,7 +134,8 @@ fn touch_slide_off_the_handle_does_nothing(cx: &mut TestAppContext) {
     let s = cx.debug_bounds("s").unwrap();
     let groove = point(s.origin.x + px(180.0), s.center().y);
     cx.simulate_event(slide(groove, 50.0, TouchPhase::Moved));
-    assert_eq!(view.read_with(cx, |v, _| v.0), 0.5);
+    cx.simulate_event(slide(groove, 0.0, TouchPhase::Ended));
+    assert_eq!(view.read_with(cx, |v, _| (v.0, v.1)), (0.5, 0));
 }
 
 #[gpui::test]

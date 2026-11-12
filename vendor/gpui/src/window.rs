@@ -4163,8 +4163,13 @@ impl Window {
     {
         self.invalidator.debug_assert_paint_or_prepaint();
         if let Some(style) = style {
+            // NYAW: a `text_exact` subtree opts out of the global text scale and bold while it is laid out and painted.
+            let exact = style.exact;
             self.text_style_stack.push(style);
-            let result = f(self);
+            let result = match exact {
+                Some(exact) => crate::with_text_exact(exact, || f(self)),
+                None => f(self),
+            };
             self.text_style_stack.pop();
             result
         } else {
