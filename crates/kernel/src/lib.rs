@@ -80,11 +80,12 @@ pub enum PanelCommand {
     /// このパネルのスピーカーで音を鳴らす（`true` で繰り返す）。読み込みは別スレッドで、いくつでも重ねて鳴らせる。
     Play(audio::Sound, bool),
     /// このパネルの中の点（パネルのピクセル、左上原点）から一度だけ音を鳴らす。キーボードのキーのように、押した所から聞こえる。
-    /// `pitch` は速さ（1 = そのまま。上げると高く短くなる）。
+    /// `pitch` は速さ（1 = そのまま。上げると高く短くなる）、`volume` は音量（1 = そのまま、0 = 無音）。
     PlayAt {
         sound: audio::Sound,
         at: Vec2,
         pitch: f32,
+        volume: f32,
     },
     /// このパネルを閉じるときにパネルの中央から一度鳴らす音。閉じた後も鳴り終わるまでその場所から聞こえる。
     CloseSound(audio::Sound),
@@ -140,6 +141,10 @@ pub enum Setting {
     UiScale(f32),
     /// すべての文字を太字にするか（`bold_text`）。カーネルは値を持つだけで、効かせるのは UI 層。
     BoldText(bool),
+    /// 仮想キーボードのキーを押した音を鳴らすか（`key_sound`）。カーネルは値を持つだけで、従うのは鳴らす側（UI 層）。
+    KeySound(bool),
+    /// キーを押した音の音量（`key_sound_volume`。0〜1 に収め、刻みに丸める）。カーネルは値を持つだけ。
+    KeySoundVolume(f32),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -168,6 +173,10 @@ pub struct Settings {
     pub ui_scale: f32,
     /// すべての文字を太字にする。
     pub bold_text: bool,
+    /// 仮想キーボードのキーを押した音を鳴らす。
+    pub key_sound: bool,
+    /// キーを押した音の音量（0〜1）。
+    pub key_sound_volume: f32,
 }
 
 impl Default for Settings {
@@ -191,6 +200,8 @@ impl Default for Settings {
             text_scale: 1.0,
             ui_scale: 1.0,
             bold_text: false,
+            key_sound: true,
+            key_sound_volume: 1.0,
         }
     }
 }
@@ -471,6 +482,11 @@ impl<B: VrBackend> Kernel<B> {
             }),
             ui_scale: self.overlay.scale(),
             bold_text: self.config.bold_text,
+            key_sound: self.config.key_sound.unwrap_or(true),
+            key_sound_volume: self
+                .config
+                .key_sound_volume
+                .map_or(1.0, |v| config::clamp_scale(v, 0.0, 1.0)),
         }
     }
 
@@ -584,6 +600,15 @@ impl<B: VrBackend> Kernel<B> {
             Setting::BoldText(b) => {
                 self.config.bold_text = b;
                 ("bold_text", config::value(b))
+            }
+            Setting::KeySound(b) => {
+                self.config.key_sound = Some(b);
+                ("key_sound", config::value(b))
+            }
+            Setting::KeySoundVolume(v) => {
+                let v = config::clamp_scale(v, 0.0, 1.0);
+                self.config.key_sound_volume = Some(v);
+                ("key_sound_volume", config::value(v))
             }
         };
         if let Some(path) = &self.config_path
@@ -822,7 +847,8 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Close => {
                 if let Some(sound) = self.close_sounds.remove(&panel) {
                     let (w, h) = self.overlay.panel(panel).resolution;
-                    self.play_audio_at(panel, sound, Vec2::new(w as f32, h as f32) / 2.0, 1.0);
+                    let center = Vec2::new(w as f32, h as f32) / 2.0;
+                    self.play_audio_at(panel, sound, center, 1.0, 1.0);
                 }
                 self.overlay.close(&mut self.subsystems.backend, panel)
             }
@@ -856,9 +882,12 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::FocusSource => self.focus_desktop(panel),
             PanelCommand::MinimizeSource => self.minimize_desktop(panel),
             PanelCommand::Play(sound, looping) => self.play_audio(panel, sound, looping),
-            PanelCommand::PlayAt { sound, at, pitch } => {
-                self.play_audio_at(panel, sound, at, pitch)
-            }
+            PanelCommand::PlayAt {
+                sound,
+                at,
+                pitch,
+                volume,
+            } => self.play_audio_at(panel, sound, at, pitch, volume),
             PanelCommand::CloseSound(sound) => {
                 self.close_sounds.insert(panel, sound);
             }
@@ -1129,6 +1158,34 @@ mod tests {
         let (mut k, _) = lod_kernel();
         k.set(Setting::LodQuality(LodQuality::High));
         assert_eq!(k.settings().lod_quality, LodQuality::High);
+    }
+
+    /// キーの音は既定で鳴り、音量は最大。オン・オフと音量は独立で、音量は 0〜1 の刻みに収まる。
+    #[test]
+    fn key_sound_is_on_at_full_volume_by_default_and_the_volume_stays_in_range() {
+        let (mut k, _) = lod_kernel();
+        let (s, d) = (k.settings(), Settings::default());
+        assert_eq!((s.key_sound, s.key_sound_volume), (true, 1.0));
+        assert_eq!((d.key_sound, d.key_sound_volume), (true, 1.0));
+        k.set(Setting::KeySoundVolume(0.44));
+        let s = k.settings();
+        assert!((s.key_sound_volume - 0.4).abs() < 1e-6 && s.key_sound);
+        k.set(Setting::KeySound(false));
+        let s = k.settings();
+        assert!((s.key_sound_volume - 0.4).abs() < 1e-6 && !s.key_sound);
+        for (given, kept) in [(9.0, 1.0), (-2.0, 0.0), (f32::NAN, 1.0)] {
+            k.set(Setting::KeySoundVolume(given));
+            assert_eq!(k.settings().key_sound_volume, kept, "{given}");
+        }
+        // 設定ファイルの値も同じく収める。
+        let config = Config {
+            key_sound: Some(false),
+            key_sound_volume: Some(3.0),
+            ..Default::default()
+        };
+        let k = Kernel::with_backend(vr::mock::MockBackend::default(), config);
+        let s = k.settings();
+        assert_eq!((s.key_sound, s.key_sound_volume), (false, 1.0));
     }
 
     /// アクセシビリティの 3 つは独立した設定: どれかを変えてもほかは変わらず、どんな値の組でも範囲に収まる。

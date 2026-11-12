@@ -1354,6 +1354,8 @@ pub const SETTINGS_PX: (u32, u32) = (1024, 768);
 const SIDEBAR_PX: f32 = 320.0;
 /// 中身のスライダーの長さ（px）。中身の幅（パネル − サイドバー − 余白）に収まる。
 const SETTINGS_SLIDER_PX: f32 = 520.0;
+/// 一覧の行（`components::slider_item`）に置くスライダーの長さ（px）。
+const ROW_SLIDER_PX: f32 = 240.0;
 
 /// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
 const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 9] = [
@@ -1442,6 +1444,8 @@ pub struct Settings {
     /// 外観・時計の部品の状態。
     pub appearance: ui::prefs::Appearance,
     pub watch: ui::prefs::WatchFaces,
+    /// キーボードの見本（最初にキーボードのカテゴリを開いたときに作り、画面を閉じるまで持つ）。
+    pub keyboard_preview: std::cell::OnceCell<gpui::Entity<ui::keyboard::KeyboardView>>,
     /// 選択肢を開いている選択の行（`debug_selector`）。
     pub open: Option<&'static str>,
     /// 情報からライセンスの一覧を開いている。
@@ -1720,37 +1724,71 @@ impl Settings {
                     Setting::MirrorFrameRate,
                 )],
             )],
-            // キーボード: 種類。
+            // キーボード: 上に見本（押せて音も鳴るが、どこにも打たない）、下に種類・キーの音・その音量（鳴らす間だけ）。
             6 => {
                 use kernel::subsystems::keyboard::KeyboardType;
-                vec![components::list(
+                let keys = self
+                    .keyboard_preview
+                    .get_or_init(|| ui::prefs::new_keyboard_preview(self.panel, cx));
+                let preview = ui::prefs::keyboard_preview(keys, cx);
+                let kind = self.select(
                     theme,
-                    [self.select(
-                        theme,
-                        window,
-                        cx,
-                        "setting-keyboard",
-                        &design::icons::KEYBOARD,
-                        i18n::t(cx, "settings.keyboard"),
-                        now.keyboard,
-                        [
-                            ("setting-keyboard-full", "keyboard.full", KeyboardType::Full),
-                            (
-                                "setting-keyboard-tkl",
-                                "keyboard.tkl",
-                                KeyboardType::Tenkeyless,
-                            ),
-                            (
-                                "setting-keyboard-compact",
-                                "keyboard.compact",
-                                KeyboardType::Compact,
-                            ),
-                        ]
-                        .map(|(id, key, k)| (id, i18n::t(cx, key), k))
-                        .to_vec(),
-                        Setting::Keyboard,
-                    )],
-                )]
+                    window,
+                    cx,
+                    "setting-keyboard",
+                    &design::icons::KEYBOARD,
+                    i18n::t(cx, "settings.keyboard"),
+                    now.keyboard,
+                    [
+                        ("setting-keyboard-full", "keyboard.full", KeyboardType::Full),
+                        (
+                            "setting-keyboard-tkl",
+                            "keyboard.tkl",
+                            KeyboardType::Tenkeyless,
+                        ),
+                        (
+                            "setting-keyboard-compact",
+                            "keyboard.compact",
+                            KeyboardType::Compact,
+                        ),
+                    ]
+                    .map(|(id, key, k)| (id, i18n::t(cx, key), k))
+                    .to_vec(),
+                    Setting::Keyboard,
+                );
+                let sound = components::switch_item(
+                    theme,
+                    "setting-key-sound",
+                    &design::icons::WAVEFORM,
+                    i18n::t(cx, "settings.key_sound"),
+                    now.key_sound,
+                )
+                .on_click(change(Setting::KeySound(!now.key_sound)));
+                // 音量は 10% の刻み（カーネルも同じ刻みに丸める）。刻みが変わったときだけ設定を変える。
+                let (volume, step) = (now.key_sound_volume, kernel::SCALE_STEP);
+                let slider = components::slider(
+                    theme,
+                    "setting-key-volume-slider",
+                    volume,
+                    move |at, _, cx| {
+                        let to = (at / step).round() * step;
+                        if (to - volume).abs() > step / 2.0 {
+                            push_setting(Setting::KeySoundVolume(to), cx)
+                        }
+                    },
+                );
+                let volume = components::slider_item(
+                    theme,
+                    "setting-key-volume",
+                    &design::icons::SPEAKER_HIGH,
+                    i18n::t(cx, "settings.key_sound_volume"),
+                    format!("{:.0}%", volume * 100.0),
+                    slider.length(ROW_SLIDER_PX),
+                );
+                let rows = [kind, sound]
+                    .into_iter()
+                    .chain(now.key_sound.then_some(volume));
+                vec![preview, components::list(theme, rows)]
             }
             // グラフィックス: 距離 LOD の品質。
             7 => vec![components::list(
