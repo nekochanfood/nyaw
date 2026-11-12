@@ -12,9 +12,10 @@ use kernel::vr::{Pose, Quat, Vec2, Vec3};
 use kernel::{DominantHand, Language, LazyFollow, PanelCommand, PanelId, Setting};
 use ui::{PanelControl, PanelSpec};
 
-/// パネルの大きさ（1px = 1mm）。いちばん背の高い文字盤の手順（見出し・設定画面と同じ部品・フッター）が収まる高さ。
-const SIZE: Vec2 = Vec2::new(0.8, 0.864);
-const PX: (u32, u32) = (800, 864);
+/// パネルの大きさ（1px = 1mm）。オーバーレイの既定と同じ 4:3 で、いちばん背の高い文字盤の手順（見出し・設定画面と同じ
+/// 部品・フッター）が収まるよう、既定（0.8m × 0.6m）より大きくする。
+const SIZE: Vec2 = Vec2::new(1.152, 0.864);
+const PX: (u32, u32) = (1152, 864);
 /// 一枚目のロゴの高さ。
 const LOGO_HEIGHT: f32 = 176.0;
 /// 選べるカードに載せるアイコンの大きさ。

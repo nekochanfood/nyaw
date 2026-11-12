@@ -15,6 +15,8 @@ mod design_prelude {
 
 /// 画面の縁から内容・フッターまでの余白（全画面で共通）。
 pub const WIZARD_MARGIN: f32 = spacing::XL;
+/// 「step」画面の内容（見出しと中身）の最大の幅。横長のパネルでは、この幅の列を左右中央に置く（行が間延びしない）。
+pub const WIZARD_CONTENT: f32 = 704.0;
 // アイコンの大きさと行の高さはダイアログと同じ（画面の種類で見た目を揃える）。
 use crate::components::{
     BUTTON_HEIGHT, BUTTON_PADDING, DIALOG_ICON as ICON, DIALOG_LEADING as LEADING,
@@ -221,7 +223,7 @@ pub fn wizard_welcome(
         .child(footer)
 }
 
-/// 「step」画面: 内容（アイコン・タイトル・説明・`body` のフォームなど）を上下中央寄せにし、下に左「戻る」・右「次へ」のフッター。
+/// 「step」画面: 内容（アイコン・タイトル・説明・`body` のフォームなど）を上下中央寄せ（幅は [`WIZARD_CONTENT`] まで）にし、下に左「戻る」・右「次へ」のフッター。
 /// 最初の手順は `back` を `None` にする（フッターの左は空き）。
 #[allow(clippy::too_many_arguments)]
 pub fn wizard_step(
@@ -245,6 +247,9 @@ pub fn wizard_step(
                 .id(SharedString::from(format!("{id}-content")))
                 .flex_1()
                 .min_h_0()
+                .w_full()
+                .max_w(px(WIZARD_CONTENT))
+                .self_center()
                 .flex()
                 .flex_col()
                 .justify_center()

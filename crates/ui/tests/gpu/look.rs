@@ -12,7 +12,7 @@ struct Faces;
 
 const FACES_PX: (u32, u32) = (900, 900);
 /// セットアップウィザードのパネルの大きさ。
-const SETUP_PX: (u32, u32) = (800, 864);
+const SETUP_PX: (u32, u32) = (1152, 864);
 
 impl Render for Faces {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

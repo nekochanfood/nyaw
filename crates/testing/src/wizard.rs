@@ -1,10 +1,6 @@
 use super::*;
 use design::icons;
-use kernel::vr::Vec2;
 
-/// ウィザードのパネルは 1:1。
-const SIZE: Vec2 = Vec2::new(0.8, 0.8);
-const PX: (u32, u32) = (800, 800);
 const STEPS: usize = 4;
 
 /// ウィザードの試験画面: ようこそ → 手順 1 → 手順 2 → 完了。`wizard-next` / `wizard-back` / `wizard-restart`。
@@ -21,13 +17,11 @@ impl WizardTest {
     }
 }
 
-/// `from` の隣に 1:1 のウィザードを開く。
+/// `from` の隣にウィザードを開く（大きさはオーバーレイの既定。4:3）。
 pub fn spawn(from: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
         cx.default_global::<PanelControl>().spawns.push(
-            PanelSpec::spawn(from, |id, _, _| WizardTest::new(id))
-                .sized(SIZE, PX)
-                .titled("testing.open.wizard"),
+            PanelSpec::spawn(from, |id, _, _| WizardTest::new(id)).titled("testing.open.wizard"),
         )
     }
 }

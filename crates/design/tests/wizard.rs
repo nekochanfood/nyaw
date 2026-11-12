@@ -31,8 +31,17 @@ impl Render for View {
 }
 
 fn setup(cx: &mut TestAppContext, welcome: bool) -> (Entity<View>, &mut VisualTestContext) {
+    setup_sized(cx, welcome, SIZE)
+}
+
+/// 幅 `width`・高さ [`SIZE`] の窓で開く。
+fn setup_sized(
+    cx: &mut TestAppContext,
+    welcome: bool,
+    width: f32,
+) -> (Entity<View>, &mut VisualTestContext) {
     let (view, cx) = cx.add_window_view(|_, _| View { welcome });
-    cx.simulate_resize(gpui::size(px(SIZE), px(SIZE)));
+    cx.simulate_resize(gpui::size(px(width), px(SIZE)));
     cx.run_until_parked();
     cx.update(|w, _| w.refresh());
     cx.run_until_parked();
@@ -74,4 +83,16 @@ fn step_keeps_roomy_buttons_in_the_footer_corners(cx: &mut TestAppContext) {
     // 内容（アイコン・タイトル・説明・中身）は、フッターの上の領域の上下中央。
     let hero = cx.debug_bounds("w-hero").unwrap();
     assert!(hero.top() > px(WIZARD_MARGIN) && hero.bottom() < next.top());
+}
+
+/// 横長のパネルでは、内容は決まった幅（`WIZARD_CONTENT`）の列になって左右中央に来る。ボタンは下の両端のまま。
+#[gpui::test]
+fn step_centers_a_column_of_content_on_a_wide_panel(cx: &mut TestAppContext) {
+    const WIDE: f32 = 1200.0;
+    let (_, cx) = setup_sized(cx, false, WIDE);
+    let [hero, back, next] = ["w-hero", "back", "next"].map(|s| cx.debug_bounds(s).unwrap());
+    let column = (WIDE - components::WIZARD_CONTENT) / 2.0;
+    assert!(near(hero.left(), column), "{hero:?}");
+    assert!(near(hero.right(), WIDE - column), "{hero:?}");
+    assert!(near(back.left(), WIZARD_MARGIN) && near(next.right(), WIDE - WIZARD_MARGIN));
 }
