@@ -8,7 +8,6 @@ use gpui::{
     App, ClickEvent, Context, Div, Entity, FontWeight, IntoElement, MouseDownEvent, Render,
     SharedString, Window, div, prelude::*, px, rgba,
 };
-use kernel::subsystems::keyboard::KeyboardType;
 use kernel::{
     PanelCommand, PanelId, PersonalColor, SCALE_STEP, Setting, Settings, TEXT_SCALE_MAX,
     TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, Vec2, WristDesign, WristFace,
@@ -393,34 +392,24 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
         .child(components::list(&theme, [text, ui_scale, bold]))
 }
 
-/// キーボードの見本のキー 1u の大きさ（px。実寸は 64）。フルサイズ（23u）が設定画面の中身の幅（680px）に収まる。
-pub const KEYBOARD_PREVIEW_UNIT: f32 = 29.0;
+/// キーボードの見本の箱の高さ（px）。設定画面の幅では、フルサイズは幅いっぱい、ほかの種類は高さいっぱいに収まる。
+const KEYBOARD_PREVIEW_HEIGHT: f32 = 200.0;
 
 /// [`keyboard_preview`] に見せるキーボードを作る（呼び出し側が持つ）。`panel` は見本を置くパネル（キーの音はそこから鳴る）。
 pub fn new_keyboard_preview(panel: PanelId, cx: &mut App) -> Entity<KeyboardView> {
-    cx.new(|cx| KeyboardView::preview(panel, KEYBOARD_PREVIEW_UNIT, cx))
+    cx.new(|cx| KeyboardView::preview(panel, cx))
 }
 
-/// キーボードの見本（高さの決まった箱 `keyboard-preview` の中に `virtual-keyboard`）: 今の設定の種類・OS の配列のキーボードを
-/// 縮めて見せる。キーは押せて、キーの音の設定どおりに鳴る（打った文字はどこにも送らない）。箱の高さはいちばん高い種類に
-/// 合わせてあり、種類を替えても下の項目は動かない。どの種類も同じ縮尺なので、種類ごとの大きさの違いも見える。
+/// キーボードの見本（高さの決まった箱 `keyboard-preview` の中央に、地 `keyboard-preview-card` とキー `virtual-keyboard`）:
+/// 今の設定の種類・OS の配列のキーボードを、召喚したときと同じ地に載せ、箱に収まるように縮めて見せる（幅が変わっても
+/// はみ出さない）。キーは押せて、キーの音の設定どおりに鳴る（どこにも打たない）。種類を替えても下の項目は動かない。
 pub fn keyboard_preview(keys: &Entity<KeyboardView>, cx: &App) -> Div {
-    let (unit, kind) = (keys.read(cx).unit, settings(cx).keyboard);
     div()
         .debug_selector(|| "keyboard-preview".into())
         .flex_none()
         .w_full()
-        .h(px(KeyboardType::Full.height() * unit))
-        .flex()
-        .items_center()
-        .justify_center()
-        // 幅を決めておく（キーの並びは幅いっぱいの横スクロールの中にあり、中身からは幅が決まらない）。
-        .child(
-            div()
-                .flex_none()
-                .w(px(kind.width() * unit))
-                .child(keys.clone()),
-        )
+        .h(px(KEYBOARD_PREVIEW_HEIGHT))
+        .child(crate::keyboard::preview(keys, cx))
 }
 
 /// 文字盤の見本（中央）の直径と、使っている文字盤を囲む輪の太さ・見本との間（px。中央の大きさでの値）。

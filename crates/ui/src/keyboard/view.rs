@@ -205,12 +205,11 @@ impl KeyboardView {
         }
     }
 
-    /// 見本のキーボード: `panel` の中に、キー 1u を `unit` px にして置く。今の設定（種類・OS の配列・キーの音）に従い、
-    /// キーは押せて音も鳴るが、打った文字はどこにも送らない。
-    pub fn preview(panel: PanelId, unit: f32, cx: &mut Context<Self>) -> Self {
+    /// 見本のキーボード: `panel` の中に置く。今の設定（種類・OS の配列・キーの音）に従い、キーは押せて音も鳴るが、
+    /// 打った文字はどこにも送らない。キーの大きさ（[`Self::unit`]）は、置く側（[`super::preview`]）が場所に合わせて決める。
+    pub fn preview(panel: PanelId, cx: &mut Context<Self>) -> Self {
         Self {
             preview: true,
-            unit,
             show_settings: false,
             ..Self::new(panel, cx)
         }

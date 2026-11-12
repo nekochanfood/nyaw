@@ -3690,6 +3690,74 @@ mod tests {
         assert_eq!(commands, [2, 0, 2]);
     }
 
+    /// キーボードの見本は、本番と同じ載せ方（影の余白の内側）の設定画面でも、もっと狭い画面でも、どの種類でも
+    /// 下の行の幅と見本の箱に収まり、地がキーを四方から囲む。幅か高さのどちらかは、いっぱいまで使う。
+    #[gpui::test]
+    fn keyboard_preview_fits_the_settings_screen_for_every_type(cx: &mut TestAppContext) {
+        use kernel::subsystems::keyboard::{Database, KeyboardType, Layout};
+        let keyboard = Database::load().unwrap();
+        let keyboard = keyboard.keyboard(&Layout::new("us", "")).unwrap();
+        let (_, cx) = cx.add_window_view(|_, cx| {
+            let keys = ui::prefs::new_keyboard_preview(0, cx);
+            keys.update(cx, |view, _| {
+                (view.automatic, view.loading) = (false, false);
+                view.keyboard = Some(keyboard);
+            });
+            let settings = Settings {
+                category: 6,
+                ..Settings::new(0)
+            };
+            assert!(settings.keyboard_preview.set(keys).is_ok());
+            ui::PanelRoot::new(cx.new(|_| settings).into())
+        });
+        for width in [SETTINGS_PX.0, 800] {
+            cx.simulate_resize(gpui::size(px(width as f32), px(SETTINGS_PX.1 as f32)));
+            for kind in KeyboardType::ALL {
+                cx.update(|window, cx| {
+                    cx.default_global::<PanelControl>().settings.keyboard = kind;
+                    window.refresh();
+                });
+                cx.run_until_parked();
+                let [row, place, card, keys] = [
+                    "setting-keyboard",
+                    "keyboard-preview",
+                    "keyboard-preview-card",
+                    "virtual-keyboard",
+                ]
+                .map(|s| cx.debug_bounds(s).unwrap_or_else(|| panic!("{s}")));
+                let slack = px(0.01);
+                let at = format!("{width}px {kind:?}: {card:?} in {place:?}, rows {row:?}");
+                assert!(
+                    card.left() >= row.left() - slack && card.right() <= row.right() + slack,
+                    "{at}"
+                );
+                assert!(
+                    card.top() >= place.top() - slack && card.bottom() <= place.bottom() + slack,
+                    "{at}"
+                );
+                let free =
+                    (row.size.width - card.size.width).min(place.size.height - card.size.height);
+                assert!(free < px(1.0), "{at}");
+                // 地の余白は四方で同じ。キーは縦横の比を保ち、実寸（1u = 64px）より小さい（配置は画素に丸まる）。
+                let pad = keys.left() - card.left();
+                assert!(pad > px(1.0), "{at}");
+                for other in [
+                    keys.top() - card.top(),
+                    card.right() - keys.right(),
+                    card.bottom() - keys.bottom(),
+                ] {
+                    assert!((other - pad).abs() < px(1.0), "{at}: {keys:?}");
+                }
+                let unit = f32::from(keys.size.width) / kind.width();
+                assert!(unit < 64.0, "{at}");
+                assert!(
+                    (f32::from(keys.size.height) - kind.height() * unit).abs() < 1.0,
+                    "{at}: {keys:?}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn grid_rows_are_full_before_wrapping() {
         assert_eq!(grid_pose(0).position.y, grid_pose(GRID_COLS - 1).position.y);

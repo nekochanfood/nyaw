@@ -479,6 +479,58 @@ impl Render for KeyboardPanel {
     }
 }
 
+/// 見本: 召喚したキーボードと同じ地（カードと余白。閉じるボタンとその段は無い）に `keys`（[`KeyboardView::preview`]）を
+/// 載せ、置かれた場所に収まるいちばん大きい縮尺（実寸まで）で、その中央に描く。場所の大きさは呼び出し側が決める。
+/// 地は `keyboard-preview-card`。場所を測ってから組むので、種類や場所の幅が変わってもはみ出さない。
+pub fn preview(keys: &gpui::Entity<KeyboardView>, cx: &App) -> impl IntoElement + use<> {
+    let (theme, kind, keys) = (design::Theme::current(cx), keyboard_kind(cx), keys.clone());
+    gpui::canvas(
+        move |bounds, window, cx| {
+            // 実寸の地（キー + 四方の余白）が場所に収まる倍率。場所が無ければ（開いた直後の窓など）描かない。
+            let pad = design::spacing::LG;
+            let fit = |room: gpui::Pixels, units: f32| {
+                f32::from(room) / (units * view::KEY_UNIT + 2. * pad)
+            };
+            let (width, height) = (bounds.size.width, bounds.size.height);
+            let k = fit(width, kind.width())
+                .min(fit(height, kind.height()))
+                .min(1.);
+            if k.is_nan() || k <= 0. {
+                return None;
+            }
+            let unit = k * view::KEY_UNIT;
+            keys.update(cx, |keys, _| keys.unit = unit);
+            let card = design::components::card(&theme)
+                .debug_selector(|| "keyboard-preview-card".into())
+                .flex_none()
+                .rounded(gpui::px(design::radius::XL * k))
+                .p(gpui::px(pad * k))
+                .child(
+                    gpui::div()
+                        .w(gpui::px(kind.width() * unit))
+                        .h(gpui::px(kind.height() * unit))
+                        .child(keys),
+                );
+            let mut place = gpui::div()
+                .w(width)
+                .h(height)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(card)
+                .into_any_element();
+            place.prepaint_as_root(bounds.origin, bounds.size.into(), window, cx);
+            Some(place)
+        },
+        |_, place, window, cx| {
+            if let Some(mut place) = place {
+                place.paint(window, cx)
+            }
+        },
+    )
+    .size_full()
+}
+
 fn gpui_key(stroke: &Stroke) -> Keystroke {
     let symbol = stroke.symbols.first().and_then(|s| s.name()).unwrap_or("");
     let key = match symbol {
