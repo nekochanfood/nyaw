@@ -64,6 +64,7 @@ pub enum PanelCommand {
     /// 現在の縦横比のまま、VR 上の高さだけを揃える。
     FitHeight(f32),
     /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
+    /// 姿勢は等倍のつもりの値で、掴む基準があれば基準がその所に来る（`Overlay::place`）。
     Place(Pose),
     /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
     Parent(Option<Parent>),
@@ -847,7 +848,7 @@ impl<B: VrBackend> Kernel<B> {
             }
             PanelCommand::Place(offset) => {
                 self.overlay.detach(panel);
-                self.overlay.set_pose(panel, self.hmd().leveled() * offset);
+                self.overlay.place(panel, self.hmd().leveled() * offset);
             }
             PanelCommand::Stream(source, frame_rate) => {
                 self.start_desktop(panel, source, frame_rate)

@@ -1160,8 +1160,18 @@ impl PanelSpec {
                 let offset = self.offset.unwrap_or(Pose::new(SPAWN_GAP, Quat::IDENTITY));
                 kernel.panel(from).pose * Pose::new(offset.position * scale, offset.orientation)
             }
-            None if self.in_view => kernel.hmd().leveled() * self.pose,
-            None => self.pose,
+            // 掴む基準があれば、基準が等倍のときと同じ所に来るように置く（ダッシュボードは画面が立つ所）。
+            None => {
+                let pose = if self.in_view {
+                    kernel.hmd().leveled() * self.pose
+                } else {
+                    self.pose
+                };
+                match self.grab_anchor {
+                    Some(anchor) => kernel::overlay::anchored(pose, anchor, scale),
+                    None => pose,
+                }
+            }
         }
     }
 

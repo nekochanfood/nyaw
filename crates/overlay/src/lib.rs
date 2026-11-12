@@ -495,7 +495,12 @@ impl Overlay {
             p.nav_bar_size *= ratio;
             p.offset.position *= ratio;
             if let Some(anchor) = &mut p.grab_anchor {
+                // 掴む基準を持つパネルは、中心ではなく基準（ダッシュボードなら画面が立つ所）を動かさずに大きさを変える。
+                let fixed = p.pose * *anchor;
                 anchor.position *= ratio;
+                if p.parent.is_none() && p.nav_bar_of.is_none() {
+                    p.pose = fixed * anchor.inverse();
+                }
             }
             match p.pointer {
                 // レーザーの太さは作ったときに決めてある。カーソル・ツールチップの幅は毎 tick `size` から決まる。
@@ -749,6 +754,18 @@ impl Overlay {
     /// パネルをその姿勢へ置く（次の tick でランタイムへ送る）。取り付け中なら取り付け先に戻される。
     pub fn set_pose(&mut self, id: PanelId, pose: Pose) {
         self.panels[id].pose = pose;
+    }
+
+    /// 等倍のつもりで決めた姿勢 `pose` へパネルを置く。掴む基準（[`Self::set_grab_anchor`]）があれば、基準が等倍のときと
+    /// 同じ所に来るように置く（[`anchored`]）。無ければ [`Self::set_pose`] と同じ。
+    pub fn place(&mut self, id: PanelId, pose: Pose) {
+        let scale = self.scale();
+        let p = &mut self.panels[id];
+        p.pose = match p.grab_anchor {
+            // 覚えている基準は UI スケールを掛けた後のもの。
+            Some(a) => anchored(pose, Pose::new(a.position / scale, a.orientation), scale),
+            None => pose,
+        };
     }
 
     /// 掴んで動かせないようにする（`false` で戻す）。レーザーでの操作はそのまま使える。
@@ -1849,6 +1866,12 @@ fn face_margin(p: &Panel) -> f32 {
     } else {
         PANEL_MARGIN * p.size.y / p.resolution.1 as f32
     }
+}
+
+/// 等倍のつもりで決めた姿勢 `pose` と掴む基準 `anchor`（パネルから見た姿勢。等倍）から、UI スケール `scale` のときの
+/// パネルの姿勢を返す。基準の置き場所は変えず、パネルの中心が基準から `scale` 倍だけ離れる（組が基準を中心に相似に大きくなる）。
+pub fn anchored(pose: Pose, anchor: Pose, scale: f32) -> Pose {
+    pose * anchor * Pose::new(anchor.position * scale, anchor.orientation).inverse()
 }
 
 /// 開いている子がいる（暗くして入力を止める）。ナビゲーションバーは持ち主に子がいれば同じ扱い。
@@ -3022,6 +3045,47 @@ mod tests {
         ov.set_grab_anchor(0, Some(Pose::new(Vec3::X * 0.1, Quat::IDENTITY)));
         let anchor = ov.panel(0).grab_anchor.unwrap();
         assert!((anchor.position.x - 0.15).abs() < 1e-6, "{anchor:?}");
+    }
+
+    /// 掴む基準を持つパネル（ダッシュボードのバー）は、基準（画面が立つ所）を動かさずに大きさが変わり、置き直しても基準は同じ所。
+    #[test]
+    fn scale_keeps_the_grab_anchor_in_place() {
+        let (mut vr, mut ov) = setup();
+        let anchor = Pose::new(Vec3::new(0.0, 0.4, 0.1), Quat::from_rotation_x(0.3));
+        ov.set_grab_anchor(0, Some(anchor));
+        let fixed = ov.panel(0).pose * anchor;
+        let world = |ov: &Overlay| ov.panel(0).pose * ov.panel(0).grab_anchor.unwrap();
+        for scale in [1.5, 0.7, 1.0] {
+            ov.set_scale(&mut vr.backend, scale);
+            let now = world(&ov);
+            assert!(now.position.abs_diff_eq(fixed.position, 1e-5), "{scale}");
+            assert!(now.orientation.abs_diff_eq(fixed.orientation, 1e-5));
+            // パネルの中心は、基準から同じ割合で離れる。
+            let from_anchor = ov.panel(0).pose.position - fixed.position;
+            let authored = at(0.0, 0.0, -1.0).position - fixed.position;
+            assert!(from_anchor.abs_diff_eq(authored * scale, 1e-5), "{scale}");
+        }
+        // 等倍のつもりの姿勢に置き直す: 等倍なら同じ姿勢、倍率があれば基準が等倍のときと同じ所に来る。
+        let to = Pose::new(Vec3::new(1.0, 2.0, -3.0), Quat::from_rotation_y(0.5));
+        ov.place(0, to);
+        assert!(ov.panel(0).pose.position.abs_diff_eq(to.position, 1e-6));
+        ov.set_scale(&mut vr.backend, 1.5);
+        ov.place(0, to);
+        assert!(
+            world(&ov)
+                .position
+                .abs_diff_eq((to * anchor).position, 1e-5)
+        );
+        assert!(
+            ov.panel(0)
+                .pose
+                .orientation
+                .abs_diff_eq(to.orientation, 1e-5)
+        );
+        // 基準の無いパネルは、中心がその姿勢。
+        ov.set_grab_anchor(0, None);
+        ov.place(0, to);
+        assert_eq!(ov.panel(0).pose, to);
     }
 
     /// 親の上端に立てた子との隙間も UI スケールに合わせて広がる（組が相似のまま大きくなる）。

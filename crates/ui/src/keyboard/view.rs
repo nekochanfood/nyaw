@@ -541,6 +541,9 @@ impl Render for KeyboardView {
                 .flex_shrink_0()
                 .w(px(self.kind.width() * unit))
                 .h(px(self.kind.height() * unit))
+                // キーの文字はキーの大きさに合わせて決めてある（大きくするとはみ出す）。全域の文字の大きさ・太字化には
+                // 従わせず、キーごと大きくするのは UI スケールに任せる。
+                .text_exact()
                 .children(keys.into_iter().flat_map(|key| {
                     let code = key.code;
                     let sound = key_sound(&key.name);

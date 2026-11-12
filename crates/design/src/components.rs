@@ -1276,6 +1276,32 @@ pub fn switch_item(
     b
 }
 
+/// スライダーの行: 一覧の行（[`menu_item`]）の右に今の値（`{id}-value`）と [`slider`]。行そのものは押せない（色も波紋も音も出ない）。
+/// 値の文字は名前の側に置き、スライダーは右端に寄せる（文字の長さ・大きさが変わっても、動かしている最中のスライダーが動かない）。
+pub fn slider_item(
+    theme: &Theme,
+    id: &'static str,
+    glyph: &'static crate::Icon,
+    label: impl Into<SharedString>,
+    value: impl Into<SharedString>,
+    slider: Slider,
+) -> Button {
+    let mut b = inert(menu_item(theme, id, glyph, label));
+    b.disabled = true;
+    let value_id = format!("{id}-value");
+    b.base = b
+        .base
+        .child(
+            div()
+                .debug_selector(move || value_id.clone())
+                .flex_none()
+                .text_color(rgba(theme.neutral_text_low))
+                .child(value.into()),
+        )
+        .child(slider);
+    b
+}
+
 /// 選択肢のポップオーバーが開くときに下りてくる距離（px）。
 pub const SELECT_POPOVER_RISE: f32 = spacing::SM;
 

@@ -5783,6 +5783,7 @@ name = "ui"
 version = "2026.0.1"
 dependencies = [
  "beam",
+ "dashboard",
  "design",
  "gpui",
  "gpui_platform",

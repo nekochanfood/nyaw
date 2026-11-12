@@ -342,6 +342,14 @@ minimal = "ミニマル"
 dress = "ドレス"
 railway = "鉄道時計"
 
+[accessibility]
+text_size = "文字の大きさ"
+ui_scale = "UI の大きさ"
+bold_text = "文字を太くする"
+sample_title = "文字の見え方"
+sample_body = "この大きさと太さで表示されます"
+sample_caption = "小さな文字はこのくらいです"
+
 [settings]
 title = "設定"
 language = "言語"
@@ -366,6 +374,7 @@ source_code = "ソースコード"
 general = "一般"
 appearance = "外観"
 watch = "時計"
+accessibility = "アクセシビリティ"
 pointer = "ポインタ"
 mirroring = "ミラーリング"
 keyboard = "キーボード"

@@ -1,5 +1,5 @@
 //! 設定の部品: 設定画面とセットアップウィザードが共有する、全体の設定（[`Setting`]）を選ぶ画面の一部（[`appearance`] /
-//! [`watch_faces`]）。今の設定を見せ、選ぶとすぐ反映する。地（`background`）の上に置く。開閉などの小さな状態は呼び出し側が
+//! [`watch_faces`] / [`accessibility`]）。今の設定を見せ、選ぶとすぐ反映する。地（`background`）の上に置く。開閉などの小さな状態は呼び出し側が
 //! 持ち、変えるときは `set` で受け取る（ビューの型を問わない）。詳しくは `crates/ui/AGENT.md` の「設定の部品」。
 
 use design::components::{self, Variant};
@@ -9,8 +9,8 @@ use gpui::{
     Window, div, prelude::*, px, rgba,
 };
 use kernel::{
-    PanelCommand, PanelId, PersonalColor, Setting, Settings, ThemeMode, Vec2, WristDesign,
-    WristFace,
+    PanelCommand, PanelId, PersonalColor, SCALE_STEP, Setting, Settings, TEXT_SCALE_MAX,
+    TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, Vec2, WristDesign, WristFace,
 };
 
 use crate::{PanelControl, PanelSpec};
@@ -228,6 +228,167 @@ impl Render for ColorDialog {
                     .children([ok.w_full(), cancel.w_full()]),
             )
     }
+}
+
+/// 文字の見本を置く箱の高さ（px）。いちばん大きい文字でも見本が収まり、文字の大きさを変えても下の項目が動かない。
+pub const SAMPLE_HEIGHT: f32 = 200.0;
+/// 倍率の行に置くスライダーの長さ（px）。
+const SCALE_SLIDER: f32 = 240.0;
+
+/// 倍率 `scale`（`min..=max`）の、スライダーの上の位置（0..=1）。
+fn stop(scale: f32, min: f32, max: f32) -> f32 {
+    ((scale - min) / (max - min)).clamp(0.0, 1.0)
+}
+
+/// スライダーの位置 `at`（0..=1）にいちばん近い刻み（[`SCALE_STEP`]）の倍率。
+fn scale_at(at: f32, min: f32, max: f32) -> f32 {
+    let steps = ((max - min) / SCALE_STEP).round();
+    min + (at.clamp(0.0, 1.0) * steps).round() * SCALE_STEP
+}
+
+/// 同じ刻みの倍率か（刻みの計算の誤差は見ない）。
+fn same_scale(a: f32, b: f32) -> bool {
+    (a - b).abs() < SCALE_STEP / 2.0
+}
+
+fn percent(scale: f32) -> SharedString {
+    format!("{:.0}%", scale * 100.0).into()
+}
+
+/// 文字の見本（`a11y-sample`）: アイコンの付いた見出し・本文・補足のカード。文字とアイコンには今の設定（文字の大きさ・太字化）が
+/// そのまま掛かる。`zoom` は見本ごとの拡大率（動かしている途中の UI スケールを、決めた後に見える大きさで見せる）。
+fn text_sample(theme: &Theme, zoom: f32, cx: &App) -> Div {
+    let s = |v: f32| px(v * zoom);
+    let line = |size: f32| div().text_size(s(size));
+    components::card(theme)
+        .debug_selector(|| "a11y-sample".into())
+        .flex_none()
+        .flex()
+        .flex_col()
+        .gap(s(spacing::XS))
+        .px(s(spacing::XL))
+        .py(s(spacing::LG))
+        .rounded(s(radius::LG))
+        .whitespace_nowrap()
+        .child(
+            line(font_size::LG)
+                .flex()
+                .items_center()
+                .gap(s(spacing::SM))
+                .font_weight(FontWeight::BOLD)
+                .child(design::icon(&icons::TEXT_AA).size(s(font_size::LG)))
+                .child(i18n::t(cx, "accessibility.sample_title")),
+        )
+        .child(line(font_size::MD).child(i18n::t(cx, "accessibility.sample_body")))
+        .child(
+            line(font_size::SM)
+                .text_color(rgba(theme.neutral_text_low))
+                .child(i18n::t(cx, "accessibility.sample_caption")),
+        )
+}
+
+/// アクセシビリティ: 上に文字の見本（`a11y-preview` の箱の中に `a11y-sample`）、下に 3 つの対等な項目。文字の大きさ
+/// （`setting-text-size`）は動かすとすぐ効く。UI スケール（`setting-ui-scale`）は決めるとパネルそのものの大きさが変わるので、
+/// 動かしている間は見本だけを拡大・縮小して見せ、離したときに決める。太字（`setting-bold-text`）はスイッチ。
+/// 倍率は刻み（[`SCALE_STEP`]）に吸い付く。動かしている途中の値はこの部品が持つ（呼び出し側に状態は要らない）。
+pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
+    let theme = Theme::current(cx);
+    let now = settings(cx);
+    // 動かしている途中の UI スケールと、離したか（離したら決めたことにし、設定が追いつくまで見本と値はそのまま見せる）。
+    let draft = window.use_keyed_state("a11y-ui-draft", cx, |_, _| None::<(f32, bool)>);
+    let pending = *draft.read(cx);
+    let pending = pending.filter(|&(to, released)| !(released && same_scale(to, now.ui_scale)));
+    if pending.is_none() && draft.read(cx).is_some() {
+        draft.update(cx, |d, _| *d = None);
+    }
+    let ui = pending.map_or(now.ui_scale, |(to, _)| to);
+
+    let (min, max) = (TEXT_SCALE_MIN, TEXT_SCALE_MAX);
+    let text_scale = now.text_scale;
+    let text = components::slider_item(
+        &theme,
+        "setting-text-size",
+        &icons::TEXT_AA,
+        i18n::t(cx, "accessibility.text_size"),
+        percent(text_scale),
+        components::slider(
+            &theme,
+            "setting-text-size-slider",
+            stop(text_scale, min, max),
+            move |at, _, cx| {
+                let to = scale_at(at, min, max);
+                if !same_scale(to, text_scale) {
+                    push(Setting::TextScale(to), cx)
+                }
+            },
+        )
+        .length(SCALE_SLIDER),
+    );
+
+    let (min, max) = (UI_SCALE_MIN, UI_SCALE_MAX);
+    let (moving, done) = (draft.clone(), draft);
+    let ui_scale = components::slider_item(
+        &theme,
+        "setting-ui-scale",
+        &icons::FRAME_CORNERS,
+        i18n::t(cx, "accessibility.ui_scale"),
+        percent(ui),
+        components::slider(
+            &theme,
+            "setting-ui-scale-slider",
+            stop(ui, min, max),
+            move |at, _, cx| {
+                let to = (scale_at(at, min, max), false);
+                moving.update(cx, |d, cx| {
+                    if *d != Some(to) {
+                        *d = Some(to);
+                        cx.notify();
+                    }
+                })
+            },
+        )
+        .on_release(move |_, cx| {
+            let to = done.update(cx, |d, cx| {
+                cx.notify();
+                d.as_mut().map(|(to, released)| {
+                    *released = true;
+                    *to
+                })
+            });
+            if let Some(to) = to {
+                push(Setting::UiScale(to), cx)
+            }
+        })
+        .length(SCALE_SLIDER),
+    );
+
+    let bold = components::switch_item(
+        &theme,
+        "setting-bold-text",
+        &icons::TEXT_B,
+        i18n::t(cx, "accessibility.bold_text"),
+        now.bold_text,
+    )
+    .on_click(move |_, _, cx| push(Setting::BoldText(!now.bold_text), cx));
+
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(spacing::LG))
+        .child(
+            div()
+                .debug_selector(|| "a11y-preview".into())
+                .flex_none()
+                .w_full()
+                .h(px(SAMPLE_HEIGHT))
+                .flex()
+                .items_center()
+                .justify_center()
+                // 大きくしすぎた見本は箱で切る（下の項目に重ねない）。
+                .overflow_hidden()
+                .child(text_sample(&theme, ui / now.ui_scale, cx)),
+        )
+        .child(components::list(&theme, [text, ui_scale, bold]))
 }
 
 /// 文字盤の見本（中央）の直径と、使っている文字盤を囲む輪の太さ・見本との間（px。中央の大きさでの値）。
@@ -481,6 +642,33 @@ mod tests {
         // 見ていたものが並びから外れたら使っているもの、それも無ければ先頭。
         assert_eq!(digital.shown(WristDesign::Flip), WristDesign::Flip);
         assert_eq!(digital.shown(WristDesign::Dots), WristDesign::Lcd);
+    }
+
+    /// スライダーの位置と倍率は、範囲の端から端まで刻みごとに行き来できる（どの位置でも範囲の中の刻みに吸い付く）。
+    #[test]
+    fn scale_stops_snap_to_steps_and_round_trip() {
+        for (min, max) in [
+            (TEXT_SCALE_MIN, TEXT_SCALE_MAX),
+            (UI_SCALE_MIN, UI_SCALE_MAX),
+        ] {
+            assert!(same_scale(scale_at(0.0, min, max), min));
+            assert!(same_scale(scale_at(1.0, min, max), max));
+            assert!(same_scale(scale_at(-3.0, min, max), min), "範囲の外は端");
+            assert!(same_scale(scale_at(9.0, min, max), max));
+            let steps = ((max - min) / SCALE_STEP).round() as usize;
+            for i in 0..=steps {
+                let scale = min + i as f32 * SCALE_STEP;
+                let at = stop(scale, min, max);
+                assert!(same_scale(scale_at(at, min, max), scale), "{scale}");
+                // 刻みの間は近い方へ。
+                let nudged = at + 0.3 / steps as f32;
+                assert!(same_scale(scale_at(nudged, min, max), scale), "{scale}");
+            }
+            assert!(same_scale(scale_at(stop(1.0, min, max), min, max), 1.0));
+        }
+        assert_eq!(percent(1.0), "100%");
+        assert_eq!(percent(0.7 + 2.0 * SCALE_STEP), "90%");
+        assert_eq!(percent(1.3000001), "130%");
     }
 
     #[test]
