@@ -247,6 +247,10 @@ pub struct Config {
     pub ui_scale: Option<f32>,
     /// すべての文字を太字にするか。省略で `false`。画面での切り替えはここへ書き戻される。
     pub bold_text: bool,
+    /// 仮想キーボードのキーを押した音を鳴らすか。省略で `true`。画面での切り替えはここへ書き戻される。
+    pub key_sound: Option<bool>,
+    /// キーを押した音の音量（0〜1。[`SCALE_STEP`] の刻み）。省略で 1。画面での切り替えはここへ書き戻される。
+    pub key_sound_volume: Option<f32>,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -547,6 +551,33 @@ emulator = false
         assert_eq!(
             (back.text_scale, back.ui_scale, back.bold_text),
             (Some(1.5), Some(0.7), true)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// キーの音の 2 つは独立したキーで、どちらも省略でき、書き戻しても互いを消さない。
+    #[test]
+    fn key_sound_keys_parse_and_round_trip() {
+        let c = parse("").unwrap();
+        assert_eq!((c.key_sound, c.key_sound_volume), (None, None));
+        let c = parse("key_sound = false\nkey_sound_volume = 0.4").unwrap();
+        assert_eq!((c.key_sound, c.key_sound_volume), (Some(false), Some(0.4)));
+        assert!(parse("key_sound = \"off\"").is_err());
+        // 音量は 0〜1 の刻みに収まる（数でない値は最大）。
+        let volume = |v| clamp_scale(v, 0.0, 1.0);
+        assert_eq!(
+            [volume(-1.0), volume(7.0), volume(f32::NAN)],
+            [0.0, 1.0, 1.0]
+        );
+        assert!((volume(0.44) - 0.4).abs() < 1e-6);
+        let dir = std::env::temp_dir().join(format!("nyaw-key-sound-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        save_at(&path, "key_sound", value(false)).unwrap();
+        save_at(&path, "key_sound_volume", value(0.3f32)).unwrap();
+        let back = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            (back.key_sound, back.key_sound_volume),
+            (Some(false), Some(0.3))
         );
         let _ = fs::remove_dir_all(&dir);
     }

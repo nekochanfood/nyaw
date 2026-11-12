@@ -6,7 +6,7 @@ Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対�
 
 ## 主な公開 API
 
-`Driver::{click, hover, down, up, drag, scroll, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit::{screenshot, on_screen, color_on_screen, move_mouse, press, release, stick, select_panel, type_keys}`, `DesktopKit::with_backend`, `VrKit::{panel, add_panel, press, drag_panel, move_hand, hand, profile, point_at}`, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け）
+`Driver::{click, hover, down, up, drag, scroll, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit::{screenshot, on_screen, color_on_screen, move_mouse, press, release, stick, select_panel, type_keys}`, `DesktopKit::with_backend`, `VrKit::{panel, add_panel, press, drag_panel, move_hand, hand, profile, point_at, bounds, try_bounds}`（`try_bounds` は描かれていなければ `None`。消えたことの確認用）, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け）
 
 ## 実ランタイムでの E2E
 

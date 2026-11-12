@@ -80,7 +80,15 @@ impl<B: VrBackend> Kernel<B> {
     }
 
     /// パネルの中の点から鳴らす。音源はその点の 1 点（左右を混ぜる）で、鳴らした時の置き場所に留まる（短い音のため）。
-    pub(super) fn play_audio_at(&mut self, panel: PanelId, sound: Sound, at: Vec2, pitch: f32) {
+    /// `volume` は音量（1 = そのまま。負の値は無音）。
+    pub(super) fn play_audio_at(
+        &mut self,
+        panel: PanelId,
+        sound: Sound,
+        at: Vec2,
+        pitch: f32,
+        volume: f32,
+    ) {
         if self.overlay.panel(panel).closed {
             return;
         }
@@ -95,7 +103,7 @@ impl<B: VrBackend> Kernel<B> {
             width: 0.0,
             spatial: config.spatial,
             layout: Layout::Mono,
-            volume: 1.0,
+            volume: volume.max(0.0),
         };
         self.audio
             .set_listener(self.hmd().position, self.hmd().orientation);
@@ -298,6 +306,7 @@ mod tests {
                     sound: tone(),
                     at: Vec2::new(x, 50.0),
                     pitch: 1.0,
+                    volume: 1.0,
                 },
             );
         };
@@ -314,6 +323,33 @@ mod tests {
         k.tick();
         settle(&mut k, p);
         assert_eq!(k.status(p).audio.playing, 0);
+    }
+
+    /// 点の音の音量は振幅に掛かる（半分にすると二乗和は 1/4）。
+    #[test]
+    fn point_sound_volume_scales_the_amplitude() {
+        let (mut k, p) = kernel();
+        let mut heard = |volume: f32| {
+            k.apply(
+                p,
+                PanelCommand::PlayAt {
+                    sound: tone(),
+                    at: Vec2::new(2.0, 2.0),
+                    pitch: 1.0,
+                    volume,
+                },
+            );
+            assert_eq!(k.status(p).audio.playing, 1);
+            let (l, r) = render_until_sounding(&mut k);
+            k.apply(p, PanelCommand::StopAudio);
+            settle(&mut k, p);
+            l + r
+        };
+        let (full, half) = (heard(1.0), heard(0.5));
+        assert!(
+            full > 0.0 && (half / full - 0.25).abs() < 0.01,
+            "{full} {half}"
+        );
     }
 
     /// 閉じる音は閉じた後も、閉じたパネルの場所（右）から鳴る。

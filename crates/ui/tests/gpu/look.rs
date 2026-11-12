@@ -1,4 +1,4 @@
-//! 見た目の確認用: 設定画面の「外観」「時計」・色を作るダイアログ・wrist の文字盤の見本を、テーマとパーソナルカラーを替えながら実 GPU で描き、
+//! 見た目の確認用: 設定画面の「外観」「時計」「キーボード」・色を作るダイアログ・wrist の文字盤の見本を、テーマとパーソナルカラーを替えながら実 GPU で描き、
 //! `target/tmp/look-*.bmp` に書き出す。塗りが選んだ色そのままで描かれていることだけ検査する（細かい見た目は絵を目で見る）。
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
@@ -67,7 +67,7 @@ pub fn main() {
             })
             .expect("cannot open panel window")
         };
-        let (appearance, watch) = (settings(1, cx), settings(2, cx));
+        let (appearance, watch, keyboard) = (settings(1, cx), settings(2, cx), settings(6, cx));
         // 色を作るダイアログ（作りかけの色は、今のパーソナルカラーと違う緑）。
         let dialog = open_panel_window(cx, ui::prefs::COLOR_DIALOG_PX, |_, cx| {
             cx.new(|_| ui::prefs::ColorDialog::new(0, preset("green")))
@@ -76,9 +76,11 @@ pub fn main() {
         let faces = open_panel_window(cx, FACES_PX, |_, cx| cx.new(|_| Faces))
             .expect("cannot open panel window");
         // 描く窓: 書き出す名前の前置き、窓、塗りの色で描かれているはずの画素の下限。
-        let windows: [(&str, gpui::AnyWindowHandle, u32, usize); 4] = [
+        let windows: [(&str, gpui::AnyWindowHandle, u32, usize); 5] = [
             ("", appearance.into(), testing::SETTINGS_PX.0, 1000),
             ("watch-", watch.into(), testing::SETTINGS_PX.0, 100),
+            // キーボードの見本は配列を裏で読んでから出る（前の窓を描いている間に読み終わる）。塗りはスイッチとスライダー。
+            ("keyboard-", keyboard.into(), testing::SETTINGS_PX.0, 100),
             ("color-", dialog.into(), ui::prefs::COLOR_DIALOG_PX.0, 1000),
             ("faces-", faces.into(), FACES_PX.0, 100),
         ];
@@ -122,7 +124,7 @@ pub fn main() {
     });
 
     let shots = shots.take();
-    assert_eq!(shots.len(), 4 * STATES.len());
+    assert_eq!(shots.len(), 5 * STATES.len());
     for (name, accent, min, frame) in shots {
         save(&frame, &format!("target/tmp/look-{name}.bmp"));
         let [r, g, b, _] = accent.color().to_be_bytes();

@@ -1,18 +1,20 @@
 //! 設定の部品: 設定画面とセットアップウィザードが共有する、全体の設定（[`Setting`]）を選ぶ画面の一部（[`appearance`] /
-//! [`watch_faces`] / [`accessibility`]）。今の設定を見せ、選ぶとすぐ反映する。地（`background`）の上に置く。開閉などの小さな状態は呼び出し側が
+//! [`watch_faces`] / [`accessibility`] / [`keyboard_preview`]）。今の設定を見せ、選ぶとすぐ反映する。地（`background`）の上に置く。開閉などの小さな状態は呼び出し側が
 //! 持ち、変えるときは `set` で受け取る（ビューの型を問わない）。詳しくは `crates/ui/AGENT.md` の「設定の部品」。
 
 use design::components::{self, Variant};
 use design::{Accent, Mode, Theme, font_size, icons, radius, spacing};
 use gpui::{
-    App, ClickEvent, Context, Div, FontWeight, IntoElement, MouseDownEvent, Render, SharedString,
-    Window, div, prelude::*, px, rgba,
+    App, ClickEvent, Context, Div, Entity, FontWeight, IntoElement, MouseDownEvent, Render,
+    SharedString, Window, div, prelude::*, px, rgba,
 };
+use kernel::subsystems::keyboard::KeyboardType;
 use kernel::{
     PanelCommand, PanelId, PersonalColor, SCALE_STEP, Setting, Settings, TEXT_SCALE_MAX,
     TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, Vec2, WristDesign, WristFace,
 };
 
+use crate::keyboard::KeyboardView;
 use crate::{PanelControl, PanelSpec};
 
 /// wrist の文字盤の見本（デザインと直径 px）を描く関数。画面どうしは直接依存しないので、文字盤を持つ wrist が GPUI の
@@ -389,6 +391,36 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
                 .child(text_sample(&theme, ui / now.ui_scale, cx)),
         )
         .child(components::list(&theme, [text, ui_scale, bold]))
+}
+
+/// キーボードの見本のキー 1u の大きさ（px。実寸は 64）。フルサイズ（23u）が設定画面の中身の幅（680px）に収まる。
+pub const KEYBOARD_PREVIEW_UNIT: f32 = 29.0;
+
+/// [`keyboard_preview`] に見せるキーボードを作る（呼び出し側が持つ）。`panel` は見本を置くパネル（キーの音はそこから鳴る）。
+pub fn new_keyboard_preview(panel: PanelId, cx: &mut App) -> Entity<KeyboardView> {
+    cx.new(|cx| KeyboardView::preview(panel, KEYBOARD_PREVIEW_UNIT, cx))
+}
+
+/// キーボードの見本（高さの決まった箱 `keyboard-preview` の中に `virtual-keyboard`）: 今の設定の種類・OS の配列のキーボードを
+/// 縮めて見せる。キーは押せて、キーの音の設定どおりに鳴る（打った文字はどこにも送らない）。箱の高さはいちばん高い種類に
+/// 合わせてあり、種類を替えても下の項目は動かない。どの種類も同じ縮尺なので、種類ごとの大きさの違いも見える。
+pub fn keyboard_preview(keys: &Entity<KeyboardView>, cx: &App) -> Div {
+    let (unit, kind) = (keys.read(cx).unit, settings(cx).keyboard);
+    div()
+        .debug_selector(|| "keyboard-preview".into())
+        .flex_none()
+        .w_full()
+        .h(px(KeyboardType::Full.height() * unit))
+        .flex()
+        .items_center()
+        .justify_center()
+        // 幅を決めておく（キーの並びは幅いっぱいの横スクロールの中にあり、中身からは幅が決まらない）。
+        .child(
+            div()
+                .flex_none()
+                .w(px(kind.width() * unit))
+                .child(keys.clone()),
+        )
 }
 
 /// 文字盤の見本（中央）の直径と、使っている文字盤を囲む輪の太さ・見本との間（px。中央の大きさでの値）。

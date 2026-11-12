@@ -1,7 +1,9 @@
 //! E2E for the shared settings parts (`ui::prefs`) on the Settings screen, with the VR laser: appearance (preview, theme,
-//! the personal color history and the dialog that makes a custom color) and the watch faces (the carousel on an arc).
+//! the personal color history and the dialog that makes a custom color), the watch faces (the carousel on an arc),
+//! accessibility and the keyboard (a preview of the keyboard, its type, the key sound and its volume).
 
-use gpui::{TestAppContext, px};
+use gpui::{Context, TestAppContext, px};
+use kernel::subsystems::keyboard::{Database, KeyboardType, Layout};
 use kernel::{PointerMode, Setting, ThemeMode, WristDesign, WristFace};
 use testing::Settings;
 use testkit::{Action, Driver, Vec2, VrKit};
@@ -332,4 +334,146 @@ fn ui_scale_applies_when_a_touch_slide_ends(cx: &mut TestAppContext) {
             .size
             .abs_diff_eq(size * kernel::UI_SCALE_MIN, 1e-5)
     );
+}
+
+/// The Settings screen with its keyboard preview already showing `layout` (neither the thread that loads the layouts
+/// nor the layout of the OS is waited for).
+fn with_keyboard(layout: &str, cx: &mut Context<Settings>) -> Settings {
+    let layout = Layout::new(layout, "");
+    let keyboard = Database::load().unwrap().keyboard(&layout).unwrap();
+    let settings = Settings::new(0);
+    let keys = ui::prefs::new_keyboard_preview(0, cx);
+    keys.update(cx, |view, _| {
+        view.automatic = false;
+        view.select_layout(layout);
+        view.keyboard = Some(keyboard);
+        view.loading = false;
+    });
+    assert!(settings.keyboard_preview.set(keys).is_ok());
+    settings
+}
+
+/// How many sounds pressing the preview key `key` starts. The laser rests on the key first, so its hover sound is not
+/// counted. Nothing renders the audio here, so every sound that started is still counted as playing.
+fn key_sounds(kit: &mut VrKit<'_, Settings>, key: &'static str) -> usize {
+    kit.hover(key);
+    let before = kit.kernel.status(0).audio.playing;
+    kit.press(Action::Select).release(Action::Select);
+    kit.kernel.status(0).audio.playing - before
+}
+
+const VOLUME_SLIDER: (&str, &str) = (
+    "setting-key-volume-slider",
+    "setting-key-volume-slider-handle",
+);
+
+/// The keyboard category: a preview of the keyboard on top, then its type, the key sound and the volume of that sound.
+/// The preview is a smaller copy that follows the settings below it: it takes the shape of the chosen type, and its
+/// keys sound (or stay silent) as the key sound is set. It types nowhere.
+#[gpui::test]
+fn keyboard_is_a_preview_then_type_key_sound_and_volume(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, cx| with_keyboard("us", cx));
+    kit.click("settings-keyboard");
+    assert_eq!(kit.read(|v| v.category), 6);
+    let [preview, keys, kind, sound, volume] = [
+        "keyboard-preview",
+        "virtual-keyboard",
+        "setting-keyboard",
+        "setting-key-sound",
+        "setting-key-volume",
+    ]
+    .map(|s| kit.bounds(s));
+    assert!(preview.bottom() <= kind.top(), "the preview is on top");
+    assert!(kind.bottom() <= sound.top() && sound.bottom() <= volume.top());
+    assert_eq!((kind.size, sound.size), (sound.size, volume.size));
+    // On by default, at full volume.
+    let s = kit.kernel.settings();
+    assert_eq!((s.key_sound, s.key_sound_volume), (true, 1.0));
+
+    // The preview is not life-size: the full-size keyboard fits the content, in the middle of its box.
+    let unit = ui::prefs::KEYBOARD_PREVIEW_UNIT;
+    let content = kit.bounds("settings-content");
+    let fits = |keys: gpui::Bounds<gpui::Pixels>, kind: KeyboardType| {
+        let size = (f32::from(keys.size.width), f32::from(keys.size.height));
+        assert_eq!(
+            size,
+            (kind.width() * unit, kind.height() * unit),
+            "{kind:?}"
+        );
+        assert!(keys.left() >= content.left() && keys.right() <= content.right());
+        assert!(keys.top() >= preview.top() && keys.bottom() <= preview.bottom());
+        let off = keys.center() - preview.center();
+        assert!(off.x.abs() < px(1.0) && off.y.abs() < px(1.0), "{kind:?}");
+    };
+    fits(keys, KeyboardType::Full);
+    assert!(kit.try_bounds("key-KP7").is_some() && kit.try_bounds("key-FK01").is_some());
+    // Only the keys: the controls of the keyboard test screen and the close button of the real one are not here.
+    assert!(kit.try_bounds("keyboard-auto").is_none());
+    assert!(kit.try_bounds("close-keyboard").is_none());
+
+    // Choosing a type reshapes the preview at the same scale, and neither its box nor the rows under the laser move.
+    for (option, chosen) in [
+        ("setting-keyboard-tkl", KeyboardType::Tenkeyless),
+        ("setting-keyboard-compact", KeyboardType::Compact),
+    ] {
+        kit.click("setting-keyboard").click(option);
+        assert_eq!(kit.kernel.settings().keyboard, chosen);
+        fits(kit.bounds("virtual-keyboard"), chosen);
+        assert_eq!(kit.bounds("keyboard-preview"), preview);
+        assert_eq!(kit.bounds("setting-keyboard"), kind);
+    }
+    assert!(kit.try_bounds("key-KP7").is_none() && kit.try_bounds("key-FK01").is_none());
+    let key = kit.bounds("key-AC01");
+    assert!(key.size.width < px(unit), "a key is smaller than 1u");
+
+    // A key of the preview can be pressed and sounds. It is a dummy: no keyboard is summoned and nothing is typed.
+    let overlays = kit.kernel.subsystems.backend.overlays.len();
+    assert_eq!(key_sounds(&mut kit, "key-AC01"), 1);
+    kit.step();
+    assert_eq!(kit.kernel.subsystems.backend.overlays.len(), overlays);
+    assert_eq!(kit.read(|v| v.category), 6);
+
+    // Key sound off: the same key is silent, and the volume row goes away without moving the rows above.
+    kit.click("setting-key-sound");
+    assert!(!kit.kernel.settings().key_sound);
+    assert_eq!(key_sounds(&mut kit, "key-AC01"), 0);
+    assert!(kit.try_bounds("setting-key-volume").is_none());
+    assert_eq!(kit.bounds("setting-key-sound"), sound);
+    kit.click("setting-key-sound");
+    assert!(kit.kernel.settings().key_sound);
+    assert_eq!(kit.bounds("setting-key-volume"), volume);
+    assert_eq!(key_sounds(&mut kit, "key-AC01"), 1);
+
+    // Volume: applies while the handle is held, snapped to steps of 10%. The others stay. (Each drag is longer than
+    // the slop that keeps a press where it started.)
+    grab_to(&mut kit, VOLUME_SLIDER.0, VOLUME_SLIDER.1, 0.32);
+    assert!((kit.kernel.settings().key_sound_volume - 0.3).abs() < 1e-5);
+    kit.release(Action::Select).step();
+    assert!((kit.kernel.settings().key_sound_volume - 0.3).abs() < 1e-5);
+    assert_eq!(kit.bounds("setting-key-volume"), volume);
+    grab_to(&mut kit, VOLUME_SLIDER.0, VOLUME_SLIDER.1, 1.0);
+    kit.release(Action::Select).step();
+    assert_eq!(kit.kernel.settings().key_sound_volume, 1.0);
+    grab_to(&mut kit, VOLUME_SLIDER.0, VOLUME_SLIDER.1, 0.0);
+    kit.release(Action::Select).step();
+    let s = kit.kernel.settings();
+    assert_eq!((s.key_sound_volume, s.key_sound), (0.0, true));
+    assert_eq!(s.keyboard, KeyboardType::Compact);
+}
+
+/// With touch (the default on the Settings screen), a tap on a key of the preview presses it, and it sounds.
+#[gpui::test]
+fn keyboard_preview_keys_sound_on_a_touch_tap(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, cx| with_keyboard("jp", cx));
+    kit.kernel.set(Setting::PointerMode(PointerMode::Touch));
+    kit.step();
+    kit.click("settings-keyboard");
+    assert_eq!(key_sounds(&mut kit, "key-AC01"), 1);
+    assert_eq!(
+        key_sounds(&mut kit, "key-HENK"),
+        1,
+        "a key of the JIS layout"
+    );
+    kit.click("setting-key-sound");
+    assert_eq!(key_sounds(&mut kit, "key-AC01"), 0);
 }
