@@ -101,6 +101,8 @@ impl Wrist {
         cx.observe_global::<PanelControl>(Self::follow_dominant_hand)
             .detach();
         let hand = off_hand(cx);
+        // 文字盤を選ぶ画面（設定など）が見本を描けるように。画面どうしは直接依存しないので、UI 層のグローバルに置く。
+        cx.set_global(ui::prefs::FacePreview(face::preview));
         // ダッシュボードは起動時に隠したまま作っておく（画面の配信を用意しておき、X の二回押しでは出すだけ）。
         open_dashboard(settings, debug, true, cx);
         Self {
