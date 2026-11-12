@@ -7,7 +7,7 @@
 
 use std::borrow::Cow;
 
-use gpui::{App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight};
+use gpui::{App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Pixels, px};
 
 pub const FAMILY: &str = "Gen Interface JP";
 pub const MONO_FAMILY: &str = "0xProto";
@@ -26,6 +26,26 @@ pub fn install(cx: &mut App) {
             Cow::Borrowed(include_bytes!("../fonts/DSEG7Classic-Bold.ttf").as_slice()),
         ])
         .expect("embedded fonts are valid");
+}
+
+/// 文字の大きさの倍率と太字化を全域に効かせる（`ui` が全体の設定から書く）。掛けるのは GPUI のテキストシステム（文字を組む所・
+/// 書体を決める所）なので、画面のコードは今までどおり等倍の大きさ・太さを書くだけでよく、効かせ忘れは起きない。外すのは
+/// `.text_exact()` を付けた部分木だけ（絵の中の文字）。変わったら全ウィンドウを描き直し、`true` を返す。AGENT.md の「文字の大きさと太字化」。
+pub fn set_text(scale: f32, bold: bool, cx: &mut App) -> bool {
+    let before = gpui::text_settings();
+    gpui::set_text_scale(scale);
+    gpui::set_bold_text(bold);
+    if gpui::text_settings() == before {
+        return false;
+    }
+    cx.refresh_windows();
+    true
+}
+
+/// 文字に合わせて決めた長さ `length`（px。行の高さから作った箱など）を、今の文字の大きさの倍率に合わせる。
+/// 文字そのものには要らない（テキストシステムが掛ける）。文字ではないが文字に付いていくべき寸法にだけ使う。
+pub fn scaled(length: f32) -> Pixels {
+    px(length * gpui::text_scale())
 }
 
 /// 既定の書体。

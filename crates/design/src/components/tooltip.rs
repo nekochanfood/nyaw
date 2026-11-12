@@ -127,7 +127,8 @@ pub fn tooltip(text: SharedString, width: f32, scroll: Option<f32>) -> Div {
                 .flex_none()
                 .relative()
                 .w(px(width - PAD_X * 2.0))
-                .h(px(LINE))
+                // 行の高さから作った箱なので、文字の大きさの倍率に合わせる。
+                .h(crate::font::scaled(LINE))
                 .overflow_hidden()
                 .child(
                     div()

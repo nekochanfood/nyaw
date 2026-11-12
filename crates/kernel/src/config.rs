@@ -116,6 +116,20 @@ impl PersonalColor {
     }
 }
 
+/// 文字の大きさの倍率（[`Config::text_scale`]）と UI スケール（[`Config::ui_scale`]）の範囲と刻み。画面の中の組み方は
+/// 変えないので、文字は入れ物に収まる倍率まで。UI スケールはパネルごと大きくするので、視野に収まる倍率まで。
+pub const TEXT_SCALE_MIN: f32 = 0.8;
+pub const TEXT_SCALE_MAX: f32 = 1.5;
+pub const UI_SCALE_MIN: f32 = 0.7;
+pub const UI_SCALE_MAX: f32 = 1.5;
+pub const SCALE_STEP: f32 = 0.1;
+
+/// 倍率を範囲 `min..=max` に収め、[`SCALE_STEP`] の刻みに丸める（数でない値は等倍）。
+pub fn clamp_scale(scale: f32, min: f32, max: f32) -> f32 {
+    let scale = if scale.is_finite() { scale } else { 1.0 };
+    ((scale.clamp(min, max) / SCALE_STEP).round() * SCALE_STEP).clamp(min, max)
+}
+
 /// 自分で作ったパーソナルカラーを覚えておく数（[`Config::color_history`]）。
 pub const COLOR_HISTORY: usize = 8;
 
@@ -240,6 +254,12 @@ pub struct Config {
     pub block_input: Option<bool>,
     /// セットアップウィザードを終えたか。省略で `false`（初回起動でウィザードを出す）。終えるとここへ書き戻される。
     pub setup_done: bool,
+    /// 文字の大きさの倍率（[`TEXT_SCALE_MIN`]〜[`TEXT_SCALE_MAX`]）。省略で等倍。画面での切り替えはここへ書き戻される。
+    pub text_scale: Option<f32>,
+    /// UI スケール: パネルの大きさの倍率（[`UI_SCALE_MIN`]〜[`UI_SCALE_MAX`]）。省略で等倍。画面での切り替えはここへ書き戻される。
+    pub ui_scale: Option<f32>,
+    /// すべての文字を太字にするか。省略で `false`。画面での切り替えはここへ書き戻される。
+    pub bold_text: bool,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -509,6 +529,48 @@ emulator = false
             parse("block_input = false").unwrap().block_input,
             Some(false)
         );
+    }
+
+    /// アクセシビリティの 3 つは独立したキーで、どれも省略でき、書き戻しても互いを消さない。
+    #[test]
+    fn accessibility_keys_parse_clamp_and_round_trip() {
+        let c = parse("").unwrap();
+        assert_eq!((c.text_scale, c.ui_scale, c.bold_text), (None, None, false));
+        let c = parse("text_scale = 1.3\nui_scale = 0.8\nbold_text = true").unwrap();
+        assert_eq!(
+            (c.text_scale, c.ui_scale, c.bold_text),
+            (Some(1.3), Some(0.8), true)
+        );
+        assert!(parse("bold_text = \"yes\"").is_err());
+        // 範囲の外は端へ、刻みの間は近い刻みへ、数でない値は等倍へ。
+        let text = |s| clamp_scale(s, TEXT_SCALE_MIN, TEXT_SCALE_MAX);
+        assert_eq!(
+            [text(9.0), text(0.0), text(-3.0)],
+            [TEXT_SCALE_MAX, TEXT_SCALE_MIN, TEXT_SCALE_MIN]
+        );
+        assert_eq!([text(f32::NAN), text(f32::INFINITY)], [1.0, 1.0]);
+        assert!((text(1.234) - 1.2).abs() < 1e-6);
+        assert!((clamp_scale(0.71, UI_SCALE_MIN, UI_SCALE_MAX) - UI_SCALE_MIN).abs() < 1e-6);
+        // 刻みは両方の範囲の端にちょうど乗る。
+        for (min, max) in [
+            (TEXT_SCALE_MIN, TEXT_SCALE_MAX),
+            (UI_SCALE_MIN, UI_SCALE_MAX),
+        ] {
+            assert!((clamp_scale(min, min, max) - min).abs() < 1e-6);
+            assert!((clamp_scale(max, min, max) - max).abs() < 1e-6);
+            assert!(min < 1.0 && 1.0 < max, "等倍は範囲の中");
+        }
+        let dir = std::env::temp_dir().join(format!("nyaw-a11y-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        save_at(&path, "text_scale", value(1.5f32)).unwrap();
+        save_at(&path, "ui_scale", value(0.7f32)).unwrap();
+        save_at(&path, "bold_text", value(true)).unwrap();
+        let back = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            (back.text_scale, back.ui_scale, back.bold_text),
+            (Some(1.5), Some(0.7), true)
+        );
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -35,3 +35,17 @@ UI の見た目の責務。Radix Colors のエイリアスに倣う 3 層。Cons
   - **`components::arc(diameter)`**（`components/carousel/arc.rs`）: 大きな円の弧に沿う並べ方。中央（弧の頂点）の項目の一辺が `diameter`。隣は弧に沿って下がり、薄くなり、弧の向きに傾く（大きさはどこでも同じ）（`Place::angle`。描くときに `Window::with_rotation` で回す）。その先は消えて見えない。wrist の文字盤を選ぶ画面（`ui::prefs::watch_faces`）が使う。
 - 別の形（一直線・カバーフローなど）が要るときは、`Shape::new` を返す関数を足す（`carousel` は変えない）。
 - テスト: `carousel::tests` / `carousel::arc::tests`（計算）、`tests/carousel.rs`（操作）。
+
+## 文字の大きさと太字化
+
+アクセシビリティの設定（`kernel` の `text_scale` / `bold_text`）を、すべての文字に効かせる仕組み。**掛けるのは下の層**（vendor/gpui のテキストシステム）で、画面や部品のコードは今までどおり等倍の大きさ・太さ（`font_size::MD`、`FontWeight::NORMAL` など）を書くだけでよい。これから書くコードも、何も考えなくても効く。
+
+- **入口**: `font::set_text(scale, bold, cx)`（`ui::sync_settings` が全体の設定から書く。変われば全ウィンドウを描き直す）。
+- **大きさ**: GPUI が文字を組む所（`WindowTextSystem::shape_line` / `shape_text` / `layout_line*`、折り返しの `TextSystem::line_wrapper`）が、渡された大きさに倍率を掛けて組む。要素として置いた文字も、`shape_line` を直接呼んで自前で組む・測る文字も、同じ所を通る。行の高さ（`TextStyle::line_height_in_pixels` と文字の要素）も同じ倍率で伸びる（相対でも `px` でも）。`window.text_style()` が返すのはコードに書いた値のまま。
+- **太さ**: 書体を決める所（`TextSystem::font_id`）が、`BOLD` より細い指定を `BOLD` にする。すでに太い字はそのまま（より太い書体は積んでいない。太字どうしの差を付けたくなったら、同じ配布物の ExtraBold を積んで対応を足す）。等幅など太さが 1 つの書体は OS が太らせる。
+- **アイコン・絵文字**: `icon(..)` と `emoji(..)` は文字と並ぶものなので、自分で同じ倍率に付いていく（`gpui::text_scale()`）。
+- **外す（オプトアウト）**: `.text_exact()` を付けた部分木は、大きさも太さもコードに書いたとおりに描く（中の `icon` も等倍）。絵の一部になっている文字だけに使う: wrist の文字盤、仮想キーボードのキーの文字、アプリの頭文字アイコン。
+- **文字に合わせた寸法**: 文字そのものには何も要らないが、「1 行の文字を入れる高さ」のように文字から作った箱は `font::scaled(長さ)` で倍率に合わせる（ダイアログの行、ツールチップの行、ダッシュボードのタイル）。高さを決めず中身に任せた箱（`h` を書かない）は何もしなくてよい。部品（ボタン・行・ナビゲーションバー）の高さは、いちばん大きい倍率の文字が収まるように決めてあるので変えない。
+- **状態の置き場所**: スレッドごと（GPUI は 1 つのスレッドで組んで描く。テストは 1 本ずつ別のスレッドなので互いに影響しない）。
+- **設定の部品**: 行の中にスライダーを置く `components::slider_item`（値の文字は名前の側、スライダーは右端。文字の大きさが変わっても動かしている最中のスライダーが動かない）、離したときに決める `Slider::on_release`。
+- テスト: `tests/text.rs`（要素の文字・自前で組んだ文字・アイコン・絵文字に効き、`.text_exact()` だけ従わない。倍率と太字化はどの組でも独立に効く）、`tests/dialog.rs`（高さが倍率に付いていく）。実 GPU の絵は `cargo test -p ui --test gpu -- --ignored a11y`（`target/tmp/look-a11y-*.bmp`）。

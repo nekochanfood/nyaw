@@ -187,7 +187,9 @@ impl IconView {
 }
 
 impl RenderOnce for IconView {
-    fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
+    fn render(mut self, _: &mut Window, _: &mut App) -> impl IntoElement {
+        // アイコンは文字と並ぶものなので、文字の大きさの倍率に付いていく（`.text_exact()` の中では等倍）。
+        self.size *= gpui::text_scale();
         let size = self.size;
         canvas(
             |_, _, _| (),

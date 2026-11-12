@@ -18,7 +18,8 @@ use subsystems::os;
 
 pub use config::{
     COLOR_HISTORY, Config, DominantHand, Language, LodQuality, PersonalColor, PointerMode,
-    ThemeMode, WristDesign, WristFace,
+    SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, WristDesign,
+    WristFace,
 };
 pub use overlay::{
     self, Anchor, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent,
@@ -72,6 +73,7 @@ pub enum PanelCommand {
     /// 現在の縦横比のまま、VR 上の高さだけを揃える。
     FitHeight(f32),
     /// 今の頭から見た相対姿勢（`ui::PanelSpec::in_view` と同じく頭の傾きは無視）へ置き直す。取り付けは外す。
+    /// 姿勢は等倍のつもりの値で、掴む基準があれば基準がその所に来る（`Overlay::place`）。
     Place(Pose),
     /// 親子関係を設定する（`None` で独立）。子は親に追従し、子が開いている間の親は暗くなって入力を受けない。
     Parent(Option<Parent>),
@@ -143,6 +145,12 @@ pub enum Setting {
     LodQuality(LodQuality),
     /// セットアップウィザードを終えたか（`setup_done`）。
     SetupDone(bool),
+    /// 文字の大きさの倍率（`text_scale`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、効かせるのは UI 層。
+    TextScale(f32),
+    /// UI スケール: パネルの VR 上の大きさの倍率（`ui_scale`。範囲に収め、刻みに丸める）。開いているパネルもその場で変わる。
+    UiScale(f32),
+    /// すべての文字を太字にするか（`bold_text`）。カーネルは値を持つだけで、効かせるのは UI 層。
+    BoldText(bool),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -168,6 +176,12 @@ pub struct Settings {
     pub setup_done: bool,
     /// ロックダウン中か（[`Kernel::lockdown`]）。シェル（ダッシュボードなど）はこれを見て、開閉を控える。
     pub lockdown: bool,
+    /// 文字の大きさの倍率（等倍 = 1）。
+    pub text_scale: f32,
+    /// UI スケール（パネルの大きさの倍率。等倍 = 1）。
+    pub ui_scale: f32,
+    /// すべての文字を太字にする。
+    pub bold_text: bool,
 }
 
 impl Default for Settings {
@@ -190,6 +204,9 @@ impl Default for Settings {
             lod_quality: Default::default(),
             setup_done: false,
             lockdown: false,
+            text_scale: 1.0,
+            ui_scale: 1.0,
+            bold_text: false,
         }
     }
 }
@@ -402,6 +419,10 @@ impl<B: VrBackend> Kernel<B> {
             overlay.set_laser_length(l);
         }
         overlay.set_block_input(config.block_input.unwrap_or(true));
+        if let Some(s) = config.ui_scale {
+            let s = config::clamp_scale(s, UI_SCALE_MIN, UI_SCALE_MAX);
+            overlay.set_scale(&mut subsystems.backend, s);
+        }
         let pointer_mode = config.pointer_mode.unwrap_or_default();
         // タッチではスライドがパネルからはみ出しても続くよう、押している間はポインタを掴んでおく。
         overlay.set_capture(pointer_mode == PointerMode::Touch);
@@ -478,7 +499,17 @@ impl<B: VrBackend> Kernel<B> {
             lod_quality: self.config.lod_quality,
             setup_done: self.config.setup_done,
             lockdown: self.lockdown(),
+            text_scale: self.config.text_scale.map_or(1.0, |s| {
+                config::clamp_scale(s, TEXT_SCALE_MIN, TEXT_SCALE_MAX)
+            }),
+            ui_scale: self.overlay.scale(),
+            bold_text: self.config.bold_text,
         }
+    }
+
+    /// UI スケール（[`Setting::UiScale`]）。パネルの大きさ（[`Self::add_panel`] など）は等倍のつもりで渡し、これが掛かる。
+    pub fn ui_scale(&self) -> f32 {
+        self.overlay.scale()
     }
 
     /// ミラーリングの取得の上限 FPS（設定ファイルの値を 1〜240 に収めたもの）。
@@ -575,6 +606,21 @@ impl<B: VrBackend> Kernel<B> {
             Setting::SetupDone(b) => {
                 self.config.setup_done = b;
                 ("setup_done", config::value(b))
+            }
+            Setting::TextScale(s) => {
+                let s = config::clamp_scale(s, TEXT_SCALE_MIN, TEXT_SCALE_MAX);
+                self.config.text_scale = Some(s);
+                ("text_scale", config::value(s))
+            }
+            Setting::UiScale(s) => {
+                let s = config::clamp_scale(s, UI_SCALE_MIN, UI_SCALE_MAX);
+                self.overlay.set_scale(&mut self.subsystems.backend, s);
+                self.config.ui_scale = Some(s);
+                ("ui_scale", config::value(s))
+            }
+            Setting::BoldText(b) => {
+                self.config.bold_text = b;
+                ("bold_text", config::value(b))
             }
         };
         if let Some(path) = &self.config_path
@@ -853,7 +899,7 @@ impl<B: VrBackend> Kernel<B> {
             }
             PanelCommand::Place(offset) => {
                 self.overlay.detach(panel);
-                self.overlay.set_pose(panel, self.hmd().leveled() * offset);
+                self.overlay.place(panel, self.hmd().leveled() * offset);
             }
             PanelCommand::Stream(source, frame_rate) => {
                 self.start_desktop(panel, source, frame_rate)
@@ -1183,6 +1229,86 @@ mod tests {
         let (mut k, _) = lod_kernel();
         k.set(Setting::LodQuality(LodQuality::High));
         assert_eq!(k.settings().lod_quality, LodQuality::High);
+    }
+
+    /// アクセシビリティの 3 つは独立した設定: どれかを変えてもほかは変わらず、どんな値の組でも範囲に収まる。
+    #[test]
+    fn accessibility_settings_are_independent_and_always_in_range() {
+        let (mut k, p) = lod_kernel();
+        let s = k.settings();
+        assert_eq!((s.text_scale, s.ui_scale, s.bold_text), (1.0, 1.0, false));
+        k.set(Setting::TextScale(1.3));
+        let s = k.settings();
+        assert!((s.text_scale - 1.3).abs() < 1e-6);
+        assert_eq!((s.ui_scale, s.bold_text), (1.0, false));
+        assert_eq!(
+            k.panel(p).size,
+            Vec2::ONE,
+            "文字の大きさではパネルは変わらない"
+        );
+        k.set(Setting::BoldText(true));
+        k.set(Setting::UiScale(1.5));
+        let s = k.settings();
+        assert!((s.text_scale - 1.3).abs() < 1e-6 && s.bold_text);
+        assert_eq!((s.ui_scale, k.ui_scale()), (1.5, 1.5));
+        // UI スケールは開いているパネルの実寸をその場で変え、解像度（中の組み方）は変えない。後から開くパネルにも掛かる。
+        assert_eq!(
+            (k.panel(p).size, k.panel(p).resolution),
+            (Vec2::splat(1.5), (1000, 1000))
+        );
+        let later = k
+            .add_panel("later", Pose::IDENTITY, Vec2::new(0.8, 0.6), (800, 600))
+            .unwrap();
+        assert!(k.panel(later).size.abs_diff_eq(Vec2::new(1.2, 0.9), 1e-6));
+        // 端から端まで、数でない値も含めてどの組でも範囲の中。
+        let wild = [
+            f32::NEG_INFINITY,
+            -1.0,
+            0.0,
+            0.05,
+            1.0,
+            99.0,
+            f32::INFINITY,
+            f32::NAN,
+        ];
+        for text in wild {
+            for ui in wild {
+                k.set(Setting::TextScale(text));
+                k.set(Setting::UiScale(ui));
+                let s = k.settings();
+                assert!(
+                    (TEXT_SCALE_MIN..=TEXT_SCALE_MAX).contains(&s.text_scale),
+                    "{text}"
+                );
+                assert!((UI_SCALE_MIN..=UI_SCALE_MAX).contains(&s.ui_scale), "{ui}");
+                let size = k.panel(p).size;
+                assert!(
+                    size.abs_diff_eq(Vec2::splat(s.ui_scale), 1e-4),
+                    "{ui}: {size}"
+                );
+            }
+        }
+    }
+
+    /// 起動時の設定も範囲に収めて効く（UI スケールは最初のパネルから掛かる）。
+    #[test]
+    fn accessibility_config_applies_at_boot() {
+        let config = Config {
+            text_scale: Some(7.0),
+            ui_scale: Some(0.1),
+            bold_text: true,
+            ..Default::default()
+        };
+        let mut k = Kernel::with_backend(MockBackend::default(), config);
+        let s = k.settings();
+        assert_eq!(
+            (s.text_scale, s.ui_scale, s.bold_text),
+            (TEXT_SCALE_MAX, UI_SCALE_MIN, true)
+        );
+        let p = k
+            .add_panel("t", Pose::IDENTITY, Vec2::ONE, (10, 10))
+            .unwrap();
+        assert!(k.panel(p).size.abs_diff_eq(Vec2::splat(UI_SCALE_MIN), 1e-6));
     }
 
     #[test]

@@ -482,10 +482,13 @@ pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool
         ctl.os_keyboard = kernel.os_keyboard();
     }
     let settings = kernel.settings();
-    if ctl.settings == settings {
+    let changed = ctl.settings != settings;
+    ctl.settings = settings;
+    // 文字の大きさと太字化は GPUI の側（スレッドごと）に置く。そちらが食い違っていれば、設定が変わっていなくても合わせる。
+    design::font::set_text(settings.text_scale, settings.bold_text, cx);
+    if !changed {
         return false;
     }
-    ctl.settings = settings;
     design::Theme::set_mode(
         match settings.theme {
             ThemeMode::Dark => design::Mode::Dark,
@@ -1083,7 +1086,11 @@ impl PanelSpec {
     }
 
     pub fn pose_for<B: VrBackend>(&self, kernel: &Kernel<B>, _next: PanelId) -> Pose {
-        if let Some(center) = self.typing {
+        // 大きさ・開いた元からの位置は等倍のつもりで書いてある。実際のパネルは UI スケールで大きいので、同じだけ掛ける。
+        let scale = kernel.ui_scale();
+        // このパネルの実際の高さの半分。
+        let half_height = self.size.y * scale / 2.;
+        if let Some(center) = self.typing.map(|c| c * scale) {
             let hmd = kernel.hmd();
             let up = hmd.panel_up();
             // 頭から見るのは上下（高さ・仰ぐ角度）だけ。左右の向きと位置は呼び出し元に合わせ、頭の回転に付いて行かない
@@ -1121,10 +1128,9 @@ impl PanelSpec {
             let upright = hands.map_or(TYPING_AT.y, |hands| {
                 ((hands - hmd.position).dot(up) + TYPING_ABOVE_HANDS)
                     .max(TYPING_LOWEST)
-                    .min(-self.size.y / 2. - TYPING_CLEARANCE)
+                    .min(-half_height - TYPING_CLEARANCE)
             });
-            let mut height =
-                upright + (-self.size.y / 2. - TYPING_LYING_CLEARANCE - upright) * lying;
+            let mut height = upright + (-half_height - TYPING_LYING_CLEARANCE - upright) * lying;
             // 頭から見て呼び出し元の下端より下に見えるよう、必要なら下げる（呼び出し元の邪魔をしない）。呼び出し元を
             // はめた先（ダッシュボードのバー）も含め、ナビゲーションバーの分も下端とみなす。下げても見える所までに収める。
             let callers =
@@ -1145,7 +1151,7 @@ impl PanelSpec {
                 // 自分の見かけの高さ（の半分）は距離で変わるので、数回詰める。真下近くでは tan が発散するので 80° で止める。
                 let mut limit = height;
                 for _ in 0..3 {
-                    let half = (self.size.y / 2.).atan2(reach.hypot(limit));
+                    let half = half_height.atan2(reach.hypot(limit));
                     let center = (bottom - TYPING_PANEL_GAP - half).max(-80f32.to_radians());
                     limit = reach * center.tan();
                 }
@@ -1170,11 +1176,21 @@ impl PanelSpec {
         match self.from {
             // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
             Some(from) => {
-                kernel.panel(from).pose
-                    * self.offset.unwrap_or(Pose::new(SPAWN_GAP, Quat::IDENTITY))
+                let offset = self.offset.unwrap_or(Pose::new(SPAWN_GAP, Quat::IDENTITY));
+                kernel.panel(from).pose * Pose::new(offset.position * scale, offset.orientation)
             }
-            None if self.in_view => kernel.hmd().leveled() * self.pose,
-            None => self.pose,
+            // 掴む基準があれば、基準が等倍のときと同じ所に来るように置く（ダッシュボードは画面が立つ所）。
+            None => {
+                let pose = if self.in_view {
+                    kernel.hmd().leveled() * self.pose
+                } else {
+                    self.pose
+                };
+                match self.grab_anchor {
+                    Some(anchor) => kernel::overlay::anchored(pose, anchor, scale),
+                    None => pose,
+                }
+            }
         }
     }
 

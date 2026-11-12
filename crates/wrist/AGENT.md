@@ -30,3 +30,5 @@
 4. `crates/i18n/locales/*.toml` の `[wrist.design]` に名前を足す（足し忘れると `every_face_and_design_has_a_name` が落ちる）。
 
 種類を足すときは、表に行を足し、`face/` にファイルを足す（`[wrist.face]` にも名前）。設定画面・セットアップの選択肢は表から並ぶので変えない。見た目は `cargo test -p ui --test gpu -- --ignored look` で `target/tmp/look-faces-*.bmp` に書き出して確かめる。
+
+文字盤は絵として描くので、アクセシビリティの「文字の大きさ」「太字」には従わない（`Face::frame` の `.text_exact()`。数字も直径に合わせて決めてある）。大きく見たいときは UI スケールで文字盤ごと大きくなる。

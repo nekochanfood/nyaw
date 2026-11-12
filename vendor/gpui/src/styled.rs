@@ -532,6 +532,15 @@ pub trait Styled: Sized {
         self
     }
 
+    /// NYAW: draws the text of this element exactly as given, opting out of the global text scale and bold
+    /// (`gpui::set_text_scale` / `gpui::set_bold_text`). For text that is part of a drawing.
+    ///
+    /// This value cascades to its child elements.
+    fn text_exact(mut self) -> Self {
+        self.text_style().exact = Some(true);
+        self
+    }
+
     /// Sets the text size of this element.
     ///
     /// This value cascades to its child elements.

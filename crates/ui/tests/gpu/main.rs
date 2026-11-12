@@ -4,6 +4,7 @@
 //!
 //! 1 ケースだけ流す: `cargo test -p ui --test gpu -- --ignored stress`（名前の一部で絞る）
 
+mod a11y;
 mod common;
 mod emoji;
 mod font_weights;
@@ -32,6 +33,7 @@ fn report<T: Termination>(main: fn() -> T) -> ExitCode {
 type Case = (&'static str, fn() -> ExitCode);
 
 const CASES: &[Case] = &[
+    ("a11y", || report(a11y::main)),
     ("emoji", || report(emoji::main)),
     ("font_weights", || report(font_weights::main)),
     ("gpu_capture", || report(gpu_capture::main)),

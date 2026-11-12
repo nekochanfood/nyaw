@@ -883,7 +883,7 @@ impl Render for Testing {
                 .child(components::elastic("pull-list", &self.list).children(
                     rows.into_iter().map(|row| {
                         div()
-                            .h(gpui::px(ROW_PX))
+                            .h(design::font::scaled(ROW_PX))
                             .px(px(spacing::LG))
                             .flex()
                             .items_center()
@@ -1085,7 +1085,7 @@ impl Render for PointerTest {
                     .children(
                         swipe_rows
                             .into_iter()
-                            .map(|row| div().h(gpui::px(ROW_PX)).px_2().child(row)),
+                            .map(|row| div().h(design::font::scaled(ROW_PX)).px_2().child(row)),
                     ),
             )
     }
@@ -1377,7 +1377,7 @@ const SIDEBAR_PX: f32 = 320.0;
 const SETTINGS_SLIDER_PX: f32 = 520.0;
 
 /// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
-const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 8] = [
+const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 9] = [
     (
         "settings-general",
         &design::icons::GEAR,
@@ -1392,6 +1392,11 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 8] = [
         "settings-watch",
         &design::icons::WATCH,
         "settings.category.watch",
+    ),
+    (
+        "settings-accessibility",
+        &design::icons::PERSON_ARMS_SPREAD,
+        "settings.category.accessibility",
     ),
     (
         "settings-pointer",
@@ -1625,8 +1630,10 @@ impl Settings {
                 };
                 vec![ui::prefs::watch_faces(self.watch, set, window, cx)]
             }
+            // アクセシビリティ: 文字の見本・文字の大きさ・UI スケール・太字（セットアップウィザードと同じ部品）。
+            3 => vec![ui::prefs::accessibility(window, cx)],
             // ポインタ: 方式と、レーザーの手ブレ抑え・長さ（Laser の画面と同じ範囲）。
-            3 => {
+            4 => {
                 let max = kernel::overlay::POINTER_SMOOTHING_MAX;
                 let (tight, loose) = (
                     kernel::overlay::POINTER_RELEASE_DEG_MIN,
@@ -1718,7 +1725,7 @@ impl Settings {
                 ]
             }
             // ミラーリング: 取得の上限 FPS。
-            4 => vec![components::list(
+            5 => vec![components::list(
                 theme,
                 [self.select(
                     theme,
@@ -1735,7 +1742,7 @@ impl Settings {
                 )],
             )],
             // キーボード: 種類。
-            5 => {
+            6 => {
                 use kernel::subsystems::keyboard::KeyboardType;
                 vec![components::list(
                     theme,
@@ -1767,7 +1774,7 @@ impl Settings {
                 )]
             }
             // グラフィックス: 距離 LOD の品質。
-            6 => vec![components::list(
+            7 => vec![components::list(
                 theme,
                 [self.select(
                     theme,

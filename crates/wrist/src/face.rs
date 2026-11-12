@@ -100,6 +100,8 @@ impl Face<'_> {
             .items_center()
             .justify_center()
             .text_color(rgba(self.theme.neutral_text))
+            // 文字盤は絵。文字も直径に合わせて決めてあるので、全域の文字の大きさ・太字化には従わない（大きさは UI スケールで変わる）。
+            .text_exact()
     }
 
     /// 日付の文字（`date`）。色・大きさは呼び出し側が足す。

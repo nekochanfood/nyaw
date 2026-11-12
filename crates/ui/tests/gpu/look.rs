@@ -8,9 +8,9 @@ use gpui::{AppContext, Context, IntoElement, Render, Window, div, prelude::*, px
 use ui::{PanelControl, capture, open_panel_window};
 
 /// wrist の文字盤の見本を、地の上に並べた画面（種類ごとに 1 行、デザインを横に）。
-struct Faces;
+pub struct Faces;
 
-const FACES_PX: (u32, u32) = (900, 900);
+pub const FACES_PX: (u32, u32) = (900, 900);
 /// セットアップウィザードのパネルの大きさ。
 const SETUP_PX: (u32, u32) = (1152, 864);
 
@@ -181,7 +181,7 @@ pub fn main() {
     }
 }
 
-fn save(frame: &ui::Frame, path: &str) {
+pub fn save(frame: &ui::Frame, path: &str) {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../..")
         .join(path);
