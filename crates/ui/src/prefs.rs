@@ -263,11 +263,12 @@ impl WatchFaces {
     }
 }
 
-/// 文字盤の見本 1 つ（一辺 `side` の正方形。`watch-face-<名前>`）。使っているものは、周りを塗りの色の輪で囲む。
+/// 文字盤の見本 1 つ（一辺 `side` の正方形。`watch-face-<名前>`）。使っているものは、周りを文字の色の輪で囲む（ライトは黒、
+/// ダークは白。塗りの色だと文字盤のデザインの一部に見えるものがある。色の見本の選択の輪と同じ）。
 fn face(design: WristDesign, used: bool, side: f32, theme: &Theme, cx: &App) -> Div {
     let k = side / FACE_PX;
     let (ring, gap) = (FACE_RING * k, FACE_RING_GAP * k);
-    let color = if used { theme.accent_solid } else { 0 };
+    let color = if used { theme.neutral_text } else { 0 };
     let d = side - 2.0 * (ring + gap);
     let dial = match cx.try_global::<FacePreview>() {
         Some(preview) => preview.0(design, d, cx),
