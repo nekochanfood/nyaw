@@ -30,7 +30,7 @@ fn flat_distance(a: Vec3, b: Vec3) -> f32 {
 
 #[gpui::test]
 fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppContext) {
-    let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0, wrist::preview));
+    let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
     // 起動仕様（`setup::spec`）と同じロックダウンと追従を付ける。
     kit.kernel.apply(0, PanelCommand::Lockdown(true));
     kit.kernel.apply(

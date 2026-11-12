@@ -1,6 +1,6 @@
 //! ウィザード: ユーザーに順番に操作させる画面。どこでも使えるよう、状態（[`Wizard`]）と見た目（[`wizard_welcome`] / [`wizard_step`]）を分ける。
 //! 画面は中身だけ（地は無い）。パネルの地（`card_panel`）と `navigation`（右から入る遷移・スワイプバック）で包んで使う。
-//! 見た目は全画面で揃える: 縁の余白は [`WIZARD_MARGIN`]、内容は上下中央寄せ、ナビゲーションのボタンは下の帯（フッター）。
+//! 見た目は全画面で揃える: 縁の余白は [`WIZARD_MARGIN`]、内容は上下中央寄せ、ボタンは下の帯（フッター）。
 
 use design_prelude::*;
 
@@ -16,9 +16,13 @@ mod design_prelude {
 /// 画面の縁から内容・フッターまでの余白（全画面で共通）。
 pub const WIZARD_MARGIN: f32 = spacing::XL;
 // アイコンの大きさと行の高さはダイアログと同じ（画面の種類で見た目を揃える）。
-use crate::components::{DIALOG_ICON as ICON, DIALOG_LEADING as LEADING};
+use crate::components::{
+    BUTTON_HEIGHT, BUTTON_PADDING, DIALOG_ICON as ICON, DIALOG_LEADING as LEADING,
+};
 /// 「次へ」「戻る」のアイコンの大きさ。
 const ARROW: f32 = font_size::LG;
+/// 「次へ」「戻る」の最小の幅。文字が短くても、押しやすい幅を保つ。
+const ARROW_BUTTON_MIN: f32 = BUTTON_HEIGHT * 2.5;
 
 /// ウィザードの進み具合（0 始まりの現在の手順と全体の数）。UI を持たないので単体でテストできる。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,12 +125,15 @@ fn arrow_button(
     let arrow = crate::icon(glyph)
         .weight(crate::Weight::Bold)
         .size(px(ARROW));
-    // アイコン付きボタンの標準の並び（余白・間隔は `content_button` のまま）。
-    let b = content_button(theme, id, variant);
+    // 文字の側は文字のボタンと同じ余白、矢印の側は少し詰める（矢印は自分の余白を持つ）。端は正円のカプセル。
+    let (text, icon) = (px(BUTTON_PADDING), px(spacing::XL));
+    let b = content_button(theme, id, variant)
+        .min_w(px(ARROW_BUTTON_MIN))
+        .circular_corners();
     if after {
-        b.child(label.into()).child(arrow)
+        b.pl(text).pr(icon).child(label.into()).child(arrow)
     } else {
-        b.child(arrow).child(label.into())
+        b.pl(icon).pr(text).child(arrow).child(label.into())
     }
 }
 
@@ -144,21 +151,29 @@ fn heading(
     } else {
         col
     };
-    col.child(div().mb(px(spacing::SM)).child(hero))
-        .child(
-            div()
-                .id(SharedString::from(format!("{id}-title")))
-                .text_size(px(font_size::LG))
-                .line_height(px(font_size::LG * LEADING))
-                .font_weight(FontWeight::BOLD)
-                .child(title),
-        )
-        .child(
-            div()
-                .id(SharedString::from(format!("{id}-description")))
-                .text_color(rgba(theme.neutral_text_low))
-                .child(description),
-        )
+    let (hero_id, title_id) = (format!("{id}-hero"), format!("{id}-title"));
+    col.child(
+        div()
+            .debug_selector(move || hero_id)
+            .mb(px(spacing::SM))
+            .child(hero),
+    )
+    .child(
+        div()
+            .id(SharedString::from(format!("{id}-title")))
+            .debug_selector(move || title_id)
+            .text_size(px(font_size::LG))
+            .line_height(px(font_size::LG * LEADING))
+            .font_weight(FontWeight::BOLD)
+            .child(title),
+    )
+    // 説明の無い画面（ロゴと一言だけの一枚目）では出さない。
+    .children((!description.is_empty()).then(|| {
+        div()
+            .id(SharedString::from(format!("{id}-description")))
+            .text_color(rgba(theme.neutral_text_low))
+            .child(description)
+    }))
 }
 
 /// 画面の上に出すアイコン（アクセント色。大きさは全画面で共通）。ロゴなど別のものを出すときは `hero` に直接渡す。
@@ -168,7 +183,8 @@ pub fn wizard_icon(theme: &Theme, glyph: &'static Icon) -> impl IntoElement {
         .color(rgba(theme.accent_solid))
 }
 
-/// 「welcome」画面（完了画面にも使える）: アイコン・タイトル・説明と、その下に中央寄せのボタン。全体を上下中央に置く。
+/// 「welcome」画面（完了画面にも使える）: アイコン（やロゴ）・タイトル・説明を画面の上下左右中央に置き、ボタンは下の帯
+/// （`{id}-footer`）に左右中央寄せで縦に積む（上が主の操作）。説明が空なら出さない。
 pub fn wizard_welcome(
     theme: &Theme,
     id: &str,
@@ -177,14 +193,23 @@ pub fn wizard_welcome(
     description: impl Into<SharedString>,
     actions: impl IntoIterator<Item = Button>,
 ) -> Div {
+    let footer = div()
+        .id(SharedString::from(format!("{id}-footer")))
+        .flex_1()
+        .flex()
+        .flex_col()
+        .items_center()
+        .justify_end()
+        .gap(px(spacing::SM))
+        .children(actions);
     div()
         .size_full()
         .flex()
         .flex_col()
         .items_center()
-        .justify_center()
         .p(px(WIZARD_MARGIN))
-        .gap(px(spacing::XL))
+        // 上の空きと下の帯が同じだけ伸びるので、内容は画面の上下中央に来る。
+        .child(div().flex_1())
         .child(heading(
             theme,
             id,
@@ -193,7 +218,7 @@ pub fn wizard_welcome(
             description.into(),
             true,
         ))
-        .child(div().flex().gap(px(spacing::SM)).children(actions))
+        .child(footer)
 }
 
 /// 「step」画面: 内容（アイコン・タイトル・説明・`body` のフォームなど）を上下中央寄せにし、下に左「戻る」・右「次へ」のフッター。

@@ -1114,36 +1114,6 @@ pub fn choice(
     b
 }
 
-/// テーマの小さな見本（文字の無い絵）: 地の上のカードに、文字に見立てた線と、塗りの色のボタン。
-/// 選べるカード（[`choice`]）に載せて、テーマを選ぶ前に見せる。幅は置いた所に合わせる。
-pub fn theme_thumbnail(theme: &Theme) -> Div {
-    let line = |width: f32, color: u32| {
-        div()
-            .w(px(width))
-            .h(px(8.0))
-            .rounded(px(radius::FULL))
-            .bg(rgba(color))
-    };
-    let button = line(56.0, theme.accent_solid).h(px(20.0));
-    div()
-        .w_full()
-        .p(px(spacing::MD))
-        .rounded(px(radius::MD))
-        .bg(rgba(theme.background))
-        .child(
-            div()
-                .p(px(spacing::MD))
-                .rounded(px(radius::MD))
-                .bg(rgba(theme.card))
-                .flex()
-                .flex_col()
-                .gap(px(spacing::SM))
-                .child(line(96.0, theme.neutral_text))
-                .child(line(140.0, theme.neutral_text_low))
-                .child(div().flex().justify_end().child(button)),
-        )
-}
-
 /// 地の上に置くタイル（アプリ一覧のアプリなど）: [`tile`] と同じく縦に並べるが、カードの地を敷かず、ホバー・押下のときだけ
 /// 色が付く。ふだんは地（`background`）と同じ色（透明にするとホバーの色から戻るフェードが途中で切れる。[`sidebar_item`]）。
 pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {

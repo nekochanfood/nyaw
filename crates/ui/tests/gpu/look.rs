@@ -12,7 +12,7 @@ struct Faces;
 
 const FACES_PX: (u32, u32) = (900, 900);
 /// セットアップウィザードのパネルの大きさ。
-const SETUP_PX: (u32, u32) = (800, 800);
+const SETUP_PX: (u32, u32) = (800, 864);
 
 impl Render for Faces {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -79,7 +79,12 @@ pub fn main() {
             .expect("cannot open panel window");
         // 描く窓: 書き出す名前の前置き、窓、塗りの色で描かれているはずの画素の下限。
         let mut windows: Vec<(String, gpui::AnyWindowHandle, u32, usize)> = vec![
-            (String::new(), appearance.into(), testing::SETTINGS_PX.0, 1000),
+            (
+                String::new(),
+                appearance.into(),
+                testing::SETTINGS_PX.0,
+                1000,
+            ),
             ("watch-".into(), watch.into(), testing::SETTINGS_PX.0, 100),
             (
                 "color-".into(),
@@ -89,20 +94,26 @@ pub fn main() {
             ),
             ("faces-".into(), faces.into(), FACES_PX.0, 100),
         ];
-        // セットアップウィザードの画面を、手順ごとに 1 枚ずつ。
-        for (i, step) in setup::STEPS.iter().enumerate() {
+        // セットアップウィザードの画面を、手順ごとに 1 枚ずつ。最後に、一枚目で言語の選択肢を開いたもの。
+        let pages = (0..setup::STEPS.len()).map(|i| (i, false));
+        for (i, languages) in pages.chain([(0, true)]) {
             let page = open_panel_window(cx, SETUP_PX, move |_, cx| {
                 cx.new(|_| {
-                    let mut wizard = setup::SetupWizard::new(0, wrist::preview);
+                    let mut wizard = setup::SetupWizard::new(0);
                     for _ in 0..i {
                         wizard.wizard.next();
                     }
+                    wizard.language_open = languages;
                     wizard
                 })
             })
             .expect("cannot open panel window");
-            let name = format!("setup-{i}-{step:?}-").to_lowercase();
-            windows.push((name, page.into(), SETUP_PX.0, 100));
+            let step = format!("{:?}", setup::STEPS[i]).to_lowercase();
+            let open = if languages { "-languages" } else { "" };
+            let name = format!("setup-{i}-{step}{open}-");
+            // 開いた選択肢は「はじめる」（塗りの色）に重なるので、塗りの色が見えなくてよい。
+            let min = if languages { 0 } else { 100 };
+            windows.push((name, page.into(), SETUP_PX.0, min));
         }
 
         cx.spawn(async move |cx| {
@@ -156,13 +167,16 @@ pub fn main() {
     });
 
     let shots = shots.take();
-    assert_eq!(shots.len(), (4 + setup::STEPS.len()) * STATES.len());
+    assert_eq!(shots.len(), (5 + setup::STEPS.len()) * STATES.len());
     for (name, accent, min, frame) in shots {
         save(&frame, &format!("target/tmp/look-{name}.bmp"));
         let [r, g, b, _] = accent.color().to_be_bytes();
         let filled = frame.rgba.as_chunks::<4>().0.iter();
         let filled = filled.filter(|p| p[..3] == [r, g, b]).count();
-        assert!(filled > min, "{name}: only {filled} px of the picked color");
+        assert!(
+            filled >= min,
+            "{name}: only {filled} px of the picked color"
+        );
         println!("look: {name} ok ({filled} px of the personal color)");
     }
 }

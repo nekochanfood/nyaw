@@ -1,30 +1,24 @@
 //! Layer 5: 画面。セットアップウィザード（初回起動と、デバッグからのやり直し）。nyaw を使い始めるのに要る設定を順に決める。
-//! 見た目と遷移は `design::components` のウィザード（`wizard_*` + `navigation`）。選んだものは、その場で全体の設定に反映する。
+//! 見た目と遷移は `design::components` のウィザード（`wizard_*` + `navigation`）。外観と文字盤は設定画面と同じ部品
+//! （`ui::prefs`）。選んだものは、その場で全体の設定に反映する。
 
-use design::components::{self, Button, Wizard};
-use design::{Accent, Icon, Logo, Mode, Theme, font_size, icons, spacing};
+use design::components::{self, Button, Variant, Wizard};
+use design::{Icon, Logo, Theme, font_size, icons, radius, spacing};
 use gpui::{
-    App, ClickEvent, Context, Div, Entity, FontWeight, IntoElement, Render, SharedString, Window,
-    div, prelude::*, px,
+    App, ClickEvent, Context, Div, Entity, FontWeight, IntoElement, MouseDownEvent, Render,
+    SharedString, Window, div, prelude::*, px, rgba,
 };
 use kernel::vr::{Pose, Quat, Vec2, Vec3};
-use kernel::{
-    DominantHand, Language, LazyFollow, PanelCommand, PanelId, PersonalColor, Setting, ThemeMode,
-    WristDesign, WristFace,
-};
+use kernel::{DominantHand, Language, LazyFollow, PanelCommand, PanelId, Setting};
 use ui::{PanelControl, PanelSpec};
 
-/// 1:1 のパネル。
-const SIZE: Vec2 = Vec2::new(0.8, 0.8);
-const PX: (u32, u32) = (800, 800);
+/// パネルの大きさ（1px = 1mm）。いちばん背の高い文字盤の手順（見出し・設定画面と同じ部品・フッター）が収まる高さ。
+const SIZE: Vec2 = Vec2::new(0.8, 0.864);
+const PX: (u32, u32) = (800, 864);
 /// 一枚目のロゴの高さ。
-const LOGO_HEIGHT: f32 = 72.0;
+const LOGO_HEIGHT: f32 = 176.0;
 /// 選べるカードに載せるアイコンの大きさ。
 const CHOICE_ICON: f32 = 48.0;
-/// パーソナルカラーのスライダーの長さ（残りの幅に見本を置く）。
-const PICKER_WIDTH: f32 = 340.0;
-/// 文字盤の見本の直径。
-const FACE_PX: f32 = 104.0;
 /// 頭から水平にこの距離（m）を保って付いてくる。
 const FOLLOW_DISTANCE: f32 = 1.0;
 /// 目の前（頭から 1m 先）。
@@ -33,31 +27,25 @@ const IN_FRONT: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
 /// 手順。[`STEPS`] の順に進む。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// ようこそと、言語。
-    Language,
+    /// ようこそ（言語もここで替えられる）。
+    Welcome,
     /// 利き手。
     Hand,
-    /// テーマ（ライト / ダーク）。
-    Theme,
-    /// パーソナルカラー。
-    Color,
-    /// wrist の文字盤の種類とデザイン。
+    /// 外観（テーマとパーソナルカラー）。
+    Appearance,
+    /// wrist の文字盤。
     Wrist,
     /// 完了。
     Done,
 }
 
-pub const STEPS: [Step; 6] = [
-    Step::Language,
+pub const STEPS: [Step; 5] = [
+    Step::Welcome,
     Step::Hand,
-    Step::Theme,
-    Step::Color,
+    Step::Appearance,
     Step::Wrist,
     Step::Done,
 ];
-
-/// wrist の文字盤の見本（デザインと直径 px）を描く関数。画面どうしは直接依存しないので、main が `wrist::preview` を渡す。
-pub type FacePreview = fn(WristDesign, f32, &App) -> Div;
 
 /// 頭の向き（左右だけ）と歩きに付いてくる設定。本番の起動仕様とテストで同じものを使う。
 pub fn follow() -> LazyFollow {
@@ -65,9 +53,9 @@ pub fn follow() -> LazyFollow {
 }
 
 /// 初回起動で、目の前に出すウィザードの起動仕様。
-pub fn spec(faces: FacePreview) -> PanelSpec {
+pub fn spec() -> PanelSpec {
     // 開いた元の無いパネルなので、頭の前に出す。
-    PanelSpec::root(IN_FRONT, move |id, _, _| SetupWizard::new(id, faces))
+    PanelSpec::root(IN_FRONT, |id, _, _| SetupWizard::new(id))
         .in_view(IN_FRONT)
         .sized(SIZE, PX)
         // 閉じられない（ロックダウン中は閉じる要求も無視される）ので、閉じるボタンの付いたバーは付けない。
@@ -77,8 +65,8 @@ pub fn spec(faces: FacePreview) -> PanelSpec {
 }
 
 /// デバッグから強制的にやり直す: パネル `from` の隣に開く。
-pub fn spawn_spec(from: PanelId, faces: FacePreview) -> PanelSpec {
-    PanelSpec::spawn(from, move |id, _, _| SetupWizard::new(id, faces))
+pub fn spawn_spec(from: PanelId) -> PanelSpec {
+    PanelSpec::spawn(from, |id, _, _| SetupWizard::new(id))
         .sized(SIZE, PX)
         .without_nav_bar()
         .lockdown()
@@ -88,15 +76,21 @@ pub fn spawn_spec(from: PanelId, faces: FacePreview) -> PanelSpec {
 pub struct SetupWizard {
     panel: PanelId,
     pub wizard: Wizard,
-    faces: FacePreview,
+    /// 一枚目の言語の選択肢を開いている。
+    pub language_open: bool,
+    /// 外観・文字盤の部品（`ui::prefs`）の状態。
+    pub appearance: ui::prefs::Appearance,
+    pub watch: ui::prefs::WatchFaces,
 }
 
 impl SetupWizard {
-    pub fn new(panel: PanelId, faces: FacePreview) -> Self {
+    pub fn new(panel: PanelId) -> Self {
         Self {
             panel,
             wizard: Wizard::new(STEPS.len()),
-            faces,
+            language_open: false,
+            appearance: Default::default(),
+            watch: Default::default(),
         }
     }
 
@@ -115,19 +109,30 @@ fn finish(panel: PanelId, cx: &mut App) {
     commands.push(PanelCommand::Close);
 }
 
-/// 押すと全体の設定を `setting` に変える（フレームループがすぐ反映し、この画面も新しい設定で描き直る）。
-fn set(setting: Setting) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    move |_, _, cx| {
-        cx.default_global::<PanelControl>()
-            .setting_changes
-            .push(setting)
-    }
+/// 全体の設定を `setting` に変える（フレームループがすぐ反映し、この画面も新しい設定で描き直る）。
+fn push(setting: Setting, cx: &mut App) {
+    let control = cx.default_global::<PanelControl>();
+    control.setting_changes.push(setting);
 }
 
 fn language(lang: i18n::Lang) -> Language {
     match lang {
         i18n::Lang::En => Language::En,
         i18n::Lang::Ja => Language::Ja,
+    }
+}
+
+/// ウィザードの状態を書き換えて描き直す処理を作る（部品の `set` や、押したときの処理に渡す）。
+fn update<T: 'static>(
+    wizard: &Entity<SetupWizard>,
+    apply: fn(&mut SetupWizard, T),
+) -> impl Fn(T, &mut Window, &mut App) + Clone + 'static {
+    let wizard = wizard.clone();
+    move |value, _, cx| {
+        wizard.update(cx, |v, cx| {
+            apply(v, value);
+            cx.notify();
+        })
     }
 }
 
@@ -139,231 +144,163 @@ fn row(choices: impl IntoIterator<Item = Button>) -> Div {
         .children(choices.into_iter().map(|c| c.flex_1().min_w_0()))
 }
 
-/// 選べるカードの中身: 見本やアイコンと名前を、縦に中央揃えで積む。
-fn stack() -> Div {
-    div()
+/// 文字が主役の選べるカード（大きめの太字の上にアイコン）。
+fn text_choice(
+    theme: &Theme,
+    id: &'static str,
+    selected: bool,
+    glyph: &'static Icon,
+    label: SharedString,
+) -> Button {
+    let content = div()
         .w_full()
         .flex()
         .flex_col()
         .items_center()
         .gap(px(spacing::SM))
-}
-
-/// 選べるカードの下に出す名前。
-fn name(text: impl Into<SharedString>) -> Div {
-    div().min_w_0().truncate().child(text.into())
-}
-
-/// 文字が主役の選べるカード（大きめの太字。`glyph` があれば上にアイコン）。
-fn text_choice(
-    theme: &Theme,
-    id: impl Into<SharedString>,
-    selected: bool,
-    glyph: Option<&'static Icon>,
-    label: impl Into<SharedString>,
-) -> Button {
-    let content = stack()
-        .children(glyph.map(|g| design::icon(g).size(px(CHOICE_ICON))))
+        .child(design::icon(glyph).size(px(CHOICE_ICON)))
         .child(
-            name(label)
+            div()
+                .min_w_0()
+                .truncate()
                 .text_size(px(font_size::LG))
-                .font_weight(FontWeight::BOLD),
+                .font_weight(FontWeight::BOLD)
+                .child(label),
         );
     components::choice(theme, id, selected, content).py(px(spacing::XL))
 }
 
+/// 設定画面と同じ部品（`ui::prefs`。地の上に置く前提）を、カードの上に出すための地の色の枠。
+fn well(theme: &Theme, body: Div) -> Div {
+    div()
+        .p(px(spacing::MD))
+        .rounded(px(radius::LG))
+        .bg(rgba(theme.background))
+        .child(body)
+}
+
 /// 手順 `step` の画面 1 枚。今の設定（[`PanelControl::settings`]）から選んでいるものを示す。
-fn page(
-    step: Step,
-    panel: PanelId,
-    faces: FacePreview,
-    wizard: &Entity<SetupWizard>,
-    cx: &App,
-) -> Div {
+fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut App) -> Div {
     let theme = Theme::current(cx);
     let now = cx.try_global::<PanelControl>().map(|c| c.settings);
     let now = now.unwrap_or_default();
-    let go = |forward: bool| {
-        let wizard = wizard.clone();
-        move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-            wizard.update(cx, |v, cx| {
-                if forward {
-                    v.wizard.next()
-                } else {
-                    v.wizard.back()
-                };
-                cx.notify();
-            })
-        }
+    let (panel, language_open, appearance, watch) = {
+        let v = wizard.read(cx);
+        (v.panel, v.language_open, v.appearance, v.watch)
     };
-    let next = |label: SharedString| {
-        components::wizard_next(&theme, "setup-next", label).on_click(go(true))
+    let go = |forward: bool| {
+        let step = update(wizard, |v: &mut SetupWizard, forward: bool| {
+            if forward {
+                v.wizard.next();
+            } else {
+                v.wizard.back();
+            }
+        });
+        move |_: &ClickEvent, window: &mut Window, cx: &mut App| step(forward, window, cx)
     };
     // 二枚目からの画面: アイコン・見出し・説明・選ぶもの・「戻る」「次へ」。
-    let choose =
-        |glyph: &'static Icon, title: SharedString, description: SharedString, body: Div| {
-            components::wizard_step(
-                &theme,
-                "setup",
-                components::wizard_icon(&theme, glyph),
-                title,
-                description,
-                body,
-                Some(
-                    components::wizard_back(&theme, "setup-back", i18n::t(cx, "setup.back"))
-                        .on_click(go(false)),
-                ),
-                next(i18n::t(cx, "setup.next")),
-            )
-        };
+    let choose = |glyph: &'static Icon, title: &str, description: &str, body: Div, cx: &App| {
+        components::wizard_step(
+            &theme,
+            "setup",
+            components::wizard_icon(&theme, glyph),
+            i18n::t(cx, title),
+            i18n::t(cx, description),
+            body,
+            Some(
+                components::wizard_back(&theme, "setup-back", i18n::t(cx, "setup.back"))
+                    .on_click(go(false)),
+            ),
+            components::wizard_next(&theme, "setup-next", i18n::t(cx, "setup.next"))
+                .on_click(go(true)),
+        )
+    };
     match step {
-        Step::Language => {
-            // どの言語で表示していても読めるよう、案内は対応している言語すべてで出す（今の言語が先頭）。
-            let mut langs = i18n::Lang::ALL;
-            langs.sort_by_key(|&l| language(l) != now.language);
-            let prompt = langs.map(|l| i18n::translate(l, "setup.language_prompt").to_string());
-            let choices = i18n::Lang::ALL.map(|l| {
+        Step::Welcome => {
+            // 言語は「はじめる」の下のドロップダウン（上へ開く）で替える。名前は、その言語自身で出す。
+            let open = update(wizard, |v: &mut SetupWizard, open| v.language_open = open);
+            let options = i18n::Lang::ALL.map(|l| {
+                let close = open.clone();
                 let id = format!("setup-lang-{}", l.code());
-                // 言語の名前は、その言語自身で出す。
-                text_choice(
-                    &theme,
-                    id,
-                    language(l) == now.language,
-                    None,
-                    l.native_name(),
+                let selected = language(l) == now.language;
+                components::select_option(&theme, id, l.native_name(), selected).on_click(
+                    move |_, window, cx| {
+                        push(Setting::Language(language(l)), cx);
+                        close(false, window, cx)
+                    },
                 )
-                .on_click(set(Setting::Language(language(l))))
             });
-            components::wizard_step(
+            let (show, dismiss) = (open.clone(), open);
+            let popover = components::dropdown_popover(
+                &theme,
+                window,
+                cx,
+                "setup-language",
+                language_open,
+                true,
+                options,
+                move |_: &MouseDownEvent, window, cx| dismiss(false, window, cx),
+            );
+            let mut langs = i18n::Lang::ALL.into_iter();
+            let current = langs.find(|&l| language(l) == now.language);
+            let languages = components::dropdown(
+                &theme,
+                "setup-language",
+                Variant::Default,
+                Some(&icons::GLOBE),
+                current.unwrap_or_default().native_name(),
+            )
+            .on_click(move |_, window, cx| show(true, window, cx))
+            .child(popover);
+            let start = components::wizard_next(&theme, "setup-next", i18n::t(cx, "setup.start"))
+                .on_click(go(true));
+            components::wizard_welcome(
                 &theme,
                 "setup",
                 design::logo(Logo::Full).height(px(LOGO_HEIGHT)),
                 i18n::t(cx, "setup.welcome_title"),
-                prompt.join("\n"),
-                row(choices),
-                None,
-                next(i18n::t(cx, "setup.start")),
+                "",
+                [start, languages],
             )
         }
         Step::Hand => {
-            let (left, right) = (i18n::t(cx, "settings.left"), i18n::t(cx, "settings.right"));
             let hands = [
-                (DominantHand::Left, "setup-hand-left", left),
-                (DominantHand::Right, "setup-hand-right", right),
+                (DominantHand::Left, "setup-hand-left", "settings.left"),
+                (DominantHand::Right, "setup-hand-right", "settings.right"),
             ];
             let choices = hands.map(|(hand, id, label)| {
                 let selected = now.dominant_hand == hand;
-                text_choice(&theme, id, selected, Some(&icons::HAND), label)
-                    .on_click(set(Setting::DominantHand(hand)))
+                text_choice(&theme, id, selected, &icons::HAND, i18n::t(cx, label))
+                    .on_click(move |_, _, cx| push(Setting::DominantHand(hand), cx))
             });
             choose(
                 &icons::HAND,
-                i18n::t(cx, "setup.hand_title"),
-                i18n::t(cx, "setup.hand_description"),
+                "setup.hand_title",
+                "setup.hand_description",
                 row(choices),
+                cx,
             )
         }
-        Step::Theme => {
-            let accent = accent(now.personal_color);
-            let (dark, light) = (i18n::t(cx, "theme.dark"), i18n::t(cx, "theme.light"));
-            let modes = [
-                (ThemeMode::Dark, Mode::Dark, "setup-theme-dark", dark),
-                (ThemeMode::Light, Mode::Light, "setup-theme-light", light),
-            ];
-            let choices = modes.map(|(mode, look, id, label)| {
-                // 見本は、そのテーマと今のパーソナルカラーで描く。
-                let content = stack()
-                    .child(components::theme_thumbnail(&Theme::with(look, accent)))
-                    .child(name(label));
-                components::choice(&theme, id, now.theme == mode, content)
-                    .on_click(set(Setting::Theme(mode)))
-            });
+        Step::Appearance => {
+            let set = update(wizard, |v: &mut SetupWizard, state| v.appearance = state);
+            let body = ui::prefs::appearance(panel, appearance, set, window, cx);
             choose(
                 &icons::PALETTE,
-                i18n::t(cx, "setup.theme_title"),
-                i18n::t(cx, "setup.theme_description"),
-                row(choices),
-            )
-        }
-        Step::Color => {
-            let picker = components::accent_picker(
-                &theme,
-                accent(now.personal_color),
-                PICKER_WIDTH,
-                |name| i18n::t(cx, &format!("color.{name}")),
-                |a, _, cx| {
-                    let color = PersonalColor {
-                        lightness: a.lightness,
-                        chroma: a.chroma,
-                        hue: a.hue,
-                    };
-                    let control = cx.default_global::<PanelControl>();
-                    control.setting_changes.push(Setting::PersonalColor(color));
-                },
-            );
-            // 選んだ色が実際の部品でどう見えるかの見本（上に載る文字の色も付いてくる）。
-            let preview = components::theme_preview(
-                &theme,
-                "setup-preview",
-                i18n::t(cx, "settings.personal_color"),
-                i18n::t(cx, "settings.preview_body"),
-                i18n::t(cx, "common.ok"),
-            );
-            let body = div()
-                .flex()
-                .items_center()
-                .gap(px(spacing::LG))
-                .child(picker.w(px(PICKER_WIDTH)).flex_none())
-                .child(preview.flex_1().min_w_0());
-            choose(
-                &icons::PAINT_BRUSH,
-                i18n::t(cx, "setup.color_title"),
-                i18n::t(cx, "setup.color_description"),
-                body,
+                "setup.appearance_title",
+                "setup.appearance_description",
+                well(&theme, body),
+                cx,
             )
         }
         Step::Wrist => {
-            let face = now.wrist_design.face();
-            // 見本つきの選べるカード。押すと `design` にする。
-            let choice = |id: String, design: WristDesign, selected: bool, label: String| {
-                let content = stack()
-                    .child(faces(design, FACE_PX, cx))
-                    .child(name(i18n::t(cx, &label)));
-                components::choice(&theme, id, selected, content)
-                    .on_click(set(Setting::WristDesign(design)))
-            };
-            // 上の段は種類（選んでいる種類は今のデザイン、ほかはその種類の先頭のデザインを見本にする）。
-            let kinds = WristFace::ALL.iter().map(|&f| {
-                let design = if f == face {
-                    now.wrist_design
-                } else {
-                    f.designs()[0]
-                };
-                let (id, label) = (
-                    format!("setup-face-{}", f.key()),
-                    format!("wrist.face.{}", f.key()),
-                );
-                choice(id, design, f == face, label)
-            });
-            // 下の段は、選んでいる種類のデザイン。
-            let designs = face.designs().iter().map(|&d| {
-                let (id, label) = (
-                    format!("setup-design-{}", d.key()),
-                    format!("wrist.design.{}", d.key()),
-                );
-                choice(id, d, d == now.wrist_design, label)
-            });
-            let body = div()
-                .flex()
-                .flex_col()
-                .gap(px(spacing::MD))
-                .child(row(kinds.collect::<Vec<_>>()))
-                .child(row(designs.collect::<Vec<_>>()));
+            let set = update(wizard, |v: &mut SetupWizard, state| v.watch = state);
+            let body = ui::prefs::watch_faces(watch, set, window, cx);
             choose(
                 &icons::WATCH,
-                i18n::t(cx, "setup.wrist_title"),
-                i18n::t(cx, "setup.wrist_description"),
-                body,
+                "setup.wrist_title",
+                "setup.wrist_description",
+                well(&theme, body),
+                cx,
             )
         }
         Step::Done => {
@@ -381,23 +318,15 @@ fn page(
     }
 }
 
-/// 設定のパーソナルカラー（選んでいなければ既定）を、見た目の色にする。
-fn accent(color: Option<PersonalColor>) -> Accent {
-    color.map_or(Accent::DEFAULT, |c| {
-        Accent::new(c.lightness, c.chroma, c.hue)
-    })
-}
-
 impl Render for SetupWizard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
         let this = cx.entity();
-        let (panel, faces) = (self.panel, self.faces);
         let stack: Vec<usize> = (0..=self.wizard.step()).collect();
         let draw = {
             let this = this.clone();
-            move |&index: &usize, _: &mut Window, cx: &mut App| {
-                page(STEPS[index], panel, faces, &this, cx).into_any_element()
+            move |&index: &usize, window: &mut Window, cx: &mut App| {
+                page(STEPS[index], &this, window, cx).into_any_element()
             }
         };
         let swipe_back = move |_: &mut Window, cx: &mut App| {
@@ -418,10 +347,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn steps_start_with_the_language_and_end_with_done() {
-        assert_eq!(STEPS.first(), Some(&Step::Language));
+    fn steps_start_with_the_welcome_and_end_with_done() {
+        assert_eq!(STEPS.first(), Some(&Step::Welcome));
         assert_eq!(STEPS.last(), Some(&Step::Done));
-        let wizard = SetupWizard::new(0, |_, _, _| div());
-        assert_eq!(wizard.step(), Step::Language);
+        assert_eq!(SetupWizard::new(0).step(), Step::Welcome);
     }
 }
