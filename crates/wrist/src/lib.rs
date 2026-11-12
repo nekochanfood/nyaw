@@ -5,6 +5,7 @@
 mod face;
 pub use face::preview;
 
+use std::f32::consts::FRAC_1_SQRT_2;
 use std::time::Duration;
 
 use design::components;
@@ -14,14 +15,20 @@ use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{DominantHand, PanelCommand, PanelId};
 use ui::{PanelControl, PanelSpec};
 
-/// 手首の甲側に載せた腕時計の相対姿勢: コントローラ原点の少し手首寄り（+Z）・上（+Y）で、
-/// 文字面が上を向き、天面が前を向く（手首を返すと読める）。
-// ponytail: コントローラ座標系（-Z が前・+Y が上）の目分量。機種ごとの握りの差は offset の調整で合わせる。
-// 骨格だけの手は、取り付け先の姿勢（`vr::HandSkeleton::grip`）の元をずらして、同じ値で腕時計の位置に来るようにしてある。
-pub const WATCH_OFFSET: Pose = Pose::new(
-    Vec3::new(0.0, 0.04, 0.08),
-    Quat::from_xyzw(-0.707_106_77, 0.0, 0.0, 0.707_106_77),
-);
+/// `hand` の手首に巻いた腕時計の相対姿勢（コントローラの tip の座標系。-Z が前・+Y が天面（親指の側））。
+/// 手首の関節（tip から [`kernel::vr::GRIP_FROM_WRIST`] の逆）から腕側へ 3cm・手の甲の側（握った手の外側。左手は -X、
+/// 右手は +X）へ 3.5cm。文字盤の表は手の甲の外、12 時は小指の側を向き、3 時は左手なら指先・右手なら肘の側（本物の腕時計と
+/// 同じ）。腕を胸の前で横にして手の甲を顔へ向けると正立して読める。骨格だけの手も、取り付け先の姿勢
+/// （`HandSkeleton::grip`）が握ったコントローラの tip に当たるので、同じ値で手首に来る。
+pub fn watch_offset(hand: Hand) -> Pose {
+    let side = if hand == Hand::Left { -1.0 } else { 1.0 };
+    Pose::new(
+        -kernel::vr::GRIP_FROM_WRIST + Vec3::new(side * 0.035, 0.0, 0.03),
+        // 左手は (1, 0, -1) 軸の半回転（右手はその鏡写し）: 3 時 → -Z、12 時 → -Y、表 → -X。
+        Quat::from_xyzw(FRAC_1_SQRT_2, 0.0, side * FRAC_1_SQRT_2, 0.0),
+    )
+}
+
 /// 取り付け先の手が追えない間（起動直後・novr のエミュレーター）の置き場所。開いた瞬間の頭から見て左下 0.4m
 /// （右手首に付けるときは右下）。
 pub const IN_VIEW: Pose = Pose::new(Vec3::new(-0.32, -0.2, -0.4), Quat::IDENTITY);
@@ -52,7 +59,7 @@ pub fn spec(
     })
     .sized(SIZE_M, RES_PX)
     .in_view(in_view)
-    .attached(Device::Controller(hand), WATCH_OFFSET)
+    .attached(Device::Controller(hand), watch_offset(hand))
     .locked()
     // 手首に付いた常駐の時計で、閉じる・動かすものではない。ナビゲーションバーは付けない。
     .without_nav_bar()
@@ -122,12 +129,13 @@ impl Wrist {
             return;
         }
         self.hand = hand;
+        let offset = watch_offset(hand);
         cx.default_global::<PanelControl>()
             .panels
             .entry(self.panel)
             .or_default()
             .commands
-            .push(PanelCommand::Attach(Device::Controller(hand), WATCH_OFFSET));
+            .push(PanelCommand::Attach(Device::Controller(hand), offset));
     }
 
     /// X ボタンを二回押すたびにダッシュボードを出す・隠す（閉じられていれば開き直す。音はダッシュボード自身が鳴らす）。
@@ -295,10 +303,39 @@ mod tests {
                 std::mem::take(&mut ctl.panels.entry(0).or_default().commands)
             })
         };
-        let attach = |hand| PanelCommand::Attach(Device::Controller(hand), WATCH_OFFSET);
+        let attach = |hand| PanelCommand::Attach(Device::Controller(hand), watch_offset(hand));
         assert_eq!(set(DominantHand::Left), [attach(Hand::Right)]);
         assert_eq!(set(DominantHand::Left), []);
         assert_eq!(set(DominantHand::Right), [attach(Hand::Left)]);
+    }
+
+    /// 腕時計を見る姿勢（腕を胸の前で横にし、手の甲を上の顔へ向ける）で、時計は手首の甲の側・腕寄りにあり、表が上を向き、
+    /// 12 時が向こう・3 時が右で正立して読める。骨格だけの手の取り付け先（`grip`）は握ったコントローラの tip に当たるので、
+    /// コントローラの手首も同じく確かめている。
+    #[test]
+    fn the_watch_reads_upright_on_the_back_of_the_wrist() {
+        use kernel::vr::{FingerTracking, HandSkeleton, JOINT_COUNT, WRIST};
+        for hand in [Hand::Left, Hand::Right] {
+            // 指先は左手なら右（+X）、右手なら左（-X）。手のひらは下、親指は手前（+Z）。
+            let dir = if hand == Hand::Left { 1.0 } else { -1.0 };
+            let mut joints = [Pose::IDENTITY; JOINT_COUNT];
+            // 中指・人差し指・小指の付け根。
+            joints[12].position = Vec3::new(dir * 0.08, 0.0, 0.0);
+            joints[7].position = Vec3::new(dir * 0.08, 0.0, 0.03);
+            joints[22].position = Vec3::new(dir * 0.07, 0.0, -0.03);
+            let skeleton = HandSkeleton {
+                hand,
+                joints,
+                tracking: FingerTracking::Full,
+            };
+            let watch = skeleton.grip() * watch_offset(hand);
+            let eq = |a: Vec3, b: Vec3| assert!(a.abs_diff_eq(b, 1e-5), "{hand:?}: {a} != {b}");
+            let wrist = joints[WRIST].position;
+            eq(watch.position, wrist + Vec3::new(-dir * 0.03, 0.035, 0.0));
+            eq(watch.orientation * Vec3::Z, Vec3::Y);
+            eq(watch.orientation * Vec3::Y, Vec3::NEG_Z);
+            eq(watch.orientation * Vec3::X, Vec3::X);
+        }
     }
 
     /// 設定のデザインで文字盤が替わる。どのデザインも日付を出し、針の無い種類は時刻を数字で出す。

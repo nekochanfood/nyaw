@@ -73,9 +73,10 @@ fn wrist_follows_the_dominant_hand(cx: &mut TestAppContext) {
         kit.kernel.set(Setting::DominantHand(dominant));
         // One frame hands the setting to the wrist, the next applies its attach command.
         kit.step().step();
+        let watch = wrist::watch_offset(wrist_on);
         assert_eq!(
             kit.kernel.panel(0).attached,
-            Some((Device::Controller(wrist_on), wrist::WATCH_OFFSET))
+            Some((Device::Controller(wrist_on), watch))
         );
     }
 }
