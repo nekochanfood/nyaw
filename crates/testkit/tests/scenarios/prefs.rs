@@ -172,6 +172,11 @@ fn watch_faces_turn_loop_filter_and_set(cx: &mut TestAppContext) {
     kit.click("watch-face-terminal");
     assert_eq!(shown(&mut kit), WristDesign::Terminal);
     assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Lcd);
+
+    // Leaving the category and coming back puts the design in use in the middle again, among all designs.
+    kit.click("settings-general").click("settings-watch");
+    assert_eq!(kit.read(|v| v.watch.face), None);
+    assert_eq!(shown(&mut kit), WristDesign::Lcd);
 }
 
 #[gpui::test]

@@ -1975,6 +1975,11 @@ impl Render for Settings {
             .map(|(i, &(id, glyph, key))| {
                 components::sidebar_item(&theme, id, glyph, i18n::t(cx, key), i == self.category)
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        // 時計に入り直したら、見ていた文字盤と絞り込みは忘れ、使っている文字盤を中央に戻す（出ていく画面は
+                        // 滑り去る間も描くので、出るときではなく入るときに戻す）。
+                        if id == "settings-watch" && i != this.category {
+                            this.watch = Default::default();
+                        }
                         if i != this.category {
                             let mut t = design::animation::Transition::rest(0.0);
                             let animated = cx.has_global::<design::Motion>();
