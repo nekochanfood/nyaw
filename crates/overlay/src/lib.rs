@@ -356,6 +356,8 @@ pub struct Overlay {
     release_deg: Option<f32>,
     /// 暗転中もゲームへの入力を通す（[`Overlay::set_block_input`]）。既定（`false`）は止める。
     pass_input: bool,
+    /// UI スケール（[`Overlay::set_scale`]）。`None` で等倍。
+    scale: Option<f32>,
     /// この tick で手ブレ抑えが効いている（ポインタを手に追従させず、空間に置く）。
     steadied: bool,
     animations: HashMap<PanelId, (Animation, Instant)>,
@@ -406,6 +408,8 @@ impl Overlay {
         size: Vec2,
         resolution: (u32, u32),
     ) -> Result<PanelId, VrError> {
+        // 大きさは等倍のつもりで渡される。UI スケールはここで掛ける（[`Self::set_scale`]）。
+        let size = size * self.scale();
         let surface = Surface::new(vr, key, size.x, pose)?;
         surface.set_sort(vr, PANEL_SORT);
         self.panels.push(Panel {
@@ -468,6 +472,49 @@ impl Overlay {
     /// 今の手ブレ抑えの強さ（設定していなければ既定値 [`POINTER_SMOOTHING`]）。
     pub fn pointer_smoothing(&self) -> f32 {
         self.smoothing.unwrap_or(POINTER_SMOOTHING)
+    }
+
+    /// UI スケール: 全パネルの VR 上の大きさに掛ける倍率（等倍 = 1。数でない・0 以下は等倍）。解像度は変えないので、
+    /// 中の組み方は変わらない。[`Self::add_panel`]・[`Self::fit_height`]・[`Self::set_grab_anchor`] に渡す長さは等倍の
+    /// つもりで書き、ここの倍率が掛かる（[`Panel::size`] は掛けた後の実寸）。変えると、開いているパネルも中心を動かさずに
+    /// 同じ割合で大きさが変わり、親から見た子の位置も同じ割合で離れる（組は相似のまま）。詳しくは AGENT.md の「UI スケール」。
+    pub fn set_scale(&mut self, vr: &mut dyn VrBackend, scale: f32) {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        let ratio = scale / self.scale();
+        self.scale = Some(scale);
+        if ratio == 1.0 {
+            return;
+        }
+        for &id in &self.present {
+            let p = &mut self.panels[id];
+            p.size *= ratio;
+            p.nav_bar_size *= ratio;
+            p.offset.position *= ratio;
+            if let Some(anchor) = &mut p.grab_anchor {
+                anchor.position *= ratio;
+            }
+            match p.pointer {
+                // レーザーの太さは作ったときに決めてある。カーソル・ツールチップの幅は毎 tick `size` から決まる。
+                Some((_, Pointer::Laser)) => p.surface.set_height(vr, p.size.y),
+                Some(_) => {}
+                None => p.surface.set_width(vr, p.displayed_size().x),
+            }
+        }
+        // 掴んでいる最中なら、基準から見たパネルの位置も同じ割合で変える（離したときに跳ねない）。
+        for h in self.hands.values_mut() {
+            if let Some((_, _, _, pivot, _)) = &mut h.dragging {
+                pivot.position *= ratio;
+            }
+        }
+    }
+
+    /// 今の UI スケール（設定していなければ等倍）。
+    pub fn scale(&self) -> f32 {
+        self.scale.unwrap_or(1.0)
     }
 
     /// 暗転している間（ダッシュボードが出ている間）、ゲームへの入力を止めるか。次の tick から効く。
@@ -539,10 +586,12 @@ impl Overlay {
         }
     }
 
+    /// 今の縦横比のまま、高さを `height`（m。等倍のつもりの値で、UI スケールが掛かる）に揃える。
     pub fn fit_height(&mut self, vr: &mut dyn VrBackend, id: PanelId, height: f32) {
         if !height.is_finite() || height <= 0.0 {
             return;
         }
+        let height = height * self.scale();
         let p = &mut self.panels[id];
         p.size = Vec2::new(
             height * p.resolution.0 as f32 / p.resolution.1 as f32,
@@ -708,9 +757,11 @@ impl Overlay {
     }
 
     /// 掴んだとき、パネルそのものではなく `anchor`（このパネルから見た姿勢）を手で動かして頭へ向け、パネルはそこに付いてくる。
-    /// ダッシュボードのバーは、画面がはまっていなくても、画面が立つ所を基準に動く。
+    /// ダッシュボードのバーは、画面がはまっていなくても、画面が立つ所を基準に動く。`anchor` の位置は等倍のつもりの値で、
+    /// UI スケールが掛かる。
     pub fn set_grab_anchor(&mut self, id: PanelId, anchor: Option<Pose>) {
-        self.panels[id].grab_anchor = anchor;
+        let scale = self.scale();
+        self.panels[id].grab_anchor = anchor.map(|a| Pose::new(a.position * scale, a.orientation));
     }
 
     /// 掴んで大きさを変えられるか（ダッシュボードのバーのように、大きさの決まったものは `false`）。
@@ -1487,7 +1538,8 @@ impl Overlay {
             .find(|&&b| self.panels[b].nav_bar_of == Some(id))
             .map_or(0.0, |&b| self.panels[b].size.y);
         let top = Vec3::Y * (outer.size.y / 2.0 - face_margin(outer));
-        let lift = SLOT_GAP + bar + inner.size.y / 2.0 - face_margin(inner);
+        // 隙間も UI スケールに合わせ、組を相似に保つ。
+        let lift = SLOT_GAP * self.scale() + bar + inner.size.y / 2.0 - face_margin(inner);
         Pose::new(top + up * lift, rotation)
     }
 
@@ -2888,6 +2940,104 @@ mod tests {
         assert!(scale > 1.0);
         let anchor = ov.panel(0).grab_anchor.unwrap();
         assert!((anchor.position.x - 0.3 * scale).abs() < 1e-5, "{anchor:?}");
+    }
+
+    /// UI スケールは開くパネルの実寸に掛かり、解像度（中の組み方）と中心は変えない。開いているパネルにも後から開くパネルにも効く。
+    #[test]
+    fn scale_multiplies_sizes_and_keeps_centers_and_resolution() {
+        let (mut vr, mut ov) = setup();
+        assert_eq!(ov.scale(), 1.0);
+        let pose = ov.panel(0).pose;
+        ov.set_scale(&mut vr.backend, 1.5);
+        assert_eq!(ov.panel(0).size, Vec2::splat(1.5));
+        assert_eq!(
+            (ov.panel(0).pose, ov.panel(0).resolution),
+            (pose, (100, 100))
+        );
+        assert_eq!(vr.backend.overlays[0].width_m, 1.5);
+        let later = ov
+            .add_panel(
+                &mut vr.backend,
+                "later",
+                at(3.0, 0.0, -1.0),
+                Vec2::new(0.4, 0.2),
+                (40, 20),
+            )
+            .unwrap();
+        assert!(ov.panel(later).size.abs_diff_eq(Vec2::new(0.6, 0.3), 1e-6));
+        assert!((vr.backend.overlays[later].width_m - 0.6).abs() < 1e-6);
+        // レーザーは実寸の面に当たる: 等倍では外れる 0.6m 右も、1.5 倍の面（半分の幅 0.75m）の上。
+        controller(&mut vr, at(0.6, 0.0, 0.0), &[]);
+        let events = kinds(&ov.tick(&mut vr));
+        assert_eq!(
+            events,
+            [PointerEvent::Move {
+                pos: Vec2::new(90.0, 50.0)
+            }]
+        );
+        // 高さを揃える長さも等倍のつもりの値。
+        ov.fit_height(&mut vr.backend, later, 0.4);
+        assert!(ov.panel(later).size.abs_diff_eq(Vec2::new(1.2, 0.6), 1e-6));
+        // 何度変えても積み重ならず、戻せば元の大きさ。数でない値は等倍。
+        ov.set_scale(&mut vr.backend, 0.7);
+        ov.set_scale(&mut vr.backend, f32::NAN);
+        assert_eq!(ov.scale(), 1.0);
+        assert!(ov.panel(0).size.abs_diff_eq(Vec2::ONE, 1e-6));
+        assert!((vr.backend.overlays[0].width_m - 1.0).abs() < 1e-6);
+    }
+
+    /// 組（親と子・ナビゲーションバー・掴む基準）は、UI スケールを変えても相似のまま（子は同じ割合で離れる）。
+    #[test]
+    fn scale_keeps_a_group_similar() {
+        let (mut vr, mut ov) = with_child(true);
+        ov.set_grab_anchor(0, Some(Pose::new(Vec3::X * 0.3, Quat::IDENTITY)));
+        let bar = ov
+            .add_panel(
+                &mut vr.backend,
+                "nav",
+                Pose::IDENTITY,
+                Vec2::new(0.2, 0.05),
+                (200, 50),
+            )
+            .unwrap();
+        ov.set_nav_bar(&mut vr.backend, bar, 0);
+        ov.tick(&mut vr);
+        ov.set_scale(&mut vr.backend, 1.5);
+        ov.tick(&mut vr);
+        let gap = ov.panel(1).pose.position - ov.panel(0).pose.position;
+        assert!(gap.abs_diff_eq(Vec3::Z * 0.15, 1e-5), "{gap}");
+        assert!(ov.panel(1).size.abs_diff_eq(Vec2::splat(0.6), 1e-6));
+        let anchor = ov.panel(0).grab_anchor.unwrap();
+        assert!((anchor.position.x - 0.45).abs() < 1e-6, "{anchor:?}");
+        assert!(
+            ov.panels[bar]
+                .nav_bar_size
+                .abs_diff_eq(Vec2::new(0.3, 0.075), 1e-6)
+        );
+        // バーは今の持ち主の下端に付いている。
+        let top = ov.panel(bar).pose.position.y + ov.panel(bar).size.y / 2.0;
+        let bottom = ov.panel(0).pose.position.y - (0.75 - face_margin(ov.panel(0)));
+        assert!((top - bottom).abs() < 1e-5, "{top} {bottom}");
+        // 後から決める基準にも掛かる。
+        ov.set_grab_anchor(0, Some(Pose::new(Vec3::X * 0.1, Quat::IDENTITY)));
+        let anchor = ov.panel(0).grab_anchor.unwrap();
+        assert!((anchor.position.x - 0.15).abs() < 1e-6, "{anchor:?}");
+    }
+
+    /// 親の上端に立てた子との隙間も UI スケールに合わせて広がる（組が相似のまま大きくなる）。
+    #[test]
+    fn scale_widens_the_slot_gap_with_the_panels() {
+        let (mut vr, mut ov) = with_slot_child();
+        let gap = |ov: &Overlay| {
+            let (outer, inner) = (ov.panel(0), ov.panel(1));
+            let top = outer.pose.position.y + outer.size.y / 2.0 - face_margin(outer);
+            let bottom = inner.pose.position.y - inner.size.y / 2.0 + face_margin(inner);
+            bottom - top
+        };
+        assert!((gap(&ov) - SLOT_GAP).abs() < 1e-5, "{}", gap(&ov));
+        ov.set_scale(&mut vr.backend, 1.5);
+        ov.tick(&mut vr);
+        assert!((gap(&ov) - SLOT_GAP * 1.5).abs() < 1e-5, "{}", gap(&ov));
     }
 
     #[test]
