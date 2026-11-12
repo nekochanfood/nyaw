@@ -8,10 +8,10 @@ pub use arc::arc;
 use std::{rc::Rc, time::Instant};
 
 use gpui::{
-    AnyElement, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+    AnyElement, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId, Hsla,
     InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseExitEvent,
     MouseMoveEvent, MouseUpEvent, Pixels, Point, Radians, RenderOnce, ScrollDelta,
-    ScrollWheelEvent, TouchPhase, Window, canvas, div, prelude::*, px, relative,
+    ScrollWheelEvent, TouchPhase, Window, canvas, div, prelude::*, px, relative, rgba,
 };
 
 use super::keep_drawing;
@@ -31,6 +31,7 @@ pub struct Place {
     pub y: f32,
     /// 一辺の長さ。
     pub side: f32,
+    /// 不透明度。項目は円として、上に地の色を `1 - alpha` で重ねて薄くする（下の [`carousel`]）。
     pub alpha: f32,
     /// 傾き（ラジアン。時計回りが正）。項目の中心の周りに回して描く（押せる範囲は回さない）。
     pub angle: f32,
@@ -400,6 +401,9 @@ impl RenderOnce for Carousel {
             .filter(|(_, d)| d.abs() < shape.reach)
             .collect();
         shown.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
+        // 項目ごと薄くする: 要素ごとの不透明度では重なった下の部品が透けて見えるので、不透明なまま描いて地の色の円で覆う。
+        // ponytail: 地が `background` の一色で項目が円のときだけ、項目ごと薄くしたのと同じに見える。別の地に置くなら色を渡す。
+        let backdrop = Hsla::from(rgba(crate::Theme::current(cx).background));
         let items = shown.into_iter().map(|(i, d)| {
             let place = shape.place(d);
             let on_select = on_select.clone();
@@ -410,10 +414,21 @@ impl RenderOnce for Carousel {
                 .left(px(place.x - place.side / 2.0))
                 .top(px(place.y - place.side / 2.0))
                 .size(px(place.side))
-                .opacity(place.alpha)
                 .child(Rotated {
                     angle: place.angle,
                     child: render(i, place.side, window, cx),
+                })
+                .when(place.alpha < 1.0, |item| {
+                    item.child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                            .rounded(px(place.side / 2.0))
+                            .circular_corners()
+                            .bg(backdrop.opacity(1.0 - place.alpha)),
+                    )
                 })
                 // 中央でない項目は、押すと中央に来る。
                 .when(i != selected, |item| {
