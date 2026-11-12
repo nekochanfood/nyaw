@@ -129,9 +129,17 @@ fn watch_faces_turn_loop_filter_and_set(cx: &mut TestAppContext) {
     assert!(left.center().x < dots.left() && right.center().x > dots.right());
     assert!(right.center().y > dots.center().y);
     assert!((right.size.width - dots.size.width).abs() < px(1.0));
-    // The carets sit at both ends.
+    // The carets sit on both sides of the name, below the faces.
     let (prev, next) = (kit.bounds("watch-prev"), kit.bounds("watch-next"));
-    assert!(prev.right() <= dots.left() && next.left() >= dots.right());
+    assert!(prev.right() < name.left() && next.left() > name.right());
+    assert!(prev.top() >= faces.bottom() && (prev.center().y - next.center().y).abs() < px(1.0));
+    // The space above the faces (to the category) and below them (to the row of the name) is the same.
+    let above = faces.top() - kind.bottom();
+    let below = prev.top().min(name.top()) - faces.bottom();
+    assert!(
+        above > px(0.0) && (above - below).abs() < px(1.0),
+        "{above:?} / {below:?}"
+    );
 
     // The button of the face in use cannot be pressed.
     kit.click("watch-set");

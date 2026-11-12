@@ -292,8 +292,8 @@ fn face(design: WristDesign, used: bool, side: f32, theme: &Theme, cx: &App) -> 
 }
 
 /// wrist の文字盤: 上から種類の絞り込み（`watch-kind` → `watch-kind-all` / `-<種類>`）、弧に並ぶ見本（`watch-faces`。押したまま
-/// 左右に動かすか、`watch-prev` / `watch-next` で回す。端はつながる）、中央のデザインの名前、`watch-set`（押すとそのデザインに
-/// する。使っているデザインでは押せない見た目で「設定中」）。使っているデザインの見本は輪で囲む。
+/// 左右に動かす。端はつながる）、中央のデザインの名前（左右の `watch-prev` / `watch-next` でも回す）、`watch-set`（押すとその
+/// デザインにする。使っているデザインでは押せない見た目で「設定中」）。使っているデザインの見本は輪で囲む。
 pub fn watch_faces(
     state: WatchFaces,
     set: impl Fn(WatchFaces, &mut Window, &mut App) + Clone + 'static,
@@ -385,8 +385,6 @@ pub fn watch_faces(
     let turn = |id: &'static str, glyph, tip: SharedString, to: usize| {
         let pick = pick.clone();
         components::icon_button(&theme, id, glyph, tip, Variant::OnBackground)
-            .absolute()
-            .top(px((FACE_PX - components::BUTTON_HEIGHT) / 2.0))
             .on_click(move |_: &ClickEvent, window, cx| pick(to, window, cx))
     };
     let previous = turn(
@@ -414,13 +412,18 @@ pub fn watch_faces(
         )
         .on_click(move |_, _, cx| push(Setting::WristDesign(shown), cx))
     };
+    // 名前と種類。幅は見本と同じに決めておき、名前の長さで左右のボタンが動かないようにする。
     let name = div()
+        .w(px(FACE_PX))
         .flex()
         .flex_col()
         .items_center()
+        .text_center()
         .child(
             div()
                 .debug_selector(|| "watch-name".into())
+                .max_w_full()
+                .truncate()
                 .text_size(px(font_size::LG))
                 .font_weight(FontWeight::BOLD)
                 .child(i18n::t(cx, &format!("wrist.design.{}", shown.key()))),
@@ -431,22 +434,23 @@ pub fn watch_faces(
                 .text_color(rgba(theme.neutral_text_low))
                 .child(kind(Some(shown.face()), cx)),
         );
+    // 見本の上下は同じだけ空ける（上は中央の見本の上端、下は弧で下がった隣の下端から）。
     div()
         .flex()
         .flex_col()
         .items_center()
-        .gap(px(spacing::LG))
         .child(kinds)
+        .child(div().w_full().my(px(spacing::XL)).child(carousel))
         .child(
             div()
-                .relative()
-                .w_full()
-                .child(carousel)
-                .child(previous.left_0())
-                .child(next.right_0()),
+                .flex()
+                .items_center()
+                .gap(px(spacing::XL))
+                .child(previous)
+                .child(name)
+                .child(next),
         )
-        .child(name)
-        .child(apply)
+        .child(div().mt(px(spacing::LG)).child(apply))
 }
 
 #[cfg(test)]
