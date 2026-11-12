@@ -1069,7 +1069,7 @@ pub fn tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
 const CHOICE_RING: f32 = 3.0;
 const CHOICE_BADGE: f32 = 24.0;
 
-/// 選べるカード: いくつかの中から 1 つ選ぶ、見本や絵を載せた箱（カードの上に置く。地は `control`）。
+/// 選べるカード: いくつかの中から 1 つ選ぶ、見本や絵を載せた箱（地の上に置く。[`tile`] と同じくカードの色で、ホバー・押下で沈む）。
 /// 選んでいるものは塗りの色の枠で囲み、右上にチェックの印を出す（色の差だけに頼らない）。
 /// 中身 `content` は中央に置く（印は中身の上に重ねるので、中身はここで受け取る）。高さは中身に合わせ、幅は呼び出し側が足す。
 pub fn choice(
@@ -1079,6 +1079,7 @@ pub fn choice(
     content: impl IntoElement,
 ) -> Button {
     let mut b = base_button(theme, id.into(), Variant::Default);
+    (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
     let ring = if selected { theme.accent_solid } else { 0 };
     b.base = b
         .base

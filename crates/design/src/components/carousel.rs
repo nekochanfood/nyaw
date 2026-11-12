@@ -145,18 +145,8 @@ pub struct Carousel {
     len: usize,
     selected: usize,
     shape: Shape,
-    /// 項目を薄くする幕の色（置いた面の色）。`None` なら今のテーマの地。
-    backdrop: Option<u32>,
     render: Render,
     on_select: OnSelect,
-}
-
-impl Carousel {
-    /// 地（`background`）以外の面に置くとき、その面の色を渡す（薄い項目に重ねる幕の色になる）。
-    pub fn backdrop(mut self, color: u32) -> Self {
-        self.backdrop = Some(color);
-        self
-    }
 }
 
 /// `len` 個（1 以上）の項目を `shape` の形に並べ、`selected` 番目を中央に置く。`render` が項目 1 つ（番号と、一辺の長さ px の
@@ -176,7 +166,6 @@ pub fn carousel(
         len,
         selected: selected.min(len - 1),
         shape,
-        backdrop: None,
         render: Rc::new(render),
         on_select: Rc::new(on_select),
     }
@@ -189,7 +178,6 @@ impl RenderOnce for Carousel {
             len,
             selected,
             shape,
-            backdrop,
             render,
             on_select,
         } = self;
@@ -414,9 +402,8 @@ impl RenderOnce for Carousel {
             .collect();
         shown.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()));
         // 項目ごと薄くする: 要素ごとの不透明度では重なった下の部品が透けて見えるので、不透明なまま描いて地の色の円で覆う。
-        // ponytail: 面が一色で項目が円のときだけ、項目ごと薄くしたのと同じに見える。地以外の面の色は [`Carousel::backdrop`] で渡す。
-        let backdrop = backdrop.unwrap_or_else(|| crate::Theme::current(cx).background);
-        let backdrop = Hsla::from(rgba(backdrop));
+        // ponytail: 地が `background` の一色で項目が円のときだけ、項目ごと薄くしたのと同じに見える。別の地に置くなら色を渡す。
+        let backdrop = Hsla::from(rgba(crate::Theme::current(cx).background));
         let items = shown.into_iter().map(|(i, d)| {
             let place = shape.place(d);
             let on_select = on_select.clone();

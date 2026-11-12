@@ -1,6 +1,6 @@
 //! Layer 5: 画面。セットアップウィザード（初回起動と、デバッグからのやり直し）。nyaw を使い始めるのに要る設定を順に決める。
-//! 見た目と遷移は `design::components` のウィザード（`wizard_*` + `navigation`）。外観と文字盤は設定画面と同じ部品
-//! （`ui::prefs`）。選んだものは、その場で全体の設定に反映する。
+//! 見た目と遷移は `design::components` のウィザード（`wizard_*` + `navigation`）。パネルの地は設定画面の中身の側と同じ背景色で、
+//! 外観と文字盤は設定画面と同じ部品（`ui::prefs`）をそのまま載せる。選んだものは、その場で全体の設定に反映する。
 
 use design::components::{self, Button, Variant, Wizard};
 use design::{Icon, Logo, Theme, font_size, icons, spacing};
@@ -238,7 +238,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             let languages = components::dropdown(
                 &theme,
                 "setup-language",
-                Variant::Default,
+                Variant::OnBackground,
                 Some(&icons::GLOBE),
                 current.unwrap_or_default().native_name(),
             )
@@ -275,8 +275,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
         }
         Step::Appearance => {
             let set = update(wizard, |v: &mut SetupWizard, state| v.appearance = state);
-            // 設定画面と同じ部品を、このカードの上に合う明るさ（`Theme::on_card`）で出す（地の色の枠は敷かない）。
-            let body = ui::prefs::appearance(&theme.on_card(), panel, appearance, set, window, cx);
+            let body = ui::prefs::appearance(panel, appearance, set, window, cx);
             choose(
                 &icons::PALETTE,
                 "setup.appearance_title",
@@ -287,7 +286,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
         }
         Step::Wrist => {
             let set = update(wizard, |v: &mut SetupWizard, state| v.watch = state);
-            let body = ui::prefs::watch_faces(&theme.on_card(), watch, set, window, cx);
+            let body = ui::prefs::watch_faces(watch, set, window, cx);
             choose(
                 &icons::WATCH,
                 "setup.wrist_title",
@@ -328,10 +327,13 @@ impl Render for SetupWizard {
                 cx.notify();
             })
         };
-        components::wizard_panel(&theme).child(
-            components::navigation(&theme, "setup-nav", &stack, draw, swipe_back)
-                .background(theme.card),
-        )
+        components::wizard_panel(&theme).child(components::navigation(
+            &theme,
+            "setup-nav",
+            &stack,
+            draw,
+            swipe_back,
+        ))
     }
 }
 

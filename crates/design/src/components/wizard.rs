@@ -1,5 +1,5 @@
 //! ウィザード: ユーザーに順番に操作させる画面。どこでも使えるよう、状態（[`Wizard`]）と見た目（[`wizard_welcome`] / [`wizard_step`]）を分ける。
-//! 画面は中身だけ（地は無い）。パネルの地（`card_panel`）と `navigation`（右から入る遷移・スワイプバック）で包んで使う。
+//! 画面は中身だけ（地は無い）。パネルの地（[`wizard_panel`]。背景色）と `navigation`（右から入る遷移・スワイプバック）で包んで使う。
 //! 見た目は全画面で揃える: 縁の余白は [`WIZARD_MARGIN`]、内容は上下中央寄せ、ボタンは下の帯（フッター）。
 
 use design_prelude::*;
@@ -76,10 +76,11 @@ impl Wizard {
     }
 }
 
-/// ウィザードのパネル: カード 1 枚のパネルで、中の画面（[`navigation`](crate::components::navigation) の地）をパネルの角丸で切る。
-/// `navigation` の画面は四角い地を持つので、切らないとパネルの角丸を覆ってしまう。
+/// ウィザードのパネル: 地（`background`。設定画面の中身の側と同じ）のパネル。画面にはカードや一覧をそのまま並べられる。
+/// 中の画面（[`navigation`](crate::components::navigation) の四角い地）は、パネルの角丸で切る（切らないと角丸を覆う）。
 pub fn wizard_panel(theme: &Theme) -> Div {
-    crate::components::card_panel(theme)
+    crate::components::panel(theme)
+        .p(px(0.0))
         .overflow_hidden()
         .clip_rounded()
 }
@@ -112,7 +113,8 @@ pub fn wizard_back(
         label,
         &crate::icons::CARET_LEFT,
         false,
-        Variant::Default,
+        // 地に直接置くので、背景用の色。
+        Variant::OnBackground,
     )
 }
 

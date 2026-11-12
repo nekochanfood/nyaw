@@ -1,7 +1,7 @@
 use gpui::{TestAppContext, px};
 use kernel::{DominantHand, Language, PanelCommand, ThemeMode, WristDesign};
 use setup::{SetupWizard, Step};
-use testing::{BUTTON_BG, PANEL_BG, SetupWizardSpawn, Testing};
+use testing::{BACKGROUND, PANEL_BG, SetupWizardSpawn, Testing};
 use testkit::{Driver, NoVrKit, Vec2, VrKit};
 
 /// The wizard walks through every decision. Each choice applies at once, and only Finish marks the setup done.
@@ -123,10 +123,10 @@ fn setup_makes_a_custom_color_in_a_child_dialog(cx: &mut TestAppContext) {
     assert_eq!(kit.read(|v| v.step()), Step::Wrist);
 }
 
-/// The appearance and watch parts sit straight on the wizard's card, with no backdrop box behind them: their own
-/// surfaces take the control color (a step off the card), like the choice cards of the hand step.
+/// The wizard's panel has the backdrop color of the Settings content side, so the shared parts sit on it in their
+/// own colors (cards on the backdrop) with no box around them.
 #[gpui::test]
-fn settings_parts_sit_on_the_wizard_card_without_a_backdrop(cx: &mut TestAppContext) {
+fn wizard_panel_is_the_backdrop_with_the_parts_in_their_own_colors(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
     kit.click("setup-next").click("setup-next");
     assert_eq!(kit.read(|v| v.step()), Step::Appearance);
@@ -134,13 +134,16 @@ fn settings_parts_sit_on_the_wizard_card_without_a_backdrop(cx: &mut TestAppCont
     let x = f32::from(row.left()) + 4.0;
     let inside = kit.vr_color_at_px(Vec2::new(x, f32::from(row.center().y)));
     let between = kit.vr_color_at_px(Vec2::new(x, f32::from(row.bottom()) + 8.0));
-    assert_eq!(inside, BUTTON_BG, "the row is a step off the card");
-    assert_eq!(between, PANEL_BG, "only the card between the groups");
-    // The watch faces too: around them is the card itself.
+    assert_eq!(
+        inside, PANEL_BG,
+        "the row is a card, as on the Settings screen"
+    );
+    assert_eq!(between, BACKGROUND, "the panel itself is the backdrop");
+    // The watch faces too: around them is the panel's backdrop.
     kit.click("setup-next");
     let faces = kit.bounds("watch-faces");
     let corner = Vec2::new(f32::from(faces.left()) + 2.0, f32::from(faces.top()) + 2.0);
-    assert_eq!(kit.vr_color_at_px(corner), PANEL_BG);
+    assert_eq!(kit.vr_color_at_px(corner), BACKGROUND);
 }
 
 #[gpui::test]

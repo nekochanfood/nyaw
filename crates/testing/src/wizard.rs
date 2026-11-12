@@ -90,7 +90,7 @@ impl Render for WizardTest {
                     .debug_selector(|| "wizard-form".into())
                     .p(px(spacing::XL))
                     .rounded(px(radius::LG))
-                    .bg(rgba(theme.control))
+                    .bg(rgba(theme.card))
                     .child(i18n::t(cx, "wizard.form"));
                 components::wizard_step(
                     &theme,
@@ -115,9 +115,12 @@ impl Render for WizardTest {
                 cx.notify();
             })
         };
-        components::wizard_panel(&theme).child(
-            components::navigation(&theme, "wizard-nav", &stack, page, swipe_back)
-                .background(theme.card),
-        )
+        components::wizard_panel(&theme).child(components::navigation(
+            &theme,
+            "wizard-nav",
+            &stack,
+            page,
+            swipe_back,
+        ))
     }
 }
