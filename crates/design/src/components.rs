@@ -1694,8 +1694,8 @@ pub fn theme_preview(theme: &Theme) -> Div {
             .flex_col()
             .gap(px(spacing::SM))
             .rounded(px(radius::LG))
-            .border_1()
-            .border_color(rgba(theme.neutral_border_subtle))
+            // 窓は影で地から浮かせる（枠線は使わない）。
+            .shadow_md()
             .bg(rgba(theme.card))
     };
     // ボタンの上に載る色（`on-accent`）も、短い線で見せる。
@@ -1718,7 +1718,6 @@ pub fn theme_preview(theme: &Theme) -> Div {
     let front = window()
         .left(px(PREVIEW_SHIFT.0))
         .top(px(PREVIEW_SHIFT.1))
-        .shadow_md()
         .child(line(72.0, theme.neutral_text))
         .child(line(132.0, theme.neutral_text_low))
         .child(line(108.0, theme.neutral_text_low))
