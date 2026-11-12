@@ -133,6 +133,12 @@ float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds bounds, Bo
     return distance_from_clip_rect_impl(transformed, clip_bounds);
 }
 
+// NYAW: whether a primitive is drawn somewhere else than its bounds (`Window::with_rotation`).
+bool is_transformed(TransformationMatrix t) {
+    return any(t.rotation_scale[0] != float2(1.0, 0.0)) || any(t.rotation_scale[1] != float2(0.0, 1.0))
+        || any(t.translation != float2(0.0, 0.0));
+}
+
 // Convert linear RGB to sRGB
 float3 linear_to_srgb(float3 color) {
     return pow(color, float3(1.0 / 2.2, 1.0 / 2.2, 1.0 / 2.2));
@@ -548,10 +554,13 @@ struct Quad {
     Corners corner_radii;
     Edges border_widths;
     float corner_exponent;
+    TransformationMatrix transformation;
 };
 
+// NYAW: `local` is the position before the quad's transformation; its shape is measured there.
 struct QuadVertexOutput {
     nointerpolation uint quad_id: TEXCOORD0;
+    float2 local: TEXCOORD1;
     float4 position: SV_Position;
     nointerpolation float4 border_color: COLOR0;
     nointerpolation float4 background_solid: COLOR1;
@@ -562,6 +571,7 @@ struct QuadVertexOutput {
 
 struct QuadFragmentInput {
     nointerpolation uint quad_id: TEXCOORD0;
+    float2 local: TEXCOORD1;
     float4 position: SV_Position;
     nointerpolation float4 border_color: COLOR0;
     nointerpolation float4 background_solid: COLOR1;
@@ -575,7 +585,13 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
     float2 unit_vertex = float2(float(vertex_id & 1u), 0.5 * float(vertex_id & 2u));
     uint quad_id = batch_start_index + instance_id;
     Quad quad = quads[quad_id];
-    float4 device_position = to_device_position(unit_vertex, quad.bounds);
+    // A transformed quad's edges are not on pixel boundaries: draw a pixel beyond them for the antialiasing.
+    Bounds geometry = quad.bounds;
+    if (is_transformed(quad.transformation)) {
+        geometry.origin -= 1.0;
+        geometry.size += 2.0;
+    }
+    float4 device_position = to_device_position_transformed(unit_vertex, geometry, quad.transformation);
 
     GradientColor gradient = prepare_gradient_color(
         quad.background.tag,
@@ -583,11 +599,12 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
         quad.background.solid,
         quad.background.colors
     );
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask.bounds);
+    float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, geometry, quad.content_mask.bounds, quad.transformation);
     float4 border_color = hsla_to_rgba(quad.border_color);
 
     QuadVertexOutput output;
     output.position = device_position;
+    output.local = unit_vertex * geometry.size + geometry.origin;
     output.border_color = border_color;
     output.quad_id = quad_id;
     output.background_solid = gradient.solid;
@@ -599,7 +616,7 @@ QuadVertexOutput quad_vertex(uint vertex_id: SV_VertexID, uint instance_id: SV_I
 
 float4 quad_fragment_impl(QuadFragmentInput input) {
     Quad quad = quads[input.quad_id];
-    float4 background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
+    float4 background_color = gradient_color(quad.background, input.local, quad.bounds,
     input.background_solid, input.background_color0, input.background_color1);
 
     bool unrounded = quad.corner_radii.top_left == 0.0 &&
@@ -608,7 +625,8 @@ float4 quad_fragment_impl(QuadFragmentInput input) {
         quad.corner_radii.bottom_right == 0.0;
 
     // Fast path when the quad is not rounded and doesn't have any border
-    if (quad.border_widths.top == 0.0 &&
+    if (!is_transformed(quad.transformation) &&
+        quad.border_widths.top == 0.0 &&
         quad.border_widths.left == 0.0 &&
         quad.border_widths.right == 0.0 &&
         quad.border_widths.bottom == 0.0 &&
@@ -618,7 +636,7 @@ float4 quad_fragment_impl(QuadFragmentInput input) {
 
     float2 size = quad.bounds.size;
     float2 half_size = size / 2.;
-    float2 the_point = input.position.xy - quad.bounds.origin;
+    float2 the_point = input.local - quad.bounds.origin;
     float2 center_to_point = the_point - half_size;
 
     // Signed distance field threshold for inclusion of pixels. 0.5 is the
@@ -919,10 +937,13 @@ struct Shadow {
     Corners element_corner_radii;
     uint inset;
     float corner_exponent;
+    TransformationMatrix transformation;
 };
 
+// NYAW: `local` is the position before the shadow's transformation (as for quads).
 struct ShadowVertexOutput {
     nointerpolation uint shadow_id: TEXCOORD0;
+    float2 local: TEXCOORD1;
     float4 position: SV_Position;
     nointerpolation float4 color: COLOR;
     float4 clip_distance: SV_ClipDistance;
@@ -930,6 +951,7 @@ struct ShadowVertexOutput {
 
 struct ShadowFragmentInput {
   nointerpolation uint shadow_id: TEXCOORD0;
+  float2 local: TEXCOORD1;
   float4 position: SV_Position;
   nointerpolation float4 color: COLOR;
 };
@@ -952,12 +974,13 @@ ShadowVertexOutput shadow_vertex(uint vertex_id: SV_VertexID, uint instance_id: 
         bounds.size += 2.0 * margin;
     }
 
-    float4 device_position = to_device_position(unit_vertex, bounds);
-    float4 clip_distance = distance_from_clip_rect(unit_vertex, bounds, shadow.content_mask.bounds);
+    float4 device_position = to_device_position_transformed(unit_vertex, bounds, shadow.transformation);
+    float4 clip_distance = distance_from_clip_rect_transformed(unit_vertex, bounds, shadow.content_mask.bounds, shadow.transformation);
     float4 color = hsla_to_rgba(shadow.color);
 
     ShadowVertexOutput output;
     output.position = device_position;
+    output.local = unit_vertex * bounds.size + bounds.origin;
     output.color = color;
     output.shadow_id = shadow_id;
     output.clip_distance = clip_distance;
@@ -970,12 +993,12 @@ float4 shadow_fragment_impl(ShadowFragmentInput input) {
 
     float2 half_size = shadow.bounds.size / 2.;
     float2 center = shadow.bounds.origin + half_size;
-    float2 point0 = input.position.xy - center;
+    float2 point0 = input.local - center;
     float corner_radius = pick_corner_radius(point0, shadow.corner_radii);
 
     float alpha;
     if (shadow.blur_radius == 0.) {
-        float distance = quad_sdf_n(input.position.xy, shadow.bounds, shadow.corner_radii, shadow.corner_exponent);
+        float distance = quad_sdf_n(input.local, shadow.bounds, shadow.corner_radii, shadow.corner_exponent);
         alpha = saturate(0.5 - distance);
     } else {
         // The signal is only non-zero in a limited range, so don't waste samples
@@ -1000,7 +1023,7 @@ float4 shadow_fragment_impl(ShadowFragmentInput input) {
         // The inset shadow is the complement of the (blurred) hole rect, clipped to the element.
         // `saturate(0.5 - d)` gives a 1-pixel antialiased edge: d <= -0.5 -> 1, d >= 0.5 -> 0.
         alpha = 1.0 - alpha;
-        float element_distance = quad_sdf_n(input.position.xy, shadow.element_bounds,
+        float element_distance = quad_sdf_n(input.local, shadow.element_bounds,
                                             shadow.element_corner_radii, shadow.corner_exponent);
         alpha *= saturate(0.5 - element_distance);
     }

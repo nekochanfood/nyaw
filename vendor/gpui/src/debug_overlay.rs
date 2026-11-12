@@ -226,6 +226,7 @@ fn solid_quad(
         corner_radii: Corners::default(),
         border_widths: Edges::default(),
         corner_exponent: 0.0,
+        transformation: Default::default(),
     }
 }
 

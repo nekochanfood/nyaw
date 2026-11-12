@@ -14,6 +14,7 @@ mod nav_swipe;
 mod novr_cursor;
 mod novr_keys;
 mod panel_lod;
+mod rotation;
 mod round_clip;
 mod stress;
 mod superellipse;
@@ -40,6 +41,7 @@ const CASES: &[Case] = &[
     ("novr_cursor", || report(novr_cursor::main)),
     ("novr_keys", || report(novr_keys::main)),
     ("panel_lod", || report(panel_lod::main)),
+    ("rotation", || report(rotation::main)),
     ("round_clip", || report(round_clip::main)),
     ("stress", || report(stress::main)),
     ("superellipse", || report(superellipse::main)),

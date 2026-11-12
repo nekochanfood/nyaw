@@ -20,7 +20,7 @@ use crate::{
     StrikethroughStyle, Style, SubpixelSprite, SubscriberSet, Subscription, SystemWindowTab,
     SystemWindowTabController, TabStopMap, TaffyLayoutEngine, Task, TextInputConfiguration,
     TextInputStateChange, TextRenderingMode, TextStyle, TextStyleRefinement, ThermalState,
-    TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
+    Radians, TransformationMatrix, Underline, UnderlineStyle, WindowAppearance, WindowBackgroundAppearance,
     WindowBounds, WindowControls, WindowDecorations, WindowOptions, WindowParams, WindowTextSystem,
     WindowVisibility, point, prelude::*, px, rems, size, transparent_black,
 };
@@ -1239,6 +1239,8 @@ pub struct Window {
     pub(crate) rendered_entity_stack: Vec<EntityId>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
     pub(crate) element_opacity: f32,
+    /// NYAW: the transformation (scaled pixels) applied to what is painted now. See [`Window::with_rotation`].
+    pub(crate) element_transformation: TransformationMatrix,
     pub(crate) content_mask_stack: Vec<ContentMask<Pixels>>,
     pub(crate) requested_autoscroll: Option<Bounds<Pixels>>,
     /// The [`TextInputConfiguration`] most recently forwarded to the platform
@@ -2144,6 +2146,7 @@ impl Window {
             element_offset_stack: Vec::new(),
             content_mask_stack: Vec::new(),
             element_opacity: 1.0,
+            element_transformation: TransformationMatrix::unit(),
             requested_autoscroll: None,
             last_text_input_configuration: None,
             focused_text_input_active: false,
@@ -4274,6 +4277,31 @@ impl Window {
         result
     }
 
+    /// NYAW: paint everything in `f` rotated clockwise by `angle` around `center` (window pixels), on top of
+    /// any outer rotation. Quads, shadows, paths, text and SVGs are rotated; underlines, strikethroughs and
+    /// images are not. Content masks stay in window space (a mask set inside `f` is not rotated), and hit
+    /// testing still uses the unrotated bounds.
+    pub fn with_rotation<R>(
+        &mut self,
+        center: Point<Pixels>,
+        angle: Radians,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        self.invalidator.debug_assert_paint();
+        if angle.0 == 0.0 {
+            return f(self);
+        }
+        let center = center.scale(self.scale_factor());
+        let previous = self.element_transformation;
+        self.element_transformation = previous
+            .translate(center)
+            .rotate(angle)
+            .translate(point(ScaledPixels(-center.x.0), ScaledPixels(-center.y.0)));
+        let result = f(self);
+        self.element_transformation = previous;
+        result
+    }
+
     /// Perform prepaint on child elements in a "retryable" manner, so that any side effects
     /// of prepaints can be discarded before prepainting again. This is used to support autoscroll
     /// where we need to prepaint children to detect the autoscroll bounds, then adjust the
@@ -4632,6 +4660,7 @@ impl Window {
                 element_corner_radii,
                 inset: 0,
                 corner_exponent,
+                transformation: self.element_transformation,
             });
         }
     }
@@ -4678,6 +4707,7 @@ impl Window {
                 element_corner_radii,
                 inset: 1,
                 corner_exponent,
+                transformation: self.element_transformation,
             });
         }
     }
@@ -4746,9 +4776,11 @@ impl Window {
             border_widths: snapped_border_widths,
             border_style: quad.border_style,
             corner_exponent: quad.superellipse.exp2(),
+            transformation: self.element_transformation,
         };
 
-        if !quad.background.is_transparent() {
+        // A rotated quad cannot be split into strips by axis-aligned content masks.
+        if !quad.background.is_transparent() || quad.transformation != TransformationMatrix::unit() {
             self.next_frame.scene.insert_primitive(quad);
             return;
         }
@@ -4812,9 +4844,10 @@ impl Window {
         path.content_mask = content_mask;
         let color: Background = color.into();
         path.color = color.opacity(opacity);
-        self.next_frame
-            .scene
-            .insert_primitive(path.scale(scale_factor));
+        let path = path
+            .scale(scale_factor)
+            .transform(&self.element_transformation);
+        self.next_frame.scene.insert_primitive(path);
     }
 
     /// Paint an underline into the scene for the next frame at the current z-index.
@@ -4894,7 +4927,9 @@ impl Window {
             (quantized_origin.y.fract() * SUBPIXEL_VARIANTS_Y as f32) as u8,
         );
         let integer_origin = quantized_origin.map(|c| ScaledPixels(c.trunc()));
-        let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size);
+        // Subpixel antialiasing assumes upright glyphs.
+        let subpixel_rendering = self.should_use_subpixel_rendering(font_id, font_size)
+            && self.element_transformation == TransformationMatrix::unit();
         let dilation = self.text_system().glyph_dilation_for_color(color);
         let params = RenderGlyphParams {
             font_id,
@@ -4930,7 +4965,7 @@ impl Window {
                     content_mask,
                     color: color.opacity(element_opacity),
                     tile,
-                    transformation: TransformationMatrix::unit(),
+                    transformation: self.element_transformation,
                 });
             } else {
                 self.next_frame.scene.insert_primitive(MonochromeSprite {
@@ -4940,7 +4975,7 @@ impl Window {
                     content_mask,
                     color: color.opacity(element_opacity),
                     tile,
-                    transformation: TransformationMatrix::unit(),
+                    transformation: self.element_transformation,
                 });
             }
         }
@@ -5087,7 +5122,7 @@ impl Window {
             content_mask,
             color: color.opacity(element_opacity),
             tile,
-            transformation,
+            transformation: self.element_transformation.compose(transformation),
         });
 
         Ok(())

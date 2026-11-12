@@ -8,8 +8,9 @@ pub use arc::arc;
 use std::{rc::Rc, time::Instant};
 
 use gpui::{
-    AnyElement, App, Bounds, DispatchPhase, ElementId, IntoElement, MouseButton, MouseDownEvent,
-    MouseExitEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, RenderOnce, ScrollDelta,
+    AnyElement, App, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+    InspectorElementId, IntoElement, LayoutId, MouseButton, MouseDownEvent, MouseExitEvent,
+    MouseMoveEvent, MouseUpEvent, Pixels, Point, Radians, RenderOnce, ScrollDelta,
     ScrollWheelEvent, TouchPhase, Window, canvas, div, prelude::*, px, relative,
 };
 
@@ -31,6 +32,8 @@ pub struct Place {
     /// 一辺の長さ。
     pub side: f32,
     pub alpha: f32,
+    /// 傾き（ラジアン。時計回りが正）。項目の中心の周りに回して描く（押せる範囲は回さない）。
+    pub angle: f32,
 }
 
 /// カルーセルの並べ方。中央から `d` 個ずれた項目（小数は動いている途中）をどこに置くかを決める。
@@ -408,7 +411,10 @@ impl RenderOnce for Carousel {
                 .top(px(place.y - place.side / 2.0))
                 .size(px(place.side))
                 .opacity(place.alpha)
-                .child(render(i, place.side, window, cx))
+                .child(Rotated {
+                    angle: place.angle,
+                    child: render(i, place.side, window, cx),
+                })
                 // 中央でない項目は、押すと中央に来る。
                 .when(i != selected, |item| {
                     item.on_click(move |_, window, cx| on_select(i, window, cx))
@@ -434,6 +440,71 @@ impl RenderOnce for Carousel {
             .children(
                 dragging.then(|| div().id("carousel-shield").absolute().size_full().occlude()),
             )
+    }
+}
+
+/// 中身を自分の中心の周りに `angle`（ラジアン。時計回りが正）だけ回して描く。並べ方と押せる範囲は回さない。
+struct Rotated {
+    angle: f32,
+    child: AnyElement,
+}
+
+impl IntoElement for Rotated {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
+}
+
+impl Element for Rotated {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        (self.child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        self.child.prepaint(window, cx);
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _: &mut (),
+        _: &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let child = &mut self.child;
+        window.with_rotation(bounds.center(), Radians(self.angle), |window| {
+            child.paint(window, cx)
+        });
     }
 }
 

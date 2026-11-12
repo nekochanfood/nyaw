@@ -28,6 +28,6 @@ UI の見た目の責務。Radix Colors のエイリアスに倣う 3 層。Cons
 
 - **`components::carousel(id, len, selected, shape, render, on_select)`**（`components/carousel.rs`）: どんな並べ方でも通用する部分。項目のループ（`offset`）、押したまま左右に動かす操作（タッチの指のスライドとマウスの両方）、離したときに収まる項目（近い項目。払っていればその先。`settle`）、選ぶ項目が外から変わったときに近い向きへ回る動き、中央でない項目を押すと中央に来ること。ここで始まった横の動きは外へ渡さない（`navigation` のスワイプバックと取り合わない。縦の動きは渡す）。選ぶ項目は呼び出し側が持つ。
 - **並べ方 `Shape`**: 中央から `d` 個ずれた項目（小数は動いている途中）の置き場所 `Place`（中心・一辺・不透明度）と、項目 1 つ分の指の動き `step`・高さ・描く範囲 `reach`。形に特化した計算はここにだけ書く。
-  - **`components::arc(diameter)`**（`components/carousel/arc.rs`）: 大きな円の弧に沿う並べ方。中央（弧の頂点）の項目の一辺が `diameter`。隣は弧に沿って下がり、小さく薄くなる。その先は消えて見えない。wrist の文字盤を選ぶ画面（`ui::prefs::watch_faces`）が使う。
+  - **`components::arc(diameter)`**（`components/carousel/arc.rs`）: 大きな円の弧に沿う並べ方。中央（弧の頂点）の項目の一辺が `diameter`。隣は弧に沿って下がり、小さく薄くなり、弧の向きに傾く（`Place::angle`。描くときに `Window::with_rotation` で回す）。その先は消えて見えない。wrist の文字盤を選ぶ画面（`ui::prefs::watch_faces`）が使う。
 - 別の形（一直線・カバーフローなど）が要るときは、`Shape::new` を返す関数を足す（`carousel` は変えない）。
 - テスト: `carousel::tests` / `carousel::arc::tests`（計算）、`tests/carousel.rs`（操作）。
