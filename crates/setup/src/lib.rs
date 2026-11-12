@@ -209,7 +209,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
     };
     match step {
         Step::Welcome => {
-            // 言語は「はじめる」の下のドロップダウンで替える。名前は、その言語自身で出す。
+            // 言語は左下のドロップダウン（上へ開く）で替える。名前は、その言語自身で出す。
             let open = update(wizard, |v: &mut SetupWizard, open| v.language_open = open);
             let options = i18n::Lang::ALL.map(|l| {
                 let close = open.clone();
@@ -229,7 +229,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
                 cx,
                 "setup-language",
                 language_open,
-                false,
+                true,
                 options,
                 move |_: &MouseDownEvent, window, cx| dismiss(false, window, cx),
             );
@@ -244,16 +244,16 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             )
             .on_click(move |_, window, cx| show(true, window, cx))
             .child(popover);
-            let start = components::wizard_next(&theme, "setup-next", i18n::t(cx, "setup.start"))
+            let start = components::wizard_next(&theme, "setup-next", i18n::t(cx, "setup.next"))
                 .on_click(go(true));
             components::wizard_welcome(
                 &theme,
                 "setup",
                 design::logo(Logo::Full).height(px(LOGO_HEIGHT)),
-                // ロゴが名乗っているので、文は出さない。
-                "",
-                "",
-                [start, languages],
+                i18n::t(cx, "setup.welcome_title"),
+                i18n::t(cx, "setup.welcome_description"),
+                Some(languages),
+                start,
             )
         }
         Step::Hand => {
@@ -299,7 +299,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
         Step::Done => {
             let done = components::wizard_next(&theme, "setup-finish", i18n::t(cx, "setup.finish"))
                 .on_click(move |_, _, cx| finish(panel, cx));
-            // 終える前に見直せるよう、「完了」の下に「戻る」。
+            // 終える前に見直せるよう、左下に「戻る」。
             let back = components::wizard_back(&theme, "setup-back", i18n::t(cx, "setup.back"))
                 .on_click(go(false));
             components::wizard_welcome(
@@ -308,7 +308,8 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
                 components::wizard_icon(&theme, &icons::CHECK_CIRCLE),
                 i18n::t(cx, "setup.done_title"),
                 i18n::t(cx, "setup.done_description"),
-                [done, back],
+                Some(back),
+                done,
             )
         }
     }

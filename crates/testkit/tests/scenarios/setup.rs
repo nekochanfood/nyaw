@@ -16,7 +16,7 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     kit.kernel.apply(0, PanelCommand::Close);
     assert!(!kit.kernel.panel(0).closed);
 
-    // 一枚目: 言語は「はじめる」の下のドロップダウンで、選ぶとその場で切り替わる（「はじめる」を待たない）。
+    // 一枚目: 言語は左下のドロップダウンで、選ぶとその場で切り替わる（「次へ」を待たない）。
     assert_eq!(kit.read(|v| v.step()), Step::Welcome);
     kit.click("setup-language");
     assert!(kit.read(|v| v.language_open));
@@ -59,10 +59,10 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Minimal);
     kit.click("setup-next");
 
-    // 完了の画面からも戻れる（「完了」の下の「戻る」）。完了を押すまでは終えたことにならない。
+    // 完了の画面からも戻れる（左下の「戻る」。「完了」は右下）。完了を押すまでは終えたことにならない。
     assert!(kit.read(|v| v.wizard.is_last()));
     let (finish, back) = (kit.bounds("setup-finish"), kit.bounds("setup-back"));
-    assert!(finish.bottom() <= back.top());
+    assert!(back.right() < finish.left() && back.bottom() == finish.bottom());
     kit.click("setup-back");
     assert_eq!(kit.read(|v| v.step()), Step::Wrist);
     kit.click("setup-next");
@@ -75,32 +75,44 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert!(kit.kernel.panel(0).closed);
 }
 
-/// The first screen: the logo, Start and the language dropdown under it make one group in the middle of the
-/// screen (no text: the logo says the name). The dropdown opens below itself.
+/// The first screen: the logo, the title and one line sit in the middle of the screen. The buttons are in the
+/// bottom corners like on a step: Next at the right, the language dropdown at the left, opening upward.
 #[gpui::test]
-fn welcome_centers_the_logo_with_start_and_the_language_under_it(cx: &mut TestAppContext) {
+fn welcome_centers_the_logo_over_next_and_the_language_in_the_corners(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
     let panel = kit.bounds("setup-nav");
-    let [hero, start, language] =
-        ["setup-hero", "setup-next", "setup-language"].map(|s| kit.bounds(s));
+    let [hero, title, about, next, language] = [
+        "setup-hero",
+        "setup-title",
+        "setup-description",
+        "setup-next",
+        "setup-language",
+    ]
+    .map(|s| kit.bounds(s));
     let near = |a: gpui::Pixels, b: gpui::Pixels| (a - b).abs() < px(2.0);
-    // 上からロゴ・「はじめる」・言語のドロップダウンが 1 つのまとまりで、画面の上下左右中央。ロゴは大きい。
-    for part in [hero, start, language] {
+    // ロゴ・タイトル・概要のかたまりが、画面の上下左右中央。ロゴは大きい。
+    for part in [hero, title, about] {
         assert!(near(part.center().x, panel.center().x), "{part:?}");
     }
-    assert!(near(
-        (hero.top() + language.bottom()) / 2.0,
-        panel.center().y
-    ));
+    assert!(near((hero.top() + about.bottom()) / 2.0, panel.center().y));
     assert!(hero.size.height >= px(160.0), "{:?}", hero.size);
-    assert!(hero.bottom() < start.top() && start.bottom() <= language.top());
-    // ドロップダウンは下へ開く（「はじめる」を隠さない）。
+    assert!(hero.bottom() <= title.top() && title.bottom() <= about.top());
+    // 「次へ」は右下、言語のドロップダウンは左下（同じ高さ）。
+    assert!(about.bottom() < next.top() && language.right() < next.left());
+    assert!(next.right() > panel.center().x && language.left() < panel.center().x);
+    assert_eq!(next.bottom(), language.bottom());
+    assert!(near(
+        panel.right() - next.right(),
+        language.left() - panel.left()
+    ));
+    // ドロップダウンは上へ開く（下は画面の縁）。左端はボタンに揃い、画面からはみ出さない。
     kit.click("setup-language").step();
     let options = ["setup-lang-en", "setup-lang-ja"].map(|s| kit.bounds(s));
     let language = kit.bounds("setup-language");
-    assert!(options.iter().all(|o| o.top() >= language.bottom()));
+    assert!(options.iter().all(|o| o.bottom() <= language.top()));
+    assert!(options.iter().all(|o| o.left() >= language.left()));
     // 外を押すと、選ばずに閉じる。
-    kit.click("setup-hero");
+    kit.click("setup-title");
     assert!(!kit.read(|v| v.language_open));
     assert_eq!(kit.read(|v| v.step()), Step::Welcome);
 }

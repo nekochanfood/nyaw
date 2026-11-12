@@ -241,7 +241,8 @@ replay = "Replay reveal"
 
 [setup]
 title = "Setup"
-start = "Start"
+welcome_title = "Welcome!"
+welcome_description = "Press Next to begin the setup."
 hand_title = "Choose your dominant hand"
 hand_description = "Pick the hand you mainly use. Controls and placement follow it."
 appearance_title = "Choose your look"

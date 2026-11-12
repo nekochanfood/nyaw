@@ -1,7 +1,7 @@
 //! ウィザードの画面（`components::wizard_welcome` / `wizard_step`）の配置と、「次へ」「戻る」のボタンの幅。
 
+use design::Theme;
 use design::components::{self, Variant, WIZARD_MARGIN};
-use design::{Theme, spacing};
 use gpui::{
     Context, Entity, IntoElement, Pixels, Render, TestAppContext, VisualTestContext, Window, div,
     prelude::*, px,
@@ -20,7 +20,7 @@ impl Render for View {
         let next = components::wizard_next(&theme, "next", "Next");
         let page = if self.welcome {
             let second = components::button(&theme, "second", "Second", Variant::Default);
-            components::wizard_welcome(&theme, "w", hero, "Title", "", [next, second])
+            components::wizard_welcome(&theme, "w", hero, "Title", "", Some(second), next)
         } else {
             let back = components::wizard_back(&theme, "back", "Back");
             let body = div().h(px(100.0));
@@ -52,23 +52,20 @@ fn near(a: Pixels, b: f32) -> bool {
     (a - px(b)).abs() < px(1.5)
 }
 
-/// welcome: 上からアイコン（やロゴ）・タイトル・ボタンが 1 つのまとまりで、画面の上下左右中央。ボタンは縦に積む（主の操作が上）。
+/// welcome: アイコン（やロゴ）とタイトルのかたまりが画面の上下左右中央。ボタンは step と同じ下の帯（右に先へ進む操作、左にそのほか）。
 #[gpui::test]
-fn welcome_centers_the_content_with_its_actions_stacked_under_it(cx: &mut TestAppContext) {
+fn welcome_centers_the_content_over_the_same_footer_as_a_step(cx: &mut TestAppContext) {
     let (_, cx) = setup(cx, true);
     let [hero, title, next, second] =
         ["w-hero", "w-title", "next", "second"].map(|s| cx.debug_bounds(s).unwrap());
-    for part in [hero, title, next, second] {
-        assert!(near(part.center().x, SIZE / 2.0), "{part:?}");
-    }
-    let middle = (hero.top() + second.bottom()) / 2.0;
+    assert!(near(hero.center().x, SIZE / 2.0) && near(title.center().x, SIZE / 2.0));
+    let middle = (hero.top() + title.bottom()) / 2.0;
     assert!(near(middle, SIZE / 2.0), "{middle:?}");
-    // ボタンは内容の下に、少し広めに空けて置く（読むものと押すものを分ける）。主の操作が上、その下にもう 1 つ。
-    assert!(near(
-        next.top() - title.bottom(),
-        components::WIZARD_ACTIONS_GAP
-    ));
-    assert!(near(second.top() - next.bottom(), spacing::SM));
+    // 先へ進む操作は右下、そのほかは左下。
+    assert!(near(next.right(), SIZE - WIZARD_MARGIN) && near(second.left(), WIZARD_MARGIN));
+    assert!(near(next.bottom(), SIZE - WIZARD_MARGIN));
+    assert!(near(second.bottom(), SIZE - WIZARD_MARGIN));
+    assert!(title.bottom() < next.top());
 }
 
 /// step: 左下に「戻る」、右下に「次へ」。文字が短くても、押しやすい幅（高さの 2.5 倍）を保つ。

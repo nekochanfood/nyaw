@@ -57,7 +57,8 @@ impl Render for WizardTest {
                         components::wizard_icon(&theme, &icons::STAR),
                         i18n::t(cx, "wizard.welcome_title"),
                         i18n::t(cx, "wizard.welcome_description"),
-                        [next],
+                        None,
+                        next,
                     )
                     .into_any_element();
                 }
@@ -81,7 +82,8 @@ impl Render for WizardTest {
                         components::wizard_icon(&theme, &icons::CHECK_CIRCLE),
                         i18n::t(cx, "wizard.done_title"),
                         i18n::t(cx, "wizard.done_description"),
-                        [b],
+                        None,
+                        b,
                     )
                     .into_any_element();
                 }

@@ -29,8 +29,8 @@ pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_
 pub use slider::{Slider, slider};
 pub use tooltip::*;
 pub use wizard::{
-    WIZARD_ACTIONS_GAP, WIZARD_CONTENT, WIZARD_MARGIN, Wizard, wizard_back, wizard_icon,
-    wizard_next, wizard_panel, wizard_step, wizard_welcome,
+    WIZARD_CONTENT, WIZARD_MARGIN, Wizard, wizard_back, wizard_icon, wizard_next, wizard_panel,
+    wizard_step, wizard_welcome,
 };
 
 use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
@@ -1389,11 +1389,12 @@ enum Popover {
     BelowEnd,
     /// 下に左右中央を揃える（[`dropdown`]）。
     Below,
-    /// 上に左右中央を揃える（画面の下の方に置いた [`dropdown`]）。
-    Above,
+    /// 上に左端を揃える（画面の下の隅に置いた [`dropdown`]）。
+    AboveStart,
 }
 
-/// [`dropdown`] の選択肢のポップオーバー: [`select_popover`] と同じもので、ボタンの下（`up` なら上）に左右中央を揃えて出す。
+/// [`dropdown`] の選択肢のポップオーバー: [`select_popover`] と同じもので、ボタンの下に左右中央を揃えて出す。`up` なら
+/// （画面の下の隅に置いたボタン用に）上に、左端を揃えて出す。
 #[allow(clippy::too_many_arguments)]
 pub fn dropdown_popover(
     theme: &Theme,
@@ -1405,7 +1406,11 @@ pub fn dropdown_popover(
     items: impl IntoIterator<Item = Button>,
     on_dismiss: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
-    let place = if up { Popover::Above } else { Popover::Below };
+    let place = if up {
+        Popover::AboveStart
+    } else {
+        Popover::Below
+    };
     popover(theme, window, cx, id, open, place, items, on_dismiss)
 }
 
@@ -1477,10 +1482,7 @@ fn popover(
             div().left(gpui::relative(0.5)).bottom_0(),
             gpui::Anchor::TopCenter,
         ),
-        Popover::Above => (
-            div().left(gpui::relative(0.5)).top_0(),
-            gpui::Anchor::BottomCenter,
-        ),
+        Popover::AboveStart => (div().left_0().top_0(), gpui::Anchor::BottomLeft),
     };
     // 開いた要素との間は `XS`。現れるときは、その向こうから [`SELECT_POPOVER_RISE`] だけ寄ってくる。
     let gap = px(spacing::XS - SELECT_POPOVER_RISE * (1.0 - shown));
@@ -1493,7 +1495,7 @@ fn popover(
         .border_1()
         .border_color(rgba(theme.neutral_border_subtle))
         .shadow_md();
-    let card = if place == Popover::Above {
+    let card = if place == Popover::AboveStart {
         card.mb(gap)
     } else {
         card.mt(gap)
