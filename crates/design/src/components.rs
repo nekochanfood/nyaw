@@ -29,8 +29,8 @@ pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_
 pub use slider::{Slider, slider};
 pub use tooltip::*;
 pub use wizard::{
-    WIZARD_CONTENT, WIZARD_MARGIN, Wizard, wizard_back, wizard_icon, wizard_next, wizard_panel,
-    wizard_step, wizard_welcome,
+    WIZARD_ACTIONS_GAP, WIZARD_CONTENT, WIZARD_MARGIN, Wizard, wizard_back, wizard_icon,
+    wizard_next, wizard_panel, wizard_step, wizard_welcome,
 };
 
 use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};

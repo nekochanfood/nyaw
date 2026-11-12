@@ -241,7 +241,6 @@ replay = "Replay reveal"
 
 [setup]
 title = "Setup"
-welcome_title = "Welcome to nyaw"
 start = "Start"
 hand_title = "Choose your dominant hand"
 hand_description = "Pick the hand you mainly use. Controls and placement follow it."

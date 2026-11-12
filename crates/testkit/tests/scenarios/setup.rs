@@ -59,7 +59,13 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Minimal);
     kit.click("setup-next");
 
-    // 完了を押すまでは終えたことにならない。
+    // 完了の画面からも戻れる（「完了」の下の「戻る」）。完了を押すまでは終えたことにならない。
+    assert!(kit.read(|v| v.wizard.is_last()));
+    let (finish, back) = (kit.bounds("setup-finish"), kit.bounds("setup-back"));
+    assert!(finish.bottom() <= back.top());
+    kit.click("setup-back");
+    assert_eq!(kit.read(|v| v.step()), Step::Wrist);
+    kit.click("setup-next");
     assert!(kit.read(|v| v.wizard.is_last()));
     kit.step();
     assert!(!kit.kernel.settings().setup_done);
@@ -69,31 +75,32 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert!(kit.kernel.panel(0).closed);
 }
 
-/// The first screen: the logo and one line sit in the middle of the screen; Start is at the bottom with the language
-/// dropdown under it, which opens upward.
+/// The first screen: the logo, Start and the language dropdown under it make one group in the middle of the
+/// screen (no text: the logo says the name). The dropdown opens below itself.
 #[gpui::test]
-fn welcome_centers_the_logo_and_puts_the_language_under_start(cx: &mut TestAppContext) {
+fn welcome_centers_the_logo_with_start_and_the_language_under_it(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
     let panel = kit.bounds("setup-nav");
-    let [hero, title, start, language] =
-        ["setup-hero", "setup-title", "setup-next", "setup-language"].map(|s| kit.bounds(s));
+    let [hero, start, language] =
+        ["setup-hero", "setup-next", "setup-language"].map(|s| kit.bounds(s));
     let near = |a: gpui::Pixels, b: gpui::Pixels| (a - b).abs() < px(2.0);
-    // ロゴと一言のかたまりが、画面の上下左右中央。ロゴは大きい。
-    assert!(near(hero.center().x, panel.center().x) && near(title.center().x, panel.center().x));
-    assert!(near((hero.top() + title.bottom()) / 2.0, panel.center().y));
+    // 上からロゴ・「はじめる」・言語のドロップダウンが 1 つのまとまりで、画面の上下左右中央。ロゴは大きい。
+    for part in [hero, start, language] {
+        assert!(near(part.center().x, panel.center().x), "{part:?}");
+    }
+    assert!(near(
+        (hero.top() + language.bottom()) / 2.0,
+        panel.center().y
+    ));
     assert!(hero.size.height >= px(160.0), "{:?}", hero.size);
-    // 「はじめる」は下の帯の左右中央。その下に言語のドロップダウン。
-    assert!(title.bottom() < start.top() && start.bottom() <= language.top());
-    assert!(
-        near(start.center().x, panel.center().x) && near(language.center().x, panel.center().x)
-    );
-    // ドロップダウンは上へ開く（下は画面の縁）。
+    assert!(hero.bottom() < start.top() && start.bottom() <= language.top());
+    // ドロップダウンは下へ開く（「はじめる」を隠さない）。
     kit.click("setup-language").step();
     let options = ["setup-lang-en", "setup-lang-ja"].map(|s| kit.bounds(s));
     let language = kit.bounds("setup-language");
-    assert!(options.iter().all(|o| o.bottom() <= language.top()));
+    assert!(options.iter().all(|o| o.top() >= language.bottom()));
     // 外を押すと、選ばずに閉じる。
-    kit.click("setup-title");
+    kit.click("setup-hero");
     assert!(!kit.read(|v| v.language_open));
     assert_eq!(kit.read(|v| v.step()), Step::Welcome);
 }

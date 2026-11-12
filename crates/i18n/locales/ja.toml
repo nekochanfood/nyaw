@@ -241,7 +241,6 @@ replay = "出し直す"
 
 [setup]
 title = "セットアップ"
-welcome_title = "nyaw へようこそ"
 start = "はじめる"
 hand_title = "利き手を選ぶ"
 hand_description = "主に使う手を選んでください。操作や配置が、この手に合わせて決まります。"

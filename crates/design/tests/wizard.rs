@@ -52,20 +52,23 @@ fn near(a: Pixels, b: f32) -> bool {
     (a - px(b)).abs() < px(1.5)
 }
 
-/// welcome: アイコン（やロゴ）とタイトルのかたまりが画面の上下左右中央。ボタンは下の帯に、左右中央寄せで縦に積む。
+/// welcome: 上からアイコン（やロゴ）・タイトル・ボタンが 1 つのまとまりで、画面の上下左右中央。ボタンは縦に積む（主の操作が上）。
 #[gpui::test]
-fn welcome_centers_the_content_and_stacks_the_actions_at_the_bottom(cx: &mut TestAppContext) {
+fn welcome_centers_the_content_with_its_actions_stacked_under_it(cx: &mut TestAppContext) {
     let (_, cx) = setup(cx, true);
     let [hero, title, next, second] =
         ["w-hero", "w-title", "next", "second"].map(|s| cx.debug_bounds(s).unwrap());
-    assert!(near(hero.center().x, SIZE / 2.0) && near(title.center().x, SIZE / 2.0));
-    let middle = (hero.top() + title.bottom()) / 2.0;
+    for part in [hero, title, next, second] {
+        assert!(near(part.center().x, SIZE / 2.0), "{part:?}");
+    }
+    let middle = (hero.top() + second.bottom()) / 2.0;
     assert!(near(middle, SIZE / 2.0), "{middle:?}");
-    // 主の操作が上、その下にもう 1 つ。下の縁からは画面の余白だけ空く。
-    assert!(title.bottom() < next.top());
-    assert!(near(next.center().x, SIZE / 2.0) && near(second.center().x, SIZE / 2.0));
+    // ボタンは内容の下に、少し広めに空けて置く（読むものと押すものを分ける）。主の操作が上、その下にもう 1 つ。
+    assert!(near(
+        next.top() - title.bottom(),
+        components::WIZARD_ACTIONS_GAP
+    ));
     assert!(near(second.top() - next.bottom(), spacing::SM));
-    assert!(near(second.bottom(), SIZE - WIZARD_MARGIN));
 }
 
 /// step: 左下に「戻る」、右下に「次へ」。文字が短くても、押しやすい幅（高さの 2.5 倍）を保つ。

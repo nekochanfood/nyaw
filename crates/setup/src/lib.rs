@@ -209,7 +209,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
     };
     match step {
         Step::Welcome => {
-            // 言語は「はじめる」の下のドロップダウン（上へ開く）で替える。名前は、その言語自身で出す。
+            // 言語は「はじめる」の下のドロップダウンで替える。名前は、その言語自身で出す。
             let open = update(wizard, |v: &mut SetupWizard, open| v.language_open = open);
             let options = i18n::Lang::ALL.map(|l| {
                 let close = open.clone();
@@ -229,7 +229,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
                 cx,
                 "setup-language",
                 language_open,
-                true,
+                false,
                 options,
                 move |_: &MouseDownEvent, window, cx| dismiss(false, window, cx),
             );
@@ -250,7 +250,8 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
                 &theme,
                 "setup",
                 design::logo(Logo::Full).height(px(LOGO_HEIGHT)),
-                i18n::t(cx, "setup.welcome_title"),
+                // ロゴが名乗っているので、文は出さない。
+                "",
                 "",
                 [start, languages],
             )
@@ -298,13 +299,16 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
         Step::Done => {
             let done = components::wizard_next(&theme, "setup-finish", i18n::t(cx, "setup.finish"))
                 .on_click(move |_, _, cx| finish(panel, cx));
+            // 終える前に見直せるよう、「完了」の下に「戻る」。
+            let back = components::wizard_back(&theme, "setup-back", i18n::t(cx, "setup.back"))
+                .on_click(go(false));
             components::wizard_welcome(
                 &theme,
                 "setup",
                 components::wizard_icon(&theme, &icons::CHECK_CIRCLE),
                 i18n::t(cx, "setup.done_title"),
                 i18n::t(cx, "setup.done_description"),
-                [done],
+                [done, back],
             )
         }
     }
