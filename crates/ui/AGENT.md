@@ -14,6 +14,7 @@
 
 - **`prefs::appearance(panel, state, set, window, cx)`**: 外観。上からテーマの見本（`theme-preview`）、テーマ（`setting-theme`）、パーソナルカラー（履歴の見本 `accent-<名前>` を左右中央に並べ、右端のプラス `accent-custom`）。プラスを押すと、色を作るダイアログ `prefs::ColorDialog` を `panel` の子として開く（開いている間、元の画面は暗くなって入力を受けない）。ダイアログはスライダーと見本を出し、`color-ok` で `Setting::CustomColor`（パーソナルカラーにして履歴の先頭に覚える）、`color-cancel` か外側を押すと何も変えずに閉じる。決めるまで、ほかの画面の色は変えない。
 - **`prefs::watch_faces(state, set, window, cx)`**: wrist の文字盤。上から種類の絞り込み（`watch-kind`: すべて / スタンダード / デジタル / アナログ）、弧に並ぶ見本（`watch-faces`。`design::components::carousel` + `arc`。押したまま左右に動かすか、左右のキャレット `watch-prev` / `watch-next` で回す。端はつながる）、中央のデザインの名前、`watch-set`（押すとそのデザインにする。使っているデザインでは押せない見た目で「設定中」）。回すだけでは設定は変わらない。使っているデザインの見本は、塗りの色の輪で囲む。
+- **`prefs::accessibility(window, cx)`**: アクセシビリティ。上に文字の見本（高さの決まった箱 `a11y-preview` の中に `a11y-sample`: アイコンの付いた見出し・本文・補足）、下に対等な 3 つの行: 文字の大きさ（`setting-text-size`。スライダー `setting-text-size-slider`）、UI スケール（`setting-ui-scale`。`setting-ui-scale-slider`）、太字（`setting-bold-text`。スイッチ）。倍率は 10% の刻みに吸い付き、今の値を行に % で出す。文字の大きさは動かしている間もすぐ効く（見本の箱の高さは決まっていて、スライダーは行の右端にあるので、文字が変わっても手元のスライダーは動かない）。UI スケールは決めるとパネルそのものが大きくなってレーザーの下で動いてしまうので、動かしている間は見本だけを決めた後の大きさに拡大・縮小して見せ、離したときに決める（`Slider::on_release`）。動かしている途中の値はこの部品が持つので、呼び出し側に状態は要らない。
 - **文字盤の見本**: 描き方は wrist が GPUI のグローバル `prefs::FacePreview` に置く（`Wrist::new`）。置かれていなければ地の丸だけになる（wrist を載せないテスト）。
 - テスト: `prefs::tests`、操作は `crates/testkit/tests/scenarios/prefs.rs`、見た目は `look`（`look-*.bmp` / `look-watch-*.bmp` / `look-color-*.bmp`）。
 
@@ -34,6 +35,7 @@
 ## テスト・ベンチマーク
 
 - **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。
+- **アクセシビリティの見た目**: `crates/ui/tests/gpu/a11y.rs`（`cargo test -p ui --test gpu -- --ignored a11y`）。文字の大きさ（80% / 100% / 150%）と太字化を替えながら、設定画面の各カテゴリ・色を作るダイアログ・文字盤の見本・仮想キーボード・Testing・ダッシュボード（バー・クイック設定・ランチャー）を実 GPU で描き、`target/tmp/look-a11y-<状態>-<画面>.bmp` に書き出す。検査するのは、倍率・太字化で文字のインクが増えること（等幅も）、`.text_exact()` の文字盤が 1 画素も変わらないこと。操作は `crates/testkit/tests/scenarios/prefs.rs`（`accessibility_*` / `ui_scale_*`）。
 - **ストレステスト（ベンチマーク）**: `crates/ui/tests/gpu/stress.rs`（`harness = false`。常には流さない: `cargo test -p ui --test gpu -- --ignored stress`）。
   本番と同じ `ui::run_with` に novr のエミュレーター（ウィンドウは出さないが毎フレーム合成する）と GPUI 8 枚・ビームを載せ、
   マウスで掃く・押したままのスワイプ・パネルの召喚と破棄の繰り返し・目の前のパネルの局面ごとに、FPS・ドロップ率と
