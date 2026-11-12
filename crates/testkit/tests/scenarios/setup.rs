@@ -2,7 +2,7 @@ use gpui::{TestAppContext, px};
 use kernel::{DominantHand, Language, PanelCommand, ThemeMode, WristDesign};
 use setup::{SetupWizard, Step};
 use testing::{BACKGROUND, PANEL_BG, SetupWizardSpawn, Testing};
-use testkit::{Driver, NoVrKit, Vec2, VrKit};
+use testkit::{Action, Driver, NoVrKit, Vec2, VrKit};
 
 /// The wizard walks through every decision. Each choice applies at once, and only Finish marks the setup done.
 #[gpui::test]
@@ -33,6 +33,25 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert_eq!(kit.read(|v| v.step()), Step::Welcome);
     kit.click("setup-next").click("setup-next");
     assert_eq!(kit.kernel.settings().dominant_hand, DominantHand::Left);
+
+    // アクセシビリティ: 外観の前に、見やすさを決める（設定画面と同じ部品。上に見本、下に対等な 3 つの項目）。
+    assert_eq!(kit.read(|v| v.step()), Step::Accessibility);
+    let [sample, text, ui, bold] = [
+        "a11y-preview",
+        "setting-text-size",
+        "setting-ui-scale",
+        "setting-bold-text",
+    ]
+    .map(|s| kit.bounds(s));
+    assert!(
+        sample.bottom() <= text.top() && text.bottom() <= ui.top() && ui.bottom() <= bold.top()
+    );
+    assert_eq!((text.size, ui.size), (ui.size, bold.size));
+    kit.click("setting-bold-text");
+    assert!(kit.kernel.settings().bold_text, "選ぶとその場で効く");
+    kit.click("setting-bold-text");
+    assert!(!kit.kernel.settings().bold_text);
+    kit.click("setup-next");
 
     // 外観: テーマとパーソナルカラーを 1 枚で決める（設定画面と同じ部品。上から見本・テーマ・色）。
     assert_eq!(kit.read(|v| v.step()), Step::Appearance);
@@ -122,7 +141,9 @@ fn welcome_centers_the_logo_over_next_and_the_language_in_the_corners(cx: &mut T
 fn setup_makes_a_custom_color_in_a_child_dialog(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
     kit.kernel.apply(0, PanelCommand::Lockdown(true));
-    kit.click("setup-next").click("setup-next");
+    kit.click("setup-next")
+        .click("setup-next")
+        .click("setup-next");
     assert_eq!(kit.read(|v| v.step()), Step::Appearance);
     kit.click("accent-custom").step().step();
     let dialog = 1;
@@ -147,7 +168,9 @@ fn setup_makes_a_custom_color_in_a_child_dialog(cx: &mut TestAppContext) {
 #[gpui::test]
 fn wizard_panel_is_the_backdrop_with_the_parts_in_their_own_colors(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
-    kit.click("setup-next").click("setup-next");
+    kit.click("setup-next")
+        .click("setup-next")
+        .click("setup-next");
     assert_eq!(kit.read(|v| v.step()), Step::Appearance);
     let row = kit.bounds("setting-theme");
     let x = f32::from(row.left()) + 4.0;
@@ -163,6 +186,107 @@ fn wizard_panel_is_the_backdrop_with_the_parts_in_their_own_colors(cx: &mut Test
     let faces = kit.bounds("watch-faces");
     let corner = Vec2::new(f32::from(faces.left()) + 2.0, f32::from(faces.top()) + 2.0);
     assert_eq!(kit.vr_color_at_px(corner), BACKGROUND);
+}
+
+/// Grabs the handle of slider `id` and moves it to `at` along its travel (0 = start, 1 = end), still holding.
+fn grab_to(kit: &mut VrKit<'_, SetupWizard>, id: &'static str, handle: &'static str, at: f32) {
+    let (h, s) = (kit.bounds(handle), kit.bounds(id));
+    let from = Vec2::new(f32::from(h.center().x), f32::from(h.center().y));
+    let travel = f32::from(s.size.width - h.size.width);
+    let to = f32::from(s.left() + h.size.width / 2.0) + at * travel;
+    kit.point_at(from).press(Action::Select);
+    for i in 1..=5 {
+        kit.point_at(from + Vec2::new((to - from.x) * i as f32 / 5.0, 0.0));
+    }
+    kit.step();
+}
+
+/// The accessibility step comes right before the appearance. Text size applies while dragging; the UI scale would
+/// move the wizard itself under the laser, so it only zooms the sample while dragging and applies on release.
+/// Whatever the two are set to, the wizard still fits its panel and goes on.
+#[gpui::test]
+fn setup_adjusts_text_size_and_ui_scale_before_the_appearance(cx: &mut TestAppContext) {
+    use kernel::{TEXT_SCALE_MAX, UI_SCALE_MAX};
+    let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
+    kit.kernel.apply(0, PanelCommand::Lockdown(true));
+    kit.click("setup-next").click("setup-next");
+    assert_eq!(kit.read(|v| v.step()), Step::Accessibility);
+    let (next, back) = (kit.bounds("setup-next"), kit.bounds("setup-back"));
+    let preview = kit.bounds("a11y-preview");
+    let sample = kit.bounds("a11y-sample");
+
+    // 文字の大きさ: 動かしている間もすぐ効く。見本は同じ大きさの箱の中で大きくなる。見出しと説明も大きくなるので箱は
+    // 上下に動くが、手元のスライダーは左右に動かず、フッター（「戻る」「次へ」）も動かない。
+    let text = (
+        "setting-text-size-slider",
+        "setting-text-size-slider-handle",
+    );
+    let slider = kit.bounds(text.0);
+    grab_to(&mut kit, text.0, text.1, 1.0);
+    assert_eq!(kit.kernel.settings().text_scale, TEXT_SCALE_MAX);
+    let held = kit.bounds(text.0);
+    assert_eq!((held.left(), held.size), (slider.left(), slider.size));
+    kit.release(Action::Select).step();
+    let (grown, around) = (kit.bounds("a11y-sample"), kit.bounds("a11y-preview"));
+    assert!(grown.size.height > sample.size.height);
+    assert!(grown.top() >= around.top() && grown.bottom() <= around.bottom());
+    assert_eq!(around.size, preview.size);
+    // フッターのボタンは文字の分だけ横に広がるが、上下の位置と高さは同じ（左右の端に寄せたまま）。
+    let footer = (kit.bounds("setup-next"), kit.bounds("setup-back"));
+    assert_eq!(
+        (footer.0.top(), footer.0.size.height),
+        (next.top(), next.size.height)
+    );
+    assert_eq!(
+        (footer.0.right(), footer.1.left()),
+        (next.right(), back.left())
+    );
+    assert_eq!(footer.1.top(), back.top());
+
+    // UI スケール: 離すまではウィザード自身の大きさを変えず、離したら大きくなる（中の組み方は同じ）。
+    let (size, resolution) = (kit.kernel.panel(0).size, kit.kernel.panel(0).resolution);
+    let ui = ("setting-ui-scale-slider", "setting-ui-scale-slider-handle");
+    grab_to(&mut kit, ui.0, ui.1, 1.0);
+    assert_eq!(kit.kernel.settings().ui_scale, 1.0);
+    assert_eq!(kit.kernel.panel(0).size, size);
+    kit.release(Action::Select).step().step();
+    assert_eq!(kit.kernel.settings().ui_scale, UI_SCALE_MAX);
+    assert!(
+        kit.kernel
+            .panel(0)
+            .size
+            .abs_diff_eq(size * UI_SCALE_MAX, 1e-5)
+    );
+    assert_eq!(kit.kernel.panel(0).resolution, resolution);
+    // パネルが大きくなっても、中の配置は 1px も変わらない。
+    assert_eq!((kit.bounds("setup-next"), kit.bounds("setup-back")), footer);
+    assert!(
+        kit.kernel.settings().lockdown,
+        "the wizard keeps the lockdown"
+    );
+
+    // どちらも最大のままでも、項目はパネルに収まり、先へ進める（外観はこの次）。
+    let panel = kit.bounds("setup-nav");
+    for row in ["setting-text-size", "setting-ui-scale", "setting-bold-text"] {
+        let b = kit.bounds(row);
+        assert!(
+            b.left() >= panel.left() && b.right() <= panel.right(),
+            "{row}"
+        );
+        assert!(b.bottom() <= next.top(), "{row} stays above the footer");
+    }
+    kit.click("setting-bold-text");
+    assert!(kit.kernel.settings().bold_text);
+    kit.click("setup-next");
+    assert_eq!(kit.read(|v| v.step()), Step::Appearance);
+    kit.click("setup-back");
+    assert_eq!(kit.read(|v| v.step()), Step::Accessibility);
+    let s = kit.kernel.settings();
+    assert_eq!(
+        (s.text_scale, s.ui_scale, s.bold_text),
+        (TEXT_SCALE_MAX, UI_SCALE_MAX, true),
+        "戻っても選んだものは残る"
+    );
 }
 
 #[gpui::test]

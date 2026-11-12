@@ -1,6 +1,6 @@
 //! Layer 5: 画面。セットアップウィザード（初回起動と、デバッグからのやり直し）。nyaw を使い始めるのに要る設定を順に決める。
 //! 見た目と遷移は `design::components` のウィザード（`wizard_*` + `navigation`）。パネルの地は設定画面の中身の側と同じ背景色で、
-//! 外観と文字盤は設定画面と同じ部品（`ui::prefs`）をそのまま載せる。選んだものは、その場で全体の設定に反映する。
+//! アクセシビリティ・外観・文字盤は設定画面と同じ部品（`ui::prefs`）をそのまま載せる。選んだものは、その場で全体の設定に反映する。
 
 use design::components::{self, Button, Variant, Wizard};
 use design::{Icon, Logo, Theme, font_size, icons, spacing};
@@ -32,6 +32,8 @@ pub enum Step {
     Welcome,
     /// 利き手。
     Hand,
+    /// アクセシビリティ（文字の大きさ・UI スケール・太字）。見やすさを先に決めてから、見た目（外観）を選ぶ。
+    Accessibility,
     /// 外観（テーマとパーソナルカラー）。
     Appearance,
     /// wrist の文字盤。
@@ -40,9 +42,10 @@ pub enum Step {
     Done,
 }
 
-pub const STEPS: [Step; 5] = [
+pub const STEPS: [Step; 6] = [
     Step::Welcome,
     Step::Hand,
+    Step::Accessibility,
     Step::Appearance,
     Step::Wrist,
     Step::Done,
@@ -274,6 +277,17 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
                 cx,
             )
         }
+        Step::Accessibility => {
+            // 動かしている途中の値は部品が持つので、ここに状態は要らない。
+            let body = ui::prefs::accessibility(window, cx);
+            choose(
+                &icons::PERSON_ARMS_SPREAD,
+                "setup.accessibility_title",
+                "setup.accessibility_description",
+                body,
+                cx,
+            )
+        }
         Step::Appearance => {
             let set = update(wizard, |v: &mut SetupWizard, state| v.appearance = state);
             let body = ui::prefs::appearance(panel, appearance, set, window, cx);
@@ -351,5 +365,13 @@ mod tests {
         assert_eq!(STEPS.first(), Some(&Step::Welcome));
         assert_eq!(STEPS.last(), Some(&Step::Done));
         assert_eq!(SetupWizard::new(0).step(), Step::Welcome);
+    }
+
+    /// 見やすさ（アクセシビリティ）は、見た目（外観）を選ぶ手順のすぐ前に決める。
+    #[test]
+    fn accessibility_comes_right_before_appearance() {
+        let at = |step| STEPS.iter().position(|&s| s == step).expect("a step");
+        assert_eq!(at(Step::Accessibility) + 1, at(Step::Appearance));
+        assert!(at(Step::Hand) < at(Step::Accessibility));
     }
 }
