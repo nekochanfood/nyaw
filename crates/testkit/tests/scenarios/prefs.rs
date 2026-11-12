@@ -375,9 +375,8 @@ fn keyboard_is_a_preview_then_type_key_sound_and_volume(cx: &mut TestAppContext)
     let mut kit = VrKit::new(cx, |_, cx| with_keyboard("us", cx));
     kit.click("settings-keyboard");
     assert_eq!(kit.read(|v| v.category), 6);
-    let [preview, keys, kind, sound, volume] = [
+    let [preview, kind, sound, volume] = [
         "keyboard-preview",
-        "virtual-keyboard",
         "setting-keyboard",
         "setting-key-sound",
         "setting-key-volume",
@@ -390,41 +389,49 @@ fn keyboard_is_a_preview_then_type_key_sound_and_volume(cx: &mut TestAppContext)
     let s = kit.kernel.settings();
     assert_eq!((s.key_sound, s.key_sound_volume), (true, 1.0));
 
-    // The preview is not life-size: the full-size keyboard fits the content, in the middle of its box.
-    let unit = ui::prefs::KEYBOARD_PREVIEW_UNIT;
-    let content = kit.bounds("settings-content");
-    let fits = |keys: gpui::Bounds<gpui::Pixels>, kind: KeyboardType| {
-        let size = (f32::from(keys.size.width), f32::from(keys.size.height));
-        assert_eq!(
-            size,
-            (kind.width() * unit, kind.height() * unit),
+    // The preview is not life-size. Like the summoned keyboard, the keys lie on a card that surrounds them; the card
+    // is as large as its box allows and sits in the middle of it, with the keys in the shape of their type.
+    let fits = |kit: &mut VrKit<'_, Settings>, kind: KeyboardType| {
+        let (card, keys) = (
+            kit.bounds("keyboard-preview-card"),
+            kit.bounds("virtual-keyboard"),
+        );
+        assert!(card.left() >= preview.left() && card.right() <= preview.right());
+        assert!(card.top() >= preview.top() - px(0.01), "{kind:?}: {card:?}");
+        assert!(card.bottom() <= preview.bottom() + px(0.01), "{kind:?}");
+        let off = card.center() - preview.center();
+        assert!(off.x.abs() < px(1.0) && off.y.abs() < px(1.0), "{kind:?}");
+        let free =
+            (preview.size.width - card.size.width).min(preview.size.height - card.size.height);
+        assert!(free < px(1.0), "{kind:?}: as large as fits");
+        assert!(
+            keys.left() > card.left() && keys.top() > card.top(),
             "{kind:?}"
         );
-        assert!(keys.left() >= content.left() && keys.right() <= content.right());
-        assert!(keys.top() >= preview.top() && keys.bottom() <= preview.bottom());
-        let off = keys.center() - preview.center();
-        assert!(off.x.abs() < px(1.0) && off.y.abs() < px(1.0), "{kind:?}");
+        assert!(keys.right() < card.right() && keys.bottom() < card.bottom());
+        let unit = f32::from(keys.size.width) / kind.width();
+        assert!(unit < 64.0, "{kind:?}: smaller than life-size (1u = 64 px)");
+        assert!((f32::from(keys.size.height) - kind.height() * unit).abs() < 1.0);
     };
-    fits(keys, KeyboardType::Full);
+    fits(&mut kit, KeyboardType::Full);
     assert!(kit.try_bounds("key-KP7").is_some() && kit.try_bounds("key-FK01").is_some());
-    // Only the keys: the controls of the keyboard test screen and the close button of the real one are not here.
+    // Only the keys and their card: the controls of the keyboard test screen and the close button of the summoned
+    // keyboard are not here.
     assert!(kit.try_bounds("keyboard-auto").is_none());
     assert!(kit.try_bounds("close-keyboard").is_none());
 
-    // Choosing a type reshapes the preview at the same scale, and neither its box nor the rows under the laser move.
+    // Choosing a type reshapes the preview to fit again, and neither its box nor the rows under the laser move.
     for (option, chosen) in [
         ("setting-keyboard-tkl", KeyboardType::Tenkeyless),
         ("setting-keyboard-compact", KeyboardType::Compact),
     ] {
         kit.click("setting-keyboard").click(option);
         assert_eq!(kit.kernel.settings().keyboard, chosen);
-        fits(kit.bounds("virtual-keyboard"), chosen);
+        fits(&mut kit, chosen);
         assert_eq!(kit.bounds("keyboard-preview"), preview);
         assert_eq!(kit.bounds("setting-keyboard"), kind);
     }
     assert!(kit.try_bounds("key-KP7").is_none() && kit.try_bounds("key-FK01").is_none());
-    let key = kit.bounds("key-AC01");
-    assert!(key.size.width < px(unit), "a key is smaller than 1u");
 
     // A key of the preview can be pressed and sounds. It is a dummy: no keyboard is summoned and nothing is typed.
     let overlays = kit.kernel.subsystems.backend.overlays.len();
