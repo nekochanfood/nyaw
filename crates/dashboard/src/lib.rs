@@ -3197,7 +3197,7 @@ mod tests {
                 published_at: None,
                 page: "https://github.com/nekochanfood/nyaw/releases".into(),
                 installer: updater::Installer {
-                    name: "nyaw-2026.0.1-patch.2-build9-setup.exe".into(),
+                    name: "nyaw-2026.0.1-patch.2-setup.exe".into(),
                     url: "https://example.com/i.exe".into(),
                     size: 1,
                     sha256: None,

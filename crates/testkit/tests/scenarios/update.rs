@@ -14,23 +14,24 @@ use testkit::{Driver, NoVrKit};
 
 /// Index of the updates category in the sidebar.
 const UPDATE: usize = 8;
-const INSTALLER: &str = "nyaw-2026.0.1-patch.2-build655-setup.exe";
+const INSTALLER: &str = "nyaw-2026.0.1-patch.2-setup.exe";
 const BODY: &[u8] = b"MZ fake installer";
 
-/// A loopback "GitHub": `/releases` lists an older build (650) and a newer one (655, with release notes), and the
-/// newer one's installer is downloadable. Returns the list's URL.
+/// A loopback "GitHub": `/releases` lists an older build (650) and a newer one (655, with release notes), each build
+/// number in the hidden note the release workflow appends, and the newer one's installer is downloadable.
+/// Returns the list's URL.
 fn github() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
-    let notes = "## What's Changed\\n* feat: updates by @someone in https://github.com/nekochanfood/nyaw/pull/83\\n* fix: **bold** and `code`";
+    let notes = "## What's Changed\\n* feat: updates by @someone in https://github.com/nekochanfood/nyaw/pull/83\\n* fix: **bold** and `code`\\n\\n<!-- nyaw-build: 655 -->";
     let list = format!(
         r#"[
           {{"tag_name":"v2026.0.1-patch.2","name":"v2026.0.1-patch.2","body":"{notes}","draft":false,
             "published_at":"2026-11-13T00:00:00Z","html_url":"https://github.com/nekochanfood/nyaw/releases/tag/v2026.0.1-patch.2",
             "assets":[{{"name":"{INSTALLER}","size":{size},"browser_download_url":"{base}/{INSTALLER}","digest":null}}]}},
-          {{"tag_name":"v2026.0.1-patch.1","name":null,"body":"","draft":false,"published_at":null,
+          {{"tag_name":"v2026.0.1-patch.1","name":null,"body":"<!-- nyaw-build: 650 -->","draft":false,"published_at":null,
             "html_url":"https://github.com/nekochanfood/nyaw/releases/tag/v2026.0.1-patch.1",
-            "assets":[{{"name":"nyaw-2026.0.1-patch.1-build650-setup.exe","size":1,"browser_download_url":"{base}/x","digest":null}}]}}
+            "assets":[{{"name":"nyaw-2026.0.1-patch.1-setup.exe","size":1,"browser_download_url":"{base}/x","digest":null}}]}}
         ]"#,
         size = BODY.len()
     );
