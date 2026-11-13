@@ -50,6 +50,7 @@ dashboard = { path = "crates/dashboard" }
 beam = { path = "crates/beam" }
 nyapp = { path = "crates/nyapp" }
 nyapp-sdk = { path = "crates/nyapp-sdk" }
+updater = { path = "crates/updater" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [package]
