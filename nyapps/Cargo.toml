@@ -4,7 +4,7 @@ resolver = "3"
 members = ["calculator", "clock", "eyes", "sandbox"]
 
 [workspace.package]
-version = "2026.0.1"
+version = "2026.0.2"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 
