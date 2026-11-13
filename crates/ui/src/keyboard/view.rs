@@ -152,9 +152,7 @@ impl KeyboardView {
                 }
             }
         });
-        let kind = cx
-            .try_global::<crate::PanelControl>()
-            .map_or_else(KeyboardType::default, |c| c.settings.keyboard);
+        let kind = crate::settings(cx).keyboard;
         let initial = Layout::new("us", "");
         let _ = request.send((0, initial.clone()));
         cx.spawn(async move |this, cx| {
@@ -165,12 +163,7 @@ impl KeyboardView {
                 if this
                     .update(cx, |this, cx| {
                         if this.poll(cx) {
-                            cx.notify();
-                            cx.default_global::<crate::PanelControl>()
-                                .panels
-                                .entry(panel)
-                                .or_default()
-                                .redraw = true;
+                            crate::notify(panel, cx);
                         }
                     })
                     .is_err()
@@ -338,16 +331,15 @@ impl KeyboardView {
         let input = self.press(code, cx);
         // Ctrl・Shift などのトグルは文字を生まない（押した状態になるだけ）が、押したことは音で返す。
         // 鳴らすか・音量は全体の設定（`key_sound` / `key_sound_volume`）に従う。
-        let ctl = cx.default_global::<crate::PanelControl>();
-        let (sounding, volume) = (ctl.settings.key_sound, ctl.settings.key_sound_volume);
-        if sounding && (input.is_some() || (toggle && ready)) {
-            let commands = &mut ctl.panels.entry(self.panel).or_default().commands;
-            commands.push(kernel::PanelCommand::PlayAt {
+        let settings = crate::settings(cx);
+        if settings.key_sound && (input.is_some() || (toggle && ready)) {
+            let play = kernel::PanelCommand::PlayAt {
                 sound: kernel::audio::Sound::Wav(sound),
                 at,
                 pitch: jittered_pitch(),
-                volume,
-            });
+                volume: settings.key_sound_volume,
+            };
+            crate::command(self.panel, play, cx);
         }
         cx.notify();
         // 見本は送らないので、押し続けても繰り返さない。
@@ -441,11 +433,7 @@ impl Render for KeyboardView {
                 // 全体の設定を変える（フレームループが反映し、描き直しで [`Self::kind`] に写る）。
                 components::button(&theme, id, i18n::t(cx, label), Variant::Default)
                     .selected(self.kind == kind)
-                    .on_click(move |_, _, cx| {
-                        cx.default_global::<crate::PanelControl>()
-                            .setting_changes
-                            .push(kernel::Setting::Keyboard(kind))
-                    })
+                    .on_click(move |_, _, cx| crate::set(kernel::Setting::Keyboard(kind), cx))
             }))
             .child(
                 components::button(

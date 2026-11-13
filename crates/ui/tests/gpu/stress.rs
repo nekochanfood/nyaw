@@ -171,12 +171,7 @@ fn spawn(remote: &Sender<ui::Remote>, spec: impl FnOnce() -> PanelSpec + Send + 
 
 fn close(remote: &Sender<ui::Remote>, panel: PanelId) {
     send(remote, move |cx| {
-        cx.default_global::<PanelControl>()
-            .panels
-            .entry(panel)
-            .or_default()
-            .commands
-            .push(PanelCommand::Close)
+        ui::command(panel, PanelCommand::Close, cx)
     });
 }
 

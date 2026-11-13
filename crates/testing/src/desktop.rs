@@ -191,39 +191,27 @@ impl Render for DesktopTest {
                         .debug_selector(move || format!("desktop-source-{index}"))
                         .on_click(move |_, _, cx| {
                             if let Some(panel) = viewer.take() {
-                                cx.default_global::<PanelControl>()
-                                    .panels
-                                    .entry(panel)
-                                    .or_default()
-                                    .commands
-                                    .push(PanelCommand::Close);
+                                ui::command(panel, PanelCommand::Close, cx);
                             }
                             let source = source.clone();
                             let viewer = viewer.clone();
                             let title = source.name.clone();
                             cx.default_global::<PanelControl>().spawns.push(
                                 PanelSpec::spawn(manager, move |panel, _, cx| {
-                                    let ctl = cx.default_global::<PanelControl>();
                                     if let Some(previous) = viewer.replace(Some(panel)) {
-                                        ctl.panels
-                                            .entry(previous)
-                                            .or_default()
-                                            .commands
-                                            .push(PanelCommand::Close);
+                                        ui::command(previous, PanelCommand::Close, cx);
                                     }
+                                    let panels = &cx.default_global::<PanelControl>().panels;
                                     let closed =
-                                        ctl.panels.get(&manager).is_some_and(|p| p.status.closed);
-                                    ctl.panels
-                                        .entry(panel)
-                                        .or_default()
-                                        .commands
-                                        .push(if closed {
-                                            PanelCommand::Close
-                                        } else {
-                                            PanelCommand::Stream(Some(source.clone()), frame_rate)
-                                        });
+                                        panels.get(&manager).is_some_and(|p| p.status.closed);
+                                    let command = if closed {
+                                        PanelCommand::Close
+                                    } else {
+                                        PanelCommand::Stream(Some(source.clone()), frame_rate)
+                                    };
+                                    ui::command(panel, command, cx);
                                     if !closed {
-                                        ctl.spawns.push(
+                                        cx.default_global::<PanelControl>().spawns.push(
                                             PanelSpec::child(panel, true, move |_, _, _| {
                                                 StreamStats { panel }
                                             })
@@ -293,12 +281,7 @@ impl Render for DesktopTest {
                         button(&theme, "desktop-stop", i18n::t(cx, "desktop.stop"), false)
                             .on_click(cx.listener(|this, _, _, cx| {
                                 if let Some(panel) = this.viewer.take() {
-                                    cx.default_global::<PanelControl>()
-                                        .panels
-                                        .entry(panel)
-                                        .or_default()
-                                        .commands
-                                        .push(PanelCommand::Close);
+                                    ui::command(panel, PanelCommand::Close, cx);
                                 }
                                 cx.notify();
                             })),
@@ -557,11 +540,7 @@ impl Render for MirrorTest {
             move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
                 *shared.state.borrow_mut() = Some(state.clone());
                 if let Some(preview) = shared.preview.get() {
-                    cx.default_global::<PanelControl>()
-                        .panels
-                        .entry(preview)
-                        .or_default()
-                        .redraw = true;
+                    ui::redraw(preview, cx);
                 }
             }
         };

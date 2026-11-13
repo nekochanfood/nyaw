@@ -28,7 +28,7 @@ use gpui::{
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{Language, PanelCommand, PanelId, Setting};
-use ui::{PanelControl, PanelSpec};
+use ui::{PanelControl, PanelSpec, settings};
 
 mod emoji;
 pub use emoji::EmojiTest;
@@ -169,30 +169,12 @@ fn command(
     panel: PanelId,
     c: PanelCommand,
 ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    move |_, _, cx| {
-        cx.default_global::<PanelControl>()
-            .panels
-            .entry(panel)
-            .or_default()
-            .commands
-            .push(c.clone())
-    }
+    move |_, _, cx| ui::command(panel, c.clone(), cx)
 }
 
 /// 押すと全体の設定の変更を積むクリックハンドラ。
 fn change(s: Setting) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    move |_, _, cx| push_setting(s, cx)
-}
-
-fn push_setting(s: Setting, cx: &mut App) {
-    cx.default_global::<PanelControl>().setting_changes.push(s)
-}
-
-/// 今の全体の設定（フレームループが書き戻したもの。無ければ既定）。
-fn settings(cx: &App) -> kernel::Settings {
-    cx.try_global::<PanelControl>()
-        .map(|c| c.settings)
-        .unwrap_or_default()
+    move |_, _, cx| ui::set(s, cx)
 }
 
 fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -1129,7 +1111,7 @@ impl Render for SmoothingTest {
             )
             .child(
                 components::slider(&theme, "smoothing-slider", now / max, move |v, _, cx| {
-                    push_setting(Setting::PointerSmoothing(v * max), cx)
+                    ui::set(Setting::PointerSmoothing(v * max), cx)
                 })
                 .length(560.0),
             )
@@ -1163,7 +1145,7 @@ impl Render for SmoothingTest {
                     "release-slider",
                     (release - tight) / (loose - tight),
                     move |v, _, cx| {
-                        push_setting(Setting::PointerRelease(tight + v * (loose - tight)), cx)
+                        ui::set(Setting::PointerRelease(tight + v * (loose - tight)), cx)
                     },
                 )
                 .length(560.0),
@@ -1187,9 +1169,7 @@ impl Render for SmoothingTest {
                     &theme,
                     "laser-length-slider",
                     (length - short) / (long - short),
-                    move |v, _, cx| {
-                        push_setting(Setting::LaserLength(short + v * (long - short)), cx)
-                    },
+                    move |v, _, cx| ui::set(Setting::LaserLength(short + v * (long - short)), cx),
                 )
                 .length(560.0),
             )
@@ -1217,7 +1197,7 @@ impl Render for SmoothingTest {
                                 Setting::PointerRelease(kernel::overlay::POINTER_RELEASE_DEG),
                                 Setting::LaserLength(kernel::overlay::LASER_LENGTH),
                             ] {
-                                push_setting(s, cx);
+                                ui::set(s, cx);
                             }
                         },
                     ),
@@ -1490,7 +1470,7 @@ impl Settings {
             .map(|(oid, l, v)| {
                 components::select_option(theme, oid, l, v == now).on_click(cx.listener(
                     move |this, _, _, cx| {
-                        push_setting(set(v), cx);
+                        ui::set(set(v), cx);
                         this.open = None;
                         cx.notify();
                     },
@@ -1645,9 +1625,7 @@ impl Settings {
                                 theme,
                                 "setting-smoothing",
                                 now.pointer_smoothing / max,
-                                move |v, _, cx| {
-                                    push_setting(Setting::PointerSmoothing(v * max), cx)
-                                },
+                                move |v, _, cx| ui::set(Setting::PointerSmoothing(v * max), cx),
                             ),
                         ),
                     ),
@@ -1670,7 +1648,7 @@ impl Settings {
                                 "setting-release",
                                 (now.pointer_release_deg - tight) / (loose - tight),
                                 move |v, _, cx| {
-                                    push_setting(
+                                    ui::set(
                                         Setting::PointerRelease(tight + v * (loose - tight)),
                                         cx,
                                     )
@@ -1697,10 +1675,7 @@ impl Settings {
                                 "setting-laser-length",
                                 (now.laser_length - short) / (long - short),
                                 move |v, _, cx| {
-                                    push_setting(
-                                        Setting::LaserLength(short + v * (long - short)),
-                                        cx,
-                                    )
+                                    ui::set(Setting::LaserLength(short + v * (long - short)), cx)
                                 },
                             ),
                         ),
@@ -1773,7 +1748,7 @@ impl Settings {
                     move |at, _, cx| {
                         let to = (at / step).round() * step;
                         if (to - volume).abs() > step / 2.0 {
-                            push_setting(Setting::KeySoundVolume(to), cx)
+                            ui::set(Setting::KeySoundVolume(to), cx)
                         }
                     },
                 );
@@ -3118,10 +3093,8 @@ impl StressTest {
 
     /// 閉じていない出したパネルに、`i` 枚目なら `f(i)` の操作を積む。
     fn each(&self, cx: &mut App, mut f: impl FnMut(usize) -> PanelCommand) {
-        let alive = self.alive(cx);
-        let c = cx.default_global::<PanelControl>();
-        for (i, id) in alive.into_iter().enumerate() {
-            c.panels.entry(id).or_default().commands.push(f(i));
+        for (i, id) in self.alive(cx).into_iter().enumerate() {
+            ui::command(id, f(i), cx);
         }
     }
 

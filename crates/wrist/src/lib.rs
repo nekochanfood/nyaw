@@ -85,19 +85,11 @@ impl Wrist {
         settings: dashboard::Summon,
         cx: &mut Context<Self>,
     ) -> Self {
-        // 時計を進める: 1 秒ごとに描き直す（フレームループはビューの notify を知らないので `redraw` で頼む）。
+        // 時計を進める: 1 秒ごとに描き直す。
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
-                let redraw = |_: &mut Self, cx: &mut Context<Self>| {
-                    cx.notify();
-                    cx.default_global::<PanelControl>()
-                        .panels
-                        .entry(panel)
-                        .or_default()
-                        .redraw = true;
-                };
-                if this.update(cx, redraw).is_err() {
+                if this.update(cx, |_, cx| ui::notify(panel, cx)).is_err() {
                     return;
                 }
             }
@@ -130,12 +122,11 @@ impl Wrist {
         }
         self.hand = hand;
         let offset = watch_offset(hand);
-        cx.default_global::<PanelControl>()
-            .panels
-            .entry(self.panel)
-            .or_default()
-            .commands
-            .push(PanelCommand::Attach(Device::Controller(hand), offset));
+        ui::command(
+            self.panel,
+            PanelCommand::Attach(Device::Controller(hand), offset),
+            cx,
+        );
     }
 
     /// X ボタンを二回押すたびにダッシュボードを出す・隠す（閉じられていれば開き直す。音はダッシュボード自身が鳴らす）。
@@ -164,10 +155,7 @@ impl Wrist {
 
 /// 今の設定で wrist を付ける手（利き手の反対）。
 fn off_hand(cx: &gpui::App) -> Hand {
-    cx.try_global::<PanelControl>()
-        .map(|ctl| ctl.settings.dominant_hand)
-        .unwrap_or_default()
-        .off_hand()
+    ui::settings(cx).dominant_hand.off_hand()
 }
 
 /// ダッシュボードを開く（`hidden` なら隠したまま）。開いたら [`Wrist::dashboard`] に覚える。
@@ -193,10 +181,7 @@ impl Render for Wrist {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = chrono::Local::now();
         let theme = Theme::current(cx);
-        let design = cx.try_global::<PanelControl>();
-        let design = design
-            .map(|ctl| ctl.settings.wrist_design)
-            .unwrap_or_default();
+        let design = ui::settings(cx).wrist_design;
         // 腕時計の文字盤: 丸いカード 1 枚がパネル全体（地は敷かない）。中身は選んだデザイン。
         components::card_panel(&theme)
             .rounded(px(radius::FULL))

@@ -349,7 +349,7 @@ impl Render for HandTuningTest {
                 components::slider(&theme, id, (v - lo) / (hi - lo), move |t, _, cx| {
                     let mut h = settings(cx).hand;
                     set(&mut h, lo + t * (hi - lo));
-                    push_setting(Setting::Hand(h), cx)
+                    ui::set(Setting::Hand(h), cx)
                 })
                 .length(600.0),
             )

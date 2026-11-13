@@ -30,15 +30,6 @@ impl SlideTest {
         }
     }
 
-    fn redraw(&self, cx: &mut Context<Self>) {
-        cx.notify();
-        cx.default_global::<PanelControl>()
-            .panels
-            .entry(self.panel)
-            .or_default()
-            .redraw = true;
-    }
-
     fn key(n: u32) -> SharedString {
         format!("slide-item-{n}").into()
     }
@@ -82,7 +73,7 @@ impl Render for SlideTest {
         let act = |f: fn(&mut Self)| {
             cx.listener(move |this, _: &ClickEvent, _, cx| {
                 f(this);
-                this.redraw(cx);
+                ui::notify(this.panel, cx);
             })
         };
         components::card_panel(&theme)
