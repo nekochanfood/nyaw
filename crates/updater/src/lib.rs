@@ -205,19 +205,34 @@ pub fn download(release: &Release, dir: &Path, progress: &AtomicU64) -> Result<P
     }
 }
 
-/// インストーラーに渡す引数: ウィザードもメッセージも出さずに入れ（ユーザー単位なので UAC も出ない）、
-/// `pid` のプロセス（このアプリ）が終わるのを待ってから入れ替え、終えたら起動し直す（`installer/nyaw.iss`）。
-pub fn installer_args(pid: u32) -> Vec<String> {
+/// インストーラーに渡す引数: ウィザードもメッセージも出さずに入れ（ユーザー単位なので UAC も出ない）、`pid` のプロセス
+/// （このアプリ）が終わるのを待ってから入れ替え、終えたら `relaunch`（`--novr` など）で起動し直す（`installer/nyaw.iss`）。
+/// インストーラーは引数を空白でつないで渡し直すので、空白・引用符を含むものは落とす。
+pub fn installer_args(pid: u32, relaunch: impl IntoIterator<Item = String>) -> Vec<String> {
     let flags = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"];
     let mut args: Vec<String> = flags.map(String::from).to_vec();
-    args.extend([format!("/WAITPID={pid}"), "/RELAUNCH=1".into()]);
+    let plain = |a: &String| !a.is_empty() && !a.contains(|c: char| c.is_whitespace() || c == '"');
+    let relaunch: Vec<String> = relaunch.into_iter().filter(plain).collect();
+    args.extend([
+        format!("/WAITPID={pid}"),
+        "/RELAUNCH=1".into(),
+        format!("/ARGS={}", relaunch.join(" ")),
+    ]);
     args
 }
 
-/// 落としたインストーラーを走らせる（終わりは待たない。待っているのはインストーラーの方）。
+/// 落としたインストーラーを走らせ、終えたら今と同じ引数で起動し直させる（終わりは待たない。待つのはインストーラーの方）。
 pub fn run_installer(path: &Path) -> Result<(), String> {
+    start_installer(path, std::env::args().skip(1))
+}
+
+/// 落としたインストーラーを走らせ、終えたら `relaunch` の引数で起動し直させる。
+pub fn start_installer(
+    path: &Path,
+    relaunch: impl IntoIterator<Item = String>,
+) -> Result<(), String> {
     std::process::Command::new(path)
-        .args(installer_args(std::process::id()))
+        .args(installer_args(std::process::id(), relaunch))
         .spawn()
         .map(drop)
         .map_err(|e| format!("cannot start {}: {e}", path.display()))
