@@ -1,6 +1,6 @@
 ; nyaw のインストーラ。`cargo build --release` の後に `iscc installer\nyaw.iss`（CI は release.yml）
 ; 保存先が %LOCALAPPDATA%\nyaw なので、管理者権限なしでユーザー単位に入れる
-; アプリの更新（crates/updater）は `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /WAITPID=<pid> /RELAUNCH=1` で走らせる
+; アプリの更新（crates/updater）は `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /WAITPID=<pid> /RELAUNCH=1 "/ARGS=<引数>"` で走らせる
 
 ; 版はリリースのワークフローがタグから渡す（NYAW_VERSION。`2026.0.1-beta.1` や `2026.0.1-patch.1` など）。無ければ Cargo.toml のもの。
 ; pkgid は `path+file:///…#2026.0.1`（ディレクトリ名が違うと `#nyaw@2026.0.1`）
@@ -62,8 +62,8 @@ Name: "{autoprograms}\nyaw"; Filename: "{app}\nyaw.exe"
 
 [Run]
 Filename: "{app}\nyaw.exe"; Description: "{cm:LaunchProgram,nyaw}"; Flags: nowait postinstall skipifsilent
-; アプリの更新は、入れ終えたらアプリを起動し直す
-Filename: "{app}\nyaw.exe"; Flags: nowait; Check: Relaunch
+; アプリの更新は、入れ終えたらアプリを元の引数（`--novr` など）で起動し直す
+Filename: "{app}\nyaw.exe"; Parameters: "{param:ARGS|}"; Flags: nowait; Check: Relaunch
 
 [Code]
 const

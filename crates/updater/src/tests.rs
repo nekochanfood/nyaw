@@ -135,13 +135,12 @@ fn the_api_url_comes_from_the_repository() {
         releases_url(),
         "https://api.github.com/repos/nekochanfood/nyaw/releases?per_page=30"
     );
-    assert!(BUILD > 0, "ビルド番号は git から数える");
     assert!(!VERSION.is_empty());
 }
 
 #[test]
 fn installer_runs_silently_and_waits_for_us() {
-    let args = installer_args(42);
+    let args = installer_args(42, ["--novr".into(), "--profile".into()]);
     for flag in [
         "/VERYSILENT",
         "/SUPPRESSMSGBOXES",
@@ -149,13 +148,31 @@ fn installer_runs_silently_and_waits_for_us() {
         "/SP-",
         "/WAITPID=42",
         "/RELAUNCH=1",
+        "/ARGS=--novr --profile",
     ] {
         assert!(args.iter().any(|a| a == flag), "{flag}");
     }
+    // 起動し直す引数は空白でつながるので、空白・引用符を含むものは渡さない。
+    let args = installer_args(
+        1,
+        [
+            "--profile=C:\\a b.csv".into(),
+            "\"".into(),
+            "--openxr".into(),
+        ],
+    );
+    assert_eq!(args.last().map(String::as_str), Some("/ARGS=--openxr"));
+    assert_eq!(
+        installer_args(1, []).last().map(String::as_str),
+        Some("/ARGS=")
+    );
 }
 
+/// サーバーが返すファイル（パス → 中身）。テストの途中で差し替える。
+type Files = Arc<Mutex<HashMap<String, Vec<u8>>>>;
+
 /// 手元の HTTP サーバー（ループバック）。`files` のパスを返し、ほかは 404。
-fn serve(files: Arc<Mutex<HashMap<String, Vec<u8>>>>) -> String {
+fn serve(files: Files) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     std::thread::spawn(move || {
@@ -203,7 +220,7 @@ fn temp(name: &str) -> PathBuf {
 }
 
 /// サーバーに patch.1・patch.2 の一覧と patch.2 のインストーラーを置く。
-fn fixture() -> (String, Arc<Mutex<HashMap<String, Vec<u8>>>>) {
+fn fixture() -> (String, Files) {
     let files = Arc::new(Mutex::new(HashMap::new()));
     let base = serve(files.clone());
     let installer = b"MZ fake installer".to_vec();

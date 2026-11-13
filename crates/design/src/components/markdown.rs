@@ -71,9 +71,8 @@ struct Builder {
 
 impl Builder {
     fn push(&mut self, block: Block) {
-        match self.open.last_mut() {
-            Some(Open::Blocks(b) | Open::Quote(b) | Open::Item(_, b)) => b.push(block),
-            _ => {}
+        if let Some(Open::Blocks(b) | Open::Quote(b) | Open::Item(_, b)) = self.open.last_mut() {
+            b.push(block);
         }
     }
 
