@@ -25,9 +25,11 @@ jobs:
         with:
           # 書き込めるトークンを .git に残さない（依存の build.rs から読めないように）
           persist-credentials: false
+          # ビルド番号（HEAD までのコミット数。crates/updater/build.rs）を数えるので、履歴を全部取る
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      # インストーラは Cargo.toml のバージョンを使う。本体と nyapps（別のワークスペース）の全パッケージが
-      # タグ（v 付きでもよい）と同じでなければビルド前に止める
+      # 本体と nyapps（別のワークスペース）の全パッケージがタグ（v 付きでもよい）と同じでなければビルド前に止める。
+      # パッチ版のタグ（2026.0.1p1）は Cargo.toml の版に p<数> を足したもの。表示する版はタグのもの（NYAW_VERSION）
       - name: Check tag matches Cargo.toml versions
         if: github.event_name == 'release'
         run: |
@@ -41,11 +43,13 @@ jobs:
             echo "::error::could not read package versions from cargo metadata"
             exit 1
           fi
-          bad=$(grep -v "\"version\":\"${TAG#v}\"" <<<"$pkgs" || true)
+          base=$(sed -E 's/p[0-9]+$//' <<<"${TAG#v}")
+          bad=$(grep -v "\"version\":\"$base\"" <<<"$pkgs" || true)
           if [ -n "$bad" ]; then
             echo "::error::tag $TAG does not match these package versions: $bad"
             exit 1
           fi
+          echo "NYAW_VERSION=${TAG#v}" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           # 保存は main だけ（タグのスコープに保存しても次のタグからは読めない）
