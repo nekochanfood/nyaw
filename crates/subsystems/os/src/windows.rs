@@ -161,7 +161,11 @@ HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\OpenXR\1
 
     #[test]
     fn log_dir_is_namespaced() {
-        assert!(log_dir().unwrap().ends_with(std::path::Path::new("nyaw").join("logs")));
+        assert!(
+            log_dir()
+                .unwrap()
+                .ends_with(std::path::Path::new("nyaw").join("logs"))
+        );
     }
 
     #[test]
