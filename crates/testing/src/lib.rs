@@ -47,6 +47,7 @@ pub use audio::AudioTest;
 mod nyapps;
 pub use nyapps::NyappTest;
 mod skeleton;
+mod update;
 pub use skeleton::{
     HandTuningTest, PINCH_DISTANCE, SKELETON_PX, SKELETON_SIZE, SkeletonTest, TUNING_PX,
     TUNING_SIZE, pinches,
@@ -1338,7 +1339,7 @@ const SETTINGS_SLIDER_PX: f32 = 520.0;
 const ROW_SLIDER_PX: f32 = 240.0;
 
 /// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
-const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 9] = [
+const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 10] = [
     (
         "settings-general",
         &design::icons::GEAR,
@@ -1380,11 +1381,18 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 9] = [
         "settings.category.graphics",
     ),
     (
+        "settings-update",
+        &design::icons::ARROW_CIRCLE_UP,
+        "settings.category.update",
+    ),
+    (
         "settings-about",
         &design::icons::INFO,
         "settings.category.about",
     ),
 ];
+/// アップデートのカテゴリの添字（ダッシュボードのボタンから開く）。
+const UPDATE_CATEGORY: usize = 8;
 
 // 依存のライセンスの表 `LICENSES`: `(名前, バージョン, ライセンス, URL)`。build.rs がビルド時に作る。
 include!(concat!(env!("OUT_DIR"), "/licenses.rs"));
@@ -1814,6 +1822,8 @@ impl Settings {
                     Setting::LodQuality,
                 )],
             )],
+            // アップデート: 今の版と確認の状態、新しいリリースがあればその版・アップデートのボタン・リリースノート。
+            UPDATE_CATEGORY => update::page(theme, window, cx),
             // ライセンス: 依存ごとの行。押すとそのリポジトリをブラウザで開く。数百行あるので、見えている行だけを
             // 作る `uniform_list` で並べる（行の高さは揃える。区切り線は先頭の行だけ透明にして高さを変えない）。
             _ if licenses => {
@@ -1890,7 +1900,7 @@ impl Settings {
                             .min_w_0()
                             .truncate()
                             .text_color(rgba(theme.neutral_text_low))
-                            .child(env!("CARGO_PKG_VERSION")),
+                            .child(updater::VERSION),
                     )],
                 ),
                 // バージョンと、ライセンス・ソースコードの間の区切り線。
@@ -1999,6 +2009,11 @@ fn stack_op<V: 'static, P: 'static + Copy>(
 
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // ダッシュボードのアップデートのボタンから開いた（開いていた）なら、アップデートを出す。
+        if updater::take_reveal(cx) {
+            self.category = UPDATE_CATEGORY;
+            (self.open, self.licenses, self.swap) = (None, false, None);
+        }
         let theme = Theme::current(cx);
         let categories = SETTINGS_CATEGORIES
             .iter()
