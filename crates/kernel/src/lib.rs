@@ -145,6 +145,8 @@ pub enum Setting {
     KeySound(bool),
     /// キーを押した音の音量（`key_sound_volume`。0〜1 に収め、刻みに丸める）。カーネルは値を持つだけ。
     KeySoundVolume(f32),
+    /// ランタイムの起動と同時に開くか（`VrBackend::set_auto_launch`）。値はランタイムが持つので設定ファイルには書かない。
+    AutoLaunch(bool),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -177,6 +179,8 @@ pub struct Settings {
     pub key_sound: bool,
     /// キーを押した音の音量（0〜1）。
     pub key_sound_volume: f32,
+    /// ランタイムの起動と同時に開くか。切り替えられないランタイム（OpenVR 以外）は `None`。
+    pub auto_launch: Option<bool>,
 }
 
 impl Default for Settings {
@@ -202,6 +206,7 @@ impl Default for Settings {
             bold_text: false,
             key_sound: true,
             key_sound_volume: 1.0,
+            auto_launch: None,
         }
     }
 }
@@ -487,6 +492,7 @@ impl<B: VrBackend> Kernel<B> {
                 .config
                 .key_sound_volume
                 .map_or(1.0, |v| config::clamp_scale(v, 0.0, 1.0)),
+            auto_launch: self.subsystems.backend.auto_launch(),
         }
     }
 
@@ -509,6 +515,10 @@ impl<B: VrBackend> Kernel<B> {
             Setting::PointerMode(m) => {
                 self.pointer_mode = m;
                 self.overlay.set_capture(m == PointerMode::Touch);
+                return;
+            }
+            Setting::AutoLaunch(on) => {
+                self.subsystems.backend.set_auto_launch(on);
                 return;
             }
             Setting::Theme(t) => {
@@ -1158,6 +1168,17 @@ mod tests {
         let (mut k, _) = lod_kernel();
         k.set(Setting::LodQuality(LodQuality::High));
         assert_eq!(k.settings().lod_quality, LodQuality::High);
+    }
+
+    /// 自動起動はランタイムが持つ値をそのまま見せ、切り替えられないランタイムでは `None` のまま。
+    #[test]
+    fn auto_launch_follows_the_runtime() {
+        let mut k = Kernel::with_backend(MockBackend::default(), Config::default());
+        k.set(Setting::AutoLaunch(true));
+        assert_eq!(k.settings().auto_launch, None);
+        k.subsystems.backend.auto_launch = Some(false);
+        k.set(Setting::AutoLaunch(true));
+        assert_eq!(k.settings().auto_launch, Some(true));
     }
 
     /// キーの音は既定で鳴り、音量は最大。オン・オフと音量は独立で、音量は 0〜1 の刻みに収まる。

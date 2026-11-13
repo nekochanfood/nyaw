@@ -408,6 +408,12 @@ pub trait VrBackend {
     /// シーンのアプリ（ゲーム）への入力を止める・戻す（ダッシュボードが出ている間）。止められるのは OpenVR だけ
     /// （SteamVR Input のアクションセットをオーバーレイの全体優先度で更新し、使う入力を奪う）。ほかは何もしない。
     fn block_app_input(&mut self, _block: bool) {}
+    /// ランタイムの起動と同時にこのアプリを開くか。切り替えられないランタイムは `None`（OpenVR だけが持つ）。
+    fn auto_launch(&self) -> Option<bool> {
+        None
+    }
+    /// 自動起動を切り替える。入れると、ランタイムが起動するのはこの実行ファイルになる。切り替えられなければ何もしない。
+    fn set_auto_launch(&mut self, _on: bool) {}
     /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
     /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読めるので、これは OpenXR 用。
     fn overlay_image(&mut self, _id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
@@ -473,6 +479,12 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn block_app_input(&mut self, block: bool) {
         (**self).block_app_input(block)
+    }
+    fn auto_launch(&self) -> Option<bool> {
+        (**self).auto_launch()
+    }
+    fn set_auto_launch(&mut self, on: bool) {
+        (**self).set_auto_launch(on)
     }
 }
 

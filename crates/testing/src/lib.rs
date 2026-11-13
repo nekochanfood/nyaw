@@ -1510,7 +1510,7 @@ impl Settings {
         let now = settings(cx);
         match category {
             // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）、利き手（主に操作する手）、
-            // ダッシュボード中のゲーム入力の遮断。
+            // ダッシュボード中のゲーム入力の遮断、SteamVR と一緒に起動（切り替えられるランタイムのときだけ）。
             0 => vec![components::list(
                 theme,
                 [
@@ -1563,7 +1563,18 @@ impl Settings {
                         now.block_input,
                     )
                     .on_click(change(Setting::BlockInput(!now.block_input))),
-                ],
+                ]
+                .into_iter()
+                .chain(now.auto_launch.map(|on| {
+                    components::switch_item(
+                        theme,
+                        "setting-auto-launch",
+                        &design::icons::ROCKET_LAUNCH,
+                        i18n::t(cx, "settings.auto_launch"),
+                        on,
+                    )
+                    .on_click(change(Setting::AutoLaunch(!on)))
+                })),
             )],
             // 外観: テーマの見本・テーマ・パーソナルカラー（セットアップウィザードと同じ部品）。
             1 => {

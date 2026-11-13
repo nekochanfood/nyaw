@@ -42,6 +42,10 @@ Source: "..\target\release\steamaudio-THIRDPARTY.md"; DestDir: "{app}"; Flags: i
 Source: "..\LICENSE-MIT"; DestDir: "{app}"
 Source: "..\LICENSE-APACHE"; DestDir: "{app}"
 
+; SteamVR に登録した vrmanifest（crates/subsystems/vr/AGENT.md の「SteamVR のアプリ登録」）。消えた nyaw を SteamVR が自動起動しないように
+[UninstallDelete]
+Type: files; Name: "{localappdata}\nyaw\openvr\nekochanfood.nyaw.vrmanifest"
+
 [Icons]
 Name: "{autoprograms}\nyaw"; Filename: "{app}\nyaw.exe"
 

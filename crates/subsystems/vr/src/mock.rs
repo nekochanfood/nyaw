@@ -48,6 +48,8 @@ pub struct MockBackend {
     pub overlays: Vec<MockOverlay>,
     /// シーンのアプリへの入力を止めている（[`VrBackend::block_app_input`]）。
     pub app_input_blocked: bool,
+    /// 自動起動（[`VrBackend::auto_launch`]）。`None` は切り替えられないランタイム。
+    pub auto_launch: Option<bool>,
 }
 
 impl VrBackend for MockBackend {
@@ -57,6 +59,16 @@ impl VrBackend for MockBackend {
 
     fn poll(&mut self) -> Frame {
         self.frame.clone()
+    }
+
+    fn auto_launch(&self) -> Option<bool> {
+        self.auto_launch
+    }
+
+    fn set_auto_launch(&mut self, on: bool) {
+        if self.auto_launch.is_some() {
+            self.auto_launch = Some(on);
+        }
     }
 
     fn block_app_input(&mut self, block: bool) {
