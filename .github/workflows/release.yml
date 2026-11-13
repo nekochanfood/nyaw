@@ -2,9 +2,13 @@ name: Release
 
 # リリースを公開すると、インストーラをビルドしてそのリリースに添付する
 # （GITHUB_TOKEN で作ったリリースではワークフローが発火しないので、画面か自分の gh で作る）
+# main の push では同じジョブでビルドだけして依存のキャッシュを保存する。タグの run は main のキャッシュを読めるので、
+# 依存をビルドし直さない（同じジョブなので rust-cache のキーも揃う）。リリース時にしか通らないビルドの失敗も先に分かる
 on:
   release:
     types: [published]
+  push:
+    branches: [main]
 
 jobs:
   installer:
@@ -16,13 +20,16 @@ jobs:
         shell: bash
     env:
       TAG: ${{ github.event.release.tag_name }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 書き込めるトークンを .git に残さない（依存の build.rs から読めないように）
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       # インストーラは Cargo.toml のバージョンを使う。本体と nyapps（別のワークスペース）の全パッケージが
       # タグ（v 付きでもよい）と同じでなければビルド前に止める
       - name: Check tag matches Cargo.toml versions
+        if: github.event_name == 'release'
         run: |
           set -o pipefail
           pkgs=$(for m in Cargo.toml nyapps/Cargo.toml; do
@@ -41,10 +48,15 @@ jobs:
           fi
       - uses: Swatinem/rust-cache@v2
         with:
-          # タグのスコープに保存しても次のタグからは読めない
-          save-if: false
+          # 保存は main だけ（タグのスコープに保存しても次のタグからは読めない）
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --release
       # ランナーに Inno Setup が無いイメージでも動くように
-      - run: command -v iscc || choco install innosetup -y --no-progress
-      - run: iscc installer/nyaw.iss
-      - run: gh release upload "$TAG" target/installer/*.exe --clobber
+      - if: github.event_name == 'release'
+        run: command -v iscc || choco install innosetup -y --no-progress
+      - if: github.event_name == 'release'
+        run: iscc installer/nyaw.iss
+      - if: github.event_name == 'release'
+        run: gh release upload "$TAG" target/installer/*.exe --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -10,9 +10,11 @@ use ash::vk::{self, Handle};
 use glam::Mat3;
 use openvr_bindings as sys;
 
+mod app;
 mod client;
 mod input;
 
+use app::App;
 use client::Client;
 pub use client::runtime_path;
 use input::{HandActions, Input};
@@ -31,6 +33,12 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
     let client = Client::init(sys::EVRApplicationType_VRApplication_Overlay)?;
     let system = client.interface(sys::IVRSystem_Version)?;
     let compositor = client.interface(sys::IVRCompositor_Version)?;
+    // アプリの名乗りは SteamVR Input の manifest より前に（バインドがそのアプリに付く）。
+    let app = client
+        .interface(sys::IVRApplications_Version)
+        .inspect_err(|e| logger::warn!("SteamVR applications unavailable", error = e))
+        .ok()
+        .map(App::init);
     // manifest の登録は最初の PollNextEvent より前でなければならない。
     let input = Input::init(client.interface(sys::IVRInput_Version)?)
         .inspect_err(|e| {
@@ -43,6 +51,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
     Ok(Box::new(OpenVrBackend {
         system,
         input,
+        app,
         overlay: client.interface(sys::IVROverlay_Version)?,
         textures: HashMap::new(),
         devices: HashMap::new(),
@@ -137,6 +146,8 @@ pub(crate) struct OpenVrBackend {
     system: *const sys::VR_IVRSystem_FnTable,
     /// 使えなければ（manifest を登録できない等）コントローラは無し。
     input: Option<Input>,
+    /// SteamVR のアプリとしての登録と自動起動（[`VrBackend::auto_launch`]）。
+    app: Option<App>,
     overlay: *const sys::VR_IVROverlay_FnTable,
     textures: HashMap<u64, Textures>,
     /// 最後の poll で見えていたデバイスの番号と、その生の姿勢から [`Frame::pose`] の姿勢への相対姿勢
@@ -561,6 +572,16 @@ impl VrBackend for OpenVrBackend {
             && let Some(was_set) = enable_global_action_set_priority(unsafe { &*settings })
         {
             self.restore_global_priority = Some((settings, was_set));
+        }
+    }
+
+    fn auto_launch(&self) -> Option<bool> {
+        self.app.as_ref().map(App::auto_launch)
+    }
+
+    fn set_auto_launch(&mut self, on: bool) {
+        if let Some(app) = &mut self.app {
+            log(app.set_auto_launch(on));
         }
     }
 

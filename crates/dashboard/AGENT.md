@@ -6,4 +6,4 @@
 
 ## 主な公開 API
 
-`dashboard::{spec(opened, settings, debug), pose, hide, show}`, `Dashboard`, `Menu`, `Screen`, `Page`, `Summon`, `date`, `OPEN_SOUND`, `CLOSE_SOUND`
+`dashboard::{spec(opened, settings, debug), pose, hide, show}`, `Dashboard`, `Menu`, `Screen`, `Page`, `Summon`, `OPEN_SOUND`, `CLOSE_SOUND`（日付の書式は `i18n::date`、ウィンドウとアプリの突き合わせは `kernel::desktop`）

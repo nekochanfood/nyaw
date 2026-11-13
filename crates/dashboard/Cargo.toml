@@ -9,8 +9,6 @@ chrono.workspace = true
 design.workspace = true
 gpui.workspace = true
 i18n.workspace = true
-# ウィンドウのアイコンを GPUI の画像にするため（gpui と同じ版）。
-image = { version = "0.25", default-features = false }
 kernel.workspace = true
 nyapp.workspace = true
 logger.workspace = true

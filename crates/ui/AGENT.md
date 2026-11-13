@@ -6,7 +6,15 @@
 
 ## 主な公開 API
 
-`run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelControl::batteries` / `PanelControl::media`（毎フレーム書く）, `PanelSpec::{new, spawn, child, popover, offset, typing, docked_to, dockable, fit_height, without_resize, pointer_mode, titled, titled_text, without_nav_bar, with_os_keyboard, with_veil, nav_bar_spec}`, 画面をはめる場所 `PanelControl::dock`（ダッシュボードが開くと置く）と `dock` / `undock` / `docked`（はめると持ち主に `Parent { docked, slot }` で固定し、はまっていた画面は閉じる。`dockable` のパネルはナビゲーションバーの左端に外す `nav-undock` / 戻す `nav-dock` を出す。仮想キーボードは、はめた画面へ打つものも含め、対象パネルの下ではなく開いた瞬間の頭の前の打ちやすい位置に出す。頭（と手）から決めるのは高さと仰ぐ角度だけで、左右の向きと位置は呼び出し元に合わせる（呼び出し元の面と同じ向きで、ホームポジション（F と J の間）を呼び出し元の中心の左右に合わせる。頭の回転に付いて行かない）。立っている間の高さはコントローラ（両手なら間）の少し上（手を動かさず手首を起こすだけで指せる。上端は目線より下、下は見える所まで）、面は目を重く見つつ手の方へも少し向ける（コントローラが無ければ目と手の間へ）。寝ている間は手に合わせず、視界に入る頭の正面の下寄り（正面のパネルに重ならない所）に出して目へ向ける（傾きに応じて滑らかに移る）。どちらでも、頭から見て呼び出し元（ナビゲーションバー・はめた先のダッシュボードのバーも）の下端より少し下に見えるよう、必要な分だけ下げる（呼び出し元に重ねない）。掴むとホームポジションを中心に動かして頭へ向ける（`PanelSpec::grab_anchor`。大きさを変えると基準も付いて動く）。親子関係は作らず、呼び出し元を覚えておき、呼び出し元が閉じる・隠れるとキーボードも閉じる（`PanelSpec::typing`、`keyboard::panel_closed` / `panel_hidden`））（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`, `sync_settings`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelCommand`, `PanelStatus`, `MAX_PANELS`
+`run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelControl::batteries` / `PanelControl::media`（毎フレーム書く）, `PanelSpec::{new, spawn, child, popover, offset, typing, docked_to, dockable, fit_height, without_resize, pointer_mode, titled, titled_text, without_nav_bar, with_os_keyboard, with_veil, nav_bar_spec}`, 画面をはめる場所 `PanelControl::dock`（ダッシュボードが開くと置く）と `dock` / `undock` / `docked`（はめると持ち主に `Parent { docked, slot }` で固定し、はまっていた画面は閉じる。`dockable` のパネルはナビゲーションバーの左端に外す `nav-undock` / 戻す `nav-dock` を出す。仮想キーボードは、はめた画面へ打つものも含め、対象パネルの下ではなく開いた瞬間の頭の前の打ちやすい位置に出す。頭（と手）から決めるのは高さと仰ぐ角度だけで、左右の向きと位置は呼び出し元に合わせる（呼び出し元の面と同じ向きで、ホームポジション（F と J の間）を呼び出し元の中心の左右に合わせる。頭の回転に付いて行かない）。立っている間の高さはコントローラ（両手なら間）の少し上（手を動かさず手首を起こすだけで指せる。上端は目線より下、下は見える所まで）、面は目を重く見つつ手の方へも少し向ける（コントローラが無ければ目と手の間へ）。寝ている間は手に合わせず、視界に入る頭の正面の下寄り（正面のパネルに重ならない所）に出して目へ向ける（傾きに応じて滑らかに移る）。どちらでも、頭から見て呼び出し元（ナビゲーションバー・はめた先のダッシュボードのバーも）の下端より少し下に見えるよう、必要な分だけ下げる（呼び出し元に重ねない）。掴むとホームポジションを中心に動かして頭へ向ける（`PanelSpec::grab_anchor`。大きさを変えると基準も付いて動く）。親子関係は作らず、呼び出し元を覚えておき、呼び出し元が閉じる・隠れるとキーボードも閉じる（`PanelSpec::typing`、`keyboard::panel_closed` / `panel_hidden`））（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`, `sync_settings`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelCommand`, `PanelStatus`, `MAX_PANELS`, 画面からの依頼 `command` / `commands` / `set` / `settings` / `notify` / `redraw`（下の「画面からの依頼」）
+
+## 画面からの依頼
+
+画面は `PanelControl` の中身を自分で組み立てず、次の入口で頼む（フレームループが次のフレームで反映する）。画面ごとに同じ補助関数を書かない。
+
+- `ui::command(panel, PanelCommand, cx)` / `ui::commands(panel, [..], cx)`: パネルへの操作（積んだ順に反映）。
+- `ui::set(Setting, cx)` / `ui::settings(cx)`: 全体の設定の変更と、今の設定（無ければ既定）。
+- `ui::notify(panel, cx)`: タイマーや非同期の結果で自分から変わったビューの `cx.notify()`。フレームループはビューの notify を知らないので、素の `cx.notify()` だけでは次の推測の描き直し（最長 1 秒）まで絵が変わらない。ビューの外（`&mut App`）からは `ui::redraw(panel, cx)`。
 
 ## 設定の部品（`ui::prefs`）
 
@@ -15,8 +23,9 @@
 - **`prefs::appearance(panel, state, set, window, cx)`**: 外観。上からテーマの見本（`theme-preview`）、テーマ（`setting-theme`）、パーソナルカラー（履歴の見本 `accent-<名前>` を左右中央に並べ、右端のプラス `accent-custom`）。プラスを押すと、色を作るダイアログ `prefs::ColorDialog` を `panel` の子として開く（開いている間、元の画面は暗くなって入力を受けない）。ダイアログはスライダーと見本を出し、`color-ok` で `Setting::CustomColor`（パーソナルカラーにして履歴の先頭に覚える）、`color-cancel` か外側を押すと何も変えずに閉じる。決めるまで、ほかの画面の色は変えない。
 - **`prefs::watch_faces(state, set, window, cx)`**: wrist の文字盤。上から種類の絞り込み（`watch-kind`: すべて / スタンダード / デジタル / アナログ）、弧に並ぶ見本（`watch-faces`。`design::components::carousel` + `arc`。押したまま左右に動かすか、左右のキャレット `watch-prev` / `watch-next` で回す。端はつながる）、中央のデザインの名前、`watch-set`（押すとそのデザインにする。使っているデザインでは押せない見た目で「設定中」）。回すだけでは設定は変わらない。使っているデザインの見本は、塗りの色の輪で囲む。
 - **`prefs::accessibility(window, cx)`**: アクセシビリティ。上に文字の見本（高さの決まった箱 `a11y-preview` の中に `a11y-sample`: アイコンの付いた見出し・本文・補足）、下に対等な 3 つの行: 文字の大きさ（`setting-text-size`。スライダー `setting-text-size-slider`）、UI スケール（`setting-ui-scale`。`setting-ui-scale-slider`）、太字（`setting-bold-text`。スイッチ）。倍率は 10% の刻みに吸い付き、今の値を行に % で出す。文字の大きさは動かしている間もすぐ効く（見本の箱の高さは決まっていて、スライダーは行の右端にあるので、文字が変わっても手元のスライダーは動かない）。UI スケールは決めるとパネルそのものが大きくなってレーザーの下で動いてしまうので、動かしている間は見本だけを決めた後の大きさに拡大・縮小して見せ、離したときに決める（`Slider::on_release`）。動かしている途中の値はこの部品が持つので、呼び出し側に状態は要らない。
+- **`prefs::keyboard_preview(&keys, cx)`**: キーボードの見本。高さの決まった箱 `keyboard-preview` の中央に、今の設定の種類・OS の配列の仮想キーボード（`virtual-keyboard`）を、召喚したキーボードと同じ地（カードと四方の余白。`keyboard-preview-card`。閉じるボタンとその段は無い）に載せて見せる。縮尺は決め打ちにせず、置かれた場所を測って収まるいちばん大きい倍率（実寸まで）にする（`keyboard::preview(&keys, cx)`。箱に限らず、渡された場所に合わせる。地の余白と角丸も同じ倍率）。種類を替えても、画面の幅が変わっても、箱と下の行の幅からはみ出さない（設定画面では、フルサイズは幅いっぱい、ほかの種類は高さいっぱい）。箱の高さは決まっているので、種類を替えても下の項目は動かない。キーは押せて、キーの音の設定（`key_sound` / `key_sound_volume`）どおりに鳴るが、打った文字はどこにも送らないダミー（`KeyboardView::preview`: `preview` = 送らない・繰り返さない・OS の配列が取れていなくても押せる。`unit` = キー 1u の大きさは `keyboard::preview` が毎回決める。隙間・角丸・文字も比例する）。見せるキーボードは `prefs::new_keyboard_preview(panel, cx)` で作って呼び出し側が持つ（配列は裏のスレッドで読むので、作り直さず持ち続ける）。下に並べる項目（種類 `setting-keyboard`・キーの入力音 `setting-key-sound`・その音量 `setting-key-volume`）は画面の側が置く。
 - **文字盤の見本**: 描き方は wrist が GPUI のグローバル `prefs::FacePreview` に置く（`Wrist::new`）。置かれていなければ地の丸だけになる（wrist を載せないテスト）。
-- テスト: `prefs::tests`、操作は `crates/testkit/tests/scenarios/prefs.rs`、見た目は `look`（`look-*.bmp` / `look-watch-*.bmp` / `look-color-*.bmp`）。
+- テスト: `prefs::tests`、操作は `crates/testkit/tests/scenarios/prefs.rs`（キーボードの見本の音の大きさは `crates/testkit/tests/audio.rs`）、見た目は `look`（`look-*.bmp` / `look-watch-*.bmp` / `look-keyboard-*.bmp` / `look-color-*.bmp`）。
 
 ## ポインタの方式
 
@@ -34,7 +43,7 @@
 
 ## テスト・ベンチマーク
 
-- **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）・セットアップウィザードの各画面（`look-setup-*.bmp`。ライトのものは日本語）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。
+- **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）「キーボード」（`look-keyboard-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）・セットアップウィザードの各画面（`look-setup-*.bmp`。ライトのものは日本語）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。設定画面は本番と同じに `PanelRoot` に載せる（載せないとパネルの影の余白が付かず、中身が本番より広く描かれる）。
 - **アクセシビリティの見た目**: `crates/ui/tests/gpu/a11y.rs`（`cargo test -p ui --test gpu -- --ignored a11y`）。文字の大きさ（80% / 100% / 150%）と太字化を替えながら、設定画面の各カテゴリ・色を作るダイアログ・文字盤の見本・仮想キーボード・Testing・ダッシュボード（バー・クイック設定・ランチャー）を実 GPU で描き、`target/tmp/look-a11y-<状態>-<画面>.bmp` に書き出す。検査するのは、倍率・太字化で文字のインクが増えること（等幅も）、`.text_exact()` の文字盤が 1 画素も変わらないこと。操作は `crates/testkit/tests/scenarios/prefs.rs`（`accessibility_*` / `ui_scale_*`）。
 - **ストレステスト（ベンチマーク）**: `crates/ui/tests/gpu/stress.rs`（`harness = false`。常には流さない: `cargo test -p ui --test gpu -- --ignored stress`）。
   本番と同じ `ui::run_with` に novr のエミュレーター（ウィンドウは出さないが毎フレーム合成する）と GPUI 8 枚・ビームを載せ、

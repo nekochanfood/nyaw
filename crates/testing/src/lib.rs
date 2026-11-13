@@ -28,7 +28,7 @@ use gpui::{
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{Language, PanelCommand, PanelId, Setting};
-use ui::{PanelControl, PanelSpec};
+use ui::{PanelControl, PanelSpec, settings};
 
 mod emoji;
 pub use emoji::EmojiTest;
@@ -177,30 +177,12 @@ fn command(
     panel: PanelId,
     c: PanelCommand,
 ) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    move |_, _, cx| {
-        cx.default_global::<PanelControl>()
-            .panels
-            .entry(panel)
-            .or_default()
-            .commands
-            .push(c.clone())
-    }
+    move |_, _, cx| ui::command(panel, c.clone(), cx)
 }
 
 /// 押すと全体の設定の変更を積むクリックハンドラ。
 fn change(s: Setting) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
-    move |_, _, cx| push_setting(s, cx)
-}
-
-fn push_setting(s: Setting, cx: &mut App) {
-    cx.default_global::<PanelControl>().setting_changes.push(s)
-}
-
-/// 今の全体の設定（フレームループが書き戻したもの。無ければ既定）。
-fn settings(cx: &App) -> kernel::Settings {
-    cx.try_global::<PanelControl>()
-        .map(|c| c.settings)
-        .unwrap_or_default()
+    move |_, _, cx| ui::set(s, cx)
 }
 
 fn spawn(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
@@ -1150,7 +1132,7 @@ impl Render for SmoothingTest {
             )
             .child(
                 components::slider(&theme, "smoothing-slider", now / max, move |v, _, cx| {
-                    push_setting(Setting::PointerSmoothing(v * max), cx)
+                    ui::set(Setting::PointerSmoothing(v * max), cx)
                 })
                 .length(560.0),
             )
@@ -1184,7 +1166,7 @@ impl Render for SmoothingTest {
                     "release-slider",
                     (release - tight) / (loose - tight),
                     move |v, _, cx| {
-                        push_setting(Setting::PointerRelease(tight + v * (loose - tight)), cx)
+                        ui::set(Setting::PointerRelease(tight + v * (loose - tight)), cx)
                     },
                 )
                 .length(560.0),
@@ -1208,9 +1190,7 @@ impl Render for SmoothingTest {
                     &theme,
                     "laser-length-slider",
                     (length - short) / (long - short),
-                    move |v, _, cx| {
-                        push_setting(Setting::LaserLength(short + v * (long - short)), cx)
-                    },
+                    move |v, _, cx| ui::set(Setting::LaserLength(short + v * (long - short)), cx),
                 )
                 .length(560.0),
             )
@@ -1238,7 +1218,7 @@ impl Render for SmoothingTest {
                                 Setting::PointerRelease(kernel::overlay::POINTER_RELEASE_DEG),
                                 Setting::LaserLength(kernel::overlay::LASER_LENGTH),
                             ] {
-                                push_setting(s, cx);
+                                ui::set(s, cx);
                             }
                         },
                     ),
@@ -1375,6 +1355,8 @@ pub const SETTINGS_PX: (u32, u32) = (1024, 768);
 const SIDEBAR_PX: f32 = 320.0;
 /// 中身のスライダーの長さ（px）。中身の幅（パネル − サイドバー − 余白）に収まる。
 const SETTINGS_SLIDER_PX: f32 = 520.0;
+/// 一覧の行（`components::slider_item`）に置くスライダーの長さ（px）。
+const ROW_SLIDER_PX: f32 = 240.0;
 
 /// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
 const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 9] = [
@@ -1463,6 +1445,8 @@ pub struct Settings {
     /// 外観・時計の部品の状態。
     pub appearance: ui::prefs::Appearance,
     pub watch: ui::prefs::WatchFaces,
+    /// キーボードの見本（最初にキーボードのカテゴリを開いたときに作り、画面を閉じるまで持つ）。
+    pub keyboard_preview: std::cell::OnceCell<gpui::Entity<ui::keyboard::KeyboardView>>,
     /// 選択肢を開いている選択の行（`debug_selector`）。
     pub open: Option<&'static str>,
     /// 情報からライセンスの一覧を開いている。
@@ -1507,7 +1491,7 @@ impl Settings {
             .map(|(oid, l, v)| {
                 components::select_option(theme, oid, l, v == now).on_click(cx.listener(
                     move |this, _, _, cx| {
-                        push_setting(set(v), cx);
+                        ui::set(set(v), cx);
                         this.open = None;
                         cx.notify();
                     },
@@ -1547,7 +1531,7 @@ impl Settings {
         let now = settings(cx);
         match category {
             // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）、利き手（主に操作する手）、
-            // ダッシュボード中のゲーム入力の遮断。
+            // ダッシュボード中のゲーム入力の遮断、SteamVR と一緒に起動（切り替えられるランタイムのときだけ）。
             0 => vec![components::list(
                 theme,
                 [
@@ -1600,7 +1584,18 @@ impl Settings {
                         now.block_input,
                     )
                     .on_click(change(Setting::BlockInput(!now.block_input))),
-                ],
+                ]
+                .into_iter()
+                .chain(now.auto_launch.map(|on| {
+                    components::switch_item(
+                        theme,
+                        "setting-auto-launch",
+                        &design::icons::ROCKET_LAUNCH,
+                        i18n::t(cx, "settings.auto_launch"),
+                        on,
+                    )
+                    .on_click(change(Setting::AutoLaunch(!on)))
+                })),
             )],
             // 外観: テーマの見本・テーマ・パーソナルカラー（セットアップウィザードと同じ部品）。
             1 => {
@@ -1662,9 +1657,7 @@ impl Settings {
                                 theme,
                                 "setting-smoothing",
                                 now.pointer_smoothing / max,
-                                move |v, _, cx| {
-                                    push_setting(Setting::PointerSmoothing(v * max), cx)
-                                },
+                                move |v, _, cx| ui::set(Setting::PointerSmoothing(v * max), cx),
                             ),
                         ),
                     ),
@@ -1687,7 +1680,7 @@ impl Settings {
                                 "setting-release",
                                 (now.pointer_release_deg - tight) / (loose - tight),
                                 move |v, _, cx| {
-                                    push_setting(
+                                    ui::set(
                                         Setting::PointerRelease(tight + v * (loose - tight)),
                                         cx,
                                     )
@@ -1714,10 +1707,7 @@ impl Settings {
                                 "setting-laser-length",
                                 (now.laser_length - short) / (long - short),
                                 move |v, _, cx| {
-                                    push_setting(
-                                        Setting::LaserLength(short + v * (long - short)),
-                                        cx,
-                                    )
+                                    ui::set(Setting::LaserLength(short + v * (long - short)), cx)
                                 },
                             ),
                         ),
@@ -1741,37 +1731,71 @@ impl Settings {
                     Setting::MirrorFrameRate,
                 )],
             )],
-            // キーボード: 種類。
+            // キーボード: 上に見本（押せて音も鳴るが、どこにも打たない）、下に種類・キーの音・その音量（鳴らす間だけ）。
             6 => {
                 use kernel::subsystems::keyboard::KeyboardType;
-                vec![components::list(
+                let keys = self
+                    .keyboard_preview
+                    .get_or_init(|| ui::prefs::new_keyboard_preview(self.panel, cx));
+                let preview = ui::prefs::keyboard_preview(keys, cx);
+                let kind = self.select(
                     theme,
-                    [self.select(
-                        theme,
-                        window,
-                        cx,
-                        "setting-keyboard",
-                        &design::icons::KEYBOARD,
-                        i18n::t(cx, "settings.keyboard"),
-                        now.keyboard,
-                        [
-                            ("setting-keyboard-full", "keyboard.full", KeyboardType::Full),
-                            (
-                                "setting-keyboard-tkl",
-                                "keyboard.tkl",
-                                KeyboardType::Tenkeyless,
-                            ),
-                            (
-                                "setting-keyboard-compact",
-                                "keyboard.compact",
-                                KeyboardType::Compact,
-                            ),
-                        ]
-                        .map(|(id, key, k)| (id, i18n::t(cx, key), k))
-                        .to_vec(),
-                        Setting::Keyboard,
-                    )],
-                )]
+                    window,
+                    cx,
+                    "setting-keyboard",
+                    &design::icons::KEYBOARD,
+                    i18n::t(cx, "settings.keyboard"),
+                    now.keyboard,
+                    [
+                        ("setting-keyboard-full", "keyboard.full", KeyboardType::Full),
+                        (
+                            "setting-keyboard-tkl",
+                            "keyboard.tkl",
+                            KeyboardType::Tenkeyless,
+                        ),
+                        (
+                            "setting-keyboard-compact",
+                            "keyboard.compact",
+                            KeyboardType::Compact,
+                        ),
+                    ]
+                    .map(|(id, key, k)| (id, i18n::t(cx, key), k))
+                    .to_vec(),
+                    Setting::Keyboard,
+                );
+                let sound = components::switch_item(
+                    theme,
+                    "setting-key-sound",
+                    &design::icons::WAVEFORM,
+                    i18n::t(cx, "settings.key_sound"),
+                    now.key_sound,
+                )
+                .on_click(change(Setting::KeySound(!now.key_sound)));
+                // 音量は 10% の刻み（カーネルも同じ刻みに丸める）。刻みが変わったときだけ設定を変える。
+                let (volume, step) = (now.key_sound_volume, kernel::SCALE_STEP);
+                let slider = components::slider(
+                    theme,
+                    "setting-key-volume-slider",
+                    volume,
+                    move |at, _, cx| {
+                        let to = (at / step).round() * step;
+                        if (to - volume).abs() > step / 2.0 {
+                            ui::set(Setting::KeySoundVolume(to), cx)
+                        }
+                    },
+                );
+                let volume = components::slider_item(
+                    theme,
+                    "setting-key-volume",
+                    &design::icons::SPEAKER_HIGH,
+                    i18n::t(cx, "settings.key_sound_volume"),
+                    format!("{:.0}%", volume * 100.0),
+                    slider.length(ROW_SLIDER_PX),
+                );
+                let rows = [kind, sound]
+                    .into_iter()
+                    .chain(now.key_sound.then_some(volume));
+                vec![preview, components::list(theme, rows)]
             }
             // グラフィックス: 距離 LOD の品質。
             7 => vec![components::list(
@@ -3101,10 +3125,8 @@ impl StressTest {
 
     /// 閉じていない出したパネルに、`i` 枚目なら `f(i)` の操作を積む。
     fn each(&self, cx: &mut App, mut f: impl FnMut(usize) -> PanelCommand) {
-        let alive = self.alive(cx);
-        let c = cx.default_global::<PanelControl>();
-        for (i, id) in alive.into_iter().enumerate() {
-            c.panels.entry(id).or_default().commands.push(f(i));
+        for (i, id) in self.alive(cx).into_iter().enumerate() {
+            ui::command(id, f(i), cx);
         }
     }
 
@@ -3671,6 +3693,74 @@ mod tests {
             [1, 2, 3].map(|id| c.panels.get(&id).map_or(0, |s| s.commands.len()))
         });
         assert_eq!(commands, [2, 0, 2]);
+    }
+
+    /// キーボードの見本は、本番と同じ載せ方（影の余白の内側）の設定画面でも、もっと狭い画面でも、どの種類でも
+    /// 下の行の幅と見本の箱に収まり、地がキーを四方から囲む。幅か高さのどちらかは、いっぱいまで使う。
+    #[gpui::test]
+    fn keyboard_preview_fits_the_settings_screen_for_every_type(cx: &mut TestAppContext) {
+        use kernel::subsystems::keyboard::{Database, KeyboardType, Layout};
+        let keyboard = Database::load().unwrap();
+        let keyboard = keyboard.keyboard(&Layout::new("us", "")).unwrap();
+        let (_, cx) = cx.add_window_view(|_, cx| {
+            let keys = ui::prefs::new_keyboard_preview(0, cx);
+            keys.update(cx, |view, _| {
+                (view.automatic, view.loading) = (false, false);
+                view.keyboard = Some(keyboard);
+            });
+            let settings = Settings {
+                category: 6,
+                ..Settings::new(0)
+            };
+            assert!(settings.keyboard_preview.set(keys).is_ok());
+            ui::PanelRoot::new(cx.new(|_| settings).into())
+        });
+        for width in [SETTINGS_PX.0, 800] {
+            cx.simulate_resize(gpui::size(px(width as f32), px(SETTINGS_PX.1 as f32)));
+            for kind in KeyboardType::ALL {
+                cx.update(|window, cx| {
+                    cx.default_global::<PanelControl>().settings.keyboard = kind;
+                    window.refresh();
+                });
+                cx.run_until_parked();
+                let [row, place, card, keys] = [
+                    "setting-keyboard",
+                    "keyboard-preview",
+                    "keyboard-preview-card",
+                    "virtual-keyboard",
+                ]
+                .map(|s| cx.debug_bounds(s).unwrap_or_else(|| panic!("{s}")));
+                let slack = px(0.01);
+                let at = format!("{width}px {kind:?}: {card:?} in {place:?}, rows {row:?}");
+                assert!(
+                    card.left() >= row.left() - slack && card.right() <= row.right() + slack,
+                    "{at}"
+                );
+                assert!(
+                    card.top() >= place.top() - slack && card.bottom() <= place.bottom() + slack,
+                    "{at}"
+                );
+                let free =
+                    (row.size.width - card.size.width).min(place.size.height - card.size.height);
+                assert!(free < px(1.0), "{at}");
+                // 地の余白は四方で同じ。キーは縦横の比を保ち、実寸（1u = 64px）より小さい（配置は画素に丸まる）。
+                let pad = keys.left() - card.left();
+                assert!(pad > px(1.0), "{at}");
+                for other in [
+                    keys.top() - card.top(),
+                    card.right() - keys.right(),
+                    card.bottom() - keys.bottom(),
+                ] {
+                    assert!((other - pad).abs() < px(1.0), "{at}: {keys:?}");
+                }
+                let unit = f32::from(keys.size.width) / kind.width();
+                assert!(unit < 64.0, "{at}");
+                assert!(
+                    (f32::from(keys.size.height) - kind.height() * unit).abs() < 1.0,
+                    "{at}: {keys:?}"
+                );
+            }
+        }
     }
 
     #[test]

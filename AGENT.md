@@ -122,6 +122,7 @@ testkit のキットに `build` として渡す。画面からパネルへの操
 （取り付け・取り外し・ロック）を積み、フレームループが `sync_panel` で反映して `PanelStatus`（ランタイム・取り付け先・ロック・
 見えているトラッカー・メニューボタン・掴み中）を書き戻す。全体の設定（テーマ・言語・ポインタ）はパネルを問わないので
 `PanelControl::setting_changes` に `Setting` を積み、`sync_settings` が反映して `PanelControl::settings` に書き戻す。画面の型に依存しないので、本番・どのキットでも同じ経路。
+積むのは `ui::command` / `ui::set` などの入口で（[`crates/ui/AGENT.md`](crates/ui/AGENT.md) の「画面からの依頼」）、画面ごとに同じ補助関数を書かない。
 新しい画面 = `crates/<名前>` を足して `ui` に依存し、`main` で選ぶ。
 
 ## パフォーマンス（設計思想）

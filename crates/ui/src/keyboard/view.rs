@@ -99,6 +99,10 @@ pub struct KeyboardView {
     /// このキーボードが載っているパネル（キーの音を鳴らす）。
     panel: PanelId,
     pub target: PanelId,
+    /// 見本: キーは押せて音も鳴るが、打った文字はどこにも送らない（[`Self::preview`]）。
+    pub preview: bool,
+    /// キー 1u の大きさ（px。既定は実寸の [`KEY_UNIT`]）。隙間・角丸・文字もこれに比例する。
+    pub unit: f32,
     pub appearance: Option<KeyAppearance>,
     pub show_settings: bool,
     pub keyboard: Option<Keyboard>,
@@ -148,9 +152,7 @@ impl KeyboardView {
                 }
             }
         });
-        let kind = cx
-            .try_global::<crate::PanelControl>()
-            .map_or_else(KeyboardType::default, |c| c.settings.keyboard);
+        let kind = crate::settings(cx).keyboard;
         let initial = Layout::new("us", "");
         let _ = request.send((0, initial.clone()));
         cx.spawn(async move |this, cx| {
@@ -161,12 +163,7 @@ impl KeyboardView {
                 if this
                     .update(cx, |this, cx| {
                         if this.poll(cx) {
-                            cx.notify();
-                            cx.default_global::<crate::PanelControl>()
-                                .panels
-                                .entry(panel)
-                                .or_default()
-                                .redraw = true;
+                            crate::notify(panel, cx);
                         }
                     })
                     .is_err()
@@ -179,6 +176,8 @@ impl KeyboardView {
         Self {
             panel,
             target: panel,
+            preview: false,
+            unit: KEY_UNIT,
             appearance: None,
             show_settings: true,
             keyboard: None,
@@ -196,6 +195,16 @@ impl KeyboardView {
             picker: false,
             repeating: None,
             repeat_id: 0,
+        }
+    }
+
+    /// 見本のキーボード: `panel` の中に置く。今の設定（種類・OS の配列・キーの音）に従い、キーは押せて音も鳴るが、
+    /// 打った文字はどこにも送らない。キーの大きさ（[`Self::unit`]）は、置く側（[`super::preview`]）が場所に合わせて決める。
+    pub fn preview(panel: PanelId, cx: &mut Context<Self>) -> Self {
+        Self {
+            preview: true,
+            show_settings: false,
+            ..Self::new(panel, cx)
         }
     }
 
@@ -274,9 +283,10 @@ impl KeyboardView {
         }
     }
 
-    /// 配列が読めていて、キーを受け付けられる。
+    /// 配列が読めていて、キーを受け付けられる。見本は送る先が無いので、OS の配列が取れていなくても押せる。
     fn ready(&self) -> bool {
-        !self.loading && self.error.is_none() && !(self.automatic && self.settings.layout.is_none())
+        let unmatched = self.automatic && self.settings.layout.is_none();
+        !self.loading && self.error.is_none() && (self.preview || !unmatched)
     }
 
     pub fn press(&mut self, code: u16, cx: &mut App) -> Option<KeyboardInput> {
@@ -290,7 +300,9 @@ impl KeyboardView {
                 stroke,
                 layout: keyboard.layout.clone(),
             };
-            send_key(self.target, input.clone(), cx);
+            if !self.preview {
+                send_key(self.target, input.clone(), cx);
+            }
             return Some(input);
         }
         None
@@ -318,21 +330,21 @@ impl KeyboardView {
         let ready = self.ready();
         let input = self.press(code, cx);
         // Ctrl・Shift などのトグルは文字を生まない（押した状態になるだけ）が、押したことは音で返す。
-        if input.is_some() || (toggle && ready) {
-            cx.default_global::<crate::PanelControl>()
-                .panels
-                .entry(self.panel)
-                .or_default()
-                .commands
-                .push(kernel::PanelCommand::PlayAt {
-                    sound: kernel::audio::Sound::Wav(sound),
-                    at,
-                    pitch: jittered_pitch(),
-                });
+        // 鳴らすか・音量は全体の設定（`key_sound` / `key_sound_volume`）に従う。
+        let settings = crate::settings(cx);
+        if settings.key_sound && (input.is_some() || (toggle && ready)) {
+            let play = kernel::PanelCommand::PlayAt {
+                sound: kernel::audio::Sound::Wav(sound),
+                at,
+                pitch: jittered_pitch(),
+                volume: settings.key_sound_volume,
+            };
+            crate::command(self.panel, play, cx);
         }
         cx.notify();
-        let Some(input) = input.filter(|i| !toggle && !i.stroke.shortcut() && !i.stroke.composing)
-        else {
+        // 見本は送らないので、押し続けても繰り返さない。
+        let repeats = |i: &KeyboardInput| !toggle && !i.stroke.shortcut() && !i.stroke.composing;
+        let Some(input) = input.filter(|i| !self.preview && repeats(i)) else {
             return;
         };
         self.repeat_id = self.repeat_id.wrapping_add(1);
@@ -421,11 +433,7 @@ impl Render for KeyboardView {
                 // 全体の設定を変える（フレームループが反映し、描き直しで [`Self::kind`] に写る）。
                 components::button(&theme, id, i18n::t(cx, label), Variant::Default)
                     .selected(self.kind == kind)
-                    .on_click(move |_, _, cx| {
-                        cx.default_global::<crate::PanelControl>()
-                            .setting_changes
-                            .push(kernel::Setting::Keyboard(kind))
-                    })
+                    .on_click(move |_, _, cx| crate::set(kernel::Setting::Keyboard(kind), cx))
             }))
             .child(
                 components::button(
@@ -527,12 +535,14 @@ impl Render for KeyboardView {
             root = root.child(div().child(i18n::t(cx, "keyboard.unmatched")));
         }
         if let Some(keyboard) = &self.keyboard {
-            let unit = KEY_UNIT;
+            // 見た目の値は実寸（[`KEY_UNIT`]）で決めてあるので、キーの大きさに比例させる。
+            let unit = self.unit;
+            let k = unit / KEY_UNIT;
             let appearance = self
                 .appearance
                 .unwrap_or_else(|| KeyAppearance::for_type(self.kind))
                 .normalized();
-            let gap = appearance.gap;
+            let (gap, corner_radius) = (appearance.gap * k, appearance.corner_radius * k);
             let keys = keyboard.keycaps(self.kind);
             let canvas = div()
                 .id("virtual-keyboard")
@@ -555,8 +565,8 @@ impl Render for KeyboardView {
                         .flex_col()
                         .items_center()
                         .justify_center()
-                        .gap(px(2.))
-                        .text_size(px(if label.chars().count() > 5 {
+                        .gap(px(2. * k))
+                        .text_size(px(k * if label.chars().count() > 5 {
                             font_size::SM
                         } else {
                             font_size::MD
@@ -572,7 +582,7 @@ impl Render for KeyboardView {
                         content = content.child(
                             design::icon(glyph)
                                 .weight(design::Weight::Bold)
-                                .size(px(24.)),
+                                .size(px(24. * k)),
                         );
                     } else {
                         content =
@@ -583,19 +593,19 @@ impl Render for KeyboardView {
                         content = content.child(
                             div()
                                 .debug_selector(move || selector)
-                                .text_size(px(font_size::SM))
+                                .text_size(px(font_size::SM * k))
                                 .text_color(rgba(theme.neutral_text_low))
                                 .child(alphabet),
                         );
                     }
                     if key.shape == kernel::subsystems::keyboard::KeyShape::SteppedEnter {
-                        content = content.ml(px(16.));
+                        content = content.ml(px(16. * k));
                     }
                     let button = components::shaped_button(
                         &theme,
                         format!("key-{}", key.name),
                         key.outline(unit, gap),
-                        appearance.corner_radius,
+                        corner_radius,
                     )
                     .content(content)
                     .selected(keyboard.is_on(code))
@@ -684,6 +694,8 @@ mod tests {
         KeyboardView {
             panel: 0,
             target: 0,
+            preview: false,
+            unit: KEY_UNIT,
             appearance: None,
             show_settings: true,
             keyboard: Some(db.keyboard(&layout).unwrap()),
@@ -795,12 +807,150 @@ mod tests {
                 .commands
                 .clone()
         });
-        let Some(kernel::PanelCommand::PlayAt { sound, at, pitch }) = commands.first() else {
+        let Some(kernel::PanelCommand::PlayAt {
+            sound,
+            at,
+            pitch,
+            volume,
+        }) = commands.first()
+        else {
             panic!("{commands:?}");
         };
         assert_eq!(*sound, kernel::audio::Sound::Wav(SPACEBAR_SOUND));
         assert_eq!(*at, kernel::Vec2::new(f32::from(key.x), f32::from(key.y)));
         assert!((pitch - 1.).abs() <= PITCH_JITTER);
+        assert_eq!(*volume, 1., "既定の音量");
+    }
+
+    /// キーの音は全体の設定に従う: 音量はそのまま音に付き、オフなら鳴らさない（キーは押せる）。
+    #[gpui::test]
+    fn key_sound_follows_the_setting_and_its_volume(cx: &mut TestAppContext) {
+        let db = Database::load().unwrap();
+        let (_, cx) = cx.add_window_view(|_, _| ready(&db, "us", KeyboardType::Compact));
+        let sent = Rc::new(Cell::new(0));
+        let count = sent.clone();
+        cx.update(|_, cx| {
+            crate::keyboard::register_input(
+                0,
+                move |_, _| {
+                    count.set(count.get() + 1);
+                    Ok(())
+                },
+                cx,
+            )
+        });
+        cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
+        cx.run_until_parked();
+        let key = cx.debug_bounds("key-AC01").unwrap().center();
+        // 設定を変えてキーを押し、鳴らす要求を取り出す。
+        fn press(
+            cx: &mut gpui::VisualTestContext,
+            key: gpui::Point<gpui::Pixels>,
+            (on, volume): (bool, f32),
+        ) -> Vec<kernel::PanelCommand> {
+            cx.update(|_, cx| {
+                let settings = &mut cx.default_global::<crate::PanelControl>().settings;
+                (settings.key_sound, settings.key_sound_volume) = (on, volume);
+            });
+            cx.simulate_click(key, gpui::Modifiers::none());
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let ctl = cx.global_mut::<crate::PanelControl>();
+                std::mem::take(&mut ctl.panels.entry(0).or_default().commands)
+            })
+        }
+        let played = press(cx, key, (true, 0.3));
+        assert!(
+            matches!(&played[..], [kernel::PanelCommand::PlayAt { volume, .. }] if *volume == 0.3),
+            "{played:?}"
+        );
+        let played = press(cx, key, (false, 0.3));
+        assert!(played.is_empty(), "オフでは鳴らさない: {played:?}");
+        assert_eq!(sent.get(), 2, "鳴らさなくてもキーは届く");
+    }
+
+    /// 見本は実物と同じ並びを `unit` に比例して縮めて描き、押すと音は鳴るが、文字はどこにも送らず、繰り返しもしない。
+    #[gpui::test]
+    fn a_preview_is_scaled_plays_sounds_and_sends_nothing(cx: &mut TestAppContext) {
+        let db = Database::load().unwrap();
+        let unit = KEY_UNIT / 2.;
+        let (view, cx) = cx.add_window_view(|_, _| KeyboardView {
+            preview: true,
+            unit,
+            show_settings: false,
+            // OS の配列が取れていなくても押せる。
+            automatic: true,
+            ..ready(&db, "jp", KeyboardType::Full)
+        });
+        let sent = Rc::new(Cell::new(0));
+        let count = sent.clone();
+        cx.update(|_, cx| {
+            crate::keyboard::register_input(
+                0,
+                move |_, _| {
+                    count.set(count.get() + 1);
+                    Ok(())
+                },
+                cx,
+            )
+        });
+        cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
+        cx.run_until_parked();
+        // 並び全体も、キーも、隙間も半分。
+        let keys = cx.debug_bounds("virtual-keyboard").unwrap();
+        assert_eq!(
+            (f32::from(keys.size.width), f32::from(keys.size.height)),
+            (
+                KeyboardType::Full.width() * unit,
+                KeyboardType::Full.height() * unit
+            )
+        );
+        let a = cx.debug_bounds("key-AC01").unwrap();
+        let gap = KeyAppearance::for_type(KeyboardType::Full).gap / 2.;
+        assert_eq!(
+            (f32::from(a.size.width), f32::from(a.size.height)),
+            (unit - gap, unit - gap)
+        );
+        assert_eq!(
+            f32::from(cx.debug_bounds("key-AC02").unwrap().left() - a.right()),
+            gap
+        );
+        // どのキーも並びの中に収まる。
+        for key in db
+            .keyboard(&Layout::new("jp", ""))
+            .unwrap()
+            .keycaps(KeyboardType::Full)
+        {
+            let name = Box::leak(format!("key-{}", key.name).into_boxed_str());
+            let b = cx.debug_bounds(name).unwrap();
+            assert!(b.left() >= keys.left() && b.top() >= keys.top(), "{name}");
+            assert!(
+                b.right() <= keys.right() && b.bottom() <= keys.bottom(),
+                "{name}"
+            );
+        }
+        // 押すと音は鳴る。文字は送らず、押し続けても繰り返さない。エラー（宛先なし）も立てない。
+        cx.simulate_mouse_down(a.center(), gpui::MouseButton::Left, gpui::Modifiers::none());
+        cx.run_until_parked();
+        let commands = cx.update(|_, cx| {
+            cx.global::<crate::PanelControl>().panels[&0]
+                .commands
+                .clone()
+        });
+        assert!(
+            matches!(&commands[..], [kernel::PanelCommand::PlayAt { sound, .. }]
+                if *sound == kernel::audio::Sound::Wav(TAP_SOUND)),
+            "{commands:?}"
+        );
+        assert!(view.read_with(cx, |view, _| view.repeating.is_none()));
+        cx.executor().advance_clock(Duration::from_millis(700));
+        cx.run_until_parked();
+        cx.simulate_mouse_up(a.center(), gpui::MouseButton::Left, gpui::Modifiers::none());
+        assert_eq!(sent.get(), 0);
+        assert_eq!(
+            cx.update(|_, cx| cx.global::<InputRouting>().error.clone()),
+            None
+        );
     }
 
     /// キーに入るとホバー音を要求する。同じキーの隙間へ手ブレしても鳴り直さず、隣のキーへ移ると鳴る。

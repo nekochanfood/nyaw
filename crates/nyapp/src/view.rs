@@ -145,7 +145,7 @@ impl NyappView {
             });
         })
         .detach();
-        self.redraw(cx);
+        ui::notify(self.panel, cx);
     }
 
     /// 出来事をニャプリへ渡し、返ってきた画面に替える。
@@ -252,13 +252,13 @@ impl NyappView {
             _ => {}
         }
         if beeps > 0 {
-            command(
+            ui::command(
                 self.panel,
                 kernel::PanelCommand::Play(Sound::Wav(beep()), false),
                 cx,
             );
         }
-        self.redraw(cx);
+        ui::notify(self.panel, cx);
     }
 
     /// ニャプリが落ちた（trap・燃料切れ・壊れた画面・起動できない）。パネルは閉じずに最後の画面を白黒で残し、次の描画で
@@ -274,7 +274,7 @@ impl NyappView {
             asked: false,
         };
         self.ticker = None;
-        self.redraw(cx);
+        ui::notify(self.panel, cx);
     }
 
     /// 強制終了のダイアログを、このパネルの子として出す（外側を押しても閉じない。開いている間このパネルは暗くなり押せない）。
@@ -330,15 +330,6 @@ impl NyappView {
             let (x, y) = (f32::from(at.x - origin.x), f32::from(at.y - origin.y));
             self.send(Event::Pointer { id, x, y }, cx);
         }
-    }
-
-    fn redraw(&self, cx: &mut Context<Self>) {
-        cx.notify();
-        cx.default_global::<PanelControl>()
-            .panels
-            .entry(self.panel)
-            .or_default()
-            .redraw = true;
     }
 
     /// 画面の木の要素 1 つを描く。`path` は要素の場所（スクロールの状態を要素ごとに分ける ID）、`in_row` は横の並びの中か
@@ -641,7 +632,7 @@ impl Render for CrashDialog {
                     ButtonVariant::Primary,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    command(panel, kernel::PanelCommand::Close, cx);
+                    ui::command(panel, kernel::PanelCommand::Close, cx);
                     let _ = this.view.update(cx, |v, cx| v.load(cx));
                 })),
                 // 子は親と一緒に閉じる。
@@ -651,19 +642,10 @@ impl Render for CrashDialog {
                     i18n::t(cx, "nyapp.close"),
                     ButtonVariant::Default,
                 )
-                .on_click(move |_, _, cx| command(nyapp, kernel::PanelCommand::Close, cx)),
+                .on_click(move |_, _, cx| ui::command(nyapp, kernel::PanelCommand::Close, cx)),
             ],
         )
     }
-}
-
-fn command(panel: PanelId, command: kernel::PanelCommand, cx: &mut App) {
-    cx.default_global::<PanelControl>()
-        .panels
-        .entry(panel)
-        .or_default()
-        .commands
-        .push(command);
 }
 
 /// 知らせの音（880Hz・0.2 秒、終わりを弱めた正弦波の WAV）。最初に使ったときに作る。

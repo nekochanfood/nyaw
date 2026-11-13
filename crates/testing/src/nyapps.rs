@@ -33,7 +33,7 @@ impl NyappTest {
                 .await;
             let _ = this.update(cx, |t, cx| {
                 t.installed = Some(found);
-                redraw(panel, cx);
+                ui::redraw(panel, cx);
             });
         })
         .detach();
@@ -65,7 +65,7 @@ impl NyappTest {
         .child(div().min_w_0().truncate().child(name))
         .on_click(cx.listener(move |this, _, _, cx| {
             this.selected = Some(owned.clone());
-            redraw(this.panel, cx);
+            ui::redraw(this.panel, cx);
         }))
         .into_any_element()
     }
@@ -258,7 +258,7 @@ impl Render for NyappTest {
                             )
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.scan(cx);
-                                redraw(this.panel, cx);
+                                ui::redraw(this.panel, cx);
                             })),
                         ),
                 )
@@ -289,14 +289,6 @@ fn section_label(theme: &Theme, text: SharedString) -> AnyElement {
         .text_color(rgba(theme.neutral_text_low))
         .child(text)
         .into_any_element()
-}
-
-fn redraw(panel: PanelId, cx: &mut App) {
-    cx.default_global::<PanelControl>()
-        .panels
-        .entry(panel)
-        .or_default()
-        .redraw = true;
 }
 
 #[cfg(test)]

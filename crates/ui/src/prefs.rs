@@ -1,19 +1,20 @@
 //! 設定の部品: 設定画面とセットアップウィザードが共有する、全体の設定（[`Setting`]）を選ぶ画面の一部（[`appearance`] /
-//! [`watch_faces`] / [`accessibility`]）。今の設定を見せ、選ぶとすぐ反映する。地（`background`）の上に置く。開閉などの小さな状態は呼び出し側が
+//! [`watch_faces`] / [`accessibility`] / [`keyboard_preview`]）。今の設定を見せ、選ぶとすぐ反映する。地（`background`）の上に置く。開閉などの小さな状態は呼び出し側が
 //! 持ち、変えるときは `set` で受け取る（ビューの型を問わない）。詳しくは `crates/ui/AGENT.md` の「設定の部品」。
 
 use design::components::{self, Variant};
 use design::{Accent, Mode, Theme, font_size, icons, radius, spacing};
 use gpui::{
-    App, ClickEvent, Context, Div, FontWeight, IntoElement, MouseDownEvent, Render, SharedString,
-    Window, div, prelude::*, px, rgba,
+    App, ClickEvent, Context, Div, Entity, FontWeight, IntoElement, MouseDownEvent, Render,
+    SharedString, Window, div, prelude::*, px, rgba,
 };
 use kernel::{
-    PanelCommand, PanelId, PersonalColor, SCALE_STEP, Setting, Settings, TEXT_SCALE_MAX,
-    TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, Vec2, WristDesign, WristFace,
+    PanelCommand, PanelId, PersonalColor, SCALE_STEP, Setting, TEXT_SCALE_MAX, TEXT_SCALE_MIN,
+    ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, Vec2, WristDesign, WristFace,
 };
 
-use crate::{PanelControl, PanelSpec};
+use crate::keyboard::KeyboardView;
+use crate::{PanelControl, PanelSpec, settings};
 
 /// wrist の文字盤の見本（デザインと直径 px）を描く関数。画面どうしは直接依存しないので、文字盤を持つ wrist が GPUI の
 /// グローバルに置き、選ぶ画面（[`watch_faces`]）が引く。置かれていなければ、見本は地の丸だけになる。
@@ -21,16 +22,6 @@ use crate::{PanelControl, PanelSpec};
 pub struct FacePreview(pub fn(WristDesign, f32, &App) -> Div);
 
 impl gpui::Global for FacePreview {}
-
-fn settings(cx: &App) -> Settings {
-    let control = cx.try_global::<PanelControl>();
-    control.map(|c| c.settings).unwrap_or_default()
-}
-
-fn push(setting: Setting, cx: &mut App) {
-    let control = cx.default_global::<PanelControl>();
-    control.setting_changes.push(setting);
-}
 
 fn accent(c: PersonalColor) -> Accent {
     Accent::new(c.lightness, c.chroma, c.hue)
@@ -79,7 +70,7 @@ pub fn appearance(
         let close = open(false);
         components::select_option(&theme, id, label, mode == now.theme).on_click(
             move |_, window, cx| {
-                push(Setting::Theme(mode), cx);
+                crate::set(Setting::Theme(mode), cx);
                 close(window, cx)
             },
         )
@@ -106,7 +97,7 @@ pub fn appearance(
         current,
         &Accent::history(current, custom),
         |name| i18n::t(cx, &format!("color.{name}")),
-        |a, _, cx| push(Setting::PersonalColor(personal(a)), cx),
+        |a, _, cx| crate::set(Setting::PersonalColor(personal(a)), cx),
         move |_, _, cx| {
             let dialog = color_dialog(panel, current);
             cx.default_global::<PanelControl>().spawns.push(dialog);
@@ -194,7 +185,7 @@ impl Render for ColorDialog {
             Variant::Primary,
         )
         .on_click(move |_, _, cx| {
-            push(Setting::CustomColor(personal(draft)), cx);
+            crate::set(Setting::CustomColor(personal(draft)), cx);
             close(cx)
         });
         let cancel = components::button(
@@ -318,7 +309,7 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
             move |at, _, cx| {
                 let to = scale_at(at, min, max);
                 if !same_scale(to, text_scale) {
-                    push(Setting::TextScale(to), cx)
+                    crate::set(Setting::TextScale(to), cx)
                 }
             },
         )
@@ -356,7 +347,7 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
                 })
             });
             if let Some(to) = to {
-                push(Setting::UiScale(to), cx)
+                crate::set(Setting::UiScale(to), cx)
             }
         })
         .length(SCALE_SLIDER),
@@ -369,7 +360,7 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
         i18n::t(cx, "accessibility.bold_text"),
         now.bold_text,
     )
-    .on_click(move |_, _, cx| push(Setting::BoldText(!now.bold_text), cx));
+    .on_click(move |_, _, cx| crate::set(Setting::BoldText(!now.bold_text), cx));
 
     div()
         .flex()
@@ -389,6 +380,26 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
                 .child(text_sample(&theme, ui / now.ui_scale, cx)),
         )
         .child(components::list(&theme, [text, ui_scale, bold]))
+}
+
+/// キーボードの見本の箱の高さ（px）。設定画面の幅では、フルサイズは幅いっぱい、ほかの種類は高さいっぱいに収まる。
+const KEYBOARD_PREVIEW_HEIGHT: f32 = 200.0;
+
+/// [`keyboard_preview`] に見せるキーボードを作る（呼び出し側が持つ）。`panel` は見本を置くパネル（キーの音はそこから鳴る）。
+pub fn new_keyboard_preview(panel: PanelId, cx: &mut App) -> Entity<KeyboardView> {
+    cx.new(|cx| KeyboardView::preview(panel, cx))
+}
+
+/// キーボードの見本（高さの決まった箱 `keyboard-preview` の中央に、地 `keyboard-preview-card` とキー `virtual-keyboard`）:
+/// 今の設定の種類・OS の配列のキーボードを、召喚したときと同じ地に載せ、箱に収まるように縮めて見せる（幅が変わっても
+/// はみ出さない）。キーは押せて、キーの音の設定どおりに鳴る（どこにも打たない）。種類を替えても下の項目は動かない。
+pub fn keyboard_preview(keys: &Entity<KeyboardView>, cx: &App) -> Div {
+    div()
+        .debug_selector(|| "keyboard-preview".into())
+        .flex_none()
+        .w_full()
+        .h(px(KEYBOARD_PREVIEW_HEIGHT))
+        .child(crate::keyboard::preview(keys, cx))
 }
 
 /// 文字盤の見本（中央）の直径と、使っている文字盤を囲む輪の太さ・見本との間（px。中央の大きさでの値）。
@@ -572,7 +583,7 @@ pub fn watch_faces(
             i18n::t(cx, "watch.set"),
             Variant::Primary,
         )
-        .on_click(move |_, _, cx| push(Setting::WristDesign(shown), cx))
+        .on_click(move |_, _, cx| crate::set(Setting::WristDesign(shown), cx))
     };
     // 名前と種類。幅は見本と同じに決めておき、名前の長さで左右のボタンが動かないようにする。
     let name = div()

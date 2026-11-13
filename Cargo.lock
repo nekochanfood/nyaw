@@ -1174,7 +1174,6 @@ dependencies = [
  "design",
  "gpui",
  "i18n",
- "image",
  "kernel",
  "logger",
  "nyapp",
@@ -2372,6 +2371,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 name = "i18n"
 version = "2026.0.1"
 dependencies = [
+ "chrono",
  "gpui",
  "toml 0.9.12+spec-1.1.0",
 ]
@@ -4634,6 +4634,7 @@ version = "2026.0.1"
 dependencies = [
  "gpui",
  "gpui_windows",
+ "image",
  "logger",
  "vr",
 ]

@@ -193,10 +193,11 @@ pub enum Facing {
     Back,
 }
 
-/// 手首の関節から見た [`HandSkeleton::grip`] の元（grip の座標系。m）: 指の方へ 5cm、手のひらの側へ 1.5cm。
-/// コントローラ用の手首の時計の相対姿勢（`wrist::WATCH_OFFSET`。tip から手首寄りへ 8cm・上へ 4cm）が、
-/// 手首の関節から腕側へ 3cm・手の甲の側へ 2.5cm（腕時計の位置）に来る。
-pub const GRIP_FROM_WRIST: Vec3 = Vec3::new(0.0, -0.015, -0.05);
+/// 手首の関節から見た、握ったコントローラの tip（[`HandSkeleton::grip`] の元。grip の座標系。m）: 指の方へ 12cm、
+/// 親指の側（コントローラの天面）へ 4cm。逆に tip から見た手首の関節は後ろへ 12cm・下へ 4cm で、手首の時計
+/// （`wrist::watch_offset`）はここから決める。
+// ponytail: Touch / Index を握ったときの目分量。機種ごとの握りの差はこの値の調整で合わせる。
+pub const GRIP_FROM_WRIST: Vec3 = Vec3::new(0.0, 0.04, -0.12);
 
 /// 人差し指・小指の基節（手のひらの面を張る関節）。
 const INDEX_PROXIMAL: usize = 7;
@@ -231,16 +232,20 @@ impl HandSkeleton {
         }
     }
 
-    /// コントローラの座標系に合わせた手の姿勢: 前方（-Z）は手首から中指の付け根への向き、上（+Y）は手の甲の側。元は、手で
-    /// コントローラを握ったときのその先（`/pose/tip`）に当たる所（手首から [`GRIP_FROM_WRIST`]）。コントローラに取り付けた
-    /// パネル（手首の時計など）を、骨格だけの手にも同じ相対姿勢で付けるため。
+    /// この手でコントローラを握ったときの `/pose/tip` に当たる姿勢: 前方（-Z）は手首から中指の付け根への向き、上（+Y）は
+    /// 親指の側（握ったコントローラの天面）、+X は右手なら手の甲・左手なら手のひらの側。元は手首から [`GRIP_FROM_WRIST`]。
+    /// コントローラに取り付けたパネル（手首の時計など）を、骨格だけの手にも同じ相対姿勢で付けるため。
     // ponytail: 前腕は追っていないので、手首を曲げると手首の時計も手と一緒に傾く。
     pub fn grip(&self) -> Pose {
         let p = |i: usize| self.joints[i].position;
         let back = (p(WRIST) - p(12)).normalize_or(Vec3::Z);
-        let up = -self.palm_normal();
-        let x = up.cross(back).normalize_or(Vec3::X);
-        let orientation = Quat::from_mat3(&Mat3::from_cols(x, back.cross(x), back));
+        let palm = self.palm_normal();
+        let x = match self.hand {
+            Hand::Right => -palm,
+            Hand::Left => palm,
+        };
+        let up = back.cross(x).normalize_or(Vec3::Y);
+        let orientation = Quat::from_mat3(&Mat3::from_cols(up.cross(back), up, back));
         Pose::new(p(WRIST) + orientation * GRIP_FROM_WRIST, orientation)
     }
 
@@ -403,6 +408,12 @@ pub trait VrBackend {
     /// シーンのアプリ（ゲーム）への入力を止める・戻す（ダッシュボードが出ている間）。止められるのは OpenVR だけ
     /// （SteamVR Input のアクションセットをオーバーレイの全体優先度で更新し、使う入力を奪う）。ほかは何もしない。
     fn block_app_input(&mut self, _block: bool) {}
+    /// ランタイムの起動と同時にこのアプリを開くか。切り替えられないランタイムは `None`（OpenVR だけが持つ）。
+    fn auto_launch(&self) -> Option<bool> {
+        None
+    }
+    /// 自動起動を切り替える。入れると、ランタイムが起動するのはこの実行ファイルになる。切り替えられなければ何もしない。
+    fn set_auto_launch(&mut self, _on: bool) {}
     /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
     /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読めるので、これは OpenXR 用。
     fn overlay_image(&mut self, _id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
@@ -468,6 +479,12 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn block_app_input(&mut self, block: bool) {
         (**self).block_app_input(block)
+    }
+    fn auto_launch(&self) -> Option<bool> {
+        (**self).auto_launch()
+    }
+    fn set_auto_launch(&mut self, on: bool) {
+        (**self).set_auto_launch(on)
     }
 }
 
@@ -678,10 +695,14 @@ mod tests {
         }
     }
 
-    /// 手のひらを下にした手の姿勢は、指の向きが前方（-Z）、手の甲が上（+Y）。
+    /// 手のひらを下にした手の姿勢は、握ったコントローラと同じく指の向きが前方（-Z）、親指の側が上（+Y）、
+    /// +X は右手なら手の甲（上）・左手なら手のひら（下）。元は手首から指の方へ 12cm・親指の側へ 4cm。
     #[test]
-    fn grip_faces_along_the_fingers_with_the_back_up() {
-        for hand in [Hand::Left, Hand::Right] {
+    fn grip_is_held_like_a_controller() {
+        for (hand, thumb, x) in [
+            (Hand::Left, Vec3::X, Vec3::NEG_Y),
+            (Hand::Right, Vec3::NEG_X, Vec3::Y),
+        ] {
             let mut s = palm_down(hand);
             s.joints[WRIST].position = Vec3::new(0.0, 0.0, 0.0);
             s.joints[12].position = Vec3::new(0.0, 0.0, -0.08);
@@ -692,20 +713,12 @@ mod tests {
                 g.forward()
             );
             assert!(
-                (g.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-5),
+                (g.orientation * Vec3::Y).abs_diff_eq(thumb, 1e-5),
                 "{hand:?}"
             );
-            // 元は手首から指の方へ 5cm・手のひらの側（下）へ 1.5cm。時計の相対姿勢は手首から腕側・手の甲の側に来る。
-            assert!(
-                g.position.abs_diff_eq(Vec3::new(0.0, -0.015, -0.05), 1e-5),
-                "{}",
-                g.position
-            );
-            let watch = g.transform_point(Vec3::new(0.0, 0.04, 0.08));
-            assert!(
-                watch.abs_diff_eq(Vec3::new(0.0, 0.025, 0.03), 1e-5),
-                "{watch}"
-            );
+            assert!((g.orientation * Vec3::X).abs_diff_eq(x, 1e-5), "{hand:?}");
+            let tip = thumb * 0.04 + Vec3::new(0.0, 0.0, -0.12);
+            assert!(g.position.abs_diff_eq(tip, 1e-5), "{}", g.position);
         }
     }
 

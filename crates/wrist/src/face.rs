@@ -63,7 +63,7 @@ pub fn preview(design: WristDesign, d: f32, cx: &App) -> Div {
             design,
             &theme,
             sample,
-            dashboard::date(sample, cx).into(),
+            i18n::date(cx, sample).into(),
             d,
         ))
 }

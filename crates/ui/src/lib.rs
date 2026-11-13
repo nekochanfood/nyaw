@@ -1,7 +1,9 @@
 //! Layer 5: UI 層。各オーバーレイパネルを GPUI の非表示ウィンドウで描画する。
 //! レーザーイベントを GPUI のマウス入力に変換し、描画を読み戻してカーネルへ返す。
 
-pub use kernel::rendering::gpui::{Frame, capture, collect, read_back, set_render_lod};
+pub use kernel::rendering::gpui::{
+    Frame, capture, collect, read_back, render_image, set_render_lod,
+};
 mod cue;
 pub mod keyboard;
 pub mod mirror;
@@ -401,27 +403,18 @@ pub fn dock(panel: PanelId, cx: &mut App) {
     let Some((owner, tilt)) = dock_slot(cx) else {
         return;
     };
-    let previous = docked(cx).filter(|&p| p != panel);
-    let ctl = cx.default_global::<PanelControl>();
-    if let Some(p) = previous {
-        ctl.panels
-            .entry(p)
-            .or_default()
-            .commands
-            .push(PanelCommand::Close);
+    if let Some(previous) = docked(cx).filter(|&p| p != panel) {
+        command(previous, PanelCommand::Close, cx);
     }
-    ctl.docked = Some(panel);
-    ctl.panels
-        .entry(panel)
-        .or_default()
-        .commands
-        .push(PanelCommand::Parent(Some(kernel::Parent {
-            panel: owner,
-            carry: true,
-            docked: true,
-            slot: Some(tilt),
-            ..Default::default()
-        })));
+    cx.default_global::<PanelControl>().docked = Some(panel);
+    let parent = kernel::Parent {
+        panel: owner,
+        carry: true,
+        docked: true,
+        slot: Some(tilt),
+        ..Default::default()
+    };
+    command(panel, PanelCommand::Parent(Some(parent)), cx);
 }
 
 /// はめた `panel` を外して独立させる（その場に残り、持ち主が閉じても閉じない）。
@@ -430,14 +423,46 @@ pub fn undock(panel: PanelId, cx: &mut App) {
     if ctl.docked == Some(panel) {
         ctl.docked = None;
     }
-    ctl.panels
-        .entry(panel)
-        .or_default()
-        .commands
-        .push(PanelCommand::Parent(None));
+    command(panel, PanelCommand::Parent(None), cx);
 }
 
 impl gpui::Global for PanelControl {}
+
+/// `panel` への操作を積む（フレームループが次の [`sync_panel`] でカーネルに反映する）。
+pub fn command(panel: PanelId, command: PanelCommand, cx: &mut App) {
+    commands(panel, [command], cx);
+}
+
+/// [`command`] の複数版（積んだ順に反映する）。
+pub fn commands(panel: PanelId, commands: impl IntoIterator<Item = PanelCommand>, cx: &mut App) {
+    let state = cx.default_global::<PanelControl>().panels.entry(panel);
+    state.or_default().commands.extend(commands);
+}
+
+/// `panel` を次のフレームで 1 回描き直させる（[`PanelState::redraw`]）。
+pub fn redraw(panel: PanelId, cx: &mut App) {
+    let state = cx.default_global::<PanelControl>().panels.entry(panel);
+    state.or_default().redraw = true;
+}
+
+/// 自分から変わったビュー（タイマー・非同期の結果）の `cx.notify()`。
+/// フレームループはビューの notify を知らないので、[`redraw`] も頼む。
+pub fn notify<V: 'static>(panel: PanelId, cx: &mut Context<V>) {
+    cx.notify();
+    redraw(panel, cx);
+}
+
+/// 全体の設定の変更を積む（フレームループが次の [`sync_settings`] で反映する）。
+pub fn set(setting: Setting, cx: &mut App) {
+    let control = cx.default_global::<PanelControl>();
+    control.setting_changes.push(setting);
+}
+
+/// 今の全体の設定（フレームループが書き戻したもの。無ければ既定）。
+pub fn settings(cx: &App) -> Settings {
+    let control = cx.try_global::<PanelControl>();
+    control.map(|c| c.settings).unwrap_or_default()
+}
 
 /// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す（`true` を返す）。
 /// 全体の設定（[`sync_settings`]）もここで反映するので、呼び出し側はパネルごとにこれだけを呼べばよい。
@@ -1336,13 +1361,7 @@ impl Render for NavBar {
             ),
             move |_, _, cx| match &minimize {
                 Some(minimize) => minimize(owner, cx),
-                None => cx
-                    .default_global::<PanelControl>()
-                    .panels
-                    .entry(owner)
-                    .or_default()
-                    .commands
-                    .push(PanelCommand::Close),
+                None => command(owner, PanelCommand::Close, cx),
             },
             leading,
             beside_close,
@@ -1880,14 +1899,7 @@ fn sync_profiler(
         }
         Some(p) if !profiling => {
             // 次のフレームの sync_panel が閉じてウィンドウを消す。
-            cx.update(|cx| {
-                cx.default_global::<PanelControl>()
-                    .panels
-                    .entry(p)
-                    .or_default()
-                    .commands
-                    .push(PanelCommand::Close)
-            });
+            cx.update(|cx| command(p, PanelCommand::Close, cx));
             *profiler_panel = None;
         }
         _ => {}
@@ -2102,12 +2114,7 @@ mod tests {
                 dockable: false,
                 minimize: None,
                 source_minimize: Some(std::rc::Rc::new(|id, cx| {
-                    cx.default_global::<PanelControl>()
-                        .panels
-                        .entry(id)
-                        .or_default()
-                        .commands
-                        .push(PanelCommand::Hide(true))
+                    command(id, PanelCommand::Hide(true), cx)
                 })),
                 open: design::animation::Transition::rest(1.0),
             }
@@ -2422,15 +2429,14 @@ mod tests {
             .add_panel("t", Pose::IDENTITY, Vec2::ONE, PANEL_PX)
             .unwrap();
         cx.update(|cx| {
-            cx.default_global::<PanelControl>()
-                .panels
-                .entry(panel)
-                .or_default()
-                .commands
-                .extend([
+            commands(
+                panel,
+                [
                     PanelCommand::Attach(Device::Hmd, Pose::IDENTITY),
                     PanelCommand::Lock(true),
-                ]);
+                ],
+                cx,
+            );
             sync_panel(&mut kernel, panel, cx);
             let ctl = &cx.global::<PanelControl>().panels[&panel];
             assert!(ctl.commands.is_empty());
@@ -2445,9 +2451,7 @@ mod tests {
                 }
             );
             assert_eq!(Theme::current(cx), Theme::DARK);
-            cx.default_global::<PanelControl>()
-                .setting_changes
-                .push(Setting::Theme(ThemeMode::Light));
+            set(Setting::Theme(ThemeMode::Light), cx);
             sync_panel(&mut kernel, panel, cx);
             assert_eq!(Theme::current(cx), Theme::LIGHT, "every screen follows");
             let color = kernel::PersonalColor {
@@ -2455,9 +2459,7 @@ mod tests {
                 chroma: 0.18,
                 hue: 95.0,
             };
-            cx.default_global::<PanelControl>()
-                .setting_changes
-                .push(Setting::PersonalColor(color));
+            set(Setting::PersonalColor(color), cx);
             sync_panel(&mut kernel, panel, cx);
             let yellow = design::Accent::new(0.87, 0.18, 95.0);
             let now = Theme::current(cx);
@@ -2467,12 +2469,11 @@ mod tests {
                 design::scale::BLACK,
                 "dark text on a light fill"
             );
-            cx.default_global::<PanelControl>()
-                .panels
-                .get_mut(&panel)
-                .unwrap()
-                .commands
-                .extend([PanelCommand::Detach, PanelCommand::Animated(false)]);
+            commands(
+                panel,
+                [PanelCommand::Detach, PanelCommand::Animated(false)],
+                cx,
+            );
             sync_panel(&mut kernel, panel, cx);
         });
         assert_eq!(kernel.panel(panel).attached, None);

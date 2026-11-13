@@ -6,10 +6,16 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
 
 env:
-  # sccache が rustc の出力をキャッシュする。インクリメンタルは sccache と相性が悪いので切る
-  RUSTC_WRAPPER: sccache
-  SCCACHE_GHA_ENABLED: "true"
+  # インクリメンタルは CI では使い回さない
   CARGO_INCREMENTAL: "0"
+  # audio の build.rs が Steam Audio の SDK（180MB）を落とさないように。テストは phonon を使わない
+  NYAW_SKIP_PHONON: "1"
+
+# sccache は使わない。依存は rust-cache の target で揃っていて、sccache に回るのは自前のクレートだけになる。
+# clippy はそれを clippy-driver 経由で呼ぶのでキャッシュできない（multiple input files）。テストは Rust 1.100 の
+# build-dir の新レイアウトで rustc に依存クレートごとの -L dependency= が付き、nyapp のコマンドラインが Windows の
+# 上限（32767 文字）を超える。cargo は引数ファイル（@file）に逃がすが、sccache はそれを展開して os error 206 で落ちる。
+# しかもブランチの run からも保存して 10GB の上限を食う
 
 jobs:
   fmt:
@@ -32,7 +38,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           # ブランチは main のキャッシュを読むだけ（ブランチごとに 1GB 超を保存すると 10GB の上限で main のが追い出される）
@@ -48,7 +53,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: Swatinem/rust-cache@v2
         with:
           # v0 はキャンセルされた run が途中までの target を保存し、以後キーが完全一致して上書きされず外部クレートを毎回ビルドしていた

@@ -29,6 +29,7 @@ pub(crate) fn flush(panel: PanelId, window: &Window, cx: &mut App) {
             sound: Sound::Wav(wav),
             at: Vec2::new(f32::from(at.x), f32::from(at.y)),
             pitch,
+            volume: 1.,
         }
     }));
 }

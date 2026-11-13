@@ -1,4 +1,4 @@
-//! 見た目の確認用: 設定画面の「外観」「時計」・色を作るダイアログ・wrist の文字盤の見本・セットアップウィザードの各画面を、テーマとパーソナルカラーを替えながら実 GPU で描き、
+//! 見た目の確認用: 設定画面の「外観」「時計」「キーボード」・色を作るダイアログ・wrist の文字盤の見本・セットアップウィザードの各画面を、テーマとパーソナルカラーを替えながら実 GPU で描き、
 //! `target/tmp/look-*.bmp` に書き出す。塗りが選んだ色そのままで描かれていることだけ検査する（細かい見た目は絵を目で見る）。
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
@@ -61,15 +61,17 @@ pub fn main() {
         // 設定画面のカテゴリ `category` を開いた窓。
         let settings = |category: usize, cx: &mut gpui::App| {
             open_panel_window(cx, testing::SETTINGS_PX, move |_, cx| {
-                cx.new(|_| {
+                let view = cx.new(|_| {
                     let mut settings = testing::Settings::new(0);
                     settings.category = category;
                     settings
-                })
+                });
+                // 本番と同じ載せ方（影の余白の内側にパネルが収まり、中身の幅も本番と同じになる）。
+                cx.new(|_| ui::PanelRoot::new(view.into()))
             })
             .expect("cannot open panel window")
         };
-        let (appearance, watch) = (settings(1, cx), settings(2, cx));
+        let (appearance, watch, keyboard) = (settings(1, cx), settings(2, cx), settings(6, cx));
         // 色を作るダイアログ（作りかけの色は、今のパーソナルカラーと違う緑）。
         let dialog = open_panel_window(cx, ui::prefs::COLOR_DIALOG_PX, |_, cx| {
             cx.new(|_| ui::prefs::ColorDialog::new(0, preset("green")))
@@ -86,6 +88,13 @@ pub fn main() {
                 1000,
             ),
             ("watch-".into(), watch.into(), testing::SETTINGS_PX.0, 100),
+            // キーボードの見本は配列を裏で読んでから出る（前の窓を描いている間に読み終わる）。塗りはスイッチとスライダー。
+            (
+                "keyboard-".into(),
+                keyboard.into(),
+                testing::SETTINGS_PX.0,
+                100,
+            ),
             (
                 "color-".into(),
                 dialog.into(),
@@ -117,7 +126,7 @@ pub fn main() {
         }
 
         cx.spawn(async move |cx| {
-            for (name, mode, color) in STATES {
+            for (i, (name, mode, color)) in STATES.into_iter().enumerate() {
                 let accent = preset(color);
                 cx.update(|cx| {
                     cx.set_global(mode);
@@ -134,6 +143,8 @@ pub fn main() {
                     } else {
                         kernel::Language::En
                     };
+                    // キーボードの見本は、状態ごとに種類も替えて全種類を描く。
+                    settings.keyboard = kernel::subsystems::keyboard::KeyboardType::ALL[i % 3];
                     settings.theme = match mode {
                         Mode::Dark => kernel::ThemeMode::Dark,
                         Mode::Light => kernel::ThemeMode::Light,
@@ -167,7 +178,7 @@ pub fn main() {
     });
 
     let shots = shots.take();
-    assert_eq!(shots.len(), (5 + setup::STEPS.len()) * STATES.len());
+    assert_eq!(shots.len(), (6 + setup::STEPS.len()) * STATES.len());
     for (name, accent, min, frame) in shots {
         save(&frame, &format!("target/tmp/look-{name}.bmp"));
         let [r, g, b, _] = accent.color().to_be_bytes();

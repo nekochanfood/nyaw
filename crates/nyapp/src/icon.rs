@@ -52,11 +52,7 @@ fn decode_image(image: &package::Image) -> Option<Arc<RenderImage>> {
         }
         package::Image::Svg(svg) => rasterize(svg)?,
     };
-    let mut bgra = rgba;
-    for p in bgra.as_chunks_mut::<4>().0 {
-        p.swap(0, 2);
-    }
-    Some(Arc::new(RenderImage::new(vec![image::Frame::new(bgra)])))
+    ui::render_image(rgba.width(), rgba.height(), rgba.into_raw())
 }
 
 /// SVG を [`SVG_SIDE`] の正方形に、縦横比を保って中央に描く（RGBA。乗算済みでない）。

@@ -6,4 +6,4 @@
 
 ## 主な公開 API
 
-`t(cx, key)`, `tf(cx, key, &[(name, &value)])`, `Lang::{En, Ja, ALL, native_name, current}`, `get`, `keys`, `missing`
+`t(cx, key)`, `tf(cx, key, &[(name, &value)])`, `date(cx, now)`（今の言語の日付。書式は `common.date`、曜日は `weekday.*`）, `Lang::{En, Ja, ALL, native_name, current}`, `get`, `keys`, `missing`

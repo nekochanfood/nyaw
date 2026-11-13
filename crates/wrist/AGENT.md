@@ -6,7 +6,7 @@
 
 ## 主な公開 API
 
-`wrist::spec(dominant, debug, settings)`, `Wrist`, `WATCH_OFFSET`, `wrist::preview(design, d, cx)`（選ぶ画面に出す文字盤の見本。画面どうしは直接依存しないので、`Wrist::new` が UI 層のグローバル `ui::prefs::FacePreview` に置き、選ぶ画面（`ui::prefs::watch_faces`）がそこから引く）
+`wrist::spec(dominant, debug, settings)`, `Wrist`, `watch_offset(hand)`（コントローラの tip から見た手首の時計の姿勢。本物の腕時計と同じく手首の甲の側・腕寄りで、表は手の甲の外、12 時は小指の側。左右は鏡写し。手首の関節の位置は `vr::GRIP_FROM_WRIST` から決まり、骨格だけの手も `HandSkeleton::grip` で同じ値が手首に来る）, `wrist::preview(design, d, cx)`（選ぶ画面に出す文字盤の見本。画面どうしは直接依存しないので、`Wrist::new` が UI 層のグローバル `ui::prefs::FacePreview` に置き、選ぶ画面（`ui::prefs::watch_faces`）がそこから引く）
 
 ## 文字盤とデザイン
 

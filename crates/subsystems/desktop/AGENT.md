@@ -6,7 +6,16 @@
 
 ## 主な公開 API
 
-`capabilities`（ホバー・最小化の対応）, `Sources`, `Stream`, `Source`（ウィンドウは `app` に実行ファイル名（Windows）、`icon` にアプリのアイコン。Windows はウィンドウのもの、無ければ実行ファイルのもの。画面の `name` はモニターの製品名（`QueryDisplayConfig`。同じ製品名が並べば番号を添える）、無ければ「Display 番号」）, `Icon`, `Cursor`（OS のカーソルの絵とホットスポット。`Stream::cursor`）, `Status`, `Touch`
+`capabilities`（ホバー・最小化の対応）, `Sources`, `Stream`, `Source`（ウィンドウは `app` に実行ファイル名（Windows）、`icon` にアプリのアイコン。Windows はウィンドウのもの、無ければ実行ファイルのもの。画面の `name` はモニターの製品名（`QueryDisplayConfig`。同じ製品名が並べば番号を添える）、無ければ「Display 番号」）, `Icon`, `Cursor`（OS のカーソルの絵とホットスポット。`Stream::cursor`）, `Status`, `Touch`, `InstalledApp`（`owns`）, `app_key`（下の「ウィンドウとアプリの突き合わせ」）
+
+## ウィンドウとアプリの突き合わせ
+
+「このウィンドウはどのアプリのものか」「消えたウィンドウの後継はどれか」は OS の知識（Windows の実行ファイル名と `.exe`）なので、画面ではなくここに置く。
+
+- `app_key(exe)`: 実行ファイル名を突き合わせるキー（小文字・`.exe` 抜き）。
+- `InstalledApp::owns(&Source)`: そのアプリのウィンドウか（実行ファイル名。分からないアプリはウィンドウの名前）。
+- `Source::replacement(&[Source])` / `Source::successor(known, current)`: 映していたウィンドウの後継（タイトルか、タイトルに入った実行ファイル名で追う）。
+- テスト: `tests::app_*` / `replacement_*` / `successor_*`。
 
 ## 画面・ウィンドウ配信
 
