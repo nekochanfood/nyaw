@@ -1,8 +1,10 @@
 name: Release
 
-# リリースを公開すると、インストーラをビルドしてそのリリースに添付する
-# （GITHUB_TOKEN で作ったリリースではワークフローが発火しないので、画面か自分の gh で作る）
-# main の push では同じジョブでビルドだけして依存のキャッシュを保存する。タグの run は main のキャッシュを読めるので、
+# インストーラをビルドしてリリースに添付する。リリースは次のどちらか:
+# - main で Cargo.toml の版を上げた push（版上げの PR をマージしたとき）。ビルドが通ったらこのジョブが v<版> のリリースを作る
+#   （GITHUB_TOKEN で作ったリリースではワークフローが発火しないので、作るところから添付まで同じジョブでする）
+# - 画面か自分の gh で公開したリリース（v2026.0.2-beta.1 のような名前付きの版はこちら）
+# それ以外の main の push はビルドだけして依存のキャッシュを保存する。タグの run は main のキャッシュを読めるので、
 # 依存をビルドし直さない（同じジョブなので rust-cache のキーも揃う）。リリース時にしか通らないビルドの失敗も先に分かる
 on:
   release:
@@ -18,8 +20,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      TAG: ${{ github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,11 +28,36 @@ jobs:
           # ビルド番号（HEAD までのコミット数。crates/updater/build.rs）を数えるので、履歴を全部取る
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+      # 出すタグを TAG に置く（出さない push では空）。公開されたリリースならそのタグ。
+      # main の push は版が上がったときだけ v<新しい版>。そのタグが別の commit に既にあれば版の上げ間違いなので止める
+      # （この commit を指していれば、やり直した run）。ノートは前の版のタグからの差分（PREV。無ければ GitHub に任せる）
+      - name: Decide the release
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$RELEASE_TAG" ]; then
+            echo "TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          ver() { sed -n 's/^version = "\([^"]*\)".*/\1/p'; }
+          new=$(ver < Cargo.toml)
+          old=$(git show "$BEFORE:Cargo.toml" | ver) || true
+          [ -n "$old" ] && [ "$new" != "$old" ] || exit 0
+          at=$(git ls-remote --tags origin "refs/tags/v$new" | cut -f1)
+          if [ -n "$at" ] && [ "$at" != "$GITHUB_SHA" ]; then
+            echo "::error::v$new is already tagged at $at"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/v$old" > /dev/null; then
+            echo "PREV=v$old" >> "$GITHUB_ENV"
+          fi
+          echo "TAG=v$new" >> "$GITHUB_ENV"
       # タグは v<CalVer>[-<名前>.<数>]（v2026.0.1-beta.1。名前は何でもよいが、インストーラーのファイル名に入るので使えない文字は除く）。
       # 本体と nyapps（別のワークスペース）の全パッケージがタグの版か、その -<名前>.<数> を除いた版でなければビルド前に止める。
       # 表示する版はタグのもの（NYAW_VERSION）
       - name: Check tag matches Cargo.toml versions
-        if: github.event_name == 'release'
+        if: env.TAG != ''
         run: |
           set -o pipefail
           re='^v?[0-9]{4}\.[0-9]+\.[0-9]+(-[^<>:"|?*/\[:space:]]+\.[0-9]+)?$'
@@ -65,13 +90,20 @@ jobs:
       - run: cargo fetch --locked
       - run: cargo build --release
       # ランナーに Inno Setup が無いイメージでも動くように
-      - if: github.event_name == 'release'
+      - if: env.TAG != ''
         run: command -v iscc || choco install innosetup -y --no-progress
-      - if: github.event_name == 'release'
+      - if: env.TAG != ''
         run: iscc installer/nyaw.iss
+      # 版上げの push は、インストーラーまでできてからリリースを作る（今までの版と同じくプレリリース。やり直しの run なら作らない）
+      - if: github.event_name == 'push' && env.TAG != ''
+        run: |
+          gh release view "$TAG" > /dev/null 2>&1 ||
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --prerelease --generate-notes ${PREV:+--notes-start-tag "$PREV"}
+        env:
+          GH_TOKEN: ${{ github.token }}
       # アプリの更新は新旧をビルド番号（HEAD までのコミット数。crates/updater/build.rs と同じ数え方）で比べる。
       # 名前にも画面にも出さず、リリースノートの末尾に見えない注釈で残す（足し直すときは前のものを消す）
-      - if: github.event_name == 'release'
+      - if: env.TAG != ''
         run: |
           build=$(git rev-list --count HEAD)
           gh release view "$TAG" --json body -q .body | sed '/^<!-- nyaw-build: [0-9]* -->$/d' > notes.md
@@ -79,7 +111,7 @@ jobs:
           gh release edit "$TAG" --notes-file notes.md
         env:
           GH_TOKEN: ${{ github.token }}
-      - if: github.event_name == 'release'
+      - if: env.TAG != ''
         run: gh release upload "$TAG" target/installer/*.exe --clobber
         env:
           GH_TOKEN: ${{ github.token }}
