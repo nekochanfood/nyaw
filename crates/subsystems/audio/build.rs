@@ -24,9 +24,13 @@ fn main() {
     {
         return;
     }
-    // OUT_DIR は target/<profile>/build/audio-<hash>/out。3 つ上が実行ファイルの置き場
+    // OUT_DIR は target/<profile>/build/audio-<hash>/out（Rust 1.100 からは build/audio/<hash>/out）。build の親が実行ファイルの置き場
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let bin = out.ancestors().nth(3).unwrap();
+    let bin = out
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == "build"))
+        .and_then(Path::parent)
+        .expect("OUT_DIR is under target/<profile>/build");
     if let Err(e) = place(bin) {
         println!(
             "cargo:warning=Steam Audio was not placed next to the executable ({e}); \
