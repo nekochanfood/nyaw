@@ -1179,6 +1179,7 @@ dependencies = [
  "logger",
  "nyapp",
  "ui",
+ "updater",
 ]
 
 [[package]]
@@ -5470,6 +5471,7 @@ dependencies = [
  "nyapp",
  "serde_json",
  "ui",
+ "updater",
 ]
 
 [[package]]
@@ -5483,6 +5485,7 @@ dependencies = [
  "sysinfo",
  "testing",
  "ui",
+ "updater",
  "wrist",
 ]
 
