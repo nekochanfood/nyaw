@@ -69,6 +69,16 @@ jobs:
         run: command -v iscc || choco install innosetup -y --no-progress
       - if: github.event_name == 'release'
         run: iscc installer/nyaw.iss
+      # アプリの更新は新旧をビルド番号（HEAD までのコミット数。crates/updater/build.rs と同じ数え方）で比べる。
+      # 名前にも画面にも出さず、リリースノートの末尾に見えない注釈で残す（足し直すときは前のものを消す）
+      - if: github.event_name == 'release'
+        run: |
+          build=$(git rev-list --count HEAD)
+          gh release view "$TAG" --json body -q .body | sed '/^<!-- nyaw-build: [0-9]* -->$/d' > notes.md
+          { echo; echo "<!-- nyaw-build: $build -->"; } >> notes.md
+          gh release edit "$TAG" --notes-file notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
       - if: github.event_name == 'release'
         run: gh release upload "$TAG" target/installer/*.exe --clobber
         env:

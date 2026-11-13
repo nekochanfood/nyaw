@@ -17,11 +17,8 @@ pub(crate) fn page(theme: &Theme, window: &mut Window, cx: &mut App) -> Vec<Div>
         components::keep_drawing(window, cx);
     }
     let low = rgba(theme.neutral_text_low);
-    let current = i18n::tf(
-        cx,
-        "update.version_build",
-        &[("version", &updater::VERSION), ("build", &updater::BUILD)],
-    );
+    // ビルド番号は新旧を比べるためだけのもので、画面には出さない（版だけ）。
+    let current = updater::VERSION;
     // 確かめた結果。失敗は、新しいリリースがあれば入れるときのもの（下に出す）、無ければ確かめたときのもの。
     let (status, failed) = match (&step, &latest, &error) {
         (Step::Checking, ..) => (i18n::t(cx, "update.checking"), false),
@@ -107,11 +104,7 @@ pub(crate) fn page(theme: &Theme, window: &mut Window, cx: &mut App) -> Vec<Div>
         .as_deref()
         .and_then(|d| d.get(..10))
         .unwrap_or_default();
-    let meta = i18n::tf(
-        cx,
-        "update.release_meta",
-        &[("build", &release.build), ("date", &date)],
-    );
+    let meta = i18n::tf(cx, "update.published", &[("date", &date)]);
     let page = release.page.clone();
     let card = components::card(theme)
         .flex()

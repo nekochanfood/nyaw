@@ -15,11 +15,6 @@
     #define AppVersion Copy(AppVersion, RPos("@", AppVersion) + 1)
   #endif
 #endif
-; ビルド番号 = HEAD までのコミット数（crates/updater/build.rs と同じ数え方）。アプリの更新が新旧をこれで比べるので名前に入れる
-#define Build ExecAndGetFirstLine("cmd.exe", "/c git rev-list --count HEAD", SourcePath + "..")
-#if Build == ""
-  #error git rev-list --count HEAD が失敗した
-#endif
 
 [Setup]
 ; 変えるとアップデートが別アプリ扱いになる
@@ -36,8 +31,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\nyaw.exe
 SetupIconFile=..\assets\icons\nyaw-light.ico
 OutputDir=..\target\installer
-; アプリの更新はこの名前から版とビルド番号を読む（crates/updater の parse_installer_name）
-OutputBaseFilename=nyaw-{#AppVersion}-build{#Build}-setup
+; アプリの更新はリリースに付いたこの名前のものを入れる（crates/updater の is_installer）
+OutputBaseFilename=nyaw-{#AppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
 

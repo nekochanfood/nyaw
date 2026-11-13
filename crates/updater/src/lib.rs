@@ -51,13 +51,19 @@ pub struct Installer {
     pub sha256: Option<String>,
 }
 
-/// インストーラーの名前 `nyaw-<版>-build<ビルド番号>-setup.exe`（`installer/nyaw.iss`）からビルド番号を読む。
-/// 版はタグから取る（版の名前は何でもよく、GitHub はアセットの名前の記号を置き換えることがある）。
-pub fn installer_build(name: &str) -> Option<u32> {
-    let rest = name.strip_prefix("nyaw-")?.strip_suffix("-setup.exe")?;
-    let (version, build) = rest.rsplit_once("-build")?;
-    let build = build.parse().ok()?;
-    (!version.is_empty() && !name.contains(['/', '\\'])).then_some(build)
+/// リリースのインストーラーか（`nyaw-<版>-setup.exe`。`installer/nyaw.iss`）。区切りを含む名前は落とす先の外に出るので除く。
+pub fn is_installer(name: &str) -> bool {
+    name.len() > "nyaw--setup.exe".len()
+        && name.starts_with("nyaw-")
+        && name.ends_with("-setup.exe")
+        && !name.contains(['/', '\\'])
+}
+
+/// リリースノートの末尾の見えない注釈 `<!-- nyaw-build: <番号> -->`（リリースのワークフローが足す）からビルド番号を読む。
+/// ファイル名には出さない。GitHub も nyaw の Markdown も HTML のコメントは描かない。
+pub fn notes_build(notes: &str) -> Option<u32> {
+    let (_, rest) = notes.rsplit_once("<!-- nyaw-build:")?;
+    rest.split_once("-->")?.0.trim().parse().ok()
 }
 
 #[derive(Deserialize)]
@@ -81,7 +87,7 @@ struct ApiAsset {
     digest: Option<String>,
 }
 
-/// GitHub のリリースの一覧（API の JSON）を読む。下書きと、ビルド番号の読めるインストーラーが無いものは除く。
+/// GitHub のリリースの一覧（API の JSON）を読む。下書きと、インストーラーかビルド番号の無いものは除く。
 pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
     let list: Vec<ApiRelease> =
         serde_json::from_slice(json).map_err(|e| format!("cannot read the release list: {e}"))?;
@@ -89,10 +95,8 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
         .into_iter()
         .filter(|r| !r.draft)
         .filter_map(|r| {
-            let (asset, build) = r
-                .assets
-                .iter()
-                .find_map(|a| installer_build(&a.name).map(|b| (a, b)))?;
+            let build = notes_build(r.body.as_deref()?)?;
+            let asset = r.assets.iter().find(|a| is_installer(&a.name))?;
             Some(Release {
                 version: r
                     .tag_name
@@ -161,7 +165,7 @@ pub fn check(url: &str, build: u32) -> Result<Option<Release>, String> {
 /// 違っていれば消してエラー。ネットワークとファイルを使うので別スレッドで呼ぶ。
 pub fn download(release: &Release, dir: &Path, progress: &AtomicU64) -> Result<PathBuf, String> {
     let installer = &release.installer;
-    if installer_build(&installer.name).is_none() || installer.size > MAX_INSTALLER {
+    if !is_installer(&installer.name) || installer.size > MAX_INSTALLER {
         return Err(format!("refusing to download {}", installer.name));
     }
     let mut response = agent(DOWNLOAD_TIMEOUT)
