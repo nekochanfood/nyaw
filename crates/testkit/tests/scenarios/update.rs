@@ -165,3 +165,32 @@ fn opening_from_the_dashboard_button_lands_on_updates(cx: &mut TestAppContext) {
     kit.click("settings-about").step();
     assert_eq!(kit.read(|v| v.category), UPDATE + 1);
 }
+
+/// Against the real GitHub, run by hand: pretending to be build `NYAW_UPDATE_FROM`, the Settings screen finds the newest
+/// release, and the update button downloads its installer and really starts it. When this test exits, the installer
+/// replaces the user's nyaw without a wizard or UAC and starts it again with `--novr`.
+/// `NYAW_UPDATE_FROM=<build> cargo test -p testkit --test scenarios -- update::real --ignored --nocapture`
+#[gpui::test]
+#[ignore = "talks to GitHub and installs nyaw for real"]
+fn real_github_release_installs_on_request(cx: &mut TestAppContext) {
+    let from: u32 = std::env::var("NYAW_UPDATE_FROM")
+        .ok()
+        .and_then(|b| b.parse().ok())
+        .expect("NYAW_UPDATE_FROM=<build to update from>");
+    let mut kit = NoVrKit::new(cx, move |_, cx| {
+        cx.set_global(updater::Updater {
+            build: from,
+            launch: |path| updater::start_installer(path, ["--novr".to_owned()]),
+            ..Default::default()
+        });
+        Settings::new(0)
+    });
+    kit.click("settings-update")
+        .click("update-check")
+        .step()
+        .step();
+    kit.bounds("update-version");
+    kit.bounds("update-notes-0");
+    kit.click("update-install").step().step();
+    kit.bounds("update-installing");
+}
