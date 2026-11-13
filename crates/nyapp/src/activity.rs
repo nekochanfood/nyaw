@@ -12,7 +12,6 @@ use gpui::{App, Task};
 use kernel::PanelCommand;
 use kernel::audio::Sound;
 use nyapp_sdk::Activity;
-use ui::PanelControl;
 
 use crate::{Installed, Permission, system};
 
@@ -172,12 +171,11 @@ fn finish(id: &str, ends: i64, cx: &mut App) {
         l.finished = true;
     }
     if audible && let Some(wrist) = crate::panel_of(system::WRIST.id, cx) {
-        cx.default_global::<PanelControl>()
-            .panels
-            .entry(wrist)
-            .or_default()
-            .commands
-            .push(PanelCommand::Play(Sound::Wav(crate::view::beep()), false));
+        ui::command(
+            wrist,
+            PanelCommand::Play(Sound::Wav(crate::view::beep()), false),
+            cx,
+        );
     }
 }
 
@@ -202,6 +200,7 @@ fn clock(ms: i64) -> String {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use ui::PanelControl;
 
     fn app(permissions: Vec<Permission>) -> Installed {
         Installed {

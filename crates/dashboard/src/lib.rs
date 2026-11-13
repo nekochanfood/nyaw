@@ -27,7 +27,7 @@ use kernel::subsystems::media;
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, Setting};
 use ui::mirror::{MirrorState, mirror_screen};
-use ui::{PanelControl, PanelSpec};
+use ui::{PanelControl, PanelSpec, commands};
 
 /// バーを手前に傾ける角度（下から見上げずに読めるよう、少し上を向かせる）。はめた画面はこの分だけ起こして垂直に立てる。
 const BAR_TILT: f32 = std::f32::consts::FRAC_PI_6;
@@ -114,17 +114,16 @@ pub fn spec(
     PanelSpec::root(Pose::IDENTITY, move |id, _, cx: &mut Context<Dashboard>| {
         nyapp::opened(nyapp::system::DASHBOARD.id, id, cx);
         opened(id, cx);
-        let ctl = cx.default_global::<PanelControl>();
-        ctl.panels.entry(id).or_default().commands.extend([
-            if hidden {
-                PanelCommand::Hide(true)
-            } else {
-                PanelCommand::Play(Sound::Wav(OPEN_SOUND), false)
-            },
-            PanelCommand::CloseSound(Sound::Wav(CLOSE_SOUND)),
-        ]);
+        // 隠して開くときは開く音を鳴らさない。
+        let entry = if hidden {
+            PanelCommand::Hide(true)
+        } else {
+            PanelCommand::Play(Sound::Wav(OPEN_SOUND), false)
+        };
+        let close_sound = PanelCommand::CloseSound(Sound::Wav(CLOSE_SOUND));
+        commands(id, [entry, close_sound], cx);
         // バーの上を、画面をはめる場所にする。
-        ctl.dock = Some((id, BAR_TILT));
+        cx.default_global::<PanelControl>().dock = Some((id, BAR_TILT));
         Dashboard::new(id, settings, debug, cx)
     })
     .sized(BAR_M, BAR_PX)
@@ -291,7 +290,7 @@ impl Dashboard {
             .without_resize();
             cx.default_global::<PanelControl>().spawns.push(spec);
         }
-        redraw(self.panel, cx);
+        ui::notify(self.panel, cx);
     }
 
     /// 配信 `panel` を開いた（はめる・隠すのは開く側。`resident` なら常駐のもので、隠して開いた）。バーにボタンが増える。
@@ -311,7 +310,7 @@ impl Dashboard {
             icon,
             stashed: resident,
         });
-        redraw(self.panel, cx);
+        ui::notify(self.panel, cx);
     }
 
     /// 画面（モニター）をすべて、常駐の配信として隠して開いておく（バーのボタンで出せる。閉じずにしまう）。
@@ -347,7 +346,7 @@ impl Dashboard {
     /// 常駐の配信 `id` をしまう（ナビゲーションバーのしまうボタン）。はまっていても独立させていても、隠してバーに残す。
     fn minimize(&mut self, id: PanelId, cx: &mut Context<Self>) {
         self.stash(id, cx);
-        redraw(self.panel, cx);
+        ui::notify(self.panel, cx);
     }
 
     /// 配信 `id` を、閉じずに隠して外す。配信でなければ何もしない。
@@ -399,7 +398,7 @@ impl Dashboard {
                 cx,
             );
         }
-        redraw(self.panel, cx);
+        ui::notify(self.panel, cx);
     }
 
     /// 配信 `id` がダッシュボードの配信で、はまっていなければはめる（独立させたものは動かさない）。
@@ -451,7 +450,7 @@ impl Dashboard {
                 .spawns
                 .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
         }
-        redraw(self.panel, cx);
+        ui::notify(self.panel, cx);
     }
 
     /// ニャプリ `app` をはめる（はまっていた画面は閉じ、配信は隠す）。もう開いていれば、そのパネルをはめる。
@@ -470,7 +469,7 @@ impl Dashboard {
                 .spawns
                 .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
         }
-        redraw(self.panel, cx);
+        ui::notify(self.panel, cx);
     }
 
     /// 進行中の作業の知らせを押した: 出したニャプリを開く。終わったカウントダウンは知らせを片付ける。
@@ -511,7 +510,7 @@ impl Dashboard {
         };
         nyapp::opened(system.id, panel, cx);
         self.shown = Some((page, panel));
-        redraw(self.panel, cx);
+        ui::notify(self.panel, cx);
     }
 }
 
@@ -1116,7 +1115,7 @@ impl Screen {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
                 let tick = |s: &mut Self, cx: &mut Context<Self>| {
                     if s.page != Page::Launcher || s.pending.is_some() {
-                        redraw(panel, cx);
+                        ui::notify(panel, cx);
                     }
                 };
                 if this.update(cx, tick).is_err() {
@@ -1166,7 +1165,7 @@ impl Screen {
                         Err(e) => s.error = Some(e),
                     }
                     s.apps_pending = false;
-                    redraw(s.panel, cx);
+                    ui::notify(s.panel, cx);
                 });
             })
             .detach();
@@ -1185,7 +1184,7 @@ impl Screen {
                 .await;
             let _ = this.update(cx, |s, cx| {
                 (s.nyapps, s.nyapps_pending) = (found, false);
-                redraw(s.panel, cx);
+                ui::notify(s.panel, cx);
             });
         })
         .detach();
@@ -1265,7 +1264,7 @@ impl Screen {
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.update_nyapps(cx);
-                            redraw(this.panel, cx);
+                            ui::notify(this.panel, cx);
                         })),
                     )
                     .child(
@@ -1278,7 +1277,7 @@ impl Screen {
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.removing = !this.removing;
-                            redraw(this.panel, cx);
+                            ui::notify(this.panel, cx);
                         })),
                     ),
             )
@@ -1327,7 +1326,7 @@ impl Screen {
                 let app = app.clone();
                 let _ = this.dashboard.update(cx, |d, cx| d.open_nyapp(app, cx));
             }
-            redraw(this.panel, cx);
+            ui::notify(this.panel, cx);
         }))
         .into_any_element()
     }
@@ -1486,7 +1485,7 @@ impl Screen {
                                 b.on_click(cx.listener(|this, _, _, cx| {
                                     this.open_app = true;
                                     this.refresh();
-                                    redraw(this.panel, cx);
+                                    ui::notify(this.panel, cx);
                                 }))
                             }),
                     ),
@@ -1961,7 +1960,7 @@ impl Screen {
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.refresh();
-                        redraw(this.panel, cx);
+                        ui::notify(this.panel, cx);
                     })),
                 )
                 .into_any_element(),
@@ -2032,7 +2031,7 @@ impl Screen {
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.open_window(source.clone(), image.clone(), cx);
-                    redraw(this.panel, cx);
+                    ui::notify(this.panel, cx);
                 }))
                 .into_any_element()
             }
@@ -2049,7 +2048,7 @@ impl Screen {
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.launch_app(app.clone(), cx);
-                    redraw(this.panel, cx);
+                    ui::notify(this.panel, cx);
                 }))
                 .into_any_element()
             }
@@ -2090,7 +2089,7 @@ impl Screen {
                         None => return,
                     },
                 }
-                redraw(this.panel, cx);
+                ui::notify(this.panel, cx);
             }))
             .child(design::icon(&icons::MAGNIFYING_GLASS).size(px(font_size::LG)))
             .child(
@@ -2116,7 +2115,7 @@ impl Screen {
                     )
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.query.clear();
-                        redraw(this.panel, cx);
+                        ui::notify(this.panel, cx);
                     })),
                 )
             })
@@ -2230,11 +2229,7 @@ impl Screen {
                                 "{} · {theme_label}",
                                 i18n::t(cx, "dashboard.theme")
                             )))
-                            .on_click(move |_, _, cx| {
-                                cx.default_global::<PanelControl>()
-                                    .setting_changes
-                                    .push(Setting::Theme(mode.toggled()))
-                            }),
+                            .on_click(move |_, _, cx| ui::set(Setting::Theme(mode.toggled()), cx)),
                     ),
                 )
                 .child(section(theme, i18n::t(cx, "dashboard.batteries")))
@@ -2333,7 +2328,7 @@ impl Mirror {
             Some(Status::Minimized) => {
                 self.ending = true;
                 self.watch_generation += 1;
-                redraw(self.panel, cx);
+                ui::notify(self.panel, cx);
             }
             Some(Status::Closed | Status::Failed(_))
                 if self
@@ -2342,7 +2337,7 @@ impl Mirror {
                     .is_some_and(|s| s.kind == SourceKind::Window) =>
             {
                 self.ending = true;
-                redraw(self.panel, cx);
+                ui::notify(self.panel, cx);
                 self.watch_successor(cx);
             }
             _ => {}
@@ -2359,7 +2354,7 @@ impl Mirror {
             cx.set_global(Mirrors(mirrors));
         }
         commands(self.panel, [stream(source, cx)], cx);
-        redraw(self.panel, cx);
+        ui::notify(self.panel, cx);
         self.watch_successor(cx);
     }
 
@@ -2463,7 +2458,7 @@ impl Mirror {
                         if let Some(w) = &mut m.waiting {
                             w.gave_up = true;
                         }
-                        redraw(m.panel, cx);
+                        ui::notify(m.panel, cx);
                         true
                     }
                     None => false,
@@ -2481,7 +2476,7 @@ impl Mirror {
         let icon = self.waiting.take().and_then(|w| w.icon);
         self.source = Some(source.clone());
         start_mirror(self.panel, source, icon, self.dashboard.clone(), false, cx);
-        redraw(self.panel, cx);
+        ui::notify(self.panel, cx);
         self.watch_successor(cx);
     }
 }
@@ -2954,22 +2949,12 @@ fn tick_every_second<V: 'static>(panel: PanelId, cx: &mut Context<V>) {
     cx.spawn(async move |this, cx| {
         loop {
             cx.background_executor().timer(Duration::from_secs(1)).await;
-            if this.update(cx, |_, cx| redraw(panel, cx)).is_err() {
+            if this.update(cx, |_, cx| ui::notify(panel, cx)).is_err() {
                 return;
             }
         }
     })
     .detach();
-}
-
-/// 描き直しを頼む（フレームループはビューの notify を知らないので `redraw` で頼む）。
-fn redraw<V: 'static>(panel: PanelId, cx: &mut Context<V>) {
-    cx.notify();
-    cx.default_global::<PanelControl>()
-        .panels
-        .entry(panel)
-        .or_default()
-        .redraw = true;
 }
 
 fn close(panel: PanelId, cx: &mut App) {
@@ -2978,20 +2963,7 @@ fn close(panel: PanelId, cx: &mut App) {
 
 /// `source` の配信を始める操作。FPS は全体の設定（`mirror_frame_rate`）。
 fn stream(source: Source, cx: &mut App) -> PanelCommand {
-    let frame_rate = cx
-        .default_global::<PanelControl>()
-        .settings
-        .mirror_frame_rate;
-    PanelCommand::Stream(Some(source), frame_rate)
-}
-
-fn commands(panel: PanelId, commands: impl IntoIterator<Item = PanelCommand>, cx: &mut App) {
-    cx.default_global::<PanelControl>()
-        .panels
-        .entry(panel)
-        .or_default()
-        .commands
-        .extend(commands);
+    PanelCommand::Stream(Some(source), ui::settings(cx).mirror_frame_rate)
 }
 
 #[cfg(test)]
@@ -3624,13 +3596,7 @@ mod tests {
                 DEFAULT_FRAME_RATE
             )]
         );
-        cx.update(|_, cx| {
-            cx.default_global::<PanelControl>()
-                .panels
-                .entry(4)
-                .or_default()
-                .redraw = true
-        });
+        cx.update(|_, cx| ui::redraw(4, cx));
         cx.run_until_parked();
         assert!(take_commands(cx, 4).is_empty());
     }
@@ -3985,7 +3951,7 @@ mod tests {
                 icon: Default::default(),
             }];
             l.nyapps_pending = false;
-            redraw(2, cx);
+            ui::notify(2, cx);
         });
         cx.run_until_parked();
         if !nyapp::NORMAL_NYAPPS_ENABLED {

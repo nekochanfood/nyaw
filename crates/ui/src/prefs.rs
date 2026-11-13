@@ -9,12 +9,12 @@ use gpui::{
     SharedString, Window, div, prelude::*, px, rgba,
 };
 use kernel::{
-    PanelCommand, PanelId, PersonalColor, SCALE_STEP, Setting, Settings, TEXT_SCALE_MAX,
-    TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, Vec2, WristDesign, WristFace,
+    PanelCommand, PanelId, PersonalColor, SCALE_STEP, Setting, TEXT_SCALE_MAX, TEXT_SCALE_MIN,
+    ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, Vec2, WristDesign, WristFace,
 };
 
 use crate::keyboard::KeyboardView;
-use crate::{PanelControl, PanelSpec};
+use crate::{PanelControl, PanelSpec, settings};
 
 /// wrist の文字盤の見本（デザインと直径 px）を描く関数。画面どうしは直接依存しないので、文字盤を持つ wrist が GPUI の
 /// グローバルに置き、選ぶ画面（[`watch_faces`]）が引く。置かれていなければ、見本は地の丸だけになる。
@@ -22,16 +22,6 @@ use crate::{PanelControl, PanelSpec};
 pub struct FacePreview(pub fn(WristDesign, f32, &App) -> Div);
 
 impl gpui::Global for FacePreview {}
-
-fn settings(cx: &App) -> Settings {
-    let control = cx.try_global::<PanelControl>();
-    control.map(|c| c.settings).unwrap_or_default()
-}
-
-fn push(setting: Setting, cx: &mut App) {
-    let control = cx.default_global::<PanelControl>();
-    control.setting_changes.push(setting);
-}
 
 fn accent(c: PersonalColor) -> Accent {
     Accent::new(c.lightness, c.chroma, c.hue)
@@ -80,7 +70,7 @@ pub fn appearance(
         let close = open(false);
         components::select_option(&theme, id, label, mode == now.theme).on_click(
             move |_, window, cx| {
-                push(Setting::Theme(mode), cx);
+                crate::set(Setting::Theme(mode), cx);
                 close(window, cx)
             },
         )
@@ -107,7 +97,7 @@ pub fn appearance(
         current,
         &Accent::history(current, custom),
         |name| i18n::t(cx, &format!("color.{name}")),
-        |a, _, cx| push(Setting::PersonalColor(personal(a)), cx),
+        |a, _, cx| crate::set(Setting::PersonalColor(personal(a)), cx),
         move |_, _, cx| {
             let dialog = color_dialog(panel, current);
             cx.default_global::<PanelControl>().spawns.push(dialog);
@@ -195,7 +185,7 @@ impl Render for ColorDialog {
             Variant::Primary,
         )
         .on_click(move |_, _, cx| {
-            push(Setting::CustomColor(personal(draft)), cx);
+            crate::set(Setting::CustomColor(personal(draft)), cx);
             close(cx)
         });
         let cancel = components::button(
@@ -319,7 +309,7 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
             move |at, _, cx| {
                 let to = scale_at(at, min, max);
                 if !same_scale(to, text_scale) {
-                    push(Setting::TextScale(to), cx)
+                    crate::set(Setting::TextScale(to), cx)
                 }
             },
         )
@@ -357,7 +347,7 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
                 })
             });
             if let Some(to) = to {
-                push(Setting::UiScale(to), cx)
+                crate::set(Setting::UiScale(to), cx)
             }
         })
         .length(SCALE_SLIDER),
@@ -370,7 +360,7 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
         i18n::t(cx, "accessibility.bold_text"),
         now.bold_text,
     )
-    .on_click(move |_, _, cx| push(Setting::BoldText(!now.bold_text), cx));
+    .on_click(move |_, _, cx| crate::set(Setting::BoldText(!now.bold_text), cx));
 
     div()
         .flex()
@@ -593,7 +583,7 @@ pub fn watch_faces(
             i18n::t(cx, "watch.set"),
             Variant::Primary,
         )
-        .on_click(move |_, _, cx| push(Setting::WristDesign(shown), cx))
+        .on_click(move |_, _, cx| crate::set(Setting::WristDesign(shown), cx))
     };
     // 名前と種類。幅は見本と同じに決めておき、名前の長さで左右のボタンが動かないようにする。
     let name = div()

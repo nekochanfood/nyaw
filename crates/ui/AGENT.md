@@ -6,7 +6,15 @@
 
 ## 主な公開 API
 
-`run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelControl::batteries` / `PanelControl::media`（毎フレーム書く）, `PanelSpec::{new, spawn, child, popover, offset, typing, docked_to, dockable, fit_height, without_resize, pointer_mode, titled, titled_text, without_nav_bar, with_os_keyboard, with_veil, nav_bar_spec}`, 画面をはめる場所 `PanelControl::dock`（ダッシュボードが開くと置く）と `dock` / `undock` / `docked`（はめると持ち主に `Parent { docked, slot }` で固定し、はまっていた画面は閉じる。`dockable` のパネルはナビゲーションバーの左端に外す `nav-undock` / 戻す `nav-dock` を出す。仮想キーボードは、はめた画面へ打つものも含め、対象パネルの下ではなく開いた瞬間の頭の前の打ちやすい位置に出す。頭（と手）から決めるのは高さと仰ぐ角度だけで、左右の向きと位置は呼び出し元に合わせる（呼び出し元の面と同じ向きで、ホームポジション（F と J の間）を呼び出し元の中心の左右に合わせる。頭の回転に付いて行かない）。立っている間の高さはコントローラ（両手なら間）の少し上（手を動かさず手首を起こすだけで指せる。上端は目線より下、下は見える所まで）、面は目を重く見つつ手の方へも少し向ける（コントローラが無ければ目と手の間へ）。寝ている間は手に合わせず、視界に入る頭の正面の下寄り（正面のパネルに重ならない所）に出して目へ向ける（傾きに応じて滑らかに移る）。どちらでも、頭から見て呼び出し元（ナビゲーションバー・はめた先のダッシュボードのバーも）の下端より少し下に見えるよう、必要な分だけ下げる（呼び出し元に重ねない）。掴むとホームポジションを中心に動かして頭へ向ける（`PanelSpec::grab_anchor`。大きさを変えると基準も付いて動く）。親子関係は作らず、呼び出し元を覚えておき、呼び出し元が閉じる・隠れるとキーボードも閉じる（`PanelSpec::typing`、`keyboard::panel_closed` / `panel_hidden`））（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`, `sync_settings`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelCommand`, `PanelStatus`, `MAX_PANELS`
+`run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelControl::batteries` / `PanelControl::media`（毎フレーム書く）, `PanelSpec::{new, spawn, child, popover, offset, typing, docked_to, dockable, fit_height, without_resize, pointer_mode, titled, titled_text, without_nav_bar, with_os_keyboard, with_veil, nav_bar_spec}`, 画面をはめる場所 `PanelControl::dock`（ダッシュボードが開くと置く）と `dock` / `undock` / `docked`（はめると持ち主に `Parent { docked, slot }` で固定し、はまっていた画面は閉じる。`dockable` のパネルはナビゲーションバーの左端に外す `nav-undock` / 戻す `nav-dock` を出す。仮想キーボードは、はめた画面へ打つものも含め、対象パネルの下ではなく開いた瞬間の頭の前の打ちやすい位置に出す。頭（と手）から決めるのは高さと仰ぐ角度だけで、左右の向きと位置は呼び出し元に合わせる（呼び出し元の面と同じ向きで、ホームポジション（F と J の間）を呼び出し元の中心の左右に合わせる。頭の回転に付いて行かない）。立っている間の高さはコントローラ（両手なら間）の少し上（手を動かさず手首を起こすだけで指せる。上端は目線より下、下は見える所まで）、面は目を重く見つつ手の方へも少し向ける（コントローラが無ければ目と手の間へ）。寝ている間は手に合わせず、視界に入る頭の正面の下寄り（正面のパネルに重ならない所）に出して目へ向ける（傾きに応じて滑らかに移る）。どちらでも、頭から見て呼び出し元（ナビゲーションバー・はめた先のダッシュボードのバーも）の下端より少し下に見えるよう、必要な分だけ下げる（呼び出し元に重ねない）。掴むとホームポジションを中心に動かして頭へ向ける（`PanelSpec::grab_anchor`。大きさを変えると基準も付いて動く）。親子関係は作らず、呼び出し元を覚えておき、呼び出し元が閉じる・隠れるとキーボードも閉じる（`PanelSpec::typing`、`keyboard::panel_closed` / `panel_hidden`））（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`, `sync_settings`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelCommand`, `PanelStatus`, `MAX_PANELS`, 画面からの依頼 `command` / `commands` / `set` / `settings` / `notify` / `redraw`（下の「画面からの依頼」）
+
+## 画面からの依頼
+
+画面は `PanelControl` の中身を自分で組み立てず、次の入口で頼む（フレームループが次のフレームで反映する）。画面ごとに同じ補助関数を書かない。
+
+- `ui::command(panel, PanelCommand, cx)` / `ui::commands(panel, [..], cx)`: パネルへの操作（積んだ順に反映）。
+- `ui::set(Setting, cx)` / `ui::settings(cx)`: 全体の設定の変更と、今の設定（無ければ既定）。
+- `ui::notify(panel, cx)`: タイマーや非同期の結果で自分から変わったビューの `cx.notify()`。フレームループはビューの notify を知らないので、素の `cx.notify()` だけでは次の推測の描き直し（最長 1 秒）まで絵が変わらない。ビューの外（`&mut App`）からは `ui::redraw(panel, cx)`。
 
 ## 設定の部品（`ui::prefs`）
 

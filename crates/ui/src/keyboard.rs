@@ -83,8 +83,7 @@ fn grab_anchor(resolution: (u32, u32), width_m: f32) -> kernel::Pose {
 
 /// 全体の設定のキーボードの種類（設定が無ければ既定）。
 fn keyboard_kind(cx: &App) -> KeyboardType {
-    cx.try_global::<crate::PanelControl>()
-        .map_or_else(KeyboardType::default, |c| c.settings.keyboard)
+    crate::settings(cx).keyboard
 }
 
 #[derive(Clone, Debug)]
@@ -205,11 +204,7 @@ pub fn hand_over_os_keyboard(from: PanelId, to: PanelId, cx: &mut App) -> bool {
     redraw_nav_bar(from, cx);
     redraw_nav_bar(to, cx);
     if let Some(keyboard) = keyboard {
-        cx.default_global::<crate::PanelControl>()
-            .panels
-            .entry(keyboard)
-            .or_default()
-            .redraw = true;
+        crate::redraw(keyboard, cx);
     }
     true
 }
@@ -219,15 +214,14 @@ fn register_os_input(panel: PanelId, cx: &mut App) {
     register_input(
         panel,
         move |input, cx| {
-            cx.default_global::<crate::PanelControl>()
-                .panels
-                .entry(panel)
-                .or_default()
-                .commands
-                .push(PanelCommand::TypeToOs {
+            crate::command(
+                panel,
+                PanelCommand::TypeToOs {
                     stroke: input.stroke,
                     layout: input.layout,
-                });
+                },
+                cx,
+            );
             Ok(())
         },
         cx,
@@ -254,11 +248,7 @@ pub fn send_key(target: PanelId, input: KeyboardInput, cx: &mut App) {
             Err("Input panel is unavailable".into())
         };
         cx.default_global::<InputRouting>().error = result.err();
-        cx.default_global::<crate::PanelControl>()
-            .panels
-            .entry(target)
-            .or_default()
-            .redraw = true;
+        crate::redraw(target, cx);
     });
 }
 
@@ -266,7 +256,7 @@ pub fn send_key(target: PanelId, input: KeyboardInput, cx: &mut App) {
 fn redraw_nav_bar(target: PanelId, cx: &mut App) {
     let ctl = cx.default_global::<crate::PanelControl>();
     if let Some(&bar) = ctl.nav_bars.get(&target) {
-        ctl.panels.entry(bar).or_default().redraw = true;
+        crate::redraw(bar, cx);
     }
 }
 
@@ -278,12 +268,7 @@ pub fn dismiss_keyboard(cx: &mut App) {
     if let Some(session) = session
         && let Some(panel) = session.panel
     {
-        cx.default_global::<crate::PanelControl>()
-            .panels
-            .entry(panel)
-            .or_default()
-            .commands
-            .push(PanelCommand::Close);
+        crate::command(panel, PanelCommand::Close, cx);
     }
 }
 
@@ -315,12 +300,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         if let Some(session) = current.filter(|s| s.generation == generation) {
             session.panel = Some(panel);
         } else {
-            cx.default_global::<crate::PanelControl>()
-                .panels
-                .entry(panel)
-                .or_default()
-                .commands
-                .push(PanelCommand::Close);
+            crate::command(panel, PanelCommand::Close, cx);
         }
         KeyboardPanel {
             panel,
@@ -438,15 +418,14 @@ impl Render for KeyboardPanel {
         if kind != self.kind {
             let to = panel_resolution(kind);
             self.kind = kind;
-            cx.default_global::<crate::PanelControl>()
-                .panels
-                .entry(panel)
-                .or_default()
-                .commands
-                .extend([
+            crate::commands(
+                panel,
+                [
                     PanelCommand::Resize(to.0, to.1),
                     PanelCommand::GrabAnchor(Some(grab_anchor(to, to.0 as f32 / self.px_per_m))),
-                ]);
+                ],
+                cx,
+            );
         }
         let close = design::components::icon_button(
             &theme,
@@ -458,12 +437,7 @@ impl Render for KeyboardPanel {
         .w(gpui::px(ACTION_SIZE))
         .h(gpui::px(ACTION_SIZE))
         .on_click(move |_, _, cx| {
-            cx.default_global::<crate::PanelControl>()
-                .panels
-                .entry(panel)
-                .or_default()
-                .commands
-                .push(PanelCommand::Close);
+            crate::command(panel, PanelCommand::Close, cx);
         });
         let actions = action_area(self.kind).child(close);
         let card = design::components::card_panel(&theme)
