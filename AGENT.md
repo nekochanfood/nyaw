@@ -42,6 +42,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 5 | [`crates/beam`](crates/beam/AGENT.md) | コントローラのレーザー・カーソル・ドラッグ・ツールチップ |
 | 5 | [`crates/nyapp`](crates/nyapp/AGENT.md) | ニャプリ（wasm アプリ）の基盤 |
 | 5 | [`crates/nyapp-sdk`](crates/nyapp-sdk/AGENT.md) | ニャプリを書く SDK |
+| 5 | [`crates/updater`](crates/updater/AGENT.md) | アプリの更新（GitHub のリリースをビルド番号で比べて知らせ、ユーザーが選んだら黙って入れ替える） |
 | 7 | [`crates/testkit`](crates/testkit/AGENT.md) | Playwright 風 E2E テスト基盤（開発専用） |
 | 6 | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして載せる画面（wrist とビーム）とともに `ui::run` に渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr |
 
@@ -151,7 +152,7 @@ nyaw の上で動くアプリ。システム UI（wrist・ダッシュボード�
 - 座標: トラッキング空間はメートル・前方 -Z。パネル表面はローカル +Z。パネルのピクセル座標は左上原点。
 - 新しいコントローラ対応 = `crates/subsystems/input` の `PROFILES` に 1 行追加。上位層でプロファイル名を見ない。
 - 新しいランタイム = `crates/subsystems/vr` に `VrBackend` 実装を追加し `connect` に登録する。
-- `CODE_OF_CONDUCT.md` に従う: コメントは日本語、Conventional Commits、CalVer（現在 `2026.0.1`、`[workspace.package]` で一括管理）、単体テスト必須、層をまたぐものは結合テスト。
+- `CODE_OF_CONDUCT.md` に従う: コメントは日本語、Conventional Commits、CalVer（現在 `2026.0.1`、`[workspace.package]` で一括管理。リリースのタグは `v<CalVer>[-<名前>.<数>]`、新旧は版の文字ではなくビルド番号で比べる。`crates/updater/AGENT.md`）、単体テスト必須、層をまたぐものは結合テスト。
 - **コメントは 1 行で収める**。どうしても長く書く必要があるときも 3 行まで（`///` `//!` `//` とも、連続した 1 かたまりで数える）。それ以上は、コードを分かりやすくするか、設計の話をそのクレートの `AGENT.md` に書いて、コメントからは指すだけにする。lint は置かず、レビューで見る。
 - `// ponytail:` コメントは意図的な簡略化。限界と次の一手が書いてある。
 - **ナビゲーションバー（厳守）**: 新しいパネルを開くときは、ナビゲーションバーを付けるか（既定）`PanelSpec::without_nav_bar()` で外すかを `crates/design/GUIDELINES.md` の「ナビゲーションバー」に従って必ず判断する。付けるなら `.titled("…")` でタイトルを渡し、パネルの中に閉じるボタン・同じ見出しを埋め込まない。testkit のキットも本番と同じく持ち主の直後（PanelId = 持ち主 + 1）にバーを開く（キットが直接作る最初のパネルには付かない）。
