@@ -210,12 +210,17 @@ impl Dashboard {
         tick_every_second(panel, cx);
         cx.observe_global::<PanelControl>(Self::close_on_outside_press)
             .detach();
-        // 新しいリリースがあるかは起動時に確かめておく（あればバーにボタンが出る。入れるのはユーザーが選んだときだけ）。
-        // ponytail: 起動時だけ。開きっぱなしで日をまたぐなら周期で確かめ直す。開発中のビルドとテストは確かめない（設定から押せる）
+        // 新しいリリースがあるかは起動時と、常駐して開きっぱなしでも分かるよう周期で確かめる（あればバーにボタンが出る。
+        // 入れるのはユーザーが選んだときだけ）。開発中のビルドとテストは確かめない（設定から押せる）。
         cx.observe_global::<updater::Updater>(|this, cx| redraw(this.panel, cx))
             .detach();
         if !cfg!(debug_assertions) {
-            updater::check_now(cx);
+            cx.spawn(async move |this, cx| {
+                while this.update(cx, |_, cx| updater::check_now(cx)).is_ok() {
+                    cx.background_executor().timer(updater::RECHECK).await;
+                }
+            })
+            .detach();
         }
         // アプリ一覧は取得に数秒かかるので、起動時に読んでおく（ランチャーを開いたときにはもう出せる）。
         let fetch = fetch_apps(cx);
