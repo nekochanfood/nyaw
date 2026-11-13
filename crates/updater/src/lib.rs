@@ -20,6 +20,8 @@ include!(concat!(env!("OUT_DIR"), "/version.rs"));
 /// リリースの一覧の大きさと、インストーラーの大きさの上限。
 const MAX_LIST: u64 = 4 << 20;
 const MAX_INSTALLER: u64 = 512 << 20;
+/// 確かめ直す間隔（ダッシュボードが起動時とこの間隔で確かめる）。GitHub の API は認証なしで 1 時間に 60 回まで。
+pub const RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
 /// 一覧・インストーラーの取得にかけてよい時間。
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
