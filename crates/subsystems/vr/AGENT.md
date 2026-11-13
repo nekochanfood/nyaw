@@ -6,7 +6,7 @@ OpenVR / OpenXR / novr の差を吸収。`Subsystems` が `VrBackend` を所有�
 
 ## 主な公開 API
 
-`connect`, `VrBackend`, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`。`hands` に骨格、`batteries` に電池の残量 `Battery`（OpenVR は 5 秒ごとに読み直す。OpenXR は標準の手段が無く空、novr は固定の模擬値））, `Device`, `RawController`, `HandSkeleton`（スケルタル入力。関節 `JOINT_COUNT` = 26 は OpenXR の並び、`joint_parent`, `TIPS`, `pinch_distance`。OpenXR は XR_EXT_hand_tracking、OpenVR は骨格のアクション。novr には無い）, `mock::MockBackend`（`test-support` フィーチャー時のみ）
+`connect`, `VrBackend`, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`。`hands` に骨格、`batteries` に電池の残量 `Battery`（OpenVR は 5 秒ごとに読み直す。OpenXR は標準の手段が無く空、novr は固定の模擬値））, `Device`, `RawController`, `HandSkeleton`（スケルタル入力。関節 `JOINT_COUNT` = 26 は OpenXR の並び、`joint_parent`, `TIPS`, `pinch_distance`。OpenXR は XR_EXT_hand_tracking、OpenVR は骨格のアクション。novr には無い）, `VrBackend::{auto_launch, set_auto_launch}`（ランタイムの起動と同時に開くか。OpenVR だけ `Some`）, `mock::MockBackend`（`test-support` フィーチャー時のみ）
 
 ## novr（エミュレーター）
 
@@ -27,6 +27,14 @@ OpenVR / OpenXR / novr の差を吸収。`Subsystems` が `VrBackend` を所有�
 ## SteamVR のバインド
 
 OpenVR のコントローラ操作は SteamVR Input のアクション（`openvr/actions.json`）だけを読み、割り当ては SteamVR の「コントローラーのバインド」画面で変えられる（機種ごとの既定は `bindings_*.json`）。ショートカット（`/actions/nyaw/in/shortcut`）の二回押しは SteamVR のバインドの「ダブルタップ」が数え、`DOUBLE_PRESS_INPUT` を 1 フレームだけ立てる（ボタンの押下そのものは渡さない。`kernel` はそれをそのまま一回と数え、ほかのランタイムは従来どおり押下の間隔から数える）。`/actions/nyaw/in/resize`（掴んだパネルの拡大縮小。`RESIZE_INPUT` に出る）は既定では割り当てが無く、利用者が割り当てる。
+
+## SteamVR のアプリ登録（自動起動）
+
+`openvr/app.rs`。自動起動を入れると `os::config_dir()/openvr/<アプリの名前>.vrmanifest`（起動するのは今の実行ファイル、引数 `--openvr`、`is_dashboard_overlay`）を書き出して `AddApplicationManifest` で恒久的に登録し、`SetApplicationAutoLaunch` で入れる。切るときは登録を残す。値は SteamVR が持ち、接続時と切り替えたときだけ読む（SteamVR の設定画面で変えた分は次の接続で見える）。
+
+- アプリの名前は release ビルド `nekochanfood.nyaw`（表示名 `nyaw`）、debug ビルド `nekochanfood.nyaw.dev`（`nyaw (dev)`）。開発版はリリース版とは別のアプリなので、開発版で入れても、インストールしたリリース版の登録（起動する実行ファイル）は書き換わらない。登録を書き換えるのは自動起動を入れたときだけで、ただ起動しただけでは触らない。
+- 登録済みなら接続時に `IdentifyApplication` でそのアプリだと名乗る（SteamVR Input の manifest より前）。手で起動しても SteamVR が起動しても、コントローラのバインドが同じアプリに付く。登録前は SteamVR が実行ファイル名から付けた名前（`system.generated.nyaw.exe`）なので、初めて自動起動を入れた次の起動からバインドの持ち主が変わる。
+- インストーラはアンインストールでリリース版の vrmanifest を消す（SteamVR は読めない manifest のアプリを起動しない）。
 
 ## 未実装（土台のみ）
 
