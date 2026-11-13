@@ -1,6 +1,6 @@
 //! 版の文字とビルド番号を埋め込む（`$OUT_DIR/version.rs`）。
 //! ビルド番号 = HEAD までのコミット数。main は直線の履歴（rebase でマージ）なので、新しいビルドほど大きい。
-//! 版の文字は `NYAW_VERSION`（リリースのワークフローがタグから渡す。`2026.0.1p1` など）、無ければ Cargo.toml のもの。
+//! 版の文字は `NYAW_VERSION`（リリースのワークフローがタグから渡す。`2026.0.1-beta.1` など）、無ければ Cargo.toml のもの。
 
 use std::process::Command;
 
