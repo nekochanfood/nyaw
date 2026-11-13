@@ -1,6 +1,6 @@
 id = "net.bettaworx.calculator"
 name = "Calculator"
-version = "2026.0.2"
+version = "2026.0.2-patch.1"
 api = 1
 permissions = []
 
