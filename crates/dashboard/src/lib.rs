@@ -200,6 +200,7 @@ pub struct Dashboard {
     prev_streams: Vec<Stream>,
     prev_activities: Vec<nyapp::activity::Live>,
     prev_media: bool,
+    prev_update: bool,
     prev_sep: bool,
     /// バーの横スクロール（最大幅を超えたとき）。
     scroll: ScrollHandle,
@@ -210,6 +211,13 @@ impl Dashboard {
         tick_every_second(panel, cx);
         cx.observe_global::<PanelControl>(Self::close_on_outside_press)
             .detach();
+        // 新しいリリースがあるかは起動時に確かめておく（あればバーにボタンが出る。入れるのはユーザーが選んだときだけ）。
+        // ponytail: 起動時だけ。開きっぱなしで日をまたぐなら周期で確かめ直す。開発中のビルドとテストは確かめない（設定から押せる）
+        cx.observe_global::<updater::Updater>(|this, cx| ui::notify(this.panel, cx))
+            .detach();
+        if !cfg!(debug_assertions) {
+            updater::check_now(cx);
+        }
         // アプリ一覧は取得に数秒かかるので、起動時に読んでおく（ランチャーを開いたときにはもう出せる）。
         let fetch = fetch_apps(cx);
         cx.spawn(async move |_, cx| match fetch.await {
@@ -254,6 +262,7 @@ impl Dashboard {
             prev_streams: Vec::new(),
             prev_activities: Vec::new(),
             prev_media: false,
+            prev_update: false,
             prev_sep: false,
             scroll: ScrollHandle::new(),
             enter: Entering::new(cfg!(test)),
@@ -470,6 +479,15 @@ impl Dashboard {
                 .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
         }
         ui::notify(self.panel, cx);
+    }
+
+    /// アップデートのボタン: 設定のアップデートを出す（設定がはまっていなければはめる）。
+    fn open_update(&mut self, cx: &mut Context<Self>) {
+        updater::reveal(cx);
+        match ui::docked(cx).filter(|_| self.current(cx) == Some(Page::Settings)) {
+            Some(settings) => ui::redraw(settings, cx),
+            None => self.toggle(Page::Settings, cx),
+        }
     }
 
     /// 進行中の作業の知らせを押した: 出したニャプリを開く。終わったカウントダウンは知らせを片付ける。
@@ -721,7 +739,7 @@ impl Render for Dashboard {
             .get(&self.panel)
             .is_some_and(|p| p.status.hidden);
         enter.begin(hidden, now_at);
-        // 左から数えたボタンの順番: メニュー 0・クイック設定 1・進行中の作業・再生中・ランチャー・区切り線と配信。
+        // 左から数えたボタンの順番: メニュー 0・クイック設定 1・進行中の作業・再生中・ランチャー・アップデート・区切り線と配信。
         let activities_now = with_leaving(
             nyapp::activity::all(cx).to_vec(),
             &self.prev_activities,
@@ -748,7 +766,12 @@ impl Render for Dashboard {
         let sep_now = streams_now.iter().any(|(_, leaving)| !leaving);
         let sep_exit = !sep_now && self.prev_sep && enter.start_exit(&sep_key, now_at);
         self.prev_sep = sep_now || sep_exit;
-        let stream_slot = 3 + n_activity + media;
+        let has_update = updater::available(cx);
+        let update_key = SharedString::from("dashboard-update");
+        let update_exit = !has_update && self.prev_update && enter.start_exit(&update_key, now_at);
+        self.prev_update = has_update || update_exit;
+        let update = usize::from(self.prev_update);
+        let stream_slot = 3 + n_activity + media + update;
         let theme = Theme::current(cx);
         let current = self.current(cx);
         let docked = ui::docked(cx);
@@ -891,6 +914,26 @@ impl Render for Dashboard {
         let now_playing = slide_in(t, components::BUTTON_HEIGHT, now_playing);
         let t = enter.progress(&"dashboard-launcher".into(), 2 + n_activity + media, now_at);
         let mirror = slide_in(t, components::BUTTON_HEIGHT, mirror);
+        // 新しいリリースがあるときだけ、ランチャーの右に強調色のボタン。押すと設定のアップデートを出す。
+        let t = if has_update {
+            enter.progress(&update_key, 3 + n_activity + media, now_at)
+        } else if update_exit {
+            enter.progress_out(&update_key, now_at)
+        } else {
+            Slide::SHOWN
+        };
+        let update_button = slide_in(
+            t,
+            components::BUTTON_HEIGHT,
+            components::icon_button(
+                &theme,
+                update_key.clone(),
+                &icons::ARROW_CIRCLE_UP,
+                i18n::t(cx, "dashboard.update"),
+                Variant::Primary,
+            )
+            .on_click(cx.listener(|this, _, _, cx| this.open_update(cx))),
+        );
         let menu_t = enter.progress(&"dashboard-menu".into(), 0, now_at);
         let quick_t = enter.progress(&"dashboard-quick-settings".into(), 1, now_at);
         let quick_w = quick_settings_width(f32::from(time_width), battery.is_some());
@@ -937,13 +980,16 @@ impl Render for Dashboard {
             .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
         );
         // 左から: メニュー・クイック設定・進行中の作業（クイック設定と再生中の間）・再生中（何か再生しているときだけ）・
-        // ランチャー・区切り線と、開いた配信。
+        // ランチャー・アップデート（新しいリリースがあるときだけ）・区切り線と、開いた配信。
         let mut items: Vec<AnyElement> = vec![menu.into_any_element(), quick.into_any_element()];
         items.extend(activities.into_iter().map(IntoElement::into_any_element));
         if self.prev_media {
             items.push(now_playing.into_any_element());
         }
         items.push(mirror.into_any_element());
+        if self.prev_update {
+            items.push(update_button.into_any_element());
+        }
         if self.prev_sep {
             items.push(fade_in(separator_t, SEPARATOR_W, separator(&theme)).into_any_element());
         }
@@ -3122,6 +3168,61 @@ mod tests {
             mcx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
             1
         );
+    }
+
+    /// 新しいリリースがあるときだけ、ランチャーの右に強調色のアップデートのボタンが出る。押すと設定をはめ、
+    /// 設定にアップデートを出すよう頼む。設定がもうはまっていれば閉じずに、その画面を描き直させる。
+    #[gpui::test]
+    fn update_button_shows_only_with_a_new_release_and_opens_settings(cx: &mut TestAppContext) {
+        let (_bar, cx) = cx.add_window_view(|_, cx| {
+            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+            Dashboard::new(1, summon, summon, cx)
+        });
+        redraw_bar(cx);
+        assert!(
+            cx.debug_bounds("dashboard-update").is_none(),
+            "最新なら出ない"
+        );
+        cx.update(|_, cx| {
+            cx.default_global::<updater::Updater>().latest = Some(updater::Release {
+                version: "2026.0.1-patch.2".into(),
+                build: u32::MAX,
+                title: "v2026.0.1-patch.2".into(),
+                notes: "## What's Changed".into(),
+                published_at: None,
+                page: "https://github.com/nekochanfood/nyaw/releases".into(),
+                installer: updater::Installer {
+                    name: "nyaw-2026.0.1-patch.2-build9-setup.exe".into(),
+                    url: "https://example.com/i.exe".into(),
+                    size: 1,
+                    sha256: None,
+                },
+            })
+        });
+        redraw_bar(cx);
+        let x = |cx: &mut VisualTestContext, s: &'static str| cx.debug_bounds(s).unwrap().origin.x;
+        assert!(x(cx, "dashboard-launcher") < x(cx, "dashboard-update"));
+        click(cx, "dashboard-update");
+        assert_eq!(
+            cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
+            1,
+            "設定をはめる"
+        );
+        assert!(
+            cx.update(|_, cx| updater::take_reveal(cx)),
+            "アップデートを出すよう頼む"
+        );
+        // はまった設定でもう一度押すと、閉じずに描き直させるだけ。
+        open_spawned(cx, 2);
+        redraw_bar(cx);
+        click(cx, "dashboard-update");
+        assert!(!commands(cx, 2).contains(&PanelCommand::Close));
+        assert!(cx.update(|_, cx| cx.global::<PanelControl>().panels[&2].redraw));
+        assert!(cx.update(|_, cx| updater::take_reveal(cx)));
+        // リリースが消えれば（入れ替えた後など）、ボタンも消える。
+        cx.update(|_, cx| cx.default_global::<updater::Updater>().latest = None);
+        redraw_bar(cx);
+        assert!(cx.debug_bounds("dashboard-update").is_none());
     }
 
     /// 終了の確かめのダイアログで終了を選ぶとアプリを終え、キャンセルならダイアログだけ閉じる。

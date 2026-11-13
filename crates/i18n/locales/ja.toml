@@ -114,6 +114,7 @@ undock = "ダッシュボードから外す"
 dock = "ダッシュボードに戻す"
 
 [dashboard]
+update = "アップデートがあります"
 title = "ダッシュボード"
 quit = "アプリを終了"
 quit_title = "アプリを終了しますか？"
@@ -382,7 +383,25 @@ pointer = "ポインタ"
 mirroring = "ミラーリング"
 keyboard = "キーボード"
 graphics = "グラフィックス"
+update = "アップデート"
 about = "情報"
+
+[update]
+current = "現在のバージョン"
+version_build = "{version}（ビルド {build}）"
+check = "今すぐ確認"
+checking = "確認しています…"
+not_checked = "まだ確認していません"
+up_to_date = "最新のバージョンです"
+available = "新しいバージョンがあります"
+failed = "確認できませんでした: {error}"
+new_version = "新しいバージョン"
+release_meta = "ビルド {build} · {date}"
+install = "アップデートして再起動"
+downloading = "ダウンロードしています… {percent}%"
+installing = "インストールしています。nyaw は再起動します"
+install_failed = "アップデートできませんでした: {error}"
+release_page = "リリースページを開く"
 
 [settings.lod]
 off = "オフ"
