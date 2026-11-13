@@ -10,13 +10,15 @@ license.workspace = true
 # 部品（Components）・アイコン・テーマのグローバルなど GPUI で描くもの。外すと値（Constants）と動き（animation）だけになり、
 # GPUI を持たない下位層（overlay）からも使える。
 default = ["gpui"]
-gpui = ["dep:gpui", "dep:unicode-segmentation"]
+gpui = ["dep:gpui", "dep:pulldown-cmark", "dep:unicode-segmentation"]
 
 [dependencies]
 palette = "0.7"
 animation.workspace = true
 gpui = { workspace = true, features = ["test-support"], optional = true }
 unicode-segmentation = { version = "1.13", optional = true }
+# リリースノートなどの Markdown を読む（components::markdown）。
+pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 
 [dev-dependencies]
 gpui_platform = { workspace = true, features = ["test-support"] }

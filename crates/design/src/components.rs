@@ -14,6 +14,7 @@ use palette::{FromColor, Mix, Oklab, Srgb};
 
 mod carousel;
 mod color;
+mod markdown;
 mod navigation;
 mod scrollbar;
 mod shaped_button;
@@ -22,6 +23,7 @@ mod slider;
 mod tooltip;
 pub use carousel::{Carousel, Place, Shape, arc, carousel};
 pub use color::{accent_row, accent_sliders, swatch};
+pub use markdown::markdown;
 pub use navigation::{Navigation, navigation};
 pub use scrollbar::{Elastic, Scroll, Scrollbars, claim_scroll, elastic, free_scroll, scrollbars};
 pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_button};
