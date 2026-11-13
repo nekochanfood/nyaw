@@ -15,6 +15,7 @@
 | `Accessibility` | 文字の大きさ・UI スケール・太字 | 設定画面の「アクセシビリティ」と同じ部品（`ui::prefs::accessibility`）: 上に文字の見本、下に対等な 3 つの項目。見た目（外観）を選ぶ前に、まず見やすさを決める。文字の大きさは動かすとすぐ効き、UI スケールは離したときに決まる（ウィザード自身の大きさが変わる。動かしている間は見本だけが拡大・縮小する） |
 | `Appearance` | テーマとパーソナルカラー | 設定画面の「外観」と同じ部品（`ui::prefs::appearance`）: 上からテーマの見本・テーマ・パーソナルカラーの履歴と、色を作るダイアログを開くプラス |
 | `Wrist` | wrist の文字盤 | 設定画面の「時計」と同じ部品（`ui::prefs::watch_faces`）: 種類の絞り込み・弧に並ぶ見本・「設定する」 |
+| `AutoLaunch` | SteamVR と一緒に起動するか | **OpenVR のときだけ出る**（`setup::shown`。`Settings::auto_launch` が `Some` なのは OpenVR だけ。ほかのランタイムでは「次へ」「戻る」・スワイプバックとも飛ばす）。「SteamVR と一緒に起動」`setup-auto-launch-on` / 「自分で起動する」`setup-auto-launch-off`（選べるカード）。既定は切ったままで、選ぶまで SteamVR には何も登録しない。選ぶと `Setting::AutoLaunch`（`../subsystems/vr/AGENT.md` の「SteamVR のアプリ登録」） |
 | `Done` | — | アイコン・一言・説明を画面の中央に置く。右下の「完了」で終える。左下に「戻る」 |
 
 - **選ぶとその場で反映する**: 選んだものはすぐ `Setting` として積む（`PanelControl::setting_changes`）。「次へ」は進むだけで、戻っても選んだものは残る。言語を替えるとこの画面の文言もその場で替わり、テーマ・パーソナルカラーはこの画面自身が見本になる。
@@ -32,9 +33,9 @@
 
 ## 主な公開 API
 
-`setup::spec()`（初回起動）, `setup::spawn_spec(from)`（デバッグからのやり直し）, `setup::follow()`, `SetupWizard`（`step()`）, `Step`, `STEPS`
+`setup::spec()`（初回起動）, `setup::spawn_spec(from)`（デバッグからのやり直し）, `setup::follow()`, `SetupWizard`（`step()`、`go(forward, settings)`: 出さない手順を飛ばして進む・戻る）, `Step`, `STEPS`, `shown(step, settings)`
 
 ## テスト
 
-- 通しの操作: `crates/testkit/tests/scenarios/setup.rs`（各画面で選ぶと設定が変わり、完了で終わる。一枚目の配置と言語のドロップダウン、完了の画面の「戻る」、ウィザードの子として開く色のダイアログ、パネルの地が背景色で部品がカードの色のまま載ること）、`setup_lockdown.rs`（ロックダウンと追従）。
+- 通しの操作: `crates/testkit/tests/scenarios/setup.rs`（各画面で選ぶと設定が変わり、完了で終わる。一枚目の配置と言語のドロップダウン、完了の画面の「戻る」、novr では SteamVR の手順を飛ばすこと・OpenVR では出て選べること（`openvr_asks_whether_to_launch_with_steamvr`）、ウィザードの子として開く色のダイアログ、パネルの地が背景色で部品がカードの色のまま載ること）、`setup_lockdown.rs`（ロックダウンと追従）。
 - 見た目: `cargo test -p ui --test gpu -- --ignored look`（各画面を `target/tmp/look-setup-*.bmp` に書き出す。ライトのものは日本語）。

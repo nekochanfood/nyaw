@@ -9,7 +9,7 @@ use gpui::{
     SharedString, Window, div, prelude::*, px,
 };
 use kernel::vr::{Pose, Quat, Vec2, Vec3};
-use kernel::{DominantHand, Language, LazyFollow, PanelCommand, PanelId, Setting};
+use kernel::{DominantHand, Language, LazyFollow, PanelCommand, PanelId, Setting, Settings};
 use ui::{PanelControl, PanelSpec};
 
 /// パネルの大きさ（1px = 1mm）。オーバーレイの既定と同じ 4:3 で、いちばん背の高い文字盤の手順（見出し・設定画面と同じ
@@ -38,18 +38,26 @@ pub enum Step {
     Appearance,
     /// wrist の文字盤。
     Wrist,
+    /// SteamVR と一緒に起動するか。OpenVR のときだけ出す（[`shown`]）。
+    AutoLaunch,
     /// 完了。
     Done,
 }
 
-pub const STEPS: [Step; 6] = [
+pub const STEPS: [Step; 7] = [
     Step::Welcome,
     Step::Hand,
     Step::Accessibility,
     Step::Appearance,
     Step::Wrist,
+    Step::AutoLaunch,
     Step::Done,
 ];
+
+/// 今のランタイムで手順 `step` を出すか。自動起動を切り替えられるのは OpenVR だけ（ほかは `auto_launch` が `None`）。
+pub fn shown(step: Step, now: &Settings) -> bool {
+    step != Step::AutoLaunch || now.auto_launch.is_some()
+}
 
 /// 頭の向き（左右だけ）と歩きに付いてくる設定。本番の起動仕様とテストで同じものを使う。
 pub fn follow() -> LazyFollow {
@@ -101,6 +109,21 @@ impl SetupWizard {
     /// 今の手順。
     pub fn step(&self) -> Step {
         STEPS[self.wizard.step()]
+    }
+
+    /// 次（`forward`）か前の、出す手順へ動く。出さない手順は飛ばす（最初と最後はいつも出すので、端では動かない）。
+    pub fn go(&mut self, forward: bool, now: &Settings) {
+        let mut w = self.wizard;
+        loop {
+            let moved = if forward { w.next() } else { w.back() };
+            if !moved {
+                return;
+            }
+            if shown(STEPS[w.step()], now) {
+                self.wizard = w;
+                return;
+            }
+        }
     }
 }
 
@@ -177,21 +200,20 @@ fn text_choice(
 /// 手順 `step` の画面 1 枚。今の設定（[`PanelControl::settings`]）から選んでいるものを示す。
 fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut App) -> Div {
     let theme = Theme::current(cx);
-    let now = cx.try_global::<PanelControl>().map(|c| c.settings);
-    let now = now.unwrap_or_default();
+    let now = ui::settings(cx);
     let (panel, language_open, appearance, watch) = {
         let v = wizard.read(cx);
         (v.panel, v.language_open, v.appearance, v.watch)
     };
     let go = |forward: bool| {
-        let step = update(wizard, |v: &mut SetupWizard, forward: bool| {
-            if forward {
-                v.wizard.next();
-            } else {
-                v.wizard.back();
-            }
-        });
-        move |_: &ClickEvent, window: &mut Window, cx: &mut App| step(forward, window, cx)
+        let wizard = wizard.clone();
+        move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+            let now = ui::settings(cx);
+            wizard.update(cx, |v, cx| {
+                v.go(forward, &now);
+                cx.notify();
+            })
+        }
     };
     // 二枚目からの画面: アイコン・見出し・説明・選ぶもの・「戻る」「次へ」。
     let choose = |glyph: &'static Icon, title: &str, description: &str, body: Div, cx: &App| {
@@ -310,6 +332,40 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
                 cx,
             )
         }
+        Step::AutoLaunch => {
+            // 選ぶまで切ったまま（SteamVR には何も登録しない）。同じものを選び直しても SteamVR を触らない。
+            let on = now.auto_launch == Some(true);
+            let options = [
+                (
+                    true,
+                    "setup-auto-launch-on",
+                    &icons::ROCKET_LAUNCH,
+                    "settings.auto_launch",
+                ),
+                (
+                    false,
+                    "setup-auto-launch-off",
+                    &icons::HAND_TAP,
+                    "setup.auto_launch_off",
+                ),
+            ];
+            let choices = options.map(|(value, id, glyph, label)| {
+                text_choice(&theme, id, on == value, glyph, i18n::t(cx, label)).on_click(
+                    move |_, _, cx| {
+                        if on != value {
+                            push(Setting::AutoLaunch(value), cx)
+                        }
+                    },
+                )
+            });
+            choose(
+                &icons::ROCKET_LAUNCH,
+                "setup.auto_launch_title",
+                "setup.auto_launch_description",
+                row(choices),
+                cx,
+            )
+        }
         Step::Done => {
             let done = components::wizard_next(&theme, "setup-finish", i18n::t(cx, "setup.finish"))
                 .on_click(move |_, _, cx| finish(panel, cx));
@@ -333,7 +389,10 @@ impl Render for SetupWizard {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
         let this = cx.entity();
-        let stack: Vec<usize> = (0..=self.wizard.step()).collect();
+        let now = ui::settings(cx);
+        let stack: Vec<usize> = (0..=self.wizard.step())
+            .filter(|&i| shown(STEPS[i], &now))
+            .collect();
         let draw = {
             let this = this.clone();
             move |&index: &usize, window: &mut Window, cx: &mut App| {
@@ -341,8 +400,9 @@ impl Render for SetupWizard {
             }
         };
         let swipe_back = move |_: &mut Window, cx: &mut App| {
+            let now = ui::settings(cx);
             this.update(cx, |v, cx| {
-                v.wizard.back();
+                v.go(false, &now);
                 cx.notify();
             })
         };
@@ -373,5 +433,31 @@ mod tests {
         let at = |step| STEPS.iter().position(|&s| s == step).expect("a step");
         assert_eq!(at(Step::Accessibility) + 1, at(Step::Appearance));
         assert!(at(Step::Hand) < at(Step::Accessibility));
+    }
+
+    /// SteamVR の自動起動の手順は、切り替えられるランタイム（OpenVR）のときだけ通る。ほかでは前後とも飛ばす。
+    #[test]
+    fn auto_launch_step_is_only_shown_on_openvr() {
+        let openvr = Settings {
+            auto_launch: Some(false),
+            ..Default::default()
+        };
+        let other = Settings::default();
+        let mut v = SetupWizard::new(0);
+        for _ in 0..4 {
+            v.go(true, &other);
+        }
+        assert_eq!(v.step(), Step::Wrist);
+        v.go(true, &other);
+        assert_eq!(v.step(), Step::Done);
+        v.go(false, &other);
+        assert_eq!(v.step(), Step::Wrist);
+        v.go(true, &openvr);
+        assert_eq!(v.step(), Step::AutoLaunch);
+        v.go(true, &openvr);
+        assert_eq!(v.step(), Step::Done);
+        // 端では動かない。
+        v.go(true, &openvr);
+        assert_eq!(v.step(), Step::Done);
     }
 }

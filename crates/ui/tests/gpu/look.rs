@@ -145,6 +145,8 @@ pub fn main() {
                     };
                     // キーボードの見本は、状態ごとに種類も替えて全種類を描く。
                     settings.keyboard = kernel::subsystems::keyboard::KeyboardType::ALL[i % 3];
+                    // ウィザードの SteamVR の手順は OpenVR のときだけ出るので、OpenVR のつもりで描く。
+                    settings.auto_launch = Some(false);
                     settings.theme = match mode {
                         Mode::Dark => kernel::ThemeMode::Dark,
                         Mode::Light => kernel::ThemeMode::Light,

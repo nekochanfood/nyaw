@@ -76,6 +76,7 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
         .click("watch-kind-analog")
         .click("watch-set");
     assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Minimal);
+    // novr では SteamVR の手順は出ず、文字盤の次は完了（戻るときも飛ばす）。
     kit.click("setup-next");
 
     // 完了の画面からも戻れる（左下の「戻る」。「完了」は右下）。完了を押すまでは終えたことにならない。
@@ -92,6 +93,27 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert!(kit.kernel.settings().setup_done);
     assert!(!kit.kernel.settings().lockdown, "終えたら外れる");
     assert!(kit.kernel.panel(0).closed);
+}
+
+/// On OpenVR, a step after the watch face asks whether nyaw starts with SteamVR. It stays off until chosen.
+#[gpui::test]
+fn openvr_asks_whether_to_launch_with_steamvr(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
+    // OpenVR のバックエンドだけが自動起動を切り替えられる（モックで OpenVR を真似る）。
+    kit.kernel.subsystems.backend.auto_launch = Some(false);
+    kit.step();
+    for _ in 0..5 {
+        kit.click("setup-next");
+    }
+    assert_eq!(kit.read(|v| v.step()), Step::AutoLaunch);
+    kit.click("setup-auto-launch-on").step();
+    assert_eq!(kit.kernel.settings().auto_launch, Some(true));
+    kit.click("setup-auto-launch-off").step();
+    assert_eq!(kit.kernel.settings().auto_launch, Some(false));
+    kit.click("setup-next");
+    assert!(kit.read(|v| v.wizard.is_last()));
+    kit.click("setup-back");
+    assert_eq!(kit.read(|v| v.step()), Step::AutoLaunch);
 }
 
 /// The first screen: the logo, the title and one line sit in the middle of the screen. The buttons are in the

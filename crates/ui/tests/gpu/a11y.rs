@@ -180,6 +180,8 @@ pub fn main() {
                     // 本番ではフレームループ（`ui::sync_settings`）が全体の設定から書く。
                     let settings = &mut cx.default_global::<PanelControl>().settings;
                     (settings.text_scale, settings.bold_text) = (scale, bold);
+                    // ウィザードの SteamVR の手順は OpenVR のときだけ出るので、OpenVR のつもりで描く。
+                    settings.auto_launch = Some(false);
                     design::font::set_text(scale, bold, cx);
                 });
                 for (name, window, width) in &windows {

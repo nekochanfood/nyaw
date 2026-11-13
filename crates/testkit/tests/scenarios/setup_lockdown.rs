@@ -80,7 +80,11 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
     assert!((p.y - 1.0).abs() < 5e-2, "高さ {}", p.y);
 
     // 追従しても操作できる: 最後まで進めて完了すると、ロックダウンが外れて閉じる。
+    // 出ない手順（OpenVR 以外での SteamVR の手順）は飛ばすので、手順の数ではなく最後まで押す。
     for _ in 1..setup::STEPS.len() {
+        if kit.read(|v| v.wizard.is_last()) {
+            break;
+        }
         kit.click("setup-next");
     }
     assert!(kit.read(|v| v.wizard.is_last()));
