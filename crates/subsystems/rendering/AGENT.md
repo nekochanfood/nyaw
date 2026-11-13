@@ -6,7 +6,7 @@ GPUI の非表示描画先・読み戻し・描画密度と OS 差、ランタ�
 
 ## 主な公開 API
 
-`Surface::{new, store, present(opacity, dim), place, show, release}`, `gpui::{capture, read_back, open_window, set_render_lod}`
+`Surface::{new, store, present(opacity, dim), place, show, release}`, `gpui::{capture, read_back, open_window, set_render_lod, render_image}`（`render_image` は RGBA の画素を GPUI の画像（BGRA）にする。画面は `ui::render_image` で使い、`image` クレートの版を gpui に合わせるのはこのクレートだけ）
 
 ## 描画層（Issue #41）
 

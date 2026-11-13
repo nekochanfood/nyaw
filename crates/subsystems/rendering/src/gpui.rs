@@ -1,5 +1,9 @@
 //! GPUI の非表示描画先・読み戻し・描画密度。
-use ::gpui::{App, AppContext, Entity, Render, Window, WindowHandle, WindowOptions, px, size};
+use std::sync::Arc;
+
+use ::gpui::{
+    App, AppContext, Entity, Render, RenderImage, Window, WindowHandle, WindowOptions, px, size,
+};
 mod lod;
 pub use lod::set_render_lod;
 
@@ -44,6 +48,16 @@ pub fn collect(window: &mut Window) -> Option<Frame> {
     })
 }
 
+/// RGBA（行間に詰め物なし）の画素を GPUI の画像にする（GPUI の画像は BGRA）。画素が大きさに足りなければ `None`。
+/// 画素の並べ替えは画像の大きさに比例して掛かるので、大きな画像はフレームループの外で作る。
+pub fn render_image(width: u32, height: u32, mut rgba: Vec<u8>) -> Option<Arc<RenderImage>> {
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    let bgra = image::RgbaImage::from_raw(width, height, rgba)?;
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(bgra)])))
+}
+
 /// 指定された表示方針でウィンドウを開く。Windows の非表示ウィンドウのレンダーターゲットは
 /// 1x1 のまま作られるので、明示的にリサイズして実寸にする（反映は非同期。最初の数フレームは 1x1）。
 pub fn open_window<V: Render>(
@@ -59,4 +73,17 @@ pub fn open_window<V: Render>(
     let size = size(px(resolution.0 as f32), px(resolution.1 as f32));
     cx.update_window(window.into(), |_, window, _| window.resize(size))?;
     Ok(window)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_image;
+
+    /// 赤と青を入れ替えて BGRA にし、画素が大きさに足りなければ画像にしない。
+    #[test]
+    fn render_image_reorders_rgba_to_bgra() {
+        let image = render_image(2, 1, vec![1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
+        assert_eq!(image.as_bytes(0), Some(&[3, 2, 1, 4, 7, 6, 5, 8][..]));
+        assert!(render_image(2, 2, vec![0; 8]).is_none());
+    }
 }
