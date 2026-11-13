@@ -76,6 +76,14 @@ fn list(base: &str) -> Vec<u8> {
             ],
             base
         ),
+        // GitHub が SHA-256 を知らせないインストーラーは、確かめられないので勧めない（番号が一番大きくても）。
+        release(
+            "v2026.0.1-patch.4",
+            false,
+            Some(670),
+            &[("nyaw-2026.0.1-patch.4-setup.exe", 5, None)],
+            base
+        ),
         // ビルド番号はあるが、インストーラーがまだ付いていない（ビルド中）。
         release("v2026.0.1-patch.3", false, Some(660), &[], base),
         // 版はタグから（アセットの名前の記号は GitHub が置き換えることがある）。
@@ -83,7 +91,7 @@ fn list(base: &str) -> Vec<u8> {
             "v2026.0.1-ぽてと.1",
             false,
             Some(650),
-            &[("nyaw-2026.0.1-....1-setup.exe", 5, None)],
+            &[("nyaw-2026.0.1-....1-setup.exe", 5, Some("sha256:def"))],
             base
         ),
         // ビルド番号の無い、更新の仕組みより前のリリース。
@@ -107,10 +115,10 @@ fn the_newest_build_above_ours_wins_whatever_the_version_says() {
             .map(|r| (r.version.as_str(), r.build))
             .collect::<Vec<_>>(),
         [("2026.0.1-patch.2", 655), ("2026.0.1-ぽてと.1", 650)],
-        "下書きと、インストーラーかビルド番号の無いものは除く"
+        "下書きと、インストーラー・SHA-256・ビルド番号のどれかが無いものは除く"
     );
     let patch2 = &releases[0];
-    assert_eq!(patch2.installer.sha256.as_deref(), Some("abc"));
+    assert_eq!(patch2.installer.sha256, "abc");
     assert_eq!(
         patch2.installer.url,
         "https://example.com/nyaw-2026.0.1-patch.2-setup.exe"
@@ -269,6 +277,15 @@ fn downloads_and_verifies_the_installer() {
     let path = download(&release, &dir, &progress).unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"MZ fake installer");
     assert_eq!(progress.load(Ordering::Relaxed), release.installer.size);
+    // 確かめる SHA-256 が無ければ、中身が正しくても走らせるものとして残さない。
+    let mut blank = release.clone();
+    blank.installer.sha256.clear();
+    assert!(
+        download(&blank, &dir, &progress)
+            .unwrap_err()
+            .contains("sha256")
+    );
+    assert!(!path.exists());
 
     // 中身が SHA-256 と違う・大きさが違うものは残さない。
     files.lock().unwrap().insert(

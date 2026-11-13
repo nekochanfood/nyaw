@@ -15,13 +15,13 @@
   - `build.rs` が埋め込み（`BUILD`）、リリースのワークフローも同じ数え方で、リリースノートの末尾に**見えない注釈** `<!-- nyaw-build: <番号> -->` として足す（`notes_build`。GitHub も nyaw の Markdown も HTML のコメントは描かない）。ファイル名（`nyaw-<版>-setup.exe`）にも画面にも出さない。アプリは API の 1 回の応答だけで全リリースを並べられる。注釈が消されたリリースは勧めない（安全側）。
   - git の無い所でのビルドは 0（どのリリースも新しく見える）。リリースのワークフローは履歴を全部取る（`fetch-depth: 0`）。
 - 表示する版（`VERSION`）はリリースのワークフローがタグから渡す `NYAW_VERSION`（無ければ Cargo.toml の版）。見つけたリリースの版はタグから（GitHub はアセットの名前の記号を置き換えることがある）。ワークフローはタグの形と、全パッケージの版がタグの版かその CalVer の部分であることを確かめる。
-- 新しいリリース = 下書きでなく、インストーラー（`is_installer`）とビルド番号の注釈があり、番号が今より大きいもの。その中で一番大きいもの（`newest`）。プレリリースも含む（今はプレリリースで出している）。
+- 新しいリリース = 下書きでなく、インストーラー（`is_installer`）とその SHA-256（`digest`。無ければ確かめられないので勧めない）とビルド番号の注釈があり、番号が今より大きいもの。その中で一番大きいもの（`newest`）。プレリリースも含む（今はプレリリースで出している）。
 
 ## 流れ
 
 1. **確かめる**（`check_now`。別スレッド）: GitHub の API `GET /repos/<owner>/<repo>/releases?per_page=30` を 1 回（リポジトリは Cargo.toml の `repository`）。ダッシュボードが起動時と 6 時間ごと（`RECHECK`。nyaw は常駐するので。リリースビルドだけで、開発中のビルドとテストは確かめない）と、設定の「今すぐ確認」（`update-check`）。
 2. **知らせる**: 見つけたら `Updater::latest`。ダッシュボードのバーのボタン（`dashboard-update`。押すと設定をはめて `reveal`）と、設定のアップデート（`settings-update`。版・公開日・「アップデートして再起動」・リリースノート（`design::components::markdown`）・リリースのページ）。
-3. **入れる**（`install`。ユーザーが押したときだけ）: インストーラーを `%TEMP%\nyaw-update` に落とし（進み具合は `Step::Downloading`）、大きさと GitHub が知らせる SHA-256（アセットの `digest`。あれば）を確かめ、`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /WAITPID=<pid> /RELAUNCH=1` で走らせて、アプリを終える（`PanelControl::quit`）。
+3. **入れる**（`install`。ユーザーが押したときだけ）: インストーラーを `%TEMP%\nyaw-update` に落とし（進み具合は `Step::Downloading`）、大きさと GitHub が知らせる SHA-256（アセットの `digest`。必須）を確かめ、`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /WAITPID=<pid> /RELAUNCH=1` で走らせて、アプリを終える（`PanelControl::quit`）。
 4. **インストーラー**: ウィザードもメッセージも出さず、ユーザー単位（`PrivilegesRequired=lowest`）なので UAC も出ない。`WAITPID` のプロセスが終わるのを待って（60 秒まで）入れ替え、`RELAUNCH` で nyaw を起動し直す（引数なしで起動する）。
 
 ## 上限
