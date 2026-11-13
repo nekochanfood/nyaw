@@ -47,8 +47,8 @@ pub struct Installer {
     pub name: String,
     pub url: String,
     pub size: u64,
-    /// GitHub が知らせる SHA-256（16 進）。古いアセットには無い。
-    pub sha256: Option<String>,
+    /// GitHub が知らせる SHA-256（16 進。アセットの `digest`）。無いものは確かめられないので、勧めも走らせもしない。
+    pub sha256: String,
 }
 
 /// リリースのインストーラーか（`nyaw-<版>-setup.exe`。`installer/nyaw.iss`）。区切りを含む名前は落とす先の外に出るので除く。
@@ -87,7 +87,7 @@ struct ApiAsset {
     digest: Option<String>,
 }
 
-/// GitHub のリリースの一覧（API の JSON）を読む。下書きと、インストーラーかビルド番号の無いものは除く。
+/// GitHub のリリースの一覧（API の JSON）を読む。下書きと、インストーラー・その SHA-256・ビルド番号のどれかが無いものは除く。
 pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
     let list: Vec<ApiRelease> =
         serde_json::from_slice(json).map_err(|e| format!("cannot read the release list: {e}"))?;
@@ -97,6 +97,7 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
         .filter_map(|r| {
             let build = notes_build(r.body.as_deref()?)?;
             let asset = r.assets.iter().find(|a| is_installer(&a.name))?;
+            let sha256 = asset.digest.as_deref()?.strip_prefix("sha256:")?.to_owned();
             Some(Release {
                 version: r
                     .tag_name
@@ -115,11 +116,7 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
                     name: asset.name.clone(),
                     url: asset.browser_download_url.clone(),
                     size: asset.size,
-                    sha256: asset
-                        .digest
-                        .as_deref()
-                        .and_then(|d| d.strip_prefix("sha256:"))
-                        .map(str::to_owned),
+                    sha256,
                 },
             })
         })
@@ -195,12 +192,13 @@ pub fn download(release: &Release, dir: &Path, progress: &AtomicU64) -> Result<P
             ));
         }
         let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        match &installer.sha256 {
-            Some(want) if !want.eq_ignore_ascii_case(&digest) => Err(format!(
-                "the installer does not match sha256 {want} (got {digest})"
-            )),
-            _ => Ok(()),
+        let want = &installer.sha256;
+        if want.is_empty() || !want.eq_ignore_ascii_case(&digest) {
+            return Err(format!(
+                "the installer does not match sha256 {want:?} (got {digest})"
+            ));
         }
+        Ok(())
     })();
     match result {
         Ok(()) => Ok(path),

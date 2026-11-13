@@ -3175,13 +3175,23 @@ mod tests {
         );
     }
 
+    /// 設定を開いた回数（[`update_button_shows_only_with_a_new_release_and_opens_settings`] だけが使う）。
+    /// 起動時に開く画面の配信（本物の OS の一覧）も `spawns` に積まれるので、要求の数では数えない。
+    static SETTINGS_OPENED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    fn counted_settings(from: PanelId, opened: Opened) -> PanelSpec {
+        SETTINGS_OPENED.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        summon(from, opened)
+    }
+
     /// 新しいリリースがあるときだけ、ランチャーの右に強調色のアップデートのボタンが出る。押すと設定をはめ、
     /// 設定にアップデートを出すよう頼む。設定がもうはまっていれば閉じずに、その画面を描き直させる。
     #[gpui::test]
     fn update_button_shows_only_with_a_new_release_and_opens_settings(cx: &mut TestAppContext) {
-        let (_bar, cx) = cx.add_window_view(|_, cx| {
+        let opened = || SETTINGS_OPENED.load(std::sync::atomic::Ordering::SeqCst);
+        let (bar, cx) = cx.add_window_view(|_, cx| {
             cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
-            Dashboard::new(1, summon, summon, cx)
+            Dashboard::new(1, counted_settings, summon, cx)
         });
         redraw_bar(cx);
         assert!(
@@ -3200,7 +3210,7 @@ mod tests {
                     name: "nyaw-2026.0.1-patch.2-setup.exe".into(),
                     url: "https://example.com/i.exe".into(),
                     size: 1,
-                    sha256: None,
+                    sha256: "0".repeat(64),
                 },
             })
         });
@@ -3208,21 +3218,19 @@ mod tests {
         let x = |cx: &mut VisualTestContext, s: &'static str| cx.debug_bounds(s).unwrap().origin.x;
         assert!(x(cx, "dashboard-launcher") < x(cx, "dashboard-update"));
         click(cx, "dashboard-update");
-        assert_eq!(
-            cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
-            1,
-            "設定をはめる"
-        );
+        assert_eq!(opened(), 1, "設定をはめる");
         assert!(
             cx.update(|_, cx| updater::take_reveal(cx)),
             "アップデートを出すよう頼む"
         );
-        // はまった設定でもう一度押すと、閉じずに描き直させるだけ。
-        open_spawned(cx, 2);
+        // 設定（パネル 7）がはまっている間に押すと、閉じも開き直しもせず、描き直させるだけ。
+        bar.update(cx, |d, cx| d.track(Page::Settings, 7, cx));
+        cx.update(|_, cx| ui::dock(7, cx));
         redraw_bar(cx);
         click(cx, "dashboard-update");
-        assert!(!commands(cx, 2).contains(&PanelCommand::Close));
-        assert!(cx.update(|_, cx| cx.global::<PanelControl>().panels[&2].redraw));
+        assert_eq!(opened(), 1, "開き直さない");
+        assert!(!commands(cx, 7).contains(&PanelCommand::Close));
+        assert!(cx.update(|_, cx| cx.global::<PanelControl>().panels[&7].redraw));
         assert!(cx.update(|_, cx| updater::take_reveal(cx)));
         // リリースが消えれば（入れ替えた後など）、ボタンも消える。
         cx.update(|_, cx| cx.default_global::<updater::Updater>().latest = None);

@@ -16,6 +16,8 @@ use testkit::{Driver, NoVrKit};
 const UPDATE: usize = 8;
 const INSTALLER: &str = "nyaw-2026.0.1-patch.2-setup.exe";
 const BODY: &[u8] = b"MZ fake installer";
+/// `BODY` の SHA-256（GitHub がアセットの `digest` で知らせるもの。無いリリースは勧めない）。
+const BODY_SHA256: &str = "9f7d203d2e9d47df255d63188d247ec305d7f3f9d40b9f1270574978cee3d1dd";
 
 /// A loopback "GitHub": `/releases` lists an older build (650) and a newer one (655, with release notes), each build
 /// number in the hidden note the release workflow appends, and the newer one's installer is downloadable.
@@ -28,10 +30,10 @@ fn github() -> String {
         r#"[
           {{"tag_name":"v2026.0.1-patch.2","name":"v2026.0.1-patch.2","body":"{notes}","draft":false,
             "published_at":"2026-11-13T00:00:00Z","html_url":"https://github.com/nekochanfood/nyaw/releases/tag/v2026.0.1-patch.2",
-            "assets":[{{"name":"{INSTALLER}","size":{size},"browser_download_url":"{base}/{INSTALLER}","digest":null}}]}},
+            "assets":[{{"name":"{INSTALLER}","size":{size},"browser_download_url":"{base}/{INSTALLER}","digest":"sha256:{BODY_SHA256}"}}]}},
           {{"tag_name":"v2026.0.1-patch.1","name":null,"body":"<!-- nyaw-build: 650 -->","draft":false,"published_at":null,
             "html_url":"https://github.com/nekochanfood/nyaw/releases/tag/v2026.0.1-patch.1",
-            "assets":[{{"name":"nyaw-2026.0.1-patch.1-setup.exe","size":1,"browser_download_url":"{base}/x","digest":null}}]}}
+            "assets":[{{"name":"nyaw-2026.0.1-patch.1-setup.exe","size":1,"browser_download_url":"{base}/x","digest":"sha256:{BODY_SHA256}"}}]}}
         ]"#,
         size = BODY.len()
     );
