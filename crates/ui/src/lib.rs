@@ -1,7 +1,9 @@
 //! Layer 5: UI 層。各オーバーレイパネルを GPUI の非表示ウィンドウで描画する。
 //! レーザーイベントを GPUI のマウス入力に変換し、描画を読み戻してカーネルへ返す。
 
-pub use kernel::rendering::gpui::{Frame, capture, collect, read_back, set_render_lod};
+pub use kernel::rendering::gpui::{
+    Frame, capture, collect, read_back, render_image, set_render_lod,
+};
 mod cue;
 pub mod keyboard;
 pub mod mirror;

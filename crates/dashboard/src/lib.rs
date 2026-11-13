@@ -1389,7 +1389,7 @@ impl Screen {
         if self.media_images.as_ref().is_none_or(|i| i.key != key) {
             let convert = |i: &Option<media::Image>| {
                 i.as_ref()
-                    .and_then(|i| rgba_image(i.width, i.height, &i.rgba))
+                    .and_then(|i| ui::render_image(i.width, i.height, i.rgba.to_vec()))
             };
             self.media_images = Some(MediaImages {
                 key,
@@ -2883,19 +2883,9 @@ fn tile_label(text: impl Into<gpui::SharedString>) -> Div {
         .child(text.into())
 }
 
-/// アイコンの RGBA を GPUI の画像（BGRA）にする。
+/// アイコンの RGBA を GPUI の画像にする。
 fn render_image(icon: &Icon) -> Option<Arc<RenderImage>> {
-    rgba_image(icon.width, icon.height, &icon.rgba)
-}
-
-/// RGBA の画素を GPUI の画像（BGRA）にする。
-fn rgba_image(width: u32, height: u32, rgba: &[u8]) -> Option<Arc<RenderImage>> {
-    let mut bgra = rgba.to_vec();
-    for p in bgra.as_chunks_mut::<4>().0 {
-        p.swap(0, 2);
-    }
-    let buffer = image::RgbaImage::from_raw(width, height, bgra)?;
-    Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
+    ui::render_image(icon.width, icon.height, icon.rgba.to_vec())
 }
 
 /// 時刻（`時:分`）を太字の `size` px で組んだときの、どの数字でも収まる幅。いちばん広い数字（"00:00"〜"99:99"）で測る。
@@ -3505,10 +3495,7 @@ mod tests {
     #[gpui::test]
     #[ignore]
     fn launcher_redraw_cost(cx: &mut TestAppContext) {
-        let icon = || {
-            let rgba = vec![200u8; 64 * 64 * 4];
-            rgba_image(64, 64, &rgba)
-        };
+        let icon = || ui::render_image(64, 64, vec![200u8; 64 * 64 * 4]);
         let (_list, cx) = cx.add_window_view(|_, cx| {
             let mut list = Screen::new(2, Page::Launcher, WeakEntity::new_invalid(), cx);
             (list.pending, list.apps_pending) = (None, false);

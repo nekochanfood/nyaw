@@ -8,6 +8,7 @@ license.workspace = true
 gpui = [
     "dep:gpui",
     "dep:gpui_windows",
+    "dep:image",
 ]
 
 [dependencies]
@@ -15,6 +16,8 @@ vr.workspace = true
 logger.workspace = true
 # render_to_image が一般公開されたら test-support を外す。
 gpui = { workspace = true, features = ["test-support"], optional = true }
+# RGBA の画素を GPUI の画像にする（`gpui::render_image`）。gpui と同じ版に合わせるのはここだけ。
+image = { version = "0.25", default-features = false, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 gpui_windows = { workspace = true, features = ["test-support"], optional = true }

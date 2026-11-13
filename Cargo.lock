@@ -1174,7 +1174,6 @@ dependencies = [
  "design",
  "gpui",
  "i18n",
- "image",
  "kernel",
  "logger",
  "nyapp",
@@ -4633,6 +4632,7 @@ version = "2026.0.1"
 dependencies = [
  "gpui",
  "gpui_windows",
+ "image",
  "logger",
  "vr",
 ]
