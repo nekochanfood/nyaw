@@ -1,0 +1,21 @@
+[package]
+name = "updater"
+description = "アプリの更新: GitHub のリリースから新しいビルドを見つけ、ユーザーが選んだら落としてインストーラーを黙って走らせる"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+gpui.workspace = true
+logger.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 落としたインストーラーが GitHub の知らせる SHA-256 のとおりかを確かめる。
+sha2 = "0.10"
+ui.workspace = true
+# リリースの一覧・インストーラーを落とす（rustls なので OS の TLS に依らない。nyapp と同じ）。
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }

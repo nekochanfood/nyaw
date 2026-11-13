@@ -1,5 +1,5 @@
 //! Windows の保存先・ランタイム検出・タイマー・GPU 設定。
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// OS のタイマーの精度を 1ms にする（プロセスが終わるまで有効）。Windows の既定は 15.6ms 刻みで、
 /// フレームループの「1ms 譲る」待ちが 1 刻みに丸められてフレームが伸びる。
@@ -56,15 +56,48 @@ pub fn high_gpu_priority() -> bool {
     }
 }
 
+/// コンソールを持たない（`windows` サブシステムの）プロセスに標準エラー出力の先を用意する。
+/// 端末から起動されていればその端末に、でなければ新しいコンソールウィンドウを開く。既にあれば何もしない。
+pub fn attach_console() {
+    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AllocConsole, AttachConsole};
+    // SAFETY: 定数を渡すだけの Win32 API。失敗（既にコンソールがある等）は無視してよい。
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS).is_err() {
+            let _ = AllocConsole();
+        }
+    }
+}
+
+/// エラーのダイアログを出し、閉じられるまで待つ（コンソールが無くても利用者に見える）。
+pub fn error_dialog(title: &str, text: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    use windows::core::HSTRING;
+    // SAFETY: 所有者なしのダイアログに、呼び出しの間だけ生きている文字列を渡す。
+    unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(text),
+            &HSTRING::from(title),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
 fn env_path(key: &str) -> Option<PathBuf> {
     std::env::var_os(key)
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
 }
 
-/// nyaw 自身の設定の保存先。ログと同じ `nyaw` ディレクトリ（`log_dir` の親）。
+/// nyaw 自身の設定の保存先: `%LOCALAPPDATA%\nyaw`。開発版（debug ビルド）は `%LOCALAPPDATA%\nyaw-dev` に分け、
+/// 開発版で変えた設定や登録用のファイルが、インストールしたリリース版のものとぶつからないようにする。
 pub fn config_dir() -> Option<PathBuf> {
-    log_dir().and_then(|d| d.parent().map(Path::to_path_buf))
+    let name = if cfg!(debug_assertions) {
+        "nyaw-dev"
+    } else {
+        "nyaw"
+    };
+    Some(env_path("LOCALAPPDATA")?.join(name))
 }
 
 /// ユーザーのデータ（ニャプリのパッケージとその保存領域）の置き場: `%LOCALAPPDATA%\nyaw`。
@@ -149,12 +182,21 @@ HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\OpenXR\1
     #[test]
     fn config_dir_is_namespaced() {
         // CI のシェルには LOCALAPPDATA が設定されている。
-        assert!(config_dir().unwrap().ends_with("nyaw"));
+        let name = if cfg!(debug_assertions) {
+            "nyaw-dev"
+        } else {
+            "nyaw"
+        };
+        assert!(config_dir().unwrap().ends_with(name));
     }
 
     #[test]
     fn log_dir_is_namespaced() {
-        assert!(log_dir().unwrap().ends_with(Path::new("nyaw").join("logs")));
+        assert!(
+            log_dir()
+                .unwrap()
+                .ends_with(std::path::Path::new("nyaw").join("logs"))
+        );
     }
 
     #[test]

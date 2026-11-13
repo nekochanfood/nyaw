@@ -23,5 +23,6 @@ mod test_panels;
 mod testing;
 mod testing_transparent;
 mod tooltip;
+mod update;
 mod vr_controls;
 mod wizard;

@@ -25,13 +25,21 @@ jobs:
         with:
           # 書き込めるトークンを .git に残さない（依存の build.rs から読めないように）
           persist-credentials: false
+          # ビルド番号（HEAD までのコミット数。crates/updater/build.rs）を数えるので、履歴を全部取る
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      # インストーラは Cargo.toml のバージョンを使う。本体と nyapps（別のワークスペース）の全パッケージが
-      # タグ（v 付きでもよい）と同じでなければビルド前に止める
+      # タグは v<CalVer>[-<名前>.<数>]（v2026.0.1-beta.1。名前は何でもよいが、インストーラーのファイル名に入るので使えない文字は除く）。
+      # 本体と nyapps（別のワークスペース）の全パッケージがタグの版か、その -<名前>.<数> を除いた版でなければビルド前に止める。
+      # 表示する版はタグのもの（NYAW_VERSION）
       - name: Check tag matches Cargo.toml versions
         if: github.event_name == 'release'
         run: |
           set -o pipefail
+          re='^v?[0-9]{4}\.[0-9]+\.[0-9]+(-[^<>:"|?*/\[:space:]]+\.[0-9]+)?$'
+          if ! [[ "$TAG" =~ $re ]]; then
+            echo "::error::tag $TAG is not v<CalVer>[-<label>.<number>] (e.g. v2026.0.1-beta.1)"
+            exit 1
+          fi
           pkgs=$(for m in Cargo.toml nyapps/Cargo.toml; do
             cargo metadata --manifest-path "$m" --no-deps --format-version 1 |
               grep -o '"name":"[^"]*","version":"[^"]*"'
@@ -41,21 +49,36 @@ jobs:
             echo "::error::could not read package versions from cargo metadata"
             exit 1
           fi
-          bad=$(grep -v "\"version\":\"${TAG#v}\"" <<<"$pkgs" || true)
+          base=$(sed -E 's/-.+\.[0-9]+$//' <<<"${TAG#v}")
+          bad=$(grep -v -e "\"version\":\"${TAG#v}\"" -e "\"version\":\"$base\"" <<<"$pkgs" || true)
           if [ -n "$bad" ]; then
             echo "::error::tag $TAG does not match these package versions: $bad"
             exit 1
           fi
+          echo "NYAW_VERSION=${TAG#v}" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
         with:
           # 保存は main だけ（タグのスコープに保存しても次のタグからは読めない）
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # testing の build.rs（ライセンスの一覧）は `cargo metadata --offline` で開発用の依存まで読むので、全部落としておく
+      # （`cargo build` はビルドに要るものしか落とさず、それを保存したキャッシュにも開発用の依存は無い）
+      - run: cargo fetch --locked
       - run: cargo build --release
       # ランナーに Inno Setup が無いイメージでも動くように
       - if: github.event_name == 'release'
         run: command -v iscc || choco install innosetup -y --no-progress
       - if: github.event_name == 'release'
         run: iscc installer/nyaw.iss
+      # アプリの更新は新旧をビルド番号（HEAD までのコミット数。crates/updater/build.rs と同じ数え方）で比べる。
+      # 名前にも画面にも出さず、リリースノートの末尾に見えない注釈で残す（足し直すときは前のものを消す）
+      - if: github.event_name == 'release'
+        run: |
+          build=$(git rev-list --count HEAD)
+          gh release view "$TAG" --json body -q .body | sed '/^<!-- nyaw-build: [0-9]* -->$/d' > notes.md
+          { echo; echo "<!-- nyaw-build: $build -->"; } >> notes.md
+          gh release edit "$TAG" --notes-file notes.md
+        env:
+          GH_TOKEN: ${{ github.token }}
       - if: github.event_name == 'release'
         run: gh release upload "$TAG" target/installer/*.exe --clobber
         env:

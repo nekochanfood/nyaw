@@ -1,4 +1,4 @@
-//! カーネル内の設定: 設定ファイル。`os::config_dir()/config.toml`（現在のバックエンドでは `%LOCALAPPDATA%\nyaw`）を読む。
+//! カーネル内の設定: 設定ファイル。`os::config_dir()/config.toml`（現在のバックエンドでは `%LOCALAPPDATA%\nyaw`。debug ビルドは `nyaw-dev`）を読む。
 //! ファイルが無ければ既定値。優先順位（コマンドライン > 環境変数 > ここ）は呼び出し側が決める。
 
 use std::fs;
@@ -220,6 +220,7 @@ pub struct Config {
     /// ログレベル（`trace` / `debug` / `info` / `warn` / `error`）。解釈は呼び出し側。
     pub log: Option<String>,
     /// 使うランタイム（`openvr` / `openxr` / `novr`）。解釈は呼び出し側。
+    /// 非推奨: ランタイムはコマンドラインで指定する（main はデバッグビルドでだけ読み、リリースビルドでは無視する）。
     pub runtime: Option<String>,
     /// レーザーの手ブレ抑え（0 = 抑えない 〜 1 未満。大きいほど強く、遅れる）。省略で既定値。
     pub pointer_smoothing: Option<f32>,
@@ -651,10 +652,6 @@ emulator = false
 
     #[test]
     fn path_is_config_toml_under_config_dir() {
-        assert!(
-            path()
-                .unwrap()
-                .ends_with(std::path::Path::new("nyaw").join("config.toml"))
-        );
+        assert_eq!(path(), os::config_dir().map(|d| d.join("config.toml")));
     }
 }

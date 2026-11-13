@@ -2405,7 +2405,7 @@ mod tests {
 
     #[gpui::test]
     fn spec_attaches_locks_and_sizes_panel(cx: &mut TestAppContext) {
-        let mut kernel = Kernel::boot(Some("novr"), Default::default()).unwrap();
+        let mut kernel = Kernel::boot(Some("novr"), Default::default(), false).unwrap();
         let hand = Device::Controller(Hand::Left);
         let spec = PanelSpec::root(Pose::IDENTITY, |_, _, _| Probe::default())
             .sized(Vec2::new(0.1, 0.05), (10, 5))
@@ -2424,7 +2424,7 @@ mod tests {
 
     #[gpui::test]
     fn sync_panel_applies_commands_and_reports_status(cx: &mut TestAppContext) {
-        let mut kernel = Kernel::boot(Some("novr"), Default::default()).unwrap();
+        let mut kernel = Kernel::boot(Some("novr"), Default::default(), false).unwrap();
         let panel = kernel
             .add_panel("t", Pose::IDENTITY, Vec2::ONE, PANEL_PX)
             .unwrap();

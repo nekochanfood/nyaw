@@ -1,14 +1,19 @@
 ; nyaw のインストーラ。`cargo build --release` の後に `iscc installer\nyaw.iss`（CI は release.yml）
 ; 保存先が %LOCALAPPDATA%\nyaw なので、管理者権限なしでユーザー単位に入れる
+; アプリの更新（crates/updater）は `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /WAITPID=<pid> /RELAUNCH=1 "/ARGS=<引数>"` で走らせる
 
-; バージョンは Cargo.toml だけが持つ。pkgid は `path+file:///…#2026.0.1`（ディレクトリ名が違うと `#nyaw@2026.0.1`）
-#define PkgId ExecAndGetFirstLine("cmd.exe", "/c cargo pkgid -p nyaw", SourcePath + "..")
-#if PkgId == ""
-  #error cargo pkgid -p nyaw が失敗した
-#endif
-#define AppVersion Copy(PkgId, RPos("#", PkgId) + 1)
-#if RPos("@", AppVersion) > 0
-  #define AppVersion Copy(AppVersion, RPos("@", AppVersion) + 1)
+; 版はリリースのワークフローがタグから渡す（NYAW_VERSION。`2026.0.1-beta.1` や `2026.0.1-patch.1` など）。無ければ Cargo.toml のもの。
+; pkgid は `path+file:///…#2026.0.1`（ディレクトリ名が違うと `#nyaw@2026.0.1`）
+#define AppVersion GetEnv("NYAW_VERSION")
+#if AppVersion == ""
+  #define PkgId ExecAndGetFirstLine("cmd.exe", "/c cargo pkgid -p nyaw", SourcePath + "..")
+  #if PkgId == ""
+    #error cargo pkgid -p nyaw が失敗した
+  #endif
+  #define AppVersion Copy(PkgId, RPos("#", PkgId) + 1)
+  #if RPos("@", AppVersion) > 0
+    #define AppVersion Copy(AppVersion, RPos("@", AppVersion) + 1)
+  #endif
 #endif
 
 [Setup]
@@ -26,6 +31,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\nyaw.exe
 SetupIconFile=..\assets\icons\nyaw-light.ico
 OutputDir=..\target\installer
+; アプリの更新はリリースに付いたこの名前のものを入れる（crates/updater の is_installer）
 OutputBaseFilename=nyaw-{#AppVersion}-setup
 Compression=lzma2
 SolidCompression=yes
@@ -51,3 +57,37 @@ Name: "{autoprograms}\nyaw"; Filename: "{app}\nyaw.exe"
 
 [Run]
 Filename: "{app}\nyaw.exe"; Description: "{cm:LaunchProgram,nyaw}"; Flags: nowait postinstall skipifsilent
+; アプリの更新は、入れ終えたらアプリを元の引数（`--novr` など）で起動し直す
+Filename: "{app}\nyaw.exe"; Parameters: "{param:ARGS|}"; Flags: nowait; Check: Relaunch
+
+[Code]
+const
+  SYNCHRONIZE = $00100000;
+
+// ponytail: ハンドルを Integer で受けるのは Setup が 32 ビット（Inno Setup 6）だから。64 ビットの Setup にするなら NativeInt に
+
+function OpenProcess(Access: Integer; Inherit: Integer; Pid: Integer): Integer;
+  external 'OpenProcess@kernel32.dll stdcall';
+function WaitForSingleObject(Handle: Integer; Milliseconds: Integer): Integer;
+  external 'WaitForSingleObject@kernel32.dll stdcall';
+function CloseHandle(Handle: Integer): Integer;
+  external 'CloseHandle@kernel32.dll stdcall';
+
+// アプリの更新（/WAITPID=<pid>）は、起こしたアプリが終わるのを待ってから入れ替える（60 秒まで。過ぎたら閉じてもらう）
+function InitializeSetup: Boolean;
+var
+  Process: Integer;
+begin
+  Process := OpenProcess(SYNCHRONIZE, 0, StrToIntDef(ExpandConstant('{param:WAITPID|0}'), 0));
+  if Process <> 0 then
+  begin
+    WaitForSingleObject(Process, 60000);
+    CloseHandle(Process);
+  end;
+  Result := True;
+end;
+
+function Relaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
