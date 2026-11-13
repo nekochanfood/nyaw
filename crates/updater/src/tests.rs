@@ -6,43 +6,43 @@ use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 
 #[test]
-fn installer_names_carry_the_build() {
+fn the_build_number_hides_in_the_notes_and_installers_are_plain_names() {
+    let notes = "## What's Changed\n* fix\n\n<!-- nyaw-build: 655 -->\n";
+    assert_eq!(notes_build(notes), Some(655));
     assert_eq!(
-        installer_build("nyaw-2026.0.1-patch.2-build655-setup.exe"),
-        Some(655)
+        notes_build("<!--nyaw-build:7-->"),
+        None,
+        "書き方はワークフローのとおりだけ"
     );
+    assert_eq!(notes_build("<!-- nyaw-build: 7 -->"), Some(7));
+    // 本文に同じ注釈を書いても、最後のもの（ワークフローが足したもの）が効く。
     assert_eq!(
-        installer_build("nyaw-2026.1.0-build700-setup.exe"),
-        Some(700)
+        notes_build("例: `<!-- nyaw-build: 1 -->`\n\n<!-- nyaw-build: 9 -->"),
+        Some(9)
     );
-    // 版の名前は何でもよい（`build` を含んでも、最後の `-build` が番号）。
-    assert_eq!(
-        installer_build("nyaw-2026.0.1-build.3-build701-setup.exe"),
-        Some(701)
-    );
-    assert_eq!(
-        installer_build("nyaw-2026.0.1-リリース候補.1-build702-setup.exe"),
-        Some(702)
-    );
-    // ビルド番号の無い古い名前・ほかのファイル・区切りを含むものは読まない。
-    assert_eq!(installer_build("nyaw-2026.0.1-setup.exe"), None);
-    assert_eq!(installer_build("nyaw-2026.0.1-buildx-setup.exe"), None);
-    assert_eq!(installer_build("nyaw--build3-setup.exe"), None);
-    assert_eq!(installer_build("phonon.dll"), None);
-    assert_eq!(installer_build("nyaw-..\\x-build3-setup.exe"), None);
+    assert_eq!(notes_build("## What's Changed"), None);
+    assert_eq!(notes_build("<!-- nyaw-build: x -->"), None);
+    // インストーラーの名前には版だけ（ビルド番号は出さない）。版の名前は何でもよい。
+    assert!(is_installer("nyaw-2026.0.1-patch.2-setup.exe"));
+    assert!(is_installer("nyaw-2026.0.1-リリース候補.1-setup.exe"));
+    assert!(!is_installer("nyaw--setup.exe"));
+    assert!(!is_installer("phonon.dll"));
+    assert!(!is_installer("nyaw-..\\x-setup.exe"));
 }
 
-/// GitHub の API の形（使うところだけ）。
+/// GitHub の API の形（使うところだけ）。`build` があれば、ワークフローのとおりリリースノートの末尾に注釈を足す。
 fn release(
     tag: &str,
     draft: bool,
+    build: Option<u32>,
     assets: &[(&str, u64, Option<&str>)],
     base: &str,
 ) -> serde_json::Value {
+    let marker = build.map_or(String::new(), |b| format!("\n\n<!-- nyaw-build: {b} -->"));
     serde_json::json!({
         "tag_name": tag,
         "name": tag,
-        "body": format!("## What's Changed\n* {tag}"),
+        "body": format!("## What's Changed\n* {tag}{marker}"),
         "draft": draft,
         "prerelease": true,
         "published_at": "2026-11-13T00:00:00Z",
@@ -62,33 +62,35 @@ fn list(base: &str) -> Vec<u8> {
         release(
             "v2026.0.1-patch.9",
             true,
-            &[("nyaw-2026.0.1-patch.9-build999-setup.exe", 1, None)],
+            Some(999),
+            &[("nyaw-2026.0.1-patch.9-setup.exe", 1, None)],
             base
         ),
         release(
             "v2026.0.1-patch.2",
             false,
+            Some(655),
             &[
                 ("phonon.dll", 1, None),
-                (
-                    "nyaw-2026.0.1-patch.2-build655-setup.exe",
-                    5,
-                    Some("sha256:abc")
-                ),
+                ("nyaw-2026.0.1-patch.2-setup.exe", 5, Some("sha256:abc")),
             ],
             base
         ),
+        // ビルド番号はあるが、インストーラーがまだ付いていない（ビルド中）。
+        release("v2026.0.1-patch.3", false, Some(660), &[], base),
         // 版はタグから（アセットの名前の記号は GitHub が置き換えることがある）。
         release(
             "v2026.0.1-ぽてと.1",
             false,
-            &[("nyaw-2026.0.1-....1-build650-setup.exe", 5, None)],
+            Some(650),
+            &[("nyaw-2026.0.1-....1-setup.exe", 5, None)],
             base
         ),
         // ビルド番号の無い、更新の仕組みより前のリリース。
         release(
             "v2026.0.1",
             false,
+            None,
             &[("nyaw-2026.0.1-setup.exe", 5, None)],
             base
         ),
@@ -105,15 +107,19 @@ fn the_newest_build_above_ours_wins_whatever_the_version_says() {
             .map(|r| (r.version.as_str(), r.build))
             .collect::<Vec<_>>(),
         [("2026.0.1-patch.2", 655), ("2026.0.1-ぽてと.1", 650)],
-        "下書きと、ビルド番号の読めないものは除く"
+        "下書きと、インストーラーかビルド番号の無いものは除く"
     );
     let patch2 = &releases[0];
     assert_eq!(patch2.installer.sha256.as_deref(), Some("abc"));
     assert_eq!(
         patch2.installer.url,
-        "https://example.com/nyaw-2026.0.1-patch.2-build655-setup.exe"
+        "https://example.com/nyaw-2026.0.1-patch.2-setup.exe"
     );
-    assert_eq!(patch2.notes, "## What's Changed\n* v2026.0.1-patch.2");
+    assert!(
+        patch2
+            .notes
+            .starts_with("## What's Changed\n* v2026.0.1-patch.2")
+    );
     let newer = |build| newest(releases.clone(), build).map(|r| r.version);
     assert_eq!(newer(650).as_deref(), Some("2026.0.1-patch.2"));
     assert_eq!(
@@ -228,8 +234,9 @@ fn fixture() -> (String, Files) {
         release(
             "v2026.0.1-patch.2",
             false,
+            Some(655),
             &[(
-                "nyaw-2026.0.1-patch.2-build655-setup.exe",
+                "nyaw-2026.0.1-patch.2-setup.exe",
                 installer.len() as u64,
                 Some(&format!("sha256:{}", sha256(&installer))),
             )],
@@ -238,17 +245,15 @@ fn fixture() -> (String, Files) {
         release(
             "v2026.0.1-patch.1",
             false,
-            &[("nyaw-2026.0.1-patch.1-build650-setup.exe", 1, None)],
+            Some(650),
+            &[("nyaw-2026.0.1-patch.1-setup.exe", 1, None)],
             &base
         ),
     ]))
     .unwrap();
     let mut f = files.lock().unwrap();
     f.insert("/releases".into(), json);
-    f.insert(
-        "/nyaw-2026.0.1-patch.2-build655-setup.exe".into(),
-        installer,
-    );
+    f.insert("/nyaw-2026.0.1-patch.2-setup.exe".into(), installer);
     drop(f);
     (base, files)
 }
@@ -267,7 +272,7 @@ fn downloads_and_verifies_the_installer() {
 
     // 中身が SHA-256 と違う・大きさが違うものは残さない。
     files.lock().unwrap().insert(
-        "/nyaw-2026.0.1-patch.2-build655-setup.exe".into(),
+        "/nyaw-2026.0.1-patch.2-setup.exe".into(),
         b"MZ evil installer".to_vec(),
     );
     assert!(
@@ -276,10 +281,10 @@ fn downloads_and_verifies_the_installer() {
             .contains("sha256")
     );
     assert!(!path.exists());
-    files.lock().unwrap().insert(
-        "/nyaw-2026.0.1-patch.2-build655-setup.exe".into(),
-        b"MZ".to_vec(),
-    );
+    files
+        .lock()
+        .unwrap()
+        .insert("/nyaw-2026.0.1-patch.2-setup.exe".into(), b"MZ".to_vec());
     assert!(
         download(&release, &dir, &progress)
             .unwrap_err()
@@ -355,10 +360,7 @@ fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
     });
     assert_eq!(
         LAUNCHED.lock().unwrap().as_deref(),
-        Some(
-            dir.join("nyaw-2026.0.1-patch.2-build655-setup.exe")
-                .as_path()
-        )
+        Some(dir.join("nyaw-2026.0.1-patch.2-setup.exe").as_path())
     );
     let _ = fs::remove_dir_all(dir);
 }

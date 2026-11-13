@@ -1900,11 +1900,7 @@ impl Settings {
                             .min_w_0()
                             .truncate()
                             .text_color(rgba(theme.neutral_text_low))
-                            .child(i18n::tf(
-                                cx,
-                                "update.version_build",
-                                &[("version", &updater::VERSION), ("build", &updater::BUILD)],
-                            )),
+                            .child(updater::VERSION),
                     )],
                 ),
                 // バージョンと、ライセンス・ソースコードの間の区切り線。
