@@ -39,8 +39,17 @@ fn main() -> ExitCode {
         }
     };
     let args = Args::parse(std::env::args().skip(1));
-    // 優先順位: コマンドライン > 設定ファイル
-    let requested = args.runtime.or(config.runtime.clone());
+    // 設定ファイルの `runtime` は非推奨（コマンドラインで指定する）。デバッグビルドだけ、コマンドラインに無ければ従う。
+    // リリースビルドでは読まない（novr は明示の指定が要るので、設定に書いて残させない）。
+    if let Some(r) = &config.runtime {
+        logger::warn!(
+            "runtime in config file is deprecated, pass it on the command line",
+            runtime = r,
+            ignored = !cfg!(debug_assertions)
+        );
+    }
+    let from_config = config.runtime.clone().filter(|_| cfg!(debug_assertions));
+    let requested = args.runtime.or(from_config);
     // novr はテスト用。リリースビルドでは VR ランタイムが無くても勝手に novr にせず、明示の指定が要る。
     let Ok(kernel) = Kernel::boot(requested.as_deref(), config, cfg!(debug_assertions)) else {
         // コンソールが無くても分かるように。指定の仕方は出さない（novr を一般の利用者に勧めない）。
