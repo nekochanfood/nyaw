@@ -191,7 +191,7 @@ impl Render for Wrist {
                 design,
                 &theme,
                 now,
-                dashboard::date(now, cx).into(),
+                i18n::date(cx, now).into(),
                 face::BASE,
             ))
     }

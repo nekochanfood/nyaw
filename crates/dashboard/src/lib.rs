@@ -2199,7 +2199,7 @@ impl Screen {
                                     div()
                                         .text_size(px(font_size::MD))
                                         .text_color(rgba(theme.neutral_text_low))
-                                        .child(date(now, cx)),
+                                        .child(i18n::date(cx, now)),
                                 ),
                         )
                         .child(
@@ -2744,22 +2744,6 @@ fn battery_glyph(b: &Battery) -> &'static design::Icon {
 
 fn percent(level: f32) -> String {
     format!("{}%", (level * 100.0).round() as u32)
-}
-
-/// 今の言語での日付（書式は文言の `common.date`。chrono の書式で、曜日だけを `{weekday}` で訳す）。
-pub fn date(now: chrono::DateTime<chrono::Local>, cx: &App) -> String {
-    use chrono::Datelike;
-    let weekday = match now.weekday() {
-        chrono::Weekday::Sun => i18n::t(cx, "weekday.sun"),
-        chrono::Weekday::Mon => i18n::t(cx, "weekday.mon"),
-        chrono::Weekday::Tue => i18n::t(cx, "weekday.tue"),
-        chrono::Weekday::Wed => i18n::t(cx, "weekday.wed"),
-        chrono::Weekday::Thu => i18n::t(cx, "weekday.thu"),
-        chrono::Weekday::Fri => i18n::t(cx, "weekday.fri"),
-        chrono::Weekday::Sat => i18n::t(cx, "weekday.sat"),
-    };
-    let format = i18n::tf(cx, "common.date", &[("weekday", &weekday)]);
-    now.format(&format).to_string()
 }
 
 /// 見出しの行（右に操作を足せる）。高さはボタンと同じにして、操作の有無で一覧の位置が変わらないようにする。

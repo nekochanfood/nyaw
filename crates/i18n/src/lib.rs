@@ -120,6 +120,22 @@ pub fn tf(cx: &App, key: &str, args: &[(&str, &dyn Display)]) -> SharedString {
     fill(&t(cx, key), args).into()
 }
 
+/// 今の言語での日付（書式は文言の `common.date`。chrono の書式で、曜日だけを `{weekday}` で訳す）。
+pub fn date(cx: &App, now: chrono::DateTime<chrono::Local>) -> String {
+    use chrono::{Datelike, Weekday};
+    let weekday = match now.weekday() {
+        Weekday::Sun => "weekday.sun",
+        Weekday::Mon => "weekday.mon",
+        Weekday::Tue => "weekday.tue",
+        Weekday::Wed => "weekday.wed",
+        Weekday::Thu => "weekday.thu",
+        Weekday::Fri => "weekday.fri",
+        Weekday::Sat => "weekday.sat",
+    };
+    let format = tf(cx, "common.date", &[("weekday", &t(cx, weekday))]);
+    now.format(&format).to_string()
+}
+
 fn fill(template: &str, args: &[(&str, &dyn Display)]) -> String {
     let mut s = template.to_owned();
     for (name, value) in args {
@@ -208,6 +224,20 @@ mod tests {
             cx.set_global(Lang::Ja);
             assert_eq!(t(cx, "common.close"), "閉じる");
             assert_eq!(tf(cx, "testing.clicked", &[("count", &2)]), "クリック 2 回");
+        });
+    }
+
+    /// 日付は言語ごとの書式で組み、曜日も訳す。
+    #[gpui::test]
+    fn date_follows_the_language(cx: &mut gpui::TestAppContext) {
+        use chrono::TimeZone;
+        let thursday = chrono::Local
+            .with_ymd_and_hms(2026, 11, 12, 9, 0, 0)
+            .unwrap();
+        cx.update(|cx| {
+            assert_eq!(date(cx, thursday), "Thu Nov 12");
+            cx.set_global(Lang::Ja);
+            assert_eq!(date(cx, thursday), "11月12日（木）");
         });
     }
 
