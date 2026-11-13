@@ -61,6 +61,46 @@ impl Source {
     pub fn same_target(&self, other: &Source) -> bool {
         self.concrete() && self.kind == other.kind && self.target == other.target
     }
+
+    /// このウィンドウが消えた後に映す、同じアプリの後継ウィンドウを `sources` から選ぶ。
+    // ponytail: タイトルと実行ファイル名が結び付かない後継窓は追えない。実例で外れたらプロセスの親子関係も調べる。
+    pub fn replacement(&self, sources: &[Source]) -> Option<Source> {
+        let app = self.app.as_deref().unwrap_or("");
+        let title = self.name.to_lowercase();
+        let key = app_key(app);
+        sources
+            .iter()
+            .filter(|s| s.kind == SourceKind::Window && !s.same_target(self))
+            .find(|s| {
+                let candidate = s.name.to_lowercase();
+                title.len() >= 5 && candidate.contains(&title)
+                    || key.len() >= 5
+                        && title.contains(&key)
+                        && candidate.contains(&key)
+                        && s.app
+                            .as_deref()
+                            .is_some_and(|a| a.eq_ignore_ascii_case(app))
+            })
+            .cloned()
+    }
+
+    /// 取得元の一覧が `known` から `current` に変わったときの後継ウィンドウ（[`Self::replacement`]）。
+    /// このウィンドウがまだ開いている間は、新しく出たウィンドウだけを候補にする（スプラッシュの後の本体など）。
+    pub fn successor(&self, known: &[Source], current: &[Source]) -> Option<Source> {
+        let still_open = current.iter().any(|s| s.same_target(self));
+        let candidates: Vec<Source> = current
+            .iter()
+            .filter(|s| !still_open || !known.iter().any(|k| k.same_target(s)))
+            .cloned()
+            .collect();
+        self.replacement(&candidates)
+    }
+}
+
+/// 実行ファイル名を突き合わせるためのキー（小文字にして拡張子 `.exe` を落とす。"Chrome.exe" → "chrome"）。
+pub fn app_key(exe: &str) -> String {
+    let exe = exe.to_ascii_lowercase();
+    exe.strip_suffix(".exe").map(str::to_owned).unwrap_or(exe)
 }
 
 /// アイコンの画像（RGBA、ストレートアルファ）。
@@ -298,6 +338,24 @@ pub struct InstalledApp {
     /// 実行ファイル名（"chrome.exe" など）。起動中のウィンドウ（[`Source::app`]）と突き合わせる。取れなければ `None`。
     pub exe: Option<String>,
     pub icon: Option<Icon>,
+}
+
+impl InstalledApp {
+    /// `source` がこのアプリのウィンドウか。実行ファイル名で見て、分からないアプリ（ストアのアプリなど）は
+    /// ウィンドウの名前にアプリの名前を含むかで見る。
+    pub fn owns(&self, source: &Source) -> bool {
+        source.kind == SourceKind::Window
+            && match &self.exe {
+                Some(exe) => source
+                    .app
+                    .as_deref()
+                    .is_some_and(|a| a.eq_ignore_ascii_case(exe)),
+                None => {
+                    let name = self.name.to_lowercase();
+                    !name.is_empty() && source.name.to_lowercase().contains(&name)
+                }
+            }
+    }
 }
 
 /// アプリの一覧の取得。アイコンを読むので時間が掛かる。フレームループで待たない。
@@ -695,6 +753,85 @@ mod tests {
         assert_eq!(found(" st "), ["Steam"]);
         assert_eq!(found("O"), ["Google Chrome", "Spotify"]);
         assert_eq!(found(""), names);
+    }
+
+    /// 名前 `name`・実行ファイル `app` のウィンドウ（`target` が 0 なら特定のウィンドウを指さない）。
+    fn window(name: &str, app: &str, target: isize) -> Source {
+        let mut source = mock::with_target(mock::source(name, SourceKind::Window), target);
+        source.app = Some(app.into());
+        source
+    }
+
+    #[test]
+    fn app_key_ignores_case_and_the_exe_suffix() {
+        assert_eq!(app_key("Chrome.EXE"), "chrome");
+        assert_eq!(app_key("spotify"), "spotify");
+    }
+
+    /// 実行ファイル名が分かるアプリは名前で見ず、分からないアプリはウィンドウの名前で見る。画面はどのアプリのものでもない。
+    #[test]
+    fn app_owns_its_windows() {
+        let app = |exe: Option<&str>| InstalledApp {
+            name: "Spotify".into(),
+            id: "spotify".into(),
+            exe: exe.map(Into::into),
+            icon: None,
+        };
+        assert!(app(Some("spotify.exe")).owns(&window("Song", "Spotify.exe", 1)));
+        assert!(!app(Some("spotify.exe")).owns(&window("Spotify", "chrome.exe", 1)));
+        assert!(app(None).owns(&window("Spotify Premium", "store.exe", 1)));
+        assert!(!app(None).owns(&mock::source("Spotify", SourceKind::Screen)));
+    }
+
+    #[test]
+    fn replacement_prefers_matching_title_when_an_app_has_multiple_windows() {
+        let original = window("Project", "Adobe.exe", 0);
+        let other = window("Other", "Adobe.exe", 0);
+        let next = window("Project", "adobe.exe", 0);
+        assert_eq!(original.replacement(&[other, next.clone()]), Some(next));
+    }
+
+    #[test]
+    fn replacement_does_not_switch_to_an_unrelated_chrome_window() {
+        let original = window("Tab A", "chrome.exe", 0);
+        assert_eq!(
+            original.replacement(&[window("Tab B", "chrome.exe", 0)]),
+            None
+        );
+    }
+
+    #[test]
+    fn replacement_follows_an_adobe_window_across_executables() {
+        let original = window("Adobe Photoshop", "AdobeLauncher.exe", 0);
+        let next = window("Untitled - Adobe Photoshop", "Photoshop.exe", 0);
+        assert_eq!(
+            original.replacement(std::slice::from_ref(&next)),
+            Some(next)
+        );
+    }
+
+    #[test]
+    fn successor_tracks_a_new_adobe_window_while_the_splash_stays_open() {
+        let splash = window("Adobe Photoshop", "Photoshop.exe", 1);
+        let previous = window("Another - Adobe Photoshop", "Photoshop.exe", 2);
+        let opened = window("Untitled - Adobe Photoshop", "Photoshop.exe", 3);
+        assert_eq!(
+            splash.successor(
+                &[splash.clone(), previous.clone()],
+                &[splash.clone(), previous, opened.clone()]
+            ),
+            Some(opened)
+        );
+    }
+
+    #[test]
+    fn successor_does_not_replace_chrome_with_an_existing_window() {
+        let chosen = window("New Tab - Google Chrome", "chrome.exe", 1);
+        let other = window("New Tab - Google Chrome", "chrome.exe", 2);
+        assert_eq!(
+            chosen.successor(&[chosen.clone(), other.clone()], &[chosen.clone(), other]),
+            None
+        );
     }
 
     #[test]

@@ -20,7 +20,9 @@ use gpui::{
     px, rgba,
 };
 use kernel::audio::Sound;
-use kernel::desktop::{Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status};
+use kernel::desktop::{
+    Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status, app_key,
+};
 use kernel::subsystems::media;
 use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
 use kernel::{PanelCommand, PanelId, Setting};
@@ -1332,16 +1334,12 @@ impl Screen {
 
     /// 再生中のメディアのアプリのウィンドウ（取得元の一覧から。実行ファイル名か、ウィンドウの名前で探す）。
     fn app_window(&self, app: &media::App) -> Option<&(Source, Option<Arc<RenderImage>>)> {
-        let stem = |s: &str| {
-            let s = s.to_ascii_lowercase();
-            s.strip_suffix(".exe").map(str::to_owned).unwrap_or(s)
-        };
-        let (id, name) = (stem(&app.id), app.name.to_lowercase());
-        let exe = app.exe.as_deref().map(stem);
+        let (id, name) = (app_key(&app.id), app.name.to_lowercase());
+        let exe = app.exe.as_deref().map(app_key);
         self.sources.iter().find(|(s, _)| {
             s.kind == SourceKind::Window
                 && (s.app.as_deref().is_some_and(|a| {
-                    let a = stem(a);
+                    let a = app_key(a);
                     a == id || a == name || exe.as_ref() == Some(&a)
                 }) || (!name.is_empty() && s.name.to_lowercase().contains(&name)))
         })
@@ -1707,7 +1705,7 @@ impl Screen {
 
     /// アプリ `app` のウィンドウ（取得元の一覧から。[`is_window_of`]）。
     fn window_for(&self, app: &InstalledApp) -> Option<&(Source, Option<Arc<RenderImage>>)> {
-        self.sources.iter().find(|(s, _)| is_window_of(app, s))
+        self.sources.iter().find(|(s, _)| app.owns(s))
     }
 
     /// ウィンドウ（画面）を映す。もう映していれば新しく開かず、ダッシュボードに隠している配信ならそれを出す。
@@ -1900,15 +1898,11 @@ impl Screen {
 
     /// 起動中のウィンドウを個別に出す。常駐の画面はバーにあるので出さない。
     fn running_apps(&self, cx: &App) -> Vec<RunningApp> {
-        let stem = |s: &str| {
-            let s = s.to_ascii_lowercase();
-            s.strip_suffix(".exe").map(str::to_owned).unwrap_or(s)
-        };
         // 実行ファイル名（小文字・.exe 抜き）→ アプリ。ウィンドウごとに全アプリを探さないよう、先に一度だけ作る。
         let by_exe: std::collections::HashMap<String, &(InstalledApp, Option<Arc<RenderImage>>)> =
             self.apps
                 .iter()
-                .filter_map(|a| Some((stem(a.0.exe.as_deref()?), a)))
+                .filter_map(|a| Some((app_key(a.0.exe.as_deref()?), a)))
                 .collect();
         let mut running: Vec<RunningApp> = Vec::new();
         for (source, image) in &self.sources {
@@ -1918,7 +1912,7 @@ impl Screen {
             let key = source
                 .app
                 .as_deref()
-                .map_or_else(|| source.name.clone(), stem);
+                .map_or_else(|| source.name.clone(), app_key);
             let app = by_exe.get(&key).copied();
             let mut name = match app {
                 Some((a, _)) => format!("{} · {}", a.name, source.name),
@@ -2423,7 +2417,7 @@ impl Mirror {
                         .await;
                 };
                 if let Ok(sources) = sources
-                    && let Some(next) = successor(&source, &known, &sources)
+                    && let Some(next) = source.successor(&known, &sources)
                 {
                     let _ = this.update(cx, |m, cx| {
                         if m.watch_generation == generation {
@@ -2451,7 +2445,7 @@ impl Mirror {
                         if let Some(result) = pending.poll() {
                             break result
                                 .ok()
-                                .and_then(|s| s.into_iter().find(|s| is_window_of(&app, s)));
+                                .and_then(|s| s.into_iter().find(|s| app.owns(s)));
                         }
                         cx.background_executor()
                             .timer(Duration::from_millis(50))
@@ -2516,57 +2510,6 @@ impl Render for Mirror {
         });
         mirror_screen(&theme, &state, action, cx).debug_selector(move || selector.into())
     }
-}
-
-/// `source` がアプリ `app` のウィンドウか。実行ファイル名で見て、分からないアプリ（ストアのアプリなど）は
-/// ウィンドウの名前にアプリの名前を含むかで見る。
-fn is_window_of(app: &InstalledApp, source: &Source) -> bool {
-    source.kind == SourceKind::Window
-        && match &app.exe {
-            Some(exe) => source
-                .app
-                .as_deref()
-                .is_some_and(|a| a.eq_ignore_ascii_case(exe)),
-            None => {
-                let name = app.name.to_lowercase();
-                !name.is_empty() && source.name.to_lowercase().contains(&name)
-            }
-        }
-}
-
-/// 元のウィンドウが消えた後、同じアプリの後継ウィンドウを選ぶ。
-fn replacement(source: &Source, sources: &[Source]) -> Option<Source> {
-    let app = source.app.as_deref().unwrap_or("");
-    let title = source.name.to_lowercase();
-    let app_name = app.to_ascii_lowercase();
-    let app_name = app_name.strip_suffix(".exe").unwrap_or(&app_name);
-    // shortcut: タイトルと実行ファイル名が結び付かない後継窓は追えない。実例で外れたらプロセスの親子関係も調べる。
-    sources
-        .iter()
-        .filter(|s| s.kind == SourceKind::Window && !s.same_target(source))
-        .find(|s| {
-            let candidate = s.name.to_lowercase();
-            title.len() >= 5 && candidate.contains(&title)
-                || app_name.len() >= 5
-                    && title.contains(app_name)
-                    && candidate.contains(app_name)
-                    && s.app
-                        .as_deref()
-                        .is_some_and(|a| a.eq_ignore_ascii_case(app))
-        })
-        .cloned()
-}
-
-fn successor(source: &Source, known: &[Source], current: &[Source]) -> Option<Source> {
-    let still_open = current.iter().any(|s| s.same_target(source));
-    replacement(
-        source,
-        &current
-            .iter()
-            .filter(|s| !still_open || !known.iter().any(|k| k.same_target(s)))
-            .cloned()
-            .collect::<Vec<_>>(),
-    )
 }
 
 /// パネル `panel` で `source` を映し始める: 映しているものとして覚え、配信を頼み、`dashboard` があれば配信のボタンを足す。
@@ -4180,87 +4123,6 @@ mod tests {
                 "Chrome · New Tab (2)",
                 "Chrome · New Tab (3)"
             ]
-        );
-    }
-
-    #[test]
-    fn replacement_prefers_matching_title_when_an_app_has_multiple_windows() {
-        let mut original = kernel::desktop::mock::source("Project", SourceKind::Window);
-        original.app = Some("Adobe.exe".into());
-        let mut other = kernel::desktop::mock::source("Other", SourceKind::Window);
-        other.app = Some("Adobe.exe".into());
-        let mut next = kernel::desktop::mock::source("Project", SourceKind::Window);
-        next.app = Some("adobe.exe".into());
-        assert_eq!(replacement(&original, &[other, next.clone()]), Some(next));
-    }
-
-    #[test]
-    fn replacement_does_not_switch_to_an_unrelated_chrome_window() {
-        let mut original = kernel::desktop::mock::source("Tab A", SourceKind::Window);
-        original.app = Some("chrome.exe".into());
-        let mut other = kernel::desktop::mock::source("Tab B", SourceKind::Window);
-        other.app = Some("chrome.exe".into());
-        assert_eq!(replacement(&original, &[other]), None);
-    }
-
-    #[test]
-    fn replacement_follows_an_adobe_window_across_executables() {
-        let mut original = kernel::desktop::mock::source("Adobe Photoshop", SourceKind::Window);
-        original.app = Some("AdobeLauncher.exe".into());
-        let mut next =
-            kernel::desktop::mock::source("Untitled - Adobe Photoshop", SourceKind::Window);
-        next.app = Some("Photoshop.exe".into());
-        assert_eq!(replacement(&original, &[next.clone()]), Some(next));
-    }
-
-    #[test]
-    fn successor_tracks_a_new_adobe_window_while_the_splash_stays_open() {
-        use kernel::desktop::mock::with_target;
-        let mut splash = with_target(
-            kernel::desktop::mock::source("Adobe Photoshop", SourceKind::Window),
-            1,
-        );
-        splash.app = Some("Photoshop.exe".into());
-        let mut previous = with_target(
-            kernel::desktop::mock::source("Another - Adobe Photoshop", SourceKind::Window),
-            2,
-        );
-        previous.app = Some("Photoshop.exe".into());
-        let mut opened = with_target(
-            kernel::desktop::mock::source("Untitled - Adobe Photoshop", SourceKind::Window),
-            3,
-        );
-        opened.app = Some("Photoshop.exe".into());
-        assert_eq!(
-            successor(
-                &splash,
-                &[splash.clone(), previous.clone()],
-                &[splash.clone(), previous, opened.clone()]
-            ),
-            Some(opened)
-        );
-    }
-
-    #[test]
-    fn successor_does_not_replace_chrome_with_an_existing_window() {
-        use kernel::desktop::mock::with_target;
-        let mut chosen = with_target(
-            kernel::desktop::mock::source("New Tab - Google Chrome", SourceKind::Window),
-            1,
-        );
-        chosen.app = Some("chrome.exe".into());
-        let mut other = with_target(
-            kernel::desktop::mock::source("New Tab - Google Chrome", SourceKind::Window),
-            2,
-        );
-        other.app = Some("chrome.exe".into());
-        assert_eq!(
-            successor(
-                &chosen,
-                &[chosen.clone(), other.clone()],
-                &[chosen.clone(), other]
-            ),
-            None
         );
     }
 
