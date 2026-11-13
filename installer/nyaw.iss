@@ -69,6 +69,8 @@ Filename: "{app}\nyaw.exe"; Parameters: "{param:ARGS|}"; Flags: nowait; Check: R
 const
   SYNCHRONIZE = $00100000;
 
+// ponytail: ハンドルを Integer で受けるのは Setup が 32 ビット（Inno Setup 6）だから。64 ビットの Setup にするなら NativeInt に
+
 function OpenProcess(Access: Integer; Inherit: Integer; Pid: Integer): Integer;
   external 'OpenProcess@kernel32.dll stdcall';
 function WaitForSingleObject(Handle: Integer; Milliseconds: Integer): Integer;

@@ -60,6 +60,9 @@ jobs:
         with:
           # 保存は main だけ（タグのスコープに保存しても次のタグからは読めない）
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # testing の build.rs（ライセンスの一覧）は `cargo metadata --offline` で開発用の依存まで読むので、全部落としておく
+      # （`cargo build` はビルドに要るものしか落とさず、それを保存したキャッシュにも開発用の依存は無い）
+      - run: cargo fetch --locked
       - run: cargo build --release
       # ランナーに Inno Setup が無いイメージでも動くように
       - if: github.event_name == 'release'
