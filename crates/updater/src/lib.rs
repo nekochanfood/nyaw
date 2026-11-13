@@ -14,7 +14,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use ui::PanelControl;
 
-// `VERSION`（表示する版。`2026.0.1p1` など）と `BUILD`（ビルド番号 = HEAD までのコミット数）。build.rs が作る。
+// `VERSION`（表示する版。`2026.0.1-beta.1` など）と `BUILD`（ビルド番号 = HEAD までのコミット数）。build.rs が作る。
 include!(concat!(env!("OUT_DIR"), "/version.rs"));
 
 /// リリースの一覧の大きさと、インストーラーの大きさの上限。
@@ -27,7 +27,7 @@ const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// 新しいリリース。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
-    /// 版（インストーラーの名前から。`2026.0.1p2` など）とビルド番号。
+    /// 版（タグから v を除いたもの。`2026.0.1-beta.1` など）とビルド番号。
     pub version: String,
     pub build: u32,
     /// リリースの名前（無ければタグ）と本文（Markdown）。
@@ -49,12 +49,13 @@ pub struct Installer {
     pub sha256: Option<String>,
 }
 
-/// インストーラーの名前 `nyaw-<版>-build<ビルド番号>-setup.exe`（`installer/nyaw.iss`）から版とビルド番号を読む。
-pub fn parse_installer_name(name: &str) -> Option<(&str, u32)> {
+/// インストーラーの名前 `nyaw-<版>-build<ビルド番号>-setup.exe`（`installer/nyaw.iss`）からビルド番号を読む。
+/// 版はタグから取る（版の名前は何でもよく、GitHub はアセットの名前の記号を置き換えることがある）。
+pub fn installer_build(name: &str) -> Option<u32> {
     let rest = name.strip_prefix("nyaw-")?.strip_suffix("-setup.exe")?;
     let (version, build) = rest.rsplit_once("-build")?;
     let build = build.parse().ok()?;
-    (!version.is_empty() && !name.contains(['/', '\\'])).then_some((version, build))
+    (!version.is_empty() && !name.contains(['/', '\\'])).then_some(build)
 }
 
 #[derive(Deserialize)]
@@ -86,12 +87,16 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
         .into_iter()
         .filter(|r| !r.draft)
         .filter_map(|r| {
-            let (asset, (version, build)) = r
+            let (asset, build) = r
                 .assets
                 .iter()
-                .find_map(|a| parse_installer_name(&a.name).map(|v| (a, v)))?;
+                .find_map(|a| installer_build(&a.name).map(|b| (a, b)))?;
             Some(Release {
-                version: version.to_owned(),
+                version: r
+                    .tag_name
+                    .strip_prefix('v')
+                    .unwrap_or(&r.tag_name)
+                    .to_owned(),
                 build,
                 title: r
                     .name
@@ -154,7 +159,7 @@ pub fn check(url: &str, build: u32) -> Result<Option<Release>, String> {
 /// 違っていれば消してエラー。ネットワークとファイルを使うので別スレッドで呼ぶ。
 pub fn download(release: &Release, dir: &Path, progress: &AtomicU64) -> Result<PathBuf, String> {
     let installer = &release.installer;
-    if parse_installer_name(&installer.name).is_none() || installer.size > MAX_INSTALLER {
+    if installer_build(&installer.name).is_none() || installer.size > MAX_INSTALLER {
         return Err(format!("refusing to download {}", installer.name));
     }
     let mut response = agent(DOWNLOAD_TIMEOUT)

@@ -2,7 +2,7 @@
 ; 保存先が %LOCALAPPDATA%\nyaw なので、管理者権限なしでユーザー単位に入れる
 ; アプリの更新（crates/updater）は `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /WAITPID=<pid> /RELAUNCH=1` で走らせる
 
-; 版はリリースのワークフローがタグから渡す（NYAW_VERSION。パッチ版の `2026.0.1p1` など）。無ければ Cargo.toml のもの。
+; 版はリリースのワークフローがタグから渡す（NYAW_VERSION。`2026.0.1-beta.1` や `2026.0.1-patch.1` など）。無ければ Cargo.toml のもの。
 ; pkgid は `path+file:///…#2026.0.1`（ディレクトリ名が違うと `#nyaw@2026.0.1`）
 #define AppVersion GetEnv("NYAW_VERSION")
 #if AppVersion == ""
