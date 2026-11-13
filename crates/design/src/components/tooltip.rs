@@ -3,7 +3,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use gpui::{AnyWeakEntity, App, Div, SharedString, Window, WindowId, div, prelude::*, px, rgba};
+use gpui::{
+    AnyWeakEntity, App, Div, FontWeight, SharedString, Window, WindowId, div, prelude::*, px, rgba,
+};
 
 use crate::{Theme, font_size, radius, spacing};
 
@@ -70,18 +72,8 @@ pub fn hover_tooltip(
 
 /// 文字 `text` を 1 行で置いたときの箱の幅（px）。
 pub fn tooltip_width(text: &SharedString, window: &mut Window) -> f32 {
-    let run = gpui::TextRun {
-        len: text.len(),
-        font: crate::font::font(),
-        color: rgba(0xffffffff).into(),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    let line = window
-        .text_system()
-        .shape_line(text.clone(), px(font_size::MD), &[run], None);
-    f32::from(line.width).ceil() + PAD_X * 2.0
+    let width = crate::font::width(text.clone(), font_size::MD, FontWeight::NORMAL, window);
+    f32::from(width).ceil() + PAD_X * 2.0
 }
 
 /// 箱に収まらない文字を流す速さ（px/秒。1 秒に 3 文字ほど）と、一周ごとに止まる時間（秒）。

@@ -7,7 +7,10 @@
 
 use std::borrow::Cow;
 
-use gpui::{App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Pixels, px};
+use gpui::{
+    App, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Pixels, SharedString, TextRun,
+    Window, px,
+};
 
 pub const FAMILY: &str = "Gen Interface JP";
 pub const MONO_FAMILY: &str = "0xProto";
@@ -46,6 +49,29 @@ pub fn set_text(scale: f32, bold: bool, cx: &mut App) -> bool {
 /// 文字そのものには要らない（テキストシステムが掛ける）。文字ではないが文字に付いていくべき寸法にだけ使う。
 pub fn scaled(length: f32) -> Pixels {
     px(length * gpui::text_scale())
+}
+
+/// `text` を既定の書体の `size` px・太さ `weight` で 1 行に組んだときの幅。
+/// 組むのはテキストシステムなので、文字の大きさの倍率・太字化も掛かった、画面に出るとおりの幅になる。
+pub fn width(
+    text: impl Into<SharedString>,
+    size: f32,
+    weight: FontWeight,
+    window: &Window,
+) -> Pixels {
+    let text = text.into();
+    let run = TextRun {
+        len: text.len(),
+        font: Font { weight, ..font() },
+        color: gpui::black(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    let line = window
+        .text_system()
+        .shape_line(text, px(size), &[run], None);
+    line.width
 }
 
 /// 既定の書体。

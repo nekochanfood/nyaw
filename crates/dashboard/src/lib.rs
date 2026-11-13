@@ -2817,20 +2817,8 @@ fn app_label_clipped(name: &str, window: &Window) -> bool {
         - (APP_COLUMNS as f32 - 1.0) * spacing::XS)
         / APP_COLUMNS as f32
         - 2.0 * spacing::MD;
-    let run = gpui::TextRun {
-        len: name.len(),
-        font: design::font::font(),
-        color: gpui::black(),
-        background_color: None,
-        underline: None,
-        strikethrough: None,
-    };
-    f32::from(
-        window
-            .text_system()
-            .shape_line(name.to_owned().into(), px(font_size::MD), &[run], None)
-            .width,
-    ) > available
+    let width = design::font::width(name.to_owned(), font_size::MD, FontWeight::NORMAL, window);
+    f32::from(width) > available
 }
 
 /// タイルの高さ。アイコンと 1 行の文字を入れる箱なので、文字の大きさの倍率に付いていく。
@@ -2874,26 +2862,8 @@ fn render_image(icon: &Icon) -> Option<Arc<RenderImage>> {
 
 /// 時刻（`時:分`）を太字の `size` px で組んだときの、どの数字でも収まる幅。いちばん広い数字（"00:00"〜"99:99"）で測る。
 fn clock_width(window: &Window, size: f32) -> gpui::Pixels {
-    let font = gpui::Font {
-        weight: FontWeight::BOLD,
-        ..design::font::font()
-    };
     (0..10)
-        .map(|d| {
-            let text: SharedString = format!("{d}{d}:{d}{d}").into();
-            let run = gpui::TextRun {
-                len: text.len(),
-                font: font.clone(),
-                color: gpui::black(),
-                background_color: None,
-                underline: None,
-                strikethrough: None,
-            };
-            window
-                .text_system()
-                .shape_line(text, px(size), &[run], None)
-                .width
-        })
+        .map(|d| design::font::width(format!("{d}{d}:{d}{d}"), size, FontWeight::BOLD, window))
         .fold(px(0.0), |a, b| a.max(b))
 }
 
