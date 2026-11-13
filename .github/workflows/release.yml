@@ -28,12 +28,18 @@ jobs:
           # ビルド番号（HEAD までのコミット数。crates/updater/build.rs）を数えるので、履歴を全部取る
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      # 本体と nyapps（別のワークスペース）の全パッケージがタグ（v 付きでもよい）と同じでなければビルド前に止める。
-      # パッチ版のタグ（2026.0.1p1）は Cargo.toml の版に p<数> を足したもの。表示する版はタグのもの（NYAW_VERSION）
+      # タグは v<CalVer>[-<名前>.<数>]（v2026.0.1-beta.1。名前は何でもよいが、インストーラーのファイル名に入るので使えない文字は除く）。
+      # 本体と nyapps（別のワークスペース）の全パッケージがタグの版か、その -<名前>.<数> を除いた版でなければビルド前に止める。
+      # 表示する版はタグのもの（NYAW_VERSION）
       - name: Check tag matches Cargo.toml versions
         if: github.event_name == 'release'
         run: |
           set -o pipefail
+          re='^v?[0-9]{4}\.[0-9]+\.[0-9]+(-[^<>:"|?*/\[:space:]]+\.[0-9]+)?$'
+          if ! [[ "$TAG" =~ $re ]]; then
+            echo "::error::tag $TAG is not v<CalVer>[-<label>.<number>] (e.g. v2026.0.1-beta.1)"
+            exit 1
+          fi
           pkgs=$(for m in Cargo.toml nyapps/Cargo.toml; do
             cargo metadata --manifest-path "$m" --no-deps --format-version 1 |
               grep -o '"name":"[^"]*","version":"[^"]*"'
@@ -43,8 +49,8 @@ jobs:
             echo "::error::could not read package versions from cargo metadata"
             exit 1
           fi
-          base=$(sed -E 's/p[0-9]+$//' <<<"${TAG#v}")
-          bad=$(grep -v "\"version\":\"$base\"" <<<"$pkgs" || true)
+          base=$(sed -E 's/-.+\.[0-9]+$//' <<<"${TAG#v}")
+          bad=$(grep -v -e "\"version\":\"${TAG#v}\"" -e "\"version\":\"$base\"" <<<"$pkgs" || true)
           if [ -n "$bad" ]; then
             echo "::error::tag $TAG does not match these package versions: $bad"
             exit 1
