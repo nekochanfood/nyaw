@@ -37,6 +37,33 @@ pub fn high_gpu_priority() -> bool {
     }
 }
 
+/// コンソールを持たない（`windows` サブシステムの）プロセスに標準エラー出力の先を用意する。
+/// 端末から起動されていればその端末に、でなければ新しいコンソールウィンドウを開く。既にあれば何もしない。
+pub fn attach_console() {
+    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AllocConsole, AttachConsole};
+    // SAFETY: 定数を渡すだけの Win32 API。失敗（既にコンソールがある等）は無視してよい。
+    unsafe {
+        if AttachConsole(ATTACH_PARENT_PROCESS).is_err() {
+            let _ = AllocConsole();
+        }
+    }
+}
+
+/// エラーのダイアログを出し、閉じられるまで待つ（コンソールが無くても利用者に見える）。
+pub fn error_dialog(title: &str, text: &str) {
+    use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
+    use windows::core::HSTRING;
+    // SAFETY: 所有者なしのダイアログに、呼び出しの間だけ生きている文字列を渡す。
+    unsafe {
+        MessageBoxW(
+            None,
+            &HSTRING::from(text),
+            &HSTRING::from(title),
+            MB_OK | MB_ICONERROR,
+        );
+    }
+}
+
 fn env_path(key: &str) -> Option<PathBuf> {
     std::env::var_os(key)
         .filter(|v| !v.is_empty())

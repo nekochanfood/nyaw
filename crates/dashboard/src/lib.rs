@@ -557,8 +557,10 @@ const MENU_PX: (u32, u32) = (
         + 2.0 * components::MENU_PADDING
         + 2.0 * components::PANEL_MARGIN) as u32,
 );
-/// メニューの行の数（デバッグ・設定・終了）。
-const MENU_ROWS: f32 = 3.0;
+/// メニューの行の数（デバッグ・設定・終了。デバッグはリリースビルドでは出さない）。
+const MENU_ROWS: f32 = if DEBUG_MENU { 3.0 } else { 2.0 };
+/// メニューにデバッグ（Testing）を出すか。開発用の画面なので、リリースビルドでは開けないようにする。
+const DEBUG_MENU: bool = cfg!(debug_assertions);
 /// 終了の確かめのダイアログの幅（px。1px = 1mm）と、視界の中での置き場所。
 const QUIT_DIALOG_WIDTH: u32 = 440;
 const QUIT_DIALOG_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
@@ -620,15 +622,18 @@ impl Render for Menu {
             .child(components::menu(
                 &theme,
                 [
-                    item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug),
-                    item(
+                    DEBUG_MENU
+                        .then(|| item("menu-debug", &icons::BUG, "dashboard.debug", Page::Debug)),
+                    Some(item(
                         "menu-settings",
                         &icons::GEAR,
                         "dashboard.settings",
                         Page::Settings,
-                    ),
-                    quit,
-                ],
+                    )),
+                    Some(quit),
+                ]
+                .into_iter()
+                .flatten(),
             ))
     }
 }

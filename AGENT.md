@@ -43,7 +43,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 5 | [`crates/nyapp`](crates/nyapp/AGENT.md) | ニャプリ（wasm アプリ）の基盤 |
 | 5 | [`crates/nyapp-sdk`](crates/nyapp-sdk/AGENT.md) | ニャプリを書く SDK |
 | 7 | [`crates/testkit`](crates/testkit/AGENT.md) | Playwright 風 E2E テスト基盤（開発専用） |
-| 6 | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして載せる画面（wrist とビーム）とともに `ui::run` に渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければ novr |
+| 6 | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして載せる画面（wrist とビーム）とともに `ui::run` に渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければデバッグビルドは novr、リリースビルドは「ランタイムが見つかりませんでした」のダイアログを出して終わる。リリースビルドはコンソールを出さず、`--console` で出す |
 
 ## ドキュメントの置き方（ルール）
 

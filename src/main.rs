@@ -1,4 +1,6 @@
 //! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（wrist・ビーム）を UI 層に引き渡す。それ以外は何も置かない。
+// リリースビルドはコンソールウィンドウを出さない（ログは `--console` で端末か新しいコンソールに出す）。
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -20,6 +22,10 @@ fn main() -> ExitCode {
             }
         };
     }
+    // ロガーより先に出力先を用意する（ここで決めないと最初のログが消える）。
+    if std::env::args().any(|a| a == "--console") {
+        os::attach_console();
+    }
     let config = config::load();
     init_logger(config.as_ref().ok().and_then(|c| c.log.clone()));
     let config = match config {
@@ -35,7 +41,10 @@ fn main() -> ExitCode {
     let args = Args::parse(std::env::args().skip(1));
     // 優先順位: コマンドライン > 設定ファイル
     let requested = args.runtime.or(config.runtime.clone());
-    let Ok(kernel) = Kernel::boot(requested.as_deref(), config) else {
+    // novr はテスト用。リリースビルドでは VR ランタイムが無くても勝手に novr にせず、明示の指定が要る。
+    let Ok(kernel) = Kernel::boot(requested.as_deref(), config, cfg!(debug_assertions)) else {
+        // コンソールが無くても分かるように。指定の仕方は出さない（novr を一般の利用者に勧めない）。
+        os::error_dialog("nyaw", "ランタイムが見つかりませんでした");
         return ExitCode::FAILURE;
     };
     // ダッシュボードのデバッグボタンで開く画面は Testing、設定ボタンで開くのは Testing の設定画面（中身はダミー）。
@@ -63,6 +72,9 @@ impl Args {
     fn parse(args: impl IntoIterator<Item = String>) -> Self {
         let mut out = Self::default();
         for a in args {
+            if a == "--console" {
+                continue; // main の先頭で処理済み
+            }
             match a.strip_prefix("--profile") {
                 Some("") => out.profile = Some(None),
                 Some(rest) if rest.starts_with('=') => {
@@ -168,5 +180,6 @@ mod tests {
                 profile: Some(Some(PathBuf::from("out/p.csv")))
             }
         );
+        assert_eq!(parse(&["--console"]), Args::default());
     }
 }

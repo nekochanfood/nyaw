@@ -349,8 +349,13 @@ const LOD_HYSTERESIS: f32 = 0.9;
 
 impl Kernel {
     /// ランタイムを選んで起動する。`requested` は `"--novr"` / `"novr"` のような指定（コマンドライン > 設定ファイル。決めるのは呼び出し側）。
-    /// 指定なしで VR ランタイムが無ければ novr で起動する（`novr` フィーチャーがあれば常に使える）。指定したのに繋がらなければエラー。
-    pub fn boot(requested: Option<&str>, config: Config) -> Result<Self, VrError> {
+    /// 指定なしで VR ランタイムが無ければ、`novr_fallback` なら novr で起動する（`novr` フィーチャーがあれば常に使える）、でなければエラー。
+    /// 指定したのに繋がらなければエラー。
+    pub fn boot(
+        requested: Option<&str>,
+        config: Config,
+        novr_fallback: bool,
+    ) -> Result<Self, VrError> {
         let prefer = match requested.map(runtime_name).as_deref() {
             None | Some("") => None,
             Some("novr") => Some(Runtime::NoVr),
@@ -364,7 +369,7 @@ impl Kernel {
         };
         let vr = match vr::connect(prefer, config.gpu.emulator) {
             Ok(b) => b,
-            Err(e) if prefer.is_none() => {
+            Err(e) if prefer.is_none() && novr_fallback => {
                 logger::warn!("failed to connect to VR runtime, starting novr", error = e);
                 // `novr` フィーチャーなしのビルドにはエミュレーターが無く、ここで失敗しうる。
                 vr::connect(Some(Runtime::NoVr), config.gpu.emulator)?
@@ -1082,7 +1087,7 @@ mod tests {
             for gpu in [false, true] {
                 let mut config = Config::default();
                 config.gpu.emulator = gpu;
-                let k = Kernel::boot(Some(name), config).unwrap();
+                let k = Kernel::boot(Some(name), config, false).unwrap();
                 assert_eq!(k.runtime(), Runtime::NoVr);
             }
         }
@@ -1090,14 +1095,14 @@ mod tests {
 
     #[test]
     fn boot_rejects_unknown_runtime_instead_of_connecting_to_vr() {
-        assert!(Kernel::boot(Some("--nvr"), Config::default()).is_err());
+        assert!(Kernel::boot(Some("--nvr"), Config::default(), true).is_err());
     }
 
     #[cfg(feature = "novr")]
     #[test]
     fn boot_without_request_always_succeeds() {
         // 実ランタイムの有無に依らず、指定なしなら novr にフォールバックして起動できる
-        assert!(Kernel::boot(None, Config::default()).is_ok());
+        assert!(Kernel::boot(None, Config::default(), true).is_ok());
     }
 
     #[test]
