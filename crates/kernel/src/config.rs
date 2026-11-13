@@ -209,6 +209,7 @@ pub struct Config {
     /// ログレベル（`trace` / `debug` / `info` / `warn` / `error`）。解釈は呼び出し側。
     pub log: Option<String>,
     /// 使うランタイム（`openvr` / `openxr` / `novr`）。解釈は呼び出し側。
+    /// 非推奨: ランタイムはコマンドラインで指定する（main はデバッグビルドでだけ読み、リリースビルドでは無視する）。
     pub runtime: Option<String>,
     /// レーザーの手ブレ抑え（0 = 抑えない 〜 1 未満。大きいほど強く、遅れる）。省略で既定値。
     pub pointer_smoothing: Option<f32>,
