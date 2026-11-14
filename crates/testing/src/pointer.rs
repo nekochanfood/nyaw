@@ -13,6 +13,12 @@ use kernel::{CURSOR_SCALE_MAX, CURSOR_SCALE_MIN, PointerTuning, SCALE_STEP, Sett
 
 use crate::{ROW_SLIDER_PX, change, setting_slider};
 
+/// 動きのスライダーの両端: 左ほど手にすぐ付いていく（はやい）、右ほど揺れてもポインタが止まる（おそい）。
+const SPEED: [&design::Icon; 2] = [
+    &design::icons::PERSON_SIMPLE_RUN,
+    &design::icons::PERSON_SIMPLE_WALK,
+];
+
 /// シンプルのスライダーの位置 `at`（0..=1）の、手ブレ抑えの強さと緩める角度（度）。真ん中が既定値。
 /// 左半分は強さを既定から 0 へ（1 − 強さを対数で。1 に近いほど効き目が大きく変わる）、右半分は角度を既定から上限へ広げる。
 fn steadiness(at: f32) -> (f32, f32) {
@@ -129,6 +135,7 @@ fn simple(theme: &Theme, now: Settings, cx: &App) -> Div {
                 ui::set(Setting::PointerSmoothing(smoothing), cx);
                 ui::set(Setting::PointerRelease(release), cx);
             }),
+            Some(SPEED),
         ),
     )
 }
@@ -138,11 +145,11 @@ fn detailed(theme: &Theme, now: Settings, cx: &App) -> Vec<Div> {
     let max = POINTER_SMOOTHING_MAX;
     let (tight, loose) = (POINTER_RELEASE_DEG_MIN, POINTER_RELEASE_DEG_MAX);
     let (short, long) = (LASER_LENGTH_MIN, LASER_MAX);
-    let row = |title: &str, value: SharedString, slider| {
+    let row = |title: &str, value: SharedString, slider, ends| {
         components::group(
             theme,
             i18n::t(cx, title),
-            setting_slider(theme, value, slider),
+            setting_slider(theme, value, slider, ends),
         )
     };
     vec![
@@ -162,6 +169,7 @@ fn detailed(theme: &Theme, now: Settings, cx: &App) -> Vec<Div> {
                 now.pointer_smoothing / max,
                 move |v, _, cx| ui::set(Setting::PointerSmoothing(v * max), cx),
             ),
+            Some(SPEED),
         ),
         row(
             "settings.release",
@@ -180,6 +188,7 @@ fn detailed(theme: &Theme, now: Settings, cx: &App) -> Vec<Div> {
                 (now.pointer_release_deg - tight) / (loose - tight),
                 move |v, _, cx| ui::set(Setting::PointerRelease(tight + v * (loose - tight)), cx),
             ),
+            Some(SPEED),
         ),
         row(
             "settings.laser_length",
@@ -198,6 +207,7 @@ fn detailed(theme: &Theme, now: Settings, cx: &App) -> Vec<Div> {
                 (now.laser_length - short) / (long - short),
                 move |v, _, cx| ui::set(Setting::LaserLength(short + v * (long - short)), cx),
             ),
+            None,
         ),
     ]
 }

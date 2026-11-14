@@ -11,7 +11,7 @@
 use gpui::{
     App, Bounds, IntoElement, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
     Point, RenderOnce, ScrollDelta, ScrollWheelEvent, TouchPhase, Window, canvas, div, prelude::*,
-    px, rgba,
+    px, relative, rgba,
 };
 use std::rc::Rc;
 
@@ -42,7 +42,8 @@ pub struct Slider {
     id: &'static str,
     value: f32,
     vertical: bool,
-    length: f32,
+    /// 軸に沿った長さ（px）。`None` は親いっぱい（[`Slider::fill`]）。
+    length: Option<f32>,
     /// 空いた側（まだ埋まっていない溝）。
     groove: u32,
     fill: u32,
@@ -64,7 +65,7 @@ pub fn slider(
         id,
         value: value.clamp(0.0, 1.0),
         vertical: false,
-        length: 200.0,
+        length: Some(200.0),
         groove: theme.groove,
         fill: theme.accent_solid,
         // つまみはどのテーマでも白（カードの色に紛れないよう、影で縁取る）。つかむと少し沈む。
@@ -84,7 +85,13 @@ impl Slider {
 
     /// 軸に沿った長さ（px）。
     pub fn length(mut self, length: f32) -> Self {
-        self.length = length.max(HANDLE * 2.0);
+        self.length = Some(length.max(HANDLE * 2.0));
+        self
+    }
+
+    /// 軸に沿って親いっぱいに広がる（長さは親が決める。横に並べるなら `div().flex_1()` などに入れる）。
+    pub fn fill(mut self) -> Self {
+        self.length = None;
         self
     }
 
@@ -94,6 +101,15 @@ impl Slider {
         self.on_release = Some(Rc::new(on_release));
         self
     }
+}
+
+/// 軸に沿った長さ（描いた範囲から。親いっぱいのときも実際の長さ）。
+fn span(b: &Bounds<Pixels>, vertical: bool) -> f32 {
+    f32::from(if vertical {
+        b.size.height
+    } else {
+        b.size.width
+    })
 }
 
 /// スライダーの始点（横は左端、縦は下端）から測ったポインタの位置。
@@ -138,7 +154,6 @@ impl RenderOnce for Slider {
             }
             (s.value, s.grab.is_some())
         });
-        let pos = shown * (length - HANDLE);
 
         // 値を変える（変わったときだけ知らせる）。
         let set = {
@@ -160,7 +175,7 @@ impl RenderOnce for Slider {
                     let s = state.read(cx);
                     (s.bounds, s.value)
                 };
-                let center = HANDLE / 2.0 + v * (length - HANDLE);
+                let center = HANDLE / 2.0 + v * (span(&b, vertical) - HANDLE);
                 let grab = along(&b, vertical, e.position) - center;
                 state.update(cx, |s, _| s.grab = Some(grab));
                 cx.stop_propagation();
@@ -178,6 +193,7 @@ impl RenderOnce for Slider {
                     let s = state.read(cx);
                     (s.bounds, s.value, s.slide.is_some())
                 };
+                let length = span(&b, vertical);
                 let center = HANDLE / 2.0 + v * (length - HANDLE);
                 if !sliding && (along(&b, vertical, e.position) - center).abs() > HANDLE / 2.0 {
                     return;
@@ -205,16 +221,18 @@ impl RenderOnce for Slider {
             }
         };
 
-        let (w, h) = if vertical {
-            (HANDLE, length)
-        } else {
-            (length, HANDLE)
-        };
+        // 長さが決まっていなくても描けるよう、位置は割合で置く。ハンドルの中心が動く範囲（両端から半径だけ内側）を
+        // `travel` とし、その中で始点から値の割合までを `done`（埋まった側。始点の端まで伸ばす）にして、ハンドルは
+        // `done` の終わり（= ハンドルの中心）に置く。
+        let half = px(HANDLE / 2.0);
+        let rest = relative(1.0 - shown);
         let groove = (HANDLE - GROOVE) / 2.0;
         let mut track = div()
             .absolute()
             .rounded(px(radius::FULL))
             .bg(rgba(groove_color));
+        let mut travel = div().absolute();
+        let mut done = div().absolute();
         let mut filled = div().absolute().rounded(px(radius::FULL)).bg(rgba(fill));
         let mut handle = div()
             .id(format!("{id}-handle"))
@@ -238,20 +256,16 @@ impl RenderOnce for Slider {
             .on_mouse_down(MouseButton::Left, press);
         if vertical {
             track = track.left(px(groove)).w(px(GROOVE)).top_0().bottom_0();
-            filled = filled
-                .left(px(groove))
-                .w(px(GROOVE))
-                .bottom_0()
-                .h(px(pos + HANDLE / 2.0));
-            handle = handle.left_0().bottom(px(pos));
+            travel = travel.left_0().right_0().top(half).bottom(half);
+            done = done.left_0().right_0().bottom(-half).top(rest);
+            filled = filled.left(px(groove)).w(px(GROOVE)).top_0().bottom_0();
+            handle = handle.left_0().top(-half);
         } else {
             track = track.top(px(groove)).h(px(GROOVE)).left_0().right_0();
-            filled = filled
-                .top(px(groove))
-                .h(px(GROOVE))
-                .left_0()
-                .w(px(pos + HANDLE / 2.0));
-            handle = handle.top_0().left(px(pos));
+            travel = travel.top_0().bottom_0().left(half).right(half);
+            done = done.top_0().bottom_0().left(-half).right(rest);
+            filled = filled.top(px(groove)).h(px(GROOVE)).left_0().right_0();
+            handle = handle.top_0().right(-half);
         }
 
         // 範囲を覚え、つかんでいる間はウィンドウのどこでもポインタに追従する（パネルの外でも維持）。
@@ -274,7 +288,7 @@ impl RenderOnce for Slider {
                         }
                         let b = s.read(cx).bounds;
                         let p = along(&b, vertical, e.position);
-                        set(value_at(length, p - grab), window, cx);
+                        set(value_at(span(&b, vertical), p - grab), window, cx);
                     });
                     let (s, released) = (state.clone(), released.clone());
                     window.on_mouse_event(move |e: &MouseUpEvent, _, window, cx| {
@@ -290,17 +304,20 @@ impl RenderOnce for Slider {
             .size_full()
         };
 
-        div()
+        let root = div()
             .id(id)
             .debug_selector(move || id.into())
             .relative()
-            .w(px(w))
-            .h(px(h))
-            .flex_none()
-            .on_scroll_wheel(slide)
+            .flex_none();
+        let root = match (vertical, length) {
+            (false, Some(l)) => root.w(px(l)).h(px(HANDLE)),
+            (false, None) => root.w_full().h(px(HANDLE)),
+            (true, Some(l)) => root.w(px(HANDLE)).h(px(l)),
+            (true, None) => root.w(px(HANDLE)).h_full(),
+        };
+        root.on_scroll_wheel(slide)
             .child(track)
-            .child(filled)
-            .child(handle)
+            .child(travel.child(done.child(filled).child(handle)))
             .child(watch)
     }
 }
