@@ -1,6 +1,6 @@
 id = "net.bettaworx.clock"
 name = "Clock"
-version = "2026.0.3-dev.0"
+version = "2026.0.3-beta.2"
 api = 1
 permissions = ["audio"]
 
