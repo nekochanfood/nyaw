@@ -1,0 +1,7 @@
+# 自動生成のリリースノート（Release・Prepare release の PR 本文）から、Actions が作る版上げの PR
+#（chore(release): <版>・chore: start <版>-dev.0）を除く。bot の名前の書き方がどちらで合うか分からないので両方
+changelog:
+  exclude:
+    authors:
+      - github-actions[bot]
+      - github-actions
