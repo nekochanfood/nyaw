@@ -227,7 +227,7 @@ impl DominantHand {
     }
 }
 
-/// アップデートのチャンネル（`stable` / `nightly`）。stable は正式なリリースだけ、nightly はプレリリース
+/// アップデートのチャンネル（安定版 `stable` / ナイトリー `nightly`）。安定版は正式なリリースだけ、ナイトリーはプレリリース
 /// （alpha・beta など。GitHub でプレリリースの印が付いたもの）も勧める。カーネルは値を持つだけで、従うのは `updater`。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
