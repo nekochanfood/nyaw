@@ -613,8 +613,7 @@ const MENU_PX: (u32, u32) = (
 const MENU_ROWS: f32 = if DEBUG_MENU { 3.0 } else { 2.0 };
 /// メニューにデバッグ（Testing）を出すか。開発用の画面なので、リリースビルドでは開けないようにする。
 const DEBUG_MENU: bool = cfg!(debug_assertions);
-/// 終了の確かめのダイアログの幅（px。1px = 1mm）と、視界の中での置き場所。
-const QUIT_DIALOG_WIDTH: u32 = 440;
+/// 終了の確かめのダイアログの、視界の中での置き場所。
 const QUIT_DIALOG_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
 const MENU_M: Vec2 = Vec2::new(
     MENU_PX.0 as f32 * SIZE_M.x / RES_PX.0 as f32,
@@ -692,17 +691,16 @@ impl Render for Menu {
 
 /// アプリを終了するかを確かめるダイアログの起動仕様。視界の中央に出す。
 fn quit_dialog_spec(from: PanelId, window: &Window, cx: &App) -> PanelSpec {
+    let width = components::DIALOG_WIDTH;
     let height = components::dialog_height(
         window,
-        QUIT_DIALOG_WIDTH,
         &i18n::t(cx, "dashboard.quit_title"),
         &i18n::t(cx, "dashboard.quit_body"),
-        2,
     );
     PanelSpec::spawn(from, |panel, _, _| QuitDialog { panel })
         .sized(
-            Vec2::new(QUIT_DIALOG_WIDTH as f32 / 1000.0, height as f32 / 1000.0),
-            (QUIT_DIALOG_WIDTH, height),
+            Vec2::new(width as f32 / 1000.0, height as f32 / 1000.0),
+            (width, height),
         )
         // 開いた元のメニューはすぐ閉じるので、その手前ではなく視界の中央に出す。
         .in_view(QUIT_DIALOG_POSE)
@@ -728,18 +726,18 @@ impl Render for QuitDialog {
             [
                 components::button(
                     &theme,
-                    "quit-confirm",
-                    i18n::t(cx, "dashboard.quit_confirm"),
-                    Variant::Danger,
-                )
-                .on_click(|_, _, cx| cx.default_global::<PanelControl>().quit = true),
-                components::button(
-                    &theme,
                     "quit-cancel",
                     i18n::t(cx, "common.cancel"),
                     Variant::Default,
                 )
                 .on_click(move |_, _, cx| close(panel, cx)),
+                components::button(
+                    &theme,
+                    "quit-confirm",
+                    i18n::t(cx, "dashboard.quit_confirm"),
+                    Variant::Danger,
+                )
+                .on_click(|_, _, cx| cx.default_global::<PanelControl>().quit = true),
             ],
         )
         // 電源のアイコンは塗りだと形が潰れて分かりにくいので、線で描く。

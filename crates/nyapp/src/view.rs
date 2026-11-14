@@ -292,7 +292,10 @@ impl NyappView {
             .to_owned();
         let title = i18n::tf(cx, "nyapp.crashed_title", &[("name", &name)]);
         let body = i18n::tf(cx, "nyapp.crashed_body", &[("reason", reason)]);
-        let height = components::dialog_height(window, CRASH_DIALOG_WIDTH, &title, &body, 2);
+        let (width, height) = (
+            components::DIALOG_WIDTH,
+            components::dialog_height(window, &title, &body),
+        );
         let (nyapp, view) = (self.panel, cx.weak_entity());
         let spec = PanelSpec::child(self.panel, true, move |panel, _, _| CrashDialog {
             panel,
@@ -303,8 +306,8 @@ impl NyappView {
         })
         .without_dismiss()
         .sized(
-            Vec2::new(CRASH_DIALOG_WIDTH as f32 / 1000.0, height as f32 / 1000.0),
-            (CRASH_DIALOG_WIDTH, height),
+            Vec2::new(width as f32 / 1000.0, height as f32 / 1000.0),
+            (width, height),
         )
         // ダイアログは答えて閉じるもの。ナビゲーションバーは付けない。
         .without_nav_bar();
@@ -599,8 +602,7 @@ fn shape(shape: &Shape, color: &dyn Fn(Color) -> u32) -> Div {
     }
 }
 
-/// 強制終了のダイアログの幅（px。1000px/m）。高さは文に合わせて測る。理由は [`CRASH_REASON_CHARS`] 文字で切る。
-const CRASH_DIALOG_WIDTH: u32 = 440;
+/// 強制終了のダイアログに出す理由の長さ（文字。超える分は切る）。
 const CRASH_REASON_CHARS: usize = 120;
 
 /// ニャプリが強制終了したことを知らせるダイアログ（落ちたニャプリのパネルの子）。再起動（`nyapp-crash-restart`。同じパネルで
@@ -625,6 +627,14 @@ impl Render for CrashDialog {
             self.title.clone(),
             self.body.clone(),
             [
+                // 子は親と一緒に閉じる。
+                components::button(
+                    &theme,
+                    "nyapp-crash-close",
+                    i18n::t(cx, "nyapp.close"),
+                    ButtonVariant::Default,
+                )
+                .on_click(move |_, _, cx| ui::command(nyapp, kernel::PanelCommand::Close, cx)),
                 components::button(
                     &theme,
                     "nyapp-crash-restart",
@@ -635,14 +645,6 @@ impl Render for CrashDialog {
                     ui::command(panel, kernel::PanelCommand::Close, cx);
                     let _ = this.view.update(cx, |v, cx| v.load(cx));
                 })),
-                // 子は親と一緒に閉じる。
-                components::button(
-                    &theme,
-                    "nyapp-crash-close",
-                    i18n::t(cx, "nyapp.close"),
-                    ButtonVariant::Default,
-                )
-                .on_click(move |_, _, cx| ui::command(nyapp, kernel::PanelCommand::Close, cx)),
             ],
         )
     }

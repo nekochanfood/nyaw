@@ -8,8 +8,7 @@ mod design_prelude {
     pub use crate::components::{Button, Variant, content_button};
     pub use crate::{Icon, Theme, font_size, spacing};
     pub use gpui::{
-        Div, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, div,
-        px, rgba,
+        Div, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, div, px, rgba,
     };
 }
 
@@ -17,10 +16,8 @@ mod design_prelude {
 pub const WIZARD_MARGIN: f32 = spacing::XL;
 /// 「step」画面の内容（見出しと中身）の最大の幅。横長のパネルでは、この幅の列を左右中央に置く（行が間延びしない）。
 pub const WIZARD_CONTENT: f32 = 704.0;
-// アイコンの大きさと行の高さはダイアログと同じ（画面の種類で見た目を揃える）。
-use crate::components::{
-    BUTTON_HEIGHT, BUTTON_PADDING, DIALOG_ICON as ICON, DIALOG_LEADING as LEADING,
-};
+// 見出し（アイコン・タイトル・説明）はダイアログと同じ部品（画面の種類で見た目を揃える）。
+use crate::components::{BUTTON_HEIGHT, BUTTON_PADDING, HEADING_ICON, heading};
 /// 「次へ」「戻る」のアイコンの大きさ。
 const ARROW: f32 = font_size::LG;
 /// 「次へ」「戻る」の最小の幅。文字が短くても、押しやすい幅を保つ。
@@ -141,52 +138,15 @@ fn arrow_button(
     }
 }
 
-fn heading(
-    theme: &Theme,
-    id: &str,
-    hero: impl IntoElement,
-    title: SharedString,
-    description: SharedString,
-    centered: bool,
-) -> Div {
-    let col = div().flex().flex_col().gap(px(spacing::SM));
-    let col = if centered {
-        col.items_center().text_center()
-    } else {
-        col
-    };
-    let (hero_id, title_id) = (format!("{id}-hero"), format!("{id}-title"));
-    let hero = div().debug_selector(move || hero_id).child(hero);
-    // タイトルも説明も無い画面（ロゴだけの一枚目）では、下の文との間を空けない。空のタイトル・説明は出さない。
-    let hero = if title.is_empty() && description.is_empty() {
-        hero
-    } else {
-        hero.mb(px(spacing::SM))
-    };
-    col.child(hero)
-        .children((!title.is_empty()).then(|| {
-            div()
-                .id(SharedString::from(format!("{id}-title")))
-                .debug_selector(move || title_id)
-                .text_size(px(font_size::LG))
-                .line_height(px(font_size::LG * LEADING))
-                .font_weight(FontWeight::BOLD)
-                .child(title)
-        }))
-        .children((!description.is_empty()).then(|| {
-            let description_id = format!("{id}-description");
-            div()
-                .id(SharedString::from(description_id.clone()))
-                .debug_selector(move || description_id)
-                .text_color(rgba(theme.neutral_text_low))
-                .child(description)
-        }))
+/// 説明（空なら出さない）。
+fn text(description: SharedString) -> Option<SharedString> {
+    (!description.is_empty()).then_some(description)
 }
 
 /// 画面の上に出すアイコン（アクセント色。大きさは全画面で共通）。ロゴなど別のものを出すときは `hero` に直接渡す。
 pub fn wizard_icon(theme: &Theme, glyph: &'static Icon) -> impl IntoElement {
     crate::icon(glyph)
-        .size(px(ICON))
+        .size(px(HEADING_ICON))
         .color(rgba(theme.accent_solid))
 }
 
@@ -220,14 +180,11 @@ pub fn wizard_welcome(
         .p(px(WIZARD_MARGIN))
         // 上の空きと下の帯の枠が同じだけ伸びるので、内容は画面の上下中央に来る。
         .child(div().flex_1())
-        .child(heading(
-            theme,
-            id,
-            hero,
-            title.into(),
-            description.into(),
-            true,
-        ))
+        .child(
+            heading(theme, id, hero, title.into(), text(description.into()))
+                .items_center()
+                .text_center(),
+        )
         .child(
             div()
                 .flex_1()
@@ -275,8 +232,7 @@ pub fn wizard_step(
                     id,
                     hero,
                     title.into(),
-                    description.into(),
-                    false,
+                    text(description.into()),
                 ))
                 .child(body),
         )

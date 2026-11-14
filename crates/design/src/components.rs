@@ -1563,26 +1563,82 @@ pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
         }))
 }
 
-/// ダイアログのアイコンの大きさ。
-pub(crate) const DIALOG_ICON: f32 = 64.0;
-/// ダイアログの文の行の高さ（文字の大きさに対する比）。
-pub(crate) const DIALOG_LEADING: f32 = 1.4;
+/// 見出しのアイコンの大きさ。
+pub(crate) const HEADING_ICON: f32 = 64.0;
+/// 見出しの文の行の高さ（文字の大きさに対する比）。
+pub(crate) const HEADING_LEADING: f32 = 1.4;
+/// 見出しの間隔: アイコン → タイトル（タイトル → 概要の倍。アイコンと文を分け、文どうしはひとまとまりに見せる）。
+const HEADING_HERO_GAP: f32 = spacing::LG;
+/// 見出しの間隔: タイトル → 概要。
+const HEADING_GAP: f32 = spacing::SM;
+
+/// 見出し: 上からアイコンなど（`hero`。`{id}-hero`）・タイトル（`{id}-title`）・概要（`{id}-description`）を左揃えで縦に並べる。
+/// ダイアログとウィザードの画面で共通の見た目: アイコン → タイトルは [`HEADING_HERO_GAP`]、タイトル → 概要は [`HEADING_GAP`]。
+/// タイトルは `LG` の太字、概要は `MD` の `text-low`（行の高さはどちらも [`HEADING_LEADING`]）。概要の文字の形は
+/// 包む側が決めるので、`description` は文字列でも、スクロールする枠などでもよい。空のタイトル・無い概要は出さない。
+/// 中央揃えにするなら、返した列に `items_center().text_center()` を付ける。
+pub(crate) fn heading(
+    theme: &Theme,
+    id: &str,
+    hero: impl IntoElement,
+    title: SharedString,
+    description: Option<impl IntoElement>,
+) -> Div {
+    let (hero_id, title_id, description_id) = (
+        format!("{id}-hero"),
+        format!("{id}-title"),
+        format!("{id}-description"),
+    );
+    let has_title = !title.is_empty();
+    let has_text = has_title || description.is_some();
+    div()
+        .flex()
+        .flex_col()
+        .child(
+            div()
+                .flex_none()
+                .debug_selector(move || hero_id)
+                .when(has_text, |d| d.mb(px(HEADING_HERO_GAP)))
+                .child(hero),
+        )
+        .children(has_title.then(|| {
+            div()
+                .id(SharedString::from(title_id.clone()))
+                .debug_selector(move || title_id)
+                .flex_none()
+                .text_size(px(font_size::LG))
+                .line_height(px(font_size::LG * HEADING_LEADING))
+                .font_weight(FontWeight::BOLD)
+                .child(title)
+        }))
+        .children(description.map(|description| {
+            div()
+                .id(SharedString::from(description_id.clone()))
+                .debug_selector(move || description_id)
+                .when(has_title, |d| d.mt(px(HEADING_GAP)))
+                // 中身がスクロールする枠なら、見出しの列が低いときに概要だけが縮む。
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .text_size(px(font_size::MD))
+                .line_height(px(font_size::MD * HEADING_LEADING))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(description)
+        }))
+}
+
+/// ダイアログのパネルの幅（px。影の余白を含む。1px = 1mm）。ボタンを横に並べ、文は 1 行に 24 字ほど。
+pub const DIALOG_WIDTH: u32 = 560;
 /// 概要が見える行数の上限。超える分はスクロールする。
 const DIALOG_LINES: usize = 3;
 
-/// 幅 `width`（px）のダイアログのパネルの高さ（px。影の余白を含む）。ボタンは `actions` 個。
+/// ダイアログのパネルの高さ（px。影の余白を含む。幅は [`DIALOG_WIDTH`]）。
 /// タイトルと概要を実際に折り返して数える（概要は [`DIALOG_LINES`] 行まで）。開くとき（`PanelSpec::sized`）に使えば、
 /// 余白が潰れも余りもしない高さで開く。
 // ponytail: 開いたあとに言語が変わっても測り直さない（長くなった分は概要がスクロールする）。要るなら描いた配置から測り直す。
-pub fn dialog_height(
-    window: &Window,
-    width: u32,
-    title: &str,
-    description: &str,
-    actions: u32,
-) -> u32 {
-    // 文の幅 = パネル − 影の余白 − 縁（概要はさらに横の `SM`）。
-    let inner = width as f32 - 2.0 * (PANEL_MARGIN + spacing::XL);
+pub fn dialog_height(window: &Window, title: &str, description: &str) -> u32 {
+    // 文の幅 = パネル − 影の余白 − 縁（概要はさらに右の `SM`）。
+    let inner = DIALOG_WIDTH as f32 - 2.0 * (PANEL_MARGIN + spacing::XL);
     // 行の高さとアイコンから作る高さなので、文字の大きさの倍率に合わせる（文字の折り返しはテキストシステムが同じ倍率で測る）。
     let scale = gpui::text_scale();
     let lines = |text: &str, size: f32, weight: FontWeight, wrap: f32| {
@@ -1616,19 +1672,17 @@ pub fn dialog_height(
         description,
         font_size::MD,
         FontWeight::NORMAL,
-        inner - 2.0 * spacing::SM,
+        inner - spacing::SM,
     )
     .min(DIALOG_LINES);
-    let n = actions as f32;
     let h = 2.0 * (PANEL_MARGIN + spacing::XL)
-        + DIALOG_ICON * scale
+        + HEADING_ICON * scale
+        + HEADING_HERO_GAP
+        + title as f32 * font_size::LG * HEADING_LEADING * scale
+        + HEADING_GAP
+        + body as f32 * font_size::MD * HEADING_LEADING * scale
         + spacing::XL
-        + title as f32 * font_size::LG * DIALOG_LEADING * scale
-        + spacing::SM
-        + body as f32 * font_size::MD * DIALOG_LEADING * scale
-        + spacing::XL
-        + n * BUTTON_HEIGHT
-        + (n - 1.0) * spacing::SM;
+        + BUTTON_HEIGHT;
     h.ceil() as u32
 }
 
@@ -1653,11 +1707,11 @@ impl Dialog {
     }
 }
 
-/// ダイアログ（子パネル）の中身。上からアイコン・タイトル・概要・ボタンを中央揃えで並べる。
-/// ボタンは幅いっぱいで縦に積む。間隔は決まった値で、全体を上下の中央に置く（余った高さは上下の縁に分ける）。
+/// ダイアログ（子パネル）の中身。上に見出し（アイコン・タイトル・概要。ウィザードの画面と同じ [`heading`]。左揃え）、
+/// 下にボタンを同じ幅で横 1 列に並べる。間隔は決まった値で、全体を上下の中央に置く（余った高さは上下の縁に分ける）。
 /// 概要は [`DIALOG_LINES`] 行まで見せ、超える分やパネルに収まらない分は概要だけがスクロールする（`{id}-body`、棒は `{id}-bars`）。
-/// パネルの高さは [`dialog_height`] で決める。
-/// 並べる順は呼び出し側が決める（主の操作を上に）。`id` はパネルの中で一意に。
+/// パネルは幅 [`DIALOG_WIDTH`]、高さ [`dialog_height`]。
+/// ボタンは渡した順に左から並べる: 肯定（主の操作）を右端に、否定（キャンセル・閉じる）を左に。`id` はパネルの中で一意に。
 /// 開く・閉じる・答えを返すのは呼び出し側（`ui::PanelSpec::child`）。
 pub fn dialog(
     theme: &Theme,
@@ -1694,67 +1748,47 @@ impl RenderOnce for Dialog {
             .read(cx)
             .clone();
         let body_id = format!("{id}-body");
-        // 余白は縁 `XL`、アイコン → タイトル `XL`（アイコンの上の縁と揃える）、タイトル → 概要 `SM`（ひとまとまり）、文 → ボタン `XL`。
-        // 概要の枠は [`DIALOG_LINES`] 行までで、超える分はスクロールする。縮められる（min_h_0）のも概要の枠だけなので、
+        // 余白は縁 `XL`、見出しの中は [`heading`] のとおり、文 → ボタン `XL`。
+        // 概要の枠は [`DIALOG_LINES`] 行までで、超える分はスクロールする。縮められる（min_h_0）のも見出しの列と概要の枠だけなので、
         // パネルが低くても概要だけが縮む。
-        // 横の `SM` は、スクロールバーが文にかからないための余白。
+        // 右の `SM` は、スクロールバーが文にかからないための余白（左は付けず、文の左端をタイトルに揃える）。
         let body = div()
             .id(SharedString::from(body_id.clone()))
             .debug_selector(move || body_id.clone())
             .min_h_0()
             .max_h(crate::font::scaled(
-                DIALOG_LINES as f32 * font_size::MD * DIALOG_LEADING,
+                DIALOG_LINES as f32 * font_size::MD * HEADING_LEADING,
             ))
             .overflow_y_scroll()
             .track_scroll(&scroll)
-            .px(px(spacing::SM))
-            .text_center()
-            .text_size(px(font_size::MD))
-            .line_height(px(font_size::MD * DIALOG_LEADING))
-            .text_color(rgba(theme.neutral_text_low))
+            .pr(px(spacing::SM))
             .child(description);
+        let description = div()
+            .relative()
+            .w_full()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(body)
+            .child(scrollbars(&theme, format!("{id}-bars"), &scroll));
+        let icon = crate::icon(glyph)
+            .weight(weight)
+            .size(px(HEADING_ICON))
+            .color(rgba(theme.accent_solid));
         card_panel(&theme)
             .flex()
             .flex_col()
-            .items_center()
             .justify_center()
             .p(px(spacing::XL))
-            .child(
-                crate::icon(glyph)
-                    .weight(weight)
-                    .size(px(DIALOG_ICON))
-                    .color(rgba(theme.accent_solid)),
-            )
-            .child(
-                div()
-                    .flex_none()
-                    .mt(px(spacing::XL))
-                    .text_center()
-                    .text_size(px(font_size::LG))
-                    .line_height(px(font_size::LG * DIALOG_LEADING))
-                    .font_weight(FontWeight::BOLD)
-                    .child(title),
-            )
-            .child(
-                div()
-                    .relative()
-                    .mt(px(spacing::SM))
-                    .w_full()
-                    .min_h_0()
-                    .flex()
-                    .flex_col()
-                    .child(body)
-                    .child(scrollbars(&theme, format!("{id}-bars"), &scroll)),
-            )
+            .child(heading(&theme, id, icon, title, Some(description)).min_h_0())
             .child(
                 div()
                     .mt(px(spacing::XL))
                     .flex_none()
                     .w_full()
                     .flex()
-                    .flex_col()
                     .gap(px(spacing::SM))
-                    .children(actions.into_iter().map(|b| b.w_full())),
+                    .children(actions.into_iter().map(|b| b.flex_1())),
             )
     }
 }
