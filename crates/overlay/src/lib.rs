@@ -354,6 +354,8 @@ pub struct Overlay {
     laser_length: Option<f32>,
     /// 手ブレ抑えを緩める角度（度。[`POINTER_RELEASE_DEG`]）。`None` で既定値。
     release_deg: Option<f32>,
+    /// カーソルの大きさの倍率（[`Overlay::set_cursor_scale`]）。`None` で等倍。
+    cursor_scale: Option<f32>,
     /// 暗転中もゲームへの入力を通す（[`Overlay::set_block_input`]）。既定（`false`）は止める。
     pass_input: bool,
     /// UI スケール（[`Overlay::set_scale`]）。`None` で等倍。
@@ -549,6 +551,16 @@ impl Overlay {
     /// 今のレーザーの見える長さ（設定していなければ既定値 [`LASER_LENGTH`]）。
     pub fn laser_length(&self) -> f32 {
         self.laser_length.unwrap_or(LASER_LENGTH)
+    }
+
+    /// カーソル（[`Pointer::Cursor`]）の大きさに掛ける倍率（等倍 = 1。数でない・0 以下は等倍）。次の tick から効く。
+    pub fn set_cursor_scale(&mut self, scale: f32) {
+        self.cursor_scale = Some(scale).filter(|s| s.is_finite() && *s > 0.0);
+    }
+
+    /// 今のカーソルの大きさの倍率（設定していなければ等倍）。
+    pub fn cursor_scale(&self) -> f32 {
+        self.cursor_scale.unwrap_or(1.0)
     }
 
     /// パネルが頭の向きから見えていそうか（ランタイムが教えてくれないときの見積もり。視野を広めに取った円錐とパネルを囲む球で判定）。
@@ -1694,7 +1706,12 @@ impl Overlay {
                         // 距離はヒット点まで（浮かせた分は含めない）なので、カーソルとツールチップの縮尺はそろう。
                         let hit = aim.position + aim.forward() * len;
                         let width = self.panels[id].size.x * hit.distance(self.hmd.position);
-                        (r, pose, width)
+                        let scale = if part == Pointer::Cursor {
+                            self.cursor_scale()
+                        } else {
+                            1.0
+                        };
+                        (r, pose, width * scale)
                     })
                 }
                 (Pointer::Drag, Some((r, aim, len))) => r.hit.zip(drag).map(|((target, _), w)| {
@@ -3855,6 +3872,13 @@ mod tests {
         let near = vr.backend.overlays[cursor].width_m;
         assert!((near - 0.02).abs() < 1e-5, "{near}");
         vr.backend.frame.hmd = at(0.0, 0.0, 1.0);
+        ov.tick(&mut vr);
+        assert!((vr.backend.overlays[cursor].width_m - near * 2.0).abs() < 1e-4);
+        // カーソルの大きさの倍率が掛かる（数でない値は等倍）。
+        ov.set_cursor_scale(1.5);
+        ov.tick(&mut vr);
+        assert!((vr.backend.overlays[cursor].width_m - near * 3.0).abs() < 1e-4);
+        ov.set_cursor_scale(f32::NAN);
         ov.tick(&mut vr);
         assert!((vr.backend.overlays[cursor].width_m - near * 2.0).abs() < 1e-4);
     }

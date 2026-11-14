@@ -55,6 +55,16 @@ pub enum PointerMode {
     Touch,
 }
 
+/// 設定画面のポインタの動きの調整のしかた。シンプルは 1 本のスライダー（手ブレ抑えの強さと緩める角度をまとめて動かす）、
+/// 詳細はそれぞれのスライダー。カーネルは値を持つだけで、従うのは設定画面。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PointerTuning {
+    #[default]
+    Simple,
+    Detailed,
+}
+
 /// 見た目のテーマ（ライト / ダーク）。`design::Mode` に対応する。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -112,6 +122,9 @@ pub const TEXT_SCALE_MAX: f32 = 1.5;
 pub const UI_SCALE_MIN: f32 = 0.7;
 pub const UI_SCALE_MAX: f32 = 1.5;
 pub const SCALE_STEP: f32 = 0.1;
+/// カーソルの大きさの倍率（[`Config::cursor_scale`]）の範囲。刻みは [`SCALE_STEP`]。
+pub const CURSOR_SCALE_MIN: f32 = 0.5;
+pub const CURSOR_SCALE_MAX: f32 = 2.0;
 
 /// 倍率を範囲 `min..=max` に収め、[`SCALE_STEP`] の刻みに丸める（数でない値は等倍）。
 pub fn clamp_scale(scale: f32, min: f32, max: f32) -> f32 {
@@ -246,6 +259,15 @@ pub struct Config {
     pub hand: subsystems::input::HandTuning,
     /// レーザーのエミュレート方式（`mouse` / `touch`）。省略でタッチ。
     pub pointer_mode: Option<PointerMode>,
+    /// 設定画面のポインタの動きの調整のしかた（`simple` / `detailed`）。省略で `simple`。画面での切り替えはここへ書き戻される。
+    pub pointer_tuning: PointerTuning,
+    /// カーソルの大きさの倍率（[`CURSOR_SCALE_MIN`]〜[`CURSOR_SCALE_MAX`]）。省略で等倍。画面での切り替えはここへ書き戻される。
+    pub cursor_scale: Option<f32>,
+    /// 指している要素の説明（ツールチップ）を出すか。省略で `true`。画面での切り替えはここへ書き戻される。
+    pub tooltips: Option<bool>,
+    /// 押したとき（タップ）・指したとき（ホバー）の音を鳴らすか。省略で `true`。画面での切り替えはここへ書き戻される。
+    pub tap_sound: Option<bool>,
+    pub hover_sound: Option<bool>,
     /// 機能ごとに GPU を使うか（`[gpu]` の表。互換性のため CPU に落とせる）。
     pub gpu: Gpu,
     /// 見た目のテーマ（`dark` / `light`）。省略で `dark`。画面での切り替えはここへ書き戻される。
@@ -644,6 +666,54 @@ emulator = false
         assert_eq!(
             (back.dashboard_distance, back.dashboard_height),
             (Some(0.8), Some(0.25))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// ポインタの画面のキー（調整のしかた・カーソルの大きさ・ツールチップ・タップ音・ホバー音）はどれも省略でき、書き戻しても互いを消さない。
+    #[test]
+    fn pointer_keys_parse_and_round_trip() {
+        let c = parse("").unwrap();
+        assert_eq!(c.pointer_tuning, PointerTuning::Simple);
+        assert_eq!(
+            (c.cursor_scale, c.tooltips, c.tap_sound, c.hover_sound),
+            (None, None, None, None)
+        );
+        let c = parse(
+            "pointer_tuning = \"detailed\"\ncursor_scale = 1.5\ntooltips = false\n\
+             tap_sound = false\nhover_sound = true",
+        )
+        .unwrap();
+        assert_eq!(c.pointer_tuning, PointerTuning::Detailed);
+        assert_eq!(
+            (c.cursor_scale, c.tooltips, c.tap_sound, c.hover_sound),
+            (Some(1.5), Some(false), Some(false), Some(true))
+        );
+        assert!(parse("pointer_tuning = \"expert\"").is_err());
+        // 刻みは範囲の端にちょうど乗り、等倍は範囲の中。
+        let cursor = |s| clamp_scale(s, CURSOR_SCALE_MIN, CURSOR_SCALE_MAX);
+        assert_eq!(
+            [cursor(0.0), cursor(9.0)],
+            [CURSOR_SCALE_MIN, CURSOR_SCALE_MAX]
+        );
+        assert!(CURSOR_SCALE_MIN < 1.0 && 1.0 < CURSOR_SCALE_MAX);
+        let dir = std::env::temp_dir().join(format!("nyaw-pointer-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        save_at(&path, "pointer_tuning", value(PointerTuning::Detailed)).unwrap();
+        save_at(&path, "cursor_scale", value(0.5f32)).unwrap();
+        save_at(&path, "tooltips", value(false)).unwrap();
+        save_at(&path, "tap_sound", value(false)).unwrap();
+        save_at(&path, "hover_sound", value(false)).unwrap();
+        let back = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(back.pointer_tuning, PointerTuning::Detailed);
+        assert_eq!(
+            (
+                back.cursor_scale,
+                back.tooltips,
+                back.tap_sound,
+                back.hover_sound
+            ),
+            (Some(0.5), Some(false), Some(false), Some(false))
         );
         let _ = fs::remove_dir_all(&dir);
     }
