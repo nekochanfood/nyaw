@@ -55,6 +55,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
         overlay: client.interface(sys::IVROverlay_Version)?,
         textures: HashMap::new(),
         devices: HashMap::new(),
+        tips: HashMap::new(),
         relative: HashMap::new(),
         fixed: HashMap::new(),
         shown: HashSet::new(),
@@ -153,6 +154,8 @@ pub(crate) struct OpenVrBackend {
     /// 最後の poll で見えていたデバイスの番号と、その生の姿勢から [`Frame::pose`] の姿勢への相対姿勢
     /// （コントローラは `/pose/tip`）。相対配置をランタイムに任せるため。
     devices: HashMap<Device, (u32, Pose)>,
+    /// デバイスの番号 → 入力のアクションで最後に分かった、本体から見た tip（[`role_device`]）。
+    tips: HashMap<u32, Pose>,
     /// ランタイムに相対配置を任せたオーバーレイ → 最後に送った（デバイスの番号, デバイスから見た姿勢）。相対配置は毎 tick
     /// 頼み直されるので、変わったときだけ送る（同じ取り付け先でも、持ち替えで裏のデバイスが入れ替わると番号が変わる）。
     relative: HashMap<u64, (u32, Pose)>,
@@ -455,6 +458,8 @@ impl VrBackend for OpenVrBackend {
                 self.apply_visible(id);
             }
         }
+        // 関数表（`s`）が self を借りている間も書き足せるよう、手元に出しておく（最後に戻す）。
+        let mut tips = std::mem::take(&mut self.tips);
         let s = self.system();
 
         let mut poses: [sys::TrackedDevicePose_t; MAX_DEVICES] =
@@ -514,6 +519,7 @@ impl VrBackend for OpenVrBackend {
                 if let Some(raw) = raw {
                     let tip = pose_from(&raw.mDeviceToAbsoluteTracking.m).inverse() * aim;
                     devices.insert(Device::Controller(hand), (device, tip));
+                    tips.insert(device, tip);
                 }
                 frame.hand_devices.push((hand, aim));
                 frame.controllers.push(RawController {
@@ -548,10 +554,10 @@ impl VrBackend for OpenVrBackend {
             else {
                 continue;
             };
-            devices.insert(Device::Controller(hand), (device, Pose::IDENTITY));
-            frame
-                .hand_devices
-                .push((hand, pose_from(&pose.mDeviceToAbsoluteTracking.m)));
+            let (entry, at) =
+                role_device(&tips, device, pose_from(&pose.mDeviceToAbsoluteTracking.m));
+            devices.insert(Device::Controller(hand), entry);
+            frame.hand_devices.push((hand, at));
         }
         if self
             .batteries
@@ -562,6 +568,7 @@ impl VrBackend for OpenVrBackend {
         }
         frame.batteries.clone_from(&self.batteries.1);
         self.devices = devices;
+        self.tips = tips;
         frame
     }
 
@@ -860,6 +867,15 @@ fn inputs(profile: &str, hand: Hand, a: HandActions) -> Vec<(String, f32)> {
     .collect()
 }
 
+/// 入力のアクションで取れなかった手の、役割のデバイス `device`（生の姿勢 `raw`）を取り付け先にするときの
+/// （[`OpenVrBackend::devices`] に入れる値, [`Frame::hand_devices`] の姿勢）。前に入力のアクションで tip が分かっていれば
+/// それを使う。ダッシュボードの出し入れで入力の優先度を切り替えたフレームはアクションが一瞬取れないことがあり、本体そのものに
+/// 付け直すと、手首の時計が tip と本体の差だけ一瞬ずれていた。分かっていなければ本体そのもの（ハンドトラッキングの手のデバイスなど）。
+fn role_device(tips: &HashMap<u32, Pose>, device: u32, raw: Pose) -> ((u32, Pose), Pose) {
+    let tip = tips.get(&device).copied().unwrap_or(Pose::IDENTITY);
+    ((device, tip), raw * tip)
+}
+
 /// `HmdMatrix34_t`（行優先の 3x4。左 3 列が回転、右端の列が平行移動）から姿勢へ。
 fn pose_from(m: &[[f32; 4]; 3]) -> Pose {
     let col = |c: usize| Vec3::new(m[0][c], m[1][c], m[2][c]);
@@ -879,6 +895,20 @@ fn matrix_from(pose: Pose) -> [[f32; 4]; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 入力のアクションが一瞬取れなかったフレーム（ダッシュボードの出し入れで優先度を切り替えたとき）も、役割のデバイスへは
+    /// 前に分かった tip で付ける（手首の時計の付け先が変わらない）。tip を知らないデバイスは本体そのもの。
+    #[test]
+    fn role_device_keeps_the_tip_learned_from_input() {
+        let tip = Pose::new(Vec3::new(0.0, -0.015, -0.05), Quat::from_rotation_x(-0.7));
+        let raw = Pose::new(Vec3::new(0.2, 1.1, -0.3), Quat::from_rotation_y(0.4));
+        let tips = HashMap::from([(3, tip)]);
+        let (entry, at) = role_device(&tips, 3, raw);
+        assert_eq!(entry, (3, tip));
+        assert!(at.position.abs_diff_eq((raw * tip).position, 1e-6));
+        assert!(at.orientation.abs_diff_eq((raw * tip).orientation, 1e-6));
+        assert_eq!(role_device(&tips, 4, raw).0, (4, Pose::IDENTITY));
+    }
 
     #[test]
     fn failed_ring_creation_releases_earlier_images() {
