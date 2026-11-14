@@ -11,11 +11,12 @@ use gpui::{
 struct View(&'static str);
 
 impl Render for View {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         div().p(px(20.0)).child(
-            markdown(&Theme::LIGHT, "md", self.0)
+            div()
                 .w(px(500.0))
-                .debug_selector(|| "md".into()),
+                .debug_selector(|| "md".into())
+                .child(markdown(&Theme::LIGHT, "md", self.0, window, cx)),
         )
     }
 }
@@ -102,4 +103,33 @@ fn links_and_bare_urls_open_in_the_browser(cx: &mut TestAppContext) {
         Some("https://example.com/bare"),
         "文末の句点は URL に入らない"
     );
+}
+
+/// 毎フレーム描き直す画面: 描いた絵を同じ高さで使い回し（リンクも押せる）、元の文字が変わったら描き直す。
+#[gpui::test]
+fn redraws_reuse_the_drawing_until_the_source_changes(cx: &mut TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, _| View("[the docs](https://example.com/docs)"));
+    cx.simulate_resize(gpui::size(px(800.0), px(1200.0)));
+    cx.run_until_parked();
+    let first = bounds(cx, "md");
+    // 親だけ汚して描く（フレームループと同じ）。1 回目は測った高さで描き直し、2 回目からは使い回す。
+    let frame = |cx: &mut VisualTestContext| {
+        cx.update(|window, cx| {
+            view.update(cx, |_, cx| cx.notify());
+            window.draw(cx).clear(cx);
+        })
+    };
+    frame(cx);
+    frame(cx);
+    assert_eq!(bounds(cx, "md"), first, "測った高さで描く");
+    click_start_of(cx, "md-0");
+    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+    assert!(cx.debug_bounds("md-1").is_none());
+    view.update(cx, |v, cx| {
+        v.0 = "[the docs](https://example.com/docs)\n\nMore.";
+        cx.notify();
+    });
+    frame(cx);
+    assert!(cx.debug_bounds("md-1").is_some(), "変わった文字で描き直す");
+    assert!(bounds(cx, "md").size.height > first.size.height);
 }
