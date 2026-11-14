@@ -1,5 +1,5 @@
 //! `components::markdown` を実際に組んで描く: ブロックが縦に並び、見出しは本文より大きく、一覧の文字は印の右に下がり、
-//! 長い行は幅の中で折り返す。書いたリンクも裸の URL も、押すとブラウザで開く。
+//! 長い行は幅の中で折り返す。書いたリンクも裸の URL も、押すとブラウザで開く依頼になる（直接は開かない）。
 
 use design::{Theme, components::markdown};
 use gpui::{
@@ -87,20 +87,26 @@ fn click_start_of(cx: &mut VisualTestContext, name: &'static str) {
     cx.run_until_parked();
 }
 
+/// 押して依頼されたリンク（`design::link`）を取り出す。開くのは UI 層がユーザーに確かめてからで、ここでは何も開かない。
+fn requested(cx: &mut VisualTestContext) -> Vec<String> {
+    assert_eq!(cx.opened_url(), None, "部品はブラウザを直接開かない");
+    cx.update(|window, cx| design::link::take(window, cx))
+}
+
 #[gpui::test]
-fn links_and_bare_urls_open_in_the_browser(cx: &mut TestAppContext) {
+fn links_and_bare_urls_ask_to_open_in_the_browser(cx: &mut TestAppContext) {
     let cx = draw(
         cx,
         "Plain words.\n\n[the docs](https://example.com/docs)\n\nhttps://example.com/bare.",
     );
     click_start_of(cx, "md-0");
-    assert_eq!(cx.opened_url(), None, "リンクの無い文字は何も開かない");
+    assert!(requested(cx).is_empty(), "リンクの無い文字は何も開かない");
     click_start_of(cx, "md-1");
-    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+    assert_eq!(requested(cx), ["https://example.com/docs"]);
     click_start_of(cx, "md-2");
     assert_eq!(
-        cx.opened_url().as_deref(),
-        Some("https://example.com/bare"),
+        requested(cx),
+        ["https://example.com/bare"],
         "文末の句点は URL に入らない"
     );
 }
@@ -123,7 +129,7 @@ fn redraws_reuse_the_drawing_until_the_source_changes(cx: &mut TestAppContext) {
     frame(cx);
     assert_eq!(bounds(cx, "md"), first, "測った高さで描く");
     click_start_of(cx, "md-0");
-    assert_eq!(cx.opened_url().as_deref(), Some("https://example.com/docs"));
+    assert_eq!(requested(cx), ["https://example.com/docs"]);
     assert!(cx.debug_bounds("md-1").is_none());
     view.update(cx, |v, cx| {
         v.0 = "[the docs](https://example.com/docs)\n\nMore.";

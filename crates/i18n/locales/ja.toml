@@ -96,6 +96,10 @@ cancel = "キャンセル"
 none = "なし"
 back = "戻る"
 
+[link]
+title = "このリンクをブラウザで開いてもいいですか？"
+open = "ブラウザで開く"
+
 [theme]
 dark = "ダーク"
 light = "ライト"

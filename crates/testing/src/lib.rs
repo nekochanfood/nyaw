@@ -1882,7 +1882,7 @@ impl Settings {
                                     .child(format!("{version} · {license}")),
                             )
                             .child(external_icon(&theme))
-                            .on_click(move |_, _, cx| cx.open_url(url));
+                            .on_click(move |_, window, cx| design::link::open(url, window, cx));
                             if i == 0 {
                                 row = row.rounded_t(px(radius::LG));
                             }
@@ -1959,7 +1959,9 @@ impl Settings {
                             i18n::t(cx, "settings.source_code"),
                         )
                         .child(external_icon(theme))
-                        .on_click(|_, _, cx| cx.open_url(env!("CARGO_PKG_REPOSITORY"))),
+                        .on_click(|_, window, cx| {
+                            design::link::open(env!("CARGO_PKG_REPOSITORY"), window, cx)
+                        }),
                     ],
                 ),
             ],

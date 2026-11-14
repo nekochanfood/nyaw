@@ -474,7 +474,9 @@ fn inline(theme: &Theme, id: &str, i: &Inline) -> AnyElement {
     let urls: Vec<String> = i.links.iter().map(|(_, url)| url.clone()).collect();
     let ranges = i.links.iter().map(|(range, _)| range.clone()).collect();
     InteractiveText::new(ElementId::Name(SharedString::from(id.to_owned())), text)
-        .on_click(ranges, move |n, _, cx| cx.open_url(&urls[n]))
+        .on_click(ranges, move |n, window, cx| {
+            crate::link::open(urls[n].clone(), window, cx)
+        })
         .into_any_element()
 }
 

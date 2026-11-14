@@ -156,6 +156,7 @@ nyaw の上で動くアプリ。システム UI（wrist・ダッシュボード�
 - 新しいランタイム = `crates/subsystems/vr` に `VrBackend` 実装を追加し `connect` に登録する。
 - `CODE_OF_CONDUCT.md` に従う: コメントは日本語、Conventional Commits、CalVer（現在 `2026.0.3-dev.0`、`[workspace.package]` で一括管理。リリースのタグは `v<CalVer>[-<名前>.<数>]`。Actions の Prepare release に版を入れると版上げの PR ができ、マージするとその PR のチェックで作ったインストーラーで `v<CalVer>` が出る（`.github/workflows/prepare-release.yml` と `release.yml`。PR が main の先頭の上に無いとマージ後にビルドし直す。名前付きの版も同じ。手で公開したリリースも、タグの commit をビルドした PR があればそのインストーラーを使う）。出すと main は次の版の `-dev.0` に上がる（`-dev.<数>` の版は出さない）。PR を開いたまま、そのブランチで Actions の Release を名前（alpha・beta など）を入れて実行すると `v<CalVer>-<名前>.<数>` のプレリリースが出る（Cargo.toml の版は変えない）。名前の付いた版は GitHub のプレリリース（アプリのナイトリーのチャンネルだけが受け取る）、付かない版は正式なリリース（安定版）。新旧は版の文字ではなくビルド番号で比べる。`crates/updater/AGENT.md`）、単体テスト必須、層をまたぐものは結合テスト。
 - **コメントは 1 行で収める**。どうしても長く書く必要があるときも 3 行まで（`///` `//!` `//` とも、連続した 1 かたまりで数える）。それ以上は、コードを分かりやすくするか、設計の話をそのクレートの `AGENT.md` に書いて、コメントからは指すだけにする。lint は置かず、レビューで見る。
+- **URL を開く（厳守）**: ブラウザで URL を開くのは `design::link::open` で依頼するだけ。開く前に `ui::link` が URL を見せてユーザーに確かめる（[`crates/ui/AGENT.md`](crates/ui/AGENT.md) の「リンクを開く」）。`cx.open_url` を直接呼ばない（`clippy.toml` が禁じる）。
 - `// ponytail:` コメントは意図的な簡略化。限界と次の一手が書いてある。
 - **ナビゲーションバー（厳守）**: 新しいパネルを開くときは、ナビゲーションバーを付けるか（既定）`PanelSpec::without_nav_bar()` で外すかを `crates/design/GUIDELINES.md` の「ナビゲーションバー」に従って必ず判断する。付けるなら `.titled("…")` でタイトルを渡し、パネルの中に閉じるボタン・同じ見出しを埋め込まない。testkit のキットも本番と同じく持ち主の直後（PanelId = 持ち主 + 1）にバーを開く（キットが直接作る最初のパネルには付かない）。
 

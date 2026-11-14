@@ -181,7 +181,7 @@ pub(crate) fn page(
                 &design::icons::ARROW_SQUARE_OUT,
                 i18n::t(cx, "update.release_page"),
             )
-            .on_click(move |_, _, cx| cx.open_url(&page))],
+            .on_click(move |_, window, cx| design::link::open(page.clone(), window, cx))],
         ),
     ]
 }
