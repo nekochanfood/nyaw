@@ -30,7 +30,7 @@ OpenVR のコントローラ操作は SteamVR Input のアクション（`openvr
 
 ## SteamVR のアプリ登録（自動起動）
 
-`openvr/app.rs`。自動起動を入れると `os::config_dir()/openvr/<アプリの名前>.vrmanifest`（起動するのは今の実行ファイル、引数 `--openvr`、`is_dashboard_overlay`）を書き出して `AddApplicationManifest` で恒久的に登録し、`SetApplicationAutoLaunch` で入れる。切るときは登録を残す。値は SteamVR が持ち、接続時と切り替えたときだけ読む（SteamVR の設定画面で変えた分は次の接続で見える）。
+`openvr/app.rs`。自動起動を入れると `os::config_dir()/openvr/<アプリの名前>.vrmanifest`（起動するのは今の実行ファイル、引数 `--openvr`、`is_dashboard_overlay`）を書き出して `AddApplicationManifest` で恒久的に登録し、`SetApplicationAutoLaunch` で入れる。切るときは登録を残す。値は SteamVR が持ち、接続時だけ読む（SteamVR の設定画面で変えた分は次の接続で見える）。切り替えたら、入れた値をそのまま持つ（SteamVR は切り替えた直後の `GetApplicationAutoLaunch` で前の値を返すので、読み直すとスイッチが動かない）。
 
 - アプリの名前は release ビルド `nekochanfood.nyaw`（表示名 `nyaw`）、debug ビルド `nekochanfood.nyaw.dev`（`nyaw (dev)`）。開発版はリリース版とは別のアプリなので、開発版で入れても、インストールしたリリース版の登録（起動する実行ファイル）は書き換わらない。登録を書き換えるのは自動起動を入れたときだけで、ただ起動しただけでは触らない。
 - 登録済みなら接続時に `IdentifyApplication` でそのアプリだと名乗る（SteamVR Input の manifest より前）。手で起動しても SteamVR が起動しても、コントローラのバインドが同じアプリに付く。登録前は SteamVR が実行ファイル名から付けた名前（`system.generated.nyaw.exe`）なので、初めて自動起動を入れた次の起動からバインドの持ち主が変わる。

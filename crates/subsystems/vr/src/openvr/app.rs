@@ -22,7 +22,8 @@ const APP_NAME: &str = if cfg!(debug_assertions) {
 
 pub(super) struct App {
     table: *const sys::VR_IVRApplications_FnTable,
-    /// SteamVR の起動と同時に開くか。毎フレーム読まれるので、接続時と切り替えたときだけ問い合わせる。
+    /// SteamVR の起動と同時に開くか。毎フレーム読まれるので、問い合わせるのは接続時だけ。切り替えたら、入れた値を持つ
+    /// （SteamVR は切り替えた直後の `GetApplicationAutoLaunch` で前の値を返す。次の接続では新しい値が読める）。
     auto_launch: bool,
 }
 
@@ -74,11 +75,12 @@ impl App {
                 manifest = path.display()
             );
         }
-        let r = check("SetApplicationAutoLaunch", unsafe {
+        check("SetApplicationAutoLaunch", unsafe {
             f(t.SetApplicationAutoLaunch)(key().as_ptr().cast_mut(), on)
-        });
-        self.auto_launch = self.read_auto_launch();
-        r
+        })?;
+        // 読み直さない: 直後は前の値が返り、スイッチが動かなくなる。
+        self.auto_launch = on;
+        Ok(())
     }
 
     fn read_auto_launch(&self) -> bool {
@@ -137,6 +139,39 @@ mod tests {
         assert_eq!(app["binary_path_windows"], exe.to_str().unwrap());
         assert_eq!(app["arguments"], "--openvr");
         assert_eq!(app["is_dashboard_overlay"], true);
+    }
+
+    /// SteamVR を真似る関数表: 登録済みで自動起動は入っており、`GetApplicationAutoLaunch` は切り替えても前の値（入）を
+    /// 返し続ける。`SetApplicationAutoLaunch` は [`SET_ERROR`] を返す。
+    static SET_ERROR: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+    unsafe extern "C" fn yes(_: *mut std::ffi::c_char) -> bool {
+        true
+    }
+    unsafe extern "C" fn identify(_: u32, _: *mut std::ffi::c_char) -> sys::EVRApplicationError {
+        sys::EVRApplicationError_VRApplicationError_None
+    }
+    unsafe extern "C" fn set(_: *mut std::ffi::c_char, _: bool) -> sys::EVRApplicationError {
+        SET_ERROR.load(std::sync::atomic::Ordering::Relaxed) as _
+    }
+
+    /// 切り替えたらすぐスイッチに出る（SteamVR が直後に前の値を返しても）。切り替えに失敗したら前の値のまま。
+    #[test]
+    fn switching_shows_at_once_though_steamvr_still_reads_the_old_value() {
+        // 関数ポインタの Option はゼロで None になる（呼ばない関数は空のまま）。
+        let mut table: sys::VR_IVRApplications_FnTable = unsafe { std::mem::zeroed() };
+        table.IsApplicationInstalled = Some(yes);
+        table.IdentifyApplication = Some(identify);
+        table.GetApplicationAutoLaunch = Some(yes);
+        table.SetApplicationAutoLaunch = Some(set);
+        let mut app = App::init(&table);
+        assert!(app.auto_launch());
+        let unknown = sys::EVRApplicationError_VRApplicationError_UnknownApplication;
+        SET_ERROR.store(unknown as _, std::sync::atomic::Ordering::Relaxed);
+        assert!(app.set_auto_launch(false).is_err());
+        assert!(app.auto_launch());
+        SET_ERROR.store(0, std::sync::atomic::Ordering::Relaxed);
+        app.set_auto_launch(false).unwrap();
+        assert!(!app.auto_launch());
     }
 
     #[test]
