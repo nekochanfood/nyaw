@@ -119,7 +119,8 @@ fn dashboard_shows_at_the_set_distance_and_height(cx: &mut TestAppContext) {
     assert!(up.orientation.abs_diff_eq(home.orientation, 1e-5));
 
     // 0.5m farther: it moves level, away from the head.
-    kit.kernel.set(Setting::DashboardDistance(1.6));
+    kit.kernel
+        .set(Setting::DashboardDistance(kernel::DASHBOARD_DISTANCE + 0.5));
     kit.step().step();
     let far = at(&kit);
     let head = kit.kernel.hmd().position;

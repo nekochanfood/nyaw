@@ -156,8 +156,8 @@ pub fn snap(value: f32, min: f32, max: f32, step: f32, fallback: f32) -> f32 {
 }
 
 /// ダッシュボードの置き場所（[`Config::dashboard_distance`] / [`Config::dashboard_height`]）の既定・範囲と刻み（m）。
-/// 距離ははめた画面の中心まで。高さは頭の高さからの相対（上が +）で、既定の 0 は画面の中心が目の高さ。
-pub const DASHBOARD_DISTANCE: f32 = 1.1;
+/// 距離ははめた画面の中心まで。高さは目の高さの 0.1m 下（ダッシュボードの `HEIGHT_ORIGIN`）を 0 とする相対（上が +）。
+pub const DASHBOARD_DISTANCE: f32 = 1.3;
 pub const DASHBOARD_DISTANCE_MIN: f32 = 0.6;
 pub const DASHBOARD_DISTANCE_MAX: f32 = 2.0;
 pub const DASHBOARD_HEIGHT_MIN: f32 = -0.5;
@@ -326,7 +326,7 @@ pub struct Config {
     pub update_channel: UpdateChannel,
     /// ダッシュボードの距離（m。[`DASHBOARD_DISTANCE_MIN`]〜[`DASHBOARD_DISTANCE_MAX`]）。省略で [`DASHBOARD_DISTANCE`]。
     pub dashboard_distance: Option<f32>,
-    /// ダッシュボードの高さ（m。頭の高さからの相対で上が +。[`DASHBOARD_HEIGHT_MIN`]〜[`DASHBOARD_HEIGHT_MAX`]）。省略で 0。
+    /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。[`DASHBOARD_HEIGHT_MIN`]〜[`DASHBOARD_HEIGHT_MAX`]）。省略で 0。
     pub dashboard_height: Option<f32>,
 }
 

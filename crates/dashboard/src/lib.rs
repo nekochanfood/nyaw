@@ -61,9 +61,11 @@ const BAR_PX: (u32, u32) = (
     (components::NAV_BAR_HEIGHT + 2.0 * components::PANEL_MARGIN) as u32,
 );
 const BAR_M: Vec2 = Vec2::new(SIZE_M.x, SIZE_M.x * BAR_PX.1 as f32 / BAR_PX.0 as f32);
+/// 設定の高さ 0 の所（頭の高さからの相対 m）。はめた画面の中心が目の高さより少し下に来ると見やすい。
+const HEIGHT_ORIGIN: f32 = -0.1;
 /// 画面を開いてからはまるまでの、最初の置き場所（既定の距離・高さでのはまる所。開くとすぐはまる）。
 const SCREEN_POSE: Pose = Pose::new(
-    Vec3::new(0.0, 0.0, -kernel::DASHBOARD_DISTANCE),
+    Vec3::new(0.0, HEIGHT_ORIGIN, -kernel::DASHBOARD_DISTANCE),
     Quat::IDENTITY,
 );
 /// タイルの高さ（px）。
@@ -82,9 +84,9 @@ pub const CLOSE_SOUND: &[u8] = include_bytes!("../assets/dashboard_close.wav");
 pub type Summon = fn(PanelId, Opened) -> PanelSpec;
 pub type Opened = Box<dyn FnOnce(PanelId, &mut App)>;
 
-/// バーの置き場所（開いた瞬間の頭から見た相対姿勢）。はめた画面（[`SIZE_M`]）の中心が正面 `distance`・頭の高さから `height` 上に
-/// 垂直に立つよう（設定のダッシュボードの距離・高さ）、画面の下半分・そのナビゲーションバー・隙間の分だけ下げ、傾けたバーの
-/// 上端がその真下に来るように置く（オーバーレイ層の `Parent::slot` の置き方の逆）。
+/// バーの置き場所（開いた瞬間の頭から見た相対姿勢）。はめた画面（[`SIZE_M`]）の中心が正面 `distance`・頭の高さから
+/// [`HEIGHT_ORIGIN`] + `height` 上に垂直に立つよう（設定のダッシュボードの距離・高さ）、画面の下半分・そのナビゲーションバー・
+/// 隙間の分だけ下げ、傾けたバーの上端がその真下に来るように置く（オーバーレイ層の `Parent::slot` の置き方の逆）。
 pub fn pose(distance: f32, height: f32) -> Pose {
     let margin = |size: Vec2, res: (u32, u32)| components::PANEL_MARGIN * size.y / res.1 as f32;
     let face = SIZE_M.y / 2.0 - margin(SIZE_M, RES_PX);
@@ -92,7 +94,7 @@ pub fn pose(distance: f32, height: f32) -> Pose {
     let nav_bar = ui::NAV_BAR_HEIGHT_M;
     let top = Vec3::new(
         0.0,
-        height - (face + nav_bar + kernel::overlay::SLOT_GAP),
+        HEIGHT_ORIGIN + height - (face + nav_bar + kernel::overlay::SLOT_GAP),
         -distance,
     );
     let rotation = Quat::from_rotation_x(-BAR_TILT);

@@ -182,7 +182,7 @@ pub enum Setting {
     UpdateChannel(UpdateChannel),
     /// ダッシュボードの距離（m。`dashboard_distance`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、置くのはダッシュボード。
     DashboardDistance(f32),
-    /// ダッシュボードの高さ（m。頭の高さからの相対で上が +。`dashboard_height`。範囲に収め、刻みに丸める）。
+    /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。`dashboard_height`。範囲に収め、刻みに丸める）。
     DashboardHeight(f32),
 }
 
@@ -234,7 +234,7 @@ pub struct Settings {
     pub update_channel: UpdateChannel,
     /// ダッシュボードの距離（m。はめた画面の中心まで）。
     pub dashboard_distance: f32,
-    /// ダッシュボードの高さ（m。頭の高さからの相対で上が +。0 で画面の中心が目の高さ）。
+    /// ダッシュボードの高さ（m。上が +。0 で画面の中心が目の高さの 0.1m 下）。
     pub dashboard_height: f32,
 }
 
@@ -1486,13 +1486,13 @@ mod tests {
         );
     }
 
-    /// ダッシュボードの距離・高さは既定で今までの置き場所（正面 1.1m・目の高さ）。互いに独立で、範囲と刻みに収まる。
+    /// ダッシュボードの距離・高さは既定で正面 1.3m・高さ 0（目の高さの 0.1m 下）。互いに独立で、範囲と刻みに収まる。
     #[test]
-    fn dashboard_placement_defaults_to_eye_level_and_stays_in_range() {
+    fn dashboard_placement_has_defaults_and_stays_in_range() {
         let (mut k, _) = lod_kernel();
         let (s, d) = (k.settings(), Settings::default());
-        assert_eq!((s.dashboard_distance, s.dashboard_height), (1.1, 0.0));
-        assert_eq!((d.dashboard_distance, d.dashboard_height), (1.1, 0.0));
+        assert_eq!((s.dashboard_distance, s.dashboard_height), (1.3, 0.0));
+        assert_eq!((d.dashboard_distance, d.dashboard_height), (1.3, 0.0));
         k.set(Setting::DashboardDistance(1.52));
         k.set(Setting::DashboardHeight(-0.18));
         let s = k.settings();
