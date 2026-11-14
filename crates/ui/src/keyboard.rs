@@ -72,12 +72,15 @@ const WRIST_TILT: f32 = 22.5 * std::f32::consts::PI / 180.;
 /// 打つときの手（コントローラの先）からキーボードまでの距離（m）。キーボードは頭の前 0.8m（`TYPING_AT`）、手はその 35cm ほど手前。
 // ponytail: 目安の固定値で、合わなければここを調整する。人ごとに合わせるなら、開いた瞬間の手との距離から大きさを決める。
 const HAND_DISTANCE: f32 = 0.45;
+/// 標準の大きさの、手首で端まで届く大きさに対する倍率。
+const SIZE_SCALE: f32 = 1.5;
 
-/// 種類（`kind`）の標準の大きさ（m。等倍）。ホームポジションに向けた手首を外へ [`WRIST_TILT`] 倒すと、遠い方のキーの端に届く。
+/// 種類（`kind`）の標準の大きさ（m。等倍）。ホームポジションに向けた手首を外へ [`WRIST_TILT`] 倒すと遠い方のキーの端に届く大きさの、
+/// [`SIZE_SCALE`] 倍。
 fn panel_size(kind: KeyboardType) -> Vec2 {
     let (w, h) = panel_resolution(kind);
     let far = HOME_U.max(kind.width() - HOME_U) * view::KEY_UNIT;
-    Vec2::new(w as f32, h as f32) * (HAND_DISTANCE * WRIST_TILT.tan() / far)
+    Vec2::new(w as f32, h as f32) * (SIZE_SCALE * HAND_DISTANCE * WRIST_TILT.tan() / far)
 }
 
 /// パネルの幅に対する、中心から見たホームポジションの横位置（割合）。キーの並びはパネルの左の余白の内側から始まる。
@@ -761,7 +764,7 @@ mod tests {
             assert_eq!(kernel.panel(panel).parent, None);
         });
     }
-    /// 標準の大きさでは、ホームポジションに向けた手首を外へ 22.5° 倒すと、遠い方のキーの端にちょうど届く。
+    /// 標準の大きさを [`SIZE_SCALE`] で割ると、ホームポジションに向けた手首を外へ 22.5° 倒して遠い方のキーの端にちょうど届く。
     #[gpui::test]
     fn a_light_wrist_tilt_reaches_the_edges_of_the_keys(cx: &mut TestAppContext) {
         cx.update(|cx| {
@@ -776,7 +779,11 @@ mod tests {
                 let left = (inset - spec.resolution.0 as f32 / 2.) * m_per_px;
                 let right = left + kind.width() * view::KEY_UNIT * m_per_px;
                 let home = spec.typing.unwrap();
-                let tilt = |x: f32| ((x - home).abs() / HAND_DISTANCE).atan().to_degrees();
+                let tilt = |x: f32| {
+                    ((x - home).abs() / SIZE_SCALE / HAND_DISTANCE)
+                        .atan()
+                        .to_degrees()
+                };
                 let far = tilt(left).max(tilt(right));
                 assert!((far - 22.5).abs() < 1e-3, "{kind:?}: {far}");
             }
