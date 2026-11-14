@@ -696,7 +696,7 @@ emulator = false
             [cursor(0.0), cursor(9.0)],
             [CURSOR_SCALE_MIN, CURSOR_SCALE_MAX]
         );
-        assert!(CURSOR_SCALE_MIN < 1.0 && 1.0 < CURSOR_SCALE_MAX);
+        const { assert!(CURSOR_SCALE_MIN < 1.0 && 1.0 < CURSOR_SCALE_MAX) };
         let dir = std::env::temp_dir().join(format!("nyaw-pointer-{}", std::process::id()));
         let path = dir.join("config.toml");
         save_at(&path, "pointer_tuning", value(PointerTuning::Detailed)).unwrap();
