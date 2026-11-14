@@ -45,7 +45,7 @@ impl<'a, V: Render> NoVrKit<'a, V> {
         let mut kernel = Kernel::with_backend(Emulator::headless(SCREEN.0, SCREEN.1), config);
         let mut panels = Panels::new(None);
         let pose = Pose::new(PANEL_POS, Quat::IDENTITY);
-        let panel = panels.add(cx, &mut kernel, pose, Some(view));
+        let panel = panels.add(cx, &mut kernel, pose, None, Some(view));
         let mut kit = Self {
             cx,
             panels,
