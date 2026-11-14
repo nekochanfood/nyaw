@@ -725,31 +725,33 @@ mod tests {
                 } else {
                     96.
                 };
+                // キーの升目（隙間を含む）。見た目は升目から種類の隙間を除いた所。
                 let expected = [
-                    ("key-TLDE", 0., y, 56., 56.),
-                    ("key-AC01", 112., y + 128., 56., 56.),
+                    ("key-TLDE", 0., y, 64., 64.),
+                    ("key-AC01", 112., y + 128., 64., 64.),
                     (
                         "key-SPCE",
                         if layout == "jp" { 304. } else { 240. },
                         y + 256.,
-                        if layout == "jp" { 216. } else { 392. },
-                        56.,
+                        if layout == "jp" { 224. } else { 400. },
+                        64.,
                     ),
                     (
                         "key-RTRN",
                         if layout == "us" { 816. } else { 864. },
                         y + if layout == "us" { 128. } else { 64. },
-                        if layout == "us" { 136. } else { 88. },
-                        if layout == "us" { 56. } else { 120. },
+                        if layout == "us" { 144. } else { 96. },
+                        if layout == "us" { 64. } else { 128. },
                     ),
                     (
                         "key-LFSH",
                         0.,
                         y + 192.,
-                        if layout == "de" { 72. } else { 136. },
-                        56.,
+                        if layout == "de" { 80. } else { 144. },
+                        64.,
                     ),
                 ];
+                let gap = KeyAppearance::for_type(kind).gap;
                 for (name, x, y, width, height) in expected {
                     let bounds = cx.debug_bounds(name).unwrap();
                     assert_eq!(
@@ -759,7 +761,7 @@ mod tests {
                             f32::from(bounds.size.width),
                             f32::from(bounds.size.height)
                         ),
-                        (x + 4., y + 4., width, height),
+                        (x + gap / 2., y + gap / 2., width - gap, height - gap),
                         "{layout}: {kind:?}: {name}"
                     );
                 }
@@ -988,7 +990,9 @@ mod tests {
                 .count()
         };
         assert_eq!(hovers(a.center()), 1);
-        assert_eq!(hovers(a.top_right() + gpui::point(px(2.), px(4.))), 0);
+        // 隣のキーとの隙間の、このキーの側（隙間の 1/4）。
+        let gap = KeyAppearance::for_type(KeyboardType::Compact).gap;
+        assert_eq!(hovers(a.top_right() + gpui::point(px(gap / 4.), px(4.))), 0);
         assert_eq!(hovers(a.center()), 0);
         assert_eq!(hovers(s.center()), 1);
     }
@@ -1004,8 +1008,10 @@ mod tests {
         cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
         cx.run_until_parked();
         let key = cx.debug_bounds("key-SPCE").unwrap();
+        // 下の隙間の、このキーの側（隙間の 1/4）と、角丸で欠けた角。
+        let gap = KeyAppearance::for_type(KeyboardType::Compact).gap;
         for at in [
-            key.bottom_left() + gpui::point(key.size.width / 2., px(2.)),
+            key.bottom_left() + gpui::point(key.size.width / 2., px(gap / 4.)),
             key.origin + gpui::point(px(1.), px(1.)),
         ] {
             cx.simulate_click(at, gpui::Modifiers::none());

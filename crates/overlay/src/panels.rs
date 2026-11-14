@@ -171,6 +171,19 @@ impl Overlay {
         self.panels[id].grab_anchor = anchor.map(|a| Pose::new(a.position * scale, a.orientation));
     }
 
+    /// 掴む基準を `anchor` に付け替え、今の基準（無ければ中心）のあった所に新しい基準が来るようにパネルを動かす。
+    /// 中身を組み直して基準の点が動いても（キーボードの種類を替えたときのホームポジション）、空間ではその点を動かさない。
+    /// 向きは変えない。位置は等倍のつもり（[`Self::set_grab_anchor`]）。親・持ち主に付いて動くパネルは基準だけ替える。
+    pub fn move_grab_anchor(&mut self, id: PanelId, anchor: Pose) {
+        let anchor = Pose::new(anchor.position * self.scale(), anchor.orientation);
+        let p = &mut self.panels[id];
+        let fixed = p.pose * p.grab_anchor.unwrap_or(Pose::IDENTITY);
+        if p.parent.is_none() && p.nav_bar_of.is_none() {
+            p.pose = fixed * anchor.inverse();
+        }
+        p.grab_anchor = Some(anchor);
+    }
+
     /// 掴んで大きさを変えられるか（ダッシュボードのバーのように、大きさの決まったものは `false`）。
     pub fn set_resizable(&mut self, id: PanelId, resizable: bool) {
         self.panels[id].resizable = resizable;

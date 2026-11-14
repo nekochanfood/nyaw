@@ -63,6 +63,9 @@ pub enum PanelCommand {
     Media(subsystems::media::Command),
     /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。`Overlay::set_grab_anchor`）。
     GrabAnchor(Option<Pose>),
+    /// 掴む基準を付け替え、今の基準（無ければ中心）のあった所に新しい基準が来るようにパネルを動かす
+    /// （`Overlay::move_grab_anchor`）。中身を組み直して基準の点（キーボードのホームポジション）が動いたときに使う。
+    MoveGrabAnchor(Pose),
     /// このパネルのイン・アウトアニメーションを有効化・無効化する。
     Animated(bool),
     /// このパネルが出ている間、空間全体を暗くする（`Overlay::set_veil`）。
@@ -1022,6 +1025,7 @@ impl<B: VrBackend> Kernel<B> {
                 }
             }
             PanelCommand::GrabAnchor(anchor) => self.overlay.set_grab_anchor(panel, anchor),
+            PanelCommand::MoveGrabAnchor(anchor) => self.overlay.move_grab_anchor(panel, anchor),
             PanelCommand::Hide(hidden) => {
                 self.overlay
                     .set_hidden(&mut self.subsystems.backend, panel, hidden)
