@@ -4,21 +4,21 @@ version = 4
 
 [[package]]
 name = "calculator"
-version = "2026.0.3-beta.3"
+version = "2026.0.3-dev.0"
 dependencies = [
  "nyapp-sdk",
 ]
 
 [[package]]
 name = "clock"
-version = "2026.0.3-beta.3"
+version = "2026.0.3-dev.0"
 dependencies = [
  "nyapp-sdk",
 ]
 
 [[package]]
 name = "eyes"
-version = "2026.0.3-beta.3"
+version = "2026.0.3-dev.0"
 dependencies = [
  "nyapp-sdk",
 ]
@@ -37,7 +37,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "nyapp-sdk"
-version = "2026.0.3-beta.3"
+version = "2026.0.3-dev.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "sandbox"
-version = "2026.0.3-beta.3"
+version = "2026.0.3-dev.0"
 dependencies = [
  "nyapp-sdk",
 ]
