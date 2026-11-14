@@ -103,7 +103,7 @@ fn list(base: &str) -> Vec<u8> {
             &[("nyaw-2026.0.1-setup.exe", 5, None)],
             base
         ),
-        // 正式なリリース（stable のチャンネルにも勧める）。
+        // 正式なリリース（安定版のチャンネルにも勧める）。
         release(
             "v2026.0.2",
             false,
@@ -158,7 +158,7 @@ fn the_newest_build_above_ours_wins_whatever_the_version_says() {
         None,
         "main の先にいるビルドに古いリリースを勧めない"
     );
-    // stable はプレリリースを除いた中で選ぶ（プレリリースの方が新しくても）。
+    // 安定版はプレリリースを除いた中で選ぶ（プレリリースの方が新しくても）。
     let stable = |build| newest(&releases, build, UpdateChannel::Stable).map(|r| r.version);
     assert_eq!(stable(0).as_deref(), Some("2026.0.2"));
     assert_eq!(stable(640), None);
@@ -357,7 +357,7 @@ fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
             launch: fake_launch,
             ..Default::default()
         });
-        // fixture のリリースはどちらもプレリリースなので、nightly で受け取る。
+        // fixture のリリースはどちらもプレリリースなので、ナイトリーで受け取る。
         cx.default_global::<PanelControl>().settings.update_channel = UpdateChannel::Nightly;
         assert!(!available(cx));
         // 確かめる前に入れようとしても何もしない。
@@ -376,7 +376,7 @@ fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
             !cx.default_global::<PanelControl>().quit,
             "見つけただけでは入れない"
         );
-        // stable に切り替えると、確かめ直さなくても勧めなくなる（入れようとしても何もしない）。
+        // 安定版に切り替えると、確かめ直さなくても勧めなくなる（入れようとしても何もしない）。
         cx.default_global::<PanelControl>().settings.update_channel = UpdateChannel::Stable;
         assert!(!available(cx));
         install(cx);

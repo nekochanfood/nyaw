@@ -1832,7 +1832,7 @@ impl Settings {
                 vec![components::list(theme, rows)]
             }
             // アップデート: 今の版と確認の状態、新しいリリースがあればその版・アップデートのボタン・リリースノート。
-            // アップデート: チャンネル（stable は正式なリリースだけ、nightly はプレリリースも）はここで選ぶ。
+            // アップデート: チャンネル（安定版は正式なリリースだけ、ナイトリーはプレリリースも）はここで選ぶ。
             UPDATE_CATEGORY => {
                 let channel = self.select(
                     theme,

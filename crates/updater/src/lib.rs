@@ -1,6 +1,6 @@
 //! アプリの更新。GitHub のリリースから今より新しいビルドを見つけて知らせ、ユーザーが選んだら落として入れ替える
 //! （勝手には入れない）。新旧は版の文字（CalVer。書き方が決まっていない）ではなく、ビルド番号で比べる（`AGENT.md`）。
-//! どのリリースを勧めるかは設定のチャンネル（`update_channel`。stable はプレリリースを除く）で決める。
+//! どのリリースを勧めるかは設定のチャンネル（`update_channel`。安定版はプレリリースを除く）で決める。
 
 use std::fmt::Display;
 use std::fs;
@@ -40,7 +40,7 @@ pub struct Release {
     /// 公開した時刻（ISO 8601）とリリースのページ。
     pub published_at: Option<String>,
     pub page: String,
-    /// プレリリース（GitHub の印。alpha・beta など）。nightly のチャンネルにだけ勧める。
+    /// プレリリース（GitHub の印。alpha・beta など）。ナイトリーのチャンネルにだけ勧める。
     pub prerelease: bool,
     pub installer: Installer,
 }
@@ -130,7 +130,7 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
         .collect())
 }
 
-/// `releases` のうち、`channel` で受け取るもの（stable はプレリリースを除く）で、ビルド番号が `build` より大きいものの中で
+/// `releases` のうち、`channel` で受け取るもの（安定版はプレリリースを除く）で、ビルド番号が `build` より大きいものの中で
 /// 一番新しいもの。
 pub fn newest(releases: &[Release], build: u32, channel: UpdateChannel) -> Option<Release> {
     releases
