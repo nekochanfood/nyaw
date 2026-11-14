@@ -5,6 +5,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
+# 同じブランチ・PR に次の push が来たら、走っている古い run は止める。main は止めない（キャッシュを保存する run で、
+# 同じグループだと待っている run が次の run に置き換えられて消えるので、run ごとに別のグループにする）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
 env:
   # インクリメンタルは CI では使い回さない
   CARGO_INCREMENTAL: "0"
