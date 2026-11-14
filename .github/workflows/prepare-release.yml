@@ -1,11 +1,12 @@
 name: Prepare release
 
 # Actions の画面で版を入れて実行すると、版を上げる commit を release/v<版> に積み、main への PR を開く（本文は前の版からの変更）。
-# PR のチェックで CI と Release（インストーラーのビルド）が走り、PR をマージすると Release がそのインストーラーで v<版> を出す。
-# GITHUB_TOKEN で作った PR でも pull_request の run は起きる（ここから gh workflow run でも起こすと、同じビルドが 2 回走る）。
+# そのブランチで Release（インストーラーのビルド）を 1 回起こし、PR をマージすると Release がそのインストーラーで v<版> を出す。
+# GITHUB_TOKEN で開いた PR の pull_request の run は承認待ちで止まる（bot 起動の扱い）ので、ビルドは PR のチェックに頼らず
+# ここから起こす（Release は PR では起動しない）。PR の CI は承認待ちのままでよい。版を変えるだけで、マージ後の main の push で走る。
 # PR を開いたままプレリリースを出すときは、そのブランチで Release を名前（alpha・beta など）を入れて実行する。
 # -dev.<数> の版（出さない版）は、PR を作ってすぐマージする。Release が出した後に次の版をこれで起こす。
-# その commit には [skip ci] を付ける（すぐ消すブランチに PR のチェックが起き、ジョブ 0 のまま失敗で残るので）
+# その commit には [skip ci] を付ける（PR の CI が承認待ちのまま、ブランチを消すと失敗で残るので）
 on:
   workflow_dispatch:
     inputs:
@@ -19,6 +20,8 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      # Release を起こす
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -70,8 +73,9 @@ jobs:
           fi
           git commit -qam "chore(release): $NEW"
           git push origin "release/v$NEW"
+          gh workflow run release.yml --ref "release/v$NEW"
           prev=$(git describe --tags --abbrev=0 2> /dev/null) || true
           notes=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
             -f tag_name="v$NEW" -f target_commitish="release/v$NEW" ${prev:+-f previous_tag_name="$prev"} -q .body)
-          printf 'Merging this releases v%s with the installer built by the Release check of this branch.\n\n%s\n' "$NEW" "$notes" > body.md
+          printf 'Merging this releases v%s with the installer built by the Release run on this branch.\n\n%s\n' "$NEW" "$notes" > body.md
           gh pr create --base main --head "release/v$NEW" --title "chore(release): $NEW" --body-file body.md
