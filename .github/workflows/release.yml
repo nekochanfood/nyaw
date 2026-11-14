@@ -3,25 +3,23 @@ name: Release
 # インストーラをビルドしてリリースに添付する。リリースは次のどちらか:
 # - main で Cargo.toml の版を上げた push（版上げの PR をマージしたとき）。このジョブが v<版> のリリースを作る
 #   （GITHUB_TOKEN で作ったリリースではワークフローが発火しないので、作るところから添付まで同じジョブでする）。
-#   インストーラーは版上げの PR のチェックで作ったものをそのまま使う（使えないときはここでビルドし直す）。
+#   インストーラーは Prepare release が版上げのブランチで起こした run で作ったものをそのまま使う（使えないときはここでビルドし直す）。
 #   版上げの PR は Actions の Prepare release（prepare-release.yml）で作れる。名前付きの版（2026.0.2-beta.1）もこれで出せる。
 #   出した後は Prepare release で main を次の版の -dev.0 に上げる（-dev.<数> の版は出さない）
 # - Actions からこのワークフローを名前（alpha・beta など）を入れて実行したとき。そのブランチの先頭を v<版>-<名前>.<数>
 #   のプレリリースとして出す（版上げの PR を開いたまま試してもらう。Cargo.toml の版は変えず、表示する版だけ変える）
-# - 画面か自分の gh で公開したリリース（タグの commit をビルドした PR の run があれば、そのインストーラーを使う）
+# - 画面か自分の gh で公開したリリース（タグの commit をビルドした run があれば、そのインストーラーを使う）
 # それ以外の main の push は依存のキャッシュが無いとき（Cargo.lock かツールチェーンが変わったとき）だけビルドして保存する。
-# タグや PR の run は main のキャッシュを読めるので、依存をビルドし直さない（同じジョブなので rust-cache のキーも揃う）。
-# リリースでしか通らないビルドの失敗は、版上げの PR のビルドで分かる。
-# Cargo.toml を変えない PR では起動しない（版上げの PR は必ず変える）
+# タグやブランチの run は main のキャッシュを読めるので、依存をビルドし直さない（同じジョブなので rust-cache のキーも揃う）。
+# リリースでしか通らないビルドの失敗は、版上げのブランチのビルドで分かる。
+# PR では起動しない（bot が開いた版上げの PR の run は承認待ちで止まる。ビルドは Prepare release がブランチで起こす。
+# 手で開いた版上げの PR は、そのブランチでこれを名前を空で実行するか、マージ時にここでビルドする）
 on:
   release:
     types: [published]
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
-    paths: [Cargo.toml]
-  # 名前を入れて画面から実行するとプレリリースを出す
+  # 名前を入れて画面から実行するとプレリリースを出す。空ならそのブランチのインストーラーを作って置く（Prepare release もこれを使う）
   workflow_dispatch:
     inputs:
       prerelease:
@@ -33,7 +31,7 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: write
-      # PR の run のインストーラーを探して落とす・出した後に Prepare release を起こす
+      # 版上げのブランチの run のインストーラーを探して落とす・出した後に Prepare release を起こす
       actions: write
       pull-requests: read
     defaults:
@@ -42,8 +40,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # PR はマージ用の commit ではなく PR の先頭をビルドする（main に入ったときと同じ中身・ビルド番号になるように）
-          ref: ${{ github.event.pull_request.head.sha }}
           # 書き込めるトークンを .git に残さない（依存の build.rs から読めないように）
           persist-credentials: false
           # ビルド番号（HEAD までのコミット数。crates/updater/build.rs）を数えるので、履歴を全部取る
@@ -51,15 +47,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # 出すタグを TAG に、ビルドするかを BUILD に、この run でリリースに添付するかを PUBLISH に置く。
       # 公開されたリリースならそのタグ。プレリリースなら v<版>-<名前>.<その名前で出した最大の数 + 1>。
-      # それ以外は版が上がったときだけ v<新しい版>（main の push は直前と、PR とブランチの run は main から分かれた所と比べる）。
-      # main の push は版を上げなくてもビルドする。-dev.<数> への版上げは出さない。
+      # それ以外は版が上がったときだけ v<新しい版>（main の push は直前と、ブランチの run は main から分かれた所と比べる）。
+      # main の push は版を上げなくてもビルドする（キャッシュがあれば後で取りやめる）。-dev.<数> への版上げは出さない。
       # そのタグが別の commit に既にあれば版の上げ間違いなので止める（この commit を指していれば、やり直した run）。
       # ノートは比べる所から辿れる一番新しいタグからの差分（PREV。-dev は出さないので前の版のタグとは限らない）
       - name: Decide the release
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           PRERELEASE: ${{ inputs.prerelease }}
-          BEFORE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
+          BEFORE: ${{ github.event.before || 'origin/main' }}
         run: |
           if [ -n "$RELEASE_TAG" ]; then
             echo "TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
@@ -128,7 +124,7 @@ jobs:
             exit 1
           fi
           echo "NYAW_VERSION=${TAG#v}" >> "$GITHUB_ENV"
-      # 版上げの PR（またはブランチ）のチェックで作ったインストーラーをそのまま出す。main の push では、マージした PR の先頭が
+      # 版上げのブランチ（PR の先頭）で作ったインストーラーをそのまま出す。main の push では、マージした PR の先頭が
       # この commit と中身（ツリー）もビルド番号（コミット数）も同じときだけ使う（中身が同じならワークフローも同じなので、
       # PR の途中で書き換えたワークフローが作ったものも弾ける）。手で公開したリリースは、タグの commit そのものをビルドした run から。
       # PR が main の先頭の上に無いままマージした・ビルドが終わる前にマージした・版が違う・どこかで失敗した、のどれでも
@@ -162,7 +158,7 @@ jobs:
         id: cache
         uses: Swatinem/rust-cache@v2
         with:
-          # 保存は main だけ（タグや PR のスコープに保存しても次の run からは読めない）
+          # 保存は main だけ（タグやブランチのスコープに保存しても次の run からは読めない）
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # 出さない main の push のビルドはキャッシュを作るためだけなので、同じキーのキャッシュがもうあればしない
       - if: env.BUILD == '1' && env.TAG == '' && steps.cache.outputs.cache-hit == 'true'
@@ -178,7 +174,7 @@ jobs:
         run: command -v iscc || choco install innosetup -y --no-progress
       - if: env.BUILD == '1' && env.TAG != ''
         run: iscc installer/nyaw.iss
-      # 版上げの PR・ブランチでは作ったインストーラーを置いておく（マージ後の push がそのまま出す。落として試すこともできる）
+      # 版上げのブランチでは作ったインストーラーを置いておく（マージ後の push がそのまま出す。落として試すこともできる）
       - if: env.TAG != '' && env.PUBLISH != '1'
         uses: actions/upload-artifact@v4
         with:
