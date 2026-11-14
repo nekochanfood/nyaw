@@ -28,7 +28,7 @@
 
 - **出る時**: 初回起動（`Settings::setup_done` が `false`）に main が `setup::spec()` を載せる。デバッグからは Testing の `setup-wizard`（`testing::SetupWizardSpawn` を main が渡したときだけ出る）で `setup::spawn_spec(from)` を開いて強制的にやり直せる。
 - **ロックダウン**: 起動仕様が `PanelSpec::lockdown()` で開いた時点から取り、完了で放してから閉じる（`Lockdown(false)`、`Close` の順）。仕組みは `../kernel/AGENT.md`。
-- **LazyFollow**: `setup::follow()`（頭から水平に 2m）で付いてくる。向きの左右だけを見て、上下・傾きは見ない。
+- **LazyFollow**: `setup::follow()`（頭から水平に 1.5m）で付いてくる。向きの左右だけを見て、上下・傾きは見ない。
 - **完了**: `Setting::SetupDone(true)` を設定ファイルに残す。途中でやめても、選んだ設定は残る（次の起動でまたウィザードが出る）。
 
 ## 主な公開 API
