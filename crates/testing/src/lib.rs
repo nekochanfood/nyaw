@@ -1348,8 +1348,9 @@ const SIDEBAR_PX: f32 = 320.0;
 /// 一覧の行（`components::slider_item`）に置くスライダーの長さ（px）。
 const ROW_SLIDER_PX: f32 = 240.0;
 
-/// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
-const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 11] = [
+/// 設定のカテゴリ（サイドバー）: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
+/// 段階的開示: カテゴリはよく変える設定だけを直接並べ、まとまった設定は詳しい画面（[`SettingsPage`]）に分けて行から開く。
+const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 5] = [
     (
         "settings-general",
         &design::icons::GEAR,
@@ -1361,53 +1362,79 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 11] = [
         "settings.category.appearance",
     ),
     (
-        "settings-watch",
-        &design::icons::WATCH,
-        "settings.category.watch",
+        "settings-input",
+        &design::icons::GAME_CONTROLLER,
+        "settings.category.input",
+    ),
+    (
+        "settings-display",
+        &design::icons::MONITOR,
+        "settings.category.display",
     ),
     (
         "settings-accessibility",
         &design::icons::PERSON_ARMS_SPREAD,
         "settings.category.accessibility",
     ),
-    (
-        "settings-pointer",
-        &design::icons::CURSOR,
-        "settings.category.pointer",
-    ),
-    (
-        "settings-mirroring",
-        &design::icons::MONITOR,
-        "settings.category.mirroring",
-    ),
-    (
-        "settings-keyboard",
-        &design::icons::KEYBOARD,
-        "settings.category.keyboard",
-    ),
-    (
-        "settings-graphics",
-        &design::icons::IMAGE,
-        "settings.category.graphics",
-    ),
-    (
-        "settings-dashboard",
-        &design::icons::SQUARES_FOUR,
-        "settings.category.dashboard",
-    ),
-    (
-        "settings-update",
-        &design::icons::ARROW_CIRCLE_UP,
-        "settings.category.update",
-    ),
-    (
-        "settings-about",
-        &design::icons::INFO,
-        "settings.category.about",
-    ),
 ];
-/// アップデートのカテゴリの添字（ダッシュボードのボタンから開く）。
-const UPDATE_CATEGORY: usize = 9;
+/// 一般のカテゴリの添字（アップデートはここから開く。ダッシュボードのボタンからも）。
+const GENERAL_CATEGORY: usize = 0;
+
+/// カテゴリの中から開く詳しい画面（サブカテゴリ）。積み重ね（[`components::navigation`]）に右から積み、
+/// 戻る（`settings-back`）かスワイプバックで下ろす。サイドバーでカテゴリを選ぶと全部下ろす。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsPage {
+    /// 外観 → 時計の文字盤。
+    Watch,
+    /// 入力 → ポインタ（カーソルとビーム）。
+    Pointer,
+    /// 入力 → キーボード。
+    Keyboard,
+    /// 一般 → アップデート。
+    Update,
+    /// 一般 → 情報。
+    About,
+    /// 情報 → ライセンスの一覧。
+    Licenses,
+}
+
+impl SettingsPage {
+    /// 開く行の `debug_selector`・アイコン・見出しの文言のキー。
+    fn row(self) -> (&'static str, &'static design::Icon, &'static str) {
+        match self {
+            Self::Watch => (
+                "settings-watch",
+                &design::icons::WATCH,
+                "settings.category.watch",
+            ),
+            Self::Pointer => (
+                "settings-pointer",
+                &design::icons::CURSOR,
+                "settings.category.pointer",
+            ),
+            Self::Keyboard => (
+                "settings-keyboard",
+                &design::icons::KEYBOARD,
+                "settings.category.keyboard",
+            ),
+            Self::Update => (
+                "settings-update",
+                &design::icons::ARROW_CIRCLE_UP,
+                "settings.category.update",
+            ),
+            Self::About => (
+                "settings-about",
+                &design::icons::INFO,
+                "settings.category.about",
+            ),
+            Self::Licenses => (
+                "setting-licenses",
+                &design::icons::SCROLL,
+                "settings.licenses",
+            ),
+        }
+    }
+}
 
 // 依存のライセンスの表 `LICENSES`: `(名前, バージョン, ライセンス, URL)`。build.rs がビルド時に作る。
 include!(concat!(env!("OUT_DIR"), "/licenses.rs"));
@@ -1438,23 +1465,26 @@ pub fn settings_spec(
 /// 右（地は `background`）に選んだカテゴリの設定。サイドバーの行（`components::sidebar_item`）は選んでいるものだけ
 /// 文字が濃く、左端に印が付く。中身はカードを縦に並べる。複数から選ぶ設定は選択の行（`components::select`）で、押すと
 /// 選択肢のポップオーバーが開き、選ぶとすぐ全体の設定（`Setting`）に反映する。外観と時計は `ui::prefs` の部品。
+/// まとまった設定は詳しい画面（[`SettingsPage`]）で、カテゴリの中の行（`components::list_item`）から積んで開く。
 #[derive(Default)]
 pub struct Settings {
     /// このパネル（色を作るダイアログを子として開く）。
     panel: PanelId,
     /// 選んでいるカテゴリ（[`SETTINGS_CATEGORIES`] の添字）。
     pub category: usize,
+    /// カテゴリの上に積んだ詳しい画面（先頭が下）。空ならカテゴリの中身を見せる。
+    pub pages: Vec<SettingsPage>,
     /// 外観・時計の部品の状態。
     pub appearance: ui::prefs::Appearance,
     pub watch: ui::prefs::WatchFaces,
-    /// キーボードの見本（最初にキーボードのカテゴリを開いたときに作り、画面を閉じるまで持つ）。
+    /// キーボードの見本（最初にキーボードの画面を開いたときに作り、画面を閉じるまで持つ）。
     pub keyboard_preview: std::cell::OnceCell<gpui::Entity<ui::keyboard::KeyboardView>>,
     /// 選択肢を開いている選択の行（`debug_selector`）。
     pub open: Option<&'static str>,
-    /// 情報からライセンスの一覧を開いている。
-    pub licenses: bool,
-    /// 中身とライセンスの一覧のスクロール（スクロールバーが見る）。
+    /// スクロール（スクロールバーが見る）: カテゴリの中身、詳しい画面（積むたびに先頭から）、ライセンスの一覧。
+    /// 積み下ろしの間は 2 枚を同時に描くので、カテゴリと詳しい画面で分ける。
     scroll: ScrollHandle,
+    page_scroll: ScrollHandle,
     licenses_scroll: gpui::UniformListScrollHandle,
     /// カテゴリを替えた直後の入れ替え: 前のカテゴリと、その進み具合（0 → 1）。
     swap: Option<(usize, design::animation::Transition)>,
@@ -1466,6 +1496,46 @@ impl Settings {
             panel,
             ..Self::default()
         }
+    }
+
+    /// 詳しい画面 `page` を積む。時計は入るたびに、見ていた文字盤と絞り込みを忘れて使っている文字盤を中央に戻す
+    /// （出ていく画面は滑り去る間も描くので、出るときではなく入るときに戻す）。ライセンスの一覧の下の情報は、
+    /// 戻ったときに元の位置のままにする（積むのが情報の上なので、詳しい画面のスクロールは先頭に戻さない）。
+    pub fn push(&mut self, page: SettingsPage) {
+        if page == SettingsPage::Watch {
+            self.watch = Default::default();
+        }
+        if page != SettingsPage::Licenses {
+            self.page_scroll = ScrollHandle::new();
+        }
+        self.pages.push(page);
+        self.open = None;
+    }
+
+    /// 押すと詳しい画面 `page` を積む行（右に `>`）。
+    fn page_row(
+        &self,
+        theme: &Theme,
+        page: SettingsPage,
+        cx: &mut Context<Self>,
+    ) -> components::Button {
+        let (id, glyph, key) = page.row();
+        components::list_item(theme, id, glyph, i18n::t(cx, key)).on_click(cx.listener(
+            move |this, _, _, cx| {
+                this.push(page);
+                cx.notify();
+            },
+        ))
+    }
+
+    /// 詳しい画面を開く行のカード。
+    fn page_rows<const N: usize>(
+        &self,
+        theme: &Theme,
+        pages: [SettingsPage; N],
+        cx: &mut Context<Self>,
+    ) -> Div {
+        components::list(theme, pages.map(|p| self.page_row(theme, p, cx)))
     }
 
     /// 選択の行（`components::select`）。押すと選択肢のポップオーバーを開き、選ぶと `set` で全体の設定に反映して閉じる。
@@ -1521,23 +1591,22 @@ impl Settings {
             .child(popover)
     }
 
-    /// 選んでいるカテゴリの中身（グループの並び）。
+    /// 選んでいるカテゴリの中身（グループの並び）。よく変える設定を直接並べ、まとまった設定は詳しい画面を開く行にする。
     fn category_page(
         &self,
         theme: &Theme,
-        licenses: bool,
         category: usize,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Div> {
         let now = settings(cx);
         match category {
-            // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）、利き手（主に操作する手）、
-            // ダッシュボード中のゲーム入力の遮断、SteamVR と一緒に起動（切り替えられるランタイムのときだけ）。
-            0 => vec![components::list(
-                theme,
-                [
-                    self.select(
+            // 一般: 言語（名前はその言語自身で出す。どの言語で表示していても読める）、SteamVR と一緒に起動
+            // （切り替えられるランタイムのときだけ）。アップデートと情報は詳しい画面。
+            GENERAL_CATEGORY => vec![
+                components::list(
+                    theme,
+                    [self.select(
                         theme,
                         window,
                         cx,
@@ -1555,51 +1624,22 @@ impl Settings {
                             })
                             .to_vec(),
                         |l| Setting::Language(language(l)),
-                    ),
-                    self.select(
-                        theme,
-                        window,
-                        cx,
-                        "setting-dominant-hand",
-                        &design::icons::HAND,
-                        i18n::t(cx, "settings.dominant_hand"),
-                        now.dominant_hand,
-                        vec![
-                            (
-                                "setting-hand-right",
-                                i18n::t(cx, "settings.right"),
-                                kernel::DominantHand::Right,
-                            ),
-                            (
-                                "setting-hand-left",
-                                i18n::t(cx, "settings.left"),
-                                kernel::DominantHand::Left,
-                            ),
-                        ],
-                        Setting::DominantHand,
-                    ),
-                    components::switch_item(
-                        theme,
-                        "setting-block-input",
-                        &design::icons::PROHIBIT,
-                        i18n::t(cx, "settings.block_input"),
-                        now.block_input,
-                    )
-                    .on_click(change(Setting::BlockInput(!now.block_input))),
-                ]
-                .into_iter()
-                .chain(now.auto_launch.map(|on| {
-                    components::switch_item(
-                        theme,
-                        "setting-auto-launch",
-                        &design::icons::ROCKET_LAUNCH,
-                        i18n::t(cx, "settings.auto_launch"),
-                        on,
-                    )
-                    .on_click(change(Setting::AutoLaunch(!on)))
-                })),
-            )],
-            // 外観: テーマの見本・テーマ・パーソナルカラー（セットアップウィザードと同じ部品）。
+                    )]
+                    .into_iter()
+                    .chain(now.auto_launch.map(|on| {
+                        components::switch_item(
+                            theme,
+                            "setting-auto-launch",
+                            &design::icons::ROCKET_LAUNCH,
+                            i18n::t(cx, "settings.auto_launch"),
+                            on,
+                        )
+                        .on_click(change(Setting::AutoLaunch(!on)))
+                    })),
+                ),
+                self.page_rows(theme, [SettingsPage::Update, SettingsPage::About], cx),
+            ],
+            // 外観: テーマの見本・テーマ・パーソナルカラー（セットアップウィザードと同じ部品）。時計の文字盤は詳しい画面。
             1 => {
                 let this = cx.entity();
                 let set = move |state, _: &mut Window, cx: &mut App| {
@@ -1608,16 +1648,168 @@ impl Settings {
                         cx.notify();
                     })
                 };
-                vec![ui::prefs::appearance(
-                    self.panel,
-                    self.appearance,
-                    set,
+                vec![
+                    ui::prefs::appearance(self.panel, self.appearance, set, window, cx),
+                    self.page_rows(theme, [SettingsPage::Watch], cx),
+                ]
+            }
+            // 入力: 利き手（主に操作する手）・ダッシュボード中のゲーム入力の遮断。ポインタとキーボードは詳しい画面。
+            2 => vec![
+                components::list(
+                    theme,
+                    [
+                        self.select(
+                            theme,
+                            window,
+                            cx,
+                            "setting-dominant-hand",
+                            &design::icons::HAND,
+                            i18n::t(cx, "settings.dominant_hand"),
+                            now.dominant_hand,
+                            vec![
+                                (
+                                    "setting-hand-right",
+                                    i18n::t(cx, "settings.right"),
+                                    kernel::DominantHand::Right,
+                                ),
+                                (
+                                    "setting-hand-left",
+                                    i18n::t(cx, "settings.left"),
+                                    kernel::DominantHand::Left,
+                                ),
+                            ],
+                            Setting::DominantHand,
+                        ),
+                        components::switch_item(
+                            theme,
+                            "setting-block-input",
+                            &design::icons::PROHIBIT,
+                            i18n::t(cx, "settings.block_input"),
+                            now.block_input,
+                        )
+                        .on_click(change(Setting::BlockInput(!now.block_input))),
+                    ],
+                ),
+                self.page_rows(theme, [SettingsPage::Pointer, SettingsPage::Keyboard], cx),
+            ],
+            // 表示: ダッシュボードの置き場所・距離 LOD の品質・ミラーリングの取得の上限 FPS。どれも 1〜2 行なので
+            // 詳しい画面には分けず、見出し付きのグループで並べる。
+            3 => {
+                // ダッシュボード: 距離と高さ（頭の高さからの相対）。決めるとこの画面ごと動くので、離したときに決める。
+                let (distance, height) = (
+                    i18n::t(cx, "settings.dashboard_distance"),
+                    i18n::t(cx, "settings.dashboard_height"),
+                );
+                let dashboard = [
+                    placement_slider(
+                        theme,
+                        window,
+                        cx,
+                        (
+                            "setting-dashboard-distance",
+                            "setting-dashboard-distance-slider",
+                        ),
+                        &design::icons::PERSPECTIVE,
+                        distance,
+                        now.dashboard_distance,
+                        (
+                            kernel::DASHBOARD_DISTANCE_MIN,
+                            kernel::DASHBOARD_DISTANCE_MAX,
+                        ),
+                        |d| format!("{d:.2} m"),
+                        Setting::DashboardDistance,
+                    ),
+                    placement_slider(
+                        theme,
+                        window,
+                        cx,
+                        (
+                            "setting-dashboard-height",
+                            "setting-dashboard-height-slider",
+                        ),
+                        &design::icons::ARROWS_VERTICAL,
+                        height,
+                        now.dashboard_height,
+                        (kernel::DASHBOARD_HEIGHT_MIN, kernel::DASHBOARD_HEIGHT_MAX),
+                        |h| format!("{h:+.2} m"),
+                        Setting::DashboardHeight,
+                    ),
+                ];
+                // グラフィックス: 距離 LOD の品質。
+                let lod = self.select(
+                    theme,
                     window,
                     cx,
-                )]
+                    "setting-lod-quality",
+                    &design::icons::IMAGE,
+                    i18n::t(cx, "settings.lod_quality"),
+                    now.lod_quality,
+                    [
+                        (
+                            "setting-lod-off",
+                            "settings.lod.off",
+                            kernel::LodQuality::Off,
+                        ),
+                        (
+                            "setting-lod-low",
+                            "settings.lod.low",
+                            kernel::LodQuality::Low,
+                        ),
+                        (
+                            "setting-lod-mid",
+                            "settings.lod.mid",
+                            kernel::LodQuality::Mid,
+                        ),
+                        (
+                            "setting-lod-high",
+                            "settings.lod.high",
+                            kernel::LodQuality::High,
+                        ),
+                    ]
+                    .map(|(id, key, q)| (id, i18n::t(cx, key), q))
+                    .to_vec(),
+                    Setting::LodQuality,
+                );
+                // ミラーリング: 取得の上限 FPS。
+                let mirror = self.select(
+                    theme,
+                    window,
+                    cx,
+                    "setting-mirror-fps",
+                    &design::icons::GAUGE,
+                    i18n::t(cx, "settings.mirror_frame_rate"),
+                    now.mirror_frame_rate,
+                    MIRROR_FRAME_RATES
+                        .map(|(id, n)| (id, SharedString::from(format!("{n} FPS")), n))
+                        .to_vec(),
+                    Setting::MirrorFrameRate,
+                );
+                let group = |key: &str, rows: Vec<components::Button>| {
+                    components::group(theme, i18n::t(cx, key), components::list(theme, rows))
+                };
+                vec![
+                    group("settings.category.dashboard", dashboard.into()),
+                    group("settings.category.graphics", vec![lod]),
+                    group("settings.category.mirroring", vec![mirror]),
+                ]
             }
+            // アクセシビリティ: 文字の見本・文字の大きさ・UI スケール・太字（セットアップウィザードと同じ部品）。
+            _ => vec![ui::prefs::accessibility(window, cx)],
+        }
+    }
+
+    /// 詳しい画面の中身（グループの並び）。
+    fn sub_page(
+        &self,
+        theme: &Theme,
+        page: SettingsPage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Div> {
+        let now = settings(cx);
+        match page {
             // 時計: wrist の文字盤。選択肢は `kernel` の表から並ぶ（足しても、ここは変えない）。
-            2 => {
+            SettingsPage::Watch => {
                 let this = cx.entity();
                 let set = move |state, _: &mut Window, cx: &mut App| {
                     this.update(cx, |v, cx| {
@@ -1627,10 +1819,8 @@ impl Settings {
                 };
                 vec![ui::prefs::watch_faces(self.watch, set, window, cx)]
             }
-            // アクセシビリティ: 文字の見本・文字の大きさ・UI スケール・太字（セットアップウィザードと同じ部品）。
-            3 => vec![ui::prefs::accessibility(window, cx)],
             // ポインタ: カーソルとビームの設定（`pointer::page`）。ポインタの方式は選ばせない（マウスは廃止の方向。全体はタッチ）。
-            4 => {
+            SettingsPage::Pointer => {
                 let tuning = self.select(
                     theme,
                     window,
@@ -1655,25 +1845,8 @@ impl Settings {
                 );
                 pointer::page(theme, now, tuning, cx)
             }
-            // ミラーリング: 取得の上限 FPS。
-            5 => vec![components::list(
-                theme,
-                [self.select(
-                    theme,
-                    window,
-                    cx,
-                    "setting-mirror-fps",
-                    &design::icons::GAUGE,
-                    i18n::t(cx, "settings.mirror_frame_rate"),
-                    now.mirror_frame_rate,
-                    MIRROR_FRAME_RATES
-                        .map(|(id, n)| (id, SharedString::from(format!("{n} FPS")), n))
-                        .to_vec(),
-                    Setting::MirrorFrameRate,
-                )],
-            )],
             // キーボード: 上に見本（押せて音も鳴るが、どこにも打たない）、下に種類・キーの音・その音量（鳴らす間だけ）。
-            6 => {
+            SettingsPage::Keyboard => {
                 use kernel::subsystems::keyboard::KeyboardType;
                 let keys = self
                     .keyboard_preview
@@ -1738,90 +1911,9 @@ impl Settings {
                     .chain(now.key_sound.then_some(volume));
                 vec![preview, components::list(theme, rows)]
             }
-            // グラフィックス: 距離 LOD の品質。
-            7 => vec![components::list(
-                theme,
-                [self.select(
-                    theme,
-                    window,
-                    cx,
-                    "setting-lod-quality",
-                    &design::icons::IMAGE,
-                    i18n::t(cx, "settings.lod_quality"),
-                    now.lod_quality,
-                    [
-                        (
-                            "setting-lod-off",
-                            "settings.lod.off",
-                            kernel::LodQuality::Off,
-                        ),
-                        (
-                            "setting-lod-low",
-                            "settings.lod.low",
-                            kernel::LodQuality::Low,
-                        ),
-                        (
-                            "setting-lod-mid",
-                            "settings.lod.mid",
-                            kernel::LodQuality::Mid,
-                        ),
-                        (
-                            "setting-lod-high",
-                            "settings.lod.high",
-                            kernel::LodQuality::High,
-                        ),
-                    ]
-                    .map(|(id, key, q)| (id, i18n::t(cx, key), q))
-                    .to_vec(),
-                    Setting::LodQuality,
-                )],
-            )],
-            // ダッシュボード: 距離と高さ（頭の高さからの相対）。決めるとこの画面ごと動くので、離したときに決める。
-            8 => {
-                let (distance, height) = (
-                    i18n::t(cx, "settings.dashboard_distance"),
-                    i18n::t(cx, "settings.dashboard_height"),
-                );
-                let rows = [
-                    placement_slider(
-                        theme,
-                        window,
-                        cx,
-                        (
-                            "setting-dashboard-distance",
-                            "setting-dashboard-distance-slider",
-                        ),
-                        &design::icons::PERSPECTIVE,
-                        distance,
-                        now.dashboard_distance,
-                        (
-                            kernel::DASHBOARD_DISTANCE_MIN,
-                            kernel::DASHBOARD_DISTANCE_MAX,
-                        ),
-                        |d| format!("{d:.2} m"),
-                        Setting::DashboardDistance,
-                    ),
-                    placement_slider(
-                        theme,
-                        window,
-                        cx,
-                        (
-                            "setting-dashboard-height",
-                            "setting-dashboard-height-slider",
-                        ),
-                        &design::icons::ARROWS_VERTICAL,
-                        height,
-                        now.dashboard_height,
-                        (kernel::DASHBOARD_HEIGHT_MIN, kernel::DASHBOARD_HEIGHT_MAX),
-                        |h| format!("{h:+.2} m"),
-                        Setting::DashboardHeight,
-                    ),
-                ];
-                vec![components::list(theme, rows)]
-            }
             // アップデート: 今の版と確認の状態、新しいリリースがあればその版・アップデートのボタン・リリースノート。
             // アップデート: チャンネル（安定版は正式なリリースだけ、ナイトリーはプレリリースも）はここで選ぶ。
-            UPDATE_CATEGORY => {
+            SettingsPage::Update => {
                 let channel = self.select(
                     theme,
                     window,
@@ -1848,7 +1940,7 @@ impl Settings {
             }
             // ライセンス: 依存ごとの行。押すとそのリポジトリをブラウザで開く。数百行あるので、見えている行だけを
             // 作る `uniform_list` で並べる（行の高さは揃える。区切り線は先頭の行だけ透明にして高さを変えない）。
-            _ if licenses => {
+            SettingsPage::Licenses => {
                 let last = LICENSES.len() - 1;
                 let rows = uniform_list("licenses", LICENSES.len(), move |range, _, cx| {
                     let theme = Theme::current(cx);
@@ -1901,7 +1993,7 @@ impl Settings {
                 ]
             }
             // 情報: バージョンと、ライセンスの一覧・リポジトリ（ブラウザで開く）。
-            _ => vec![
+            SettingsPage::About => vec![
                 // 先頭にフルサイズのロゴ。上下の余白は同じだけ取り、狭くしない。
                 div()
                     .flex()
@@ -1930,16 +2022,7 @@ impl Settings {
                 components::list(
                     theme,
                     [
-                        components::list_item(
-                            theme,
-                            "setting-licenses",
-                            &design::icons::SCROLL,
-                            i18n::t(cx, "settings.licenses"),
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.licenses = true;
-                            cx.notify();
-                        })),
+                        self.page_row(theme, SettingsPage::Licenses, cx),
                         components::menu_item(
                             theme,
                             "setting-source",
@@ -2110,8 +2193,9 @@ impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // ダッシュボードのアップデートのボタンから開いた（開いていた）なら、アップデートを出す。
         if updater::take_reveal(cx) {
-            self.category = UPDATE_CATEGORY;
-            (self.open, self.licenses, self.swap) = (None, false, None);
+            (self.category, self.swap) = (GENERAL_CATEGORY, None);
+            self.pages.clear();
+            self.push(SettingsPage::Update);
         }
         let theme = Theme::current(cx);
         let categories = SETTINGS_CATEGORIES
@@ -2120,11 +2204,7 @@ impl Render for Settings {
             .map(|(i, &(id, glyph, key))| {
                 components::sidebar_item(&theme, id, glyph, i18n::t(cx, key), i == self.category)
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        // 時計に入り直したら、見ていた文字盤と絞り込みは忘れ、使っている文字盤を中央に戻す（出ていく画面は
-                        // 滑り去る間も描くので、出るときではなく入るときに戻す）。
-                        if id == "settings-watch" && i != this.category {
-                            this.watch = Default::default();
-                        }
+                        // 選んだカテゴリの中身に戻る（今のカテゴリでも、積んだ詳しい画面を下ろす）。
                         if i != this.category {
                             let mut t = design::animation::Transition::rest(0.0);
                             let animated = cx.has_global::<design::Motion>();
@@ -2136,28 +2216,27 @@ impl Render for Settings {
                         this.open = None;
                         this.appearance = Default::default();
                         this.watch.open = false;
-                        this.licenses = false;
+                        this.pages.clear();
                         cx.notify();
                     }))
             })
             .collect::<Vec<_>>();
-        // 画面の積み重ね: 一番下がカテゴリの中身（`false`）、ライセンスの一覧（`true`）を積むと右から入る。
+        // 画面の積み重ね: 一番下がカテゴリの中身（`None`）、その上に詳しい画面を積むと右から入る。
         let this = cx.entity();
-        let stack = if self.licenses {
-            vec![false, true]
-        } else {
-            vec![false]
-        };
+        let stack: Vec<Option<SettingsPage>> = std::iter::once(None)
+            .chain(self.pages.iter().copied().map(Some))
+            .collect();
         let page = {
             let this = this.clone();
-            move |&licenses: &bool, window: &mut Window, cx: &mut App| {
-                this.update(cx, |s, cx| s.page(licenses, window, cx))
+            move |&page: &Option<SettingsPage>, window: &mut Window, cx: &mut App| {
+                this.update(cx, |s, cx| s.page(page, window, cx))
                     .into_any_element()
             }
         };
         let swipe_back = move |_: &mut Window, cx: &mut App| {
             this.update(cx, |s, cx| {
-                s.licenses = false;
+                s.pages.pop();
+                s.open = None;
                 cx.notify();
             })
         };
@@ -2202,17 +2281,17 @@ impl Render for Settings {
 }
 
 impl Settings {
-    /// 積み重ねの画面 1 枚: 見出しの下にカテゴリの中身、または（`licenses`）ライセンスの一覧。
+    /// 積み重ねの画面 1 枚: 見出しの下にカテゴリの中身（`None`）、または詳しい画面。
     /// カテゴリを替えた直後は、前のカテゴリの画面と上下にスライドして入れ替わる（サイドバーで下の行を選ぶと上へ、上の行なら下へ）。
-    fn page(&self, licenses: bool, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let swap = self.swap.filter(|_| !licenses);
+    fn page(&self, page: Option<SettingsPage>, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let swap = self.swap.filter(|_| page.is_none());
         if let Some((from, tr)) = swap {
             let (t, moving) = tr.at(design::drive::now());
             if moving {
                 components::keep_drawing(window, cx);
                 let dir = if self.category > from { 1.0 } else { -1.0 };
-                let old = self.page_of(false, from, true, window, cx);
-                let new = self.page_of(false, self.category, false, window, cx);
+                let old = self.page_of(None, from, true, window, cx);
+                let new = self.page_of(None, self.category, false, window, cx);
                 // 出る側も入る側も、動きは小さく、透明度を入れ替える。
                 let slot = |top: f32, alpha: f32, page: Div| {
                     div()
@@ -2230,35 +2309,39 @@ impl Settings {
                     .child(slot(dir * (1.0 - t), t, new));
             }
         }
-        self.page_of(licenses, self.category, false, window, cx)
+        self.page_of(page, self.category, false, window, cx)
     }
 
     /// 画面 1 枚。`leaving` は入れ替えで抜けていく側（スクロールの追跡とスクロールバーは持たない）。
+    /// 詳しい画面は見出しの左に戻る（`settings-back`）を置く。ライセンスの一覧は自分でスクロールする。
     fn page_of(
         &self,
-        licenses: bool,
+        page: Option<SettingsPage>,
         category: usize,
         leaving: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let theme = Theme::current(cx);
-        let (title, back) = if licenses {
-            let back = components::icon_button(
-                &theme,
-                "settings-back",
-                &design::icons::CARET_LEFT,
-                i18n::t(cx, "common.back"),
-                Variant::OnBackground,
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.licenses = false;
-                cx.notify();
-            }));
-            ("settings.licenses", Some(back.into_any_element()))
-        } else {
-            (SETTINGS_CATEGORIES[category].2, None)
+        let (title, back) = match page {
+            Some(p) => {
+                let back = components::icon_button(
+                    &theme,
+                    "settings-back",
+                    &design::icons::CARET_LEFT,
+                    i18n::t(cx, "common.back"),
+                    Variant::OnBackground,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.pages.pop();
+                    this.open = None;
+                    cx.notify();
+                }));
+                (p.row().2, Some(back.into_any_element()))
+            }
+            None => (SETTINGS_CATEGORIES[category].2, None),
         };
+        let licenses = page == Some(SettingsPage::Licenses);
         let content = div()
             .id(if licenses {
                 "settings-licenses"
@@ -2275,19 +2358,28 @@ impl Settings {
             .pb(px(spacing::XL))
             .overflow_y_scroll()
             .child(heading(i18n::t(cx, title), back))
-            .children(self.category_page(&theme, licenses, category, window, cx));
-        let page = div().relative().size_full();
+            .children(match page {
+                Some(p) => self.sub_page(&theme, p, window, cx),
+                None => self.category_page(&theme, category, window, cx),
+            });
+        let frame = div().relative().size_full();
         if licenses || leaving {
-            return page.child(content);
+            return frame.child(content);
         }
-        page.child(
-            content
-                .debug_selector(|| "settings-content".into())
-                .track_scroll(&self.scroll),
-        )
-        .child(
-            components::scrollbars(&theme, "settings-bars", &self.scroll).corner_radius(radius::XL),
-        )
+        let scroll = if page.is_some() {
+            &self.page_scroll
+        } else {
+            &self.scroll
+        };
+        frame
+            .child(
+                content
+                    .debug_selector(|| "settings-content".into())
+                    .track_scroll(scroll),
+            )
+            .child(
+                components::scrollbars(&theme, "settings-bars", scroll).corner_radius(radius::XL),
+            )
     }
 }
 
@@ -3802,7 +3894,8 @@ mod tests {
                 view.keyboard = Some(keyboard);
             });
             let settings = Settings {
-                category: 6,
+                category: 2,
+                pages: vec![SettingsPage::Keyboard],
                 ..Settings::new(0)
             };
             assert!(settings.keyboard_preview.set(keys).is_ok());
@@ -3863,7 +3956,8 @@ mod tests {
         use kernel::PointerTuning;
         let (_, cx) = cx.add_window_view(|_, cx| {
             let settings = Settings {
-                category: 4,
+                category: 2,
+                pages: vec![SettingsPage::Pointer],
                 ..Settings::new(0)
             };
             ui::PanelRoot::new(cx.new(|_| settings).into())

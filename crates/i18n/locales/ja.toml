@@ -429,6 +429,8 @@ source_code = "ソースコード"
 [settings.category]
 general = "一般"
 appearance = "外観"
+input = "入力"
+display = "表示"
 watch = "時計"
 accessibility = "アクセシビリティ"
 pointer = "ポインタ"

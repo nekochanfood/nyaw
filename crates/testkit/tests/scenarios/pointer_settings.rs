@@ -1,9 +1,10 @@
-//! E2E for the Pointer category of the Settings screen, with the VR laser: the simple / detailed switch of the movement
-//! sliders, the cursor rows, and the switches that silence the pointer's tap and hover sounds.
+//! E2E for the Pointer page of the Settings screen (opened from the input category), with the VR laser: the simple /
+//! detailed switch of the movement sliders, the cursor rows, and the switches that silence the pointer's tap and hover
+//! sounds.
 
 use gpui::TestAppContext;
 use kernel::PointerTuning;
-use testing::Settings;
+use testing::{Settings, SettingsPage};
 use testkit::{Action, Driver, VrKit};
 
 const DETAILED: [&str; 3] = [
@@ -16,7 +17,7 @@ const DETAILED: [&str; 3] = [
 #[gpui::test]
 fn simple_is_one_slider_and_detailed_is_three(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
-    kit.click("settings-pointer");
+    kit.click("settings-input").click("settings-pointer");
     assert_eq!(kit.kernel.settings().pointer_tuning, PointerTuning::Simple);
     let shown = |kit: &mut VrKit<'_, Settings>, id: &'static str| kit.try_bounds(id).is_some();
     assert!(shown(&mut kit, "setting-steadiness"));
@@ -50,9 +51,10 @@ fn playing(kit: &VrKit<'_, Settings>) -> usize {
     kit.kernel.status(0).audio.playing
 }
 
-/// Sounds started by pointing at the selected category (coming from another one) and by pressing it.
+/// From the Pointer page: goes back to the input category, then the sounds started by pointing at the row of the Pointer
+/// page (coming from the sidebar) and by pressing it, which opens the page again.
 fn cues(kit: &mut VrKit<'_, Settings>) -> (usize, usize) {
-    kit.hover("settings-about");
+    kit.click("settings-back").hover("settings-general");
     let before = playing(kit);
     kit.hover("settings-pointer");
     let hover = playing(kit) - before;
@@ -65,7 +67,7 @@ fn cues(kit: &mut VrKit<'_, Settings>) -> (usize, usize) {
 #[gpui::test]
 fn sound_switches_silence_the_tap_and_hover_sounds(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
-    kit.click("settings-pointer");
+    kit.click("settings-input").click("settings-pointer");
     assert_eq!(cues(&mut kit), (1, 1));
 
     kit.click("setting-tap-sound");
@@ -76,7 +78,11 @@ fn sound_switches_silence_the_tap_and_hover_sounds(cx: &mut TestAppContext) {
     let s = kit.kernel.settings();
     assert!(!s.hover_sound && !s.tap_sound);
     assert_eq!(cues(&mut kit), (0, 0));
-    assert_eq!(kit.read(|v| v.category), 4, "still on the Pointer category");
+    assert_eq!(
+        kit.read(|v| (v.category, v.pages.clone())),
+        (2, vec![SettingsPage::Pointer]),
+        "still on the Pointer page"
+    );
 
     kit.click("setting-tap-sound").click("setting-hover-sound");
     assert_eq!(cues(&mut kit), (1, 1));

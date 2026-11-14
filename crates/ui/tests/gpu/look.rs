@@ -5,6 +5,7 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use design::{Accent, Mode};
 use gpui::{AppContext, Context, IntoElement, Render, Window, div, prelude::*, px, rgba};
+use testing::SettingsPage;
 use ui::{PanelControl, capture, open_panel_window};
 
 /// wrist の文字盤の見本を、地の上に並べた画面（種類ごとに 1 行、デザインを横に）。
@@ -60,12 +61,13 @@ pub fn main() {
         design::corner::install();
         // 本番では wrist が置く、文字盤の見本の描き方。
         cx.set_global(ui::prefs::FacePreview(wrist::preview));
-        // 設定画面のカテゴリ `category` を開いた窓。
-        let settings = |category: usize, cx: &mut gpui::App| {
+        // 設定画面のカテゴリ `category`（`page` があればその上に詳しい画面を積んで）を開いた窓。
+        let settings = |category: usize, page: Option<SettingsPage>, cx: &mut gpui::App| {
             open_panel_window(cx, testing::SETTINGS_PX, move |_, cx| {
                 let view = cx.new(|_| {
                     let mut settings = testing::Settings::new(0);
                     settings.category = category;
+                    settings.pages.extend(page);
                     settings
                 });
                 // 本番と同じ載せ方（影の余白の内側にパネルが収まり、中身の幅も本番と同じになる）。
@@ -74,10 +76,10 @@ pub fn main() {
             .expect("cannot open panel window")
         };
         let (appearance, watch, pointer, keyboard) = (
-            settings(1, cx),
-            settings(2, cx),
-            settings(4, cx),
-            settings(6, cx),
+            settings(1, None, cx),
+            settings(1, Some(SettingsPage::Watch), cx),
+            settings(2, Some(SettingsPage::Pointer), cx),
+            settings(2, Some(SettingsPage::Keyboard), cx),
         );
         // 色を作るダイアログ（作りかけの色は、今のパーソナルカラーと違う緑）。
         let dialog = open_panel_window(cx, ui::prefs::COLOR_DIALOG_PX, |_, cx| {
