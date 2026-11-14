@@ -12,7 +12,7 @@ use kernel::{
         os::keyboard::Settings,
     },
 };
-use std::{sync::mpsc, thread, time::Duration};
+use std::{sync::OnceLock, thread, time::Duration};
 
 pub(super) const KEY_UNIT: f32 = 64.;
 
@@ -88,13 +88,22 @@ impl KeyAppearance {
     }
 }
 
-enum Loaded {
-    Catalog(Vec<Layout>),
-    Keyboard(u64, Result<Box<Keyboard>, String>),
-    Error(String),
+/// 配列のデータベース（プロセスに 1 つ）。読み込みは XKB の数百のファイルをディスクから読むので、キーボードを初めて
+/// 出すときに始めると、ディスクが混んでいる間はキーの無いカードが数秒出たままになる。起動時に [`preload`] で読ませておく。
+static DATABASE: OnceLock<Result<Database, String>> = OnceLock::new();
+
+fn database() -> &'static Result<Database, String> {
+    DATABASE.get_or_init(|| Database::load().map_err(|e| e.to_string()))
 }
 
-/// どの画面にも載せられるキーボード。配列の読み込みは専用スレッド、入力先の決定は UI に任せる。
+/// 配列のデータベースを裏のスレッドで読み始める（UI の起動時）。
+pub(crate) fn preload() {
+    thread::spawn(|| {
+        database();
+    });
+}
+
+/// どの画面にも載せられるキーボード。配列は共有のデータベースから裏のスレッドで組み、入力先の決定は UI に任せる。
 pub struct KeyboardView {
     /// このキーボードが載っているパネル（キーの音を鳴らす）。
     panel: PanelId,
@@ -117,8 +126,6 @@ pub struct KeyboardView {
     settings: Settings,
     requested: Layout,
     generation: u64,
-    request: mpsc::Sender<(u64, Layout)>,
-    loaded: mpsc::Receiver<Loaded>,
     picker: bool,
     repeating: Option<(u16, KeyboardInput, u64)>,
     repeat_id: u64,
@@ -126,35 +133,7 @@ pub struct KeyboardView {
 
 impl KeyboardView {
     pub fn new(panel: PanelId, cx: &mut Context<Self>) -> Self {
-        let (request, receiver) = mpsc::channel::<(u64, Layout)>();
-        let (sender, loaded) = mpsc::channel();
-        thread::spawn(move || {
-            let database = match Database::load() {
-                Ok(db) => db,
-                Err(e) => {
-                    let _ = sender.send(Loaded::Error(e.to_string()));
-                    return;
-                }
-            };
-            if sender
-                .send(Loaded::Catalog(database.layouts.clone()))
-                .is_err()
-            {
-                return;
-            }
-            while let Ok(mut request) = receiver.recv() {
-                while let Ok(newer) = receiver.try_recv() {
-                    request = newer;
-                }
-                let result = database.keyboard(&request.1).map(Box::new);
-                if sender.send(Loaded::Keyboard(request.0, result)).is_err() {
-                    return;
-                }
-            }
-        });
         let kind = crate::settings(cx).keyboard;
-        let initial = Layout::new("us", "");
-        let _ = request.send((0, initial.clone()));
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -173,7 +152,7 @@ impl KeyboardView {
             }
         })
         .detach();
-        Self {
+        let mut view = Self {
             panel,
             target: panel,
             preview: false,
@@ -188,14 +167,14 @@ impl KeyboardView {
             loading: true,
             error: None,
             settings: Settings::default(),
-            requested: initial,
+            requested: Layout::default(),
             generation: 0,
-            request,
-            loaded,
             picker: false,
             repeating: None,
             repeat_id: 0,
-        }
+        };
+        view.select_layout(Layout::new("us", ""), cx);
+        view
     }
 
     /// 見本のキーボード: `panel` の中に置く。今の設定（種類・OS の配列・キーの音）に従い、キーは押せて音も鳴るが、
@@ -208,58 +187,72 @@ impl KeyboardView {
         }
     }
 
-    pub fn select_layout(&mut self, layout: Layout) {
+    /// `layout` を裏のスレッドで組み、できたら（その間にほかの配列を頼んでいなければ）すぐ載せて描き直させる。
+    pub fn select_layout(&mut self, layout: Layout, cx: &mut Context<Self>) {
         self.generation += 1;
         self.requested = layout.clone();
         self.loading = true;
         self.error = None;
-        if self.request.send((self.generation, layout)).is_err() {
-            self.error = Some("Keyboard worker stopped".into());
-            self.loading = false;
-        }
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    database()
+                        .as_ref()
+                        .map_err(Clone::clone)
+                        .and_then(|db| db.keyboard(&layout))
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| this.loaded(generation, result, cx));
+        })
+        .detach();
     }
 
-    pub fn poll(&mut self, cx: &mut App) -> bool {
-        let mut changed = false;
-        while let Ok(loaded) = self.loaded.try_recv() {
-            match loaded {
-                Loaded::Catalog(layouts) => self.layouts = layouts,
-                Loaded::Keyboard(generation, result) if generation == self.generation => {
-                    self.loading = false;
-                    match result {
-                        Ok(mut keyboard) => {
-                            if self.automatic {
-                                keyboard
-                                    .sync_locks(self.settings.caps_lock, self.settings.num_lock);
-                            }
-                            self.keyboard = Some(*keyboard);
-                        }
-                        Err(error) => self.error = Some(error),
-                    }
-                }
-                Loaded::Error(error) => {
-                    self.error = Some(error);
-                    self.loading = false;
-                }
-                _ => continue,
-            }
-            changed = true;
+    /// 頼んだ配列が組めた。後から別の配列を頼んだ・読み込みを待っていない（テストが直に載せた）なら捨てる。
+    fn loaded(
+        &mut self,
+        generation: u64,
+        result: Result<Keyboard, String>,
+        cx: &mut Context<Self>,
+    ) {
+        if generation != self.generation || !self.loading {
+            return;
         }
-        let settings = system_keyboard(cx);
-        if self.settings != settings {
-            self.settings = settings;
-            if self.automatic {
-                self.follow_system();
-                if let Some(keyboard) = &mut self.keyboard {
+        self.loading = false;
+        if self.layouts.is_empty()
+            && let Ok(db) = database()
+        {
+            self.layouts = db.layouts.clone();
+        }
+        match result {
+            Ok(mut keyboard) => {
+                if self.automatic {
                     keyboard.sync_locks(self.settings.caps_lock, self.settings.num_lock);
                 }
+                self.keyboard = Some(keyboard);
             }
-            changed = true;
+            Err(error) => self.error = Some(error),
         }
-        changed
+        crate::notify(self.panel, cx);
     }
 
-    fn follow_system(&mut self) {
+    pub fn poll(&mut self, cx: &mut Context<Self>) -> bool {
+        let settings = system_keyboard(cx);
+        if self.settings == settings {
+            return false;
+        }
+        self.settings = settings;
+        if self.automatic {
+            self.follow_system(cx);
+            if let Some(keyboard) = &mut self.keyboard {
+                keyboard.sync_locks(self.settings.caps_lock, self.settings.num_lock);
+            }
+        }
+        true
+    }
+
+    fn follow_system(&mut self, cx: &mut Context<Self>) {
         let layout = self
             .settings
             .layout
@@ -279,7 +272,7 @@ impl KeyboardView {
         if let Some(layout) = layout
             && (layout.name != self.requested.name || layout.variant != self.requested.variant)
         {
-            self.select_layout(layout);
+            self.select_layout(layout, cx);
         }
     }
 
@@ -411,7 +404,7 @@ impl Render for KeyboardView {
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.automatic = !this.automatic;
                     if this.automatic {
-                        this.follow_system();
+                        this.follow_system(cx);
                     }
                     cx.notify();
                 })),
@@ -497,7 +490,7 @@ impl Render for KeyboardView {
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.automatic = false;
                                             this.picker = false;
-                                            this.select_layout(layout.clone());
+                                            this.select_layout(layout.clone(), cx);
                                             cx.notify();
                                         })),
                                 )
@@ -689,8 +682,6 @@ mod tests {
 
     fn ready(db: &Database, layout: &str, kind: KeyboardType) -> KeyboardView {
         let layout = Layout::new(layout, "");
-        let (request, _) = mpsc::channel();
-        let (_, loaded) = mpsc::channel();
         KeyboardView {
             panel: 0,
             target: 0,
@@ -708,8 +699,6 @@ mod tests {
             settings: Settings::default(),
             requested: layout,
             generation: 0,
-            request,
-            loaded,
             picker: false,
             repeating: None,
             repeat_id: 0,
@@ -1008,29 +997,49 @@ mod tests {
         }
     }
 
-    #[test]
-    fn os_layout_and_ime_changes_request_the_corresponding_variant() {
+    fn layout_of(view: &gpui::Entity<KeyboardView>, cx: &mut TestAppContext) -> Option<Layout> {
+        view.read_with(cx, |view, _| {
+            view.keyboard.as_ref().map(|k| {
+                let l = &k.layout;
+                Layout::new(&l.name, &l.variant)
+            })
+        })
+    }
+
+    #[gpui::test]
+    fn os_layout_and_ime_changes_request_the_corresponding_variant(cx: &mut TestAppContext) {
         let db = Database::load().unwrap();
-        let mut view = ready(&db, "us", KeyboardType::Full);
-        let (request, requests) = mpsc::channel();
-        view.request = request;
-        view.settings.layout = Some(("jp".into(), "kana".into()));
-        view.follow_system();
-        let (_, layout) = requests.try_recv().unwrap();
-        assert_eq!(
-            (layout.name.as_str(), layout.variant.as_str()),
-            ("jp", "kana")
-        );
-        assert!(view.loading);
-        view.follow_system();
-        assert!(requests.try_recv().is_err());
-        view.settings.layout = Some(("us".into(), "dvorak".into()));
-        view.follow_system();
-        let (_, layout) = requests.try_recv().unwrap();
-        assert_eq!(
-            (layout.name.as_str(), layout.variant.as_str()),
-            ("us", "dvorak")
-        );
+        let view = cx.new(|_| ready(&db, "us", KeyboardType::Full));
+        let follow = |os: (&str, &str), cx: &mut TestAppContext| {
+            view.update(cx, |view, cx| {
+                view.settings.layout = Some((os.0.into(), os.1.into()));
+                view.follow_system(cx);
+                (view.requested.clone(), view.generation, view.loading)
+            })
+        };
+        let (requested, generation, loading) = follow(("jp", "kana"), cx);
+        assert_eq!((requested, loading), (Layout::new("jp", "kana"), true));
+        // 頼んである配列と同じなら頼み直さない。
+        assert_eq!(follow(("jp", "kana"), cx).1, generation);
+        // 先の配列が組み上がる前に替わったら、後の配列だけが載る。
+        let (requested, ..) = follow(("us", "dvorak"), cx);
+        assert_eq!(requested, Layout::new("us", "dvorak"));
+        cx.run_until_parked();
+        assert_eq!(layout_of(&view, cx), Some(Layout::new("us", "dvorak")));
+    }
+
+    /// 新しいキーボードのキーは、共有のデータベースから組めたらすぐ載る（OS の状態を見に行く周期を待たない）。
+    /// ビューごとに読み込みを始めていたので、初めて出したときにディスクの読み込みを待ってキーの無いカードが出ていた。
+    #[gpui::test]
+    fn a_new_keyboard_gets_its_keys_without_waiting_for_the_poll(cx: &mut TestAppContext) {
+        preload();
+        let view = cx.new(|cx| KeyboardView::new(0, cx));
+        // 時計を進めない（100ms ごとの poll は走らない）。
+        cx.run_until_parked();
+        assert_eq!(layout_of(&view, cx), Some(Layout::new("us", "")));
+        view.read_with(cx, |view, _| {
+            assert!(!view.loading && !view.layouts.is_empty());
+        });
     }
 
     #[gpui::test]

@@ -10,9 +10,9 @@ fn screen(layout: &str, variant: &str, cx: &mut Context<KeyboardTest>) -> Keyboa
     let layout = Layout::new(layout, variant);
     let keyboard = db.keyboard(&layout).unwrap();
     let view = KeyboardTest::new(0, cx);
-    view.keyboard.update(cx, |view, _| {
+    view.keyboard.update(cx, |view, cx| {
         view.automatic = false;
-        view.select_layout(layout);
+        view.select_layout(layout, cx);
         view.keyboard = Some(keyboard);
         view.loading = false;
         view.kind = KeyboardType::Compact;

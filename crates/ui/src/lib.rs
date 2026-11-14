@@ -1422,6 +1422,8 @@ pub fn run_with(
         cx.set_global(design::Motion::default());
         design::font::install(cx);
         design::corner::install();
+        // 初めてキーボードを出すときにディスクから配列を読み始めると、それまでキーの無いカードが出る。先に読んでおく。
+        keyboard::preload();
         if let Some(p) = profiler {
             cx.set_global(with_budget(p));
             cx.default_global::<PanelControl>().profiling = true;
