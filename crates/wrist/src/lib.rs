@@ -18,17 +18,22 @@ use ui::{PanelControl, PanelSpec};
 
 /// `hand` の手首に巻いた腕時計の相対姿勢（コントローラの tip の座標系。-Z が前・+Y が天面（親指の側））。
 /// 手首の関節（tip から [`kernel::vr::GRIP_FROM_WRIST`] の逆）から腕側へ 3cm・手の甲の側（握った手の外側。左手は -X、
-/// 右手は +X）へ 3.5cm。文字盤の表は手の甲の外、12 時は小指の側を向き、3 時は左手なら指先・右手なら肘の側（本物の腕時計と
-/// 同じ）。腕を胸の前で横にして手の甲を顔へ向けると正立して読める。骨格だけの手も、取り付け先の姿勢
+/// 右手は +X）へ [`LIFT`]。文字盤の表は手の甲の外、12 時は小指の側を向き、3 時は左手なら指先・右手なら肘の側（本物の
+/// 腕時計と同じ）。腕を胸の前で横にして手の甲を顔へ向けると正立して読める。骨格だけの手も、取り付け先の姿勢
 /// （`HandSkeleton::grip`）が握ったコントローラの tip に当たるので、同じ値で手首に来る。
 pub fn watch_offset(hand: Hand) -> Pose {
     let side = if hand == Hand::Left { -1.0 } else { 1.0 };
     Pose::new(
-        -kernel::vr::GRIP_FROM_WRIST + Vec3::new(side * 0.035, 0.0, 0.03),
+        -kernel::vr::GRIP_FROM_WRIST + Vec3::new(side * LIFT, 0.0, 0.03),
         // 左手は (1, 0, -1) 軸の半回転（右手はその鏡写し）: 3 時 → -Z、12 時 → -Y、表 → -X。
         Quat::from_xyzw(FRAC_1_SQRT_2, 0.0, side * FRAC_1_SQRT_2, 0.0),
     )
 }
+
+/// 手首の関節から文字盤までの高さ（手の甲の側。m）。本物の腕時計なら 3.5cm ほどだが、それでは手の甲の側まで回る
+/// コントローラ（Index のストラップなど）の描画に文字盤がめり込むので、そこから 2cm 浮かせて 5.5cm。
+// ponytail: 機種を問わない目分量。めり込む機種や浮きすぎて見える機種があれば、この値（か機種ごとの値）で合わせる。
+const LIFT: f32 = 0.055;
 
 /// ダッシュボードが出ている間に掴んで置き直せる範囲（取り付け先の手のコントローラから m）。手の甲・前腕・手の周りに届く。
 pub const REACH: f32 = 0.3;
@@ -479,7 +484,7 @@ mod tests {
             let watch = skeleton.grip() * watch_offset(hand);
             let eq = |a: Vec3, b: Vec3| assert!(a.abs_diff_eq(b, 1e-5), "{hand:?}: {a} != {b}");
             let wrist = joints[WRIST].position;
-            eq(watch.position, wrist + Vec3::new(-dir * 0.03, 0.035, 0.0));
+            eq(watch.position, wrist + Vec3::new(-dir * 0.03, LIFT, 0.0));
             eq(watch.orientation * Vec3::Z, Vec3::Y);
             eq(watch.orientation * Vec3::Y, Vec3::NEG_Z);
             eq(watch.orientation * Vec3::X, Vec3::X);
