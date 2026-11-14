@@ -401,6 +401,9 @@ downloading = "Downloading… {percent}%"
 installing = "Installing. nyaw will restart"
 install_failed = "Couldn't update: {error}"
 release_page = "Open the release page"
+channel = "Update channel"
+stable = "Stable"
+nightly = "Nightly (includes pre-releases)"
 
 [settings.lod]
 off = "Off"

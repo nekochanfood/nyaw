@@ -18,8 +18,8 @@ use subsystems::os;
 
 pub use config::{
     COLOR_HISTORY, Config, DominantHand, Language, LodQuality, PersonalColor, PointerMode,
-    SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, WristDesign,
-    WristFace,
+    SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN,
+    UpdateChannel, WristDesign, WristFace,
 };
 pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use subsystems::ControllerState;
@@ -147,6 +147,8 @@ pub enum Setting {
     KeySoundVolume(f32),
     /// ランタイムの起動と同時に開くか（`VrBackend::set_auto_launch`）。値はランタイムが持つので設定ファイルには書かない。
     AutoLaunch(bool),
+    /// アップデートのチャンネル（`update_channel`）。カーネルは値を持つだけで、従うのは `updater`。
+    UpdateChannel(UpdateChannel),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -181,6 +183,7 @@ pub struct Settings {
     pub key_sound_volume: f32,
     /// ランタイムの起動と同時に開くか。切り替えられないランタイム（OpenVR 以外）は `None`。
     pub auto_launch: Option<bool>,
+    pub update_channel: UpdateChannel,
 }
 
 impl Default for Settings {
@@ -207,6 +210,7 @@ impl Default for Settings {
             key_sound: true,
             key_sound_volume: 1.0,
             auto_launch: None,
+            update_channel: Default::default(),
         }
     }
 }
@@ -498,6 +502,7 @@ impl<B: VrBackend> Kernel<B> {
                 .key_sound_volume
                 .map_or(1.0, |v| config::clamp_scale(v, 0.0, 1.0)),
             auto_launch: self.subsystems.backend.auto_launch(),
+            update_channel: self.config.update_channel,
         }
     }
 
@@ -624,6 +629,10 @@ impl<B: VrBackend> Kernel<B> {
                 let v = config::clamp_scale(v, 0.0, 1.0);
                 self.config.key_sound_volume = Some(v);
                 ("key_sound_volume", config::value(v))
+            }
+            Setting::UpdateChannel(c) => {
+                self.config.update_channel = c;
+                ("update_channel", config::value(c))
             }
         };
         if let Some(path) = &self.config_path
@@ -1057,6 +1066,9 @@ mod tests {
         assert_eq!(k.settings().dominant_hand, DominantHand::Left);
         k.set(Setting::WristDesign(WristDesign::Lcd));
         assert_eq!(k.settings().wrist_design, WristDesign::Lcd);
+        assert_eq!(k.settings().update_channel, UpdateChannel::Stable);
+        k.set(Setting::UpdateChannel(UpdateChannel::Nightly));
+        assert_eq!(k.settings().update_channel, UpdateChannel::Nightly);
         k.set(Setting::MirrorFrameRate(1000));
         assert_eq!(k.settings().mirror_frame_rate, desktop::MAX_FRAME_RATE);
         k.set(Setting::MirrorFrameRate(0));

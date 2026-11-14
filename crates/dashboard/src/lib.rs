@@ -3199,20 +3199,21 @@ mod tests {
             "最新なら出ない"
         );
         cx.update(|_, cx| {
-            cx.default_global::<updater::Updater>().latest = Some(updater::Release {
+            cx.default_global::<updater::Updater>().found = vec![updater::Release {
                 version: "2026.0.1-patch.2".into(),
                 build: u32::MAX,
                 title: "v2026.0.1-patch.2".into(),
                 notes: "## What's Changed".into(),
                 published_at: None,
                 page: "https://github.com/nekochanfood/nyaw/releases".into(),
+                prerelease: false,
                 installer: updater::Installer {
                     name: "nyaw-2026.0.1-patch.2-setup.exe".into(),
                     url: "https://example.com/i.exe".into(),
                     size: 1,
                     sha256: "0".repeat(64),
                 },
-            })
+            }]
         });
         redraw_bar(cx);
         let x = |cx: &mut VisualTestContext, s: &'static str| cx.debug_bounds(s).unwrap().origin.x;
@@ -3233,7 +3234,7 @@ mod tests {
         assert!(cx.update(|_, cx| cx.global::<PanelControl>().panels[&7].redraw));
         assert!(cx.update(|_, cx| updater::take_reveal(cx)));
         // リリースが消えれば（入れ替えた後など）、ボタンも消える。
-        cx.update(|_, cx| cx.default_global::<updater::Updater>().latest = None);
+        cx.update(|_, cx| cx.default_global::<updater::Updater>().found.clear());
         redraw_bar(cx);
         assert!(cx.debug_bounds("dashboard-update").is_none());
     }

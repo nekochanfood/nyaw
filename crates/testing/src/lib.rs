@@ -1823,7 +1823,32 @@ impl Settings {
                 )],
             )],
             // アップデート: 今の版と確認の状態、新しいリリースがあればその版・アップデートのボタン・リリースノート。
-            UPDATE_CATEGORY => update::page(theme, window, cx),
+            // アップデート: チャンネル（stable は正式なリリースだけ、nightly はプレリリースも）はここで選ぶ。
+            UPDATE_CATEGORY => {
+                let channel = self.select(
+                    theme,
+                    window,
+                    cx,
+                    "setting-update-channel",
+                    &design::icons::GIT_BRANCH,
+                    i18n::t(cx, "update.channel"),
+                    now.update_channel,
+                    vec![
+                        (
+                            "setting-channel-stable",
+                            i18n::t(cx, "update.stable"),
+                            kernel::UpdateChannel::Stable,
+                        ),
+                        (
+                            "setting-channel-nightly",
+                            i18n::t(cx, "update.nightly"),
+                            kernel::UpdateChannel::Nightly,
+                        ),
+                    ],
+                    Setting::UpdateChannel,
+                );
+                update::page(theme, channel, window, cx)
+            }
             // ライセンス: 依存ごとの行。押すとそのリポジトリをブラウザで開く。数百行あるので、見えている行だけを
             // 作る `uniform_list` で並べる（行の高さは揃える。区切り線は先頭の行だけ透明にして高さを変えない）。
             _ if licenses => {
