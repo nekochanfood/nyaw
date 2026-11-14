@@ -136,6 +136,12 @@ pub const SCALE_STEP: f32 = 0.1;
 /// カーソルの大きさの倍率（[`Config::cursor_scale`]）の範囲。刻みは [`SCALE_STEP`]。
 pub const CURSOR_SCALE_MIN: f32 = 0.5;
 pub const CURSOR_SCALE_MAX: f32 = 2.0;
+/// 仮想キーボードの大きさの倍率（[`Config::keyboard_scale`]）の範囲。刻みは [`SCALE_STEP`]。
+pub const KEYBOARD_SCALE_MIN: f32 = 0.5;
+pub const KEYBOARD_SCALE_MAX: f32 = 2.0;
+/// 仮想キーボードのキーの間隔の倍率（[`Config::key_gap`]。種類の既定の隙間に掛ける）の範囲。刻みは [`SCALE_STEP`]。
+pub const KEY_GAP_MIN: f32 = 0.0;
+pub const KEY_GAP_MAX: f32 = 2.0;
 
 /// 倍率を範囲 `min..=max` に収め、[`SCALE_STEP`] の刻みに丸める（数でない値は等倍）。
 pub fn clamp_scale(scale: f32, min: f32, max: f32) -> f32 {
@@ -297,6 +303,10 @@ pub struct Config {
     pub mirror_frame_rate: Option<u32>,
     /// 仮想キーボードの種類（`full` / `tenkeyless` / `compact`）。省略で `full`。
     pub keyboard: subsystems::keyboard::KeyboardType,
+    /// 仮想キーボードの大きさの倍率（[`KEYBOARD_SCALE_MIN`]〜[`KEYBOARD_SCALE_MAX`]）。省略で等倍。画面での切り替えはここへ書き戻される。
+    pub keyboard_scale: Option<f32>,
+    /// 仮想キーボードのキーの間隔の倍率（[`KEY_GAP_MIN`]〜[`KEY_GAP_MAX`]）。省略で等倍。画面での切り替えはここへ書き戻される。
+    pub key_gap: Option<f32>,
     /// ダッシュボードが出ている間、ゲームへの入力を止めるか。省略で `true`。画面での切り替えはここへ書き戻される。
     pub block_input: Option<bool>,
     /// セットアップウィザードを終えたか。省略で `false`（初回起動でウィザードを出す）。終えるとここへ書き戻される。

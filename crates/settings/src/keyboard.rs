@@ -1,11 +1,13 @@
 //! キーボード（入力の行 `settings-keyboard` から開く詳しい画面）: 上に見本（押せて音も鳴るが、どこにも打たない）、
-//! 下に種類・キーの音・その音量（鳴らす間だけ）。
+//! 下に種類・大きさ・キーの間隔・キーの音・その音量（鳴らす間だけ）。
 
 use design::Theme;
 use design::components;
 use gpui::{Context, Div, Window, prelude::*};
-use kernel::Setting;
 use kernel::subsystems::keyboard::KeyboardType;
+use kernel::{
+    KEY_GAP_MAX, KEY_GAP_MIN, KEYBOARD_SCALE_MAX, KEYBOARD_SCALE_MIN, SCALE_STEP, Setting,
+};
 
 use crate::{ROW_SLIDER_PX, Settings, change};
 
@@ -45,6 +47,50 @@ pub(crate) fn page(
         .to_vec(),
         Setting::Keyboard,
     );
+    // 倍率のスライダー。刻み（`SCALE_STEP`）に吸い付き、刻みが変わったときだけ設定を変える。
+    let scale_item = |id: &'static str,
+                      slider_id: &'static str,
+                      glyph: &'static design::Icon,
+                      key: &str,
+                      (min, max, now): (f32, f32, f32),
+                      set: fn(f32) -> Setting| {
+        components::slider_item(
+            theme,
+            id,
+            glyph,
+            i18n::t(cx, key),
+            format!("{:.0}%", now * 100.0),
+            components::slider(
+                theme,
+                slider_id,
+                (now - min) / (max - min),
+                move |at, _, cx| {
+                    let to = kernel::config::clamp_scale(min + at * (max - min), min, max);
+                    if (to - now).abs() > SCALE_STEP / 2.0 {
+                        ui::set(set(to), cx)
+                    }
+                },
+            )
+            .length(ROW_SLIDER_PX),
+        )
+    };
+    // 大きさは召喚するキーボードに効く（見本は実寸ではないので変わらない）。間隔はすぐ見本に出る。
+    let size = scale_item(
+        "setting-keyboard-size",
+        "setting-keyboard-size-slider",
+        &design::icons::ARROWS_OUT,
+        "settings.keyboard_size",
+        (KEYBOARD_SCALE_MIN, KEYBOARD_SCALE_MAX, now.keyboard_scale),
+        Setting::KeyboardScale,
+    );
+    let gap = scale_item(
+        "setting-key-gap",
+        "setting-key-gap-slider",
+        &design::icons::SQUARES_FOUR,
+        "settings.key_gap",
+        (KEY_GAP_MIN, KEY_GAP_MAX, now.key_gap),
+        Setting::KeyGap,
+    );
     let sound = components::switch_item(
         theme,
         "setting-key-sound",
@@ -54,7 +100,7 @@ pub(crate) fn page(
     )
     .on_click(change(Setting::KeySound(!now.key_sound)));
     // 音量は 10% の刻み（カーネルも同じ刻みに丸める）。刻みが変わったときだけ設定を変える。
-    let (volume, step) = (now.key_sound_volume, kernel::SCALE_STEP);
+    let (volume, step) = (now.key_sound_volume, SCALE_STEP);
     let slider = components::slider(
         theme,
         "setting-key-volume-slider",
@@ -74,7 +120,7 @@ pub(crate) fn page(
         format!("{:.0}%", volume * 100.0),
         slider.length(ROW_SLIDER_PX),
     );
-    let rows = [kind, sound]
+    let rows = [kind, size, gap, sound]
         .into_iter()
         .chain(now.key_sound.then_some(volume));
     vec![preview, components::list(theme, rows)]

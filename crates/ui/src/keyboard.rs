@@ -72,16 +72,17 @@ const WRIST_TILT: f32 = 22.5 * std::f32::consts::PI / 180.;
 /// 打つときの手（コントローラの先）からキーボードまでの距離（m）。キーボードは頭の前 0.8m（`TYPING_AT`）、手はその 35cm ほど手前。
 // ponytail: 目安の固定値で、合わなければここを調整する。人ごとに合わせるなら、開いた瞬間の手との距離から大きさを決める。
 const HAND_DISTANCE: f32 = 0.45;
-/// 標準の大きさの、手首で端まで届く大きさに対する倍率。
+/// 等倍（設定の大きさ `keyboard_scale` = 1）の、手首で端まで届く大きさに対する倍率。
 const SIZE_SCALE: f32 = 1.5;
 
-/// 種類（`kind`）の標準の大きさ（m。等倍）。キーの大きさは種類によらずそろえる。既定でいちばん広いフルサイズで、
-/// ホームポジションに向けた手首を外へ [`WRIST_TILT`] 倒すと遠い方のキーの端に届く大きさの、[`SIZE_SCALE`] 倍。
-fn panel_size(kind: KeyboardType) -> Vec2 {
+/// 種類（`kind`）の、設定の大きさ（`scale`）での標準の大きさ（m。UI スケールは掛ける前）。キーの大きさは種類によらずそろえる。
+/// 等倍は、既定でいちばん広いフルサイズで、ホームポジションに向けた手首を外へ [`WRIST_TILT`] 倒すと遠い方のキーの端に届く
+/// 大きさの、[`SIZE_SCALE`] 倍。
+fn panel_size(kind: KeyboardType, scale: f32) -> Vec2 {
     let (w, h) = panel_resolution(kind);
     let full = KeyboardType::Full.width();
     let far = HOME_U.max(full - HOME_U) * view::KEY_UNIT;
-    Vec2::new(w as f32, h as f32) * (SIZE_SCALE * HAND_DISTANCE * WRIST_TILT.tan() / far)
+    Vec2::new(w as f32, h as f32) * (scale * SIZE_SCALE * HAND_DISTANCE * WRIST_TILT.tan() / far)
 }
 
 /// パネルの幅に対する、中心から見たホームポジションの横位置（割合）。キーの並びはパネルの左の余白の内側から始まる。
@@ -310,8 +311,8 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
     });
     routing.error = None;
     redraw_nav_bar(target, cx);
-    let kind = keyboard_kind(cx);
-    let (resolution, size) = (panel_resolution(kind), panel_size(kind));
+    let (kind, scale) = (keyboard_kind(cx), crate::settings(cx).keyboard_scale);
+    let (resolution, size) = (panel_resolution(kind), panel_size(kind, scale));
     let spec = crate::PanelSpec::spawn(target, move |panel, _, cx| {
         let current = cx.default_global::<InputRouting>().active.as_mut();
         if let Some(session) = current.filter(|s| s.generation == generation) {
@@ -322,6 +323,7 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         KeyboardPanel {
             panel,
             kind,
+            scale,
             keyboard: cx.new(|cx| {
                 let mut keyboard = KeyboardView::new(panel, cx);
                 keyboard.target = target;
@@ -402,8 +404,9 @@ pub fn panel_hidden(panel: PanelId, cx: &mut App) {
 
 struct KeyboardPanel {
     panel: PanelId,
-    /// パネルの大きさを合わせてある種類（アクションの置き場所もこれで決まる）。
+    /// パネルの大きさを合わせてある種類（アクションの置き場所もこれで決まる）と、設定の大きさ。
     kind: KeyboardType,
+    scale: f32,
     keyboard: gpui::Entity<KeyboardView>,
 }
 impl Render for KeyboardPanel {
@@ -424,11 +427,11 @@ impl Render for KeyboardPanel {
                 }
             });
         }
-        // 種類が変わったら、キーがちょうど収まる解像度と、その種類の標準の大きさ（手首で端まで届く）にパネルを変える。
-        let kind = keyboard_kind(cx);
-        if kind != self.kind {
-            let (to, size) = (panel_resolution(kind), panel_size(kind));
-            self.kind = kind;
+        // 種類か設定の大きさが変わったら、キーがちょうど収まる解像度と、その標準の大きさにパネルを変える。
+        let (kind, scale) = (keyboard_kind(cx), crate::settings(cx).keyboard_scale);
+        if (kind, scale) != (self.kind, self.scale) {
+            let (to, size) = (panel_resolution(kind), panel_size(kind, scale));
+            (self.kind, self.scale) = (kind, scale);
             crate::commands(
                 panel,
                 [
@@ -805,9 +808,10 @@ mod tests {
         });
     }
 
-    /// 種類を変えると、出ているキーボードのパネルがその種類の標準の大きさになり、掴む点もホームポジションへ移る。
+    /// 種類か大きさの設定を変えると、出ているキーボードのパネルがその標準の大きさになり、掴む点もホームポジションへ移る。
+    /// 大きさの設定は、キーの並びの形を変えずにパネルの大きさだけに掛かる。
     #[gpui::test]
-    fn changing_the_type_resizes_the_open_keyboard(cx: &mut TestAppContext) {
+    fn changing_the_type_or_size_resizes_the_open_keyboard(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|window, cx| {
             show_keyboard(0, KeyboardMode::Persistent, cx);
             let spec = cx
@@ -819,13 +823,22 @@ mod tests {
             crate::PanelRoot::new(spec.build(1, window, cx))
         });
         cx.run_until_parked();
-        for kind in [KeyboardType::Compact, KeyboardType::Tenkeyless] {
+        for (kind, scale) in [
+            (KeyboardType::Compact, 1.),
+            (KeyboardType::Tenkeyless, 1.),
+            (KeyboardType::Tenkeyless, 2.),
+        ] {
             cx.update(|window, cx| {
-                cx.global_mut::<crate::PanelControl>().settings.keyboard = kind;
+                let settings = &mut cx.global_mut::<crate::PanelControl>().settings;
+                (settings.keyboard, settings.keyboard_scale) = (kind, scale);
                 window.refresh();
             });
             cx.run_until_parked();
-            let (to, size) = (panel_resolution(kind), panel_size(kind));
+            let (to, size) = (panel_resolution(kind), panel_size(kind, scale));
+            assert!(
+                size.abs_diff_eq(panel_size(kind, 1.) * scale, 1e-6),
+                "{size}"
+            );
             let commands = cx.update(|_, cx| {
                 std::mem::take(
                     &mut cx
