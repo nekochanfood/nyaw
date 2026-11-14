@@ -46,9 +46,12 @@ fn simple_is_one_slider_and_detailed_is_three(cx: &mut TestAppContext) {
     assert!(shown(&mut kit, "setting-steadiness"));
 }
 
+fn playing(kit: &VrKit<'_, Settings>) -> usize {
+    kit.kernel.status(0).audio.playing
+}
+
 /// Sounds started by pointing at the selected category (coming from another one) and by pressing it.
 fn cues(kit: &mut VrKit<'_, Settings>) -> (usize, usize) {
-    let playing = |kit: &VrKit<'_, Settings>| kit.kernel.status(0).audio.playing;
     kit.hover("settings-about");
     let before = playing(kit);
     kit.hover("settings-pointer");
