@@ -387,26 +387,14 @@ impl Render for SetupWizard {
         let stack: Vec<usize> = (0..=self.wizard.step())
             .filter(|&i| shown(STEPS[i], &now))
             .collect();
-        let draw = {
-            let this = this.clone();
-            move |&index: &usize, window: &mut Window, cx: &mut App| {
-                page(STEPS[index], &this, window, cx).into_any_element()
-            }
+        let draw = move |&index: &usize, window: &mut Window, cx: &mut App| {
+            page(STEPS[index], &this, window, cx).into_any_element()
         };
-        let swipe_back = move |_: &mut Window, cx: &mut App| {
-            let now = ui::settings(cx);
-            this.update(cx, |v, cx| {
-                v.go(false, &now);
-                cx.notify();
-            })
-        };
-        components::wizard_panel(&theme).child(components::navigation(
-            &theme,
-            "setup-nav",
-            &stack,
-            draw,
-            swipe_back,
-        ))
+        // 戻るのは「戻る」ボタンだけ。ページそのものはスワイプで動かさない（色や文字盤を選ぶ途中の横の動きで戻らない）。
+        components::wizard_panel(&theme).child(
+            components::navigation(&theme, "setup-nav", &stack, draw, |_, _| {})
+                .without_swipe_back(),
+        )
     }
 }
 

@@ -9,6 +9,7 @@
 //!   - 中の要素が先に受け取って止めたもの（スライダーのハンドルなど）は奪わない。縦にスクロールする一覧は
 //!     横の動きを縦に読み替えないよう `restrict_scroll_to_axis()` を付ける。
 //!   - スワイプ中は中身を覆い、離したときに下にあったボタンが押されたことにしない。
+//!   - [`Navigation::without_swipe_back`] で切れる（ボタンだけで戻る画面。ウィザードなど）。
 //! - パネルを掴んでいる手（グリップ）のポインタは無視する。オーバーレイは掴み中の手のイベントを送らず、掴んだ瞬間に
 //!   その手の `MouseExited` だけが届く。ボタンを押していない動き・離脱（別の手のもの）ではスワイプを止めない。
 //! - [`crate::Motion`] が無ければ（テスト）動きは即座に終わる。
@@ -122,12 +123,20 @@ pub struct Navigation<P: Clone + PartialEq + 'static> {
     right_radius: f32,
     /// 積み下ろしで画面が動く距離（幅に対する割合）を抑え、代わりに透明度を入れ替える。指に付くスワイプは常に全幅。
     fade_shift: Option<f32>,
+    /// スワイプバックを受け付ける。
+    swipe: bool,
 }
 
 impl<P: Clone + PartialEq + 'static> Navigation<P> {
     /// 積み下ろしを、幅の `shift` 倍だけ動きながら重なって入れ替わる（フェード）動きにする。
     pub fn fading(mut self, shift: f32) -> Self {
         self.fade_shift = Some(shift);
+        self
+    }
+
+    /// スワイプバックを受け付けない（ページは指に付いて動かない。戻るのはボタンだけ）。
+    pub fn without_swipe_back(mut self) -> Self {
+        self.swipe = false;
         self
     }
 
@@ -163,6 +172,7 @@ pub fn navigation<P: Clone + PartialEq + 'static>(
         background: theme.background,
         right_radius: 0.0,
         fade_shift: None,
+        swipe: true,
     }
 }
 
@@ -176,6 +186,7 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
             background,
             right_radius,
             fade_shift,
+            swipe,
         } = self;
         let animated = cx.has_global::<Motion>();
         let now = crate::drive::now();
@@ -249,6 +260,9 @@ impl<P: Clone + PartialEq + 'static> RenderOnce for Navigation<P> {
                 move |bounds, _, cx| state.update(cx, |s, _| s.bounds = bounds)
             },
             move |_, _, window, _| {
+                if !swipe {
+                    return;
+                }
                 let s = state.clone();
                 let back = on_back.clone();
                 window.on_mouse_event(move |e: &ScrollWheelEvent, phase, window, cx| {
