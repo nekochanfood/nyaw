@@ -159,8 +159,15 @@ pub(crate) fn page(
         )
         .child(div().h(px(1.0)).bg(rgba(theme.neutral_border_subtle)))
         .child(
-            components::markdown(theme, "update-notes", &release.notes)
-                .debug_selector(|| "update-notes".into()),
+            div()
+                .debug_selector(|| "update-notes".into())
+                .child(components::markdown(
+                    theme,
+                    "update-notes",
+                    &release.notes,
+                    window,
+                    cx,
+                )),
         );
     vec![
         summary,

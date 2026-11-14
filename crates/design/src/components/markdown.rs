@@ -5,8 +5,9 @@
 use std::ops::Range;
 
 use gpui::{
-    AnyElement, Div, ElementId, FontStyle, FontWeight, HighlightStyle, InteractiveText,
-    SharedString, StrikethroughStyle, StyledText, UnderlineStyle, div, prelude::*, px, rgba,
+    AnyElement, App, Bounds, Context, Div, ElementId, FontStyle, FontWeight, HighlightStyle,
+    InteractiveText, Pixels, SharedString, StrikethroughStyle, StyleRefinement, StyledText,
+    UnderlineStyle, Window, canvas, div, prelude::*, px, rgba,
 };
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
@@ -278,10 +279,64 @@ fn parse(source: &str) -> Vec<Block> {
     }
 }
 
-/// `source` の Markdown を縦に並べる。リンクは押すとブラウザで開く。`id` はリンクを持つ文字の要素の ID の頭。
-pub fn markdown(theme: &Theme, id: impl Into<SharedString>, source: &str) -> Div {
+/// 描いた Markdown。解析した結果と、前に描いたときの中身の高さを覚えておく。
+struct Markdown {
+    id: SharedString,
+    source: String,
+    blocks: Vec<Block>,
+    theme: Theme,
+    /// 分かるまでは使い回さずに描いて測る（使い回す包みは中身から高さを測れず、高さを先に決める必要がある）。
+    height: Option<Pixels>,
+}
+
+impl Render for Markdown {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let this = cx.entity().downgrade();
+        let measure = move |bounds: Bounds<Pixels>, _: &mut Window, cx: &mut App| {
+            let _ = this.update(cx, |m, _| m.height = Some(bounds.size.height));
+        };
+        blocks(&self.theme, &self.id, &self.blocks)
+            .w_full()
+            .child(canvas(measure, |_, _, _, _| {}).absolute().size_full())
+    }
+}
+
+/// `source` の Markdown を縦に並べる。リンクは押すとブラウザで開く。`id` は覚えておく状態とリンクを持つ文字の要素の ID の頭。
+/// 解析した結果と描いた絵は `source`・`theme`・置き場所が変わるまで使い回す（落としている間など毎フレーム描き直す画面向け）。
+pub fn markdown(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    source: &str,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
     let id = id.into();
-    blocks(theme, &id, &parse(source))
+    let view = window.use_keyed_state(id.clone(), cx, |_, _| Markdown {
+        id,
+        source: source.to_owned(),
+        blocks: parse(source),
+        theme: *theme,
+        height: None,
+    });
+    view.update(cx, |m, cx| {
+        if m.source != source {
+            m.source = source.to_owned();
+            m.blocks = parse(source);
+            m.height = None;
+            cx.notify();
+        }
+        if m.theme != *theme {
+            m.theme = *theme;
+            cx.notify();
+        }
+    });
+    // ponytail: 幅が変わったフレームは前の高さのまま描き、測り直した高さは次に描くときに効く。ずれが目立つなら測ってすぐ描き直す。
+    match view.read(cx).height {
+        Some(h) => view
+            .cached(StyleRefinement::default().w_full().h(h))
+            .into_any_element(),
+        None => view.into_any_element(),
+    }
 }
 
 fn blocks(theme: &Theme, id: &str, list: &[Block]) -> Div {
