@@ -45,6 +45,7 @@ design = { path = "crates/design" }
 i18n = { path = "crates/i18n" }
 profiler = { path = "crates/profiler" }
 testing = { path = "crates/testing" }
+settings = { path = "crates/settings" }
 wrist = { path = "crates/wrist" }
 setup = { path = "crates/setup" }
 dashboard = { path = "crates/dashboard" }
@@ -68,6 +69,7 @@ profiler.workspace = true
 wrist.workspace = true
 setup.workspace = true
 testing.workspace = true
+settings.workspace = true
 beam.workspace = true
 nyapp.workspace = true
 

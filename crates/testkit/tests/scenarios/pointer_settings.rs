@@ -4,7 +4,7 @@
 
 use gpui::TestAppContext;
 use kernel::PointerTuning;
-use testing::{Settings, SettingsPage};
+use settings::{Category, Page, Settings};
 use testkit::{Action, Driver, VrKit};
 
 const DETAILED: [&str; 3] = [
@@ -80,7 +80,7 @@ fn sound_switches_silence_the_tap_and_hover_sounds(cx: &mut TestAppContext) {
     assert_eq!(cues(&mut kit), (0, 0));
     assert_eq!(
         kit.read(|v| (v.category, v.pages.clone())),
-        (2, vec![SettingsPage::Pointer]),
+        (Category::Input, vec![Page::Pointer]),
         "still on the Pointer page"
     );
 

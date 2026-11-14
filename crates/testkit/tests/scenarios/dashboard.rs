@@ -19,7 +19,7 @@ fn wrist(cx: &mut gpui::Context<Wrist>) -> Wrist {
     Wrist::new(
         0,
         |f, o| testing::spec(f, o),
-        |f, o| testing::settings_spec(f, o),
+        |f, o| settings::spec(f, o),
         cx,
     )
 }

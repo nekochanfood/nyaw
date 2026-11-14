@@ -1,0 +1,21 @@
+[package]
+name = "settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+design.workspace = true
+i18n.workspace = true
+gpui.workspace = true
+kernel.workspace = true
+ui.workspace = true
+updater.workspace = true
+
+[build-dependencies]
+serde_json = "1"
+
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+kernel = { workspace = true, features = ["test-support"] }

@@ -6,17 +6,47 @@ use std::sync::atomic::Ordering;
 
 use design::components::{self, Variant};
 use design::{Theme, font_size, spacing};
-use gpui::{App, Div, FontWeight, SharedString, Window, div, prelude::*, px, rgba};
+use gpui::{App, Context, Div, FontWeight, SharedString, Window, div, prelude::*, px, rgba};
+use kernel::{Setting, UpdateChannel};
 use updater::Step;
 
-/// 中身（グループの並び）。`channel` はチャンネルを選ぶ行（設定画面の選択肢）。
-/// 確かめている・落としている間は描き続けて、終わりと進み具合を拾う。
+use crate::Settings;
+
+/// チャンネル（安定版は正式なリリースだけ、ナイトリーはプレリリースも）はここで選ぶ。
 pub(crate) fn page(
+    s: &Settings,
     theme: &Theme,
-    channel: components::Button,
     window: &mut Window,
-    cx: &mut App,
+    cx: &mut Context<Settings>,
 ) -> Vec<Div> {
+    let channel = s.select(
+        theme,
+        window,
+        cx,
+        "setting-update-channel",
+        &design::icons::GIT_BRANCH,
+        i18n::t(cx, "update.channel"),
+        ui::settings(cx).update_channel,
+        vec![
+            (
+                "setting-channel-stable",
+                i18n::t(cx, "update.stable"),
+                UpdateChannel::Stable,
+            ),
+            (
+                "setting-channel-nightly",
+                i18n::t(cx, "update.nightly"),
+                UpdateChannel::Nightly,
+            ),
+        ],
+        Setting::UpdateChannel,
+    );
+    body(theme, channel, window, cx)
+}
+
+/// 中身（グループの並び）。`channel` はチャンネルを選ぶ行。
+/// 確かめている・落としている間は描き続けて、終わりと進み具合を拾う。
+fn body(theme: &Theme, channel: components::Button, window: &mut Window, cx: &mut App) -> Vec<Div> {
     // 勧めるリリースはチャンネルで変わる（切り替えたらすぐ。確かめ直さない）。
     let latest = updater::latest(cx);
     let u = updater::state(cx);

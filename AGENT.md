@@ -39,6 +39,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 5 | [`crates/testing`](crates/testing/AGENT.md) | テスト用の画面（Testing ほか） |
 | 5 | [`crates/wrist`](crates/wrist/AGENT.md) | 常駐の腕時計パネル |
 | 5 | [`crates/dashboard`](crates/dashboard/AGENT.md) | ダッシュボード（メニュー・配信・再生中・クイック設定・ランチャー） |
+| 5 | [`crates/settings`](crates/settings/AGENT.md) | 設定画面（カテゴリ・詳しい画面ごとに 1 ファイル） |
 | 5 | [`crates/setup`](crates/setup/AGENT.md) | セットアップウィザード（初回起動・デバッグからのやり直し。ロックダウンと LazyFollow を使う） |
 | 5 | [`crates/beam`](crates/beam/AGENT.md) | コントローラのレーザー・カーソル・ドラッグ・ツールチップ |
 | 5 | [`crates/nyapp`](crates/nyapp/AGENT.md) | ニャプリ（wasm アプリ）の基盤 |

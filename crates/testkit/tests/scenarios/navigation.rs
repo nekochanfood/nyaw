@@ -5,10 +5,8 @@
 use gpui::{Render, TestAppContext};
 use kernel::subsystems::keyboard::KeyboardType;
 use kernel::{DominantHand, Language, PointerMode, Setting, ThemeMode};
-use testing::{
-    BACKGROUND, NavPage, NavTest, SIDEBAR_BG, SIDEBAR_INDICATOR, SIDEBAR_INDICATOR_INSET, Settings,
-    SettingsPage,
-};
+use settings::{Category, Page, SIDEBAR_BG, SIDEBAR_INDICATOR, SIDEBAR_INDICATOR_INSET, Settings};
+use testing::{BACKGROUND, NavPage, NavTest};
 use testkit::{Action, Driver, Hand, Vec2, VrKit};
 
 /// Holds the trigger near the right end of `selector`'s row and moves left by a bit more than half the page width, then releases.
@@ -155,7 +153,7 @@ fn settings_selects_change_the_settings(cx: &mut TestAppContext) {
     kit.click("settings-appearance")
         .click("setting-theme")
         .click("setting-theme-light");
-    assert_eq!(kit.read(|v| v.category), 1);
+    assert_eq!(kit.read(|v| v.category), Category::Appearance);
     assert_eq!(kit.kernel.settings().theme, ThemeMode::Light);
     kit.click("settings-display")
         .click("setting-mirror-fps")
@@ -177,10 +175,13 @@ fn settings_popover_closes_on_outside_press(cx: &mut TestAppContext) {
     // A press outside closes it without reaching what is under it.
     kit.click("setting-language")
         .click("settings-accessibility");
-    assert_eq!(kit.read(|v| (v.open, v.category)), (None, 0));
+    assert_eq!(
+        kit.read(|v| (v.open, v.category)),
+        (None, Category::General)
+    );
 }
 
-fn pages(kit: &mut VrKit<Settings>) -> (usize, Vec<SettingsPage>) {
+fn pages(kit: &mut VrKit<Settings>) -> (Category, Vec<Page>) {
     kit.read(|v| (v.category, v.pages.clone()))
 }
 
@@ -198,25 +199,29 @@ fn settings_pages_open_from_their_category(cx: &mut TestAppContext) {
         "no back on a category"
     );
     kit.click("settings-about");
-    assert_eq!(pages(&mut kit), (0, vec![SettingsPage::About]));
+    assert_eq!(pages(&mut kit), (Category::General, vec![Page::About]));
     kit.bounds("setting-version");
     kit.click("setting-licenses");
     assert_eq!(
         pages(&mut kit),
-        (0, vec![SettingsPage::About, SettingsPage::Licenses])
+        (Category::General, vec![Page::About, Page::Licenses])
     );
     kit.click("settings-back");
-    assert_eq!(pages(&mut kit), (0, vec![SettingsPage::About]));
+    assert_eq!(pages(&mut kit), (Category::General, vec![Page::About]));
     swipe_back(&mut kit, "settings-nav", "setting-version");
-    assert_eq!(pages(&mut kit), (0, vec![]));
+    assert_eq!(pages(&mut kit), (Category::General, vec![]));
     kit.bounds("settings-update");
 
     kit.click("settings-input").click("settings-pointer");
-    assert_eq!(pages(&mut kit), (2, vec![SettingsPage::Pointer]));
+    assert_eq!(pages(&mut kit), (Category::Input, vec![Page::Pointer]));
     kit.click("settings-input");
-    assert_eq!(pages(&mut kit), (2, vec![]), "the selected category");
+    assert_eq!(
+        pages(&mut kit),
+        (Category::Input, vec![]),
+        "the selected category"
+    );
     kit.click("settings-keyboard").click("settings-appearance");
-    assert_eq!(pages(&mut kit), (1, vec![]));
+    assert_eq!(pages(&mut kit), (Category::Appearance, vec![]));
 }
 
 /// The color 2px in from the left edge of `selector`, halfway down (where the selected row's indicator is).

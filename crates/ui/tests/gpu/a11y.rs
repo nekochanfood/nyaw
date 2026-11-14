@@ -5,7 +5,7 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gpui::{AppContext, Context, IntoElement, Render, Window, div, prelude::*, px, rgb};
-use testing::SettingsPage;
+use settings::{Category, Page, Settings};
 use ui::{PanelControl, capture, open_panel_window};
 
 use crate::look::{FACES_PX, Faces, save};
@@ -45,16 +45,16 @@ const STATES: [(&str, f32, bool); 5] = [
     ("large-bold", kernel::TEXT_SCALE_MAX, true),
 ];
 
-/// 設定画面のカテゴリ（添字）・その上に積む詳しい画面・書き出す名前。
-const PAGES: [(usize, Option<SettingsPage>, &str); 8] = [
-    (0, None, "general"),
-    (0, Some(SettingsPage::About), "about"),
-    (1, None, "appearance"),
-    (1, Some(SettingsPage::Watch), "watch"),
-    (2, None, "input"),
-    (2, Some(SettingsPage::Pointer), "pointer"),
-    (3, None, "display"),
-    (4, None, "accessibility"),
+/// 設定画面のカテゴリ・その上に積む詳しい画面・書き出す名前。
+const PAGES: [(Category, Option<Page>, &str); 8] = [
+    (Category::General, None, "general"),
+    (Category::General, Some(Page::About), "about"),
+    (Category::Appearance, None, "appearance"),
+    (Category::Appearance, Some(Page::Watch), "watch"),
+    (Category::Input, None, "input"),
+    (Category::Input, Some(Page::Pointer), "pointer"),
+    (Category::Display, None, "display"),
+    (Category::Accessibility, None, "accessibility"),
 ];
 
 pub fn main() {
@@ -72,9 +72,9 @@ pub fn main() {
             windows.push((name.to_owned(), handle, width));
         };
         for (category, page, name) in PAGES {
-            let window = open_panel_window(cx, testing::SETTINGS_PX, move |_, cx| {
+            let window = open_panel_window(cx, settings::PX, move |_, cx| {
                 cx.new(|_| {
-                    let mut settings = testing::Settings::new(0);
+                    let mut settings = Settings::new(0);
                     settings.category = category;
                     settings.pages.extend(page);
                     settings
@@ -83,7 +83,7 @@ pub fn main() {
             open(
                 name,
                 window.expect("cannot open panel window").into(),
-                testing::SETTINGS_PX.0,
+                settings::PX.0,
             );
         }
         let (w, _) = ui::prefs::COLOR_DIALOG_PX;
@@ -117,7 +117,7 @@ pub fn main() {
         let summon: dashboard::Summon = |from, opened| {
             ui::PanelSpec::spawn(from, |id, _, cx| {
                 opened(id, cx);
-                testing::Settings::new(id)
+                Settings::new(id)
             })
         };
         let mut bar = None;

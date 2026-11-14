@@ -5,7 +5,7 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use design::{Accent, Mode};
 use gpui::{AppContext, Context, IntoElement, Render, Window, div, prelude::*, px, rgba};
-use testing::SettingsPage;
+use settings::{Category, Page, Settings};
 use ui::{PanelControl, capture, open_panel_window};
 
 /// wrist の文字盤の見本を、地の上に並べた画面（種類ごとに 1 行、デザインを横に）。
@@ -62,10 +62,10 @@ pub fn main() {
         // 本番では wrist が置く、文字盤の見本の描き方。
         cx.set_global(ui::prefs::FacePreview(wrist::preview));
         // 設定画面のカテゴリ `category`（`page` があればその上に詳しい画面を積んで）を開いた窓。
-        let settings = |category: usize, page: Option<SettingsPage>, cx: &mut gpui::App| {
-            open_panel_window(cx, testing::SETTINGS_PX, move |_, cx| {
+        let screen = |category: Category, page: Option<Page>, cx: &mut gpui::App| {
+            open_panel_window(cx, settings::PX, move |_, cx| {
                 let view = cx.new(|_| {
-                    let mut settings = testing::Settings::new(0);
+                    let mut settings = Settings::new(0);
                     settings.category = category;
                     settings.pages.extend(page);
                     settings
@@ -76,10 +76,10 @@ pub fn main() {
             .expect("cannot open panel window")
         };
         let (appearance, watch, pointer, keyboard) = (
-            settings(1, None, cx),
-            settings(1, Some(SettingsPage::Watch), cx),
-            settings(2, Some(SettingsPage::Pointer), cx),
-            settings(2, Some(SettingsPage::Keyboard), cx),
+            screen(Category::Appearance, None, cx),
+            screen(Category::Appearance, Some(Page::Watch), cx),
+            screen(Category::Input, Some(Page::Pointer), cx),
+            screen(Category::Input, Some(Page::Keyboard), cx),
         );
         // 色を作るダイアログ（作りかけの色は、今のパーソナルカラーと違う緑）。
         let dialog = open_panel_window(cx, ui::prefs::COLOR_DIALOG_PX, |_, cx| {
@@ -104,27 +104,12 @@ pub fn main() {
             .expect("cannot open panel window");
         // 描く窓: 書き出す名前の前置き、窓、塗りの色で描かれているはずの画素の下限。
         let mut windows: Vec<(String, gpui::AnyWindowHandle, u32, usize)> = vec![
-            (
-                String::new(),
-                appearance.into(),
-                testing::SETTINGS_PX.0,
-                1000,
-            ),
-            ("watch-".into(), watch.into(), testing::SETTINGS_PX.0, 100),
+            (String::new(), appearance.into(), settings::PX.0, 1000),
+            ("watch-".into(), watch.into(), settings::PX.0, 100),
             // 塗りはスライダーの埋まった側とスイッチ。
-            (
-                "pointer-".into(),
-                pointer.into(),
-                testing::SETTINGS_PX.0,
-                100,
-            ),
+            ("pointer-".into(), pointer.into(), settings::PX.0, 100),
             // キーボードの見本は配列を裏で読んでから出る（前の窓を描いている間に読み終わる）。塗りはスイッチとスライダー。
-            (
-                "keyboard-".into(),
-                keyboard.into(),
-                testing::SETTINGS_PX.0,
-                100,
-            ),
+            ("keyboard-".into(), keyboard.into(), settings::PX.0, 100),
             (
                 "color-".into(),
                 dialog.into(),

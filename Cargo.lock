@@ -3461,6 +3461,7 @@ dependencies = [
  "logger",
  "nyapp",
  "profiler",
+ "settings",
  "setup",
  "testing",
  "ui",
@@ -5072,6 +5073,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "settings"
+version = "2026.0.3-dev.0"
+dependencies = [
+ "design",
+ "gpui",
+ "i18n",
+ "kernel",
+ "serde_json",
+ "ui",
+ "updater",
+]
+
+[[package]]
 name = "setup"
 version = "2026.0.3-dev.0"
 dependencies = [
@@ -5482,9 +5496,8 @@ dependencies = [
  "i18n",
  "kernel",
  "nyapp",
- "serde_json",
+ "settings",
  "ui",
- "updater",
 ]
 
 [[package]]
@@ -5495,6 +5508,7 @@ dependencies = [
  "kernel",
  "logger",
  "minifb",
+ "settings",
  "setup",
  "sysinfo",
  "testing",
@@ -5820,6 +5834,7 @@ dependencies = [
  "kernel",
  "logger",
  "profiler",
+ "settings",
  "setup",
  "testing",
  "vr",

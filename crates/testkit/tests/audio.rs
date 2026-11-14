@@ -5,8 +5,9 @@ use gpui::TestAppContext;
 use kernel::audio::{BLOCK, Layout};
 use kernel::subsystems::keyboard::{Database, Layout as KeyLayout};
 use kernel::{PanelCommand, Setting};
+use settings::Settings;
 use std::time::{Duration, Instant};
-use testing::{AudioTest, Settings};
+use testing::AudioTest;
 use testkit::{Action, Driver, VrKit};
 
 /// 鳴り始めるまで（読み込みは別スレッド）描き、そこから約 0.3 秒の左右の二乗和を返す。
