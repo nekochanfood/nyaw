@@ -71,7 +71,12 @@ pub fn main() {
             })
             .expect("cannot open panel window")
         };
-        let (appearance, watch, keyboard) = (settings(1, cx), settings(2, cx), settings(6, cx));
+        let (appearance, watch, pointer, keyboard) = (
+            settings(1, cx),
+            settings(2, cx),
+            settings(4, cx),
+            settings(6, cx),
+        );
         // 色を作るダイアログ（作りかけの色は、今のパーソナルカラーと違う緑）。
         let dialog = open_panel_window(cx, ui::prefs::COLOR_DIALOG_PX, |_, cx| {
             cx.new(|_| ui::prefs::ColorDialog::new(0, preset("green")))
@@ -88,6 +93,13 @@ pub fn main() {
                 1000,
             ),
             ("watch-".into(), watch.into(), testing::SETTINGS_PX.0, 100),
+            // 塗りはスライダーの埋まった側とスイッチ。
+            (
+                "pointer-".into(),
+                pointer.into(),
+                testing::SETTINGS_PX.0,
+                100,
+            ),
             // キーボードの見本は配列を裏で読んでから出る（前の窓を描いている間に読み終わる）。塗りはスイッチとスライダー。
             (
                 "keyboard-".into(),
@@ -180,7 +192,7 @@ pub fn main() {
     });
 
     let shots = shots.take();
-    assert_eq!(shots.len(), (6 + setup::STEPS.len()) * STATES.len());
+    assert_eq!(shots.len(), (7 + setup::STEPS.len()) * STATES.len());
     for (name, accent, min, frame) in shots {
         save(&frame, &format!("target/tmp/look-{name}.bmp"));
         let [r, g, b, _] = accent.color().to_be_bytes();

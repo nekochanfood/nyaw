@@ -1355,8 +1355,6 @@ pub const SETTINGS_SIZE: Vec2 = Vec2::new(1.024, 0.768);
 pub const SETTINGS_PX: (u32, u32) = (1024, 768);
 /// サイドバーの幅（px）。
 const SIDEBAR_PX: f32 = 320.0;
-/// 中身のスライダーの長さ（px）。中身の幅（パネル − サイドバー − 余白）に収まる。
-const SETTINGS_SLIDER_PX: f32 = 520.0;
 /// 一覧の行（`components::slider_item`）に置くスライダーの長さ（px）。
 const ROW_SLIDER_PX: f32 = 240.0;
 
@@ -2037,8 +2035,23 @@ fn placement_slider(
     components::slider_item(theme, id, glyph, label, show(value), slider)
 }
 
-/// スライダーのカード: スライダーだけをカードに入れ、今の値の説明はカードの下に置く。
-fn setting_slider(theme: &Theme, value: SharedString, slider: components::Slider) -> Div {
+/// スライダーのカード: スライダーをカードの幅いっぱいに入れ、今の値の説明はカードの下に置く。
+/// `ends` があれば、左端と右端が何を表すかのアイコンをスライダーの両側に置く。
+fn setting_slider(
+    theme: &Theme,
+    value: SharedString,
+    slider: components::Slider,
+    ends: Option<[&'static design::Icon; 2]>,
+) -> Div {
+    let end = |glyph| {
+        design::icon(glyph)
+            .size(px(font_size::LG))
+            .color(rgba(theme.neutral_text_low))
+    };
+    let (left, right) = match ends {
+        Some([l, r]) => (Some(end(l)), Some(end(r))),
+        None => (None, None),
+    };
     div()
         .flex()
         .flex_col()
@@ -2046,7 +2059,12 @@ fn setting_slider(theme: &Theme, value: SharedString, slider: components::Slider
         .child(
             components::card(theme)
                 .p(px(spacing::LG))
-                .child(slider.length(SETTINGS_SLIDER_PX)),
+                .flex()
+                .items_center()
+                .gap(px(spacing::MD))
+                .children(left)
+                .child(div().flex_1().child(slider.fill()))
+                .children(right),
         )
         .child(
             div()
@@ -3844,6 +3862,81 @@ mod tests {
                     (f32::from(keys.size.height) - kind.height() * unit).abs() < 1.0,
                     "{at}: {keys:?}"
                 );
+            }
+        }
+    }
+
+    /// ポインタの動きのスライダーはカードの幅いっぱい（両端のアイコンの分だけ左右に同じ余白）で、ハンドルは値の位置にあり、
+    /// 右端まで動かせる。
+    #[gpui::test]
+    fn pointer_sliders_span_the_card(cx: &mut TestAppContext) {
+        use kernel::PointerTuning;
+        let (_, cx) = cx.add_window_view(|_, cx| {
+            let settings = Settings {
+                category: 4,
+                ..Settings::new(0)
+            };
+            ui::PanelRoot::new(cx.new(|_| settings).into())
+        });
+        use kernel::overlay::{
+            POINTER_RELEASE_DEG, POINTER_RELEASE_DEG_MAX, POINTER_SMOOTHING, POINTER_SMOOTHING_MAX,
+        };
+        for width in [SETTINGS_PX.0, 800] {
+            cx.simulate_resize(gpui::size(px(width as f32), px(SETTINGS_PX.1 as f32)));
+            // （調整のしかた, スライダーとハンドル, 手ブレ抑えの強さ, スライダーの位置）。シンプルの既定は真ん中。
+            for (tuning, (id, handle), smoothing, value) in [
+                (
+                    PointerTuning::Simple,
+                    ("setting-steadiness", "setting-steadiness-handle"),
+                    POINTER_SMOOTHING,
+                    0.5,
+                ),
+                (
+                    PointerTuning::Detailed,
+                    ("setting-smoothing", "setting-smoothing-handle"),
+                    POINTER_SMOOTHING_MAX / 4.0,
+                    0.25,
+                ),
+            ] {
+                cx.update(|window, cx| {
+                    let c = cx.default_global::<PanelControl>();
+                    c.settings.pointer_tuning = tuning;
+                    (c.settings.pointer_smoothing, c.settings.pointer_release_deg) =
+                        (smoothing, POINTER_RELEASE_DEG);
+                    window.refresh();
+                });
+                cx.run_until_parked();
+                let row = cx.debug_bounds("setting-cursor-size").unwrap();
+                let slider = cx.debug_bounds(id).unwrap();
+                let handle = cx.debug_bounds(handle).unwrap();
+                let at = format!("{width}px {id}: {slider:?} in {row:?}");
+                let (l, r) = (slider.left() - row.left(), row.right() - slider.right());
+                assert!((l - r).abs() < px(1.0) && r < px(80.0), "{at}");
+                let travel = slider.size.width - handle.size.width;
+                let expect = slider.left() + handle.size.width / 2.0 + travel * value;
+                assert!(
+                    (handle.center().x - expect).abs() < px(1.0),
+                    "{at}: {handle:?}"
+                );
+
+                let from = handle.center();
+                let to = gpui::point(slider.right() + px(40.0), from.y);
+                cx.simulate_mouse_down(from, gpui::MouseButton::Left, Modifiers::none());
+                cx.simulate_mouse_move(to, gpui::MouseButton::Left, Modifiers::none());
+                cx.simulate_mouse_up(to, gpui::MouseButton::Left, Modifiers::none());
+                let changes = cx.update(|_, cx| {
+                    std::mem::take(&mut cx.default_global::<PanelControl>().setting_changes)
+                });
+                let at_end = |c: &Setting| match (tuning, *c) {
+                    (PointerTuning::Simple, Setting::PointerRelease(v)) => {
+                        (v - POINTER_RELEASE_DEG_MAX).abs() < 1e-3
+                    }
+                    (PointerTuning::Detailed, Setting::PointerSmoothing(v)) => {
+                        (v - POINTER_SMOOTHING_MAX).abs() < 1e-6
+                    }
+                    _ => false,
+                };
+                assert!(changes.iter().any(at_end), "{at}: {changes:?}");
             }
         }
     }
