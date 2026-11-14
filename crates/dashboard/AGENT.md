@@ -7,3 +7,19 @@
 ## 主な公開 API
 
 `dashboard::{spec(opened, settings, debug), pose(distance, height), hide, show}`, `Dashboard`, `Menu`, `Screen`, `Page`, `Summon`, `OPEN_SOUND`, `CLOSE_SOUND`（日付の書式は `i18n::date`、ウィンドウとアプリの突き合わせは `kernel::desktop`）
+
+## ファイルの分け方（ルール）
+
+**画面・部品ごとに 1 ファイル**。`lib.rs` には公開 API（`spec` / `pose` / `hide` / `show` / `Page`）と、ビューの状態（`Dashboard` / `Screen` の構造体。フィールドはどのファイルからも触る）と、どこでも使う定数だけを置き、振る舞いは下のファイルの `impl` に書く。1 つのファイルだけが使う定数はそのファイルに置く。テストはそのファイルの子（`bar/tests.rs` など。非公開の項目に触れる）に置き、共通の道具は `test_util.rs`。
+
+| ファイル | 中身 |
+|---|---|
+| `bar.rs` | バー（`impl Dashboard` と描画）: ボタン・配信のボタン・ニャプリの作業の知らせ、画面のはめ外し |
+| `menu.rs` | メニューのポップオーバー（`Menu`）と終了の確かめのダイアログ |
+| `screen.rs` | `Screen` の作り方・取得元の一覧の見張り・ページの振り分け |
+| `launcher.rs` | ランチャー（ニャプリ・起動中のアプリ・すべてのアプリ、検索欄、起動） |
+| `now_playing.rs` | 再生中 |
+| `quick_settings.rs` | クイック設定（時刻・日付・テーマ・電池） |
+| `mirror.rs` | 配信を映すパネル（`Mirror`）と、起動したアプリのウィンドウを待つ画面 |
+| `parts.rs` | 画面どうしで使う小さな部品（見出し・グリッド・タイル・時計、閉じる・配信を開く） |
+
