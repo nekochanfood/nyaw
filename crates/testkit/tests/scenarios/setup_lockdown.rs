@@ -47,8 +47,9 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
     assert!(!kit.kernel.panel(0).closed, "ロックダウン中は閉じられない");
 
     // 頭の正面に、HMD の高さで置かれる。
+    let d = setup::follow().distance;
     let p = kit.panel_pose().position;
-    assert!(p.abs_diff_eq(Vec3::new(0.0, 1.6, -1.0), 5e-2), "{p}");
+    assert!(p.abs_diff_eq(Vec3::new(0.0, 1.6, -d), 5e-2), "{p}");
 
     // 小さく首を振っても逃げない（不感帯）。
     settle(&mut kit, head(0.0, 1.6, 0.0, 10f32.to_radians()));
@@ -64,19 +65,16 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
     let up = kit.panel_pose().orientation * Vec3::Y;
     assert!(up.abs_diff_eq(Vec3::Y, 1e-3), "パネルは立ったまま: {up}");
 
-    // 大きく向きを変えると付いてくる（右へ 90°）。
+    // 大きく向きを変えると付いてくる（右へ 90°）。追いかけは 2° 手前で止まるので、ずれは距離に比例する。
     settle(&mut kit, head(0.0, 1.6, 0.0, 90f32.to_radians()));
     let p = kit.panel_pose().position;
-    assert!(p.abs_diff_eq(Vec3::new(1.0, 1.6, 0.0), 8e-2), "{p}");
+    assert!(p.abs_diff_eq(Vec3::new(d, 1.6, 0.0), 4e-2 * d), "{p}");
 
     // 歩いてしゃがむと、距離を保って高さも合わせて付いてくる。
     let walked = head(4.0, 1.0, -3.0, 90f32.to_radians());
     settle(&mut kit, walked);
     let p = kit.panel_pose().position;
-    assert!(
-        (flat_distance(p, walked.position) - 1.0).abs() < 5e-2,
-        "{p}"
-    );
+    assert!((flat_distance(p, walked.position) - d).abs() < 5e-2, "{p}");
     assert!((p.y - 1.0).abs() < 5e-2, "高さ {}", p.y);
 
     // 追従しても操作できる: 最後まで進めて完了すると、ロックダウンが外れて閉じる。
