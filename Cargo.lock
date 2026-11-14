@@ -5073,7 +5073,7 @@ dependencies = [
 
 [[package]]
 name = "setup"
-version = "2026.0.1"
+version = "2026.0.2"
 dependencies = [
  "design",
  "gpui",
