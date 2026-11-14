@@ -200,6 +200,16 @@ impl DominantHand {
     }
 }
 
+/// アップデートのチャンネル（`stable` / `nightly`）。stable は正式なリリースだけ、nightly はプレリリース
+/// （alpha・beta など。GitHub でプレリリースの印が付いたもの）も勧める。カーネルは値を持つだけで、従うのは `updater`。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Nightly,
+}
+
 /// `config.toml` の中身。どのキーも省略でき、知らないキーは無視する。
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default)]
@@ -252,6 +262,8 @@ pub struct Config {
     pub key_sound: Option<bool>,
     /// キーを押した音の音量（0〜1。[`SCALE_STEP`] の刻み）。省略で 1。画面での切り替えはここへ書き戻される。
     pub key_sound_volume: Option<f32>,
+    /// アップデートのチャンネル（`stable` / `nightly`）。省略で `stable`。画面での切り替えはここへ書き戻される。
+    pub update_channel: UpdateChannel,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -431,6 +443,10 @@ emulator = false
         );
         assert!(parse("dominant_hand = \"both\"").is_err());
         assert!(parse("wrist_design = \"sundial\"").is_err());
+        assert_eq!(parse("").unwrap().update_channel, UpdateChannel::Stable);
+        let nightly = parse("update_channel = \"nightly\"").unwrap();
+        assert_eq!(nightly.update_channel, UpdateChannel::Nightly);
+        assert!(parse("update_channel = \"beta\"").is_err());
     }
 
     #[test]

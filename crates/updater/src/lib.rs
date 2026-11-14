@@ -1,5 +1,6 @@
 //! アプリの更新。GitHub のリリースから今より新しいビルドを見つけて知らせ、ユーザーが選んだら落として入れ替える
 //! （勝手には入れない）。新旧は版の文字（CalVer。書き方が決まっていない）ではなく、ビルド番号で比べる（`AGENT.md`）。
+//! どのリリースを勧めるかは設定のチャンネル（`update_channel`。stable はプレリリースを除く）で決める。
 
 use std::fmt::Display;
 use std::fs;
@@ -10,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use gpui::App;
+use kernel::UpdateChannel;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use ui::PanelControl;
@@ -38,6 +40,8 @@ pub struct Release {
     /// 公開した時刻（ISO 8601）とリリースのページ。
     pub published_at: Option<String>,
     pub page: String,
+    /// プレリリース（GitHub の印。alpha・beta など）。nightly のチャンネルにだけ勧める。
+    pub prerelease: bool,
     pub installer: Installer,
 }
 
@@ -73,6 +77,8 @@ struct ApiRelease {
     body: Option<String>,
     #[serde(default)]
     draft: bool,
+    #[serde(default)]
+    prerelease: bool,
     published_at: Option<String>,
     html_url: String,
     #[serde(default)]
@@ -112,6 +118,7 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
                 notes: r.body.unwrap_or_default(),
                 published_at: r.published_at,
                 page: r.html_url,
+                prerelease: r.prerelease,
                 installer: Installer {
                     name: asset.name.clone(),
                     url: asset.browser_download_url.clone(),
@@ -123,12 +130,14 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
         .collect())
 }
 
-/// `releases` のうち、ビルド番号が `build` より大きいものの中で一番新しいもの。
-pub fn newest(releases: Vec<Release>, build: u32) -> Option<Release> {
+/// `releases` のうち、`channel` で受け取るもの（stable はプレリリースを除く）で、ビルド番号が `build` より大きいものの中で
+/// 一番新しいもの。
+pub fn newest(releases: &[Release], build: u32, channel: UpdateChannel) -> Option<Release> {
     releases
-        .into_iter()
-        .filter(|r| r.build > build)
+        .iter()
+        .filter(|r| r.build > build && (channel == UpdateChannel::Nightly || !r.prerelease))
         .max_by_key(|r| r.build)
+        .cloned()
 }
 
 /// リリースの一覧を返す GitHub の API（リポジトリは Cargo.toml の `repository`）。
@@ -138,8 +147,8 @@ pub fn releases_url() -> String {
     format!("{api}/releases?per_page=30")
 }
 
-/// 一覧 `url` に、ビルド `build` より新しいリリースがあるか確かめる。ネットワークを使うので別スレッドで呼ぶ。
-pub fn check(url: &str, build: u32) -> Result<Option<Release>, String> {
+/// 一覧 `url` のリリースを読む（どれが新しいかは [`newest`] で選ぶ）。ネットワークを使うので別スレッドで呼ぶ。
+pub fn check(url: &str) -> Result<Vec<Release>, String> {
     let mut response = agent(LIST_TIMEOUT)
         .get(url)
         .header("Accept", "application/vnd.github+json")
@@ -155,7 +164,7 @@ pub fn check(url: &str, build: u32) -> Result<Option<Release>, String> {
     if body.len() as u64 > MAX_LIST {
         return Err(format!("the release list is larger than {MAX_LIST} bytes"));
     }
-    Ok(newest(parse_releases(&body)?, build))
+    parse_releases(&body)
 }
 
 /// `release` のインストーラーを `dir` に落とし、大きさと SHA-256 を確かめる。落とした量（バイト）を `progress` に書く。
@@ -262,8 +271,9 @@ pub struct Updater {
     pub source: String,
     pub dir: PathBuf,
     pub launch: fn(&Path) -> Result<(), String>,
-    /// 見つけた新しいリリース（最新なら `None`）。
-    pub latest: Option<Release>,
+    /// 最後に確かめたリリースの一覧（チャンネルを問わない）。勧めるものは [`latest`] が今のチャンネルで選ぶので、
+    /// チャンネルを切り替えると確かめ直さずにすぐ変わる。
+    pub found: Vec<Release>,
     pub step: Step,
     /// 一度でも確かめ終えた。
     pub checked: bool,
@@ -280,7 +290,7 @@ impl Default for Updater {
             source: releases_url(),
             dir: std::env::temp_dir().join("nyaw-update"),
             launch: run_installer,
-            latest: None,
+            found: Vec::new(),
             step: Step::Idle,
             checked: false,
             error: None,
@@ -308,10 +318,15 @@ pub fn state(cx: &mut App) -> &Updater {
     cx.default_global::<Updater>()
 }
 
+/// 今のチャンネル（設定の `update_channel`）で勧める新しいリリース（最新なら `None`）。
+pub fn latest(cx: &App) -> Option<Release> {
+    let u = cx.try_global::<Updater>()?;
+    newest(&u.found, u.build, ui::settings(cx).update_channel)
+}
+
 /// 新しいリリースがあるか（ダッシュボードのボタン）。
 pub fn available(cx: &App) -> bool {
-    cx.try_global::<Updater>()
-        .is_some_and(|u| u.latest.is_some())
+    latest(cx).is_some()
 }
 
 /// 新しいリリースがあるか確かめる（別スレッド）。何かしている間は何もしない。
@@ -322,28 +337,27 @@ pub fn check_now(cx: &mut App) {
     }
     u.step = Step::Checking;
     u.error = None;
-    let (url, build) = (u.source.clone(), u.build);
-    let task = cx
-        .background_executor()
-        .spawn(async move { check(&url, build) });
+    let url = u.source.clone();
+    let task = cx.background_executor().spawn(async move { check(&url) });
     cx.spawn(async move |cx| {
         let result = task.await;
         cx.update(|cx| {
             let u = cx.default_global::<Updater>();
             u.step = Step::Idle;
             match result {
-                Ok(latest) => {
-                    match &latest {
+                Ok(found) => {
+                    u.found = found;
+                    u.checked = true;
+                    let build = u.build;
+                    match latest(cx) {
                         Some(r) => logger::info!(
                             "update available",
                             version = r.version,
                             build = r.build,
-                            current = u.build
+                            current = build
                         ),
-                        None => logger::info!("up to date", build = u.build),
+                        None => logger::info!("up to date", build = build),
                     }
-                    u.latest = latest;
-                    u.checked = true;
                 }
                 Err(e) => {
                     logger::warn!("cannot check for updates", error = e);
@@ -358,10 +372,10 @@ pub fn check_now(cx: &mut App) {
 /// 見つけたリリースを落とし、インストーラーを走らせてアプリを終える（インストーラーが入れ替えて起動し直す）。
 /// ユーザーが押したときだけ呼ぶ。何かしている間は何もしない。
 pub fn install(cx: &mut App) {
-    let u = cx.default_global::<Updater>();
-    let Some(release) = u.latest.clone() else {
+    let Some(release) = latest(cx) else {
         return;
     };
+    let u = cx.default_global::<Updater>();
     if !matches!(u.step, Step::Idle) {
         return;
     }

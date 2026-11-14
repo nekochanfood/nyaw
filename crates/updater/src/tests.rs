@@ -31,6 +31,7 @@ fn the_build_number_hides_in_the_notes_and_installers_are_plain_names() {
 }
 
 /// GitHub の API の形（使うところだけ）。`build` があれば、ワークフローのとおりリリースノートの末尾に注釈を足す。
+/// 名前の付いた版（`-<名前>.<数>`）は、ワークフローのとおりプレリリース。
 fn release(
     tag: &str,
     draft: bool,
@@ -44,7 +45,7 @@ fn release(
         "name": tag,
         "body": format!("## What's Changed\n* {tag}{marker}"),
         "draft": draft,
-        "prerelease": true,
+        "prerelease": tag.contains('-'),
         "published_at": "2026-11-13T00:00:00Z",
         "html_url": format!("https://github.com/nekochanfood/nyaw/releases/tag/{tag}"),
         "assets": assets.iter().map(|(name, size, digest)| serde_json::json!({
@@ -102,6 +103,14 @@ fn list(base: &str) -> Vec<u8> {
             &[("nyaw-2026.0.1-setup.exe", 5, None)],
             base
         ),
+        // 正式なリリース（stable のチャンネルにも勧める）。
+        release(
+            "v2026.0.2",
+            false,
+            Some(640),
+            &[("nyaw-2026.0.2-setup.exe", 5, Some("sha256:123"))],
+            base
+        ),
     ]))
     .unwrap()
 }
@@ -114,8 +123,16 @@ fn the_newest_build_above_ours_wins_whatever_the_version_says() {
             .iter()
             .map(|r| (r.version.as_str(), r.build))
             .collect::<Vec<_>>(),
-        [("2026.0.1-patch.2", 655), ("2026.0.1-ぽてと.1", 650)],
+        [
+            ("2026.0.1-patch.2", 655),
+            ("2026.0.1-ぽてと.1", 650),
+            ("2026.0.2", 640)
+        ],
         "下書きと、インストーラー・SHA-256・ビルド番号のどれかが無いものは除く"
+    );
+    assert_eq!(
+        releases.iter().map(|r| r.prerelease).collect::<Vec<_>>(),
+        [true, true, false]
     );
     let patch2 = &releases[0];
     assert_eq!(patch2.installer.sha256, "abc");
@@ -128,7 +145,7 @@ fn the_newest_build_above_ours_wins_whatever_the_version_says() {
             .notes
             .starts_with("## What's Changed\n* v2026.0.1-patch.2")
     );
-    let newer = |build| newest(releases.clone(), build).map(|r| r.version);
+    let newer = |build| newest(&releases, build, UpdateChannel::Nightly).map(|r| r.version);
     assert_eq!(newer(650).as_deref(), Some("2026.0.1-patch.2"));
     assert_eq!(
         newer(0).as_deref(),
@@ -141,6 +158,10 @@ fn the_newest_build_above_ours_wins_whatever_the_version_says() {
         None,
         "main の先にいるビルドに古いリリースを勧めない"
     );
+    // stable はプレリリースを除いた中で選ぶ（プレリリースの方が新しくても）。
+    let stable = |build| newest(&releases, build, UpdateChannel::Stable).map(|r| r.version);
+    assert_eq!(stable(0).as_deref(), Some("2026.0.2"));
+    assert_eq!(stable(640), None);
 }
 
 #[test]
@@ -269,9 +290,8 @@ fn fixture() -> (String, Files) {
 #[test]
 fn downloads_and_verifies_the_installer() {
     let (base, files) = fixture();
-    let release = check(&format!("{base}/releases"), 650)
-        .unwrap()
-        .expect("patch.2 is newer");
+    let found = check(&format!("{base}/releases")).unwrap();
+    let release = newest(&found, 650, UpdateChannel::Nightly).expect("patch.2 is newer");
     let dir = temp("download");
     let progress = AtomicU64::new(0);
     let path = download(&release, &dir, &progress).unwrap();
@@ -309,7 +329,7 @@ fn downloads_and_verifies_the_installer() {
     );
     assert!(!path.exists());
     files.lock().unwrap().clear();
-    assert!(check(&format!("{base}/releases"), 650).is_err(), "404");
+    assert!(check(&format!("{base}/releases")).is_err(), "404");
     let _ = fs::remove_dir_all(dir);
 }
 
@@ -337,6 +357,8 @@ fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
             launch: fake_launch,
             ..Default::default()
         });
+        // fixture のリリースはどちらもプレリリースなので、nightly で受け取る。
+        cx.default_global::<PanelControl>().settings.update_channel = UpdateChannel::Nightly;
         assert!(!available(cx));
         // 確かめる前に入れようとしても何もしない。
         install(cx);
@@ -349,11 +371,17 @@ fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
         assert!(available(cx));
         let u = state(cx);
         assert!(u.checked && u.error.is_none());
-        assert_eq!(u.latest.as_ref().unwrap().version, "2026.0.1-patch.2");
+        assert_eq!(latest(cx).unwrap().version, "2026.0.1-patch.2");
         assert!(
             !cx.default_global::<PanelControl>().quit,
             "見つけただけでは入れない"
         );
+        // stable に切り替えると、確かめ直さなくても勧めなくなる（入れようとしても何もしない）。
+        cx.default_global::<PanelControl>().settings.update_channel = UpdateChannel::Stable;
+        assert!(!available(cx));
+        install(cx);
+        assert!(matches!(state(cx).step, Step::Idle));
+        cx.default_global::<PanelControl>().settings.update_channel = UpdateChannel::Nightly;
 
         FAIL.store(true, Ordering::Relaxed);
         install(cx);
