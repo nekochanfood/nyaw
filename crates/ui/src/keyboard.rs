@@ -75,11 +75,12 @@ const HAND_DISTANCE: f32 = 0.45;
 /// 標準の大きさの、手首で端まで届く大きさに対する倍率。
 const SIZE_SCALE: f32 = 1.5;
 
-/// 種類（`kind`）の標準の大きさ（m。等倍）。ホームポジションに向けた手首を外へ [`WRIST_TILT`] 倒すと遠い方のキーの端に届く大きさの、
-/// [`SIZE_SCALE`] 倍。
+/// 種類（`kind`）の標準の大きさ（m。等倍）。キーの大きさは種類によらずそろえる。既定でいちばん広いフルサイズで、
+/// ホームポジションに向けた手首を外へ [`WRIST_TILT`] 倒すと遠い方のキーの端に届く大きさの、[`SIZE_SCALE`] 倍。
 fn panel_size(kind: KeyboardType) -> Vec2 {
     let (w, h) = panel_resolution(kind);
-    let far = HOME_U.max(kind.width() - HOME_U) * view::KEY_UNIT;
+    let full = KeyboardType::Full.width();
+    let far = HOME_U.max(full - HOME_U) * view::KEY_UNIT;
     Vec2::new(w as f32, h as f32) * (SIZE_SCALE * HAND_DISTANCE * WRIST_TILT.tan() / far)
 }
 
@@ -764,10 +765,14 @@ mod tests {
             assert_eq!(kernel.panel(panel).parent, None);
         });
     }
-    /// 標準の大きさを [`SIZE_SCALE`] で割ると、ホームポジションに向けた手首を外へ 22.5° 倒して遠い方のキーの端にちょうど届く。
+    /// 標準の大きさでは、キーの大きさが種類によらずそろう。[`SIZE_SCALE`] で割ると、フルサイズはホームポジションに向けた
+    /// 手首を外へ 22.5° 倒して遠い方のキーの端にちょうど届き、ほかの種類はその内側に収まる。
     #[gpui::test]
-    fn a_light_wrist_tilt_reaches_the_edges_of_the_keys(cx: &mut TestAppContext) {
+    fn keys_are_the_same_size_across_types_and_a_light_wrist_tilt_reaches_them(
+        cx: &mut TestAppContext,
+    ) {
         cx.update(|cx| {
+            let mut pitches = Vec::new();
             for kind in KeyboardType::ALL {
                 cx.default_global::<crate::PanelControl>().settings.keyboard = kind;
                 dismiss_keyboard(cx);
@@ -785,7 +790,17 @@ mod tests {
                         .to_degrees()
                 };
                 let far = tilt(left).max(tilt(right));
-                assert!((far - 22.5).abs() < 1e-3, "{kind:?}: {far}");
+                if kind == KeyboardType::Full {
+                    assert!((far - 22.5).abs() < 1e-3, "{kind:?}: {far}");
+                } else {
+                    assert!(far < 22.5, "{kind:?}: {far}");
+                }
+                pitches.push((m_per_px, spec.size.y / spec.resolution.1 as f32));
+            }
+            let (x, y) = pitches[0];
+            for (kind, &(px, py)) in KeyboardType::ALL.iter().zip(&pitches) {
+                assert!((px / x - 1.).abs() < 1e-4, "{kind:?}: {px} != {x}");
+                assert!((py / y - 1.).abs() < 1e-4, "{kind:?}: {py} != {y}");
             }
         });
     }
