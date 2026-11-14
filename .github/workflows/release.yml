@@ -4,7 +4,10 @@ name: Release
 # - main で Cargo.toml の版を上げた push（版上げの PR をマージしたとき）。このジョブが v<版> のリリースを作る
 #   （GITHUB_TOKEN で作ったリリースではワークフローが発火しないので、作るところから添付まで同じジョブでする）。
 #   インストーラーは版上げの PR のチェックで作ったものをそのまま使う（使えないときはここでビルドし直す）。
-#   版上げの PR は Actions の Prepare release（prepare-release.yml）で作れる。名前付きの版（2026.0.2-beta.1）もこれで出せる
+#   版上げの PR は Actions の Prepare release（prepare-release.yml）で作れる。名前付きの版（2026.0.2-beta.1）もこれで出せる。
+#   出した後は Prepare release で main を次の版の -dev.0 に上げる（-dev.<数> の版は出さない）
+# - Actions からこのワークフローを名前（alpha・beta など）を入れて実行したとき。そのブランチの先頭を v<版>-<名前>.<数>
+#   のプレリリースとして出す（版上げの PR を開いたまま試してもらう。Cargo.toml の版は変えず、表示する版だけ変える）
 # - 画面か自分の gh で公開したリリース（タグの commit をビルドした PR の run があれば、そのインストーラーを使う）
 # それ以外の main の push はビルドだけして依存のキャッシュを保存する。タグや PR の run は main のキャッシュを読めるので、
 # 依存をビルドし直さない（同じジョブなので rust-cache のキーも揃う）。リリース時にしか通らないビルドの失敗も先に分かる。
@@ -16,16 +19,21 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Prepare release（prepare-release.yml）が版上げのブランチで起こす（GITHUB_TOKEN の push・PR では pull_request が来ない）
+  # Prepare release（prepare-release.yml）が版上げのブランチで起こす（GITHUB_TOKEN の push・PR では pull_request が来ない）。
+  # 名前を入れて画面から実行するとプレリリースを出す
   workflow_dispatch:
+    inputs:
+      prerelease:
+        description: プレリリースの名前（alpha・beta など。数は続きを振る）。空ならインストーラーを作って置くだけ
+        required: false
 
 jobs:
   installer:
     runs-on: windows-latest
     permissions:
       contents: write
-      # PR の run のインストーラーを探して落とす
-      actions: read
+      # PR の run のインストーラーを探して落とす・出した後に Prepare release を起こす
+      actions: write
       pull-requests: read
     defaults:
       run:
@@ -40,18 +48,21 @@ jobs:
           # ビルド番号（HEAD までのコミット数。crates/updater/build.rs）を数えるので、履歴を全部取る
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      # 出すタグを TAG に、ビルドするかを BUILD に置く。公開されたリリースならそのタグ。
+      # 出すタグを TAG に、ビルドするかを BUILD に、この run でリリースに添付するかを PUBLISH に置く。
+      # 公開されたリリースならそのタグ。プレリリースなら v<版>-<名前>.<その名前で出した最大の数 + 1>。
       # それ以外は版が上がったときだけ v<新しい版>（main の push は直前と、PR とブランチの run は main から分かれた所と比べる）。
-      # main の push は版を上げなくてもビルドする。
+      # main の push は版を上げなくてもビルドする。-dev.<数> への版上げは出さない。
       # そのタグが別の commit に既にあれば版の上げ間違いなので止める（この commit を指していれば、やり直した run）。
-      # ノートは前の版のタグからの差分（PREV。無ければ GitHub に任せる）
+      # ノートは比べる所から辿れる一番新しいタグからの差分（PREV。-dev は出さないので前の版のタグとは限らない）
       - name: Decide the release
         env:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
+          PRERELEASE: ${{ inputs.prerelease }}
           BEFORE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
         run: |
           if [ -n "$RELEASE_TAG" ]; then
             echo "TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+            echo "PUBLISH=1" >> "$GITHUB_ENV"
             echo "BUILD=1" >> "$GITHUB_ENV"
             exit 0
           fi
@@ -60,17 +71,31 @@ jobs:
           else
             BEFORE=$(git merge-base HEAD "$BEFORE")
           fi
+          if prev=$(git describe --tags --abbrev=0 "$BEFORE" 2> /dev/null); then
+            echo "PREV=$prev" >> "$GITHUB_ENV"
+          fi
           ver() { sed -n 's/^version = "\([^"]*\)".*/\1/p'; }
           new=$(ver < Cargo.toml)
+          if [ -n "$PRERELEASE" ]; then
+            if [[ $new == *-* ]]; then
+              echo "::error::the version $new already has a label; run this on the version-bump PR's branch"
+              exit 1
+            fi
+            n=$(git tag -l "v$new-$PRERELEASE.*" | sed 's/.*\.//' | sort -n | tail -1)
+            echo "TAG=v$new-$PRERELEASE.$((n + 1))" >> "$GITHUB_ENV"
+            echo "PUBLISH=1" >> "$GITHUB_ENV"
+            echo "BUILD=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
           old=$(git show "$BEFORE:Cargo.toml" | ver) || true
-          [ -n "$old" ] && [ "$new" != "$old" ] || exit 0
+          [ -n "$old" ] && [ "$new" != "$old" ] && [[ $new != *-dev.* ]] || exit 0
           at=$(git ls-remote --tags origin "refs/tags/v$new" | cut -f1)
           if [ -n "$at" ] && [ "$at" != "$(git rev-parse HEAD)" ]; then
             echo "::error::v$new is already tagged at $at"
             exit 1
           fi
-          if git ls-remote --exit-code --tags origin "refs/tags/v$old" > /dev/null; then
-            echo "PREV=v$old" >> "$GITHUB_ENV"
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            echo "PUBLISH=1" >> "$GITHUB_ENV"
           fi
           echo "TAG=v$new" >> "$GITHUB_ENV"
           echo "BUILD=1" >> "$GITHUB_ENV"
@@ -106,9 +131,9 @@ jobs:
       # この commit と中身（ツリー）もビルド番号（コミット数）も同じときだけ使う（中身が同じならワークフローも同じなので、
       # PR の途中で書き換えたワークフローが作ったものも弾ける）。手で公開したリリースは、タグの commit そのものをビルドした run から。
       # PR が main の先頭の上に無いままマージした・ビルドが終わる前にマージした・版が違う・どこかで失敗した、のどれでも
-      # BUILD が残り、この後でビルドし直す
+      # BUILD が残り、この後でビルドし直す。プレリリースは表示する版が違うので、いつもビルドし直す
       - name: Reuse the installer built in the PR
-        if: (github.event_name == 'push' || github.event_name == 'release') && env.TAG != ''
+        if: env.PUBLISH == '1' && !inputs.prerelease
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -124,8 +149,10 @@ jobs:
               exit 0
             fi
           fi
-          run=$(gh run list -w release.yml -c "$head" -s success -L 1 --json databaseId -q '.[0].databaseId')
-          gh run download "$run" -n installer -D pr-installer
+          # 同じ commit のプレリリースの run にはインストーラーを置かないので、置いてある run まで遡る
+          for run in $(gh run list -w release.yml -c "$head" -s success --json databaseId -q '.[].databaseId'); do
+            gh run download "$run" -n installer -D pr-installer && break
+          done
           mkdir -p target/installer
           mv "pr-installer/nyaw-${TAG#v}-setup.exe" target/installer/
           echo "::notice::reusing the installer built by run $run for $head"
@@ -147,14 +174,15 @@ jobs:
       - if: env.BUILD == '1' && env.TAG != ''
         run: iscc installer/nyaw.iss
       # 版上げの PR・ブランチでは作ったインストーラーを置いておく（マージ後の push がそのまま出す。落として試すこともできる）
-      - if: github.event_name != 'push' && github.event_name != 'release' && env.TAG != ''
+      - if: env.TAG != '' && env.PUBLISH != '1'
         uses: actions/upload-artifact@v4
         with:
           name: installer
           path: target/installer/*.exe
           if-no-files-found: error
-      # 版上げの push は、インストーラーができてからリリースを作る（今までの版と同じくプレリリース。やり直しの run なら作らない）
-      - if: github.event_name == 'push' && env.TAG != ''
+      # 版上げの push とプレリリースは、インストーラーができてからリリースを作る
+      # （今までの版と同じくプレリリース。公開されたリリースや、やり直しの run なら作らない）
+      - if: env.PUBLISH == '1'
         run: |
           gh release view "$TAG" > /dev/null 2>&1 ||
             gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --prerelease --generate-notes ${PREV:+--notes-start-tag "$PREV"}
@@ -162,7 +190,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
       # アプリの更新は新旧をビルド番号（HEAD までのコミット数。crates/updater/build.rs と同じ数え方）で比べる。
       # 名前にも画面にも出さず、リリースノートの末尾に見えない注釈で残す（足し直すときは前のものを消す）
-      - if: (github.event_name == 'push' || github.event_name == 'release') && env.TAG != ''
+      - if: env.PUBLISH == '1'
         run: |
           build=$(git rev-list --count HEAD)
           gh release view "$TAG" --json body -q .body | sed '/^<!-- nyaw-build: [0-9]* -->$/d' > notes.md
@@ -170,7 +198,17 @@ jobs:
           gh release edit "$TAG" --notes-file notes.md
         env:
           GH_TOKEN: ${{ github.token }}
-      - if: (github.event_name == 'push' || github.event_name == 'release') && env.TAG != ''
+      - if: env.PUBLISH == '1'
         run: gh release upload "$TAG" target/installer/*.exe --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+      # 版上げの push で出したら、main を次の版の -dev.0 に上げる（出した版に名前があればその名前を除いた版、
+      # 無ければ末尾を 1 つ上げた版）。Prepare release がその PR を作ってすぐマージする
+      - if: github.event_name == 'push' && env.TAG != ''
+        run: |
+          v=${TAG#v}
+          next=${v%%-*}
+          [ "$v" != "$next" ] || next=${next%.*}.$((${next##*.} + 1))
+          gh workflow run prepare-release.yml --ref main -f version="$next-dev.0"
         env:
           GH_TOKEN: ${{ github.token }}
