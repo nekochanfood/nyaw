@@ -531,9 +531,14 @@ impl Render for KeyboardView {
             // 見た目の値は実寸（[`KEY_UNIT`]）で決めてあるので、キーの大きさに比例させる。
             let unit = self.unit;
             let k = unit / KEY_UNIT;
+            // 既定の見た目は種類のもので、隙間には全体の設定のキーの間隔（`key_gap`）を掛ける。
             let appearance = self
                 .appearance
-                .unwrap_or_else(|| KeyAppearance::for_type(self.kind))
+                .unwrap_or_else(|| {
+                    let mut appearance = KeyAppearance::for_type(self.kind);
+                    appearance.gap *= crate::settings(cx).key_gap;
+                    appearance
+                })
                 .normalized();
             let (gap, corner_radius) = (appearance.gap * k, appearance.corner_radius * k);
             let keys = keyboard.keycaps(self.kind);
@@ -856,6 +861,28 @@ mod tests {
         let played = press(cx, key, (false, 0.3));
         assert!(played.is_empty(), "オフでは鳴らさない: {played:?}");
         assert_eq!(sent.get(), 2, "鳴らさなくてもキーは届く");
+    }
+
+    /// キーの間隔は全体の設定（`key_gap`）の倍率で、種類の既定の隙間に掛かる（0 でキーが接する）。
+    #[gpui::test]
+    fn the_key_gap_setting_scales_the_gap_between_keys(cx: &mut TestAppContext) {
+        let db = Database::load().unwrap();
+        let (_, cx) = cx.add_window_view(|_, _| KeyboardView {
+            show_settings: false,
+            ..ready(&db, "us", KeyboardType::Full)
+        });
+        cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
+        let base = KeyAppearance::for_type(KeyboardType::Full).gap;
+        for scale in [1., 2., 0.] {
+            cx.update(|window, cx| {
+                cx.default_global::<crate::PanelControl>().settings.key_gap = scale;
+                window.refresh();
+            });
+            cx.run_until_parked();
+            let a = cx.debug_bounds("key-AC01").unwrap();
+            let gap = f32::from(cx.debug_bounds("key-AC02").unwrap().left() - a.right());
+            assert!((gap - base * scale).abs() < 1e-3, "{scale}: {gap}");
+        }
     }
 
     /// 見本は実物と同じ並びを `unit` に比例して縮めて描き、押すと音は鳴るが、文字はどこにも送らず、繰り返しもしない。

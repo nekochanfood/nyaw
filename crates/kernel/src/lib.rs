@@ -19,9 +19,9 @@ use subsystems::os;
 pub use config::{
     COLOR_HISTORY, CURSOR_SCALE_MAX, CURSOR_SCALE_MIN, Config, DASHBOARD_DISTANCE,
     DASHBOARD_DISTANCE_MAX, DASHBOARD_DISTANCE_MIN, DASHBOARD_HEIGHT_MAX, DASHBOARD_HEIGHT_MIN,
-    DASHBOARD_STEP, DominantHand, Language, LodQuality, PersonalColor, PointerMode, PointerTuning,
-    SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN,
-    UpdateChannel, WristDesign, WristFace,
+    DASHBOARD_STEP, DominantHand, KEY_GAP_MAX, KEY_GAP_MIN, KEYBOARD_SCALE_MAX, KEYBOARD_SCALE_MIN,
+    Language, LodQuality, PersonalColor, PointerMode, PointerTuning, SCALE_STEP, TEXT_SCALE_MAX,
+    TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, UpdateChannel, WristDesign, WristFace,
 };
 pub use overlay::{
     self, Anchor, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent,
@@ -153,6 +153,10 @@ pub enum Setting {
     MirrorFrameRate(u32),
     /// 仮想キーボードの種類（`keyboard`）。
     Keyboard(subsystems::keyboard::KeyboardType),
+    /// 仮想キーボードの大きさの倍率（`keyboard_scale`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、従うのは UI 層。
+    KeyboardScale(f32),
+    /// 仮想キーボードのキーの間隔の倍率（`key_gap`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、従うのは UI 層。
+    KeyGap(f32),
     /// ダッシュボードが出ている間、ゲームへの入力を止めるか（`block_input`）。
     BlockInput(bool),
     /// 距離 LOD の品質（`lod_quality`）。
@@ -203,6 +207,10 @@ pub struct Settings {
     pub wrist_design: WristDesign,
     pub mirror_frame_rate: u32,
     pub keyboard: subsystems::keyboard::KeyboardType,
+    /// 仮想キーボードの大きさの倍率（等倍 = 1）。
+    pub keyboard_scale: f32,
+    /// 仮想キーボードのキーの間隔の倍率（等倍 = 1。0 でキーが接する）。
+    pub key_gap: f32,
     pub block_input: bool,
     pub lod_quality: LodQuality,
     pub setup_done: bool,
@@ -248,6 +256,8 @@ impl Default for Settings {
             wrist_design: Default::default(),
             mirror_frame_rate: desktop::DEFAULT_FRAME_RATE,
             keyboard: Default::default(),
+            keyboard_scale: 1.0,
+            key_gap: 1.0,
             block_input: true,
             lod_quality: Default::default(),
             setup_done: false,
@@ -562,6 +572,13 @@ impl<B: VrBackend> Kernel<B> {
             wrist_design: self.config.wrist_design,
             mirror_frame_rate: self.mirror_frame_rate(),
             keyboard: self.config.keyboard,
+            keyboard_scale: self.config.keyboard_scale.map_or(1.0, |s| {
+                config::clamp_scale(s, KEYBOARD_SCALE_MIN, KEYBOARD_SCALE_MAX)
+            }),
+            key_gap: self
+                .config
+                .key_gap
+                .map_or(1.0, |g| config::clamp_scale(g, KEY_GAP_MIN, KEY_GAP_MAX)),
             block_input: self.overlay.block_input(),
             lod_quality: self.config.lod_quality,
             setup_done: self.config.setup_done,
@@ -741,6 +758,16 @@ impl<B: VrBackend> Kernel<B> {
             Setting::KeySound(b) => {
                 self.config.key_sound = Some(b);
                 ("key_sound", config::value(b))
+            }
+            Setting::KeyboardScale(s) => {
+                let s = config::clamp_scale(s, KEYBOARD_SCALE_MIN, KEYBOARD_SCALE_MAX);
+                self.config.keyboard_scale = Some(s);
+                ("keyboard_scale", config::value(s))
+            }
+            Setting::KeyGap(g) => {
+                let g = config::clamp_scale(g, KEY_GAP_MIN, KEY_GAP_MAX);
+                self.config.key_gap = Some(g);
+                ("key_gap", config::value(g))
             }
             Setting::KeySoundVolume(v) => {
                 let v = config::clamp_scale(v, 0.0, 1.0);
@@ -1417,6 +1444,42 @@ mod tests {
         let k = Kernel::with_backend(vr::mock::MockBackend::default(), config);
         let s = k.settings();
         assert_eq!((s.key_sound, s.key_sound_volume), (false, 1.0));
+    }
+
+    /// キーボードの大きさとキーの間隔は既定で等倍。互いに独立で、範囲と刻みに収まり、設定ファイルの値も同じく収める。
+    #[test]
+    fn keyboard_scale_and_key_gap_are_one_by_default_and_stay_in_range() {
+        let (mut k, _) = lod_kernel();
+        let (s, d) = (k.settings(), Settings::default());
+        assert_eq!((s.keyboard_scale, s.key_gap), (1.0, 1.0));
+        assert_eq!((d.keyboard_scale, d.key_gap), (1.0, 1.0));
+        k.set(Setting::KeyboardScale(1.26));
+        let s = k.settings();
+        assert!((s.keyboard_scale - 1.3).abs() < 1e-6 && s.key_gap == 1.0);
+        k.set(Setting::KeyGap(0.44));
+        let s = k.settings();
+        assert!((s.keyboard_scale - 1.3).abs() < 1e-6 && (s.key_gap - 0.4).abs() < 1e-6);
+        for (given, scale, gap) in [
+            (9.0, KEYBOARD_SCALE_MAX, KEY_GAP_MAX),
+            (-1.0, KEYBOARD_SCALE_MIN, KEY_GAP_MIN),
+            (f32::NAN, 1.0, 1.0),
+        ] {
+            k.set(Setting::KeyboardScale(given));
+            k.set(Setting::KeyGap(given));
+            let s = k.settings();
+            assert_eq!((s.keyboard_scale, s.key_gap), (scale, gap), "{given}");
+        }
+        let config = Config {
+            keyboard_scale: Some(7.0),
+            key_gap: Some(-3.0),
+            ..Default::default()
+        };
+        let k = Kernel::with_backend(vr::mock::MockBackend::default(), config);
+        let s = k.settings();
+        assert_eq!(
+            (s.keyboard_scale, s.key_gap),
+            (KEYBOARD_SCALE_MAX, KEY_GAP_MIN)
+        );
     }
 
     /// ダッシュボードの距離・高さは既定で今までの置き場所（正面 1.1m・目の高さ）。互いに独立で、範囲と刻みに収まる。

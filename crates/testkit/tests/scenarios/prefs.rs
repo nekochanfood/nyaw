@@ -5,7 +5,7 @@
 
 use gpui::{Context, TestAppContext, px};
 use kernel::subsystems::keyboard::{Database, KeyboardType, Layout};
-use kernel::{PointerMode, Setting, ThemeMode, WristDesign, WristFace};
+use kernel::{KEYBOARD_SCALE_MAX, PointerMode, Setting, ThemeMode, WristDesign, WristFace};
 use settings::{Category, Page, Settings};
 use testkit::{Action, Driver, Vec2, VrKit};
 
@@ -376,24 +376,28 @@ const VOLUME_SLIDER: (&str, &str) = (
     "setting-key-volume-slider-handle",
 );
 
-/// The keyboard category: a preview of the keyboard on top, then its type, the key sound and the volume of that sound.
-/// The preview is a smaller copy that follows the settings below it: it takes the shape of the chosen type, and its
-/// keys sound (or stay silent) as the key sound is set. It types nowhere.
+/// The keyboard category: a preview of the keyboard on top, then its type, its size, the spacing of its keys, the key
+/// sound and the volume of that sound. The preview is a smaller copy that follows the settings below it: it takes the
+/// shape of the chosen type, the spacing of the keys, and its keys sound (or stay silent) as the key sound is set. It
+/// types nowhere. The size is for the summoned keyboard only, as the preview is not life-size.
 #[gpui::test]
-fn keyboard_is_a_preview_then_type_key_sound_and_volume(cx: &mut TestAppContext) {
+fn keyboard_is_a_preview_then_type_size_spacing_key_sound_and_volume(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, cx| with_keyboard("us", cx));
     // The keyboard is a page of the input category.
     kit.click("settings-input").click("settings-keyboard");
     assert_eq!(at(&mut kit), (Category::Input, vec![Page::Keyboard]));
-    let [preview, kind, sound, volume] = [
+    let [preview, kind, size, spacing, sound, volume] = [
         "keyboard-preview",
         "setting-keyboard",
+        "setting-keyboard-size",
+        "setting-key-gap",
         "setting-key-sound",
         "setting-key-volume",
     ]
     .map(|s| kit.bounds(s));
     assert!(preview.bottom() <= kind.top(), "the preview is on top");
-    assert!(kind.bottom() <= sound.top() && sound.bottom() <= volume.top());
+    assert!(kind.bottom() <= size.top() && size.bottom() <= spacing.top());
+    assert!(spacing.bottom() <= sound.top() && sound.bottom() <= volume.top());
     assert_eq!((kind.size, sound.size), (sound.size, volume.size));
     // On by default, at full volume.
     let s = kit.kernel.settings();
@@ -476,6 +480,29 @@ fn keyboard_is_a_preview_then_type_key_sound_and_volume(cx: &mut TestAppContext)
     let s = kit.kernel.settings();
     assert_eq!((s.key_sound_volume, s.key_sound), (0.0, true));
     assert_eq!(s.keyboard, KeyboardType::Compact);
+
+    // Size and spacing are 100% by default, in steps of 10%. The preview keeps its size; with no spacing, its keys touch.
+    let s = kit.kernel.settings();
+    assert_eq!((s.keyboard_scale, s.key_gap), (1.0, 1.0));
+    let (shown, key) = (kit.bounds("keyboard-preview-card"), kit.bounds("key-AC01"));
+    assert!(f32::from(kit.bounds("key-AC02").left() - key.right()) > 1.0);
+    for (slider, at) in [
+        ("setting-keyboard-size-slider", 1.0),
+        ("setting-key-gap-slider", 0.0),
+    ] {
+        let handle = Box::leak(format!("{slider}-handle").into_boxed_str());
+        grab_to(&mut kit, slider, handle, at);
+        kit.release(Action::Select).step();
+    }
+    let s = kit.kernel.settings();
+    assert_eq!((s.keyboard_scale, s.key_gap), (KEYBOARD_SCALE_MAX, 0.0));
+    assert_eq!(
+        (s.key_sound_volume, s.keyboard),
+        (0.0, KeyboardType::Compact)
+    );
+    assert_eq!(kit.bounds("keyboard-preview-card"), shown);
+    let key = kit.bounds("key-AC01");
+    assert!(f32::from(kit.bounds("key-AC02").left() - key.right()).abs() < 0.01);
 }
 
 /// With touch (the default on the Settings screen), a tap on a key of the preview presses it, and it sounds.
