@@ -2,11 +2,11 @@
 
 層: 5 画面
 
-常駐パネル。利き手（`Settings::dominant_hand`。意味は `../kernel/AGENT.md`）の反対の手首に腕時計のように取り付き（掴めない。設定が変わると `PanelCommand::Attach` で自分から反対の手首へ付け替える）、丸い文字盤に日付・時刻（見た目は設定の `wrist_design`。下の「文字盤とデザイン」）。常駐なので、X ボタンの二回連続押し（`PanelStatus::double_press` の回数が増える）でダッシュボードを開く（2 回目からは隠す / 出し直す。閉じない）。ダッシュボードから開くデバッグ画面・設定画面は main が渡す（`wrist::spec(dominant, debug, settings)`。`dominant` は main が `Settings::dominant_hand` をそのまま渡し、どちらの手首に付くかは wrist が決める。今は Testing とその設定画面。画面どうしは直接依存しない）。ロックダウン（`Settings::lockdown`。取り手はカーネルの `PanelCommand::Lockdown`）に入った瞬間に、手首自身と出ているダッシュボードを隠し（解けると手首は出し直す）（解けても出し直さない）、中は二回押しを受け取っても何もしない（ダッシュボードを開閉しない）
+常駐パネル。利き手（`Settings::dominant_hand`。意味は `../kernel/AGENT.md`）の反対の手首に腕時計のように取り付き（ダッシュボードが出ている間だけ掴んで、手のコントローラから `REACH`（0.3m）以内のどこへでも置き直せる。大きさは変えない。掴んだままダッシュボードが隠れる・閉じると、ロックが掴みを取り消して元の位置へ戻す。置き直した位置は利き手の付け替えで戻り、保存もしない。設定が変わると `PanelCommand::Attach` で自分から反対の手首へ付け替える）、丸い文字盤に日付・時刻（見た目は設定の `wrist_design`。下の「文字盤とデザイン」）。常駐なので、X ボタンの二回連続押し（`PanelStatus::double_press` の回数が増える）でダッシュボードを開く（2 回目からは隠す / 出し直す。閉じない）。ダッシュボードから開くデバッグ画面・設定画面は main が渡す（`wrist::spec(dominant, debug, settings)`。`dominant` は main が `Settings::dominant_hand` をそのまま渡し、どちらの手首に付くかは wrist が決める。今は Testing とその設定画面。画面どうしは直接依存しない）。ロックダウン（`Settings::lockdown`。取り手はカーネルの `PanelCommand::Lockdown`）に入った瞬間に、手首自身と出ているダッシュボードを隠し（解けると手首は出し直す）（解けても出し直さない）、中は二回押しを受け取っても何もしない（ダッシュボードを開閉しない）
 
 ## 主な公開 API
 
-`wrist::spec(dominant, debug, settings)`, `Wrist`, `watch_offset(hand)`（コントローラの tip から見た手首の時計の姿勢。本物の腕時計と同じく手首の甲の側・腕寄りで、表は手の甲の外、12 時は小指の側。左右は鏡写し。手首の関節の位置は `vr::GRIP_FROM_WRIST` から決まり、骨格だけの手も `HandSkeleton::grip` で同じ値が手首に来る）, `wrist::preview(design, d, cx)`（選ぶ画面に出す文字盤の見本。画面どうしは直接依存しないので、`Wrist::new` が UI 層のグローバル `ui::prefs::FacePreview` に置き、選ぶ画面（`ui::prefs::watch_faces`）がそこから引く）
+`wrist::spec(dominant, debug, settings)`, `Wrist`, `REACH`, `watch_offset(hand)`（コントローラの tip から見た手首の時計の姿勢。本物の腕時計と同じく手首の甲の側・腕寄りで、表は手の甲の外、12 時は小指の側。左右は鏡写し。手首の関節の位置は `vr::GRIP_FROM_WRIST` から決まり、骨格だけの手も `HandSkeleton::grip` で同じ値が手首に来る）, `wrist::preview(design, d, cx)`（選ぶ画面に出す文字盤の見本。画面どうしは直接依存しないので、`Wrist::new` が UI 層のグローバル `ui::prefs::FacePreview` に置き、選ぶ画面（`ui::prefs::watch_faces`）がそこから引く）
 
 ## 文字盤とデザイン
 

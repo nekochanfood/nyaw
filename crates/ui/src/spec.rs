@@ -50,6 +50,8 @@ pub struct PanelSpec {
     lockdown: bool,
     /// 掴んで大きさを変えられる（既定。[`Self::without_resize`] で外す）。
     resizable: bool,
+    /// 取り付けたまま掴んで動かせる範囲（[`Self::reach`]）。
+    reach: Option<f32>,
     /// 全体の設定によらないポインタの方式（[`Self::pointer_mode`]）。
     pointer_mode: Option<PointerMode>,
     /// 掴んだときに手で動かす基準（[`Self::grab_anchor`]）。
@@ -113,6 +115,7 @@ impl PanelSpec {
             lazy_follow: None,
             lockdown: false,
             resizable: true,
+            reach: None,
             pointer_mode: None,
             grab_anchor: None,
             parent: None,
@@ -284,6 +287,12 @@ impl PanelSpec {
     /// 掴んでも大きさを変えられないようにする（大きさの決まったもの。ダッシュボードのバーなど）。
     pub fn without_resize(mut self) -> Self {
         self.resizable = false;
+        self
+    }
+
+    /// 取り付けたまま掴んで動かせるのを、取り付け先から `m` m 以内に限る（[`PanelCommand::Reach`]）。
+    pub fn reach(mut self, m: f32) -> Self {
+        self.reach = Some(m);
         self
     }
 
@@ -567,6 +576,9 @@ pub(crate) fn open_panel(
     }
     if !spec.resizable {
         kernel.apply(panel, PanelCommand::Resizable(false));
+    }
+    if spec.reach.is_some() {
+        kernel.apply(panel, PanelCommand::Reach(spec.reach));
     }
     if let Some(mode) = spec.pointer_mode {
         kernel.apply(panel, PanelCommand::PointerMode(mode));

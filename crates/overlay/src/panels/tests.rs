@@ -82,6 +82,46 @@ fn dragging_attached_panel_reanchors_offset() {
     assert_at(&ov, &vr, Vec3::new(1.0, 0.5, -1.0));
 }
 
+/// 範囲（`reach`）を決めた取り付け中のパネルは、掴んで遠くへ動かしても取り付け先からその距離で止まり、そこで付け直される。
+#[test]
+fn reach_keeps_a_dragged_attached_panel_near_its_device() {
+    let (mut vr, mut ov) = setup();
+    ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
+    ov.set_reach(0, Some(1.5));
+    controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+    ov.tick(&mut vr);
+    controller(&mut vr, at(3.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+    settle(&mut vr, &mut ov);
+    let toward = Vec3::new(3.0, 0.0, -1.0).normalize() * 1.5;
+    assert_at(&ov, &vr, toward);
+    controller(&mut vr, at(3.0, 0.0, 0.0), &[]);
+    ov.tick(&mut vr);
+    vr.backend.frame.hmd = at(0.0, 0.5, 0.0);
+    ov.tick(&mut vr);
+    assert_at(&ov, &vr, toward + Vec3::Y * 0.5);
+}
+
+/// 掴んでいる最中にロックすると掴みは取り消され、取り付け中のパネルは掴む前のオフセットへ戻る（離しても付け直さない）。
+#[test]
+fn locking_mid_grab_undoes_the_grab_of_an_attached_panel() {
+    let (mut vr, mut ov) = setup();
+    ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
+    controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+    ov.tick(&mut vr);
+    controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+    settle(&mut vr, &mut ov);
+    assert_at(&ov, &vr, Vec3::new(1.0, 0.0, -1.0));
+    ov.set_locked(0, true);
+    assert!(!ov.grabbed(0));
+    ov.tick(&mut vr);
+    assert_at(&ov, &vr, Vec3::new(0.0, 0.0, -1.0));
+    controller(&mut vr, at(1.0, 0.0, 0.0), &[]);
+    ov.tick(&mut vr);
+    vr.backend.frame.hmd = at(0.0, 0.5, 0.0);
+    ov.tick(&mut vr);
+    assert_at(&ov, &vr, Vec3::new(0.0, 0.5, -1.0));
+}
+
 #[test]
 fn locked_panel_ignores_grab_but_still_takes_pointer() {
     let (mut vr, mut ov) = setup();

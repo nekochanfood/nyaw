@@ -62,6 +62,22 @@ fn x_key_twice_opens_hides_and_shows_the_dashboard(cx: &mut TestAppContext) {
     assert_eq!(kit.read(|w| w.dashboard), Some(dashboard), "not reopened");
 }
 
+/// The wrist can be grabbed only while the dashboard shows (the kit builds the view without `wrist::spec`, so
+/// its startup lock and reach are not here; the wrist locks itself once it sees the dashboard hidden).
+#[gpui::test]
+fn the_wrist_is_grabbable_only_while_the_dashboard_shows(cx: &mut TestAppContext) {
+    let mut kit = NoVrKit::new(cx, |_, cx| wrist(cx));
+    kit.step().step();
+    assert!(kit.kernel.panel(0).locked);
+    press_x_twice(&mut kit);
+    // One frame hands the shown dashboard to the wrist, the next applies its unlock.
+    kit.step().step();
+    assert!(!kit.kernel.panel(0).locked);
+    press_x_twice(&mut kit);
+    kit.step().step();
+    assert!(kit.kernel.panel(0).locked);
+}
+
 /// The wrist sits on the wrist opposite the dominant hand and moves there by itself when the setting changes.
 #[gpui::test]
 fn wrist_follows_the_dominant_hand(cx: &mut TestAppContext) {

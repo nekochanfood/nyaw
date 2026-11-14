@@ -76,6 +76,8 @@ pub struct Panel {
     pub locked: bool,
     /// 掴んで大きさを変えられる（[`Overlay::set_resizable`]。既定は変えられる）。
     pub resizable: bool,
+    /// 取り付けたまま掴んで動かせる、取り付け先からの距離の上限（m。[`Overlay::set_reach`]）。`None` なら限らない。
+    pub reach: Option<f32>,
     /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。[`Overlay::set_grab_anchor`]）。`None` ならパネルそのもの。
     pub grab_anchor: Option<Pose>,
     /// 閉じられた。ヒット判定の対象外で、PanelId は詰めずに欠番のまま残る。

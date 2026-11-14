@@ -55,6 +55,8 @@ pub enum PanelCommand {
     Lockdown(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
+    /// 取り付けたまま掴んで動かせる、取り付け先からの距離の上限（m。`Overlay::set_reach`。`None` で限らない）。
+    Reach(Option<f32>),
     /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
     PointerMode(PointerMode),
     /// 再生中のメディアを操作する（再生・一時停止・曲送り・シーク・アプリを前に出す。[`Kernel::now_playing`]）。
@@ -983,6 +985,7 @@ impl<B: VrBackend> Kernel<B> {
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
+            PanelCommand::Reach(reach) => self.overlay.set_reach(panel, reach),
             PanelCommand::PointerMode(mode) => {
                 self.pointer_modes.insert(panel, mode);
             }
