@@ -104,6 +104,28 @@ fn scale_keeps_a_group_similar() {
     assert!((anchor.position.x - 0.15).abs() < 1e-6, "{anchor:?}");
 }
 
+/// 掴む基準を付け替えて動かすと、新しい基準が今の基準のあった所に来て、向きは変わらない。位置には UI スケールが掛かる。
+#[test]
+fn moving_the_grab_anchor_keeps_its_place() {
+    let (mut vr, mut ov) = setup();
+    ov.set_scale(&mut vr.backend, 1.5);
+    ov.set_grab_anchor(0, Some(Pose::new(Vec3::X * 0.3, Quat::IDENTITY)));
+    let (fixed, facing) = (
+        ov.panel(0).pose * ov.panel(0).grab_anchor.unwrap(),
+        ov.panel(0).pose.orientation,
+    );
+    let to = Pose::new(Vec3::new(-0.2, 0.1, 0.0), Quat::IDENTITY);
+    ov.move_grab_anchor(0, to);
+    let p = ov.panel(0);
+    let anchor = p.grab_anchor.unwrap();
+    assert!(
+        anchor.position.abs_diff_eq(to.position * 1.5, 1e-6),
+        "{anchor:?}"
+    );
+    assert!((p.pose * anchor).position.abs_diff_eq(fixed.position, 1e-5));
+    assert_eq!(p.pose.orientation, facing);
+}
+
 /// 掴む基準を持つパネル（ダッシュボードのバー）は、基準（画面が立つ所）を動かさずに大きさが変わり、置き直しても基準は同じ所。
 #[test]
 fn scale_keeps_the_grab_anchor_in_place() {

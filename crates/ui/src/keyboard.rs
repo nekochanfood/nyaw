@@ -72,8 +72,8 @@ const WRIST_TILT: f32 = 22.5 * std::f32::consts::PI / 180.;
 /// 打つときの手（コントローラの先）からキーボードまでの距離（m）。キーボードは頭の前 0.8m（`TYPING_AT`）、手はその 35cm ほど手前。
 // ponytail: 目安の固定値で、合わなければここを調整する。人ごとに合わせるなら、開いた瞬間の手との距離から大きさを決める。
 const HAND_DISTANCE: f32 = 0.45;
-/// 等倍（設定の大きさ `keyboard_scale` = 1）の、手首で端まで届く大きさに対する倍率。
-const SIZE_SCALE: f32 = 1.5;
+/// 等倍（設定の大きさ `keyboard_scale` = 1）の、手首で端まで届く大きさに対する倍率（実機で試して合わせた値）。
+const SIZE_SCALE: f32 = 3.75;
 
 /// 種類（`kind`）の、設定の大きさ（`scale`）での標準の大きさ（m。UI スケールは掛ける前）。キーの大きさは種類によらずそろえる。
 /// 等倍は、既定でいちばん広いフルサイズで、ホームポジションに向けた手首を外へ [`WRIST_TILT`] 倒すと遠い方のキーの端に届く
@@ -428,6 +428,7 @@ impl Render for KeyboardPanel {
             });
         }
         // 種類か設定の大きさが変わったら、キーがちょうど収まる解像度と、その標準の大きさにパネルを変える。
+        // ホームポジションは空間で動かさない（打っている手の下からキーが逃げない）。
         let (kind, scale) = (keyboard_kind(cx), crate::settings(cx).keyboard_scale);
         if (kind, scale) != (self.kind, self.scale) {
             let (to, size) = (panel_resolution(kind), panel_size(kind, scale));
@@ -437,7 +438,8 @@ impl Render for KeyboardPanel {
                 [
                     PanelCommand::Resize(to.0, to.1),
                     PanelCommand::FitHeight(size.y),
-                    PanelCommand::GrabAnchor(Some(grab_anchor(to, size.x))),
+                    // 中心を基準に大きさが変わってずれたホームポジションを、元の所へ戻す。
+                    PanelCommand::MoveGrabAnchor(grab_anchor(to, size.x)),
                 ],
                 cx,
             );
@@ -809,9 +811,12 @@ mod tests {
     }
 
     /// 種類か大きさの設定を変えると、出ているキーボードのパネルがその標準の大きさになり、掴む点もホームポジションへ移る。
-    /// 大きさの設定は、キーの並びの形を変えずにパネルの大きさだけに掛かる。
+    /// ホームポジションは空間で動かない。大きさの設定は、キーの並びの形を変えずにパネルの大きさだけに掛かる。
     #[gpui::test]
-    fn changing_the_type_or_size_resizes_the_open_keyboard(cx: &mut TestAppContext) {
+    fn changing_the_type_or_size_resizes_the_open_keyboard_around_the_home_position(
+        cx: &mut TestAppContext,
+    ) {
+        let mut opened = None;
         let (_, cx) = cx.add_window_view(|window, cx| {
             show_keyboard(0, KeyboardMode::Persistent, cx);
             let spec = cx
@@ -820,9 +825,32 @@ mod tests {
                 .pop()
                 .unwrap();
             assert_eq!(spec.resolution, panel_resolution(KeyboardType::Full));
+            opened = Some((spec.size, spec.resolution));
             crate::PanelRoot::new(spec.build(1, window, cx))
         });
         cx.run_until_parked();
+        // 同じパネルをカーネルにも置き、積まれた操作を流してホームポジションの空間の位置を見る。
+        let (size, resolution) = opened.unwrap();
+        let mut kernel = kernel::Kernel::with_backend(
+            kernel::vr::mock::MockBackend::default(),
+            kernel::Config::default(),
+        );
+        let pose = kernel::Pose::new(
+            kernel::vr::Vec3::new(0.3, 1.1, -0.7),
+            kernel::vr::Quat::from_rotation_y(0.4) * kernel::vr::Quat::from_rotation_x(-0.5),
+        );
+        let id = kernel
+            .add_panel("keyboard", pose, size, resolution)
+            .unwrap();
+        kernel.apply(
+            id,
+            PanelCommand::GrabAnchor(Some(grab_anchor(resolution, size.x))),
+        );
+        let home = |kernel: &kernel::Kernel<kernel::vr::mock::MockBackend>| {
+            let panel = kernel.panel(id);
+            (panel.pose * panel.grab_anchor.unwrap()).position
+        };
+        let fixed = home(&kernel);
         for (kind, scale) in [
             (KeyboardType::Compact, 1.),
             (KeyboardType::Tenkeyless, 1.),
@@ -854,9 +882,15 @@ mod tests {
                 [
                     PanelCommand::Resize(to.0, to.1),
                     PanelCommand::FitHeight(size.y),
-                    PanelCommand::GrabAnchor(Some(grab_anchor(to, size.x))),
+                    PanelCommand::MoveGrabAnchor(grab_anchor(to, size.x)),
                 ]
             );
+            for command in commands {
+                kernel.apply(id, command);
+            }
+            assert!(kernel.panel(id).size.abs_diff_eq(size, 1e-5), "{kind:?}");
+            assert!(home(&kernel).abs_diff_eq(fixed, 1e-5), "{kind:?} {scale}");
+            assert_eq!(kernel.panel(id).pose.orientation, pose.orientation);
         }
     }
 
