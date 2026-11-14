@@ -148,11 +148,21 @@ pub struct Tooltip {
     pub state: State,
 }
 
-/// 箱の端をカーソルの中心から離す距離（px）。カーソルの輪の外側から `spacing::SM` 空ける。
-fn gap() -> f32 {
+/// 箱の端をカーソルの中心から離す距離（px）。大きさの倍率 `cursor` を掛けたカーソルの輪の外側から `spacing::SM` 空ける。
+fn gap(cursor: f32) -> f32 {
     let ring = super::CURSOR_M * (super::RING_RADIUS_PX + super::RING_WIDTH_PX / 2.0)
         / super::CURSOR_PX.0 as f32;
-    ring * super::TOOLTIP_PX.0 as f32 / super::TOOLTIP_M + design::spacing::SM
+    cursor * ring * super::TOOLTIP_PX.0 as f32 / super::TOOLTIP_M + design::spacing::SM
+}
+
+/// 箱の上端（px）。向き `anchor` の側に、カーソルから `gap` 離し、見えていない分 `hide` だけカーソルへ寄せる。
+fn top(anchor: Option<Anchor>, gap: f32, hide: f32) -> f32 {
+    let h = super::TOOLTIP_PX.1 as f32;
+    match anchor {
+        // 上に出る箱は下から（カーソルの側から）上がってくる。下はその逆。
+        Some(Anchor::Above) => h / 2.0 - gap - TOOLTIP_HEIGHT + hide,
+        _ => h / 2.0 + gap - hide,
+    }
 }
 
 impl Render for Tooltip {
@@ -183,13 +193,10 @@ impl Render for Tooltip {
             .entry(self.panel)
             .or_default()
             .live = busy || scroll.is_some();
-        let (w, h) = (super::TOOLTIP_PX.0 as f32, super::TOOLTIP_PX.1 as f32);
+        let w = super::TOOLTIP_PX.0 as f32;
         let hide = (1.0 - s.vis) * SLIDE;
-        let top = match s.shown.as_ref().map(|(_, a)| *a) {
-            // 上に出る箱は下から（カーソルの側から）上がってくる。下はその逆。
-            Some(Anchor::Above) => h / 2.0 - gap() - TOOLTIP_HEIGHT + hide,
-            _ => h / 2.0 + gap() - hide,
-        };
+        let gap = gap(ui::settings(cx).cursor_scale);
+        let top = top(s.shown.as_ref().map(|(_, a)| *a), gap, hide);
         div()
             .size_full()
             .debug_selector(|| "tooltip".into())
@@ -308,6 +315,22 @@ mod tests {
         run(&mut s, t0, 460, 1000, Some("Save"), Anchor::Below);
         assert_eq!(s.shown.as_ref().unwrap().1, Anchor::Below);
         assert_eq!(s.vis, 1.0);
+    }
+
+    /// カーソルをいちばん大きくしても、箱は輪に重ならず、パネルからもはみ出さない（上下どちらでも）。
+    #[test]
+    fn box_clears_the_cursor_ring_and_stays_in_the_panel_at_any_cursor_scale() {
+        let h = super::super::TOOLTIP_PX.1 as f32;
+        for cursor in [kernel::CURSOR_SCALE_MIN, 1.0, kernel::CURSOR_SCALE_MAX] {
+            let gap = gap(cursor);
+            assert!(gap > design::spacing::SM, "{cursor}");
+            assert!(top(Some(Anchor::Above), gap, 0.0) >= 0.0, "{cursor}");
+            assert!(
+                top(Some(Anchor::Below), gap, 0.0) + TOOLTIP_HEIGHT <= h,
+                "{cursor}"
+            );
+        }
+        assert!(gap(2.0) > gap(1.0), "大きいカーソルほど離す");
     }
 
     #[test]

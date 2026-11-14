@@ -567,7 +567,7 @@ pub fn dispatch_input(
 
 /// ウィンドウごとのツールチップの要求（[`design::components::Tooltips`]）を、そのパネルを指している手に振り分け、
 /// 手ごとの向き（[`Kernel::tooltip_anchor`]）とともに [`PanelControl`] へ書く。変わったら `true`（ツールチップを描き直す）。
-/// 入力を配送した後に毎フレーム呼ぶ。本番と testkit 共通。
+/// 全体の設定でツールチップを切っていれば振り分けない。入力を配送した後に毎フレーム呼ぶ。本番と testkit 共通。
 pub fn sync_tooltips<B: VrBackend>(
     kernel: &Kernel<B>,
     bridges: &HashMap<(PanelId, Hand), PointerBridge>,
@@ -575,6 +575,7 @@ pub fn sync_tooltips<B: VrBackend>(
     cx: &mut App,
 ) -> bool {
     let windows: Vec<_> = windows.into_iter().collect();
+    let shown = settings(cx).tooltips;
     cx.default_global::<design::components::TooltipSource>()
         .1
         .retain(|id| windows.iter().any(|(_, window)| window == id));
@@ -587,7 +588,8 @@ pub fn sync_tooltips<B: VrBackend>(
                 Hand::Left => 0,
                 Hand::Right => 1,
             };
-            if let Some((_, text, _)) = requests.0.get(&(window, index))
+            if shown
+                && let Some((_, text, _)) = requests.0.get(&(window, index))
                 && bridges.get(&(panel, hand)).is_some_and(|b| b.on_panel())
             {
                 tooltip.insert(hand, text.clone());
