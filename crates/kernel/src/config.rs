@@ -115,9 +115,23 @@ pub const SCALE_STEP: f32 = 0.1;
 
 /// 倍率を範囲 `min..=max` に収め、[`SCALE_STEP`] の刻みに丸める（数でない値は等倍）。
 pub fn clamp_scale(scale: f32, min: f32, max: f32) -> f32 {
-    let scale = if scale.is_finite() { scale } else { 1.0 };
-    ((scale.clamp(min, max) / SCALE_STEP).round() * SCALE_STEP).clamp(min, max)
+    snap(scale, min, max, SCALE_STEP, 1.0)
 }
+
+/// 値を範囲 `min..=max` に収め、`step` の刻みに丸める（数でない値は `fallback`。-0 は 0 にする）。
+pub fn snap(value: f32, min: f32, max: f32, step: f32, fallback: f32) -> f32 {
+    let value = if value.is_finite() { value } else { fallback };
+    ((value.clamp(min, max) / step).round() * step).clamp(min, max) + 0.0
+}
+
+/// ダッシュボードの置き場所（[`Config::dashboard_distance`] / [`Config::dashboard_height`]）の既定・範囲と刻み（m）。
+/// 距離ははめた画面の中心まで。高さは頭の高さからの相対（上が +）で、既定の 0 は画面の中心が目の高さ。
+pub const DASHBOARD_DISTANCE: f32 = 1.1;
+pub const DASHBOARD_DISTANCE_MIN: f32 = 0.6;
+pub const DASHBOARD_DISTANCE_MAX: f32 = 2.0;
+pub const DASHBOARD_HEIGHT_MIN: f32 = -0.5;
+pub const DASHBOARD_HEIGHT_MAX: f32 = 0.5;
+pub const DASHBOARD_STEP: f32 = 0.05;
 
 /// 自分で作ったパーソナルカラーを覚えておく数（[`Config::color_history`]）。
 pub const COLOR_HISTORY: usize = 8;
@@ -264,6 +278,10 @@ pub struct Config {
     pub key_sound_volume: Option<f32>,
     /// アップデートのチャンネル（`stable` / `nightly`）。省略で `stable`。画面での切り替えはここへ書き戻される。
     pub update_channel: UpdateChannel,
+    /// ダッシュボードの距離（m。[`DASHBOARD_DISTANCE_MIN`]〜[`DASHBOARD_DISTANCE_MAX`]）。省略で [`DASHBOARD_DISTANCE`]。
+    pub dashboard_distance: Option<f32>,
+    /// ダッシュボードの高さ（m。頭の高さからの相対で上が +。[`DASHBOARD_HEIGHT_MIN`]〜[`DASHBOARD_HEIGHT_MAX`]）。省略で 0。
+    pub dashboard_height: Option<f32>,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -595,6 +613,44 @@ emulator = false
         assert_eq!(
             (back.key_sound, back.key_sound_volume),
             (Some(false), Some(0.3))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// ダッシュボードの距離・高さはどちらも省略でき、書き戻しても互いを消さない。`snap` は範囲と刻みに収める。
+    #[test]
+    fn dashboard_keys_parse_round_trip_and_snap() {
+        let c = parse("").unwrap();
+        assert_eq!((c.dashboard_distance, c.dashboard_height), (None, None));
+        let c = parse("dashboard_distance = 1.5\ndashboard_height = -0.2").unwrap();
+        assert_eq!(
+            (c.dashboard_distance, c.dashboard_height),
+            (Some(1.5), Some(-0.2))
+        );
+        let height = |v| {
+            snap(
+                v,
+                DASHBOARD_HEIGHT_MIN,
+                DASHBOARD_HEIGHT_MAX,
+                DASHBOARD_STEP,
+                0.0,
+            )
+        };
+        assert_eq!(
+            [height(-9.0), height(9.0), height(f32::NAN)],
+            [DASHBOARD_HEIGHT_MIN, DASHBOARD_HEIGHT_MAX, 0.0]
+        );
+        assert!((height(0.12) - 0.1).abs() < 1e-6);
+        // 0 の近くの負の値は -0 にせず 0 にする（表示が「-0.00」にならない）。
+        assert!(height(-0.01).is_sign_positive());
+        let dir = std::env::temp_dir().join(format!("nyaw-dashboard-{}", std::process::id()));
+        let path = dir.join("config.toml");
+        save_at(&path, "dashboard_distance", value(0.8f32)).unwrap();
+        save_at(&path, "dashboard_height", value(0.25f32)).unwrap();
+        let back = parse(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            (back.dashboard_distance, back.dashboard_height),
+            (Some(0.8), Some(0.25))
         );
         let _ = fs::remove_dir_all(&dir);
     }
