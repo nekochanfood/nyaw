@@ -531,8 +531,8 @@ const HEIGHT_SLIDER: (&str, &str) = (
     "setting-dashboard-height-slider-handle",
 );
 
-/// The dashboard category: its distance and height (relative to the head), two equal rows. The defaults are where the
-/// dashboard always was. The Settings screen sits on the dashboard and would move under the laser, so dragging only
+/// The dashboard category: its distance and height (relative to the head), two equal rows. The defaults are 1.3m ahead at
+/// height 0 (a little below eye level). The Settings screen sits on the dashboard and would move under the laser, so dragging only
 /// shows the value and letting go applies it.
 #[gpui::test]
 fn dashboard_distance_and_height_apply_on_release(cx: &mut TestAppContext) {

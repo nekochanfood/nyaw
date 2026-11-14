@@ -3,8 +3,8 @@ use crate::test_util::*;
 // `ui::commands`（親から）ではなくテストの道具の方。
 use crate::test_util::commands;
 
-/// バーを `pose` に置くと、はめた画面は正面 `distance`・頭の高さから `height` 上に垂直に立つ。既定（今までの置き場所）は
-/// 目の高さの正面 1.1m で、バーはその下で 1m 以上離れる。
+/// バーを `pose` に置くと、はめた画面は正面 `distance`・頭の高さから [`HEIGHT_ORIGIN`] + `height` 上に垂直に立つ。
+/// 既定は目の高さの少し下の正面 1.3m で、バーはその下で 1m 以上離れる。
 #[test]
 fn docked_screen_stands_upright_at_the_set_distance_and_height() {
     let b = docked_at(kernel::DASHBOARD_DISTANCE, 0.0);
@@ -59,7 +59,7 @@ fn docked_at(distance: f32, height: f32) -> Vec3 {
         ov.tick(&mut vr);
     }
     let s = ov.panel(screen).pose;
-    let want = Vec3::new(0.0, height, -distance);
+    let want = Vec3::new(0.0, HEIGHT_ORIGIN + height, -distance);
     assert!(
         s.position.abs_diff_eq(want, 1e-3),
         "{} != {want}",
