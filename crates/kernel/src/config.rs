@@ -149,9 +149,10 @@ pub fn clamp_scale(scale: f32, min: f32, max: f32) -> f32 {
 }
 
 /// 値を範囲 `min..=max` に収め、`step` の刻みに丸める（数でない値は `fallback`。-0 は 0 にする）。
+/// 刻みの数を `step` で掛けず `1 / step` で割るので、1.3 が 1.3000001 になるような誤差が出ない。
 pub fn snap(value: f32, min: f32, max: f32, step: f32, fallback: f32) -> f32 {
     let value = if value.is_finite() { value } else { fallback };
-    ((value.clamp(min, max) / step).round() * step).clamp(min, max) + 0.0
+    ((value.clamp(min, max) / step).round() / (1.0 / step)).clamp(min, max) + 0.0
 }
 
 /// ダッシュボードの置き場所（[`Config::dashboard_distance`] / [`Config::dashboard_height`]）の既定・範囲と刻み（m）。
@@ -688,6 +689,8 @@ emulator = false
             [min, max, 0.0]
         );
         assert!((height(0.12) - 0.1).abs() < 1e-6);
+        // 刻みの上の値は誤差なくそのまま（1.3 が 1.3000001 にならない）。
+        assert_eq!(snap(1.3, 0.6, 2.0, DASHBOARD_STEP, 1.0), 1.3);
         // 0 の近くの負の値は -0 にせず 0 にする（表示が「-0.00」にならない）。
         assert!(height(-0.01).is_sign_positive());
         let dir = std::env::temp_dir().join(format!("nyaw-dashboard-{}", std::process::id()));
