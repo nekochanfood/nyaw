@@ -13,6 +13,7 @@ use kernel::{
 use std::{collections::HashMap, rc::Rc};
 
 mod view;
+pub(crate) use view::preload;
 pub use view::{KeyAppearance, KeyboardView};
 
 /// アクション（閉じるなど、パネルの操作のボタン）の一辺。
