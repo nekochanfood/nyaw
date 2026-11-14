@@ -627,18 +627,11 @@ emulator = false
             (c.dashboard_distance, c.dashboard_height),
             (Some(1.5), Some(-0.2))
         );
-        let height = |v| {
-            snap(
-                v,
-                DASHBOARD_HEIGHT_MIN,
-                DASHBOARD_HEIGHT_MAX,
-                DASHBOARD_STEP,
-                0.0,
-            )
-        };
+        let (min, max) = (DASHBOARD_HEIGHT_MIN, DASHBOARD_HEIGHT_MAX);
+        let height = |v| snap(v, min, max, DASHBOARD_STEP, 0.0);
         assert_eq!(
             [height(-9.0), height(9.0), height(f32::NAN)],
-            [DASHBOARD_HEIGHT_MIN, DASHBOARD_HEIGHT_MAX, 0.0]
+            [min, max, 0.0]
         );
         assert!((height(0.12) - 0.1).abs() < 1e-6);
         // 0 の近くの負の値は -0 にせず 0 にする（表示が「-0.00」にならない）。
