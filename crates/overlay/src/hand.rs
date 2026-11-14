@@ -113,6 +113,13 @@ impl Overlay {
                         .unwrap_or(reference.orientation),
                 ) * pivot;
                 p.pose = approach(p.pose, target, self.dt);
+                // 取り付け先から届く範囲の外へは出さない。
+                if let (Some(reach), Some((device, _))) = (p.reach, &p.attached)
+                    && let Some(dp) = frame.pose(device)
+                {
+                    let from = p.pose.position - dp.position;
+                    p.pose.position = dp.position + from.clamp_length_max(reach);
+                }
                 st.ray = Some(Ray {
                     hand: c.aim,
                     aim,
@@ -131,6 +138,9 @@ impl Overlay {
                     && let Some(dp) = frame.pose(device)
                 {
                     *offset = dp.inverse() * p.pose;
+                    if let Some(reach) = p.reach {
+                        offset.position = offset.position.clamp_length_max(reach);
+                    }
                 }
             }
         }

@@ -26,6 +26,7 @@ impl Overlay {
             attached: None,
             locked: false,
             resizable: true,
+            reach: None,
             grab_anchor: None,
             closed: false,
             hidden: false,
@@ -143,8 +144,23 @@ impl Overlay {
     }
 
     /// 掴んで動かせないようにする（`false` で戻す）。レーザーでの操作はそのまま使える。
+    /// 掴んでいる最中にロックすると掴みを取り消す（取り付け中なら掴む前のオフセットへ戻る）。
     pub fn set_locked(&mut self, id: PanelId, locked: bool) {
         self.panels[id].locked = locked;
+        if !locked {
+            return;
+        }
+        for h in self.hands.values_mut() {
+            if h.dragging.is_some_and(|d| d.0 == id) {
+                h.dragging = None;
+                h.scaling = None;
+            }
+        }
+    }
+
+    /// 取り付けたまま掴んで動かせる範囲を、取り付け先から `reach` m 以内に限る（`None` で限らない）。
+    pub fn set_reach(&mut self, id: PanelId, reach: Option<f32>) {
+        self.panels[id].reach = reach;
     }
 
     /// 掴んだとき、パネルそのものではなく `anchor`（このパネルから見た姿勢）を手で動かして頭へ向け、パネルはそこに付いてくる。

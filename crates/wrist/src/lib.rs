@@ -1,4 +1,5 @@
-//! Layer 6 画面: 常駐パネル「wrist」。利き手の反対（既定は左）の手首に腕時計のように取り付き（掴めない）、丸い文字盤に
+//! Layer 6 画面: 常駐パネル「wrist」。利き手の反対（既定は左）の手首に腕時計のように取り付き（ダッシュボードが出ている間だけ
+//! 掴んで、手から [`REACH`] 以内に置き直せる。掴んだままダッシュボードが消えれば元に戻る）、丸い文字盤に
 //! 日付・時刻を出す（デザインは設定の `wrist_design`。[`face`]）。利き手の設定が変われば、自分で反対の手首へ付け替える。
 //! 常駐なので、X ボタンの二回連続押しでダッシュボードを出す / 隠すのもここ（ダッシュボードは閉じずに隠し、次も同じ状態で出す）。
 
@@ -28,6 +29,9 @@ pub fn watch_offset(hand: Hand) -> Pose {
         Quat::from_xyzw(FRAC_1_SQRT_2, 0.0, side * FRAC_1_SQRT_2, 0.0),
     )
 }
+
+/// ダッシュボードが出ている間に掴んで置き直せる範囲（取り付け先の手のコントローラから m）。手の甲・前腕・手の周りに届く。
+pub const REACH: f32 = 0.3;
 
 /// 取り付け先の手が追えない間（起動直後・novr のエミュレーター）の置き場所。開いた瞬間の頭から見て左下 0.4m
 /// （右手首に付けるときは右下）。
@@ -60,8 +64,11 @@ pub fn spec(
     .sized(SIZE_M, RES_PX)
     .in_view(in_view)
     .attached(Device::Controller(hand), watch_offset(hand))
+    // 掴めるのはダッシュボードが出ている間だけ（[`Wrist::sync_dashboard`]）。置き直すだけで大きさは変えない。
     .locked()
-    // 手首に付いた常駐の時計で、閉じる・動かすものではない。ナビゲーションバーは付けない。
+    .reach(REACH)
+    .without_resize()
+    // 手首に付いた常駐の時計で、閉じるものではない。ナビゲーションバーは付けない。
     .without_nav_bar()
 }
 
@@ -78,6 +85,8 @@ pub struct Wrist {
     locked: bool,
     /// 付いている手首（利き手の反対。設定が変われば自分で付け替える）。
     hand: Hand,
+    /// 掴んで置き直せるようにしてある（ダッシュボードが出ている間）。
+    movable: bool,
 }
 
 impl Wrist {
@@ -114,6 +123,7 @@ impl Wrist {
             toggles: 0,
             locked: false,
             hand,
+            movable: false,
         }
     }
 
@@ -163,6 +173,14 @@ impl Wrist {
             && !status.as_ref().is_some_and(|s| s.hidden)
         {
             dashboard::hide(*id, cx);
+        }
+        // ダッシュボードが出ている間だけ掴める。掴んだまま消えたら、ロックがその掴みを取り消して元の位置へ戻す。
+        let movable = open
+            .as_ref()
+            .is_some_and(|(_, s)| s.as_ref().is_some_and(|s| !s.hidden));
+        if movable != self.movable {
+            self.movable = movable;
+            ui::command(self.panel, PanelCommand::Lock(!movable), cx);
         }
         if toggles == self.toggles {
             return;
@@ -394,6 +412,28 @@ mod tests {
         assert!(commands(cx).contains(&PanelCommand::Hide(true)));
         set_lockdown(cx, false);
         assert!(commands(cx).contains(&PanelCommand::Hide(false)));
+    }
+
+    /// ダッシュボードが出ている間だけ掴める（出ると `Lock(false)`、隠れると `Lock(true)`。変わらなければ積まない）。
+    #[gpui::test]
+    fn grabbable_only_while_the_dashboard_shows(cx: &mut TestAppContext) {
+        let (wrist, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        cx.run_until_parked();
+        wrist.update(cx, |w, _| w.dashboard = Some(3));
+        let mut set_hidden = |hidden| {
+            cx.update(|_, cx| {
+                let ctl = cx.default_global::<PanelControl>();
+                ctl.panels.entry(3).or_default().status.hidden = hidden;
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                let ctl = cx.default_global::<PanelControl>();
+                std::mem::take(&mut ctl.panels.entry(0).or_default().commands)
+            })
+        };
+        assert_eq!(set_hidden(false), [PanelCommand::Lock(false)]);
+        assert_eq!(set_hidden(false), []);
+        assert_eq!(set_hidden(true), [PanelCommand::Lock(true)]);
     }
 
     /// 利き手を替えると、反対の手首へ自分で付け替える（設定が同じままなら何もしない）。
