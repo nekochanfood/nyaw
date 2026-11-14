@@ -146,7 +146,7 @@ fn preview_key_sound_is_as_loud_as_the_volume_setting(cx: &mut TestAppContext) {
         assert!(settings.keyboard_preview.set(keys).is_ok());
         settings
     });
-    kit.click("settings-keyboard");
+    kit.click("settings-input").click("settings-keyboard");
     // レーザーをキーに載せてホバー音が鳴り終わってから押し、キーの音だけを測る。
     let heard = |kit: &mut VrKit<'_, Settings>, setting: Option<Setting>| {
         if let Some(setting) = setting {

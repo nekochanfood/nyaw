@@ -1,12 +1,18 @@
 //! E2E for the shared settings parts (`ui::prefs`) on the Settings screen, with the VR laser: appearance (preview, theme,
 //! the personal color history and the dialog that makes a custom color), the watch faces (the carousel on an arc),
 //! accessibility, the keyboard (a preview of the keyboard, its type, the key sound and its volume) and the dashboard.
+//! The watch faces and the keyboard are pages opened from their category (appearance, input).
 
 use gpui::{Context, TestAppContext, px};
 use kernel::subsystems::keyboard::{Database, KeyboardType, Layout};
 use kernel::{PointerMode, Setting, ThemeMode, WristDesign, WristFace};
-use testing::Settings;
+use testing::{Settings, SettingsPage};
 use testkit::{Action, Driver, Vec2, VrKit};
+
+/// The category and the pages stacked on it.
+fn at(kit: &mut VrKit<'_, Settings>) -> (usize, Vec<SettingsPage>) {
+    kit.read(|v| (v.category, v.pages.clone()))
+}
 
 /// How dark the runtime shows the Settings panel (1 = as drawn; less while a child dialog is open).
 fn tint(kit: &VrKit<'_, Settings>) -> f32 {
@@ -114,8 +120,9 @@ fn shown(kit: &mut VrKit<'_, Settings>) -> WristDesign {
 #[gpui::test]
 fn watch_faces_turn_loop_filter_and_set(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
-    kit.click("settings-watch");
-    assert_eq!(kit.read(|v| v.category), 2);
+    // The watch faces are a page of the appearance category.
+    kit.click("settings-appearance").click("settings-watch");
+    assert_eq!(at(&mut kit), (1, vec![SettingsPage::Watch]));
     // The face in use is in the middle, between the category above and its name and the button below.
     let [kind, faces, name, set] =
         ["watch-kind", "watch-faces", "watch-name", "watch-set"].map(|s| kit.bounds(s));
@@ -175,8 +182,10 @@ fn watch_faces_turn_loop_filter_and_set(cx: &mut TestAppContext) {
     assert_eq!(shown(&mut kit), WristDesign::Terminal);
     assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Lcd);
 
-    // Leaving the category and coming back puts the design in use in the middle again, among all designs.
-    kit.click("settings-general").click("settings-watch");
+    // Leaving the page and coming back puts the design in use in the middle again, among all designs.
+    kit.click("settings-back");
+    assert_eq!(at(&mut kit), (1, vec![]));
+    kit.click("settings-watch");
     assert_eq!(kit.read(|v| v.watch.face), None);
     assert_eq!(shown(&mut kit), WristDesign::Lcd);
 }
@@ -186,7 +195,7 @@ fn watch_faces_follow_a_touch_slide(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
     kit.kernel.set(Setting::PointerMode(PointerMode::Touch));
     kit.step();
-    kit.click("settings-watch");
+    kit.click("settings-appearance").click("settings-watch");
     // With touch, holding and moving is a finger slide: left for the next design, right back again (and on past the first).
     drag(&mut kit, -150.0);
     assert_eq!(shown(&mut kit), WristDesign::Ring);
@@ -225,7 +234,7 @@ fn accessibility_is_a_sample_then_text_size_ui_scale_and_bold(cx: &mut TestAppCo
     use kernel::{TEXT_SCALE_MAX, TEXT_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_MIN};
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
     kit.click("settings-accessibility");
-    assert_eq!(kit.read(|v| v.category), 3);
+    assert_eq!(at(&mut kit), (4, vec![]));
     let [preview, sample, text, ui, bold] = [
         "a11y-preview",
         "a11y-sample",
@@ -373,8 +382,9 @@ const VOLUME_SLIDER: (&str, &str) = (
 #[gpui::test]
 fn keyboard_is_a_preview_then_type_key_sound_and_volume(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, cx| with_keyboard("us", cx));
-    kit.click("settings-keyboard");
-    assert_eq!(kit.read(|v| v.category), 6);
+    // The keyboard is a page of the input category.
+    kit.click("settings-input").click("settings-keyboard");
+    assert_eq!(at(&mut kit), (2, vec![SettingsPage::Keyboard]));
     let [preview, kind, sound, volume] = [
         "keyboard-preview",
         "setting-keyboard",
@@ -438,7 +448,7 @@ fn keyboard_is_a_preview_then_type_key_sound_and_volume(cx: &mut TestAppContext)
     assert_eq!(key_sounds(&mut kit, "key-AC01"), 1);
     kit.step();
     assert_eq!(kit.kernel.subsystems.backend.overlays.len(), overlays);
-    assert_eq!(kit.read(|v| v.category), 6);
+    assert_eq!(at(&mut kit), (2, vec![SettingsPage::Keyboard]));
 
     // Key sound off: the same key is silent, and the volume row goes away without moving the rows above.
     kit.click("setting-key-sound");
@@ -474,7 +484,7 @@ fn keyboard_preview_keys_sound_on_a_touch_tap(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, cx| with_keyboard("jp", cx));
     kit.kernel.set(Setting::PointerMode(PointerMode::Touch));
     kit.step();
-    kit.click("settings-keyboard");
+    kit.click("settings-input").click("settings-keyboard");
     assert_eq!(key_sounds(&mut kit, "key-AC01"), 1);
     assert_eq!(
         key_sounds(&mut kit, "key-HENK"),
@@ -501,8 +511,9 @@ const HEIGHT_SLIDER: (&str, &str) = (
 fn dashboard_distance_and_height_apply_on_release(cx: &mut TestAppContext) {
     use kernel::{DASHBOARD_DISTANCE, DASHBOARD_DISTANCE_MAX, DASHBOARD_HEIGHT_MIN};
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
-    kit.click("settings-dashboard");
-    assert_eq!(kit.read(|v| v.category), 8);
+    // The dashboard rows are a group of the display category.
+    kit.click("settings-display");
+    assert_eq!(at(&mut kit), (3, vec![]));
     let s = kit.kernel.settings();
     assert_eq!(
         (s.dashboard_distance, s.dashboard_height),

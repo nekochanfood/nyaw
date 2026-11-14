@@ -1,6 +1,7 @@
 //! E2E for updates on the Settings screen (`settings-update`), against a loopback "GitHub": checking finds the newer
 //! build, the page shows its version and release notes (Markdown), and only pressing the update button downloads the
-//! installer and starts it. Opening from the dashboard's button (`updater::reveal`) lands on this category. The update
+//! installer and starts it. The page opens from the general category, and opening from the dashboard's button
+//! (`updater::reveal`) lands on it. The update
 //! channel decides whether pre-releases are offered.
 
 use std::collections::HashMap;
@@ -11,11 +12,13 @@ use std::sync::Mutex;
 
 use gpui::TestAppContext;
 use kernel::UpdateChannel;
-use testing::Settings;
+use testing::{Settings, SettingsPage};
 use testkit::{Driver, NoVrKit};
 
-/// Index of the updates category in the sidebar.
-const UPDATE: usize = 9;
+/// The updates page: on the general category (the first in the sidebar).
+fn on_updates(kit: &mut NoVrKit<'_, Settings>) -> bool {
+    kit.read(|v| v.category == 0 && v.pages == [SettingsPage::Update])
+}
 const INSTALLER: &str = "nyaw-2026.0.1-patch.2-setup.exe";
 const BODY: &[u8] = b"MZ fake installer";
 /// `BODY` の SHA-256（GitHub がアセットの `digest` で知らせるもの。無いリリースは勧めない）。
@@ -107,7 +110,7 @@ fn check_shows_the_new_release_with_its_notes_and_installs_only_on_request(
         Settings::new(0)
     });
     kit.click("settings-update");
-    assert_eq!(kit.read(|v| v.category), UPDATE);
+    assert!(on_updates(&mut kit));
     let (current, status) = (kit.bounds("update-current"), kit.bounds("update-status"));
     assert!(
         current.bottom() <= status.top(),
@@ -195,7 +198,7 @@ fn the_channel_decides_whether_pre_releases_are_offered(cx: &mut TestAppContext)
     assert!(kit.try_bounds("update-version").is_none());
 }
 
-/// The dashboard's update button asks for the updates category; the Settings screen opens on it.
+/// The dashboard's update button asks for the updates page; the Settings screen opens on it.
 #[gpui::test]
 fn opening_from_the_dashboard_button_lands_on_updates(cx: &mut TestAppContext) {
     let mut kit = NoVrKit::new(cx, |_, cx| {
@@ -203,11 +206,11 @@ fn opening_from_the_dashboard_button_lands_on_updates(cx: &mut TestAppContext) {
         Settings::new(0)
     });
     kit.step();
-    assert_eq!(kit.read(|v| v.category), UPDATE);
+    assert!(on_updates(&mut kit));
     kit.bounds("update-check");
     // It is taken once: choosing another category afterwards stays there.
-    kit.click("settings-about").step();
-    assert_eq!(kit.read(|v| v.category), UPDATE + 1);
+    kit.click("settings-appearance").step();
+    assert_eq!(kit.read(|v| (v.category, v.pages.clone())), (1, vec![]));
 }
 
 /// Against the real GitHub, run by hand: pretending to be build `NYAW_UPDATE_FROM`, the Settings screen finds the newest

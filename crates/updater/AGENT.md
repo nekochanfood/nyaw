@@ -30,7 +30,7 @@
 ## 流れ
 
 1. **確かめる**（`check_now`。別スレッド）: GitHub の API `GET /repos/<owner>/<repo>/releases?per_page=30` を 1 回（リポジトリは Cargo.toml の `repository`）。ダッシュボードが起動時と 6 時間ごと（`RECHECK`。nyaw は常駐するので。リリースビルドだけで、開発中のビルドとテストは確かめない）と、設定の「今すぐ確認」（`update-check`）。
-2. **知らせる**: 見つけたら（`latest`。チャンネルで選ぶ）。ダッシュボードのバーのボタン（`dashboard-update`。押すと設定をはめて `reveal`）と、設定のアップデート（`settings-update`。版・公開日・「アップデートして再起動」・リリースノート（`design::components::markdown`）・リリースのページ）。
+2. **知らせる**: 見つけたら（`latest`。チャンネルで選ぶ）。ダッシュボードのバーのボタン（`dashboard-update`。押すと設定をはめて `reveal`）と、設定のアップデート（一般の上に積む詳しい画面。行は `settings-update`。版・公開日・「アップデートして再起動」・リリースノート（`design::components::markdown`）・リリースのページ）。
 3. **入れる**（`install`。ユーザーが押したときだけ）: インストーラーを `%TEMP%\nyaw-update` に落とし（進み具合は `Step::Downloading`）、大きさと GitHub が知らせる SHA-256（アセットの `digest`。必須）を確かめ、`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /WAITPID=<pid> /RELAUNCH=1` で走らせて、アプリを終える（`PanelControl::quit`）。
 4. **インストーラー**: ウィザードもメッセージも出さず、ユーザー単位（`PrivilegesRequired=lowest`）なので UAC も出ない。`WAITPID` のプロセスが終わるのを待って（60 秒まで）入れ替え、`RELAUNCH` で nyaw を起動し直す（引数なしで起動する）。
 

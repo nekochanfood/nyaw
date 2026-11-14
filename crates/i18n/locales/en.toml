@@ -429,6 +429,8 @@ source_code = "Source code"
 [settings.category]
 general = "General"
 appearance = "Appearance"
+input = "Input"
+display = "Display"
 watch = "Watch"
 accessibility = "Accessibility"
 pointer = "Pointer"

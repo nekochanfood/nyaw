@@ -1,4 +1,4 @@
-//! 設定の「ポインタ」（`settings-pointer`）: カーソルとビームの設定。上から動きの調整のしかた（`setting-pointer-tuning`。
+//! 設定の「ポインタ」（入力の行 `settings-pointer` から開く詳しい画面）: カーソルとビームの設定。上から動きの調整のしかた（`setting-pointer-tuning`。
 //! シンプル / 詳細）、動き（シンプルは 1 本の `setting-steadiness`、詳細は `setting-smoothing` / `setting-release` /
 //! `setting-laser-length`）、カーソル（大きさ・ツールチップ）、音（タップ音・ホバー音）。どれも動かすとすぐ効く。
 

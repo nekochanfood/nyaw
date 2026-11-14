@@ -7,6 +7,7 @@ use kernel::subsystems::keyboard::KeyboardType;
 use kernel::{DominantHand, Language, PointerMode, Setting, ThemeMode};
 use testing::{
     BACKGROUND, NavPage, NavTest, SIDEBAR_BG, SIDEBAR_INDICATOR, SIDEBAR_INDICATOR_INSET, Settings,
+    SettingsPage,
 };
 use testkit::{Action, Driver, Hand, Vec2, VrKit};
 
@@ -147,7 +148,8 @@ fn settings_selects_change_the_settings(cx: &mut TestAppContext) {
     kit.click("setting-lang-ja");
     assert_eq!(kit.kernel.settings().language, Language::Ja);
     assert_eq!(kit.read(|v| v.open), None, "choosing closes the popover");
-    kit.click("setting-dominant-hand")
+    kit.click("settings-input")
+        .click("setting-dominant-hand")
         .click("setting-hand-left");
     assert_eq!(kit.kernel.settings().dominant_hand, DominantHand::Left);
     kit.click("settings-appearance")
@@ -155,11 +157,12 @@ fn settings_selects_change_the_settings(cx: &mut TestAppContext) {
         .click("setting-theme-light");
     assert_eq!(kit.read(|v| v.category), 1);
     assert_eq!(kit.kernel.settings().theme, ThemeMode::Light);
-    kit.click("settings-mirroring")
+    kit.click("settings-display")
         .click("setting-mirror-fps")
         .click("setting-fps-30");
     assert_eq!(kit.kernel.settings().mirror_frame_rate, 30);
-    kit.click("settings-keyboard")
+    kit.click("settings-input")
+        .click("settings-keyboard")
         .click("setting-keyboard")
         .click("setting-keyboard-compact");
     assert_eq!(kit.kernel.settings().keyboard, KeyboardType::Compact);
@@ -172,8 +175,48 @@ fn settings_popover_closes_on_outside_press(cx: &mut TestAppContext) {
     kit.click("setting-language").click("setting-language");
     assert_eq!(kit.read(|v| v.open), None);
     // A press outside closes it without reaching what is under it.
-    kit.click("setting-language").click("settings-about");
+    kit.click("setting-language")
+        .click("settings-accessibility");
     assert_eq!(kit.read(|v| (v.open, v.category)), (None, 0));
+}
+
+fn pages(kit: &mut VrKit<Settings>) -> (usize, Vec<SettingsPage>) {
+    kit.read(|v| (v.category, v.pages.clone()))
+}
+
+/// Progressive disclosure: the sidebar has a few categories, and the larger groups of settings are pages opened from
+/// a row of their category. A page slides in on top (its heading has a back button), back or a swipe takes it off, and
+/// choosing a category in the sidebar (even the selected one) goes back to that category.
+#[gpui::test]
+fn settings_pages_open_from_their_category(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    for page in ["settings-watch", "settings-pointer", "settings-keyboard"] {
+        assert!(kit.try_bounds(page).is_none(), "{page} is not a category");
+    }
+    assert!(
+        kit.try_bounds("settings-back").is_none(),
+        "no back on a category"
+    );
+    kit.click("settings-about");
+    assert_eq!(pages(&mut kit), (0, vec![SettingsPage::About]));
+    kit.bounds("setting-version");
+    kit.click("setting-licenses");
+    assert_eq!(
+        pages(&mut kit),
+        (0, vec![SettingsPage::About, SettingsPage::Licenses])
+    );
+    kit.click("settings-back");
+    assert_eq!(pages(&mut kit), (0, vec![SettingsPage::About]));
+    swipe_back(&mut kit, "settings-nav", "setting-version");
+    assert_eq!(pages(&mut kit), (0, vec![]));
+    kit.bounds("settings-update");
+
+    kit.click("settings-input").click("settings-pointer");
+    assert_eq!(pages(&mut kit), (2, vec![SettingsPage::Pointer]));
+    kit.click("settings-input");
+    assert_eq!(pages(&mut kit), (2, vec![]), "the selected category");
+    kit.click("settings-keyboard").click("settings-appearance");
+    assert_eq!(pages(&mut kit), (1, vec![]));
 }
 
 /// The color 2px in from the left edge of `selector`, halfway down (where the selected row's indicator is).
@@ -195,11 +238,11 @@ fn settings_sidebar_marks_only_the_selected_category(cx: &mut TestAppContext) {
         SIDEBAR_BG,
         "no background"
     );
-    assert_eq!(kit.color_at("settings-about"), SIDEBAR_BG);
+    assert_eq!(kit.color_at("settings-display"), SIDEBAR_BG);
     assert_eq!(left_edge(&mut kit, "settings-general"), SIDEBAR_INDICATOR);
-    assert_eq!(left_edge(&mut kit, "settings-about"), SIDEBAR_BG);
-    kit.click("settings-about").hover("setting-version");
-    assert_eq!(left_edge(&mut kit, "settings-about"), SIDEBAR_INDICATOR);
+    assert_eq!(left_edge(&mut kit, "settings-display"), SIDEBAR_BG);
+    kit.click("settings-display").hover("setting-lod-quality");
+    assert_eq!(left_edge(&mut kit, "settings-display"), SIDEBAR_INDICATOR);
     assert_eq!(left_edge(&mut kit, "settings-general"), SIDEBAR_BG);
 }
 

@@ -5,6 +5,7 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
 use gpui::{AppContext, Context, IntoElement, Render, Window, div, prelude::*, px, rgb};
+use testing::SettingsPage;
 use ui::{PanelControl, capture, open_panel_window};
 
 use crate::look::{FACES_PX, Faces, save};
@@ -44,14 +45,16 @@ const STATES: [(&str, f32, bool); 5] = [
     ("large-bold", kernel::TEXT_SCALE_MAX, true),
 ];
 
-/// 設定画面のカテゴリ（添字と書き出す名前）。
-const PAGES: [(usize, &str); 6] = [
-    (0, "general"),
-    (1, "appearance"),
-    (2, "watch"),
-    (3, "accessibility"),
-    (4, "pointer"),
-    (8, "about"),
+/// 設定画面のカテゴリ（添字）・その上に積む詳しい画面・書き出す名前。
+const PAGES: [(usize, Option<SettingsPage>, &str); 8] = [
+    (0, None, "general"),
+    (0, Some(SettingsPage::About), "about"),
+    (1, None, "appearance"),
+    (1, Some(SettingsPage::Watch), "watch"),
+    (2, None, "input"),
+    (2, Some(SettingsPage::Pointer), "pointer"),
+    (3, None, "display"),
+    (4, None, "accessibility"),
 ];
 
 pub fn main() {
@@ -68,11 +71,12 @@ pub fn main() {
         let mut open = |name: &str, handle: gpui::AnyWindowHandle, width: u32| {
             windows.push((name.to_owned(), handle, width));
         };
-        for (category, name) in PAGES {
+        for (category, page, name) in PAGES {
             let window = open_panel_window(cx, testing::SETTINGS_PX, move |_, cx| {
                 cx.new(|_| {
                     let mut settings = testing::Settings::new(0);
                     settings.category = category;
+                    settings.pages.extend(page);
                     settings
                 })
             });
