@@ -9,9 +9,10 @@ name: Release
 # - Actions からこのワークフローを名前（alpha・beta など）を入れて実行したとき。そのブランチの先頭を v<版>-<名前>.<数>
 #   のプレリリースとして出す（版上げの PR を開いたまま試してもらう。Cargo.toml の版は変えず、表示する版だけ変える）
 # - 画面か自分の gh で公開したリリース（タグの commit をビルドした PR の run があれば、そのインストーラーを使う）
-# それ以外の main の push はビルドだけして依存のキャッシュを保存する。タグや PR の run は main のキャッシュを読めるので、
-# 依存をビルドし直さない（同じジョブなので rust-cache のキーも揃う）。リリース時にしか通らないビルドの失敗も先に分かる。
-# 版を上げない PR では何もしない
+# それ以外の main の push は依存のキャッシュが無いとき（Cargo.lock かツールチェーンが変わったとき）だけビルドして保存する。
+# タグや PR の run は main のキャッシュを読めるので、依存をビルドし直さない（同じジョブなので rust-cache のキーも揃う）。
+# リリースでしか通らないビルドの失敗は、版上げの PR のビルドで分かる。
+# Cargo.toml を変えない PR では起動しない（版上げの PR は必ず変える）
 on:
   release:
     types: [published]
@@ -19,7 +20,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Prepare release（prepare-release.yml）が版上げのブランチで起こす（GITHUB_TOKEN の push・PR では pull_request が来ない）。
+    paths: [Cargo.toml]
   # 名前を入れて画面から実行するとプレリリースを出す
   workflow_dispatch:
     inputs:
@@ -158,10 +159,14 @@ jobs:
           echo "::notice::reusing the installer built by run $run for $head"
           echo "BUILD=" >> "$GITHUB_ENV"
       - if: env.BUILD == '1'
+        id: cache
         uses: Swatinem/rust-cache@v2
         with:
           # 保存は main だけ（タグや PR のスコープに保存しても次の run からは読めない）
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      # 出さない main の push のビルドはキャッシュを作るためだけなので、同じキーのキャッシュがもうあればしない
+      - if: env.BUILD == '1' && env.TAG == '' && steps.cache.outputs.cache-hit == 'true'
+        run: echo "BUILD=" >> "$GITHUB_ENV"
       # testing の build.rs（ライセンスの一覧）は `cargo metadata --offline` で開発用の依存まで読むので、全部落としておく
       # （`cargo build` はビルドに要るものしか落とさず、それを保存したキャッシュにも開発用の依存は無い）
       - if: env.BUILD == '1'
