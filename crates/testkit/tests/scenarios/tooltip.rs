@@ -4,7 +4,7 @@
 
 use gpui::TestAppContext;
 use kernel::vr::{Quat, Vec3};
-use kernel::{Anchor, Hand, Pose};
+use kernel::{Anchor, Hand, Pose, Setting};
 use testing::TooltipTest;
 use testkit::{Driver, VrKit};
 
@@ -68,4 +68,20 @@ fn tooltip_side_follows_the_hand_seen_from_the_head(cx: &mut TestAppContext) {
         .hover("tip-short");
     assert_eq!(anchor(&mut kit, Hand::Right), Anchor::Above);
     assert_eq!(tooltip(&mut kit, Hand::Right).as_deref(), Some("Save"));
+}
+
+/// Tooltips can be switched off in the settings: nothing goes to the hand until they are switched back on.
+#[gpui::test]
+fn no_tooltip_while_tooltips_are_off(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| TooltipTest::default());
+    kit.kernel.set(Setting::Tooltips(false));
+    kit.step();
+    kit.hover("tip-short");
+    assert_eq!(tooltip(&mut kit, Hand::Right), None);
+    kit.kernel.set(Setting::Tooltips(true));
+    kit.hover("tip-long");
+    assert_eq!(
+        tooltip(&mut kit, Hand::Right).as_deref(),
+        Some("Open the settings of this panel")
+    );
 }

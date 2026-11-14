@@ -15,6 +15,7 @@ mod nav_bar;
 mod navigation;
 mod novr_emulator;
 mod panel_texture;
+mod pointer_settings;
 mod prefs;
 mod skeleton;
 mod test_panels;

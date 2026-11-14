@@ -34,6 +34,7 @@ mod emoji;
 pub use emoji::EmojiTest;
 mod logo;
 pub use logo::LogoTest;
+mod pointer;
 mod superellipse;
 pub use superellipse::SuperellipseTest;
 mod keyboard;
@@ -1619,92 +1620,31 @@ impl Settings {
             }
             // アクセシビリティ: 文字の見本・文字の大きさ・UI スケール・太字（セットアップウィザードと同じ部品）。
             3 => vec![ui::prefs::accessibility(window, cx)],
-            // ポインタ: 方式と、レーザーの手ブレ抑え・長さ（Laser の画面と同じ範囲）。
+            // ポインタ: カーソルとビームの設定（`pointer::page`）。ポインタの方式は選ばせない（マウスは廃止の方向。全体はタッチ）。
             4 => {
-                let max = kernel::overlay::POINTER_SMOOTHING_MAX;
-                let (tight, loose) = (
-                    kernel::overlay::POINTER_RELEASE_DEG_MIN,
-                    kernel::overlay::POINTER_RELEASE_DEG_MAX,
+                let tuning = self.select(
+                    theme,
+                    window,
+                    cx,
+                    "setting-pointer-tuning",
+                    &design::icons::SLIDERS_HORIZONTAL,
+                    i18n::t(cx, "settings.pointer_tuning"),
+                    now.pointer_tuning,
+                    vec![
+                        (
+                            "setting-tuning-simple",
+                            i18n::t(cx, "settings.simple"),
+                            kernel::PointerTuning::Simple,
+                        ),
+                        (
+                            "setting-tuning-detailed",
+                            i18n::t(cx, "settings.detailed"),
+                            kernel::PointerTuning::Detailed,
+                        ),
+                    ],
+                    Setting::PointerTuning,
                 );
-                let (short, long) = (
-                    kernel::overlay::LASER_LENGTH_MIN,
-                    kernel::overlay::LASER_MAX,
-                );
-                vec![
-                    // ポインタの方式は選ばせない（マウスは廃止の方向。全体はタッチ）。
-                    components::group(
-                        theme,
-                        i18n::t(cx, "settings.smoothing"),
-                        setting_slider(
-                            theme,
-                            i18n::tf(
-                                cx,
-                                "laser.strength",
-                                &[
-                                    ("now", &format!("{:.2}", now.pointer_smoothing)),
-                                    ("max", &format!("{max:.2}")),
-                                ],
-                            ),
-                            components::slider(
-                                theme,
-                                "setting-smoothing",
-                                now.pointer_smoothing / max,
-                                move |v, _, cx| ui::set(Setting::PointerSmoothing(v * max), cx),
-                            ),
-                        ),
-                    ),
-                    components::group(
-                        theme,
-                        i18n::t(cx, "settings.release"),
-                        setting_slider(
-                            theme,
-                            i18n::tf(
-                                cx,
-                                "laser.release",
-                                &[
-                                    ("release", &format!("{:.1}", now.pointer_release_deg)),
-                                    ("tight", &format!("{tight:.1}")),
-                                    ("loose", &format!("{loose:.0}")),
-                                ],
-                            ),
-                            components::slider(
-                                theme,
-                                "setting-release",
-                                (now.pointer_release_deg - tight) / (loose - tight),
-                                move |v, _, cx| {
-                                    ui::set(
-                                        Setting::PointerRelease(tight + v * (loose - tight)),
-                                        cx,
-                                    )
-                                },
-                            ),
-                        ),
-                    ),
-                    components::group(
-                        theme,
-                        i18n::t(cx, "settings.laser_length"),
-                        setting_slider(
-                            theme,
-                            i18n::tf(
-                                cx,
-                                "laser.length",
-                                &[
-                                    ("length", &format!("{:.2}", now.laser_length)),
-                                    ("short", &format!("{short:.2}")),
-                                    ("long", &format!("{long:.2}")),
-                                ],
-                            ),
-                            components::slider(
-                                theme,
-                                "setting-laser-length",
-                                (now.laser_length - short) / (long - short),
-                                move |v, _, cx| {
-                                    ui::set(Setting::LaserLength(short + v * (long - short)), cx)
-                                },
-                            ),
-                        ),
-                    ),
-                ]
+                pointer::page(theme, now, tuning, cx)
             }
             // ミラーリング: 取得の上限 FPS。
             5 => vec![components::list(
