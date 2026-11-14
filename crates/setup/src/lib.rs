@@ -20,10 +20,11 @@ const PX: (u32, u32) = (1152, 864);
 const LOGO_HEIGHT: f32 = 176.0;
 /// 選べるカードに載せるアイコンの大きさ。
 const CHOICE_ICON: f32 = 48.0;
-/// 頭から水平にこの距離（m）を保って付いてくる。
-const FOLLOW_DISTANCE: f32 = 1.0;
-/// 目の前（頭から 1m 先）。
-const IN_FRONT: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
+/// 頭から水平にこの距離（m）を保って付いてくる。パネルが大きいので、近いと視界が覆われ、UI スケール（面の大きさに
+/// 最大 1.5 倍）を上げると視野からはみ出す。2m なら 1.5 倍でも横幅が視野の 47° ほどに収まる。
+const FOLLOW_DISTANCE: f32 = 2.0;
+/// 目の前（頭から [`FOLLOW_DISTANCE`] 先）。
+const IN_FRONT: Pose = Pose::new(Vec3::new(0.0, 0.0, -FOLLOW_DISTANCE), Quat::IDENTITY);
 
 /// 手順。[`STEPS`] の順に進む。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
