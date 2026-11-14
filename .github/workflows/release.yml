@@ -180,12 +180,16 @@ jobs:
           name: installer
           path: target/installer/*.exe
           if-no-files-found: error
-      # 版上げの push とプレリリースは、インストーラーができてからリリースを作る
-      # （今までの版と同じくプレリリース。公開されたリリースや、やり直しの run なら作らない）
+      # 版上げの push とプレリリースは、インストーラーができてからリリースを作る（公開されたリリースや、やり直しの run なら作らない）。
+      # 名前の付いた版（-<名前>.<数>）は GitHub のプレリリース（アプリは nightly のチャンネルだけが受け取る）、付かない版は正式なリリース
       - if: env.PUBLISH == '1'
         run: |
+          pre=
+          if [[ $TAG == *-* ]]; then
+            pre=--prerelease
+          fi
           gh release view "$TAG" > /dev/null 2>&1 ||
-            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --prerelease --generate-notes ${PREV:+--notes-start-tag "$PREV"}
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" $pre --generate-notes ${PREV:+--notes-start-tag "$PREV"}
         env:
           GH_TOKEN: ${{ github.token }}
       # アプリの更新は新旧をビルド番号（HEAD までのコミット数。crates/updater/build.rs と同じ数え方）で比べる。
