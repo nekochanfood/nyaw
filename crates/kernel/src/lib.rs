@@ -17,10 +17,11 @@ use std::time::{Duration, Instant};
 use subsystems::os;
 
 pub use config::{
-    COLOR_HISTORY, Config, DASHBOARD_DISTANCE, DASHBOARD_DISTANCE_MAX, DASHBOARD_DISTANCE_MIN,
-    DASHBOARD_HEIGHT_MAX, DASHBOARD_HEIGHT_MIN, DASHBOARD_STEP, DominantHand, Language, LodQuality,
-    PersonalColor, PointerMode, SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode,
-    UI_SCALE_MAX, UI_SCALE_MIN, UpdateChannel, WristDesign, WristFace,
+    COLOR_HISTORY, CURSOR_SCALE_MAX, CURSOR_SCALE_MIN, Config, DASHBOARD_DISTANCE,
+    DASHBOARD_DISTANCE_MAX, DASHBOARD_DISTANCE_MIN, DASHBOARD_HEIGHT_MAX, DASHBOARD_HEIGHT_MIN,
+    DASHBOARD_STEP, DominantHand, Language, LodQuality, PersonalColor, PointerMode, PointerTuning,
+    SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN,
+    UpdateChannel, WristDesign, WristFace,
 };
 pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use subsystems::ControllerState;
@@ -122,6 +123,15 @@ pub enum Setting {
     PointerRelease(f32),
     /// レーザーの見える長さ（m。`laser_length`）。
     LaserLength(f32),
+    /// 設定画面のポインタの動きの調整のしかた（`pointer_tuning`）。カーネルは値を持つだけで、従うのは設定画面。
+    PointerTuning(PointerTuning),
+    /// カーソルの大きさの倍率（`cursor_scale`。範囲に収め、刻みに丸める）。
+    CursorScale(f32),
+    /// ツールチップを出すか（`tooltips`）。カーネルは値を持つだけで、従うのは UI 層。
+    Tooltips(bool),
+    /// 押したとき（`tap_sound`）・指したとき（`hover_sound`）の音を鳴らすか。カーネルは値を持つだけで、従うのは UI 層。
+    TapSound(bool),
+    HoverSound(bool),
     /// コントローラを持たない手の調整値（`[hand]`）。範囲の外の値は範囲に収める。
     Hand(subsystems::input::HandTuning),
     /// 利き手（`dominant_hand`）。カーネルは値を持つだけで、パネルは動かさない（従うのは左右で振る舞いが変わる側）。
@@ -169,6 +179,12 @@ pub struct Settings {
     pub pointer_smoothing: f32,
     pub pointer_release_deg: f32,
     pub laser_length: f32,
+    pub pointer_tuning: PointerTuning,
+    /// カーソルの大きさの倍率（等倍 = 1）。
+    pub cursor_scale: f32,
+    pub tooltips: bool,
+    pub tap_sound: bool,
+    pub hover_sound: bool,
     pub hand: subsystems::input::HandTuning,
     pub dominant_hand: DominantHand,
     pub wrist_design: WristDesign,
@@ -206,6 +222,11 @@ impl Default for Settings {
             pointer_smoothing: Default::default(),
             pointer_release_deg: Default::default(),
             laser_length: Default::default(),
+            pointer_tuning: Default::default(),
+            cursor_scale: 1.0,
+            tooltips: true,
+            tap_sound: true,
+            hover_sound: true,
             hand: Default::default(),
             dominant_hand: Default::default(),
             wrist_design: Default::default(),
@@ -432,6 +453,9 @@ impl<B: VrBackend> Kernel<B> {
         if let Some(l) = config.laser_length {
             overlay.set_laser_length(l);
         }
+        if let Some(s) = config.cursor_scale {
+            overlay.set_cursor_scale(config::clamp_scale(s, CURSOR_SCALE_MIN, CURSOR_SCALE_MAX));
+        }
         overlay.set_block_input(config.block_input.unwrap_or(true));
         if let Some(s) = config.ui_scale {
             let s = config::clamp_scale(s, UI_SCALE_MIN, UI_SCALE_MAX);
@@ -495,6 +519,11 @@ impl<B: VrBackend> Kernel<B> {
             pointer_smoothing: self.overlay.pointer_smoothing(),
             pointer_release_deg: self.overlay.pointer_release(),
             laser_length: self.overlay.laser_length(),
+            pointer_tuning: self.config.pointer_tuning,
+            cursor_scale: self.overlay.cursor_scale(),
+            tooltips: self.config.tooltips.unwrap_or(true),
+            tap_sound: self.config.tap_sound.unwrap_or(true),
+            hover_sound: self.config.hover_sound.unwrap_or(true),
             hand: self.subsystems.hand,
             dominant_hand: self.config.dominant_hand,
             wrist_design: self.config.wrist_design,
@@ -598,6 +627,28 @@ impl<B: VrBackend> Kernel<B> {
                 let l = self.overlay.laser_length();
                 self.config.laser_length = Some(l);
                 ("laser_length", config::value(l))
+            }
+            Setting::PointerTuning(t) => {
+                self.config.pointer_tuning = t;
+                ("pointer_tuning", config::value(t))
+            }
+            Setting::CursorScale(s) => {
+                let s = config::clamp_scale(s, CURSOR_SCALE_MIN, CURSOR_SCALE_MAX);
+                self.overlay.set_cursor_scale(s);
+                self.config.cursor_scale = Some(s);
+                ("cursor_scale", config::value(s))
+            }
+            Setting::Tooltips(b) => {
+                self.config.tooltips = Some(b);
+                ("tooltips", config::value(b))
+            }
+            Setting::TapSound(b) => {
+                self.config.tap_sound = Some(b);
+                ("tap_sound", config::value(b))
+            }
+            Setting::HoverSound(b) => {
+                self.config.hover_sound = Some(b);
+                ("hover_sound", config::value(b))
             }
             Setting::Hand(h) => {
                 let h = h.clamped();
@@ -1294,6 +1345,46 @@ mod tests {
             (s.dashboard_distance, s.dashboard_height),
             (DASHBOARD_DISTANCE_MIN, DASHBOARD_HEIGHT_MAX)
         );
+    }
+
+    /// ポインタの画面の設定: 既定はシンプル・等倍・どれもオン。カーソルの大きさは範囲と刻みに収まり、設定ファイルの値も同じく収める。
+    #[test]
+    fn pointer_settings_default_on_and_cursor_scale_stays_in_range() {
+        let (mut k, _) = lod_kernel();
+        let (s, d) = (k.settings(), Settings::default());
+        for s in [s, d] {
+            assert_eq!(s.pointer_tuning, PointerTuning::Simple);
+            assert_eq!(
+                (s.cursor_scale, s.tooltips, s.tap_sound, s.hover_sound),
+                (1.0, true, true, true)
+            );
+        }
+        k.set(Setting::PointerTuning(PointerTuning::Detailed));
+        k.set(Setting::Tooltips(false));
+        k.set(Setting::TapSound(false));
+        let s = k.settings();
+        assert_eq!(s.pointer_tuning, PointerTuning::Detailed);
+        assert_eq!(
+            (s.tooltips, s.tap_sound, s.hover_sound),
+            (false, false, true)
+        );
+        k.set(Setting::CursorScale(1.44));
+        assert!((k.settings().cursor_scale - 1.4).abs() < 1e-6);
+        for (given, kept) in [
+            (9.0, CURSOR_SCALE_MAX),
+            (0.0, CURSOR_SCALE_MIN),
+            (f32::NAN, 1.0),
+        ] {
+            k.set(Setting::CursorScale(given));
+            assert!((k.settings().cursor_scale - kept).abs() < 1e-6, "{given}");
+        }
+        let config = Config {
+            cursor_scale: Some(7.0),
+            hover_sound: Some(false),
+            ..Default::default()
+        };
+        let s = Kernel::with_backend(MockBackend::default(), config).settings();
+        assert_eq!((s.cursor_scale, s.hover_sound), (CURSOR_SCALE_MAX, false));
     }
 
     /// アクセシビリティの 3 つは独立した設定: どれかを変えてもほかは変わらず、どんな値の組でも範囲に収まる。
