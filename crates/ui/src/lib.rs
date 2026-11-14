@@ -1624,8 +1624,11 @@ pub fn run_with(
                                     .and_then(|c| c.panels.get(&panel))
                                     .is_some_and(|s| s.live))
                         {
-                            // ビューが描くたびに変わる。GPUI が描き直すよう汚す。
-                            window.refresh();
+                            // ビューが描くたびに変わる。GPUI が描き直すよう汚す。`refresh` だと使い回すビュー（Markdown など）まで描き直すので、根だけ汚す。
+                            match window.root::<PanelRoot>().flatten() {
+                                Some(root) => root.update(cx, |_, cx| cx.notify()),
+                                None => window.refresh(),
+                            }
                             redraw = true;
                         }
                         let resolution = kernel.panel(panel).resolution;
