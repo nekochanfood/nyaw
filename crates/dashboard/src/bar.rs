@@ -79,7 +79,7 @@ impl Dashboard {
             debug,
             streams: Vec::new(),
             menu: None,
-            shown: None,
+            pages: Vec::new(),
             outside: None,
             placement: None,
             prev_streams: Vec::new(),
@@ -250,18 +250,36 @@ impl Dashboard {
     /// 今はまっている画面。
     pub fn current(&self, cx: &App) -> Option<Page> {
         let docked = ui::docked(cx)?;
-        self.shown
-            .filter(|&(_, id)| id == docked)
-            .map(|(page, _)| page)
+        self.pages
+            .iter()
+            .find(|&&(_, id)| id == docked)
+            .map(|&(page, _)| page)
+    }
+
+    /// `page` の、閉じていない画面（はまっていても、外して独立させていても）。
+    fn page_panel(&self, page: Page, cx: &App) -> Option<PanelId> {
+        let closed = |id: &PanelId| {
+            cx.try_global::<PanelControl>()
+                .and_then(|c| c.panels.get(id))
+                .is_some_and(|p| p.status.closed)
+        };
+        self.pages
+            .iter()
+            .find(|(p, id)| *p == page && !closed(id))
+            .map(|&(_, id)| id)
     }
 
     /// `page` の画面をはめる（はまっていた画面は閉じる）。もうはまっていれば閉じる。
+    /// 外して独立させていれば、もう一つ開かずにそれをはめ直す。
     pub fn toggle(&mut self, page: Page, cx: &mut Context<Self>) {
         if self.current(cx) == Some(page) {
             if let Some(id) = ui::docked(cx) {
                 close(id, cx);
+                self.pages.retain(|&(_, p)| p != id);
             }
-            self.shown = None;
+        } else if let Some(id) = self.page_panel(page, cx) {
+            self.stash_docked(cx);
+            ui::dock(id, cx);
         } else {
             // はまっている配信は閉じずに隠す（ほかの画面は、次の画面と入れ替わりに閉じる）。
             self.stash_docked(cx);
@@ -288,7 +306,6 @@ impl Dashboard {
     /// ニャプリ `app` をはめる（はまっていた画面は閉じ、配信は隠す）。もう開いていれば、そのパネルをはめる。
     pub fn open_nyapp(&mut self, app: nyapp::Installed, cx: &mut Context<Self>) {
         self.stash_docked(cx);
-        self.shown = None;
         if let Some(panel) = nyapp::panel_of(&app.manifest.id, cx) {
             ui::dock(panel, cx);
             commands(panel, [PanelCommand::Hide(false)], cx);
@@ -365,7 +382,8 @@ impl Dashboard {
             Page::QuickSettings | Page::NowPlaying => nyapp::system::DASHBOARD,
         };
         nyapp::opened(system.id, panel, cx);
-        self.shown = Some((page, panel));
+        self.pages.retain(|&(p, _)| p != page);
+        self.pages.push((page, panel));
         ui::notify(self.panel, cx);
     }
 }

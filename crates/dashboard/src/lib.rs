@@ -194,8 +194,8 @@ pub struct Dashboard {
     streams: Vec<Stream>,
     /// 開いているメニューのポップオーバー（[`Menu`]）。
     menu: Option<PanelId>,
-    /// 最後にはめた画面（外されたり閉じられたりしていれば、[`Self::current`] は `None`）。
-    shown: Option<(Page, PanelId)>,
+    /// 開いた画面（画面ごとに 1 つ。外して独立させたものも含む。閉じたものは [`Self::page_panel`] が引かない）。
+    pages: Vec<(Page, PanelId)>,
     /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）と、そのとき隠していたか。
     /// 最初に見た値から数える。
     outside: Option<(u32, bool)>,
