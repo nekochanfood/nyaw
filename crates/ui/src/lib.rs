@@ -763,6 +763,10 @@ pub struct PanelSpec {
     attach: Option<(Device, Pose)>,
     /// 起動時から掴めない。
     locked: bool,
+    /// 頭にゆるく追従する（[`Self::lazy_follow`]）。
+    lazy_follow: Option<kernel::LazyFollow>,
+    /// 開いた時点からロックダウンを取る（[`Self::lockdown`]）。
+    lockdown: bool,
     /// 掴んで大きさを変えられる（既定。[`Self::without_resize`] で外す）。
     resizable: bool,
     /// 全体の設定によらないポインタの方式（[`Self::pointer_mode`]）。
@@ -823,6 +827,8 @@ impl PanelSpec {
             resolution: PANEL_PX,
             attach: None,
             locked: false,
+            lazy_follow: None,
+            lockdown: false,
             resizable: true,
             pointer_mode: None,
             grab_anchor: None,
@@ -951,6 +957,19 @@ impl PanelSpec {
     /// 起動時にデバイスへ取り付ける。
     pub fn attached(mut self, device: Device, offset: Pose) -> Self {
         self.attach = Some((device, offset));
+        self
+    }
+
+    /// 開いた時点からロックダウンを取る（[`PanelCommand::Lockdown`]）。放す（か閉じる）まで、このパネルは閉じられず、
+    /// ダッシュボードなどのシェルも開閉を控える。放すのはビューが `Lockdown(false)` を積む。
+    pub fn lockdown(mut self) -> Self {
+        self.lockdown = true;
+        self
+    }
+
+    /// 頭の向き（左右だけ）と歩きにゆるく追従する（[`kernel::LazyFollow`]）。ほかのパネルでも使える。
+    pub fn lazy_follow(mut self, follow: kernel::LazyFollow) -> Self {
+        self.lazy_follow = Some(follow);
         self
     }
 
@@ -1979,6 +1998,12 @@ fn open_panel(
     }
     if spec.locked {
         kernel.apply(panel, PanelCommand::Lock(true));
+    }
+    if spec.lockdown {
+        kernel.apply(panel, PanelCommand::Lockdown(true));
+    }
+    if let Some(follow) = spec.lazy_follow {
+        kernel.apply(panel, PanelCommand::LazyFollow(Some(follow)));
     }
     if !spec.resizable {
         kernel.apply(panel, PanelCommand::Resizable(false));

@@ -1,0 +1,41 @@
+# crates/setup
+
+層: 5 画面
+
+セットアップウィザード。nyaw を使い始めるのに要る設定を、1 画面に 1 つずつ順に決める。ウィザード部品（`design::components` の `wizard_*` + `navigation`）で組むパネルで、ナビゲーションバーは付けない。大きさは 1.152m × 0.864m（1152 × 864px）: オーバーレイの既定と同じ 4:3 で、いちばん背の高い文字盤の手順が収まるよう既定（0.8m × 0.6m）より大きくしてある。二枚目からの内容（見出しと選ぶもの）は幅 704px までの列にして左右中央に置き（`components::WIZARD_CONTENT`）、「戻る」「次へ」は下の両端。
+
+## 手順
+
+`setup::STEPS` の順（`Step`）。二枚目からは「戻る」で前へ戻れ（完了の画面にもある）、右から左へのスワイプでも戻る。
+
+| 手順 | 決めること | 選び方 |
+|---|---|---|
+| `Welcome` | （言語） | 一枚目。大きなロゴ・「ようこそ！」・概要を画面の中央に置く。右下に「次へ」、左下に言語のドロップダウン `setup-language`（地球儀と、今の言語のその言語自身での名前。上へ開く） |
+| `Hand` | 利き手 | 左手 / 右手（選べるカード） |
+| `Accessibility` | 文字の大きさ・UI スケール・太字 | 設定画面の「アクセシビリティ」と同じ部品（`ui::prefs::accessibility`）: 上に文字の見本、下に対等な 3 つの項目。見た目（外観）を選ぶ前に、まず見やすさを決める。文字の大きさは動かすとすぐ効き、UI スケールは離したときに決まる（ウィザード自身の大きさが変わる。動かしている間は見本だけが拡大・縮小する） |
+| `Appearance` | テーマとパーソナルカラー | 設定画面の「外観」と同じ部品（`ui::prefs::appearance`）: 上からテーマの見本・テーマ・パーソナルカラーの履歴と、色を作るダイアログを開くプラス |
+| `Wrist` | wrist の文字盤 | 設定画面の「時計」と同じ部品（`ui::prefs::watch_faces`）: 種類の絞り込み・弧に並ぶ見本・「設定する」 |
+| `AutoLaunch` | SteamVR と一緒に起動するか | **OpenVR のときだけ出る**（`setup::shown`。`Settings::auto_launch` が `Some` なのは OpenVR だけ。ほかのランタイムでは「次へ」「戻る」・スワイプバックとも飛ばす）。「SteamVR と一緒に起動」`setup-auto-launch-on` / 「自分で起動する」`setup-auto-launch-off`（選べるカード）。既定は切ったままで、選ぶまで SteamVR には何も登録しない。選ぶと `Setting::AutoLaunch`（`../subsystems/vr/AGENT.md` の「SteamVR のアプリ登録」） |
+| `Done` | — | アイコン・一言・説明を画面の中央に置く。右下の「完了」で終える。左下に「戻る」 |
+
+- **選ぶとその場で反映する**: 選んだものはすぐ `Setting` として積む（`PanelControl::setting_changes`）。「次へ」は進むだけで、戻っても選んだものは残る。言語を替えるとこの画面の文言もその場で替わり、テーマ・パーソナルカラーはこの画面自身が見本になる。
+- **言語の初期値**: 設定ファイルで決めていなければ OS の表示言語（`../kernel/AGENT.md`）。なので、一枚目は多くの人にとって自分の言語で出る。違ったときのために、言語の名前はその言語自身で出す。
+- **設定画面と同じ部品**: アクセシビリティ・外観・文字盤は `ui::prefs`（`../ui/AGENT.md` の「設定の部品」）。ウィザードのパネルの地は設定画面の中身の側と同じ背景色（`components::wizard_panel`）なので、部品は設定画面と同じ色のまま、枠で囲まずに載せる。色を作るダイアログはウィザードの子パネルとして開く（ロックダウン中でも開ける。開いている間、ウィザードは暗くなって入力を受けない）。
+- **文字盤の見本**: 描き方は wrist が `ui::prefs::FacePreview` に置く（`../wrist/AGENT.md`）。ロックダウン中は本物の wrist が隠れているので、見本で選ぶ。
+- **選べるカード**: 利き手の選択肢は `components::choice`（選んでいるものは塗りの色の枠と右上のチェック）。
+
+## 出る時・終わる時
+
+- **出る時**: 初回起動（`Settings::setup_done` が `false`）に main が `setup::spec()` を載せる。デバッグからは Testing の `setup-wizard`（`testing::SetupWizardSpawn` を main が渡したときだけ出る）で `setup::spawn_spec(from)` を開いて強制的にやり直せる。
+- **ロックダウン**: 起動仕様が `PanelSpec::lockdown()` で開いた時点から取り、完了で放してから閉じる（`Lockdown(false)`、`Close` の順）。仕組みは `../kernel/AGENT.md`。
+- **LazyFollow**: `setup::follow()`（頭から水平に 1m）で付いてくる。向きの左右だけを見て、上下・傾きは見ない。
+- **完了**: `Setting::SetupDone(true)` を設定ファイルに残す。途中でやめても、選んだ設定は残る（次の起動でまたウィザードが出る）。
+
+## 主な公開 API
+
+`setup::spec()`（初回起動）, `setup::spawn_spec(from)`（デバッグからのやり直し）, `setup::follow()`, `SetupWizard`（`step()`、`go(forward, settings)`: 出さない手順を飛ばして進む・戻る）, `Step`, `STEPS`, `shown(step, settings)`
+
+## テスト
+
+- 通しの操作: `crates/testkit/tests/scenarios/setup.rs`（各画面で選ぶと設定が変わり、完了で終わる。一枚目の配置と言語のドロップダウン、完了の画面の「戻る」、novr では SteamVR の手順を飛ばすこと・OpenVR では出て選べること（`openvr_asks_whether_to_launch_with_steamvr`）、ウィザードの子として開く色のダイアログ、パネルの地が背景色で部品がカードの色のまま載ること）、`setup_lockdown.rs`（ロックダウンと追従）。
+- 見た目: `cargo test -p ui --test gpu -- --ignored look`（各画面を `target/tmp/look-setup-*.bmp` に書き出す。ライトのものは日本語）。

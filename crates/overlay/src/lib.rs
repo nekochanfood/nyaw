@@ -13,6 +13,8 @@ use subsystems::{Frame, Subsystems, desktop::Cursor, rendering::Surface, vr};
 
 use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
 
+mod lazy_follow;
+pub use lazy_follow::LazyFollow;
 pub use subsystems::ControllerState;
 
 pub type PanelId = usize;
@@ -90,6 +92,15 @@ pub struct Panel {
     surface: Surface,
     /// この tick で追従させるデバイスと相対姿勢。ランタイムに任せられればそうする。
     follow: Option<(Device, Pose)>,
+    /// 頭の向きにゆるく追従する（[`Overlay::set_lazy_follow`]）。取り付けより優先する。
+    pub lazy_follow: Option<LazyFollow>,
+}
+
+impl Panel {
+    /// 掴める（ロックされておらず、頭にゆるく追従してもいない）。ゆるい追従は毎 tick 位置を決めるので、掴んで動かしても意味がない。
+    pub fn grabbable(&self) -> bool {
+        !self.locked && self.lazy_follow.is_none()
+    }
 }
 
 /// レーザーを描くパネルの役割。見た目は上の層の画面が描き、置き場所はオーバーレイ層が決める。
@@ -438,6 +449,7 @@ impl Overlay {
             opacity: 1.0,
             surface,
             follow: None,
+            lazy_follow: None,
         });
         let id = self.panels.len() - 1;
         self.present.push(id);
@@ -768,6 +780,11 @@ impl Overlay {
         self.panels[id].pose = pose;
     }
 
+    /// 頭の向き（左右だけ）と歩きにゆるく追従させる（`None` で外す）。取り付けより優先する。掴んでいる間は手に従う。
+    pub fn set_lazy_follow(&mut self, id: PanelId, follow: Option<LazyFollow>) {
+        self.panels[id].lazy_follow = follow;
+    }
+
     /// 等倍のつもりで決めた姿勢 `pose` へパネルを置く。掴む基準（[`Self::set_grab_anchor`]）があれば、基準が等倍のときと
     /// 同じ所に来るように置く（[`anchored`]）。無ければ [`Self::set_pose`] と同じ。
     pub fn place(&mut self, id: PanelId, pose: Pose) {
@@ -1078,11 +1095,17 @@ impl Overlay {
         for d in dragged.clone() {
             dragged.extend(carried(&self.panels, d));
         }
+        let dt = self.dt;
         for &id in &self.present {
             let p = &mut self.panels[id];
             p.follow = None;
             // 子は取り付けではなく親に追従する（下の settle_family）。
             if dragged.contains(&id) || p.parent.is_some() || p.nav_bar_of.is_some() {
+                continue;
+            }
+            // 頭にゆるく追従するパネルは、取り付けではなく頭の向きと位置から置く（ランタイムには任せず毎 tick 置く）。
+            if let Some(lazy) = p.lazy_follow.as_mut() {
+                p.pose = lazy.step(&frame.hmd, dt);
                 continue;
             }
             // 骨格で操作している手も、ランタイムがその手のデバイスを追っていれば相対配置を任せる（`Frame::pose` も同じ姿勢）。
@@ -1384,12 +1407,12 @@ impl Overlay {
             hit: Some((id, aim.position + aim.forward() * t)),
         });
         st.drawn = st.ray.map(|r| r.aim.orientation);
-        // ロック中のパネルは掴めない（掴みボタンは無視して普通に指す）。
+        // ロック中・ゆるく追従中のパネルは掴めない（掴みボタンは無視して普通に指す）。
         let grab_started = grab_started
             && hit.is_some_and(|h| {
                 std::iter::once(self.panels[h.0].nav_bar_of.unwrap_or(h.0))
                     .chain(carried(&self.panels, h.0))
-                    .all(|q| !self.panels[q].locked)
+                    .all(|q| self.panels[q].grabbable())
             });
 
         let mut emit = |panel, event| {
@@ -3557,6 +3580,32 @@ mod tests {
         controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
         ov.tick(&mut vr);
         assert_at(&ov, &vr, Vec3::new(0.0, 0.0, -1.0));
+    }
+
+    #[test]
+    fn lazy_following_panel_ignores_grab_but_still_takes_pointer() {
+        let (mut vr, mut ov) = setup();
+        ov.set_lazy_follow(0, Some(LazyFollow::new(1.0)));
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        assert_eq!(
+            kinds(&ov.tick(&mut vr)),
+            [PointerEvent::Move {
+                pos: Vec2::new(50.0, 50.0)
+            }]
+        );
+        // 手を動かしても付いてこない（掴めない）。ゆるい追従が置いた、頭の正面のまま。
+        controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        assert_at(&ov, &vr, Vec3::new(0.0, 0.0, -1.0));
+        // 外せば掴める（いったん離して押し直す）。
+        ov.set_lazy_follow(0, None);
+        controller(&mut vr, Pose::IDENTITY, &[]);
+        ov.tick(&mut vr);
+        controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+        ov.tick(&mut vr);
+        controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+        settle(&mut vr, &mut ov);
+        assert_at(&ov, &vr, Vec3::new(1.0, 0.0, -1.0));
     }
 
     #[test]

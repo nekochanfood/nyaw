@@ -21,6 +21,7 @@ mod shaped_button;
 pub mod slide;
 mod slider;
 mod tooltip;
+mod wizard;
 pub use carousel::{Carousel, Place, Shape, arc, carousel};
 pub use color::{accent_row, accent_sliders, swatch};
 pub use markdown::markdown;
@@ -29,6 +30,10 @@ pub use scrollbar::{Elastic, Scroll, Scrollbars, claim_scroll, elastic, free_scr
 pub use shaped_button::{ShapedButton, rounded_contains, rounded_corners, shaped_button};
 pub use slider::{Slider, slider};
 pub use tooltip::*;
+pub use wizard::{
+    WIZARD_CONTENT, WIZARD_MARGIN, Wizard, wizard_back, wizard_icon, wizard_next, wizard_panel,
+    wizard_step, wizard_welcome,
+};
 
 use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 
@@ -1062,6 +1067,56 @@ pub fn tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
     b
 }
 
+/// 選べるカード（[`choice`]）の、選んでいる印の枠の太さと、右上のチェックの丸の大きさ（px）。
+const CHOICE_RING: f32 = 3.0;
+const CHOICE_BADGE: f32 = 24.0;
+
+/// 選べるカード: いくつかの中から 1 つ選ぶ、見本や絵を載せた箱（地の上に置く。[`tile`] と同じくカードの色で、ホバー・押下で沈む）。
+/// 選んでいるものは塗りの色の枠で囲み、右上にチェックの印を出す（色の差だけに頼らない）。
+/// 中身 `content` は中央に置く（印は中身の上に重ねるので、中身はここで受け取る）。高さは中身に合わせ、幅は呼び出し側が足す。
+pub fn choice(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    selected: bool,
+    content: impl IntoElement,
+) -> Button {
+    let mut b = base_button(theme, id.into(), Variant::Default);
+    (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
+    let ring = if selected { theme.accent_solid } else { 0 };
+    b.base = b
+        .base
+        .relative()
+        .h_auto()
+        .flex_col()
+        .gap(px(spacing::SM))
+        .p(px(spacing::MD))
+        .rounded(px(radius::LG))
+        .border(px(CHOICE_RING))
+        .border_color(rgba(ring))
+        .font_weight(FontWeight::NORMAL)
+        .child(content);
+    if selected {
+        let check = crate::icon(&crate::icons::CHECK)
+            .weight(crate::Weight::Bold)
+            .size(px(font_size::SM))
+            .color(rgba(theme.on_accent));
+        b.base = b.base.child(
+            div()
+                .absolute()
+                .top(px(spacing::SM))
+                .right(px(spacing::SM))
+                .size(px(CHOICE_BADGE))
+                .rounded(px(radius::FULL))
+                .bg(rgba(theme.accent_solid))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(check),
+        );
+    }
+    b
+}
+
 /// 地の上に置くタイル（アプリ一覧のアプリなど）: [`tile`] と同じく縦に並べるが、カードの地を敷かず、ホバー・押下のときだけ
 /// 色が付く。ふだんは地（`background`）と同じ色（透明にするとホバーの色から戻るフェードが途中で切れる。[`sidebar_item`]）。
 pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
@@ -1362,11 +1417,12 @@ enum Popover {
     BelowEnd,
     /// 下に左右中央を揃える（[`dropdown`]）。
     Below,
-    /// 上に左右中央を揃える（画面の下の方に置いた [`dropdown`]）。
-    Above,
+    /// 上に左端を揃える（画面の下の隅に置いた [`dropdown`]）。
+    AboveStart,
 }
 
-/// [`dropdown`] の選択肢のポップオーバー: [`select_popover`] と同じもので、ボタンの下（`up` なら上）に左右中央を揃えて出す。
+/// [`dropdown`] の選択肢のポップオーバー: [`select_popover`] と同じもので、ボタンの下に左右中央を揃えて出す。`up` なら
+/// （画面の下の隅に置いたボタン用に）上に、左端を揃えて出す。
 #[allow(clippy::too_many_arguments)]
 pub fn dropdown_popover(
     theme: &Theme,
@@ -1378,7 +1434,11 @@ pub fn dropdown_popover(
     items: impl IntoIterator<Item = Button>,
     on_dismiss: impl Fn(&gpui::MouseDownEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
-    let place = if up { Popover::Above } else { Popover::Below };
+    let place = if up {
+        Popover::AboveStart
+    } else {
+        Popover::Below
+    };
     popover(theme, window, cx, id, open, place, items, on_dismiss)
 }
 
@@ -1450,10 +1510,7 @@ fn popover(
             div().left(gpui::relative(0.5)).bottom_0(),
             gpui::Anchor::TopCenter,
         ),
-        Popover::Above => (
-            div().left(gpui::relative(0.5)).top_0(),
-            gpui::Anchor::BottomCenter,
-        ),
+        Popover::AboveStart => (div().left_0().top_0(), gpui::Anchor::BottomLeft),
     };
     // 開いた要素との間は `XS`。現れるときは、その向こうから [`SELECT_POPOVER_RISE`] だけ寄ってくる。
     let gap = px(spacing::XS - SELECT_POPOVER_RISE * (1.0 - shown));
@@ -1466,7 +1523,7 @@ fn popover(
         .border_1()
         .border_color(rgba(theme.neutral_border_subtle))
         .shadow_md();
-    let card = if place == Popover::Above {
+    let card = if place == Popover::AboveStart {
         card.mb(gap)
     } else {
         card.mt(gap)
@@ -1507,9 +1564,9 @@ pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
 }
 
 /// ダイアログのアイコンの大きさ。
-const DIALOG_ICON: f32 = 64.0;
+pub(crate) const DIALOG_ICON: f32 = 64.0;
 /// ダイアログの文の行の高さ（文字の大きさに対する比）。
-const DIALOG_LEADING: f32 = 1.4;
+pub(crate) const DIALOG_LEADING: f32 = 1.4;
 /// 概要が見える行数の上限。超える分はスクロールする。
 const DIALOG_LINES: usize = 3;
 

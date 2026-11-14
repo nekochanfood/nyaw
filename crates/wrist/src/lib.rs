@@ -74,6 +74,8 @@ pub struct Wrist {
     panel: PanelId,
     /// 反映した X ボタンの二回押しの回数（[`kernel::PanelStatus::double_press`]）。
     toggles: u32,
+    /// 前回見たときにロックダウン中だったか（入った瞬間にダッシュボードを隠す）。
+    locked: bool,
     /// 付いている手首（利き手の反対。設定が変われば自分で付け替える）。
     hand: Hand,
 }
@@ -110,6 +112,7 @@ impl Wrist {
             dashboard: None,
             panel,
             toggles: 0,
+            locked: false,
             hand,
         }
     }
@@ -137,16 +140,42 @@ impl Wrist {
             .panels
             .get(&self.panel)
             .map_or(0, |p| p.status.double_press);
+        let locked = ctl.settings.lockdown;
+        let open = self
+            .dashboard
+            .map(|id| (id, ctl.panels.get(&id).map(|p| p.status.clone())))
+            .filter(|(_, s)| !s.as_ref().is_some_and(|s| s.closed));
+        // ロックダウンに入った瞬間、出ているダッシュボードを隠す（解けても出し直さない）。
+        let entered = locked && !self.locked;
+        // ロックダウンの出入りに合わせて、手首自身も隠す・出す。
+        let changed = locked != self.locked;
+        self.locked = locked;
+        if changed {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(self.panel)
+                .or_default()
+                .commands
+                .push(kernel::PanelCommand::Hide(locked));
+        }
+        if entered
+            && let Some((id, status)) = &open
+            && !status.as_ref().is_some_and(|s| s.hidden)
+        {
+            dashboard::hide(*id, cx);
+        }
         if toggles == self.toggles {
             return;
         }
         self.toggles = toggles;
-        let open = self
-            .dashboard
-            .map(|id| (id, ctl.panels.get(&id).map(|p| &p.status)))
-            .filter(|(_, s)| !s.is_some_and(|s| s.closed));
+        // ロックダウン中はダッシュボードを開けない（押したことだけ受け取って捨てる）。
+        if locked {
+            return;
+        }
         match open {
-            Some((id, status)) if status.is_some_and(|s| s.hidden) => dashboard::show(id, cx),
+            Some((id, status)) if status.as_ref().is_some_and(|s| s.hidden) => {
+                dashboard::show(id, cx)
+            }
             Some((id, _)) => dashboard::hide(id, cx),
             None => open_dashboard(self.settings, self.debug, false, cx),
         }
@@ -271,6 +300,100 @@ mod tests {
             1,
             "開き直さない"
         );
+    }
+
+    /// ロックダウン中は X ボタンを二回押してもダッシュボードを出さない（押したことは受け取る）。
+    #[gpui::test]
+    fn double_x_does_nothing_in_lockdown(cx: &mut TestAppContext) {
+        let (wrist, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        cx.run_until_parked();
+        wrist.update(cx, |w, _| w.dashboard = Some(3));
+        cx.update(|_, cx| {
+            let ctl = cx.default_global::<PanelControl>();
+            ctl.settings.lockdown = true;
+            ctl.panels.entry(3).or_default().status.hidden = true;
+            ctl.panels.entry(0).or_default().status.double_press = 1;
+        });
+        cx.run_until_parked();
+        let commands = cx.update(|_, cx| {
+            cx.default_global::<PanelControl>()
+                .panels
+                .entry(3)
+                .or_default()
+                .commands
+                .clone()
+        });
+        assert!(commands.is_empty(), "{commands:?}");
+        assert_eq!(
+            cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
+            1,
+            "開かない"
+        );
+    }
+
+    /// ロックダウンに入ったとき、出ていたダッシュボードは隠れる（1 回だけ。解けても出し直さない）。
+    #[gpui::test]
+    fn lockdown_hides_a_visible_dashboard_once(cx: &mut TestAppContext) {
+        let (wrist, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        cx.run_until_parked();
+        wrist.update(cx, |w, _| w.dashboard = Some(3));
+        let commands = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                std::mem::take(
+                    &mut cx
+                        .default_global::<PanelControl>()
+                        .panels
+                        .entry(3)
+                        .or_default()
+                        .commands,
+                )
+            })
+        };
+        let set_lockdown = |cx: &mut gpui::VisualTestContext, on| {
+            cx.update(|_, cx| {
+                let ctl = cx.default_global::<PanelControl>();
+                ctl.settings.lockdown = on;
+                ctl.panels.entry(3).or_default().status.hidden = false;
+            });
+            cx.run_until_parked();
+        };
+        // 出ているダッシュボード（hidden = false）の前でロックダウンに入る。
+        set_lockdown(cx, true);
+        assert!(commands(cx).contains(&PanelCommand::Hide(true)));
+        // 続けて状態が書かれても、もう一度は隠さない。
+        set_lockdown(cx, true);
+        assert!(commands(cx).is_empty());
+        // 解けても出し直さない。
+        set_lockdown(cx, false);
+        assert!(commands(cx).is_empty());
+    }
+
+    /// ロックダウン中は手首自身も隠れ、解けると出る。
+    #[gpui::test]
+    fn lockdown_hides_the_wrist_itself(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        cx.run_until_parked();
+        let commands = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                std::mem::take(
+                    &mut cx
+                        .default_global::<PanelControl>()
+                        .panels
+                        .entry(0)
+                        .or_default()
+                        .commands,
+                )
+            })
+        };
+        let set_lockdown = |cx: &mut gpui::VisualTestContext, on| {
+            cx.update(|_, cx| cx.default_global::<PanelControl>().settings.lockdown = on);
+            cx.run_until_parked();
+        };
+        commands(cx);
+        set_lockdown(cx, true);
+        assert!(commands(cx).contains(&PanelCommand::Hide(true)));
+        set_lockdown(cx, false);
+        assert!(commands(cx).contains(&PanelCommand::Hide(false)));
     }
 
     /// 利き手を替えると、反対の手首へ自分で付け替える（設定が同じままなら何もしない）。

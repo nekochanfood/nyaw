@@ -1,4 +1,4 @@
-//! 見た目の確認用: 設定画面の「外観」「時計」「キーボード」・色を作るダイアログ・wrist の文字盤の見本を、テーマとパーソナルカラーを替えながら実 GPU で描き、
+//! 見た目の確認用: 設定画面の「外観」「時計」「キーボード」・色を作るダイアログ・wrist の文字盤の見本・セットアップウィザードの各画面を、テーマとパーソナルカラーを替えながら実 GPU で描き、
 //! `target/tmp/look-*.bmp` に書き出す。塗りが選んだ色そのままで描かれていることだけ検査する（細かい見た目は絵を目で見る）。
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
@@ -11,6 +11,8 @@ use ui::{PanelControl, capture, open_panel_window};
 pub struct Faces;
 
 pub const FACES_PX: (u32, u32) = (900, 900);
+/// セットアップウィザードのパネルの大きさ。
+const SETUP_PX: (u32, u32) = (1152, 864);
 
 impl Render for Faces {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -32,7 +34,7 @@ impl Render for Faces {
     }
 }
 
-/// 書き出す状態: 名前、テーマ、パーソナルカラー（[`Accent::PRESETS`] の名前）。
+/// 書き出す状態: 名前、テーマ、パーソナルカラー（[`Accent::PRESETS`] の名前）。ダークは英語、ライトは日本語で描く。
 const STATES: [(&str, Mode, &str); 4] = [
     ("dark-blue", Mode::Dark, "blue"),
     ("dark-yellow", Mode::Dark, "yellow"),
@@ -78,23 +80,73 @@ pub fn main() {
         let faces = open_panel_window(cx, FACES_PX, |_, cx| cx.new(|_| Faces))
             .expect("cannot open panel window");
         // 描く窓: 書き出す名前の前置き、窓、塗りの色で描かれているはずの画素の下限。
-        let windows: [(&str, gpui::AnyWindowHandle, u32, usize); 5] = [
-            ("", appearance.into(), testing::SETTINGS_PX.0, 1000),
-            ("watch-", watch.into(), testing::SETTINGS_PX.0, 100),
+        let mut windows: Vec<(String, gpui::AnyWindowHandle, u32, usize)> = vec![
+            (
+                String::new(),
+                appearance.into(),
+                testing::SETTINGS_PX.0,
+                1000,
+            ),
+            ("watch-".into(), watch.into(), testing::SETTINGS_PX.0, 100),
             // キーボードの見本は配列を裏で読んでから出る（前の窓を描いている間に読み終わる）。塗りはスイッチとスライダー。
-            ("keyboard-", keyboard.into(), testing::SETTINGS_PX.0, 100),
-            ("color-", dialog.into(), ui::prefs::COLOR_DIALOG_PX.0, 1000),
-            ("faces-", faces.into(), FACES_PX.0, 100),
+            (
+                "keyboard-".into(),
+                keyboard.into(),
+                testing::SETTINGS_PX.0,
+                100,
+            ),
+            (
+                "color-".into(),
+                dialog.into(),
+                ui::prefs::COLOR_DIALOG_PX.0,
+                1000,
+            ),
+            ("faces-".into(), faces.into(), FACES_PX.0, 100),
         ];
+        // セットアップウィザードの画面を、手順ごとに 1 枚ずつ。最後に、一枚目で言語の選択肢を開いたもの。
+        let pages = (0..setup::STEPS.len()).map(|i| (i, false));
+        for (i, languages) in pages.chain([(0, true)]) {
+            let page = open_panel_window(cx, SETUP_PX, move |_, cx| {
+                cx.new(|_| {
+                    let mut wizard = setup::SetupWizard::new(0);
+                    for _ in 0..i {
+                        wizard.wizard.next();
+                    }
+                    wizard.language_open = languages;
+                    wizard
+                })
+            })
+            .expect("cannot open panel window");
+            let step = format!("{:?}", setup::STEPS[i]).to_lowercase();
+            let open = if languages { "-languages" } else { "" };
+            let name = format!("setup-{i}-{step}{open}-");
+            // 開いた選択肢は「はじめる」（塗りの色）に重なるので、塗りの色が見えなくてよい。
+            let min = if languages { 0 } else { 100 };
+            windows.push((name, page.into(), SETUP_PX.0, min));
+        }
+
         cx.spawn(async move |cx| {
             for (i, (name, mode, color)) in STATES.into_iter().enumerate() {
                 let accent = preset(color);
                 cx.update(|cx| {
                     cx.set_global(mode);
                     cx.set_global(accent);
+                    let japanese = mode == Mode::Light;
+                    cx.set_global(if japanese {
+                        i18n::Lang::Ja
+                    } else {
+                        i18n::Lang::En
+                    });
                     let settings = &mut cx.default_global::<PanelControl>().settings;
+                    settings.language = if japanese {
+                        kernel::Language::Ja
+                    } else {
+                        kernel::Language::En
+                    };
                     // キーボードの見本は、状態ごとに種類も替えて全種類を描く。
                     settings.keyboard = kernel::subsystems::keyboard::KeyboardType::ALL[i % 3];
+                    // ウィザードの SteamVR の手順は OpenVR のときだけ出るので、OpenVR のつもりで描く。
+                    settings.auto_launch = Some(false);
                     settings.theme = match mode {
                         Mode::Dark => kernel::ThemeMode::Dark,
                         Mode::Light => kernel::ThemeMode::Light,
@@ -105,7 +157,7 @@ pub fn main() {
                         hue: accent.hue,
                     });
                 });
-                for (prefix, window, width, min) in windows {
+                for (prefix, window, width, min) in windows.clone() {
                     // 読み戻しは 1 回遅れなので、間を空けて何度か描き、最後の絵を使う。
                     let mut last = None;
                     for _ in 0..6 {
@@ -128,13 +180,16 @@ pub fn main() {
     });
 
     let shots = shots.take();
-    assert_eq!(shots.len(), 5 * STATES.len());
+    assert_eq!(shots.len(), (6 + setup::STEPS.len()) * STATES.len());
     for (name, accent, min, frame) in shots {
         save(&frame, &format!("target/tmp/look-{name}.bmp"));
         let [r, g, b, _] = accent.color().to_be_bytes();
         let filled = frame.rgba.as_chunks::<4>().0.iter();
         let filled = filled.filter(|p| p[..3] == [r, g, b]).count();
-        assert!(filled > min, "{name}: only {filled} px of the picked color");
+        assert!(
+            filled >= min,
+            "{name}: only {filled} px of the picked color"
+        );
         println!("look: {name} ok ({filled} px of the personal color)");
     }
 }

@@ -20,6 +20,7 @@ sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 # The screens the scenarios operate. The kit itself knows nothing about screens
 [dev-dependencies]
 testing.workspace = true
+setup.workspace = true
 kernel = { workspace = true, features = ["test-support"] }
 wrist.workspace = true
 updater.workspace = true

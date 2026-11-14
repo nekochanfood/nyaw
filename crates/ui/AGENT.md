@@ -43,7 +43,7 @@
 
 ## テスト・ベンチマーク
 
-- **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）「キーボード」（`look-keyboard-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。設定画面は本番と同じに `PanelRoot` に載せる（載せないとパネルの影の余白が付かず、中身が本番より広く描かれる）。
+- **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）「キーボード」（`look-keyboard-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）・セットアップウィザードの各画面（`look-setup-*.bmp`。ライトのものは日本語）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。設定画面は本番と同じに `PanelRoot` に載せる（載せないとパネルの影の余白が付かず、中身が本番より広く描かれる）。
 - **アクセシビリティの見た目**: `crates/ui/tests/gpu/a11y.rs`（`cargo test -p ui --test gpu -- --ignored a11y`）。文字の大きさ（80% / 100% / 150%）と太字化を替えながら、設定画面の各カテゴリ・色を作るダイアログ・文字盤の見本・仮想キーボード・Testing・ダッシュボード（バー・クイック設定・ランチャー）を実 GPU で描き、`target/tmp/look-a11y-<状態>-<画面>.bmp` に書き出す。検査するのは、倍率・太字化で文字のインクが増えること（等幅も）、`.text_exact()` の文字盤が 1 画素も変わらないこと。操作は `crates/testkit/tests/scenarios/prefs.rs`（`accessibility_*` / `ui_scale_*`）。
 - **ストレステスト（ベンチマーク）**: `crates/ui/tests/gpu/stress.rs`（`harness = false`。常には流さない: `cargo test -p ui --test gpu -- --ignored stress`）。
   本番と同じ `ui::run_with` に novr のエミュレーター（ウィンドウは出さないが毎フレーム合成する）と GPUI 8 枚・ビームを載せ、
@@ -57,3 +57,5 @@
 - **novr のキー入力**: `crates/ui/tests/gpu/novr_keys.rs`（`harness = false`、`-- --ignored`。Windows のみ）。本番と同じ窓付きのエミュレーターに X キーの押下を投げ、二回押しがすべてカーネルに届くことを確かめる（GPUI のメッセージループが、同じスレッドにいるエミュレーターの窓宛ての `WM_KEYDOWN` を捨てていた。`vendor/gpui_windows` の `translate_accelerator`）。
 - **スワイプバック（本番のフレームループ）**: `crates/ui/tests/gpu/nav_swipe.rs`（`harness = false`、`-- --ignored`）。NavTest に画面を積み、タッチのまま右から左へ動かす・長押ししてから動かすの両方で戻ることを確かめる。手ブレ抑えが効いた VR のレーザーでの確認は `testkit/tests/scenarios/navigation.rs`。
 - **実 GPU での読み戻し**: `crates/ui/tests/gpu/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
+- **ゆるい追従**: `PanelSpec::lazy_follow(kernel::LazyFollow)` で、パネルを頭の向き（左右だけ）と歩きにゆるく追従させる（どのパネルでも使える。仕組みは `../overlay/AGENT.md`）。
+- **ロックダウン**: `PanelSpec::lockdown()` で、開いた時点から `PanelCommand::Lockdown` を取る（放すのはビュー。仕組みは `../kernel/AGENT.md`）。

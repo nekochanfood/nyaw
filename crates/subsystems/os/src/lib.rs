@@ -9,7 +9,7 @@ mod windows;
 #[cfg(windows)]
 pub use windows::{
     attach_console, config_dir, data_dir, error_dialog, high_gpu_priority, log_dir,
-    openvr_paths_file, openxr_runtime_manifest, precise_timers,
+    openvr_paths_file, openxr_runtime_manifest, precise_timers, ui_language,
 };
 
 #[cfg(not(windows))]

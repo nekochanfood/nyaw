@@ -23,7 +23,9 @@ pub use config::{
     SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN,
     UpdateChannel, WristDesign, WristFace,
 };
-pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
+pub use overlay::{
+    self, Anchor, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent,
+};
 pub use subsystems::ControllerState;
 pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
@@ -44,6 +46,13 @@ pub enum PanelCommand {
     Attach(Device, Pose),
     Detach,
     Lock(bool),
+    /// 頭の向き（左右だけ）と歩きにゆるく追従する（[`overlay::LazyFollow`]。`None` で外す）。
+    LazyFollow(Option<LazyFollow>),
+    /// このパネルがロックダウンを取る・放す。取っている間、このパネルは（自分が放すまで）閉じられず（[`PanelCommand::Close`] は無視する）、
+    /// カーネルはロックダウン中（[`Settings::lockdown`]）になる。シェル（ダッシュボードなど）はそれを見て開閉を控える。
+    /// 取り手は何枚でもよく、全員が放す（か閉じる）までロックダウンは続く。閉じる前に放すなら、同じパネルのコマンドに
+    /// `Lockdown(false)`、`Close` の順で積む。設定ファイルには残さない。
+    Lockdown(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
     /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
@@ -146,6 +155,8 @@ pub enum Setting {
     BlockInput(bool),
     /// 距離 LOD の品質（`lod_quality`）。
     LodQuality(LodQuality),
+    /// セットアップウィザードを終えたか（`setup_done`）。
+    SetupDone(bool),
     /// 文字の大きさの倍率（`text_scale`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、効かせるのは UI 層。
     TextScale(f32),
     /// UI スケール: パネルの VR 上の大きさの倍率（`ui_scale`。範囲に収め、刻みに丸める）。開いているパネルもその場で変わる。
@@ -192,6 +203,9 @@ pub struct Settings {
     pub keyboard: subsystems::keyboard::KeyboardType,
     pub block_input: bool,
     pub lod_quality: LodQuality,
+    pub setup_done: bool,
+    /// ロックダウン中か（[`Kernel::lockdown`]）。シェル（ダッシュボードなど）はこれを見て、開閉を控える。
+    pub lockdown: bool,
     /// 文字の大きさの倍率（等倍 = 1）。
     pub text_scale: f32,
     /// UI スケール（パネルの大きさの倍率。等倍 = 1）。
@@ -234,6 +248,8 @@ impl Default for Settings {
             keyboard: Default::default(),
             block_input: true,
             lod_quality: Default::default(),
+            setup_done: false,
+            lockdown: false,
             text_scale: 1.0,
             ui_scale: 1.0,
             bold_text: false,
@@ -308,6 +324,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     close_sounds: std::collections::HashMap<PanelId, audio::Sound>,
     /// 全体の設定によらないポインタの方式（[`PanelCommand::PointerMode`]）。
     pointer_modes: std::collections::HashMap<PanelId, PointerMode>,
+    /// ロックダウンを取っているパネル（[`PanelCommand::Lockdown`]）。
+    lockdown_holders: std::collections::BTreeSet<PanelId>,
     /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
     shortcut: DoublePress,
     /// ランタイムが数えた二回押しの合計（[`vr::DOUBLE_PRESS_INPUT`]）。
@@ -389,9 +407,13 @@ impl Kernel {
     /// 指定したのに繋がらなければエラー。
     pub fn boot(
         requested: Option<&str>,
-        config: Config,
+        mut config: Config,
         novr_fallback: bool,
     ) -> Result<Self, VrError> {
+        // 言語を決めていなければ、OS の表示言語で始める（決めるまで設定ファイルには書かない）。
+        if config.language.is_none() {
+            config.language = os::ui_language().and_then(Language::from_code);
+        }
         let prefer = match requested.map(runtime_name).as_deref() {
             None | Some("") => None,
             Some("novr") => Some(Runtime::NoVr),
@@ -479,6 +501,7 @@ impl<B: VrBackend> Kernel<B> {
             point_slots: Default::default(),
             close_sounds: Default::default(),
             pointer_modes: Default::default(),
+            lockdown_holders: Default::default(),
             shortcut: DoublePress::default(),
             runtime_double_press: 0,
             hand_shortcut: LongPress::default(),
@@ -506,6 +529,14 @@ impl<B: VrBackend> Kernel<B> {
             .unwrap_or(self.pointer_mode)
     }
 
+    /// ロックダウン中か: 開いているパネルのどれかがロックダウンを取っている（[`PanelCommand::Lockdown`]）。
+    /// 取ったパネルが閉じれば自然に外れる。
+    pub fn lockdown(&self) -> bool {
+        self.lockdown_holders
+            .iter()
+            .any(|&p| !self.overlay.panel(p).closed)
+    }
+
     pub fn settings(&self) -> Settings {
         Settings {
             pointer_mode: self.pointer_mode,
@@ -515,7 +546,7 @@ impl<B: VrBackend> Kernel<B> {
                 let color = self.config.color_history.get(i);
                 color.copied().map(PersonalColor::clamped)
             }),
-            language: self.config.language,
+            language: self.config.language.unwrap_or_default(),
             pointer_smoothing: self.overlay.pointer_smoothing(),
             pointer_release_deg: self.overlay.pointer_release(),
             laser_length: self.overlay.laser_length(),
@@ -531,6 +562,8 @@ impl<B: VrBackend> Kernel<B> {
             keyboard: self.config.keyboard,
             block_input: self.overlay.block_input(),
             lod_quality: self.config.lod_quality,
+            setup_done: self.config.setup_done,
+            lockdown: self.lockdown(),
             text_scale: self.config.text_scale.map_or(1.0, |s| {
                 config::clamp_scale(s, TEXT_SCALE_MIN, TEXT_SCALE_MAX)
             }),
@@ -607,7 +640,7 @@ impl<B: VrBackend> Kernel<B> {
                 ("color_history", config::value(history.clone()))
             }
             Setting::Language(l) => {
-                self.config.language = l;
+                self.config.language = Some(l);
                 ("language", config::value(l))
             }
             Setting::PointerSmoothing(s) => {
@@ -683,6 +716,10 @@ impl<B: VrBackend> Kernel<B> {
             Setting::LodQuality(q) => {
                 self.config.lod_quality = q;
                 ("lod_quality", config::value(q))
+            }
+            Setting::SetupDone(b) => {
+                self.config.setup_done = b;
+                ("setup_done", config::value(b))
             }
             Setting::TextScale(s) => {
                 let s = config::clamp_scale(s, TEXT_SCALE_MIN, TEXT_SCALE_MAX);
@@ -939,6 +976,7 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Attach(device, offset) => self.overlay.attach(panel, device, offset),
             PanelCommand::Detach => self.overlay.detach(panel),
             PanelCommand::Lock(locked) => self.overlay.set_locked(panel, locked),
+            PanelCommand::LazyFollow(follow) => self.overlay.set_lazy_follow(panel, follow),
             PanelCommand::Animated(animated) => {
                 self.overlay
                     .set_animated(&mut self.subsystems.backend, panel, animated)
@@ -957,6 +995,19 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Hide(hidden) => {
                 self.overlay
                     .set_hidden(&mut self.subsystems.backend, panel, hidden)
+            }
+            PanelCommand::Lockdown(on) => {
+                if on {
+                    self.lockdown_holders.insert(panel);
+                } else {
+                    self.lockdown_holders.remove(&panel);
+                }
+            }
+            PanelCommand::Close if self.lockdown_holders.contains(&panel) => {
+                logger::debug!(
+                    "ignoring close of a panel holding the lockdown",
+                    panel = panel
+                );
             }
             PanelCommand::Close => {
                 if let Some(sound) = self.close_sounds.remove(&panel) {
@@ -1270,6 +1321,55 @@ mod tests {
     }
 
     /// 境目の前後で行き来しない: 上げるのは閾値で、下げるのは閾値の 9 割を割ってから。
+    #[test]
+    fn lockdown_protects_only_its_holders_and_lasts_until_all_release() {
+        let (mut k, _) = lod_kernel();
+        let mut panel = |name| {
+            k.add_panel(name, Pose::IDENTITY, Vec2::new(1.0, 1.0), (100, 100))
+                .unwrap()
+        };
+        let (a, b, other) = (panel("a"), panel("b"), panel("other"));
+        assert!(!k.lockdown());
+        k.apply(a, PanelCommand::Lockdown(true));
+        k.apply(b, PanelCommand::Lockdown(true));
+        assert!(k.settings().lockdown);
+        // 取っているパネルだけが閉じられない。ほかは閉じられる。
+        k.apply(a, PanelCommand::Close);
+        assert!(!k.panel(a).closed);
+        k.apply(other, PanelCommand::Close);
+        assert!(k.panel(other).closed);
+        // 1 枚放しても、もう 1 枚が取っている間は続く。放したパネルは閉じられる。
+        k.apply(a, PanelCommand::Lockdown(false));
+        assert!(k.lockdown());
+        k.apply(a, PanelCommand::Close);
+        assert!(k.panel(a).closed);
+        k.apply(b, PanelCommand::Lockdown(false));
+        assert!(!k.lockdown());
+    }
+
+    #[test]
+    fn lockdown_is_released_then_the_holder_closes() {
+        let (mut k, _) = lod_kernel();
+        let p = k
+            .add_panel("p", Pose::IDENTITY, Vec2::new(1.0, 1.0), (100, 100))
+            .unwrap();
+        k.apply(p, PanelCommand::Lockdown(true));
+        assert!(k.lockdown());
+        // 放してから閉じる（同じパネルのコマンド列の順）。
+        for cmd in [PanelCommand::Lockdown(false), PanelCommand::Close] {
+            k.apply(p, cmd);
+        }
+        assert!(k.panel(p).closed && !k.lockdown());
+    }
+
+    #[test]
+    fn setup_done_starts_false_and_is_reflected() {
+        let (mut k, _) = lod_kernel();
+        assert!(!k.settings().setup_done);
+        k.set(Setting::SetupDone(true));
+        assert!(k.settings().setup_done);
+    }
+
     #[test]
     fn lod_quality_setting_is_reflected() {
         let (mut k, _) = lod_kernel();
@@ -1599,7 +1699,7 @@ mod tests {
     #[test]
     fn language_starts_from_config_and_persists_to_config_path() {
         let config = Config {
-            language: Language::Ja,
+            language: Some(Language::Ja),
             ..Default::default()
         };
         let mut k = Kernel::with_backend(MockBackend::default(), config);
@@ -1611,7 +1711,7 @@ mod tests {
         assert_eq!(k.settings().language, Language::En);
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(saved.language, Language::En);
+        assert_eq!(saved.language, Some(Language::En));
     }
 
     /// パーソナルカラーは選ぶまで `None`。範囲に収めて覚え、設定ファイルへ表ごと書き戻す。

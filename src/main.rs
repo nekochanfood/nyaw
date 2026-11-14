@@ -59,11 +59,21 @@ fn main() -> ExitCode {
     // ダッシュボードのデバッグボタンで開く画面は Testing、設定ボタンで開くのは Testing の設定画面（中身はダミー）。
     let mut panels = vec![wrist::spec(
         kernel.settings().dominant_hand,
-        |from, opened| testing::spec(from, opened),
+        |from, opened| {
+            testing::spec(from, move |id, cx| {
+                // デバッグ画面からセットアップウィザードを強制的にやり直せるようにする。
+                cx.set_global(testing::SetupWizardSpawn(setup::spawn_spec));
+                opened(id, cx)
+            })
+        },
         |from, opened| testing::settings_spec(from, opened),
     )];
     // novr もコントローラを模すので、どのランタイムでもビームを載せる（novr のレーザーは視線と重なって見えない）。
     panels.extend(beam::specs());
+    // 初回起動（セットアップを終えていない）ときは、セットアップウィザードを出す。
+    if !kernel.settings().setup_done {
+        panels.push(setup::spec());
+    }
     let profiler = args.profile.map(start_profiler);
     ui::run(kernel, panels, profiler);
     ExitCode::SUCCESS

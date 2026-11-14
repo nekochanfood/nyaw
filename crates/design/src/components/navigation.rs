@@ -131,6 +131,12 @@ impl<P: Clone + PartialEq + 'static> Navigation<P> {
         self
     }
 
+    /// 画面の地の色（既定はパネルの地）。カードの上に置くときはカードの色に。
+    pub fn background(mut self, color: u32) -> Self {
+        self.background = color;
+        self
+    }
+
     /// 画面の右の角を丸める（親のパネルの角を、画面の地が覆わないように）。
     pub fn rounded_right(mut self, radius: f32) -> Self {
         self.right_radius = radius;

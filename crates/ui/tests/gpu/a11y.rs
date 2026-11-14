@@ -17,6 +17,7 @@ const LINES_PX: (u32, u32) = (900, 120);
 const KEYBOARD_PX: (u32, u32) = (1700, 760);
 const BAR_PX: (u32, u32) = (1024, 118);
 const PAGE_PX: (u32, u32) = (1024, 768);
+const SETUP_PX: (u32, u32) = (1152, 864);
 
 impl Render for Lines {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -147,6 +148,24 @@ pub fn main() {
                 PAGE_PX.0,
             );
         }
+        // Setup wizard, one window per step.
+        for (i, step) in setup::STEPS.into_iter().enumerate() {
+            let page = open_panel_window(cx, SETUP_PX, move |_, cx| {
+                cx.new(|_| {
+                    let mut wizard = setup::SetupWizard::new(0);
+                    for _ in 0..i {
+                        wizard.wizard.next();
+                    }
+                    wizard
+                })
+            });
+            let name = format!("setup-{i}-{step:?}").to_lowercase();
+            open(
+                &name,
+                page.expect("cannot open panel window").into(),
+                SETUP_PX.0,
+            );
+        }
         for (name, mono) in [("lines", false), ("mono", true)] {
             let lines = open_panel_window(cx, LINES_PX, move |_, cx| cx.new(|_| Lines(mono)));
             open(
@@ -161,6 +180,8 @@ pub fn main() {
                     // 本番ではフレームループ（`ui::sync_settings`）が全体の設定から書く。
                     let settings = &mut cx.default_global::<PanelControl>().settings;
                     (settings.text_scale, settings.bold_text) = (scale, bold);
+                    // ウィザードの SteamVR の手順は OpenVR のときだけ出るので、OpenVR のつもりで描く。
+                    settings.auto_launch = Some(false);
                     design::font::set_text(scale, bold, cx);
                 });
                 for (name, window, width) in &windows {
@@ -188,7 +209,10 @@ pub fn main() {
     });
 
     let shots = shots.take();
-    assert_eq!(shots.len(), STATES.len() * (PAGES.len() + 9));
+    assert_eq!(
+        shots.len(),
+        STATES.len() * (PAGES.len() + 9 + setup::STEPS.len())
+    );
     for (state, name, frame) in &shots {
         save(frame, &format!("target/tmp/look-a11y-{state}-{name}.bmp"));
     }

@@ -32,6 +32,8 @@ use ui::{PanelControl, PanelSpec, settings};
 
 mod emoji;
 pub use emoji::EmojiTest;
+mod wizard;
+pub use wizard::WizardTest;
 mod logo;
 pub use logo::LogoTest;
 mod pointer;
@@ -101,6 +103,12 @@ pub fn spec(from: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'stati
     .sized(TESTING_SIZE, TESTING_PX)
     .titled("testing.open.testing")
 }
+/// セットアップウィザードを開く仕様（`from` の隣）。画面どうしは直接依存しないので、main が [`spec`] の `opened` で
+/// グローバルに入れる。入っているときだけ Testing に `setup-wizard`（強制的にやり直す）が出る。
+#[derive(Clone, Copy)]
+pub struct SetupWizardSpawn(pub fn(PanelId) -> PanelSpec);
+impl gpui::Global for SetupWizardSpawn {}
+
 /// スクロールする一覧の行数と1行の高さ。
 pub const LIST_ROWS: usize = 30;
 const ROW_PX: f32 = 24.0;
@@ -530,6 +538,19 @@ impl Render for Testing {
                     button!("emoji-test", i18n::t(cx, "testing.open.emoji"), false).on_click(
                         spawn_view(self.panel, "testing.open.emoji", |id, _| EmojiTest::new(id)),
                     ),
+                )
+                .children(cx.try_global::<SetupWizardSpawn>().map(|s| {
+                    let open = s.0;
+                    let panel = self.panel;
+                    button!("setup-wizard", i18n::t(cx, "testing.open.setup"), false).on_click(
+                        move |_, _, cx| {
+                            cx.default_global::<PanelControl>().spawns.push(open(panel))
+                        },
+                    )
+                }))
+                .child(
+                    button!("wizard-test", i18n::t(cx, "testing.open.wizard"), false)
+                        .on_click(wizard::spawn(self.panel)),
                 )
                 .child(
                     button!("logo-test", i18n::t(cx, "testing.open.logo"), false).on_click(

@@ -3461,6 +3461,7 @@ dependencies = [
  "logger",
  "nyapp",
  "profiler",
+ "setup",
  "testing",
  "ui",
  "winresource",
@@ -5071,6 +5072,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "setup"
+version = "2026.0.3-dev.0"
+dependencies = [
+ "design",
+ "gpui",
+ "i18n",
+ "kernel",
+ "ui",
+]
+
+[[package]]
 name = "sha1_smol"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5483,6 +5495,7 @@ dependencies = [
  "kernel",
  "logger",
  "minifb",
+ "setup",
  "sysinfo",
  "testing",
  "ui",
@@ -5807,6 +5820,7 @@ dependencies = [
  "kernel",
  "logger",
  "profiler",
+ "setup",
  "testing",
  "vr",
  "wrist",

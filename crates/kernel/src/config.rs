@@ -92,6 +92,17 @@ pub enum Language {
     Ja,
 }
 
+impl Language {
+    /// ISO 639-1 の 2 文字（`os::ui_language`）から。対応していない言語は `None`。
+    pub fn from_code(code: &str) -> Option<Self> {
+        match code {
+            "en" => Some(Self::En),
+            "ja" => Some(Self::Ja),
+            _ => None,
+        }
+    }
+}
+
 /// パーソナルカラー: ボタンなどの塗りに使う、ユーザーの色（OKLCH）。`design::Accent` に対応する。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PersonalColor {
@@ -276,8 +287,8 @@ pub struct Config {
     pub personal_color: Option<PersonalColor>,
     /// 自分で作ったパーソナルカラーの履歴（`[[color_history]]`。新しい順で [`COLOR_HISTORY`] 個まで）。省略で空。作るたびにここへ書き戻される。
     pub color_history: Vec<PersonalColor>,
-    /// 画面の言語（`en` / `ja`）。省略で `en`。画面での切り替えはここへ書き戻される。
-    pub language: Language,
+    /// 画面の言語（`en` / `ja`）。省略で OS の表示言語（対応していなければ `en`）。画面での切り替えはここへ書き戻される。
+    pub language: Option<Language>,
     /// 利き手（`right` / `left`）。省略で `right`。画面での切り替えはここへ書き戻される。
     pub dominant_hand: DominantHand,
     /// wrist の文字盤のデザイン（[`WristDesign::key`]。`dots` / `lcd` / `minimal` など）。省略で `dots`。画面での切り替えはここへ書き戻される。
@@ -288,6 +299,8 @@ pub struct Config {
     pub keyboard: subsystems::keyboard::KeyboardType,
     /// ダッシュボードが出ている間、ゲームへの入力を止めるか。省略で `true`。画面での切り替えはここへ書き戻される。
     pub block_input: Option<bool>,
+    /// セットアップウィザードを終えたか。省略で `false`（初回起動でウィザードを出す）。終えるとここへ書き戻される。
+    pub setup_done: bool,
     /// 文字の大きさの倍率（[`TEXT_SCALE_MIN`]〜[`TEXT_SCALE_MAX`]）。省略で等倍。画面での切り替えはここへ書き戻される。
     pub text_scale: Option<f32>,
     /// UI スケール: パネルの大きさの倍率（[`UI_SCALE_MIN`]〜[`UI_SCALE_MAX`]）。省略で等倍。画面での切り替えはここへ書き戻される。
@@ -420,6 +433,12 @@ lod_quality = 9
     }
 
     #[test]
+    fn setup_done_defaults_to_false() {
+        assert!(!parse("").unwrap().setup_done);
+        assert!(parse("setup_done = true").unwrap().setup_done);
+    }
+
+    #[test]
     fn lod_quality_defaults_to_mid_and_validates_numbers() {
         assert_eq!(parse("").unwrap().lod_quality, LodQuality::Mid);
         for (n, quality) in [
@@ -471,8 +490,11 @@ emulator = false
         assert_eq!(parse("").unwrap().theme, ThemeMode::Dark);
         assert_eq!(parse("theme = \"light\"").unwrap().theme, ThemeMode::Light);
         assert!(parse("theme = \"blue\"").is_err());
-        assert_eq!(parse("").unwrap().language, Language::En);
-        assert_eq!(parse("language = \"ja\"").unwrap().language, Language::Ja);
+        assert_eq!(parse("").unwrap().language, None);
+        let ja = parse("language = \"ja\"").unwrap().language;
+        assert_eq!(ja, Some(Language::Ja));
+        assert_eq!(Language::from_code("ja"), Some(Language::Ja));
+        assert_eq!(Language::from_code("fr"), None);
         assert!(parse("language = \"fr\"").is_err());
         assert_eq!(ThemeMode::Dark.toggled(), ThemeMode::Light);
         assert_eq!(parse("").unwrap().dominant_hand, DominantHand::Right);
@@ -752,7 +774,10 @@ emulator = false
         // 言語も同じく書き戻せ、テーマは残る。
         save_at(&path, "language", value(Language::Ja)).unwrap();
         let c = parse(&fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!((c.language, c.theme), (Language::Ja, ThemeMode::Light));
+        assert_eq!(
+            (c.language, c.theme),
+            (Some(Language::Ja), ThemeMode::Light)
+        );
         // 壊れたファイルは上書きしない。
         fs::write(&path, "log = ").unwrap();
         assert!(save_at(&path, "theme", value(ThemeMode::Dark)).is_err());

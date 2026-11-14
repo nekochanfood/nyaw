@@ -6,4 +6,4 @@
 
 ## 主な公開 API
 
-`config_dir`（`%LOCALAPPDATA%\nyaw`。debug ビルドは `nyaw-dev` に分け、リリース版の設定とぶつけない）, `log_dir`, `data_dir`（ニャプリのパッケージと保存領域）, `precise_timers`, `high_gpu_priority`, `openvr_paths_file`, `openxr_runtime_manifest`, `attach_console`, `error_dialog`
+`config_dir`（`%LOCALAPPDATA%\nyaw`。debug ビルドは `nyaw-dev` に分け、リリース版の設定とぶつけない）, `log_dir`, `data_dir`（ニャプリのパッケージと保存領域）, `precise_timers`, `high_gpu_priority`, `ui_language`（OS の表示言語。`ja` / `en` 以外は `None`）, `openvr_paths_file`, `openxr_runtime_manifest`, `attach_console`, `error_dialog`
