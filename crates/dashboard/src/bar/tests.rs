@@ -103,6 +103,38 @@ fn opening_shows_nothing_and_buttons_toggle_docked_screens(cx: &mut TestAppConte
     assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), None);
 }
 
+/// 外して独立させた画面のボタンを押しても、もう一つは開かずにそれをはめ直す。閉じていれば開き直す。
+#[gpui::test]
+fn undocked_screen_is_docked_again_instead_of_opened_twice(cx: &mut TestAppContext) {
+    let (bar, cx) = cx.add_window_view(|_, cx| {
+        cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+        Dashboard::new(1, summon, summon, cx)
+    });
+    cx.run_until_parked();
+    let spawns =
+        |cx: &mut VisualTestContext| cx.update(|_, cx| cx.global::<PanelControl>().spawns.len());
+    bar.update(cx, |d, cx| d.toggle(Page::Settings, cx));
+    open_spawned(cx, 2);
+    // ナビゲーションバーの `nav-undock` と同じく外す。
+    cx.update(|_, cx| ui::undock(2, cx));
+    take_commands(cx, 2);
+    assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), None);
+    bar.update(cx, |d, cx| d.toggle(Page::Settings, cx));
+    assert_eq!(spawns(cx), 0, "もう一つは開かない");
+    assert!(take_commands(cx, 2).iter().any(docked_to_bar));
+    assert_eq!(
+        cx.update(|_, cx| bar.read(cx).current(cx)),
+        Some(Page::Settings)
+    );
+    // 閉じていれば、新しく開く。
+    cx.update(|_, cx| {
+        let ctl = cx.default_global::<PanelControl>();
+        ctl.panels.entry(2).or_default().status.closed = true;
+    });
+    bar.update(cx, |d, cx| d.toggle(Page::Settings, cx));
+    assert_eq!(spawns(cx), 1);
+}
+
 /// 設定を開いた回数（[`update_button_shows_only_with_a_new_release_and_opens_settings`] だけが使う）。
 /// 起動時に開く画面の配信（本物の OS の一覧）も `spawns` に積まれるので、要求の数では数えない。
 static SETTINGS_OPENED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
