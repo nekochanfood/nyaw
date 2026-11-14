@@ -6,6 +6,7 @@ pub use kernel::rendering::gpui::{
 };
 mod cue;
 pub mod keyboard;
+mod link;
 pub mod mirror;
 mod panel_window;
 pub mod prefs;
@@ -563,6 +564,7 @@ pub fn dispatch_input(
     window.dispatch_event(input, cx);
     cx.default_global::<design::components::TooltipSource>().0 = None;
     cue::flush(panel, window, cx);
+    link::flush(panel, window, cx);
 }
 
 /// ウィンドウごとのツールチップの要求（[`design::components::Tooltips`]）を、そのパネルを指している手に振り分け、

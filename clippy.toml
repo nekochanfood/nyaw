@@ -1,0 +1,5 @@
+# URL を開くのは ui::link の検問所だけ（URL を見せてユーザーに確かめてから）。部品・画面は design::link::open で依頼する。
+# allow-invalid: gpui に依存しないクレートでは道が解決できないため。
+disallowed-methods = [
+    { path = "gpui::App::open_url", reason = "design::link::open で依頼する（ui::link が URL を見せて確かめてから開く）", allow-invalid = true },
+]

@@ -36,6 +36,8 @@ pub mod font;
 #[cfg(feature = "gpui")]
 pub mod icon;
 #[cfg(feature = "gpui")]
+pub mod link;
+#[cfg(feature = "gpui")]
 pub mod logo;
 
 #[cfg(feature = "gpui")]

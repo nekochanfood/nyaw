@@ -96,6 +96,10 @@ cancel = "Cancel"
 none = "none"
 back = "Back"
 
+[link]
+title = "Open this link in your browser?"
+open = "Open in browser"
+
 [theme]
 dark = "Dark"
 light = "Light"

@@ -14,7 +14,18 @@
 
 - `ui::command(panel, PanelCommand, cx)` / `ui::commands(panel, [..], cx)`: パネルへの操作（積んだ順に反映）。
 - `ui::set(Setting, cx)` / `ui::settings(cx)`: 全体の設定の変更と、今の設定（無ければ既定）。
+- URL をブラウザで開くのは `design::link::open(url, window, cx)`（下の「リンクを開く」）。
 - `ui::notify(panel, cx)`: タイマーや非同期の結果で自分から変わったビューの `cx.notify()`。フレームループはビューの notify を知らないので、素の `cx.notify()` だけでは次の推測の描き直し（最長 1 秒）まで絵が変わらない。ビューの外（`&mut App`）からは `ui::redraw(panel, cx)`。
+
+## リンクを開く（検問所）
+
+nyaw の中から URL を開く道は 1 本に絞り、検問所 `ui::link` を通す。公式のページ（リリースページ・リポジトリ）でも必ず確かめる。
+
+- 入口は `design::link::open(url, window, cx)` だけ。部品（Markdown のリンク）も画面（更新・ライセンス・ソースコード）もこれで依頼する。依頼はウィンドウごとに積まれる。
+- `dispatch_input` が入力を配送した直後に `link::flush` で取り出し、依頼元のパネルの子としてダイアログ（`link-dialog`）を開く。タイトルは「このリンクをブラウザで開いてもいいですか？」、概要に URL を省かずそのまま出す。`link-open` で開いて閉じ、`link-cancel` か外側を押すと開かずに閉じる。
+- `http` / `https` 以外（`file:`・`ms-settings:` など、OS がファイルやアプリを開くもの）はダイアログも出さずに捨てる（警告のログ）。
+- `App::open_url` を呼んでよいのは検問所の出口 `link::open` だけ。ほかで呼ぶとルートの `clippy.toml`（`disallowed-methods`）で CI の clippy が落ちる。
+- テスト: `link::tests`（依頼はダイアログになりブラウザは開かない・ブラウザで開くものだけ通す・ダイアログは見せた URL だけを開く）、`design/tests/markdown.rs`（リンクを押すと依頼になる）。
 
 ## 設定の部品（`ui::prefs`）
 
