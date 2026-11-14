@@ -125,8 +125,8 @@ pub fn appearance(
         ))
 }
 
-/// 色を作るダイアログの大きさ（px。1px = 1mm）。縦に、見出し・見本・スライダー 3 本・ボタン 2 個。
-pub const COLOR_DIALOG_PX: (u32, u32) = (480, 736);
+/// 色を作るダイアログの大きさ（px。1px = 1mm）。縦に、見出し・見本・スライダー 3 本・ボタン 2 個（横 1 列）。
+pub const COLOR_DIALOG_PX: (u32, u32) = (480, 674);
 
 /// 色を作るダイアログを、`from` の子として開く起動仕様。`accent` から作り始める。
 fn color_dialog(from: PanelId, accent: Accent) -> PanelSpec {
@@ -202,8 +202,10 @@ impl Render for ColorDialog {
             .justify_center()
             .gap(px(spacing::XL))
             .p(px(spacing::XL))
+            // 見出しは左揃え、ボタンは横 1 列で否定を左・肯定を右に（`components::dialog` と同じ）。
             .child(
                 div()
+                    .self_start()
                     .text_size(px(font_size::LG))
                     .font_weight(FontWeight::BOLD)
                     .child(i18n::t(cx, "color.custom")),
@@ -214,9 +216,8 @@ impl Render for ColorDialog {
                 div()
                     .w_full()
                     .flex()
-                    .flex_col()
                     .gap(px(spacing::SM))
-                    .children([ok.w_full(), cancel.w_full()]),
+                    .children([cancel.flex_1(), ok.flex_1()]),
             )
     }
 }

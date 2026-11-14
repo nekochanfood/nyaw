@@ -1,4 +1,4 @@
-//! 見た目の確認用: 設定画面の「外観」「時計」「キーボード」・色を作るダイアログ・wrist の文字盤の見本・セットアップウィザードの各画面を、テーマとパーソナルカラーを替えながら実 GPU で描き、
+//! 見た目の確認用: 設定画面の「外観」「時計」「キーボード」・色を作るダイアログ・ダイアログ・wrist の文字盤の見本・セットアップウィザードの各画面を、テーマとパーソナルカラーを替えながら実 GPU で描き、
 //! `target/tmp/look-*.bmp` に書き出す。塗りが選んだ色そのままで描かれていることだけ検査する（細かい見た目は絵を目で見る）。
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
@@ -13,6 +13,8 @@ pub struct Faces;
 pub const FACES_PX: (u32, u32) = (900, 900);
 /// セットアップウィザードのパネルの大きさ。
 const SETUP_PX: (u32, u32) = (1152, 864);
+/// ダイアログの大きさ。高さは 1 行のタイトルと 3 行の概要の分（`components::dialog_height` が測る値）。
+const DIALOG_PX: (u32, u32) = (design::components::DIALOG_WIDTH, 376);
 
 impl Render for Faces {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -82,6 +84,20 @@ pub fn main() {
             cx.new(|_| ui::prefs::ColorDialog::new(0, preset("green")))
         })
         .expect("cannot open panel window");
+        // ダイアログ（概要が 3 行を超えてスクロールするもの）。本番と同じく影の余白の内側に載せる。
+        let required = open_panel_window(cx, DIALOG_PX, |_, cx| {
+            let view = cx.new(|_| {
+                testing::Dialog::new(
+                    0,
+                    gpui::WeakEntity::new_invalid(),
+                    &design::icons::WARNING,
+                    "dialog.required_title",
+                    "dialog.required_body",
+                )
+            });
+            cx.new(|_| ui::PanelRoot::new(view.into()))
+        })
+        .expect("cannot open panel window");
         let faces = open_panel_window(cx, FACES_PX, |_, cx| cx.new(|_| Faces))
             .expect("cannot open panel window");
         // 描く窓: 書き出す名前の前置き、窓、塗りの色で描かれているはずの画素の下限。
@@ -113,6 +129,8 @@ pub fn main() {
                 ui::prefs::COLOR_DIALOG_PX.0,
                 1000,
             ),
+            // 塗りは OK のボタンとアイコン。
+            ("dialog-".into(), required.into(), DIALOG_PX.0, 100),
             ("faces-".into(), faces.into(), FACES_PX.0, 100),
         ];
         // セットアップウィザードの画面を、手順ごとに 1 枚ずつ。最後に、一枚目で言語の選択肢を開いたもの。
@@ -192,7 +210,7 @@ pub fn main() {
     });
 
     let shots = shots.take();
-    assert_eq!(shots.len(), (7 + setup::STEPS.len()) * STATES.len());
+    assert_eq!(shots.len(), (8 + setup::STEPS.len()) * STATES.len());
     for (name, accent, min, frame) in shots {
         save(&frame, &format!("target/tmp/look-{name}.bmp"));
         let [r, g, b, _] = accent.color().to_be_bytes();

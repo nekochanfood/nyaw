@@ -7,9 +7,6 @@ use kernel::{PanelCommand, PanelId, Vec2};
 
 use crate::{PanelControl, PanelSpec};
 
-/// ダイアログの幅（px。1px = 1mm）。
-const WIDTH: u32 = 480;
-
 /// ブラウザで開くものか: `http` / `https` だけ。ほかのスキーム（`file:` など）は OS がファイルやアプリを開いてしまう。
 fn browsable(url: &str) -> bool {
     url.split_once("://").is_some_and(|(scheme, rest)| {
@@ -28,11 +25,14 @@ pub(crate) fn flush(panel: PanelId, window: &Window, cx: &mut App) {
             continue;
         }
         let title = i18n::t(cx, "link.title");
-        let height = components::dialog_height(window, WIDTH, &title, &url, 2);
+        let (width, height) = (
+            components::DIALOG_WIDTH,
+            components::dialog_height(window, &title, &url),
+        );
         let spec = PanelSpec::child(panel, true, move |panel, _, _| LinkDialog { panel, url })
             .sized(
-                Vec2::new(WIDTH as f32 / 1000.0, height as f32 / 1000.0),
-                (WIDTH, height),
+                Vec2::new(width as f32 / 1000.0, height as f32 / 1000.0),
+                (width, height),
             )
             // 答えて閉じるもの。ナビゲーションバーは付けない。
             .without_nav_bar();
@@ -66,6 +66,13 @@ impl Render for LinkDialog {
             [
                 components::button(
                     &theme,
+                    "link-cancel",
+                    i18n::t(cx, "common.cancel"),
+                    Variant::Default,
+                )
+                .on_click(move |_, _, cx| crate::command(panel, PanelCommand::Close, cx)),
+                components::button(
+                    &theme,
                     "link-open",
                     i18n::t(cx, "link.open"),
                     Variant::Primary,
@@ -74,13 +81,6 @@ impl Render for LinkDialog {
                     open(&url, cx);
                     crate::command(panel, PanelCommand::Close, cx);
                 }),
-                components::button(
-                    &theme,
-                    "link-cancel",
-                    i18n::t(cx, "common.cancel"),
-                    Variant::Default,
-                )
-                .on_click(move |_, _, cx| crate::command(panel, PanelCommand::Close, cx)),
             ],
         )
     }

@@ -1326,10 +1326,8 @@ impl Render for TooltipTest {
     }
 }
 
-/// ダイアログの幅（px）。上からアイコン・タイトル・概要・ボタン（2 個）。文の幅 344px。1px = 1mm。
-const DIALOG_WIDTH: u32 = 440;
-
-/// 文言のキーが `title` / `description` のダイアログを、文に合った高さ（`components::dialog_height`）で `spec` に与える。
+/// 文言のキーが `title` / `description` のダイアログを、ダイアログの幅（`components::DIALOG_WIDTH`）と
+/// 文に合った高さ（`components::dialog_height`）で `spec` に与える。
 fn dialog_sized(
     spec: PanelSpec,
     title: &str,
@@ -1337,17 +1335,9 @@ fn dialog_sized(
     window: &Window,
     cx: &App,
 ) -> PanelSpec {
-    let h = components::dialog_height(
-        window,
-        DIALOG_WIDTH,
-        &i18n::t(cx, title),
-        &i18n::t(cx, description),
-        2,
-    );
-    spec.sized(
-        Vec2::new(DIALOG_WIDTH as f32 / 1000.0, h as f32 / 1000.0),
-        (DIALOG_WIDTH, h),
-    )
+    let w = components::DIALOG_WIDTH;
+    let h = components::dialog_height(window, &i18n::t(cx, title), &i18n::t(cx, description));
+    spec.sized(Vec2::new(w as f32 / 1000.0, h as f32 / 1000.0), (w, h))
 }
 
 /// 設定画面の大きさ（m）と解像度（px）。1px = 1mm。
@@ -2623,16 +2613,16 @@ impl Render for Dialog {
             i18n::t(cx, self.description),
             [
                 answer(
-                    "dialog-ok",
-                    "OK",
-                    i18n::t(cx, "common.ok"),
-                    Variant::Primary,
-                ),
-                answer(
                     "dialog-cancel",
                     "Cancel",
                     i18n::t(cx, "common.cancel"),
                     Variant::Default,
+                ),
+                answer(
+                    "dialog-ok",
+                    "OK",
+                    i18n::t(cx, "common.ok"),
+                    Variant::Primary,
                 ),
             ],
         )
