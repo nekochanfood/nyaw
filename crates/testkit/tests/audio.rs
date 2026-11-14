@@ -137,9 +137,9 @@ fn preview_key_sound_is_as_loud_as_the_volume_setting(cx: &mut TestAppContext) {
         let keyboard = Database::load().unwrap().keyboard(&layout).unwrap();
         let settings = Settings::new(0);
         let keys = ui::prefs::new_keyboard_preview(0, cx);
-        keys.update(cx, |view, _| {
+        keys.update(cx, |view, cx| {
             view.automatic = false;
-            view.select_layout(layout);
+            view.select_layout(layout, cx);
             view.keyboard = Some(keyboard);
             view.loading = false;
         });

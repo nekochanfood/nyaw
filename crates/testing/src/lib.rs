@@ -36,6 +36,7 @@ mod wizard;
 pub use wizard::WizardTest;
 mod logo;
 pub use logo::LogoTest;
+mod pointer;
 mod superellipse;
 pub use superellipse::SuperellipseTest;
 mod keyboard;
@@ -1360,7 +1361,7 @@ const SETTINGS_SLIDER_PX: f32 = 520.0;
 const ROW_SLIDER_PX: f32 = 240.0;
 
 /// 設定のカテゴリ: `debug_selector`・アイコン・文言のキー。中身は [`Settings::category_page`] が添字で選ぶ。
-const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 10] = [
+const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 11] = [
     (
         "settings-general",
         &design::icons::GEAR,
@@ -1402,6 +1403,11 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 10] = [
         "settings.category.graphics",
     ),
     (
+        "settings-dashboard",
+        &design::icons::SQUARES_FOUR,
+        "settings.category.dashboard",
+    ),
+    (
         "settings-update",
         &design::icons::ARROW_CIRCLE_UP,
         "settings.category.update",
@@ -1413,7 +1419,7 @@ const SETTINGS_CATEGORIES: [(&str, &design::Icon, &str); 10] = [
     ),
 ];
 /// アップデートのカテゴリの添字（ダッシュボードのボタンから開く）。
-const UPDATE_CATEGORY: usize = 8;
+const UPDATE_CATEGORY: usize = 9;
 
 // 依存のライセンスの表 `LICENSES`: `(名前, バージョン, ライセンス, URL)`。build.rs がビルド時に作る。
 include!(concat!(env!("OUT_DIR"), "/licenses.rs"));
@@ -1635,92 +1641,31 @@ impl Settings {
             }
             // アクセシビリティ: 文字の見本・文字の大きさ・UI スケール・太字（セットアップウィザードと同じ部品）。
             3 => vec![ui::prefs::accessibility(window, cx)],
-            // ポインタ: 方式と、レーザーの手ブレ抑え・長さ（Laser の画面と同じ範囲）。
+            // ポインタ: カーソルとビームの設定（`pointer::page`）。ポインタの方式は選ばせない（マウスは廃止の方向。全体はタッチ）。
             4 => {
-                let max = kernel::overlay::POINTER_SMOOTHING_MAX;
-                let (tight, loose) = (
-                    kernel::overlay::POINTER_RELEASE_DEG_MIN,
-                    kernel::overlay::POINTER_RELEASE_DEG_MAX,
+                let tuning = self.select(
+                    theme,
+                    window,
+                    cx,
+                    "setting-pointer-tuning",
+                    &design::icons::SLIDERS_HORIZONTAL,
+                    i18n::t(cx, "settings.pointer_tuning"),
+                    now.pointer_tuning,
+                    vec![
+                        (
+                            "setting-tuning-simple",
+                            i18n::t(cx, "settings.simple"),
+                            kernel::PointerTuning::Simple,
+                        ),
+                        (
+                            "setting-tuning-detailed",
+                            i18n::t(cx, "settings.detailed"),
+                            kernel::PointerTuning::Detailed,
+                        ),
+                    ],
+                    Setting::PointerTuning,
                 );
-                let (short, long) = (
-                    kernel::overlay::LASER_LENGTH_MIN,
-                    kernel::overlay::LASER_MAX,
-                );
-                vec![
-                    // ポインタの方式は選ばせない（マウスは廃止の方向。全体はタッチ）。
-                    components::group(
-                        theme,
-                        i18n::t(cx, "settings.smoothing"),
-                        setting_slider(
-                            theme,
-                            i18n::tf(
-                                cx,
-                                "laser.strength",
-                                &[
-                                    ("now", &format!("{:.2}", now.pointer_smoothing)),
-                                    ("max", &format!("{max:.2}")),
-                                ],
-                            ),
-                            components::slider(
-                                theme,
-                                "setting-smoothing",
-                                now.pointer_smoothing / max,
-                                move |v, _, cx| ui::set(Setting::PointerSmoothing(v * max), cx),
-                            ),
-                        ),
-                    ),
-                    components::group(
-                        theme,
-                        i18n::t(cx, "settings.release"),
-                        setting_slider(
-                            theme,
-                            i18n::tf(
-                                cx,
-                                "laser.release",
-                                &[
-                                    ("release", &format!("{:.1}", now.pointer_release_deg)),
-                                    ("tight", &format!("{tight:.1}")),
-                                    ("loose", &format!("{loose:.0}")),
-                                ],
-                            ),
-                            components::slider(
-                                theme,
-                                "setting-release",
-                                (now.pointer_release_deg - tight) / (loose - tight),
-                                move |v, _, cx| {
-                                    ui::set(
-                                        Setting::PointerRelease(tight + v * (loose - tight)),
-                                        cx,
-                                    )
-                                },
-                            ),
-                        ),
-                    ),
-                    components::group(
-                        theme,
-                        i18n::t(cx, "settings.laser_length"),
-                        setting_slider(
-                            theme,
-                            i18n::tf(
-                                cx,
-                                "laser.length",
-                                &[
-                                    ("length", &format!("{:.2}", now.laser_length)),
-                                    ("short", &format!("{short:.2}")),
-                                    ("long", &format!("{long:.2}")),
-                                ],
-                            ),
-                            components::slider(
-                                theme,
-                                "setting-laser-length",
-                                (now.laser_length - short) / (long - short),
-                                move |v, _, cx| {
-                                    ui::set(Setting::LaserLength(short + v * (long - short)), cx)
-                                },
-                            ),
-                        ),
-                    ),
-                ]
+                pointer::page(theme, now, tuning, cx)
             }
             // ミラーリング: 取得の上限 FPS。
             5 => vec![components::list(
@@ -1843,8 +1788,76 @@ impl Settings {
                     Setting::LodQuality,
                 )],
             )],
+            // ダッシュボード: 距離と高さ（頭の高さからの相対）。決めるとこの画面ごと動くので、離したときに決める。
+            8 => {
+                let (distance, height) = (
+                    i18n::t(cx, "settings.dashboard_distance"),
+                    i18n::t(cx, "settings.dashboard_height"),
+                );
+                let rows = [
+                    placement_slider(
+                        theme,
+                        window,
+                        cx,
+                        (
+                            "setting-dashboard-distance",
+                            "setting-dashboard-distance-slider",
+                        ),
+                        &design::icons::PERSPECTIVE,
+                        distance,
+                        now.dashboard_distance,
+                        (
+                            kernel::DASHBOARD_DISTANCE_MIN,
+                            kernel::DASHBOARD_DISTANCE_MAX,
+                        ),
+                        |d| format!("{d:.2} m"),
+                        Setting::DashboardDistance,
+                    ),
+                    placement_slider(
+                        theme,
+                        window,
+                        cx,
+                        (
+                            "setting-dashboard-height",
+                            "setting-dashboard-height-slider",
+                        ),
+                        &design::icons::ARROWS_VERTICAL,
+                        height,
+                        now.dashboard_height,
+                        (kernel::DASHBOARD_HEIGHT_MIN, kernel::DASHBOARD_HEIGHT_MAX),
+                        |h| format!("{h:+.2} m"),
+                        Setting::DashboardHeight,
+                    ),
+                ];
+                vec![components::list(theme, rows)]
+            }
             // アップデート: 今の版と確認の状態、新しいリリースがあればその版・アップデートのボタン・リリースノート。
-            UPDATE_CATEGORY => update::page(theme, window, cx),
+            // アップデート: チャンネル（stable は正式なリリースだけ、nightly はプレリリースも）はここで選ぶ。
+            UPDATE_CATEGORY => {
+                let channel = self.select(
+                    theme,
+                    window,
+                    cx,
+                    "setting-update-channel",
+                    &design::icons::GIT_BRANCH,
+                    i18n::t(cx, "update.channel"),
+                    now.update_channel,
+                    vec![
+                        (
+                            "setting-channel-stable",
+                            i18n::t(cx, "update.stable"),
+                            kernel::UpdateChannel::Stable,
+                        ),
+                        (
+                            "setting-channel-nightly",
+                            i18n::t(cx, "update.nightly"),
+                            kernel::UpdateChannel::Nightly,
+                        ),
+                    ],
+                    Setting::UpdateChannel,
+                );
+                update::page(theme, channel, window, cx)
+            }
             // ライセンス: 依存ごとの行。押すとそのリポジトリをブラウザで開く。数百行あるので、見えている行だけを
             // 作る `uniform_list` で並べる（行の高さは揃える。区切り線は先頭の行だけ透明にして高さを変えない）。
             _ if licenses => {
@@ -1965,6 +1978,61 @@ fn external_icon(theme: &Theme) -> impl IntoElement {
     design::icon(&design::icons::ARROW_SQUARE_OUT)
         .size(px(font_size::MD))
         .color(rgba(theme.neutral_text_low))
+}
+
+/// 決めると自分の置き場所が変わる長さ（m）のスライダーの行（`ids` は行とスライダー）。動かしている間は値だけを見せて
+/// 離したときに `set` で決める（`ui::prefs` の UI スケールと同じ）。`min..=max` を `kernel::DASHBOARD_STEP` に吸い付かせる。
+#[allow(clippy::too_many_arguments)]
+fn placement_slider(
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut App,
+    (id, slider_id): (&'static str, &'static str),
+    glyph: &'static design::Icon,
+    label: SharedString,
+    now: f32,
+    (min, max): (f32, f32),
+    show: fn(f32) -> String,
+    set: fn(f32) -> Setting,
+) -> components::Button {
+    let step = kernel::DASHBOARD_STEP;
+    // 動かしている途中の値と、離したか（離したら決めたことにし、設定が追いつくまで値はそのまま見せる）。
+    let key = SharedString::from(format!("{id}-draft"));
+    let draft = window.use_keyed_state(key, cx, |_, _| None::<(f32, bool)>);
+    let pending = (*draft.read(cx)).filter(|&(to, done)| !(done && (to - now).abs() < step / 2.0));
+    if pending.is_none() && draft.read(cx).is_some() {
+        draft.update(cx, |d, _| *d = None);
+    }
+    let value = pending.map_or(now, |(to, _)| to);
+    let (moving, done) = (draft.clone(), draft);
+    let slider = components::slider(
+        theme,
+        slider_id,
+        (value - min) / (max - min),
+        move |at, _, cx| {
+            let to = kernel::config::snap(min + at * (max - min), min, max, step, now);
+            moving.update(cx, |d, cx| {
+                if *d != Some((to, false)) {
+                    *d = Some((to, false));
+                    cx.notify();
+                }
+            })
+        },
+    )
+    .on_release(move |_, cx| {
+        let to = done.update(cx, |d, cx| {
+            cx.notify();
+            d.as_mut().map(|(to, released)| {
+                *released = true;
+                *to
+            })
+        });
+        if let Some(to) = to {
+            ui::set(set(to), cx)
+        }
+    })
+    .length(ROW_SLIDER_PX);
+    components::slider_item(theme, id, glyph, label, show(value), slider)
 }
 
 /// スライダーのカード: スライダーだけをカードに入れ、今の値の説明はカードの下に置く。

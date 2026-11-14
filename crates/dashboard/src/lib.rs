@@ -31,8 +31,6 @@ use ui::{PanelControl, PanelSpec, commands};
 
 /// バーを手前に傾ける角度（下から見上げずに読めるよう、少し上を向かせる）。はめた画面はこの分だけ起こして垂直に立てる。
 const BAR_TILT: f32 = std::f32::consts::FRAC_PI_6;
-/// はめた画面の中心までの距離（m）。画面は目の高さの正面に垂直に立ち、バーはその下に来る（[`pose`]）。
-const DISTANCE: f32 = 1.1;
 /// はめる画面の大きさと解像度（main が渡す設定画面と同じ）。ほかから渡される画面も、縦をこの高さに揃える。
 const SIZE_M: Vec2 = Vec2::new(1.024, 0.768);
 const RES_PX: (u32, u32) = (1024, 768);
@@ -42,8 +40,11 @@ const BAR_PX: (u32, u32) = (
     (components::NAV_BAR_HEIGHT + 2.0 * components::PANEL_MARGIN) as u32,
 );
 const BAR_M: Vec2 = Vec2::new(SIZE_M.x, SIZE_M.x * BAR_PX.1 as f32 / BAR_PX.0 as f32);
-/// 画面を開いてからはまるまでの、最初の置き場所（はまる所）。
-const SCREEN_POSE: Pose = Pose::new(Vec3::new(0.0, 0.0, -DISTANCE), Quat::IDENTITY);
+/// 画面を開いてからはまるまでの、最初の置き場所（既定の距離・高さでのはまる所。開くとすぐはまる）。
+const SCREEN_POSE: Pose = Pose::new(
+    Vec3::new(0.0, 0.0, -kernel::DASHBOARD_DISTANCE),
+    Quat::IDENTITY,
+);
 /// グリッドの列の数とタイルの高さ（px）。
 const COLUMNS: u16 = 4;
 const TILE_PX: f32 = 120.0;
@@ -85,22 +86,28 @@ pub const CLOSE_SOUND: &[u8] = include_bytes!("../assets/dashboard_close.wav");
 pub type Summon = fn(PanelId, Opened) -> PanelSpec;
 pub type Opened = Box<dyn FnOnce(PanelId, &mut App)>;
 
-/// バーの置き場所（開いた瞬間の頭から見た相対姿勢）。はめた画面（[`SIZE_M`]）が目の高さの正面 [`DISTANCE`] に垂直に立つよう、
-/// 画面の下半分・そのナビゲーションバー・隙間の分だけ下げ、傾けたバーの上端がその真下に来るように置く
-/// （オーバーレイ層の `Parent::slot` の置き方の逆）。
-pub fn pose() -> Pose {
+/// バーの置き場所（開いた瞬間の頭から見た相対姿勢）。はめた画面（[`SIZE_M`]）の中心が正面 `distance`・頭の高さから `height` 上に
+/// 垂直に立つよう（設定のダッシュボードの距離・高さ）、画面の下半分・そのナビゲーションバー・隙間の分だけ下げ、傾けたバーの
+/// 上端がその真下に来るように置く（オーバーレイ層の `Parent::slot` の置き方の逆）。
+pub fn pose(distance: f32, height: f32) -> Pose {
     let margin = |size: Vec2, res: (u32, u32)| components::PANEL_MARGIN * size.y / res.1 as f32;
     let face = SIZE_M.y / 2.0 - margin(SIZE_M, RES_PX);
     // はめた画面のナビゲーションバーは、距離で大きさを変えない（1m 先での大きさのまま）。
     let nav_bar = ui::NAV_BAR_HEIGHT_M;
     let top = Vec3::new(
         0.0,
-        -(face + nav_bar + kernel::overlay::SLOT_GAP),
-        -DISTANCE,
+        height - (face + nav_bar + kernel::overlay::SLOT_GAP),
+        -distance,
     );
     let rotation = Quat::from_rotation_x(-BAR_TILT);
     let half = BAR_M.y / 2.0 - margin(BAR_M, BAR_PX);
     Pose::new(top - rotation * Vec3::Y * half, rotation)
+}
+
+/// 今の設定のダッシュボードの距離・高さでの、バーの置き場所（[`pose`]）。
+fn placed(cx: &App) -> Pose {
+    let s = ui::settings(cx);
+    pose(s.dashboard_distance, s.dashboard_height)
 }
 
 /// ダッシュボード（バー）の起動仕様。`opened` は作られたパネルの ID を受け取る。`hidden` なら隠したまま開く
@@ -111,29 +118,31 @@ pub fn spec(
     debug: Summon,
     hidden: bool,
 ) -> PanelSpec {
+    let default = pose(kernel::DASHBOARD_DISTANCE, 0.0);
     PanelSpec::root(Pose::IDENTITY, move |id, _, cx: &mut Context<Dashboard>| {
         nyapp::opened(nyapp::system::DASHBOARD.id, id, cx);
         opened(id, cx);
-        // 隠して開くときは開く音を鳴らさない。
+        // 隠して開くときは開く音を鳴らさない（置くのは出すとき）。すぐ出すときは設定の距離・高さに置き直す。
         let entry = if hidden {
-            PanelCommand::Hide(true)
+            vec![PanelCommand::Hide(true)]
         } else {
-            PanelCommand::Play(Sound::Wav(OPEN_SOUND), false)
+            let open = PanelCommand::Play(Sound::Wav(OPEN_SOUND), false);
+            vec![PanelCommand::Place(placed(cx)), open]
         };
         let close_sound = PanelCommand::CloseSound(Sound::Wav(CLOSE_SOUND));
-        commands(id, [entry, close_sound], cx);
+        commands(id, entry.into_iter().chain([close_sound]), cx);
         // バーの上を、画面をはめる場所にする。
         cx.default_global::<PanelControl>().dock = Some((id, BAR_TILT));
         Dashboard::new(id, settings, debug, cx)
     })
     .sized(BAR_M, BAR_PX)
-    .in_view(pose())
+    .in_view(default)
     // 閉じる（隠す）のは X ボタンの二回押しかダッシュボードの外を押したときで、閉じるボタンは置かない。
     .without_nav_bar()
     // 大きさははめる画面に合わせて決めてあるので変えさせない。
     .without_resize()
-    // 画面がはまっていなくても、画面が立つ所を基準に掴んで動かす（はめた画面を掴んだときと同じ動き）。
-    .grab_anchor(pose().inverse() * SCREEN_POSE)
+    // 画面がはまっていなくても、画面が立つ所を基準に掴んで動かす（はめた画面を掴んだときと同じ動き。距離・高さによらない）。
+    .grab_anchor(default.inverse() * SCREEN_POSE)
     .with_veil()
 }
 
@@ -157,7 +166,7 @@ pub fn show(dashboard: PanelId, cx: &mut App) {
     commands(
         dashboard,
         [
-            PanelCommand::Place(pose()),
+            PanelCommand::Place(placed(cx)),
             PanelCommand::Hide(false),
             PanelCommand::Play(Sound::Wav(OPEN_SOUND), false),
         ],
@@ -194,6 +203,8 @@ pub struct Dashboard {
     /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）と、そのとき隠していたか。
     /// 最初に見た値から数える。
     outside: Option<(u32, bool)>,
+    /// 最後に見た、設定のダッシュボードの距離・高さ（変わったら置き直す。[`Self::follow_placement`]）。
+    placement: Option<(f32, f32)>,
     /// 足されたボタンの出方（[`Entering`]）。
     enter: Entering,
     /// 前のフレームに並べていたもの（消えていくものを含む）。消えたものを、滑り出る間だけ同じ場所に描き残すのに使う。
@@ -210,6 +221,8 @@ impl Dashboard {
     fn new(panel: PanelId, settings: Summon, debug: Summon, cx: &mut Context<Self>) -> Self {
         tick_every_second(panel, cx);
         cx.observe_global::<PanelControl>(Self::close_on_outside_press)
+            .detach();
+        cx.observe_global::<PanelControl>(Self::follow_placement)
             .detach();
         // 新しいリリースがあるかは起動時と、常駐して開きっぱなしでも分かるよう周期で確かめる（あればバーにボタンが出る。
         // 入れるのはユーザーが選んだときだけ）。開発中のビルドとテストは確かめない（設定から押せる）。
@@ -264,6 +277,7 @@ impl Dashboard {
             menu: None,
             shown: None,
             outside: None,
+            placement: None,
             prev_streams: Vec::new(),
             prev_activities: Vec::new(),
             prev_media: false,
@@ -520,6 +534,21 @@ impl Dashboard {
         let seen = self.outside.replace((count, hidden));
         if seen.is_some_and(|(seen, was_hidden)| seen != count && !was_hidden) && !hidden {
             hide(self.panel, cx);
+        }
+    }
+
+    /// 設定のダッシュボードの距離・高さが変わったら、出ていれば今の目の前に置き直す（隠していれば次に出すとき [`show`] で効く）。
+    /// フレームループが状態を書き戻すたびに呼ばれるので、変わっていなければ何もしない。
+    fn follow_placement(&mut self, cx: &mut Context<Self>) {
+        let s = ui::settings(cx);
+        let now = (s.dashboard_distance, s.dashboard_height);
+        let hidden = cx
+            .global::<PanelControl>()
+            .panels
+            .get(&self.panel)
+            .is_none_or(|p| p.status.hidden);
+        if self.placement.replace(now).is_some_and(|seen| seen != now) && !hidden {
+            commands(self.panel, [PanelCommand::Place(placed(cx))], cx);
         }
     }
 
@@ -3001,16 +3030,31 @@ mod tests {
         assert_eq!(percent(0.826), "83%");
     }
 
-    /// バーを `pose` に置くと、はめた画面は目の高さの正面に垂直に立ち、バーはその下で 1m 以上離れる。
+    /// バーを `pose` に置くと、はめた画面は正面 `distance`・頭の高さから `height` 上に垂直に立つ。既定（今までの置き場所）は
+    /// 目の高さの正面 1.1m で、バーはその下で 1m 以上離れる。
     #[test]
-    fn docked_screen_stands_upright_at_eye_level_in_front() {
+    fn docked_screen_stands_upright_at_the_set_distance_and_height() {
+        let b = docked_at(kernel::DASHBOARD_DISTANCE, 0.0);
+        assert!(b.y < -0.3 && b.length() >= 1.0, "{b}");
+        docked_at(kernel::DASHBOARD_DISTANCE_MAX, kernel::DASHBOARD_HEIGHT_MIN);
+        docked_at(kernel::DASHBOARD_DISTANCE_MIN, kernel::DASHBOARD_HEIGHT_MAX);
+    }
+
+    /// バーを `pose(distance, height)` に置いて画面をはめ、画面がそこに垂直に立つことを確かめる。バーの位置を返す。
+    fn docked_at(distance: f32, height: f32) -> Vec3 {
         use kernel::overlay::{Overlay, Parent};
         use kernel::subsystems::Subsystems;
         use kernel::vr::mock::MockBackend;
         let mut vr = Subsystems::with_backend(MockBackend::default());
         let mut ov = Overlay::new();
         let bar = ov
-            .add_panel(&mut vr.backend, "bar", pose(), BAR_M, BAR_PX)
+            .add_panel(
+                &mut vr.backend,
+                "bar",
+                pose(distance, height),
+                BAR_M,
+                BAR_PX,
+            )
             .unwrap();
         let screen = ov
             .add_panel(&mut vr.backend, "screen", SCREEN_POSE, SIZE_M, RES_PX)
@@ -3042,14 +3086,14 @@ mod tests {
             ov.tick(&mut vr);
         }
         let s = ov.panel(screen).pose;
+        let want = Vec3::new(0.0, height, -distance);
         assert!(
-            s.position.abs_diff_eq(SCREEN_POSE.position, 1e-3),
-            "{}",
+            s.position.abs_diff_eq(want, 1e-3),
+            "{} != {want}",
             s.position
         );
         assert!(s.orientation.abs_diff_eq(Quat::IDENTITY, 1e-4));
-        let b = ov.panel(bar).pose.position;
-        assert!(b.y < -0.3 && b.length() >= 1.0, "{b}");
+        ov.panel(bar).pose.position
     }
 
     fn summon(from: PanelId, opened: Opened) -> PanelSpec {
@@ -3199,20 +3243,21 @@ mod tests {
             "最新なら出ない"
         );
         cx.update(|_, cx| {
-            cx.default_global::<updater::Updater>().latest = Some(updater::Release {
+            cx.default_global::<updater::Updater>().found = vec![updater::Release {
                 version: "2026.0.1-patch.2".into(),
                 build: u32::MAX,
                 title: "v2026.0.1-patch.2".into(),
                 notes: "## What's Changed".into(),
                 published_at: None,
                 page: "https://github.com/nekochanfood/nyaw/releases".into(),
+                prerelease: false,
                 installer: updater::Installer {
                     name: "nyaw-2026.0.1-patch.2-setup.exe".into(),
                     url: "https://example.com/i.exe".into(),
                     size: 1,
                     sha256: "0".repeat(64),
                 },
-            })
+            }]
         });
         redraw_bar(cx);
         let x = |cx: &mut VisualTestContext, s: &'static str| cx.debug_bounds(s).unwrap().origin.x;
@@ -3233,7 +3278,7 @@ mod tests {
         assert!(cx.update(|_, cx| cx.global::<PanelControl>().panels[&7].redraw));
         assert!(cx.update(|_, cx| updater::take_reveal(cx)));
         // リリースが消えれば（入れ替えた後など）、ボタンも消える。
-        cx.update(|_, cx| cx.default_global::<updater::Updater>().latest = None);
+        cx.update(|_, cx| cx.default_global::<updater::Updater>().found.clear());
         redraw_bar(cx);
         assert!(cx.debug_bounds("dashboard-update").is_none());
     }

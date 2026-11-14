@@ -1,6 +1,7 @@
 //! E2E for updates on the Settings screen (`settings-update`), against a loopback "GitHub": checking finds the newer
 //! build, the page shows its version and release notes (Markdown), and only pressing the update button downloads the
-//! installer and starts it. Opening from the dashboard's button (`updater::reveal`) lands on this category.
+//! installer and starts it. Opening from the dashboard's button (`updater::reveal`) lands on this category. The update
+//! channel decides whether pre-releases are offered.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
@@ -9,18 +10,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use gpui::TestAppContext;
+use kernel::UpdateChannel;
 use testing::Settings;
 use testkit::{Driver, NoVrKit};
 
 /// Index of the updates category in the sidebar.
-const UPDATE: usize = 8;
+const UPDATE: usize = 9;
 const INSTALLER: &str = "nyaw-2026.0.1-patch.2-setup.exe";
 const BODY: &[u8] = b"MZ fake installer";
 /// `BODY` の SHA-256（GitHub がアセットの `digest` で知らせるもの。無いリリースは勧めない）。
 const BODY_SHA256: &str = "9f7d203d2e9d47df255d63188d247ec305d7f3f9d40b9f1270574978cee3d1dd";
 
 /// A loopback "GitHub": `/releases` lists an older build (650) and a newer one (655, with release notes), each build
-/// number in the hidden note the release workflow appends, and the newer one's installer is downloadable.
+/// number in the hidden note the release workflow appends, and the newer one's installer is downloadable. A pre-release
+/// (660) is newer still, for the Nightly channel only.
 /// Returns the list's URL.
 fn github() -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -28,6 +31,9 @@ fn github() -> String {
     let notes = "## What's Changed\\n* feat: updates by @someone in https://github.com/nekochanfood/nyaw/pull/83\\n* fix: **bold** and `code`\\n\\n<!-- nyaw-build: 655 -->";
     let list = format!(
         r#"[
+          {{"tag_name":"v2026.0.2-beta.1","name":null,"body":"<!-- nyaw-build: 660 -->","draft":false,"prerelease":true,
+            "published_at":null,"html_url":"https://github.com/nekochanfood/nyaw/releases/tag/v2026.0.2-beta.1",
+            "assets":[{{"name":"nyaw-2026.0.2-beta.1-setup.exe","size":1,"browser_download_url":"{base}/x","digest":"sha256:{BODY_SHA256}"}}]}},
           {{"tag_name":"v2026.0.1-patch.2","name":"v2026.0.1-patch.2","body":"{notes}","draft":false,
             "published_at":"2026-11-13T00:00:00Z","html_url":"https://github.com/nekochanfood/nyaw/releases/tag/v2026.0.1-patch.2",
             "assets":[{{"name":"{INSTALLER}","size":{size},"browser_download_url":"{base}/{INSTALLER}","digest":"sha256:{BODY_SHA256}"}}]}},
@@ -152,6 +158,41 @@ fn check_shows_the_new_release_with_its_notes_and_installs_only_on_request(
     assert_eq!(std::fs::read(&launched).unwrap(), BODY);
     kit.bounds("update-installing");
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// Stable leaves pre-releases out and Nightly offers them. Switching the channel changes the offer at once, without
+/// checking again, and is saved in the settings.
+#[gpui::test]
+fn the_channel_decides_whether_pre_releases_are_offered(cx: &mut TestAppContext) {
+    let source = github();
+    let mut kit = NoVrKit::new(cx, move |_, cx| {
+        cx.set_global(updater::Updater {
+            build: 655,
+            source,
+            ..Default::default()
+        });
+        Settings::new(0)
+    });
+    kit.click("settings-update")
+        .click("update-check")
+        .step()
+        .step();
+    assert_eq!(kit.kernel.settings().update_channel, UpdateChannel::Stable);
+    assert!(
+        kit.try_bounds("update-version").is_none(),
+        "Stable: the newer pre-release is not offered"
+    );
+
+    kit.click("setting-update-channel")
+        .click("setting-channel-nightly")
+        .step();
+    assert_eq!(kit.kernel.settings().update_channel, UpdateChannel::Nightly);
+    kit.bounds("update-version");
+
+    kit.click("setting-update-channel")
+        .click("setting-channel-stable")
+        .step();
+    assert!(kit.try_bounds("update-version").is_none());
 }
 
 /// The dashboard's update button asks for the updates category; the Settings screen opens on it.

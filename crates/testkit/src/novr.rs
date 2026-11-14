@@ -45,7 +45,7 @@ impl<'a, V: Render> NoVrKit<'a, V> {
         let mut kernel = Kernel::with_backend(Emulator::headless(SCREEN.0, SCREEN.1), config);
         let mut panels = Panels::new(None);
         let pose = Pose::new(PANEL_POS, Quat::IDENTITY);
-        let panel = panels.add(cx, &mut kernel, pose, Some(view));
+        let panel = panels.add(cx, &mut kernel, pose, None, Some(view));
         let mut kit = Self {
             cx,
             panels,
@@ -82,9 +82,13 @@ impl<'a, V: Render> NoVrKit<'a, V> {
 
     /// The bounds on the panel (logical pixels) of the element tagged with `debug_selector`.
     pub fn bounds(&mut self, selector: &'static str) -> Bounds<Pixels> {
-        self.visual()
-            .debug_bounds(selector)
+        self.try_bounds(selector)
             .unwrap_or_else(|| panic!("element {selector:?} is not rendered"))
+    }
+
+    /// Like [`Self::bounds`], but `None` when the element is not rendered.
+    pub fn try_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
+        self.visual().debug_bounds(selector)
     }
 
     /// The point on screen where the center of an element appears.

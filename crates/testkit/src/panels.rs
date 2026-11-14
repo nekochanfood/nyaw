@@ -32,18 +32,23 @@ impl<V: Render> Panels<V> {
         }
     }
 
-    /// Adds view `view` (window `window`) as a panel at `pose`. Panel resolution = window size.
+    /// Adds view `view` (window `window`) as a panel at `pose`. Panel resolution = window size; the VR size is `size`
+    /// (`None`: [`PANEL_WIDTH_M`] wide).
     pub(crate) fn add<B: VrBackend>(
         &mut self,
         cx: &mut VisualTestContext,
         kernel: &mut Kernel<B>,
         pose: Pose,
+        size: Option<Vec2>,
         view: Option<Entity<V>>,
     ) -> PanelId {
         let window = cx.update(|window, _| window.window_handle());
         let vp = cx.update(|window, _| window.viewport_size());
         let res = (f32::from(vp.width) as u32, f32::from(vp.height) as u32);
-        let size = Vec2::new(PANEL_WIDTH_M, PANEL_WIDTH_M * res.1 as f32 / res.0 as f32);
+        let size = size.unwrap_or(Vec2::new(
+            PANEL_WIDTH_M,
+            PANEL_WIDTH_M * res.1 as f32 / res.0 as f32,
+        ));
         let id = kernel
             .add_panel(&format!("testkit.{}", self.windows.len()), pose, size, res)
             .expect("failed to create panel");
@@ -131,11 +136,14 @@ impl<V: Render> Panels<V> {
         let pose = spec.pose_for(kernel, id);
         let parent = spec.parent();
         let (bar, owner) = (spec.nav_bar_spec(id), spec.nav_bar_of());
+        let (size, res) = spec.size();
         let (root, cx) = cx
             .cx
             .add_window_view(|window, cx| PanelRoot::new(spec.build(id, window, cx)));
+        // As in production, the window and the panel take the spec's resolution and VR size (`pose_for` places it by that size).
+        cx.simulate_resize(gpui::size(gpui::px(res.0 as f32), gpui::px(res.1 as f32)));
         let view = root.read_with(cx, |root, _| root.view().downcast::<V>().ok());
-        let panel = self.add(cx, kernel, pose, view);
+        let panel = self.add(cx, kernel, pose, Some(size), view);
         if let Some(parent) = parent {
             kernel.apply(panel, kernel::PanelCommand::Parent(Some(parent)));
         }

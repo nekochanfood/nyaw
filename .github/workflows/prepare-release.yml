@@ -1,0 +1,80 @@
+name: Prepare release
+
+# Actions の画面で版を入れて実行すると、版を上げる commit を release/v<版> に積み、main への PR を開く（本文は前の版からの変更）。
+# そのブランチで CI と Release（インストーラーのビルド）を起こし、PR をマージすると Release がそのインストーラーで v<版> を出す。
+# GITHUB_TOKEN で push・作った PR ではワークフローが発火しないので、ビルドはここから起こす。
+# PR を開いたままプレリリースを出すときは、そのブランチで Release を名前（alpha・beta など）を入れて実行する。
+# -dev.<数> の版（出さない版）は、PR を作ってすぐマージする。Release が出した後に次の版をこれで起こす
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 新しい版（<CalVer>[-<名前>.<数>]。例 2026.0.3・2026.0.3-beta.1。-dev.<数> は出さずに main を上げるだけ）
+        required: true
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      # CI と Release を起こす
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # ノートの起点（辿れる一番新しいタグ）を探すので、履歴とタグを全部取る
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      # 版を上げる所は今の版が書いてある所すべて（本体と nyapps の Cargo.toml・ロックファイル、試作のニャプリ、AGENT.md）
+      - name: Bump the version
+        env:
+          NEW: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            echo "::error::run this on main"
+            exit 1
+          fi
+          # 名前は Cargo の版にも入るので semver の pre-release に使える文字だけ。新旧はビルド番号で決まるので、版の文字の大小は見ない
+          if ! [[ "$NEW" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+\.[0-9]+)?$ ]]; then
+            echo "::error::$NEW is not <CalVer>[-<label>.<number>] (e.g. 2026.0.3, 2026.0.3-beta.1)"
+            exit 1
+          fi
+          old=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' Cargo.toml)
+          if [ "$NEW" = "$old" ]; then
+            echo "::error::the version is already $old"
+            exit 1
+          fi
+          if git ls-remote --exit-code origin "refs/tags/v$NEW" "refs/heads/release/v$NEW" > /dev/null; then
+            echo "::error::v$NEW is already tagged or being prepared"
+            exit 1
+          fi
+          sed -i "s/^version = \"$old\"/version = \"$NEW\"/" Cargo.toml nyapps/Cargo.toml nyapps/*/manifest.toml
+          sed -i "s/CalVer（現在 \`$old\`/CalVer（現在 \`$NEW\`/" AGENT.md
+          cargo update --workspace
+          cargo update --workspace --manifest-path nyapps/Cargo.toml
+      - name: Open the release PR
+        env:
+          NEW: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git switch -c "release/v$NEW"
+          if [[ $NEW == *-dev.* ]]; then
+            git commit -qam "chore: start $NEW"
+            git push origin "release/v$NEW"
+            gh pr create --base main --head "release/v$NEW" --title "chore: start $NEW" \
+              --body "Moves main to $NEW after the release. Nothing is released; merged right away."
+            gh pr merge "release/v$NEW" --rebase --delete-branch
+            exit 0
+          fi
+          git commit -qam "chore(release): $NEW"
+          git push origin "release/v$NEW"
+          gh workflow run ci.yml --ref "release/v$NEW"
+          gh workflow run release.yml --ref "release/v$NEW"
+          prev=$(git describe --tags --abbrev=0 2> /dev/null) || true
+          notes=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
+            -f tag_name="v$NEW" -f target_commitish="release/v$NEW" ${prev:+-f previous_tag_name="$prev"} -q .body)
+          printf 'Merging this releases v%s with the installer built by the Release check of this branch.\n\n%s\n' "$NEW" "$notes" > body.md
+          gh pr create --base main --head "release/v$NEW" --title "chore(release): $NEW" --body-file body.md

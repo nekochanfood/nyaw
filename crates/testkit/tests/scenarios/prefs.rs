@@ -1,6 +1,6 @@
 //! E2E for the shared settings parts (`ui::prefs`) on the Settings screen, with the VR laser: appearance (preview, theme,
 //! the personal color history and the dialog that makes a custom color), the watch faces (the carousel on an arc),
-//! accessibility and the keyboard (a preview of the keyboard, its type, the key sound and its volume).
+//! accessibility, the keyboard (a preview of the keyboard, its type, the key sound and its volume) and the dashboard.
 
 use gpui::{Context, TestAppContext, px};
 use kernel::subsystems::keyboard::{Database, KeyboardType, Layout};
@@ -343,9 +343,9 @@ fn with_keyboard(layout: &str, cx: &mut Context<Settings>) -> Settings {
     let keyboard = Database::load().unwrap().keyboard(&layout).unwrap();
     let settings = Settings::new(0);
     let keys = ui::prefs::new_keyboard_preview(0, cx);
-    keys.update(cx, |view, _| {
+    keys.update(cx, |view, cx| {
         view.automatic = false;
-        view.select_layout(layout);
+        view.select_layout(layout, cx);
         view.keyboard = Some(keyboard);
         view.loading = false;
     });
@@ -483,4 +483,59 @@ fn keyboard_preview_keys_sound_on_a_touch_tap(cx: &mut TestAppContext) {
     );
     kit.click("setting-key-sound");
     assert_eq!(key_sounds(&mut kit, "key-AC01"), 0);
+}
+
+const DISTANCE_SLIDER: (&str, &str) = (
+    "setting-dashboard-distance-slider",
+    "setting-dashboard-distance-slider-handle",
+);
+const HEIGHT_SLIDER: (&str, &str) = (
+    "setting-dashboard-height-slider",
+    "setting-dashboard-height-slider-handle",
+);
+
+/// The dashboard category: its distance and height (relative to the head), two equal rows. The defaults are where the
+/// dashboard always was. The Settings screen sits on the dashboard and would move under the laser, so dragging only
+/// shows the value and letting go applies it.
+#[gpui::test]
+fn dashboard_distance_and_height_apply_on_release(cx: &mut TestAppContext) {
+    use kernel::{DASHBOARD_DISTANCE, DASHBOARD_DISTANCE_MAX, DASHBOARD_HEIGHT_MIN};
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.click("settings-dashboard");
+    assert_eq!(kit.read(|v| v.category), 8);
+    let s = kit.kernel.settings();
+    assert_eq!(
+        (s.dashboard_distance, s.dashboard_height),
+        (DASHBOARD_DISTANCE, 0.0)
+    );
+    let [distance, height] =
+        ["setting-dashboard-distance", "setting-dashboard-height"].map(|s| kit.bounds(s));
+    assert!(distance.bottom() <= height.top());
+    assert_eq!(distance.size, height.size, "equal rows");
+
+    grab_to(&mut kit, DISTANCE_SLIDER.0, DISTANCE_SLIDER.1, 1.0);
+    let s = kit.kernel.settings();
+    assert_eq!(
+        s.dashboard_distance, DASHBOARD_DISTANCE,
+        "not while dragging"
+    );
+    kit.release(Action::Select).step().step();
+    assert_eq!(
+        kit.kernel.settings().dashboard_distance,
+        DASHBOARD_DISTANCE_MAX
+    );
+
+    grab_to(&mut kit, HEIGHT_SLIDER.0, HEIGHT_SLIDER.1, 0.0);
+    assert_eq!(
+        kit.kernel.settings().dashboard_height,
+        0.0,
+        "not while dragging"
+    );
+    kit.release(Action::Select).step().step();
+    let s = kit.kernel.settings();
+    assert_eq!(
+        (s.dashboard_distance, s.dashboard_height),
+        (DASHBOARD_DISTANCE_MAX, DASHBOARD_HEIGHT_MIN),
+        "each keeps the other"
+    );
 }
