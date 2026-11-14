@@ -4,7 +4,7 @@
 
 use design::Theme;
 use design::components::{self, Button};
-use gpui::{App, Div, SharedString};
+use gpui::{App, Div, SharedString, prelude::*};
 use kernel::overlay::{
     LASER_LENGTH_MIN, LASER_MAX, POINTER_RELEASE_DEG, POINTER_RELEASE_DEG_MAX,
     POINTER_RELEASE_DEG_MIN, POINTER_SMOOTHING, POINTER_SMOOTHING_MAX,
