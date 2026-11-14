@@ -17,6 +17,8 @@ struct View {
     taps: usize,
     backs: usize,
     value: f32,
+    /// スワイプバックを切る（`without_swipe_back`）。
+    no_swipe: bool,
 }
 
 /// 画面 1 枚: 左上に `push`（次の画面を積む）、その下に幅いっぱいの `tap`（押した回数）、`slider`。
@@ -70,7 +72,7 @@ fn page(this: &Entity<View>, n: u8, cx: &mut App) -> gpui::AnyElement {
 impl Render for View {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (this, back) = (cx.entity(), cx.entity());
-        div().size_full().child(navigation(
+        let nav = navigation(
             &Theme::DARK,
             "nav",
             &self.stack,
@@ -82,7 +84,13 @@ impl Render for View {
                     cx.notify()
                 })
             },
-        ))
+        );
+        let nav = if self.no_swipe {
+            nav.without_swipe_back()
+        } else {
+            nav
+        };
+        div().size_full().child(nav)
     }
 }
 
@@ -183,6 +191,32 @@ fn short_slow_swipe_snaps_back(cx: &mut TestAppContext) {
     let tap = cx.debug_bounds("tap").unwrap().center();
     cx.simulate_click(tap, Modifiers::none());
     assert_eq!(view.read_with(cx, |v, _| v.taps), 1);
+}
+
+#[gpui::test]
+fn without_swipe_back_the_page_stays_put(cx: &mut TestAppContext) {
+    let (view, cx) = setup(cx, vec![0, 1]);
+    view.update(cx, |v, cx| {
+        v.no_swipe = true;
+        cx.notify()
+    });
+    cx.run_until_parked();
+    // マウスで左へ大きく動かしても、ページは動かず戻らない。
+    let from = right_of(cx, "tap");
+    let at = drag_left(cx, from, 12, 20.0);
+    assert_eq!(top_x(cx), px(0.0));
+    cx.simulate_mouse_up(at, MouseButton::Left, Modifiers::none());
+    // 指のスライドでも。
+    for (dx, phase) in [
+        (-40.0, TouchPhase::Started),
+        (-200.0, TouchPhase::Moved),
+        (0.0, TouchPhase::Ended),
+    ] {
+        cx.simulate_event(slide(from, dx, 0.0, phase));
+    }
+    assert_eq!(top_x(cx), px(0.0));
+    assert_eq!(depth(&view, cx), 1);
+    assert_eq!(view.read_with(cx, |v, _| v.backs), 0);
 }
 
 #[gpui::test]
