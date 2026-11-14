@@ -5895,6 +5895,7 @@ name = "updater"
 version = "2026.0.2"
 dependencies = [
  "gpui",
+ "kernel",
  "logger",
  "serde",
  "serde_json",

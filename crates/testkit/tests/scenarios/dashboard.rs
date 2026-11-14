@@ -1,4 +1,5 @@
 use gpui::TestAppContext;
+use kernel::vr::Vec3;
 use kernel::{Device, DominantHand, Hand, Setting};
 use testkit::{Button, Driver, NoVrKit};
 use wrist::Wrist;
@@ -79,4 +80,55 @@ fn wrist_follows_the_dominant_hand(cx: &mut TestAppContext) {
             Some((Device::Controller(wrist_on), watch))
         );
     }
+}
+
+/// The dashboard shows at the distance and height set in Settings (the height is relative to the head). While it
+/// shows, a change moves it there at once; while hidden, it takes effect the next time it shows.
+#[gpui::test]
+fn dashboard_shows_at_the_set_distance_and_height(cx: &mut TestAppContext) {
+    let mut kit = NoVrKit::new(cx, |_, cx| wrist(cx));
+    kit.step().step();
+    press_x_twice(&mut kit);
+    kit.step();
+    let dashboard = kit.read(|w| w.dashboard).expect("dashboard opened");
+    let at = |kit: &NoVrKit<Wrist>| kit.kernel.panel(dashboard).pose;
+    let home = at(&kit);
+
+    // 0.2m up: it moves straight up, facing the same way.
+    kit.kernel.set(Setting::DashboardHeight(0.2));
+    kit.step().step();
+    let up = at(&kit);
+    let moved = up.position - home.position;
+    assert!(moved.abs_diff_eq(Vec3::Y * 0.2, 1e-4), "{moved}");
+    assert!(up.orientation.abs_diff_eq(home.orientation, 1e-5));
+
+    // 0.5m farther: it moves level, away from the head.
+    kit.kernel.set(Setting::DashboardDistance(1.6));
+    kit.step().step();
+    let far = at(&kit);
+    let head = kit.kernel.hmd().position;
+    let flat = |v: Vec3| Vec3::new(v.x, 0.0, v.z);
+    let moved = far.position - up.position;
+    assert!(
+        moved.y.abs() < 1e-4 && (flat(moved).length() - 0.5).abs() < 1e-3,
+        "{moved}"
+    );
+    assert!(flat(far.position - head).length() > flat(up.position - head).length());
+
+    // Hidden, a change leaves it where it is; it shows at the new place next time.
+    press_x_twice(&mut kit);
+    kit.step();
+    assert!(kit.kernel.status(dashboard).hidden);
+    kit.kernel.set(Setting::DashboardHeight(0.0));
+    kit.kernel
+        .set(Setting::DashboardDistance(kernel::DASHBOARD_DISTANCE));
+    kit.step().step();
+    assert!(
+        at(&kit).position.abs_diff_eq(far.position, 1e-5),
+        "not while hidden"
+    );
+    press_x_twice(&mut kit);
+    kit.step();
+    assert!(!kit.kernel.status(dashboard).hidden);
+    assert!(at(&kit).position.abs_diff_eq(home.position, 1e-4));
 }

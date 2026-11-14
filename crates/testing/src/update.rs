@@ -1,5 +1,6 @@
-//! 設定の「アップデート」（`settings-update`）: 今の版と確認の状態、新しいリリースがあればその版・アップデートのボタン・
-//! リリースノート（Markdown）。確かめる・落として入れるのは `updater`。勝手には入れず、ユーザーが押したときだけ入れる。
+//! 設定の「アップデート」（`settings-update`）: 今の版と確認の状態、チャンネル（stable / nightly）、新しいリリースが
+//! あればその版・アップデートのボタン・リリースノート（Markdown）。確かめる・落として入れるのは `updater`。
+//! 勝手には入れず、ユーザーが押したときだけ入れる。
 
 use std::sync::atomic::Ordering;
 
@@ -8,11 +9,18 @@ use design::{Theme, font_size, spacing};
 use gpui::{App, Div, FontWeight, SharedString, Window, div, prelude::*, px, rgba};
 use updater::Step;
 
-/// 中身（グループの並び）。確かめている・落としている間は描き続けて、終わりと進み具合を拾う。
-pub(crate) fn page(theme: &Theme, window: &mut Window, cx: &mut App) -> Vec<Div> {
+/// 中身（グループの並び）。`channel` はチャンネルを選ぶ行（設定画面の選択肢）。
+/// 確かめている・落としている間は描き続けて、終わりと進み具合を拾う。
+pub(crate) fn page(
+    theme: &Theme,
+    channel: components::Button,
+    window: &mut Window,
+    cx: &mut App,
+) -> Vec<Div> {
+    // 勧めるリリースはチャンネルで変わる（切り替えたらすぐ。確かめ直さない）。
+    let latest = updater::latest(cx);
     let u = updater::state(cx);
-    let (step, latest, error, checked) =
-        (u.step.clone(), u.latest.clone(), u.error.clone(), u.checked);
+    let (step, error, checked) = (u.step.clone(), u.error.clone(), u.checked);
     if matches!(step, Step::Checking | Step::Downloading(_)) {
         components::keep_drawing(window, cx);
     }
@@ -67,8 +75,9 @@ pub(crate) fn page(theme: &Theme, window: &mut Window, cx: &mut App) -> Vec<Div>
                     .on_click(|_, _, cx| updater::check_now(cx)),
                 ),
         );
+    let channel = components::list(theme, [channel]);
     let Some(release) = latest else {
-        return vec![summary];
+        return vec![summary, channel];
     };
     // 入れる操作: ボタン → 落としている間は進み具合の輪と割合 → 走らせたら再起動を待つ文字。
     let action = match &step {
@@ -155,6 +164,7 @@ pub(crate) fn page(theme: &Theme, window: &mut Window, cx: &mut App) -> Vec<Div>
         );
     vec![
         summary,
+        channel,
         components::group(theme, i18n::t(cx, "update.new_version"), card),
         components::list(
             theme,

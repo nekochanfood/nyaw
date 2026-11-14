@@ -4,6 +4,8 @@ on:
   push:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  # Prepare release（prepare-release.yml）が版上げのブランチで起こす（GITHUB_TOKEN の push・PR では走らないので）
+  workflow_dispatch:
 
 env:
   # インクリメンタルは CI では使い回さない
@@ -19,7 +21,7 @@ env:
 
 jobs:
   fmt:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -31,7 +33,7 @@ jobs:
   # clippy は PR と main の push だけ（ブランチの push ごとには走らせない）
   clippy:
     # draft の PR では走らせない（ready_for_review で走る）
-    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || github.ref == 'refs/heads/main'
+    if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,7 +47,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
-    if: github.event_name == 'push'
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     env:
       # デバッグ情報（PDB）の生成とリンクがテストバイナリの数だけ効いて重いので切る。panic の位置は出る

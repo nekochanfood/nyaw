@@ -17,9 +17,10 @@ use std::time::{Duration, Instant};
 use subsystems::os;
 
 pub use config::{
-    COLOR_HISTORY, Config, DominantHand, Language, LodQuality, PersonalColor, PointerMode,
-    SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, WristDesign,
-    WristFace,
+    COLOR_HISTORY, Config, DASHBOARD_DISTANCE, DASHBOARD_DISTANCE_MAX, DASHBOARD_DISTANCE_MIN,
+    DASHBOARD_HEIGHT_MAX, DASHBOARD_HEIGHT_MIN, DASHBOARD_STEP, DominantHand, Language, LodQuality,
+    PersonalColor, PointerMode, SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode,
+    UI_SCALE_MAX, UI_SCALE_MIN, UpdateChannel, WristDesign, WristFace,
 };
 pub use overlay::{self, Anchor, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent};
 pub use subsystems::ControllerState;
@@ -147,6 +148,12 @@ pub enum Setting {
     KeySoundVolume(f32),
     /// ランタイムの起動と同時に開くか（`VrBackend::set_auto_launch`）。値はランタイムが持つので設定ファイルには書かない。
     AutoLaunch(bool),
+    /// アップデートのチャンネル（`update_channel`）。カーネルは値を持つだけで、従うのは `updater`。
+    UpdateChannel(UpdateChannel),
+    /// ダッシュボードの距離（m。`dashboard_distance`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、置くのはダッシュボード。
+    DashboardDistance(f32),
+    /// ダッシュボードの高さ（m。頭の高さからの相対で上が +。`dashboard_height`。範囲に収め、刻みに丸める）。
+    DashboardHeight(f32),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -181,6 +188,11 @@ pub struct Settings {
     pub key_sound_volume: f32,
     /// ランタイムの起動と同時に開くか。切り替えられないランタイム（OpenVR 以外）は `None`。
     pub auto_launch: Option<bool>,
+    pub update_channel: UpdateChannel,
+    /// ダッシュボードの距離（m。はめた画面の中心まで）。
+    pub dashboard_distance: f32,
+    /// ダッシュボードの高さ（m。頭の高さからの相対で上が +。0 で画面の中心が目の高さ）。
+    pub dashboard_height: f32,
 }
 
 impl Default for Settings {
@@ -207,6 +219,9 @@ impl Default for Settings {
             key_sound: true,
             key_sound_volume: 1.0,
             auto_launch: None,
+            update_channel: Default::default(),
+            dashboard_distance: DASHBOARD_DISTANCE,
+            dashboard_height: 0.0,
         }
     }
 }
@@ -498,7 +513,24 @@ impl<B: VrBackend> Kernel<B> {
                 .key_sound_volume
                 .map_or(1.0, |v| config::clamp_scale(v, 0.0, 1.0)),
             auto_launch: self.subsystems.backend.auto_launch(),
+            update_channel: self.config.update_channel,
+            dashboard_distance: self.dashboard_distance(),
+            dashboard_height: self.dashboard_height(),
         }
+    }
+
+    /// ダッシュボードの距離（設定ファイルの値を範囲に収め、刻みに丸めたもの）。
+    fn dashboard_distance(&self) -> f32 {
+        let (min, max) = (DASHBOARD_DISTANCE_MIN, DASHBOARD_DISTANCE_MAX);
+        let d = self.config.dashboard_distance.unwrap_or(DASHBOARD_DISTANCE);
+        config::snap(d, min, max, DASHBOARD_STEP, DASHBOARD_DISTANCE)
+    }
+
+    /// ダッシュボードの高さ（設定ファイルの値を範囲に収め、刻みに丸めたもの）。
+    fn dashboard_height(&self) -> f32 {
+        let (min, max) = (DASHBOARD_HEIGHT_MIN, DASHBOARD_HEIGHT_MAX);
+        let h = self.config.dashboard_height.unwrap_or(0.0);
+        config::snap(h, min, max, DASHBOARD_STEP, 0.0)
     }
 
     /// UI スケール（[`Setting::UiScale`]）。パネルの大きさ（[`Self::add_panel`] など）は等倍のつもりで渡し、これが掛かる。
@@ -624,6 +656,22 @@ impl<B: VrBackend> Kernel<B> {
                 let v = config::clamp_scale(v, 0.0, 1.0);
                 self.config.key_sound_volume = Some(v);
                 ("key_sound_volume", config::value(v))
+            }
+            Setting::UpdateChannel(c) => {
+                self.config.update_channel = c;
+                ("update_channel", config::value(c))
+            }
+            Setting::DashboardDistance(d) => {
+                self.config.dashboard_distance = Some(d);
+                let d = self.dashboard_distance();
+                self.config.dashboard_distance = Some(d);
+                ("dashboard_distance", config::value(d))
+            }
+            Setting::DashboardHeight(h) => {
+                self.config.dashboard_height = Some(h);
+                let h = self.dashboard_height();
+                self.config.dashboard_height = Some(h);
+                ("dashboard_height", config::value(h))
             }
         };
         if let Some(path) = &self.config_path
@@ -1057,6 +1105,9 @@ mod tests {
         assert_eq!(k.settings().dominant_hand, DominantHand::Left);
         k.set(Setting::WristDesign(WristDesign::Lcd));
         assert_eq!(k.settings().wrist_design, WristDesign::Lcd);
+        assert_eq!(k.settings().update_channel, UpdateChannel::Stable);
+        k.set(Setting::UpdateChannel(UpdateChannel::Nightly));
+        assert_eq!(k.settings().update_channel, UpdateChannel::Nightly);
         k.set(Setting::MirrorFrameRate(1000));
         assert_eq!(k.settings().mirror_frame_rate, desktop::MAX_FRAME_RATE);
         k.set(Setting::MirrorFrameRate(0));
@@ -1212,6 +1263,37 @@ mod tests {
         let k = Kernel::with_backend(vr::mock::MockBackend::default(), config);
         let s = k.settings();
         assert_eq!((s.key_sound, s.key_sound_volume), (false, 1.0));
+    }
+
+    /// ダッシュボードの距離・高さは既定で今までの置き場所（正面 1.1m・目の高さ）。互いに独立で、範囲と刻みに収まる。
+    #[test]
+    fn dashboard_placement_defaults_to_eye_level_and_stays_in_range() {
+        let (mut k, _) = lod_kernel();
+        let (s, d) = (k.settings(), Settings::default());
+        assert_eq!((s.dashboard_distance, s.dashboard_height), (1.1, 0.0));
+        assert_eq!((d.dashboard_distance, d.dashboard_height), (1.1, 0.0));
+        k.set(Setting::DashboardDistance(1.52));
+        k.set(Setting::DashboardHeight(-0.18));
+        let s = k.settings();
+        assert!((s.dashboard_distance - 1.5).abs() < 1e-6, "{s:?}");
+        assert!((s.dashboard_height + 0.2).abs() < 1e-6, "{s:?}");
+        for (given, kept) in [(9.0, DASHBOARD_DISTANCE_MAX), (0.0, DASHBOARD_DISTANCE_MIN)] {
+            k.set(Setting::DashboardDistance(given));
+            assert_eq!(k.settings().dashboard_distance, kept, "{given}");
+        }
+        k.set(Setting::DashboardHeight(f32::NAN));
+        assert_eq!(k.settings().dashboard_height, 0.0);
+        // 設定ファイルの値も同じく収める。
+        let config = Config {
+            dashboard_distance: Some(-1.0),
+            dashboard_height: Some(3.0),
+            ..Default::default()
+        };
+        let s = Kernel::with_backend(vr::mock::MockBackend::default(), config).settings();
+        assert_eq!(
+            (s.dashboard_distance, s.dashboard_height),
+            (DASHBOARD_DISTANCE_MIN, DASHBOARD_HEIGHT_MAX)
+        );
     }
 
     /// アクセシビリティの 3 つは独立した設定: どれかを変えてもほかは変わらず、どんな値の組でも範囲に収まる。
