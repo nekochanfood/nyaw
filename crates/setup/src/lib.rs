@@ -9,7 +9,7 @@ use gpui::{
     SharedString, Window, div, prelude::*, px,
 };
 use kernel::vr::{Pose, Quat, Vec2, Vec3};
-use kernel::{DominantHand, Language, LazyFollow, PanelCommand, PanelId, Setting, Settings};
+use kernel::{DominantHand, LazyFollow, PanelCommand, PanelId, Setting, Settings};
 use ui::{PanelControl, PanelSpec};
 
 /// パネルの大きさ（1px = 1mm）。オーバーレイの既定と同じ 4:3 で、いちばん背の高い文字盤の手順（見出し・設定画面と同じ
@@ -142,13 +142,6 @@ fn push(setting: Setting, cx: &mut App) {
     control.setting_changes.push(setting);
 }
 
-fn language(lang: i18n::Lang) -> Language {
-    match lang {
-        i18n::Lang::En => Language::En,
-        i18n::Lang::Ja => Language::Ja,
-    }
-}
-
 /// ウィザードの状態を書き換えて描き直す処理を作る（部品の `set` や、押したときの処理に渡す）。
 fn update<T: 'static>(
     wizard: &Entity<SetupWizard>,
@@ -239,10 +232,10 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             let options = i18n::Lang::ALL.map(|l| {
                 let close = open.clone();
                 let id = format!("setup-lang-{}", l.code());
-                let selected = language(l) == now.language;
+                let selected = ui::language(l) == now.language;
                 components::select_option(&theme, id, l.native_name(), selected).on_click(
                     move |_, window, cx| {
-                        push(Setting::Language(language(l)), cx);
+                        push(Setting::Language(ui::language(l)), cx);
                         close(false, window, cx)
                     },
                 )
@@ -259,7 +252,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
                 move |_: &MouseDownEvent, window, cx| dismiss(false, window, cx),
             );
             let mut langs = i18n::Lang::ALL.into_iter();
-            let current = langs.find(|&l| language(l) == now.language);
+            let current = langs.find(|&l| ui::language(l) == now.language);
             let languages = components::dropdown(
                 &theme,
                 "setup-language",

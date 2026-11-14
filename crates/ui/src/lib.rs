@@ -526,11 +526,24 @@ pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool
         .personal_color
         .map(|c| design::Accent::new(c.lightness, c.chroma, c.hue));
     design::Theme::set_accent(accent.unwrap_or_default(), cx);
-    cx.set_global(match settings.language {
+    cx.set_global(lang(settings.language));
+    true
+}
+
+/// カーネルの言語に対応する i18n の言語。
+pub fn lang(l: Language) -> i18n::Lang {
+    match l {
         Language::En => i18n::Lang::En,
         Language::Ja => i18n::Lang::Ja,
-    });
-    true
+    }
+}
+
+/// i18n の言語に対応するカーネルの言語（[`lang`] の逆）。
+pub fn language(l: i18n::Lang) -> Language {
+    match l {
+        i18n::Lang::En => Language::En,
+        i18n::Lang::Ja => Language::Ja,
+    }
 }
 
 /// 配送前にポインタのコンテキストを更新する。本番と各 testkit で同じ消滅条件を使う。

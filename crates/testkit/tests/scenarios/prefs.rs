@@ -6,11 +6,11 @@
 use gpui::{Context, TestAppContext, px};
 use kernel::subsystems::keyboard::{Database, KeyboardType, Layout};
 use kernel::{PointerMode, Setting, ThemeMode, WristDesign, WristFace};
-use testing::{Settings, SettingsPage};
+use settings::{Category, Page, Settings};
 use testkit::{Action, Driver, Vec2, VrKit};
 
 /// The category and the pages stacked on it.
-fn at(kit: &mut VrKit<'_, Settings>) -> (usize, Vec<SettingsPage>) {
+fn at(kit: &mut VrKit<'_, Settings>) -> (Category, Vec<Page>) {
     kit.read(|v| (v.category, v.pages.clone()))
 }
 
@@ -23,7 +23,7 @@ fn tint(kit: &VrKit<'_, Settings>) -> f32 {
 fn appearance_is_preview_then_theme_then_centered_colors(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
     kit.click("settings-appearance");
-    assert_eq!(kit.read(|v| v.category), 1);
+    assert_eq!(kit.read(|v| v.category), Category::Appearance);
     let [preview, theme, first, last, custom] = [
         "theme-preview",
         "setting-theme",
@@ -122,7 +122,7 @@ fn watch_faces_turn_loop_filter_and_set(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
     // The watch faces are a page of the appearance category.
     kit.click("settings-appearance").click("settings-watch");
-    assert_eq!(at(&mut kit), (1, vec![SettingsPage::Watch]));
+    assert_eq!(at(&mut kit), (Category::Appearance, vec![Page::Watch]));
     // The face in use is in the middle, between the category above and its name and the button below.
     let [kind, faces, name, set] =
         ["watch-kind", "watch-faces", "watch-name", "watch-set"].map(|s| kit.bounds(s));
@@ -184,7 +184,7 @@ fn watch_faces_turn_loop_filter_and_set(cx: &mut TestAppContext) {
 
     // Leaving the page and coming back puts the design in use in the middle again, among all designs.
     kit.click("settings-back");
-    assert_eq!(at(&mut kit), (1, vec![]));
+    assert_eq!(at(&mut kit), (Category::Appearance, vec![]));
     kit.click("settings-watch");
     assert_eq!(kit.read(|v| v.watch.face), None);
     assert_eq!(shown(&mut kit), WristDesign::Lcd);
@@ -234,7 +234,7 @@ fn accessibility_is_a_sample_then_text_size_ui_scale_and_bold(cx: &mut TestAppCo
     use kernel::{TEXT_SCALE_MAX, TEXT_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_MIN};
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
     kit.click("settings-accessibility");
-    assert_eq!(at(&mut kit), (4, vec![]));
+    assert_eq!(at(&mut kit), (Category::Accessibility, vec![]));
     let [preview, sample, text, ui, bold] = [
         "a11y-preview",
         "a11y-sample",
@@ -384,7 +384,7 @@ fn keyboard_is_a_preview_then_type_key_sound_and_volume(cx: &mut TestAppContext)
     let mut kit = VrKit::new(cx, |_, cx| with_keyboard("us", cx));
     // The keyboard is a page of the input category.
     kit.click("settings-input").click("settings-keyboard");
-    assert_eq!(at(&mut kit), (2, vec![SettingsPage::Keyboard]));
+    assert_eq!(at(&mut kit), (Category::Input, vec![Page::Keyboard]));
     let [preview, kind, sound, volume] = [
         "keyboard-preview",
         "setting-keyboard",
@@ -448,7 +448,7 @@ fn keyboard_is_a_preview_then_type_key_sound_and_volume(cx: &mut TestAppContext)
     assert_eq!(key_sounds(&mut kit, "key-AC01"), 1);
     kit.step();
     assert_eq!(kit.kernel.subsystems.backend.overlays.len(), overlays);
-    assert_eq!(at(&mut kit), (2, vec![SettingsPage::Keyboard]));
+    assert_eq!(at(&mut kit), (Category::Input, vec![Page::Keyboard]));
 
     // Key sound off: the same key is silent, and the volume row goes away without moving the rows above.
     kit.click("setting-key-sound");
@@ -513,7 +513,7 @@ fn dashboard_distance_and_height_apply_on_release(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
     // The dashboard rows are a group of the display category.
     kit.click("settings-display");
-    assert_eq!(at(&mut kit), (3, vec![]));
+    assert_eq!(at(&mut kit), (Category::Display, vec![]));
     let s = kit.kernel.settings();
     assert_eq!(
         (s.dashboard_distance, s.dashboard_height),

@@ -66,7 +66,7 @@ fn main() -> ExitCode {
                 opened(id, cx)
             })
         },
-        |from, opened| testing::settings_spec(from, opened),
+        |from, opened| settings::spec(from, opened),
     )];
     // novr もコントローラを模すので、どのランタイムでもビームを載せる（novr のレーザーは視線と重なって見えない）。
     panels.extend(beam::specs());

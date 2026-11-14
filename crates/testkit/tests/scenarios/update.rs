@@ -12,12 +12,12 @@ use std::sync::Mutex;
 
 use gpui::TestAppContext;
 use kernel::UpdateChannel;
-use testing::{Settings, SettingsPage};
+use settings::{Category, Page, Settings};
 use testkit::{Driver, NoVrKit};
 
 /// The updates page: on the general category (the first in the sidebar).
 fn on_updates(kit: &mut NoVrKit<'_, Settings>) -> bool {
-    kit.read(|v| v.category == 0 && v.pages == [SettingsPage::Update])
+    kit.read(|v| v.category == Category::General && v.pages == [Page::Update])
 }
 const INSTALLER: &str = "nyaw-2026.0.1-patch.2-setup.exe";
 const BODY: &[u8] = b"MZ fake installer";
@@ -210,7 +210,10 @@ fn opening_from_the_dashboard_button_lands_on_updates(cx: &mut TestAppContext) {
     kit.bounds("update-check");
     // It is taken once: choosing another category afterwards stays there.
     kit.click("settings-appearance").step();
-    assert_eq!(kit.read(|v| (v.category, v.pages.clone())), (1, vec![]));
+    assert_eq!(
+        kit.read(|v| (v.category, v.pages.clone())),
+        (Category::Appearance, vec![])
+    );
 }
 
 /// Against the real GitHub, run by hand: pretending to be build `NYAW_UPDATE_FROM`, the Settings screen finds the newest

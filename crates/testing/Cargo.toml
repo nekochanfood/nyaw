@@ -11,11 +11,8 @@ i18n.workspace = true
 gpui.workspace = true
 kernel.workspace = true
 nyapp.workspace = true
+settings.workspace = true
 ui.workspace = true
-updater.workspace = true
-
-[build-dependencies]
-serde_json = "1"
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

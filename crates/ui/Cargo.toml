@@ -19,6 +19,7 @@ logger.workspace = true
 kernel = { workspace = true, features = ["novr", "test-support"] }
 vr = { workspace = true, features = ["test-support", "novr"] }
 testing.workspace = true
+settings.workspace = true
 beam.workspace = true
 wrist.workspace = true
 setup.workspace = true

@@ -2,16 +2,16 @@
 //! シンプル / 詳細）、動き（シンプルは 1 本の `setting-steadiness`、詳細は `setting-smoothing` / `setting-release` /
 //! `setting-laser-length`）、カーソル（大きさ・ツールチップ）、音（タップ音・ホバー音）。どれも動かすとすぐ効く。
 
-use design::Theme;
 use design::components::{self, Button};
-use gpui::{App, Div, SharedString, prelude::*};
+use design::{Theme, font_size, spacing};
+use gpui::{App, Context, Div, SharedString, Window, div, prelude::*, px, rgba};
 use kernel::overlay::{
     LASER_LENGTH_MIN, LASER_MAX, POINTER_RELEASE_DEG, POINTER_RELEASE_DEG_MAX,
     POINTER_RELEASE_DEG_MIN, POINTER_SMOOTHING, POINTER_SMOOTHING_MAX,
 };
 use kernel::{CURSOR_SCALE_MAX, CURSOR_SCALE_MIN, PointerTuning, SCALE_STEP, Setting, Settings};
 
-use crate::{ROW_SLIDER_PX, change, setting_slider};
+use crate::{ROW_SLIDER_PX, change};
 
 /// 動きのスライダーの両端: 左ほど手にすぐ付いていく（はやい）、右ほど揺れてもポインタが止まる（おそい）。
 const SPEED: [&design::Icon; 2] = [
@@ -48,8 +48,42 @@ fn steadiness_at(smoothing: f32, release: f32) -> f32 {
     }
 }
 
-/// 中身（グループの並び）。`tuning` は調整のしかたを選ぶ行（設定画面の選択肢）。
-pub(crate) fn page(theme: &Theme, now: Settings, tuning: Button, cx: &App) -> Vec<Div> {
+/// 中身（グループの並び）。上に調整のしかた（シンプル / 詳細）を選ぶ行。ポインタの方式は選ばせない
+/// （マウスは廃止の方向。全体はタッチ）。
+pub(crate) fn page(
+    s: &crate::Settings,
+    theme: &Theme,
+    window: &mut Window,
+    cx: &mut Context<crate::Settings>,
+) -> Vec<Div> {
+    let now = ui::settings(cx);
+    let tuning = s.select(
+        theme,
+        window,
+        cx,
+        "setting-pointer-tuning",
+        &design::icons::SLIDERS_HORIZONTAL,
+        i18n::t(cx, "settings.pointer_tuning"),
+        now.pointer_tuning,
+        vec![
+            (
+                "setting-tuning-simple",
+                i18n::t(cx, "settings.simple"),
+                PointerTuning::Simple,
+            ),
+            (
+                "setting-tuning-detailed",
+                i18n::t(cx, "settings.detailed"),
+                PointerTuning::Detailed,
+            ),
+        ],
+        Setting::PointerTuning,
+    );
+    body(theme, now, tuning, cx)
+}
+
+/// `tuning` の下の中身（動き・カーソル・音のグループ）。
+fn body(theme: &Theme, now: Settings, tuning: Button, cx: &App) -> Vec<Div> {
     let t = |key: &str| i18n::t(cx, key);
     let mut groups = vec![components::list(theme, [tuning])];
     groups.extend(match now.pointer_tuning {
@@ -212,9 +246,53 @@ fn detailed(theme: &Theme, now: Settings, cx: &App) -> Vec<Div> {
     ]
 }
 
+/// スライダーのカード: スライダーをカードの幅いっぱいに入れ、今の値の説明はカードの下に置く。
+/// `ends` があれば、左端と右端が何を表すかのアイコンをスライダーの両側に置く。
+fn setting_slider(
+    theme: &Theme,
+    value: SharedString,
+    slider: components::Slider,
+    ends: Option<[&'static design::Icon; 2]>,
+) -> Div {
+    let end = |glyph| {
+        design::icon(glyph)
+            .size(px(font_size::LG))
+            .color(rgba(theme.neutral_text_low))
+    };
+    let (left, right) = match ends {
+        Some([l, r]) => (Some(end(l)), Some(end(r))),
+        None => (None, None),
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(spacing::SM))
+        .child(
+            components::card(theme)
+                .p(px(spacing::LG))
+                .flex()
+                .items_center()
+                .gap(px(spacing::MD))
+                .children(left)
+                .child(div().flex_1().child(slider.fill()))
+                .children(right),
+        )
+        .child(
+            div()
+                .px(px(spacing::LG))
+                .text_size(px(font_size::SM))
+                .text_color(rgba(theme.neutral_text_low))
+                .child(value),
+        )
+}
+
 #[cfg(test)]
 mod tests {
+    use gpui::{Modifiers, TestAppContext};
+    use ui::PanelControl;
+
     use super::*;
+    use crate::{Category, PX, Page};
 
     /// 真ん中が既定値、左端は抑えない、右端は角度が上限。位置と組は行き来でき、強さは左から右へ強まり、角度は広がる。
     #[test]
@@ -243,5 +321,81 @@ mod tests {
         );
         assert_eq!(steadiness_at(POINTER_SMOOTHING_MAX, 999.0), 1.0);
         assert_eq!(steadiness_at(-1.0, 30.0), 0.0);
+    }
+
+    /// ポインタの動きのスライダーはカードの幅いっぱい（両端のアイコンの分だけ左右に同じ余白）で、ハンドルは値の位置にあり、
+    /// 右端まで動かせる。
+    #[gpui::test]
+    fn pointer_sliders_span_the_card(cx: &mut TestAppContext) {
+        use kernel::PointerTuning;
+        let (_, cx) = cx.add_window_view(|_, cx| {
+            let settings = crate::Settings {
+                category: Category::Input,
+                pages: vec![Page::Pointer],
+                ..crate::Settings::new(0)
+            };
+            ui::PanelRoot::new(cx.new(|_| settings).into())
+        });
+        use kernel::overlay::{
+            POINTER_RELEASE_DEG, POINTER_RELEASE_DEG_MAX, POINTER_SMOOTHING, POINTER_SMOOTHING_MAX,
+        };
+        for width in [PX.0, 800] {
+            cx.simulate_resize(gpui::size(px(width as f32), px(PX.1 as f32)));
+            // （調整のしかた, スライダーとハンドル, 手ブレ抑えの強さ, スライダーの位置）。シンプルの既定は真ん中。
+            for (tuning, (id, handle), smoothing, value) in [
+                (
+                    PointerTuning::Simple,
+                    ("setting-steadiness", "setting-steadiness-handle"),
+                    POINTER_SMOOTHING,
+                    0.5,
+                ),
+                (
+                    PointerTuning::Detailed,
+                    ("setting-smoothing", "setting-smoothing-handle"),
+                    POINTER_SMOOTHING_MAX / 4.0,
+                    0.25,
+                ),
+            ] {
+                cx.update(|window, cx| {
+                    let c = cx.default_global::<PanelControl>();
+                    c.settings.pointer_tuning = tuning;
+                    (c.settings.pointer_smoothing, c.settings.pointer_release_deg) =
+                        (smoothing, POINTER_RELEASE_DEG);
+                    window.refresh();
+                });
+                cx.run_until_parked();
+                let row = cx.debug_bounds("setting-cursor-size").unwrap();
+                let slider = cx.debug_bounds(id).unwrap();
+                let handle = cx.debug_bounds(handle).unwrap();
+                let at = format!("{width}px {id}: {slider:?} in {row:?}");
+                let (l, r) = (slider.left() - row.left(), row.right() - slider.right());
+                assert!((l - r).abs() < px(1.0) && r < px(80.0), "{at}");
+                let travel = slider.size.width - handle.size.width;
+                let expect = slider.left() + handle.size.width / 2.0 + travel * value;
+                assert!(
+                    (handle.center().x - expect).abs() < px(1.0),
+                    "{at}: {handle:?}"
+                );
+
+                let from = handle.center();
+                let to = gpui::point(slider.right() + px(40.0), from.y);
+                cx.simulate_mouse_down(from, gpui::MouseButton::Left, Modifiers::none());
+                cx.simulate_mouse_move(to, gpui::MouseButton::Left, Modifiers::none());
+                cx.simulate_mouse_up(to, gpui::MouseButton::Left, Modifiers::none());
+                let changes = cx.update(|_, cx| {
+                    std::mem::take(&mut cx.default_global::<PanelControl>().setting_changes)
+                });
+                let at_end = |c: &Setting| match (tuning, *c) {
+                    (PointerTuning::Simple, Setting::PointerRelease(v)) => {
+                        (v - POINTER_RELEASE_DEG_MAX).abs() < 1e-3
+                    }
+                    (PointerTuning::Detailed, Setting::PointerSmoothing(v)) => {
+                        (v - POINTER_SMOOTHING_MAX).abs() < 1e-6
+                    }
+                    _ => false,
+                };
+                assert!(changes.iter().any(at_end), "{at}: {changes:?}");
+            }
+        }
     }
 }
