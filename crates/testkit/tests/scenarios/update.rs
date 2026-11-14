@@ -15,7 +15,7 @@ use testing::Settings;
 use testkit::{Driver, NoVrKit};
 
 /// Index of the updates category in the sidebar.
-const UPDATE: usize = 8;
+const UPDATE: usize = 9;
 const INSTALLER: &str = "nyaw-2026.0.1-patch.2-setup.exe";
 const BODY: &[u8] = b"MZ fake installer";
 /// `BODY` の SHA-256（GitHub がアセットの `digest` で知らせるもの。無いリリースは勧めない）。
