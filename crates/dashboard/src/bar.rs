@@ -48,7 +48,13 @@ impl Dashboard {
         })
         .detach();
         // 画面（モニター）の一覧が届いたら、すべて配信として開いておく。隠している間は描かないので、描画とは別に待つ。
-        if let Ok(pending) = Sources::refresh() {
+        // テストでは読まない（OS の一覧が届く時刻がテストの待ち合わせと競合し、配信が開くかどうかが毎回変わる）。
+        let preload = if cfg!(test) {
+            None
+        } else {
+            Sources::refresh().ok()
+        };
+        if let Some(pending) = preload {
             cx.spawn(async move |this, cx| {
                 let sources = loop {
                     if let Some(result) = pending.poll() {
