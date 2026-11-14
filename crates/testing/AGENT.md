@@ -8,6 +8,10 @@ UI 層の上に載る画面。GPUI のビューで、ランタイムを意識し
 
 `Testing`（テスト用の画面）, `TestingAnim`（毎フレーム変わる）, `TestingLod`（LOD を数字と色で表示）, `TestingScrollbar`（縦・横・縦横のスクロールバー）, `StressTest`（上限までパネルを出す・閉じる・ちりばめる・並べる）, `TooltipTest`（ツールチップ）, `SmoothingTest`（レーザーの手ブレ抑えの強さと線の長さをスライダーで調整）, `WizardTest`（ウィザード: ようこそ → 手順 2 つ → 完了。`wizard-next` / `wizard-back` / `wizard-restart` / `wizard-form`。`wizard-test` で開く。部品は `design::components::wizard_*`）, `LogoTest`（ロゴの Full / Mini と、16〜256 px のサイズ違いをライト用・ダーク用の地の上に並べる。`logo-test` で開く）, `SuperellipseTest`（角丸のスーパーエリプス。`superellipse-radius` で大きさ、`superellipse-k` で強さ k を動かし、`superellipse-preview` / `superellipse-outline` と固定 k の見本で見る。`superellipse-test` で開く。描画は vendor/gpui の `corner_superellipse(k)`、GPU テストは `ui/tests/gpu/superellipse.rs`）, `LogoTest`（ロゴの Full / Mini と、16〜256 px のサイズ違いをライト用・ダーク用の地の上に並べる。`logo-test` で開く）
 
+## ファイルの分け方（ルール）
+
+**画面ごとに 1 ファイル**（`pointer.rs` = `PointerTest`、`nav.rs` = `NavTest`、`dialog.rs` = `DialogTest` / `Dialog`、`scrollbar.rs`、`stress.rs` など）。Testing パネル本体の描画は `panel.rs`、`lib.rs` には `Testing` の状態・色の定数・どの画面でも使う小さな部品（`button` / `row` / `section` / `spawn_view` など）だけを置く。新しいテスト用の画面はファイルを足して `lib.rs` に `mod` と `pub use` を 1 行ずつ足す。テストはその画面のファイルの子（`scrollbar/tests.rs` など）に置き、共通の道具は `test_util.rs`。
+
 ## Testing（テスト用の画面）
 
 一連の機能を1画面で試せる画面。新しい機能を足したら Testing にも操作を足し、E2E はその操作で書く。有効な状態は `BUTTON_ACTIVE_BG` で光る。
