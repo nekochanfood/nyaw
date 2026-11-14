@@ -66,7 +66,7 @@ impl<'a, V: Render> VrKit<'a, V> {
         let mut kernel = Kernel::with_backend(MockBackend::default(), config);
         let mut panels = Panels::new(Watch::from_env());
         let pose = Pose::new(PANEL_POS, Quat::IDENTITY);
-        let panel = panels.add(cx, &mut kernel, pose, Some(view));
+        let panel = panels.add(cx, &mut kernel, pose, None, Some(view));
         let mut kit = Self {
             cx,
             panels,
@@ -86,7 +86,9 @@ impl<'a, V: Render> VrKit<'a, V> {
         build: impl FnOnce(&mut Window, &mut Context<V>) -> V,
     ) -> PanelId {
         let (view, cx) = self.cx.cx.add_window_view(build);
-        let id = self.panels.add(cx, &mut self.kernel, pose, Some(view));
+        let id = self
+            .panels
+            .add(cx, &mut self.kernel, pose, None, Some(view));
         self.step();
         id
     }

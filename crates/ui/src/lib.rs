@@ -1086,6 +1086,11 @@ impl PanelSpec {
         })
     }
 
+    /// VR 上の大きさ（m。等倍）と解像度（px）。[`Self::sized`] で決めたもの。
+    pub fn size(&self) -> (Vec2, (u32, u32)) {
+        (self.size, self.resolution)
+    }
+
     /// このパネルがナビゲーションバーなら、その持ち主（開いた直後に [`PanelCommand::NavBar`] で適用する）。
     pub fn nav_bar_of(&self) -> Option<PanelId> {
         self.nav_bar_of
