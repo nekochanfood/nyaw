@@ -1,6 +1,7 @@
-//! OS の通知のカード。通知のトースト（`crates/toast`）とダッシュボードの通知一覧が同じものを出す（画面どうしは直接
-//! 依存しないので、共有する部品は UI 層に置く）。アイコン・見出し・アプリの名前・本文（行数を限って省略）。広げると
-//! （ホバー中）本文が伸び、通知のボタンが並ぶ。押したときの開き方（[`open`]）もここ。
+//! OS の通知のカード。通知のトースト（`crates/toast`）とダッシュボードの通知センター（クイック設定の一覧）が同じものを
+//! 出す（画面どうしは直接依存しないので、共有する部品は UI 層に置く）。アイコン・見出し・アプリの名前・本文（行数を
+//! 限って省略）。広げると本文が伸び、通知のボタンが並ぶ。押したときの開き方（[`open`]）と、トーストから通知センターを
+//! 開く頼み（[`Center`]）もここ。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -12,6 +13,28 @@ use gpui::{
 };
 use kernel::subsystems::notifications::Notification;
 use kernel::{PanelCommand, PanelId};
+
+/// 通知センター（ダッシュボードのクイック設定の一覧）を開いてほしいという頼み（GPUI のグローバル）。トーストのカードを
+/// 押すと、その通知に合わせて開く（[`show_center`]）。ダッシュボードが見て出し、一覧を開いて、一覧が [`Center::focus`]
+/// を広げる。
+#[derive(Debug, Default)]
+pub struct Center {
+    /// 頼まれた回数（増えたら開く）。
+    pub asked: u32,
+    /// 広げて見せる通知（一覧が受け取ったら空にする）。
+    pub focus: Option<u32>,
+    /// 一覧を出している画面のパネル。トーストは、これがダッシュボードにはまって出ている間は出ない（同じものが並ぶので）。
+    pub panel: Option<PanelId>,
+}
+
+impl gpui::Global for Center {}
+
+/// 通知センターを開いてほしい（`focus` の通知を広げて）。
+pub fn show_center(focus: Option<u32>, cx: &mut App) {
+    let c = cx.default_global::<Center>();
+    c.asked = c.asked.wrapping_add(1);
+    c.focus = focus;
+}
 
 /// 本文の行数（ふだん・広げたとき）。
 pub const BODY_LINES: usize = 2;
@@ -53,14 +76,16 @@ pub fn title(n: &Notification) -> SharedString {
     }
 }
 
-/// 通知 `n` のカード（地に直接置く押せるカード。`id` は `{prefix}-{通知の ID}`）。`expanded` なら本文を伸ばし、ボタン
-/// （`{prefix}-action-{通知の ID}-{番号}`）を並べる。本文かボタンを押すと `pressed` に `None` かボタンの番号が届く。
+/// 通知 `n` のカード（地に直接置く押せるカード。`id` は `{prefix}-{通知の ID}`）。`expanded` なら本文を伸ばし、通知の
+/// ボタン（`{prefix}-action-{通知の ID}-{番号}`）と `extra` を並べる（そのときカードはホバー・押下で色を変えない。
+/// 変えると中のボタンが紛れる）。本文か通知のボタンを押すと `pressed` に `None` かボタンの番号が届く。
 pub fn card(
     theme: &Theme,
     prefix: &str,
     n: &Notification,
     image: Option<Arc<RenderImage>>,
     expanded: bool,
+    extra: impl IntoIterator<Item = Button>,
     pressed: impl Fn(Option<usize>, &mut Window, &mut App) + Clone + 'static,
 ) -> Button {
     let id = n.id;
@@ -78,6 +103,11 @@ pub fn card(
             pressed(Some(i), window, cx);
         })
     });
+    let buttons: Vec<Button> = if expanded {
+        actions.chain(extra).collect()
+    } else {
+        Vec::new()
+    };
     let body = (!n.body.is_empty()).then(|| {
         div()
             .w_full()
@@ -118,25 +148,30 @@ pub fn card(
                         .child(n.app.name.clone()),
                 ),
         );
-    components::tile(theme, format!("{prefix}-{id}"))
-        .w_full()
-        // ボタンの高さに決まっているので、中身に合わせて伸ばす。
-        .h_auto()
-        .items_start()
-        .rounded(px(radius::XL))
-        .child(header)
-        .children(body)
-        .when(expanded && !n.actions.is_empty(), |t| {
-            t.child(
-                div()
-                    .w_full()
-                    .flex()
-                    .flex_wrap()
-                    .gap(px(spacing::SM))
-                    .children(actions),
-            )
-        })
-        .on_click(move |_, window, cx| pressed(None, window, cx))
+    let tile = components::tile(theme, format!("{prefix}-{id}"));
+    if buttons.is_empty() {
+        tile
+    } else {
+        tile.still()
+    }
+    .w_full()
+    // ボタンの高さに決まっているので、中身に合わせて伸ばす。
+    .h_auto()
+    .items_start()
+    .rounded(px(radius::XL))
+    .child(header)
+    .children(body)
+    .when(!buttons.is_empty(), |t| {
+        t.child(
+            div()
+                .w_full()
+                .flex()
+                .flex_wrap()
+                .gap(px(spacing::SM))
+                .children(buttons),
+        )
+    })
+    .on_click(move |_, window, cx| pressed(None, window, cx))
 }
 
 /// 通知 `n` の本文（`action` が `None`）かボタンを押した。URL は確かめてから開き（[`crate::link`]）、ほかはアプリへ届ける
