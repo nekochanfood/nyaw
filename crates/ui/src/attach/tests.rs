@@ -144,7 +144,11 @@ fn the_menu_sits_over_the_nav_bar_at_its_scale(cx: &mut TestAppContext) {
             (card_bottom - band_top - design::spacing::SM * n).abs() < 1e-5,
             "{card_bottom} {band_top}"
         );
-        assert!(local.z.abs() < 1e-5);
+        // バー（と持ち主）より手前に浮かせる。
+        assert!(
+            (local.z - MENU_LIFT * b.size.x / NAV_BAR_M).abs() < 1e-5,
+            "{local}"
+        );
         assert!((m - n).abs() < 1e-7, "same density as the bar");
         (size.x, b.size.x)
     };
