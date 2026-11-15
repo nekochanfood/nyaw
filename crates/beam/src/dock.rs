@@ -1,4 +1,4 @@
-//! はまる所の見本（[`Pointer::Dock`]）。はめられる画面を掴んでいる間、はまる所に画面の地より少し大きく出る破線の枠と、上の一行。
+//! はまる所の見本（[`Pointer::Dock`]）。はめられる画面を掴んでいる間、はまる所に画面の地より少し大きく出る角だけの枠と、上の一行。
 //! 離すとはまる（はまったままになる）間は強調色、離すと独立する間は無彩色で、境目が分かる。
 //! ここは絵だけを描き、置き場所・大きさ・出入りのフェードはオーバーレイ層が決める（描き直すのは一行が変わったときだけ）。
 
@@ -12,11 +12,12 @@ use ui::PanelSpec;
 
 /// 窓の最初の大きさ（px）。掴んだ画面に合わせてオーバーレイ層が変える。
 const GHOST_PX: (u32, u32) = (400, 300 + DOCK_HINT_PX);
-/// 破線の太さと、1 本の長さ・間の長さ（px）。GPUI の破線（長さ = 太さの 2 倍）では細かすぎるので自分で描く。
+/// 角の線の太さと、角の丸みから辺に沿って伸ばす長さ（px）。伸ばす長さは、短い辺の直線部分の [`ARM_MAX`] までに収める
+/// （隣の角の線とつながらない）。
 const BORDER_PX: f32 = 6.0;
-const DASH_PX: f32 = 36.0;
-const GAP_PX: f32 = 20.0;
-/// 離すと独立する間の破線の濃さ（無彩色の文字色に掛ける不透明度。0〜255）。
+const ARM_PX: f32 = 96.0;
+const ARM_MAX: f32 = 0.35;
+/// 離すと独立する間の枠の濃さ（無彩色の文字色に掛ける不透明度。0〜255）。
 const LOOSE_ALPHA: u32 = 0xb0;
 
 /// `hand` の見本の起動仕様。
@@ -29,7 +30,7 @@ pub fn spec(hand: Hand) -> PanelSpec {
     .pointer(hand, Pointer::Dock)
 }
 
-/// 上の帯に一行（引っ張って外す・離してくっつける・近づけてくっつける）、その下にはまる所の破線の枠（中は透ける）。
+/// 上の帯に一行（引っ張って外す・離してくっつける・近づけてくっつける）、その下にはまる所の角だけの枠（中は透ける）。
 pub struct DockGhost {
     panel: PanelId,
     /// 最後に出した一行（離して薄れていく間も同じものを出す）。
@@ -63,7 +64,7 @@ impl Render for DockGhost {
             .items_center()
             .justify_center()
             .child(
-                // ツールチップと同じ地で、どこに重なっても読める。アイコンは破線と同じ色。
+                // ツールチップと同じ地で、どこに重なっても読める。アイコンは文字と同じ色。
                 div()
                     .flex()
                     .items_center()
@@ -80,13 +81,13 @@ impl Render for DockGhost {
                     .child(
                         design::icon(glyph)
                             .size(px(font_size::LG))
-                            .color(rgba(line | 0xff)),
+                            .color(rgba(theme.on_tooltip)),
                     )
                     .child(i18n::t(cx, key)),
             );
         let slot = canvas(
             |_, _, _| {},
-            move |bounds, _, window, _| dashed_outline(bounds, line, window),
+            move |bounds, _, window, _| corner_frame(bounds, line, window),
         )
         .flex_1()
         .w_full();
@@ -100,9 +101,9 @@ impl Render for DockGhost {
     }
 }
 
-/// `bounds` いっぱいの角丸（`radius::XL`）の長方形を、[`DASH_PX`] の線と [`GAP_PX`] の間の破線で縁取る（色 `color`）。
-/// 一周にちょうど収まるよう、線と間の長さを少し伸び縮みさせる。
-fn dashed_outline(bounds: Bounds<Pixels>, color: u32, window: &mut Window) {
+/// `bounds` いっぱいの角丸（`radius::XL`）の長方形の四隅だけを、丸みとそこから辺に沿って [`ARM_PX`] 伸ばした線で描く
+/// （全画面表示のアイコンのような角の枠。色 `color`）。
+fn corner_frame(bounds: Bounds<Pixels>, color: u32, window: &mut Window) {
     let half = BORDER_PX / 2.0;
     let (x0, y0) = (
         f32::from(bounds.origin.x) + half,
@@ -117,17 +118,13 @@ fn dashed_outline(bounds: Bounds<Pixels>, color: u32, window: &mut Window) {
     }
     let r = (radius::XL - half).clamp(0.0, w.min(h) / 2.0);
     let edges = Perimeter { x0, y0, w, h, r };
-    let total = edges.length();
-    let n = (total / (DASH_PX + GAP_PX)).round().max(1.0);
-    let period = total / n;
-    let dash = period * DASH_PX / (DASH_PX + GAP_PX);
-    for k in 0..n as usize {
-        let start = k as f32 * period;
-        let steps = (dash / 4.0).ceil().max(1.0) as usize;
+    let (starts, len) = edges.brackets();
+    for start in starts {
+        let steps = (len / 4.0).ceil().max(1.0) as usize;
         let mut path = PathBuilder::stroke(px(BORDER_PX));
         path.move_to(edges.at(start));
         for i in 1..=steps {
-            path.line_to(edges.at(start + dash * i as f32 / steps as f32));
+            path.line_to(edges.at(start + len * i as f32 / steps as f32));
         }
         if let Ok(path) = path.build() {
             window.paint_path(path, rgba(color));
@@ -145,6 +142,24 @@ struct Perimeter {
 }
 
 impl Perimeter {
+    /// 四隅の線（右上・右下・左下・左上）が始まる周の位置と、その長さ。丸みの前後に辺に沿って [`ARM_PX`] ずつ伸ばす。
+    fn brackets(&self) -> ([f32; 4], f32) {
+        let (sw, sh, arc) = (
+            self.w - 2.0 * self.r,
+            self.h - 2.0 * self.r,
+            std::f32::consts::FRAC_PI_2 * self.r,
+        );
+        let arm = ARM_PX.min(ARM_MAX * sw.min(sh)).max(0.0);
+        // 右上・右下・左下・左上の丸みが始まる所。
+        let corners = [
+            sw,
+            sw + arc + sh,
+            2.0 * sw + 2.0 * arc + sh,
+            2.0 * sw + 3.0 * arc + 2.0 * sh,
+        ];
+        (corners.map(|c| c - arm), arm + arc + arm)
+    }
+
     fn length(&self) -> f32 {
         2.0 * (self.w + self.h - 4.0 * self.r) + std::f32::consts::TAU * self.r
     }
@@ -204,6 +219,17 @@ mod tests {
         assert!(close(p.at(80.0 + corner), 100.0, 10.0));
         assert!(close(p.at(80.0 + corner + 40.0), 100.0, 50.0));
         assert!(close(p.at(total), 10.0, 0.0));
+        // 四隅の線はそれぞれの角を囲み、隣の線とつながらない。
+        let (starts, len) = p.brackets();
+        assert!(close(
+            p.at(starts[0] + len / 2.0),
+            100.0 - 10.0 + 10.0 * std::f32::consts::FRAC_1_SQRT_2,
+            10.0 - 10.0 * std::f32::consts::FRAC_1_SQRT_2
+        ));
+        for k in 0..4 {
+            let next = (starts[(k + 1) % 4] - starts[k]).rem_euclid(total);
+            assert!(len < next, "{k}: {len} >= {next}");
+        }
         // どの点も、角丸の長方形の線の上（外へはみ出さない）。
         for i in 0..200 {
             let a = p.at(total * i as f32 / 200.0);

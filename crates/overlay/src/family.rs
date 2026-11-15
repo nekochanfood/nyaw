@@ -23,8 +23,8 @@ impl Overlay {
             return;
         }
         let at = parent.map(|p| self.panels[p.panel].pose);
-        // はめる・外すときは、見えていれば磁石のように動かす（吸い寄せられてはまる・飛び出す）。外すときは離れたと分かるよう
-        // 手前へ出す。掴んでいる間は手に付いて動くので動かさない。
+        // はめる・外すときは、見えていれば滑らかに動かす。はめる（ダッシュボードから呼び出す）ときは行き過ぎずに戻り、外すときは
+        // 離れたと分かるよう手前へ飛び出す。掴んでいる間は手に付いて動くので動かさない。
         let held = self.grabbed(id);
         let q = &self.panels[id];
         let (was_slot, to_slot) = (
@@ -37,7 +37,7 @@ impl Overlay {
                 Some(q.pose * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY)),
                 Motion::Pop,
             )),
-            (false, true) => Some((None, Motion::Attract)),
+            (false, true) => Some((None, Motion::Move)),
             _ => None,
         };
         if let Some((to, motion)) = to {

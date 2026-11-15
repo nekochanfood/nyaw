@@ -20,6 +20,9 @@ const GHOST_MAX_PX: f32 = 1024.0;
 const GHOST_SINK: f32 = 0.01;
 /// 見本の枠を、画面の地の縁からどれだけ外へ広げるか（m）。はまっている間も、画面の周りに枠が見える。
 const GHOST_PAD: f32 = 0.01;
+/// 掴んでいる画面がはまる所からこれより近ければ見本をはっきり出し、遠ざかるにつれて薄れ、これより遠ければ消す（m）。
+const GHOST_NEAR: f32 = ATTRACT;
+const GHOST_FAR: f32 = 0.7;
 
 /// 見本に出す一行。離すとはまるか（[`DockHint::docks`]）で、上の層は枠の色も変える。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +62,8 @@ pub(crate) struct Ghost {
     alpha: f32,
     /// 今の置き場所の大きさで描いた絵が届いている（[`Overlay::submit`]）。出始めは届くまで待つ（前の絵を一瞬見せない）。
     pub(crate) ready: bool,
+    /// 掴んでいる画面がはまる所に近い具合（1 = [`GHOST_NEAR`] より近い、0 = [`GHOST_FAR`] より遠い）。濃さに掛ける。
+    near: f32,
     /// 最後に置いた所（姿勢・幅・解像度）。離してから消えきるまで同じ所に置く。
     at: Option<(Pose, f32, (u32, u32))>,
 }
@@ -69,6 +74,7 @@ impl Default for Ghost {
             shown: Transition::rest(0.0),
             alpha: 0.0,
             ready: false,
+            near: 0.0,
             at: None,
         }
     }
@@ -285,7 +291,8 @@ impl Overlay {
     }
 
     /// はまる所の見本（[`Pointer::Dock`]）を、その手で掴んでいる画面のはまる所の少し奥に、地より少し大きく置く（上に一行の帯を
-    /// 足す）。置き場所が分かるよう、出入りのフェードのほかは動かさない。出始めは、その大きさで描いた絵が届いてからフェードインする。
+    /// 足す）。置き場所が分かるよう動かさず、濃さだけを変える: 画面がはまる所に近いほど濃く、離れると薄れて消える。
+    /// 出始めは、その大きさで描いた絵が届いてからフェードインする。
     pub(crate) fn place_ghosts(&mut self, vr: &mut dyn VrBackend, now: Instant) {
         let scale = self.scale();
         for &id in &self.present {
@@ -313,6 +320,9 @@ impl Overlay {
                 let up = Vec3::Y * (DOCK_HINT_PX as f32 / density / 2.0);
                 let at = slot.transform_point(up - Vec3::Z * GHOST_SINK);
                 h.ghost.at = Some((Pose::new(at, slot.orientation), rect.x, res));
+                // 画面がはまる所に近いほど濃く、遠ざかると薄れて消える。
+                let d = target.pose.position.distance(slot.position);
+                h.ghost.near = smoothstep(GHOST_FAR, GHOST_NEAR, d);
                 // 窓の大きさは UI 層が解像度に合わせる。
                 self.panels[id].resolution = res;
             }
@@ -324,7 +334,7 @@ impl Overlay {
                 (0.0, Motion::Exit)
             };
             h.ghost.shown.go(to, motion, now, true);
-            let (alpha, _) = h.ghost.shown.at(now);
+            let alpha = h.ghost.shown.at(now).0 * h.ghost.near;
             let Some((pose, width, _)) = h.ghost.at.filter(|_| alpha > 0.0) else {
                 p.surface.show(vr, false, None, p.size.x);
                 continue;

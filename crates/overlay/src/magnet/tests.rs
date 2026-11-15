@@ -161,6 +161,32 @@ fn a_free_screen_is_drawn_in_catches_and_docks_when_let_go() {
     assert_eq!(ov.take_dock_changes(), vec![(1, true)]);
 }
 
+/// ダッシュボードから呼び出してはめる（バーやナビゲーションバーのボタン。[`Overlay::set_parent`]）ときは、跳ね返らずに滑らかに収まる。
+#[test]
+fn docking_from_the_dashboard_eases_in_without_overshoot() {
+    let (mut vr, mut ov) = docked(false);
+    let slot = ov.panel(1).pose.position;
+    ov.set_animated(&mut vr.backend, 1, true);
+    ov.submit(&mut vr.backend, 1, 1, 1, &[255; 4]);
+    ov.set_parent(&mut vr.backend, 1, None);
+    ov.glides.clear();
+    ov.set_pose(1, at(0.6, 0.0, -1.0));
+    ov.set_parent(&mut vr.backend, 1, Some(slot_parent()));
+    // 動きの時間を 20ms ずつ進めると、はまる所までの距離は縮み続け（行き過ぎない・跳ね返らない）、最後ははまる所に着く。
+    let mut last = ov.panel(1).pose.position.distance(slot);
+    for _ in 0..30 {
+        if let Some(g) = ov.glides.get_mut(&1) {
+            g.last -= std::time::Duration::from_millis(20);
+        }
+        ov.settle_family(&[], &[]);
+        ov.glide(&[], Instant::now());
+        let d = ov.panel(1).pose.position.distance(slot);
+        assert!(d <= last + 1e-6, "{d} > {last}");
+        last = d;
+    }
+    assert!(last < 1e-4, "{last}");
+}
+
 #[test]
 fn a_caught_screen_can_be_pulled_off_again_without_docking() {
     let (mut vr, mut ov) = docked(false);
@@ -270,15 +296,21 @@ fn the_ghost_frames_the_slot_without_moving_and_waits_for_its_picture() {
         (rect.y * 1000.0).round() as u32 + DOCK_HINT_PX,
     );
     // 引いている間も、抜けて上下・左右に動かしている間も、見本は動かない（外れたナビゲーションバーの大きさに釣られない）。
-    for to in [
-        Vec3::X * 0.1,
-        Vec3::X * 0.5,
-        Vec3::new(0.5, 0.4, 0.0),
-        Vec3::new(0.4, -0.5, 0.2),
+    // 画面がはまる所から遠ざかると薄れて消え、近づくとまた見える。
+    for (to, near) in [
+        (Vec3::X * 0.1, true),
+        (Vec3::X * 0.5, true),
+        (Vec3::new(0.9, 0.6, 0.0), false),
+        (Vec3::new(0.2, 0.15, 0.0), true),
+        (Vec3::new(0.15, -0.2, 0.1), true),
     ] {
         pull_to(&mut vr, &mut ov, slot.position + to);
         let o = &vr.backend.overlays[ghost];
-        assert!(o.visible && o.alpha > 0.0);
+        if !near {
+            assert!(!o.visible, "{to}: 遠ざかると消える");
+            continue;
+        }
+        assert!(o.visible && o.alpha > 0.0, "{to}");
         assert!((o.width_m - rect.x).abs() < 1e-4, "{}", o.width_m);
         assert!(
             o.pose.position.abs_diff_eq(at, 1e-4),
@@ -290,7 +322,7 @@ fn the_ghost_frames_the_slot_without_moving_and_waits_for_its_picture() {
     }
     assert!(ov.panel(1).parent.is_none());
     // 離すと薄れて消える。
-    release(&mut vr, &mut ov, slot.position + Vec3::new(0.4, -0.5, 0.2));
+    release(&mut vr, &mut ov, slot.position + Vec3::new(0.15, -0.2, 0.1));
     std::thread::sleep(std::time::Duration::from_millis(
         Motion::Exit.duration_ms() + 50,
     ));
