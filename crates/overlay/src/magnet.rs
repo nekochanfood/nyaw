@@ -249,10 +249,13 @@ impl Overlay {
     }
 
     /// はまる所に付けたまま離した画面をはめる（はまっていれば戻す）。どちらも磁石に引かれて収まる（[`Motion::Attract`]）。
-    /// 離すまでの間に、ほかの画面がはまっていれば何もしない。
+    /// 離すまでの間に、ほかの画面がはまった・はめる場所が隠れた（閉じた）なら何もしない。
     pub(crate) fn land(&mut self, vr: &mut dyn VrBackend) {
         for id in std::mem::take(&mut self.landed) {
-            let Some((owner, tilt)) = self.dock_slot else {
+            let Some((owner, tilt)) = self
+                .dock_slot
+                .filter(|&(o, _)| !self.panels[o].closed && !self.panels[o].hidden)
+            else {
                 continue;
             };
             if in_slot(&self.panels[id], owner) {

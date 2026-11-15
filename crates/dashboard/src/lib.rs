@@ -3,8 +3,8 @@
 //! ダッシュボードは少し上を向けたバー（[`Dashboard`]）そのもので、開いた時は何も出さない。バーのボタンで、
 //! クイック設定・ランチャー・再生中（[`Screen`]）・デバッグ・設定の画面（それぞれ自分のナビゲーションバーを持つ別のパネル）を
 //! バーの上にはめる（`ui::dock`。同じボタンをもう一度押すと閉じる）。ランチャーで開いたアプリのウィンドウもそこにはまる。
-//! はめた画面はダッシュボードに固定され（一緒に動き、掴むとダッシュボードごと動く）、ナビゲーションバーから外して
-//! 独立させたり、戻したりできる。閉じる（バーの X・X ボタンの二回押し）と、はめた画面ごと隠すだけで、次は同じ状態で出る。
+//! はめた画面はダッシュボードに固定され（一緒に動き、バーを掴むとダッシュボードごと動く）、掴んで引っこ抜く・ナビゲーションバーから
+//! 外すと独立し、近づけて離す・ナビゲーションバーから戻すとはまる。閉じる（バーの X・X ボタンの二回押し）と、はめた画面ごと隠すだけで、次は同じ状態で出る。
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -129,8 +129,8 @@ pub fn spec(
         };
         let close_sound = PanelCommand::CloseSound(Sound::Wav(CLOSE_SOUND));
         commands(id, entry.into_iter().chain([close_sound]), cx);
-        // バーの上を、画面をはめる場所にする。
-        cx.default_global::<PanelControl>().dock = Some((id, BAR_TILT));
+        // バーの上を、画面をはめる場所にする（掴んで引っこ抜く・近づけてはめることもできる）。
+        ui::offer_dock(id, BAR_TILT, cx);
         Dashboard::new(id, settings, debug, cx)
     })
     .sized(BAR_M, BAR_PX)

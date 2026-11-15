@@ -122,6 +122,35 @@ pub fn undock(panel: PanelId, cx: &mut App) {
     command(panel, PanelCommand::Parent(None), cx);
 }
 
+/// `owner` の上端を、画面をはめる場所にする（`tilt` だけ起こして立てる。[`dock`] で使う）。はめられる画面
+/// （[`PanelSpec::dockable`]）は、ここから掴んで引っこ抜け、近づけて離すとはまる（オーバーレイ層の磁石）。
+pub fn offer_dock(owner: PanelId, tilt: f32, cx: &mut App) {
+    cx.default_global::<PanelControl>().dock = Some((owner, tilt));
+    command(owner, PanelCommand::DockSlot(Some(tilt)), cx);
+}
+
+/// 掴んで引っこ抜いた・はめた画面（[`Kernel::take_dock_changes`]）を、はまっている画面の記録に写し、はめる場所の持ち主
+/// （ボタンの強調）とその画面のナビゲーションバー（外す・戻すボタン）を描き直させる。
+fn sync_docking<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) {
+    let changes = kernel.take_dock_changes();
+    for &(panel, docked) in &changes {
+        let ctl = cx.default_global::<PanelControl>();
+        if docked {
+            ctl.docked = Some(panel);
+        } else if ctl.docked == Some(panel) {
+            ctl.docked = None;
+        }
+        let owner = ctl.dock.map(|(o, _)| o);
+        let bar = ctl.nav_bars.get(&panel).copied();
+        for p in owner.into_iter().chain(bar) {
+            redraw(p, cx);
+        }
+    }
+    if !changes.is_empty() {
+        cx.refresh_windows();
+    }
+}
+
 impl gpui::Global for PanelControl {}
 
 /// `panel` への操作を積む（フレームループが次の [`sync_panel`] でカーネルに反映する）。
@@ -161,10 +190,11 @@ pub fn settings(cx: &App) -> Settings {
 }
 
 /// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す（`true` を返す）。
-/// 全体の設定（[`sync_settings`]）もここで反映するので、呼び出し側はパネルごとにこれだけを呼べばよい。
-/// 入力を配送した後・描画する前に毎フレーム呼ぶ。
+/// 全体の設定（[`sync_settings`]）と、掴んで外した・はめた画面（[`sync_docking`]）もここで反映するので、呼び出し側は
+/// パネルごとにこれだけを呼べばよい。入力を配送した後・描画する前に毎フレーム呼ぶ。
 pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut App) -> bool {
     sync_settings(kernel, cx);
+    sync_docking(kernel, cx);
     let ctl = cx.default_global::<PanelControl>();
     ctl.hands = kernel.hands().to_vec();
     ctl.hmd = kernel.hmd();
@@ -243,3 +273,6 @@ pub fn language(l: i18n::Lang) -> Language {
         i18n::Lang::Ja => Language::Ja,
     }
 }
+
+#[cfg(test)]
+mod tests;
