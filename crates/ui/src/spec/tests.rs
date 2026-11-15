@@ -21,6 +21,7 @@ fn source_nav_bar_has_minimize_beside_close(cx: &mut TestAppContext) {
                 command(id, PanelCommand::Hide(true), cx)
             })),
             open: design::animation::Transition::rest(1.0),
+            held: false,
         }
     });
     cx.run_until_parked();

@@ -123,6 +123,12 @@ sat = "Sat"
 undock = "Detach from the dashboard"
 dock = "Return to the dashboard"
 
+[hand]
+attach = "Hold in hand"
+left = "Left hand"
+right = "Right hand"
+detach = "Let go"
+
 [dashboard]
 update = "Update available"
 title = "Dashboard"

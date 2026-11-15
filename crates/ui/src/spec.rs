@@ -36,6 +36,8 @@ pub struct PanelSpec {
     pub(crate) typing: Option<f32>,
     /// `from` から見た置き場所（[`Self::offset`]）。無ければ `from` の手前に少し離して重ねる。
     offset: Option<Pose>,
+    /// 置き場所と大きさを `from` のナビゲーションバーに合わせる（[`Self::over_nav_bar`]）。
+    over_nav_bar: bool,
     /// `pose` を開いた瞬間の頭（向きは水平方向だけ）からの相対姿勢とする。
     in_view: bool,
     pub(crate) size: Vec2,
@@ -81,14 +83,14 @@ pub struct PanelSpec {
 }
 
 /// ナビゲーションバーの窓（px）。帯（[`design::components::NAV_BAR_HEIGHT`]）の周りに影の余白を取る。
-const NAV_BAR_PX: (u32, u32) = (
+pub(crate) const NAV_BAR_PX: (u32, u32) = (
     480 + 2 * design::components::PANEL_MARGIN as u32,
     design::components::NAV_BAR_HEIGHT as u32 + 2 * design::components::PANEL_MARGIN as u32,
 );
 
 /// ナビゲーションバーの頭から 1m 先での幅（m）。帯の高さがツールチップの箱の 2 倍に見える縮尺にする。
 /// オーバーレイ層が距離に比例して大きくするので、近くても遠くても見た目の大きさは変わらない。
-const NAV_BAR_M: f32 = NAV_BAR_PX.0 as f32 * 2.0 * design::components::TOOLTIP_HEIGHT_M
+pub(crate) const NAV_BAR_M: f32 = NAV_BAR_PX.0 as f32 * 2.0 * design::components::TOOLTIP_HEIGHT_M
     / design::components::NAV_BAR_HEIGHT;
 
 /// ナビゲーションバーの窓（影の余白込み）の、頭から 1m 先での高さ（m）。オーバーレイ層が距離に比例して大きくする。
@@ -107,6 +109,7 @@ impl PanelSpec {
             from: None,
             typing: None,
             offset: None,
+            over_nav_bar: false,
             in_view: false,
             size: Vec2::new(0.8, 0.6),
             resolution: PANEL_PX,
@@ -167,6 +170,22 @@ impl PanelSpec {
     pub fn offset(mut self, offset: Pose) -> Self {
         self.offset = Some(offset);
         self
+    }
+
+    /// [`Self::offset`] を `from` のナビゲーションバーから見た置き場所にし、バーの今の大きさ（頭からの距離で変わる）に合わせて
+    /// 置き場所と大きさを伸ばす（[`Self::sized`] はバーと同じく 1m 先での大きさで書く）。バーの上に出すポップオーバー用。
+    pub(crate) fn over_nav_bar(mut self) -> Self {
+        self.over_nav_bar = true;
+        self
+    }
+
+    /// [`Self::over_nav_bar`] なら、`from` のナビゲーションバーと、その今の大きさの 1m 先での大きさに対する比。
+    fn nav_bar_scale<B: VrBackend>(&self, kernel: &Kernel<B>) -> Option<(PanelId, f32)> {
+        let bar = kernel.nav_bar(self.from.filter(|_| self.over_nav_bar)?)?;
+        Some((
+            bar,
+            kernel.panel(bar).size.x / (NAV_BAR_M * kernel.ui_scale()),
+        ))
     }
 
     /// `from` の子として出す（ダイアログなど）。親に追従し、開いている間の親は暗くなって入力を受けない。
@@ -384,6 +403,10 @@ impl PanelSpec {
                 cx.default_global::<PanelControl>()
                     .nav_bars
                     .insert(owner, id);
+                cx.observe_global::<PanelControl>(|bar: &mut NavBar, cx| {
+                    attach::hold(bar.owner, &mut bar.held, cx)
+                })
+                .detach();
                 NavBar {
                     id,
                     owner,
@@ -393,15 +416,17 @@ impl PanelSpec {
                     minimize,
                     source_minimize,
                     open: design::animation::Transition::rest(0.0),
+                    held: false,
                 }
             })
             .sized(Vec2::new(NAV_BAR_M, NAV_BAR_HEIGHT_M), NAV_BAR_PX)
         })
     }
 
-    /// VR 上の大きさ（m。等倍）と解像度（px）。[`Self::sized`] で決めたもの。
-    pub fn size(&self) -> (Vec2, (u32, u32)) {
-        (self.size, self.resolution)
+    /// 開くときの VR 上の大きさ（m。等倍）と解像度（px）。[`Self::sized`] で決めたもの（[`Self::over_nav_bar`] ならバーに合わせる）。
+    pub fn size<B: VrBackend>(&self, kernel: &Kernel<B>) -> (Vec2, (u32, u32)) {
+        let k = self.nav_bar_scale(kernel).map_or(1., |(_, k)| k);
+        (self.size * k, self.resolution)
     }
 
     /// このパネルがナビゲーションバーなら、その持ち主（開いた直後に [`PanelCommand::NavBar`] で適用する）。
@@ -501,7 +526,11 @@ impl PanelSpec {
             // 親の中心をアンカーに、親の手前へ少しだけ離して重ねる（子の子はさらに手前へ積まれる）。
             Some(from) => {
                 let offset = self.offset.unwrap_or(Pose::new(SPAWN_GAP, Quat::IDENTITY));
-                kernel.panel(from).pose * Pose::new(offset.position * scale, offset.orientation)
+                let (base, k) = match self.nav_bar_scale(kernel) {
+                    Some((bar, k)) => (kernel.panel(bar).pose, k),
+                    None => (kernel.panel(from).pose, 1.),
+                };
+                base * Pose::new(offset.position * scale * k, offset.orientation)
             }
             // 掴む基準があれば、基準が等倍のときと同じ所に来るように置く（ダッシュボードは画面が立つ所）。
             None => {
@@ -544,12 +573,8 @@ pub(crate) fn open_panel(
     cx: &mut App,
 ) -> Option<(PanelId, AnyWindowHandle)> {
     let pose = spec.pose_for(kernel, index);
-    let panel = match kernel.add_panel(
-        &format!("nyaw.panel.{index}"),
-        pose,
-        spec.size,
-        spec.resolution,
-    ) {
+    let (size, resolution) = spec.size(kernel);
+    let panel = match kernel.add_panel(&format!("nyaw.panel.{index}"), pose, size, resolution) {
         Ok(p) => p,
         Err(e) => {
             logger::error!("cannot open panel", error = ?e);
