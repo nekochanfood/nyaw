@@ -59,8 +59,8 @@ impl Flow {
     pub(crate) fn step(&mut self, ids: &[u32], scene: Scene, now: Instant) -> (Place, Vec<u32>) {
         self.stages.retain(|id, _| ids.contains(id));
         for &id in ids {
-            if !self.stages.contains_key(&id) {
-                self.stages.insert(id, Stage::Hud);
+            if let std::collections::hash_map::Entry::Vacant(e) = self.stages.entry(id) {
+                e.insert(Stage::Hud);
                 self.hud_until = Some(now + HUD_TIME);
             }
         }
