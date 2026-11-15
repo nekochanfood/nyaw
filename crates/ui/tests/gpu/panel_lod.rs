@@ -92,6 +92,10 @@ pub fn main() -> ExitCode {
                     );
                 }
                 vr.point_at((632., 432.));
+                // 指している間は距離によらず LOD0（操作する所を粗くしない）。
+                wait("pointing at the panel brings it to LOD0", || {
+                    vr.texture_size_of(0) == Some((800, 600))
+                });
                 std::thread::sleep(Duration::from_millis(100));
                 vr.set("trigger/value", 1.0);
                 std::thread::sleep(Duration::from_millis(100));
@@ -99,6 +103,8 @@ pub fn main() -> ExitCode {
                 wait("GPUI remains clickable after LOD changes", || {
                     clicks.load(Ordering::SeqCst) == index + 1
                 });
+                // パネルの上へ外す。指したままだと次の距離でも LOD0 のまま。
+                vr.point_at((400., -10_000.));
                 println!("panel_lod: LOD{lod} {expected:?}, viewport/input OK");
             }
         }))

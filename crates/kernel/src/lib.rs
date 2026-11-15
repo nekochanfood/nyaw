@@ -870,11 +870,13 @@ impl<B: VrBackend> Kernel<B> {
     }
 
     /// 前の段階 `prev` から、距離で次の段階を決める。境目の前後で行き来しないよう、下げる側は閾値を縮める。
+    /// レーザーが指している（操作しようとしている）パネルとツールチップは、距離によらず LOD0。
     fn lod_for(&self, id: PanelId, prev: Option<u8>) -> u8 {
-        if self
-            .panel(id)
-            .pointer
-            .is_some_and(|(_, part)| part == Pointer::Tooltip)
+        if self.overlay.pointed(id)
+            || self
+                .panel(id)
+                .pointer
+                .is_some_and(|(_, part)| part == Pointer::Tooltip)
         {
             return 0;
         }
@@ -1742,6 +1744,27 @@ mod tests {
         k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 100.0;
         k.tick();
         assert_eq!(k.panel_lod(p), 0);
+    }
+
+    /// 遠くのパネルでも、レーザーで指している間は LOD0（操作したいのに粗くて見づらい）。外せば距離の段階に戻る。
+    #[test]
+    fn pointed_panel_keeps_full_resolution_when_far_from_the_head() {
+        let (mut k, p) = lod_kernel();
+        k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 100.0;
+        k.tick();
+        assert_eq!(k.panel_lod(p), 3);
+        k.subsystems.backend.frame.controllers = vec![vr::RawController {
+            hand: Hand::Right,
+            profile: "khr/simple_controller".into(),
+            aim: Pose::new(vr::Vec3::Z, vr::Quat::IDENTITY),
+            inputs: vec![],
+        }];
+        k.tick();
+        assert!(k.status(p).pointed);
+        assert_eq!(k.panel_lod(p), 0);
+        k.subsystems.backend.frame.controllers.clear();
+        k.tick();
+        assert_eq!(k.panel_lod(p), 3);
     }
 
     #[test]
