@@ -10,6 +10,7 @@
 //! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
 //! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）・[`TestingFont`]（フォントの見本）・[`TestingScrollbar`]（縦・横・両方のスクロールバー）
 //! - スケルタル入力: [`SkeletonTest`] で、手の関節をギズモで描き、親指とほかの指でつまめているかを見る
+//! - 通知: [`NotificationTest`] で、Windows に本物の通知を出し、トースト（HUD → 手首 → ダッシュボード）と通知の一覧を試す
 //! - 音: [`AudioTest`] で、パネルのスピーカーから立体的に鳴る音（同時再生・立体化のオプトアウト・モノラル / ステレオ）を聞く
 //! - 負荷: [`StressTest`] で上限いっぱいまでパネルを出し、閉じる・ちりばめる・並べる
 //!
@@ -46,6 +47,8 @@ mod slide;
 pub use slide::SlideTest;
 mod audio;
 pub use audio::AudioTest;
+mod notifications;
+pub use notifications::NotificationTest;
 mod nyapps;
 pub use nyapps::NyappTest;
 mod skeleton;

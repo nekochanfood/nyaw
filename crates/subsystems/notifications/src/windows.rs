@@ -8,12 +8,13 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use windows::{
+    Data::Xml::Dom::XmlDocument,
     Foundation::Size,
     Storage::Streams::{DataReader, IRandomAccessStreamReference},
     UI::Notifications::{
         KnownNotificationBindings,
         Management::{UserNotificationListener, UserNotificationListenerAccessStatus as Access},
-        NotificationKinds, UserNotification,
+        NotificationKinds, ToastNotification, ToastNotificationManager, UserNotification,
     },
     Win32::{
         Storage::EnhancedStorage::{PKEY_AppUserModel_ID, PKEY_AppUserModel_ToastActivatorCLSID},
@@ -173,6 +174,52 @@ impl Backend for Listener {
             logger::warn!("cannot remove the notification", id = id, error = e);
         }
     }
+
+    fn send(&mut self, toast: &super::Outgoing) {
+        if let Err(e) = show(toast) {
+            logger::warn!("cannot show the test notification", error = e);
+        }
+    }
+}
+
+/// テスト用の通知を出す名前（PowerShell。どの Windows にも登録されている。nyaw は通知を出すための ID を登録していない）。
+// ponytail: デバッグのテスト専用。nyaw から本番の通知を出すなら、インストーラーでショートカットに AppUserModelId を付ける。
+const TEST_SENDER: &str =
+    r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe";
+
+/// テスト用の通知を OS に出す。押すと開くものは、どれもウェブの URL（`protocol`）。
+fn show(toast: &super::Outgoing) -> windows::core::Result<()> {
+    let buttons: String = toast
+        .buttons
+        .iter()
+        .map(|(label, url)| {
+            format!(
+                r#"<action content="{}" activationType="protocol" arguments="{}"/>"#,
+                escape(label),
+                escape(url)
+            )
+        })
+        .collect();
+    let xml = format!(
+        r#"<toast activationType="protocol" launch="{}"><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual><actions>{buttons}</actions></toast>"#,
+        escape(&toast.url),
+        escape(&toast.title),
+        escape(&toast.body),
+    );
+    let doc = XmlDocument::new()?;
+    doc.LoadXml(&HSTRING::from(xml))?;
+    let notification = ToastNotification::CreateToastNotification(&doc)?;
+    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(TEST_SENDER))?
+        .Show(&notification)
+}
+
+/// XML の文字・属性に入れられるようにする。
+fn escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
 }
 
 /// 押したことを、アプリの通知の受け口に渡す（OS が通知を押したときと同じ。アプリが前に出られるようにしてから）。
@@ -453,24 +500,31 @@ mod tests {
     fn reads_a_real_toast() {
         let mut listener = Listener::new().expect("notification access");
         let before = listener.read().unwrap().len();
-        let script = r#"
-[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null
-[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] | Out-Null
-$x = New-Object Windows.Data.Xml.Dom.XmlDocument
-$x.LoadXml('<toast><visual><binding template="ToastGeneric"><text>nyaw</text><text>probe</text></binding></visual><actions><action content="Site" activationType="protocol" arguments="https://example.com/"/></actions></toast>')
-$id = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe'
-[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show((New-Object Windows.UI.Notifications.ToastNotification $x))"#;
-        let ok = std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-Command", script])
-            .status()
-            .unwrap();
-        assert!(ok.success());
+        // テスト用の通知を出す経路（`show`）で出す。文字は XML に入れても崩れないこと（& < >）も見る。
+        show(&super::super::Outgoing {
+            title: "nyaw & <probe>".into(),
+            body: "probe".into(),
+            url: "https://example.com/".into(),
+            buttons: vec![("Site".into(), "https://example.com/a?b=1&c=2".into())],
+        })
+        .unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(500));
         let raws = listener.read().unwrap();
         assert!(raws.len() > before, "{} -> {}", before, raws.len());
         let raw = raws.iter().max_by_key(|r| r.id).unwrap();
-        assert_eq!(raw.texts, ["nyaw", "probe"]);
-        let (_, actions) = super::super::parse(&listener.payload(raw.id).unwrap(), false);
-        assert_eq!(actions.len(), 1, "{actions:?}");
+        assert_eq!(raw.texts, ["nyaw & <probe>", "probe"]);
+        let (launch, actions) = super::super::parse(&listener.payload(raw.id).unwrap(), false);
+        assert_eq!(
+            launch,
+            super::super::Plan::Url("https://example.com/".into())
+        );
+        assert_eq!(
+            actions,
+            [(
+                "Site".to_owned(),
+                super::super::Plan::Url("https://example.com/a?b=1&c=2".into())
+            )]
+        );
         let shell = desktop::app_icon(&raw.app_id).map(|i| (i.width, i.height));
         println!(
             "{raw:?} logo={:?} shell={shell:?}",

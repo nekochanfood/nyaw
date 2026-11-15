@@ -264,6 +264,18 @@ impl Render for Testing {
                     )),
                 )
                 .child(
+                    button!(
+                        "notification-test",
+                        i18n::t(cx, "notification_test.title"),
+                        false
+                    )
+                    .on_click(spawn_view(
+                        self.panel,
+                        "notification_test.title",
+                        |id, _| NotificationTest::new(id),
+                    )),
+                )
+                .child(
                     button!("skeleton-test", i18n::t(cx, "skeleton.title"), false).on_click({
                         let panel = self.panel;
                         move |_, _, cx| {

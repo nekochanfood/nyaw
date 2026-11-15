@@ -60,6 +60,27 @@ pub struct Notification {
     pub actions: Vec<Action>,
 }
 
+/// OS に出す通知（デバッグのテスト用。[`Notifications::send`]）。押すと開くものは、どれもウェブの URL
+/// （確かめてから開く。アプリは開かない）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outgoing {
+    pub title: String,
+    pub body: String,
+    /// 本文を押すと開く URL。
+    pub url: String,
+    /// ボタン（文字と、押すと開く URL）。
+    pub buttons: Vec<(String, String)>,
+}
+
+/// ワーカーへの頼みごと。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Request {
+    /// 通知の本文（`None`）かボタンを押した（[`Notifications::activate`]）。
+    Activate(u32, Option<usize>),
+    /// OS に通知を出す（[`Notifications::send`]）。
+    Send(Outgoing),
+}
+
 /// 押したときにすること（ワーカーの中だけで持つ）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Plan {
@@ -102,6 +123,8 @@ trait Backend {
     fn activate(&mut self, app: &str, args: Option<&str>) -> bool;
     /// 通知センターから消す。
     fn remove(&mut self, id: u32);
+    /// OS に通知を出す。
+    fn send(&mut self, toast: &Outgoing);
 }
 
 /// 通知と、押したときにすること。
@@ -279,7 +302,7 @@ fn decode(bytes: &[u8]) -> Option<Image> {
 /// 通知を見張るワーカー。落とすと止まる。
 pub struct Notifications {
     latest: Arc<Mutex<Arc<[Arc<Notification>]>>>,
-    activations: Sender<(u32, Option<usize>)>,
+    requests: Sender<Request>,
     stop: Arc<AtomicBool>,
 }
 
@@ -288,7 +311,7 @@ impl Notifications {
     pub fn start() -> Self {
         let latest: Arc<Mutex<Arc<[Arc<Notification>]>>> = Arc::new(Mutex::new(Arc::new([])));
         let stop = Arc::new(AtomicBool::new(false));
-        let (activations, rx) = mpsc::channel::<(u32, Option<usize>)>();
+        let (requests, rx) = mpsc::channel::<Request>();
         let (out, stopping) = (latest.clone(), stop.clone());
         let spawned = thread::Builder::new()
             .name("notifications".into())
@@ -302,8 +325,13 @@ impl Notifications {
                 while !stopping.load(Ordering::Acquire) {
                     let mut changed = false;
                     pending.extend(rx.try_iter());
-                    for (id, action) in pending.drain(..) {
-                        changed |= state.activate(id, action, backend.as_mut());
+                    for request in pending.drain(..) {
+                        match request {
+                            Request::Activate(id, action) => {
+                                changed |= state.activate(id, action, backend.as_mut());
+                            }
+                            Request::Send(toast) => backend.send(&toast),
+                        }
                     }
                     if let Some(raws) = backend.read() {
                         changed |= state.update(raws, backend.as_mut());
@@ -323,21 +351,21 @@ impl Notifications {
         }
         Self {
             latest,
-            activations,
+            requests,
             stop,
         }
     }
 
-    /// OS を見ずに、決まった一覧 `list` を届いたものとして返す（E2E・見本用）。押したものは受け口 `clicks` に届く。
-    pub fn fixed(list: Vec<Notification>) -> (Self, mpsc::Receiver<(u32, Option<usize>)>) {
-        let (activations, clicks) = mpsc::channel();
+    /// OS を見ずに、決まった一覧 `list` を届いたものとして返す（E2E・見本用）。頼みごと（押した・出した）は受け口に届く。
+    pub fn fixed(list: Vec<Notification>) -> (Self, mpsc::Receiver<Request>) {
+        let (requests, received) = mpsc::channel();
         let list: Arc<[Arc<Notification>]> = list.into_iter().map(Arc::new).collect();
         let notifications = Self {
             latest: Arc::new(Mutex::new(list)),
-            activations,
+            requests,
             stop: Arc::new(AtomicBool::new(false)),
         };
-        (notifications, clicks)
+        (notifications, received)
     }
 
     /// 起動してから届いた通知（通知センターに残っているもの。届いた順）。
@@ -349,7 +377,13 @@ impl Notifications {
     /// 通知 `id` の本文（`action` が `None`）か `action` 番目のボタンを押したことをアプリへ届ける（待たない）。
     /// 届けた通知は OS の通知センターからも消える。URL を開くもの（[`Notification::url`]）は画面が開く。
     pub fn activate(&self, id: u32, action: Option<usize>) {
-        let _ = self.activations.send((id, action));
+        let _ = self.requests.send(Request::Activate(id, action));
+    }
+
+    /// OS に通知を出す（デバッグのテスト用。待たない）。Windows は PowerShell の名前で出す（nyaw は通知を出すための
+    /// アプリの ID を登録していない）。届いた通知は、ほかのアプリのものと同じく一覧に入る。
+    pub fn send(&self, toast: Outgoing) {
+        let _ = self.requests.send(Request::Send(toast));
     }
 }
 
@@ -409,6 +443,7 @@ mod tests {
         fn remove(&mut self, id: u32) {
             self.removed.push(id);
         }
+        fn send(&mut self, _: &Outgoing) {}
     }
 
     fn raw(id: u32) -> Raw {
