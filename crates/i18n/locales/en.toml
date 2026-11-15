@@ -96,6 +96,12 @@ cancel = "Cancel"
 none = "none"
 back = "Back"
 
+[quit]
+label = "Quit the app"
+title = "Quit the app?"
+body = "All open screens and streams will close."
+confirm = "Quit"
+
 [link]
 title = "Open this link in your browser?"
 open = "Open in browser"
@@ -120,10 +126,6 @@ dock = "Return to the dashboard"
 [dashboard]
 update = "Update available"
 title = "Dashboard"
-quit = "Quit the app"
-quit_title = "Quit the app?"
-quit_body = "All open screens and streams will close."
-quit_confirm = "Quit"
 now_playing = "Now Playing"
 nothing_playing = "Nothing is playing"
 open_app = "Open the app"

@@ -117,16 +117,18 @@ fn openvr_asks_whether_to_launch_with_steamvr(cx: &mut TestAppContext) {
 }
 
 /// The first screen: the logo, the title and one line sit in the middle of the screen. The buttons are in the
-/// bottom corners like on a step: Next at the right, the language dropdown at the left, opening upward.
+/// bottom corners like on a step: Next at the right; at the left, the power button and then the language dropdown,
+/// opening upward.
 #[gpui::test]
 fn welcome_centers_the_logo_over_next_and_the_language_in_the_corners(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
     let panel = kit.bounds("setup-nav");
-    let [hero, title, about, next, language] = [
+    let [hero, title, about, next, quit, language] = [
         "setup-hero",
         "setup-title",
         "setup-description",
         "setup-next",
+        "setup-quit",
         "setup-language",
     ]
     .map(|s| kit.bounds(s));
@@ -138,13 +140,15 @@ fn welcome_centers_the_logo_over_next_and_the_language_in_the_corners(cx: &mut T
     assert!(near((hero.top() + about.bottom()) / 2.0, panel.center().y));
     assert!(hero.size.height >= px(160.0), "{:?}", hero.size);
     assert!(hero.bottom() <= title.top() && title.bottom() <= about.top());
-    // 「次へ」は右下、言語のドロップダウンは左下（同じ高さ）。
+    // 「次へ」は右下、左下に終了のボタンとその右に言語のドロップダウン（同じ高さ）。
     assert!(about.bottom() < next.top() && language.right() < next.left());
     assert!(next.right() > panel.center().x && language.left() < panel.center().x);
+    assert!(quit.right() < language.left());
     assert_eq!(next.bottom(), language.bottom());
+    assert_eq!(quit.bottom(), language.bottom());
     assert!(near(
         panel.right() - next.right(),
-        language.left() - panel.left()
+        quit.left() - panel.left()
     ));
     // ドロップダウンは上へ開く（下は画面の縁）。左端はボタンに揃い、画面からはみ出さない。
     kit.click("setup-language").step();
@@ -156,6 +160,32 @@ fn welcome_centers_the_logo_over_next_and_the_language_in_the_corners(cx: &mut T
     kit.click("setup-title");
     assert!(!kit.read(|v| v.language_open));
     assert_eq!(kit.read(|v| v.step()), Step::Welcome);
+}
+
+/// The power button on the first screen asks in a dialog, the wizard's child (even in lockdown), before it quits the app.
+/// Cancel only closes the dialog.
+#[gpui::test]
+fn setup_asks_before_it_quits_the_app(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
+    kit.kernel.apply(0, PanelCommand::Lockdown(true));
+    kit.click("setup-quit").step().step();
+    let dialog = 1;
+    assert_eq!(kit.kernel.status(dialog).parent, Some(0));
+    let tint = kit.kernel.subsystems.backend.overlays[0].tint;
+    assert!(tint < 1.0, "the wizard behind is dimmed");
+    kit.panel(dialog).click("quit-cancel").step().step();
+    assert!(kit.kernel.panel(dialog).closed);
+    assert!(!kit.panel_control(|c| c.quit));
+    assert!(!kit.kernel.panel(0).closed && kit.kernel.settings().lockdown);
+    kit.panel(0).click("setup-quit").step().step();
+    let dialog = 2;
+    assert_eq!(kit.kernel.status(dialog).parent, Some(0));
+    kit.panel(dialog).click("quit-confirm");
+    assert!(kit.panel_control(|c| c.quit));
+    assert!(
+        !kit.kernel.settings().setup_done,
+        "the wizard comes back next time"
+    );
 }
 
 /// On the appearance step, the dialog that makes a custom color opens as the wizard's child, even in lockdown.

@@ -37,18 +37,6 @@ fn menu_items_open_screens_and_close_the_menu(cx: &mut TestAppContext) {
     );
 }
 
-/// 終了の確かめのダイアログで終了を選ぶとアプリを終え、キャンセルならダイアログだけ閉じる。
-#[gpui::test]
-fn quit_dialog_quits_or_cancels(cx: &mut TestAppContext) {
-    let (_dialog, cx) = cx.add_window_view(|_, _| QuitDialog { panel: 7 });
-    cx.run_until_parked();
-    click(cx, "quit-cancel");
-    assert!(commands(cx, 7).contains(&PanelCommand::Close));
-    assert!(!cx.update(|_, cx| cx.global::<PanelControl>().quit));
-    click(cx, "quit-confirm");
-    assert!(cx.update(|_, cx| cx.global::<PanelControl>().quit));
-}
-
 /// メニューは、中央に寄ったバーの左端に揃えて開く（幅が狭いほど右にずれる）。
 #[test]
 fn menu_follows_the_bar_left_edge() {

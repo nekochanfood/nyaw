@@ -1,4 +1,4 @@
-//! メニューのポップオーバー（[`Menu`]。デバッグ・設定・終了）と、終了を確かめるダイアログ。
+//! メニューのポップオーバー（[`Menu`]。デバッグ・設定・終了。終了は確かめるダイアログ `ui::QuitDialog` を出す）。
 
 use super::*;
 
@@ -65,12 +65,15 @@ impl Render for Menu {
             &theme,
             "menu-quit",
             &icons::POWER,
-            i18n::t(cx, "dashboard.quit"),
+            i18n::t(cx, "quit.label"),
         )
         .text_color(rgba(theme.danger_text))
         .on_click(move |_, window, cx| {
             close(panel, cx);
-            let spec = quit_dialog_spec(panel, window, cx);
+            // 開いた元のメニューはすぐ閉じるので、その子ではなく視界の中央に出す。
+            let spec = ui::quit_dialog(window, cx, |build| {
+                PanelSpec::spawn(panel, build).in_view(QUIT_DIALOG_POSE)
+            });
             cx.default_global::<PanelControl>().spawns.push(spec);
         });
         components::card_panel(&theme)
@@ -91,62 +94,6 @@ impl Render for Menu {
                 .into_iter()
                 .flatten(),
             ))
-    }
-}
-
-/// アプリを終了するかを確かめるダイアログの起動仕様。視界の中央に出す。
-fn quit_dialog_spec(from: PanelId, window: &Window, cx: &App) -> PanelSpec {
-    let width = components::DIALOG_WIDTH;
-    let height = components::dialog_height(
-        window,
-        &i18n::t(cx, "dashboard.quit_title"),
-        &i18n::t(cx, "dashboard.quit_body"),
-    );
-    PanelSpec::spawn(from, |panel, _, _| QuitDialog { panel })
-        .sized(
-            Vec2::new(width as f32 / 1000.0, height as f32 / 1000.0),
-            (width, height),
-        )
-        // 開いた元のメニューはすぐ閉じるので、その手前ではなく視界の中央に出す。
-        .in_view(QUIT_DIALOG_POSE)
-        // ダイアログは答えて閉じるもの。ナビゲーションバーは付けない。
-        .without_nav_bar()
-}
-
-/// アプリを終了するかを確かめるダイアログ。終了を選ぶとアプリを終える。
-struct QuitDialog {
-    panel: PanelId,
-}
-
-impl Render for QuitDialog {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = Theme::current(cx);
-        let panel = self.panel;
-        components::dialog(
-            &theme,
-            "quit-dialog",
-            &icons::POWER,
-            i18n::t(cx, "dashboard.quit_title"),
-            i18n::t(cx, "dashboard.quit_body"),
-            [
-                components::button(
-                    &theme,
-                    "quit-cancel",
-                    i18n::t(cx, "common.cancel"),
-                    Variant::Default,
-                )
-                .on_click(move |_, _, cx| close(panel, cx)),
-                components::button(
-                    &theme,
-                    "quit-confirm",
-                    i18n::t(cx, "dashboard.quit_confirm"),
-                    Variant::Danger,
-                )
-                .on_click(|_, _, cx| cx.default_global::<PanelControl>().quit = true),
-            ],
-        )
-        // 電源のアイコンは塗りだと形が潰れて分かりにくいので、線で描く。
-        .weight(design::Weight::Regular)
     }
 }
 

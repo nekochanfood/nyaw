@@ -151,7 +151,7 @@ pub fn wizard_icon(theme: &Theme, glyph: &'static Icon) -> impl IntoElement {
 }
 
 /// 下の帯（`{id}-footer`）: 右に先へ進む操作 `next`、左にそのほか（戻る・言語の選択など）`other`。無ければ左は空き。
-fn footer(id: &str, other: Option<Button>, next: Button) -> gpui::Stateful<Div> {
+fn footer(id: &str, other: Option<impl IntoElement>, next: Button) -> gpui::Stateful<Div> {
     div()
         .id(SharedString::from(format!("{id}-footer")))
         .w_full()
@@ -169,7 +169,7 @@ pub fn wizard_welcome(
     hero: impl IntoElement,
     title: impl Into<SharedString>,
     description: impl Into<SharedString>,
-    other: Option<Button>,
+    other: Option<impl IntoElement>,
     next: Button,
 ) -> Div {
     div()
