@@ -79,6 +79,8 @@ pub enum Request {
     Activate(u32, Option<usize>),
     /// OS に通知を出す（[`Notifications::send`]）。
     Send(Outgoing),
+    /// 通知センターから消す（[`Notifications::remove`]）。
+    Remove(u32),
 }
 
 /// 押したときにすること（ワーカーの中だけで持つ）。
@@ -237,6 +239,16 @@ impl State {
         done
     }
 
+    /// 通知 `id` を通知センターから消し、一覧からも落とす（押さずに片付けた）。無ければ `false`。
+    fn remove(&mut self, id: u32, backend: &mut dyn Backend) -> bool {
+        let Some(i) = self.live.iter().position(|e| e.note.id == id) else {
+            return false;
+        };
+        backend.remove(id);
+        self.live.remove(i);
+        true
+    }
+
     fn list(&self) -> Arc<[Arc<Notification>]> {
         self.live.iter().map(|e| e.note.clone()).collect()
     }
@@ -331,6 +343,7 @@ impl Notifications {
                                 changed |= state.activate(id, action, backend.as_mut());
                             }
                             Request::Send(toast) => backend.send(&toast),
+                            Request::Remove(id) => changed |= state.remove(id, backend.as_mut()),
                         }
                     }
                     if let Some(raws) = backend.read() {
@@ -384,6 +397,11 @@ impl Notifications {
     /// アプリの ID を登録していない）。届いた通知は、ほかのアプリのものと同じく一覧に入る。
     pub fn send(&self, toast: Outgoing) {
         let _ = self.requests.send(Request::Send(toast));
+    }
+
+    /// 通知 `id` を押さずに片付ける: OS の通知センターから消す（待たない。消えた通知は一覧から落ちる）。
+    pub fn remove(&self, id: u32) {
+        let _ = self.requests.send(Request::Remove(id));
     }
 }
 
@@ -565,5 +583,20 @@ mod tests {
         assert!(state.activate(3, None, &mut fake));
         assert_eq!(fake.activated[1], ("Chat".to_owned(), None));
         assert!(state.list().is_empty());
+    }
+
+    /// 片付けると、アプリへは届けずに通知センターから消し、一覧からも落とす。
+    #[test]
+    fn removing_clears_without_delivering() {
+        let mut fake = Fake::default();
+        let mut state = State::default();
+        step(&mut state, &mut fake);
+        fake.raws = vec![raw(4), raw(5)];
+        step(&mut state, &mut fake);
+        assert!(state.remove(4, &mut fake));
+        assert!(!state.remove(4, &mut fake), "もう無い");
+        assert_eq!(fake.removed, [4]);
+        assert!(fake.activated.is_empty());
+        assert_eq!(state.list().iter().map(|n| n.id).collect::<Vec<_>>(), [5]);
     }
 }

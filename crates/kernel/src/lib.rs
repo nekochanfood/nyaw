@@ -87,6 +87,8 @@ pub enum PanelCommand {
     FadeOnly(bool),
     /// OS に通知を出す（デバッグのテスト用。`Notifications::send`）。
     SendNotification(subsystems::notifications::Outgoing),
+    /// 通知を押さずに片付ける（OS の通知センターから消す。`Notifications::remove`）。
+    RemoveNotification(u32),
     Close,
     /// 隠す・出し直す（`Overlay::set_hidden`。閉じずにビュー・配信・音を残す）。
     Hide(bool),
@@ -1107,6 +1109,11 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::SendNotification(toast) => {
                 if let Some(n) = &self.notifications {
                     n.send(toast);
+                }
+            }
+            PanelCommand::RemoveNotification(id) => {
+                if let Some(n) = &self.notifications {
+                    n.remove(id);
                 }
             }
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),

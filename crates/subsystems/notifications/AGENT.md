@@ -6,7 +6,7 @@ OS の通知（トースト）を読み、押されたら OS と同じ経路で�
 
 ## 主な公開 API
 
-`Notifications::{start, fixed, now, activate, send}`（`fixed` は OS を見ずに決まった一覧を返し、届いた依頼（`Request::Activate` / `Request::Send`）を受け口に送る。E2E・見本用。`Kernel::set_notifications` で差す。`send` は `Outgoing`（見出し・本文・押すと開く URL・ボタン）を PowerShell の名前で Windows に出す。デバッグのテスト画面用）, `Notification`（`id` / `app` / `title` / `body` / `arrived` / `url` / `actions`）, `App`, `Action`, `Image`（= `desktop::Icon`）
+`Notifications::{start, fixed, now, activate, send, remove}`（`remove` は押さずに片付ける: OS の通知センターから消し、一覧からも落とす。通知センターのスワイプ。`fixed` は OS を見ずに決まった一覧を返し、届いた依頼（`Request::Activate` / `Send` / `Remove`）を受け口に送る。E2E・見本用。`Kernel::set_notifications` で差す。`send` は `Outgoing`（見出し・本文・押すと開く URL・ボタン）を PowerShell の名前で Windows に出す。デバッグのテスト画面用）, `Notification`（`id` / `app` / `title` / `body` / `arrived` / `url` / `actions`）, `App`, `Action`, `Image`（= `desktop::Icon`）
 
 ## Windows
 

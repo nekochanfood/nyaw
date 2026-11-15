@@ -284,12 +284,12 @@ impl DominantHand {
 #[serde(rename_all = "snake_case")]
 pub enum NotificationAnchor {
     TopLeft,
-    #[default]
     Top,
     TopRight,
     Left,
     Right,
     BottomLeft,
+    #[default]
     Bottom,
     BottomRight,
 }
@@ -601,7 +601,7 @@ emulator = false
         assert!(parse("dominant_hand = \"both\"").is_err());
         assert_eq!(
             parse("").unwrap().notification_anchor,
-            NotificationAnchor::Top
+            NotificationAnchor::Bottom
         );
         for anchor in NotificationAnchor::ALL {
             let text = format!("notification_anchor = {}", value(anchor));
