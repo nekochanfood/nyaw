@@ -23,6 +23,7 @@
 | `run.rs` | フレームループ（`run` / `pump` / ツールチップ） |
 | `profiler_panel.rs` | プロファイラのパネル |
 | `quit.rs` | アプリの終了を確かめるダイアログ（`QuitDialog`） |
+| `notification.rs` | OS の通知の部品（トーストとクイック設定で同じ見た目）: アイコンの読み込み（`Icons::of`。変換はアプリごとに一度）・`icon`・`title`・カード（`card(theme, prefix, n, image, expanded, pressed)`。`<prefix>-<id>`、ボタンは `<prefix>-action-<id>-<番号>`。本文は 2 行、広げると 6 行とボタン）・押したときの開き方（`open`。URL は `design::link::open` で確かめてから、ほかは `PanelCommand::Notification` でアプリへ） |
 | `keyboard` / `prefs` / `mirror` / `link` / `cue` / `panel_window` | 前からの部品（下の各節） |
 
 ## 手に持つ

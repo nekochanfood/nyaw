@@ -72,7 +72,7 @@ fn settle(kit: &mut VrKit<Wrist>) {
     }
 }
 
-/// One test at a time: the HUD shows for 6s of real time, and parallel tests slow every frame down.
+/// One test at a time: the HUD shows for 10s of real time, and parallel tests slow every frame down.
 static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn serial() -> std::sync::MutexGuard<'static, ()> {
@@ -233,9 +233,8 @@ fn the_hud_lands_inside_a_wide_headset(cx: &mut TestAppContext) {
 }
 
 /// Not looking at the watch, a notification shows at the edge of the view (not clickable). Raising the watch moves
-/// the same panel onto it (out where it was, then in on the watch), opening the dashboard moves it on top of the dashboard,
-/// and its buttons there
-/// reach the app. After closing the dashboard it never comes back, not even to the watch.
+/// the same panel onto it (out where it was, then in on the watch), opening the dashboard moves it on top of the
+/// dashboard, and its buttons there reach the app. After closing the dashboard it never comes back, not even to the watch.
 #[gpui::test]
 fn a_notification_flows_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mut TestAppContext) {
     let _serial = serial();
