@@ -65,6 +65,8 @@ fn main() -> ExitCode {
             mark("connect");
             overlay_reaches_runtime(vr.as_mut());
             mark("overlay");
+            fov_is_reported(vr.as_mut());
+            mark("fov");
             home_runs_on_runtime(vr);
             mark("home");
             let vr = rt
@@ -103,6 +105,23 @@ fn main() -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// The runtime reports both eyes' view (after frames have run), and the HUD's safe area lies inside it, so a HUD
+/// placed there (the notification toast) renders on this (simulated) headset.
+fn fov_is_reported(vr: &mut dyn VrBackend) {
+    let fov = vr.fov().expect("the runtime reports its field of view");
+    let safe = fov.safe();
+    eprintln!("  fov: {fov:?}\n  safe: {safe:?}");
+    assert!(fov.valid(), "{fov:?}");
+    for (s, f) in [
+        (safe.left, fov.left),
+        (safe.right, fov.right),
+        (safe.up, fov.up),
+        (safe.down, fov.down),
+    ] {
+        assert!(s > 0.0 && s < f, "safe {s} inside {f}");
     }
 }
 

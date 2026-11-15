@@ -99,13 +99,16 @@ fn press_x_twice(kit: &mut VrKit<Wrist>) {
     kit.step();
 }
 
+/// Where clicks on notifications are delivered (notification id, button index).
+type Clicks = Receiver<(u32, Option<usize>)>;
+
 /// The wrist worn on the lowered left hand, a headset with `fov`, the HUD at `anchor`, and one notification that
 /// arrives after start. Returns the toast's panel and where clicks are delivered.
 fn arrive(
     cx: &mut TestAppContext,
     fov: Fov,
     anchor: NotificationAnchor,
-) -> (VrKit<'_, Wrist>, PanelId, Receiver<(u32, Option<usize>)>) {
+) -> (VrKit<'_, Wrist>, PanelId, Clicks) {
     let mut kit = VrKit::new(cx, |_, cx| wrist(cx));
     kit.kernel.subsystems.backend.fov = Some(fov);
     kit.kernel.set(Setting::NotificationAnchor(anchor));

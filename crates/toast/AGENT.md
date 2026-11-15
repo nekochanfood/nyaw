@@ -36,3 +36,5 @@ HUD の中身の外側の端（パネルの端から影の余白の内側）を�
 ## テスト
 
 `cargo test -p toast`: 流れ（`flow::tests`）、置き場所への動かし方・戻る向きは隠してから・押したときの届け方（`tests.rs`）、HUD がどの端・どの UI スケールでもセーフエリアの端に収まること（`the_hud_stays_inside_the_safe_area`）。見た目は `cargo test -p ui --test gpu -- --ignored look`（`target/tmp/look-toast-*.bmp`）。
+
+VR の経路を丸ごと通す E2E は `cargo test -p testkit --test notifications`（実時間に頼るので `scenarios` とは別のバイナリで、1 つずつ流す）: 時計を下ろしていると HUD に出て押せない → 時計を顔の前に上げると何フレームもかけて手首の上へ滑らかに動く（跳ばない）→ X の二回押しでダッシュボードの上へ → ホバーでボタンが出て、押すとアプリへ届く → 閉じるともう出ない。HUD は 4 種の視野の HMD（狭い・Quest 風・Index 風・広い）で四隅どれでも、両目に映り、セーフエリアの端に来る。実ランタイム（Monado・SteamVR の null ドライバ）が視野を返し、セーフエリアがその内側に収まることは `cargo test -p testkit --test runtimes -- --ignored`（`fov_is_reported`）。
