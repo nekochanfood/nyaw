@@ -17,7 +17,7 @@ impl Overlay {
     ) -> Result<PanelId, VrError> {
         // 大きさは等倍のつもりで渡される。UI スケールはここで掛ける（[`Self::set_scale`]）。
         let size = size * self.scale();
-        let surface = Surface::new(vr, key, size.x, pose)?;
+        let mut surface = Surface::new(vr, key, size.x, pose)?;
         surface.set_sort(vr, PANEL_SORT);
         self.panels.push(Panel {
             pose,

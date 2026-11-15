@@ -135,7 +135,7 @@ impl Overlay {
                 std::collections::hash_map::Entry::Vacant(e) => {
                     let key = format!("nyaw.os-cursor.{hand:?}");
                     match Surface::new(vr, &key, 0.01, Pose::IDENTITY) {
-                        Ok(s) => {
+                        Ok(mut s) => {
                             s.set_sort(vr, CURSOR_SORT);
                             e.insert((s, None))
                         }
