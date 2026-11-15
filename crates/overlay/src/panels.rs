@@ -11,7 +11,7 @@ const HAND_GAP: f32 = 0.03;
 // ponytail: 目分量。大きすぎる・小さすぎるなら、この値で合わせる。
 const HAND_SIZE: f32 = 0.4;
 /// 手に持たせたパネルを、コントローラの面から手前（天面の側）へ起こす角度。手首を起こしきらなくても表がこちらを向く。
-const HAND_TILT: f32 = std::f32::consts::FRAC_PI_8;
+const HAND_TILT: f32 = std::f32::consts::FRAC_PI_4;
 
 impl Overlay {
     pub fn new() -> Self {

@@ -23,6 +23,11 @@ fn raised_left() -> Pose {
     )
 }
 
+/// The right controller, in front of the panel held in the raised left hand.
+fn in_front() -> Pose {
+    Pose::new(Vec3::new(0.2, -0.3, 0.0), Quat::IDENTITY)
+}
+
 /// Spawns a Testing panel and holds it in the left hand through its navigation bar, with the left controller raised.
 /// Returns the panel's size before it was held.
 fn hold_in_left_hand(kit: &mut VrKit<Testing>) -> Vec2 {
@@ -54,10 +59,10 @@ fn nav_bar_puts_a_panel_in_the_left_hand(cx: &mut TestAppContext) {
     let hand = raised_left().position;
     let p = kit.kernel.panel(OWNER).pose;
     let (face, up) = (p.orientation * Vec3::Z, p.orientation * Vec3::Y);
-    assert!(face.z > 0.9 && up.y > 0.9, "{face} {up}");
-    assert!(up.z > 0.1, "leans toward the user: {up}");
+    assert!(face.z > 0.6 && up.y > 0.6, "{face} {up}");
+    assert!(up.z > 0.6, "leans toward the user: {up}");
     let rise = p.position.y - hand.y;
-    assert!(rise > size.y / 3.0, "above the controller: {rise}");
+    assert!(rise > size.y / 4.0, "above the controller: {rise}");
     assert!((p.position.x - hand.x).abs() < 1e-4);
     // It follows the hand.
     let moved = Pose::new(Vec3::new(0.1, 0.0, 0.1), Quat::IDENTITY) * raised_left();
@@ -99,10 +104,12 @@ fn a_held_panel_is_adjustable_only_while_the_dashboard_shows(cx: &mut TestAppCon
     assert_eq!(offset(&kit), start);
 
     // With it shown again, the other hand moves the panel, and it stays there in the left hand.
+    // The drag above carried the right hand along; bring it back in front of the panel first.
     kit.kernel.apply(0, PanelCommand::Hide(false));
     kit.step().step();
     assert!(!kit.kernel.panel(OWNER).locked);
-    kit.drag_panel(Vec3::new(0.2, 0.1, -0.6));
+    kit.move_hand(in_front())
+        .drag_panel(Vec3::new(0.2, 0.1, -0.6));
     let moved = offset(&kit);
     assert!(!moved.position.abs_diff_eq(start.position, 1e-3));
     kit.hand(Hand::Left)
@@ -124,7 +131,7 @@ fn a_held_panel_is_adjustable_only_while_the_dashboard_shows(cx: &mut TestAppCon
     // undone, and the panel is back in the hand where it was, at its old size.
     // The drags above carried the right hand along; bring it back in front of the panel first.
     let res = kit.kernel.panel(OWNER).resolution;
-    kit.move_hand(Pose::new(Vec3::new(0.2, -0.3, 0.0), Quat::IDENTITY))
+    kit.move_hand(in_front())
         .point_at(Vec2::new(res.0 as f32, res.1 as f32) / 2.0)
         .press(Action::Grab)
         .press(Action::Select);
