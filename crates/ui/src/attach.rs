@@ -6,6 +6,9 @@ use design::{Theme, components, font_size, icons, spacing};
 
 /// ポップオーバーの窓の幅（px。バーと同じ密度）。
 const MENU_WIDTH: f32 = 300.0;
+/// ポップオーバーを持ち主の面（とバー）よりどれだけ手前に浮かせるか（m。1m 先での値で、バーと同じく距離に合わせて伸ばす）。
+/// 持ち主に重なる所に出すので、同じ面だとめり込んで見える。
+const MENU_LIFT: f32 = 0.03;
 
 /// `panel` を持っている手（手に取り付いていなければ `None`）。
 pub(crate) fn in_hand(panel: PanelId, cx: &App) -> Option<Hand> {
@@ -41,7 +44,7 @@ fn attach(owner: PanelId, hand: Hand, cx: &mut App) {
 }
 
 /// 持つ手を選ぶポップオーバーの起動仕様。`owner` のナビゲーションバーの上に、カードの左端を帯の左端（手のボタンの側）に揃えて
-/// 出す。バーと同じ密度で書き、バーと同じく頭からの距離に合わせて大きくする（[`PanelSpec::over_nav_bar`]）。
+/// 少し手前に浮かせて出す。バーと同じ密度で書き、バーと同じく頭からの距離に合わせて大きくする（[`PanelSpec::over_nav_bar`]）。
 pub(crate) fn menu_spec(owner: PanelId, cx: &App) -> PanelSpec {
     let hand = in_hand(owner, cx);
     let rows = if hand.is_some() { 3.0 } else { 2.0 };
@@ -60,7 +63,7 @@ pub(crate) fn menu_spec(owner: PanelId, cx: &App) -> PanelSpec {
             Vec2::new(MENU_WIDTH, height) * m,
             (MENU_WIDTH as u32, height as u32),
         )
-        .offset(Pose::new(at.extend(0.0) * m, Quat::IDENTITY))
+        .offset(Pose::new((at * m).extend(MENU_LIFT), Quat::IDENTITY))
         .over_nav_bar()
         .without_resize()
 }
