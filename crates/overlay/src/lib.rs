@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use animation::{Animation, Motion};
+use animation::{Animation, Motion, Transition};
 use design::PANEL_MARGIN;
 use subsystems::{Frame, Subsystems, desktop::Cursor, rendering::Surface, vr};
 
@@ -102,6 +102,14 @@ pub struct Panel {
     pub nav_bar_of: Option<PanelId>,
     /// ナビゲーションバーの頭から 1m 先での大きさ（`size` は毎 tick これ * 距離になる）。
     nav_bar_size: Vec2,
+    /// ナビゲーションバーの出具合（1 = 出ている、0 = 薄れて消えた。不透明度に掛ける）と、向かっている先。
+    /// 持ち主もバーも指されないまましばらく経つと、縮んだ線が時間をかけて薄れ、消えきったらランタイムのオーバーレイを
+    /// 手放す（パネル・ビュー・最後の画像は残す）。指されると作り直して現れる（[`Overlay::place_nav_bars`]）。
+    /// ほかのパネルは 1 のまま。
+    awake: f32,
+    wake: Transition,
+    /// 持ち主かバーが最後に指されていた時刻（まだ指されていなければ作った時刻）。
+    pointed_at: Instant,
     /// 親から見た相対姿勢。
     offset: Pose,
     /// 今の暗さ（0 = そのまま）と、向かっている先。

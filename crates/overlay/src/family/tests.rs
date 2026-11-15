@@ -85,6 +85,64 @@ fn nav_bar_enters_and_leaves_with_its_owner() {
 }
 
 #[test]
+fn idle_nav_bar_gives_its_overlay_back_and_comes_back_when_pointed() {
+    let (mut vr, mut ov) = setup();
+    let bar = ov
+        .add_panel(
+            &mut vr.backend,
+            "bar",
+            Pose::IDENTITY,
+            Vec2::new(0.2, 0.05),
+            (2, 2),
+        )
+        .unwrap();
+    ov.set_nav_bar(&mut vr.backend, bar, 0);
+    ov.set_animated(&mut vr.backend, 0, false);
+    ov.set_animated(&mut vr.backend, bar, false);
+    ov.submit(&mut vr.backend, 0, 2, 2, &[255u8; 16]);
+    ov.submit(&mut vr.backend, bar, 2, 2, &[7u8; 16]);
+    let idle = |ov: &mut Overlay| ov.panels[bar].pointed_at -= NAV_BAR_LINGER;
+    // 指している間は、いくら経っても消えない。
+    controller(&mut vr, Pose::IDENTITY, &[]);
+    ov.tick(&mut vr);
+    idle(&mut ov);
+    ov.tick(&mut vr);
+    assert!(ov.pointed(bar) && !ov.panel(bar).surface.parked());
+    // 指さないまましばらく経つと消え、ランタイムのオーバーレイを手放す。パネルは残り、見えていない扱い。
+    vr.backend.frame.controllers.clear();
+    ov.tick(&mut vr);
+    assert!(!ov.panel(bar).surface.parked());
+    idle(&mut ov);
+    ov.tick(&mut vr);
+    assert!(ov.panel(bar).surface.parked());
+    assert!(vr.backend.overlays[bar].destroyed);
+    assert!(!ov.panel(bar).closed && ov.present_ids().contains(&bar));
+    assert!(!ov.in_view(bar));
+    // 手放している間に届いた描画は送らずに覚えておく。
+    ov.submit(&mut vr.backend, bar, 2, 2, &[9u8; 16]);
+    ov.tick(&mut vr);
+    assert_eq!(vr.backend.overlays.len(), 2);
+    // 持ち主を指すと、同じキー・描画順で作り直し、覚えておいた描画で現れる。
+    controller(&mut vr, Pose::IDENTITY, &[]);
+    ov.tick(&mut vr);
+    assert!(!ov.panel(bar).surface.parked());
+    assert_eq!(ov.panel(bar).overlay_id(), OverlayId(2));
+    let o = &vr.backend.overlays[2];
+    assert_eq!((o.key.as_str(), o.sort, o.alpha), ("bar", HUD_SORT, 1.0));
+    assert_eq!(o.texture.as_ref().unwrap().rgba, [9u8; 16]);
+    assert_eq!(o.pose, ov.panel(bar).pose);
+    assert!(!o.destroyed);
+    // 動きがあれば、薄れるのに時間をかける（しばらく経った瞬間にはまだ出ている）。
+    ov.set_animated(&mut vr.backend, bar, true);
+    vr.backend.frame.controllers.clear();
+    ov.tick(&mut vr);
+    idle(&mut ov);
+    ov.tick(&mut vr);
+    assert!(!ov.panel(bar).surface.parked());
+    assert!(vr.backend.overlays[2].alpha > 0.99);
+}
+
+#[test]
 fn hidden_docked_panel_keeps_its_nav_bar_size_while_undocking() {
     let (mut vr, mut ov) = with_slot_child();
     let bar = ov

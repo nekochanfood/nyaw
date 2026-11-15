@@ -68,7 +68,7 @@ impl Overlay {
         if p.closed && p.opacity == 0.0 {
             p.surface.release(vr);
         } else {
-            p.surface.present(vr, p.opacity, p.dim, upload);
+            p.surface.present(vr, p.opacity * p.awake, p.dim, upload);
         }
     }
 
@@ -222,7 +222,7 @@ impl Overlay {
                 Self::present(vr, p, false);
             }
         }
-        self.place_nav_bars(vr);
+        self.place_nav_bars(vr, now);
         self.place_pointers(vr);
         for &id in &self.present {
             let p = &mut self.panels[id];
