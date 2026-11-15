@@ -16,6 +16,10 @@ const HOP_MS: u64 = 300;
 /// 画面の入れ替え・積み下ろしの長さ（ms）。
 const PAGE_MS: u64 = 300;
 
+/// 使っていないものが薄れて消える長さ（ms）。気付かないくらいゆっくり。
+// ponytail: 固定の長さ。速すぎる・遅すぎると感じたらここを調整する。
+const FADE_MS: u64 = 1000;
+
 /// 幅の動きと中身の動きのずれ（入りは幅が先、出は中身が先）。
 pub const LAG: Duration = Duration::from_millis(80);
 
@@ -114,6 +118,8 @@ pub enum Motion {
     Toggle,
     /// 画面の積み下ろし・入れ替え。ゆっくり動き出してゆっくり止まる、緩急の強い ease-in-out（quint）。
     Page,
+    /// 使っていないものが時間をかけて薄れて消える（ease-in-out。一番長い）。
+    Fade,
 }
 
 impl Motion {
@@ -124,6 +130,7 @@ impl Motion {
             Motion::SlideIn | Motion::SlideOut | Motion::Grow | Motion::Shrink => SLIDE_MS,
             Motion::Morph => duration_ms::SLOW,
             Motion::Page => PAGE_MS,
+            Motion::Fade => FADE_MS,
             Motion::Hop | Motion::HopIn | Motion::Toggle => HOP_MS,
         }
     }
@@ -139,7 +146,7 @@ impl Motion {
                 Easing::EaseOutCubic
             }
             Motion::Exit | Motion::Shrink => Easing::EaseInCubic,
-            Motion::Move | Motion::Morph | Motion::HopIn => Easing::EaseInOutCubic,
+            Motion::Move | Motion::Morph | Motion::HopIn | Motion::Fade => Easing::EaseInOutCubic,
             // 緩急を強めに（始めも終わりもゆっくり、真ん中が速い）。
             Motion::Page => Easing::EaseInOutQuint,
             Motion::SlideIn => Easing::EaseOutBack,
@@ -180,7 +187,7 @@ impl Animation {
 
 /// `Animation` と違い毎フレーム進めず、始めた時刻と「今」から値を引く。呼び出し側は `Instant::now()` を渡すだけ。
 /// 動いている間（`at` の 2 つ目が `true`）は描き続けること。
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transition {
     from: f32,
     to: f32,
@@ -207,6 +214,11 @@ impl Transition {
             return (self.to, false);
         }
         (self.from + (self.to - self.from) * motion.ease(p), true)
+    }
+
+    /// 向かっている先（動き終わっていれば今の値）。
+    pub fn target(&self) -> f32 {
+        self.to
     }
 
     /// 今の値から `to` へ `motion` で動き直す。行き先が同じなら何もしない。`animated` でなければ即座。
