@@ -88,10 +88,10 @@ fn shot(emu: &Emu, name: &str) {
     std::fs::write(path, bmp).unwrap();
 }
 
-/// 掴んだまま、はめた画面の中心から横へ `x` m の所を狙うまで、少しずつ手を動かす。
-fn pull(emu: &Emu, from: f32, x: f32) {
+/// 掴んだまま、はめた画面の中心から `to` だけ離れた所を狙うまで、`from` から少しずつ手を動かす。
+fn pull(emu: &Emu, from: Vec3, to: Vec3) {
     for i in 1..=15 {
-        let at = DOCKED + Vec3::X * (from + (x - from) * i as f32 / 15.0);
+        let at = DOCKED + from.lerp(to, i as f32 / 15.0);
         let p = emu.run(move |e| e.project(at)).expect("in view");
         emu.point(Some(p));
         std::thread::sleep(Duration::from_millis(15));
@@ -123,18 +123,22 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>) {
     std::thread::sleep(Duration::from_millis(200));
     emu.button(Button::Grab, true);
     std::thread::sleep(Duration::from_millis(300));
-    // 少し引くと、磁石に引かれて少しだけ付いてくる（まだはまっている）。
-    pull(emu, 0.0, 0.12);
+    let x = |m: f32| Vec3::X * m;
+    // 少し引いても、はまる所から動かない（まだはまっている）。
+    pull(emu, Vec3::ZERO, x(0.12));
     shot(emu, "pull");
     assert_eq!(on_app(remote, |cx| ui::docked(cx)), docked, "still docked");
-    // 引っこ抜くと独立する。
-    pull(emu, 0.12, 0.5);
+    // 引っこ抜くと独立する。上下に動かしても見本は動かない。
+    pull(emu, x(0.12), x(0.5));
     shot(emu, "torn");
     assert_eq!(on_app(remote, |cx| ui::docked(cx)), None, "pulled off");
+    let up = x(0.5) + Vec3::Y * 0.25;
+    pull(emu, x(0.5), up);
+    shot(emu, "torn-up");
     // 近づけると引き寄せられ、吸い付く。
-    pull(emu, 0.5, 0.22);
+    pull(emu, up, x(0.22));
     shot(emu, "near");
-    pull(emu, 0.22, 0.03);
+    pull(emu, x(0.22), x(0.03));
     shot(emu, "caught");
     // 離すとはまる。
     emu.button(Button::Grab, false);

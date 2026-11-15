@@ -118,14 +118,11 @@ impl Overlay {
                     .magnet
                     .map(|m| m.slot(&self.panels, &self.present, scale, id));
                 let p = &mut self.panels[id];
-                let half = p.size / 2.0 - Vec2::splat(face_margin(p));
-                let (pose, stretch, flipped) = match (st.magnet.as_mut(), slot) {
-                    (Some(m), Some(slot)) => {
-                        m.follow((p.pose, p.stretch), slot, half, target, self.dt)
-                    }
-                    _ => (approach(p.pose, target, self.dt), 1.0, None),
+                let (pose, flipped) = match (st.magnet.as_mut(), slot) {
+                    (Some(m), Some(slot)) => m.follow(p.pose, slot, target, self.dt),
+                    _ => (approach(p.pose, target, self.dt), None),
                 };
-                (p.pose, p.stretch) = (pose, stretch);
+                p.pose = pose;
                 if let (Some(false), Some(m)) = (flipped, st.magnet)
                     && magnet::unplug(p, m.owner())
                 {
@@ -263,6 +260,8 @@ impl Overlay {
             // はめられる画面そのものを掴んだら、磁石で引っこ抜く・はめる（バーを掴めばダッシュボードごと動く）。
             st.magnet = Magnet::grab(&self.panels, &self.present, self.dock_slot, id)
                 .filter(|_| id == grabbed);
+            // 見本は、この画面に合わせて描き直した絵が届いてから出す（前の絵を一瞬見せない）。
+            st.ghost.ready = false;
             st.hover = None;
             st.select = false;
             return;

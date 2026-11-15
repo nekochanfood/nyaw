@@ -41,7 +41,7 @@ impl Overlay {
             _ => None,
         };
         if let Some((to, motion)) = to {
-            self.glide_to(vr, id, to, motion);
+            self.glide_to(id, to, motion);
         }
         let q = &mut self.panels[id];
         q.parent = parent;
@@ -137,42 +137,28 @@ impl Overlay {
         slot_offset_in(&self.panels, &self.present, self.scale(), id, parent, tilt)
     }
 
-    /// `id` を今の所・伸び（[`Panel::stretch`]）から `to`（`None` なら毎 tick 決まるはまる所）・元の大きさへ `motion` で動かす
-    /// （[`Glide`]）。見えていなければその場で移す。
-    pub(crate) fn glide_to(
-        &mut self,
-        vr: &mut dyn VrBackend,
-        id: PanelId,
-        to: Option<Pose>,
-        motion: Motion,
-    ) {
+    /// `id` を今の所から `to`（`None` なら毎 tick 決まるはまる所）へ `motion` で動かす（[`Glide`]）。見えていなければその場で移す。
+    pub(crate) fn glide_to(&mut self, id: PanelId, to: Option<Pose>, motion: Motion) {
         let q = &mut self.panels[id];
         if q.animated && q.surface.has_texture() && !q.hidden {
             let tween = Animation::new(0.0, 1.0, motion);
-            let (from, stretch, last) = (q.pose, q.stretch, Instant::now());
+            let (from, last) = (q.pose, Instant::now());
             self.glides.insert(
                 id,
                 Glide {
                     from,
-                    stretch,
                     to,
                     tween,
                     last,
                 },
             );
-            return;
-        }
-        if let Some(pose) = to {
+        } else if let Some(pose) = to {
             q.pose = pose;
-        }
-        if q.stretch != 1.0 {
-            q.stretch = 1.0;
-            q.surface.set_width(vr, q.displayed_size().x);
         }
     }
 
     /// 位置のトランジションを進める（[`Glide`]）。掴まれたら、その場でやめる。
-    pub(crate) fn glide(&mut self, vr: &mut dyn VrBackend, dragged: &[PanelId], now: Instant) {
+    pub(crate) fn glide(&mut self, dragged: &[PanelId], now: Instant) {
         let panels = &mut self.panels;
         self.glides.retain(|&id, g| {
             let p = &mut panels[id];
@@ -189,10 +175,6 @@ impl Overlay {
                 g.from.position.lerp(to.position, t),
                 g.from.orientation.slerp(to.orientation, t.clamp(0.0, 1.0)),
             );
-            if g.stretch != 1.0 {
-                p.stretch = g.stretch + (1.0 - g.stretch) * t;
-                p.surface.set_width(vr, p.displayed_size().x);
-            }
             !g.tween.is_done()
         });
     }
@@ -288,10 +270,12 @@ pub(crate) fn slot_offset_in(
     let rotation = Quat::from_rotation_x(tilt);
     let up = rotation * Vec3::Y;
     let (outer, inner) = (&panels[parent], &panels[id]);
+    // ナビゲーションバーは、はまっている間の大きさ（頭からの距離で変わらない）で空ける。外れて動かしている間も
+    // はまる所が動かないように（外れたバーは距離で大きさが変わる）。
     let bar = present
         .iter()
         .find(|&&b| panels[b].nav_bar_of == Some(id))
-        .map_or(0.0, |&b| panels[b].size.y);
+        .map_or(0.0, |&b| panels[b].nav_bar_size.y);
     let top = Vec3::Y * (outer.size.y / 2.0 - face_margin(outer));
     // 隙間も UI スケールに合わせ、組を相似に保つ。
     let lift = SLOT_GAP * scale + bar + inner.size.y / 2.0 - face_margin(inner);

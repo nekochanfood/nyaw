@@ -4,7 +4,8 @@ use crate::test_util::*;
 const GRAB: &[(&str, f32)] = &[("squeeze/value", 1.0)];
 
 /// バー（0 番）の上端に、はめられる画面（1 番。0.4 × 0.3m）がはまっている組。画面は目の高さの正面 1m に立つ。
-fn docked() -> (Subsystems<MockBackend>, Overlay) {
+/// `nav_bar` なら、画面にナビゲーションバー（2 番）を付ける。
+fn docked(nav_bar: bool) -> (Subsystems<MockBackend>, Overlay) {
     let (mut vr, mut ov) = setup();
     // バーは低く（影の余白が画面の中心に重ならない）。
     ov.fit_height(&mut vr.backend, 0, 0.2);
@@ -17,6 +18,18 @@ fn docked() -> (Subsystems<MockBackend>, Overlay) {
             (400, 300),
         )
         .unwrap();
+    if nav_bar {
+        let bar = ov
+            .add_panel(
+                &mut vr.backend,
+                "nav",
+                Pose::IDENTITY,
+                Vec2::new(0.2, 0.03),
+                (200, 30),
+            )
+            .unwrap();
+        ov.set_nav_bar(&mut vr.backend, bar, screen);
+    }
     ov.set_animated(&mut vr.backend, screen, false);
     ov.set_resizable(0, false);
     ov.set_dock_slot(0, Some(0.0));
@@ -59,34 +72,28 @@ fn release(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay, to: Vec3) {
     settle(vr, ov);
 }
 
+/// 画面（1 番）を外して、はまる所から横へ離れた所（頭から 1m）に置く。その場所を返す。
+fn undock_aside(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay) -> Vec3 {
+    ov.set_parent(&mut vr.backend, 1, None);
+    let away = Vec3::new(0.6f32.sin(), 0.0, -0.6f32.cos());
+    ov.set_pose(1, Pose::new(away, Quat::IDENTITY));
+    ov.tick(vr);
+    away
+}
+
 #[test]
-fn a_docked_screen_resists_a_pull_then_pops_out_into_the_hand() {
-    let (mut vr, mut ov) = docked();
+fn a_docked_screen_holds_still_then_pops_out_into_the_hand() {
+    let (mut vr, mut ov) = docked(false);
     let (slot, bar) = (ov.panel(1).pose, ov.panel(0).pose);
     controller(&mut vr, aim_at(slot.position), GRAB);
     ov.tick(&mut vr);
     assert!(ov.grabbed(1));
     assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Pull));
-    // 少し引いても手ほどには付いてこない（磁石に引かれている）。向きはダッシュボードのまま、面に沿って引く向きへずれ、
-    // 反対側の縁をアンカーに伸びる（下端は動かない）。ダッシュボードは動かない。
-    pull_to(&mut vr, &mut ov, slot.position + Vec3::X * 0.1);
+    // 抜けるまでは、はまる所から動かない（位置も向きも大きさも）。ダッシュボードも動かない。
+    pull_to(&mut vr, &mut ov, slot.position + Vec3::new(0.1, 0.05, 0.0));
     let p = ov.panel(1);
-    let moved = p.pose.position - slot.position;
-    assert!(moved.x > 0.01 && moved.x < GIVE + STRETCH * 0.2, "{moved}");
-    assert!(moved.z.abs() < 1e-4, "{moved}");
-    assert!(p.pose.orientation.angle_between(slot.orientation) < 1e-4);
-    let grown = p.displayed_size().x / p.size.x;
-    assert!(grown > 1.01 && grown <= 1.0 + STRETCH, "{grown}");
-    let face = 0.15 - PANEL_MARGIN * 0.3 / 300.0;
-    let bottom = p.pose.position.y - grown * face;
-    assert!((bottom - (slot.position.y - face)).abs() < 1e-4, "{bottom}");
-    // 左の縁は動かない（そこをアンカーに伸びる）。
-    let left = |p: &Panel| p.pose.position.x - p.displayed_size().x / 2.0;
-    assert!(
-        (left(p) - (slot.position.x - 0.2)).abs() < GIVE,
-        "{}",
-        left(p)
-    );
+    assert_eq!(p.pose, slot);
+    assert_eq!(p.displayed_size(), p.size);
     assert!(p.parent.is_some());
     assert_eq!(ov.panel(0).pose, bar);
     assert!(ov.take_dock_changes().is_empty());
@@ -99,7 +106,6 @@ fn a_docked_screen_resists_a_pull_then_pops_out_into_the_hand() {
     // 手ブレ抑えでレーザーは少し遅れて付いてくる。
     let got = ov.panel(1).pose.position;
     assert!(got.abs_diff_eq(to.normalize(), 0.01), "{got}");
-    assert_eq!(ov.panel(1).displayed_size(), ov.panel(1).size, "元の大きさ");
     assert_eq!(ov.panel(0).pose, bar);
     // 離しても外れたまま。
     release(&mut vr, &mut ov, to);
@@ -108,66 +114,29 @@ fn a_docked_screen_resists_a_pull_then_pops_out_into_the_hand() {
 }
 
 #[test]
-fn pulling_stretches_from_the_far_edge_and_keeps_the_dashboards_rotation() {
-    let slot = Pose::new(Vec3::new(0.0, 1.0, -1.0), Quat::from_rotation_x(0.3));
-    let half = Vec2::new(0.5, 0.25);
-    let local = |pose: Pose| slot.inverse().transform_point(pose.position);
-    // ダッシュボードに付いている下端は動かない。
-    let bottom = |pose: Pose, s: f32| local(pose).y - half.y * s;
-    // 真っ直ぐ手前へ引くと、左右の真ん中のまま下端から上へ大きくなる。
-    let (pose, s) = stretched(slot, half, slot.orientation * Vec3::Z * 0.1);
-    assert!(s > 1.0);
-    assert_eq!(pose.orientation, slot.orientation);
-    assert!(local(pose).x.abs() < 1e-6 && local(pose).z.abs() < 1e-6);
-    assert!((bottom(pose, s) + half.y).abs() < 1e-6);
-    // 右へ引くと、面に沿って右へずれ、左の縁から伸びる。向きはそのまま。
-    let (pose, s) = stretched(slot, half, slot.orientation * Vec3::X * 0.1);
-    assert_eq!(pose.orientation, slot.orientation);
-    assert!(local(pose).z.abs() < 1e-6 && (bottom(pose, s) + half.y).abs() < 1e-6);
-    // 左の縁は伸びでは動かず、ずれた分（GIVE の内）だけ動く。
-    let ease = 1.0 - (1.0 - 0.1 / TEAR).powi(2);
-    let left = local(pose).x - half.x * s;
-    assert!((left + half.x - GIVE * ease).abs() < 1e-5, "{left}");
-    // 下へ引いても、下端はダッシュボードにめり込まない。
-    let (pose, s) = stretched(slot, half, slot.orientation * Vec3::NEG_Y * 0.1);
-    assert!(bottom(pose, s) >= -half.y - 1e-6);
-    // 抜ける所より先では、それ以上伸びない。
-    let far = stretched(slot, half, Vec3::X * 1.0).1;
-    assert_eq!(far, 1.0 + STRETCH);
-}
-
-#[test]
-fn letting_go_before_it_pops_out_snaps_it_back() {
-    let (mut vr, mut ov) = docked();
+fn letting_go_before_it_pops_out_leaves_it_docked() {
+    let (mut vr, mut ov) = docked(false);
     let slot = ov.panel(1).pose;
     controller(&mut vr, aim_at(slot.position), GRAB);
     ov.tick(&mut vr);
     let to = slot.position + Vec3::new(0.08, 0.05, 0.0);
     pull_to(&mut vr, &mut ov, to);
-    assert!(ov.panel(1).pose.position.distance(slot.position) > 0.01);
-    assert!(ov.panel(1).displayed_size().x > ov.panel(1).size.x);
     release(&mut vr, &mut ov, to);
     let p = ov.panel(1);
     assert!(p.parent.is_some());
-    assert!(p.pose.position.abs_diff_eq(slot.position, 1e-4));
-    assert!(p.pose.orientation.angle_between(slot.orientation) < 1e-3);
-    assert_eq!(p.displayed_size(), p.size);
-    assert!((vr.backend.overlays[1].width_m - p.size.x).abs() < 1e-6);
+    assert_eq!(p.pose, slot);
     assert!(ov.take_dock_changes().is_empty());
 }
 
 #[test]
 fn a_free_screen_is_drawn_in_catches_and_docks_when_let_go() {
-    let (mut vr, mut ov) = docked();
+    let (mut vr, mut ov) = docked(false);
     let slot = ov.panel(1).pose;
-    ov.set_parent(&mut vr.backend, 1, None);
-    let away = Vec3::new(0.6f32.sin(), 0.0, -0.6f32.cos());
-    ov.set_pose(1, Pose::new(away, Quat::IDENTITY));
-    ov.tick(&mut vr);
+    let away = undock_aside(&mut vr, &mut ov);
     controller(&mut vr, aim_at(away), GRAB);
     ov.tick(&mut vr);
     assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Attach));
-    // 近づけていくと、手の位置よりはまる所へ引き寄せられる。
+    // 近づけていくと、手の位置よりはまる所へ引き寄せられる（まだ離せば独立したまま）。
     let near = slot.position + Vec3::X * 0.2;
     pull_to(&mut vr, &mut ov, near);
     let hand = near.normalize();
@@ -176,10 +145,13 @@ fn a_free_screen_is_drawn_in_catches_and_docks_when_let_go() {
         got.distance(slot.position) < hand.distance(slot.position) - 0.02,
         "{got}"
     );
-    // さらに近づけると吸い付く（離すまでは、まだはまっていない）。
+    assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Attach));
+    // さらに近づけると吸い付いてはまる所に収まり、離せばはまると分かる一行になる（離すまでは、まだはまっていない）。
     let close = slot.position + Vec3::X * 0.05;
     pull_to(&mut vr, &mut ov, close);
-    assert!(ov.panel(1).pose.position.distance(slot.position) < GIVE);
+    assert!(ov.panel(1).pose.position.abs_diff_eq(slot.position, 1e-4));
+    assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Release));
+    assert!(DockHint::Release.docks() && !DockHint::Attach.docks());
     assert!(ov.panel(1).parent.is_none());
     // 離すとはまる。
     release(&mut vr, &mut ov, close);
@@ -191,17 +163,16 @@ fn a_free_screen_is_drawn_in_catches_and_docks_when_let_go() {
 
 #[test]
 fn a_caught_screen_can_be_pulled_off_again_without_docking() {
-    let (mut vr, mut ov) = docked();
+    let (mut vr, mut ov) = docked(false);
     let slot = ov.panel(1).pose;
-    ov.set_parent(&mut vr.backend, 1, None);
-    let away = Vec3::new(0.6f32.sin(), 0.0, -0.6f32.cos());
-    ov.set_pose(1, Pose::new(away, Quat::IDENTITY));
-    ov.tick(&mut vr);
+    let away = undock_aside(&mut vr, &mut ov);
     controller(&mut vr, aim_at(away), GRAB);
     ov.tick(&mut vr);
     pull_to(&mut vr, &mut ov, slot.position + Vec3::X * 0.05);
+    assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Release));
     let far = slot.position - Vec3::X * 0.5;
     pull_to(&mut vr, &mut ov, far);
+    assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Attach));
     release(&mut vr, &mut ov, far);
     assert!(ov.panel(1).parent.is_none());
     assert!(ov.take_dock_changes().is_empty());
@@ -209,7 +180,7 @@ fn a_caught_screen_can_be_pulled_off_again_without_docking() {
 
 #[test]
 fn grabbing_the_bar_still_moves_the_whole_dashboard() {
-    let (mut vr, mut ov) = docked();
+    let (mut vr, mut ov) = docked(false);
     let bar = ov.panel(0).pose.position;
     controller(&mut vr, aim_at(bar), GRAB);
     ov.tick(&mut vr);
@@ -222,7 +193,7 @@ fn grabbing_the_bar_still_moves_the_whole_dashboard() {
 
 #[test]
 fn no_magnet_when_another_screen_is_docked_or_the_panel_cannot_dock() {
-    let (mut vr, mut ov) = docked();
+    let (mut vr, mut ov) = docked(false);
     let away = Vec3::new(0.6f32.sin(), 0.0, -0.6f32.cos());
     let other = ov
         .add_panel(
@@ -248,9 +219,8 @@ fn no_magnet_when_another_screen_is_docked_or_the_panel_cannot_dock() {
     assert_eq!(ov.dock_hint(Hand::Right), None);
 }
 
-#[test]
-fn the_ghost_shows_where_the_screen_docks_at_its_size_with_a_hint_band() {
-    let (mut vr, mut ov) = docked();
+/// 見本のパネル（右手）を足す。
+fn add_ghost(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay) -> PanelId {
     let ghost = ov
         .add_panel(
             &mut vr.backend,
@@ -261,36 +231,66 @@ fn the_ghost_shows_where_the_screen_docks_at_its_size_with_a_hint_band() {
         )
         .unwrap();
     ov.set_pointer(&mut vr.backend, ghost, Hand::Right, Pointer::Dock);
+    ghost
+}
+
+/// 見本の絵（今の解像度）が届いたことにする。
+fn draw_ghost(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay, ghost: PanelId) {
+    let (w, h) = ov.panel(ghost).resolution;
+    ov.submit(&mut vr.backend, ghost, w, h, &vec![0; (w * h * 4) as usize]);
+}
+
+#[test]
+fn the_ghost_frames_the_slot_without_moving_and_waits_for_its_picture() {
+    let (mut vr, mut ov) = docked(true);
+    let ghost = add_ghost(&mut vr, &mut ov);
+    // 起動時の絵（前の大きさ）は届いていても、掴んだ画面に合わせた絵が届くまでは出さない（前の絵を一瞬見せない）。
+    draw_ghost(&mut vr, &mut ov, ghost);
     ov.tick(&mut vr);
     assert!(!vr.backend.overlays[ghost].visible);
     assert!(vr.backend.overlays[ghost].sort < vr.backend.overlays[1].sort);
     let slot = ov.panel(1).pose;
     controller(&mut vr, aim_at(slot.position), GRAB);
     ov.tick(&mut vr);
-    // 引いている間も抜けた後も、地（影の余白の内側）と同じ大きさで、地の部分がはまる所に重なる（伸びない・動かない）。
-    // 帯の分だけ上に伸び、Z ファイティングしないよう少し奥にある。
+    ov.tick(&mut vr);
+    assert!(!vr.backend.overlays[ghost].visible, "絵が届くまで出さない");
+    draw_ghost(&mut vr, &mut ov, ghost);
+    // 届いた次からフェードインする。
+    ov.tick(&mut vr);
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    ov.tick(&mut vr);
+    assert!(vr.backend.overlays[ghost].visible);
+    // 地の縁より少し外まで、帯の分だけ上に伸び、Z ファイティングしないよう少し奥にある。
     let margin = PANEL_MARGIN * 0.3 / 300.0;
-    let face = Vec2::new(0.4, 0.3) - Vec2::splat(2.0 * margin);
+    let rect = Vec2::new(0.4, 0.3) - Vec2::splat(2.0 * (margin - GHOST_PAD));
     let band = DOCK_HINT_PX as f32 / 1000.0;
     let at = slot.position + Vec3::Y * band / 2.0 - Vec3::Z * GHOST_SINK;
-    for to in [0.1, 0.5] {
-        pull_to(&mut vr, &mut ov, slot.position + Vec3::X * to);
+    let res = (
+        (rect.x * 1000.0).round() as u32,
+        (rect.y * 1000.0).round() as u32 + DOCK_HINT_PX,
+    );
+    // 引いている間も、抜けて上下・左右に動かしている間も、見本は動かない（外れたナビゲーションバーの大きさに釣られない）。
+    for to in [
+        Vec3::X * 0.1,
+        Vec3::X * 0.5,
+        Vec3::new(0.5, 0.4, 0.0),
+        Vec3::new(0.4, -0.5, 0.2),
+    ] {
+        pull_to(&mut vr, &mut ov, slot.position + to);
         let o = &vr.backend.overlays[ghost];
         assert!(o.visible && o.alpha > 0.0);
-        assert!((o.width_m - face.x).abs() < 1e-4, "{}", o.width_m);
-        assert!(o.pose.position.abs_diff_eq(at, 1e-4), "{}", o.pose.position);
+        assert!((o.width_m - rect.x).abs() < 1e-4, "{}", o.width_m);
+        assert!(
+            o.pose.position.abs_diff_eq(at, 1e-4),
+            "{to}: {}",
+            o.pose.position
+        );
         assert_eq!(o.pose.orientation, slot.orientation);
+        assert_eq!(ov.panel(ghost).resolution, res);
     }
-    let res = ov.panel(ghost).resolution;
-    assert_eq!(
-        res,
-        (
-            (face.x * 1000.0).round() as u32,
-            (face.y * 1000.0).round() as u32 + DOCK_HINT_PX
-        )
-    );
+    assert!(ov.panel(1).parent.is_none());
     // 離すと薄れて消える。
-    release(&mut vr, &mut ov, slot.position + Vec3::X * 0.5);
+    release(&mut vr, &mut ov, slot.position + Vec3::new(0.4, -0.5, 0.2));
     std::thread::sleep(std::time::Duration::from_millis(
         Motion::Exit.duration_ms() + 50,
     ));

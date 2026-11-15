@@ -60,7 +60,6 @@ impl Overlay {
             follow: None,
             lazy_follow: None,
             dockable: false,
-            stretch: 1.0,
         });
         let id = self.panels.len() - 1;
         self.present.push(id);
@@ -353,7 +352,6 @@ impl Overlay {
             id,
             Glide {
                 from: p.pose,
-                stretch: p.stretch,
                 to: Some(p.pose * Pose::new(Vec3::NEG_Z * SLOT_RETREAT, Quat::IDENTITY)),
                 tween: Animation::new(0.0, 1.0, Motion::Exit),
                 last: Instant::now(),
