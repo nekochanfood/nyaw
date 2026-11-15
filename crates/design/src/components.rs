@@ -900,7 +900,8 @@ const NAV_LINE_HEIGHT: f32 = spacing::MD;
 /// ナビゲーションバー: パネルの下に付き、パネルを操作する帯。中央にパネルのタイトル、右端に閉じるボタン（アイコンだけ。
 /// id は `nav-close`）。`minimize` なら閉じる代わりにしまうボタン（マイナス。id は `nav-minimize`）。
 /// カード 1 枚の帯で、角丸は `FULL`。押したときの処理（閉じる・しまう）は `on_close` で受け取る。
-/// `leading` は左端に並べる（パネルごとの操作。閉じるボタンと左右対称の位置から右へ）。
+/// `leading` は左端に並べる（パネルごとの操作。閉じるボタンと左右対称の位置から右へ）。`trailing` は閉じるボタンの左に
+/// 並べる（並べた順に左から）。
 /// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
 ///
 /// `open`（0〜1）は広がり具合。0（触れていない）はボタンもタイトルも出さない丸い線で、帯の上端に寄せて置く。
@@ -917,7 +918,7 @@ pub fn nav_bar(
     close_tooltip: impl Into<SharedString>,
     on_close: impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static,
     leading: Vec<Button>,
-    beside_close: Option<Button>,
+    trailing: Vec<Button>,
 ) -> Div {
     let (close_id, close_glyph) = if minimize {
         ("nav-minimize", &crate::icons::MINUS)
@@ -938,9 +939,8 @@ pub fn nav_bar(
     // 広がりの中心（帯の上下中央）。動く前は、線の上端が帯の上端に来るところまで上げておく。
     let center_offset = lerp(-(NAV_BAR_HEIGHT - NAV_LINE_HEIGHT) / 2.0, 0.0, moved);
     // タイトルは帯の中央。長くても閉じるボタンにかからないよう、左右にボタンの分を空けて省略する。
-    let side = leading.len().max(1 + usize::from(beside_close.is_some())) as f32
-        * (BUTTON_HEIGHT + spacing::SM)
-        + spacing::SM;
+    let side =
+        leading.len().max(1 + trailing.len()) as f32 * (BUTTON_HEIGHT + spacing::SM) + spacing::SM;
     div().absolute().inset(px(PANEL_MARGIN)).child(
         div()
             .absolute()
@@ -986,7 +986,7 @@ pub fn nav_bar(
                                     .right(px(spacing::SM))
                                     .flex()
                                     .gap(px(spacing::SM))
-                                    .when_some(beside_close, |d, button| d.child(button))
+                                    .children(trailing)
                                     .child(
                                         icon_button(
                                             theme,
