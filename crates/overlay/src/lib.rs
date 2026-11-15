@@ -292,6 +292,8 @@ struct HandState {
     /// 掴んで動かしているパネル・手から見た基準の位置・レーザーに沿った距離・基準から見たパネルの姿勢・大きさを変えてよいか。
     /// 基準（頭へ向けて手で動かすもの）はふつうパネルそのもの（`Pose::IDENTITY`）。[`grab_target`] が決める。
     dragging: Option<(PanelId, Vec3, f32, Pose, bool)>,
+    /// 掴んだときの大きさと掴む基準（掴みを取り消したら戻す。[`Overlay::set_locked`]）。
+    before: (Vec2, Option<Pose>),
     /// ドラッグの見た目の幅（m）。ドラッグ中だけ。
     drag: Option<f32>,
     /// 掴み中にトリガーで拡大縮小しているとき、前の tick の手の位置。

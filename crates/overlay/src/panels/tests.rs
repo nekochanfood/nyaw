@@ -111,7 +111,7 @@ fn locking_mid_grab_undoes_the_grab_of_an_attached_panel() {
     controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
     settle(&mut vr, &mut ov);
     assert_at(&ov, &vr, Vec3::new(1.0, 0.0, -1.0));
-    ov.set_locked(0, true);
+    ov.set_locked(&mut vr.backend, 0, true);
     assert!(!ov.grabbed(0));
     ov.tick(&mut vr);
     assert_at(&ov, &vr, Vec3::new(0.0, 0.0, -1.0));
@@ -122,10 +122,69 @@ fn locking_mid_grab_undoes_the_grab_of_an_attached_panel() {
     assert_at(&ov, &vr, Vec3::new(0.0, 0.5, -1.0));
 }
 
+/// 手に持ったパネルは、レーザーの出る所の前へ寝かせて伸び（上から見るとコントローラの先に面がある）、手を起こすと立って
+/// 表がこちらを向く。地の下端の左右中央は、どちらでもレーザーの出る所の前 `HAND_GAP` にある。
+#[test]
+fn panel_in_hand_lies_ahead_of_the_laser_and_stands_up_when_raised() {
+    let (mut vr, mut ov) = setup();
+    ov.attach_to_hand(0, Hand::Right);
+    assert!(matches!(
+        ov.panel(0).attached,
+        Some((Device::Controller(Hand::Right), _))
+    ));
+    let face = ov.panel(0).size.y / 2.0 - face_margin(ov.panel(0));
+    let hand = Vec3::new(0.2, -0.3, -0.4);
+    let eq = |a: Vec3, b: Vec3| assert!(a.abs_diff_eq(b, 1e-5), "{a} != {b}");
+    // 水平に前へ向けた手: 面は前に寝て、表が上を向く。
+    controller(&mut vr, Pose::new(hand, Quat::IDENTITY), &[]);
+    ov.tick(&mut vr);
+    let p = ov.panel(0).pose;
+    eq(p.orientation * Vec3::Z, Vec3::Y);
+    eq(p.orientation * Vec3::Y, Vec3::NEG_Z);
+    eq(
+        p.position - p.orientation * Vec3::Y * face,
+        hand + Vec3::NEG_Z * HAND_GAP,
+    );
+    // 手を起こす（レーザーが真上）と、面は立って表が手前（+Z）を向き、正立する。
+    let raised = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+    controller(&mut vr, Pose::new(hand, raised), &[]);
+    ov.tick(&mut vr);
+    let p = ov.panel(0).pose;
+    eq(p.orientation * Vec3::Z, Vec3::Z);
+    eq(p.orientation * Vec3::Y, Vec3::Y);
+    eq(p.orientation * Vec3::X, Vec3::X);
+    eq(p.position - Vec3::Y * face, hand + Vec3::Y * HAND_GAP);
+}
+
+/// 掴んで大きさを変えている最中にロックすると、大きさも掴む前に戻る（手に持ったパネルの調整の取り消し）。
+#[test]
+fn locking_mid_grab_undoes_the_resize() {
+    const RESIZE: &str = subsystems::vr::RESIZE_INPUT;
+    let (mut vr, mut ov) = setup();
+    ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
+    let before = ov.panel(0).size;
+    controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
+    ov.tick(&mut vr);
+    controller(
+        &mut vr,
+        Pose::IDENTITY,
+        &[("squeeze/value", 1.0), (RESIZE, 1.0)],
+    );
+    settle(&mut vr, &mut ov);
+    assert!(ov.panel(0).size.x > before.x * 1.5);
+    ov.set_locked(&mut vr.backend, 0, true);
+    assert_eq!(ov.panel(0).size, before);
+    let width = vr.backend.overlays[0].width_m;
+    assert!((width - before.x).abs() < 1e-5, "{width}");
+    ov.tick(&mut vr);
+    assert_eq!(ov.panel(0).size, before);
+    assert_at(&ov, &vr, Vec3::new(0.0, 0.0, -1.0));
+}
+
 #[test]
 fn locked_panel_ignores_grab_but_still_takes_pointer() {
     let (mut vr, mut ov) = setup();
-    ov.set_locked(0, true);
+    ov.set_locked(&mut vr.backend, 0, true);
     controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
     assert_eq!(
         kinds(&ov.tick(&mut vr)),
@@ -167,8 +226,8 @@ fn lazy_following_panel_ignores_grab_but_still_takes_pointer() {
 #[test]
 fn unlocked_panel_can_be_grabbed_again() {
     let (mut vr, mut ov) = setup();
-    ov.set_locked(0, true);
-    ov.set_locked(0, false);
+    ov.set_locked(&mut vr.backend, 0, true);
+    ov.set_locked(&mut vr.backend, 0, false);
     controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
     ov.tick(&mut vr);
     controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
@@ -180,7 +239,7 @@ fn unlocked_panel_can_be_grabbed_again() {
 fn locked_attached_panel_still_follows_device() {
     let (mut vr, mut ov) = setup();
     ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
-    ov.set_locked(0, true);
+    ov.set_locked(&mut vr.backend, 0, true);
     vr.backend.frame.hmd = at(0.0, 0.5, 0.0);
     ov.tick(&mut vr);
     assert_at(&ov, &vr, Vec3::new(0.0, 0.5, -1.0));

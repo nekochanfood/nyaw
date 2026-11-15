@@ -45,6 +45,8 @@ pub struct TickTiming {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PanelCommand {
     Attach(Device, Pose),
+    /// その手のコントローラに、レーザーの出る所から前へ寝かせて取り付ける（手を起こすと立って見える。`Overlay::attach_to_hand`）。
+    AttachToHand(Hand),
     Detach,
     Lock(bool),
     /// 頭の向き（左右だけ）と歩きにゆるく追従する（[`overlay::LazyFollow`]。`None` で外す）。
@@ -1039,7 +1041,11 @@ impl<B: VrBackend> Kernel<B> {
         match cmd {
             PanelCommand::Attach(device, offset) => self.overlay.attach(panel, device, offset),
             PanelCommand::Detach => self.overlay.detach(panel),
-            PanelCommand::Lock(locked) => self.overlay.set_locked(panel, locked),
+            PanelCommand::AttachToHand(hand) => self.overlay.attach_to_hand(panel, hand),
+            PanelCommand::Lock(locked) => {
+                self.overlay
+                    .set_locked(&mut self.subsystems.backend, panel, locked)
+            }
             PanelCommand::LazyFollow(follow) => self.overlay.set_lazy_follow(panel, follow),
             PanelCommand::Animated(animated) => {
                 self.overlay

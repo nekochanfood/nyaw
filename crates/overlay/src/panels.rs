@@ -2,6 +2,11 @@
 
 use super::*;
 
+/// 手に取り付けたパネル（[`Overlay::attach_to_hand`]）の地の下端と、レーザーの出る所との隙間（m）。下に付くナビゲーション
+/// バー（腕の長さの先で 2cm ほど）が、コントローラに重ならずに収まる。
+// ponytail: 目分量。バーがコントローラに重なる・離れすぎて見えるなら、この値で合わせる。
+const HAND_GAP: f32 = 0.03;
+
 impl Overlay {
     pub fn new() -> Self {
         Self::default()
@@ -102,6 +107,19 @@ impl Overlay {
     // ponytail: 任せられない（OpenXR）ときは tick の姿勢を送るので 1 フレーム分遅れる。
     pub fn attach(&mut self, id: PanelId, device: Device, offset: Pose) {
         self.panels[id].attached = Some((device, offset));
+        // はめる場所から外したときの滑らかな移動が残っていれば止め、すぐ取り付け先に付ける。
+        self.glides.remove(&id);
+    }
+
+    /// パネルを `hand` のコントローラに取り付ける。レーザーの出る所を根元に、そこから前へ寝かせて伸ばし（上から見ると
+    /// コントローラの先に面がある）、手を起こすと立って表がこちらを向く。地の下端の左右中央が、その前 [`HAND_GAP`] に来る。
+    pub fn attach_to_hand(&mut self, id: PanelId, hand: Hand) {
+        let p = &self.panels[id];
+        let reach = p.size.y / 2.0 - face_margin(p) + HAND_GAP;
+        // 表（+Z）をコントローラの天面（+Y）へ、上（+Y）を前（-Z）へ向ける。
+        let lay = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
+        let offset = Pose::new(Vec3::NEG_Z * reach, lay);
+        self.attach(id, Device::Controller(hand), offset);
     }
 
     /// 取り付けを外す。パネルはその場（最後の姿勢）に残る。
@@ -147,8 +165,8 @@ impl Overlay {
     }
 
     /// 掴んで動かせないようにする（`false` で戻す）。レーザーでの操作はそのまま使える。
-    /// 掴んでいる最中にロックすると掴みを取り消す（取り付け中なら掴む前のオフセットへ戻る）。
-    pub fn set_locked(&mut self, id: PanelId, locked: bool) {
+    /// 掴んでいる最中にロックすると掴みを取り消す（取り付け中なら掴む前のオフセットへ戻る。大きさも掴む前に戻る）。
+    pub fn set_locked(&mut self, vr: &mut dyn VrBackend, id: PanelId, locked: bool) {
         self.panels[id].locked = locked;
         if !locked {
             return;
@@ -157,6 +175,9 @@ impl Overlay {
             if h.dragging.is_some_and(|d| d.0 == id) {
                 h.dragging = None;
                 h.scaling = None;
+                let p = &mut self.panels[id];
+                (p.size, p.grab_anchor) = h.before;
+                p.surface.set_width(vr, p.displayed_size().x);
             }
         }
     }
