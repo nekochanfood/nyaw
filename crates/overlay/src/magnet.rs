@@ -5,12 +5,12 @@ use super::*;
 
 /// はまっている画面を、はまる所から手をこれだけ離すと抜ける（m）。
 const TEAR: f32 = 0.18;
-/// 抜けるまでに画面が手に付いてくる距離の上限（m）。磁石に引かれ、少ししか動かない。
-const GIVE: f32 = 0.05;
-/// 抜けるまでに、引く向きへ傾く角度の上限（ラジアン。約 7°）。剥がれかけて見える。
-const PEEL: f32 = 0.12;
+/// 抜けるまでに、画面が面に沿って引く向きへずれる距離の上限（m）。磁石に引かれ、少ししか動かない。
+const GIVE: f32 = 0.04;
+/// 抜ける直前の伸び（大きさの倍率から 1 を引いたもの）。引く向きと反対側の縁をアンカーに伸びる。
+const STRETCH: f32 = 0.1;
 /// 外れた画面がはまる所に引かれ始める距離と、吸い付く距離（m）。吸い付く距離は抜ける距離より短い（境目で行き来しない）。
-// ponytail: 距離はどれも目分量。抜けにくい・吸い付きすぎると感じたらここで合わせる。
+// ponytail: 距離・伸びはどれも目分量。抜けにくい・吸い付きすぎる・伸びすぎると感じたらここで合わせる。
 const ATTRACT: f32 = 0.35;
 const CATCH: f32 = 0.1;
 /// 吸い付く直前に、手の位置からはまる所へ寄せる割合。
@@ -20,15 +20,8 @@ const PULL: f32 = 0.5;
 pub const DOCK_HINT_PX: u32 = 72;
 /// 見本の長い辺のピクセル数の上限（大きな配信でも窓を大きくしすぎない）。
 const GHOST_MAX_PX: f32 = 1024.0;
-/// 見本の濃さ: 抜こうとしている間（引くほど濃く）・外れている間（近づくほど濃く）・吸い付いている間。
-const GHOST_PULL: (f32, f32) = (0.55, 0.9);
-const GHOST_FREE: (f32, f32) = (0.3, 0.85);
-const GHOST_CAUGHT: f32 = 0.9;
-/// 外れている間の見本の息づき（磁石の場）の周期（秒）と、薄れる深さ。
-const BREATH: (f32, f32) = (1.2, 0.25);
-/// 吸い付いた・抜けた瞬間に見本を光らせて少し大きくする量と、それが引くまでの時間（秒）。
-const FLASH_GROW: f32 = 0.04;
-const FLASH: f32 = 0.35;
+/// 見本を、はまる所からどれだけ奥に置くか（m）。同じ面に置くと、はまった画面と Z ファイティングする。
+const GHOST_SINK: f32 = 0.01;
 
 /// 見本に出す一行。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,35 +38,28 @@ pub(crate) struct Magnet {
     /// はめる場所の持ち主と、その上端に立てる角度。
     owner: PanelId,
     tilt: f32,
-    /// はまる所に付いている（はまっていた画面を掴んだ・近づけて吸い付いた）。抜けるまで手にはほとんど付いてこない。
+    /// はまる所に付いている（はまっていた画面を掴んだ・近づけて吸い付いた）。抜けるまで、向きははめる場所のままで伸びるだけ。
     pub(crate) stuck: bool,
-    /// 抜けた・吸い付いたときの動き（始めた姿勢・動き・経過秒）。終わるまで、置きたい所へこの動きで向かう。
-    jump: Option<(Pose, Motion, f32)>,
-    /// 抜ける・吸い付くまでの具合（0〜1。見本の濃さに使う）。
-    strain: f32,
+    /// 抜けた・吸い付いたときの動き（始めた姿勢と伸び・動き・経過秒）。終わるまで、置きたい所へこの動きで向かう。
+    jump: Option<(Pose, f32, Motion, f32)>,
 }
 
-/// 手ごとの見本の出具合。
+/// 手ごとの見本の出具合。置き場所が分かるよう、出入りのフェードのほかは動かさない。
 #[derive(Debug)]
 pub(crate) struct Ghost {
-    /// 出具合（掴んでいる間は 1 へ、離すと 0 へ）。
+    /// 出具合（掴んでいる間は 1 へ、離すと 0 へ）と、最後に送った不透明度。
     shown: Transition,
-    /// 掴み始めた時刻（息づきの始まり）と、最後に吸い付いた・抜けた時刻（光らせる）。
-    pub(crate) since: Instant,
-    pub(crate) flashed: Option<Instant>,
-    /// 最後に置いた所（姿勢・幅・解像度）と濃さ。離してから消えきるまで同じ所に同じ濃さで置く。
+    alpha: f32,
+    /// 最後に置いた所（姿勢・幅・解像度）。離してから消えきるまで同じ所に置く。
     at: Option<(Pose, f32, (u32, u32))>,
-    level: f32,
 }
 
 impl Default for Ghost {
     fn default() -> Self {
         Self {
             shown: Transition::rest(0.0),
-            since: Instant::now(),
-            flashed: None,
+            alpha: 0.0,
             at: None,
-            level: 0.0,
         }
     }
 }
@@ -107,6 +93,22 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+/// はまる所 `slot`（地の半分の大きさ `half`）に付いたまま `pull` だけ引いたときの姿勢と伸び。向きははまる所のまま、
+/// 面に沿って引く向きへ少しずれ、引く向きと反対側の縁をアンカーに伸びる（真っ直ぐ手前へ引けば、中心のまま大きくなる）。
+pub(crate) fn stretched(slot: Pose, half: Vec2, pull: Vec3) -> (Pose, f32) {
+    let u = (pull.length() / TEAR).min(1.0);
+    let ease = 1.0 - (1.0 - u).powi(2);
+    let local = slot.orientation.inverse() * pull;
+    let dir = local.truncate().normalize_or_zero();
+    // 中心から引く向きの逆へ進んで地の縁に当たるまでの距離（アンカーまで）。
+    let m = (dir.x.abs() / half.x.max(1e-6)).max(dir.y.abs() / half.y.max(1e-6));
+    let edge = if m > 0.0 { 1.0 / m } else { 0.0 };
+    let stretch = 1.0 + STRETCH * ease;
+    let shift = dir * (GIVE * ease + edge * (stretch - 1.0));
+    let at = slot.position + slot.orientation * shift.extend(0.0);
+    (Pose::new(at, slot.orientation), stretch)
+}
+
 impl Magnet {
     /// `id` を掴んだときの磁石。はめる場所が出ていて、`id` がはめられる画面で、そこにはまっているか、外れていて場所が空いていれば。
     pub(crate) fn grab(
@@ -126,20 +128,20 @@ impl Magnet {
             tilt,
             stuck: docked,
             jump: None,
-            strain: 0.0,
         })
     }
 
-    /// 手が置きたい所 `target` と、はまる所 `slot` から、この tick の画面の姿勢（今は `cur`）。
-    /// はまる所に付いている間は抜けるまで少ししか付いてこず（引く向きへ少し傾く）、抜けると手へ飛び出す（[`Motion::Pop`]）。
+    /// 手が置きたい所 `target` と、はまる所 `slot`（地の半分の大きさ `half`）から、この tick の画面の姿勢と伸び（今は `cur`）。
+    /// はまる所に付いている間は抜けるまで伸びるだけで（[`stretched`]）、抜けると元の大きさに戻りながら手へ飛び出す（[`Motion::Pop`]）。
     /// 外れている間は近づくほどはまる所へ引き寄せ、吸い付くとはまる所へ飛び込む（[`Motion::Attract`]）。抜けた・吸い付いたら `Some(stuck)`。
     pub(crate) fn follow(
         &mut self,
-        cur: Pose,
+        cur: (Pose, f32),
         slot: Pose,
+        half: Vec2,
         target: Pose,
         dt: f32,
-    ) -> (Pose, Option<bool>) {
+    ) -> (Pose, f32, Option<bool>) {
         let pull = target.position - slot.position;
         let x = pull.length();
         let flipped = match self.stuck {
@@ -150,45 +152,39 @@ impl Magnet {
         if let Some(stuck) = flipped {
             self.stuck = stuck;
             let motion = if stuck { Motion::Attract } else { Motion::Pop };
-            self.jump = Some((cur, motion, 0.0));
+            self.jump = Some((cur.0, cur.1, motion, 0.0));
         }
-        let want = if self.stuck {
-            let u = (x / TEAR).min(1.0);
-            self.strain = u;
-            let dir = pull.normalize_or_zero();
-            let normal = slot.orientation * Vec3::Z;
-            let peel = normal
-                .cross(dir)
-                .try_normalize()
-                .map_or(Quat::IDENTITY, |axis| Quat::from_axis_angle(axis, PEEL * u));
-            let give = GIVE * (1.0 - (1.0 - u).powi(2));
-            Pose::new(slot.position + dir * give, peel * slot.orientation)
+        let (want, stretch) = if self.stuck {
+            stretched(slot, half, pull)
         } else {
-            self.strain = smoothstep(ATTRACT, CATCH, x);
-            let k = PULL * self.strain;
-            Pose::new(
+            let k = PULL * smoothstep(ATTRACT, CATCH, x);
+            let pose = Pose::new(
                 target.position.lerp(slot.position, k),
                 target.orientation.slerp(slot.orientation, k),
-            )
+            );
+            (pose, 1.0)
         };
-        let pose = match &mut self.jump {
-            Some((from, motion, t)) => {
+        match &mut self.jump {
+            Some((from, grown, motion, t)) => {
                 *t += dt;
                 let p = *t * 1000.0 / motion.duration_ms() as f32;
                 if p >= 1.0 {
                     self.jump = None;
-                    want
-                } else {
-                    let e = motion.ease(p);
-                    Pose::new(
-                        from.position.lerp(want.position, e),
-                        from.orientation.slerp(want.orientation, e.clamp(0.0, 1.0)),
-                    )
+                    return (want, stretch, flipped);
                 }
+                let e = motion.ease(p);
+                let pose = Pose::new(
+                    from.position.lerp(want.position, e),
+                    from.orientation.slerp(want.orientation, e.clamp(0.0, 1.0)),
+                );
+                (pose, *grown + (stretch - *grown) * e, flipped)
             }
-            None => approach(cur, want, dt),
-        };
-        (pose, flipped)
+            None => {
+                let k = 1.0 - (1.0 - SMOOTH).powf(dt / TICK_MIN);
+                let s = cur.1 + (stretch - cur.1) * k;
+                (approach(cur.0, want, dt), s, flipped)
+            }
+        }
     }
 
     /// はまる所（この tick の `id` の姿勢として）。
@@ -248,7 +244,7 @@ impl Overlay {
             .collect()
     }
 
-    /// はまる所に付けたまま離した画面をはめる（はまっていれば戻す）。どちらも磁石に引かれて収まる（[`Motion::Attract`]）。
+    /// はまる所に付けたまま離した画面をはめる（はまっていれば戻す）。どちらも磁石に引かれて元の大きさで収まる（[`Motion::Attract`]）。
     /// 離すまでの間に、ほかの画面がはまった・はめる場所が隠れた（閉じた）なら何もしない。
     pub(crate) fn land(&mut self, vr: &mut dyn VrBackend) {
         for id in std::mem::take(&mut self.landed) {
@@ -259,7 +255,7 @@ impl Overlay {
                 continue;
             };
             if in_slot(&self.panels[id], owner) {
-                self.glide_to(id, None, Motion::Attract);
+                self.glide_to(vr, id, None, Motion::Attract);
             } else if self.panels[id].parent.is_none()
                 && slot_free(&self.panels, &self.present, owner, id)
             {
@@ -276,8 +272,8 @@ impl Overlay {
         }
     }
 
-    /// はまる所の見本（[`Pointer::Dock`]）を、その手で掴んでいる画面のはまる所に、地と同じ大きさで置く（上に一行の帯を足す）。
-    /// 抜こうとしているほど・近づけているほど濃く、外れている間はゆっくり息づき、吸い付いた・抜けた瞬間に光る。離すと薄れて消える。
+    /// はまる所の見本（[`Pointer::Dock`]）を、その手で掴んでいる画面のはまる所の少し奥に、地と同じ大きさで置く（上に一行の帯を足す）。
+    /// 置き場所が分かるよう、出入りのフェードのほかは動かさない。
     pub(crate) fn place_ghosts(&mut self, vr: &mut dyn VrBackend, now: Instant) {
         let scale = self.scale();
         for &id in &self.present {
@@ -291,7 +287,6 @@ impl Overlay {
                 let (t, o) = (&self.panels[*t], &self.panels[m.owner]);
                 !t.closed && !t.hidden && !o.closed && !o.hidden
             });
-            let mut level = 0.0;
             if let Some(((t, ..), m)) = held {
                 let target = &self.panels[t];
                 let slot = m.slot(&self.panels, &self.present, scale, t);
@@ -302,23 +297,10 @@ impl Overlay {
                     (face.x * density).round().max(1.0) as u32,
                     (face.y * density).round().max(1.0) as u32 + DOCK_HINT_PX,
                 );
-                // 帯の分だけ上に伸ばす（地の部分がはまる所に重なる）。
-                let up = slot.orientation * Vec3::Y * (DOCK_HINT_PX as f32 / density / 2.0);
-                h.ghost.at = Some((Pose::new(slot.position + up, slot.orientation), face.x, res));
-                let lerp = |(a, b): (f32, f32), t: f32| a + (b - a) * t;
-                let breath = 1.0
-                    - BREATH.1
-                        * (1.0
-                            - (now.saturating_duration_since(h.ghost.since).as_secs_f32()
-                                * std::f32::consts::TAU
-                                / BREATH.0)
-                                .cos())
-                        / 2.0;
-                level = match (m.stuck, in_slot(target, m.owner)) {
-                    (true, true) => lerp(GHOST_PULL, m.strain),
-                    (true, false) => GHOST_CAUGHT,
-                    (false, _) => lerp(GHOST_FREE, m.strain) * breath,
-                };
+                // 帯の分だけ上に伸ばし（地の部分がはまる所に重なる）、少し奥へ下げる。
+                let up = Vec3::Y * (DOCK_HINT_PX as f32 / density / 2.0);
+                let at = slot.transform_point(up - Vec3::Z * GHOST_SINK);
+                h.ghost.at = Some((Pose::new(at, slot.orientation), face.x, res));
             }
             let (to, motion) = if held.is_some() {
                 (1.0, Motion::Enter)
@@ -326,16 +308,7 @@ impl Overlay {
                 (0.0, Motion::Exit)
             };
             h.ghost.shown.go(to, motion, now, true);
-            let (shown, _) = h.ghost.shown.at(now);
-            if held.is_some() {
-                h.ghost.level = level;
-            }
-            let flash = h.ghost.flashed.map_or(0.0, |t| {
-                (1.0 - now.saturating_duration_since(t).as_secs_f32() / FLASH)
-                    .max(0.0)
-                    .powi(2)
-            });
-            let alpha = (shown * (h.ghost.level + (1.0 - h.ghost.level) * flash)).min(1.0);
+            let (alpha, _) = h.ghost.shown.at(now);
             let p = &mut self.panels[id];
             let Some((pose, width, res)) = h.ghost.at.filter(|_| alpha > 0.0) else {
                 p.surface.show(vr, false, None, p.size.x);
@@ -344,9 +317,11 @@ impl Overlay {
             // 窓の大きさは UI 層が解像度に合わせる。
             p.resolution = res;
             p.pose = pose;
-            let width = width * (1.0 + FLASH_GROW * flash);
             p.surface.show(vr, true, Some(width), width);
-            p.surface.present(vr, alpha, 0.0, false);
+            if alpha != h.ghost.alpha {
+                h.ghost.alpha = alpha;
+                p.surface.present(vr, alpha, 0.0, false);
+            }
         }
     }
 }

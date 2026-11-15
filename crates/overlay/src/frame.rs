@@ -133,6 +133,11 @@ impl Overlay {
         for &id in &self.present {
             let p = &mut self.panels[id];
             p.follow = None;
+            // 引っこ抜こうとして伸びた画面は、引いている間と吸い戻る間のほかは元の大きさ（掴みが取り消されたときなど）。
+            if p.stretch != 1.0 && !pulled.contains(&id) && !self.glides.contains_key(&id) {
+                p.stretch = 1.0;
+                p.surface.set_width(vr, p.displayed_size().x);
+            }
             // 子は取り付けではなく親に追従する（下の settle_family）。
             if dragged.contains(&id) || p.parent.is_some() || p.nav_bar_of.is_some() {
                 continue;
@@ -159,8 +164,9 @@ impl Overlay {
         }
         for c in &frame.controllers {
             self.update_hand(c, &frame, &mut events);
-            if let Some((id, ..)) = self.hands[&c.hand].dragging
-                && self.hands[&c.hand].scaling.is_some()
+            let h = &self.hands[&c.hand];
+            if let Some((id, ..)) = h.dragging
+                && (h.scaling.is_some() || h.magnet.is_some())
             {
                 let p = &self.panels[id];
                 p.surface.set_width(vr, p.displayed_size().x);
@@ -184,7 +190,7 @@ impl Overlay {
             self.close(vr, id);
         }
         self.settle_family(&dragged, &pulled);
-        self.glide(&dragged, now);
+        self.glide(vr, &dragged, now);
         // 離した画面の吸い付く動きは次の tick から（この tick はまだ掴んでいた扱いで、動きを止めてしまう）。
         self.land(vr);
         let mut parents = std::collections::HashSet::new();

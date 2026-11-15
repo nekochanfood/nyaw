@@ -1,5 +1,5 @@
-//! はまる所の見本（[`Pointer::Dock`]）。はめられる画面を掴んでいる間、はまる所に画面の地と同じ大きさで出る半透明の面。
-//! ここは絵だけを描き、置き場所・大きさ・濃さ・息づき・光り方はオーバーレイ層が決める（描き直すのは一行が変わったときだけ）。
+//! はまる所の見本（[`Pointer::Dock`]）。はめられる画面を掴んでいる間、はまる所に画面の地と同じ大きさで出る破線の枠。
+//! ここは絵だけを描き、置き場所・大きさ・出入りのフェードはオーバーレイ層が決める（描き直すのは一行が変わったときだけ）。
 
 use design::{Theme, font_size, icons, radius, spacing};
 use gpui::{Context, Window, div, prelude::*, px, rgba};
@@ -9,12 +9,8 @@ use ui::PanelSpec;
 
 /// 窓の最初の大きさ（px）。掴んだ画面に合わせてオーバーレイ層が変える。
 const GHOST_PX: (u32, u32) = (400, 300 + DOCK_HINT_PX);
-/// はまる所の縁（破線）の太さと、面の濃さ（強調色に掛ける不透明度。0〜255）。
+/// はまる所の縁（破線）の太さ。
 const BORDER_PX: f32 = 4.0;
-const FILL_ALPHA: u32 = 0x33;
-/// 真ん中の磁石の大きさ（px）と濃さ。
-const MAGNET_PX: f32 = 96.0;
-const MAGNET_OPACITY: f32 = 0.6;
 
 /// `hand` の見本の起動仕様。
 pub fn spec(hand: Hand) -> PanelSpec {
@@ -26,7 +22,7 @@ pub fn spec(hand: Hand) -> PanelSpec {
     .pointer(hand, Pointer::Dock)
 }
 
-/// 上の帯に一行（引っ張って外す・近づけてくっつける）、その下にはまる所（強調色の半透明の面と破線の縁、真ん中に磁石）。
+/// 上の帯に一行（引っ張って外す・近づけてくっつける）、その下にはまる所（強調色の破線の枠だけ。中は透ける）。
 pub struct DockGhost {
     panel: PanelId,
     /// 最後に出した一行（離して薄れていく間も同じものを出す）。
@@ -47,7 +43,6 @@ impl Render for DockGhost {
             DockHint::Pull => (&icons::ARROW_SQUARE_OUT, "dock.pull"),
             DockHint::Attach => (&icons::MAGNET, "dock.attach"),
         };
-        let accent = theme.accent_solid;
         let band = div()
             .h(px(DOCK_HINT_PX as f32))
             .flex()
@@ -77,20 +72,10 @@ impl Render for DockGhost {
             );
         let slot = div()
             .flex_1()
-            .flex()
-            .items_center()
-            .justify_center()
             .rounded(px(radius::XL))
-            .bg(rgba(accent & !0xff | FILL_ALPHA))
             .border(px(BORDER_PX))
             .border_dashed()
-            .border_color(rgba(accent))
-            .child(
-                design::icon(&icons::MAGNET)
-                    .size(px(MAGNET_PX))
-                    .color(rgba(accent))
-                    .opacity(MAGNET_OPACITY),
-            );
+            .border_color(rgba(theme.accent_solid));
         div()
             .size_full()
             .flex()

@@ -127,6 +127,8 @@ pub struct Panel {
     pub lazy_follow: Option<LazyFollow>,
     /// はめる場所（[`Overlay::set_dock_slot`]）から掴んで引っこ抜ける・近づけてはめられる（[`Overlay::set_dockable`]）。
     pub dockable: bool,
+    /// 引っこ抜こうとして伸びている倍率（1 = そのまま）。見た目の大きさ（[`Panel::displayed_size`]）にだけ掛かる。
+    stretch: f32,
 }
 
 impl Panel {
@@ -232,9 +234,9 @@ struct Ray {
 }
 
 impl Panel {
-    /// アニメーションを反映した表示サイズ。中心の位置・姿勢は変えない。
+    /// アニメーション（と引っこ抜こうとしている間の伸び）を反映した表示サイズ。中心の位置・姿勢は変えない。
     pub fn displayed_size(&self) -> Vec2 {
-        self.size * (0.75 + 0.25 * self.opacity)
+        self.size * (0.75 + 0.25 * self.opacity) * self.stretch
     }
 
     /// パネル上のピクセル（左上原点）をトラッキング空間の点に変換する。ヒット判定の逆。
@@ -328,6 +330,8 @@ struct HandState {
 #[derive(Debug)]
 struct Glide {
     from: Pose,
+    /// 始めたときの伸び（[`Panel::stretch`]）。同じ動きで 1 へ戻す。
+    stretch: f32,
     to: Option<Pose>,
     tween: Animation,
     last: Instant,
