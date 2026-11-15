@@ -10,7 +10,7 @@ use ui::PanelSpec;
 /// 窓の最初の大きさ（px）。掴んだ画面に合わせてオーバーレイ層が変える。
 const GHOST_PX: (u32, u32) = (400, 300 + DOCK_HINT_PX);
 /// はまる所の縁（破線）の太さ。
-const BORDER_PX: f32 = 4.0;
+const BORDER_PX: f32 = 6.0;
 
 /// `hand` の見本の起動仕様。
 pub fn spec(hand: Hand) -> PanelSpec {
@@ -43,11 +43,13 @@ impl Render for DockGhost {
             DockHint::Pull => (&icons::ARROW_SQUARE_OUT, "dock.pull"),
             DockHint::Attach => (&icons::MAGNET, "dock.attach"),
         };
+        // 一行は帯の上端に置く（引いて上へ伸びた画面に隠れないように。帯の下側は空ける）。
         let band = div()
             .h(px(DOCK_HINT_PX as f32))
             .flex()
-            .items_center()
+            .items_start()
             .justify_center()
+            .pt(px(spacing::SM))
             .child(
                 // ツールチップと同じ地で、どこに重なっても読める。
                 div()

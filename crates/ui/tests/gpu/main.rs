@@ -6,6 +6,7 @@
 
 mod a11y;
 mod common;
+mod dock_magnet;
 mod emoji;
 mod font_weights;
 mod gpu_capture;
@@ -34,6 +35,7 @@ type Case = (&'static str, fn() -> ExitCode);
 
 const CASES: &[Case] = &[
     ("a11y", || report(a11y::main)),
+    ("dock_magnet", || report(dock_magnet::main)),
     ("emoji", || report(emoji::main)),
     ("font_weights", || report(font_weights::main)),
     ("gpu_capture", || report(gpu_capture::main)),

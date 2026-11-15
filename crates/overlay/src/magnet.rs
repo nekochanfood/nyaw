@@ -8,7 +8,7 @@ const TEAR: f32 = 0.18;
 /// 抜けるまでに、画面が面に沿って引く向きへずれる距離の上限（m）。磁石に引かれ、少ししか動かない。
 const GIVE: f32 = 0.04;
 /// 抜ける直前の伸び（大きさの倍率から 1 を引いたもの）。引く向きと反対側の縁をアンカーに伸びる。
-const STRETCH: f32 = 0.1;
+const STRETCH: f32 = 0.08;
 /// 外れた画面がはまる所に引かれ始める距離と、吸い付く距離（m）。吸い付く距離は抜ける距離より短い（境目で行き来しない）。
 // ponytail: 距離・伸びはどれも目分量。抜けにくい・吸い付きすぎる・伸びすぎると感じたらここで合わせる。
 const ATTRACT: f32 = 0.35;
@@ -16,8 +16,9 @@ const CATCH: f32 = 0.1;
 /// 吸い付く直前に、手の位置からはまる所へ寄せる割合。
 const PULL: f32 = 0.5;
 
-/// 見本の上に足す帯（「引っ張って外す」などの一行）の高さ（px）。帯の中身は上の層の画面が描く。
-pub const DOCK_HINT_PX: u32 = 72;
+/// 見本の上に足す帯の高さ（px）。上の層の画面が、帯の上端に一行（「引っ張って外す」など）を描く。伸びた画面
+/// （上へ最大で地の高さの [`STRETCH`] 倍 + [`GIVE`]）に隠れないよう、一行の高さより高く取る。
+pub const DOCK_HINT_PX: u32 = 160;
 /// 見本の長い辺のピクセル数の上限（大きな配信でも窓を大きくしすぎない）。
 const GHOST_MAX_PX: f32 = 1024.0;
 /// 見本を、はまる所からどれだけ奥に置くか（m）。同じ面に置くと、はまった画面と Z ファイティングする。
@@ -94,7 +95,8 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
 }
 
 /// はまる所 `slot`（地の半分の大きさ `half`）に付いたまま `pull` だけ引いたときの姿勢と伸び。向きははまる所のまま、
-/// 面に沿って引く向きへ少しずれ、引く向きと反対側の縁をアンカーに伸びる（真っ直ぐ手前へ引けば、中心のまま大きくなる）。
+/// 面に沿って引く向きへ少しずれ、引く向きと反対側の縁をアンカーに伸びる。ただし、ダッシュボードに付いている下端はそれより
+/// 下げない（めり込まない。横や手前へ引けば下端から上へ伸びる）。
 pub(crate) fn stretched(slot: Pose, half: Vec2, pull: Vec3) -> (Pose, f32) {
     let u = (pull.length() / TEAR).min(1.0);
     let ease = 1.0 - (1.0 - u).powi(2);
@@ -104,7 +106,8 @@ pub(crate) fn stretched(slot: Pose, half: Vec2, pull: Vec3) -> (Pose, f32) {
     let m = (dir.x.abs() / half.x.max(1e-6)).max(dir.y.abs() / half.y.max(1e-6));
     let edge = if m > 0.0 { 1.0 / m } else { 0.0 };
     let stretch = 1.0 + STRETCH * ease;
-    let shift = dir * (GIVE * ease + edge * (stretch - 1.0));
+    let mut shift = dir * (GIVE * ease + edge * (stretch - 1.0));
+    shift.y = shift.y.max(half.y * (stretch - 1.0));
     let at = slot.position + slot.orientation * shift.extend(0.0);
     (Pose::new(at, slot.orientation), stretch)
 }

@@ -68,15 +68,18 @@ fn a_docked_screen_resists_a_pull_then_pops_out_into_the_hand() {
     assert!(ov.grabbed(1));
     assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Pull));
     // 少し引いても手ほどには付いてこない（磁石に引かれている）。向きはダッシュボードのまま、面に沿って引く向きへずれ、
-    // 反対側の縁をアンカーに伸びる。ダッシュボードは動かない。
+    // 反対側の縁をアンカーに伸びる（下端は動かない）。ダッシュボードは動かない。
     pull_to(&mut vr, &mut ov, slot.position + Vec3::X * 0.1);
     let p = ov.panel(1);
     let moved = p.pose.position - slot.position;
     assert!(moved.x > 0.01 && moved.x < GIVE + STRETCH * 0.2, "{moved}");
-    assert!(moved.y.abs() < 1e-4 && moved.z.abs() < 1e-4, "{moved}");
+    assert!(moved.z.abs() < 1e-4, "{moved}");
     assert!(p.pose.orientation.angle_between(slot.orientation) < 1e-4);
     let grown = p.displayed_size().x / p.size.x;
     assert!(grown > 1.01 && grown <= 1.0 + STRETCH, "{grown}");
+    let face = 0.15 - PANEL_MARGIN * 0.3 / 300.0;
+    let bottom = p.pose.position.y - grown * face;
+    assert!((bottom - (slot.position.y - face)).abs() < 1e-4, "{bottom}");
     // 左の縁は動かない（そこをアンカーに伸びる）。
     let left = |p: &Panel| p.pose.position.x - p.displayed_size().x / 2.0;
     assert!(
@@ -108,19 +111,26 @@ fn a_docked_screen_resists_a_pull_then_pops_out_into_the_hand() {
 fn pulling_stretches_from_the_far_edge_and_keeps_the_dashboards_rotation() {
     let slot = Pose::new(Vec3::new(0.0, 1.0, -1.0), Quat::from_rotation_x(0.3));
     let half = Vec2::new(0.5, 0.25);
-    // 真っ直ぐ手前へ引くと、中心のまま大きくなる（近づいて見える）。
+    let local = |pose: Pose| slot.inverse().transform_point(pose.position);
+    // ダッシュボードに付いている下端は動かない。
+    let bottom = |pose: Pose, s: f32| local(pose).y - half.y * s;
+    // 真っ直ぐ手前へ引くと、左右の真ん中のまま下端から上へ大きくなる。
     let (pose, s) = stretched(slot, half, slot.orientation * Vec3::Z * 0.1);
-    assert_eq!(pose, slot);
     assert!(s > 1.0);
+    assert_eq!(pose.orientation, slot.orientation);
+    assert!(local(pose).x.abs() < 1e-6 && local(pose).z.abs() < 1e-6);
+    assert!((bottom(pose, s) + half.y).abs() < 1e-6);
     // 右へ引くと、面に沿って右へずれ、左の縁から伸びる。向きはそのまま。
     let (pose, s) = stretched(slot, half, slot.orientation * Vec3::X * 0.1);
-    let local = slot.inverse().transform_point(pose.position);
     assert_eq!(pose.orientation, slot.orientation);
-    assert!(local.y.abs() < 1e-6 && local.z.abs() < 1e-6, "{local}");
+    assert!(local(pose).z.abs() < 1e-6 && (bottom(pose, s) + half.y).abs() < 1e-6);
     // 左の縁は伸びでは動かず、ずれた分（GIVE の内）だけ動く。
     let ease = 1.0 - (1.0 - 0.1 / TEAR).powi(2);
-    let left = local.x - half.x * s;
+    let left = local(pose).x - half.x * s;
     assert!((left + half.x - GIVE * ease).abs() < 1e-5, "{left}");
+    // 下へ引いても、下端はダッシュボードにめり込まない。
+    let (pose, s) = stretched(slot, half, slot.orientation * Vec3::NEG_Y * 0.1);
+    assert!(bottom(pose, s) >= -half.y - 1e-6);
     // 抜ける所より先では、それ以上伸びない。
     let far = stretched(slot, half, Vec3::X * 1.0).1;
     assert_eq!(far, 1.0 + STRETCH);
