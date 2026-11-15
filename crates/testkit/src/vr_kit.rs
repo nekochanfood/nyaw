@@ -124,6 +124,16 @@ impl<'a, V: Render> VrKit<'a, V> {
             .debug_bounds(selector)
     }
 
+    /// The open panel that shows `selector` (for screens the app opened itself, whose ids the test doesn't know).
+    pub fn find(&mut self, selector: &'static str) -> Option<PanelId> {
+        (0..self.panels.windows.len()).find(|&id| {
+            !self.kernel.panel(id).closed
+                && VisualTestContext::from_window(self.panels.windows[id], &self.cx.cx)
+                    .debug_bounds(selector)
+                    .is_some()
+        })
+    }
+
     /// Aims the laser at a pixel on the panel and steps one frame.
     pub fn point_at(&mut self, px: Vec2) -> &mut Self {
         let target = self.kernel.panel(self.panel).pixel_to_world(px);

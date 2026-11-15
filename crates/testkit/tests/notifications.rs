@@ -234,7 +234,9 @@ fn the_hud_lands_inside_a_wide_headset(cx: &mut TestAppContext) {
 
 /// Not looking at the watch, a notification shows at the edge of the view (not clickable). Raising the watch moves
 /// the same panel onto it (out where it was, then in on the watch), opening the dashboard moves it on top of the
-/// dashboard, and its buttons there reach the app. After closing the dashboard it never comes back, not even to the watch.
+/// dashboard. Clicking it there opens the notification center with that notification expanded, the toast steps aside,
+/// and the notification's buttons in the center reach the app. After closing the dashboard it never comes back, not even
+/// to the watch.
 #[gpui::test]
 fn a_notification_flows_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mut TestAppContext) {
     let _serial = serial();
@@ -293,19 +295,24 @@ fn a_notification_flows_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mut Test
         "stands on top of the dashboard: {above}"
     );
 
-    // Hover the card: its buttons show; pressing one reaches the app (with the button's index). The kit's watch is a
-    // full-size panel, so lower it out of the right hand's way first (the dashboard keeps the toast).
+    // The card shows no buttons (details live in the notification center). Clicking it opens the center with this
+    // notification expanded, and the toast steps aside (the center lists it). The kit's watch is a full-size panel, so
+    // lower it out of the right hand's way first (the dashboard keeps the toast).
     kit.hand(Hand::Left).move_hand(lowered()).hand(Hand::Right);
     assert_eq!(kit.kernel.status(toast).parent, Some(dashboard));
     kit.panel(toast).hover("toast-7");
     kit.step();
-    kit.click("toast-action-7-0");
-    assert_eq!(clicks.try_recv(), Ok(Request::Activate(7, Some(0))));
+    assert!(kit.try_bounds("toast-action-7-0").is_none(), "no buttons");
+    kit.click("toast-7");
     settle(&mut kit);
-    assert!(
-        kit.kernel.status(toast).hidden,
-        "a pressed notification leaves"
-    );
+    let center = kit
+        .find("notification-action-7-0")
+        .expect("the center opens with the notification expanded");
+    assert_eq!(kit.kernel.status(center).parent, Some(dashboard));
+    assert!(kit.kernel.status(toast).hidden, "the toast steps aside");
+    // Its button reaches the app (with the button's index).
+    kit.panel(center).click("notification-action-7-0");
+    assert_eq!(clicks.try_recv(), Ok(Request::Activate(7, Some(0))));
 
     // Close the dashboard and look at the watch again: it was seen on the dashboard, so it never comes back.
     kit.panel(0);
