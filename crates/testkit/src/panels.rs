@@ -136,7 +136,7 @@ impl<V: Render> Panels<V> {
         let pose = spec.pose_for(kernel, id);
         let parent = spec.parent();
         let (bar, owner) = (spec.nav_bar_spec(id), spec.nav_bar_of());
-        let (size, res) = spec.size();
+        let (size, res) = spec.size(kernel);
         let (root, cx) = cx
             .cx
             .add_window_view(|window, cx| PanelRoot::new(spec.build(id, window, cx)));

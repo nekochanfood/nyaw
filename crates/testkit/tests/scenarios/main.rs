@@ -9,6 +9,7 @@ mod dashboard;
 mod desktop_stream;
 mod dialog;
 mod emoji;
+mod hold_in_hand;
 mod keyboard;
 mod multi_panel;
 mod nav_bar;
