@@ -145,14 +145,11 @@ impl Swipes {
         }
     }
 
-    /// 動いている途中か（次のフレームも描く）。
+    /// 時間で動いている途中か（次のフレームも描く）。指やマウスで動かしている間は入力のたびに描き直すので含めない
+    /// （離したことが届かないまま残っても、描き続けない）。
     pub fn busy(&self) -> bool {
         let s = self.0.borrow();
-        !s.gone.is_empty()
-            || matches!(
-                s.gesture,
-                Some(Gesture::Dragging { .. } | Gesture::Settling { .. })
-            )
+        !s.gone.is_empty() || matches!(s.gesture, Some(Gesture::Settling { .. }))
     }
 
     /// 畳みきった項目（一度だけ返す。呼ぶ側は、このフレームからもう並べない）。
@@ -224,6 +221,13 @@ impl Swipes {
             };
             let (dx, dy) = (f32::from(d.x), f32::from(d.y));
             let mut s = state.borrow_mut();
+            // 新しい指のスライドが始まったのに前のものが残っている（離したことが届かなかった）なら、前のものは捨てる。
+            if phase == DispatchPhase::Capture
+                && e.touch_phase == TouchPhase::Started
+                && matches!(s.gesture, Some(Gesture::Dragging { start: None, .. }))
+            {
+                s.gesture = None;
+            }
             match (phase, s.gesture, e.touch_phase) {
                 // 指のスライド（タッチの方式）の始まりが横向きなら、その項目を動かす。
                 (DispatchPhase::Bubble, None, TouchPhase::Started) if dx.abs() > dy.abs() => {
@@ -360,6 +364,10 @@ mod tests {
         assert_eq!(far.take_gone(end), [7]);
         assert!(far.take_gone(end).is_empty(), "一度だけ");
         assert!(!far.busy());
+        assert!(
+            !dragged(80.0).busy(),
+            "動かしている間は入力のたびに描くので、描き続けない"
+        );
         let short = dragged(80.0);
         short.0.borrow_mut().release(t);
         assert_eq!(short.look(7, out).offset, 0.0);
