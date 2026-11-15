@@ -26,37 +26,33 @@ impl Overlay {
         }
         let at = parent.map(|p| self.panels[p.panel].pose);
         let q = &mut self.panels[id];
-        // はめる・外すとき（ほかの親の上へ移るときも）は、見えていれば滑らかに動かす。外すときは離れたと分かるよう手前へ出す。
+        // はめる・外すときは、見えていれば滑らかに動かす。外すときは離れたと分かるよう手前へ出す。
         let (was_slot, to_slot) = (
             q.parent.is_some_and(|p| p.slot.is_some()),
             parent.is_some_and(|p| p.slot.is_some()),
         );
-        let moved = q.parent.map(|p| p.panel) != parent.map(|p| p.panel);
         let to = match (was_slot, to_slot) {
             (true, false) if parent.is_none() && !q.hidden => Some(Some(
                 q.pose * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY),
             )),
             (false, true) => Some(None),
-            (true, true) if moved => Some(None),
             _ => None,
         };
         if let Some(to) = to {
             if q.animated && q.surface.has_texture() && !q.hidden {
-                self.end_glide(id);
                 self.glides.insert(
                     id,
                     Glide {
-                        from: self.panels[id].pose,
+                        from: q.pose,
                         to,
-                        size: None,
                         tween: Animation::new(0.0, 1.0, Motion::Move),
+                        last: Instant::now(),
                     },
                 );
             } else if let Some(pose) = to {
-                self.panels[id].pose = pose;
+                q.pose = pose;
             }
         }
-        let q = &mut self.panels[id];
         q.parent = parent;
         // 表示だけの子と、ポップオーバー（固定して外側を押すと閉じる子）は、ほかのパネルより前に描く。ランタイムは
         // 奥行きではなく描画順で重ねるので、同じ順だと重なった所がちらつく（はめた画面の上に出すメニューなど）。
@@ -190,38 +186,23 @@ impl Overlay {
         Pose::new(top + up * lift, rotation)
     }
 
-    /// 位置のトランジションをやめる。大きさも変えている途中なら、変えた後の大きさにする。
-    pub(crate) fn end_glide(&mut self, id: PanelId) {
-        if let Some(Glide {
-            size: Some((_, to)),
-            ..
-        }) = self.glides.remove(&id)
-        {
-            self.panels[id].size = to;
-        }
-    }
-
     /// 位置のトランジションを進める（[`Glide`]）。掴まれたら、その場でやめる。
-    pub(crate) fn glide(&mut self, vr: &mut dyn VrBackend, dragged: &[PanelId]) {
-        let (panels, dt) = (&mut self.panels, self.dt);
+    pub(crate) fn glide(&mut self, dragged: &[PanelId], now: Instant) {
+        let panels = &mut self.panels;
         self.glides.retain(|&id, g| {
             let p = &mut panels[id];
             if dragged.contains(&id) {
-                if let Some((_, to)) = g.size {
-                    p.size = to;
-                }
                 return false;
             }
-            let t = g.tween.advance(dt);
+            let t = g
+                .tween
+                .advance(now.saturating_duration_since(g.last).as_secs_f32());
+            g.last = now;
             let to = g.to.unwrap_or(p.pose);
             p.pose = Pose::new(
                 g.from.position.lerp(to.position, t),
                 g.from.orientation.slerp(to.orientation, t),
             );
-            if let Some((from, to)) = g.size {
-                p.size = from.lerp(to, t);
-                p.surface.set_width(vr, p.displayed_size().x);
-            }
             !g.tween.is_done()
         });
     }

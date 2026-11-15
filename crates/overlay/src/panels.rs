@@ -45,6 +45,7 @@ impl Overlay {
             animated: true,
             veil: false,
             pass_through: false,
+            fade_only: false,
             capture: false,
             os_cursor: None,
             parent: None,
@@ -96,20 +97,10 @@ impl Overlay {
         }
         let height = height * self.scale();
         let p = &mut self.panels[id];
-        let size = Vec2::new(
+        p.size = Vec2::new(
             height * p.resolution.0 as f32 / p.resolution.1 as f32,
             height,
         );
-        // 動いている最中（はめる・親を移る）なら、大きさも動きに合わせて変える（跳ばないように）。動き出す前なら、
-        // 移動と大きさの変化が続く形の移り変わり（`Motion::Morph`。少し長い）にする。
-        if let Some(g) = self.glides.get_mut(&id).filter(|_| !p.hidden) {
-            g.size = Some((p.size, size));
-            if g.tween.value() == 0.0 {
-                g.tween = Animation::new(0.0, 1.0, Motion::Morph);
-            }
-            return;
-        }
-        p.size = size;
         p.surface.set_width(vr, p.displayed_size().x);
     }
 
@@ -281,6 +272,12 @@ impl Overlay {
         self.panels[id].pass_through = pass;
     }
 
+    /// 出入り（開く・閉じる・隠す・出し直す）を不透明度だけにする（`false` で戻す）。大きさを 75%〜100% に変えず、
+    /// はめた画面のように後ろへ下がらない。どちらへ動くかは中身（GPUI）が描くパネル（通知のトースト）。
+    pub fn set_fade_only(&mut self, id: PanelId, fade_only: bool) {
+        self.panels[id].fade_only = fade_only;
+    }
+
     /// `hand` のレーザーを描くパネルにする。以降はヒット判定の対象外になり、毎 tick レーザーに合わせて置かれる。
     pub fn set_pointer(&mut self, vr: &mut dyn VrBackend, id: PanelId, hand: Hand, part: Pointer) {
         self.set_animated(vr, id, false);
@@ -359,18 +356,20 @@ impl Overlay {
     /// 入れ替わりにはまる画面と同じ所で重なってちらつかないように。
     fn retreat(&mut self, id: PanelId) {
         let p = &self.panels[id];
-        if !p.parent.is_some_and(|q| q.slot.is_some()) || !p.animated || p.opacity == 0.0 {
+        if !p.parent.is_some_and(|q| q.slot.is_some())
+            || !p.animated
+            || p.fade_only
+            || p.opacity == 0.0
+        {
             return;
         }
-        self.end_glide(id);
-        let p = &self.panels[id];
         self.glides.insert(
             id,
             Glide {
                 from: p.pose,
                 to: Some(p.pose * Pose::new(Vec3::NEG_Z * SLOT_RETREAT, Quat::IDENTITY)),
-                size: None,
                 tween: Animation::new(0.0, 1.0, Motion::Exit),
+                last: Instant::now(),
             },
         );
     }
@@ -387,7 +386,7 @@ impl Overlay {
             self.retreat(id);
         } else {
             // 隠すときの退き（隠した時の場所へ向かう）が残っていれば、出し直した場所から引き戻さないよう打ち切る。
-            self.end_glide(id);
+            self.glides.remove(&id);
         }
         let kids: Vec<PanelId> = self
             .present

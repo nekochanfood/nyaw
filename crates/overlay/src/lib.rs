@@ -95,6 +95,8 @@ pub struct Panel {
     pub veil: bool,
     /// レーザーが素通りする（[`Overlay::set_pass_through`]）。
     pub pass_through: bool,
+    /// 出入りは不透明度だけ（[`Overlay::set_fade_only`]）。
+    pub fade_only: bool,
     /// OS へのタッチを解放まで同じパネルへ届ける。
     capture: bool,
     /// その手で指している間、カーソルの代わりに出す OS のカーソル（[`Overlay::set_os_cursor`]）。
@@ -229,6 +231,9 @@ struct Ray {
 impl Panel {
     /// アニメーションを反映した表示サイズ。中心の位置・姿勢は変えない。
     pub fn displayed_size(&self) -> Vec2 {
+        if self.fade_only {
+            return self.size;
+        }
         self.size * (0.75 + 0.25 * self.opacity)
     }
 
@@ -316,14 +321,12 @@ struct HandState {
 }
 
 /// 位置のトランジション: `from` から `to` へ動かす。`to` が `None` なら、毎 tick 決まる置き場所（はまる場所）へ向かう。
-/// 動いている間に大きさを変えたら（[`Overlay::fit_height`]）、大きさも `size` の始めから終わりへ一緒に変える。
-/// 進めるのは tick の経過（[`TICK_MAX`] で丸める）なので、遅れたフレームの後も跳ばずに続きから動く。
 #[derive(Debug)]
 struct Glide {
     from: Pose,
     to: Option<Pose>,
-    size: Option<(Vec2, Vec2)>,
     tween: Animation,
+    last: Instant,
 }
 
 #[derive(Debug, Default)]

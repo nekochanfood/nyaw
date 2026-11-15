@@ -272,3 +272,25 @@ fn pixel_to_world_inverts_hit_test() {
     let (hit, _) = hit_test(p, &aim).unwrap();
     assert!(hit.abs_diff_eq(px, 1e-3), "{hit}");
 }
+
+/// 出入りを不透明度だけにしたパネルは、隠しても大きさを変えず、はめた所から後ろへ下がらない（動きは中身が描く）。
+#[test]
+fn a_fade_only_panel_keeps_its_size_and_place_while_it_fades() {
+    let (mut vr, mut ov) = with_slot_child();
+    ov.set_animated(&mut vr.backend, 1, true);
+    ov.submit(&mut vr.backend, 1, 1, 1, &[200, 100, 50, 255]);
+    ov.panels[1].opacity = 1.0;
+    ov.animations.clear();
+    ov.set_fade_only(1, true);
+    let size = ov.panel(1).size;
+    ov.set_hidden(&mut vr.backend, 1, true);
+    assert!(!ov.glides.contains_key(&1), "下がらない");
+    advance(&mut ov, &mut vr, 0.05);
+    let p = ov.panel(1);
+    assert!(
+        p.opacity > 0.0 && p.opacity < 1.0,
+        "薄れている途中: {}",
+        p.opacity
+    );
+    assert_eq!(p.displayed_size(), size);
+}

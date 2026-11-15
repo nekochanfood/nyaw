@@ -686,38 +686,6 @@ fn stack_on(panel: PanelId) -> Option<Parent> {
     })
 }
 
-/// 立てた子が別の親の上へ移ると、跳ばずに滑らかに動き、動いている間に変えた大きさも一緒に変わっていく。
-#[test]
-fn a_slot_child_glides_with_its_size_to_another_parent() {
-    let (mut vr, mut ov, toast) = with_toast();
-    ov.set_parent(&mut vr.backend, toast, stack_on(2));
-    ov.fit_height(&mut vr.backend, toast, 0.05);
-    // 次のフレームが遅れても（動きより長く止まっても）、跳ばずに元の所から動き出す。
-    std::thread::sleep(std::time::Duration::from_millis(400));
-    ov.tick(&mut vr);
-    let on_wrist = |ov: &Overlay| {
-        ov.panel(toast)
-            .pose
-            .position
-            .distance(ov.panel(2).pose.position)
-    };
-    assert!(on_wrist(&ov) > 0.3, "最初は元の所から動き出す");
-    finish_glides(&mut vr, &mut ov);
-    assert!(on_wrist(&ov) < 0.15, "手首の上に収まる");
-    let before = ov.panel(toast).pose.position;
-    assert!((ov.panel(toast).size.y - 0.05).abs() < 1e-5);
-    // 手首からバーの上へ移るときも、跳ばずに動き出す。
-    ov.set_parent(&mut vr.backend, toast, stack_on(0));
-    ov.fit_height(&mut vr.backend, toast, 0.1);
-    assert!(ov.glides.contains_key(&toast));
-    ov.tick(&mut vr);
-    assert!(ov.panel(toast).pose.position.distance(before) < 0.2);
-    assert!(ov.panel(toast).size.y < 0.1, "大きさも少しずつ");
-    // 隠すと大きさは変えた後のものになる。
-    ov.set_hidden(&mut vr.backend, toast, true);
-    assert!((ov.panel(toast).size.y - 0.1).abs() < 1e-5);
-}
-
 /// 積む子は、はめた画面があればその上端の上に、無ければ親の上端の上に立つ。
 #[test]
 fn a_stacked_child_stands_on_the_docked_screen() {
