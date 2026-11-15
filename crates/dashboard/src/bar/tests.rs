@@ -547,3 +547,48 @@ fn resident_streams_stay_on_the_bar_and_minimize(cx: &mut TestAppContext) {
     assert!(!c.contains(&PanelCommand::Close), "閉じない");
     assert!(bar.read_with(cx, |d, _| d.streams[0].stashed));
 }
+
+/// トーストから通知センターを頼まれると、隠れていたダッシュボードを出してクイック設定（通知の一覧）をはめる。
+/// もうはまっていれば閉じない。
+#[gpui::test]
+fn the_toast_opens_the_notification_center(cx: &mut TestAppContext) {
+    let (bar, cx) = cx.add_window_view(|_, cx| {
+        cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+        Dashboard::new(1, summon, summon, cx)
+    });
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        let p = cx
+            .default_global::<PanelControl>()
+            .panels
+            .entry(1)
+            .or_default();
+        p.status.hidden = true;
+    });
+    cx.update(|_, cx| ui::notification::show_center(Some(5), cx));
+    cx.run_until_parked();
+    assert!(
+        take_commands(cx, 1).contains(&PanelCommand::Hide(false)),
+        "出す"
+    );
+    cx.update(|_, cx| {
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(1)
+            .or_default()
+            .status
+            .hidden = false;
+    });
+    open_spawned(cx, 2);
+    assert_eq!(
+        cx.update(|_, cx| bar.read(cx).current(cx)),
+        Some(Page::QuickSettings)
+    );
+    cx.update(|_, cx| ui::notification::show_center(Some(6), cx));
+    cx.run_until_parked();
+    assert!(!commands(cx, 2).contains(&PanelCommand::Close), "閉じない");
+    assert_eq!(
+        cx.update(|_, cx| bar.read(cx).current(cx)),
+        Some(Page::QuickSettings)
+    );
+}

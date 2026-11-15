@@ -22,6 +22,9 @@ impl Dashboard {
             .detach();
         cx.observe_global::<PanelControl>(Self::follow_placement)
             .detach();
+        // トーストのカードを押すと、通知センター（クイック設定の一覧）を開く（隠れていれば出す）。
+        cx.observe_global::<ui::notification::Center>(Self::open_center)
+            .detach();
         // 新しいリリースがあるかは起動時と、常駐して開きっぱなしでも分かるよう周期で確かめる（あればバーにボタンが出る。
         // 入れるのはユーザーが選んだときだけ）。開発中のビルドとテストは確かめない（設定から押せる）。
         cx.observe_global::<updater::Updater>(|this, cx| ui::notify(this.panel, cx))
@@ -89,7 +92,31 @@ impl Dashboard {
             prev_sep: false,
             scroll: ScrollHandle::new(),
             enter: Entering::new(cfg!(test)),
+            center_asked: cx
+                .try_global::<ui::notification::Center>()
+                .map_or(0, |c| c.asked),
         }
+    }
+
+    /// 通知センターを開いてほしいと頼まれたら（トーストのカードを押した）、ダッシュボードを出して一覧をはめる。
+    /// ロックダウン中は開かない。
+    fn open_center(&mut self, cx: &mut Context<Self>) {
+        let asked = cx.global::<ui::notification::Center>().asked;
+        if asked == self.center_asked {
+            return;
+        }
+        self.center_asked = asked;
+        let ctl = cx.global::<PanelControl>();
+        if ctl.settings.lockdown {
+            return;
+        }
+        if ctl.panels.get(&self.panel).is_some_and(|p| p.status.hidden) {
+            show(self.panel, cx);
+        }
+        if self.current(cx) != Some(Page::QuickSettings) {
+            self.toggle(Page::QuickSettings, cx);
+        }
+        ui::notify(self.panel, cx);
     }
 
     /// 開いているメニューのポップオーバー（外側を押して閉じていれば `None`）。
