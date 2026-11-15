@@ -21,6 +21,7 @@ mod family;
 mod frame;
 mod geometry;
 mod hand;
+mod magnet;
 mod options;
 mod panels;
 mod pointers;
@@ -30,6 +31,8 @@ use family::*;
 use frame::*;
 pub use geometry::anchored;
 use geometry::*;
+pub use magnet::{DOCK_HINT_PX, DockHint};
+use magnet::{Ghost, Magnet};
 use pointers::*;
 
 #[cfg(test)]
@@ -122,6 +125,8 @@ pub struct Panel {
     follow: Option<(Device, Pose)>,
     /// 頭の向きにゆるく追従する（[`Overlay::set_lazy_follow`]）。取り付けより優先する。
     pub lazy_follow: Option<LazyFollow>,
+    /// はめる場所（[`Overlay::set_dock_slot`]）から掴んで引っこ抜ける・近づけてはめられる（[`Overlay::set_dockable`]）。
+    pub dockable: bool,
 }
 
 impl Panel {
@@ -145,6 +150,9 @@ pub enum Pointer {
     /// ツールチップ。カーソルの子で、カーソルと同じ点・同じ縮尺（頭から 1m 先での大きさ）に置き、カーソルより手前に描く。
     /// 中心がカーソルで、箱を上下どちらに描くかは [`Overlay::tooltip_anchor`] を見て上の層が決める。
     Tooltip,
+    /// はまる所の見本。はめられる画面を掴んでいる間、はまる所に画面の地と同じ大きさで置く（上に [`DOCK_HINT_PX`] の
+    /// 帯を足した解像度をオーバーレイ層が決める）。パネルより奥に描く。何を描くかは [`Overlay::dock_hint`]。
+    Dock,
 }
 
 /// ツールチップをカーソルの上下どちらに出すか。
@@ -173,13 +181,15 @@ const CURSOR_LIFT: f32 = LIFT_STEP * 2.0;
 /// 1mm は 10m 先でも 24bit の深度で 8 段ほどの差がある。
 // ponytail: 固定の幅。実機でちらつくなら広げる。
 const LIFT_STEP: f32 = 0.001;
-/// 描画順。一番奥が空間全体の暗転の幕（[`Overlay::set_veil`]）で、その上にパネル。
+/// 描画順。一番奥が空間全体の暗転の幕（[`Overlay::set_veil`]）、次がはまる所の見本（[`Pointer::Dock`]。掴んだ画面と
+/// そのナビゲーションバーがいつも上に重なる）で、その上にパネル。
 const VEIL_SORT: u32 = 0;
-const PANEL_SORT: u32 = 1;
-const LASER_SORT: u32 = 2;
-const DRAG_SORT: u32 = 3;
-const CURSOR_SORT: u32 = 4;
-const TOOLTIP_SORT: u32 = 5;
+const GHOST_SORT: u32 = 1;
+const PANEL_SORT: u32 = 2;
+const LASER_SORT: u32 = 3;
+const DRAG_SORT: u32 = 4;
+const CURSOR_SORT: u32 = 5;
+const TOOLTIP_SORT: u32 = 6;
 /// 掴み移動で、目標へ 1/120 秒（[`TICK_MIN`]）に近づく割合。経過時間で換算するので、フレームが落ちても追いつく速さは変わらない。
 /// 目標との差が [`SNAP`] 未満なら目標に合わせる。
 const SMOOTH: f32 = 0.3;
@@ -308,6 +318,10 @@ struct HandState {
     press: Option<(Vec2, Vec3)>,
     /// ツールチップを出す向き（毎 tick 見直す）。
     anchor: Anchor,
+    /// 掴んでいる画面をはめる場所へ引っこ抜く・はめる磁石（はめられる画面そのものを掴んでいる間だけ）。
+    magnet: Option<Magnet>,
+    /// この手のはまる所の見本（[`Pointer::Dock`]）の出具合。
+    ghost: Ghost,
 }
 
 /// 位置のトランジション: `from` から `to` へ動かす。`to` が `None` なら、毎 tick 決まる置き場所（はまる場所）へ向かう。
@@ -367,6 +381,12 @@ pub struct Overlay {
     /// 前の tick の時刻と、そこからの経過（秒。[`TICK_MIN`]〜[`TICK_MAX`] に丸める）。
     last_tick: Option<Instant>,
     dt: f32,
+    /// 画面をはめる場所: 持ち主と、その上端に立てる角度（[`Overlay::set_dock_slot`]）。
+    dock_slot: Option<(PanelId, f32)>,
+    /// 掴んで引っこ抜いた（`false`）・はめた（`true`）画面（[`Overlay::take_dock_changes`] で受け取る）。
+    dock_changes: Vec<(PanelId, bool)>,
+    /// はまる所に付けたまま離した画面（この tick の終わりにはめる・はめ直す）。
+    landed: Vec<PanelId>,
 }
 
 /// 空間全体の暗転の幕（[`Overlay::set_veil`]）。

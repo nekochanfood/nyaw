@@ -121,8 +121,12 @@ impl Overlay {
             .filter_map(|h| h.dragging)
             .map(|d| d.0)
             .collect();
-        // 子を掴んで親を連れていくときは、親も手に従う。
+        // 子を掴んで親を連れていくときは、親も手に従う。磁石を効かせて掴んでいる画面は親を連れていかない。
+        let pulled = self.pulled();
         for d in dragged.clone() {
+            if pulled.contains(&d) {
+                continue;
+            }
             dragged.extend(carried(&self.panels, d));
         }
         let dt = self.dt;
@@ -179,8 +183,10 @@ impl Overlay {
         for id in std::mem::take(&mut self.dismissed) {
             self.close(vr, id);
         }
-        self.settle_family(&dragged);
+        self.settle_family(&dragged, &pulled);
         self.glide(&dragged, now);
+        // 離した画面の吸い付く動きは次の tick から（この tick はまだ掴んでいた扱いで、動きを止めてしまう）。
+        self.land(vr);
         let mut parents = std::collections::HashSet::new();
         for &id in &self.present {
             let p = &self.panels[id];
@@ -224,6 +230,7 @@ impl Overlay {
         }
         self.place_nav_bars(vr, now);
         self.place_pointers(vr);
+        self.place_ghosts(vr, now);
         self.follow_roots();
         for &id in &self.present {
             let p = &mut self.panels[id];

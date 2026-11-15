@@ -59,6 +59,7 @@ impl Overlay {
             surface,
             follow: None,
             lazy_follow: None,
+            dockable: false,
         });
         let id = self.panels.len() - 1;
         self.present.push(id);
@@ -275,6 +276,7 @@ impl Overlay {
             Pointer::Cursor => CURSOR_SORT,
             Pointer::Drag => DRAG_SORT,
             Pointer::Tooltip => TOOLTIP_SORT + tooltip_step(hand),
+            Pointer::Dock => GHOST_SORT,
         };
         p.surface.set_sort(vr, sort);
         // レーザーは長さ（幅）だけ変え、太さ（高さ）は作ったときのまま。

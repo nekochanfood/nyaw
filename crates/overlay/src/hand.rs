@@ -34,6 +34,7 @@ impl Overlay {
             self.pointer_smoothing()
         };
         let release = self.pointer_release().to_radians();
+        let scale = self.scale();
         let st = self.hands.entry(c.hand).or_default();
         // 手ブレを抑えたレーザー。隠れていた後は追わずに手に合わせる。
         let aim = Pose::new(
@@ -112,7 +113,22 @@ impl Overlay {
                     facing(at, frame.hmd.position, frame.hmd.panel_up())
                         .unwrap_or(reference.orientation),
                 ) * pivot;
-                p.pose = approach(p.pose, target, self.dt);
+                // はめられる画面は、はまる所との間に磁石が効く（引っこ抜く・吸い付く）。
+                let slot = st
+                    .magnet
+                    .map(|m| m.slot(&self.panels, &self.present, scale, id));
+                let p = &mut self.panels[id];
+                let (pose, flipped) = match (st.magnet.as_mut(), slot) {
+                    (Some(m), Some(slot)) => m.follow(p.pose, slot, target, self.dt),
+                    _ => (approach(p.pose, target, self.dt), None),
+                };
+                p.pose = pose;
+                if let (Some(stuck), Some(m)) = (flipped, st.magnet) {
+                    st.ghost.flashed = Some(Instant::now());
+                    if !stuck && magnet::unplug(p, m.owner()) {
+                        self.dock_changes.push((id, false));
+                    }
+                }
                 // 取り付け先から届く範囲の外へは出さない。
                 if let (Some(reach), Some((device, _))) = (p.reach, &p.attached)
                     && let Some(dp) = frame.pose(device)
@@ -131,6 +147,10 @@ impl Overlay {
             }
             st.dragging = None;
             st.scaling = None;
+            // はまる所に付けたまま離したら、はめる（はまっていれば戻す）。この tick の終わりに（Overlay::land）。
+            if st.magnet.take().is_some_and(|m| m.stuck) {
+                self.landed.push(id);
+            }
             // 取り付け中なら、離した位置を新しいオフセットにする。
             for q in std::iter::once(id).chain(carried(&self.panels, id)) {
                 let p = &mut self.panels[q];
@@ -238,6 +258,10 @@ impl Overlay {
             let offset = aim.inverse().transform_point(reference.position);
             st.dragging = Some((id, offset, t, pivot, resize));
             st.before = (self.panels[id].size, self.panels[id].grab_anchor);
+            // はめられる画面そのものを掴んだら、磁石で引っこ抜く・はめる（バーを掴めばダッシュボードごと動く）。
+            st.magnet = Magnet::grab(&self.panels, &self.present, self.dock_slot, id)
+                .filter(|_| id == grabbed);
+            st.ghost.since = Instant::now();
             st.hover = None;
             st.select = false;
             return;
