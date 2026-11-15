@@ -9,6 +9,7 @@ members = [
     "crates/subsystems/desktop",
     "crates/subsystems/audio",
     "crates/subsystems/media",
+    "crates/subsystems/notifications",
 ]
 # vendor/ は手を入れた zed のクレートの写し（それぞれの Cargo.toml）。ワークスペースには入れない
 # nyapps/ は wasm 向けにビルドするニャプリの試作（別のワークスペース。crates/nyapp/AGENT.md）
@@ -35,6 +36,7 @@ keyboard = { path = "crates/subsystems/keyboard" }
 desktop = { path = "crates/subsystems/desktop" }
 audio = { path = "crates/subsystems/audio" }
 media = { path = "crates/subsystems/media" }
+notifications = { path = "crates/subsystems/notifications" }
 kernel = { path = "crates/kernel", default-features = false }
 subsystems = { path = "crates/subsystems", default-features = false }
 vr = { path = "crates/subsystems/vr", default-features = false }

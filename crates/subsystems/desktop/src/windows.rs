@@ -49,8 +49,9 @@ use ::windows::{
             Input::KeyboardAndMouse::*,
             Shell::{
                 BHID_EnumItems, ExtractIconExW, FOLDERID_AppsFolder, IEnumShellItems, IShellItem,
-                IShellItem2, IShellItemImageFactory, KF_FLAG_DEFAULT, SHGetKnownFolderItem,
-                SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY, ShellExecuteW,
+                IShellItem2, IShellItemImageFactory, KF_FLAG_DEFAULT, SHCreateItemFromParsingName,
+                SHGetKnownFolderItem, SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
+                ShellExecuteW,
             },
             WindowsAndMessaging::*,
         },
@@ -425,48 +426,62 @@ pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
         let exe = take(unsafe { item.GetString(&PKEY_Link_TargetParsingPath) })
             .filter(|p| p.to_ascii_lowercase().ends_with(".exe"))
             .and_then(|p| p.rsplit('\\').next().map(str::to_owned));
-        let icon = item
-            .cast::<IShellItemImageFactory>()
-            .ok()
-            .and_then(|f| {
-                unsafe {
-                    f.GetImage(
-                        SIZE { cx: 64, cy: 64 },
-                        SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
-                    )
-                }
-                .ok()
-            })
-            .and_then(|bitmap| {
-                let read = unsafe { bitmap_bgra(bitmap) };
-                unsafe {
-                    let _ = DeleteObject(bitmap.into());
-                }
-                let (width, height, mut px) = read?;
-                // シェルの絵は乗算済みのアルファなので、ストレートに戻す。
-                for p in px.as_chunks_mut::<4>().0 {
-                    p.swap(0, 2);
-                    let a = p[3] as u32;
-                    if a > 0 {
-                        for c in &mut p[..3] {
-                            *c = (u32::from(*c) * 255).checked_div(a).unwrap_or(255).min(255) as u8;
-                        }
-                    }
-                }
-                Some(Icon {
-                    width,
-                    height,
-                    rgba: px.into(),
-                })
-            });
         apps.push(InstalledApp {
             name,
             id,
             exe,
-            icon,
+            icon: shell_icon(&item),
         });
     }
     Ok(apps)
+}
+
+/// シェルの項目のアイコン（64px）。
+fn shell_icon(item: &IShellItem2) -> Option<Icon> {
+    let factory = item.cast::<IShellItemImageFactory>().ok()?;
+    let bitmap = unsafe {
+        factory.GetImage(
+            SIZE { cx: 64, cy: 64 },
+            SIIGBF_ICONONLY | SIIGBF_BIGGERSIZEOK,
+        )
+    }
+    .ok()?;
+    let read = unsafe { bitmap_bgra(bitmap) };
+    unsafe {
+        let _ = DeleteObject(bitmap.into());
+    }
+    let (width, height, mut px) = read?;
+    // シェルの絵は乗算済みのアルファなので、ストレートに戻す。
+    for p in px.as_chunks_mut::<4>().0 {
+        p.swap(0, 2);
+        let a = p[3] as u32;
+        if a > 0 {
+            for c in &mut p[..3] {
+                *c = (u32::from(*c) * 255).checked_div(a).unwrap_or(255).min(255) as u8;
+            }
+        }
+    }
+    Some(Icon {
+        width,
+        height,
+        rgba: px.into(),
+    })
+}
+
+/// アプリ（AppUserModelId）のスタートメニューのアイコン。シェルの項目は STA で読むので、呼ぶ側のスレッドの初期化に
+/// よらないよう、別のスレッドで読む。
+pub(super) fn app_icon(id: &str) -> Option<Icon> {
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            let path = ::windows::core::HSTRING::from(format!("shell:AppsFolder\\{id}"));
+            let item: IShellItem2 = unsafe { SHCreateItemFromParsingName(&path, None) }.ok()?;
+            shell_icon(&item)
+        })
+        .join()
+        .ok()
+        .flatten()
+    })
 }
 
 /// アプリを AppUserModelId で起動する（ストアのアプリもデスクトップのアプリも `shell:AppsFolder` 経由で開ける）。

@@ -1,0 +1,23 @@
+[package]
+name = "notifications"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+logger.workspace = true
+# 通知がロゴを持たないアプリのアイコン（スタートメニュー）と、その型。
+desktop.workspace = true
+# アプリのアイコンを読む（media と同じ版）。
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# 通知の元の XML（ボタン・押したときの引数）を読む。
+roxmltree = "0.21"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = [
+    "Foundation", "Foundation_Collections", "ApplicationModel", "Storage_Streams",
+    "UI_Notifications", "UI_Notifications_Management", "Win32_System_WinRT",
+    # 押したとき: アプリの通知の受け口（COM）を呼ぶか、アプリを開く。
+    "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_Notifications", "Win32_UI_WindowsAndMessaging", "Win32_Storage_EnhancedStorage",
+] }

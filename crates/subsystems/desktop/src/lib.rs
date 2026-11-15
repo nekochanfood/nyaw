@@ -393,6 +393,18 @@ impl InstalledApps {
     }
 }
 
+/// アプリ（[`InstalledApp::id`] と同じ ID）のスタートメニューのアイコン（64px）。シェルに問い合わせて待つので、
+/// フレームループでは呼ばない。
+pub fn app_icon(id: &str) -> Option<Icon> {
+    #[cfg(windows)]
+    return windows::app_icon(id);
+    #[cfg(not(windows))]
+    {
+        let _ = id;
+        None
+    }
+}
+
 /// アプリを起動する（待たない）。
 pub fn launch(app: &InstalledApp) -> Result<(), Error> {
     #[cfg(windows)]

@@ -28,6 +28,7 @@ OS・ランタイム・コントローラ入力・描画の差を吸収。ラン
     ├ audio/      OS の音声出力・立体化
     ├ desktop/    画面・ウィンドウの取得と OS タッチ注入
     ├ media/      再生中のメディアの情報と操作
+    ├ notifications/ OS の通知の一覧と、押したときの届け先
     └ keyboard/   仮想キーボードの配列データ（OS への入力は os/ の os::keyboard）
 ```
 
