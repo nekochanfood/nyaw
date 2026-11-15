@@ -224,6 +224,7 @@ impl Overlay {
         }
         self.place_nav_bars(vr, now);
         self.place_pointers(vr);
+        self.follow_roots();
         for &id in &self.present {
             let p = &mut self.panels[id];
             p.surface.place(vr, p.pose, p.follow.as_ref());

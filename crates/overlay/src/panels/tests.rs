@@ -122,38 +122,52 @@ fn locking_mid_grab_undoes_the_grab_of_an_attached_panel() {
     assert_at(&ov, &vr, Vec3::new(0.0, 0.5, -1.0));
 }
 
-/// 手に持ったパネルは、レーザーの出る所の前へ寝かせて伸び（上から見るとコントローラの先に面がある）、手を起こすと立って
-/// 表がこちらを向く。地の下端の左右中央は、どちらでもレーザーの出る所の前 `HAND_GAP` にある。
+/// 手に持ったパネルは、レーザーの出る所の前へ伸び（上から見るとコントローラの先に面がある）、手前へ `HAND_TILT` 起きる。
+/// 地の下端の左右中央は、面に沿ってレーザーの出る所から `HAND_GAP` の所。大きければ長い辺が `HAND_SIZE` になるまで縮む。
 #[test]
-fn panel_in_hand_lies_ahead_of_the_laser_and_stands_up_when_raised() {
+fn panel_in_hand_lies_ahead_of_the_laser_tilted_toward_the_user() {
     let (mut vr, mut ov) = setup();
-    ov.attach_to_hand(0, Hand::Right);
+    ov.attach_to_hand(&mut vr.backend, 0, Hand::Right);
     assert!(matches!(
         ov.panel(0).attached,
         Some((Device::Controller(Hand::Right), _))
     ));
+    assert!(ov.panel(0).size.abs_diff_eq(Vec2::splat(HAND_SIZE), 1e-6));
+    assert!((vr.backend.overlays[0].width_m - HAND_SIZE).abs() < 1e-5);
     let face = ov.panel(0).size.y / 2.0 - face_margin(ov.panel(0));
     let hand = Vec3::new(0.2, -0.3, -0.4);
+    let (sin, cos) = HAND_TILT.sin_cos();
     let eq = |a: Vec3, b: Vec3| assert!(a.abs_diff_eq(b, 1e-5), "{a} != {b}");
-    // 水平に前へ向けた手: 面は前に寝て、表が上を向く。
+    // 水平に前へ向けた手: 面は前へ伸び、上（前）の端が手前へ起きて、表は上やや手前を向く。
     controller(&mut vr, Pose::new(hand, Quat::IDENTITY), &[]);
     ov.tick(&mut vr);
     let p = ov.panel(0).pose;
-    eq(p.orientation * Vec3::Z, Vec3::Y);
-    eq(p.orientation * Vec3::Y, Vec3::NEG_Z);
-    eq(
-        p.position - p.orientation * Vec3::Y * face,
-        hand + Vec3::NEG_Z * HAND_GAP,
-    );
-    // 手を起こす（レーザーが真上）と、面は立って表が手前（+Z）を向き、正立する。
+    let up = Vec3::new(0.0, sin, -cos);
+    eq(p.orientation * Vec3::Y, up);
+    eq(p.orientation * Vec3::Z, Vec3::new(0.0, cos, sin));
+    eq(p.position - up * face, hand + up * HAND_GAP);
+    // 手を起こす（レーザーが真上）と、面は立って上の端が手前に傾き、表が手前（+Z）を向いて正立する。
     let raised = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     controller(&mut vr, Pose::new(hand, raised), &[]);
     ov.tick(&mut vr);
     let p = ov.panel(0).pose;
-    eq(p.orientation * Vec3::Z, Vec3::Z);
-    eq(p.orientation * Vec3::Y, Vec3::Y);
+    let up = Vec3::new(0.0, cos, sin);
+    eq(p.orientation * Vec3::Y, up);
+    eq(p.orientation * Vec3::Z, Vec3::new(0.0, -sin, cos));
     eq(p.orientation * Vec3::X, Vec3::X);
-    eq(p.position - Vec3::Y * face, hand + Vec3::Y * HAND_GAP);
+    eq(p.position - up * face, hand + up * HAND_GAP);
+}
+
+/// もともと小さいパネルは、手に持たせても大きさを変えない。
+#[test]
+fn small_panel_keeps_its_size_in_hand() {
+    let (mut vr, mut ov) = setup();
+    let small = Vec2::new(0.3, 0.2);
+    let id = ov
+        .add_panel(&mut vr.backend, "small", Pose::IDENTITY, small, (300, 200))
+        .unwrap();
+    ov.attach_to_hand(&mut vr.backend, id, Hand::Left);
+    assert_eq!(ov.panel(id).size, small);
 }
 
 /// 掴んで大きさを変えている最中にロックすると、大きさも掴む前に戻る（手に持ったパネルの調整の取り消し）。

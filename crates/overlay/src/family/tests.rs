@@ -636,3 +636,36 @@ fn closing_the_parent_closes_its_children_and_cycles_are_refused() {
     ov.close(&mut vr.backend, 0);
     assert!(ov.panel(1).closed);
 }
+
+/// デバイスに付いて動くパネルのナビゲーションバーと子（ポップオーバー）も、同じデバイスに相対で付く（ランタイムが根元と
+/// 同じ姿勢で動かすので遅れない）。根元が付いていなければ付けない。
+#[test]
+fn nav_bar_and_children_follow_the_device_their_root_rides_on() {
+    let (mut vr, mut ov) = with_child(true);
+    let bar = ov
+        .add_panel(
+            &mut vr.backend,
+            "bar",
+            Pose::IDENTITY,
+            Vec2::new(0.2, 0.05),
+            (200, 50),
+        )
+        .unwrap();
+    ov.set_nav_bar(&mut vr.backend, bar, 0);
+    ov.tick(&mut vr);
+    assert_eq!(ov.panels[bar].follow, None);
+    assert_eq!(ov.panels[1].follow, None);
+    let device = Device::Controller(Hand::Right);
+    ov.attach(0, device.clone(), at(0.0, 0.2, -0.5));
+    let hand = Pose::new(Vec3::new(0.3, -0.2, -0.4), Quat::from_rotation_y(0.5));
+    controller(&mut vr, hand, &[]);
+    ov.tick(&mut vr);
+    for id in [bar, 1] {
+        let (d, offset) = ov.panels[id].follow.clone().expect("follows the device");
+        assert_eq!(d, device);
+        let pose = hand * offset;
+        let p = ov.panels[id].pose;
+        assert!(pose.position.abs_diff_eq(p.position, 1e-5), "{id}");
+        assert!(pose.orientation.abs_diff_eq(p.orientation, 1e-5), "{id}");
+    }
+}
