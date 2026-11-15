@@ -7,6 +7,9 @@ use super::*;
 const HUD_LIFT: f32 = LIFT_STEP;
 /// 親の上端に立てた子を外したとき、離れたと分かるよう面の向き（頭の側）へ動かす距離（m）。
 const UNDOCK_PULL: f32 = 0.2;
+/// 持ち主もバーも指されなくなってから、ナビゲーションバー（縮んだ線）が薄れ始めるまで。線に縮みきってから少し置く。
+// ponytail: 固定の長さ。早すぎる・遅すぎると感じたらここを調整する。
+const NAV_BAR_LINGER: std::time::Duration = std::time::Duration::from_millis(1500);
 
 impl Overlay {
     /// `id` を `parent` の子にする（`None` で独立）。今の位置を保ち、以降は親に追従する。取り付けは外す。
@@ -153,7 +156,10 @@ impl Overlay {
     /// ナビゲーションバーを持ち主の下端へ置く。持ち主の地の下端（影の余白 [`PANEL_MARGIN`] の内側）の左右中央を
     /// アンカーに、バーの上端の左右中央を合わせる。頭から見て同じ大きさに見えるよう、アンカーまでの距離に比例して大きくする。
     /// 持ち主の出入りのアニメーション（75%〜100%）で縮んだ下端にも付いていく。
-    pub(crate) fn place_nav_bars(&mut self, vr: &mut dyn VrBackend) {
+    /// 持ち主もバーも指されないまま [`NAV_BAR_LINGER`] 経つと、時間をかけて薄れ（[`Motion::Fade`]）、消えきったら
+    /// ランタイムのオーバーレイを手放す（[`Surface::park`]。パネル・ビュー・最後の画像は残す）。
+    /// 指されたら作り直して現れる（[`Motion::Enter`]）。
+    pub(crate) fn place_nav_bars(&mut self, vr: &mut dyn VrBackend, now: Instant) {
         for &id in &self.present {
             let Some(owner) = self.panels[id]
                 .nav_bar_of
@@ -161,6 +167,7 @@ impl Overlay {
             else {
                 continue;
             };
+            let pointed = self.pointed(id);
             let o = &self.panels[owner];
             let (opacity, dim) = (o.opacity, o.dim);
             let up = o.pose.orientation * Vec3::Y;
@@ -183,19 +190,42 @@ impl Overlay {
             };
             let resized = !p.size.abs_diff_eq(size, 1e-4);
             p.size = size;
+            // 指されないまましばらく経ったら薄れて消える。指されたら現れる。
+            if pointed {
+                p.pointed_at = now;
+            }
+            let asleep = now.saturating_duration_since(p.pointed_at) >= NAV_BAR_LINGER;
+            let to = if asleep { 0.0 } else { 1.0 };
+            let woke = p.wake.target() != to && !asleep;
+            let motion = if asleep { Motion::Fade } else { Motion::Enter };
+            p.wake.go(to, motion, now, p.animated);
+            let (awake, _) = p.wake.at(now);
             // 出入りと暗さは持ち主と一体（バーは閉じても、持ち主が消えきるまで残る）。
-            let faded = p.opacity != opacity || p.dim != dim || (p.closed && opacity == 0.0);
-            (p.opacity, p.dim, p.dim_to) = (opacity, dim, dim);
+            let faded = p.opacity != opacity
+                || p.dim != dim
+                || p.awake != awake
+                || (p.closed && opacity == 0.0);
+            (p.opacity, p.dim, p.dim_to, p.awake) = (opacity, dim, dim, awake);
             // 上端は持ち主の影の余白と重なる。同じ面だと Z ファイティングするので、表示だけの子と同じだけ手前に浮かせる。
             p.pose = Pose::new(
                 anchor - up * (size.y * (0.75 + 0.25 * opacity) / 2.0)
                     + rotation * Vec3::Z * HUD_LIFT,
                 rotation,
             );
+            if woke
+                && let Err(e) =
+                    p.surface
+                        .restore(vr, p.displayed_size().x, p.pose, opacity * awake, dim)
+            {
+                logger::warn!("ナビゲーションバーのオーバーレイを作り直せない", error = ?e, panel = id);
+            }
             if (faded && p.surface.has_texture()) || (p.closed && opacity == 0.0) {
                 Self::present(vr, p, false);
             } else if resized {
                 p.surface.set_width(vr, p.displayed_size().x);
+            }
+            if asleep && awake == 0.0 {
+                p.surface.park(vr);
             }
         }
     }
