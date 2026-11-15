@@ -427,6 +427,7 @@ key_sound_volume = "Key sound volume"
 lod_quality = "Distance LOD quality"
 dashboard_distance = "Dashboard distance"
 dashboard_height = "Dashboard height"
+notification_anchor = "Position at the edge of view"
 licenses = "Licenses"
 source_code = "Source code"
 
@@ -442,6 +443,7 @@ mirroring = "Mirroring"
 keyboard = "Keyboard"
 graphics = "Graphics"
 dashboard = "Dashboard"
+notifications = "Notifications"
 update = "Updates"
 about = "About"
 
@@ -527,3 +529,16 @@ running = "Running panel"
 none = "None"
 all = "Everything (outside the sandbox)"
 builtin = "Built into nyaw"
+
+[settings.anchor]
+top_left = "Top left"
+top = "Top"
+top_right = "Top right"
+left = "Left"
+right = "Right"
+bottom_left = "Bottom left"
+bottom = "Bottom"
+bottom_right = "Bottom right"
+
+[toast]
+more = "+{count} more"

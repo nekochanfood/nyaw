@@ -12,6 +12,7 @@ i18n.workspace = true
 gpui.workspace = true
 kernel.workspace = true
 nyapp.workspace = true
+toast.workspace = true
 ui.workspace = true
 
 [dev-dependencies]

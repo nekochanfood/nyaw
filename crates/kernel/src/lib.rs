@@ -78,6 +78,8 @@ pub enum PanelCommand {
     Animated(bool),
     /// このパネルが出ている間、空間全体を暗くする（`Overlay::set_veil`）。
     Veil(bool),
+    /// レーザーを素通りさせる（`Overlay::set_pass_through`。視界の端に出す表示だけのもの）。
+    PassThrough(bool),
     Close,
     /// 隠す・出し直す（`Overlay::set_hidden`。閉じずにビュー・配信・音を残す）。
     Hide(bool),
@@ -1050,6 +1052,7 @@ impl<B: VrBackend> Kernel<B> {
                     .set_animated(&mut self.subsystems.backend, panel, animated)
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
+            PanelCommand::PassThrough(pass) => self.overlay.set_pass_through(panel, pass),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
             PanelCommand::Reach(reach) => self.overlay.set_reach(panel, reach),
             PanelCommand::PointerMode(mode) => {

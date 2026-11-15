@@ -33,6 +33,7 @@ impl Overlay {
             pointer: None,
             animated: true,
             veil: false,
+            pass_through: false,
             capture: false,
             os_cursor: None,
             parent: None,
@@ -228,6 +229,11 @@ impl Overlay {
     /// 幕はパネルより奥に描くので、パネル・レーザーは暗くならない。
     pub fn set_veil(&mut self, id: PanelId, veil: bool) {
         self.panels[id].veil = veil;
+    }
+
+    /// レーザーを素通りさせる（指せず、後ろのパネルを指せる）。視界の端に出す表示だけのもの（HUD）。
+    pub fn set_pass_through(&mut self, id: PanelId, pass: bool) {
+        self.panels[id].pass_through = pass;
     }
 
     /// `hand` のレーザーを描くパネルにする。以降はヒット判定の対象外になり、毎 tick レーザーに合わせて置かれる。

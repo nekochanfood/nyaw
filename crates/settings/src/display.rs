@@ -1,10 +1,10 @@
-//! 表示（`settings-display`）: ダッシュボードの置き場所・距離 LOD の品質・ミラーリングの取得の上限 FPS。どれも 1〜2 行なので
+//! 表示（`settings-display`）: ダッシュボードの置き場所・通知を視界の端に出す位置・距離 LOD の品質・ミラーリングの取得の上限 FPS。どれも 1〜2 行なので
 //! 詳しい画面には分けず、見出し付きのグループで並べる。
 
 use design::Theme;
 use design::components;
 use gpui::{App, Context, Div, SharedString, Window};
-use kernel::{LodQuality, Setting};
+use kernel::{LodQuality, NotificationAnchor, Setting};
 
 use crate::{ROW_SLIDER_PX, Settings};
 
@@ -64,6 +64,24 @@ pub(crate) fn page(
             Setting::DashboardHeight,
         ),
     ];
+    // 通知: 視界の端に出す位置（上下左右の端と四隅）。
+    let anchor = s.select(
+        theme,
+        window,
+        cx,
+        "setting-notification-anchor",
+        &design::icons::BELL,
+        i18n::t(cx, "settings.notification_anchor"),
+        now.notification_anchor,
+        NotificationAnchor::ALL
+            .map(|a| {
+                let key = anchor_key(a);
+                let id = format!("setting-anchor-{}", key.replace('_', "-"));
+                (id, i18n::t(cx, &format!("settings.anchor.{key}")), a)
+            })
+            .to_vec(),
+        Setting::NotificationAnchor,
+    );
     // グラフィックス: 距離 LOD の品質。
     let lod = s.select(
         theme,
@@ -102,9 +120,18 @@ pub(crate) fn page(
     };
     vec![
         group("settings.category.dashboard", dashboard.into()),
+        group("settings.category.notifications", vec![anchor]),
         group("settings.category.graphics", vec![lod]),
         group("settings.category.mirroring", vec![mirror]),
     ]
+}
+
+/// 通知の位置の設定ファイルの値（`top_left` など。i18n の `settings.anchor.*` のキーにも使う）。
+fn anchor_key(a: NotificationAnchor) -> String {
+    kernel::config::value(a)
+        .as_str()
+        .unwrap_or_default()
+        .to_owned()
 }
 
 /// 決めると自分の置き場所が変わる長さ（m）のスライダーの行（`ids` は行とスライダー）。動かしている間は値だけを見せて

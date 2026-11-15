@@ -166,6 +166,7 @@ impl Overlay {
                     !p.closed
                         && !p.hidden
                         && p.pointer.is_none()
+                        && !p.pass_through
                         && !p.parent.is_some_and(|q| q.hud)
                         && !p.nav_bar_of.is_some_and(|o| self.panels[o].hidden)
                 })

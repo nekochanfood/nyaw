@@ -427,6 +427,7 @@ key_sound_volume = "入力音の音量"
 lod_quality = "距離 LOD の品質"
 dashboard_distance = "ダッシュボードの距離"
 dashboard_height = "ダッシュボードの高さ"
+notification_anchor = "視界の端に出す位置"
 licenses = "ライセンス"
 source_code = "ソースコード"
 
@@ -442,6 +443,7 @@ mirroring = "ミラーリング"
 keyboard = "キーボード"
 graphics = "グラフィックス"
 dashboard = "ダッシュボード"
+notifications = "通知"
 update = "アップデート"
 about = "情報"
 
@@ -527,3 +529,16 @@ running = "起動中のパネル"
 none = "なし"
 all = "すべて（サンドボックスの外）"
 builtin = "nyaw に組み込み"
+
+[settings.anchor]
+top_left = "左上"
+top = "上"
+top_right = "右上"
+left = "左"
+right = "右"
+bottom_left = "左下"
+bottom = "下"
+bottom_right = "右下"
+
+[toast]
+more = "ほか {count} 件"

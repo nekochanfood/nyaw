@@ -6,7 +6,7 @@
 
 ## 主な公開 API
 
-`Kernel::{boot, with_backend, tick, submit, apply, status, set, settings, os_keyboard, add_panel, batteries, now_playing, notifications, fov}`（メディアと OS の通知の見張りは `boot` だけが起こす。`fov` は両目に映る範囲で、HUD は `vr::Fov::safe` に通した範囲に置く）, `PanelCommand`（`Notification { id, action }` で OS の通知の本文かボタンを押したことをアプリへ届ける、`Hide(bool)` で閉じずに隠す・出し直す、`Resizable(bool)`、`GrabAnchor(Option<Pose>)`、`Media(media::Command)`、`FocusSource`（配信しているウィンドウを OS で前に出す））, `PanelStatus`（`hidden`、`gazed` = 見ている。`Overlay::gazed`）, `Setting`, `Settings`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート
+`Kernel::{boot, with_backend, tick, submit, apply, status, set, settings, os_keyboard, add_panel, batteries, now_playing, notifications, fov}`（メディアと OS の通知の見張りは `boot` だけが起こす。`fov` は両目に映る範囲で、HUD は `vr::Fov::safe` に通した範囲に置く）, `PanelCommand`（`PassThrough(bool)` でレーザーを素通りさせる、`Notification { id, action }` で OS の通知の本文かボタンを押したことをアプリへ届ける、`Hide(bool)` で閉じずに隠す・出し直す、`Resizable(bool)`、`GrabAnchor(Option<Pose>)`、`Media(media::Command)`、`FocusSource`（配信しているウィンドウを OS で前に出す））, `PanelStatus`（`hidden`、`gazed` = 見ている。`Overlay::gazed`）, `Setting`, `Settings`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート
 
 ## パネルの LOD
 

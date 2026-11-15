@@ -49,6 +49,7 @@ profiler = { path = "crates/profiler" }
 testing = { path = "crates/testing" }
 settings = { path = "crates/settings" }
 wrist = { path = "crates/wrist" }
+toast = { path = "crates/toast" }
 setup = { path = "crates/setup" }
 dashboard = { path = "crates/dashboard" }
 beam = { path = "crates/beam" }

@@ -93,6 +93,8 @@ pub struct Panel {
     pub animated: bool,
     /// 出ている間、空間全体を暗くする（[`Overlay::set_veil`]）。
     pub veil: bool,
+    /// レーザーが素通りする（[`Overlay::set_pass_through`]）。
+    pub pass_through: bool,
     /// OS へのタッチを解放まで同じパネルへ届ける。
     capture: bool,
     /// その手で指している間、カーソルの代わりに出す OS のカーソル（[`Overlay::set_os_cursor`]）。

@@ -105,15 +105,16 @@ impl Overlay {
                     let to = self.slot_offset(id, parent.panel, tilt);
                     let p = &self.panels[id];
                     // 積む子は、積む先が出入りしても跳ばずに追いつく（見えていないときはそのまま合わせる）。
-                    self.panels[id].offset = if parent.stack && p.animated && !p.hidden && p.opacity > 0.0 {
-                        let k = 1.0 - (-self.dt / STACK_FOLLOW).exp();
-                        Pose::new(
-                            p.offset.position.lerp(to.position, k),
-                            p.offset.orientation.slerp(to.orientation, k),
-                        )
-                    } else {
-                        to
-                    };
+                    self.panels[id].offset =
+                        if parent.stack && p.animated && !p.hidden && p.opacity > 0.0 {
+                            let k = 1.0 - (-self.dt / STACK_FOLLOW).exp();
+                            Pose::new(
+                                p.offset.position.lerp(to.position, k),
+                                p.offset.orientation.slerp(to.orientation, k),
+                            )
+                        } else {
+                            to
+                        };
                 } else if parent.hud {
                     // 親の縦横比は配信元に合わせて変わるので、角からの位置を毎 tick 決め直す。
                     let (outer, inner) = (self.panels[parent.panel].size, self.panels[id].size);
