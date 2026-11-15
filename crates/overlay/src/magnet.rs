@@ -20,9 +20,10 @@ const GHOST_MAX_PX: f32 = 1024.0;
 const GHOST_SINK: f32 = 0.01;
 /// 見本の枠を、画面の地の縁からどれだけ外へ広げるか（m）。はまっている間も、画面の周りに枠が見える。
 const GHOST_PAD: f32 = 0.01;
-/// 掴んでいる画面がはまる所からこれより近ければ見本をはっきり出し、遠ざかるにつれて薄れ、これより遠ければ消す（m）。
-const GHOST_NEAR: f32 = ATTRACT;
-const GHOST_FAR: f32 = 0.7;
+/// 掴んでいる画面がはまる所にこれより近づくと見本をフェードインし、これより遠ざかるとフェードアウトする（m）。
+/// 濃さは距離で変えず、近いか遠いかの二択。境目で行き来しないよう、消える距離を少し遠くする。
+const GHOST_SHOW: f32 = 0.45;
+const GHOST_HIDE: f32 = 0.55;
 
 /// 見本に出す一行。離すとはまるか（[`DockHint::docks`]）で、上の層は枠の色も変える。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,8 +63,8 @@ pub(crate) struct Ghost {
     alpha: f32,
     /// 今の置き場所の大きさで描いた絵が届いている（[`Overlay::submit`]）。出始めは届くまで待つ（前の絵を一瞬見せない）。
     pub(crate) ready: bool,
-    /// 掴んでいる画面がはまる所に近い具合（1 = [`GHOST_NEAR`] より近い、0 = [`GHOST_FAR`] より遠い）。濃さに掛ける。
-    near: f32,
+    /// 掴んでいる画面がはまる所に近い（[`GHOST_SHOW`] / [`GHOST_HIDE`]）。近い間だけ出す。
+    near: bool,
     /// 最後に置いた所（姿勢・幅・解像度）。離してから消えきるまで同じ所に置く。
     at: Option<(Pose, f32, (u32, u32))>,
 }
@@ -74,7 +75,7 @@ impl Default for Ghost {
             shown: Transition::rest(0.0),
             alpha: 0.0,
             ready: false,
-            near: 0.0,
+            near: false,
             at: None,
         }
     }
@@ -291,7 +292,7 @@ impl Overlay {
     }
 
     /// はまる所の見本（[`Pointer::Dock`]）を、その手で掴んでいる画面のはまる所の少し奥に、地より少し大きく置く（上に一行の帯を
-    /// 足す）。置き場所が分かるよう動かさず、濃さだけを変える: 画面がはまる所に近いほど濃く、離れると薄れて消える。
+    /// 足す）。置き場所が分かるよう動かさない: 画面がはまる所に近づくとフェードインし、離れるとフェードアウトする。
     /// 出始めは、その大きさで描いた絵が届いてからフェードインする。
     pub(crate) fn place_ghosts(&mut self, vr: &mut dyn VrBackend, now: Instant) {
         let scale = self.scale();
@@ -320,21 +321,20 @@ impl Overlay {
                 let up = Vec3::Y * (DOCK_HINT_PX as f32 / density / 2.0);
                 let at = slot.transform_point(up - Vec3::Z * GHOST_SINK);
                 h.ghost.at = Some((Pose::new(at, slot.orientation), rect.x, res));
-                // 画面がはまる所に近いほど濃く、遠ざかると薄れて消える。
                 let d = target.pose.position.distance(slot.position);
-                h.ghost.near = smoothstep(GHOST_FAR, GHOST_NEAR, d);
+                h.ghost.near = d < if h.ghost.near { GHOST_HIDE } else { GHOST_SHOW };
                 // 窓の大きさは UI 層が解像度に合わせる。
                 self.panels[id].resolution = res;
             }
             let p = &mut self.panels[id];
             // 掴み始めは、その大きさで描いた絵が届くまで待つ（[`Ghost::ready`]。届くのは窓を合わせて描き直した後）。
-            let (to, motion) = if held.is_some() && h.ghost.ready {
+            let (to, motion) = if held.is_some() && h.ghost.ready && h.ghost.near {
                 (1.0, Motion::Enter)
             } else {
                 (0.0, Motion::Exit)
             };
             h.ghost.shown.go(to, motion, now, true);
-            let alpha = h.ghost.shown.at(now).0 * h.ghost.near;
+            let alpha = h.ghost.shown.at(now).0;
             let Some((pose, width, _)) = h.ghost.at.filter(|_| alpha > 0.0) else {
                 p.surface.show(vr, false, None, p.size.x);
                 continue;

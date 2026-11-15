@@ -296,21 +296,31 @@ fn the_ghost_frames_the_slot_without_moving_and_waits_for_its_picture() {
         (rect.y * 1000.0).round() as u32 + DOCK_HINT_PX,
     );
     // 引いている間も、抜けて上下・左右に動かしている間も、見本は動かない（外れたナビゲーションバーの大きさに釣られない）。
-    // 画面がはまる所から遠ざかると薄れて消え、近づくとまた見える。
+    // 画面がはまる所から遠ざかるとフェードアウトし、近づくとフェードインする。濃さは距離で変えない（近いか遠いかの二択）。
+    // 境目の辺り（0.5m）では、それまでの見え方のまま（行き来しない）。
     for (to, near) in [
         (Vec3::X * 0.1, true),
         (Vec3::X * 0.5, true),
         (Vec3::new(0.9, 0.6, 0.0), false),
+        (Vec3::X * 0.5, false),
         (Vec3::new(0.2, 0.15, 0.0), true),
         (Vec3::new(0.15, -0.2, 0.1), true),
     ] {
         pull_to(&mut vr, &mut ov, slot.position + to);
+        std::thread::sleep(std::time::Duration::from_millis(
+            Motion::Enter.duration_ms() + 50,
+        ));
+        ov.tick(&mut vr);
         let o = &vr.backend.overlays[ghost];
         if !near {
             assert!(!o.visible, "{to}: 遠ざかると消える");
             continue;
         }
-        assert!(o.visible && o.alpha > 0.0, "{to}");
+        assert!(
+            o.visible && (o.alpha - 1.0).abs() < 1e-6,
+            "{to}: {}",
+            o.alpha
+        );
         assert!((o.width_m - rect.x).abs() < 1e-4, "{}", o.width_m);
         assert!(
             o.pose.position.abs_diff_eq(at, 1e-4),
