@@ -21,3 +21,7 @@ windows = { version = "0.61.3", features = [
     "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_Notifications", "Win32_UI_WindowsAndMessaging", "Win32_Storage_EnhancedStorage",
 ] }
+
+# テストでアプリの通知の受け口（COM）をこのプロセスに置く（`#[implement]` が直接のクレートを要る。windows と同じ版）。
+[target.'cfg(windows)'.dev-dependencies]
+windows-core = "0.61"

@@ -4,6 +4,7 @@
 //! （`INotificationActivationCallback` の COM サーバー）に引数を渡す。受け口が無ければアプリを開くだけ。
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use windows::{
@@ -15,10 +16,11 @@ use windows::{
         NotificationKinds, UserNotification,
     },
     Win32::{
-        Storage::EnhancedStorage::PKEY_AppUserModel_ToastActivatorCLSID,
+        Storage::EnhancedStorage::{PKEY_AppUserModel_ID, PKEY_AppUserModel_ToastActivatorCLSID},
         System::{
             Com::{
-                CLSCTX_LOCAL_SERVER, CLSIDFromString, CoAllowSetForegroundWindow, CoCreateInstance,
+                CLSCTX_LOCAL_SERVER, CLSIDFromString, COINIT_APARTMENTTHREADED,
+                CoAllowSetForegroundWindow, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
             },
             Registry::{HKEY_CLASSES_ROOT, RRF_RT_REG_SZ, RegGetValueW},
             WinRT::{RO_INIT_MULTITHREADED, RoInitialize},
@@ -213,12 +215,65 @@ fn registered(app: &str) -> Option<GUID> {
     }
 }
 
-/// スタートメニューのショートカットに書いた通知の受け口（`System.AppUserModel.ToastActivatorCLSID`。Chrome など）。
+/// スタートメニューのショートカット（.lnk）に書いた通知の受け口（`System.AppUserModel.ToastActivatorCLSID`。Chrome・Edge・
+/// Discord など）。スタートメニューの項目（`shell:AppsFolder`）は持っていないので、ショートカットのファイルを探す。
+/// シェルは STA で読むので、呼ぶ側のスレッドによらないよう別のスレッドで読む。結果はアプリごとに覚える（[`Listener::activator`]）。
 fn shortcut(app: &str) -> Option<GUID> {
-    let path = HSTRING::from(format!("shell:AppsFolder\\{app}"));
-    let item: IShellItem2 = unsafe { SHCreateItemFromParsingName(&path, None) }.ok()?;
-    let clsid = unsafe { item.GetCLSID(&PKEY_AppUserModel_ToastActivatorCLSID) }.ok()?;
-    (clsid != GUID::zeroed()).then_some(clsid)
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            start_menu_links()
+                .iter()
+                .find_map(|path| match link_activator(path) {
+                    Some((id, clsid)) if id == app => clsid,
+                    _ => None,
+                })
+        })
+        .join()
+        .ok()
+        .flatten()
+    })
+}
+
+/// ショートカットの AppUserModelId と、書いてあれば通知の受け口。
+fn link_activator(path: &Path) -> Option<(String, Option<GUID>)> {
+    let item: IShellItem2 =
+        unsafe { SHCreateItemFromParsingName(&HSTRING::from(path), None) }.ok()?;
+    let id = unsafe { item.GetString(&PKEY_AppUserModel_ID) }.ok()?;
+    let text = unsafe { id.to_string() }.ok();
+    unsafe { CoTaskMemFree(Some(id.0 as *const _)) };
+    let clsid = unsafe { item.GetCLSID(&PKEY_AppUserModel_ToastActivatorCLSID) }
+        .ok()
+        .filter(|c| *c != GUID::zeroed());
+    Some((text?, clsid))
+}
+
+/// スタートメニュー（全ユーザーと自分）のショートカットのファイル。
+fn start_menu_links() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = ["ProgramData", "APPDATA"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .map(|root| Path::new(&root).join(r"Microsoft\Windows\Start Menu\Programs"))
+        .collect();
+    let mut links = Vec::new();
+    while let Some(dir) = dirs.pop() {
+        for path in std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|e| e.path())
+        {
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path
+                .extension()
+                .is_some_and(|x| x.eq_ignore_ascii_case("lnk"))
+            {
+                links.push(path);
+            }
+        }
+    }
+    links
 }
 
 /// ストリームの中身を全部読む。
@@ -298,6 +353,98 @@ mod db {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Arc, Mutex};
+    use windows::Win32::System::Com::{
+        COINIT_MULTITHREADED, CoInitializeEx, CoRegisterClassObject, CoRevokeClassObject,
+        IClassFactory, IClassFactory_Impl, REGCLS_MULTIPLEUSE,
+    };
+    use windows::Win32::System::Registry::{
+        HKEY_CURRENT_USER, REG_SZ, RegDeleteTreeW, RegSetKeyValueW,
+    };
+    use windows::Win32::UI::Notifications::{
+        INotificationActivationCallback_Impl, NOTIFICATION_USER_INPUT_DATA,
+    };
+    use windows::core::{BOOL, IUnknown, Interface, Ref, implement};
+
+    type Got = Arc<Mutex<Vec<(String, String)>>>;
+
+    /// アプリの通知の受け口の代わり: 受け取ったもの（AppUserModelId と引数）を覚える。
+    #[implement(INotificationActivationCallback)]
+    struct Callback(Got);
+
+    impl INotificationActivationCallback_Impl for Callback_Impl {
+        fn Activate(
+            &self,
+            app: &PCWSTR,
+            args: &PCWSTR,
+            _: *const NOTIFICATION_USER_INPUT_DATA,
+            _: u32,
+        ) -> windows::core::Result<()> {
+            let got = unsafe { (app.to_string()?, args.to_string()?) };
+            self.0.lock().unwrap().push(got);
+            Ok(())
+        }
+    }
+
+    #[implement(IClassFactory)]
+    struct Factory(Got);
+
+    impl IClassFactory_Impl for Factory_Impl {
+        fn CreateInstance(
+            &self,
+            _: Ref<'_, IUnknown>,
+            riid: *const GUID,
+            out: *mut *mut core::ffi::c_void,
+        ) -> windows::core::Result<()> {
+            let callback: IUnknown = Callback(self.0.clone()).into();
+            unsafe { callback.query(riid, out).ok() }
+        }
+
+        fn LockServer(&self, _: BOOL) -> windows::core::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// 押したことが、OS と同じ経路でアプリの通知の受け口（COM のローカルサーバー）に届く: レジストリの
+    /// `AppUserModelId\<ID>\CustomActivator` から受け口を引き、AppUserModelId と通知の引数を渡す。受け口はこの
+    /// プロセスに置き（`CoRegisterClassObject`）、レジストリには一時的なキーを HKCU に書いて消す。
+    #[test]
+    fn a_click_reaches_the_apps_activator() {
+        let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+        let clsid = GUID::new().unwrap();
+        let app = format!("nyaw.test.{clsid:?}");
+        let got: Got = Arc::default();
+        let factory: IClassFactory = Factory(got.clone()).into();
+        let cookie = unsafe {
+            CoRegisterClassObject(&clsid, &factory, CLSCTX_LOCAL_SERVER, REGCLS_MULTIPLEUSE)
+        }
+        .unwrap();
+        let key = HSTRING::from(format!("Software\\Classes\\AppUserModelId\\{app}"));
+        let value: Vec<u16> = format!("{{{clsid:?}}}").encode_utf16().chain([0]).collect();
+        let written = unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                &key,
+                w!("CustomActivator"),
+                REG_SZ.0,
+                Some(value.as_ptr().cast()),
+                (value.len() * 2) as u32,
+            )
+        };
+        let found = registered(&app);
+        let delivered = found.map(|clsid| invoke(clsid, &app, "action=reply&id=7"));
+        unsafe {
+            let _ = RegDeleteTreeW(HKEY_CURRENT_USER, &key);
+            let _ = CoRevokeClassObject(cookie);
+        }
+        assert!(written.is_ok(), "{written:?}");
+        assert_eq!(found, Some(clsid), "the activator is found in the registry");
+        delivered.unwrap().unwrap();
+        assert_eq!(
+            *got.lock().unwrap(),
+            [(app, "action=reply&id=7".to_owned())]
+        );
+    }
 
     /// 実機の確認: PowerShell の名前でトーストを出し、リスナーが読めること・DB からボタンが読めることを見る。
     /// `cargo test -p notifications -- --ignored --nocapture`（Windows。通知へのアクセスが許されていること）。
@@ -331,5 +478,25 @@ $id = '{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.
         );
         assert!(shell.is_some(), "スタートメニューのアイコン");
         listener.remove(raw.id);
+    }
+
+    /// 実機の確認: スタートメニューのショートカットに通知の受け口を書いたアプリ（Chrome・Edge・Discord など）は、どれも
+    /// AppUserModelId から受け口が引ける（スタートメニューの項目からは引けず、ショートカットを探す）。
+    /// `cargo test -p notifications -- --ignored --nocapture`（そういうアプリが 1 つも無ければ何も確かめない）。
+    #[test]
+    #[ignore]
+    fn activators_are_found_from_start_menu_shortcuts() {
+        let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+        let declared: Vec<(String, GUID)> = start_menu_links()
+            .iter()
+            .filter_map(|p| link_activator(p))
+            .filter_map(|(id, clsid)| Some((id, clsid?)))
+            .collect();
+        println!("{} shortcuts declare an activator", declared.len());
+        for (id, clsid) in declared {
+            let found = shortcut(&id);
+            println!("{id} -> {found:?}");
+            assert!(found.is_some(), "{id}: {clsid:?}");
+        }
     }
 }

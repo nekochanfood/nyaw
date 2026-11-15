@@ -3264,6 +3264,7 @@ dependencies = [
  "logger",
  "roxmltree 0.21.1",
  "windows 0.61.3",
+ "windows-core 0.61.2",
 ]
 
 [[package]]

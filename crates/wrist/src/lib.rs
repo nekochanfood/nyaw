@@ -83,6 +83,8 @@ pub struct Wrist {
     settings: dashboard::Summon,
     /// ダッシュボード（一度開いたら閉じずに隠す）。
     pub dashboard: Option<PanelId>,
+    /// OS の通知のトースト。
+    pub toast: Option<PanelId>,
     /// このパネル。
     panel: PanelId,
     /// 反映した X ボタンの二回押しの回数（[`kernel::PanelStatus::double_press`]）。
@@ -122,13 +124,16 @@ impl Wrist {
         // ダッシュボードは起動時に隠したまま作っておく（画面の配信を用意しておき、X の二回押しでは出すだけ）。
         open_dashboard(settings, debug, true, cx);
         // OS の通知のトースト（隠したまま。届くと視界の端に出て、この時計・ダッシュボードの上へ動く）。
-        cx.default_global::<PanelControl>()
-            .spawns
-            .push(toast::spec(panel));
+        let wrist = cx.entity();
+        let toast = toast::spec(panel, move |id, cx| {
+            wrist.update(cx, |w, _| w.toast = Some(id));
+        });
+        cx.default_global::<PanelControl>().spawns.push(toast);
         Self {
             debug,
             settings,
             dashboard: None,
+            toast: None,
             panel,
             toggles: 0,
             locked: false,

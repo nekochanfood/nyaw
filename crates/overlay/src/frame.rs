@@ -180,7 +180,7 @@ impl Overlay {
             self.close(vr, id);
         }
         self.settle_family(&dragged);
-        self.glide(vr, &dragged, now);
+        self.glide(vr, &dragged);
         let mut parents = std::collections::HashSet::new();
         for &id in &self.present {
             let p = &self.panels[id];

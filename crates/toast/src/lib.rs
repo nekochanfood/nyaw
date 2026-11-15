@@ -42,9 +42,11 @@ const CARD_ICON: f32 = 36.0;
 /// 隠してから、ほかの場所に出し直すまで（消えるのを待つ。戻るように動いて見せない）。
 const REAPPEAR: Duration = Duration::from_millis(200);
 
-/// トーストの起動仕様。手首の時計 `wrist` の上と、ダッシュボード（`PanelControl::dock`）の上へも動く。
-pub fn spec(wrist: PanelId) -> PanelSpec {
+/// トーストの起動仕様。手首の時計 `wrist` の上と、ダッシュボード（`PanelControl::dock`）の上へも動く。`opened` は作られた
+/// パネルの ID を受け取る。
+pub fn spec(wrist: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'static) -> PanelSpec {
     PanelSpec::root(Pose::IDENTITY, move |panel, _, cx: &mut Context<Toast>| {
+        opened(panel, cx);
         // 何も届いていない間は隠しておく。
         ui::command(panel, PanelCommand::Hide(true), cx);
         Toast::new(panel, wrist, cx)

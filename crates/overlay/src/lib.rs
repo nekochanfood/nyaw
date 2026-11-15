@@ -307,13 +307,13 @@ struct HandState {
 
 /// 位置のトランジション: `from` から `to` へ動かす。`to` が `None` なら、毎 tick 決まる置き場所（はまる場所）へ向かう。
 /// 動いている間に大きさを変えたら（[`Overlay::fit_height`]）、大きさも `size` の始めから終わりへ一緒に変える。
+/// 進めるのは tick の経過（[`TICK_MAX`] で丸める）なので、遅れたフレームの後も跳ばずに続きから動く。
 #[derive(Debug)]
 struct Glide {
     from: Pose,
     to: Option<Pose>,
     size: Option<(Vec2, Vec2)>,
     tween: Animation,
-    last: Instant,
 }
 
 #[derive(Debug, Default)]

@@ -610,11 +610,8 @@ fn with_toast() -> (Subsystems<MockBackend>, Overlay, PanelId) {
     (vr, ov, toast)
 }
 
-/// 動いているもの（実時間で進む）を終わらせ、積む子が追いつくまで tick する。
+/// 動いているものを終わらせ、積む子が追いつくまで tick する（1 tick は少なくとも 1/120 秒進む）。
 fn finish_glides(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay) {
-    for g in ov.glides.values_mut() {
-        g.last = Instant::now() - std::time::Duration::from_secs(5);
-    }
     for _ in 0..120 {
         ov.tick(vr);
     }
@@ -637,6 +634,8 @@ fn a_slot_child_glides_with_its_size_to_another_parent() {
     let (mut vr, mut ov, toast) = with_toast();
     ov.set_parent(&mut vr.backend, toast, stack_on(2));
     ov.fit_height(&mut vr.backend, toast, 0.05);
+    // 次のフレームが遅れても（動きより長く止まっても）、跳ばずに元の所から動き出す。
+    std::thread::sleep(std::time::Duration::from_millis(400));
     ov.tick(&mut vr);
     let on_wrist = |ov: &Overlay| {
         ov.panel(toast)

@@ -328,6 +328,18 @@ impl Notifications {
         }
     }
 
+    /// OS を見ずに、決まった一覧 `list` を届いたものとして返す（E2E・見本用）。押したものは受け口 `clicks` に届く。
+    pub fn fixed(list: Vec<Notification>) -> (Self, mpsc::Receiver<(u32, Option<usize>)>) {
+        let (activations, clicks) = mpsc::channel();
+        let list: Arc<[Arc<Notification>]> = list.into_iter().map(Arc::new).collect();
+        let notifications = Self {
+            latest: Arc::new(Mutex::new(list)),
+            activations,
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        (notifications, clicks)
+    }
+
     /// 起動してから届いた通知（通知センターに残っているもの。届いた順）。
     pub fn now(&self) -> Arc<[Arc<Notification>]> {
         // 入れ替えるのは参照だけなので、待っても一瞬。読めないフレームに空を返すと、消えて届き直したように見える。

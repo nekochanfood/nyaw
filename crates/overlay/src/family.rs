@@ -47,7 +47,6 @@ impl Overlay {
                         to,
                         size: None,
                         tween: Animation::new(0.0, 1.0, Motion::Move),
-                        last: Instant::now(),
                     },
                 );
             } else if let Some(pose) = to {
@@ -178,8 +177,8 @@ impl Overlay {
     }
 
     /// 位置のトランジションを進める（[`Glide`]）。掴まれたら、その場でやめる。
-    pub(crate) fn glide(&mut self, vr: &mut dyn VrBackend, dragged: &[PanelId], now: Instant) {
-        let panels = &mut self.panels;
+    pub(crate) fn glide(&mut self, vr: &mut dyn VrBackend, dragged: &[PanelId]) {
+        let (panels, dt) = (&mut self.panels, self.dt);
         self.glides.retain(|&id, g| {
             let p = &mut panels[id];
             if dragged.contains(&id) {
@@ -188,10 +187,7 @@ impl Overlay {
                 }
                 return false;
             }
-            let t = g
-                .tween
-                .advance(now.saturating_duration_since(g.last).as_secs_f32());
-            g.last = now;
+            let t = g.tween.advance(dt);
             let to = g.to.unwrap_or(p.pose);
             p.pose = Pose::new(
                 g.from.position.lerp(to.position, t),

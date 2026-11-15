@@ -86,9 +86,13 @@ impl Overlay {
             height * p.resolution.0 as f32 / p.resolution.1 as f32,
             height,
         );
-        // 動いている最中（はめる・親を移る）なら、大きさも動きに合わせて変える（跳ばないように）。
+        // 動いている最中（はめる・親を移る）なら、大きさも動きに合わせて変える（跳ばないように）。動き出す前なら、
+        // 移動と大きさの変化が続く形の移り変わり（`Motion::Morph`。少し長い）にする。
         if let Some(g) = self.glides.get_mut(&id).filter(|_| !p.hidden) {
             g.size = Some((p.size, size));
+            if g.tween.value() == 0.0 {
+                g.tween = Animation::new(0.0, 1.0, Motion::Morph);
+            }
             return;
         }
         p.size = size;
@@ -326,7 +330,6 @@ impl Overlay {
                 to: Some(p.pose * Pose::new(Vec3::NEG_Z * SLOT_RETREAT, Quat::IDENTITY)),
                 size: None,
                 tween: Animation::new(0.0, 1.0, Motion::Exit),
-                last: Instant::now(),
             },
         );
     }

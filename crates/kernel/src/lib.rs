@@ -475,7 +475,7 @@ impl Kernel {
         kernel.config_path = config::path();
         kernel.audio = audio::Engine::open();
         kernel.media = Some(subsystems::media::Media::start());
-        kernel.notifications = Some(subsystems::notifications::Notifications::start());
+        kernel.set_notifications(subsystems::notifications::Notifications::start());
         Ok(kernel)
     }
 }
@@ -994,6 +994,11 @@ impl<B: VrBackend> Kernel<B> {
         self.notifications
             .as_ref()
             .map_or_else(|| Arc::from([]), |n| n.now())
+    }
+
+    /// OS の通知の見張りを差し替える（`boot` は OS のものを起こす。E2E は決まった一覧 `Notifications::fixed`）。
+    pub fn set_notifications(&mut self, notifications: subsystems::notifications::Notifications) {
+        self.notifications = Some(notifications);
     }
 
     /// 両目に映る範囲（ランタイムが教えてくれなければ `None`）。頭に付けて視野の端に出すもの（HUD）は、

@@ -2,11 +2,11 @@
 
 層: 5 画面
 
-OS の通知（`kernel::Kernel::notifications`。[`crates/subsystems/notifications`](../subsystems/notifications/AGENT.md)）のトースト。**1 枚のパネルを使い回し**、届いた通知を視界の端（HUD）→ 手首の時計の上 → ダッシュボードの上へ動かす。開くのは wrist（起動時に隠したまま。`toast::spec(wrist)`）。ナビゲーションバーは付けない（常駐で、置き場所は自分で決める。閉じる・動かす対象ではない）。
+OS の通知（`kernel::Kernel::notifications`。[`crates/subsystems/notifications`](../subsystems/notifications/AGENT.md)）のトースト。**1 枚のパネルを使い回し**、届いた通知を視界の端（HUD）→ 手首の時計の上 → ダッシュボードの上へ動かす。開くのは wrist（起動時に隠したまま。`toast::spec(wrist, opened)`。ID は `Wrist::toast`）。ナビゲーションバーは付けない（常駐で、置き場所は自分で決める。閉じる・動かす対象ではない）。
 
 ## 主な公開 API
 
-`spec(wrist)`, `Toast`（`place`）, `Place`, `hud_pose(anchor, safe, scale)`, `HUD_DISTANCE`（1.5m）, `RES_PX`
+`spec(wrist, opened)`, `Toast`（`place`）, `Place`, `hud_pose(anchor, safe, scale)`, `HUD_DISTANCE`（1.5m）, `RES_PX`
 
 ## 流れ（ウォーターフォール。`flow.rs`）
 
