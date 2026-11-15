@@ -118,11 +118,9 @@ impl Render for NavBar {
             let spec = attach::menu_spec(owner, cx);
             cx.default_global::<PanelControl>().spawns.push(spec);
         });
-        let leading = std::iter::once(hand)
-            .chain(dock.flatten())
-            .chain(os_keyboard)
-            .collect();
+        let leading = std::iter::once(hand).chain(dock.flatten()).collect();
         let minimize = self.minimize.clone();
+        // 右側（閉じるボタンの左）は、左から OS キーボードのトグル・配信元をしまうボタン。左側が詰まらないよう右に寄せる。
         let beside_close = self.source_minimize.clone().map(|minimize| {
             design::components::icon_button(
                 &theme,
@@ -151,7 +149,7 @@ impl Render for NavBar {
                 None => command(owner, PanelCommand::Close, cx),
             },
             leading,
-            beside_close,
+            os_keyboard.into_iter().chain(beside_close).collect(),
         ))
     }
 }
