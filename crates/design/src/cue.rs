@@ -93,10 +93,14 @@ pub fn hover(id: &SharedString, window: &Window, cx: &mut App) {
     if source.0.is_none() && source.1.contains(&w) {
         return;
     }
-    let key = (w, source.0.unwrap_or(1));
+    let (hand, key) = (source.0, (w, source.0.unwrap_or(1)));
     let h = cx.default_global::<Hovers>();
-    if h.now.get(&key) == Some(id) {
-        return;
+    match h.now.get(&key) {
+        Some(now) if now == id => return,
+        // 1 回の移動は内側の要素から順に届く。外側（中にボタンを置いたカードなど）で上書きすると、次の移動で内側に
+        // 入り直したことになって鳴り続けるので、先に受けた内側のものを残す。
+        Some(_) if hand.is_some() => return,
+        _ => {}
     }
     h.now.insert(key, id.clone());
     if h.prev.get(&key) != Some(id) {

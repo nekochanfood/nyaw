@@ -44,6 +44,8 @@ pub struct Entering {
     scroll_t: Option<Instant>,
     /// 動かさない（出きった状態で描く）。画面のテストが、動いている途中のボタンを押さないように。
     off: bool,
+    /// しばらく描かれなかったことを、隠れていたとみなさない（[`Entering::without_idle_replay`]）。
+    no_idle: bool,
 }
 
 impl Entering {
@@ -53,6 +55,13 @@ impl Entering {
             off,
             ..Self::default()
         }
+    }
+
+    /// しばらく（[`IDLE_GAP`]）描かれなくても出し直さない。出たまま描き直さないことがあるもの（出し直すときは自分で
+    /// [`Entering::replay`] か `begin` の `hidden` で知らせる）に。
+    pub fn without_idle_replay(mut self) -> Self {
+        self.no_idle = true;
+        self
     }
 
     /// 全部のボタンを、次のフレームから左のものから順に出し直す（ダッシュボードを出し直したときと同じ動き）。
@@ -67,7 +76,7 @@ impl Entering {
         } else if self.hid
             || self
                 .last
-                .is_none_or(|l| now.saturating_duration_since(l) > IDLE_GAP)
+                .is_none_or(|l| !self.no_idle && now.saturating_duration_since(l) > IDLE_GAP)
         {
             (self.hid, self.revealing) = (false, true);
             self.seen.clear();
@@ -407,6 +416,22 @@ mod tests {
         e.finish();
         e.begin(false, mid);
         assert_eq!(e.progress(&key("b"), 1, mid).rise, 0.0);
+    }
+
+    /// 出し直しを自分で知らせるものは、しばらく描かれなくても出し直さない（消えていく途中のものも続く）。
+    #[test]
+    fn without_idle_replay_a_long_pause_keeps_the_stack() {
+        let (mut e, t0) = (Entering::new(false).without_idle_replay(), Instant::now());
+        let done = t0 + Duration::from_secs(2);
+        for now in [t0, done] {
+            e.begin(false, now);
+            e.progress(&key("a"), 0, now);
+            e.finish();
+        }
+        let later = done + IDLE_GAP * 2;
+        e.begin(false, later);
+        assert_eq!(e.progress(&key("a"), 0, later).rise, 1.0, "出し直さない");
+        assert!(!e.finish());
     }
 
     /// 隠れていたダッシュボードを出し直すと、出ていたボタンも順に出し直す。

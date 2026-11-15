@@ -64,4 +64,56 @@ mod tests {
         };
         assert!(!enabled(Cue::Hover, &hover_off) && enabled(Cue::Click, &hover_off));
     }
+
+    /// 押せるカードの中のボタンは、入ったときに 1 回だけ鳴る（ポインタを動かし続けても鳴り直さない）。カードの地へ
+    /// 戻れば、カードの分がまた鳴る。
+    #[gpui::test]
+    fn a_button_inside_a_card_sounds_once_per_entry(cx: &mut gpui::TestAppContext) {
+        use design::components::{self, Variant};
+        use gpui::{MouseMoveEvent, PlatformInput, div, point, prelude::*, px};
+        struct Nested;
+        impl Render for Nested {
+            fn render(&mut self, _: &mut Window, cx: &mut gpui::Context<Self>) -> impl IntoElement {
+                let theme = design::Theme::current(cx);
+                div().size_full().child(
+                    components::tile(&theme, "card")
+                        .w(px(320.0))
+                        .h(px(240.0))
+                        .child(components::button(&theme, "inner", "OK", Variant::Default)),
+                )
+            }
+        }
+        let (_view, cx) = cx.add_window_view(|_, _| Nested);
+        cx.run_until_parked();
+        let card = cx.debug_bounds("card").unwrap();
+        let inner = cx.debug_bounds("inner").unwrap().center();
+        let hovers = |cx: &mut gpui::VisualTestContext, at: gpui::Point<gpui::Pixels>| {
+            // 同じ種類の音は続けて鳴らさない（`Cue::min_gap`）ので、その分だけ時計を進めてから動かす。
+            design::drive::advance(std::time::Duration::from_millis(100));
+            cx.update(|window, cx| {
+                let input = PlatformInput::MouseMove(MouseMoveEvent {
+                    position: at,
+                    pressed_button: None,
+                    modifiers: Default::default(),
+                });
+                crate::dispatch_input(0, kernel::vr::Hand::Right, input, window, cx);
+                let state = cx
+                    .default_global::<PanelControl>()
+                    .panels
+                    .entry(0)
+                    .or_default();
+                std::mem::take(&mut state.commands).len()
+            })
+        };
+        let body = card.bottom_right() - point(px(20.0), px(20.0));
+        assert_eq!(hovers(cx, body), 1, "カードに入った");
+        assert_eq!(hovers(cx, inner), 1, "中のボタンに入った");
+        assert_eq!(
+            hovers(cx, inner + point(px(2.0), px(0.0))),
+            0,
+            "ボタンの上で動かしても鳴り直さない"
+        );
+        assert_eq!(hovers(cx, inner + point(px(4.0), px(0.0))), 0);
+        assert_eq!(hovers(cx, body), 1, "カードの地へ戻った");
+    }
 }
