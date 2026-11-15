@@ -442,6 +442,23 @@ impl VrBackend for OpenVrBackend {
         Runtime::OpenVr
     }
 
+    fn fov(&self) -> Option<crate::Fov> {
+        let eye = |e| {
+            let (mut l, mut r, mut t, mut b) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+            unsafe { f(self.system().GetProjectionRaw)(e, &mut l, &mut r, &mut t, &mut b) };
+            // 正接で返る。上下はランタイムによって符号の向きが違うので、狭い方を上下の両方に使う。
+            let v = t.abs().min(b.abs()).atan();
+            crate::Fov {
+                left: l.abs().atan(),
+                right: r.abs().atan(),
+                up: v,
+                down: v,
+            }
+        };
+        let fov = eye(sys::EVREye_Eye_Left).overlap(eye(sys::EVREye_Eye_Right));
+        fov.valid().then_some(fov)
+    }
+
     fn poll(&mut self) -> Frame {
         let predict = self.wait_vsync();
         let s = self.system();

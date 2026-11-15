@@ -81,10 +81,16 @@ impl Overlay {
         }
         let height = height * self.scale();
         let p = &mut self.panels[id];
-        p.size = Vec2::new(
+        let size = Vec2::new(
             height * p.resolution.0 as f32 / p.resolution.1 as f32,
             height,
         );
+        // 動いている最中（はめる・親を移る）なら、大きさも動きに合わせて変える（跳ばないように）。
+        if let Some(g) = self.glides.get_mut(&id).filter(|_| !p.hidden) {
+            g.size = Some((p.size, size));
+            return;
+        }
+        p.size = size;
         p.surface.set_width(vr, p.displayed_size().x);
     }
 
@@ -305,11 +311,14 @@ impl Overlay {
         if !p.parent.is_some_and(|q| q.slot.is_some()) || !p.animated || p.opacity == 0.0 {
             return;
         }
+        self.end_glide(id);
+        let p = &self.panels[id];
         self.glides.insert(
             id,
             Glide {
                 from: p.pose,
                 to: Some(p.pose * Pose::new(Vec3::NEG_Z * SLOT_RETREAT, Quat::IDENTITY)),
+                size: None,
                 tween: Animation::new(0.0, 1.0, Motion::Exit),
                 last: Instant::now(),
             },
@@ -328,7 +337,7 @@ impl Overlay {
             self.retreat(id);
         } else {
             // 隠すときの退き（隠した時の場所へ向かう）が残っていれば、出し直した場所から引き戻さないよう打ち切る。
-            self.glides.remove(&id);
+            self.end_glide(id);
         }
         let kids: Vec<PanelId> = self
             .present

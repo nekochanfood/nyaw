@@ -542,6 +542,7 @@ fn pressing_a_nested_child_keeps_its_parent_dialog() {
             hud: false,
             docked: false,
             slot: None,
+            stack: false,
         }),
     );
     controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
@@ -568,6 +569,7 @@ fn closing_the_parent_closes_its_children_and_cycles_are_refused() {
             hud: false,
             docked: false,
             slot: None,
+            stack: false,
         }),
     );
     assert_eq!(
@@ -577,4 +579,129 @@ fn closing_the_parent_closes_its_children_and_cycles_are_refused() {
     );
     ov.close(&mut vr.backend, 0);
     assert!(ov.panel(1).closed);
+}
+
+/// 通知の組: 親（0 番。バー）・はめた画面（1 番）・別の親（2 番。手首）と、掴めない小さな通知（3 番。描画済み）。
+fn with_toast() -> (Subsystems<MockBackend>, Overlay, PanelId) {
+    let (mut vr, mut ov) = with_slot_child();
+    let wrist = ov
+        .add_panel(
+            &mut vr.backend,
+            "wrist",
+            at(0.3, -0.4, -0.4),
+            Vec2::splat(0.1),
+            (40, 40),
+        )
+        .unwrap();
+    let toast = ov
+        .add_panel(
+            &mut vr.backend,
+            "toast",
+            at(0.0, 0.3, -1.5),
+            Vec2::new(0.3, 0.1),
+            (300, 100),
+        )
+        .unwrap();
+    ov.set_locked(toast, true);
+    ov.submit(&mut vr.backend, toast, 1, 1, &[200, 100, 50, 255]);
+    ov.panels[toast].opacity = 1.0;
+    ov.animations.clear();
+    assert_eq!(wrist, 2);
+    (vr, ov, toast)
+}
+
+/// 動いているもの（実時間で進む）を終わらせ、積む子が追いつくまで tick する。
+fn finish_glides(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay) {
+    for g in ov.glides.values_mut() {
+        g.last = Instant::now() - std::time::Duration::from_secs(5);
+    }
+    for _ in 0..120 {
+        ov.tick(vr);
+    }
+}
+
+fn stack_on(panel: PanelId) -> Option<Parent> {
+    Some(Parent {
+        panel,
+        carry: true,
+        docked: true,
+        slot: Some(0.0),
+        stack: true,
+        ..Default::default()
+    })
+}
+
+/// 立てた子が別の親の上へ移ると、跳ばずに滑らかに動き、動いている間に変えた大きさも一緒に変わっていく。
+#[test]
+fn a_slot_child_glides_with_its_size_to_another_parent() {
+    let (mut vr, mut ov, toast) = with_toast();
+    ov.set_parent(&mut vr.backend, toast, stack_on(2));
+    ov.fit_height(&mut vr.backend, toast, 0.05);
+    ov.tick(&mut vr);
+    let on_wrist = |ov: &Overlay| {
+        ov.panel(toast)
+            .pose
+            .position
+            .distance(ov.panel(2).pose.position)
+    };
+    assert!(on_wrist(&ov) > 0.3, "最初は元の所から動き出す");
+    finish_glides(&mut vr, &mut ov);
+    assert!(on_wrist(&ov) < 0.15, "手首の上に収まる");
+    let before = ov.panel(toast).pose.position;
+    assert!((ov.panel(toast).size.y - 0.05).abs() < 1e-5);
+    // 手首からバーの上へ移るときも、跳ばずに動き出す。
+    ov.set_parent(&mut vr.backend, toast, stack_on(0));
+    ov.fit_height(&mut vr.backend, toast, 0.1);
+    assert!(ov.glides.contains_key(&toast));
+    ov.tick(&mut vr);
+    assert!(ov.panel(toast).pose.position.distance(before) < 0.2);
+    assert!(ov.panel(toast).size.y < 0.1, "大きさも少しずつ");
+    // 隠すと大きさは変えた後のものになる。
+    ov.set_hidden(&mut vr.backend, toast, true);
+    assert!((ov.panel(toast).size.y - 0.1).abs() < 1e-5);
+}
+
+/// 積む子は、はめた画面があればその上端の上に、無ければ親の上端の上に立つ。
+#[test]
+fn a_stacked_child_stands_on_the_docked_screen() {
+    let (mut vr, mut ov, toast) = with_toast();
+    ov.set_animated(&mut vr.backend, toast, false);
+    ov.set_parent(&mut vr.backend, toast, stack_on(0));
+    ov.tick(&mut vr);
+    let (screen, t) = (ov.panel(1), ov.panel(toast));
+    let screen_top = screen.pose.position.y + screen.size.y / 2.0 - face_margin(screen);
+    let toast_bottom = t.pose.position.y - t.size.y / 2.0 + face_margin(t);
+    assert!(
+        (toast_bottom - screen_top - SLOT_GAP).abs() < 1e-4,
+        "{toast_bottom} {screen_top}"
+    );
+    // 画面が隠れると、バーの上（画面の立っていた所）へ下りていく。
+    ov.set_hidden(&mut vr.backend, 1, true);
+    finish_glides(&mut vr, &mut ov);
+    let (bar, t) = (ov.panel(0), ov.panel(toast));
+    let bar_top = bar.pose.position.y + bar.size.y / 2.0 - face_margin(bar);
+    let toast_bottom = t.pose.position.y - t.size.y / 2.0 + face_margin(t);
+    assert!(
+        (toast_bottom - bar_top - SLOT_GAP).abs() < 1e-3,
+        "{toast_bottom} {bar_top}"
+    );
+}
+
+/// 掴めない子（積んだ通知）があっても、バーを掴むとはめた画面を掴んだことになる。
+#[test]
+fn a_locked_docked_child_does_not_change_what_a_grab_moves() {
+    let (mut vr, mut ov, toast) = with_toast();
+    ov.set_parent(&mut vr.backend, toast, stack_on(0));
+    ov.tick(&mut vr);
+    let frame = vr.poll();
+    assert_eq!(
+        crate::hand::grab_target(&ov.panels, &ov.present, 0, &frame).0,
+        1
+    );
+    ov.set_parent(&mut vr.backend, 1, None);
+    ov.set_parent(&mut vr.backend, toast, stack_on(2));
+    assert_eq!(
+        crate::hand::grab_target(&ov.panels, &ov.present, 2, &frame),
+        (2, Pose::IDENTITY)
+    );
 }

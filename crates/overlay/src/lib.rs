@@ -52,6 +52,9 @@ pub struct Parent {
     /// 親の上端の上に立てて置く（`docked` の子）。値は親から見て水平軸回りに起こす角度（ラジアン）。
     /// 子の下端に付くナビゲーションバーの分を空けて、子の地の下端を置く。子の大きさが変わっても毎 tick 置き直す。
     pub slot: Option<f32>,
+    /// `slot` の子で、ほかに立てた子（はめた画面）があればその上端の上に積む（無ければ親の上端の上）。積む先が
+    /// 替わると滑らかに動く。ダッシュボードの上に出す通知など、はめた画面と並べて上に出すもの。
+    pub stack: bool,
 }
 
 impl Parent {
@@ -301,10 +304,12 @@ struct HandState {
 }
 
 /// 位置のトランジション: `from` から `to` へ動かす。`to` が `None` なら、毎 tick 決まる置き場所（はまる場所）へ向かう。
+/// 動いている間に大きさを変えたら（[`Overlay::fit_height`]）、大きさも `size` の始めから終わりへ一緒に変える。
 #[derive(Debug)]
 struct Glide {
     from: Pose,
     to: Option<Pose>,
+    size: Option<(Vec2, Vec2)>,
     tween: Animation,
     last: Instant,
 }

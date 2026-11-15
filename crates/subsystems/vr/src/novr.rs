@@ -726,6 +726,13 @@ impl VrBackend for Emulator {
         Runtime::NoVr
     }
 
+    /// 画面に映る範囲（縦は [`FOV_Y`]、横は画面の縦横比から）。目は 1 つなので、そのまま両目の重なり。
+    fn fov(&self) -> Option<crate::Fov> {
+        let t = (FOV_Y / 2.0).tan();
+        let aspect = self.size.0 as f32 / self.size.1.max(1) as f32;
+        Some(crate::Fov::even((t * aspect).atan(), FOV_Y / 2.0))
+    }
+
     /// ウィンドウ付きでは [`FRAME`] の周期まで待ってから、前のフレームの絵を出して入力を読む。
     fn poll(&mut self) -> Frame {
         if !self.headless {
