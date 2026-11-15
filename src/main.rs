@@ -58,7 +58,7 @@ fn main() -> ExitCode {
     };
     // ダッシュボードのデバッグボタンで開く画面は Testing、設定ボタンで開くのは Testing の設定画面（中身はダミー）。
     let mut panels = vec![wrist::spec(
-        kernel.settings().dominant_hand,
+        &kernel.settings(),
         |from, opened| {
             testing::spec(from, move |id, cx| {
                 // デバッグ画面からセットアップウィザードを強制的にやり直せるようにする。
