@@ -10,8 +10,14 @@ use vr::{Device, OverlayId, Pose, VrBackend, VrError};
 #[derive(Debug, Clone, PartialEq)]
 pub struct Surface {
     id: OverlayId,
+    /// ランタイムのオーバーレイのキー（[`Self::restore`] で作り直すときに使う）。
+    key: String,
     texture: Option<(u32, u32, Vec<u8>)>,
     released: bool,
+    /// ランタイム側のオーバーレイだけを捨てている（[`Self::park`]）。画像・描画順は持ったまま。
+    parked: bool,
+    /// 描画順（作り直したときに付け直す）。
+    sort: u32,
     sent: Option<(Option<Device>, Pose)>,
     shown: Option<(bool, f32)>,
     /// 最後に送った暗さ。
@@ -24,8 +30,11 @@ impl Surface {
         vr.set_overlay_pose(id, pose);
         Ok(Self {
             id,
+            key: key.to_owned(),
             texture: None,
             released: false,
+            parked: false,
+            sort: 0,
             sent: None,
             shown: None,
             dim: 0.0,
@@ -42,9 +51,56 @@ impl Surface {
         self.texture.is_some()
     }
 
-    /// [`Self::show`] で隠している（一度も呼ばれていなければ表示中）。
+    /// ランタイム側のオーバーレイを手放している（[`Self::park`]）。
+    pub fn parked(&self) -> bool {
+        self.parked
+    }
+
+    /// ランタイムへ送れる（解放も手放しもしていない）。
+    fn live(&self) -> bool {
+        !self.released && !self.parked
+    }
+
+    /// [`Self::show`] で隠している（一度も呼ばれていなければ表示中）か、オーバーレイを手放している。
     pub fn hidden(&self) -> bool {
-        self.shown.is_some_and(|(visible, _)| !visible)
+        self.parked || self.shown.is_some_and(|(visible, _)| !visible)
+    }
+
+    /// ランタイム側のオーバーレイだけを捨てる（ランタイムの枠を空ける）。画像・描画順は持ったままで、
+    /// 手放している間に届いた画像も覚えておき、[`Self::restore`] で作り直して送る。
+    pub fn park(&mut self, vr: &mut dyn VrBackend) {
+        if !self.live() {
+            return;
+        }
+        vr.destroy_overlay(self.id);
+        self.parked = true;
+        self.sent = None;
+    }
+
+    /// [`Self::park`] で手放したオーバーレイを、同じキー・描画順で幅 `width`・姿勢 `pose` に作り直す。
+    /// 画像は不透明度 `opacity` で送り直す（フェードインはここから始める）。手放していなければ何もしない。
+    pub fn restore(
+        &mut self,
+        vr: &mut dyn VrBackend,
+        width: f32,
+        pose: Pose,
+        opacity: f32,
+        dim: f32,
+    ) -> Result<(), VrError> {
+        if self.released || !self.parked {
+            return Ok(());
+        }
+        self.id = vr.create_overlay(&self.key, width)?;
+        vr.set_overlay_pose(self.id, pose);
+        vr.set_overlay_sort(self.id, self.sort);
+        // 隠していた（[`Self::show`]）なら隠したまま。
+        if self.shown.is_some_and(|(visible, _)| !visible) {
+            vr.set_overlay_visible(self.id, false);
+        }
+        self.shown = self.shown.map(|(visible, _)| (visible, width));
+        (self.parked, self.sent, self.dim) = (false, Some((None, pose)), 0.0);
+        self.present(vr, opacity, dim, true);
+        Ok(())
     }
 
     pub fn store(&mut self, width: u32, height: u32, rgba: &[u8]) {
@@ -53,6 +109,7 @@ impl Surface {
             width as usize * height as usize * 4,
             "invalid RGBA buffer size"
         );
+        // 手放している間も覚えておく（作り直したときに送る）。
         if !self.released {
             self.texture = Some((width, height, rgba.to_vec()));
         }
@@ -62,7 +119,7 @@ impl Surface {
     /// 追従は毎回頼み直す（同じなら送らないのはバックエンドの仕事）。取り付け先の裏のデバイスが消えた・入れ替わった
     /// （ハンドトラッキングとコントローラの持ち替え）フレームは断られて、当たり判定と同じ `pose` に置かれる。
     pub fn place(&mut self, vr: &mut dyn VrBackend, pose: Pose, follow: Option<&(Device, Pose)>) {
-        if self.released {
+        if !self.live() {
             return;
         }
         if let Some((device, offset)) = follow
@@ -79,19 +136,21 @@ impl Surface {
     }
 
     pub fn set_width(&self, vr: &mut dyn VrBackend, width: f32) {
-        if !self.released {
+        if self.live() {
             vr.set_overlay_width(self.id, width);
         }
     }
 
-    pub fn set_sort(&self, vr: &mut dyn VrBackend, sort: u32) {
-        if !self.released {
+    pub fn set_sort(&mut self, vr: &mut dyn VrBackend, sort: u32) {
+        self.sort = sort;
+        if self.live() {
             vr.set_overlay_sort(self.id, sort);
         }
     }
 
+    // ponytail: 高さは作り直しで付け直さない（使うのはレーザーだけで、手放さない）。手放すものに使うなら覚えておく。
     pub fn set_height(&self, vr: &mut dyn VrBackend, height: f32) {
-        if !self.released {
+        if self.live() {
             vr.set_overlay_height(self.id, height);
         }
     }
@@ -104,7 +163,7 @@ impl Surface {
         width: Option<f32>,
         initial: f32,
     ) {
-        if self.released {
+        if !self.live() {
             return;
         }
         let width = width.unwrap_or_else(|| self.shown.map_or(initial, |s| s.1));
@@ -117,15 +176,17 @@ impl Surface {
         self.shown = Some((visible, width));
     }
 
-    /// 描画先を解放する。いつ解放するかは呼び出し側が決める。
+    /// 描画先を解放する。いつ解放するかは呼び出し側が決める。手放しているオーバーレイは捨て済み。
     pub fn release(&mut self, vr: &mut dyn VrBackend) {
         if self.released {
             return;
         }
-        vr.set_overlay_alpha(self.id, 0.0);
-        vr.set_overlay_visible(self.id, false);
-        vr.submit_overlay_pixels(self.id, 1, 1, &[0; 4]);
-        vr.destroy_overlay(self.id);
+        if !self.parked {
+            vr.set_overlay_alpha(self.id, 0.0);
+            vr.set_overlay_visible(self.id, false);
+            vr.submit_overlay_pixels(self.id, 1, 1, &[0; 4]);
+            vr.destroy_overlay(self.id);
+        }
         self.released = true;
         self.texture = None;
     }
@@ -134,7 +195,7 @@ impl Surface {
     /// `dim`（0 = そのまま 〜 1 = 真っ黒）は色だけを黒へ寄せ、透明度は変えない。ランタイムが明るさを掛けられれば画素には触らない
     /// （フェード中に毎フレーム画素を作り直して送ると詰まる）。掛けられないときだけ、変わったときに画素を暗くして送り直す。
     pub fn present(&mut self, vr: &mut dyn VrBackend, opacity: f32, dim: f32, upload: bool) {
-        if self.released {
+        if !self.live() {
             return;
         }
         let native = vr.set_overlay_alpha(self.id, opacity);
@@ -304,6 +365,40 @@ mod tests {
         assert_eq!(vr.overlays[0].width_m, 1.0);
         assert_eq!(vr.overlays[0].height_m, None);
         assert_eq!(vr.overlays[0].sort, 0);
+    }
+
+    #[test]
+    fn parked_surface_keeps_its_image_and_comes_back_as_a_new_overlay() {
+        let mut vr = MockBackend::default();
+        let mut surface = Surface::new(&mut vr, "bar", 1.0, Pose::IDENTITY).unwrap();
+        surface.set_sort(&mut vr, 5);
+        surface.store(1, 1, &[255; 4]);
+        surface.present(&mut vr, 1.0, 0.0, true);
+        surface.park(&mut vr);
+        assert!(surface.parked() && surface.hidden() && !surface.released());
+        assert!(vr.overlays[0].destroyed);
+        // 手放している間はランタイムに何も送らないが、届いた画像は覚えておく。
+        surface.store(1, 1, &[9; 4]);
+        surface.present(&mut vr, 1.0, 0.0, true);
+        surface.set_width(&mut vr, 3.0);
+        assert_eq!(vr.overlays[0].pixel_submissions, 1);
+        assert_eq!(vr.overlays.len(), 1);
+        let pose = Pose {
+            position: Vec3::Y,
+            ..Pose::IDENTITY
+        };
+        surface.restore(&mut vr, 2.0, pose, 0.5, 0.0).unwrap();
+        assert!(!surface.parked() && !surface.hidden());
+        assert_eq!(surface.id(), OverlayId(1));
+        let o = &vr.overlays[1];
+        assert_eq!((o.key.as_str(), o.width_m, o.sort), ("bar", 2.0, 5));
+        assert_eq!((o.pose, o.alpha), (pose, 0.5));
+        assert_eq!(o.texture.as_ref().unwrap().rgba, [9; 4]);
+        // 手放したまま解放しても、捨てたオーバーレイには触らない。
+        surface.park(&mut vr);
+        surface.release(&mut vr);
+        assert!(surface.released() && vr.overlays[1].destroyed);
+        assert_eq!(vr.overlays[1].pixel_submissions, 1);
     }
 
     #[test]

@@ -19,6 +19,8 @@ pub struct MockOverlay {
     pub sort: u32,
     /// 最後に送られたテクスチャ。
     pub texture: Option<MockTexture>,
+    /// 捨てられた（[`VrBackend::destroy_overlay`]）。
+    pub destroyed: bool,
 }
 
 /// モックが受け取ったテクスチャ（RGBA8）。
@@ -87,6 +89,7 @@ impl VrBackend for MockBackend {
             pixel_submissions: 0,
             sort: 0,
             texture: None,
+            destroyed: false,
         });
         Ok(OverlayId(self.overlays.len() as u64 - 1))
     }
@@ -125,6 +128,10 @@ impl VrBackend for MockBackend {
 
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32) {
         self.overlays[id.0 as usize].sort = order;
+    }
+
+    fn destroy_overlay(&mut self, id: OverlayId) {
+        self.overlays[id.0 as usize].destroyed = true;
     }
 
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
