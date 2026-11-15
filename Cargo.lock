@@ -5860,6 +5860,7 @@ dependencies = [
  "settings",
  "setup",
  "testing",
+ "toast",
  "vr",
  "wrist",
 ]

@@ -74,7 +74,7 @@ nyaw の中から URL を開く道は 1 本に絞り、検問所 `ui::link` を�
 
 ## テスト・ベンチマーク
 
-- **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）「キーボード」（`look-keyboard-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）・セットアップウィザードの各画面（`look-setup-*.bmp`。ライトのものは日本語）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。設定画面は本番と同じに `PanelRoot` に載せる（載せないとパネルの影の余白が付かず、中身が本番より広く描かれる）。
+- **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）「キーボード」（`look-keyboard-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）・セットアップウィザードの各画面（`look-setup-*.bmp`。ライトのものは日本語）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。設定画面は本番と同じに `PanelRoot` に載せる（載せないとパネルの影の余白が付かず、中身が本番より広く描かれる）。 通知のトースト（視界の端・手首・手首でホバー）は `look_toast.rs`（同じ絞り込みで流れ、`look-toast-*.bmp`）。
 - **アクセシビリティの見た目**: `crates/ui/tests/gpu/a11y.rs`（`cargo test -p ui --test gpu -- --ignored a11y`）。文字の大きさ（80% / 100% / 150%）と太字化を替えながら、設定画面の各カテゴリ・色を作るダイアログ・文字盤の見本・仮想キーボード・Testing・ダッシュボード（バー・クイック設定・ランチャー）を実 GPU で描き、`target/tmp/look-a11y-<状態>-<画面>.bmp` に書き出す。検査するのは、倍率・太字化で文字のインクが増えること（等幅も）、`.text_exact()` の文字盤が 1 画素も変わらないこと。操作は `crates/testkit/tests/scenarios/prefs.rs`（`accessibility_*` / `ui_scale_*`）。
 - **ストレステスト（ベンチマーク）**: `crates/ui/tests/gpu/stress.rs`（`harness = false`。常には流さない: `cargo test -p ui --test gpu -- --ignored stress`）。
   本番と同じ `ui::run_with` に novr のエミュレーター（ウィンドウは出さないが毎フレーム合成する）と GPUI 8 枚・ビームを載せ、
