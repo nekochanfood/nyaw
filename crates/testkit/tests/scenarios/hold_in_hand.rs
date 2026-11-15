@@ -24,8 +24,10 @@ fn raised_left() -> Pose {
 }
 
 /// Spawns a Testing panel and holds it in the left hand through its navigation bar, with the left controller raised.
-fn hold_in_left_hand(kit: &mut VrKit<Testing>) {
+/// Returns the panel's size before it was held.
+fn hold_in_left_hand(kit: &mut VrKit<Testing>) -> Vec2 {
     kit.click("spawn-panel").step();
+    let size = kit.kernel.panel(OWNER).size;
     kit.panel(BAR).click("nav-hand").step();
     assert_eq!(kit.kernel.panel(MENU).parent.map(|p| p.panel), Some(OWNER));
     kit.panel(MENU).click("hand-left").step();
@@ -37,23 +39,26 @@ fn hold_in_left_hand(kit: &mut VrKit<Testing>) {
     kit.hand(Hand::Left)
         .move_hand(raised_left())
         .hand(Hand::Right);
+    size
 }
 
 #[gpui::test]
 fn nav_bar_puts_a_panel_in_the_left_hand(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| Testing::new(0));
-    hold_in_left_hand(&mut kit);
-    // Standing above the raised controller, upright and facing back toward the user.
+    let before = hold_in_left_hand(&mut kit);
+    // The big Testing panel shrinks to a size to hold, keeping its aspect ratio.
+    let size = kit.kernel.panel(OWNER).size;
+    assert!(size.x < before.x * 0.9, "{size} {before}");
+    assert!((size.x / size.y - before.x / before.y).abs() < 1e-4);
+    // Standing above the raised controller, upright, its top leaning toward the user and its face turned back to them.
     let hand = raised_left().position;
     let p = kit.kernel.panel(OWNER).pose;
-    assert!((p.orientation * Vec3::Z).abs_diff_eq(Vec3::Z, 1e-4));
-    assert!((p.orientation * Vec3::Y).abs_diff_eq(Vec3::Y, 1e-4));
+    let (face, up) = (p.orientation * Vec3::Z, p.orientation * Vec3::Y);
+    assert!(face.z > 0.9 && up.y > 0.9, "{face} {up}");
+    assert!(up.z > 0.1, "leans toward the user: {up}");
     let rise = p.position.y - hand.y;
-    assert!(
-        rise > kit.kernel.panel(OWNER).size.y / 3.0,
-        "above the controller: {rise}"
-    );
-    assert!((p.position.x - hand.x).abs() < 1e-4 && (p.position.z - hand.z).abs() < 1e-4);
+    assert!(rise > size.y / 3.0, "above the controller: {rise}");
+    assert!((p.position.x - hand.x).abs() < 1e-4);
     // It follows the hand.
     let moved = Pose::new(Vec3::new(0.1, 0.0, 0.1), Quat::IDENTITY) * raised_left();
     kit.hand(Hand::Left).move_hand(moved).hand(Hand::Right);
@@ -117,8 +122,10 @@ fn a_held_panel_is_adjustable_only_while_the_dashboard_shows(cx: &mut TestAppCon
 
     // Grab it again and resize it (trigger held, hand pushed forward), then the dashboard goes away mid-grab: the grab is
     // undone, and the panel is back in the hand where it was, at its old size.
+    // The drags above carried the right hand along; bring it back in front of the panel first.
     let res = kit.kernel.panel(OWNER).resolution;
-    kit.point_at(Vec2::new(res.0 as f32, res.1 as f32) / 2.0)
+    kit.move_hand(Pose::new(Vec3::new(0.2, -0.3, 0.0), Quat::IDENTITY))
+        .point_at(Vec2::new(res.0 as f32, res.1 as f32) / 2.0)
         .press(Action::Grab)
         .press(Action::Select);
     for _ in 0..10 {

@@ -116,6 +116,28 @@ impl Overlay {
         }
     }
 
+    /// 親・持ち主に付いて動くもの（子・ナビゲーションバー）は、根元のパネルがデバイスに付いて動いていれば（`follow`）、
+    /// 同じデバイスに相対で付ける。根元はランタイムが合成の直前の姿勢で動かすので、毎 tick の姿勢で置くと遅れて見える。
+    pub(crate) fn follow_roots(&mut self) {
+        let up = |q: &Panel| q.nav_bar_of.or(q.parent.map(|r| r.panel));
+        let follows: Vec<_> = self
+            .present
+            .iter()
+            .filter_map(|&id| {
+                let p = &self.panels[id];
+                let root = std::iter::successors(up(p), |&r| up(&self.panels[r]))
+                    .take(self.panels.len())
+                    .last()?;
+                let r = &self.panels[root];
+                let (device, offset) = r.follow.clone()?;
+                Some((id, (device, offset * r.pose.inverse() * p.pose)))
+            })
+            .collect();
+        for (id, follow) in follows {
+            self.panels[id].follow = Some(follow);
+        }
+    }
+
     /// 親の上端に立てる子（[`Parent::slot`]）の、親から見た姿勢。子のナビゲーションバーの分を空ける。
     fn slot_offset(&self, id: PanelId, parent: PanelId, tilt: f32) -> Pose {
         let rotation = Quat::from_rotation_x(tilt);

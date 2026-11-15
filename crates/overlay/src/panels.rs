@@ -6,6 +6,12 @@ use super::*;
 /// バー（腕の長さの先で 2cm ほど）が、コントローラに重ならずに収まる。
 // ponytail: 目分量。バーがコントローラに重なる・離れすぎて見えるなら、この値で合わせる。
 const HAND_GAP: f32 = 0.03;
+/// 手に持たせたパネルの長い辺の上限（m。等倍のつもりの値で、UI スケールが掛かる）。持たせるときに、これより大きければ
+/// 縦横比を保って縮める（腕の長さの先では、置いて使う大きさのままだと視界からはみ出す）。
+// ponytail: 目分量。大きすぎる・小さすぎるなら、この値で合わせる。
+const HAND_SIZE: f32 = 0.4;
+/// 手に持たせたパネルを、コントローラの面から手前（天面の側）へ起こす角度。手首を起こしきらなくても表がこちらを向く。
+const HAND_TILT: f32 = std::f32::consts::FRAC_PI_8;
 
 impl Overlay {
     pub fn new() -> Self {
@@ -111,14 +117,25 @@ impl Overlay {
         self.glides.remove(&id);
     }
 
-    /// パネルを `hand` のコントローラに取り付ける。レーザーの出る所を根元に、そこから前へ寝かせて伸ばし（上から見ると
-    /// コントローラの先に面がある）、手を起こすと立って表がこちらを向く。地の下端の左右中央が、その前 [`HAND_GAP`] に来る。
-    pub fn attach_to_hand(&mut self, id: PanelId, hand: Hand) {
-        let p = &self.panels[id];
+    /// パネルを `hand` のコントローラに取り付ける。レーザーの出る所を根元に、そこから前へ伸ばし（上から見るとコントローラの
+    /// 先に面がある）、手前へ [`HAND_TILT`] 起こす。手を起こすと立って表がこちらを向く。地の下端の左右中央が、面に沿って
+    /// 根元から [`HAND_GAP`] の所に来る。長い辺が [`HAND_SIZE`] より大きければ、縦横比を保ってそこまで縮める。
+    pub fn attach_to_hand(&mut self, vr: &mut dyn VrBackend, id: PanelId, hand: Hand) {
+        let limit = HAND_SIZE * self.scale();
+        let p = &mut self.panels[id];
+        let fit = (limit / p.size.max_element()).min(1.0);
+        if fit < 1.0 {
+            p.size *= fit;
+            // 掴む基準は中身の決まった点なので、大きさに合わせて動かす。
+            if let Some(anchor) = &mut p.grab_anchor {
+                anchor.position *= fit;
+            }
+            p.surface.set_width(vr, p.displayed_size().x);
+        }
+        // 表（+Z）をコントローラの天面（+Y）へ、上（+Y）を前（-Z）へ向けてから、上を天面の側へ起こす。
+        let lay = Quat::from_rotation_x(HAND_TILT - std::f32::consts::FRAC_PI_2);
         let reach = p.size.y / 2.0 - face_margin(p) + HAND_GAP;
-        // 表（+Z）をコントローラの天面（+Y）へ、上（+Y）を前（-Z）へ向ける。
-        let lay = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-        let offset = Pose::new(Vec3::NEG_Z * reach, lay);
+        let offset = Pose::new(lay * Vec3::Y * reach, lay);
         self.attach(id, Device::Controller(hand), offset);
     }
 
