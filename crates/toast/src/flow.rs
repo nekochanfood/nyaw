@@ -39,6 +39,8 @@ pub enum Place {
 pub(crate) struct Scene {
     /// ダッシュボードが出ている。
     pub dashboard: bool,
+    /// 通知センター（ダッシュボードの一覧）が出ている。そこに全部並ぶので、トーストは出さない（見たことになる）。
+    pub center: bool,
     /// 手首の時計を見ている（[`kernel::PanelStatus::gazed`]）。
     pub gazing: bool,
     /// ロックダウン中（シェルは控える。通知は待たせる）。
@@ -72,6 +74,9 @@ impl Flow {
         }
         let (place, stage) = if scene.dashboard {
             self.advance(|s| s < Stage::Dashboard, Stage::Dashboard);
+            if scene.center {
+                return (Place::Hidden, Vec::new());
+            }
             (Place::Dashboard, Stage::Dashboard)
         } else {
             self.advance(|s| s == Stage::Dashboard, Stage::Done);
@@ -120,6 +125,7 @@ mod tests {
 
     const IDLE: Scene = Scene {
         dashboard: false,
+        center: false,
         gazing: false,
         lockdown: false,
     };
@@ -131,6 +137,22 @@ mod tests {
         dashboard: true,
         ..IDLE
     };
+
+    /// 通知センターが出ている間は、届いたものも含めて出さず、見たことにする（閉じてももう出ない）。
+    #[test]
+    fn the_notification_center_takes_over() {
+        let mut f = Flow::default();
+        let t = Instant::now();
+        f.step(&[], IDLE, t);
+        let center = Scene {
+            center: true,
+            ..DASHBOARD
+        };
+        assert_eq!(f.step(&[1], center, t), (Place::Hidden, vec![]));
+        assert_eq!(f.step(&[1, 2], center, t), (Place::Hidden, vec![]));
+        assert_eq!(f.step(&[1, 2], GAZING, t), (Place::Hidden, vec![]));
+        assert_eq!(f.step(&[1, 2], IDLE, t), (Place::Hidden, vec![]));
+    }
 
     /// 時計を見ていないと視界の端に出て、時計を見ると手首へ、ダッシュボードを開くとダッシュボードへ進む。
     /// 閉じると、ダッシュボードで見たものはもう出ない。

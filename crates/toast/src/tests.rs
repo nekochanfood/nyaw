@@ -185,49 +185,81 @@ fn the_newest_card_is_on_top(cx: &mut TestAppContext) {
     assert!(new.top() < old.top(), "HUD: {new:?} {old:?}");
 }
 
-/// 手首・ダッシュボードの通知は押すとアプリへ届き、URL のものは確かめてから開く。ホバーするとボタンが出る。
-/// 押した通知はもう出さない。
+/// 手首・ダッシュボードの通知は広げず（ホバーしてもボタンは出ない）、押すとアプリへは届けずに通知センターを、その
+/// 通知を広げて開くよう頼む。
 #[gpui::test]
-fn cards_open_the_app_or_the_url(cx: &mut TestAppContext) {
-    let (view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
+fn cards_jump_to_the_notification_center(cx: &mut TestAppContext) {
+    let (_view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
     set(cx, |c| {
         c.notifications = Arc::from([note(1, None), note(2, Some("https://example.com/2"))]);
         c.panels.entry(WRIST).or_default().status.gazed = true;
     });
     take(cx, TOAST);
-    assert!(
-        cx.debug_bounds("toast-action-1-0").is_none(),
-        "ホバーするまでボタンは出さない"
-    );
     let at = cx.debug_bounds("toast-1").unwrap().center();
     cx.simulate_mouse_move(at, None, Modifiers::none());
     cx.run_until_parked();
-    assert!(cx.debug_bounds("toast-action-1-0").is_some());
-    let mute = cx.debug_bounds("toast-action-1-0").unwrap().center();
-    cx.simulate_click(mute, Modifiers::none());
-    cx.run_until_parked();
-    assert_eq!(
-        take(cx, TOAST),
-        [PanelCommand::Notification {
-            id: 1,
-            action: Some(0)
-        }],
-        "ボタンだけが押される"
+    assert!(
+        cx.debug_bounds("toast-action-1-0").is_none(),
+        "ホバーしても広げない"
     );
-    assert!(cx.debug_bounds("toast-1").is_none(), "押した通知は出さない");
-    let at = cx.debug_bounds("toast-2").unwrap().center();
     cx.simulate_click(at, Modifiers::none());
     cx.run_until_parked();
+    let asked = cx.update(|_, cx| {
+        let c = cx.global::<ui::notification::Center>();
+        (c.asked, c.focus)
+    });
+    assert_eq!(asked, (1, Some(1)));
     assert!(
         !take(cx, TOAST)
             .iter()
             .any(|c| matches!(c, PanelCommand::Notification { .. })),
-        "URL はアプリへは届けない"
+        "アプリへは届けない"
     );
     let urls = cx.update(|window, cx| design::link::take(window, cx));
-    assert_eq!(urls, ["https://example.com/2"]);
+    assert!(urls.is_empty(), "URL も開かない");
+}
+
+/// 通知センターがダッシュボードにはまって出ている間は、トーストは出ない（届いたものも含めて見たことになり、閉じても
+/// もう出ない）。
+#[gpui::test]
+fn the_toast_steps_aside_for_the_notification_center(cx: &mut TestAppContext) {
+    const CENTER: PanelId = 9;
+    let (view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
+    set(cx, |c| {
+        c.dock = Some((BAR, 0.5));
+        c.panels.entry(BAR).or_default();
+        c.notifications = Arc::from([note(1, None)]);
+    });
+    assert_eq!(place(&view, cx), Place::Dashboard);
+    cx.update(|window, cx| {
+        cx.default_global::<ui::notification::Center>().panel = Some(CENTER);
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(CENTER)
+            .or_default();
+        ui::dock(CENTER, cx);
+        window.refresh();
+    });
+    set(cx, |_| {});
     finish_out(&view, cx);
-    assert_eq!(place(&view, cx), Place::Hidden);
+    assert_eq!(
+        place(&view, cx),
+        Place::Hidden,
+        "通知センターに並ぶので出さない"
+    );
+    set(cx, |c| {
+        c.notifications = Arc::from([note(1, None), note(2, None)])
+    });
+    assert_eq!(place(&view, cx), Place::Hidden, "出ている間に届いたものも");
+    set(cx, |c| c.panels.get_mut(&BAR).unwrap().status.hidden = true);
+    set(cx, |c| {
+        c.panels.entry(WRIST).or_default().status.gazed = true
+    });
+    assert_eq!(
+        place(&view, cx),
+        Place::Hidden,
+        "通知センターで見たものはもう出ない"
+    );
 }
 
 /// HUD の中身の外側の端は、どの端でも両目に確実に映る範囲の端に来て、その外へは出ない（UI スケールが大きくても）。
@@ -292,7 +324,7 @@ fn the_more_line_does_not_overlap_the_cards(cx: &mut TestAppContext) {
 }
 
 /// 手首の通知はマウスのドラッグでも指のスライド（横のスクロール）でも左右へ片付く。片付けるのはその場だけで、押した
-/// ことにはせず、通知の一覧（クイック設定）からも消さない。短いスワイプは元へ戻る。
+/// ことにはせず、通知センター（クイック設定の一覧）からも消さない。短いスワイプは元へ戻る。
 #[gpui::test]
 fn cards_swipe_away(cx: &mut TestAppContext) {
     use gpui::{MouseButton, ScrollDelta, ScrollWheelEvent, TouchPhase, point};
@@ -302,8 +334,11 @@ fn cards_swipe_away(cx: &mut TestAppContext) {
         c.panels.entry(WRIST).or_default().status.gazed = true;
     });
     take(cx, TOAST);
+    // 離した後: 横へ抜ける・戻る動きを待って描き、抜けたなら高さを畳む動きも待って描く（畳みきって片付く）。
     let settle = |cx: &mut VisualTestContext| {
         std::thread::sleep(Duration::from_millis(Motion::Return.duration_ms() + 50));
+        set(cx, |_| {});
+        std::thread::sleep(Duration::from_millis(Motion::Shrink.duration_ms() + 50));
         set(cx, |_| {});
         set(cx, |_| {});
     };
