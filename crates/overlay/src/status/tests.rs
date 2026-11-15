@@ -24,8 +24,12 @@ fn a_panel_is_gazed_only_while_it_faces_the_head_in_front() {
     let raised = Vec3::new(0.05, -0.2, -0.35);
     assert!(look(&mut vr, &mut ov, raised, -raised));
     assert!(
-        !look(&mut vr, &mut ov, raised, Vec3::Y),
-        "面が上を向いている（頭へ向いていない）"
+        look(&mut vr, &mut ov, raised, Vec3::Y),
+        "手首を回しきっていない（面が頭から 60° ほど上を向いている）"
+    );
+    assert!(
+        !look(&mut vr, &mut ov, raised, Vec3::new(0.0, 1.0, -0.6)),
+        "面が向こうへ倒れている（頭へ向いていない）"
     );
     let lowered = Vec3::new(0.2, -0.6, -0.1);
     assert!(

@@ -54,9 +54,10 @@ impl Overlay {
             }
         }
         q.parent = parent;
-        // 表示だけの子と、ポップオーバー（固定して外側を押すと閉じる子）は、ほかのパネルより前に描く。ランタイムは
-        // 奥行きではなく描画順で重ねるので、同じ順だと重なった所がちらつく（はめた画面の上に出すメニューなど）。
-        let front = parent.is_some_and(|p| p.hud || (p.docked && p.dismiss));
+        // 表示だけの子と、ポップオーバー（固定して外側を押すと閉じる子）と、積む子は、ほかのパネルより前に描く。ランタイムは
+        // 奥行きではなく描画順で重ねるので、同じ順だと重なった所がちらつく（はめた画面の上に出すメニューや、はめた画面の
+        // 出入りで上へ動く積む子など）。
+        let front = parent.is_some_and(|p| p.hud || p.stack || (p.docked && p.dismiss));
         q.surface
             .set_sort(vr, if front { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
@@ -102,9 +103,10 @@ impl Overlay {
                 if let Some(tilt) = parent.slot {
                     let to = self.slot_offset(id, parent.panel, tilt);
                     let p = &self.panels[id];
-                    // 積む子は、積む先が出入りしても跳ばずに追いつく（見えていないときはそのまま合わせる）。
+                    // 積む子は、積む先が出入りしても跳ばずに追いつく。現れきるまではそのまま合わせる（出し直したときに、前の
+                    // 置き場所から滑ってくるのが見えないように）。
                     self.panels[id].offset =
-                        if parent.stack && p.animated && !p.hidden && p.opacity > 0.0 {
+                        if parent.stack && p.animated && !p.hidden && p.opacity >= 1.0 {
                             let k = 1.0 - (-self.dt / STACK_FOLLOW).exp();
                             Pose::new(
                                 p.offset.position.lerp(to.position, k),

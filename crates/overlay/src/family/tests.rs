@@ -712,6 +712,32 @@ fn a_stacked_child_stands_on_the_docked_screen() {
     );
 }
 
+/// 隠れている間に積む先へ移した子は、出し直したときに前の置き場所から滑ってこない（その場に現れる。トーストの移り方）。
+/// はめた画面より前に描く（はめた画面の出入りで上へ動くとき、重なった所がちらつかないように）。
+#[test]
+fn a_stacked_child_appears_in_place_and_in_front() {
+    let (mut vr, mut ov, toast) = with_toast();
+    ov.set_hidden(&mut vr.backend, toast, true);
+    finish_glides(&mut vr, &mut ov);
+    ov.set_parent(&mut vr.backend, toast, stack_on(0));
+    ov.set_hidden(&mut vr.backend, toast, false);
+    ov.tick(&mut vr);
+    let first = ov.panel(toast).pose.position;
+    finish_glides(&mut vr, &mut ov);
+    let last = ov.panel(toast).pose.position;
+    assert!(first.distance(last) < 1e-3, "{first} → {last}");
+    let sort = |key: &str| {
+        vr.backend
+            .overlays
+            .iter()
+            .find(|o| o.key == key)
+            .unwrap()
+            .sort
+    };
+    assert_eq!(sort("toast"), HUD_SORT);
+    assert_eq!(sort("child"), PANEL_SORT);
+}
+
 /// 掴めない子（積んだ通知）があっても、バーを掴むとはめた画面を掴んだことになる。
 #[test]
 fn a_locked_docked_child_does_not_change_what_a_grab_moves() {
