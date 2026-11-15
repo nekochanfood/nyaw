@@ -10,7 +10,9 @@ mod link;
 pub mod mirror;
 mod panel_window;
 pub mod prefs;
+mod quit;
 pub use panel_window::{open_panel_window, panel_window_options};
+pub use quit::{QuitDialog, quit_dialog};
 
 use std::{
     collections::HashMap,

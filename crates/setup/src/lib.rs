@@ -263,6 +263,25 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             )
             .on_click(move |_, window, cx| show(true, window, cx))
             .child(popover);
+            // 言語の左に、アプリの終了（確かめるダイアログをウィザードの子として出す）。ロックダウン中はダッシュボードの
+            // メニューを出せないので、ここでやめられるようにする。
+            let quit = components::icon_button(
+                &theme,
+                "setup-quit",
+                &icons::POWER,
+                i18n::t(cx, "quit.label"),
+                Variant::OnBackground,
+            )
+            .on_click(move |_, window, cx| {
+                let spec =
+                    ui::quit_dialog(window, cx, |build| PanelSpec::child(panel, true, build));
+                cx.default_global::<PanelControl>().spawns.push(spec);
+            });
+            let others = div()
+                .flex()
+                .gap(px(spacing::SM))
+                .child(quit)
+                .child(languages);
             let start = components::wizard_next(&theme, "setup-next", i18n::t(cx, "setup.next"))
                 .on_click(go(true));
             components::wizard_welcome(
@@ -271,7 +290,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
                 design::logo(Logo::Full).height(px(LOGO_HEIGHT)),
                 i18n::t(cx, "setup.welcome_title"),
                 i18n::t(cx, "setup.welcome_description"),
-                Some(languages),
+                Some(others),
                 start,
             )
         }
