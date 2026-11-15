@@ -3,7 +3,8 @@
 use std::{env, fmt::Write, fs, path::Path};
 
 fn main() {
-    let tokens = Path::new(env!("CARGO_MANIFEST_DIR")).join("../design/tokens.json");
+    // env! だとビルドスクリプトをコンパイルした場所が焼き込まれ、target を共有した別の worktree の跡を読みに行く
+    let tokens = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("../design/tokens.json");
     println!("cargo:rerun-if-changed={}", tokens.display());
     let root: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&tokens).expect("tokens.json")).unwrap();
