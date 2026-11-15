@@ -5652,6 +5652,7 @@ dependencies = [
  "gpui",
  "i18n",
  "kernel",
+ "logger",
  "ui",
 ]
 

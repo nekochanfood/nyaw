@@ -66,7 +66,8 @@ fn the_toast_flows_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mut TestAppCo
     let c = take(cx, TOAST);
     assert_eq!(place(&view, cx), Place::Hud);
     assert!(
-        matches!(c[0], PanelCommand::Attach(Device::Hmd, _)),
+        matches!(c[0], PanelCommand::Place(_))
+            && matches!(c[1], PanelCommand::Attach(Device::Hmd, _)),
         "{c:?}"
     );
     assert!(c.contains(&PanelCommand::PassThrough(true)) && fits(&c));
@@ -219,15 +220,14 @@ fn the_hud_stays_inside_the_safe_area() {
                 (p.length() - HUD_DISTANCE).abs() < HUD_DISTANCE * 0.15,
                 "{anchor:?}"
             );
-            // 外側の端の角度（頭の正面から）。
-            let angle = |c: f32, half: f32| ((c.abs() + half) / -p.z).atan();
+            // 寄せた側の外側の端の角度（頭の正面から）。パネルが範囲より大きければ中心は反対側へ回るが、端は動かない。
             let check = |s: f32, c: f32, half: f32, neg: f32, pos: f32| {
                 if s == 0.0 {
                     assert_eq!(c, 0.0, "{anchor:?}");
                 } else {
                     let limit = if s > 0.0 { pos } else { neg };
-                    assert!((angle(c, half) - limit).abs() < 1e-3, "{anchor:?} {scale}");
-                    assert_eq!(c.signum(), s, "{anchor:?}");
+                    let edge = ((s * c + half) / -p.z).atan();
+                    assert!((edge - limit).abs() < 1e-3, "{anchor:?} {scale}");
                 }
             };
             check(sx, p.x, half.x, safe.left, safe.right);

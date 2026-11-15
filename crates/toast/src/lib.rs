@@ -23,7 +23,7 @@ use flow::{Flow, Scene};
 pub const RES_PX: (u32, u32) = (420, 600);
 /// 置き場所ごとの密度（px/m）。どこでもダッシュボードの画面と同じくらいの見た目の大きさになるよう、遠い HUD は粗く、
 /// 近い手首は細かく。
-const HUD_PX_PER_M: f32 = 800.0;
+const HUD_PX_PER_M: f32 = 600.0;
 const WRIST_PX_PER_M: f32 = 3000.0;
 const DASHBOARD_PX_PER_M: f32 = 1000.0;
 /// HUD の頭からの距離（m）。
@@ -217,6 +217,7 @@ impl Toast {
         if target == self.target {
             return;
         }
+        logger::debug!("toast moves", from = ?self.place, to = ?place);
         let forward = place > self.place && self.place != Place::Hidden;
         if self.target.is_some() && !forward {
             // 隠す。親（手首・ダッシュボード）から外しておく（親を出し直したときに一緒に出ないように）。
@@ -241,7 +242,9 @@ impl Toast {
                 _ => DASHBOARD_PX_PER_M,
             };
         let mut commands = match target {
+            // 頭に付ける前に、今の頭の前へ置いておく（頭を追えないランタイム（novr）では、そのままそこに残る）。
             Target::Hud(pose) => vec![
+                PanelCommand::Place(pose),
                 PanelCommand::Attach(Device::Hmd, pose),
                 PanelCommand::PassThrough(true),
             ],

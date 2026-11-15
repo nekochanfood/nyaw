@@ -134,6 +134,8 @@ impl State {
         };
         self.seen = Some(ids);
         for raw in fresh {
+            // 中身は書かない（人のやりとりが入る）。
+            logger::debug!("notification arrived", id = raw.id, app = raw.app_id);
             let entry = self.entry(raw, backend);
             self.live.push(entry);
             changed = true;
