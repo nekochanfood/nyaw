@@ -21,7 +21,8 @@ pub use config::{
     DASHBOARD_DISTANCE_MAX, DASHBOARD_DISTANCE_MIN, DASHBOARD_HEIGHT_MAX, DASHBOARD_HEIGHT_MIN,
     DASHBOARD_STEP, DominantHand, KEY_GAP_MAX, KEY_GAP_MIN, KEYBOARD_SCALE_MAX, KEYBOARD_SCALE_MIN,
     Language, LodQuality, PersonalColor, PointerMode, PointerTuning, SCALE_STEP, TEXT_SCALE_MAX,
-    TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, UpdateChannel, WristDesign, WristFace,
+    TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, UpdateChannel, WRIST_SCALE_MAX,
+    WRIST_SCALE_MIN, WristDesign, WristFace,
 };
 pub use overlay::{
     self, Anchor, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent,
@@ -152,6 +153,10 @@ pub enum Setting {
     DominantHand(DominantHand),
     /// wrist の文字盤のデザイン（`wrist_design`）。
     WristDesign(WristDesign),
+    /// wrist を掴んで置き直した姿勢（`wrist_offset`。左手首での値）。カーネルは値を持つだけで、付けるのは wrist。
+    WristOffset(Pose),
+    /// wrist の大きさの倍率（`wrist_scale`。範囲に収める）。カーネルは値を持つだけで、従うのは wrist。
+    WristScale(f32),
     /// ミラーリングの取得の上限 FPS（`mirror_frame_rate`。1〜240 に収める）。配信中のミラーもこの FPS でかけ直す。
     MirrorFrameRate(u32),
     /// 仮想キーボードの種類（`keyboard`）。
@@ -208,6 +213,10 @@ pub struct Settings {
     pub hand: subsystems::input::HandTuning,
     pub dominant_hand: DominantHand,
     pub wrist_design: WristDesign,
+    /// wrist を掴んで置き直した姿勢（左手首での値）。置き直していない・設定ファイルの値が壊れていれば `None`。
+    pub wrist_offset: Option<Pose>,
+    /// wrist の大きさの倍率（等倍 = 1）。
+    pub wrist_scale: f32,
     pub mirror_frame_rate: u32,
     pub keyboard: subsystems::keyboard::KeyboardType,
     /// 仮想キーボードの大きさの倍率（等倍 = 1）。
@@ -257,6 +266,8 @@ impl Default for Settings {
             hand: Default::default(),
             dominant_hand: Default::default(),
             wrist_design: Default::default(),
+            wrist_offset: None,
+            wrist_scale: 1.0,
             mirror_frame_rate: desktop::DEFAULT_FRAME_RATE,
             keyboard: Default::default(),
             keyboard_scale: 1.0,
@@ -573,6 +584,8 @@ impl<B: VrBackend> Kernel<B> {
             hand: self.subsystems.hand,
             dominant_hand: self.config.dominant_hand,
             wrist_design: self.config.wrist_design,
+            wrist_offset: self.config.wrist_offset.and_then(config::WristOffset::pose),
+            wrist_scale: self.wrist_scale(),
             mirror_frame_rate: self.mirror_frame_rate(),
             keyboard: self.config.keyboard,
             keyboard_scale: self.config.keyboard_scale.map_or(1.0, |s| {
@@ -615,6 +628,12 @@ impl<B: VrBackend> Kernel<B> {
         let (min, max) = (DASHBOARD_HEIGHT_MIN, DASHBOARD_HEIGHT_MAX);
         let h = self.config.dashboard_height.unwrap_or(0.0);
         config::snap(h, min, max, DASHBOARD_STEP, 0.0)
+    }
+
+    /// wrist の大きさの倍率（設定ファイルの値を範囲に収めたもの。数でない値は等倍）。
+    fn wrist_scale(&self) -> f32 {
+        let s = self.config.wrist_scale.filter(|s| s.is_finite());
+        s.map_or(1.0, |s| s.clamp(WRIST_SCALE_MIN, WRIST_SCALE_MAX))
     }
 
     /// UI スケール（[`Setting::UiScale`]）。パネルの大きさ（[`Self::add_panel`] など）は等倍のつもりで渡し、これが掛かる。
@@ -718,6 +737,17 @@ impl<B: VrBackend> Kernel<B> {
             Setting::WristDesign(d) => {
                 self.config.wrist_design = d;
                 ("wrist_design", config::value(d))
+            }
+            Setting::WristOffset(p) => {
+                let o = config::WristOffset::from(p);
+                self.config.wrist_offset = Some(o);
+                ("wrist_offset", config::value(o))
+            }
+            Setting::WristScale(s) => {
+                self.config.wrist_scale = Some(s);
+                let s = self.wrist_scale();
+                self.config.wrist_scale = Some(s);
+                ("wrist_scale", config::value(s))
             }
             Setting::MirrorFrameRate(f) => {
                 self.config.mirror_frame_rate = Some(f);
@@ -1484,6 +1514,38 @@ mod tests {
             (s.keyboard_scale, s.key_gap),
             (KEYBOARD_SCALE_MAX, KEY_GAP_MIN)
         );
+    }
+
+    /// wrist の姿勢は置き直すまで無く、大きさは等倍。置き直した姿勢はそのまま、大きさは刻まずに範囲に収めて覚える。
+    #[test]
+    fn wrist_placement_is_remembered_and_scale_stays_in_range() {
+        let (mut k, _) = lod_kernel();
+        let (s, d) = (k.settings(), Settings::default());
+        assert_eq!((s.wrist_offset, s.wrist_scale), (None, 1.0));
+        assert_eq!((d.wrist_offset, d.wrist_scale), (None, 1.0));
+        let pose = Pose::new(
+            vr::Vec3::new(-0.1, 0.02, 0.15),
+            vr::Quat::from_rotation_x(0.3),
+        );
+        k.set(Setting::WristOffset(pose));
+        k.set(Setting::WristScale(1.37));
+        let s = k.settings();
+        assert_eq!(s.wrist_offset.unwrap().position, pose.position);
+        assert!(
+            s.wrist_offset
+                .unwrap()
+                .orientation
+                .abs_diff_eq(pose.orientation, 1e-6)
+        );
+        assert_eq!(s.wrist_scale, 1.37, "掴んで変えた大きさは刻まない");
+        for (given, scale) in [
+            (9.0, WRIST_SCALE_MAX),
+            (0.0, WRIST_SCALE_MIN),
+            (f32::NAN, 1.0),
+        ] {
+            k.set(Setting::WristScale(given));
+            assert_eq!(k.settings().wrist_scale, scale, "{given}");
+        }
     }
 
     /// ダッシュボードの距離・高さは既定で正面 1.3m・高さ 0（目の高さの 0.1m 下）。互いに独立で、範囲と刻みに収まる。

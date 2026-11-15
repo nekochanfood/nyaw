@@ -15,6 +15,11 @@ pub struct PanelState {
     /// このパネルそのものをレーザーで指している手。フレームループが [`sync_panel`] で毎フレーム書く（変わっても描き直させない）。
     /// コントローラの入力をパネルに見せてよいかの条件（[`PanelControl::controllers`] を絞る）。
     pub pointing: Vec<Hand>,
+    /// 取り付け先から見た姿勢（取り付けていれば。掴んで離すと変わる）と、VR 上の大きさ（m。等倍のつもりの値: UI スケールを
+    /// 割り戻したもの）。フレームループが [`sync_panel`] で毎フレーム書く（ナビゲーションバーの大きさは毎 tick 変わるので、
+    /// 変わっても描き直させない）。置き直した所を覚えておく画面（wrist）が読む。
+    pub offset: Option<Pose>,
+    pub size: Vec2,
     /// このパネルが最後に描き直したときの全体の設定（[`PanelControl::settings`]。変われば描き直す）。
     seen: Settings,
 }
@@ -172,6 +177,9 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     for c in ctl.commands.drain(..) {
         kernel.apply(panel, c);
     }
+    let p = kernel.panel(panel);
+    ctl.offset = p.attached.as_ref().map(|(_, offset)| *offset);
+    ctl.size = p.size / kernel.ui_scale();
     let status = kernel.status(panel);
     if ctl.status == status && ctl.seen == settings {
         return false;
