@@ -1,7 +1,7 @@
 use gpui::TestAppContext;
-use kernel::vr::Vec3;
-use kernel::{Device, DominantHand, Hand, Setting};
-use testkit::{Button, Driver, NoVrKit};
+use kernel::vr::{Pose, Quat, Vec3};
+use kernel::{Device, DominantHand, Hand, PanelCommand, Setting};
+use testkit::{Button, Driver, NoVrKit, VrKit};
 use wrist::Wrist;
 
 /// Presses the left hand's X button twice in a row (novr: the X key) and lets the result show up.
@@ -96,6 +96,43 @@ fn wrist_follows_the_dominant_hand(cx: &mut TestAppContext) {
             Some((Device::Controller(wrist_on), watch))
         );
     }
+}
+
+/// Releasing a grab of the wrist remembers where it was put: the offset goes to the settings as the left wrist's
+/// value (mirrored here, since a left-handed user wears it on the right wrist), and a wrist opened from those
+/// settings sits there again.
+#[gpui::test]
+fn the_wrist_remembers_where_it_was_placed(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, cx| wrist(cx));
+    kit.kernel.set(Setting::DominantHand(DominantHand::Left));
+    // One frame hands the setting to the wrist, the next applies its attach command.
+    kit.step().step();
+    // The kit tracks no wrist to wear it on: put it on the head 1m ahead, and unlock it as the shown dashboard would.
+    let ahead = Pose::new(Vec3::NEG_Z, Quat::IDENTITY);
+    kit.kernel
+        .apply(0, PanelCommand::Attach(Device::Hmd, ahead));
+    kit.kernel.apply(0, PanelCommand::Lock(false));
+    // One frame hands the release to the wrist, the next applies the settings it wrote.
+    kit.drag_panel(Vec3::new(0.2, 0.1, -0.8)).step();
+    let (_, placed) = kit
+        .kernel
+        .panel(0)
+        .attached
+        .clone()
+        .expect("still attached");
+    assert!(placed.position.distance(ahead.position) > 0.1, "{placed:?}");
+    let saved = kit.kernel.settings();
+    let left = saved.wrist_offset.expect("remembered on release");
+    assert!(
+        (left.position.x + placed.position.x).abs() < 1e-5,
+        "{left:?}"
+    );
+    let back = wrist::offset(Hand::Right, &saved);
+    assert!(back.position.abs_diff_eq(placed.position, 1e-5), "{back:?}");
+    assert!(
+        back.orientation.abs_diff_eq(placed.orientation, 1e-5),
+        "{back:?}"
+    );
 }
 
 /// The dashboard shows at the distance and height set in Settings (the height is relative to the head). While it

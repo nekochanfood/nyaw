@@ -123,6 +123,12 @@ sat = "土"
 undock = "ダッシュボードから外す"
 dock = "ダッシュボードに戻す"
 
+[hand]
+attach = "手に持つ"
+left = "左手"
+right = "右手"
+detach = "手から外す"
+
 [dashboard]
 update = "アップデートがあります"
 title = "ダッシュボード"

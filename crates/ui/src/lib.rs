@@ -32,6 +32,7 @@ use kernel::{
 };
 use profiler::{Profiler, ProfilerView, Stages};
 
+mod attach;
 mod control;
 mod drag;
 mod nav_bar;

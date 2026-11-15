@@ -6,7 +6,7 @@
 
 ## 主な公開 API
 
-`run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelControl::batteries` / `PanelControl::media`（毎フレーム書く）, `PanelSpec::{new, spawn, child, popover, offset, typing, docked_to, dockable, fit_height, without_resize, reach, pointer_mode, titled, titled_text, without_nav_bar, with_os_keyboard, with_veil, nav_bar_spec, size}`, 画面をはめる場所 `PanelControl::dock`（ダッシュボードが開くと置く）と `dock` / `undock` / `docked`（はめると持ち主に `Parent { docked, slot }` で固定し、はまっていた画面は閉じる。`dockable` のパネルはナビゲーションバーの左端に外す `nav-undock` / 戻す `nav-dock` を出す。仮想キーボードは、はめた画面へ打つものも含め、対象パネルの下ではなく開いた瞬間の頭の前の打ちやすい位置に出す。頭（と手）から決めるのは高さと仰ぐ角度だけで、左右の向きと位置は呼び出し元に合わせる（呼び出し元の面と同じ向きで、ホームポジション（F と J の間）を呼び出し元の中心の左右に合わせる。頭の回転に付いて行かない）。立っている間の高さはコントローラ（両手なら間）の少し上（手を動かさず手首を起こすだけで指せる。上端は目線より下、下は見える所まで）、面は目を重く見つつ手の方へも少し向ける（コントローラが無ければ目と手の間へ）。寝ている間は手に合わせず、視界に入る頭の正面の下寄り（正面のパネルに重ならない所）に出して目へ向ける（傾きに応じて滑らかに移る）。どちらでも、頭から見て呼び出し元（ナビゲーションバー・はめた先のダッシュボードのバーも）の下端より少し下に見えるよう、必要な分だけ下げる（呼び出し元に重ねない）。掴むとホームポジションを中心に動かして頭へ向ける（`PanelSpec::grab_anchor`。大きさを変えると基準も付いて動く）。大きさは種類ごとの標準で、キーの大きさは種類によらずそろえ、フルサイズでホームポジションに向けた手首を手の甲の方（外）へ 22.5° 倒すと遠い方のキーの端に届く幅（手からキーボードまで 45cm とみる）の 3.75 倍（`keyboard::WRIST_TILT` / `HAND_DISTANCE` / `SIZE_SCALE`。実機で試して合わせた）に、設定の大きさ（`keyboard_scale`。既定は等倍）を掛ける（種類か大きさを替えると、出ているものもその標準の大きさになり、ホームポジションは空間で動かさない。`PanelCommand::MoveGrabAnchor`）。キーの隙間は種類の既定（`KeyAppearance::for_type`）に設定のキーの間隔（`key_gap`。既定は等倍）を掛ける。親子関係は作らず、呼び出し元を覚えておき、呼び出し元が閉じる・隠れるとキーボードも閉じる（`PanelSpec::typing`、`keyboard::panel_closed` / `panel_hidden`））（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`, `sync_settings`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelCommand`, `PanelStatus`, `MAX_PANELS`, 画面からの依頼 `command` / `commands` / `set` / `settings` / `notify` / `redraw`（下の「画面からの依頼」）, アプリの終了を確かめるダイアログ `quit_dialog(window, cx, open)` / `QuitDialog`（下の「アプリの終了」）
+`run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelControl::batteries` / `PanelControl::media`（毎フレーム書く）, `PanelSpec::{new, spawn, child, popover, offset, typing, docked_to, dockable, fit_height, without_resize, reach, pointer_mode, titled, titled_text, without_nav_bar, with_os_keyboard, with_veil, nav_bar_spec, size(kernel)}`, 画面をはめる場所 `PanelControl::dock`（ダッシュボードが開くと置く）と `dock` / `undock` / `docked`（はめると持ち主に `Parent { docked, slot }` で固定し、はまっていた画面は閉じる。`dockable` のパネルはナビゲーションバーの左端に外す `nav-undock` / 戻す `nav-dock` を出す。仮想キーボードは、はめた画面へ打つものも含め、対象パネルの下ではなく開いた瞬間の頭の前の打ちやすい位置に出す。頭（と手）から決めるのは高さと仰ぐ角度だけで、左右の向きと位置は呼び出し元に合わせる（呼び出し元の面と同じ向きで、ホームポジション（F と J の間）を呼び出し元の中心の左右に合わせる。頭の回転に付いて行かない）。立っている間の高さはコントローラ（両手なら間）の少し上（手を動かさず手首を起こすだけで指せる。上端は目線より下、下は見える所まで）、面は目を重く見つつ手の方へも少し向ける（コントローラが無ければ目と手の間へ）。寝ている間は手に合わせず、視界に入る頭の正面の下寄り（正面のパネルに重ならない所）に出して目へ向ける（傾きに応じて滑らかに移る）。どちらでも、頭から見て呼び出し元（ナビゲーションバー・はめた先のダッシュボードのバーも）の下端より少し下に見えるよう、必要な分だけ下げる（呼び出し元に重ねない）。掴むとホームポジションを中心に動かして頭へ向ける（`PanelSpec::grab_anchor`。大きさを変えると基準も付いて動く）。大きさは種類ごとの標準で、キーの大きさは種類によらずそろえ、フルサイズでホームポジションに向けた手首を手の甲の方（外）へ 22.5° 倒すと遠い方のキーの端に届く幅（手からキーボードまで 45cm とみる）の 3.75 倍（`keyboard::WRIST_TILT` / `HAND_DISTANCE` / `SIZE_SCALE`。実機で試して合わせた）に、設定の大きさ（`keyboard_scale`。既定は等倍）を掛ける（種類か大きさを替えると、出ているものもその標準の大きさになり、ホームポジションは空間で動かさない。`PanelCommand::MoveGrabAnchor`）。キーの隙間は種類の既定（`KeyAppearance::for_type`）に設定のキーの間隔（`key_gap`。既定は等倍）を掛ける。親子関係は作らず、呼び出し元を覚えておき、呼び出し元が閉じる・隠れるとキーボードも閉じる（`PanelSpec::typing`、`keyboard::panel_closed` / `panel_hidden`））（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`, `sync_settings`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelState::{offset, size}`（取り付け先から見た姿勢と、等倍のつもりの大きさ。`sync_panel` が毎フレーム書き、変わっても描き直させない。wrist が離したときに覚える）, `PanelCommand`, `PanelStatus`, `MAX_PANELS`, 画面からの依頼 `command` / `commands` / `set` / `settings` / `notify` / `redraw`（下の「画面からの依頼」）, アプリの終了を確かめるダイアログ `quit_dialog(window, cx, open)` / `QuitDialog`（下の「アプリの終了」）
 
 ## ファイルの分け方（ルール）
 
@@ -17,12 +17,21 @@
 | `control.rs` | ビューとフレームループの受け渡し口（`PanelControl` / `PanelState`）と、画面が使う操作（`command(s)` / `set` / `settings` / `dock` / `notify` など）、設定の反映（`sync_settings` / `lang` / `language`） |
 | `spec.rs` | 起動仕様（`PanelSpec`）と、それからパネルを開く `open_panel` |
 | `nav_bar.rs` | ナビゲーションバー（`NavBar`）と、中身を包む根（`PanelRoot`） |
+| `attach.rs` | パネルを手に持つ（ナビゲーションバーから開く、持つ手を選ぶポップオーバーと、持っている間のロック。下の「手に持つ」） |
 | `pointer.rs` | レーザーのイベントを GPUI の入力に変える（`PointerBridge`。タップ・スワイプ・長押し）と `dispatch_input` |
 | `drag.rs` | ドラッグの見た目（`DragPreview`） |
 | `run.rs` | フレームループ（`run` / `pump` / ツールチップ） |
 | `profiler_panel.rs` | プロファイラのパネル |
 | `quit.rs` | アプリの終了を確かめるダイアログ（`QuitDialog`） |
 | `keyboard` / `prefs` / `mirror` / `link` / `cue` / `panel_window` | 前からの部品（下の各節） |
+
+## 手に持つ
+
+どのナビゲーションバーにも、左端の先頭に手のボタン（`nav-hand`。持っている間は強調色）を出す。押すとバーの上にポップオーバー（`HandMenu`。カードの左端をバーの帯の左端にそろえ、持ち主にめり込まないよう少し手前に浮かせる。バーと同じ密度で、バーと同じく頭からの距離に合わせて大きくする: `PanelSpec::over_nav_bar`）が開き、左手（`hand-left`）か右手（`hand-right`）を選ぶと持ち主をその手に持つ（`PanelCommand::AttachToHand`。置き方・大きすぎるときに縮めるのは `../overlay/AGENT.md` の `attach_to_hand`。ダッシュボードにはめた画面などの子は、外して独立させてから持つ）。持っている手には印が付き、持っていれば「手から外す」（`hand-detach`。その場に残す）も出る。選ぶとポップオーバーは閉じ、外側を押しても閉じる。
+
+手に持っている間は、ダッシュボードが出ている間（はめる場所 `PanelControl::dock` が出ている間）だけ掴んで置き場所・向き・大きさを変えられる。出ていなければロックし、掴んだままダッシュボードが消えると、ロックがその掴みを取り消して掴む前の置き場所・大きさへ戻す（wrist と同じ）。手から外れたらロックも外す。持ち主のナビゲーションバーが `PanelControl` の変わるたびに見て合わせる（`attach::hold`）。
+
+テスト: `attach::tests`、操作は `crates/testkit/tests/scenarios/hold_in_hand.rs`。
 
 ## 画面からの依頼
 

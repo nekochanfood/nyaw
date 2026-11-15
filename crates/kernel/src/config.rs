@@ -167,6 +167,39 @@ pub const DASHBOARD_STEP: f32 = 0.05;
 /// 自分で作ったパーソナルカラーを覚えておく数（[`Config::color_history`]）。
 pub const COLOR_HISTORY: usize = 8;
 
+/// wrist の大きさの倍率（[`Config::wrist_scale`]）の範囲。掴んで変えた大きさなので刻みには丸めない。
+pub const WRIST_SCALE_MIN: f32 = 0.5;
+pub const WRIST_SCALE_MAX: f32 = 3.0;
+
+/// wrist を掴んで置き直した姿勢（[`Config::wrist_offset`]）。取り付け先のコントローラの tip から見た、左手首での値
+/// （右手首には wrist が鏡写しにして付ける）。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct WristOffset {
+    /// 位置（m。`[x, y, z]`）。
+    pub position: [f32; 3],
+    /// 向き（四元数。`[x, y, z, w]`）。
+    pub orientation: [f32; 4],
+}
+
+impl WristOffset {
+    /// 姿勢にする。数でない値・長さ 0 の向きは壊れているので `None`。向きは長さ 1 に直す。
+    pub fn pose(self) -> Option<vr::Pose> {
+        let position = vr::Vec3::from_array(self.position);
+        let orientation = vr::Quat::from_array(self.orientation);
+        let ok = position.is_finite() && orientation.is_finite() && orientation.length() > 1e-6;
+        ok.then(|| vr::Pose::new(position, orientation.normalize()))
+    }
+}
+
+impl From<vr::Pose> for WristOffset {
+    fn from(p: vr::Pose) -> Self {
+        Self {
+            position: p.position.to_array(),
+            orientation: p.orientation.to_array(),
+        }
+    }
+}
+
 /// wrist（腕時計）の文字盤の種類と、種類ごとのデザインの表。ここに 1 行足すと、選ぶ画面の一覧にも並ぶ
 /// （描くのは `wrist` クレート。足し方は `crates/wrist/AGENT.md`）。名前は設定ファイルの値と文言のキーになる。
 macro_rules! wrist_designs {
@@ -344,6 +377,11 @@ pub struct Config {
     pub dominant_hand: DominantHand,
     /// wrist の文字盤のデザイン（[`WristDesign::key`]。`dots` / `lcd` / `minimal` など）。省略で `dots`。画面での切り替えはここへ書き戻される。
     pub wrist_design: WristDesign,
+    /// wrist を掴んで置き直した姿勢（`[wrist_offset]`: `position` / `orientation`。[`WristOffset`]）。省略で手首の既定の所。
+    /// 掴んで離すとここへ書き戻される。
+    pub wrist_offset: Option<WristOffset>,
+    /// wrist の大きさの倍率（[`WRIST_SCALE_MIN`]〜[`WRIST_SCALE_MAX`]）。省略で等倍。掴んで大きさを変えるとここへ書き戻される。
+    pub wrist_scale: Option<f32>,
     /// ミラーリング（デスクトップの配信）の取得の上限 FPS（1〜240）。省略で `desktop::DEFAULT_FRAME_RATE`。
     pub mirror_frame_rate: Option<u32>,
     /// 仮想キーボードの種類（`full` / `tenkeyless` / `compact`）。省略で `full`。
@@ -637,6 +675,32 @@ emulator = false
                 seen.push(design.key());
             }
         }
+    }
+
+    /// wrist の姿勢は `[wrist_offset]` で読み書きでき、向きは長さ 1 に直す。壊れた値は姿勢にしない。
+    #[test]
+    fn wrist_offset_round_trips_and_rejects_broken_values() {
+        assert_eq!(parse("").unwrap().wrist_offset, None);
+        let pose = vr::Pose::new(
+            vr::Vec3::new(-0.1, 0.02, 0.15),
+            vr::Quat::from_rotation_y(0.5),
+        );
+        let text = format!("wrist_offset = {}", value(WristOffset::from(pose)));
+        let back = parse(&text).unwrap().wrist_offset.unwrap().pose().unwrap();
+        assert_eq!(back.position, pose.position);
+        assert!(back.orientation.abs_diff_eq(pose.orientation, 1e-6));
+        let read = |text| parse(text).unwrap().wrist_offset.unwrap().pose();
+        let scaled = read("wrist_offset = { position = [0, 0, 0], orientation = [0, 0, 0, 2] }");
+        assert_eq!(scaled, Some(vr::Pose::IDENTITY));
+        assert_eq!(
+            read("wrist_offset = { position = [0, 0, 0], orientation = [0, 0, 0, 0] }"),
+            None
+        );
+        assert_eq!(
+            read("wrist_offset = { position = [nan, 0, 0], orientation = [0, 0, 0, 1] }"),
+            None
+        );
+        assert!(parse("wrist_offset = { position = [0, 0], orientation = [0, 0, 0, 1] }").is_err());
     }
 
     #[test]

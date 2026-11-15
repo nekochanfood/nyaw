@@ -1,6 +1,7 @@
 //! Layer 6 画面: 常駐パネル「wrist」。利き手の反対（既定は左）の手首に腕時計のように取り付き（ダッシュボードが出ている間だけ
-//! 掴んで、手から [`REACH`] 以内に置き直せる。掴んだままダッシュボードが消えれば元に戻る）、丸い文字盤に
-//! 日付・時刻を出す（デザインは設定の `wrist_design`。[`face`]）。利き手の設定が変われば、自分で反対の手首へ付け替える。
+//! 掴んで、手から [`REACH`] 以内に置き直し・大きさを変えられる。離すと設定に覚え、次の起動も同じ所・同じ大きさに付く。
+//! 掴んだままダッシュボードが消えれば元に戻る）、丸い文字盤に日付・時刻を出す（デザインは設定の `wrist_design`。[`face`]）。
+//! 利き手の設定が変われば、自分で反対の手首へ付け替える。
 //! 常駐なので、X ボタンの二回連続押しでダッシュボードを出す / 隠すのもここ（ダッシュボードは閉じずに隠し、次も同じ状態で出す）。
 //! OS の通知のトースト（[`toast`]）も起動時に開く。
 
@@ -14,7 +15,7 @@ use design::components;
 use design::{Theme, radius};
 use gpui::{Context, Window, prelude::*, px};
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
-use kernel::{DominantHand, PanelCommand, PanelId};
+use kernel::{PanelCommand, PanelId, Setting, Settings};
 use ui::{PanelControl, PanelSpec};
 
 /// `hand` の手首に巻いた腕時計の相対姿勢（コントローラの tip の座標系。-Z が前・+Y が天面（親指の側））。
@@ -28,6 +29,27 @@ pub fn watch_offset(hand: Hand) -> Pose {
         -kernel::vr::GRIP_FROM_WRIST + Vec3::new(side * LIFT, 0.0, 0.03),
         // 左手は (1, 0, -1) 軸の半回転（右手はその鏡写し）: 3 時 → -Z、12 時 → -Y、表 → -X。
         Quat::from_xyzw(FRAC_1_SQRT_2, 0.0, side * FRAC_1_SQRT_2, 0.0),
+    )
+}
+
+/// `hand` の手首に付ける姿勢: 掴んで置き直した姿勢（設定の `wrist_offset`。左手首での値で、右手首には鏡写し）があれば
+/// それ、無ければ [`watch_offset`]。
+pub fn offset(hand: Hand, settings: &Settings) -> Pose {
+    settings
+        .wrist_offset
+        .map_or_else(|| watch_offset(hand), |o| mirror(o, hand))
+}
+
+/// 左手首での姿勢を `hand` の手首での姿勢にする（右手首は X を裏返した鏡写し。[`watch_offset`] の左右と同じ）。
+/// 鏡写しは 2 回で元に戻るので、`hand` の手首での姿勢を左手首での値に直すのにも使う。
+fn mirror(pose: Pose, hand: Hand) -> Pose {
+    if hand == Hand::Left {
+        return pose;
+    }
+    let (p, q) = (pose.position, pose.orientation);
+    Pose::new(
+        Vec3::new(-p.x, p.y, p.z),
+        Quat::from_xyzw(q.x, -q.y, -q.z, q.w),
     )
 }
 
@@ -50,14 +72,11 @@ const RES_PX: (u32, u32) = (448, 448);
 // 文字盤（カード）の直径は、文字盤の寸法を決めた基準と同じ。
 const _: () = assert!(RES_PX.0 as f32 - 2.0 * components::PANEL_MARGIN == face::BASE);
 
-/// 利き手 `dominant` の反対の手首に取り付いた状態で起動する wrist の起動仕様。`debug` と `settings` は
-/// ダッシュボードから開くデバッグ画面と設定画面（画面どうしを直接つながないよう、main が選ぶ）。
-pub fn spec(
-    dominant: DominantHand,
-    debug: dashboard::Summon,
-    settings: dashboard::Summon,
-) -> PanelSpec {
-    let hand = dominant.off_hand();
+/// 今の設定 `saved` の利き手の反対の手首に、覚えた姿勢と大きさ（[`offset`]・`wrist_scale`）で取り付いた状態で起動する
+/// wrist の起動仕様。`debug` と `settings` はダッシュボードから開くデバッグ画面と設定画面（画面どうしを直接つながないよう、
+/// main が選ぶ）。
+pub fn spec(saved: &Settings, debug: dashboard::Summon, settings: dashboard::Summon) -> PanelSpec {
+    let hand = saved.dominant_hand.off_hand();
     let side = if hand == Hand::Left { 1.0 } else { -1.0 };
     let in_view = Pose::new(
         IN_VIEW.position * Vec3::new(side, 1.0, 1.0),
@@ -67,13 +86,13 @@ pub fn spec(
         nyapp::opened(nyapp::system::WRIST.id, panel, cx);
         Wrist::new(panel, debug, settings, cx)
     })
-    .sized(SIZE_M, RES_PX)
+    .sized(SIZE_M * saved.wrist_scale, RES_PX)
     .in_view(in_view)
-    .attached(Device::Controller(hand), watch_offset(hand))
-    // 掴めるのはダッシュボードが出ている間だけ（[`Wrist::sync_dashboard`]）。置き直すだけで大きさは変えない。
+    .attached(Device::Controller(hand), offset(hand, saved))
+    // 掴めるのはダッシュボードが出ている間だけ（[`Wrist::sync_dashboard`]）。置き直した所と大きさは離すと覚える
+    // （[`Wrist::remember_placement`]）。
     .locked()
     .reach(REACH)
-    .without_resize()
     // 手首に付いた常駐の時計で、閉じるものではない。ナビゲーションバーは付けない。
     .without_nav_bar()
 }
@@ -95,6 +114,8 @@ pub struct Wrist {
     hand: Hand,
     /// 掴んで置き直せるようにしてある（ダッシュボードが出ている間）。
     movable: bool,
+    /// 前回見たときに掴まれていたか（離した瞬間に置き場所を覚える）。
+    grabbed: bool,
 }
 
 impl Wrist {
@@ -118,6 +139,8 @@ impl Wrist {
             .detach();
         cx.observe_global::<PanelControl>(Self::follow_dominant_hand)
             .detach();
+        cx.observe_global::<PanelControl>(Self::remember_placement)
+            .detach();
         let hand = off_hand(cx);
         // 文字盤を選ぶ画面（設定など）が見本を描けるように。画面どうしは直接依存しないので、UI 層のグローバルに置く。
         cx.set_global(ui::prefs::FacePreview(face::preview));
@@ -139,7 +162,26 @@ impl Wrist {
             locked: false,
             hand,
             movable: false,
+            grabbed: false,
         }
+    }
+
+    /// 掴んで離したら、置き直した姿勢（左手首での値に直して）と大きさを設定に書き戻す（次の起動も同じ所・同じ大きさに付く）。
+    /// フレームループが状態を書き戻すたびに呼ばれるので、離した瞬間のほかは何もしない（書き込むと自分がまた呼ばれる）。
+    fn remember_placement(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = cx.global::<PanelControl>().panels.get(&self.panel) else {
+            return;
+        };
+        let (grabbed, offset, size) = (state.status.grabbed, state.offset, state.size);
+        let released = self.grabbed && !grabbed;
+        self.grabbed = grabbed;
+        if !released {
+            return;
+        }
+        if let Some(offset) = offset {
+            ui::set(Setting::WristOffset(mirror(offset, self.hand)), cx);
+        }
+        ui::set(Setting::WristScale(size.x / SIZE_M.x), cx);
     }
 
     /// 利き手の設定が変わったら、反対の手首へ付け替える（変わっていなければ何もしない。書き込むと自分がまた呼ばれる）。
@@ -149,12 +191,9 @@ impl Wrist {
             return;
         }
         self.hand = hand;
-        let offset = watch_offset(hand);
-        ui::command(
-            self.panel,
-            PanelCommand::Attach(Device::Controller(hand), offset),
-            cx,
-        );
+        let attach =
+            PanelCommand::Attach(Device::Controller(hand), offset(hand, &ui::settings(cx)));
+        ui::command(self.panel, attach, cx);
     }
 
     /// X ボタンを二回押すたびにダッシュボードを出す・隠す（閉じられていれば開き直す。音はダッシュボード自身が鳴らす）。
@@ -263,6 +302,7 @@ impl Render for Wrist {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use kernel::DominantHand;
 
     fn wrist(cx: &mut Context<Wrist>) -> Wrist {
         Wrist::new(
@@ -470,6 +510,68 @@ mod tests {
         assert_eq!(set(DominantHand::Left), [attach(Hand::Right)]);
         assert_eq!(set(DominantHand::Left), []);
         assert_eq!(set(DominantHand::Right), [attach(Hand::Left)]);
+    }
+
+    /// 掴んで離した瞬間だけ、置き直した姿勢と大きさの倍率を設定に書き戻す。右手首では左手首での値（鏡写し）に直して覚える。
+    #[gpui::test]
+    fn remembers_the_placement_when_released(cx: &mut TestAppContext) {
+        let (_, cx) = cx.add_window_view(|_, cx| wrist(cx));
+        cx.run_until_parked();
+        let placed = Pose::new(Vec3::new(0.05, 0.1, -0.02), Quat::from_rotation_z(0.4));
+        let grab = |grabbed, cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                let state = cx.default_global::<PanelControl>().panels.entry(0);
+                let state = state.or_default();
+                state.status.grabbed = grabbed;
+                state.offset = Some(placed);
+                state.size = SIZE_M * 1.5;
+            });
+            cx.run_until_parked();
+            cx.update(|_, cx| {
+                std::mem::take(&mut cx.default_global::<PanelControl>().setting_changes)
+            })
+        };
+        let saved = |changes: Vec<Setting>| match changes[..] {
+            [Setting::WristOffset(o), Setting::WristScale(s)] if (s - 1.5).abs() < 1e-5 => o,
+            _ => panic!("{changes:?}"),
+        };
+        assert_eq!(grab(true, cx), [], "掴んでいる間は覚えない");
+        assert_eq!(saved(grab(false, cx)), placed);
+        assert_eq!(grab(false, cx), [], "離した瞬間だけ");
+        // 利き手を左にすると右手首に付く。
+        cx.update(|_, cx| {
+            cx.default_global::<PanelControl>().settings.dominant_hand = DominantHand::Left;
+        });
+        cx.run_until_parked();
+        grab(true, cx);
+        assert_eq!(saved(grab(false, cx)), mirror(placed, Hand::Right));
+    }
+
+    /// 覚えた姿勢が無ければ既定の腕時計の所。あれば左手首ではそのまま、右手首では鏡写しで付ける。
+    #[test]
+    fn the_saved_offset_is_mirrored_onto_the_right_wrist() {
+        let eq = |a: Pose, b: Pose| {
+            assert!(a.position.abs_diff_eq(b.position, 1e-6), "{a:?} != {b:?}");
+            assert!(
+                a.orientation.abs_diff_eq(b.orientation, 1e-6),
+                "{a:?} != {b:?}"
+            );
+        };
+        let mut saved = Settings::default();
+        for hand in [Hand::Left, Hand::Right] {
+            assert_eq!(offset(hand, &saved), watch_offset(hand));
+        }
+        // 既定の左右も鏡写しどうし（覚えた値を左手首での値にそろえても、既定の所は変わらない）。
+        eq(
+            mirror(watch_offset(Hand::Left), Hand::Right),
+            watch_offset(Hand::Right),
+        );
+        let placed = Pose::new(Vec3::new(-0.05, 0.1, 0.02), Quat::from_rotation_z(0.4));
+        saved.wrist_offset = Some(placed);
+        assert_eq!(offset(Hand::Left, &saved), placed);
+        let right = offset(Hand::Right, &saved);
+        assert_eq!(right.position, Vec3::new(0.05, 0.1, 0.02));
+        eq(mirror(right, Hand::Right), placed);
     }
 
     /// 腕時計を見る姿勢（腕を胸の前で横にし、手の甲を上の顔へ向ける）で、時計は手首の甲の側・腕寄りにあり、表が上を向き、

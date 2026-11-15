@@ -238,6 +238,7 @@ impl Overlay {
             let reference = self.panels[id].pose * pivot.inverse();
             let offset = aim.inverse().transform_point(reference.position);
             st.dragging = Some((id, offset, t, pivot, resize));
+            st.before = (self.panels[id].size, self.panels[id].grab_anchor);
             st.hover = None;
             st.select = false;
             return;

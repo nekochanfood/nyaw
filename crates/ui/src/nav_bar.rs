@@ -15,6 +15,8 @@ pub(crate) struct NavBar {
     pub(crate) source_minimize: Option<Minimize>,
     /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
     pub(crate) open: design::animation::Transition,
+    /// 手に持っている持ち主を、ダッシュボードが出ていないのでロックしてある（[`attach::hold`]）。
+    pub(crate) held: bool,
 }
 
 impl Render for NavBar {
@@ -100,8 +102,25 @@ impl Render for NavBar {
                 })
             })
         });
-        let leading = dock.flatten().into_iter().chain(os_keyboard).collect();
+        // 手に持つ（持つ手を選ぶポップオーバーを開く）。持っている間は強調色。どのパネルにも出すので先頭に置く。
+        let hand = design::components::icon_button(
+            &theme,
+            "nav-hand",
+            &design::icons::HAND,
+            i18n::t(cx, "hand.attach"),
+            if attach::in_hand(owner, cx).is_some() {
+                design::components::Variant::Primary
+            } else {
+                design::components::Variant::Default
+            },
+        )
+        .on_click(move |_, _, cx| {
+            let spec = attach::menu_spec(owner, cx);
+            cx.default_global::<PanelControl>().spawns.push(spec);
+        });
+        let leading = std::iter::once(hand).chain(dock.flatten()).collect();
         let minimize = self.minimize.clone();
+        // 右側（閉じるボタンの左）は、左から OS キーボードのトグル・配信元をしまうボタン。左側が詰まらないよう右に寄せる。
         let beside_close = self.source_minimize.clone().map(|minimize| {
             design::components::icon_button(
                 &theme,
@@ -130,7 +149,7 @@ impl Render for NavBar {
                 None => command(owner, PanelCommand::Close, cx),
             },
             leading,
-            beside_close,
+            os_keyboard.into_iter().chain(beside_close).collect(),
         ))
     }
 }
