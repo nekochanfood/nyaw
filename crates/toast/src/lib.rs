@@ -1,16 +1,28 @@
 //! Layer 5 画面: OS の通知のトースト。1 枚のパネルを使い回し、届いた通知を視界の端（HUD）→ 手首の時計の上 →
-//! ダッシュボードの上へ滑らかに動かす（進むだけで戻らない。[`flow`]）。HUD はアイコンと見出しだけで押せず、
-//! 手首とダッシュボードでは本文まで出して押せる（ホバーすると本文が伸び、通知のボタンが出る）。開くのは wrist。
+//! ダッシュボードの上へ移す（進むだけで戻らない。[`flow`]）。場所を移るときは、今の場所で消えて（アウト）から次の場所へ
+//! 瞬間的に移り、そこで現れる（イン）。目の前を横切って視界を遮らないように。HUD はアイコンと見出しだけで押せず、
+//! 手首とダッシュボードでは本文まで出して押せる（ホバーすると本文が伸び、通知のボタンが出る）。左右にスワイプすると
+//! その場で片付く（[`swipe`]。クイック設定の一覧からは消さない）。開くのは wrist。
 
 mod flow;
+mod swipe;
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use design::components::{self, Variant};
-use design::{PANEL_MARGIN, Theme, font_size, icons, radius, spacing};
-use gpui::{Context, FontWeight, IntoElement, RenderImage, Window, div, img, prelude::*, px, rgba};
+use design::animation::Motion;
+use design::components::{
+    self,
+    slide::{Entering, Slide, with_leaving},
+};
+use design::{PANEL_MARGIN, Theme, font_size, radius, spacing};
+use gpui::{
+    AnyElement, Bounds, Context, FontWeight, IntoElement, Pixels, SharedString, Window, canvas,
+    div, prelude::*, px, rgba,
+};
 use kernel::subsystems::notifications::Notification;
 use kernel::vr::{Device, Fov, Pose, Quat, Vec2, Vec3};
 use kernel::{NotificationAnchor, PanelCommand, PanelId, Parent};
@@ -22,7 +34,7 @@ use flow::{Flow, Scene};
 /// パネルの解像度（px）。中身は置き場所の側（HUD は設定の端、手首とダッシュボードは下）に寄せ、残りは透明。
 pub const RES_PX: (u32, u32) = (420, 600);
 /// 置き場所ごとの密度（px/m）。どこでもダッシュボードの画面と同じくらいの見た目の大きさになるよう、遠い HUD は粗く、
-/// 近い手首は細かく。
+/// 近い手首は細かく。HUD は視界の端でも気づけるよう少し大きく。
 const HUD_PX_PER_M: f32 = 600.0;
 const WRIST_PX_PER_M: f32 = 3000.0;
 const DASHBOARD_PX_PER_M: f32 = 1000.0;
@@ -33,22 +45,26 @@ const WRIST_TILT: f32 = 0.3;
 /// 並べる数（それより多ければ「ほか n 件」）。
 const HUD_ROWS: usize = 3;
 const CARD_ROWS: usize = 3;
-/// 本文の行数（ふだん・ホバー中）。
-const BODY_LINES: usize = 2;
-const BODY_LINES_HOVER: usize = 6;
-/// アイコンの一辺（px）。
+/// HUD のアイコンの一辺（px）。
 const HUD_ICON: f32 = 28.0;
-const CARD_ICON: f32 = 36.0;
-/// 隠してから、ほかの場所に出し直すまで（消えるのを待つ。戻るように動いて見せない）。
-const REAPPEAR: Duration = Duration::from_millis(200);
+/// 並べたカードのまとまりが、出入りで滑る距離（px）。
+const SLIDE_PX: f32 = 56.0;
+/// 足されたカードが上から落ちてくる距離（px）。
+const DROP_PX: f32 = 24.0;
+/// アウトが終わりきるのを待つ余裕（アウトの長さに足す。フレームの遅れで消えきる前に移らないように）。
+const OUT_MARGIN: Duration = Duration::from_millis(50);
 
-/// トーストの起動仕様。手首の時計 `wrist` の上と、ダッシュボード（`PanelControl::dock`）の上へも動く。`opened` は作られた
+/// トーストの起動仕様。手首の時計 `wrist` の上と、ダッシュボード（`PanelControl::dock`）の上へも移る。`opened` は作られた
 /// パネルの ID を受け取る。
 pub fn spec(wrist: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'static) -> PanelSpec {
     PanelSpec::root(Pose::IDENTITY, move |panel, _, cx: &mut Context<Toast>| {
         opened(panel, cx);
-        // 何も届いていない間は隠しておく。
-        ui::command(panel, PanelCommand::Hide(true), cx);
+        // 何も届いていない間は隠しておく。出入りは不透明度だけにして、どちらへ動くかは中身が描く。
+        ui::commands(
+            panel,
+            [PanelCommand::Hide(true), PanelCommand::FadeOnly(true)],
+            cx,
+        );
         Toast::new(panel, wrist, cx)
     })
     .sized(size(HUD_PX_PER_M), RES_PX)
@@ -65,7 +81,7 @@ fn size(px_per_m: f32) -> Vec2 {
 
 /// 頭から見た HUD の置き場所。中身の外側の端（パネルの端から影の余白の内側）が、両目に確実に映る範囲 `safe`
 /// （[`Fov::safe`]）の `anchor` の側の端に来るよう、[`HUD_DISTANCE`] 先に置いて頭の方へ向ける。`scale` は UI スケール。
-// ponytail: 頭へ向けて回した分、外の端は 1° ほど外へずれる。セーフエリアの余裕（視野の 60%）に収まるので詰めない。
+// ponytail: 頭へ向けて回した分、外の端は 1° ほど外へずれる。セーフエリアの余裕（視野の 40%）に収まるので詰めない。
 pub fn hud_pose(anchor: NotificationAnchor, safe: Fov, scale: f32) -> Pose {
     let (sx, sy) = anchor.side();
     let half = size(HUD_PX_PER_M) * scale / 2.0 - Vec2::splat(PANEL_MARGIN / HUD_PX_PER_M * scale);
@@ -98,21 +114,39 @@ enum Target {
     Parent(Parent),
 }
 
+/// 出入りの段階。出ていく間（`Out`）は前の中身のまま描き、消えきってから次の場所へ移る。
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Phase {
+    Hidden,
+    In(Instant),
+    Shown,
+    Out(Instant),
+}
+
 pub struct Toast {
     panel: PanelId,
     wrist: PanelId,
     flow: Flow,
-    place: Place,
+    /// 今パネルを置いている所（出入りしている間も）。隠れていれば `None`。
     target: Option<Target>,
-    /// 最後に隠した時刻（[`REAPPEAR`]）。
-    hidden_at: Option<Instant>,
+    phase: Phase,
+    /// 描いている置き場所（出ていく間も前のまま）。
+    place: Place,
     /// 出している通知（新しい順）と、出しきれなかった数。
     shown: Vec<Arc<Notification>>,
     more: usize,
+    /// 前のフレームに並べていた通知（無くなったカードを、消えていく間だけ描き残す）。
+    prev: Vec<Arc<Notification>>,
+    /// カードの出入り（上から積む）。
+    stack: Entering,
+    /// カードの置かれた所（ウィンドウの px。前のフレームに測った自然な大きさ）。出入りで高さを伸び縮みさせ、
+    /// スワイプがどのカードの上で始まったかを見る。
+    boxes: Rc<RefCell<HashMap<u32, Bounds<Pixels>>>>,
+    /// 左右のスワイプで片付ける（[`swipe`]）。
+    swipes: swipe::Swipes,
     /// ホバーしている通知。
     hovered: Option<u32>,
-    /// アプリごとのアイコンの画像。
-    icons: HashMap<String, Option<Arc<RenderImage>>>,
+    icons: ui::notification::Icons,
 }
 
 impl Toast {
@@ -122,22 +156,32 @@ impl Toast {
             panel,
             wrist,
             flow: Flow::default(),
-            place: Place::Hidden,
             target: None,
-            hidden_at: None,
+            phase: Phase::Hidden,
+            place: Place::Hidden,
             shown: Vec::new(),
             more: 0,
+            prev: Vec::new(),
+            // 画面のテストでは動かさない（動いている途中のカードを押さないように）。
+            stack: Entering::new(cfg!(test)),
+            boxes: Rc::default(),
+            swipes: Default::default(),
             hovered: None,
-            icons: HashMap::new(),
+            icons: Default::default(),
         }
     }
 
-    /// 今の置き場所（テスト用）。
+    /// 今の置き場所（出ていく間も前の場所。隠れていれば [`Place::Hidden`]）。
     pub fn place(&self) -> Place {
-        self.place
+        if self.target.is_some() {
+            self.place
+        } else {
+            Place::Hidden
+        }
     }
 
-    /// フレームループが状態を書き戻すたびに、置き場所と出す通知を決め直す。変わったときだけパネルを動かし、描き直す。
+    /// フレームループが状態を書き戻すたびに、置き場所と出す通知を決め直す。場所が変わるときは、今の場所で消えきってから
+    /// 次の場所で現れる。同じ場所なら中身だけ入れ替える（カードが上から積まれ、無くなったものは消えていく）。
     fn sync(&mut self, cx: &mut Context<Self>) {
         let ctl = cx.global::<PanelControl>();
         let status = |id: PanelId| ctl.panels.get(&id).map(|p| &p.status);
@@ -190,60 +234,44 @@ impl Toast {
             .collect();
         let more = shown.len().saturating_sub(rows);
         let shown: Vec<_> = shown.into_iter().take(rows).collect();
-        self.move_to(place, target, now, cx);
-        let same = |a: &[Arc<Notification>], b: &[Arc<Notification>]| {
-            a.len() == b.len() && a.iter().zip(b).all(|(a, b)| Arc::ptr_eq(a, b))
-        };
-        if !same(&shown, &self.shown) || more != self.more {
-            for n in &shown {
-                self.icons.entry(n.app.id.clone()).or_insert_with(|| {
-                    let icon = n.app.icon.as_ref()?;
-                    ui::render_image(icon.width, icon.height, icon.rgba.to_vec())
-                });
+        // 出ていく途中: 前の中身のまま、消えきるまで待つ。消えきったら親から外す（親を出し直したときに一緒に出ないように）。
+        if let Phase::Out(since) = self.phase {
+            let out = Duration::from_millis(Motion::Exit.duration_ms()) + OUT_MARGIN;
+            if now.saturating_duration_since(since) < out {
+                return;
             }
-            self.shown = shown;
-            self.more = more;
-            ui::notify(self.panel, cx);
+            if matches!(self.target, Some(Target::Parent(_))) {
+                ui::command(self.panel, PanelCommand::Parent(None), cx);
+            }
+            (self.target, self.phase) = (None, Phase::Hidden);
+        }
+        match (self.target, target) {
+            (Some(at), Some(next)) if at == next => self.set_content(shown, more, cx),
+            // 違う所へ移る・隠す: まずこの場所で消える（中身はそのまま）。
+            (Some(_), _) => {
+                logger::debug!("toast leaves", from = ?self.place, to = ?place);
+                ui::command(self.panel, PanelCommand::Hide(true), cx);
+                self.phase = Phase::Out(now);
+                ui::notify(self.panel, cx);
+            }
+            (None, Some(next)) => {
+                logger::debug!("toast shows", at = ?place);
+                self.show(place, next, now, cx);
+                self.set_content(shown, more, cx);
+            }
+            (None, None) => {}
         }
     }
 
-    /// パネルを `target` へ置く。先へ進む（HUD → 手首 → ダッシュボード）ときは見えたまま滑らかに動かし、それ以外は
-    /// いったん隠して、消えきってから出し直す（戻るようには動かさない）。
-    fn move_to(
-        &mut self,
-        place: Place,
-        target: Option<Target>,
-        now: Instant,
-        cx: &mut Context<Self>,
-    ) {
-        if target == self.target {
-            return;
-        }
-        logger::debug!("toast moves", from = ?self.place, to = ?place);
-        let forward = place > self.place && self.place != Place::Hidden;
-        if self.target.is_some() && !forward {
-            // 隠す。親（手首・ダッシュボード）から外しておく（親を出し直したときに一緒に出ないように）。
-            let mut hide = vec![PanelCommand::Hide(true)];
-            if matches!(self.target, Some(Target::Parent(_))) {
-                hide.push(PanelCommand::Parent(None));
-            }
-            ui::commands(self.panel, hide, cx);
-            (self.target, self.place, self.hidden_at) = (None, Place::Hidden, Some(now));
-            ui::notify(self.panel, cx);
-        }
-        let Some(target) = target else {
-            return;
-        };
-        if self.target.is_none() && self.hidden_at.is_some_and(|t| now - t < REAPPEAR) {
-            return;
-        }
+    /// 隠れているパネルを `next` へ移して出す（イン）。カードは上から順に積まれる。
+    fn show(&mut self, place: Place, next: Target, now: Instant, cx: &mut Context<Self>) {
         let height = RES_PX.1 as f32
             / match place {
                 Place::Hud => HUD_PX_PER_M,
                 Place::Wrist => WRIST_PX_PER_M,
                 _ => DASHBOARD_PX_PER_M,
             };
-        let mut commands = match target {
+        let mut commands = match next {
             // 頭に付ける前に、今の頭の前へ置いておく（頭を追えないランタイム（novr）では、そのままそこに残る）。
             Target::Hud(pose) => vec![
                 PanelCommand::Place(pose),
@@ -255,20 +283,30 @@ impl Toast {
                 PanelCommand::PassThrough(false),
             ],
         };
-        // 見えたまま動くときは、動きの中で大きさも変わっていく（親を移した後に大きさを変える）。
-        if place != self.place {
-            commands.push(PanelCommand::FitHeight(height));
-        }
-        if self.target.is_none() {
-            commands.push(PanelCommand::Hide(false));
-        }
+        commands.extend([PanelCommand::FitHeight(height), PanelCommand::Hide(false)]);
         ui::commands(self.panel, commands, cx);
-        (self.target, self.place) = (Some(target), place);
+        (self.target, self.place, self.phase) = (Some(next), place, Phase::In(now));
+        // 前の場所のカードは引き継がず、ここで上から順に積み直す。
+        (self.shown, self.prev, self.hovered) = (Vec::new(), Vec::new(), None);
+        self.stack.replay();
         ui::notify(self.panel, cx);
     }
 
-    /// 通知 `id` の本文（`action` が `None`）かボタンを押した。URL は確かめてから開き（`ui::link`）、ほかはアプリへ届ける。
-    /// 押した通知はもう出さない。
+    /// 出している通知を入れ替える（変わったときだけ描き直す）。
+    fn set_content(&mut self, shown: Vec<Arc<Notification>>, more: usize, cx: &mut Context<Self>) {
+        let same = shown.len() == self.shown.len()
+            && shown
+                .iter()
+                .zip(&self.shown)
+                .all(|(a, b)| Arc::ptr_eq(a, b));
+        if same && more == self.more {
+            return;
+        }
+        (self.shown, self.more) = (shown, more);
+        ui::notify(self.panel, cx);
+    }
+
+    /// 通知 `id` の本文（`action` が `None`）かボタンを押した。押した通知はもう出さない（消えていく）。
     fn open(
         &mut self,
         id: u32,
@@ -276,32 +314,56 @@ impl Toast {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(n) = self.shown.iter().find(|n| n.id == id) else {
+        let Some(n) = self.shown.iter().find(|n| n.id == id).cloned() else {
             return;
         };
-        let url = match action {
-            None => n.url.clone(),
-            Some(i) => n.actions.get(i).and_then(|a| a.url.clone()),
-        };
-        match url {
-            Some(url) => design::link::open(url, window, cx),
-            None => ui::command(self.panel, PanelCommand::Notification { id, action }, cx),
-        }
+        ui::notification::open(self.panel, &n, action, window, cx);
         self.flow.done(id);
         self.shown.retain(|n| n.id != id);
         ui::notify(self.panel, cx);
     }
 
-    fn icon(&self, n: &Notification, size: f32) -> gpui::AnyElement {
-        match self.icons.get(&n.app.id).cloned().flatten() {
-            Some(image) => img(image).size(px(size)).flex_none().into_any_element(),
-            None => design::icon(&icons::BELL).size(px(size)).into_any_element(),
+    /// 並べたカードのまとまりが隠れている側（px の向き）: 手首・ダッシュボードは下（下から上に入り、上から下に出る）、
+    /// HUD は寄せた端の外（上の端なら上、左右の端なら横）。
+    fn hidden_side(&self, cx: &gpui::App) -> Vec2 {
+        match self.place {
+            Place::Hud => match ui::settings(cx).notification_anchor.side() {
+                (_, sy) if sy != 0.0 => Vec2::new(0.0, -sy),
+                (sx, _) => Vec2::new(sx, 0.0),
+            },
+            _ => Vec2::Y,
+        }
+    }
+
+    /// まとまりのずれ（px）。入り・出の途中なら動き続ける（`true`）。
+    fn slide(&mut self, now: Instant, cx: &gpui::App) -> (Vec2, bool) {
+        let side = self.hidden_side(cx) * SLIDE_PX;
+        let progress = |since: Instant, motion: Motion| {
+            let t = now.saturating_duration_since(since).as_secs_f32() * 1000.0
+                / motion.duration_ms() as f32;
+            (motion.ease(t.min(1.0)), t < 1.0)
+        };
+        match self.phase {
+            Phase::Hidden => (side, false),
+            Phase::Shown => (Vec2::ZERO, false),
+            Phase::In(since) => {
+                let (t, going) = progress(since, Motion::Enter);
+                if !going {
+                    self.phase = Phase::Shown;
+                }
+                (side * (1.0 - t), going)
+            }
+            Phase::Out(since) => {
+                let (t, going) = progress(since, Motion::Exit);
+                (side * t, going)
+            }
         }
     }
 
     /// HUD の 1 行: アイコンと見出し（1 行。長ければ省略）。押せない。
-    fn pill(&self, theme: &Theme, n: &Notification) -> gpui::AnyElement {
+    fn pill(&mut self, theme: &Theme, n: &Notification) -> AnyElement {
         let id = n.id;
+        let image = self.icons.of(n);
         components::card_panel_fit(theme)
             .debug_selector(move || format!("toast-hud-{id}"))
             .max_w_full()
@@ -311,96 +373,48 @@ impl Toast {
             .px(px(spacing::MD))
             .py(px(spacing::SM))
             .rounded(px(radius::FULL))
-            .child(self.icon(n, HUD_ICON))
+            .child(ui::notification::icon(image, HUD_ICON))
             .child(
                 div()
                     .min_w_0()
                     .truncate()
                     .text_size(px(font_size::MD))
                     .font_weight(FontWeight::BOLD)
-                    .child(title(n)),
+                    .child(ui::notification::title(n)),
             )
             .into_any_element()
     }
 
-    /// 手首・ダッシュボードの 1 枚: アイコン・見出し・アプリの名前・本文（行数を限って省略）。押すと開く。ホバー中は本文が
-    /// 伸び、通知のボタンが並ぶ。
-    fn card(&self, theme: &Theme, n: &Notification, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// 手首・ダッシュボードの 1 枚（[`ui::notification::card`]）。ホバー中は広げる。左右にスワイプしている間は横にずれ、
+    /// 離れるほど薄くなる。
+    fn card(
+        &mut self,
+        theme: &Theme,
+        n: &Notification,
+        now: Instant,
+        cx: &mut Context<Self>,
+    ) -> (AnyElement, bool) {
         let id = n.id;
-        let hovered = self.hovered == Some(id);
-        let actions = n.actions.iter().enumerate().map(|(i, a)| {
-            components::button(
-                theme,
-                format!("toast-action-{id}-{i}"),
-                a.label.clone(),
-                Variant::Default,
-            )
-            .on_click(cx.listener(move |this, _, window, cx| {
-                cx.stop_propagation();
-                this.open(id, Some(i), window, cx);
-            }))
-        });
-        let body = (!n.body.is_empty()).then(|| {
-            div()
-                .w_full()
-                .text_size(px(font_size::SM))
-                .text_color(rgba(theme.neutral_text_low))
-                .line_clamp(if hovered {
-                    BODY_LINES_HOVER
-                } else {
-                    BODY_LINES
-                })
-                .text_ellipsis()
-                .child(n.body.clone())
-        });
-        let header = div()
-            .w_full()
-            .flex()
-            .items_center()
-            .gap(px(spacing::SM))
-            .child(self.icon(n, CARD_ICON))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(font_size::MD))
-                            .font_weight(FontWeight::BOLD)
-                            .child(title(n)),
-                    )
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(font_size::SM))
-                            .text_color(rgba(theme.neutral_text_low))
-                            .child(n.app.name.clone()),
-                    ),
-            );
-        let tile = components::tile(theme, format!("toast-{id}"))
-            .w_full()
-            // ボタンの高さに決まっているので、中身に合わせて伸ばす。
-            .h_auto()
-            .items_start()
-            .rounded(px(radius::XL))
-            .child(header)
-            .children(body)
-            .when(hovered && !n.actions.is_empty(), |t| {
-                t.child(
-                    div()
-                        .w_full()
-                        .flex()
-                        .flex_wrap()
-                        .gap(px(spacing::SM))
-                        .children(actions),
-                )
-            })
-            .on_click(cx.listener(move |this, _, window, cx| this.open(id, None, window, cx)));
-        div()
-            .id(gpui::SharedString::from(format!("toast-card-{id}")))
+        let (dx, settling) = self.swipes.offset(id, now);
+        let width = self
+            .boxes
+            .borrow()
+            .get(&id)
+            .map_or(1.0, |b| f32::from(b.size.width).max(1.0));
+        let image = self.icons.of(n);
+        let this = cx.entity().downgrade();
+        let card = ui::notification::card(
+            theme,
+            "toast",
+            n,
+            image,
+            self.hovered == Some(id),
+            move |action, window, cx| {
+                let _ = this.update(cx, |t, cx| t.open(id, action, window, cx));
+            },
+        );
+        let card = div()
+            .id(SharedString::from(format!("toast-card-{id}")))
             .w_full()
             .on_hover(cx.listener(move |this, on: &bool, _, cx| {
                 let next = match (*on, this.hovered) {
@@ -413,37 +427,144 @@ impl Toast {
                     ui::notify(this.panel, cx);
                 }
             }))
-            .child(components::card_panel_fit(theme).w_full().child(tile))
-            .into_any_element()
+            .relative()
+            .left(px(dx))
+            .opacity(1.0 - (dx.abs() / width).min(1.0))
+            .child(components::card_panel_fit(theme).w_full().child(card))
+            .into_any_element();
+        (card, settling)
     }
 }
 
-/// 見出し（無ければアプリの名前）。
-fn title(n: &Notification) -> gpui::SharedString {
-    if n.title.is_empty() {
-        n.app.name.clone().into()
-    } else {
-        n.title.clone().into()
-    }
+/// 揃え方（HUD は寄せた端の側。手首・ダッシュボードは中央）。
+#[derive(Clone, Copy)]
+enum Alignment {
+    Start,
+    Center,
+    End,
+}
+
+/// カード 1 枚の出入り（上から積む）: 出具合 `s` に合わせて高さが伸び（下のカードを押し下げる）、上から落ちてきて現れる。
+/// 消えるときは逆に縮んで上へ抜ける。高さは前のフレームに測った自然な高さ（`boxes`）。出きったら自然な高さに任せる
+/// （ホバーで伸びても追従する）。カードとの隙間は寄せた端の反対側（`gap_top` なら上）に取る。
+fn drop_in(
+    s: Slide,
+    id: u32,
+    boxes: &Rc<RefCell<HashMap<u32, Bounds<Pixels>>>>,
+    gap_top: bool,
+    align: Alignment,
+    child: AnyElement,
+) -> AnyElement {
+    let grow = s.grow.clamp(0.0, 1.0);
+    let natural = boxes
+        .borrow()
+        .get(&id)
+        .map_or(0.0, |b| f32::from(b.size.height));
+    let measure = {
+        let boxes = boxes.clone();
+        canvas(
+            move |bounds, _, _| {
+                boxes.borrow_mut().insert(id, bounds);
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0()
+    };
+    let inner = div()
+        .relative()
+        .w_full()
+        .flex_none()
+        .flex()
+        .map(|d| match align {
+            Alignment::Start => d.justify_start(),
+            Alignment::Center => d.justify_center(),
+            Alignment::End => d.justify_end(),
+        })
+        .map(|d| {
+            if gap_top {
+                d.pt(px(spacing::SM))
+            } else {
+                d.pb(px(spacing::SM))
+            }
+        })
+        .child(child)
+        .child(measure);
+    div()
+        .w_full()
+        .flex_none()
+        .when(grow < 1.0, |d| d.h(px(natural * grow)).overflow_hidden())
+        .child(
+            div()
+                .relative()
+                .top(px(-(1.0 - s.rise) * DROP_PX))
+                .opacity(s.rise.clamp(0.0, 1.0))
+                .child(inner),
+        )
+        .into_any_element()
 }
 
 impl Render for Toast {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = Instant::now();
         let theme = Theme::current(cx);
-        // HUD は設定の端に、手首・ダッシュボードは下（立てた所）に寄せる。新しいものほど寄せた端に近く。
-        let (sx, sy) = match self.place {
-            Place::Hud => ui::settings(cx).notification_anchor.side(),
-            _ => (0.0, -1.0),
+        let hud = self.place == Place::Hud;
+        // HUD は設定の端に、手首・ダッシュボードは下（立てた所）に寄せる。カードはどこでも新しいものが上。
+        let (sx, sy) = if hud {
+            ui::settings(cx).notification_anchor.side()
+        } else {
+            (0.0, -1.0)
         };
-        let mut items: Vec<gpui::AnyElement> = match self.place {
-            Place::Hud => self.shown.iter().map(|n| self.pill(&theme, n)).collect(),
-            _ => {
-                let shown = self.shown.clone();
-                shown.iter().map(|n| self.card(&theme, n, cx)).collect()
-            }
+        let align = match sx {
+            x if x < 0.0 => Alignment::Start,
+            x if x > 0.0 => Alignment::End,
+            _ => Alignment::Center,
         };
-        if self.more > 0 {
-            items.push(
+        let (offset, sliding) = self.slide(now, cx);
+        // 横へ抜けきったカードは、もう出さない（クイック設定の一覧には残る）。
+        let ids: Vec<u32> = self.shown.iter().map(|n| n.id).collect();
+        for id in self.swipes.take_gone(&ids) {
+            self.flow.done(id);
+            self.shown.retain(|n| n.id != id);
+        }
+        self.stack.begin(self.phase == Phase::Hidden, now);
+        let items = with_leaving(
+            self.shown.clone(),
+            &self.prev,
+            |n| SharedString::from(n.id.to_string()),
+            &mut self.stack,
+            now,
+        );
+        self.prev = self.shown.clone();
+        let boxes = self.boxes.clone();
+        let mut swiping = false;
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (slot, (n, leaving)) in items.iter().enumerate() {
+            let key = SharedString::from(n.id.to_string());
+            let s = if *leaving {
+                self.stack.progress_out(&key, now)
+            } else {
+                self.stack.progress(&key, slot, now)
+            };
+            let content = if hud {
+                self.pill(&theme, n)
+            } else {
+                let (card, settling) = self.card(&theme, n, now, cx);
+                swiping |= settling;
+                card
+            };
+            rows.push(drop_in(s, n.id, &boxes, sy < 0.0, align, content));
+        }
+        let drawn: Vec<u32> = items.iter().map(|(n, _)| n.id).collect();
+        self.swipes.forget(&drawn);
+        boxes.borrow_mut().retain(|id, _| drawn.contains(id));
+        if self.stack.finish() || sliding || swiping {
+            components::keep_drawing(window, cx);
+        }
+        // 「ほか n 件」は並べたカードの下。カードの隙間が上に付く並べ方（下に寄せる）では、ここにも同じ隙間を空ける
+        // （空けないと一番下のカードに重なる）。
+        let more = (self.more > 0).then(|| {
+            div().when(sy < 0.0, |d| d.pt(px(spacing::SM))).child(
                 components::card_panel_fit(&theme)
                     .debug_selector(|| "toast-more".into())
                     .px(px(spacing::MD))
@@ -451,31 +572,47 @@ impl Render for Toast {
                     .rounded(px(radius::FULL))
                     .text_size(px(font_size::SM))
                     .text_color(rgba(theme.neutral_text_low))
-                    .child(i18n::tf(cx, "toast.more", &[("count", &self.more)]))
-                    .into_any_element(),
-            );
-        }
-        if sy < 0.0 {
-            items.reverse();
-        }
-        let root = div()
+                    .child(i18n::tf(cx, "toast.more", &[("count", &self.more)])),
+            )
+        });
+        let column = div()
+            .relative()
+            .left(px(offset.x))
+            .top(px(offset.y))
+            .w_full()
+            .flex()
+            .flex_col()
+            .map(|d| match align {
+                Alignment::Start => d.items_start(),
+                Alignment::Center => d.items_center(),
+                Alignment::End => d.items_end(),
+            })
+            .children(rows)
+            .children(more);
+        div()
             .size_full()
             .p(px(PANEL_MARGIN))
             .flex()
             .flex_col()
-            .gap(px(spacing::SM))
-            .text_color(rgba(theme.neutral_text));
-        let root = match sy {
-            y if y > 0.0 => root.justify_start(),
-            y if y < 0.0 => root.justify_end(),
-            _ => root.justify_center(),
-        };
-        let root = match sx {
-            x if x < 0.0 => root.items_start(),
-            x if x > 0.0 => root.items_end(),
-            _ => root.items_center(),
-        };
-        root.children(items)
+            .text_color(rgba(theme.neutral_text))
+            .map(|d| match sy {
+                y if y > 0.0 => d.justify_start(),
+                y if y < 0.0 => d.justify_end(),
+                _ => d.justify_center(),
+            })
+            .child(column)
+            // 押せる所でだけ、カードのスワイプを受ける。
+            .when(!hud, |d| {
+                let this = cx.entity().downgrade();
+                d.child(
+                    canvas(
+                        |_, _, _| {},
+                        move |_, _, window, _| swipe::listen(this, window),
+                    )
+                    .absolute()
+                    .size_full(),
+                )
+            })
     }
 }
 

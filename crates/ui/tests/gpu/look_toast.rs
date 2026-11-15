@@ -95,9 +95,9 @@ pub fn main() {
                         cx.background_executor()
                             .timer(Duration::from_millis(100))
                             .await;
-                        // 一番新しい（一番下の）カードの上にポインタを置く。
+                        // 一番新しい（一番上の）カードの上にポインタを置く。
                         if name == "wrist-hover" {
-                            let at = point(px(210.0), px(toast::RES_PX.1 as f32 - 80.0));
+                            let at = point(px(210.0), px(toast::RES_PX.1 as f32 - 200.0));
                             let event = PlatformInput::MouseMove(MouseMoveEvent {
                                 position: at,
                                 pressed_button: None,

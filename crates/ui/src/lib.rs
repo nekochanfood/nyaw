@@ -8,6 +8,7 @@ mod cue;
 pub mod keyboard;
 mod link;
 pub mod mirror;
+pub mod notification;
 mod panel_window;
 pub mod prefs;
 mod quit;

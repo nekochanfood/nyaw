@@ -10,7 +10,7 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use gpui::TestAppContext;
-use kernel::subsystems::notifications::{self as notes, Notification, Notifications};
+use kernel::subsystems::notifications::{self as notes, Notification, Notifications, Request};
 use kernel::vr::{Fov, RawController, Vec3};
 use kernel::{Device, Hand, NotificationAnchor, PanelCommand, PanelId, Pose, Setting, Vec2};
 use testkit::{Action, Driver, VrKit};
@@ -99,8 +99,8 @@ fn press_x_twice(kit: &mut VrKit<Wrist>) {
     kit.step();
 }
 
-/// Where clicks on notifications are delivered (notification id, button index).
-type Clicks = Receiver<(u32, Option<usize>)>;
+/// Where the notifications source receives requests (clicks: notification id, button index).
+type Clicks = Receiver<Request>;
 
 /// The wrist worn on the lowered left hand, a headset with `fov`, the HUD at `anchor`, and one notification that
 /// arrives after start. Returns the toast's panel and where clicks are delivered.
@@ -232,8 +232,9 @@ fn the_hud_lands_inside_a_wide_headset(cx: &mut TestAppContext) {
     );
 }
 
-/// Not looking at the watch, a notification shows at the edge of the view (not clickable). Raising the watch makes
-/// the same panel glide onto it, opening the dashboard glides it on top of the dashboard, and its buttons there
+/// Not looking at the watch, a notification shows at the edge of the view (not clickable). Raising the watch moves
+/// the same panel onto it (out where it was, then in on the watch), opening the dashboard moves it on top of the dashboard,
+/// and its buttons there
 /// reach the app. After closing the dashboard it never comes back, not even to the watch.
 #[gpui::test]
 fn a_notification_flows_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mut TestAppContext) {
@@ -246,32 +247,25 @@ fn a_notification_flows_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mut Test
     );
     kit.panel(0);
     let hud = kit.kernel.panel(toast).pose.position;
-    // testkit turns panel animations off (most tests must not depend on time); this one is about the motion.
-    kit.kernel.apply(toast, PanelCommand::Animated(true));
 
-    // Raise the watch: the toast glides from the HUD over several frames (no jump) and settles on the watch.
+    // Raise the watch: the toast first disappears where it is (on the HUD), and only then appears on the watch. It is
+    // never seen anywhere in between (moving across the view would block it).
     kit.hand(Hand::Left).move_hand(raised()).hand(Hand::Right);
-    kit.step();
     assert!(kit.kernel.status(0).gazed, "looking at the watch");
-    let mut last = kit.kernel.panel(toast).pose.position;
-    assert!(
-        last.distance(hud) < 0.05,
-        "starts from the HUD: {last} vs {hud}"
-    );
-    let flight = last.distance(kit.kernel.panel(0).pose.position);
-    let mut moves = 0;
-    for _ in 0..40 {
-        kit.step();
+    let start = Instant::now();
+    while kit.kernel.status(toast).parent != Some(0) {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "moves to the watch"
+        );
         let at = kit.kernel.panel(toast).pose.position;
-        let d = at.distance(last);
-        assert!(d < flight / 2.0, "glides, no jump: {last} -> {at}");
-        moves += usize::from(d > 0.01);
-        last = at;
-        if moves > 0 && d < 1e-4 {
-            break;
-        }
+        assert!(
+            kit.kernel.status(toast).hidden || at.distance(hud) < 1e-3,
+            "seen only on the HUD before it moves: {at} vs {hud}"
+        );
+        kit.step();
     }
-    assert!(moves >= 5, "glides over {moves} frames");
+    settle(&mut kit);
     let (watch, card) = (kit.kernel.panel(0).clone(), kit.kernel.panel(toast).clone());
     assert_eq!(kit.kernel.status(toast).parent, Some(0));
     assert!(!card.pass_through && !kit.kernel.status(toast).hidden);
@@ -307,7 +301,7 @@ fn a_notification_flows_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mut Test
     kit.panel(toast).hover("toast-7");
     kit.step();
     kit.click("toast-action-7-0");
-    assert_eq!(clicks.try_recv(), Ok((7, Some(0))));
+    assert_eq!(clicks.try_recv(), Ok(Request::Activate(7, Some(0))));
     settle(&mut kit);
     assert!(
         kit.kernel.status(toast).hidden,

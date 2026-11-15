@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 /// HUD に出しておく時間（新しい通知が届くたびに延びる）。過ぎても通知は手首で待つ。
-pub(crate) const HUD_TIME: Duration = Duration::from_secs(6);
+pub(crate) const HUD_TIME: Duration = Duration::from_secs(10);
 /// 手首から目を離してから、手首の通知を片付けるまで（ちらっと外れただけで消えないように）。
 pub(crate) const WRIST_LINGER: Duration = Duration::from_millis(1500);
 
