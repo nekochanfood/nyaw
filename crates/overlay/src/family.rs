@@ -119,17 +119,14 @@ impl Overlay {
     /// 親・持ち主に付いて動くもの（子・ナビゲーションバー）は、根元のパネルがデバイスに付いて動いていれば（`follow`）、
     /// 同じデバイスに相対で付ける。根元はランタイムが合成の直前の姿勢で動かすので、毎 tick の姿勢で置くと遅れて見える。
     pub(crate) fn follow_roots(&mut self) {
-        let up = |q: &Panel| q.nav_bar_of.or(q.parent.map(|r| r.panel));
         let follows: Vec<_> = self
             .present
             .iter()
             .filter_map(|&id| {
                 let p = &self.panels[id];
-                let root = std::iter::successors(up(p), |&r| up(&self.panels[r]))
-                    .take(self.panels.len())
-                    .last()?;
-                let r = &self.panels[root];
-                let (device, offset) = r.follow.clone()?;
+                let r = root(&self.panels, id);
+                let (device, offset) = self.panels[r].follow.clone().filter(|_| r != id)?;
+                let r = &self.panels[r];
                 Some((id, (device, offset * r.pose.inverse() * p.pose)))
             })
             .collect();
@@ -263,6 +260,15 @@ pub(crate) fn has_child(panels: &[Panel], present: &[PanelId], id: PanelId) -> b
 }
 
 /// `id` の親、その親…（近い順）。
+/// 親・持ち主（ナビゲーションバーの）をたどった根元。親も持ち主も無ければ `id` 自身。
+pub(crate) fn root(panels: &[Panel], id: PanelId) -> PanelId {
+    let up = |q: &Panel| q.nav_bar_of.or(q.parent.map(|r| r.panel));
+    std::iter::successors(Some(id), |&r| up(&panels[r]))
+        .take(panels.len())
+        .last()
+        .unwrap_or(id)
+}
+
 pub(crate) fn ancestors(panels: &[Panel], id: PanelId) -> Vec<PanelId> {
     let mut v = Vec::new();
     let mut cur = id;

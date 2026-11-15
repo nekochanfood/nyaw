@@ -157,17 +157,23 @@ impl Overlay {
                     && !self.panels[id].hidden
             })
             .and_then(|id| plane_hit(&self.panels[id], &aim).map(|(pos, t)| (id, pos, t)));
-        // そうでなければ、レーザー上で最も近いパネル。
+        // そうでなければ、レーザー上で最も近いパネル。この手のコントローラに付いているもの（手に持ったパネルとその子・
+        // ナビゲーションバー）は指さない（レーザーと一緒に動くので指しても意味が無く、根元の近くで誤って当たる）。
+        let own = Device::Controller(c.hand);
         let hit = captured.or_else(|| {
             self.present
                 .iter()
                 .map(|&id| (id, &self.panels[id]))
-                .filter(|(_, p)| {
+                .filter(|&(id, p)| {
                     !p.closed
                         && !p.hidden
                         && p.pointer.is_none()
                         && !p.parent.is_some_and(|q| q.hud)
                         && !p.nav_bar_of.is_some_and(|o| self.panels[o].hidden)
+                        && !self.panels[root(&self.panels, id)]
+                            .attached
+                            .as_ref()
+                            .is_some_and(|(d, _)| *d == own)
                 })
                 .filter_map(|(id, p)| hit_test(p, &aim).map(|(pos, t)| (id, pos, t)))
                 .min_by(|a, b| a.2.total_cmp(&b.2))
