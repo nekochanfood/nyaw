@@ -359,9 +359,9 @@ impl Fov {
 }
 
 /// HUD を置いてよい範囲（[`Fov::safe`]）に使う、視野の片側のうちの割合。
-pub const SAFE_SHARE: f32 = 0.6;
-/// HUD を置いてよい範囲の上限（左右 25°・上下 20°）。
-pub const SAFE_MAX: Fov = Fov::even(25.0_f32.to_radians(), 20.0_f32.to_radians());
+pub const SAFE_SHARE: f32 = 0.4;
+/// HUD を置いてよい範囲の上限（左右 15°・上下 12°。目を少し動かすだけで読める所）。
+pub const SAFE_MAX: Fov = Fov::even(15.0_f32.to_radians(), 12.0_f32.to_radians());
 
 /// トラッキングされるデバイス。オーバーレイを取り付ける先として使う。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -645,7 +645,7 @@ mod tests {
                 (safe.down, fov.down, SAFE_MAX.down),
             ] {
                 assert!(s <= f * SAFE_SHARE + 1e-6 && s <= max, "{fov:?} → {safe:?}");
-                assert!(s > deg(15.0), "端に寄せられる余地が残る: {safe:?}");
+                assert!(s > deg(10.0), "端に寄せられる余地が残る: {safe:?}");
             }
         }
         assert!(Fov::NARROW.valid() && !Fov::even(0.0, 1.0).valid());
