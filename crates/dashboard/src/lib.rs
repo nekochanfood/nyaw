@@ -24,8 +24,9 @@ use kernel::desktop::{
     Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status, app_key,
 };
 use kernel::subsystems::media;
-use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
-use kernel::{PanelCommand, PanelId, Setting};
+use kernel::subsystems::notifications::Notification;
+use kernel::vr::{Pose, Quat, Vec2, Vec3};
+use kernel::{PanelCommand, PanelId};
 use ui::mirror::{MirrorState, mirror_screen};
 use ui::{PanelControl, PanelSpec, commands};
 
@@ -44,7 +45,6 @@ pub use menu::*;
 use mirror::*;
 use now_playing::*;
 use parts::*;
-use quick_settings::*;
 use screen::*;
 
 #[cfg(test)]
@@ -245,4 +245,7 @@ pub struct Screen {
     removing: bool,
     /// 更新の確認の結果（確認中も）。
     update_note: Option<SharedString>,
+    /// 通知の一覧（クイック設定）で、ホバーして広げている通知と、アプリのアイコン。
+    notification_hover: Option<u32>,
+    notification_icons: ui::notification::Icons,
 }

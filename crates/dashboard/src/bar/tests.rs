@@ -339,15 +339,13 @@ fn showing_the_dashboard_focuses_the_docked_stream(cx: &mut TestAppContext) {
 }
 
 /// 滑り込みの間の幅の計算（クイック設定の自然な幅）が、出きったときの実際の幅と合う。合わないと出きる瞬間に飛ぶ。
+/// 通知が溜まっていれば、時刻の横にその件数が出る（無ければ出さない）。
 #[gpui::test]
 fn quick_settings_width_matches_the_laid_out_button(cx: &mut TestAppContext) {
-    for with_battery in [false, true] {
+    for count in [0, 12] {
         let (_bar, cx) = cx.add_window_view(|_, cx| {
-            cx.default_global::<PanelControl>().batteries = if with_battery {
-                vec![battery(0.9, false)]
-            } else {
-                vec![]
-            };
+            cx.default_global::<PanelControl>().notifications =
+                (0..count).map(|id| Arc::new(note(id))).collect();
             Dashboard::new(1, summon, summon, cx)
         });
         cx.run_until_parked();
@@ -358,10 +356,22 @@ fn quick_settings_width_matches_the_laid_out_button(cx: &mut TestAppContext) {
                 .size
                 .width,
         );
-        let expected = quick_settings_width(f32::from(time), with_battery);
+        let shown = cx.debug_bounds("dashboard-notification-count").is_some();
+        assert_eq!(shown, count > 0, "件数");
+        let digits = (count > 0).then(|| {
+            cx.update(|window, _| {
+                f32::from(design::font::width(
+                    count.to_string(),
+                    font_size::MD,
+                    FontWeight::BOLD,
+                    window,
+                ))
+            })
+        });
+        let expected = quick_settings_width(f32::from(time), digits);
         assert!(
             (actual - expected).abs() <= 1.0,
-            "電池 {with_battery}: {actual} / {expected}"
+            "通知 {count}: {actual} / {expected}"
         );
     }
 }

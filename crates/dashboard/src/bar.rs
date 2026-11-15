@@ -402,15 +402,11 @@ const MAX_BAR_PX: f32 = BAR_PX.0 as f32 - 2.0 * components::PANEL_MARGIN;
 /// 区切り線の自然な幅（線と両脇の余白）。
 const SEPARATOR_W: f32 = 1.0 + 2.0 * spacing::XS;
 
-/// クイック設定のボタンの自然な幅（px）: 左右の余白と時刻、電池があればその記号（と隙間）。
-fn quick_settings_width(time_width: f32, battery: bool) -> f32 {
+/// クイック設定のボタンの自然な幅（px）: 左右の余白と時刻、通知があればその件数（鐘の記号と数字の幅 `count`。と隙間）。
+fn quick_settings_width(time_width: f32, count: Option<f32>) -> f32 {
     2.0 * spacing::XL
         + time_width
-        + if battery {
-            spacing::SM + font_size::LG
-        } else {
-            0.0
-        }
+        + count.map_or(0.0, |w| spacing::SM + font_size::LG + spacing::XS + w)
 }
 
 /// ダッシュボードで開いた配信。
@@ -533,14 +529,16 @@ impl Render for Dashboard {
                 Variant::Default
             }
         };
-        // 時刻の横の電池は HMD のもの（無ければ最初のデバイス）。
-        let ctl = cx.global::<PanelControl>();
-        let battery = ctl
-            .batteries
-            .iter()
-            .find(|b| b.device == Device::Hmd)
-            .or(ctl.batteries.first())
-            .cloned();
+        // 時刻の横に、溜まっている通知の件数（一覧はクイック設定）。無ければ出さない。
+        let count = cx.global::<PanelControl>().notifications.len();
+        let count_width = (count > 0).then(|| {
+            f32::from(design::font::width(
+                count.to_string(),
+                font_size::MD,
+                FontWeight::BOLD,
+                window,
+            ))
+        });
         let page_button = |id, glyph, tooltip, page| {
             components::icon_button(&theme, id, glyph, tooltip, variant(page))
                 .on_click(cx.listener(move |this, _, _, cx| this.toggle(page, cx)))
@@ -648,7 +646,7 @@ impl Render for Dashboard {
         );
         let menu_t = enter.progress(&"dashboard-menu".into(), 0, now_at);
         let quick_t = enter.progress(&"dashboard-quick-settings".into(), 1, now_at);
-        let quick_w = quick_settings_width(f32::from(time_width), battery.is_some());
+        let quick_w = quick_settings_width(f32::from(time_width), count_width);
         // 区切り線は滑り込まず、透明度と幅だけが変わる。
         let separator_t = if sep_now {
             enter.progress(&sep_key, stream_slot, now_at)
@@ -688,7 +686,15 @@ impl Render for Dashboard {
             // 数字で幅が変わって落ち着かないので、時刻の幅を固定する。
             .child(fixed_clock(time_width))
             .tooltip(i18n::t(cx, "dashboard.quick_settings"))
-            .children(battery.map(|b| design::icon(battery_glyph(&b)).size(px(font_size::LG))))
+            .children(count_width.map(|_| {
+                div()
+                    .debug_selector(|| "dashboard-notification-count".into())
+                    .flex()
+                    .items_center()
+                    .gap(px(spacing::XS))
+                    .child(design::icon(&icons::BELL).size(px(font_size::LG)))
+                    .child(div().font_weight(FontWeight::BOLD).child(count.to_string()))
+            }))
             .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
         );
         // 左から: メニュー・クイック設定・進行中の作業（クイック設定と再生中の間）・再生中（何か再生しているときだけ）・

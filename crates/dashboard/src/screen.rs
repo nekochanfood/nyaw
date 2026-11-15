@@ -68,6 +68,8 @@ impl Screen {
             nyapps_pending: false,
             removing: false,
             update_note: None,
+            notification_hover: None,
+            notification_icons: Default::default(),
         };
         // 再生中の画面は、アプリのアイコンが OS から取れないとき（デスクトップのアプリ）にウィンドウのものを使う。
         if matches!(page, Page::Launcher | Page::NowPlaying) {
