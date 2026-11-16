@@ -46,6 +46,8 @@ pub struct Entering {
     off: bool,
     /// しばらく描かれなかったことを、隠れていたとみなさない（[`Entering::without_idle_replay`]）。
     no_idle: bool,
+    /// 幅（高さ）の動き（[`Entering::with_grow`]。既定は入りが `Grow`、出が `Shrink`）。
+    grow: Option<Motion>,
 }
 
 impl Entering {
@@ -61,6 +63,12 @@ impl Entering {
     /// [`Entering::replay`] か `begin` の `hidden` で知らせる）に。
     pub fn without_idle_replay(mut self) -> Self {
         self.no_idle = true;
+        self
+    }
+
+    /// 幅（高さ）の動きを、入りも出も `grow` にする（積んだ通知のカードは ease-in-out で伸び縮みする）。
+    pub fn with_grow(mut self, grow: Motion) -> Self {
+        self.grow = Some(grow);
         self
     }
 
@@ -107,7 +115,16 @@ impl Entering {
             };
             self.running.insert(
                 key.clone(),
-                (Pair::new(0.0, 1.0, Motion::SlideIn, true), start),
+                (
+                    Pair::with_grow(
+                        0.0,
+                        1.0,
+                        Motion::SlideIn,
+                        self.grow.unwrap_or(Motion::Grow),
+                        true,
+                    ),
+                    start,
+                ),
             );
             if !self.revealing {
                 self.follow = Some(key.clone());
@@ -144,7 +161,16 @@ impl Entering {
         self.running.remove(key);
         self.leaving.insert(
             key.clone(),
-            (Pair::new(1.0, 0.0, Motion::SlideOut, false), now),
+            (
+                Pair::with_grow(
+                    1.0,
+                    0.0,
+                    Motion::SlideOut,
+                    self.grow.unwrap_or(Motion::Shrink),
+                    false,
+                ),
+                now,
+            ),
         );
         true
     }

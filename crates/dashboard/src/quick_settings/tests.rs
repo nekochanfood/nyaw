@@ -196,7 +196,7 @@ fn a_card_expands_and_collapses_smoothly(cx: &mut TestAppContext) {
     cx.simulate_mouse_move(at, None, Modifiers::none());
     cx.run_until_parked();
     assert!(cx.debug_bounds("notification-action-1-0").is_some());
-    let half = Motion::Grow.duration_ms() / 2;
+    let half = Motion::Morph.duration_ms() / 2;
     redraw(cx, half);
     let mid = height(cx, "notification-1");
     redraw(cx, half + 50);
@@ -205,22 +205,33 @@ fn a_card_expands_and_collapses_smoothly(cx: &mut TestAppContext) {
     assert_eq!(mid, mid.round(), "画素に揃える");
     cx.simulate_mouse_move(gpui::point(px(1.0), px(1.0)), None, Modifiers::none());
     cx.run_until_parked();
-    redraw(cx, Motion::Shrink.duration_ms() / 2);
+    redraw(cx, Motion::Morph.duration_ms() / 2);
     let mid = height(cx, "notification-1");
     assert!(closed < mid && mid < open, "{closed} < {mid} < {open}");
-    redraw(cx, Motion::Shrink.duration_ms() / 2 + 50);
+    redraw(cx, Motion::Morph.duration_ms() / 2 + 50);
     assert_eq!(height(cx, "notification-1"), closed);
     assert!(cx.debug_bounds("notification-action-1-0").is_none());
 }
 
-/// 「すべて消去」で、どれもその場で畳まれて OS の通知センターから消える（押したことにはしない）。
+/// 「すべて消去」で、上から順にスワイプしたように横へ抜けて畳まれ、OS の通知センターから消える（押したことにはしない）。
 #[gpui::test]
 fn clearing_all_removes_every_notification(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![note(1), note(2)]);
+    let x = |cx: &mut VisualTestContext, s: &'static str| {
+        f32::from(cx.debug_bounds(s).unwrap().origin.x)
+    };
+    let start = x(cx, "notification-2");
     click(cx, "notifications-clear");
     cx.run_until_parked();
-    redraw(cx, ui::swipe::COLLAPSE.duration_ms() + 50);
-    redraw(cx, 0);
+    redraw(cx, ui::swipe::FLICK.duration_ms() / 3);
+    let (top, below) = (x(cx, "notification-2"), x(cx, "notification-1"));
+    assert!(
+        top > below && top > start,
+        "上から順に抜ける: {top} {below}"
+    );
+    for _ in 0..4 {
+        redraw(cx, ui::swipe::COLLAPSE.duration_ms());
+    }
     let mut removed: Vec<u32> = take_commands(cx, 2)
         .into_iter()
         .map(|c| match c {

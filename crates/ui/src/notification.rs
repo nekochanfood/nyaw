@@ -134,12 +134,8 @@ impl Expanding {
         let mut s = self.0.borrow_mut();
         let to = if open { 1.0 } else { 0.0 };
         let t = s.open.entry(id).or_insert(Transition::rest(to));
-        t.go(
-            to,
-            if open { Motion::Grow } else { Motion::Shrink },
-            now,
-            animated,
-        );
+        // 広げるのもたたむのも、ゆっくり動き出してゆっくり止まる。
+        t.go(to, Motion::Morph, now, animated);
         let (p, moving) = t.at(now);
         let at = |expanded| s.heights.get(&(id, expanded)).copied();
         let height = match (moving, at(false), at(true)) {

@@ -8,6 +8,14 @@ use super::*;
 use ui::notification::{Center, Detail};
 use ui::swipe::Look;
 
+/// 「すべて消去」で、カードが上から順に抜けていく間隔。多いときは全部で [`CLEAR_SPAN`] に収める。
+const CLEAR_STAGGER: Duration = Duration::from_millis(60);
+const CLEAR_SPAN: Duration = Duration::from_millis(600);
+
+fn clear_stagger(count: usize) -> Duration {
+    CLEAR_STAGGER.min(CLEAR_SPAN / count.max(1) as u32)
+}
+
 /// 届いてからこの間は「n 日前」のように今からの差で、過ぎたら日付と時刻で出す。
 const RELATIVE_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
@@ -161,12 +169,14 @@ impl Screen {
                                     i18n::t(cx, "dashboard.clear_notifications"),
                                     Variant::OnBackground,
                                 )
-                                // その場で薄れながら畳まれ、畳みきったら OS の通知センターから消す（スワイプと同じ）。
+                                // 上から順にスワイプしたように横へ抜けて畳まれ、畳みきったら OS の通知センターから消す
+                                // （スワイプと同じ）。
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
                                         let now = Instant::now();
-                                        for &id in &ids {
-                                            this.swipes.dismiss(id, now);
+                                        let gap = clear_stagger(ids.len());
+                                        for (i, &id) in ids.iter().enumerate() {
+                                            this.swipes.dismiss(id, now + gap * i as u32);
                                         }
                                         ui::notify(this.panel, cx);
                                     },

@@ -23,7 +23,9 @@ const SLOP: f32 = 8.0;
 /// 離した後に横へ抜ける・戻る動きと、抜けた後に高さを畳む動き。
 const SETTLE: Motion = Motion::Return;
 /// 抜けた項目の高さを畳む動き（下が詰まる）。ゆっくり動き出してゆっくり止まる（終わり際に速いと、詰まりきる所で跳ねて見える）。
-pub const COLLAPSE: Motion = Motion::Move;
+pub const COLLAPSE: Motion = Motion::Morph;
+/// スワイプせずに片付ける項目（[`Swipes::dismiss`]）が横へ抜ける動き（離して抜けるのと同じ）。
+pub const FLICK: Motion = SETTLE;
 
 /// 1 つの項目のスワイプ。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -50,6 +52,8 @@ struct State {
     gesture: Option<Gesture>,
     /// 横へ抜けきった項目: 抜けた先（px）と、抜けきった時刻（そこから高さを畳む）。
     gone: HashMap<u32, (f32, Instant)>,
+    /// スワイプせずに片付ける項目（[`Swipes::dismiss`]）: 横へ抜け始める時刻。
+    flicks: HashMap<u32, Instant>,
     /// 項目の置かれた所（ウィンドウの px。前のフレームに測ったもの）。どの項目の上で始まったか・幅を見る。
     boxes: HashMap<u32, Bounds<Pixels>>,
 }
@@ -105,7 +109,9 @@ impl State {
     fn card_at(&self, at: Point<Pixels>) -> Option<u32> {
         self.boxes
             .iter()
-            .find(|(id, b)| b.contains(&at) && !self.gone.contains_key(id))
+            .find(|(id, b)| {
+                b.contains(&at) && !self.gone.contains_key(id) && !self.flicks.contains_key(id)
+            })
             .map(|(&id, _)| id)
     }
 }
@@ -122,11 +128,19 @@ impl Swipes {
         };
         if let Some(&(x, since)) = s.gone.get(&id) {
             let t = progress(since, COLLAPSE, now).min(1.0);
-            let height = 1.0 - COLLAPSE.ease(t);
-            // 横へ抜けずに片付けたもの（[`Swipes::dismiss`]）は、畳みながら薄れる。
-            let mut l = look(x, height);
-            l.opacity = l.opacity.min(height);
-            return l;
+            return look(x, 1.0 - COLLAPSE.ease(t));
+        }
+        if let Some(&start) = s.flicks.get(&id) {
+            if now < start {
+                return look(0.0, 1.0);
+            }
+            let t = progress(start, FLICK, now);
+            if t < 1.0 {
+                return look(width * FLICK.ease(t), 1.0);
+            }
+            s.flicks.remove(&id);
+            s.gone.insert(id, (width, now));
+            return look(width, 1.0);
         }
         match s.gesture {
             Some(Gesture::Dragging { id: g, moved, .. }) if g == id => look(moved, 1.0),
@@ -154,7 +168,9 @@ impl Swipes {
     /// （離したことが届かないまま残っても、描き続けない）。
     pub fn busy(&self) -> bool {
         let s = self.0.borrow();
-        !s.gone.is_empty() || matches!(s.gesture, Some(Gesture::Settling { .. }))
+        !s.gone.is_empty()
+            || !s.flicks.is_empty()
+            || matches!(s.gesture, Some(Gesture::Settling { .. }))
     }
 
     /// 畳みきった項目（一度だけ返す。呼ぶ側は、このフレームからもう並べない）。
@@ -173,16 +189,20 @@ impl Swipes {
         done
     }
 
-    /// 項目 `id` をスワイプせずに片付ける（まとめて消すとき）。その場で薄れながら畳まれ、畳みきったら [`Self::take_gone`]
-    /// が返す。
-    pub fn dismiss(&self, id: u32, now: Instant) {
-        self.0.borrow_mut().gone.entry(id).or_insert((0.0, now));
+    /// 項目 `id` をスワイプせずに片付ける（まとめて消すとき）。`start` に右へ抜け始め（スワイプして離したのと同じ動き）、
+    /// 抜けきったら高さを畳み、畳みきったら [`Self::take_gone`] が返す。時刻をずらして呼べば順に抜ける。
+    pub fn dismiss(&self, id: u32, start: Instant) {
+        let mut s = self.0.borrow_mut();
+        if !s.gone.contains_key(&id) {
+            s.flicks.entry(id).or_insert(start);
+        }
     }
 
     /// 並べなくなった項目を忘れる。
     pub fn forget(&self, drawn: &[u32]) {
         let mut s = self.0.borrow_mut();
         s.gone.retain(|id, _| drawn.contains(id));
+        s.flicks.retain(|id, _| drawn.contains(id));
         s.boxes.retain(|id, _| drawn.contains(id));
     }
 

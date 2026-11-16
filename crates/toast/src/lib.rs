@@ -164,7 +164,10 @@ impl Toast {
             prev: Vec::new(),
             // 画面のテストでは動かさない（動いている途中のカードを押さないように）。出たまま描き直さないことがあるので、
             // しばらく描かなくても積み直さない（出し直すときは `replay` と、隠れている間の `begin`）。
-            stack: Entering::new(cfg!(test)).without_idle_replay(),
+            // カードの高さ（下のカードを押し下げる・詰める）は、入りも出もゆっくり動き出してゆっくり止まる。
+            stack: Entering::new(cfg!(test))
+                .without_idle_replay()
+                .with_grow(Motion::Morph),
             boxes: Rc::default(),
             swipes: Swipes::default(),
             icons: Default::default(),
