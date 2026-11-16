@@ -24,8 +24,9 @@ const SLOP: f32 = 8.0;
 const SETTLE: Motion = Motion::Return;
 /// 抜けた項目の高さを畳む動き（下が詰まる）。ゆっくり動き出してゆっくり止まる（終わり際に速いと、詰まりきる所で跳ねて見える）。
 pub const COLLAPSE: Motion = Motion::Morph;
-/// スワイプせずに片付ける項目（[`Swipes::dismiss`]）が横へ抜ける動き（離して抜けるのと同じ）。
-pub const FLICK: Motion = SETTLE;
+/// スワイプせずに片付ける項目（[`Swipes::dismiss`]）が横へ抜ける動き。止まった所から動き出すので、指で動かした続きの
+/// [`SETTLE`] より長く、ゆっくり動き出してゆっくり抜ける（短いと消えるのが速すぎる）。
+pub const FLICK: Motion = Motion::Morph;
 
 /// 1 つの項目のスワイプ。
 #[derive(Debug, Clone, Copy, PartialEq)]
