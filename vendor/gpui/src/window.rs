@@ -5727,6 +5727,9 @@ impl Window {
             }
             PlatformInput::MouseExited(mouse_exited) => {
                 self.modifiers = mouse_exited.modifiers;
+                // nyaw: the pointer is no longer in the window. Keeping its last position made every redraw hit-test
+                // it again, so whatever was under it (or moved under it) became hovered with nothing pointing at it.
+                self.mouse_position = point(px(-1.0e6), px(-1.0e6));
                 PlatformInput::MouseExited(mouse_exited)
             }
             PlatformInput::ModifiersChanged(modifiers_changed) => {
