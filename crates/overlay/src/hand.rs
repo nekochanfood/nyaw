@@ -34,6 +34,7 @@ impl Overlay {
             self.pointer_smoothing()
         };
         let release = self.pointer_release().to_radians();
+        let scale = self.scale();
         let st = self.hands.entry(c.hand).or_default();
         // 手ブレを抑えたレーザー。隠れていた後は追わずに手に合わせる。
         let aim = Pose::new(
@@ -112,7 +113,21 @@ impl Overlay {
                     facing(at, frame.hmd.position, frame.hmd.panel_up())
                         .unwrap_or(reference.orientation),
                 ) * pivot;
-                p.pose = approach(p.pose, target, self.dt);
+                // はめられる画面は、はまる所との間に磁石が効く（引っこ抜く・吸い付く）。
+                let slot = st
+                    .magnet
+                    .map(|m| m.slot(&self.panels, &self.present, scale, id));
+                let p = &mut self.panels[id];
+                let (pose, flipped) = match (st.magnet.as_mut(), slot) {
+                    (Some(m), Some(slot)) => m.follow(p.pose, slot, target, self.dt),
+                    _ => (approach(p.pose, target, self.dt), None),
+                };
+                p.pose = pose;
+                if let (Some(false), Some(m)) = (flipped, st.magnet)
+                    && magnet::unplug(p, m.owner())
+                {
+                    self.dock_changes.push((id, false));
+                }
                 // 取り付け先から届く範囲の外へは出さない。
                 if let (Some(reach), Some((device, _))) = (p.reach, &p.attached)
                     && let Some(dp) = frame.pose(device)
@@ -131,6 +146,10 @@ impl Overlay {
             }
             st.dragging = None;
             st.scaling = None;
+            // はまる所に付けたまま離したら、はめる（はまっていれば戻す）。この tick の終わりに（Overlay::land）。
+            if st.magnet.take().is_some_and(|m| m.stuck) {
+                self.landed.push(id);
+            }
             // 取り付け中なら、離した位置を新しいオフセットにする。
             for q in std::iter::once(id).chain(carried(&self.panels, id)) {
                 let p = &mut self.panels[q];
@@ -157,18 +176,24 @@ impl Overlay {
                     && !self.panels[id].hidden
             })
             .and_then(|id| plane_hit(&self.panels[id], &aim).map(|(pos, t)| (id, pos, t)));
-        // そうでなければ、レーザー上で最も近いパネル。
+        // そうでなければ、レーザー上で最も近いパネル。この手のコントローラに付いているもの（手に持ったパネルとその子・
+        // ナビゲーションバー）は指さない（レーザーと一緒に動くので指しても意味が無く、根元の近くで誤って当たる）。
+        let own = Device::Controller(c.hand);
         let hit = captured.or_else(|| {
             self.present
                 .iter()
                 .map(|&id| (id, &self.panels[id]))
-                .filter(|(_, p)| {
+                .filter(|&(id, p)| {
                     !p.closed
                         && !p.hidden
                         && p.pointer.is_none()
                         && !p.pass_through
                         && !p.parent.is_some_and(|q| q.hud)
                         && !p.nav_bar_of.is_some_and(|o| self.panels[o].hidden)
+                        && !self.panels[root(&self.panels, id)]
+                            .attached
+                            .as_ref()
+                            .is_some_and(|(d, _)| *d == own)
                 })
                 .filter_map(|(id, p)| hit_test(p, &aim).map(|(pos, t)| (id, pos, t)))
                 .min_by(|a, b| a.2.total_cmp(&b.2))
@@ -239,6 +264,11 @@ impl Overlay {
             let offset = aim.inverse().transform_point(reference.position);
             st.dragging = Some((id, offset, t, pivot, resize));
             st.before = (self.panels[id].size, self.panels[id].grab_anchor);
+            // はめられる画面そのものを掴んだら、磁石で引っこ抜く・はめる（バーを掴めばダッシュボードごと動く）。
+            st.magnet = Magnet::grab(&self.panels, &self.present, self.dock_slot, id)
+                .filter(|_| id == grabbed);
+            // 見本は、この画面に合わせて描き直した絵が届いてから出す（前の絵を一瞬見せない）。
+            st.ghost.ready = false;
             st.hover = None;
             st.select = false;
             return;

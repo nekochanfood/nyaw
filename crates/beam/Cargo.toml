@@ -7,5 +7,6 @@ license.workspace = true
 [dependencies]
 design.workspace = true
 gpui.workspace = true
+i18n.workspace = true
 kernel.workspace = true
 ui.workspace = true

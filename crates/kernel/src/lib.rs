@@ -26,7 +26,8 @@ pub use config::{
     UpdateChannel, WRIST_SCALE_MAX, WRIST_SCALE_MIN, WristDesign, WristFace,
 };
 pub use overlay::{
-    self, Anchor, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent, UiEvent,
+    self, Anchor, DockHint, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent,
+    UiEvent,
 };
 pub use subsystems::ControllerState;
 pub use vr::{Device, Fov, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
@@ -60,6 +61,10 @@ pub enum PanelCommand {
     Lockdown(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
+    /// このパネルの上端を、画面をはめる場所にする（上端から起こす角度。`None` でやめる。`Overlay::set_dock_slot`）。
+    DockSlot(Option<f32>),
+    /// はめる場所から掴んで引っこ抜ける・近づけて離すとはまる画面にする（`Overlay::set_dockable`）。
+    Dockable(bool),
     /// 取り付けたまま掴んで動かせる、取り付け先からの距離の上限（m。`Overlay::set_reach`。`None` で限らない）。
     Reach(Option<f32>),
     /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
@@ -347,6 +352,8 @@ pub struct PanelStatus {
     pub desktop_stats: Option<DesktopStats>,
     /// このパネルのスピーカー。
     pub audio: AudioStatus,
+    /// はまる所の見本（[`Pointer::Dock`]）なら、その手で掴んでいる画面に出す一行（`Overlay::dock_hint`）。
+    pub dock_hint: Option<DockHint>,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -1057,6 +1064,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.pointing_hands(panel)
     }
 
+    /// 掴んで引っこ抜いた（`false`）・はめた（`true`）画面（[`Overlay::take_dock_changes`]）。受け取ると空になる。
+    pub fn take_dock_changes(&mut self) -> Vec<(PanelId, bool)> {
+        self.overlay.take_dock_changes()
+    }
+
     /// 最後の tick の手ごとの入力の状態（骨格だけの手は判定に使った値 `metrics` 付き）。
     pub fn controllers(&self) -> &[ControllerState] {
         self.overlay.controllers()
@@ -1116,6 +1128,8 @@ impl<B: VrBackend> Kernel<B> {
                     n.remove(id);
                 }
             }
+            PanelCommand::DockSlot(tilt) => self.overlay.set_dock_slot(panel, tilt),
+            PanelCommand::Dockable(dockable) => self.overlay.set_dockable(panel, dockable),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
             PanelCommand::Reach(reach) => self.overlay.set_reach(panel, reach),
             PanelCommand::PointerMode(mode) => {
@@ -1231,6 +1245,10 @@ impl<B: VrBackend> Kernel<B> {
             desktop: self.desktop_panels.get(&panel).map(|p| p.status.clone()),
             desktop_stats: self.desktop_panels.get(&panel).and_then(|p| p.stats),
             audio: self.audio_status(panel),
+            dock_hint: p
+                .pointer
+                .filter(|&(_, part)| part == Pointer::Dock)
+                .and_then(|(hand, _)| self.overlay.dock_hint(hand)),
         }
     }
 }

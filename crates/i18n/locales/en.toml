@@ -122,6 +122,9 @@ sat = "Sat"
 [dock]
 undock = "Detach from the dashboard"
 dock = "Return to the dashboard"
+pull = "Pull to detach"
+release = "Let go to attach"
+attach = "Bring close to attach"
 
 [hand]
 attach = "Hold in hand"

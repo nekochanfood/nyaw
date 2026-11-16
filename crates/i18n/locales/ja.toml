@@ -122,6 +122,9 @@ sat = "土"
 [dock]
 undock = "ダッシュボードから外す"
 dock = "ダッシュボードに戻す"
+pull = "引っ張って外す"
+release = "離してくっつける"
+attach = "近づけてくっつける"
 
 [hand]
 attach = "手に持つ"

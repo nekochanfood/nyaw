@@ -224,6 +224,37 @@ fn pointing_hands_are_those_aiming_at_the_panel_itself() {
     assert!(ov.pointing_hands(0).is_empty(), "外れれば空");
 }
 
+/// 手に持ったパネルとそのナビゲーションバーは、持っている手のレーザーでは指さない（レーザーと一緒に動くので、根元の
+/// 近くのバーに誤って当たるだけ）。離せば同じレーザーで指せる。
+#[test]
+fn the_holding_hand_does_not_point_at_what_it_holds() {
+    let (mut vr, mut ov) = setup();
+    let bar = ov
+        .add_panel(
+            &mut vr.backend,
+            "bar",
+            Pose::IDENTITY,
+            Vec2::new(0.2, 0.05),
+            (200, 50),
+        )
+        .unwrap();
+    ov.set_nav_bar(&mut vr.backend, bar, 0);
+    controller(&mut vr, Pose::IDENTITY, &[]);
+    let hand = Device::Controller(Hand::Right);
+    ov.attach(0, hand.clone(), at(0.0, 0.0, -1.0));
+    ov.tick(&mut vr);
+    // バーがレーザーの真正面に来るよう、持ち主をずらして持ち直す。
+    let b = ov.panel(bar).pose.position;
+    ov.attach(0, hand, at(-b.x, -b.y, -1.0));
+    ov.tick(&mut vr);
+    let hit = |ov: &Overlay| ov.hands[&Hand::Right].ray.and_then(|r| r.hit).map(|h| h.0);
+    assert!(ov.tick(&mut vr).is_empty());
+    assert_eq!(hit(&ov), None);
+    ov.detach(0);
+    ov.tick(&mut vr);
+    assert_eq!(hit(&ov), Some(bar));
+}
+
 /// 何も無い所を押すと数え、パネルを押したときは数えない。
 #[test]
 fn presses_on_nothing_are_counted() {

@@ -719,6 +719,8 @@ fn a_stacked_child_appears_in_place_and_in_front() {
     let (mut vr, mut ov, toast) = with_toast();
     ov.set_hidden(&mut vr.backend, toast, true);
     finish_glides(&mut vr, &mut ov);
+    // 消えきってから移る（トーストは消えきるのを待ってから次の場所へ移る）。薄れるのは実時間で進むので、待たずに消えきらせる。
+    ov.panels[toast].opacity = 0.0;
     ov.set_parent(&mut vr.backend, toast, stack_on(0));
     ov.set_hidden(&mut vr.backend, toast, false);
     ov.tick(&mut vr);

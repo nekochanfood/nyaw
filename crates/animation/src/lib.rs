@@ -16,6 +16,10 @@ const HOP_MS: u64 = 300;
 /// 画面の入れ替え・積み下ろしの長さ（ms）。
 const PAGE_MS: u64 = 300;
 
+/// 磁石に吸い寄せられてはまる・磁石から外れて飛び出す長さ（ms）。
+const ATTRACT_MS: u64 = 320;
+const POP_MS: u64 = 300;
+
 /// 使っていないものが薄れて消える長さ（ms）。気付かないくらいゆっくり。
 // ponytail: 固定の長さ。速すぎる・遅すぎると感じたらここを調整する。
 const FADE_MS: u64 = 1000;
@@ -120,6 +124,10 @@ pub enum Motion {
     Page,
     /// 使っていないものが時間をかけて薄れて消える（ease-in-out。一番長い）。
     Fade,
+    /// 磁石に吸い寄せられてはまる。近づくほど速まり、当たって小さく跳ね返ってから収まる（[`attract`]）。
+    Attract,
+    /// 磁石から外れて飛び出す。すぐ動き出し、少し行き過ぎてから収まる（ease-out-back）。
+    Pop,
 }
 
 impl Motion {
@@ -132,6 +140,8 @@ impl Motion {
             Motion::Page => PAGE_MS,
             Motion::Fade => FADE_MS,
             Motion::Hop | Motion::HopIn | Motion::Toggle => HOP_MS,
+            Motion::Attract => ATTRACT_MS,
+            Motion::Pop => POP_MS,
         }
     }
 
@@ -149,10 +159,24 @@ impl Motion {
             Motion::Move | Motion::Morph | Motion::HopIn | Motion::Fade => Easing::EaseInOutCubic,
             // 緩急を強めに（始めも終わりもゆっくり、真ん中が速い）。
             Motion::Page => Easing::EaseInOutQuint,
-            Motion::SlideIn => Easing::EaseOutBack,
+            Motion::SlideIn | Motion::Pop => Easing::EaseOutBack,
+            Motion::Attract => Easing::Custom(attract),
             // 滑り込みを逆に再生した動き（ease-in-back は 1 - ease-out-back(1 - t)）。
             Motion::SlideOut => Easing::EaseInBack,
         }
+    }
+}
+
+/// 磁石に吸い寄せられる動きで、行き先に当たるまでの割合と、当たってから跳ね返る大きさ（行き先までの距離に対する割合）。
+const IMPACT: f32 = 0.7;
+const REBOUND: f32 = 0.04;
+
+/// 磁石に吸い寄せられる動き: 近づくほど速まって [`IMPACT`] で行き先に当たり（ease-in）、[`REBOUND`] だけ跳ね返って収まる。
+fn attract(t: f32) -> f32 {
+    if t < IMPACT {
+        (t / IMPACT).powi(2)
+    } else {
+        1.0 - REBOUND * (std::f32::consts::PI * (t - IMPACT) / (1.0 - IMPACT)).sin()
     }
 }
 
@@ -310,6 +334,31 @@ mod tests {
             assert!((0.0..=1.0).contains(&a) && (0.0..=1.0).contains(&b));
         }
         assert_eq!((i.value(), o.value()), (1.0, 0.0));
+    }
+
+    #[test]
+    fn attract_speeds_up_hits_and_rebounds_a_little() {
+        let at = |i: usize| Motion::Attract.ease(i as f32 / 100.0);
+        // 当たるまでは速まっていく（同じ間隔で進む量が増える）。
+        let hit = (IMPACT * 100.0) as usize;
+        assert!((2..hit).all(|i| at(i) - at(i - 1) >= at(i - 1) - at(i - 2) - 1e-6));
+        assert!((at(hit) - 1.0).abs() < 1e-5);
+        // 当たった後は行き過ぎず、少しだけ跳ね返って戻る。
+        let after: Vec<f32> = (hit..=100).map(at).collect();
+        assert!(after.iter().all(|&x| x <= 1.0 + 1e-6));
+        let min = after.iter().copied().fold(1.0, f32::min);
+        assert!((1.0 - REBOUND - 1e-3..1.0).contains(&min), "{min}");
+        let mut a = Animation::new(0.0, 1.0, Motion::Attract);
+        (0..40).for_each(|_| _ = a.advance(0.01));
+        assert_eq!(a.value(), 1.0);
+    }
+
+    #[test]
+    fn pop_overshoots_and_settles() {
+        let mut a = Animation::new(0.0, 1.0, Motion::Pop);
+        let max = (0..40).map(|_| a.advance(0.01)).fold(0.0, f32::max);
+        assert!(max > 1.0, "{max}");
+        assert_eq!(a.value(), 1.0);
     }
 
     #[test]

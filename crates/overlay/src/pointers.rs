@@ -36,7 +36,11 @@ impl Overlay {
         }
         for &id in &self.present {
             let p = &self.panels[id];
-            let Some((hand, part)) = p.pointer.filter(|_| !p.closed) else {
+            // はまる所の見本はレーザーではなく掴んだ画面に付く（place_ghosts）。
+            let Some((hand, part)) = p
+                .pointer
+                .filter(|&(_, part)| !p.closed && part != Pointer::Dock)
+            else {
                 continue;
             };
             let ray = self.hands.get(&hand).and_then(|h| h.ray);

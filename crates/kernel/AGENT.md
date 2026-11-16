@@ -6,7 +6,7 @@
 
 ## 主な公開 API
 
-`Kernel::{boot, with_backend, tick, submit, apply, status, set, settings, os_keyboard, add_panel, batteries, now_playing, notifications, set_notifications, fov}`（メディアと OS の通知の見張りは `boot` だけが起こす。`fov` は両目に映る範囲で、HUD は `vr::Fov::safe` に通した範囲に置く）, `PanelCommand`（`Notification { id, action }` で OS の通知の本文かボタンを押したことをアプリへ届ける、`SendNotification` で OS の通知を出す（デバッグのテスト用）、`PassThrough(bool)` でレーザーを素通りさせる、`FadeOnly(bool)` で出入りを不透明度だけにする、`Hide(bool)` で閉じずに隠す・出し直す、`Resizable(bool)`、`GrabAnchor(Option<Pose>)`、`Media(media::Command)`、`FocusSource`（配信しているウィンドウを OS で前に出す））, `PanelStatus`（`hidden`、`gazed` = 見ている。`Overlay::gazed`）, `Setting`, `Settings`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート
+`Kernel::{boot, with_backend, tick, submit, apply, status, set, settings, os_keyboard, add_panel, batteries, now_playing, notifications, set_notifications, fov}`（メディアと OS の通知の見張りは `boot` だけが起こす。`fov` は両目に映る範囲で、HUD は `vr::Fov::safe` に通した範囲に置く）, `PanelCommand`（`Notification { id, action }` で OS の通知の本文かボタンを押したことをアプリへ届ける、`SendNotification` で OS の通知を出す（デバッグのテスト用）、`RemoveNotification(id)` で OS の通知センターから消す（通知センターでスワイプ・すべて消去）、`PassThrough(bool)` でレーザーを素通りさせる、`FadeOnly(bool)` で出入りを不透明度だけにする、`Hide(bool)` で閉じずに隠す・出し直す、`Resizable(bool)`、`DockSlot(Option<f32>)` / `Dockable(bool)`（はめる場所と、そこから掴んで引っこ抜ける・はめられる画面。`Kernel::take_dock_changes` で手で外した・はめた画面を受け取る）、`GrabAnchor(Option<Pose>)`、`Media(media::Command)`、`FocusSource`（配信しているウィンドウを OS で前に出す））, `PanelStatus`（`hidden`、はまる所の見本の一行 `dock_hint`、`gazed` = 見ている。`Overlay::gazed`）, `Setting`, `Settings`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート
 
 ## パネルの LOD
 

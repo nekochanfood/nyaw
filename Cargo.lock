@@ -510,6 +510,7 @@ version = "2026.0.3-dev.0"
 dependencies = [
  "design",
  "gpui",
+ "i18n",
  "kernel",
  "ui",
 ]

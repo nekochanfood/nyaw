@@ -11,7 +11,7 @@ const HAND_GAP: f32 = 0.03;
 // ponytail: 目分量。大きすぎる・小さすぎるなら、この値で合わせる。
 const HAND_SIZE: f32 = 0.4;
 /// 手に持たせたパネルを、コントローラの面から手前（天面の側）へ起こす角度。手首を起こしきらなくても表がこちらを向く。
-const HAND_TILT: f32 = std::f32::consts::FRAC_PI_8;
+const HAND_TILT: f32 = std::f32::consts::FRAC_PI_4;
 
 impl Overlay {
     pub fn new() -> Self {
@@ -61,6 +61,7 @@ impl Overlay {
             surface,
             follow: None,
             lazy_follow: None,
+            dockable: false,
         });
         let id = self.panels.len() - 1;
         self.present.push(id);
@@ -288,6 +289,7 @@ impl Overlay {
             Pointer::Cursor => CURSOR_SORT,
             Pointer::Drag => DRAG_SORT,
             Pointer::Tooltip => TOOLTIP_SORT + tooltip_step(hand),
+            Pointer::Dock => GHOST_SORT,
         };
         p.surface.set_sort(vr, sort);
         // レーザーは長さ（幅）だけ変え、太さ（高さ）は作ったときのまま。
