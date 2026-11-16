@@ -257,6 +257,8 @@ pub struct Screen {
     /// スワイプで片付けた通知（OS の通知センターから消えて一覧から落ちるまで並べない）と、左右のスワイプ。
     dismissed: HashSet<u32>,
     swipes: ui::swipe::Swipes,
+    /// 通知のカードを広げる・たたむ動き。
+    expanding: ui::notification::Expanding,
     /// 「（アプリ）を開く」を押したアプリ（ウィンドウの一覧を取り直してから、映して開く）。
     open_after: Option<InstalledApp>,
 }

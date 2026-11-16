@@ -1,11 +1,43 @@
 //! クイック設定（通知センター）: 上に時刻・日付と設定ボタン、その下に届いた OS の通知の一覧（新しい順。カードは通知の
 //! トーストと同じ `ui::notification::card`）。詳しい中身はここで見る: ホバー（トーストから開いたときはその通知）で広げ、
-//! 本文が伸びて通知のボタンと、アプリを開けるなら「（アプリ）を開く」（映して開く）が並ぶ。押すと開く。左右にスワイプ
-//! すると片付く（OS の通知センターからも消す）。
+//! 本文が伸びて通知のボタンと、アプリを開けるなら「（アプリ）を開く」（映して開く）が並ぶ（滑らかに伸び縮みする）。押すと
+//! 開く。左右にスワイプするか「すべて消去」で片付く（OS の通知センターからも消す）。通知が多いときは一覧だけが
+//! スクロールし、時刻と見出しは動かない。
 
 use super::*;
-use ui::notification::Center;
+use ui::notification::{Center, Detail};
 use ui::swipe::Look;
+
+/// 届いてからこの間は「n 日前」のように今からの差で、過ぎたら日付と時刻で出す。
+const RELATIVE_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+
+/// 通知が届いた時刻の出し方: 1 分以内は「今」、それから「n 分前」「n 時間前」「n 日前」、[`RELATIVE_FOR`] より古ければ
+/// 日付と時刻。
+pub(crate) fn stamp(
+    cx: &App,
+    arrived: std::time::SystemTime,
+    now: chrono::DateTime<chrono::Local>,
+) -> SharedString {
+    let at = chrono::DateTime::<chrono::Local>::from(arrived);
+    // 時計がずれて先の時刻になっていても「今」。
+    let ago = (now - at).to_std().unwrap_or_default().as_secs();
+    let (minute, hour, day) = (60, 60 * 60, 24 * 60 * 60);
+    let ago_in =
+        |key, unit: u64| i18n::tf(cx, key, &[("n", &(ago / unit) as &dyn std::fmt::Display)]);
+    if ago < minute {
+        i18n::t(cx, "dashboard.notification_now")
+    } else if ago < hour {
+        ago_in("dashboard.notification_minutes_ago", minute)
+    } else if ago < day {
+        ago_in("dashboard.notification_hours_ago", hour)
+    } else if ago < RELATIVE_FOR.as_secs() {
+        ago_in("dashboard.notification_days_ago", day)
+    } else {
+        at.format(&i18n::t(cx, "dashboard.notification_date"))
+            .to_string()
+            .into()
+    }
+}
 
 impl Screen {
     /// トーストから通知センターを開いた: 一覧を出しているのはこのパネルだと知らせ、広げて見せる通知を受け取る
@@ -52,8 +84,9 @@ impl Screen {
             .iter()
             .map(|n| self.notification(theme, n, tick, cx))
             .collect();
-        self.swipes
-            .forget(&shown.iter().map(|n| n.id).collect::<Vec<_>>());
+        let ids: Vec<u32> = shown.iter().map(|n| n.id).collect();
+        self.swipes.forget(&ids);
+        self.expanding.forget(&ids);
         // 「（アプリ）を開く」: ウィンドウの一覧が届いたら映して開く（起動していなければ起動して待つ）。
         self.poll_sources();
         if self.pending.is_none()
@@ -61,23 +94,20 @@ impl Screen {
         {
             self.launch_app(app, cx);
         }
-        if self.swipes.busy() || self.open_after.is_some() {
+        if self.swipes.busy() || self.expanding.busy(tick) || self.open_after.is_some() {
             components::keep_drawing(window, cx);
         }
         let dashboard = self.dashboard.clone();
         let (swipes, panel) = (self.swipes.clone(), self.panel);
-        // 通知が多いと収まらないので、中身は縦にスクロールする。
         // 出ている一覧に並んだものは読んだことにする（はまっていて、ダッシュボードが出ているとき）。
         if ui::docked(cx) == Some(self.panel) {
-            ui::notification::mark_read(shown.iter().map(|n| n.id), cx);
+            ui::notification::mark_read(ids.iter().copied(), cx);
         }
         components::panel(theme)
             .child(
                 div()
-                    .id("quick-settings")
                     .debug_selector(|| "quick-settings".into())
                     .size_full()
-                    .overflow_y_scroll()
                     .flex()
                     .flex_col()
                     .gap(px(spacing::MD))
@@ -121,15 +151,48 @@ impl Screen {
                                 }),
                             ),
                     )
-                    .child(section(theme, i18n::t(cx, "dashboard.notifications")))
+                    .child(section(theme, i18n::t(cx, "dashboard.notifications")).when(
+                        !cards.is_empty(),
+                        |s| {
+                            s.child(
+                                components::button(
+                                    theme,
+                                    "notifications-clear",
+                                    i18n::t(cx, "dashboard.clear_notifications"),
+                                    Variant::OnBackground,
+                                )
+                                // その場で薄れながら畳まれ、畳みきったら OS の通知センターから消す（スワイプと同じ）。
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        let now = Instant::now();
+                                        for &id in &ids {
+                                            this.swipes.dismiss(id, now);
+                                        }
+                                        ui::notify(this.panel, cx);
+                                    },
+                                )),
+                            )
+                        },
+                    ))
                     .child(if cards.is_empty() {
                         div()
                             .debug_selector(|| "notifications-empty".into())
                             .px(px(spacing::SM))
                             .text_color(rgba(theme.neutral_text_low))
                             .child(i18n::t(cx, "dashboard.no_notifications"))
+                            .into_any_element()
                     } else {
-                        div().flex().flex_col().children(cards)
+                        // 通知が多いと収まらないので、一覧だけが縦にスクロールする（時刻と見出しは動かない）。
+                        div()
+                            .id("notifications-list")
+                            .debug_selector(|| "notifications-list".into())
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .children(cards)
+                            .into_any_element()
                     }),
             )
             // カードのスワイプを受ける（カードより後に描く）。
@@ -158,17 +221,25 @@ impl Screen {
             Some(h) => h == id,
             None => self.notification_focus == Some(id),
         };
-        let open = expanded
+        let expand = self
+            .expanding
+            .look(id, expanded, now, cx.has_global::<design::Motion>());
+        let open = expand
+            .open
             .then(|| self.open_app_button(theme, n, cx))
             .flatten();
         let (panel, note) = (self.panel, n.clone());
+        let detail = Detail {
+            expand,
+            stamp: Some(stamp(cx, n.arrived, chrono::Local::now())),
+            extra: open.into_iter().collect(),
+        };
         let card = ui::notification::card(
             theme,
             "notification",
             n,
             image,
-            expanded,
-            open,
+            detail,
             move |action, window, cx| ui::notification::open(panel, &note, action, window, cx),
         );
         let look: Look = self.swipes.look(id, now);
@@ -183,7 +254,8 @@ impl Screen {
             // カードの隙間もカードと一緒に畳む（畳みきったときに隙間の分だけ跳ばないように）。
             .pb(px(spacing::SM))
             .when(look.height < 1.0, |d| {
-                d.h(px((natural + spacing::SM) * look.height))
+                // 画素に揃える（端数で動くと、下のカードの文字だけが画素に吸い付いて震える）。
+                d.h(px(((natural + spacing::SM) * look.height).round()))
                     .overflow_hidden()
             })
             .on_hover(cx.listener(move |this, on: &bool, _, cx| {

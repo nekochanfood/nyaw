@@ -11,6 +11,17 @@ fn quick_settings(cx: &mut TestAppContext, notes: Vec<Notification>) -> &mut Vis
     cx
 }
 
+/// `ms` 待ってから描き直す（時間で動くものを進める）。
+fn redraw(cx: &mut VisualTestContext, ms: u64) {
+    std::thread::sleep(Duration::from_millis(ms));
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+}
+
+fn height(cx: &mut VisualTestContext, selector: &'static str) -> f32 {
+    f32::from(cx.debug_bounds(selector).unwrap().size.height)
+}
+
 /// 上に時刻、その下に届いた通知が新しい順に並ぶ（電池・テーマの切り替えはもう無い）。
 #[gpui::test]
 fn quick_settings_lists_notifications_newest_first(cx: &mut TestAppContext) {
@@ -135,13 +146,8 @@ fn swiping_a_notification_away_removes_it(cx: &mut TestAppContext) {
     }
     let end = at + point(card.size.width * 0.8, px(0.0));
     cx.simulate_mouse_up(end, MouseButton::Left, Modifiers::none());
-    let redraw = |cx: &mut VisualTestContext, ms: u64| {
-        std::thread::sleep(Duration::from_millis(ms));
-        cx.update(|window, _| window.refresh());
-        cx.run_until_parked();
-    };
     redraw(cx, design::animation::Motion::Return.duration_ms() + 50);
-    redraw(cx, design::animation::Motion::Shrink.duration_ms() + 50);
+    redraw(cx, ui::swipe::COLLAPSE.duration_ms() + 50);
     redraw(cx, 0);
     assert!(cx.debug_bounds("notification-2").is_none());
     assert!(cx.debug_bounds("notification-1").is_some());
@@ -177,4 +183,122 @@ fn an_installed_app_can_be_opened_from_its_notification(cx: &mut TestAppContext)
         let open = cx.debug_bounds(format!("notification-open-{id}").leak());
         assert_eq!(open.is_some(), id == 1, "{id}");
     }
+}
+
+/// 広げる・たたむときは、高さが測った高さの間を滑らかに伸び縮みする（ボタンは広げ始めから並ぶ）。
+#[gpui::test]
+fn a_card_expands_and_collapses_smoothly(cx: &mut TestAppContext) {
+    use design::animation::Motion;
+    cx.update(|cx| cx.set_global(design::Motion::default()));
+    let cx = quick_settings(cx, vec![note(1)]);
+    let closed = height(cx, "notification-1");
+    let at = cx.debug_bounds("notification-1").unwrap().center();
+    cx.simulate_mouse_move(at, None, Modifiers::none());
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("notification-action-1-0").is_some());
+    let half = Motion::Grow.duration_ms() / 2;
+    redraw(cx, half);
+    let mid = height(cx, "notification-1");
+    redraw(cx, half + 50);
+    let open = height(cx, "notification-1");
+    assert!(closed < mid && mid < open, "{closed} < {mid} < {open}");
+    assert_eq!(mid, mid.round(), "画素に揃える");
+    cx.simulate_mouse_move(gpui::point(px(1.0), px(1.0)), None, Modifiers::none());
+    cx.run_until_parked();
+    redraw(cx, Motion::Shrink.duration_ms() / 2);
+    let mid = height(cx, "notification-1");
+    assert!(closed < mid && mid < open, "{closed} < {mid} < {open}");
+    redraw(cx, Motion::Shrink.duration_ms() / 2 + 50);
+    assert_eq!(height(cx, "notification-1"), closed);
+    assert!(cx.debug_bounds("notification-action-1-0").is_none());
+}
+
+/// 「すべて消去」で、どれもその場で畳まれて OS の通知センターから消える（押したことにはしない）。
+#[gpui::test]
+fn clearing_all_removes_every_notification(cx: &mut TestAppContext) {
+    let cx = quick_settings(cx, vec![note(1), note(2)]);
+    click(cx, "notifications-clear");
+    cx.run_until_parked();
+    redraw(cx, ui::swipe::COLLAPSE.duration_ms() + 50);
+    redraw(cx, 0);
+    let mut removed: Vec<u32> = take_commands(cx, 2)
+        .into_iter()
+        .map(|c| match c {
+            PanelCommand::RemoveNotification(id) => id,
+            other => panic!("押したことにはしない: {other:?}"),
+        })
+        .collect();
+    removed.sort();
+    assert_eq!(removed, [1, 2]);
+    assert!(cx.debug_bounds("notification-1").is_none());
+    assert!(cx.debug_bounds("notifications-empty").is_some());
+    assert!(
+        cx.debug_bounds("notifications-clear").is_none(),
+        "無ければ出さない"
+    );
+}
+
+/// 通知が溜まっても、スクロールするのは一覧だけ（時刻と見出しは動かない）。
+#[gpui::test]
+fn only_the_list_scrolls(cx: &mut TestAppContext) {
+    use gpui::{ScrollDelta, ScrollWheelEvent, point};
+    let cx = quick_settings(cx, (1..=20).map(note).collect());
+    cx.simulate_resize(gpui::size(px(RES_PX.0 as f32), px(RES_PX.1 as f32)));
+    cx.run_until_parked();
+    let y = |cx: &mut VisualTestContext, s: &'static str| cx.debug_bounds(s).unwrap().origin.y;
+    let (time, clear, newest) = (
+        y(cx, "quick-time"),
+        y(cx, "notifications-clear"),
+        y(cx, "notification-20"),
+    );
+    let list = cx.debug_bounds("notifications-list").unwrap();
+    assert!(
+        f32::from(list.bottom()) <= RES_PX.1 as f32,
+        "一覧は画面に収まる"
+    );
+    cx.simulate_event(ScrollWheelEvent {
+        position: list.center(),
+        delta: ScrollDelta::Pixels(point(px(0.0), px(-300.0))),
+        ..Default::default()
+    });
+    cx.run_until_parked();
+    assert_eq!(y(cx, "quick-time"), time);
+    assert_eq!(y(cx, "notifications-clear"), clear);
+    assert!(y(cx, "notification-20") < newest, "一覧はスクロールする");
+}
+
+/// 届いた時刻: 1 分以内は「今」、それから「n 分前」「n 時間前」「n 日前」、1 週間より古ければ日付と時刻。
+#[gpui::test]
+fn the_arrival_time_is_relative_then_absolute(cx: &mut TestAppContext) {
+    use chrono::TimeZone;
+    let now = chrono::Local
+        .with_ymd_and_hms(2026, 11, 16, 15, 30, 0)
+        .unwrap();
+    let ago = |secs: u64| std::time::SystemTime::from(now) - Duration::from_secs(secs);
+    cx.update(|cx| {
+        cx.set_global(i18n::Lang::En);
+        let s = |secs| stamp(cx, ago(secs), now).to_string();
+        assert_eq!(s(20), "now");
+        assert_eq!(s(5 * 60 + 20), "5 min ago");
+        assert_eq!(s(59 * 60), "59 min ago");
+        assert_eq!(s(2 * 3600 + 59 * 60), "2 h ago");
+        assert_eq!(s(23 * 3600), "23 h ago");
+        assert_eq!(s(24 * 3600), "1 d ago");
+        assert_eq!(s(6 * 24 * 3600 + 23 * 3600), "6 d ago");
+        assert_eq!(s(7 * 24 * 3600), "Nov 9, 15:30");
+        assert_eq!(
+            stamp(
+                cx,
+                std::time::SystemTime::from(now) + Duration::from_secs(30),
+                now
+            ),
+            "now",
+            "時計のずれで先の時刻"
+        );
+    });
+    let cx = quick_settings(cx, vec![note(1)]);
+    assert!(
+        cx.debug_bounds("notification-time-1").is_some(),
+        "カードに出る"
+    );
 }

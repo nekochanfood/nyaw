@@ -1,15 +1,20 @@
 //! OS の通知のカード。通知のトースト（`crates/toast`）とダッシュボードの通知センター（クイック設定の一覧）が同じものを
 //! 出す（画面どうしは直接依存しないので、共有する部品は UI 層に置く）。アイコン・見出し・アプリの名前・本文（行数を
 //! 限って省略）。広げると本文が伸び、通知のボタンが並ぶ。押したときの開き方（[`open`]）と、トーストから通知センターを
-//! 開く頼み（[`Center`]）と、既読（[`Read`]）もここ。
+//! 開く頼み（[`Center`]）と、既読（[`Read`]）と、通知センターでカードを広げる動き（[`Expanding`]）もここ。
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
+use design::animation::{Motion, Transition};
 use design::components::{self, Button, Variant};
 use design::{Theme, font_size, icons, radius, spacing};
 use gpui::{
-    App, FontWeight, IntoElement, RenderImage, SharedString, Window, div, img, prelude::*, px, rgba,
+    App, FontWeight, IntoElement, RenderImage, SharedString, Window, canvas, div, img, prelude::*,
+    px, rgba,
 };
 use kernel::subsystems::notifications::Notification;
 use kernel::{PanelCommand, PanelId};
@@ -98,18 +103,101 @@ pub fn title(n: &Notification) -> SharedString {
     }
 }
 
-/// 通知 `n` のカード（地に直接置く押せるカード。`id` は `{prefix}-{通知の ID}`）。`expanded` なら本文を伸ばし、通知の
-/// ボタン（`{prefix}-action-{通知の ID}-{番号}`）と `extra` を並べる（そのときカードはホバー・押下で色を変えない。
-/// 変えると中のボタンが紛れる）。本文か通知のボタンを押すと `pressed` に `None` かボタンの番号が届く。
+/// カードの広がり（[`Expanding::look`]）。トーストのカードはいつも [`Expand::default`]（たたんだまま）。
+#[derive(Clone, Default)]
+pub struct Expand {
+    /// 広げた中身（本文 6 行とボタン）を描く（広げている・広がっていく・たたんでいく間）。
+    pub open: bool,
+    /// 広がり具合（0 = たたんだ、1 = 広げた）。ボタンはこれに合わせて現れる。
+    pub p: f32,
+    /// 動いている間の中身の高さ（たたんだ・広げた中身の測った高さの間）。`None` なら中身なり。
+    height: Option<f32>,
+    /// 中身の高さを測って覚える所。
+    measure: Option<(u32, Expanding)>,
+}
+
+/// 通知センターのカードを広げる・たたむ動き。中身の高さを描くたびに測っておき、動いている間はたたんだ・広げた高さの
+/// 間で伸び縮みする（下のカードは押されて動く）。高さは画素に揃える（端数で動くと文字だけが画素に吸い付いて震える）。
+#[derive(Clone, Default)]
+pub struct Expanding(Rc<RefCell<ExpandState>>);
+
+#[derive(Default)]
+struct ExpandState {
+    open: HashMap<u32, Transition>,
+    /// 測った中身の高さ（通知、広げた中身か）。
+    heights: HashMap<(u32, bool), f32>,
+}
+
+impl Expanding {
+    /// 通知 `id` を `open` にする（変わったら `animated` なら動き始める）。今の広がり。
+    pub fn look(&self, id: u32, open: bool, now: Instant, animated: bool) -> Expand {
+        let mut s = self.0.borrow_mut();
+        let to = if open { 1.0 } else { 0.0 };
+        let t = s.open.entry(id).or_insert(Transition::rest(to));
+        t.go(
+            to,
+            if open { Motion::Grow } else { Motion::Shrink },
+            now,
+            animated,
+        );
+        let (p, moving) = t.at(now);
+        let at = |expanded| s.heights.get(&(id, expanded)).copied();
+        let height = match (moving, at(false), at(true)) {
+            (false, _, _) => None,
+            (true, Some(c), Some(o)) => Some(c + (o - c) * p),
+            // 広げた中身はまだ測っていない（広がり始めたフレーム）。
+            (true, Some(c), None) => Some(c),
+            // ponytail: 広げて開いた（トーストから）カードは、たたんだ高さを知らないので最後に縮む。
+            (true, None, _) => None,
+        };
+        Expand {
+            open: open || p > 0.0,
+            p,
+            height: height.map(f32::round),
+            measure: Some((id, self.clone())),
+        }
+    }
+
+    /// 動いているカードがあるか（次のフレームも描く）。
+    pub fn busy(&self, now: Instant) -> bool {
+        self.0.borrow().open.values().any(|t| t.at(now).1)
+    }
+
+    /// 並べなくなった通知を忘れる。
+    pub fn forget(&self, drawn: &[u32]) {
+        let mut s = self.0.borrow_mut();
+        s.open.retain(|id, _| drawn.contains(id));
+        s.heights.retain(|(id, _), _| drawn.contains(id));
+    }
+}
+
+/// 通知センターだけがカードに足すもの（トーストは [`Default`]）。
+#[derive(Default)]
+pub struct Detail {
+    /// 広がり。
+    pub expand: Expand,
+    /// 届いた時刻（アプリの名前の横）。
+    pub stamp: Option<SharedString>,
+    /// 広げたとき通知のボタンの後に並べるボタン。
+    pub extra: Vec<Button>,
+}
+
+/// 通知 `n` のカード（地に直接置く押せるカード。`id` は `{prefix}-{通知の ID}`）。広げる（[`Expand::open`]）と本文を
+/// 伸ばし、通知のボタン（`{prefix}-action-{通知の ID}-{番号}`）と [`Detail::extra`] を並べる（そのときカードはホバー・
+/// 押下で色を変えない。変えると中のボタンが紛れる）。本文か通知のボタンを押すと `pressed` に `None` かボタンの番号が届く。
 pub fn card(
     theme: &Theme,
     prefix: &str,
     n: &Notification,
     image: Option<Arc<RenderImage>>,
-    expanded: bool,
-    extra: impl IntoIterator<Item = Button>,
+    detail: Detail,
     pressed: impl Fn(Option<usize>, &mut Window, &mut App) + Clone + 'static,
 ) -> Button {
+    let Detail {
+        expand,
+        stamp,
+        extra,
+    } = detail;
     let id = n.id;
     let actions = n.actions.iter().enumerate().map(|(i, a)| {
         let pressed = pressed.clone();
@@ -125,6 +213,7 @@ pub fn card(
             pressed(Some(i), window, cx);
         })
     });
+    let expanded = expand.open;
     let buttons: Vec<Button> = if expanded {
         actions.chain(extra).collect()
     } else {
@@ -164,10 +253,18 @@ pub fn card(
                 )
                 .child(
                     div()
-                        .truncate()
+                        .flex()
+                        .gap(px(spacing::XS))
                         .text_size(px(font_size::SM))
                         .text_color(rgba(theme.neutral_text_low))
-                        .child(n.app.name.clone()),
+                        .child(div().min_w_0().truncate().child(n.app.name.clone()))
+                        .children(stamp.map(|t| {
+                            let selector = format!("{prefix}-time-{id}");
+                            div()
+                                .flex_none()
+                                .debug_selector(|| selector)
+                                .child(format!("· {t}"))
+                        })),
                 ),
         );
     let tile = components::tile(theme, format!("{prefix}-{id}"));
@@ -181,18 +278,45 @@ pub fn card(
     .h_auto()
     .items_start()
     .rounded(px(radius::XL))
-    .child(header)
-    .children(body)
-    .when(!buttons.is_empty(), |t| {
-        t.child(
-            div()
-                .w_full()
-                .flex()
-                .flex_wrap()
-                .gap(px(spacing::SM))
-                .children(buttons),
-        )
-    })
+    .child(
+        // 広げる・たたむ間は、測った高さの間で中身を切り抜く（中身はいつも自然な高さで並べて測る）。
+        div()
+            .w_full()
+            .when_some(expand.height, |d, h| d.h(px(h)).overflow_hidden())
+            .child(
+                div()
+                    .relative()
+                    .w_full()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .gap(px(spacing::SM))
+                    .child(header)
+                    .children(body)
+                    .when(!buttons.is_empty(), |t| {
+                        t.child(
+                            div()
+                                .w_full()
+                                .flex()
+                                .flex_wrap()
+                                .gap(px(spacing::SM))
+                                .opacity(expand.p)
+                                .children(buttons),
+                        )
+                    })
+                    .children(expand.measure.map(|(id, e)| {
+                        canvas(
+                            move |b, _, _| {
+                                let h = f32::from(b.size.height);
+                                e.0.borrow_mut().heights.insert((id, expanded), h);
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .inset_0()
+                    })),
+            ),
+    )
     .on_click(move |_, window, cx| pressed(None, window, cx))
 }
 

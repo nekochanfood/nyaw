@@ -382,9 +382,16 @@ impl Toast {
     fn card(&mut self, theme: &Theme, n: &Notification, look: Look) -> AnyElement {
         let id = n.id;
         let image = self.icons.of(n);
-        let card = ui::notification::card(theme, "toast", n, image, false, [], move |_, _, cx| {
-            ui::notification::show_center(Some(id), cx);
-        });
+        let card = ui::notification::card(
+            theme,
+            "toast",
+            n,
+            image,
+            Default::default(),
+            move |_, _, cx| {
+                ui::notification::show_center(Some(id), cx);
+            },
+        );
         self.swipes.item(
             id,
             look,
@@ -450,7 +457,10 @@ fn drop_in(
     div()
         .w_full()
         .flex_none()
-        .when(grow < 1.0, |d| d.h(px(natural * grow)).overflow_hidden())
+        // 高さは画素に揃える（端数で動くと、ほかのカードの文字だけが画素に吸い付いて震える）。
+        .when(grow < 1.0, |d| {
+            d.h(px((natural * grow).round())).overflow_hidden()
+        })
         .child(
             div()
                 .relative()

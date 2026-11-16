@@ -22,7 +22,8 @@ pub const DISMISS: f32 = 0.3;
 const SLOP: f32 = 8.0;
 /// 離した後に横へ抜ける・戻る動きと、抜けた後に高さを畳む動き。
 const SETTLE: Motion = Motion::Return;
-const COLLAPSE: Motion = Motion::Shrink;
+/// 抜けた項目の高さを畳む動き（下が詰まる）。ゆっくり動き出してゆっくり止まる（終わり際に速いと、詰まりきる所で跳ねて見える）。
+pub const COLLAPSE: Motion = Motion::Move;
 
 /// 1 つの項目のスワイプ。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -121,7 +122,11 @@ impl Swipes {
         };
         if let Some(&(x, since)) = s.gone.get(&id) {
             let t = progress(since, COLLAPSE, now).min(1.0);
-            return look(x, 1.0 - COLLAPSE.ease(t));
+            let height = 1.0 - COLLAPSE.ease(t);
+            // 横へ抜けずに片付けたもの（[`Swipes::dismiss`]）は、畳みながら薄れる。
+            let mut l = look(x, height);
+            l.opacity = l.opacity.min(height);
+            return l;
         }
         match s.gesture {
             Some(Gesture::Dragging { id: g, moved, .. }) if g == id => look(moved, 1.0),
@@ -168,6 +173,12 @@ impl Swipes {
         done
     }
 
+    /// 項目 `id` をスワイプせずに片付ける（まとめて消すとき）。その場で薄れながら畳まれ、畳みきったら [`Self::take_gone`]
+    /// が返す。
+    pub fn dismiss(&self, id: u32, now: Instant) {
+        self.0.borrow_mut().gone.entry(id).or_insert((0.0, now));
+    }
+
     /// 並べなくなった項目を忘れる。
     pub fn forget(&self, drawn: &[u32]) {
         let mut s = self.0.borrow_mut();
@@ -200,7 +211,7 @@ impl Swipes {
                 div()
                     .relative()
                     .w_full()
-                    .left(px(look.offset))
+                    .left(px(look.offset.round()))
                     .opacity(look.opacity)
                     .child(child),
             )

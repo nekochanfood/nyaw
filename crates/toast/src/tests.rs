@@ -340,7 +340,9 @@ fn cards_swipe_away(cx: &mut TestAppContext) {
     let settle = |cx: &mut VisualTestContext| {
         std::thread::sleep(Duration::from_millis(Motion::Return.duration_ms() + 50));
         set(cx, |_| {});
-        std::thread::sleep(Duration::from_millis(Motion::Shrink.duration_ms() + 50));
+        std::thread::sleep(Duration::from_millis(
+            ui::swipe::COLLAPSE.duration_ms() + 50,
+        ));
         set(cx, |_| {});
         set(cx, |_| {});
     };

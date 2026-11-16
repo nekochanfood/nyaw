@@ -73,6 +73,7 @@ impl Screen {
             notification_icons: Default::default(),
             dismissed: HashSet::new(),
             swipes: Default::default(),
+            expanding: Default::default(),
             open_after: None,
         };
         if page == Page::QuickSettings {
