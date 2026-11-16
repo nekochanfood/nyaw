@@ -15,6 +15,9 @@ fn quick_settings(cx: &mut TestAppContext, notes: Vec<Notification>) -> &mut Vis
 #[gpui::test]
 fn quick_settings_lists_notifications_newest_first(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![note(1), note(2), note(3)]);
+    // 実際の画面の大きさ（`RES_PX`）で並べる。
+    cx.simulate_resize(gpui::size(px(RES_PX.0 as f32), px(RES_PX.1 as f32)));
+    cx.run_until_parked();
     let y = [
         "quick-time",
         "notification-3",
@@ -23,9 +26,36 @@ fn quick_settings_lists_notifications_newest_first(cx: &mut TestAppContext) {
     ]
     .map(|s| cx.debug_bounds(s).unwrap().origin.y);
     assert!(y.windows(2).all(|w| w[0] < w[1]), "{y:?}");
+    let (list, window) = (
+        cx.debug_bounds("quick-settings").unwrap().size,
+        cx.update(|window, _| window.viewport_size()),
+    );
+    assert!(
+        list.height > window.height * 0.8 && list.width > window.width * 0.8,
+        "一覧はパネルいっぱいに広がる: {list:?} / {window:?}"
+    );
     assert!(cx.debug_bounds("notifications-empty").is_none());
     assert!(cx.debug_bounds("quick-theme").is_none());
     assert!(cx.debug_bounds("battery-hmd").is_none());
+}
+
+/// はまって出ている一覧に並んだ通知は読んだことになる（はまっていなければまだ）。
+#[gpui::test]
+fn the_shown_list_marks_its_notifications_read(cx: &mut TestAppContext) {
+    let cx = quick_settings(cx, vec![note(1), note(2)]);
+    let read = |cx: &mut VisualTestContext| {
+        cx.update(|_, cx| [1, 2].map(|id| ui::notification::is_read(id, cx)))
+    };
+    assert_eq!(read(cx), [false, false]);
+    cx.update(|window, cx| {
+        let c = cx.default_global::<PanelControl>();
+        c.dock = Some((1, 0.5));
+        c.panels.entry(1).or_default();
+        ui::dock(2, cx);
+        window.refresh();
+    });
+    cx.run_until_parked();
+    assert_eq!(read(cx), [true, true]);
 }
 
 #[gpui::test]

@@ -189,7 +189,7 @@ fn the_newest_card_is_on_top(cx: &mut TestAppContext) {
 /// 通知を広げて開くよう頼む。
 #[gpui::test]
 fn cards_jump_to_the_notification_center(cx: &mut TestAppContext) {
-    let (_view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
+    let (view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
     set(cx, |c| {
         c.notifications = Arc::from([note(1, None), note(2, Some("https://example.com/2"))]);
         c.panels.entry(WRIST).or_default().status.gazed = true;
@@ -209,6 +209,8 @@ fn cards_jump_to_the_notification_center(cx: &mut TestAppContext) {
         (c.asked, c.focus)
     });
     assert_eq!(asked, (1, Some(1)));
+    let shown = view.read_with(cx, |t, _| t.shown.iter().map(|n| n.id).collect::<Vec<_>>());
+    assert_eq!(shown, [2], "押したものは読んだので消える（ほかは残る）");
     assert!(
         !take(cx, TOAST)
             .iter()

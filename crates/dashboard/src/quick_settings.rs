@@ -67,11 +67,15 @@ impl Screen {
         let dashboard = self.dashboard.clone();
         let (swipes, panel) = (self.swipes.clone(), self.panel);
         // 通知が多いと収まらないので、中身は縦にスクロールする。
+        // 出ている一覧に並んだものは読んだことにする（はまっていて、ダッシュボードが出ているとき）。
+        if ui::docked(cx) == Some(self.panel) {
+            ui::notification::mark_read(shown.iter().map(|n| n.id), cx);
+        }
         components::panel(theme)
-            .relative()
             .child(
                 div()
                     .id("quick-settings")
+                    .debug_selector(|| "quick-settings".into())
                     .size_full()
                     .overflow_y_scroll()
                     .flex()

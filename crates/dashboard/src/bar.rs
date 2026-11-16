@@ -22,9 +22,19 @@ impl Dashboard {
             .detach();
         cx.observe_global::<PanelControl>(Self::follow_placement)
             .detach();
+        // 件数は未読の数。
+        cx.observe_global::<ui::notification::Read>(|this, cx| ui::notify(this.panel, cx))
+            .detach();
         // トーストのカードを押すと、通知センター（クイック設定の一覧）を開く（隠れていれば出す）。
         cx.observe_global::<ui::notification::Center>(Self::open_center)
             .detach();
+        cx.observe_global::<PanelControl>(|this, cx| {
+            if this.center_waiting && !this.hidden(cx) {
+                this.center_waiting = false;
+                this.dock_center(cx);
+            }
+        })
+        .detach();
         // 新しいリリースがあるかは起動時と、常駐して開きっぱなしでも分かるよう周期で確かめる（あればバーにボタンが出る。
         // 入れるのはユーザーが選んだときだけ）。開発中のビルドとテストは確かめない（設定から押せる）。
         cx.observe_global::<updater::Updater>(|this, cx| ui::notify(this.panel, cx))
@@ -95,6 +105,7 @@ impl Dashboard {
             center_asked: cx
                 .try_global::<ui::notification::Center>()
                 .map_or(0, |c| c.asked),
+            center_waiting: false,
         }
     }
 
@@ -106,17 +117,31 @@ impl Dashboard {
             return;
         }
         self.center_asked = asked;
-        let ctl = cx.global::<PanelControl>();
-        if ctl.settings.lockdown {
+        if cx.global::<PanelControl>().settings.lockdown {
             return;
         }
-        if ctl.panels.get(&self.panel).is_some_and(|p| p.status.hidden) {
+        if self.hidden(cx) {
+            // 出るのは次のフレームで、隠れている間ははめられない（開いた画面が浮いたままになる）。出てからはめる。
             show(self.panel, cx);
+            self.center_waiting = true;
+            return;
         }
+        self.dock_center(cx);
+    }
+
+    /// 通知センター（クイック設定）をはめる（もうはまっていれば閉じない）。
+    fn dock_center(&mut self, cx: &mut Context<Self>) {
         if self.current(cx) != Some(Page::QuickSettings) {
             self.toggle(Page::QuickSettings, cx);
         }
         ui::notify(self.panel, cx);
+    }
+
+    fn hidden(&self, cx: &App) -> bool {
+        cx.global::<PanelControl>()
+            .panels
+            .get(&self.panel)
+            .is_some_and(|p| p.status.hidden)
     }
 
     /// 開いているメニューのポップオーバー（外側を押して閉じていれば `None`）。
@@ -556,8 +581,13 @@ impl Render for Dashboard {
                 Variant::Default
             }
         };
-        // 時刻の横に、溜まっている通知の件数（一覧はクイック設定）。無ければ出さない。
-        let count = cx.global::<PanelControl>().notifications.len();
+        // 時刻の横に、未読の通知の件数（一覧はクイック設定。開けば読んだことになる）。無ければ出さない。
+        let count = cx
+            .global::<PanelControl>()
+            .notifications
+            .iter()
+            .filter(|n| !ui::notification::is_read(n.id, cx))
+            .count();
         let count_width = (count > 0).then(|| {
             f32::from(design::font::width(
                 count.to_string(),

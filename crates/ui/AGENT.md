@@ -23,7 +23,7 @@
 | `run.rs` | フレームループ（`run` / `pump` / ツールチップ） |
 | `profiler_panel.rs` | プロファイラのパネル |
 | `quit.rs` | アプリの終了を確かめるダイアログ（`QuitDialog`） |
-| `notification.rs` | OS の通知の部品（トーストと通知センター（クイック設定）で同じ見た目）: アイコンの読み込み（`Icons::of`。変換はアプリごとに一度）・`icon`・`title`・カード（`card(theme, prefix, n, image, expanded, extra, pressed)`。`<prefix>-<id>`、ボタンは `<prefix>-action-<id>-<番号>` と `extra`。本文は 2 行、広げると 6 行とボタン。ボタンを並べている間はカードの色をホバー・押下で変えない（`Button::still`。中のボタンが紛れないように））・押したときの開き方（`open`。URL は `design::link::open` で確かめてから、ほかは `PanelCommand::Notification` でアプリへ）・トーストから通知センターを開く頼み（`Center` のグローバルと `show_center`。ダッシュボードが応え、一覧が `focus` を広げ、一覧を出しているパネルを `panel` に置く） |
+| `notification.rs` | OS の通知の部品（トーストと通知センター（クイック設定）で同じ見た目）: アイコンの読み込み（`Icons::of`。変換はアプリごとに一度）・`icon`・`title`・カード（`card(theme, prefix, n, image, expanded, extra, pressed)`。`<prefix>-<id>`、ボタンは `<prefix>-action-<id>-<番号>` と `extra`。本文は 2 行、広げると 6 行とボタン。ボタンを並べている間はカードの色をホバー・押下で変えない（`Button::still`。中のボタンが紛れないように））・押したときの開き方（`open`。URL は `design::link::open` で確かめてから、ほかは `PanelCommand::Notification` でアプリへ）・トーストから通知センターを開く頼み（`Center` のグローバルと `show_center`。ダッシュボードが応え、一覧が `focus` を広げ、一覧を出しているパネルを `panel` に置く）・既読（`Read` のグローバルと `mark_read`・`is_read`。はまって出ている通知センターに並んだもの、`show_center` で開いたもの。トーストは未読だけを出し、バーの件数は未読の数） |
 | `swipe.rs` | 縦に並んだ項目（通知のカード）を左右にスワイプして片付ける（`Swipes`。トーストと通知センター）。マウスのドラッグ（8px 動かしてから）でもタッチの方式の横のスクロールでも付いてきて薄れ、離したときに幅の 3 割を超えていれば横へ抜け、高さを畳んで（`Look::height`。呼ぶ側が掛ける）下を詰め、畳みきったら `take_gone` が一度だけ返す。動かしたら離した所を押したことにしない。受け口は描くたびに `listen` で置き直す（項目より後に描く所で） |
 | `keyboard` / `prefs` / `mirror` / `link` / `cue` / `panel_window` | 前からの部品（下の各節） |
 

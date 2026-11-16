@@ -320,3 +320,38 @@ fn a_notification_flows_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mut Test
     settle(&mut kit);
     assert!(kit.kernel.status(toast).hidden);
 }
+
+/// Clicking a card on the watch while the dashboard is hidden shows the dashboard with the notification center docked
+/// in it (not floating beside it), and the clicked card goes away (it is read).
+#[gpui::test]
+fn a_card_on_the_wrist_opens_the_notification_center_in_the_dashboard(cx: &mut TestAppContext) {
+    let _serial = serial();
+    let (mut kit, toast, _) = arrive(cx, Fov::NARROW, NotificationAnchor::Top);
+    kit.hand(Hand::Left).move_hand(raised()).hand(Hand::Right);
+    let start = Instant::now();
+    while kit.kernel.status(toast).parent != Some(0) {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "moves to the watch"
+        );
+        kit.step();
+    }
+    settle(&mut kit);
+    let dashboard = kit.read(|w| w.dashboard).expect("opened hidden at startup");
+    assert!(kit.kernel.status(dashboard).hidden);
+    kit.panel(toast).click("toast-7");
+    settle(&mut kit);
+    assert!(!kit.kernel.status(dashboard).hidden, "the dashboard shows");
+    let center = kit
+        .find("notification-action-7-0")
+        .expect("the center opens with the notification expanded");
+    assert_eq!(
+        kit.kernel.status(center).parent,
+        Some(dashboard),
+        "docked in the dashboard"
+    );
+    assert!(
+        kit.kernel.status(toast).hidden,
+        "the clicked card goes away"
+    );
+}

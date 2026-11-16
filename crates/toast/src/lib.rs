@@ -150,6 +150,8 @@ pub struct Toast {
 impl Toast {
     pub fn new(panel: PanelId, wrist: PanelId, cx: &mut Context<Self>) -> Self {
         cx.observe_global::<PanelControl>(Self::sync).detach();
+        cx.observe_global::<ui::notification::Read>(Self::sync)
+            .detach();
         Self {
             panel,
             wrist,
@@ -198,7 +200,12 @@ impl Toast {
         let notes = ctl.notifications.clone();
         let settings = ctl.settings;
         let safe = ctl.fov.unwrap_or(Fov::NARROW).safe();
-        let ids: Vec<u32> = notes.iter().map(|n| n.id).collect();
+        // 読んだもの（通知センターに並んだ・押した）はもう出さない。
+        let ids: Vec<u32> = notes
+            .iter()
+            .map(|n| n.id)
+            .filter(|&id| !ui::notification::is_read(id, cx))
+            .collect();
         let now = Instant::now();
         let (place, shown) = self.flow.step(&ids, scene, now);
         let target = match place {

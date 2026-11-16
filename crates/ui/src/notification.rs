@@ -1,9 +1,9 @@
 //! OS の通知のカード。通知のトースト（`crates/toast`）とダッシュボードの通知センター（クイック設定の一覧）が同じものを
 //! 出す（画面どうしは直接依存しないので、共有する部品は UI 層に置く）。アイコン・見出し・アプリの名前・本文（行数を
 //! 限って省略）。広げると本文が伸び、通知のボタンが並ぶ。押したときの開き方（[`open`]）と、トーストから通知センターを
-//! 開く頼み（[`Center`]）もここ。
+//! 開く頼み（[`Center`]）と、既読（[`Read`]）もここ。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use design::components::{self, Button, Variant};
@@ -29,8 +29,30 @@ pub struct Center {
 
 impl gpui::Global for Center {}
 
-/// 通知センターを開いてほしい（`focus` の通知を広げて）。
+/// 既読の通知（GPUI のグローバル）: 通知センターにはまって出ている一覧に並んだか、トーストで押した（通知センターで
+/// 開いた）もの。トーストは未読のものだけを出し、バーの件数は未読の数。
+// ponytail: 消えた通知の ID も残る（u32 が数個ずつ増えるだけ）。長く動かして気になったら一覧に無いものを落とす。
+#[derive(Debug, Default)]
+pub struct Read(pub HashSet<u32>);
+
+impl gpui::Global for Read {}
+
+/// `id` の通知を読んだか。
+pub fn is_read(id: u32, cx: &App) -> bool {
+    cx.try_global::<Read>().is_some_and(|r| r.0.contains(&id))
+}
+
+/// `ids` を既読にする。新しく読んだものがあるときだけ、見ている側（トースト・バー）に知らせる。
+pub fn mark_read(ids: impl IntoIterator<Item = u32>, cx: &mut App) {
+    let new: Vec<u32> = ids.into_iter().filter(|&id| !is_read(id, cx)).collect();
+    if !new.is_empty() {
+        cx.default_global::<Read>().0.extend(new);
+    }
+}
+
+/// 通知センターを開いてほしい（`focus` の通知を広げて。その通知は既読にする）。
 pub fn show_center(focus: Option<u32>, cx: &mut App) {
+    mark_read(focus, cx);
     let c = cx.default_global::<Center>();
     c.asked = c.asked.wrapping_add(1);
     c.focus = focus;

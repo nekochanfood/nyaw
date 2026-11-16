@@ -548,8 +548,8 @@ fn resident_streams_stay_on_the_bar_and_minimize(cx: &mut TestAppContext) {
     assert!(bar.read_with(cx, |d, _| d.streams[0].stashed));
 }
 
-/// トーストから通知センターを頼まれると、隠れていたダッシュボードを出してクイック設定（通知の一覧）をはめる。
-/// もうはまっていれば閉じない。
+/// トーストから通知センターを頼まれると、隠れていたダッシュボードを出し、出てからクイック設定（通知の一覧）をはめる
+/// （隠れている間に開くとはまらずに浮く）。もうはまっていれば閉じない。
 #[gpui::test]
 fn the_toast_opens_the_notification_center(cx: &mut TestAppContext) {
     let (bar, cx) = cx.add_window_view(|_, cx| {
@@ -571,6 +571,10 @@ fn the_toast_opens_the_notification_center(cx: &mut TestAppContext) {
         take_commands(cx, 1).contains(&PanelCommand::Hide(false)),
         "出す"
     );
+    assert!(
+        cx.update(|_, cx| cx.global::<PanelControl>().spawns.is_empty()),
+        "出るまでは開かない"
+    );
     cx.update(|_, cx| {
         cx.default_global::<PanelControl>()
             .panels
@@ -591,4 +595,19 @@ fn the_toast_opens_the_notification_center(cx: &mut TestAppContext) {
         cx.update(|_, cx| bar.read(cx).current(cx)),
         Some(Page::QuickSettings)
     );
+}
+
+/// 件数は未読の数。みな読んだら出さない。
+#[gpui::test]
+fn the_count_is_of_unread_notifications(cx: &mut TestAppContext) {
+    let (_bar, cx) = cx.add_window_view(|_, cx| {
+        cx.default_global::<PanelControl>().notifications =
+            (0..3).map(|id| Arc::new(note(id))).collect();
+        Dashboard::new(1, summon, summon, cx)
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("dashboard-notification-count").is_some());
+    cx.update(|_, cx| ui::notification::mark_read(0..3, cx));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("dashboard-notification-count").is_none());
 }

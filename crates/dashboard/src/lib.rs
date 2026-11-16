@@ -215,6 +215,8 @@ pub struct Dashboard {
     scroll: ScrollHandle,
     /// 応えた、通知センターを開く頼みの回数（[`ui::notification::Center::asked`]）。
     center_asked: u32,
+    /// 通知センターを頼まれたときダッシュボードが隠れていた。出てからはめる（隠れている間ははめられない）。
+    center_waiting: bool,
 }
 
 /// ダッシュボードから開く画面のうち、ダッシュボード自身のもの（クイック設定・ランチャー・再生中）。
