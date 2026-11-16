@@ -6,7 +6,7 @@
 
 ## 主な公開 API
 
-`Kernel::{boot, with_backend, tick, submit, apply, status, set, settings, os_keyboard, add_panel, batteries, now_playing}`（メディアの見張りは `boot` だけが起こす）, `PanelCommand`（`Hide(bool)` で閉じずに隠す・出し直す、`Resizable(bool)`、`GrabAnchor(Option<Pose>)`、`Media(media::Command)`、`FocusSource`（配信しているウィンドウを OS で前に出す））, `PanelStatus`（`hidden`）, `Setting`, `Settings`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート
+`Kernel::{boot, with_backend, tick, submit, apply, status, set, settings, os_keyboard, add_panel, batteries, now_playing}`（メディアの見張りは `boot` だけが起こす）, `PanelCommand`（`Hide(bool)` で閉じずに隠す・出し直す、`Resizable(bool)`、`DockSlot(Option<f32>)` / `Dockable(bool)`（はめる場所と、そこから掴んで引っこ抜ける・はめられる画面。`Kernel::take_dock_changes` で手で外した・はめた画面を受け取る）、`GrabAnchor(Option<Pose>)`、`Media(media::Command)`、`FocusSource`（配信しているウィンドウを OS で前に出す））, `PanelStatus`（`hidden`、はまる所の見本の一行 `dock_hint`）, `Setting`, `Settings`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート
 
 ## パネルの LOD
 

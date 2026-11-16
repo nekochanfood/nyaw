@@ -1,5 +1,6 @@
 //! Layer 6 画面: コントローラのビーム。手ごとに、手元から伸びるレーザーと、指しているパネルに貼り付く
-//! 小さな円（カーソル）と、ドラッグ中の要素の見た目（中身は GPUI が描く `ui::DragPreview`）と、カーソルの子のツールチップ（[`tooltip`]）の 4 枚。ここは見た目だけを描き、置き場所・長さ・表示はオーバーレイ層が毎 tick 決める。
+//! 小さな円（カーソル）と、ドラッグ中の要素の見た目（中身は GPUI が描く `ui::DragPreview`）と、カーソルの子のツールチップ（[`tooltip`]）と、
+//! はめられる画面を掴んでいる間のはまる所の見本（[`dock`]）の 5 枚。ここは見た目だけを描き、置き場所・長さ・表示はオーバーレイ層が毎 tick 決める。
 
 use gpui::{
     Bounds, Context, PathBuilder, Pixels, Point, Window, canvas, div, hsla, linear_color_stop,
@@ -9,7 +10,9 @@ use kernel::overlay::LASER_MAX;
 use kernel::{Hand, Pointer, Pose, Vec2};
 use ui::PanelSpec;
 
+pub mod dock;
 pub mod tooltip;
+pub use dock::DockGhost;
 pub use tooltip::Tooltip;
 
 const COLOR: u32 = 0xffffffd0;
@@ -62,6 +65,7 @@ pub fn specs() -> Vec<PanelSpec> {
                     .sized(Vec2::splat(0.4), DRAG_PX)
                     .pointer(hand, Pointer::Drag),
                 tooltip::spec(hand),
+                dock::spec(hand),
             ]
         })
         .collect()

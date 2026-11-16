@@ -319,13 +319,14 @@ pub fn run_with(
                             .map(|s| s.status.clone());
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
-                        // LOD と指されているかはそのパネルだけの状態。変わるたびにほかのパネルまで描き直させない。
+                        // LOD・指されているか・見本の一行はそのパネルだけの状態。変わるたびにほかのパネルまで描き直させない。
                         let status = kernel.status(panel);
                         others = changed
                             && before.is_none_or(|b| {
                                 PanelStatus {
                                     lod: status.lod,
                                     pointed: status.pointed,
+                                    dock_hint: status.dock_hint,
                                     ..b
                                 } != status
                             });

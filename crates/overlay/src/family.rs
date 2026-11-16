@@ -23,34 +23,27 @@ impl Overlay {
             return;
         }
         let at = parent.map(|p| self.panels[p.panel].pose);
-        let q = &mut self.panels[id];
-        // はめる・外すときは、見えていれば滑らかに動かす。外すときは離れたと分かるよう手前へ出す。
+        // はめる・外すときは、見えていれば滑らかに動かす。はめる（ダッシュボードから呼び出す）ときは行き過ぎずに戻り、外すときは
+        // 離れたと分かるよう手前へ飛び出す。掴んでいる間は手に付いて動くので動かさない。
+        let held = self.grabbed(id);
+        let q = &self.panels[id];
         let (was_slot, to_slot) = (
             q.parent.is_some_and(|p| p.slot.is_some()),
             parent.is_some_and(|p| p.slot.is_some()),
         );
         let to = match (was_slot, to_slot) {
-            (true, false) if parent.is_none() && !q.hidden => Some(Some(
-                q.pose * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY),
+            _ if held => None,
+            (true, false) if parent.is_none() && !q.hidden => Some((
+                Some(q.pose * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY)),
+                Motion::Pop,
             )),
-            (false, true) => Some(None),
+            (false, true) => Some((None, Motion::Move)),
             _ => None,
         };
-        if let Some(to) = to {
-            if q.animated && q.surface.has_texture() && !q.hidden {
-                self.glides.insert(
-                    id,
-                    Glide {
-                        from: q.pose,
-                        to,
-                        tween: Animation::new(0.0, 1.0, Motion::Move),
-                        last: Instant::now(),
-                    },
-                );
-            } else if let Some(pose) = to {
-                q.pose = pose;
-            }
+        if let Some((to, motion)) = to {
+            self.glide_to(id, to, motion);
         }
+        let q = &mut self.panels[id];
         q.parent = parent;
         // 表示だけの子と、ポップオーバー（固定して外側を押すと閉じる子）は、ほかのパネルより前に描く。ランタイムは
         // 奥行きではなく描画順で重ねるので、同じ順だと重なった所がちらつく（はめた画面の上に出すメニューなど）。
@@ -66,8 +59,9 @@ impl Overlay {
     /// 親子の姿勢を合わせる。掴まれている子は、親を連れていくなら親を子に合わせ、そうでなければ親との相対位置を付け直す。
     /// そのあと、掴まれていない子を親（浅い順）に合わせる。親が掴まれても取り付けで動いても、子はここで追従する。
     // ponytail: 親の拡大縮小では子の相対位置を変えない（子はその場の大きさのまま）。
-    pub(crate) fn settle_family(&mut self, dragged: &[PanelId]) {
-        for &id in dragged {
+    /// 磁石を効かせて掴んでいる子（`pulled`。[`Magnet`]）は、親を連れていかず、親との位置関係も変えない。
+    pub(crate) fn settle_family(&mut self, dragged: &[PanelId], pulled: &[PanelId]) {
+        for &id in dragged.iter().filter(|id| !pulled.contains(id)) {
             let mut cur = id;
             while let Some(Parent {
                 panel, carry, slot, ..
@@ -135,20 +129,29 @@ impl Overlay {
         }
     }
 
-    /// 親の上端に立てる子（[`Parent::slot`]）の、親から見た姿勢。子のナビゲーションバーの分を空ける。
+    /// 親の上端に立てる子（[`Parent::slot`]）の、親から見た姿勢（[`slot_offset_in`]）。
     fn slot_offset(&self, id: PanelId, parent: PanelId, tilt: f32) -> Pose {
-        let rotation = Quat::from_rotation_x(tilt);
-        let up = rotation * Vec3::Y;
-        let (outer, inner) = (&self.panels[parent], &self.panels[id]);
-        let bar = self
-            .present
-            .iter()
-            .find(|&&b| self.panels[b].nav_bar_of == Some(id))
-            .map_or(0.0, |&b| self.panels[b].size.y);
-        let top = Vec3::Y * (outer.size.y / 2.0 - face_margin(outer));
-        // 隙間も UI スケールに合わせ、組を相似に保つ。
-        let lift = SLOT_GAP * self.scale() + bar + inner.size.y / 2.0 - face_margin(inner);
-        Pose::new(top + up * lift, rotation)
+        slot_offset_in(&self.panels, &self.present, self.scale(), id, parent, tilt)
+    }
+
+    /// `id` を今の所から `to`（`None` なら毎 tick 決まるはまる所）へ `motion` で動かす（[`Glide`]）。見えていなければその場で移す。
+    pub(crate) fn glide_to(&mut self, id: PanelId, to: Option<Pose>, motion: Motion) {
+        let q = &mut self.panels[id];
+        if q.animated && q.surface.has_texture() && !q.hidden {
+            let tween = Animation::new(0.0, 1.0, motion);
+            let (from, last) = (q.pose, Instant::now());
+            self.glides.insert(
+                id,
+                Glide {
+                    from,
+                    to,
+                    tween,
+                    last,
+                },
+            );
+        } else if let Some(pose) = to {
+            q.pose = pose;
+        }
     }
 
     /// 位置のトランジションを進める（[`Glide`]）。掴まれたら、その場でやめる。
@@ -164,9 +167,10 @@ impl Overlay {
                 .advance(now.saturating_duration_since(g.last).as_secs_f32());
             g.last = now;
             let to = g.to.unwrap_or(p.pose);
+            // 行き過ぎる動き（[`Motion::Pop`]）でも、向きは行き過ぎさせない。
             p.pose = Pose::new(
                 g.from.position.lerp(to.position, t),
-                g.from.orientation.slerp(to.orientation, t),
+                g.from.orientation.slerp(to.orientation, t.clamp(0.0, 1.0)),
             );
             !g.tween.is_done()
         });
@@ -248,6 +252,31 @@ impl Overlay {
             }
         }
     }
+}
+
+/// 親 `parent` の上端に立てる子 `id`（[`Parent::slot`]）の、親から見た姿勢。子のナビゲーションバーの分を空ける。
+/// 隙間は UI スケール `scale` に合わせる。
+pub(crate) fn slot_offset_in(
+    panels: &[Panel],
+    present: &[PanelId],
+    scale: f32,
+    id: PanelId,
+    parent: PanelId,
+    tilt: f32,
+) -> Pose {
+    let rotation = Quat::from_rotation_x(tilt);
+    let up = rotation * Vec3::Y;
+    let (outer, inner) = (&panels[parent], &panels[id]);
+    // ナビゲーションバーは、はまっている間の大きさ（頭からの距離で変わらない）で空ける。外れて動かしている間も
+    // はまる所が動かないように（外れたバーは距離で大きさが変わる）。
+    let bar = present
+        .iter()
+        .find(|&&b| panels[b].nav_bar_of == Some(id))
+        .map_or(0.0, |&b| panels[b].nav_bar_size.y);
+    let top = Vec3::Y * (outer.size.y / 2.0 - face_margin(outer));
+    // 隙間も UI スケールに合わせ、組を相似に保つ。
+    let lift = SLOT_GAP * scale + bar + inner.size.y / 2.0 - face_margin(inner);
+    Pose::new(top + up * lift, rotation)
 }
 
 /// 開いている子がいる（暗くして入力を止める）。ナビゲーションバーは持ち主に子がいれば同じ扱い。

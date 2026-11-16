@@ -368,6 +368,7 @@ impl PanelSpec {
     }
 
     /// ナビゲーションバーの左端に、はめる場所（ダッシュボード。[`dock`]）から外して独立させる・戻すボタンを出す。
+    /// 掴んで引っこ抜く・近づけて離してはめることもできる（[`PanelCommand::Dockable`]）。
     pub fn dockable(mut self) -> Self {
         self.dockable = true;
         self
@@ -601,6 +602,9 @@ pub(crate) fn open_panel(
     }
     if !spec.resizable {
         kernel.apply(panel, PanelCommand::Resizable(false));
+    }
+    if spec.dockable {
+        kernel.apply(panel, PanelCommand::Dockable(true));
     }
     if spec.reach.is_some() {
         kernel.apply(panel, PanelCommand::Reach(spec.reach));
