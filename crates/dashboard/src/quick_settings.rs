@@ -1,8 +1,8 @@
-//! クイック設定（通知センター）: 上に時刻・日付と設定ボタン、その下に届いた OS の通知の一覧（新しい順。カードは通知の
+//! クイック設定（通知センター）: 上に時刻とその下に日付、右に設定ボタン、その下に届いた OS の通知の一覧（新しい順。カードは通知の
 //! トーストと同じ `ui::notification::card`）。詳しい中身はここで見る: ホバー（トーストから開いたときはその通知）で広げ、
 //! 本文が伸びて通知のボタンと、アプリを開けるなら「（アプリ）を開く」（映して開く）が並ぶ（滑らかに伸び縮みする）。押すと
 //! 開く。左右にスワイプするか「すべて消去」で片付く（OS の通知センターからも消す）。通知が多いときは一覧だけが
-//! スクロールし、時刻と見出しは動かない。
+//! スクロールし、時刻と見出しは動かない。無ければ中央にチェックと「通知はありません」。
 
 use super::*;
 use ui::notification::{Center, Detail};
@@ -15,6 +15,9 @@ const CLEAR_SPAN: Duration = Duration::from_millis(600);
 fn clear_stagger(count: usize) -> Duration {
     CLEAR_STAGGER.min(CLEAR_SPAN / count.max(1) as u32)
 }
+
+/// 通知が無いときに中央に出すチェックの一辺。
+const EMPTY_ICON_PX: f32 = 64.0;
 
 /// 届いてからこの間は「n 日前」のように今からの差で、過ぎたら日付と時刻で出す。
 const RELATIVE_FOR: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -68,7 +71,6 @@ impl Screen {
     pub(crate) fn quick_settings(
         &mut self,
         theme: &Theme,
-        time_width: gpui::Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -119,7 +121,8 @@ impl Screen {
                     .flex()
                     .flex_col()
                     .gap(px(spacing::MD))
-                    // Android のクイック設定のように、上に時刻・日付と設定へのボタン。
+                    // Android のクイック設定のように、上に時刻とその下に日付（左端は見出しと揃う）、右に設定へのボタン。
+                    // 横に並べると GPUI はベースラインで揃えられず日付が垂れるので、縦に積む。
                     .child(
                         div()
                             .flex()
@@ -128,17 +131,20 @@ impl Screen {
                             .child(
                                 div()
                                     .flex_1()
+                                    .min_w_0()
                                     .flex()
-                                    .items_baseline()
-                                    .gap(px(spacing::MD))
+                                    .flex_col()
                                     .child(
                                         div()
                                             .debug_selector(|| "quick-time".into())
                                             .text_size(px(QUICK_TIME_PX))
-                                            .child(fixed_clock(time_width)),
+                                            .line_height(gpui::relative(1.15))
+                                            .font_weight(FontWeight::BOLD)
+                                            .child(now.format("%H:%M").to_string()),
                                     )
                                     .child(
                                         div()
+                                            .debug_selector(|| "quick-date".into())
                                             .text_size(px(font_size::MD))
                                             .text_color(rgba(theme.neutral_text_low))
                                             .child(i18n::date(cx, now)),
@@ -185,10 +191,21 @@ impl Screen {
                         },
                     ))
                     .child(if cards.is_empty() {
+                        // 片付いたと一目で分かるよう、空いた所の中央にチェックと「通知はありません」。
                         div()
                             .debug_selector(|| "notifications-empty".into())
-                            .px(px(spacing::SM))
+                            .flex_1()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .justify_center()
+                            .gap(px(spacing::MD))
                             .text_color(rgba(theme.neutral_text_low))
+                            .child(
+                                design::icon(&icons::CHECK_CIRCLE)
+                                    .size(px(EMPTY_ICON_PX))
+                                    .color(rgba(theme.neutral_text_low)),
+                            )
                             .child(i18n::t(cx, "dashboard.no_notifications"))
                             .into_any_element()
                     } else {

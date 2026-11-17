@@ -69,10 +69,31 @@ fn the_shown_list_marks_its_notifications_read(cx: &mut TestAppContext) {
     assert_eq!(read(cx), [true, true]);
 }
 
+/// 通知が無ければ、空いた所の中央にチェックと「通知はありません」。
 #[gpui::test]
 fn quick_settings_says_when_there_are_no_notifications(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![]);
-    assert!(cx.debug_bounds("notifications-empty").is_some());
+    cx.simulate_resize(gpui::size(px(RES_PX.0 as f32), px(RES_PX.1 as f32)));
+    cx.run_until_parked();
+    let empty = cx.debug_bounds("notifications-empty").unwrap();
+    let (x, y) = (f32::from(empty.center().x), f32::from(empty.center().y));
+    assert!(
+        (x - RES_PX.0 as f32 / 2.0).abs() < 40.0,
+        "横は中央: {empty:?}"
+    );
+    assert!(y > RES_PX.1 as f32 * 0.4, "下の空いた所の中ほど: {empty:?}");
+}
+
+/// 時刻の下に日付が来て、左端が揃う（横に並べると日付がベースラインから垂れていた）。
+#[gpui::test]
+fn the_date_sits_under_the_time(cx: &mut TestAppContext) {
+    let cx = quick_settings(cx, vec![]);
+    let (time, date) = (
+        cx.debug_bounds("quick-time").unwrap(),
+        cx.debug_bounds("quick-date").unwrap(),
+    );
+    assert!(date.top() >= time.bottom(), "{time:?} {date:?}");
+    assert_eq!(date.left(), time.left());
 }
 
 /// ホバーすると通知のボタンが出て、押すとアプリへ届く（本文を押しても届く）。
