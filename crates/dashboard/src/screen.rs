@@ -144,7 +144,10 @@ impl Render for Screen {
             Page::Launcher => self.apps_page(&theme, cx),
             Page::NowPlaying => self.now_playing(cx),
             // デバッグ・設定は main が渡す別の画面で、Screen にはならない。
-            _ => self.quick_settings(&theme, window, cx),
+            _ => {
+                let width = clock_width(window, QUICK_TIME_PX);
+                self.quick_settings(&theme, width, window, cx)
+            }
         }
     }
 }
