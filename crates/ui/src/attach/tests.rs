@@ -53,10 +53,11 @@ fn choosing_a_hand_holds_the_owner_in_it(cx: &mut TestAppContext) {
             .entry(1)
             .or_default();
         state.status.parent = Some(0);
-        HandMenu {
+        NavMenu {
             panel: 3,
             owner: 1,
             hand: None,
+            docked: None,
         }
     });
     cx.run_until_parked();
@@ -76,10 +77,11 @@ fn choosing_a_hand_holds_the_owner_in_it(cx: &mut TestAppContext) {
 /// 持っている手を選び直しても何もしない（閉じるだけ）。
 #[gpui::test]
 fn choosing_the_held_hand_again_changes_nothing(cx: &mut TestAppContext) {
-    let (_, cx) = cx.add_window_view(|_, _| HandMenu {
+    let (_, cx) = cx.add_window_view(|_, _| NavMenu {
         panel: 4,
         owner: 1,
         hand: Some(Hand::Right),
+        docked: None,
     });
     cx.run_until_parked();
     let right = cx.debug_bounds("hand-right").unwrap();
@@ -91,10 +93,11 @@ fn choosing_the_held_hand_again_changes_nothing(cx: &mut TestAppContext) {
 /// 「手から外す」は持ち主をその場に残して手から外し、ポップオーバーを閉じる。
 #[gpui::test]
 fn letting_go_detaches_the_owner(cx: &mut TestAppContext) {
-    let (_, cx) = cx.add_window_view(|_, _| HandMenu {
+    let (_, cx) = cx.add_window_view(|_, _| NavMenu {
         panel: 3,
         owner: 1,
         hand: Some(Hand::Left),
+        docked: None,
     });
     cx.run_until_parked();
     let detach = cx.debug_bounds("hand-detach").unwrap();
@@ -103,8 +106,63 @@ fn letting_go_detaches_the_owner(cx: &mut TestAppContext) {
     assert_eq!(cx.update(|_, cx| take(3, cx)), [PanelCommand::Close]);
 }
 
-/// ポップオーバーはナビゲーションバーの上に、カードの左端をバーの帯の左端にそろえて出す。バーは頭からの距離で大きくなるので、
-/// ポップオーバーも同じ割合で大きく・遠くなる（バーとの見た目の比が変わらない）。
+/// はめる場所にはまっていれば「ダッシュボードから外す」、外れていて場所が開いていれば「戻す」が出て、選ぶとそうして閉じる。
+/// はめられないパネルや、場所が出ていなければ出さない。
+#[gpui::test]
+fn the_menu_docks_and_undocks_the_owner(cx: &mut TestAppContext) {
+    let rows =
+        |cx: &mut TestAppContext, dockable| cx.update(|cx| menu_spec(1, dockable, cx)).resolution.1;
+    let two = rows(cx, true);
+    cx.update(|cx| cx.default_global::<PanelControl>().dock = Some((5, 0.0)));
+    assert_eq!(rows(cx, false), two, "only for a dockable panel");
+    let three = rows(cx, true);
+    assert_eq!(
+        three - two,
+        design::components::MENU_ITEM_HEIGHT as u32,
+        "one more row"
+    );
+    cx.update(|cx| {
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(1)
+            .or_default()
+            .status
+            .parent = Some(5)
+    });
+    assert_eq!(cx.update(|cx| dock_state(1, cx)), Some(true));
+
+    let menu = |docked| {
+        move |_: &mut Window, _: &mut Context<NavMenu>| NavMenu {
+            panel: 3,
+            owner: 1,
+            hand: None,
+            docked: Some(docked),
+        }
+    };
+    let (_, undock) = cx.add_window_view(menu(true));
+    undock.run_until_parked();
+    assert!(undock.debug_bounds("nav-dock").is_none());
+    let row = undock.debug_bounds("nav-undock").unwrap();
+    undock.simulate_click(row.center(), gpui::Modifiers::none());
+    assert_eq!(
+        undock.update(|_, cx| take(1, cx)),
+        [PanelCommand::Parent(None)]
+    );
+    assert_eq!(undock.update(|_, cx| take(3, cx)), [PanelCommand::Close]);
+
+    let (_, dock) = cx.add_window_view(menu(false));
+    dock.run_until_parked();
+    let row = dock.debug_bounds("nav-dock").unwrap();
+    dock.simulate_click(row.center(), gpui::Modifiers::none());
+    assert!(matches!(
+        dock.update(|_, cx| take(1, cx)).as_slice(),
+        [PanelCommand::Parent(Some(p))] if p.panel == 5 && p.docked
+    ));
+    assert_eq!(dock.update(|_, cx| take(3, cx)), [PanelCommand::Close]);
+}
+
+/// ポップオーバーはナビゲーションバーの上に、カードの右端をバーの帯の右端（「…」の側）にそろえて出す。バーは頭からの距離で
+/// 大きくなるので、ポップオーバーも同じ割合で大きく・遠くなる（バーとの見た目の比が変わらない）。
 #[gpui::test]
 fn the_menu_sits_over_the_nav_bar_at_its_scale(cx: &mut TestAppContext) {
     let mut kernel =
@@ -125,20 +183,20 @@ fn the_menu_sits_over_the_nav_bar_at_its_scale(cx: &mut TestAppContext) {
     let margin = design::components::PANEL_MARGIN;
     let place = |kernel: &mut Kernel<_>, cx: &mut TestAppContext| {
         kernel.tick();
-        let spec = cx.update(|cx| menu_spec(0, cx));
+        let spec = cx.update(|cx| menu_spec(0, false, cx));
         let (size, res) = spec.size(kernel);
         let pose = spec.pose_for(kernel, 2);
         let b = kernel.panel(bar);
-        // 1px の大きさ（m）と、ポップオーバー・帯の左端と、カードの下端・帯の上端（バーの面の上で）。
+        // 1px の大きさ（m）と、ポップオーバー・帯の右端と、カードの下端・帯の上端（バーの面の上で）。
         let (m, n) = (size.x / res.0 as f32, b.size.x / NAV_BAR_PX.0 as f32);
         let local = b.pose.inverse().transform_point(pose.position);
-        let card_left = local.x - size.x / 2.0 + margin * m;
-        let band_left = -b.size.x / 2.0 + margin * n;
+        let card_right = local.x + size.x / 2.0 - margin * m;
+        let band_right = b.size.x / 2.0 - margin * n;
         let card_bottom = local.y - size.y / 2.0 + margin * m;
         let band_top = b.size.y / 2.0 - margin * n;
         assert!(
-            (card_left - band_left).abs() < 1e-5,
-            "{card_left} {band_left}"
+            (card_right - band_right).abs() < 1e-5,
+            "{card_right} {band_right}"
         );
         assert!(
             (card_bottom - band_top - design::spacing::SM * n).abs() < 1e-5,

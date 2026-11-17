@@ -115,7 +115,7 @@ fn undocked_screen_is_docked_again_instead_of_opened_twice(cx: &mut TestAppConte
         |cx: &mut VisualTestContext| cx.update(|_, cx| cx.global::<PanelControl>().spawns.len());
     bar.update(cx, |d, cx| d.toggle(Page::Settings, cx));
     open_spawned(cx, 2);
-    // ナビゲーションバーの `nav-undock` と同じく外す。
+    // ナビゲーションバーの「…」の `nav-undock` と同じく外す。
     cx.update(|_, cx| ui::undock(2, cx));
     take_commands(cx, 2);
     assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), None);

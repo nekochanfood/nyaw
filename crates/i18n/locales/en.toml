@@ -90,6 +90,7 @@ tune_hold = "While clicking, ignore hand movement within {deg}°"
 date = "{weekday} %b %-d"
 close = "Close"
 minimize = "Minimize"
+more = "More"
 default = "Default"
 ok = "OK"
 cancel = "Cancel"
@@ -127,9 +128,8 @@ release = "Let go to attach"
 attach = "Bring close to attach"
 
 [hand]
-attach = "Hold in hand"
-left = "Left hand"
-right = "Right hand"
+left = "Hold in left hand"
+right = "Hold in right hand"
 detach = "Let go"
 
 [dashboard]

@@ -6,9 +6,9 @@ pub(crate) struct NavBar {
     pub(crate) id: PanelId,
     pub(crate) owner: PanelId,
     pub(crate) title: Option<Title>,
-    /// 左端に OS キーボードのトグルを出す。
+    /// 「…」の左に OS キーボードのトグルを出す。
     pub(crate) os_keyboard: bool,
-    /// 左端に、はめる場所から外す・戻すボタンを出す。
+    /// 「…」のポップオーバーに、はめる場所から外す・戻す行を出す。
     pub(crate) dockable: bool,
     /// 右端を、閉じる代わりにしまうボタンにする。
     pub(crate) minimize: Option<Minimize>,
@@ -66,61 +66,21 @@ impl Render for NavBar {
                 keyboard::toggle_os_keyboard(owner, cx);
             })
         });
-        // はめる場所から外す（はまっている間）・戻す（外れていて、場所が開いている間）。
-        let dock = self.dockable.then(|| {
-            let ctl = cx.global::<PanelControl>();
-            let parent = ctl.panels.get(&owner).and_then(|p| p.status.parent);
-            let slot = dock_slot(cx);
-            let inside = parent.is_some() && parent == slot.map(|(o, _)| o);
-            (inside || slot.is_some()).then(|| {
-                let (id, glyph, tip) = if inside {
-                    (
-                        "nav-undock",
-                        &design::icons::ARROW_SQUARE_OUT,
-                        i18n::t(cx, "dock.undock"),
-                    )
-                } else {
-                    (
-                        "nav-dock",
-                        &design::icons::CARET_LINE_DOWN,
-                        i18n::t(cx, "dock.dock"),
-                    )
-                };
-                design::components::icon_button(
-                    &theme,
-                    id,
-                    glyph,
-                    tip,
-                    design::components::Variant::Default,
-                )
-                .on_click(move |_, _, cx| {
-                    if inside {
-                        undock(owner, cx)
-                    } else {
-                        dock(owner, cx)
-                    }
-                })
-            })
-        });
-        // 手に持つ（持つ手を選ぶポップオーバーを開く）。持っている間は強調色。どのパネルにも出すので先頭に置く。
-        let hand = design::components::icon_button(
+        // 「…」: 手に持つ・はめる場所から外す/戻すを選ぶポップオーバーを開く。どのパネルにも出す。
+        let dockable = self.dockable;
+        let more = design::components::icon_button(
             &theme,
-            "nav-hand",
-            &design::icons::HAND,
-            i18n::t(cx, "hand.attach"),
-            if attach::in_hand(owner, cx).is_some() {
-                design::components::Variant::Primary
-            } else {
-                design::components::Variant::Default
-            },
+            "nav-more",
+            &design::icons::DOTS_THREE,
+            i18n::t(cx, "common.more"),
+            design::components::Variant::Default,
         )
         .on_click(move |_, _, cx| {
-            let spec = attach::menu_spec(owner, cx);
+            let spec = attach::menu_spec(owner, dockable, cx);
             cx.default_global::<PanelControl>().spawns.push(spec);
         });
-        let leading = std::iter::once(hand).chain(dock.flatten()).collect();
         let minimize = self.minimize.clone();
-        // 右側（閉じるボタンの左）は、左から OS キーボードのトグル・配信元をしまうボタン。左側が詰まらないよう右に寄せる。
+        // ボタンはすべて右に寄せ、閉じるボタンの左に左から「…」・OS キーボードのトグル・配信元をしまうボタン。
         let beside_close = self.source_minimize.clone().map(|minimize| {
             design::components::icon_button(
                 &theme,
@@ -148,8 +108,10 @@ impl Render for NavBar {
                 Some(minimize) => minimize(owner, cx),
                 None => command(owner, PanelCommand::Close, cx),
             },
-            leading,
-            os_keyboard.into_iter().chain(beside_close).collect(),
+            std::iter::once(more)
+                .chain(os_keyboard)
+                .chain(beside_close)
+                .collect(),
         ))
     }
 }

@@ -90,6 +90,7 @@ tune_hold = "クリック中は {deg}° 以内の手の動きでポインタを�
 date = "%-m月%-d日（{weekday}）"
 close = "閉じる"
 minimize = "しまう"
+more = "その他"
 default = "既定"
 ok = "OK"
 cancel = "キャンセル"
@@ -127,9 +128,8 @@ release = "離してくっつける"
 attach = "近づけてくっつける"
 
 [hand]
-attach = "手に持つ"
-left = "左手"
-right = "右手"
+left = "左手に持つ"
+right = "右手に持つ"
 detach = "手から外す"
 
 [dashboard]
