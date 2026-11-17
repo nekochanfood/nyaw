@@ -1,4 +1,4 @@
-//! クイック設定（通知センター）: 上に時刻とその下に日付、右に設定ボタン、その下に届いた OS の通知の一覧（新しい順。カードは通知の
+//! クイック設定（通知センター）: 上に時刻・日付と設定ボタン、その下に届いた OS の通知の一覧（新しい順。カードは通知の
 //! トーストと同じ `ui::notification::card`）。詳しい中身はここで見る: ホバー（トーストから開いたときはその通知）で広げ、
 //! 本文が伸びて通知のボタンと、アプリを開けるなら「（アプリ）を開く」（映して開く）が並ぶ（滑らかに伸び縮みする）。押すと
 //! 開く。左右にスワイプするか「すべて消去」で片付く（OS の通知センターからも消す）。通知が多いときは一覧だけが
@@ -14,6 +14,36 @@ const CLEAR_SPAN: Duration = Duration::from_millis(600);
 
 fn clear_stagger(count: usize) -> Duration {
     CLEAR_STAGGER.min(CLEAR_SPAN / count.max(1) as u32)
+}
+
+/// 時刻・日付と見出しの、地の余白からさらに下げる幅（パネルの角に寄りすぎないように）。
+const QUICK_INSET: f32 = spacing::LG;
+/// 時刻と日付の行の高さ（文字の大きさに対する倍率）。
+const QUICK_LEADING: f32 = 1.2;
+
+/// 時刻の横に下端を揃えて並べた日付を、時刻のベースラインまで持ち上げる高さ。GPUI はベースラインで揃えられないので、
+/// 行の箱の下端からベースラインまでの高さの差を書体の寸法から出す（テキストシステムと同じ組み方・丸め方。文字の大きさの
+/// 倍率も掛かる）。
+fn date_lift(window: &Window) -> gpui::Pixels {
+    let below = |size: f32, weight: FontWeight| {
+        let run = gpui::TextRun {
+            len: 1,
+            font: gpui::Font {
+                weight,
+                ..design::font::font()
+            },
+            color: gpui::black(),
+            background_color: None,
+            underline: None,
+            strikethrough: None,
+        };
+        let line = window
+            .text_system()
+            .shape_line("0".into(), px(size), &[run], None);
+        let height = design::font::scaled(size * QUICK_LEADING).round();
+        (height - line.ascent + line.descent) / 2.0
+    };
+    below(QUICK_TIME_PX, FontWeight::BOLD) - below(font_size::MD, FontWeight::NORMAL)
 }
 
 /// 通知が無いときに中央に出すチェックの一辺。
@@ -71,6 +101,7 @@ impl Screen {
     pub(crate) fn quick_settings(
         &mut self,
         theme: &Theme,
+        time_width: gpui::Pixels,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -121,31 +152,40 @@ impl Screen {
                     .flex()
                     .flex_col()
                     .gap(px(spacing::MD))
-                    // Android のクイック設定のように、上に時刻とその下に日付（左端は見出しと揃う）、右に設定へのボタン。
-                    // 横に並べると GPUI はベースラインで揃えられず日付が垂れるので、縦に積む。
+                    // Android のクイック設定のように、上に時刻・日付（日付は時刻のベースラインに載る）と設定へのボタン。
+                    // パネルの角から離し、左端は見出しと揃える。
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .px(px(spacing::SM))
+                            .px(px(QUICK_INSET))
+                            .pt(px(spacing::SM))
                             .child(
                                 div()
                                     .flex_1()
                                     .min_w_0()
                                     .flex()
-                                    .flex_col()
+                                    .items_end()
+                                    .gap(px(spacing::MD))
                                     .child(
                                         div()
                                             .debug_selector(|| "quick-time".into())
+                                            .flex_none()
+                                            // 数字で幅が変わって日付が動かないように（左に寄せる）。
+                                            .w(time_width)
                                             .text_size(px(QUICK_TIME_PX))
-                                            .line_height(gpui::relative(1.15))
+                                            .line_height(gpui::relative(QUICK_LEADING))
                                             .font_weight(FontWeight::BOLD)
                                             .child(now.format("%H:%M").to_string()),
                                     )
                                     .child(
                                         div()
                                             .debug_selector(|| "quick-date".into())
+                                            .min_w_0()
+                                            .truncate()
+                                            .pb(date_lift(window))
                                             .text_size(px(font_size::MD))
+                                            .line_height(gpui::relative(QUICK_LEADING))
                                             .text_color(rgba(theme.neutral_text_low))
                                             .child(i18n::date(cx, now)),
                                     ),
@@ -165,31 +205,32 @@ impl Screen {
                                 }),
                             ),
                     )
-                    .child(section(theme, i18n::t(cx, "dashboard.notifications")).when(
-                        !cards.is_empty(),
-                        |s| {
-                            s.child(
-                                components::button(
-                                    theme,
-                                    "notifications-clear",
-                                    i18n::t(cx, "dashboard.clear_notifications"),
-                                    Variant::OnBackground,
+                    .child(
+                        section(theme, i18n::t(cx, "dashboard.notifications"))
+                            .px(px(QUICK_INSET))
+                            .when(!cards.is_empty(), |s| {
+                                s.child(
+                                    components::button(
+                                        theme,
+                                        "notifications-clear",
+                                        i18n::t(cx, "dashboard.clear_notifications"),
+                                        Variant::OnBackground,
+                                    )
+                                    // 上から順にスワイプしたように横へ抜けて畳まれ、畳みきったら OS の通知センターから消す
+                                    // （スワイプと同じ）。
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            let now = Instant::now();
+                                            let gap = clear_stagger(ids.len());
+                                            for (i, &id) in ids.iter().enumerate() {
+                                                this.swipes.dismiss(id, now + gap * i as u32);
+                                            }
+                                            ui::notify(this.panel, cx);
+                                        },
+                                    )),
                                 )
-                                // 上から順にスワイプしたように横へ抜けて畳まれ、畳みきったら OS の通知センターから消す
-                                // （スワイプと同じ）。
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        let now = Instant::now();
-                                        let gap = clear_stagger(ids.len());
-                                        for (i, &id) in ids.iter().enumerate() {
-                                            this.swipes.dismiss(id, now + gap * i as u32);
-                                        }
-                                        ui::notify(this.panel, cx);
-                                    },
-                                )),
-                            )
-                        },
-                    ))
+                            }),
+                    )
                     .child(if cards.is_empty() {
                         // 片付いたと一目で分かるよう、空いた所の中央にチェックと「通知はありません」。
                         div()

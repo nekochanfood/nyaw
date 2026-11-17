@@ -84,16 +84,18 @@ fn quick_settings_says_when_there_are_no_notifications(cx: &mut TestAppContext) 
     assert!(y > RES_PX.1 as f32 * 0.4, "下の空いた所の中ほど: {empty:?}");
 }
 
-/// 時刻の下に日付が来て、左端が揃う（横に並べると日付がベースラインから垂れていた）。
+/// 日付は時刻の横で、時刻のベースラインまで持ち上がる（下端で揃えたままだと垂れる）。
 #[gpui::test]
-fn the_date_sits_under_the_time(cx: &mut TestAppContext) {
+fn the_date_sits_beside_the_time_on_its_baseline(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![]);
     let (time, date) = (
         cx.debug_bounds("quick-time").unwrap(),
         cx.debug_bounds("quick-date").unwrap(),
     );
-    assert!(date.top() >= time.bottom(), "{time:?} {date:?}");
-    assert_eq!(date.left(), time.left());
+    assert!(date.left() > time.right(), "{time:?} {date:?}");
+    // 下端を揃え、その上に持ち上げる分の余白を積む（持ち上げる高さは書体の寸法から出すので、寸法の無いテストの
+    // テキストシステムでは 0。実際の高さは実 GPU の `look-a11y-*-quick` で見る）。
+    assert_eq!(date.bottom(), time.bottom(), "{time:?} {date:?}");
 }
 
 /// ホバーすると通知のボタンが出て、押すとアプリへ届く（本文を押しても届く）。
