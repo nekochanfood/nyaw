@@ -232,33 +232,49 @@ fn panel_window_is_hidden_and_matches_panel_resolution(cx: &mut TestAppContext) 
     assert_eq!(vp, gpui::size(px(PANEL_PX.0 as f32), px(PANEL_PX.1 as f32)));
 }
 
-/// 手に持つボタンは左端、OS キーボードのトグルは右側（閉じるボタンのすぐ左）。
+/// ボタンはすべて右に寄せ、右から閉じる・配信元をしまう・OS キーボード・「…」と詰めて並べる。手に持つ・外す・戻すは
+/// バーに出さず、「…」がポップオーバーを開く。
 #[gpui::test]
-fn hand_button_is_on_the_left_and_keyboard_beside_close(cx: &mut TestAppContext) {
+fn every_button_sits_on_the_right_ending_with_more(cx: &mut TestAppContext) {
     let (_bar, cx) = cx.add_window_view(|_, cx| {
-        let state = cx
-            .default_global::<PanelControl>()
-            .panels
-            .entry(2)
-            .or_default();
-        state.status.pointed = true;
+        let ctl = cx.default_global::<PanelControl>();
+        ctl.dock = Some((5, 0.0));
+        ctl.panels.entry(2).or_default().status.pointed = true;
         NavBar {
             id: 2,
             owner: 1,
             title: None,
             os_keyboard: true,
-            dockable: false,
+            dockable: true,
             minimize: None,
-            source_minimize: None,
+            source_minimize: Some(std::rc::Rc::new(|_, _| {})),
             open: design::animation::Transition::rest(1.0),
             held: false,
         }
     });
     cx.run_until_parked();
-    let [hand, keyboard, close] =
-        ["nav-hand", "nav-keyboard", "nav-close"].map(|s| cx.debug_bounds(s).unwrap());
-    let middle = (hand.left() + close.right()) / 2.0;
-    assert!(hand.right() < middle && keyboard.left() > middle);
-    assert!(keyboard.right() <= close.left());
-    assert!(close.left() - keyboard.right() <= px(design::spacing::SM + 1.0));
+    for id in ["nav-hand", "nav-dock", "nav-undock"] {
+        assert!(cx.debug_bounds(id).is_none(), "{id}");
+    }
+    let row = [
+        "nav-more",
+        "nav-keyboard",
+        "nav-minimize-source",
+        "nav-close",
+    ]
+    .map(|s| cx.debug_bounds(s).unwrap());
+    let width = cx.update(|w, _| w.viewport_size().width);
+    assert!(row[0].left() > width / 2.0, "{:?} {width:?}", row[0]);
+    for pair in row.windows(2) {
+        let gap = pair[1].left() - pair[0].right();
+        assert!(
+            gap >= px(0.0) && gap <= px(design::spacing::SM + 1.0),
+            "{gap:?}"
+        );
+    }
+    cx.simulate_click(row[0].center(), gpui::Modifiers::none());
+    assert_eq!(
+        cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
+        1
+    );
 }

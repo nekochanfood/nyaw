@@ -1,4 +1,4 @@
-//! Holding a panel in a hand: the navigation bar's hand button opens a popover that picks the left or right hand. The panel
+//! Holding a panel in a hand: the navigation bar's "…" button opens a popover that picks the left or right hand. The panel
 //! then rides on that controller, laid ahead of where its laser comes out, and stands up facing the user when the controller is
 //! raised. While it is held, it can be grabbed (moved, turned, resized) only while the dashboard shows; if the dashboard goes
 //! away mid-grab, the grab is undone (as with the wrist).
@@ -10,7 +10,7 @@ use kernel::PanelCommand;
 use testing::Testing;
 use testkit::{Action, Device, Driver, Hand, Pose, Quat, Vec2, Vec3, VrKit};
 
-/// Spawned Testing panel, its navigation bar and the hand popover opened from it.
+/// Spawned Testing panel, its navigation bar and the "…" popover opened from it.
 const OWNER: usize = 1;
 const BAR: usize = 2;
 const MENU: usize = 3;
@@ -33,7 +33,7 @@ fn in_front() -> Pose {
 fn hold_in_left_hand(kit: &mut VrKit<Testing>) -> Vec2 {
     kit.click("spawn-panel").step();
     let size = kit.kernel.panel(OWNER).size;
-    kit.panel(BAR).click("nav-hand").step();
+    kit.panel(BAR).click("nav-more").step();
     assert_eq!(kit.kernel.panel(MENU).parent.map(|p| p.panel), Some(OWNER));
     kit.panel(MENU).click("hand-left").step();
     assert!(kit.kernel.panel(MENU).closed, "choosing closes the popover");
@@ -76,7 +76,7 @@ fn nav_bar_puts_a_panel_in_the_left_hand(cx: &mut TestAppContext) {
     kit.panel(OWNER).click("click-me");
     assert_eq!(kit.read(|t| t.clicks), 1);
     // Letting go leaves it where it is.
-    kit.panel(BAR).click("nav-hand").step();
+    kit.panel(BAR).click("nav-more").step();
     let menu = MENU + 1;
     kit.panel(menu).click("hand-detach").step().step();
     assert_eq!(kit.kernel.panel(OWNER).attached, None);
