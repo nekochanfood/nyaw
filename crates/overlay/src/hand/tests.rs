@@ -642,3 +642,28 @@ fn resizing_moves_the_grab_anchor_with_the_panel() {
     let anchor = ov.panel(0).grab_anchor.unwrap();
     assert!((anchor.position.x - 0.3 * scale).abs() < 1e-5, "{anchor:?}");
 }
+
+/// レーザーを素通りさせるパネル（HUD）は指せず、後ろのパネルを指す。
+#[test]
+fn a_pass_through_panel_lets_the_laser_reach_what_is_behind() {
+    let (mut vr, mut ov) = setup();
+    let hud = ov
+        .add_panel(
+            &mut vr.backend,
+            "hud",
+            at(0.0, 0.0, -0.5),
+            Vec2::splat(0.5),
+            (50, 50),
+        )
+        .unwrap();
+    controller(&mut vr, Pose::IDENTITY, &[]);
+    assert_eq!(ov.tick(&mut vr)[0].panel, hud);
+    ov.set_pass_through(hud, true);
+    let events = ov.tick(&mut vr);
+    assert!(
+        events
+            .iter()
+            .all(|e| e.panel != hud || e.event == PointerEvent::Leave)
+    );
+    assert!(events.iter().any(|e| e.panel == 0), "{events:?}");
+}

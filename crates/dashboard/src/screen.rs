@@ -68,7 +68,17 @@ impl Screen {
             nyapps_pending: false,
             removing: false,
             update_note: None,
+            notification_hover: None,
+            notification_focus: None,
+            notification_icons: Default::default(),
+            dismissed: HashSet::new(),
+            swipes: Default::default(),
+            expanding: Default::default(),
+            open_after: None,
         };
+        if page == Page::QuickSettings {
+            this.answer_center(panel, cx);
+        }
         // 再生中の画面は、アプリのアイコンが OS から取れないとき（デスクトップのアプリ）にウィンドウのものを使う。
         if matches!(page, Page::Launcher | Page::NowPlaying) {
             this.refresh();
@@ -136,7 +146,7 @@ impl Render for Screen {
             // デバッグ・設定は main が渡す別の画面で、Screen にはならない。
             _ => {
                 let width = clock_width(window, QUICK_TIME_PX);
-                self.quick_settings(&theme, width, cx)
+                self.quick_settings(&theme, width, window, cx)
             }
         }
     }

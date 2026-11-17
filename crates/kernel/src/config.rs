@@ -278,6 +278,50 @@ impl DominantHand {
     }
 }
 
+/// 通知を視界の端に出す所（HUD。`top_left` / `top` / `top_right` / `left` / `right` / `bottom_left` / `bottom` /
+/// `bottom_right`）。視界の上下左右の端と四隅の 8 か所。カーネルは値を持つだけで、置くのは通知の画面。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NotificationAnchor {
+    TopLeft,
+    Top,
+    TopRight,
+    Left,
+    Right,
+    BottomLeft,
+    #[default]
+    Bottom,
+    BottomRight,
+}
+
+impl NotificationAnchor {
+    /// 選ぶ画面に並べる順（左上から右下へ、真ん中を除いた 3×3 の升目）。
+    pub const ALL: [Self; 8] = [
+        Self::TopLeft,
+        Self::Top,
+        Self::TopRight,
+        Self::Left,
+        Self::Right,
+        Self::BottomLeft,
+        Self::Bottom,
+        Self::BottomRight,
+    ];
+
+    /// 視界の中での向き（左 -1・中 0・右 1、下 -1・中 0・上 1）。
+    pub fn side(self) -> (f32, f32) {
+        match self {
+            Self::TopLeft => (-1.0, 1.0),
+            Self::Top => (0.0, 1.0),
+            Self::TopRight => (1.0, 1.0),
+            Self::Left => (-1.0, 0.0),
+            Self::Right => (1.0, 0.0),
+            Self::BottomLeft => (-1.0, -1.0),
+            Self::Bottom => (0.0, -1.0),
+            Self::BottomRight => (1.0, -1.0),
+        }
+    }
+}
+
 /// アップデートのチャンネル（安定版 `stable` / ナイトリー `nightly`）。安定版は正式なリリースだけ、ナイトリーはプレリリース
 /// （alpha・beta など。GitHub でプレリリースの印が付いたもの）も勧める。カーネルは値を持つだけで、従うのは `updater`。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -366,6 +410,8 @@ pub struct Config {
     pub dashboard_distance: Option<f32>,
     /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。[`DASHBOARD_HEIGHT_MIN`]〜[`DASHBOARD_HEIGHT_MAX`]）。省略で 0。
     pub dashboard_height: Option<f32>,
+    /// 通知を視界の端に出す所（[`NotificationAnchor`]）。省略で `top`。画面での切り替えはここへ書き戻される。
+    pub notification_anchor: NotificationAnchor,
 }
 
 /// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
@@ -553,6 +599,17 @@ emulator = false
             (vr::Hand::Left, vr::Hand::Right)
         );
         assert!(parse("dominant_hand = \"both\"").is_err());
+        assert_eq!(
+            parse("").unwrap().notification_anchor,
+            NotificationAnchor::Bottom
+        );
+        for anchor in NotificationAnchor::ALL {
+            let text = format!("notification_anchor = {}", value(anchor));
+            assert_eq!(parse(&text).unwrap().notification_anchor, anchor);
+        }
+        let corner = parse("notification_anchor = \"bottom_right\"").unwrap();
+        assert_eq!(corner.notification_anchor.side(), (1.0, -1.0));
+        assert!(parse("notification_anchor = \"center\"").is_err());
         assert!(parse("wrist_design = \"sundial\"").is_err());
         assert_eq!(parse("").unwrap().update_channel, UpdateChannel::Stable);
         let nightly = parse("update_channel = \"nightly\"").unwrap();

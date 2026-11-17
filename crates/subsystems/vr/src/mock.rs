@@ -52,6 +52,8 @@ pub struct MockBackend {
     pub app_input_blocked: bool,
     /// 自動起動（[`VrBackend::auto_launch`]）。`None` は切り替えられないランタイム。
     pub auto_launch: Option<bool>,
+    /// 両目に映る範囲（[`VrBackend::fov`]）。
+    pub fov: Option<crate::Fov>,
 }
 
 impl VrBackend for MockBackend {
@@ -65,6 +67,10 @@ impl VrBackend for MockBackend {
 
     fn auto_launch(&self) -> Option<bool> {
         self.auto_launch
+    }
+
+    fn fov(&self) -> Option<crate::Fov> {
+        self.fov
     }
 
     fn set_auto_launch(&mut self, on: bool) {

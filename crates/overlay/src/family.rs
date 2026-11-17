@@ -7,6 +7,8 @@ use super::*;
 const HUD_LIFT: f32 = LIFT_STEP;
 /// 親の上端に立てた子を外したとき、離れたと分かるよう面の向き（頭の側）へ動かす距離（m）。
 const UNDOCK_PULL: f32 = 0.2;
+/// 積む子（[`Parent::stack`]）が、積む先の変わった置き場所へ追いつく時定数（秒）。
+const STACK_FOLLOW: f32 = 0.12;
 /// 持ち主もバーも指されなくなってから、ナビゲーションバー（縮んだ線）が薄れ始めるまで。線に縮みきってから少し置く。
 // ponytail: 固定の長さ。早すぎる・遅すぎると感じたらここを調整する。
 const NAV_BAR_LINGER: std::time::Duration = std::time::Duration::from_millis(1500);
@@ -45,9 +47,10 @@ impl Overlay {
         }
         let q = &mut self.panels[id];
         q.parent = parent;
-        // 表示だけの子と、ポップオーバー（固定して外側を押すと閉じる子）は、ほかのパネルより前に描く。ランタイムは
-        // 奥行きではなく描画順で重ねるので、同じ順だと重なった所がちらつく（はめた画面の上に出すメニューなど）。
-        let front = parent.is_some_and(|p| p.hud || (p.docked && p.dismiss));
+        // 表示だけの子と、ポップオーバー（固定して外側を押すと閉じる子）と、積む子は、ほかのパネルより前に描く。ランタイムは
+        // 奥行きではなく描画順で重ねるので、同じ順だと重なった所がちらつく（はめた画面の上に出すメニューや、はめた画面の
+        // 出入りで上へ動く積む子など）。
+        let front = parent.is_some_and(|p| p.hud || p.stack || (p.docked && p.dismiss));
         q.surface
             .set_sort(vr, if front { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
@@ -92,7 +95,20 @@ impl Overlay {
         for id in kids {
             if let Some(parent) = self.panels[id].parent {
                 if let Some(tilt) = parent.slot {
-                    self.panels[id].offset = self.slot_offset(id, parent.panel, tilt);
+                    let to = self.slot_offset(id, parent.panel, tilt);
+                    let p = &self.panels[id];
+                    // 積む子は、積む先が出入りしても跳ばずに追いつく。現れきるまではそのまま合わせる（出し直したときに、前の
+                    // 置き場所から滑ってくるのが見えないように）。
+                    self.panels[id].offset =
+                        if parent.stack && p.animated && !p.hidden && p.opacity >= 1.0 {
+                            let k = 1.0 - (-self.dt / STACK_FOLLOW).exp();
+                            Pose::new(
+                                p.offset.position.lerp(to.position, k),
+                                p.offset.orientation.slerp(to.orientation, k),
+                            )
+                        } else {
+                            to
+                        };
                 } else if parent.hud {
                     // 親の縦横比は配信元に合わせて変わるので、角からの位置を毎 tick 決め直す。
                     let (outer, inner) = (self.panels[parent.panel].size, self.panels[id].size);
@@ -255,7 +271,7 @@ impl Overlay {
 }
 
 /// 親 `parent` の上端に立てる子 `id`（[`Parent::slot`]）の、親から見た姿勢。子のナビゲーションバーの分を空ける。
-/// 隙間は UI スケール `scale` に合わせる。
+/// 隙間は UI スケール `scale` に合わせる。積む子（[`Parent::stack`]）は、ほかに立てた子があればその上端の上に置く。
 pub(crate) fn slot_offset_in(
     panels: &[Panel],
     present: &[PanelId],
@@ -273,9 +289,25 @@ pub(crate) fn slot_offset_in(
         .iter()
         .find(|&&b| panels[b].nav_bar_of == Some(id))
         .map_or(0.0, |&b| panels[b].nav_bar_size.y);
-    let top = Vec3::Y * (outer.size.y / 2.0 - face_margin(outer));
     // 隙間も UI スケールに合わせ、組を相似に保つ。
     let lift = SLOT_GAP * scale + bar + inner.size.y / 2.0 - face_margin(inner);
+    let below = inner.parent.filter(|p| p.stack).and_then(|_| {
+        present.iter().copied().find(|&c| {
+            let q = &panels[c];
+            c != id
+                && !q.closed
+                && !q.hidden
+                && q.parent
+                    .is_some_and(|q| q.panel == parent && q.slot.is_some() && !q.stack)
+        })
+    });
+    if let Some((below, tilt)) = below.and_then(|b| Some((b, panels[b].parent?.slot?))) {
+        let under = slot_offset_in(panels, present, scale, below, parent, tilt);
+        let b = &panels[below];
+        let top = under.position + under.orientation * Vec3::Y * (b.size.y / 2.0 - face_margin(b));
+        return Pose::new(top + up * lift, rotation);
+    }
+    let top = Vec3::Y * (outer.size.y / 2.0 - face_margin(outer));
     Pose::new(top + up * lift, rotation)
 }
 

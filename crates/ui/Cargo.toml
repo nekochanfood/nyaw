@@ -24,6 +24,7 @@ beam.workspace = true
 wrist.workspace = true
 setup.workspace = true
 dashboard.workspace = true
+toast.workspace = true
 
 # 実プラットフォーム + GPU で動かすテスト（tests/gpu）。GUI はメインスレッドで回すため独自 main。
 # ケースごとに子プロセスで起こす。ストレステスト（ベンチマーク）などは `-- --ignored` のときだけ流す。

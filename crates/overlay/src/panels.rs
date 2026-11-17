@@ -44,6 +44,8 @@ impl Overlay {
             pointer: None,
             animated: true,
             veil: false,
+            pass_through: false,
+            fade_only: false,
             capture: false,
             os_cursor: None,
             parent: None,
@@ -266,6 +268,17 @@ impl Overlay {
         self.panels[id].veil = veil;
     }
 
+    /// レーザーを素通りさせる（指せず、後ろのパネルを指せる）。視界の端に出す表示だけのもの（HUD）。
+    pub fn set_pass_through(&mut self, id: PanelId, pass: bool) {
+        self.panels[id].pass_through = pass;
+    }
+
+    /// 出入り（開く・閉じる・隠す・出し直す）を不透明度だけにする（`false` で戻す）。大きさを 75%〜100% に変えず、
+    /// はめた画面のように後ろへ下がらない。どちらへ動くかは中身（GPUI）が描くパネル（通知のトースト）。
+    pub fn set_fade_only(&mut self, id: PanelId, fade_only: bool) {
+        self.panels[id].fade_only = fade_only;
+    }
+
     /// `hand` のレーザーを描くパネルにする。以降はヒット判定の対象外になり、毎 tick レーザーに合わせて置かれる。
     pub fn set_pointer(&mut self, vr: &mut dyn VrBackend, id: PanelId, hand: Hand, part: Pointer) {
         self.set_animated(vr, id, false);
@@ -345,7 +358,11 @@ impl Overlay {
     /// 入れ替わりにはまる画面と同じ所で重なってちらつかないように。
     fn retreat(&mut self, id: PanelId) {
         let p = &self.panels[id];
-        if !p.parent.is_some_and(|q| q.slot.is_some()) || !p.animated || p.opacity == 0.0 {
+        if !p.parent.is_some_and(|q| q.slot.is_some())
+            || !p.animated
+            || p.fade_only
+            || p.opacity == 0.0
+        {
             return;
         }
         self.glides.insert(

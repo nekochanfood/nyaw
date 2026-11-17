@@ -600,6 +600,7 @@ fn pressing_a_nested_child_keeps_its_parent_dialog() {
             hud: false,
             docked: false,
             slot: None,
+            stack: false,
         }),
     );
     controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
@@ -626,6 +627,7 @@ fn closing_the_parent_closes_its_children_and_cycles_are_refused() {
             hud: false,
             docked: false,
             slot: None,
+            stack: false,
         }),
     );
     assert_eq!(
@@ -637,6 +639,125 @@ fn closing_the_parent_closes_its_children_and_cycles_are_refused() {
     assert!(ov.panel(1).closed);
 }
 
+/// 通知の組: 親（0 番。バー）・はめた画面（1 番）・別の親（2 番。手首）と、掴めない小さな通知（3 番。描画済み）。
+fn with_toast() -> (Subsystems<MockBackend>, Overlay, PanelId) {
+    let (mut vr, mut ov) = with_slot_child();
+    let wrist = ov
+        .add_panel(
+            &mut vr.backend,
+            "wrist",
+            at(0.3, -0.4, -0.4),
+            Vec2::splat(0.1),
+            (40, 40),
+        )
+        .unwrap();
+    let toast = ov
+        .add_panel(
+            &mut vr.backend,
+            "toast",
+            at(0.0, 0.3, -1.5),
+            Vec2::new(0.3, 0.1),
+            (300, 100),
+        )
+        .unwrap();
+    ov.set_locked(&mut vr.backend, toast, true);
+    ov.submit(&mut vr.backend, toast, 1, 1, &[200, 100, 50, 255]);
+    ov.panels[toast].opacity = 1.0;
+    ov.animations.clear();
+    assert_eq!(wrist, 2);
+    (vr, ov, toast)
+}
+
+/// 動いているものを終わらせ、積む子が追いつくまで tick する（1 tick は少なくとも 1/120 秒進む）。
+fn finish_glides(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay) {
+    for _ in 0..120 {
+        ov.tick(vr);
+    }
+}
+
+fn stack_on(panel: PanelId) -> Option<Parent> {
+    Some(Parent {
+        panel,
+        carry: true,
+        docked: true,
+        slot: Some(0.0),
+        stack: true,
+        ..Default::default()
+    })
+}
+
+/// 積む子は、はめた画面があればその上端の上に、無ければ親の上端の上に立つ。
+#[test]
+fn a_stacked_child_stands_on_the_docked_screen() {
+    let (mut vr, mut ov, toast) = with_toast();
+    ov.set_animated(&mut vr.backend, toast, false);
+    ov.set_parent(&mut vr.backend, toast, stack_on(0));
+    ov.tick(&mut vr);
+    let (screen, t) = (ov.panel(1), ov.panel(toast));
+    let screen_top = screen.pose.position.y + screen.size.y / 2.0 - face_margin(screen);
+    let toast_bottom = t.pose.position.y - t.size.y / 2.0 + face_margin(t);
+    assert!(
+        (toast_bottom - screen_top - SLOT_GAP).abs() < 1e-4,
+        "{toast_bottom} {screen_top}"
+    );
+    // 画面が隠れると、バーの上（画面の立っていた所）へ下りていく。
+    ov.set_hidden(&mut vr.backend, 1, true);
+    finish_glides(&mut vr, &mut ov);
+    let (bar, t) = (ov.panel(0), ov.panel(toast));
+    let bar_top = bar.pose.position.y + bar.size.y / 2.0 - face_margin(bar);
+    let toast_bottom = t.pose.position.y - t.size.y / 2.0 + face_margin(t);
+    assert!(
+        (toast_bottom - bar_top - SLOT_GAP).abs() < 1e-3,
+        "{toast_bottom} {bar_top}"
+    );
+}
+
+/// 隠れている間に積む先へ移した子は、出し直したときに前の置き場所から滑ってこない（その場に現れる。トーストの移り方）。
+/// はめた画面より前に描く（はめた画面の出入りで上へ動くとき、重なった所がちらつかないように）。
+#[test]
+fn a_stacked_child_appears_in_place_and_in_front() {
+    let (mut vr, mut ov, toast) = with_toast();
+    ov.set_hidden(&mut vr.backend, toast, true);
+    finish_glides(&mut vr, &mut ov);
+    // 消えきってから移る（トーストは消えきるのを待ってから次の場所へ移る）。薄れるのは実時間で進むので、待たずに消えきらせる。
+    ov.panels[toast].opacity = 0.0;
+    ov.set_parent(&mut vr.backend, toast, stack_on(0));
+    ov.set_hidden(&mut vr.backend, toast, false);
+    ov.tick(&mut vr);
+    let first = ov.panel(toast).pose.position;
+    finish_glides(&mut vr, &mut ov);
+    let last = ov.panel(toast).pose.position;
+    assert!(first.distance(last) < 1e-3, "{first} → {last}");
+    let sort = |key: &str| {
+        vr.backend
+            .overlays
+            .iter()
+            .find(|o| o.key == key)
+            .unwrap()
+            .sort
+    };
+    assert_eq!(sort("toast"), HUD_SORT);
+    assert_eq!(sort("child"), PANEL_SORT);
+}
+
+/// 掴めない子（積んだ通知）があっても、バーを掴むとはめた画面を掴んだことになる。
+#[test]
+fn a_locked_docked_child_does_not_change_what_a_grab_moves() {
+    let (mut vr, mut ov, toast) = with_toast();
+    ov.set_parent(&mut vr.backend, toast, stack_on(0));
+    ov.tick(&mut vr);
+    let frame = vr.poll();
+    assert_eq!(
+        crate::hand::grab_target(&ov.panels, &ov.present, 0, &frame).0,
+        1
+    );
+    ov.set_parent(&mut vr.backend, 1, None);
+    ov.set_parent(&mut vr.backend, toast, stack_on(2));
+    assert_eq!(
+        crate::hand::grab_target(&ov.panels, &ov.present, 2, &frame),
+        (2, Pose::IDENTITY)
+    );
+}
 /// デバイスに付いて動くパネルのナビゲーションバーと子（ポップオーバー）も、同じデバイスに相対で付く（ランタイムが根元と
 /// 同じ姿勢で動かすので遅れない）。根元が付いていなければ付けない。
 #[test]

@@ -3,6 +3,7 @@
 //! 掴んだままダッシュボードが消えれば元に戻る）、丸い文字盤に日付・時刻を出す（デザインは設定の `wrist_design`。[`face`]）。
 //! 利き手の設定が変われば、自分で反対の手首へ付け替える。
 //! 常駐なので、X ボタンの二回連続押しでダッシュボードを出す / 隠すのもここ（ダッシュボードは閉じずに隠し、次も同じ状態で出す）。
+//! OS の通知のトースト（[`toast`]）も起動時に開く。
 
 mod face;
 pub use face::preview;
@@ -101,6 +102,8 @@ pub struct Wrist {
     settings: dashboard::Summon,
     /// ダッシュボード（一度開いたら閉じずに隠す）。
     pub dashboard: Option<PanelId>,
+    /// OS の通知のトースト。
+    pub toast: Option<PanelId>,
     /// このパネル。
     panel: PanelId,
     /// 反映した X ボタンの二回押しの回数（[`kernel::PanelStatus::double_press`]）。
@@ -143,10 +146,17 @@ impl Wrist {
         cx.set_global(ui::prefs::FacePreview(face::preview));
         // ダッシュボードは起動時に隠したまま作っておく（画面の配信を用意しておき、X の二回押しでは出すだけ）。
         open_dashboard(settings, debug, true, cx);
+        // OS の通知のトースト（隠したまま。届くと視界の端に出て、この時計・ダッシュボードの上へ動く）。
+        let wrist = cx.entity();
+        let toast = toast::spec(panel, move |id, cx| {
+            wrist.update(cx, |w, _| w.toast = Some(id));
+        });
+        cx.default_global::<PanelControl>().spawns.push(toast);
         Self {
             debug,
             settings,
             dashboard: None,
+            toast: None,
             panel,
             toggles: 0,
             locked: false,
@@ -331,10 +341,10 @@ mod tests {
                 )
             })
         };
-        // 起動時に隠したまま開いておく。
+        // 起動時に隠したまま開いておく（ダッシュボードと通知のトースト）。
         assert_eq!(
             cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
-            1
+            2
         );
         wrist.update(cx, |w, _| w.dashboard = Some(3));
         let set_hidden = |cx: &mut gpui::VisualTestContext, hidden| {
@@ -360,7 +370,7 @@ mod tests {
         assert_eq!(wrist.read_with(cx, |w, _| w.dashboard), Some(3));
         assert_eq!(
             cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
-            1,
+            2,
             "開き直さない"
         );
     }
@@ -389,7 +399,7 @@ mod tests {
         assert!(commands.is_empty(), "{commands:?}");
         assert_eq!(
             cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
-            1,
+            2,
             "開かない"
         );
     }

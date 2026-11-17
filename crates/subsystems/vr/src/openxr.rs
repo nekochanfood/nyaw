@@ -156,6 +156,8 @@ pub(crate) struct OpenXrBackend {
     lost: bool,
     /// セッションが EXITING / LOSS_PENDING になった。`Frame::quit` で上位へ伝える。
     quit: bool,
+    /// 両目に映る範囲（最初に目の位置が取れたフレームで読む）。
+    fov: Option<crate::Fov>,
     gpu: Gpu,
     instance: xr::Instance,
 }
@@ -369,6 +371,7 @@ impl OpenXrBackend {
             waiter,
             session,
             running: false,
+            fov: None,
             in_frame: None,
             lost: false,
             quit: false,
@@ -430,6 +433,24 @@ impl OpenXrBackend {
                 _ => {}
             }
         }
+    }
+
+    /// 両目に映る範囲（両目の視野の重なり）。目の位置が取れなければ `None`（次のフレームで読み直す）。
+    fn locate_fov(&self, time: xr::Time) -> Option<crate::Fov> {
+        let (_, views) = self
+            .session
+            .locate_views(xr::ViewConfigurationType::PRIMARY_STEREO, time, &self.view)
+            .ok()?;
+        let fov = views
+            .iter()
+            .map(|v| crate::Fov {
+                left: -v.fov.angle_left,
+                right: v.fov.angle_right,
+                up: v.fov.angle_up,
+                down: -v.fov.angle_down,
+            })
+            .reduce(crate::Fov::overlap)?;
+        fov.valid().then_some(fov)
     }
 
     /// 開いているフレームを、画像が届いているオーバーレイのクアッドを載せて閉じる。
@@ -754,6 +775,10 @@ fn from_posef(p: xr::Posef) -> Pose {
 }
 
 impl VrBackend for OpenXrBackend {
+    fn fov(&self) -> Option<crate::Fov> {
+        self.fov
+    }
+
     fn max_overlays(&self) -> Option<usize> {
         Some(self.max_layers)
     }
@@ -802,6 +827,9 @@ impl VrBackend for OpenXrBackend {
                     .contains(xr::SpaceLocationFlags::POSITION_VALID)
             })
             .map_or(Pose::IDENTITY, |l| from_posef(l.pose));
+        if self.fov.is_none() {
+            self.fov = self.locate_fov(time);
+        }
         Frame {
             hmd,
             controllers: self.controllers(time),

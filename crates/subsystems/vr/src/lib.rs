@@ -304,6 +304,65 @@ pub struct Battery {
     pub charging: bool,
 }
 
+/// 視野: 頭の正面から左・右・上・下の端までの角度（ラジアン。どれも正）。[`VrBackend::fov`] は両目に映る範囲を返す。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Fov {
+    pub left: f32,
+    pub right: f32,
+    pub up: f32,
+    pub down: f32,
+}
+
+impl Fov {
+    /// ランタイムが教えてくれないときに見込む視野（出回っている HMD の中で狭いもの。両目の重なりが片側 40°）。
+    pub const NARROW: Fov = Fov::even(40.0_f32.to_radians(), 40.0_f32.to_radians());
+
+    /// 左右・上下が対称な視野（片側の角度）。
+    pub const fn even(horizontal: f32, vertical: f32) -> Fov {
+        Fov {
+            left: horizontal,
+            right: horizontal,
+            up: vertical,
+            down: vertical,
+        }
+    }
+
+    /// 2 つの視野の重なり（両目に映る範囲）。
+    pub fn overlap(self, other: Fov) -> Fov {
+        Fov {
+            left: self.left.min(other.left),
+            right: self.right.min(other.right),
+            up: self.up.min(other.up),
+            down: self.down.min(other.down),
+        }
+    }
+
+    /// HUD（頭に付けて視野の端に出すもの）を置いてよい範囲。どの HMD でも確実に映り、余裕を持たせる: 視野の端から
+    /// [`SAFE_SHARE`] の内側（レンズの端はにじみ・歪みで読めず、目の位置のずれで欠ける）で、かつ [`SAFE_MAX`] を
+    /// 超えない（視野の広い HMD でも、目を少し動かせば読める所に置き、HMD による違いを小さくする）。
+    pub fn safe(self) -> Fov {
+        let side = |a: f32, max: f32| (a * SAFE_SHARE).min(max);
+        Fov {
+            left: side(self.left, SAFE_MAX.left),
+            right: side(self.right, SAFE_MAX.right),
+            up: side(self.up, SAFE_MAX.up),
+            down: side(self.down, SAFE_MAX.down),
+        }
+    }
+
+    /// 角度がどれも 0 より大きく直角より小さい（ランタイムが返した値を信じてよい）。
+    pub fn valid(self) -> bool {
+        [self.left, self.right, self.up, self.down]
+            .iter()
+            .all(|a| *a > 0.0 && *a < std::f32::consts::FRAC_PI_2)
+    }
+}
+
+/// HUD を置いてよい範囲（[`Fov::safe`]）に使う、視野の片側のうちの割合。
+pub const SAFE_SHARE: f32 = 0.4;
+/// HUD を置いてよい範囲の上限（左右 15°・上下 12°。目を少し動かすだけで読める所）。
+pub const SAFE_MAX: Fov = Fov::even(15.0_f32.to_radians(), 12.0_f32.to_radians());
+
 /// トラッキングされるデバイス。オーバーレイを取り付ける先として使う。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Device {
@@ -408,6 +467,10 @@ pub trait VrBackend {
     /// シーンのアプリ（ゲーム）への入力を止める・戻す（ダッシュボードが出ている間）。止められるのは OpenVR だけ
     /// （SteamVR Input のアクションセットをオーバーレイの全体優先度で更新し、使う入力を奪う）。ほかは何もしない。
     fn block_app_input(&mut self, _block: bool) {}
+    /// 両目に映る範囲（両目の視野の重なり）。ランタイムが教えてくれなければ `None`（呼び出し側は [`Fov::NARROW`] を見込む）。
+    fn fov(&self) -> Option<Fov> {
+        None
+    }
     /// ランタイムの起動と同時にこのアプリを開くか。切り替えられないランタイムは `None`（OpenVR だけが持つ）。
     fn auto_launch(&self) -> Option<bool> {
         None
@@ -480,6 +543,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     fn block_app_input(&mut self, block: bool) {
         (**self).block_app_input(block)
     }
+    fn fov(&self) -> Option<Fov> {
+        (**self).fov()
+    }
     fn auto_launch(&self) -> Option<bool> {
         (**self).auto_launch()
     }
@@ -544,6 +610,46 @@ fn novr_emulator(_: bool) -> Result<Box<dyn VrBackend>, VrError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HUD を置いてよい範囲は、狭い HMD では視野の内側に縮み、広い HMD でも上限を超えない。どれも両目の重なりの内側。
+    #[test]
+    fn the_hud_safe_area_fits_every_headset() {
+        let deg = f32::to_radians;
+        // 狭いもの（両目の重なりが片側 35°）・Quest 2 くらい・Index くらい・広いもの（Pimax くらい）。
+        let headsets = [
+            Fov::even(deg(35.0), deg(35.0)),
+            Fov {
+                left: deg(42.0),
+                right: deg(41.0),
+                up: deg(44.0),
+                down: deg(50.0),
+            },
+            Fov::even(deg(50.0), deg(52.0)),
+            Fov::even(deg(75.0), deg(55.0)),
+        ];
+        for fov in headsets {
+            let left_eye = Fov {
+                right: fov.right + deg(10.0),
+                ..fov
+            };
+            let both = left_eye.overlap(Fov {
+                left: fov.left + deg(10.0),
+                ..fov
+            });
+            assert_eq!(both, fov, "両目の重なり");
+            let safe = fov.safe();
+            for (s, f, max) in [
+                (safe.left, fov.left, SAFE_MAX.left),
+                (safe.right, fov.right, SAFE_MAX.right),
+                (safe.up, fov.up, SAFE_MAX.up),
+                (safe.down, fov.down, SAFE_MAX.down),
+            ] {
+                assert!(s <= f * SAFE_SHARE + 1e-6 && s <= max, "{fov:?} → {safe:?}");
+                assert!(s > deg(10.0), "端に寄せられる余地が残る: {safe:?}");
+            }
+        }
+        assert!(Fov::NARROW.valid() && !Fov::even(0.0, 1.0).valid());
+    }
 
     #[test]
     fn pose_inverse_roundtrip() {

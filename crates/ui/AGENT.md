@@ -18,11 +18,13 @@
 | `spec.rs` | 起動仕様（`PanelSpec`）と、それからパネルを開く `open_panel` |
 | `nav_bar.rs` | ナビゲーションバー（`NavBar`）と、中身を包む根（`PanelRoot`） |
 | `attach.rs` | パネルを手に持つ（ナビゲーションバーから開く、持つ手を選ぶポップオーバーと、持っている間のロック。下の「手に持つ」） |
-| `pointer.rs` | レーザーのイベントを GPUI の入力に変える（`PointerBridge`。タップ・スワイプ・長押し）と `dispatch_input` |
+| `pointer.rs` | レーザーのイベントを GPUI の入力に変える（`PointerBridge`。タップ・スワイプ・長押し）と `dispatch_input`。レーザーが離れると `MouseExited` を送り、vendor/gpui はポインタをウィンドウの外へ置く（最後の位置を残すと、描き直すたびにその下の要素がホバーに戻り、中身が動く通知のカードで指していないカードが光っていた。`design/tests/button.rs`） |
 | `drag.rs` | ドラッグの見た目（`DragPreview`） |
 | `run.rs` | フレームループ（`run` / `pump` / ツールチップ） |
 | `profiler_panel.rs` | プロファイラのパネル |
 | `quit.rs` | アプリの終了を確かめるダイアログ（`QuitDialog`） |
+| `notification.rs` | OS の通知の部品（トーストと通知センター（クイック設定）で同じ見た目）: アイコンの読み込み（`Icons::of`。変換はアプリごとに一度）・`icon`・`title`・カード（`card(theme, prefix, n, image, detail, pressed)`。`<prefix>-<id>`、ボタンは `<prefix>-action-<id>-<番号>` と `Detail::extra`。本文は 2 行、広げると 6 行とボタン。通知センターだけが足すもの（広がり・届いた時刻・足すボタン）は `Detail`（トーストは既定）。広げる・たたむ動きは `Expanding`（ease-in-out の `Motion::Morph`。中身の高さを測っておき、測った高さの間を画素に揃えて伸び縮みする。ボタンは広がるにつれて現れる）。ボタンを並べている間はカードの色をホバー・押下で変えない（`Button::still`。中のボタンが紛れないように））・押したときの開き方（`open`。URL は `design::link::open` で確かめてから、ほかは `PanelCommand::Notification` でアプリへ）・トーストから通知センターを開く頼み（`Center` のグローバルと `show_center`。ダッシュボードが応え、一覧が `focus` を広げ、一覧を出しているパネルを `panel` に置く）・既読（`Read` のグローバルと `mark_read`・`is_read`。はまって出ている通知センターに並んだもの、`show_center` で開いたもの。トーストは未読だけを出し、バーの件数は未読の数） |
+| `swipe.rs` | 縦に並んだ項目（通知のカード）を左右にスワイプして片付ける（`Swipes`。トーストと通知センター）。マウスのドラッグ（8px 動かしてから）でもタッチの方式の横のスクロールでも付いてきて薄れ、離したときに幅の 3 割を超えていれば横へ抜け（スワイプせずに片付けるなら `dismiss(id, start)`。`start` に右へ抜け（`FLICK`。止まった所から動き出すので、離して抜けるのより長い ease-in-out）、それから畳む。時刻をずらせば順に抜ける）、高さを畳んで（`Look::height`。呼ぶ側が掛け、画素に揃える。端数で動くとほかの項目の文字だけが画素に吸い付いて震える。`COLLAPSE` は ease-in-out で、詰まりきる所で跳ねない）下を詰め、畳みきったら `take_gone` が一度だけ返す。動かしたら離した所を押したことにしない。受け口は描くたびに `listen` で置き直す（項目より後に描く所で） |
 | `keyboard` / `prefs` / `mirror` / `link` / `cue` / `panel_window` | 前からの部品（下の各節） |
 
 ## 手に持つ
@@ -83,7 +85,7 @@ nyaw の中から URL を開く道は 1 本に絞り、検問所 `ui::link` を�
 
 ## テスト・ベンチマーク
 
-- **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）「キーボード」（`look-keyboard-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）・セットアップウィザードの各画面（`look-setup-*.bmp`。ライトのものは日本語）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。設定画面は本番と同じに `PanelRoot` に載せる（載せないとパネルの影の余白が付かず、中身が本番より広く描かれる）。
+- **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）「キーボード」（`look-keyboard-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）・セットアップウィザードの各画面（`look-setup-*.bmp`。ライトのものは日本語）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。設定画面は本番と同じに `PanelRoot` に載せる（載せないとパネルの影の余白が付かず、中身が本番より広く描かれる）。 通知のトースト（視界の端・手首・手首でホバー）は `look_toast.rs`（同じ絞り込みで流れ、`look-toast-*.bmp`）。
 - **アクセシビリティの見た目**: `crates/ui/tests/gpu/a11y.rs`（`cargo test -p ui --test gpu -- --ignored a11y`）。文字の大きさ（80% / 100% / 150%）と太字化を替えながら、設定画面の各カテゴリ・色を作るダイアログ・文字盤の見本・仮想キーボード・Testing・ダッシュボード（バー・クイック設定・ランチャー）を実 GPU で描き、`target/tmp/look-a11y-<状態>-<画面>.bmp` に書き出す。検査するのは、倍率・太字化で文字のインクが増えること（等幅も）、`.text_exact()` の文字盤が 1 画素も変わらないこと。操作は `crates/testkit/tests/scenarios/prefs.rs`（`accessibility_*` / `ui_scale_*`）。
 - **ストレステスト（ベンチマーク）**: `crates/ui/tests/gpu/stress.rs`（`harness = false`。常には流さない: `cargo test -p ui --test gpu -- --ignored stress`）。
   本番と同じ `ui::run_with` に novr のエミュレーター（ウィンドウは出さないが毎フレーム合成する）と GPUI 8 枚・ビームを載せ、

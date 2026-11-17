@@ -339,15 +339,13 @@ fn showing_the_dashboard_focuses_the_docked_stream(cx: &mut TestAppContext) {
 }
 
 /// 滑り込みの間の幅の計算（クイック設定の自然な幅）が、出きったときの実際の幅と合う。合わないと出きる瞬間に飛ぶ。
+/// 通知が溜まっていれば、時刻の横にその件数が出る（無ければ出さない）。
 #[gpui::test]
 fn quick_settings_width_matches_the_laid_out_button(cx: &mut TestAppContext) {
-    for with_battery in [false, true] {
+    for count in [0, 12] {
         let (_bar, cx) = cx.add_window_view(|_, cx| {
-            cx.default_global::<PanelControl>().batteries = if with_battery {
-                vec![battery(0.9, false)]
-            } else {
-                vec![]
-            };
+            cx.default_global::<PanelControl>().notifications =
+                (0..count).map(|id| Arc::new(note(id))).collect();
             Dashboard::new(1, summon, summon, cx)
         });
         cx.run_until_parked();
@@ -358,10 +356,22 @@ fn quick_settings_width_matches_the_laid_out_button(cx: &mut TestAppContext) {
                 .size
                 .width,
         );
-        let expected = quick_settings_width(f32::from(time), with_battery);
+        let shown = cx.debug_bounds("dashboard-notification-count").is_some();
+        assert_eq!(shown, count > 0, "件数");
+        let digits = (count > 0).then(|| {
+            cx.update(|window, _| {
+                f32::from(design::font::width(
+                    count.to_string(),
+                    font_size::MD,
+                    FontWeight::BOLD,
+                    window,
+                ))
+            })
+        });
+        let expected = quick_settings_width(f32::from(time), digits);
         assert!(
             (actual - expected).abs() <= 1.0,
-            "電池 {with_battery}: {actual} / {expected}"
+            "通知 {count}: {actual} / {expected}"
         );
     }
 }
@@ -536,4 +546,68 @@ fn resident_streams_stay_on_the_bar_and_minimize(cx: &mut TestAppContext) {
     assert!(c.contains(&PanelCommand::Hide(true)));
     assert!(!c.contains(&PanelCommand::Close), "閉じない");
     assert!(bar.read_with(cx, |d, _| d.streams[0].stashed));
+}
+
+/// トーストから通知センターを頼まれると、隠れていたダッシュボードを出し、出てからクイック設定（通知の一覧）をはめる
+/// （隠れている間に開くとはまらずに浮く）。もうはまっていれば閉じない。
+#[gpui::test]
+fn the_toast_opens_the_notification_center(cx: &mut TestAppContext) {
+    let (bar, cx) = cx.add_window_view(|_, cx| {
+        cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+        Dashboard::new(1, summon, summon, cx)
+    });
+    cx.run_until_parked();
+    cx.update(|_, cx| {
+        let p = cx
+            .default_global::<PanelControl>()
+            .panels
+            .entry(1)
+            .or_default();
+        p.status.hidden = true;
+    });
+    cx.update(|_, cx| ui::notification::show_center(Some(5), cx));
+    cx.run_until_parked();
+    assert!(
+        take_commands(cx, 1).contains(&PanelCommand::Hide(false)),
+        "出す"
+    );
+    assert!(
+        cx.update(|_, cx| cx.global::<PanelControl>().spawns.is_empty()),
+        "出るまでは開かない"
+    );
+    cx.update(|_, cx| {
+        cx.default_global::<PanelControl>()
+            .panels
+            .entry(1)
+            .or_default()
+            .status
+            .hidden = false;
+    });
+    open_spawned(cx, 2);
+    assert_eq!(
+        cx.update(|_, cx| bar.read(cx).current(cx)),
+        Some(Page::QuickSettings)
+    );
+    cx.update(|_, cx| ui::notification::show_center(Some(6), cx));
+    cx.run_until_parked();
+    assert!(!commands(cx, 2).contains(&PanelCommand::Close), "閉じない");
+    assert_eq!(
+        cx.update(|_, cx| bar.read(cx).current(cx)),
+        Some(Page::QuickSettings)
+    );
+}
+
+/// 件数は未読の数。みな読んだら出さない。
+#[gpui::test]
+fn the_count_is_of_unread_notifications(cx: &mut TestAppContext) {
+    let (_bar, cx) = cx.add_window_view(|_, cx| {
+        cx.default_global::<PanelControl>().notifications =
+            (0..3).map(|id| Arc::new(note(id))).collect();
+        Dashboard::new(1, summon, summon, cx)
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("dashboard-notification-count").is_some());
+    cx.update(|_, cx| ui::notification::mark_read(0..3, cx));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("dashboard-notification-count").is_none());
 }

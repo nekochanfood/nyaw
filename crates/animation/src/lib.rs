@@ -58,17 +58,19 @@ pub struct Pair {
 impl Pair {
     /// 入り（`entering`）は幅が先に開き始め、少し遅れて中身が出る。出は中身が先に消え始め、少し遅れて幅が閉じる。
     pub fn new(from: f32, to: f32, rise: Motion, entering: bool) -> Self {
+        let grow = if entering {
+            Motion::Grow
+        } else {
+            Motion::Shrink
+        };
+        Self::with_grow(from, to, rise, grow, entering)
+    }
+
+    /// [`Self::new`] の幅（高さ）の動きを `grow` にしたもの。
+    pub fn with_grow(from: f32, to: f32, rise: Motion, grow: Motion, entering: bool) -> Self {
         Self {
             rise: Animation::new(from, to, rise),
-            grow: Animation::new(
-                from,
-                to,
-                if entering {
-                    Motion::Grow
-                } else {
-                    Motion::Shrink
-                },
-            ),
+            grow: Animation::new(from, to, grow),
             wait: LAG.as_secs_f32(),
             rise_waits: entering,
         }

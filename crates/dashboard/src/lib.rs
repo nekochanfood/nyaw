@@ -16,16 +16,17 @@ use design::components::{self, Variant};
 use design::{Theme, font_size, icons, spacing};
 use gpui::{
     AnyElement, App, Context, Div, FocusHandle, FontWeight, KeyDownEvent, ListAlignment, ListState,
-    RenderImage, ScrollHandle, SharedString, Task, WeakEntity, Window, div, img, list, prelude::*,
-    px, rgba,
+    RenderImage, ScrollHandle, SharedString, Task, WeakEntity, Window, canvas, div, img, list,
+    prelude::*, px, rgba,
 };
 use kernel::audio::Sound;
 use kernel::desktop::{
     Icon, InstalledApp, InstalledApps, Source, SourceKind, Sources, Status, app_key,
 };
 use kernel::subsystems::media;
-use kernel::vr::{Battery, Device, Hand, Pose, Quat, Vec2, Vec3};
-use kernel::{PanelCommand, PanelId, Setting};
+use kernel::subsystems::notifications::Notification;
+use kernel::vr::{Pose, Quat, Vec2, Vec3};
+use kernel::{PanelCommand, PanelId};
 use ui::mirror::{MirrorState, mirror_screen};
 use ui::{PanelControl, PanelSpec, commands};
 
@@ -44,7 +45,6 @@ pub use menu::*;
 use mirror::*;
 use now_playing::*;
 use parts::*;
-use quick_settings::*;
 use screen::*;
 
 #[cfg(test)]
@@ -213,6 +213,10 @@ pub struct Dashboard {
     prev_sep: bool,
     /// バーの横スクロール（最大幅を超えたとき）。
     scroll: ScrollHandle,
+    /// 応えた、通知センターを開く頼みの回数（[`ui::notification::Center::asked`]）。
+    center_asked: u32,
+    /// 通知センターを頼まれたときダッシュボードが隠れていた。出てからはめる（隠れている間ははめられない）。
+    center_waiting: bool,
 }
 
 /// ダッシュボードから開く画面のうち、ダッシュボード自身のもの（クイック設定・ランチャー・再生中）。
@@ -245,4 +249,16 @@ pub struct Screen {
     removing: bool,
     /// 更新の確認の結果（確認中も）。
     update_note: Option<SharedString>,
+    /// 通知センター（クイック設定の一覧）で、ホバーして広げている通知・トーストから開いて広げて見せる通知（ホバーすると
+    /// 外す）と、アプリのアイコン。
+    notification_hover: Option<u32>,
+    notification_focus: Option<u32>,
+    notification_icons: ui::notification::Icons,
+    /// スワイプで片付けた通知（OS の通知センターから消えて一覧から落ちるまで並べない）と、左右のスワイプ。
+    dismissed: HashSet<u32>,
+    swipes: ui::swipe::Swipes,
+    /// 通知のカードを広げる・たたむ動き。
+    expanding: ui::notification::Expanding,
+    /// 「（アプリ）を開く」を押したアプリ（ウィンドウの一覧を取り直してから、映して開く）。
+    open_after: Option<InstalledApp>,
 }

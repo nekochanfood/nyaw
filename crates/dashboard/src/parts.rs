@@ -2,9 +2,6 @@
 
 use super::*;
 
-/// グリッドの列の数。
-const COLUMNS: u16 = 4;
-
 /// 見出しの行（右に操作を足せる）。高さはボタンと同じにして、操作の有無で一覧の位置が変わらないようにする。
 pub(crate) fn section(theme: &Theme, title: gpui::SharedString) -> Div {
     div()
@@ -18,10 +15,6 @@ pub(crate) fn section(theme: &Theme, title: gpui::SharedString) -> Div {
         .font_weight(FontWeight::BOLD)
         .text_color(rgba(theme.neutral_text_low))
         .child(title)
-}
-
-pub(crate) fn grid() -> Div {
-    div().grid().grid_cols(COLUMNS).gap(px(spacing::SM))
 }
 
 /// タイルの高さ。アイコンと 1 行の文字を入れる箱なので、文字の大きさの倍率に付いていく。

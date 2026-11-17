@@ -6,7 +6,7 @@ OpenVR / OpenXR / novr の差を吸収。`Subsystems` が `VrBackend` を所有�
 
 ## 主な公開 API
 
-`connect`, `VrBackend`, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`。`hands` に骨格、`batteries` に電池の残量 `Battery`（OpenVR は 5 秒ごとに読み直す。OpenXR は標準の手段が無く空、novr は固定の模擬値））, `Device`, `RawController`, `HandSkeleton`（スケルタル入力。関節 `JOINT_COUNT` = 26 は OpenXR の並び、`joint_parent`, `TIPS`, `pinch_distance`。OpenXR は XR_EXT_hand_tracking、OpenVR は骨格のアクション。novr には無い）, `VrBackend::{auto_launch, set_auto_launch}`（ランタイムの起動と同時に開くか。OpenVR だけ `Some`）, `mock::MockBackend`（`test-support` フィーチャー時のみ）
+`connect`, `VrBackend`（`fov`: 両目に映る範囲。OpenVR は `GetProjectionRaw` の両目の重なり（上下は狭い方）、OpenXR は最初に取れた `xrLocateViews`、novr は画面の視野）, `Fov`（`safe`: HUD を置いてよい範囲。下の「HUD のセーフエリア」）, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`。`hands` に骨格、`batteries` に電池の残量 `Battery`（OpenVR は 5 秒ごとに読み直す。OpenXR は標準の手段が無く空、novr は固定の模擬値））, `Device`, `RawController`, `HandSkeleton`（スケルタル入力。関節 `JOINT_COUNT` = 26 は OpenXR の並び、`joint_parent`, `TIPS`, `pinch_distance`。OpenXR は XR_EXT_hand_tracking、OpenVR は骨格のアクション。novr には無い）, `VrBackend::{auto_launch, set_auto_launch}`（ランタイムの起動と同時に開くか。OpenVR だけ `Some`）, `mock::MockBackend`（`test-support` フィーチャー時のみ）
 
 ## novr（エミュレーター）
 
@@ -40,3 +40,13 @@ OpenVR のコントローラ操作は SteamVR Input のアクション（`openvr
 
 - 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は Monado（Windows、simulated）でパネルが映るところまで確認済みで、コントローラ入力は未確認。
 - 描画は毎フレーム CPU に読み戻し、変化があれば `vr` が Vulkan のイメージへ上げ直してランタイムへ渡す（`crates/subsystems/vr/src/gpu.rs`。1024x768 で約 1.6ms）。GPUI のテクスチャを読み戻さずに直接共有する経路は未実装。
+
+## HUD のセーフエリア
+
+頭に付けて視野の端に出すもの（通知のトーストなど）は、どの HMD でも確実に映り、余裕を持たせた範囲に置く（HMD A では見えて HMD B では見えない、を防ぐ）。`VrBackend::fov`（両目に映る範囲。分からなければ `Fov::NARROW` = 片側 40°）を `Fov::safe` に通す。
+
+- 片側ごとに、視野の端までの角度の `SAFE_SHARE`（40%）の内側。レンズの端はにじみ・歪みで読めず、目の位置（IPD・かぶり方）のずれでも欠ける。
+- かつ `SAFE_MAX`（左右 15°・上下 12°）を超えない。視野の広い HMD でも、目を少し動かすだけで読める所に置き（首を回さず、眼球も大きく動かさない）、HMD による違いを小さくする。
+- 両目の重なりで決めるので、片目にしか映らない所には置かない。目の離れ（±3cm）は 1.5m 先で 1° ほどで、割合の余裕に収まる。
+- ponytail: 目の向きが外へ開いた HMD（Pimax など）の傾きは見ない。そういう HMD は視野が広く、上限の方が効く。
+- テスト: `vr::tests::the_hud_safe_area_fits_every_headset`。

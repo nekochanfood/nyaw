@@ -4,6 +4,12 @@ use super::*;
 
 /// 見えていそうかの見積もり（[`Overlay::in_view`]）に使う視野の半角（ラジアン、70°。実機の視野より広めに取る）。
 const VIEW_HALF_ANGLE: f32 = 1.221_730_5;
+/// 見ている（[`Overlay::gazed`]）とみなす、頭の正面からパネルの中心までの角度（45°。目も動かすので広めに）・
+/// パネルの面の向きと頭の方向の間の角度（65°。手首を回しきらなくても）・頭からの距離（m）。腕時計を見る構えを拾う。
+// ponytail: 頭の向きで見る。視線のトラッキングがある HMD なら、それで絞れる。
+const GAZE_ANGLE: f32 = 0.79;
+const GAZE_FACING: f32 = 1.13;
+const GAZE_REACH: f32 = 1.0;
 
 impl Overlay {
     /// パネルの数（閉じたものも含む。PanelId は 0..len）。
@@ -43,6 +49,19 @@ impl Overlay {
         }
         let off_axis = self.hmd.forward().angle_between(to);
         off_axis - (radius / d).asin() < VIEW_HALF_ANGLE
+    }
+
+    /// パネルを見ている（頭の正面に近く、面がこちらを向き、手の届くくらいの距離にある）。腕時計を見る構えを拾う。
+    pub fn gazed(&self, id: PanelId) -> bool {
+        let p = &self.panels[id];
+        let to = p.pose.position - self.hmd.position;
+        let d = to.length();
+        !p.closed
+            && !p.hidden
+            && d > 1e-3
+            && d < GAZE_REACH
+            && self.hmd.forward().angle_between(to) < GAZE_ANGLE
+            && (p.pose.orientation * Vec3::Z).angle_between(-to) < GAZE_FACING
     }
 
     /// `hand` のツールチップをカーソルの上下どちらに出すか。頭から見て、レーザーの来る側（手）に出す。
@@ -107,3 +126,6 @@ impl Overlay {
             .any(|h| h.dragging.is_some_and(|d| d.0 == id))
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -187,6 +187,7 @@ impl Overlay {
                     !p.closed
                         && !p.hidden
                         && p.pointer.is_none()
+                        && !p.pass_through
                         && !p.parent.is_some_and(|q| q.hud)
                         && !p.nav_bar_of.is_some_and(|o| self.panels[o].hidden)
                         && !self.panels[root(&self.panels, id)]
@@ -351,9 +352,12 @@ pub(crate) fn grab_target(
     grabbed: PanelId,
     frame: &Frame,
 ) -> (PanelId, Pose) {
+    // 掴めない子（ダッシュボードの上の通知など）は、掴み方を変えない。
     let docked = |id: PanelId| {
         present.iter().any(|&c| {
-            panels[c].parent.is_some_and(|q| q.panel == id && q.docked) && !panels[c].closed
+            panels[c].parent.is_some_and(|q| q.panel == id && q.docked)
+                && !panels[c].closed
+                && !panels[c].locked
         })
     };
     if !panels[grabbed].parent.is_some_and(|q| q.docked)
@@ -367,6 +371,7 @@ pub(crate) fn grab_target(
         let q = &panels[c];
         !q.closed
             && !q.hidden
+            && !q.locked
             && q.parent
                 .is_some_and(|q| q.panel == root && q.slot.is_some())
     });

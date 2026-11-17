@@ -55,6 +55,9 @@ pub struct Parent {
     /// 親の上端の上に立てて置く（`docked` の子）。値は親から見て水平軸回りに起こす角度（ラジアン）。
     /// 子の下端に付くナビゲーションバーの分を空けて、子の地の下端を置く。子の大きさが変わっても毎 tick 置き直す。
     pub slot: Option<f32>,
+    /// `slot` の子で、ほかに立てた子（はめた画面）があればその上端の上に積む（無ければ親の上端の上）。積む先が
+    /// 替わると滑らかに動く。ダッシュボードの上に出す通知など、はめた画面と並べて上に出すもの。
+    pub stack: bool,
 }
 
 impl Parent {
@@ -93,6 +96,10 @@ pub struct Panel {
     pub animated: bool,
     /// 出ている間、空間全体を暗くする（[`Overlay::set_veil`]）。
     pub veil: bool,
+    /// レーザーが素通りする（[`Overlay::set_pass_through`]）。
+    pub pass_through: bool,
+    /// 出入りは不透明度だけ（[`Overlay::set_fade_only`]）。
+    pub fade_only: bool,
     /// OS へのタッチを解放まで同じパネルへ届ける。
     capture: bool,
     /// その手で指している間、カーソルの代わりに出す OS のカーソル（[`Overlay::set_os_cursor`]）。
@@ -234,6 +241,9 @@ struct Ray {
 impl Panel {
     /// アニメーションを反映した表示サイズ。中心の位置・姿勢は変えない。
     pub fn displayed_size(&self) -> Vec2 {
+        if self.fade_only {
+            return self.size;
+        }
         self.size * (0.75 + 0.25 * self.opacity)
     }
 

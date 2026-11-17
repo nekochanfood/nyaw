@@ -12,6 +12,7 @@ mod font_weights;
 mod gpu_capture;
 mod keyboard;
 mod look;
+mod look_toast;
 mod nav_swipe;
 mod novr_cursor;
 mod novr_keys;
@@ -41,6 +42,7 @@ const CASES: &[Case] = &[
     ("gpu_capture", || report(gpu_capture::main)),
     ("keyboard", || report(keyboard::main)),
     ("look", || report(look::main)),
+    ("look_toast", || report(look_toast::main)),
     ("nav_swipe", || report(nav_swipe::main)),
     ("novr_cursor", || report(novr_cursor::main)),
     ("novr_keys", || report(novr_keys::main)),

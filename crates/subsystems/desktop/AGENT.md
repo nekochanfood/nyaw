@@ -6,7 +6,7 @@
 
 ## 主な公開 API
 
-`capabilities`（ホバー・最小化の対応）, `Sources`, `Stream`, `Source`（ウィンドウは `app` に実行ファイル名（Windows）、`icon` にアプリのアイコン。Windows はウィンドウのもの、無ければ実行ファイルのもの。画面の `name` はモニターの製品名（`QueryDisplayConfig`。同じ製品名が並べば番号を添える）、無ければ「Display 番号」）, `Icon`, `Cursor`（OS のカーソルの絵とホットスポット。`Stream::cursor`）, `Status`, `Touch`, `InstalledApp`（`owns`）, `app_key`（下の「ウィンドウとアプリの突き合わせ」）
+`capabilities`（ホバー・最小化の対応）, `Sources`, `Stream`, `Source`（ウィンドウは `app` に実行ファイル名（Windows）、`icon` にアプリのアイコン。Windows はウィンドウのもの、無ければ実行ファイルのもの。画面の `name` はモニターの製品名（`QueryDisplayConfig`。同じ製品名が並べば番号を添える）、無ければ「Display 番号」）, `Icon`, `Cursor`（OS のカーソルの絵とホットスポット。`Stream::cursor`）, `Status`, `Touch`, `InstalledApp`（`owns`）, `app_icon`（AppUserModelId からスタートメニューのアイコン。シェルを待つので裏のスレッドで呼ぶ。通知のアイコンに使う）, `app_key`（下の「ウィンドウとアプリの突き合わせ」）
 
 ## ウィンドウとアプリの突き合わせ
 

@@ -210,6 +210,13 @@ impl Button {
         (scale(self.rest), scale(self.hover), scale(self.active))
     }
 
+    /// ホバー・押下で地の色を変えず、波紋も出さない（中にボタンを置いたカード。地の色が変わると中のボタンが紛れる）。
+    /// 押せることとホバーの音はそのまま。
+    pub fn still(mut self) -> Self {
+        (self.hover, self.active, self.ripple) = (self.rest, self.rest, false);
+        self
+    }
+
     /// 切り替えボタンが有効なときの見た目（平常時の色が押下の色になる）。
     pub fn selected(mut self, selected: bool) -> Self {
         if selected {

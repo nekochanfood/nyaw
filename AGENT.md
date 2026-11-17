@@ -21,7 +21,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 |---|---|---|
 | 0 | [`crates/logger`](crates/logger/AGENT.md) | logfmt 形式の構造化ロガー（横断） |
 | 0 | [`crates/animation`](crates/animation/AGENT.md) | 動きの責務（Motion / Animation / Transition / Slide）。GPUI にも design にも依存しない |
-| 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | OS・ランタイム・入力・描画の差を吸収し、上位に共通フレームを渡す。下の 8 クレートを束ねる |
+| 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | OS・ランタイム・入力・描画の差を吸収し、上位に共通フレームを渡す。下の 9 クレートを束ねる |
 | 1 | [`crates/subsystems/os`](crates/subsystems/os/AGENT.md) | 保存先・ランタイム検出・タイマー精度などの OS 差 |
 | 1 | [`crates/subsystems/vr`](crates/subsystems/vr/AGENT.md) | OpenVR / OpenXR / novr の差とエミュレーター |
 | 1 | [`crates/subsystems/input`](crates/subsystems/input/AGENT.md) | コントローラ機種の差（プロファイル表）と骨格の手の操作 |
@@ -30,6 +30,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 1 | [`crates/subsystems/keyboard`](crates/subsystems/keyboard/AGENT.md) | 仮想キーボードの配列データ・文字・トグル状態 |
 | 1 | [`crates/subsystems/desktop`](crates/subsystems/desktop/AGENT.md) | 画面・ウィンドウの配信元・画像取得・OS タッチ注入 |
 | 1 | [`crates/subsystems/media`](crates/subsystems/media/AGENT.md) | 再生中のメディアの情報と操作 |
+| 1 | [`crates/subsystems/notifications`](crates/subsystems/notifications/AGENT.md) | OS の通知（トースト）の一覧と、押したときにアプリへ届ける |
 | 2 | [`crates/overlay`](crates/overlay/AGENT.md) | パネル配置・取り付け・ヒット判定・掴み移動・親子関係・暗転 |
 | 3 | [`crates/kernel`](crates/kernel/AGENT.md) | 設定・フレーム進行・パネル操作を束ねる。UI・画面はカーネルだけを見る |
 | 4 | [`crates/ui`](crates/ui/AGENT.md) | パネルを GPUI の非表示ウィンドウで描き、ポインタをマウス入力へ変換する |
@@ -38,6 +39,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 4 | [`crates/i18n`](crates/i18n/AGENT.md) | 画面の文言の多言語対応（英語・日本語） |
 | 5 | [`crates/testing`](crates/testing/AGENT.md) | テスト用の画面（Testing ほか） |
 | 5 | [`crates/wrist`](crates/wrist/AGENT.md) | 常駐の腕時計パネル |
+| 5 | [`crates/toast`](crates/toast/AGENT.md) | OS の通知のトースト（1 枚のパネルが HUD → 手首 → ダッシュボードへ動く） |
 | 5 | [`crates/dashboard`](crates/dashboard/AGENT.md) | ダッシュボード（メニュー・配信・再生中・クイック設定・ランチャー） |
 | 5 | [`crates/settings`](crates/settings/AGENT.md) | 設定画面（カテゴリ・詳しい画面ごとに 1 ファイル） |
 | 5 | [`crates/setup`](crates/setup/AGENT.md) | セットアップウィザード（初回起動・デバッグからのやり直し。ロックダウンと LazyFollow を使う） |

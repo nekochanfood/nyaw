@@ -3257,6 +3257,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
+name = "notifications"
+version = "2026.0.3-dev.0"
+dependencies = [
+ "desktop",
+ "image",
+ "logger",
+ "roxmltree 0.21.1",
+ "windows 0.61.3",
+ "windows-core 0.61.2",
+]
+
+[[package]]
 name = "notify-rust"
 version = "4.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5316,6 +5328,7 @@ dependencies = [
  "keyboard",
  "logger",
  "media",
+ "notifications",
  "os",
  "rendering",
  "vr",
@@ -5634,6 +5647,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
+name = "toast"
+version = "2026.0.3-dev.0"
+dependencies = [
+ "design",
+ "gpui",
+ "i18n",
+ "kernel",
+ "logger",
+ "ui",
+]
+
+[[package]]
 name = "tokio"
 version = "1.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5838,6 +5863,7 @@ dependencies = [
  "settings",
  "setup",
  "testing",
+ "toast",
  "vr",
  "wrist",
 ]
@@ -7123,6 +7149,7 @@ dependencies = [
  "i18n",
  "kernel",
  "nyapp",
+ "toast",
  "ui",
 ]
 

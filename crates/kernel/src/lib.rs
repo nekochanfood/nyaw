@@ -13,6 +13,7 @@ pub use desktop_panels::DesktopStats;
 pub use subsystems::{self, Subsystems};
 pub use subsystems::{audio, desktop, rendering, vr};
 
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use subsystems::os;
 
@@ -20,16 +21,16 @@ pub use config::{
     COLOR_HISTORY, CURSOR_SCALE_MAX, CURSOR_SCALE_MIN, Config, DASHBOARD_DISTANCE,
     DASHBOARD_DISTANCE_MAX, DASHBOARD_DISTANCE_MIN, DASHBOARD_HEIGHT_MAX, DASHBOARD_HEIGHT_MIN,
     DASHBOARD_STEP, DominantHand, KEY_GAP_MAX, KEY_GAP_MIN, KEYBOARD_SCALE_MAX, KEYBOARD_SCALE_MIN,
-    Language, LodQuality, PersonalColor, PointerMode, PointerTuning, SCALE_STEP, TEXT_SCALE_MAX,
-    TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN, UpdateChannel, WRIST_SCALE_MAX,
-    WRIST_SCALE_MIN, WristDesign, WristFace,
+    Language, LodQuality, NotificationAnchor, PersonalColor, PointerMode, PointerTuning,
+    SCALE_STEP, TEXT_SCALE_MAX, TEXT_SCALE_MIN, ThemeMode, UI_SCALE_MAX, UI_SCALE_MIN,
+    UpdateChannel, WRIST_SCALE_MAX, WRIST_SCALE_MIN, WristDesign, WristFace,
 };
 pub use overlay::{
     self, Anchor, DockHint, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent,
     UiEvent,
 };
 pub use subsystems::ControllerState;
-pub use vr::{Device, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
+pub use vr::{Device, Fov, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 
 /// [`Kernel::tick`] 1 回の内訳。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -70,6 +71,12 @@ pub enum PanelCommand {
     PointerMode(PointerMode),
     /// 再生中のメディアを操作する（再生・一時停止・曲送り・シーク・アプリを前に出す。[`Kernel::now_playing`]）。
     Media(subsystems::media::Command),
+    /// OS の通知 `id` の本文（`action` が `None`）か `action` 番目のボタンを押したことを、アプリへ届ける
+    /// （[`Kernel::notifications`]。届けた通知は OS の通知センターからも消える）。URL を開くものは画面が開く。
+    Notification {
+        id: u32,
+        action: Option<usize>,
+    },
     /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。`Overlay::set_grab_anchor`）。
     GrabAnchor(Option<Pose>),
     /// 掴む基準を付け替え、今の基準（無ければ中心）のあった所に新しい基準が来るようにパネルを動かす
@@ -79,6 +86,14 @@ pub enum PanelCommand {
     Animated(bool),
     /// このパネルが出ている間、空間全体を暗くする（`Overlay::set_veil`）。
     Veil(bool),
+    /// レーザーを素通りさせる（`Overlay::set_pass_through`。視界の端に出す表示だけのもの）。
+    PassThrough(bool),
+    /// 出入りを不透明度だけにする（`Overlay::set_fade_only`。動きは中身が描くパネル）。
+    FadeOnly(bool),
+    /// OS に通知を出す（デバッグのテスト用。`Notifications::send`）。
+    SendNotification(subsystems::notifications::Outgoing),
+    /// 通知を押さずに片付ける（OS の通知センターから消す。`Notifications::remove`）。
+    RemoveNotification(u32),
     Close,
     /// 隠す・出し直す（`Overlay::set_hidden`。閉じずにビュー・配信・音を残す）。
     Hide(bool),
@@ -197,6 +212,8 @@ pub enum Setting {
     DashboardDistance(f32),
     /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。`dashboard_height`。範囲に収め、刻みに丸める）。
     DashboardHeight(f32),
+    /// 通知を視界の端に出す所（`notification_anchor`）。カーネルは値を持つだけで、置くのは通知の画面。
+    NotificationAnchor(NotificationAnchor),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
@@ -253,6 +270,7 @@ pub struct Settings {
     pub dashboard_distance: f32,
     /// ダッシュボードの高さ（m。上が +。0 で画面の中心が目の高さの 0.1m 下）。
     pub dashboard_height: f32,
+    pub notification_anchor: NotificationAnchor,
 }
 
 impl Default for Settings {
@@ -293,6 +311,7 @@ impl Default for Settings {
             update_channel: Default::default(),
             dashboard_distance: DASHBOARD_DISTANCE,
             dashboard_height: 0.0,
+            notification_anchor: Default::default(),
         }
     }
 }
@@ -326,6 +345,8 @@ pub struct PanelStatus {
     pub parent: Option<PanelId>,
     /// レーザーが指している（`Overlay::pointed`。ナビゲーションバーは持ち主を指していても）。
     pub pointed: bool,
+    /// 見ている（`Overlay::gazed`。頭の正面に近く、面がこちらを向いている。腕時計を見る構え）。
+    pub gazed: bool,
     pub desktop: Option<desktop::Status>,
     /// 配信中なら、直近一秒の統計（最初の一秒は `None`）。
     pub desktop_stats: Option<DesktopStats>,
@@ -376,6 +397,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     batteries: Vec<vr::Battery>,
     /// 再生中のメディアの見張り（[`Kernel::now_playing`]）。`boot` だけが起こす（テスト用のカーネルは OS に触らない）。
     media: Option<subsystems::media::Media>,
+    /// OS の通知の見張り（[`Kernel::notifications`]）。`boot` だけが起こす。
+    notifications: Option<subsystems::notifications::Notifications>,
 }
 
 /// 二回続けて押したと見なす、押下と次の押下の間隔の上限。
@@ -478,6 +501,7 @@ impl Kernel {
         kernel.config_path = config::path();
         kernel.audio = audio::Engine::open();
         kernel.media = Some(subsystems::media::Media::start());
+        kernel.set_notifications(subsystems::notifications::Notifications::start());
         Ok(kernel)
     }
 }
@@ -545,6 +569,7 @@ impl<B: VrBackend> Kernel<B> {
             pending_os_input: Vec::new(),
             batteries: Vec::new(),
             media: None,
+            notifications: None,
         }
     }
 
@@ -623,6 +648,7 @@ impl<B: VrBackend> Kernel<B> {
             update_channel: self.config.update_channel,
             dashboard_distance: self.dashboard_distance(),
             dashboard_height: self.dashboard_height(),
+            notification_anchor: self.config.notification_anchor,
         }
     }
 
@@ -833,6 +859,10 @@ impl<B: VrBackend> Kernel<B> {
                 self.config.dashboard_height = Some(h);
                 ("dashboard_height", config::value(h))
             }
+            Setting::NotificationAnchor(a) => {
+                self.config.notification_anchor = a;
+                ("notification_anchor", config::value(a))
+            }
         };
         if let Some(path) = &self.config_path
             && let Err(e) = config::save_at(path, key, value)
@@ -1006,6 +1036,24 @@ impl<B: VrBackend> Kernel<B> {
         self.media.as_ref().and_then(|m| m.now())
     }
 
+    /// 起動してから届いた OS の通知（通知センターに残っているもの。届いた順）。読み込みは別スレッドで、最後に読んだもの。
+    pub fn notifications(&self) -> Arc<[Arc<subsystems::notifications::Notification>]> {
+        self.notifications
+            .as_ref()
+            .map_or_else(|| Arc::from([]), |n| n.now())
+    }
+
+    /// OS の通知の見張りを差し替える（`boot` は OS のものを起こす。E2E は決まった一覧 `Notifications::fixed`）。
+    pub fn set_notifications(&mut self, notifications: subsystems::notifications::Notifications) {
+        self.notifications = Some(notifications);
+    }
+
+    /// 両目に映る範囲（ランタイムが教えてくれなければ `None`）。頭に付けて視野の端に出すもの（HUD）は、
+    /// これを [`vr::Fov::safe`] に通した範囲に置く。
+    pub fn fov(&self) -> Option<vr::Fov> {
+        self.subsystems.backend.fov()
+    }
+
     /// 最後の tick で電池の残量を申告していたデバイス。
     pub fn batteries(&self) -> &[vr::Battery] {
         &self.batteries
@@ -1068,6 +1116,18 @@ impl<B: VrBackend> Kernel<B> {
                     .set_animated(&mut self.subsystems.backend, panel, animated)
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
+            PanelCommand::PassThrough(pass) => self.overlay.set_pass_through(panel, pass),
+            PanelCommand::FadeOnly(fade_only) => self.overlay.set_fade_only(panel, fade_only),
+            PanelCommand::SendNotification(toast) => {
+                if let Some(n) = &self.notifications {
+                    n.send(toast);
+                }
+            }
+            PanelCommand::RemoveNotification(id) => {
+                if let Some(n) = &self.notifications {
+                    n.remove(id);
+                }
+            }
             PanelCommand::DockSlot(tilt) => self.overlay.set_dock_slot(panel, tilt),
             PanelCommand::Dockable(dockable) => self.overlay.set_dockable(panel, dockable),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
@@ -1078,6 +1138,11 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Media(command) => {
                 if let Some(media) = &self.media {
                     media.send(command);
+                }
+            }
+            PanelCommand::Notification { id, action } => {
+                if let Some(n) = &self.notifications {
+                    n.activate(id, action);
                 }
             }
             PanelCommand::GrabAnchor(anchor) => self.overlay.set_grab_anchor(panel, anchor),
@@ -1176,6 +1241,7 @@ impl<B: VrBackend> Kernel<B> {
             lod: self.panel_lod(panel),
             parent: p.parent.map(|q| q.panel),
             pointed: self.overlay.pointed(panel),
+            gazed: self.overlay.gazed(panel),
             desktop: self.desktop_panels.get(&panel).map(|p| p.status.clone()),
             desktop_stats: self.desktop_panels.get(&panel).and_then(|p| p.stats),
             audio: self.audio_status(panel),

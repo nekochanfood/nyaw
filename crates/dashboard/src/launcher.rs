@@ -268,7 +268,7 @@ impl Screen {
 
     /// アプリを開く: 起動していればそのウィンドウを映す。していなければ起動して、すぐそのアプリの画面を開いて待つ
     /// （[`launch_spec`]。ウィンドウが出たら、そこで映し始める）。
-    fn launch_app(&mut self, app: InstalledApp, cx: &mut App) {
+    pub(crate) fn launch_app(&mut self, app: InstalledApp, cx: &mut App) {
         if let Some((source, icon)) = self.window_for(&app).cloned() {
             self.open_window(source, icon, cx);
             return;

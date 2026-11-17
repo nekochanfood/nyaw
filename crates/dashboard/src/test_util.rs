@@ -4,11 +4,24 @@ use super::*;
 pub(crate) use gpui::{Modifiers, TestAppContext, VisualTestContext};
 pub(crate) use kernel::desktop::DEFAULT_FRAME_RATE;
 
-pub(crate) fn battery(level: f32, charging: bool) -> Battery {
-    Battery {
-        device: Device::Hmd,
-        level,
-        charging,
+/// 通知（`id` 番。見出しと本文、ボタン 1 つ）。
+pub(crate) fn note(id: u32) -> kernel::subsystems::notifications::Notification {
+    use kernel::subsystems::notifications as n;
+    n::Notification {
+        id,
+        app: n::App {
+            id: "Chat".into(),
+            name: "Chat".into(),
+            icon: None,
+        },
+        title: format!("Title {id}"),
+        body: "Body".into(),
+        arrived: std::time::SystemTime::now(),
+        url: None,
+        actions: vec![n::Action {
+            label: "Reply".into(),
+            url: None,
+        }],
     }
 }
 

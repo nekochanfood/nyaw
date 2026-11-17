@@ -58,6 +58,11 @@ pub struct PanelControl {
     pub batteries: Vec<kernel::vr::Battery>,
     /// 再生中のメディア（[`kernel::Kernel::now_playing`]）。`hands` と同じく毎フレーム書く。
     pub media: Option<std::sync::Arc<kernel::subsystems::media::NowPlaying>>,
+    /// 起動してから届いた OS の通知（[`kernel::Kernel::notifications`]。届いた順）。`hands` と同じく毎フレーム書く。
+    pub notifications:
+        std::sync::Arc<[std::sync::Arc<kernel::subsystems::notifications::Notification>]>,
+    /// 両目に映る範囲（[`kernel::Kernel::fov`]。HUD は `Fov::safe` の内側に置く）。`hands` と同じく毎フレーム書く。
+    pub fov: Option<kernel::Fov>,
     /// 終了を頼む。フレームループがアプリを終える（テストのハーネスもこれで終える）。
     pub quit: bool,
     /// 開いているパネルの数（閉じたものは数えない）と、同時に開ける数の上限（[`MAX_PANELS`] とランタイムの上限の小さい方）。
@@ -201,6 +206,8 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     ctl.controllers = kernel.controllers().to_vec();
     ctl.batteries = kernel.batteries().to_vec();
     ctl.media = kernel.now_playing();
+    ctl.notifications = kernel.notifications();
+    ctl.fov = kernel.fov();
     let settings = ctl.settings;
     let ctl = ctl.panels.entry(panel).or_default();
     ctl.pointing = kernel.pointing_hands(panel);
