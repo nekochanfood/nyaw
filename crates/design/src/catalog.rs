@@ -110,10 +110,10 @@ macro_rules! scales {
         use scale::$m::*;
         [
             (
-                "slate",
+                "gray",
                 [
-                    SLATE_1, SLATE_2, SLATE_3, SLATE_4, SLATE_5, SLATE_6, SLATE_7, SLATE_8,
-                    SLATE_9, SLATE_10, SLATE_11, SLATE_12,
+                    GRAY_1, GRAY_2, GRAY_3, GRAY_4, GRAY_5, GRAY_6, GRAY_7, GRAY_8, GRAY_9,
+                    GRAY_10, GRAY_11, GRAY_12,
                 ],
             ),
             (
