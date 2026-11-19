@@ -1,38 +1,30 @@
 ---
-name: Bug report
-about: Create a report to help us improve
-title: ''
-labels: ''
+name: バグ報告 (Bug report)
+about: 不具合や予期しない挙動の報告
+title: '[BUG] '
+labels: 'bug'
 assignees: ''
 
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+## 不具合の概要
+発生している問題の簡潔な説明。
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+## 再現手順
+1. '...' を起動
+2. '...' をクリック
+3. '...' のエラーが発生
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+## 期待される挙動
+正常であればどう動くべきだったかの説明。
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+## 実行環境
+- **nyaw バージョン**: [例: 2026.0.3-dev.0]
+- **OS**: Windows 11 / Windows 10
+- **VR ランタイム**: SteamVR (OpenVR) / OpenXR / novr（エミュレーター）
+- **HMD / コントローラ**: [例: Meta Quest 3, Valve Index, なし]
+- **GPU**: [例: NVIDIA RTX 4080]
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
-
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
-
-**Additional context**
-Add any other context about the problem here.
+## ログ・スクリーンショット
+- ログファイル（`%LOCALAPPDATA%\nyaw\logs\nyaw.log`）の該当箇所
+- 画面のスクリーンショット（必要に応じて添付）
