@@ -2,20 +2,53 @@
 
 層: 1 Subsystems
 
-OS の通知（トースト）を読み、押されたら OS と同じ経路でアプリへ届ける。ワーカーが 1 秒ごとに通知センターを読み直し、起動してから届いた通知だけを知らせる（起動時にあったものは知らせない。通知センターから消えたら落とす）。アイコンの読み込み・押したときの呼び出しもワーカーで行い、メインスレッドは最新の一覧を受け取るだけ
+OS から発行されるトースト通知の監視、内容取得、およびユーザー操作に応じた対象アプリケーションへのアクティベーション配送を担当する。
+
+通知のポーリング、トースト XML の解析、アプリアイコンの取得、およびクリック時の COM コールバック呼び出しはすべてバックグラウンドスレッドで非同期に実行され、メインスレッドは最新の通知一覧のみを受け取る。
+
+## Windows における通知監視とアクティベーション
+
+Windows 環境における通知システムは、リスナー API、SQLite データベース、および COM アクティベーションを組み合わせて実現されている。
+
+### 通知一覧の取得と監視
+
+- **リスナー API の利用**: `Windows.UI.Notifications.Management.UserNotificationListener` を用いて通知を取得する。パッケージ ID を持たない一般的なデスクトップ（Win32）アプリケーションの通知も網羅的に取得できる。
+- **起動時判定**: アプリケーション起動後に新規受信した通知のみをユーザーへ通知し、起動前から存在した既存通知は初回走査時に既読扱いとする。OS 側で消去された通知は内部リストからも即座に破棄される。
+
+### トースト XML の解析とアクション抽出
+
+リスナー API では通知のアクションボタン詳細が取得できないため、OS の通知データベース（`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db`）から元のトースト XML を読み取って解析する。
+
+- **SQLite 連携**: Windows 標準の `winsqlite3.dll` を動的リンクし、読み取り専用でデータベースにアクセスする。
+- **ボタンの選別**:
+  - 右クリックメニュー、インライン入力欄、および OS 固有のシステムボタンは除外する。
+  - URL スキームボタン（`protocol`）は、セキュリティのため `http://` および `https://` のみを許可する。
+  - 引数付きアクションボタン（`foreground` / `background`）は、対象アプリがアクティベーターを備えている場合のみ表示する。
+
+### アプリケーションの呼び出し連携
+
+ユーザーが通知カードまたはアクションボタンをクリックした際は、OS 標準と同一の経路で対象アプリケーションへ通知イベントを届ける。
+
+- **COM アクティベーターの呼び出し**: アプリケーションの `INotificationActivationCallback` COM サーバーを特定し、引数を配送する。CLSID の特定は、レジストリ（`AppUserModelId\<ID>\CustomActivator`）またはスタートメニューのショートカット（`.lnk` ファイル内の `ToastActivatorCLSID`）から行う。
+- **フォールバック**: 専用のアクティベーターを持たないアプリケーションについては、`shell:AppsFolder\<ID>` を通じて該当アプリのウィンドウを起動・前面化する。
+- **消去の同期**: 配送完了後、該当通知は OS 側の通知センターからも削除される。
 
 ## 主な公開 API
 
-`Notifications::{start, fixed, now, activate, send, remove}`（`remove` は押さずに片付ける: OS の通知センターから消し、一覧からも落とす。通知センターのスワイプ。`fixed` は OS を見ずに決まった一覧を返し、届いた依頼（`Request::Activate` / `Send` / `Remove`）を受け口に送る。E2E・見本用。`Kernel::set_notifications` で差す。`send` は `Outgoing`（見出し・本文・押すと開く URL・ボタン）を PowerShell の名前で Windows に出す。デバッグのテスト画面用）, `Notification`（`id` / `app` / `title` / `body` / `arrived` / `url` / `actions`）, `App`, `Action`, `Image`（= `desktop::Icon`）
+```rust
+Notifications::{
+    start,     // バックグラウンド監視ワーカーの起動
+    fixed,     // テスト用の固定通知リスト生成
+    now,       // 現在の通知一覧の取得
+    activate,  // 通知またはアクションボタンの実行
+    remove,    // 通知の削除（OS側からも消去）
+    send,      // デバッグ用通知の発行
+};
+Notification;  // 単一の通知情報（ID、タイトル、本文、アイコン、アクション等）
+Action;        // 通知に付随するボタン定義
+```
 
-## Windows
+## テスト手法
 
-- **一覧**: `UserNotificationListener`（パッケージの ID が無いアプリでも読める。ユーザーが設定の「通知へのアクセス」を切っていれば何も届かない）。変化の見張り（`NotificationChanged`）はパッケージの ID が要るので使わず、読み直す。見出しは通知の 1 つ目の文字、本文は残りをつないだもの。
-- **ボタンと押したときの引数**: リスナーは教えないので、OS の通知の DB（`%LOCALAPPDATA%\Microsoft\Windows\Notifications\wpndatabase.db`。リスナーと同じ ID）から元の XML（トーストの XML）を読む。SQLite は Windows に入っている `winsqlite3.dll`（`raw-dylib`）で、読むたびに読み取り専用で開いて閉じる。リスナーに見えた時点で DB にも書かれている（実測）。
-- **出すボタン**: 右クリックのメニュー（`placement`）・文字を打つ欄の横のボタン（`hint-inputId`）・OS のボタン（`system`）は出さない。URL を開くもの（`protocol`）は `http` / `https` だけを `url` で渡す（開くのは画面で、`ui::link` で確かめてから。それ以外のスキームは開けない決まり）。引数で動くもの（`foreground` / `background`）は、アプリが通知の受け口を持っているときだけ出す。
-- **押したとき**: アプリの通知の受け口（`INotificationActivationCallback` の COM サーバー。CLSID はレジストリの `AppUserModelId\<ID>\CustomActivator` （Firefox・Office など）か、スタートメニューのショートカットのファイル（.lnk）の `System.AppUserModel.ToastActivatorCLSID`（Chrome・Edge・Discord など。スタートメニューの項目 `shell:AppsFolder` は持っていないので、ショートカットを探す。STA の別スレッドで読む））に、OS が押したときと同じ引数を渡す。受け口が無ければ本文はアプリを開くだけ（`shell:AppsFolder\<ID>`）。届けた通知は通知センターからも消す（OS で押したときと同じ）。
-- **アイコン**: 通知のロゴ（ストアのアプリ）。無ければスタートメニューのアイコン（`desktop::app_icon`。Chrome・Discord などのデスクトップのアプリ）。アプリごとに一度だけ読む。
-
-## テスト
-
-`cargo test -p notifications`（読んだ一覧の反映・XML からボタンを読む・押したときの届け方を、決まった結果を返す問い合わせ先で。押したことが本物の COM のローカルサーバー（このプロセスに置き、HKCU に一時的なキーを書いて消す）へ引数ごと届くことは `a_click_reaches_the_apps_activator`）。スタートメニューのショートカットに受け口を書いたアプリがどれも引けることは `activators_are_found_from_start_menu_shortcuts`（`--ignored`）。実機は `cargo test -p notifications -- --ignored --nocapture`（PowerShell の名前でトーストを出し、リスナー・DB・アイコンから読めることを見る。Windows・通知へのアクセスが許されていること）。
+- **単体・XML 解析テスト (`cargo test -p notifications`)**: トースト XML からのアクション抽出ロジック、およびインプロセス COM サーバーを用いたアクティベーション引数の配送を検証する。
+- **実機検証テスト (`cargo test -p notifications -- --ignored --nocapture`)**: PowerShell 経由でテスト通知を発行し、リスナー API、SQLite データベース、およびアプリアイコンの取得が正常に動作することを確認する。

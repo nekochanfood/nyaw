@@ -2,51 +2,58 @@
 
 層: 1 Subsystems
 
-OpenVR / OpenXR / novr の差を吸収。`Subsystems` が `VrBackend` を所有し、上位は共通フレームを受け取る。novr はデスクトップのウィンドウで VR を模すエミュレーター
+OpenVR、OpenXR、およびデスクトップウィンドウ上で動作するエミュレーター（novr）の差異を吸収する。`Subsystems` が `VrBackend` の実装インスタンスを所有し、上位層へ正規化されたフレーム情報を引き渡す。
 
 ## 主な公開 API
 
-`connect`, `VrBackend`（`fov`: 両目に映る範囲。OpenVR は `GetProjectionRaw` の両目の重なり（上下は狭い方）、OpenXR は最初に取れた `xrLocateViews`、novr は画面の視野）, `Fov`（`safe`: HUD を置いてよい範囲。下の「HUD のセーフエリア」）, `Runtime`, `novr::{Emulator, Button}`, `Pose`, `Frame`（`pose(&Device)`。`hands` に骨格、`batteries` に電池の残量 `Battery`（OpenVR は 5 秒ごとに読み直す。OpenXR は標準の手段が無く空、novr は固定の模擬値））, `Device`, `RawController`, `HandSkeleton`（スケルタル入力。関節 `JOINT_COUNT` = 26 は OpenXR の並び、`joint_parent`, `TIPS`, `pinch_distance`。OpenXR は XR_EXT_hand_tracking、OpenVR は骨格のアクション。novr には無い）, `VrBackend::{auto_launch, set_auto_launch}`（ランタイムの起動と同時に開くか。OpenVR だけ `Some`）, `mock::MockBackend`（`test-support` フィーチャー時のみ）
+```rust
+connect(runtime);                 // 指定ランタイムへの接続
+VrBackend;                        // ランタイム抽象化トレイト
+Runtime;                          // ランタイム種別（Novr, OpenVr, OpenXr）
+novr::Emulator;                   // デスクトップエミュレーター実装
+Fov;                              // 視野角情報（両目重複範囲とセーフエリア）
+Pose;                             // 3次元位置と回転クォータニオン
+HandSkeleton;                     // 26関節のスケルタルハンドトラッキング
+mock::MockBackend;                // テスト用モック（test-support フィーチャー）
+```
 
-## novr（エミュレーター）
+## novr（デスクトップエミュレーター）
 
-- **novr は VR のエミュレーター**（`vr::novr::Emulator`）。最初の poll でウィンドウ（`nyaw (novr)`）を開き、受け取ったテクスチャを
-  固定した頭（原点・前方 -Z、縦の視野 70°）から見た絵として合成する。重なりは VR と同じく描画順。背景は透過がわかるよう無彩色の市松模様。
-  ウィンドウを閉じると終了を求める（`Frame::quit`）。poll は約 90Hz に待って周期を作る（VR の vsync 待ちに当たる）。
-  - 合成は GPU（wgpu。`vr::compositor`）でウィンドウに直接描く。使えなければ（または `gpu.emulator = false` か `NYAW_EMULATOR_CPU=1`）CPU で合成して minifb に渡す。
-    GPU のときも、見えたか（`VrBackend::overlay_seen`。隠れたパネルの描き直しを止めるカリングに使う）は縦横 1/8 の CPU の合成で求める。
-    スクリーンショットはいつも CPU で合成し直す。`Emulator::headless` はウィンドウを出さず CPU で合成し、`Emulator::scripted_window` は
-    ウィンドウと合成は本番どおりで入力だけ注入する（ベンチマーク用）。
-  - カーソルの周りの輪は長押しの進み（`PanelControl::hold`）。満ちるとマウスの押下になり、その場でドラッグが始まる。
-  - 片手操作: 右手のレイは目からマウスの方向（レーザーは視線と重なるので見えず、カーソルだけ見える）。左クリック = トリガー、
-    右クリック = グリップ（掴む）、X キー = 左手の X ボタン（`novr::Button::X`）、矢印キー = 右手のスティック、掴んでいる間の PageUp / PageDown = パネルの拡大 / 縮小（テスト用。`vr::RESIZE_INPUT` → `ControllerState::resize`）。左手は手元で下を向いていてパネルを指さず、WASD = 左手のスティック。
-  - デバイスは実在しないので取り付けたパネルは追従しない（Subsystems が返す共通フレームの `pose` が `None`。取り付け先を見失ったのと同じ扱い）。
-  - キーボードはスティックなのでパネルには届かない（VR と同じ）。
-- ビューはランタイムを意識しない（どのランタイムでも同じビューが動く）。
+VR 機器が接続されていない環境や日常的な開発・テストのために、通常のデスクトップウィンドウ（`nyaw (novr)`）上で VR 空間の描画と操作を再現するエミュレーター。
 
-## SteamVR のバインド
+- **空間の合成**: 視点（原点、前方 -Z、垂直視野角 70 度）から見た空間を GPU（wgpu）または CPU（minifb）でウィンドウ上に合成描画する。背後の透過度が把握できるよう、背景には無彩色の市松模様を敷く。更新周期は約 90Hz（VR の vsync 周期に相当）で制御される。
+- **入力エミュレーション**:
+  - マウス移動: 右手コントローラのレーザー照射方向（視線と重なるためカーソルのみが表示される）。
+  - 左クリック: トリガー押下。
+  - 右クリック: グリップ押下（パネルの把持）。
+  - X キー: 左手 X ボタン（二回押しでダッシュボード開閉）。
+  - 矢印キー / WASD: 右手および左手のスティック入力。
+  - 長押し判定: カーソル周囲のゲージが満ちることでマウス押下へ遷移し、ドラッグ＆ドロップが可能となる。
 
-OpenVR のコントローラ操作は SteamVR Input のアクション（`openvr/actions.json`）だけを読み、割り当ては SteamVR の「コントローラーのバインド」画面で変えられる（機種ごとの既定は `bindings_*.json`）。ショートカット（`/actions/nyaw/in/shortcut`）の二回押しは SteamVR のバインドの「ダブルタップ」が数え、`DOUBLE_PRESS_INPUT` を 1 フレームだけ立てる（ボタンの押下そのものは渡さない。`kernel` はそれをそのまま一回と数え、ほかのランタイムは従来どおり押下の間隔から数える）。`/actions/nyaw/in/resize`（掴んだパネルの拡大縮小。`RESIZE_INPUT` に出る）は既定では割り当てが無く、利用者が割り当てる。
+## SteamVR (OpenVR) 連携
 
-## SteamVR のアプリ登録（自動起動）
+### アクションバインディング
 
-`openvr/app.rs`。自動起動を入れると `os::config_dir()/openvr/<アプリの名前>.vrmanifest`（起動するのは今の実行ファイル、引数 `--openvr`、`is_dashboard_overlay`）を書き出して `AddApplicationManifest` で恒久的に登録し、`SetApplicationAutoLaunch` で入れる。切るときは登録を残す。値は SteamVR が持ち、接続時だけ読む（SteamVR の設定画面で変えた分は次の接続で見える）。切り替えたら、入れた値をそのまま持つ（SteamVR は切り替えた直後の `GetApplicationAutoLaunch` で前の値を返すので、読み直すとスイッチが動かない）。
+OpenVR 環境における操作は、SteamVR Input システム（`openvr/actions.json`）を介して処理される。コントローラの機種別割り当ては SteamVR の設定画面から変更可能である。
 
-- アプリの名前は release ビルド `nekochanfood.nyaw`（表示名 `nyaw`）、debug ビルド `nekochanfood.nyaw.dev`（`nyaw (dev)`）。開発版はリリース版とは別のアプリなので、開発版で入れても、インストールしたリリース版の登録（起動する実行ファイル）は書き換わらない。登録を書き換えるのは自動起動を入れたときだけで、ただ起動しただけでは触らない。
-- 登録済みなら接続時に `IdentifyApplication` でそのアプリだと名乗る（SteamVR Input の manifest より前）。手で起動しても SteamVR が起動しても、コントローラのバインドが同じアプリに付く。登録前は SteamVR が実行ファイル名から付けた名前（`system.generated.nyaw.exe`）なので、初めて自動起動を入れた次の起動からバインドの持ち主が変わる。
-- インストーラはアンインストールでリリース版の vrmanifest を消す（SteamVR は読めない manifest のアプリを起動しない）。
+ショートカット操作（`/actions/nyaw/in/shortcut`）の二回連続押しは、SteamVR バインド側のダブルタップ判定を利用して `DOUBLE_PRESS_INPUT` を 1 フレームのみ発行する。
 
-## 未実装（土台のみ）
+### アプリケーション自動起動の登録（SteamVR のアプリ登録）
 
-- 実ランタイムでの確認の残り。OpenVR（`openvr_bindings` の C API の関数表。openvr_api は jsoncpp が OpenXR ローダーと衝突するのでリンクせず、`openvr/client.rs` が vrclient を直接読む）は null ドライバで接続・オーバーレイへの送信（Vulkan テクスチャ、毎フレーム更新）まで確認済みで、コントローラ入力は未確認。OpenXR（XR_EXTX_overlay + XR_KHR_vulkan_enable2）は Monado（Windows、simulated）でパネルが映るところまで確認済みで、コントローラ入力は未確認。
-- 描画は毎フレーム CPU に読み戻し、変化があれば `vr` が Vulkan のイメージへ上げ直してランタイムへ渡す（`crates/subsystems/vr/src/gpu.rs`。1024x768 で約 1.6ms）。GPUI のテクスチャを読み戻さずに直接共有する経路は未実装。
+`openvr/app.rs` が SteamVR へのマニフェスト登録と自動起動制御を担う。
 
-## HUD のセーフエリア
+- **マニフェストの生成**: 自動起動を有効化した際、設定ディレクトリ内に `vrmanifest` ファイル（起動コマンド引数 `--openvr` を指定）を出力し、`AddApplicationManifest` を通じて SteamVR に恒久登録する。
+- **識別情報の管理**: リリースビルド（`nekochanfood.nyaw`）と開発ビルド（`nekochanfood.nyaw.dev`）でマニフェストおよび識別子を分離し、開発環境による本番環境の上書きを防止する。接続時は `IdentifyApplication` により自身を名乗ることで、コントローラバインドの同一性を担保する。
 
-頭に付けて視野の端に出すもの（通知のトーストなど）は、どの HMD でも確実に映り、余裕を持たせた範囲に置く（HMD A では見えて HMD B では見えない、を防ぐ）。`VrBackend::fov`（両目に映る範囲。分からなければ `Fov::NARROW` = 片側 40°）を `Fov::safe` に通す。
+## HUD セーフエリアの算出（HUD のセーフエリア）
 
-- 片側ごとに、視野の端までの角度の `SAFE_SHARE`（40%）の内側。レンズの端はにじみ・歪みで読めず、目の位置（IPD・かぶり方）のずれでも欠ける。
-- かつ `SAFE_MAX`（左右 15°・上下 12°）を超えない。視野の広い HMD でも、目を少し動かすだけで読める所に置き（首を回さず、眼球も大きく動かさない）、HMD による違いを小さくする。
-- 両目の重なりで決めるので、片目にしか映らない所には置かない。目の離れ（±3cm）は 1.5m 先で 1° ほどで、割合の余裕に収まる。
-- ponytail: 目の向きが外へ開いた HMD（Pimax など）の傾きは見ない。そういう HMD は視野が広く、上限の方が効く。
-- テスト: `vr::tests::the_hud_safe_area_fits_every_headset`。
+視界の端に固定表示されるトースト通知などの要素が、装着する HMD の光学特性によって見切れることを防ぐための安全表示領域（`Fov::safe`）。
+
+- **視野角の取得**: `VrBackend::fov` から両目の重なり合う視野角を取得する（取得不能時は狭視野基準 `Fov::NARROW`（片側 40 度）を適用）。
+- **周辺歪みの除外**: レンズ周辺部の色収差や歪み、および装着位置（IPD や被り深さ）のズレによるケラレを考慮し、視野端までの角度の 40%（`SAFE_SHARE`）以内を基準領域とする。
+- **最大角度の制限**: 視野角が広い HMD であっても、視線を大きく動かさずに視認できるよう、水平 15 度・垂直 12 度（`SAFE_MAX`）を上限とする。
+
+## 描画転送と現在の制約
+
+- **フレームバッファ転送**: GPUI の描画結果を CPU 側へ読み戻し、更新差分が存在する場合に Vulkan イメージへ再転送してランタイムへ渡す（`src/gpu.rs`、1024×768 解像度で約 1.6ms）。GPUI の Direct3D / Vulkan テクスチャをゼロコピーで直接共有する経路は未実装である。
+- **実機検証の範囲**: OpenVR は null ドライバ環境での接続および Vulkan オーバーレイ送信まで検証済み。OpenXR は Monado 環境（Windows）でのオーバーレイ表示まで検証済みであり、実機コントローラの完全な挙動検証は継続課題である。

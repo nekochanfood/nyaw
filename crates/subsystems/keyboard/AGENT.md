@@ -2,16 +2,29 @@
 
 層: 1 Subsystems
 
-仮想キーボードの配列データ（xkeyboard-config）・文字・トグル状態。OS には触らない（OS への入力は `os::keyboard`）
+仮想キーボードの配列定義データ（xkeyboard-config）、キートップの文字マッピング、および修飾キー・トグル状態の管理を担当する。OS に対する直接の入力注入は行わない。
+
+## キーボード機能の責務分離
+
+仮想キーボード関連の処理は、関心事に応じて以下の 3 つの階層に分離されている。
+
+1. **配列データと文字解決 (`crates/subsystems/keyboard`)**:
+   - xkeyboard-config 由来の配列データベース（`Database`）を保持する。
+   - 押下されたキースキャンコードから文字および修飾キー状態（`Stroke`）を算出する純粋な計算処理を担う。
+   - 配列定義ファイルの走査にはディスク I/O を伴うため、UI 起動時にバックグラウンドスレッドで先行ロード（`preload`）してメモリ上に保持する。
+2. **OS 入力注入と IME 監視 (`crates/subsystems/os::keyboard`)**:
+   - OS 側で前面化されているアプリケーションのキーボード配列や IME 状態を監視する（`Watcher`）。
+   - カーネルからの要求（`PanelCommand::TypeToOs`）に基づき、仮想キーストロークを OS 側へ直接注入する。
+3. **キーボード UI とルーティング (`crates/ui::keyboard`)**:
+   - 仮想キーボードパネル（`KeyboardView`）の描画と、入力先パネルへのルーティング（`InputRouting`）を行う。
+   - GPUI 内部のテキスト入力欄への配送（`focus_input`）と、デスクトップ配信パネルに対する OS キーボード呼び出し（`toggle_os_keyboard`）を調停する。
 
 ## 主な公開 API
 
-`Database`, `Keyboard`, `Layout`, `Stroke`, `KeyboardType`
-
-## 仮想キーボード
-
-キーボードは役割ごとに 3 か所に分かれる。
-
-- `crates/subsystems/keyboard`: 配列データ（xkeyboard-config）と、押したキーから文字・修飾キーの状態を求める（`Stroke`）。OS には触らない。`Database::load` は数百のファイルをディスクから読む（初回は書き出しと比較も）ので、ディスクが混んでいると数秒掛かる。UI はプロセスに 1 つだけ、起動時に裏のスレッドで読んでおく（下の `ui::keyboard`）。
-- `crates/subsystems/os` の `os::keyboard`: OS の前面のアプリの配列・IME の監視（`Watcher`。別スレッド）と、キー・文字の注入。カーネルが持ち（`Kernel::os_keyboard`。最初に使ったときに監視を始める）、`PanelCommand::TypeToOs` で送る。
-- `crates/ui` の `ui::keyboard`: キーボードのパネル（`KeyboardView`）と、入力をどのパネルへ届けるかの振り分け（`InputRouting`）。GPUI の入力欄は `focus_input`、OS を操作するパネル（配信・`PanelSpec::with_os_keyboard`）は `toggle_os_keyboard` で出す。OS の状態はフレームループが `PanelControl::os_keyboard` に書き写し、`system_keyboard` で読む。配列のデータベースは `ui::run_with` の起動時に読み始め（`keyboard::preload`）、どの `KeyboardView` もそれを共有して、配列を GPUI の裏のスレッドで組み、組めたらすぐ載せる（初めてキーボードを出すときに読み始めていたので、読み終わるまでキーの無い白いカードが出ていた）。
+```rust
+Database;        // 配列データベース（xkeyboard-config の保持）
+Keyboard;        // キーボードインスタンスとレイアウト状態
+Layout;          // 配列定義（キーの位置とサイズ）
+Stroke;          // 打鍵結果（生成文字、修飾キー状態）
+KeyboardType;    // キーボード種別（Full, Tenkeyless, Compact）
+```

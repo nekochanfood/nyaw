@@ -2,15 +2,42 @@
 
 層: 1 Subsystems
 
-GPUI の非表示描画先・読み戻し・描画密度と OS 差、ランタイムへの画像転送・不透明度 / 相対追従の能力差・描画資源の保持と解放。UI は `kernel::rendering` 経由で使う
+GPUI のオフスクリーン非表示ウィンドウにおける描画、GPU フレームバッファの読み戻し、および VR ランタイムオーバーレイへのピクセル転送を担当する。
+
+VR ランタイムごとの不透明度制御やアタッチ追従能力の差異を吸収し、描画リソースのライフサイクル（確保・パーキング・解放）を管理する。
+
+## 描画パイプラインにおける位置づけ
+
+本クレートは `overlay` の下位、`vr` の上位に位置し、カーネルを通じて `kernel::rendering` として機能を提供する。UI 層から直接本クレートを参照することはない。
+
+- **リソースの保持 (`Surface`)**: 各パネルに対応する `Surface` インスタンスが、ランタイム側のオーバーレイリソースと送信済みテクスチャの状態を保持する。パネルの姿勢計算やアニメーション進行は `overlay` が決定し、ランタイムへの転送時の能力差は `Surface` が吸収する。
+- **一時退避 (`park` / `restore`)**: 非アクティブなパネル（非表示のナビゲーションバーなど）は、`park()` によってランタイム側のリソースのみを解放し、メモリ上の画像データと描画順情報を維持する。再注視時は `restore()` により同一キーで再生成される。
+- **フォーマット変換**: GPUI の内部描画形式（BGRA）と VR ランタイムや他クレートが要求する形式（RGBA）との相互変換（`render_image` など）を集約する。
 
 ## 主な公開 API
 
-`Surface::{new, store, present(opacity, dim), place, show, park, restore, release}`（`park` はランタイム側のオーバーレイだけを捨てて画像・描画順を持ち続け、`restore` で同じキーで作り直して送り直す。手放している間に届いた画像も覚えておく）, `gpui::{capture, read_back, open_window, set_render_lod, render_image}`（`render_image` は RGBA の画素を GPUI の画像（BGRA）にする。画面は `ui::render_image` で使い、`image` クレートの版を gpui に合わせるのはこのクレートだけ）
+```rust
+Surface::{
+    new,      // パネル描画サーフェスの生成
+    store,    // フレーム画像の保持
+    present,  // 不透明度・明暗補正を適用したランタイム転送
+    place,    // 空間姿勢の適用
+    show,     // 可視性の切り替え
+    park,     // ランタイムオーバーレイの一時返還
+    restore,  // 退避サーフェスの復帰
+    release,  // リソースの完全破棄
+};
 
-## 描画層（Issue #41）
+// GPUI ウィンドウ連携
+gpui::{
+    capture,         // ウィンドウ描画のキャプチャ実行
+    read_back,       // GPUからのピクセル読み戻し
+    open_window,     // オフスクリーンウィンドウの生成
+    set_render_lod,  // LOD に応じた描画解像度スケール変更
+    render_image,    // ピクセルバッファから GPUI 画像への変換
+};
+```
 
-- `rendering` は `overlay` の下、`vr` の上に入り、カーネルが `kernel::rendering` として公開する。UI から描画クレートへ直接依存しない。
-- `overlay::Panel` が持つ `rendering::Surface` が描画資源と送信済み状態を保持する。配置・入力判定・アニメーションの目標と進行は overlay が決め、描画先へ送るときの能力差は Surface が吸収する。
-- `ui::{capture, Frame, set_render_lod}` は rendering の再エクスポート。`ui::{open_panel_window, panel_window_options}` は UI の表示方針で、OS・描画ホスト固有の作成と読み戻しは `crates/subsystems/rendering` が担う。
-- `cargo test -p rendering --all-features` は画素変換、アルファ対応 / 未対応、追従のフォールバック、解放後の更新抑止を検証する。実描画は既存の `gpu_capture` / `panel_lod` で描画層からカーネルまで通す。
+## テスト手法
+
+`cargo test -p rendering --all-features` を実行し、ピクセルフォーマット変換、アルファブレンド処理、追従フォールバック、およびリソース解放後の更新抑止ロジックを検証する。

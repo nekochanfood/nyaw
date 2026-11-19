@@ -2,8 +2,35 @@
 
 層: 0 基盤
 
-動きの責務。用途 `Motion`（長さとイージングを決める。長さは design の `tokens.json` の `duration-ms`）、毎フレーム進める `Animation`、始めた時刻と今から値を引く `Transition`、ボタンの滑り込みの `Pair` / `Slide`。GPUI にも `design` にも依存しない（境界は `tests/boundaries.rs`）。時刻を読む・再描画を要求する・何を動かすか決めるのは呼び出し側（`design` の部品、`overlay`）。イージングの式はここにだけ書く
+アニメーションの進行計算およびイージング補間を担当する純粋な計算基盤クレート。
+
+GPUI や UI 部品、デザインシステムのコード実装に依存しない。時刻の取得、再描画の要求、および補間値の適用対象の決定は呼び出し側（`design` や `overlay`）が担い、本クレートはイージング関数の計算と進行率の管理のみに特化する。
+
+## 主な機能と役割
+
+- **イージングと継続時間 (`Motion`)**: `tokens.json` の `duration-ms` に基づく所要時間と、各種イージング曲線（Ease-in, Ease-out, Ease-in-out, Morph 等）の数学的定義。
+- **フレーム更新型アニメーション (`Animation`)**: 毎フレームの経過時間を加算して状態を進め、現在値（0.0〜1.0）および完了判定を提供する。
+- **時刻参照型アニメーション (`Transition`)**: 開始時刻と現在時刻から直接補間値を算出するステートレスな遷移モデル。
+- **スライド遷移 (`Pair` / `Slide`)**: ボタンやパネル要素の入退出に伴う相対スライドアニメーションの計算。
 
 ## 主な公開 API
 
-`Motion::{duration_ms, ease}`, `Animation::{new, advance, value, is_done}`, `Transition::{rest, go, at}`, `Pair`, `Slide`, `duration_ms`
+```rust
+Motion::{
+    duration_ms,  // アニメーション所要時間
+    ease,         // 進行率 t に対するイージング補間値の計算
+};
+Animation::{
+    new,          // アニメーションの初期化
+    advance,      // 経過時間の加算
+    value,        // 現在の補間値（0.0〜1.0）
+    is_done,      // アニメーション完了フラグ
+};
+Transition::{
+    rest,         // 静止状態の生成
+    go,           // 新規遷移の開始
+    at,           // 指定時刻における補間値の取得
+};
+Pair;             // 2要素間のスライド補間
+Slide;            // スライド方向および移動量の定義
+```

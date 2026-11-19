@@ -2,40 +2,155 @@
 
 層: 3 カーネル
 
-設定・フレーム進行・パネル操作を束ねる。最下部の Subsystems の上に位置し、UI・画面はカーネルだけを見る。設定は `subsystems::os::config_dir()/config.toml`（アプリ全体の設定はパネルの操作 `PanelCommand` と分け、`Kernel::set(Setting)` で変えて `Kernel::settings()` で読む。`theme = "dark" | "light"` は `Setting::Theme`、`[personal_color]`（`lightness` / `chroma` / `hue`。ボタンなどの塗りに使うユーザーの色。省略で既定の色）は `Setting::PersonalColor`（`Settings::personal_color`。選ぶまで `None`。`ui::sync_settings` が `design::Accent` のグローバルに反映する。色の使われ方は `../design/AGENT.md` の「パーソナルカラー」）、`[[color_history]]`（自分で作ったパーソナルカラーの履歴。新しい順で `COLOR_HISTORY` = 8 個まで。省略で空）は `Setting::CustomColor`（作った色をパーソナルカラーにし、履歴の先頭に覚える。同じ色は 1 つだけ残り、古いものから落ちる。`Settings::color_history`。見本を選ぶだけの `Setting::PersonalColor` では変わらない。選ぶ画面は、この後ろを用意した色で埋めて並べる）、`wrist_design = "dots" | "lcd" | "minimal" | …`（wrist の文字盤のデザイン。既定 `dots`。種類 `WristFace` ごとのデザインの表は `config.rs` の `wrist_designs!`。意味と足し方は `../wrist/AGENT.md`）は `Setting::WristDesign`、`[wrist_offset]`（`position` = `[x, y, z]` / `orientation` = `[x, y, z, w]`。wrist を掴んで置き直した、左手首のコントローラの tip から見た姿勢（`config::WristOffset`）。省略・壊れた値（数でない・向きの長さ 0）で `Settings::wrist_offset` は `None`。向きは長さ 1 に直す）は `Setting::WristOffset`、`wrist_scale`（wrist の大きさの倍率。`WRIST_SCALE_MIN`〜`WRIST_SCALE_MAX` = 0.5〜3 に収める。掴んで変えた大きさなので刻みには丸めない。既定 1）は `Setting::WristScale`（どちらもカーネルは値を持つだけで、離したときに書き戻し、起動時に付けるのは wrist）、`language = "en" | "ja"`（省略なら `Kernel::boot` が OS の表示言語 `os::ui_language` で始める。対応していない言語なら `en`。選ぶまで設定ファイルには書かない） は `Setting::Language`、`pointer_smoothing`（レーザーの手ブレ抑え。0〜0.998、既定 `overlay::POINTER_SMOOTHING` = 上限の 0.998）は `Setting::PointerSmoothing`、`pointer_release_deg`（抑えたレーザーがこの角度だけ手から遅れると抑えが半分になる。0.5〜45°、既定 11.25°）は `Setting::PointerRelease`、`laser_length`（レーザーの見える長さ m。0.05〜1.5、既定 0.3）は `Setting::LaserLength` で切り替えると書き戻され、次回起動に残る。ポインタの画面の `pointer_tuning = "simple" | "detailed"`（設定画面の動きの調整のしかた。既定 `simple`）は `Setting::PointerTuning`、`cursor_scale`（カーソルの大きさの倍率。`CURSOR_SCALE_MIN`〜`CURSOR_SCALE_MAX` = 0.5〜2 を `SCALE_STEP` の刻みに丸める。既定 1。`Overlay::set_cursor_scale` に渡す）は `Setting::CursorScale`、`tooltips` / `tap_sound` / `hover_sound = true | false`（ツールチップ・押したときの音・指したときの音。既定 `true`）は `Setting::Tooltips` / `TapSound` / `HoverSound`（カーネルは値を持つだけで、従うのは UI 層の `sync_tooltips` と `ui::cue`）。`mirror_frame_rate`（ミラーリングの取得の上限 FPS。1〜240、既定 `desktop::DEFAULT_FRAME_RATE` = 60）は `Setting::MirrorFrameRate`（配信中のミラーもかけ直す。ダッシュボードは配信を始めるときにこの値を `PanelCommand::Stream` に渡す）、`keyboard = "full" | "tenkeyless" | "compact"`（仮想キーボードの種類。既定 `full`）は `Setting::Keyboard`（`KeyboardView` が描き直しで従う）、`keyboard_scale`（仮想キーボードの大きさの倍率。`KEYBOARD_SCALE_MIN`〜`KEYBOARD_SCALE_MAX` = 0.5〜2.0 を `SCALE_STEP` の刻みに丸める。既定 1）は `Setting::KeyboardScale`（カーネルは値を持つだけで、`ui::keyboard` が標準の大きさに掛け、出ているキーボードもその大きさに変える）、`key_gap`（仮想キーボードのキーの間隔の倍率。`KEY_GAP_MIN`〜`KEY_GAP_MAX` = 0〜2.0 を `SCALE_STEP` の刻みに丸める。既定 1）は `Setting::KeyGap`（カーネルは値を持つだけで、`KeyboardView` が種類の既定の隙間に掛ける）、`key_sound = true | false`（仮想キーボードのキーを押した音を鳴らすか。既定 `true`）は `Setting::KeySound`、`key_sound_volume`（その音量。0〜1 を `SCALE_STEP` = 0.1 の刻みに丸める。既定 1）は `Setting::KeySoundVolume`（どちらもカーネルは値を持つだけで、鳴らす側の `KeyboardView` が従い、音量は `PanelCommand::PlayAt` の `volume` に載せる）、`block_input = true | false`（ダッシュボードが出ている間、ゲームへの入力を止めるか。既定 `true`。`Settings::block_input`、`Setting::BlockInput`。`Overlay::set_block_input` へ渡し、出ている最中の切り替えも次の tick から効く）, `dashboard_distance`（ダッシュボードの距離 m。はめた画面の中心まで。0.6〜2.0 を `DASHBOARD_STEP` = 0.05 の刻みに丸める。既定 `DASHBOARD_DISTANCE` = 1.3）は `Setting::DashboardDistance`、`dashboard_height`（ダッシュボードの高さ m。目の高さの 0.1m 下を 0 とする相対で上が +。−0.5〜0.5、同じ刻み。既定 0）は `Setting::DashboardHeight`（どちらもカーネルは値を持つだけで、置くのはダッシュボード）, `Setting::AutoLaunch(bool)`（SteamVR の起動と同時に開くか。値は SteamVR が持つので設定ファイルには書かない。`Settings::auto_launch` は切り替えられないランタイムで `None`。`../subsystems/vr/AGENT.md` の「SteamVR のアプリ登録」）, `update_channel = "stable" | "nightly"`（アップデートのチャンネル。既定 `stable` = 安定版。ナイトリー（`nightly`）はプレリリースも受け取る。`Settings::update_channel`。カーネルは値を持つだけで、従うのは `updater`。`../updater/AGENT.md` の「チャンネル」）は `Setting::UpdateChannel`, `notification_anchor = "top" | "top_left" | "bottom_right" | …`（通知を視界の端に出す所。上下左右の端と四隅の 8 か所。既定 `bottom`。`NotificationAnchor::side`。カーネルは値を持つだけで、置くのは通知の画面 `crates/toast`）は `Setting::NotificationAnchor`, `dominant_hand = "right" | "left"`（利き手。既定 `right`。`Settings::dominant_hand`。`DominantHand::{hand, off_hand}`）は `Setting::DominantHand`: 主に操作する手。カーネルは値を持つだけで、左右で振る舞いが変わる機能がそれぞれ読んで従う（カーネルがパネルを付け替えることはしない）。カーネルの中では、配信のパネルの OS のマウスを利き手だけが動かす（両手で取り合わない。もう片方の手で一度押すと操作する手が替わり、その押下は送らない。OS のカーソルの絵も操作している手にだけ出し、もう片方は nyaw のカーソル）。`ui::sync_settings` が `design::Mode` のグローバルに反映し、画面は `Theme::current(cx)` で引く）。OS への入力（配信のタッチ・仮想キーボードのキー）はどちらもカーネル経由（`PanelCommand::Stream` / `PanelCommand::TypeToOs`）。優先順位はコマンドライン > 設定ファイル（ログレベルは `NYAW_LOG` > 設定ファイル）
+アプリケーション全体の設定管理、フレームサイクルの進行、およびパネル操作の集約を担う。最下部の Subsystems の直上に位置し、上位の UI 層および画面クレートはカーネルを通じてのみシステムリソースを操作する。
+
+## 設定管理システム
+
+アプリケーションの設定は `subsystems::os::config_dir()/config.toml` に保存される。実行時の設定値はパネル操作（`PanelCommand`）から分離されており、`Kernel::set(Setting)` で更新し、`Kernel::settings()` で参照する。
+
+設定の優先順位は「コマンドライン引数 > 設定ファイル」である（ログレベルに関しては環境変数 `NYAW_LOG` > 設定ファイル）。
+
+### 設定項目一覧
+
+各設定項目は `config.toml` のキー、対応する `Setting` / `Settings` の列挙型、および既定値を持つ。
+
+#### 外観・デザイン
+
+| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
+|---|---|---|---|
+| `theme` | `"dark" \| "light"`<br>`Setting::Theme` | `"dark"` | UI の明暗テーマ。`ui::sync_settings` を通じて `design::Mode` に反映される。 |
+| `[personal_color]` | `{ lightness, chroma, hue }`<br>`Setting::PersonalColor` | 未設定 (`None`) | ボタンや強調表示に使用するアクセントカラー。未設定時はテーマの既定色を用いる。 |
+| `[[color_history]]` | 色配列（最大 8 件）<br>`Setting::CustomColor` | 空 | ユーザーが作成したカスタムカラーの履歴。新規作成時に先頭へ追加され、重複は除外される。 |
+| `language` | `"en" \| "ja"`<br>`Setting::Language` | 自動検出 | 表示言語。未設定時は `os::ui_language` から取得し、未対応言語の場合は `"en"` とする。 |
+
+#### 腕時計パネル (wrist)
+
+| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
+|---|---|---|---|
+| `wrist_design` | 文字列（`WristFace`）<br>`Setting::WristDesign` | `"dots"` | 腕時計パネルの文字盤デザイン。 |
+| `[wrist_offset]` | `{ position, orientation }`<br>`Setting::WristOffset` | 未設定 (`None`) | 左手コントローラ先端から見た腕時計パネルの相対姿勢。掴み操作で調整された値が保存される。 |
+| `wrist_scale` | 浮動小数点数 (`0.5`〜`3.0`)<br>`Setting::WristScale` | `1.0` | 腕時計パネルの表示倍率。 |
+
+#### ポインタと入力制御
+
+| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
+|---|---|---|---|
+| `dominant_hand` | `"right" \| "left"`<br>`Setting::DominantHand` | `"right"` | 利き手の設定。デスクトップ配信パネルに対する OS マウス操作権を保持する。 |
+| `pointer_smoothing` | 浮動小数点数 (`0.0`〜`0.998`)<br>`Setting::PointerSmoothing` | `0.998` | コントローラレーザーの手振れ補正係数。 |
+| `pointer_release_deg` | 浮動小数点数 (`0.5`〜`45.0` 度)<br>`Setting::PointerRelease` | `11.25` | 手振れ補正中にレーザーが手から遅れた際、補正強度を半減させる閾値角度。 |
+| `laser_length` | 浮動小数点数 (`0.05`〜`1.5` m)<br>`Setting::LaserLength` | `0.3` | コントローラから照射されるレーザーの可視長。 |
+| `cursor_scale` | 浮動小数点数 (`0.5`〜`2.0`)<br>`Setting::CursorScale` | `1.0` | パネル上のカーソル表示倍率（0.1 刻み）。 |
+| `pointer_tuning` | `"simple" \| "detailed"`<br>`Setting::PointerTuning` | `"simple"` | 設定画面におけるポインタ調整項目の表示モード。 |
+| `block_input` | 真偽値<br>`Setting::BlockInput` | `true` | ダッシュボード表示中に背後のゲームに対する入力を遮断するかどうか。 |
+
+#### 効果音・操作フィードバック
+
+| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
+|---|---|---|---|
+| `tooltips` | 真偽値<br>`Setting::Tooltips` | `true` | UI 要素に対するツールチップ表示の有効化。 |
+| `tap_sound` | 真偽値<br>`Setting::TapSound` | `true` | ボタン押下時の効果音の有効化。 |
+| `hover_sound` | 真偽値<br>`Setting::HoverSound` | `true` | ボタンにホバーした際の効果音の有効化。 |
+
+#### 仮想キーボード
+
+| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
+|---|---|---|---|
+| `keyboard` | `"full" \| "tenkeyless" \| "compact"`<br>`Setting::Keyboard` | `"full"` | 仮想キーボードの配列レイアウト。 |
+| `keyboard_scale` | 浮動小数点数 (`0.5`〜`2.0`)<br>`Setting::KeyboardScale` | `1.0` | 仮想キーボードの表示倍率（0.1 刻み）。 |
+| `key_gap` | 浮動小数点数 (`0.0`〜`2.0`)<br>`Setting::KeyGap` | `1.0` | キー間の間隔倍率（0.1 刻み）。 |
+| `key_sound` | 真偽値<br>`Setting::KeySound` | `true` | キー押下時の打鍵音の有効化。 |
+| `key_sound_volume` | 浮動小数点数 (`0.0`〜`1.0`)<br>`Setting::KeySoundVolume` | `1.0` | 打鍵音の音量（0.1 刻み）。 |
+
+#### ダッシュボードとシステム連携
+
+| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
+|---|---|---|---|
+| `dashboard_distance` | 浮動小数点数 (`0.6`〜`2.0` m)<br>`Setting::DashboardDistance` | `1.3` | ダッシュボードの出現距離（0.05m 刻み）。 |
+| `dashboard_height` | 浮動小数点数 (`-0.5`〜`0.5` m)<br>`Setting::DashboardHeight` | `0.0` | ダッシュボードの出現基準高さからのオフセット（0.05m 刻み）。 |
+| `mirror_frame_rate` | 整数 (`1`〜`240` FPS)<br>`Setting::MirrorFrameRate` | `60` | 画面・ウィンドウミラーリングのキャプチャ上限フレームレート。 |
+| `notification_anchor` | 文字列（`NotificationAnchor`）<br>`Setting::NotificationAnchor` | `"bottom"` | トースト通知の視界内固定位置（上下左右・四隅の計 8 か所）。 |
+| `update_channel` | `"stable" \| "nightly"`<br>`Setting::UpdateChannel` | `"stable"` | アプリケーションの更新確認チャンネル。 |
+| （設定ファイル外） | `Setting::AutoLaunch(bool)` | ランタイム依存 | SteamVR 起動時の自動起動連携。SteamVR 自身が設定を保持する。 |
+| `setup_done` | 真偽値<br>`Setting::SetupDone` | `false` | 初期セットアップウィザードが完了しているかどうか。 |
 
 ## 主な公開 API
 
-`Kernel::{boot, with_backend, tick, submit, apply, status, set, settings, os_keyboard, add_panel, batteries, now_playing, notifications, set_notifications, fov}`（メディアと OS の通知の見張りは `boot` だけが起こす。`fov` は両目に映る範囲で、HUD は `vr::Fov::safe` に通した範囲に置く）, `PanelCommand`（`Notification { id, action }` で OS の通知の本文かボタンを押したことをアプリへ届ける、`SendNotification` で OS の通知を出す（デバッグのテスト用）、`RemoveNotification(id)` で OS の通知センターから消す（通知センターでスワイプ・すべて消去）、`PassThrough(bool)` でレーザーを素通りさせる、`FadeOnly(bool)` で出入りを不透明度だけにする、`Hide(bool)` で閉じずに隠す・出し直す、`Resizable(bool)`、`DockSlot(Option<f32>)` / `Dockable(bool)`（はめる場所と、そこから掴んで引っこ抜ける・はめられる画面。`Kernel::take_dock_changes` で手で外した・はめた画面を受け取る）、`GrabAnchor(Option<Pose>)`、`Media(media::Command)`、`FocusSource`（配信しているウィンドウを OS で前に出す））, `PanelStatus`（`hidden`、はまる所の見本の一行 `dock_hint`、`gazed` = 見ている。`Overlay::gazed`）, `Setting`, `Settings`, `config::{load, parse, path, Config}`, `subsystems`, `rendering` / `vr` / `overlay` の再エクスポート
+### Kernel 型
 
-## パネルの LOD
+カーネルのライフサイクルおよびシステム制御を行う主構造体。
 
-- `config.toml` の `lod_quality`: 0 = Off（常に LOD0）、1 = Low、2 = Mid（既定）、3 = High。`Kernel::panel_lod` が HMD とパネル中心の距離から決める。距離はパネルの密度（1m あたりの論理ピクセル）で換算し、基準（1000px/m）より粗いパネルは近くにあるものとして扱う（拡大すると LOD が下がり、ぼやけたまま残らない。Issue #51）。レーザーが指しているパネル（`Overlay::pointed`）とツールチップは距離によらず LOD0。
-- LOD0〜3 は縦横 1 / 1/2 / 1/4 / 1/8。切り替え距離は Low が 1 / 2 / 4 m、Mid が 2 / 4 / 8 m、High が 4 / 8 / 16 m。
-- フレームレートも LOD で絞る。LOD0 は毎フレーム、LOD1〜3 は 2 / 4 / 8 フレームに 1 回だけ描き直す（`Kernel::panel_frame_due`。パネルごとにずらす）。間引いたフレームの入力・変化は次に描いてよいフレームで描く。
-- GPUI は非表示ウィンドウの DPI と実ピクセルサイズを変える。カーネルの論理解像度と物理サイズは変えない。8 の倍数でないサイズは表示領域に最大 7 論理ピクセルの丸めがある。
-- `cargo test -p ui --test gpu -- --ignored panel_lod` で実描画と入力を確認し、`--off` を追加して無効時も確認する（Windows）。
-- ストレステストは `NYAW_STRESS_LOD=0` と `2` で同じ負荷を比較できる。
+```rust
+Kernel::{
+    boot,              // メディア監視・OS通知監視を起動してカーネルを初期化
+    with_backend,      // テスト用バックエンドを指定した初期化
+    tick,              // 1フレームの進行処理
+    submit,            // 描画結果のオーバーレイ転送
+    apply,             // パネルコマンドの適用
+    status,            // パネル状態の取得
+    set,               // 設定の変更
+    settings,          // 現在の設定値の取得
+    os_keyboard,       // OS 仮想キーボード連携
+    add_panel,         // 新規パネルの追加
+    batteries,         // HMD・コントローラのバッテリー残量取得
+    now_playing,       // メディア再生状態の取得
+    notifications,     // 通知一覧の取得
+    set_notifications, // 通知の更新
+    fov,               // 両目視野範囲の取得（vr::Fov::safe 経由で HUD 配置に使用）
+};
+```
 
-## ロックダウン
+### パネル制御コマンド（PanelCommand）
 
-パネルが取る・放す汎用の仕組み（`PanelCommand::Lockdown(bool)`。`PanelSpec::lockdown()` で開いた時点から取る）。特定の画面のためのものではない。
+画面側からカーネルに対してパネルの振る舞い変更を要求するコマンド群。
 
-- **取り手**: パネルごとに取り、何枚でもよい。全員が放す（か閉じる）までロックダウン（`Kernel::lockdown` / `Settings::lockdown`）は続く。設定ファイルには残さない。
-- **守るもの**: 取っているパネルは、自分が放すまで閉じられない（`PanelCommand::Close` を無視する）。取っていないパネルには影響しない。
-- **シェルの振る舞い**: カーネルは状態を渡すだけで、何を控えるかは見る側（シェル）が決める。今は wrist が、ロックダウンに入った瞬間に自分自身と出ているダッシュボードを隠し（解けると手首は出し直し、ダッシュボードは出し直さない）、中は二回押しを無視して開閉しない。
-- **放して閉じる**: 閉じる前に放すときは、同じパネルのコマンドに `Lockdown(false)`、`Close` の順で積む（同じパネルのコマンドは積んだ順に処理される）。
+- `Notification { id, action }`: OS 通知の本文またはボタン押下を対象アプリへ伝達する。
+- `SendNotification`: デバッグ用の OS 通知を発行する。
+- `RemoveNotification(id)`: 指定通知を OS 通知センターおよび内部リストから消去する。
+- `PassThrough(bool)`: コントローラレーザーの当たり判定を素通りさせる。
+- `FadeOnly(bool)`: 表示・非表示の遷移演出を不透明度のフェードのみにする。
+- `Hide(bool)`: パネルを破棄せず不可視化（または再可視化）する。
+- `Resizable(bool)`: ユーザーによるサイズ変更の許可・不許可を設定する。
+- `DockSlot(Option<f32>)` / `Dockable(bool)`: ドッキングスロットの配置と、把持による分離・吸着を可能にする。
+- `GrabAnchor(Option<Pose>)`: 掴み操作時の基準姿勢を指定する。
+- `Media(media::Command)`: 再生・停止・曲送りなどのメディア制御要求を送信する。
+- `FocusSource`: ミラーリング対象のウィンドウを OS 側で前面化する。
 
-`Setting::SetupDone(bool)`（`setup_done`）はセットアップウィザードを終えたか。省略で `false`。
+### パネル状態（PanelStatus）
 
-## アクセシビリティの設定
+カーネルから画面側へフィードバックされる各パネルの状態情報。
 
-対等な 3 つの設定。どれも独立したキーで、互いに依らない（どの値の組でも、それぞれが範囲に収まってそのまま効く）。
+- `hidden`: パネルが現在非表示状態にあるかどうか。
+- `dock_hint`: ドッキング可能な領域に近づいた際の一時的な吸着ガイド情報。
+- `gazed`: ユーザーが視線をパネルに向けているかどうか（`Overlay::gazed`）。
 
-| 設定ファイル | `Setting` / `Settings` | 範囲（既定） | 効かせる所 |
+## パネルの LOD（詳細度制御）
+
+視界内のパネル数が増加した際の描画負荷を低減するため、距離とピクセル密度に応じた Level of Detail（LOD）制御を適用する。
+
+- **LOD レベルの決定**: 設定ファイル内の `lod_quality`（0: 無効、1: Low、2: Mid、3: High、既定値は 2）に基づき、`Kernel::panel_lod` が HMD とパネル中心点との距離を基準に算出する。距離はパネルのピクセル密度（基準: 1000px/m）で正規化されるため、引き伸ばされた粗いパネルは近傍にあるものとして扱われ、ぼやけたまま残る現象を防ぐ。
+- **レーザー注視パネルの保護**: コントローラのレーザーが当たっているパネル（`Overlay::pointed`）およびツールチップは、距離に関わらず常に最高解像度（LOD0）を維持する。
+- **解像度とフレームレートの間引き**:
+  - 解像度: LOD0〜3 はそれぞれ等倍、1/2、1/4、1/8 の解像度へ縮小される。
+  - 更新頻度: LOD0 は毎フレーム、LOD1〜3 はそれぞれ 2 / 4 / 8 フレームに 1 回のみ再描画される（`Kernel::panel_frame_due`）。描画が間引かれたフレームにおける入力イベントは、次回描画フレームへ蓄積されて処理される。
+- **検証方法**: 実描画および入力の検証は `cargo test -p ui --test gpu -- --ignored panel_lod`（無効化時は `--off`）で行う。
+
+## ロックダウン機構
+
+初回セットアップウィザードや重要な確認画面において、ユーザーの誤操作によるパネル閉塞を防ぐ排他制御機構（`PanelCommand::Lockdown(bool)`）。
+
+- **取得と解放**: 各パネルは任意のタイミングでロックダウンを取得できる（`PanelSpec::lockdown()` で生成時から取得可能）。すべての保持パネルが解放するか閉じるまで、システム全体のロックダウン状態（`Kernel::lockdown`）は維持される。
+- **保護対象**: ロックダウンを取得しているパネルは、自身が解放するまで `PanelCommand::Close` を受信しても閉じない。ロックダウンを取得していない他パネルには直接の影響を与えない。
+- **シェルの応答**: カーネルはロックダウン状態を公開するのみであり、具体的な抑制処理は各シェルが実装する。たとえば `wrist` は、ロックダウン突入時に自身とダッシュボードを非表示化し、復帰までショートカットの二回押しを無視する。
+- **閉じる際の手順**: ロックダウン中のパネルを自ら閉じる場合は、コマンド列に `Lockdown(false)`、`Close` の順序で積んで送信する。
+
+## アクセシビリティ設定
+
+視覚補助のための 3 つの独立した設定項目。互いに干渉せず、それぞれ指定範囲内で独立して反映される。
+
+| 設定ファイルキー | 設定列挙型 | 範囲（既定値） | 反映経路と影響範囲 |
 |---|---|---|---|
-| `text_scale` | `TextScale(f32)` / `text_scale` | `TEXT_SCALE_MIN`〜`TEXT_SCALE_MAX` = 0.8〜1.5（1.0） | カーネルは値を持つだけ。`ui::sync_settings` が `design::font::set_text` へ渡し、テキストシステムが全部の文字に掛ける（`../design/AGENT.md` の「文字の大きさと太字化」） |
-| `ui_scale` | `UiScale(f32)` / `ui_scale` | `UI_SCALE_MIN`〜`UI_SCALE_MAX` = 0.7〜1.5（1.0） | `Overlay::set_scale`（`../overlay/AGENT.md` の「UI スケール」）。開いているパネルもその場で変わり、以降 `add_panel` の大きさに掛かる（`Kernel::ui_scale`） |
-| `bold_text` | `BoldText(bool)` / `bold_text` | `true` / `false`（`false`） | `text_scale` と同じ経路 |
+| `text_scale` | `TextScale(f32)` | `0.8`〜`1.5` (`1.0`) | `ui::sync_settings` を経由して `design::font::set_text` へ渡され、システム全体のフォント描画サイズを一括調整する。 |
+| `ui_scale` | `UiScale(f32)` | `0.7`〜`1.5` (`1.0`) | `Overlay::set_scale` に渡され、配置済みおよび新規生成される全パネルの空間寸法を一括拡大縮小する。 |
+| `bold_text` | `BoldText(bool)` | `true` / `false` (`false`) | `text_scale` と同様にフォントシステムへ渡され、全テキストの太字ウェイトを有効化する。 |
 
-倍率は `SCALE_STEP` = 0.1 の刻みに丸める（`config::clamp_scale`。数でない値は等倍）。文字の大きさは画面の中の組み方を変えないので、入れ物に収まる 1.5 倍まで。UI スケールはパネルごと大きくするので、視野に収まる 1.5 倍まで。
+倍率の入力値は 0.1 刻み（`SCALE_STEP`）に丸められる（不正値は等倍）。テキストスケールはレイアウト崩れを防ぐため 1.5 倍を上限とし、UI スケールは視界への収まりを考慮して 1.5 倍を上限とする。
