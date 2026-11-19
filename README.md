@@ -11,19 +11,36 @@
 
 ## ビルドと起動
 
-必要なもの: 
+### 前提環境
+
+ビルドには以下の環境が必要です。
+
 - Rust (stable)
-- cmake
+- cmake（OpenXR ローダーおよび OpenVR バインディングのビルドに使用）
 - C++ コンパイラ
 
+> [!NOTE]
+> Windows 環境で cmake が `PATH` に通っていない場合は、環境変数 `CMAKE` に実行ファイルの絶対パス（例: Visual Studio 同梱の `cmake.exe`）を指定してください。
+
+### 起動コマンド
+
 ```sh
-cargo run --release              # VR ランタイムを自動検出（無ければウィンドウで動くエミュレーターで起動）
-cargo run --release -- --openvr  # SteamVR を使う（--openxr で OpenXR、--novr でエミュレーター）
+# VR ランタイムを自動検出して起動
+cargo run --release
+
+# SteamVR (OpenVR) を指定して起動
+cargo run --release -- --openvr
+
+# OpenXR を指定して起動
+cargo run --release -- --openxr
+
+# VR 機器を使わずエミュレーター（novr）で起動
+cargo run --release -- --novr
 ```
 
 ## ライセンス
 
-[MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE)
+本ソフトウェアは [MIT ライセンス](LICENSE-MIT) または [Apache-2.0 ライセンス](LICENSE-APACHE) の下で配布されています。
 
-絵文字は [Twemoji](https://github.com/jdecked/twemoji) v17.0.3 の SVG を同梱しています。
+絵文字グラフィックには [Twemoji](https://github.com/jdecked/twemoji) v17.0.3 の SVG を同梱しています。  
 Graphics: Twitter, Inc. and contributors / [CC BY 4.0](crates/design/twemoji/LICENSE-GRAPHICS)。
