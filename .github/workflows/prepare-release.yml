@@ -1,17 +1,16 @@
 name: Prepare release
 
-# Actions の画面で版を入れて実行すると、版を上げる commit を release/v<版> に積み、main への PR を開く（本文は前の版からの変更）。
-# そのブランチで Release（インストーラーのビルド）を 1 回起こし、PR をマージすると Release がそのインストーラーで v<版> を出す。
-# GITHUB_TOKEN で開いた PR の pull_request の run は承認待ちで止まる（bot 起動の扱い）ので、ビルドは PR のチェックに頼らず
-# ここから起こす（Release は PR では起動しない）。PR の CI は承認待ちのままでよい。版を変えるだけで、マージ後の main の push で走る。
-# PR を開いたままプレリリースを出すときは、そのブランチで Release を名前（alpha・beta など）を入れて実行する。
-# -dev.<数> の版（出さない版）は、PR を作ってすぐマージする。Release が出した後に次の版をこれで起こす。
-# その commit には [skip ci] を付ける（PR の CI が承認待ちのまま、ブランチを消すと失敗で残るので）
+# リリース準備ワークフロー:
+# 手動実行により指定バージョンのブランチ（release/v<バージョン>）を作成し、バージョン更新コミットと main 宛ての PR を発行する。
+# 同時にインストーラービルドワークフロー（release.yml）をトリガーし、PR マージ時に生成済みインストーラーを正式リリースへ添付する。
+#
+# - 開発版（-dev.<番号>）の指定時は、リリースを発行せずバージョン更新のみをコミットして即時自動マージする。
+# - プレリリース（alpha/beta 等）を発行する場合は、作成されたブランチに対して release.yml を手動実行する。
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 新しい版（<CalVer>[-<名前>.<数>]。例 2026.0.3・2026.0.3-beta.1。-dev.<数> は出さずに main を上げるだけ）
+        description: 新バージョン（<CalVer>[-<チャネル名>.<番号>]。例: 2026.0.3, 2026.0.3-beta.1。-dev.<番号> は main のバージョン進行のみ）
         required: true
 
 jobs:
@@ -20,15 +19,15 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-      # Release を起こす
+      # release.yml をトリガーするための権限
       actions: write
     steps:
       - uses: actions/checkout@v4
         with:
-          # ノートの起点（辿れる一番新しいタグ）を探すので、履歴とタグを全部取る
+          # リリースノート生成のために直近のタグを含む全履歴を取得
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      # 版を上げる所は今の版が書いてある所すべて（Cargo.toml・ロックファイル、AGENT.md）
+      # バージョン番号の更新（Cargo.toml、AGENT.md、および Cargo.lock）
       - name: Bump the version
         env:
           NEW: ${{ inputs.version }}
@@ -37,7 +36,7 @@ jobs:
             echo "::error::run this on main"
             exit 1
           fi
-          # 名前は Cargo の版にも入るので semver の pre-release に使える文字だけ。新旧はビルド番号で決まるので、版の文字の大小は見ない
+          # SemVer 互換プレリリース識別子の形式検証（新旧判定はビルド番号で行うため文字の大小は問わない）
           if ! [[ "$NEW" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+(-[0-9A-Za-z-]+\.[0-9]+)?$ ]]; then
             echo "::error::$NEW is not <CalVer>[-<label>.<number>] (e.g. 2026.0.3, 2026.0.3-beta.1)"
             exit 1

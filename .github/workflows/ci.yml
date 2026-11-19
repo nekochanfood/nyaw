@@ -5,23 +5,24 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
-# 同じブランチ・PR に次の push が来たら、走っている古い run は止める。main は止めない（キャッシュを保存する run で、
-# 同じグループだと待っている run が次の run に置き換えられて消えるので、run ごとに別のグループにする）
+# 同一ブランチ・PR への連続 push 時は先行する古い実行を自動キャンセルする。
+# main ブランチはキャッシュ保存を担うためキャンセル対象外とし、実行ごとに独立したグループを割り当てる。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 env:
-  # インクリメンタルは CI では使い回さない
+  # CI 環境ではインクリメンタルコンパイルの再利用性が低いため無効化
   CARGO_INCREMENTAL: "0"
-  # audio の build.rs が Steam Audio の SDK（180MB）を落とさないように。テストは phonon を使わない
+  # CI テストでは空間音響（phonon）を使用しないため、Steam Audio SDK（約180MB）のダウンロードを抑止
   NYAW_SKIP_PHONON: "1"
 
-# sccache は使わない。依存は rust-cache の target で揃っていて、sccache に回るのは自前のクレートだけになる。
-# clippy はそれを clippy-driver 経由で呼ぶのでキャッシュできない（multiple input files）。テストは Rust 1.100 の
-# build-dir の新レイアウトで rustc に依存クレートごとの -L dependency= が付き、コマンドラインが Windows の
-# 上限（32767 文字）を超える。cargo は引数ファイル（@file）に逃がすが、sccache はそれを展開して os error 206 で落ちる。
-# しかもブランチの run からも保存して 10GB の上限を食う
+# sccache は以下の理由により使用しない:
+# 1. 外部依存の成果物は rust-cache（target ディレクトリ）で十分に保持される。
+# 2. Clippy は clippy-driver 経由で呼び出されるため sccache でキャッシュできない（multiple input files 制約）。
+# 3. Rust 1.100 以降のビルドレイアウトにおいて、依存クレートごとの -L 指定により Windows のコマンドライン長上限
+#    （32,767 文字）を超過する。Cargo は引数ファイル（@file）で回避するが、sccache が展開して os error 206 で異常終了する。
+# 4. ブランチ実行からも保存が行われ、GitHub Actions のキャッシュ容量上限（10GB）を圧迫する。
 
 jobs:
   fmt:
@@ -32,11 +33,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
+        # コードフォーマットの検証
       - run: cargo fmt --all --check
 
-  # clippy は PR と main の push だけ（ブランチの push ごとには走らせない）
+  # Clippy による静的解析。PR 作成・更新時および main への push 時のみ実行
   clippy:
-    # draft の PR では走らせない（ready_for_review で走る）
+    # ドラフト状態の PR では実行をスキップ（ready_for_review 時に自動実行）
     if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || github.ref == 'refs/heads/main'
     runs-on: windows-latest
     steps:
@@ -46,7 +48,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          # ブランチは main のキャッシュを読むだけ（ブランチごとに 1GB 超を保存すると 10GB の上限で main のが追い出される）
+          # キャッシュ保存は main に限定（ブランチごとに大容量キャッシュを保存すると容量上限で main のキャッシュが破棄されるため）
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -54,16 +56,15 @@ jobs:
     if: github.event_name != 'pull_request'
     runs-on: windows-latest
     env:
-      # デバッグ情報（PDB）の生成とリンクがテストバイナリの数だけ効いて重いので切る。panic の位置は出る
+      # テストバイナリごとのデバッグシンボル（PDB）生成とリンク負荷を抑制するため無効化（パニック箇所の行番号は保持される）
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          # v0 はキャンセルされた run が途中までの target を保存し、以後キーが完全一致して上書きされず外部クレートを毎回ビルドしていた
+          # キャッシュキーのプレフィックス（不完全なビルド成果物とのキー衝突を防止）
           prefix-key: v1-rust
-          # cache-on-failure は付けない。キャンセルされた run でも保存され、途中までの target がキャッシュになる。
-          # テストが落ちた run も保存しないので、キーが変わった直後は main が通るまでフルビルドになる
+          # 途中キャンセルやテスト失敗時の不完全な target 保存を防ぐため、正常終了した main のみキャッシュを保存
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --no-fail-fast
