@@ -2,102 +2,130 @@
 
 層: 4 UI
 
-パネルを GPUI の非表示ウィンドウで描き、ポインタイベントをマウス入力へ変換する。1 つのフレームループ・カーネルで回し、描画結果を `kernel::rendering` 経由でパネルへ返す。画面（アプリ）の種類は知らない。どのパネルにも付くシステムの部品（ナビゲーションバー・仮想キーボード `ui::keyboard`・プロファイラパネル）と、設定画面とセットアップウィザードが共有する設定の部品（`ui::prefs`。下の「設定の部品」）だけは UI 層が持つ
+GPUI の非表示（オフスクリーン）ウィンドウを用いてパネルを描画し、VR コントローラのレーザーポインタイベントを OS / GPUI のマウス・タッチ入力へ変換して配送する。
+
+UI 層は特定の画面の個別実装を知らない。全画面で共有されるナビゲーションバー、仮想キーボード、プロファイラパネル、および共通設定コンポーネント（`ui::prefs`）の提供を担当する。
 
 ## 主な公開 API
 
-`run(kernel, panels, profiler)` / `run_with`（テスト用の `Hooks`）, `PanelControl::batteries` / `PanelControl::media`（毎フレーム書く）, `PanelSpec::{new, spawn, child, popover, offset, typing, docked_to, dockable, fit_height, without_resize, reach, pointer_mode, titled, titled_text, without_nav_bar, with_os_keyboard, with_veil, nav_bar_spec, size(kernel)}`, 画面をはめる場所 `offer_dock`（ダッシュボードが開くと置く。`PanelControl::dock` とオーバーレイの `PanelCommand::DockSlot`）と `dock` / `undock` / `docked`（はめると持ち主に `Parent { docked, slot }` で固定し、はまっていた画面は閉じる。`dockable` のパネルはナビゲーションバーの「…」（`nav-more`）のポップオーバーに外す `nav-undock` / 戻す `nav-dock` を出し、掴んで引っこ抜く・近づけて離してはめることもできる（`PanelCommand::Dockable`。動きは `../overlay/AGENT.md` の「はめた画面を引っこ抜く・はめる」）。手で外した・はめたものは `sync_panel` が `Kernel::take_dock_changes` から `docked` に写し、はめる場所の持ち主と画面のナビゲーションバーを描き直させる。仮想キーボードは、はめた画面へ打つものも含め、対象パネルの下ではなく開いた瞬間の頭の前の打ちやすい位置に出す。頭（と手）から決めるのは高さと仰ぐ角度だけで、左右の向きと位置は呼び出し元に合わせる（呼び出し元の面と同じ向きで、ホームポジション（F と J の間）を呼び出し元の中心の左右に合わせる。頭の回転に付いて行かない）。立っている間の高さはコントローラ（両手なら間）の少し上（手を動かさず手首を起こすだけで指せる。上端は目線より下、下は見える所まで）、面は目を重く見つつ手の方へも少し向ける（コントローラが無ければ目と手の間へ）。寝ている間は手に合わせず、視界に入る頭の正面の下寄り（正面のパネルに重ならない所）に出して目へ向ける（傾きに応じて滑らかに移る）。どちらでも、頭から見て呼び出し元（ナビゲーションバー・はめた先のダッシュボードのバーも）の下端より少し下に見えるよう、必要な分だけ下げる（呼び出し元に重ねない）。掴むとホームポジションを中心に動かして頭へ向ける（`PanelSpec::grab_anchor`。大きさを変えると基準も付いて動く）。大きさは種類ごとの標準で、キーの大きさは種類によらずそろえ、フルサイズでホームポジションに向けた手首を手の甲の方（外）へ 22.5° 倒すと遠い方のキーの端に届く幅（手からキーボードまで 45cm とみる）の 3.75 倍（`keyboard::WRIST_TILT` / `HAND_DISTANCE` / `SIZE_SCALE`。実機で試して合わせた）に、設定の大きさ（`keyboard_scale`。既定は等倍）を掛ける（種類か大きさを替えると、出ているものもその標準の大きさになり、ホームポジションは空間で動かさない。`PanelCommand::MoveGrabAnchor`）。キーの隙間は種類の既定（`KeyAppearance::for_type`）に設定のキーの間隔（`key_gap`。既定は等倍）を掛ける。親子関係は作らず、呼び出し元を覚えておき、呼び出し元が閉じる・隠れるとキーボードも閉じる（`PanelSpec::typing`、`keyboard::panel_closed` / `panel_hidden`））（ナビゲーションバーは既定で付き、開く側が持ち主の直後に開く。ポインタのパネルには付かない）, `pump`, `sync_panel`（`PanelStatus` の `lod`・`pointed`・`dock_hint` だけが変わったときは、ほかのパネルを描き直させない）, `sync_settings`, `sync_tooltips`, `capture`, `open_panel_window`, `drag_preview`, `PointerBridge`, `PanelControl`, `PanelState::live`, `PanelState::{offset, size}`（取り付け先から見た姿勢と、等倍のつもりの大きさ。`sync_panel` が毎フレーム書き、変わっても描き直させない。wrist が離したときに覚える）, `PanelCommand`, `PanelStatus`, `MAX_PANELS`, 画面からの依頼 `command` / `commands` / `set` / `settings` / `notify` / `redraw`（下の「画面からの依頼」）, アプリの終了を確かめるダイアログ `quit_dialog(window, cx, open)` / `QuitDialog`（下の「アプリの終了」）
+### アプリケーション実行とイベントループ
 
-## ファイルの分け方（ルール）
+```rust
+// メインループの起動
+ui::run(kernel, panels, profiler);
+ui::run_with(kernel, panels, profiler, hooks); // テスト用フック付き
 
-**役割ごとに 1 ファイル**。`lib.rs` はモジュールの宣言・再エクスポートと、いくつものファイルが使う定数だけを持ち、中身を書かない。1 つのファイルだけが使う定数はそのファイルに置く。テストはそのファイルの子（`pointer/tests.rs` など。非公開の項目に触れる）に置き、共通の道具は `test_util.rs`。
+// フレーム更新と同期
+ui::pump(cx);
+ui::sync_panel(cx);
+ui::sync_settings(cx);
+ui::sync_tooltips(cx);
+ui::capture(window);
+```
 
-| ファイル | 中身 |
+### パネル仕様の定義（PanelSpec）
+
+パネルの属性や振る舞いを宣言的に定義するビルダー。
+
+- `new`, `spawn`, `child`, `popover`: パネルの種類および親子関係の指定。
+- `titled`, `titled_text`, `without_nav_bar`: ナビゲーションバーのタイトルおよび表示制御。
+- `dockable`, `docked_to`: ダッシュボードへのドッキング可否および初期ドッキング先。
+- `with_os_keyboard`, `typing`: 仮想キーボード連携の指定。
+- `with_veil`: 開いている間の空間暗転演出の付与。
+- `fit_height`, `without_resize`, `reach`: パネル寸法およびリサイズ制約の設定。
+
+### 画面側からの要求インターフェース
+
+画面クレートは `PanelControl` を直接操作せず、以下の共通ヘルパー関数を通じてカーネルや UI 層へ要求を発行する。
+
+- `ui::command(panel, command, cx)` / `ui::commands(panel, commands, cx)`: 指定パネルに対する操作コマンドの発行。
+- `ui::set(setting, cx)` / `ui::settings(cx)`: システム全体設定の変更および現在値の取得。
+- `ui::notify(panel, cx)`: タイマーや非同期処理によって自律的に変化したビューの再描画要求。
+- `ui::redraw(panel, cx)`: ビューの外部（`&mut App`）からの強制再描画要求。
+- `ui::quit_dialog(window, cx, build)`: アプリケーション終了確認ダイアログの表示。
+
+## ファイル構成と責務
+
+本クレートは役割ごとに 1 ファイルを割り当てる。`lib.rs` はモジュール宣言、再エクスポート、および共有定数のみを保持し、実装詳細は各モジュールへ委託する。
+
+| ファイル | 責務と実装内容 |
 |---|---|
-| `control.rs` | ビューとフレームループの受け渡し口（`PanelControl` / `PanelState`）と、画面が使う操作（`command(s)` / `set` / `settings` / `offer_dock` / `dock` / `notify` など）、手で外した・はめた画面の記録（`sync_docking`）、設定の反映（`sync_settings` / `lang` / `language`） |
-| `spec.rs` | 起動仕様（`PanelSpec`）と、それからパネルを開く `open_panel` |
-| `nav_bar.rs` | ナビゲーションバー（`NavBar`）と、中身を包む根（`PanelRoot`） |
-| `attach.rs` | ナビゲーションバーの「…」から開くポップオーバー（手に持つ・ダッシュボードから外す/戻す）と、手に持っている間のロック（下の「手に持つ」） |
-| `pointer.rs` | レーザーのイベントを GPUI の入力に変える（`PointerBridge`。タップ・スワイプ・長押し）と `dispatch_input`。レーザーが離れると `MouseExited` を送り、vendor/gpui はポインタをウィンドウの外へ置く（最後の位置を残すと、描き直すたびにその下の要素がホバーに戻り、中身が動く通知のカードで指していないカードが光っていた。`design/tests/button.rs`） |
-| `drag.rs` | ドラッグの見た目（`DragPreview`） |
-| `run.rs` | フレームループ（`run` / `pump` / ツールチップ） |
-| `profiler_panel.rs` | プロファイラのパネル |
-| `quit.rs` | アプリの終了を確かめるダイアログ（`QuitDialog`） |
-| `notification.rs` | OS の通知の部品（トーストと通知センター（クイック設定）で同じ見た目）: アイコンの読み込み（`Icons::of`。変換はアプリごとに一度）・`icon`・`title`・カード（`card(theme, prefix, n, image, detail, pressed)`。`<prefix>-<id>`、ボタンは `<prefix>-action-<id>-<番号>` と `Detail::extra`。本文は 2 行、広げると 6 行とボタン。通知センターだけが足すもの（広がり・届いた時刻・足すボタン）は `Detail`（トーストは既定）。広げる・たたむ動きは `Expanding`（ease-in-out の `Motion::Morph`。中身の高さを測っておき、測った高さの間を画素に揃えて伸び縮みする。ボタンは広がるにつれて現れる）。ボタンを並べている間はカードの色をホバー・押下で変えない（`Button::still`。中のボタンが紛れないように））・押したときの開き方（`open`。URL は `design::link::open` で確かめてから、ほかは `PanelCommand::Notification` でアプリへ）・トーストから通知センターを開く頼み（`Center` のグローバルと `show_center`。ダッシュボードが応え、一覧が `focus` を広げ、一覧を出しているパネルを `panel` に置く）・既読（`Read` のグローバルと `mark_read`・`is_read`。はまって出ている通知センターに並んだもの、`show_center` で開いたもの。トーストは未読だけを出し、バーの件数は未読の数） |
-| `swipe.rs` | 縦に並んだ項目（通知のカード）を左右にスワイプして片付ける（`Swipes`。トーストと通知センター）。マウスのドラッグ（8px 動かしてから）でもタッチの方式の横のスクロールでも付いてきて薄れ、離したときに幅の 3 割を超えていれば横へ抜け（スワイプせずに片付けるなら `dismiss(id, start)`。`start` に右へ抜け（`FLICK`。止まった所から動き出すので、離して抜けるのより長い ease-in-out）、それから畳む。時刻をずらせば順に抜ける）、高さを畳んで（`Look::height`。呼ぶ側が掛け、画素に揃える。端数で動くとほかの項目の文字だけが画素に吸い付いて震える。`COLLAPSE` は ease-in-out で、詰まりきる所で跳ねない）下を詰め、畳みきったら `take_gone` が一度だけ返す。動かしたら離した所を押したことにしない。受け口は描くたびに `listen` で置き直す（項目より後に描く所で） |
-| `keyboard` / `prefs` / `mirror` / `link` / `cue` / `panel_window` | 前からの部品（下の各節） |
+| `control.rs` | ビューとフレームループ間の通信仲介（`PanelControl` / `PanelState`）、各種コマンド発行 API、ドッキング状態の同期。 |
+| `spec.rs` | パネル起動仕様（`PanelSpec`）の定義、および仕様に基づくウィンドウ生成処理（`open_panel`）。 |
+| `nav_bar.rs` | パネル共通ナビゲーションバー（`NavBar`）と、パネルのルート構造（`PanelRoot`）の実装。 |
+| `attach.rs` | ナビゲーションバーの「…」メニューから開くポップオーバー（手首把持、ドッキング着脱）と追従ロック制御。 |
+| `pointer.rs` | レーザー光線の交差イベントを GPUI の入力イベントへ変換する `PointerBridge` の実装。 |
+| `drag.rs` | パネルや要素のドラッグ移動時における視覚的プレビュー（`DragPreview`）。 |
+| `run.rs` | フレームループの進行制御（`run` / `pump`）およびツールチップの表示調停。 |
+| `profiler_panel.rs` | パフォーマンス計測用プロファイラパネルの表示と更新。 |
+| `quit.rs` | 終了確認ダイアログ（`QuitDialog`）の実装。 |
+| `notification.rs` | OS 通知カードの描画、アプリアイコン取得、展開アニメーション、通知センター連携。 |
+| `swipe.rs` | 通知カード等のリスト項目における水平スワイプ消去アニメーション（`Swipes`）。 |
 
-## 手に持つ
+## ナビゲーションバーとパネル保持制御
 
-ナビゲーションバーは左にタイトル（左寄せ）、ボタンはすべて右に寄せ、右から閉じる（か、しまう）・配信元をしまう・OS キーボード・「…」（`nav-more`。どのバーにも出す）と並ぶ（あるものだけ）。「…」を押すとバーの上にポップオーバー（`NavMenu`。カードの右端をバーの帯の右端にそろえ、持ち主にめり込まないよう少し手前に浮かせる。バーと同じ密度で、バーと同じく頭からの距離に合わせて大きくする: `PanelSpec::over_nav_bar`）が開き、左手に持つ（`hand-left`）か右手に持つ（`hand-right`）を選ぶと持ち主をその手に持つ（`PanelCommand::AttachToHand`。置き方・大きすぎるときに縮めるのは `../overlay/AGENT.md` の `attach_to_hand`。ダッシュボードにはめた画面などの子は、外して独立させてから持つ）。持っている手には印が付き、持っていれば「手から外す」（`hand-detach`。その場に残す）も出る。`dockable` のパネルには、はまっていれば「ダッシュボードから外す」（`nav-undock`）、外れていてはめる場所が出ていれば「ダッシュボードに戻す」（`nav-dock`）も出る（開いたときの状態で決める）。選ぶとポップオーバーは閉じ、外側を押しても閉じる。
+すべての通常パネルには既定で上部にナビゲーションバー（`NavBar`）が付与される。
 
-手に持っている間は、ダッシュボードが出ている間（はめる場所 `PanelControl::dock` が出ている間）だけ掴んで置き場所・向き・大きさを変えられる。出ていなければロックし、掴んだままダッシュボードが消えると、ロックがその掴みを取り消して掴む前の置き場所・大きさへ戻す（wrist と同じ）。手から外れたらロックも外す。持ち主のナビゲーションバーが `PanelControl` の変わるたびに見て合わせる（`attach::hold`）。
+### バーの配置構成
 
-テスト: `attach::tests`、操作は `crates/testkit/tests/scenarios/hold_in_hand.rs`。
+左端にタイトル（左寄せ）を表示し、右側に操作ボタン群を右寄せで配置する。
 
-## 画面からの依頼
+1. 「…」詳細メニュー（`nav-more`、常時表示）
+2. OS 仮想キーボード呼び出しボタン（設定時のみ）
+3. 配信元最小化ボタン（ミラーリング時のみ）
+4. 閉じるボタン（または格納ボタン）
 
-画面は `PanelControl` の中身を自分で組み立てず、次の入口で頼む（フレームループが次のフレームで反映する）。画面ごとに同じ補助関数を書かない。
+### パネルの手首把持（手に持つ）
 
-- `ui::command(panel, PanelCommand, cx)` / `ui::commands(panel, [..], cx)`: パネルへの操作（積んだ順に反映）。
-- `ui::set(Setting, cx)` / `ui::settings(cx)`: 全体の設定の変更と、今の設定（無ければ既定）。
-- URL をブラウザで開くのは `design::link::open(url, window, cx)`（下の「リンクを開く」）。
-- `ui::notify(panel, cx)`: タイマーや非同期の結果で自分から変わったビューの `cx.notify()`。フレームループはビューの notify を知らないので、素の `cx.notify()` だけでは次の推測の描き直し（最長 1 秒）まで絵が変わらない。ビューの外（`&mut App`）からは `ui::redraw(panel, cx)`。
+「…」ボタンを押すと、バー上にポップオーバー（`NavMenu`）が展開される。
 
-## アプリの終了
+- **把持の選択**: 「左手に持つ（`hand-left`）」または「右手に持つ（`hand-right`）」を選択すると、パネルが指定した手のコントローラに追従する（`PanelCommand::AttachToHand`）。ドッキング中の画面は自動的に分離されてから追従する。
+- **把持中の編集ロック**: 手に持っている間は、ダッシュボードが表示されている間のみパネルを掴んで位置・向き・倍率を変更できる。ダッシュボードが非表示になるとロックが有効化され、掴み中の移動は取り消されて元の姿勢へ復帰する。
+- **解放操作**: 把持中のパネルのメニューには「手から外す（`hand-detach`）」が表示され、選択するとその場に空間固定される。
 
-アプリを終えるのは、確かめるダイアログ（`quit-dialog`。電源のアイコン・「アプリを終了しますか？」）で `quit-confirm` を押したときだけ（`PanelControl::quit`）。`quit-cancel` か外側を押すとダイアログだけ閉じる。開く側（ダッシュボードのメニュー・セットアップの一枚目）は `ui::quit_dialog(window, cx, |build| PanelSpec::..(.., build))` で開き方だけを決める（大きさは文に合わせ、ナビゲーションバーは付けない）。文言は i18n の `quit.*`。テスト: `quit::tests`。
+## 仮想キーボードの空間配置と動作
 
-## リンクを開く（検問所）
+仮想キーボード（`ui::keyboard`）は、対象パネルの下部ではなく、呼び出しが行われた瞬間のユーザー頭部前方の操作しやすい位置へ出現する。
 
-nyaw の中から URL を開く道は 1 本に絞り、検問所 `ui::link` を通す。公式のページ（リリースページ・リポジトリ）でも必ず確かめる。
+### 空間配置アルゴリズム
 
-- 入口は `design::link::open(url, window, cx)` だけ。部品（Markdown のリンク）も画面（更新・ライセンス・ソースコード）もこれで依頼する。依頼はウィンドウごとに積まれる。
-- `dispatch_input` が入力を配送した直後に `link::flush` で取り出し、依頼元のパネルの子としてダイアログ（`link-dialog`）を開く。タイトルは「このリンクをブラウザで開いてもいいですか？」、概要に URL を省かずそのまま出す。`link-open` で開いて閉じ、`link-cancel` か外側を押すと開かずに閉じる。
-- `http` / `https` 以外（`file:`・`ms-settings:` など、OS がファイルやアプリを開くもの）はダイアログも出さずに捨てる（警告のログ）。
-- `App::open_url` を呼んでよいのは検問所の出口 `link::open` だけ。ほかで呼ぶとルートの `clippy.toml`（`disallowed-methods`）で CI の clippy が落ちる。
-- テスト: `link::tests`（依頼はダイアログになりブラウザは開かない・ブラウザで開くものだけ通す・ダイアログは見せた URL だけを開く）、`design/tests/markdown.rs`（リンクを押すと依頼になる）。
+- **高さと角度の決定**: 立位時はコントローラ（両手ならその中間点）のわずかに上に配置され、手首を軽く起こすだけで打鍵可能な位置とする。視線より下端に収まり、目と手の双方へ適度に向くように仰角を調整する。臥位（寝ている状態）時は手に追従せず、視界正面の下寄りかつ正面パネルに重ならない位置へ出現する。
+- **左右位置と向き**: 呼び出し元パネルの平面向きと平行とし、ホームポジション（F キーと J キーの中間）が呼び出し元パネルの中心と揃うように配置する。
+- **スケールの基準**: ホームポジションに向けた手首を外側へ 22.5 度傾けた際に最端キーへ届く寸法を基準とし、設定値（`keyboard_scale`、`key_gap`）を乗算して最終サイズを決定する。
+- **ライフサイクル**: キーボードは呼び出し元パネルを記憶しており、呼び出し元が閉じられたり非表示化されたりした場合は連動して自動消去される。
 
-## 設定の部品（`ui::prefs`）
+## 外部リンクの検証制御（検問所）
 
-全体の設定（`Setting`）を選ぶ画面の一部。設定画面とセットアップウィザードの両方が同じものを出す（画面どうしは直接依存しないので、共有する部品は UI 層に置く）。今の設定（`PanelControl::settings`）を見せ、選ぶとすぐ `PanelControl::setting_changes` に積む。地（`background`）の上に置く前提。開閉などの小さな状態（`Appearance` / `WatchFaces`。どちらも `Copy`）は呼び出し側が持ち、変えるときは `set` で受け取る（ビューの型を問わない）。
+アプリケーション内から外部 URL をブラウザで開く処理は、セキュリティ確保のため単一の検問所（`ui::link`）を経由する。
 
-- **`prefs::appearance(panel, state, set, window, cx)`**: 外観。上からテーマの見本（`theme-preview`）、テーマ（`setting-theme`）、パーソナルカラー（履歴の見本 `accent-<名前>` を左右中央に並べ、右端のプラス `accent-custom`）。プラスを押すと、色を作るダイアログ `prefs::ColorDialog` を `panel` の子として開く（開いている間、元の画面は暗くなって入力を受けない）。ダイアログはスライダーと見本を出し、`color-ok` で `Setting::CustomColor`（パーソナルカラーにして履歴の先頭に覚える）、`color-cancel` か外側を押すと何も変えずに閉じる。決めるまで、ほかの画面の色は変えない。
-- **`prefs::watch_faces(state, set, window, cx)`**: wrist の文字盤。上から種類の絞り込み（`watch-kind`: すべて / スタンダード / デジタル / アナログ）、弧に並ぶ見本（`watch-faces`。`design::components::carousel` + `arc`。押したまま左右に動かすか、左右のキャレット `watch-prev` / `watch-next` で回す。端はつながる）、中央のデザインの名前、`watch-set`（押すとそのデザインにする。使っているデザインでは押せない見た目で「設定中」）。回すだけでは設定は変わらない。使っているデザインの見本は、塗りの色の輪で囲む。
-- **`prefs::accessibility(window, cx)`**: アクセシビリティ。上に文字の見本（高さの決まった箱 `a11y-preview` の中に `a11y-sample`: アイコンの付いた見出し・本文・補足）、下に対等な 3 つの行: 文字の大きさ（`setting-text-size`。スライダー `setting-text-size-slider`）、UI スケール（`setting-ui-scale`。`setting-ui-scale-slider`）、太字（`setting-bold-text`。スイッチ）。倍率は 10% の刻みに吸い付き、今の値を行に % で出す。文字の大きさは動かしている間もすぐ効く（見本の箱の高さは決まっていて、スライダーは行の右端にあるので、文字が変わっても手元のスライダーは動かない）。UI スケールは決めるとパネルそのものが大きくなってレーザーの下で動いてしまうので、動かしている間は見本だけを決めた後の大きさに拡大・縮小して見せ、離したときに決める（`Slider::on_release`）。動かしている途中の値はこの部品が持つので、呼び出し側に状態は要らない。
-- **`prefs::keyboard_preview(&keys, cx)`**: キーボードの見本。高さの決まった箱 `keyboard-preview` の中央に、今の設定の種類・OS の配列の仮想キーボード（`virtual-keyboard`）を、召喚したキーボードと同じ地（カードと四方の余白。`keyboard-preview-card`。閉じるボタンとその段は無い）に載せて見せる。縮尺は決め打ちにせず、置かれた場所を測って収まるいちばん大きい倍率（実寸まで）にする（`keyboard::preview(&keys, cx)`。箱に限らず、渡された場所に合わせる。地の余白と角丸も同じ倍率）。種類を替えても、画面の幅が変わっても、箱と下の行の幅からはみ出さない（設定画面では、フルサイズは幅いっぱい、ほかの種類は高さいっぱい）。箱の高さは決まっているので、種類を替えても下の項目は動かない。キーは押せて、キーの音の設定（`key_sound` / `key_sound_volume`）どおりに鳴るが、打った文字はどこにも送らないダミー（`KeyboardView::preview`: `preview` = 送らない・繰り返さない・OS の配列が取れていなくても押せる。`unit` = キー 1u の大きさは `keyboard::preview` が毎回決める。隙間・角丸・文字も比例する）。見せるキーボードは `prefs::new_keyboard_preview(panel, cx)` で作って呼び出し側が持つ（配列は裏のスレッドで読むので、作り直さず持ち続ける）。下に並べる項目（種類 `setting-keyboard`・キーの入力音 `setting-key-sound`・その音量 `setting-key-volume`）は画面の側が置く。
-- **文字盤の見本**: 描き方は wrist が GPUI のグローバル `prefs::FacePreview` に置く（`Wrist::new`）。置かれていなければ地の丸だけになる（wrist を載せないテスト）。
-- テスト: `prefs::tests`、操作は `crates/testkit/tests/scenarios/prefs.rs`（キーボードの見本の音の大きさは `crates/testkit/tests/audio.rs`）、見た目は `look`（`look-*.bmp` / `look-watch-*.bmp` / `look-keyboard-*.bmp` / `look-color-*.bmp`）。
+1. **要求の発行**: すべてのリンク起動は `design::link::open(url, window, cx)` を経由してウィンドウごとに蓄積される。
+2. **確認ダイアログの表示**: 入力配送直後に `link::flush` が要求を取り出し、呼び出し元パネルの子ダイアログ（`link-dialog`）として確認画面を表示する。ダイアログ上には省略なしの完全な URL が明示される。
+3. **スキームの検証**: `http://` および `https://` 以外のスキーム（`file:` や `ms-settings:` など）は危険な操作とみなし、ダイアログを表示せずに遮断して警告ログを出力する。
+4. **呼び出し制限**: `App::open_url` の直接呼び出しは `clippy.toml` で禁止されており、検問所の正規出口以外からの呼び出しはビルド時にエラーとなる。
 
-## ポインタの方式
+## 共通設定コンポーネント（ui::prefs / 設定の部品）
 
-ポインタの方式（`kernel::PointerMode`。カーネルが持ち、`config.toml` の `pointer_mode` が初期値、`Setting::PointerMode` で切り替え、`Settings::pointer_mode`（UI では `PanelControl::settings`）で見える。全パネル共通。ただしパネルごとに `PanelSpec::pointer_mode`（`PanelCommand::PointerMode`、`Kernel::panel_pointer_mode`）で決められ、仮想キーボードは押した瞬間に押し、手ブレでスワイプにならないようマウス。キーは見た目ではなく隙間まで含めた升目（`Keycap::regions`）で押す）:
-- タッチ（既定）: 押したまま頭から見て `ui::SWIPE_SLOP_DEG`（1°。パネルの距離と密度から毎フレーム px に直す。下限 `ui::SWIPE_SLOP` = 12px）より動かすとスワイプ（GPUI にはピクセル単位の `ScrollWheel`、宛先は押した所。
-  離すと慣性で滑る: `PointerBridge::momentum` をフレームごとに流す）、動かさずに離すとタップ
-  （その時点で押して離す）、動かさずに `ui::LONG_PRESS`（400ms）押し続けるとマウスの押下（そのまま動かせば `on_drag` のドラッグ＆ドロップ）。
-  押下はどれと決まるまで送らないので、押している間の見た目は長押しまで効かない。方式は押した瞬間に決まり、離すまで変わらない。
-- マウス: 押したまま動かすとドラッグ。
-- どちらの方式でも、トリガーを押している間は押したパネルの面を指し続ける（オーバーレイ層のポインタのキャプチャ）。
-  スライド・ドラッグがパネルからはみ出しても離すまで続き、離したフレームの Up もそのパネルに届く。
-- testkit のキット は操作のシナリオをマウスで書く（設定でマウスを明示）。タッチは `pointer_mode.rs` で確かめる。
+設定画面とセットアップウィザードで共通利用される UI パーツ群。
 
-未対応: GPUI 標準の `.tooltip()`（遅延タイマー。代わりに `design` の `Button::tooltip` / `components::hover_tooltip` で置き、`ui::sync_tooltips` が手に振り分けて beam が描く。全体の設定 `tooltips` がオフなら振り分けない）、右クリック・ダブルクリック（レーザーは左ボタン1回押しのみ）、文字・画像の見た目（testkit のラスタライザは矩形・角丸・枠線・下線を描く）。
+- **外観設定 (`prefs::appearance`)**: テーマのプレビュー、テーマ選択、およびアクセントカラーのパレット。カラー作成ダイアログ（`prefs::ColorDialog`）の表示とカスタムカラー追加を内包する。
+- **文字盤設定 (`prefs::watch_faces`)**: 腕時計パネルの文字盤カルーセル。種類別絞り込みとデザイン選択を提供する。
+- **アクセシビリティ設定 (`prefs::accessibility`)**: テキストサイズ（`setting-text-size`）、UI スケール（`setting-ui-scale`）、太字切り替え（`setting-bold-text`）のスライダーおよびプレビュー表示。
+- **キーボード見本 (`prefs::keyboard_preview`)**: 現在の配列とスケールを反映した仮想キーボードの打鍵可能なプレビュー表示。
 
-## テスト・ベンチマーク
+## ポインタ入力変換方式（PointerMode）
 
-- **見た目の書き出し**: `crates/ui/tests/gpu/look.rs`（`cargo test -p ui --test gpu -- --ignored look`）。設定画面の「外観」「時計」（`look-watch-*.bmp`）「キーボード」（`look-keyboard-*.bmp`）・色を作るダイアログ（`look-color-*.bmp`）・wrist の文字盤の見本（全デザイン。`look-faces-*.bmp`）・セットアップウィザードの各画面（`look-setup-*.bmp`。ライトのものは日本語）をテーマとパーソナルカラーを替えながら実 GPU で描き、`target/tmp/look-*.bmp` に書き出す（塗りが選んだ色で描かれていることだけ検査する）。設定画面は本番と同じに `PanelRoot` に載せる（載せないとパネルの影の余白が付かず、中身が本番より広く描かれる）。 通知のトースト（視界の端・手首・手首でホバー）は `look_toast.rs`（同じ絞り込みで流れ、`look-toast-*.bmp`）。
-- **アクセシビリティの見た目**: `crates/ui/tests/gpu/a11y.rs`（`cargo test -p ui --test gpu -- --ignored a11y`）。文字の大きさ（80% / 100% / 150%）と太字化を替えながら、設定画面の各カテゴリ・色を作るダイアログ・文字盤の見本・仮想キーボード・Testing・ダッシュボード（バー・クイック設定・ランチャー）を実 GPU で描き、`target/tmp/look-a11y-<状態>-<画面>.bmp` に書き出す。検査するのは、倍率・太字化で文字のインクが増えること（等幅も）、`.text_exact()` の文字盤が 1 画素も変わらないこと。操作は `crates/testkit/tests/scenarios/prefs.rs`（`accessibility_*` / `ui_scale_*`）。
-- **ストレステスト（ベンチマーク）**: `crates/ui/tests/gpu/stress.rs`（`harness = false`。常には流さない: `cargo test -p ui --test gpu -- --ignored stress`）。
-  本番と同じ `ui::run_with` に novr のエミュレーター（ウィンドウは出さないが毎フレーム合成する）と GPUI 8 枚・ビームを載せ、
-  マウスで掃く・押したままのスワイプ・パネルの召喚と破棄の繰り返し・目の前のパネルの局面ごとに、FPS・ドロップ率と
-  レンダラー（`compositor`）・オーバーレイ（`overlay`）・UI（`input` / `draw` / `render` / `upload`）の平均と p95 を出す。
-  最初と最後のアイドルの差で時間とともに重くなるか、召喚の局面の最大フレーム時間で召喚の引っ掛かりを見る。
-  10 枚を重ねて出す物量の局面（`volume`）もある。
-  1 フレームごとの CSV と集計は `target/tmp/stress.{csv,txt}`。`NYAW_STRESS_SCALE` で局面の長さ、
-  `NYAW_STRESS_WINDOW=1` で本番と同じくウィンドウを出して GPU で合成する、`NYAW_STRESS_PROFILER=1` でプロファイラの窓も載せる。
-- **長押しの輪**: `crates/ui/tests/gpu/novr_cursor.rs`（`harness = false`、`-- --ignored`）。タッチで押したまま、カーソルの輪が満ちていくのをエミュレーターの画面で見る。
-- **novr のキー入力**: `crates/ui/tests/gpu/novr_keys.rs`（`harness = false`、`-- --ignored`。Windows のみ）。本番と同じ窓付きのエミュレーターに X キーの押下を投げ、二回押しがすべてカーネルに届くことを確かめる（GPUI のメッセージループが、同じスレッドにいるエミュレーターの窓宛ての `WM_KEYDOWN` を捨てていた。`vendor/gpui_windows` の `translate_accelerator`）。
-- **スワイプバック（本番のフレームループ）**: `crates/ui/tests/gpu/nav_swipe.rs`（`harness = false`、`-- --ignored`）。NavTest に画面を積み、タッチのまま右から左へ動かす・長押ししてから動かすの両方で戻ることを確かめる。手ブレ抑えが効いた VR のレーザーでの確認は `testkit/tests/scenarios/navigation.rs`。
-- **実 GPU での読み戻し**: `crates/ui/tests/gpu/gpu_capture.rs`（`harness = false`、本番と同じプラットフォームで非表示ウィンドウを描いて読み戻す。Windows のみ）。
-- **ゆるい追従**: `PanelSpec::lazy_follow(kernel::LazyFollow)` で、パネルを頭の向き（左右だけ）と歩きにゆるく追従させる（どのパネルでも使える。仕組みは `../overlay/AGENT.md`）。
-- **ロックダウン**: `PanelSpec::lockdown()` で、開いた時点から `PanelCommand::Lockdown` を取る（放すのはビュー。仕組みは `../kernel/AGENT.md`）。
+レーザーの衝突情報から GPUI への入力イベントを生成する方式には、タッチとマウスの 2 系統が存在する。
+
+- **タッチ方式（既定）**:
+  - レーザーを押したまま一定角度（`ui::SWIPE_SLOP_DEG`、約 1 度）以上動かした場合はスワイプ（スクロールホイールイベント）として扱う。
+  - 動かさずに短時間で離した場合はタップ（クリック）となる。
+  - 動かさずに 400ms（`ui::LONG_PRESS`）押し続けた段階でマウス押下と判定され、その後の移動でドラッグ＆ドロップへ移行する。
+- **マウス方式**:
+  - トリガー押下と同時にマウスボタン押下を発行し、移動時は即座にドラッグとして扱う。仮想キーボードなど即応性が求められる場面で使用される。
+- **ポインタキャプチャ**: どちらの方式であっても、トリガーを押下している間は最初に衝突したパネルに対する操作権が維持され、パネル外へレーザーが外れてもドラッグや解放イベントは対象パネルへ配送される。
+
+## テストと検証手法
+
+- **実 GPU 描画検証 (look)**: `cargo test -p ui --test gpu -- --ignored look` を実行し、テーマやアクセントカラーごとの描画結果を画像ファイル（`target/tmp/look-*.bmp`）に出力して検証する。
+- **アクセシビリティ検証 (a11y)**: `cargo test -p ui --test gpu -- --ignored a11y` を実行し、各スケール設定下におけるフォント描画の整合性を検査する。
+- **負荷ストレステスト (stress)**: `cargo test -p ui --test gpu -- --ignored stress` を実行し、多数のパネルやアニメーション動作時における FPS、フレーム落ち率、各処理フェーズの平均および p95 処理時間を計測する。

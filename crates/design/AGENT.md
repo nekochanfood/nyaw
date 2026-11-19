@@ -1,58 +1,79 @@
 # crates/design
 
-層: 4 UI（横断部品）
+層: 4 UI（横断デザイン部品）
 
-UI の見た目の責務。Radix Colors のエイリアスに倣う 3 層。Constants（`scale::{light,dark}::GRAY_1..12` / `BLUE_*` / `RED_*`、`scale::{WHITE,BLACK}`、`radius` / `spacing` / `font_size` / `letter_spacing` / `duration_ms`。段ごとに用途が決まった 12 段の生の値）→ Utilities（`Theme`。`accent` → `blue` のスケールの別名と段の用途名 `accent_solid` など、テーマで指す先が変わる `background`（パネルの地）/ `card` / `control`（ボタンの既定）/ `groove`（スライダーの空き）/ `track` / `on_accent` など。`Mode::{Dark, Light}` と `Theme::of`。部品は役割だけを見る）→ Components（`button` / `switch` / `slider` / `panel` + `card`（カード複数）/ `card_panel`（カード 1 枚）/ `navigation`（画面の積み重ね。右から入る push 遷移と、押したまま右から左へ動かすスワイプバック。タッチ・マウスとも。中の要素が止めた入力は奪わず、縦の一覧は `restrict_scroll_to_axis()` を付ける。`without_swipe_back()` でスワイプバックを切れる）/ `dialog`（子パネルの中身: アイコン・タイトル・概要・ボタン）/ `nav_bar`（パネルの下に付くナビゲーションバー: 左にタイトル（左寄せ）、ボタンはすべて右に寄せ、右端に閉じるボタン `nav-close`。持ち主のパネル（かバー）を指していない間は丸い線に縮み、指すと広がる。線がしばらくして薄れて消えるのは `overlay` の仕事）/ `list` + `list_item`（カード色の行を区切り線で並べる一覧）/ `menu_item`（`>` の無い行。メニュー用）/ `tile`（地に直接並べる押せるカード。グリッド用。中身は呼び出し側が足す。`Button` は `ParentElement` なので中身を足せる）/ `select` + `select_option` + `switch_item`（オン / オフの行: `menu_item` の右に `switch`（`{id}-switch`）。押したときの処理は呼び出し側）, `select_popover`（複数から 1 つ選ぶ行: 右に今の値と `caret-up-down`。押すと行の右下に右端を揃えたポップオーバーに選択肢が並び、選んでいる行にチェック。外を押すと背面の透明な板が受けて閉じる）/ `dropdown` + `dropdown_popover`（行の中ではなく単独で置く、複数から 1 つ選ぶボタン: 今の値と `caret-up-down`。選択肢は `select_popover` と同じカードを、ボタンの下に左右中央を揃えて出す。`up` なら、画面の下の隅に置いたボタン用に、上に左端を揃えて出す）/ `disabled_button`（押せないボタン: 今その状態であること（「設定中」など）を、枠だけのカプセルとチェックの印で示す。色が変わらず、波紋も音も出ない）/ `group`（小さな見出しの下に中身。設定の項目をまとめる）/ `carousel` + `arc`（下の「カルーセル」）/ `sidebar` + `sidebar_item`（サイドバーの行。地は `sidebar`（GNOME 風のツートーン）で、背景が無く、選んでいる行だけ文字が `neutral-text` になる。ほかは `neutral-text-low`。左端のアクセント色の印は行ごとに `sidebar` が描き、選ぶ行が変わると前の印は中央へ縮んで消え、同時に新しい印が中央から伸びて出る（印は行の丸い背景の内側に `SIDEBAR_INDICATOR_INSET` 空けて置く。消えるのは `Motion::Hop`（ease-out）、出るのは `Motion::HopIn`（ease-in-out）。どちらも 300ms。上下の伸び縮みと 1:1 の点の拡大縮小をつなぎ、幅より低く潰れない））/ `wizard`（順番に操作させる画面。状態 `Wizard`（`new(len)` / `next` / `back` / `is_first` / `is_last`。UI なし）と見た目 `wizard_welcome`（アイコンやロゴ・タイトル・説明を画面の上下左右中央に置く。ボタンは `wizard_step` と同じ下の帯: 右に先へ進む操作、左にそのほか（戻る・言語の選択など）。タイトル・説明は空なら出さない。完了画面にも）/ `wizard_step`（上下中央寄せの内容 + 下のフッターに左「戻る」・右「次へ」。内容は幅 `WIZARD_CONTENT`（704）までの列で、横長のパネルでは左右中央に置く）。縁の余白は全画面共通の `WIZARD_MARGIN`。画面は中身だけなので、`wizard_panel`（地 `background` のパネル。設定画面の中身の側と同じ色なので、カードや一覧をそのまま並べられる。中の `navigation` の四角い地をパネルの角丸で切る `clip_rounded` 付き）と `navigation`（右から入る遷移）で包む。ボタンはアイコン付きボタン（`content_button` + 文字 + caret）で、文字の側の余白は文字のボタンと同じ（32）、矢印の側は 24、最小の幅を持ち、端は正円のカプセル（`circular_corners`）。`wizard_next` はポジティブな操作なので青（`Variant::Primary`）、`wizard_back` は地に直接置く無彩色（`Variant::OnBackground`））/ `surface`）。値は `tokens.json`（色は Radix Colors を OKLCH にしたもの）が唯一の情報源で、build.rs が `palette` クレートで sRGB にしてコードを作り、役割の組が WCAG のコントラスト比を満たさなければビルドを落とす
+ユーザーインターフェースの視覚的仕様、デザイントークン、共通 UI コンポーネント、およびテーマ管理を担当する。
 
-## 主な公開 API
+## デザインシステムの 3 層構造
 
-`icon(&icons::HEART).weight(Weight::Fill).size(..).color(..).rotate(..)`（Phosphor を path で描く。色は `Background` なのでグラデーションでアイコンの形に抜ける。6 ウェイト全対応。**ソースで使われているアイコン・ウェイトだけ**を build.rs が埋め込む。データは `icons/*.tsv`、更新は `icons/vendor.mjs`）, `Theme::{DARK, LIGHT, of, current, set_mode, fading, map, zip}`（`set_mode` でテーマを切り替えると、`Motion` があれば `current` が全役割を前の色から `duration_ms::SLOW` かけて OKLab で補間する。その間 `fading` が真で、`ui` のフレームループは全パネルを描き直す）, `Mode`, `logo(Logo::{Full, Mini}).height(..)`（nyaw のロゴ。今のテーマに合う SVG を `assets/logos/` から埋め込み、裏のスレッドで描く。`.mode(..)` で固定。exe のアイコンは別で `assets/icons/*.ico` をルートの `build.rs` が埋め込み、ウィンドウ側は `vendor/gpui_windows` の `load_icon` がアプリのテーマを見て ID 1（ライト）/ 2（ダーク）を選ぶ。Explorer のファイルアイコンはテーマで切り替わらない）, `logo(Logo::{Full, Mini}).height(..)`（nyaw のロゴ。今のテーマに合う SVG を `assets/logos/` から埋め込み、裏のスレッドで描く。`.mode(..)` で固定。exe のアイコンは別で `assets/icons/*.ico` をルートの `build.rs` が埋め込み、ウィンドウ側は `vendor/gpui_windows` の `load_icon` がアプリのテーマを見て ID 1（ライト）/ 2（ダーク）を選ぶ。Explorer のファイルアイコンはテーマで切り替わらない）, `components::{button, icon_button, round_button, switch, slider, panel, card, card_panel, dialog, PANEL_MARGIN, surface, tooltip, Tooltips, hover_tooltip, Variant}`（`Variant::{Default, Primary, Danger, OnBackground, Ghost}`。既定は無彩色。`Ghost` は背景の無いボタン）, `content_button`（中身を足す横長のボタン）, `progress_ring`（線の円の進み具合。上から時計回り）, `markdown(theme, id, source, window, cx)`（Markdown を読める形で縦に並べる。リリースノート用。GitHub の書き方（表・打ち消し線・チェックリスト・裸の URL のリンク）まで。解析は pulldown-cmark、HTML は描かない。リンクは押すと `link::open` でブラウザで開く依頼をする（開く前に UI 層が確かめる）。ブロックの `debug_selector` は `{id}-{添字}`。`id` ごとのビュー（`use_keyed_state`）で解析した結果と描いた絵を覚え、`source`・テーマ・置き場所が変わるまで gpui のビューのキャッシュ（`cached`）で使い回す。キャッシュは高さを先に決める必要があるので、最初は使い回さずに描いて中身の高さを測る。`refresh` はキャッシュを捨てるので、毎フレーム描き直すパネルでもフレームループは根（`PanelRoot`）だけ汚す。テストは `components::markdown::tests`（解析）と `tests/markdown.rs`（描いた並び・折り返し・リンク・使い回し））, `scale::*`, `drive::{now, advance, keep_drawing}`（動きの駆動: 時計と再描画の要求。部品は `Instant::now()` を直接読まない）, `link::{open, take}`（ブラウザで URL を開く依頼。部品・画面は URL を直接開かず `link::open` を呼ぶだけで、UI 層の検問所 `ui::link` が URL を見せて確かめてから開く。`App::open_url` の直接呼び出しはルートの `clippy.toml` が禁じる）, `cue::{Cue, emit, take, hover, begin_hover}`（効果音の要求。部品は種類 `Cue` を置くだけで音は知らない。同じ種類は 50ms 以内なら捨てる。音の割り当ては `ui::cue`）, `corner::{SUPERELLIPSE, ENABLED, install}`（UI 全域の角丸をスーパーエリプス k=1.2 にする。`ENABLED` で全域を切り替え、`ui::run` が `install` を呼ぶので呼び出し側は `.rounded(..)` だけでよい。個別に変えるのは `.corner_superellipse(k)`、オプトアウトは実装側で `.circular_corners()`（円の角丸。円であるべき丸ボタン・カプセルなど）。実装は vendor/gpui のシェーダー）, `components::{scrollbars, elastic, claim_scroll, Scroll}`（スクロールバーと端の引っ張り。`&ScrollHandle` のほか、見えている行だけを作る gpui の `list` の `&ListState` も渡せる。`list` は `elastic` で一覧ごと包む）, `catalog::Catalog`（デバッグ用カタログ。色の段・役割・定数・文字・アイコン・部品・動きを 1 画面で確認する。節を gpui の `list` に並べ、見えている節だけを作る。`cargo run -p design --example catalog`）。見た目の方針は `crates/design/GUIDELINES.md
+本クレートは Radix Colors の設計思想を参考にした 3 層構造を採用している。単一の情報源である `tokens.json` から `build.rs` がコードを自動生成し、WCAG のコントラスト比を満たさない色の組み合わせが存在する場合はビルド時にエラーとする。
 
-## 入れ子の押せるもの・出入りの動き
+```
+Constants（生の値） → Utilities（セマンティック定義） → Components（UI パーツ）
+```
 
-- **ホバーの音**（`cue::hover`）: 1 回のポインタの移動は内側の要素から順に届き、先に受けた内側のものが残る（外側の押せるカードで上書きしない。上書きすると、次の移動で中のボタンに入り直したことになって鳴り続ける）。
-- **中にボタンを置いたカード**は `Button::still`（ホバー・押下で地の色を変えず、波紋も出さない。色が変わると中のボタンが紛れる。押せることとホバーの音はそのまま）。
-- **`slide::Entering::without_idle_replay`**: しばらく（3 秒）描かれなくても出し直さない。出たまま描き直さないことがあるもの（通知のトースト）に。出し直しは `replay` か `begin` の `hidden` で知らせる。
-- **`slide::Entering::with_grow`**: 幅（高さ）の動きを入りも出も同じ `Motion` にする（既定は入りが `Grow`、出が `Shrink`）。通知のトーストは ease-in-out の `Morph`。
-## パーソナルカラー
+1. **Constants（トークン層）**:
+   - 12 段階の用途別カラースケール（`scale::{light, dark}::GRAY_1..12`、`BLUE_*`、`RED_*`、白黒）。
+   - 余白（`spacing`）、角丸（`radius`）、文字寸法（`font_size`）、字間（`letter_spacing`）、アニメーション時間（`duration_ms`）などの基本定数。
+2. **Utilities（テーマ層）**:
+   - 役割に応じたセマンティックカラー（`Theme`）。
+   - パネル地（`background`）、カード背景（`card`）、ボタン既定色（`control`）、スライダー空き領域（`groove`）、アクセント塗り（`accent_solid`）など。
+   - テーマ切り替え（`Mode::{Dark, Light}`）時は、`duration_ms::SLOW` をかけて OKLab 色空間で滑らかに補間遷移する。
+3. **Components（コンポーネント層）**:
+   - テーマ定義を利用して組み立てられた各種 UI パーツ。
 
-ユーザーが決める、アクセントの**塗り**の色（`Accent`。OKLCH の明るさ・鮮やかさ・色相）。広くは効かせない: 差し替えるのは `accent-solid`（プライマリボタン・スライダーの埋まった側・オンのスイッチ・サイドバーの印など）と、そのホバー・押下、上に載る `on-accent` の 4 つだけ。スケールのほかの段（色付きの背景・枠・文字・`focus-ring`）は tokens.json のまま。
+## 主な UI コンポーネント
 
-- **自由なのは塗りの色**。選んだ色は、どのテーマでもそのまま塗りになる（画面に出せない鮮やかさだけ落とす。`Accent::color`）。カードに紛れる色を選ぶのもユーザーの自由で、こちらでは補正しない。
-- **従うのは周りの色**（`fill(mode, accent)`）:
-  - 上に載る色（`on-accent`）は、塗り・ホバー・押下のどれの上でも 3:1 で読める方。白で読めれば白（既定と同じ）、読めなければ黒。
-  - ホバー・押下は、既定の塗りと同じコントラスト比だけ暗くする（黒に近い塗りでは、同じ比だけ明るくする）。黒が載るときは黒が読める明るさより暗くせず、押下がスクロールバーのつまみ（`track`）と同じ明るさになるなら避ける。
-- `Theme::with(mode, accent)` がその 4 つを差し替えたテーマ。今の色は GPUI のグローバル `Accent`（`Theme::set_accent`。テーマと同じく今の色から移り変わる）で、`Theme::current(cx)` が反映する。既定（`Accent::DEFAULT` = tokens.json の `accent-solid`）なら tokens.json のテーマそのもの。
-- 選ぶ画面に並ぶのは**履歴**（`Accent::history(今の色, 作った色)`）。自分で作った色（新しい順）の後ろを用意した色 `Accent::PRESETS`（名前は i18n の `color.<名前>`）で埋めたもので、作っていなければ用意した色そのもの。用意した色は「履歴の最初の中身」でしかなく、作るたびに後ろから落ちる（覚えるのは `kernel` の `color_history`）。
-- 選ぶ部品は `components::accent_row`（履歴の見本 `swatch` を左右中央に並べ、右端に自分で色を作るプラス `accent-custom`）。色を作るのは別の画面（ダイアログ。`ui::prefs::ColorDialog`）で、`components::accent_sliders`（色相・鮮やかさ・明るさのスライダー。上の帯は動かすとどう変わるか）と見本を出す。
-- 結果を見せるのは `components::theme_preview(theme)`（文字の無い絵: 地の上に重なった 2 枚の窓。手前の窓に、文字に見立てた線と塗りの色のボタン）。名前の無い色は `Accent::hex`（`#RRGGBB`）を説明に出す。
-- テスト: `accent::tests`（色相・鮮やかさ・明るさを一巡りして、上の色が読めること・状態が見分けられること）。実 GPU の絵は `cargo test -p ui --test gpu -- --ignored look`（`target/tmp/look-*.bmp`）。
+各コンポーネントは役割に基づいたテーマカラーのみを参照し、ハードコードされた色を持たない。
 
-## 選べるカード
+### 基本操作コンポーネント
 
-`components::choice(theme, id, selected, content)`: いくつかの中から 1 つ選ぶ箱（地の上に置く。`tile` と同じくカードの色で、ホバー・押下で沈む）。選んでいるものは塗りの色の枠で囲み、右上にチェックの印を出す（色の差だけに頼らない）。印は中身の上に重ねるので、中身（アイコン・名前）は `content` で渡す。セットアップウィザード（`../setup/AGENT.md`）の利き手の選択が使う。
+- **ボタン群 (`button`, `icon_button`, `round_button`, `content_button`)**: バリアント（`Variant::{Default, Primary, Danger, OnBackground, Ghost}`）に応じたスタイルを提供する。中にボタンを配置した親カード要素は `Button::still` を指定し、ホバーや押下による背景変色を抑制して子要素の視認性を保つ。
+- **選択・入力パーツ (`switch`, `slider`, `progress_ring`)**: オン/オフ切り替えスイッチ、連続値スライダー、および円形プログレスインジケーター。
+- **無効状態表示 (`disabled_button`)**: 設定中の状態を示すカプセル型枠線とチェックマークの表示。ホバー音や波紋演出は発生しない。
 
-## カルーセル
+### リスト・選択メニュー
 
-横に並ぶ項目を左右に滑らせて 1 つ選ぶ（端はつながって回る）。責務を 2 つに分ける。
+- **一覧行 (`list`, `list_item`, `menu_item`)**: カード色の行を境界線で区切って並べる一覧。
+- **ポップオーバー選択 (`select_popover`, `dropdown_popover`)**: 行末または独立ボタンから展開され、選択肢一覧をカード状にポップオーバー表示する。
+- **タイル (`tile`, `choice`)**: 地の上に配置する選択用カード。`choice` は選択時にアクセント色の枠線とチェックマークを表示する。
 
-- **`components::carousel(id, len, selected, shape, render, on_select)`**（`components/carousel.rs`）: どんな並べ方でも通用する部分。項目のループ（`offset`）、押したまま左右に動かす操作（タッチの指のスライドとマウスの両方）、離したときに収まる項目（近い項目。払っていればその先。`settle`）、選ぶ項目が外から変わったときに近い向きへ回る動き、中央でない項目を押すと中央に来ること。ここで始まった横の動きは外へ渡さない（`navigation` のスワイプバックと取り合わない。縦の動きは渡す）。選ぶ項目は呼び出し側が持つ。
-- **並べ方 `Shape`**: 中央から `d` 個ずれた項目（小数は動いている途中）の置き場所 `Place`（中心・一辺・不透明度）と、項目 1 つ分の指の動き `step`・高さ・描く範囲 `reach`。形に特化した計算はここにだけ書く。
-  - **`components::arc(diameter)`**（`components/carousel/arc.rs`）: 大きな円の弧に沿う並べ方。中央（弧の頂点）の項目の一辺が `diameter`。隣は弧に沿って下がり、薄くなり、弧の向きに傾く（大きさはどこでも同じ）（`Place::angle`。描くときに `Window::with_rotation` で回す）。その先は消えて見えない。wrist の文字盤を選ぶ画面（`ui::prefs::watch_faces`）が使う。
-- 別の形（一直線・カバーフローなど）が要るときは、`Shape::new` を返す関数を足す（`carousel` は変えない）。
-- テスト: `carousel::tests` / `carousel::arc::tests`（計算）、`tests/carousel.rs`（操作）。
+### レイアウト・ナビゲーション
 
-## 文字の大きさと太字化
+- **画面スタック (`navigation`)**: 画面の階層遷移を管理する。右からのプッシュアニメーション、および右から左へのスワイプバック操作を標準で備える。
+- **サイドバー (`sidebar`, `sidebar_item`)**: GNOME 風のツートーン背景と選択インジケーターを備えたサイドバー。選択項目の切り替え時は、インジケーターが縮小消去と伸長出現のアニメーション（`Motion::Hop` / `HopIn`）を伴って遷移する。
+- **ウィザード (`wizard`, `wizard_welcome`, `wizard_step`)**: 順を追って設定を進めるウィザード画面用のレイアウト基盤。
 
-アクセシビリティの設定（`kernel` の `text_scale` / `bold_text`）を、すべての文字に効かせる仕組み。**掛けるのは下の層**（vendor/gpui のテキストシステム）で、画面や部品のコードは今までどおり等倍の大きさ・太さ（`font_size::MD`、`FontWeight::NORMAL` など）を書くだけでよい。これから書くコードも、何も考えなくても効く。
+### 特殊表示コンポーネント
 
-- **入口**: `font::set_text(scale, bold, cx)`（`ui::sync_settings` が全体の設定から書く。変われば全ウィンドウを描き直す）。
-- **大きさ**: GPUI が文字を組む所（`WindowTextSystem::shape_line` / `shape_text` / `layout_line*`、折り返しの `TextSystem::line_wrapper`）が、渡された大きさに倍率を掛けて組む。要素として置いた文字も、`shape_line` を直接呼んで自前で組む・測る文字も、同じ所を通る。行の高さ（`TextStyle::line_height_in_pixels` と文字の要素）も同じ倍率で伸びる（相対でも `px` でも）。`window.text_style()` が返すのはコードに書いた値のまま。
-- **太さ**: 書体を決める所（`TextSystem::font_id`）が、`BOLD` より細い指定を `BOLD` にする。すでに太い字はそのまま（より太い書体は積んでいない。太字どうしの差を付けたくなったら、同じ配布物の ExtraBold を積んで対応を足す）。等幅など太さが 1 つの書体は OS が太らせる。
-- **アイコン・絵文字**: `icon(..)` と `emoji(..)` は文字と並ぶものなので、自分で同じ倍率に付いていく（`gpui::text_scale()`）。
-- **外す（オプトアウト）**: `.text_exact()` を付けた部分木は、大きさも太さもコードに書いたとおりに描く（中の `icon` も等倍）。絵の一部になっている文字だけに使う: wrist の文字盤、仮想キーボードのキーの文字、アプリの頭文字アイコン。
-- **文字に合わせた寸法**: 文字そのものには何も要らないが、「1 行の文字を入れる高さ」のように文字から作った箱は `font::scaled(長さ)` で倍率に合わせる（ダイアログの行、ツールチップの行、ダッシュボードのタイル）。高さを決めず中身に任せた箱（`h` を書かない）は何もしなくてよい。部品（ボタン・行・ナビゲーションバー）の高さは、いちばん大きい倍率の文字が収まるように決めてあるので変えない。
-- **文字の幅を測る**: `font::width(text, size, weight, window)`（既定の書体で 1 行に組んだ幅。倍率・太字化が掛かった、画面に出るとおりの幅）。`TextRun` を組んで `shape_line` を呼ぶ定型を画面や部品に書かない。
-- **状態の置き場所**: スレッドごと（GPUI は 1 つのスレッドで組んで描く。テストは 1 本ずつ別のスレッドなので互いに影響しない）。
-- **設定の部品**: 行の中にスライダーを置く `components::slider_item`（値の文字は名前の側、スライダーは右端。文字の大きさが変わっても動かしている最中のスライダーが動かない）、離したときに決める `Slider::on_release`。
-- テスト: `tests/text.rs`（要素の文字・自前で組んだ文字・アイコン・絵文字に効き、`.text_exact()` だけ従わない。倍率と太字化はどの組でも独立に効く）、`tests/dialog.rs`（高さが倍率に付いていく）。実 GPU の絵は `cargo test -p ui --test gpu -- --ignored a11y`（`target/tmp/look-a11y-*.bmp`）。
+- **Markdown 表示 (`markdown`)**: リリースノート等の表示用。pulldown-cmark による解析結果をキー付きキャッシュで保持し、不要な再解析・再レイアウトを抑制する。
+- **スーパーエリプス角丸 (`corner`)**: UI 全域の矩形角丸に対してスーパーエリプス（k=1.2）を既定で適用する。真円やカプセル型ボタンは `.circular_corners()` でオプトアウトする。
+- **Phosphor アイコン (`icon`)**: ベクターパスで描画されるアイコン。ソースコード内で実際に参照されているアイコンとウェイトのみを `build.rs` がバイナリに埋め込む。
+
+## パーソナルカラー機能
+
+ユーザーが任意に選択したアクセントカラー（`Accent`、OKLCH 色空間）を適用する仕組み。
+
+- **差し替えの限定範囲**: 配色破綻を防ぐため、影響範囲は `accent-solid`（プライマリボタン、スライダーの塗り等）、そのホバー・押下色、および上に載るテキスト色 `on-accent` の 4 箇所に限定する。
+- **コントラスト比の保証**: 塗りの上に載る `on-accent` は、塗り・ホバー・押下の全状態において 3:1 以上のコントラスト比を維持できるよう、白または黒が自動選択される。
+- **履歴とプリセット**: 選択 UI（`components::accent_row`）には、ユーザーが過去に作成したカスタムカラーの履歴（最新順）が表示され、空き枠は既定のプリセット色（`Accent::PRESETS`）で補完される。
+
+## カルーセルと幾何配置
+
+横並びの要素を滑らかに回転させて 1 つを選択するカルーセル UI（`components::carousel`）。
+
+- **ロジックと形状の分離**: 項目のループ処理、指やマウスによるスワイプ操作、停止位置の決定などの汎用ロジックと、空間配置を計算する形状定義（`Shape`）を分離している。
+- **円弧配置 (`components::arc`)**: 項目を大きな円の弧に沿って配置する実装。中央の項目が頂点となり、左右の項目は弧に沿って下降・傾斜しながら奥へフェードアウトする。腕時計パネルの文字盤選択画面で使用される。
+
+## テキストのアクセシビリティ対応（文字の大きさと太字化）
+
+システム設定（`text_scale` および `bold_text`）を全テキストへ一括反映する仕組み。
+
+- **下位層での一括適用**: GPUI のテキストレイアウト基盤（`WindowTextSystem`）において倍率の乗算とフォントウェイトの置換を行うため、個々のコンポーネント側で文字サイズを動的に計算する必要はない。
+- **アイコンと絵文字の追従**: インラインに並ぶアイコンや絵文字も、フォントスケーリングに合わせて同一倍率で拡大縮小される。
+- **変形の抑止 (`.text_exact()`)**: 腕時計パネルの文字盤や仮想キーボードのキートップなど、デザインの一部として寸法が固定されるべきテキスト要素に対しては、`.text_exact()` を付与することでスケーリングから除外する。
+
+## テスト手法
+
+- **単体・統合テスト**: テーマ補間計算（`accent::tests`）、テキストレイアウト（`tests/text.rs`）、カルーセル挙動（`tests/carousel.rs`）、Markdown 解析（`tests/markdown.rs`）を網羅する。
+- **実描画検証**: `cargo test -p ui --test gpu -- --ignored look` を通じて、各種テーマやパーソナルカラーを適用したコンポーネントの描画結果画像（`target/tmp/look-*.bmp`）を出力し、視覚的な整合性を確認する。

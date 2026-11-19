@@ -2,8 +2,24 @@
 
 層: 1 Subsystems
 
-再生中のメディア（音楽・動画）の情報と操作。Windows は GSMTC（`GlobalSystemMediaTransportControlsSessionManager`。アプリの名前とロゴは `AppInfo`）。ワーカーが 1 秒ごとに問い合わせ、ジャケットの縮小・背景用のぼかし・背景の明るさ（`light`）もワーカーで求める。メインスレッドは最新の結果を受け取るだけ
+OS 上で再生中のメディア（音楽・動画）に関するメタデータの取得および再生制御を担当する。
+
+Windows 環境では Global System Media Transport Controls (GSMTC) セッションマネージャーを使用する。
+
+## 非同期監視と画像処理
+
+- **バックグラウンド監視**: ワーカータスクが 1 秒間隔でメディアセッションをポーリングし、タイトル、アーティスト名、再生状態、再生位置、曲長を取得する。
+- **アートワークの前処理**: アルバムジャケット画像の縮小、UI 背景用のガウスぼかし処理、およびテーマ明暗判定用の平均輝度計算（`light`）をバックグラウンドスレッドで先行処理する。メインスレッドは計算済みの結果構造体を非同期に受け取る。
+- **再生制御 (`Command`)**: 再生、一時停止、曲送り、曲戻し、シーク位置変更のコマンドを非同期に OS へ発行する。
 
 ## 主な公開 API
 
-`Media::{start, now, send}`, `NowPlaying`（`position_now`）, `App`, `Controls`, `Command`, `Image`
+```rust
+Media::{
+    start,          // バックグラウンド監視ワーカーの起動
+    now,            // 現在の再生中メディア情報の取得
+    send,           // 再生制御コマンドの送信
+};
+NowPlaying;         // 再生中メディアのメタデータ構造体
+Command;            // 制御コマンド（Play, Pause, Next, Previous, Seek 等）
+```

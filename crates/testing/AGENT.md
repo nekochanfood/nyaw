@@ -2,39 +2,62 @@
 
 層: 5 画面
 
-UI 層の上に載る画面。GPUI のビューで、ランタイムを意識しない
+システム開発・検証および E2E テスト用の各種検証画面を提供する。GPUI のビューとして実装され、背後の VR ランタイムの種類を意識することなく全機能の動作確認が可能である。
 
 ## 主な公開 API
 
-`Testing`（テスト用の画面）, `TestingAnim`（毎フレーム変わる）, `TestingLod`（LOD を数字と色で表示）, `TestingScrollbar`（縦・横・縦横のスクロールバー）, `StressTest`（上限までパネルを出す・閉じる・ちりばめる・並べる）, `TooltipTest`（ツールチップ）, `SmoothingTest`（レーザーの手ブレ抑えの強さと線の長さをスライダーで調整）, `WizardTest`（ウィザード: ようこそ → 手順 2 つ → 完了。`wizard-next` / `wizard-back` / `wizard-restart` / `wizard-form`。`wizard-test` で開く。部品は `design::components::wizard_*`）, `LogoTest`（ロゴの Full / Mini と、16〜256 px のサイズ違いをライト用・ダーク用の地の上に並べる。`logo-test` で開く）, `SuperellipseTest`（角丸のスーパーエリプス。`superellipse-radius` で大きさ、`superellipse-k` で強さ k を動かし、`superellipse-preview` / `superellipse-outline` と固定 k の見本で見る。`superellipse-test` で開く。描画は vendor/gpui の `corner_superellipse(k)`、GPU テストは `ui/tests/gpu/superellipse.rs`）, `LogoTest`（ロゴの Full / Mini と、16〜256 px のサイズ違いをライト用・ダーク用の地の上に並べる。`logo-test` で開く）
+各機能の単体検証用画面構造体。
 
-## ファイルの分け方（ルール）
+```rust
+Testing;             // 各種検証機能を統合したメインテストパネル
+TestingAnim;         // 毎フレーム動的に変化するアニメーション検証
+TestingLod;          // 距離に応じた LOD 解像度・頻度の可視化
+TestingScrollbar;    // 縦・横・双方向スクロールバーの検証
+StressTest;          // 最大枚数パネルの生成・破棄・配置負荷テスト
+TooltipTest;         // ツールチップのオーバーフロー・追従検証
+SmoothingTest;       // レーザー手振れ補正係数の動的調整検証
+WizardTest;          // ウィザードコンポーネント（welcome, step, done）の検証
+LogoTest;            // 各種サイズ・テーマ下におけるロゴ描画の検証
+SuperellipseTest;    // スーパーエリプス角丸パラメータ（k値）の検証
+```
 
-**画面ごとに 1 ファイル**（`pointer.rs` = `PointerTest`、`nav.rs` = `NavTest`、`dialog.rs` = `DialogTest` / `Dialog`、`scrollbar.rs`、`stress.rs` など）。Testing パネル本体の描画は `panel.rs`、`lib.rs` には `Testing` の状態・色の定数・どの画面でも使う小さな部品（`button` / `row` / `section` / `spawn_view` など）だけを置く。新しいテスト用の画面はファイルを足して `lib.rs` に `mod` と `pub use` を 1 行ずつ足す。テストはその画面のファイルの子（`scrollbar/tests.rs` など）に置き、共通の道具は `test_util.rs`。
+## ファイル構成と実装規則
 
-## Testing（テスト用の画面）
+本クレートは検証対象画面ごとに 1 ファイルを割り当てる。`panel.rs` がメインパネル（`Testing`）の描画を担当し、`lib.rs` は状態定義、カラー定数、および共通コンポーネント（ボタン、行、セクション等）のみを保持する。
 
-一連の機能を1画面で試せる画面。新しい機能を足したら Testing にも操作を足し、E2E はその操作で書く。有効な状態は `BUTTON_ACTIVE_BG` で光る。
-
-| 区分 | 要素（`debug_selector`） | 試せること |
+| ファイル | 画面名 | 検証内容 |
 |---|---|---|
-| VR | `click-me` | クリック・ホバー（全機種・左右の手） |
-| VR | `spawn-panel` | 隣に Testing パネルを追加し、その画面を独立して操作する |
-| VR | `locale-test` | 隣にローカライズを確かめる画面（`LocaleTest`）を開く。`lang-en` / `lang-ja` で言語を切り替え（設定ファイルに残る）、`locale-missing` に訳の抜け、`locale-samples` に長い文・差し込み・ボタン、`locale-table` に全キーを言語ごとに並べる。Testing の `toggle-language` でも次の言語へ切り替わる |
-| VR | `tooltip-test` | 隣にツールチップを試す画面（`TooltipTest`）を開く。`tip-short` / `tip-long`（隣り合い、移ると文字と幅が変わる）、`no-tip`（説明なし）、`tip-overflow`（箱に収まらない説明。止まる → 一周流れる、を繰り返す）、アイコンだけのボタン `tip-icon-*`（説明は必須）、`tip-far`（離れていて猶予が切れる）。`tip-status` に手ごとの文字と向き |
-| VR | `pointer-test` | 隣にポインタの方式を試す画面（`PointerTest`）を開く。方式は全体の設定に従う（画面に切り替えは無い）。`drag-chip` → `drop-zone`（マウスのドラッグ）・`swipe-list`（タッチのスワイプ）・`tap-me`（どちらでも押せる） |
-| VR | `dialog-test` | 隣に親子関係を試す画面（`DialogTest`）を開く。`open-dialog`（外側を押すと閉じる既定のダイアログ）と `open-modal-dialog`（`without_dismiss`。答えるまで残る）でダイアログ（`Dialog`。`PanelSpec::child(.., carry = true, ..)`）を子として出す。開いている間は親が暗くなって押せず（掴んで動かすと子が付いてくる）、ダイアログを掴むと親も付いてくる（独立しない）。`dialog-ok` / `dialog-cancel` で答えて閉じる |
-| VR | `settings-test` | 隣に設定画面（`settings::Settings`）を開く。中身は [`crates/settings`](../settings/AGENT.md) |
-| VR | `nav-test` | 隣に画面の積み重ねを試す画面（`NavTest`）を開く。`nav-item-0..` → `nav-deeper` で右から次の画面が入り（push 遷移）、`nav-back` か押したまま右から左へ動かす（スワイプバック。幅の半分を越えるか払うと戻る）で戻る。離した所の `nav-tap` は押されず、`nav-slider` のハンドルは奪わない。パネルを掴んでいる手のポインタは無視する（E2E は `navigation.rs`） |
-| VR | `audio-test` | 隣に立体音響を試す画面（`AudioTest`）を開く。`audio-left` / `audio-centre` / `audio-right`（片側だけの 2ch・左右が同じ 2ch）と `audio-loop-1..4`（2ch のループ。重ねて鳴る）をこのパネルのスピーカーで鳴らし、`audio-stop` で止める。`audio-spatial` で立体化を外し（有効で光る）、`audio-layout-auto` / `-mono` / `-stereo` でスピーカーの経路を切り替える。`audio-status` に再生中の数と立体化の手段（E2E は `testkit/tests/audio.rs`） |
-| VR | `skeleton-test` | 隣にスケルタル入力を試す画面（`SkeletonTest`）を開く。判定の確認として手ごとに入力の元（`input-source-*`）・クリック / 掴む / ショートカットの状態と強さ（`hand-click-*` / `hand-grab-*` / `hand-shortcut-*`）・ダッシュボードの開閉の回数（`double-press-count`。二回押しと手の長押し）を出し、`hand-tuning` でしきい値と揺れの抑えのスライダー（`HandTuningTest`。`tune-*`）を開く。`skeleton-left` / `skeleton-right` に頭から見た手の関節を手のひら中心で描き（骨の線と、関節ごとの向きのギズモ X 赤・Y 緑・Z 青）、親指の先とほかの指の先が `testing::PINCH_DISTANCE`（2cm）より近いと `pinch-{left,right}-{index,middle,ring,little}` が光る。骨格は `PanelControl::hands`（と `hmd`）でフレームループが毎フレーム渡す（E2E は `testkit/tests/scenarios/skeleton.rs`） |
-| VR | `notification-test` | 隣に OS の通知を試す画面（`NotificationTest`）を開く。`notify-short`（短い本文）・`notify-long`（長い本文とボタン 2 つ）・`notify-burst`（3 件まとめて）で Windows に本物の通知を出し（PowerShell の名前で。`PanelCommand::SendNotification`）、届いたものがトースト（HUD → 手首 → ダッシュボード）とクイック設定の一覧に出る。押すと開くのはこのリポジトリのページだけ（確かめてから）。`notify-count` に届いている数 |
-| VR | `attach-hmd` / `attach-left` / `attach-right` / `attach-tracker` / `detach` | 取り付け・取り外し（トラッカーは見えている最初のもの） |
-| VR | `lock` | 掴めないようにする |
-| VR | `menu-held` / `grabbed` | メニューボタン・パネルを掴んでいる間光る（表示のみ） |
-| GPUI | `toggle` | 切り替え（`on_click` と状態の見た目） |
-| GPUI | `hold-me` | 押している間の見た目（`.active()`） |
-| GPUI | `drag-chip` → `drop-zone` | ドラッグ＆ドロップ（`on_drag` / `drag_over` / `on_drop`） |
-| GPUI | `open-menu` → `menu-a` / `menu-b` | ポップアップ（`deferred(anchored())`、`on_mouse_down_out` で閉じる） |
-| GPUI | `text-field` | フォーカス（`track_focus` / `.focus()`）と文字入力（`on_key_down`。キーボードは無いので testkit の `NoVrKit::type_keys` で GPUI に直接打って確かめる） |
-| GPUI | `scroll-list` | スクロール（`on_scroll_wheel` / `overflow_y_scroll` + `ScrollHandle`） |
+| `pointer.rs` | `PointerTest` | ドラッグ＆ドロップ、スワイプ、タップ操作の検証。 |
+| `nav.rs` | `NavTest` | プッシュ遷移、スワイプバック、スクロール優先度の検証。 |
+| `dialog.rs` | `DialogTest` | 通常ダイアログおよびモーダルダイアログ（排他制御）の親子関係検証。 |
+| `scrollbar.rs` | `TestingScrollbar` | GPUI リストおよびコンテナのスクロール挙動検証。 |
+| `stress.rs` | `StressTest` | パネルの大量生成と破棄による負荷・スタッター検証。 |
+
+## Testing パネルの要素一覧
+
+メインパネル（`Testing`）上の各要素には `debug_selector` が付与されており、E2E シナリオテストから直接操作できる。
+
+### VR 空間およびシステム連携の検証
+
+- `click-me`: コントローラレーザーによるクリックおよびホバーの判定。
+- `spawn-panel`: 隣接位置への新規検証パネルの追加生成。
+- `locale-test`: 多言語表示検証画面（`LocaleTest`）の展開。言語切り替え、長文・置換文字の表示確認。
+- `tooltip-test`: ツールチップ検証画面（`TooltipTest`）の展開。短文、長文（マーキー自動スクロール）、アイコンボタンのツールチップ挙動。
+- `pointer-test`: 入力方式検証画面（`PointerTest`）の展開。タッチスワイプとマウスドラッグの挙動差確認。
+- `dialog-test`: 子パネル検証画面（`DialogTest`）の展開。親パネルの暗転、入力遮断、および連動把持の確認。
+- `settings-test`: 設定画面（[`crates/settings`](../settings/AGENT.md)）の呼び出し。
+- `nav-test`: 画面スタック検証画面（`NavTest`）の展開。プッシュ遷移およびスワイプバックの閾値判定。
+- `audio-test`: 空間音響検証画面（`AudioTest`）の展開。2ch 再生、ループ再生、立体音響の有効/無効切り替え。
+- `skeleton-test`: ハンドトラッキング検証画面（`SkeletonTest`）の展開。関節ギズモの描画、ピンチジェスチャー判定。
+- `notification-test`: OS 通知連携画面（`NotificationTest`）の展開。テスト通知の発行とトースト表示の確認。
+- `attach-hmd` / `attach-left` / `attach-right` / `attach-tracker` / `detach`: デバイスへのアタッチおよび解除。
+- `lock`: パネルの空間固定（掴み禁止）の切り替え。
+
+### GPUI コアコンポーネントの検証
+
+- `toggle`: クリックによるトグル状態の変更。
+- `hold-me`: 押下中のアクティブスタイルの確認。
+- `drag-chip` → `drop-zone`: ドラッグ＆ドロップイベントの配送。
+- `open-menu` → `menu-a` / `menu-b`: ポップオーバーメニューの表示と外部クリックによる閉塞。
+- `text-field`: フォーカス管理とキーボード文字入力。
+- `scroll-list`: ホイールおよびドラッグによるスクロール操作。

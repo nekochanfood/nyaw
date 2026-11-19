@@ -1,194 +1,194 @@
 # AGENT.md
 
-nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワークスペースで、層ごとに 1 クレート。
+nyaw は、GPUI で GUI を描画する VR オーバーレイシステムである。Cargo ワークスペースを採用しており、関心事に応じて層を定義し、原則として 1 つの責務に対して 1 クレートを割り当てる。
 
-## 目次（下 → 上）
+## アーキテクチャの階層構造
 
-各クレートの詳細はリンク先の `AGENT.md`。**全クレートがどれかの層に属する**（新しいクレートも層を決めて目次に足す）。
+システムは下位から上位へ向かう 8 つの層で構成される。すべてのクレートはいずれかの層に属する。新しいクレートを追加する場合も、所属する層を決定したうえで本目次へ追加する。
 
 | 層 | 名前 | 位置づけ |
 |---|---|---|
-| 0 | 基盤 | どの層からも使える共有クレート（`logger` `animation`）。自前の依存なし（`animation` は `design` の `tokens.json` をビルド時に読むだけで、コードは依存しない） |
-| 1 | Subsystems | OS・ランタイム・入力・描画などの差を吸収 |
-| 2 | オーバーレイ | パネルの配置・入力判定 |
-| 3 | カーネル | 設定・フレーム進行・パネル操作 |
-| 4 | UI | パネルの描画と入力変換（`design` などの横断部品を含む） |
-| 5 | 画面 | UI の上に載る画面 |
-| 6 | ブート | `src/main.rs` |
-| 7 | テスト | 開発専用のテスト基盤（本番のバイナリには入らない） |
+| 0 | 基盤 | どの層からも参照できる共有クレート。他クレートへの実行時コード依存を持たない。 |
+| 1 | Subsystems | OS、VR ランタイム、入力機器、描画環境などの差異を吸収する。 |
+| 2 | オーバーレイ | 3 次元空間内におけるパネルの配置、姿勢計算、当たり判定を処理する。 |
+| 3 | カーネル | アプリケーション設定、フレーム進行、パネル操作を統括する。 |
+| 4 | UI | GPUI の非表示ウィンドウを用いたパネル描画と、入力イベントの変換を行う。 |
+| 5 | 画面 | UI 層の上に構築される個別の機能画面（ダッシュボードや設定画面など）。 |
+| 6 | ブート | エントリポイント（`src/main.rs`）。設定読み込みとランタイム初期化を行い、イベントループを開始する。 |
+| 7 | テスト | 開発専用のエンドツーエンド（E2E）テスト基盤。本番バイナリには含まれない。 |
 
-| 層 | クレート | 一言 |
+### クレート一覧
+
+各クレートの詳細な責務や公開 API については、それぞれのリンク先にある `AGENT.md` を参照する。
+
+| 層 | クレート | 概要 |
 |---|---|---|
-| 0 | [`crates/logger`](crates/logger/AGENT.md) | logfmt 形式の構造化ロガー（横断） |
-| 0 | [`crates/animation`](crates/animation/AGENT.md) | 動きの責務（Motion / Animation / Transition / Slide）。GPUI にも design にも依存しない |
-| 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | OS・ランタイム・入力・描画の差を吸収し、上位に共通フレームを渡す。下の 9 クレートを束ねる |
-| 1 | [`crates/subsystems/os`](crates/subsystems/os/AGENT.md) | 保存先・ランタイム検出・タイマー精度などの OS 差 |
-| 1 | [`crates/subsystems/vr`](crates/subsystems/vr/AGENT.md) | OpenVR / OpenXR / novr の差とエミュレーター |
-| 1 | [`crates/subsystems/input`](crates/subsystems/input/AGENT.md) | コントローラ機種の差（プロファイル表）と骨格の手の操作 |
-| 1 | [`crates/subsystems/rendering`](crates/subsystems/rendering/AGENT.md) | GPUI の非表示描画先・読み戻し・ランタイムへの画像転送 |
-| 1 | [`crates/subsystems/audio`](crates/subsystems/audio/AGENT.md) | 音声出力と Steam Audio による立体化 |
-| 1 | [`crates/subsystems/keyboard`](crates/subsystems/keyboard/AGENT.md) | 仮想キーボードの配列データ・文字・トグル状態 |
-| 1 | [`crates/subsystems/desktop`](crates/subsystems/desktop/AGENT.md) | 画面・ウィンドウの配信元・画像取得・OS タッチ注入 |
-| 1 | [`crates/subsystems/media`](crates/subsystems/media/AGENT.md) | 再生中のメディアの情報と操作 |
-| 1 | [`crates/subsystems/notifications`](crates/subsystems/notifications/AGENT.md) | OS の通知（トースト）の一覧と、押したときにアプリへ届ける |
-| 2 | [`crates/overlay`](crates/overlay/AGENT.md) | パネル配置・取り付け・ヒット判定・掴み移動・親子関係・暗転 |
-| 3 | [`crates/kernel`](crates/kernel/AGENT.md) | 設定・フレーム進行・パネル操作を束ねる。UI・画面はカーネルだけを見る |
-| 4 | [`crates/ui`](crates/ui/AGENT.md) | パネルを GPUI の非表示ウィンドウで描き、ポインタをマウス入力へ変換する |
-| 4 | [`crates/design`](crates/design/AGENT.md) | UI の見た目（Constants → Utilities → Components） |
-| 4 | [`crates/profiler`](crates/profiler/AGENT.md) | 計測中だけ動くプロファイラ |
-| 4 | [`crates/i18n`](crates/i18n/AGENT.md) | 画面の文言の多言語対応（英語・日本語） |
-| 5 | [`crates/testing`](crates/testing/AGENT.md) | テスト用の画面（Testing ほか） |
-| 5 | [`crates/wrist`](crates/wrist/AGENT.md) | 常駐の腕時計パネル |
-| 5 | [`crates/toast`](crates/toast/AGENT.md) | OS の通知のトースト（1 枚のパネルが HUD → 手首 → ダッシュボードへ動く） |
-| 5 | [`crates/dashboard`](crates/dashboard/AGENT.md) | ダッシュボード（メニュー・配信・再生中・クイック設定・ランチャー） |
-| 5 | [`crates/settings`](crates/settings/AGENT.md) | 設定画面（カテゴリ・詳しい画面ごとに 1 ファイル） |
-| 5 | [`crates/setup`](crates/setup/AGENT.md) | セットアップウィザード（初回起動・デバッグからのやり直し。ロックダウンと LazyFollow を使う） |
-| 5 | [`crates/beam`](crates/beam/AGENT.md) | コントローラのレーザー・カーソル・ドラッグ・ツールチップ |
-| 5 | [`crates/updater`](crates/updater/AGENT.md) | アプリの更新（GitHub のリリースをビルド番号で比べて知らせ、ユーザーが選んだら黙って入れ替える） |
-| 7 | [`crates/testkit`](crates/testkit/AGENT.md) | Playwright 風 E2E テスト基盤（開発専用） |
-| 6 | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして載せる画面（wrist とビーム）とともに `ui::run` に渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければデバッグビルドは novr、リリースビルドは「ランタイムが見つかりませんでした」のダイアログを出して終わる。リリースビルドはコンソールを出さず、`--console` で出す。設定ファイルの `runtime` は非推奨（デバッグビルドだけ読む） |
+| 0 | [`crates/logger`](crates/logger/AGENT.md) | logfmt 形式に対応した横断的構造化ロガー。 |
+| 0 | [`crates/animation`](crates/animation/AGENT.md) | アニメーション計算と遷移状態の管理。GPUI や UI 部品には依存しない。 |
+| 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | 下位サブシステムを統括し、上位層へ共通フレーム情報を供給する。 |
+| 1 | [`crates/subsystems/os`](crates/subsystems/os/AGENT.md) | データ保存先パス、ランタイム検出、高精度タイマーなどの OS 差異の吸収。 |
+| 1 | [`crates/subsystems/vr`](crates/subsystems/vr/AGENT.md) | OpenVR、OpenXR、および非 VR 用エミュレーター（novr）のランタイム抽象化。 |
+| 1 | [`crates/subsystems/input`](crates/subsystems/input/AGENT.md) | コントローラの機種別入力マッピングと骨格ハンドトラッキングの処理。 |
+| 1 | [`crates/subsystems/rendering`](crates/subsystems/rendering/AGENT.md) | GPUI のオフスクリーン描画、ピクセル読み戻し、VR ランタイムへの転送。 |
+| 1 | [`crates/subsystems/audio`](crates/subsystems/audio/AGENT.md) | 音声出力および Steam Audio による空間音響処理。 |
+| 1 | [`crates/subsystems/keyboard`](crates/subsystems/keyboard/AGENT.md) | 仮想キーボードのレイアウト定義、文字入力、修飾キー状態の管理。 |
+| 1 | [`crates/subsystems/desktop`](crates/subsystems/desktop/AGENT.md) | 画面・ウィンドウのキャプチャ、画像取得、OS 側への入力注入。 |
+| 1 | [`crates/subsystems/media`](crates/subsystems/media/AGENT.md) | システム内で再生中のメディア情報の取得と再生制御。 |
+| 1 | [`crates/subsystems/notifications`](crates/subsystems/notifications/AGENT.md) | OS 通知の取得と、通知クリック時の対象アプリ起動連携。 |
+| 2 | [`crates/overlay`](crates/overlay/AGENT.md) | パネル配置、アタッチ処理、光線交差判定、掴み移動、親子関係、暗転演出の制御。 |
+| 3 | [`crates/kernel`](crates/kernel/AGENT.md) | 設定管理、毎フレームの更新サイクル、パネル操作を統合する中核。 |
+| 4 | [`crates/ui`](crates/ui/AGENT.md) | GPUI のオフスクリーンウィンドウによるパネル描画とポインタイベント変換。 |
+| 4 | [`crates/design`](crates/design/AGENT.md) | デザインシステム（トークン、共通コンポーネント、テーマ管理）。 |
+| 4 | [`crates/profiler`](crates/profiler/AGENT.md) | 計測時のみ動作する軽量プロファイラ。 |
+| 4 | [`crates/i18n`](crates/i18n/AGENT.md) | 画面表示文字列の多言語対応（英語・日本語）。 |
+| 5 | [`crates/testing`](crates/testing/AGENT.md) | 開発時の動作確認・E2E テスト用の各種検証画面。 |
+| 5 | [`crates/wrist`](crates/wrist/AGENT.md) | 手首に常駐する腕時計型パネル。 |
+| 5 | [`crates/toast`](crates/toast/AGENT.md) | OS 通知のトースト表示（HUD、手首、ダッシュボード間を移動）。 |
+| 5 | [`crates/dashboard`](crates/dashboard/AGENT.md) | ランチャー、画面配信、再生制御、クイック設定を統合したダッシュボード。 |
+| 5 | [`crates/settings`](crates/settings/AGENT.md) | カテゴリ別に整理されたアプリケーション詳細設定画面。 |
+| 5 | [`crates/setup`](crates/setup/AGENT.md) | 初回起動時や設定リセット時に表示するセットアップウィザード。 |
+| 5 | [`crates/beam`](crates/beam/AGENT.md) | コントローラのレーザー光線、カーソル表示、ドラッグ挙動、ツールチップ。 |
+| 5 | [`crates/updater`](crates/updater/AGENT.md) | GitHub Releases を用いた更新確認とバックグラウンドアップデート。 |
+| 6 | `src/main.rs` | アプリケーション起動処理。ロガー初期化、設定読み込み、初期パネル生成を担う。 |
+| 7 | [`crates/testkit`](crates/testkit/AGENT.md) | 宣言的な E2E シナリオテスト用テストハーネス（開発専用）。 |
 
-## ドキュメントの置き方（ルール）
+## ドキュメントの配置方針
 
-- このファイルは**目次と全体の規約だけ**を持つ。クレートの責務・公開 API・設計・テスト手順は `crates/<名前>/AGENT.md`（`subsystems` の下は `crates/subsystems/<名前>/AGENT.md`）に書く。
-- クレートごとの `AGENT.md` の形: 先頭に層と責務、続けて `## 主な公開 API`、その後にそのクレート固有の節（設計思想・テスト・未実装）。
-- 複数のクレートにまたがる話（依存の向き・フレームの流れ・パフォーマンス・規約）だけがこのファイルに残る。1 つのクレートに閉じる話をここに足さない。
-- 新しいクレートを足したら、`AGENT.md` を作り、上の目次に 1 行足す。公開 API を変えたらそのクレートの `AGENT.md` を直す。
-- 他のクレートの話は書き写さず、`../kernel/AGENT.md` のように相対リンクで指す。
+本リポジトリでは、情報の重複と散逸を防ぐためにドキュメントの記載範囲を厳密に分離する。
 
-重い依存は feature で選ぶ。`vr` の `novr`（wgpu・minifb）/ `openvr` / `openxr` を `subsystems` と `kernel` が同名で転送する。ワークスペースの `vr` / `subsystems` / `kernel` は `default-features = false` で、`kernel` の既定は全部無効（型・`connect`・モックだけ。`overlay` / `kernel` のテストはこれで足りる）。実際に起動する `nyaw` と、エミュレーターや実ランタイムを使う `ui` / `testkit` のテストだけが有効にする。無効なランタイムへの接続は `VrError::NoRuntime`。`vr` / `subsystems` 単体の既定は全部有効。
+- **ルート `AGENT.md` の役割**: システム全体の目次、アーキテクチャ境界、層間の依存関係、共通の設計思想および規約のみを記載する。特定のクレート単体に閉じた話題はここに含めない。
+- **クレート別 `AGENT.md` の役割**: 各クレートの責務、公開 API、内部設計、テスト手順は `crates/<クレート名>/AGENT.md`（サブシステムは `crates/subsystems/<名前>/AGENT.md`）に記載する。他のクレートの仕様を複製せず、`../kernel/AGENT.md` のように相対リンクで参照する。
+- **構成の統一**: 各クレートの `AGENT.md` は、冒頭に「層」と「責務」を明記し、続いて「主な公開 API」、その後に設計思想や固有の仕様を記述する構成とする。
 
-依存は**必ず下向き**。カーネル内の最下部が Subsystems（`os` / `vr` / `input` / `rendering`）で、その上に設定・フレーム進行・パネル管理を置く。依存の入口は `subsystems ← overlay ← kernel ← ui ← 画面 ← main`。`kernel` は設定やフレーム進行のため `subsystems` にも依存する。Subsystems 内は `os ← vr ← input / rendering` で、上位層への依存は禁止する。`audio` は他のサブシステムに依存しない（座標は glam）。
-描画に必要な OS 分岐は `rendering` に集約する（`gpui` フィーチャー。`kernel/rendering-host` → `subsystems/rendering-host` で有効にし、下位だけのテストではホスト依存を不要にする）。入力変換・画面の構築とイベントループの進行は UI が担う。ランタイム固有の Vulkan 転送・novr 合成は `vr` に残り、`rendering` が `VrBackend` を通して利用する。
-UI・画面・testkit が見る下位の型は `kernel` の再エクスポート経由で、`vr` / `overlay` を直接組み立てない。overlay は `vr` の型（`Pose` 等）を共通語彙として使ってよい。
-`logger` は例外で、どの層からも直接依存してよい唯一の横断クレート（`logger` 自身は他の自前クレートに依存しない）。
-`design` の値（Constants）と動き（`animation` クレート。`design::animation` で再エクスポート）は GPUI を持たない（`gpui` フィーチャーを外した `design`）ので、`overlay` がパネルの表示アニメーションと影の余白に使ってよい。部品・テーマのグローバルなど GPUI のものは UI 層から上だけ。
-`kernel` は `subsystems` を再エクスポートしているが、上位が使ってよいのは型（語彙）とデータ（配列の表など）まで。OS・ランタイムへの副作用（入力の注入・送信）は `PanelCommand` でカーネルに頼む（画面からカーネル本体には届かないので、`PanelControl` に積む）。
+## 依存関係とフィーチャー設計
 
-## ログ
+モジュール間の疎結合性を維持し、ビルド時間とテスト実行速度を最適化するために、依存の方向とフィーチャーの切り替えを厳格に管理する。
 
-- ログは**必ず** `logger` のマクロで出す。`println!` / `eprintln!` は使わない（テストハーネスの出力は除く）。
+### 依存の方向性
+
+依存関係は原則として上位層から下位層への単方向とする。逆方向の依存や循環依存は禁止する。
+
+```
+subsystems ← overlay ← kernel ← ui ← 画面 (dashboard / wrist など) ← main
+```
+
+- **カーネルとサブシステムの関係**: カーネルは設定およびフレーム進行の目的で `subsystems` を参照する。Subsystems 内部の依存順序は `os ← vr ← input / rendering` とし、上位層への逆参照は行わない。`audio` は他サブシステムに依存せず、位置計算には `glam` を用いる。
+- **型と副作用の境界**: `kernel` は `subsystems` の一部を再エクスポートするが、上位層（UI や画面）が利用できるのはデータ型（共通語彙）と定数テーブルに限られる。OS やランタイムに対する副作用（入力の注入やパケット送信）を直接呼ぶことは禁止し、必ず `PanelCommand` を通じてカーネルへ依頼する。
+- **型の共通語彙**: UI 層、画面、`testkit` が参照する下位の型は、`kernel` の再エクスポート経由で取得する。`overlay` は `vr` の型（`Pose` など）を共通語彙として直接利用してよい。
+- **横断クレートの例外**: `logger` はすべての層から直接参照できる唯一の横断クレートである。ただし、`logger` 自体はワークスペース内の自前クレートに一切依存しない。
+- **デザインシステムと動きの分離**: `design` の定数定義（Constants）および `animation` クレートは GPUI に依存しないため、`overlay` がパネルのアニメーションや余白計算に参照できる。GPUI に依存するコンポーネントやテーマ定義は UI 層以上のみで利用する。
+
+### フィーチャーによる依存の制御
+
+VR ランタイムや重い依存関係（wgpu、minifb、OpenVR、OpenXR）は Cargo フィーチャーによって局所化する。
+
+- `vr` のバックエンド切り替えフィーチャー（`novr` / `openvr` / `openxr`）は、`subsystems` および `kernel` を通じて同名で転送される。
+- ワークスペース設定において、`vr`、`subsystems`、`kernel` の依存は `default-features = false` を基本とする。`kernel` の既定は最小限（基本型、モック、接続インターフェースのみ）とし、`overlay` や `kernel` 単体のテストでは重いランタイムをリンクしない。
+- 実際のアプリケーションバイナリ（`nyaw`）や、実描画・エミュレーターを必要とする `ui` および `testkit` のテストでのみ必要なフィーチャーを有効化する。無効化されたランタイムへの接続要求に対しては `VrError::NoRuntime` を返す。
+
+## ログ設計
+
+ログの整合性と可読性を保つため、出力形式と出力先を統一する。
+
+- **マクロの使用**: ログ出力には必ず `logger` クレートが提供する構造化マクロ（`logger::info!` / `warn!` / `error!`）を使用する。`println!` や `eprintln!` の直接使用は禁止する（テストハーネス内の出力は除く）。
   ```rust
-  logger::warn!("パネルの描画を取得できない", error = e, panel = ?panel); // key = Display, key = ?Debug
+  logger::warn!("パネル描画の取得に失敗しました", error = e, panel = ?panel);
   ```
-- 出力は 1 行 1 件の logfmt: `ts=2026-10-13T09:00:00.123Z level=warn target=ui msg=パネルの描画を取得できない error="device lost" panel=0`。
-  `ts level target msg` は固定、以降はフィールドを書いた順。キーは snake_case。`target` は `module_path!()`。
-- 出力先は `main` だけが組み立てる: 標準エラー出力（`logger::StderrSink`）と `os::log_dir()/nyaw.log`（`logger::FileSink`。Windows `%LOCALAPPDATA%\nyaw\logs`）。
-  起動ごとに新しく作り、前回分は `nyaw-prev.log` に 1 世代だけ残す（既存の prev は消してから退避）。
-  ファイル出力・世代管理は `logger::FileSink` / `logger::create_rotated`。保存先の OS 差は `os::log_dir` に閉じ、ローテーションの方針は logger が持つ。logger は自前クレートに依存しない。
-- レベルの環境変数は `kernel::config::log_level()` が読む。レベルは環境変数 `NYAW_LOG`（`trace`/`debug`/`info`/`warn`/`error`、既定 `info`）。`init` 前のログは stderr・info 以上に出る。
-- 外部クレートの `log` 出力（gpui 等）も同じロガーに流れる。パニックも `main` のフックで `error` として記録する。
+- **出力フォーマット**: 1 行 1 件の logfmt 形式を採用する。先頭は `ts=... level=... target=... msg=...` で固定し、以降に任意のキー・値フィールドを記述順で続ける。キー名は snake_case とし、`target` には `module_path!()` を記録する。
+- **出力先とログ退避**: 出力先は標準エラー出力（`logger::StderrSink`）とローカルログファイル（`logger::FileSink`、Windows 環境では `%LOCALAPPDATA%\nyaw\logs\nyaw.log`）の 2 系統とする。起動時に前回のログを `nyaw-prev.log` に 1 世代のみ退避し、新規にファイルを作成する。
+- **ログレベルの制御**: 環境変数 `NYAW_LOG`（`trace` / `debug` / `info` / `warn` / `error`、既定値は `info`）で動的に制御する。初期化完了前のログは標準エラー出力へ `info` レベル以上で出力される。外部ライブラリ（GPUI など）のログも同ロガーへ転送し、パニック時もフックを通じて `error` として記録する。
 
-## ランタイム（設計思想）
+## ランタイムの設計思想
 
-novr・SteamVR (OpenVR)・OpenXR はどれも対等な「手段」でしかない。novr はテスト用の抜け道ではなく、
-ランタイム層（`crates/subsystems/vr`）に OpenVR / OpenXR と並んで常に存在し、ビルドしたバイナリでも常に使える。
+nyaw において、novr（ウィンドウ型エミュレーター）、SteamVR (OpenVR)、OpenXR はすべて対等な入出力手段として扱う。
 
-- **基本操作はどのランタイムでもネイティブに行える**こと。VR 固有の機能（手・コントローラ機種・パネルを掴んで動かす等）
-  が novr で使えないのは構わない。
-- **上位層はランタイムで分岐しない**。どのランタイムでもパネルは非表示ウィンドウ（GPUI。実質ヘッドレス）で描き、
-  読み戻してオーバーレイへ送る。入力はコントローラのレーザー。
+- **novr の位置づけ**: novr はテスト専用の暫定実装ではなく、実機 VR を持たない環境や通常開発において日常的に利用される正式なランタイムである。そのため、ビルド済みバイナリにおいても常時利用可能とする。
+- **上位層の非依存性**: UI 層以上のコンポーネントは、背後で動作しているランタイムの種類によって処理を分岐させない。どのランタイムであっても、パネルは GPUI の非表示オフスクリーンウィンドウ上で描画され、ピクセルデータとして読み戻された後にオーバーレイ層へ転送される。
+- **機能差の許容**: コントローラの 6 自由度トラッキングやパネルの直接掴み移動など、VR ハードウェアに固有の機能が novr 上で代替されないことは仕様として許容する。ただし、ポインタによる基本操作や画面遷移はすべてのランタイムで同一に実行できなければならない。
 
-novr（エミュレーター）の詳細は [`crates/subsystems/vr`](crates/subsystems/vr/AGENT.md)。
+## フレームサイクルの処理手順
 
-## 1 フレームの流れ（`ui::run`。どのランタイムでも同じ）
+メインスレッドにおける 1 フレームの進行（`ui::run`）は、以下のパイプラインに沿って実行される。周期生成は `poll` が担い、VR 環境ではランタイムの垂直同期信号（vsync）、novr 環境では約 90Hz の周期で駆動する。
 
 ```
-ui::run（周期は poll が作る: VR はランタイムの vsync、novr は約 90Hz）/ testkit の VrKit::step・NoVrKit::step
+ui::run
  └ ui::pump → kernel.tick()
-     ├ subsystems.poll()    → 共通 Frame { hmd, controllers: Vec<ControllerState>, trackers, quit }
-     │   ├ backend.poll()  → 生入力（Subsystems 内部だけで扱う）
-     │   └ input::map      → 機種別変換・手ごとのヒステリシス（切断・機種変更で履歴を破棄）
-     ├ overlay.tick_frame  → 共通フレームからパネル操作を処理
-     ├ 取り付け中のパネル   → 姿勢 = frame.pose(device) * offset（掴み中は手に従い、離すとオフセットを付け直す）
-     ├ レーザー × パネル判定 → Vec<UiEvent { panel, hand, PointerEvent }>
-     ├ ポインタのパネル     → レーザーをヒット点まで伸ばし、カーソルをヒット点へ（無ければ隠す）
-     └ vr.set_overlay_pose  （掴み移動を反映）
- └ 手・パネルごとの PointerBridge::translate → gpui::PlatformInput → 対象パネルの window.dispatch_event
- └ ui::sync_panel           → ビューが PanelControl の PanelId ごとに積んだ操作（取り付け・取り外し・ロック）を kernel に反映し、状態を書き戻す
- └ PanelControl::spawns     → 画面から要求された新しいパネルとウィンドウを開く
- └ PanelControl::quit       → アプリを終える（テストのハーネスもこれで終える）
- └ ui::capture(window)      → Frame（RGBA、デバイスピクセル）   testkit は testkit::raster::capture
-                              本番は入力・状態の変化があったとき、または 250ms ごとだけ描く（GPU の完了待ちが重い）。1x1 は送らない
- └ overlay.submit(vr, ...)  → vr.submit_overlay_pixels
+     ├ subsystems.poll()       → 共通 Frame 生成（HMD姿勢、コントローラ状態、終了要求）
+     │   ├ backend.poll()      → ランタイム生入力の取得（Subsystems 内部で完結）
+     │   └ input::map          → 機種別変換、ヒステリシス計算（接続変更時に履歴破棄）
+     ├ overlay.tick_frame      → 共通フレーム情報をもとにパネルの姿勢・操作を計算
+     ├ パネル姿勢更新          → 追従パネルの座標計算（掴み中は手に追従、解放時にオフセット再計算）
+     ├ 光線交差判定            → レーザーと各パネルの当たり判定 → Vec<UiEvent> を生成
+     ├ ポインタ表示更新        → レーザー長を衝突面まで調整、カーソル座標を設定
+     └ vr.set_overlay_pose     → 計算結果の姿勢をランタイムへ反映
+ └ PointerBridge::translate    → UiEvent を gpui::PlatformInput に変換し各ウィンドウへ配送
+ └ ui::sync_panel              → PanelControl に積まれた操作（アタッチ、ロック等）をカーネルへ反映
+ └ PanelControl::spawns        → 新規要求されたパネルのウィンドウを生成
+ └ PanelControl::quit          → アプリケーション終了要求の処理
+ └ ui::capture(window)         → オフスクリーンウィンドウを描画し RGBA ピクセルを取得
+ └ overlay.submit(vr, ...)     → 描画結果を VR ランタイムのオーバーレイへ転送
 ```
 
-パネル用ウィンドウは `ui::open_panel_window(cx, surface, ..)` で開く。`Overlay` では非表示で、
-`Window::render_to_image` で画面に出さずに描画して読み戻す。ルートビューを借用したまま描画・入力すると
-二重借用で落ちるので、ウィンドウ操作は `WindowHandle::update` ではなく `cx.update_window(handle.into(), ..)` を使う。
+### ウィンドウ管理の注意点
 
-## 画面（UI 層の上。UI 層 1 : 画面 n）
+パネル用ウィンドウは `ui::open_panel_window` を用いてオフスクリーン（非表示）として生成する。描画結果の取得には `Window::render_to_image` を使用する。
 
-UI 層（`crates/ui`）は1つで、どの画面かを知らない。画面はその上に何個でも載る別クレートで、`ui::run(kernel, Vec<PanelSpec>, profiler)` /
-testkit のキットに `build` として渡す。画面からパネルへの操作は GPUI のグローバル `PanelControl` に PanelId ごとに `PanelCommand`
-（取り付け・取り外し・ロック）を積み、フレームループが `sync_panel` で反映して `PanelStatus`（ランタイム・取り付け先・ロック・
-見えているトラッカー・メニューボタン・掴み中）を書き戻す。全体の設定（テーマ・言語・ポインタ）はパネルを問わないので
-`PanelControl::setting_changes` に `Setting` を積み、`sync_settings` が反映して `PanelControl::settings` に書き戻す。画面の型に依存しないので、本番・どのキットでも同じ経路。
-積むのは `ui::command` / `ui::set` などの入口で（[`crates/ui/AGENT.md`](crates/ui/AGENT.md) の「画面からの依頼」）、画面ごとに同じ補助関数を書かない。
-新しい画面 = `crates/<名前>` を足して `ui` に依存し、`main` で選ぶ。
+ルートビューを借用した状態で描画や入力配送を行うと GPUI 内部で多重借用パニックが発生するため、ウィンドウに対する操作は `WindowHandle::update` ではなく、必ず `cx.update_window(handle.into(), ...)` を介して実行する。また、GPU の同期負荷を抑えるため、ピクセル読み戻しは画面内容に変更があった場合、または最低 250ms 間隔に限定して実行する。
 
-## パフォーマンス（設計思想）
+## 画面の分離と制御
 
-オーバーレイは常に目の前にあり、操作はシームレスでなければならない。フレームループ（メインスレッド）が 1 フレームでも
-詰まると、レーザー・カーソル・パネルの追従がその場で引っ掛かる。新しい処理を足すときは次を守る。
+UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個別仕様を知らない。各画面は独立したクレート（`crates/dashboard`、`crates/wrist` など）として実装され、実行時に `PanelSpec` の集合として渡される。
 
-- **メインスレッドを止めない**。読み込み・展開・デコード・ファイル入出力・重い計算はフレームループの中でしない。
-  別スレッドで行い、結果はチャンネル等で次のフレーム以降に受け取る（非同期）。間に合わないフレームは前の結果のまま進める。
-  - GPUI のウィンドウ操作・描画のように、メインスレッドでしかできないものは仕方ない。代わりに回数を減らす
-    （何もしていないパネルの描き直しは 1 フレームに 1 枚まで・絵が変わらなければ間隔を延ばす、同じ位置への Move は送らない）。
-- **分けられる処理は並列にする**。画素ごと・行ごと・パネルごとに独立な処理は、スレッドに分けて同時に進める。
-  - 例: novr のエミュレーターの合成は、画面を横帯に分けて帯ごとに別のスレッドで塗る（`std::thread::scope`。目の前のパネルで 5.5ms → 1.3ms）。
-- **待ちは正確に**。フレームの周期を作る短い待ちは丸められないものを使う（GPUI のタイマーは Windows では 1ms が 6〜12ms になる。
-  フレームループはバックグラウンドのスレッドで眠って譲る。`os::precise_timers` でタイマー精度も 1ms にする）。
-- **測ってから直す**。推測ではなく、ストレステスト（`cargo test -p ui --test gpu -- --ignored stress`）とプロファイラ（`--profile`）の
-  段階ごとの時間を見る。直したらストレステストの数字で効果を確かめ、コミットに書く。
-- 依存クレートのデバッグビルドの罠に注意する。gpui（Windows）は debug-assertions が有効だとウィンドウを作るたびに HLSL を実行時に
-  コンパイルする（1 枚 180ms）ので、`Cargo.toml` の `[profile.dev.package.gpui_windows]` で切っている。
+### 画面とカーネル間の通信
 
-## 規約
+画面からカーネルに対する状態変更の要求は、GPUI のグローバルリソースである `PanelControl` を介して非同期に行う。
 
-- 語彙は OpenXR に合わせる: プロファイル `"valve/index_controller"`、入力 `"trigger/value"`。OpenVR バックエンドが翻訳する。
-- 座標: トラッキング空間はメートル・前方 -Z。パネル表面はローカル +Z。パネルのピクセル座標は左上原点。
-- 新しいコントローラ対応 = `crates/subsystems/input` の `PROFILES` に 1 行追加。上位層でプロファイル名を見ない。
-- 新しいランタイム = `crates/subsystems/vr` に `VrBackend` 実装を追加し `connect` に登録する。
-- `CODE_OF_CONDUCT.md` に従う: コメントは日本語、Conventional Commits、CalVer（現在 `2026.0.3-dev.0`、`[workspace.package]` で一括管理。リリースのタグは `v<CalVer>[-<名前>.<数>]`。Actions の Prepare release に版を入れると版上げの PR ができ、マージするとその PR のチェックで作ったインストーラーで `v<CalVer>` が出る（`.github/workflows/prepare-release.yml` と `release.yml`。PR が main の先頭の上に無いとマージ後にビルドし直す。名前付きの版も同じ。手で公開したリリースも、タグの commit をビルドした PR があればそのインストーラーを使う）。出すと main は次の版の `-dev.0` に上がる（`-dev.<数>` の版は出さない）。PR を開いたまま、そのブランチで Actions の Release を名前（alpha・beta など）を入れて実行すると `v<CalVer>-<名前>.<数>` のプレリリースが出る（Cargo.toml の版は変えない）。名前の付いた版は GitHub のプレリリース（アプリのナイトリーのチャンネルだけが受け取る）、付かない版は正式なリリース（安定版）。新旧は版の文字ではなくビルド番号で比べる。`crates/updater/AGENT.md`）、単体テスト必須、層をまたぐものは結合テスト。
-- **コメントは 1 行で収める**。どうしても長く書く必要があるときも 3 行まで（`///` `//!` `//` とも、連続した 1 かたまりで数える）。それ以上は、コードを分かりやすくするか、設計の話をそのクレートの `AGENT.md` に書いて、コメントからは指すだけにする。lint は置かず、レビューで見る。
-- **URL を開く（厳守）**: ブラウザで URL を開くのは `design::link::open` で依頼するだけ。開く前に `ui::link` が URL を見せてユーザーに確かめる（[`crates/ui/AGENT.md`](crates/ui/AGENT.md) の「リンクを開く」）。`cx.open_url` を直接呼ばない（`clippy.toml` が禁じる）。
-- `// ponytail:` コメントは意図的な簡略化。限界と次の一手が書いてある。
-- **ナビゲーションバー（厳守）**: 新しいパネルを開くときは、ナビゲーションバーを付けるか（既定）`PanelSpec::without_nav_bar()` で外すかを `crates/design/GUIDELINES.md` の「ナビゲーションバー」に従って必ず判断する。付けるなら `.titled("…")` でタイトルを渡し、パネルの中に閉じるボタン・同じ見出しを埋め込まない。testkit のキットも本番と同じく持ち主の直後（PanelId = 持ち主 + 1）にバーを開く（キットが直接作る最初のパネルには付かない）。
+1. **個別パネルの操作**: パネル固有の操作（取り付け、取り外し、ロック等）は、PanelId を指定して `PanelControl` に `PanelCommand` を積む。フレームループ内の `sync_panel` がこれをカーネルへ適用し、最新の `PanelStatus` を画面側へ書き戻す。
+2. **全体設定の変更**: テーマや言語などのシステム全体に関わる設定は、`PanelControl::setting_changes` に `Setting` を積む。`sync_settings` がこれをカーネルへ反映し、`PanelControl::settings` を更新する。
+3. **ヘルパー関数の利用**: 画面側からコマンドを発行する際は、重複コードの作成を避け、`ui::command` や `ui::set` などの共通入口関数を使用する。
 
-- `gpui` は crates.io 版では `Window::dispatch_event` を外部から呼べないため、Zed の git リビジョンに固定している。`render_to_image` のため `rendering` は本番でも gpui の `test-support` フィーチャーを有効にしている。
+## パフォーマンス設計原則
 
-## テスト
+オーバーレイはユーザーの視界内に常時表示されるため、フレーム落ち（スタッター）は重大な操作感の低下を招く。メインスレッドにおける処理時間は厳密に管理されなければならない。
 
-E2E はローカルで実行し、CI には追加しない。
+- **メインスレッドの非同期化**: ファイル入出力、画像のデコード、フォント読み込み、重い計算処理をメインスレッドのフレームループ内で直接実行することを禁止する。これらはバックグラウンドスレッドで実行し、結果をチャンネル経由で受け取る。処理がフレームに間に合わない場合は、前フレームの状態を維持して描画を進める。
+- **データ並列化の推進**: 画素処理や行単位の走査など、相互に独立した処理はスレッドプールを利用して並列化する。たとえば、novr における画面合成処理は画面を水平帯に分割し、`std::thread::scope` を用いて並列実行することで処理時間を大幅に削減している。
+- **タイマー精度の確保**: フレーム周期の待機には、OS による丸め誤差の影響を受けない手段を用いる。Windows 環境の通常スリープはミリ秒単位の精度が出ないため、`os::precise_timers` を通じてタイマー分解能を 1ms に引き上げ、バックグラウンドスレッドで高精度な待機を行う。
+- **計測に基づく最適化**: 推測による最適化を避け、ストレステスト（`cargo test -p ui --test gpu -- --ignored stress`）およびプロファイラ（`--profile`）の実測値に基づいて判断する。改修を行う際は、改修前後の実測数値をコミットメッセージに記録する。
+- **デバッグビルド時のシェーダーコンパイル抑制**: GPUI の Windows 実装は、debug-assertions が有効な場合にウィンドウ生成ごとに HLSL シェーダーを実行時コンパイルするため、1 枚あたり約 180ms の遅延が発生する。これを防ぐため、`Cargo.toml` の `[profile.dev.package.gpui_windows]` において最適化レベルを指定している。
 
-`cargo test --workspace`。ビルドには cmake と C++ コンパイラが要る（`vr` が OpenXR ローダーを静的リンクし、`openvr_bindings` もビルド時に OpenVR を cmake でビルドするため）。cmake が PATH に無ければ環境変数 `CMAKE` で指す（Windows は Visual Studio 同梱の `Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe` でよい）。CI は `cargo fmt --check`・`cargo clippy --workspace --all-targets -D warnings`・`cargo test --workspace` を別ジョブで並列に回す。
+## 開発規約
 
-- **単体テスト**: 各クレート内の `#[cfg(test)]`。その層の範囲だけで完結させる。実機の代わりは `vr` の `test-support` フィーチャーで出る `vr::mock::MockBackend`。単体テストから testkit は使わない（依存が循環する）。
-- **ユーザー操作のシナリオ（E2E 風）**: `crates/testkit/tests/` に置く。Testing の画面を操作して検証する（取り付け・ロックも `kit.click("attach-hmd")` のようにボタンで）。testkit 自体は画面を知らず、`testing` は dev-dependency。要素は GPUI の `.debug_selector(|| "名前".into())` で指定し、プロファイル名や座標計算はテストに書かない。
-  - **基本操作**（クリック・ホバー・見えている色など）: `Driver` に対して1回だけ書き、`on_every_runtime!` で全ランタイム（novr / VR）で実行する（例: `testing.rs`）。
-  - **UI のロジックだけ**の確認: ランタイムに関係しないので `NoVrKit` だけで書く。
-  - `NoVrKit` は本番の novr と同じくエミュレーター（ウィンドウを出さない `Emulator::headless`）を通す。マウス・ボタン・スティックを
-    注入して（`move_mouse` / `press(Button::Grab)` / `stick(Hand::Left, ..)`）、ユーザーに見える絵は `screenshot()`（エミュレーターの画面）で見る。
-    要素が画面のどこに映るかは `on_screen(selector)`。`NYAW_E2E_WATCH` でエミュレーターの画面をウィンドウに出す（例: `novr_emulator.rs`）。
-  - **VR 固有の機能**（レーザー・機種・手・パネル移動・VR に映る描画）: `VrKit` で書く（例: `vr_controls.rs`, `panel_texture.rs`, `attach.rs`, ポインタの方式は `pointer_mode.rs`）。
-  - `color_at` は「ユーザーに見えている色」: novr はエミュレーターの画面、VR は VR パネルに送られたテクスチャ。テストプラットフォームには GPU が無いため、描画は `testkit::raster` の CPU ラスタライザ。
-  - ベンチマーク・長押しの輪・スワイプバック・実 GPU の読み戻しなど `ui` のテストは [`crates/ui/AGENT.md`](crates/ui/AGENT.md)、実ランタイムでの E2E は [`crates/testkit/AGENT.md`](crates/testkit/AGENT.md)。
+### 座標系と語彙の統一
 
-```rust
-// 基本操作: 全ランタイムで実行（click_button::novr / click_button::vr）
-fn click_button(kit: &mut impl Driver<Testing>) {
-    kit.click("click-me");
-    assert_eq!(kit.read(|h| h.clicks), 1);
-}
-on_every_runtime!(click_button, |_, _| Testing::default());
+- **語彙定義**: 入力およびプロファイルに関する識別子は OpenXR の仕様に準拠する（例: プロファイル名 `"valve/index_controller"`、入力名 `"trigger/value"`）。OpenVR バックエンド側でこれらの語彙への相互変換を行う。
+- **3 次元座標系**: トラッキング空間はメートル単位の右手系（前方 -Z、上 +Y、右 +X）とする。パネル表面はローカル座標系で +Z 方向を正面とし、パネル内の 2 次元ピクセル座標は左上を原点とする。
+- **ハードウェア対応の追加**: 新しい VR コントローラへの対応は `crates/subsystems/input` の `PROFILES` 定義に追加することで行う。上位層で機種名を直接判定してはならない。
+- **ランタイムの追加**: 新規ランタイムの対応は `crates/subsystems/vr` 内に `VrBackend` の実装を追加し、`connect` 関数へ登録する。
 
-// VR 固有
-#[gpui::test]
-fn left_touch_controller_clicks(cx: &mut TestAppContext) {
-    let mut kit = VrKit::new(cx, |_, _| Testing::default());
-    kit.hand(Hand::Left).profile("oculus/touch_controller").click("click-me");
-    assert_eq!(kit.read(|h| h.clicks), 1);
-}
-```
+### バージョン管理とリリース手順
+
+本プロジェクトは Calendar Versioning（CalVer（現在 `2026.0.3-dev.0`、形式: `YYYY.MINOR.MICRO[-dev.PATCH]`））を採用しており、`Cargo.toml` の `[workspace.package]` で一括管理する。
+
+- **タグ命名規則**: リリースタグは `v<CalVer>`（安定版）または `v<CalVer>-<チャネル名>.<番号>`（プレリリース版）とする。
+- **正式リリースの流れ**: GitHub Actions の `prepare-release.yml` ワークフローにバージョン番号を指定して実行すると、バージョン更新の Pull Request が自動生成される。この PR をマージすると、`release.yml` がインストーラーをビルドし、GitHub Releases に正式版が発行される。発行完了後、`main` ブランチのバージョン番号は自動的に次の版の `-dev.0` へ進む。
+- **プレリリースの発行**: ブランチ上で Actions の `release.yml` をチャネル名（alpha や beta など）を指定して手動実行すると、プレリリースが発行される。この際、`Cargo.toml` のバージョン表記は変更しない。
+- **更新判定の基準**: アプリケーション本体による新旧判定は、バージョン文字列ではなくビルド番号（コミット番号およびビルドメタデータ）の大小比較によって行う。
+
+### コード規約と UI 規則
+
+- **コメントの記述範囲**: コード内のコメントは原則として 1 行、不可欠な場合でも 3 行以内に収める。詳細な設計理由や背景は該当クレートの `AGENT.md` に記述し、コードからはその参照を示すにとどめる。
+- **外部リンクの起動**: ブラウザで URL を開く処理は `design::link::open` を経由しなければならない。`cx.open_url` を直接呼び出すことは `clippy.toml` により禁止されている。実行前に確認ダイアログが表示される。
+- **意図的簡略化の明記**: 実装をあえて簡略化している箇所には `// ponytail:` プレフィックスを付けたコメントを配置し、現在の制約と将来の改善案を明記する。
+- **ナビゲーションバーの設置基準**: 新規パネルを作成する際は、ナビゲーションバーを付与するか、`PanelSpec::without_nav_bar()` で明示的に除外するかを設計ガイドラインに従って判断する。付与する場合は `.titled("...")` でタイトルを渡し、パネル内部に独自の閉じるボタンや重複した見出しを配置しない。
+
+## テスト手法
+
+テストスイートは単体テスト、UI 検証、E2E シナリオテストに分類される。なお、重い E2E テストはローカル環境で実行し、CI ジョブには含めない。
+
+- **ワークスペース全体のテスト実行**: `cargo test --workspace` を実行する。ビルドには cmake および C++ コンパイラが必要となる。CI 環境では `cargo fmt --check`、`cargo clippy`、`cargo test` が並列ジョブとして実行される。
+- **単体テスト**: 各クレート内の `#[cfg(test)]` に記述し、自層の範囲内で完結させる。外部ランタイムとの通信は `vr::mock::MockBackend` を使用する。循環依存を防ぐため、単体テストから `testkit` を参照してはならない。
+- **シナリオテスト**: `crates/testkit/tests/` に配置する。GPUI の `.debug_selector(|| "識別名".into())` を指定して要素を探索・操作し、プロファイル名や生の座標計算をテストコードに直接書かない。
+  - **全ランタイム共通テスト**: クリックやホバーなどの基本操作は `Driver` インターフェースに対して 1 回記述し、`on_every_runtime!` マクロを用いて novr および VR の両環境で網羅実行する。
+  - **novr 専用テスト**: UI のレイアウトや表示ロジックの検証は `NoVrKit` を使用する。エミュレーターをヘッドレスで起動し、マウスやキー入力を注入して `screenshot()` で結果を検証する。
+  - **VR 固有機能のテスト**: コントローラ把持、レーザーポインタ、空間配置の検証は `VrKit` を使用して記述する。

@@ -2,33 +2,52 @@
 
 層: 5 画面
 
-常駐パネル。利き手（`Settings::dominant_hand`。意味は `../kernel/AGENT.md`）の反対の手首に腕時計のように取り付き（ダッシュボードが出ている間だけ掴んで、手のコントローラから `REACH`（0.3m）以内のどこへでも置き直し・向きと大きさを変えられる（大きさはほかのパネルと同じく、掴んだままトリガーを押して手を前後に動かす）。掴んだままダッシュボードが隠れる・閉じると、ロックが掴みを取り消して元の位置へ戻す。離すと、置き直した姿勢を左手首での値に直して `Setting::WristOffset`（`wrist_offset`）に、大きさを等倍の何倍かで `Setting::WristScale`（`wrist_scale`）に書き戻す（`Wrist::remember_placement`。姿勢と大きさはフレームループが `PanelState::{offset, size}` に毎フレーム書く）。起動時（`spec`）と利き手の付け替えでは、覚えた姿勢を付ける手首へ鏡写しにして付ける（`offset(hand, settings)`。覚えていなければ `watch_offset(hand)`）。利き手の設定が変わると `PanelCommand::Attach` で自分から反対の手首へ付け替える）、丸い文字盤に日付・時刻（見た目は設定の `wrist_design`。下の「文字盤とデザイン」）。常駐なので、X ボタンの二回連続押し（`PanelStatus::double_press` の回数が増える）でダッシュボードを開く（2 回目からは隠す / 出し直す。閉じない）。ダッシュボードから開くデバッグ画面・設定画面は main が渡す（`wrist::spec(&saved, debug, settings)`。最初の引数は main が `Kernel::settings()` をそのまま渡し、どちらの手首にどの姿勢・大きさで付くかは wrist が決める。今は Testing とその設定画面。画面どうしは直接依存しない）。起動時に OS の通知のトースト（[`crates/toast`](../toast/AGENT.md)。隠したまま。ID は `Wrist::toast`）も開く。ロックダウン（`Settings::lockdown`。取り手はカーネルの `PanelCommand::Lockdown`）に入った瞬間に、手首自身と出ているダッシュボードを隠し（解けると手首は出し直す）（解けても出し直さない）、中は二回押しを受け取っても何もしない（ダッシュボードを開閉しない）
+利き手と反対側の手首に常駐する腕時計型パネルを提供する。日付・時刻の常時表示、ダッシュボードの開閉制御、および通知トーストの初期化を担う。
+
+## 手首への配置と姿勢調整
+
+腕時計パネルは、設定された利き手（`Settings::dominant_hand`）の反対側の手首へ自動的に取り付けられる。
+
+- **姿勢の微調整**: ダッシュボードが開いている間のみ、ユーザーはパネルを直接掴んで手のコントローラから一定範囲内（`REACH`、0.3m）で任意の位置・角度・大きさに調整できる。
+- **設定への保存**: 調整後に手を離すと、最新の相対姿勢が左手首基準の値に換算されて `Setting::WristOffset`（`wrist_offset`）へ、表示倍率が `Setting::WristScale`（`wrist_scale`）へ自動保存される。
+- **利き手の切り替え**: 利き手設定が変更された際は、保存された姿勢を鏡写しに変換して反対側の手首へ自動で付け替える（`PanelCommand::Attach`）。
+- **編集の保護**: ダッシュボードが非表示になると掴みロックが有効化され、調整中の姿勢変更は取り消されて元の位置へ戻る。
+
+## システム制御と連携
+
+- **ダッシュボードの開閉**: 左手 X ボタンの二回連続押し（`PanelStatus::double_press`）を検知し、ダッシュボードの表示と非表示を切り替える。
+- **通知トーストの生成**: 起動時に OS 通知用のトーストパネル（[`crates/toast`](../toast/AGENT.md)）を非表示状態で生成する。
+- **ロックダウン時の挙動**: システムがロックダウン状態（`Settings::lockdown`）へ入った瞬間、腕時計パネル自身および開いているダッシュボードを即座に隠し、二回押し入力を無視する。ロックダウンが解除されると、腕時計パネルのみが元の位置へ自動復帰する。
+
+## 文字盤のデザインシステム
+
+文字盤は 3 つの種類（`WristFace`）に分類され、それぞれ固有のデザイン（`WristDesign`）を持つ。設定ファイル上のキーは `wrist_design` であり、選択されたデザインから種類が一意に決定される。
+
+| 種類 | デザインキー | 特徴 |
+|---|---|---|
+| スタンダード | `dots`（既定）<br>`ring`<br>`gauge` | 中央に日付と大きな時刻を配置。<br>・`dots`: ドット目盛りと秒インジケーター。<br>・`ring`: 秒経過で満ちるリングと日付バッジ。<br>・`gauge`: 60 段階のゲージが順次点灯。 |
+| デジタル | `lcd`<br>`flip`<br>`terminal` | 数値による秒単位の表示。<br>・`lcd`: 消灯セグメントも薄く可視化された 7 セグメント液晶。<br>・`flip`: パタパタと切り替わるフリップ時計。<br>・`terminal`: 等幅フォントと点滅カーソル。 |
+| アナログ | `minimal`<br>`dress`<br>`railway` | 針による伝統的な運針表示。<br>・`minimal`: 極限まで装飾を排した針表示。<br>・`dress`: ローマ数字とセリフ書体。<br>・`railway`: 太いインデックスと特徴的な秒針。 |
+
+### カラーと寸法の規則
+
+- **テーマ連動**: 配色はテーマのセマンティックカラー（地色は `card`、針や文字は `neutral-text`）およびパーソナルカラー（秒針やアクセント表示は `accent-solid`）に自動追従する。
+- **描画寸法**: 基準直径 400px（`face::BASE`）で描画され、実際の空間スケールへ縮小される。文字盤はグラフィックとして成立しているため、アクセシビリティの文字拡大・太字化からは除外（`.text_exact()`）され、全体の UI スケールによってのみ拡大縮小される。
 
 ## 主な公開 API
 
-`wrist::spec(&saved, debug, settings)`, `Wrist`, `REACH`, `offset(hand, settings)`（`hand` の手首に付ける姿勢。覚えた `wrist_offset` を鏡写しにしたもの、無ければ `watch_offset(hand)`）, `watch_offset(hand)`（コントローラの tip から見た手首の時計の姿勢。本物の腕時計と同じく手首の甲の側・腕寄りで、表は手の甲の外、12 時は小指の側。左右は鏡写し。手首の関節の位置は `vr::GRIP_FROM_WRIST` から決まり、骨格だけの手も `HandSkeleton::grip` で同じ値が手首に来る）, `wrist::preview(design, d, cx)`（選ぶ画面に出す文字盤の見本。画面どうしは直接依存しないので、`Wrist::new` が UI 層のグローバル `ui::prefs::FacePreview` に置き、選ぶ画面（`ui::prefs::watch_faces`）がそこから引く）
+```rust
+wrist::spec(&saved, debug, settings); // パネル起動仕様の生成
+wrist::preview(design, diameter, cx); // 設定画面用の文字盤プレビュー
+Wrist;
+REACH;
+offset(hand, settings);               // 指定手首への装着姿勢の算出
+watch_offset(hand);                   // 既定の装着姿勢
+```
 
-## 文字盤とデザイン
+## 新規デザインの追加手順（デザインを足す）
 
-文字盤には種類（`kernel::WristFace`: スタンダード / デジタル / アナログ）があり、種類ごとにその種類に合う題材のデザイン（`kernel::WristDesign`）を持つ。設定は `wrist_design`（`Setting::WristDesign`）1 つで、種類はデザインから決まる（`WristDesign::face`）。
-
-| 種類 | デザイン |
-|---|---|
-| スタンダード（中央に日付と大きな時刻。縁で秒を見せる） | `dots` ドット（既定。点の目盛りと秒の点） / `ring` リング（秒で満ちる輪と、塗りの色の日付の札） / `gauge` ゲージ（60 の目盛りが秒まで灯る） |
-| デジタル（数字で秒まで） | `lcd` 液晶（7 セグメント。消えたセグメントも薄く見える） / `flip` フリップ時計（時と分の札） / `terminal` ターミナル（等幅の文字と点滅するカーソル） |
-| アナログ（針） | `minimal` ミニマル / `dress` ドレス（セリフのローマ数字） / `railway` 鉄道時計（太い目盛りと、先に円の付いた秒針） |
-
-- 色はテーマの役割だけを使う（生の色は書かない）。地は `card`、文字と針は `neutral-text` / `neutral-text-low`、秒を示すもの（点・輪・秒針・カーソル）はパーソナルカラーの塗り `accent-solid`、塗りの上の文字は `on-accent`。なので、テーマとパーソナルカラーを替えると文字盤の色も替わる。
-- 寸法は基準の直径（`face::BASE` = 400px、本物の大きさ）で書き、`Face::px` / `Face::size` が実際の大きさに縮める。本物も見本（`preview`）も同じ関数で描く。
-- 飾りの書体は `design::font::{serif, segment, mono}`（OFL のものだけ。`../design/src/font.rs`）。
-
-### デザインを足す
-
-1. `crates/kernel/src/config.rs` の `wrist_designs!` の表で、種類の行に `名前 = "キー"` を足す（設定ファイルの値・選ぶ画面の一覧・`WristDesign::face` はここから決まる）。
-2. `crates/wrist/src/face/<種類>.rs` に `pub fn キー(f: &Face) -> Div` を書く。材料は `Face`（`frame` / `date` / `time` / `clock` / `hands` / `label` / `paint` と `Pen`）だけを使う。
-3. `crates/wrist/src/face.rs` の `dial` の `match` に 1 行足す（足し忘れるとコンパイルが通らない）。
-4. `crates/i18n/locales/*.toml` の `[wrist.design]` に名前を足す（足し忘れると `every_face_and_design_has_a_name` が落ちる）。
-
-種類を足すときは、表に行を足し、`face/` にファイルを足す（`[wrist.face]` にも名前）。設定画面・セットアップの選択肢は表から並ぶので変えない。見た目は `cargo test -p ui --test gpu -- --ignored look` で `target/tmp/look-faces-*.bmp` に書き出して確かめる。
-
-文字盤は絵として描くので、アクセシビリティの「文字の大きさ」「太字」には従わない（`Face::frame` の `.text_exact()`。数字も直径に合わせて決めてある）。大きく見たいときは UI スケールで文字盤ごと大きくなる。
+1. `crates/kernel/src/config.rs` のマクロ `wrist_designs!` に、該当種類の行へ `名前 = "キー"` を追加する。
+2. `crates/wrist/src/face/<種類>.rs` に描画関数 `pub fn キー(f: &Face) -> Div` を実装する。
+3. `crates/wrist/src/face.rs` の `dial` 関数内の `match` 式へ分岐を追加する。
+4. `crates/i18n/locales/*.toml` の `[wrist.design]` テーブルへ表示名を追加する。

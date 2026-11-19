@@ -2,15 +2,41 @@
 
 層: 7 テスト
 
-Playwright 風 E2E テスト基盤。開発専用。ランタイムごとに対等なキット
+Playwright の設計思想を取り入れた宣言的な E2E テスト基盤を提供する。開発および CI 検証専用のクレートであり、本番バイナリには含まれない。
+
+各 VR ランタイム（novr、OpenVR、OpenXR）に対して均一な抽象化キットを提供する。
 
 ## 主な公開 API
 
-`Driver::{click, hover, down, up, drag, scroll, read, color_at}`（全キット共通）, `on_every_runtime!`, `NoVrKit::{screenshot, on_screen, color_on_screen, move_mouse, press, release, stick, select_panel, type_keys}`, `DesktopKit::with_backend`, `VrKit::{panel, add_panel, press, drag_panel, move_hand, hand, profile, point_at, bounds, try_bounds}`（`try_bounds` は描かれていなければ `None`。消えたことの確認用）, `runtimes::{install, launch, Launched::connect}`（実ランタイムの用意・起動・後片付け）
+### 全キット共通インターフェース（Driver）
 
-## 実ランタイムでの E2E
+```rust
+pub trait Driver<V> {
+    fn click(&mut self, selector: &str);
+    fn hover(&mut self, selector: &str);
+    fn down(&mut self, selector: &str);
+    fn up(&mut self, selector: &str);
+    fn drag(&mut self, from: &str, to: &str);
+    fn scroll(&mut self, selector: &str, delta_y: f32);
+    fn read<T>(&mut self, f: impl FnOnce(&V) -> T) -> T;
+    fn color_at(&mut self, selector: &str) -> Rgba;
+}
+```
 
-- **実ランタイムでの E2E**: `crates/testkit/tests/runtimes.rs`（`harness = false`）。`testkit::runtimes` がランタイムを起動し（Playwright の `webServer` に当たる）、繋いでオーバーレイへ送り、Testing をマウスで操作して（取り付け・ロック）その描画を `DesktopKit::with_backend`（パネルのウィンドウへマウスを直接送るキット）で実ランタイムへ送り、OpenVR はランタイムから読み戻して（光ったボタンまで）確かめ、Drop で自分が起動したプロセスを止めて消えたことまで確かめる。起動に数秒かかり画面にも出るので `cargo test -p testkit --test runtimes -- --ignored [monado|steamvr]` のときだけ流す。入っていないランタイムと、すでに動いているランタイム（別の設定で動いているかもしれず、止めると持ち主が困る）はスキップする。 繋いだ後に、ランタイムが両目の視野を返し、HUD のセーフエリアがその内側に収まることも見る（`fov_is_reported`。通知の HUD を置く範囲）。
-  - **ランタイムを入れる**: `cargo runtimes`（`.cargo/config.toml` の別名。`npx playwright install` に当たるウィザード。`list` / `install [名前] [--dry-run]` / `uninstall [名前]`）。入れる先は `NYAW_RUNTIMES_PATH`、無ければ `%LOCALAPPDATA%\nyaw\runtimes`。
-  - **Monado**: Windows 版は公式の配布物が無いので、Monado の GitLab CI の `windows` ジョブの成果物（main の最新。`install/` に `monado-service.exe` と `openxr_monado.json`）を入れる。`XRT_COMPOSITOR_COMPUTE=false` で起動し（コンピュート合成でクアッドを出すと落ちる）、`XR_RUNTIME_JSON` でマニフェストを指す。模擬 HMD（simulated）の画面にパネルが映る。読み戻しの手段は無い。ログは `<入れる先>/logs/monado-service.log`。
-  - **SteamVR**: Steam の管理下なので入れない（`steam://install/250820` を開くだけ）。HMD が無くても動くよう、null ドライバを有効にした `steamvr.vrsettings` だけを置いた一時フォルダを `VR_CONFIG_PATH` で指す（普段の設定には触らない）。最初に繋いだクライアントが SteamVR を起動する。null ドライバだと `steamvr_room_setup` が立ち上がって vrserver を起動し直すので、後片付けは静かになるまで止め続ける。
+マクロ `on_every_runtime!(test_fn, view_factory)` を用いることで、同一のテストシナリオを novr および VR の全ランタイムに対して網羅実行できる。
+
+### ランタイム別テストキット
+
+- **`NoVrKit`**: デスクトップエミュレーターを用いたテストキット。ヘッドレス実行、画面全体のスクリーンショット検証（`screenshot`、`color_on_screen`）、およびマウス・キー入力注入を提供する。
+- **`VrKit`**: 6 自由度 VR 空間のシミュレーションキット。コントローラ把持（`hand`）、機種プロファイル切り替え（`profile`）、空間ドラッグ（`drag_panel`）、および要素の境界取得（`bounds`、`try_bounds`）を扱う。
+- **`DesktopKit`**: パネルウィンドウに対して直接入力を注入し、実ランタイムへの描画転送を検証するキット。
+
+## 実ランタイムを用いた E2E テスト
+
+外部の VR ランタイムプロセスを実際に起動し、本番同等のパイプラインで動作を検証する（`crates/testkit/tests/runtimes.rs`、`#[ignore]` 指定）。
+
+- **実行コマンド**: `cargo test -p testkit --test runtimes -- --ignored [monado|steamvr]`
+- **ライフサイクル管理**: `testkit::runtimes` がランタイムプロセスを自動起動し、テスト完了時に安全に停止・クリーンアップする。既存の起動中ランタイムが存在する場合は設定破壊を防ぐためテストをスキップする。
+- **環境構築ツール (`cargo runtimes`)**: テストに必要なランタイムの取得・インストールを行うヘルパーコマンド（保存先: `%LOCALAPPDATA%\nyaw\runtimes`）。
+  - **Monado**: GitLab CI の Windows ビルド成果物を取得し、シミュレーション HMD モードで起動して OpenXR レイヤーの動作を検証する。
+  - **SteamVR**: null ドライバを有効化した独立の一時設定（`VR_CONFIG_PATH`）を指定して起動し、物理 HMD が接続されていない環境でもオーバーレイ転送と読み戻しを検査する。

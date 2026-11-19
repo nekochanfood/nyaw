@@ -2,37 +2,41 @@
 
 層: 5 画面
 
-設定画面。ダッシュボードの設定ボタン（`menu-settings`。main が `settings::spec` を渡す）と Testing の `settings-test` から開く。GNOME の設定のようなツートーン: 左のサイドバー（地は `sidebar`）のカテゴリ（`settings-general` / `settings-appearance` / `settings-input` / `settings-display` / `settings-accessibility`。選んでいるものだけ文字が濃く、左端のアクセント色の印が前の行で縮み、選んだ行で伸びて出る）を押すと、右（地は `background`）の中身が切り替わる。閉じるのはナビゲーションバー。
+アプリケーション全体の各種設定を変更するための画面を提供する。GNOME Settings に類似したツートーンレイアウトを採用し、左側のサイドバーでカテゴリを選択し、右側の領域で詳細な設定項目を操作する。
+
+## 画面構造と設計思想
+
+- **段階的開示（Progressive Disclosure）**: 頻繁に変更される主要項目はカテゴリ直下に直接配置し、設定項目が多い機能については右矢印（`>`）の付いた行から詳細ページ（`Page`）をスタック上に展開する（右からのプッシュ遷移）。詳細画面からはスワイプバックまたは戻るボタンで即座に復帰できる。
+- **設定の即時反映**: 各種スライダーの調整やポップオーバーでの選択肢変更は、操作が行われた瞬間に `Setting` コマンドを通じてカーネルおよびシステム全体へ即座に反映される。
+- **共通コンポーネントの再利用**: 外観、文字盤、アクセシビリティの各設定領域には、セットアップウィザードと共通の部品（`ui::prefs`）を使用し、動作と視覚的一貫性を担保する。
+
+## カテゴリと設定項目
+
+本クレートはカテゴリおよび詳細ページごとにファイルを分割して実装する。
+
+| ファイル / カテゴリ | 責務と設定項目 |
+|---|---|
+| `general.rs`<br>一般 (`settings-general`) | 表示言語の選択、SteamVR 連動起動設定（OpenVR のみ表示）、アップデート画面およびバージョン情報画面への遷移リンク。 |
+| `appearance.rs`<br>外観 (`settings-appearance`) | テーマの切り替え（ダーク / ライト）、パーソナルカラーの履歴選択とカスタム色作成ダイアログの起動、腕時計文字盤の選択カルーセル。 |
+| `input.rs`<br>入力 (`settings-input`) | 利き手の指定（右 / 左）、ダッシュボード表示中のゲーム入力遮断スイッチ、ポインタ調整およびキーボード設定画面への遷移リンク。 |
+| `display.rs`<br>表示 (`settings-display`) | ダッシュボードの出現距離と高さ（調整完了時に位置再計算）、トースト通知の表示アンカー位置（8 か所）、パネルの描画品質（LOD）、画面ミラーリングの上限フレームレート。 |
+| `pointer.rs`<br>ポインタ詳細 | コントローラレーザーの調整。簡易調整（1 本のスライダー）と詳細調整（手振れ補正係数、追従遅延限界角度、可視長）の切り替え、カーソル倍率、ツールチップおよび効果音の有効化。 |
+| `keyboard.rs`<br>キーボード詳細 | 上部に打鍵可能な仮想キーボードプレビューを表示し、下部に配列レイアウト、表示倍率、キー間隔倍率、打鍵音の有無と音量設定を配置。 |
+| `update.rs`<br>アップデート詳細 | 現在のバージョン情報、手動更新確認ボタン、配信チャンネル（安定版 / ナイトリー）の切り替え、新規リリース検出時のダウンロード・インストール処理、および Markdown 形式のリリースノート表示。 |
+| `about.rs`<br>情報詳細 | アプリケーションのロゴ、バージョン表記、ソースコードリンク、および依存ライブラリ一覧（`cargo metadata` からビルド時に自動収集）の表示。 |
+
+アクセシビリティ設定に関しては単一の共通コンポーネント（`ui::prefs::accessibility`）で完結するため、`lib.rs` の画面振り分けから直接呼び出される。
 
 ## 主な公開 API
 
-`Settings`（画面。`category: Category` / `pages: Vec<Page>` / `push(page)`）, `Category`（サイドバーのカテゴリ。`Category::ALL` の順に並ぶ）, `Page`（カテゴリから開く詳しい画面）, `spec(from, opened)`, `SIZE` / `PX`, `heading`（見出しの行。`testing::NavTest` も使う）, `SIDEBAR_BG` / `SIDEBAR_INDICATOR` / `SIDEBAR_INDICATOR_INSET`（E2E が色を見る）
+```rust
+Settings;             // 設定画面の主構造体（カテゴリとページスタックを保持）
+Category;             // サイドバーの各カテゴリ定義
+Page;                 // 詳細設定ページの定義
+spec(from, opened);   // パネル起動仕様の生成
+```
 
-## ファイルの分け方（ルール）
+## テスト手法
 
-**カテゴリ・詳しい画面ごとに 1 ファイル**。カテゴリや画面を足すときは、ファイルを足して `lib.rs` の `Category` / `Page` と振り分け（`category_page` / `sub_page`）に 1 行ずつ足す。中身を `lib.rs` に書かない（同じ所を皆が触ってコンフリクトするので）。
-
-| ファイル | 中身 |
-|---|---|
-| `lib.rs` | 骨組みだけ: サイドバー・積み重ね・カテゴリの入れ替え、どのカテゴリでも使う部品（選択の行 `select`・詳しい画面を開く行 `page_row(s)`・`heading`・`change`） |
-| `general.rs` | 一般 = 言語・SteamVR と一緒に起動（`setting-auto-launch`。`Settings::auto_launch` が `Some` のとき = OpenVR のときだけ出る）、行 `settings-update` / `settings-about` |
-| `appearance.rs` | 外観 = テーマの見本 `theme-preview`・テーマ `setting-theme`・パーソナルカラーの履歴（見本 `accent-<名前>` と、色を作るダイアログを開く `accent-custom`）、行 `settings-watch`。時計（`watch`）= 種類の絞り込み `watch-kind`・弧に並ぶ文字盤の見本 `watch-faces`（`watch-prev` / `watch-next` でも回せる）・`watch-set` |
-| `input.rs` | 入力 = 利き手 `setting-dominant-hand`・ゲーム入力を止める `setting-block-input`（`switch_item`。行のどこを押しても `Setting::BlockInput` を切り替える）、行 `settings-pointer` / `settings-keyboard` |
-| `display.rs` | 表示 = 見出し付きのグループでダッシュボード（距離 `setting-dashboard-distance` と高さ `setting-dashboard-height`（頭の高さからの相対）のスライダーの行（`-slider`）。この画面もダッシュボードに付いて動くので、動かしている間は値だけを見せ、離したときに決める（ダッシュボードはその場で置き直る））・通知（視界の端に出す位置 `setting-notification-anchor`。選択肢は `setting-anchor-top-left` 〜 `-bottom-right` の 8 か所）・グラフィックス（距離 LOD `setting-lod-quality`）・ミラーリング（FPS `setting-mirror-fps`） |
-| `pointer.rs` | ポインタ = カーソルとビームの設定: 調整のしかた `setting-pointer-tuning`（`setting-tuning-simple` / `-detailed`）で、シンプルは 1 本のスライダー `setting-steadiness`（真ん中が既定。左半分で手ブレ抑えを弱め、右半分で抑えを緩める角度を広げる）、詳細は `setting-smoothing` / `setting-release` / `setting-laser-length`（線が消えていく長さ）。その下にカーソルの大きさ `setting-cursor-size`（スライダー `setting-cursor-size-slider`。50〜200%、10% の刻み）・ツールチップ `setting-tooltips`、音のタップ音 `setting-tap-sound`・ホバー音 `setting-hover-sound`（スイッチ。既定はオン） |
-| `keyboard.rs` | キーボード = 上にキーボードの見本（`ui::prefs::keyboard_preview`。召喚したキーボードと同じ地 `keyboard-preview-card` に載り、どの種類も中身の幅と箱に収まる縮尺になる。押せて音も鳴るが、どこにも打たないダミー。`Settings::keyboard_preview` が持つ）、下に種類 `setting-keyboard`・大きさ `setting-keyboard-size`（スライダー `setting-keyboard-size-slider`。50〜200% を 10% の刻み。召喚するキーボードの大きさで、見本は変わらない）・キーの間隔 `setting-key-gap`（スライダー `setting-key-gap-slider`。種類の既定の隙間（`spacing.xs` = 4px）の 0〜200% を 10% の刻み）・キーの入力音 `setting-key-sound`（スイッチ。既定はオン）・その音量 `setting-key-volume`（スライダー `setting-key-volume-slider`。10% の刻み。入力音がオンの間だけ出る）で、大きさ以外は変えるとすぐ見本に出る |
-| `update.rs` | アップデート = 今の版（`update-current`。ビルド番号は画面に出さない）・確認の状態（`update-status`）と「今すぐ確認」（`update-check`）、チャンネル（`setting-update-channel`。安定版 / ナイトリー。`../updater/AGENT.md` の「チャンネル」）、新しいリリースがあればその版（`update-version`）・「アップデートして再起動」（`update-install`。落としている間は `update-progress`、走らせたら `update-installing`）・リリースノート（`update-notes`。Markdown）・リリースのページ（`update-page`）。ダッシュボードのアップデートのボタンから開くと一般の上にこの画面を積んだ状態になる |
-| `about.rs` | 情報 = ロゴ・バージョン、`setting-licenses` で情報の上に依存のライセンスの一覧を積む（`license-<名前>-<バージョン>`。押すとリポジトリをブラウザで開く（確かめてから。`ui::link`））、`setting-source` でこのリポジトリをブラウザで開く。一覧は `build.rs` が `cargo metadata` から nyaw の通常・ビルドの依存だけを集めてビルド時に埋め込む |
-
-アクセシビリティは `ui::prefs::accessibility` 1 つなので `lib.rs` の振り分けに直接書く。
-
-## 設計
-
-- **段階的開示**: カテゴリにはよく変える設定だけを直接並べ、まとまった設定は詳しい画面（`Page`。`Settings::pages` に積む）に分け、カテゴリの中の `>` の付いた行から開く（右から入る。見出しの左の `settings-back` かスワイプバックで戻り、サイドバーでカテゴリを押すと、選んでいるものでも全部下ろす）。1〜2 行しかない設定は詳しい画面に分けない（押す回数を増やすだけなので、グループの見出しでまとめる）。
-- 複数から選ぶ設定は選択の行（`setting-language` / `setting-theme` / `setting-dominant-hand` / `setting-mirror-fps` / `setting-keyboard` など）で、押すとポップオーバーに選択肢（`setting-lang-*` / `setting-theme-*` / `setting-hand-*` / `setting-fps-*` / `setting-keyboard-*`）が開き、外を押すと閉じる。選択肢とスライダーはすぐ全体の設定（`Setting`）に反映する。
-- 「外観」「時計」「アクセシビリティ」は、セットアップウィザードと同じ部品（`ui::prefs::appearance` / `ui::prefs::watch_faces` / `ui::prefs::accessibility`。`../ui/AGENT.md` の「設定の部品」）。
-
-## テスト
-
-- 単体（`cargo test -p settings`）: ポインタの手ブレ抑えのスライダーの換算とカードの幅（`pointer.rs`）、キーボードの見本がどの種類でも収まること（`keyboard.rs`）。
-- E2E は testkit の `scenarios/{navigation,prefs,pointer_settings,update}.rs`、見た目は `ui/tests/gpu/{look,a11y}.rs`。
+- **単体テスト (`cargo test -p settings`)**: ポインタ手振れ補正スライダーの数値換算ロジック、および各配列におけるキーボードプレビューの描画幅計算を検証する。
+- **E2E シナリオテスト**: `testkit` の各種シナリオ（`navigation.rs`、`prefs.rs`、`pointer_settings.rs`、`update.rs`）を通じて画面遷移と値の反映を総合的に検査する。
