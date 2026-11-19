@@ -118,7 +118,6 @@ pub fn spec(
 ) -> PanelSpec {
     let default = pose(kernel::DASHBOARD_DISTANCE, 0.0);
     PanelSpec::root(Pose::IDENTITY, move |id, _, cx: &mut Context<Dashboard>| {
-        nyapp::opened(nyapp::system::DASHBOARD.id, id, cx);
         opened(id, cx);
         // 隠して開くときは開く音を鳴らさない（置くのは出すとき）。すぐ出すときは設定の距離・高さに置き直す。
         let entry = if hidden {
@@ -207,7 +206,6 @@ pub struct Dashboard {
     enter: Entering,
     /// 前のフレームに並べていたもの（消えていくものを含む）。消えたものを、滑り出る間だけ同じ場所に描き残すのに使う。
     prev_streams: Vec<Stream>,
-    prev_activities: Vec<nyapp::activity::Live>,
     prev_media: bool,
     prev_update: bool,
     prev_sep: bool,
@@ -242,13 +240,6 @@ pub struct Screen {
     /// アプリ一覧の検索欄に打った文字。
     query: String,
     search: FocusHandle,
-    /// 入っているニャプリ（名前の順）と、読み直している最中か。
-    nyapps: Vec<nyapp::Installed>,
-    nyapps_pending: bool,
-    /// ニャプリを消す状態（タイルを押すと消す）。
-    removing: bool,
-    /// 更新の確認の結果（確認中も）。
-    update_note: Option<SharedString>,
     /// 通知センター（クイック設定の一覧）で、ホバーして広げている通知・トーストから開いて広げて見せる通知（ホバーすると
     /// 外す）と、アプリのアイコン。
     notification_hover: Option<u32>,

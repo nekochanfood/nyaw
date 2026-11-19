@@ -13,7 +13,7 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 2 | オーバーレイ | パネルの配置・入力判定 |
 | 3 | カーネル | 設定・フレーム進行・パネル操作 |
 | 4 | UI | パネルの描画と入力変換（`design` などの横断部品を含む） |
-| 5 | 画面 | UI の上に載る画面・ニャプリ基盤 |
+| 5 | 画面 | UI の上に載る画面 |
 | 6 | ブート | `src/main.rs` |
 | 7 | テスト | 開発専用のテスト基盤（本番のバイナリには入らない） |
 
@@ -44,8 +44,6 @@ nyaw は GPUI で GUI を描く VR オーバーレイシステム。Cargo ワー
 | 5 | [`crates/settings`](crates/settings/AGENT.md) | 設定画面（カテゴリ・詳しい画面ごとに 1 ファイル） |
 | 5 | [`crates/setup`](crates/setup/AGENT.md) | セットアップウィザード（初回起動・デバッグからのやり直し。ロックダウンと LazyFollow を使う） |
 | 5 | [`crates/beam`](crates/beam/AGENT.md) | コントローラのレーザー・カーソル・ドラッグ・ツールチップ |
-| 5 | [`crates/nyapp`](crates/nyapp/AGENT.md) | ニャプリ（wasm アプリ）の基盤 |
-| 5 | [`crates/nyapp-sdk`](crates/nyapp-sdk/AGENT.md) | ニャプリを書く SDK |
 | 5 | [`crates/updater`](crates/updater/AGENT.md) | アプリの更新（GitHub のリリースをビルド番号で比べて知らせ、ユーザーが選んだら黙って入れ替える） |
 | 7 | [`crates/testkit`](crates/testkit/AGENT.md) | Playwright 風 E2E テスト基盤（開発専用） |
 | 6 | `src/main.rs` | ブートローダー。ロガーを組み立て、設定を読み、カーネルを起こして載せる画面（wrist とビーム）とともに `ui::run` に渡すだけ。`--novr` / `--openxr` / `--openvr`、指定なしで VR が無ければデバッグビルドは novr、リリースビルドは「ランタイムが見つかりませんでした」のダイアログを出して終わる。リリースビルドはコンソールを出さず、`--console` で出す。設定ファイルの `runtime` は非推奨（デバッグビルドだけ読む） |
@@ -146,10 +144,6 @@ testkit のキットに `build` として渡す。画面からパネルへの操
   段階ごとの時間を見る。直したらストレステストの数字で効果を確かめ、コミットに書く。
 - 依存クレートのデバッグビルドの罠に注意する。gpui（Windows）は debug-assertions が有効だとウィンドウを作るたびに HLSL を実行時に
   コンパイルする（1 枚 180ms）ので、`Cargo.toml` の `[profile.dev.package.gpui_windows]` で切っている。
-
-## ニャプリ
-
-nyaw の上で動くアプリ。システム UI（wrist・ダッシュボード・ランチャー・デバッグ・設定）もニャプリで、本体に組み込まれた特権のもの（Android の SystemUI と同じ）。ユーザーのニャプリは `.nyapp`（wasm）で、サンドボックスで動き、落ちても nyaw は落ちない。構想・思想・形式は `crates/nyapp/AGENT.md`、試作は `nyapps/`（別のワークスペース。`cargo nyapps build | install`）。
 
 ## 規約
 

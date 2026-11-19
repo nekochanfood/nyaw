@@ -28,7 +28,7 @@ jobs:
           # ノートの起点（辿れる一番新しいタグ）を探すので、履歴とタグを全部取る
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
-      # 版を上げる所は今の版が書いてある所すべて（本体と nyapps の Cargo.toml・ロックファイル、試作のニャプリ、AGENT.md）
+      # 版を上げる所は今の版が書いてある所すべて（Cargo.toml・ロックファイル、AGENT.md）
       - name: Bump the version
         env:
           NEW: ${{ inputs.version }}
@@ -51,10 +51,9 @@ jobs:
             echo "::error::v$NEW is already tagged or being prepared"
             exit 1
           fi
-          sed -i "s/^version = \"$old\"/version = \"$NEW\"/" Cargo.toml nyapps/Cargo.toml nyapps/*/manifest.toml
+          sed -i "s/^version = \"$old\"/version = \"$NEW\"/" Cargo.toml
           sed -i "s/CalVer（現在 \`$old\`/CalVer（現在 \`$NEW\`/" AGENT.md
           cargo update --workspace
-          cargo update --workspace --manifest-path nyapps/Cargo.toml
       - name: Open the release PR
         env:
           NEW: ${{ inputs.version }}

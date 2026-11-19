@@ -100,7 +100,7 @@ pub fn config_dir() -> Option<PathBuf> {
     Some(env_path("LOCALAPPDATA")?.join(name))
 }
 
-/// ユーザーのデータ（ニャプリのパッケージとその保存領域）の置き場: `%LOCALAPPDATA%\nyaw`。
+/// ユーザーのデータの置き場: `%LOCALAPPDATA%\nyaw`。
 pub fn data_dir() -> Option<PathBuf> {
     let root = env_path("LOCALAPPDATA")?;
     Some(root.join("nyaw"))

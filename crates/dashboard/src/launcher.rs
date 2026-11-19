@@ -1,5 +1,5 @@
-//! ランチャー: ニャプリ・起動中のアプリ・すべてのアプリを、見出しとタイルの行の仮想化したリストに並べる。
-//! 押すとニャプリをはめ、アプリはウィンドウを映す（無ければ起動して待つ。`mirror.rs`）。
+//! ランチャー: 起動中のアプリ・すべてのアプリを、見出しとタイルの行の仮想化したリストに並べる。
+//! 押すとアプリのウィンドウを映す（無ければ起動して待つ。`mirror.rs`）。
 
 use super::*;
 
@@ -63,7 +63,6 @@ impl Launcher {
 /// ランチャーのリストの 1 行。
 #[derive(Debug, Clone, PartialEq)]
 enum LauncherRow {
-    NyappsHeader,
     RunningHeader,
     AllAppsHeader,
     Note(SharedString),
@@ -77,8 +76,6 @@ enum LauncherRow {
 /// ランチャーのタイル。`n` は検索で絞った中での順番（`debug_selector` の番号）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Tile {
-    /// [`Screen::nyapps`] の添字。
-    Nyapp(usize),
     /// [`Launcher::running`] の添字。
     Running { at: usize, n: usize },
     /// [`Screen::apps`] の添字と、起動中か。
@@ -86,163 +83,6 @@ enum Tile {
 }
 
 impl Screen {
-    /// 入っているニャプリを読み直す（パッケージを読むので別スレッド）。
-    pub(crate) fn scan_nyapps(&mut self, cx: &mut Context<Self>) {
-        self.nyapps_pending = true;
-        cx.spawn(async move |this, cx| {
-            let found = cx
-                .background_executor()
-                .spawn(async { nyapp::installed::scan() })
-                .await;
-            let _ = this.update(cx, |s, cx| {
-                (s.nyapps, s.nyapps_pending) = (found, false);
-                ui::notify(s.panel, cx);
-            });
-        })
-        .detach();
-    }
-
-    /// ニャプリ `app` を消す（開いていれば閉じる）。消したら一覧を読み直す。
-    fn uninstall_nyapp(&mut self, app: nyapp::Installed, cx: &mut Context<Self>) {
-        if let Some(panel) = nyapp::panel_of(&app.manifest.id, cx) {
-            close(panel, cx);
-        }
-        let id = app.manifest.id.clone();
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(async move { nyapp::installed::uninstall(&id) })
-                .await;
-            let removed = result.is_ok();
-            if let Err(e) = result {
-                logger::warn!("cannot uninstall nyapp", app = app.manifest.id, error = e);
-            }
-            let _ = this.update(cx, |s, cx| {
-                if removed {
-                    nyapp::activity::clear(&app.manifest.id, cx);
-                }
-                s.scan_nyapps(cx)
-            });
-        })
-        .detach();
-    }
-
-    /// 更新情報を持つニャプリの最新版を確かめ、新しければ入れ替える（ネットワークを使うので別スレッド）。
-    fn update_nyapps(&mut self, cx: &mut Context<Self>) {
-        self.update_note = Some(i18n::t(cx, "dashboard.nyapps_checking"));
-        let apps = self.nyapps.clone();
-        cx.spawn(async move |this, cx| {
-            let results: Vec<_> = cx
-                .background_executor()
-                .spawn(async move { apps.iter().map(nyapp::update::update).collect() })
-                .await;
-            let _ = this.update(cx, |s, cx| {
-                let updated = results.iter().filter(|r| matches!(r, Ok(Some(_)))).count();
-                let error = results.iter().find_map(|r| r.as_ref().err());
-                s.update_note = Some(match (error, updated) {
-                    (Some(e), _) => i18n::tf(cx, "dashboard.nyapps_update_failed", &[("error", e)]),
-                    (None, 0) => i18n::t(cx, "dashboard.nyapps_up_to_date"),
-                    (None, n) => i18n::tf(cx, "dashboard.nyapps_updated", &[("count", &n)]),
-                });
-                s.scan_nyapps(cx);
-            });
-        })
-        .detach();
-    }
-
-    /// ランチャーのニャプリの見出し: 更新の確認と、消す状態の切り替え。
-    fn nyapps_header(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let (remove_glyph, remove_key, remove_variant) = if self.removing {
-            (&icons::CHECK, "dashboard.nyapps_done", Variant::Primary)
-        } else {
-            (
-                &icons::PENCIL_SIMPLE,
-                "dashboard.nyapps_edit",
-                Variant::OnBackground,
-            )
-        };
-        section(theme, i18n::t(cx, "dashboard.nyapps"))
-            .child(
-                div()
-                    .flex()
-                    .gap(px(spacing::XS))
-                    .child(
-                        components::icon_button(
-                            theme,
-                            "dashboard-nyapps-update",
-                            &icons::ARROW_CIRCLE_UP,
-                            i18n::t(cx, "dashboard.nyapps_update"),
-                            Variant::OnBackground,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.update_nyapps(cx);
-                            ui::notify(this.panel, cx);
-                        })),
-                    )
-                    .child(
-                        components::icon_button(
-                            theme,
-                            "dashboard-nyapps-remove",
-                            remove_glyph,
-                            i18n::t(cx, remove_key),
-                            remove_variant,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.removing = !this.removing;
-                            ui::notify(this.panel, cx);
-                        })),
-                    ),
-            )
-            .into_any_element()
-    }
-
-    /// ニャプリ `app` のタイル。押すと開く（消す状態なら消す。アイコンはごみ箱になる）。
-    fn nyapp_tile(
-        &self,
-        app: &nyapp::Installed,
-        theme: &Theme,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
-        let lang = i18n::Lang::current(cx);
-        let name = app.manifest.name_in(lang.code()).to_owned();
-        let running = nyapp::panel_of(&app.manifest.id, cx).is_some();
-        let icon = if self.removing {
-            design::icon(&icons::TRASH)
-                .size(px(TILE_ICON_PX))
-                .color(rgba(theme.danger_solid))
-                .into_any_element()
-        } else {
-            app.icon(lang.code(), f32::from(tile_icon_size()), theme)
-        };
-        let tooltip = self
-            .removing
-            .then(|| i18n::tf(cx, "dashboard.nyapps_uninstall", &[("name", &name)]));
-        let app = app.clone();
-        let tile = app_tile(
-            theme,
-            format!("dashboard-nyapp-{}", app.manifest.id),
-            icon,
-            &name,
-            running,
-            window,
-        );
-        match tooltip {
-            Some(t) => tile.tooltip(t),
-            None => tile,
-        }
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if this.removing {
-                this.uninstall_nyapp(app.clone(), cx);
-            } else {
-                let app = app.clone();
-                let _ = this.dashboard.update(cx, |d, cx| d.open_nyapp(app, cx));
-            }
-            ui::notify(this.panel, cx);
-        }))
-        .into_any_element()
-    }
-
     /// アプリ `app` のウィンドウ（取得元の一覧から。[`is_window_of`]）。
     fn window_for(&self, app: &InstalledApp) -> Option<&(Source, Option<Arc<RenderImage>>)> {
         self.sources.iter().find(|(s, _)| app.owns(s))
@@ -294,7 +134,7 @@ impl Screen {
         }
     }
 
-    /// ランチャー: 上に検索欄、その下をスクロールする 1 本のリストにして、ニャプリ・区切り線・起動中のアプリ・区切り線・
+    /// ランチャー: 上に検索欄、その下をスクロールする 1 本のリストにして、起動中のアプリ・区切り線・
     /// 全部のアプリ（名前の順）を並べる。検索すると、どれも名前に打った文字を含むものだけになる。
     /// リストは見えている行だけを組み立てる（アプリは数百個あり、全部のタイルを毎回組むと 1 フレームに収まらない）。
     pub(crate) fn apps_page(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Div {
@@ -338,39 +178,8 @@ impl Screen {
     fn layout_launcher(&self, cx: &App) -> Launcher {
         let query = self.query.trim().to_lowercase();
         let matches = |name: &str| query.is_empty() || name.to_lowercase().contains(&query);
-        let lang = i18n::Lang::current(cx).code();
         let mut l = Launcher::default();
         let note = |key: &str| LauncherRow::Note(i18n::t(cx, key));
-
-        // 通常のニャプリを止めているときは、見出しごと出さない。
-        if nyapp::NORMAL_NYAPPS_ENABLED {
-            l.rows.push(LauncherRow::NyappsHeader);
-            if let Some(n) = &self.update_note {
-                l.rows.push(LauncherRow::Note(n.clone()));
-            }
-            let nyapps: Vec<_> = (0..self.nyapps.len())
-                .filter(|&i| matches(self.nyapps[i].manifest.name_in(lang)))
-                .map(Tile::Nyapp)
-                .collect();
-            if !nyapps.is_empty() {
-                l.push_tiles(nyapps);
-            } else if self.nyapps_pending {
-                l.rows
-                    .push(LauncherRow::Loading(i18n::t(cx, "dashboard.loading")));
-            } else if self.nyapps.is_empty() {
-                let dir = nyapp::installed::dir()
-                    .map(|d| d.display().to_string())
-                    .unwrap_or_default();
-                l.rows.push(LauncherRow::Note(i18n::tf(
-                    cx,
-                    "dashboard.nyapps_none",
-                    &[("dir", &dir)],
-                )));
-            } else {
-                l.rows.push(note("dashboard.none"));
-            }
-            l.rows.push(LauncherRow::Separator);
-        }
 
         l.rows.push(LauncherRow::RunningHeader);
         l.running = self.running_apps(cx);
@@ -489,7 +298,6 @@ impl Screen {
             return div().into_any_element();
         };
         let row = match row {
-            LauncherRow::NyappsHeader => self.nyapps_header(&theme, cx),
             LauncherRow::RunningHeader => section(&theme, i18n::t(cx, "dashboard.running"))
                 .child(
                     components::icon_button(
@@ -554,7 +362,6 @@ impl Screen {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         match self.launcher.tiles[i] {
-            Tile::Nyapp(at) => self.nyapp_tile(&self.nyapps[at], theme, window, cx),
             Tile::Running { at, n } => {
                 let r = &self.launcher.running[at];
                 let (source, image) = (r.source.clone(), r.window_icon.clone());

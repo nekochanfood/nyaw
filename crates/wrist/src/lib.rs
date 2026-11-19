@@ -83,7 +83,6 @@ pub fn spec(saved: &Settings, debug: dashboard::Summon, settings: dashboard::Sum
         IN_VIEW.orientation,
     );
     PanelSpec::root(Pose::IDENTITY, move |panel, _, cx| {
-        nyapp::opened(nyapp::system::WRIST.id, panel, cx);
         Wrist::new(panel, debug, settings, cx)
     })
     .sized(SIZE_M * saved.wrist_scale, RES_PX)
