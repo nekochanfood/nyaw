@@ -1,8 +1,0 @@
-id = "net.bettaworx.eyes"
-name = "Eyes"
-version = "2026.0.3-dev.0"
-api = 1
-permissions = []
-
-[names]
-ja = "目玉"

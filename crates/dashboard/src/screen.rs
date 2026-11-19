@@ -64,10 +64,6 @@ impl Screen {
             apps_pending: false,
             query: String::new(),
             search: cx.focus_handle(),
-            nyapps: Vec::new(),
-            nyapps_pending: false,
-            removing: false,
-            update_note: None,
             notification_hover: None,
             notification_focus: None,
             notification_icons: Default::default(),
@@ -101,7 +97,6 @@ impl Screen {
                 });
             })
             .detach();
-            this.scan_nyapps(cx);
         }
         this
     }

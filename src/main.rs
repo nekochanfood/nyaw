@@ -10,18 +10,6 @@ use kernel::{Kernel, config, subsystems::os};
 use logger::{Level, Logger, StderrSink};
 
 fn main() -> ExitCode {
-    if std::env::args_os()
-        .nth(1)
-        .is_some_and(|arg| arg == "--nyapp-worker")
-    {
-        return match nyapp::worker::main() {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("nyapp worker: {e}");
-                ExitCode::FAILURE
-            }
-        };
-    }
     // ロガーより先に出力先を用意する（ここで決めないと最初のログが消える）。
     if std::env::args().any(|a| a == "--console") {
         os::attach_console();

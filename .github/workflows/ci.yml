@@ -19,7 +19,7 @@ env:
 
 # sccache は使わない。依存は rust-cache の target で揃っていて、sccache に回るのは自前のクレートだけになる。
 # clippy はそれを clippy-driver 経由で呼ぶのでキャッシュできない（multiple input files）。テストは Rust 1.100 の
-# build-dir の新レイアウトで rustc に依存クレートごとの -L dependency= が付き、nyapp のコマンドラインが Windows の
+# build-dir の新レイアウトで rustc に依存クレートごとの -L dependency= が付き、コマンドラインが Windows の
 # 上限（32767 文字）を超える。cargo は引数ファイル（@file）に逃がすが、sccache はそれを展開して os error 206 で落ちる。
 # しかもブランチの run からも保存して 10GB の上限を食う
 

@@ -1,14 +1,7 @@
-//! バー（[`Dashboard`]）: メニュー・クイック設定・再生中・ニャプリの作業・ランチャー・アップデートのボタンと、開いた配信のボタン。
+//! バー（[`Dashboard`]）: メニュー・クイック設定・再生中・ランチャー・アップデートのボタンと、開いた配信のボタン。
 //! 押すと画面をはめ、もう一度押すと閉じる。配信は溜まっていき、選ぶとはまっていたものは隠して外す。
 
 use super::*;
-
-/// 進行中の作業の知らせ（ライブアクティビティ。丸いボタン）の、進み具合の輪の一辺と太さ・中のアイコンの一辺・
-/// 長い文字（`時:分:秒`）の大きさ（px）。
-const ACTIVITY_RING_PX: f32 = 48.0;
-const ACTIVITY_RING_STROKE: f32 = 4.0;
-const ACTIVITY_ICON_PX: f32 = 28.0;
-const ACTIVITY_SMALL_TEXT_PX: f32 = 11.0;
 
 impl Dashboard {
     pub(crate) fn new(
@@ -96,7 +89,6 @@ impl Dashboard {
             outside: None,
             placement: None,
             prev_streams: Vec::new(),
-            prev_activities: Vec::new(),
             prev_media: false,
             prev_update: false,
             prev_sep: false,
@@ -355,24 +347,6 @@ impl Dashboard {
         ui::notify(self.panel, cx);
     }
 
-    /// ニャプリ `app` をはめる（はまっていた画面は閉じ、配信は隠す）。もう開いていれば、そのパネルをはめる。
-    pub fn open_nyapp(&mut self, app: nyapp::Installed, cx: &mut Context<Self>) {
-        self.stash_docked(cx);
-        if let Some(panel) = nyapp::panel_of(&app.manifest.id, cx) {
-            ui::dock(panel, cx);
-            commands(panel, [PanelCommand::Hide(false)], cx);
-        } else {
-            let spec = nyapp::spec(self.panel, app, i18n::Lang::current(cx), |id, cx| {
-                ui::dock(id, cx)
-            });
-            // はめる画面は、開いた元（ランチャー）の手前ではなく、はめる場所に合わせて目の前に出す。
-            cx.default_global::<PanelControl>()
-                .spawns
-                .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
-        }
-        ui::notify(self.panel, cx);
-    }
-
     /// アップデートのボタン: 設定のアップデートを出す（設定がはまっていなければはめる）。
     fn open_update(&mut self, cx: &mut Context<Self>) {
         updater::reveal(cx);
@@ -380,14 +354,6 @@ impl Dashboard {
             Some(settings) => ui::redraw(settings, cx),
             None => self.toggle(Page::Settings, cx),
         }
-    }
-
-    /// 進行中の作業の知らせを押した: 出したニャプリを開く。終わったカウントダウンは知らせを片付ける。
-    fn open_activity(&mut self, live: nyapp::activity::Live, cx: &mut Context<Self>) {
-        if live.finished {
-            nyapp::activity::clear(&live.app.manifest.id, cx);
-        }
-        self.open_nyapp(live.app, cx);
     }
 
     /// 出ている間に何も無い所（ダッシュボードにも、ほかのパネルにも当たらない所）を押したら隠す。
@@ -425,15 +391,8 @@ impl Dashboard {
         }
     }
 
-    /// `panel` に `page` をはめた。その画面のシステムのニャプリとして覚える。
+    /// `panel` に `page` をはめたことを覚える。
     fn track(&mut self, page: Page, panel: PanelId, cx: &mut Context<Self>) {
-        let system = match page {
-            Page::Launcher => nyapp::system::LAUNCHER,
-            Page::Debug => nyapp::system::DEBUG,
-            Page::Settings => nyapp::system::SETTINGS,
-            Page::QuickSettings | Page::NowPlaying => nyapp::system::DASHBOARD,
-        };
-        nyapp::opened(system.id, panel, cx);
         self.pages.retain(|&(p, _)| p != page);
         self.pages.push((page, panel));
         ui::notify(self.panel, cx);
@@ -442,10 +401,6 @@ impl Dashboard {
 
 fn stream_key(panel: PanelId) -> SharedString {
     format!("dashboard-stream-{panel}").into()
-}
-
-fn activity_key(live: &nyapp::activity::Live) -> SharedString {
-    format!("dashboard-activity-{}", live.app.manifest.id).into()
 }
 
 /// バーの最大幅（px）。窓の幅（[`BAR_PX`]）から影の余白を引いたもので、配信などが溜まってこれを超えそうなら、横にスクロールする。
@@ -499,15 +454,7 @@ impl Render for Dashboard {
             .get(&self.panel)
             .is_some_and(|p| p.status.hidden);
         enter.begin(hidden, now_at);
-        // 左から数えたボタンの順番: メニュー 0・クイック設定 1・進行中の作業・再生中・ランチャー・アップデート・区切り線と配信。
-        let activities_now = with_leaving(
-            nyapp::activity::all(cx).to_vec(),
-            &self.prev_activities,
-            activity_key,
-            &mut enter,
-            now_at,
-        );
-        self.prev_activities = activities_now.iter().map(|(l, _)| l.clone()).collect();
+        // 左から数えたボタンの順番: メニュー 0・クイック設定 1・再生中・ランチャー・アップデート・区切り線と配信。
         let streams_now = with_leaving(
             self.streams.clone(),
             &self.prev_streams,
@@ -516,7 +463,6 @@ impl Render for Dashboard {
             now_at,
         );
         self.prev_streams = streams_now.iter().map(|(s, _)| s.clone()).collect();
-        let n_activity = activities_now.len();
         let has_media = cx.global::<PanelControl>().media.is_some();
         let media_key = SharedString::from("dashboard-now-playing");
         let media_exit = !has_media && self.prev_media && enter.start_exit(&media_key, now_at);
@@ -531,7 +477,7 @@ impl Render for Dashboard {
         let update_exit = !has_update && self.prev_update && enter.start_exit(&update_key, now_at);
         self.prev_update = has_update || update_exit;
         let update = usize::from(self.prev_update);
-        let stream_slot = 3 + n_activity + media + update;
+        let stream_slot = 3 + media + update;
         let theme = Theme::current(cx);
         let current = self.current(cx);
         let docked = ui::docked(cx);
@@ -600,65 +546,6 @@ impl Render for Dashboard {
             components::icon_button(&theme, id, glyph, tooltip, variant(page))
                 .on_click(cx.listener(move |this, _, _, cx| this.toggle(page, cx)))
         };
-        // 進行中の作業の知らせ（Dynamic Island のような進み具合の表示）: 1:1 の丸いボタン。進み具合があれば円の輪で示し、
-        // その中に残り時間などの文字。終わったものと文字の無いものは、アプリのアイコンの前景。
-        let now = nyapp::activity::now_ms();
-        let lang = i18n::Lang::current(cx).code();
-        let activities: Vec<_> = activities_now
-            .into_iter()
-            .enumerate()
-            .map(|(i, (live, leaving))| {
-                let text = live.text(now);
-                let tooltip = match &text {
-                    Some(t) => format!("{} · {t}", live.activity.title()),
-                    None => format!(
-                        "{} · {}",
-                        live.activity.title(),
-                        i18n::t(cx, "dashboard.activity_done")
-                    ),
-                };
-                let middle = match &text {
-                    Some(t) if !live.finished => div()
-                        .text_size(px(if t.chars().count() > 5 {
-                            ACTIVITY_SMALL_TEXT_PX
-                        } else {
-                            font_size::SM
-                        }))
-                        .font_weight(FontWeight::BOLD)
-                        .child(t.clone())
-                        .into_any_element(),
-                    _ => live.app.foreground(lang, ACTIVITY_ICON_PX, &theme),
-                };
-                let key = activity_key(&live);
-                let t = if leaving {
-                    enter.progress_out(&key, now_at)
-                } else {
-                    enter.progress(&key, 2 + i, now_at)
-                };
-                let button = components::round_button(&theme, key, tooltip, Variant::Default)
-                    .flex_none()
-                    .relative()
-                    .children(live.progress(now).map(|p| {
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .child(components::progress_ring(
-                                &theme,
-                                ACTIVITY_RING_PX,
-                                ACTIVITY_RING_STROKE,
-                                p,
-                            ))
-                    }))
-                    .child(middle)
-                    .on_click(
-                        cx.listener(move |this, _, _, cx| this.open_activity(live.clone(), cx)),
-                    );
-                slide_in(t, components::BUTTON_HEIGHT, button)
-            })
-            .collect();
         let mirror = page_button(
             "dashboard-launcher",
             &icons::DOTS_NINE,
@@ -672,18 +559,18 @@ impl Render for Dashboard {
             Page::NowPlaying,
         );
         let t = if has_media {
-            enter.progress(&media_key, 2 + n_activity, now_at)
+            enter.progress(&media_key, 2, now_at)
         } else if media_exit {
             enter.progress_out(&media_key, now_at)
         } else {
             Slide::SHOWN
         };
         let now_playing = slide_in(t, components::BUTTON_HEIGHT, now_playing);
-        let t = enter.progress(&"dashboard-launcher".into(), 2 + n_activity + media, now_at);
+        let t = enter.progress(&"dashboard-launcher".into(), 2 + media, now_at);
         let mirror = slide_in(t, components::BUTTON_HEIGHT, mirror);
         // 新しいリリースがあるときだけ、ランチャーの右に強調色のボタン。押すと設定のアップデートを出す。
         let t = if has_update {
-            enter.progress(&update_key, 3 + n_activity + media, now_at)
+            enter.progress(&update_key, 3 + media, now_at)
         } else if update_exit {
             enter.progress_out(&update_key, now_at)
         } else {
@@ -754,10 +641,9 @@ impl Render for Dashboard {
             }))
             .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
         );
-        // 左から: メニュー・クイック設定・進行中の作業（クイック設定と再生中の間）・再生中（何か再生しているときだけ）・
-        // ランチャー・アップデート（新しいリリースがあるときだけ）・区切り線と、開いた配信。
+        // 左から: メニュー・クイック設定・再生中（何か再生しているときだけ）・ランチャー・アップデート（新しいリリースが
+        // あるときだけ）・区切り線と、開いた配信。
         let mut items: Vec<AnyElement> = vec![menu.into_any_element(), quick.into_any_element()];
-        items.extend(activities.into_iter().map(IntoElement::into_any_element));
         if self.prev_media {
             items.push(now_playing.into_any_element());
         }

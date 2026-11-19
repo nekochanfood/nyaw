@@ -49,8 +49,6 @@ mod audio;
 pub use audio::AudioTest;
 mod notifications;
 pub use notifications::NotificationTest;
-mod nyapps;
-pub use nyapps::NyappTest;
 mod skeleton;
 pub use skeleton::{
     HandTuningTest, PINCH_DISTANCE, SKELETON_PX, SKELETON_SIZE, SkeletonTest, TUNING_PX,

@@ -229,20 +229,11 @@ fn section_buttons_sit_at_the_right_edge(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     let width = cx.update(|window, _| window.viewport_size().width);
-    for button in ["dashboard-refresh", "dashboard-nyapps-remove"] {
-        if !nyapp::NORMAL_NYAPPS_ENABLED && button == "dashboard-nyapps-remove" {
-            assert!(
-                cx.debug_bounds(button).is_none(),
-                "ロック中はニャプリの見出しを出さない"
-            );
-            continue;
-        }
-        let b = cx.debug_bounds(button).unwrap();
-        assert!(
-            b.right() > width * 0.9,
-            "{button} は右端: {b:?} / {width:?}"
-        );
-    }
+    let b = cx.debug_bounds("dashboard-refresh").unwrap();
+    assert!(
+        b.right() > width * 0.9,
+        "dashboard-refresh は右端: {b:?} / {width:?}"
+    );
 }
 
 #[gpui::test]
@@ -282,64 +273,6 @@ fn choosing_a_source_docks_its_mirror_without_closing_the_dashboard(cx: &mut Tes
     });
     assert_eq!(streams, [4]);
     assert_eq!(cx.update(|_, cx| ui::docked(cx)), Some(4));
-}
-
-/// ランチャーのニャプリのセクション: アイコンの無いものは頭文字の代わりのアイコンで並び、押すとランチャーと入れ替わりに
-/// ニャプリのパネルがはまり、そのニャプリのものとして起動中の表に載る。
-#[gpui::test]
-fn launcher_lists_nyapps_and_docks_the_chosen_one(cx: &mut TestAppContext) {
-    let bar = cx
-        .add_window(|_, cx| {
-            cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
-            Dashboard::new(1, summon, summon, cx)
-        })
-        .root(cx)
-        .unwrap();
-    let (list, cx) = cx.add_window_view(|_, cx| {
-        ui::dock(2, cx);
-        let mut list = Screen::new(2, Page::Launcher, bar.downgrade(), cx);
-        list.pending = None;
-        list
-    });
-    cx.run_until_parked();
-    let manifest = nyapp::Manifest::parse(
-        "id = \"net.bettaworx.calc\"\nname = \"Calc\"\nversion = \"1\"\napi = 1\n",
-    )
-    .unwrap();
-    list.update(cx, |l, cx| {
-        // 本物のフォルダを読んだ結果を置き換える。
-        l.nyapps = vec![nyapp::Installed {
-            manifest,
-            path: std::env::temp_dir().join("net.bettaworx.calc.nyapp"),
-            icon: Default::default(),
-        }];
-        l.nyapps_pending = false;
-        ui::notify(2, cx);
-    });
-    cx.run_until_parked();
-    if !nyapp::NORMAL_NYAPPS_ENABLED {
-        assert!(
-            cx.debug_bounds("dashboard-nyapp-net.bettaworx.calc")
-                .is_none(),
-            "ロック中は入っているニャプリを並べない"
-        );
-        return;
-    }
-    assert!(
-        cx.debug_bounds("nyapp-icon-fallback").is_some(),
-        "アイコンが無ければ代わりを描く"
-    );
-    click(cx, "dashboard-nyapp-net.bettaworx.calc");
-    open_spawned(cx, 4);
-    assert!(commands(cx, 4).iter().any(docked_to_bar));
-    assert!(
-        commands(cx, 2).contains(&PanelCommand::Close),
-        "ランチャーは入れ替わりに閉じる"
-    );
-    assert_eq!(
-        cx.update(|_, cx| nyapp::panel_of("net.bettaworx.calc", cx)),
-        Some(4)
-    );
 }
 
 #[gpui::test]

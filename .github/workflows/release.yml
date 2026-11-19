@@ -97,7 +97,7 @@ jobs:
           echo "TAG=v$new" >> "$GITHUB_ENV"
           echo "BUILD=1" >> "$GITHUB_ENV"
       # タグは v<CalVer>[-<名前>.<数>]（v2026.0.1-beta.1。名前は何でもよいが、インストーラーのファイル名に入るので使えない文字は除く）。
-      # 本体と nyapps（別のワークスペース）の全パッケージがタグの版か、その -<名前>.<数> を除いた版でなければビルド前に止める。
+      # 全パッケージがタグの版か、その -<名前>.<数> を除いた版でなければビルド前に止める。
       # 表示する版はタグのもの（NYAW_VERSION）
       - name: Check tag matches Cargo.toml versions
         if: env.TAG != ''
@@ -108,10 +108,8 @@ jobs:
             echo "::error::tag $TAG is not v<CalVer>[-<label>.<number>] (e.g. v2026.0.1-beta.1)"
             exit 1
           fi
-          pkgs=$(for m in Cargo.toml nyapps/Cargo.toml; do
-            cargo metadata --manifest-path "$m" --no-deps --format-version 1 |
-              grep -o '"name":"[^"]*","version":"[^"]*"'
-          done)
+          pkgs=$(cargo metadata --no-deps --format-version 1 |
+            grep -o '"name":"[^"]*","version":"[^"]*"')
           # 1 件も拾えないのは metadata の形が変わったとき。素通りさせない
           if [ -z "$pkgs" ]; then
             echo "::error::could not read package versions from cargo metadata"

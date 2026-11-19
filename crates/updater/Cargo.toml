@@ -15,7 +15,7 @@ serde_json = "1"
 # 落としたインストーラーが GitHub の知らせる SHA-256 のとおりかを確かめる。
 sha2 = "0.10"
 ui.workspace = true
-# リリースの一覧・インストーラーを落とす（rustls なので OS の TLS に依らない。nyapp と同じ）。
+# リリースの一覧・インストーラーを落とす（rustls なので OS の TLS に依らない）。
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
