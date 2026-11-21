@@ -22,7 +22,10 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert!(kit.read(|v| v.language_open));
     kit.click("setup-lang-ja");
     assert_eq!(kit.kernel.settings().language, Language::Ja);
-    assert!(!kit.read(|v| v.language_open), "選択後にドロップダウンが閉じる");
+    assert!(
+        !kit.read(|v| v.language_open),
+        "選択後にドロップダウンが閉じる"
+    );
     kit.click("setup-next");
 
     // 利き手の選択。前のページに戻っても選択状態は保持される。
@@ -91,7 +94,10 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert!(!kit.kernel.settings().setup_done);
     kit.click("setup-finish").step();
     assert!(kit.kernel.settings().setup_done);
-    assert!(!kit.kernel.settings().lockdown, "完了後にロックダウンが解除される");
+    assert!(
+        !kit.kernel.settings().lockdown,
+        "完了後にロックダウンが解除される"
+    );
     assert!(kit.kernel.panel(0).closed);
 }
 

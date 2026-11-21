@@ -11,7 +11,9 @@ fn scrollbar_appears_and_drags(cx: &mut TestAppContext) {
     // 初回レイアウトで初めてオーバーフローが検出されるため、再描画後に表示される（本番ではフレームループが再描画する）。
     cx.update(|window, _| window.refresh());
     cx.run_until_parked();
-    let thumb = cx.debug_bounds("scroll-bars-v-thumb").expect("サムが表示される");
+    let thumb = cx
+        .debug_bounds("scroll-bars-v-thumb")
+        .expect("サムが表示される");
     let from = thumb.center();
     cx.simulate_mouse_down(from, gpui::MouseButton::Left, Modifiers::none());
     cx.simulate_mouse_move(
@@ -45,7 +47,10 @@ fn scrollbar_follows_a_touch_slide_without_long_press(cx: &mut TestAppContext) {
     };
     cx.simulate_event(wheel(gpui::TouchPhase::Started));
     let y = view.read_with(cx, |t, _| t.list.offset().y);
-    assert!(y < px(-30.0), "サムが 30px 移動するとコンテンツはそれ以上スクロールする: {y:?}");
+    assert!(
+        y < px(-30.0),
+        "サムが 30px 移動するとコンテンツはそれ以上スクロールする: {y:?}"
+    );
     cx.simulate_event(wheel(gpui::TouchPhase::Ended));
     assert_eq!(
         view.read_with(cx, |t, _| t.list.offset().y),
@@ -76,7 +81,10 @@ fn content_is_pulled_at_the_edge_and_settles(cx: &mut TestAppContext) {
     cx.update(|window, _| window.refresh());
     cx.run_until_parked();
     let pulled = top(cx);
-    assert!(pulled > rest, "先頭を超えてドラッグするとコンテンツが下方向に引かれる");
+    assert!(
+        pulled > rest,
+        "先頭を超えてドラッグするとコンテンツが下方向に引かれる"
+    );
     // ドラッグを継続すると上限なく引き伸ばせる（復元力はリリース時にのみ作用する）。
     for _ in 0..20 {
         cx.simulate_event(ScrollWheelEvent {

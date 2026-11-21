@@ -665,7 +665,10 @@ mod tests {
         ] {
             assert!(same_scale(scale_at(0.0, min, max), min));
             assert!(same_scale(scale_at(1.0, min, max), max));
-            assert!(same_scale(scale_at(-3.0, min, max), min), "範囲外は端に丸める");
+            assert!(
+                same_scale(scale_at(-3.0, min, max), min),
+                "範囲外は端に丸める"
+            );
             assert!(same_scale(scale_at(9.0, min, max), max));
             let steps = ((max - min) / SCALE_STEP).round() as usize;
             for i in 0..=steps {

@@ -220,7 +220,11 @@ mod tests {
             p.position.z - h.position.z,
         );
         assert!((flat.length() - 1.2).abs() < 1e-2, "{}", flat.length());
-        assert!((p.position.y - 1.1).abs() < 1e-2, "高さ不一致 {}", p.position.y);
+        assert!(
+            (p.position.y - 1.1).abs() < 1e-2,
+            "高さ不一致 {}",
+            p.position.y
+        );
     }
 
     #[test]

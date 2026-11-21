@@ -292,11 +292,7 @@ mod tests {
         run(&mut s, t0, 450, 460, Some("Open settings"), Anchor::Above);
         assert_eq!(s.shown.as_ref().unwrap().0, "Open settings");
         assert_eq!(s.vis, 1.0, "退出せずテキストのみ切り替わる");
-        assert!(
-            s.width > 40.0 && s.width < 130.0,
-            "幅は遷移中: {}",
-            s.width
-        );
+        assert!(s.width > 40.0 && s.width < 130.0, "幅は遷移中: {}", s.width);
         run(&mut s, t0, 470, 900, Some("Open settings"), Anchor::Above);
         assert_eq!(s.width, 130.0);
     }

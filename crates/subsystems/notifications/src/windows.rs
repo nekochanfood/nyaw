@@ -530,7 +530,10 @@ mod tests {
             "{raw:?} logo={:?} shell={shell:?}",
             listener.icon(raw.id).map(|b| b.len())
         );
-        assert!(shell.is_some(), "スタートメニューのアイコンが取得できること");
+        assert!(
+            shell.is_some(),
+            "スタートメニューのアイコンが取得できること"
+        );
         listener.remove(raw.id);
     }
 

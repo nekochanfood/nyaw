@@ -204,7 +204,10 @@ mod tests {
         // 完了フレームは幅 0 で残存描画され、次フレームで除去される。
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
-        assert!(cx.debug_bounds("slide-item-4").is_none(), "完了後に除去される");
+        assert!(
+            cx.debug_bounds("slide-item-4").is_none(),
+            "完了後に除去される"
+        );
         assert!((bar_width(cx) - three).abs() <= 1.0, "幅が元に復帰する");
     }
 
@@ -287,9 +290,15 @@ mod tests {
         let start = offset_x(&view, cx);
         frames(cx, 3);
         let early = offset_x(&view, cx);
-        assert!(early > 1.0 && early < start, "スクロール途中: {start} -> {early}");
+        assert!(
+            early > 1.0 && early < start,
+            "スクロール途中: {start} -> {early}"
+        );
         frames(cx, 40);
         let at = offset_x(&view, cx);
-        assert!(at.abs() <= 1.0, "先頭までスクロール（左マージンまで）: {at}");
+        assert!(
+            at.abs() <= 1.0,
+            "先頭までスクロール（左マージンまで）: {at}"
+        );
     }
 }

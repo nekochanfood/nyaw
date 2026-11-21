@@ -44,7 +44,10 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
     assert!(kit.kernel.settings().lockdown);
     assert!(kit.panel_control(|c| c.settings.lockdown));
     kit.kernel.apply(0, PanelCommand::Close);
-    assert!(!kit.kernel.panel(0).closed, "ロックダウン中はパネルを閉じることができない");
+    assert!(
+        !kit.kernel.panel(0).closed,
+        "ロックダウン中はパネルを閉じることができない"
+    );
 
     // 頭部の正面方向に、HMD の高さで配置される。
     let d = setup::follow().distance;
@@ -86,7 +89,10 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
         kit.click("setup-next");
     }
     assert!(kit.read(|v| v.wizard.is_last()));
-    assert!(kit.kernel.settings().lockdown, "「完了」押下までロックダウンは継続する");
+    assert!(
+        kit.kernel.settings().lockdown,
+        "「完了」押下までロックダウンは継続する"
+    );
     kit.click("setup-finish");
     kit.step();
     assert!(kit.kernel.settings().setup_done);

@@ -81,7 +81,10 @@ fn quick_settings_says_when_there_are_no_notifications(cx: &mut TestAppContext) 
         (x - RES_PX.0 as f32 / 2.0).abs() < 40.0,
         "水平方向に中央配置: {empty:?}"
     );
-    assert!(y > RES_PX.1 as f32 * 0.4, "下部空き領域の中間に配置: {empty:?}");
+    assert!(
+        y > RES_PX.1 as f32 * 0.4,
+        "下部空き領域の中間に配置: {empty:?}"
+    );
 }
 
 /// 日付は時刻の横に配置され、時刻のベースラインに揃える（下端揃えのみだと視覚的に下がって見える）。
@@ -298,7 +301,10 @@ fn only_the_list_scrolls(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(y(cx, "quick-time"), time);
     assert_eq!(y(cx, "notifications-clear"), clear);
-    assert!(y(cx, "notification-20") < newest, "一覧がスクロールされている");
+    assert!(
+        y(cx, "notification-20") < newest,
+        "一覧がスクロールされている"
+    );
 }
 
 /// 受信時刻の表示: 1 分以内は「今」、以降は「n 分前」「n 時間前」「n 日前」、1 週間超過で日付と時刻。

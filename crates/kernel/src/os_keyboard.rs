@@ -179,7 +179,11 @@ mod tests {
         kernel.type_to_os(panel, key(), Layout::new("us", ""));
         kernel.type_to_os(panel, key(), Layout::new("us", ""));
         settle();
-        assert_eq!(sent.load(Ordering::SeqCst), 0, "フォアグラウンドでない間は送信しない");
+        assert_eq!(
+            sent.load(Ordering::SeqCst),
+            0,
+            "フォアグラウンドでない間は送信しない"
+        );
         assert_eq!(control.focuses(), 1, "フォアグラウンド昇格要求は 1 回のみ");
         foreground.store(77, Ordering::SeqCst);
         settle();
@@ -192,7 +196,11 @@ mod tests {
         );
         kernel.type_to_os(panel, key(), Layout::new("us", ""));
         settle();
-        assert_eq!(sent.load(Ordering::SeqCst), 3, "フォアグラウンドなら即時送信する");
+        assert_eq!(
+            sent.load(Ordering::SeqCst),
+            3,
+            "フォアグラウンドなら即時送信する"
+        );
         assert_eq!(control.focuses(), 0);
     }
 
