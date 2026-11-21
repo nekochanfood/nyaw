@@ -4,17 +4,19 @@
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use gpui::{
     Action, AnyWindowHandle, BackgroundExecutor, Bounds, Capslock, ClipboardItem, CursorStyle,
-    DevicePixels, DispatchEventResult, ForegroundExecutor, GpuSpecs, Keymap, Menu, MenuItem,
-    Modifiers, PathPromptOptions, Pixels, Platform, PlatformAtlas, PlatformDisplay,
+    DevicePixels, DispatchEventResult, ForegroundExecutor, FrameRequestSource, GpuSpecs, Keymap,
+    Menu, MenuItem, Modifiers, PathPromptOptions, Pixels, Platform, PlatformAtlas, PlatformDisplay,
     PlatformHeadlessRenderer, PlatformInput, PlatformInputHandler, PlatformKeyboardLayout,
     PlatformKeyboardMapper, PlatformTextSystem, PlatformWindow, Point, PromptButton, PromptLevel,
     RequestFrameOptions, Scene, Size, Task, ThermalState, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, WindowVisibility, px,
+    WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, WindowVisibility,
+    px,
 };
 use gpui_wgpu::{CosmicTextSystem, WgpuHeadlessRenderer};
 
@@ -90,6 +92,7 @@ impl Platform for OffscreenPlatform {
         Ok(Box::new(OffscreenWindow::new(
             params,
             self.inner.foreground_executor(),
+            self.inner.background_executor(),
             self.inner.window_appearance(),
         )?))
     }
@@ -243,7 +246,12 @@ impl Platform for OffscreenPlatform {
     fn write_to_primary(&self, item: ClipboardItem) {
         self.inner.write_to_primary(item)
     }
-    fn write_credentials(&self, url: &str, username: &str, password: &[u8]) -> Task<anyhow::Result<()>> {
+    fn write_credentials(
+        &self,
+        url: &str,
+        username: &str,
+        password: &[u8],
+    ) -> Task<anyhow::Result<()>> {
         self.inner.write_credentials(url, username, password)
     }
     fn read_credentials(&self, url: &str) -> Task<anyhow::Result<Option<(String, Vec<u8>)>>> {
@@ -272,6 +280,82 @@ const NO_POINTER: Point<Pixels> = Point {
 
 type ResizeCallback = Rc<RefCell<Option<Box<dyn FnMut(Size<Pixels>, f32)>>>>;
 
+/// GPUI 自身のフレーム（`on_request_frame`）。GPUI はここで、汚れたウィンドウの描画と、次のフレームのコールバック
+/// （`request_animation_frame`。部品のアニメーションが描画ごとに積む）の実行を行う。一度も呼ばないと、プログラムからの変更
+/// （`cx.notify`）はフレームループが次に描くまで描かれず、次のフレームのコールバックは溜まり続ける。
+/// 読み戻す描画はフレームループが担い、遠いパネルの間引き・隠れたパネルのカリングをしているので、それを打ち消さないよう、
+/// 見えていてフレームループが今は描いていないウィンドウにだけ送る（AGENT.md「GPUI 自身のフレーム」）。
+type FrameCallback = Box<dyn FnMut(RequestFrameOptions)>;
+
+/// 要求から GPUI のフレームを送るまでの間隔。フレームループが描いていれば、その描画が要求を満たす。
+const FRAME_DELAY: Duration = Duration::from_millis(100);
+/// フレームループがこれより長く描いていないウィンドウは、見えていない（カリング中）とみなし、GPUI にも描かせない。
+/// フレームループは見えているパネルを少なくとも 1 秒ごと（`IDLE_MAX`）に描く。
+const CULLED: Duration = Duration::from_secs(2);
+/// フレームループが描き続けているウィンドウにも、これだけ待ったら送る（溜まった次のフレームのコールバックを実行する）。
+const MAX_WAIT: Duration = Duration::from_secs(1);
+
+struct Frames {
+    callback: RefCell<Option<FrameCallback>>,
+    /// 要求を受けた時刻（送るまで）。
+    pending: Cell<Option<Instant>>,
+    /// フレームループが最後に描いた（読み戻した）時刻。
+    rendered: Cell<Option<Instant>>,
+    foreground: ForegroundExecutor,
+    background: BackgroundExecutor,
+}
+
+/// 要求を受けてからの経過時間と、フレームループが最後に描いてからの経過時間で、今 GPUI のフレームを送るか決める。
+fn frame_due(waited: Duration, since_render: Option<Duration>) -> bool {
+    match since_render {
+        None => false,
+        Some(since) if since >= CULLED => false,
+        Some(since) => since >= FRAME_DELAY || waited >= MAX_WAIT,
+    }
+}
+
+impl Frames {
+    fn request(self: &Rc<Self>) {
+        if self.pending.get().is_some() {
+            return;
+        }
+        self.pending.set(Some(Instant::now()));
+        self.wait(FRAME_DELAY);
+    }
+
+    fn wait(self: &Rc<Self>, after: Duration) {
+        let frames = Rc::downgrade(self);
+        let timer = self.background.timer(after);
+        self.foreground
+            .spawn(async move {
+                timer.await;
+                // 閉じたウィンドウには送らない。
+                let Some(frames) = frames.upgrade() else {
+                    return;
+                };
+                let Some(requested) = frames.pending.get() else {
+                    return;
+                };
+                let since_render = frames.rendered.get().map(|at| at.elapsed());
+                if !frame_due(requested.elapsed(), since_render) {
+                    // 描き続けている・見えていない間は待つ（見えれば描かれ、描くのをやめれば送る）。
+                    frames.wait(FRAME_DELAY);
+                    return;
+                }
+                frames.pending.set(None);
+                let callback = frames.callback.borrow_mut().take();
+                if let Some(mut callback) = callback {
+                    callback(RequestFrameOptions {
+                        signal_source: FrameRequestSource::LocalSchedule,
+                        ..Default::default()
+                    });
+                    frames.callback.borrow_mut().get_or_insert(callback);
+                }
+            })
+            .detach();
+    }
+}
+
 struct OffscreenState {
     bounds: Bounds<Pixels>,
     scale_factor: f32,
@@ -288,6 +372,7 @@ struct OffscreenWindow {
     atlas: Arc<dyn PlatformAtlas>,
     /// GPUI のウィンドウへのサイズ変更の通知。GPUI がこのウィンドウを更新している最中に呼ぶと失敗するため、タスクで遅らせて呼ぶ。
     on_resize: ResizeCallback,
+    frames: Rc<Frames>,
     executor: ForegroundExecutor,
 }
 
@@ -295,6 +380,7 @@ impl OffscreenWindow {
     fn new(
         params: WindowParams,
         executor: ForegroundExecutor,
+        background: BackgroundExecutor,
         appearance: WindowAppearance,
     ) -> anyhow::Result<Self> {
         // ponytail: 背景は生成後に `set_background_appearance` で届くため、描画先は常に透明（事前乗算）で作る。
@@ -313,6 +399,13 @@ impl OffscreenWindow {
             appearance,
             atlas,
             on_resize: Rc::new(RefCell::new(None)),
+            frames: Rc::new(Frames {
+                callback: RefCell::new(None),
+                pending: Cell::new(None),
+                rendered: Cell::new(None),
+                foreground: executor.clone(),
+                background,
+            }),
             executor,
         })
     }
@@ -322,6 +415,7 @@ impl Drop for OffscreenWindow {
     fn drop(&mut self) {
         // 遅らせた通知が、閉じたウィンドウに届かないように。
         self.on_resize.borrow_mut().take();
+        self.frames.callback.borrow_mut().take();
     }
 }
 
@@ -470,9 +564,24 @@ impl PlatformWindow for OffscreenWindow {
         false
     }
 
-    // 描画は nyaw のフレームループが `Window::draw` と `render_to_image` で行う。入力も直接配送されるため、
-    // プラットフォームからのフレーム要求・入力・状態変化の通知は無い。
-    fn on_request_frame(&self, _callback: Box<dyn FnMut(RequestFrameOptions)>) {}
+    // 読み戻す描画は nyaw のフレームループが `Window::draw` と `render_to_image` で行う。フレーム要求は GPUI 自身の
+    // 描画とアニメーションのため（[`Frames`]）。入力は直接配送されるため、プラットフォームからの入力・状態変化の通知は無い。
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+        *self.frames.callback.borrow_mut() = Some(callback);
+    }
+
+    fn frame_waker(&self) -> Option<Rc<dyn Fn()>> {
+        let frames: Weak<Frames> = Rc::downgrade(&self.frames);
+        Some(Rc::new(move || {
+            if let Some(frames) = frames.upgrade() {
+                frames.request();
+            }
+        }))
+    }
+
+    fn schedule_frame(&self) {
+        self.frames.request();
+    }
 
     fn on_input(&self, _callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>) {}
 
@@ -524,6 +633,7 @@ impl PlatformWindow for OffscreenWindow {
             return state.renderer.collect_readback();
         }
         let size = device_size(state.bounds.size, state.scale_factor);
+        self.frames.rendered.set(Some(Instant::now()));
         state.renderer.render_and_read_back(scene, size)
     }
 }
@@ -531,6 +641,21 @@ impl PlatformWindow for OffscreenWindow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// GPUI のフレームは、見えていて（最近フレームループが描いた）今は描かれていないウィンドウにだけ送る。
+    /// 描き続けているウィンドウにも、待ちが長くなれば送る。
+    #[test]
+    fn frames_go_to_shown_windows_the_loop_is_not_drawing() {
+        let ms = Duration::from_millis;
+        assert!(!frame_due(ms(100), None), "never drawn: not shown yet");
+        assert!(frame_due(ms(100), Some(ms(500))), "shown and idle");
+        assert!(!frame_due(ms(100), Some(ms(20))), "the loop is drawing it");
+        assert!(
+            frame_due(ms(1000), Some(ms(20))),
+            "drawn all along: after a while anyway"
+        );
+        assert!(!frame_due(ms(5000), Some(ms(3000))), "culled");
+    }
 
     #[test]
     fn device_size_matches_the_frame_loop_and_never_collapses() {
