@@ -212,6 +212,9 @@ pub enum Setting {
     DashboardDistance(f32),
     /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。`dashboard_height`。範囲に収め、刻みに丸める）。
     DashboardHeight(f32),
+    /// ダッシュボード表示中の背景の暗さ（`dashboard_dim`）。0 で暗くせず、1 で真っ黒になる。範囲に収め、刻みに丸める。
+    /// 表示中に変更した場合も即座に反映される。
+    DashboardDim(f32),
     /// 通知を視界の端に表示する位置（`notification_anchor`）。カーネルは値を保持するのみで、配置は通知画面が行う。
     NotificationAnchor(NotificationAnchor),
 }
@@ -270,6 +273,8 @@ pub struct Settings {
     pub dashboard_distance: f32,
     /// ダッシュボードの高さ（m。上が +。0 で画面の中心が目の高さの 0.1m 下）。
     pub dashboard_height: f32,
+    /// ダッシュボード表示中の背景の暗さ（黒の不透明度、0〜1）。
+    pub dashboard_dim: f32,
     pub notification_anchor: NotificationAnchor,
 }
 
@@ -311,6 +316,7 @@ impl Default for Settings {
             update_channel: Default::default(),
             dashboard_distance: DASHBOARD_DISTANCE,
             dashboard_height: 0.0,
+            dashboard_dim: overlay::VEIL,
             notification_anchor: Default::default(),
         }
     }
@@ -539,6 +545,9 @@ impl<B: VrBackend> Kernel<B> {
             overlay.set_cursor_scale(config::clamp_scale(s, CURSOR_SCALE_MIN, CURSOR_SCALE_MAX));
         }
         overlay.set_block_input(config.block_input.unwrap_or(true));
+        if let Some(d) = config.dashboard_dim {
+            overlay.set_veil_opacity(config::snap(d, 0.0, 1.0, SCALE_STEP, overlay::VEIL));
+        }
         if let Some(s) = config.ui_scale {
             let s = config::clamp_scale(s, UI_SCALE_MIN, UI_SCALE_MAX);
             overlay.set_scale(&mut subsystems.backend, s);
@@ -648,6 +657,7 @@ impl<B: VrBackend> Kernel<B> {
             update_channel: self.config.update_channel,
             dashboard_distance: self.dashboard_distance(),
             dashboard_height: self.dashboard_height(),
+            dashboard_dim: self.overlay.veil_opacity(),
             notification_anchor: self.config.notification_anchor,
         }
     }
@@ -858,6 +868,12 @@ impl<B: VrBackend> Kernel<B> {
                 let h = self.dashboard_height();
                 self.config.dashboard_height = Some(h);
                 ("dashboard_height", config::value(h))
+            }
+            Setting::DashboardDim(d) => {
+                let d = config::snap(d, 0.0, 1.0, SCALE_STEP, overlay::VEIL);
+                self.overlay.set_veil_opacity(d);
+                self.config.dashboard_dim = Some(d);
+                ("dashboard_dim", config::value(d))
             }
             Setting::NotificationAnchor(a) => {
                 self.config.notification_anchor = a;
@@ -1673,6 +1689,32 @@ mod tests {
             (s.dashboard_distance, s.dashboard_height),
             (DASHBOARD_DISTANCE_MIN, DASHBOARD_HEIGHT_MAX)
         );
+    }
+
+    /// ダッシュボードの背景の暗さの既定値は `overlay::VEIL`。設定した値は 0〜1 の範囲と刻みに収めたうえで、暗転の幕の
+    /// 濃さになる。設定ファイルから読んだ値も同様に収める。
+    #[test]
+    fn dashboard_dim_drives_the_veil_and_stays_in_range() {
+        let (mut k, _) = lod_kernel();
+        let (s, d) = (k.settings(), Settings::default());
+        assert_eq!(
+            (s.dashboard_dim, d.dashboard_dim),
+            (overlay::VEIL, overlay::VEIL)
+        );
+        k.set(Setting::DashboardDim(0.26));
+        assert!((k.settings().dashboard_dim - 0.3).abs() < 1e-6);
+        assert_eq!(k.overlay.veil_opacity(), k.settings().dashboard_dim);
+        assert_eq!(k.config.dashboard_dim, Some(k.settings().dashboard_dim));
+        for (given, kept) in [(9.0, 1.0), (-1.0, 0.0), (f32::NAN, overlay::VEIL)] {
+            k.set(Setting::DashboardDim(given));
+            assert_eq!(k.settings().dashboard_dim, kept, "{given}");
+        }
+        let config = Config {
+            dashboard_dim: Some(-3.0),
+            ..Default::default()
+        };
+        let k = Kernel::with_backend(vr::mock::MockBackend::default(), config);
+        assert_eq!(k.overlay.veil_opacity(), 0.0);
     }
 
     /// ポインタの画面の設定: 既定はシンプル・等倍・どれもオン。カーソルの大きさは範囲と刻みに収まり、設定ファイルの値も同じく収める。
