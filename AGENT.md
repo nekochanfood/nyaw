@@ -72,7 +72,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 subsystems ← overlay ← kernel ← ui ← 画面 (dashboard / wrist など) ← main
 ```
 
-- **カーネルとサブシステムの関係**: カーネルは設定およびフレーム進行の目的で `subsystems` を参照する。Subsystems 内部の依存順序は `os ← vr ← input / rendering` とし、上位層への逆参照は行わない。`audio` は他サブシステムに依存せず、位置計算には `glam` を用いる。
+- **カーネルとサブシステムの関係**: カーネルは設定およびフレーム進行の目的で `subsystems` を参照する。Subsystems 内部の依存順序は `os ← vr ← input / rendering`、`os ← keyboard`、`desktop ← media / notifications`（アプリ情報の解決と起動を `desktop` にまとめるため）とし、上位層への逆参照は行わない。`audio` は他サブシステムに依存せず、位置計算には `glam` を用いる。
 - **型と副作用の境界**: `kernel` は `subsystems` の一部を再エクスポートするが、上位層（UI や画面）が利用できるのはデータ型（共通語彙）と定数テーブルに限られる。OS やランタイムに対する副作用（入力の注入やパケット送信）を直接呼ぶことは禁止し、必ず `PanelCommand` を通じてカーネルへ依頼する。
 - **型の共通語彙**: UI 層、画面、`testkit` が参照する下位の型は、`kernel` の再エクスポート経由で取得する。`overlay` は `vr` の型（`Pose` など）を共通語彙として直接利用してよい。
 - **横断クレートの例外**: `logger` はすべての層から直接参照できる唯一の横断クレートである。ただし、`logger` 自体はワークスペース内の自前クレートに一切依存しない。

@@ -159,9 +159,10 @@ impl Backend for Listener {
 
     fn activate(&mut self, _: u32, app: &str, plan: &Plan) -> bool {
         let done = match (self.activator(app), plan) {
-            (Some(clsid), Plan::Invoke(args)) => invoke(clsid, app, args),
-            (Some(clsid), Plan::Launch) => invoke(clsid, app, ""),
-            (None, Plan::Launch) => launch(app),
+            (Some(clsid), Plan::Invoke(args)) => invoke(clsid, app, args).map_err(|e| e.to_string()),
+            (Some(clsid), Plan::Launch) => invoke(clsid, app, "").map_err(|e| e.to_string()),
+            // アクティベーターを持たないアプリは、スタートメニューから起動するのと同じく開くだけ。
+            (None, Plan::Launch) => desktop::launch(app).map_err(|e| e.to_string()),
             _ => return false,
         };
         if let Err(e) = &done {
@@ -235,15 +236,6 @@ fn invoke(clsid: GUID, app: &str, args: &str) -> windows::core::Result<()> {
         let _ = CoAllowSetForegroundWindow(&callback, None);
         callback.Activate(&HSTRING::from(app), &HSTRING::from(args), &[])
     }
-}
-
-/// アプリを起動する（スタートメニューからの起動と同一。パッケージアプリ・デスクトップアプリの両方に対応する）。
-fn launch(app: &str) -> windows::core::Result<()> {
-    std::process::Command::new("explorer.exe")
-        .arg(format!("shell:AppsFolder\\{app}"))
-        .spawn()
-        .map(drop)
-        .map_err(|e| windows::core::Error::new(windows::core::HRESULT(-1), e.to_string()))
 }
 
 /// 通知の元の XML（トーストの XML）から、本文を押したときとボタンを押したときにすることを読む。`invoke` はアプリが通知の

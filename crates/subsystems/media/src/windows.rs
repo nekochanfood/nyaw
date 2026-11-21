@@ -13,15 +13,8 @@ use windows::{
         GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status,
     },
     Storage::Streams::{DataReader, IRandomAccessStreamReference},
-    Win32::{
-        Storage::EnhancedStorage::PKEY_Link_TargetParsingPath,
-        System::{
-            Com::CoTaskMemFree,
-            WinRT::{RO_INIT_MULTITHREADED, RoInitialize},
-        },
-        UI::Shell::{IShellItem2, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY},
-    },
-    core::{HSTRING, PWSTR},
+    Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize},
+    core::HSTRING,
 };
 
 use super::{Backend, Command, Controls, Pick, Raw, fallback_name, picked};
@@ -159,12 +152,12 @@ impl Backend for Session {
         let info = AppInfo::GetFromAppUserModelId(&HSTRING::from(id))
             .and_then(|a| a.DisplayInfo())
             .ok();
-        let shell = shell_app(id);
+        let shell = desktop::installed_app(id);
         let name = info
             .as_ref()
             .and_then(|d| d.DisplayName().ok())
             .map(|n| n.to_string())
-            .or_else(|| shell.as_ref().map(|(n, _)| n.clone()))
+            .or_else(|| shell.as_ref().map(|a| a.name.clone()))
             .filter(|n| !n.is_empty())
             .unwrap_or_else(|| fallback_name(id));
         let logo = info
@@ -176,7 +169,7 @@ impl Backend for Session {
                 .ok()
             })
             .and_then(|r| read_stream(&r.into()));
-        (name, logo, shell.and_then(|(_, exe)| exe))
+        (name, logo, shell.and_then(|a| a.exe))
     }
 
     fn command(&mut self, command: Command) {
@@ -196,23 +189,6 @@ impl Backend for Session {
             logger::warn!("media command failed", command = ?command, error = e);
         }
     }
-}
-
-/// スタートメニューのアプリ（`shell:AppsFolder`）を AppUserModelId で検索し、表示名と
-/// ショートカットが指す実行ファイル名（"chrome.exe" 等）を返す。
-fn shell_app(id: &str) -> Option<(String, Option<String>)> {
-    let path = HSTRING::from(format!("shell:AppsFolder\\{id}"));
-    let item: IShellItem2 = unsafe { SHCreateItemFromParsingName(&path, None) }.ok()?;
-    let take = |s: windows::core::Result<PWSTR>| {
-        let s = s.ok()?;
-        let text = unsafe { s.to_string() }.ok();
-        unsafe { CoTaskMemFree(Some(s.0 as *const _)) };
-        text
-    };
-    let name = take(unsafe { item.GetDisplayName(SIGDN_NORMALDISPLAY) })?;
-    let exe = take(unsafe { item.GetString(&PKEY_Link_TargetParsingPath) })
-        .and_then(|p| p.rsplit('\\').next().map(str::to_owned));
-    Some((name, exe))
 }
 
 /// ストリームの内容を全量読み出す。

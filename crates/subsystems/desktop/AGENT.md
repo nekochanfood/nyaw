@@ -2,7 +2,7 @@
 
 層: 1 Subsystems
 
-ディスプレイ画面および個別アプリケーションウィンドウの列挙、キャプチャ画像の取得、および OS に対する直接的なタッチ入力の注入を担当する。
+ディスプレイ画面および個別アプリケーションウィンドウの列挙、キャプチャ画像の取得、および OS に対する直接的なタッチ入力の注入を担当する。また、インストール済みアプリの一覧、アプリ ID からの名前・実行ファイル名・アイコンの解決、およびアプリの起動を担当する。
 
 Windows 環境では Windows Graphics Capture (WGC) および Synthetic Pointer API を使用する。
 
@@ -13,6 +13,14 @@ Windows 環境では Windows Graphics Capture (WGC) および Synthetic Pointer 
 - `app_key(exe)`: 実行ファイル名を正規化して小文字かつ拡張子なしの検索キーを生成する。
 - `InstalledApp::owns(&Source)`: 指定されたウィンドウが該当アプリケーションに属しているかを判定する。
 - `Source::replacement` / `Source::successor`: キャプチャ対象のウィンドウが閉じられた際、タイトルやプロセス情報から後継ウィンドウを特定する。
+
+## インストール済みアプリの解決と起動
+
+アプリ ID（Windows は AppUserModelId）からアプリの情報を引く処理と起動は、本サブシステムだけが実装する。`media`（再生中のアプリの名前と実行ファイル名）と `notifications`（通知のアイコンと、通知を押したときの起動）も本サブシステムの関数を呼ぶ。他の OS に対応する場合は、ここだけを実装すればよい。
+
+- `InstalledApps::refresh`: スタートメニューのアプリをすべて列挙する（アイコンを読み込むため数秒かかる）。
+- `installed_app(id)` / `app_icon(id)`: 1 つのアプリの情報、またはアイコンだけを引く。
+- `launch(id)`: アプリを起動する。シェルの API は STA を前提とするものがあるため、Windows では STA の専用スレッドで `ShellExecuteExW` を呼ぶ。呼び出し元のスレッド（通知のワーカーは MTA）の COM の初期化状態には依存しない。失敗は呼び出し側に返し、OS のエラーダイアログは出さない（VR から見えないため）。
 
 ## 画面・ウィンドウのキャプチャと配信
 
@@ -34,10 +42,14 @@ Stream;                  // 個別キャプチャセッションの制御
 Source;                  // キャプチャ元情報（名前、アプリアイコン、製品名等）
 Cursor;                  // OS カーソル画像とホットスポット情報
 capabilities();          // ホバーや最小化対応などのバックエンド能力問い合わせ
-app_icon(aumid);         // AppUserModelId からのアプリアイコン非同期取得
+InstalledApps;           // インストール済みアプリの一覧の取得（別スレッド）
+installed_app(id);       // アプリ ID からのアプリ情報の取得
+app_icon(id);            // アプリ ID からのアイコンの取得
+launch(id);              // アプリの起動
 ```
 
 ## テスト手法
 
 - **単体・モックテスト**: `desktop/test-support` フィーチャーを有効化し、モックを用いて最新画像の更新、タッチイベントの配送、およびセッション終了処理を検証する。
+- **アプリの解決と起動の実機検証**: `cargo run -p desktop --example apps` で一覧を出力し、各アプリを ID から引き直した結果が一覧と一致するかを確認する。`cargo test -p desktop -- --ignored launches_an_app_from_an_mta_thread` は電卓を MTA のスレッドから起動する。
 - **実機キャプチャテスト**: `crates/subsystems/desktop/tests/windows_capture.rs` および `testkit/tests/scenarios/desktop_stream.rs`（いずれも `#[ignore]` 指定）を用いて実デスクトップ環境での動作を検証する。
