@@ -41,7 +41,7 @@ pub fn release(
     })
 }
 
-/// 下書き・インストーラーやダイジェストやビルド番号の欠けたリリースを含む一覧（API の JSON）。
+/// 下書きのリリースと、インストーラー・ダイジェスト・ビルド番号のいずれかが欠けたリリースを含む一覧（API の JSON）。
 pub fn varied(base: &str) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!([
         // 下書きは除外する（ビルド番号が最大でも）。

@@ -81,7 +81,7 @@ subsystems ← overlay ← kernel ← ui ← 画面 (dashboard / wrist など) �
 
 ### OS 機能の禁止の仕組み
 
-ルートの `clippy.toml` は、標準ライブラリのプロセス・ファイル・通信の API（`std::process::Command`、`std::fs::*`、`std::net::*`）と、`ureq`・gpui の OS 機能（`App::open_url` など）の使用を禁止する。CI の `cargo clippy --workspace --all-targets -- -D warnings` が違反を検出する。`windows` クレートは上位層の依存に含まれないため、コンパイラが呼び出しを防ぐ。
+ルートの `clippy.toml` は、標準ライブラリのプロセス・ファイル・通信の API（`std::process::Command`、`std::fs::*`、`std::net::*`）と、`ureq`・gpui の OS 機能（`App::open_url` など）の使用を禁止する。CI の `cargo clippy --workspace --all-targets -- -D warnings` が違反を検出する。上位層は `windows` クレートに依存していないため、その API を呼ぶコードはコンパイルできない。
 
 - **許可する側の設定**: clippy は設定ファイルを継承・結合せず、クレートのディレクトリから親へ向かって最初に見つけた 1 つだけを使う。そのため `crates/kernel`・`crates/logger`・`crates/subsystems`・`crates/testkit` は、OS の機能以外の規則（URL を開く処理の制限）だけを複製した `clippy.toml` を持つ。ルートの規則を変えたら複製も揃える。
 - **ビルドスクリプトとテスト**: 上位層のビルドスクリプト（コード生成）と、ファイルやプロセスを使うテスト（`ui/tests/gpu` の画像出力など）は、ファイルや関数の先頭に `#![allow(clippy::disallowed_methods, clippy::disallowed_types)]` と理由のコメントを置く。アプリ本体のコードには置かない。
