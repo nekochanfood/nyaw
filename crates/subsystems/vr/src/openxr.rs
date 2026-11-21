@@ -601,6 +601,27 @@ impl OpenXrBackend {
     }
 
     fn submit(&mut self, id: u64, width: u32, height: u32, rgba: &[u8]) -> Result<(), VrError> {
+        // OpenXR はカラー用のスワップチェーンを COLOR_ATTACHMENT_OPTIMAL で返してもらう決まり。
+        self.submit_with(id, width, height, |gpu, image| {
+            gpu.upload(
+                image,
+                width,
+                height,
+                rgba,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            )
+        })
+    }
+
+    /// スワップチェーンから取得したイメージを `write` に書かせて返す。
+    fn submit_with(
+        &mut self,
+        id: u64,
+        width: u32,
+        height: u32,
+        write: impl FnOnce(&mut Gpu, vk::Image) -> Result<(), VrError>,
+    ) -> Result<(), VrError> {
+        let mutable = self.gpu.import_formats().is_some();
         let overlay = self
             .overlays
             .get_mut(&id)
@@ -619,9 +640,15 @@ impl OpenXrBackend {
                 .session
                 .create_swapchain(&xr::SwapchainCreateInfo {
                     create_flags: xr::SwapchainCreateFlags::EMPTY,
+                    // 取り込んだ画像は UNORM のビューで書き写す（Gpu::convert）。
                     usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
                         | xr::SwapchainUsageFlags::TRANSFER_DST
-                        | xr::SwapchainUsageFlags::TRANSFER_SRC,
+                        | xr::SwapchainUsageFlags::TRANSFER_SRC
+                        | if mutable {
+                            xr::SwapchainUsageFlags::MUTABLE_FORMAT
+                        } else {
+                            xr::SwapchainUsageFlags::EMPTY
+                        },
                     format: gpu::FORMAT.as_raw() as u32,
                     sample_count: 1,
                     width,
@@ -653,14 +680,7 @@ impl OpenXrBackend {
         sc.handle
             .wait_image(xr::Duration::from_nanos(100_000_000))
             .map_err(xr_err("xrWaitSwapchainImage"))?;
-        // OpenXR はカラー用のスワップチェーンを COLOR_ATTACHMENT_OPTIMAL で返してもらう決まり。
-        let uploaded = self.gpu.upload(
-            sc.images[index as usize],
-            width,
-            height,
-            rgba,
-            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        );
+        let uploaded = write(&mut self.gpu, sc.images[index as usize]);
         sc.last = Some(index as usize);
         sc.handle
             .release_image()
@@ -984,6 +1004,23 @@ impl VrBackend for OpenXrBackend {
         if let Err(e) = self.submit(id.0, width, height, rgba) {
             eprintln!("{e}");
         }
+    }
+
+    fn import_formats(&self) -> Option<crate::ImportFormats> {
+        self.gpu.import_formats()
+    }
+
+    fn submit_overlay_external(
+        &mut self,
+        id: OverlayId,
+        image: &std::sync::Arc<crate::ExternalImage>,
+    ) -> Result<(), VrError> {
+        if self.lost {
+            return Ok(());
+        }
+        self.submit_with(id.0, image.width, image.height, |gpu, target| {
+            gpu.convert(target, image, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        })
     }
 }
 

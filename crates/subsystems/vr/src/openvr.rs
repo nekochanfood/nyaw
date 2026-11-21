@@ -325,6 +325,25 @@ impl OpenVrBackend {
     }
 
     fn submit(&mut self, id: u64, width: u32, height: u32, rgba: &[u8]) -> Result<(), VrError> {
+        self.submit_with(id, width, height, |gpu, image| {
+            gpu.upload(
+                image,
+                width,
+                height,
+                rgba,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            )
+        })
+    }
+
+    /// `write` がリングの次のイメージを書き、そのイメージをオーバーレイのテクスチャにする。
+    fn submit_with(
+        &mut self,
+        id: u64,
+        width: u32,
+        height: u32,
+        write: impl FnOnce(&mut Gpu, vk::Image) -> Result<(), VrError>,
+    ) -> Result<(), VrError> {
         let mut replacement = if self
             .textures
             .get(&id)
@@ -353,13 +372,7 @@ impl OpenVrBackend {
         t.next = (t.next + 1) % RING;
         // SteamVR は Vulkan のテクスチャを TRANSFER_SRC_OPTIMAL で受け取る。
         let result = (|| {
-            self.gpu.upload(
-                image,
-                width,
-                height,
-                rgba,
-                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            )?;
+            write(&mut self.gpu, image)?;
             let g = &self.gpu;
             let mut data = sys::VRVulkanTextureData_t {
                 m_nImage: image.as_raw(),
@@ -759,6 +772,22 @@ impl VrBackend for OpenVrBackend {
         );
         log(self.submit(id.0, width, height, rgba));
         self.apply_height(id.0);
+    }
+
+    fn import_formats(&self) -> Option<crate::ImportFormats> {
+        self.gpu.import_formats()
+    }
+
+    fn submit_overlay_external(
+        &mut self,
+        id: OverlayId,
+        image: &std::sync::Arc<crate::ExternalImage>,
+    ) -> Result<(), VrError> {
+        self.submit_with(id.0, image.width, image.height, |gpu, target| {
+            gpu.convert(target, image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+        })?;
+        self.apply_height(id.0);
+        Ok(())
     }
 }
 

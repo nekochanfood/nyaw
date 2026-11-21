@@ -8,6 +8,8 @@ use ash::vk;
 
 use crate::VrError;
 
+mod import;
+
 pub(crate) fn vk_err(what: &str) -> impl FnOnce(vk::Result) -> VrError + '_ {
     move |e| VrError::Runtime(format!("{what}: {e}"))
 }
@@ -47,7 +49,8 @@ pub(crate) fn create_instance(
     Ok(unsafe { ash::Instance::load(entry.static_fn(), raw) })
 }
 
-/// グラフィックス用キューを 1 本持つデバイスを `create` に作成させる。
+/// グラフィックス用キューを 1 本持つデバイスを `create` に作成させる。`extensions` に加え、表示サーバーの画像の
+/// 取り込み（[`Gpu::convert`]）に使う拡張を、GPU が対応していれば有効にする。
 pub(crate) fn create_device(
     entry: ash::Entry,
     instance: ash::Instance,
@@ -67,7 +70,13 @@ pub(crate) fn create_device(
     let queues = [vk::DeviceQueueCreateInfo::default()
         .queue_family_index(family)
         .queue_priorities(&priorities)];
-    let ext = pointers(extensions);
+    let mut enabled = extensions.to_vec();
+    for name in import::extensions(&instance, physical) {
+        if !enabled.iter().any(|e| e.as_c_str() == name) {
+            enabled.push(name.to_owned());
+        }
+    }
+    let ext = pointers(&enabled);
     let info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queues)
         .enabled_extension_names(&ext);
@@ -79,7 +88,7 @@ pub(crate) fn create_device(
         }
     };
     let device = unsafe { ash::Device::load(instance.fp_v1_0(), raw) };
-    Gpu::new(entry, instance, physical, device, family)
+    Gpu::new(entry, instance, physical, device, family, &enabled)
 }
 
 /// 書き込み先として自前で確保した VkImage（OpenVR 用）。
@@ -112,6 +121,12 @@ struct Slot {
 // ponytail: 1 フレームの転送がこの数を超えると同一フレームの先行転送を待機する。パネルを大量に同時更新する場合は増やす。
 const SLOTS: usize = 8;
 
+/// GPU が使い終えるまで破棄を待つ資源。
+enum Retired {
+    Image(Image),
+    Import(import::Transient),
+}
+
 pub(crate) struct Gpu {
     pub instance: ash::Instance,
     pub physical: vk::PhysicalDevice,
@@ -123,8 +138,10 @@ pub(crate) struct Gpu {
     next: usize,
     /// サブミット済み転送のカウント（シーケンス番号）。
     submitted: u64,
-    /// 破棄予約済みのイメージと破棄時点のシーケンス番号。それ以降の転送が完了すれば、ランタイムの読み出しも完了している。
-    retired: Vec<(u64, Image)>,
+    /// 破棄予約済みの資源と破棄時点のシーケンス番号。それ以降の転送が完了すれば、ランタイムの読み出しも完了している。
+    retired: Vec<(u64, Retired)>,
+    /// 表示サーバーの画像の取り込み（[`Gpu::convert`]）。拡張が無ければ `None`。
+    import: Option<import::Importer>,
     /// Vulkan ライブラリ。関数ポインタの参照先のため、最後に解放する。
     _entry: ash::Entry,
 }
@@ -136,6 +153,7 @@ impl Gpu {
         physical: vk::PhysicalDevice,
         device: ash::Device,
         queue_family: u32,
+        enabled: &[CString],
     ) -> Result<Self, VrError> {
         unsafe {
             let queue = device.get_device_queue(queue_family, 0);
@@ -182,6 +200,10 @@ impl Gpu {
                 instance.destroy_instance(None);
                 return Err(e);
             }
+            let import = import::Importer::new(&instance, physical, &device, enabled)
+                .inspect_err(|e| logger::warn!("cannot import display server images", error = e))
+                .ok()
+                .flatten();
             Ok(Self {
                 instance,
                 physical,
@@ -193,6 +215,7 @@ impl Gpu {
                 next: 0,
                 submitted: 0,
                 retired: Vec::new(),
+                import,
                 _entry: entry,
             })
         }
@@ -220,10 +243,20 @@ impl Gpu {
         usage: vk::ImageUsageFlags,
     ) -> Result<Image, VrError> {
         unsafe {
+            // 取り込んだ画像は UNORM のビューで値をそのまま書き写す（[`Gpu::convert`]）。
+            let (flags, usage) = if self.import.is_some() {
+                (
+                    vk::ImageCreateFlags::MUTABLE_FORMAT,
+                    usage | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                )
+            } else {
+                (vk::ImageCreateFlags::empty(), usage)
+            };
             let image = self
                 .device
                 .create_image(
                     &vk::ImageCreateInfo::default()
+                        .flags(flags)
                         .image_type(vk::ImageType::TYPE_2D)
                         .format(FORMAT)
                         .extent(vk::Extent3D {
@@ -273,12 +306,8 @@ impl Gpu {
         }
     }
 
-    /// 次のスロットを取得する（前回そのスロットでサブミットした転送の完了を待機する）。CPU 可視ステージングバッファは `size` 以上を確保する。
-    /// スロット番号・コマンドバッファ・ステージングバッファとその書き込み先ポインタを返す。
-    fn slot(
-        &mut self,
-        size: usize,
-    ) -> Result<(usize, vk::CommandBuffer, vk::Buffer, *mut u8), VrError> {
+    /// 次のスロットを取得する（前回そのスロットでサブミットした転送の完了を待機する）。
+    fn next_slot(&mut self) -> Result<(usize, vk::CommandBuffer), VrError> {
         let i = self.next;
         self.next = (i + 1) % SLOTS;
         let slot = &mut self.slots[i];
@@ -294,16 +323,32 @@ impl Gpu {
             slot.busy = false;
             // キューは順に完了するため、この番号までの転送（およびその後にキューイングされたランタイムの読み出し）は完了済み。
             let done = slot.seq;
-            for (_, image) in self.retired.extract_if(.., |(at, _)| *at < done) {
-                unsafe {
-                    self.device.destroy_image(image.image, None);
-                    self.device.free_memory(image.memory, None);
-                }
+            let finished: Vec<Retired> = self
+                .retired
+                .extract_if(.., |(at, _)| *at < done)
+                .map(|(_, r)| r)
+                .collect();
+            for retired in finished {
+                self.free(retired);
             }
         }
-        let slot = &mut self.slots[i];
-        let cmd = slot.cmd;
-        if let Some(s) = &slot.staging
+        Ok((i, self.slots[i].cmd))
+    }
+
+    fn free(&self, retired: Retired) {
+        match retired {
+            Retired::Image(image) => self.destroy_image(image),
+            Retired::Import(transient) => self.destroy_transient(transient),
+        }
+    }
+
+    /// 次のスロットと、`size` 以上の CPU 可視ステージングバッファとその書き込み先ポインタを取得する。
+    fn slot(
+        &mut self,
+        size: usize,
+    ) -> Result<(usize, vk::CommandBuffer, vk::Buffer, *mut u8), VrError> {
+        let (i, cmd) = self.next_slot()?;
+        if let Some(s) = &self.slots[i].staging
             && s.size >= size
         {
             return Ok((i, cmd, s.buffer, s.mapped));
@@ -400,7 +445,7 @@ impl Gpu {
     /// 使用済みイメージを破棄予約する。ランタイムがまだ読み出し中の可能性があるため、後続の転送完了後に破棄する
     /// （サイズ変更のたびに GPU 全体のアイドル待ちを行うと、ゲーム中はそれだけで数十 ms のストールが発生していた）。
     pub fn retire(&mut self, image: Image) {
-        self.retired.push((self.submitted, image));
+        self.retired.push((self.submitted, Retired::Image(image)));
     }
 
     /// `rgba`（行間パディングなし）を `image` 全体へ書き込み、`layout` に遷移させる。
@@ -579,8 +624,11 @@ impl Gpu {
 impl Drop for Gpu {
     fn drop(&mut self) {
         self.wait_idle();
-        for (_, image) in std::mem::take(&mut self.retired) {
-            self.destroy_image(image);
+        for (_, retired) in std::mem::take(&mut self.retired) {
+            self.free(retired);
+        }
+        if let Some(import) = self.import.take() {
+            import.destroy(&self.device);
         }
         for slot in std::mem::take(&mut self.slots) {
             if let Some(s) = slot.staging {
