@@ -81,7 +81,10 @@ fn spatial_speaker_is_heard_from_its_side() {
     e.set_speaker(1, speaker(Vec3::new(2.0, 0.0, 0.0)));
     e.play(1, tone(0.5, 0.5, 1, RATE as usize), true);
     let (l, r) = energy(&mut e, 4096);
-    assert!(r > l * 10.0, "右側に配置したスピーカーの音は右から聞こえる: {l} {r}");
+    assert!(
+        r > l * 10.0,
+        "右側に配置したスピーカーの音は右から聞こえる: {l} {r}"
+    );
     // 頭を 180° 右回転（後方を向く）すると左から聞こえる。
     e.set_listener(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
     let (l, r) = energy(&mut e, 4096);
@@ -125,7 +128,10 @@ fn distance_attenuates_beyond_one_meter() {
         e.play(1, tone(0.5, 0.5, 1, RATE as usize), true);
         energy(&mut e, 4096).0
     };
-    assert!((level(0.5) - level(1.0)).abs() < 1e-3, "1m 以内では減衰しない");
+    assert!(
+        (level(0.5) - level(1.0)).abs() < 1e-3,
+        "1m 以内では減衰しない"
+    );
     // 2 倍の距離で振幅 1/2 = エネルギー 1/4 となる。
     assert!((level(2.0) / level(1.0) - 0.25).abs() < 0.01);
 }

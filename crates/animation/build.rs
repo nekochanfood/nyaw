@@ -9,7 +9,10 @@ fn main() {
     let root: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&tokens).expect("tokens.json")).unwrap();
     let mut out = String::from("pub mod duration_ms {\n");
-    for (name, v) in root["duration-ms"].as_object().expect("duration-ms が存在しない") {
+    for (name, v) in root["duration-ms"]
+        .as_object()
+        .expect("duration-ms が存在しない")
+    {
         let name = name.replace('-', "_").to_uppercase();
         writeln!(out, "    pub const {name}: u64 = {};", v.as_u64().unwrap()).unwrap();
     }

@@ -521,7 +521,10 @@ fn the_toast_opens_the_notification_center(cx: &mut TestAppContext) {
     );
     cx.update(|_, cx| ui::notification::show_center(Some(6), cx));
     cx.run_until_parked();
-    assert!(!commands(cx, 2).contains(&PanelCommand::Close), "クローズしないはず");
+    assert!(
+        !commands(cx, 2).contains(&PanelCommand::Close),
+        "クローズしないはず"
+    );
     assert_eq!(
         cx.update(|_, cx| bar.read(cx).current(cx)),
         Some(Page::QuickSettings)

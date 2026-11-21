@@ -34,11 +34,11 @@ fn apps_list_marks_running_apps_and_filters_by_search(cx: &mut TestAppContext) {
             && cx.debug_bounds("dashboard-app-1").is_some()
     );
     list.read_with(cx, |l, _| {
-        assert!(l.window_for(&l.apps[0].0).is_some(), "Editor は起動中のはず");
         assert!(
-            l.window_for(&l.apps[1].0).is_none(),
-            "Paint は未起動のはず"
+            l.window_for(&l.apps[0].0).is_some(),
+            "Editor は起動中のはず"
         );
+        assert!(l.window_for(&l.apps[1].0).is_none(), "Paint は未起動のはず");
     });
     let search = list.read_with(cx, |l, _| l.search.clone());
     cx.update(|window, cx| window.focus(&search, cx));
@@ -216,7 +216,11 @@ fn long_app_names_do_not_widen_tiles(cx: &mut TestAppContext) {
     };
     assert_eq!(tooltip(cx).as_deref(), Some(LONG_APP));
     cx.simulate_mouse_move(short.center(), None, Modifiers::none());
-    assert_eq!(tooltip(cx), None, "省略されないラベルにはツールチップを表示しない");
+    assert_eq!(
+        tooltip(cx),
+        None,
+        "省略されないラベルにはツールチップを表示しない"
+    );
 }
 
 /// 見出し行は全幅を占め、見出しテキストは左寄せ、操作ボタンは右端に配置される。

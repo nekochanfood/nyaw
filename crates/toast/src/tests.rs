@@ -86,7 +86,10 @@ fn the_toast_moves_out_and_in_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mu
     assert_eq!(place(&view, cx), Place::Hud);
     assert!(hud_shows(&c), "{c:?}");
     assert!(cx.debug_bounds("toast-hud-1").is_some());
-    assert!(cx.debug_bounds("toast-1").is_none(), "HUD は非インタラクティブ");
+    assert!(
+        cx.debug_bounds("toast-1").is_none(),
+        "HUD は非インタラクティブ"
+    );
 
     // 時計を注視: まず HUD でフェードアウト（コンテンツは HUD のまま）。完全消失後に手首でフェードイン。
     set(cx, |c| {
@@ -210,7 +213,11 @@ fn cards_jump_to_the_notification_center(cx: &mut TestAppContext) {
     });
     assert_eq!(asked, (1, Some(1)));
     let shown = view.read_with(cx, |t, _| t.shown.iter().map(|n| n.id).collect::<Vec<_>>());
-    assert_eq!(shown, [2], "クリックした通知は閲覧済みとなり消える（他は残留する）");
+    assert_eq!(
+        shown,
+        [2],
+        "クリックした通知は閲覧済みとなり消える（他は残留する）"
+    );
     assert!(
         !take(cx, TOAST)
             .iter()
@@ -252,7 +259,11 @@ fn the_toast_steps_aside_for_the_notification_center(cx: &mut TestAppContext) {
     set(cx, |c| {
         c.notifications = Arc::from([note(1, None), note(2, None)])
     });
-    assert_eq!(place(&view, cx), Place::Hidden, "表示中に到着した通知も非表示");
+    assert_eq!(
+        place(&view, cx),
+        Place::Hidden,
+        "表示中に到着した通知も非表示"
+    );
     set(cx, |c| c.panels.get_mut(&BAR).unwrap().status.hidden = true);
     set(cx, |c| {
         c.panels.entry(WRIST).or_default().status.gazed = true

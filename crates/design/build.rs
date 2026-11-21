@@ -245,7 +245,8 @@ fn twemoji() {
 }
 
 fn obj<'a>(v: &'a Value, k: &str) -> &'a Map {
-    v[k].as_object().unwrap_or_else(|| panic!("{k} が見つからない"))
+    v[k].as_object()
+        .unwrap_or_else(|| panic!("{k} が見つからない"))
 }
 
 fn konst(s: &str) -> String {

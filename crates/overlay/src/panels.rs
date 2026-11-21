@@ -334,7 +334,6 @@ impl Overlay {
         let p = &mut self.panels[id];
         if p.nav_bar_of.is_some() {
             // 持ち主と一緒にフェードアウトし、持ち主が消えたら解放される（place_nav_bars）。
-
         } else if p.animated && p.surface.has_texture() && p.opacity > 0.0 {
             self.animations.insert(
                 id,
