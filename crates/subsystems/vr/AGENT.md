@@ -32,6 +32,14 @@ VR 機器が接続されていない環境や日常的な開発・テストの�
 
 ## SteamVR (OpenVR) 連携
 
+### SteamVR への接続（Windows / Linux）
+
+`openvr_api` の代わりに SteamVR の `vrclient`（Windows は `bin/vrclient_x64.dll`、Linux は `bin/linux64/vrclient.so`）を直接読み込み、`IVRClientCore` を呼び出す（`openvr/client.rs`）。x64 では Windows と Linux（System V）のいずれでも、仮想関数は `this` を第 1 引数とする C 呼び出し規約と同一であるため、関数テーブルの定義は共通である。
+
+次の vsync までの待機時間は、ドライバが返す表示周波数・vsync からの経過時間・表示までの遅延から求める。Linux の null ドライバは範囲外の表示周波数を返すため、これらの値は範囲（10〜1000Hz、1 周期以内、0〜1 秒）を検査し、範囲外であれば 90Hz・1 周期・0 とみなす。
+
+SteamVR の OpenXR ランタイムは `XR_EXTX_overlay` を提供しない。そのため SteamVR では、`--openxr` を指定しても OpenXR のオーバーレイセッションは生成できず、OpenVR に接続する（`connect` のフォールバック）。
+
 ### アクションバインディング
 
 OpenVR 環境における操作は、SteamVR Input システム（`openvr/actions.json`）を介して処理される。コントローラの機種別割り当ては SteamVR の設定画面から変更可能である。
@@ -42,7 +50,7 @@ OpenVR 環境における操作は、SteamVR Input システム（`openvr/action
 
 `openvr/app.rs` が SteamVR へのマニフェスト登録と自動起動制御を担う。
 
-- **マニフェストの生成**: 自動起動を有効化した際、設定ディレクトリ内に `vrmanifest` ファイル（起動コマンド引数 `--openvr` を指定）を出力し、`AddApplicationManifest` を通じて SteamVR に恒久登録する。
+- **マニフェストの生成**: 自動起動を有効化した際、設定ディレクトリ内に `vrmanifest` ファイル（起動コマンド引数 `--openvr` を指定。実行ファイルのパスは Windows では `binary_path_windows`、Linux では `binary_path_linux` に記載）を出力し、`AddApplicationManifest` を通じて SteamVR に恒久登録する。
 - **識別情報の管理**: リリースビルド（`nekochanfood.nyaw`）と開発ビルド（`nekochanfood.nyaw.dev`）でマニフェストおよび識別子を分離し、開発環境による本番環境の上書きを防止する。接続時は `IdentifyApplication` により自身を名乗ることで、コントローラバインドの同一性を担保する。
 
 ## HUD セーフエリアの算出（HUD のセーフエリア）
@@ -56,4 +64,4 @@ OpenVR 環境における操作は、SteamVR Input システム（`openvr/action
 ## 描画転送と現在の制約
 
 - **フレームバッファ転送**: GPUI の描画結果を CPU 側へ読み戻し、更新差分が存在する場合に Vulkan イメージへ再転送してランタイムへ渡す（`src/gpu.rs`、1024×768 解像度で約 1.6ms）。GPUI の Direct3D / Vulkan テクスチャをゼロコピーで直接共有する経路は未実装である。
-- **実機検証の範囲**: OpenVR は null ドライバ環境での接続および Vulkan オーバーレイ送信まで検証済み。OpenXR は Monado 環境（Windows）でのオーバーレイ表示まで検証済みであり、実機コントローラの完全な挙動検証は継続課題である。
+- **実機検証の範囲**: OpenVR は null ドライバ環境での接続および Vulkan オーバーレイ送信まで、Windows と Linux の両方で検証済み（Linux では SteamVR のコンポジタに nyaw のパネルが合成されることも確認した）。OpenXR は Monado 環境（Windows）でのオーバーレイ表示まで検証済みで、Linux では未検証である。実機コントローラの完全な挙動検証は継続課題である。
