@@ -2732,6 +2732,7 @@ dependencies = [
  "logger",
  "overlay",
  "serde",
+ "serde_json",
  "subsystems",
  "toml 0.9.12+spec-1.1.0",
 ]

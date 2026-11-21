@@ -59,10 +59,8 @@ fn desktop_panels_can_spawn_attach_and_lock_independently(cx: &mut TestAppContex
 #[test]
 fn hands_keep_independent_pressed_state_on_same_panel() {
     // This checks that presses are tracked per hand, so use the mouse mode, which sends the press at the instant of pressing.
-    let config = kernel::Config {
-        pointer_mode: Some(kernel::PointerMode::Mouse),
-        ..Default::default()
-    };
+    let mut config = kernel::Config::default();
+    config.kernel.pointer_mode = Some(kernel::PointerMode::Mouse);
     let mut kernel = Kernel::with_backend(MockBackend::default(), config);
     kernel
         .add_panel(

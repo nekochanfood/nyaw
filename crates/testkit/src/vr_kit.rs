@@ -57,12 +57,10 @@ impl<'a, V: Render> VrKit<'a, V> {
         let (view, cx) = cx.add_window_view(build);
         cx.run_until_parked();
         // Turn off hand-jitter smoothing, since it would make pointing miss at the instant of aiming (the smoothing itself is checked in overlay unit tests).
-        let config = kernel::config::Config {
-            pointer_smoothing: Some(0.0),
-            // Operation scenarios are written for the mouse (the default touch mode is checked in pointer_mode.rs).
-            pointer_mode: Some(kernel::PointerMode::Mouse),
-            ..Default::default()
-        };
+        let mut config = kernel::config::Config::default();
+        config.overlay.pointer_smoothing = Some(0.0);
+        // Operation scenarios are written for the mouse (the default touch mode is checked in pointer_mode.rs).
+        config.kernel.pointer_mode = Some(kernel::PointerMode::Mouse);
         let mut kernel = Kernel::with_backend(MockBackend::default(), config);
         let mut panels = Panels::new(Watch::from_env());
         let pose = Pose::new(PANEL_POS, Quat::IDENTITY);

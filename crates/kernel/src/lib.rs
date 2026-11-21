@@ -142,182 +142,214 @@ pub enum PanelCommand {
     },
 }
 
-/// アプリ全体の設定の変更（[`Kernel::set`]）。パネルを問わず効き、`pointer_mode` 以外は設定ファイルへ書き戻される
+/// アプリ全体の設定の変更（[`Kernel::set`]）。パネルを問わず効き、`PointerMode` と `AutoLaunch` 以外は設定ファイルへ書き戻される
 /// （起動時の設定の場合のみ。テスト用のカーネルは書かない）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Setting {
-    /// レーザーのエミュレート方式。
-    PointerMode(PointerMode),
-    Theme(ThemeMode),
-    /// パーソナルカラー（`personal_color`）。範囲の外の値は範囲に収める。
-    PersonalColor(PersonalColor),
-    /// 自作の色をパーソナルカラーに設定し、履歴（`color_history`）の先頭に記録する。同じ色は 1 つだけ残し、古いものから削除する。
-    CustomColor(PersonalColor),
-    /// 画面の言語（`language`）。
-    Language(Language),
-    /// レーザーの手ブレ抑えの強さ（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`。`pointer_smoothing`）。
-    PointerSmoothing(f32),
-    /// 手ブレ抑えを緩める角度（度。`pointer_release_deg`）。
-    PointerRelease(f32),
-    /// レーザーの見える長さ（m。`laser_length`）。
-    LaserLength(f32),
-    /// 設定画面のポインタの動きの調整方式（`pointer_tuning`）。カーネルは値を保持するのみで、解釈は設定画面が行う。
-    PointerTuning(PointerTuning),
-    /// カーソルの大きさの倍率（`cursor_scale`。範囲に収め、刻みに丸める）。
-    CursorScale(f32),
-    /// ツールチップを表示するか（`tooltips`）。カーネルは値を保持するのみで、解釈は UI 層が行う。
-    Tooltips(bool),
-    /// タップ時（`tap_sound`）・ホバー時（`hover_sound`）の効果音を再生するか。カーネルは値を保持するのみで、解釈は UI 層が行う。
-    TapSound(bool),
-    HoverSound(bool),
-    /// コントローラを持たない手の調整値（`[hand]`）。範囲の外の値は範囲に収める。
-    Hand(subsystems::input::HandTuning),
-    /// 利き手（`dominant_hand`）。カーネルは値を保持するのみで、パネルの配置は変更しない（解釈は左右で動作が変わる側が行う）。
-    DominantHand(DominantHand),
-    /// wrist の文字盤のデザイン（`wrist_design`）。
-    WristDesign(WristDesign),
-    /// wrist を掴んで再配置した姿勢（`wrist_offset`。左手首での値）。カーネルは値を保持するのみで、取り付けは wrist が行う。
-    WristOffset(Pose),
-    /// wrist の大きさの倍率（`wrist_scale`。範囲に収める）。カーネルは値を保持するのみで、解釈は wrist が行う。
-    WristScale(f32),
-    /// ミラーリングの取得の上限 FPS（`mirror_frame_rate`。1〜240 に収める）。配信中のミラーもこの FPS でかけ直す。
-    MirrorFrameRate(u32),
-    /// 仮想キーボードの種類（`keyboard`）。
-    Keyboard(subsystems::keyboard::KeyboardType),
-    /// 仮想キーボードの大きさの倍率（`keyboard_scale`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、解釈は UI 層が行う。
-    KeyboardScale(f32),
-    /// 仮想キーボードのキーの間隔の倍率（`key_gap`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、解釈は UI 層が行う。
-    KeyGap(f32),
-    /// ダッシュボード表示中にゲームへの入力をブロックするか（`block_input`）。
-    BlockInput(bool),
-    /// 距離 LOD の品質（`lod_quality`）。
-    LodQuality(LodQuality),
-    /// セットアップウィザードを完了したか（`setup_done`）。
-    SetupDone(bool),
-    /// 文字の大きさの倍率（`text_scale`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、適用は UI 層が行う。
-    TextScale(f32),
-    /// UI スケール: パネルの VR 上の大きさの倍率（`ui_scale`。範囲に収め、刻みに丸める）。開いているパネルもその場で変わる。
-    UiScale(f32),
-    /// すべての文字を太字にするか（`bold_text`）。カーネルは値を保持するのみで、適用は UI 層が行う。
-    BoldText(bool),
-    /// 仮想キーボードのキー押下音を再生するか（`key_sound`）。カーネルは値を保持するのみで、再生は UI 層が行う。
-    KeySound(bool),
-    /// キー押下音の音量（`key_sound_volume`。0〜1 に収め、刻みに丸める）。カーネルは値を保持するのみ。
-    KeySoundVolume(f32),
+    // 設定ファイルに書かない値
     /// ランタイムの起動と同時に開くか（`VrBackend::set_auto_launch`）。値はランタイムが持つので設定ファイルには書かない。
     AutoLaunch(bool),
-    /// アップデートのチャンネル（`update_channel`）。カーネルは値を保持するのみで、解釈は `updater` が行う。
-    UpdateChannel(UpdateChannel),
-    /// ダッシュボードの距離（m。`dashboard_distance`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、配置はダッシュボードが行う。
-    DashboardDistance(f32),
-    /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。`dashboard_height`。範囲に収め、刻みに丸める）。
-    DashboardHeight(f32),
-    /// ダッシュボード表示中の背景の暗さ（`dashboard_dim`）。0 で暗くせず、1 で真っ黒になる。範囲に収め、刻みに丸める。
+    // `[input]`
+    /// コントローラを持たない手の調整値（`[input.hand]`）。範囲の外の値は範囲に収める。
+    Hand(subsystems::input::HandTuning),
+    // `[keyboard]`
+    /// 仮想キーボードの種類（`keyboard.kind`）。
+    Keyboard(subsystems::keyboard::KeyboardType),
+    /// 仮想キーボードの大きさの倍率（`keyboard.scale`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、解釈は UI 層が行う。
+    KeyboardScale(f32),
+    /// 仮想キーボードのキーの間隔の倍率（`keyboard.key_gap`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、解釈は UI 層が行う。
+    KeyGap(f32),
+    /// 仮想キーボードのキー押下音を再生するか（`keyboard.key_sound`）。カーネルは値を保持するのみで、再生は UI 層が行う。
+    KeySound(bool),
+    /// キー押下音の音量（`keyboard.key_sound_volume`。0〜1 に収め、刻みに丸める）。カーネルは値を保持するのみ。
+    KeySoundVolume(f32),
+    // `[desktop]`
+    /// ミラーリングの取得の上限 FPS（`desktop.frame_rate`。1〜240 に収める）。配信中のミラーもこの FPS でかけ直す。
+    MirrorFrameRate(u32),
+    // `[overlay]`
+    /// UI スケール: パネルの VR 上の大きさの倍率（`overlay.ui_scale`。範囲に収め、刻みに丸める）。開いているパネルもその場で変わる。
+    UiScale(f32),
+    /// レーザーの手ブレ抑えの強さ（0 = 抑えない 〜 `overlay::POINTER_SMOOTHING_MAX`。`overlay.pointer_smoothing`）。
+    PointerSmoothing(f32),
+    /// 手ブレ抑えを緩める角度（度。`overlay.pointer_release_deg`）。
+    PointerRelease(f32),
+    /// レーザーの見える長さ（m。`overlay.laser_length`）。
+    LaserLength(f32),
+    /// カーソルの大きさの倍率（`overlay.cursor_scale`。範囲に収め、刻みに丸める）。
+    CursorScale(f32),
+    /// ダッシュボード表示中にゲームへの入力をブロックするか（`overlay.block_input`）。
+    BlockInput(bool),
+    /// ダッシュボード表示中の背景の暗さ（`overlay.veil_opacity`）。0 で暗くせず、1 で真っ黒になる。範囲に収め、刻みに丸める。
     /// 表示中に変更した場合も即座に反映される。
     DashboardDim(f32),
-    /// 通知を視界の端に表示する位置（`notification_anchor`）。カーネルは値を保持するのみで、配置は通知画面が行う。
+    // `[kernel]`
+    /// 利き手（`kernel.dominant_hand`）。カーネルは値を保持するのみで、パネルの配置は変更しない（解釈は左右で動作が変わる側が行う）。
+    DominantHand(DominantHand),
+    /// レーザーのエミュレート方式（`kernel.pointer_mode`）。設定ファイルへは書き戻さない。
+    PointerMode(PointerMode),
+    /// 距離 LOD の品質（`kernel.lod_quality`）。
+    LodQuality(LodQuality),
+    // `[ui]`
+    /// ツールチップを表示するか（`ui.tooltips`）。カーネルは値を保持するのみで、解釈は UI 層が行う。
+    Tooltips(bool),
+    /// タップ時（`ui.tap_sound`）・ホバー時（`ui.hover_sound`）の効果音を再生するか。カーネルは値を保持するのみで、解釈は UI 層が行う。
+    TapSound(bool),
+    HoverSound(bool),
+    // `[design]`
+    /// 見た目のテーマ（`design.theme`）。
+    Theme(ThemeMode),
+    /// パーソナルカラー（`design.personal_color`）。範囲の外の値は範囲に収める。
+    PersonalColor(PersonalColor),
+    /// 自作の色をパーソナルカラーに設定し、履歴（`design.color_history`）の先頭に記録する。同じ色は 1 つだけ残し、古いものから削除する。
+    CustomColor(PersonalColor),
+    /// 文字の大きさの倍率（`design.text_scale`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、適用は UI 層が行う。
+    TextScale(f32),
+    /// すべての文字を太字にするか（`design.bold_text`）。カーネルは値を保持するのみで、適用は UI 層が行う。
+    BoldText(bool),
+    // `[i18n]`
+    /// 画面の言語（`i18n.language`）。
+    Language(Language),
+    // `[wrist]`
+    /// wrist の文字盤のデザイン（`wrist.design`）。
+    WristDesign(WristDesign),
+    /// wrist を掴んで再配置した姿勢（`wrist.offset`。左手首での値）。カーネルは値を保持するのみで、取り付けは wrist が行う。
+    WristOffset(Pose),
+    /// wrist の大きさの倍率（`wrist.scale`。範囲に収める）。カーネルは値を保持するのみで、解釈は wrist が行う。
+    WristScale(f32),
+    // `[toast]`
+    /// 通知を視界の端に表示する位置（`toast.anchor`）。カーネルは値を保持するのみで、配置は通知画面が行う。
     NotificationAnchor(NotificationAnchor),
+    // `[dashboard]`
+    /// ダッシュボードの距離（m。`dashboard.distance`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、配置はダッシュボードが行う。
+    DashboardDistance(f32),
+    /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。`dashboard.height`。範囲に収め、刻みに丸める）。
+    DashboardHeight(f32),
+    // `[settings]`
+    /// 設定画面のポインタの動きの調整方式（`settings.pointer_tuning`）。カーネルは値を保持するのみで、解釈は設定画面が行う。
+    PointerTuning(PointerTuning),
+    // `[setup]`
+    /// セットアップウィザードを完了したか（`setup.done`）。
+    SetupDone(bool),
+    // `[updater]`
+    /// アップデートのチャンネル（`updater.channel`）。カーネルは値を保持するのみで、解釈は `updater` が行う。
+    UpdateChannel(UpdateChannel),
 }
 
 /// アプリ全体の設定の今の値（[`Kernel::settings`]）。ビューの表示用。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Settings {
-    pub pointer_mode: PointerMode,
-    pub theme: ThemeMode,
-    /// パーソナルカラー。選んでいなければ `None`（既定の色味）。
-    pub personal_color: Option<PersonalColor>,
-    /// 自分で作ったパーソナルカラーの履歴（新しい順。空きは `None`）。
-    pub color_history: [Option<PersonalColor>; COLOR_HISTORY],
-    pub language: Language,
-    pub pointer_smoothing: f32,
-    pub pointer_release_deg: f32,
-    pub laser_length: f32,
-    pub pointer_tuning: PointerTuning,
-    /// カーソルの大きさの倍率（等倍 = 1）。
-    pub cursor_scale: f32,
-    pub tooltips: bool,
-    pub tap_sound: bool,
-    pub hover_sound: bool,
+    // 設定ファイルに書かない値
+    /// ランタイムの起動と同時に開くか。切り替えられないランタイム（OpenVR 以外）は `None`。
+    pub auto_launch: Option<bool>,
+    // `[input]`
     pub hand: subsystems::input::HandTuning,
-    pub dominant_hand: DominantHand,
-    pub wrist_design: WristDesign,
-    /// wrist を掴んで置き直した姿勢（左手首での値）。置き直していない・設定ファイルの値が壊れていれば `None`。
-    pub wrist_offset: Option<Pose>,
-    /// wrist の大きさの倍率（等倍 = 1）。
-    pub wrist_scale: f32,
-    pub mirror_frame_rate: u32,
+    // `[keyboard]`
     pub keyboard: subsystems::keyboard::KeyboardType,
     /// 仮想キーボードの大きさの倍率（等倍 = 1）。
     pub keyboard_scale: f32,
     /// 仮想キーボードのキーの間隔の倍率（等倍 = 1。0 でキーが接する）。
     pub key_gap: f32,
-    pub block_input: bool,
-    pub lod_quality: LodQuality,
-    pub setup_done: bool,
-    /// ロックダウン中か（[`Kernel::lockdown`]）。シェル（ダッシュボードなど）はこれを見て、開閉を控える。
-    pub lockdown: bool,
-    /// 文字の大きさの倍率（等倍 = 1）。
-    pub text_scale: f32,
-    /// UI スケール（パネルの大きさの倍率。等倍 = 1）。
-    pub ui_scale: f32,
-    /// すべての文字を太字にする。
-    pub bold_text: bool,
     /// 仮想キーボードのキーを押した音を鳴らす。
     pub key_sound: bool,
     /// キーを押した音の音量（0〜1）。
     pub key_sound_volume: f32,
-    /// ランタイムの起動と同時に開くか。切り替えられないランタイム（OpenVR 以外）は `None`。
-    pub auto_launch: Option<bool>,
-    pub update_channel: UpdateChannel,
+    // `[desktop]`
+    pub mirror_frame_rate: u32,
+    // `[overlay]`
+    /// UI スケール（パネルの大きさの倍率。等倍 = 1）。
+    pub ui_scale: f32,
+    pub pointer_smoothing: f32,
+    pub pointer_release_deg: f32,
+    pub laser_length: f32,
+    /// カーソルの大きさの倍率（等倍 = 1）。
+    pub cursor_scale: f32,
+    pub block_input: bool,
+    /// ダッシュボード表示中の背景の暗さ（黒の不透明度、0〜1）。
+    pub dashboard_dim: f32,
+    // `[kernel]`
+    pub dominant_hand: DominantHand,
+    pub pointer_mode: PointerMode,
+    pub lod_quality: LodQuality,
+    // `[ui]`
+    pub tooltips: bool,
+    pub tap_sound: bool,
+    pub hover_sound: bool,
+    // `[design]`
+    pub theme: ThemeMode,
+    /// パーソナルカラー。選んでいなければ `None`（既定の色味）。
+    pub personal_color: Option<PersonalColor>,
+    /// 自分で作ったパーソナルカラーの履歴（新しい順。空きは `None`）。
+    pub color_history: [Option<PersonalColor>; COLOR_HISTORY],
+    /// 文字の大きさの倍率（等倍 = 1）。
+    pub text_scale: f32,
+    /// すべての文字を太字にする。
+    pub bold_text: bool,
+    // `[i18n]`
+    pub language: Language,
+    // `[wrist]`
+    pub wrist_design: WristDesign,
+    /// wrist を掴んで置き直した姿勢（左手首での値）。置き直していない・設定ファイルの値が壊れていれば `None`。
+    pub wrist_offset: Option<Pose>,
+    /// wrist の大きさの倍率（等倍 = 1）。
+    pub wrist_scale: f32,
+    // `[toast]`
+    pub notification_anchor: NotificationAnchor,
+    // `[dashboard]`
     /// ダッシュボードの距離（m。はめた画面の中心まで）。
     pub dashboard_distance: f32,
     /// ダッシュボードの高さ（m。上が +。0 で画面の中心が目の高さの 0.1m 下）。
     pub dashboard_height: f32,
-    /// ダッシュボード表示中の背景の暗さ（黒の不透明度、0〜1）。
-    pub dashboard_dim: f32,
-    pub notification_anchor: NotificationAnchor,
+    // `[settings]`
+    pub pointer_tuning: PointerTuning,
+    // `[setup]`
+    pub setup_done: bool,
+    // `[updater]`
+    pub update_channel: UpdateChannel,
+    // 設定ではなく、カーネルの今の状態
+    /// ロックダウン中か（[`Kernel::lockdown`]）。シェル（ダッシュボードなど）はこれを見て、開閉を控える。
+    pub lockdown: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            pointer_mode: Default::default(),
-            theme: Default::default(),
-            personal_color: None,
-            color_history: [None; COLOR_HISTORY],
-            language: Default::default(),
-            pointer_smoothing: Default::default(),
-            pointer_release_deg: Default::default(),
-            laser_length: Default::default(),
-            pointer_tuning: Default::default(),
-            cursor_scale: 1.0,
-            tooltips: true,
-            tap_sound: true,
-            hover_sound: true,
+            auto_launch: None,
             hand: Default::default(),
-            dominant_hand: Default::default(),
-            wrist_design: Default::default(),
-            wrist_offset: None,
-            wrist_scale: 1.0,
-            mirror_frame_rate: desktop::DEFAULT_FRAME_RATE,
             keyboard: Default::default(),
             keyboard_scale: 1.0,
             key_gap: 1.0,
-            block_input: true,
-            lod_quality: Default::default(),
-            setup_done: false,
-            lockdown: false,
-            text_scale: 1.0,
-            ui_scale: 1.0,
-            bold_text: false,
             key_sound: true,
             key_sound_volume: 1.0,
-            auto_launch: None,
-            update_channel: Default::default(),
+            mirror_frame_rate: desktop::DEFAULT_FRAME_RATE,
+            ui_scale: 1.0,
+            pointer_smoothing: Default::default(),
+            pointer_release_deg: Default::default(),
+            laser_length: Default::default(),
+            cursor_scale: 1.0,
+            block_input: true,
+            dashboard_dim: overlay::VEIL,
+            dominant_hand: Default::default(),
+            pointer_mode: Default::default(),
+            lod_quality: Default::default(),
+            tooltips: true,
+            tap_sound: true,
+            hover_sound: true,
+            theme: Default::default(),
+            personal_color: None,
+            color_history: [None; COLOR_HISTORY],
+            text_scale: 1.0,
+            bold_text: false,
+            language: Default::default(),
+            wrist_design: Default::default(),
+            wrist_offset: None,
+            wrist_scale: 1.0,
+            notification_anchor: Default::default(),
             dashboard_distance: DASHBOARD_DISTANCE,
             dashboard_height: 0.0,
-            dashboard_dim: overlay::VEIL,
-            notification_anchor: Default::default(),
+            pointer_tuning: Default::default(),
+            setup_done: false,
+            update_channel: Default::default(),
+            lockdown: false,
         }
     }
 }
@@ -467,7 +499,7 @@ const LOD_PX_PER_M: f32 = 1000.0;
 const LOD_HYSTERESIS: f32 = 0.9;
 
 impl Kernel {
-    /// ランタイムを選んで起動する。`requested` は `"--novr"` / `"novr"` のような指定（コマンドライン > 設定ファイル。決めるのは呼び出し側）。
+    /// ランタイムを選んで起動する。`requested` は `"--novr"` / `"novr"` のような指定（コマンドライン引数から呼び出し側が渡す）。
     /// 指定なしで VR ランタイムが無ければ、`novr_fallback` なら novr で起動する（`novr` フィーチャーがあれば常に使える）、でなければエラー。
     /// 指定したのに繋がらなければエラー。
     pub fn boot(
@@ -476,8 +508,8 @@ impl Kernel {
         novr_fallback: bool,
     ) -> Result<Self, VrError> {
         // 言語を決めていなければ、OS の表示言語で始める（決めるまで設定ファイルには書かない）。
-        if config.language.is_none() {
-            config.language = os::ui_language().and_then(Language::from_code);
+        if config.i18n.language.is_none() {
+            config.i18n.language = os::ui_language().and_then(Language::from_code);
         }
         let prefer = match requested.map(runtime_name).as_deref() {
             None | Some("") => None,
@@ -490,12 +522,12 @@ impl Kernel {
                 return Err(VrError::NoRuntime);
             }
         };
-        let vr = match vr::connect(prefer, config.gpu.emulator) {
+        let vr = match vr::connect(prefer, config.vr.emulator_gpu) {
             Ok(b) => b,
             Err(e) if prefer.is_none() && novr_fallback => {
                 logger::warn!("failed to connect to VR runtime, starting novr", error = e);
                 // `novr` フィーチャーなしのビルドにはエミュレーターが無く、ここで失敗しうる。
-                vr::connect(Some(Runtime::NoVr), config.gpu.emulator)?
+                vr::connect(Some(Runtime::NoVr), config.vr.emulator_gpu)?
             }
             Err(e) => {
                 logger::error!("failed to connect to VR runtime", runtime = ?prefer, error = e);
@@ -530,29 +562,29 @@ impl<B: VrBackend> Kernel<B> {
             logger::warn!("cannot raise GPU scheduling priority");
         }
         let mut subsystems = Subsystems::with_backend(vr);
-        subsystems.hand = config.hand.clamped();
+        subsystems.hand = config.input.hand.clamped();
         let mut overlay = Overlay::new();
-        if let Some(s) = config.pointer_smoothing {
+        if let Some(s) = config.overlay.pointer_smoothing {
             overlay.set_pointer_smoothing(s);
         }
-        if let Some(deg) = config.pointer_release_deg {
+        if let Some(deg) = config.overlay.pointer_release_deg {
             overlay.set_pointer_release(deg);
         }
-        if let Some(l) = config.laser_length {
+        if let Some(l) = config.overlay.laser_length {
             overlay.set_laser_length(l);
         }
-        if let Some(s) = config.cursor_scale {
+        if let Some(s) = config.overlay.cursor_scale {
             overlay.set_cursor_scale(config::clamp_scale(s, CURSOR_SCALE_MIN, CURSOR_SCALE_MAX));
         }
-        overlay.set_block_input(config.block_input.unwrap_or(true));
-        if let Some(d) = config.dashboard_dim {
+        overlay.set_block_input(config.overlay.block_input.unwrap_or(true));
+        if let Some(d) = config.overlay.veil_opacity {
             overlay.set_veil_opacity(config::snap(d, 0.0, 1.0, SCALE_STEP, overlay::VEIL));
         }
-        if let Some(s) = config.ui_scale {
+        if let Some(s) = config.overlay.ui_scale {
             let s = config::clamp_scale(s, UI_SCALE_MIN, UI_SCALE_MAX);
             overlay.set_scale(&mut subsystems.backend, s);
         }
-        let pointer_mode = config.pointer_mode.unwrap_or_default();
+        let pointer_mode = config.kernel.pointer_mode.unwrap_or_default();
         // タッチではスライドがパネルからはみ出しても続くよう、押している間はポインタを掴んでおく。
         overlay.set_capture(pointer_mode == PointerMode::Touch);
         Self {
@@ -609,76 +641,82 @@ impl<B: VrBackend> Kernel<B> {
 
     pub fn settings(&self) -> Settings {
         Settings {
-            pointer_mode: self.pointer_mode,
-            theme: self.config.theme,
-            personal_color: self.config.personal_color.map(PersonalColor::clamped),
-            color_history: std::array::from_fn(|i| {
-                let color = self.config.color_history.get(i);
-                color.copied().map(PersonalColor::clamped)
-            }),
-            language: self.config.language.unwrap_or_default(),
-            pointer_smoothing: self.overlay.pointer_smoothing(),
-            pointer_release_deg: self.overlay.pointer_release(),
-            laser_length: self.overlay.laser_length(),
-            pointer_tuning: self.config.pointer_tuning,
-            cursor_scale: self.overlay.cursor_scale(),
-            tooltips: self.config.tooltips.unwrap_or(true),
-            tap_sound: self.config.tap_sound.unwrap_or(true),
-            hover_sound: self.config.hover_sound.unwrap_or(true),
+            auto_launch: self.subsystems.backend.auto_launch(),
             hand: self.subsystems.hand,
-            dominant_hand: self.config.dominant_hand,
-            wrist_design: self.config.wrist_design,
-            wrist_offset: self.config.wrist_offset.and_then(config::WristOffset::pose),
-            wrist_scale: self.wrist_scale(),
-            mirror_frame_rate: self.mirror_frame_rate(),
-            keyboard: self.config.keyboard,
-            keyboard_scale: self.config.keyboard_scale.map_or(1.0, |s| {
+            keyboard: self.config.keyboard.kind,
+            keyboard_scale: self.config.keyboard.scale.map_or(1.0, |s| {
                 config::clamp_scale(s, KEYBOARD_SCALE_MIN, KEYBOARD_SCALE_MAX)
             }),
             key_gap: self
                 .config
+                .keyboard
                 .key_gap
                 .map_or(1.0, |g| config::clamp_scale(g, KEY_GAP_MIN, KEY_GAP_MAX)),
-            block_input: self.overlay.block_input(),
-            lod_quality: self.config.lod_quality,
-            setup_done: self.config.setup_done,
-            lockdown: self.lockdown(),
-            text_scale: self.config.text_scale.map_or(1.0, |s| {
-                config::clamp_scale(s, TEXT_SCALE_MIN, TEXT_SCALE_MAX)
-            }),
-            ui_scale: self.overlay.scale(),
-            bold_text: self.config.bold_text,
-            key_sound: self.config.key_sound.unwrap_or(true),
+            key_sound: self.config.keyboard.key_sound.unwrap_or(true),
             key_sound_volume: self
                 .config
+                .keyboard
                 .key_sound_volume
                 .map_or(1.0, |v| config::clamp_scale(v, 0.0, 1.0)),
-            auto_launch: self.subsystems.backend.auto_launch(),
-            update_channel: self.config.update_channel,
+            mirror_frame_rate: self.mirror_frame_rate(),
+            ui_scale: self.overlay.scale(),
+            pointer_smoothing: self.overlay.pointer_smoothing(),
+            pointer_release_deg: self.overlay.pointer_release(),
+            laser_length: self.overlay.laser_length(),
+            cursor_scale: self.overlay.cursor_scale(),
+            block_input: self.overlay.block_input(),
+            dashboard_dim: self.overlay.veil_opacity(),
+            dominant_hand: self.config.kernel.dominant_hand,
+            pointer_mode: self.pointer_mode,
+            lod_quality: self.config.kernel.lod_quality,
+            tooltips: self.config.ui.tooltips.unwrap_or(true),
+            tap_sound: self.config.ui.tap_sound.unwrap_or(true),
+            hover_sound: self.config.ui.hover_sound.unwrap_or(true),
+            theme: self.config.design.theme,
+            personal_color: self
+                .config
+                .design
+                .personal_color
+                .map(PersonalColor::clamped),
+            color_history: std::array::from_fn(|i| {
+                let color = self.config.design.color_history.get(i);
+                color.copied().map(PersonalColor::clamped)
+            }),
+            text_scale: self.config.design.text_scale.map_or(1.0, |s| {
+                config::clamp_scale(s, TEXT_SCALE_MIN, TEXT_SCALE_MAX)
+            }),
+            bold_text: self.config.design.bold_text,
+            language: self.config.i18n.language.unwrap_or_default(),
+            wrist_design: self.config.wrist.design,
+            wrist_offset: self.config.wrist.offset.and_then(config::WristOffset::pose),
+            wrist_scale: self.wrist_scale(),
+            notification_anchor: self.config.toast.anchor,
             dashboard_distance: self.dashboard_distance(),
             dashboard_height: self.dashboard_height(),
-            dashboard_dim: self.overlay.veil_opacity(),
-            notification_anchor: self.config.notification_anchor,
+            pointer_tuning: self.config.settings.pointer_tuning,
+            setup_done: self.config.setup.done,
+            update_channel: self.config.updater.channel,
+            lockdown: self.lockdown(),
         }
     }
 
     /// ダッシュボードの距離（設定ファイルの値を範囲に収め、刻みに丸めたもの）。
     fn dashboard_distance(&self) -> f32 {
         let (min, max) = (DASHBOARD_DISTANCE_MIN, DASHBOARD_DISTANCE_MAX);
-        let d = self.config.dashboard_distance.unwrap_or(DASHBOARD_DISTANCE);
+        let d = self.config.dashboard.distance.unwrap_or(DASHBOARD_DISTANCE);
         config::snap(d, min, max, DASHBOARD_STEP, DASHBOARD_DISTANCE)
     }
 
     /// ダッシュボードの高さ（設定ファイルの値を範囲に収め、刻みに丸めたもの）。
     fn dashboard_height(&self) -> f32 {
         let (min, max) = (DASHBOARD_HEIGHT_MIN, DASHBOARD_HEIGHT_MAX);
-        let h = self.config.dashboard_height.unwrap_or(0.0);
+        let h = self.config.dashboard.height.unwrap_or(0.0);
         config::snap(h, min, max, DASHBOARD_STEP, 0.0)
     }
 
     /// wrist の大きさの倍率（設定ファイルの値を範囲に収めたもの。数でない値は等倍）。
     fn wrist_scale(&self) -> f32 {
-        let s = self.config.wrist_scale.filter(|s| s.is_finite());
+        let s = self.config.wrist.scale.filter(|s| s.is_finite());
         s.map_or(1.0, |s| s.clamp(WRIST_SCALE_MIN, WRIST_SCALE_MAX))
     }
 
@@ -690,201 +728,203 @@ impl<B: VrBackend> Kernel<B> {
     /// ミラーリングの取得の上限 FPS（設定ファイルの値を 1〜240 に収めたもの）。
     fn mirror_frame_rate(&self) -> u32 {
         self.config
-            .mirror_frame_rate
+            .desktop
+            .frame_rate
             .unwrap_or(desktop::DEFAULT_FRAME_RATE)
             .clamp(1, desktop::MAX_FRAME_RATE)
     }
 
     /// アプリ全体の設定を変更する。
     pub fn set(&mut self, setting: Setting) {
-        let (key, value) = match setting {
+        let (table, key, value) = match setting {
+            Setting::AutoLaunch(on) => {
+                self.subsystems.backend.set_auto_launch(on);
+                return;
+            }
+            Setting::Hand(h) => {
+                let h = h.clamped();
+                self.subsystems.hand = h;
+                self.config.input.hand = h;
+                ("input", "hand", config::value(h))
+            }
+            Setting::Keyboard(k) => {
+                self.config.keyboard.kind = k;
+                ("keyboard", "kind", config::value(k))
+            }
+            Setting::KeyboardScale(s) => {
+                let s = config::clamp_scale(s, KEYBOARD_SCALE_MIN, KEYBOARD_SCALE_MAX);
+                self.config.keyboard.scale = Some(s);
+                ("keyboard", "scale", config::value(s))
+            }
+            Setting::KeyGap(g) => {
+                let g = config::clamp_scale(g, KEY_GAP_MIN, KEY_GAP_MAX);
+                self.config.keyboard.key_gap = Some(g);
+                ("keyboard", "key_gap", config::value(g))
+            }
+            Setting::KeySound(b) => {
+                self.config.keyboard.key_sound = Some(b);
+                ("keyboard", "key_sound", config::value(b))
+            }
+            Setting::KeySoundVolume(v) => {
+                let v = config::clamp_scale(v, 0.0, 1.0);
+                self.config.keyboard.key_sound_volume = Some(v);
+                ("keyboard", "key_sound_volume", config::value(v))
+            }
+            Setting::MirrorFrameRate(f) => {
+                self.config.desktop.frame_rate = Some(f);
+                let f = self.mirror_frame_rate();
+                self.config.desktop.frame_rate = Some(f);
+                self.restart_desktops(f);
+                ("desktop", "frame_rate", config::value(f))
+            }
+            Setting::UiScale(s) => {
+                let s = config::clamp_scale(s, UI_SCALE_MIN, UI_SCALE_MAX);
+                self.overlay.set_scale(&mut self.subsystems.backend, s);
+                self.config.overlay.ui_scale = Some(s);
+                ("overlay", "ui_scale", config::value(s))
+            }
+            Setting::PointerSmoothing(s) => {
+                self.overlay.set_pointer_smoothing(s);
+                let s = self.overlay.pointer_smoothing();
+                self.config.overlay.pointer_smoothing = Some(s);
+                ("overlay", "pointer_smoothing", config::value(s))
+            }
+            Setting::PointerRelease(deg) => {
+                self.overlay.set_pointer_release(deg);
+                let deg = self.overlay.pointer_release();
+                self.config.overlay.pointer_release_deg = Some(deg);
+                ("overlay", "pointer_release_deg", config::value(deg))
+            }
+            Setting::LaserLength(l) => {
+                self.overlay.set_laser_length(l);
+                let l = self.overlay.laser_length();
+                self.config.overlay.laser_length = Some(l);
+                ("overlay", "laser_length", config::value(l))
+            }
+            Setting::CursorScale(s) => {
+                let s = config::clamp_scale(s, CURSOR_SCALE_MIN, CURSOR_SCALE_MAX);
+                self.overlay.set_cursor_scale(s);
+                self.config.overlay.cursor_scale = Some(s);
+                ("overlay", "cursor_scale", config::value(s))
+            }
+            Setting::BlockInput(b) => {
+                self.overlay.set_block_input(b);
+                self.config.overlay.block_input = Some(b);
+                ("overlay", "block_input", config::value(b))
+            }
+            Setting::DashboardDim(d) => {
+                let d = config::snap(d, 0.0, 1.0, SCALE_STEP, overlay::VEIL);
+                self.overlay.set_veil_opacity(d);
+                self.config.overlay.veil_opacity = Some(d);
+                ("overlay", "veil_opacity", config::value(d))
+            }
+            Setting::DominantHand(h) => {
+                self.config.kernel.dominant_hand = h;
+                ("kernel", "dominant_hand", config::value(h))
+            }
             Setting::PointerMode(m) => {
                 self.pointer_mode = m;
                 self.overlay.set_capture(m == PointerMode::Touch);
                 return;
             }
-            Setting::AutoLaunch(on) => {
-                self.subsystems.backend.set_auto_launch(on);
-                return;
+            Setting::LodQuality(q) => {
+                self.config.kernel.lod_quality = q;
+                ("kernel", "lod_quality", config::value(q))
+            }
+            Setting::Tooltips(b) => {
+                self.config.ui.tooltips = Some(b);
+                ("ui", "tooltips", config::value(b))
+            }
+            Setting::TapSound(b) => {
+                self.config.ui.tap_sound = Some(b);
+                ("ui", "tap_sound", config::value(b))
+            }
+            Setting::HoverSound(b) => {
+                self.config.ui.hover_sound = Some(b);
+                ("ui", "hover_sound", config::value(b))
             }
             Setting::Theme(t) => {
-                self.config.theme = t;
-                ("theme", config::value(t))
+                self.config.design.theme = t;
+                ("design", "theme", config::value(t))
             }
             Setting::PersonalColor(c) => {
                 let c = c.clamped();
-                self.config.personal_color = Some(c);
-                ("personal_color", config::value(c))
+                self.config.design.personal_color = Some(c);
+                ("design", "personal_color", config::value(c))
             }
             Setting::CustomColor(c) => {
                 // 選ぶのは `PersonalColor` と同じ（先に書き戻す）。続けて履歴を書き戻す。
                 self.set(Setting::PersonalColor(c));
                 let c = c.clamped();
-                let history = &mut self.config.color_history;
+                let history = &mut self.config.design.color_history;
                 history.retain(|h| h.clamped() != c);
                 history.insert(0, c);
                 history.truncate(COLOR_HISTORY);
-                ("color_history", config::value(history.clone()))
-            }
-            Setting::Language(l) => {
-                self.config.language = Some(l);
-                ("language", config::value(l))
-            }
-            Setting::PointerSmoothing(s) => {
-                self.overlay.set_pointer_smoothing(s);
-                let s = self.overlay.pointer_smoothing();
-                self.config.pointer_smoothing = Some(s);
-                ("pointer_smoothing", config::value(s))
-            }
-            Setting::PointerRelease(deg) => {
-                self.overlay.set_pointer_release(deg);
-                let deg = self.overlay.pointer_release();
-                self.config.pointer_release_deg = Some(deg);
-                ("pointer_release_deg", config::value(deg))
-            }
-            Setting::LaserLength(l) => {
-                self.overlay.set_laser_length(l);
-                let l = self.overlay.laser_length();
-                self.config.laser_length = Some(l);
-                ("laser_length", config::value(l))
-            }
-            Setting::PointerTuning(t) => {
-                self.config.pointer_tuning = t;
-                ("pointer_tuning", config::value(t))
-            }
-            Setting::CursorScale(s) => {
-                let s = config::clamp_scale(s, CURSOR_SCALE_MIN, CURSOR_SCALE_MAX);
-                self.overlay.set_cursor_scale(s);
-                self.config.cursor_scale = Some(s);
-                ("cursor_scale", config::value(s))
-            }
-            Setting::Tooltips(b) => {
-                self.config.tooltips = Some(b);
-                ("tooltips", config::value(b))
-            }
-            Setting::TapSound(b) => {
-                self.config.tap_sound = Some(b);
-                ("tap_sound", config::value(b))
-            }
-            Setting::HoverSound(b) => {
-                self.config.hover_sound = Some(b);
-                ("hover_sound", config::value(b))
-            }
-            Setting::Hand(h) => {
-                let h = h.clamped();
-                self.subsystems.hand = h;
-                self.config.hand = h;
-                ("hand", config::value(h))
-            }
-            Setting::DominantHand(h) => {
-                self.config.dominant_hand = h;
-                ("dominant_hand", config::value(h))
-            }
-            Setting::WristDesign(d) => {
-                self.config.wrist_design = d;
-                ("wrist_design", config::value(d))
-            }
-            Setting::WristOffset(p) => {
-                let o = config::WristOffset::from(p);
-                self.config.wrist_offset = Some(o);
-                ("wrist_offset", config::value(o))
-            }
-            Setting::WristScale(s) => {
-                self.config.wrist_scale = Some(s);
-                let s = self.wrist_scale();
-                self.config.wrist_scale = Some(s);
-                ("wrist_scale", config::value(s))
-            }
-            Setting::MirrorFrameRate(f) => {
-                self.config.mirror_frame_rate = Some(f);
-                let f = self.mirror_frame_rate();
-                self.config.mirror_frame_rate = Some(f);
-                self.restart_desktops(f);
-                ("mirror_frame_rate", config::value(f))
-            }
-            Setting::Keyboard(k) => {
-                self.config.keyboard = k;
-                ("keyboard", config::value(k))
-            }
-            Setting::BlockInput(b) => {
-                self.overlay.set_block_input(b);
-                self.config.block_input = Some(b);
-                ("block_input", config::value(b))
-            }
-            Setting::LodQuality(q) => {
-                self.config.lod_quality = q;
-                ("lod_quality", config::value(q))
-            }
-            Setting::SetupDone(b) => {
-                self.config.setup_done = b;
-                ("setup_done", config::value(b))
+                ("design", "color_history", config::value(history.clone()))
             }
             Setting::TextScale(s) => {
                 let s = config::clamp_scale(s, TEXT_SCALE_MIN, TEXT_SCALE_MAX);
-                self.config.text_scale = Some(s);
-                ("text_scale", config::value(s))
-            }
-            Setting::UiScale(s) => {
-                let s = config::clamp_scale(s, UI_SCALE_MIN, UI_SCALE_MAX);
-                self.overlay.set_scale(&mut self.subsystems.backend, s);
-                self.config.ui_scale = Some(s);
-                ("ui_scale", config::value(s))
+                self.config.design.text_scale = Some(s);
+                ("design", "text_scale", config::value(s))
             }
             Setting::BoldText(b) => {
-                self.config.bold_text = b;
-                ("bold_text", config::value(b))
+                self.config.design.bold_text = b;
+                ("design", "bold_text", config::value(b))
             }
-            Setting::KeySound(b) => {
-                self.config.key_sound = Some(b);
-                ("key_sound", config::value(b))
+            Setting::Language(l) => {
+                self.config.i18n.language = Some(l);
+                ("i18n", "language", config::value(l))
             }
-            Setting::KeyboardScale(s) => {
-                let s = config::clamp_scale(s, KEYBOARD_SCALE_MIN, KEYBOARD_SCALE_MAX);
-                self.config.keyboard_scale = Some(s);
-                ("keyboard_scale", config::value(s))
+            Setting::WristDesign(d) => {
+                self.config.wrist.design = d;
+                ("wrist", "design", config::value(d))
             }
-            Setting::KeyGap(g) => {
-                let g = config::clamp_scale(g, KEY_GAP_MIN, KEY_GAP_MAX);
-                self.config.key_gap = Some(g);
-                ("key_gap", config::value(g))
+            Setting::WristOffset(p) => {
+                let o = config::WristOffset::from(p);
+                self.config.wrist.offset = Some(o);
+                ("wrist", "offset", config::value(o))
             }
-            Setting::KeySoundVolume(v) => {
-                let v = config::clamp_scale(v, 0.0, 1.0);
-                self.config.key_sound_volume = Some(v);
-                ("key_sound_volume", config::value(v))
-            }
-            Setting::UpdateChannel(c) => {
-                self.config.update_channel = c;
-                ("update_channel", config::value(c))
-            }
-            Setting::DashboardDistance(d) => {
-                self.config.dashboard_distance = Some(d);
-                let d = self.dashboard_distance();
-                self.config.dashboard_distance = Some(d);
-                ("dashboard_distance", config::value(d))
-            }
-            Setting::DashboardHeight(h) => {
-                self.config.dashboard_height = Some(h);
-                let h = self.dashboard_height();
-                self.config.dashboard_height = Some(h);
-                ("dashboard_height", config::value(h))
-            }
-            Setting::DashboardDim(d) => {
-                let d = config::snap(d, 0.0, 1.0, SCALE_STEP, overlay::VEIL);
-                self.overlay.set_veil_opacity(d);
-                self.config.dashboard_dim = Some(d);
-                ("dashboard_dim", config::value(d))
+            Setting::WristScale(s) => {
+                self.config.wrist.scale = Some(s);
+                let s = self.wrist_scale();
+                self.config.wrist.scale = Some(s);
+                ("wrist", "scale", config::value(s))
             }
             Setting::NotificationAnchor(a) => {
-                self.config.notification_anchor = a;
-                ("notification_anchor", config::value(a))
+                self.config.toast.anchor = a;
+                ("toast", "anchor", config::value(a))
+            }
+            Setting::DashboardDistance(d) => {
+                self.config.dashboard.distance = Some(d);
+                let d = self.dashboard_distance();
+                self.config.dashboard.distance = Some(d);
+                ("dashboard", "distance", config::value(d))
+            }
+            Setting::DashboardHeight(h) => {
+                self.config.dashboard.height = Some(h);
+                let h = self.dashboard_height();
+                self.config.dashboard.height = Some(h);
+                ("dashboard", "height", config::value(h))
+            }
+            Setting::PointerTuning(t) => {
+                self.config.settings.pointer_tuning = t;
+                ("settings", "pointer_tuning", config::value(t))
+            }
+            Setting::SetupDone(b) => {
+                self.config.setup.done = b;
+                ("setup", "done", config::value(b))
+            }
+            Setting::UpdateChannel(c) => {
+                self.config.updater.channel = c;
+                ("updater", "channel", config::value(c))
             }
         };
         if let Some(path) = &self.config_path
-            && let Err(e) = config::save_at(path, key, value)
+            && let Err(e) = config::save_at(path, table, key, value)
         {
             logger::warn!(
                 "failed to save to config file",
+                table = table,
                 key = key,
                 path = path.display(),
                 error = e
@@ -936,7 +976,7 @@ impl<B: VrBackend> Kernel<B> {
         {
             return 0;
         }
-        let near = match self.config.lod_quality {
+        let near = match self.config.kernel.lod_quality {
             LodQuality::Off => return 0,
             LodQuality::Low => 1.0,
             LodQuality::Mid => 2.0,
@@ -1344,7 +1384,7 @@ mod tests {
         };
         assert_eq!(k.settings().hand, expected);
         assert_eq!(k.subsystems.hand, expected);
-        assert_eq!(k.config.hand, expected);
+        assert_eq!(k.config.input.hand, expected);
     }
 
     /// 左手の X ボタンを二回押すと、どのパネルの状態でも数が増える。
@@ -1415,7 +1455,7 @@ mod tests {
         for name in ["novr", "--novr", "--no-vr", "NoVr", "no_vr"] {
             for gpu in [false, true] {
                 let mut config = Config::default();
-                config.gpu.emulator = gpu;
+                config.vr.emulator_gpu = gpu;
                 let k = Kernel::boot(Some(name), config, false).unwrap();
                 assert_eq!(k.runtime(), Runtime::NoVr);
             }
@@ -1582,11 +1622,9 @@ mod tests {
             assert_eq!(k.settings().key_sound_volume, kept, "{given}");
         }
         // 設定ファイルの値も同じく収める。
-        let config = Config {
-            key_sound: Some(false),
-            key_sound_volume: Some(3.0),
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.keyboard.key_sound = Some(false);
+        config.keyboard.key_sound_volume = Some(3.0);
         let k = Kernel::with_backend(vr::mock::MockBackend::default(), config);
         let s = k.settings();
         assert_eq!((s.key_sound, s.key_sound_volume), (false, 1.0));
@@ -1615,11 +1653,9 @@ mod tests {
             let s = k.settings();
             assert_eq!((s.keyboard_scale, s.key_gap), (scale, gap), "{given}");
         }
-        let config = Config {
-            keyboard_scale: Some(7.0),
-            key_gap: Some(-3.0),
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.keyboard.scale = Some(7.0);
+        config.keyboard.key_gap = Some(-3.0);
         let k = Kernel::with_backend(vr::mock::MockBackend::default(), config);
         let s = k.settings();
         assert_eq!(
@@ -1679,11 +1715,9 @@ mod tests {
         k.set(Setting::DashboardHeight(f32::NAN));
         assert_eq!(k.settings().dashboard_height, 0.0);
         // 設定ファイルの値も同じく収める。
-        let config = Config {
-            dashboard_distance: Some(-1.0),
-            dashboard_height: Some(3.0),
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.dashboard.distance = Some(-1.0);
+        config.dashboard.height = Some(3.0);
         let s = Kernel::with_backend(vr::mock::MockBackend::default(), config).settings();
         assert_eq!(
             (s.dashboard_distance, s.dashboard_height),
@@ -1704,15 +1738,16 @@ mod tests {
         k.set(Setting::DashboardDim(0.26));
         assert!((k.settings().dashboard_dim - 0.3).abs() < 1e-6);
         assert_eq!(k.overlay.veil_opacity(), k.settings().dashboard_dim);
-        assert_eq!(k.config.dashboard_dim, Some(k.settings().dashboard_dim));
+        assert_eq!(
+            k.config.overlay.veil_opacity,
+            Some(k.settings().dashboard_dim)
+        );
         for (given, kept) in [(9.0, 1.0), (-1.0, 0.0), (f32::NAN, overlay::VEIL)] {
             k.set(Setting::DashboardDim(given));
             assert_eq!(k.settings().dashboard_dim, kept, "{given}");
         }
-        let config = Config {
-            dashboard_dim: Some(-3.0),
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.overlay.veil_opacity = Some(-3.0);
         let k = Kernel::with_backend(vr::mock::MockBackend::default(), config);
         assert_eq!(k.overlay.veil_opacity(), 0.0);
     }
@@ -1748,11 +1783,9 @@ mod tests {
             k.set(Setting::CursorScale(given));
             assert!((k.settings().cursor_scale - kept).abs() < 1e-6, "{given}");
         }
-        let config = Config {
-            cursor_scale: Some(7.0),
-            hover_sound: Some(false),
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.overlay.cursor_scale = Some(7.0);
+        config.ui.hover_sound = Some(false);
         let s = Kernel::with_backend(MockBackend::default(), config).settings();
         assert_eq!((s.cursor_scale, s.hover_sound), (CURSOR_SCALE_MAX, false));
     }
@@ -1819,12 +1852,10 @@ mod tests {
     /// 起動時の設定も範囲に収めて効く（UI スケールは最初のパネルから掛かる）。
     #[test]
     fn accessibility_config_applies_at_boot() {
-        let config = Config {
-            text_scale: Some(7.0),
-            ui_scale: Some(0.1),
-            bold_text: true,
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.design.text_scale = Some(7.0);
+        config.overlay.ui_scale = Some(0.1);
+        config.design.bold_text = true;
         let mut k = Kernel::with_backend(MockBackend::default(), config);
         let s = k.settings();
         assert_eq!(
@@ -1840,7 +1871,7 @@ mod tests {
     #[test]
     fn lod_does_not_flap_at_the_threshold() {
         let (mut k, p) = lod_kernel();
-        k.config.lod_quality = LodQuality::Low;
+        k.config.kernel.lod_quality = LodQuality::Low;
         let pose = k.panel(p).pose;
         for (distance, lod) in [(1.0, 1), (0.95, 1), (1.0, 1), (0.85, 0), (0.95, 0)] {
             k.subsystems.backend.frame.hmd.position = pose.position + vr::Vec3::Z * distance;
@@ -1862,7 +1893,7 @@ mod tests {
     #[test]
     fn scaled_up_panel_gets_a_finer_lod_at_the_same_distance() {
         let (mut k, p) = lod_kernel();
-        k.config.lod_quality = LodQuality::Low;
+        k.config.kernel.lod_quality = LodQuality::Low;
         // 同じ解像度のまま 4 倍に拡大したパネル（密度 1/4）を同じ所に。
         let big = k
             .add_panel("big", Pose::IDENTITY, Vec2::splat(4.0), (1000, 1000))
@@ -1909,7 +1940,7 @@ mod tests {
         let pose = k.panel(p).pose;
         let resolution = k.panel(p).resolution;
         let size = k.panel(p).size;
-        k.config.lod_quality = LodQuality::Off;
+        k.config.kernel.lod_quality = LodQuality::Off;
         k.subsystems.backend.frame.hmd.position = pose.position + vr::Vec3::Z * 100.0;
         k.tick();
         assert_eq!(k.panel_lod(p), 0);
@@ -1918,7 +1949,7 @@ mod tests {
             (LodQuality::Mid, 2.0),
             (LodQuality::High, 4.0),
         ] {
-            k.config.lod_quality = quality;
+            k.config.kernel.lod_quality = quality;
             for (distance, lod) in [
                 (0.0, 0),
                 (near - 0.01, 0),
@@ -1955,10 +1986,8 @@ mod tests {
 
     #[test]
     fn pointer_mode_starts_from_config_and_switches() {
-        let config = Config {
-            pointer_mode: Some(PointerMode::Touch),
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.kernel.pointer_mode = Some(PointerMode::Touch);
         let mut k = Kernel::with_backend(MockBackend::default(), config);
         assert_eq!(k.settings().pointer_mode, PointerMode::Touch);
         k.set(Setting::PointerMode(PointerMode::Mouse));
@@ -1977,10 +2006,8 @@ mod tests {
 
     #[test]
     fn theme_starts_from_config_and_switches_without_touching_files() {
-        let config = Config {
-            theme: ThemeMode::Light,
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.design.theme = ThemeMode::Light;
         let mut k = Kernel::with_backend(MockBackend::default(), config);
         assert_eq!(k.settings().theme, ThemeMode::Light);
         k.set(Setting::Theme(ThemeMode::Dark));
@@ -1989,10 +2016,8 @@ mod tests {
 
     #[test]
     fn language_starts_from_config_and_persists_to_config_path() {
-        let config = Config {
-            language: Some(Language::Ja),
-            ..Default::default()
-        };
+        let mut config = Config::default();
+        config.i18n.language = Some(Language::Ja);
         let mut k = Kernel::with_backend(MockBackend::default(), config);
         assert_eq!(k.settings().language, Language::Ja);
         let path =
@@ -2002,7 +2027,7 @@ mod tests {
         assert_eq!(k.settings().language, Language::En);
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(saved.language, Some(Language::En));
+        assert_eq!(saved.i18n.language, Some(Language::En));
     }
 
     /// パーソナルカラーは選ぶまで `None`。範囲に収めて覚え、設定ファイルへ表ごと書き戻す。
@@ -2026,7 +2051,7 @@ mod tests {
         assert_eq!(k.settings().personal_color, want);
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(saved.personal_color, want);
+        assert_eq!(saved.design.personal_color, want);
     }
 
     /// 自分で作った色は選ばれ、履歴の先頭に残る（同じ色は 1 つ、古いものから落ちる）。選ぶだけなら履歴は変わらない。
@@ -2053,8 +2078,8 @@ mod tests {
         assert_eq!(s.color_history[..3], newest);
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(saved.personal_color, Some(color(10.0)));
-        assert_eq!(saved.color_history, [color(10.0), color(20.0)]);
+        assert_eq!(saved.design.personal_color, Some(color(10.0)));
+        assert_eq!(saved.design.color_history, [color(10.0), color(20.0)]);
         for n in 0..COLOR_HISTORY + 2 {
             k.set(Setting::CustomColor(color(100.0 + n as f32)));
         }
@@ -2072,7 +2097,7 @@ mod tests {
         k.set(Setting::Theme(ThemeMode::Light));
         let saved = config::parse(&std::fs::read_to_string(&path).unwrap()).unwrap();
         let _ = std::fs::remove_file(&path);
-        assert_eq!(saved.theme, ThemeMode::Light);
+        assert_eq!(saved.design.theme, ThemeMode::Light);
     }
 
     #[test]

@@ -57,14 +57,10 @@ pub fn main() -> ExitCode {
     }
     let mock = SharedMock::default();
     let observer = mock.0.clone();
-    let kernel = Kernel::with_backend(
-        Box::new(mock.clone()) as Box<dyn VrBackend>,
-        kernel::Config {
-            pointer_mode: Some(kernel::PointerMode::Mouse),
-            pointer_smoothing: Some(0.),
-            ..Default::default()
-        },
-    );
+    let mut config = kernel::Config::default();
+    config.kernel.pointer_mode = Some(kernel::PointerMode::Mouse);
+    config.overlay.pointer_smoothing = Some(0.);
+    let kernel = Kernel::with_backend(Box::new(mock.clone()) as Box<dyn VrBackend>, config);
     let panels = vec![
         PanelSpec::root(
             Pose::new(common::PANEL_POS, Default::default()),

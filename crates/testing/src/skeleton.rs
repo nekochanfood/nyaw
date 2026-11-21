@@ -322,7 +322,7 @@ impl Render for SkeletonTest {
     }
 }
 
-/// 骨格のみの手入力のチューニング画面（`hand-tuning`）。スライダー操作が即座に反映され、設定ファイルの `[hand]` に永続化される
+/// 骨格のみの手入力のチューニング画面（`hand-tuning`）。スライダー操作が即座に反映され、設定ファイルの `[input.hand]` に永続化される
 /// （`Setting::Hand`）。`tune-pinch`（クリック距離）・`tune-little`（ショートカット距離）・`tune-grip`（グリップ角度）・
 /// `tune-palm`（手のひら判定角度）・`tune-smoothing`（レーザーブレ抑制）・`tune-click`（クリック時の安定化）・`tune-hold`（クリック中のポインタ固定範囲）。`tune-reset` でデフォルトに復帰する。
 pub struct HandTuningTest {}
