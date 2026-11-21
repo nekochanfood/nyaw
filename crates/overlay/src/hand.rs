@@ -118,8 +118,9 @@ impl Overlay {
                 let slot = st
                     .magnet
                     .map(|m| m.slot(&self.panels, &self.present, scale, id));
-                // はまる所に付いた画面は、大きさを変えている間は抜かない（手がぶれても外れない）。
-                // 変え終えた所から引き直せるよう、今の画面を掴み直す（トリガーを離した途端に抜けない）。
+                // はまる所に付いている画面は、大きさを変えている間は手が離れても抜かない。
+                // 掴んだ点も毎 tick 画面の今の位置に合わせ直すので、抜けるまでの距離は大きさを変え終えた時点から測る
+                // （トリガーを離した直後には抜けない）。
                 let hold = resizing && st.magnet.is_some_and(|m| m.stuck);
                 let p = &mut self.panels[id];
                 let (pose, flipped) = match (st.magnet.as_mut(), slot) {
