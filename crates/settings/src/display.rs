@@ -1,4 +1,4 @@
-//! 表示（`settings-display`）: ダッシュボード配置・通知アンカー位置・距離 LOD 品質・ミラーリング上限 FPS。
+//! 表示（`settings-display`）: ダッシュボード配置・背景の暗さ・通知アンカー位置・距離 LOD 品質・ミラーリング上限 FPS。
 //! いずれも 1〜2 行の設定のため詳細画面には分離せず、見出し付きグループで並べる。
 
 use design::Theme;
@@ -24,7 +24,7 @@ pub(crate) fn page(
     cx: &mut Context<Settings>,
 ) -> Vec<Div> {
     let now = ui::settings(cx);
-    // ダッシュボード: 距離と高さ（頭部基準の相対値）。変更するとこの画面自体が移動するため、リリース時に確定する。
+    // ダッシュボード: 距離と高さ（頭部基準の相対値）、背景の暗さ。距離と高さは変更するとこの画面自体が移動するため、リリース時に確定する。
     let (distance, height) = (
         i18n::t(cx, "settings.dashboard_distance"),
         i18n::t(cx, "settings.dashboard_height"),
@@ -63,6 +63,7 @@ pub(crate) fn page(
             |h| format!("{h:+.2} m"),
             Setting::DashboardHeight,
         ),
+        dim_slider(theme, cx, now.dashboard_dim),
     ];
     // 通知アンカー: HUD 通知の表示位置（上下左右の端および四隅）。
     let anchor = s.select(
@@ -132,6 +133,31 @@ fn anchor_key(a: NotificationAnchor) -> String {
         .as_str()
         .unwrap_or_default()
         .to_owned()
+}
+
+/// 背景の暗さのスライダー行。距離や高さと違い、変更してもこの画面は移動しない。そのためドラッグ中も刻みの境界を
+/// 越えるたびに確定し、実際の暗さを見ながら値を選べるようにする（キー押下音の音量と同じ方式）。
+fn dim_slider(theme: &Theme, cx: &mut App, now: f32) -> components::Button {
+    let step = kernel::SCALE_STEP;
+    let slider = components::slider(
+        theme,
+        "setting-dashboard-dim-slider",
+        now,
+        move |at, _, cx| {
+            let to = (at / step).round() * step;
+            if (to - now).abs() > step / 2.0 {
+                ui::set(Setting::DashboardDim(to), cx)
+            }
+        },
+    );
+    components::slider_item(
+        theme,
+        "setting-dashboard-dim",
+        &design::icons::SUN_DIM,
+        i18n::t(cx, "settings.dashboard_dim"),
+        format!("{:.0}%", now * 100.0),
+        slider.length(ROW_SLIDER_PX),
+    )
 }
 
 /// 配置用距離（m）スライダー行（`ids` は行とスライダーの ID）。ドラッグ中はプレビュー値のみ表示し、

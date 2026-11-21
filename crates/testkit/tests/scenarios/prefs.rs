@@ -577,3 +577,35 @@ fn dashboard_distance_and_height_apply_on_release(cx: &mut TestAppContext) {
         "each keeps the other"
     );
 }
+
+const DIM_SLIDER: (&str, &str) = (
+    "setting-dashboard-dim-slider",
+    "setting-dashboard-dim-slider-handle",
+);
+
+/// Below the height, the dashboard group sets how dark the space behind the dashboard gets (50% by default). Unlike the
+/// distance and the height, it does not move the Settings screen, so it applies while the handle is held, in steps of 10%.
+/// (Each drag is longer than the slop that keeps a press where it started.)
+#[gpui::test]
+fn dashboard_dimming_applies_while_dragging(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, _| Settings::new(0));
+    kit.click("settings-display");
+    let [height, dim] =
+        ["setting-dashboard-height", "setting-dashboard-dim"].map(|s| kit.bounds(s));
+    assert!(height.bottom() <= dim.top());
+    assert_eq!(height.size, dim.size, "equal rows");
+    assert_eq!(kit.kernel.settings().dashboard_dim, kernel::overlay::VEIL);
+
+    grab_to(&mut kit, DIM_SLIDER.0, DIM_SLIDER.1, 0.0);
+    assert_eq!(kit.kernel.settings().dashboard_dim, 0.0, "while dragging");
+    kit.release(Action::Select).step();
+    grab_to(&mut kit, DIM_SLIDER.0, DIM_SLIDER.1, 0.72);
+    kit.release(Action::Select).step();
+    let s = kit.kernel.settings();
+    assert!((s.dashboard_dim - 0.7).abs() < 1e-5, "{}", s.dashboard_dim);
+    assert_eq!(
+        s.dashboard_distance,
+        kernel::DASHBOARD_DISTANCE,
+        "the placement stays"
+    );
+}
