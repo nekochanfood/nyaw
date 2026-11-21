@@ -94,7 +94,7 @@ impl Dashboard {
             prev_sep: false,
             overflow_menu: None,
             scroll: ScrollHandle::new(),
-            enter: Entering::new(cfg!(test)),
+            enter: Entering::new(cfg!(test)).without_idle_replay(),
             center_asked: cx
                 .try_global::<ui::notification::Center>()
                 .map_or(0, |c| c.asked),
@@ -400,6 +400,11 @@ impl Dashboard {
             return;
         };
         let (count, hidden) = (status.outside_press, status.hidden);
+        // 非表示中は描画されないことがあるため、再表示時の出し直しはここで知らせる。描画の間隔で判断すると、
+        // ポップオーバーを開いてバーが描かれない間に、閉じたときに出し直してしまう。
+        if hidden {
+            self.enter.replay();
+        }
         // 前回の確認時も表示中だった場合のみ反応。非表示中（再表示と同一フレームを含む）の押下は無視し、
         // 表示直後に非表示化されるのを防ぐ（開始音だけ再生されて表示されない状態を回避）。
         let seen = self.outside.replace((count, hidden));
