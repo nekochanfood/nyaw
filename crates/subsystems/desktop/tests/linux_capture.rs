@@ -525,8 +525,16 @@ fn portal_waits_for_permission_then_streams_points_and_types() {
             }
             assert!(
                 Instant::now() < deadline,
-                "{} of {n} key events arrived; keyboard error: {:?}; focused: {}",
+                "{} of {n} key events arrived ({:?}); keyboard error: {:?}; focused: {}",
                 events.len(),
+                events
+                    .iter()
+                    .map(|e| match e {
+                        Event::KeyPress(k) => format!("+{}", k.detail),
+                        Event::KeyRelease(k) => format!("-{}", k.detail),
+                        _ => String::new(),
+                    })
+                    .collect::<Vec<_>>(),
                 keyboard.settings().error,
                 conn.get_input_focus().unwrap().reply().unwrap().focus == window
             );
@@ -551,4 +559,93 @@ fn portal_waits_for_permission_then_streams_points_and_types() {
         [u32::from(b'H'), u32::from(b'i'), u32::from(b'!')]
     );
     eprintln!("keyboard: {:?}", keyboard.settings().error);
+}
+
+/// 調査用: 確認画面で許可した直後に、portal の OS キーボードの最初のキーが届かないことがある。フォーカスの出入りと
+/// キーの到着を時刻付きで記録し、1 文字ずつ間隔を空けて送って、最初だけ落ちるのか、しばらく落ち続けるのかを見る。
+#[test]
+#[ignore = "needs a Wayland session with xdg-desktop-portal and someone to allow the dialog"]
+fn portal_trace_keys_right_after_permission() {
+    use os::keyboard::{Output, chord};
+    // SAFETY: このテストは単独で実行する（--test-threads=1）。
+    unsafe { std::env::set_var("NYAW_CAPTURE", "portal") };
+    let start = Instant::now();
+    let t = || start.elapsed().as_millis();
+    if std::env::var_os("NYAW_KEEP_CHOICE").is_none() {
+        let _ = std::fs::remove_file(os::data_dir().unwrap().join("screencast-token"));
+    }
+    let screens = sources();
+    let stream = Stream::start(screens[0].clone()).unwrap();
+    eprintln!(">>> allow the dialog on the desktop (if it appears)");
+    frame(&stream, Duration::from_secs(300));
+    eprintln!("[{}] streaming", t());
+
+    let (conn, screen) = x11rb::connect(None).expect("XWayland");
+    let root = conn.setup().roots[screen].root;
+    let window = conn.generate_id().unwrap();
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT,
+        window,
+        root,
+        100,
+        100,
+        320,
+        200,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        x11rb::COPY_FROM_PARENT,
+        &CreateWindowAux::new()
+            .background_pixel(0x602040)
+            .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE | EventMask::FOCUS_CHANGE),
+    )
+    .unwrap();
+    conn.map_window(window).unwrap();
+    conn.flush().unwrap();
+    let mut log: Vec<String> = Vec::new();
+    let pump = |log: &mut Vec<String>| {
+        while let Some(e) = conn.poll_for_event().unwrap() {
+            match e {
+                Event::FocusIn(f) => log.push(format!("[{}] FocusIn mode={:?}", t(), f.mode)),
+                Event::FocusOut(f) => log.push(format!("[{}] FocusOut mode={:?}", t(), f.mode)),
+                Event::KeyPress(k) => log.push(format!("[{}] KeyPress {}", t(), k.detail)),
+                Event::KeyRelease(k) => log.push(format!("[{}] KeyRelease {}", t(), k.detail)),
+                _ => {}
+            }
+        }
+    };
+    until("the test window to be focused", Duration::from_secs(10), || {
+        pump(&mut log);
+        (conn.get_input_focus().unwrap().reply().unwrap().focus == window).then_some(())
+    });
+    log.push(format!("[{}] focused", t()));
+    let keyboard = desktop::os_keyboard();
+    let settings = until("the keyboard", Duration::from_secs(10), || {
+        let s = keyboard.settings();
+        (s.foreground != 0 || s.error.is_some()).then_some(s)
+    });
+    log.push(format!("[{}] keyboard ready, error {:?}", t(), settings.error));
+    // a, s, d, f を 300ms おきに 1 文字ずつ送る。
+    let mut arrived = Vec::new();
+    for code in [30u16, 31, 32, 33] {
+        let focused = conn.get_input_focus().unwrap().reply().unwrap().focus == window;
+        log.push(format!("[{}] send {code} (focused {focused})", t()));
+        keyboard
+            .send(settings.foreground, Output::Keys(chord(&[], code)))
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_millis(300);
+        let before = log.len();
+        while Instant::now() < deadline {
+            pump(&mut log);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        arrived.push(log[before..].iter().any(|l| l.contains(&format!("KeyPress {}", code + 8))));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    pump(&mut log);
+    log.push(format!("[{}] keyboard error after: {:?}", t(), keyboard.settings().error));
+    for line in &log {
+        eprintln!("{line}");
+    }
+    eprintln!("arrived: {arrived:?}");
+    assert!(arrived.iter().all(|a| *a), "some keys did not arrive: {arrived:?}");
 }
