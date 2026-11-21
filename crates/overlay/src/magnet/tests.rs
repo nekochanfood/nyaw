@@ -339,3 +339,39 @@ fn the_ghost_frames_the_slot_without_moving_and_waits_for_its_picture() {
     ov.tick(&mut vr);
     assert!(!vr.backend.overlays[ghost].visible);
 }
+
+/// 同じ画面を掴み直すと見本の大きさは変わらず、UI 層は同じ絵を送り直さない。それでも、届いている絵で見本を出す。
+#[test]
+fn regrabbing_shows_the_ghost_again_without_a_new_picture() {
+    let (mut vr, mut ov) = docked(false);
+    let ghost = add_ghost(&mut vr, &mut ov);
+    let slot = ov.panel(1).pose.position;
+    controller(&mut vr, aim_at(slot), GRAB);
+    ov.tick(&mut vr);
+    draw_ghost(&mut vr, &mut ov, ghost);
+    let wait = |m: Motion| {
+        std::thread::sleep(std::time::Duration::from_millis(m.duration_ms() + 50));
+    };
+    // `faded` が真なら、離して見本が消えきってから掴み直す。偽なら、消えかけている間に素早く掴み直す。
+    for faded in [false, true, false] {
+        ov.tick(&mut vr);
+        wait(Motion::Enter);
+        ov.tick(&mut vr);
+        let o = &vr.backend.overlays[ghost];
+        assert!(
+            o.visible && (o.alpha - 1.0).abs() < 1e-6,
+            "{faded}: {}",
+            o.alpha
+        );
+        controller(&mut vr, aim_at(slot), &[]);
+        ov.tick(&mut vr);
+        if faded {
+            wait(Motion::Exit);
+            ov.tick(&mut vr);
+            assert!(!vr.backend.overlays[ghost].visible);
+        }
+        controller(&mut vr, aim_at(slot), GRAB);
+        ov.tick(&mut vr);
+        assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Pull));
+    }
+}

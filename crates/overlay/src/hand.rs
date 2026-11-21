@@ -267,8 +267,6 @@ impl Overlay {
             // はめられる画面そのものを掴んだら、磁石で引っこ抜く・はめる（バーを掴めばダッシュボードごと動く）。
             st.magnet = Magnet::grab(&self.panels, &self.present, self.dock_slot, id)
                 .filter(|_| id == grabbed);
-            // 見本は、この画面に合わせて描き直した絵が届いてから出す（前の絵を一瞬見せない）。
-            st.ghost.ready = false;
             st.hover = None;
             st.select = false;
             return;

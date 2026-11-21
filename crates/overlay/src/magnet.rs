@@ -61,8 +61,9 @@ pub(crate) struct Ghost {
     /// 出具合（掴んでいる間は 1 へ、離すと 0 へ）と、最後に送った不透明度。
     shown: Transition,
     alpha: f32,
-    /// 今の置き場所の大きさで描いた絵が届いている（[`Overlay::submit`]）。出始めは届くまで待つ（前の絵を一瞬見せない）。
-    pub(crate) ready: bool,
+    /// 見本の今の大きさで描いた絵が届いている（[`Overlay::submit`]）。大きさが変わると、新しい絵が届くまで見本を出さない
+    /// （前の大きさの絵を一瞬でも見せないため）。
+    ready: bool,
     /// 掴んでいる画面がはまる所に近い（[`GHOST_SHOW`] / [`GHOST_HIDE`]）。近い間だけ出す。
     near: bool,
     /// 最後に置いた所（姿勢・幅・解像度）。離してから消えきるまで同じ所に置く。
@@ -293,7 +294,7 @@ impl Overlay {
 
     /// はまる所の見本（[`Pointer::Dock`]）を、その手で掴んでいる画面のはまる所の少し奥に、地より少し大きく置く（上に一行の帯を
     /// 足す）。置き場所が分かるよう動かさない: 画面がはまる所に近づくとフェードインし、離れるとフェードアウトする。
-    /// 出始めは、その大きさで描いた絵が届いてからフェードインする。
+    /// 見本の大きさが変わったときは、新しい大きさで描いた絵が届いてからフェードインする。
     pub(crate) fn place_ghosts(&mut self, vr: &mut dyn VrBackend, now: Instant) {
         let scale = self.scale();
         for &id in &self.present {
@@ -323,11 +324,15 @@ impl Overlay {
                 h.ghost.at = Some((Pose::new(at, slot.orientation), rect.x, res));
                 let d = target.pose.position.distance(slot.position);
                 h.ghost.near = d < if h.ghost.near { GHOST_HIDE } else { GHOST_SHOW };
-                // 窓の大きさは UI 層が解像度に合わせる。
-                self.panels[id].resolution = res;
+                // 窓の大きさは UI 層が解像度に合わせる。解像度が変わったときだけ、新しい大きさの絵が届くまで見本を出さない。
+                // UI 層は前と同じ絵を送り直さないので、解像度が同じなのに待つと、絵が届かず見本が出ないままになる。
+                if self.panels[id].resolution != res {
+                    self.panels[id].resolution = res;
+                    h.ghost.ready = false;
+                }
             }
             let p = &mut self.panels[id];
-            // 掴み始めは、その大きさで描いた絵が届くまで待つ（[`Ghost::ready`]。届くのは窓を合わせて描き直した後）。
+            // [`Ghost::ready`] になるまでは出さない（絵が届くのは、UI 層が窓の大きさを合わせて描き直した後）。
             let (to, motion) = if held.is_some() && h.ghost.ready && h.ghost.near {
                 (1.0, Motion::Enter)
             } else {
