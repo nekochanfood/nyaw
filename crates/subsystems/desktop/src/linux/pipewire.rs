@@ -508,6 +508,8 @@ unsafe fn process(
     if raw.is_null() {
         return;
     }
+    // 届いた時刻（RGBA へ並べ替える時間も遅延に含める）。
+    let arrived = Instant::now();
     let requeue = || unsafe { stream.queue_raw_buffer(raw) };
     let (Some(format), Some(spa_buffer)) = (data.format, unsafe { (*raw).buffer.as_ref() }) else {
         return requeue();
@@ -587,7 +589,7 @@ unsafe fn process(
     };
     match frame {
         Ok(mut frame) => {
-            frame.captured = Instant::now();
+            frame.captured = arrived;
             // 取りに来なかった前の画像は破棄して、そのバッファを返却する。
             shared.latest.lock().unwrap().replace(frame);
             wake.wake();
