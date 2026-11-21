@@ -105,7 +105,9 @@ pub fn check_now(cx: &mut App) {
     u.step = Step::Checking;
     u.error = None;
     let url = u.source.clone();
-    let task = cx.background_executor().spawn(async move { update::check(&url) });
+    let task = cx
+        .background_executor()
+        .spawn(async move { update::check(&url) });
     cx.spawn(async move |cx| {
         let result = task.await;
         cx.update(|cx| {
@@ -155,9 +157,9 @@ pub fn install(cx: &mut App) {
         version = release.version,
         url = release.installer.url
     );
-    let task = cx
-        .background_executor()
-        .spawn(async move { update::download(&release, &dir, &progress).and_then(|path| launch(&path)) });
+    let task = cx.background_executor().spawn(async move {
+        update::download(&release, &dir, &progress).and_then(|path| launch(&path))
+    });
     cx.spawn(async move |cx| {
         let result = task.await;
         cx.update(|cx| {

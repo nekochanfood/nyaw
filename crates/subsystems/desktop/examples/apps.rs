@@ -31,5 +31,9 @@ fn main() {
     for a in &mismatched {
         println!("lookup by id differs: {} ({})", a.name, a.id);
     }
-    println!("{} of {} apps differ when looked up by id", mismatched.len(), apps.len());
+    println!(
+        "{} of {} apps differ when looked up by id",
+        mismatched.len(),
+        apps.len()
+    );
 }

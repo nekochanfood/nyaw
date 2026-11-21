@@ -104,7 +104,10 @@ fn temp(name: &str) -> PathBuf {
 fn downloads_and_verifies_the_installer() {
     let (base, files) = fixture();
     let found = check(&format!("{base}/releases")).unwrap();
-    let release = found.into_iter().find(|r| r.build == 655).expect("patch.2 is listed");
+    let release = found
+        .into_iter()
+        .find(|r| r.build == 655)
+        .expect("patch.2 is listed");
     let dir = temp("download");
     let progress = AtomicU64::new(0);
     let path = download(&release, &dir, &progress).unwrap();

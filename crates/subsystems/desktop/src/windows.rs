@@ -49,9 +49,10 @@ use ::windows::{
             Input::KeyboardAndMouse::*,
             Shell::{
                 BHID_EnumItems, ExtractIconExW, FOLDERID_AppsFolder, IEnumShellItems, IShellItem,
-                IShellItem2, IShellItemImageFactory, KF_FLAG_DEFAULT, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC,
-                SHCreateItemFromParsingName, SHELLEXECUTEINFOW, SHGetKnownFolderItem,
-                SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY, ShellExecuteExW,
+                IShellItem2, IShellItemImageFactory, KF_FLAG_DEFAULT, SEE_MASK_FLAG_NO_UI,
+                SEE_MASK_NOASYNC, SHCreateItemFromParsingName, SHELLEXECUTEINFOW,
+                SHGetKnownFolderItem, SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
+                ShellExecuteExW,
             },
             WindowsAndMessaging::*,
         },
@@ -521,10 +522,13 @@ pub(super) fn launch(id: &str) -> Result<(), Error> {
             nShow: SW_SHOWNORMAL.0,
             ..Default::default()
         };
-        unsafe { ShellExecuteExW(&mut info) }
-            .map_err(|e| Error(format!("cannot launch {id}: {e}")))
+        unsafe { ShellExecuteExW(&mut info) }.map_err(|e| Error(format!("cannot launch {id}: {e}")))
     })
-    .unwrap_or_else(|| Err(Error(format!("cannot launch {id}: the launcher thread failed"))))
+    .unwrap_or_else(|| {
+        Err(Error(format!(
+            "cannot launch {id}: the launcher thread failed"
+        )))
+    })
 }
 
 struct Apartment;
