@@ -416,3 +416,139 @@ fn x11_types_keys_and_text_into_the_focused_window() {
     assert_eq!(typed(&conn, &got), [u32::from(b'H'), 0xe9, 0x0100_8a9e]);
     assert!(keyboard.settings().error.is_none());
 }
+
+/// portal（KDE など）の一連の流れ: 保存した選択を消して確認画面を出させ、許可待ちが報告されることと、許可したら
+/// 再試行なしで配信が始まることを確かめる。続けて、ポインタの位置と、フォーカスしたテスト用ウィンドウへの
+/// OS キーボードの送信を確かめる。確認画面での許可の操作が要る。
+#[test]
+#[ignore = "needs a Wayland session with xdg-desktop-portal and someone to allow the dialog"]
+fn portal_waits_for_permission_then_streams_points_and_types() {
+    use os::keyboard::{Output, chord};
+    use x11rb::wrapper::ConnectionExt as _;
+    // SAFETY: このテストは単独で実行する（--test-threads=1）。
+    unsafe { std::env::set_var("NYAW_CAPTURE", "portal") };
+    let token = os::data_dir().unwrap().join("screencast-token");
+    // NYAW_KEEP_CHOICE を指定すると、保存した選択を残して確認画面を出さない（許可待ちの確認を省く）。
+    let ask = std::env::var_os("NYAW_KEEP_CHOICE").is_none();
+    if ask {
+        let _ = std::fs::remove_file(&token);
+    }
+    let screens = sources();
+
+    // 許可待ち → 許可 → 配信
+    let stream = Stream::start(screens[0].clone()).unwrap();
+    if ask {
+        until("the permission state", Duration::from_secs(10), || {
+            stream.poll().filter(|u| u.status == Status::Permission)
+        });
+    }
+    eprintln!(">>> waiting for permission: allow the dialog on the desktop");
+    let asked = Instant::now();
+    let first = frame(&stream, Duration::from_secs(300));
+    eprintln!(
+        "streaming {}x{} {:?} after permission",
+        first.width,
+        first.height,
+        asked.elapsed()
+    );
+    assert!(token.exists(), "the choice is saved for the next time");
+
+    // マウス: 送った画素に OS のポインタが置かれる。
+    let (w, h) = (first.width as f32, first.height as f32);
+    for (x, y) in [(0.2, 0.3), (0.8, 0.7)] {
+        stream
+            .touch(Touch {
+                id: 0,
+                phase: TouchPhase::Move,
+                x,
+                y,
+            })
+            .unwrap();
+        let want = (((w - 1.0) * x).round(), ((h - 1.0) * y).round());
+        until("the reported pointer", Duration::from_secs(5), || {
+            stream
+                .pointer()
+                .filter(|p| ((p.0 * (w - 1.0)).round(), (p.1 * (h - 1.0)).round()) == want)
+        });
+    }
+
+    // キーボード: XWayland のテスト用ウィンドウにフォーカスがあることを確かめてから送る（他のアプリへ誤って入力しない）。
+    let (conn, screen) = x11rb::connect(None).expect("XWayland");
+    let root = conn.setup().roots[screen].root;
+    let window = conn.generate_id().unwrap();
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT,
+        window,
+        root,
+        100,
+        100,
+        320,
+        200,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        x11rb::COPY_FROM_PARENT,
+        &CreateWindowAux::new()
+            .background_pixel(0x204060)
+            .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE | EventMask::FOCUS_CHANGE),
+    )
+    .unwrap();
+    conn.change_property8(
+        x11rb::protocol::xproto::PropMode::REPLACE,
+        window,
+        x11rb::protocol::xproto::AtomEnum::WM_NAME,
+        x11rb::protocol::xproto::AtomEnum::STRING,
+        b"nyaw keyboard test",
+    )
+    .unwrap();
+    conn.map_window(window).unwrap();
+    conn.flush().unwrap();
+    let focused = || conn.get_input_focus().unwrap().reply().unwrap().focus == window;
+    until(
+        "the test window to be focused",
+        Duration::from_secs(10),
+        || focused().then_some(()),
+    );
+    let keyboard = desktop::os_keyboard();
+    let settings = until("the keyboard", Duration::from_secs(10), || {
+        let s = keyboard.settings();
+        (s.foreground != 0 || s.error.is_some()).then_some(s)
+    });
+    assert!(settings.error.is_none(), "{:?}", settings.error);
+    let mut events = Vec::new();
+    let mut keys = |n: usize| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while events.len() < n {
+            while let Some(e) = conn.poll_for_event().unwrap() {
+                if matches!(e, Event::KeyPress(_) | Event::KeyRelease(_)) {
+                    events.push(e);
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "{} of {n} key events arrived; keyboard error: {:?}; focused: {}",
+                events.len(),
+                keyboard.settings().error,
+                conn.get_input_focus().unwrap().reply().unwrap().focus == window
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::mem::take(&mut events)
+    };
+    assert!(focused(), "focus moved away; not sending keys");
+    keyboard
+        .send(settings.foreground, Output::Keys(chord(&[42], 30)))
+        .unwrap();
+    let got = keys(4);
+    assert_eq!(typed(&conn, &got), [u32::from(b'A')]);
+    assert!(focused(), "focus moved away; not sending keys");
+    keyboard
+        .send(settings.foreground, Output::Text("Hi!".into()))
+        .unwrap();
+    // H と ! は Shift 付き（押下と解放が 4 件ずつ）、i は 2 件。
+    let got = keys(10);
+    assert_eq!(
+        typed(&conn, &got),
+        [u32::from(b'H'), u32::from(b'i'), u32::from(b'!')]
+    );
+    eprintln!("keyboard: {:?}", keyboard.settings().error);
+}

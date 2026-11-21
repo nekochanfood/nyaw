@@ -122,7 +122,22 @@ impl os::keyboard::Host for Keyboard {
         match sender {
             Sender::X11(x) => x.send(output),
             Sender::Wlr(w) => w.send(output),
-            Sender::Portal(p) => p.send_keys(output),
+            Sender::Portal(p) => match output {
+                Output::Keys(keys) => p.keys(&keys),
+                // NotifyKeyboardKeysym は Shift などの段を付けない（KDE で「H」が「h」になった）。配列でキーと段を引いて
+                // キーコードで送り、配列に無い文字だけ keysym で送る。
+                Output::Text(text) => {
+                    let layout = compositor_keymap().ok().and_then(|k| Layout::parse(&k));
+                    for c in text.chars() {
+                        let sym = keysym(c);
+                        match layout.as_ref().and_then(|l| l.find(sym)) {
+                            Some((code, level)) => p.keys(&level_tap(code, level))?,
+                            None => p.keysym(sym)?,
+                        }
+                    }
+                    Ok(())
+                }
+            },
         }
     }
 }
@@ -141,6 +156,76 @@ pub(super) fn keysym(c: char) -> u32 {
         cp @ (0x20..=0x7e | 0xa0..=0xff) => cp,
         cp => 0x0100_0000 | cp,
     }
+}
+
+/// 配列での文字の位置（keysym → evdev のキーコードと段）。
+pub(super) struct Layout(HashMap<u32, (u16, u32)>);
+
+impl Layout {
+    /// XKB の配列（テキスト）から、最初の配列の各キーの段 0〜3 の文字を引けるようにする。同じ文字は低い段を優先する。
+    pub fn parse(keymap: &str) -> Option<Self> {
+        use xkbcommon::xkb;
+        let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        let keymap = xkb::Keymap::new_from_string(
+            &context,
+            keymap.to_owned(),
+            xkb::KEYMAP_FORMAT_TEXT_V1,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )?;
+        let mut found: HashMap<u32, (u16, u32)> = HashMap::new();
+        for raw in keymap.min_keycode().raw().max(8)..=keymap.max_keycode().raw() {
+            let key = xkb::Keycode::new(raw);
+            for level in 0..keymap.num_levels_for_key(key, 0).min(4) {
+                for sym in keymap.key_get_syms_by_level(key, 0, level) {
+                    let place = ((raw - 8) as u16, level);
+                    found
+                        .entry(sym.raw())
+                        .and_modify(|p| {
+                            if level < p.1 {
+                                *p = place
+                            }
+                        })
+                        .or_insert(place);
+                }
+            }
+        }
+        Some(Self(found))
+    }
+
+    pub fn find(&self, keysym: u32) -> Option<(u16, u32)> {
+        self.0.get(&keysym).copied()
+    }
+}
+
+/// 段 `level` の文字を出す押下と解放（段 1 は Shift、段 2 は AltGr、段 3 は両方）。
+pub(super) fn level_tap(code: u16, level: u32) -> Vec<KeyEvent> {
+    let mut held = Vec::new();
+    if level & 1 != 0 {
+        held.push(42);
+    }
+    if level & 2 != 0 {
+        held.push(100);
+    }
+    os::keyboard::chord(&held, code)
+}
+
+/// コンポジタの配列（wl_keyboard.keymap）。フォーカスが無くても、wl_keyboard を作ると届く。
+fn compositor_keymap() -> Result<String, String> {
+    let conn = Connection::connect_to_env().map_err(|e| e.to_string())?;
+    let mut queue = conn.new_event_queue();
+    let qh = queue.handle();
+    conn.display().get_registry(&qh, ());
+    let mut state = WlrState::default();
+    queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
+    let seat = state.seat.clone().ok_or("the compositor has no seat")?;
+    let keyboard = seat.get_keyboard(&qh, ());
+    queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
+    keyboard.release();
+    let _ = conn.flush();
+    state
+        .keymap
+        .take()
+        .ok_or_else(|| "the compositor sent no keymap".to_string())
 }
 
 // ---- X11 ----
@@ -497,14 +582,7 @@ impl Wlr {
         let (Some(seat), Some(manager)) = (state.seat.clone(), state.manager.clone()) else {
             return Err("this compositor has no virtual keyboard".into());
         };
-        // コンポジタの配列は wl_keyboard を作ると届く（フォーカスが無くても届く）。
-        let keyboard = seat.get_keyboard(&qh, ());
-        queue.roundtrip(&mut state).map_err(|e| e.to_string())?;
-        keyboard.release();
-        let system = state
-            .keymap
-            .take()
-            .ok_or_else(|| "the compositor sent no keymap".to_string())?;
+        let system = compositor_keymap()?;
         let virtual_keyboard = manager.create_virtual_keyboard(&seat, &qh, ());
         let wlr = Self {
             conn,
@@ -614,6 +692,39 @@ mod tests {
         assert_eq!(keysym('é'), 0xe9);
         assert_eq!(keysym('あ'), 0x0100_3042);
         assert_eq!(keysym('€'), 0x0100_20ac);
+    }
+
+    /// 段 1 の文字は Shift 付き、段 2 は AltGr 付きで押す。配列は外部のデータを使わずに書く。
+    #[test]
+    fn layouts_find_the_key_and_level_of_each_character() {
+        let keymap = r#"xkb_keymap {
+            xkb_keycodes "t" { minimum = 8; maximum = 255; <AC01> = 38; <AE01> = 10; };
+            xkb_types "t" {
+                type "ONE_LEVEL" { modifiers = none; level_name[Level1] = "Any"; };
+                type "TWO_LEVEL" { modifiers = Shift; map[Shift] = Level2;
+                    level_name[Level1] = "Base"; level_name[Level2] = "Shift"; };
+                type "ALPHABETIC" { modifiers = Shift; map[Shift] = Level2;
+                    level_name[Level1] = "Base"; level_name[Level2] = "Caps"; };
+                type "FOUR_LEVEL" { modifiers = Shift+Mod5; map[Shift] = Level2; map[Mod5] = Level3;
+                    map[Shift+Mod5] = Level4; level_name[Level1] = "Base"; level_name[Level2] = "Shift";
+                    level_name[Level3] = "AltGr"; level_name[Level4] = "Shift AltGr"; };
+            };
+            xkb_compatibility "t" { };
+            xkb_symbols "t" {
+                key <AC01> { [ a, A ] };
+                key <AE01> { type = "FOUR_LEVEL", [ 1, exclam, onesuperior, exclamdown ] };
+            };
+        };"#;
+        let layout = Layout::parse(keymap).expect("a valid keymap");
+        assert_eq!(layout.find(u32::from(b'a')), Some((30, 0)));
+        assert_eq!(layout.find(u32::from(b'A')), Some((30, 1)));
+        assert_eq!(layout.find(u32::from(b'!')), Some((2, 1)));
+        assert_eq!(layout.find(0xb9), Some((2, 2)));
+        assert_eq!(layout.find(keysym('語')), None);
+        let shifted: Vec<_> = level_tap(30, 1).iter().map(|k| (k.code, k.down)).collect();
+        assert_eq!(shifted, [(42, true), (30, true), (30, false), (42, false)]);
+        let altgr: Vec<_> = level_tap(2, 3).iter().map(|k| k.code).collect();
+        assert_eq!(altgr, [42, 100, 2, 2, 100, 42]);
     }
 
     #[test]

@@ -22,6 +22,8 @@ wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # wlroots の仮想キーボード（OS キーボード。src/linux/keyboard.rs）。
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
+# portal の OS キーボードで、コンポジタの配列から文字のキーと段（Shift・AltGr）を引く。
+xkbcommon = { version = "0.9", default-features = false }
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "screencast", "remote_desktop"] }
 pollster = "0.4"
 pipewire = { version = "0.9", features = ["v0_3_65"] }

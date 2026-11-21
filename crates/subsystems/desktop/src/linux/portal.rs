@@ -261,55 +261,56 @@ impl Portal {
         matches!(self.kind, Kind::Remote { keyboard: true, .. })
     }
 
-    /// キーは evdev のキーコードで（コンポジタの配列で解釈される）、文字列は文字の keysym で送る。
-    pub fn send_keys(&self, output: os::keyboard::Output) -> std::io::Result<()> {
-        let Kind::Remote {
-            portal,
-            session,
-            keyboard: true,
-            ..
-        } = &self.kind
-        else {
-            return Err(std::io::Error::other(
-                "the desktop portal did not allow the keyboard",
-            ));
-        };
-        let state = |down| {
-            if down {
-                KeyState::Pressed
-            } else {
-                KeyState::Released
-            }
-        };
-        let err = |e: ashpd::Error| std::io::Error::other(e.to_string());
-        match output {
-            os::keyboard::Output::Keys(keys) => {
-                for key in keys {
-                    pollster::block_on(portal.notify_keyboard_keycode(
-                        session,
-                        key.code.into(),
-                        state(key.down),
-                        Default::default(),
-                    ))
-                    .map_err(err)?;
-                }
-            }
-            os::keyboard::Output::Text(text) => {
-                for c in text.chars() {
-                    let keysym = super::keyboard::keysym(c) as i32;
-                    for down in [true, false] {
-                        pollster::block_on(portal.notify_keyboard_keysym(
-                            session,
-                            keysym,
-                            state(down),
-                            Default::default(),
-                        ))
-                        .map_err(err)?;
-                    }
-                }
-            }
+    /// キーを evdev のキーコードで送る（コンポジタの配列で解釈される）。
+    pub fn keys(&self, keys: &[os::keyboard::KeyEvent]) -> std::io::Result<()> {
+        let (portal, session) = self.keyboard_session()?;
+        for key in keys {
+            pollster::block_on(portal.notify_keyboard_keycode(
+                session,
+                key.code.into(),
+                key_state(key.down),
+                Default::default(),
+            ))
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
         }
         Ok(())
+    }
+
+    /// 配列に無い文字を keysym で送る（コンポジタが配列から探す。見つからなければ何も入力されない）。
+    pub fn keysym(&self, keysym: u32) -> std::io::Result<()> {
+        let (portal, session) = self.keyboard_session()?;
+        for down in [true, false] {
+            pollster::block_on(portal.notify_keyboard_keysym(
+                session,
+                keysym as i32,
+                key_state(down),
+                Default::default(),
+            ))
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn keyboard_session(&self) -> std::io::Result<(&RemoteDesktop, &Session<RemoteDesktop>)> {
+        match &self.kind {
+            Kind::Remote {
+                portal,
+                session,
+                keyboard: true,
+                ..
+            } => Ok((portal, session)),
+            _ => Err(std::io::Error::other(
+                "the desktop portal did not allow the keyboard",
+            )),
+        }
+    }
+}
+
+fn key_state(down: bool) -> KeyState {
+    if down {
+        KeyState::Pressed
+    } else {
+        KeyState::Released
     }
 }
 
