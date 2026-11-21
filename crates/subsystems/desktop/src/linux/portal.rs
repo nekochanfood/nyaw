@@ -109,12 +109,12 @@ impl Portal {
             .available_cursor_modes()
             .await
             .unwrap_or_default();
-        // カーソルは映像に含めない（VR のポインタが代わりに示す）。
-        let cursor = if modes.contains(CursorMode::Hidden) {
-            CursorMode::Hidden
-        } else {
-            CursorMode::Embedded
-        };
+        // カーソルは映像に含めず、画像と位置をメタデータで受け取る（VR のポインタの代わりに描く）。
+        // メタデータが無ければ隠し、隠せなければ焼き込む。
+        let cursor = [CursorMode::Metadata, CursorMode::Hidden]
+            .into_iter()
+            .find(|m| modes.contains(*m))
+            .unwrap_or(CursorMode::Embedded);
         let sources = SelectSourcesOptions::default()
             .set_sources(BitFlags::from(SourceType::Monitor))
             .set_multiple(true)
@@ -286,6 +286,14 @@ impl super::Session for Capture {
         self.stream.closed()
     }
 
+    fn cursor(&mut self) -> Option<Arc<crate::Cursor>> {
+        self.stream.cursor()
+    }
+
+    fn pointer(&mut self) -> Option<(f32, f32)> {
+        self.stream.pointer()
+    }
+
     fn touch(&mut self, touch: Touch) -> Result<(), Error> {
         self.button(touch, Button::Left)
     }
@@ -339,9 +347,10 @@ fn evdev_button(button: Button) -> i32 {
 
 impl Inject for Notify<'_> {
     fn motion(&mut self, x: f32, y: f32) -> Result<(), Error> {
+        // 他の表示サーバーと同じく画素に丸めて送る（小数のまま送ると KWin が切り捨て、1 画素手前に置く）。
         let (w, h) = self.size;
-        let px = f64::from(x.clamp(0.0, 1.0)) * f64::from((w - 1).max(0));
-        let py = f64::from(y.clamp(0.0, 1.0)) * f64::from((h - 1).max(0));
+        let px = f64::from(super::pixel(x, w.max(0) as u32));
+        let py = f64::from(super::pixel(y, h.max(0) as u32));
         pollster::block_on(self.portal.notify_pointer_motion_absolute(
             self.session,
             self.node,

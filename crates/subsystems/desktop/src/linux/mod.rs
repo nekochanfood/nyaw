@@ -101,6 +101,9 @@ impl Session for Box<dyn Session> {
     fn cursor(&mut self) -> Option<Arc<Cursor>> {
         (**self).cursor()
     }
+    fn pointer(&mut self) -> Option<(f32, f32)> {
+        (**self).pointer()
+    }
 }
 
 /// 画面を表示名で区別する。製品名（取れなければコネクタ名）を使い、同じ名前が複数あればコネクタ名を添える。
@@ -329,6 +332,16 @@ fn pixel(v: f32, size: u32) -> i32 {
     (size.saturating_sub(1) as f32 * v.clamp(0.0, 1.0)).round() as i32
 }
 
+/// 取り込み元の画素の位置 (`x`, `y`) を 0〜1 にする（[`pixel`] の逆）。範囲の外なら `None`。
+fn normalized(x: i32, y: i32, width: u32, height: u32) -> Option<(f32, f32)> {
+    let inside = |v: i32, size: u32| v >= 0 && (v as u32) < size;
+    if !inside(x, width) || !inside(y, height) {
+        return None;
+    }
+    let scale = |v: i32, size: u32| v as f32 / size.saturating_sub(1).max(1) as f32;
+    Some((scale(x, width), scale(y, height)))
+}
+
 /// 事前乗算済みの ARGB（XFixes・PipeWire のカーソル）を、ストレートアルファの RGBA にする。
 fn unpremultiply_argb(width: u32, height: u32, argb: impl Iterator<Item = u32>) -> super::Icon {
     let rgba: Vec<u8> = argb
@@ -446,6 +459,11 @@ mod tests {
         assert_eq!(pixel(0.0, 1920), 0);
         assert_eq!(pixel(1.0, 1920), 1919);
         assert_eq!(pixel(2.0, 1080), 1079);
+        // 位置へ戻すと同じ画素を指す。範囲の外は無い。
+        let (x, y) = normalized(1919, 540, 1920, 1080).unwrap();
+        assert_eq!((pixel(x, 1920), pixel(y, 1080)), (1919, 540));
+        assert_eq!(normalized(-1, 0, 1920, 1080), None);
+        assert_eq!(normalized(0, 1080, 1920, 1080), None);
     }
 
     #[test]

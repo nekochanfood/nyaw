@@ -23,7 +23,8 @@ use pw::spa::{
 use rustix::mm;
 use vr::{ExternalImage, Memory};
 
-use super::{Error, Frame, ImportFormats, PixelFormat, Wake};
+use super::{Cursor, Error, Frame, ImportFormats, PixelFormat, Wake};
+use crate::Icon;
 
 impl From<pw::Error> for Error {
     fn from(e: pw::Error) -> Self {
@@ -52,6 +53,9 @@ enum Message {
 struct Shared {
     latest: Mutex<Option<Frame>>,
     size: Mutex<Option<(u32, u32)>>,
+    /// カーソルのメタデータ（portal の Metadata モード）から読んだカーソルと、その位置。
+    cursor: Mutex<Option<Arc<Cursor>>>,
+    pointer: Mutex<Option<(f32, f32)>>,
     closed: AtomicBool,
 }
 
@@ -119,6 +123,16 @@ impl Stream {
     pub fn size(&self) -> Option<(u32, u32)> {
         *self.shared.size.lock().unwrap()
     }
+
+    /// 表示サーバーが知らせた OS のカーソル（隠れていれば `None`）。
+    pub fn cursor(&self) -> Option<Arc<Cursor>> {
+        self.shared.cursor.lock().unwrap().clone()
+    }
+
+    /// 表示サーバーが知らせた OS のポインタの位置（0〜1。画面の外なら `None`）。
+    pub fn pointer(&self) -> Option<(f32, f32)> {
+        *self.shared.pointer.lock().unwrap()
+    }
 }
 
 impl Drop for Stream {
@@ -155,6 +169,8 @@ impl Drop for Mapping {
 struct Data {
     import: Option<ImportFormats>,
     format: Option<Negotiated>,
+    /// 最後に届いたカーソルの画像（画像は変わったときだけ届く）。
+    bitmap: Option<Icon>,
     /// memfd のバッファ（`pw_buffer` のアドレス）ごとの写像。取り込める境界に揃っていなければ `None`。
     mappings: HashMap<usize, Option<Arc<Mapping>>>,
 }
@@ -291,6 +307,155 @@ fn buffers_pod(dmabuf: bool) -> Vec<u8> {
     }))
 }
 
+/// `n`×`n` 画素までのカーソルを載せるメタデータの大きさ。
+fn cursor_meta_size(n: usize) -> i32 {
+    (size_of::<spa::sys::spa_meta_cursor>() + size_of::<spa::sys::spa_meta_bitmap>() + n * n * 4)
+        as i32
+}
+
+/// カーソルをメタデータで受け取る（映像には焼き込まない）。
+fn cursor_meta_pod() -> Vec<u8> {
+    serialize(Value::Object(Object {
+        type_: spa::sys::SPA_TYPE_OBJECT_ParamMeta,
+        id: spa::sys::SPA_PARAM_Meta,
+        properties: vec![
+            Property::new(
+                spa::sys::SPA_PARAM_META_type,
+                Value::Id(Id(spa::sys::SPA_META_Cursor)),
+            ),
+            Property::new(
+                spa::sys::SPA_PARAM_META_size,
+                Value::Choice(ChoiceValue::Int(Choice(
+                    ChoiceFlags::empty(),
+                    ChoiceEnum::Range {
+                        default: cursor_meta_size(64),
+                        min: cursor_meta_size(1),
+                        max: cursor_meta_size(256),
+                    },
+                ))),
+            ),
+        ],
+    }))
+}
+
+/// カーソルの画像（`format` の画素、`stride` バイト/行）をストレートアルファの RGBA にする。全画素で色が透明度以下なら
+/// 事前乗算とみなして戻す。
+fn cursor_icon(
+    format: VideoFormat,
+    width: u32,
+    height: u32,
+    stride: usize,
+    data: &[u8],
+) -> Option<Icon> {
+    let order: [usize; 4] = match format {
+        VideoFormat::RGBA => [0, 1, 2, 3],
+        VideoFormat::BGRA => [2, 1, 0, 3],
+        VideoFormat::ARGB => [1, 2, 3, 0],
+        VideoFormat::ABGR => [3, 2, 1, 0],
+        _ => return None,
+    };
+    let row = width as usize * 4;
+    if width == 0 || height == 0 || width > 256 || height > 256 || stride < row {
+        return None;
+    }
+    if data.len() < stride * (height as usize - 1) + row {
+        return None;
+    }
+    let mut rgba = Vec::with_capacity(row * height as usize);
+    for y in 0..height as usize {
+        for p in data[y * stride..y * stride + row].as_chunks::<4>().0 {
+            rgba.extend(order.map(|i| p[i]));
+        }
+    }
+    let premultiplied = rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|p| p[..3].iter().all(|&c| c <= p[3]));
+    if premultiplied {
+        for p in rgba.as_chunks_mut::<4>().0 {
+            let a = u32::from(p[3]);
+            for c in &mut p[..3] {
+                *c = (u32::from(*c) * 255)
+                    .checked_div(a)
+                    .map_or(0, |v| v.min(255) as u8);
+            }
+        }
+    }
+    Some(Icon {
+        width,
+        height,
+        rgba: rgba.into(),
+    })
+}
+
+/// バッファのカーソルのメタデータを読み、カーソルと位置を更新する。
+unsafe fn read_cursor(spa_buffer: &spa::sys::spa_buffer, data: &mut Data, shared: &Shared) {
+    if spa_buffer.metas.is_null() {
+        return;
+    }
+    let metas =
+        unsafe { std::slice::from_raw_parts(spa_buffer.metas, spa_buffer.n_metas as usize) };
+    let Some(meta) = metas.iter().find(|m| {
+        m.type_ == spa::sys::SPA_META_Cursor
+            && m.size as usize >= size_of::<spa::sys::spa_meta_cursor>()
+            && !m.data.is_null()
+    }) else {
+        return;
+    };
+    let base = meta.data as *const u8;
+    let cursor = unsafe { &*(base as *const spa::sys::spa_meta_cursor) };
+    // 0 は「新しいカーソルの情報なし」。
+    if cursor.id == 0 {
+        return;
+    }
+    let bitmap_offset = cursor.bitmap_offset as usize;
+    let mut visible = data.bitmap.is_some();
+    if bitmap_offset >= size_of::<spa::sys::spa_meta_cursor>()
+        && bitmap_offset + size_of::<spa::sys::spa_meta_bitmap>() <= meta.size as usize
+    {
+        let bitmap = unsafe { &*(base.add(bitmap_offset) as *const spa::sys::spa_meta_bitmap) };
+        if bitmap.format != 0 {
+            let pixels = bitmap.offset as usize;
+            if pixels >= size_of::<spa::sys::spa_meta_bitmap>() {
+                let start = bitmap_offset + pixels;
+                let len = (meta.size as usize).saturating_sub(start);
+                let bytes = unsafe { std::slice::from_raw_parts(base.add(start), len) };
+                data.bitmap = cursor_icon(
+                    VideoFormat::from_raw(bitmap.format),
+                    bitmap.size.width,
+                    bitmap.size.height,
+                    bitmap.stride.max(0) as usize,
+                    bytes,
+                );
+                visible = data.bitmap.is_some();
+            } else {
+                // 画像の位置が 0 なら、カーソルは見えない。
+                visible = false;
+            }
+        }
+    }
+    let shown = data
+        .bitmap
+        .as_ref()
+        .filter(|_| visible)
+        .map(|image| Cursor {
+            image: image.clone(),
+            hotspot: (
+                cursor.hotspot.x.max(0) as u32,
+                cursor.hotspot.y.max(0) as u32,
+            ),
+        });
+    let mut current = shared.cursor.lock().unwrap();
+    if current.as_deref() != shown.as_ref() {
+        *current = shown.map(Arc::new);
+    }
+    drop(current);
+    *shared.pointer.lock().unwrap() = data
+        .format
+        .and_then(|f| super::normalized(cursor.position.x, cursor.position.y, f.width, f.height));
+}
+
 /// 修飾子がまだ一つに決まっていない（DONT_FIXATE の選択肢のまま）なら、その選択肢の先頭。
 fn unfixed_modifier(param: &Pod) -> Option<i64> {
     let (_, Value::Object(object)) =
@@ -358,6 +523,7 @@ fn run(
     let data = Data {
         import: import.clone(),
         format: None,
+        bitmap: None,
         mappings: HashMap::new(),
     };
     let quit = mainloop.clone();
@@ -418,7 +584,11 @@ fn run(
             data.format = Some(negotiated);
             *delivered.size.lock().unwrap() = Some((negotiated.width, negotiated.height));
             let buffers = buffers_pod(has_modifier);
-            let mut params = [Pod::from_bytes(&buffers).unwrap()];
+            let cursor = cursor_meta_pod();
+            let mut params = [
+                Pod::from_bytes(&buffers).unwrap(),
+                Pod::from_bytes(&cursor).unwrap(),
+            ];
             let _ = stream.update_params(&mut params);
         })
         .add_buffer(|_, data, buffer| {
@@ -514,6 +684,8 @@ unsafe fn process(
     let (Some(format), Some(spa_buffer)) = (data.format, unsafe { (*raw).buffer.as_ref() }) else {
         return requeue();
     };
+    // カーソルだけが動いた更新も、画像を持たないバッファで届く。
+    unsafe { read_cursor(spa_buffer, data, shared) };
     if spa_buffer.n_datas < 1 {
         return requeue();
     }
@@ -632,6 +804,20 @@ mod tests {
         assert_eq!(second.value, Value::Long(3));
         assert!(pods[2..].iter().all(|p| modifier_property(p).is_none()));
         assert_eq!(format_pods(None).len(), FORMATS.len());
+    }
+
+    /// カーソルの画像は RGBA の並びに直し、事前乗算されていればストレートアルファに戻す。
+    #[test]
+    fn cursor_bitmaps_become_straight_rgba() {
+        // BGRA、2×1、行末に 4 バイトの余白。1 画素目は半透明の事前乗算。
+        let data = [0, 0, 64, 128, 0, 0, 0, 0, 9, 9, 9, 9];
+        let icon = cursor_icon(VideoFormat::BGRA, 2, 1, 12, &data).unwrap();
+        assert_eq!(&*icon.rgba, [127, 0, 0, 128, 0, 0, 0, 0]);
+        // 色が透明度を超えるものはストレートアルファのまま。
+        let icon = cursor_icon(VideoFormat::RGBA, 1, 1, 4, &[200, 10, 10, 100]).unwrap();
+        assert_eq!(&*icon.rgba, [200, 10, 10, 100]);
+        assert!(cursor_icon(VideoFormat::RGBA, 2, 2, 8, &[0; 12]).is_none());
+        assert!(cursor_icon(VideoFormat::NV12, 1, 1, 4, &[0; 4]).is_none());
     }
 
     /// 候補の残った交渉結果は、先頭の修飾子に決めて送り直す。

@@ -14,7 +14,10 @@ use x11rb::{
     connection::Connection,
     protocol::{
         Event,
-        xproto::{ConnectionExt as _, CreateWindowAux, EventMask, WindowClass},
+        xproto::{
+            ChangeWindowAttributesAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask,
+            Rectangle, WindowClass,
+        },
     },
 };
 
@@ -148,6 +151,88 @@ fn x11_captures_the_screen_and_clicks_through_xtest() {
         });
         assert_eq!((press.detail, press.event_x, press.event_y), (1, 50, 40));
     }
+
+    // ポインタの位置: XTest で動かした画素に X サーバーのポインタがあり、取り込みもその位置を知らせる。
+    let stream = Stream::start(screens[0].clone()).unwrap();
+    frame(&stream, Duration::from_secs(5));
+    for (x, y) in [(0.25, 0.75), (0.0, 0.0), (1.0, 1.0), (0.5, 0.5)] {
+        stream
+            .touch(Touch {
+                id: 0,
+                phase: TouchPhase::Move,
+                x,
+                y,
+            })
+            .unwrap();
+        let want = (
+            (319.0 * x).round() as i16,
+            (239.0 * y).round() as i16,
+        );
+        until("the X pointer", Duration::from_secs(5), || {
+            let p = conn.query_pointer(root).unwrap().reply().unwrap();
+            ((p.root_x, p.root_y) == want).then_some(())
+        });
+        let reported = until("the reported pointer", Duration::from_secs(5), || {
+            stream.pointer().filter(|p| {
+                (p.0 * 319.0).round() as i16 == want.0 && (p.1 * 239.0).round() as i16 == want.1
+            })
+        });
+        assert!((reported.0 - x).abs() < 0.01 && (reported.1 - y).abs() < 0.01);
+    }
+
+    // カーソルの画像: 左半分が赤く右半分が透明な 16×16（ホットスポット 3, 5）をウィンドウに設定し、ポインタを
+    // ウィンドウに入れると、その画像とホットスポットが XFixes から読める。
+    let (source, mask) = (conn.generate_id().unwrap(), conn.generate_id().unwrap());
+    conn.create_pixmap(1, source, root, 16, 16).unwrap();
+    conn.create_pixmap(1, mask, root, 16, 16).unwrap();
+    let fill = |pixmap, value, width| {
+        let gc = conn.generate_id().unwrap();
+        conn.create_gc(gc, pixmap, &CreateGCAux::new().foreground(value))
+            .unwrap();
+        conn.poly_fill_rectangle(
+            pixmap,
+            gc,
+            &[Rectangle {
+                x: 0,
+                y: 0,
+                width,
+                height: 16,
+            }],
+        )
+        .unwrap();
+        conn.free_gc(gc).unwrap();
+    };
+    fill(source, 1, 16);
+    fill(mask, 0, 16);
+    fill(mask, 1, 8);
+    let cursor = conn.generate_id().unwrap();
+    conn.create_cursor(cursor, source, mask, 65535, 0, 0, 0, 0, 0, 3, 5)
+        .unwrap();
+    conn.change_window_attributes(window, &ChangeWindowAttributesAux::new().cursor(cursor))
+        .unwrap();
+    conn.flush().unwrap();
+    let outside = until("the root cursor", Duration::from_secs(5), || {
+        stream.cursor()
+    });
+    stream
+        .touch(Touch {
+            id: 0,
+            phase: TouchPhase::Move,
+            x: 90.0 / 319.0,
+            y: 70.0 / 239.0,
+        })
+        .unwrap();
+    let shown = until("the window's cursor", Duration::from_secs(5), || {
+        stream.cursor().filter(|c| !Arc::ptr_eq(c, &outside))
+    });
+    assert_eq!((shown.image.width, shown.image.height), (16, 16));
+    assert_eq!(shown.hotspot, (3, 5));
+    let px = |x: usize, y: usize| -> [u8; 4] {
+        let i = (y * 16 + x) * 4;
+        shown.image.rgba[i..i + 4].try_into().unwrap()
+    };
+    assert_eq!(px(2, 9), [255, 0, 0, 255]);
+    assert_eq!(px(12, 9), [0, 0, 0, 0]);
 }
 
 /// portal: 確認画面で選んだ画面を PipeWire で受け取り、RemoteDesktop でポインタを動かす。
@@ -185,4 +270,45 @@ fn portal_streams_a_screen() {
             })
             .unwrap();
     }
+
+    // ポインタの位置: RemoteDesktop で動かした位置を、表示サーバーがカーソルのメタデータで知らせる。
+    let stream = Stream::start(screens[0].clone()).unwrap();
+    let shot = frame(&stream, Duration::from_secs(10));
+    let (w, h) = (shot.width as f32, shot.height as f32);
+    for (x, y) in [(0.25, 0.5), (0.75, 0.25), (0.5, 0.5)] {
+        stream
+            .touch(Touch {
+                id: 0,
+                phase: TouchPhase::Move,
+                x,
+                y,
+            })
+            .unwrap();
+        // 送った画素と同じ画素に置かれる。
+        let want = (((w - 1.0) * x).round(), ((h - 1.0) * y).round());
+        let reported = until("the reported pointer", Duration::from_secs(5), || {
+            stream
+                .pointer()
+                .filter(|p| ((p.0 * (w - 1.0)).round(), (p.1 * (h - 1.0)).round()) == want)
+        });
+        eprintln!("pointer at {x}, {y}: reported {reported:?}");
+    }
+    // カーソルの画像: 映像に焼き込まれず、画像とホットスポットが届く。
+    let cursor = until("the cursor", Duration::from_secs(5), || stream.cursor());
+    let (cw, ch) = (cursor.image.width, cursor.image.height);
+    eprintln!("cursor: {cw}x{ch}, hotspot {:?}", cursor.hotspot);
+    assert!((8..=256).contains(&cw) && (8..=256).contains(&ch));
+    assert!(cursor.hotspot.0 < cw && cursor.hotspot.1 < ch);
+    let alpha: Vec<u8> = cursor
+        .image
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|p| p[3])
+        .collect();
+    assert!(
+        alpha.contains(&255) && alpha.contains(&0),
+        "an opaque arrow on a clear background"
+    );
 }

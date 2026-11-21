@@ -411,6 +411,17 @@ impl Session for Capture {
         self.cursor.as_ref().and_then(|(_, c)| c.clone())
     }
 
+    fn pointer(&mut self) -> Option<(f32, f32)> {
+        let reply = self.conn.query_pointer(self.root).ok()?.reply().ok()?;
+        let m = self.monitor;
+        super::normalized(
+            i32::from(reply.root_x) - i32::from(m.x),
+            i32::from(reply.root_y) - i32::from(m.y),
+            m.width.into(),
+            m.height.into(),
+        )
+    }
+
     fn touch(&mut self, touch: Touch) -> Result<(), Error> {
         self.button(touch, Button::Left)
     }

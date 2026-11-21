@@ -46,6 +46,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
             stop: stop.clone(),
             paused: paused.clone(),
             cursor: cursor.clone(),
+            pointer: Arc::new(Mutex::new(None)),
             window,
         },
         Controller {

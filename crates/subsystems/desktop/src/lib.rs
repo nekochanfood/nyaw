@@ -547,6 +547,10 @@ trait Session {
     fn cursor(&mut self) -> Option<Arc<Cursor>> {
         None
     }
+    /// OS のポインタの位置（取り込み元の左上原点、0〜1。取り込み元の外や、表示サーバーが知らせなければ `None`）。
+    fn pointer(&mut self) -> Option<(f32, f32)> {
+        None
+    }
 }
 
 /// 最新画像は常に一枚だけ保持し、遅れたフレームを蓄積しない。
@@ -557,6 +561,7 @@ pub struct Stream {
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     cursor: Arc<Mutex<Option<Arc<Cursor>>>>,
+    pointer: Arc<Mutex<Option<(f32, f32)>>>,
     /// ウィンドウを映しているとき、そのウィンドウ（OS のウィンドウ識別子）。画面や特定できないものは `None`。
     window: Option<u64>,
 }
@@ -622,6 +627,8 @@ impl Stream {
         let pausing = paused.clone();
         let cursor = Arc::new(Mutex::new(None));
         let cursor_out = cursor.clone();
+        let pointer = Arc::new(Mutex::new(None));
+        let pointer_out = pointer.clone();
         let (input, rx) = mpsc::sync_channel(64);
         let wake = Wake {
             tx: input.clone(),
@@ -689,6 +696,7 @@ impl Stream {
                             shown = now_cursor;
                             *cursor_out.lock().unwrap() = shown.clone();
                         }
+                        *pointer_out.lock().unwrap() = session.pointer();
                         if session.minimized() {
                             minimized = true;
                             break;
@@ -719,6 +727,7 @@ impl Stream {
                     Ok::<_, Error>(minimized)
                 })();
                 *cursor_out.lock().unwrap() = None;
+                *pointer_out.lock().unwrap() = None;
                 *output.lock().unwrap() = Some(Update {
                     status: match result {
                         Ok(true) => Status::Minimized,
@@ -735,6 +744,7 @@ impl Stream {
             stop,
             paused,
             cursor,
+            pointer,
             window: None,
         })
     }
@@ -751,6 +761,12 @@ impl Stream {
     /// 今の OS のカーソル（隠れている・取れなければ `None`）。
     pub fn cursor(&self) -> Option<Arc<Cursor>> {
         self.cursor.lock().ok()?.clone()
+    }
+
+    /// OS のポインタの位置（取り込み元の左上原点、0〜1）。取り込み元の外にある場合や、表示サーバーが位置を
+    /// 知らせない場合（Windows、wlroots）は `None`。
+    pub fn pointer(&self) -> Option<(f32, f32)> {
+        *self.pointer.lock().ok()?
     }
 
     pub fn touch(&self, touch: Touch) -> Result<(), Error> {
