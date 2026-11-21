@@ -969,13 +969,13 @@ impl<B: VrBackend> Kernel<B> {
     }
 
     /// 前の段階 `prev` から、距離で次の段階を決める。境目の前後で行き来しないよう、下げる側は閾値を縮める。
-    /// レーザーが指している（操作しようとしている）パネルとツールチップは、距離によらず LOD0。
+    /// レーザーが指している（操作しようとしている）パネルとツールチップ、はまる所の見本は、距離によらず LOD0。
     fn lod_for(&self, id: PanelId, prev: Option<u8>) -> u8 {
         if self.overlay.pointed(id)
             || self
                 .panel(id)
                 .pointer
-                .is_some_and(|(_, part)| part == Pointer::Tooltip)
+                .is_some_and(|(_, part)| matches!(part, Pointer::Tooltip | Pointer::Dock))
         {
             return 0;
         }
@@ -1917,6 +1917,16 @@ mod tests {
     fn tooltip_keeps_full_resolution_when_far_from_the_head() {
         let (mut k, p) = lod_kernel();
         k.apply(p, PanelCommand::Pointer(vr::Hand::Right, Pointer::Tooltip));
+        k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 100.0;
+        k.tick();
+        assert_eq!(k.panel_lod(p), 0);
+    }
+
+    /// はまる所の見本の帯の文字が、距離で粗くならない。
+    #[test]
+    fn dock_ghost_keeps_full_resolution_when_far_from_the_head() {
+        let (mut k, p) = lod_kernel();
+        k.apply(p, PanelCommand::Pointer(vr::Hand::Right, Pointer::Dock));
         k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 100.0;
         k.tick();
         assert_eq!(k.panel_lod(p), 0);
