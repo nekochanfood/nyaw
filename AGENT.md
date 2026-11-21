@@ -35,6 +35,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 | 1 | [`crates/subsystems/desktop`](crates/subsystems/desktop/AGENT.md) | 画面・ウィンドウのキャプチャ、画像取得、OS 側への入力注入。 |
 | 1 | [`crates/subsystems/media`](crates/subsystems/media/AGENT.md) | システム内で再生中のメディア情報の取得と再生制御。 |
 | 1 | [`crates/subsystems/notifications`](crates/subsystems/notifications/AGENT.md) | OS 通知の取得と、通知クリック時の対象アプリ起動連携。 |
+| 1 | [`crates/subsystems/update`](crates/subsystems/update/AGENT.md) | リリース一覧の取得、インストーラーのダウンロードと検証、インストーラーの起動。 |
 | 2 | [`crates/overlay`](crates/overlay/AGENT.md) | パネル配置、アタッチ処理、光線交差判定、掴み移動、親子関係、暗転演出の制御。 |
 | 3 | [`crates/kernel`](crates/kernel/AGENT.md) | 設定管理、毎フレームの更新サイクル、パネル操作を統合する中核。 |
 | 4 | [`crates/ui`](crates/ui/AGENT.md) | GPUI のオフスクリーンウィンドウによるパネル描画とポインタイベント変換。 |
@@ -48,7 +49,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 | 5 | [`crates/settings`](crates/settings/AGENT.md) | カテゴリ別に整理されたアプリケーション詳細設定画面。 |
 | 5 | [`crates/setup`](crates/setup/AGENT.md) | 初回起動時や設定リセット時に表示するセットアップウィザード。 |
 | 5 | [`crates/beam`](crates/beam/AGENT.md) | コントローラのレーザー光線、カーソル表示、ドラッグ挙動、ツールチップ。 |
-| 5 | [`crates/updater`](crates/updater/AGENT.md) | GitHub Releases を用いた更新確認とバックグラウンドアップデート。 |
+| 5 | [`crates/updater`](crates/updater/AGENT.md) | 更新の状態と、更新確認・インストールの操作（ダッシュボードと設定画面が共有する。画面ではない）。 |
 | 6 | `src/main.rs` | アプリケーション起動処理。ロガー初期化、設定読み込み、初期パネル生成を担う。 |
 | 7 | [`crates/testkit`](crates/testkit/AGENT.md) | 宣言的な E2E シナリオテスト用テストハーネス（開発専用）。 |
 
