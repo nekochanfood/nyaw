@@ -6,17 +6,14 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+# 通信・ダウンロード・インストーラーの起動は update サブシステム（kernel::subsystems::update）が行う
 [dependencies]
 gpui.workspace = true
 kernel.workspace = true
 logger.workspace = true
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-# ダウンロードしたインストーラーの SHA-256 を GitHub 公開値と照合する
-sha2 = "0.10"
 ui.workspace = true
-# リリース一覧の取得およびインストーラーのダウンロード（rustls 使用のため OS の TLS に非依存）
-ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
+# ループバックの「GitHub」（update::fake）
+update = { workspace = true, features = ["test-support"] }

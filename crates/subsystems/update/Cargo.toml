@@ -1,0 +1,19 @@
+[package]
+name = "update"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+# リリース一覧の URL（`releases_url`）はこのリポジトリから作る
+repository.workspace = true
+
+[features]
+# ループバックの「GitHub」（`update::fake`）。updater のテストが使う
+test-support = []
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# ダウンロードしたインストーラーの SHA-256 を GitHub 公開値と照合する
+sha2 = "0.10"
+# リリース一覧の取得およびインストーラーのダウンロード（rustls 使用のため OS の TLS に非依存）
+ureq = { version = "3", default-features = false, features = ["rustls"] }

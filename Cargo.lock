@@ -5269,6 +5269,7 @@ dependencies = [
  "notifications",
  "os",
  "rendering",
+ "update",
  "vr",
 ]
 
@@ -5878,17 +5879,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
+name = "update"
+version = "2026.0.3-dev.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+ "ureq",
+]
+
+[[package]]
 name = "updater"
 version = "2026.0.3-dev.0"
 dependencies = [
  "gpui",
  "kernel",
  "logger",
- "serde",
- "serde_json",
- "sha2",
  "ui",
- "ureq",
+ "update",
 ]
 
 [[package]]
