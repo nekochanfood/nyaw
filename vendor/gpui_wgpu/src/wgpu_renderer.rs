@@ -20,10 +20,15 @@ const MAX_INSTANCE_BUFFER_SIZE: u64 = 256 * 1024 * 1024;
 
 const INSTANCE_TEXTURE_TEXEL_SIZE: u64 = 16;
 
+/// NYAW: the record decoders shared by both transports (word strides are checked in the tests).
+#[cfg(test)]
+const RECORD_SHADERS: &str = include_str!("shaders_records.wgsl");
+
 /// Shader variant for backends with storage buffer support: the shared shader
 /// logic plus the storage-buffer instance transport.
 const STORAGE_BUFFER_SHADERS: &str = concat!(
     include_str!("shaders.wgsl"),
+    include_str!("shaders_records.wgsl"),
     include_str!("shaders_storage.wgsl"),
 );
 
@@ -31,6 +36,7 @@ const STORAGE_BUFFER_SHADERS: &str = concat!(
 /// logic plus the texture-based instance transport.
 const WEBGL_SHADERS: &str = concat!(
     include_str!("shaders.wgsl"),
+    include_str!("shaders_records.wgsl"),
     include_str!("shaders_webgl.wgsl"),
 );
 
@@ -40,6 +46,7 @@ const WEBGL_SHADERS: &str = concat!(
 const SUBPIXEL_SHADERS: &str = concat!(
     "enable dual_source_blending;\n",
     include_str!("shaders.wgsl"),
+    include_str!("shaders_records.wgsl"),
     include_str!("shaders_storage.wgsl"),
     include_str!("shaders_subpixel.wgsl"),
 );
@@ -2311,6 +2318,34 @@ pub struct WgpuHeadlessRenderer {
     core: WgpuRendererCore,
     render_target: Option<HeadlessRenderTarget>,
     observed_error_generation: u64,
+    /// NYAW: clear to transparent and blend premultiplied ([`Self::new_transparent`]).
+    transparent: bool,
+    /// NYAW: the asynchronous readback ([`Self::render_and_read_back`]).
+    readback: Option<Readback>,
+}
+
+/// NYAW: two readback buffers, the slot whose copy was submitted and not yet read, and the image last returned.
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+struct Readback {
+    buffers: [wgpu::Buffer; 2],
+    width: u32,
+    height: u32,
+    padded_bytes_per_row: u32,
+    pending: Option<PendingReadback>,
+    last: Option<image::RgbaImage>,
+}
+
+#[cfg(all(
+    not(target_family = "wasm"),
+    any(test, feature = "bench-support", feature = "test-support")
+))]
+struct PendingReadback {
+    slot: usize,
+    submission: wgpu::SubmissionIndex,
+    mapped: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
 }
 
 #[cfg(all(
@@ -2319,6 +2354,16 @@ pub struct WgpuHeadlessRenderer {
 ))]
 impl WgpuHeadlessRenderer {
     pub fn new() -> anyhow::Result<Self> {
+        Self::with_transparency(false)
+    }
+
+    /// NYAW: a renderer for a transparent window: it clears to transparent black and returns
+    /// premultiplied-alpha pixels (as the Windows renderer does for `WindowBackgroundAppearance::Transparent`).
+    pub fn new_transparent() -> anyhow::Result<Self> {
+        Self::with_transparency(true)
+    }
+
+    fn with_transparency(transparent: bool) -> anyhow::Result<Self> {
         let (context, target_format) = WgpuContext::new_headless()?;
         // The device may be shared with earlier renderers; observe only errors raised from
         // here on, including any while this renderer builds its pipelines.
@@ -2328,7 +2373,11 @@ impl WgpuHeadlessRenderer {
             &context,
             atlas,
             target_format,
-            wgpu::CompositeAlphaMode::Opaque,
+            if transparent {
+                wgpu::CompositeAlphaMode::PreMultiplied
+            } else {
+                wgpu::CompositeAlphaMode::Opaque
+            },
         );
 
         Ok(Self {
@@ -2336,7 +2385,186 @@ impl WgpuHeadlessRenderer {
             core,
             render_target: None,
             observed_error_generation,
+            transparent,
+            readback: None,
         })
+    }
+
+    /// NYAW: renders `scene` and queues its readback without waiting for the GPU. Returns the readback
+    /// queued by the previous call (or, if none, the image last returned); only the very first call waits.
+    /// The image rendered now is returned by the next call, or by [`Self::collect_readback`].
+    pub fn render_and_read_back(
+        &mut self,
+        scene: &Scene,
+        size: Size<DevicePixels>,
+    ) -> anyhow::Result<image::RgbaImage> {
+        self.render(scene, size)?;
+        let (width, height) = {
+            let target = self
+                .render_target
+                .as_ref()
+                .context("Headless render target was not created")?;
+            (target.texture.width(), target.texture.height())
+        };
+        if self
+            .readback
+            .as_ref()
+            .is_none_or(|rb| (rb.width, rb.height) != (width, height))
+        {
+            self.readback = Some(self.create_readback(width, height)?);
+        }
+        let rb = self.readback.as_ref().context("readback missing")?;
+        let slot = match &rb.pending {
+            Some(pending) if pending.slot == 0 => 1,
+            _ => 0,
+        };
+        let queued = self.queue_readback(slot)?;
+        let rb = self.readback.as_mut().context("readback missing")?;
+        if let Some(previous) = rb.pending.replace(queued) {
+            return self.finish_readback(previous);
+        }
+        if let Some(last) = &rb.last {
+            return Ok(last.clone());
+        }
+        let current = rb.pending.take().context("no readback pending")?;
+        self.finish_readback(current)
+    }
+
+    /// NYAW: receives the readback queued by the last [`Self::render_and_read_back`] without rendering.
+    /// Fails if none is pending.
+    pub fn collect_readback(&mut self) -> anyhow::Result<image::RgbaImage> {
+        let pending = self
+            .readback
+            .as_mut()
+            .and_then(|rb| rb.pending.take())
+            .context("no readback pending")?;
+        self.finish_readback(pending)
+    }
+
+    fn create_readback(&self, width: u32, height: u32) -> anyhow::Result<Readback> {
+        let padded_bytes_per_row = width
+            .checked_mul(4)
+            .and_then(|row| row.checked_next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT))
+            .context("Headless readback row size overflowed")?;
+        let size = u64::from(padded_bytes_per_row) * u64::from(height);
+        anyhow::ensure!(
+            size <= self.core.resources.device.limits().max_buffer_size,
+            "Headless readback buffer size {size} exceeds maximum buffer size"
+        );
+        let buffer = || {
+            self.core
+                .resources
+                .device
+                .create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("headless_async_readback_buffer"),
+                    size,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                })
+        };
+        Ok(Readback {
+            buffers: [buffer(), buffer()],
+            width,
+            height,
+            padded_bytes_per_row,
+            pending: None,
+            last: None,
+        })
+    }
+
+    /// Copies the render target into readback buffer `slot`, submits it and starts mapping it.
+    fn queue_readback(&mut self, slot: usize) -> anyhow::Result<PendingReadback> {
+        let target = self
+            .render_target
+            .as_ref()
+            .context("Headless render target was not created")?;
+        let rb = self.readback.as_ref().context("readback missing")?;
+        let buffer = &rb.buffers[slot];
+        let resources = &self.core.resources;
+        let mut encoder = resources
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("headless_async_readback_encoder"),
+            });
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: &target.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(rb.padded_bytes_per_row),
+                    rows_per_image: Some(rb.height),
+                },
+            },
+            wgpu::Extent3d {
+                width: rb.width,
+                height: rb.height,
+                depth_or_array_layers: 1,
+            },
+        );
+        let submission = resources.queue.submit(std::iter::once(encoder.finish()));
+        let (sender, mapped) = std::sync::mpsc::channel();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
+            sender.send(result).ok();
+        });
+        // Let the GPU start on it now; the result is waited for on the next call.
+        let _ = resources.device.poll(wgpu::PollType::Poll);
+        Ok(PendingReadback {
+            slot,
+            submission,
+            mapped,
+        })
+    }
+
+    /// Waits for `pending` (normally finished by now), reads it and records it as the last image.
+    fn finish_readback(&mut self, pending: PendingReadback) -> anyhow::Result<image::RgbaImage> {
+        let result = match pending.mapped.try_recv() {
+            Ok(result) => result,
+            Err(_) => {
+                self.core
+                    .resources
+                    .device
+                    .poll(wgpu::PollType::Wait {
+                        submission_index: Some(pending.submission),
+                        timeout: Some(std::time::Duration::from_secs(30)),
+                    })
+                    .map_err(|error| anyhow::anyhow!("Failed to wait for headless readback: {error}"))?;
+                pending
+                    .mapped
+                    .recv_timeout(std::time::Duration::from_secs(30))
+                    .context("Failed to receive headless mapping result")?
+            }
+        };
+        result.map_err(|error| anyhow::anyhow!("Failed to map headless readback buffer: {error}"))?;
+        self.check_gpu_errors()?;
+        let rb = self.readback.as_mut().context("readback missing")?;
+        let buffer = &rb.buffers[pending.slot];
+        let bytes_per_row = rb.width as usize * 4;
+        let mut pixels = Vec::with_capacity(bytes_per_row * rb.height as usize);
+        {
+            let mapped = buffer.slice(..).get_mapped_range();
+            for row in mapped
+                .chunks_exact(rb.padded_bytes_per_row as usize)
+                .take(rb.height as usize)
+            {
+                pixels.extend_from_slice(&row[..bytes_per_row]);
+            }
+        }
+        buffer.unmap();
+        if self.core.target_format == wgpu::TextureFormat::Bgra8Unorm {
+            for pixel in pixels.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
+        }
+        let image = image::RgbaImage::from_raw(rb.width, rb.height, pixels)
+            .context("Failed to create image from headless pixel data")?;
+        rb.last = Some(image.clone());
+        Ok(image)
     }
 
     fn ensure_render_target(&mut self, size: Size<DevicePixels>) -> anyhow::Result<()> {
@@ -2405,8 +2633,14 @@ impl WgpuHeadlessRenderer {
             .ok_or_else(|| anyhow::anyhow!("Headless render target was not created"))?
             .view
             .clone();
+        // NYAW: a transparent renderer clears to transparent and blends premultiplied.
+        let clear = if self.transparent {
+            wgpu::Color::TRANSPARENT
+        } else {
+            wgpu::Color::BLACK
+        };
         self.core
-            .render_frame(scene, &view, size, false, wgpu::Color::BLACK)?;
+            .render_frame(scene, &view, size, self.transparent, clear)?;
         Ok(())
     }
 
@@ -2645,11 +2879,13 @@ mod tests {
             order: 0,
             border_style: BorderStyle::Solid,
             bounds,
-            content_mask: ContentMask { bounds },
+            content_mask: ContentMask::from_bounds(bounds),
             background: color.into(),
             border_color: color,
             corner_radii: Corners::default(),
             border_widths: Edges::default(),
+            corner_exponent: 0.0,
+            transformation: gpui::TransformationMatrix::unit(),
         }
     }
 
@@ -2797,20 +3033,37 @@ mod tests {
             .expect("shader should validate");
     }
 
+    /// NYAW: the word strides of `shaders_records.wgsl` (both transports decode records word by word).
     #[test]
-    fn webgl_record_sizes_match_shader_word_strides() {
-        assert_eq!(std::mem::size_of::<Quad>(), 40 * 4);
-        assert_eq!(std::mem::size_of::<Shadow>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), 26 * 4);
-        assert_eq!(std::mem::size_of::<PathSprite>(), 4 * 4);
-        assert_eq!(std::mem::size_of::<Underline>(), 16 * 4);
-        assert_eq!(std::mem::size_of::<MonochromeSprite>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<SubpixelSprite>(), 28 * 4);
-        assert_eq!(std::mem::size_of::<PolychromeSprite>(), 24 * 4);
+    fn record_sizes_match_shader_word_strides() {
+        let words = |name: &str| -> usize {
+            let line = RECORD_SHADERS
+                .lines()
+                .find(|l| l.starts_with(&format!("const {name}: u32 = ")))
+                .unwrap_or_else(|| panic!("{name} missing"));
+            line.split('=').nth(1).unwrap().trim().trim_end_matches("u;").parse().unwrap()
+        };
+        assert_eq!(std::mem::size_of::<Quad>(), words("QUAD_WORDS") * 4);
+        assert_eq!(std::mem::size_of::<Shadow>(), words("SHADOW_WORDS") * 4);
+        assert_eq!(std::mem::size_of::<PathRasterizationVertex>(), words("PATH_VERTEX_WORDS") * 4);
+        assert_eq!(std::mem::size_of::<PathSprite>(), words("PATH_SPRITE_WORDS") * 4);
+        assert_eq!(std::mem::size_of::<Underline>(), words("UNDERLINE_WORDS") * 4);
+        assert_eq!(std::mem::size_of::<MonochromeSprite>(), words("MONO_SPRITE_WORDS") * 4);
+        assert_eq!(std::mem::size_of::<SubpixelSprite>(), words("MONO_SPRITE_WORDS") * 4);
+        assert_eq!(std::mem::size_of::<PolychromeSprite>(), words("POLY_SPRITE_WORDS") * 4);
+        assert_eq!(
+            std::mem::offset_of!(MonochromeSprite, content_mask),
+            words("MONO_SPRITE_MASK_OFFSET") * 4
+        );
+        assert_eq!(
+            std::mem::offset_of!(SubpixelSprite, content_mask),
+            words("MONO_SPRITE_MASK_OFFSET") * 4
+        );
     }
 
+    /// NYAW: the words `load_quad` reads, in order (`shaders_records.wgsl`).
     #[test]
-    fn webgl_quad_layout_matches_fixed_decoder() {
+    fn quad_layout_matches_record_decoder() {
         let quad = Quad {
             order: 41,
             border_style: BorderStyle::Dashed,
@@ -2824,8 +3077,8 @@ mod tests {
                     height: 4.0.into(),
                 },
             },
-            content_mask: ContentMask {
-                bounds: Bounds {
+            content_mask: ContentMask::rounded(
+                Bounds {
                     origin: Point {
                         x: 5.0.into(),
                         y: 6.0.into(),
@@ -2835,7 +3088,24 @@ mod tests {
                         height: 8.0.into(),
                     },
                 },
-            },
+                Bounds {
+                    origin: Point {
+                        x: 50.0.into(),
+                        y: 51.0.into(),
+                    },
+                    size: Size {
+                        width: 52.0.into(),
+                        height: 53.0.into(),
+                    },
+                },
+                Corners {
+                    top_left: 54.0.into(),
+                    top_right: 55.0.into(),
+                    bottom_right: 56.0.into(),
+                    bottom_left: 57.0.into(),
+                },
+                58.0,
+            ),
             background: linear_gradient(
                 11.0,
                 linear_color_stop(
@@ -2876,6 +3146,11 @@ mod tests {
                 bottom: 32.0.into(),
                 left: 33.0.into(),
             },
+            corner_exponent: 34.0,
+            transformation: gpui::TransformationMatrix {
+                rotation_scale: [[35.0, 36.0], [37.0, 38.0]],
+                translation: [39.0, 40.0],
+            },
         };
 
         let bytes = unsafe { WgpuRendererCore::instance_bytes(std::slice::from_ref(&quad)) };
@@ -2893,6 +3168,15 @@ mod tests {
                 6.0_f32.to_bits(),
                 7.0_f32.to_bits(),
                 8.0_f32.to_bits(),
+                50.0_f32.to_bits(),
+                51.0_f32.to_bits(),
+                52.0_f32.to_bits(),
+                53.0_f32.to_bits(),
+                54.0_f32.to_bits(),
+                55.0_f32.to_bits(),
+                56.0_f32.to_bits(),
+                57.0_f32.to_bits(),
+                58.0_f32.to_bits(),
                 1,
                 1,
                 0,
@@ -2923,7 +3207,189 @@ mod tests {
                 31.0_f32.to_bits(),
                 32.0_f32.to_bits(),
                 33.0_f32.to_bits(),
+                34.0_f32.to_bits(),
+                35.0_f32.to_bits(),
+                36.0_f32.to_bits(),
+                37.0_f32.to_bits(),
+                38.0_f32.to_bits(),
+                39.0_f32.to_bits(),
+                40.0_f32.to_bits(),
             ]
         );
+    }
+
+    // ---- NYAW: the vendor/gpui scene extensions, rendered on the real GPU ----
+
+    #[cfg(target_os = "linux")]
+    const CLEAR: [u8; 4] = [0, 0, 0, 0];
+
+    #[cfg(target_os = "linux")]
+    fn bounds(x: f32, y: f32, width: f32, height: f32) -> Bounds<gpui::ScaledPixels> {
+        Bounds {
+            origin: Point {
+                x: x.into(),
+                y: y.into(),
+            },
+            size: Size {
+                width: width.into(),
+                height: height.into(),
+            },
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn radii(r: f32) -> Corners<gpui::ScaledPixels> {
+        Corners {
+            top_left: r.into(),
+            top_right: r.into(),
+            bottom_right: r.into(),
+            bottom_left: r.into(),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn render_transparent(primitives: Vec<gpui::Primitive>, width: i32, height: i32) -> anyhow::Result<image::RgbaImage> {
+        let mut renderer = WgpuHeadlessRenderer::new_transparent()?;
+        let mut scene = Scene::default();
+        for primitive in primitives {
+            scene.insert_primitive(primitive);
+        }
+        scene.finish();
+        renderer.render_scene_to_image(&scene, device_size(width, height))
+    }
+
+    /// A transparent renderer leaves untouched pixels transparent and returns premultiplied colors.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn transparent_renderer_returns_premultiplied_pixels() -> anyhow::Result<()> {
+        let half_red = Hsla { a: 0.5, ..gpui::red() };
+        let image = render_transparent(vec![solid_quad(0.0, 0.0, 8.0, 8.0, half_red).into()], 16, 8)?;
+        assert_pixel(&image, 4, 4, [128, 0, 0, 128]);
+        assert_pixel(&image, 12, 4, CLEAR);
+        Ok(())
+    }
+
+    /// The rounded part of a content mask cuts the corners off whatever it clips (quads and underlines).
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rounded_content_mask_clips_the_corners() -> anyhow::Result<()> {
+        let mask = ContentMask::rounded(bounds(0.0, 0.0, 40.0, 40.0), bounds(0.0, 0.0, 40.0, 40.0), radii(20.0), 0.0);
+        let quad = Quad {
+            content_mask: mask,
+            ..solid_quad(0.0, 0.0, 40.0, 20.0, gpui::red())
+        };
+        let underline = Underline {
+            order: 0,
+            pad: 0,
+            bounds: bounds(0.0, 30.0, 40.0, 10.0),
+            content_mask: mask,
+            color: gpui::blue(),
+            thickness: 10.0.into(),
+            wavy: false.into(),
+        };
+        let image = render_transparent(vec![quad.into(), underline.into()], 40, 40)?;
+        assert_pixel(&image, 1, 1, CLEAR);
+        assert_pixel(&image, 38, 1, CLEAR);
+        assert_pixel(&image, 20, 5, RED);
+        assert_pixel(&image, 1, 38, CLEAR);
+        assert_pixel(&image, 20, 35, BLUE);
+        Ok(())
+    }
+
+    /// A superellipse corner (exponent 4, a squircle) keeps pixels a circular corner of the same radius drops.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn superellipse_corners_are_squarer_than_circles() -> anyhow::Result<()> {
+        let quad = |exponent: f32| Quad {
+            corner_radii: radii(20.0),
+            corner_exponent: exponent,
+            ..solid_quad(0.0, 0.0, 40.0, 40.0, gpui::red())
+        };
+        let circle = render_transparent(vec![quad(0.0).into()], 40, 40)?;
+        let squircle = render_transparent(vec![quad(4.0).into()], 40, 40)?;
+        assert_pixel(&circle, 4, 4, CLEAR);
+        assert_pixel(&squircle, 4, 4, RED);
+        assert_pixel(&circle, 20, 20, RED);
+        assert_pixel(&squircle, 0, 0, CLEAR);
+        Ok(())
+    }
+
+    /// A quad's transformation (`Window::with_rotation`) moves where it is drawn; its shape follows.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn rotated_quad_is_drawn_rotated() -> anyhow::Result<()> {
+        let center = Point {
+            x: gpui::ScaledPixels(50.0),
+            y: gpui::ScaledPixels(50.0),
+        };
+        let transformation = gpui::TransformationMatrix::unit()
+            .translate(center)
+            .rotate(gpui::Radians(std::f32::consts::FRAC_PI_2))
+            .translate(Point {
+                x: gpui::ScaledPixels(-50.0),
+                y: gpui::ScaledPixels(-50.0),
+            });
+        let mut quad = solid_quad(20.0, 40.0, 60.0, 20.0, gpui::red());
+        quad.content_mask = ContentMask::from_bounds(bounds(0.0, 0.0, 100.0, 100.0));
+        quad.transformation = transformation;
+        let image = render_transparent(vec![quad.into()], 100, 100)?;
+        assert_pixel(&image, 50, 25, RED);
+        assert_pixel(&image, 50, 75, RED);
+        assert_pixel(&image, 25, 50, CLEAR);
+        assert_pixel(&image, 75, 50, CLEAR);
+        Ok(())
+    }
+
+    /// Shadows have the most reshuffled record (rounded mask, exponent, transformation): it still decodes.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn shadow_record_decodes() -> anyhow::Result<()> {
+        let shadow = Shadow {
+            order: 0,
+            blur_radius: 0.0.into(),
+            bounds: bounds(10.0, 10.0, 20.0, 20.0),
+            corner_radii: radii(0.0),
+            content_mask: ContentMask::from_bounds(bounds(0.0, 0.0, 40.0, 40.0)),
+            color: gpui::blue(),
+            element_bounds: bounds(10.0, 10.0, 20.0, 20.0),
+            element_corner_radii: radii(0.0),
+            inset: 0,
+            corner_exponent: 0.0,
+            transformation: gpui::TransformationMatrix::unit(),
+        };
+        let image = render_transparent(vec![shadow.into()], 40, 40)?;
+        assert_pixel(&image, 20, 20, BLUE);
+        assert_pixel(&image, 5, 5, CLEAR);
+        assert_pixel(&image, 35, 35, CLEAR);
+        Ok(())
+    }
+
+    /// The asynchronous readback returns the previous frame's image; `collect_readback` the current one.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn async_readback_is_one_frame_behind() -> anyhow::Result<()> {
+        let mut renderer = WgpuHeadlessRenderer::new_transparent()?;
+        let frame = |color| {
+            let mut scene = Scene::default();
+            scene.insert_primitive(solid_quad(0.0, 0.0, 8.0, 8.0, color));
+            scene.finish();
+            scene
+        };
+        // Nothing earlier to return: the first call waits for its own frame.
+        let image = renderer.render_and_read_back(&frame(gpui::red()), device_size(8, 8))?;
+        assert_pixel(&image, 4, 4, RED);
+        let image = renderer.render_and_read_back(&frame(gpui::blue()), device_size(8, 8))?;
+        assert_pixel(&image, 4, 4, RED);
+        let image = renderer.collect_readback()?;
+        assert_pixel(&image, 4, 4, BLUE);
+        assert!(renderer.collect_readback().is_err());
+        // Nothing pending: the image last returned.
+        let image = renderer.render_and_read_back(&frame(gpui::red()), device_size(8, 8))?;
+        assert_pixel(&image, 4, 4, BLUE);
+        // A new size starts over.
+        let image = renderer.render_and_read_back(&frame(gpui::red()), device_size(13, 7))?;
+        assert_eq!(image.dimensions(), (13, 7));
+        assert_pixel(&image, 4, 4, RED);
+        Ok(())
     }
 }

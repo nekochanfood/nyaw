@@ -1204,7 +1204,8 @@ fn check_is_known_emoji_font(postscript_name: &str) -> bool {
     postscript_name == "NotoColorEmoji"
 }
 
-#[cfg(test)]
+// NYAW: these tests read fonts from the Zed repository (assets/fonts), which is not vendored.
+#[cfg(all(test, any()))]
 mod tests {
     use super::*;
     #[cfg(feature = "test-support")]
