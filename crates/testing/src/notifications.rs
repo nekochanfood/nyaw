@@ -126,7 +126,8 @@ mod tests {
             let at = cx.debug_bounds(id).unwrap().center();
             cx.simulate_click(at, Modifiers::none());
             cx.run_until_parked();
-            let sent = cx.update(|_, cx| std::mem::take(&mut cx.default_global::<PanelControl>().requests));
+            let sent = cx
+                .update(|_, cx| std::mem::take(&mut cx.default_global::<PanelControl>().requests));
             assert_eq!(sent.len(), n, "{id}");
             for c in sent {
                 let Request::SendNotification(t) = c else {

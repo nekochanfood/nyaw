@@ -67,9 +67,7 @@ impl Screen {
                     );
                     cx.default_global::<PanelControl>().spawns.push(spec);
                 }
-                None if m.controls.raise => {
-                    ui::request(Request::Media(media::Command::Raise), cx)
-                }
+                None if m.controls.raise => ui::request(Request::Media(media::Command::Raise), cx),
                 None => {}
             }
         }

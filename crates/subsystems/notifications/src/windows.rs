@@ -159,7 +159,9 @@ impl Backend for Listener {
 
     fn activate(&mut self, _: u32, app: &str, plan: &Plan) -> bool {
         let done = match (self.activator(app), plan) {
-            (Some(clsid), Plan::Invoke(args)) => invoke(clsid, app, args).map_err(|e| e.to_string()),
+            (Some(clsid), Plan::Invoke(args)) => {
+                invoke(clsid, app, args).map_err(|e| e.to_string())
+            }
             (Some(clsid), Plan::Launch) => invoke(clsid, app, "").map_err(|e| e.to_string()),
             // アクティベーターを持たないアプリは、スタートメニューから起動するのと同じく開くだけ。
             (None, Plan::Launch) => desktop::launch(app).map_err(|e| e.to_string()),
