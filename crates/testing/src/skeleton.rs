@@ -4,25 +4,25 @@ use kernel::ControllerState;
 use kernel::subsystems::input::{HandMetrics, HandTuning, PRESS};
 use kernel::vr::{Facing, FingerTracking, HandSkeleton, JOINT_COUNT, PALM, TIPS, joint_parent};
 
-/// 親指の先とほかの指の先がこれより近ければ、つまんでいるとみなす（m）。画面の指ごとの表示だけに使う
-/// （操作の判定は入力層の [`HandTuning`]）。
-// ponytail: しきい値 1 つでヒステリシスが無い。境目で点滅して困るなら、離すしきい値を別に持つ。
+/// 親指先端と他の指先端がこの距離未満であればピンチとみなす（m）。画面上の指別表示にのみ使用する
+/// （操作判定は入力層の [`HandTuning`] が担当）。
+// ponytail: しきい値が単一でヒステリシスなし。境界でのちらつきが問題なら、リリース用しきい値を別途設ける。
 pub const PINCH_DISTANCE: f32 = 0.02;
-/// 手の図に収める範囲（手のひらを中心にした一辺、m）。
+/// 手の描画範囲（手のひら中心の一辺、m）。
 const VIEW_M: f32 = 0.25;
-/// 関節のギズモの軸の長さ（m）。
+/// 関節ギズモの軸の長さ（m）。
 const AXIS_M: f32 = 0.012;
 const HAND_PX: f32 = 360.0;
-/// 画面の大きさ（m）と解像度（px）。手の図 2 つと判定の表示が入る。
+/// 画面のサイズ（m）と解像度（px）。手の描画 2 つと判定表示を収容する。
 pub const SKELETON_SIZE: Vec2 = Vec2::new(1.1, 1.08);
 pub const SKELETON_PX: (u32, u32) = (1100, 1080);
-/// 調整の画面の大きさ（m）と解像度（px）。
+/// チューニング画面のサイズ（m）と解像度（px）。
 pub const TUNING_SIZE: Vec2 = Vec2::new(0.8, 0.98);
 pub const TUNING_PX: (u32, u32) = (800, 980);
-/// ギズモの軸の色（X 赤・Y 緑・Z 青）。
+/// ギズモの軸色（X: 赤、Y: 緑、Z: 青）。
 const AXIS_COLORS: [u32; 3] = [0xe5484dff, 0x30a46cff, 0x3e63ddff];
 
-/// 親指とつまむ指（人差し指・中指・薬指・小指）の名前のキーと、手ごとの表示の id。
+/// 親指とピンチ対象の指（人差し指・中指・薬指・小指）の i18n キーと、手別の表示 ID。
 const FINGERS: [(&str, [&str; 2]); 4] = [
     ("skeleton.index", ["pinch-left-index", "pinch-right-index"]),
     (
@@ -36,19 +36,19 @@ const FINGERS: [(&str, [&str; 2]); 4] = [
     ),
 ];
 
-/// 手ごとの判定の表示の id（入力の元・クリック・掴む・ショートカット）。
+/// 手別の判定表示 ID（入力ソース・クリック・グラブ・ショートカット）。
 const SOURCE_IDS: [&str; 2] = ["input-source-left", "input-source-right"];
 const CLICK_IDS: [&str; 2] = ["hand-click-left", "hand-click-right"];
 const GRAB_IDS: [&str; 2] = ["hand-grab-left", "hand-grab-right"];
 const SHORTCUT_IDS: [&str; 2] = ["hand-shortcut-left", "hand-shortcut-right"];
 
-/// 親指の先とほかの指の先（[`TIPS`] の 1〜4 番目）がつまんでいるか。
+/// 親指先端と他の指先端（[`TIPS`] の 1〜4 番目）がピンチ状態かを判定する。
 pub fn pinches(skeleton: &HandSkeleton) -> [bool; 4] {
     std::array::from_fn(|i| skeleton.pinch_distance(TIPS[i + 1]) < PINCH_DISTANCE)
 }
 
-/// 光らせる指（親指〜小指）。骨格だけで操作している手は、効いている操作の指（クリック = 親指と人差し指、
-/// 掴む = 中指・薬指・小指、ショートカット = 親指と小指）。それ以外はつまんでいる指と親指。
+/// ハイライトする指（親指〜小指）。骨格のみで操作する手は、有効な操作に対応する指（クリック = 親指と人差し指、
+/// グラブ = 中指・薬指・小指、ショートカット = 親指と小指）。それ以外はピンチ中の指と親指。
 fn lit_fingers(skeleton: &HandSkeleton, state: Option<&ControllerState>) -> [bool; 5] {
     match state.filter(|c| c.metrics.is_some()) {
         Some(c) => [
@@ -65,7 +65,7 @@ fn lit_fingers(skeleton: &HandSkeleton, state: Option<&ControllerState>) -> [boo
     }
 }
 
-/// 関節が属する指（0 親指〜4 小指。手のひら・手首は無し）。
+/// 関節が属する指のインデックス（0: 親指〜4: 小指。手のひら・手首は None）。
 fn finger_of(joint: usize) -> Option<usize> {
     (joint >= 2).then(|| (joint - 1) / 5)
 }
@@ -78,14 +78,14 @@ fn hand_state(cx: &App, hand: Hand) -> Option<ControllerState> {
         .copied()
 }
 
-/// スケルタル入力を試す画面（`skeleton-test`）。左右の手（`skeleton-left` / `skeleton-right`）の関節を、
-/// 頭から見た向きで手のひらを中心に描く。関節ごとに向きのギズモ（X 赤・Y 緑・Z 青）、骨は親の関節との線。
-/// 手ごとに、操作の判定を出す: 入力の元（`input-source-*`。骨格だけの手・コントローラ・なし）、クリック・掴む・ショートカット
-/// （`hand-click-*` / `hand-grab-*` / `hand-shortcut-*`。効いている間光り、判定に使った強さを出す）、
-/// 手のひら / 手の甲（`facing-*`）、指ごとのつまみ（`pinch-{left,right}-{index,middle,ring,little}`）、
-/// ダッシュボードの開閉の回数（`double-press-count`。X ボタンの二回押しと、手の長押し）。しきい値は `hand-tuning` で開く [`HandTuningTest`] で変える。
-/// 骨格が取れないランタイム（novr・拡張の無い OpenXR）では手が出ない。
-/// 毎フレーム描き直す（[`ui::PanelState::live`]）。
+/// スケルタル入力のテスト画面（`skeleton-test`）。左右の手（`skeleton-left` / `skeleton-right`）の関節を、
+/// HMD 視点で手のひら中心に描画する。関節ごとに方向ギズモ（X: 赤、Y: 緑、Z: 青）、骨は親関節への線で表現する。
+/// 手ごとに操作判定を表示: 入力ソース（`input-source-*`: 骨格のみ / コントローラ / なし）、クリック / グラブ / ショートカット
+/// （`hand-click-*` / `hand-grab-*` / `hand-shortcut-*`: 有効中はハイライトし、判定に使用した強度を表示）、
+/// 手のひら / 手の甲の向き（`facing-*`）、指別ピンチ（`pinch-{left,right}-{index,middle,ring,little}`）、
+/// ダッシュボード開閉回数（`double-press-count`: X ボタンのダブルプレスおよび手の長押し）。しきい値は `hand-tuning` で開く [`HandTuningTest`] で調整する。
+/// 骨格データを取得できないランタイム（novr・拡張のない OpenXR）では手は表示されない。
+/// 毎フレーム再描画する（[`ui::PanelState::live`]）。
 pub struct SkeletonTest {
     panel: PanelId,
 }
@@ -101,7 +101,7 @@ impl SkeletonTest {
     }
 }
 
-/// 強さ（0〜1）を百分率の文字に。
+/// 強度（0〜1）をパーセント文字列に変換する。
 fn percent(v: f32) -> String {
     format!("{:.0}", v * 100.0)
 }
@@ -143,7 +143,7 @@ impl Render for SkeletonTest {
                     };
                     indicator(&theme, ids[side], label, on)
                 });
-            // 入力の元と、骨格の指の追跡の精度（完全なら、コントローラとして見えていても骨格で操作する）。
+            // 入力ソースと骨格のフィンガートラッキング精度（完全であれば、コントローラとして検出されていても骨格で操作する）。
             let tracking = i18n::t(
                 cx,
                 match skeleton.map(|s| s.tracking) {
@@ -167,7 +167,7 @@ impl Render for SkeletonTest {
                 ),
                 metrics.is_some(),
             );
-            // 強さは判定に使った値。押下は [`PRESS`]（60%）。コントローラ・手が無ければ状態だけ。
+            // 強度は判定に使用した値。押下しきい値は [`PRESS`]（60%）。コントローラ・手が存在しなければ状態のみ表示。
             let strength = |key: &str, v: Option<f32>, on: bool, id: &'static str| {
                 let v = v.map_or_else(|| "-".into(), percent);
                 indicator(
@@ -322,9 +322,9 @@ impl Render for SkeletonTest {
     }
 }
 
-/// 骨格だけの手の調整（`hand-tuning`）。スライダーを動かすとその場で効き、設定ファイルの `[hand]` に残る
-/// （`Setting::Hand`）。`tune-pinch`（クリックの距離）・`tune-little`（ショートカットの距離）・`tune-grip`（握りの角度）・
-/// `tune-palm`（手のひらを向ける角度）・`tune-smoothing`（レーザーの揺れの抑え）・`tune-click`（クリック時の鈍さ）・`tune-hold`（クリック中にポインタを止める範囲）、`tune-reset` で既定に戻す。
+/// 骨格のみの手入力のチューニング画面（`hand-tuning`）。スライダー操作が即座に反映され、設定ファイルの `[hand]` に永続化される
+/// （`Setting::Hand`）。`tune-pinch`（クリック距離）・`tune-little`（ショートカット距離）・`tune-grip`（グリップ角度）・
+/// `tune-palm`（手のひら判定角度）・`tune-smoothing`（レーザーブレ抑制）・`tune-click`（クリック時の安定化）・`tune-hold`（クリック中のポインタ固定範囲）。`tune-reset` でデフォルトに復帰する。
 pub struct HandTuningTest {}
 
 impl HandTuningTest {
@@ -337,7 +337,7 @@ impl Render for HandTuningTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
         let now = settings(cx).hand;
-        // 値と範囲から、文字・スライダー・書き換えを 1 つの項目にする。
+        // 値と範囲から、ラベル・スライダー・設定更新を 1 つの項目にまとめる。
         let item = |id: &'static str,
                     label: SharedString,
                     v: f32,
@@ -426,8 +426,8 @@ impl Render for HandTuningTest {
     }
 }
 
-/// 手のひらを `b` の中心に、頭（`hmd`）から見た向きで正射影して描く。骨・関節の点・関節ごとの向きのギズモ。
-/// 光らせる指（`lit`。親指〜小指）は `colors.1` で描く（ほかの骨は `colors.0`）。
+/// 手のひらを `b` の中心に、HMD（`hmd`）視点の正射影で描画する。骨・関節点・関節ごとの方向ギズモを表示。
+/// ハイライト対象の指（`lit`: 親指〜小指）は `colors.1` で描画し、他の骨は `colors.0` を使用する。
 fn paint_hand(
     b: Bounds<Pixels>,
     s: &HandSkeleton,
@@ -489,7 +489,7 @@ fn paint_hand(
 mod tests {
     use super::*;
 
-    /// 指先を親指の先に寄せた指だけがつまんでいる。
+    /// 指先を親指先端に近づけた指のみがピンチ状態になる。
     #[test]
     fn pinch_is_per_finger() {
         let mut s = HandSkeleton {
@@ -507,7 +507,7 @@ mod tests {
         assert_eq!(pinches(&s), [true, true, false, false]);
     }
 
-    /// 骨格だけの手では、効いている操作の指が光る（つまんでいる指ではなく）。
+    /// 骨格のみの手では、有効な操作に対応する指がハイライトされる（ピンチ中の指ではなく）。
     #[test]
     fn lit_fingers_follow_the_hand_actions() {
         let s = HandSkeleton {
@@ -534,7 +534,7 @@ mod tests {
             ..c
         };
         assert_eq!(lit_fingers(&s, Some(&c)), [true, false, false, false, true]);
-        // 骨格はあるがコントローラで操作している: つまんでいる指（関節がみな同じ点なので全部）。
+        // 骨格データはあるがコントローラで操作している場合: ピンチ中の指（全関節が同一位置のため全指）。
         assert_eq!(lit_fingers(&s, None), [true; 5]);
     }
 }

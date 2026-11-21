@@ -1,5 +1,5 @@
 //! SteamVR のアプリとしての登録（IVRApplications）: vrmanifest を書き出して登録し、SteamVR の起動と同時に開くかを切り替える。
-//! 開発版（debug ビルド）はアプリの名前を分け、リリース版の登録（起動する実行ファイル）に触らない。
+//! 開発版（debug ビルド）はアプリの名前を分離し、リリース版の登録（起動する実行ファイル）を変更しない。
 
 use std::ffi::CString;
 use std::path::{Path, PathBuf};
@@ -22,8 +22,8 @@ const APP_NAME: &str = if cfg!(debug_assertions) {
 
 pub(super) struct App {
     table: *const sys::VR_IVRApplications_FnTable,
-    /// SteamVR の起動と同時に開くか。毎フレーム読まれるので、問い合わせるのは接続時だけ。切り替えたら、入れた値を持つ
-    /// （SteamVR は切り替えた直後の `GetApplicationAutoLaunch` で前の値を返す。次の接続では新しい値が読める）。
+    /// SteamVR の起動と同時に起動するか。毎フレーム読み取られるため、問い合わせは接続時のみ。切り替え後は設定した値を保持する
+    /// （SteamVR は切り替え直後の `GetApplicationAutoLaunch` で前の値を返す。次の接続では新しい値が読み取れる）。
     auto_launch: bool,
 }
 
@@ -40,7 +40,7 @@ fn check(what: &str, e: sys::EVRApplicationError) -> Result<(), VrError> {
 }
 
 impl App {
-    /// 登録済みなら、この接続をそのアプリだと名乗る（手で起動しても SteamVR が起動しても、バインドが同じアプリに付く）。
+    /// 登録済みであれば、この接続をそのアプリとして識別させる（手動起動でも SteamVR 起動でも、バインドが同じアプリに紐付く）。
     /// SteamVR Input の manifest より前に呼ぶこと。
     pub fn init(table: *const sys::VR_IVRApplications_FnTable) -> Self {
         let t = unsafe { &*table };
@@ -65,7 +65,7 @@ impl App {
         self.auto_launch
     }
 
-    /// 入れるときは、この実行ファイルを起動する vrmanifest を書き出して登録し直してから入れる。切るときは登録を残す（名乗りを保つ）。
+    /// 有効化時は、この実行ファイルを起動する vrmanifest を書き出して再登録してから有効化する。無効化時は登録を残す（識別を維持する）。
     pub fn set_auto_launch(&mut self, on: bool) -> Result<(), VrError> {
         let t = unsafe { &*self.table };
         if on {
@@ -78,7 +78,7 @@ impl App {
         check("SetApplicationAutoLaunch", unsafe {
             f(t.SetApplicationAutoLaunch)(key().as_ptr().cast_mut(), on)
         })?;
-        // 読み直さない: 直後は前の値が返り、スイッチが動かなくなる。
+        // 再読み取りしない: 直後は前の値が返り、トグルが動作しなくなる。
         self.auto_launch = on;
         Ok(())
     }

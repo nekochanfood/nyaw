@@ -1,9 +1,9 @@
-//! Phosphor アイコンのコード生成。ワークスペースのソースで実際に使われているアイコンとウェイトだけを埋め込む。
-//! - アイコン: `icons::HEART` / `icons::{HEART, BELL}` と書かれた定数名（UPPER_SNAKE）。Phosphor に無い名前はビルドを落とす。
-//! - ウェイト: `Weight::Bold` など。`Weight::Regular` は常に入る。`Weight::ALL` と書けば全部入る。
+//! Phosphor アイコンのコード生成。ワークスペースのソースで実際に使用されているアイコンとウェイトのみを埋め込む。
+//! - アイコン: `icons::HEART` / `icons::{HEART, BELL}` と記述された定数名（UPPER_SNAKE）。Phosphor に存在しない名前はビルドエラーとする。
+//! - ウェイト: `Weight::Bold` 等。`Weight::Regular` は常に含まれる。`Weight::ALL` と記述すると全ウェイトが含まれる。
 //!
-//! データは icons/<weight>.tsv（vendor.mjs が @phosphor-icons/core から作る）。
-//! path の d は svgtypes で絶対座標の M / L / Q / C / Z にそろえる（相対・省略形・円弧は展開）。
+//! データは icons/<weight>.tsv（vendor.mjs が @phosphor-icons/core から生成）。
+//! path の d は svgtypes で絶対座標の M / L / Q / C / Z に正規化する（相対・省略形・円弧は展開）。
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -28,7 +28,7 @@ pub fn generate(out_dir: &Path) {
         scan_weights(&text, &mut weights);
     }
 
-    // weight -> name -> d のリスト
+    // weight → name → d のリスト（TSV から読み込んだパスデータ）
     let mut data: BTreeMap<&str, BTreeMap<String, Vec<String>>> = BTreeMap::new();
     for w in weights
         .iter()
@@ -61,7 +61,7 @@ pub fn generate(out_dir: &Path) {
             write!(out, "        {w}: &[").unwrap();
             if let Some(map) = data.get(w) {
                 let ds = map.get(&kebab).unwrap_or_else(|| {
-                    panic!("Phosphor に `{kebab}`（icons::{name}）が無い。綴りを確認する")
+                    panic!("Phosphor に `{kebab}`（icons::{name}）が存在しない。綴りを確認すること")
                 });
                 for d in ds {
                     out += &layer(d);
@@ -73,11 +73,11 @@ pub fn generate(out_dir: &Path) {
         all.push(name.as_str());
     }
     let list: Vec<String> = all.iter().map(|n| format!("&{n}")).collect();
-    writeln!(out, "    /// 実際に使われていて、ビルドに含まれるアイコン。\n    pub static ALL: &[&Icon] = &[{}];", list.join(", ")).unwrap();
+    writeln!(out, "    /// ソースから検出され、ビルドに含まれているアイコン。\n    pub static ALL: &[&Icon] = &[{}];", list.join(", ")).unwrap();
     let used: Vec<String> = weights.iter().map(|w| format!("{w:?}")).collect();
     writeln!(
         out,
-        "    /// ビルドに含まれるウェイト（小文字）。\n    pub const WEIGHTS: &[&str] = &[{}];",
+        "    /// ビルドに含まれているウェイト（小文字）。\n    pub const WEIGHTS: &[&str] = &[{}];",
         used.join(", ")
     )
     .unwrap();
@@ -96,7 +96,7 @@ fn collect(dir: &Path, files: &mut Vec<std::path::PathBuf>) {
                 collect(&p, files);
             }
         } else if name.ends_with(".rs")
-            // 生成側と、ウェイトの定義そのもの（全ウェイトの名前が出てくる）は数えない
+            // コード生成側と、ウェイト定義自体（全ウェイト名が出現する）はスキャン対象外
             && !matches!(&*name, "build.rs" | "build_icons.rs" | "icon.rs")
         {
             files.push(p);
@@ -110,7 +110,7 @@ fn is_const(c: char) -> bool {
 
 fn scan_names(text: &str, names: &mut BTreeSet<String>) {
     for (i, _) in text.match_indices("icons::") {
-        // `xicons::` のような別の識別子の末尾は除く
+        // `xicons::` のような別の識別子の末尾一致は除外
         if text[..i]
             .chars()
             .next_back()
@@ -128,7 +128,7 @@ fn scan_names(text: &str, names: &mut BTreeSet<String>) {
             if is_const(c) {
                 cur.push(c);
             } else {
-                // 先頭が大文字で、`ALL` / `WEIGHTS` 以外が定数名
+                // 先頭が大文字かつ `ALL` / `WEIGHTS` 以外をアイコン定数名とみなす
                 if cur.starts_with(|c: char| c.is_ascii_uppercase())
                     && cur != "ALL"
                     && cur != "WEIGHTS"
@@ -160,7 +160,7 @@ fn scan_weights(text: &str, weights: &mut BTreeSet<String>) {
     }
 }
 
-/// `~` 始まりは duotone の薄い面。
+/// `~` で始まるパスは duotone の薄い面を表す。
 fn layer(d: &str) -> String {
     let (opacity, d) = match d.strip_prefix('~') {
         Some(d) => ("0.2", d),

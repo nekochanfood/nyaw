@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_util::*;
 
-/// 最小化された窓の画面には「戻す」ボタンが出て、押すと同じ窓を映し直す（映し直しが最小化を戻す）。
+/// 最小化されたウィンドウの画面には「復元」ボタンが表示され、押下すると同一ウィンドウを再配信する（再配信が最小化を復元する）。
 #[gpui::test]
 fn mirror_offers_restore_when_its_window_is_minimized(cx: &mut TestAppContext) {
     let source = kernel::desktop::mock::source("Editor", SourceKind::Window);
@@ -29,7 +29,7 @@ fn mirror_offers_restore_when_its_window_is_minimized(cx: &mut TestAppContext) {
     );
 }
 
-/// 配信が終わってもパネルに再試行を出す。
+/// 配信が終了してもパネルに再試行ボタンを表示する。
 #[gpui::test]
 fn mirror_offers_retry_when_its_window_closes(cx: &mut TestAppContext) {
     let source = kernel::desktop::mock::source("Editor", SourceKind::Window);
@@ -101,7 +101,7 @@ fn reconnecting_updates_the_mirrored_window_and_stream(cx: &mut TestAppContext) 
     );
 }
 
-/// OS でウィンドウが最小化されても、ダッシュボード側ではしまわない（互いに連動しない）。
+/// OS 側でウィンドウが最小化されても、ダッシュボード側では格納しない（双方は連動しない）。
 #[gpui::test]
 fn os_minimizing_a_window_does_not_stash_it(cx: &mut TestAppContext) {
     let source = kernel::desktop::mock::source("Editor", SourceKind::Window);

@@ -1,8 +1,8 @@
 //! Windows の保存先・ランタイム検出・タイマー・GPU 設定。
 use std::path::PathBuf;
 
-/// OS のタイマーの精度を 1ms にする（プロセスが終わるまで有効）。Windows の既定は 15.6ms 刻みで、
-/// フレームループの「1ms 譲る」待ちが 1 刻みに丸められてフレームが伸びる。
+/// OS のタイマーの精度を 1ms に設定する（プロセス終了まで有効）。Windows の既定は 15.6ms 刻みで、
+/// フレームループの「1ms 譲る」待機が 1 刻みに丸められてフレームが延長される。
 pub fn precise_timers() {
     #[link(name = "winmm")]
     unsafe extern "system" {
@@ -24,7 +24,7 @@ pub fn ui_language() -> Option<&'static str> {
     primary_language(unsafe { GetUserDefaultUILanguage() })
 }
 
-/// 言語 ID（LANGID）の下位 10 ビットが言語（LANG_JAPANESE = 0x11、LANG_ENGLISH = 0x09）。地域は見ない。
+/// 言語 ID（LANGID）の下位 10 ビットが言語（LANG_JAPANESE = 0x11、LANG_ENGLISH = 0x09）。地域は参照しない。
 fn primary_language(langid: u16) -> Option<&'static str> {
     match langid & 0x3ff {
         0x11 => Some("ja"),
@@ -33,10 +33,10 @@ fn primary_language(langid: u16) -> Option<&'static str> {
     }
 }
 
-/// このプロセスの GPU スケジューリングの優先度を上げる（プロセスが終わるまで有効。D3D11 も Vulkan も対象）。
-/// 既定（通常）のままだと、ゲームが GPU を使い切っている間は小さな描画もゲームのフレームの後ろに並ばされ、
-/// 読み戻しの完了待ちが 1 回 100ms 近くになってフレームループごと止まる。
-/// REALTIME は管理者権限が要るので HIGH。成功したか返す。
+/// このプロセスの GPU スケジューリングの優先度を引き上げる（プロセス終了まで有効。D3D11 も Vulkan も対象）。
+/// 既定（通常）のままだと、ゲームが GPU を占有している間は小さな描画もゲームのフレームの後ろにキューイングされ、
+/// 読み戻しの完了待機が 1 回 100ms 近くになりフレームループごと停止する。
+/// REALTIME は管理者権限が必要なため HIGH を使用する。成功したか返す。
 pub fn high_gpu_priority() -> bool {
     const D3DKMT_SCHEDULINGPRIORITYCLASS_HIGH: i32 = 4;
     #[link(name = "gdi32")]
@@ -57,7 +57,7 @@ pub fn high_gpu_priority() -> bool {
 }
 
 /// コンソールを持たない（`windows` サブシステムの）プロセスに標準エラー出力の先を用意する。
-/// 端末から起動されていればその端末に、でなければ新しいコンソールウィンドウを開く。既にあれば何もしない。
+/// 端末から起動されていればその端末に、そうでなければ新しいコンソールウィンドウを作成する。既に存在すれば何も行わない。
 pub fn attach_console() {
     use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AllocConsole, AttachConsole};
     // SAFETY: 定数を渡すだけの Win32 API。失敗（既にコンソールがある等）は無視してよい。
@@ -68,7 +68,7 @@ pub fn attach_console() {
     }
 }
 
-/// エラーのダイアログを出し、閉じられるまで待つ（コンソールが無くても利用者に見える）。
+/// エラーのダイアログを表示し、閉じられるまで待機する（コンソールが無くても利用者に視認可能）。
 pub fn error_dialog(title: &str, text: &str) {
     use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
     use windows::core::HSTRING;
@@ -89,8 +89,8 @@ fn env_path(key: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// nyaw 自身の設定の保存先: `%LOCALAPPDATA%\nyaw`。開発版（debug ビルド）は `%LOCALAPPDATA%\nyaw-dev` に分け、
-/// 開発版で変えた設定や登録用のファイルが、インストールしたリリース版のものとぶつからないようにする。
+/// nyaw 自身の設定の保存先: `%LOCALAPPDATA%\nyaw`。開発版（debug ビルド）は `%LOCALAPPDATA%\nyaw-dev` に分離し、
+/// 開発版で変更した設定や登録用のファイルが、インストールしたリリース版のものと競合しないようにする。
 pub fn config_dir() -> Option<PathBuf> {
     let name = if cfg!(debug_assertions) {
         "nyaw-dev"
@@ -112,7 +112,7 @@ pub fn log_dir() -> Option<PathBuf> {
     Some(root.join("nyaw").join("logs"))
 }
 
-/// SteamVR はインストール時に `openvrpaths.vrpath` を書き出す。存在すれば OpenVR が使える。
+/// SteamVR はインストール時に `openvrpaths.vrpath` を書き出す。存在すれば OpenVR が利用可能。
 pub fn openvr_paths_file() -> Option<PathBuf> {
     let dir = env_path("LOCALAPPDATA")?;
     Some(dir.join("openvr").join("openvrpaths.vrpath")).filter(|p| p.exists())
@@ -134,7 +134,7 @@ fn parse_reg_value(out: &str) -> Option<PathBuf> {
 }
 
 /// HKLM\SOFTWARE\Khronos\OpenXR\1 の ActiveRuntime。
-// ponytail: reg.exe を呼ぶ（依存を足さない）。毎回プロセスを起こすので、頻繁に呼ぶなら winreg にする。
+// ponytail: reg.exe を呼び出す（依存を追加しない）。毎回プロセスを起動するため、頻繁に呼び出すなら winreg にする。
 fn active_runtime_from_registry() -> Option<PathBuf> {
     let out = std::process::Command::new("reg")
         .args([

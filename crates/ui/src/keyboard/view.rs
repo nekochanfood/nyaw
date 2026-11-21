@@ -16,15 +16,15 @@ use std::{sync::OnceLock, thread, time::Duration};
 
 pub(super) const KEY_UNIT: f32 = 64.;
 
-/// キーを押した音。押したキーの位置（パネルの中の点）から鳴らす。
+/// キー押下音。押下したキーの位置（パネル内座標）から再生する。
 const TAP_SOUND: &[u8] = include_bytes!("../../assets/keyboard/tap.wav");
 const ENTER_SOUND: &[u8] = include_bytes!("../../assets/keyboard/enter.wav");
 const BACKSPACE_SOUND: &[u8] = include_bytes!("../../assets/keyboard/backspace.wav");
 const SPACEBAR_SOUND: &[u8] = include_bytes!("../../assets/keyboard/spacebar.wav");
-/// 押すたびに音の高さを揺らす幅（速さの倍率 1 ± これ）。同じ音の繰り返しを機械的に聞こえさせない。
+/// 押下ごとのピッチ揺らぎ幅（再生速度倍率 1 ± この値）。同一音の反復が機械的に聞こえることを防ぐ。
 const PITCH_JITTER: f32 = 0.1;
 
-/// XKB のキー名ごとの音。Enter・Backspace・Space だけ専用で、ほかは共通。
+/// XKB キー名に対応する音素。Enter・Backspace・Space のみ専用音、他は共通音。
 fn key_sound(name: &str) -> &'static [u8] {
     match name {
         "RTRN" | "KPEN" => ENTER_SOUND,
@@ -34,7 +34,7 @@ fn key_sound(name: &str) -> &'static [u8] {
     }
 }
 
-/// 1 ± [`PITCH_JITTER`] の一様な乱数。乱数のクレートは使わず、標準のハッシュの乱数の鍵を使う。
+/// 1 ± [`PITCH_JITTER`] の範囲の一様乱数。乱数クレートを使用せず、標準ライブラリのハッシュ乱数シードを利用する。
 fn jittered_pitch() -> f32 {
     use std::hash::{BuildHasher, Hasher};
     let bits = std::collections::hash_map::RandomState::new()
@@ -88,37 +88,37 @@ impl KeyAppearance {
     }
 }
 
-/// 配列のデータベース（プロセスに 1 つ）。読み込みは XKB の数百のファイルをディスクから読むので、キーボードを初めて
-/// 出すときに始めると、ディスクが混んでいる間はキーの無いカードが数秒出たままになる。起動時に [`preload`] で読ませておく。
+/// キー配列データベース（プロセスに 1 つ）。読み込みは XKB の数百ファイルのディスク I/O を伴うため、キーボード初回表示時に
+/// 開始するとディスク負荷が高い間はキーのないカードが数秒間表示される。起動時に [`preload`] で事前読み込みする。
 static DATABASE: OnceLock<Result<Database, String>> = OnceLock::new();
 
 fn database() -> &'static Result<Database, String> {
     DATABASE.get_or_init(|| Database::load().map_err(|e| e.to_string()))
 }
 
-/// 配列のデータベースを裏のスレッドで読み始める（UI の起動時）。
+/// キー配列データベースをバックグラウンドスレッドで読み込み開始する（UI 起動時）。
 pub(crate) fn preload() {
     thread::spawn(|| {
         database();
     });
 }
 
-/// どの画面にも載せられるキーボード。配列は共有のデータベースから裏のスレッドで組み、入力先の決定は UI に任せる。
+/// 任意の画面に配置可能なキーボード。配列は共有データベースからバックグラウンドスレッドで構築し、入力先の決定は UI に委ねる。
 pub struct KeyboardView {
-    /// このキーボードが載っているパネル（キーの音を鳴らす）。
+    /// このキーボードが配置されているパネル（キー音の再生先）。
     panel: PanelId,
     pub target: PanelId,
-    /// 見本: キーは押せて音も鳴るが、打った文字はどこにも送らない（[`Self::preview`]）。
+    /// プレビューモード: キー押下と音再生は可能だが、入力文字はどこにも送出しない（[`Self::preview`]）。
     pub preview: bool,
-    /// キー 1u の大きさ（px。既定は実寸の [`KEY_UNIT`]）。隙間・角丸・文字もこれに比例する。
+    /// キー 1u のサイズ（px。既定値は実寸の [`KEY_UNIT`]）。隙間・角丸・文字サイズもこれに比例する。
     pub unit: f32,
     pub appearance: Option<KeyAppearance>,
     pub show_settings: bool,
     pub keyboard: Option<Keyboard>,
     pub layouts: Vec<Layout>,
-    /// 今の種類。全体の設定（`keyboard`）に従い、設定が変わると切り替わる。
+    /// 現在の種類。全体設定（`keyboard`）に従い、設定変更時に切り替わる。
     pub kind: KeyboardType,
-    /// 最後に見た全体の設定の種類（変わったときだけ [`Self::kind`] に写す）。
+    /// 最後に参照した全体設定の種類（変更時のみ [`Self::kind`] に反映する）。
     seen_kind: KeyboardType,
     pub automatic: bool,
     pub loading: bool,
@@ -177,8 +177,8 @@ impl KeyboardView {
         view
     }
 
-    /// 見本のキーボード: `panel` の中に置く。今の設定（種類・OS の配列・キーの音）に従い、キーは押せて音も鳴るが、
-    /// 打った文字はどこにも送らない。キーの大きさ（[`Self::unit`]）は、置く側（[`super::preview`]）が場所に合わせて決める。
+    /// プレビュー用キーボード: `panel` 内に配置する。現在の設定（種類・OS 配列・キー音）に従い、キー押下と音再生は可能だが
+    /// 入力文字は送出しない。キーサイズ（[`Self::unit`]）は配置側（[`super::preview`]）が表示領域に合わせて決定する。
     pub fn preview(panel: PanelId, cx: &mut Context<Self>) -> Self {
         Self {
             preview: true,
@@ -187,7 +187,7 @@ impl KeyboardView {
         }
     }
 
-    /// `layout` を裏のスレッドで組み、できたら（その間にほかの配列を頼んでいなければ）すぐ載せて描き直させる。
+    /// `layout` をバックグラウンドスレッドで構築し、完了時に（その間に他の配列を要求していなければ）即座に反映して再描画する。
     pub fn select_layout(&mut self, layout: Layout, cx: &mut Context<Self>) {
         self.generation += 1;
         self.requested = layout.clone();
@@ -209,7 +209,7 @@ impl KeyboardView {
         .detach();
     }
 
-    /// 頼んだ配列が組めた。後から別の配列を頼んだ・読み込みを待っていない（テストが直に載せた）なら捨てる。
+    /// 要求した配列の構築が完了した。後続の別配列要求が存在する、または読み込み待ちでない（テストが直接設定した）場合は破棄する。
     fn loaded(
         &mut self,
         generation: u64,
@@ -276,7 +276,7 @@ impl KeyboardView {
         }
     }
 
-    /// 配列が読めていて、キーを受け付けられる。見本は送る先が無いので、OS の配列が取れていなくても押せる。
+    /// 配列が読み込み済みでキー入力を受け付け可能。プレビューは送出先がないため、OS 配列が未取得でも押下可能。
     fn ready(&self) -> bool {
         let unmatched = self.automatic && self.settings.layout.is_none();
         !self.loading && self.error.is_none() && (self.preview || !unmatched)
@@ -301,7 +301,7 @@ impl KeyboardView {
         None
     }
 
-    /// 押していたキーを離した（離した所がキーの外でも）。キーリピートを止める。
+    /// 押下中のキーを解放する（解放位置がキー外でも有効）。キーリピートを停止する。
     fn release(&mut self, code: u16) {
         if self
             .repeating
@@ -322,8 +322,8 @@ impl KeyboardView {
         let toggle = self.keyboard.as_ref().is_some_and(|k| k.is_toggle(code));
         let ready = self.ready();
         let input = self.press(code, cx);
-        // Ctrl・Shift などのトグルは文字を生まない（押した状態になるだけ）が、押したことは音で返す。
-        // 鳴らすか・音量は全体の設定（`key_sound` / `key_sound_volume`）に従う。
+        // Ctrl・Shift 等のトグルキーは文字を生成しない（状態変更のみ）が、押下フィードバックとして音を再生する。
+        // 再生有無・音量は全体設定（`key_sound` / `key_sound_volume`）に従う。
         let settings = crate::settings(cx);
         if settings.key_sound && (input.is_some() || (toggle && ready)) {
             let play = kernel::PanelCommand::PlayAt {
@@ -335,7 +335,7 @@ impl KeyboardView {
             crate::command(self.panel, play, cx);
         }
         cx.notify();
-        // 見本は送らないので、押し続けても繰り返さない。
+        // プレビューは入力を送出しないため、長押ししてもリピートしない。
         let repeats = |i: &KeyboardInput| !toggle && !i.stroke.shortcut() && !i.stroke.composing;
         let Some(input) = input.filter(|i| !self.preview && repeats(i)) else {
             return;
@@ -423,7 +423,7 @@ impl Render for KeyboardView {
                     KeyboardType::Tenkeyless => ("keyboard-tkl", "keyboard.tkl"),
                     KeyboardType::Compact => ("keyboard-compact", "keyboard.compact"),
                 };
-                // 全体の設定を変える（フレームループが反映し、描き直しで [`Self::kind`] に写る）。
+                // 全体設定を変更する（フレームループが反映し、再描画時に [`Self::kind`] へ伝播する）。
                 components::button(&theme, id, i18n::t(cx, label), Variant::Default)
                     .selected(self.kind == kind)
                     .on_click(move |_, _, cx| crate::set(kernel::Setting::Keyboard(kind), cx))
@@ -528,10 +528,10 @@ impl Render for KeyboardView {
             root = root.child(div().child(i18n::t(cx, "keyboard.unmatched")));
         }
         if let Some(keyboard) = &self.keyboard {
-            // 見た目の値は実寸（[`KEY_UNIT`]）で決めてあるので、キーの大きさに比例させる。
+            // 見た目の値は実寸（[`KEY_UNIT`]）基準で定義されているため、キーサイズに比例させる。
             let unit = self.unit;
             let k = unit / KEY_UNIT;
-            // 既定の見た目は種類のもので、隙間には全体の設定のキーの間隔（`key_gap`）を掛ける。
+            // 既定の見た目はキーボード種類に基づき、隙間には全体設定のキー間隔（`key_gap`）倍率を適用する。
             let appearance = self
                 .appearance
                 .unwrap_or_else(|| {
@@ -549,8 +549,8 @@ impl Render for KeyboardView {
                 .flex_shrink_0()
                 .w(px(self.kind.width() * unit))
                 .h(px(self.kind.height() * unit))
-                // キーの文字はキーの大きさに合わせて決めてある（大きくするとはみ出す）。全域の文字の大きさ・太字化には
-                // 従わせず、キーごと大きくするのは UI スケールに任せる。
+                // キーの文字サイズはキーサイズに合わせて決定済み（拡大するとはみ出す）。全域のフォントサイズ・太字設定には
+                // 従わず、全体の拡大は UI スケールに委ねる。
                 .text_exact()
                 .children(keys.into_iter().flat_map(|key| {
                     let code = key.code;
@@ -617,9 +617,9 @@ impl Render for KeyboardView {
                     } else {
                         button
                     };
-                    // 押す判定はキーの見た目（隙間と角丸を除く）ではなく、隙間の半分まで含めたキーの升目全体で取る。
-                    // レーザーは手ブレするので、隙間や角に当たって押し損じないように。
-                    // ホバー音も升目で鳴らす（升目は隙間なく並ぶので、隙間のそばの手ブレで鳴り直さない）。
+                    // 押下判定はキーの見た目（隙間・角丸を除く）ではなく、隙間の半分を含むキーのセル全体で取る。
+                    // レーザーは手ブレするため、隙間や角への当たりによる押下失敗を防止する。
+                    // ホバー音もセル単位で鳴らす（セルは隙間なく並ぶため、隙間付近の手ブレで鳴り直さない）。
                     let hover: gpui::SharedString = format!("key-{}", key.name).into();
                     let cells = key.regions().into_iter().map(|(x, y, w, h)| {
                         let hover = hover.clone();
@@ -725,7 +725,7 @@ mod tests {
                 } else {
                     96.
                 };
-                // キーの升目（隙間を含む）。見た目は升目から種類の隙間を除いた所。
+                // キーのセル（隙間を含む）。見た目はセルから種類固有の隙間を除いた領域。
                 let expected = [
                     ("key-TLDE", 0., y, 64., 64.),
                     ("key-AC01", 112., y + 128., 64., 64.),
@@ -788,7 +788,7 @@ mod tests {
         assert_eq!(key_sound("AC01"), TAP_SOUND);
     }
 
-    /// キーを押すと、載っているパネルにそのキーの点から鳴らす要求を積む。
+    /// キー押下時に、配置先パネルに対して該当キーの位置から音を再生する要求を発行する。
     #[gpui::test]
     fn pressing_a_key_plays_its_sound_from_the_key(cx: &mut TestAppContext) {
         let db = Database::load().unwrap();
@@ -815,10 +815,10 @@ mod tests {
         assert_eq!(*sound, kernel::audio::Sound::Wav(SPACEBAR_SOUND));
         assert_eq!(*at, kernel::Vec2::new(f32::from(key.x), f32::from(key.y)));
         assert!((pitch - 1.).abs() <= PITCH_JITTER);
-        assert_eq!(*volume, 1., "既定の音量");
+        assert_eq!(*volume, 1., "既定音量");
     }
 
-    /// キーの音は全体の設定に従う: 音量はそのまま音に付き、オフなら鳴らさない（キーは押せる）。
+    /// キー音は全体設定に従う: 音量はそのまま適用され、オフ時は音を再生しない（キー押下は有効）。
     #[gpui::test]
     fn key_sound_follows_the_setting_and_its_volume(cx: &mut TestAppContext) {
         let db = Database::load().unwrap();
@@ -838,7 +838,7 @@ mod tests {
         cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
         cx.run_until_parked();
         let key = cx.debug_bounds("key-AC01").unwrap().center();
-        // 設定を変えてキーを押し、鳴らす要求を取り出す。
+        // 設定を変更してキーを押下し、音再生要求を取得する。
         fn press(
             cx: &mut gpui::VisualTestContext,
             key: gpui::Point<gpui::Pixels>,
@@ -861,11 +861,11 @@ mod tests {
             "{played:?}"
         );
         let played = press(cx, key, (false, 0.3));
-        assert!(played.is_empty(), "オフでは鳴らさない: {played:?}");
-        assert_eq!(sent.get(), 2, "鳴らさなくてもキーは届く");
+        assert!(played.is_empty(), "オフ時は再生しない: {played:?}");
+        assert_eq!(sent.get(), 2, "音を再生しなくてもキー入力は送出される");
     }
 
-    /// キーの間隔は全体の設定（`key_gap`）の倍率で、種類の既定の隙間に掛かる（0 でキーが接する）。
+    /// キー間隔は全体設定（`key_gap`）の倍率で種類の既定隙間に乗算される（0 でキー同士が接する）。
     #[gpui::test]
     fn the_key_gap_setting_scales_the_gap_between_keys(cx: &mut TestAppContext) {
         let db = Database::load().unwrap();
@@ -887,7 +887,7 @@ mod tests {
         }
     }
 
-    /// 見本は実物と同じ並びを `unit` に比例して縮めて描き、押すと音は鳴るが、文字はどこにも送らず、繰り返しもしない。
+    /// プレビューは実物と同じ配列を `unit` に比例して縮小描画し、押下時に音は再生するが入力文字は送出せず、リピートもしない。
     #[gpui::test]
     fn a_preview_is_scaled_plays_sounds_and_sends_nothing(cx: &mut TestAppContext) {
         let db = Database::load().unwrap();
@@ -896,7 +896,7 @@ mod tests {
             preview: true,
             unit,
             show_settings: false,
-            // OS の配列が取れていなくても押せる。
+            // OS 配列が未取得でも押下可能。
             automatic: true,
             ..ready(&db, "jp", KeyboardType::Full)
         });
@@ -914,7 +914,7 @@ mod tests {
         });
         cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
         cx.run_until_parked();
-        // 並び全体も、キーも、隙間も半分。
+        // 配列全体・キー・隙間すべて半分。
         let keys = cx.debug_bounds("virtual-keyboard").unwrap();
         assert_eq!(
             (f32::from(keys.size.width), f32::from(keys.size.height)),
@@ -933,7 +933,7 @@ mod tests {
             f32::from(cx.debug_bounds("key-AC02").unwrap().left() - a.right()),
             gap
         );
-        // どのキーも並びの中に収まる。
+        // 全キーが配列領域内に収まる。
         for key in db
             .keyboard(&Layout::new("jp", ""))
             .unwrap()
@@ -947,7 +947,7 @@ mod tests {
                 "{name}"
             );
         }
-        // 押すと音は鳴る。文字は送らず、押し続けても繰り返さない。エラー（宛先なし）も立てない。
+        // 押下時に音は再生される。入力文字は送出せず、長押しでもリピートしない。エラー（宛先なし）も発生しない。
         cx.simulate_mouse_down(a.center(), gpui::MouseButton::Left, gpui::Modifiers::none());
         cx.run_until_parked();
         let commands = cx.update(|_, cx| {
@@ -971,7 +971,7 @@ mod tests {
         );
     }
 
-    /// キーに入るとホバー音を要求する。同じキーの隙間へ手ブレしても鳴り直さず、隣のキーへ移ると鳴る。
+    /// キーへの進入時にホバー音を要求する。同一キーの隙間への手ブレでは再発音せず、隣のキーへ移動すると発音する。
     #[gpui::test]
     fn hovering_a_key_requests_the_hover_sound_once_per_key(cx: &mut TestAppContext) {
         let db = Database::load().unwrap();
@@ -990,25 +990,25 @@ mod tests {
                 .count()
         };
         assert_eq!(hovers(a.center()), 1);
-        // 隣のキーとの隙間の、このキーの側（隙間の 1/4）。
+        // 隣接キーとの隙間の、このキー側（隙間の 1/4 の位置）。
         let gap = KeyAppearance::for_type(KeyboardType::Compact).gap;
         assert_eq!(hovers(a.top_right() + gpui::point(px(gap / 4.), px(4.))), 0);
         assert_eq!(hovers(a.center()), 0);
         assert_eq!(hovers(s.center()), 1);
     }
 
-    /// キーの見た目の外でも、隙間（の半分まで）や角丸の外に当たればそのキーを押す（レーザーの手ブレで押し損じない）。
+    /// キーの見た目の外でも、隙間（半分まで）や角丸の外に当たればそのキーが押下される（レーザーの手ブレによる押下失敗を防止する）。
     #[gpui::test]
     fn pressing_the_gap_or_corner_next_to_a_key_presses_it(cx: &mut TestAppContext) {
         let db = Database::load().unwrap();
         let view = ready(&db, "us", KeyboardType::Compact);
         let (_, cx) = cx.add_window_view(|_, _| view);
-        // 宛先が無いと押すたびにエラーの行が出てキーが下へずれ、次に押す点が別のキーに当たる。
+        // 宛先未登録だと押下ごとにエラー行が表示されてキーが下方にずれ、次の押下位置が別のキーに当たる。
         cx.update(|_, cx| crate::keyboard::register_input(0, |_, _| Ok(()), cx));
         cx.simulate_resize(gpui::size(px(1700.), px(1000.)));
         cx.run_until_parked();
         let key = cx.debug_bounds("key-SPCE").unwrap();
-        // 下の隙間の、このキーの側（隙間の 1/4）と、角丸で欠けた角。
+        // 下側隙間のこのキー側（隙間の 1/4 の位置）と、角丸により欠けた角。
         let gap = KeyAppearance::for_type(KeyboardType::Compact).gap;
         for at in [
             key.bottom_left() + gpui::point(key.size.width / 2., px(gap / 4.)),
@@ -1052,22 +1052,22 @@ mod tests {
         };
         let (requested, generation, loading) = follow(("jp", "kana"), cx);
         assert_eq!((requested, loading), (Layout::new("jp", "kana"), true));
-        // 頼んである配列と同じなら頼み直さない。
+        // 要求済みの配列と同一であれば再要求しない。
         assert_eq!(follow(("jp", "kana"), cx).1, generation);
-        // 先の配列が組み上がる前に替わったら、後の配列だけが載る。
+        // 前の配列が構築完了する前に変更された場合、後の配列のみが反映される。
         let (requested, ..) = follow(("us", "dvorak"), cx);
         assert_eq!(requested, Layout::new("us", "dvorak"));
         cx.run_until_parked();
         assert_eq!(layout_of(&view, cx), Some(Layout::new("us", "dvorak")));
     }
 
-    /// 新しいキーボードのキーは、共有のデータベースから組めたらすぐ載る（OS の状態を見に行く周期を待たない）。
-    /// ビューごとに読み込みを始めていたので、初めて出したときにディスクの読み込みを待ってキーの無いカードが出ていた。
+    /// 新規キーボードのキーは共有データベースから構築でき次第即座に反映される（OS 状態のポーリング周期を待たない）。
+    /// 以前はビューごとに読み込みを開始していたため、初回表示時にディスク I/O 待ちでキーのないカードが表示されていた。
     #[gpui::test]
     fn a_new_keyboard_gets_its_keys_without_waiting_for_the_poll(cx: &mut TestAppContext) {
         preload();
         let view = cx.new(|cx| KeyboardView::new(0, cx));
-        // 時計を進めない（100ms ごとの poll は走らない）。
+        // 時計を進めない（100ms ごとのポーリングは実行されない）。
         cx.run_until_parked();
         assert_eq!(layout_of(&view, cx), Some(Layout::new("us", "")));
         view.read_with(cx, |view, _| {

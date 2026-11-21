@@ -1,61 +1,61 @@
-//! レーザーのイベントを GPUI のマウス入力に変換する（[`PointerBridge`]。タッチの方式ではタップ・スワイプ・長押し）。
+//! レーザーイベントを GPUI のマウス入力に変換する（[`PointerBridge`]）。タッチモードではタップ・スワイプ・長押しを識別する。
 
 use super::*;
 
-/// 1つの手のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
-/// 位置とボタン状態を持つがオーバーレイのイベントは持たないので、直前の値を保持する。
+/// 片手のレーザーイベントを GPUI のプラットフォーム入力に変換する。GPUI のイベントは
+/// 位置とボタン状態を保持するが、オーバーレイのイベントにはそれらがないため、直前の値を内部に保持する。
 ///
-/// [`PointerMode::Touch`] では押したまま動かすとスワイプ（ピクセル単位のスクロール。離すと慣性で滑る）になり、
-/// 動かさずに離すとタップ（押して離す）、動かさずに [`LONG_PRESS`] 押し続けるとマウスの押下になる（そのまま動かせば
-/// ドラッグ＆ドロップ）。GPUI にはタッチ入力が無いので、どれと決まるまで押下を送らずに待つ。
-/// 方式は押した瞬間に決め、離すまで変えない。
+/// [`PointerMode::Touch`] では、押したまま移動するとスワイプ（ピクセル単位のスクロール。離すと慣性で滑る）となり、
+/// 移動せず離すとタップ（押下→解放）、移動せず [`LONG_PRESS`] 保持するとマウス押下（そのまま移動すれば
+/// ドラッグ＆ドロップ）となる。GPUI にはタッチ入力がないため、方式が確定するまで押下イベントの送出を保留する。
+/// 方式は押下時点で決定し、解放まで変更しない。
 #[derive(Debug, Default)]
 pub struct PointerBridge {
     pos: Point<Pixels>,
     pub(crate) pressed: bool,
     button: Option<MouseButton>,
     pub(crate) touch: Option<Touch>,
-    /// スワイプを離した後の慣性（宛先の位置と、1 フレームあたりの移動量）。
+    /// スワイプ解放後の慣性（宛先位置と 1 フレームあたりの移動量）。
     momentum: Option<(Point<Pixels>, Point<Pixels>)>,
-    /// この手が最後に送った位置（パネルを離れたら `None`）。同じ位置への Move は送らない
-    /// （オーバーレイは指している間 毎 tick Move を出すので、止まっていても描き直しと読み戻しが毎フレーム走ってしまう）。
+    /// この手が最後に送出した位置（パネルから外れたら `None`）。同一位置への Move は送出しない
+    /// （オーバーレイは指している間に毎 tick Move を発行するため、静止時でも再描画と読み戻しが毎フレーム発生する）。
     sent: Option<Point<Pixels>>,
     pub(crate) rehover: bool,
-    /// スワイプとみなす動き（論理 px）。[`pump`] がパネルの距離と密度から毎フレーム決める（[`SWIPE_SLOP`] を下回らない）。
+    /// スワイプと判定する移動量（論理 px）。[`pump`] がパネルの距離と密度から毎フレーム算出する（[`SWIPE_SLOP`] を下回らない）。
     pub slop: f32,
 }
 
-/// タッチで押している間の状態。
+/// タッチ押下中の内部状態。
 #[derive(Debug)]
 pub(crate) struct Touch {
     start: Point<Pixels>,
-    /// 押した時刻（長押しの判定）。
+    /// 押下時刻（長押し判定に使用）。
     at: Instant,
-    /// スワイプと決まった。
+    /// スワイプとして確定済み。
     swiping: bool,
-    /// 長押しでマウスの押下になった（以降はマウスと同じ）。
+    /// 長押しによりマウス押下に遷移済み（以降はマウスと同様に動作する）。
     held: bool,
-    /// スワイプの 1 イベントあたりの移動量（慣性の初速。直近を重く見て均す）。
+    /// スワイプの 1 イベントあたりの移動量（慣性の初速度。直近の値に重みを置いて平滑化する）。
     velocity: Point<Pixels>,
 }
 
-/// これだけ動かさずに押し続けると、タッチでもマウスの押下になる（ドラッグ＆ドロップを始められる）。
+/// この時間以上移動せず押下を継続すると、タッチモードでもマウス押下に遷移する（ドラッグ＆ドロップが可能になる）。
 pub const LONG_PRESS: Duration = Duration::from_millis(400);
 
-/// 長押しでドラッグを始めるときに押したまま動かす量（論理 px）。GPUI のドラッグの閾値（2px）を越える。
+/// 長押しでドラッグを開始する際に押下状態のまま移動させる量（論理 px）。GPUI のドラッグ閾値（2px）を超過する値。
 const DRAG_NUDGE: f32 = 3.0;
 
-/// 慣性の 1 フレームあたりの減衰（約 90Hz で 1 秒後に 1% 程度）。
+/// 慣性の 1 フレームあたりの減衰係数（約 90Hz で 1 秒後に約 1% まで減衰）。
 const FRICTION: f32 = 0.95;
 
-/// 慣性がこれより遅くなったら止める（論理 px / フレーム）。
+/// 慣性がこの速度を下回ったら停止する（論理 px / フレーム）。
 const MOMENTUM_STOP: f32 = 0.5;
 
-/// これより動いたらタップではなくスワイプ（論理 px）。指す距離・パネルの密度で決める閾値（[`SWIPE_SLOP_DEG`]）の下限。
+/// この移動量を超えるとタップではなくスワイプと判定する（論理 px）。距離・密度に基づく閾値（[`SWIPE_SLOP_DEG`]）の下限値。
 pub const SWIPE_SLOP: f32 = 12.0;
 
-/// これより（頭から見た角度で）動いたらタップではなくスワイプ。遠い・画素の細かいパネル（キーボード）でも、
-/// 手ブレでタップがスワイプにならないよう、角度で決めて毎フレーム px に直す（[`PointerBridge::slop`]）。
+/// この角度（頭基準）を超える移動でスワイプと判定する。遠距離・高密度パネル（キーボード等）でも
+/// 手ブレによるタップの誤判定を防ぐため、角度基準で決定し毎フレーム px に変換する（[`PointerBridge::slop`]）。
 pub const SWIPE_SLOP_DEG: f32 = 1.0;
 
 impl PointerBridge {
@@ -73,9 +73,9 @@ impl PointerBridge {
                         if t.at.elapsed() < LONG_PRESS {
                             return Vec::new();
                         }
-                        // 長押し: 押した所でマウスの押下にする。以降はマウスと同じ（動かせばドラッグ）。
-                        // 押したまま GPUI のドラッグの閾値（2px）を越えて動かし、カーソルを動かさなくてもすぐドラッグを始めて
-                        // その見た目を出す。最後に今の位置へ戻す。
+                        // 長押し: 押下位置でマウス押下に遷移する。以降はマウスと同様に動作する（移動すればドラッグ）。
+                        // GPUI のドラッグ閾値（2px）を超える移動を挿入し、カーソルを動かさなくても即座にドラッグ開始の
+                        // 見た目を表示する。最後に現在位置へ復帰する。
                         t.held = true;
                         let start = Vec2::new(t.start.x.into(), t.start.y.into());
                         let mut out = self.mouse(PointerEvent::Move { pos: start });
@@ -90,12 +90,12 @@ impl PointerBridge {
                     t.velocity = t.velocity * 0.5 + delta * 0.5;
                     self.pos = pos;
                     self.sent = Some(t.start);
-                    // 中身が指に付いてくる向き（下へ動かすと上へスクロール）。宛先は押した所に固定する。
+                    // コンテンツが指に追従する方向（下方移動で上方スクロール）。スクロール対象位置は押下位置に固定する。
                     return vec![PlatformInput::ScrollWheel(ScrollWheelEvent {
                         position: t.start,
                         delta: ScrollDelta::Pixels(pos - last),
                         modifiers: Default::default(),
-                        // スクロールバーなどが、指のスライドの始まりと終わりを知れるように段階を付ける。
+                        // スクロールバー等がスライドの開始・終了を検知できるよう、タッチフェーズを設定する。
                         touch_phase: if was_swiping {
                             TouchPhase::Moved
                         } else {
@@ -110,7 +110,7 @@ impl PointerBridge {
                 PointerEvent::Up { pos } => {
                     let t = self.touch.take().expect("pressed");
                     if t.swiping {
-                        // 離した後も慣性で滑る（フレームごとの momentum）。GPUI のマウスは離した所へ。
+                        // 解放後も慣性で滑り続ける（フレームごとの momentum）。GPUI のマウスカーソルは解放位置に移動する。
                         self.momentum = Some((t.start, t.velocity));
                         let mut out = vec![PlatformInput::ScrollWheel(ScrollWheelEvent {
                             position: t.start,
@@ -121,14 +121,14 @@ impl PointerBridge {
                         out.extend(self.mouse(PointerEvent::Move { pos }));
                         return out;
                     }
-                    // タップ: 押して離す。
+                    // タップ: 押下→解放のシーケンスを送出する。
                     let mut out = self.mouse(PointerEvent::Move { pos });
                     out.extend(self.mouse(PointerEvent::Down { pos }));
                     out.extend(self.mouse(PointerEvent::Up { pos }));
                     return out;
                 }
                 PointerEvent::Leave => {
-                    // スワイプ中に外れたら、指のスライドが終わったことを知らせる。
+                    // スワイプ中にパネルから外れた場合、スライド終了を通知する。
                     let swiped = t.swiping.then_some(t.start);
                     self.touch = None;
                     if let Some(position) = swiped {
@@ -142,14 +142,14 @@ impl PointerBridge {
                         return out;
                     }
                 }
-                // スティックのスクロールはマウスと同じ。押し直しは来ない。
+                // スティックスクロールはマウスと同様に処理する。タッチ中の再押下は発生しない。
                 PointerEvent::Scroll { .. }
                 | PointerEvent::Down { .. }
                 | PointerEvent::DownButton { .. }
                 | PointerEvent::UpButton { .. } => {}
             }
         } else if let (PointerMode::Touch, PointerEvent::Down { pos }) = (mode, ev) {
-            // 触れたら慣性は止まる。
+            // タッチ開始で慣性スクロールを停止する。
             self.momentum = None;
             self.touch = Some(Touch {
                 start: at(pos),
@@ -164,27 +164,27 @@ impl PointerBridge {
         self.mouse(ev)
     }
 
-    /// タッチで押して動かしていない間の、長押し（[`LONG_PRESS`]）までの進み具合（0〜1）。押していない・スワイプ中・
-    /// 長押しが済んだ後は `None`。ポインタのリングに出す。
+    /// タッチ押下中かつ未移動時の、長押し（[`LONG_PRESS`]）到達までの進捗（0〜1）。非押下・スワイプ中・
+    /// 長押し完了後は `None` を返す。ポインタのリング表示に使用する。
     pub fn hold_progress(&self) -> Option<f32> {
         let t = self.touch.as_ref().filter(|t| !t.swiping && !t.held)?;
-        // 普通のタップでリングがちらつかないよう、押して少しの間は出さず、残りの時間で 0〜1 に満ちる。
+        // 通常のタップでリングがちらつかないよう、押下直後は非表示とし、残りの時間で 0〜1 まで進行させる。
         const RING_DELAY: Duration = Duration::from_millis(150);
         let e = t.at.elapsed().checked_sub(RING_DELAY)?;
         Some((e.as_secs_f32() / (LONG_PRESS - RING_DELAY).as_secs_f32()).min(1.0))
     }
 
-    /// この手のレーザーがパネルの上にある。
+    /// この手のレーザーがパネル上を指しているかどうか。
     pub fn on_panel(&self) -> bool {
         self.sent.is_some()
     }
 
-    /// タッチの長押しでマウスの押下になっている（ドラッグできる）。
+    /// タッチの長押しによりマウス押下状態に遷移済み（ドラッグ操作が可能）。
     pub fn held(&self) -> bool {
         self.touch.as_ref().is_some_and(|t| t.held)
     }
 
-    /// スワイプを離した後の慣性の 1 フレーム分（スクロール）。滑っていなければ `None`。フレームごとに 1 回呼ぶ。
+    /// スワイプ解放後の慣性スクロールの 1 フレーム分を返す。慣性が停止していれば `None`。フレームごとに 1 回呼び出す。
     pub fn momentum(&mut self) -> Option<PlatformInput> {
         let (position, v) = self.momentum.as_mut()?;
         *v *= FRICTION;
@@ -196,12 +196,12 @@ impl PointerBridge {
             position: *position,
             delta: ScrollDelta::Pixels(*v),
             modifiers: Default::default(),
-            // 指を離した後の惰性（指のスライドそのものではない）。
+            // 指を離した後の惰性スクロール（指のスライド操作そのものではない）。
             touch_phase: TouchPhase::Ended,
         }))
     }
 
-    /// マウスとして変換する。
+    /// マウスイベントとして変換する。
     fn mouse(&mut self, ev: PointerEvent) -> Vec<PlatformInput> {
         let at = |p: Vec2| Point::new(px(p.x), px(p.y));
         let held = |pressed: bool| pressed.then_some(self.button.unwrap_or(MouseButton::Left));
@@ -218,7 +218,7 @@ impl PointerBridge {
             | PointerEvent::Up { pos }
             | PointerEvent::DownButton { pos, .. }
             | PointerEvent::UpButton { pos, .. } => self.sent = Some(at(pos)),
-            // スクロールでキーがポインタの下から動く。次の Move でホバーを判定し直す。
+            // スクロールによりポインタ直下の要素が移動するため、次の Move でホバー対象を再判定する。
             PointerEvent::Scroll { pos, .. } => {
                 self.sent = Some(at(pos));
                 self.rehover = true;
@@ -288,7 +288,7 @@ impl PointerBridge {
     }
 }
 
-/// 配送前にポインタのコンテキストを更新する。本番と各 testkit で同じ消滅条件を使う。
+/// 入力配送前にポインタのコンテキストを更新する。本番環境と各 testkit で同一の消去条件を適用する。
 pub fn dispatch_input(
     panel: PanelId,
     hand: Hand,

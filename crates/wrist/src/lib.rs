@@ -1,9 +1,9 @@
-//! Layer 6 画面: 常駐パネル「wrist」。利き手の反対（既定は左）の手首に腕時計のように取り付き（ダッシュボードが出ている間だけ
-//! 掴んで、手から [`REACH`] 以内に置き直し・大きさを変えられる。離すと設定に覚え、次の起動も同じ所・同じ大きさに付く。
-//! 掴んだままダッシュボードが消えれば元に戻る）、丸い文字盤に日付・時刻を出す（デザインは設定の `wrist_design`。[`face`]）。
-//! 利き手の設定が変われば、自分で反対の手首へ付け替える。
-//! 常駐なので、X ボタンの二回連続押しでダッシュボードを出す / 隠すのもここ（ダッシュボードは閉じずに隠し、次も同じ状態で出す）。
-//! OS の通知のトースト（[`toast`]）も起動時に開く。
+//! Layer 6 画面: 常駐パネル「wrist」。利き手の反対（既定は左）の手首に腕時計のようにアタッチする（ダッシュボード表示中のみ
+//! グラブして、手から [`REACH`] 以内に再配置・リサイズ可能。リリースすると設定に保存し、次回起動でも同一位置・同一サイズでアタッチする。
+//! グラブしたままダッシュボードが非表示になれば元に戻る）。丸い文字盤に日付・時刻を表示する（デザインは設定の `wrist_design`。[`face`]）。
+//! 利き手の設定が変更されれば、自動で反対の手首へ再アタッチする。
+//! 常駐パネルのため、X ボタンの二回連続押しでダッシュボードを表示 / 非表示にする処理もここで行う（ダッシュボードは閉じずに非表示にし、次回も同じ状態で表示する）。
+//! OS 通知のトースト（[`toast`]）も起動時に開く。
 
 mod face;
 pub use face::preview;
@@ -32,8 +32,8 @@ pub fn watch_offset(hand: Hand) -> Pose {
     )
 }
 
-/// `hand` の手首に付ける姿勢: 掴んで置き直した姿勢（設定の `wrist_offset`。左手首での値で、右手首には鏡写し）があれば
-/// それ、無ければ [`watch_offset`]。
+/// `hand` の手首にアタッチする姿勢: グラブして再配置した姿勢（設定の `wrist_offset`。左手首での値で、右手首にはミラーリング）があれば
+/// それ、なければ [`watch_offset`]。
 pub fn offset(hand: Hand, settings: &Settings) -> Pose {
     settings
         .wrist_offset
@@ -53,16 +53,16 @@ fn mirror(pose: Pose, hand: Hand) -> Pose {
     )
 }
 
-/// 手首の関節から文字盤までの高さ（手の甲の側。m）。本物の腕時計なら 3.5cm ほどだが、それでは手の甲の側まで回る
-/// コントローラ（Index のストラップなど）の描画に文字盤がめり込むので、そこから 2cm 浮かせて 5.5cm。
+/// 手首関節から文字盤までの高さ（手の甲側。m）。実物の腕時計なら 3.5cm 程度だが、手の甲側まで回る
+/// コントローラ（Index のストラップなど）の描画に文字盤がめり込むため、そこから 2cm 浮かせて 5.5cm。
 // ponytail: 機種を問わない目分量。めり込む機種や浮きすぎて見える機種があれば、この値（か機種ごとの値）で合わせる。
 const LIFT: f32 = 0.055;
 
-/// ダッシュボードが出ている間に掴んで置き直せる範囲（取り付け先の手のコントローラから m）。手の甲・前腕・手の周りに届く。
+/// ダッシュボード表示中にグラブして再配置可能な範囲（アタッチ先の手のコントローラから m）。手の甲・前腕・手の周囲に到達する。
 pub const REACH: f32 = 0.3;
 
-/// 取り付け先の手が追えない間（起動直後・novr のエミュレーター）の置き場所。開いた瞬間の頭から見て左下 0.4m
-/// （右手首に付けるときは右下）。
+/// アタッチ先の手をトラッキングできない間（起動直後・novr のエミュレーター）の配置位置。表示時の頭部から見て左下 0.4m
+/// （右手首にアタッチする場合は右下）。
 pub const IN_VIEW: Pose = Pose::new(Vec3::new(-0.32, -0.2, -0.4), Quat::IDENTITY);
 
 /// 丸い文字盤（直径 0.1m）と、周りの影の余白（[`components::PANEL_MARGIN`]）が収まる正方形。
@@ -72,9 +72,9 @@ const RES_PX: (u32, u32) = (448, 448);
 // 文字盤（カード）の直径は、文字盤の寸法を決めた基準と同じ。
 const _: () = assert!(RES_PX.0 as f32 - 2.0 * components::PANEL_MARGIN == face::BASE);
 
-/// 今の設定 `saved` の利き手の反対の手首に、覚えた姿勢と大きさ（[`offset`]・`wrist_scale`）で取り付いた状態で起動する
-/// wrist の起動仕様。`debug` と `settings` はダッシュボードから開くデバッグ画面と設定画面（画面どうしを直接つながないよう、
-/// main が選ぶ）。
+/// 現在の設定 `saved` の利き手の反対の手首に、保存済み姿勢とサイズ（[`offset`]・`wrist_scale`）でアタッチした状態で起動する
+/// wrist の起動仕様。`debug` と `settings` はダッシュボードから開くデバッグ画面と設定画面（画面間を直接結合しないよう、
+/// main が選択する）。
 pub fn spec(saved: &Settings, debug: dashboard::Summon, settings: dashboard::Summon) -> PanelSpec {
     let hand = saved.dominant_hand.off_hand();
     let side = if hand == Hand::Left { 1.0 } else { -1.0 };
@@ -88,18 +88,18 @@ pub fn spec(saved: &Settings, debug: dashboard::Summon, settings: dashboard::Sum
     .sized(SIZE_M * saved.wrist_scale, RES_PX)
     .in_view(in_view)
     .attached(Device::Controller(hand), offset(hand, saved))
-    // 掴めるのはダッシュボードが出ている間だけ（[`Wrist::sync_dashboard`]）。置き直した所と大きさは離すと覚える
+    // グラブ可能なのはダッシュボード表示中のみ（[`Wrist::sync_dashboard`]）。再配置した位置とサイズはリリース時に保存する
     // （[`Wrist::remember_placement`]）。
     .locked()
     .reach(REACH)
-    // 手首に付いた常駐の時計で、閉じるものではない。ナビゲーションバーは付けない。
+    // 手首にアタッチされた常駐時計であり、閉じる対象ではない。ナビゲーションバーは付与しない。
     .without_nav_bar()
 }
 
 pub struct Wrist {
     debug: dashboard::Summon,
     settings: dashboard::Summon,
-    /// ダッシュボード（一度開いたら閉じずに隠す）。
+    /// ダッシュボード（一度開いたら閉じずに非表示にする）。
     pub dashboard: Option<PanelId>,
     /// OS の通知のトースト。
     pub toast: Option<PanelId>,

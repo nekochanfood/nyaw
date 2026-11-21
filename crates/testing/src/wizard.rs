@@ -3,8 +3,8 @@ use design::icons;
 
 const STEPS: usize = 4;
 
-/// ウィザードの試験画面: ようこそ → 手順 1 → 手順 2 → 完了。`wizard-next` / `wizard-back` / `wizard-restart`。
-/// 画面は `navigation` の積み重ね（右から入る。押したまま右から左へ動かすとスワイプバック）。
+/// ウィザードのテスト画面: ようこそ → ステップ 1 → ステップ 2 → 完了。`wizard-next` / `wizard-back` / `wizard-restart`。
+/// 画面は `navigation` のスタック（右からスライドイン。長押し状態で右から左へ移動するとスワイプバック）。
 pub struct WizardTest {
     pub wizard: components::Wizard,
 }
@@ -17,7 +17,7 @@ impl WizardTest {
     }
 }
 
-/// `from` の隣にウィザードを開く（大きさはオーバーレイの既定。4:3）。
+/// `from` の隣にウィザードを開く（サイズはオーバーレイの既定値。4:3）。
 pub fn spawn(from: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
         cx.default_global::<PanelControl>().spawns.push(

@@ -1,5 +1,5 @@
-//! 見た目の確認用: 通知のトースト（視界の端・手首・手首でホバーしたもの）を、テーマを替えながら実 GPU で描き、
-//! `target/tmp/look-toast-<置き場所>-<状態>.bmp` に書き出す（透明の上に描くので、中身だけが見える）。
+//! 見た目の確認用: 通知のトースト（視界の端・手首・手首でホバーしたもの）を、テーマを切り替えながら実 GPU で描画し、
+//! `target/tmp/look-toast-<配置場所>-<状態>.bmp` に書き出す（透明の上に描画するため、コンテンツのみが表示される）。
 
 use std::{
     cell::RefCell,
@@ -45,7 +45,7 @@ pub fn main() {
     ui::application().run(move |cx| {
         design::font::install(cx);
         design::corner::install();
-        // 手首の時計: 1 つ目のトーストのものは見ておらず（HUD に出る）、ほかは見ている（手首に出る）。
+        // 手首の時計: 1 つ目のトーストのものは注視しておらず（HUD に表示する）、他は注視している（手首に表示する）。
         let ctl = cx.default_global::<PanelControl>();
         ctl.settings.notification_anchor = NotificationAnchor::TopRight;
         for wrist in [101, 102] {
@@ -95,7 +95,7 @@ pub fn main() {
                         cx.background_executor()
                             .timer(Duration::from_millis(100))
                             .await;
-                        // 一番新しい（一番上の）カードの上にポインタを置く。
+                        // 最新（最上部）のカード上にポインタを配置する。
                         if name == "wrist-hover" {
                             let at = point(px(210.0), px(toast::RES_PX.1 as f32 - 200.0));
                             let event = PlatformInput::MouseMove(MouseMoveEvent {
@@ -124,7 +124,7 @@ pub fn main() {
     assert_eq!(shots.len(), 6);
     for (name, frame) in shots {
         crate::look::save(&frame, &format!("target/tmp/look-toast-{name}.bmp"));
-        // 中身（不透明な画素）が描けていること。
+        // コンテンツ（不透明なピクセル）が描画されていること。
         let drawn = frame
             .rgba
             .as_chunks::<4>()

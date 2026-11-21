@@ -1,4 +1,4 @@
-//! 出力のスレッド（オーディオのコールバック）で回すミキサー。メインスレッドとはチャンネルだけでやり取りする。
+//! オーディオコールバックスレッド上で動作するミキサー。メインスレッドとの通信はチャンネル経由で行う。
 
 use crate::phonon::{Binaural, Phonon};
 use crate::{Channels, Clip, Spatializer, Speaker, SpeakerId, VoiceId};
@@ -7,13 +7,13 @@ use std::sync::mpsc::{Receiver, Sender};
 
 /// 1 回に処理するフレーム数（Steam Audio のフレームサイズ）。48kHz で約 5ms。
 pub const BLOCK: usize = 256;
-/// 同時に鳴らせる音の数。立体化の状態（音源ごとに L / R の 2 つ）を最初にこの数だけ作っておき、
-/// コールバックの中で作らない。
-/// ponytail: 固定の上限。超えた音は立体化せずパンニングで鳴らす。足りなくなったら増やす。
+/// 同時発音数の上限。HRTF 状態（音源ごとに L / R の 2 つ）を起動時にこの数だけ確保し、
+/// コールバック内での割り当てを回避する。
+/// ponytail: 固定上限。超過分は HRTF を適用せずパンニングで再生する。不足時は値を増やす。
 pub(crate) const MAX_VOICES: usize = 32;
-/// 距離による減衰が始まる距離（m）。これより近ければ減衰しない（Steam Audio の既定の逆距離モデルと同じ）。
+/// 距離減衰の開始距離（m）。この距離以下では減衰しない（Steam Audio の既定逆距離モデルと同等）。
 const MIN_DISTANCE: f32 = 1.0;
-/// 覚えておく「届く前に止められた音」の数。
+/// 再生開始前にキャンセルされた音の保持数上限。
 const CANCELLED: usize = 256;
 
 pub(crate) enum Command {
@@ -29,7 +29,7 @@ pub(crate) enum Command {
     Stop(VoiceId),
 }
 
-/// 鳴り終わった（止めた）音。音声データはメインスレッドで落とす（コールバックで解放しない）。
+/// 再生終了（停止含む）した音。音声データの解放はメインスレッドで行い、コールバック内では解放しない。
 pub(crate) type Done = (VoiceId, Option<Clip>);
 
 struct Voice {
@@ -37,11 +37,11 @@ struct Voice {
     speaker: SpeakerId,
     clip: Clip,
     looping: bool,
-    /// 音声データの中の位置（フレーム。出力のレートとの違いを埋めるため小数）。
+    /// 音声データ内の再生位置（フレーム単位。出力レートとの差を補間するため小数値で保持）。
     position: f64,
-    /// L / R の音源ごとの HRTF の状態（Steam Audio が無い・足りなければ `None`）。
+    /// L / R 各音源の HRTF 状態（Steam Audio が無効または不足時は `None`）。
     effects: [Option<Binaural>; 2],
-    /// このブロックで鳴り終わった。
+    /// このブロックで再生が終了した。
     ended: bool,
 }
 
@@ -52,19 +52,19 @@ pub(crate) struct Mixer {
     listener: (Vec3, Quat),
     speakers: Vec<(SpeakerId, Speaker)>,
     voices: Vec<Voice>,
-    /// まだ届いていない（読み込み中の）うちに止められた音。届いたらすぐ終える。
-    /// ponytail: 鳴り終わった直後に止めた音も残る。上限で古いものから捨てる。
+    /// 読み込み完了前にキャンセルされた音。到着時に即終了させる。
+    /// ponytail: 再生終了直後の停止も残留する。上限超過時は古いものから破棄。
     cancelled: Vec<VoiceId>,
     phonon: Option<Phonon>,
-    /// 使っていない HRTF の状態。
+    /// 未使用の HRTF 状態のプール。
     pool: Vec<Binaural>,
-    /// ブロックの途中までしか出力に書けなかったときの残り（ステレオのインターリーブ）。
+    /// ブロック途中で出力バッファが満杯になった場合の残余データ（ステレオインターリーブ）。
     pending: Vec<f32>,
     pending_at: usize,
     scratch: Scratch,
 }
 
-/// 1 ブロックぶんの作業領域（コールバックで確保しないよう、作っておいて使い回す）。
+/// 1 ブロック分の作業バッファ（コールバック内でのメモリ割り当てを避けるため事前確保して再利用する）。
 struct Scratch {
     source: [Vec<f32>; 2],
     left: Vec<f32>,
@@ -73,7 +73,7 @@ struct Scratch {
 }
 
 impl Mixer {
-    /// `steam_audio` なら Steam Audio を読む（読めなければパンニング）。
+    /// `steam_audio` が true の場合は Steam Audio を読み込む（読み込み失敗時はパンニングにフォールバック）。
     pub(crate) fn new(
         rate: u32,
         steam_audio: bool,
@@ -102,7 +102,7 @@ impl Mixer {
         }
     }
 
-    /// 出力のレートを替える（デバイスが替わったとき）。違えば Steam Audio を読み直す。鳴っている音はそのまま続ける。
+    /// 出力サンプルレートを変更する（デバイス切り替え時）。変更があれば Steam Audio を再読み込みする。再生中の音は継続する。
     pub(crate) fn set_rate(&mut self, rate: u32) {
         if rate == self.rate {
             return;
@@ -122,7 +122,7 @@ impl Mixer {
         Some(e)
     }
 
-    /// HRTF の状態をすべて Steam Audio へ返し、Steam Audio を落とす。
+    /// すべての HRTF 状態を Steam Audio へ返却し、Steam Audio を解放する。
     fn release(&mut self) {
         for v in &mut self.voices {
             self.pool
@@ -143,7 +143,7 @@ impl Mixer {
         }
     }
 
-    /// ステレオのインターリーブで `out` を埋める。
+    /// ステレオインターリーブ形式で `out` を埋める。
     pub(crate) fn render(&mut self, out: &mut [f32]) {
         let mut written = 0;
         while written < out.len() {
@@ -265,7 +265,7 @@ impl Mixer {
                     }
                 };
                 for &(point, ch) in points {
-                    // 聞き手の座標（右 +X・上 +Y・前 -Z）での向きと距離。
+                    // リスナー座標系（右 +X・上 +Y・前 -Z）における方向と距離を算出。
                     let local = listener.1.inverse() * (point - listener.0);
                     let distance = local.length();
                     let direction = if distance > 1e-4 {
@@ -312,7 +312,7 @@ impl Drop for Mixer {
     }
 }
 
-/// `steam_audio` なら Steam Audio と HRTF の状態を作る（読めなければパンニング）。
+/// `steam_audio` が true の場合は Steam Audio と HRTF 状態を初期化する（読み込み失敗時はパンニングにフォールバック）。
 fn load(rate: u32, steam_audio: bool) -> (Option<Phonon>, Vec<Binaural>) {
     let phonon = steam_audio
         .then(|| match Phonon::load(rate, BLOCK) {
@@ -330,8 +330,8 @@ fn load(rate: u32, steam_audio: bool) -> (Option<Phonon>, Vec<Binaural>) {
     (phonon, pool)
 }
 
-/// 音声データから 1 ブロックを `channels` で読む（出力のレートへ線形補間で合わせる）。鳴り終われば `true`。
-/// ponytail: 線形補間のリサンプル。高音が少し曇る。気になったら窓付き sinc に替える。
+/// 音声データから 1 ブロック分を `channels` 構成で読み出す（出力レートへ線形補間でリサンプリング）。再生完了時は `true` を返す。
+/// ponytail: 線形補間によるリサンプリング。高域がわずかに減衰する。品質が必要な場合は窓付き sinc に変更する。
 fn read(voice: &mut Voice, rate: u32, channels: Channels, out: &mut [Vec<f32>; 2]) -> bool {
     let clip = &voice.clip;
     let frames = clip.frames();
@@ -353,7 +353,7 @@ fn read(voice: &mut Voice, rate: u32, channels: Channels, out: &mut [Vec<f32>; 2
         }
         let at = voice.position.floor() as usize;
         let t = (voice.position - at as f64) as f32;
-        // ループは先頭へ、そうでなければ最後のフレームのまま補間する。
+        // ループ時は先頭に戻り、非ループ時は最終フレームの値で補間する。
         let next = if at + 1 < frames {
             at + 1
         } else if voice.looping {
@@ -375,7 +375,7 @@ fn read(voice: &mut Voice, rate: u32, channels: Channels, out: &mut [Vec<f32>; 2
     finished
 }
 
-/// Steam Audio が無いときの左右の振り分け（等パワー）。向きの左右成分だけを見る。
+/// Steam Audio 不在時の左右パンニング（等パワー方式）。方向ベクトルの左右成分のみを使用する。
 fn pan(direction: Vec3) -> (f32, f32) {
     let angle = (direction.x.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
     (angle.cos(), angle.sin())

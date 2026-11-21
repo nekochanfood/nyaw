@@ -478,8 +478,8 @@ impl WindowsPlatform {
                     };
                     for hwnd in all_windows.read().iter() {
                         unsafe {
-                            // 破棄したウィンドウは WM_GPUI_CLOSE_ONE_WINDOW が届くまで一覧に残る。その間に
-                            // 触ると "Invalid window handle. (0x80070578)" がログに出るので、生きているものだけにする。
+                            // 破棄済みウィンドウは WM_GPUI_CLOSE_ONE_WINDOW の到着まで一覧に残存する。
+                            // その間にアクセスすると "Invalid window handle. (0x80070578)" がログに記録されるため、有効なウィンドウのみ処理する。
                             if !IsWindow(Some(hwnd.as_raw())).as_bool() {
                                 continue;
                             }
@@ -508,8 +508,8 @@ fn translate_accelerator(msg: &MSG) -> Option<()> {
     if msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN {
         return None;
     }
-    // NYAW: 同じスレッドの GPUI 以外の窓（novr のエミュレーター）は WM_GPUI_KEYDOWN を知らず、DefWindowProc の 0 が
-    // 「処理済み」に見えて WM_KEYDOWN が配られずに消えていた。GPUI の窓にだけ聞く。
+    // NYAW: 同一スレッド上の非 GPUI ウィンドウ（novr エミュレーター）は WM_GPUI_KEYDOWN を処理できず、
+    // DefWindowProc の戻り値 0 が「処理済み」と判定されて WM_KEYDOWN がディスパッチされなかった。GPUI ウィンドウにのみ問い合わせる。
     if !is_gpui_window(msg.hwnd) {
         return None;
     }
@@ -1640,7 +1640,7 @@ fn file_save_dialog(
     Ok(Some(PathBuf::from(file_path_string)))
 }
 
-/// アプリのテーマがライトか（レジストリが読めなければライト）。
+/// アプリケーションテーマがライトモードかを判定する（レジストリ読み取り失敗時はライトモードと見なす）。
 fn apps_use_light_theme() -> bool {
     windows_registry::CURRENT_USER
         .open(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")
@@ -1649,8 +1649,8 @@ fn apps_use_light_theme() -> bool {
         .unwrap_or(true)
 }
 
-/// nyaw 改造: exe に埋め込んだアイコンのうち、ID 1 = ライト用、ID 2 = ダーク用を選ぶ
-/// （ルートの build.rs）。ダーク用が無ければ ID 1 に戻る。ウィンドウを作るときに 1 回だけ決める。
+/// NYAW: exe に埋め込まれたアイコンからテーマに応じて選択する（ID 1 = ライト用、ID 2 = ダーク用。ルートの build.rs で埋め込み）。
+/// ダーク用が存在しない場合は ID 1 にフォールバックする。ウィンドウ作成時に一度だけ決定する。
 fn load_icon() -> Result<HICON> {
     let module = unsafe { GetModuleHandleW(None).context("unable to get module handle")? };
     let load = |id: usize| unsafe {

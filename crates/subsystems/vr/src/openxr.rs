@@ -69,7 +69,7 @@ const BINDINGS: &[(&str, &[&str])] = &[
     ),
 ];
 
-/// その入力がその手のコントローラにあるか。左右で違うのは Touch のボタンだけ。
+/// その入力がその手のコントローラに存在するか。左右で異なるのは Touch のボタンのみ。
 fn on_hand(profile: &str, input: &str, hand: Hand) -> bool {
     match (profile, input) {
         (
@@ -83,13 +83,13 @@ fn on_hand(profile: &str, input: &str, hand: Hand) -> bool {
     }
 }
 
-/// `"trigger/value"` → `"trigger_value"`（アクション名に `/` は使えない）。
+/// `"trigger/value"` → `"trigger_value"`（アクション名に `/` は使用できない）。
 fn action_name(input: &str) -> String {
     input.replace('/', "_")
 }
 
 /// XR_HTCX_vive_tracker_interaction のロール（`/user/vive_tracker_htcx/role/<名前>`）。
-/// トラッカーの ID にはこの名前をそのまま使う。
+/// トラッカーの ID にはこの名前をそのまま使用する。
 const TRACKER_ROLES: &[&str] = &[
     "waist",
     "chest",
@@ -107,7 +107,7 @@ const HANDS: [(Hand, &str); 2] = [(Hand::Left, "left"), (Hand::Right, "right")];
 
 struct Overlay {
     width_m: f32,
-    /// 固定された高さ。無ければテクスチャの縦横比で決まる。
+    /// 固定された高さ。未設定の場合はテクスチャの縦横比で決まる。
     height_m: Option<f32>,
     pose: Pose,
     visible: bool,
@@ -129,18 +129,18 @@ pub(crate) struct OpenXrBackend {
     // フィールドは宣言順に破棄される。セッション由来のものを先に、Vulkan、インスタンスの順に。
     overlays: HashMap<u64, Overlay>,
     next_id: u64,
-    /// 1 フレームに出せるレイヤーの数（`maxLayerCount`）。超えると xrEndFrame が失敗して何も出なくなる。
+    /// 1 フレームに出力可能なレイヤー数（`maxLayerCount`）。超過すると xrEndFrame が失敗して何も出力されなくなる。
     max_layers: usize,
     stage: xr::Space,
     view: xr::Space,
     aim_spaces: Vec<xr::Space>,
-    /// 手ごとの骨格のトラッカー（XR_EXT_hand_tracking）。拡張が無いランタイムでは空。
+    /// 手ごとの骨格トラッカー（XR_EXT_hand_tracking）。拡張が未対応のランタイムでは空。
     hand_trackers: Vec<(Hand, xr::HandTracker)>,
-    /// ロールごとのトラッカーの空間。拡張が無いランタイムでは空。
+    /// ロールごとのトラッカーの空間。拡張が未対応のランタイムでは空。
     tracker_spaces: Vec<(&'static str, xr::Space)>,
     actions: Vec<(String, xr::Action<f32>)>,
     button_actions: Vec<(String, xr::Action<bool>)>,
-    /// レーザーの姿勢。`aim_spaces` の元なので持っておく。
+    /// レーザーの姿勢。`aim_spaces` の元であるため保持する。
     _aim: xr::Action<xr::Posef>,
     _tracker: Option<xr::Action<xr::Posef>>,
     action_set: xr::ActionSet,
@@ -148,15 +148,15 @@ pub(crate) struct OpenXrBackend {
     stream: xr::FrameStream<xr::Vulkan>,
     waiter: xr::FrameWaiter,
     session: xr::Session<xr::Vulkan>,
-    /// セッションが動いていて、フレームを回してよいか。
+    /// セッションが実行中で、フレームループを進行してよいか。
     running: bool,
     /// `begin` 済みで `end` していないフレームの表示時刻。
     in_frame: Option<xr::Time>,
-    /// ランタイムとの接続が失われた（落ちた等）。以後は何もしない。
+    /// ランタイムとの接続が喪失した（クラッシュ等）。以後は何もしない。
     lost: bool,
-    /// セッションが EXITING / LOSS_PENDING になった。`Frame::quit` で上位へ伝える。
+    /// セッションが EXITING / LOSS_PENDING になった。`Frame::quit` で上位へ通知する。
     quit: bool,
-    /// 両目に映る範囲（最初に目の位置が取れたフレームで読む）。
+    /// 両目に映る範囲（最初に目の位置が取得できたフレームで読み取る）。
     fov: Option<crate::Fov>,
     gpu: Gpu,
     instance: xr::Instance,
@@ -183,7 +183,7 @@ impl OpenXrBackend {
         extensions.khr_vulkan_enable2 = true;
         extensions.khr_composition_layer_color_scale_bias =
             available.khr_composition_layer_color_scale_bias;
-        // トラッカーは任意。無いランタイムでもコントローラだけで動く。
+        // トラッカーは任意。未対応のランタイムでもコントローラのみで動作する。
         let has_trackers = available.htcx_vive_tracker_interaction;
         extensions.htcx_vive_tracker_interaction = has_trackers;
         // 骨格（スケルタル入力）も任意。

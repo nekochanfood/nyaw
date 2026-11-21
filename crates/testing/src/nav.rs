@@ -1,8 +1,8 @@
-//! 画面の積み重ね（push 遷移・スワイプバック）を試す画面（[`NavTest`]）。
+//! 画面のスタック（push 遷移・スワイプバック）をテストする画面（[`NavTest`]）。
 
 use super::*;
 
-/// 押すと `view` の積み重ねに `page` を積む・下ろす（`None`）。
+/// クリックすると `view` のスタックに `page` をプッシュ・ポップ（`None`）する。
 fn stack_op<V: 'static, P: 'static + Copy>(
     view: &gpui::Entity<V>,
     stack: fn(&mut V) -> &mut Vec<P>,
@@ -20,10 +20,10 @@ fn stack_op<V: 'static, P: 'static + Copy>(
     }
 }
 
-/// 画面の積み重ね（[`components::navigation`]）を試す画面 [`NavTest`] の画面 1 枚。
+/// 画面のスタック（[`components::navigation`]）をテストする画面 [`NavTest`] の 1 ページ。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NavPage {
-    /// 一番下。項目（`nav-item-0..`）を押すと [`NavPage::Detail`] を積む。
+    /// 最下層。項目（`nav-item-0..`）をクリックすると [`NavPage::Detail`] をプッシュする。
     Root,
     /// 項目の詳しい画面。`nav-deeper` で [`NavPage::Deep`] を積む。`nav-tap`（押した回数を数える）と `nav-slider` がある。
     Detail(usize),

@@ -1,6 +1,6 @@
-//! アクセシビリティの見た目: 文字の大きさの倍率と太字化を替えながら、設定画面の各カテゴリ・色を作るダイアログ・wrist の文字盤の
-//! 見本を実 GPU で描き、`target/tmp/look-a11y-*.bmp` に書き出す（細かい見た目は絵を目で見る）。検査するのは、倍率・太字化で
-//! 文字のインクが増えること、等幅の書体も崩れないこと、従わない文字（`.text_exact()` の文字盤）が 1 画素も変わらないこと。
+//! アクセシビリティの見た目検証: 文字サイズ倍率と太字化を切り替えながら、設定画面の各カテゴリ・色作成ダイアログ・wrist の文字盤
+//! プレビューを実 GPU で描画し、`target/tmp/look-a11y-*.bmp` に書き出す（詳細な見た目は画像を目視確認する）。検査対象は、倍率・太字化で
+//! 文字のインクが増加すること、等幅書体も崩れないこと、適用対象外の文字（`.text_exact()` の文字盤）が 1 ピクセルも変化しないこと。
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
@@ -10,11 +10,11 @@ use ui::{PanelControl, capture, open_panel_window};
 
 use crate::look::{FACES_PX, Faces, save};
 
-/// 白地に黒い文字（既定の書体と、太さが 1 つしか無い等幅の書体）。インクの量を比べる。
+/// 白地に黒い文字（既定の書体と、ウェイトが 1 種類のみの等幅書体）。インク量を比較する。
 struct Lines(bool);
 
 const LINES_PX: (u32, u32) = (900, 120);
-/// 仮想キーボード（フルサイズが収まる大きさ）・ダッシュボードのバー・そこにはめる画面の窓。
+/// 仮想キーボード（フルサイズが収まるサイズ）・ダッシュボードのバー・バーにはめ込む画面のウィンドウ。
 const KEYBOARD_PX: (u32, u32) = (1700, 760);
 const BAR_PX: (u32, u32) = (1024, 118);
 const PAGE_PX: (u32, u32) = (1024, 768);
@@ -36,7 +36,7 @@ impl Render for Lines {
     }
 }
 
-/// 書き出す状態: 名前、文字の大きさの倍率、太字化。
+/// 書き出す状態: 名前、文字サイズ倍率、太字化。
 const STATES: [(&str, f32, bool); 5] = [
     ("base", 1.0, false),
     ("small", kernel::TEXT_SCALE_MIN, false),
@@ -45,7 +45,7 @@ const STATES: [(&str, f32, bool); 5] = [
     ("large-bold", kernel::TEXT_SCALE_MAX, true),
 ];
 
-/// 設定画面のカテゴリ・その上に積む詳しい画面・書き出す名前。
+/// 設定画面のカテゴリ・その上に表示する詳細画面・書き出す名前。
 const PAGES: [(Category, Option<Page>, &str); 8] = [
     (Category::General, None, "general"),
     (Category::General, Some(Page::About), "about"),
@@ -97,7 +97,7 @@ pub fn main() {
             faces.expect("cannot open panel window").into(),
             FACES_PX.0,
         );
-        // 仮想キーボード・部品が一通り並ぶ Testing・ダッシュボード（バーと、そこから開くクイック設定・ランチャー）。
+        // 仮想キーボード・各部品が一通り並ぶ Testing・ダッシュボード（バーと、バーから開くクイック設定・ランチャー）。
         let keyboard = open_panel_window(cx, KEYBOARD_PX, |_, cx| {
             cx.new(|cx| ui::keyboard::KeyboardView::new(0, cx))
         });
@@ -181,15 +181,15 @@ pub fn main() {
         cx.spawn(async move |cx| {
             for (state, scale, bold) in STATES {
                 cx.update(|cx| {
-                    // 本番ではフレームループ（`ui::sync_settings`）が全体の設定から書く。
+                    // 本番ではフレームループ（`ui::sync_settings`）がグローバル設定から書き込む。
                     let settings = &mut cx.default_global::<PanelControl>().settings;
                     (settings.text_scale, settings.bold_text) = (scale, bold);
-                    // ウィザードの SteamVR の手順は OpenVR のときだけ出るので、OpenVR のつもりで描く。
+                    // ウィザードの SteamVR 手順は OpenVR 使用時のみ表示されるため、OpenVR として描画する。
                     settings.auto_launch = Some(false);
                     design::font::set_text(scale, bold, cx);
                 });
                 for (name, window, width) in &windows {
-                    // 読み戻しは 1 回遅れなので、間を空けて何度か描き、最後の絵を使う。
+                    // 読み戻しは 1 フレーム遅れのため、間隔を空けて複数回描画し、最後の画像を使用する。
                     let mut last = None;
                     for _ in 0..6 {
                         cx.background_executor()
@@ -224,7 +224,7 @@ pub fn main() {
         let found = shots.iter().find(|(s, n, _)| *s == state && n == name);
         &found.expect("captured").2
     };
-    // インク = 画面全体の暗さの合計（白地に黒い文字）。
+    // インク = 画面全体の暗さの合計値（白地に黒い文字）。
     let ink = |state: &str, name: &str| -> u64 {
         let pixels = frame(state, name).rgba.as_chunks::<4>().0.iter();
         pixels.map(|p| 255 - p[0] as u64).sum()
@@ -240,10 +240,10 @@ pub fn main() {
         assert!(large <= both, "{name}: bold never thins the text");
         assert!(base <= bold, "{name}: bold never thins the text");
     }
-    // 太さを持つ既定の書体は、太字化ではっきり濃くなる。
+    // 複数ウェイトを持つ既定の書体は、太字化で明確に濃くなる。
     assert!(ink("base", "lines") < ink("bold", "lines"));
     assert!(ink("large", "lines") < ink("large-bold", "lines"));
-    // 文字盤は絵。全域の設定では 1 画素も変わらない。
+    // 文字盤は画像。グローバル設定では 1 ピクセルも変化しない。
     for (state, ..) in STATES {
         assert!(
             frame(state, "faces") == frame("base", "faces"),

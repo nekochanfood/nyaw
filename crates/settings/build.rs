@@ -1,5 +1,5 @@
-//! 設定の「ライセンス」に出す依存の一覧を作る。`cargo metadata` で nyaw（バイナリ）から通常・ビルドの依存だけを
-//! たどり（開発用の依存とこのワークスペースのクレートは除く）、`(名前, バージョン, ライセンス, URL)` の表を書き出す。
+//! 設定の「ライセンス」画面に表示する依存一覧を生成する。`cargo metadata` により nyaw バイナリの通常・ビルド依存のみを
+//! 走査し（dev 依存およびワークスペース内クレートは除外）、`(名前, バージョン, ライセンス, URL)` の定数テーブルを出力する。
 
 use std::{
     collections::{BTreeSet, HashMap},
@@ -44,7 +44,7 @@ fn main() {
         .map(|n| (n["id"].as_str().unwrap(), n))
         .collect();
 
-    // nyaw から、開発用でない依存をたどる。
+    // nyaw を起点に dev 以外の依存を再帰的に走査する。
     let root = meta["resolve"]["root"].as_str().expect("root package");
     let (mut seen, mut todo) = (BTreeSet::from([root]), vec![root]);
     while let Some(id) = todo.pop() {

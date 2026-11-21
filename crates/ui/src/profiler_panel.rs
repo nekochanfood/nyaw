@@ -1,13 +1,13 @@
-//! 計測中だけ出すプロファイラのパネル。
+//! プロファイリング中のみ表示するプロファイラパネル。
 
 use super::*;
 
-/// プロファイラパネルのグラフを描き直す間隔（約 10Hz）。
+/// プロファイラパネルのグラフ再描画間隔（約 10Hz）。
 const PROFILER_REDRAW: Duration = Duration::from_millis(100);
-/// プロファイラパネルの位置。開いた瞬間の頭から見て正面 1m、少し上（Testing と重ならないように）。
+/// プロファイラパネルの配置位置。起動時の頭部正面 1m、やや上方（Testing パネルと重ならないように）。
 const PROFILER_POSE: Pose = Pose::new(Vec3::new(0.0, 0.25, -1.0), Quat::IDENTITY);
 
-/// 計測とプロファイラパネルを [`PanelControl::profiling`] に合わせ、このフレームの段階ごとの時間を記録する。
+/// プロファイリングとプロファイラパネルを [`PanelControl::profiling`] に同期し、今フレームのステージ別時間を記録する。
 pub(crate) fn sync_profiler(
     kernel: &mut Kernel,
     slots: &mut Slots,
@@ -20,7 +20,7 @@ pub(crate) fn sync_profiler(
     if let Some(p) = *profiler_panel
         && kernel.panel(p).closed
     {
-        // OS の X などで閉じられた。
+        // OS の閉じるボタン等で閉じられた。
         *profiler_panel = None;
         cx.update(|cx| cx.default_global::<PanelControl>().profiling = false);
     }
@@ -29,14 +29,14 @@ pub(crate) fn sync_profiler(
         cx.update(|cx| {
             logger::info!("profiler toggled", profiling = profiling);
             if profiling {
-                // --profile 無しで始めたときは CSV に書かない。
+                // --profile なしで起動した場合は CSV に書き出さない。
                 let p = Profiler::new(None).expect("cannot fail without an output path");
                 cx.set_global(with_budget(p));
             } else {
                 log_summary(cx);
                 cx.remove_global::<Profiler>();
             }
-            // 切り替えボタンの表示を変えるため、どのパネルも描き直させる。
+            // トグルボタンの表示を更新するため、全パネルを再描画する。
             cx.refresh_windows();
         });
         slots.drawn.iter_mut().for_each(|t| *t = None);
@@ -61,12 +61,12 @@ pub(crate) fn sync_profiler(
                     slots.push(opened);
                     *profiler_panel = Some(panel);
                 }
-                // 開けなかった。毎フレーム作り直そうとしないよう計測ごと止める。
+                // 起動に失敗。毎フレーム再試行しないようプロファイリングごと停止する。
                 None => cx.update(|cx| cx.default_global::<PanelControl>().profiling = false),
             }
         }
         Some(p) if !profiling => {
-            // 次のフレームの sync_panel が閉じてウィンドウを消す。
+            // 次フレームの sync_panel が閉じてウィンドウを破棄する。
             cx.update(|cx| command(p, PanelCommand::Close, cx));
             *profiler_panel = None;
         }
@@ -79,15 +79,15 @@ pub(crate) fn sync_profiler(
         if let Some(p) = *profiler_panel
             && slots.drawn[p].is_none_or(|t| t.elapsed() >= PROFILER_REDRAW)
         {
-            // グラフは毎フレーム変わるが、読むには PROFILER_REDRAW ごとで足りる。毎フレーム描くと、描画・読み戻し・
-            // 合成のコストで計測そのものを重くする（プロファイラの窓だけで 1 フレーム 20ms 近かった）。
+            // グラフは毎フレーム変化するが、判読には PROFILER_REDRAW 間隔で十分。毎フレーム描画すると描画・リードバック・
+            // 合成のコストでプロファイリング自体が重くなる（プロファイラウィンドウだけで 1 フレーム約 20ms を要した）。
             let _ = cx.update_window(slots.windows[p].1, |_, w, _| w.refresh());
             slots.drawn[p] = None;
         }
     });
 }
 
-/// プロファイラのパネル。閉じるのはナビゲーションバー（閉じると計測も止まる）。
+/// プロファイラパネル。閉じるのはナビゲーションバー経由（閉じるとプロファイリングも停止する）。
 struct ProfilerPanel {
     view: Entity<ProfilerView>,
 }

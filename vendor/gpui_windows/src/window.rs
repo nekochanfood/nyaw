@@ -33,12 +33,12 @@ use crate::*;
 use gpui::*;
 
 thread_local! {
-    /// NYAW: 次の `resize` で使う描画の拡大率（[`with_render_scale`]）。
+    /// NYAW: 次回の `resize` で適用する描画スケール（[`with_render_scale`]）。
     static RENDER_SCALE: Cell<Option<f32>> = const { Cell::new(None) };
 }
 
-/// NYAW: `f`（`Window::resize` を呼ぶ）の間の resize で、ウィンドウの拡大率を `scale` にする（DPI を偽らずにパネルの LOD を変える）。
-/// 論理サイズはそのままで、描く解像度だけが変わる。反映は resize と同じく非同期（WM_SIZE のとき）。
+/// NYAW: `f`（`Window::resize` を呼ぶ）の実行中の resize で、ウィンドウの描画スケールを `scale` に設定する（DPI 偽装ではなくパネル LOD を変更する）。
+/// 論理サイズは維持したまま描画解像度のみが変更される。反映は resize と同様に非同期（WM_SIZE 受信時）。
 pub fn with_render_scale<R>(scale: f32, f: impl FnOnce() -> R) -> R {
     RENDER_SCALE.with(|s| s.set(Some(scale)));
     let r = f();
@@ -504,7 +504,7 @@ impl WindowsWindow {
         );
 
         let (mut dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
-            // NYAW: WS_OVERLAPPED (0) はモニターの作業領域に制限され、非表示パネルも切り詰められる。
+            // NYAW: WS_OVERLAPPED (0) はモニターの作業領域に制約され、非表示パネルもクリッピングされる。
             (WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WS_POPUP)
         } else {
             let mut dwstyle = WS_SYSMENU;
@@ -626,8 +626,8 @@ impl rwh::HasDisplayHandle for WindowsWindow {
 impl Drop for WindowsWindow {
     fn drop(&mut self) {
         self.0.dialog_owner.close();
-        // ユーザーが閉じたウィンドウは Windows がもう破棄している。そのハンドルを触ると
-        // "Invalid window handle. (0x80070578)" がログに出るので、生きているときだけ片付ける。
+        // ユーザーが閉じたウィンドウは OS により破棄済みとなっている。破棄済みハンドルへのアクセスは
+        // "Invalid window handle. (0x80070578)" をログに記録するため、有効なウィンドウのみクリーンアップする。
         if unsafe { IsWindow(Some(self.0.hwnd)) }.as_bool() {
             unsafe { ShowWindowAsync(self.0.hwnd, SW_HIDE).ok().log_err() };
         }
@@ -675,7 +675,7 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn resize(&mut self, size: Size<Pixels>) {
-        // NYAW: 描画の拡大率を書き換える（[`with_render_scale`]）。続く WM_SIZE がこの拡大率で論理サイズと描画先を更新する。
+        // NYAW: 描画スケールを上書きする（[`with_render_scale`]）。後続の WM_SIZE がこのスケールで論理サイズと描画ターゲットを更新する。
         if let Some(scale) = RENDER_SCALE.with(|s| s.get()) {
             self.state.scale_factor.set(scale);
             self.state.direct_manipulation.set_scale_factor(scale);
@@ -695,8 +695,8 @@ impl PlatformWindow for WindowsWindow {
                         bounds.origin.y.0,
                         rect.right - rect.left,
                         rect.bottom - rect.top,
-                        // NYAW: 大きさを変えるだけで、前面に出したりフォーカスを奪ったりしない。
-                        // 起動後に開いたパネルの非表示のウィンドウがアクティブになり、novr のエミュレーターの窓がキー入力を失っていた。
+                        // NYAW: サイズ変更のみ行い、前面化やフォーカス奪取を行わない。
+                        // 起動後に追加されたパネルの非表示ウィンドウがアクティブ化し、novr エミュレーターがキー入力を喪失していた。
                         SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOZORDER,
                     )
                     .context("unable to set window content size")
@@ -1452,7 +1452,7 @@ enum WindowOpenState {
 
 const WINDOW_CLASS_NAME: PCWSTR = w!("Zed::Window");
 
-/// NYAW: `hwnd` が GPUI の窓か（ウィンドウクラスで見分ける）。
+/// NYAW: `hwnd` が GPUI ウィンドウかをウィンドウクラス名で判定する。
 pub(crate) fn is_gpui_window(hwnd: HWND) -> bool {
     let mut class_name = [0u16; 32];
     let length = unsafe { GetClassNameW(hwnd, &mut class_name) } as usize;

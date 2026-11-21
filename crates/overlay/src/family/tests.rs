@@ -18,25 +18,25 @@ fn nav_bar_hangs_under_its_owner_at_a_constant_apparent_size() {
         ov.set_pose(0, at(0.0, 0.0, z));
         ov.tick(&mut vr);
         let p = ov.panel(bar);
-        // 頭（原点）から見て、持ち主の地の下端（影の余白の内側）の左右中央に、バーの上端の左右中央が付く。
+        // 頭（原点）から見て持ち主面の下端（シャドウマージン内側）の左右中央にバーの上端の左右中央が合う。
         let anchor = Vec3::new(0.0, -0.5 + PANEL_MARGIN / 100.0, z);
         let top = p.pose.position + Vec3::Y * p.size.y / 2.0 - Vec3::Z * HUD_LIFT;
         assert!(
             top.normalize().abs_diff_eq(anchor.normalize(), 1e-5),
             "{top}"
         );
-        // バーの面は持ち主から HUD_LIFT だけ手前（Z ファイティングしない）。
+        // バー面は持ち主から HUD_LIFT だけ手前（Z ファイティング回避）。
         assert!((p.pose.position.z - (z + HUD_LIFT)).abs() < 1e-5);
-        // 頭から見た大きさは距離によらない（1m 先で 0.2m）。
+        // 頭から見た見かけサイズは距離に依存しない（1m 先で 0.2m）。
         assert!((p.size.x / top.length() - 0.2).abs() < 1e-5);
         assert!((vr.backend.overlays[bar].width_m - p.size.x).abs() < 1e-5);
     }
-    // 持ち主を指せば、バーも指されている扱い（広がる）。どこも指さなければ縮む。
+    // 持ち主をポイントすればバーもポイント扱い（展開）。どこもポイントしなければ縮小。
     assert!(!ov.pointed(bar));
     controller(&mut vr, Pose::IDENTITY, &[]);
     ov.tick(&mut vr);
     assert!(ov.pointed(0) && ov.pointed(bar));
-    // バーを掴むと持ち主ごと動き、持ち主を閉じるとバーも閉じる。
+    // バーをグラブすると持ち主ごと移動し、持ち主を close するとバーも close される。
     let bar_center = ov.panel(bar).pose.position;
     controller(
         &mut vr,
@@ -48,7 +48,7 @@ fn nav_bar_hangs_under_its_owner_at_a_constant_apparent_size() {
     );
     ov.tick(&mut vr);
     assert!(ov.grabbed(0));
-    assert!(ov.pointed(bar), "掴んでいる間も広がったまま");
+    assert!(ov.pointed(bar), "グラブ中も展開状態を維持");
     ov.close(&mut vr.backend, 0);
     assert!(ov.panel(bar).closed);
 }
@@ -70,13 +70,13 @@ fn nav_bar_enters_and_leaves_with_its_owner() {
     let rgba = [255u8; 100 * 100 * 4];
     ov.submit(&mut vr.backend, 0, 100, 100, &rgba);
     ov.tick(&mut vr);
-    // バーの描画は後から届いても、自分では入場せず持ち主の途中から一緒に出る。
+    // バーの描画は後から届いても自身では入場せず持ち主の途中から一緒に出現する。
     ov.submit(&mut vr.backend, bar, 2, 2, &[255u8; 16]);
     ov.tick(&mut vr);
     assert!(ratio(&ov, 0) < 1.0);
     assert!((ratio(&ov, bar) - ratio(&ov, 0)).abs() < 1e-6);
     assert_eq!(vr.backend.overlays[bar].alpha, vr.backend.overlays[0].alpha);
-    // 閉じるときも一緒に消え、持ち主が消えきるまでは残る。
+    // close 時も一緒に消え、持ち主が完全に消えるまで残存する。
     ov.close(&mut vr.backend, 0);
     ov.tick(&mut vr);
     assert!(ov.panel(bar).closed);
@@ -102,13 +102,13 @@ fn idle_nav_bar_gives_its_overlay_back_and_comes_back_when_pointed() {
     ov.submit(&mut vr.backend, 0, 2, 2, &[255u8; 16]);
     ov.submit(&mut vr.backend, bar, 2, 2, &[7u8; 16]);
     let idle = |ov: &mut Overlay| ov.panels[bar].pointed_at -= NAV_BAR_LINGER;
-    // 指している間は、いくら経っても消えない。
+    // ポイント中はいくら経過しても消えない。
     controller(&mut vr, Pose::IDENTITY, &[]);
     ov.tick(&mut vr);
     idle(&mut ov);
     ov.tick(&mut vr);
     assert!(ov.pointed(bar) && !ov.panel(bar).surface.parked());
-    // 指さないまましばらく経つと消え、ランタイムのオーバーレイを手放す。パネルは残り、見えていない扱い。
+    // 非ポイント状態が続くと消え、ランタイムのオーバーレイを解放する。パネルは残存し非表示扱い。
     vr.backend.frame.controllers.clear();
     ov.tick(&mut vr);
     assert!(!ov.panel(bar).surface.parked());
@@ -118,11 +118,11 @@ fn idle_nav_bar_gives_its_overlay_back_and_comes_back_when_pointed() {
     assert!(vr.backend.overlays[bar].destroyed);
     assert!(!ov.panel(bar).closed && ov.present_ids().contains(&bar));
     assert!(!ov.in_view(bar));
-    // 手放している間に届いた描画は送らずに覚えておく。
+    // 解放中に届いた描画は送信せず保持する。
     ov.submit(&mut vr.backend, bar, 2, 2, &[9u8; 16]);
     ov.tick(&mut vr);
     assert_eq!(vr.backend.overlays.len(), 2);
-    // 持ち主を指すと、同じキー・描画順で作り直し、覚えておいた描画で現れる。
+    // 持ち主をポイントすると同じキー・描画順で再生成し、保持していた描画で出現する。
     controller(&mut vr, Pose::IDENTITY, &[]);
     ov.tick(&mut vr);
     assert!(!ov.panel(bar).surface.parked());
@@ -132,7 +132,7 @@ fn idle_nav_bar_gives_its_overlay_back_and_comes_back_when_pointed() {
     assert_eq!(o.texture.as_ref().unwrap().rgba, [9u8; 16]);
     assert_eq!(o.pose, ov.panel(bar).pose);
     assert!(!o.destroyed);
-    // 動きがあれば、薄れるのに時間をかける（しばらく経った瞬間にはまだ出ている）。
+    // アニメーションありならフェードアウトに時間をかける（タイムアウト直後はまだ表示中）。
     ov.set_animated(&mut vr.backend, bar, true);
     vr.backend.frame.controllers.clear();
     ov.tick(&mut vr);
@@ -180,7 +180,7 @@ fn child_follows_its_parent() {
             .position
             .abs_diff_eq(Vec3::new(1.0, 2.0, -0.9), 1e-5)
     );
-    // 取り付けた親にも付いてくる。
+    // デバイスアタッチした親にも追従する。
     ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
     vr.backend.frame.hmd = at(3.0, 0.0, 0.0);
     ov.tick(&mut vr);
@@ -196,14 +196,14 @@ fn child_follows_its_parent() {
 fn grabbing_the_child_carries_the_parent_only_when_asked() {
     for carry in [true, false] {
         let (mut vr, mut ov) = with_child(carry);
-        // 子（手前）を掴んで右へ運ぶ。
+        // 子（手前）をグラブして右へ移動する。
         controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
         ov.tick(&mut vr);
         controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
         settle(&mut vr, &mut ov);
         assert!(ov.panel(1).pose.position.x > 0.9);
         assert_eq!(ov.panel(0).pose.position.x > 0.9, carry, "carry = {carry}");
-        // 離したあとも、親が動けば子は新しい相対位置のまま付いてくる。
+        // リリース後も親が移動すれば子は新しい相対位置のまま追従する。
         controller(&mut vr, at(1.0, 0.0, 0.0), &[]);
         ov.tick(&mut vr);
         let (parent, child) = (ov.panel(0).pose, ov.panel(1).pose.position);
@@ -216,7 +216,7 @@ fn grabbing_the_child_carries_the_parent_only_when_asked() {
 #[test]
 fn parent_is_dimmed_and_blocked_while_a_child_is_open() {
     let (mut vr, mut ov) = with_child(false);
-    // ランタイムが明るさを掛けられないときは、画素を暗くして送る。
+    // ランタイムが明度乗算に非対応の場合はピクセルを暗くして送信する。
     vr.backend.unsupported_tint = true;
     ov.set_animated(&mut vr.backend, 0, false);
     ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
@@ -224,12 +224,12 @@ fn parent_is_dimmed_and_blocked_while_a_child_is_open() {
     let pixel =
         |vr: &Subsystems<MockBackend>| vr.backend.overlays[0].texture.as_ref().unwrap().pixel(0, 0);
     assert_eq!(pixel(&vr), [110, 55, 28, 255]);
-    // 子の外（親だけがある場所）を押しても、親には届かない。
+    // 子の外（親のみの領域）をプレスしても親には届かない。
     controller(&mut vr, at(0.45, 0.0, 0.0), &[("trigger/value", 1.0)]);
     assert!(ov.tick(&mut vr).is_empty());
     controller(&mut vr, at(0.45, 0.0, 0.0), &[]);
     ov.tick(&mut vr);
-    // 子が閉じると戻る。
+    // 子が close されると復帰する。
     ov.close(&mut vr.backend, 1);
     ov.tick(&mut vr);
     assert_eq!(pixel(&vr), [200, 100, 50, 255]);
@@ -247,11 +247,11 @@ fn slot_child_stands_on_its_parent_without_dimming_or_blocking_it() {
     ov.set_animated(&mut vr.backend, 0, false);
     ov.submit(&mut vr.backend, 0, 1, 1, &[200, 100, 50, 255]);
     ov.tick(&mut vr);
-    // 親は暗くならず、押せる。
+    // 親は暗転せずプレス可能。
     assert_eq!(ov.panel(0).dim, 0.0);
     controller(&mut vr, at(0.45, -0.45, 0.0), &[("trigger/value", 1.0)]);
     assert!(!ov.tick(&mut vr).is_empty());
-    // 子は親の上端の上に、親から見て `tilt` だけ起こして立つ。地の下端は上端から隙間の分だけ上。
+    // 子は親の上端に親から見て `tilt` だけ傾けて立つ。面の下端は上端から隙間分だけ上。
     let (parent, child) = (ov.panel(0).pose, ov.panel(1));
     let local = parent.inverse() * child.pose;
     assert!(
@@ -266,7 +266,7 @@ fn slot_child_stands_on_its_parent_without_dimming_or_blocking_it() {
         bottom.abs_diff_eq(Vec3::Y * top + up * SLOT_GAP, 1e-4),
         "{bottom}"
     );
-    // 親を動かすと付いてくる。
+    // 親を移動すると追従する。
     ov.set_pose(0, at(0.0, 1.0, -1.0));
     ov.tick(&mut vr);
     assert!(
@@ -294,7 +294,7 @@ fn undocking_a_slot_child_pulls_it_away_from_its_parent() {
     ov.tick(&mut vr);
     let pulled = docked * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY);
     assert!(ov.panel(1).pose.position.abs_diff_eq(pulled.position, 1e-4));
-    // 外したあとは親に付いていかない。
+    // アンドック後は親に追従しない。
     ov.set_pose(0, at(0.0, 1.0, -1.0));
     ov.tick(&mut vr);
     assert!(ov.panel(1).pose.position.abs_diff_eq(pulled.position, 1e-4));
@@ -305,7 +305,7 @@ fn grabbing_the_parent_moves_the_slot_child_and_resizes_nothing() {
     const RESIZE: &str = subsystems::vr::RESIZE_INPUT;
     let (mut vr, mut ov) = with_slot_child();
     let sizes = (ov.panel(0).size, ov.panel(1).size);
-    // 親だけがある所を掴むと、上の子を掴んだことになる。
+    // 親のみの領域をグラブすると上のスロット子をグラブした扱いになる。
     let p = ov.panel(0).pose.position;
     controller(
         &mut vr,
@@ -314,7 +314,7 @@ fn grabbing_the_parent_moves_the_slot_child_and_resizes_nothing() {
     );
     ov.tick(&mut vr);
     assert!(ov.grabbed(1) && !ov.grabbed(0));
-    // 拡大縮小を入れても、掴んだもの（親）とは違うので大きさは変わらない。
+    // リサイズ入力を加えても、グラブ対象（親）とは異なるためサイズは変わらない。
     controller(
         &mut vr,
         at(p.x + 1.45, p.y - 0.45, 0.0),
@@ -322,7 +322,7 @@ fn grabbing_the_parent_moves_the_slot_child_and_resizes_nothing() {
     );
     settle(&mut vr, &mut ov);
     assert_eq!((ov.panel(0).size, ov.panel(1).size), sizes);
-    // 子は頭に向けて垂直に立ち、親は子の下に付いてくる。
+    // 子は頭方向を向いて直立し、親は子の下に追従する。
     assert!(ov.panel(1).pose.position.x > 0.9);
     let local = ov.panel(0).pose.inverse() * ov.panel(1).pose;
     let expected = ov.slot_offset(1, 0, 0.0);
@@ -339,7 +339,7 @@ fn a_stream_in_a_slot_keeps_its_height_and_follows_the_aspect_in_width() {
     ov.set_content_resolution(1, (1920, 1080));
     assert_eq!(ov.panel(1).size.y, height);
     assert!((ov.panel(1).size.x - height * 16.0 / 9.0).abs() < 1e-5);
-    // はめていなければ、これまでどおり幅を保つ。
+    // ドックしていなければ従来どおり幅を維持する。
     let width = ov.panel(0).size.x;
     ov.set_content_resolution(0, (1920, 1080));
     assert_eq!(ov.panel(0).size.x, width);
@@ -366,7 +366,7 @@ fn fitting_height_restores_a_stream_captured_before_docking() {
     assert!((ov.panel(1).size.x - 0.768 * 16.0 / 9.0).abs() < 1e-5);
 }
 
-/// はめた画面が入れ替わりで消える（隠す・閉じる）ときは、後ろへ下がる。外しても手前へ出さない。
+/// ドック画面が入れ替わりで消える（隠す・閉じる）際は後方へ退避する。アンドック時は手前へ出さない。
 #[test]
 fn a_slot_child_retreats_while_it_fades_away() {
     let (mut vr, mut ov) = with_slot_child();
@@ -385,11 +385,11 @@ fn a_slot_child_retreats_while_it_fades_away() {
     );
     assert!(
         ov.panel(1).pose.position.abs_diff_eq(before.position, 1e-5),
-        "手前へ出さない"
+        "手前への移動なし"
     );
 }
 
-/// ポップオーバー（固定して外側を押すと閉じる子）は、ほかのパネルより前の描画順。
+/// ポップオーバー（ドックして外側プレスで閉じる子）は他パネルより前の描画順。
 #[test]
 fn popovers_are_drawn_in_front_of_panels() {
     let (mut vr, mut ov) = with_child(true);
@@ -428,7 +428,7 @@ fn docked_panels_nav_bar_keeps_its_size_at_any_distance() {
     assert!(ov.panel(bar).size.abs_diff_eq(near, 1e-5));
     assert!(
         near.abs_diff_eq(Vec2::new(0.4, 0.05), 1e-5),
-        "1m 先での大きさのまま"
+        "1m 先でのサイズ固定"
     );
 }
 
@@ -436,7 +436,7 @@ fn docked_panels_nav_bar_keeps_its_size_at_any_distance() {
 fn resizing_a_slot_child_keeps_its_bottom_on_the_parent() {
     const RESIZE: &str = subsystems::vr::RESIZE_INPUT;
     let (mut vr, mut ov) = with_slot_child();
-    // 実際の画素密度で影の余白を計算し、親と子の面が重ならないようにする。
+    // 実際の画素密度でシャドウマージンを計算し、親と子の面が重ならないようにする。
     ov.panels[0].resolution = (1000, 1000);
     ov.panels[1].resolution = (400, 400);
     ov.tick(&mut vr);
@@ -450,7 +450,7 @@ fn resizing_a_slot_child_keeps_its_bottom_on_the_parent() {
         ),
     );
     ov.tick(&mut vr);
-    // 子を掴んで（掴んだものそのものなので）大きくする。
+    // 子をグラブして（グラブ対象そのものなので）リサイズする。
     let c = ov.panel(1).pose.position;
     let aim = at(c.x, c.y, 0.0);
     controller(&mut vr, aim, &[("squeeze/value", 1.0)]);
@@ -463,7 +463,7 @@ fn resizing_a_slot_child_keeps_its_bottom_on_the_parent() {
         ov.tick(&mut vr);
     }
     assert!(ov.panel(1).size.x > size.x);
-    // 大きくしても親はほぼ動かない（頭を向くためのわずかな回転はある）。
+    // リサイズしても親はほぼ不動（頭方向を向くためのわずかな回転はある）。
     assert!(
         ov.panel(0).pose.position.abs_diff_eq(parent, 1e-2),
         "{} -> {}",
@@ -513,12 +513,12 @@ fn hud_child_sits_in_the_top_left_corner_without_taking_input() {
     ov.tick(&mut vr);
     let corner = Vec3::new(-0.3, 0.3, -1.0 + HUD_LIFT);
     assert!(ov.panel(1).pose.position.abs_diff_eq(corner, 1e-5));
-    // 親の縦横比が変わっても角に付いていく。
+    // 親のアスペクト比が変わっても角に追従する。
     ov.panels[0].size = Vec2::new(1.0, 0.5);
     ov.tick(&mut vr);
     let corner = Vec3::new(-0.3, 0.05, -1.0 + HUD_LIFT);
     assert!(ov.panel(1).pose.position.abs_diff_eq(corner, 1e-5));
-    // 重なった所を押しても、レーザーは素通りして親へ届く（親は止められない）。
+    // 重なった部分をプレスしてもレーザーは透過して親へ届く（親はブロックされない）。
     controller(&mut vr, at(-0.3, 0.05, 0.0), &[("trigger/value", 1.0)]);
     let events = ov.tick(&mut vr);
     assert!(!events.is_empty());
@@ -533,23 +533,23 @@ fn pressing_outside_the_child_closes_it_unless_blocked() {
         controller(vr, at(x, 0.0, 0.0), &[("trigger/value", 1.0)]);
         ov.tick(vr);
     };
-    // 子の中を押しても閉じない。
+    // 子の内部をプレスしても閉じない。
     let (mut vr, mut ov) = with_child(false);
     ov.panels[1].parent.as_mut().unwrap().dismiss = true;
     press(&mut ov, &mut vr, 0.0);
     assert!(!ov.panel(1).closed);
-    // 親の上でも、何もない所でも閉じる。
+    // 親上でも空間上でも閉じる。
     for x in [0.45, 3.0] {
         let (mut vr, mut ov) = with_child(false);
         ov.panels[1].parent.as_mut().unwrap().dismiss = true;
         press(&mut ov, &mut vr, x);
         assert!(ov.panel(1).closed && !ov.panel(0).closed, "x = {x}");
     }
-    // ブロックした子は閉じない。
+    // dismiss 未設定の子は閉じない。
     let (mut vr, mut ov) = with_child(false);
     press(&mut ov, &mut vr, 0.45);
     assert!(!ov.panel(1).closed);
-    // 閉じた押下は、その下の親には届かない（押したままでも、離しても）。
+    // dismiss 時のプレスはその下の親には届かない（プレス中もリリースも）。
     let (mut vr, mut ov) = with_child(false);
     ov.panels[1].parent.as_mut().unwrap().dismiss = true;
     let mut seen = Vec::new();
@@ -568,7 +568,7 @@ fn pressing_outside_the_child_closes_it_unless_blocked() {
             .any(|e| matches!(e.event, PointerEvent::Down { .. } | PointerEvent::Up { .. })),
         "{seen:?}"
     );
-    // 離したあとは、親は普通に押せる。
+    // リリース後は親を通常どおりプレス可能。
     controller(&mut vr, at(0.45, 0.0, 0.0), &[("trigger/value", 1.0)]);
     assert!(
         ov.tick(&mut vr)
@@ -606,7 +606,7 @@ fn pressing_a_nested_child_keeps_its_parent_dialog() {
     controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
     ov.tick(&mut vr);
     assert!(!ov.panel(1).closed && !ov.panel(inner).closed);
-    // 外側の子を押すと内側の子だけが閉じる。
+    // 外側の子をプレスすると内側の子だけが閉じる。
     controller(&mut vr, at(0.15, 0.0, 0.0), &[]);
     ov.tick(&mut vr);
     controller(&mut vr, at(0.15, 0.0, 0.0), &[("trigger/value", 1.0)]);
@@ -639,7 +639,7 @@ fn closing_the_parent_closes_its_children_and_cycles_are_refused() {
     assert!(ov.panel(1).closed);
 }
 
-/// 通知の組: 親（0 番。バー）・はめた画面（1 番）・別の親（2 番。手首）と、掴めない小さな通知（3 番。描画済み）。
+/// 通知のグループ: 親（0 番。バー）・ドック画面（1 番）・別の親（2 番。手首）とロックされた小型通知（3 番。描画済み）。
 fn with_toast() -> (Subsystems<MockBackend>, Overlay, PanelId) {
     let (mut vr, mut ov) = with_slot_child();
     let wrist = ov
@@ -668,7 +668,7 @@ fn with_toast() -> (Subsystems<MockBackend>, Overlay, PanelId) {
     (vr, ov, toast)
 }
 
-/// 動いているものを終わらせ、積む子が追いつくまで tick する（1 tick は少なくとも 1/120 秒進む）。
+/// トランジションを完了させスタック子が追従するまで tick する（1 tick は最低 1/120 秒進行）。
 fn finish_glides(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay) {
     for _ in 0..120 {
         ov.tick(vr);
@@ -686,7 +686,7 @@ fn stack_on(panel: PanelId) -> Option<Parent> {
     })
 }
 
-/// 積む子は、はめた画面があればその上端の上に、無ければ親の上端の上に立つ。
+/// スタック子はドック画面があればその上端の上に、無ければ親の上端の上に立つ。
 #[test]
 fn a_stacked_child_stands_on_the_docked_screen() {
     let (mut vr, mut ov, toast) = with_toast();
@@ -700,7 +700,7 @@ fn a_stacked_child_stands_on_the_docked_screen() {
         (toast_bottom - screen_top - SLOT_GAP).abs() < 1e-4,
         "{toast_bottom} {screen_top}"
     );
-    // 画面が隠れると、バーの上（画面の立っていた所）へ下りていく。
+    // 画面が隠れるとバーの上（画面の位置）へ降下する。
     ov.set_hidden(&mut vr.backend, 1, true);
     finish_glides(&mut vr, &mut ov);
     let (bar, t) = (ov.panel(0), ov.panel(toast));
@@ -712,14 +712,14 @@ fn a_stacked_child_stands_on_the_docked_screen() {
     );
 }
 
-/// 隠れている間に積む先へ移した子は、出し直したときに前の置き場所から滑ってこない（その場に現れる。トーストの移り方）。
-/// はめた画面より前に描く（はめた画面の出入りで上へ動くとき、重なった所がちらつかないように）。
+/// 非表示中にスタック先へ移した子は再表示時に前の位置からスライドしない（その場に出現する。トーストの移動方式）。
+/// ドック画面より前に描画する（ドック画面の出入りで上に移動する際、重なり部分のフリッカーを防止）。
 #[test]
 fn a_stacked_child_appears_in_place_and_in_front() {
     let (mut vr, mut ov, toast) = with_toast();
     ov.set_hidden(&mut vr.backend, toast, true);
     finish_glides(&mut vr, &mut ov);
-    // 消えきってから移る（トーストは消えきるのを待ってから次の場所へ移る）。薄れるのは実時間で進むので、待たずに消えきらせる。
+    // 完全に消えてから移動（トーストはフェードアウト完了後に次の位置へ移動）。フェードは実時間で進むため即座に完了させる。
     ov.panels[toast].opacity = 0.0;
     ov.set_parent(&mut vr.backend, toast, stack_on(0));
     ov.set_hidden(&mut vr.backend, toast, false);
@@ -740,7 +740,7 @@ fn a_stacked_child_appears_in_place_and_in_front() {
     assert_eq!(sort("child"), PANEL_SORT);
 }
 
-/// 掴めない子（積んだ通知）があっても、バーを掴むとはめた画面を掴んだことになる。
+/// ロックされた子（スタックされた通知）があってもバーをグラブするとドック画面をグラブした扱いになる。
 #[test]
 fn a_locked_docked_child_does_not_change_what_a_grab_moves() {
     let (mut vr, mut ov, toast) = with_toast();
@@ -758,8 +758,8 @@ fn a_locked_docked_child_does_not_change_what_a_grab_moves() {
         (2, Pose::IDENTITY)
     );
 }
-/// デバイスに付いて動くパネルのナビゲーションバーと子（ポップオーバー）も、同じデバイスに相対で付く（ランタイムが根元と
-/// 同じ姿勢で動かすので遅れない）。根元が付いていなければ付けない。
+/// デバイス追従パネルのナビバーと子（ポップオーバー）も同じデバイスへ相対配置される（ランタイムがルートと
+/// 同じ姿勢で移動するため遅延なし）。ルートが未アタッチなら配置しない。
 #[test]
 fn nav_bar_and_children_follow_the_device_their_root_rides_on() {
     let (mut vr, mut ov) = with_child(true);

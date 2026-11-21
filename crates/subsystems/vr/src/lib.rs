@@ -1,13 +1,13 @@
 //! ランタイムサブシステム。OpenVR / OpenXR / novr（VR なし）の違いを1つのトレイト [`VrBackend`] の裏に隠す。
 //! どれも対等な「手段」で、上位層は [`connect`] から得た `Box<dyn VrBackend>` だけを扱う。
-//! novr もデスクトップのウィンドウで VR を模すエミュレーター（[`novr::Emulator`]）なので、上位層から見た違いは無い。
+//! novr もデスクトップのウィンドウで VR をエミュレートするエミュレーター（[`novr::Emulator`]）なので、上位層から見た違いは無い。
 //!
 //! 語彙は OpenXR に揃える: コントローラのプロファイルは `"vendor/name"`（例 `"valve/index_controller"`）、
 //! 入力は `"component/feature"`（例 `"trigger/value"`）。OpenVR バックエンドはこれに翻訳する。
 
 #[cfg(feature = "novr")]
 mod compositor;
-// openvr と openxr で使う部分が違うので、片方だけのビルドでは未使用になる。
+// openvr と openxr で使用する部分が異なるため、片方のみのビルドでは未使用になる。
 #[cfg(any(feature = "openvr", feature = "openxr"))]
 #[cfg_attr(not(all(feature = "openvr", feature = "openxr")), allow(dead_code))]
 mod gpu;
@@ -18,7 +18,7 @@ pub mod novr;
 #[cfg(feature = "openvr")]
 mod openvr;
 
-/// testkit の実ランタイムテスト用。上位層からは使わない。
+/// testkit の実ランタイムテスト用。上位層からは使用しない。
 #[cfg(feature = "openvr")]
 #[doc(hidden)]
 pub use openvr::{
@@ -32,9 +32,9 @@ use std::fmt;
 
 pub use glam::{Mat3, Quat, Vec2, Vec3};
 
-/// 頭がこの角度（ラジアン）より見上げる・横に倒れると、寝転がりとみなし始める（[`Pose::panel_up`]）。
+/// 頭がこの角度（ラジアン）を超えて見上げる・横に傾くと、仰臥姿勢とみなし始める（[`Pose::panel_up`]）。
 const LIE_START: f32 = 35.0 * std::f32::consts::PI / 180.0;
-/// この角度で寝転がりきったとみなす。間はなめらかに移り、境目でパネルが跳ねない。
+/// この角度で仰臥姿勢が完了したとみなす。間はスムーズに遷移し、境界でパネルが跳ねない。
 const LIE_FULL: f32 = 55.0 * std::f32::consts::PI / 180.0;
 
 /// トラッキング空間での剛体変換（メートル）。前方は -Z（OpenVR / OpenXR 共通）。
@@ -65,13 +65,13 @@ impl Pose {
         self.orientation * Vec3::NEG_Z
     }
 
-    /// 頭の姿勢から決める、パネルを立てる上方向。立っている（座っている）間は真上で、首の傾きを無視する。
-    /// 寝転がる（見上げる・横に倒す）ほど頭の上へ寄せ、寝転がりきれば頭の上そのもの。頭の位置（高さ）は見ず、回転だけで決める。
-    /// うつむきは寝転がりに数えない（手首を見下ろしてもパネルは立てたまま）。
-    /// ponytail: 回転だけなので、立って真上を見上げるのも仰向けと区別しない。
+    /// 頭の姿勢から決定する、パネルを立てる上方向。起立・着席中は真上で、首の傾きを無視する。
+    /// 仰臥姿勢（見上げ・横傾き）が深いほど頭の上へ寄せ、完全な仰臥で頭の上そのもの。頭の位置（高さ）は参照せず、回転のみで決定する。
+    /// 俯きは仰臥姿勢に含めない（手首を見下ろしてもパネルは立てたまま）。
+    /// ponytail: 回転のみのため、起立状態で真上を見上げる場合も仰臥と区別しない。
     pub fn panel_up(&self) -> Vec3 {
         let (up, right) = (self.orientation * Vec3::Y, self.orientation * Vec3::X);
-        // 見上げる角度と左右に倒す角度の大きい方。
+        // 見上げ角度と左右傾斜角度の大きい方。
         let tilt = self.forward().y.max(right.y.abs()).clamp(0.0, 1.0).asin();
         let t = ((tilt - LIE_START) / (LIE_FULL - LIE_START)).clamp(0.0, 1.0);
         let t = t * t * (3.0 - 2.0 * t);
@@ -79,13 +79,13 @@ impl Pose {
     }
 
     /// 位置はそのまま、上を [`Pose::panel_up`] に立て、前方（-Z）を頭の前方に寄せた姿勢。
-    /// 頭の前にパネルを出すのに使う。立っている間は水平方向（Y 軸回り）だけで、うつむき・首の傾きを無視する。
-    /// 寝転がっている間は頭の向きそのもので、顔の前に出る。
+    /// 頭の前にパネルを表示する際に使用する。起立中は水平方向（Y 軸回り）のみで、俯き・首の傾きを無視する。
+    /// 仰臥中は頭の向きそのもので、顔の前に表示される。
     pub fn leveled(&self) -> Pose {
         let up = self.panel_up();
         let f = self.forward();
         let Some(back) = (up * f.dot(up) - f).try_normalize() else {
-            // 真上・真下を見ている（立っている間のうつむききり）。向きは決まらないので前方 -Z。
+            // 真上・真下を見ている（起立中の完全な俯き）。方向が不定のため前方 -Z。
             return Pose::new(self.position, Quat::IDENTITY);
         };
         let x = up.cross(back).normalize();
@@ -120,12 +120,12 @@ pub enum Hand {
     Right,
 }
 
-/// 掴んでいるパネルの拡大縮小（-1..1、+ で大きく）を直接伝える入力名。実機のコントローラには無く、
-/// novr のエミュレーターが PageUp / PageDown で出す（テスト用。手を前後に動かせないため）。
+/// グラブ中パネルの拡縮（-1..1、+ で拡大）を直接伝達する入力名。実機のコントローラには存在せず、
+/// novr のエミュレーターが PageUp / PageDown で生成する（テスト用。手の前後移動が不可能なため）。
 pub const RESIZE_INPUT: &str = "nyaw/resize";
 
-/// ショートカットの二回押しを、ランタイムが数えて 1 フレームだけ 1 を立てる入力名。SteamVR ではバインドの「ダブルタップ」が数えるので、
-/// ボタンの押下そのもの（`x/click` 等）は出さない。ほかのランタイムは出さず、`kernel` が押下の間隔から数える。
+/// ショートカットのダブルプレスを、ランタイムがカウントして 1 フレームのみ 1 を立てる入力名。SteamVR ではバインドの「ダブルタップ」がカウントするため、
+/// ボタンの押下そのもの（`x/click` 等）は出力しない。他のランタイムは出力せず、`kernel` が押下間隔からカウントする。
 pub const DOUBLE_PRESS_INPUT: &str = "nyaw/double_press";
 
 /// ランタイム非依存・バインド前のコントローラのスナップショット。解釈は入力層の仕事。
@@ -170,23 +170,23 @@ pub const fn joint_parent(joint: usize) -> Option<usize> {
 pub struct HandSkeleton {
     pub hand: Hand,
     pub joints: [Pose; JOINT_COUNT],
-    /// 指をどれだけ実際に追っているか。
+    /// 指をどの程度実際に追跡しているか。
     pub tracking: FingerTracking,
 }
 
-/// 骨格の指をどれだけ実際に追っているか（OpenVR の `EVRSkeletalTrackingLevel` に揃える）。
+/// 骨格の指をどの程度実際に追跡しているか（OpenVR の `EVRSkeletalTrackingLevel` に揃える）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FingerTracking {
-    /// 指は追っておらず、ボタンなどから推し量った形（Vive のコントローラ）。
+    /// 指は追跡しておらず、ボタン等から推定した形状（Vive のコントローラ）。
     Estimated,
-    /// コントローラを握ったまま、一部の指を追っている（Index・Touch の静電容量）。
+    /// コントローラを握ったまま、一部の指を追跡している（Index・Touch の静電容量）。
     Partial,
-    /// 指を全部追っている（光学式のハンドトラッキング・グローブ）。コントローラを握っていない手で、ランタイムがコントローラとして
-    /// 見せていても（Steam Link・Virtual Desktop はつまみをトリガーにする）骨格で操作する。
+    /// 指を全部追跡している（光学式のハンドトラッキング・グローブ）。コントローラを握っていない手で、ランタイムがコントローラとして
+    /// 提示していても（Steam Link・Virtual Desktop はピンチをトリガーに変換する）骨格で操作する。
     Full,
 }
 
-/// 手のひらと手の甲のどちらを（顔に）向けているか（[`HandSkeleton::facing`]）。
+/// 手のひらと手の甲のどちらを顔に向けているか（[`HandSkeleton::facing`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Facing {
     Palm,
@@ -196,7 +196,7 @@ pub enum Facing {
 /// 手首の関節から見た、握ったコントローラの tip（[`HandSkeleton::grip`] の元。grip の座標系。m）: 指の方へ 12cm、
 /// 親指の側（コントローラの天面）へ 4cm。逆に tip から見た手首の関節は後ろへ 12cm・下へ 4cm で、手首の時計
 /// （`wrist::watch_offset`）はここから決める。
-// ponytail: Touch / Index を握ったときの目分量。機種ごとの握りの差はこの値の調整で合わせる。
+// ponytail: Touch / Index を握った際の目分量。機種ごとの握りの差はこの値の調整で合わせる。
 pub const GRIP_FROM_WRIST: Vec3 = Vec3::new(0.0, 0.04, -0.12);
 
 /// 人差し指・小指の基節（手のひらの面を張る関節）。
@@ -204,7 +204,7 @@ const INDEX_PROXIMAL: usize = 7;
 const LITTLE_PROXIMAL: usize = 22;
 
 impl HandSkeleton {
-    /// 手のひらから外へ出る向き（単位ベクトル）。関節の位置だけから求めるので、ランタイムの関節の軸の違いによらない。
+    /// 手のひらから外へ出る向き（単位ベクトル）。関節の位置のみから算出するため、ランタイムの関節軸の違いに依存しない。
     pub fn palm_normal(&self) -> Vec3 {
         let wrist = self.joints[WRIST].position;
         let index = self.joints[INDEX_PROXIMAL].position - wrist;
@@ -217,7 +217,7 @@ impl HandSkeleton {
         n.normalize_or_zero()
     }
 
-    /// 手のひらを `eye` へどれだけ向けているか（なす角の cos。1 で正面に手のひら、-1 で手の甲）。
+    /// 手のひらを `eye` へどの程度向けているか（なす角の cos。1 で正面に手のひら、-1 で手の甲）。
     pub fn palm_toward(&self, eye: Vec3) -> f32 {
         let to_eye = (eye - self.joints[PALM].position).normalize_or_zero();
         self.palm_normal().dot(to_eye)
@@ -232,10 +232,10 @@ impl HandSkeleton {
         }
     }
 
-    /// この手でコントローラを握ったときの `/pose/tip` に当たる姿勢: 前方（-Z）は手首から中指の付け根への向き、上（+Y）は
-    /// 親指の側（握ったコントローラの天面）、+X は右手なら手の甲・左手なら手のひらの側。元は手首から [`GRIP_FROM_WRIST`]。
-    /// コントローラに取り付けたパネル（手首の時計など）を、骨格だけの手にも同じ相対姿勢で付けるため。
-    // ponytail: 前腕は追っていないので、手首を曲げると手首の時計も手と一緒に傾く。
+    /// この手でコントローラを握った際の `/pose/tip` に相当する姿勢: 前方（-Z）は手首から中指の付け根への向き、上（+Y）は
+    /// 親指側（コントローラの天面）、+X は右手なら手の甲・左手なら手のひら側。原点は手首から [`GRIP_FROM_WRIST`]。
+    /// コントローラに取り付けたパネル（手首の時計等）を、骨格のみの手にも同じ相対姿勢で付与するため。
+    // ponytail: 前腕は追跡していないため、手首を曲げると手首の時計も手と一緒に傾く。
     pub fn grip(&self) -> Pose {
         let p = |i: usize| self.joints[i].position;
         let back = (p(WRIST) - p(12)).normalize_or(Vec3::Z);
@@ -249,7 +249,7 @@ impl HandSkeleton {
         Pose::new(p(WRIST) + orientation * GRIP_FROM_WRIST, orientation)
     }
 
-    /// 親指の先と `tip`（[`TIPS`] のどれか）の先との距離（m）。つまむ動作の判定に使う。
+    /// 親指の先端と `tip`（[`TIPS`] のいずれか）の先端との距離（m）。ピンチ動作の判定に使用する。
     pub fn pinch_distance(&self, tip: usize) -> f32 {
         self.joints[TIPS[0]]
             .position
@@ -261,24 +261,24 @@ impl HandSkeleton {
 pub struct Frame {
     pub hmd: Pose,
     pub controllers: Vec<RawController>,
-    /// 骨格が取れている手（スケルタル入力。ランタイムが対応していなければ空）。
+    /// 骨格が取得できている手（スケルタル入力。ランタイムが未対応であれば空）。
     pub hands: Vec<HandSkeleton>,
-    /// 手ごとの、ランタイムが追っているその手のデバイスの姿勢（[`Device::Controller`] への取り付けの基準。コントローラなら
-    /// [`RawController::aim`] と同じ）。ハンドトラッキングでもランタイムが手をデバイスとして見せていればある
-    /// （Virtual Desktop の `vd_hand_controller`）。無ければ骨格の手は骨格から置く。
+    /// 手ごとの、ランタイムが追跡しているその手のデバイスの姿勢（[`Device::Controller`] への取り付け基準。コントローラなら
+    /// [`RawController::aim`] と同一）。ハンドトラッキングでもランタイムが手をデバイスとして提示していれば存在する
+    /// （Virtual Desktop の `vd_hand_controller`）。存在しなければ骨格の手は骨格から配置する。
     pub hand_devices: Vec<(Hand, Pose)>,
     /// コントローラ以外のトラッカー（腰・足など）。ID はランタイムが決める（OpenVR はシリアル番号）。
     pub trackers: Vec<(String, Pose)>,
-    /// 電池の残量を申告しているデバイス（OpenVR だけ。OpenXR には標準の手段が無い）。
+    /// 電池の残量を報告しているデバイス（OpenVR のみ。OpenXR には標準的な手段が存在しない）。
     pub batteries: Vec<Battery>,
     /// ランタイムが終了を求めている（SteamVR の終了、OpenXR セッションの EXITING など）。
     pub quit: bool,
-    /// デバイスは実在せず模したもの（novr のエミュレーター）。取り付けたパネルは追従しない（[`Frame::pose`] が `None`）。
+    /// デバイスは実在せずエミュレートされたもの（novr のエミュレーター）。取り付けたパネルは追従しない（[`Frame::pose`] が `None`）。
     pub emulated: bool,
 }
 
 impl Frame {
-    /// このフレームでの `device` の姿勢。トラッキングされていなければ（模したデバイスも）`None`。
+    /// このフレームでの `device` の姿勢。トラッキングされていなければ（エミュレートされたデバイスも）`None`。
     pub fn pose(&self, device: &Device) -> Option<Pose> {
         if self.emulated {
             return None;
@@ -314,7 +314,7 @@ pub struct Fov {
 }
 
 impl Fov {
-    /// ランタイムが教えてくれないときに見込む視野（出回っている HMD の中で狭いもの。両目の重なりが片側 40°）。
+    /// ランタイムが提供しない場合に想定する視野（市販 HMD の中で狭いもの。両目の重なりが片側 40°）。
     pub const NARROW: Fov = Fov::even(40.0_f32.to_radians(), 40.0_f32.to_radians());
 
     /// 左右・上下が対称な視野（片側の角度）。
@@ -337,9 +337,9 @@ impl Fov {
         }
     }
 
-    /// HUD（頭に付けて視野の端に出すもの）を置いてよい範囲。どの HMD でも確実に映り、余裕を持たせる: 視野の端から
-    /// [`SAFE_SHARE`] の内側（レンズの端はにじみ・歪みで読めず、目の位置のずれで欠ける）で、かつ [`SAFE_MAX`] を
-    /// 超えない（視野の広い HMD でも、目を少し動かせば読める所に置き、HMD による違いを小さくする）。
+    /// HUD（頭に取り付けて視野の端に表示するもの）を配置可能な範囲。どの HMD でも確実に映り、余裕を持たせる: 視野の端から
+    /// [`SAFE_SHARE`] の内側（レンズの端はにじみ・歪みで判読不能、目の位置のずれで欠ける）で、かつ [`SAFE_MAX`] を
+    /// 超えない（広視野 HMD でも、目を少し動かすだけで判読可能な位置に配置し、HMD による差異を縮小する）。
     pub fn safe(self) -> Fov {
         let side = |a: f32, max: f32| (a * SAFE_SHARE).min(max);
         Fov {
@@ -350,7 +350,7 @@ impl Fov {
         }
     }
 
-    /// 角度がどれも 0 より大きく直角より小さい（ランタイムが返した値を信じてよい）。
+    /// 角度がすべて 0 より大きく直角より小さい（ランタイムが返した値を信頼可能）。
     pub fn valid(self) -> bool {
         [self.left, self.right, self.up, self.down]
             .iter()
@@ -360,7 +360,7 @@ impl Fov {
 
 /// HUD を置いてよい範囲（[`Fov::safe`]）に使う、視野の片側のうちの割合。
 pub const SAFE_SHARE: f32 = 0.4;
-/// HUD を置いてよい範囲の上限（左右 15°・上下 12°。目を少し動かすだけで読める所）。
+/// HUD を配置可能な範囲の上限（左右 15°・上下 12°。目を少し動かすだけで判読可能な位置）。
 pub const SAFE_MAX: Fov = Fov::even(15.0_f32.to_radians(), 12.0_f32.to_radians());
 
 /// トラッキングされるデバイス。オーバーレイを取り付ける先として使う。
@@ -380,7 +380,7 @@ pub struct OverlayId(pub u64);
 pub enum Runtime {
     OpenVr,
     OpenXr,
-    /// VR を使わず、デスクトップのウィンドウで VR を模す（[`novr::Emulator`]）。
+    /// VR を使用せず、デスクトップのウィンドウで VR をエミュレートする（[`novr::Emulator`]）。
     NoVr,
 }
 
@@ -411,15 +411,15 @@ pub trait VrBackend {
     /// ランタイムのイベントを処理し、このフレームの姿勢と生のコントローラ入力を返す。
     fn poll(&mut self) -> Frame;
     fn create_overlay(&mut self, key: &str, width_m: f32) -> Result<OverlayId, VrError>;
-    /// 同時に作れるオーバーレイの数の上限（OpenXR は 1 フレームに出せるレイヤー数、OpenVR はランタイム全体の数）。
-    /// 無い・分からなければ `None`。超えた分の [`create_overlay`](Self::create_overlay) はエラーになる。
+    /// 同時に作成可能なオーバーレイ数の上限（OpenXR は 1 フレームに出力可能なレイヤー数、OpenVR はランタイム全体の数）。
+    /// 存在しない・不明であれば `None`。超過分の [`create_overlay`](Self::create_overlay) はエラーになる。
     fn max_overlays(&self) -> Option<usize> {
         None
     }
     fn set_overlay_pose(&mut self, id: OverlayId, pose: Pose);
-    /// `device` の姿勢 * `offset` に置き、追従はランタイムに任せる（アプリが poll した姿勢を送るより遅れない）。
-    /// 任せられなければ `false` を返し、呼び出し側は毎 tick [`set_overlay_pose`](Self::set_overlay_pose) で送る。
-    /// 呼び出し側は毎 tick 頼み直すので、前と同じならランタイムへ送らないこと。
+    /// `device` の姿勢 * `offset` に配置し、追従はランタイムに委任する（アプリが poll した姿勢を送信するより低遅延）。
+    /// 委任不可なら `false` を返し、呼び出し側は毎 tick [`set_overlay_pose`](Self::set_overlay_pose) で送信する。
+    /// 呼び出し側は毎 tick 再要求するため、前回と同一ならランタイムへ送信しないこと。
     fn set_overlay_pose_relative(
         &mut self,
         _id: OverlayId,
@@ -430,61 +430,61 @@ pub trait VrBackend {
     }
     /// 幅（m）。高さはテクスチャの縦横比で決まる。
     fn set_overlay_width(&mut self, id: OverlayId, width_m: f32);
-    /// 高さ（m）を幅・テクスチャの縦横比と関係なく固定する（伸び縮みするレーザーの太さを保つため）。
+    /// 高さ（m）を幅・テクスチャの縦横比と無関係に固定する（伸縮するレーザーの太さを維持するため）。
     fn set_overlay_height(&mut self, id: OverlayId, height_m: f32);
     /// 作成直後は表示されている。
     fn set_overlay_visible(&mut self, id: OverlayId, visible: bool);
-    /// 不透明度（0〜1）をランタイムで合成する。未対応なら `false`（呼び出し側が画素を減衰させる）。
+    /// 不透明度（0〜1）をランタイムで合成する。未対応であれば `false`（呼び出し側が画素を減衰させる）。
     fn set_overlay_alpha(&mut self, _id: OverlayId, _alpha: f32) -> bool {
         false
     }
-    /// 色の明るさ（1 = そのまま 〜 0 = 黒）をランタイムで掛ける。透明度は変えない。未対応なら `false`（呼び出し側が画素を暗くする）。
+    /// 色の明るさ（1 = そのまま 〜 0 = 黒）をランタイムで乗算する。透明度は変更しない。未対応であれば `false`（呼び出し側が画素を暗くする）。
     fn set_overlay_tint(&mut self, _id: OverlayId, _brightness: f32) -> bool {
         false
     }
-    /// 重なったときの描画順。大きいほど手前に描かれる（既定 0）。奥行きでは決まらない。
+    /// 重なった際の描画順。値が大きいほど手前に描画される（既定 0）。奥行きでは決定されない。
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32);
-    /// RGBA8、行間に詰め物なし。
+    /// RGBA8、行間にパディングなし。
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]);
-    /// オーバーレイを捨てて資源を返す。以降 `id` は使わない。閉じたパネルが溜まらないよう、既定は何もしない。
+    /// オーバーレイを破棄してリソースを返却する。以降 `id` は使用しない。閉じたパネルが蓄積しないよう、既定は何もしない。
     fn destroy_overlay(&mut self, _id: OverlayId) {}
-    /// 直前の [`poll`](Self::poll) でランタイムがアプリのスレッドで合成・表示にかけた時間（待ちは含まない）。
-    /// 合成をランタイム（別プロセス）がするなら 0（novr のエミュレーターだけが返す）。プロファイラ用。
+    /// 直前の [`poll`](Self::poll) でランタイムがアプリのスレッドで合成・表示に要した時間（待機は含まない）。
+    /// 合成をランタイム（別プロセス）が実行する場合は 0（novr のエミュレーターのみが返す）。プロファイラ用。
     fn compositor_time(&self) -> std::time::Duration {
         std::time::Duration::ZERO
     }
-    /// フレームの周期が決まっていれば返す（novr のエミュレーター）。VR ランタイムは vsync で決まり分からないので `None`。
-    /// プロファイラがドロップを数える基準に使う。
+    /// フレームの周期が確定していれば返す（novr のエミュレーター）。VR ランタイムは vsync で決定され不明のため `None`。
+    /// プロファイラがドロップをカウントする基準に使用する。
     fn frame_interval(&self) -> Option<std::time::Duration> {
         None
     }
-    /// 直前に合成した絵で、オーバーレイの画面上の領域が 1 画素でもほかのオーバーレイに隠されずにあったか
-    /// （ほかのパネルに隠れた・視野の外なら `false`。自分が透明かどうかは問わない）。
-    /// ランタイムが教えてくれなければ `None`（呼び出し側が視野で見積もる）。見えないパネルの描き直しを省くのに使う。
+    /// 直前に合成したフレームで、オーバーレイの画面上の領域が 1 画素でも他のオーバーレイに遮蔽されずに存在したか
+    /// （他のパネルに遮蔽された・視野外であれば `false`。自身の透明度は問わない）。
+    /// ランタイムが提供しなければ `None`（呼び出し側が視野で推定する）。非可視パネルの再描画を省略するために使用する。
     fn overlay_seen(&self, _id: OverlayId) -> Option<bool> {
         None
     }
-    /// シーンのアプリ（ゲーム）への入力を止める・戻す（ダッシュボードが出ている間）。止められるのは OpenVR だけ
-    /// （SteamVR Input のアクションセットをオーバーレイの全体優先度で更新し、使う入力を奪う）。ほかは何もしない。
+    /// シーンのアプリ（ゲーム）への入力をブロック・解除する（ダッシュボード表示中）。ブロック可能なのは OpenVR のみ
+    /// （SteamVR Input のアクションセットをオーバーレイの全体優先度で更新し、使用する入力を占有する）。他は何もしない。
     fn block_app_input(&mut self, _block: bool) {}
-    /// 両目に映る範囲（両目の視野の重なり）。ランタイムが教えてくれなければ `None`（呼び出し側は [`Fov::NARROW`] を見込む）。
+    /// 両目に映る範囲（両目の視野の重なり）。ランタイムが提供しなければ `None`（呼び出し側は [`Fov::NARROW`] を想定する）。
     fn fov(&self) -> Option<Fov> {
         None
     }
-    /// ランタイムの起動と同時にこのアプリを開くか。切り替えられないランタイムは `None`（OpenVR だけが持つ）。
+    /// ランタイムの起動と同時にこのアプリを起動するか。切り替え不可のランタイムは `None`（OpenVR のみが保持する）。
     fn auto_launch(&self) -> Option<bool> {
         None
     }
-    /// 自動起動を切り替える。入れると、ランタイムが起動するのはこの実行ファイルになる。切り替えられなければ何もしない。
+    /// 自動起動を切り替える。有効にすると、ランタイム起動時にこの実行ファイルが起動する。切り替え不可であれば何もしない。
     fn set_auto_launch(&mut self, _on: bool) {}
-    /// 疎通確認用: ランタイムへ渡した最後の画像（幅, 高さ, RGBA）を読み戻す。読めない実装は `None`。
-    /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読めるので、これは OpenXR 用。
+    /// 疎通確認用: ランタイムへ送信した最後の画像（幅, 高さ, RGBA）を読み戻す。読み戻し不可の実装は `None`。
+    /// OpenVR は [`openvr_overlay_image`] でランタイム側の画像を読み戻せるため、これは OpenXR 用。
     fn overlay_image(&mut self, _id: OverlayId) -> Option<(u32, u32, Vec<u8>)> {
         None
     }
 }
 
-/// `Box<dyn VrBackend>` もそのままバックエンドとして使える（カーネルが具象型・動的型の両方を持てるように）。
+/// `Box<dyn VrBackend>` もそのままバックエンドとして使用可能（カーネルが具象型・動的型の両方を保持できるように）。
 impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     fn runtime(&self) -> Runtime {
         (**self).runtime()

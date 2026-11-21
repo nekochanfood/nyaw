@@ -118,8 +118,8 @@ impl DirectManipulationHandler {
 
 impl Drop for DirectManipulationHandler {
     fn drop(&mut self) {
-        // ウィンドウの状態は DestroyWindow の後に破棄される。ビューポートはウィンドウと一緒に片付いているので、
-        // 破棄済みのハンドルで呼ぶと "Invalid window handle. (0x80070578)" がログに出る。
+        // DestroyWindow 後にウィンドウの状態は破棄済みとなる。ビューポートもウィンドウと共に解放されるため、
+        // 破棄済みハンドルで呼び出すと "Invalid window handle. (0x80070578)" がログに記録される。
         if !unsafe { IsWindow(Some(self.window)) }.as_bool() {
             return;
         }

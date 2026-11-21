@@ -1,8 +1,8 @@
-//! フォントの見本（[`TestingFont`]）。
+//! フォントのサンプル表示（[`TestingFont`]）。
 
 use super::*;
 
-/// フォントの見本（`testing-font`）: 英数・かな漢字・混在を、太さと大きさを変えて並べる。
+/// フォントのサンプル表示（`testing-font`）: 英数・かな漢字・混在を、ウェイトとサイズを変えて一覧する。
 pub struct TestingFont {}
 
 impl TestingFont {

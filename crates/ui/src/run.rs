@@ -1,15 +1,15 @@
-//! フレームループ（[`run`] / [`pump`]）: カーネルを進め、パネルの窓を開け閉めし、入力を配って描画を読み戻す。
+//! フレームループ（[`run`] / [`pump`]）: カーネルを進行させ、パネルウィンドウの開閉を管理し、入力を配送して描画を読み戻す。
 
 use super::*;
 
-/// ホバーだけの入力で描き直す間隔の下限（約 40Hz）。
+/// ホバーのみの入力で再描画する間隔の下限（約 40Hz）。
 const HOVER_REDRAW: Duration = Duration::from_millis(25);
-/// 描き直しても絵が変わらないパネルの、描き直す間隔の上限（時計の分の切り替わりはこの遅れで見える）。
+/// 再描画しても画像が変わらないパネルの再描画間隔の上限（時計の分の切り替わりはこの遅延で視認可能）。
 const IDLE_MAX: Duration = Duration::from_secs(1);
 
-/// ウィンドウごとのツールチップの要求（[`design::components::Tooltips`]）を、そのパネルを指している手に振り分け、
-/// 手ごとの向き（[`Kernel::tooltip_anchor`]）とともに [`PanelControl`] へ書く。変わったら `true`（ツールチップを描き直す）。
-/// 全体の設定でツールチップを切っていれば振り分けない。入力を配送した後に毎フレーム呼ぶ。本番と testkit 共通。
+/// ウィンドウごとのツールチップ要求（[`design::components::Tooltips`]）を、パネルを指している手に振り分け、
+/// 手ごとの向き（[`Kernel::tooltip_anchor`]）とともに [`PanelControl`] へ書き込む。変更があれば `true` を返す（ツールチップを再描画する）。
+/// 全体設定でツールチップが無効の場合は振り分けない。入力配送後に毎フレーム呼び出す。本番と testkit で共通。
 pub fn sync_tooltips<B: VrBackend>(
     kernel: &Kernel<B>,
     bridges: &HashMap<(PanelId, Hand), PointerBridge>,
@@ -48,8 +48,8 @@ pub fn sync_tooltips<B: VrBackend>(
     changed
 }
 
-/// 1フレーム分: 下位パイプラインを回し、パネル宛てのイベントを GPUI 入力に変換して返す。
-/// 本番の [`run`] とテスト用の testkit が共通で通る経路。
+/// 1 フレーム分の処理: 下位パイプラインを実行し、パネル宛てイベントを GPUI 入力に変換して返す。
+/// 本番の [`run`] とテスト用 testkit が共通で通る経路。
 pub fn pump<B: VrBackend>(
     kernel: &mut Kernel<B>,
     bridges: &mut HashMap<(PanelId, Hand), PointerBridge>,
@@ -64,11 +64,11 @@ pub fn pump<B: VrBackend>(
             SWIPE_SLOP_DEG.to_radians().tan() * distance * p.resolution.0 as f32 / p.size.x;
         let input = bridge.translate(e.event, mode);
         if bridge.held() {
-            // 長押しでドラッグになった。ほかのパネルへ運べるよう、オーバーレイのキャプチャを外す。
+            // 長押しでドラッグに遷移した。他パネルへ移動可能にするため、オーバーレイのキャプチャを解除する。
             kernel.release_capture(e.hand);
         }
-        // GPUI のマウスはウィンドウに 1 つ。この手が動かしたので、同じパネルのもう一方の手は「マウスはもう自分の所にある」と
-        // 思わず、次は必ず位置から送り直す（送らないと、押下がもう一方の手の位置に届いて押せないことがあった）。
+        // GPUI のマウスはウィンドウに 1 つ。この手が移動させたため、同じパネルのもう一方の手は
+        // 次の入力で必ず位置を再送出する（再送出しないと、押下がもう一方の手の位置に届いて押せない場合があった）。
         if !input.is_empty() {
             for (&(panel, hand), b) in bridges.iter_mut() {
                 if panel == e.panel && hand != e.hand {
@@ -97,32 +97,32 @@ pub fn pump<B: VrBackend>(
     gpui
 }
 
-/// テストなどがフレームループに差し込む口。
+/// テスト等がフレームループに挿入するフック。
 #[derive(Default)]
 pub struct Hooks {
-    /// 毎フレーム、メインスレッドで `App` を触る処理を受け取る（別スレッドのテストが GPUI を操作する）。
+    /// 毎フレーム、メインスレッドで `App` にアクセスする処理を受け取る（別スレッドのテストが GPUI を操作する）。
     pub remote: Option<std::sync::mpsc::Receiver<Remote>>,
-    /// 計測はするがプロファイラパネルを出さない（ベンチマークが自分の描画で計測を汚さないように）。
+    /// 計測は実行するがプロファイラパネルは表示しない（ベンチマーク自身の描画が計測を汚染しないようにする）。
     pub hide_profiler: bool,
 }
 
-/// フレームループ（メインスレッド）で実行してもらう処理。
+/// フレームループ（メインスレッド）で実行する処理。
 pub type Remote = Box<dyn FnOnce(&mut App) + Send>;
 
-/// パネルを描く GPUI のアプリ。プラットフォームの選択は GPUI に任せる。
+/// パネルを描画する GPUI アプリケーション。プラットフォームの選択は GPUI に委ねる。
 pub fn application() -> gpui::Application {
     gpui_platform::application()
 }
 
-/// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも回す。
-/// どのランタイム（OpenVR / OpenXR / novr）でも同じ経路を通る（周期は `poll` が vsync まで待って作る）。
-/// パネルに載せる画面（上の層）は `panels` で受け取る。UI 層はどの画面かを知らない。
-/// `profiler` があれば起動時から計測し（`PanelControl::profiling`）、段階ごとの所要時間をプロファイラパネルにグラフで出す。
+/// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも駆動する。
+/// どのランタイム（OpenVR / OpenXR / novr）でも同一の経路を通る（周期は `poll` が vsync まで待機して生成する）。
+/// パネルに載せる画面（上位層）は `panels` で受け取る。UI 層はどの画面かを関知しない。
+/// `profiler` を指定すると起動時から計測を開始し（`PanelControl::profiling`）、段階ごとの所要時間をプロファイラパネルにグラフ表示する。
 pub fn run(kernel: Kernel, panels: Vec<PanelSpec>, profiler: Option<Profiler>) {
     run_with(kernel, panels, profiler, Hooks::default())
 }
 
-/// [`run`] にテスト用の差し込み口（[`Hooks`]）を足したもの。
+/// [`run`] にテスト用フック（[`Hooks`]）を追加したもの。
 pub fn run_with(
     mut kernel: Kernel,
     panels: Vec<PanelSpec>,
@@ -131,21 +131,21 @@ pub fn run_with(
 ) {
     let remote = hooks.remote;
     let hide_profiler = hooks.hide_profiler;
-    // novr はフレームの周期が決まっているので、ドロップをその長さで数える（間隔からの推定は揺れに弱い）。
+    // novr はフレーム周期が固定であるため、ドロップをその長さで計数する（間隔からの推定はジッターに弱い）。
     let budget = kernel.frame_interval();
     let with_budget = move |p: Profiler| match budget {
         Some(b) => p.with_budget(b),
         None => p,
     };
     application().run(move |cx: &mut App| {
-        // 画面が作られた時から本当の設定（テーマ・言語・利き手）を見られるよう、パネルを開く前に一度反映する。
-        // トランジションを有効にする前なので、起動時のテーマは移り変わらずに決まる。
+        // 画面生成時から実際の設定（テーマ・言語・利き手）を参照可能にするため、パネルを開く前に一度反映する。
+        // トランジション有効化前のため、起動時のテーマはアニメーションなしで確定する。
         sync_settings(&mut kernel, cx);
-        // 部品のトランジションを有効にする（テストのキットは置かない）。
+        // 部品のトランジションを有効化する（テストキットでは設定しない）。
         cx.set_global(design::Motion::default());
         design::font::install(cx);
         design::corner::install();
-        // 初めてキーボードを出すときにディスクから配列を読み始めると、それまでキーの無いカードが出る。先に読んでおく。
+        // キーボード初回表示時にディスクから配列を読み始めると、完了までキーのないカードが表示される。事前に読み込む。
         keyboard::preload();
         if let Some(p) = profiler {
             cx.set_global(with_budget(p));
@@ -162,25 +162,25 @@ pub fn run_with(
         cx.spawn(async move |cx| {
             let mut bridges = HashMap::new();
             let mut warned = false;
-            // ホバーだけの Move を受けて、まだ描いていないパネル。
+            // ホバーのみの Move を受け取ったが、まだ再描画していないパネル。
             let mut hover_pending = std::collections::HashSet::new();
-            // 描いて読み戻しを積んだまま、まだ受け取っていないパネル。
+            // 描画して読み戻しを発行したが、まだ結果を受け取っていないパネル。
             let mut collecting = std::collections::HashSet::new();
             let mut render_sizes = HashMap::new();
             let limit = kernel
                 .max_overlays()
                 .map_or(MAX_PANELS, |m| m.min(MAX_PANELS));
-            // ドラッグ中の手と、その見た目を描くパネル。
+            // ドラッグ中の手と、ドラッグの見た目を描画するパネル。
             let mut drag: Option<(Hand, PanelId)> = None;
-            // VR では poll がブロックして周期を作る。待ちの前に一度 GPUI へ制御を返す。
-            // 0 だとこのループがすぐ再スケジュールされ、後から積まれた GPUI のタスクが走らない。
-            // 途中で開いたパネルのリサイズ（SetWindowPos はタスクで行われる）が届かず、1x1 のまま表示されなかった。
-            // poll は次の vsync までの残りを眠るので、ここで 1ms 譲っても周期は変わらない。
+            // VR では poll がブロックして周期を生成する。待機前に一度 GPUI へ制御を返す。
+            // 0 だとこのループが即座に再スケジュールされ、後続の GPUI タスクが実行されない。
+            // 途中で開いたパネルのリサイズ（SetWindowPos はタスクで実行される）が反映されず、1x1 のまま表示されなかった。
+            // poll は次の vsync までの残り時間を待機するため、ここで 1ms 譲っても周期に影響しない。
             let wait = Duration::from_millis(1);
             loop {
                 let begin = Instant::now();
-                // GPUI のタイマーは Windows では粗く（1ms を頼んでも 6〜12ms 掛かり、フレームが 60fps 台に頭打ちになる）、
-                // バックグラウンドのスレッドで眠ってから戻る（std の sleep は細かい）。
+                // GPUI のタイマーは Windows では粗い（1ms を要求しても 6〜12ms 掛かり、フレームレートが 60fps 台で頭打ちになる）。
+                // バックグラウンドスレッドで待機してから復帰する（std の sleep は高精度）。
                 cx.background_executor()
                     .spawn(async move { std::thread::sleep(wait) })
                     .await;
@@ -194,7 +194,7 @@ pub fn run_with(
                 for (panel, hand, input) in gpui_inputs {
                     inputs.entry(panel).or_default().push((hand, input));
                 }
-                // タッチの長押しの進み具合を手ごとに置き、変わればカーソルを描き直す（リングが満ちていく）。
+                // タッチの長押し進捗を手ごとに記録し、変更があればカーソルを再描画する（リングが充填されていく）。
                 let mut hold: HashMap<Hand, f32> = HashMap::new();
                 for (&(_, hand), b) in &bridges {
                     if let Some(p) = b.hold_progress() {
@@ -208,7 +208,7 @@ pub fn run_with(
                     ctl.hold = hold;
                     changed
                 });
-                // 前のフレームの配送でホバーした要素のツールチップを手に振り分ける。変わればツールチップのパネルを描き直す。
+                // 前フレームの配送でホバーした要素のツールチップを手に振り分ける。変更があればツールチップパネルを再描画する。
                 let tooltip_changed = cx.update(|cx| {
                     let ids = slots
                         .open
@@ -227,7 +227,7 @@ pub fn run_with(
                         slots.drawn[p] = None;
                     }
                 }
-                // ドラッグの見た目は中心がカーソルに来るよう置かれるので、そのウィンドウのマウスを中心に置いて毎フレーム描く。
+                // ドラッグの見た目は中心がカーソル位置に配置されるため、そのウィンドウのマウスを中心に設定して毎フレーム描画する。
                 if let Some((_, dp)) = drag {
                     let (w, h) = kernel.panel(dp).resolution;
                     let pos = Vec2::new(w as f32, h as f32) / 2.0;
@@ -238,7 +238,7 @@ pub fn run_with(
                             .map(|input| (Hand::Right, input)),
                     );
                 }
-                // wait = ランタイムの待ち（VR は vsync、novr はエミュレーターの周期）。オーバーレイ層と合成は別に測る。
+                // wait = ランタイムの待機時間（VR は vsync、novr はエミュレーターの周期）。オーバーレイ層と合成は別途計測する。
                 let timing = kernel.timing();
                 let mut stages = Stages {
                     wait: begin
@@ -252,9 +252,9 @@ pub fn run_with(
                     cx.update(quit);
                     return;
                 }
-                // WindowHandle::update はルートビューを借用したままになり、draw やクリック処理で
-                // ビューを更新すると二重借用で落ちる。AnyWindowHandle 経由で借用しない。
-                // 何もしていないパネルの描き直しは 1 フレームに 1 枚まで（同じフレームに重なると読み戻しの待ちが積み上がる）。
+                // WindowHandle::update はルートビューを借用したままにするため、draw やクリック処理で
+                // ビューを更新すると二重借用でパニックする。AnyWindowHandle 経由で借用を回避する。
+                // アイドル状態のパネルの再描画は 1 フレームに 1 枚まで（同一フレームに重なると読み戻しの待機が積み上がる）。
                 let mut idle_slot = true;
                 for panel in slots.open.iter().copied() {
                     let window = slots.windows[panel].1;
@@ -267,16 +267,16 @@ pub fn run_with(
                         slots.last[panel] = None;
                         continue;
                     }
-                    // 描画と読み戻し（GPU の完了待ちを含む）は重いので、入力・状態の変化があったとき、
-                    // 前回描いてから idle[panel] 経ったとき（1 フレームに 1 枚）だけ行う。
-                    // 見えていないパネル（ほかのパネルに隠れた・視野の外）は、何もしていないときに描き直さない（カリング）。
+                    // 描画と読み戻し（GPU 完了待ちを含む）は高コストのため、入力・状態の変化があった場合と、
+                    // 前回描画から idle[panel] 経過した場合（1 フレームに 1 枚）のみ実行する。
+                    // 非表示パネル（他パネルに遮蔽・視野外）はアイドル時に再描画しない（カリング）。
                     let visible = kernel.panel_seen(panel);
                     if visible && !slots.seen[panel] {
                         slots.drawn[panel] = None;
                     }
                     slots.seen[panel] = visible;
-                    // ボタンを押していない Move だけなら、変わりうるのはホバーの見た目だけ（カーソルは別のパネルで毎フレーム動く）。
-                    // 描き直しを HOVER_REDRAW ごとに間引き、間引いた分は後で描く（読み戻しはゲーム中 1 回数 ms 掛かる）。
+                    // ボタン非押下の Move のみの場合、変化し得るのはホバーの見た目のみ（カーソルは別パネルで毎フレーム移動する）。
+                    // 再描画を HOVER_REDRAW ごとに間引き、間引いた分は後続フレームで描画する（読み戻しはゲーム中 1 回数 ms 掛かる）。
                     let hover_only = !inputs.is_empty()
                         && inputs.iter().all(|(_, i)| match i {
                             PlatformInput::MouseMove(m) => m.pressed_button.is_none(),
@@ -293,9 +293,9 @@ pub fn run_with(
                     if forced {
                         hover_pending.remove(&panel);
                     }
-                    // 遠い（LOD1 以上の）パネルはフレームを間引いて描く。
+                    // 遠距離（LOD1 以上）のパネルはフレームを間引いて描画する。
                     let due = kernel.panel_frame_due(panel);
-                    // 配信中のパネルは GPUI で描かず描いた時刻が進まないので、1 枚の枠を毎フレーム取らせない。
+                    // 配信中のパネルは GPUI で描画せず描画時刻が進まないため、1 枚の枠を毎フレーム消費させない。
                     let idle_due = !forced
                         && visible
                         && !kernel.desktop_streaming(panel)
@@ -319,7 +319,7 @@ pub fn run_with(
                             .map(|s| s.status.clone());
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
-                        // LOD・指されているか・見本の一行はそのパネルだけの状態。変わるたびにほかのパネルまで描き直させない。
+                        // LOD・ポインタ状態・ドックヒントはそのパネル固有の状態。変更のたびに他パネルまで再描画させない。
                         let status = kernel.status(panel);
                         others = changed
                             && before.is_none_or(|b| {
@@ -330,14 +330,14 @@ pub fn run_with(
                                     ..b
                                 } != status
                             });
-                        // 部品やテーマの切り替えのトランジションが動いている間は、毎フレーム描き直す。
+                        // 部品やテーマ切替のトランジション実行中は毎フレーム再描画する。
                         let transitioning = cx.has_global::<design::Motion>()
                             && cx
                                 .global_mut::<design::Motion>()
                                 .animating
                                 .remove(&window.window_handle().window_id())
                             || design::Theme::fading(cx);
-                        // 頼まれた描き直しは、見えていなければ捨てる（見えた瞬間に描き直す）。
+                        // 要求された再描画は非表示であれば破棄する（表示された瞬間に再描画する）。
                         asked = cx.has_global::<PanelControl>()
                             && cx
                                 .global_mut::<PanelControl>()
@@ -352,7 +352,7 @@ pub fn run_with(
                                     .and_then(|c| c.panels.get(&panel))
                                     .is_some_and(|s| s.live))
                         {
-                            // ビューが描くたびに変わる。GPUI が描き直すよう汚す。`refresh` だと使い回すビュー（Markdown など）まで描き直すので、根だけ汚す。
+                            // ビューが描画ごとに変化する。GPUI が再描画するよう無効化する。`refresh` だと共有ビュー（Markdown 等）まで再描画するため、ルートのみ無効化する。
                             match window.root::<PanelRoot>().flatten() {
                                 Some(root) => root.update(cx, |_, cx| cx.notify()),
                                 None => window.refresh(),
@@ -381,12 +381,12 @@ pub fn run_with(
                             window.remove_window();
                             return None;
                         }
-                        // 配信画像はカーネルが直接送る。GPUI の描画・読み戻しで毎フレーム GPU を待たない。
+                        // 配信画像はカーネルが直接送出する。GPUI の描画・読み戻しで毎フレーム GPU を待機しない。
                         if kernel.desktop_streaming(panel) {
                             return None;
                         }
                         if redraw && !due {
-                            // 間引いたフレーム。次に描いてよいフレームで必ず描く。
+                            // 間引かれたフレーム。次に描画可能なフレームで必ず描画する。
                             slots.drawn[panel] = None;
                             redraw = false;
                         }
@@ -394,7 +394,7 @@ pub fn run_with(
                             let t = Instant::now();
                             window.draw(cx).clear(cx);
                             let scene = Instant::now();
-                            // 読み戻しは GPU の完了を待たず 1 回遅れで返る。描いた絵は次のフレームで受け取る。
+                            // 読み戻しは GPU 完了を待たず 1 フレーム遅れで返す。描画結果は次のフレームで受け取る。
                             let frame = read_back(window);
                             collecting.insert(panel);
                             stages.draw += scene - t;
@@ -410,17 +410,17 @@ pub fn run_with(
                             None
                         }
                     }) else {
-                        // ウィンドウが OS の X などで閉じられた。そのパネルだけ閉じる（全部閉じたら下で終了する）。
+                        // ウィンドウが OS の閉じるボタン等で閉じられた。該当パネルのみ閉じる（全パネル閉鎖後に下段で終了する）。
                         kernel.apply(panel, PanelCommand::Close);
                         slots.last[panel] = None;
                         continue;
                     };
                     if kernel.panel(panel).closed {
-                        // 閉じたパネルの最後の描画（1 枚 2MB 近い）は手放す。
+                        // 閉じたパネルの最終描画（1 枚約 2MB）を解放する。
                         slots.last[panel] = None;
                     }
                     if others {
-                        // 状態はどのパネルにも表示されうるので、ほかのパネルも描き直す（1 フレームに 1 枚ずつ）。
+                        // 状態は任意のパネルに表示されうるため、他パネルも再描画する（1 フレームに 1 枚ずつ）。
                         for &p in &slots.open {
                             let t = &mut slots.drawn[p];
                             if p != panel
@@ -432,7 +432,7 @@ pub fn run_with(
                         }
                     }
                     match frame {
-                        // 開いた直後はウィンドウの大きさの反映が間に合わず 1x1 で描かれる。送らずに次のフレームで描き直す。
+                        // 開直後はウィンドウサイズの反映が間に合わず 1x1 で描画される。送出せず次フレームで再描画する。
                         Some(Ok(f))
                             if render_sizes.get(&panel).is_some_and(|&(res, lod)| {
                                 (f.width, f.height)
@@ -441,15 +441,15 @@ pub fn run_with(
                         {
                             slots.drawn[panel] = None;
                         }
-                        // 画素が変わったときだけ送る（GPU 書き込みと完了待ちを省く）。
+                        // ピクセルが変化した場合のみ送出する（GPU 書き込みと完了待ちを省略する）。
                         Some(Ok(f)) => {
                             slots.drawn[panel] = Some(Instant::now());
                             let same = slots.last[panel].as_ref() == Some(&f);
-                            // 頼まれて描いた分は推測の間隔を縮めない（自分で頼むビューは推測で描かなくてよい）。
-                            // 描いたフレームの絵は前の読み戻し（1 回遅れ）なので、変わったかは受け取ったフレームで決める。
+                            // 要求による描画は推測間隔を短縮しない（自発的に再描画を要求するビューは推測描画が不要）。
+                            // 描画したフレームの画像は前回の読み戻し（1 フレーム遅れ）のため、変化の判定は受け取ったフレームで行う。
                             slots.idle[panel] = if idle_due && same && !changed {
-                                // ほかのパネルの状態の変化で 0 に詰めた間隔は、倍にしても 0 のまま毎フレーム描き直して
-                                // 1 枚の枠を取り続け、後ろのパネルが描かれなくなる。下限から伸ばし直す。
+                                // 他パネルの状態変化で 0 にリセットした間隔は、倍にしても 0 のまま毎フレーム再描画して
+                                // 1 枚の枠を占有し続け、後続パネルが描画されなくなる。下限から再度延伸する。
                                 (slots.idle[panel] * 2).clamp(IDLE_REDRAW, IDLE_MAX)
                             } else if !changed && (asked || (collected && same)) {
                                 slots.idle[panel]
@@ -470,7 +470,7 @@ pub fn run_with(
                         _ => {}
                     }
                 }
-                // 終了を頼まれたか、ウィンドウが全部（OS の X などで）閉じられたら終了する。
+                // 終了が要求されたか、全ウィンドウが（OS の閉じるボタン等で）閉じられた場合に終了する。
                 slots.open.retain(|&p| !kernel.panel(p).closed);
                 hover_pending.retain(|p| !kernel.panel(*p).closed);
                 collecting.retain(|p| !kernel.panel(*p).closed);
@@ -482,11 +482,11 @@ pub fn run_with(
                 }
                 let spawns =
                     cx.update(|cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns));
-                // 閉じたパネルの手ごとの状態（慣性のスクロールなど）は持ち越さない。
+                // 閉じたパネルの手ごとの状態（慣性スクロール等）は持ち越さない。
                 bridges.retain(|&(p, _), _| !kernel.panel(p).closed);
                 render_sizes.retain(|&p, _| !kernel.panel(p).closed);
                 for spec in spawns {
-                    // 連打で開きっぱなしのパネルが際限なく増えないように。
+                    // 連打により開いたままのパネルが際限なく増加することを防止する。
                     if slots.open.len() >= limit {
                         logger::error!("too many open panels", max = limit);
                         break;
@@ -517,26 +517,26 @@ pub fn run_with(
     });
 }
 
-/// フレームループがパネルごとに持つ状態。添字は PanelId（カーネルは開いた順に 0 から PanelId を振り、窓も同じ順に積む）。
+/// フレームループがパネルごとに保持する状態。添字は PanelId（カーネルが開いた順に 0 から PanelId を割り当て、ウィンドウも同じ順序で追加する）。
 #[derive(Default)]
 pub(crate) struct Slots {
     pub(crate) windows: Vec<(PanelId, AnyWindowHandle)>,
     /// 開いているパネル（閉じたものは除く）。
     open: Vec<PanelId>,
-    /// 最後に送った描画（同じなら送らない）。
+    /// 最後に送出した描画（同一なら送出しない）。
     last: Vec<Option<Frame>>,
-    /// 最後に描いた時刻（None = 次のフレームで必ず描く）。
+    /// 最後に描画した時刻（None = 次のフレームで必ず描画する）。
     pub(crate) drawn: Vec<Option<Instant>>,
-    /// 入力も変化も無いときに描き直す間隔。描いても変わらなければ IDLE_MAX まで延ばす。
+    /// 入力も変化もない場合に再描画する間隔。描画しても変化がなければ IDLE_MAX まで延伸する。
     idle: Vec<Duration>,
-    /// 前のフレームで見えていたか（隠れていた・視野の外だったパネルは見えた瞬間に描き直す）。
+    /// 前フレームで表示されていたか（遮蔽・視野外だったパネルは表示された瞬間に再描画する）。
     seen: Vec<bool>,
 }
 
 impl Slots {
-    /// 開いたパネルを積む。
+    /// 開いたパネルを追加する。
     pub(crate) fn push(&mut self, (panel, window): (PanelId, AnyWindowHandle)) {
-        // 添字で引くので、ずれたら別のパネルの窓を描いてしまう。
+        // 添字でアクセスするため、ずれると別パネルのウィンドウを描画してしまう。
         assert_eq!(
             panel,
             self.windows.len(),
@@ -551,13 +551,13 @@ impl Slots {
     }
 }
 
-/// 終了する。プロファイル中なら集計をログへ残す。
+/// 終了する。プロファイル実行中であれば集計をログに出力する。
 pub(crate) fn quit(cx: &mut App) {
     log_summary(cx);
     cx.quit();
 }
 
-/// プロファイル中なら集計をログへ残す。
+/// プロファイル実行中であれば集計をログに出力する。
 pub(crate) fn log_summary(cx: &App) {
     if let Some(p) = cx.try_global::<Profiler>() {
         let s = p.summary();

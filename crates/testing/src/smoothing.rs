@@ -1,10 +1,10 @@
-//! レーザーの手ブレ抑えを試す画面（[`SmoothingTest`]）。
+//! レーザーのスムージングをテストする画面（[`SmoothingTest`]）。
 
 use super::*;
 
-/// レーザーを調整する画面（`smoothing-test`）。`smoothing-slider` で手ブレ抑えの強さを、`laser-length-slider` で
-/// 線の見える長さを変えるとその場で効き、設定ファイルの `pointer_smoothing` / `laser_length` にも残る
-/// （`Setting::PointerSmoothing` / `LaserLength`）。下の小さな的を狙って、止めたときの揺れと、振ったときの遅れを見比べる。
+/// レーザーを調整する画面（`smoothing-test`）。`smoothing-slider` でスムージングの強度を、`laser-length-slider` で
+/// レーザーの表示長を変更すると即座に反映され、設定ファイルの `pointer_smoothing` / `laser_length` にも保存される
+/// （`Setting::PointerSmoothing` / `LaserLength`）。下部の小さなターゲットを狙い、静止時の振動と、移動時の遅延を比較する。
 pub struct SmoothingTest {}
 
 impl SmoothingTest {

@@ -1,5 +1,5 @@
 //! OS サブシステム。保存先・ランタイム検出・タイマー精度・GPU 優先度を提供する。
-//! OS 固有の実装はバックエンドに閉じ、上位層へ持ち出さない。
+//! OS 固有の実装はバックエンドに閉じ、上位層へ公開しない。
 
 use std::{fs, io, path::Path};
 
@@ -23,7 +23,7 @@ pub enum Os {
 #[cfg(windows)]
 pub const CURRENT: Os = Os::Windows;
 
-/// `path` に `contents` を書く（親ディレクトリが無ければ作る）。中身が同じなら書かない。
+/// `path` に `contents` を書き込む（親ディレクトリが存在しなければ作成する）。内容が同一であれば書き込まない。
 pub fn write_file(path: &Path, contents: &str) -> io::Result<()> {
     if fs::read_to_string(path).is_ok_and(|old| old == contents) {
         return Ok(());

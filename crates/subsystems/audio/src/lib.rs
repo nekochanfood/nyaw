@@ -1,9 +1,9 @@
 //! 音声サブシステム。OS の出力デバイス（cpal）・音声ファイルの読み込み・
-//! Steam Audio による立体化（HRTF）の差を吸収する。
+//! Steam Audio による空間音響（HRTF）の差異を抽象化する。
 //!
-//! 音は「スピーカー」（音源）から鳴る。スピーカーは置き場所・向き・幅を持ち、モノラルなら中央の 1 点、
-//! ステレオなら幅の両端の 2 点から聞こえる。立体化（`Speaker::spatial`）を外すと、置き場所に関係なくそのまま鳴る。
-//! 出力・ミックス・立体化は別スレッド（オーディオのコールバック）で行い、メインスレッドは命令を送るだけで待たない。
+//! 音は「スピーカー」（音源）から再生される。スピーカーは位置・向き・幅を持ち、モノラルなら中央の 1 点、
+//! ステレオなら幅の両端の 2 点から聞こえる。空間音響（`Speaker::spatial`）を無効にすると、位置に関係なくそのまま出力される。
+//! 出力・ミキシング・空間音響処理は別スレッド（オーディオコールバック）で実行し、メインスレッドはコマンド送信のみで待機しない。
 
 mod mixer;
 mod phonon;
@@ -20,7 +20,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 pub type SpeakerId = u64;
 
-/// 再生中の音を指す。
+/// 再生中の音を識別するハンドル。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct VoiceId(u64);
 
@@ -35,25 +35,25 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-/// 鳴らす経路の数。
+/// 再生チャンネル数。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Channels {
-    /// 1ch。スピーカーの中央の 1 点から鳴る。
+    /// 1ch。スピーカー中央の 1 点から再生する。
     #[default]
     Mono,
-    /// 2ch。スピーカーの左端・右端の 2 点から鳴る。
+    /// 2ch。スピーカーの左端・右端の 2 点から再生する。
     Stereo,
 }
 
-/// スピーカーをモノラル・ステレオのどちらで鳴らすか。
+/// スピーカーのモノラル・ステレオ再生モード。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Layout {
-    /// 鳴らす音に合わせる（[`Clip::channels`]）。
+    /// 音声データのチャンネル数に従う（[`Clip::channels`]）。
     #[default]
     Auto,
-    /// ステレオの音は左右を混ぜて鳴らす。
+    /// ステレオ音声を左右ミックスしてモノラル再生する。
     Mono,
-    /// モノラルの音は左右に同じ音を鳴らす。
+    /// モノラル音声を左右同一でステレオ再生する。
     Stereo,
 }
 
@@ -67,7 +67,7 @@ impl Layout {
     }
 }
 
-/// デコード済みの音声（f32 のインターリーブ）。複製は安い（中身は共有）。
+/// デコード済みの音声データ（f32 インターリーブ）。複製は低コスト（内部データは共有）。
 #[derive(Clone)]
 pub struct Clip {
     samples: Arc<[f32]>,
@@ -77,8 +77,8 @@ pub struct Clip {
 }
 
 impl Clip {
-    /// インターリーブのサンプルから作る。3ch 以上は前の 2ch（左・右）だけを使う。
-    /// 左右がまったく同じステレオはモノラルとして持つ（[`Layout::Auto`] でモノラルに鳴る）。
+    /// インターリーブ形式のサンプル列から生成する。3ch 以上は先頭 2ch（左・右）のみ使用する。
+    /// 左右が完全に同一のステレオはモノラルとして保持する（[`Layout::Auto`] でモノラル再生となる）。
     pub fn from_samples(samples: &[f32], channels: u16, sample_rate: u32) -> Result<Self, Error> {
         if channels == 0 || sample_rate == 0 {
             return Err(Error(format!(
@@ -100,7 +100,7 @@ impl Clip {
         })
     }
 
-    /// WAV（整数 8〜32bit・浮動小数点 32bit）を読む。
+    /// WAV ファイルを読み込む（整数 8〜32bit・浮動小数点 32bit 対応）。
     pub fn from_wav(reader: impl std::io::Read) -> Result<Self, Error> {
         let err = |e: hound::Error| Error(e.to_string());
         let mut wav = hound::WavReader::new(reader).map_err(err)?;
@@ -129,7 +129,7 @@ impl Clip {
         }
     }
 
-    /// この音の経路の数。1ch と、左右がまったく同じ 2ch はモノラル。
+    /// この音声のチャンネル数。1ch および左右が完全に同一の 2ch はモノラルとなる。
     pub fn channels(&self) -> Channels {
         if self.channels == 1 {
             Channels::Mono
@@ -142,7 +142,7 @@ impl Clip {
         self.sample_rate
     }
 
-    /// 速さを `pitch` 倍にした音（1 = そのまま。上げると高く短くなる）。中身は共有したまま、標本化レートだけを変える。
+    /// 再生速度を `pitch` 倍にした音声（1.0 = 原速。値を上げると高音・短縮される）。内部データは共有のまま、サンプルレートのみ変更する。
     pub fn pitched(mut self, pitch: f32) -> Self {
         self.sample_rate = (self.sample_rate as f32 * pitch).round().max(1.0) as u32;
         self
@@ -163,29 +163,29 @@ impl std::fmt::Debug for Clip {
     }
 }
 
-/// 同じ音声データを指していれば等しい。
+/// 同一の音声データを参照していれば等しいと判定する。
 impl PartialEq for Clip {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.samples, &other.samples)
     }
 }
 
-/// 鳴らす音の在りか。読み込み（デコード）は別スレッドで行う。
+/// 再生する音声の参照先。読み込み（デコード）はワーカースレッドで実行する。
 #[derive(Debug, Clone, PartialEq)]
 pub enum Sound {
     File(PathBuf),
-    /// 実行ファイルに埋め込んだ WAV。
+    /// 実行ファイルに埋め込まれた WAV データ。
     Wav(&'static [u8]),
 }
 
-/// 音源。トラッキング空間（メートル・前方 -Z）に置く。
+/// 音源。トラッキング空間（メートル単位・前方 -Z）に配置する。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Speaker {
     pub position: Vec3,
     pub rotation: Quat,
-    /// ステレオの左右の点の間隔（m）。ローカルの X 方向に並ぶ。
+    /// ステレオ再生時の左右音源間の距離（m）。ローカル X 軸方向に配置される。
     pub width: f32,
-    /// 置き場所から聞こえるようにする。外すと置き場所・聞き手に関係なく、そのまま左右に鳴る。
+    /// 空間音響を有効にする。無効時は位置・リスナーに関係なく、音声がそのまま左右に出力される。
     pub spatial: bool,
     pub layout: Layout,
     pub volume: f32,
@@ -204,17 +204,17 @@ impl Default for Speaker {
     }
 }
 
-/// 立体化の手段。
+/// 空間音響処理の方式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Spatializer {
-    /// 出力の準備中。
+    /// 出力を準備中。
     #[default]
     Starting,
     /// Steam Audio の HRTF。
     SteamAudio,
-    /// Steam Audio が無いので左右の音量の振り分けだけ。
+    /// Steam Audio が利用不可のため左右パンニングのみ。
     Panning,
-    /// 出力デバイスが無い（音は捨てる）。
+    /// 出力デバイスが存在しない（音声は破棄される）。
     Unavailable,
 }
 
@@ -238,23 +238,23 @@ impl Spatializer {
     }
 }
 
-/// メインスレッドから使う入口。命令はチャンネルで出力のスレッドへ送り、待たない。
+/// メインスレッドから使用するエントリポイント。コマンドはチャンネル経由で出力スレッドへ送信し、待機しない。
 pub struct Engine {
     commands: Sender<Command>,
     done_tx: Sender<Done>,
     done: Receiver<Done>,
-    /// 鳴っている（読み込み中を含む）音と、そのスピーカー。
+    /// 再生中（読み込み中を含む）の音とその音源スピーカー。
     voices: HashMap<VoiceId, SpeakerId>,
     next: u64,
     spatializer: Arc<AtomicU8>,
-    /// [`Self::offline`] のときだけ。出力のスレッドの代わりに [`Self::render`] で回す。
+    /// [`Self::offline`] 時のみ使用。出力スレッドの代わりに [`Self::render`] で処理を進める。
     offline: Option<Mixer>,
-    /// 落とすと出力のスレッドが止まる。
+    /// ドロップすると出力スレッドが停止する。
     _stop: Option<Sender<()>>,
 }
 
 impl Engine {
-    /// 既定の出力デバイスで鳴らす。デバイスを開く・Steam Audio を読むのは別スレッドで、すぐ返る。
+    /// 既定の出力デバイスで再生する。デバイスのオープンおよび Steam Audio の読み込みは別スレッドで実行し、即座に返る。
     pub fn open() -> Self {
         let (commands, rx) = mpsc::channel();
         let (done_tx, done) = mpsc::channel();
@@ -281,8 +281,8 @@ impl Engine {
         }
     }
 
-    /// デバイスを開かず、[`Self::render`] で呼び出し側が回すエンジン（テスト・書き出し用）。
-    /// `steam_audio` なら Steam Audio を読む（読めなければパンニング）。
+    /// デバイスを開かず、[`Self::render`] で呼び出し側が駆動するエンジン（テスト・書き出し用）。
+    /// `steam_audio` が true の場合は Steam Audio を読み込む（失敗時はパンニングにフォールバック）。
     pub fn offline(sample_rate: u32, steam_audio: bool) -> Self {
         let (commands, rx) = mpsc::channel();
         let (done_tx, done) = mpsc::channel();
@@ -300,7 +300,7 @@ impl Engine {
         }
     }
 
-    /// [`Self::offline`] のエンジンを進め、ステレオのインターリーブで `out` を埋める。デバイスで鳴らしているときは何もしない。
+    /// [`Self::offline`] エンジンを進め、ステレオインターリーブ形式で `out` を埋める。デバイス再生時は何もしない。
     pub fn render(&mut self, out: &mut [f32]) {
         if let Some(m) = &mut self.offline {
             m.render(out);
@@ -311,7 +311,7 @@ impl Engine {
         Spatializer::from_u8(self.spatializer.load(Ordering::Relaxed))
     }
 
-    /// 聞き手（頭）の位置と向き。
+    /// リスナー（頭部）の位置と向きを設定する。
     pub fn set_listener(&self, position: Vec3, rotation: Quat) {
         let _ = self.commands.send(Command::Listener(position, rotation));
     }
@@ -320,13 +320,13 @@ impl Engine {
         let _ = self.commands.send(Command::Speaker(id, speaker));
     }
 
-    /// スピーカーを外し、そこで鳴っている（読み込み中を含む）音を止める。
+    /// スピーカーを除去し、再生中（読み込み中を含む）の音を停止する。
     pub fn remove_speaker(&self, id: SpeakerId) {
         self.stop_speaker(id);
         let _ = self.commands.send(Command::RemoveSpeaker(id));
     }
 
-    /// デコード済みの音をスピーカーで鳴らす。同じスピーカーでもいくつでも重ねて鳴らせる。
+    /// デコード済みの音声をスピーカーで再生する。同一スピーカーに複数の音声を重ねて再生可能。
     pub fn play(&mut self, speaker: SpeakerId, clip: Clip, looping: bool) -> VoiceId {
         let id = self.reserve(speaker);
         if let Err(mpsc::SendError(Command::Play { clip, .. })) =
@@ -337,18 +337,18 @@ impl Engine {
                 looping,
             })
         {
-            // 出力のスレッドが無い（デバイスが無い）。鳴らずに終わったことにする。
+            // 出力スレッドが存在しない（デバイスなし）。再生せず終了として処理する。
             let _ = self.done_tx.send((id, Some(clip)));
         }
         id
     }
 
-    /// 音を別スレッドで読み込んでから鳴らす。読めなければログに出し、鳴らずに終わる。
+    /// 音声をワーカースレッドで読み込んでから再生する。読み込み失敗時はログ出力のみで再生しない。
     pub fn play_sound(&mut self, speaker: SpeakerId, sound: Sound, looping: bool) -> VoiceId {
         self.play_sound_pitched(speaker, sound, looping, 1.0)
     }
 
-    /// [`Self::play_sound`] を、速さを `pitch` 倍にして（[`Clip::pitched`]）鳴らす。
+    /// [`Self::play_sound`] を再生速度 `pitch` 倍で再生する（[`Clip::pitched`]）。
     pub fn play_sound_pitched(
         &mut self,
         speaker: SpeakerId,
@@ -394,26 +394,26 @@ impl Engine {
         id
     }
 
-    /// 音を止める。読み込み中なら、読み終えても鳴らさない。
+    /// 音声を停止する。読み込み中の場合、読み込み完了後も再生しない。
     pub fn stop(&self, voice: VoiceId) {
         let _ = self.commands.send(Command::Stop(voice));
     }
 
-    /// そのスピーカーで鳴っている音をすべて止める（スピーカーは残す）。
+    /// 指定スピーカーの再生中の音声をすべて停止する（スピーカー自体は保持）。
     pub fn stop_speaker(&self, speaker: SpeakerId) {
         for (&id, _) in self.voices.iter().filter(|(_, s)| **s == speaker) {
             self.stop(id);
         }
     }
 
-    /// 鳴り終わった音を受け取る。毎フレーム呼ぶ（音声データの解放もここで行う）。
+    /// 再生終了した音声を回収する。毎フレーム呼び出す（音声データの解放もここで行う）。
     pub fn poll(&mut self) {
         while let Ok((id, _clip)) = self.done.try_recv() {
             self.voices.remove(&id);
         }
     }
 
-    /// そのスピーカーで鳴っている（読み込み中を含む）音の数。
+    /// 指定スピーカーで再生中（読み込み中を含む）の音声数。
     pub fn playing(&self, speaker: SpeakerId) -> usize {
         self.voices.values().filter(|s| **s == speaker).count()
     }
@@ -430,18 +430,18 @@ mod device {
     use std::sync::{Mutex, MutexGuard, PoisonError};
     use std::time::Duration;
 
-    /// 既定の出力デバイスが替わっていないかを見る間隔。
+    /// 既定の出力デバイスの変更を検出するポーリング間隔。
     const POLL: Duration = Duration::from_secs(1);
-    /// デバイスが無い間に、音を捨てながらミキサーを進めるレート。
+    /// デバイス不在時に音声を破棄しつつミキサーを進行させるサンプルレート。
     const DISCARD_RATE: usize = 48_000;
 
     fn lock(mixer: &Mutex<Mixer>) -> MutexGuard<'_, Mixer> {
         mixer.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// 既定の出力デバイスで鳴らし続ける。デバイスが外れた・既定が替わったら開き直す（ミキサーは使い回し、
-    /// 鳴っている音は続く）。`stop` の送り手が落ちたら返る。
-    /// ストリームはこのスレッドで持つ（cpal のストリームはスレッドをまたげない OS がある）。
+    /// 既定の出力デバイスで再生を継続する。デバイスの切断・既定デバイスの変更時は再オープンする（ミキサーは再利用し、
+    /// 再生中の音声は継続する）。`stop` の送信側がドロップされると終了する。
+    /// ストリームはこのスレッドが保持する（cpal のストリームはスレッド間移動できない OS がある）。
     pub(super) fn run(
         commands: Receiver<Command>,
         done: Sender<Done>,
@@ -478,7 +478,7 @@ mod device {
                     _ => return,
                 }
                 if stream.is_err() {
-                    // 鳴らした音が終わるよう、デバイスの代わりに進める（音は捨てる）。
+                    // 再生済みの音声が終了処理されるよう、デバイスの代わりにミキサーを進める（音声は破棄）。
                     discard.resize(DISCARD_RATE * POLL.as_secs() as usize * 2, 0.0);
                     lock(&mixer).render(&mut discard);
                 }
@@ -491,12 +491,12 @@ mod device {
                     break;
                 }
             }
-            // 次のストリームを開く前に、ここで今のストリームを落とす（同じミキサーを 2 つで回さない）。
+            // 次のストリームをオープンする前に現在のストリームを解放する（同一ミキサーの同時駆動を防止）。
             drop(stream);
         }
     }
 
-    /// デバイスを開き、ミキサーをコールバックで回し始める。デバイスが外れたら `lost` に知らせる。
+    /// デバイスをオープンし、コールバックでミキサーの駆動を開始する。デバイス切断時は `lost` へ通知する。
     fn open(
         device: &cpal::Device,
         mixer: &Arc<Mutex<Mixer>>,
@@ -508,14 +508,13 @@ mod device {
         lock(mixer).set_rate(config.sample_rate.0);
         let mixer = mixer.clone();
         let mut stereo = Vec::new();
-        // ponytail: f32 の出力だけ。出力先が別の形式を要求するときに対応を足す。
-        // 整数しか受けないデバイスが出たら cpal::Sample で変換する。
+        // ponytail: f32 出力のみ対応。整数形式のみのデバイスが必要になった場合は cpal::Sample で変換する。
         let stream = device
             .build_output_stream::<f32, _, _>(
                 &config,
                 move |out, _| {
                     let frames = out.len() / channels;
-                    // 最初の数回だけ伸びる（デバイスのバッファの大きさは変わらない）。
+                    // 最初の数回のみリサイズが発生する（デバイスのバッファサイズは一定）。
                     stereo.resize(frames * 2, 0.0);
                     lock(&mixer).render(&mut stereo);
                     for (o, s) in out

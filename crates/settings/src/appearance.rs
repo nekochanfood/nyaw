@@ -1,5 +1,5 @@
-//! 外観（`settings-appearance`）: テーマの見本・テーマ・パーソナルカラー（セットアップウィザードと同じ部品）。
-//! 時計の文字盤は詳しい画面（`settings-watch`）。
+//! 外観（`settings-appearance`）: テーマプレビュー・テーマ選択・パーソナルカラー（セットアップウィザードと共通の部品）。
+//! 時計の文字盤は詳細画面（`settings-watch`）に分離。
 
 use design::Theme;
 use gpui::{App, Context, Div, Window};
@@ -25,7 +25,7 @@ pub(crate) fn page(
     ]
 }
 
-/// 時計: wrist の文字盤。選択肢は `kernel` の表から並ぶ（足しても、ここは変えない）。
+/// 時計の文字盤選択。選択肢は `kernel` のテーブルから生成される（文字盤追加時もここの変更は不要）。
 pub(crate) fn watch(s: &Settings, window: &mut Window, cx: &mut Context<Settings>) -> Vec<Div> {
     let this = cx.entity();
     let set = move |state, _: &mut Window, cx: &mut App| {

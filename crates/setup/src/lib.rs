@@ -1,6 +1,6 @@
-//! Layer 5: 画面。セットアップウィザード（初回起動と、デバッグからのやり直し）。nyaw を使い始めるのに要る設定を順に決める。
-//! 見た目と遷移は `design::components` のウィザード（`wizard_*` + `navigation`）。パネルの地は設定画面の中身の側と同じ背景色で、
-//! アクセシビリティ・外観・文字盤は設定画面と同じ部品（`ui::prefs`）をそのまま載せる。選んだものは、その場で全体の設定に反映する。
+//! Layer 5 画面: セットアップウィザード。初回起動およびデバッグからの再実行時に、必要な設定を順に決定する。
+//! 外観と遷移は `design::components` のウィザード（`wizard_*` + `navigation`）。パネルの地は設定画面のコンテンツ側と同じ背景色で、
+//! アクセシビリティ・外観・文字盤は設定画面と同一の部品（`ui::prefs`）をそのまま配置する。選択内容は即座に全体設定へ反映する。
 
 use design::components::{self, Button, Variant, Wizard};
 use design::{Icon, Logo, Theme, font_size, icons, spacing};
@@ -12,34 +12,34 @@ use kernel::vr::{Pose, Quat, Vec2, Vec3};
 use kernel::{DominantHand, LazyFollow, PanelCommand, PanelId, Setting, Settings};
 use ui::{PanelControl, PanelSpec};
 
-/// パネルの大きさ（1px = 1mm）。オーバーレイの既定と同じ 4:3 で、いちばん背の高い文字盤の手順（見出し・設定画面と同じ
-/// 部品・フッター）が収まるよう、既定（0.8m × 0.6m）より大きくする。
+/// パネルサイズ（1px = 1mm）。オーバーレイの既定と同じ 4:3 で、最も高さのある文字盤ステップ（見出し・設定画面と同一の
+/// 部品・フッター）が収まるよう、既定（0.8m × 0.6m）より拡大する。
 const SIZE: Vec2 = Vec2::new(1.152, 0.864);
 const PX: (u32, u32) = (1152, 864);
 /// 一枚目のロゴの高さ。
 const LOGO_HEIGHT: f32 = 176.0;
-/// 選べるカードに載せるアイコンの大きさ。
+/// 選択カードに配置するアイコンのサイズ。
 const CHOICE_ICON: f32 = 48.0;
-/// 頭から水平にこの距離（m）を保って付いてくる。パネルが大きいので、近いと視界が覆われ、UI スケール（面の大きさに
-/// 最大 1.5 倍）を上げると視野からはみ出す。1.5m なら等倍で横幅が視野の 42°、1.5 倍で 60° ほど。
+/// 頭部から水平にこの距離（m）を保って追従する。パネルが大きいため、近すぎると視界が覆われ、UI スケール（面サイズ最大
+/// 1.5 倍）を適用すると視野から逸脱する。1.5m なら等倍で横幅が視野の 42°、1.5 倍で 60° 程度。
 const FOLLOW_DISTANCE: f32 = 1.5;
-/// 目の前（頭から [`FOLLOW_DISTANCE`] 先）。
+/// 正面（頭部から [`FOLLOW_DISTANCE`] 先）。
 const IN_FRONT: Pose = Pose::new(Vec3::new(0.0, 0.0, -FOLLOW_DISTANCE), Quat::IDENTITY);
 
-/// 手順。[`STEPS`] の順に進む。
+/// ステップ。[`STEPS`] の順に遷移する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
-    /// ようこそ（言語もここで替えられる）。
+    /// ウェルカム画面（言語もここで変更可能）。
     Welcome,
     /// 利き手。
     Hand,
-    /// アクセシビリティ（文字の大きさ・UI スケール・太字）。見やすさを先に決めてから、見た目（外観）を選ぶ。
+    /// アクセシビリティ（文字サイズ・UI スケール・太字）。視認性を先に決定してから外観を選択する。
     Accessibility,
     /// 外観（テーマとパーソナルカラー）。
     Appearance,
     /// wrist の文字盤。
     Wrist,
-    /// SteamVR と一緒に起動するか。OpenVR のときだけ出す（[`shown`]）。
+    /// SteamVR との自動起動設定。OpenVR の場合のみ表示する（[`shown`]）。
     AutoLaunch,
     /// 完了。
     Done,
@@ -55,29 +55,29 @@ pub const STEPS: [Step; 7] = [
     Step::Done,
 ];
 
-/// 今のランタイムで手順 `step` を出すか。自動起動を切り替えられるのは OpenVR だけ（ほかは `auto_launch` が `None`）。
+/// 現在のランタイムでステップ `step` を表示するか。自動起動を切り替え可能なのは OpenVR のみ（他は `auto_launch` が `None`）。
 pub fn shown(step: Step, now: &Settings) -> bool {
     step != Step::AutoLaunch || now.auto_launch.is_some()
 }
 
-/// 頭の向き（左右だけ）と歩きに付いてくる設定。本番の起動仕様とテストで同じものを使う。
+/// 頭部の向き（水平のみ）と歩行に追従する設定。本番の起動仕様とテストで共通使用する。
 pub fn follow() -> LazyFollow {
     LazyFollow::new(FOLLOW_DISTANCE)
 }
 
-/// 初回起動で、目の前に出すウィザードの起動仕様。
+/// 初回起動で正面に表示するウィザードの起動仕様。
 pub fn spec() -> PanelSpec {
-    // 開いた元の無いパネルなので、頭の前に出す。
+    // 親パネルのないルートパネルのため、頭部の正面に表示する。
     PanelSpec::root(IN_FRONT, |id, _, _| SetupWizard::new(id))
         .in_view(IN_FRONT)
         .sized(SIZE, PX)
-        // 閉じられない（ロックダウン中は閉じる要求も無視される）ので、閉じるボタンの付いたバーは付けない。
+        // 閉じ不可（ロックダウン中は閉じる要求も無視される）のため、ナビゲーションバーを付与しない。
         .without_nav_bar()
         .lockdown()
         .lazy_follow(follow())
 }
 
-/// デバッグから強制的にやり直す: パネル `from` の隣に開く。
+/// デバッグからの強制再実行: パネル `from` の隣に開く。
 pub fn spawn_spec(from: PanelId) -> PanelSpec {
     PanelSpec::spawn(from, |id, _, _| SetupWizard::new(id))
         .sized(SIZE, PX)
@@ -89,7 +89,7 @@ pub fn spawn_spec(from: PanelId) -> PanelSpec {
 pub struct SetupWizard {
     panel: PanelId,
     pub wizard: Wizard,
-    /// 一枚目の言語の選択肢を開いている。
+    /// 最初の画面の言語ドロップダウンを展開中。
     pub language_open: bool,
     /// 外観・文字盤の部品（`ui::prefs`）の状態。
     pub appearance: ui::prefs::Appearance,
@@ -107,12 +107,12 @@ impl SetupWizard {
         }
     }
 
-    /// 今の手順。
+    /// 現在のステップ。
     pub fn step(&self) -> Step {
         STEPS[self.wizard.step()]
     }
 
-    /// 次（`forward`）か前の、出す手順へ動く。出さない手順は飛ばす（最初と最後はいつも出すので、端では動かない）。
+    /// 次（`forward`）または前方の、表示対象ステップへ移動する。非表示ステップはスキップする（最初と最後は常に表示するため、端では移動しない）。
     pub fn go(&mut self, forward: bool, now: &Settings) {
         let mut w = self.wizard;
         loop {
@@ -128,7 +128,7 @@ impl SetupWizard {
     }
 }
 
-/// 終えたことを設定に残し、ロックダウンを放してからこのパネルを閉じる（同じパネルのコマンドは積んだ順に処理される）。
+/// 完了を設定に記録し、ロックダウンを解除してからこのパネルを閉じる（同一パネルのコマンドはキュー順に処理される）。
 fn finish(panel: PanelId, cx: &mut App) {
     let control = cx.default_global::<PanelControl>();
     control.setting_changes.push(Setting::SetupDone(true));
@@ -137,13 +137,13 @@ fn finish(panel: PanelId, cx: &mut App) {
     commands.push(PanelCommand::Close);
 }
 
-/// 全体の設定を `setting` に変える（フレームループがすぐ反映し、この画面も新しい設定で描き直る）。
+/// 全体設定を `setting` に変更する（フレームループが即座に反映し、この画面も新しい設定で再描画される）。
 fn push(setting: Setting, cx: &mut App) {
     let control = cx.default_global::<PanelControl>();
     control.setting_changes.push(setting);
 }
 
-/// ウィザードの状態を書き換えて描き直す処理を作る（部品の `set` や、押したときの処理に渡す）。
+/// ウィザードの状態を更新して再描画するハンドラを生成する（部品の `set` やクリックハンドラに渡す）。
 fn update<T: 'static>(
     wizard: &Entity<SetupWizard>,
     apply: fn(&mut SetupWizard, T),
@@ -157,7 +157,7 @@ fn update<T: 'static>(
     }
 }
 
-/// 選べるカードを横に並べる（幅は等分）。
+/// 選択カードを横並びに配置する（幅は均等分割）。
 fn row(choices: impl IntoIterator<Item = Button>) -> Div {
     div()
         .flex()
@@ -165,7 +165,7 @@ fn row(choices: impl IntoIterator<Item = Button>) -> Div {
         .children(choices.into_iter().map(|c| c.flex_1().min_w_0()))
 }
 
-/// 文字が主役の選べるカード（大きめの太字の上にアイコン）。
+/// テキスト主体の選択カード（大きめの太字テキストの上にアイコン）。
 fn text_choice(
     theme: &Theme,
     id: &'static str,
@@ -191,7 +191,7 @@ fn text_choice(
     components::choice(theme, id, selected, content).py(px(spacing::XL))
 }
 
-/// 手順 `step` の画面 1 枚。今の設定（[`PanelControl::settings`]）から選んでいるものを示す。
+/// ステップ `step` の画面 1 枚。現在の設定（[`PanelControl::settings`]）から選択中の項目を示す。
 fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut App) -> Div {
     let theme = Theme::current(cx);
     let now = ui::settings(cx);
@@ -209,7 +209,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             })
         }
     };
-    // 二枚目からの画面: アイコン・見出し・説明・選ぶもの・「戻る」「次へ」。
+    // 2 枚目以降の画面: アイコン・見出し・説明・選択肢・「戻る」「次へ」。
     let choose = |glyph: &'static Icon, title: &str, description: &str, body: Div, cx: &App| {
         components::wizard_step(
             &theme,
@@ -228,7 +228,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
     };
     match step {
         Step::Welcome => {
-            // 言語は左下のドロップダウン（上へ開く）で替える。名前は、その言語自身で出す。
+            // 言語は左下のドロップダウン（上方向に展開）で変更する。名前はその言語自体で表示する。
             let open = update(wizard, |v: &mut SetupWizard, open| v.language_open = open);
             let options = i18n::Lang::ALL.map(|l| {
                 let close = open.clone();
@@ -263,8 +263,8 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             )
             .on_click(move |_, window, cx| show(true, window, cx))
             .child(popover);
-            // 言語の左に、アプリの終了（確かめるダイアログをウィザードの子として出す）。ロックダウン中はダッシュボードの
-            // メニューを出せないので、ここでやめられるようにする。
+            // 言語ドロップダウンの左にアプリ終了ボタン（確認ダイアログをウィザードの子として表示）。ロックダウン中はダッシュボードの
+            // メニューを表示できないため、ここから終了可能にする。
             let quit = components::icon_button(
                 &theme,
                 "setup-quit",
@@ -313,7 +313,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             )
         }
         Step::Accessibility => {
-            // 動かしている途中の値は部品が持つので、ここに状態は要らない。
+            // 操作中の値は部品が保持するため、ここに状態は不要。
             let body = ui::prefs::accessibility(window, cx);
             choose(
                 &icons::PERSON_ARMS_SPREAD,
@@ -346,7 +346,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             )
         }
         Step::AutoLaunch => {
-            // 選ぶまで切ったまま（SteamVR には何も登録しない）。同じものを選び直しても SteamVR を触らない。
+            // 選択するまで無効のまま（SteamVR には何も登録しない）。同一項目を再選択しても SteamVR を操作しない。
             let on = now.auto_launch == Some(true);
             let options = [
                 (
@@ -382,7 +382,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
         Step::Done => {
             let done = components::wizard_next(&theme, "setup-finish", i18n::t(cx, "setup.finish"))
                 .on_click(move |_, _, cx| finish(panel, cx));
-            // 終える前に見直せるよう、左下に「戻る」。
+            // 完了前に確認できるよう、左下に「戻る」を配置。
             let back = components::wizard_back(&theme, "setup-back", i18n::t(cx, "setup.back"))
                 .on_click(go(false));
             components::wizard_welcome(
@@ -409,7 +409,7 @@ impl Render for SetupWizard {
         let draw = move |&index: &usize, window: &mut Window, cx: &mut App| {
             page(STEPS[index], &this, window, cx).into_any_element()
         };
-        // 戻るのは「戻る」ボタンだけ。ページそのものはスワイプで動かさない（色や文字盤を選ぶ途中の横の動きで戻らない）。
+        // 戻る操作は「戻る」ボタンのみ。ページ自体はスワイプで移動しない（色や文字盤の選択中に横スワイプで戻るのを防止する）。
         components::wizard_panel(&theme).child(
             components::navigation(&theme, "setup-nav", &stack, draw, |_, _| {})
                 .without_swipe_back(),
@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(SetupWizard::new(0).step(), Step::Welcome);
     }
 
-    /// 見やすさ（アクセシビリティ）は、見た目（外観）を選ぶ手順のすぐ前に決める。
+    /// アクセシビリティは、外観選択ステップの直前に位置する。
     #[test]
     fn accessibility_comes_right_before_appearance() {
         let at = |step| STEPS.iter().position(|&s| s == step).expect("a step");
@@ -436,7 +436,7 @@ mod tests {
         assert!(at(Step::Hand) < at(Step::Accessibility));
     }
 
-    /// SteamVR の自動起動の手順は、切り替えられるランタイム（OpenVR）のときだけ通る。ほかでは前後とも飛ばす。
+    /// SteamVR の自動起動ステップは、切り替え可能なランタイム（OpenVR）の場合のみ通過する。他では前後ともスキップする。
     #[test]
     fn auto_launch_step_is_only_shown_on_openvr() {
         let openvr = Settings {
@@ -457,7 +457,7 @@ mod tests {
         assert_eq!(v.step(), Step::AutoLaunch);
         v.go(true, &openvr);
         assert_eq!(v.step(), Step::Done);
-        // 端では動かない。
+        // 末端では移動しない。
         v.go(true, &openvr);
         assert_eq!(v.step(), Step::Done);
     }

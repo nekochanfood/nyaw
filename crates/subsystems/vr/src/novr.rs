@@ -1,14 +1,14 @@
-//! novr バックエンド: VR ランタイムを使わず、デスクトップのウィンドウで VR を模す（エミュレーター）。
+//! novr バックエンド: VR ランタイムを使用せず、デスクトップのウィンドウで VR をエミュレートする（エミュレーター）。
 //! ほかのランタイムと同じく、パネルの描画はテクスチャとして受け取り、固定した頭（原点・前方 -Z）
 //! から見た絵をウィンドウに合成する。重なりは VR と同じく描画順（奥行きではない）。背景は透過がわかるよう灰色の市松模様。
 //!
-//! 入力は片手のコントローラとして模す:
+//! 入力は片手のコントローラとしてエミュレートする:
 //! - 右手: レイは目からマウスの方向（レーザーは視線と重なるので見えず、カーソルだけが見える）。
 //!   左クリック = トリガー、右クリック = グリップ（掴む）、矢印キー = スティック、ホイール = スティックの縦。
 //! - 左手: 手元で下を向いていてパネルを指さない。WASD = スティック、X キー = X ボタン（二回続けて押すとダッシュボード）。
 //!
 //! デバイスは実在しないので、取り付けたパネルは追従しない（[`Frame::emulated`]）。
-//! testkit 用に、ウィンドウを出さない [`Emulator::headless`] と、入力の注入・スクリーンショットを公開する。
+//! testkit 用に、ウィンドウを表示しない [`Emulator::headless`] と、入力の注入・スクリーンショットを公開する。
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,7 +27,7 @@ const TITLE: &str = "nyaw (novr)";
 const SIZE: (u32, u32) = (1280, 720);
 /// 縦の視野角（ラジアン、70°）。
 const FOV_Y: f32 = 1.221_730_5;
-/// これより目に近いものは描かない（m）。面が目を通るクアッド（視線に沿ったレーザー）は真横から見えるので描かない。
+/// これより目に近いものは描画しない（m）。面が目を通過するクアッド（視線に沿ったレーザー）は真横から見えるため描画しない。
 const NEAR: f32 = 0.01;
 /// 市松模様の 1 マス（px）と、無彩色の 2 色。
 const CHECKER: u32 = 16;
@@ -35,7 +35,7 @@ const CHECKER_GRAY: [u32; 2] = [0x6b6b6b, 0x8a8a8a];
 /// フレームの周期（約 90Hz）。VR ランタイムの vsync 待ちと同じく、poll はここまで待つ。
 const FRAME: Duration = Duration::from_nanos(1_000_000_000 / 90);
 
-/// 模したデバイスの電池（固定の値。電池を見せる画面を novr でも確かめられるように）。
+/// エミュレートされたデバイスの電池（固定値。電池を表示する画面を novr でも確認できるように）。
 fn batteries() -> Vec<Battery> {
     [
         (Device::Hmd, 0.82, false),
@@ -50,17 +50,17 @@ fn batteries() -> Vec<Battery> {
     })
     .collect()
 }
-/// ホイール 1 刻みで右手のスティックを倒す量（1 フレームだけ）。オーバーレイはスティックの値をそのまま行数として送るので、
+/// ホイール 1 刻みで右手のスティックを傾斜させる量（1 フレームのみ）。オーバーレイはスティックの値をそのまま行数として送信するため、
 /// 1 刻み = 3 行（一般的なホイールの既定）になる。
-// ponytail: 刻みの大きさ（Windows は 120 単位、ほかは OS ごと）は見ず向きだけ。滑らかなスクロールのホイールでは速すぎるかもしれない。
+// ponytail: 刻みの大きさ（Windows は 120 単位、他は OS ごと）は参照せず向きのみ。スムーズスクロールのホイールでは速すぎる可能性がある。
 const WHEEL: f32 = 3.0;
-/// GPU で描くとき、見えたかを求める CPU の合成の縮小率（縦横これで割る）。
+/// GPU 描画時に、可視性を判定する CPU 合成の縮小率（縦横をこの値で除算する）。
 const SEEN_SCALE: u32 = 8;
-/// 合成に使うスレッドの上限（画面を横帯に分けて並べて塗る）。
+/// 合成に使用するスレッドの上限（画面を横帯に分割して並行描画する）。
 const MAX_THREADS: usize = 8;
-/// 模すコントローラの機種（トリガー・グリップ・スティックがそろっている）。
+/// エミュレートするコントローラの機種（トリガー・グリップ・スティックが揃っている）。
 const PROFILE: &str = "valve/index_controller";
-/// 左手の置き場所（頭の少し下・左）。下を向けてパネルを指さないようにする。
+/// 左手の配置位置（頭の少し下・左）。下向きに設定してパネルを指さないようにする。
 const LEFT_HAND: Pose = Pose::new(
     Vec3::new(-0.2, -0.3, 0.0),
     Quat::from_xyzw(-0.707_106_77, 0.0, 0.0, 0.707_106_77),
@@ -83,9 +83,9 @@ struct Quad {
     width_m: f32,
     height_m: Option<f32>,
     visible: bool,
-    /// 不透明度（0〜1）。テクスチャのアルファに掛ける。
+    /// 不透明度（0〜1）。テクスチャのアルファに乗算する。
     alpha: f32,
-    /// 色に掛ける明るさ。
+    /// 色に乗算する明るさ。
     tint: f32,
     /// 直前の合成で 1 画素でも見えた（[`VrBackend::overlay_seen`]）。
     seen: bool,
@@ -96,28 +96,28 @@ struct Quad {
 
 /// novr のエミュレーター。本番は [`crate::connect`] がウィンドウ付きで作り、testkit は [`Emulator::headless`] で作る。
 pub struct Emulator {
-    /// GPU コンポジタ。ウィンドウに直接描く（使えなければ CPU で合成して minifb に渡す）。
+    /// GPU コンポジタ。ウィンドウに直接描画する（利用不可の場合は CPU で合成して minifb に渡す）。
     /// ウィンドウを使うので、ウィンドウより先に落とす（フィールドはこの順で落ちる）。
     gpu: Option<Gpu>,
     /// `None` かつ `!headless` なら最初の poll で開く。
     window: Option<Window>,
     headless: bool,
-    /// ウィンドウを出すが、入力はウィンドウから読まない（[`Emulator::scripted_window`]）。
+    /// ウィンドウを表示するが、入力はウィンドウから読み取らない（[`Emulator::scripted_window`]）。
     scripted: bool,
-    /// GPU で合成してよいか（設定の `gpu.emulator`。`false` か環境変数 `NYAW_EMULATOR_CPU` があれば CPU）。
+    /// GPU で合成してよいか（設定の `gpu.emulator`。`false` または環境変数 `NYAW_EMULATOR_CPU` が存在すれば CPU）。
     allow_gpu: bool,
     size: (u32, u32),
-    /// 合成した絵（0RGB）。
+    /// 合成した画像（0RGB）。
     pixels: Vec<u32>,
-    /// 背景の市松模様（`size` の大きさ。変わったら作り直す）。
+    /// 背景の市松模様（`size` の大きさ。変更時に再生成する）。
     background: Vec<u32>,
-    /// GPU で描くときに、見えたかを求めるための縮小した合成の置き場。
+    /// GPU 描画時に、可視性を判定するための縮小合成のバッファ。
     seen_pixels: Vec<u32>,
-    /// クアッドごとの、GPU へ上げ直すテクスチャがあるか。
+    /// クアッドごとの、GPU へ再アップロードするテクスチャの有無。
     uploads: Vec<bool>,
     dirty: bool,
     quads: Vec<Quad>,
-    /// マウスの位置（ウィンドウのピクセル、左上原点）。ウィンドウの外なら `None`（右手が見えない）。
+    /// マウスの位置（ウィンドウのピクセル、左上原点）。ウィンドウ外であれば `None`（右手は非表示）。
     pointer: Option<Vec2>,
     trigger: bool,
     grab: bool,
@@ -127,17 +127,17 @@ pub struct Emulator {
     x_tapped: Arc<AtomicBool>,
     /// 左手・右手のスティック。
     sticks: [Vec2; 2],
-    /// 右手が掴んでいるパネルの拡大縮小（PageUp = +1、PageDown = -1）。
+    /// 右手がグラブ中のパネルの拡縮（PageUp = +1、PageDown = -1）。
     resize: f32,
     quit: bool,
-    /// 次のフレームの始まり（ウィンドウ付きの poll はここまで眠る）。
+    /// 次のフレームの開始時刻（ウィンドウ付きの poll はここまで待機する）。
     next_frame: Option<Instant>,
-    /// 直前の合成と表示にかかった時間（[`VrBackend::compositor_time`]）。
+    /// 直前の合成と表示に要した時間（[`VrBackend::compositor_time`]）。
     composite_time: Duration,
 }
 
 impl Emulator {
-    /// ウィンドウ付き。ウィンドウは最初の poll で開き、閉じると終了を求める。入力はウィンドウから受ける。
+    /// ウィンドウ付き。ウィンドウは最初の poll で生成し、閉じると終了を要求する。入力はウィンドウから取得する。
     /// `gpu` が偽なら CPU で合成する。
     pub(crate) fn windowed(gpu: bool) -> Self {
         Self {
@@ -146,7 +146,7 @@ impl Emulator {
         }
     }
 
-    /// ウィンドウを出して本番と同じく合成・表示する（GPU が使えれば GPU）が、入力はウィンドウからではなく
+    /// ウィンドウを表示して本番と同様に合成・表示する（GPU が利用可能であれば GPU）が、入力はウィンドウからではなく
     /// [`Emulator::point`] などで注入する（ベンチマーク用。本番と同じ合成のコストを測る）。
     pub fn scripted_window(width: u32, height: u32) -> Self {
         Self {
@@ -155,7 +155,7 @@ impl Emulator {
         }
     }
 
-    /// ウィンドウを出さない（testkit 用）。入力は [`Emulator::point`] などで注入し、絵は [`Emulator::screenshot`] で見る。
+    /// ウィンドウを表示しない（testkit 用）。入力は [`Emulator::point`] 等で注入し、画像は [`Emulator::screenshot`] で確認する。
     pub fn headless(width: u32, height: u32) -> Self {
         Self::new((width, height), true)
     }
@@ -192,7 +192,7 @@ impl Emulator {
         self.size
     }
 
-    /// マウスを画面上の点へ動かす（`None` でウィンドウの外へ出す）。ウィンドウ付きではウィンドウの入力で上書きされる。
+    /// マウスを画面上の点へ移動する（`None` でウィンドウ外へ移動させる）。ウィンドウ付きではウィンドウの入力で上書きされる。
     pub fn point(&mut self, at: Option<Vec2>) {
         self.pointer = at;
     }

@@ -1,6 +1,6 @@
-//! 結合: セットアップウィザード + ロックダウン + LazyFollow。
-//! 開いている間は閉じられず・ダッシュボードの開閉が止められ、頭の向き（左右だけ）と歩きにゆるく付いてきて、
-//! 完了するとロックダウンが外れてパネルが閉じる。
+//! 結合テスト: セットアップウィザード + ロックダウン + LazyFollow。
+//! 表示中はパネルを閉じられず、ダッシュボードの開閉も抑制される。頭の水平方向の向きと歩行に緩やかに追従し、
+//! 完了時にロックダウンが解除されてパネルが閉じる。
 
 use gpui::TestAppContext;
 use kernel::PanelCommand;
@@ -8,15 +8,15 @@ use kernel::vr::{Pose, Quat, Vec3};
 use setup::SetupWizard;
 use testkit::{Driver, VrKit};
 
-/// 頭の姿勢（`yaw` はラジアン。+X 側へ向く向きが正）。
+/// 頭部の姿勢を生成する（`yaw` はラジアン。+X 方向が正）。
 fn head(x: f32, y: f32, z: f32, yaw: f32) -> Pose {
     Pose::new(Vec3::new(x, y, z), Quat::from_rotation_y(-yaw))
 }
 
-/// 1 回に進めるフレーム数。時定数を短くしてあるので（下）、これで追いつく。
+/// 1 回の収束に必要なフレーム数。時定数を短縮しているため（後述）、この回数で十分追従する。
 const STEPS: usize = 120;
 
-/// 追いつくまで進める。
+/// パネルが追従し収束するまでフレームを進める。
 fn settle(kit: &mut VrKit<'_, SetupWizard>, head: Pose) {
     kit.kernel.subsystems.backend.frame.hmd = head;
     for _ in 0..STEPS {
@@ -31,31 +31,31 @@ fn flat_distance(a: Vec3, b: Vec3) -> f32 {
 #[gpui::test]
 fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
-    // 起動仕様（`setup::spec`）と同じロックダウンと追従を付ける。
+    // 起動仕様（`setup::spec`）と同じロックダウンおよび追従を設定する。
     kit.kernel.apply(0, PanelCommand::Lockdown(true));
     kit.kernel.apply(
         0,
-        // 本番と同じ設定で、追いつきだけ速くする（描画を伴うのでフレーム数を抑えたい）。
+        // 本番と同一設定で、追従の時定数のみ短縮する（描画を伴うためフレーム数を抑える）。
         PanelCommand::LazyFollow(Some(setup::follow().with_time_constants(0.1, 0.05))),
     );
     settle(&mut kit, head(0.0, 1.6, 0.0, 0.0));
 
-    // ロックダウン: 設定が全体に反映され（wrist などが見る）、閉じる要求は無視される。
+    // ロックダウン: 設定がグローバルに反映され（wrist 等が参照）、閉じる要求は無視される。
     assert!(kit.kernel.settings().lockdown);
     assert!(kit.panel_control(|c| c.settings.lockdown));
     kit.kernel.apply(0, PanelCommand::Close);
-    assert!(!kit.kernel.panel(0).closed, "ロックダウン中は閉じられない");
+    assert!(!kit.kernel.panel(0).closed, "ロックダウン中はパネルを閉じることができない");
 
-    // 頭の正面に、HMD の高さで置かれる。
+    // 頭部の正面方向に、HMD の高さで配置される。
     let d = setup::follow().distance;
     let p = kit.panel_pose().position;
     assert!(p.abs_diff_eq(Vec3::new(0.0, 1.6, -d), 5e-2), "{p}");
 
-    // 小さく首を振っても逃げない（不感帯）。
+    // 小さな首振りでは追従しない（不感帯）。
     settle(&mut kit, head(0.0, 1.6, 0.0, 10f32.to_radians()));
     assert!(kit.panel_pose().position.abs_diff_eq(p, 5e-2));
 
-    // 見上げて首を傾けても、上下・傾きは見ない。
+    // 見上げや首の傾きには反応せず、上下・ロールは無視する。
     let tilted = Pose::new(
         Vec3::new(0.0, 1.6, 0.0),
         Quat::from_rotation_x(0.8) * Quat::from_rotation_z(0.4),
@@ -65,20 +65,20 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
     let up = kit.panel_pose().orientation * Vec3::Y;
     assert!(up.abs_diff_eq(Vec3::Y, 1e-3), "パネルは立ったまま: {up}");
 
-    // 大きく向きを変えると付いてくる（右へ 90°）。追いかけは 2° 手前で止まるので、ずれは距離に比例する。
+    // 大きく向きを変えるとパネルが追従する（右へ 90°）。追従は 2° 手前で停止するため、ずれは距離に比例する。
     settle(&mut kit, head(0.0, 1.6, 0.0, 90f32.to_radians()));
     let p = kit.panel_pose().position;
     assert!(p.abs_diff_eq(Vec3::new(d, 1.6, 0.0), 4e-2 * d), "{p}");
 
-    // 歩いてしゃがむと、距離を保って高さも合わせて付いてくる。
+    // 移動してしゃがむと、距離を維持しつつ高さも合わせて追従する。
     let walked = head(4.0, 1.0, -3.0, 90f32.to_radians());
     settle(&mut kit, walked);
     let p = kit.panel_pose().position;
     assert!((flat_distance(p, walked.position) - d).abs() < 5e-2, "{p}");
     assert!((p.y - 1.0).abs() < 5e-2, "高さ {}", p.y);
 
-    // 追従しても操作できる: 最後まで進めて完了すると、ロックダウンが外れて閉じる。
-    // 出ない手順（OpenVR 以外での SteamVR の手順）は飛ばすので、手順の数ではなく最後まで押す。
+    // 追従中でも操作可能: 最後まで進めて完了すると、ロックダウンが解除されてパネルが閉じる。
+    // 非表示のステップ（OpenVR 以外での SteamVR ステップ）はスキップされるため、ステップ数ではなく末尾まで押す。
     for _ in 1..setup::STEPS.len() {
         if kit.read(|v| v.wizard.is_last()) {
             break;
@@ -86,7 +86,7 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
         kit.click("setup-next");
     }
     assert!(kit.read(|v| v.wizard.is_last()));
-    assert!(kit.kernel.settings().lockdown, "完了を押すまでは続く");
+    assert!(kit.kernel.settings().lockdown, "「完了」押下までロックダウンは継続する");
     kit.click("setup-finish");
     kit.step();
     assert!(kit.kernel.settings().setup_done);

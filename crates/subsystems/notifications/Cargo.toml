@@ -6,22 +6,22 @@ license.workspace = true
 
 [dependencies]
 logger.workspace = true
-# 通知がロゴを持たないアプリのアイコン（スタートメニュー）と、その型。
+# 通知がロゴを保持しないアプリのアイコン（スタートメニュー）と、その型。
 desktop.workspace = true
-# アプリのアイコンを読む（media と同じ版）。
+# アプリのアイコンを読み取る（media と同じ版）。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-# 通知の元の XML（ボタン・押したときの引数）を読む。
+# 通知の元の XML（ボタン・押下時の引数）を読み取る。
 roxmltree = "0.21"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
     "Data_Xml_Dom", "Foundation", "Foundation_Collections", "ApplicationModel", "Storage_Streams",
     "UI_Notifications", "UI_Notifications_Management", "Win32_System_WinRT",
-    # 押したとき: アプリの通知の受け口（COM）を呼ぶか、アプリを開く。
+    # 押下時: アプリの通知の受信インターフェース（COM）を呼び出すか、アプリを起動する。
     "Win32_System_Com", "Win32_System_Registry", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem",
     "Win32_UI_Notifications", "Win32_UI_WindowsAndMessaging", "Win32_Storage_EnhancedStorage",
 ] }
 
-# テストでアプリの通知の受け口（COM）をこのプロセスに置く（`#[implement]` が直接のクレートを要る。windows と同じ版）。
+# テストでアプリの通知の受信インターフェース（COM）をこのプロセスに配置する（`#[implement]` が直接のクレートを必要とする。windows と同じ版）。
 [target.'cfg(windows)'.dev-dependencies]
 windows-core = "0.61"

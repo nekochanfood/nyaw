@@ -1,10 +1,10 @@
-//! パネル用ウィンドウの表示方針。
+//! パネル用ウィンドウの表示設定。
 use gpui::{
     App, Bounds, Entity, Point, Render, Window, WindowBackgroundAppearance, WindowBounds,
     WindowHandle, WindowOptions, px, size,
 };
 
-/// パネル用ウィンドウの設定。描画は VR（novr はエミュレーター）に送るので、デスクトップには出さない（非表示）。
+/// パネル用ウィンドウの設定。描画は VR（novr はエミュレーター）へ送出するため、デスクトップ上には表示しない。
 pub fn panel_window_options(resolution: (u32, u32)) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds {
@@ -13,13 +13,13 @@ pub fn panel_window_options(resolution: (u32, u32)) -> WindowOptions {
         })),
         show: false,
         focus: false,
-        // 既定（Opaque）だと白で塗ってから描くので、半透明の画面も不透明になる。
+        // 既定値（Opaque）では白色で下塗りされるため、半透明パネルが不透明として描画される。
         window_background: WindowBackgroundAppearance::Transparent,
         ..Default::default()
     }
 }
 
-/// UI の表示方針を決め、環境ごとの描画先の作成は Subsystems に委譲する。
+/// UI の表示設定を適用し、環境固有の描画先の生成を Subsystems に委譲する。
 pub fn open_panel_window<V: Render>(
     cx: &mut App,
     resolution: (u32, u32),

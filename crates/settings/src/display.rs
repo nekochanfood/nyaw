@@ -1,5 +1,5 @@
-//! 表示（`settings-display`）: ダッシュボードの置き場所・通知を視界の端に出す位置・距離 LOD の品質・ミラーリングの取得の上限 FPS。どれも 1〜2 行なので
-//! 詳しい画面には分けず、見出し付きのグループで並べる。
+//! 表示（`settings-display`）: ダッシュボード配置・通知アンカー位置・距離 LOD 品質・ミラーリング上限 FPS。
+//! いずれも 1〜2 行の設定のため詳細画面には分離せず、見出し付きグループで並べる。
 
 use design::Theme;
 use design::components;
@@ -24,7 +24,7 @@ pub(crate) fn page(
     cx: &mut Context<Settings>,
 ) -> Vec<Div> {
     let now = ui::settings(cx);
-    // ダッシュボード: 距離と高さ（頭の高さからの相対）。決めるとこの画面ごと動くので、離したときに決める。
+    // ダッシュボード: 距離と高さ（頭部基準の相対値）。変更するとこの画面自体が移動するため、リリース時に確定する。
     let (distance, height) = (
         i18n::t(cx, "settings.dashboard_distance"),
         i18n::t(cx, "settings.dashboard_height"),
@@ -64,7 +64,7 @@ pub(crate) fn page(
             Setting::DashboardHeight,
         ),
     ];
-    // 通知: 視界の端に出す位置（上下左右の端と四隅）。
+    // 通知アンカー: HUD 通知の表示位置（上下左右の端および四隅）。
     let anchor = s.select(
         theme,
         window,
@@ -82,7 +82,7 @@ pub(crate) fn page(
             .to_vec(),
         Setting::NotificationAnchor,
     );
-    // グラフィックス: 距離 LOD の品質。
+    // グラフィックス: 距離 LOD の品質設定。
     let lod = s.select(
         theme,
         window,
@@ -101,7 +101,7 @@ pub(crate) fn page(
         .to_vec(),
         Setting::LodQuality,
     );
-    // ミラーリング: 取得の上限 FPS。
+    // ミラーリング: キャプチャ上限 FPS。
     let mirror = s.select(
         theme,
         window,
@@ -126,7 +126,7 @@ pub(crate) fn page(
     ]
 }
 
-/// 通知の位置の設定ファイルの値（`top_left` など。i18n の `settings.anchor.*` のキーにも使う）。
+/// 通知アンカーの設定値文字列（`top_left` 等）。i18n の `settings.anchor.*` キーとしても使用する。
 fn anchor_key(a: NotificationAnchor) -> String {
     kernel::config::value(a)
         .as_str()
@@ -134,8 +134,8 @@ fn anchor_key(a: NotificationAnchor) -> String {
         .to_owned()
 }
 
-/// 決めると自分の置き場所が変わる長さ（m）のスライダーの行（`ids` は行とスライダー）。動かしている間は値だけを見せて
-/// 離したときに `set` で決める（`ui::prefs` の UI スケールと同じ）。`min..=max` を `kernel::DASHBOARD_STEP` に吸い付かせる。
+/// 配置用距離（m）スライダー行（`ids` は行とスライダーの ID）。ドラッグ中はプレビュー値のみ表示し、
+/// リリース時に `set` で確定する（`ui::prefs` の UI スケールと同一方式）。`min..=max` を `kernel::DASHBOARD_STEP` にスナップさせる。
 #[allow(clippy::too_many_arguments)]
 fn placement_slider(
     theme: &Theme,
@@ -150,7 +150,7 @@ fn placement_slider(
     set: fn(f32) -> Setting,
 ) -> components::Button {
     let step = kernel::DASHBOARD_STEP;
-    // 動かしている途中の値と、離したか（離したら決めたことにし、設定が追いつくまで値はそのまま見せる）。
+    // ドラッグ中の仮値とリリース済みフラグ。リリース後は設定が反映されるまで仮値を維持する。
     let key = SharedString::from(format!("{id}-draft"));
     let draft = window.use_keyed_state(key, cx, |_, _| None::<(f32, bool)>);
     let pending = (*draft.read(cx)).filter(|&(to, done)| !(done && (to - now).abs() < step / 2.0));

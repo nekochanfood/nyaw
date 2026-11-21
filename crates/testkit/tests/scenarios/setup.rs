@@ -9,23 +9,23 @@ use testkit::{Action, Driver, NoVrKit, Vec2, VrKit};
 fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     let mut kit = NoVrKit::new(cx, |_, _| SetupWizard::new(0));
     assert!(!kit.kernel.settings().setup_done);
-    // 起動仕様（`setup::spec`）と同じく、開いた時点からロックダウンを取る。開いている間は閉じられない。
+    // 起動仕様（`setup::spec`）と同様に、表示時点からロックダウンを有効にする。表示中は閉じることができない。
     kit.kernel.apply(0, PanelCommand::Lockdown(true));
     kit.step();
     assert!(kit.kernel.settings().lockdown);
     kit.kernel.apply(0, PanelCommand::Close);
     assert!(!kit.kernel.panel(0).closed);
 
-    // 一枚目: 言語は左下のドロップダウンで、選ぶとその場で切り替わる（「次へ」を待たない）。
+    // 1 ページ目: 言語は左下のドロップダウンで選択し、即座に反映される（「次へ」の押下を待たない）。
     assert_eq!(kit.read(|v| v.step()), Step::Welcome);
     kit.click("setup-language");
     assert!(kit.read(|v| v.language_open));
     kit.click("setup-lang-ja");
     assert_eq!(kit.kernel.settings().language, Language::Ja);
-    assert!(!kit.read(|v| v.language_open), "選ぶと閉じる");
+    assert!(!kit.read(|v| v.language_open), "選択後にドロップダウンが閉じる");
     kit.click("setup-next");
 
-    // 利き手。戻っても選んだものは残る。
+    // 利き手の選択。前のページに戻っても選択状態は保持される。
     assert_eq!(kit.read(|v| v.step()), Step::Hand);
     kit.click("setup-hand-left");
     assert_eq!(kit.kernel.settings().dominant_hand, DominantHand::Left);
@@ -34,7 +34,7 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     kit.click("setup-next").click("setup-next");
     assert_eq!(kit.kernel.settings().dominant_hand, DominantHand::Left);
 
-    // アクセシビリティ: 外観の前に、見やすさを決める（設定画面と同じ部品。上に見本、下に対等な 3 つの項目）。
+    // アクセシビリティ: 外観の前に視認性を設定する（設定画面と共通の部品。上段にプレビュー、下段に同等の 3 項目）。
     assert_eq!(kit.read(|v| v.step()), Step::Accessibility);
     let [sample, text, ui, bold] = [
         "a11y-preview",
@@ -48,12 +48,12 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     );
     assert_eq!((text.size, ui.size), (ui.size, bold.size));
     kit.click("setting-bold-text");
-    assert!(kit.kernel.settings().bold_text, "選ぶとその場で効く");
+    assert!(kit.kernel.settings().bold_text, "選択が即座に反映される");
     kit.click("setting-bold-text");
     assert!(!kit.kernel.settings().bold_text);
     kit.click("setup-next");
 
-    // 外観: テーマとパーソナルカラーを 1 枚で決める（設定画面と同じ部品。上から見本・テーマ・色）。
+    // 外観: テーマとパーソナルカラーを 1 ページで設定する（設定画面と共通の部品。上からプレビュー・テーマ・色）。
     assert_eq!(kit.read(|v| v.step()), Step::Appearance);
     let [preview, theme, colors] =
         ["theme-preview", "setting-theme", "accent-custom"].map(|s| kit.bounds(s));
@@ -66,7 +66,7 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert_eq!(pink.hue, 350.0);
     kit.click("setup-next");
 
-    // 文字盤: 回すだけでは変わらず、「設定する」で決まる。種類で絞り込める。
+    // 文字盤: 送りボタンだけでは変更されず、「設定する」で確定する。種類での絞り込みも可能。
     assert_eq!(kit.read(|v| v.step()), Step::Wrist);
     kit.click("watch-next");
     assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Dots);
@@ -76,10 +76,10 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
         .click("watch-kind-analog")
         .click("watch-set");
     assert_eq!(kit.kernel.settings().wrist_design, WristDesign::Minimal);
-    // novr では SteamVR の手順は出ず、文字盤の次は完了（戻るときも飛ばす）。
+    // novr モードでは SteamVR のステップは表示されず、文字盤の次が完了画面になる（戻る際も省略される）。
     kit.click("setup-next");
 
-    // 完了の画面からも戻れる（左下の「戻る」。「完了」は右下）。完了を押すまでは終えたことにならない。
+    // 完了画面からも戻ることができる（左下の「戻る」。「完了」は右下）。「完了」を押すまではセットアップ未完了のまま。
     assert!(kit.read(|v| v.wizard.is_last()));
     let (finish, back) = (kit.bounds("setup-finish"), kit.bounds("setup-back"));
     assert!(back.right() < finish.left() && back.bottom() == finish.bottom());
@@ -91,7 +91,7 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     assert!(!kit.kernel.settings().setup_done);
     kit.click("setup-finish").step();
     assert!(kit.kernel.settings().setup_done);
-    assert!(!kit.kernel.settings().lockdown, "終えたら外れる");
+    assert!(!kit.kernel.settings().lockdown, "完了後にロックダウンが解除される");
     assert!(kit.kernel.panel(0).closed);
 }
 
@@ -99,7 +99,7 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
 #[gpui::test]
 fn openvr_asks_whether_to_launch_with_steamvr(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
-    // OpenVR のバックエンドだけが自動起動を切り替えられる（モックで OpenVR を真似る）。
+    // OpenVR バックエンドのみが自動起動の切り替えに対応する（モックで OpenVR を模倣）。
     kit.kernel.subsystems.backend.auto_launch = Some(false);
     kit.step();
     for _ in 0..5 {
@@ -133,14 +133,14 @@ fn welcome_centers_the_logo_over_next_and_the_language_in_the_corners(cx: &mut T
     ]
     .map(|s| kit.bounds(s));
     let near = |a: gpui::Pixels, b: gpui::Pixels| (a - b).abs() < px(2.0);
-    // ロゴ・タイトル・概要のかたまりが、画面の上下左右中央。ロゴは大きい。
+    // ロゴ・タイトル・説明のグループが画面の上下左右中央に配置される。ロゴは大きいサイズで表示。
     for part in [hero, title, about] {
         assert!(near(part.center().x, panel.center().x), "{part:?}");
     }
     assert!(near((hero.top() + about.bottom()) / 2.0, panel.center().y));
     assert!(hero.size.height >= px(160.0), "{:?}", hero.size);
     assert!(hero.bottom() <= title.top() && title.bottom() <= about.top());
-    // 「次へ」は右下、左下に終了のボタンとその右に言語のドロップダウン（同じ高さ）。
+    // 「次へ」は右下に配置。左下に終了ボタンとその右に言語ドロップダウン（同一高さ）。
     assert!(about.bottom() < next.top() && language.right() < next.left());
     assert!(next.right() > panel.center().x && language.left() < panel.center().x);
     assert!(quit.right() < language.left());
@@ -150,13 +150,13 @@ fn welcome_centers_the_logo_over_next_and_the_language_in_the_corners(cx: &mut T
         panel.right() - next.right(),
         quit.left() - panel.left()
     ));
-    // ドロップダウンは上へ開く（下は画面の縁）。左端はボタンに揃い、画面からはみ出さない。
+    // ドロップダウンは上方向に展開する（下端が画面の縁に近いため）。左端はボタンに揃い、画面外にはみ出さない。
     kit.click("setup-language").step();
     let options = ["setup-lang-en", "setup-lang-ja"].map(|s| kit.bounds(s));
     let language = kit.bounds("setup-language");
     assert!(options.iter().all(|o| o.bottom() <= language.top()));
     assert!(options.iter().all(|o| o.left() >= language.left()));
-    // 外を押すと、選ばずに閉じる。
+    // 外部クリックで、未選択のまま閉じる。
     kit.click("setup-title");
     assert!(!kit.read(|v| v.language_open));
     assert_eq!(kit.read(|v| v.step()), Step::Welcome);
@@ -267,8 +267,8 @@ fn setup_adjusts_text_size_and_ui_scale_before_the_appearance(cx: &mut TestAppCo
     let preview = kit.bounds("a11y-preview");
     let sample = kit.bounds("a11y-sample");
 
-    // 文字の大きさ: 動かしている間もすぐ効く。見本は同じ大きさの箱の中で大きくなる。見出しと説明も大きくなるので箱は
-    // 上下に動くが、手元のスライダーは左右に動かず、フッター（「戻る」「次へ」）も動かない。
+    // 文字サイズ: ドラッグ中も即座に反映される。プレビューは固定サイズの枠内で拡大される。見出しと説明も拡大されるため枠の
+    // 上下位置は変化するが、スライダーの水平位置とフッター（「戻る」「次へ」）は動かない。
     let text = (
         "setting-text-size-slider",
         "setting-text-size-slider-handle",
@@ -283,7 +283,7 @@ fn setup_adjusts_text_size_and_ui_scale_before_the_appearance(cx: &mut TestAppCo
     assert!(grown.size.height > sample.size.height);
     assert!(grown.top() >= around.top() && grown.bottom() <= around.bottom());
     assert_eq!(around.size, preview.size);
-    // フッターのボタンは文字の分だけ横に広がるが、上下の位置と高さは同じ（左右の端に寄せたまま）。
+    // フッターのボタンは文字サイズに応じて横方向に拡大されるが、上下の位置と高さは維持される（左右端に寄せたまま）。
     let footer = (kit.bounds("setup-next"), kit.bounds("setup-back"));
     assert_eq!(
         (footer.0.top(), footer.0.size.height),
@@ -295,7 +295,7 @@ fn setup_adjusts_text_size_and_ui_scale_before_the_appearance(cx: &mut TestAppCo
     );
     assert_eq!(footer.1.top(), back.top());
 
-    // UI スケール: 離すまではウィザード自身の大きさを変えず、離したら大きくなる（中の組み方は同じ）。
+    // UI スケール: リリースするまでウィザード自体のサイズは変更せず、リリース時に拡大する（内部レイアウトは同一）。
     let (size, resolution) = (kit.kernel.panel(0).size, kit.kernel.panel(0).resolution);
     let ui = ("setting-ui-scale-slider", "setting-ui-scale-slider-handle");
     grab_to(&mut kit, ui.0, ui.1, 1.0);
@@ -310,14 +310,14 @@ fn setup_adjusts_text_size_and_ui_scale_before_the_appearance(cx: &mut TestAppCo
             .abs_diff_eq(size * UI_SCALE_MAX, 1e-5)
     );
     assert_eq!(kit.kernel.panel(0).resolution, resolution);
-    // パネルが大きくなっても、中の配置は 1px も変わらない。
+    // パネルサイズが拡大されても、内部レイアウトは 1px も変化しない。
     assert_eq!((kit.bounds("setup-next"), kit.bounds("setup-back")), footer);
     assert!(
         kit.kernel.settings().lockdown,
         "the wizard keeps the lockdown"
     );
 
-    // どちらも最大のままでも、項目はパネルに収まり、先へ進める（外観はこの次）。
+    // 文字サイズ・UI スケールの両方を最大にしても、項目はパネル内に収まり次へ進める（次のステップは外観）。
     let panel = kit.bounds("setup-nav");
     for row in ["setting-text-size", "setting-ui-scale", "setting-bold-text"] {
         let b = kit.bounds(row);
@@ -337,7 +337,7 @@ fn setup_adjusts_text_size_and_ui_scale_before_the_appearance(cx: &mut TestAppCo
     assert_eq!(
         (s.text_scale, s.ui_scale, s.bold_text),
         (TEXT_SCALE_MAX, UI_SCALE_MAX, true),
-        "戻っても選んだものは残る"
+        "前のページに戻っても選択状態は保持される"
     );
 }
 

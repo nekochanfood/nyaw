@@ -1,16 +1,16 @@
-//! ポインタの方式を試す画面（[`PointerTest`]）。
+//! ポインタモードをテストする画面（[`PointerTest`]）。
 
 use super::*;
 
-/// ポインタの方式（マウス / タッチのエミュレート）を試す画面（`pointer-test`）。
-/// 方式は全体の設定に従う（画面からは切り替えない）。同じ操作がどう効くかを見る:
-/// マウスでは `drag-chip` を `drop-zone` へ運べ、タッチでは `swipe-list` を押したまま動かすとスクロールする。
-/// `tap-me` はどちらでも押せる。
+/// ポインタモード（マウス / タッチエミュレート）をテストする画面（`pointer-test`）。
+/// モードはグローバル設定に従う（画面からは切り替えない）。同一操作がどう動作するかを確認する:
+/// マウスでは `drag-chip` を `drop-zone` へドラッグ可能、タッチでは `swipe-list` を長押しして移動するとスクロールする。
+/// `tap-me` はどちらでもクリック可能。
 #[derive(Default)]
 pub struct PointerTest {
     pub taps: usize,
     pub dropped: usize,
-    /// スワイプする一覧の状態（`offset().y` が負 = 下へスクロール済み）。
+    /// スワイプリストの状態（`offset().y` が負 = 下方向にスクロール済み）。
     pub list: ScrollHandle,
 }
 

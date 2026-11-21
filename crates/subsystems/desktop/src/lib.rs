@@ -45,7 +45,7 @@ pub struct Source {
     pub kind: SourceKind,
     /// ウィンドウのアプリのアイコン（取れなければ `None`。画面には無い）。
     pub icon: Option<Icon>,
-    /// ウィンドウのアプリの実行ファイル名（"Spotify.exe" など。Windows だけ。再生中のメディアのアプリと突き合わせる）。
+    /// ウィンドウのアプリの実行ファイル名（"Spotify.exe" など。Windows のみ。再生中メディアのアプリと照合する）。
     pub app: Option<String>,
     target: isize,
 }
@@ -56,14 +56,14 @@ impl Source {
         self.target != 0
     }
 
-    /// `other` と同じ画面・ウィンドウを指すか（名前はウィンドウのタイトルで変わるので見ない）。
-    /// 特定のものを指さない一覧（[`Self::concrete`]）は、どれとも同じにならない。
+    /// `other` と同じ画面・ウィンドウを指すか（名前はウィンドウのタイトルで変化するため比較しない）。
+    /// 特定のものを指さない一覧（[`Self::concrete`]）は、どれとも一致しない。
     pub fn same_target(&self, other: &Source) -> bool {
         self.concrete() && self.kind == other.kind && self.target == other.target
     }
 
-    /// このウィンドウが消えた後に映す、同じアプリの後継ウィンドウを `sources` から選ぶ。
-    // ponytail: タイトルと実行ファイル名が結び付かない後継窓は追えない。実例で外れたらプロセスの親子関係も調べる。
+    /// このウィンドウが消失した後に表示する、同じアプリの後継ウィンドウを `sources` から選択する。
+    // ponytail: タイトルと実行ファイル名が結び付かない後継ウィンドウは追跡不可。実例で外れたらプロセスの親子関係も調査する。
     pub fn replacement(&self, sources: &[Source]) -> Option<Source> {
         let app = self.app.as_deref().unwrap_or("");
         let title = self.name.to_lowercase();
@@ -85,7 +85,7 @@ impl Source {
     }
 
     /// 取得元の一覧が `known` から `current` に変わったときの後継ウィンドウ（[`Self::replacement`]）。
-    /// このウィンドウがまだ開いている間は、新しく出たウィンドウだけを候補にする（スプラッシュの後の本体など）。
+    /// このウィンドウがまだ開いている間は、新規出現ウィンドウのみを候補にする（スプラッシュの後の本体など）。
     pub fn successor(&self, known: &[Source], current: &[Source]) -> Option<Source> {
         let still_open = current.iter().any(|s| s.same_target(self));
         let candidates: Vec<Source> = current
@@ -97,7 +97,7 @@ impl Source {
     }
 }
 
-/// 実行ファイル名を突き合わせるためのキー（小文字にして拡張子 `.exe` を落とす。"Chrome.exe" → "chrome"）。
+/// 実行ファイル名を照合するためのキー（小文字化して拡張子 `.exe` を除去する。"Chrome.exe" → "chrome"）。
 pub fn app_key(exe: &str) -> String {
     let exe = exe.to_ascii_lowercase();
     exe.strip_suffix(".exe").map(str::to_owned).unwrap_or(exe)
@@ -111,7 +111,7 @@ pub struct Icon {
     pub rgba: Arc<[u8]>,
 }
 
-/// OS のマウスカーソル。映像には入れず、上の層がポインタの代わりに描く。
+/// OS のマウスカーソル。映像には含めず、上位層がポインタの代わりに描画する。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cursor {
     pub image: Icon,
@@ -129,16 +129,16 @@ impl fmt::Display for Error {
 }
 impl std::error::Error for Error {}
 
-/// 取り込みが止まった理由の分類。画面に出すときのローカライズに使う（元のメッセージは英語の自由文）。
+/// 取り込みが停止した理由の分類。画面に表示する際のローカライズに使用する（元のメッセージは英語の自由文）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Reason {
     /// 取り込み元のウィンドウが閉じた・隠れた・最小化された。
     WindowUnavailable,
-    /// この環境では画面の取り込みが使えない。
+    /// この環境では画面の取り込みが利用不可。
     Unsupported,
-    /// 取り込み元から映像が来ない。
+    /// 取り込み元から映像が到着しない。
     NoPixels,
-    /// 取り込み元の大きさが取れない。
+    /// 取り込み元のサイズが取得不可。
     InvalidBounds,
     /// グラフィックスの処理で失敗した。
     Graphics,
@@ -157,7 +157,7 @@ impl Reason {
     ];
 }
 
-/// 取り込みの失敗メッセージ。[`Error::reason`] がこれで分類する。
+/// 取り込みの失敗メッセージ。[`Error::reason`] がこの値で分類する。
 pub mod failure {
     pub const WINDOW_HIDDEN: &str = "capture window is closed or hidden";
     pub const WINDOW_MINIMIZED: &str = "capture window is minimized or closed";
@@ -198,9 +198,9 @@ pub struct Frame {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
-    /// OS が画面を取り込んだ時刻。分からなければ受け取った時刻。遅延の計測に使う。
+    /// OS が画面を取り込んだ時刻。不明であれば受信時刻。遅延の計測に使用する。
     pub captured: Instant,
-    /// ワーカーで GPU から読み出して並べ替えるのに掛かった時間。
+    /// ワーカーで GPU から読み出して並べ替えるのに要した時間。
     pub cost: Duration,
 }
 
@@ -297,7 +297,7 @@ pub struct Update {
     pub frame: Option<Arc<Frame>>,
 }
 
-/// 一覧の取得もフレームループで OS を待たない。
+/// 一覧の取得もフレームループで OS を待機しない。
 pub struct Sources(Receiver<Result<Vec<Source>, Error>>);
 
 impl Sources {
@@ -335,14 +335,14 @@ pub struct InstalledApp {
     pub name: String,
     /// 起動に使うバックエンド固有の ID。
     pub id: String,
-    /// 実行ファイル名（"chrome.exe" など）。起動中のウィンドウ（[`Source::app`]）と突き合わせる。取れなければ `None`。
+    /// 実行ファイル名（"chrome.exe" など）。起動中のウィンドウ（[`Source::app`]）と照合する。取得不可であれば `None`。
     pub exe: Option<String>,
     pub icon: Option<Icon>,
 }
 
 impl InstalledApp {
-    /// `source` がこのアプリのウィンドウか。実行ファイル名で見て、分からないアプリ（ストアのアプリなど）は
-    /// ウィンドウの名前にアプリの名前を含むかで見る。
+    /// `source` がこのアプリのウィンドウか。実行ファイル名で判定し、判定不可のアプリ（ストアのアプリなど）は
+    /// ウィンドウの名前にアプリの名前を含むかで判定する。
     pub fn owns(&self, source: &Source) -> bool {
         source.kind == SourceKind::Window
             && match &self.exe {
@@ -358,7 +358,7 @@ impl InstalledApp {
     }
 }
 
-/// アプリの一覧の取得。アイコンを読むので時間が掛かる。フレームループで待たない。
+/// アプリの一覧の取得。アイコンを読み込むため時間を要する。フレームループで待機しない。
 pub struct InstalledApps(Receiver<Result<Vec<InstalledApp>, Error>>);
 
 impl InstalledApps {
@@ -393,8 +393,8 @@ impl InstalledApps {
     }
 }
 
-/// アプリ（[`InstalledApp::id`] と同じ ID）のスタートメニューのアイコン（64px）。シェルに問い合わせて待つので、
-/// フレームループでは呼ばない。
+/// アプリ（[`InstalledApp::id`] と同じ ID）のスタートメニューのアイコン（64px）。シェルに問い合わせて待機するため、
+/// フレームループでは呼び出さない。
 pub fn app_icon(id: &str) -> Option<Icon> {
     #[cfg(windows)]
     return windows::app_icon(id);

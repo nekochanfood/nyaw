@@ -9,7 +9,7 @@ pub struct KeyboardTest {
 }
 
 impl KeyboardTest {
-    /// パネル `from` から開く。打つ指が届くよう、開いた元の手前ではなく目の前の低めに出す。
+    /// パネル `from` から開く。指が届くよう、元パネルの手前ではなく正面の低い位置に表示する。
     pub fn spec(from: PanelId) -> PanelSpec {
         PanelSpec::spawn(from, |id, _, cx| Self::new(id, cx))
             .in_view(Pose::new(Vec3::new(0., 0.23, -0.85), Quat::IDENTITY))

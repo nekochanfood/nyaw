@@ -1,13 +1,13 @@
-//! ローカライズを確かめる画面（[`LocaleTest`]）。
+//! ローカライズを検証する画面（[`LocaleTest`]）。
 
 use super::*;
 
-/// ローカライズを確かめる画面（`locale-test`）。
-/// - `lang-en` / `lang-ja` で言語を切り替える（全パネルに効き、設定ファイルの `language` に残る。`Setting::Language`）。
-///   ボタンの名前はその言語自身で出す。今の言語のボタンが光る。
-/// - `locale-current` に今の言語、`locale-missing` に訳の抜け（言語ごとに表に無いキー）を出す。
-/// - 見本（`locale-samples`）: 長い文の折り返し、差し込み（`{count}`）、訳で長さの変わるボタン。
-/// - `locale-table` に全キーを、言語ごとの文言と並べて出す（今の言語の列を強調）。抜けは赤字で `—`。
+/// ローカライズを検証する画面（`locale-test`）。
+/// - `lang-en` / `lang-ja` で言語を切り替える（全パネルに反映され、設定ファイルの `language` に保存される。`Setting::Language`）。
+///   ボタンの名前はその言語自体で表示する。現在の言語のボタンがハイライトされる。
+/// - `locale-current` に現在の言語、`locale-missing` に翻訳の欠落（言語ごとにテーブルにないキー）を表示する。
+/// - サンプル（`locale-samples`）: 長文の折り返し、プレースホルダー（`{count}`）、翻訳により長さの変わるボタン。
+/// - `locale-table` に全キーを、言語ごとの文言と並べて表示する（現在の言語の列をハイライト）。欠落は赤字で `—`。
 pub struct LocaleTest {
     pub table: ScrollHandle,
 }

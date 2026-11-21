@@ -4,8 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# 動きの責務。用途（Motion）→ 長さとイージング、時間で動く値（Animation / Transition）、その組み合わせ（Pair）。
-# GPUI にも描画にも依存しない。再描画の駆動と「何を動かすか」は呼び出し側（design の部品、overlay）が持つ。
+# 動きの責務。用途（Motion）から長さとイージングを決め、時間で動く値（Animation / Transition）とその組み合わせ（Pair）を提供する。
+# GPUI にも描画にも依存しない。再描画の駆動と対象の選定は呼び出し側（design の部品、overlay）が担う。
 [dependencies]
 animato = { version = "1.7.2", default-features = false, features = ["tween"] }
 

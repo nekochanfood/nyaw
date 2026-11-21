@@ -5,7 +5,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use ui::mirror::{MirrorState, mirror_screen};
 
-/// 取得元を選び、独立したパネルへの配信と停止・再接続を試す。
+/// キャプチャソースを選択し、独立パネルへの配信・停止・再接続を検証する。
 pub struct DesktopTest {
     panel: PanelId,
     sources: Vec<Source>,
@@ -85,11 +85,11 @@ impl Render for DesktopViewer {
     }
 }
 
-/// 統計の大きさ（m）と解像度（px）。文字が収まる最小限にし、余白は透明にする。
+/// 統計オーバーレイのサイズ（m）と解像度（px）。テキストが収まる最小限とし、余白は透明にする。
 const STATS_SIZE: Vec2 = Vec2::new(0.16, 0.1);
 const STATS_RESOLUTION: (u32, u32) = (160, 100);
 
-/// 配信パネルの左上の角に重ねる統計（FPS・遅延・取得・転送・解像度）。行ごとに薄い下地を敷く。
+/// 配信パネルの左上隅にオーバーレイする統計（FPS・レイテンシ・キャプチャ・転送・解像度）。行ごとに半透明の背景を敷く。
 struct StreamStats {
     panel: PanelId,
 }
@@ -216,18 +216,18 @@ impl Render for DesktopTest {
                                                 StreamStats { panel }
                                             })
                                             .hud()
-                                            // 統計は表示だけの子。ナビゲーションバーは付けない。
+                                            // 統計は表示専用の子パネル。ナビゲーションバーは不要。
                                             .without_nav_bar()
                                             .sized(STATS_SIZE, STATS_RESOLUTION),
                                         );
                                     }
                                     DesktopViewer { panel }
                                 })
-                                // 一覧（開いた元）を隠さないよう、その手前ではなく右に並べる。
+                                // ソース一覧（起動元）を隠さないよう、手前ではなく右側に配置する。
                                 .in_view(Pose::new(Vec3::new(0.75, 0.0, -1.2), Quat::IDENTITY))
-                                // 配信のパネルは取得元の名前をタイトルに、ナビゲーションバーで閉じる（配信も止まる）。
+                                // 配信パネルはソース名をタイトルに設定し、ナビゲーションバーで閉じる（配信も停止する）。
                                 .titled_text(title)
-                                // 映しているデスクトップ・ウィンドウへ打てるよう、バーの左端に OS キーボードのトグルを出す。
+                                // ミラー先のデスクトップ・ウィンドウへ入力できるよう、バーの左端に OS キーボードトグルを表示する。
                                 .with_os_keyboard(),
                             );
                         }),
@@ -439,13 +439,13 @@ mod tests {
     }
 }
 
-/// ミラーリング画面（[`ui::mirror`]）の全ての状態を見比べる画面。操作の [`MirrorTest`] と、実物と同じ表示の [`MirrorPreview`] の
-/// 2 枚のパネルに分かれる（重ならない）。[`spawn_mirror_test`] が両方を出す。
-/// 操作の上段は状態、下段は「キャプチャに失敗」の理由ごと（理由の分類は `kernel::desktop::Reason`）。
+/// ミラーリング画面（[`ui::mirror`]）の全状態を比較する画面。操作用の [`MirrorTest`] と、実物と同一表示の [`MirrorPreview`] の
+/// 2 枚のパネルで構成される（重複なし）。[`spawn_mirror_test`] が両方を生成する。
+/// 操作パネルの上段は状態選択、下段は「キャプチャ失敗」の理由別表示（理由の分類は `kernel::desktop::Reason`）。
 #[derive(Default)]
 pub struct MirrorShared {
     pub(crate) state: RefCell<Option<MirrorState>>,
-    /// 表示のパネル（出たら入る）。操作が変えたら描き直しを頼む相手。
+    /// プレビューパネル（生成後に設定される）。操作側が状態を変更した際に再描画を要求する対象。
     preview: Cell<Option<PanelId>>,
 }
 
@@ -458,7 +458,7 @@ impl MirrorShared {
     }
 }
 
-/// 操作のパネルと表示のパネルを並べて出す。
+/// 操作パネルとプレビューパネルを並べて生成する。
 pub fn spawn_mirror_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
         let shared = Rc::new(MirrorShared::default());
@@ -473,14 +473,14 @@ pub fn spawn_mirror_test(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &m
                 shared.preview.set(Some(id));
                 MirrorPreview { shared }
             })
-            // 操作のパネルを隠さないよう、その右に並べる。
+            // 操作パネルを隠さないよう、右側に配置する。
             .in_view(Pose::new(Vec3::new(0.75, 0.0, -1.2), Quat::IDENTITY))
             .titled("testing.open.mirror"),
         );
     }
 }
 
-/// 選んだ状態の、実物（ダッシュボードのミラーリング画面）と同じ表示。
+/// 選択した状態を、実際のダッシュボードのミラーリング画面と同一のレイアウトで表示する。
 pub struct MirrorPreview {
     pub(crate) shared: Rc<MirrorShared>,
 }
@@ -496,7 +496,7 @@ impl Render for MirrorPreview {
     }
 }
 
-/// 理由ごとの見本の失敗（本物のメッセージを使うので、分類が崩れたらここで気づける）。
+/// 理由別のサンプルエラー（実際のメッセージを使用するため、分類の不整合をここで検出できる）。
 fn failure_samples() -> [(&'static str, Error); 6] {
     use kernel::desktop::failure::*;
     [
@@ -527,7 +527,7 @@ const MIRROR_STATES: [(MirrorState, &str); 6] = [
     (MirrorState::Closed, "mirror-case-closed"),
 ];
 
-/// 状態を選ぶ操作のパネル。
+/// 状態を選択する操作パネル。
 pub struct MirrorTest {
     pub(crate) shared: Rc<MirrorShared>,
 }

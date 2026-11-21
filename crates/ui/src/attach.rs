@@ -1,16 +1,16 @@
-//! ナビゲーションバーの「…」から開くポップオーバー（[`NavMenu`]。手に持つ・はめる場所から外す/戻す）と、手に持っている間は
-//! ダッシュボードが出ているときだけ掴めるようにするロック（[`hold`]）。
+//! ナビゲーションバーの「…」から開くポップオーバー（[`NavMenu`]）と、手に保持している間のグラブロック（[`hold`]）。
+//! ポップオーバーでは手への装着・ドックからの着脱を操作する。
 
 use super::*;
 use design::{Theme, components, font_size, icons, spacing};
 
-/// ポップオーバーの窓の幅（px。バーと同じ密度）。「ダッシュボードから外す」が省略されずに入る幅。
+/// ポップオーバーのウィンドウ幅（px、バーと同一密度）。「ダッシュボードから外す」が省略なく収まる幅。
 const MENU_WIDTH: f32 = 380.0;
-/// ポップオーバーを持ち主の面（とバー）よりどれだけ手前に浮かせるか（m。1m 先での値で、バーと同じく距離に合わせて伸ばす）。
-/// 持ち主に重なる所に出すので、同じ面だとめり込んで見える。
+/// ポップオーバーを持ち主の面（とバー）よりどれだけ手前に浮かせるか（m、1m 先での値で距離に応じて拡大）。
+/// 持ち主と重なる位置に表示するため、同一面ではめり込みが生じる。
 const MENU_LIFT: f32 = 0.03;
 
-/// `panel` を持っている手（手に取り付いていなければ `None`）。
+/// `panel` を保持している手を返す（手に装着されていなければ `None`）。
 pub(crate) fn in_hand(panel: PanelId, cx: &App) -> Option<Hand> {
     let state = cx.try_global::<PanelControl>()?.panels.get(&panel)?;
     match state.status.attached {
@@ -19,9 +19,10 @@ pub(crate) fn in_hand(panel: PanelId, cx: &App) -> Option<Hand> {
     }
 }
 
-/// 手に持っている `owner` を、ダッシュボードが出ている間だけ掴めるようにする（置き場所・向き・大きさを変えられる）。掴んだまま
-/// ダッシュボードが消えたら、ロックがその掴みを取り消して元へ戻す（wrist と同じ）。手から外れたらロックも外す。
-/// `locked` は今かけてあるか（変わるときだけ積む。積むとまた呼ばれる）。持ち主のナビゲーションバーが状態の変わるたびに呼ぶ。
+/// 手に保持している `owner` を、ダッシュボード非表示時のみグラブロックする（配置・向き・大きさの変更を制限）。
+/// グラブ中にダッシュボードが消えると、ロックがグラブを取り消して元の状態に戻す（wrist と同一動作）。
+/// 手から外れた場合はロックも解除する。`locked` は現在のロック状態（変更時のみキューイングし、再呼び出しされる）。
+/// 持ち主のナビゲーションバーが状態変化するたびに呼び出す。
 pub(crate) fn hold(owner: PanelId, locked: &mut bool, cx: &mut App) {
     let want = in_hand(owner, cx).is_some() && dock_slot(cx).is_none();
     if want != *locked {
@@ -30,7 +31,7 @@ pub(crate) fn hold(owner: PanelId, locked: &mut bool, cx: &mut App) {
     }
 }
 
-/// `owner` を `hand` に持つ。親（はめた先のダッシュボードなど）に付いていれば外して独立させる（子は親に付いて動くため）。
+/// `owner` を `hand` に装着する。親（ドック先のダッシュボード等）に属している場合は取り外して独立させる（子は親に追従するため）。
 fn attach(owner: PanelId, hand: Hand, cx: &mut App) {
     let ctl = cx.global::<PanelControl>();
     if ctl
@@ -43,8 +44,8 @@ fn attach(owner: PanelId, hand: Hand, cx: &mut App) {
     command(owner, PanelCommand::AttachToHand(hand), cx);
 }
 
-/// はめる場所に対する `owner` の今: `Some(true)` = はまっている（外せる）、`Some(false)` = 外れていて場所が開いている（戻せる）。
-/// どちらでもなければ `None`。
+/// `owner` のドック状態。`Some(true)` = ドック中（取り外し可）、`Some(false)` = 未装着でドックが空き（装着可）。
+/// どちらにも該当しなければ `None`。
 fn dock_state(owner: PanelId, cx: &App) -> Option<bool> {
     let parent = cx
         .try_global::<PanelControl>()?
@@ -56,9 +57,9 @@ fn dock_state(owner: PanelId, cx: &App) -> Option<bool> {
     (inside || slot.is_some()).then_some(inside)
 }
 
-/// 「…」のポップオーバーの起動仕様。`owner` のナビゲーションバーの上に、カードの右端を帯の右端（「…」の側）に揃えて
-/// 少し手前に浮かせて出す。バーと同じ密度で書き、バーと同じく頭からの距離に合わせて大きくする（[`PanelSpec::over_nav_bar`]）。
-/// `dockable` なら、はめる場所から外す・戻す行も出す（できるときだけ）。
+/// 「…」ポップオーバーの起動仕様。`owner` のナビゲーションバー上に、カード右端を帯の右端（「…」側）に揃え、
+/// やや手前に浮かせて表示する。バーと同一密度で描画し、頭からの距離に応じて拡大する（[`PanelSpec::over_nav_bar`]）。
+/// `dockable` の場合はドック着脱行も表示する（操作可能な場合のみ）。
 pub(crate) fn menu_spec(owner: PanelId, dockable: bool, cx: &App) -> PanelSpec {
     let hand = in_hand(owner, cx);
     let docked = dockable.then(|| dock_state(owner, cx)).flatten();
@@ -67,8 +68,8 @@ pub(crate) fn menu_spec(owner: PanelId, dockable: bool, cx: &App) -> PanelSpec {
     let height =
         rows as f32 * components::MENU_ITEM_HEIGHT + 2.0 * (components::MENU_PADDING + margin);
     let bar = Vec2::new(NAV_BAR_PX.0 as f32, NAV_BAR_PX.1 as f32);
-    // バーの窓の中心から見た、ポップオーバーの窓の中心（px。上が +）。窓の右端をそろえるとカードの右端が帯の右端にそろい、
-    // カードの下端は帯の上端の `SM` 上に来る。
+    // バーのウィンドウ中心から見たポップオーバーのウィンドウ中心（px、上が正）。
+    // 右端を揃えるとカード右端が帯の右端に合い、カード下端は帯上端の `SM` 上に位置する。
     let at = Vec2::new(
         (bar.x - MENU_WIDTH) / 2.0,
         bar.y / 2.0 - margin + spacing::SM - margin + height / 2.0,
@@ -89,14 +90,14 @@ pub(crate) fn menu_spec(owner: PanelId, dockable: bool, cx: &App) -> PanelSpec {
     .without_resize()
 }
 
-/// 「…」のポップオーバー: 左手・右手に持つ（持っている手に印）と、持っていれば手から外す（その場に残す）、はめる場所から
-/// 外す・戻す。選ぶと閉じる。
+/// 「…」ポップオーバー。左手・右手への装着（装着中の手にマーク）、手からの取り外し（その場に残す）、ドック着脱を操作する。
+/// 項目選択で自動的に閉じる。
 struct NavMenu {
     panel: PanelId,
     owner: PanelId,
-    /// 開いたときに持っていた手。
+    /// ポップオーバーを開いた時点で装着していた手。
     hand: Option<Hand>,
-    /// 開いたときの [`dock_state`]（外す・戻す行を出さないなら `None`）。
+    /// ポップオーバーを開いた時点の [`dock_state`]（着脱行を表示しない場合は `None`）。
     docked: Option<bool>,
 }
 

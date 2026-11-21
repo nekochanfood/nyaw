@@ -60,7 +60,7 @@ fn modified_click_uses_the_requested_button_in_touch_mode() {
     assert!(matches!(&up[..], [PlatformInput::MouseUp(e)] if e.button == MouseButton::Right));
 }
 
-/// 一方の手がパネルにマウスを動かしたら、もう一方の手は次に位置から送り直す（GPUI のマウスは 1 つ）。
+/// 一方の手がマウスを移動させると、もう一方の手は次回の位置を再送出する（GPUI のマウスは 1 つのため）。
 #[test]
 fn one_hand_moving_the_mouse_makes_the_other_resend_its_position() {
     let mut kernel =
@@ -130,7 +130,7 @@ fn leave_releases_held_button() {
     assert!(!b.pressed);
 }
 
-/// 遠い・画素の細かいパネルでは、スワイプとみなす動き（`slop`）が大きくなり、手ブレ程度の動きはタップのまま。
+/// 遠距離・高密度パネルではスワイプ閾値（`slop`）が大きくなり、手ブレ程度の移動はタップとして扱う。
 #[test]
 fn wider_slop_keeps_a_shaky_tap_a_tap() {
     let touch = PointerMode::Touch;
@@ -144,7 +144,7 @@ fn wider_slop_keeps_a_shaky_tap_a_tap() {
         },
         touch,
     );
-    // 固定の下限（SWIPE_SLOP）は超えるが、このパネルの閾値の内。
+    // 固定下限（SWIPE_SLOP）は超過するが、このパネルの閾値内に収まる。
     let moved = b.translate(
         PointerEvent::Move {
             pos: Vec2::new(40.0, 10.0),
@@ -161,7 +161,7 @@ fn wider_slop_keeps_a_shaky_tap_a_tap() {
     assert!(tap.iter().any(|i| matches!(i, PlatformInput::MouseDown(_))));
 }
 
-/// タッチ: 動かさずに離すとタップ（押して離す）、しきい値を超えて動かすとスワイプ（指に付いてくるスクロール）だけになる。
+/// タッチ: 移動せず離すとタップ（押下→解放）、閾値を超えて移動するとスワイプ（指追従スクロール）となる。
 #[test]
 fn touch_taps_or_swipes() {
     let pos = |x, y| Vec2::new(x, y);
@@ -210,7 +210,7 @@ fn touch_taps_or_swipes() {
         },
         touch,
     );
-    // 押している間に方式が変わっても、離すまではタッチのまま。
+    // 押下中にモードが変更されても、解放まではタッチとして処理する。
     let swipe = b.translate(
         PointerEvent::Move {
             pos: pos(10.0, 40.0),
@@ -237,7 +237,7 @@ fn touch_taps_or_swipes() {
         ["scroll", "move"]
     );
     assert!(!b.pressed);
-    // 離した後も慣性で同じ向きに滑り、だんだん止まる。
+    // 解放後も慣性で同方向に滑り続け、徐々に減速して停止する。
     let Some(PlatformInput::ScrollWheel(first)) = b.momentum() else {
         panic!("no momentum")
     };
@@ -268,7 +268,7 @@ fn touch_long_press_becomes_mouse_press_for_drag() {
             .is_empty()
     );
     std::thread::sleep(LONG_PRESS);
-    // 動かさずに長押しすると、押した所でマウスの押下になり、押したまま閾値を越えて動かして（ドラッグがすぐ始まる）元へ戻す。
+    // 移動せず長押しすると押下位置でマウス押下に遷移し、押下状態のまま閾値を超えて移動（即座にドラッグ開始）後に元の位置へ復帰する。
     let held = b.translate(PointerEvent::Move { pos: at }, touch);
     let [
         PlatformInput::MouseMove(_),
@@ -285,7 +285,7 @@ fn touch_long_press_becomes_mouse_press_for_drag() {
         "exceeds the GPUI drag threshold"
     );
     assert_eq!(back.position, Point::new(px(10.0), px(10.0)));
-    // 以降はマウスのドラッグ（押したままの Move）で、スクロールにはならない。
+    // 以降はマウスのドラッグ（押下状態の Move）として動作し、スクロールにはならない。
     let drag = b.translate(
         PointerEvent::Move {
             pos: Vec2::new(10.0, 60.0),

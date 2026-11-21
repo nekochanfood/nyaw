@@ -2,16 +2,16 @@
 
 use super::*;
 
-/// 再生中の画面（背景に大きな画像が載る）の Ghost ボタンの、ホバー・押下の背景の不透明度。
+/// 再生中画面（背景にジャケット画像を表示）の Ghost ボタンにおけるホバー・押下時の背景不透明度。
 const NOW_PLAYING_BACKGROUND_OPACITY: f32 = 0.125;
-/// 再生中の画面: ジャケットの一辺、シークバーの幅・棒の太さ・押せる高さ（px）、背景に重ねる地の濃さ（0..=255）。
+/// 再生中画面: ジャケットの一辺、シークバーの幅・トラック太さ・ヒット領域高さ（px）、背景に重ねるベース色の濃度（0..=255）。
 const ART_DISPLAY_PX: f32 = 280.0;
 const SEEK_PX: f32 = 560.0;
 const SEEK_BAR_PX: f32 = 6.0;
 const SEEK_HIT_PX: f32 = 32.0;
 const NOW_PLAYING_VEIL: u32 = 0x8c;
 
-/// 再生中の画面の画像。`key` は元の画像（[`kernel::subsystems::media::Image`]）の中身の場所。
+/// 再生中画面の画像群。`key` は元画像（[`kernel::subsystems::media::Image`]）のポインタ位置。
 pub(crate) struct MediaImages {
     key: [usize; 3],
     art: Option<Arc<RenderImage>>,
@@ -20,7 +20,7 @@ pub(crate) struct MediaImages {
 }
 
 impl Screen {
-    /// 再生中のメディアのアプリのウィンドウ（取得元の一覧から。実行ファイル名か、ウィンドウの名前で探す）。
+    /// 再生中メディアのアプリウィンドウ（ソース一覧から実行ファイル名またはウィンドウ名で検索）。
     fn app_window(&self, app: &media::App) -> Option<&(Source, Option<Arc<RenderImage>>)> {
         let (id, name) = (app_key(&app.id), app.name.to_lowercase());
         let exe = app.exe.as_deref().map(app_key);
@@ -44,14 +44,14 @@ impl Screen {
                 .text_color(rgba(theme.neutral_text_low))
                 .child(i18n::t(cx, "dashboard.nothing_playing"));
         };
-        // アプリのウィンドウを映す。無ければ、対応するプレイヤーだけに前面化を頼む。
+        // アプリのウィンドウを配信する。見つからなければ、対応するプレイヤーに前面化を要求する。
         if self.open_app && self.pending.is_none() {
             self.open_app = false;
             let window = self.app_window(&m.app);
             match window
                 .map(|(source, icon)| (source, icon, mirror_of(source, cx).map(|(id, _)| id)))
             {
-                // もう映していれば新しく開かない。ダッシュボードに隠している配信なら、それを出す。
+                // 既に配信中なら新規に開かない。ダッシュボードで非表示の配信があればそれを表示する。
                 Some((_, _, Some(id))) => {
                     let _ = self.dashboard.update(cx, |d, cx| d.show_stream(id, cx));
                 }
@@ -88,14 +88,14 @@ impl Screen {
             });
         }
         let images = self.media_images.as_ref().expect("made above");
-        // 背景がジャケットで変わるので、明るい背景には暗い文字（ライト）、暗い背景には明るい文字（ダーク）を載せる。
+        // 背景がジャケットにより変化するため、明るい背景にはダークテーマ、暗い背景にはライトテーマのテキスト色を使用する。
         let theme = match m.light {
             Some(true) => Theme::LIGHT,
             Some(false) => Theme::DARK,
             None => Theme::current(cx),
         };
         let low = theme.neutral_text_low;
-        // Ghost ボタンの背景は、背景に紛れないよう反対のテーマの色にする（明るい背景には暗く、暗い背景には明るく）。
+        // Ghost ボタンの背景は、背景に埋もれないよう反対テーマの色を使用する（明→暗、暗→明）。
         let contrast = if theme == Theme::LIGHT {
             Theme::DARK
         } else {
@@ -137,7 +137,7 @@ impl Screen {
                         .rounded(px(design::radius::XL)),
                 )
             })
-            // ぼかしたジャケットの上に地の色を薄く重ね、文字と部品を読みやすくする。
+            // ぼかしたジャケットの上にベース色を半透明で重ね、テキストと UI 部品の可読性を確保する。
             .child(
                 div()
                     .absolute()
@@ -179,7 +179,7 @@ impl Screen {
                             }),
                     ),
             )
-            // メディアが複数あるときだけ、右上に前後のメディアへの切り替えを出す。
+            // メディアセッションが複数ある場合のみ、右上に前後のメディア切り替えボタンを表示する。
             .when(m.sessions > 1, |d| {
                 d.child(
                     div()
@@ -246,7 +246,7 @@ impl Screen {
                             .text_color(rgba(low))
                             .child(m.artist.clone()),
                     )
-                    // 1 行に、再生位置・シークバー・曲の長さ。
+                    // 1 行に再生位置・シークバー・曲の長さを配置。
                     .child(
                         div()
                             .mt(px(spacing::MD))
@@ -262,7 +262,7 @@ impl Screen {
                                     .debug_selector(|| "now-playing-position".into())
                                     .child(clock(position)),
                             )
-                            // シークバー: ハンドルの無い無彩色の棒。押した位置へ移る（シークできるときだけ）。
+                            // シークバー: ハンドル無しの無彩色トラック。押下位置へシークする（シーク可能時のみ）。
                             .child(
                                 div()
                                     .id("now-playing-seek")

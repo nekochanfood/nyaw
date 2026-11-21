@@ -1,7 +1,7 @@
-//! Layer 5 画面: 設定画面。GNOME の設定のようなツートーン: 左のサイドバー（地は `sidebar`）にカテゴリの一覧、
-//! 右（地は `background`）に選んだカテゴリの設定。中身はカテゴリ・詳しい画面ごとのファイルに分ける
+//! Layer 5 画面: 設定画面。GNOME 設定風のツートーン構成で、左サイドバー（背景色 `sidebar`）にカテゴリ一覧、
+//! 右側（背景色 `background`）に選択カテゴリの設定を表示する。内容はカテゴリ・詳細画面ごとにファイル分割する
 //! （[`general`] / [`appearance`] / [`input`] / [`display`] / [`pointer`] / [`keyboard`] / [`update`] / [`about`]）。
-//! このファイルは画面の骨組み（サイドバー・積み重ね・入れ替え）と、どのカテゴリでも使う部品（選択の行・詳しい画面を開く行）だけを持つ。
+//! 本ファイルは画面の骨格（サイドバー・ナビゲーションスタック・遷移アニメーション）と共通部品（選択行・詳細画面遷移行）のみを持つ。
 
 use design::components::{self, Variant};
 use design::{Mode, Theme, font_size, radius, spacing};
@@ -26,24 +26,24 @@ pub const SIZE: Vec2 = Vec2::new(1.024, 0.768);
 pub const PX: (u32, u32) = (1024, 768);
 /// サイドバーの幅（px）。
 const SIDEBAR_PX: f32 = 320.0;
-/// 一覧の行（`components::slider_item`）に置くスライダーの長さ（px）。
+/// リスト行（`components::slider_item`）内に配置するスライダーの長さ（px）。
 const ROW_SLIDER_PX: f32 = 240.0;
-/// 画面の入れ替えで動く距離（画面の幅・高さに対する割合）。全幅は動かず、透明度の入れ替えで見せる。
+/// 画面遷移時のスライド距離（画面サイズに対する割合）。全幅遷移は行わず、スライド＋フェードで遷移を表現する。
 const PAGE_SHIFT: f32 = 0.5;
 
-/// 色は `design` のダークテーマの役割から引く（`color_at` は 0xRRGGBB なのでアルファを落とす）。
+/// 色は `design` のダークテーマのセマンティックトークンから取得する（`color_at` は 0xRRGGBB のためアルファを除去）。
 const THEME: Theme = Theme::of(Mode::Dark);
-/// サイドバーの地。行は選んでいてもいなくても同じ色（背景が無いように見える）。
+/// サイドバー背景色。行は選択状態に関わらず同一色（背景が透過して見える）。
 pub const SIDEBAR_BG: u32 = THEME.sidebar >> 8;
-/// サイドバーで選んでいる行の左端の印の色。
+/// サイドバーの選択行左端インジケーターの色。
 pub const SIDEBAR_INDICATOR: u32 = THEME.accent_solid >> 8;
 pub use design::components::SIDEBAR_INDICATOR_INSET;
 
-/// 設定のカテゴリ（サイドバー。並びはこの順）。段階的開示: カテゴリはよく変える設定だけを直接並べ、
-/// まとまった設定は詳しい画面（[`Page`]）に分けて行から開く。
+/// 設定のカテゴリ（サイドバーに表示、定義順に並ぶ）。段階的開示の原則に従い、頻用する設定のみ直接表示し、
+/// 関連設定群は詳細画面（[`Page`]）に分離してリスト行から遷移する。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Category {
-    /// 一般（アップデートはここから開く。ダッシュボードのボタンからも）。
+    /// 一般（アップデートはここから遷移。ダッシュボードのボタンからも直接遷移可能）。
     #[default]
     General,
     Appearance,
@@ -61,7 +61,7 @@ impl Category {
         Self::Accessibility,
     ];
 
-    /// サイドバーの行の `debug_selector`・アイコン・文言のキー。
+    /// サイドバー行の `debug_selector`・アイコン・i18n キー。
     fn row(self) -> (&'static str, &'static design::Icon, &'static str) {
         match self {
             Self::General => (
@@ -93,8 +93,8 @@ impl Category {
     }
 }
 
-/// カテゴリの中から開く詳しい画面（サブカテゴリ）。積み重ね（[`components::navigation`]）に右から積み、
-/// 戻る（`settings-back`）かスワイプバックで下ろす。サイドバーでカテゴリを選ぶと全部下ろす。
+/// カテゴリ内の詳細画面（サブカテゴリ）。ナビゲーションスタック（[`components::navigation`]）に右から積み、
+/// 戻るボタン（`settings-back`）またはスワイプバックでポップする。サイドバーでカテゴリを選択すると全画面をポップする。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Page {
     /// 外観 → 時計の文字盤。
@@ -107,12 +107,12 @@ pub enum Page {
     Update,
     /// 一般 → 情報。
     About,
-    /// 情報 → ライセンスの一覧。
+    /// 情報 → ライセンス一覧。
     Licenses,
 }
 
 impl Page {
-    /// 開く行の `debug_selector`・アイコン・見出しの文言のキー。
+    /// 遷移行の `debug_selector`・アイコン・見出しの i18n キー。
     fn row(self) -> (&'static str, &'static design::Icon, &'static str) {
         match self {
             Self::Watch => (
@@ -149,7 +149,7 @@ impl Page {
     }
 }
 
-/// 設定画面の起動仕様（ダッシュボードの設定ボタン。main が渡す）。`opened` は作られたパネルの ID を受け取る。
+/// 設定画面の起動仕様（ダッシュボードの設定ボタン用、main が渡す）。`opened` は生成されたパネル ID を受け取るコールバック。
 pub fn spec(from: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'static) -> PanelSpec {
     PanelSpec::spawn(from, |id, _, cx| {
         opened(id, cx);
@@ -159,31 +159,31 @@ pub fn spec(from: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'stati
     .titled("testing.open.settings")
 }
 
-/// 設定画面。サイドバーの行（`components::sidebar_item`）は選んでいるものだけ文字が濃く、左端に印が付く。
-/// 中身はカードを縦に並べる。複数から選ぶ設定は選択の行（`components::select`）で、押すと選択肢のポップオーバーが開き、
-/// 選ぶとすぐ全体の設定（`Setting`）に反映する。外観と時計は `ui::prefs` の部品。
-/// まとまった設定は詳しい画面（[`Page`]）で、カテゴリの中の行（`components::list_item`）から積んで開く。
+/// 設定画面。サイドバー行（`components::sidebar_item`）は選択中のもののみテキストが濃く、左端にインジケーターが付く。
+/// 本体はカードを縦に配置する。選択式設定は `components::select` 行で、クリックでポップオーバーを開き、
+/// 選択するとグローバル設定（`Setting`）に即時反映する。外観と時計は `ui::prefs` の共通部品を使用。
+/// 関連設定群は詳細画面（[`Page`]）として、カテゴリ内のリスト行（`components::list_item`）からスタックに積んで遷移する。
 #[derive(Default)]
 pub struct Settings {
-    /// このパネル（色を作るダイアログを子として開く）。
+    /// このパネルの ID（カラーピッカーダイアログを子パネルとして開く際に使用）。
     panel: PanelId,
-    /// 選んでいるカテゴリ。
+    /// 現在選択中のカテゴリ。
     pub category: Category,
-    /// カテゴリの上に積んだ詳しい画面（先頭が下）。空ならカテゴリの中身を見せる。
+    /// カテゴリ上に積んだ詳細画面のスタック（先頭が底）。空の場合はカテゴリ本体を表示する。
     pub pages: Vec<Page>,
-    /// 外観・時計の部品の状態。
+    /// 外観・時計の共通部品の状態。
     pub appearance: ui::prefs::Appearance,
     pub watch: ui::prefs::WatchFaces,
-    /// キーボードの見本（最初にキーボードの画面を開いたときに作り、画面を閉じるまで持つ）。
+    /// キーボードプレビュー（キーボード画面の初回遷移時に生成し、画面が閉じるまで保持する）。
     pub keyboard_preview: std::cell::OnceCell<gpui::Entity<ui::keyboard::KeyboardView>>,
-    /// 選択肢を開いている選択の行（`debug_selector`）。
+    /// ポップオーバーが開いている選択行の `debug_selector`。
     pub open: Option<&'static str>,
-    /// スクロール（スクロールバーが見る）: カテゴリの中身、詳しい画面（積むたびに先頭から）、ライセンスの一覧。
-    /// 積み下ろしの間は 2 枚を同時に描くので、カテゴリと詳しい画面で分ける。
+    /// スクロールハンドル（スクロールバー用）: カテゴリ本体、詳細画面（プッシュごとに先頭にリセット）、ライセンス一覧。
+    /// スタック遷移中は 2 画面を同時に描画するため、カテゴリと詳細画面でハンドルを分離する。
     scroll: ScrollHandle,
     page_scroll: ScrollHandle,
     licenses_scroll: gpui::UniformListScrollHandle,
-    /// カテゴリを替えた直後の入れ替え: 前のカテゴリと、その進み具合（0 → 1）。
+    /// カテゴリ切替直後の遷移アニメーション: 切替前のカテゴリと進捗（0→1）。
     swap: Option<(Category, design::animation::Transition)>,
 }
 
@@ -195,9 +195,9 @@ impl Settings {
         }
     }
 
-    /// 詳しい画面 `page` を積む。時計は入るたびに、見ていた文字盤と絞り込みを忘れて使っている文字盤を中央に戻す
-    /// （出ていく画面は滑り去る間も描くので、出るときではなく入るときに戻す）。ライセンスの一覧の下の情報は、
-    /// 戻ったときに元の位置のままにする（積むのが情報の上なので、詳しい画面のスクロールは先頭に戻さない）。
+    /// 詳細画面 `page` をスタックに積む。時計画面は遷移のたびに文字盤選択とフィルターをリセットし、使用中の文字盤を中央に戻す
+    /// （退出画面はスライドアウト中も描画されるため、退出時ではなく進入時にリセットする）。ライセンス一覧下の情報画面は、
+    /// 戻った際にスクロール位置を維持する（ライセンスが情報の上に積まれるため、詳細画面のスクロールはリセットしない）。
     pub fn push(&mut self, page: Page) {
         if page == Page::Watch {
             self.watch = Default::default();
@@ -209,7 +209,7 @@ impl Settings {
         self.open = None;
     }
 
-    /// 押すと詳しい画面 `page` を積む行（右に `>`）。
+    /// クリックで詳細画面 `page` をスタックに積む行（右端に `>` アイコン）。
     fn page_row(&self, theme: &Theme, page: Page, cx: &mut Context<Self>) -> components::Button {
         let (id, glyph, key) = page.row();
         components::list_item(theme, id, glyph, i18n::t(cx, key)).on_click(cx.listener(
@@ -220,7 +220,7 @@ impl Settings {
         ))
     }
 
-    /// 詳しい画面を開く行のカード。
+    /// 詳細画面への遷移行をまとめたカード。
     fn page_rows<const N: usize>(
         &self,
         theme: &Theme,
@@ -230,7 +230,7 @@ impl Settings {
         components::list(theme, pages.map(|p| self.page_row(theme, p, cx)))
     }
 
-    /// 選択の行（`components::select`）。押すと選択肢のポップオーバーを開き、選ぶと `set` で全体の設定に反映して閉じる。
+    /// 選択行（`components::select`）。クリックでポップオーバーを開き、選択すると `set` でグローバル設定に反映して閉じる。
     #[allow(clippy::too_many_arguments)]
     fn select<T: Copy + PartialEq + 'static, I: Into<SharedString>>(
         &self,
@@ -249,7 +249,7 @@ impl Settings {
             .find(|(_, _, v)| *v == now)
             .map(|(_, l, _)| l.clone())
             .unwrap_or_default();
-        // 閉じる動きのために、閉じていても毎回渡す（消えきると何も描かない）。
+        // 閉じるアニメーションのため、非表示状態でも毎フレーム渡す（完全に消えると描画しない）。
         let items = options
             .into_iter()
             .map(|(oid, l, v)| {
@@ -283,7 +283,7 @@ impl Settings {
             .child(popover)
     }
 
-    /// カテゴリの中身（グループの並び）。よく変える設定を直接並べ、まとまった設定は詳しい画面を開く行にする。
+    /// カテゴリ本体（グループの並び）。頻用する設定を直接配置し、関連設定群は詳細画面への遷移行とする。
     fn category_page(
         &self,
         theme: &Theme,
@@ -296,12 +296,12 @@ impl Settings {
             Category::Appearance => appearance::page(self, theme, window, cx),
             Category::Input => input::page(self, theme, window, cx),
             Category::Display => display::page(self, theme, window, cx),
-            // 文字の見本・文字の大きさ・UI スケール・太字（セットアップウィザードと同じ部品）。
+            // テキストプレビュー・フォントサイズ・UI スケール・太字（セットアップウィザードと共通部品）。
             Category::Accessibility => vec![ui::prefs::accessibility(window, cx)],
         }
     }
 
-    /// 詳しい画面の中身（グループの並び）。
+    /// 詳細画面の本体（グループの並び）。
     fn sub_page(
         &self,
         theme: &Theme,
@@ -320,16 +320,16 @@ impl Settings {
     }
 }
 
-/// 押すと全体の設定の変更を積むクリックハンドラ。
+/// クリックでグローバル設定の変更を適用するハンドラ。
 fn change(s: Setting) -> impl Fn(&gpui::ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| ui::set(s, cx)
 }
 
-/// 見出しの行。サイドバーと中身で高さを揃え、一覧の上端を揃える。タイトルは左右の中央、`left` のボタン（戻る）は左端に寄せる（閉じるのはナビゲーションバー）。
-/// 高さはアイコンボタンと同じなので、ボタンは上下にも左右にも余白を足さない（パネルの内側の余白だけが四方に揃う）。
-/// 積み重ねを試す画面（`testing::NavTest`）も同じ見出しを使う。
+/// 見出し行。サイドバーと本体で高さを揃え、リスト上端を整列させる。タイトルは水平中央配置、`left` のボタン（戻る）は左端に寄せる（閉じるはナビゲーションバーが担当）。
+/// 高さはアイコンボタンと同一のため、ボタンには上下左右の追加余白を設けない（パネル内側の余白のみで四方が揃う）。
+/// ナビゲーションスタックのテスト画面（`testing::NavTest`）も同一の見出しを使用する。
 pub fn heading(title: impl IntoElement, left: Option<gpui::AnyElement>) -> Div {
-    // ボタンの有無で中央がずれないよう、左右にボタンと同じ幅の枠を常に取り、タイトルはその間の中央に置く（長ければ省略）。
+    // ボタンの有無でタイトル中央がずれないよう、左右にボタンと同幅のスロットを常時確保し、タイトルはその間に中央配置する（長い場合は省略表示）。
     let slot = || div().w(px(components::BUTTON_HEIGHT)).flex_none().flex();
     div()
         .h(px(components::BUTTON_HEIGHT))
@@ -351,7 +351,7 @@ pub fn heading(title: impl IntoElement, left: Option<gpui::AnyElement>) -> Div {
 
 impl Render for Settings {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // ダッシュボードのアップデートのボタンから開いた（開いていた）なら、アップデートを出す。
+        // ダッシュボードのアップデートボタンから開いた（または開いていた）場合、アップデート画面を表示する。
         if updater::take_reveal(cx) {
             (self.category, self.swap) = (Category::General, None);
             self.pages.clear();
@@ -370,7 +370,7 @@ impl Render for Settings {
                     category == self.category,
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    // 選んだカテゴリの中身に戻る（今のカテゴリでも、積んだ詳しい画面を下ろす）。
+                    // 選択したカテゴリの本体に戻る（現在のカテゴリでも、積まれた詳細画面をすべてポップする）。
                     if category != this.category {
                         let mut t = design::animation::Transition::rest(0.0);
                         let animated = cx.has_global::<design::Motion>();
@@ -387,7 +387,7 @@ impl Render for Settings {
                 }))
             })
             .collect::<Vec<_>>();
-        // 画面の積み重ね: 一番下がカテゴリの中身（`None`）、その上に詳しい画面を積むと右から入る。
+        // ナビゲーションスタック: 最下層がカテゴリ本体（`None`）、その上に詳細画面を積むと右からスライドインする。
         let this = cx.entity();
         let stack: Vec<Option<Page>> = std::iter::once(None)
             .chain(self.pages.iter().copied().map(Some))
@@ -406,7 +406,7 @@ impl Render for Settings {
                 cx.notify();
             })
         };
-        // パネルの地は中身側（`background`）。サイドバーだけ `sidebar` で塗り、左の角をパネルに合わせて丸める。
+        // パネル背景は本体側（`background`）。サイドバーのみ `sidebar` で塗り、左角をパネルの角丸に合わせる。
         components::panel(&theme)
             .p(px(0.0))
             .flex()
@@ -434,11 +434,11 @@ impl Render for Settings {
                 div()
                     .relative()
                     .flex_1()
-                    // 中身の幅で広がらず、パネルの残りに収める（長い文字は行の中で省略する）。
+                    // 本体の内容幅で膨張せず、パネルの残り幅に収める（長いテキストは行内で省略表示する）。
                     .min_w_0()
                     .child(
                         components::navigation(&theme, "settings-nav", &stack, page, swipe_back)
-                            // ページの地がパネルの右の角丸を覆わない。
+                            // ページ背景がパネル右側の角丸を覆わないようにする。
                             .rounded_right(radius::XL)
                             .fading(PAGE_SHIFT),
                     ),
@@ -447,8 +447,8 @@ impl Render for Settings {
 }
 
 impl Settings {
-    /// 積み重ねの画面 1 枚: 見出しの下にカテゴリの中身（`None`）、または詳しい画面。
-    /// カテゴリを替えた直後は、前のカテゴリの画面と上下にスライドして入れ替わる（サイドバーで下の行を選ぶと上へ、上の行なら下へ）。
+    /// スタック内の 1 画面: 見出し下にカテゴリ本体（`None`）または詳細画面を表示する。
+    /// カテゴリ切替直後は前カテゴリの画面と上下スライドで遷移する（サイドバーで下の行を選ぶと上へ、上の行なら下へ）。
     fn page(&self, page: Option<Page>, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let swap = self.swap.filter(|_| page.is_none());
         if let Some((from, tr)) = swap {
@@ -458,7 +458,7 @@ impl Settings {
                 let dir = if self.category > from { 1.0 } else { -1.0 };
                 let old = self.page_of(None, from, true, window, cx);
                 let new = self.page_of(None, self.category, false, window, cx);
-                // 出る側も入る側も、動きは小さく、透明度を入れ替える。
+                // 退出側・進入側ともスライド量は小さく、透明度のクロスフェードで遷移を表現する。
                 let slot = |top: f32, alpha: f32, page: Div| {
                     div()
                         .absolute()
@@ -478,8 +478,8 @@ impl Settings {
         self.page_of(page, self.category, false, window, cx)
     }
 
-    /// 画面 1 枚。`leaving` は入れ替えで抜けていく側（スクロールの追跡とスクロールバーは持たない）。
-    /// 詳しい画面は見出しの左に戻る（`settings-back`）を置く。ライセンスの一覧は自分でスクロールする。
+    /// 画面 1 枚の描画。`leaving` は遷移アニメーションで退出中の側（スクロール追跡とスクロールバーを持たない）。
+    /// 詳細画面は見出しの左に戻るボタン（`settings-back`）を配置する。ライセンス一覧は独自のスクロールを持つ。
     fn page_of(
         &self,
         page: Option<Page>,

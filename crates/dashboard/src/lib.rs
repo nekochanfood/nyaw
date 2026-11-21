@@ -1,10 +1,11 @@
-//! Layer 6 画面: ダッシュボード。左手の X ボタンを二回続けて押すと開き、もう一度二回押すと閉じる
-//! （開け閉めは常駐の wrist が [`kernel::PanelStatus::double_press`] を見て行う）。開いている間は空間全体が暗くなる。
-//! ダッシュボードは少し上を向けたバー（[`Dashboard`]）そのもので、開いた時は何も出さない。バーのボタンで、
-//! クイック設定・ランチャー・再生中（[`Screen`]）・デバッグ・設定の画面（それぞれ自分のナビゲーションバーを持つ別のパネル）を
-//! バーの上にはめる（`ui::dock`。同じボタンをもう一度押すと閉じる）。ランチャーで開いたアプリのウィンドウもそこにはまる。
-//! はめた画面はダッシュボードに固定され（一緒に動き、バーを掴むとダッシュボードごと動く）、掴んで引っこ抜く・ナビゲーションバーから
-//! 外すと独立し、近づけて離す・ナビゲーションバーから戻すとはまる。閉じる（バーの X・X ボタンの二回押し）と、はめた画面ごと隠すだけで、次は同じ状態で出る。
+//! Layer 6 画面: ダッシュボード。左手の X ボタンを二回連続で押すと開閉する
+//! （常駐の wrist が [`kernel::PanelStatus::double_press`] を監視して制御する）。表示中は空間全体が暗転する。
+//! ダッシュボードの実体はやや上向きに傾けたバー（[`Dashboard`]）であり、開いた直後には何も表示しない。バーのボタンで、
+//! クイック設定・ランチャー・再生中（[`Screen`]）・デバッグ・設定の各画面（個別のナビゲーションバーを持つ別パネル）を
+//! バーの上にドッキングする（`ui::dock`。同じボタンの再押下で閉じる）。ランチャーから起動したアプリのウィンドウも同様にドッキングされる。
+//! ドッキングした画面はダッシュボードに追従し（バーを掴むとダッシュボードごと移動する）、掴んで引き離すかナビゲーションバーで
+//! 取り外すと独立する。近づけて離すかナビゲーションバーで戻すと再びドッキングする。閉じる操作（バーの X・X ボタンの二回押し）では
+//! ドッキング中の画面ごと非表示にするだけで、次回は同じ状態で復帰する。
 
 use std::collections::HashSet;
 use std::ops::Range;
@@ -50,20 +51,20 @@ use screen::*;
 #[cfg(test)]
 mod test_util;
 
-/// バーを手前に傾ける角度（下から見上げずに読めるよう、少し上を向かせる）。はめた画面はこの分だけ起こして垂直に立てる。
+/// バーの手前方向への傾斜角（見上げずに読めるよう上向きに傾ける）。ドッキングした画面はこの分だけ起こして垂直にする。
 const BAR_TILT: f32 = std::f32::consts::FRAC_PI_6;
-/// はめる画面の大きさと解像度（main が渡す設定画面と同じ）。ほかから渡される画面も、縦をこの高さに揃える。
+/// ドッキング画面のサイズと解像度（main が渡す設定画面と共通）。外部から渡される画面も縦をこの高さに統一する。
 const SIZE_M: Vec2 = Vec2::new(1.024, 0.768);
 const RES_PX: (u32, u32) = (1024, 768);
-/// バーの窓（px）。帯（ナビゲーションバーと同じ高さ）の周りに影の余白を取る。幅は画面と同じ密度。
+/// バーのウィンドウサイズ（px）。帯（ナビゲーションバーと同じ高さ）の周囲にシャドウ用の余白を含む。幅は画面と同密度。
 const BAR_PX: (u32, u32) = (
     RES_PX.0,
     (components::NAV_BAR_HEIGHT + 2.0 * components::PANEL_MARGIN) as u32,
 );
 const BAR_M: Vec2 = Vec2::new(SIZE_M.x, SIZE_M.x * BAR_PX.1 as f32 / BAR_PX.0 as f32);
-/// 設定の高さ 0 の所（頭の高さからの相対 m）。はめた画面の中心が目の高さより少し下に来ると見やすい。
+/// 高さ設定 0 の基準位置（頭の高さからの相対 m）。ドッキング画面の中心が目の高さよりやや下になる位置。
 const HEIGHT_ORIGIN: f32 = -0.1;
-/// 画面を開いてからはまるまでの、最初の置き場所（既定の距離・高さでのはまる所。開くとすぐはまる）。
+/// 画面を開いた直後のドッキング位置（既定の距離・高さにおけるドッキング先。開くと即座にドッキングする）。
 const SCREEN_POSE: Pose = Pose::new(
     Vec3::new(0.0, HEIGHT_ORIGIN, -kernel::DASHBOARD_DISTANCE),
     Quat::IDENTITY,
@@ -74,23 +75,23 @@ const TILE_PX: f32 = 120.0;
 const TILE_ICON_PX: f32 = 48.0;
 /// クイック設定の上の時刻の大きさ（px）。
 const QUICK_TIME_PX: f32 = 48.0;
-/// 開くとき・閉じるときの音。どちらもダッシュボード自身から聞こえる（閉じる音は閉じ方を問わず鳴る）。
+/// 開閉時の効果音。いずれもダッシュボード自体から再生される（閉じる音は閉じ方によらず再生する）。
 pub const OPEN_SOUND: &[u8] = include_bytes!("../assets/dashboard_open.wav");
 pub const CLOSE_SOUND: &[u8] = include_bytes!("../assets/dashboard_close.wav");
 
-/// ダッシュボードから開くほかの画面（デバッグ・設定）の起動仕様を作る。第 1 引数は開いた元のパネル
-/// （[`PanelSpec::spawn`] に渡す）。開いたら引数で PanelId を知らせる（[`spec`] と同じ形）。
-/// 画面どうしを直接つながないよう、何を開くかは main が選ぶ。
+/// ダッシュボードから開く外部画面（デバッグ・設定）の起動仕様を生成する。第 1 引数は起動元のパネル
+/// （[`PanelSpec::spawn`] に渡す）。起動後、コールバックで PanelId を通知する（[`spec`] と同じ形式）。
+/// 画面間の直接結合を避けるため、起動対象は main が決定する。
 pub type Summon = fn(PanelId, Opened) -> PanelSpec;
 pub type Opened = Box<dyn FnOnce(PanelId, &mut App)>;
 
-/// バーの置き場所（開いた瞬間の頭から見た相対姿勢）。はめた画面（[`SIZE_M`]）の中心が正面 `distance`・頭の高さから
-/// [`HEIGHT_ORIGIN`] + `height` 上に垂直に立つよう（設定のダッシュボードの距離・高さ）、画面の下半分・そのナビゲーションバー・
-/// 隙間の分だけ下げ、傾けたバーの上端がその真下に来るように置く（オーバーレイ層の `Parent::slot` の置き方の逆）。
+/// バーの配置姿勢（開いた瞬間の頭からの相対姿勢）。ドッキング画面（[`SIZE_M`]）の中心が正面 `distance`・頭の高さから
+/// [`HEIGHT_ORIGIN`] + `height` 上に垂直に立つよう、画面の下半分・ナビゲーションバー・隙間の分だけ下げ、
+/// 傾けたバーの上端がその直下に位置するよう配置する（オーバーレイ層の `Parent::slot` の逆算）。
 pub fn pose(distance: f32, height: f32) -> Pose {
     let margin = |size: Vec2, res: (u32, u32)| components::PANEL_MARGIN * size.y / res.1 as f32;
     let face = SIZE_M.y / 2.0 - margin(SIZE_M, RES_PX);
-    // はめた画面のナビゲーションバーは、距離で大きさを変えない（1m 先での大きさのまま）。
+    // ドッキング画面のナビゲーションバーは距離によらず固定サイズ（1m 先での表示サイズを維持）。
     let nav_bar = ui::NAV_BAR_HEIGHT_M;
     let top = Vec3::new(
         0.0,
@@ -102,14 +103,14 @@ pub fn pose(distance: f32, height: f32) -> Pose {
     Pose::new(top - rotation * Vec3::Y * half, rotation)
 }
 
-/// 今の設定のダッシュボードの距離・高さでの、バーの置き場所（[`pose`]）。
+/// 現在の設定値（距離・高さ）に基づくバーの配置姿勢（[`pose`]）。
 fn placed(cx: &App) -> Pose {
     let s = ui::settings(cx);
     pose(s.dashboard_distance, s.dashboard_height)
 }
 
-/// ダッシュボード（バー）の起動仕様。`opened` は作られたパネルの ID を受け取る。`hidden` なら隠したまま開く
-/// （起動時に作っておき、画面の配信を用意しておく。出すのは [`show`]）。
+/// ダッシュボード（バー）の起動仕様。`opened` は生成されたパネルの ID を受け取る。`hidden` が真の場合は非表示のまま生成する
+/// （起動時に事前生成し、画面の配信を準備しておく。表示は [`show`] で行う）。
 pub fn spec(
     opened: impl FnOnce(PanelId, &mut App) + 'static,
     settings: Summon,
@@ -119,7 +120,7 @@ pub fn spec(
     let default = pose(kernel::DASHBOARD_DISTANCE, 0.0);
     PanelSpec::root(Pose::IDENTITY, move |id, _, cx: &mut Context<Dashboard>| {
         opened(id, cx);
-        // 隠して開くときは開く音を鳴らさない（置くのは出すとき）。すぐ出すときは設定の距離・高さに置き直す。
+        // 非表示で開く場合は開始音を再生しない（配置は表示時に行う）。即座に表示する場合は設定の距離・高さに再配置する。
         let entry = if hidden {
             vec![PanelCommand::Hide(true)]
         } else {
@@ -128,22 +129,22 @@ pub fn spec(
         };
         let close_sound = PanelCommand::CloseSound(Sound::Wav(CLOSE_SOUND));
         commands(id, entry.into_iter().chain([close_sound]), cx);
-        // バーの上を、画面をはめる場所にする（掴んで引っこ抜く・近づけてはめることもできる）。
+        // バーの上をドッキングスロットとして登録する（掴んで引き離す・近づけてドッキングする操作にも対応）。
         ui::offer_dock(id, BAR_TILT, cx);
         Dashboard::new(id, settings, debug, cx)
     })
     .sized(BAR_M, BAR_PX)
     .in_view(default)
-    // 閉じる（隠す）のは X ボタンの二回押しかダッシュボードの外を押したときで、閉じるボタンは置かない。
+    // 閉じる（非表示にする）操作は X ボタンの二回押しかダッシュボード外の押下であり、閉じるボタンは設置しない。
     .without_nav_bar()
-    // 大きさははめる画面に合わせて決めてあるので変えさせない。
+    // サイズはドッキング画面に合わせて固定のためリサイズ不可。
     .without_resize()
-    // 画面がはまっていなくても、画面が立つ所を基準に掴んで動かす（はめた画面を掴んだときと同じ動き。距離・高さによらない）。
+    // 画面がドッキングしていなくても、画面が立つ位置を基準に掴んで移動する（ドッキング画面を掴んだときと同じ挙動。距離・高さに依存しない）。
     .grab_anchor(default.inverse() * SCREEN_POSE)
     .with_veil()
 }
 
-/// ダッシュボードを、はめた画面ごと隠す（閉じない。配信も止めない）。
+/// ダッシュボードをドッキング画面ごと非表示にする（クローズではない。配信も停止しない）。
 pub fn hide(dashboard: PanelId, cx: &mut App) {
     commands(
         dashboard,
@@ -155,7 +156,7 @@ pub fn hide(dashboard: PanelId, cx: &mut App) {
     );
 }
 
-/// 隠したダッシュボードを、今の目の前に同じ状態で出し直す。はまっているのが配信なら、そのウィンドウを OS で前に出す。
+/// 非表示のダッシュボードを現在の正面に同じ状態で再表示する。ドッキング中の配信があれば、そのウィンドウを OS 上で前面化する。
 pub fn show(dashboard: PanelId, cx: &mut App) {
     if let Some(docked) = ui::docked(cx) {
         commands(docked, [PanelCommand::FocusSource], cx);
@@ -171,31 +172,31 @@ pub fn show(dashboard: PanelId, cx: &mut App) {
     );
 }
 
-/// ダッシュボードにはめる画面。
+/// ダッシュボードにドッキングする画面の種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     QuickSettings,
-    /// 再生中のメディア（[`Screen`]）。
+    /// メディア再生中画面（[`Screen`]）。
     NowPlaying,
-    /// ランチャー: アプリを探して起動し、そのウィンドウを映す（[`Screen`]）。
+    /// ランチャー: アプリを検索・起動し、そのウィンドウを配信する（[`Screen`]）。
     Launcher,
     Debug,
     Settings,
 }
 
-/// ダッシュボード（バー）。左からメニュー（デバッグ・設定のポップオーバー）・時刻と電池（クイック設定）・アプリを
-/// 開くランチャー、区切り線を挟んで開いた配信のボタン（溜まっていき、はみ出すと横にスクロールする）。
-/// 閉じる（隠す）のは X ボタンの二回押しか、ダッシュボードの外を押したとき。
-/// 今はまっている画面・配信のボタンは強調色。
+/// ダッシュボード（バー）。左からメニュー（デバッグ・設定のポップオーバー）・時刻と電池（クイック設定）・
+/// ランチャー、区切り線を挟んで開いた配信のボタン（蓄積され、あふれると横スクロールする）。
+/// 閉じる（非表示にする）操作は X ボタンの二回押しかダッシュボード外の押下。
+/// 現在ドッキング中の画面・配信のボタンは強調色で表示する。
 pub struct Dashboard {
     panel: PanelId,
     settings: Summon,
     debug: Summon,
-    /// ダッシュボードで開いた配信（画面・ウィンドウ）。押すとはまり、ほかを選ぶと閉じずに隠れる。
+    /// ダッシュボードで開いた配信（画面・ウィンドウ）。押下でドッキングし、他を選択すると閉じずに非表示になる。
     streams: Vec<Stream>,
     /// 開いているメニューのポップオーバー（[`Menu`]）。
     menu: Option<PanelId>,
-    /// 開いた画面（画面ごとに 1 つ。外して独立させたものも含む。閉じたものは [`Self::page_panel`] が引かない）。
+    /// 開いた画面（画面種別ごとに 1 つ。取り外して独立させたものも含む。閉じたものは [`Self::page_panel`] で除外される）。
     pages: Vec<(Page, PanelId)>,
     /// 反映した、何も無い所を押した回数（[`kernel::PanelStatus::outside_press`]）と、そのとき隠していたか。
     /// 最初に見た値から数える。

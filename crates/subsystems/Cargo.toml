@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# 実ランタイムとエミュレーターは重い依存を引くので、使う側が選ぶ（vr の同名フィーチャー）。
+# 実ランタイムとエミュレーターは重い依存を伴うため、使用側が選択する（vr の同名フィーチャー）。
 default = ["novr", "openvr", "openxr"]
 novr = ["vr/novr"]
 openvr = ["vr/openvr"]

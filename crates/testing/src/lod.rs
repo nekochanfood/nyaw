@@ -1,11 +1,11 @@
-//! 今の LOD を数字と色で出す画面（[`TestingLod`]）。
+//! 現在の LOD を数字と色で表示する画面（[`TestingLod`]）。
 
 use super::*;
 
 /// LOD0〜3 の背景色: 緑・黄・橙・赤。
 pub const LOD_COLORS: [u32; 4] = [0x30a050, 0xc0b030, 0xc07030, 0xc03030];
 
-/// 今の LOD（距離による描画解像度の段階）を数字と背景色で大きく出す画面（`testing-lod`）。
+/// 現在の LOD（距離による描画解像度の段階）を数字と背景色で大きく表示する画面（`testing-lod`）。
 pub struct TestingLod {
     panel: PanelId,
 }

@@ -1,11 +1,11 @@
 [env]
-# openvr_bindings が同梱する OpenVR の CMakeLists.txt は cmake_minimum_required が古く、CMake 4 で設定に失敗する
+# openvr_bindings が同梱する OpenVR の CMakeLists.txt は cmake_minimum_required が古いため、CMake 4 で構成に失敗する
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
 
 [alias]
-# E2E 用の実ランタイム（Monado / SteamVR）を入れるウィザード。crates/testkit/src/bin/runtimes.rs
+# E2E テスト用の実ランタイム（Monado / SteamVR）を導入するウィザード。crates/testkit/src/bin/runtimes.rs
 runtimes = "run -q -p testkit --bin runtimes --"
 
-# MSVC の link.exe より速い。テストバイナリが多く、リンクがビルド時間の大きな部分を占める
+# MSVC の link.exe より高速。テストバイナリが多いため、リンク時間がビルド全体の大きな割合を占める
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"

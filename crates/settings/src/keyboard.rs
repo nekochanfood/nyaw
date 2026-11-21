@@ -1,5 +1,5 @@
-//! キーボード（入力の行 `settings-keyboard` から開く詳しい画面）: 上に見本（押せて音も鳴るが、どこにも打たない）、
-//! 下に種類・大きさ・キーの間隔・キーの音・その音量（鳴らす間だけ）。
+//! キーボード（入力カテゴリの `settings-keyboard` から開く詳細画面）: 上部にプレビュー（入力操作可能・打鍵音あり、テキスト出力なし）、
+//! 下部に種類・サイズ・キー間隔・打鍵音・音量（打鍵音有効時のみ表示）。
 
 use design::Theme;
 use design::components;
@@ -47,7 +47,7 @@ pub(crate) fn page(
         .to_vec(),
         Setting::Keyboard,
     );
-    // 倍率のスライダー。刻み（`SCALE_STEP`）に吸い付き、刻みが変わったときだけ設定を変える。
+    // 倍率スライダー。`SCALE_STEP` にスナップし、ステップ境界を越えた場合のみ設定を更新する。
     let scale_item = |id: &'static str,
                       slider_id: &'static str,
                       glyph: &'static design::Icon,
@@ -74,7 +74,7 @@ pub(crate) fn page(
             .length(ROW_SLIDER_PX),
         )
     };
-    // 大きさは召喚するキーボードに効く（見本は実寸ではないので変わらない）。間隔はすぐ見本に出る。
+    // サイズは VR 上のキーボードに反映される（プレビューは実寸ではないため変化なし）。間隔はプレビューに即時反映。
     let size = scale_item(
         "setting-keyboard-size",
         "setting-keyboard-size-slider",
@@ -99,7 +99,7 @@ pub(crate) fn page(
         now.key_sound,
     )
     .on_click(change(Setting::KeySound(!now.key_sound)));
-    // 音量は 10% の刻み（カーネルも同じ刻みに丸める）。刻みが変わったときだけ設定を変える。
+    // 音量は 10% 刻み（カーネル側も同一ステップで丸める）。ステップ境界を越えた場合のみ設定を更新する。
     let (volume, step) = (now.key_sound_volume, SCALE_STEP);
     let slider = components::slider(
         theme,
@@ -133,8 +133,8 @@ mod tests {
 
     use crate::{Category, PX, Page, Settings};
 
-    /// キーボードの見本は、本番と同じ載せ方（影の余白の内側）の設定画面でも、もっと狭い画面でも、どの種類でも
-    /// 下の行の幅と見本の箱に収まり、地がキーを四方から囲む。幅か高さのどちらかは、いっぱいまで使う。
+    /// キーボードプレビューは、本番同一レイアウト（影余白内）の設定画面でも狭い画面でも全種類において
+    /// 下部行の幅とプレビュー領域に収まり、背景がキー領域を四方から囲む。幅または高さの一方は最大まで使用する。
     #[gpui::test]
     fn keyboard_preview_fits_the_settings_screen_for_every_type(cx: &mut TestAppContext) {
         use gpui::AppContext;
@@ -183,7 +183,7 @@ mod tests {
                 let free =
                     (row.size.width - card.size.width).min(place.size.height - card.size.height);
                 assert!(free < px(1.0), "{at}");
-                // 地の余白は四方で同じ。キーは縦横の比を保ち、実寸（1u = 64px）より小さい（配置は画素に丸まる）。
+                // 背景余白は四方均一。キーはアスペクト比を維持し、実寸（1u = 64px）より縮小される（配置はピクセルに丸められる）。
                 let pad = keys.left() - card.left();
                 assert!(pad > px(1.0), "{at}");
                 for other in [

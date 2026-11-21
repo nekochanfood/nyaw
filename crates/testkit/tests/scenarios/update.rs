@@ -21,7 +21,7 @@ fn on_updates(kit: &mut NoVrKit<'_, Settings>) -> bool {
 }
 const INSTALLER: &str = "nyaw-2026.0.1-patch.2-setup.exe";
 const BODY: &[u8] = b"MZ fake installer";
-/// `BODY` の SHA-256（GitHub がアセットの `digest` で知らせるもの。無いリリースは勧めない）。
+/// `BODY` の SHA-256（GitHub がアセットの `digest` として通知する値。ダイジェストのないリリースは提示しない）。
 const BODY_SHA256: &str = "9f7d203d2e9d47df255d63188d247ec305d7f3f9d40b9f1270574978cee3d1dd";
 
 /// A loopback "GitHub": `/releases` lists an older build (650) and a newer one (655, with release notes), each build

@@ -39,10 +39,10 @@ pub(crate) use window::*;
 pub(crate) use wrapper::*;
 
 pub use platform::WindowsPlatform;
-// NYAW: 待たない読み戻しの受け取り口。
+// NYAW: 非同期リードバックの回収用エントリポイント。
 #[cfg(any(test, feature = "test-support"))]
 pub use directx_renderer::collect_readback;
-// NYAW: パネルの LOD。
+// NYAW: パネル LOD 用の描画スケール変更。
 pub use window::with_render_scale;
 
 pub(crate) use windows::Win32::Foundation::HWND;

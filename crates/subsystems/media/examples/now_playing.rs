@@ -1,5 +1,5 @@
-//! 再生中のメディアを OS から読めるか確かめる。`cargo run -p media --example now_playing [秒]`
-//! （既定 5 秒。1 秒ごとに読めた内容を出す）。
+//! 再生中のメディアを OS から取得できるか検証する。`cargo run -p media --example now_playing [秒]`
+//! （既定 5 秒。1 秒ごとに取得した内容を出力する）。
 
 use std::time::Duration;
 

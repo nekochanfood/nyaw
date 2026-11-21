@@ -17,9 +17,9 @@ impl Backend {
     }
 
     pub fn settings(&mut self) -> Settings {
-        // SAFETY: OS から借用したハンドルだけを使い、固定長バッファを API に渡す。
+        // SAFETY: OS から借用したハンドルのみを使用し、固定長バッファを API に渡す。
         unsafe {
-            // GetKeyState の監視スレッド側の状態をメッセージキューと同期する。
+            // GetKeyState の監視スレッド側状態をメッセージキューと同期する。
             let _ = PeekMessageW(&mut MSG::default(), None, 0, 0, PM_NOREMOVE);
             let window = GetForegroundWindow();
             let mut process = 0;
@@ -116,12 +116,12 @@ impl Backend {
                 })
                 .collect::<io::Result<_>>()?,
         };
-        // SAFETY: INPUT の配列と正確な構造体サイズを渡す。
+        // SAFETY: INPUT 配列と正確な構造体サイズを渡す。
         let count = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) } as usize;
         if count == inputs.len() {
             return Ok(());
         }
-        // 部分的な注入でも、押した可能性のあるキーを解放する。
+        // 部分的な注入でも、押下済みの可能性があるキーを解放する。
         let releases: Vec<_> = inputs
             .iter()
             .take(count)
@@ -200,7 +200,7 @@ fn scan_code(code: u16) -> Option<(u16, u16)> {
 }
 
 fn kana_input(open: usize, mode: usize, kana_lock: bool) -> bool {
-    // IME_CMODE_ROMAN が立たないローマ字入力もあるため、かなロックを確認する。
+    // IME_CMODE_ROMAN が設定されないローマ字入力も存在するため、かなロック状態を確認する。
     open != 0 && mode & IME_CMODE_NATIVE.0 as usize != 0 && kana_lock
 }
 
@@ -332,7 +332,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "検証用の入力ウィンドウを一時的にフォアグラウンドへ出す"]
+    #[ignore = "検証用の入力ウィンドウを一時的にフォアグラウンドに表示する"]
     fn native_scan_codes_and_unicode_reach_the_selected_edit_window() {
         use std::{
             thread,
@@ -342,7 +342,7 @@ mod tests {
             Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId},
             core::w,
         };
-        // SAFETY: テスト専用の標準 EDIT ウィンドウを作り、同じスレッドでメッセージを処理する。
+        // SAFETY: テスト専用の標準 EDIT ウィンドウを作成し、同一スレッドでメッセージを処理する。
         unsafe {
             let previous = GetKeyboardLayout(0);
             let layout = LoadKeyboardLayoutW(w!("00000409"), KLF_ACTIVATE).unwrap();

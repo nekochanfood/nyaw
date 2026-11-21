@@ -1,4 +1,4 @@
-//! パネルの下に付くナビゲーションバー（[`NavBar`]）と、パネルの中身を包む根（[`PanelRoot`]）。
+//! パネル下部のナビゲーションバー（[`NavBar`]）と、パネル内容を包むルートビュー（[`PanelRoot`]）。
 
 use super::*;
 
@@ -6,35 +6,35 @@ pub(crate) struct NavBar {
     pub(crate) id: PanelId,
     pub(crate) owner: PanelId,
     pub(crate) title: Option<Title>,
-    /// 「…」の左に OS キーボードのトグルを出す。
+    /// 「…」の左に OS キーボードのトグルボタンを表示する。
     pub(crate) os_keyboard: bool,
-    /// 「…」のポップオーバーに、はめる場所から外す・戻す行を出す。
+    /// 「…」ポップオーバーにドック着脱行を表示する。
     pub(crate) dockable: bool,
-    /// 右端を、閉じる代わりにしまうボタンにする。
+    /// 右端の閉じるボタンを最小化ボタンに置き換える。
     pub(crate) minimize: Option<Minimize>,
     pub(crate) source_minimize: Option<Minimize>,
-    /// 広がり具合（0 = 線、1 = 帯）と、向かっている先・その動き。
+    /// 展開度（0 = 線、1 = 帯）と、目標値・アニメーション状態。
     pub(crate) open: design::animation::Transition,
-    /// 手に持っている持ち主を、ダッシュボードが出ていないのでロックしてある（[`attach::hold`]）。
+    /// 手に保持中の持ち主をダッシュボード非表示時にグラブロックしている状態（[`attach::hold`]）。
     pub(crate) held: bool,
 }
 
 impl Render for NavBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = design::drive::now();
-        // 指されているかは `sync_panel` が状態に書き、変わればこのバーを描き直す。
+        // ポイント状態は `sync_panel` が状態に書き込み、変更時にこのバーを再描画する。
         let state = cx
             .default_global::<PanelControl>()
             .panels
             .entry(self.id)
             .or_default();
         let to = if state.status.pointed { 1.0 } else { 0.0 };
-        // 広がるのも縮むのも落ち着いて動く（ease-in-out）。
+        // 展開・収縮ともに ease-in-out で遷移する。
         let animated = cx.has_global::<design::Motion>();
         self.open
             .go(to, design::animation::Motion::Morph, now, animated);
         let (open, moving) = self.open.at(now);
-        // 動いている間だけ毎フレーム描き直す。
+        // アニメーション中のみ毎フレーム再描画する。
         cx.default_global::<PanelControl>()
             .panels
             .entry(self.id)
@@ -47,8 +47,8 @@ impl Render for NavBar {
             None => Default::default(),
         };
         let theme = design::Theme::current(cx);
-        // OS キーボードのトグル。出ている間（持ち主に向いたキーボードがある）は強調色。
-        // キーボードの出入りでは `keyboard` がこのバーを描き直させるので、キーボード自身の X で閉じても色が戻る。
+        // OS キーボードトグル。表示中（持ち主向けキーボードが存在する間）は強調色。
+        // キーボードの表示・非表示時に `keyboard` がこのバーを再描画するため、キーボードの X ボタンで閉じても色が復帰する。
         let os_keyboard = self.os_keyboard.then(|| {
             let on = keyboard::keyboard_visible(owner, cx);
             design::components::icon_button(
@@ -66,7 +66,7 @@ impl Render for NavBar {
                 keyboard::toggle_os_keyboard(owner, cx);
             })
         });
-        // 「…」: 手に持つ・はめる場所から外す/戻すを選ぶポップオーバーを開く。どのパネルにも出す。
+        // 「…」: 手への装着・ドック着脱を選択するポップオーバーを起動する。全パネル共通。
         let dockable = self.dockable;
         let more = design::components::icon_button(
             &theme,
@@ -80,7 +80,7 @@ impl Render for NavBar {
             cx.default_global::<PanelControl>().spawns.push(spec);
         });
         let minimize = self.minimize.clone();
-        // ボタンはすべて右に寄せ、閉じるボタンの左に左から「…」・OS キーボードのトグル・配信元をしまうボタン。
+        // ボタンはすべて右寄せ。閉じるボタンの左に、左から「…」・OS キーボードトグル・配信元最小化ボタンの順に配置。
         let beside_close = self.source_minimize.clone().map(|minimize| {
             design::components::icon_button(
                 &theme,
@@ -130,7 +130,7 @@ impl PanelRoot {
 
 impl Render for PanelRoot {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        // 全パネル共通の書体（子は継承する）。
+        // 全パネル共通のフォント設定（子要素が継承する）。
         div()
             .size_full()
             .font(design::font::font())

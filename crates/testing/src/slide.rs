@@ -1,18 +1,18 @@
 use super::*;
 use design::components::slide::{Entering, fit_bar, slide_in, with_leaving};
 
-/// カプセルの最大幅（px）。ボタンが増えてこれを超えそうなら、横にスクロールする。
+/// カプセルの最大幅（px）。ボタンの増加でこれを超える場合、水平スクロールに切り替わる。
 const MAX_BAR_PX: f32 = 360.0;
 
-/// ボタンの滑り込み・滑り出しと、それに合わせて広がる・閉じる幅を試す画面（ダッシュボードのバーと同じ部品）。
-/// 上の操作で丸いボタンを足す・消す・全部出し直す。下のカプセルは中身の幅に収まる（バーと同じ）。
+/// ボタンのスライドイン・スライドアウトと、それに連動するカプセル幅の拡縮を検証する画面（ダッシュボードのバーと共通の部品）。
+/// 上段の操作で円形ボタンの追加・削除・全体リセットを行う。下段のカプセルはコンテンツ幅に追従する（バーと同一動作）。
 pub struct SlideTest {
     panel: PanelId,
-    /// 並んでいるボタンの番号。
+    /// 表示中のボタンの番号。
     items: Vec<u32>,
-    /// 次に足すボタンの番号。
+    /// 次に追加するボタンの番号。
     next: u32,
-    /// 前のフレームに並べていたもの（消えていくものを含む）。
+    /// 前フレームで表示していたアイテム（スライドアウト中のものを含む）。
     prev: Vec<u32>,
     enter: Entering,
     scroll: ScrollHandle,
@@ -159,7 +159,7 @@ mod tests {
     use std::time::Duration;
 
     fn settle(cx: &mut VisualTestContext) {
-        // 動きの長さ（design::duration_ms）を実時間で待つ。
+        // アニメーション時間（design::duration_ms）を実時間で待機する。
         std::thread::sleep(Duration::from_millis(700));
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
@@ -175,7 +175,7 @@ mod tests {
         f32::from(cx.debug_bounds("slide-bar").unwrap().size.width)
     }
 
-    /// 足したボタンは滑り込みながらカプセルの幅を広げ、消したボタンは滑り出ながら幅を閉じて、終われば並びから外れる。
+    /// 追加ボタンはスライドインしつつカプセル幅を拡大し、削除ボタンはスライドアウトしつつ幅を縮小して、完了後に配列から除去される。
     #[gpui::test]
     fn bar_widens_and_narrows_with_the_sliding_buttons(cx: &mut TestAppContext) {
         let (_view, cx) = cx.add_window_view(|_, _| SlideTest::new(1));
@@ -187,28 +187,28 @@ mod tests {
         assert!(cx.debug_bounds("slide-item-4").is_some());
         assert!(
             bar_width(cx) < three + components::BUTTON_HEIGHT / 2.0,
-            "足した直後はまだ広がっていない"
+            "追加直後はまだ拡大していない"
         );
         settle(cx);
         assert!(
             bar_width(cx) >= three + components::BUTTON_HEIGHT,
-            "広がりきる"
+            "拡大が完了する"
         );
 
         click(cx, "slide-remove-last");
         assert!(
             cx.debug_bounds("slide-item-4").is_some(),
-            "消える間は同じ場所に描き残す"
+            "スライドアウト中は同じ位置に描画を維持する"
         );
         settle(cx);
-        // 終わったフレームは幅 0 で描き残し、次のフレームで外れる。
+        // 完了フレームは幅 0 で残存描画され、次フレームで除去される。
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
-        assert!(cx.debug_bounds("slide-item-4").is_none(), "終われば外れる");
-        assert!((bar_width(cx) - three).abs() <= 1.0, "幅が元に戻る");
+        assert!(cx.debug_bounds("slide-item-4").is_none(), "完了後に除去される");
+        assert!((bar_width(cx) - three).abs() <= 1.0, "幅が元に復帰する");
     }
 
-    /// 足している間、カプセルの幅は一度も縮まず、広がりきるまで増え続ける（隣が動いても幅が揺れない）。
+    /// 追加中のカプセル幅は一度も縮小せず、拡大完了まで単調増加する（隣接要素の移動で幅がぶれない）。
     #[gpui::test]
     fn bar_width_grows_steadily_when_a_button_is_added(cx: &mut TestAppContext) {
         let (_view, cx) = cx.add_window_view(|_, _| SlideTest::new(1));
@@ -222,13 +222,13 @@ mod tests {
             cx.update(|window, _| window.refresh());
             cx.run_until_parked();
             let w = bar_width(cx);
-            assert!(w >= last - 0.5, "縮んだ: {last} -> {w}");
+            assert!(w >= last - 0.5, "縮小した: {last} -> {w}");
             last = w;
         }
         assert!(last >= before + components::BUTTON_HEIGHT);
     }
 
-    /// 最大幅を超えそうなら、カプセルはそこで頭打ちになり、横にスクロールできる。
+    /// 最大幅を超える場合、カプセルは最大幅で固定され、水平スクロールが有効になる。
     #[gpui::test]
     fn bar_stops_at_the_max_width_and_scrolls(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(|_, _| SlideTest::new(1));
@@ -241,21 +241,21 @@ mod tests {
         settle(cx);
         assert!(
             bar_width(cx) <= MAX_BAR_PX + 1.0,
-            "頭打ち: {}",
+            "最大幅で固定: {}",
             bar_width(cx)
         );
         assert_eq!(
             view.read_with(cx, |v, _| v.scroll.max_offset().y),
             px(0.0),
-            "縦にはあふれない"
+            "垂直方向にはオーバーフローしない"
         );
         assert!(
             view.read_with(cx, |v, _| v.scroll.max_offset().x) > px(0.0),
-            "あふれた分はスクロールできる"
+            "オーバーフロー分はスクロール可能"
         );
     }
 
-    /// 20ms ごとに `n` フレーム描く（スクロールなど、フレームごとに進む動きを進める）。
+    /// 20ms 間隔で `n` フレーム描画する（スクロール等、フレーム単位で進行するアニメーションを進める）。
     fn frames(cx: &mut VisualTestContext, n: usize) {
         for _ in 0..n {
             std::thread::sleep(Duration::from_millis(20));
@@ -268,7 +268,7 @@ mod tests {
         -f32::from(view.read_with(cx, |v, _| v.scroll.offset().x))
     }
 
-    /// 足したボタンの場所までスクロールする（末尾に足せば末尾へ、先頭に足せば先頭へ）。
+    /// 追加したボタンの位置までスクロールする（末尾に追加すれば末尾へ、先頭に追加すれば先頭へ）。
     #[gpui::test]
     fn bar_scrolls_to_a_newly_added_button(cx: &mut TestAppContext) {
         let (view, cx) = cx.add_window_view(|_, _| SlideTest::new(1));
@@ -281,15 +281,15 @@ mod tests {
         let max = f32::from(view.read_with(cx, |v, _| v.scroll.max_offset().x));
         assert!(max > 0.0);
         let at = offset_x(&view, cx);
-        assert!((at - max).abs() <= 1.0, "末尾へ: {at} / {max}");
+        assert!((at - max).abs() <= 1.0, "末尾までスクロール: {at} / {max}");
         click(cx, "slide-add-first");
-        // 一瞬では着かず、時間をかけて戻る。
+        // 即座には到達せず、時間をかけてスクロールする。
         let start = offset_x(&view, cx);
         frames(cx, 3);
         let early = offset_x(&view, cx);
-        assert!(early > 1.0 && early < start, "途中: {start} -> {early}");
+        assert!(early > 1.0 && early < start, "スクロール途中: {start} -> {early}");
         frames(cx, 40);
         let at = offset_x(&view, cx);
-        assert!(at.abs() <= 1.0, "先頭へ（左の余白まで）: {at}");
+        assert!(at.abs() <= 1.0, "先頭までスクロール（左マージンまで）: {at}");
     }
 }

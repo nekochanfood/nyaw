@@ -142,7 +142,7 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
         .ok()?;
         EnumWindows(Some(window), LPARAM(&mut sources as *mut _ as isize))?;
     }
-    // 画面の名前は "\\.\DISPLAY2" のような装置名なので、モニターの製品名（無ければ「Display 2」）にする。
+    // 画面名は "\\.\DISPLAY2" 形式の装置名のため、モニター製品名（取得不可時は「Display 2」）に置換する
     let products = monitor_products();
     let screens: Vec<(String, Option<String>)> = sources
         .iter()
@@ -155,7 +155,7 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
     Ok(sources)
 }
 
-/// GDI の装置名（"\\.\DISPLAY2"）→ そこに映しているモニターの製品名（EDID の名前。"DELL U2720Q" など）。
+/// GDI 装置名（`"\\.\DISPLAY2"`）から、接続先モニターの製品名（EDID 名。`"DELL U2720Q"` 等）への対応表を返す。
 fn monitor_products() -> std::collections::HashMap<String, String> {
     let mut names = std::collections::HashMap::new();
     let (mut paths, mut modes) = (0u32, 0u32);
@@ -214,7 +214,7 @@ fn monitor_products() -> std::collections::HashMap<String, String> {
     names
 }
 
-/// 画面の表示名。モニターの製品名（同じ製品名がほかにもあれば番号を添える）か、無ければ「Display 番号」。
+/// 画面の表示名を返す。モニター製品名が取得でき、同一名が複数あれば番号を付与する。取得不可時は「Display 番号」。
 fn screen_label(device: &str, screens: &[(String, Option<String>)]) -> String {
     let number = device
         .trim_start_matches(|c: char| !c.is_ascii_digit())
@@ -239,10 +239,10 @@ fn screen_label(device: &str, screens: &[(String, Option<String>)]) -> String {
     }
 }
 
-/// ウィンドウのアイコン。ウィンドウ自身のもの（WM_GETICON・クラス）が無ければ、プロセスの実行ファイルのもの。
+/// ウィンドウのアイコンを取得する。ウィンドウ固有のアイコン（WM_GETICON・クラス）が無い場合、プロセスの実行ファイルから取得する。
 unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
     let mut icon = 0usize;
-    // 固まったウィンドウで一覧の取得ごと止まらないよう、待ちを区切る。
+    // 応答停止中のウィンドウでソース一覧取得全体がブロックされないようタイムアウトを設定する
     let sent = unsafe {
         SendMessageTimeoutW(
             hwnd,
@@ -258,7 +258,7 @@ unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
         icon = unsafe { GetClassLongPtrW(hwnd, GCLP_HICON) };
     }
     if icon != 0 {
-        // 借りたアイコンなので破棄しない。
+        // 借用アイコンのため破棄不要
         return unsafe { icon_rgba(HICON(icon as _)) }.map(|(i, _)| i);
     }
     let mut path = unsafe { process_path(hwnd) }?;
@@ -273,7 +273,7 @@ unsafe fn window_icon(hwnd: HWND) -> Option<Icon> {
     rgba.map(|(i, _)| i)
 }
 
-/// ウィンドウのプロセスの実行ファイルのパス（UTF-16、終端なし）。
+/// ウィンドウの所属プロセスの実行ファイルパスを UTF-16（終端ヌルなし）で返す。
 unsafe fn process_path(hwnd: HWND) -> Option<Vec<u16>> {
     let mut pid = 0;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
@@ -293,7 +293,7 @@ unsafe fn process_path(hwnd: HWND) -> Option<Vec<u16>> {
     Some(path[..len as usize].to_vec())
 }
 
-/// アイコン・カーソルを RGBA で読み出し、ホットスポットと返す。アルファを持たない古いものはマスクから透明部分を作る。
+/// アイコン・カーソルを RGBA として読み出し、ホットスポットとともに返す。アルファチャネルを持たない旧形式はマスクから透明領域を生成する。
 unsafe fn icon_rgba(icon: HICON) -> Option<(Icon, (u32, u32))> {
     let mut info = ICONINFO::default();
     unsafe { GetIconInfo(icon, &mut info) }.ok()?;
@@ -311,14 +311,14 @@ unsafe fn icon_rgba(icon: HICON) -> Option<(Icon, (u32, u32))> {
         let _ = DeleteObject(info.hbmMask.into());
     }
     let Some((width, height, mut px)) = color else {
-        // 白黒のカーソル: マスクの上半分が AND、下半分が XOR。
+        // 白黒カーソル：マスクの上半分が AND マスク、下半分が XOR マスク
         let (width, double, m) = mask?;
         let n = (width * (double / 2)) as usize;
         let rgba: Vec<u8> = (0..n)
             .flat_map(|i| match (m[i * 4] != 0, m[(n + i) * 4] != 0) {
                 (true, false) => [0, 0, 0, 0],
                 (false, true) => [255; 4],
-                // ponytail: 反転（AND も XOR も 1）は下地が分からないので黒。目立たなければ縁取りを足す。
+                // ponytail: 反転ピクセル（AND・XOR ともに 1）は背景色が不明なため黒で代替する。視認性が不足する場合は縁取りを追加する
                 _ => [0, 0, 0, 255],
             })
             .collect();
@@ -332,7 +332,7 @@ unsafe fn icon_rgba(icon: HICON) -> Option<(Icon, (u32, u32))> {
     for (i, p) in px.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         p.swap(0, 2);
         if let Some((_, _, m)) = &mask {
-            // マスクの黒い所が絵、白い所が透明。
+            // マスクの黒が不透明領域、白が透明領域
             p[3] = if m[i * 4] == 0 { 255 } else { 0 };
         }
     }
@@ -346,7 +346,7 @@ unsafe fn icon_rgba(icon: HICON) -> Option<(Icon, (u32, u32))> {
     ))
 }
 
-/// ビットマップを上から下の並びの BGRA で読み出す（一辺 256 まで）。
+/// ビットマップをトップダウン順の BGRA として読み出す（一辺 256px 以下に限定）。
 unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
     {
         let mut bm = BITMAP::default();
@@ -365,7 +365,7 @@ unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: size_of::<BITMAPINFOHEADER>() as u32,
                 biWidth: w,
-                // 負の高さで上から下の並びにする。
+                // 負の高さを指定してトップダウン順にする
                 biHeight: -h,
                 biPlanes: 1,
                 biBitCount: 32,
@@ -392,10 +392,10 @@ unsafe fn bitmap_bgra(bitmap: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
     }
 }
 
-/// スタートメニューのアプリ（`shell:AppsFolder`）を並べる。名前・AppUserModelId・ショートカットの指す実行ファイル名と、
-/// アイコン（64px）を読む。
+/// スタートメニューのアプリ（`shell:AppsFolder`）を列挙する。名前・AppUserModelId・ショートカット先の実行ファイル名、
+/// およびアイコン（64px）を取得する。
 pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
-    // シェルの項目は STA で読む（このワーカーのスレッドだけで使う）。
+    // シェル項目は STA で取得する（このワーカースレッド内でのみ使用）
     let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
     let folder: IShellItem =
         unsafe { SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None) }?;
@@ -436,7 +436,7 @@ pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
     Ok(apps)
 }
 
-/// シェルの項目のアイコン（64px）。
+/// シェル項目のアイコン（64px）を取得する。
 fn shell_icon(item: &IShellItem2) -> Option<Icon> {
     let factory = item.cast::<IShellItemImageFactory>().ok()?;
     let bitmap = unsafe {
@@ -451,7 +451,7 @@ fn shell_icon(item: &IShellItem2) -> Option<Icon> {
         let _ = DeleteObject(bitmap.into());
     }
     let (width, height, mut px) = read?;
-    // シェルの絵は乗算済みのアルファなので、ストレートに戻す。
+    // シェルアイコンは事前乗算アルファのため、ストレートアルファに逆変換する
     for p in px.as_chunks_mut::<4>().0 {
         p.swap(0, 2);
         let a = p[3] as u32;
@@ -468,8 +468,8 @@ fn shell_icon(item: &IShellItem2) -> Option<Icon> {
     })
 }
 
-/// アプリ（AppUserModelId）のスタートメニューのアイコン。シェルの項目は STA で読むので、呼ぶ側のスレッドの初期化に
-/// よらないよう、別のスレッドで読む。
+/// アプリ（AppUserModelId）のスタートメニューアイコンを取得する。シェル項目の取得に STA が必要なため、
+/// 呼び出し元スレッドの COM 初期化状態に依存しないよう専用スレッドで実行する。
 pub(super) fn app_icon(id: &str) -> Option<Icon> {
     std::thread::scope(|s| {
         s.spawn(|| {
@@ -484,7 +484,7 @@ pub(super) fn app_icon(id: &str) -> Option<Icon> {
     })
 }
 
-/// アプリを AppUserModelId で起動する（ストアのアプリもデスクトップのアプリも `shell:AppsFolder` 経由で開ける）。
+/// AppUserModelId を指定してアプリを起動する（ストアアプリ・デスクトップアプリとも `shell:AppsFolder` 経由で起動可能）。
 pub(super) fn launch(id: &str) -> Result<(), Error> {
     let path = ::windows::core::HSTRING::from(format!("shell:AppsFolder\\{id}"));
     let done = unsafe {
@@ -497,7 +497,7 @@ pub(super) fn launch(id: &str) -> Result<(), Error> {
             SW_SHOWNORMAL,
         )
     };
-    // 32 以下はエラー（ShellExecute の決まり）。
+    // 戻り値 32 以下はエラー（ShellExecute の仕様）
     if done.0 as isize <= 32 {
         return Err(Error(format!("cannot launch {id} ({})", done.0 as isize)));
     }
@@ -520,20 +520,20 @@ pub(super) struct Capture {
     direct: IDirect3DDevice,
     size: SizeInt32,
     staging: Option<ID3D11Texture2D>,
-    /// 一時停止中に取っておいた最新の画像（[`Session::skip`]）。プールの一枚を占めるが、もう一枚に次が届く。
+    /// 一時停止中に保持した最新フレーム（[`Session::skip`]）。プール内の 1 スロットを占有するが、残りの 1 スロットで次フレームを受信できる。
     held: Option<::windows::Graphics::Capture::Direct3D11CaptureFrame>,
     ready: Arc<AtomicBool>,
     closed: Arc<AtomicBool>,
     source: Source,
     mouse: MouseDevice,
-    /// 最後に読んだカーソルのハンドルと絵（同じハンドルなら読み直さない）。
+    /// 最後に取得したカーソルのハンドルと画像（同一ハンドルであれば再取得を省略する）。
     cursor: Option<(isize, Option<Arc<Cursor>>)>,
     _apartment: Apartment,
 }
 
 impl Capture {
     pub fn new(source: Source, wake: Wake) -> Result<Self, Error> {
-        // WinRT の静的キャッシュと MTA の寿命を揃え、全配信停止後の再開でも参照を有効に保つ。
+        // WinRT の静的キャッシュと MTA のライフタイムを一致させ、全セッション停止後の再開時にも参照を有効に保つ
         static MTA: OnceLock<Result<(), Error>> = OnceLock::new();
         MTA.get_or_init(|| {
             unsafe { CoIncrementMTAUsage() }
@@ -545,14 +545,14 @@ impl Capture {
             RoInitialize(RO_INIT_MULTITHREADED)?;
         }
         let apartment = Apartment;
-        // WGC と入力の双方をデバイスピクセルで扱い、異なる DPI のモニター間でも座標を揃える。
+        // WGC とポインタ入力の双方をデバイスピクセルで処理し、異なる DPI のモニター間でも座標を統一する
         unsafe {
             SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         }
         if source.kind == SourceKind::Window
             && unsafe { IsIconic(HWND(source.target as _)) }.as_bool()
         {
-            // 最小化した窓は WGC が画像を出さず、最初の一枚を待ったまま止まるので元に戻す。
+            // 最小化されたウィンドウでは WGC がフレームを生成せず初回フレーム待ちで停止するため、復元する
             unsafe {
                 let _ = ShowWindowAsync(HWND(source.target as _), SW_RESTORE);
             }
@@ -622,11 +622,11 @@ impl Capture {
             Ok(())
         }))?;
         let session = pool.CreateCaptureSession(&item)?;
-        // 既定では OS がリフレッシュレートより粗く間引く。毎 vsync で出させ、上限 FPS はワーカーで揃える
-        // （上限の間隔を渡すと vsync の倍数へ切り上げられ、143Hz で 60 を頼むと 48 になる）。
-        // Windows 11 24H2 より前には無い設定なので、失敗しても既定のまま続ける。
+        // 既定では OS がリフレッシュレートより粗くフレームを間引く。毎 vsync でフレームを生成させ、FPS 上限はワーカー側で制御する
+        // （上限間隔を指定すると vsync の倍数に切り上げられ、143Hz モニターで 60fps を指定すると 48fps になる）。
+        // Windows 11 24H2 より前にはこの API が存在しないため、失敗時は既定動作のまま続行する
         let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000 });
-        // カーソルは映像に入れず、上の層がポインタとして描く（Windows 10 2004 より前は入ったまま）。
+        // カーソルはキャプチャ映像に含めず、上位レイヤーがポインタとして描画する（Windows 10 2004 より前ではこの設定は無効）
         let _ = session.SetIsCursorCaptureEnabled(false);
         session.StartCapture()?;
         Ok(Self {
@@ -680,7 +680,7 @@ impl Capture {
         Ok(rect)
     }
 
-    /// 取得元のウィンドウを前に出してフォーカスする（最小化していれば戻す）。画面なら何もしない。
+    /// 取得元ウィンドウを前面に出してフォーカスする（最小化時は復元する）。画面ソースの場合は何もしない。
     fn bring_to_front(&self) {
         if self.source.kind != SourceKind::Window {
             return;
@@ -692,7 +692,7 @@ impl Capture {
             }
             let _ = BringWindowToTop(hwnd);
             if !SetForegroundWindow(hwnd).as_bool() || GetForegroundWindow() != hwnd {
-                // VR の入力だけでは前面化の権限がない場合がある。切り替え中だけ入力キューを共有する。
+                // VR 入力のみでは前面化の権限が付与されない場合がある。切り替え時に一時的に入力キューを共有する
                 let current = GetCurrentThreadId();
                 let foreground = GetWindowThreadProcessId(GetForegroundWindow(), None);
                 let target = GetWindowThreadProcessId(hwnd, None);
@@ -716,7 +716,7 @@ impl Capture {
                 }
             }
             if GetForegroundWindow() != hwnd {
-                // フォーカス権限が拒否されても、モニター上の重なりは前に出す。
+                // フォーカス権限が拒否された場合でも、Z オーダー上の重なりは前面に移動する
                 let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
                 let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, flags);
                 let _ = SetWindowPos(hwnd, Some(HWND_NOTOPMOST), 0, 0, 0, 0, flags);
@@ -727,7 +727,7 @@ impl Capture {
     fn activate_target(&mut self, touch: Touch) -> Result<Option<POINT>, Error> {
         let hwnd = HWND(self.source.target as _);
         self.bring_to_front();
-        // 前面化は相手の UI スレッドで反映されるため、直後の一回の判定では拒否しない。
+        // 前面化は対象の UI スレッドで非同期に反映されるため、即座の判定では拒否しない
         let deadline = std::time::Instant::now() + std::time::Duration::from_millis(150);
         loop {
             if !unsafe { IsWindow(Some(hwnd)) }.as_bool() {
@@ -750,7 +750,7 @@ impl Capture {
     fn next_frame(
         &self,
     ) -> Result<Option<::windows::Graphics::Capture::Direct3D11CaptureFrame>, Error> {
-        // WinRT の正常な null 戻り値を「フレームなし」として扱う。非 nullable な Rust API は Error(0) に変換する。
+        // WinRT の正常な null 戻り値を「フレームなし」として処理する。非 nullable な Rust API は Error(0) に変換するため、直接 vtable を呼ぶ
         unsafe {
             let mut frame = std::ptr::null_mut();
             (Interface::vtable(&self.pool).TryGetNextFrame)(
@@ -763,7 +763,7 @@ impl Capture {
         }
     }
 
-    /// 届いている中で最新の画像（取っておいたものを含む）。古い方は閉じてプールへ返す。
+    /// 利用可能なフレームのうち最新のもの（保持分を含む）を返す。古いフレームは Close してプールに返却する。
     fn latest(
         &mut self,
     ) -> Result<Option<::windows::Graphics::Capture::Direct3D11CaptureFrame>, Error> {
@@ -771,7 +771,7 @@ impl Capture {
         if !self.ready.swap(false, Ordering::AcqRel) {
             return Ok(latest);
         }
-        // プールは二枚なので、低 FPS や一時停止で溜まったもう一枚があれば最新の方だけ残す。
+        // プール容量は 2 フレームのため、低 FPS や一時停止で蓄積された古いフレームを破棄し最新のみ保持する
         while let Some(newer) = self.next_frame()? {
             if let Some(older) = latest.replace(newer) {
                 older.Close()?;
@@ -824,7 +824,7 @@ impl Session for Capture {
         {
             return cursor.clone();
         }
-        // ponytail: アニメーションするカーソル（待ちの輪など）は最初のコマだけ。動かしたくなったら DrawIconEx でコマを描く。
+        // ponytail: アニメーションカーソル（待機スピナー等）は先頭フレームのみ取得。フレームアニメーションが必要になったら DrawIconEx で描画する
         let cursor = unsafe { icon_rgba(HICON(info.hCursor.0)) }
             .map(|(image, hotspot)| Arc::new(Cursor { image, hotspot }));
         self.cursor = Some((handle, cursor.clone()));
@@ -914,7 +914,7 @@ impl Session for Capture {
                 ..f
             })
         });
-        // リサイズ途中の画像は捨て、フレームの参照を解放してからプールを作り直す。
+        // リサイズ中のフレームは破棄し、フレーム参照を解放してからプールを再生成する
         if self.staging.is_none() {
             self.pool.Recreate(
                 &self.direct,
@@ -939,7 +939,7 @@ impl Session for Capture {
             && self.source.kind == SourceKind::Window
         {
             let Some(point) = self.activate_target(touch)? else {
-                // 他の窓への誤入力を避ける。前面化できないクリックだけを捨て、画像配信は続ける。
+                // 他ウィンドウへの誤入力を防止する。前面化できないクリックのみ破棄し、フレーム配信は継続する
                 return Ok(());
             };
             point
@@ -975,7 +975,7 @@ impl Drop for Capture {
     }
 }
 
-/// WGC のフレーム時刻（QPC を 100ns 単位にしたもの）を `Instant` にする。
+/// WGC のフレーム時刻（QPC を 100ns 単位に変換した値）を `Instant` に変換する。
 fn captured_at(time: TimeSpan) -> Instant {
     let (mut now, mut frequency) = (0i64, 0i64);
     unsafe {
@@ -987,10 +987,10 @@ fn captured_at(time: TimeSpan) -> Instant {
     Instant::now().checked_sub(age).unwrap_or_else(Instant::now)
 }
 
-/// 仮想デスクトップ上の画素を `MOUSEEVENTF_ABSOLUTE` の 0..=65535 に写す。
+/// 仮想デスクトップ上のピクセル座標を `MOUSEEVENTF_ABSOLUTE` の 0..=65535 範囲にマッピングする。
 fn virtual_desk_point(point: POINT, left: i32, top: i32, width: i32, height: i32) -> (i32, i32) {
     let scale = |v: i32, origin: i32, size: i32| {
-        // 四捨五入する（切り捨てだと Windows が画素に戻したとき 1 画素手前に落ちる）
+        // 四捨五入する（切り捨てでは Windows がピクセルに逆変換した際に 1px 手前にずれる）
         let span = (size - 1).max(1) as i64;
         (((v - origin) as i64 * 65535 + span / 2) / span).clamp(0, 65535) as i32
     };
@@ -1006,19 +1006,19 @@ fn normalized_point(bounds: RECT, x: f32, y: f32) -> POINT {
 
 #[derive(Default)]
 struct MouseDevice {
-    // shortcut: Windows のデスクトップはマウス 1 個として操作する。複数指のジェスチャーが必要になったらタッチ注入を併用する。
+    // ponytail: Windows デスクトップはマウス 1 台として操作する。マルチタッチジェスチャーが必要になったらタッチ注入を併用する
     pressed_by: Option<u32>,
     button: Option<Button>,
-    /// 1 ノッチに満たないホイール量の貯め（縦, 横）。
+    /// 1 ノッチ未満のホイール量の蓄積値（縦, 横）。
     wheel: [f32; 2],
 }
 
-/// スティックの量を貯め、送れるだけのノッチ（`WHEEL_DELTA` の倍数）を返す。
-/// 120 未満の量を整数割りで捨てるアプリがある（コンソールのターミナル、Win32 のスライダーなど）。
+/// スティック入力量を蓄積し、送信可能なノッチ数（`WHEEL_DELTA` の倍数）を返す。
+/// 120 未満の量を整数除算で切り捨てるアプリが存在する（コンソールターミナル、Win32 スライダー等）。
 fn wheel_notches(acc: &mut f32, delta: f32) -> i32 {
     const WHEEL_DELTA: f32 = 120.0;
     let amount = delta * 40.0;
-    // 向きを変えたら、逆向きの貯めは待たせずに捨てる。
+    // 方向が反転した場合、逆方向の蓄積値を即座に破棄する
     if *acc * amount < 0.0 {
         *acc = 0.0;
     }
@@ -1046,7 +1046,7 @@ impl MouseDevice {
         })
     }
 
-    /// 移動も入力として注入する。`SetCursorPos` だけでは押下中の移動を受け取らないアプリがある（ターミナルの範囲選択など）。
+    /// カーソル移動も入力イベントとして注入する。`SetCursorPos` のみではボタン押下中の移動を受け取らないアプリが存在する（ターミナルの範囲選択等）。
     fn move_to(point: POINT) -> Result<(), Error> {
         let (left, top, width, height) = unsafe {
             (
@@ -1145,13 +1145,13 @@ mod tests {
         let mut acc = 0.0;
         let sent: Vec<_> = (0..6).map(|_| wheel_notches(&mut acc, 1.0)).collect();
         assert_eq!(sent, [0, 0, 120, 0, 0, 120]);
-        // 浅く倒しても、貯まれば届く。
+        // 小さな入力でも蓄積すればノッチに到達する
         let mut acc = 0.0;
         assert_eq!(
             (0..12).map(|_| wheel_notches(&mut acc, 0.25)).sum::<i32>(),
             120
         );
-        // 逆へ倒したら前の貯めは残さない。
+        // 逆方向に入力した場合、以前の蓄積値は保持しない
         let mut acc = 0.0;
         wheel_notches(&mut acc, 1.0);
         wheel_notches(&mut acc, 1.0);

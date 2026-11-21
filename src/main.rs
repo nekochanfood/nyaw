@@ -1,5 +1,5 @@
-//! ブートローダー: ロガーを組み立て、カーネルを起こし、メインスレッドと載せる画面（wrist・ビーム）を UI 層に引き渡す。それ以外は何も置かない。
-// リリースビルドはコンソールウィンドウを出さない（ログは `--console` で端末か新しいコンソールに出す）。
+//! ブートローダー: ロガーを構成し、カーネルを初期化して、メインスレッドと表示する画面（wrist・ビーム）を UI 層に引き渡す。それ以外の責務は持たない。
+// リリースビルドではコンソールウィンドウを非表示にする（ログは `--console` で端末または新規コンソールに出力する）。
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{BufWriter, Write};
@@ -10,7 +10,7 @@ use kernel::{Kernel, config, subsystems::os};
 use logger::{Level, Logger, StderrSink};
 
 fn main() -> ExitCode {
-    // ロガーより先に出力先を用意する（ここで決めないと最初のログが消える）。
+    // ロガーの初期化に先立ち出力先を確保する（事前に確保しないと初期ログが失われる）。
     if std::env::args().any(|a| a == "--console") {
         os::attach_console();
     }
@@ -27,8 +27,8 @@ fn main() -> ExitCode {
         }
     };
     let args = Args::parse(std::env::args().skip(1));
-    // 設定ファイルの `runtime` は非推奨（コマンドラインで指定する）。デバッグビルドだけ、コマンドラインに無ければ従う。
-    // リリースビルドでは読まない（novr は明示の指定が要るので、設定に書いて残させない）。
+    // 設定ファイルの `runtime` は非推奨（コマンドラインで指定する）。デバッグビルドでのみ、コマンドライン引数が未指定の場合に参照する。
+    // リリースビルドでは無視する（novr は明示的な指定を必要とするため、設定ファイルへの記載を促さない）。
     if let Some(r) = &config.runtime {
         logger::warn!(
             "runtime in config file is deprecated, pass it on the command line",
@@ -38,27 +38,27 @@ fn main() -> ExitCode {
     }
     let from_config = config.runtime.clone().filter(|_| cfg!(debug_assertions));
     let requested = args.runtime.or(from_config);
-    // novr はテスト用。リリースビルドでは VR ランタイムが無くても勝手に novr にせず、明示の指定が要る。
+    // novr はテスト用。リリースビルドでは VR ランタイムが見つからなくても自動的に novr へフォールバックせず、明示的な指定を必要とする。
     let Ok(kernel) = Kernel::boot(requested.as_deref(), config, cfg!(debug_assertions)) else {
-        // コンソールが無くても分かるように。指定の仕方は出さない（novr を一般の利用者に勧めない）。
+        // コンソール非接続時にもユーザーへ通知するためダイアログを使用する。回避策は表示しない（novr を一般ユーザーに案内しない）。
         os::error_dialog("nyaw", "ランタイムが見つかりませんでした");
         return ExitCode::FAILURE;
     };
-    // ダッシュボードのデバッグボタンで開く画面は Testing、設定ボタンで開くのは Testing の設定画面（中身はダミー）。
+    // ダッシュボードのデバッグボタンで開く画面は Testing、設定ボタンで開く画面は Testing の設定画面（内容はプレースホルダー）。
     let mut panels = vec![wrist::spec(
         &kernel.settings(),
         |from, opened| {
             testing::spec(from, move |id, cx| {
-                // デバッグ画面からセットアップウィザードを強制的にやり直せるようにする。
+                // デバッグ画面経由でセットアップウィザードの再実行を可能にする。
                 cx.set_global(testing::SetupWizardSpawn(setup::spawn_spec));
                 opened(id, cx)
             })
         },
         |from, opened| settings::spec(from, opened),
     )];
-    // novr もコントローラを模すので、どのランタイムでもビームを載せる（novr のレーザーは視線と重なって見えない）。
+    // novr もコントローラをエミュレートするため、すべてのランタイムでビームを登録する（novr のレーザーは視線と重なり視認できない）。
     panels.extend(beam::specs());
-    // 初回起動（セットアップを終えていない）ときは、セットアップウィザードを出す。
+    // 初回起動時（セットアップ未完了）はセットアップウィザードを表示する。
     if !kernel.settings().setup_done {
         panels.push(setup::spec());
     }
@@ -95,8 +95,8 @@ impl Args {
     }
 }
 
-/// プロファイラを起こす。ダンプ先は既定 `os::log_dir()/profile.csv`（前回分は `profile-prev.csv`）。
-/// 作れなくても計測と表示はする。
+/// プロファイラを初期化する。出力先の既定は `os::log_dir()/profile.csv`（前回分は `profile-prev.csv`）。
+/// ファイルの作成に失敗しても計測と表示は行う。
 fn start_profiler(path: Option<PathBuf>) -> profiler::Profiler {
     let path = path.or_else(|| os::log_dir().map(|d| d.join("profile.csv")));
     let out = path.as_ref().and_then(|p| match logger::create_rotated(p) {
@@ -119,7 +119,7 @@ fn start_profiler(path: Option<PathBuf>) -> profiler::Profiler {
     })
 }
 
-/// 標準エラー出力と `os::log_dir()/nyaw.log` へ出すロガーを設定する。レベルは `NYAW_LOG` > 設定ファイルの `log`（既定 info）。
+/// 標準エラー出力と `os::log_dir()/nyaw.log` に出力するロガーを初期化する。レベルの優先順位は `NYAW_LOG` > 設定ファイルの `log`（既定 info）。
 fn init_logger(from_config: Option<String>) {
     let requested = config::log_level().or(from_config);
     let level = requested.as_deref().and_then(|s| s.parse().ok());
@@ -135,7 +135,7 @@ fn init_logger(from_config: Option<String>) {
     }
     logger::init(logger).expect("logger is initialized once, first thing in main");
 
-    // パニックもロガーを通して残す（ファイルにも書かれる）
+    // パニックもロガー経由で記録する（ファイルにも出力される）
     std::panic::set_hook(Box::new(|info| {
         logger::error!("panic", info = info);
         logger::global().flush();

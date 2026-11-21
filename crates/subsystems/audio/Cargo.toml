@@ -9,5 +9,5 @@ logger.workspace = true
 glam.workspace = true
 cpal = "0.16"
 hound = "3.5"
-# Steam Audio（phonon）は実行時に読む。無ければ簡単なパンニングで鳴らす
+# Steam Audio（phonon）は実行時に動的ロードする。未導入環境では単純なパンニングで再生する
 libloading = "0.8"

@@ -1,8 +1,8 @@
 use super::*;
 use kernel::audio::{Layout, Sound, Spatializer};
 
-/// パネルのスピーカーから鳴る音を試す画面。パネルを動かす・頭を回すと、音が聞こえる向きが変わる。
-/// `left` / `right` は片側の 2ch、`centre` は左右が同じ（自動ではモノラル）、Loop は 2ch のループで、重ねて鳴らせる。
+/// パネルのスピーカーから再生される音をテストする画面。パネルを移動・頭部を回転すると、音の聞こえる方向が変化する。
+/// `left` / `right` は片側の 2ch、`centre` は左右同一（自動ではモノラル）、Loop は 2ch のループで、重ねて再生可能。
 pub struct AudioTest {
     panel: PanelId,
 }

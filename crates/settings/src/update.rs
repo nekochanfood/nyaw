@@ -1,6 +1,6 @@
-//! 設定の「アップデート」（一般の行 `settings-update` から開く詳しい画面）: 今の版と確認の状態、チャンネル（安定版 / ナイトリー）、新しいリリースが
-//! あればその版・アップデートのボタン・リリースノート（Markdown）。確かめる・落として入れるのは `updater`。
-//! 勝手には入れず、ユーザーが押したときだけ入れる。
+//! アップデート（一般カテゴリの `settings-update` から開く詳細画面）: 現在バージョンと確認状態、チャンネル（安定版 / ナイトリー）、
+//! 新リリースがあればバージョン・アップデートボタン・リリースノート（Markdown）を表示する。
+//! 確認・ダウンロード・インストールは `updater` クレートに委譲する。自動インストールは行わず、ユーザー操作時のみ実行する。
 
 use std::sync::atomic::Ordering;
 
@@ -12,7 +12,7 @@ use updater::Step;
 
 use crate::Settings;
 
-/// チャンネル（安定版は正式なリリースだけ、ナイトリーはプレリリースも）はここで選ぶ。
+/// チャンネル選択（安定版は正式リリースのみ、ナイトリーはプレリリースを含む）。
 pub(crate) fn page(
     s: &Settings,
     theme: &Theme,
@@ -44,10 +44,10 @@ pub(crate) fn page(
     body(theme, channel, window, cx)
 }
 
-/// 中身（グループの並び）。`channel` はチャンネルを選ぶ行。
-/// 確かめている・落としている間は描き続けて、終わりと進み具合を拾う。
+/// ページ本体（グループの並び）。`channel` はチャンネル選択行。
+/// 確認中・ダウンロード中は描画を継続し、完了と進捗を検出する。
 fn body(theme: &Theme, channel: components::Button, window: &mut Window, cx: &mut App) -> Vec<Div> {
-    // 勧めるリリースはチャンネルで変わる（切り替えたらすぐ。確かめ直さない）。
+    // 推奨リリースはチャンネルにより異なる（切替時に即時反映、再確認不要）。
     let latest = updater::latest(cx);
     let u = updater::state(cx);
     let (step, error, checked) = (u.step.clone(), u.error.clone(), u.checked);
@@ -55,9 +55,9 @@ fn body(theme: &Theme, channel: components::Button, window: &mut Window, cx: &mu
         components::keep_drawing(window, cx);
     }
     let low = rgba(theme.neutral_text_low);
-    // ビルド番号は新旧を比べるためだけのもので、画面には出さない（版だけ）。
+    // ビルド番号は新旧比較専用であり、画面にはバージョン文字列のみ表示する。
     let current = updater::VERSION;
-    // 確かめた結果。失敗は、新しいリリースがあれば入れるときのもの（下に出す）、無ければ確かめたときのもの。
+    // 確認結果の表示。エラーは新リリースが存在すればインストール時のもの（下部に表示）、なければ確認時のもの。
     let (status, failed) = match (&step, &latest, &error) {
         (Step::Checking, ..) => (i18n::t(cx, "update.checking"), false),
         (_, None, Some(e)) => (i18n::tf(cx, "update.failed", &[("error", e)]), true),
@@ -109,7 +109,7 @@ fn body(theme: &Theme, channel: components::Button, window: &mut Window, cx: &mu
     let Some(release) = latest else {
         return vec![summary, channel];
     };
-    // 入れる操作: ボタン → 落としている間は進み具合の輪と割合 → 走らせたら再起動を待つ文字。
+    // インストール操作: ボタン → ダウンロード中はプログレスリングと進捗率 → インストール実行後は再起動待ちテキスト。
     let action = match &step {
         Step::Downloading(done) => {
             let p = done.load(Ordering::Relaxed) as f32 / release.installer.size.max(1) as f32;

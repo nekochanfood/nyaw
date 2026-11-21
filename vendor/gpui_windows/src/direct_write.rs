@@ -1541,10 +1541,10 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             // so create a new font from it and cache it accordingly. The usual culprit here seems to be Segoe UI Symbol
             .map_or_else(
                 || {
-                    // NYAW: フォールバックで選ばれた面は、名前で引き直さずにその面のまま登録する。
-                    // 名前（ファミリー・太さ）で引き直すと別のファイルの面になることがあり（埋め込みの可変フォント、
-                    // システムのフォールバックなど）、字形の番号が合わずに日本語が別の字で描かれていた。
-                    // 面を持っておくので、キー（面のアドレス）がほかの面に使い回されることもない。
+                    // NYAW: フォールバックで選択されたフェイスを名前で再検索せず、そのまま登録する。
+                    // ファミリー名・ウェイトで再検索すると別ファイルのフェイスが返る場合があり（可変フォントの埋め込みや
+                    // システムフォールバック等）、グリフ ID の不一致により日本語が誤った字形で描画されていた。
+                    // フェイスを直接保持するため、キー（フェイスのアドレス）が他のフェイスと衝突することもない。
                     let family = font_face_to_font(font_face, &self.locale)
                         .map(|f| f.family.to_string())
                         .unwrap_or_default();

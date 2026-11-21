@@ -1,11 +1,11 @@
 //! 画面の文言の多言語対応。対応言語は [`Lang`]（英語・日本語）。
 //!
-//! 文言は言語ごとの表 `locales/<code>.toml` に置き、キー（`testing.title` のような `.` 区切り。TOML の表がそのまま区切りになる）で引く。
-//! 画面は `render` で [`t`] / [`tf`] を呼ぶ。言語は GPUI のグローバル [`Lang`] で、切り替えると全ウィンドウが描き直される
-//! （`ui::sync_panel` がカーネルの設定から反映する）。表に無いキーは英語、英語にも無ければキーそのものを出す。
+//! 文言は言語ごとの定義表 `locales/<code>.toml` に配置し、キー（`testing.title` のような `.` 区切り。TOML のテーブルがそのまま区切りとなる）で参照する。
+//! 画面は `render` で [`t`] / [`tf`] を呼び出す。言語は GPUI のグローバル [`Lang`] で、切り替えると全ウィンドウが再描画される
+//! （`ui::sync_panel` がカーネルの設定から反映する）。定義表に存在しないキーは英語にフォールバックし、英語にも存在しなければキーそのものを返す。
 //!
-//! キーは `i18n::t(cx, "…")` / `i18n::tf(cx, "…", …)` の第 2 引数に文字列で直に書く。テストがソースを走査して、
-//! 使っているキーがどの言語の表にもあるかを確かめる。
+//! キーは `i18n::t(cx, "…")` / `i18n::tf(cx, "…", …)` の第 2 引数に文字列リテラルで直接記述する。テストがソースを走査して、
+//! 使用されているキーがすべての言語の定義表に存在するかを検証する。
 
 use std::collections::{BTreeMap, HashMap};
 use std::fmt::Display;
@@ -34,7 +34,7 @@ impl Lang {
         }
     }
 
-    /// その言語自身での名前（切り替えのボタンに出す。どの言語で表示していても読めるように）。
+    /// その言語自身での名前（切り替えボタンに表示する。どの言語で表示中でも読めるようにする）。
     pub const fn native_name(self) -> &'static str {
         match self {
             Lang::En => "English",
@@ -42,13 +42,13 @@ impl Lang {
         }
     }
 
-    /// 次の言語（切り替えのボタン用）。
+    /// 次の言語（切り替えボタン用）。
     pub fn next(self) -> Lang {
         let i = Lang::ALL.iter().position(|&l| l == self).unwrap_or(0);
         Lang::ALL[(i + 1) % Lang::ALL.len()]
     }
 
-    /// 今の言語（グローバルが無ければ英語）。
+    /// 現在の言語（グローバルが未設定なら英語）。
     pub fn current(cx: &App) -> Lang {
         cx.try_global::<Lang>().copied().unwrap_or_default()
     }
@@ -63,14 +63,14 @@ impl Lang {
 
 type Table = HashMap<String, &'static str>;
 
-/// 言語の表（キー → 文言）。初めて引いたときに埋め込みの TOML を読む。
+/// 言語の定義表（キー → 文言）。初回参照時に埋め込みの TOML をパースする。
 fn table(lang: Lang) -> &'static Table {
     static TABLES: OnceLock<[Table; 2]> = OnceLock::new();
     let tables = TABLES.get_or_init(|| Lang::ALL.map(parse));
     &tables[Lang::ALL.iter().position(|&l| l == lang).unwrap()]
 }
 
-/// TOML の入れ子の表を `.` 区切りのキーに平らにする。文言は解放しない（プロセスの間ずっと使う）。
+/// TOML のネストされたテーブルを `.` 区切りのキーにフラット化する。文言は解放しない（プロセスの存続期間中使用する）。
 fn parse(lang: Lang) -> Table {
     let root: toml::Table = lang
         .source()
@@ -97,12 +97,12 @@ fn parse(lang: Lang) -> Table {
     out
 }
 
-/// `lang` での `key` の文言。表に無ければ `None`。
+/// `lang` での `key` の文言。定義表に存在しなければ `None`。
 pub fn get(lang: Lang, key: &str) -> Option<&'static str> {
     table(lang).get(key).copied()
 }
 
-/// `lang` で `key` を引く。無ければ英語、それも無ければキーそのもの。
+/// `lang` で `key` を参照する。存在しなければ英語にフォールバックし、それも存在しなければキーそのものを返す。
 pub fn translate(lang: Lang, key: &str) -> SharedString {
     match get(lang, key).or_else(|| get(Lang::En, key)) {
         Some(s) => SharedString::new_static(s),
@@ -110,17 +110,17 @@ pub fn translate(lang: Lang, key: &str) -> SharedString {
     }
 }
 
-/// 今の言語で `key` を引く。
+/// 現在の言語で `key` を参照する。
 pub fn t(cx: &App, key: &str) -> SharedString {
     translate(Lang::current(cx), key)
 }
 
-/// 今の言語で `key` を引き、`{name}` を `args` の値で置き換える。
+/// 現在の言語で `key` を参照し、`{name}` を `args` の値で置換する。
 pub fn tf(cx: &App, key: &str, args: &[(&str, &dyn Display)]) -> SharedString {
     fill(&t(cx, key), args).into()
 }
 
-/// 今の言語での日付（書式は文言の `common.date`。chrono の書式で、曜日だけを `{weekday}` で訳す）。
+/// 現在の言語での日付（書式は文言の `common.date`。chrono の書式で、曜日のみ `{weekday}` で翻訳する）。
 pub fn date(cx: &App, now: chrono::DateTime<chrono::Local>) -> String {
     use chrono::{Datelike, Weekday};
     let weekday = match now.weekday() {
@@ -144,7 +144,7 @@ fn fill(template: &str, args: &[(&str, &dyn Display)]) -> String {
     s
 }
 
-/// どれかの言語の表にあるキー（並べ替え済み）。ローカライズの確認画面が一覧に使う。
+/// いずれかの言語の定義表に存在するキー（ソート済み）。ローカライズの確認画面が一覧表示に使用する。
 pub fn keys() -> Vec<&'static str> {
     let mut all = BTreeMap::new();
     for lang in Lang::ALL {
@@ -155,7 +155,7 @@ pub fn keys() -> Vec<&'static str> {
     all.into_keys().collect()
 }
 
-/// `lang` の表に無いキー（ほかの言語にはあるもの）。
+/// `lang` の定義表に存在しないキー（他の言語には存在するもの）。
 pub fn missing(lang: Lang) -> Vec<&'static str> {
     keys()
         .into_iter()
@@ -163,7 +163,7 @@ pub fn missing(lang: Lang) -> Vec<&'static str> {
         .collect()
 }
 
-/// 文言の中の `{name}` の名前（並べ替え済み）。
+/// 文言中の `{name}` プレースホルダーの名前（ソート済み）。
 #[cfg(test)]
 fn placeholders(s: &str) -> Vec<&str> {
     let mut v: Vec<&str> = s

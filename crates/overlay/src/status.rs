@@ -1,18 +1,18 @@
-//! 状態の問い合わせ（上の層が読む）: パネル・頭と手・指している手・掴んでいる手・外側を押した回数。
+//! 状態照会。上位層が参照するパネル・HMD・コントローラ・ポインティング・グラブ・外側プレスの情報。
 
 use super::*;
 
-/// 見えていそうかの見積もり（[`Overlay::in_view`]）に使う視野の半角（ラジアン、70°。実機の視野より広めに取る）。
+/// [`Overlay::in_view`] 用の視野半角（rad）。実機より広め（70°）に設定。
 const VIEW_HALF_ANGLE: f32 = 1.221_730_5;
-/// 見ている（[`Overlay::gazed`]）とみなす、頭の正面からパネルの中心までの角度（45°。目も動かすので広めに）・
-/// パネルの面の向きと頭の方向の間の角度（65°。手首を回しきらなくても）・頭からの距離（m）。腕時計を見る構えを拾う。
-// ponytail: 頭の向きで見る。視線のトラッキングがある HMD なら、それで絞れる。
+/// [`Overlay::gazed`] 判定の閾値。正面→パネル中心の角度（45°、眼球運動の余裕込み）・
+/// 面↔頭方向の角度（65°、手首が回りきらない場合を許容）・頭からの距離（m）。腕時計注視姿勢の検出向け。
+// ponytail: 頭の向き基準。視線トラッキング対応 HMD なら視線方向で絞れる。
 const GAZE_ANGLE: f32 = 0.79;
 const GAZE_FACING: f32 = 1.13;
 const GAZE_REACH: f32 = 1.0;
 
 impl Overlay {
-    /// パネルの数（閉じたものも含む。PanelId は 0..len）。
+    /// パネル総数。閉じたパネルを含む。PanelId は 0..len。
     pub fn len(&self) -> usize {
         self.panels.len()
     }
@@ -29,15 +29,15 @@ impl Overlay {
         &self.panels[id]
     }
 
-    /// 最後の tick でランタイムが終了を求めていたか。
+    /// 直前 tick でランタイムが終了を要求したか。
     pub fn quit_requested(&self) -> bool {
         self.quit
     }
 
-    /// パネルが頭の向きから見えていそうか（ランタイムが教えてくれないときの見積もり。視野を広めに取った円錐とパネルを囲む球で判定）。
+    /// パネルが HMD の向きから視野内にあるかの推定。ランタイムが通知しない場合の代替で、広めの視野円錐とパネル外接球で判定する。
     pub fn in_view(&self, id: PanelId) -> bool {
         let p = &self.panels[id];
-        // 隠しているポインタのパネルは最後に出した所に残るので、そちらを向くたびに見えた扱いで描き直していた。
+        // 非表示ポインタパネルは最終表示位置に残るため、その方向を向くたびに可視と誤判定される。
         if p.closed || p.hidden || p.surface.hidden() {
             return false;
         }
@@ -51,7 +51,7 @@ impl Overlay {
         off_axis - (radius / d).asin() < VIEW_HALF_ANGLE
     }
 
-    /// パネルを見ている（頭の正面に近く、面がこちらを向き、手の届くくらいの距離にある）。腕時計を見る構えを拾う。
+    /// パネルを注視しているか判定する。HMD 正面付近・面が頭方向・近距離の三条件で、腕時計注視姿勢を検出する。
     pub fn gazed(&self, id: PanelId) -> bool {
         let p = &self.panels[id];
         let to = p.pose.position - self.hmd.position;
@@ -64,44 +64,43 @@ impl Overlay {
             && (p.pose.orientation * Vec3::Z).angle_between(-to) < GAZE_FACING
     }
 
-    /// `hand` のツールチップをカーソルの上下どちらに出すか。頭から見て、レーザーの来る側（手）に出す。
+    /// `hand` のツールチップの表示位置（カーソルの上下）。頭から見てレーザー入射側に配置する。
     pub fn tooltip_anchor(&self, hand: Hand) -> Anchor {
         self.hands.get(&hand).map(|h| h.anchor).unwrap_or_default()
     }
 
-    /// 最後の tick の HMD の姿勢（新しいパネルを目の前に出すため）。
+    /// 直前 tick の HMD 姿勢。新規パネルの初期配置に使用する。
     pub fn hmd(&self) -> Pose {
         self.hmd
     }
 
-    /// 最後の tick で見えていたトラッカーの ID。
+    /// 直前 tick で検出されたトラッカー ID 一覧。
     pub fn trackers(&self) -> &[String] {
         &self.trackers
     }
 
-    /// 最後の tick で骨格が取れていた手（スケルタル入力）。
+    /// 直前 tick でスケルタル入力が得られた手の一覧。
     pub fn hands(&self) -> &[HandSkeleton] {
         &self.skeletons
     }
 
-    /// 最後の tick の手ごとの入力の状態。
+    /// 直前 tick の各コントローラ入力状態。
     pub fn controllers(&self) -> &[ControllerState] {
         &self.controllers
     }
 
-    /// どちらかの手でメニューボタンを押している。
+    /// いずれかの手がメニューボタンを押下中か。
     pub fn menu_held(&self) -> bool {
         self.hands.values().any(|h| h.menu)
     }
 
-    /// どのパネルにも当たっていない所でトリガーを押した回数（起動から数える）。
+    /// パネル外でのトリガー押下回数（起動時からの累計）。
     pub fn outside_presses(&self) -> u32 {
         self.outside_presses
     }
 
-    /// どちらかの手のレーザーが `id` を指している。ナビゲーションバーは、持ち主かバー自身を指していれば（持ち主から
-    /// バーへ移っても途切れない。バーの上端は持ち主の影の余白に重なっている）。子が開いて入力を受けない間は指していない扱い。
-    /// 掴んでいる間も指している扱い（掴んで動かしている間もバーは広がったまま）。
+    /// いずれかの手のレーザーが `id` を指しているか。ナビバーは持ち主またはバー自体を指していれば真
+    /// （持ち主→バー間で途切れない）。入力を受けない子パネルは指していない扱い。グラブ中も指している扱い。
     pub fn pointed(&self, id: PanelId) -> bool {
         let owner = self.panels[id].nav_bar_of;
         let is = |x: PanelId| x == id || Some(x) == owner;
@@ -110,7 +109,7 @@ impl Overlay {
             .any(|h| h.hover.is_some_and(is) || h.dragging.is_some_and(|d| is(d.0)))
     }
 
-    /// `id` そのもの（ナビゲーションバーや子ではなく）をレーザーで指している手。
+    /// `id` 自体（ナビバー・子を除く）をレーザーで指している手の一覧。
     pub fn pointing_hands(&self, id: PanelId) -> Vec<Hand> {
         self.hands
             .iter()
@@ -119,7 +118,7 @@ impl Overlay {
             .collect()
     }
 
-    /// `id` をどちらかの手で掴んでいる。
+    /// `id` をいずれかの手でグラブ中か。
     pub fn grabbed(&self, id: PanelId) -> bool {
         self.hands
             .values()

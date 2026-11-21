@@ -1,4 +1,4 @@
-//! カーネル最下部の描画サブシステム。描画先・読み戻し・ランタイムへの転送と能力差を扱う。
+//! カーネル最下部の描画サブシステム。描画先・読み戻し・ランタイムへの転送と能力差を処理する。
 //! パネルの配置、入力、アニメーションの進行は overlay が決める。
 
 #[cfg(feature = "gpui")]
@@ -14,13 +14,13 @@ pub struct Surface {
     key: String,
     texture: Option<(u32, u32, Vec<u8>)>,
     released: bool,
-    /// ランタイム側のオーバーレイだけを捨てている（[`Self::park`]）。画像・描画順は持ったまま。
+    /// ランタイム側のオーバーレイのみを破棄済み（[`Self::park`]）。画像・描画順は保持したまま。
     parked: bool,
-    /// 描画順（作り直したときに付け直す）。
+    /// 描画順（再作成時に再設定する）。
     sort: u32,
     sent: Option<(Option<Device>, Pose)>,
     shown: Option<(bool, f32)>,
-    /// 最後に送った暗さ。
+    /// 最後に送信した暗さ。
     dim: f32,
 }
 
@@ -51,23 +51,23 @@ impl Surface {
         self.texture.is_some()
     }
 
-    /// ランタイム側のオーバーレイを手放している（[`Self::park`]）。
+    /// ランタイム側のオーバーレイを解放済み（[`Self::park`]）。
     pub fn parked(&self) -> bool {
         self.parked
     }
 
-    /// ランタイムへ送れる（解放も手放しもしていない）。
+    /// ランタイムへ送信可能（解放も park もしていない）。
     fn live(&self) -> bool {
         !self.released && !self.parked
     }
 
-    /// [`Self::show`] で隠している（一度も呼ばれていなければ表示中）か、オーバーレイを手放している。
+    /// [`Self::show`] で非表示にしている（一度も呼ばれていなければ表示中）か、オーバーレイを park 済み。
     pub fn hidden(&self) -> bool {
         self.parked || self.shown.is_some_and(|(visible, _)| !visible)
     }
 
-    /// ランタイム側のオーバーレイだけを捨てる（ランタイムの枠を空ける）。画像・描画順は持ったままで、
-    /// 手放している間に届いた画像も覚えておき、[`Self::restore`] で作り直して送る。
+    /// ランタイム側のオーバーレイのみを破棄する（ランタイムの枠を空ける）。画像・描画順は保持したままで、
+    /// park 中に届いた画像も保持し、[`Self::restore`] で再作成して送信する。
     pub fn park(&mut self, vr: &mut dyn VrBackend) {
         if !self.live() {
             return;
@@ -77,8 +77,8 @@ impl Surface {
         self.sent = None;
     }
 
-    /// [`Self::park`] で手放したオーバーレイを、同じキー・描画順で幅 `width`・姿勢 `pose` に作り直す。
-    /// 画像は不透明度 `opacity` で送り直す（フェードインはここから始める）。手放していなければ何もしない。
+    /// [`Self::park`] で解放したオーバーレイを、同じキー・描画順で幅 `width`・姿勢 `pose` に再作成する。
+    /// 画像は不透明度 `opacity` で再送信する（フェードインはここから開始する）。park 状態でなければ何もしない。
     pub fn restore(
         &mut self,
         vr: &mut dyn VrBackend,
@@ -93,7 +93,7 @@ impl Surface {
         self.id = vr.create_overlay(&self.key, width)?;
         vr.set_overlay_pose(self.id, pose);
         vr.set_overlay_sort(self.id, self.sort);
-        // 隠していた（[`Self::show`]）なら隠したまま。
+        // 非表示にしていた（[`Self::show`]）場合は非表示を維持する。
         if self.shown.is_some_and(|(visible, _)| !visible) {
             vr.set_overlay_visible(self.id, false);
         }
@@ -109,15 +109,15 @@ impl Surface {
             width as usize * height as usize * 4,
             "invalid RGBA buffer size"
         );
-        // 手放している間も覚えておく（作り直したときに送る）。
+        // park 中も保持する（再作成時に送信する）。
         if !self.released {
             self.texture = Some((width, height, rgba.to_vec()));
         }
     }
 
     /// ネイティブの追従が無ければ、呼び出し側で計算した絶対姿勢へフォールバックする。
-    /// 追従は毎回頼み直す（同じなら送らないのはバックエンドの仕事）。取り付け先の裏のデバイスが消えた・入れ替わった
-    /// （ハンドトラッキングとコントローラの持ち替え）フレームは断られて、当たり判定と同じ `pose` に置かれる。
+    /// 追従は毎回再要求する（同一であれば送信しないのはバックエンドの責務）。取り付け先のデバイスが消失・入れ替わった
+    /// （ハンドトラッキングとコントローラの持ち替え）フレームは拒否され、当たり判定と同じ `pose` に配置される。
     pub fn place(&mut self, vr: &mut dyn VrBackend, pose: Pose, follow: Option<&(Device, Pose)>) {
         if !self.live() {
             return;
@@ -155,7 +155,7 @@ impl Surface {
         }
     }
 
-    /// 隠すときは最後に表示した幅を保つ。
+    /// 非表示にする際は最後に表示した幅を維持する。
     pub fn show(
         &mut self,
         vr: &mut dyn VrBackend,
@@ -176,7 +176,7 @@ impl Surface {
         self.shown = Some((visible, width));
     }
 
-    /// 描画先を解放する。いつ解放するかは呼び出し側が決める。手放しているオーバーレイは捨て済み。
+    /// 描画先を解放する。解放タイミングは呼び出し側が決定する。park 中のオーバーレイは破棄済み。
     pub fn release(&mut self, vr: &mut dyn VrBackend) {
         if self.released {
             return;
@@ -192,8 +192,8 @@ impl Surface {
     }
 
     /// 不透明度 API のないランタイムでは、加工前の画像から画素を減衰させる。
-    /// `dim`（0 = そのまま 〜 1 = 真っ黒）は色だけを黒へ寄せ、透明度は変えない。ランタイムが明るさを掛けられれば画素には触らない
-    /// （フェード中に毎フレーム画素を作り直して送ると詰まる）。掛けられないときだけ、変わったときに画素を暗くして送り直す。
+    /// `dim`（0 = そのまま 〜 1 = 真っ黒）は色のみを黒へ寄せ、透明度は変更しない。ランタイムが明るさを乗算可能であれば画素には触れない
+    /// （フェード中に毎フレーム画素を再生成して送信すると詰まる）。乗算不可の場合のみ、変更時に画素を暗くして再送信する。
     pub fn present(&mut self, vr: &mut dyn VrBackend, opacity: f32, dim: f32, upload: bool) {
         if !self.live() {
             return;

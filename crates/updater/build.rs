@@ -1,6 +1,6 @@
-//! 版の文字とビルド番号を埋め込む（`$OUT_DIR/version.rs`）。
-//! ビルド番号 = HEAD までのコミット数。main は直線の履歴（rebase でマージ）なので、新しいビルドほど大きい。
-//! 版の文字は `NYAW_VERSION`（リリースのワークフローがタグから渡す。`2026.0.1-beta.1` など）、無ければ Cargo.toml のもの。
+//! バージョン文字列とビルド番号を埋め込む（`$OUT_DIR/version.rs`）。
+//! ビルド番号 = HEAD までのコミット数。main はリニア履歴（rebase マージ）のため、新しいビルドほど大きい。
+//! バージョン文字列は `NYAW_VERSION`（リリースワークフローがタグから渡す。`2026.0.1-beta.1` など）、未設定であれば Cargo.toml の値。
 
 use std::process::Command;
 
@@ -12,7 +12,7 @@ fn git(args: &[&str]) -> Option<String> {
 }
 
 fn main() {
-    // コミットするたびに数え直す（HEAD と、それが指すブランチの先）。
+    // コミットごとに再カウントする（HEAD と、それが指すブランチの先頭）。
     let head = git(&["rev-parse", "--symbolic-full-name", "HEAD"]);
     let watched = [
         Some("HEAD".to_owned()),
@@ -24,7 +24,7 @@ fn main() {
         }
     }
     println!("cargo:rerun-if-env-changed=NYAW_VERSION");
-    // git の無い所（ソースの tarball など）では 0。どのリリースも新しく見える。
+    // git のない環境（ソースの tarball など）では 0。すべてのリリースが新しいと判定される。
     let build: u32 = git(&["rev-list", "--count", "HEAD"])
         .and_then(|n| n.parse().ok())
         .unwrap_or(0);

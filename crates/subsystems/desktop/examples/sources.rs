@@ -1,4 +1,4 @@
-//! 画面・ウィンドウの取得元の一覧を出す（名前・種類・実行ファイル名・アイコンの有無）。`cargo run -p desktop --example sources`
+//! 画面・ウィンドウの取得元一覧を出力する（名前・種類・実行ファイル名・アイコンの有無）。`cargo run -p desktop --example sources`
 
 fn main() {
     let pending = desktop::Sources::refresh().expect("start listing");

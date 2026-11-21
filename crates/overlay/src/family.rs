@@ -1,21 +1,21 @@
-//! 親子関係（ダイアログ・ポップオーバー・はめる場所）と、ナビゲーションバーの置き場所。
+//! 親子関係（ダイアログ・ポップオーバー・ドックスロット）とナビバーの配置。
 
 use super::*;
 
-/// 表示だけの子（[`Parent::hud`]）とナビゲーションバーを、親の面からどれだけ手前（m）に置くか。
+/// 表示専用子（[`Parent::hud`]）とナビバーを親面からどれだけ手前（m）に配置するか。
 /// その上を指したカーソル（[`CURSOR_LIFT`]）より奥にする。
 const HUD_LIFT: f32 = LIFT_STEP;
-/// 親の上端に立てた子を外したとき、離れたと分かるよう面の向き（頭の側）へ動かす距離（m）。
+/// スロット子をアンドックしたとき、離脱を明示するために面の法線方向（頭側）へ移動する距離（m）。
 const UNDOCK_PULL: f32 = 0.2;
-/// 積む子（[`Parent::stack`]）が、積む先の変わった置き場所へ追いつく時定数（秒）。
+/// スタック子（[`Parent::stack`]）が変化した配置先へ追従する時定数（秒）。
 const STACK_FOLLOW: f32 = 0.12;
-/// 持ち主もバーも指されなくなってから、ナビゲーションバー（縮んだ線）が薄れ始めるまで。線に縮みきってから少し置く。
-// ponytail: 固定の長さ。早すぎる・遅すぎると感じたらここを調整する。
+/// 持ち主もバーも非ポイント状態になってからナビバー（縮んだ線）がフェードアウト開始するまでの待機時間。
+// ponytail: 固定値。早すぎる・遅すぎればここを調整する。
 const NAV_BAR_LINGER: std::time::Duration = std::time::Duration::from_millis(1500);
 
 impl Overlay {
-    /// `id` を `parent` の子にする（`None` で独立）。今の位置を保ち、以降は親に追従する。取り付けは外す。
-    /// 自分自身・子孫・閉じたパネルは親にできない（何もしない）。
+    /// `id` を `parent` の子にする（`None` で独立）。現在位置を保持し以降は親に追従する。取り付けは解除される。
+    /// 自分自身・子孫・閉じたパネルは親に指定不可（何もしない）。
     pub fn set_parent(&mut self, vr: &mut dyn VrBackend, id: PanelId, parent: Option<Parent>) {
         if let Some(p) = parent
             && (p.panel == id
@@ -25,8 +25,8 @@ impl Overlay {
             return;
         }
         let at = parent.map(|p| self.panels[p.panel].pose);
-        // はめる・外すときは、見えていれば滑らかに動かす。はめる（ダッシュボードから呼び出す）ときは行き過ぎずに戻り、外すときは
-        // 離れたと分かるよう手前へ飛び出す。掴んでいる間は手に付いて動くので動かさない。
+        // ドック・アンドック時は可視ならトランジションで移動する。ドック（ダッシュボードから呼び出す）時はオーバーシュートなしで収束、
+        // アンドック時は離脱を示すため手前へ飛び出す。グラブ中は手に追従するため移動しない。
         let held = self.grabbed(id);
         let q = &self.panels[id];
         let (was_slot, to_slot) = (
@@ -47,9 +47,9 @@ impl Overlay {
         }
         let q = &mut self.panels[id];
         q.parent = parent;
-        // 表示だけの子と、ポップオーバー（固定して外側を押すと閉じる子）と、積む子は、ほかのパネルより前に描く。ランタイムは
-        // 奥行きではなく描画順で重ねるので、同じ順だと重なった所がちらつく（はめた画面の上に出すメニューや、はめた画面の
-        // 出入りで上へ動く積む子など）。
+        // 表示専用子・ポップオーバー（固定して外側プレスで閉じる子）・スタック子は他パネルより前に描画する。ランタイムは
+        // 深度ではなく描画順で合成するため、同一順だと重なり部分がフリッカーする（ドックパネル上のメニューや、ドックパネルの
+        // 出入りで上に移動するスタック子など）。
         let front = parent.is_some_and(|p| p.hud || p.stack || (p.docked && p.dismiss));
         q.surface
             .set_sort(vr, if front { HUD_SORT } else { PANEL_SORT });
@@ -59,10 +59,10 @@ impl Overlay {
         }
     }
 
-    /// 親子の姿勢を合わせる。掴まれている子は、親を連れていくなら親を子に合わせ、そうでなければ親との相対位置を付け直す。
-    /// そのあと、掴まれていない子を親（浅い順）に合わせる。親が掴まれても取り付けで動いても、子はここで追従する。
-    // ponytail: 親の拡大縮小では子の相対位置を変えない（子はその場の大きさのまま）。
-    /// 磁石を効かせて掴んでいる子（`pulled`。[`Magnet`]）は、親を連れていかず、親との位置関係も変えない。
+    /// 親子の姿勢を同期する。グラブ中の子は carry なら親を子に合わせ、そうでなければ親との相対位置を再計算する。
+    /// その後、非グラブの子を親（浅い順）に合わせる。親がグラブされてもデバイス追従で動いても子はここで追従する。
+    // ponytail: 親のリサイズでは子の相対位置を変えない（子はそのサイズのまま）。
+    /// 磁石で引いている子（`pulled`。[`Magnet`]）は親を連れず、親との位置関係も変更しない。
     pub(crate) fn settle_family(&mut self, dragged: &[PanelId], pulled: &[PanelId]) {
         for &id in dragged.iter().filter(|id| !pulled.contains(id)) {
             let mut cur = id;
@@ -70,7 +70,7 @@ impl Overlay {
                 panel, carry, slot, ..
             }) = self.panels[cur].parent
             {
-                // 掴んでいる間も、立てた子の大きさに合わせて親との位置関係を決め直す（大きさを変えても親が付いてくる）。
+                // グラブ中もスロット子のサイズに合わせて親との位置関係を再計算（リサイズしても親が追従する）。
                 if let Some(tilt) = slot {
                     self.panels[cur].offset = self.slot_offset(cur, panel, tilt);
                 }
@@ -97,8 +97,8 @@ impl Overlay {
                 if let Some(tilt) = parent.slot {
                     let to = self.slot_offset(id, parent.panel, tilt);
                     let p = &self.panels[id];
-                    // 積む子は、積む先が出入りしても跳ばずに追いつく。現れきるまではそのまま合わせる（出し直したときに、前の
-                    // 置き場所から滑ってくるのが見えないように）。
+                    // スタック子は配置先が出入りしてもジャンプせず追従する。フェードイン完了まではそのまま合わせる
+                    // （再表示時に前の位置からスライドしてくるのを防止）。
                     self.panels[id].offset =
                         if parent.stack && p.animated && !p.hidden && p.opacity >= 1.0 {
                             let k = 1.0 - (-self.dt / STACK_FOLLOW).exp();
@@ -110,7 +110,7 @@ impl Overlay {
                             to
                         };
                 } else if parent.hud {
-                    // 親の縦横比は配信元に合わせて変わるので、角からの位置を毎 tick 決め直す。
+                    // 親のアスペクト比はキャプチャ元に合わせて変わるため、角からの位置を毎 tick 再計算する。
                     let (outer, inner) = (self.panels[parent.panel].size, self.panels[id].size);
                     self.panels[id].offset = Pose::new(
                         Vec3::new(
@@ -126,8 +126,8 @@ impl Overlay {
         }
     }
 
-    /// 親・持ち主に付いて動くもの（子・ナビゲーションバー）は、根元のパネルがデバイスに付いて動いていれば（`follow`）、
-    /// 同じデバイスに相対で付ける。根元はランタイムが合成の直前の姿勢で動かすので、毎 tick の姿勢で置くと遅れて見える。
+    /// 親・持ち主に追従するもの（子・ナビバー）は、ルートパネルがデバイス追従中（`follow`）なら
+    /// 同じデバイスへの相対配置にする。ルートはランタイムが合成直前の姿勢で移動するため、毎 tick の姿勢で配置すると遅延が見える。
     pub(crate) fn follow_roots(&mut self) {
         let follows: Vec<_> = self
             .present
@@ -145,12 +145,12 @@ impl Overlay {
         }
     }
 
-    /// 親の上端に立てる子（[`Parent::slot`]）の、親から見た姿勢（[`slot_offset_in`]）。
+    /// スロット子（[`Parent::slot`]）の親から見た姿勢（[`slot_offset_in`]）。
     fn slot_offset(&self, id: PanelId, parent: PanelId, tilt: f32) -> Pose {
         slot_offset_in(&self.panels, &self.present, self.scale(), id, parent, tilt)
     }
 
-    /// `id` を今の所から `to`（`None` なら毎 tick 決まるはまる所）へ `motion` で動かす（[`Glide`]）。見えていなければその場で移す。
+    /// `id` を現在位置から `to`（`None` なら毎 tick 算出のドック位置）へ `motion` で移動する（[`Glide`]）。非表示ならその場で移動。
     pub(crate) fn glide_to(&mut self, id: PanelId, to: Option<Pose>, motion: Motion) {
         let q = &mut self.panels[id];
         if q.animated && q.surface.has_texture() && !q.hidden {
@@ -170,7 +170,7 @@ impl Overlay {
         }
     }
 
-    /// 位置のトランジションを進める（[`Glide`]）。掴まれたら、その場でやめる。
+    /// 位置トランジションを進行させる（[`Glide`]）。グラブされたら即座に中止する。
     pub(crate) fn glide(&mut self, dragged: &[PanelId], now: Instant) {
         let panels = &mut self.panels;
         self.glides.retain(|&id, g| {
@@ -183,7 +183,7 @@ impl Overlay {
                 .advance(now.saturating_duration_since(g.last).as_secs_f32());
             g.last = now;
             let to = g.to.unwrap_or(p.pose);
-            // 行き過ぎる動き（[`Motion::Pop`]）でも、向きは行き過ぎさせない。
+            // オーバーシュートする動き（[`Motion::Pop`]）でも向きはオーバーシュートさせない。
             p.pose = Pose::new(
                 g.from.position.lerp(to.position, t),
                 g.from.orientation.slerp(to.orientation, t.clamp(0.0, 1.0)),
@@ -192,12 +192,12 @@ impl Overlay {
         });
     }
 
-    /// ナビゲーションバーを持ち主の下端へ置く。持ち主の地の下端（影の余白 [`PANEL_MARGIN`] の内側）の左右中央を
-    /// アンカーに、バーの上端の左右中央を合わせる。頭から見て同じ大きさに見えるよう、アンカーまでの距離に比例して大きくする。
-    /// 持ち主の出入りのアニメーション（75%〜100%）で縮んだ下端にも付いていく。
-    /// 持ち主もバーも指されないまま [`NAV_BAR_LINGER`] 経つと、時間をかけて薄れ（[`Motion::Fade`]）、消えきったら
-    /// ランタイムのオーバーレイを手放す（[`Surface::park`]。パネル・ビュー・最後の画像は残す）。
-    /// 指されたら作り直して現れる（[`Motion::Enter`]）。
+    /// ナビバーを持ち主の下端へ配置する。持ち主面の下端（シャドウマージン [`PANEL_MARGIN`] の内側）の左右中央を
+    /// アンカーに、バーの上端の左右中央を合わせる。頭から同じ見かけサイズになるようアンカーまでの距離に比例して拡大する。
+    /// 持ち主の出入りアニメーション（75%〜100%）で縮んだ下端にも追従する。
+    /// 持ち主もバーも非ポイント状態で [`NAV_BAR_LINGER`] 経過するとフェードアウトし（[`Motion::Fade`]）、完了後に
+    /// ランタイムのオーバーレイを解放する（[`Surface::park`]。パネル・ビュー・最終画像は保持）。
+    /// ポイントされたら再生成して出現する（[`Motion::Enter`]）。
     pub(crate) fn place_nav_bars(&mut self, vr: &mut dyn VrBackend, now: Instant) {
         for &id in &self.present {
             let Some(owner) = self.panels[id]
@@ -210,13 +210,13 @@ impl Overlay {
             let o = &self.panels[owner];
             let (opacity, dim) = (o.opacity, o.dim);
             let up = o.pose.orientation * Vec3::Y;
-            // 配信中のパネルは影の余白が無い。余白があるものとして内側に付けると、バーが絵に食い込む（face_margin）。
+            // キャプチャ中のパネルはシャドウマージンなし。マージンありとして内側に配置するとバーが描画に食い込む（face_margin）。
             let margin = face_margin(o) * o.displayed_size().y / o.size.y;
             let anchor = o.pose.position - up * (o.displayed_size().y / 2.0 - margin);
             let rotation = o.pose.orientation;
             let eye = self.hmd.position;
-            // 固定した子（ダッシュボードにはめた画面）のバーは、頭からの距離で大きさを変えない（1m 先での大きさのまま。
-            // ダッシュボードと一体の部品として、画面との比を保つ）。
+            // ドック子（ダッシュボードにはめた画面）のバーは頭からの距離でサイズ変更しない（1m 先でのサイズ固定。
+            // ダッシュボードと一体の部品として画面との比率を維持する）。
             let docked = o.parent.is_some_and(|q| q.docked);
             let leaving = o.hidden || o.closed;
             let p = &mut self.panels[id];
@@ -229,7 +229,7 @@ impl Overlay {
             };
             let resized = !p.size.abs_diff_eq(size, 1e-4);
             p.size = size;
-            // 指されないまましばらく経ったら薄れて消える。指されたら現れる。
+            // 非ポイント状態が続くとフェードアウトして消える。ポイントされると出現する。
             if pointed {
                 p.pointed_at = now;
             }
@@ -239,13 +239,13 @@ impl Overlay {
             let motion = if asleep { Motion::Fade } else { Motion::Enter };
             p.wake.go(to, motion, now, p.animated);
             let (awake, _) = p.wake.at(now);
-            // 出入りと暗さは持ち主と一体（バーは閉じても、持ち主が消えきるまで残る）。
+            // 出入りと暗転度は持ち主と同期（バーは close されても持ち主が消えきるまで残存する）。
             let faded = p.opacity != opacity
                 || p.dim != dim
                 || p.awake != awake
                 || (p.closed && opacity == 0.0);
             (p.opacity, p.dim, p.dim_to, p.awake) = (opacity, dim, dim, awake);
-            // 上端は持ち主の影の余白と重なる。同じ面だと Z ファイティングするので、表示だけの子と同じだけ手前に浮かせる。
+            // 上端は持ち主のシャドウマージンと重なる。同一面だと Z ファイティングするため表示専用子と同じ分だけ手前に浮かせる。
             p.pose = Pose::new(
                 anchor - up * (size.y * (0.75 + 0.25 * opacity) / 2.0)
                     + rotation * Vec3::Z * HUD_LIFT,
@@ -256,7 +256,7 @@ impl Overlay {
                     p.surface
                         .restore(vr, p.displayed_size().x, p.pose, opacity * awake, dim)
             {
-                logger::warn!("ナビゲーションバーのオーバーレイを作り直せない", error = ?e, panel = id);
+                logger::warn!("ナビバーのオーバーレイを再生成できない", error = ?e, panel = id);
             }
             if (faded && p.surface.has_texture()) || (p.closed && opacity == 0.0) {
                 Self::present(vr, p, false);

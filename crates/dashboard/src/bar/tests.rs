@@ -1,10 +1,10 @@
 use super::*;
 use crate::test_util::*;
-// `ui::commands`（親から）ではなくテストの道具の方。
+// `ui::commands`（親モジュール由来）ではなくテストユーティリティ側。
 use crate::test_util::commands;
 
-/// バーを `pose` に置くと、はめた画面は正面 `distance`・頭の高さから [`HEIGHT_ORIGIN`] + `height` 上に垂直に立つ。
-/// 既定は目の高さの少し下の正面 1.3m で、バーはその下で 1m 以上離れる。
+/// バーを `pose` に配置すると、ドッキング画面は正面 `distance`・頭の高さから [`HEIGHT_ORIGIN`] + `height` 上に垂直に立つ。
+/// 既定値は目の高さよりやや下の正面 1.3m で、バーはその下方かつ 1m 以上の距離に位置する。
 #[test]
 fn docked_screen_stands_upright_at_the_set_distance_and_height() {
     let b = docked_at(kernel::DASHBOARD_DISTANCE, 0.0);
@@ -13,7 +13,7 @@ fn docked_screen_stands_upright_at_the_set_distance_and_height() {
     docked_at(kernel::DASHBOARD_DISTANCE_MIN, kernel::DASHBOARD_HEIGHT_MAX);
 }
 
-/// バーを `pose(distance, height)` に置いて画面をはめ、画面がそこに垂直に立つことを確かめる。バーの位置を返す。
+/// バーを `pose(distance, height)` に配置して画面をドッキングし、画面がその位置に垂直に立つことを検証する。バーの位置を返す。
 fn docked_at(distance: f32, height: f32) -> Vec3 {
     use kernel::overlay::{Overlay, Parent};
     use kernel::subsystems::Subsystems;
@@ -42,7 +42,7 @@ fn docked_at(distance: f32, height: f32) -> Vec3 {
         )
         .unwrap();
     ov.set_nav_bar(&mut vr.backend, nav, screen);
-    // 出入りのアニメーションの途中は小さく見えるので、出きった状態で測る。
+    // 出入りアニメーション中はスケールが小さいため、アニメーション完了状態で計測する。
     ov.set_animated(&mut vr.backend, screen, false);
     ov.set_parent(
         &mut vr.backend,
@@ -71,7 +71,7 @@ fn docked_at(distance: f32, height: f32) -> Vec3 {
 
 #[gpui::test]
 fn opening_shows_nothing_and_buttons_toggle_docked_screens(cx: &mut TestAppContext) {
-    // バー（PanelId 1）の上を、画面をはめる場所にする。
+    // バー（PanelId 1）の上をドッキングスロットとして設定する。
     let (bar, cx) = cx.add_window_view(|_, cx| {
         cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
         Dashboard::new(1, summon, summon, cx)
@@ -81,7 +81,7 @@ fn opening_shows_nothing_and_buttons_toggle_docked_screens(cx: &mut TestAppConte
         cx.update(|_, cx| cx.global::<PanelControl>().spawns.len()),
         0
     );
-    // 設定を選ぶと（メニューから。`menu_items_open_screens_and_close_the_menu`）、main が渡した設定画面がバーの上にはまる。
+    // 設定を選択すると（メニューから。`menu_items_open_screens_and_close_the_menu`）、main が渡した設定画面がバー上にドッキングする。
     bar.update(cx, |d, cx| d.toggle(Page::Settings, cx));
     open_spawned(cx, 2);
     assert!(commands(cx, 2).iter().any(docked_to_bar));
@@ -89,7 +89,7 @@ fn opening_shows_nothing_and_buttons_toggle_docked_screens(cx: &mut TestAppConte
         cx.update(|_, cx| bar.read(cx).current(cx)),
         Some(Page::Settings)
     );
-    // クイック設定を押すと、設定と入れ替わる。
+    // クイック設定を押下すると、設定と入れ替わる。
     click(cx, "dashboard-quick-settings");
     open_spawned(cx, 3);
     assert!(commands(cx, 2).contains(&PanelCommand::Close));
@@ -97,13 +97,13 @@ fn opening_shows_nothing_and_buttons_toggle_docked_screens(cx: &mut TestAppConte
         cx.update(|_, cx| bar.read(cx).current(cx)),
         Some(Page::QuickSettings)
     );
-    // もう一度押すと閉じる。
+    // 再度押下するとクローズする。
     click(cx, "dashboard-quick-settings");
     assert!(commands(cx, 3).contains(&PanelCommand::Close));
     assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), None);
 }
 
-/// 外して独立させた画面のボタンを押しても、もう一つは開かずにそれをはめ直す。閉じていれば開き直す。
+/// 取り外して独立させた画面のボタンを押下しても、新規に開かずに再ドッキングする。クローズ済みなら新規に開く。
 #[gpui::test]
 fn undocked_screen_is_docked_again_instead_of_opened_twice(cx: &mut TestAppContext) {
     let (bar, cx) = cx.add_window_view(|_, cx| {
@@ -115,18 +115,18 @@ fn undocked_screen_is_docked_again_instead_of_opened_twice(cx: &mut TestAppConte
         |cx: &mut VisualTestContext| cx.update(|_, cx| cx.global::<PanelControl>().spawns.len());
     bar.update(cx, |d, cx| d.toggle(Page::Settings, cx));
     open_spawned(cx, 2);
-    // ナビゲーションバーの「…」の `nav-undock` と同じく外す。
+    // ナビゲーションバーの「…」の `nav-undock` と同様に取り外す。
     cx.update(|_, cx| ui::undock(2, cx));
     take_commands(cx, 2);
     assert_eq!(cx.update(|_, cx| bar.read(cx).current(cx)), None);
     bar.update(cx, |d, cx| d.toggle(Page::Settings, cx));
-    assert_eq!(spawns(cx), 0, "もう一つは開かない");
+    assert_eq!(spawns(cx), 0, "新規に開かないはず");
     assert!(take_commands(cx, 2).iter().any(docked_to_bar));
     assert_eq!(
         cx.update(|_, cx| bar.read(cx).current(cx)),
         Some(Page::Settings)
     );
-    // 閉じていれば、新しく開く。
+    // クローズ済みなら新規に開く。
     cx.update(|_, cx| {
         let ctl = cx.default_global::<PanelControl>();
         ctl.panels.entry(2).or_default().status.closed = true;
@@ -135,8 +135,8 @@ fn undocked_screen_is_docked_again_instead_of_opened_twice(cx: &mut TestAppConte
     assert_eq!(spawns(cx), 1);
 }
 
-/// 設定を開いた回数（[`update_button_shows_only_with_a_new_release_and_opens_settings`] だけが使う）。
-/// 起動時に開く画面の配信（本物の OS の一覧）も `spawns` に積まれるので、要求の数では数えない。
+/// 設定を開いた回数（[`update_button_shows_only_with_a_new_release_and_opens_settings`] 専用）。
+/// 起動時に開くモニター配信（実際の OS 一覧）も `spawns` に積まれるため、スポーン要求数では計測しない。
 static SETTINGS_OPENED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 fn counted_settings(from: PanelId, opened: Opened) -> PanelSpec {
@@ -144,8 +144,8 @@ fn counted_settings(from: PanelId, opened: Opened) -> PanelSpec {
     summon(from, opened)
 }
 
-/// 新しいリリースがあるときだけ、ランチャーの右に強調色のアップデートのボタンが出る。押すと設定をはめ、
-/// 設定にアップデートを出すよう頼む。設定がもうはまっていれば閉じずに、その画面を描き直させる。
+/// 新規リリースがある場合のみ、ランチャーの右に強調色のアップデートボタンが表示される。押下すると設定をドッキングし、
+/// 設定にアップデート画面の表示を要求する。設定が既にドッキング済みならクローズせず、その画面を再描画させる。
 #[gpui::test]
 fn update_button_shows_only_with_a_new_release_and_opens_settings(cx: &mut TestAppContext) {
     let opened = || SETTINGS_OPENED.load(std::sync::atomic::Ordering::SeqCst);
@@ -156,7 +156,7 @@ fn update_button_shows_only_with_a_new_release_and_opens_settings(cx: &mut TestA
     redraw_bar(cx);
     assert!(
         cx.debug_bounds("dashboard-update").is_none(),
-        "最新なら出ない"
+        "最新版なら非表示のはず"
     );
     cx.update(|_, cx| {
         cx.default_global::<updater::Updater>().found = vec![updater::Release {
@@ -179,27 +179,27 @@ fn update_button_shows_only_with_a_new_release_and_opens_settings(cx: &mut TestA
     let x = |cx: &mut VisualTestContext, s: &'static str| cx.debug_bounds(s).unwrap().origin.x;
     assert!(x(cx, "dashboard-launcher") < x(cx, "dashboard-update"));
     click(cx, "dashboard-update");
-    assert_eq!(opened(), 1, "設定をはめる");
+    assert_eq!(opened(), 1, "設定をドッキングするはず");
     assert!(
         cx.update(|_, cx| updater::take_reveal(cx)),
-        "アップデートを出すよう頼む"
+        "アップデート画面の表示を要求するはず"
     );
-    // 設定（パネル 7）がはまっている間に押すと、閉じも開き直しもせず、描き直させるだけ。
+    // 設定（パネル 7）がドッキング中に押下すると、クローズも再生成もせず、再描画のみ行う。
     bar.update(cx, |d, cx| d.track(Page::Settings, 7, cx));
     cx.update(|_, cx| ui::dock(7, cx));
     redraw_bar(cx);
     click(cx, "dashboard-update");
-    assert_eq!(opened(), 1, "開き直さない");
+    assert_eq!(opened(), 1, "再生成しないはず");
     assert!(!commands(cx, 7).contains(&PanelCommand::Close));
     assert!(cx.update(|_, cx| cx.global::<PanelControl>().panels[&7].redraw));
     assert!(cx.update(|_, cx| updater::take_reveal(cx)));
-    // リリースが消えれば（入れ替えた後など）、ボタンも消える。
+    // リリースが消えれば（インストール後等）、ボタンも消える。
     cx.update(|_, cx| cx.default_global::<updater::Updater>().found.clear());
     redraw_bar(cx);
     assert!(cx.debug_bounds("dashboard-update").is_none());
 }
 
-/// 何か再生しているときだけ、バーに再生中の画面のボタンが出る。
+/// メディア再生中の場合のみ、バーに再生中画面のボタンが表示される。
 #[gpui::test]
 fn now_playing_button_shows_only_while_something_plays(cx: &mut TestAppContext) {
     let (bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
@@ -211,7 +211,7 @@ fn now_playing_button_shows_only_while_something_plays(cx: &mut TestAppContext) 
     assert!(cx.debug_bounds("dashboard-now-playing").is_some());
 }
 
-/// 出ている間に何も無い所を押すと隠す（開いた時点までの数では隠さない）。
+/// 表示中に空領域を押下すると非表示にする（表示開始時点までのカウントでは非表示にしない）。
 #[gpui::test]
 fn pressing_outside_hides_the_dashboard(cx: &mut TestAppContext) {
     let (_bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
@@ -232,7 +232,7 @@ fn pressing_outside_hides_the_dashboard(cx: &mut TestAppContext) {
     assert!(commands(cx, 1).contains(&PanelCommand::Hide(true)));
 }
 
-/// 隠している間に押した分は、出し直したのと同じ状態の書き戻しで届いても隠さない（開く音だけ鳴って出ない）。
+/// 非表示中の押下分は、再表示と同一フレームの状態書き戻しで到着しても非表示にしない（開始音のみ再生されて表示されない状態を防ぐ）。
 #[gpui::test]
 fn press_while_hidden_does_not_hide_the_reshown_dashboard(cx: &mut TestAppContext) {
     let (_bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
@@ -249,14 +249,14 @@ fn press_while_hidden_does_not_hide_the_reshown_dashboard(cx: &mut TestAppContex
         cx.run_until_parked();
     };
     set(cx, 4, true);
-    // 出し直したのと同じフレームに、何も無い所を押した数も増えた。
+    // 再表示と同一フレームに空領域押下カウントも増加した。
     set(cx, 5, false);
     assert!(!commands(cx, 1).contains(&PanelCommand::Hide(true)));
     set(cx, 6, false);
     assert!(commands(cx, 1).contains(&PanelCommand::Hide(true)));
 }
 
-/// ダッシュボードを出し直すと、はまっている画面（配信なら、そのウィンドウ）を前に出すよう頼む。
+/// ダッシュボードを再表示すると、ドッキング中の画面（配信の場合はそのウィンドウ）の前面化を要求する。
 #[gpui::test]
 fn showing_the_dashboard_focuses_the_docked_stream(cx: &mut TestAppContext) {
     let (_bar, cx) = cx.add_window_view(|_, cx| {
@@ -269,8 +269,8 @@ fn showing_the_dashboard_focuses_the_docked_stream(cx: &mut TestAppContext) {
     assert_eq!(take_commands(cx, 4), [PanelCommand::FocusSource]);
 }
 
-/// 滑り込みの間の幅の計算（クイック設定の自然な幅）が、出きったときの実際の幅と合う。合わないと出きる瞬間に飛ぶ。
-/// 通知が溜まっていれば、時刻の横にその件数が出る（無ければ出さない）。
+/// スライドインアニメーション中の幅計算（クイック設定の自然幅）がアニメーション完了後の実際の幅と一致する。不一致だと完了時にジャンプする。
+/// 通知がある場合は時刻の横に件数を表示する（0 件なら非表示）。
 #[gpui::test]
 fn quick_settings_width_matches_the_laid_out_button(cx: &mut TestAppContext) {
     for count in [0, 12] {
@@ -288,7 +288,7 @@ fn quick_settings_width_matches_the_laid_out_button(cx: &mut TestAppContext) {
                 .width,
         );
         let shown = cx.debug_bounds("dashboard-notification-count").is_some();
-        assert_eq!(shown, count > 0, "件数");
+        assert_eq!(shown, count > 0, "件数表示の有無");
         let digits = (count > 0).then(|| {
             cx.update(|window, _| {
                 f32::from(design::font::width(
@@ -307,7 +307,7 @@ fn quick_settings_width_matches_the_laid_out_button(cx: &mut TestAppContext) {
     }
 }
 
-/// 配信が溜まって最大幅を超えそうでも、バーはそこで頭打ちになり、横にスクロールできる。
+/// 配信が蓄積して最大幅を超えそうな場合でも、バーは上限で固定され横スクロール可能になる。
 #[gpui::test]
 fn bar_stops_at_the_max_width_and_scrolls(cx: &mut TestAppContext) {
     let (bar, cx) = cx.add_window_view(|_, cx| {
@@ -328,11 +328,11 @@ fn bar_stops_at_the_max_width_and_scrolls(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     let width = f32::from(cx.debug_bounds("dashboard-bar").unwrap().size.width);
-    assert!(width <= MAX_BAR_PX + 1.0, "頭打ち: {width}");
+    assert!(width <= MAX_BAR_PX + 1.0, "上限で固定: {width}");
     assert!(bar.read_with(cx, |d, _| d.scroll.max_offset().x) > px(0.0));
 }
 
-/// バーは窓いっぱいに広がらず、中身の幅に収まって中央に置かれる。
+/// バーはウィンドウ全幅には広がらず、内容幅に収まって中央配置される。
 #[gpui::test]
 fn bar_fits_its_contents_and_is_centered(cx: &mut TestAppContext) {
     let (_bar, cx) = cx.add_window_view(|_, cx| Dashboard::new(1, summon, summon, cx));
@@ -345,17 +345,17 @@ fn bar_fits_its_contents_and_is_centered(cx: &mut TestAppContext) {
     let content = last.right() - first.left();
     assert!(
         content < width * 0.8,
-        "窓いっぱいに広がらない: {content:?} / {width:?}"
+        "ウィンドウ全幅に広がらないはず: {content:?} / {width:?}"
     );
     let (left, right) = (first.left(), width - last.right());
     assert!(
         (left - right).abs() <= px(2.0),
-        "中央に置く: {left:?} / {right:?}"
+        "中央配置のはず: {left:?} / {right:?}"
     );
 }
 
-/// 開いた配信はバーに溜まり、押すとはまる。はまっていた配信は閉じずに隠して外し、もう一度押すと隠す。
-/// 閉じた配信のボタンは消える。
+/// 開いた配信はバーに蓄積され、押下でドッキングする。ドッキング中の配信はクローズせず非表示にして取り外し、再押下で非表示化する。
+/// クローズ済み配信のボタンは除去される。
 #[gpui::test]
 fn streams_accumulate_and_switch_without_closing(cx: &mut TestAppContext) {
     let (bar, cx) = cx.add_window_view(|_, cx| {
@@ -368,30 +368,30 @@ fn streams_accumulate_and_switch_without_closing(cx: &mut TestAppContext) {
     });
     cx.update(|_, cx| ui::dock(4, cx));
     cx.run_until_parked();
-    // 配信は区切り線の右に、押せるボタンとして並ぶ。
+    // 配信は区切り線の右にクリック可能なボタンとして並ぶ。
     assert!(cx.debug_bounds("dashboard-stream-4").is_some());
     click(cx, "dashboard-stream-5");
     assert_eq!(
         commands(cx, 4)[1..],
         [PanelCommand::Hide(true), PanelCommand::Parent(None)]
     );
-    // 隠したままはめてから出す。
+    // 非表示のままドッキングしてから表示する。
     let five = commands(cx, 5);
     assert!(docked_to_bar(&five[0]));
     assert_eq!(five[1], PanelCommand::FitHeight(SIZE_M.y));
     assert_eq!(
         five[3],
         PanelCommand::FocusSource,
-        "出したウィンドウを前に出す"
+        "配信対象のウィンドウを前面化するはず"
     );
     assert!(
         !commands(cx, 4).contains(&PanelCommand::Close),
-        "隠すだけで閉じない"
+        "非表示のみでクローズしないはず"
     );
-    // もう一度押すと隠す。
+    // 再押下で非表示化する。
     click(cx, "dashboard-stream-5");
     assert!(commands(cx, 5).contains(&PanelCommand::Hide(true)));
-    // 閉じた配信のボタンは消える。
+    // クローズ済み配信のボタンは除去される。
     cx.update(|_, cx| {
         cx.default_global::<PanelControl>()
             .panels
@@ -412,7 +412,7 @@ fn streams_accumulate_and_switch_without_closing(cx: &mut TestAppContext) {
     assert_eq!(streams, [5]);
 }
 
-/// 自分で外して独立させた配信のボタンは残り、閉じたときだけ消える。押すとダッシュボードに戻る。
+/// 手動で取り外して独立させた配信のボタンは残り、クローズ時にのみ除去される。押下でダッシュボードに再ドッキングする。
 #[gpui::test]
 fn undocked_stream_keeps_its_button_until_closed(cx: &mut TestAppContext) {
     let (bar, cx) = cx.add_window_view(|_, cx| {
@@ -443,7 +443,7 @@ fn undocked_stream_keeps_its_button_until_closed(cx: &mut TestAppContext) {
     assert_eq!(bar.read_with(cx, |d, _| d.streams.len()), 0);
 }
 
-/// 常駐の配信は、独立させてもバーに残り、しまうと閉じずに隠れる。
+/// 常駐配信は、独立させてもバーに残り、格納するとクローズせず非表示になる。
 #[gpui::test]
 fn resident_streams_stay_on_the_bar_and_minimize(cx: &mut TestAppContext) {
     let (bar, cx) = cx.add_window_view(|_, cx| {
@@ -453,7 +453,7 @@ fn resident_streams_stay_on_the_bar_and_minimize(cx: &mut TestAppContext) {
     bar.update(cx, |d, cx| {
         d.add_stream(4, SourceKind::Screen, "Display 1".into(), None, true, cx)
     });
-    // はめてから自分で外した（独立させた）。
+    // ドッキング後に手動で取り外した（独立させた）。
     let set_parent = |cx: &mut VisualTestContext, parent| {
         cx.update(|_, cx| {
             cx.default_global::<PanelControl>()
@@ -470,17 +470,17 @@ fn resident_streams_stay_on_the_bar_and_minimize(cx: &mut TestAppContext) {
     assert_eq!(
         bar.read_with(cx, |d, _| d.streams.len()),
         1,
-        "独立させても残る"
+        "独立させてもボタンは残るはず"
     );
     bar.update(cx, |d, cx| d.minimize(4, cx));
     let c = commands(cx, 4);
     assert!(c.contains(&PanelCommand::Hide(true)));
-    assert!(!c.contains(&PanelCommand::Close), "閉じない");
+    assert!(!c.contains(&PanelCommand::Close), "クローズしないはず");
     assert!(bar.read_with(cx, |d, _| d.streams[0].stashed));
 }
 
-/// トーストから通知センターを頼まれると、隠れていたダッシュボードを出し、出てからクイック設定（通知の一覧）をはめる
-/// （隠れている間に開くとはまらずに浮く）。もうはまっていれば閉じない。
+/// トーストから通知センターの表示を要求されると、非表示のダッシュボードを再表示し、表示後にクイック設定（通知一覧）をドッキングする
+/// （非表示中に開くとドッキングされず浮いてしまう）。既にドッキング済みならクローズしない。
 #[gpui::test]
 fn the_toast_opens_the_notification_center(cx: &mut TestAppContext) {
     let (bar, cx) = cx.add_window_view(|_, cx| {
@@ -500,11 +500,11 @@ fn the_toast_opens_the_notification_center(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(
         take_commands(cx, 1).contains(&PanelCommand::Hide(false)),
-        "出す"
+        "ダッシュボードを再表示するはず"
     );
     assert!(
         cx.update(|_, cx| cx.global::<PanelControl>().spawns.is_empty()),
-        "出るまでは開かない"
+        "表示完了前には開かないはず"
     );
     cx.update(|_, cx| {
         cx.default_global::<PanelControl>()
@@ -521,14 +521,14 @@ fn the_toast_opens_the_notification_center(cx: &mut TestAppContext) {
     );
     cx.update(|_, cx| ui::notification::show_center(Some(6), cx));
     cx.run_until_parked();
-    assert!(!commands(cx, 2).contains(&PanelCommand::Close), "閉じない");
+    assert!(!commands(cx, 2).contains(&PanelCommand::Close), "クローズしないはず");
     assert_eq!(
         cx.update(|_, cx| bar.read(cx).current(cx)),
         Some(Page::QuickSettings)
     );
 }
 
-/// 件数は未読の数。みな読んだら出さない。
+/// 件数は未読通知数。全件既読なら非表示にする。
 #[gpui::test]
 fn the_count_is_of_unread_notifications(cx: &mut TestAppContext) {
     let (_bar, cx) = cx.add_window_view(|_, cx| {

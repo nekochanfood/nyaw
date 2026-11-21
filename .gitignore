@@ -1,5 +1,5 @@
 /target
 /target-*
 
-# ローカルの入れ子の worktree
+# ローカルのネストされた worktree
 /.worktrees/

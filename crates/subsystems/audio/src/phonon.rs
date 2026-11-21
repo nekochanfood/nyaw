@@ -1,5 +1,5 @@
-//! Steam Audio（phonon）の最小の FFI。ライブラリは実行時に読み、無ければ呼び出し側がパンニングに落とす。
-//! bindgen（clang）をビルドに要求しないよう、使う型と関数だけを `phonon.h`（4.8）から写している。
+//! Steam Audio（phonon）の最小限 FFI バインディング。ライブラリは実行時に動的読み込みし、不在時は呼び出し側がパンニングにフォールバックする。
+//! bindgen（clang）をビルド要件にしないため、使用する型と関数のみを `phonon.h`（4.8）から転記している。
 
 use glam::Vec3;
 use libloading::Library;
@@ -8,7 +8,7 @@ use std::ptr;
 
 type Handle = *mut c_void;
 
-/// 要求する API の版（`STEAMAUDIO_VERSION`）。ライブラリは同じメジャーで、マイナー・パッチがこれ以上なら受け付ける。
+/// 要求する API バージョン（`STEAMAUDIO_VERSION`）。同一メジャーかつマイナー・パッチがこの値以上であれば互換とみなす。
 const VERSION: u32 = (4 << 16) | (8 << 8);
 const STATUS_SUCCESS: i32 = 0;
 const SIMD_AVX2: i32 = 3;
@@ -89,7 +89,7 @@ type BinauralApply = unsafe extern "system" fn(
     *mut AudioBuffer,
 ) -> i32;
 
-/// 読み込んだ Steam Audio と、コンテキスト・HRTF。
+/// 読み込み済みの Steam Audio ライブラリおよびコンテキスト・HRTF。
 pub(crate) struct Phonon {
     context: Handle,
     hrtf: Handle,
@@ -100,21 +100,21 @@ pub(crate) struct Phonon {
     binaural_release: Release,
     binaural_reset: BinauralReset,
     binaural_apply: BinauralApply,
-    // 関数ポインタより後に落とす（宣言順に Drop される）。
+    // 関数ポインタより後に解放される（フィールド宣言順に Drop が実行される）。
     _lib: Library,
 }
 
-// SAFETY: Steam Audio のコンテキスト・HRTF・エフェクトはスレッドをまたいで使ってよい（同時に呼ばない限り）。
-// Phonon はミキサーが単独で所有し、一度に 1 スレッドからしか触らない。
+// SAFETY: Steam Audio のコンテキスト・HRTF・エフェクトはスレッド間で移動可能（同時アクセスがない限り安全）。
+// Phonon はミキサーが排他的に所有し、常に単一スレッドからのみアクセスする。
 unsafe impl Send for Phonon {}
 
-/// 音源 1 つぶんの HRTF の畳み込みの状態。[`Phonon::binaural`] で作り、同じ `Phonon` に返して解放する。
+/// 音源 1 つ分の HRTF 畳み込み状態。[`Phonon::binaural`] で生成し、同一 `Phonon` に返却して解放する。
 pub(crate) struct Binaural(Handle);
 
 // SAFETY: Phonon と同じ。
 unsafe impl Send for Binaural {}
 
-/// ライブラリを探す名前。`NYAW_PHONON` で場所を指せる。無ければ OS の既定の探し方（Windows は実行ファイルの隣が最初）。
+/// ライブラリの検索名。`NYAW_PHONON` 環境変数でパスを指定可能。未設定時は OS の既定の検索順序に従う（Windows は実行ファイルと同一ディレクトリが最優先）。
 fn library_name() -> std::ffi::OsString {
     std::env::var_os("NYAW_PHONON").unwrap_or_else(|| {
         format!(
@@ -127,7 +127,7 @@ fn library_name() -> std::ffi::OsString {
 }
 
 unsafe extern "system" fn log(level: i32, message: *const c_char) {
-    // SAFETY: Steam Audio は NUL 終端の文字列を渡す。
+    // SAFETY: Steam Audio は NUL 終端文字列を渡す。
     let message = unsafe { std::ffi::CStr::from_ptr(message) }.to_string_lossy();
     match level {
         2 => logger::error!("steam audio", message = message.trim_end()),
@@ -137,13 +137,13 @@ unsafe extern "system" fn log(level: i32, message: *const c_char) {
 }
 
 impl Phonon {
-    /// Steam Audio を読み、既定の HRTF を作る。`frame_size` は [`Self::apply`] に渡す 1 回ぶんのサンプル数。
+    /// Steam Audio を読み込み、既定の HRTF を作成する。`frame_size` は [`Self::apply`] に渡す 1 回分のサンプル数。
     pub(crate) fn load(sampling_rate: u32, frame_size: usize) -> Result<Self, String> {
         let name = library_name();
-        // SAFETY: Steam Audio のライブラリを読むだけ（初期化で副作用のある処理を持たない）。
+        // SAFETY: Steam Audio ライブラリの読み込みのみ（初期化時に副作用のある処理は実行されない）。
         let lib = unsafe { Library::new(&name) }
             .map_err(|e| format!("{}: {e}", name.to_string_lossy()))?;
-        // SAFETY: シンボルの型は phonon.h の宣言どおり。
+        // SAFETY: シンボルの型は phonon.h の宣言と一致する。
         unsafe {
             let sym = |n: &[u8]| -> Result<*const c_void, String> {
                 lib.get::<*const c_void>(n)
@@ -169,7 +169,7 @@ impl Phonon {
                 log_callback: Some(log),
                 allocate_callback: ptr::null(),
                 free_callback: ptr::null(),
-                // AVX512 はクロックが落ちて遅くなることがある（phonon.h の注意書き）。
+                // AVX512 はクロック低下により性能劣化する場合がある（phonon.h の注意事項）。
                 simd_level: SIMD_AVX2,
                 flags: 0,
             };
@@ -218,25 +218,25 @@ impl Phonon {
         };
         let mut es = BinauralEffectSettings { hrtf: self.hrtf };
         let mut effect = ptr::null_mut();
-        // SAFETY: 生きているコンテキストと HRTF を渡す。
+        // SAFETY: 有効なコンテキストと HRTF を渡す。
         let status =
             unsafe { (self.binaural_create)(self.context, &mut audio, &mut es, &mut effect) };
         (status == STATUS_SUCCESS).then_some(Binaural(effect))
     }
 
-    /// 前の音の残り（畳み込みの尾）を捨てる。別の音に使い回す前に呼ぶ。
+    /// 前の音声の残響（畳み込みテール）をクリアする。別の音声に再利用する前に呼び出す。
     pub(crate) fn reset(&self, effect: &mut Binaural) {
-        // SAFETY: このコンテキストで作ったエフェクト。
+        // SAFETY: このコンテキストで生成したエフェクト。
         unsafe { (self.binaural_reset)(effect.0) }
     }
 
     pub(crate) fn release(&self, mut effect: Binaural) {
-        // SAFETY: このコンテキストで作ったエフェクトを 1 回だけ解放する。
+        // SAFETY: このコンテキストで生成したエフェクトを一度だけ解放する。
         unsafe { (self.binaural_release)(&mut effect.0) }
     }
 
-    /// モノラルの `input` を、聞き手から見た向き `direction`（聞き手の座標。右 +X・上 +Y・前 -Z の単位ベクトル）から
-    /// 聞こえるように HRTF で畳み込み、`left` / `right` に書く。長さはどれも `frame_size`。
+    /// モノラルの `input` を、リスナーから見た方向 `direction`（リスナー座標系。右 +X・上 +Y・前 -Z の単位ベクトル）から
+    /// 聞こえるよう HRTF で畳み込み、`left` / `right` に書き込む。すべての長さは `frame_size`。
     pub(crate) fn apply(
         &self,
         effect: &mut Binaural,
@@ -270,14 +270,14 @@ impl Phonon {
             num_samples: n as i32,
             data: out_ptrs.as_mut_ptr(),
         };
-        // SAFETY: バッファは frame_size ぶんあり、呼び出しの間だけ借りる。
+        // SAFETY: バッファは frame_size 分の長さがあり、呼び出し期間中のみ借用する。
         unsafe { (self.binaural_apply)(effect.0, &mut params, &mut inb, &mut outb) };
     }
 }
 
 impl Drop for Phonon {
     fn drop(&mut self) {
-        // SAFETY: 作ったものを作った逆順に 1 回ずつ解放する。エフェクトは先に返されている。
+        // SAFETY: 生成した順序の逆順に 1 回ずつ解放する。エフェクトは事前に返却済み。
         unsafe {
             (self.hrtf_release)(&mut self.hrtf);
             (self.context_release)(&mut self.context);

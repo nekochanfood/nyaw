@@ -1,7 +1,7 @@
-//! OS の通知（トースト）を読み、押されたら OS と同じ経路でアプリへ届ける。Windows は `UserNotificationListener`
+//! OS の通知（トースト）を読み取り、押下されたら OS と同じ経路でアプリへ配信する。Windows は `UserNotificationListener`
 //! （通知センターの一覧）と、通知の元の XML（ボタンと押したときの引数。OS の通知の DB にある）。
 //! 問い合わせ・アイコンの読み込み・押したときの呼び出しはワーカーが行い、メインスレッドは最新の一覧を受け取るだけ
-//! （[`Notifications::now`]）。押す（[`Notifications::activate`]）もワーカーへ送るだけで待たない。
+//! （[`Notifications::now`]）。押下（[`Notifications::activate`]）もワーカーへ送信するのみで待機しない。
 
 use std::{
     collections::{HashMap, HashSet},
@@ -18,7 +18,7 @@ use std::{
 mod windows;
 
 /// OS に問い合わせ直す間隔。
-// ponytail: 見張り（NotificationChanged）はパッケージの ID が無いアプリでは使えないので読み直す。遅れは最長この間隔。
+// ponytail: 監視（NotificationChanged）はパッケージの ID が無いアプリでは利用できないため再読み取りする。遅延は最長この間隔。
 const POLL: Duration = Duration::from_secs(1);
 /// アプリのアイコンの一辺（px）。
 const ICON_PX: u32 = 64;
@@ -40,7 +40,7 @@ pub struct App {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Action {
     pub label: String,
-    /// 押すと開く URL（画面がユーザーに確かめてから開く）。`None` なら [`Notifications::activate`] でアプリへ届ける。
+    /// 押下すると開く URL（画面がユーザーに確認してから開く）。`None` であれば [`Notifications::activate`] でアプリへ配信する。
     pub url: Option<String>,
 }
 
@@ -56,12 +56,12 @@ pub struct Notification {
     pub arrived: SystemTime,
     /// 本文を押すと開く URL。`None` なら [`Notifications::activate`] でアプリへ届ける（開く）。
     pub url: Option<String>,
-    /// 押せるボタン（届けられないものは含めない）。
+    /// 押下可能なボタン（配信不可のものは含めない）。
     pub actions: Vec<Action>,
 }
 
-/// OS に出す通知（デバッグのテスト用。[`Notifications::send`]）。押すと開くものは、どれもウェブの URL
-/// （確かめてから開く。アプリは開かない）。
+/// OS に送信する通知（デバッグのテスト用。[`Notifications::send`]）。押下で開くものは、すべてウェブの URL
+/// （確認してから開く。アプリは起動しない）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Outgoing {
     pub title: String,
@@ -72,7 +72,7 @@ pub struct Outgoing {
     pub buttons: Vec<(String, String)>,
 }
 
-/// ワーカーへの頼みごと。
+/// ワーカーへのリクエスト。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     /// 通知の本文（`None`）かボタンを押した（[`Notifications::activate`]）。
@@ -83,14 +83,14 @@ pub enum Request {
     Remove(u32),
 }
 
-/// 押したときにすること（ワーカーの中だけで持つ）。
+/// 押下時に実行する処理（ワーカー内部でのみ保持する）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Plan {
-    /// URL を開く（画面が確かめてから開く）。
+    /// URL を開く（画面がユーザーに確認してから開く）。
     Url(String),
     /// アプリの通知の受け口に引数を渡す（OS が通知を押したときと同じ）。
     Invoke(String),
-    /// アプリを開く。
+    /// アプリを起動する。
     Launch,
 }
 
@@ -106,26 +106,26 @@ struct Raw {
     arrived: SystemTime,
 }
 
-/// OS ごとの問い合わせ先。ワーカーのスレッドだけが持つ。
+/// OS ごとの問い合わせ先。ワーカーのスレッドのみが保持する。
 #[cfg_attr(not(windows), allow(dead_code))]
 trait Backend {
-    /// 通知センターにある通知。読めなければ `None`（前の一覧のまま）。
+    /// 通知センターにある通知。読み取り不可であれば `None`（前の一覧のまま）。
     fn read(&mut self) -> Option<Vec<Raw>>;
     /// 通知 `id` の元の XML。
     fn payload(&mut self, id: u32) -> Option<String>;
     /// 通知 `id` のアプリのアイコンの画像のファイルの中身。
     fn icon(&mut self, id: u32) -> Option<Vec<u8>>;
-    /// アプリ `app` のスタートメニューのアイコン（通知がロゴを持たないとき）。
+    /// アプリ `app` のスタートメニューのアイコン（通知がロゴを保持しない場合）。
     fn shell_icon(&mut self, app: &str) -> Option<Image> {
         desktop::app_icon(app)
     }
-    /// アプリ `app` が通知の受け口（押したときの引数を受け取る口）を持っているか。
+    /// アプリ `app` が通知の受信インターフェース（押下時の引数を受け取る口）を保持しているか。
     fn invokable(&mut self, app: &str) -> bool;
-    /// 押したことをアプリへ届ける（`args` が `None` ならアプリを開く）。届けられたら `true`。
+    /// 押下をアプリへ配信する（`args` が `None` であればアプリを起動する）。配信成功時は `true`。
     fn activate(&mut self, app: &str, args: Option<&str>) -> bool;
-    /// 通知センターから消す。
+    /// 通知センターから削除する。
     fn remove(&mut self, id: u32);
-    /// OS に通知を出す。
+    /// OS に通知を送信する。
     fn send(&mut self, toast: &Outgoing);
 }
 
@@ -139,7 +139,7 @@ struct Entry {
 /// ワーカーが持つ一覧。
 #[derive(Default)]
 struct State {
-    /// 前に読んだ通知の ID。起動時にあったものは知らせず、新しく来たものだけを足す。`None` はまだ一度も読んでいない。
+    /// 前回読み取った通知の ID。起動時に存在したものは通知せず、新規到着分のみ追加する。`None` はまだ一度も読み取っていない。
     seen: Option<HashSet<u32>>,
     live: Vec<Entry>,
     /// アプリごとのアイコン（読めなかったものも覚える）。
@@ -147,7 +147,7 @@ struct State {
 }
 
 impl State {
-    /// 読んだ一覧を反映する（消えたものを落とし、新しく来たものを足す）。変わったら `true`。
+    /// 読み取った一覧を反映する（消失したものを除去し、新規到着分を追加する）。変更があれば `true`。
     fn update(&mut self, raws: Vec<Raw>, backend: &mut dyn Backend) -> bool {
         let ids: HashSet<u32> = raws.iter().map(|r| r.id).collect();
         let before = self.live.len();
@@ -159,7 +159,7 @@ impl State {
         };
         self.seen = Some(ids);
         for raw in fresh {
-            // 中身は書かない（人のやりとりが入る）。
+            // 内容は記録しない（個人のやり取りが含まれるため）。
             logger::debug!("notification arrived", id = raw.id, app = raw.app_id);
             let entry = self.entry(raw, backend);
             self.live.push(entry);

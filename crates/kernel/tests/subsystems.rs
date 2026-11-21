@@ -1,4 +1,4 @@
-//! 生入力が Subsystems を通って共通のパネル操作になることを確かめる。
+//! 生入力が Subsystems を経由して共通のパネル操作に変換されることを検証する。
 
 use kernel::{
     Config, Hand, Kernel, PanelCommand, PointerEvent, Pose, Vec2,

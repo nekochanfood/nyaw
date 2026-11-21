@@ -1,4 +1,4 @@
-//! 実デスクトップを使用するため、明示的に --ignored を指定したときだけ実行する。
+//! 実デスクトップを使用するため、`--ignored` を明示的に指定した場合にのみ実行される。
 #![cfg(windows)]
 
 use desktop::{SourceKind, Sources, Status, Stream, Touch, TouchPhase};

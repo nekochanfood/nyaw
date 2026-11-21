@@ -1,5 +1,5 @@
-//! Windows: GSMTC（`GlobalSystemMediaTransportControlsSessionManager`）。切り替えて選んだセッションか、無ければ
-//! OS がいちばん関係があると見たセッション（`GetCurrentSession`）を出す。
+//! Windows: GSMTC（`GlobalSystemMediaTransportControlsSessionManager`）。ユーザーが切り替えで選択したセッション、または
+//! OS が最も関連性が高いと判断したセッション（`GetCurrentSession`）を返す。
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -26,19 +26,19 @@ use windows::{
 
 use super::{Backend, Command, Controls, Pick, Raw, fallback_name, picked};
 
-/// Windows の時刻（1601 年からの 100ns）と UNIX 時刻の差（100ns）。
+/// Windows 時刻（1601 年基点、100ns 単位）と UNIX 時刻の差分（100ns 単位）。
 const EPOCH_DIFF: i64 = 116_444_736_000_000_000;
 
 pub(crate) struct Session {
     manager: Manager,
-    /// 最後に読んだセッション（操作はこれに送る）と、その曲（ジャケットを読むため）。
+    /// 最後に取得したセッション（操作コマンドの送信先）と、その曲情報（ジャケット取得用）。
     session: Option<MediaSession>,
     properties: Option<Properties>,
 }
 
 impl Session {
     pub(crate) fn new() -> Option<Self> {
-        // WinRT はスレッドごとに初期化が要る（このワーカーのスレッドだけで使う）。
+        // WinRT はスレッドごとの初期化が必要（このワーカースレッドでのみ使用する）。
         let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
         let manager = Manager::RequestAsync().ok()?.get().ok()?;
         Some(Self {
@@ -48,7 +48,7 @@ impl Session {
         })
     }
 
-    /// 再生中・一時停止中のセッション（OS の並び順）と、そのアプリの ID。
+    /// 再生中・一時停止中のセッション（OS の並び順）とそのアプリ ID を返す。
     fn active(&self) -> Vec<(String, MediaSession)> {
         let Ok(list) = self.manager.GetSessions() else {
             return Vec::new();
@@ -76,7 +76,7 @@ impl Backend for Session {
     fn read(&mut self, pick: Option<&Pick>) -> Option<Raw> {
         let active = self.active();
         let sessions: Vec<String> = active.iter().map(|(id, _)| id.clone()).collect();
-        // 選んだものが無ければ、OS がいちばん関係があると見たもの（無ければ最初）。
+        // 選択セッションが存在しない場合、OS が最も関連性が高いと判断したもの（なければ先頭）を使用する。
         let current = self.manager.GetCurrentSession().ok();
         let index = picked(&sessions, pick)
             .or_else(|| {
@@ -108,7 +108,7 @@ impl Backend for Session {
                 (ticks(position), (end > start).then(|| ticks(end - start)))
             })
             .unwrap_or_default();
-        // 位置はアプリが最後に知らせた時点のもの。再生中なら、そこからの経過を足す。
+        // 位置はアプリが最後に報告した時点の値。再生中であれば、そこからの経過時間を加算する。
         if playing
             && let Some(updated) = timeline.and_then(|t| t.LastUpdatedTime().ok())
             && let Ok(now) = SystemTime::now().duration_since(UNIX_EPOCH)
@@ -152,10 +152,10 @@ impl Backend for Session {
     }
 
     fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>, Option<String>) {
-        // ストアのアプリ（と登録されたアプリ）は AppInfo から名前とロゴが取れる。ブラウザのような ID を持つ
-        // デスクトップのアプリ（"Chrome"、Firefox の "308046B0AF4A39CB" など）はスタートメニューから引く。
-        // "Spotify.exe" のように ID が実行ファイル名のものはどちらでも引けないので、ID から名前を作る
-        // （アイコンは画面側がウィンドウのものを使う）。
+        // ストアアプリ（および登録済みアプリ）は AppInfo から名前とロゴを取得可能。ブラウザのような ID を持つ
+        // デスクトップアプリ（"Chrome"、Firefox の "308046B0AF4A39CB" 等）はスタートメニューから解決する。
+        // "Spotify.exe" のように ID が実行ファイル名のものはどちらでも解決できないため、ID から名前を生成する
+        // （アイコンは画面側がウィンドウのものを使用する）。
         let info = AppInfo::GetFromAppUserModelId(&HSTRING::from(id))
             .and_then(|a| a.DisplayInfo())
             .ok();
@@ -198,8 +198,8 @@ impl Backend for Session {
     }
 }
 
-/// スタートメニューのアプリ（`shell:AppsFolder`）を AppUserModelId で引き、表示名と、ショートカットの指す
-/// 実行ファイル名（"chrome.exe" など）を返す。
+/// スタートメニューのアプリ（`shell:AppsFolder`）を AppUserModelId で検索し、表示名と
+/// ショートカットが指す実行ファイル名（"chrome.exe" 等）を返す。
 fn shell_app(id: &str) -> Option<(String, Option<String>)> {
     let path = HSTRING::from(format!("shell:AppsFolder\\{id}"));
     let item: IShellItem2 = unsafe { SHCreateItemFromParsingName(&path, None) }.ok()?;
@@ -215,7 +215,7 @@ fn shell_app(id: &str) -> Option<(String, Option<String>)> {
     Some((name, exe))
 }
 
-/// ストリームの中身を全部読む。
+/// ストリームの内容を全量読み出す。
 fn read_stream(reference: &IRandomAccessStreamReference) -> Option<Vec<u8>> {
     let stream = reference.OpenReadAsync().ok()?.get().ok()?;
     let size = u32::try_from(stream.Size().ok()?).ok()?;

@@ -1,6 +1,6 @@
-//! アプリの更新。GitHub のリリースから今より新しいビルドを見つけて知らせ、ユーザーが選んだら落として入れ替える
-//! （勝手には入れない）。新旧は版の文字（CalVer。書き方が決まっていない）ではなく、ビルド番号で比べる（`AGENT.md`）。
-//! どのリリースを勧めるかは設定のチャンネル（`update_channel`。安定版はプレリリースを除く）で決める。
+//! アプリの更新。GitHub のリリースから現在より新しいビルドを検出して通知し、ユーザーが選択するとダウンロードしてインストールする
+//! （自動インストールは行わない）。新旧はバージョン文字列（CalVer。書式は不定）ではなく、ビルド番号で比較する（`AGENT.md`）。
+//! 推奨リリースは設定のチャンネル（`update_channel`。安定版はプレリリースを除外）で決定する。
 
 use std::fmt::Display;
 use std::fs;
@@ -16,46 +16,46 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use ui::PanelControl;
 
-// `VERSION`（表示する版。`2026.0.1-beta.1` など）と `BUILD`（ビルド番号 = HEAD までのコミット数）。build.rs が作る。
+// `VERSION`（表示用バージョン。`2026.0.1-beta.1` など）と `BUILD`（ビルド番号 = HEAD までのコミット数）。build.rs が生成する。
 include!(concat!(env!("OUT_DIR"), "/version.rs"));
 
-/// リリースの一覧の大きさと、インストーラーの大きさの上限。
+/// リリース一覧のサイズと、インストーラーのサイズ上限。
 const MAX_LIST: u64 = 4 << 20;
 const MAX_INSTALLER: u64 = 512 << 20;
-/// 確かめ直す間隔（ダッシュボードが起動時とこの間隔で確かめる）。GitHub の API は認証なしで 1 時間に 60 回まで。
+/// 再確認間隔（ダッシュボードが起動時およびこの間隔で確認する）。GitHub の API は認証なしで 1 時間に 60 回まで。
 pub const RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
-/// 一覧・インストーラーの取得にかけてよい時間。
+/// 一覧・インストーラーの取得タイムアウト。
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
 /// 新しいリリース。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
-    /// 版（タグから v を除いたもの。`2026.0.1-beta.1` など）とビルド番号。
+    /// バージョン（タグから v を除いた文字列。`2026.0.1-beta.1` など）とビルド番号。
     pub version: String,
     pub build: u32,
     /// リリースの名前（無ければタグ）と本文（Markdown）。
     pub title: String,
     pub notes: String,
-    /// 公開した時刻（ISO 8601）とリリースのページ。
+    /// 公開日時（ISO 8601）とリリースページの URL。
     pub published_at: Option<String>,
     pub page: String,
-    /// プレリリース（GitHub の印。alpha・beta など）。ナイトリーのチャンネルにだけ勧める。
+    /// プレリリース（GitHub のフラグ。alpha・beta など）。ナイトリーチャンネルにのみ推奨する。
     pub prerelease: bool,
     pub installer: Installer,
 }
 
-/// リリースに付いたインストーラー。
+/// リリースに付属するインストーラー。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Installer {
     pub name: String,
     pub url: String,
     pub size: u64,
-    /// GitHub が知らせる SHA-256（16 進。アセットの `digest`）。無いものは確かめられないので、勧めも走らせもしない。
+    /// GitHub が提供する SHA-256（16 進。アセットの `digest`）。未提供の場合は検証不可のため、推奨も実行もしない。
     pub sha256: String,
 }
 
-/// リリースのインストーラーか（`nyaw-<版>-setup.exe`。`installer/nyaw.iss`）。区切りを含む名前は落とす先の外に出るので除く。
+/// リリースのインストーラーか判定する（`nyaw-<バージョン>-setup.exe`。`installer/nyaw.iss`）。パス区切りを含む名前はダウンロード先外に到達するため除外する。
 pub fn is_installer(name: &str) -> bool {
     name.len() > "nyaw--setup.exe".len()
         && name.starts_with("nyaw-")
@@ -63,8 +63,8 @@ pub fn is_installer(name: &str) -> bool {
         && !name.contains(['/', '\\'])
 }
 
-/// リリースノートの末尾の見えない注釈 `<!-- nyaw-build: <番号> -->`（リリースのワークフローが足す）からビルド番号を読む。
-/// ファイル名には出さない。GitHub も nyaw の Markdown も HTML のコメントは描かない。
+/// リリースノート末尾の非表示注釈 `<!-- nyaw-build: <番号> -->`（リリースワークフローが追加する）からビルド番号を読み取る。
+/// ファイル名には含めない。GitHub も nyaw の Markdown も HTML コメントをレンダリングしない。
 pub fn notes_build(notes: &str) -> Option<u32> {
     let (_, rest) = notes.rsplit_once("<!-- nyaw-build:")?;
     rest.split_once("-->")?.0.trim().parse().ok()
@@ -93,7 +93,7 @@ struct ApiAsset {
     digest: Option<String>,
 }
 
-/// GitHub のリリースの一覧（API の JSON）を読む。下書きと、インストーラー・その SHA-256・ビルド番号のどれかが無いものは除く。
+/// GitHub のリリース一覧（API の JSON）をパースする。下書きと、インストーラー・SHA-256・ビルド番号のいずれかが欠けたものは除外する。
 pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
     let list: Vec<ApiRelease> =
         serde_json::from_slice(json).map_err(|e| format!("cannot read the release list: {e}"))?;
@@ -130,8 +130,8 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
         .collect())
 }
 
-/// `releases` のうち、`channel` で受け取るもの（安定版はプレリリースを除く）で、ビルド番号が `build` より大きいものの中で
-/// 一番新しいもの。
+/// `releases` のうち `channel` で受け入れるもの（安定版はプレリリースを除外）で、ビルド番号が `build` より大きいもののうち
+/// 最新のもの。
 pub fn newest(releases: &[Release], build: u32, channel: UpdateChannel) -> Option<Release> {
     releases
         .iter()
@@ -140,14 +140,14 @@ pub fn newest(releases: &[Release], build: u32, channel: UpdateChannel) -> Optio
         .cloned()
 }
 
-/// リリースの一覧を返す GitHub の API（リポジトリは Cargo.toml の `repository`）。
+/// リリース一覧を返す GitHub API の URL（リポジトリは Cargo.toml の `repository`）。
 pub fn releases_url() -> String {
     let repo = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
     let api = repo.replacen("https://github.com/", "https://api.github.com/repos/", 1);
     format!("{api}/releases?per_page=30")
 }
 
-/// 一覧 `url` のリリースを読む（どれが新しいかは [`newest`] で選ぶ）。ネットワークを使うので別スレッドで呼ぶ。
+/// 一覧 `url` のリリースを取得する（新旧の判定は [`newest`] で行う）。ネットワークアクセスを伴うため別スレッドで呼び出す。
 pub fn check(url: &str) -> Result<Vec<Release>, String> {
     let mut response = agent(LIST_TIMEOUT)
         .get(url)
@@ -167,8 +167,8 @@ pub fn check(url: &str) -> Result<Vec<Release>, String> {
     parse_releases(&body)
 }
 
-/// `release` のインストーラーを `dir` に落とし、大きさと SHA-256 を確かめる。落とした量（バイト）を `progress` に書く。
-/// 違っていれば消してエラー。ネットワークとファイルを使うので別スレッドで呼ぶ。
+/// `release` のインストーラーを `dir` にダウンロードし、サイズと SHA-256 を検証する。ダウンロード済みバイト数を `progress` に書き込む。
+/// 不一致の場合はファイルを削除してエラーを返す。ネットワークとファイルアクセスを伴うため別スレッドで呼び出す。
 pub fn download(release: &Release, dir: &Path, progress: &AtomicU64) -> Result<PathBuf, String> {
     let installer = &release.installer;
     if !is_installer(&installer.name) || installer.size > MAX_INSTALLER {
@@ -218,9 +218,9 @@ pub fn download(release: &Release, dir: &Path, progress: &AtomicU64) -> Result<P
     }
 }
 
-/// インストーラーに渡す引数: ウィザードもメッセージも出さずに入れ（ユーザー単位なので UAC も出ない）、`pid` のプロセス
-/// （このアプリ）が終わるのを待ってから入れ替え、終えたら `relaunch`（`--novr` など）で起動し直す（`installer/nyaw.iss`）。
-/// インストーラーは引数を空白でつないで渡し直すので、空白・引用符を含むものは落とす。
+/// インストーラーに渡す引数: ウィザードもメッセージも表示せずにインストールし（ユーザー単位のため UAC も不要）、`pid` のプロセス
+/// （このアプリ）の終了を待ってからファイルを入れ替え、完了後 `relaunch`（`--novr` など）で再起動する（`installer/nyaw.iss`）。
+/// インストーラーは引数を空白で結合して再渡しするため、空白・引用符を含むものは除外する。
 pub fn installer_args(pid: u32, relaunch: impl IntoIterator<Item = String>) -> Vec<String> {
     let flags = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"];
     let mut args: Vec<String> = flags.map(String::from).to_vec();
@@ -234,12 +234,12 @@ pub fn installer_args(pid: u32, relaunch: impl IntoIterator<Item = String>) -> V
     args
 }
 
-/// 落としたインストーラーを走らせ、終えたら今と同じ引数で起動し直させる（終わりは待たない。待つのはインストーラーの方）。
+/// ダウンロード済みインストーラーを実行し、完了後に現在と同じ引数で再起動させる（完了を待たない。待機するのはインストーラー側）。
 pub fn run_installer(path: &Path) -> Result<(), String> {
     start_installer(path, std::env::args().skip(1))
 }
 
-/// 落としたインストーラーを走らせ、終えたら `relaunch` の引数で起動し直させる。
+/// ダウンロード済みインストーラーを実行し、完了後に `relaunch` の引数で再起動させる。
 pub fn start_installer(
     path: &Path,
     relaunch: impl IntoIterator<Item = String>,
@@ -254,7 +254,7 @@ pub fn start_installer(
 fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
-        // GitHub の API は User-Agent の無い要求を断る。
+        // GitHub の API は User-Agent のないリクエストを拒否する。
         .user_agent(concat!("nyaw/", env!("CARGO_PKG_VERSION")))
         .build()
         .into()
@@ -264,22 +264,22 @@ fn err(e: impl Display) -> String {
     e.to_string()
 }
 
-/// 更新の状態（GPUI のグローバル）。ダッシュボードのボタンと設定のアップデートが同じものを見る。
+/// 更新の状態（GPUI のグローバル）。ダッシュボードのボタンと設定のアップデート画面が同一インスタンスを参照する。
 pub struct Updater {
-    /// 比べる元（今動いているビルド）・一覧の場所・落とす先・インストーラーの走らせ方。テストが差し替える。
+    /// 比較元（現在実行中のビルド）・一覧の URL・ダウンロード先・インストーラーの実行方法。テストが差し替える。
     pub build: u32,
     pub source: String,
     pub dir: PathBuf,
     pub launch: fn(&Path) -> Result<(), String>,
-    /// 最後に確かめたリリースの一覧（チャンネルを問わない）。勧めるものは [`latest`] が今のチャンネルで選ぶので、
-    /// チャンネルを切り替えると確かめ直さずにすぐ変わる。
+    /// 最後に確認したリリース一覧（チャンネル不問）。推奨リリースは [`latest`] が現在のチャンネルで選択するため、
+    /// チャンネルを切り替えると再確認なしで即座に反映される。
     pub found: Vec<Release>,
     pub step: Step,
-    /// 一度でも確かめ終えた。
+    /// 1 回以上確認完了済み。
     pub checked: bool,
-    /// 最後の失敗。
+    /// 最後のエラー。
     pub error: Option<String>,
-    /// ダッシュボードのボタンから、設定のアップデートを開くよう頼まれた（設定画面が見て下ろす）。
+    /// ダッシュボードのボタンから設定のアップデート画面を開くよう要求された（設定画面が参照して消費する）。
     pub reveal: bool,
 }
 
@@ -301,35 +301,35 @@ impl Default for Updater {
 
 impl gpui::Global for Updater {}
 
-/// 今していること。
+/// 現在の処理状態。
 #[derive(Debug, Clone, Default)]
 pub enum Step {
     #[default]
     Idle,
     Checking,
-    /// 落としている（落とした量。全体は `Installer::size`）。
+    /// ダウンロード中（ダウンロード済みバイト数。合計は `Installer::size`）。
     Downloading(Arc<AtomicU64>),
-    /// インストーラーを走らせた（アプリはすぐ終わる）。
+    /// インストーラー実行済み（アプリは直後に終了する）。
     Installing,
 }
 
-/// 今の状態（まだ何もしていなければ既定のもの）。
+/// 現在の状態（未初期化であれば既定値）。
 pub fn state(cx: &mut App) -> &Updater {
     cx.default_global::<Updater>()
 }
 
-/// 今のチャンネル（設定の `update_channel`）で勧める新しいリリース（最新なら `None`）。
+/// 現在のチャンネル（設定の `update_channel`）で推奨する新しいリリース（最新版であれば `None`）。
 pub fn latest(cx: &App) -> Option<Release> {
     let u = cx.try_global::<Updater>()?;
     newest(&u.found, u.build, ui::settings(cx).update_channel)
 }
 
-/// 新しいリリースがあるか（ダッシュボードのボタン）。
+/// 新しいリリースが利用可能か（ダッシュボードのボタン用）。
 pub fn available(cx: &App) -> bool {
     latest(cx).is_some()
 }
 
-/// 新しいリリースがあるか確かめる（別スレッド）。何かしている間は何もしない。
+/// 新しいリリースの有無を確認する（別スレッド）。処理中であれば何もしない。
 pub fn check_now(cx: &mut App) {
     let u = cx.default_global::<Updater>();
     if !matches!(u.step, Step::Idle) {
@@ -369,8 +369,8 @@ pub fn check_now(cx: &mut App) {
     .detach();
 }
 
-/// 見つけたリリースを落とし、インストーラーを走らせてアプリを終える（インストーラーが入れ替えて起動し直す）。
-/// ユーザーが押したときだけ呼ぶ。何かしている間は何もしない。
+/// 検出済みリリースをダウンロードし、インストーラーを実行してアプリを終了する（インストーラーがファイルを入れ替えて再起動する）。
+/// ユーザーの操作時のみ呼び出す。処理中であれば何もしない。
 pub fn install(cx: &mut App) {
     let Some(release) = latest(cx) else {
         return;
@@ -412,12 +412,12 @@ pub fn install(cx: &mut App) {
     .detach();
 }
 
-/// 設定のアップデートを開くよう頼む（ダッシュボードのボタン）。
+/// 設定のアップデート画面を開くよう要求する（ダッシュボードのボタン）。
 pub fn reveal(cx: &mut App) {
     cx.default_global::<Updater>().reveal = true;
 }
 
-/// 頼まれていれば下ろして `true`（設定画面）。
+/// 要求があれば消費して `true` を返す（設定画面用）。
 pub fn take_reveal(cx: &mut App) -> bool {
     cx.try_global::<Updater>().is_some_and(|u| u.reveal)
         && std::mem::take(&mut cx.global_mut::<Updater>().reveal)

@@ -1,6 +1,6 @@
-//! カタログ: design のすべて（色の段・役割・定数・文字・アイコン・部品・動き）を 1 画面で確認するデバッグ用のビュー。
-//! `cargo run -p design --example catalog` で単独のウィンドウに出る。画面側（VR のパネル）に載せてもよい。
-//! 右上のスイッチでライト / ダークを切り替える。
+//! カタログ: design の全要素（色の段・役割・定数・文字・アイコン・部品・動き）を 1 画面で確認するデバッグ用ビュー。
+//! `cargo run -p design --example catalog` で単独ウィンドウとして起動する。画面側（VR パネル）にも配置可能。
+//! 右上のスイッチでライト / ダークテーマを切り替える。
 
 use std::time::Instant;
 
@@ -18,13 +18,13 @@ use crate::{
 
 pub struct Catalog {
     mode: Mode,
-    /// 節ごとの一覧（見えている節だけを作る）。
+    /// 節ごとの仮想リスト（可視範囲の節のみ描画する）。
     page: ListState,
     scroll: ScrollHandle,
     slider: f32,
     toggle: bool,
     clicks: usize,
-    /// 動きの見本（再生した後のもの）。
+    /// アニメーションの見本（再生済みのもの）。
     motions: Vec<(Motion, Animation)>,
     last: Option<Instant>,
 }
@@ -33,7 +33,7 @@ impl Default for Catalog {
     fn default() -> Self {
         Self {
             mode: Mode::Dark,
-            // 描いていない節は高さ 0 と数えられ、スクロールの量（棒の長さ）が足りなくなるので、最初に一度だけ全節を測る。
+            // 未描画の節は高さ 0 として扱われ、スクロールバーの長さが不正確になるため、初回に全節を測定する。
             page: ListState::new(SECTIONS, ListAlignment::Top, px(0.0)).measure_all(),
             scroll: ScrollHandle::new(),
             slider: 0.5,
@@ -54,8 +54,7 @@ fn hex(c: u32) -> String {
     format!("#{c:08x}")
 }
 
-/// 見出し + 中身。
-/// 見出しと中身を 1 枚のカードに入れる。
+/// 見出しと中身を 1 枚のカードにまとめた節。
 fn section(t: &Theme, title: &str, body: Div) -> Div {
     div()
         .flex()
@@ -81,7 +80,7 @@ fn caption(t: &Theme, s: impl Into<SharedString>) -> Div {
         .child(s.into())
 }
 
-/// 色見本 1 枚（名前と 16 進つき）。
+/// 色見本 1 枚（名前と 16 進表記付き）。
 fn swatch(t: &Theme, name: &str, c: u32) -> Div {
     div()
         .flex()
@@ -134,7 +133,7 @@ macro_rules! scales {
     }};
 }
 
-/// `Theme` の役割を名前つきで並べる。
+/// `Theme` の全役割を名前付きで列挙する。
 macro_rules! roles {
     ($t:expr, $($f:ident),+ $(,)?) => { [$((stringify!($f), $t.$f)),+] };
 }
@@ -380,7 +379,7 @@ fn icon_section(t: &Theme) -> Div {
     section(t, "Icons（ビルドに入っているものだけ）", body)
 }
 
-/// 縦横にあふれる領域に `scrollbars` を重ねる。
+/// 縦横にオーバーフローする領域に `scrollbars` を重ねたデモ。
 fn scroll_demo(t: &Theme, handle: &ScrollHandle) -> Div {
     div()
         .relative()
@@ -389,7 +388,7 @@ fn scroll_demo(t: &Theme, handle: &ScrollHandle) -> Div {
         .rounded(px(radius::MD))
         .bg(rgba(t.control))
         .child(
-            // ページの中の入れ子: ポインタが触れている内側だけが動く。
+            // ページ内の入れ子スクロール: ポインタが触れている内側のみスクロールする。
             components::claim_scroll(
                 components::free_scroll(div().id("cat-scroll"))
                     .size_full()
@@ -447,7 +446,7 @@ impl Catalog {
                     ),
             )
             .child(
-                // 背景に直接置くボタンは、背景の上で見る。
+                // 背景に直接配置するボタンは、背景色上での表示を確認する。
                 wrap()
                     .p(px(spacing::MD))
                     .rounded(px(radius::LG))
@@ -523,7 +522,7 @@ impl Catalog {
     }
 
     fn motion_section(&mut self, t: &Theme, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        // 再生中なら進めて、終わるまで描き直す。
+        // 再生中であればアニメーションを進行させ、完了まで再描画を要求する。
         let now = crate::drive::now();
         let dt = self
             .last
@@ -630,7 +629,7 @@ impl Catalog {
             6 => self.components_section(&t, cx),
             _ => self.motion_section(&t, window, cx),
         };
-        // 節の間と上下の余白は節の側に持たせる（一覧の余白はスクロールの量に入らない）。
+        // 節間と上下の余白は各節が持つ（リスト自体の余白はスクロール量に影響しないため）。
         div()
             .px(px(spacing::XL))
             .pt(px(spacing::XL))
@@ -644,7 +643,7 @@ impl Render for Catalog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = Theme::of(self.mode);
         let page = self.page.clone();
-        // 節を一覧に並べ、見えている節だけを作る（アイコンや部品の節は大きく、全部を毎フレーム作ると重い）。
+        // 節を仮想リストに配置し、可視範囲のみ描画する（アイコンや部品の節は重いため毎フレーム全生成は避ける）。
         components::surface(&t).size_full().child(
             div()
                 .relative()

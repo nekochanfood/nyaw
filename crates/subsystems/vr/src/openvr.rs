@@ -33,7 +33,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
     let client = Client::init(sys::EVRApplicationType_VRApplication_Overlay)?;
     let system = client.interface(sys::IVRSystem_Version)?;
     let compositor = client.interface(sys::IVRCompositor_Version)?;
-    // アプリの名乗りは SteamVR Input の manifest より前に（バインドがそのアプリに付く）。
+    // アプリの登録は SteamVR Input の manifest より前に行う（バインドがそのアプリに紐付く）。
     let app = client
         .interface(sys::IVRApplications_Version)
         .inspect_err(|e| logger::warn!("SteamVR applications unavailable", error = e))
@@ -72,7 +72,7 @@ pub(crate) fn connect() -> Result<Box<dyn VrBackend>, VrError> {
     }))
 }
 
-/// SteamVR が要求する拡張を有効にし、HMD が繋がっている GPU で Vulkan のデバイスを作る。
+/// SteamVR が要求する拡張を有効にし、HMD が接続されている GPU で Vulkan デバイスを作成する。
 fn create_gpu(
     system: &sys::VR_IVRSystem_FnTable,
     compositor: &sys::VR_IVRCompositor_FnTable,
@@ -100,7 +100,7 @@ fn create_gpu(
         )
     };
     let physical = match physical {
-        // 分からなければ最初の GPU にする。
+        // 不明の場合は最初の GPU を使用する。
         0 => *unsafe { instance.enumerate_physical_devices() }
             .map_err(vk_err("vkEnumeratePhysicalDevices"))?
             .first()
@@ -122,18 +122,18 @@ fn create_gpu(
     })
 }
 
-/// 関数表の各項目は `Option<fn>`。ランタイムが埋めていなければ ABI の不一致なので落とす。
+/// 関数表の各項目は `Option<fn>`。ランタイムが設定していなければ ABI の不一致のためパニックする。
 fn f<T>(func: Option<T>) -> T {
     func.expect("OpenVR function table is missing a function")
 }
 
 const MAX_DEVICES: usize = sys::k_unMaxTrackedDeviceCount as usize;
 
-/// オーバーレイ 1 枚あたりのイメージの数。コンポジタが読んでいる最中のイメージに書き込まないよう順番に使う。
+/// オーバーレイ 1 枚あたりのイメージ数。コンポジタが読み取り中のイメージへの書き込みを避けるため順番に使用する。
 // ponytail: 3 枚あれば足りる想定。絵がちらつく・崩れるなら増やすか、送ったイメージの使用完了を待つ。
 const RING: usize = 3;
 
-/// 電池を読み直す間隔。残量はゆっくりしか変わらないので、毎フレームは読まない。
+/// 電池を再読み取りする間隔。残量は緩やかにしか変化しないため、毎フレームは読み取らない。
 const BATTERY_INTERVAL: Duration = Duration::from_secs(5);
 
 struct Textures {
@@ -145,7 +145,7 @@ struct Textures {
 
 pub(crate) struct OpenVrBackend {
     system: *const sys::VR_IVRSystem_FnTable,
-    /// 使えなければ（manifest を登録できない等）コントローラは無し。
+    /// 利用不可であれば（manifest を登録できない等）コントローラは無し。
     input: Option<Input>,
     /// SteamVR のアプリとしての登録と自動起動（[`VrBackend::auto_launch`]）。
     app: Option<App>,
@@ -156,22 +156,22 @@ pub(crate) struct OpenVrBackend {
     devices: HashMap<Device, (u32, Pose)>,
     /// デバイスの番号 → 入力のアクションで最後に分かった、本体から見た tip（[`role_device`]）。
     tips: HashMap<u32, Pose>,
-    /// ランタイムに相対配置を任せたオーバーレイ → 最後に送った（デバイスの番号, デバイスから見た姿勢）。相対配置は毎 tick
-    /// 頼み直されるので、変わったときだけ送る（同じ取り付け先でも、持ち替えで裏のデバイスが入れ替わると番号が変わる）。
+    /// ランタイムに相対配置を委任したオーバーレイ → 最後に送信した（デバイスの番号, デバイスから見た姿勢）。相対配置は毎 tick
+    /// 再要求されるため、変更時のみ送信する（同じ取り付け先でも、持ち替えで裏のデバイスが入れ替わると番号が変わる）。
     relative: HashMap<u64, (u32, Pose)>,
     /// 高さを固定したオーバーレイの（幅, 高さ）（m）。OpenVR は高さを縦横比で決めるので、テクセルの縦横比で合わせる。
     fixed: HashMap<u64, (f32, f32)>,
-    /// アプリが表示したいオーバーレイ。SteamVR のダッシュボードが開いている間は、これらも隠す。
+    /// アプリが表示したいオーバーレイ。SteamVR のダッシュボード表示中は、これらも非表示にする。
     shown: HashSet<u64>,
-    /// 最後の poll で SteamVR のダッシュボードが開いていたか。
+    /// 最後の poll で SteamVR のダッシュボードが表示されていたか。
     dashboard: bool,
-    /// シーンのアプリ（ゲーム）への入力を止めている（[`VrBackend::block_app_input`]）。
+    /// シーンのアプリ（ゲーム）への入力をブロック中（[`VrBackend::block_app_input`]）。
     block_input: bool,
-    /// SteamVR の設定（入力を止める仕組みを有効にする）。使ったら `None` にして、二度目からは触らない。
+    /// SteamVR の設定（入力ブロック機能を有効化する）。使用後は `None` にして、以降は変更しない。
     settings: Option<*const sys::VR_IVRSettings_FnTable>,
-    /// この接続で設定を有効にしたときだけ、終了時に元の値へ戻す。
+    /// この接続で設定を有効化した場合のみ、終了時に元の値へ復元する。
     restore_global_priority: Option<(*const sys::VR_IVRSettings_FnTable, bool)>,
-    /// 最後に電池を読んだ時刻と、その結果（[`BATTERY_INTERVAL`] ごとに読み直す）。
+    /// 最後に電池を読み取った時刻と、その結果（[`BATTERY_INTERVAL`] ごとに再読み取りする）。
     batteries: (Option<Instant>, Vec<Battery>),
     gpu: Gpu,
     /// SteamVR との接続。関数表の持ち主なので最後に破棄する。
@@ -194,7 +194,7 @@ impl OpenVrBackend {
         }
     }
 
-    /// 次の vsync まで眠り、このフレームで送る姿勢が表示されるまでの秒数（姿勢の予測に使う）を返す。
+    /// 次の vsync まで待機し、このフレームで送信する姿勢が表示されるまでの秒数（姿勢の予測に使用する）を返す。
     /// オーバーレイアプリは WaitGetPoses でフレームを進められないので、直前の vsync からの経過時間と
     /// 表示周波数から残りを計算して眠る。
     /// 経過時間が 1 フレームを超えて返るドライバ（Quest 系で実測）があるので、周期で割った余りを使う。

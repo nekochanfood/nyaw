@@ -1,4 +1,4 @@
-//! 本番の GPUI フレームループで動かす E2E の共有処理。
+//! 本番の GPUI フレームループで動作する E2E テストの共有処理。
 
 #![allow(dead_code)] // each test uses a different subset
 
@@ -15,7 +15,7 @@ use kernel::vr::{Frame, OverlayId, Quat, RawController, Vec3, mock::MockBackend}
 use kernel::{Hand, Pose, Runtime, Vec2, VrBackend, VrError};
 use std::sync::mpsc::Sender;
 
-/// 実際の描画先を使うため、`--ignored` で明示されたときだけ実行する。
+/// 実際の描画先を使用するため、`--ignored` で明示された場合のみ実行する。
 pub fn should_run(name: &str) -> bool {
     let ignored = std::env::args().any(|a| a == "--ignored" || a == "--include-ignored");
     if !ignored {
@@ -73,7 +73,7 @@ impl VrBackend for SharedMock {
     }
 }
 
-/// 終了を頼み、15 秒経っても終わらなければプロセスを終了する。
+/// 終了を要求し、15 秒経過しても完了しなければプロセスを終了する。
 pub fn quit(remote: &Sender<ui::Remote>, ok: bool) {
     let _ = remote.send(Box::new(|cx| {
         cx.default_global::<ui::PanelControl>().quit = true;
@@ -138,7 +138,7 @@ impl Vr {
         }];
     }
 
-    /// パネルの論理ピクセルへレーザーを向ける。
+    /// パネルの論理ピクセルにレーザーを照準する。
     pub fn point_at(&mut self, (x, y): (f32, f32)) {
         let (w, h) = (self.resolution.0 as f32, self.resolution.1 as f32);
         let target =

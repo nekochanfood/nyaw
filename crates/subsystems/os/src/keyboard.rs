@@ -1,4 +1,4 @@
-//! フォアグラウンドの配列・IME の監視と OS 入力。ディスク / IPC / 待ちは専用スレッドに閉じる。
+//! フォアグラウンドのキー配列・IME 状態の監視と OS への入力送信。ディスク / IPC / ブロッキング処理は専用スレッドに閉じる。
 use std::{
     io,
     sync::{Arc, Mutex, mpsc},
@@ -15,7 +15,7 @@ pub struct Settings {
     pub layout: Option<(String, String)>,
     pub input_method: String,
     pub layout_description: Option<String>,
-    /// OS の入力先。0 は取得できなかった場合。
+    /// OS の入力送信先ウィンドウ。0 は取得不可の場合。
     pub foreground: u64,
     pub own_process: bool,
     pub caps_lock: bool,
@@ -25,7 +25,7 @@ pub struct Settings {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KeyEvent {
-    /// 配列データで使う evdev の番号（XKB の +8 を含まない）。
+    /// 配列データで使用する evdev キーコード（XKB の +8 を含まない）。
     pub code: u16,
     pub down: bool,
 }
@@ -40,7 +40,7 @@ enum Command {
     Send { target: u64, output: Output },
 }
 
-/// 監視・配送を同じ所有者で実行する。テストは実 OS の代わりに記録するホストを渡せる。
+/// 監視・送信を同一オーナーで実行する。テストでは実 OS の代わりに記録用ホストを注入可能。
 pub trait Host: Send + 'static {
     fn settings(&mut self) -> Settings;
     fn send(&mut self, output: Output) -> io::Result<()>;
@@ -89,8 +89,8 @@ impl Watcher {
                 match receiver.recv_timeout(Duration::from_millis(150)) {
                     Ok(Command::Send { target, output }) => {
                         let settings = backend.settings();
-                        // 遅延中に他のアプリへ切り替わった操作は配送しない。
-                        // エミュレーターが入力先でも、明示した OS 入力は配送する。
+                        // 遅延中に他のアプリへ切り替わった操作は送信しない。
+                        // エミュレーターが入力先であっても、明示的な OS 入力は送信する。
                         let result = if target == 0 || target != settings.foreground {
                             Err(io::Error::other(
                                 "OS input target changed or is unavailable",
@@ -122,7 +122,7 @@ impl Watcher {
     }
 }
 
-/// 押下と解放を一括で送り、パネルを閉じても OS に押しっぱなしを残さない。
+/// 押下と解放を一括送信し、パネルを閉じても OS にキー押下状態が残らないようにする。
 pub fn chord(held: &[u16], key: u16) -> Vec<KeyEvent> {
     let locks: Vec<_> = held
         .iter()

@@ -1,4 +1,4 @@
-//! 本番の描画ループで、キーボード画面を追加した後も描画と操作が進むか確認する。
+//! 本番の描画ループで、キーボード画面を追加した後も描画と操作が継続することを確認する。
 use crate::common;
 
 use common::SharedMock;
@@ -71,7 +71,7 @@ pub fn main() -> ExitCode {
             |id, _, _| testing::Testing::new(id),
         )
         .sized(testing::TESTING_SIZE, testing::TESTING_PX)
-        // PanelId と開いている数を数えるので、ナビゲーションバー（これもパネル）は付けない。
+        // PanelId と開いているパネル数をカウントするため、ナビゲーションバー（これもパネル）は付与しない。
         .without_nav_bar(),
     ];
     let (remote, rx) = channel::<ui::Remote>();
@@ -115,14 +115,14 @@ pub fn main() -> ExitCode {
                     .get(2)
                     .is_some_and(|p| p.texture.is_some())
             });
-            // 初回のローディング画像ではなく、実際のキーが届くまで待つ。
+            // 初回のローディング画像ではなく、実際のキーが描画されるまで待機する。
             std::thread::sleep(Duration::from_millis(500));
             let pose = {
                 let m = observer.lock().unwrap();
                 save(m.overlays[1].texture.as_ref().unwrap(), "keyboard-test.bmp");
                 let keyboard = &m.overlays[2];
                 let texture = keyboard.texture.as_ref().unwrap();
-                // フルサイズはアクション（X ボタン）をテンキーの上に置くので、キーの上に段が無い。
+                // フルサイズはアクション（X ボタン）をテンキーの上に配置するため、キーの上に追加の段がない。
                 assert_eq!((texture.width, texture.height), (1552, 496));
                 save(texture, "keyboard.bmp");
                 keyboard.pose

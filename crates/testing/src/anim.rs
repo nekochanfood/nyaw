@@ -1,14 +1,14 @@
-//! 毎フレーム変わる画面（[`TestingAnim`]）。
+//! 毎フレーム更新される画面（[`TestingAnim`]）。
 
 use super::*;
 
 /// ループアニメーションの周期（秒）。
 const ANIM_PERIOD: f32 = 2.0;
 
-/// 毎フレーム中身が変わる画面（`testing-anim`）: 描いた回数と、周期 [`ANIM_PERIOD`] で左右を往復し色の変わる四角。
-/// 見えている間はフレームループが毎フレーム描き直す（[`ui::PanelState::live`]）。
+/// 毎フレーム内容が更新される画面（`testing-anim`）: 描画回数と、周期 [`ANIM_PERIOD`] で左右を往復し色が変化する矩形。
+/// 表示中はフレームループが毎フレーム再描画する（[`ui::PanelState::live`]）。
 pub struct TestingAnim {
-    /// 描いた回数。
+    /// 描画回数。
     pub frames: u64,
     start: Instant,
 }

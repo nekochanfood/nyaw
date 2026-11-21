@@ -1,5 +1,5 @@
-//! 見た目の確認用: 設定画面の「外観」「時計」「キーボード」・色を作るダイアログ・ダイアログ・wrist の文字盤の見本・セットアップウィザードの各画面を、テーマとパーソナルカラーを替えながら実 GPU で描き、
-//! `target/tmp/look-*.bmp` に書き出す。塗りが選んだ色そのままで描かれていることだけ検査する（細かい見た目は絵を目で見る）。
+//! 見た目の確認用: 設定画面の「外観」「時計」「キーボード」・色作成ダイアログ・ダイアログ・wrist の文字盤プレビュー・セットアップウィザードの各画面を、テーマとパーソナルカラーを切り替えながら実 GPU で描画し、
+//! `target/tmp/look-*.bmp` に書き出す。塗りが選択した色のまま描画されていることのみ検査する（詳細な見た目は画像を目視確認する）。
 
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
@@ -8,13 +8,13 @@ use gpui::{AppContext, Context, IntoElement, Render, Window, div, prelude::*, px
 use settings::{Category, Page, Settings};
 use ui::{PanelControl, capture, open_panel_window};
 
-/// wrist の文字盤の見本を、地の上に並べた画面（種類ごとに 1 行、デザインを横に）。
+/// wrist の文字盤プレビューを背景上に並べた画面（種類ごとに 1 行、デザインを横に配置）。
 pub struct Faces;
 
 pub const FACES_PX: (u32, u32) = (900, 900);
-/// セットアップウィザードのパネルの大きさ。
+/// セットアップウィザードのパネルサイズ。
 const SETUP_PX: (u32, u32) = (1152, 864);
-/// ダイアログの大きさ。高さは 1 行のタイトルと 3 行の概要の分（`components::dialog_height` が測る値）。
+/// ダイアログのサイズ。高さは 1 行のタイトルと 3 行の概要の分（`components::dialog_height` で算出する値）。
 const DIALOG_PX: (u32, u32) = (design::components::DIALOG_WIDTH, 376);
 
 impl Render for Faces {
@@ -37,7 +37,7 @@ impl Render for Faces {
     }
 }
 
-/// 書き出す状態: 名前、テーマ、パーソナルカラー（[`Accent::PRESETS`] の名前）。ダークは英語、ライトは日本語で描く。
+/// 書き出す状態: 名前、テーマ、パーソナルカラー（[`Accent::PRESETS`] の名前）。ダークは英語、ライトは日本語で描画する。
 const STATES: [(&str, Mode, &str); 4] = [
     ("dark-blue", Mode::Dark, "blue"),
     ("dark-yellow", Mode::Dark, "yellow"),
@@ -59,9 +59,9 @@ pub fn main() {
     ui::application().run(move |cx| {
         design::font::install(cx);
         design::corner::install();
-        // 本番では wrist が置く、文字盤の見本の描き方。
+        // 本番では wrist が設定する、文字盤プレビューの描画方法。
         cx.set_global(ui::prefs::FacePreview(wrist::preview));
-        // 設定画面のカテゴリ `category`（`page` があればその上に詳しい画面を積んで）を開いた窓。
+        // 設定画面のカテゴリ `category`（`page` があればその上に詳細画面を表示して）を開いたウィンドウ。
         let screen = |category: Category, page: Option<Page>, cx: &mut gpui::App| {
             open_panel_window(cx, settings::PX, move |_, cx| {
                 let view = cx.new(|_| {
@@ -70,7 +70,7 @@ pub fn main() {
                     settings.pages.extend(page);
                     settings
                 });
-                // 本番と同じ載せ方（影の余白の内側にパネルが収まり、中身の幅も本番と同じになる）。
+                // 本番と同じ配置方法（影の余白の内側にパネルが収まり、コンテンツ幅も本番と同一になる）。
                 cx.new(|_| ui::PanelRoot::new(view.into()))
             })
             .expect("cannot open panel window")
@@ -81,12 +81,12 @@ pub fn main() {
             screen(Category::Input, Some(Page::Pointer), cx),
             screen(Category::Input, Some(Page::Keyboard), cx),
         );
-        // 色を作るダイアログ（作りかけの色は、今のパーソナルカラーと違う緑）。
+        // 色作成ダイアログ（編集中の色は、現在のパーソナルカラーと異なる緑）。
         let dialog = open_panel_window(cx, ui::prefs::COLOR_DIALOG_PX, |_, cx| {
             cx.new(|_| ui::prefs::ColorDialog::new(0, preset("green")))
         })
         .expect("cannot open panel window");
-        // ダイアログ（概要が 3 行を超えてスクロールするもの）。本番と同じく影の余白の内側に載せる。
+        // ダイアログ（概要が 3 行を超えてスクロールするもの）。本番と同様に影の余白の内側に配置する。
         let required = open_panel_window(cx, DIALOG_PX, |_, cx| {
             let view = cx.new(|_| {
                 testing::Dialog::new(
@@ -102,13 +102,13 @@ pub fn main() {
         .expect("cannot open panel window");
         let faces = open_panel_window(cx, FACES_PX, |_, cx| cx.new(|_| Faces))
             .expect("cannot open panel window");
-        // 描く窓: 書き出す名前の前置き、窓、塗りの色で描かれているはずの画素の下限。
+        // 描画するウィンドウ: 書き出す名前のプレフィックス、ウィンドウ、塗りの色で描画されているべきピクセル数の下限。
         let mut windows: Vec<(String, gpui::AnyWindowHandle, u32, usize)> = vec![
             (String::new(), appearance.into(), settings::PX.0, 1000),
             ("watch-".into(), watch.into(), settings::PX.0, 100),
-            // 塗りはスライダーの埋まった側とスイッチ。
+            // 塗りはスライダーの充填部分とスイッチ。
             ("pointer-".into(), pointer.into(), settings::PX.0, 100),
-            // キーボードの見本は配列を裏で読んでから出る（前の窓を描いている間に読み終わる）。塗りはスイッチとスライダー。
+            // キーボードのプレビューはレイアウトをバックグラウンドで読み込んでから表示する（前のウィンドウの描画中に読み込み完了する）。塗りはスイッチとスライダー。
             ("keyboard-".into(), keyboard.into(), settings::PX.0, 100),
             (
                 "color-".into(),
@@ -116,11 +116,11 @@ pub fn main() {
                 ui::prefs::COLOR_DIALOG_PX.0,
                 1000,
             ),
-            // 塗りは OK のボタンとアイコン。
+            // 塗りは OK ボタンとアイコン。
             ("dialog-".into(), required.into(), DIALOG_PX.0, 100),
             ("faces-".into(), faces.into(), FACES_PX.0, 100),
         ];
-        // セットアップウィザードの画面を、手順ごとに 1 枚ずつ。最後に、一枚目で言語の選択肢を開いたもの。
+        // セットアップウィザードの画面を手順ごとに 1 枚ずつ描画する。最後に、1 枚目で言語の選択肢を展開したものを追加する。
         let pages = (0..setup::STEPS.len()).map(|i| (i, false));
         for (i, languages) in pages.chain([(0, true)]) {
             let page = open_panel_window(cx, SETUP_PX, move |_, cx| {
@@ -137,7 +137,7 @@ pub fn main() {
             let step = format!("{:?}", setup::STEPS[i]).to_lowercase();
             let open = if languages { "-languages" } else { "" };
             let name = format!("setup-{i}-{step}{open}-");
-            // 開いた選択肢は「はじめる」（塗りの色）に重なるので、塗りの色が見えなくてよい。
+            // 展開した選択肢は「はじめる」（塗りの色）に重なるため、塗りの色が見えなくてよい。
             let min = if languages { 0 } else { 100 };
             windows.push((name, page.into(), SETUP_PX.0, min));
         }
@@ -160,9 +160,9 @@ pub fn main() {
                     } else {
                         kernel::Language::En
                     };
-                    // キーボードの見本は、状態ごとに種類も替えて全種類を描く。
+                    // キーボードのプレビューは状態ごとに種類も切り替えて全種類を描画する。
                     settings.keyboard = kernel::subsystems::keyboard::KeyboardType::ALL[i % 3];
-                    // ウィザードの SteamVR の手順は OpenVR のときだけ出るので、OpenVR のつもりで描く。
+                    // ウィザードの SteamVR 手順は OpenVR 使用時のみ表示されるため、OpenVR として描画する。
                     settings.auto_launch = Some(false);
                     settings.theme = match mode {
                         Mode::Dark => kernel::ThemeMode::Dark,
@@ -175,7 +175,7 @@ pub fn main() {
                     });
                 });
                 for (prefix, window, width, min) in windows.clone() {
-                    // 読み戻しは 1 回遅れなので、間を空けて何度か描き、最後の絵を使う。
+                    // 読み戻しは 1 フレーム遅れのため、間隔を空けて複数回描画し、最後の画像を使用する。
                     let mut last = None;
                     for _ in 0..6 {
                         cx.background_executor()

@@ -11,7 +11,7 @@ fn quick_settings(cx: &mut TestAppContext, notes: Vec<Notification>) -> &mut Vis
     cx
 }
 
-/// `ms` 待ってから描き直す（時間で動くものを進める）。
+/// `ms` ミリ秒待機後に再描画する（時間ベースのアニメーションを進行させる）。
 fn redraw(cx: &mut VisualTestContext, ms: u64) {
     std::thread::sleep(Duration::from_millis(ms));
     cx.update(|window, _| window.refresh());
@@ -22,11 +22,11 @@ fn height(cx: &mut VisualTestContext, selector: &'static str) -> f32 {
     f32::from(cx.debug_bounds(selector).unwrap().size.height)
 }
 
-/// 上に時刻、その下に届いた通知が新しい順に並ぶ（電池・テーマの切り替えはもう無い）。
+/// 上部に時刻、その下に通知が新着順に並ぶ（バッテリー・テーマ切り替えは廃止済み）。
 #[gpui::test]
 fn quick_settings_lists_notifications_newest_first(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![note(1), note(2), note(3)]);
-    // 実際の画面の大きさ（`RES_PX`）で並べる。
+    // 実際の画面サイズ（`RES_PX`）でレイアウトする。
     cx.simulate_resize(gpui::size(px(RES_PX.0 as f32), px(RES_PX.1 as f32)));
     cx.run_until_parked();
     let y = [
@@ -43,14 +43,14 @@ fn quick_settings_lists_notifications_newest_first(cx: &mut TestAppContext) {
     );
     assert!(
         list.height > window.height * 0.8 && list.width > window.width * 0.8,
-        "一覧はパネルいっぱいに広がる: {list:?} / {window:?}"
+        "一覧はパネル全体に広がる: {list:?} / {window:?}"
     );
     assert!(cx.debug_bounds("notifications-empty").is_none());
     assert!(cx.debug_bounds("quick-theme").is_none());
     assert!(cx.debug_bounds("battery-hmd").is_none());
 }
 
-/// はまって出ている一覧に並んだ通知は読んだことになる（はまっていなければまだ）。
+/// ドッキング状態で表示中の一覧内の通知は既読となる（ドッキングされていなければ未読のまま）。
 #[gpui::test]
 fn the_shown_list_marks_its_notifications_read(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![note(1), note(2)]);
@@ -69,7 +69,7 @@ fn the_shown_list_marks_its_notifications_read(cx: &mut TestAppContext) {
     assert_eq!(read(cx), [true, true]);
 }
 
-/// 通知が無ければ、空いた所の中央にチェックと「通知はありません」。
+/// 通知がなければ、空き領域の中央にチェックマークと「通知はありません」を表示する。
 #[gpui::test]
 fn quick_settings_says_when_there_are_no_notifications(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![]);
@@ -79,12 +79,12 @@ fn quick_settings_says_when_there_are_no_notifications(cx: &mut TestAppContext) 
     let (x, y) = (f32::from(empty.center().x), f32::from(empty.center().y));
     assert!(
         (x - RES_PX.0 as f32 / 2.0).abs() < 40.0,
-        "横は中央: {empty:?}"
+        "水平方向に中央配置: {empty:?}"
     );
-    assert!(y > RES_PX.1 as f32 * 0.4, "下の空いた所の中ほど: {empty:?}");
+    assert!(y > RES_PX.1 as f32 * 0.4, "下部空き領域の中間に配置: {empty:?}");
 }
 
-/// 日付は時刻の横で、時刻のベースラインまで持ち上がる（下端で揃えたままだと垂れる）。
+/// 日付は時刻の横に配置され、時刻のベースラインに揃える（下端揃えのみだと視覚的に下がって見える）。
 #[gpui::test]
 fn the_date_sits_beside_the_time_on_its_baseline(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![]);
@@ -93,12 +93,12 @@ fn the_date_sits_beside_the_time_on_its_baseline(cx: &mut TestAppContext) {
         cx.debug_bounds("quick-date").unwrap(),
     );
     assert!(date.left() > time.right(), "{time:?} {date:?}");
-    // 下端を揃え、その上に持ち上げる分の余白を積む（持ち上げる高さは書体の寸法から出すので、寸法の無いテストの
-    // テキストシステムでは 0。実際の高さは実 GPU の `look-a11y-*-quick` で見る）。
+    // 下端を揃えた上に持ち上げ分の余白を加算する（持ち上げ量はフォントメトリクスから算出するため、メトリクスのないテスト
+    // 環境では 0。実際の値は実 GPU の `look-a11y-*-quick` で確認する）。
     assert_eq!(date.bottom(), time.bottom(), "{time:?} {date:?}");
 }
 
-/// ホバーすると通知のボタンが出て、押すとアプリへ届く（本文を押しても届く）。
+/// ホバーで通知のアクションボタンが表示され、押下するとアプリに配信される（本文の押下でも配信される）。
 #[gpui::test]
 fn a_notification_in_the_list_opens_from_its_card_or_its_buttons(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![note(1)]);
@@ -132,8 +132,8 @@ fn a_notification_in_the_list_opens_from_its_card_or_its_buttons(cx: &mut TestAp
     );
 }
 
-/// トーストから開いたときは、その通知を広げて見せる（ボタンが並ぶ）。ほかを指すとそちらを広げ、前のものはたたむ。
-/// 一覧を出しているのがこのパネルだと知らせる（トーストはそれが出ている間は出ない）。
+/// トーストから開いた場合は該当通知を展開表示する（アクションボタンが並ぶ）。別の通知をホバーするとそちらが展開され、前のものは折り畳まれる。
+/// 通知一覧を表示中のパネルを通知センターに登録する（トーストはその表示中は抑制される）。
 #[gpui::test]
 fn the_notification_opened_from_the_toast_is_expanded(cx: &mut TestAppContext) {
     cx.update(|cx| ui::notification::show_center(Some(2), cx));
@@ -144,7 +144,7 @@ fn the_notification_opened_from_the_toast_is_expanded(cx: &mut TestAppContext) {
         let c = cx.global::<ui::notification::Center>();
         (c.panel, c.focus)
     });
-    assert_eq!(center, (Some(2), None), "受け取った");
+    assert_eq!(center, (Some(2), None), "通知センターに登録された");
     let one = cx.debug_bounds("notification-1").unwrap().center();
     cx.simulate_mouse_move(one, None, Modifiers::none());
     cx.run_until_parked();
@@ -152,7 +152,7 @@ fn the_notification_opened_from_the_toast_is_expanded(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("notification-action-2-0").is_none());
 }
 
-/// 左右にスワイプすると、畳まれて下が詰まり、OS の通知センターから消す（押したことにはしない）。
+/// 左右スワイプで折り畳まれ、下に詰められ、OS の通知センターから削除される（アクション発火はしない）。
 #[gpui::test]
 fn swiping_a_notification_away_removes_it(cx: &mut TestAppContext) {
     use gpui::{MouseButton, point};
@@ -177,11 +177,11 @@ fn swiping_a_notification_away_removes_it(cx: &mut TestAppContext) {
     assert_eq!(
         take_commands(cx, 2),
         [PanelCommand::RemoveNotification(2)],
-        "押したことにはしない"
+        "アクション発火はしない"
     );
 }
 
-/// 入っているアプリの通知には、広げると「（アプリ）を開く」が並ぶ（ID の大文字・小文字は問わない）。無いアプリには出さない。
+/// インストール済みアプリの通知は、展開すると「（アプリ）を開く」が表示される（ID の大文字・小文字は区別しない）。未インストールのアプリには表示しない。
 #[gpui::test]
 fn an_installed_app_can_be_opened_from_its_notification(cx: &mut TestAppContext) {
     let mut other = note(2);
@@ -208,7 +208,7 @@ fn an_installed_app_can_be_opened_from_its_notification(cx: &mut TestAppContext)
     }
 }
 
-/// 広げる・たたむときは、高さが測った高さの間を滑らかに伸び縮みする（ボタンは広げ始めから並ぶ）。
+/// 展開・折り畳み時は、高さが計測値の間を滑らかに遷移する（アクションボタンは展開開始時から表示される）。
 #[gpui::test]
 fn a_card_expands_and_collapses_smoothly(cx: &mut TestAppContext) {
     use design::animation::Motion;
@@ -225,7 +225,7 @@ fn a_card_expands_and_collapses_smoothly(cx: &mut TestAppContext) {
     redraw(cx, half + 50);
     let open = height(cx, "notification-1");
     assert!(closed < mid && mid < open, "{closed} < {mid} < {open}");
-    assert_eq!(mid, mid.round(), "画素に揃える");
+    assert_eq!(mid, mid.round(), "ピクセルに整列する");
     cx.simulate_mouse_move(gpui::point(px(1.0), px(1.0)), None, Modifiers::none());
     cx.run_until_parked();
     redraw(cx, Motion::Morph.duration_ms() / 2);
@@ -236,7 +236,7 @@ fn a_card_expands_and_collapses_smoothly(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("notification-action-1-0").is_none());
 }
 
-/// 「すべて消去」で、上から順にスワイプしたように横へ抜けて畳まれ、OS の通知センターから消える（押したことにはしない）。
+/// 「すべて消去」で上から順にスワイプ風に横へ退出して折り畳まれ、OS の通知センターから削除される（アクション発火はしない）。
 #[gpui::test]
 fn clearing_all_removes_every_notification(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![note(1), note(2)]);
@@ -250,7 +250,7 @@ fn clearing_all_removes_every_notification(cx: &mut TestAppContext) {
     let (top, below) = (x(cx, "notification-2"), x(cx, "notification-1"));
     assert!(
         top > below && top > start,
-        "上から順に抜ける: {top} {below}"
+        "上から順に退出する: {top} {below}"
     );
     for _ in 0..4 {
         redraw(cx, ui::swipe::COLLAPSE.duration_ms());
@@ -259,7 +259,7 @@ fn clearing_all_removes_every_notification(cx: &mut TestAppContext) {
         .into_iter()
         .map(|c| match c {
             PanelCommand::RemoveNotification(id) => id,
-            other => panic!("押したことにはしない: {other:?}"),
+            other => panic!("アクション発火は不可: {other:?}"),
         })
         .collect();
     removed.sort();
@@ -268,11 +268,11 @@ fn clearing_all_removes_every_notification(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("notifications-empty").is_some());
     assert!(
         cx.debug_bounds("notifications-clear").is_none(),
-        "無ければ出さない"
+        "通知がなければ表示しない"
     );
 }
 
-/// 通知が溜まっても、スクロールするのは一覧だけ（時刻と見出しは動かない）。
+/// 通知が多数あっても、スクロールするのは一覧部分のみ（時刻とヘッダーは固定）。
 #[gpui::test]
 fn only_the_list_scrolls(cx: &mut TestAppContext) {
     use gpui::{ScrollDelta, ScrollWheelEvent, point};
@@ -288,7 +288,7 @@ fn only_the_list_scrolls(cx: &mut TestAppContext) {
     let list = cx.debug_bounds("notifications-list").unwrap();
     assert!(
         f32::from(list.bottom()) <= RES_PX.1 as f32,
-        "一覧は画面に収まる"
+        "一覧は画面内に収まる"
     );
     cx.simulate_event(ScrollWheelEvent {
         position: list.center(),
@@ -298,10 +298,10 @@ fn only_the_list_scrolls(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert_eq!(y(cx, "quick-time"), time);
     assert_eq!(y(cx, "notifications-clear"), clear);
-    assert!(y(cx, "notification-20") < newest, "一覧はスクロールする");
+    assert!(y(cx, "notification-20") < newest, "一覧がスクロールされている");
 }
 
-/// 届いた時刻: 1 分以内は「今」、それから「n 分前」「n 時間前」「n 日前」、1 週間より古ければ日付と時刻。
+/// 受信時刻の表示: 1 分以内は「今」、以降は「n 分前」「n 時間前」「n 日前」、1 週間超過で日付と時刻。
 #[gpui::test]
 fn the_arrival_time_is_relative_then_absolute(cx: &mut TestAppContext) {
     use chrono::TimeZone;
@@ -327,12 +327,12 @@ fn the_arrival_time_is_relative_then_absolute(cx: &mut TestAppContext) {
                 now
             ),
             "now",
-            "時計のずれで先の時刻"
+            "時計のずれにより未来の時刻"
         );
     });
     let cx = quick_settings(cx, vec![note(1)]);
     assert!(
         cx.debug_bounds("notification-time-1").is_some(),
-        "カードに出る"
+        "カードに表示される"
     );
 }

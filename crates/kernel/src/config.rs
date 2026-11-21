@@ -43,20 +43,20 @@ impl TryFrom<u8> for LodQuality {
     }
 }
 
-/// トリガーを押したまま動かしたときの意味。
+/// トリガーを押下したまま移動した際の動作。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PointerMode {
-    /// マウスのエミュレート: 押したまま動かすとドラッグ。
+    /// マウスのエミュレート: 押下したまま移動するとドラッグ。
     Mouse,
-    /// タッチのエミュレート（既定）: 押したまま動かすとスワイプ（スクロール。離すと慣性で滑る）、動かさずに離すとタップ（クリック）、
-    /// 動かさずに長押しするとマウスの押下（そのまま動かせばドラッグ）。
+    /// タッチのエミュレート（既定）: 押下したまま移動するとスワイプ（スクロール。離すと慣性スクロール）、移動せずに離すとタップ（クリック）、
+    /// 移動せずに長押しするとマウスの押下（そのまま移動するとドラッグ）。
     #[default]
     Touch,
 }
 
-/// 設定画面のポインタの動きの調整のしかた。シンプルは 1 本のスライダー（手ブレ抑えの強さと緩める角度をまとめて動かす）、
-/// 詳細はそれぞれのスライダー。カーネルは値を持つだけで、従うのは設定画面。
+/// 設定画面のポインタの動きの調整方式。シンプルは 1 本のスライダー（手ブレ抑えの強さと緩和角度を連動して変更する）、
+/// 詳細はそれぞれのスライダー。カーネルは値を保持するのみで、解釈は設定画面が行う。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PointerTuning {
@@ -103,19 +103,19 @@ impl Language {
     }
 }
 
-/// パーソナルカラー: ボタンなどの塗りに使う、ユーザーの色（OKLCH）。`design::Accent` に対応する。
+/// パーソナルカラー: ボタンなどの塗りに使用するユーザー定義の色（OKLCH）。`design::Accent` に対応する。
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct PersonalColor {
     /// 明るさ（0〜1）。
     pub lightness: f32,
-    /// 鮮やかさ（0〜0.4。画面に出せる範囲を越える分は、描くときに落とす）。
+    /// 鮮やかさ（0〜0.4。画面に表示可能な範囲を超える分は、描画時にクリッピングする）。
     pub chroma: f32,
     /// 色相（度。0〜360）。
     pub hue: f32,
 }
 
 impl PersonalColor {
-    /// 範囲に収める（色相は 0〜360 に巻く。数でない値は 0）。
+    /// 範囲に収める（色相は 0〜360 にラップする。非数値は 0）。
     pub fn clamped(self) -> Self {
         let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
         Self {
@@ -126,8 +126,8 @@ impl PersonalColor {
     }
 }
 
-/// 文字の大きさの倍率（[`Config::text_scale`]）と UI スケール（[`Config::ui_scale`]）の範囲と刻み。画面の中の組み方は
-/// 変えないので、文字は入れ物に収まる倍率まで。UI スケールはパネルごと大きくするので、視野に収まる倍率まで。
+/// 文字の大きさの倍率（[`Config::text_scale`]）と UI スケール（[`Config::ui_scale`]）の範囲と刻み。画面内のレイアウトは
+/// 変更しないため、文字はコンテナに収まる倍率まで。UI スケールはパネルごと拡大するため、視野に収まる倍率まで。
 pub const TEXT_SCALE_MIN: f32 = 0.8;
 pub const TEXT_SCALE_MAX: f32 = 1.5;
 pub const UI_SCALE_MIN: f32 = 0.7;
@@ -143,7 +143,7 @@ pub const KEYBOARD_SCALE_MAX: f32 = 2.0;
 pub const KEY_GAP_MIN: f32 = 0.0;
 pub const KEY_GAP_MAX: f32 = 2.0;
 
-/// 倍率を範囲 `min..=max` に収め、[`SCALE_STEP`] の刻みに丸める（数でない値は等倍）。
+/// 倍率を範囲 `min..=max` に収め、[`SCALE_STEP`] の刻みに丸める（非数値は等倍）。
 pub fn clamp_scale(scale: f32, min: f32, max: f32) -> f32 {
     snap(scale, min, max, SCALE_STEP, 1.0)
 }
@@ -200,8 +200,8 @@ impl From<vr::Pose> for WristOffset {
     }
 }
 
-/// wrist（腕時計）の文字盤の種類と、種類ごとのデザインの表。ここに 1 行足すと、選ぶ画面の一覧にも並ぶ
-/// （描くのは `wrist` クレート。足し方は `crates/wrist/AGENT.md`）。名前は設定ファイルの値と文言のキーになる。
+/// wrist（腕時計）の文字盤の種類と、種類ごとのデザインの定義表。ここに 1 行追加すると、選択画面の一覧にも表示される
+/// （描画は `wrist` クレート。追加方法は `crates/wrist/AGENT.md`）。名前は設定ファイルの値と文言のキーに使用する。
 macro_rules! wrist_designs {
     ($($face:ident = $face_key:literal { $($design:ident = $key:literal),+ $(,)? })+) => {
         /// wrist の文字盤の種類。
@@ -252,7 +252,7 @@ impl Default for WristDesign {
     }
 }
 
-/// 利き手（`right` / `left`）。主に操作する手。左右で振る舞いが変わる機能が、それぞれこれを見て決める。
+/// 利き手（`right` / `left`）。主に操作する手。左右で動作が変わる機能が、それぞれこの値を参照して決定する。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DominantHand {
@@ -278,8 +278,8 @@ impl DominantHand {
     }
 }
 
-/// 通知を視界の端に出す所（HUD。`top_left` / `top` / `top_right` / `left` / `right` / `bottom_left` / `bottom` /
-/// `bottom_right`）。視界の上下左右の端と四隅の 8 か所。カーネルは値を持つだけで、置くのは通知の画面。
+/// 通知を視界の端に表示する位置（HUD。`top_left` / `top` / `top_right` / `left` / `right` / `bottom_left` / `bottom` /
+/// `bottom_right`）。視界の上下左右の端と四隅の 8 か所。カーネルは値を保持するのみで、配置は通知画面が行う。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NotificationAnchor {
@@ -295,7 +295,7 @@ pub enum NotificationAnchor {
 }
 
 impl NotificationAnchor {
-    /// 選ぶ画面に並べる順（左上から右下へ、真ん中を除いた 3×3 の升目）。
+    /// 選択画面に並べる順（左上から右下へ、中央を除いた 3×3 のグリッド）。
     pub const ALL: [Self; 8] = [
         Self::TopLeft,
         Self::Top,
@@ -322,8 +322,8 @@ impl NotificationAnchor {
     }
 }
 
-/// アップデートのチャンネル（安定版 `stable` / ナイトリー `nightly`）。安定版は正式なリリースだけ、ナイトリーはプレリリース
-/// （alpha・beta など。GitHub でプレリリースの印が付いたもの）も勧める。カーネルは値を持つだけで、従うのは `updater`。
+/// アップデートのチャンネル（安定版 `stable` / ナイトリー `nightly`）。安定版は正式リリースのみ、ナイトリーはプレリリース
+/// （alpha・beta など。GitHub でプレリリースとしてマークされたもの）も通知する。カーネルは値を保持するのみで、解釈は `updater` が行う。
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum UpdateChannel {
@@ -332,7 +332,7 @@ pub enum UpdateChannel {
     Nightly,
 }
 
-/// `config.toml` の中身。どのキーも省略でき、知らないキーは無視する。
+/// `config.toml` の内容。すべてのキーは省略可能で、未知のキーは無視する。
 #[derive(Debug, Default, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -349,8 +349,8 @@ pub struct Config {
     pub pointer_release_deg: Option<f32>,
     /// レーザーの見える長さ（m）。手元からこの長さで消える（カーソルが近ければその手前で消える）。省略で既定値。
     pub laser_length: Option<f32>,
-    /// コントローラを持たない手（スケルタル入力）の判定のしきい値とレーザーの揺れの抑え（`[hand]` の表）。
-    /// 画面での調整はここへ表ごと書き戻される。
+    /// コントローラを持たない手（スケルタル入力）の判定しきい値とレーザーの揺れ抑制（`[hand]` テーブル）。
+    /// 画面での調整はここへテーブルごと書き戻される。
     pub hand: subsystems::input::HandTuning,
     /// レーザーのエミュレート方式（`mouse` / `touch`）。省略でタッチ。
     pub pointer_mode: Option<PointerMode>,
@@ -358,12 +358,12 @@ pub struct Config {
     pub pointer_tuning: PointerTuning,
     /// カーソルの大きさの倍率（[`CURSOR_SCALE_MIN`]〜[`CURSOR_SCALE_MAX`]）。省略で等倍。画面での切り替えはここへ書き戻される。
     pub cursor_scale: Option<f32>,
-    /// 指している要素の説明（ツールチップ）を出すか。省略で `true`。画面での切り替えはここへ書き戻される。
+    /// 指している要素の説明（ツールチップ）を表示するか。省略で `true`。画面での切り替えはここへ書き戻される。
     pub tooltips: Option<bool>,
-    /// 押したとき（タップ）・指したとき（ホバー）の音を鳴らすか。省略で `true`。画面での切り替えはここへ書き戻される。
+    /// タップ時・ホバー時の効果音を再生するか。省略で `true`。画面での切り替えはここへ書き戻される。
     pub tap_sound: Option<bool>,
     pub hover_sound: Option<bool>,
-    /// 機能ごとに GPU を使うか（`[gpu]` の表。互換性のため CPU に落とせる）。
+    /// 機能ごとの GPU 使用設定（`[gpu]` テーブル。互換性のため CPU にフォールバック可能）。
     pub gpu: Gpu,
     /// 見た目のテーマ（`dark` / `light`）。省略で `dark`。画面での切り替えはここへ書き戻される。
     pub theme: ThemeMode,
@@ -414,7 +414,7 @@ pub struct Config {
     pub notification_anchor: NotificationAnchor,
 }
 
-/// 機能ごとに GPU を使うか。どれも既定は GPU（`true`）で、`false` で CPU の実装に切り替える。
+/// 機能ごとの GPU 使用設定。すべて既定は GPU（`true`）で、`false` にすると CPU 実装に切り替わる。
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(default)]
 pub struct Gpu {
@@ -443,7 +443,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-/// 設定ファイルの場所。置き場が決まらなければ `None`。
+/// 設定ファイルのパス。ディレクトリが決定できなければ `None`。
 pub fn path() -> Option<PathBuf> {
     os::config_dir().map(|d| d.join("config.toml"))
 }
@@ -452,7 +452,7 @@ pub fn parse(text: &str) -> Result<Config, Error> {
     toml::from_str(text).map_err(Error::Parse)
 }
 
-/// 設定ファイルを読む。置き場が決まらない・ファイルが無いときは既定値。
+/// 設定ファイルを読み込む。ディレクトリが決定できない場合やファイルが存在しない場合は既定値を返す。
 pub fn load() -> Result<Config, Error> {
     let Some(path) = path() else {
         return Ok(Config::default());
@@ -464,8 +464,8 @@ pub fn load() -> Result<Config, Error> {
     }
 }
 
-/// 設定ファイルが読めなかった（どこかの値が壊れている）ときに、`runtime` だけ拾い出す。
-/// 既定値で起動すると novr の指定が消え、VR ランタイム（SteamVR）に繋ぎに行ってしまうので。
+/// 設定ファイルのパースに失敗した（いずれかの値が不正な）場合に、`runtime` のみを抽出する。
+/// 既定値で起動すると novr の指定が失われ、VR ランタイム（SteamVR）への接続を試行してしまうため。
 pub fn salvage_runtime() -> Option<String> {
     runtime_from(&fs::read_to_string(path()?).ok()?)
 }
@@ -475,13 +475,13 @@ fn runtime_from(text: &str) -> Option<String> {
     table.get("runtime")?.as_str().map(str::to_owned)
 }
 
-/// 設定の値（列挙は文字列）を、設定ファイルに書く TOML の値にする。
+/// 設定の値（列挙型は文字列）を、設定ファイルに書き込む TOML 値に変換する。
 pub fn value(v: impl serde::Serialize) -> toml::Value {
     toml::Value::try_from(v).expect("settings serialize to TOML values")
 }
 
-/// `path` の設定ファイルの 1 つのキーだけを書き換える（他のキーは残す。ファイルが無ければ作る）。
-/// 既存のファイルが読めない・TOML として壊れているときは、上書きせずにエラーを返す。
+/// `path` の設定ファイルの 1 つのキーのみを書き換える（他のキーは保持する。ファイルが存在しなければ作成する）。
+/// 既存のファイルが読み込めない・TOML として不正な場合は、上書きせずにエラーを返す。
 pub fn save_at(path: &Path, key: &str, value: impl Into<toml::Value>) -> Result<(), Error> {
     let value = value.into();
     let mut table = match fs::read_to_string(path) {

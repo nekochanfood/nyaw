@@ -1,9 +1,9 @@
-//! 親子関係を試す画面（[`DialogTest`]）と、子として開くダイアログ（[`Dialog`]）。
+//! 親子関係をテストする画面（[`DialogTest`]）と、子として開くダイアログ（[`Dialog`]）。
 
 use super::*;
 
-/// 文言のキーが `title` / `description` のダイアログを、ダイアログの幅（`components::DIALOG_WIDTH`）と
-/// 文に合った高さ（`components::dialog_height`）で `spec` に与える。
+/// 文言キーが `title` / `description` のダイアログを、ダイアログの幅（`components::DIALOG_WIDTH`）と
+/// テキストに合った高さ（`components::dialog_height`）で `spec` に設定する。
 fn dialog_sized(
     spec: PanelSpec,
     title: &str,
@@ -16,15 +16,15 @@ fn dialog_sized(
     spec.sized(Vec2::new(w as f32 / 1000.0, h as f32 / 1000.0), (w, h))
 }
 
-/// 親子関係を試す画面（`dialog-test`）。ダイアログ（[`Dialog`]）を子として開く 2 種類のボタンがある。
-/// - `open-dialog`: 外側（この画面など）を押すと閉じる（既定）。
-/// - `open-modal-dialog`: 外側を押しても閉じない（`PanelSpec::without_dismiss`）。`dialog-ok` / `dialog-cancel` で答えるまで残る。
+/// 親子関係をテストする画面（`dialog-test`）。ダイアログ（[`Dialog`]）を子として開く 2 種類のボタンがある。
+/// - `open-dialog`: 外側（この画面など）をクリックすると閉じる（既定）。
+/// - `open-modal-dialog`: 外側をクリックしても閉じない（`PanelSpec::without_dismiss`）。`dialog-ok` / `dialog-cancel` で応答するまで残る。
 ///
-/// 開いている間はこの画面が暗くなって押せず（掴んで動かすと子も付いてくる）、ダイアログを掴むと親も付いてくる（独立しない）。
+/// 表示中はこの画面が暗転して操作不可になり（グラブして移動すると子も追従する）、ダイアログをグラブすると親も追従する（独立しない）。
 #[derive(Default)]
 pub struct DialogTest {
     panel: PanelId,
-    /// ダイアログが答えた回数と、最後の答え。
+    /// ダイアログが応答した回数と、最後の応答。
     pub answered: usize,
     pub answer: Option<&'static str>,
 }
@@ -67,7 +67,7 @@ impl Render for DialogTest {
                                             "dialog.dismiss_body",
                                         )
                                     })
-                                    // ダイアログは答えて閉じるもの。ナビゲーションバーは付けない。
+                                    // ダイアログは応答して閉じるもの。ナビゲーションバーは付与しない。
                                     .without_nav_bar(),
                                     "dialog.dismiss_title",
                                     "dialog.dismiss_body",
@@ -94,7 +94,7 @@ impl Render for DialogTest {
                                         me,
                                         &design::icons::WARNING,
                                         "dialog.required_title",
-                                        // わざと長い文。3 行を超える分は文の側だけがスクロールし、ボタンは残る。
+                                        // 意図的に長いテキスト。3 行を超える分はテキスト側のみスクロールし、ボタンは固定される。
                                         "dialog.required_body",
                                     )
                                 })
@@ -129,7 +129,7 @@ impl Render for DialogTest {
     }
 }
 
-/// ダイアログの答え（`OK` / `Cancel`）を出すときの文言のキー。
+/// ダイアログの応答（`OK` / `Cancel`）に対応する文言キー。
 fn answer_key(answer: &str) -> &'static str {
     match answer {
         "OK" => "common.ok",
@@ -137,8 +137,8 @@ fn answer_key(answer: &str) -> &'static str {
     }
 }
 
-/// [`DialogTest`] が開く、OK / Cancel だけのダイアログ（`components::dialog`）。押した答えを親へ渡して自分を閉じる。
-/// `title` は種類の見分け用。`title` / `description` は文言のキー（描くときに今の言語で引く）。
+/// [`DialogTest`] が開く、OK / Cancel のみのダイアログ（`components::dialog`）。クリックした応答を親へ渡して自身を閉じる。
+/// `title` は種類の識別用。`title` / `description` は文言キー（描画時に現在の言語で解決する）。
 pub struct Dialog {
     panel: PanelId,
     parent: WeakEntity<DialogTest>,
@@ -168,7 +168,7 @@ impl Dialog {
 impl Render for Dialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        // 答えの値（親に渡す）は言語によらず、見出しだけを訳す。
+        // 応答の値（親に渡す）は言語によらず、見出しのみを翻訳する。
         let answer = |id: &'static str, value: &'static str, label: SharedString, variant| {
             let parent = self.parent.clone();
             let close = command(self.panel, PanelCommand::Close);

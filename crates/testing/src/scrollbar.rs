@@ -1,14 +1,14 @@
-//! 縦・横・縦横のスクロールバーを試す画面（[`TestingScrollbar`]）。
+//! 縦・横・縦横のスクロールバーを検証する画面（[`TestingScrollbar`]）。
 
 use super::*;
 
-/// スクロールバーの試験画面（`testing-scrollbar`）: 縦だけ・横だけ・縦横の 3 つのあふれる領域。
-/// 領域は `scrollbar-v` / `scrollbar-h` / `scrollbar-both`、棒は `{領域}-bars-v` / `-h`（`-thumb` 付きが棒）。
+/// スクロールバーのテスト画面（`testing-scrollbar`）: 縦方向・横方向・縦横方向の 3 つのオーバーフロー領域。
+/// 領域は `scrollbar-v` / `scrollbar-h` / `scrollbar-both`、バーは `{領域}-bars-v` / `-h`（`-thumb` 付きがサム）。
 pub struct TestingScrollbar {
     pub vertical: ScrollHandle,
     pub horizontal: ScrollHandle,
     pub both: ScrollHandle,
-    /// 縦の領域の中にある、入れ子のスクロール要素。
+    /// 縦方向領域内のネストされたスクロール要素。
     pub inner: ScrollHandle,
 }
 
@@ -23,7 +23,7 @@ impl TestingScrollbar {
     }
 }
 
-/// 中身の 1 マス（色で位置が分かる）。
+/// コンテンツの 1 セル（色相で位置を識別可能）。
 pub(crate) fn cell(i: usize) -> Div {
     div()
         .flex_none()
@@ -39,7 +39,7 @@ pub(crate) fn cell(i: usize) -> Div {
 impl Render for TestingScrollbar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        // 領域の枠: 入れ物（relative）に、スクロールする本体と棒を重ねる。
+        // 領域の枠: コンテナ（relative）にスクロール本体とバーを重ねる。
         let area =
             |id: &'static str, pull: &'static str, handle: &ScrollHandle, body: Stateful<Div>| {
                 div()
@@ -69,7 +69,7 @@ impl Render for TestingScrollbar {
                         .gap_2()
                         .p_2()
                         .child(
-                            // 入れ子: ポインタが触れている内側だけが動く。
+                            // ネストスクロール: ポインタが接触している内側の要素のみスクロールする。
                             div()
                                 .debug_selector(|| "scrollbar-nested".into())
                                 .relative()
@@ -141,7 +141,7 @@ impl Render for TestingScrollbar {
                         .flex_col()
                         .gap_2()
                         .p_2()
-                        // 幅を中身に合わせないと、親の幅に揃えられて横にあふれない。
+                        // 幅をコンテンツに合わせないと、親の幅に制約されて水平オーバーフローが発生しない。
                         .w(px(30.0 * 56.0 + 16.0))
                         .children((0..20).map(|r| {
                             div()

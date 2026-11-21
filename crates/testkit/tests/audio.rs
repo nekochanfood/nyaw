@@ -1,5 +1,5 @@
-//! 音声テストの画面（`AudioTest`）のボタンから、パネルのスピーカーで音が鳴るまで。
-//! テスト用のカーネルは出力デバイスを開かないので、`kernel.audio.render` で回して左右に出た音を測る。
+//! 音声テスト画面（`AudioTest`）のボタン操作からパネルスピーカーの発音までを検証する。
+//! テスト用カーネルは出力デバイスを開かないため、`kernel.audio.render` でレンダリングし左右チャンネルの出力を計測する。
 
 use gpui::TestAppContext;
 use kernel::audio::{BLOCK, Layout};
@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use testing::AudioTest;
 use testkit::{Action, Driver, VrKit};
 
-/// 鳴り始めるまで（読み込みは別スレッド）描き、そこから約 0.3 秒の左右の二乗和を返す。
+/// 発音開始まで（読み込みは別スレッド）描画を進め、約 0.3 秒間の左右チャンネルの二乗和を返す。
 fn heard(kit: &mut VrKit<'_, AudioTest>) -> (f32, f32) {
     let block = |kit: &mut VrKit<'_, AudioTest>| {
         let mut out = [0.0; BLOCK * 2];
@@ -33,9 +33,9 @@ fn heard(kit: &mut VrKit<'_, AudioTest>) -> (f32, f32) {
     e
 }
 
-/// `selector` を押し、押したときの効果音（ホバーとクリック。`ui::cue`）が鳴り終わって
-/// 鳴っている音が `sounds` 個になるまで回す。効果音が混ざると左右の測り方が狂う。
-// ponytail: 効果音（0.23 秒）より短いテスト音だと鳴り終わってしまう。そうなったら効果音を止める口を作る
+/// `selector` をクリックし、効果音（ホバー・クリック。`ui::cue`）の再生完了後、
+/// 再生中の音数が `sounds` になるまで進める。効果音の混入は左右チャンネルの計測精度を損なう。
+// ponytail: 効果音（0.23 秒）より短いテスト音の場合は先に再生終了する。その場合は効果音の停止手段を追加する
 fn press(kit: &mut VrKit<'_, AudioTest>, selector: &'static str, sounds: usize) {
     kit.click(selector);
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -46,7 +46,7 @@ fn press(kit: &mut VrKit<'_, AudioTest>, selector: &'static str, sounds: usize) 
     assert_eq!(kit.kernel.status(0).audio.playing, sounds);
 }
 
-/// 鳴っている音が無くなるまで回す。
+/// 再生中の音がすべて終了するまで進める。
 fn settle(kit: &mut VrKit<'_, AudioTest>) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while kit.kernel.status(0).audio.playing > 0 && Instant::now() < deadline {
@@ -58,7 +58,7 @@ fn settle(kit: &mut VrKit<'_, AudioTest>) {
 #[gpui::test]
 fn panel_speaker_plays_from_the_panel_edges(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| AudioTest::new(0));
-    // 右だけ鳴る 2ch の音は、正面のパネルの右端から聞こえる。
+    // 右チャンネルのみの 2ch 音源は、正面パネルの右端から聞こえる。
     press(&mut kit, "audio-right", 1);
     let (l, r) = heard(&mut kit);
     assert!(r > l * 1.5, "{l} {r}");
@@ -67,7 +67,7 @@ fn panel_speaker_plays_from_the_panel_edges(cx: &mut TestAppContext) {
     let (l, r) = heard(&mut kit);
     assert!(l > r * 1.5, "{l} {r}");
     settle(&mut kit);
-    // 左右が同じ音は自動でモノラル（中央の 1 点）になり、正面なら左右同じ。
+    // 左右同一の音源は自動的にモノラル（中央 1 点）に変換され、正面配置では左右均等になる。
     press(&mut kit, "audio-centre", 1);
     let (l, r) = heard(&mut kit);
     assert!(l > 0.0 && (l - r).abs() < l * 0.05, "{l} {r}");
@@ -77,10 +77,10 @@ fn panel_speaker_plays_from_the_panel_edges(cx: &mut TestAppContext) {
 #[gpui::test]
 fn buttons_switch_spatialization_layout_and_mix_loops(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, _| AudioTest::new(0));
-    assert!(kit.kernel.status(0).audio.spatial, "立体化は既定で有効");
+    assert!(kit.kernel.status(0).audio.spatial, "空間化は既定で有効");
     kit.click("audio-spatial");
     assert!(!kit.kernel.status(0).audio.spatial);
-    // 立体化を外すと、片側の音はそのまま片側に鳴る（置き場所に関係しない）。
+    // 空間化を無効にすると、片側チャンネルの音はパネル位置に依存せずそのまま片側から出力される。
     press(&mut kit, "audio-right", 1);
     let (l, r) = heard(&mut kit);
     assert!(r > l * 1000.0, "{l} {r}");
@@ -88,7 +88,7 @@ fn buttons_switch_spatialization_layout_and_mix_loops(cx: &mut TestAppContext) {
 
     kit.click("audio-layout-mono");
     assert_eq!(kit.kernel.status(0).audio.layout, Layout::Mono);
-    // モノラルに固定すると、片側の音も左右に混ぜて鳴る。
+    // モノラル固定時は、片側チャンネルの音も左右均等にミックスされる。
     press(&mut kit, "audio-right", 1);
     let (l, r) = heard(&mut kit);
     assert!(l > 0.0 && (l - r).abs() < l * 1e-3, "{l} {r}");
@@ -98,7 +98,7 @@ fn buttons_switch_spatialization_layout_and_mix_loops(cx: &mut TestAppContext) {
     kit.click("audio-layout-auto");
     assert_eq!(kit.kernel.status(0).audio.layout, Layout::Auto);
 
-    // ループは重ねて鳴らせ、止めるまで鳴り続ける。
+    // ループ音源は重ねて再生でき、明示的に停止するまで継続する。
     press(&mut kit, "audio-loop-1", 1);
     press(&mut kit, "audio-loop-2", 2);
     heard(&mut kit);
@@ -106,7 +106,7 @@ fn buttons_switch_spatialization_layout_and_mix_loops(cx: &mut TestAppContext) {
     settle(&mut kit);
     assert_eq!(kit.kernel.status(0).audio.playing, 0);
 
-    // パネルを閉じると、そのパネルの音は止まる。
+    // パネルを閉じると、そのパネルに属する音源は停止する。
     press(&mut kit, "audio-loop-3", 1);
     heard(&mut kit);
     kit.kernel.apply(0, PanelCommand::Close);
@@ -115,7 +115,7 @@ fn buttons_switch_spatialization_layout_and_mix_loops(cx: &mut TestAppContext) {
     assert_eq!(kit.kernel.status(0).audio.playing, 0);
 }
 
-/// 鳴っている音が無くなるまで描き、その間に左右に出た音の二乗和を返す。
+/// 再生中の音がすべて終了するまで描画を進め、その間の左右チャンネル出力の二乗和を返す。
 fn drain(kit: &mut VrKit<'_, Settings>) -> f32 {
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut energy = 0.0;
@@ -129,11 +129,11 @@ fn drain(kit: &mut VrKit<'_, Settings>) -> f32 {
     energy
 }
 
-/// 設定画面のキーボードの見本のキーは、キーの音の設定どおりに鳴る: 音量を半分にすると振幅が半分になり、オフでは鳴らない。
+/// 設定画面のキーボードプレビューのキーは、打鍵音設定に従って発音する。音量 50% で振幅が半分になり、オフでは無音になる。
 #[gpui::test]
 fn preview_key_sound_is_as_loud_as_the_volume_setting(cx: &mut TestAppContext) {
     let mut kit = VrKit::new(cx, |_, cx| {
-        // 読み込みのスレッドと OS の配列を待たず、同じ配列から始める。
+        // 非同期読み込みスレッドや OS のレイアウト検出を待たず、固定のレイアウトで開始する。
         let layout = KeyLayout::new("us", "");
         let keyboard = Database::load().unwrap().keyboard(&layout).unwrap();
         let settings = Settings::new(0);
@@ -148,7 +148,7 @@ fn preview_key_sound_is_as_loud_as_the_volume_setting(cx: &mut TestAppContext) {
         settings
     });
     kit.click("settings-input").click("settings-keyboard");
-    // レーザーをキーに載せてホバー音が鳴り終わってから押し、キーの音だけを測る。
+    // レーザーをキー上に合わせてホバー音の終了を待ってから押下し、打鍵音のみを計測する。
     let heard = |kit: &mut VrKit<'_, Settings>, setting: Option<Setting>| {
         if let Some(setting) = setting {
             kit.kernel.set(setting);
@@ -162,9 +162,9 @@ fn preview_key_sound_is_as_loud_as_the_volume_setting(cx: &mut TestAppContext) {
     let full = heard(&mut kit, None);
     let half = heard(&mut kit, Some(Setting::KeySoundVolume(0.5)));
     let off = heard(&mut kit, Some(Setting::KeySound(false)));
-    assert!(full > 0.0, "既定では鳴る");
-    // 二乗和は音量の二乗に比例する。押すたびに高さが 1 ± 0.1 で揺れ、その分だけ長さ（二乗和）も変わる。
+    assert!(full > 0.0, "既定設定では発音される");
+    // 二乗和は音量の二乗に比例する。打鍵ごとにピッチが 1 ± 0.1 で変動し、その分だけ持続時間（二乗和）も変化する。
     let ratio = half / full;
     assert!((0.15..0.4).contains(&ratio), "{half} / {full} = {ratio}");
-    assert_eq!(off, 0.0, "オフでは鳴らない");
+    assert_eq!(off, 0.0, "オフ設定では無音");
 }

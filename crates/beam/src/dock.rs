@@ -1,6 +1,6 @@
-//! はまる所の見本（[`Pointer::Dock`]）。はめられる画面を掴んでいる間、はまる所に画面の地より少し大きく出る角だけの枠と、上の一行。
-//! 離すとはまる（はまったままになる）間は強調色、離すと独立する間は無彩色で、境目が分かる。
-//! ここは絵だけを描き、置き場所・大きさ・出入りのフェードはオーバーレイ層が決める（描き直すのは一行が変わったときだけ）。
+//! ドッキングスロットのゴースト表示（[`Pointer::Dock`]）。ドッキング可能なパネルを掴んでいる間、スロットにパネル背景より少し大きい角枠とヒントテキストを描く。
+//! ドッキング成立時は強調色、解除時は無彩色で状態を視覚的に区別する。
+//! 描画のみを担い、配置・寸法・フェード制御はオーバーレイ層が行う（再描画はヒントテキスト変更時のみ）。
 
 use design::{Theme, font_size, icons, radius, spacing};
 use gpui::{
@@ -10,17 +10,17 @@ use kernel::overlay::DOCK_HINT_PX;
 use kernel::{DockHint, Hand, PanelId, Pointer, Pose, Vec2};
 use ui::PanelSpec;
 
-/// 窓の最初の大きさ（px）。掴んだ画面に合わせてオーバーレイ層が変える。
+/// ウィンドウの初期サイズ（px）。掴んだパネルに合わせてオーバーレイ層が変更する。
 const GHOST_PX: (u32, u32) = (400, 300 + DOCK_HINT_PX);
-/// 角の線の太さと、角の丸みから辺に沿って伸ばす長さ（px）。伸ばす長さは、短い辺の直線部分の [`ARM_MAX`] までに収める
-/// （隣の角の線とつながらない）。
+/// 角線の太さと、角の丸みから辺に沿って伸ばす長さ（px）。伸ばす長さは短辺の直線部分の [`ARM_MAX`] 以下に制限する
+/// （隣の角線と接続しないようにする）。
 const BORDER_PX: f32 = 6.0;
 const ARM_PX: f32 = 96.0;
 const ARM_MAX: f32 = 0.35;
-/// 離すと独立する間の枠の濃さ（無彩色の文字色に掛ける不透明度。0〜255）。
+/// ドッキング解除状態の枠の不透明度（無彩色の文字色に乗算。0〜255）。
 const LOOSE_ALPHA: u32 = 0xb0;
 
-/// `hand` の見本の起動仕様。
+/// `hand` のドッキングゴーストの起動仕様。
 pub fn spec(hand: Hand) -> PanelSpec {
     PanelSpec::root(Pose::IDENTITY, |panel, _, _| DockGhost {
         panel,
@@ -30,10 +30,10 @@ pub fn spec(hand: Hand) -> PanelSpec {
     .pointer(hand, Pointer::Dock)
 }
 
-/// 上の帯に一行（引っ張って外す・離してくっつける・近づけてくっつける）、その下にはまる所の角だけの枠（中は透ける）。
+/// 上部にヒントテキスト帯（Pull / Release / Attach）、下部に角枠のみのスロット表示（中央は透過）。
 pub struct DockGhost {
     panel: PanelId,
-    /// 最後に出した一行（離して薄れていく間も同じものを出す）。
+    /// 最後に表示したヒント（フェードアウト中も同じものを維持する）。
     hint: DockHint,
 }
 
@@ -52,7 +52,7 @@ impl Render for DockGhost {
             DockHint::Release => (&icons::LINK, "dock.release"),
             DockHint::Attach => (&icons::MAGNET, "dock.attach"),
         };
-        // 離すとはまるなら強調色、離すと独立するなら無彩色。
+        // ドッキング成立なら強調色、解除なら無彩色。
         let line = if self.hint.docks() {
             theme.accent_solid
         } else {
@@ -64,7 +64,7 @@ impl Render for DockGhost {
             .items_center()
             .justify_center()
             .child(
-                // ツールチップと同じ地で、どこに重なっても読める。アイコンは文字と同じ色。
+                // ツールチップと同じ背景色で、どの面に重なっても可読性を確保する。アイコンは文字色と統一。
                 div()
                     .flex()
                     .items_center()
@@ -101,8 +101,8 @@ impl Render for DockGhost {
     }
 }
 
-/// `bounds` いっぱいの角丸（`radius::XL`）の長方形の四隅だけを、丸みとそこから辺に沿って [`ARM_PX`] 伸ばした線で描く
-/// （全画面表示のアイコンのような角の枠。色 `color`）。
+/// `bounds` 全体の角丸（`radius::XL`）矩形の四隅のみを、丸みとそこから辺に沿って [`ARM_PX`] 延伸した線で描画する
+/// （フルスクリーンアイコンに類似した角枠。色 `color`）。
 fn corner_frame(bounds: Bounds<Pixels>, color: u32, window: &mut Window) {
     let half = BORDER_PX / 2.0;
     let (x0, y0) = (
@@ -132,7 +132,7 @@ fn corner_frame(bounds: Bounds<Pixels>, color: u32, window: &mut Window) {
     }
 }
 
-/// 角丸の長方形（線の中心）の周。上辺の左の角の終わりから時計回りに進む。
+/// 角丸矩形（線の中心）の周長。上辺左角の終端から時計回りに進行する。
 struct Perimeter {
     x0: f32,
     y0: f32,
@@ -142,7 +142,7 @@ struct Perimeter {
 }
 
 impl Perimeter {
-    /// 四隅の線（右上・右下・左下・左上）が始まる周の位置と、その長さ。丸みの前後に辺に沿って [`ARM_PX`] ずつ伸ばす。
+    /// 四隅の角線（右上・右下・左下・左上）の開始位置とその長さ。丸みの前後に辺方向へ [`ARM_PX`] ずつ延伸する。
     fn brackets(&self) -> ([f32; 4], f32) {
         let (sw, sh, arc) = (
             self.w - 2.0 * self.r,
@@ -150,7 +150,7 @@ impl Perimeter {
             std::f32::consts::FRAC_PI_2 * self.r,
         );
         let arm = ARM_PX.min(ARM_MAX * sw.min(sh)).max(0.0);
-        // 右上・右下・左下・左上の丸みが始まる所。
+        // 右上・右下・左下・左上の丸みの開始位置。
         let corners = [
             sw,
             sw + arc + sh,
@@ -164,7 +164,7 @@ impl Perimeter {
         2.0 * (self.w + self.h - 4.0 * self.r) + std::f32::consts::TAU * self.r
     }
 
-    /// 周に沿って `s` 進んだ点。
+    /// 周上を `s` だけ進んだ座標。
     fn at(&self, s: f32) -> Point<Pixels> {
         let Self { x0, y0, w, h, r } = *self;
         let (sw, sh, arc) = (w - 2.0 * r, h - 2.0 * r, std::f32::consts::FRAC_PI_2 * r);
@@ -172,7 +172,7 @@ impl Perimeter {
             let a = from + if r > 0.0 { s / r } else { 0.0 };
             point(px(cx + r * a.cos()), px(cy + r * a.sin()))
         };
-        // 上辺・右上・右辺・右下・下辺・左下・左辺・左上（画面の下向きが +y）の長さ。
+        // 上辺・右上・右辺・右下・下辺・左下・左辺・左上（画面座標系で下方向が +y）の各区間長。
         let lens = [sw, arc, sh, arc, sw, arc, sh, arc];
         let mut s = s.rem_euclid(self.length());
         let mut i = 0;
@@ -212,14 +212,14 @@ mod tests {
         let close = |a: Point<Pixels>, x: f32, y: f32| {
             (f32::from(a.x) - x).abs() < 1e-3 && (f32::from(a.y) - y).abs() < 1e-3
         };
-        // 上辺の左端から始まり、右上の角を回って右辺へ、一周で戻る。
+        // 上辺左端から開始し、右上角を経て右辺へ進み、一周で始点に戻る。
         assert!(close(p.at(0.0), 10.0, 0.0));
         assert!(close(p.at(80.0), 90.0, 0.0));
         let corner = std::f32::consts::FRAC_PI_2 * 10.0;
         assert!(close(p.at(80.0 + corner), 100.0, 10.0));
         assert!(close(p.at(80.0 + corner + 40.0), 100.0, 50.0));
         assert!(close(p.at(total), 10.0, 0.0));
-        // 四隅の線はそれぞれの角を囲み、隣の線とつながらない。
+        // 四隅の角線はそれぞれの角を囲み、隣の角線と接続しない。
         let (starts, len) = p.brackets();
         assert!(close(
             p.at(starts[0] + len / 2.0),
@@ -230,7 +230,7 @@ mod tests {
             let next = (starts[(k + 1) % 4] - starts[k]).rem_euclid(total);
             assert!(len < next, "{k}: {len} >= {next}");
         }
-        // どの点も、角丸の長方形の線の上（外へはみ出さない）。
+        // すべての点が角丸矩形の輪郭上にある（外側にはみ出さない）。
         for i in 0..200 {
             let a = p.at(total * i as f32 / 200.0);
             let (x, y) = (f32::from(a.x), f32::from(a.y));

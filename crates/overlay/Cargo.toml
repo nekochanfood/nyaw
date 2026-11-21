@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [features]
-# 起動済みの SteamVR が要るテスト（animation_runtime）用。
+# animation_runtime テストに必要（起動済みの SteamVR を前提とする）
 openvr = ["subsystems/openvr"]
 
 [[test]]
@@ -15,7 +15,7 @@ required-features = ["openvr"]
 [dependencies]
 subsystems.workspace = true
 logger.workspace = true
-# 値（design）と動き（animation）だけを使う（GPUI は持ち込まない）
+# design（値）と animation（動き）のみ使用し、GPUI への依存は持ち込まない
 animation.workspace = true
 design = { path = "../design", default-features = false }
 
