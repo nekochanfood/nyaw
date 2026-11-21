@@ -219,7 +219,12 @@ fn open_url(url: &str) -> Result<(), String> {
         // `start` の第 1 引数はウィンドウタイトル。
         run(Command::new("cmd").args(["/C", "start", "", url]))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        // Steam registers itself for steam:// links with the desktop.
+        run(Command::new("xdg-open").arg(url))
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = url;
         Err("no URL opener is implemented for this target".into())
@@ -237,11 +242,17 @@ fn monado() -> Option<Monado> {
     monado_in(&root().join("monado"))
 }
 
+/// The executable name of Monado's service.
+const MONADO_SERVICE: &str = if cfg!(windows) {
+    "monado-service.exe"
+} else {
+    "monado-service"
+};
+
 /// Monado extracted by testkit (`<dir>/install/...`).
 fn monado_in(dir: &Path) -> Option<Monado> {
     let install = dir.join("install");
-    #[cfg(windows)]
-    let service = install.join("bin").join("monado-service.exe");
+    let service = install.join("bin").join(MONADO_SERVICE);
     let manifest = install.join("openxr_monado.json");
     (service.is_file() && manifest.is_file()).then_some(Monado { service, manifest })
 }
@@ -435,15 +446,22 @@ impl Drop for Launched {
 // --- Processes ------------------------------------------------------------------------------
 
 /// Processes (from one snapshot) whose executable name (without extension) is in `names`.
+/// Linux cuts the process name to 15 bytes, so the executable's file name is checked too.
 fn running(names: &[&str]) -> Vec<sysinfo::Pid> {
     let mut sys = sysinfo::System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
+    let matches = |name: &std::ffi::OsStr| {
+        let n = name.to_string_lossy().to_lowercase();
+        let n = n.strip_suffix(".exe").unwrap_or(&n);
+        names.contains(&n)
+    };
     sys.processes()
         .iter()
         .filter(|(_, p)| {
-            let n = p.name().to_string_lossy().to_lowercase();
-            let n = n.strip_suffix(".exe").unwrap_or(&n);
-            names.contains(&n)
+            matches(p.name()) || p.exe().and_then(Path::file_name).is_some_and(matches)
         })
         .map(|(pid, _)| *pid)
         .collect()
@@ -484,7 +502,7 @@ mod tests {
         fs::create_dir_all(&bin).unwrap();
         assert!(monado_in(&dir).is_none());
 
-        let exe = "monado-service.exe";
+        let exe = MONADO_SERVICE;
         fs::write(bin.join(exe), "").unwrap();
         assert!(
             monado_in(&dir).is_none(),
