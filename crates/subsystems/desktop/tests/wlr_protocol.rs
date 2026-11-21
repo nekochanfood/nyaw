@@ -15,6 +15,9 @@ use std::{
 
 use desktop::{Button, SourceKind, Sources, Status, Stream, Touch, TouchPhase};
 use rustix::mm;
+use wayland_protocols_misc::zwp_virtual_keyboard_v1::server::{
+    zwp_virtual_keyboard_manager_v1 as keyboards, zwp_virtual_keyboard_v1 as virtual_keyboard,
+};
 use wayland_protocols_wlr::{
     screencopy::v1::server::{
         zwlr_screencopy_frame_v1 as frame, zwlr_screencopy_manager_v1 as manager,
@@ -27,8 +30,24 @@ use wayland_server::{
     Client, DataInit, Dispatch, Display, DisplayHandle, GlobalDispatch, ListeningSocket, New,
     Resource,
     backend::{ClientData, ClientId, DisconnectReason},
-    protocol::{wl_buffer, wl_output, wl_seat, wl_shm, wl_shm_pool},
+    protocol::{wl_buffer, wl_keyboard, wl_output, wl_seat, wl_shm, wl_shm_pool},
 };
+
+/// コンポジタの配列として送る文字列（仮想キーボードがキーを送るときに、そのまま使い戻されることを確かめる）。
+const SYSTEM_KEYMAP: &str = "xkb_keymap { system };";
+
+/// 仮想キーボードから受け取った配列の要約（コンポジタの配列か、文字ごとの配列の keysym 名の並び）。
+fn keymap_summary(text: &str) -> String {
+    if text == SYSTEM_KEYMAP {
+        return "keymap system".into();
+    }
+    let symbols: Vec<&str> = text
+        .split("{[ ")
+        .skip(1)
+        .filter_map(|s| s.split(' ').next())
+        .collect();
+    format!("keymap {}", symbols.join(" "))
+}
 
 const WIDTH: u32 = 64;
 const HEIGHT: u32 = 32;
@@ -344,7 +363,103 @@ macro_rules! accept_requests {
         }
     )*};
 }
-accept_requests!(wl_output::WlOutput, wl_seat::WlSeat);
+accept_requests!(wl_output::WlOutput, wl_keyboard::WlKeyboard);
+
+impl Dispatch<wl_seat::WlSeat, ()> for State {
+    fn request(
+        _: &mut Self,
+        _: &Client,
+        _: &wl_seat::WlSeat,
+        request: wl_seat::Request,
+        _: &(),
+        _: &DisplayHandle,
+        init: &mut DataInit<'_, Self>,
+    ) {
+        if let wl_seat::Request::GetKeyboard { id } = request {
+            let keyboard = init.init(id, ());
+            let fd = rustix::fs::memfd_create(c"keymap", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
+            let mut text = SYSTEM_KEYMAP.as_bytes().to_vec();
+            text.push(0);
+            rustix::io::write(&fd, &text).unwrap();
+            keyboard.keymap(
+                wl_keyboard::KeymapFormat::XkbV1,
+                std::os::fd::AsFd::as_fd(&fd),
+                text.len() as u32,
+            );
+        }
+    }
+}
+
+impl GlobalDispatch<keyboards::ZwpVirtualKeyboardManagerV1, ()> for State {
+    fn bind(
+        _: &mut Self,
+        _: &DisplayHandle,
+        _: &Client,
+        resource: New<keyboards::ZwpVirtualKeyboardManagerV1>,
+        _: &(),
+        init: &mut DataInit<'_, Self>,
+    ) {
+        init.init(resource, ());
+    }
+}
+
+impl Dispatch<keyboards::ZwpVirtualKeyboardManagerV1, ()> for State {
+    fn request(
+        _: &mut Self,
+        _: &Client,
+        _: &keyboards::ZwpVirtualKeyboardManagerV1,
+        request: keyboards::Request,
+        _: &(),
+        _: &DisplayHandle,
+        init: &mut DataInit<'_, Self>,
+    ) {
+        if let keyboards::Request::CreateVirtualKeyboard { id, .. } = request {
+            init.init(id, ());
+        }
+    }
+}
+
+impl Dispatch<virtual_keyboard::ZwpVirtualKeyboardV1, ()> for State {
+    fn request(
+        state: &mut Self,
+        _: &Client,
+        _: &virtual_keyboard::ZwpVirtualKeyboardV1,
+        request: virtual_keyboard::Request,
+        _: &(),
+        _: &DisplayHandle,
+        _: &mut DataInit<'_, Self>,
+    ) {
+        let event = match request {
+            virtual_keyboard::Request::Keymap { fd, size, .. } => {
+                let len = size as usize;
+                let ptr = unsafe {
+                    mm::mmap(
+                        std::ptr::null_mut(),
+                        len,
+                        mm::ProtFlags::READ,
+                        mm::MapFlags::PRIVATE,
+                        &fd,
+                        0,
+                    )
+                }
+                .unwrap();
+                let bytes = unsafe { std::slice::from_raw_parts(ptr as *const u8, len) };
+                let text =
+                    String::from_utf8_lossy(bytes.split(|&b| b == 0).next().unwrap()).into_owned();
+                unsafe { mm::munmap(ptr, len).unwrap() };
+                keymap_summary(&text)
+            }
+            virtual_keyboard::Request::Key { key, state, .. } => format!("key {key} {state}"),
+            virtual_keyboard::Request::Modifiers {
+                mods_depressed,
+                mods_locked,
+                ..
+            } => format!("mods {mods_depressed} {mods_locked}"),
+            _ => return,
+        };
+        state.events.lock().unwrap().push(event);
+    }
+}
 
 impl Dispatch<wl_buffer::WlBuffer, Buffer> for State {
     fn request(
@@ -386,6 +501,7 @@ impl Compositor {
                 handle.create_global::<State, wl_seat::WlSeat, ()>(7, ());
                 handle.create_global::<State, manager::ZwlrScreencopyManagerV1, ()>(3, ());
                 handle.create_global::<State, pointers::ZwlrVirtualPointerManagerV1, ()>(2, ());
+                handle.create_global::<State, keyboards::ZwpVirtualKeyboardManagerV1, ()>(1, ());
                 let mut state = State { events, frames: 0 };
                 ready.send(()).unwrap();
                 while !stop.load(Ordering::Acquire) {
@@ -521,4 +637,54 @@ fn wlroots_streams_and_points_through_screencopy_and_a_virtual_pointer() {
         );
         compositor.events.lock().unwrap().clear();
     }
+
+    // OS キーボード: キーはコンポジタの配列で送り、修飾キーは修飾子も送る。文字列は文字ごとの配列で送ってから戻す。
+    use os::keyboard::{Output, chord};
+    let keyboard = desktop::os_keyboard();
+    let settings = until("the keyboard", || {
+        let s = keyboard.settings();
+        (s.foreground != 0).then_some(s)
+    });
+    assert!(settings.error.is_none(), "{:?}", settings.error);
+    let expect = |wanted: &[&str]| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while compositor.events().len() < wanted.len() {
+            assert!(
+                Instant::now() < deadline,
+                "got {:?}, want {wanted:?}",
+                compositor.events()
+            );
+            thread::sleep(Duration::from_millis(5));
+        }
+        let events = compositor.events();
+        assert_eq!(
+            events.iter().map(String::as_str).collect::<Vec<_>>(),
+            wanted,
+            "{events:?}"
+        );
+        compositor.events.lock().unwrap().clear();
+    };
+    expect(&["keymap system"]);
+    keyboard
+        .send(settings.foreground, Output::Keys(chord(&[42], 30)))
+        .unwrap();
+    expect(&[
+        "key 42 1", "mods 1 0", "key 30 1", "key 30 0", "key 42 0", "mods 0 0",
+    ]);
+    keyboard
+        .send(settings.foreground, Output::Text("aあa".into()))
+        .unwrap();
+    expect(&[
+        "keymap U0061 U3042",
+        "mods 0 0",
+        "key 1 1",
+        "key 1 0",
+        "key 2 1",
+        "key 2 0",
+        "key 1 1",
+        "key 1 0",
+        "keymap system",
+        "mods 0 0",
+    ]);
+    assert!(keyboard.settings().error.is_none());
 }

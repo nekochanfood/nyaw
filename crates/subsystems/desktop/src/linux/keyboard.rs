@@ -516,6 +516,7 @@ impl Wlr {
             started: Instant::now(),
         };
         wlr.upload(&wlr.system.clone()).map_err(|e| e.to_string())?;
+        wlr.conn.flush().map_err(|e| e.to_string())?;
         Ok(wlr)
     }
 
