@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 新バージョン（<CalVer>[-<チャネル名>.<番号>]。例: 2026.0.3, 2026.0.3-beta.1。-dev.<番号> は main のバージョン進行のみ）
+        description: '新バージョン（<CalVer>[-<チャネル名>.<番号>]。例: 2026.0.3, 2026.0.3-beta.1。-dev.<番号> は main のバージョン進行のみ）'
         required: true
 
 jobs:
