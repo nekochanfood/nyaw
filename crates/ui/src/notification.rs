@@ -17,7 +17,7 @@ use gpui::{
     px, rgba,
 };
 use kernel::subsystems::notifications::Notification;
-use kernel::{PanelCommand, PanelId};
+use kernel::{PanelId, Request};
 
 /// 通知センター（ダッシュボードのクイック設定一覧）のオープン要求（GPUI グローバル）。トーストのカードを押すと
 /// 該当通知に合わせて起動する（[`show_center`]）。ダッシュボードが検知して一覧を表示し、
@@ -317,20 +317,14 @@ pub fn card(
 }
 
 /// 通知 `n` の本文（`action` が `None`）またはボタンの押下を処理する。URL は検証後に開き（[`crate::link`]）、
-/// それ以外はアプリへ配送する（配送済みの通知は OS の通知センターからも消去され、一覧から除外される）。`panel` は押下元パネル。
-pub fn open(
-    panel: PanelId,
-    n: &Notification,
-    action: Option<usize>,
-    window: &Window,
-    cx: &mut App,
-) {
+/// それ以外はアプリへ配送する（配送済みの通知は OS の通知センターからも消去され、一覧から除外される）。
+pub fn open(n: &Notification, action: Option<usize>, window: &Window, cx: &mut App) {
     let url = match action {
         None => n.url.clone(),
         Some(i) => n.actions.get(i).and_then(|a| a.url.clone()),
     };
     match url {
         Some(url) => design::link::open(url, window, cx),
-        None => crate::command(panel, PanelCommand::Notification { id: n.id, action }, cx),
+        None => crate::request(Request::Notification { id: n.id, action }, cx),
     }
 }

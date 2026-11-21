@@ -30,7 +30,7 @@ use kernel::subsystems::input::ClickButton;
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
     Anchor, Device, Kernel, Language, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent,
-    PointerMode, Pose, Setting, Settings, ThemeMode, Vec2, VrBackend,
+    PointerMode, Pose, Request, Setting, Settings, ThemeMode, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 

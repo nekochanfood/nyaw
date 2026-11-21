@@ -18,19 +18,19 @@ fn now_playing_screen_shows_the_song_and_sends_commands(cx: &mut TestAppContext)
     // 前へは無効のため、押下してもコマンドは発行されない。
     click(cx, "now-playing-previous");
     assert_eq!(
-        commands(cx, 2),
+        take_requests(cx),
         [
-            PanelCommand::Media(media::Command::PlayPause),
-            PanelCommand::Media(media::Command::Next),
+            Request::Media(media::Command::PlayPause),
+            Request::Media(media::Command::Next),
         ]
     );
     // シークバーの右端付近を押下すると、曲の終盤付近へシークする。
     let bar = cx.debug_bounds("now-playing-seek").unwrap();
     let at = gpui::point(bar.right() - px(1.0), bar.center().y);
     cx.simulate_click(at, Modifiers::none());
-    let last = commands(cx, 2).pop();
+    let last = take_requests(cx).pop();
     assert!(
-        matches!(last, Some(PanelCommand::Media(media::Command::Seek(d))) if d > Duration::from_secs(190))
+        matches!(last, Some(Request::Media(media::Command::Seek(d))) if d > Duration::from_secs(190))
     );
 }
 
@@ -52,9 +52,9 @@ fn media_switch_shows_only_with_several_sessions(cx: &mut TestAppContext) {
     cx.run_until_parked();
     click(cx, "now-playing-previous-media");
     click(cx, "now-playing-next-media");
-    let c = commands(cx, 2);
-    assert!(c.contains(&PanelCommand::Media(media::Command::Switch(false))));
-    assert!(c.contains(&PanelCommand::Media(media::Command::Switch(true))));
+    let c = take_requests(cx);
+    assert!(c.contains(&Request::Media(media::Command::Switch(false))));
+    assert!(c.contains(&Request::Media(media::Command::Switch(true))));
 }
 
 #[gpui::test]

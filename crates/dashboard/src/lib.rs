@@ -27,7 +27,7 @@ use kernel::desktop::{
 use kernel::subsystems::media;
 use kernel::subsystems::notifications::Notification;
 use kernel::vr::{Pose, Quat, Vec2, Vec3};
-use kernel::{PanelCommand, PanelId};
+use kernel::{PanelCommand, PanelId, Request};
 use ui::mirror::{MirrorState, mirror_screen};
 use ui::{PanelControl, PanelSpec, commands};
 
