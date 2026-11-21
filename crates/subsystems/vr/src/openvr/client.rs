@@ -12,7 +12,7 @@ use openvr_bindings as sys;
 use crate::VrError;
 
 /// `vr::IVRClientCore`（ivrclientcore.h）の仮想関数テーブル。順序が ABI そのもの。
-/// x64 Windows ではメンバ関数は `this` を第 1 引数とする C 呼び出し規約と同一。
+/// x64 の Windows でも Linux（System V）でも、メンバ関数は `this` を第 1 引数とする C 呼び出し規約と同一。
 #[repr(C)]
 struct CoreVtbl {
     init: unsafe extern "C" fn(
@@ -63,6 +63,8 @@ impl Client {
         })?;
         #[cfg(windows)]
         let dll = runtime.join("bin").join("vrclient_x64.dll");
+        #[cfg(target_os = "linux")]
+        let dll = runtime.join("bin").join("linux64").join("vrclient.so");
         let lib = unsafe { Library::new(&dll) }
             .map_err(|e| VrError::Runtime(format!("{}: {e}", dll.display())))?;
         let factory = unsafe { lib.get::<Factory>(b"VRClientCoreFactory\0") }

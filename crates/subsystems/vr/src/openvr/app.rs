@@ -104,6 +104,13 @@ fn register_manifest(t: &sys::VR_IVRApplications_FnTable) -> Result<PathBuf, VrE
     Ok(path)
 }
 
+/// SteamVR が実行ファイルのパスを読むキー（OS ごとに別）。
+const BINARY_PATH_KEY: &str = if cfg!(windows) {
+    "binary_path_windows"
+} else {
+    "binary_path_linux"
+};
+
 /// SteamVR のアプリの定義。`is_dashboard_overlay` が無いと自動起動を切り替えられない。
 fn manifest(exe: &Path) -> String {
     // str の Debug は `\` と `"` をエスケープするので、パスはそのまま JSON の文字列になる。
@@ -115,7 +122,7 @@ fn manifest(exe: &Path) -> String {
     {{
       "app_key": "{APP_KEY}",
       "launch_type": "binary",
-      "binary_path_windows": {exe},
+      "{BINARY_PATH_KEY}": {exe},
       "arguments": "--openvr",
       "is_dashboard_overlay": true,
       "strings": {{ "en_us": {{ "name": "{APP_NAME}" }} }}
@@ -136,7 +143,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&manifest(exe)).unwrap();
         let app = &json["applications"][0];
         assert_eq!(app["app_key"], APP_KEY);
-        assert_eq!(app["binary_path_windows"], exe.to_str().unwrap());
+        assert_eq!(app[BINARY_PATH_KEY], exe.to_str().unwrap());
         assert_eq!(app["arguments"], "--openvr");
         assert_eq!(app["is_dashboard_overlay"], true);
     }
