@@ -1,7 +1,7 @@
 // Windows の実行ファイルにアイコンリソースを埋め込む。
 // ID 1 = ライトテーマ用（Explorer やショートカットが参照する既定のアイコン）、ID 2 = ダークテーマ用。
 // ウィンドウ側は vendor/gpui_windows の load_icon がテーマに応じて選択する。
-// winresource はビルドする側（ホスト）が Windows のときだけの依存（Cargo.toml）なので、ここも同じ条件で囲む。
+// winresource はビルドを実行するホストが Windows の場合に限る依存（Cargo.toml）であるため、同じ条件でコンパイルする。
 fn main() {
     println!("cargo:rerun-if-changed=assets/icons");
     #[cfg(windows)]

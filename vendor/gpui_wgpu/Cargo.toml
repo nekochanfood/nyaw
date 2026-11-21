@@ -1,9 +1,10 @@
 # Zed の crates/gpui_wgpu（rev 26363aab）を複製し、ワークスペース継承を具体的な依存指定に展開したもの。
-# Linux のパネル描画（crates/subsystems/rendering の offscreen）が使用する。
+# Linux のパネル描画（crates/subsystems/rendering/src/gpui/linux.rs）が使用する。
 # 変更点（NYAW: で標識）:
-# - vendor/gpui の拡張したシーン構造体（`ContentMask` の角丸、`Quad` / `Shadow` の超楕円と変形）に WGSL を合わせ、
+# - WGSL を vendor/gpui で拡張したシーン構造体（`ContentMask` の角丸、`Quad` / `Shadow` の超楕円と変形）に合わせ、
 #   角丸クリッピング・超楕円の角・回転を vendor/gpui_windows/src/shaders.hlsl と同等に描画する。
-# - ヘッドレスレンダラを透明で下塗りし（事前乗算アルファ）、読み戻しを GPU の完了待ちなしで行う（Windows と同じ 1 回遅れ）。
+# - ヘッドレスレンダラは透明で下塗りして事前乗算アルファの画素を返し、読み戻しを GPU の完了を待たずに行う
+#   （Windows と同じく 1 回遅れ）。
 # Zed を更新する際は、新リビジョンを複製し直して NYAW: の箇所を再適用する。
 [package]
 name = "gpui_wgpu"

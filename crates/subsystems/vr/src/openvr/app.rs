@@ -104,7 +104,7 @@ fn register_manifest(t: &sys::VR_IVRApplications_FnTable) -> Result<PathBuf, VrE
     Ok(path)
 }
 
-/// SteamVR が実行ファイルのパスを読むキー（OS ごとに別）。
+/// SteamVR が実行ファイルのパスを読み取るキー。OS ごとに異なる。
 const BINARY_PATH_KEY: &str = if cfg!(windows) {
     "binary_path_windows"
 } else {

@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# Linux のエラーダイアログを出せないときの記録先。
+# Linux でエラーのダイアログを表示できない場合の記録先。
 logger.workspace = true
 
 [target.'cfg(windows)'.dependencies]

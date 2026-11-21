@@ -12,7 +12,7 @@ use openvr_bindings as sys;
 use crate::VrError;
 
 /// `vr::IVRClientCore`（ivrclientcore.h）の仮想関数テーブル。順序が ABI そのもの。
-/// x64 の Windows でも Linux（System V）でも、メンバ関数は `this` を第 1 引数とする C 呼び出し規約と同一。
+/// x64 では Windows と Linux（System V）のいずれでも、メンバ関数は `this` を第 1 引数とする C 呼び出し規約と同一。
 #[repr(C)]
 struct CoreVtbl {
     init: unsafe extern "C" fn(

@@ -9,8 +9,8 @@ pub use lod::set_render_lod;
 #[cfg(target_os = "linux")]
 mod linux;
 
-/// パネルを描画する GPUI アプリケーション。Windows は GPUI の標準のプラットフォーム（非表示のウィンドウ）、
-/// Linux は表示サーバーに作らないオフスクリーンのウィンドウ（[`linux`]）。
+/// パネルを描画する GPUI アプリケーション。Windows では GPUI 標準のプラットフォームが非表示のウィンドウを生成し、
+/// Linux では表示サーバー上に生成しないオフスクリーンのウィンドウを用いる（[`linux`]）。
 pub fn application() -> ::gpui::Application {
     #[cfg(target_os = "linux")]
     {

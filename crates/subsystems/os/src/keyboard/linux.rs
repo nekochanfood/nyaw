@@ -1,4 +1,4 @@
-//! Linux: キー配列（XKB）の検出のみ。OS への入力送信は未対応（送信は常にエラー）。
+//! Linux のキー配列（XKB）の検出。OS への入力送信には対応しておらず、送信は常にエラーを返す。
 use super::{Output, Settings};
 use std::io;
 
@@ -7,7 +7,7 @@ pub struct Backend {
 }
 
 impl Backend {
-    /// 配列は起動時に一度だけ調べる（`settings` は監視スレッドから 150ms ごとに呼ばれるため、外部コマンドを毎回実行しない）。
+    /// 配列は起動時に一度だけ検出する。`settings` は監視スレッドから 150ms ごとに呼び出されるため、そのたびに外部コマンドを実行しない。
     pub fn new() -> Self {
         let layout = detect_layout();
         Self {
@@ -18,7 +18,7 @@ impl Backend {
                     None => "XKB unknown".into(),
                 },
                 layout,
-                // ponytail: 入力送信（uinput 等）を実装するまで、送信先（フォアグラウンド）は常に「取得不可」。
+                // ponytail: 入力送信（uinput 等）を実装するまで、送信先（フォアグラウンドのウィンドウ）は常に「取得不可」とする。
                 foreground: 0,
                 error: Some("sending keys to other apps is not supported on Linux".into()),
                 ..Settings::default()
@@ -38,7 +38,7 @@ impl Backend {
     }
 }
 
-/// XKB の（配列, バリアント）。`XKB_DEFAULT_LAYOUT` > `setxkbmap -query`（X11 / XWayland） > `localectl status` の順に探す。
+/// XKB の（配列, バリアント）を `XKB_DEFAULT_LAYOUT` > `setxkbmap -query`（X11 / XWayland） > `localectl status` の順に探索する。
 fn detect_layout() -> Option<(String, String)> {
     if let Ok(layout) = std::env::var("XKB_DEFAULT_LAYOUT")
         && !layout.is_empty()
@@ -63,7 +63,7 @@ fn detect_layout() -> Option<(String, String)> {
         })
 }
 
-/// `key: value` 形式の出力から配列とバリアントを読む。`(unset)` は未設定。
+/// `key: value` 形式の出力から配列とバリアントを読み取る。`(unset)` は未設定として扱う。
 fn parse_fields(out: &str, layout_key: &str, variant_key: &str) -> Option<(String, String)> {
     let field = |key: &str| {
         out.lines()
@@ -75,7 +75,7 @@ fn parse_fields(out: &str, layout_key: &str, variant_key: &str) -> Option<(Strin
     first_layout(&field(layout_key)?, &field(variant_key).unwrap_or_default())
 }
 
-/// 複数配列（`jp,us`）は先頭（既定の配列）を使う。バリアントも同じ位置のもの。
+/// 複数の配列（`jp,us`）が設定されていれば、先頭（既定の配列）と、それと同じ位置のバリアントを用いる。
 fn first_layout(layouts: &str, variants: &str) -> Option<(String, String)> {
     let name = layouts.split(',').next()?.trim();
     if name.is_empty() {

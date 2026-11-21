@@ -1,6 +1,6 @@
-//! Linux の描画ホスト: パネルのウィンドウを表示サーバーに作らず、wgpu のオフスクリーン描画先（vendor/gpui_wgpu の
-//! `WgpuHeadlessRenderer`）に描く。Linux の GPUI は Wayland / X11 のウィンドウで `render_to_image` を持たず、非表示の
-//! ウィンドウも作れないため、ヘッドレスの Linux プラットフォームを包み、ウィンドウの生成だけを差し替える。
+//! Linux の描画ホスト。パネルのウィンドウを表示サーバー上に生成せず、wgpu のオフスクリーン描画先（vendor/gpui_wgpu の
+//! `WgpuHeadlessRenderer`）に描画する。Linux の GPUI は Wayland / X11 のウィンドウに `render_to_image` を実装しておらず、
+//! 非表示のウィンドウも生成できない。そのため、ヘッドレスの Linux プラットフォームをラップし、ウィンドウの生成のみを差し替える。
 use std::cell::{Cell, RefCell};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -23,12 +23,12 @@ use gpui_wgpu::{CosmicTextSystem, WgpuHeadlessRenderer};
 thread_local! {
     /// 次回の `resize` で適用する描画スケール（[`with_render_scale`]）。
     static RENDER_SCALE: Cell<Option<f32>> = const { Cell::new(None) };
-    /// 次の `render_to_image` で描画せず、発行済みの読み戻しを回収する（[`collect_readback`]）。
+    /// 次の `render_to_image` で描画せず、発行済みの読み戻しを回収するか（[`collect_readback`]）。
     static COLLECT: Cell<bool> = const { Cell::new(false) };
 }
 
-/// `f`（`Window::resize` を呼ぶ）の間の resize で、ウィンドウの描画スケールを `scale` にする（Windows の
-/// `gpui_windows::with_render_scale` と同じ）。論理サイズは変えず、描画解像度だけが変わる。反映は次のタスク実行時。
+/// `f`（`Window::resize` を呼び出す）の実行中の resize で、ウィンドウの描画スケールを `scale` に設定する（Windows の
+/// `gpui_windows::with_render_scale` に相当）。論理サイズは維持したまま描画解像度のみが変更され、次のタスクの実行時に反映される。
 pub fn with_render_scale<R>(scale: f32, f: impl FnOnce() -> R) -> R {
     RENDER_SCALE.set(Some(scale));
     let r = f();
@@ -36,8 +36,8 @@ pub fn with_render_scale<R>(scale: f32, f: impl FnOnce() -> R) -> R {
     r
 }
 
-/// `f`（`Window::render_to_image` を呼ぶ）の間、再描画せず前回発行した読み戻しを回収する（Windows の
-/// `gpui_windows::collect_readback` と同じ）。発行済みの読み戻しが無ければエラー。
+/// `f`（`Window::render_to_image` を呼び出す）の実行中、再描画せず前回発行した読み戻しを回収する（Windows の
+/// `gpui_windows::collect_readback` に相当）。発行済みの読み戻しが存在しない場合はエラーを返す。
 pub fn collect_readback<R>(f: impl FnOnce() -> R) -> R {
     COLLECT.set(true);
     let r = f();
@@ -45,17 +45,18 @@ pub fn collect_readback<R>(f: impl FnOnce() -> R) -> R {
     r
 }
 
-/// ヘッドレスの Linux プラットフォーム（イベントループ・実行器）に、文字描画とオフスクリーンのウィンドウを組み合わせる。
+/// ヘッドレスの Linux プラットフォーム（イベントループと実行器）に、テキストシステムとオフスクリーンのウィンドウを組み合わせたもの。
 pub struct OffscreenPlatform {
     inner: Rc<dyn Platform>,
-    /// Zed のワークスペースは gpui_linux を表示サーバー（wayland / x11）なしで取り込むため、そのヘッドレスの文字描画は
-    /// 何も描かない（`NoopTextSystem`）。表示サーバーありの gpui_linux と同じ文字描画（cosmic-text とシステムのフォント）を使う。
+    /// Zed のワークスペースは gpui_linux を表示サーバーの機能（wayland / x11）なしで依存に含めるため、そのヘッドレスの
+    /// テキストシステムは字形を描画しない（`NoopTextSystem`）。代わりに、表示サーバーに接続する gpui_linux と同じ
+    /// テキストシステム（cosmic-text とシステムのフォント）を使用する。
     text_system: Arc<CosmicTextSystem>,
 }
 
 impl OffscreenPlatform {
     pub fn new() -> Self {
-        // 表示サーバーに接続しない（SteamVR から起動されたときなど、表示サーバーが無くても動く）。
+        // 表示サーバーには接続しない。SteamVR から起動された場合など、表示サーバーが存在しない環境でも動作する。
         Self {
             inner: gpui_platform::current_platform(true),
             text_system: Arc::new(CosmicTextSystem::new(&system_ui_font())),
@@ -63,8 +64,8 @@ impl OffscreenPlatform {
     }
 }
 
-/// GPUI のシステム UI 書体（`.SystemUIFont`。書体を指定しない文字）に使う、デスクトップの sans-serif（fontconfig）。
-/// Windows の Segoe UI に相当する。gpui_linux は Zed が同梱する IBM Plex Sans を使うが、nyaw は同梱しない。
+/// GPUI のシステム UI 書体（`.SystemUIFont`。書体を指定しない文字に適用される）として、fontconfig が選ぶデスクトップの
+/// sans-serif を返す。Windows の Segoe UI に相当する。gpui_linux は Zed が同梱する IBM Plex Sans を指定するが、nyaw はこれを同梱しない。
 fn system_ui_font() -> String {
     std::process::Command::new("fc-match")
         .args(["--format=%{family[0]}", "sans-serif"])
@@ -73,7 +74,7 @@ fn system_ui_font() -> String {
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
         .filter(|family| !family.is_empty())
-        // ponytail: fontconfig が無い環境では、よく入っている書体を名指しする。
+        // ponytail: fontconfig が存在しない環境では、多くのディストリビューションが収録する書体を指定する。
         .unwrap_or_else(|| "DejaVu Sans".into())
 }
 
@@ -97,7 +98,7 @@ impl Platform for OffscreenPlatform {
         )?))
     }
 
-    /// ヘッドレスのプラットフォームは URL を開かない。デスクトップの既定のアプリ（xdg-open）に渡す。
+    /// ヘッドレスのプラットフォームは URL を開かないため、デスクトップの既定のアプリケーション（xdg-open）で開く。
     fn open_url(&self, url: &str) {
         if let Err(e) = std::process::Command::new("xdg-open").arg(url).spawn() {
             logger::warn!("cannot open URL with xdg-open", url = url, error = e);
@@ -271,8 +272,8 @@ impl Platform for OffscreenPlatform {
     }
 }
 
-/// ポインタはオフスクリーンのウィンドウの上には無い（nyaw は入力を `Window::dispatch_event` で直接配送する）。
-/// vendor/gpui が `MouseExited` で置く位置と同じ。
+/// OS のポインタがオフスクリーンのウィンドウ上に存在することはない（nyaw は入力を `Window::dispatch_event` で直接配送する）。
+/// 座標は vendor/gpui が `MouseExited` の受信時に設定する位置と同じ。
 const NO_POINTER: Point<Pixels> = Point {
     x: px(-1.0e6),
     y: px(-1.0e6),
@@ -280,32 +281,34 @@ const NO_POINTER: Point<Pixels> = Point {
 
 type ResizeCallback = Rc<RefCell<Option<Box<dyn FnMut(Size<Pixels>, f32)>>>>;
 
-/// GPUI 自身のフレーム（`on_request_frame`）。GPUI はここで、汚れたウィンドウの描画と、次のフレームのコールバック
-/// （`request_animation_frame`。部品のアニメーションが描画ごとに積む）の実行を行う。一度も呼ばないと、プログラムからの変更
-/// （`cx.notify`）はフレームループが次に描くまで描かれず、次のフレームのコールバックは溜まり続ける。
-/// 読み戻す描画はフレームループが担い、遠いパネルの間引き・隠れたパネルのカリングをしているので、それを打ち消さないよう、
-/// 見えていてフレームループが今は描いていないウィンドウにだけ送る（AGENT.md「GPUI 自身のフレーム」）。
+/// GPUI 自身のフレーム（`on_request_frame` のコールバック）。GPUI はこのコールバックで、再描画が必要なウィンドウの描画と、
+/// 次のフレームのコールバック（`request_animation_frame`。部品はアニメーション中に描画のたびに登録する）の実行を行う。
+/// 呼び出さなければ、入力を伴わない変更（`cx.notify`）はフレームループが次に描画するまで反映されず、次のフレームの
+/// コールバックは実行されないまま蓄積する。一方、読み戻す描画はフレームループが担い、遠いパネルの間引きと隠れたパネルの
+/// カリングを行っている。これを無効にしないよう、表示中かつフレームループが描画していないウィンドウにのみ呼び出す
+/// （AGENT.md「GPUI 自身のフレーム」）。
 type FrameCallback = Box<dyn FnMut(RequestFrameOptions)>;
 
-/// 要求から GPUI のフレームを送るまでの間隔。フレームループが描いていれば、その描画が要求を満たす。
+/// フレームの要求から GPUI のフレームを呼び出すまでの間隔。その間にフレームループが描画すれば、その描画が要求を満たす。
 const FRAME_DELAY: Duration = Duration::from_millis(100);
-/// フレームループがこれより長く描いていないウィンドウは、見えていない（カリング中）とみなし、GPUI にも描かせない。
-/// フレームループは見えているパネルを少なくとも 1 秒ごと（`IDLE_MAX`）に描く。
+/// フレームループがこの時間を超えて描画していないウィンドウは非表示（カリング中）とみなし、GPUI にも描画させない。
+/// フレームループは表示中のパネルを少なくとも 1 秒（`IDLE_MAX`）ごとに描画する。
 const CULLED: Duration = Duration::from_secs(2);
-/// フレームループが描き続けているウィンドウにも、これだけ待ったら送る（溜まった次のフレームのコールバックを実行する）。
+/// フレームループが描画を続けているウィンドウでも、要求からこの時間が経過したらフレームを呼び出し、蓄積した次のフレームの
+/// コールバックを実行させる。
 const MAX_WAIT: Duration = Duration::from_secs(1);
 
 struct Frames {
     callback: RefCell<Option<FrameCallback>>,
-    /// 要求を受けた時刻（送るまで）。
+    /// 未処理のフレーム要求を受けた時刻。
     pending: Cell<Option<Instant>>,
-    /// フレームループが最後に描いた（読み戻した）時刻。
+    /// フレームループが最後に描画した（読み戻しを発行した）時刻。
     rendered: Cell<Option<Instant>>,
     foreground: ForegroundExecutor,
     background: BackgroundExecutor,
 }
 
-/// 要求を受けてからの経過時間と、フレームループが最後に描いてからの経過時間で、今 GPUI のフレームを送るか決める。
+/// 要求からの経過時間と、フレームループが最後に描画してからの経過時間から、GPUI のフレームを今呼び出すかを判定する。
 fn frame_due(waited: Duration, since_render: Option<Duration>) -> bool {
     match since_render {
         None => false,
@@ -329,7 +332,7 @@ impl Frames {
         self.foreground
             .spawn(async move {
                 timer.await;
-                // 閉じたウィンドウには送らない。
+                // 閉じたウィンドウのフレームは呼び出さない。
                 let Some(frames) = frames.upgrade() else {
                     return;
                 };
@@ -338,7 +341,8 @@ impl Frames {
                 };
                 let since_render = frames.rendered.get().map(|at| at.elapsed());
                 if !frame_due(requested.elapsed(), since_render) {
-                    // 描き続けている・見えていない間は待つ（見えれば描かれ、描くのをやめれば送る）。
+                    // フレームループが描画中、または非表示の間は待機する（表示されればフレームループが描画し、
+                    // フレームループが描画を止めればフレームを呼び出す）。
                     frames.wait(FRAME_DELAY);
                     return;
                 }
@@ -365,12 +369,12 @@ struct OffscreenState {
     renderer: WgpuHeadlessRenderer,
 }
 
-/// 表示サーバーに作らないウィンドウ。レイアウト・入力・描画は通常どおり行い、描画結果は `render_to_image` で読み戻す。
+/// 表示サーバー上に生成しないウィンドウ。レイアウト・入力・描画は通常のウィンドウと同様に処理し、描画結果は `render_to_image` で読み戻す。
 struct OffscreenWindow {
     state: Rc<RefCell<OffscreenState>>,
     appearance: WindowAppearance,
     atlas: Arc<dyn PlatformAtlas>,
-    /// GPUI のウィンドウへのサイズ変更の通知。GPUI がこのウィンドウを更新している最中に呼ぶと失敗するため、タスクで遅らせて呼ぶ。
+    /// GPUI のウィンドウへのサイズ変更の通知。GPUI がこのウィンドウを更新している最中に呼び出すと失敗するため、タスクで遅延させて呼び出す。
     on_resize: ResizeCallback,
     frames: Rc<Frames>,
     executor: ForegroundExecutor,
@@ -383,8 +387,8 @@ impl OffscreenWindow {
         background: BackgroundExecutor,
         appearance: WindowAppearance,
     ) -> anyhow::Result<Self> {
-        // ponytail: 背景は生成後に `set_background_appearance` で届くため、描画先は常に透明（事前乗算）で作る。
-        // 不透明のウィンドウは、覆われていない部分が黒でなく透明になる（nyaw のパネルはすべて透明）。
+        // ponytail: 背景の指定は生成後に `set_background_appearance` で渡されるため、描画先は常に透明（事前乗算アルファ）で生成する。
+        // 不透明のウィンドウでは、要素に覆われていない部分が黒ではなく透明になる（nyaw のパネルはすべて透明）。
         let renderer = WgpuHeadlessRenderer::new_transparent()?;
         let atlas = renderer.sprite_atlas();
         Ok(Self {
@@ -413,7 +417,7 @@ impl OffscreenWindow {
 
 impl Drop for OffscreenWindow {
     fn drop(&mut self) {
-        // 遅らせた通知が、閉じたウィンドウに届かないように。
+        // 遅延させた通知を、閉じたウィンドウに対して呼び出さないようにする。
         self.on_resize.borrow_mut().take();
         self.frames.callback.borrow_mut().take();
     }
@@ -435,8 +439,8 @@ impl raw_window_handle::HasDisplayHandle for OffscreenWindow {
     }
 }
 
-/// 論理サイズ × スケールの描画解像度（切り捨て、最小 1px）。フレームループは LOD の描画を `解像度 >> lod` の大きさと
-/// 照合するので、それと一致させる（スケールは 1/2^lod なので整数の解像度では割り切れる分だけ切り捨てになる）。
+/// 論理サイズ × スケールの描画解像度（端数は切り捨て、最小 1px）。フレームループは LOD の描画結果を `解像度 >> lod` の
+/// 大きさと照合するため、これと一致させる（スケールは 1/2^lod であり、整数の解像度では右シフトと同じ値になる）。
 fn device_size(size: Size<Pixels>, scale: f32) -> Size<DevicePixels> {
     let px = |v: Pixels| DevicePixels(((f32::from(v) * scale).floor() as i32).max(1));
     Size {
@@ -520,7 +524,7 @@ impl PlatformWindow for OffscreenWindow {
         _detail: Option<&str>,
         _answers: &[PromptButton],
     ) -> Option<futures::channel::oneshot::Receiver<usize>> {
-        // GPUI 自身が描く確認ダイアログを使う。
+        // GPUI が描画する確認ダイアログを使用する。
         None
     }
 
@@ -564,8 +568,8 @@ impl PlatformWindow for OffscreenWindow {
         false
     }
 
-    // 読み戻す描画は nyaw のフレームループが `Window::draw` と `render_to_image` で行う。フレーム要求は GPUI 自身の
-    // 描画とアニメーションのため（[`Frames`]）。入力は直接配送されるため、プラットフォームからの入力・状態変化の通知は無い。
+    // 読み戻す描画は nyaw のフレームループが `Window::draw` と `render_to_image` で行う。フレームの要求は GPUI 自身の
+    // 描画とアニメーションに用いる（[`Frames`]）。入力は直接配送されるため、プラットフォームからの入力と状態変化の通知は発生しない。
     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         *self.frames.callback.borrow_mut() = Some(callback);
     }
@@ -615,7 +619,7 @@ impl PlatformWindow for OffscreenWindow {
     }
 
     fn is_subpixel_rendering_supported(&self) -> bool {
-        // 透明な描画先にサブピクセルの文字は合成できない。
+        // サブピクセルレンダリングの文字は透明な描画先に合成できない。
         false
     }
 
@@ -625,8 +629,8 @@ impl PlatformWindow for OffscreenWindow {
         None
     }
 
-    /// GPU の完了を待たず、前回の描画の読み戻しを返す（Windows の vendor/gpui_windows と同じ 1 回遅れ）。
-    /// [`collect_readback`] の間は描画せず、発行済みの読み戻しを受け取る。
+    /// GPU の完了を待たず、前回の描画の読み戻しを返す（vendor/gpui_windows と同じく 1 回遅れ）。
+    /// [`collect_readback`] の実行中は描画せず、発行済みの読み戻しを回収する。
     fn render_to_image(&self, scene: &Scene) -> anyhow::Result<image::RgbaImage> {
         let mut state = self.state.borrow_mut();
         if COLLECT.get() {
@@ -642,8 +646,8 @@ impl PlatformWindow for OffscreenWindow {
 mod tests {
     use super::*;
 
-    /// GPUI のフレームは、見えていて（最近フレームループが描いた）今は描かれていないウィンドウにだけ送る。
-    /// 描き続けているウィンドウにも、待ちが長くなれば送る。
+    /// GPUI のフレームは、表示中（フレームループが直近に描画した）かつフレームループが描画していないウィンドウにのみ呼び出す。
+    /// フレームループが描画を続けているウィンドウでも、要求からの待機が長くなれば呼び出す。
     #[test]
     fn frames_go_to_shown_windows_the_loop_is_not_drawing() {
         let ms = Duration::from_millis;

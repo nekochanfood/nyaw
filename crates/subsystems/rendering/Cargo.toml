@@ -24,15 +24,15 @@ gpui = { workspace = true, features = ["test-support"], optional = true }
 # RGBA の画素を GPUI の画像に変換する（`gpui::render_image`）。gpui と同じ版に同期するのはこの箇所のみ。
 image = { version = "0.25", default-features = false, optional = true }
 
-# パネルを描画する GPUI アプリケーションのプラットフォーム（`gpui::application`）。
+# パネルを描画する GPUI アプリケーションのプラットフォーム（`gpui::application`）を生成する。
 gpui_platform = { workspace = true, features = ["test-support"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 gpui_windows = { workspace = true, features = ["test-support"], optional = true }
 
-# Linux はパネルを表示サーバーに作らず、wgpu のオフスクリーン描画先に描く（src/gpui/linux.rs）。
+# Linux ではパネルのウィンドウを表示サーバー上に生成せず、wgpu のオフスクリーン描画先に描画する（src/gpui/linux.rs）。
 [target.'cfg(target_os = "linux")'.dependencies]
-# font-kit は書体の太さ・字形の照合（表示サーバーありの gpui_linux と同じ）。
+# font-kit はウェイトとスタイルによる書体の照合に使用する（表示サーバーに接続する gpui_linux と同じ構成）。
 gpui_wgpu = { workspace = true, features = ["test-support", "font-kit"], optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 futures = { version = "0.3", optional = true }
