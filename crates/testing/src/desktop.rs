@@ -497,7 +497,7 @@ impl Render for MirrorPreview {
 }
 
 /// 理由別のサンプルエラー（実際のメッセージを使用するため、分類の不整合をここで検出できる）。
-fn failure_samples() -> [(&'static str, Error); 6] {
+fn failure_samples() -> [(&'static str, Error); 8] {
     use kernel::desktop::failure::*;
     [
         (
@@ -511,6 +511,8 @@ fn failure_samples() -> [(&'static str, Error); 6] {
             Error(INVALID_BOUNDS.into()),
         ),
         ("mirror-case-failed-graphics", Error(D3D_DEVICE.into())),
+        ("mirror-case-failed-denied", Error(DENIED.into())),
+        ("mirror-case-failed-notshared", Error(NOT_SHARED.into())),
         (
             "mirror-case-failed-other",
             Error("unexpected failure (0x80004005)".into()),

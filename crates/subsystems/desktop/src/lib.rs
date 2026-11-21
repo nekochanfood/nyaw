@@ -24,10 +24,14 @@ pub struct Capabilities {
 pub fn capabilities() -> Capabilities {
     #[cfg(windows)]
     return windows::CAPABILITIES;
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::CAPABILITIES;
+    #[cfg(not(any(windows, target_os = "linux")))]
     Capabilities::default()
 }
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 #[cfg(windows)]
@@ -142,17 +146,23 @@ pub enum Reason {
     InvalidBounds,
     /// グラフィックスの処理で失敗した。
     Graphics,
+    /// 画面の共有を OS の確認画面で拒否された（Linux の xdg-desktop-portal）。
+    Denied,
+    /// OS の確認画面で、この画面が共有の対象に選ばれなかった。
+    NotShared,
     /// 上のどれでもない。
     Other,
 }
 
 impl Reason {
-    pub const ALL: [Reason; 6] = [
+    pub const ALL: [Reason; 8] = [
         Reason::WindowUnavailable,
         Reason::Unsupported,
         Reason::NoPixels,
         Reason::InvalidBounds,
         Reason::Graphics,
+        Reason::Denied,
+        Reason::NotShared,
         Reason::Other,
     ];
 }
@@ -168,6 +178,10 @@ pub mod failure {
     pub const D3D_CONTEXT: &str = "D3D11 context missing";
     pub const D3D_STAGING: &str = "D3D11 staging texture missing";
     pub const INVALID_TEXTURE: &str = "invalid mapped desktop texture";
+    pub const NO_DISPLAY_SERVER: &str = "no X11 or Wayland display server to capture";
+    pub const UNSUPPORTED_FORMAT: &str = "the screen's pixel format is not supported";
+    pub const DENIED: &str = "screen sharing was not allowed";
+    pub const NOT_SHARED: &str = "this screen was not chosen for sharing";
 }
 
 impl Error {
@@ -175,7 +189,9 @@ impl Error {
         use failure::*;
         match self.0.as_str() {
             WINDOW_HIDDEN | WINDOW_MINIMIZED => Reason::WindowUnavailable,
-            UNSUPPORTED => Reason::Unsupported,
+            UNSUPPORTED | NO_DISPLAY_SERVER | UNSUPPORTED_FORMAT => Reason::Unsupported,
+            DENIED => Reason::Denied,
+            NOT_SHARED => Reason::NotShared,
             NO_PIXELS => Reason::NoPixels,
             INVALID_BOUNDS => Reason::InvalidBounds,
             D3D_DEVICE | D3D_CONTEXT | D3D_STAGING | INVALID_TEXTURE => Reason::Graphics,
@@ -197,7 +213,10 @@ pub enum Status {
 pub struct Frame {
     pub width: u32,
     pub height: u32,
+    /// RGBA（事前乗算済み）。[`Self::external`] があれば空。
     pub rgba: Vec<u8>,
+    /// ランタイムの GPU へ直接取り込む表示サーバーの画像（[`Stream::start_with`] で取り込める形式を渡した場合）。
+    pub external: Option<Arc<vr::ExternalImage>>,
     /// OS が画面を取り込んだ時刻。不明であれば受信時刻。遅延の計測に使用する。
     pub captured: Instant,
     /// ワーカーで GPU から読み出して並べ替えるのに要した時間。
@@ -217,15 +236,40 @@ impl Frame {
             width,
             height,
             rgba,
+            external: None,
             captured: Instant::now(),
             cost: Duration::ZERO,
         })
+    }
+
+    /// 表示サーバーの画像をそのまま渡すフレーム。
+    pub fn external(image: vr::ExternalImage) -> Self {
+        Self {
+            width: image.width,
+            height: image.height,
+            rgba: Vec::new(),
+            external: Some(Arc::new(image)),
+            captured: Instant::now(),
+            cost: Duration::ZERO,
+        }
     }
 
     /// GPU の行パディングを取り除き、事前乗算済み BGRA を RGBA にする。
     // shortcut: 画像転送は CPU 経由。大きな画面の転送が律速になったら GPU の共有テクスチャへ置き換える。
     #[cfg_attr(not(windows), allow(dead_code))]
     fn from_bgra(width: u32, height: u32, stride: usize, data: &[u8]) -> Result<Self, Error> {
+        Self::from_pixels(width, height, stride, data, vr::PixelFormat::Bgra)
+    }
+
+    /// 行パディングを取り除き、`format` の画素を RGBA にする。透明度の無い形式は不透明にする。
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+    fn from_pixels(
+        width: u32,
+        height: u32,
+        stride: usize,
+        data: &[u8],
+        format: vr::PixelFormat,
+    ) -> Result<Self, Error> {
         let row = (width as usize)
             .checked_mul(4)
             .ok_or_else(|| Error("frame overflow".into()))?;
@@ -239,6 +283,8 @@ impl Frame {
         if width == 0 || height == 0 || stride < row || required.is_none_or(|n| data.len() < n) {
             return Err(Error("invalid desktop frame stride or buffer".into()));
         }
+        let alpha = if format.opaque() { 0xff00_0000 } else { 0 };
+        let swap = format.bgr();
         // 1 画素を u32 として並べ替え、コピーと同じ 1 回の走査で済ませる（バイト単位の入れ替えはベクトル化されず 3 倍遅い）。
         let mut rgba = vec![0; size];
         for (y, dst) in rgba.chunks_exact_mut(row).enumerate() {
@@ -250,7 +296,12 @@ impl Frame {
                 .zip(src.as_chunks::<4>().0)
             {
                 let x = u32::from_le_bytes(*s);
-                *d = (x & 0xff00_ff00 | (x >> 16) & 0xff | (x & 0xff) << 16).to_le_bytes();
+                let x = if swap {
+                    x & 0xff00_ff00 | (x >> 16) & 0xff | (x & 0xff) << 16
+                } else {
+                    x
+                };
+                *d = (x | alpha).to_le_bytes();
             }
         }
         Self::new(width, height, rgba)
@@ -309,7 +360,9 @@ impl Sources {
             .spawn(move || {
                 #[cfg(windows)]
                 let result = windows::sources();
-                #[cfg(not(windows))]
+                #[cfg(target_os = "linux")]
+                let result = linux::sources();
+                #[cfg(not(any(windows, target_os = "linux")))]
                 let result = Err(Error(
                     "desktop capture is not available on this platform yet".into(),
                 ));
@@ -428,7 +481,7 @@ pub fn matching<'a, T>(items: &'a [T], name: impl Fn(&T) -> &str, query: &str) -
         .collect()
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 enum Input {
     Touch(Touch),
     Button(Touch, Button),
@@ -452,7 +505,7 @@ struct Wake {
 }
 
 impl Wake {
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
     fn wake(&self) {
         if !self.pending.swap(true, Ordering::AcqRel) {
             let _ = self.tx.try_send(Input::Frame);
@@ -460,7 +513,7 @@ impl Wake {
     }
 }
 
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 trait Session {
     fn frame(&mut self) -> Result<Option<Frame>, Error>;
     /// 一時停止中（[`Stream::set_paused`]）に `frame` の代わりに呼ぶ。読み戻さずに最新の画像だけ持ち、再開したらそれを返す。
@@ -509,7 +562,6 @@ pub struct Stream {
 }
 
 /// 接点の維持と停止要求の処理のため、待ちはこれより長くしない。
-#[cfg_attr(not(windows), allow(dead_code))]
 const POLL: Duration = Duration::from_millis(8);
 
 impl Stream {
@@ -518,8 +570,22 @@ impl Stream {
     }
 
     pub fn start_at(source: Source, frame_rate: u32) -> Result<Self, Error> {
+        Self::start_with(source, frame_rate, None)
+    }
+
+    /// `import` はランタイムが GPU へ直接取り込める画像（[`vr::VrBackend::import_formats`]）。取り込めるものは
+    /// [`Frame::external`] で渡し、それ以外は RGBA に並べ替えて渡す。
+    pub fn start_with(
+        source: Source,
+        frame_rate: u32,
+        import: Option<vr::ImportFormats>,
+    ) -> Result<Self, Error> {
+        #[cfg(target_os = "linux")]
+        return Self::spawn(frame_rate, move |_, wake| linux::open(source, wake, import));
+        // ponytail: Windows は WGC の画像を CPU へ読み戻す。共有テクスチャで渡すなら import を使う。
         #[cfg(windows)]
         {
+            let _ = import;
             let window = (source.kind == SourceKind::Window && source.concrete())
                 .then_some(source.target as usize as u64);
             let mut stream = Self::spawn(frame_rate, move |_, wake| {
@@ -528,16 +594,15 @@ impl Stream {
             stream.window = window;
             Ok(stream)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
-            let _ = (source, frame_rate);
+            let _ = (source, frame_rate, import);
             Err(Error(
                 "desktop capture is not available on this platform yet".into(),
             ))
         }
     }
 
-    #[cfg_attr(not(windows), allow(dead_code))]
     fn spawn<S: Session + 'static>(
         frame_rate: u32,
         open: impl FnOnce(Arc<AtomicBool>, Wake) -> Result<S, Error> + Send + 'static,
@@ -754,6 +819,9 @@ mod tests {
         assert_eq!(reason(NO_PIXELS), Reason::NoPixels);
         assert_eq!(reason(INVALID_BOUNDS), Reason::InvalidBounds);
         assert_eq!(reason(D3D_STAGING), Reason::Graphics);
+        assert_eq!(reason(NO_DISPLAY_SERVER), Reason::Unsupported);
+        assert_eq!(reason(DENIED), Reason::Denied);
+        assert_eq!(reason(NOT_SHARED), Reason::NotShared);
         assert_eq!(reason("something else"), Reason::Other);
     }
 

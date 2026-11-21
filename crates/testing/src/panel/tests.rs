@@ -22,6 +22,8 @@ fn mirror_test_controls_the_preview_panel(cx: &mut TestAppContext) {
         ("mirror-case-failed-nopixels", true),
         ("mirror-case-failed-invalidbounds", true),
         ("mirror-case-failed-graphics", true),
+        ("mirror-case-failed-denied", true),
+        ("mirror-case-failed-notshared", true),
         ("mirror-case-failed-other", true),
     ];
     let mut seen = Vec::new();

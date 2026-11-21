@@ -33,6 +33,8 @@ unsupported = "Screen capture is not available on this device."
 no_pixels = "No picture is coming from the source."
 invalid_bounds = "The size of the source could not be read."
 graphics = "A graphics error occurred."
+denied = "Screen sharing was not allowed."
+not_shared = "This display was not chosen for sharing."
 [audio]
 title = "Spatial audio"
 instructions = "Sound plays from this panel's speaker. Move the panel or turn your head to hear it move. Sounds can overlap."

@@ -97,6 +97,8 @@ impl MirrorState {
             Reason::NoPixels => i18n::t(cx, "desktop.reason.no_pixels"),
             Reason::InvalidBounds => i18n::t(cx, "desktop.reason.invalid_bounds"),
             Reason::Graphics => i18n::t(cx, "desktop.reason.graphics"),
+            Reason::Denied => i18n::t(cx, "desktop.reason.denied"),
+            Reason::NotShared => i18n::t(cx, "desktop.reason.not_shared"),
             Reason::Other => error.to_string().into(),
         })
     }

@@ -147,8 +147,12 @@ impl<B: VrBackend> Kernel<B> {
     ) {
         if let Some(source) = source {
             let window = source.kind == desktop::SourceKind::Window;
-            match Stream::start_at(source.clone(), frame_rate)
-                .and_then(|stream| self.set_desktop_stream(panel, stream))
+            match Stream::start_with(
+                source.clone(),
+                frame_rate,
+                self.subsystems.backend.import_formats(),
+            )
+            .and_then(|stream| self.set_desktop_stream(panel, stream))
             {
                 Ok(()) => {
                     if let Some(p) = self.desktop_panels.get_mut(&panel) {
@@ -201,8 +205,12 @@ impl<B: VrBackend> Kernel<B> {
             .filter_map(|(&id, p)| Some((id, p.source.clone()?)))
             .collect();
         for (panel, source) in running {
-            match Stream::start_at(source.clone(), frame_rate)
-                .and_then(|stream| self.set_desktop_stream(panel, stream))
+            match Stream::start_with(
+                source.clone(),
+                frame_rate,
+                self.subsystems.backend.import_formats(),
+            )
+            .and_then(|stream| self.set_desktop_stream(panel, stream))
             {
                 Ok(()) => {
                     if let Some(p) = self.desktop_panels.get_mut(&panel) {
@@ -276,13 +284,21 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay
                     .set_content_resolution(id, (frame.width, frame.height));
                 let started = Instant::now();
-                self.overlay.submit(
-                    &mut self.subsystems.backend,
-                    id,
-                    frame.width,
-                    frame.height,
-                    &frame.rgba,
-                );
+                match &frame.external {
+                    // 表示サーバーの画像は、ランタイムの GPU が直接取り込む（Linux）。
+                    Some(image) => self.overlay.submit_external(
+                        &mut self.subsystems.backend,
+                        id,
+                        image.clone(),
+                    ),
+                    None => self.overlay.submit(
+                        &mut self.subsystems.backend,
+                        id,
+                        frame.width,
+                        frame.height,
+                        &frame.rgba,
+                    ),
+                }
                 let done = Instant::now();
                 panel.meter.add(
                     done.saturating_duration_since(frame.captured),
@@ -503,6 +519,48 @@ mod tests {
         kernel.tick();
         assert_eq!(kernel.panel(panel).size, Vec2::new(1.0, 2.0));
         assert_eq!(kernel.status(panel).desktop, Some(Status::Streaming));
+    }
+
+    /// 表示サーバーの画像は RGBA に並べ替えずランタイムへ渡し、ランタイムが手放したら書き込み元へ返す。
+    #[test]
+    fn external_frames_go_to_the_runtime_without_rgba() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (mut kernel, panel, control) = setup();
+        let returned = Arc::new(AtomicBool::new(false));
+        let flag = returned.clone();
+        let pixels: &'static [u8] =
+            Box::leak(vec![10, 20, 30, 0, 40, 50, 60, 0].into_boxed_slice());
+        let image = vr::ExternalImage::new(
+            2,
+            1,
+            vr::PixelFormat::Bgrx,
+            vr::Memory::Host {
+                ptr: pixels.as_ptr(),
+                len: pixels.len(),
+                offset: 0,
+                stride: 8,
+            },
+            move || flag.store(true, Ordering::Release),
+        );
+        kernel.subsystems.backend.import = Some(Default::default());
+        control.publish(Update {
+            status: Status::Streaming,
+            frame: Some(Arc::new(Frame::external(image))),
+        });
+        kernel.tick();
+        let overlay = &kernel.subsystems.backend.overlays[0];
+        assert_eq!(overlay.external_submissions, 1);
+        assert_eq!(
+            overlay.texture.as_ref().unwrap().rgba,
+            [30, 20, 10, 255, 60, 50, 40, 255]
+        );
+        assert_eq!(kernel.panel(panel).resolution, (2, 1));
+        assert!(
+            !returned.load(Ordering::Acquire),
+            "held while the GPU reads it"
+        );
+        kernel.subsystems.backend.held = None;
+        assert!(returned.load(Ordering::Acquire));
     }
 
     #[test]
