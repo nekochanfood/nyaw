@@ -76,6 +76,7 @@ Kernel::{
     tick,              // 1フレームの進行処理
     submit,            // 描画結果のオーバーレイ転送
     apply,             // パネルコマンドの適用
+    request,           // システムへの要求の処理
     status,            // パネル状態の取得
     set,               // 設定の変更
     settings,          // 現在の設定値の取得
@@ -93,17 +94,22 @@ Kernel::{
 
 画面側からカーネルに対してパネルの振る舞い変更を要求するコマンド群。
 
-- `Notification { id, action }`: OS 通知の本文またはボタン押下を対象アプリへ伝達する。
-- `SendNotification`: デバッグ用の OS 通知を発行する。
-- `RemoveNotification(id)`: 指定通知を OS 通知センターおよび内部リストから消去する。
 - `PassThrough(bool)`: コントローラレーザーの当たり判定を素通りさせる。
 - `FadeOnly(bool)`: 表示・非表示の遷移演出を不透明度のフェードのみにする。
 - `Hide(bool)`: パネルを破棄せず不可視化（または再可視化）する。
 - `Resizable(bool)`: ユーザーによるサイズ変更の許可・不許可を設定する。
 - `DockSlot(Option<f32>)` / `Dockable(bool)`: ドッキングスロットの配置と、把持による分離・吸着を可能にする。
 - `GrabAnchor(Option<Pose>)`: 掴み操作時の基準姿勢を指定する。
-- `Media(media::Command)`: 再生・停止・曲送りなどのメディア制御要求を送信する。
 - `FocusSource`: ミラーリング対象のウィンドウを OS 側で前面化する。
+
+### システムへの要求（Request）
+
+どのパネルにも属さない要求。`PanelCommand` と違って対象パネルを持たず、`Kernel::request` が処理する（画面からは `ui::request` で積む）。
+
+- `Media(media::Command)`: 再生・停止・曲送りなどのメディア制御要求を送信する。
+- `Notification { id, action }`: OS 通知の本文またはボタン押下を対象アプリへ伝達する。
+- `SendNotification`: デバッグ用の OS 通知を発行する。
+- `RemoveNotification(id)`: 指定通知を OS 通知センターおよび内部リストから消去する。
 
 ### パネル状態（PanelStatus）
 

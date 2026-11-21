@@ -28,7 +28,7 @@ use gpui::{
     div, hsla, prelude::*, px, relative, rgb, rgba,
 };
 use kernel::vr::{Device, Hand, Pose, Quat, Vec2, Vec3};
-use kernel::{Language, PanelCommand, PanelId, Setting};
+use kernel::{Language, PanelCommand, PanelId, Request, Setting};
 use ui::{PanelControl, PanelSpec, settings};
 
 mod emoji;

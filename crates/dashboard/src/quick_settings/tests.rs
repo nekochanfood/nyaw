@@ -105,12 +105,6 @@ fn the_date_sits_beside_the_time_on_its_baseline(cx: &mut TestAppContext) {
 #[gpui::test]
 fn a_notification_in_the_list_opens_from_its_card_or_its_buttons(cx: &mut TestAppContext) {
     let cx = quick_settings(cx, vec![note(1)]);
-    let take = |cx: &mut VisualTestContext| {
-        cx.update(|_, cx| {
-            let state = cx.default_global::<PanelControl>().panels.entry(2);
-            std::mem::take(&mut state.or_default().commands)
-        })
-    };
     assert!(cx.debug_bounds("notification-action-1-0").is_none());
     let card = cx.debug_bounds("notification-1").unwrap().center();
     cx.simulate_mouse_move(card, None, Modifiers::none());
@@ -118,8 +112,8 @@ fn a_notification_in_the_list_opens_from_its_card_or_its_buttons(cx: &mut TestAp
     click(cx, "notification-action-1-0");
     cx.run_until_parked();
     assert_eq!(
-        take(cx),
-        [PanelCommand::Notification {
+        take_requests(cx),
+        [Request::Notification {
             id: 1,
             action: Some(0)
         }]
@@ -127,8 +121,8 @@ fn a_notification_in_the_list_opens_from_its_card_or_its_buttons(cx: &mut TestAp
     click(cx, "notification-1");
     cx.run_until_parked();
     assert_eq!(
-        take(cx),
-        [PanelCommand::Notification {
+        take_requests(cx),
+        [Request::Notification {
             id: 1,
             action: None
         }]
@@ -178,8 +172,8 @@ fn swiping_a_notification_away_removes_it(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("notification-2").is_none());
     assert!(cx.debug_bounds("notification-1").is_some());
     assert_eq!(
-        take_commands(cx, 2),
-        [PanelCommand::RemoveNotification(2)],
+        take_requests(cx),
+        [Request::RemoveNotification(2)],
         "アクション発火はしない"
     );
 }
@@ -258,10 +252,10 @@ fn clearing_all_removes_every_notification(cx: &mut TestAppContext) {
     for _ in 0..4 {
         redraw(cx, ui::swipe::COLLAPSE.duration_ms());
     }
-    let mut removed: Vec<u32> = take_commands(cx, 2)
+    let mut removed: Vec<u32> = take_requests(cx)
         .into_iter()
         .map(|c| match c {
-            PanelCommand::RemoveNotification(id) => id,
+            Request::RemoveNotification(id) => id,
             other => panic!("アクション発火は不可: {other:?}"),
         })
         .collect();

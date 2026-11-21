@@ -272,7 +272,7 @@ impl Render for Testing {
                     .on_click(spawn_view(
                         self.panel,
                         "notification_test.title",
-                        |id, _| NotificationTest::new(id),
+                        |_, _| NotificationTest,
                     )),
                 )
                 .child(

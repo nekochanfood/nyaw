@@ -40,6 +40,7 @@ ui::capture(window);
 
 - `ui::command(panel, command, cx)` / `ui::commands(panel, commands, cx)`: 指定パネルに対する操作コマンドの発行。
 - `ui::set(setting, cx)` / `ui::settings(cx)`: システム全体設定の変更および現在値の取得。
+- `ui::request(request, cx)`: どのパネルにも属さないシステムへの要求（メディア・OS の通知の操作）の発行。
 - `ui::notify(panel, cx)`: タイマーや非同期処理によって自律的に変化したビューの再描画要求。
 - `ui::redraw(panel, cx)`: ビューの外部（`&mut App`）からの強制再描画要求。
 - `ui::quit_dialog(window, cx, build)`: アプリケーション終了確認ダイアログの表示。

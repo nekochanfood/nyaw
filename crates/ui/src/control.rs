@@ -33,6 +33,9 @@ pub struct PanelControl {
     pub settings: Settings,
     /// ビューがキューイングする全体設定の変更要求（パネル非依存）。フレームループが [`sync_settings`] で反映する。
     pub setting_changes: Vec<Setting>,
+    /// ビューがキューイングするシステムへの要求（メディア・OS の通知の操作。パネル非依存）。フレームループが
+    /// [`sync_settings`] でカーネルへ渡す（[`Kernel::request`]）。
+    pub requests: Vec<Request>,
     /// OS のフォアグラウンドアプリのキーボード状態（[`keyboard::system_keyboard`] で参照）。
     /// `os_keyboard_wanted` が設定された後、フレームループが [`sync_settings`] でカーネルから転写する。
     pub os_keyboard: kernel::subsystems::os::keyboard::Settings,
@@ -187,6 +190,11 @@ pub fn set(setting: Setting, cx: &mut App) {
     control.setting_changes.push(setting);
 }
 
+/// システムへの要求をキューイングする（フレームループが次の [`sync_settings`] でカーネルへ渡す）。
+pub fn request(request: Request, cx: &mut App) {
+    cx.default_global::<PanelControl>().requests.push(request);
+}
+
 /// 現在の全体設定（フレームループが書き戻した値、未設定時は既定値）。
 pub fn settings(cx: &App) -> Settings {
     let control = cx.try_global::<PanelControl>();
@@ -231,12 +239,15 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     true
 }
 
-/// ビューがキューイングした全体設定の変更をカーネルに反映し、現在の設定を書き戻す。変更があれば `true`。
+/// ビューがキューイングした全体設定の変更とシステムへの要求をカーネルに反映し、現在の設定を書き戻す。設定に変更があれば `true`。
 /// テーマ・言語は GPUI グローバルにも設定する（画面は `design::Theme::current` / `i18n::t` で参照する）。
 pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool {
     let ctl = cx.default_global::<PanelControl>();
     for s in ctl.setting_changes.drain(..) {
         kernel.set(s);
+    }
+    for r in ctl.requests.drain(..) {
+        kernel.request(r);
     }
     if ctl.os_keyboard_wanted {
         ctl.os_keyboard = kernel.os_keyboard();

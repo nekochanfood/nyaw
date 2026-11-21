@@ -110,7 +110,7 @@ impl Screen {
         // スワイプで完全に折り畳まれた通知は OS 通知センターから削除する（一覧から除去されるまで非表示）。
         for id in self.swipes.take_gone(tick) {
             self.dismissed.insert(id);
-            ui::command(self.panel, PanelCommand::RemoveNotification(id), cx);
+            ui::request(Request::RemoveNotification(id), cx);
         }
         let notes = cx.global::<PanelControl>().notifications.clone();
         self.dismissed
@@ -295,7 +295,7 @@ impl Screen {
             .open
             .then(|| self.open_app_button(theme, n, cx))
             .flatten();
-        let (panel, note) = (self.panel, n.clone());
+        let note = n.clone();
         let detail = Detail {
             expand,
             stamp: Some(stamp(cx, n.arrived, chrono::Local::now())),
@@ -307,7 +307,7 @@ impl Screen {
             n,
             image,
             detail,
-            move |action, window, cx| ui::notification::open(panel, &note, action, window, cx),
+            move |action, window, cx| ui::notification::open(&note, action, window, cx),
         );
         let look: Look = self.swipes.look(id, now);
         let natural = self

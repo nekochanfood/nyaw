@@ -146,7 +146,8 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 
 1. **個別パネルの操作**: パネル固有の操作（取り付け、取り外し、ロック等）は、PanelId を指定して `PanelControl` に `PanelCommand` を積む。フレームループ内の `sync_panel` がこれをカーネルへ適用し、最新の `PanelStatus` を画面側へ書き戻す。
 2. **全体設定の変更**: テーマや言語などのシステム全体に関わる設定は、`PanelControl::setting_changes` に `Setting` を積む。`sync_settings` がこれをカーネルへ反映し、`PanelControl::settings` を更新する。
-3. **ヘルパー関数の利用**: 画面側からコマンドを発行する際は、重複コードの作成を避け、`ui::command` や `ui::set` などの共通入口関数を使用する。
+3. **システムへの要求**: メディアの操作や OS の通知の操作など、どのパネルにも属さない要求は、`PanelControl::requests` に `Request` を積む。`sync_settings` がこれをカーネルへ渡す（`Kernel::request`）。
+4. **ヘルパー関数の利用**: 画面側からコマンドを発行する際は、重複コードの作成を避け、`ui::command`・`ui::set`・`ui::request` などの共通入口関数を使用する。
 
 ## パフォーマンス設計原則
 

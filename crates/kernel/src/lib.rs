@@ -69,14 +69,6 @@ pub enum PanelCommand {
     Reach(Option<f32>),
     /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
     PointerMode(PointerMode),
-    /// 再生中のメディアを操作する（再生・一時停止・曲送り・シーク・アプリを前に出す。[`Kernel::now_playing`]）。
-    Media(subsystems::media::Command),
-    /// OS の通知 `id` の本文（`action` が `None`）か `action` 番目のボタンを押したことを、アプリへ届ける
-    /// （[`Kernel::notifications`]。届けた通知は OS の通知センターからも消える）。URL を開くものは画面が開く。
-    Notification {
-        id: u32,
-        action: Option<usize>,
-    },
     /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。`Overlay::set_grab_anchor`）。
     GrabAnchor(Option<Pose>),
     /// 掴む基準を付け替え、今の基準（無ければ中心）のあった所に新しい基準が来るようにパネルを動かす
@@ -90,10 +82,6 @@ pub enum PanelCommand {
     PassThrough(bool),
     /// 表示・非表示の遷移を不透明度のみで行う（`Overlay::set_fade_only`。アニメーションはパネル自身が描画する）。
     FadeOnly(bool),
-    /// OS に通知を出す（デバッグのテスト用。`Notifications::send`）。
-    SendNotification(subsystems::notifications::Outgoing),
-    /// 通知をアクションなしで消去する（OS の通知センターから削除する。`Notifications::remove`）。
-    RemoveNotification(u32),
     Close,
     /// 非表示・再表示を切り替える（`Overlay::set_hidden`。閉じずにビュー・配信・音声を維持する）。
     Hide(bool),
@@ -140,6 +128,21 @@ pub enum PanelCommand {
         stroke: subsystems::keyboard::Stroke,
         layout: subsystems::keyboard::Layout,
     },
+}
+
+/// 上位層（ビュー）からシステムへの要求。どのパネルにも属さない操作で、[`Kernel::request`] が処理する
+/// （パネルへの操作は [`PanelCommand`]、全体設定の変更は [`Setting`]）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Request {
+    /// 再生中のメディアを操作する（再生・一時停止・曲送り・シーク・アプリを前に出す。[`Kernel::now_playing`]）。
+    Media(subsystems::media::Command),
+    /// OS の通知 `id` の本文（`action` が `None`）か `action` 番目のボタンを押したことを、アプリへ届ける
+    /// （[`Kernel::notifications`]。届けた通知は OS の通知センターからも消える）。URL を開くものは画面が開く。
+    Notification { id: u32, action: Option<usize> },
+    /// OS に通知を出す（デバッグのテスト用。`Notifications::send`）。
+    SendNotification(subsystems::notifications::Outgoing),
+    /// 通知をアクションなしで消去する（OS の通知センターから削除する。`Notifications::remove`）。
+    RemoveNotification(u32),
 }
 
 /// アプリ全体の設定の変更（[`Kernel::set`]）。パネルを問わず効き、`PointerMode` と `AutoLaunch` 以外は設定ファイルへ書き戻される
@@ -1154,6 +1157,32 @@ impl<B: VrBackend> Kernel<B> {
             .submit(&mut self.subsystems.backend, panel, width, height, rgba)
     }
 
+    /// システムへの要求を処理する（[`Request`]）。メディアと通知の操作は各ワーカーへ送信するだけで待機しない。
+    pub fn request(&mut self, request: Request) {
+        match request {
+            Request::Media(command) => {
+                if let Some(media) = &self.media {
+                    media.send(command);
+                }
+            }
+            Request::Notification { id, action } => {
+                if let Some(n) = &self.notifications {
+                    n.activate(id, action);
+                }
+            }
+            Request::SendNotification(toast) => {
+                if let Some(n) = &self.notifications {
+                    n.send(toast);
+                }
+            }
+            Request::RemoveNotification(id) => {
+                if let Some(n) = &self.notifications {
+                    n.remove(id);
+                }
+            }
+        }
+    }
+
     pub fn apply(&mut self, panel: PanelId, cmd: PanelCommand) {
         match cmd {
             PanelCommand::Attach(device, offset) => self.overlay.attach(panel, device, offset),
@@ -1174,32 +1203,12 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
             PanelCommand::PassThrough(pass) => self.overlay.set_pass_through(panel, pass),
             PanelCommand::FadeOnly(fade_only) => self.overlay.set_fade_only(panel, fade_only),
-            PanelCommand::SendNotification(toast) => {
-                if let Some(n) = &self.notifications {
-                    n.send(toast);
-                }
-            }
-            PanelCommand::RemoveNotification(id) => {
-                if let Some(n) = &self.notifications {
-                    n.remove(id);
-                }
-            }
             PanelCommand::DockSlot(tilt) => self.overlay.set_dock_slot(panel, tilt),
             PanelCommand::Dockable(dockable) => self.overlay.set_dockable(panel, dockable),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
             PanelCommand::Reach(reach) => self.overlay.set_reach(panel, reach),
             PanelCommand::PointerMode(mode) => {
                 self.pointer_modes.insert(panel, mode);
-            }
-            PanelCommand::Media(command) => {
-                if let Some(media) = &self.media {
-                    media.send(command);
-                }
-            }
-            PanelCommand::Notification { id, action } => {
-                if let Some(n) = &self.notifications {
-                    n.activate(id, action);
-                }
             }
             PanelCommand::GrabAnchor(anchor) => self.overlay.set_grab_anchor(panel, anchor),
             PanelCommand::MoveGrabAnchor(anchor) => self.overlay.move_grab_anchor(panel, anchor),

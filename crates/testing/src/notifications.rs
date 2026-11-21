@@ -3,15 +3,7 @@ use kernel::subsystems::notifications::Outgoing;
 
 /// OS 通知のテスト画面。ボタン押下で Windows に実際の通知を送信し（PowerShell 名義）、受信した通知がトースト（HUD → 手首 →
 /// ダッシュボード）とクイック設定の一覧に表示される。リンク先はすべてこのリポジトリのページ（URL を確認してから開く）。
-pub struct NotificationTest {
-    panel: PanelId,
-}
-
-impl NotificationTest {
-    pub fn new(panel: PanelId) -> Self {
-        Self { panel }
-    }
-}
+pub struct NotificationTest;
 
 /// ボタン押下時に開くページの URL。
 const REPOSITORY: &str = "https://github.com/nekochanfood/nyaw";
@@ -43,14 +35,14 @@ fn outgoing(cx: &App, title: &str, body: &str, buttons: bool) -> Outgoing {
 impl Render for NotificationTest {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let panel = self.panel;
         let count = cx
             .try_global::<PanelControl>()
             .map_or(0, |c| c.notifications.len());
         let send = |toasts: Vec<Outgoing>| {
             move |_: &ClickEvent, _: &mut Window, cx: &mut App| {
-                let commands = toasts.iter().cloned().map(PanelCommand::SendNotification);
-                ui::commands(panel, commands, cx);
+                for toast in &toasts {
+                    ui::request(Request::SendNotification(toast.clone()), cx);
+                }
             }
         };
         let short = outgoing(
@@ -128,19 +120,16 @@ mod tests {
     /// ボタン押下で Windows への通知送信を要求する（バースト 3 件なら 3 通知）。リンク先は Web ページのみ（アプリは起動しない）。
     #[gpui::test]
     fn buttons_send_test_notifications(cx: &mut TestAppContext) {
-        let (_view, cx) = cx.add_window_view(|_, _| NotificationTest::new(4));
+        let (_view, cx) = cx.add_window_view(|_, _| NotificationTest);
         cx.run_until_parked();
         for (id, n) in [("notify-short", 1), ("notify-long", 1), ("notify-burst", 3)] {
             let at = cx.debug_bounds(id).unwrap().center();
             cx.simulate_click(at, Modifiers::none());
             cx.run_until_parked();
-            let sent = cx.update(|_, cx| {
-                let state = cx.default_global::<PanelControl>().panels.entry(4);
-                std::mem::take(&mut state.or_default().commands)
-            });
+            let sent = cx.update(|_, cx| std::mem::take(&mut cx.default_global::<PanelControl>().requests));
             assert_eq!(sent.len(), n, "{id}");
             for c in sent {
-                let PanelCommand::SendNotification(t) = c else {
+                let Request::SendNotification(t) = c else {
                     panic!("{id}: {c:?}");
                 };
                 assert!(t.url.starts_with("https://"));
