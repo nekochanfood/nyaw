@@ -224,6 +224,7 @@ impl Frame {
 
     /// GPU の行パディングを取り除き、事前乗算済み BGRA を RGBA にする。
     // shortcut: 画像転送は CPU 経由。大きな画面の転送が律速になったら GPU の共有テクスチャへ置き換える。
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn from_bgra(width: u32, height: u32, stride: usize, data: &[u8]) -> Result<Self, Error> {
         let row = (width as usize)
             .checked_mul(4)
@@ -427,6 +428,7 @@ pub fn matching<'a, T>(items: &'a [T], name: impl Fn(&T) -> &str, query: &str) -
         .collect()
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 enum Input {
     Touch(Touch),
     Button(Touch, Button),
@@ -458,6 +460,7 @@ impl Wake {
     }
 }
 
+#[cfg_attr(not(windows), allow(dead_code))]
 trait Session {
     fn frame(&mut self) -> Result<Option<Frame>, Error>;
     /// 一時停止中（[`Stream::set_paused`]）に `frame` の代わりに呼ぶ。読み戻さずに最新の画像だけ持ち、再開したらそれを返す。
@@ -506,6 +509,7 @@ pub struct Stream {
 }
 
 /// 接点の維持と停止要求の処理のため、待ちはこれより長くしない。
+#[cfg_attr(not(windows), allow(dead_code))]
 const POLL: Duration = Duration::from_millis(8);
 
 impl Stream {
@@ -533,6 +537,7 @@ impl Stream {
         }
     }
 
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn spawn<S: Session + 'static>(
         frame_rate: u32,
         open: impl FnOnce(Arc<AtomicBool>, Wake) -> Result<S, Error> + Send + 'static,

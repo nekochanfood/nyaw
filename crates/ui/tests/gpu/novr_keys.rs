@@ -3,6 +3,9 @@
 //! emulator's window and used to drop its WM_KEYDOWN (`translate_accelerator` in vendor/gpui_windows), so double
 //! presses were counted only by luck. Opens a real window, so it only runs with `--ignored` (Windows only).
 
+// Everything below the entry point is for Windows.
+#![cfg_attr(not(windows), allow(unused_imports, dead_code))]
+
 use crate::common;
 
 use std::process::ExitCode;
