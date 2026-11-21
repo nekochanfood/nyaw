@@ -47,40 +47,46 @@ cargo run --release -- --novr
 
 ## 対応状況
 
-🟢 は対応済み、🟡 は一部のみ対応または未検証、🔴 は未対応、- は仕様上対応できないことを表します。列のうち「共通実装」は、OS とランタイムに依存しない部分（画面とロジック）の実装状況を表します。
+🟢 は対応済み、🟡 は一部のみ対応または未検証、🔴 は未対応、- は仕様上対応できないことを表します。各 OS の「共通実装」は VR ランタイムに依存しない部分（画面、ロジック、OS との連携）の対応状況を、「OpenVR」と「OpenXR」はその OS でそのランタイムを使用したときの対応状況を表します。
 
-| 機能 | Windows | Linux[<sup>*1</sup>](#note-linux) | 共通実装 | OpenVR | OpenXR[<sup>*2</sup>](#note-openxr) |
-|---|:-:|:-:|:-:|:-:|:-:|
-| オーバーレイとしてのパネルの表示 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| VR 機器なしでの動作（novr エミュレーター） | 🟢 | 🟡[<sup>*3</sup>](#note-novr) | 🟢 | - | - |
-| コントローラによるパネルの操作（レーザー・クリック・スクロール） | 🟢 | 🟡 | 🟢 | 🟢 | 🟡 |
-| パネルの掴み移動と、手・HMD への取り付け | 🟢 | 🟡 | 🟢 | 🟢 | 🟡 |
-| パネルのトラッカーへの取り付け | 🟢 | 🟡 | 🟢 | 🟢 | 🟡[<sup>*4</sup>](#note-openxr-ext) |
-| ハンドトラッキングによる操作 | 🟢 | 🟡 | 🟢 | 🟢 | 🟡[<sup>*4</sup>](#note-openxr-ext) |
-| 手首の時計 | 🟢 | 🟡 | 🟢 | 🟢 | 🟡 |
-| ダッシュボードとクイック設定 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| 設定画面 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| セットアップウィザード | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| 仮想キーボードによる nyaw の画面への文字入力 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| 仮想キーボードによる他のアプリへのキー入力 | 🟢 | 🔴 | 🟢 | 🟢 | 🟢 |
-| OS の通知のトースト表示 | 🟢 | 🔴 | 🟢 | 🟢 | 🟢 |
-| 画面・ウィンドウの配信 | 🟢 | 🔴 | 🟢 | 🟢 | 🟢 |
-| 配信中の画面・ウィンドウへの操作 | 🟢 | 🔴 | 🟢 | 🟢 | 🟢 |
-| アプリの一覧と起動 | 🟢 | 🔴 | 🟢 | 🟢 | 🟢 |
-| 再生中のメディアの表示と操作 | 🟢 | 🔴 | 🟢 | 🟢 | 🟢 |
-| 空間音響（Steam Audio の HRTF） | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| 視野に合わせた HUD の配置 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| 距離に応じた描画解像度の調整（LOD） | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| 文字サイズの変更と太字化 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| 表示言語の切り替え（日本語・英語）と OS の言語の検出 | 🟢 | 🟢 | 🟢 | 🟢 | 🟢 |
-| コントローラなどの電池残量の表示 | 🟢 | 🟡 | 🟢 | 🟢 | -[<sup>*5</sup>](#note-runtime-api) |
-| ランタイムの起動に合わせた自動起動 | 🟢 | 🟡 | 🟢 | 🟢 | -[<sup>*5</sup>](#note-runtime-api) |
-| ダッシュボード表示中のゲームへの入力のブロック | 🟢 | 🟡 | 🟢 | 🟢 | -[<sup>*5</sup>](#note-runtime-api) |
-| アップデートの確認と適用 | 🟢 | 🔴[<sup>*6</sup>](#note-update) | 🟢 | 🟢 | 🟢 |
+<table>
+<thead>
+<tr><th rowspan="2">機能</th><th colspan="3">Windows</th><th colspan="3">Linux<a href="#note-linux"><sup>*1</sup></a></th></tr>
+<tr><th>共通実装</th><th>OpenVR</th><th>OpenXR<a href="#note-openxr"><sup>*2</sup></a></th><th>共通実装</th><th>OpenVR</th><th>OpenXR<a href="#note-openxr"><sup>*2</sup></a></th></tr>
+</thead>
+<tbody>
+<tr><td>オーバーレイとしてのパネルの表示</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>VR 機器なしでの動作（novr エミュレーター）</td><td align="center">🟢</td><td align="center">-</td><td align="center">-</td><td align="center">🟡<a href="#note-novr"><sup>*3</sup></a></td><td align="center">-</td><td align="center">-</td></tr>
+<tr><td>コントローラによるパネルの操作（レーザー・クリック・スクロール）</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td><td align="center">🟢</td><td align="center">🟡</td><td align="center">🟡</td></tr>
+<tr><td>パネルの掴み移動と、手・HMD への取り付け</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td><td align="center">🟢</td><td align="center">🟡</td><td align="center">🟡</td></tr>
+<tr><td>パネルのトラッカーへの取り付け</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡<a href="#note-openxr-ext"><sup>*4</sup></a></td><td align="center">🟢</td><td align="center">🟡</td><td align="center">🟡<a href="#note-openxr-ext"><sup>*4</sup></a></td></tr>
+<tr><td>ハンドトラッキングによる操作</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡<a href="#note-openxr-ext"><sup>*4</sup></a></td><td align="center">🟢</td><td align="center">🟡</td><td align="center">🟡<a href="#note-openxr-ext"><sup>*4</sup></a></td></tr>
+<tr><td>手首の時計</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td><td align="center">🟢</td><td align="center">🟡</td><td align="center">🟡</td></tr>
+<tr><td>ダッシュボードとクイック設定</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>設定画面</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>セットアップウィザード</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>仮想キーボードによる nyaw の画面への文字入力</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>仮想キーボードによる他のアプリへのキー入力</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>OS の通知のトースト表示</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>画面・ウィンドウの配信</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>配信中の画面・ウィンドウへの操作</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>アプリの一覧と起動</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>再生中のメディアの表示と操作</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>空間音響（Steam Audio の HRTF）</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>視野に合わせた HUD の配置</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>距離に応じた描画解像度の調整（LOD）</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>文字サイズの変更と太字化</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>表示言語の切り替え（日本語・英語）と OS の言語の検出</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
+<tr><td>コントローラなどの電池残量の表示</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td><td align="center">🟢</td><td align="center">🟡</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td></tr>
+<tr><td>ランタイムの起動に合わせた自動起動</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td><td align="center">🟢</td><td align="center">🟡</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td></tr>
+<tr><td>ダッシュボード表示中のゲームへの入力のブロック</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td><td align="center">🟢</td><td align="center">🟡</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td></tr>
+<tr><td>アップデートの確認と適用</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴<a href="#note-update"><sup>*6</sup></a></td><td align="center">🔴</td><td align="center">🔴</td></tr>
+</tbody>
+</table>
 
-<a name="note-linux"></a>\*1 Linux では、HMD を接続しない SteamVR（null ドライバ）にオーバーレイとして接続し、パネルが SteamVR のコンポジタに合成されることを確認しました。実機の HMD とコントローラは未検証であり、それらを必要とする機能を 🟡 としています。🔴 の機能は OS との連携（通知、画面の取り込み、入力の注入など）を Windows でのみ実装しています。
+<a name="note-linux"></a>\*1 Linux では、HMD を接続しない SteamVR（null ドライバ）にオーバーレイとして接続し、パネルが SteamVR のコンポジタに合成されることを確認しました。共通実装の列は、エミュレーターを用いたテストで検証しています。実機の HMD とコントローラは未検証であり、OpenVR の列ではそれらを必要とする機能を 🟡 としています。🔴 の機能は、OS との連携（通知、画面の取り込み、入力の注入など）を Windows でのみ実装しています。
 
-<a name="note-openxr"></a>\*2 OpenXR のオーバーレイには `XR_EXTX_overlay` に対応したランタイム（Monado など）が必要です。SteamVR の OpenXR ランタイムはこの拡張に対応していないため、SteamVR では `--openxr` を指定しても OpenVR で接続します。OpenXR は Windows の Monado（HMD のシミュレーション）でのみ検証しており、実機のコントローラは未検証です。
+<a name="note-openxr"></a>\*2 OpenXR のオーバーレイには `XR_EXTX_overlay` に対応したランタイム（Monado など）が必要です。SteamVR の OpenXR ランタイムはこの拡張に対応していないため、SteamVR では `--openxr` を指定しても OpenVR で接続します。OpenXR は Windows の Monado（HMD のシミュレーション）でのみ検証しており、実機のコントローラと Linux での動作は未検証です。
 
 <a name="note-novr"></a>\*3 Linux ではエミュレーターのウィンドウの表示までを確認しています。エミュレーターのウィンドウへのマウスとキーボードの入力は未検証です。
 
