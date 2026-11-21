@@ -1,3 +1,6 @@
+// テストが一時ディレクトリを片付けるため、ファイル操作の制限（clippy.toml）を外す。
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+
 use super::*;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};

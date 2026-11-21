@@ -1,0 +1,6 @@
+# このディレクトリのクレートは OS の機能（プロセス・ファイル・通信）を直接使ってよい（ルートの clippy.toml を参照）。
+# clippy は設定ファイルを継承しないため、ルートの規則のうち OS の機能以外のもの（URL を開く処理の制限）だけを複製する。
+# allow-invalid: gpui に依存しないクレートではパスを解決できないため。
+disallowed-methods = [
+    { path = "gpui::App::open_url", reason = "design::link::open 経由で依頼する（ui::link がユーザーに URL を提示し確認を得てから開く）", allow-invalid = true },
+]

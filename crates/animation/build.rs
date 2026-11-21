@@ -1,4 +1,6 @@
 //! 動きの長さは design の tokens.json（唯一の情報源）の `duration-ms` から生成する。
+// ビルド時にファイルを読み書きし、外部コマンドを実行するため、OS の機能の制限（clippy.toml）を外す（アプリには含まれない）。
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use std::{env, fmt::Write, fs, path::Path};
 

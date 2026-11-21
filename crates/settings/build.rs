@@ -1,5 +1,7 @@
 //! 設定の「ライセンス」画面に表示する依存一覧を生成する。`cargo metadata` により nyaw バイナリの通常・ビルド依存のみを
 //! 走査し（dev 依存およびワークスペース内クレートは除外）、`(名前, バージョン, ライセンス, URL)` の定数テーブルを出力する。
+// ビルド時にファイルを読み書きし、外部コマンドを実行するため、OS の機能の制限（clippy.toml）を外す（アプリには含まれない）。
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use std::{
     collections::{BTreeSet, HashMap},

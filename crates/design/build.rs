@@ -5,6 +5,8 @@
 //! - mutable: `panel` のようにテーマによって参照先が変わる名前。
 //!
 //! 役割の組み合わせが WCAG のコントラスト比を満たさない場合、ビルドエラーとする。
+// ビルド時にファイルを読み書きし、外部コマンドを実行するため、OS の機能の制限（clippy.toml）を外す（アプリには含まれない）。
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use std::collections::BTreeMap;
 use std::fmt::Write;

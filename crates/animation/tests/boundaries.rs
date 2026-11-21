@@ -1,6 +1,8 @@
 //! 動きの責務の境界テスト。違反時にここで検出する。
 //! - `animation` は GPUI にも design にも依存しない（下位層の overlay からも利用可能にするため）。
 //! - イージング式は `animation` にのみ記述する。各部品は `Motion::ease` / `Transition` / `Animation` を使用する。
+// テストがソースファイルを読むため、ファイル操作の制限（clippy.toml）を外す。
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use std::{fs, path::Path};
 
