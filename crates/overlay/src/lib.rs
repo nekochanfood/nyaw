@@ -204,6 +204,9 @@ const SNAP: f32 = 1e-5;
 /// 子が開いている間の親の暗転度（黒との混合率）。子に注目させつつ読める程度に抑える。
 /// 暗転の遷移時間は子のフェードイン（0.2 秒）・アウト（0.15 秒）と同一。
 const DIM: f32 = 0.45;
+/// 空間全体の暗転（[`Overlay::set_veil`]）の濃さ（黒の不透明度）の既定値。周囲がうっすら見える程度にする。
+/// [`Overlay::set_veil_opacity`] で変更できる。
+pub const VEIL: f32 = 0.5;
 /// スロット子（[`Parent::slot`]）のナビバー下端と親の上端の間隔（m）。
 pub const SLOT_GAP: f32 = 0.02;
 /// スロット子が入れ替わりで退出するときの後退距離（m）。
@@ -371,6 +374,8 @@ pub struct Overlay {
     cursor_scale: Option<f32>,
     /// 暗転中もゲームへの入力を通す（[`Overlay::set_block_input`]）。既定（`false`）は入力を遮断する。
     pass_input: bool,
+    /// 暗転の濃さ（[`Overlay::set_veil_opacity`]）。`None` で既定値 [`VEIL`]。
+    veil_opacity: Option<f32>,
     /// UI スケール（[`Overlay::set_scale`]）。`None` で等倍。
     scale: Option<f32>,
     /// 今 tick で手ブレ抑制が有効（ポインタをデバイス追従ではなくワールド配置にする）。
