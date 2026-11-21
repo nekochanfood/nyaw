@@ -14,7 +14,7 @@ use ui::PanelSpec;
 const GHOST_PX: (u32, u32) = (400, 300 + DOCK_HINT_PX);
 /// 角線の太さと、角の丸みから辺に沿って伸ばす長さ（px）。伸ばす長さは短辺の直線部分の [`ARM_MAX`] 以下に制限する
 /// （隣の角線と接続しないようにする）。
-const BORDER_PX: f32 = 6.0;
+const BORDER_PX: f32 = design::DOCK_BORDER_PX;
 const ARM_PX: f32 = 96.0;
 const ARM_MAX: f32 = 0.35;
 /// ドッキング解除状態の枠の不透明度（無彩色の文字色に乗算。0〜255）。
