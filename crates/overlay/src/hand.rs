@@ -65,6 +65,7 @@ impl Overlay {
                 // トリガーを押しながら手を前後に動かすと拡大縮小。パネルは手に付いて動かず、その場に留める。
                 let p = &mut self.panels[id];
                 let mut width = p.size.x;
+                let resizing = resize && (c.select || c.resize != 0.0);
                 if c.select && resize {
                     if let Some(last) = st.scaling {
                         let delta = (c.aim.position - last).dot(aim.forward());
@@ -117,12 +118,23 @@ impl Overlay {
                 let slot = st
                     .magnet
                     .map(|m| m.slot(&self.panels, &self.present, scale, id));
+                // はまる所に付いた画面は、大きさを変えている間は抜かない（手がぶれても外れない）。
+                // 変え終えた所から引き直せるよう、今の画面を掴み直す（トリガーを離した途端に抜けない）。
+                let hold = resizing && st.magnet.is_some_and(|m| m.stuck);
                 let p = &mut self.panels[id];
                 let (pose, flipped) = match (st.magnet.as_mut(), slot) {
-                    (Some(m), Some(slot)) => m.follow(p.pose, slot, target, self.dt),
+                    (Some(m), Some(slot)) => {
+                        m.follow(p.pose, slot, if hold { slot } else { target }, self.dt)
+                    }
                     _ => (approach(p.pose, target, self.dt), None),
                 };
                 p.pose = pose;
+                if hold {
+                    let offset = aim
+                        .inverse()
+                        .transform_point((pose * pivot.inverse()).position);
+                    st.dragging = Some((id, offset, new_len, pivot, resize));
+                }
                 if let (Some(false), Some(m)) = (flipped, st.magnet)
                     && magnet::unplug(p, m.owner())
                 {
