@@ -636,19 +636,13 @@ impl OpenXrBackend {
                 self.gpu.wait_idle();
                 drop(old);
             }
-            let handle = self
-                .session
-                .create_swapchain(&xr::SwapchainCreateInfo {
+            let create = |usage| {
+                self.session.create_swapchain(&xr::SwapchainCreateInfo {
                     create_flags: xr::SwapchainCreateFlags::EMPTY,
-                    // 取り込んだ画像は UNORM のビューで書き写す（Gpu::convert）。
                     usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
                         | xr::SwapchainUsageFlags::TRANSFER_DST
                         | xr::SwapchainUsageFlags::TRANSFER_SRC
-                        | if mutable {
-                            xr::SwapchainUsageFlags::MUTABLE_FORMAT
-                        } else {
-                            xr::SwapchainUsageFlags::EMPTY
-                        },
+                        | usage,
                     format: gpu::FORMAT.as_raw() as u32,
                     sample_count: 1,
                     width,
@@ -657,7 +651,16 @@ impl OpenXrBackend {
                     array_size: 1,
                     mip_count: 1,
                 })
-                .map_err(xr_err("xrCreateSwapchain"))?;
+            };
+            // 取り込んだ画像は UNORM のビューで書き写す（Gpu::convert）。可変形式を作れないランタイムでは、
+            // 取り込みは失敗するが RGBA の転送は続ける。
+            let handle = if mutable {
+                create(xr::SwapchainUsageFlags::MUTABLE_FORMAT)
+                    .or_else(|_| create(xr::SwapchainUsageFlags::EMPTY))
+            } else {
+                create(xr::SwapchainUsageFlags::EMPTY)
+            }
+            .map_err(xr_err("xrCreateSwapchain"))?;
             let images = handle
                 .enumerate_images()
                 .map_err(xr_err("xrEnumerateSwapchainImages"))?
