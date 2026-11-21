@@ -250,10 +250,21 @@ fn veil_darkens_the_space_behind_the_panels_while_its_panel_is_open() {
     step(&mut ov, &mut vr, 0.2);
     assert_eq!(veil(&vr).alpha, VEIL);
     assert!(veil(&vr).visible);
+    // 暗転中に濃さを変更すると、新しい濃さへフェードする。範囲外の値は 0〜1 に収め、非数は既定値に戻す。
+    ov.set_veil_opacity(0.8);
+    ov.tick(&mut vr);
+    step(&mut ov, &mut vr, 0.1);
+    assert!(VEIL < veil(&vr).alpha && veil(&vr).alpha < 0.8);
+    step(&mut ov, &mut vr, 0.2);
+    assert_eq!(veil(&vr).alpha, 0.8);
+    for (given, kept) in [(3.0, 1.0), (-1.0, 0.0), (f32::NAN, VEIL), (0.8, 0.8)] {
+        ov.set_veil_opacity(given);
+        assert_eq!(ov.veil_opacity(), kept, "{given}");
+    }
     ov.close(&mut vr.backend, 0);
     ov.tick(&mut vr);
     step(&mut ov, &mut vr, 0.075);
-    assert!(0.0 < veil(&vr).alpha && veil(&vr).alpha < VEIL);
+    assert!(0.0 < veil(&vr).alpha && veil(&vr).alpha < 0.8);
     step(&mut ov, &mut vr, 0.2);
     assert_eq!(veil(&vr).alpha, 0.0);
     assert!(!veil(&vr).visible);

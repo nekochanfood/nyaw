@@ -2,9 +2,6 @@
 
 use super::*;
 
-/// 空間全体の暗転の濃さ（黒の不透明度）。周りがうっすら見える程度に落とす。
-// ponytail: 固定の濃さ。暗すぎる・明るすぎると感じたらここを調整する。
-const VEIL: f32 = 0.5;
 /// 暗転の幕は黒い正方形で、毎 tick 頭の正面この距離（m）に置き直す。描画順だけでなく奥行きでもパネルより奥にする
 /// （SteamVR は頭に相対配置したオーバーレイを描画順に関係なく手前に合成し、パネルが幕の向こうで消えた）。
 // ponytail: 固定の距離。これより遠いパネルは幕の手前に出ない。
@@ -248,7 +245,8 @@ impl Overlay {
             let p = &self.panels[id];
             p.veil && !p.closed && !p.hidden && p.surface.has_texture()
         });
-        let to = if on { VEIL } else { 0.0 };
+        // 暗転中に濃さを変更した場合も（設定画面のスライダーなど）、同じフェードで新しい濃さへ遷移させる。
+        let to = if on { self.veil_opacity() } else { 0.0 };
         // 暗転している間（ダッシュボードが出ている間）は、ゲームへの入力も止める（設定で通せる）。
         let block = on && !self.pass_input;
         let v = &mut self.veil;

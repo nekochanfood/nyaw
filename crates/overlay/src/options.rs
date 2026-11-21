@@ -1,4 +1,4 @@
-//! 全体設定: UI スケール・手ブレ抑制・レーザー長・カーソルサイズ・ゲーム入力遮断。
+//! 全体設定: UI スケール・手ブレ抑制・レーザー長・カーソルサイズ・ゲーム入力遮断・暗転の濃さ。
 
 use super::*;
 
@@ -68,6 +68,17 @@ impl Overlay {
 
     pub fn block_input(&self) -> bool {
         !self.pass_input
+    }
+
+    /// 暗転の濃さ（黒の不透明度）を設定する。0 で暗転せず、1 で真っ黒になる。範囲外の値は 0〜1 に収め、
+    /// 非数は既定値 [`VEIL`] に戻す。暗転中に変更すると、次の tick から新しい濃さへフェードする。
+    pub fn set_veil_opacity(&mut self, opacity: f32) {
+        self.veil_opacity = Some(opacity.clamp(0.0, 1.0)).filter(|o| !o.is_nan());
+    }
+
+    /// 現在の暗転の濃さ（未設定なら既定値 [`VEIL`]）。
+    pub fn veil_opacity(&self) -> f32 {
+        self.veil_opacity.unwrap_or(VEIL)
     }
 
     /// 手ブレ抑制緩和角度（度。[`POINTER_RELEASE_DEG_MIN`] 〜 [`POINTER_RELEASE_DEG_MAX`]）。
