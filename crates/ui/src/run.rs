@@ -146,7 +146,7 @@ pub fn run_with(
         design::font::install(cx);
         design::corner::install();
         // キーボード初回表示時にディスクから配列を読み始めると、完了までキーのないカードが表示される。事前に読み込む。
-        keyboard::preload();
+        kernel::subsystems::keyboard::preload();
         if let Some(p) = profiler {
             cx.set_global(with_budget(p));
             cx.default_global::<PanelControl>().profiling = true;
