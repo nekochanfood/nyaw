@@ -1,5 +1,5 @@
-//! リンクを開く検問所。部品・画面からの依頼（`design::link::open`）を入力の配送の直後に取り出し、URL を見せて確かめる
-//! ダイアログを依頼元のパネルの子として開く。ブラウザを開くのは、そこで「開く」を押したときだけ（[`open`]）。
+//! リンクオープンのゲート。部品・画面からの要求（`design::link::open`）を入力配送直後に取り出し、
+//! URL 確認ダイアログを要求元パネルの子として表示する。ブラウザを開くのは確認後のみ（[`open`]）。
 
 use design::{Theme, components, components::Variant, icons};
 use gpui::{App, Context, Render, Window, prelude::*};
@@ -7,7 +7,7 @@ use kernel::{PanelCommand, PanelId, Vec2};
 
 use crate::{PanelControl, PanelSpec};
 
-/// ブラウザで開くものか: `http` / `https` だけ。ほかのスキーム（`file:` など）は OS がファイルやアプリを開いてしまう。
+/// ブラウザで開くべき URL か判定する。`http` / `https` のみ許可。他のスキーム（`file:` 等）は OS がファイルやアプリを起動するため除外する。
 fn browsable(url: &str) -> bool {
     url.split_once("://").is_some_and(|(scheme, rest)| {
         !rest.is_empty()
@@ -17,11 +17,11 @@ fn browsable(url: &str) -> bool {
     })
 }
 
-/// 入力を配送した直後に呼ぶ。`window` から依頼された URL ごとに、確かめるダイアログを `panel` の子として開く。
+/// 入力配送直後に呼び出す。`window` から要求された各 URL について、確認ダイアログを `panel` の子として起動する。
 pub(crate) fn flush(panel: PanelId, window: &Window, cx: &mut App) {
     for url in design::link::take(window, cx) {
         if !browsable(&url) {
-            logger::warn!("ブラウザで開くものではない URL を捨てた", url = url);
+            logger::warn!("ブラウザで開けない URL を破棄した", url = url);
             continue;
         }
         let title = i18n::t(cx, "link.title");
@@ -34,20 +34,20 @@ pub(crate) fn flush(panel: PanelId, window: &Window, cx: &mut App) {
                 Vec2::new(width as f32 / 1000.0, height as f32 / 1000.0),
                 (width, height),
             )
-            // 答えて閉じるもの。ナビゲーションバーは付けない。
+            // 応答後に閉じるダイアログ。ナビゲーションバーは不要。
             .without_nav_bar();
         cx.default_global::<PanelControl>().spawns.push(spec);
     }
 }
 
-/// 検問所の出口: ユーザーが確かめた URL をブラウザで開く。`App::open_url` を呼んでよいのはここだけ（`clippy.toml`）。
+/// ゲートの出口: ユーザーが確認した URL をブラウザで開く。`App::open_url` の呼び出しはここに限定する（`clippy.toml`）。
 #[allow(clippy::disallowed_methods)]
 fn open(url: &str, cx: &App) {
     cx.open_url(url);
 }
 
-/// URL をブラウザで開いてよいか確かめるダイアログ。URL を省かずにそのまま見せ、`link-open` で開いて閉じる。
-/// `link-cancel` か外側を押すと開かずに閉じる。
+/// URL のブラウザオープン確認ダイアログ。URL を省略せず全文表示し、`link-open` で開いて閉じる。
+/// `link-cancel` または外側クリックで開かずに閉じる。
 struct LinkDialog {
     panel: PanelId,
     url: String,
@@ -102,7 +102,7 @@ mod tests {
         assert!(!browsable("C:\\Windows\\notepad.exe"));
     }
 
-    /// 依頼は開かず、依頼元のパネルの子として確かめるダイアログを開く。ブラウザで開くものでなければ何も開かない。
+    /// 要求は直接開かず、要求元パネルの子として確認ダイアログを起動する。ブラウザ対象外の URL では何も起動しない。
     #[gpui::test]
     fn requests_open_a_confirmation_instead_of_the_browser(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, _| gpui::Empty);
@@ -138,7 +138,7 @@ mod tests {
         })
     }
 
-    /// キャンセルは開かずに閉じ、「開く」は見せた URL をブラウザで開いて閉じる。
+    /// キャンセルはブラウザを開かず閉じ、「開く」は表示した URL をブラウザで開いて閉じる。
     #[gpui::test]
     fn the_dialog_opens_only_what_it_shows(cx: &mut TestAppContext) {
         let url = "https://github.com/nekochanfood/nyaw/releases/tag/v2026.0.2";

@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# デザイン層。値（Constants）→ 役割とテーマ（Utilities）→ 部品（Components）の 3 層。
-# 値は tokens.json が唯一の情報源で、build.rs が Rust のコードにする。
+# デザイン層。値（Constants）→ 役割とテーマ（Utilities）→ 部品（Components）の 3 層構成。
+# 値は tokens.json を唯一の情報源とし、build.rs が Rust コードへ変換する。
 [features]
-# 部品（Components）・アイコン・テーマのグローバルなど GPUI で描くもの。外すと値（Constants）と動き（animation）だけになり、
-# GPUI を持たない下位層（overlay）からも使える。
+# 部品（Components）・アイコン・テーマのグローバル等、GPUI で描画するもの。
+# 無効にすると値（Constants）と動き（animation）のみとなり、GPUI に依存しない下位層（overlay）からも利用できる。
 default = ["gpui"]
 gpui = ["dep:gpui", "dep:pulldown-cmark", "dep:unicode-segmentation"]
 
@@ -17,7 +17,7 @@ palette = "0.7"
 animation.workspace = true
 gpui = { workspace = true, features = ["test-support"], optional = true }
 unicode-segmentation = { version = "1.13", optional = true }
-# リリースノートなどの Markdown を読む（components::markdown）。
+# リリースノート等の Markdown 描画に使用（components::markdown）。
 pulldown-cmark = { version = "0.13", default-features = false, optional = true }
 
 [dev-dependencies]

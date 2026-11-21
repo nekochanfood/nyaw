@@ -1,19 +1,19 @@
-//! 仮想キーボードから OS の前面のアプリへの入力（デスクトップ配信のタッチと同じく、UI はカーネルに頼むだけ）。
-//! 前面のアプリの配列・IME の監視は OS へ定期的に問い合わせるので、使い始めたときに起こす。
+//! 仮想キーボードから OS のフォアグラウンドアプリへの入力（デスクトップキャプチャのタッチと同様、UI はカーネルに委譲するのみ）。
+//! フォアグラウンドアプリのレイアウト・IME の監視は OS への定期ポーリングのため、使用開始時に起動する。
 use super::*;
 use std::time::{Duration, Instant};
 use subsystems::keyboard::{Layout, Stroke};
 use subsystems::os::keyboard::{Output, Settings, Watcher, chord};
 
 impl<B: VrBackend> Kernel<B> {
-    /// OS の前面のアプリのキーボードの状態（配列・IME・ロック・入力先）。最初に呼んだときに監視を始める。
+    /// OS のフォアグラウンドアプリのキーボード状態（レイアウト・IME・ロックキー・入力先）。初回呼び出し時に監視を開始する。
     pub fn os_keyboard(&mut self) -> Settings {
         self.os_keyboard.get_or_insert_with(Watcher::new).settings()
     }
 
-    /// ウィンドウを映すパネルからの入力は、そのウィンドウが前面になってから送る（別のアプリへ入らないように）。
-    /// 前面でなければウィンドウを前に出し、[`PENDING_TTL`] の間だけ順に待たせる。送る先もそのウィンドウに固定するので、
-    /// 配送までに前面が移っても入らない。
+    /// ミラーリング中のパネルからの入力は、対象ウィンドウがフォアグラウンドになってから送信する（別アプリへの誤入力を防止）。
+    /// フォアグラウンドでなければウィンドウをフォアグラウンドに昇格させ、[`PENDING_TTL`] 間のみ順序付きで待機させる。送信先もそのウィンドウに固定するため、
+    /// 配送までにフォアグラウンドが変わっても誤送信しない。
     pub(super) fn type_to_os(&mut self, panel: PanelId, stroke: Stroke, layout: Layout) {
         let settings = self.os_keyboard();
         let Some(output) = os_output(stroke, &layout, &settings) else {
@@ -41,8 +41,8 @@ impl<B: VrBackend> Kernel<B> {
         self.flush_os_input();
     }
 
-    /// 待たせている入力を、前面になったものから順に送る。時間切れや、もう映していないウィンドウ宛てのものは捨てる。
-    /// 同じパネルの入力は順序を守る（先頭が前面待ちの間は後ろも待つ）。
+    /// 待機中の入力を、フォアグラウンドになったものから順に送信する。タイムアウトまたはミラーリング解除されたウィンドウ宛てのものは破棄する。
+    /// 同一パネルの入力は順序を保持する（先頭がフォアグラウンド待ちの間は後続も待機する）。
     pub(super) fn flush_os_input(&mut self) {
         if self.pending_os_input.is_empty() {
             return;
@@ -70,7 +70,7 @@ impl<B: VrBackend> Kernel<B> {
     }
 }
 
-/// 映しているウィンドウが前面になるのを待っている、OS への入力一つ。
+/// ミラーリング中のウィンドウがフォアグラウンドになるのを待機している OS 入力 1 件。
 pub(super) struct PendingKey {
     panel: PanelId,
     window: u64,
@@ -78,13 +78,13 @@ pub(super) struct PendingKey {
     since: Instant,
 }
 
-/// 前面になるのを待つ長さ。前に出す頼みは非同期で、前面の判定も [`Watcher`] の周期で更新される。
+/// フォアグラウンド待機のタイムアウト。フォアグラウンド昇格要求は非同期で、判定も [`Watcher`] のポーリング周期で更新される。
 const PENDING_TTL: Duration = Duration::from_secs(1);
-/// 待たせる入力の上限（出られないウィンドウに溜め続けない）。
+/// 待機入力の上限数（フォアグラウンドに昇格できないウィンドウへの蓄積を防止する）。
 const PENDING_MAX: usize = 64;
 
-/// 仮想キーボードの一操作を OS へ送る形にする。OS と同じ配列ならキーを、違えば文字を送る（OS 側の配列で別の文字にならない）。
-/// 違う配列の変換中（文字が決まっていない）は送らない。
+/// 仮想キーボードの 1 操作を OS 送信形式に変換する。OS と同一レイアウトならキーコードを、異なれば文字列を送信する（OS 側レイアウトでの文字化けを防止）。
+/// 異なるレイアウトでの変換中（未確定文字）は送信しない。
 fn os_output(stroke: Stroke, layout: &Layout, settings: &Settings) -> Option<Output> {
     let native = settings
         .layout
@@ -153,7 +153,7 @@ mod tests {
         }
     }
 
-    /// ウィンドウを映すパネルからの入力は、前面でなければウィンドウを前に出して待たせ、前面になったら順に送る。
+    /// ミラーリング中パネルからの入力は、フォアグラウンドでなければウィンドウを昇格させて待機し、フォアグラウンドになったら順に送信する。
     #[test]
     fn mirrored_window_input_waits_for_the_foreground_then_resends_in_order() {
         use std::sync::{Arc, atomic::AtomicU64, atomic::AtomicUsize, atomic::Ordering};
@@ -179,8 +179,8 @@ mod tests {
         kernel.type_to_os(panel, key(), Layout::new("us", ""));
         kernel.type_to_os(panel, key(), Layout::new("us", ""));
         settle();
-        assert_eq!(sent.load(Ordering::SeqCst), 0, "前面でない間は送らない");
-        assert_eq!(control.focuses(), 1, "前に出す頼みは一度だけ");
+        assert_eq!(sent.load(Ordering::SeqCst), 0, "フォアグラウンドでない間は送信しない");
+        assert_eq!(control.focuses(), 1, "フォアグラウンド昇格要求は 1 回のみ");
         foreground.store(77, Ordering::SeqCst);
         settle();
         kernel.flush_os_input();
@@ -188,15 +188,15 @@ mod tests {
         assert_eq!(
             sent.load(Ordering::SeqCst),
             2,
-            "前面になったら待たせた分を送る"
+            "フォアグラウンドになったら待機分を送信する"
         );
         kernel.type_to_os(panel, key(), Layout::new("us", ""));
         settle();
-        assert_eq!(sent.load(Ordering::SeqCst), 3, "前面なら待たずに送る");
+        assert_eq!(sent.load(Ordering::SeqCst), 3, "フォアグラウンドなら即時送信する");
         assert_eq!(control.focuses(), 0);
     }
 
-    /// 前面にならないまま映しているウィンドウが変わったら、待たせた入力は捨てる（別のウィンドウへ入らない）。
+    /// フォアグラウンドに昇格しないままミラーリング対象ウィンドウが変更された場合、待機中の入力は破棄する（別ウィンドウへの誤入力を防止）。
     #[test]
     fn pending_input_is_dropped_when_the_panel_stops_mirroring_that_window() {
         use std::sync::{Arc, atomic::AtomicU64, atomic::AtomicUsize, atomic::Ordering};

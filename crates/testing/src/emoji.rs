@@ -1,6 +1,6 @@
 use super::*;
 
-/// Twemoji のテキスト・アイコン表示を確認する画面。
+/// Twemoji のテキスト・アイコン表示を検証する画面。
 #[derive(Default)]
 pub struct EmojiTest {
     pub clicks: usize,

@@ -1,7 +1,7 @@
-//! Steam Audio（phonon.dll）を実行ファイルの置き場（`target/<profile>`）に写す。`cargo build` だけで HRTF で鳴り、
-//! インストーラ（`installer/nyaw.iss`）もここから同梱する。SDK は版ごとに一度だけ落として
-//! `%LOCALAPPDATA%\nyaw\steamaudio-<版>` に取っておく（target・worktree ごとには落とさない）。
-//! 落とせなくてもビルドは止めない（実行時はパンニングに落ちる）。`NYAW_SKIP_PHONON` があれば何もしない（CI の clippy・テスト）。
+//! Steam Audio（phonon.dll）を実行ファイルの配置先（`target/<profile>`）にコピーする。`cargo build` のみで HRTF で再生可能になり、
+//! インストーラ（`installer/nyaw.iss`）もここから同梱する。SDK は版ごとに一度だけダウンロードして
+//! `%LOCALAPPDATA%\nyaw\steamaudio-<版>` に保持する（target・worktree ごとにはダウンロードしない）。
+//! ダウンロード不可でもビルドは停止しない（実行時はパンニングにフォールバックする）。`NYAW_SKIP_PHONON` があれば何も行わない（CI の clippy・テスト）。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -51,12 +51,12 @@ fn place(bin: &Path) -> Result<(), String> {
         let len = fs::metadata(&from)
             .map_err(|e| format!("{}: {e}", from.display()))?
             .len();
-        // 動いている nyaw が読み込んでいる phonon.dll は上書きできない。同じものなら写さない
+        // 実行中の nyaw が読み込んでいる phonon.dll は上書き不可。同一であればコピーしない
         if fs::metadata(&to).map(|m| m.len()).ok() != Some(len) {
             fs::copy(&from, &to).map_err(|e| format!("{}: {e}", to.display()))?;
         }
     }
-    // 消されたら写し直す（写した dll の更新日時は SDK のままなので、写しただけでは走り直さない）
+    // 削除されたら再コピーする（コピーした dll の更新日時は SDK のままのため、コピーしただけでは再実行されない）
     println!(
         "cargo:rerun-if-changed={}",
         bin.join("phonon.dll").display()
@@ -64,17 +64,17 @@ fn place(bin: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// SDK の zip を落とし、使うものだけを `sdk` に展開する。途中で失敗しても半端なものを残さないよう、別の場所に展開してから移す。
+/// SDK の zip をダウンロードし、必要なもののみを `sdk` に展開する。途中で失敗しても不完全なものを残留させないよう、別の場所に展開してから移動する。
 fn fetch(sdk: &Path) -> Result<(), String> {
     let parent = sdk.parent().unwrap();
-    // 別の target のビルドが同時に落としてもぶつからないよう、プロセスごとの名前にする
+    // 別の target のビルドが同時にダウンロードしても競合しないよう、プロセスごとの名前にする
     let id = std::process::id();
     let zip = parent.join(format!("steamaudio-{VERSION}.{id}.zip"));
     let staging = parent.join(format!("steamaudio-{VERSION}.{id}.partial"));
     let result = download(&zip, &staging, sdk);
     let _ = fs::remove_file(&zip);
     let _ = fs::remove_dir_all(&staging);
-    // 同時に落とした別のビルドが先に置いたなら、それを使う
+    // 同時にダウンロードした別のビルドが先に配置済みであれば、それを使用する
     result.or_else(|e| if sdk.exists() { Ok(()) } else { Err(e) })
 }
 
@@ -83,8 +83,8 @@ fn download(zip: &Path, staging: &Path, sdk: &Path) -> Result<(), String> {
     let url = format!(
         "https://github.com/ValveSoftware/steam-audio/releases/download/v{VERSION}/steamaudio_{VERSION}.zip"
     );
-    // Windows 10 以降に入っている curl.exe と tar.exe（bsdtar。zip も読める）。Command は PATH より System32 を先に見るので、
-    // Git Bash の GNU tar（zip を読めない）は拾わない（testkit の runtimes と同じ）
+    // Windows 10 以降に搭載されている curl.exe と tar.exe（bsdtar。zip も読み取り可能）。Command は PATH より System32 を先に参照するため、
+    // Git Bash の GNU tar（zip を読み取れない）は参照しない（testkit の runtimes と同じ）
     run(Command::new("curl")
         .args(["-fsSL", "--retry", "3", "--connect-timeout", "30", "-o"])
         .arg(zip)

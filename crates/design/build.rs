@@ -1,10 +1,10 @@
-//! tokens.json（唯一の情報源）から Constants と Theme のコードを作る。
-//! 構成は Radix Colors のエイリアス(https://www.radix-ui.com/colors/docs/overview/aliasing)に倣う:
+//! tokens.json（唯一の情報源）から Constants と Theme のコードを生成する。
+//! 構成は Radix Colors のエイリアス (https://www.radix-ui.com/colors/docs/overview/aliasing) に倣う:
 //! - scales: 色相ごとの 12 段（段ごとに用途が決まっている）。ライトとダークで別の値。これが Constants。
-//! - aliases: `accent` → `blue` のようにスケールへ役割の名前を付け、各段に用途名（`accent-solid` = 9 段）を付ける。
-//! - mutable: `panel` のようにテーマで指す先が変わる名前。
+//! - aliases: `accent` → `blue` のようにスケールへ役割名を対応付け、各段に用途名（`accent-solid` = 9 段目）を付与する。
+//! - mutable: `panel` のようにテーマによって参照先が変わる名前。
 //!
-//! 役割の組が WCAG のコントラスト比を満たさなければ、ここでビルドを落とす。
+//! 役割の組み合わせが WCAG のコントラスト比を満たさない場合、ビルドエラーとする。
 
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -25,8 +25,8 @@ fn main() {
     twemoji();
     icons::generate(Path::new(&env::var("OUT_DIR").unwrap()));
     println!("cargo:rerun-if-changed=tokens.json");
-    let src = fs::read_to_string("tokens.json").expect("tokens.json を読めない");
-    let root: Value = serde_json::from_str(&src).expect("tokens.json が JSON ではない");
+    let src = fs::read_to_string("tokens.json").expect("tokens.json の読み込みに失敗");
+    let root: Value = serde_json::from_str(&src).expect("tokens.json の JSON パースに失敗");
     let scales = obj(&root, "scales");
     let statics = obj(&root, "static");
     let aliases = obj(&root, "aliases");
@@ -36,7 +36,7 @@ fn main() {
         .iter()
         .map(|s| s.as_str().unwrap())
         .collect();
-    assert_eq!(steps.len(), 12, "段は 12 個");
+    assert_eq!(steps.len(), 12, "段数は 12 でなければならない");
 
     let mut out = String::from("pub mod scale {\n");
     for (name, v) in statics {
@@ -48,8 +48,8 @@ fn main() {
         for (name, s) in scales {
             let list = s[theme]
                 .as_array()
-                .unwrap_or_else(|| panic!("{name}.{theme} が無い"));
-            assert_eq!(list.len(), 12, "{name}.{theme}: 12 段");
+                .unwrap_or_else(|| panic!("{name}.{theme} が見つからない"));
+            assert_eq!(list.len(), 12, "{name}.{theme}: 段数が 12 でない");
             for (i, c) in list.iter().enumerate() {
                 let c = rgba(oklch_to_srgb(c.as_str().unwrap()));
                 writeln!(
@@ -89,10 +89,10 @@ fn main() {
         for property in ["gap", "corner-radius"] {
             let reference = root["keyboard"][kind][property]
                 .as_str()
-                .expect("キーボードの値は定数への参照");
+                .expect("キーボードの値は定数への参照であること");
             let (module, name) = reference
                 .split_once('.')
-                .expect("定数は module.name で指定");
+                .expect("定数は module.name 形式で指定する");
             assert!(
                 matches!(module, "spacing" | "radius") && root[module][name].is_number(),
                 "未知のキーボード用トークン: {reference}"
@@ -109,8 +109,8 @@ fn main() {
     }
     out += "}\n";
 
-    // テーマごとに「役割名 → (定数の式, 色)」を作る。
-    // 用途エイリアス（accent-solid ...）は名前が全テーマ共通で、mutable は指す先がテーマで変わる。
+    // テーマごとに「役割名 → (定数の式, 色)」のマップを構築する。
+    // 用途エイリアス（accent-solid 等）は名前が全テーマ共通で、mutable は参照先がテーマごとに異なる。
     let mutable = obj(&root, "mutable");
     let mut fields: Vec<String> = Vec::new();
     for alias in aliases.keys() {
@@ -131,13 +131,13 @@ fn main() {
             }
             let (name, n) = r
                 .rsplit_once('-')
-                .unwrap_or_else(|| panic!("{r}: 名前-段 で書く"));
-            let n: usize = n.parse().unwrap_or_else(|_| panic!("{r}: 段が数字でない"));
-            assert!((1..=12).contains(&n), "{r}: 段は 1..=12");
+                .unwrap_or_else(|| panic!("{r}: 名前-段 の形式で記述する"));
+            let n: usize = n.parse().unwrap_or_else(|_| panic!("{r}: 段が数値でない"));
+            assert!((1..=12).contains(&n), "{r}: 段は 1〜12 の範囲");
             let scale = aliases.get(name).map_or(name, |a| a.as_str().unwrap());
             let list = scales
                 .get(scale)
-                .unwrap_or_else(|| panic!("{r}: スケール {scale} が無い"))[theme]
+                .unwrap_or_else(|| panic!("{r}: スケール {scale} が見つからない"))[theme]
                 .as_array()
                 .unwrap();
             (
@@ -147,7 +147,7 @@ fn main() {
         };
         let m = mutable[theme]
             .as_object()
-            .unwrap_or_else(|| panic!("mutable.{theme} が無い"));
+            .unwrap_or_else(|| panic!("mutable.{theme} が見つからない"));
         let mut map = BTreeMap::new();
         for alias in aliases.keys() {
             for (i, s) in steps.iter().enumerate() {
@@ -162,7 +162,7 @@ fn main() {
         }
         assert!(
             fields.iter().all(|f| map.contains_key(f)),
-            "{theme}: 役割が足りない"
+            "{theme}: 役割の定義が不足している"
         );
         resolved.insert(theme, map);
     }
@@ -190,24 +190,24 @@ fn main() {
             let c = |r: &str| {
                 resolved[theme]
                     .get(r)
-                    .unwrap_or_else(|| panic!("コントラスト: {r} が無い"))
+                    .unwrap_or_else(|| panic!("コントラスト検査: {r} が見つからない"))
                     .1
             };
             let got = f64::from(c(fg).relative_contrast(c(bg)));
             if got < min {
                 failures.push(format!(
-                    "テーマ {theme}: {fg} と {bg} のコントラスト比 {got:.2} が {min} に足りない"
+                    "テーマ {theme}: {fg} / {bg} のコントラスト比 {got:.2} が要件 {min} を下回る"
                 ));
             }
         }
     }
-    out += "    /// どの役割の色にも `f` を当てたテーマ（白黒にするなど）。\n";
+    out += "    /// すべての役割の色に `f` を適用したテーマ（白黒変換など）。\n";
     out += "    pub fn map(self, f: impl Fn(u32) -> u32) -> Theme {\n        Theme {\n";
     for f in &fields {
         writeln!(out, "            {0}: f(self.{0}),", field(f)).unwrap();
     }
     out += "        }\n    }\n\n";
-    out += "    /// 役割ごとに `self` と `other` の色を `f` で合わせたテーマ（2 つのテーマの間を補間するなど）。\n";
+    out += "    /// 役割ごとに `self` と `other` の色を `f` で合成したテーマ（2 テーマ間の補間など）。\n";
     out += "    pub fn zip(self, other: Theme, f: impl Fn(u32, u32) -> u32) -> Theme {\n        Theme {\n";
     for f in &fields {
         writeln!(out, "            {0}: f(self.{0}, other.{0}),", field(f)).unwrap();
@@ -245,7 +245,7 @@ fn twemoji() {
 }
 
 fn obj<'a>(v: &'a Value, k: &str) -> &'a Map {
-    v[k].as_object().unwrap_or_else(|| panic!("{k} が無い"))
+    v[k].as_object().unwrap_or_else(|| panic!("{k} が見つからない"))
 }
 
 fn konst(s: &str) -> String {
@@ -261,18 +261,18 @@ fn rgba(c: Srgb) -> u32 {
     u32::from(c.red) << 24 | u32::from(c.green) << 16 | u32::from(c.blue) << 8 | 0xff
 }
 
-/// "oklch(L C H)"（L は 0..1、H は度）を sRGB にする。
-/// ponytail: 色域外は各チャンネルを切るだけ。彩度を落として収める方式は色が合わなくなったら入れる。
+/// "oklch(L C H)"（L は 0..1、H は度）を sRGB に変換する。
+/// ponytail: 色域外は各チャンネルのクランプのみ。彩度を段階的に落とす方式は色の一致度が問題になった時点で導入する。
 fn oklch_to_srgb(s: &str) -> Srgb {
     let inner = s
         .trim()
         .strip_prefix("oklch(")
         .and_then(|x| x.strip_suffix(')'));
     let v: Vec<f32> = inner
-        .unwrap_or_else(|| panic!("{s}: oklch(L C H) で書く"))
+        .unwrap_or_else(|| panic!("{s}: oklch(L C H) 形式で記述する"))
         .split_whitespace()
         .map(|x| x.parse().unwrap_or_else(|_| panic!("{s}: 数値でない")))
         .collect();
-    assert_eq!(v.len(), 3, "{s}: oklch(L C H) で書く");
+    assert_eq!(v.len(), 3, "{s}: oklch(L C H) 形式で記述する");
     Srgb::from_color(Oklch::new(v[0], v[1], v[2])).clamp()
 }

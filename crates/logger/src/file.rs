@@ -1,19 +1,19 @@
-//! ファイルへのログ出力と、ログ・計測ダンプの世代管理。
+//! ファイルへのログ出力およびログ・計測ダンプの世代ローテーション。
 
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// ログをファイルへ書くシンク。1 行ずつ書き切るので、落ちてもそこまでのログは残る。
-/// 起動ごとに新しいファイルにし、前回のログは 1 世代だけ `<名前>-prev.<拡張子>` に残す。
+/// ログをファイルへ書き出すシンク。1 行ずつ書き切るため、クラッシュ時もそこまでのログが保全される。
+/// 起動ごとに新規ファイルを作成し、前回のログは 1 世代のみ `<名前>-prev.<拡張子>` に保持する。
 pub struct FileSink {
     file: Mutex<File>,
     path: PathBuf,
 }
 
 impl FileSink {
-    /// [`create_rotated`] で新しいファイルを作る（前回分は 1 世代だけ残る）。
+    /// [`create_rotated`] で新規ファイルを作成する（前回分は 1 世代のみ保持される）。
     pub fn create(path: impl AsRef<Path>) -> io::Result<Self> {
         let path = path.as_ref();
         let file = create_rotated(path)?;
@@ -28,8 +28,8 @@ impl FileSink {
     }
 }
 
-/// 新しいファイルを作る（ログ・プロファイラのダンプ共通）。親ディレクトリが無ければ作り、
-/// 既に `path` があれば [`prev_log_path`] へ 1 世代だけ退避する（既存の退避先は先に消す。Windows の rename は上書きできないため）。
+/// 新規ファイルを作成する（ログ・プロファイラダンプ共通）。親ディレクトリが存在しなければ作成し、
+/// `path` が既存なら [`prev_log_path`] へ 1 世代のみ退避する（既存の退避先は事前に削除する。Windows の rename は上書き不可のため）。
 pub fn create_rotated(path: impl AsRef<Path>) -> io::Result<File> {
     let path = path.as_ref();
     if let Some(dir) = path.parent() {
@@ -46,7 +46,7 @@ pub fn create_rotated(path: impl AsRef<Path>) -> io::Result<File> {
     File::create(path)
 }
 
-/// 前回のログの退避先: `logs/nyaw.log` → `logs/nyaw-prev.log`（拡張子が無ければ `nyaw-prev`）。
+/// 前回ログの退避先パス: `logs/nyaw.log` → `logs/nyaw-prev.log`（拡張子なしの場合は `nyaw-prev`）。
 pub fn prev_log_path(path: &Path) -> PathBuf {
     let mut name = path.file_stem().unwrap_or_default().to_os_string();
     name.push("-prev");
@@ -62,7 +62,7 @@ impl crate::Sink for FileSink {
         let mut buf = String::with_capacity(line.len() + 1);
         buf.push_str(line);
         buf.push('\n');
-        // 書けなくてもアプリは止めない（ロガーの失敗をロガーで報告すると再帰するので黙って捨てる）。
+        // 書き込み失敗時もアプリは停止しない（ロガーの失敗をロガーで報告すると再帰するため無視する）。
         if let Ok(mut f) = self.file.lock() {
             let _ = f.write_all(buf.as_bytes());
         }
@@ -96,11 +96,11 @@ mod tests {
         let prev = dir.join("a").join("nyaw-prev.log");
         let _ = fs::remove_dir_all(&dir);
 
-        // 1 回目: 親ディレクトリごと作る。退避するものは無い
+        // 1 回目: 親ディレクトリごと作成する。退避対象は存在しない
         FileSink::create(&path).unwrap().write("run1");
         assert!(!prev.exists());
 
-        // 2 回目: 前回分が prev に移り、新しいファイルは空から始まる
+        // 2 回目: 前回分が prev に退避され、新規ファイルは空の状態で開始する
         let sink = FileSink::create(&path).unwrap();
         sink.write("run2-a");
         sink.write("run2-b");
@@ -109,7 +109,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "run2-a\nrun2-b\n");
         assert_eq!(fs::read_to_string(&prev).unwrap(), "run1\n");
 
-        // 3 回目: 既存の prev は消され、1 世代だけ残る
+        // 3 回目: 既存の prev は削除され、1 世代のみ保持される
         FileSink::create(&path).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "");
         assert_eq!(fs::read_to_string(&prev).unwrap(), "run2-a\nrun2-b\n");

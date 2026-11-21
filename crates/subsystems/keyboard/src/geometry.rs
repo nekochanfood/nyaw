@@ -1,7 +1,7 @@
-//! xkeyboard-config の pc104 / pc105 / jp106 に対応するキー名と物理位置（1u 単位）。
+//! xkeyboard-config の pc104 / pc105 / jp106 に対応するキー名と物理配置（1u 単位）。
 use super::Keyboard;
 
-/// キーボードの種類。設定ファイルでは `full` / `tenkeyless` / `compact`。
+/// キーボードの種別。設定ファイルでは `full` / `tenkeyless` / `compact`。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum KeyboardType {
@@ -39,12 +39,12 @@ pub struct Keycap {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum KeyShape {
     Rectangle,
-    /// 上段が 1.5u、下段が 1.25u の ISO / JIS Enter。
+    /// 上段 1.5u、下段 1.25u の ISO / JIS Enter キー。
     SteppedEnter,
 }
 
 impl Keycap {
-    /// ギャップを輪郭の両側に半分ずつ取り、凹角でも隣のキーと同じ間隔にする。
+    /// ギャップを輪郭の両側に半分ずつ配分し、凹角部分でも隣接キーと同一間隔を維持する。
     pub fn outline(&self, unit: f32, gap: f32) -> Vec<(f32, f32)> {
         let (w, h) = (self.width * unit - gap, self.height * unit - gap);
         match self.shape {
@@ -60,7 +60,7 @@ impl Keycap {
         }
     }
 
-    /// キーが占める領域。Enter の左下の空白をヒット領域に含めない。
+    /// キーが占有する領域を返す。Enter キーの左下の空白はヒット領域に含めない。
     pub fn regions(&self) -> Vec<(f32, f32, f32, f32)> {
         match self.shape {
             KeyShape::Rectangle => vec![(self.x, self.y, self.width, self.height)],

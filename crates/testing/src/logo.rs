@@ -1,8 +1,8 @@
 use super::*;
 use design::{Logo, Mode};
 
-/// ロゴの読み込みと、大きさごとの見え方を確かめる画面。
-/// 行は 16〜256 px（アイコンに埋め込むサイズ）、列はライト用・ダーク用（それぞれの地色の上に置く）。
+/// ロゴの読み込みと、サイズごとの表示を確認する画面。
+/// 行は 16〜256 px（アイコンに埋め込むサイズ）、列はライト用・ダーク用（それぞれの背景色上に配置する）。
 #[derive(Default)]
 pub struct LogoTest {
     scroll: ScrollHandle,
@@ -14,7 +14,7 @@ impl LogoTest {
     }
 }
 
-/// 同じ大きさのロゴをライト用・ダーク用の地の上に並べた行。
+/// 同一サイズのロゴをライト用・ダーク用の背景上に並べた行。
 fn size_row(edge: f32) -> Div {
     let tile = |mode: Mode| {
         let bg = Theme::of(mode);

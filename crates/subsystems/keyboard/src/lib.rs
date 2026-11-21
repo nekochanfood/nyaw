@@ -1,4 +1,4 @@
-//! xkeyboard-config による配列・文字・トグル状態。OS への送信先は UI が決める。
+//! xkeyboard-config に基づくキー配列・文字マッピング・トグル状態。OS への入力送信先は UI が決定する。
 use std::{
     collections::BTreeMap,
     fs, io,
@@ -49,7 +49,7 @@ fn compile(context: &Context, layout: &Layout, model: &str) -> Result<Keymap, St
         }]),
         Some(&[]),
     );
-    // 機種限定の追加キーは pc 配列に存在しない場合があるため、XKB と同じくその定義だけを除外する。
+    // 機種固有の追加キーは pc 配列に存在しない場合があるため、XKB と同様にその定義のみ除外する。
     diagnostics.retain(|d| d.kind() != DiagnosticKind::UnknownKey);
     check_diagnostics(diagnostics)?;
     if keymap.keys().next().is_none() {
@@ -87,7 +87,7 @@ impl Layout {
     }
 }
 
-/// 初回の展開とコンパイルは呼び出し側のワーカースレッドで行う。
+/// 初回の展開とコンパイルは呼び出し側のワーカースレッド上で実行する。
 pub struct Database {
     context: Context,
     physical_keys: BTreeMap<String, Keycode>,
@@ -132,7 +132,7 @@ impl Database {
         check_diagnostics(diagnostics).map_err(io::Error::other)?;
         let mut layouts = Vec::new();
         for entry in registry.layouts {
-            // custom は利用者が別途 symbols/custom を置くための項目で、配布元には配列がない。
+            // custom はユーザーが独自に symbols/custom を配置するための項目であり、配布元には配列定義がない。
             if entry.name == "custom" {
                 continue;
             }
@@ -173,7 +173,7 @@ impl Database {
                     .map(|key| (key.name().to_owned(), key.keycode())),
             );
         }
-        // evdev の MENU は COMP の別名で、コンパイル済み keymap には正規名だけが残る。
+        // evdev の MENU は COMP の別名であり、コンパイル済み keymap には正規名のみ残る。
         if let Some(&code) = physical_keys.get("COMP") {
             physical_keys.insert("MENU".into(), code);
         }
@@ -232,7 +232,7 @@ impl Database {
     }
 }
 
-/// 一操作。物理キー番号は evdev（XKB の +8 は含まない）。
+/// 1 回のキー操作。物理キー番号は evdev（XKB の +8 を含まない）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Stroke {
     pub code: u16,
@@ -355,7 +355,7 @@ impl Keyboard {
             .join(" ")
     }
 
-    /// かな入力中だけ、優先するかなとは別にローマ字の印字も残す。
+    /// かな入力中に限り、優先するかな表記とは別にローマ字のラベルも返す。
     pub fn alphabet_label(&self, code: u16) -> Option<String> {
         let alphabet = self.alphabet.as_ref()?;
         let label: String = alphabet
@@ -433,8 +433,8 @@ impl Keyboard {
         stroke
     }
 
-    /// 修飾キーは組み合わせに使う。Shift の一度押しは次のキーだけ、二度押しは固定。
-    /// 単独入力は on → off、組み合わせに使った解除は入力しない。
+    /// 修飾キーは組み合わせに使用する。Shift の単押しは次のキーのみに適用され、二度押しで固定される。
+    /// 単独入力は on → off、組み合わせに使用した解除はストロークを生成しない。
     pub fn click(&mut self, code: u16) -> Option<Stroke> {
         let key = Keycode::from_evdev(u32::from(code));
         let shift = self
@@ -702,7 +702,7 @@ mod tests {
                     layout.name,
                     layout.variant
                 );
-                // NoSymbol の空白キーも有効な配列なので、文字の有無ではなく物理領域を検証する。
+                // NoSymbol の空白キーも有効な配列であるため、文字割り当てではなく物理領域で検証する。
                 for key in keys {
                     assert!(
                         key.x >= 0.

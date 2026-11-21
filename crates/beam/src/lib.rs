@@ -1,6 +1,6 @@
-//! Layer 6 画面: コントローラのビーム。手ごとに、手元から伸びるレーザーと、指しているパネルに貼り付く
-//! 小さな円（カーソル）と、ドラッグ中の要素の見た目（中身は GPUI が描く `ui::DragPreview`）と、カーソルの子のツールチップ（[`tooltip`]）と、
-//! はめられる画面を掴んでいる間のはまる所の見本（[`dock`]）の 5 枚。ここは見た目だけを描き、置き場所・長さ・表示はオーバーレイ層が毎 tick 決める。
+//! Layer 6 パネル: コントローラのビーム。手ごとに、手元から伸びるレーザー、指示先パネルに貼り付く
+//! カーソル（小円）、ドラッグ中の要素の外観（中身は GPUI が描画する `ui::DragPreview`）、カーソル子要素のツールチップ（[`tooltip`]）、
+//! ドッキング可能パネル把持中のスロットゴースト（[`dock`]）の計 5 枚。描画のみを担い、配置・長さ・表示制御はオーバーレイ層が毎 tick 決定する。
 
 use gpui::{
     Bounds, Context, PathBuilder, Pixels, Point, Window, canvas, div, hsla, linear_color_stop,
@@ -18,38 +18,38 @@ pub use tooltip::Tooltip;
 const COLOR: u32 = 0xffffffd0;
 const OUTLINE: u32 = 0x000000a0;
 
-/// レーザーのテクスチャ。横方向がレーザーの向き（左端 = 手元）で、オーバーレイ層が幅 = 長さに伸ばし、
-/// 高さは長さによらず [`LASER_THICK_M`] に固める。線はテクスチャいっぱいに塗るので、線の縁 = クアッドの縁になり、
-/// 拡大してもにじまない（細い線を透明の中に描くと、拡大の補間で縁がぼける）。
-/// 縦の画素数は Windows の非表示ウィンドウの最小の大きさのため。
+/// レーザーのテクスチャ。横方向がレーザーの向き（左端 = 手元）で、オーバーレイ層が幅を長さに伸張し、
+/// 高さは長さによらず [`LASER_THICK_M`] に固定する。線をテクスチャ全面に描画するため線の縁 = クアッドの縁となり、
+/// 拡大しても滲まない（細い線を透明領域内に描くと、拡大時の補間で縁がぼける）。
+/// 縦の画素数は Windows の非表示ウィンドウの最小サイズ制約による。
 const LASER_PX: (u32, u32) = (1024, 64);
-/// レーザーの太さ（m）。
+/// レーザーの太さ（m 単位）。
 const LASER_THICK_M: f32 = 0.003;
-/// レーザーの不透明度の段数。段ごとに線形のグラデーションでつなぎ、曲線に沿わせる。
+/// レーザーの不透明度の分割数。各区間を線形グラデーションで接続し、曲線を近似する。
 const LASER_FADE_STEPS: usize = 16;
-/// カーソルのパネルの幅（m）。頭から 1m 先にあるときの大きさで、離れるほど大きくして見た目の大きさを保つ。
-/// 中心の丸（直径はこの 1/3 = 12mm）の周りに、長押しの進み具合のリングを描く余白を取ってある。
+/// カーソルパネルの幅（m）。頭部から 1m 先での基準サイズで、距離に比例して拡大し見かけの大きさを維持する。
+/// 中心の丸（直径はこの 1/3 = 12mm）の周囲に、長押し進行リングの描画余白を確保してある。
 const CURSOR_M: f32 = 0.036;
-/// Windows の非表示ウィンドウには最小の大きさがあるので小さくしすぎない。
+/// Windows の非表示ウィンドウの最小サイズ制約があるため、これ以上小さくしない。
 const CURSOR_PX: (u32, u32) = (240, 240);
-/// 中心の丸の直径（px）と、リングの半径（線の中心）・太さ（px）。丸はリングの穴に収まる。
+/// 中心の丸の直径（px）とリングの半径（線の中心）・太さ（px）。丸はリングの内径に収まる。
 const DOT_PX: f32 = 80.0;
 const RING_RADIUS_PX: f32 = 80.0;
 const RING_WIDTH_PX: f32 = 18.0;
-/// リングの下地（薄い）。満ちた分はテーマの強調色（`accent-solid`。白だと白い面の上で見えない）。
+/// リングのトラック色（薄い）。充填部分はテーマの強調色（`accent-solid`。白では白い面上で不可視になるため）。
 const RING_TRACK: u32 = 0x00000060;
-/// これより短い押下（タップ）ではリングを出さない（ちらつかないように）。
+/// この秒数より短い押下（タップ）ではリングを表示しない（ちらつき防止）。
 const RING_SHOW: f32 = 0.15;
-/// ドラッグの見た目を描くウィンドウ。中心がカーソル。幅（m）はドラッグを始めたパネルの縮尺で UI 層が決める。
+/// ドラッグプレビューを描画するウィンドウ。中心がカーソル位置。幅（m）はドラッグ開始時のパネルスケールに基づき UI 層が決定する。
 const DRAG_PX: (u32, u32) = (400, 400);
-/// ツールチップのパネル。中心がカーソルで、カーソルと同じく頭から 1m 先での大きさ（m）。
-/// オーバーレイ層が距離に比例して大きくするので、近くても遠くても見た目の大きさは変わらない。
-/// 箱の高さ（`TOOLTIP_HEIGHT` px）が `TOOLTIP_HEIGHT_M`（カーソルの丸 2 個分の高さ）に見える縮尺にする。
+/// ツールチップのパネル。中心がカーソル位置で、カーソルと同様に頭部から 1m 先での基準サイズ（m）。
+/// オーバーレイ層が距離に比例して拡大するため、距離によらず見かけの大きさが一定になる。
+/// ボックス高さ（`TOOLTIP_HEIGHT` px）が `TOOLTIP_HEIGHT_M`（カーソル丸 2 個分の高さ）に対応するスケールに設定。
 const TOOLTIP_PX: (u32, u32) = (640, 256);
 const TOOLTIP_M: f32 =
     TOOLTIP_PX.0 as f32 * design::components::TOOLTIP_HEIGHT_M / design::components::TOOLTIP_HEIGHT;
 
-/// 両手のレーザーとカーソルとドラッグの見た目。
+/// 両手のレーザー・カーソル・ドラッグプレビューの各パネル仕様。
 pub fn specs() -> Vec<PanelSpec> {
     [Hand::Left, Hand::Right]
         .into_iter()
@@ -71,11 +71,11 @@ pub fn specs() -> Vec<PanelSpec> {
         .collect()
 }
 
-/// レーザー。手元では [`COLOR`] の濃さで、先（カーソル）へ向けて薄くなり、先で消える。
+/// レーザー。手元では [`COLOR`] の濃度で、先端（カーソル方向）へ向けて減衰し、先端で完全に消える。
 pub struct Laser;
 
-/// 手元から `t`（0 = 手元、1 = 先）の不透明度の割合: 1 − sine-out。手元はしっかり見え、早めに薄れて先では 0。
-/// 線の長さ（見える範囲）はオーバーレイ層の `laser_length` で決まり、この曲線はその長さに沿って伸び縮みする。
+/// 手元からの位置 `t`（0 = 手元、1 = 先端）における不透明度: 1 − sine-out。手元は明瞭で、早期に減衰し先端では 0 になる。
+/// 可視長はオーバーレイ層の `laser_length` が決定し、この曲線はその長さに沿って伸縮する。
 fn laser_fade(t: f32) -> f32 {
     1.0 - (t * std::f32::consts::FRAC_PI_2).sin()
 }
@@ -99,8 +99,8 @@ impl Render for Laser {
     }
 }
 
-/// カーソル。中心の丸と、タッチで長押ししている間はその進み具合を満ちていくリング（ドーナツ型。丸は穴に収まる）で出す。
-/// リングが満ちるとマウスの押下になり、ドラッグ＆ドロップができる。
+/// カーソル。中心の丸と、タッチ長押し中はその進行度を充填リング（ドーナツ型。丸は内径に収まる）で表示する。
+/// リングが充填完了するとマウス押下に変換され、ドラッグ＆ドロップが可能になる。
 pub struct Cursor {
     pub hand: Hand,
 }
@@ -117,7 +117,7 @@ impl Render for Cursor {
             .flex()
             .items_center()
             .justify_center()
-            // 白いパネルの上でも見えるよう縁取る。
+            // 白いパネル上でも視認できるよう縁取りを付ける。
             .child(
                 div()
                     .size(px(DOT_PX))
@@ -139,7 +139,7 @@ impl Render for Cursor {
     }
 }
 
-/// `bounds` の中心に、下地の輪と、12 時から時計回りに `progress`（0〜1）だけ満ちた弧（色 `fill`）を描く。
+/// `bounds` の中心に、トラック環と 12 時から時計回りに `progress`（0〜1）分充填された弧（色 `fill`）を描画する。
 fn ring(bounds: Bounds<Pixels>, progress: f32, fill: u32, window: &mut Window) {
     let center = bounds.center();
     let at = |turn: f32| -> Point<Pixels> {
@@ -166,7 +166,7 @@ fn ring(bounds: Bounds<Pixels>, progress: f32, fill: u32, window: &mut Window) {
     }
 }
 
-/// 空。ドラッグ中は GPUI がドラッグの見た目をマウス位置（= 中心）に重ねて描く。
+/// 空コンテナ。ドラッグ中は GPUI がドラッグプレビューをマウス位置（= 中心）にオーバーレイ描画する。
 pub struct DragLayer;
 
 impl Render for DragLayer {
@@ -183,14 +183,14 @@ mod tests {
     fn laser_fades_out_toward_the_cursor_along_sine_out() {
         assert_eq!(laser_fade(0.0), 1.0);
         assert!(laser_fade(1.0).abs() < 1e-6);
-        // sine-out: 前半で大きく薄れる（半分の所で 3 割弱）。
+        // sine-out: 前半で大幅に減衰する（中間点で約 3 割弱）。
         assert!((laser_fade(0.5) - (1.0 - std::f32::consts::FRAC_1_SQRT_2)).abs() < 1e-6);
         assert!((1..=10).all(|i| laser_fade(i as f32 / 10.0) < laser_fade((i - 1) as f32 / 10.0)));
     }
 
     #[test]
     fn tooltip_box_is_two_cursor_dots_tall() {
-        // カーソルの中心の丸の直径（m、1m 先で）。
+        // カーソル中心丸の直径（m、1m 先での基準値）。
         const CURSOR_DOT_M: f32 = CURSOR_M * DOT_PX / CURSOR_PX.0 as f32;
         let box_m = design::components::TOOLTIP_HEIGHT * TOOLTIP_M / TOOLTIP_PX.0 as f32;
         assert!((box_m - 2.0 * CURSOR_DOT_M).abs() < 1e-6, "{box_m}");

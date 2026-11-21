@@ -5,13 +5,13 @@ use subsystems::input::ClickButton;
 
 pub(super) struct DesktopPanel {
     stream: Option<Stream>,
-    /// 映しているもの（[`Kernel::start_desktop`] で始めたときだけ。FPS を変えたときにかけ直す）。
+    /// 配信対象（[`Kernel::start_desktop`] で開始した場合のみ。FPS 変更時に再起動する）。
     source: Option<desktop::Source>,
     pub status: Status,
     contacts: [Option<Vec2>; 2],
     hovered: [Option<Vec2>; 2],
-    /// OS のマウスを動かす手。両手で取り合わないよう、もう片方の手の入力は送らない。既定は利き手で、もう片方の手で
-    /// 一度押すとその手に替わる（その押下は送らない）。
+    /// OS のマウスを操作する手。両手で競合しないよう、もう片方の手の入力は送信しない。既定は利き手で、もう片方の手で
+    /// 一度押下するとその手に切り替わる（その押下自体は送信しない）。
     active: Hand,
     original_resolution: (u32, u32),
     meter: Meter,
@@ -60,7 +60,7 @@ impl Meter {
         self.capture += capture;
     }
 
-    /// 一秒たっていれば区切る。画像が来なかった区間（画面が止まっている）は、遅延と転送を前の値のまま残す。
+    /// 1 秒経過していれば区切る。画像が到着しなかった区間（画面が静止している）は、遅延と転送を前の値のまま保持する。
     fn roll(
         &mut self,
         now: Instant,
@@ -154,7 +154,7 @@ impl<B: VrBackend> Kernel<B> {
                     if let Some(p) = self.desktop_panels.get_mut(&panel) {
                         p.source = Some(source);
                     }
-                    // 映し始めたウィンドウは前に出す（そのまま操作できるように）。
+                    // 配信開始時にウィンドウを前面化する（そのまま操作できるようにする）。
                     if window {
                         self.focus_desktop(panel);
                     }
@@ -192,7 +192,7 @@ impl<B: VrBackend> Kernel<B> {
         }
     }
 
-    /// 配信中のミラーを `frame_rate` でかけ直す（ウィンドウは前に出し直さない）。
+    /// 配信中のミラーを `frame_rate` で再起動する（ウィンドウの前面化は行わない）。
     pub(super) fn restart_desktops(&mut self, frame_rate: u32) {
         let running: Vec<_> = self
             .desktop_panels
@@ -214,12 +214,12 @@ impl<B: VrBackend> Kernel<B> {
         }
     }
 
-    /// パネル `panel` が映しているウィンドウ（画面や配信していないときは `None`）。
+    /// パネル `panel` が配信中のウィンドウ（画面や未配信時は `None`）。
     pub(super) fn mirrored_window(&self, panel: PanelId) -> Option<u64> {
         self.desktop_panels.get(&panel)?.stream.as_ref()?.window()
     }
 
-    /// パネル `panel` で配信しているウィンドウを前に出す。配信していなければ何もしない。
+    /// パネル `panel` で配信中のウィンドウを前面化する。配信中でなければ何もしない。
     pub(super) fn focus_desktop(&mut self, panel: PanelId) {
         if let Some(stream) = self
             .desktop_panels
@@ -249,7 +249,7 @@ impl<B: VrBackend> Kernel<B> {
     pub(super) fn poll_desktop(&mut self) {
         self.desktop_panels
             .retain(|id, _| !self.overlay.panel(*id).closed);
-        // 見えていない配信は取得を止める。見え直すと止めている間の最新の画像から再開する。
+        // 非表示の配信は取得を一時停止する。再表示すると停止中の最新の画像から再開する。
         for (&id, panel) in &self.desktop_panels {
             if let Some(stream) = &panel.stream {
                 stream.set_paused(!self.panel_seen(id));
@@ -301,7 +301,7 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay.set_panel_capture(id, false);
             }
         }
-        // OS のカーソルは映像に入れず、指している手のカーソルを差し替えて描く。
+        // OS のカーソルは映像に含めず、指している手のカーソルを差し替えて描画する。
         for (&id, panel) in &self.desktop_panels {
             let cursor = panel
                 .stream

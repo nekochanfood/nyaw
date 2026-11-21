@@ -1,9 +1,9 @@
 use super::*;
 use crate::test_util::*;
-// `ui::commands`（親から）ではなくテストの道具の方。
+// `ui::commands`（親モジュール由来）ではなくテストユーティリティ側。
 use crate::test_util::commands;
 
-/// メニューボタンはバーに固定したポップオーバーを開き、その項目を選ぶと画面をはめてメニューを閉じる。
+/// メニューボタンはバーに固定したポップオーバーを開き、項目を選択すると画面をドッキングしてメニューをクローズする。
 #[gpui::test]
 fn menu_items_open_screens_and_close_the_menu(cx: &mut TestAppContext) {
     let bar = cx
@@ -37,7 +37,7 @@ fn menu_items_open_screens_and_close_the_menu(cx: &mut TestAppContext) {
     );
 }
 
-/// メニューは、中央に寄ったバーの左端に揃えて開く（幅が狭いほど右にずれる）。
+/// メニューは中央配置のバーの左端に揃えて開く（バー幅が狭いほど右にずれる）。
 #[test]
 fn menu_follows_the_bar_left_edge() {
     let full = menu_offset(components::PANEL_MARGIN).position.x;

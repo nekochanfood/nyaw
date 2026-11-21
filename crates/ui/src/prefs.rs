@@ -1,6 +1,6 @@
-//! 設定の部品: 設定画面とセットアップウィザードが共有する、全体の設定（[`Setting`]）を選ぶ画面の一部（[`appearance`] /
-//! [`watch_faces`] / [`accessibility`] / [`keyboard_preview`]）。今の設定を見せ、選ぶとすぐ反映する。地（`background`）の上に置く。開閉などの小さな状態は呼び出し側が
-//! 持ち、変えるときは `set` で受け取る（ビューの型を問わない）。詳しくは `crates/ui/AGENT.md` の「設定の部品」。
+//! 設定の部品: 設定画面とセットアップウィザードが共有する、全体設定（[`Setting`]）選択用の UI 部品（[`appearance`] /
+//! [`watch_faces`] / [`accessibility`] / [`keyboard_preview`]）。現在の設定を表示し、選択時に即座に反映する。背景（`background`）上に配置する。開閉等の小状態は呼び出し側が
+//! 保持し、変更時は `set` で受け取る（ビューの型を問わない）。詳細は `crates/ui/AGENT.md` の「設定の部品」を参照。
 
 use design::components::{self, Variant};
 use design::{Accent, Mode, Theme, font_size, icons, radius, spacing};
@@ -16,8 +16,8 @@ use kernel::{
 use crate::keyboard::KeyboardView;
 use crate::{PanelControl, PanelSpec, settings};
 
-/// wrist の文字盤の見本（デザインと直径 px）を描く関数。画面どうしは直接依存しないので、文字盤を持つ wrist が GPUI の
-/// グローバルに置き、選ぶ画面（[`watch_faces`]）が引く。置かれていなければ、見本は地の丸だけになる。
+/// wrist の文字盤プレビュー（デザインと直径 px）を描画する関数。画面間で直接依存しないため、文字盤を持つ wrist が GPUI の
+/// グローバルに設定し、選択画面（[`watch_faces`]）が参照する。未設定の場合、プレビューは背景色の円のみとなる。
 #[derive(Clone, Copy)]
 pub struct FacePreview(pub fn(WristDesign, f32, &App) -> Div);
 
@@ -35,15 +35,15 @@ fn personal(a: Accent) -> PersonalColor {
     }
 }
 
-/// [`appearance`] の状態。
+/// [`appearance`] の内部状態。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Appearance {
-    /// テーマの選択肢を開いている。
+    /// テーマ選択肢のドロップダウンが展開中。
     pub theme_open: bool,
 }
 
-/// 外観: 上からテーマの見本（`theme-preview`）、テーマ（`setting-theme` → `setting-theme-dark` / `-light`）、パーソナルカラー
-/// （履歴の見本 `accent-<名前>` と、自分で色を作る `accent-custom`）。色を作るダイアログは `panel` の子として開く。
+/// 外観: 上からテーマプレビュー（`theme-preview`）、テーマ選択（`setting-theme` → `setting-theme-dark` / `-light`）、パーソナルカラー
+/// （履歴プレビュー `accent-<名前>` と、カスタムカラー作成 `accent-custom`）。カラー作成ダイアログは `panel` の子パネルとして開く。
 pub fn appearance(
     panel: PanelId,
     state: Appearance,
@@ -90,7 +90,7 @@ pub fn appearance(
         .on_click(move |_, window, cx| show(window, cx))
         .child(popover);
 
-    // 履歴: 自分で作った色（新しい順）の後ろに、用意した色。
+    // 履歴: カスタムカラー（新しい順）の後にプリセットカラーを配置する。
     let custom = now.color_history.into_iter().flatten().map(accent);
     let colors = components::accent_row(
         &theme,
@@ -125,24 +125,24 @@ pub fn appearance(
         ))
 }
 
-/// 色を作るダイアログの大きさ（px。1px = 1mm）。縦に、見出し・見本・スライダー 3 本・ボタン 2 個（横 1 列）。
+/// カラー作成ダイアログのサイズ（px。1px = 1mm）。縦に見出し・プレビュー・スライダー 3 本・ボタン 2 個（横 1 列）を配置する。
 pub const COLOR_DIALOG_PX: (u32, u32) = (480, 674);
 
-/// 色を作るダイアログを、`from` の子として開く起動仕様。`accent` から作り始める。
+/// カラー作成ダイアログを `from` の子パネルとして開く起動仕様。`accent` を初期値として編集を開始する。
 fn color_dialog(from: PanelId, accent: Accent) -> PanelSpec {
     let (w, h) = COLOR_DIALOG_PX;
     PanelSpec::child(from, true, move |id, _, _| ColorDialog::new(id, accent))
         .sized(Vec2::new(w as f32 / 1000.0, h as f32 / 1000.0), (w, h))
-        // 答えて閉じるもの。ナビゲーションバーは付けない。
+        // 応答して閉じるダイアログ。ナビゲーションバーは付けない。
         .without_nav_bar()
 }
 
-/// 自分でパーソナルカラーを作るダイアログ（[`appearance`] の `accent-custom` から開く子パネル）。スライダーで作った色を
-/// 見本で確かめ、`color-ok` でパーソナルカラーにして履歴に覚える（[`Setting::CustomColor`]）。`color-cancel` か、外側を
-/// 押すと何も変えずに閉じる。
+/// カスタムパーソナルカラー作成ダイアログ（[`appearance`] の `accent-custom` から開く子パネル）。スライダーで作成した色を
+/// プレビューで確認し、`color-ok` でパーソナルカラーに設定して履歴に保存する（[`Setting::CustomColor`]）。`color-cancel` か外側の
+/// クリックで変更せずに閉じる。
 pub struct ColorDialog {
     panel: PanelId,
-    /// 作りかけの色。
+    /// 編集中の色。
     pub accent: Accent,
 }
 
@@ -156,7 +156,7 @@ impl Render for ColorDialog {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
         let (panel, draft) = (self.panel, self.accent);
-        // 見本は、今のテーマを作りかけの色にしたもの（決めるまで、ほかの画面の色は変えない）。
+        // プレビューは現在のテーマに編集中の色を適用したもの（確定まで他の画面の色は変更しない）。
         let mode = cx.try_global::<Mode>().copied().unwrap_or_default();
         let (w, _) = COLOR_DIALOG_PX;
         let width = w as f32 - 2.0 * (components::PANEL_MARGIN + spacing::XL);
@@ -202,7 +202,7 @@ impl Render for ColorDialog {
             .justify_center()
             .gap(px(spacing::XL))
             .p(px(spacing::XL))
-            // 見出しは左揃え、ボタンは横 1 列で否定を左・肯定を右に（`components::dialog` と同じ）。
+            // 見出しは左揃え、ボタンは横 1 列でキャンセルを左・OK を右に配置（`components::dialog` と同様）。
             .child(
                 div()
                     .self_start()
@@ -222,23 +222,23 @@ impl Render for ColorDialog {
     }
 }
 
-/// 文字の見本を置く箱の高さ（px）。いちばん大きい文字でも見本が収まり、文字の大きさを変えても下の項目が動かない。
+/// テキストサンプルを配置するコンテナの高さ（px）。最大サイズのテキストでもサンプルが収まり、サイズ変更時に下の項目が動かない。
 pub const SAMPLE_HEIGHT: f32 = 200.0;
-/// 倍率の行に置くスライダーの長さ（px）。
+/// 倍率行に配置するスライダーの長さ（px）。
 const SCALE_SLIDER: f32 = 240.0;
 
-/// 倍率 `scale`（`min..=max`）の、スライダーの上の位置（0..=1）。
+/// 倍率 `scale`（`min..=max`）をスライダー上の位置（0..=1）に変換する。
 fn stop(scale: f32, min: f32, max: f32) -> f32 {
     ((scale - min) / (max - min)).clamp(0.0, 1.0)
 }
 
-/// スライダーの位置 `at`（0..=1）にいちばん近い刻み（[`SCALE_STEP`]）の倍率。
+/// スライダー位置 `at`（0..=1）に最も近い刻み（[`SCALE_STEP`]）の倍率を返す。
 fn scale_at(at: f32, min: f32, max: f32) -> f32 {
     let steps = ((max - min) / SCALE_STEP).round();
     min + (at.clamp(0.0, 1.0) * steps).round() * SCALE_STEP
 }
 
-/// 同じ刻みの倍率か（刻みの計算の誤差は見ない）。
+/// 同一刻みの倍率かどうかを判定する（刻み計算の浮動小数点誤差を許容する）。
 fn same_scale(a: f32, b: f32) -> bool {
     (a - b).abs() < SCALE_STEP / 2.0
 }
@@ -247,8 +247,8 @@ fn percent(scale: f32) -> SharedString {
     format!("{:.0}%", scale * 100.0).into()
 }
 
-/// 文字の見本（`a11y-sample`）: アイコンの付いた見出し・本文・補足のカード。文字とアイコンには今の設定（文字の大きさ・太字化）が
-/// そのまま掛かる。`zoom` は見本ごとの拡大率（動かしている途中の UI スケールを、決めた後に見える大きさで見せる）。
+/// テキストサンプル（`a11y-sample`）: アイコン付き見出し・本文・補足のカード。テキストとアイコンには現在の設定（テキストサイズ・太字）が
+/// そのまま適用される。`zoom` はサンプルの拡大率（操作中の UI スケールを、確定後に見えるサイズで表示する）。
 fn text_sample(theme: &Theme, zoom: f32, cx: &App) -> Div {
     let s = |v: f32| px(v * zoom);
     let line = |size: f32| div().text_size(s(size));
@@ -279,14 +279,14 @@ fn text_sample(theme: &Theme, zoom: f32, cx: &App) -> Div {
         )
 }
 
-/// アクセシビリティ: 上に文字の見本（`a11y-preview` の箱の中に `a11y-sample`）、下に 3 つの対等な項目。文字の大きさ
-/// （`setting-text-size`）は動かすとすぐ効く。UI スケール（`setting-ui-scale`）は決めるとパネルそのものの大きさが変わるので、
-/// 動かしている間は見本だけを拡大・縮小して見せ、離したときに決める。太字（`setting-bold-text`）はスイッチ。
-/// 倍率は刻み（[`SCALE_STEP`]）に吸い付く。動かしている途中の値はこの部品が持つ（呼び出し側に状態は要らない）。
+/// アクセシビリティ: 上にテキストサンプル（`a11y-preview` コンテナ内に `a11y-sample`）、下に 3 つの対等な項目。テキストサイズ
+/// （`setting-text-size`）は操作時に即座に反映する。UI スケール（`setting-ui-scale`）は確定時にパネル自体のサイズが変わるため、
+/// 操作中はサンプルのみを拡縮して表示し、解放時に確定する。太字（`setting-bold-text`）はスイッチ。
+/// 倍率は刻み（[`SCALE_STEP`]）にスナップする。操作中の値はこの部品が内部に保持する（呼び出し側に状態は不要）。
 pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
     let theme = Theme::current(cx);
     let now = settings(cx);
-    // 動かしている途中の UI スケールと、離したか（離したら決めたことにし、設定が追いつくまで見本と値はそのまま見せる）。
+    // 操作中の UI スケールと解放済みフラグ（解放時に確定とし、設定が追いつくまでサンプルと値はそのまま表示する）。
     let draft = window.use_keyed_state("a11y-ui-draft", cx, |_, _| None::<(f32, bool)>);
     let pending = *draft.read(cx);
     let pending = pending.filter(|&(to, released)| !(released && same_scale(to, now.ui_scale)));
@@ -376,24 +376,24 @@ pub fn accessibility(window: &mut Window, cx: &mut App) -> Div {
                 .flex()
                 .items_center()
                 .justify_center()
-                // 大きくしすぎた見本は箱で切る（下の項目に重ねない）。
+                // 拡大しすぎたサンプルはコンテナでクリップする（下の項目に重ねない）。
                 .overflow_hidden()
                 .child(text_sample(&theme, ui / now.ui_scale, cx)),
         )
         .child(components::list(&theme, [text, ui_scale, bold]))
 }
 
-/// キーボードの見本の箱の高さ（px）。設定画面の幅では、フルサイズは幅いっぱい、ほかの種類は高さいっぱいに収まる。
+/// キーボードプレビューコンテナの高さ（px）。設定画面幅ではフルサイズは幅一杯、他の種類は高さ一杯に収まる。
 const KEYBOARD_PREVIEW_HEIGHT: f32 = 200.0;
 
-/// [`keyboard_preview`] に見せるキーボードを作る（呼び出し側が持つ）。`panel` は見本を置くパネル（キーの音はそこから鳴る）。
+/// [`keyboard_preview`] に表示するキーボードを生成する（呼び出し側が保持する）。`panel` はプレビューを配置するパネル（キー音の再生元）。
 pub fn new_keyboard_preview(panel: PanelId, cx: &mut App) -> Entity<KeyboardView> {
     cx.new(|cx| KeyboardView::preview(panel, cx))
 }
 
-/// キーボードの見本（高さの決まった箱 `keyboard-preview` の中央に、地 `keyboard-preview-card` とキー `virtual-keyboard`）:
-/// 今の設定の種類・OS の配列のキーボードを、召喚したときと同じ地に載せ、箱に収まるように縮めて見せる（幅が変わっても
-/// はみ出さない）。キーは押せて、キーの音の設定どおりに鳴る（どこにも打たない）。種類を替えても下の項目は動かない。
+/// キーボードプレビュー（高さ固定のコンテナ `keyboard-preview` の中央に、背景 `keyboard-preview-card` とキー `virtual-keyboard`）:
+/// 現在の設定の種類・OS 配列のキーボードを、表示時と同じ背景に載せ、コンテナに収まるよう縮小表示する（幅変更時も
+/// はみ出さない）。キーは押下可能で、キー音設定に従って再生される（入力は送出しない）。種類変更時も下の項目は動かない。
 pub fn keyboard_preview(keys: &Entity<KeyboardView>, cx: &App) -> Div {
     div()
         .debug_selector(|| "keyboard-preview".into())
@@ -403,31 +403,31 @@ pub fn keyboard_preview(keys: &Entity<KeyboardView>, cx: &App) -> Div {
         .child(crate::keyboard::preview(keys, cx))
 }
 
-/// 文字盤の見本（中央）の直径と、使っている文字盤を囲む輪の太さ・見本との間（px。中央の大きさでの値）。
+/// 文字盤プレビュー（中央）の直径と、使用中文字盤を囲むリングの太さ・プレビューとの間隔（px。中央サイズでの値）。
 const FACE_PX: f32 = 200.0;
 const FACE_RING: f32 = 4.0;
 const FACE_RING_GAP: f32 = 6.0;
 
-/// [`watch_faces`] の状態。
+/// [`watch_faces`] の内部状態。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WatchFaces {
-    /// 絞り込む種類（`None` = すべて）。
+    /// フィルタする種類（`None` = 全種類）。
     pub face: Option<WristFace>,
-    /// 中央に見せているデザイン（`None` = 今使っているもの）。
+    /// 中央に表示中のデザイン（`None` = 現在使用中のもの）。
     pub at: Option<WristDesign>,
-    /// 種類の選択肢を開いている。
+    /// 種類選択ドロップダウンが展開中。
     pub open: bool,
 }
 
 impl WatchFaces {
-    /// 並ぶデザイン（種類で絞り込んだもの。表の順）。
+    /// 表示するデザイン一覧（種類でフィルタ済み。定義順）。
     pub fn designs(&self) -> Vec<WristDesign> {
         let kinds = WristFace::ALL.iter();
         let kinds = kinds.filter(|&&f| self.face.is_none_or(|only| only == f));
         kinds.flat_map(|f| f.designs().iter().copied()).collect()
     }
 
-    /// 中央に見せるデザイン: 見ているもの。並びに無ければ（絞り込みを替えた）使っているもの `used`、それも無ければ先頭。
+    /// 中央に表示するデザイン: 閲覧中のもの。一覧にない場合（フィルタ変更時）は使用中の `used`、それもなければ先頭。
     pub fn shown(&self, used: WristDesign) -> WristDesign {
         let designs = self.designs();
         let wanted = [self.at, Some(used)].into_iter().flatten();
@@ -436,8 +436,8 @@ impl WatchFaces {
     }
 }
 
-/// 文字盤の見本 1 つ（一辺 `side` の正方形。`watch-face-<名前>`）。使っているものは、周りを控えめな文字の色の輪で囲む（ライトは
-/// 濃い灰、ダークは明るい灰。塗りの色だと文字盤のデザインの一部に見えるものがあり、文字の色そのままでは文字盤より目立つ）。
+/// 文字盤プレビュー 1 つ（一辺 `side` の正方形。`watch-face-<名前>`）。使用中のものは控えめなテキスト色のリングで囲む（ライトは
+/// 濃い灰、ダークは明るい灰。塗り色だと文字盤デザインの一部に見えるものがあり、テキスト色そのままでは文字盤より目立つ）。
 fn face(design: WristDesign, used: bool, side: f32, theme: &Theme, cx: &App) -> Div {
     let k = side / FACE_PX;
     let (ring, gap) = (FACE_RING * k, FACE_RING_GAP * k);
@@ -465,9 +465,9 @@ fn face(design: WristDesign, used: bool, side: f32, theme: &Theme, cx: &App) -> 
         .child(dial)
 }
 
-/// wrist の文字盤: 上から種類の絞り込み（`watch-kind` → `watch-kind-all` / `-<種類>`）、弧に並ぶ見本（`watch-faces`。押したまま
-/// 左右に動かす。端はつながる）、中央のデザインの名前（左右の `watch-prev` / `watch-next` でも回す）、`watch-set`（押すとその
-/// デザインにする。使っているデザインでは押せない見た目で「設定中」）。使っているデザインの見本は輪で囲む。
+/// wrist の文字盤: 上から種類フィルタ（`watch-kind` → `watch-kind-all` / `-<種類>`）、弧状に並ぶプレビュー（`watch-faces`。押下したまま
+/// 左右に移動。端はループする）、中央のデザイン名（左右の `watch-prev` / `watch-next` でも切替可能）、`watch-set`（押下で該当
+/// デザインに設定。使用中デザインでは無効表示で「設定中」）。使用中デザインのプレビューはリングで囲む。
 pub fn watch_faces(
     state: WatchFaces,
     set: impl Fn(WatchFaces, &mut Window, &mut App) + Clone + 'static,
@@ -481,7 +481,7 @@ pub fn watch_faces(
     let at = designs.iter().position(|&d| d == shown).unwrap_or(0);
     let len = designs.len();
 
-    // 種類の絞り込み。
+    // 種類のフィルタ。
     let kind = |face: Option<WristFace>, cx: &App| match face {
         Some(f) => i18n::t(cx, &format!("wrist.face.{}", f.key())),
         None => i18n::t(cx, "watch.all"),
@@ -530,7 +530,7 @@ pub fn watch_faces(
     .on_click(move |_, window, cx| show(window, cx))
     .child(popover);
 
-    // 弧に並ぶ見本。中央に見せるデザインを替えるのは `pick`（番号は並びの中の位置）。
+    // 弧状に並ぶプレビュー。中央に表示するデザインの切替は `pick`（引数は一覧内のインデックス）。
     let pick = {
         let (set, designs) = (set.clone(), designs.clone());
         move |i: usize, window: &mut Window, cx: &mut App| {
@@ -574,7 +574,7 @@ pub fn watch_faces(
         (at + 1) % len,
     );
 
-    // 使っているデザインでは、押せない見た目で「設定中」。
+    // 使用中デザインでは無効状態で「設定中」を表示する。
     let apply = if shown == used {
         components::disabled_button(&theme, "watch-set", i18n::t(cx, "watch.in_use"))
     } else {
@@ -586,7 +586,7 @@ pub fn watch_faces(
         )
         .on_click(move |_, _, cx| crate::set(Setting::WristDesign(shown), cx))
     };
-    // 名前と種類。幅は見本と同じに決めておき、名前の長さで左右のボタンが動かないようにする。
+    // 名前と種類。幅をプレビューと同一に固定し、名前の長さで左右のボタンが移動しないようにする。
     let name = div()
         .w(px(FACE_PX))
         .flex()
@@ -608,7 +608,7 @@ pub fn watch_faces(
                 .text_color(rgba(theme.neutral_text_low))
                 .child(kind(Some(shown.face()), cx)),
         );
-    // 見本の上下は同じだけ空ける（上は中央の見本の上端、下は弧で下がった隣の下端から）。
+    // プレビューの上下に同じ余白を設ける（上は中央プレビューの上端、下は弧で下がった隣接プレビューの下端から）。
     div()
         .flex()
         .flex_col()
@@ -638,25 +638,25 @@ mod tests {
         assert_eq!(
             all.shown(WristDesign::Lcd),
             WristDesign::Lcd,
-            "使っているもの"
+            "使用中のデザイン"
         );
         let looking = WatchFaces {
             at: Some(WristDesign::Railway),
             ..all
         };
         assert_eq!(looking.shown(WristDesign::Lcd), WristDesign::Railway);
-        // 絞り込むと、その種類のデザインだけが表の順に並ぶ。
+        // フィルタすると、該当種類のデザインのみが定義順に並ぶ。
         let digital = WatchFaces {
             face: Some(WristFace::Digital),
             ..looking
         };
         assert_eq!(digital.designs(), WristFace::Digital.designs());
-        // 見ていたものが並びから外れたら使っているもの、それも無ければ先頭。
+        // 閲覧中のものが一覧から外れた場合は使用中のもの、それもなければ先頭を表示する。
         assert_eq!(digital.shown(WristDesign::Flip), WristDesign::Flip);
         assert_eq!(digital.shown(WristDesign::Dots), WristDesign::Lcd);
     }
 
-    /// スライダーの位置と倍率は、範囲の端から端まで刻みごとに行き来できる（どの位置でも範囲の中の刻みに吸い付く）。
+    /// スライダー位置と倍率は、範囲の端から端まで刻みごとに往復可能（任意の位置で範囲内の刻みにスナップする）。
     #[test]
     fn scale_stops_snap_to_steps_and_round_trip() {
         for (min, max) in [
@@ -665,14 +665,14 @@ mod tests {
         ] {
             assert!(same_scale(scale_at(0.0, min, max), min));
             assert!(same_scale(scale_at(1.0, min, max), max));
-            assert!(same_scale(scale_at(-3.0, min, max), min), "範囲の外は端");
+            assert!(same_scale(scale_at(-3.0, min, max), min), "範囲外は端に丸める");
             assert!(same_scale(scale_at(9.0, min, max), max));
             let steps = ((max - min) / SCALE_STEP).round() as usize;
             for i in 0..=steps {
                 let scale = min + i as f32 * SCALE_STEP;
                 let at = stop(scale, min, max);
                 assert!(same_scale(scale_at(at, min, max), scale), "{scale}");
-                // 刻みの間は近い方へ。
+                // 刻みの間の値は近い刻みにスナップする。
                 let nudged = at + 0.3 / steps as f32;
                 assert!(same_scale(scale_at(nudged, min, max), scale), "{scale}");
             }

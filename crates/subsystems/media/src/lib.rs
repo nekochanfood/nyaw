@@ -1,6 +1,6 @@
-//! 再生中のメディア（音楽・動画）の情報と操作。Windows バックエンドは GSMTC（`GlobalSystemMediaTransportControlsSessionManager`）。
-//! OS への問い合わせ・画像の読み込みとぼかしはワーカーが行い、メインスレッドは最新の結果を
-//! 受け取るだけ（[`Media::now`]）。操作（[`Command`]）もワーカーへ送るだけで待たない。
+//! 再生中のメディア（音楽・動画）の情報取得と操作。Windows バックエンドは GSMTC（`GlobalSystemMediaTransportControlsSessionManager`）を使用する。
+//! OS への問い合わせ・画像の読み込みとぼかし処理はワーカースレッドが実行し、メインスレッドは最新の結果を
+//! 参照するのみ（[`Media::now`]）。操作（[`Command`]）もワーカーへ送信するだけで待機しない。
 
 use std::{
     sync::{
@@ -15,21 +15,21 @@ use std::{
 #[cfg(windows)]
 mod windows;
 
-/// OS に問い合わせ直す間隔。
+/// OS への再問い合わせ間隔。
 const POLL: Duration = Duration::from_secs(1);
-/// ジャケットの一辺の上限（px）。
+/// ジャケット画像の一辺の上限（px）。
 const ART_PX: u32 = 512;
-/// 背景用にぼかす前に縮める一辺（px）と、ぼかしの強さ。小さく縮めてからぼかすので軽い。
+/// 背景用ぼかし前の縮小サイズ（px）とぼかし強度。小さく縮小してからぼかすため処理が軽量。
 const BACKDROP_PX: u32 = 64;
 const BACKDROP_BLUR: f32 = 6.0;
-/// ぼかした背景を渡す一辺（px）。表示で引き伸ばしたときの縁の暗い帯が 1px に満たない大きさ。
+/// ぼかし背景の出力サイズ（px）。表示時の引き伸ばしで縁の暗い帯が 1px 未満になるサイズ。
 const BACKDROP_OUT_PX: u32 = 512;
-/// アプリのアイコンの一辺（px）。
+/// アプリアイコンの一辺（px）。
 const ICON_PX: u32 = 64;
-/// 背景の平均の明るさ（相対輝度 0〜1）がこれより明るければ、載せる文字を暗くする。白と黒の文字のコントラストが釣り合う所。
+/// 背景の平均輝度（相対輝度 0〜1）がこの値を超える場合、前景テキストを暗色にする。白色テキストと黒色テキストのコントラストが均衡する閾値。
 const LIGHT_LUMINANCE: f32 = 0.18;
 
-/// 画像（RGBA、ストレートアルファ）。
+/// 画像データ（RGBA、ストレートアルファ）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Image {
     pub width: u32,
@@ -37,55 +37,55 @@ pub struct Image {
     pub rgba: Arc<[u8]>,
 }
 
-/// 再生しているアプリ。
+/// メディア再生中のアプリケーション情報。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct App {
-    /// OS が付けた ID（バックエンド固有）。
+    /// OS が割り当てた ID（バックエンド固有）。
     pub id: String,
     /// 表示名（"Spotify" など）。
     pub name: String,
     pub icon: Option<Image>,
-    /// 実行ファイル名（"chrome.exe" など）。ID が実行ファイル名でないアプリ（ブラウザなど）のウィンドウを探すのに使う。
-    /// ID から引けたときだけ（Windows だけ）。
+    /// 実行ファイル名（"chrome.exe" 等）。ID が実行ファイル名と異なるアプリ（ブラウザ等）のウィンドウ検索に使用する。
+    /// ID から解決できた場合のみ設定される（Windows のみ）。
     pub exe: Option<String>,
 }
 
-/// できる操作。
+/// 利用可能な操作。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Controls {
     pub play_pause: bool,
     pub next: bool,
     pub previous: bool,
     pub seek: bool,
-    /// プレイヤーのウィンドウを前面に出せる。
+    /// プレイヤーウィンドウの前面化が可能。
     pub raise: bool,
 }
 
-/// 今再生している（一時停止中も含む）メディア。
+/// 現在再生中（一時停止中を含む）のメディア情報。
 #[derive(Debug, Clone, PartialEq)]
 pub struct NowPlaying {
     pub title: String,
     pub artist: String,
     pub album: String,
     pub playing: bool,
-    /// [`Self::at`] の時点の再生位置。
+    /// [`Self::at`] 時点での再生位置。
     pub position: Duration,
     pub duration: Option<Duration>,
     pub at: Instant,
     pub app: App,
-    /// ジャケット。
+    /// ジャケット画像。
     pub art: Option<Image>,
-    /// ジャケットをぼかした背景。
+    /// ジャケットをぼかした背景画像。
     pub backdrop: Option<Image>,
-    /// 背景（[`Self::backdrop`]）が明るいか。載せる文字・部品を暗くするか明るくするかの判断に使う。背景が無ければ `None`。
+    /// 背景（[`Self::backdrop`]）が明るいかどうか。前景のテキスト・部品の明暗を決定する際に使用する。背景なしの場合は `None`。
     pub light: Option<bool>,
     pub controls: Controls,
-    /// 再生中・一時停止中のメディア（セッション）の数。2 つ以上なら [`Command::Switch`] で切り替えられる。
+    /// 再生中・一時停止中のメディアセッション数。2 以上の場合は [`Command::Switch`] で切り替え可能。
     pub sessions: usize,
 }
 
 impl NowPlaying {
-    /// 今の再生位置（再生中は読んだ時刻からの経過を足す。長さを超えない）。
+    /// 現在の再生位置（再生中は取得時刻からの経過を加算する。duration を超えない）。
     pub fn position_now(&self) -> Duration {
         let position = if self.playing {
             self.position + self.at.elapsed()
@@ -96,24 +96,24 @@ impl NowPlaying {
     }
 }
 
-/// 再生中のアプリへの操作。
+/// 再生中のアプリへのコマンド。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Command {
     PlayPause,
     Next,
     Previous,
-    /// 曲の頭からの位置へ移る。
+    /// 曲の先頭からの指定位置へシークする。
     Seek(Duration),
-    /// アプリの画面を前に出す（[`Controls::raise`] が有効な場合）。
+    /// アプリのウィンドウを前面に出す（[`Controls::raise`] が有効な場合）。
     Raise,
-    /// 見せる・操作するメディアを、次（`true`）か前（`false`）のセッションに切り替える。ワーカーが扱う。
+    /// 表示・操作対象のメディアを次（`true`）または前（`false`）のセッションに切り替える。ワーカーが処理する。
     Switch(bool),
 }
 
-/// 切り替えて選んだセッション: アプリの ID と、同じ ID のセッションの中で何番目か（ブラウザはタブごとに出る）。
+/// 切り替えで選択されたセッション: アプリの ID と、同一 ID のセッション中でのインデックス（ブラウザはタブごとに生成される）。
 type Pick = (String, usize);
 
-/// OS の 1 回分の問い合わせ結果（画像は読む前のもの）。
+/// OS への 1 回の問い合わせ結果（画像は読み込み前の状態）。
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(not(windows), allow(dead_code))]
 struct Raw {
@@ -125,15 +125,15 @@ struct Raw {
     duration: Option<Duration>,
     app_id: String,
     controls: Controls,
-    /// ジャケットが変わったか見分ける鍵（同じなら読み直さない）。
+    /// ジャケット変更を判別するキー（同一であれば再読み込みしない）。
     art_key: String,
-    /// 再生中・一時停止中のセッションのアプリの ID（OS の並び順）と、読んだのがその何番目か。
+    /// 再生中・一時停止中セッションのアプリ ID（OS の並び順）と、取得対象のインデックス。
     sessions: Vec<String>,
     index: usize,
 }
 
 impl Raw {
-    /// 次（`forward`）か前のセッション。1 つしか無ければ `None`。
+    /// 次（`forward`）または前のセッションを返す。セッションが 1 つのみの場合は `None`。
     fn switched(&self, forward: bool) -> Option<Pick> {
         let n = self.sessions.len();
         if n < 2 {
@@ -148,7 +148,7 @@ impl Raw {
     }
 }
 
-/// `sessions` のうち `pick` に当たるものの番号。当たらなければ（閉じた）`None`。
+/// `sessions` 内で `pick` に該当するセッションのインデックスを返す。該当なし（終了済み）の場合は `None`。
 #[cfg_attr(not(windows), allow(dead_code))]
 fn picked(sessions: &[String], pick: Option<&Pick>) -> Option<usize> {
     let (id, nth) = pick?;
@@ -160,20 +160,20 @@ fn picked(sessions: &[String], pick: Option<&Pick>) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-/// OS ごとの問い合わせ先。ワーカーのスレッドだけが持つ。
+/// OS 固有の問い合わせバックエンド。ワーカースレッドのみが保持する。
 #[cfg_attr(not(windows), allow(dead_code))]
 trait Backend {
-    /// 今再生している（一時停止中も含む）ものがあれば、その情報。`pick` のセッションがあればそれを、無ければ OS が
-    /// いちばん関係があると見たものを読み、以後の操作（[`Backend::command`]）もそれに送る。
+    /// 現在再生中（一時停止中を含む）のメディアがあればその情報を返す。`pick` のセッションがあればそれを、なければ OS が
+    /// 最も関連性が高いと判断したものを取得し、以後の操作（[`Backend::command`]）もそのセッションに送信する。
     fn read(&mut self, pick: Option<&Pick>) -> Option<Raw>;
-    /// 最後の [`Backend::read`] のジャケットの画像のファイルの中身。
+    /// 直前の [`Backend::read`] で取得したジャケット画像のファイル内容。
     fn art(&mut self) -> Option<Vec<u8>>;
-    /// アプリ `id` の表示名と、アイコンの画像のファイルの中身と、実行ファイル名（[`App::exe`]）。
+    /// アプリ `id` の表示名、アイコン画像のファイル内容、および実行ファイル名（[`App::exe`]）を返す。
     fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>, Option<String>);
     fn command(&mut self, command: Command);
 }
 
-/// 再生中のメディアを見張るワーカー。落とすと止まる。
+/// 再生中のメディアを監視するワーカー。ドロップすると停止する。
 pub struct Media {
     latest: Arc<Mutex<Option<Arc<NowPlaying>>>>,
     commands: Sender<Command>,

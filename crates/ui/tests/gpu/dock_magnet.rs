@@ -1,6 +1,6 @@
-//! E2E: ダッシュボードにはめた画面を掴んで引っこ抜き、近づけてはめ直す（本番の `ui::run_with`・novr のエミュレーター・実 GPU）。
-//! 引いている間・抜けた後・近づけた所・吸い付いた所・はめ直した後のエミュレーターの画面を `target/tmp/dock-*.bmp` に書き出し、
-//! はまっている画面の記録（`ui::docked`）が手の動きに付いてくることを検査する。`--ignored` のときだけ流す。
+//! E2E: ダッシュボードにドッキングした画面を掴んで引き抜き、近づけて再ドッキングする（本番の `ui::run_with`・novr エミュレーター・実 GPU）。
+//! 引いている間・抜けた後・近づけた位置・スナップした位置・再ドッキング後のエミュレーター画面を `target/tmp/dock-*.bmp` に書き出し、
+//! ドッキング状態の記録（`ui::docked`）が手の動きに追従することを検証する。`--ignored` のときのみ実行する。
 
 use crate::common;
 
@@ -16,7 +16,7 @@ use kernel::vr::novr::Button;
 use kernel::{Kernel, Language, Setting, VrBackend};
 
 const SCREEN: (u32, u32) = (1280, 720);
-/// はめた画面の中心（既定のダッシュボードの距離・高さ）。
+/// ドッキングした画面の中心（既定のダッシュボードの距離・高さ）。
 const DOCKED: Vec3 = Vec3::new(0.0, -0.1, -kernel::DASHBOARD_DISTANCE);
 
 pub fn main() -> ExitCode {
@@ -51,7 +51,7 @@ pub fn main() -> ExitCode {
     common::exit_code("dock_magnet", &result)
 }
 
-/// フレームループで `f` を走らせて結果を返す。
+/// フレームループで `f` を実行して結果を返す。
 fn on_app<R: Send + 'static>(
     remote: &Sender<ui::Remote>,
     f: impl FnOnce(&mut gpui::App) -> R + Send + 'static,
@@ -88,7 +88,7 @@ fn shot(emu: &Emu, name: &str) {
     std::fs::write(path, bmp).unwrap();
 }
 
-/// 掴んだまま、はめた画面の中心から `to` だけ離れた所を狙うまで、`from` から少しずつ手を動かす。
+/// 掴んだまま、ドッキング画面の中心から `to` だけ離れた位置を照準するまで、`from` から段階的に手を移動する。
 fn pull(emu: &Emu, from: Vec3, to: Vec3) {
     for i in 1..=15 {
         let at = DOCKED + from.lerp(to, i as f32 / 15.0);
@@ -124,23 +124,23 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>) {
     emu.button(Button::Grab, true);
     std::thread::sleep(Duration::from_millis(300));
     let x = |m: f32| Vec3::X * m;
-    // 少し引いても、はまる所から動かない（まだはまっている）。
+    // 少し引いても、ドッキング位置から動かない（まだドッキング中）。
     pull(emu, Vec3::ZERO, x(0.12));
     shot(emu, "pull");
     assert_eq!(on_app(remote, |cx| ui::docked(cx)), docked, "still docked");
-    // 引っこ抜くと独立する。上下に動かしても見本は動かない。
+    // 引き抜くと独立する。上下に動かしてもプレビューは移動しない。
     pull(emu, x(0.12), x(0.5));
     shot(emu, "torn");
     assert_eq!(on_app(remote, |cx| ui::docked(cx)), None, "pulled off");
     let up = x(0.5) + Vec3::Y * 0.25;
     pull(emu, x(0.5), up);
     shot(emu, "torn-up");
-    // 近づけると引き寄せられ、吸い付く。
+    // 近づけると引き寄せられ、スナップする。
     pull(emu, up, x(0.22));
     shot(emu, "near");
     pull(emu, x(0.22), x(0.03));
     shot(emu, "caught");
-    // 離すとはまる。
+    // 解放するとドッキングされる。
     emu.button(Button::Grab, false);
     std::thread::sleep(Duration::from_millis(800));
     shot(emu, "back");

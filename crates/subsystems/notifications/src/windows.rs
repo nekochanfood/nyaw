@@ -1,7 +1,7 @@
-//! Windows: 通知センターの一覧は `UserNotificationListener`（パッケージの ID が無いアプリでも読める。ユーザーが
-//! 設定で通知へのアクセスを切っていれば読めない）。ボタンと押したときの引数はリスナーが教えないので、OS の通知の DB
-//! （`wpndatabase.db`。リスナーと同じ ID）から元の XML を読む。押したときは OS と同じく、アプリの通知の受け口
-//! （`INotificationActivationCallback` の COM サーバー）に引数を渡す。受け口が無ければアプリを開くだけ。
+//! Windows: 通知センターの一覧は `UserNotificationListener` で取得する（パッケージ ID を持たないアプリでも取得可能。
+//! ユーザーが設定で通知アクセスを無効にしている場合は取得不可）。ボタンと押下時の引数はリスナーが提供しないため、OS の
+//! 通知 DB（`wpndatabase.db`、リスナーと同一 ID）から元の XML を読み込む。押下時は OS と同様に、アプリの通知
+//! アクティベーター（`INotificationActivationCallback` の COM サーバー）に引数を渡す。アクティベーターが存在しなければアプリを起動するのみ。
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -36,20 +36,20 @@ use windows::{
 
 use super::{Backend, Raw};
 
-/// Windows の時刻（1601 年からの 100ns）と UNIX 時刻の差（100ns）。
+/// Windows 時刻（1601 年基点、100ns 単位）と UNIX 時刻の差分（100ns 単位）。
 const EPOCH_DIFF: i64 = 116_444_736_000_000_000;
 
 pub(crate) struct Listener {
     listener: UserNotificationListener,
-    /// 最後に読んだ通知（アイコンを読むため）。
+    /// 最後に取得した通知（アイコン取得用）。
     notes: HashMap<u32, UserNotification>,
-    /// アプリごとの通知の受け口（COM のクラス）。無いものも覚える。
+    /// アプリごとの通知アクティベーター（COM クラス）。不在の場合もキャッシュする。
     activators: HashMap<String, Option<GUID>>,
 }
 
 impl Listener {
     pub(crate) fn new() -> Option<Self> {
-        // WinRT（と COM）はスレッドごとに初期化が要る（このワーカーのスレッドだけで使う）。
+        // WinRT（および COM）はスレッドごとの初期化が必要（このワーカースレッドでのみ使用する）。
         let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
         let listener = UserNotificationListener::Current().ok()?;
         let mut access = listener.GetAccessStatus().ok()?;
@@ -182,12 +182,12 @@ impl Backend for Listener {
     }
 }
 
-/// テスト用の通知を出す名前（PowerShell。どの Windows にも登録されている。nyaw は通知を出すための ID を登録していない）。
-// ponytail: デバッグのテスト専用。nyaw から本番の通知を出すなら、インストーラーでショートカットに AppUserModelId を付ける。
+/// テスト用の通知送信元名（PowerShell。全 Windows に登録済み。nyaw は通知送信用 ID を登録していない）。
+// ponytail: デバッグ・テスト専用。nyaw から本番の通知を送信する場合はインストーラーでショートカットに AppUserModelId を付与する。
 const TEST_SENDER: &str =
     r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe";
 
-/// テスト用の通知を OS に出す。押すと開くものは、どれもウェブの URL（`protocol`）。
+/// テスト用の通知を OS に送信する。押下で開くリンクはすべてウェブ URL（`protocol`）。
 fn show(toast: &super::Outgoing) -> windows::core::Result<()> {
     let buttons: String = toast
         .buttons
@@ -213,7 +213,7 @@ fn show(toast: &super::Outgoing) -> windows::core::Result<()> {
         .Show(&notification)
 }
 
-/// XML の文字・属性に入れられるようにする。
+/// XML のテキスト・属性に安全に埋め込めるようエスケープする。
 fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -222,7 +222,7 @@ fn escape(s: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-/// 押したことを、アプリの通知の受け口に渡す（OS が通知を押したときと同じ。アプリが前に出られるようにしてから）。
+/// 押下をアプリの通知アクティベーターに通知する（OS がトースト押下時に行う処理と同一。事前にアプリへのフォアグラウンド許可を設定する）。
 fn invoke(clsid: GUID, app: &str, args: &str) -> windows::core::Result<()> {
     unsafe {
         let callback: INotificationActivationCallback =
@@ -232,7 +232,7 @@ fn invoke(clsid: GUID, app: &str, args: &str) -> windows::core::Result<()> {
     }
 }
 
-/// アプリを開く（スタートメニューから開くのと同じ。パッケージのアプリもデスクトップのアプリも開ける）。
+/// アプリを起動する（スタートメニューからの起動と同一。パッケージアプリ・デスクトップアプリの両方に対応する）。
 fn launch(app: &str) -> windows::core::Result<()> {
     std::process::Command::new("explorer.exe")
         .arg(format!("shell:AppsFolder\\{app}"))
@@ -241,7 +241,7 @@ fn launch(app: &str) -> windows::core::Result<()> {
         .map_err(|e| windows::core::Error::new(windows::core::HRESULT(-1), e.to_string()))
 }
 
-/// レジストリに登録した通知の受け口（`AppUserModelId\<ID>\CustomActivator`。Firefox・Office など）。
+/// レジストリに登録された通知アクティベーター（`AppUserModelId\<ID>\CustomActivator`。Firefox・Office 等）。
 fn registered(app: &str) -> Option<GUID> {
     let key = HSTRING::from(format!("AppUserModelId\\{app}"));
     let mut buf = [0u16; 64];
@@ -262,9 +262,9 @@ fn registered(app: &str) -> Option<GUID> {
     }
 }
 
-/// スタートメニューのショートカット（.lnk）に書いた通知の受け口（`System.AppUserModel.ToastActivatorCLSID`。Chrome・Edge・
-/// Discord など）。スタートメニューの項目（`shell:AppsFolder`）は持っていないので、ショートカットのファイルを探す。
-/// シェルは STA で読むので、呼ぶ側のスレッドによらないよう別のスレッドで読む。結果はアプリごとに覚える（[`Listener::activator`]）。
+/// スタートメニューのショートカット（.lnk）に記録された通知アクティベーター（`System.AppUserModel.ToastActivatorCLSID`。
+/// Chrome・Edge・Discord 等）。スタートメニューの項目（`shell:AppsFolder`）には格納されないため、ショートカットファイルを検索する。
+/// シェルは STA で読み込むため、呼び出し側スレッドに依存しないよう別スレッドで実行する。結果はアプリごとにキャッシュする（[`Listener::activator`]）。
 fn shortcut(app: &str) -> Option<GUID> {
     std::thread::scope(|s| {
         s.spawn(|| {
@@ -282,7 +282,7 @@ fn shortcut(app: &str) -> Option<GUID> {
     })
 }
 
-/// ショートカットの AppUserModelId と、書いてあれば通知の受け口。
+/// ショートカットの AppUserModelId と、記録されていれば通知アクティベーターを返す。
 fn link_activator(path: &Path) -> Option<(String, Option<GUID>)> {
     let item: IShellItem2 =
         unsafe { SHCreateItemFromParsingName(&HSTRING::from(path), None) }.ok()?;
@@ -295,7 +295,7 @@ fn link_activator(path: &Path) -> Option<(String, Option<GUID>)> {
     Some((text?, clsid))
 }
 
-/// スタートメニュー（全ユーザーと自分）のショートカットのファイル。
+/// スタートメニュー（全ユーザーおよびカレントユーザー）のショートカットファイル一覧を返す。
 fn start_menu_links() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = ["ProgramData", "APPDATA"]
         .into_iter()
@@ -323,7 +323,7 @@ fn start_menu_links() -> Vec<PathBuf> {
     links
 }
 
-/// ストリームの中身を全部読む。
+/// ストリームの内容を全量読み出す。
 fn read_stream(reference: &IRandomAccessStreamReference) -> Option<Vec<u8>> {
     let stream = reference.OpenReadAsync().ok()?.get().ok()?;
     let size = u32::try_from(stream.Size().ok()?).ok()?;
@@ -334,7 +334,7 @@ fn read_stream(reference: &IRandomAccessStreamReference) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// OS の通知の DB（SQLite）を Windows に入っている `winsqlite3.dll` で読む（読むだけ。書いているのは OS）。
+/// OS の通知 DB（SQLite）を Windows 標準の `winsqlite3.dll` で読み込む（読み取り専用。書き込みは OS が行う）。
 mod db {
     use std::ffi::{CString, c_char, c_int, c_void};
     use std::ptr::null_mut;
@@ -366,7 +366,7 @@ mod db {
     const OK: c_int = 0;
     const ROW: c_int = 100;
 
-    /// 通知 `id` の元の XML。開いたままにせず、読むたびに開いて閉じる（OS の書き込みを妨げない）。
+    /// 通知 `id` の元の XML を返す。開いたまま保持せず、取得のたびに開閉する（OS の書き込みをブロックしない）。
     pub(super) fn payload(id: u32) -> Option<String> {
         let dir = std::env::var_os("LOCALAPPDATA")?;
         let path =
@@ -390,7 +390,7 @@ mod db {
                 }
                 sqlite3_finalize(stmt);
             }
-            // 開けなかったときも、確保されたものを返すために閉じる。
+            // オープン失敗時でも、確保済みリソースを解放するため必ず閉じる。
             sqlite3_close(db);
         }
         out
@@ -415,7 +415,7 @@ mod tests {
 
     type Got = Arc<Mutex<Vec<(String, String)>>>;
 
-    /// アプリの通知の受け口の代わり: 受け取ったもの（AppUserModelId と引数）を覚える。
+    /// アプリの通知アクティベーターの代替: 受信内容（AppUserModelId と引数）を記録する。
     #[implement(INotificationActivationCallback)]
     struct Callback(Got);
 
@@ -452,9 +452,9 @@ mod tests {
         }
     }
 
-    /// 押したことが、OS と同じ経路でアプリの通知の受け口（COM のローカルサーバー）に届く: レジストリの
-    /// `AppUserModelId\<ID>\CustomActivator` から受け口を引き、AppUserModelId と通知の引数を渡す。受け口はこの
-    /// プロセスに置き（`CoRegisterClassObject`）、レジストリには一時的なキーを HKCU に書いて消す。
+    /// 押下が OS と同一経路でアプリの通知アクティベーター（COM ローカルサーバー）に到達する: レジストリの
+    /// `AppUserModelId\<ID>\CustomActivator` からアクティベーターを解決し、AppUserModelId と通知引数を渡す。
+    /// アクティベーターはこのプロセスに登録し（`CoRegisterClassObject`）、レジストリには一時キーを HKCU に作成・削除する。
     #[test]
     fn a_click_reaches_the_apps_activator() {
         let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
@@ -493,14 +493,14 @@ mod tests {
         );
     }
 
-    /// 実機の確認: PowerShell の名前でトーストを出し、リスナーが読めること・DB からボタンが読めることを見る。
-    /// `cargo test -p notifications -- --ignored --nocapture`（Windows。通知へのアクセスが許されていること）。
+    /// 実機検証: PowerShell の名前でトーストを送信し、リスナーが取得できること・DB からボタンを読み込めることを確認する。
+    /// `cargo test -p notifications -- --ignored --nocapture`（Windows。通知アクセスが許可されていること）。
     #[test]
     #[ignore]
     fn reads_a_real_toast() {
         let mut listener = Listener::new().expect("notification access");
         let before = listener.read().unwrap().len();
-        // テスト用の通知を出す経路（`show`）で出す。文字は XML に入れても崩れないこと（& < >）も見る。
+        // テスト用の通知送信経路（`show`）で送信する。文字列が XML エスケープで破損しないこと（& < >）も確認する。
         show(&super::super::Outgoing {
             title: "nyaw & <probe>".into(),
             body: "probe".into(),
@@ -530,13 +530,13 @@ mod tests {
             "{raw:?} logo={:?} shell={shell:?}",
             listener.icon(raw.id).map(|b| b.len())
         );
-        assert!(shell.is_some(), "スタートメニューのアイコン");
+        assert!(shell.is_some(), "スタートメニューのアイコンが取得できること");
         listener.remove(raw.id);
     }
 
-    /// 実機の確認: スタートメニューのショートカットに通知の受け口を書いたアプリ（Chrome・Edge・Discord など）は、どれも
-    /// AppUserModelId から受け口が引ける（スタートメニューの項目からは引けず、ショートカットを探す）。
-    /// `cargo test -p notifications -- --ignored --nocapture`（そういうアプリが 1 つも無ければ何も確かめない）。
+    /// 実機検証: スタートメニューのショートカットに通知アクティベーターを記録しているアプリ（Chrome・Edge・Discord 等）は、
+    /// すべて AppUserModelId からアクティベーターを解決できる（スタートメニューの項目からは解決不可のため、ショートカットを検索する）。
+    /// `cargo test -p notifications -- --ignored --nocapture`（該当アプリが存在しなければ検証をスキップする）。
     #[test]
     #[ignore]
     fn activators_are_found_from_start_menu_shortcuts() {

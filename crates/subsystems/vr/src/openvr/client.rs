@@ -1,7 +1,7 @@
-//! openvr_api の代わり: SteamVR の `vrclient` を直接読み込み、`IVRClientCore` を呼ぶ。
-//! openvr_api は jsoncpp を静的に抱えていて、OpenXR ローダー（同じく jsoncpp 入り）と
-//! 一緒にリンクするとシンボルが衝突するため、やっていること（数個の関数）だけを自前で持つ。
-//! `VR_CONFIG_PATH` / `VR_LOG_PATH` は vrclient 自身が読むので、ここでは扱わない。
+//! openvr_api の代替: SteamVR の `vrclient` を直接読み込み、`IVRClientCore` を呼び出す。
+//! openvr_api は jsoncpp を静的リンクしており、OpenXR ローダー（同じく jsoncpp を含む）と
+//! 同時にリンクするとシンボルが衝突するため、必要な処理（数個の関数）のみを自前で実装する。
+//! `VR_CONFIG_PATH` / `VR_LOG_PATH` は vrclient 自身が読み込むため、ここでは扱わない。
 
 use std::ffi::{CStr, CString, c_char, c_void};
 use std::path::PathBuf;
@@ -11,8 +11,8 @@ use openvr_bindings as sys;
 
 use crate::VrError;
 
-/// `vr::IVRClientCore`（ivrclientcore.h）の仮想関数表。順番が ABI そのもの。
-/// x64 の Windows では、メンバ関数は `this` を第 1 引数にした C の呼び出し規約と同じ。
+/// `vr::IVRClientCore`（ivrclientcore.h）の仮想関数テーブル。順序が ABI そのもの。
+/// x64 Windows ではメンバ関数は `this` を第 1 引数とする C 呼び出し規約と同一。
 #[repr(C)]
 struct CoreVtbl {
     init: unsafe extern "C" fn(
@@ -39,12 +39,12 @@ type Factory = unsafe extern "C" fn(*const c_char, *mut i32) -> *mut c_void;
 pub(super) struct Client {
     core: *mut Core,
     initialized: bool,
-    // 関数表の指す先なので最後に解放する。
+    // 関数テーブルの参照先のため最後に解放する。
     _lib: Library,
 }
 
 impl Client {
-    /// `VR_InitInternal` 相当。
+    /// `VR_InitInternal` と同等の処理を行う。
     pub fn init(app: sys::EVRApplicationType) -> Result<Self, VrError> {
         let mut client = Self::load()?;
         let err = unsafe { (client.vtbl().init)(client.core, app, std::ptr::null()) };
@@ -55,8 +55,8 @@ impl Client {
         Ok(client)
     }
 
-    /// vrclient を読み込んで `IVRClientCore` を得るだけ（初期化しない）。
-    /// 同じプロセスですでに `init` 済みなら、その接続をそのまま使える。
+    /// vrclient を読み込んで `IVRClientCore` を取得するのみ（初期化は行わない）。
+    /// 同一プロセスですでに `init` 済みであれば、その接続をそのまま使用可能。
     pub fn load() -> Result<Self, VrError> {
         let runtime = runtime_path().ok_or_else(|| {
             VrError::Runtime("SteamVR location unknown (openvrpaths.vrpath)".into())
@@ -90,7 +90,7 @@ impl Client {
         VrError::Runtime(format!("{what}: {}", msg.to_string_lossy()))
     }
 
-    /// `version` は `b"IVRSystem_022\0"` のようなバインディングの定数。C API の関数表を得る。
+    /// `version` は `b"IVRSystem_022\0"` 等のバインディング定数。C API の関数テーブルを取得する。
     pub fn interface<T>(&self, version: &[u8]) -> Result<*const T, VrError> {
         let version = CStr::from_bytes_with_nul(version)
             .unwrap()
@@ -106,7 +106,7 @@ impl Client {
         Ok(table as *const T)
     }
 
-    /// `VR_ShutdownInternal` 相当。
+    /// `VR_ShutdownInternal` と同等の処理を行う。
     pub fn shutdown(&mut self) {
         if std::mem::take(&mut self.initialized) {
             unsafe { (self.vtbl().cleanup)(self.core) };
@@ -120,7 +120,7 @@ impl Drop for Client {
     }
 }
 
-/// SteamVR の場所。`VR_OVERRIDE` があればそれ、無ければ `openvrpaths.vrpath` の `runtime` の先頭。
+/// SteamVR のパス。`VR_OVERRIDE` が設定されていればそれを使用し、なければ `openvrpaths.vrpath` の `runtime` の先頭エントリを返す。
 pub fn runtime_path() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("VR_OVERRIDE").filter(|v| !v.is_empty()) {
         return Some(p.into());
@@ -129,8 +129,8 @@ pub fn runtime_path() -> Option<PathBuf> {
     first_string(&json, "runtime").map(PathBuf::from)
 }
 
-/// `"key" : [ "値", ... ]` の最初の文字列を取り出す。openvrpaths.vrpath を読むためだけの最小の JSON 読み。
-// ponytail: 配列の最初の文字列しか見ない。他のキーも読む必要が出たら JSON パーサを入れる。
+/// `"key" : [ "値", ... ]` の最初の文字列を抽出する。openvrpaths.vrpath の読み込みに特化した最小限の JSON パーサ。
+// ponytail: 配列の最初の文字列のみ参照する。他のキーも必要になったら JSON パーサライブラリを導入する。
 fn first_string(json: &str, key: &str) -> Option<String> {
     let rest = &json[json.find(&format!("\"{key}\""))? + key.len() + 2..];
     let rest = &rest[rest.find('[')? + 1..];

@@ -1,4 +1,4 @@
-//! スタンダードの文字盤: 中央に日付と大きな時刻。デザインごとに、縁での秒の見せ方が違う。
+//! スタンダード文字盤: 中央に日付と大きな時刻を表示する。デザインごとに、縁での秒の表現方法が異なる。
 
 use design::{components, font_size, radius, spacing};
 use gpui::{Div, FontWeight, prelude::*, px, rgba};
@@ -20,7 +20,7 @@ fn date(f: &Face) -> Div {
         .text_color(rgba(f.theme.neutral_text_low))
 }
 
-/// ドット（既定）: 縁に 12 の点の目盛りと、今の秒を指す点（塗りの色）。
+/// ドット（既定）: 縁に 12 個の点の目盛りと、現在の秒を示す点（アクセントカラー）。
 pub fn dots(f: &Face) -> Div {
     // 目盛りの中心は、縁から `spacing::LG` 内側。
     const REACH: f32 = 0.88;
@@ -42,7 +42,7 @@ pub fn dots(f: &Face) -> Div {
         .child(time(f, FontWeight::BOLD))
 }
 
-/// リング: 縁の輪が秒で満ちる（塗りの色）。日付は塗りの色の札に載せる。
+/// リング: 縁のリングが秒で充填される（アクセントカラー）。日付はアクセントカラーのタグに配置する。
 pub fn ring(f: &Face) -> Div {
     let inset = spacing::MD;
     let ring = components::progress_ring(
@@ -67,7 +67,7 @@ pub fn ring(f: &Face) -> Div {
         .child(time(f, FontWeight::BOLD))
 }
 
-/// ゲージ: 縁に 60 の細い目盛り。0 秒から今の秒までが塗りの色で灯る。
+/// ゲージ: 縁に 60 本の細い目盛り。0 秒から現在の秒までがアクセントカラーで点灯する。
 pub fn gauge(f: &Face) -> Div {
     let (off, on, second) = (
         f.theme.neutral_border,

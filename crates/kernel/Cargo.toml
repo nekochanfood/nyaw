@@ -4,11 +4,11 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# カーネルの最下部は subsystems。設定とパネル操作を束ね、上位には kernel だけを見せる。
+# subsystems を最下層とし、設定とパネル操作を統合して上位には kernel のみを公開する
 [features]
 rendering-host = ["subsystems/rendering-host"]
 test-support = ["subsystems/test-support"]
-# 実ランタイムとエミュレーター。既定では無効（型とモックだけで済むテストを軽くする）。起動するバイナリが選ぶ。
+# VR 実ランタイムおよびエミュレーター。既定では無効化し、型とモックのみで完結するテストを高速に保つ。有効化はバイナリ側で選択する
 novr = ["subsystems/novr"]
 openvr = ["subsystems/openvr"]
 openxr = ["subsystems/openxr"]

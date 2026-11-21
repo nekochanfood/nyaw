@@ -1,6 +1,6 @@
-//! 動きの駆動。部品は時刻を `Instant::now()` で読まず、再描画も自分で要求せず、ここを通す。
-//! - [`now`]: 動きが見る唯一の時計。テストは [`advance`] で進められる（実際に待たない）。
-//! - [`keep_drawing`]: 動いている間は次のフレームも描く。VR のフレームループにも伝える（[`Motion`]）。
+//! アニメーション駆動。部品は `Instant::now()` を直接読まず、再描画も自ら要求せず、ここを経由する。
+//! - [`now`]: アニメーションが参照する唯一の時計。テストは [`advance`] で進行させる（実際の待機なし）。
+//! - [`keep_drawing`]: アニメーション中は次のフレームも描画する。VR のフレームループにも通知する（[`Motion`]）。
 
 use std::{cell::Cell, time::Duration, time::Instant};
 
@@ -12,17 +12,17 @@ thread_local! {
     static SKEW: Cell<Duration> = const { Cell::new(Duration::ZERO) };
 }
 
-/// 動きの時計の「今」。
+/// アニメーション時計の現在時刻。
 pub fn now() -> Instant {
     Instant::now() + SKEW.get()
 }
 
-/// 時計を `by` 進める（このスレッドの動きだけ。テストが待たずに動きを終わらせるために使う）。
+/// 時計を `by` 進める（このスレッドのみ。テストが待機なしでアニメーションを完了させるために使用）。
 pub fn advance(by: Duration) {
     SKEW.set(SKEW.get() + by);
 }
 
-/// 動いている間は次のフレームも描く。
+/// アニメーション中は次のフレームも描画する。
 pub fn keep_drawing(window: &mut Window, cx: &mut App) {
     if cx.has_global::<Motion>() {
         let id = window.window_handle().window_id();

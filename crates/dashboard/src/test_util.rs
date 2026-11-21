@@ -1,10 +1,10 @@
-//! テストで使う共通の道具。テストはそれぞれの画面のファイルの子（`bar/tests.rs` など）に置く。
+//! テスト共通ユーティリティ。各画面のテストは対応するファイルの子モジュール（`bar/tests.rs` 等）に配置する。
 
 use super::*;
 pub(crate) use gpui::{Modifiers, TestAppContext, VisualTestContext};
 pub(crate) use kernel::desktop::DEFAULT_FRAME_RATE;
 
-/// 通知（`id` 番。見出しと本文、ボタン 1 つ）。
+/// テスト用通知（ID: `id`。タイトル・本文・アクションボタン 1 つ）。
 pub(crate) fn note(id: u32) -> kernel::subsystems::notifications::Notification {
     use kernel::subsystems::notifications as n;
     n::Notification {
@@ -37,7 +37,7 @@ pub(crate) fn click(cx: &mut VisualTestContext, selector: &'static str) {
     cx.simulate_click(at, Modifiers::none());
 }
 
-/// 要求された一番新しいパネルを `id` で開く。
+/// 最新のスポーン要求をパネル `id` で開く。
 pub(crate) fn open_spawned(cx: &mut VisualTestContext, id: PanelId) {
     cx.update(|window, cx| {
         let spec = cx.default_global::<PanelControl>().spawns.pop().unwrap();
@@ -54,7 +54,7 @@ pub(crate) fn commands(cx: &mut VisualTestContext, id: PanelId) -> Vec<PanelComm
     })
 }
 
-/// `id` に積まれた操作を取り出す（[`commands`] は写すだけ）。
+/// `id` に蓄積されたコマンドを取り出す（[`commands`] はコピーのみ）。
 pub(crate) fn take_commands(cx: &mut VisualTestContext, id: PanelId) -> Vec<PanelCommand> {
     cx.update(|_, cx| {
         std::mem::take(
@@ -114,7 +114,7 @@ pub(crate) fn redraw_bar(cx: &mut VisualTestContext) {
     cx.run_until_parked();
 }
 
-/// テストでバーを別の窓に描くための包み。
+/// テストでバーを別ウィンドウに描画するためのラッパー。
 pub(crate) struct BarView(pub(crate) gpui::Entity<Dashboard>);
 impl Render for BarView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -122,7 +122,7 @@ impl Render for BarView {
     }
 }
 
-/// テストで [`Mirror`] を窓に載せる入れ物。
+/// テストで [`Mirror`] をウィンドウに載せるためのコンテナ。
 pub(crate) struct Waiter(pub(crate) gpui::Entity<Mirror>);
 
 impl Render for Waiter {

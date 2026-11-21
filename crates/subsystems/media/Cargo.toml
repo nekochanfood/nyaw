@@ -6,12 +6,12 @@ license.workspace = true
 
 [dependencies]
 logger.workspace = true
-# ジャケット・アプリのアイコンを読み、背景用にぼかす（gpui と同じ版）。
+# ジャケットおよびアプリアイコンの読み込みと背景用のぼかし処理（gpui と同一バージョン）
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
     "Foundation", "ApplicationModel", "Media_Control", "Storage_Streams", "Win32_System_WinRT",
-    # ブラウザなどデスクトップのアプリの ID を、スタートメニュー（shell:AppsFolder）から名前と実行ファイルに引く。
+    # ブラウザ等デスクトップアプリの ID をスタートメニュー（shell:AppsFolder）から名前と実行ファイルに解決する
     "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_Storage_EnhancedStorage",
 ] }

@@ -1,7 +1,7 @@
-//! wrist の文字盤。直径 `d` px の丸の中に描く（本物は窓いっぱい、選ぶ画面では小さな見本）。
-//! 色はテーマの役割だけを使うので、テーマ（ライト / ダーク）とパーソナルカラー（塗りの `accent-solid` と、その上の `on-accent`）で変わる。
+//! wrist の文字盤。直径 `d` px の円内に描画する（実物はウィンドウ全体、選択画面では小さなプレビュー）。
+//! 色はテーマのロールのみを使用するため、テーマ（ライト / ダーク）とパーソナルカラー（塗りの `accent-solid` と、その上の `on-accent`）で変化する。
 //!
-//! デザインは 1 つ 1 関数（`fn(&Face) -> Div`）で、文字盤の種類ごとのファイルに置く。足し方は AGENT.md の「デザインを足す」。
+//! デザインは 1 つ 1 関数（`fn(&Face) -> Div`）で、文字盤の種類ごとのファイルに配置する。追加方法は AGENT.md の「デザインを足す」。
 
 mod analog;
 mod digital;
@@ -16,10 +16,10 @@ use gpui::{
 };
 use kernel::WristDesign;
 
-/// 寸法を決めた基準の直径（本物の文字盤）。デザインはこの大きさのつもりで書き、ほかの大きさには [`Face`] が縮める。
+/// 寸法を決定する基準の直径（実物の文字盤）。デザインはこのサイズを前提に記述し、他のサイズには [`Face`] がスケーリングする。
 pub const BASE: f32 = 400.0;
 
-/// 文字盤の中身（一辺 `d` の正方形。地の丸いカードは呼び出し側が敷く）。`date` は今の言語での日付。
+/// 文字盤の内容（一辺 `d` の正方形。背景の丸いカードは呼び出し側が配置する）。`date` は現在の言語での日付。
 pub fn dial(
     design: WristDesign,
     theme: &Theme,
@@ -33,7 +33,7 @@ pub fn dial(
         date,
         k: d / BASE,
     };
-    // デザインを足したら、ここに 1 行足す（足し忘れるとコンパイルが通らない）。
+    // デザインを追加したら、ここに 1 行追加する（追加漏れがあるとコンパイルエラーになる）。
     match design {
         WristDesign::Dots => standard::dots(&f),
         WristDesign::Ring => standard::ring(&f),
@@ -47,7 +47,7 @@ pub fn dial(
     }
 }
 
-/// 選ぶ画面に出す見本: 直径 `d` の丸いカードに、決まった時刻（10:09:36）の文字盤。カードと見分けられる地の上に置く。
+/// 選択画面に表示するプレビュー: 直径 `d` の丸いカードに、固定時刻（10:09:36）の文字盤。カードと区別可能な背景上に配置する。
 pub fn preview(design: WristDesign, d: f32, cx: &App) -> Div {
     let theme = Theme::current(cx);
     let now = Local::now();
@@ -68,19 +68,19 @@ pub fn preview(design: WristDesign, d: f32, cx: &App) -> Div {
         ))
 }
 
-/// 文字盤 1 枚を描く材料。デザインの関数はこれだけを受け取る。
-/// 寸法は基準の直径（[`BASE`]）のつもりで書き、[`Face::px`] / [`Face::size`] で実際の大きさにする。
+/// 文字盤 1 枚を描画するためのコンテキスト。デザイン関数はこれのみを受け取る。
+/// 寸法は基準の直径（[`BASE`]）を前提に記述し、[`Face::px`] / [`Face::size`] で実際のサイズに変換する。
 pub(crate) struct Face<'a> {
     pub theme: &'a Theme,
     pub now: DateTime<Local>,
-    /// 今の言語での日付。
+    /// 現在の言語での日付。
     date: SharedString,
     /// 基準に対する縮尺。
     k: f32,
 }
 
 impl Face<'_> {
-    /// 基準の寸法を、実際の大きさ（px の数）にする。
+    /// 基準の寸法を実際のサイズ（px 値）に変換する。
     pub fn size(&self, base: f32) -> f32 {
         base * self.k
     }
@@ -89,7 +89,7 @@ impl Face<'_> {
         px(self.size(base))
     }
 
-    /// 文字盤の枠: 中身を上下左右の中央に、縦に並べる。重ねるもの（[`Self::paint`] / [`Self::label`]）も子に足す。
+    /// 文字盤のフレーム: 内容を上下左右中央に、縦に配置する。重ねる要素（[`Self::paint`] / [`Self::label`]）も子に追加する。
     pub fn frame(&self) -> Div {
         div()
             .relative()
@@ -100,11 +100,11 @@ impl Face<'_> {
             .items_center()
             .justify_center()
             .text_color(rgba(self.theme.neutral_text))
-            // 文字盤は絵。文字も直径に合わせて決めてあるので、全域の文字の大きさ・太字化には従わない（大きさは UI スケールで変わる）。
+            // 文字盤はグラフィカル要素。フォントサイズも直径に合わせて設定済みのため、全域のフォントサイズ・太字化には従わない（サイズは UI スケールで変化する）。
             .text_exact()
     }
 
-    /// 日付の文字（`date`）。色・大きさは呼び出し側が足す。
+    /// 日付テキスト（`date`）。色・サイズは呼び出し側が追加する。
     pub fn date(&self) -> Div {
         div()
             .debug_selector(|| "date".into())
@@ -118,12 +118,12 @@ impl Face<'_> {
             .child(self.clock("%H:%M"))
     }
 
-    /// 今の時刻を chrono の書式で（`%H` / `%M` / `%S`）。
+    /// 現在の時刻を chrono のフォーマットで取得する（`%H` / `%M` / `%S`）。
     pub fn clock(&self, format: &str) -> String {
         self.now.format(format).to_string()
     }
 
-    /// 今の秒が 1 分のどこまで来たか（0〜1）。
+    /// 現在の秒の 1 分内での進捗（0〜1）。
     pub fn minute_progress(&self) -> f32 {
         self.now.second() as f32 / 60.0
     }
@@ -133,9 +133,9 @@ impl Face<'_> {
         turns(self.now.hour(), self.now.minute(), self.now.second())
     }
 
-    /// 文字盤の上の文字: 12 時から時計回りに `turn` 周の向き・中心から `reach`（半径に対する割合）の点を中心に置く。
+    /// 文字盤上のラベル: 12 時から時計回りに `turn` 周の方向・中心から `reach`（半径に対する割合）の点を中心に配置する。
     pub fn label(&self, turn: f32, reach: f32, text: impl Into<SharedString>) -> Div {
-        // 文字を中央に置く箱の一辺。
+        // テキストを中央配置するボックスの一辺。
         const BOX: f32 = 96.0;
         let (a, r) = (turn * TAU, BASE / 2.0 * reach);
         div()
@@ -149,7 +149,7 @@ impl Face<'_> {
             .child(text.into())
     }
 
-    /// 文字盤いっぱいに重ねる描画面（`hands`）。`draw` に渡る [`Pen`] で、中心からの向きと距離で線や円を描く。
+    /// 文字盤全体に重ねる描画サーフェス（`hands`）。`draw` に渡る [`Pen`] で、中心からの方向と距離で線や円を描画する。
     pub fn paint(&self, draw: impl Fn(&mut Pen) + 'static) -> Div {
         let k = self.k;
         let surface = canvas(
@@ -167,7 +167,7 @@ impl Face<'_> {
     }
 }
 
-/// 文字盤に線や円を描く道具（[`Face::paint`]）。向きは 12 時から時計回りの周の割合、中心からの距離は半径に対する割合
+/// 文字盤に線や円を描画するユーティリティ（[`Face::paint`]）。方向は 12 時から時計回りの周の割合、中心からの距離は半径に対する割合
 /// （負は反対側）、太さ・半径は基準の寸法。
 pub(crate) struct Pen<'a> {
     window: &'a mut Window,
@@ -185,7 +185,7 @@ impl Pen<'_> {
         )
     }
 
-    /// 向き `turn` の放射状の線（中心からの距離 `from`〜`to`）。両端は角のまま。目盛りや、まっすぐな針に。
+    /// 方向 `turn` の放射状の線（中心からの距離 `from`〜`to`）。両端は角のまま。目盛りや直線の針に使用する。
     pub fn spoke(&mut self, turn: f32, from: f32, to: f32, width: f32, color: u32) {
         let mut path = gpui::PathBuilder::stroke(px(width * self.k));
         path.move_to(self.at(turn, from));
@@ -203,7 +203,7 @@ impl Pen<'_> {
         }
     }
 
-    /// 向き `turn`・距離 `reach` の点を中心にした円。
+    /// 方向 `turn`・距離 `reach` の点を中心とした円。
     pub fn disc(&mut self, turn: f32, reach: f32, radius: f32, color: u32) {
         let (c, r) = (self.at(turn, reach), px(radius * self.k));
         let mut path = gpui::PathBuilder::fill();
@@ -222,7 +222,7 @@ impl Pen<'_> {
     }
 }
 
-/// 時針・分針・秒針の向き（12 時から時計回りの周の割合 0〜1）。時針は分で、分針は秒でなめらかに進む。
+/// 時針・分針・秒針の方向（12 時から時計回りの周の割合 0〜1）。時針は分で、分針は秒でスムーズに進む。
 fn turns(hour: u32, minute: u32, second: u32) -> [f32; 3] {
     let second = second as f32 / 60.0;
     let minute = (minute as f32 + second) / 60.0;
@@ -236,15 +236,15 @@ mod tests {
     #[test]
     fn hands_point_at_the_time() {
         assert_eq!(turns(0, 0, 0), [0.0, 0.0, 0.0]);
-        assert_eq!(turns(15, 0, 0), [0.25, 0.0, 0.0], "15 時は 3 時の向き");
+        assert_eq!(turns(15, 0, 0), [0.25, 0.0, 0.0], "15 時は 3 時の方向");
         let [hour, minute, second] = turns(6, 30, 30);
         assert!((second - 0.5).abs() < 1e-6);
-        assert!((minute - 30.5 / 60.0).abs() < 1e-6, "分針は秒のぶん進む");
+        assert!((minute - 30.5 / 60.0).abs() < 1e-6, "分針は秒の分だけ進む");
         let want = 0.5 + 30.5 / 60.0 / 12.0;
-        assert!((hour - want).abs() < 1e-6, "時針は分のぶん進む");
+        assert!((hour - want).abs() < 1e-6, "時針は分の分だけ進む");
     }
 
-    /// 種類・デザインの名前（`wrist.face.*` / `wrist.design.*`）が、どの言語の文言にもある。
+    /// 種類・デザインの名前（`wrist.face.*` / `wrist.design.*`）が、すべての言語の文言に存在する。
     #[test]
     fn every_face_and_design_has_a_name() {
         for &face in kernel::WristFace::ALL {

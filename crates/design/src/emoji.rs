@@ -1,6 +1,6 @@
-//! Twemoji のカラー SVG。`emoji("🐈").size(px(24.))` はアイコンとして、
-//! `emoji_text("こんにちは 🐈!")` は周りの文字サイズ・行高・折り返しで表示する。
-//! 未対応の文字列・明示的なテキスト指定（VS15）はそのままフォントで描く。
+//! Twemoji のカラー SVG。`emoji("🐈").size(px(24.))` はアイコンとして使用し、
+//! `emoji_text("こんにちは 🐈!")` は周囲の文字サイズ・行高・折り返しに従って表示する。
+//! 未対応の文字列・明示的テキスト指定（VS15）はフォントでそのまま描画する。
 
 use gpui::{
     AnyElement, App, Asset, AvailableSpace, Bounds, Element, ElementId, GlobalElementId,
@@ -64,7 +64,7 @@ fn image(index: usize, edge: Pixels, window: &Window) -> gpui::Img {
     .flex_none()
 }
 
-/// カラーの絵文字部品。色は SVG 本来の配色を保つ。
+/// カラー絵文字部品。SVG 本来の配色を維持する。
 #[derive(IntoElement)]
 pub struct Emoji {
     text: SharedString,
@@ -87,7 +87,7 @@ impl Emoji {
 
 impl RenderOnce for Emoji {
     fn render(self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        // 枠は、中の文字（テキストシステムが倍率を掛ける）と同じだけ大きくする。
+        // 枠は、内部テキスト（テキストシステムがスケールを適用）と同サイズにする。
         div()
             .size(self.edge * gpui::text_scale())
             .flex_none()
@@ -97,8 +97,8 @@ impl RenderOnce for Emoji {
     }
 }
 
-/// 文章を一つのテキストとして組み、全角スペースで確保した位置に SVG を重ねる。
-/// GPUI のテキストシェーパーを使うので、日本語・改行・折り返しも通常の文章と同じ。
+/// 文章を一つのテキストとして組版し、全角スペースで確保した位置に SVG を重ねる。
+/// GPUI のテキストシェーパーを使用するため、日本語・改行・折り返しも通常の文章と同様に処理される。
 pub struct EmojiText {
     original: SharedString,
     text: StyledText,
@@ -157,7 +157,7 @@ impl Element for EmojiText {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let (layout, ()) = self.text.request_layout(id, inspector, window, cx);
-        // 絵は、組まれた文字（倍率が掛かっている）と同じ大きさにする。
+        // 画像は、組版済みテキスト（スケール適用済み）と同サイズにする。
         let edge = window.text_style().font_size.to_pixels(window.rem_size()) * gpui::text_scale();
         let icons = self
             .icons
@@ -186,7 +186,7 @@ impl Element for EmojiText {
     ) -> Self::PrepaintState {
         self.text
             .prepaint(id, inspector, bounds, &mut (), window, cx);
-        // 絵は、組まれた文字（倍率が掛かっている）と同じ大きさにする。
+        // 画像は、組版済みテキスト（スケール適用済み）と同サイズにする。
         let edge = window.text_style().font_size.to_pixels(window.rem_size()) * gpui::text_scale();
         let line_height = self.text.layout().line_height();
         let inset = (line_height - edge) / 2.;
@@ -211,7 +211,7 @@ impl Element for EmojiText {
         }
         let mut visible = Vec::new();
         for (i, (offset, image)) in icons.iter_mut().enumerate() {
-            // 折り返し境界の開始位置は前行の末尾を返すため、全角スペースの終端から戻す。
+            // 折り返し境界の開始位置は前行の末尾を返すため、全角スペースの終端からオフセットを逆算する。
             if let Some(end) = self
                 .text
                 .layout()

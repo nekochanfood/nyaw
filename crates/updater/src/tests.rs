@@ -12,17 +12,17 @@ fn the_build_number_hides_in_the_notes_and_installers_are_plain_names() {
     assert_eq!(
         notes_build("<!--nyaw-build:7-->"),
         None,
-        "書き方はワークフローのとおりだけ"
+        "ワークフロー定義どおりの書式のみ有効"
     );
     assert_eq!(notes_build("<!-- nyaw-build: 7 -->"), Some(7));
-    // 本文に同じ注釈を書いても、最後のもの（ワークフローが足したもの）が効く。
+    // 本文に同一の注釈を記述しても、最後のもの（ワークフローが追加したもの）が有効。
     assert_eq!(
         notes_build("例: `<!-- nyaw-build: 1 -->`\n\n<!-- nyaw-build: 9 -->"),
         Some(9)
     );
     assert_eq!(notes_build("## What's Changed"), None);
     assert_eq!(notes_build("<!-- nyaw-build: x -->"), None);
-    // インストーラーの名前には版だけ（ビルド番号は出さない）。版の名前は何でもよい。
+    // インストーラーのファイル名にはバージョンのみ（ビルド番号は含めない）。バージョン名は任意。
     assert!(is_installer("nyaw-2026.0.1-patch.2-setup.exe"));
     assert!(is_installer("nyaw-2026.0.1-リリース候補.1-setup.exe"));
     assert!(!is_installer("nyaw--setup.exe"));
@@ -30,8 +30,8 @@ fn the_build_number_hides_in_the_notes_and_installers_are_plain_names() {
     assert!(!is_installer("nyaw-..\\x-setup.exe"));
 }
 
-/// GitHub の API の形（使うところだけ）。`build` があれば、ワークフローのとおりリリースノートの末尾に注釈を足す。
-/// 名前の付いた版（`-<名前>.<数>`）は、ワークフローのとおりプレリリース。
+/// GitHub API レスポンスの形式（使用部分のみ）。`build` があればワークフロー定義どおりリリースノート末尾に注釈を追加する。
+/// 名前付きバージョン（`-<名前>.<数>`）は、ワークフロー定義どおりプレリリースとする。
 fn release(
     tag: &str,
     draft: bool,
@@ -59,7 +59,7 @@ fn release(
 
 fn list(base: &str) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!([
-        // 下書きは数えない（ビルド番号が一番大きくても）。
+        // 下書きは除外する（ビルド番号が最大でも）。
         release(
             "v2026.0.1-patch.9",
             true,
@@ -77,7 +77,7 @@ fn list(base: &str) -> Vec<u8> {
             ],
             base
         ),
-        // GitHub が SHA-256 を知らせないインストーラーは、確かめられないので勧めない（番号が一番大きくても）。
+        // GitHub が SHA-256 を提供しないインストーラーは検証不可のため推奨しない（番号が最大でも）。
         release(
             "v2026.0.1-patch.4",
             false,
@@ -85,9 +85,9 @@ fn list(base: &str) -> Vec<u8> {
             &[("nyaw-2026.0.1-patch.4-setup.exe", 5, None)],
             base
         ),
-        // ビルド番号はあるが、インストーラーがまだ付いていない（ビルド中）。
+        // ビルド番号はあるがインストーラーが未添付（ビルド中）。
         release("v2026.0.1-patch.3", false, Some(660), &[], base),
-        // 版はタグから（アセットの名前の記号は GitHub が置き換えることがある）。
+        // バージョンはタグから取得（アセット名の記号は GitHub が変換する場合がある）。
         release(
             "v2026.0.1-ぽてと.1",
             false,
@@ -95,7 +95,7 @@ fn list(base: &str) -> Vec<u8> {
             &[("nyaw-2026.0.1-....1-setup.exe", 5, Some("sha256:def"))],
             base
         ),
-        // ビルド番号の無い、更新の仕組みより前のリリース。
+        // ビルド番号のない、更新機構導入前のリリース。
         release(
             "v2026.0.1",
             false,
@@ -103,7 +103,7 @@ fn list(base: &str) -> Vec<u8> {
             &[("nyaw-2026.0.1-setup.exe", 5, None)],
             base
         ),
-        // 正式なリリース（安定版のチャンネルにも勧める）。
+        // 正式リリース（安定版チャンネルにも推奨する）。
         release(
             "v2026.0.2",
             false,
@@ -128,7 +128,7 @@ fn the_newest_build_above_ours_wins_whatever_the_version_says() {
             ("2026.0.1-ぽてと.1", 650),
             ("2026.0.2", 640)
         ],
-        "下書きと、インストーラー・SHA-256・ビルド番号のどれかが無いものは除く"
+        "下書きおよびインストーラー・SHA-256・ビルド番号のいずれかが欠けたものは除外する"
     );
     assert_eq!(
         releases.iter().map(|r| r.prerelease).collect::<Vec<_>>(),
@@ -150,15 +150,15 @@ fn the_newest_build_above_ours_wins_whatever_the_version_says() {
     assert_eq!(
         newer(0).as_deref(),
         Some("2026.0.1-patch.2"),
-        "git の無いビルドにはどれも新しい"
+        "git のないビルドにはすべて新しい"
     );
-    assert_eq!(newer(655), None, "同じビルドは新しくない");
+    assert_eq!(newer(655), None, "同一ビルドは新しくない");
     assert_eq!(
         newer(700),
         None,
-        "main の先にいるビルドに古いリリースを勧めない"
+        "main より先のビルドに旧リリースを推奨しない"
     );
-    // 安定版はプレリリースを除いた中で選ぶ（プレリリースの方が新しくても）。
+    // 安定版はプレリリースを除外して選択する（プレリリースの方が新しくても）。
     let stable = |build| newest(&releases, build, UpdateChannel::Stable).map(|r| r.version);
     assert_eq!(stable(0).as_deref(), Some("2026.0.2"));
     assert_eq!(stable(640), None);
@@ -187,7 +187,7 @@ fn installer_runs_silently_and_waits_for_us() {
     ] {
         assert!(args.iter().any(|a| a == flag), "{flag}");
     }
-    // 起動し直す引数は空白でつながるので、空白・引用符を含むものは渡さない。
+    // 再起動引数は空白で結合されるため、空白・引用符を含むものは渡さない。
     let args = installer_args(
         1,
         [
@@ -203,10 +203,10 @@ fn installer_runs_silently_and_waits_for_us() {
     );
 }
 
-/// サーバーが返すファイル（パス → 中身）。テストの途中で差し替える。
+/// サーバーが返すファイル（パス → 内容）。テスト中に差し替え可能。
 type Files = Arc<Mutex<HashMap<String, Vec<u8>>>>;
 
-/// 手元の HTTP サーバー（ループバック）。`files` のパスを返し、ほかは 404。
+/// ローカル HTTP サーバー（ループバック）。`files` のパスを返し、他は 404。
 fn serve(files: Files) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -254,7 +254,7 @@ fn temp(name: &str) -> PathBuf {
     std::env::temp_dir().join(format!("nyaw-updater-{name}-{}", std::process::id()))
 }
 
-/// サーバーに patch.1・patch.2 の一覧と patch.2 のインストーラーを置く。
+/// サーバーに patch.1・patch.2 の一覧と patch.2 のインストーラーを配置する。
 fn fixture() -> (String, Files) {
     let files = Arc::new(Mutex::new(HashMap::new()));
     let base = serve(files.clone());
@@ -297,7 +297,7 @@ fn downloads_and_verifies_the_installer() {
     let path = download(&release, &dir, &progress).unwrap();
     assert_eq!(fs::read(&path).unwrap(), b"MZ fake installer");
     assert_eq!(progress.load(Ordering::Relaxed), release.installer.size);
-    // 確かめる SHA-256 が無ければ、中身が正しくても走らせるものとして残さない。
+    // 検証用 SHA-256 がなければ、内容が正しくても実行対象として保持しない。
     let mut blank = release.clone();
     blank.installer.sha256.clear();
     assert!(
@@ -307,7 +307,7 @@ fn downloads_and_verifies_the_installer() {
     );
     assert!(!path.exists());
 
-    // 中身が SHA-256 と違う・大きさが違うものは残さない。
+    // 内容が SHA-256 と不一致、またはサイズが異なるものは保持しない。
     files.lock().unwrap().insert(
         "/nyaw-2026.0.1-patch.2-setup.exe".into(),
         b"MZ evil installer".to_vec(),
@@ -344,7 +344,7 @@ fn fake_launch(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// 確かめると新しいリリースを覚え、ユーザーが選ぶと落としてインストーラーを走らせ、アプリを終える。
+/// 確認すると新しいリリースを記録し、ユーザーが選択するとダウンロードしてインストーラーを実行し、アプリを終了する。
 #[gpui::test]
 fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
     let (base, _files) = fixture();
@@ -357,10 +357,10 @@ fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
             launch: fake_launch,
             ..Default::default()
         });
-        // fixture のリリースはどちらもプレリリースなので、ナイトリーで受け取る。
+        // fixture のリリースはどちらもプレリリースのため、ナイトリーチャンネルで受け取る。
         cx.default_global::<PanelControl>().settings.update_channel = UpdateChannel::Nightly;
         assert!(!available(cx));
-        // 確かめる前に入れようとしても何もしない。
+        // 確認前にインストールを試みても何もしない。
         install(cx);
         assert!(matches!(state(cx).step, Step::Idle));
         check_now(cx);
@@ -374,9 +374,9 @@ fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
         assert_eq!(latest(cx).unwrap().version, "2026.0.1-patch.2");
         assert!(
             !cx.default_global::<PanelControl>().quit,
-            "見つけただけでは入れない"
+            "検出のみではインストールしない"
         );
-        // 安定版に切り替えると、確かめ直さなくても勧めなくなる（入れようとしても何もしない）。
+        // 安定版に切り替えると、再確認なしで推奨されなくなる（インストールを試みても何もしない）。
         cx.default_global::<PanelControl>().settings.update_channel = UpdateChannel::Stable;
         assert!(!available(cx));
         install(cx);
@@ -390,7 +390,7 @@ fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
     cx.update(|cx| {
         let u = state(cx);
         assert_eq!(u.error.as_deref(), Some("cannot start"));
-        assert!(matches!(u.step, Step::Idle), "失敗したらもう一度押せる");
+        assert!(matches!(u.step, Step::Idle), "失敗後は再試行可能");
         assert!(!cx.default_global::<PanelControl>().quit);
         FAIL.store(false, Ordering::Relaxed);
         install(cx);
@@ -400,7 +400,7 @@ fn check_then_install_quits_for_the_installer(cx: &mut gpui::TestAppContext) {
         assert!(matches!(state(cx).step, Step::Installing));
         assert!(
             cx.default_global::<PanelControl>().quit,
-            "入れ替えのために終える"
+            "更新のために終了する"
         );
     });
     assert_eq!(

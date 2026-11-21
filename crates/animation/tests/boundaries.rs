@@ -1,6 +1,6 @@
-//! 動きの責務の境界。破るとここで落ちる。
-//! - `animation` は GPUI にも design にも依存しない（下位層の overlay からも使えるように）。
-//! - イージングの式は `animation` にだけ書く。部品は `Motion::ease` / `Transition` / `Animation` を使う。
+//! 動きの責務の境界テスト。違反時にここで検出する。
+//! - `animation` は GPUI にも design にも依存しない（下位層の overlay からも利用可能にするため）。
+//! - イージング式は `animation` にのみ記述する。各部品は `Motion::ease` / `Transition` / `Animation` を使用する。
 
 use std::{fs, path::Path};
 
@@ -16,7 +16,7 @@ fn animation_depends_on_neither_gpui_nor_design() {
     for banned in ["gpui", "design"] {
         assert!(
             !manifest.contains(banned),
-            "animation は {banned} に依存しない"
+            "animation は {banned} に依存してはならない"
         );
     }
 }
@@ -32,7 +32,7 @@ fn easing_math_lives_only_in_animation() {
     }
     assert!(
         found.is_empty(),
-        "手書きのイージング（`powi(3)`）は animation::Motion::ease に寄せる: {found:?}"
+        "手書きのイージング（`powi(3)`）は animation::Motion::ease に集約する: {found:?}"
     );
 }
 
@@ -52,7 +52,7 @@ fn visit(dir: &Path, found: &mut Vec<String>) {
     }
 }
 
-/// design の部品は動きの時刻を `design::drive::now()` からだけ読む（テストは `drive::advance` で進める）。
+/// design の部品は動きの時刻を `design::drive::now()` からのみ取得する（テストでは `drive::advance` で進める）。
 #[test]
 fn design_reads_the_clock_only_through_drive() {
     let src = Path::new(ROOT).join("../design/src");
@@ -72,7 +72,7 @@ fn design_reads_the_clock_only_through_drive() {
                 && path.file_name() != Some("drive.rs".as_ref())
             {
                 let s = fs::read_to_string(&path).unwrap();
-                // テストのモジュールより前（本体）だけ見る。
+                // テストモジュールより前（本体コード）のみを検査する。
                 let body = s.split("#[cfg(test)]").next().unwrap();
                 if body.contains("Instant::now()") {
                     found.push(path.display().to_string());

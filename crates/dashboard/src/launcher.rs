@@ -1,5 +1,5 @@
-//! ランチャー: 起動中のアプリ・すべてのアプリを、見出しとタイルの行の仮想化したリストに並べる。
-//! 押すとアプリのウィンドウを映す（無ければ起動して待つ。`mirror.rs`）。
+//! ランチャー: 起動中のアプリ・全アプリを、見出しとタイル行の仮想化リストに表示する。
+//! 押下するとアプリのウィンドウを配信する（未起動なら起動して待機。`mirror.rs`）。
 
 use super::*;
 
@@ -7,15 +7,15 @@ use super::*;
 const APP_COLUMNS: u16 = 6;
 const RUNNING_DOT_PX: f32 = 6.0;
 
-/// 読んだアプリ一覧。次に開いたときに、取り直すまでの間それを出す（アイコンを読むので時間が掛かる）。
+/// 読み込み済みアプリ一覧。次回表示時に再取得完了までこれを表示する（アイコン読み込みに時間がかかるため）。
 pub(crate) struct AppCatalog(pub(crate) AppList);
 
-/// アプリ一覧（名前の順）と、そのアイコンの画像。
+/// アプリ一覧（名前順）と各アイコン画像。
 type AppList = Vec<(InstalledApp, Option<Arc<RenderImage>>)>;
 
 impl gpui::Global for AppCatalog {}
 
-/// アプリ一覧を OS から取り直し、アイコンを画像にする（どちらも別スレッド。取得はアイコンを読むので数秒かかる）。
+/// アプリ一覧を OS から再取得し、アイコンを画像に変換する（いずれもバックグラウンドスレッド。アイコン読み込みに数秒要する）。
 pub(crate) fn fetch_apps(cx: &App) -> Task<Result<AppList, String>> {
     let pending = InstalledApps::refresh();
     let executor = cx.background_executor().clone();
@@ -37,17 +37,17 @@ pub(crate) fn fetch_apps(cx: &App) -> Task<Result<AppList, String>> {
     })
 }
 
-/// ランチャーの中身: 行（リストの 1 行）と、行が並べるタイル。
+/// ランチャーの内容: 行（リストの 1 行）と、行が配置するタイル。
 #[derive(Default)]
 pub(crate) struct Launcher {
     rows: Vec<LauncherRow>,
     tiles: Vec<Tile>,
-    /// 起動中のアプリ（[`Tile::Running`] が指す）。
+    /// 起動中のアプリ（[`Tile::Running`] が参照）。
     running: Vec<RunningApp>,
 }
 
 impl Launcher {
-    /// タイルを足し、[`APP_COLUMNS`] 個ずつの行にする。
+    /// タイルを追加し、[`APP_COLUMNS`] 個ずつの行に分割する。
     fn push_tiles(&mut self, tiles: Vec<Tile>) {
         let start = self.tiles.len();
         self.tiles.extend(tiles);
@@ -60,25 +60,25 @@ impl Launcher {
     }
 }
 
-/// ランチャーのリストの 1 行。
+/// ランチャーリストの 1 行。
 #[derive(Debug, Clone, PartialEq)]
 enum LauncherRow {
     RunningHeader,
     AllAppsHeader,
     Note(SharedString),
-    /// 読み込み中（スピナー付きの注記）。
+    /// 読み込み中（スピナー付き注記）。
     Loading(SharedString),
     Separator,
-    /// [`Launcher::tiles`] のこの範囲を 1 行に並べる。
+    /// [`Launcher::tiles`] のこの範囲を 1 行に配置する。
     Tiles(Range<usize>),
 }
 
-/// ランチャーのタイル。`n` は検索で絞った中での順番（`debug_selector` の番号）。
+/// ランチャーのタイル。`n` は検索フィルタ後の順序（`debug_selector` の番号）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Tile {
-    /// [`Launcher::running`] の添字。
+    /// [`Launcher::running`] のインデックス。
     Running { at: usize, n: usize },
-    /// [`Screen::apps`] の添字と、起動中か。
+    /// [`Screen::apps`] のインデックスと起動中フラグ。
     App { at: usize, n: usize, running: bool },
 }
 
@@ -88,8 +88,8 @@ impl Screen {
         self.sources.iter().find(|(s, _)| app.owns(s))
     }
 
-    /// ウィンドウ（画面）を映す。もう映していれば新しく開かず、ダッシュボードに隠している配信ならそれを出す。
-    /// 映したものは、この一覧がはまっていればダッシュボードにはまり（一覧と入れ替わる）、独立させていれば独立して開く。
+    /// ウィンドウを配信する。既に配信中なら新規に開かず、ダッシュボードで非表示の配信があればそれを表示する。
+    /// 配信対象は、この一覧がドッキング中ならダッシュボードにドッキングし（一覧と入れ替わる）、独立していれば独立して開く。
     fn open_window(&self, source: Source, icon: Option<Arc<RenderImage>>, cx: &mut App) {
         if let Some((id, _)) = mirror_of(&source, cx) {
             let _ = self.dashboard.update(cx, |d, cx| d.show_stream(id, cx));
@@ -106,8 +106,8 @@ impl Screen {
         ));
     }
 
-    /// アプリを開く: 起動していればそのウィンドウを映す。していなければ起動して、すぐそのアプリの画面を開いて待つ
-    /// （[`launch_spec`]。ウィンドウが出たら、そこで映し始める）。
+    /// アプリを開く: 起動済みならそのウィンドウを配信する。未起動なら起動し、即座にアプリ画面を開いて待機する
+    /// （[`launch_spec`]。ウィンドウ出現後に配信を開始する）。
     pub(crate) fn launch_app(&mut self, app: InstalledApp, cx: &mut App) {
         if let Some((source, icon)) = self.window_for(&app).cloned() {
             self.open_window(source, icon, cx);
@@ -134,14 +134,14 @@ impl Screen {
         }
     }
 
-    /// ランチャー: 上に検索欄、その下をスクロールする 1 本のリストにして、起動中のアプリ・区切り線・
-    /// 全部のアプリ（名前の順）を並べる。検索すると、どれも名前に打った文字を含むものだけになる。
-    /// リストは見えている行だけを組み立てる（アプリは数百個あり、全部のタイルを毎回組むと 1 フレームに収まらない）。
+    /// ランチャー: 上部に検索欄、その下にスクロール可能な単一リストとして起動中アプリ・区切り線・
+    /// 全アプリ（名前順）を配置する。検索すると、名前に入力文字を含むものだけにフィルタされる。
+    /// リストは可視行のみ構築する（アプリは数百個あり、全タイルを毎フレーム構築すると 1 フレームに収まらない）。
     pub(crate) fn apps_page(&mut self, theme: &Theme, cx: &mut Context<Self>) -> Div {
         self.poll_sources();
         let launcher = self.layout_launcher(cx);
         if launcher.rows != self.launcher.rows {
-            // 行が変わったときだけ測り直す（同じなら、見えている行を描き直すだけ）。
+            // 行が変更された場合のみ再計測する（同一なら可視行の再描画のみ）。
             self.list
                 .splice(0..self.launcher.rows.len(), launcher.rows.len());
         }
@@ -174,7 +174,7 @@ impl Screen {
         )
     }
 
-    /// ランチャーの行とタイルを、今の一覧と検索から決める（要素は作らない。描くのは見えている行だけ）。
+    /// ランチャーの行とタイルを、現在の一覧と検索クエリから決定する（要素は生成しない。描画は可視行のみ）。
     fn layout_launcher(&self, cx: &App) -> Launcher {
         let query = self.query.trim().to_lowercase();
         let matches = |name: &str| query.is_empty() || name.to_lowercase().contains(&query);
@@ -203,7 +203,7 @@ impl Screen {
 
         l.rows
             .extend([LauncherRow::Separator, LauncherRow::AllAppsHeader]);
-        // 起動中か（点を付ける）は、ウィンドウの実行ファイル名・名前を一度だけ小文字にして突き合わせる。
+        // 起動中判定（ドット表示）は、ウィンドウの実行ファイル名・名前を 1 回だけ小文字化して照合する。
         let window_exes: HashSet<String> = self
             .sources
             .iter()
@@ -245,9 +245,9 @@ impl Screen {
         l
     }
 
-    /// 起動中のウィンドウを個別に出す。常駐の画面はバーにあるので出さない。
+    /// 起動中のウィンドウを個別に表示する。常駐画面はバーに存在するため除外する。
     fn running_apps(&self, cx: &App) -> Vec<RunningApp> {
-        // 実行ファイル名（小文字・.exe 抜き）→ アプリ。ウィンドウごとに全アプリを探さないよう、先に一度だけ作る。
+        // 実行ファイル名（小文字・.exe 除去）→ アプリのマップ。ウィンドウごとの全アプリ走査を避けるため事前に 1 回だけ構築する。
         let by_exe: std::collections::HashMap<String, &(InstalledApp, Option<Arc<RenderImage>>)> =
             self.apps
                 .iter()
@@ -285,8 +285,8 @@ impl Screen {
         running
     }
 
-    /// ランチャーの `ix` 行目を組み立てる（リストが見えている行だけ呼ぶ）。リストの行は中身の幅に縮むので、
-    /// 幅いっぱいに広げる（見出しのボタンを右端に、区切り線・タイルの格子を端から端まで）。
+    /// ランチャーの `ix` 行目を構築する（リストは可視行のみ呼び出す）。リストの行は内容幅に縮むため、
+    /// 全幅に広げる（見出しのボタンを右端に、区切り線・タイルグリッドを端から端まで）。
     fn launcher_row(
         &mut self,
         ix: usize,
@@ -403,7 +403,7 @@ impl Screen {
         }
     }
 
-    /// アプリ一覧の検索欄。押すと文字を打てる（仮想キーボードが出る）。打っている間は右端に消すボタンを出す。
+    /// アプリ一覧の検索欄。押下すると入力可能になる（仮想キーボードが表示される）。入力中は右端にクリアボタンを表示する。
     fn search_field(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let empty = self.query.is_empty();
         let focus = self.search.clone();
@@ -470,22 +470,22 @@ impl Screen {
     }
 }
 
-/// アプリ一覧のグリッド（アプリは地を敷かないので、タイルより多く並べる）。
+/// アプリ一覧のグリッド（アプリは背景を敷かないため、タイルより多く配置可能）。
 fn app_grid() -> Div {
     div().grid().grid_cols(APP_COLUMNS).gap(px(spacing::XS))
 }
 
-/// アプリ一覧の起動中のウィンドウ。
+/// 起動中ウィンドウの情報。
 struct RunningApp {
     name: String,
     icon: Option<Arc<RenderImage>>,
-    /// 開くウィンドウと、そのアイコン。
+    /// 配信対象ウィンドウのソースとアイコン。
     source: Source,
     window_icon: Option<Arc<RenderImage>>,
 }
 
-/// アプリ一覧のアプリ: アイコン（`icon`）の下に名前（地を敷かず、ホバー・押下だけ色が付く）。起動中・オーバーレイで
-/// 開いているもの（`running`）は、その下に点を付ける。
+/// アプリタイル: アイコン（`icon`）の下に名前（背景なし、ホバー・押下時のみ着色）。起動中またはオーバーレイで
+/// 表示中のもの（`running`）はその下にドットを付与する。
 fn app_tile(
     theme: &Theme,
     id: String,
@@ -499,7 +499,7 @@ fn app_tile(
         .min_w_0()
         .child(icon)
         .child(tile_label(name.to_owned()))
-        // 点が無くても場所は取り、アイコンと名前の高さをそろえる。
+        // ドットが無くてもスペースを確保し、アイコンと名前の高さを揃える。
         .child(
             div()
                 .debug_selector(|| "dashboard-running-dot".into())

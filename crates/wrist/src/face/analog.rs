@@ -1,12 +1,12 @@
-//! アナログの文字盤: 針で時刻を指す。デザインごとに、題材にした時計（素っ気ない時計・ドレスウォッチ・駅の時計）が違う。
-//! どれも秒針と中心の軸は塗りの色。日付は 6 時の側に小さく出す。
+//! アナログ文字盤: 針で時刻を示す。デザインごとに題材とした時計（シンプルな時計・ドレスウォッチ・駅の時計）が異なる。
+//! いずれも秒針と中心の軸はアクセントカラー。日付は 6 時側に小さく表示する。
 
 use design::{font, font_size};
 use gpui::{Div, prelude::*, rgba};
 
 use super::{BASE, Face};
 
-/// 6 時の側（中心と目盛りの間）の、控えめな色の日付。
+/// 6 時側（中心と目盛りの間）の、控えめな色の日付。
 fn date(f: &Face) -> Div {
     f.date()
         .absolute()
@@ -15,7 +15,7 @@ fn date(f: &Face) -> Div {
         .text_color(rgba(f.theme.neutral_text_low))
 }
 
-/// ミニマル: 12 の短い目盛りと、端の丸い針だけ。
+/// ミニマル: 12 本の短い目盛りと、先端の丸い針のみ。
 pub fn minimal(f: &Face) -> Div {
     let t = f.theme;
     let (ink, low, accent) = (t.neutral_text, t.neutral_text_low, t.accent_solid);
@@ -27,14 +27,14 @@ pub fn minimal(f: &Face) -> Div {
         }
         pen.rounded_spoke(hour, 0.0, 0.48, 12.0, ink);
         pen.rounded_spoke(minute, 0.0, 0.72, 8.0, ink);
-        // 秒針は反対側へ少し伸ばし、軸で留める。
+        // 秒針は反対側へ少し延長し、中心軸で固定する。
         pen.rounded_spoke(second, -0.16, 0.8, 3.0, accent);
         pen.disc(0.0, 0.0, 8.0, accent);
     });
     f.frame().child(date(f)).child(hands)
 }
 
-/// ドレス: セリフのローマ数字（12・3・6・9）と、細い目盛り・細い針。
+/// ドレス: セリフ体のローマ数字（12・3・6・9）と、細い目盛り・細い針。
 pub fn dress(f: &Face) -> Div {
     let t = f.theme;
     let (ink, low, accent) = (t.neutral_text, t.neutral_text_low, t.accent_solid);
@@ -46,7 +46,7 @@ pub fn dress(f: &Face) -> Div {
     });
     let hands = f.paint(move |pen| {
         for i in 0..60 {
-            // 数字のある所には目盛りを引かない。
+            // 数字のある位置には目盛りを描画しない。
             if i % 15 != 0 {
                 let (from, width) = if i % 5 == 0 { (0.82, 2.5) } else { (0.89, 1.5) };
                 pen.spoke(i as f32 / 60.0, from, 0.92, width, low);
@@ -63,7 +63,7 @@ pub fn dress(f: &Face) -> Div {
         .child(hands)
 }
 
-/// 鉄道時計: 駅の時計のような太い目盛りと、まっすぐな太い針。秒針の先に円が付く。
+/// 鉄道時計: 駅の時計のような太い目盛りと、直線の太い針。秒針の先端に円が付く。
 pub fn railway(f: &Face) -> Div {
     let t = f.theme;
     let (ink, accent) = (t.neutral_text, t.accent_solid);

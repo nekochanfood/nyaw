@@ -1,4 +1,4 @@
-//! OS の取得・注入を使わず、上位層から本番と同じ受け渡しを検証する。
+//! OS のキャプチャ・入力注入を使わず、上位層から本番と同一のインターフェースで検証する。
 use super::*;
 
 pub fn source(name: &str, kind: SourceKind) -> Source {
@@ -28,7 +28,7 @@ pub fn stream() -> (Stream, Controller) {
     stream_of(None)
 }
 
-/// ウィンドウ `window` を映している配信（[`Stream::window`]）。
+/// ウィンドウ `window` をキャプチャしているストリーム（[`Stream::window`]）。
 pub fn window_stream(window: u64) -> (Stream, Controller) {
     stream_of(Some(window))
 }
@@ -62,7 +62,7 @@ impl Controller {
     pub fn publish(&self, update: Update) {
         *self.update.lock().unwrap() = Some(update);
     }
-    /// OS のカーソルが変わったことにする（[`Stream::cursor`]）。
+    /// OS カーソルが変更されたことを通知する（[`Stream::cursor`]）。
     pub fn set_cursor(&self, cursor: Option<Cursor>) {
         *self.cursor.lock().unwrap() = cursor.map(Arc::new);
     }
@@ -93,7 +93,7 @@ impl Controller {
             })
             .collect()
     }
-    /// 前に出すよう頼まれた回数（[`Stream::focus`]）。
+    /// フォーカス要求を受けた回数（[`Stream::focus`]）。
     pub fn focuses(&self) -> usize {
         self.input
             .try_iter()
@@ -109,7 +109,7 @@ impl Controller {
     pub fn stopped(&self) -> bool {
         self.stop.load(Ordering::Acquire)
     }
-    /// 取得を止めるよう頼まれているか（[`Stream::set_paused`]）。
+    /// キャプチャの一時停止が要求されているか（[`Stream::set_paused`]）。
     pub fn paused(&self) -> bool {
         self.paused.load(Ordering::Acquire)
     }

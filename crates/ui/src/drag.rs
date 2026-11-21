@@ -1,15 +1,15 @@
-//! ドラッグの見た目（[`DragPreview`]）を、押している手のドラッグ用のパネルにだけ描く。
+//! ドラッグプレビュー（[`DragPreview`]）を、押下中の手のドラッグ専用パネルにのみ描画する。
 
 use super::*;
 
-/// ドラッグの見た目を描くウィンドウ（[`Pointer::Drag`] のパネル）。無ければ（novr）どのウィンドウでも描く。
+/// ドラッグプレビューの描画先ウィンドウ（[`Pointer::Drag`] パネル）。未設定時（novr）は全ウィンドウで描画する。
 #[derive(Default)]
 pub(crate) struct DragWindows(pub(crate) Vec<AnyWindowHandle>);
 
 impl gpui::Global for DragWindows {}
 
-/// ドラッグ中の見た目（`on_drag` が返すビュー）を包む。GPUI はこれをどのウィンドウにもマウス位置に描くが、
-/// VR ではカーソル側のウィンドウ（[`Pointer::Drag`]）だけに描く。パネルの外へ出てもウィンドウをまたいで見える。
+/// ドラッグ中のビュー（`on_drag` の返り値）を包むラッパー。GPUI は全ウィンドウにマウス位置で描画するが、
+/// VR ではカーソル側のウィンドウ（[`Pointer::Drag`]）のみに描画する。パネル外でもウィンドウ間で可視。
 pub struct DragPreview(AnyView);
 
 /// `.on_drag(value, |_, _, _, cx| ui::drag_preview(cx, MyPreview))` のように使う。
@@ -28,8 +28,8 @@ impl Render for DragPreview {
     }
 }
 
-/// `panel` で始まったドラッグの見た目を、押している手の [`Pointer::Drag`] のパネルに出す。
-/// 大きさは元のパネルと同じ縮尺（1m あたりのピクセル）にする。
+/// `panel` で開始されたドラッグのプレビューを、押下中の手の [`Pointer::Drag`] パネルに表示する。
+/// サイズは元パネルと同一縮尺（1m あたりのピクセル数）に合わせる。
 pub(crate) fn start_drag(
     kernel: &mut Kernel,
     bridges: &HashMap<(PanelId, Hand), PointerBridge>,

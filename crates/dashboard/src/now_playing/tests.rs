@@ -1,9 +1,9 @@
 use super::*;
 use crate::test_util::*;
-// `ui::commands`（親から）ではなくテストの道具の方。
+// `ui::commands`（親モジュール由来）ではなくテストユーティリティ側。
 use crate::test_util::commands;
 
-/// 再生中の画面: 曲と位置・長さを出し、操作ボタンとシークバーはカーネルへの操作を積む。
+/// 再生中画面: 曲名・再生位置・長さを表示し、操作ボタンとシークバーはカーネルへのコマンドを発行する。
 #[gpui::test]
 fn now_playing_screen_shows_the_song_and_sends_commands(cx: &mut TestAppContext) {
     let (_screen, cx) = cx.add_window_view(|_, cx| {
@@ -15,7 +15,7 @@ fn now_playing_screen_shows_the_song_and_sends_commands(cx: &mut TestAppContext)
     assert!(cx.debug_bounds("now-playing-position").is_some());
     click(cx, "now-playing-play-pause");
     click(cx, "now-playing-next");
-    // 前へはできないので、押しても何も積まない。
+    // 前へは無効のため、押下してもコマンドは発行されない。
     click(cx, "now-playing-previous");
     assert_eq!(
         commands(cx, 2),
@@ -24,7 +24,7 @@ fn now_playing_screen_shows_the_song_and_sends_commands(cx: &mut TestAppContext)
             PanelCommand::Media(media::Command::Next),
         ]
     );
-    // シークバーの右端近くを押すと、曲の終わり近くへ移る。
+    // シークバーの右端付近を押下すると、曲の終盤付近へシークする。
     let bar = cx.debug_bounds("now-playing-seek").unwrap();
     let at = gpui::point(bar.right() - px(1.0), bar.center().y);
     cx.simulate_click(at, Modifiers::none());
@@ -34,7 +34,7 @@ fn now_playing_screen_shows_the_song_and_sends_commands(cx: &mut TestAppContext)
     );
 }
 
-/// メディアが 1 つなら切り替えを出さず、複数なら右上の前後のボタンで切り替えを積む。
+/// メディアセッションが 1 つなら切り替えボタンを非表示にし、複数なら右上の前後ボタンで切り替えコマンドを発行する。
 #[gpui::test]
 fn media_switch_shows_only_with_several_sessions(cx: &mut TestAppContext) {
     let (screen, cx) = cx.add_window_view(|_, cx| {

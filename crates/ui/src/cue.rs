@@ -1,4 +1,4 @@
-//! 部品の効果音の要求（`design::cue`）を、そのパネルのスピーカーへ渡す。種類ごとの音はここ一箇所で決める。
+//! 部品の効果音要求（`design::cue`）をパネルのスピーカーへ転送する。種類ごとの音はここで一元管理する。
 
 use design::cue::Cue;
 use gpui::{App, Window};
@@ -6,7 +6,7 @@ use kernel::{PanelCommand, PanelId, Vec2, audio::Sound};
 
 use crate::PanelControl;
 
-/// 種類ごとの音と速さ（1 = そのまま）。
+/// 効果音の種類に対応する音声データと再生速度（1.0 = 等速）。
 fn sound(cue: Cue) -> (&'static [u8], f32) {
     match cue {
         Cue::Hover => (include_bytes!("../assets/pointer/hover.wav"), 1.),
@@ -14,7 +14,7 @@ fn sound(cue: Cue) -> (&'static [u8], f32) {
     }
 }
 
-/// 全体の設定（タップ音・ホバー音）で鳴らすか。
+/// 全体設定（タップ音・ホバー音）に基づく有効判定。
 fn enabled(cue: Cue, settings: &kernel::Settings) -> bool {
     match cue {
         Cue::Hover => settings.hover_sound,
@@ -22,8 +22,8 @@ fn enabled(cue: Cue, settings: &kernel::Settings) -> bool {
     }
 }
 
-/// 入力を配送した直後に呼ぶ。`window` 宛ての要求を、ポインタの点から聞こえるよう `panel` の操作要求に積む。
-/// 全体の設定で切っている種類は捨てる。
+/// 入力配送直後に呼び出す。`window` 宛ての効果音要求を、ポインタ位置を音源として `panel` の操作要求にキューイングする。
+/// 全体設定で無効化されている種類は破棄する。
 pub(crate) fn flush(panel: PanelId, window: &Window, cx: &mut App) {
     let settings = crate::settings(cx);
     let cues = design::cue::take(window, cx);
@@ -65,8 +65,8 @@ mod tests {
         assert!(!enabled(Cue::Hover, &hover_off) && enabled(Cue::Click, &hover_off));
     }
 
-    /// 押せるカードの中のボタンは、入ったときに 1 回だけ鳴る（ポインタを動かし続けても鳴り直さない）。カードの地へ
-    /// 戻れば、カードの分がまた鳴る。
+    /// 押下可能なカード内のボタンは、ポインタ進入時に 1 回だけ鳴る（ポインタの移動を続けても再発音しない）。
+    /// カードの背景へ戻ると、カードのホバー音が再度鳴る。
     #[gpui::test]
     fn a_button_inside_a_card_sounds_once_per_entry(cx: &mut gpui::TestAppContext) {
         use design::components::{self, Variant};
@@ -88,7 +88,7 @@ mod tests {
         let card = cx.debug_bounds("card").unwrap();
         let inner = cx.debug_bounds("inner").unwrap().center();
         let hovers = |cx: &mut gpui::VisualTestContext, at: gpui::Point<gpui::Pixels>| {
-            // 同じ種類の音は続けて鳴らさない（`Cue::min_gap`）ので、その分だけ時計を進めてから動かす。
+            // 同一種類の音は連続再生しない（`Cue::min_gap`）ため、その間隔分だけ時計を進めてから操作する。
             design::drive::advance(std::time::Duration::from_millis(100));
             cx.update(|window, cx| {
                 let input = PlatformInput::MouseMove(MouseMoveEvent {
@@ -106,14 +106,14 @@ mod tests {
             })
         };
         let body = card.bottom_right() - point(px(20.0), px(20.0));
-        assert_eq!(hovers(cx, body), 1, "カードに入った");
-        assert_eq!(hovers(cx, inner), 1, "中のボタンに入った");
+        assert_eq!(hovers(cx, body), 1, "カードへ進入");
+        assert_eq!(hovers(cx, inner), 1, "内部ボタンへ進入");
         assert_eq!(
             hovers(cx, inner + point(px(2.0), px(0.0))),
             0,
-            "ボタンの上で動かしても鳴り直さない"
+            "ボタン上の移動では再発音しない"
         );
         assert_eq!(hovers(cx, inner + point(px(4.0), px(0.0))), 0);
-        assert_eq!(hovers(cx, body), 1, "カードの地へ戻った");
+        assert_eq!(hovers(cx, body), 1, "カード背景へ復帰");
     }
 }

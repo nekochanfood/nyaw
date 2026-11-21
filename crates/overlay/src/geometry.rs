@@ -1,20 +1,20 @@
-//! 置き場所の計算の小さな道具: 取り付けの基準・近づき方・向き・面との交差。
+//! 配置計算ユーティリティ: アンカー方向・補間・向き・面との交差判定。
 
 use super::*;
 
-/// ツールチップの向きを変える目安: 頭から見た手の方向が、パネルの上下へ水平からこれ（sin。約 12°）より傾いたら切り替える。
-/// 間は前の向きのまま（水平近くで行ったり来たりしないように）。
-// ponytail: 固定の幅。切り替わりが敏感・鈍いと感じたらここを調整する。
+/// ツールチップ方向切替の閾値: 頭から見た手の方向がパネル上下へ水平からこの値（sin。約 12°）を超えると切り替わる。
+/// ヒステリシス帯域内は前の方向を維持（水平付近での往復を防止）。
+// ponytail: 固定の閾値。切り替わりが敏感・鈍ければここを調整する。
 const ANCHOR_BAND: f32 = 0.2;
 
-/// 頭 `eye` から点 `point` を見たとき、手 `hand` がパネルの上 `up` に対して上下どちらに見えるかでツールチップの向きを決める。
-/// 手が下に見えれば（レーザーは下から来る）下に、上に見えれば上に出す（手の側）。どちらとも言えなければ `prev` のまま。
+/// 頭 `eye` から `point` を見て、手 `hand` がパネルの上 `up` に対し上下どちらにあるかでツールチップ方向を決定する。
+/// 手が下（レーザーが下から入射）なら下に、上なら上に配置する。不明確なら `prev` を維持。
 pub(crate) fn anchor(prev: Anchor, eye: Vec3, hand: Vec3, point: Vec3, up: Vec3) -> Anchor {
     let view = (point - eye).normalize_or_zero();
     let flat = |v: Vec3| v - view * v.dot(view);
     let (hand, up) = (flat(hand - point), flat(up).normalize_or_zero());
     let len = hand.length();
-    // 手が視線の上にある（novr のように目から指す）と、レーザーは点にしか見えない。
+    // 手が視線上にある（novr のように目から指す場合）と、レーザーは点にしか見えない。
     if len < 1e-4 {
         return prev;
     }
@@ -28,7 +28,7 @@ pub(crate) fn anchor(prev: Anchor, eye: Vec3, hand: Vec3, point: Vec3, up: Vec3)
     }
 }
 
-/// `from` から `to` へ、経過 `dt` 秒の分（[`SMOOTH`]）だけ近づける。十分近ければ `to`。
+/// `from` から `to` へ経過 `dt` 秒分（[`SMOOTH`]）だけ補間する。十分近ければ `to` にスナップ。
 pub(crate) fn approach(from: Pose, to: Pose, dt: f32) -> Pose {
     if from.position.distance(to.position) < SNAP
         && from.orientation.angle_between(to.orientation) < SNAP
@@ -42,8 +42,8 @@ pub(crate) fn approach(from: Pose, to: Pose, dt: f32) -> Pose {
     )
 }
 
-/// パネルの地の縁と、クアッドの縁の間（m。影の余白）。
-// ponytail: 配信中（`capture`）は絵を窓いっぱいに送り、影の余白が無い。余白の無い中身がほかにも出たら、パネルに余白の有無を持たせる。
+/// パネル面の縁とクアッドの縁の間隔（m。シャドウマージン）。
+// ponytail: キャプチャ中は全面描画でマージンなし。マージンなしのケースが他にも出たらパネルにフラグを持たせる。
 pub(crate) fn face_margin(p: &Panel) -> f32 {
     if p.capture {
         0.0
@@ -52,14 +52,14 @@ pub(crate) fn face_margin(p: &Panel) -> f32 {
     }
 }
 
-/// `at` に置いて表面（+Z）を `eye` に向け、上（+Y）を `up` に寄せた向き。`up` と視線が平行なら `None`。
+/// `at` に配置し表面（+Z）を `eye` に向け、上（+Y）を `up` に近づけた回転。`up` と視線が平行なら `None`。
 pub(crate) fn facing(at: Vec3, eye: Vec3, up: Vec3) -> Option<Quat> {
     let z = (eye - at).try_normalize()?;
     let x = up.cross(z).try_normalize()?;
     Some(Quat::from_mat3(&Mat3::from_cols(x, z.cross(x), z)))
 }
 
-/// レイ（aim の前方）とパネルの表面（+Z 側）の交差判定。ヒットしたピクセルとレイ上の距離を返す。裏からは当たらない。
+/// レイ（aim の前方）とパネル表面（+Z 側）の交差判定。ヒットピクセルとレイ上の距離を返す。裏面からはヒットしない。
 pub(crate) fn hit_test(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
     if aim.forward().dot(p.pose.orientation * Vec3::Z) >= 0.0 {
         return None;
@@ -69,7 +69,7 @@ pub(crate) fn hit_test(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
     ((0.0..=w).contains(&px.x) && (0.0..=h).contains(&px.y)).then_some((px, t))
 }
 
-/// レイとパネルを含む平面の交点（パネルの外でもよい）のピクセル座標とレイ上の距離。レイが面と平行か後ろなら `None`。
+/// レイとパネルを含む平面の交点（パネル外も含む）のピクセル座標とレイ上の距離。レイが面と平行または後方なら `None`。
 pub(crate) fn plane_hit(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
     let normal = p.pose.orientation * Vec3::Z;
     let dir = aim.forward();
@@ -90,8 +90,8 @@ pub(crate) fn plane_hit(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
     ))
 }
 
-/// 等倍のつもりで決めた姿勢 `pose` と掴む基準 `anchor`（パネルから見た姿勢。等倍）から、UI スケール `scale` のときの
-/// パネルの姿勢を返す。基準の置き場所は変えず、パネルの中心が基準から `scale` 倍だけ離れる（組が基準を中心に相似に大きくなる）。
+/// 等倍設計の姿勢 `pose` とグラブ基準 `anchor`（パネルローカル姿勢。等倍）から、UI スケール `scale` 適用時の
+/// パネル姿勢を返す。基準の配置は不変で、パネル中心が基準から `scale` 倍離れる（基準中心の相似拡大）。
 pub fn anchored(pose: Pose, anchor: Pose, scale: f32) -> Pose {
     pose * anchor * Pose::new(anchor.position * scale, anchor.orientation).inverse()
 }

@@ -11,17 +11,17 @@ fn laser_rot_lays_texture_along_aim_facing_up() {
 fn tooltip_goes_on_the_hand_side_as_seen_from_the_head() {
     let (point, up) = (Vec3::new(0.0, 1.5, -1.0), Vec3::Y);
     let eye = Vec3::new(0.0, 1.6, 0.0);
-    // 右手を腰の高さで構え、上から見下ろす: レーザーは下から来るので下。
+    // 右手を腰の高さに構え上から見下ろす。レーザーは下方から入射するため Below。
     let low = Vec3::new(0.3, 1.0, -0.3);
     assert_eq!(anchor(Anchor::Above, eye, low, point, up), Anchor::Below);
-    // 手を頭より高く掲げて見上げる: 上。
+    // 手を頭より高く掲げて見上げる。Above。
     let high = Vec3::new(0.3, 2.2, -0.3);
     assert_eq!(anchor(Anchor::Below, eye, high, point, up), Anchor::Above);
-    // 手が真横（水平近く）なら前の向きのまま。
+    // 手がほぼ水平の場合は前回の向きを維持する。
     let side = Vec3::new(0.6, 1.5, -0.6);
     assert_eq!(anchor(Anchor::Below, eye, side, point, up), Anchor::Below);
     assert_eq!(anchor(Anchor::Above, eye, side, point, up), Anchor::Above);
-    // 目から指す（novr）: レーザーが見えないので前のまま。
+    // 目の位置から指す（novr）場合はレーザーが不可視のため前回を維持する。
     assert_eq!(anchor(Anchor::Below, eye, eye, point, up), Anchor::Below);
 }
 
@@ -38,7 +38,7 @@ fn tooltip_follows_the_cursor_in_front_of_it() {
         )
         .unwrap();
     ov.set_pointer(&mut vr.backend, tip, Hand::Right, Pointer::Tooltip);
-    // 手を目より下に置いて正面のパネルを指す。
+    // 手を目より下に配置し正面のパネルを指す。
     controller(
         &mut vr,
         Pose::new(Vec3::new(0.0, -0.4, 0.0), Quat::IDENTITY),
@@ -47,14 +47,14 @@ fn tooltip_follows_the_cursor_in_front_of_it() {
     ov.tick(&mut vr);
     let (c, t) = (&vr.backend.overlays[cursor], &vr.backend.overlays[tip]);
     assert!(t.visible && c.visible);
-    assert!((t.width_m - c.width_m).abs() < 1e-5, "同じ縮尺");
+    assert!((t.width_m - c.width_m).abs() < 1e-5, "カーソルと同一縮尺");
     let (pc, pt) = (ov.panel(cursor).pose.position, ov.panel(tip).pose.position);
     assert!((pc.x - pt.x).abs() < 1e-5 && (pc.y - pt.y).abs() < 1e-5);
     assert!(pt.z > pc.z, "カーソルより手前");
     assert_eq!(ov.tooltip_anchor(Hand::Right), Anchor::Below);
 }
 
-/// OS のカーソルを持つパネルを指すと、カーソルの代わりにその絵をホットスポットに合わせ、最近傍で拡大して出す。
+/// OS カーソルを持つパネルを指すとカーソルに代えて OS カーソル画像をホットスポット基準で最近傍拡大して表示する。
 #[test]
 fn os_cursor_replaces_the_cursor_at_its_hotspot() {
     let (mut vr, mut ov, _, cursor) = with_pointers();
@@ -70,7 +70,7 @@ fn os_cursor_replaces_the_cursor_at_its_hotspot() {
         image,
         hotspot: (0, 0),
     });
-    // OS のカーソルを持たない手（左）が指すと、nyaw のカーソルのまま。
+    // OS カーソルを持たない手（左）が指す場合、nyaw カーソルのまま。
     ov.set_os_cursor(0, Some((Hand::Left, image.clone())));
     controller(&mut vr, Pose::IDENTITY, &[]);
     ov.tick(&mut vr);
@@ -79,7 +79,7 @@ fn os_cursor_replaces_the_cursor_at_its_hotspot() {
     ov.tick(&mut vr);
     assert!(!vr.backend.overlays[cursor].visible);
     let os = vr.backend.overlays.last().unwrap();
-    // パネルは 1m / 100px。面はホットスポットを中心にした 4px 四方で、中心がヒット点。
+    // パネルは 1m/100px。面はホットスポット中心の 4px 四方で、中心がヒット点。
     let px = 0.01;
     assert!(os.visible && (os.width_m - 4.0 * px).abs() < 1e-6);
     assert!(
@@ -87,13 +87,13 @@ fn os_cursor_replaces_the_cursor_at_its_hotspot() {
             .position
             .abs_diff_eq(Vec3::new(0.0, 0.0, -1.0 + CURSOR_LIFT), 1e-5)
     );
-    // 1px を 128 倍に。ホットスポット（左上の画素の角）がテクスチャの中心に来る。
+    // 1px を 128 倍に拡大。ホットスポット（左上画素の角）がテクスチャ中心に配置される。
     let t = os.texture.as_ref().unwrap();
     assert_eq!((t.width, t.height), (512, 512));
     let at = |x: usize, y: usize| &t.rgba[(y * 512 + x) * 4..][..4];
     assert_eq!((at(256, 256), at(383, 383)), (&red[..], &red[..]));
     assert_eq!((at(255, 256), at(384, 256)), (&[0; 4][..], &[0; 4][..]));
-    // 形が変わっても（ホットスポットが違っても）置き場所と大きさは変わらない。
+    // 形状が変わっても（ホットスポット位置が異なっても）位置とサイズは不変。
     let before = (os.pose, os.width_m);
     let image = subsystems::desktop::Icon {
         width: 2,
@@ -119,7 +119,7 @@ fn os_cursor_replaces_the_cursor_at_its_hotspot() {
     assert!(!vr.backend.overlays.last().unwrap().visible);
 }
 
-/// 隠したポインタは最後に出した所（目の前）に残っても見えない扱い（描き直さない）。
+/// 非表示ポインタは最終表示位置に残存しても不可視扱い（再描画しない）。
 #[test]
 fn hidden_pointer_is_not_in_view() {
     let (mut vr, mut ov, _, cursor) = with_pointers();
@@ -135,7 +135,7 @@ fn hidden_pointer_is_not_in_view() {
 fn laser_stops_short_of_hit_and_cursor_floats_in_front_of_panel() {
     let (mut vr, mut ov, laser, cursor) = with_pointers();
     controller(&mut vr, Pose::IDENTITY, &[]);
-    // ポインタのパネルはレーザーの手前にあってもヒットしない。
+    // ポインタパネルはレーザー手前にあってもヒット対象外。
     assert_eq!(
         kinds(&ov.tick(&mut vr)),
         [PointerEvent::Move {
@@ -157,14 +157,14 @@ fn laser_stops_short_of_hit_and_cursor_floats_in_front_of_panel() {
             .position
             .abs_diff_eq(Vec3::new(0.0, 0.0, -1.0 + CURSOR_LIFT), 1e-5)
     );
-    // カーソルはパネル（0）とレーザーより手前に描く。
+    // カーソルはパネル（0）およびレーザーより手前に描画する。
     assert!(c.sort > l.sort && l.sort > vr.backend.overlays[0].sort);
 }
 
 #[test]
 fn laser_turns_its_face_to_head_around_its_axis() {
     let (mut vr, mut ov, laser, _) = with_pointers();
-    // 頭がレーザーの右横にある。
+    // 頭がレーザーの右側方にある配置。
     vr.backend.frame.hmd = at(1.0, 0.0, -0.5);
     controller(&mut vr, Pose::IDENTITY, &[]);
     ov.tick(&mut vr);
@@ -179,13 +179,13 @@ fn laser_keeps_its_thickness_and_cursor_its_apparent_size() {
     assert_eq!(vr.backend.overlays[laser].height_m, Some(0.02));
     controller(&mut vr, Pose::IDENTITY, &[]);
     ov.tick(&mut vr);
-    // 頭（原点）から 1m 先のカーソルは 1m 先での大きさ、2m 先なら 2 倍。
+    // 頭（原点）から 1m 先のカーソルは基準サイズ、2m 先なら 2 倍。
     let near = vr.backend.overlays[cursor].width_m;
     assert!((near - 0.02).abs() < 1e-5, "{near}");
     vr.backend.frame.hmd = at(0.0, 0.0, 1.0);
     ov.tick(&mut vr);
     assert!((vr.backend.overlays[cursor].width_m - near * 2.0).abs() < 1e-4);
-    // カーソルの大きさの倍率が掛かる（数でない値は等倍）。
+    // カーソルサイズ倍率が適用される（NaN 等の非数値は等倍扱い）。
     ov.set_cursor_scale(1.5);
     ov.tick(&mut vr);
     assert!((vr.backend.overlays[cursor].width_m - near * 3.0).abs() < 1e-4);
@@ -219,7 +219,7 @@ fn drag_visual_shows_only_while_dragging_at_given_width() {
             .position
             .abs_diff_eq(Vec3::new(0.0, 0.0, -1.0 + DRAG_LIFT), 1e-5)
     );
-    // パネル < ドラッグの見た目 < カーソル。
+    // 描画順: パネル < ドラッグ表示 < カーソル。
     assert!(vr.backend.overlays[0].sort < d.sort && d.sort < vr.backend.overlays[cursor].sort);
     ov.set_drag(Hand::Right, None);
     ov.tick(&mut vr);
@@ -235,7 +235,7 @@ fn missing_panel_hides_laser_and_cursor() {
     controller(&mut vr, at(5.0, 0.0, 0.0), &[]);
     ov.tick(&mut vr);
     assert!(!vr.backend.overlays[laser].visible && !vr.backend.overlays[cursor].visible);
-    // 掴み中はパネルの外を向いていてもレーザーを出す。
+    // グラブ中はパネル外を向いていてもレーザーを表示する。
     controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
     ov.tick(&mut vr);
     controller(&mut vr, at(0.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);

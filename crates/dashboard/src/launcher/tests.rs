@@ -1,10 +1,10 @@
 use super::*;
 use crate::test_util::*;
-// `ui::commands`（親から）ではなくテストの道具の方。
+// `ui::commands`（親モジュール由来）ではなくテストユーティリティ側。
 use crate::test_util::commands;
 
-/// アプリ一覧: 起動中のアプリとすべてのアプリを分けて出し（起動中でもすべてのアプリに出る）、起動中のものを
-/// 見分ける。検索欄に打つと、どちらも名前に含むものだけになり、消すと戻る。
+/// アプリ一覧: 起動中のアプリと全アプリを分離表示し（起動中でも全アプリ側にも表示される）、起動中のものを
+/// 識別する。検索欄に入力すると両方とも名前に一致するもののみに絞られ、クリアで元に戻る。
 #[gpui::test]
 fn apps_list_marks_running_apps_and_filters_by_search(cx: &mut TestAppContext) {
     let (list, cx) = cx.add_window_view(|_, cx| {
@@ -34,10 +34,10 @@ fn apps_list_marks_running_apps_and_filters_by_search(cx: &mut TestAppContext) {
             && cx.debug_bounds("dashboard-app-1").is_some()
     );
     list.read_with(cx, |l, _| {
-        assert!(l.window_for(&l.apps[0].0).is_some(), "Editor は起動中");
+        assert!(l.window_for(&l.apps[0].0).is_some(), "Editor は起動中のはず");
         assert!(
             l.window_for(&l.apps[1].0).is_none(),
-            "Paint は起動していない"
+            "Paint は未起動のはず"
         );
     });
     let search = list.read_with(cx, |l, _| l.search.clone());
@@ -54,8 +54,8 @@ fn apps_list_marks_running_apps_and_filters_by_search(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("dashboard-running-0").is_some());
 }
 
-/// ランチャーの描き直しの重さ（計測。常には流さない: `cargo test -p dashboard --lib launcher_redraw_cost -- --ignored --nocapture`）。
-/// アプリ 450 個・ウィンドウ 30 個で、描き直し 1 回の平均を出す。
+/// ランチャーの再描画コスト計測（通常は実行しない: `cargo test -p dashboard --lib launcher_redraw_cost -- --ignored --nocapture`）。
+/// アプリ 450 個・ウィンドウ 30 個の条件で、1 回の再描画にかかる平均時間を計測する。
 #[gpui::test]
 #[ignore]
 fn launcher_redraw_cost(cx: &mut TestAppContext) {
@@ -94,8 +94,8 @@ fn launcher_redraw_cost(cx: &mut TestAppContext) {
     println!("launcher redraw: {:?} per frame", start.elapsed() / n);
 }
 
-/// 起動していないアプリを開くと、すぐその画面がはまって待ち（名前と「起動しています」）、ウィンドウが出たら
-/// その画面で映し始めてバーに配信のボタンが増える。
+/// 未起動のアプリを開くと、即座にドッキングして待機画面（名前と「起動しています」）を表示し、ウィンドウが出現したら
+/// その画面で配信を開始してバーに配信ボタンが追加される。
 #[gpui::test]
 fn launching_app_opens_a_waiting_screen_that_starts_mirroring(cx: &mut TestAppContext) {
     let bar = cx
@@ -119,11 +119,11 @@ fn launching_app_opens_a_waiting_screen_that_starts_mirroring(cx: &mut TestAppCo
     mcx.run_until_parked();
     assert!(
         mcx.debug_bounds("mirror-waiting").is_some(),
-        "待っている間の中身"
+        "待機中の画面内容が存在するはず"
     );
     assert!(
         take_commands(mcx, 4).iter().any(docked_to_bar),
-        "すぐはまる"
+        "即座にドッキングするはず"
     );
     let mut window = kernel::desktop::mock::source("Editor - file.txt", SourceKind::Window);
     window.app = Some("Editor.exe".into());
@@ -140,7 +140,7 @@ fn launching_app_opens_a_waiting_screen_that_starts_mirroring(cx: &mut TestAppCo
             .map(|s| s.panel)
             .collect::<Vec<_>>()
     });
-    assert_eq!(streams, [4], "バーに配信のボタンが増える");
+    assert_eq!(streams, [4], "バーに配信ボタンが追加されるはず");
     {
         let (_nav, ncx) =
             cx.add_window_view(|window, cx| ui::PanelRoot::new(nav_spec.build(5, window, cx)));
@@ -170,7 +170,7 @@ fn launching_app_opens_a_waiting_screen_that_starts_mirroring(cx: &mut TestAppCo
     }
 }
 
-/// アプリの名前が長くても、タイル（押せる範囲）は列の幅のままで、名前は省略される。
+/// アプリ名が長くても、タイル（クリック可能な領域）は列幅を維持し、名前は省略表示される。
 #[gpui::test]
 fn long_app_names_do_not_widen_tiles(cx: &mut TestAppContext) {
     const LONG_APP: &str =
@@ -197,8 +197,8 @@ fn long_app_names_do_not_widen_tiles(cx: &mut TestAppContext) {
         (long.size.width - short.size.width).abs() <= px(1.0),
         "{long:?} / {short:?}"
     );
-    assert!(short.left() >= long.right(), "隣のタイルに重ならない");
-    // タイルは列の幅（行の幅を列の数で割ったもの）いっぱい。中身の幅に縮まない。
+    assert!(short.left() >= long.right(), "隣のタイルと重ならないはず");
+    // タイルは列幅（行幅を列数で除したもの）いっぱいに広がり、内容の幅に縮小しない。
     let width = cx.update(|window, _| window.viewport_size().width);
     assert!(
         long.size.width * APP_COLUMNS as f32 > width * 0.8,
@@ -216,10 +216,10 @@ fn long_app_names_do_not_widen_tiles(cx: &mut TestAppContext) {
     };
     assert_eq!(tooltip(cx).as_deref(), Some(LONG_APP));
     cx.simulate_mouse_move(short.center(), None, Modifiers::none());
-    assert_eq!(tooltip(cx), None, "省略されないラベルには出さない");
+    assert_eq!(tooltip(cx), None, "省略されないラベルにはツールチップを表示しない");
 }
 
-/// 見出しの行は幅いっぱいで、見出しの文字は左、操作のボタンは右端に離れて並ぶ。
+/// 見出し行は全幅を占め、見出しテキストは左寄せ、操作ボタンは右端に配置される。
 #[gpui::test]
 fn section_buttons_sit_at_the_right_edge(cx: &mut TestAppContext) {
     let (_list, cx) = cx.add_window_view(|_, cx| {
@@ -246,7 +246,7 @@ fn choosing_a_source_docks_its_mirror_without_closing_the_dashboard(cx: &mut Tes
         })
         .root(cx)
         .unwrap();
-    // バーにはまったランチャー（PanelId 2）。
+    // バーにドッキング済みのランチャー（PanelId 2）。
     let (list, cx) = cx.add_window_view(|_, cx| {
         ui::dock(2, cx);
         let mut list = Screen::new(2, Page::Launcher, bar.downgrade(), cx);
@@ -261,7 +261,7 @@ fn choosing_a_source_docks_its_mirror_without_closing_the_dashboard(cx: &mut Tes
     let c = commands(cx, 4);
     assert_eq!(c[0], PanelCommand::Stream(Some(source), DEFAULT_FRAME_RATE));
     assert!(docked_to_bar(&c[1]));
-    // 一覧は入れ替わりに閉じ、ダッシュボードは開いたまま。バーに配信のボタンが増える。
+    // 一覧は入れ替わりにクローズされ、ダッシュボードは開いたまま。バーに配信ボタンが追加される。
     assert!(commands(cx, 2).contains(&PanelCommand::Close));
     assert!(!commands(cx, 1).contains(&PanelCommand::Close));
     let streams = cx.update(|_, cx| {

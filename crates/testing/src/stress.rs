@@ -1,28 +1,28 @@
-//! 上限までパネルを出す・閉じる・ちりばめる・並べる負荷の画面（[`StressTest`]）。
+//! パネルを上限まで生成・閉じる・ランダム配置・グリッド整列するストレステスト画面（[`StressTest`]）。
 
 use super::*;
 
-/// 負荷試験で出すパネルの大きさ（m）。解像度は既定のまま（800 × 600）。
+/// ストレステストで生成するパネルのサイズ（m）。解像度はデフォルト（800 × 600）。
 pub const STRESS_SIZE: Vec2 = Vec2::new(0.3, 0.225);
 
-/// 一度に足す枚数（[`StressTest`] の `stress-add`）。
+/// 1 回の追加で生成する枚数（[`StressTest`] の `stress-add`）。
 pub const STRESS_STEP: usize = 10;
 
-/// 並べるときの列数と間隔（m）、頭からの距離（m）。
+/// グリッド配置の列数と間隔（m）、HMD からの距離（m）。
 const GRID_COLS: usize = 8;
 
 const GRID_GAP: Vec2 = Vec2::new(0.33, 0.255);
 
 const GRID_DISTANCE: f32 = 2.0;
 
-/// 負荷試験の画面（`stress-test`）。[`TestingAnim`]・[`TestingLod`]・[`TestingTransparent`] を順に出す。
-/// `stress-fill` は開いているパネルが上限（[`ui::PanelControl::limit`]: [`ui::MAX_PANELS`] とランタイムの上限の小さい方）
-/// ちょうどになるまで出す。ランタイムがそれより手前で作れなくなれば（OpenVR のほかのアプリの分など）そこで止まり、
-/// 届いた数が `stress-count` に出る。
+/// ストレステスト画面（`stress-test`）。[`TestingAnim`]・[`TestingLod`]・[`TestingTransparent`] を順に生成する。
+/// `stress-fill` は開いているパネルが上限（[`ui::PanelControl::limit`]: [`ui::MAX_PANELS`] とランタイム上限の小さい方）
+/// に達するまで生成する。ランタイムがそれより前に生成不可になった場合（OpenVR の他アプリの占有分等）はそこで停止し、
+/// 到達数が `stress-count` に表示される。
 pub struct StressTest {
-    /// このパネル（出すパネルの開いた元）。
+    /// このパネル（生成するパネルの起動元）。
     panel: PanelId,
-    /// 出したパネル（閉じたものも含む）。ビルド時に積まれる。
+    /// 生成済みパネル（閉じたものを含む）。生成時に追加される。
     spawned: Rc<RefCell<Vec<PanelId>>>,
     rng: u64,
 }
@@ -39,7 +39,7 @@ impl StressTest {
         }
     }
 
-    /// 出したパネルのうち閉じていないもの。
+    /// 生成済みパネルのうち未閉じのもの。
     fn alive(&self, cx: &App) -> Vec<PanelId> {
         let ctl = cx.try_global::<PanelControl>();
         self.spawned
@@ -53,11 +53,11 @@ impl StressTest {
             .collect()
     }
 
-    /// 上限を超えない範囲で、最大 `n` 枚を並べる位置に出す。
+    /// 上限を超えない範囲で、最大 `n` 枚をグリッド位置に生成する。
     fn spawn(&mut self, n: usize, cx: &mut App) {
         let start = self.alive(cx).len();
         let c = cx.default_global::<PanelControl>();
-        // spawns に積んだまま次のフレームを待っている分も数える。
+        // spawns にキューイングされて次フレーム待ちの分もカウントする。
         let room = c.limit.saturating_sub(c.open + c.spawns.len());
         for i in start..start + n.min(room) {
             let ids = self.spawned.clone();
@@ -77,23 +77,23 @@ impl StressTest {
                 }),
             };
             c.spawns.push(
-                // 並べて数えるので、開いた元の手前に重ねず格子に出す。
+                // グリッドで数えるため、起動元の手前に重ねずグリッド位置に配置する。
                 spec.in_view(grid_pose(i))
                     .sized(STRESS_SIZE, (800, 600))
-                    // 負荷を測るための埋め草で、まとめて閉じる（`stress-close`）。バーを付けると開ける数が半分になる。
+                    // 負荷計測用のフィラーパネルで、一括閉じ（`stress-close`）する。ナビバーを付けると生成可能数が半減する。
                     .without_nav_bar(),
             );
         }
     }
 
-    /// 閉じていない出したパネルに、`i` 枚目なら `f(i)` の操作を積む。
+    /// 未閉じの生成済みパネルに、`i` 番目に対して `f(i)` のコマンドをキューイングする。
     fn each(&self, cx: &mut App, mut f: impl FnMut(usize) -> PanelCommand) {
         for (i, id) in self.alive(cx).into_iter().enumerate() {
             ui::command(id, f(i), cx);
         }
     }
 
-    /// xorshift64 で 0〜1。
+    /// xorshift64 で 0〜1 の乱数を生成する。
     fn random(&mut self) -> f32 {
         self.rng ^= self.rng << 13;
         self.rng ^= self.rng >> 7;
@@ -102,7 +102,7 @@ impl StressTest {
     }
 }
 
-/// 並べるときの `i` 枚目の位置（頭から見た相対姿勢）。正面 [`GRID_DISTANCE`] に [`GRID_COLS`] 列で上から下へ。
+/// グリッド配置時の `i` 番目のパネル位置（HMD からの相対姿勢）。正面 [`GRID_DISTANCE`] に [`GRID_COLS`] 列で上から下へ配置。
 pub fn grid_pose(i: usize) -> Pose {
     let (col, row) = ((i % GRID_COLS) as f32, (i / GRID_COLS) as f32);
     Pose::new(
@@ -115,7 +115,7 @@ pub fn grid_pose(i: usize) -> Pose {
     )
 }
 
-/// `p` に置いたパネルが頭（原点）の方を向く姿勢。
+/// 位置 `p` に配置されたパネルが原点（HMD）方向を向く姿勢。
 fn facing_head(p: Vec3) -> Pose {
     Pose::new(p, Quat::from_rotation_y((-p.x).atan2(-p.z)))
 }
@@ -172,7 +172,7 @@ impl Render for StressTest {
                             false,
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
-                            // 左右 ±3m・上下 -1〜1.5m・前方 0.8〜8m（距離がばらけて LOD もばらける）。
+                            // 左右 ±3m、上下 -1〜1.5m、前方 0.8〜8m（距離の分散により LOD も分散する）。
                             let poses: Vec<_> = (0..this.alive(cx).len())
                                 .map(|_| {
                                     facing_head(Vec3::new(

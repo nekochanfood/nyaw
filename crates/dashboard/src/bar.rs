@@ -1,5 +1,5 @@
 //! バー（[`Dashboard`]）: メニュー・クイック設定・再生中・ランチャー・アップデートのボタンと、開いた配信のボタン。
-//! 押すと画面をはめ、もう一度押すと閉じる。配信は溜まっていき、選ぶとはまっていたものは隠して外す。
+//! 押下で画面をドッキングし、再押下でクローズする。配信は蓄積され、選択すると既にドッキング中のものは非表示にして取り外す。
 
 use super::*;
 
@@ -15,10 +15,10 @@ impl Dashboard {
             .detach();
         cx.observe_global::<PanelControl>(Self::follow_placement)
             .detach();
-        // 件数は未読の数。
+        // 件数は未読通知数。
         cx.observe_global::<ui::notification::Read>(|this, cx| ui::notify(this.panel, cx))
             .detach();
-        // トーストのカードを押すと、通知センター（クイック設定の一覧）を開く（隠れていれば出す）。
+        // トーストのカードを押下すると通知センター（クイック設定の一覧）を開く（非表示なら表示する）。
         cx.observe_global::<ui::notification::Center>(Self::open_center)
             .detach();
         cx.observe_global::<PanelControl>(|this, cx| {
@@ -28,8 +28,8 @@ impl Dashboard {
             }
         })
         .detach();
-        // 新しいリリースがあるかは起動時と、常駐して開きっぱなしでも分かるよう周期で確かめる（あればバーにボタンが出る。
-        // 入れるのはユーザーが選んだときだけ）。開発中のビルドとテストは確かめない（設定から押せる）。
+        // 新規リリースの有無は起動時と、常駐して開いたままでも検知できるよう定期的に確認する（あればバーにボタンを表示。
+        // インストールはユーザーの明示的な操作のみ）。開発ビルドとテストでは確認しない（設定から手動で実行可能）。
         cx.observe_global::<updater::Updater>(|this, cx| ui::notify(this.panel, cx))
             .detach();
         if !cfg!(debug_assertions) {
@@ -40,7 +40,7 @@ impl Dashboard {
             })
             .detach();
         }
-        // アプリ一覧は取得に数秒かかるので、起動時に読んでおく（ランチャーを開いたときにはもう出せる）。
+        // アプリ一覧の取得には数秒かかるため、起動時に事前取得する（ランチャー表示時に即座に使用可能にする）。
         let fetch = fetch_apps(cx);
         cx.spawn(async move |_, cx| match fetch.await {
             Ok(apps) => {
@@ -53,8 +53,8 @@ impl Dashboard {
             Err(e) => logger::warn!("cannot list installed apps", error = e),
         })
         .detach();
-        // 画面（モニター）の一覧が届いたら、すべて配信として開いておく。隠している間は描かないので、描画とは別に待つ。
-        // テストでは読まない（OS の一覧が届く時刻がテストの待ち合わせと競合し、配信が開くかどうかが毎回変わる）。
+        // モニター一覧の取得完了後、すべてを配信として事前に開く。非表示中は描画しないため、描画とは別に待機する。
+        // テストでは取得しない（OS 一覧の到着タイミングがテストの同期と競合し、配信の開閉状態が非決定的になる）。
         let preload = if cfg!(test) {
             None
         } else {
@@ -101,8 +101,8 @@ impl Dashboard {
         }
     }
 
-    /// 通知センターを開いてほしいと頼まれたら（トーストのカードを押した）、ダッシュボードを出して一覧をはめる。
-    /// ロックダウン中は開かない。
+    /// 通知センターの開閉要求（トーストのカード押下）を処理する。ダッシュボードを表示して一覧をドッキングする。
+    /// ロックダウン中は無視する。
     fn open_center(&mut self, cx: &mut Context<Self>) {
         let asked = cx.global::<ui::notification::Center>().asked;
         if asked == self.center_asked {
@@ -113,7 +113,7 @@ impl Dashboard {
             return;
         }
         if self.hidden(cx) {
-            // 出るのは次のフレームで、隠れている間ははめられない（開いた画面が浮いたままになる）。出てからはめる。
+            // 表示は次フレームで行われ、非表示中はドッキングできない（画面が浮いたままになる）。表示後にドッキングする。
             show(self.panel, cx);
             self.center_waiting = true;
             return;
@@ -121,7 +121,7 @@ impl Dashboard {
         self.dock_center(cx);
     }
 
-    /// 通知センター（クイック設定）をはめる（もうはまっていれば閉じない）。
+    /// 通知センター（クイック設定）をドッキングする（既にドッキング済みの場合は何もしない）。
     fn dock_center(&mut self, cx: &mut Context<Self>) {
         if self.current(cx) != Some(Page::QuickSettings) {
             self.toggle(Page::QuickSettings, cx);
@@ -136,7 +136,7 @@ impl Dashboard {
             .is_some_and(|p| p.status.hidden)
     }
 
-    /// 開いているメニューのポップオーバー（外側を押して閉じていれば `None`）。
+    /// 開いているメニューのポップオーバー（外側押下でクローズ済みなら `None`）。
     fn open_menu(&self, cx: &App) -> Option<PanelId> {
         self.menu.filter(|id| {
             !cx.global::<PanelControl>()
@@ -146,7 +146,7 @@ impl Dashboard {
         })
     }
 
-    /// メニューを開く・閉じる。開いている間にボタンを押すと、外側を押したことになってオーバーレイが閉じる。
+    /// メニューを開閉する。表示中にボタンを押下すると外側押下として扱われ、オーバーレイがクローズする。
     fn toggle_menu(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = self.open_menu(cx) {
             close(id, cx);
@@ -161,7 +161,7 @@ impl Dashboard {
                 }
             })
             .sized(MENU_M, MENU_PX)
-            // バーは中身の幅で中央に置かれ、幅は配信などで変わる。開く今のバーの左端に合わせる。
+            // バーは内容幅で中央配置され、幅は配信等で変動する。現在のバーの左端に合わせて開く。
             .offset(menu_offset(f32::from(self.scroll.bounds().left())))
             .without_resize();
             cx.default_global::<PanelControl>().spawns.push(spec);
@@ -169,7 +169,7 @@ impl Dashboard {
         ui::notify(self.panel, cx);
     }
 
-    /// 配信 `panel` を開いた（はめる・隠すのは開く側。`resident` なら常駐のもので、隠して開いた）。バーにボタンが増える。
+    /// 配信 `panel` を開いた（ドッキング・非表示化は呼び出し側が行う。`resident` なら常駐配信で、非表示で開いた）。バーにボタンを追加する。
     pub(crate) fn add_stream(
         &mut self,
         panel: PanelId,
@@ -189,8 +189,8 @@ impl Dashboard {
         ui::notify(self.panel, cx);
     }
 
-    /// 画面（モニター）をすべて、常駐の配信として隠して開いておく（バーのボタンで出せる。閉じずにしまう）。
-    /// もう映しているものは開かない。
+    /// すべてのモニターを常駐配信として非表示で事前に開く（バーのボタンで表示可能。クローズせず格納する）。
+    /// 既に配信中のものは開かない。
     fn open_screens(&mut self, mut sources: Vec<Source>, cx: &mut Context<Self>) {
         sources.sort_by(|a, b| a.name.cmp(&b.name));
         for source in sources {
@@ -211,27 +211,27 @@ impl Dashboard {
         }
     }
 
-    /// はまっている配信を、閉じずに隠して外す（ボタンを押せばまた出せる）。配信でなければ何もしない
-    /// （ほかの画面は、次にはめる画面と入れ替わりに閉じる）。
+    /// ドッキング中の配信を、クローズせず非表示にして取り外す（ボタンで再表示可能）。配信でなければ何もしない
+    /// （他の画面は、次にドッキングする画面と入れ替わりにクローズされる）。
     fn stash_docked(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = ui::docked(cx) {
             self.stash(id, cx);
         }
     }
 
-    /// 常駐の配信 `id` をしまう（ナビゲーションバーのしまうボタン）。はまっていても独立させていても、隠してバーに残す。
+    /// 常駐配信 `id` を格納する（ナビゲーションバーの格納ボタン）。ドッキング中でも独立状態でも、非表示にしてバーに残す。
     pub(crate) fn minimize(&mut self, id: PanelId, cx: &mut Context<Self>) {
         self.stash(id, cx);
         ui::notify(self.panel, cx);
     }
 
-    /// 配信 `id` を、閉じずに隠して外す。配信でなければ何もしない。
+    /// 配信 `id` を、クローズせず非表示にして取り外す。配信でなければ何もしない。
     fn stash(&mut self, id: PanelId, cx: &mut Context<Self>) {
         let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) else {
             return;
         };
         stream.stashed = true;
-        // 隠した配信へは打てないので、そこへ打つキーボードも片付ける。
+        // 非表示の配信には入力できないため、その配信向けのキーボードも解除する。
         if cx
             .try_global::<ui::keyboard::InputRouting>()
             .and_then(|r| r.active)
@@ -239,16 +239,16 @@ impl Dashboard {
         {
             ui::keyboard::dismiss_keyboard(cx);
         }
-        // 先に隠してから外す（見えたまま外すと、離れる動きが見えてしまう）。
+        // 先に非表示にしてから取り外す（表示したまま取り外すと、離脱アニメーションが見えてしまう）。
         commands(id, [PanelCommand::Hide(true)], cx);
         ui::undock(id, cx);
     }
 
-    /// 配信 `id` をはめる（はまっていた配信は隠し、ほかの画面は閉じる）。もうはまっていれば隠す。
+    /// 配信 `id` をドッキングする（ドッキング中の配信は非表示化し、他の画面はクローズする）。既にドッキング済みなら非表示化する。
     pub fn toggle_stream(&mut self, id: PanelId, cx: &mut Context<Self>) {
         let previous = ui::docked(cx);
         let docked = previous == Some(id);
-        // 配信から配信へ切り替えるなら、出ている OS キーボードは閉じずに次の配信へ譲る（隠す配信と一緒に片付けない）。
+        // 配信間の切り替え時は、表示中の OS キーボードをクローズせず次の配信に引き渡す（非表示化する配信と一緒に解除しない）。
         if !docked
             && let Some(previous) = previous
             && [previous, id]
@@ -260,10 +260,10 @@ impl Dashboard {
         self.stash_docked(cx);
         if !docked && let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) {
             stream.stashed = false;
-            // 隠したままはめてから出す。先に出すと、隠した時の場所（その後ダッシュボードを動かしていれば遠く）から
-            // はめる場所へ滑って・回って入ってくる。
+            // 非表示のままドッキングしてから表示する。先に表示すると、非表示時の位置（その後ダッシュボードを移動していれば遠方）から
+            // ドッキング位置へスライド・回転して入ってくる。
             ui::dock(id, cx);
-            // 出したウィンドウを OS で前に出す（そのまま操作できるように）。
+            // 配信対象のウィンドウを OS 上で前面化する（そのまま操作できるようにする）。
             commands(
                 id,
                 [
@@ -277,21 +277,21 @@ impl Dashboard {
         ui::notify(self.panel, cx);
     }
 
-    /// 配信 `id` がダッシュボードの配信で、はまっていなければはめる（独立させたものは動かさない）。
+    /// 配信 `id` がダッシュボードの配信で、未ドッキングならドッキングする（独立状態のものは移動しない）。
     pub(crate) fn show_stream(&mut self, id: PanelId, cx: &mut Context<Self>) {
         if ui::docked(cx) != Some(id) && self.streams.iter().any(|s| s.panel == id) {
             self.toggle_stream(id, cx);
         }
     }
 
-    /// 閉じた配信のボタンを消す。独立させたものは残す（ボタンで戻せる）。
+    /// クローズ済み配信のボタンを除去する。独立状態のものは残す（ボタンで復帰可能）。
     fn prune_streams(&mut self, cx: &App) {
         let ctl = cx.global::<PanelControl>();
         self.streams
             .retain(|s| !ctl.panels.get(&s.panel).is_some_and(|p| p.status.closed));
     }
 
-    /// 今はまっている画面。
+    /// 現在ドッキング中の画面。
     pub fn current(&self, cx: &App) -> Option<Page> {
         let docked = ui::docked(cx)?;
         self.pages
@@ -300,7 +300,7 @@ impl Dashboard {
             .map(|&(page, _)| page)
     }
 
-    /// `page` の、閉じていない画面（はまっていても、外して独立させていても）。
+    /// `page` の未クローズ画面（ドッキング中でも、取り外して独立させた状態でも）。
     fn page_panel(&self, page: Page, cx: &App) -> Option<PanelId> {
         let closed = |id: &PanelId| {
             cx.try_global::<PanelControl>()
@@ -313,8 +313,8 @@ impl Dashboard {
             .map(|&(_, id)| id)
     }
 
-    /// `page` の画面をはめる（はまっていた画面は閉じる）。もうはまっていれば閉じる。
-    /// 外して独立させていれば、もう一つ開かずにそれをはめ直す。
+    /// `page` の画面をドッキングする（ドッキング中の画面はクローズする）。既にドッキング済みならクローズする。
+    /// 取り外して独立させた画面が存在すれば、新規に開かずそれを再ドッキングする。
     pub fn toggle(&mut self, page: Page, cx: &mut Context<Self>) {
         if self.current(cx) == Some(page) {
             if let Some(id) = ui::docked(cx) {
@@ -325,7 +325,7 @@ impl Dashboard {
             self.stash_docked(cx);
             ui::dock(id, cx);
         } else {
-            // はまっている配信は閉じずに隠す（ほかの画面は、次の画面と入れ替わりに閉じる）。
+            // ドッキング中の配信はクローズせず非表示化する（他の画面は、次の画面と入れ替わりにクローズする）。
             self.stash_docked(cx);
             let dashboard = cx.weak_entity();
             let opened = Box::new(move |id, cx: &mut App| {
@@ -339,7 +339,7 @@ impl Dashboard {
                 Page::Debug => (self.debug)(self.panel, opened),
                 Page::Settings => (self.settings)(self.panel, opened),
             };
-            // はめる画面は、開いた元（バー）の手前ではなく、はめる場所に合わせて目の前に出す。
+            // ドッキングする画面は、起動元（バー）の手前ではなく、ドッキング位置に合わせて正面に配置する。
             cx.default_global::<PanelControl>()
                 .spawns
                 .push(spec.fit_height(SIZE_M.y).in_view(SCREEN_POSE).dockable());
@@ -347,7 +347,7 @@ impl Dashboard {
         ui::notify(self.panel, cx);
     }
 
-    /// アップデートのボタン: 設定のアップデートを出す（設定がはまっていなければはめる）。
+    /// アップデートボタン: 設定のアップデート画面を表示する（設定が未ドッキングならドッキングする）。
     fn open_update(&mut self, cx: &mut Context<Self>) {
         updater::reveal(cx);
         match ui::docked(cx).filter(|_| self.current(cx) == Some(Page::Settings)) {
@@ -356,8 +356,8 @@ impl Dashboard {
         }
     }
 
-    /// 出ている間に何も無い所（ダッシュボードにも、ほかのパネルにも当たらない所）を押したら隠す。
-    /// フレームループが状態を書き戻すたびに呼ばれるので、変わっていなければ何もしない（書き込むと自分がまた呼ばれる）。
+    /// 表示中にどのパネルにもヒットしない空領域を押下した場合に非表示にする。
+    /// フレームループが状態を書き戻すたびに呼ばれるため、変化がなければ何もしない（書き込むと自身が再度呼ばれる）。
     fn close_on_outside_press(&mut self, cx: &mut Context<Self>) {
         let Some(status) = cx
             .global::<PanelControl>()
@@ -368,16 +368,16 @@ impl Dashboard {
             return;
         };
         let (count, hidden) = (status.outside_press, status.hidden);
-        // 前に見たときも出ていたときだけ。隠している間（出し直したのと同じフレームを含む）に押した分で、
-        // 出した直後に隠さない（開く音だけ鳴って出ない）。
+        // 前回の確認時も表示中だった場合のみ反応。非表示中（再表示と同一フレームを含む）の押下は無視し、
+        // 表示直後に非表示化されるのを防ぐ（開始音だけ再生されて表示されない状態を回避）。
         let seen = self.outside.replace((count, hidden));
         if seen.is_some_and(|(seen, was_hidden)| seen != count && !was_hidden) && !hidden {
             hide(self.panel, cx);
         }
     }
 
-    /// 設定のダッシュボードの距離・高さが変わったら、出ていれば今の目の前に置き直す（隠していれば次に出すとき [`show`] で効く）。
-    /// フレームループが状態を書き戻すたびに呼ばれるので、変わっていなければ何もしない。
+    /// ダッシュボードの距離・高さ設定が変更されたら、表示中であれば現在の正面に再配置する（非表示中なら次回の [`show`] で反映される）。
+    /// フレームループが状態を書き戻すたびに呼ばれるため、変化がなければ何もしない。
     fn follow_placement(&mut self, cx: &mut Context<Self>) {
         let s = ui::settings(cx);
         let now = (s.dashboard_distance, s.dashboard_height);
@@ -391,7 +391,7 @@ impl Dashboard {
         }
     }
 
-    /// `panel` に `page` をはめたことを覚える。
+    /// `panel` に `page` をドッキングした記録を保持する。
     fn track(&mut self, page: Page, panel: PanelId, cx: &mut Context<Self>) {
         self.pages.retain(|&(p, _)| p != page);
         self.pages.push((page, panel));
@@ -403,13 +403,13 @@ fn stream_key(panel: PanelId) -> SharedString {
     format!("dashboard-stream-{panel}").into()
 }
 
-/// バーの最大幅（px）。窓の幅（[`BAR_PX`]）から影の余白を引いたもので、配信などが溜まってこれを超えそうなら、横にスクロールする。
+/// バーの最大幅（px）。ウィンドウ幅（[`BAR_PX`]）からシャドウ余白を差し引いた値。配信等が蓄積してこの幅を超える場合、横スクロールする。
 const MAX_BAR_PX: f32 = BAR_PX.0 as f32 - 2.0 * components::PANEL_MARGIN;
 
 /// 区切り線の自然な幅（線と両脇の余白）。
 const SEPARATOR_W: f32 = 1.0 + 2.0 * spacing::XS;
 
-/// クイック設定のボタンの自然な幅（px）: 左右の余白と時刻、通知があればその件数（鐘の記号と数字の幅 `count`。と隙間）。
+/// クイック設定ボタンの自然幅（px）: 左右の余白＋時刻、通知があれば件数表示（ベルアイコン＋数字幅 `count`＋間隔）を加算。
 fn quick_settings_width(time_width: f32, count: Option<f32>) -> f32 {
     2.0 * spacing::XL
         + time_width
@@ -422,9 +422,9 @@ pub(crate) struct Stream {
     pub(crate) panel: PanelId,
     kind: SourceKind,
     name: SharedString,
-    /// ウィンドウのアプリのアイコン（無ければウィンドウの記号）。
+    /// ウィンドウのアプリアイコン（取得できなければウィンドウアイコンで代替）。
     icon: Option<Arc<RenderImage>>,
-    /// ほかを選んだので隠して外している。
+    /// 他の配信を選択したため非表示にして取り外した状態。
     pub(crate) stashed: bool,
 }
 
@@ -432,7 +432,7 @@ pub(crate) struct Stream {
 const SEPARATOR_PX: f32 = 32.0;
 
 fn separator(theme: &Theme) -> Div {
-    // 丸いボタンどうしは縁が離れていくぶん広く見えるので、まっすぐな線の両脇は少し広く取って、見た目の間隔をそろえる。
+    // 丸いボタン同士は縁が離れるため広く見える。直線の両側のマージンを広めに取り、視覚的な間隔を統一する。
     div()
         .flex_none()
         .mx(px(spacing::XS))
@@ -443,7 +443,7 @@ fn separator(theme: &Theme) -> Div {
 
 impl Render for Dashboard {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // フレームループより先に描くこともあるので、受け渡し口が無ければ作る。
+        // フレームループより先に描画される場合があるため、受け渡し口がなければ生成する。
         cx.default_global::<PanelControl>();
         self.prune_streams(cx);
         let time_width = clock_width(window, font_size::MD);
@@ -454,7 +454,7 @@ impl Render for Dashboard {
             .get(&self.panel)
             .is_some_and(|p| p.status.hidden);
         enter.begin(hidden, now_at);
-        // 左から数えたボタンの順番: メニュー 0・クイック設定 1・再生中・ランチャー・アップデート・区切り線と配信。
+        // ボタンの左からの配置順: メニュー 0・クイック設定 1・再生中・ランチャー・アップデート・区切り線＋配信。
         let streams_now = with_leaving(
             self.streams.clone(),
             &self.prev_streams,
@@ -527,7 +527,7 @@ impl Render for Dashboard {
                 Variant::Default
             }
         };
-        // 時刻の横に、未読の通知の件数（一覧はクイック設定。開けば読んだことになる）。無ければ出さない。
+        // 時刻の横に未読通知の件数を表示する（一覧はクイック設定。開くと既読になる）。0 件なら非表示。
         let count = cx
             .global::<PanelControl>()
             .notifications
@@ -568,7 +568,7 @@ impl Render for Dashboard {
         let now_playing = slide_in(t, components::BUTTON_HEIGHT, now_playing);
         let t = enter.progress(&"dashboard-launcher".into(), 2 + media, now_at);
         let mirror = slide_in(t, components::BUTTON_HEIGHT, mirror);
-        // 新しいリリースがあるときだけ、ランチャーの右に強調色のボタン。押すと設定のアップデートを出す。
+        // 新規リリースがある場合のみ、ランチャーの右に強調色のボタンを表示。押下で設定のアップデート画面を開く。
         let t = if has_update {
             enter.progress(&update_key, 3 + media, now_at)
         } else if update_exit {
@@ -591,7 +591,7 @@ impl Render for Dashboard {
         let menu_t = enter.progress(&"dashboard-menu".into(), 0, now_at);
         let quick_t = enter.progress(&"dashboard-quick-settings".into(), 1, now_at);
         let quick_w = quick_settings_width(f32::from(time_width), count_width);
-        // 区切り線は滑り込まず、透明度と幅だけが変わる。
+        // 区切り線はスライドインせず、透明度と幅のみ変化する。
         let separator_t = if sep_now {
             enter.progress(&sep_key, stream_slot, now_at)
         } else if sep_exit {
@@ -599,7 +599,7 @@ impl Render for Dashboard {
         } else {
             Slide::SHOWN
         };
-        // 出ているボタンが動いている間は、次のフレームも描く。
+        // ボタンのアニメーション中は継続的に再描画する。
         self.enter = enter;
         let scrolling = self.enter.follow_scroll(&self.scroll, now_at);
         if self.enter.finish() || scrolling {
@@ -627,7 +627,7 @@ impl Render for Dashboard {
                 variant(Page::QuickSettings),
             )
             .px(px(spacing::XL))
-            // 数字で幅が変わって落ち着かないので、時刻の幅を固定する。
+            // 数字による幅変動を防ぐため、時刻表示の幅を固定する。
             .child(fixed_clock(time_width))
             .tooltip(i18n::t(cx, "dashboard.quick_settings"))
             .children(count_width.map(|_| {
@@ -641,8 +641,8 @@ impl Render for Dashboard {
             }))
             .on_click(cx.listener(|this, _, _, cx| this.toggle(Page::QuickSettings, cx))),
         );
-        // 左から: メニュー・クイック設定・再生中（何か再生しているときだけ）・ランチャー・アップデート（新しいリリースが
-        // あるときだけ）・区切り線と、開いた配信。
+        // 左から: メニュー・クイック設定・再生中（メディア再生時のみ）・ランチャー・アップデート（新規リリース時のみ）・
+        // 区切り線＋開いた配信。
         let mut items: Vec<AnyElement> = vec![menu.into_any_element(), quick.into_any_element()];
         if self.prev_media {
             items.push(now_playing.into_any_element());
@@ -655,7 +655,7 @@ impl Render for Dashboard {
             items.push(fade_in(separator_t, SEPARATOR_W, separator(&theme)).into_any_element());
         }
         items.extend(streams.into_iter().map(IntoElement::into_any_element));
-        // 窓は固定の幅だが、バーは中身の幅に収めて中央に置く（[`MAX_BAR_PX`] を超えそうなら、そこで頭打ちにして横にスクロール）。
+        // ウィンドウは固定幅だが、バーは内容幅に収めて中央配置する（[`MAX_BAR_PX`] を超える場合は上限固定で横スクロール）。
         div()
             .absolute()
             .inset(px(components::PANEL_MARGIN))

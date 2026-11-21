@@ -1,5 +1,5 @@
-//! 入力（`settings-input`）: 利き手（主に操作する手）・ダッシュボード中のゲーム入力の遮断。
-//! ポインタとキーボードは詳しい画面（`pointer.rs` / `keyboard.rs`）。
+//! 入力（`settings-input`）: 利き手（主操作手）の選択、ダッシュボード表示中のゲーム入力ブロック。
+//! ポインタとキーボードは詳細画面（`pointer.rs` / `keyboard.rs`）に分離。
 
 use design::Theme;
 use design::components;

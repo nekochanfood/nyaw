@@ -1,8 +1,8 @@
 use super::*;
 use kernel::subsystems::notifications::Outgoing;
 
-/// OS の通知を試す画面。押すと Windows に本物の通知を出し（PowerShell の名前で）、届いたものがトースト（HUD → 手首 →
-/// ダッシュボード）とクイック設定の一覧に出る。押すと開くものは、どれもこのリポジトリのページ（確かめてから開く）。
+/// OS 通知のテスト画面。ボタン押下で Windows に実際の通知を送信し（PowerShell 名義）、受信した通知がトースト（HUD → 手首 →
+/// ダッシュボード）とクイック設定の一覧に表示される。リンク先はすべてこのリポジトリのページ（URL を確認してから開く）。
 pub struct NotificationTest {
     panel: PanelId,
 }
@@ -13,11 +13,11 @@ impl NotificationTest {
     }
 }
 
-/// 押すと開くページ。
+/// ボタン押下時に開くページの URL。
 const REPOSITORY: &str = "https://github.com/nekochanfood/nyaw";
 const RELEASES: &str = "https://github.com/nekochanfood/nyaw/releases";
 
-/// テスト用の通知（見出し・本文の i18n のキーと、ボタンを付けるか）。
+/// テスト用の通知を生成する（タイトル・本文の i18n キーと、ボタン付与の有無）。
 fn outgoing(cx: &App, title: &str, body: &str, buttons: bool) -> Outgoing {
     Outgoing {
         title: i18n::t(cx, title).to_string(),
@@ -125,7 +125,7 @@ mod tests {
     use super::*;
     use gpui::{Modifiers, TestAppContext};
 
-    /// 押すと Windows に通知を出すよう頼む（3 件まとめてなら 3 つ）。押すと開くのはウェブのページだけ（アプリは開かない）。
+    /// ボタン押下で Windows への通知送信を要求する（バースト 3 件なら 3 通知）。リンク先は Web ページのみ（アプリは起動しない）。
     #[gpui::test]
     fn buttons_send_test_notifications(cx: &mut TestAppContext) {
         let (_view, cx) = cx.add_window_view(|_, _| NotificationTest::new(4));

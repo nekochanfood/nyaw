@@ -1,6 +1,6 @@
 [package]
 name = "updater"
-description = "アプリの更新: GitHub のリリースから新しいビルドを見つけ、ユーザーが選んだら落としてインストーラーを黙って走らせる"
+description = "アプリの自動更新：GitHub リリースから新しいビルドを検出し、ユーザーの承認後にインストーラーをダウンロードしてサイレント実行する"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -12,10 +12,10 @@ kernel.workspace = true
 logger.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# 落としたインストーラーが GitHub の知らせる SHA-256 のとおりかを確かめる。
+# ダウンロードしたインストーラーの SHA-256 を GitHub 公開値と照合する
 sha2 = "0.10"
 ui.workspace = true
-# リリースの一覧・インストーラーを落とす（rustls なので OS の TLS に依らない）。
+# リリース一覧の取得およびインストーラーのダウンロード（rustls 使用のため OS の TLS に非依存）
 ureq = { version = "3", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]

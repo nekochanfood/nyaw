@@ -15,18 +15,18 @@ pub struct Frame {
     pub rgba: Vec<u8>,
 }
 
-/// ウィンドウを描き直し、画面に出さずにオフスクリーンへ描画して読み戻す。
+/// ウィンドウを再描画し、画面に表示せずにオフスクリーンへ描画して読み戻す。
 /// 大きさはデバイスピクセル（論理サイズ × 拡大率）。
 // ponytail: gpui の `render_to_image` は test-support フィーチャー限定。上流で一般公開されたらフィーチャーを外す。
 pub fn capture(window: &mut Window, cx: &mut App) -> gpui::Result<Frame> {
     window.draw(cx).clear(cx);
     let frame = read_back(window)?;
-    // 読み戻しは 1 回遅れなので、いま描いた絵を受け取る（積んでいなければ返った絵がいまの絵）。
+    // 読み戻しは 1 回遅れのため、いま描画した絵を受け取る（キューイングされていなければ返った絵が現在の絵）。
     Ok(collect(window).unwrap_or(frame))
 }
 
-/// 描き直し済みのシーンを GPU で描画し、読み戻しを積む（[`capture`] の後半。プロファイラが別々に測るため分けてある）。
-/// GPU の完了を待たず、前に積んだ読み戻しの絵（無ければ最後に返した絵）を返す。いま描いた絵は
+/// 再描画済みのシーンを GPU で描画し、読み戻しをキューイングする（[`capture`] の後半。プロファイラが別々に計測するため分離してある）。
+/// GPU の完了を待機せず、前にキューイングした読み戻しの絵（無ければ最後に返した絵）を返す。いま描画した絵は
 /// 次のフレームの [`collect`] か、次の `read_back` で受け取る。
 pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
     let img = window.render_to_image()?;
@@ -37,7 +37,7 @@ pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
     })
 }
 
-/// 前の [`read_back`] で積んだ読み戻しを、描き直さずに受け取る。積んでいなければ `None`。
+/// 前の [`read_back`] でキューイングした読み戻しを、再描画せずに受け取る。キューイングされていなければ `None`。
 pub fn collect(window: &mut Window) -> Option<Frame> {
     #[cfg(windows)]
     let img = gpui_windows::collect_readback(|| window.render_to_image());
@@ -48,8 +48,8 @@ pub fn collect(window: &mut Window) -> Option<Frame> {
     })
 }
 
-/// RGBA（行間に詰め物なし）の画素を GPUI の画像にする（GPUI の画像は BGRA）。画素が大きさに足りなければ `None`。
-/// 画素の並べ替えは画像の大きさに比例して掛かるので、大きな画像はフレームループの外で作る。
+/// RGBA（行間にパディングなし）の画素を GPUI の画像に変換する（GPUI の画像は BGRA）。画素がサイズに不足であれば `None`。
+/// 画素の並べ替えは画像のサイズに比例して要するため、大きな画像はフレームループの外で生成する。
 pub fn render_image(width: u32, height: u32, mut rgba: Vec<u8>) -> Option<Arc<RenderImage>> {
     for pixel in rgba.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
@@ -59,14 +59,14 @@ pub fn render_image(width: u32, height: u32, mut rgba: Vec<u8>) -> Option<Arc<Re
 }
 
 /// 指定された表示方針でウィンドウを開く。Windows の非表示ウィンドウのレンダーターゲットは
-/// 1x1 のまま作られるので、明示的にリサイズして実寸にする（反映は非同期。最初の数フレームは 1x1）。
+/// 1x1 のまま生成されるため、明示的にリサイズして実寸にする（反映は非同期。最初の数フレームは 1x1）。
 pub fn open_window<V: Render>(
     cx: &mut App,
     mut options: WindowOptions,
     resolution: (u32, u32),
     build: impl FnOnce(&mut Window, &mut App) -> Entity<V>,
 ) -> gpui::Result<WindowHandle<V>> {
-    // OS の最小幅に、小さな描画先を広げられないよう枠を持たせない。
+    // OS の最小幅に小さな描画先が拡張されないよう枠を除去する。
     options.kind = gpui::WindowKind::PopUp;
     options.window_min_size = Some(size(px(1.), px(1.)));
     let window = cx.open_window(options, build)?;

@@ -1,16 +1,16 @@
-//! ミラーリング画面（配信を映すパネル）の、映像が出ていないときの表示。
-//! どの状態も、上下左右中央に縦へ「アイコン・タイトル・（あれば）理由・（必要なら）ボタン」。
-//! 読み込み中はスピナー、エラーは X のアイコン、切断に近い状態はコンセントが抜けたアイコン。
-//! ダッシュボードの実物と Testing の確認画面が同じ見た目になるよう、ここに置く。
+//! ミラーリング画面（配信を映すパネル）の、映像非表示時のプレースホルダー。
+//! いずれの状態でも中央に縦方向で「アイコン・タイトル・理由（該当時）・ボタン（必要時）」を配置する。
+//! 読み込み中はスピナー、エラーは X アイコン、切断系の状態はプラグアイコンを表示する。
+//! ダッシュボードと Testing の確認画面で見た目を統一するため、共通モジュールとして配置する。
 
 use design::{Theme, components, icons};
 use gpui::{AnyElement, App, Div, IntoElement, SharedString};
 use kernel::desktop::{Error, Reason, Status};
 
-/// 表示の一辺（px）。スピナーとアイコンはこの枠に収まる。
+/// アイコン表示領域の一辺（px）。スピナーおよびアイコンはこの枠内に収まる。
 pub const ICON_PX: f32 = 48.0;
 
-/// 状態の画面に出すボタン。押したときの処理（映し直す）は呼び出し側が足す。
+/// 状態画面に表示するボタン。押下時の処理（再配信等）は呼び出し側が設定する。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirrorAction {
     Retry,
@@ -36,12 +36,12 @@ impl MirrorAction {
     }
 }
 
-/// ミラーリング画面の状態。
+/// ミラーリング画面の表示状態。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirrorState {
-    /// 起動したアプリのウィンドウを待っている。
+    /// 起動したアプリのウィンドウ出現を待機中。
     Launching,
-    /// 待ったがウィンドウが出なかった。
+    /// 待機したがウィンドウが検出されなかった。
     LaunchFailed,
     Starting,
     Streaming,
@@ -51,7 +51,7 @@ pub enum MirrorState {
 }
 
 impl MirrorState {
-    /// 配信の状態（まだ何も届いていなければ `None`）から。
+    /// 配信の状態（未受信であれば `None`）から変換する。
     pub fn from_status(status: Option<Status>) -> Self {
         match status {
             None | Some(Status::Starting) => Self::Starting,
@@ -62,7 +62,7 @@ impl MirrorState {
         }
     }
 
-    /// この状態で出すボタン。閉じた・失敗は再試行、最小化は最小化を戻して映し直す。
+    /// この状態で表示するボタン。閉じた・失敗時は再試行、最小化時は復元して再配信する。
     pub fn action(&self) -> Option<MirrorAction> {
         match self {
             Self::Closed | Self::Failed(_) => Some(MirrorAction::Retry),
@@ -86,7 +86,7 @@ impl MirrorState {
         )
     }
 
-    /// 失敗の理由（ローカライズ済み）。分類できないものは元のメッセージをそのまま出す。
+    /// 失敗の理由（ローカライズ済み）。分類不能なエラーは元のメッセージをそのまま表示する。
     pub fn reason(&self, cx: &App) -> Option<SharedString> {
         let Self::Failed(error) = self else {
             return None;
@@ -117,7 +117,7 @@ impl MirrorState {
     }
 }
 
-/// `state` の画面。ボタン（再試行など）は呼び出し側が `action` で渡す。
+/// `state` に対応する画面を構築する。ボタン（再試行等）は呼び出し側が `action` で指定する。
 pub fn mirror_screen(
     theme: &Theme,
     state: &MirrorState,

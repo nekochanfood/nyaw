@@ -34,7 +34,7 @@ fn source_nav_bar_has_minimize_beside_close(cx: &mut TestAppContext) {
     assert_eq!(commands, &[PanelCommand::Hide(true), PanelCommand::Close]);
 }
 
-/// 打ちやすい位置に出すパネルは、手の少し上の高さに出し、面は目を重く見つつ手の方へも少し向ける。
+/// タイピング位置に配置するパネルは、手のやや上方に配置し、面は視線を重視しつつ手の方向にも若干傾ける。
 #[test]
 fn typing_panel_sits_just_above_the_hands_and_faces_mostly_the_eyes() {
     let mut kernel =
@@ -63,16 +63,16 @@ fn typing_panel_sits_just_above_the_hands_and_faces_mostly_the_eyes() {
     let normal = pose.orientation * Vec3::Z;
     let aim = eye.lerp(hands, TYPING_TOWARD_HANDS);
     assert!(normal.dot((aim - pose.position).normalize()) > 1.0 - 1e-4);
-    // 目へまっすぐより手の方（下）へ寄る。
+    // 視線方向より手の方向（下方）に寄る。
     assert!(normal.dot((eye - pose.position).normalize()) < 1.0 - 1e-4);
-    // 手を下ろしきっていても、見やすい高さより下には出さない。
+    // 手を完全に下ろしていても、視認しやすい高さより下には配置しない。
     let mut low = hand(Hand::Right, 0.2);
     low.aim.position.y = eye.y - 1.2;
     kernel.subsystems.backend.frame.controllers = vec![low];
     kernel.tick();
     let height = spec.pose_for(&kernel, 0).position.y - eye.y;
     assert!((height - TYPING_LOWEST).abs() < 1e-4, "{height}");
-    // 手を上げていても、上端は目線より下。
+    // 手を上げていても、上端は視線より下方に保つ。
     let mut high = hand(Hand::Right, 0.2);
     high.aim.position.y = eye.y + 0.3;
     kernel.subsystems.backend.frame.controllers = vec![high];
@@ -84,7 +84,7 @@ fn typing_panel_sits_just_above_the_hands_and_faces_mostly_the_eyes() {
     );
 }
 
-/// 呼び出し元より手前に出すので、頭から見て呼び出し元の下端（ナビゲーションバー込み）より下に見えるよう下げる。
+/// 呼び出し元より手前に配置するため、視点から見て呼び出し元の下端（ナビゲーションバー込み）より下方に見えるよう下げる。
 #[test]
 fn typing_panel_shows_below_the_caller_without_covering_it() {
     let mut kernel =
@@ -107,11 +107,11 @@ fn typing_panel_shows_below_the_caller_without_covering_it() {
     let top = elevation(pose.transform_point(Vec3::Y * 0.165));
     let bottom = elevation(eye + Vec3::new(0.0, -0.5, -1.2));
     assert!(top < bottom - TYPING_PANEL_GAP * 0.5, "{top} {bottom}");
-    // 必要な分だけ下げる（離れすぎない）。
+    // 必要な分だけ下げる（過度に離さない）。
     assert!(top > bottom - TYPING_PANEL_GAP * 2.0, "{top} {bottom}");
 }
 
-/// 左右の向きと位置は呼び出し元に合わせ、頭を左右に向けても変わらない（頭から見るのは上下だけ）。
+/// 左右の向きと位置は呼び出し元に合わせ、頭を左右に向けても変化しない（頭の向きが影響するのは上下方向のみ）。
 #[test]
 fn typing_panel_follows_the_callers_heading_not_the_heads() {
     let mut kernel =
@@ -142,22 +142,22 @@ fn typing_panel_follows_the_callers_heading_not_the_heads() {
             "{pose:?}"
         );
         assert!(pose.orientation.abs_diff_eq(poses[0].orientation, 1e-4));
-        // 面の左右の向きは呼び出し元と同じ。
+        // 面の水平方向の向きは呼び出し元と同一。
         let normal = pose.orientation * Vec3::Z;
         let flat = Vec3::new(normal.x, 0.0, normal.z).normalize();
         assert!(flat.abs_diff_eq(yaw * Vec3::Z, 1e-4), "{flat}");
-        // ホームポジション（中心から 0.1m）が呼び出し元の中心の左右に来る。
+        // ホームポジション（中心から 0.1m）が呼び出し元の中心の左右位置に一致する。
         let home = yaw.inverse() * (pose.transform_point(Vec3::X * 0.1) - eye);
         assert!(home.x.abs() < 1e-4, "{home}");
     }
 }
 
-/// 寝ているときは手の高さによらず、視界に入る頭の正面の下寄り（正面のパネルに重ならない所）に出す。
+/// 仰臥時は手の高さによらず、視界内の正面下方（正面パネルと重ならない位置）に配置する。
 #[test]
 fn typing_panel_sits_low_in_view_while_lying() {
     let mut kernel =
         Kernel::with_backend(kernel::vr::mock::MockBackend::default(), Default::default());
-    // 仰向け（真上を見る）。
+    // 仰臥姿勢（真上を見る）。
     let head = Pose::new(
         Vec3::new(0.0, 0.3, 0.0),
         Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
@@ -177,7 +177,7 @@ fn typing_panel_sits_low_in_view_while_lying() {
     let local = kernel.hmd().inverse().transform_point(pose.position);
     let expected = Vec3::new(0.0, -0.1 - TYPING_LYING_CLEARANCE, TYPING_AT.z);
     assert!(local.abs_diff_eq(expected, 1e-3), "{local}");
-    // 面は目へ向く。
+    // 面は視点に向く。
     let normal = pose.orientation * Vec3::Z;
     let toward = (kernel.hmd().position - pose.position).normalize();
     assert!(normal.dot(toward) > 1.0 - 1e-4);
@@ -202,7 +202,7 @@ fn spec_attaches_locks_and_sizes_panel(cx: &mut TestAppContext) {
     assert_eq!((p.size, p.resolution), (Vec2::new(0.1, 0.05), (10, 5)));
 }
 
-/// 目の前に出すパネルは頭の向く水平方向に置き、うつむいていても立てて置く。
+/// 視界前方に配置するパネルは頭の水平方向に置き、うつむいていても垂直に配置する。
 #[test]
 fn in_view_places_level_in_front_of_head() {
     // +X を向き、30° うつむいた頭。
@@ -232,8 +232,8 @@ fn panel_window_is_hidden_and_matches_panel_resolution(cx: &mut TestAppContext) 
     assert_eq!(vp, gpui::size(px(PANEL_PX.0 as f32), px(PANEL_PX.1 as f32)));
 }
 
-/// ボタンはすべて右に寄せ、右から閉じる・配信元をしまう・OS キーボード・「…」と詰めて並べる。手に持つ・外す・戻すは
-/// バーに出さず、「…」がポップオーバーを開く。
+/// ボタンはすべて右寄せで、右から閉じる・配信元を最小化・OS キーボード・「…」の順に詰めて配置する。手に持つ・外す・戻すは
+/// バーに表示せず、「…」がポップオーバーを展開する。
 #[gpui::test]
 fn every_button_sits_on_the_right_ending_with_more(cx: &mut TestAppContext) {
     let (_bar, cx) = cx.add_window_view(|_, cx| {

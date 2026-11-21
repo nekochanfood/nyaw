@@ -2,31 +2,31 @@
 
 use super::*;
 
-/// アプリを起動してから、ウィンドウが出るのを待つ長さ。出なければ待機中の画面に見つからないと出す（起動はしている）。
+/// アプリ起動後、ウィンドウ出現を待つタイムアウト。超過すると待機画面に「見つからない」と表示する（起動自体は完了済み）。
 const LAUNCH_WAIT: Duration = Duration::from_secs(20);
-/// 起動したアプリのウィンドウを探し直す間隔。
+/// 起動済みアプリのウィンドウをポーリングする間隔。
 const LAUNCH_POLL: Duration = Duration::from_millis(500);
 
-/// 配信を映すパネル。画像はカーネルが直接送るので、描くのは始まるまで・終わった後の状態と、起動したアプリのウィンドウを
-/// 待っている間（[`launch_spec`]）だけ。映しているウィンドウが閉じたら、パネルも閉じる。
+/// 配信を映すパネル。画像はカーネルが直接送るため、描画するのは開始前・終了後の状態と、起動済みアプリのウィンドウ
+/// 待機中（[`launch_spec`]）のみ。配信元ウィンドウがクローズされるとパネルもクローズする。
 pub(crate) struct Mirror {
     panel: PanelId,
-    /// 映しているもの（ウィンドウを待っている間は `None`）。
+    /// 配信元ソース（ウィンドウ待機中は `None`）。
     source: Option<Source>,
-    /// 起動したアプリのウィンドウを待っている。
+    /// 起動済みアプリのウィンドウ出現を待機中。
     waiting: Option<Waiting>,
-    /// 映し始めたら配信のボタンを足し、最小化時にしまうダッシュボード。
+    /// 配信開始時にボタンを追加し、最小化時に格納するダッシュボード。
     dashboard: Option<WeakEntity<Dashboard>>,
-    /// 配信の再接続を探している（状態が書き戻されるたびに繰り返さない）。
+    /// 配信の再接続先を探索中（状態書き戻しごとの重複実行を防止）。
     ending: bool,
     watch_generation: u64,
 }
 
-/// 起動したアプリのウィンドウを待っている間の中身。
+/// 起動済みアプリのウィンドウ待機状態。
 pub(crate) struct Waiting {
     app: InstalledApp,
     icon: Option<Arc<RenderImage>>,
-    /// 待つのをやめた（[`LAUNCH_WAIT`] の間に出なかった）。
+    /// 待機を中止（[`LAUNCH_WAIT`] 内にウィンドウが出現しなかった）。
     gave_up: bool,
 }
 
@@ -56,7 +56,7 @@ impl Mirror {
         this
     }
 
-    /// 取得元が入れ替わったら配信をつなぎ直す。OS での最小化は、ダッシュボードのしまう動作とは連動しない。
+    /// ソースが変更されたら配信を再接続する。OS 側の最小化はダッシュボードの格納動作と連動しない。
     fn follow_status(&mut self, cx: &mut Context<Self>) {
         let status = cx
             .global::<PanelControl>()
@@ -112,7 +112,7 @@ impl Mirror {
         self.restart(source, cx);
     }
 
-    /// 起動直後に本画面が別窓へ移るアプリを追う。既存の別窓は候補にしない。
+    /// 起動直後にメインウィンドウが別ウィンドウへ遷移するアプリを追跡する。既存の他ウィンドウは候補としない。
     fn watch_successor(&mut self, cx: &mut Context<Self>) {
         let Some(source) = self
             .source
@@ -172,7 +172,7 @@ impl Mirror {
         .detach();
     }
 
-    /// 起動したアプリのウィンドウを探し続け、出たら映し始める。[`LAUNCH_WAIT`] の間に出なければ諦める。
+    /// 起動済みアプリのウィンドウをポーリングし、検出したら配信を開始する。[`LAUNCH_WAIT`] 内に出現しなければ中止する。
     fn wait_for_window(&self, cx: &mut Context<Self>) {
         let Some(app) = self.waiting.as_ref().map(|w| w.app.clone()) else {
             return;
@@ -217,7 +217,7 @@ impl Mirror {
         .detach();
     }
 
-    /// 待っていたウィンドウ `source` が出た: このパネルで映し始め、ダッシュボードに配信のボタンを足す。
+    /// 待機中のウィンドウ `source` が出現した: このパネルで配信を開始し、ダッシュボードに配信ボタンを追加する。
     pub(crate) fn found(&mut self, source: Source, cx: &mut Context<Self>) {
         let icon = self.waiting.take().and_then(|w| w.icon);
         self.source = Some(source.clone());
@@ -253,7 +253,7 @@ impl Render for Mirror {
     }
 }
 
-/// パネル `panel` で `source` を映し始める: 映しているものとして覚え、配信を頼み、`dashboard` があれば配信のボタンを足す。
+/// パネル `panel` で `source` の配信を開始する: ミラー一覧に登録し、配信を要求し、`dashboard` があれば配信ボタンを追加する。
 fn start_mirror(
     panel: PanelId,
     source: Source,
@@ -262,7 +262,7 @@ fn start_mirror(
     resident: bool,
     cx: &mut App,
 ) {
-    // 閉じたものは忘れ、これを覚える。
+    // クローズ済みを除外し、新しいソースを登録する。
     let closed = |id: &PanelId| {
         cx.try_global::<PanelControl>()
             .and_then(|c| c.panels.get(id))
@@ -288,8 +288,8 @@ fn start_mirror(
     }
 }
 
-/// 起動したアプリ `app` の画面: 開いた時点ではアイコンと名前と「起動しています」を出して待ち、ウィンドウが出たらそこで
-/// 映し始める（[`Mirror::wait_for_window`]）。`dashboard` があればはめて開く（ランチャーと入れ替わる）。
+/// 起動済みアプリ `app` の画面仕様: 生成時はアイコン・名前・「起動中」を表示して待機し、ウィンドウ出現後に
+/// 配信を開始する（[`Mirror::wait_for_window`]）。`dashboard` があればドッキングして開く（ランチャーと入れ替わる）。
 pub(crate) fn launch_spec(
     app: InstalledApp,
     icon: Option<Arc<RenderImage>>,
@@ -310,7 +310,7 @@ pub(crate) fn launch_spec(
         };
         Mirror::new(panel, None, Some(waiting), dashboard, cx)
     });
-    // はめるものは、開いた元の手前ではなく、はめる場所に合わせて目の前に出す。
+    // ドッキング対象は、起動元の手前ではなくドッキングスロットに合わせて正面に配置する。
     let spec = if docked {
         spec.in_view(SCREEN_POSE)
     } else {
@@ -329,14 +329,14 @@ pub(crate) fn launch_spec(
     }
 }
 
-/// 開いている配信のパネルと、その取得元・常駐か。同じ画面・ウィンドウは 1 枚だけ映す（[`mirror_of`]）。
+/// 配信中パネルの一覧とそのソース・常駐フラグ。同一画面・ウィンドウは 1 枚のみ配信する（[`mirror_of`]）。
 #[derive(Default)]
 struct Mirrors(Vec<(Source, PanelId, bool)>);
 
 impl gpui::Global for Mirrors {}
 
-/// `source` を映している、閉じていないパネルと、それが常駐（起動時に用意した画面）か。
-// ponytail: 開くのは次のフレームなので、同じフレームに 2 回押すと 2 枚開く。困れば開く前の分も数える。
+/// `source` を配信中でクローズされていないパネルと、常駐（起動時に生成された画面）かどうか。
+// ponytail: 生成は次フレームのため、同一フレームで 2 回押下すると 2 枚開く。問題になれば生成前の分も計上する。
 pub(crate) fn mirror_of(source: &Source, cx: &App) -> Option<(PanelId, bool)> {
     let panels = &cx.try_global::<PanelControl>()?.panels;
     cx.try_global::<Mirrors>()?
@@ -348,11 +348,11 @@ pub(crate) fn mirror_of(source: &Source, cx: &App) -> Option<(PanelId, bool)> {
         .map(|&(_, id, resident)| (id, resident))
 }
 
-/// `source` を映すパネルの起動仕様。`docked` ならランチャーと入れ替わりにはまり、
-/// そうでなければ開いた画面 `from` の手前に重ねて開く。
-/// `resident` なら（`dashboard` があるとき）常駐のもの: はめずに隠して開き、バーのボタンで出す。ナビゲーションバーでは
-/// 閉じずにしまう。
-/// タイトルは取得元の名前で、ナビゲーションバーで閉じると配信も止まる。
+/// `source` を配信するパネルの起動仕様。`docked` ならランチャーと入れ替わりにドッキングし、
+/// そうでなければ起動元画面 `from` の手前に重ねて開く。
+/// `resident`（`dashboard` がある場合）は常駐配信: ドッキングせず非表示で開き、バーのボタンで表示する。ナビゲーションバーでは
+/// クローズせず格納する。
+/// タイトルはソース名で、ナビゲーションバーでクローズすると配信も停止する。
 pub(crate) fn mirror_spec(
     source: Source,
     icon: Option<Arc<RenderImage>>,
@@ -375,7 +375,7 @@ pub(crate) fn mirror_spec(
         Mirror::new(panel, Some(source), None, dashboard, cx)
     };
     let spec = PanelSpec::spawn(from, build);
-    // はめるものは、開いた元の手前ではなく、はめる場所に合わせて目の前に出す。
+    // ドッキング対象は、起動元の手前ではなくドッキングスロットに合わせて正面に配置する。
     let spec = if docked || resident {
         spec.in_view(SCREEN_POSE)
     } else {
@@ -387,12 +387,12 @@ pub(crate) fn mirror_spec(
         }),
         None => spec,
     };
-    // 配信は横幅を保って縦横比を合わせるので、幅をはめる画面とそろえる。
+    // 配信は横幅を維持してアスペクト比を合わせるため、幅をドッキング画面と揃える。
     let spec = spec
         .sized(SIZE_M, RES_PX)
         .titled_text(source_title)
         .dockable()
-        // 映しているデスクトップ・ウィンドウへ打てるよう、ナビゲーションバーの左端に OS キーボードのトグルを出す。
+        // 配信中のデスクトップ・ウィンドウへ入力できるよう、ナビゲーションバーの左端に OS キーボードのトグルを表示する。
         .with_os_keyboard();
     match stash {
         Some(dashboard) if source_kind == SourceKind::Window => {

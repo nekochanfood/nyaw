@@ -1,20 +1,20 @@
-//! Layer 5 画面: Testing パネル。UI 層（`ui`）の上に載る画面の1つで、一連の機能を1画面で試せるテスト用の画面。
+//! Layer 5 画面: Testing パネル。UI 層（`ui`）上の画面の一つで、各種機能を単一画面で検証するためのテスト画面。
 //! E2E テストもこの画面を操作して検証する。
 //!
-//! - VR: クリック数・HMD / 手 / トラッカーへの取り付け・取り外し・ロック・メニューボタンと掴みの表示
-//! - GPUI: 切り替え・押している間の見た目・ドラッグ＆ドロップ・スクロールする一覧・フォーカスと文字入力・ポップアップメニュー
-//! - ポインタの方式: [`PointerTest`] でマウス・タッチのエミュレートを切り替える
-//! - レーザー: [`SmoothingTest`] でレーザーの手ブレ抑えの強さと線の長さを変え、小さな的で揺れと遅れを見る
-//! - ツールチップ: [`TooltipTest`] で、カーソルに付いて出る説明（向き・猶予・文字の差し替え・幅の伸び縮み）を見る
-//! - 積み重ね: [`NavTest`] で、右から入る画面（push 遷移）と、押したまま右から左へ動かして戻るスワイプバック（設定画面の中身と同じ部品）
-//! - 親子: [`DialogTest`] がダイアログ（[`Dialog`]）を子として開く。開いている間の親は暗くなり、子を掴むと親も付いてくる
-//! - 描画: [`TestingAnim`]（毎フレーム変わる）・[`TestingLod`]（今の LOD を大きく出す）・[`TestingFont`]（フォントの見本）・[`TestingScrollbar`]（縦・横・両方のスクロールバー）
-//! - スケルタル入力: [`SkeletonTest`] で、手の関節をギズモで描き、親指とほかの指でつまめているかを見る
-//! - 通知: [`NotificationTest`] で、Windows に本物の通知を出し、トースト（HUD → 手首 → ダッシュボード）と通知の一覧を試す
-//! - 音: [`AudioTest`] で、パネルのスピーカーから立体的に鳴る音（同時再生・立体化のオプトアウト・モノラル / ステレオ）を聞く
-//! - 負荷: [`StressTest`] で上限いっぱいまでパネルを出し、閉じる・ちりばめる・並べる
+//! - VR: クリック回数・HMD / コントローラー / トラッカーへのアタッチ・デタッチ・ロック・メニューボタンとグラブの表示
+//! - GPUI: トグル・押下中の外観・ドラッグ＆ドロップ・スクロール可能なリスト・フォーカスとテキスト入力・ポップアップメニュー
+//! - ポインタ方式: [`PointerTest`] でマウス・タッチエミュレーションを切り替える
+//! - レーザー: [`SmoothingTest`] でレーザーの手ブレ抑制強度と線の長さを調整し、小さなターゲットで揺れと遅延を確認する
+//! - ツールチップ: [`TooltipTest`] で、カーソルに追従する説明表示（方向・遅延・テキスト差し替え・幅の伸縮）を確認する
+//! - ナビゲーションスタック: [`NavTest`] で、右から入る画面（push 遷移）と、押したまま右から左へスワイプして戻るスワイプバック（設定画面と共通の部品）
+//! - 親子関係: [`DialogTest`] がダイアログ（[`Dialog`]）を子として表示する。表示中の親は暗転し、子をグラブすると親も追従する
+//! - 描画: [`TestingAnim`]（毎フレーム更新）・[`TestingLod`]（現在の LOD を拡大表示）・[`TestingFont`]（フォントサンプル）・[`TestingScrollbar`]（縦・横・双方向スクロールバー）
+//! - スケルタル入力: [`SkeletonTest`] で、手の関節をギズモ描画し、親指と他の指によるピンチ判定を確認する
+//! - 通知: [`NotificationTest`] で、Windows に実際の通知を送信し、トースト（HUD → 手首 → ダッシュボード）と通知一覧を検証する
+//! - 音声: [`AudioTest`] で、パネルスピーカーからの空間音響（同時再生・空間化の無効化・モノラル / ステレオ）を検証する
+//! - 負荷: [`StressTest`] で上限までパネルを生成し、閉じる・ランダム配置・整列を行う
 //!
-//! 要素はすべて `debug_selector` で名前を付けてある（名前 = `id`）。
+//! すべての要素に `debug_selector` で名前が付与されている（名前 = `id`）。
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -82,40 +82,40 @@ pub use transparent::*;
 #[cfg(test)]
 mod test_util;
 
-/// 「HMD に取り付け」で使う相対姿勢: 顔の正面 1m。
+/// 「HMD に取り付け」で使用する相対姿勢: 正面 1m。
 pub const HMD_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::IDENTITY);
-/// 「手・トラッカーに取り付け」で使う相対姿勢: 0.3m 前（手首の時計のような配置）。
+/// 「手・トラッカーに取り付け」で使用する相対姿勢: 0.3m 前方（手首の腕時計的な配置）。
 pub const HAND_OFFSET: Pose = Pose::new(Vec3::new(0.0, 0.0, -0.3), Quat::IDENTITY);
 
-/// 色は `design` のダークテーマの役割から引く（`color_at` は 0xRRGGBB なのでアルファを落とす）。
+/// 色は `design` のダークテーマのロールから取得する（`color_at` は 0xRRGGBB のためアルファを除去）。
 const THEME: Theme = Theme::of(Mode::Dark);
 const fn rgb24(rgba: u32) -> u32 {
     rgba >> 8
 }
-/// カード 1 枚のパネルで使う地の色。
+/// カード 1 枚構成のパネルで使用する背景色。
 pub const PANEL_BG: u32 = rgb24(THEME.card);
-/// Testing パネルのカードの外側にある地の色。
+/// Testing パネルのカード外側の背景色。
 pub const PANEL_GROUND_BG: u32 = rgb24(THEME.background);
-/// パネルの縁の影の余白。地はこの内側から始まる。
+/// パネル縁のシャドウマージン。背景描画はこの内側から開始される。
 pub use design::components::PANEL_MARGIN;
 pub const BUTTON_BG: u32 = rgb24(THEME.control);
-/// レーザーが当たっている間のボタン色。VR 上でどこを指しているかの視覚的フィードバック。
+/// レーザーホバー中のボタン色。VR 上でのポインティング位置を示す視覚フィードバック。
 pub const BUTTON_HOVER_BG: u32 = rgb24(THEME.control_hover);
-/// 有効になっている切り替えボタン・表示や、押している間のボタンの色。
+/// 有効状態のトグル・インジケーター、または押下中のボタンの色。
 pub const BUTTON_ACTIVE_BG: u32 = rgb24(THEME.control_active);
-/// ドラッグ中の値を落とせる場所の上にいるときの色。
+/// ドラッグ中のアイテムがドロップターゲット上にあるときの色。
 pub const DROP_TARGET_BG: u32 = 0x30a050;
-/// フォーカスのある入力欄の色。
+/// フォーカス中の入力フィールドの色。
 pub const FIELD_FOCUS_BG: u32 = rgb24(THEME.accent_bg_active);
-/// ダイアログの背景色（親より明るくして重なりが見えるように）。
+/// ダイアログの背景色（親より明るくし、重なりを視認可能にする）。
 pub const DIALOG_BG: u32 = rgb24(THEME.card);
-/// 画面の地（`components::panel`）。設定画面の中身（右側）の地。
+/// 画面の背景色（`components::panel`）。設定画面のコンテンツ領域（右側）の背景。
 pub const BACKGROUND: u32 = rgb24(THEME.background);
-/// Testing パネルの大きさ（m）と解像度（px）。ボタンが高い（最小ヒット領域）ので、既定の 0.8m × 0.6m では入りきらない。
+/// Testing パネルのサイズ（m）と解像度（px）。ボタンの最小ヒット領域が大きいため、既定の 0.8m × 0.6m では収まらない。
 pub const TESTING_SIZE: Vec2 = Vec2::new(1.2, 1.0);
 pub const TESTING_PX: (u32, u32) = (1200, 1000);
 
-/// パネル `from` から開く Testing パネルの起動仕様。開いたら `opened` で PanelId を知らせる。
+/// パネル `from` から開く Testing パネルの起動仕様。起動後に `opened` で PanelId を通知する。
 pub fn spec(from: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'static) -> PanelSpec {
     PanelSpec::spawn(from, move |id, _, cx| {
         opened(id, cx);
@@ -124,30 +124,30 @@ pub fn spec(from: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'stati
     .sized(TESTING_SIZE, TESTING_PX)
     .titled("testing.open.testing")
 }
-/// セットアップウィザードを開く仕様（`from` の隣）。画面どうしは直接依存しないので、main が [`spec`] の `opened` で
-/// グローバルに入れる。入っているときだけ Testing に `setup-wizard`（強制的にやり直す）が出る。
+/// セットアップウィザードを開く仕様（`from` の隣）。画面間に直接依存がないため、main が [`spec`] の `opened` で
+/// グローバルに登録する。登録時のみ Testing に `setup-wizard`（強制再実行）ボタンが表示される。
 #[derive(Clone, Copy)]
 pub struct SetupWizardSpawn(pub fn(PanelId) -> PanelSpec);
 impl gpui::Global for SetupWizardSpawn {}
 
-/// スクロールする一覧の行数と1行の高さ。
+/// スクロール可能なリストの行数と 1 行の高さ。
 pub const LIST_ROWS: usize = 30;
 const ROW_PX: f32 = 24.0;
 #[derive(Default)]
 pub struct Testing {
     panel: PanelId,
     pub clicks: usize,
-    /// 受け取ったスクロール量の合計（行。下向きが負）。
+    /// 累計スクロール量（行単位。下方向が負）。
     pub scrolled: f32,
     pub toggled: bool,
-    /// ドロップ先に落とされた回数。
+    /// ドロップターゲットへのドロップ回数。
     pub dropped: usize,
-    /// 入力欄に打たれた文字。
+    /// 入力フィールドに入力されたテキスト。
     pub text: String,
     pub menu_open: bool,
-    /// ポップアップメニューで選んだ項目。
+    /// ポップアップメニューで選択された項目。
     pub picked: Option<&'static str>,
-    /// スクロールする一覧の状態（`offset().y` が負 = 下へスクロール済み）。
+    /// スクロール可能なリストの状態（`offset().y` が負 = 下方向にスクロール済み）。
     pub list: ScrollHandle,
     focus: Option<FocusHandle>,
 }
@@ -161,10 +161,10 @@ impl Testing {
     }
 }
 
-/// ドラッグ＆ドロップで運ぶ値。
+/// ドラッグ＆ドロップで搬送する値。
 struct Chip;
 
-/// ドラッグ中にポインタに付いてくる見た目。
+/// ドラッグ中にポインタに追従するプレビュー。
 struct ChipPreview;
 
 impl Render for ChipPreview {
@@ -173,7 +173,7 @@ impl Render for ChipPreview {
     }
 }
 
-/// 押せるボタン（`design` の部品）。`active` は切り替えボタンが有効なとき。
+/// クリック可能なボタン（`design` のコンポーネント）。`active` はトグルが有効な場合に true。
 fn button(
     theme: &Theme,
     id: &'static str,
@@ -192,7 +192,7 @@ fn themed_button(
     components::button(theme, id, label.into(), Variant::Default).selected(active)
 }
 
-/// ボタンを押したらパネルへの操作要求を積む。
+/// ボタン押下時にパネルへの操作コマンドをキューイングする。
 fn command(
     panel: PanelId,
     c: PanelCommand,
@@ -200,7 +200,7 @@ fn command(
     move |_, _, cx| ui::command(panel, c.clone(), cx)
 }
 
-/// 押すと全体の設定の変更を積むクリックハンドラ。
+/// クリック時にグローバル設定の変更をキューイングするハンドラ。
 fn change(s: Setting) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| ui::set(s, cx)
 }
@@ -240,7 +240,7 @@ fn spawn_transparent(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut A
     }
 }
 
-/// 隣に `build` の画面を開く。`title` はナビゲーションバーのタイトル（i18n のキー）。
+/// 隣に `build` の画面を開く。`title` はナビゲーションバーのタイトル（i18n キー）。
 fn spawn_view<V: Render>(
     panel: PanelId,
     title: &'static str,
@@ -253,12 +253,12 @@ fn spawn_view<V: Render>(
     }
 }
 
-/// design のカタログを隣に開く（Close はこのパネルを閉じる）。
+/// design カタログを隣に開く（Close でこのパネルを閉じる）。
 fn spawn_catalog(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) + 'static {
     move |_, _, cx| {
         cx.default_global::<PanelControl>().spawns.push(
             PanelSpec::spawn(panel, |id, _, cx| {
-                // 動きの見本を毎フレーム描く。
+                // アニメーションのサンプルを毎フレーム描画する。
                 cx.default_global::<PanelControl>()
                     .panels
                     .entry(id)
@@ -271,7 +271,7 @@ fn spawn_catalog(panel: PanelId) -> impl Fn(&ClickEvent, &mut Window, &mut App) 
     }
 }
 
-/// 言語の切り替えボタンが次に選ぶ言語（i18n の対応言語を順に回る）。
+/// 言語切り替えボタンが次に選択する言語（i18n の対応言語をサイクルする）。
 fn next_language(l: Language) -> Language {
     ui::language(ui::lang(l).next())
 }
@@ -287,7 +287,7 @@ fn row() -> Div {
     div().flex().flex_wrap().gap_2().items_center()
 }
 
-/// 見出し付きのカード。中身は縦に並べる。
+/// 見出し付きカード。内容は縦方向に配置する。
 fn section(theme: &Theme, title: impl Into<SharedString>) -> Div {
     components::card(theme)
         .p(px(spacing::LG))
@@ -302,7 +302,7 @@ fn section(theme: &Theme, title: impl Into<SharedString>) -> Div {
         )
 }
 
-/// 小見出しと、その下の中身。
+/// 小見出しとその下のコンテンツ。
 fn labeled(theme: &Theme, label: impl Into<SharedString>, body: impl IntoElement) -> Div {
     div()
         .flex()
@@ -317,8 +317,8 @@ fn labeled(theme: &Theme, label: impl Into<SharedString>, body: impl IntoElement
         .child(body)
 }
 
-/// 押せない状態の表示。ボタンと見分けられるよう低く、先頭に点を置く（点は入っている間だけ強調色）。
-/// 面の色は入っている間 `control-active`、それ以外 `control`（テストは中心の色を見る）。
+/// 非インタラクティブなインジケーター。ボタンと区別するため高さを低くし、先頭にドットを配置する（ドットは有効時のみアクセントカラー）。
+/// 面の色は有効時 `control-active`、無効時 `control`（テストは中心の色で判定する）。
 fn indicator(
     theme: &Theme,
     id: &'static str,

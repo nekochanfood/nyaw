@@ -1,8 +1,8 @@
-//! 透過したパネル（[`TestingTransparent`]）。
+//! 透過パネル（[`TestingTransparent`]）。
 
 use super::*;
 
-/// 半透明の背景に描画される画面（`testing-transparent`）。右上の Close ボタンで自分を閉じる。
+/// 半透明の背景で描画される画面（`testing-transparent`）。右上の Close ボタンで自身を閉じる。
 pub const TRANSPARENT_BG: u32 = 0x202020a0;
 
 #[derive(Default)]

@@ -1,4 +1,4 @@
-//! アプリを終了するかを確かめるダイアログ（[`QuitDialog`]）。ダッシュボードのメニューとセットアップの一枚目から開く。
+//! アプリ終了確認ダイアログ（[`QuitDialog`]）。ダッシュボードのメニューとセットアップの初期画面から起動する。
 
 use design::{Theme, components, components::Variant, icons};
 use gpui::{App, Context, Render, Window, prelude::*};
@@ -6,8 +6,8 @@ use kernel::{PanelCommand, PanelId, Vec2};
 
 use crate::{PanelControl, PanelSpec};
 
-/// アプリを終了するかを確かめるダイアログの起動仕様。開き方（[`PanelSpec::spawn`] / [`PanelSpec::child`] と置き場所）は
-/// `open` が、渡された作り方で決める。大きさは文に合わせ、ナビゲーションバーは付けない（答えて閉じるもの）。
+/// アプリ終了確認ダイアログの起動仕様。表示方法（[`PanelSpec::spawn`] / [`PanelSpec::child`] と配置位置）は
+/// `open` が指定されたファクトリで決定する。サイズはテキストに合わせ、ナビゲーションバーは付けない（応答後に閉じるダイアログ）。
 pub fn quit_dialog(
     window: &Window,
     cx: &App,
@@ -27,7 +27,7 @@ pub fn quit_dialog(
         .without_nav_bar()
 }
 
-/// アプリを終了するかを確かめるダイアログ。`quit-confirm` でアプリを終え、`quit-cancel` ならダイアログだけ閉じる。
+/// アプリ終了確認ダイアログ。`quit-confirm` でアプリを終了し、`quit-cancel` ならダイアログのみ閉じる。
 pub struct QuitDialog {
     panel: PanelId,
 }
@@ -59,7 +59,7 @@ impl Render for QuitDialog {
                 .on_click(|_, _, cx| cx.default_global::<PanelControl>().quit = true),
             ],
         )
-        // 電源のアイコンは塗りだと形が潰れて分かりにくいので、線で描く。
+        // 電源アイコンは塗りでは形が潰れて判別しにくいため、線描画にする。
         .weight(design::Weight::Regular)
     }
 }
@@ -69,7 +69,7 @@ mod tests {
     use super::*;
     use gpui::{Modifiers, TestAppContext};
 
-    /// 終了を選ぶとアプリを終え、キャンセルならダイアログだけ閉じる。
+    /// 終了を選択するとアプリを終了し、キャンセルならダイアログのみ閉じる。
     #[gpui::test]
     fn quits_or_cancels(cx: &mut TestAppContext) {
         let (_, cx) = cx.add_window_view(|_, _| QuitDialog { panel: 7 });

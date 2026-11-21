@@ -1,6 +1,6 @@
-//! SteamVR Input（IVRInput）: action manifest と機種ごとの既定バインディングを書き出して登録し、手ごとのアクションを読む。
-//! 旧来の `IVRSystem::GetControllerState` は、SteamVR Input が有効だと値が空（0）で返ることがあるので使わない。
-//! バインディングは SteamVR の「コントローラーのバインド」画面で利用者が変えられる。
+//! SteamVR Input（IVRInput）: action manifest と機種ごとの既定バインディングを書き出して登録し、手ごとのアクションを読み取る。
+//! 旧来の `IVRSystem::GetControllerState` は、SteamVR Input が有効だと値が空（0）で返ることがあるため使用しない。
+//! バインディングは SteamVR の「コントローラーのバインド」画面で利用者が変更可能。
 
 use std::ffi::{CString, c_char};
 use std::mem::{MaybeUninit, size_of};
@@ -36,10 +36,10 @@ pub(super) struct HandActions {
     pub menu: bool,
     pub middle_touch: bool,
     pub right_touch: bool,
-    /// ショートカットのダブルタップ（バインドが数える）。1 フレームだけ真。
+    /// ショートカットのダブルタップ（バインドがカウントする）。1 フレームのみ真。
     pub shortcut: bool,
     pub scroll: Vec2,
-    /// 掴んでいるパネルの拡大縮小（-1..1）。既定のバインドは無く、SteamVR の画面で利用者が割り当てる。
+    /// グラブ中パネルの拡縮（-1..1）。既定のバインドは存在せず、SteamVR の画面で利用者が割り当て可能。
     pub resize: f32,
 }
 

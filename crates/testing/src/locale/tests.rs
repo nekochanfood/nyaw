@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_util::*;
 
-/// ローカライズの画面: 言語のボタンが切り替えを要求し、言語が変わると文言が訳されて長さも変わる。
+/// ローカライズ画面: 言語ボタンが切り替えを要求し、言語変更後にテキストが翻訳され幅も変化する。
 #[gpui::test]
 fn locale_screen_switches_language_and_text_follows(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| LocaleTest::new(0));
@@ -15,7 +15,7 @@ fn locale_screen_switches_language_and_text_follows(cx: &mut TestAppContext) {
     cx.simulate_click(c, Modifiers::none());
     let queued = cx.update(|_, cx| cx.global::<PanelControl>().setting_changes.clone());
     assert_eq!(queued, [Setting::Language(Language::Ja)]);
-    // フレームループ（ui::sync_settings）の代わりに、設定とグローバルの言語を反映する。
+    // フレームループ（ui::sync_settings）の代わりに、設定とグローバル言語を直接反映する。
     cx.update(|window, cx| {
         cx.default_global::<PanelControl>().settings.language = Language::Ja;
         cx.set_global(i18n::Lang::Ja);

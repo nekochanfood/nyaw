@@ -1,4 +1,4 @@
-//! テストで使う共通の道具。テストはそれぞれのモジュールの子（`pointer/tests.rs` など）に置く。
+//! テスト共通ユーティリティ。テストは各モジュールの子（`pointer/tests.rs` 等）に配置する。
 
 use super::*;
 
@@ -6,7 +6,7 @@ pub(crate) use design::Theme;
 pub(crate) use gpui::{TestAppContext, div};
 pub(crate) use kernel::Runtime;
 
-/// UI 層だけで確かめるための最小の画面。
+/// UI 層単体テスト用の最小画面。
 #[derive(Default)]
 pub(crate) struct Probe {
     pub(crate) clicks: usize,

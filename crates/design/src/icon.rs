@@ -1,22 +1,22 @@
-//! Phosphor アイコン。SVG の path を gpui の `Path` にして描くので、色・グラデーション・不透明度・回転・反転が自由に効く。
+//! Phosphor アイコン。SVG の path を gpui の `Path` に変換して描画するため、色・グラデーション・不透明度・回転・反転を自由に適用できる。
 //!
 //! ```ignore
 //! icon(&icons::HEART).weight(Weight::Fill).size(px(20.)).color(rgba(theme.danger_solid))
 //! ```
 //!
-//! - アイコンは `icons::HEART` のような定数（build.rs が生成）。**ソースで使われているものだけ**がビルドに入る。
-//!   Phosphor に無い名前はビルドが落ちる。
-//! - ウェイトは Phosphor の 6 種類すべて（[`Weight`]）。これも `Weight::Bold` のようにソースに書かれたものだけが入る
-//!   （入っていないウェイトは何も描かれない）。実行時に選ぶ場合は `Weight::ALL` をどこかに書けば全部入る。
-//! - 色を省くと周りの文字色（SVG の `currentColor`）。[`IconView::color`] は [`Background`] を取るので、
-//!   グラデーションなどの塗りでアイコンの形に抜く（マスク）こともできる。duotone の薄い面は塗りの不透明度 0.2 倍。
+//! - アイコンは `icons::HEART` のような定数（build.rs が生成）。**ソースで使用されているもののみ**がビルドに含まれる。
+//!   Phosphor に存在しない名前はビルドエラーになる。
+//! - ウェイトは Phosphor の 6 種類すべて（[`Weight`]）。同様にソースに記述されたもののみが含まれる
+//!   （含まれていないウェイトは描画されない）。実行時に選択する場合は `Weight::ALL` をどこかに記述すれば全種類含まれる。
+//! - 色を省略すると周囲の文字色（SVG の `currentColor`）。[`IconView::color`] は [`Background`] を受け取るため、
+//!   グラデーション等の塗りでアイコン形状をマスクすることも可能。duotone の薄い面は塗りの不透明度 0.2 倍。
 
 use gpui::{
     App, Background, Bounds, FillOptions, Path, PathBuilder, PathStyle, Pixels, Point, Window,
     canvas, point, prelude::*, px,
 };
 
-/// path の 1 区間。座標は Phosphor の 256×256 の座標系。
+/// path の 1 セグメント。座標は Phosphor の 256×256 座標系。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Seg {
     M(f32, f32),
@@ -26,7 +26,7 @@ pub enum Seg {
     Z,
 }
 
-/// 1 枚の塗り。duotone の薄い面は `opacity` が 0.2。
+/// 1 枚の塗りレイヤー。duotone の薄い面は `opacity` が 0.2。
 #[derive(Clone, Copy, Debug)]
 pub struct Layer {
     pub opacity: f32,
@@ -55,7 +55,7 @@ impl Weight {
     ];
 }
 
-/// 生成された 1 アイコン分のデータ。ウェイトごとに [`Layer`] の列を持つ（使われていないウェイトは空）。
+/// 生成された 1 アイコン分のデータ。ウェイトごとに [`Layer`] の列を保持する（未使用ウェイトは空）。
 #[derive(Debug)]
 pub struct Icon {
     pub name: &'static str,
@@ -82,7 +82,7 @@ impl Icon {
 
 const VIEW_BOX: f32 = 256.0;
 
-/// 描くアイコン。`RenderOnce` なので `.child(icon(&icons::HEART))` のように置く。
+/// 描画するアイコン。`RenderOnce` のため `.child(icon(&icons::HEART))` のように配置する。
 #[derive(IntoElement)]
 pub struct IconView {
     icon: &'static Icon,
@@ -112,13 +112,13 @@ impl IconView {
         self
     }
 
-    /// 一辺の長さ（正方形）。
+    /// 一辺の長さ（正方形）を設定する。
     pub fn size(mut self, size: Pixels) -> Self {
         self.size = size;
         self
     }
 
-    /// 塗り。単色（`rgba(..)` / `Hsla`）でもグラデーションでもよい。省くと周りの文字色。
+    /// 塗り。単色（`rgba(..)` / `Hsla`）でもグラデーションでもよい。省略時は周囲の文字色。
     pub fn color(mut self, color: impl Into<Background>) -> Self {
         self.color = Some(color.into());
         self
@@ -129,7 +129,7 @@ impl IconView {
         self
     }
 
-    /// 中心まわりに時計回りへ回す（度）。
+    /// 中心を軸に時計回りに回転させる（度）。
     pub fn rotate(mut self, degrees: f32) -> Self {
         self.rotate = degrees;
         self
@@ -145,8 +145,8 @@ impl IconView {
         self
     }
 
-    /// 左上が `origin` のときの塗り（`Path` と、その不透明度）。描画に使うのと同じもの。
-    // ponytail: 描くたびに三角形分割する(アイコン 1 つ数十 µs)。数百個を毎フレーム描くなら (アイコン, サイズ, 回転) で Path を使い回す。
+    /// 左上が `origin` のときの塗り（`Path` とその不透明度）。描画と同一のデータを返す。
+    // ponytail: 描画のたびに三角形分割する（アイコン 1 個あたり数十 µs）。数百個を毎フレーム描画するなら (アイコン, サイズ, 回転) で Path をキャッシュする。
     pub fn paths(&self, origin: Point<Pixels>) -> Vec<(Path<Pixels>, f32)> {
         let size = f32::from(self.size);
         let s = size / VIEW_BOX;
@@ -166,7 +166,7 @@ impl IconView {
             .layers(self.weight)
             .iter()
             .filter_map(|layer| {
-                // 塗りの規則は SVG の既定の nonzero（lyon の既定は evenodd）
+                // 塗りルールは SVG デフォルトの nonzero（lyon のデフォルトは evenodd）
                 let mut b =
                     PathBuilder::fill().with_style(PathStyle::Fill(FillOptions::non_zero()));
                 for seg in layer.segs {
@@ -188,7 +188,7 @@ impl IconView {
 
 impl RenderOnce for IconView {
     fn render(mut self, _: &mut Window, _: &mut App) -> impl IntoElement {
-        // アイコンは文字と並ぶものなので、文字の大きさの倍率に付いていく（`.text_exact()` の中では等倍）。
+        // アイコンは文字と並ぶため、文字サイズ倍率に追従する（`.text_exact()` 内では等倍）。
         self.size *= gpui::text_scale();
         let size = self.size;
         canvas(

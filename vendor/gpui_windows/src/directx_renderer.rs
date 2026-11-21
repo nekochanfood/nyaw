@@ -55,12 +55,12 @@ pub(crate) struct DirectXRenderer {
     /// meaning we lost all the allocated gpu textures and scene resources.
     skip_draws: bool,
 
-    /// NYAW: 待たない読み戻し（[`Self::render_to_image`]）。
+    /// NYAW: 非同期リードバック（[`Self::render_to_image`]）。
     #[cfg(any(test, feature = "test-support"))]
     readback: Option<Readback>,
 }
 
-/// NYAW: 読み戻し用の CPU から読めるテクスチャ 2 枚と、コピーを積んだまま読んでいない方、最後に返した絵。
+/// NYAW: リードバック用のステージングテクスチャ 2 枚、コピー発行済みで未読のスロット番号、および最後に返した画像。
 #[cfg(any(test, feature = "test-support"))]
 struct Readback {
     staging: [ID3D11Texture2D; 2],
@@ -72,14 +72,14 @@ struct Readback {
 
 #[cfg(any(test, feature = "test-support"))]
 thread_local! {
-    /// NYAW: 次の `render_to_image` は描かずに、積んである読み戻しを受け取るだけにする（[`collect_readback`]）。
+    /// NYAW: 次の `render_to_image` で描画をスキップし、発行済みリードバックの回収のみ行う（[`collect_readback`]）。
     static COLLECT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// NYAW: `f`（`Window::render_to_image` を呼ぶ）の間、描き直さずに前の呼び出しで積んだ読み戻しを受け取る。
-/// 積んでいなければエラー。ふつうの `render_to_image` は GPU の完了を待たず、前の呼び出しの絵を返す
-/// （ゲームが GPU を使い切っている間は完了待ちが 1 回数 ms〜十数 ms になり、呼び出し側のフレームを落とす）。
-/// 描いた絵を受け取るには、次のフレームでこれを呼ぶ。
+/// NYAW: `f`（`Window::render_to_image` を呼ぶ）の実行中、再描画を行わず前回発行済みのリードバックを回収する。
+/// 発行済みリードバックが存在しない場合はエラーを返す。通常の `render_to_image` は GPU の完了を待機せず、
+/// 前回の呼び出しで取得した画像を返す（GPU が高負荷の場合、完了待機が数 ms〜十数 ms に達し呼び出し側のフレーム落ちを招くため）。
+/// 描画結果を取得するには、次のフレームでこの関数を呼び出す。
 #[cfg(any(test, feature = "test-support"))]
 pub fn collect_readback<R>(f: impl FnOnce() -> R) -> R {
     COLLECT.with(|c| c.set(true));
@@ -296,7 +296,7 @@ impl DirectXRenderer {
 
     fn handle_device_lost_impl(&mut self, directx_devices: &DirectXDevices) -> Result<()> {
         let disable_direct_composition = self.direct_composition.is_none();
-        // NYAW: 読み戻し用のテクスチャは失ったデバイスのもの。
+        // NYAW: リードバック用テクスチャは喪失デバイスに属するため破棄する。
         #[cfg(any(test, feature = "test-support"))]
         {
             self.readback = None;
@@ -461,7 +461,7 @@ impl DirectXRenderer {
             !self.skip_draws,
             "render_to_image unavailable while recovering from a lost device"
         );
-        // NYAW: 前の呼び出しで積んだ読み戻しを受け取るだけ（描かない）。
+        // NYAW: 前回発行済みのリードバックを回収するのみ（再描画しない）。
         if COLLECT.with(|c| c.get()) {
             let rb = self.readback.as_mut().context("no readback pending")?;
             let slot = rb.pending.take().context("no readback pending")?;
@@ -485,7 +485,7 @@ impl DirectXRenderer {
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         unsafe { render_target.GetDesc(&mut desc) };
         let (width, height) = (desc.Width, desc.Height);
-        // NYAW: CPU から読めるテクスチャは大きさが変わるまで使い回す（毎回作っていた）。
+        // NYAW: ステージングテクスチャはサイズが変わるまで再利用する（従来は毎回生成していた）。
         if self
             .readback
             .as_ref()
@@ -521,10 +521,10 @@ impl DirectXRenderer {
         let slot = if rb.pending == Some(0) { 1 } else { 0 };
         unsafe {
             context.CopyResource(&rb.staging[slot], render_target);
-            // 積んだコピーをすぐ GPU に流し、次に受け取るときには済んでいるようにする。
+            // コピーコマンドを即座に GPU へ送出し、次回の回収時に完了済みとなるようにする。
             context.Flush();
         }
-        // NYAW: 待たずに、前に積んだ読み戻し（無ければ最後に返した絵）を返す。どちらも無い初回だけ待つ。
+        // NYAW: 待機せず、前回発行済みのリードバック（なければ最後に返した画像）を返す。どちらも存在しない初回のみ待機する。
         if let Some(prev) = rb.pending.replace(slot) {
             let img = self.map_readback(prev)?;
             if let Some(rb) = &mut self.readback {
@@ -543,7 +543,7 @@ impl DirectXRenderer {
         Ok(img)
     }
 
-    /// NYAW: 読み戻し用のテクスチャ `slot` を CPU に写し、BGRA を RGBA にする（コピーが済むまで待つ）。
+    /// NYAW: ステージングテクスチャ `slot` を CPU にマップし、BGRA → RGBA 変換を行う（コピー完了まで待機）。
     #[cfg(any(test, feature = "test-support"))]
     fn map_readback(&self, slot: usize) -> Result<image::RgbaImage> {
         let context = &self.devices.as_ref().context("devices missing")?.device_context;

@@ -6,7 +6,7 @@ fn in_view_estimates_from_head_direction() {
     let (mut vr, mut ov) = setup();
     ov.tick(&mut vr);
     assert!(ov.in_view(0), "1m straight ahead");
-    // 真後ろを向くと見えない。
+    // 真後ろを向くと不可視。
     vr.backend.frame.hmd = Pose::new(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
     ov.tick(&mut vr);
     assert!(!ov.in_view(0));
@@ -21,7 +21,7 @@ fn attached_to_hmd_follows_head_including_rotation() {
         Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
     );
     ov.tick(&mut vr);
-    // 左を向いた頭の 0.5m 前方 = -X 方向。
+    // 左を向いた頭の 0.5m 前方 = −X 方向。
     assert_at(&ov, &vr, Vec3::new(0.5, 1.5, 0.0));
     assert!(
         ov.panel(0)
@@ -68,7 +68,7 @@ fn detach_leaves_panel_in_place() {
 fn dragging_attached_panel_reanchors_offset() {
     let (mut vr, mut ov) = setup();
     ov.attach(0, Device::Hmd, at(0.0, 0.0, -1.0));
-    // 右手で掴んで 1m 右へ動かして離す。
+    // 右手でグラブし 1m 右へ移動後リリースする。
     controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", 1.0)]);
     ov.tick(&mut vr);
     controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
@@ -76,13 +76,13 @@ fn dragging_attached_panel_reanchors_offset() {
     controller(&mut vr, at(1.0, 0.0, 0.0), &[]);
     ov.tick(&mut vr);
     assert_at(&ov, &vr, Vec3::new(1.0, 0.0, -1.0));
-    // 頭が動けば、新しいオフセットのまま追従する。
+    // 頭が移動すると新オフセットのまま追従する。
     vr.backend.frame.hmd = at(0.0, 0.5, 0.0);
     ov.tick(&mut vr);
     assert_at(&ov, &vr, Vec3::new(1.0, 0.5, -1.0));
 }
 
-/// 範囲（`reach`）を決めた取り付け中のパネルは、掴んで遠くへ動かしても取り付け先からその距離で止まり、そこで付け直される。
+/// `reach` 設定済みの取り付けパネルは、グラブで遠方へ移動しても取り付け先から指定距離でクランプされ、その位置に再取り付けされる。
 #[test]
 fn reach_keeps_a_dragged_attached_panel_near_its_device() {
     let (mut vr, mut ov) = setup();
@@ -101,7 +101,7 @@ fn reach_keeps_a_dragged_attached_panel_near_its_device() {
     assert_at(&ov, &vr, toward + Vec3::Y * 0.5);
 }
 
-/// 掴んでいる最中にロックすると掴みは取り消され、取り付け中のパネルは掴む前のオフセットへ戻る（離しても付け直さない）。
+/// グラブ中にロックするとグラブが取り消され、取り付けパネルはグラブ前のオフセットに復帰する。リリース時の再取り付けは行わない。
 #[test]
 fn locking_mid_grab_undoes_the_grab_of_an_attached_panel() {
     let (mut vr, mut ov) = setup();
@@ -122,8 +122,8 @@ fn locking_mid_grab_undoes_the_grab_of_an_attached_panel() {
     assert_at(&ov, &vr, Vec3::new(0.0, 0.5, -1.0));
 }
 
-/// 手に持ったパネルは、レーザーの出る所の前へ伸び（上から見るとコントローラの先に面がある）、手前へ `HAND_TILT` 起きる。
-/// 地の下端の左右中央は、面に沿ってレーザーの出る所から `HAND_GAP` の所。大きければ長い辺が `HAND_SIZE` になるまで縮む。
+/// 手持ちパネルはレーザー射出点の前方に配置され（上面視でコントローラ先端に面がある）、`HAND_TILT` 分手前に起きる。
+/// パネル下端中央は面に沿って射出点から `HAND_GAP` の位置。長辺が `HAND_SIZE` を超える場合は縮小する。
 #[test]
 fn panel_in_hand_lies_ahead_of_the_laser_tilted_toward_the_user() {
     let (mut vr, mut ov) = setup();
@@ -138,7 +138,7 @@ fn panel_in_hand_lies_ahead_of_the_laser_tilted_toward_the_user() {
     let hand = Vec3::new(0.2, -0.3, -0.4);
     let (sin, cos) = HAND_TILT.sin_cos();
     let eq = |a: Vec3, b: Vec3| assert!(a.abs_diff_eq(b, 1e-5), "{a} != {b}");
-    // 水平に前へ向けた手: 面は前へ伸び、上（前）の端が手前へ起きて、表は上やや手前を向く。
+    // 水平前方の手: 面は前方に伸び、上端（前端）が手前に起き、表面は上方やや手前を向く。
     controller(&mut vr, Pose::new(hand, Quat::IDENTITY), &[]);
     ov.tick(&mut vr);
     let p = ov.panel(0).pose;
@@ -146,7 +146,7 @@ fn panel_in_hand_lies_ahead_of_the_laser_tilted_toward_the_user() {
     eq(p.orientation * Vec3::Y, up);
     eq(p.orientation * Vec3::Z, Vec3::new(0.0, cos, sin));
     eq(p.position - up * face, hand + up * HAND_GAP);
-    // 手を起こす（レーザーが真上）と、面は立って上の端が手前に傾き、表が手前（+Z）を向いて正立する。
+    // 手を起こす（レーザーが真上）と面が立ち、上端が手前に傾き、表面が手前（+Z）を向いて正立する。
     let raised = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
     controller(&mut vr, Pose::new(hand, raised), &[]);
     ov.tick(&mut vr);
@@ -158,7 +158,7 @@ fn panel_in_hand_lies_ahead_of_the_laser_tilted_toward_the_user() {
     eq(p.position - up * face, hand + up * HAND_GAP);
 }
 
-/// もともと小さいパネルは、手に持たせても大きさを変えない。
+/// 元々小さいパネルは手持ち時にもサイズを維持する。
 #[test]
 fn small_panel_keeps_its_size_in_hand() {
     let (mut vr, mut ov) = setup();
@@ -170,7 +170,7 @@ fn small_panel_keeps_its_size_in_hand() {
     assert_eq!(ov.panel(id).size, small);
 }
 
-/// 掴んで大きさを変えている最中にロックすると、大きさも掴む前に戻る（手に持ったパネルの調整の取り消し）。
+/// リサイズ中にロックするとサイズもグラブ前に復帰する。手持ちパネルの調整取り消し。
 #[test]
 fn locking_mid_grab_undoes_the_resize() {
     const RESIZE: &str = subsystems::vr::RESIZE_INPUT;
@@ -222,11 +222,11 @@ fn lazy_following_panel_ignores_grab_but_still_takes_pointer() {
             pos: Vec2::new(50.0, 50.0)
         }]
     );
-    // 手を動かしても付いてこない（掴めない）。ゆるい追従が置いた、頭の正面のまま。
+    // 手を移動してもパネルは追従しない（グラブ不可）。LazyFollow が配置した頭の正面位置のまま。
     controller(&mut vr, at(1.0, 0.0, 0.0), &[("squeeze/value", 1.0)]);
     settle(&mut vr, &mut ov);
     assert_at(&ov, &vr, Vec3::new(0.0, 0.0, -1.0));
-    // 外せば掴める（いったん離して押し直す）。
+    // LazyFollow を解除すればグラブ可能。いったんリリースして再グラブする。
     ov.set_lazy_follow(0, None);
     controller(&mut vr, Pose::IDENTITY, &[]);
     ov.tick(&mut vr);
@@ -273,7 +273,7 @@ fn pixel_to_world_inverts_hit_test() {
     assert!(hit.abs_diff_eq(px, 1e-3), "{hit}");
 }
 
-/// 出入りを不透明度だけにしたパネルは、隠しても大きさを変えず、はめた所から後ろへ下がらない（動きは中身が描く）。
+/// フェードのみのパネルは非表示時にサイズ変更やスロット位置からの後退を行わない。アニメーションはコンテンツ側が担当する。
 #[test]
 fn a_fade_only_panel_keeps_its_size_and_place_while_it_fades() {
     let (mut vr, mut ov) = with_slot_child();
@@ -284,12 +284,12 @@ fn a_fade_only_panel_keeps_its_size_and_place_while_it_fades() {
     ov.set_fade_only(1, true);
     let size = ov.panel(1).size;
     ov.set_hidden(&mut vr.backend, 1, true);
-    assert!(!ov.glides.contains_key(&1), "下がらない");
+    assert!(!ov.glides.contains_key(&1), "後退しない");
     advance(&mut ov, &mut vr, 0.05);
     let p = ov.panel(1);
     assert!(
         p.opacity > 0.0 && p.opacity < 1.0,
-        "薄れている途中: {}",
+        "フェード中: {}",
         p.opacity
     );
     assert_eq!(p.displayed_size(), size);

@@ -1,20 +1,20 @@
-//! リンクを開く依頼。部品・画面は URL を直接開かず [`open`] で依頼するだけ。UI 層が入力の配送の直後に [`take`] で取り出し、
-//! URL を見せてユーザーに確かめてから開く（検問所は `ui::link`。`cx.open_url` を呼べるのはそこだけで、clippy が守る）。
+//! リンクを開く要求。部品・画面は URL を直接開かず [`open`] で要求するのみ。UI 層が入力配送直後に [`take`] で取り出し、
+//! URL をユーザーに確認させてから開く（検問所は `ui::link`。`cx.open_url` を呼べるのはそこだけで、clippy が保護する）。
 
 use gpui::{App, Window, WindowId};
 
-/// 開いてほしい URL（GPUI のグローバル）。依頼したウィンドウごと。
+/// 開くよう要求された URL（GPUI グローバル）。要求元ウィンドウごとに保持する。
 #[derive(Default)]
 struct Requests(Vec<(WindowId, String)>);
 impl gpui::Global for Requests {}
 
-/// `url` をブラウザで開いてほしいと依頼する。開く前に、UI 層がユーザーに確かめる。
+/// `url` をブラウザで開くよう要求する。UI 層が開く前にユーザーへ確認を行う。
 pub fn open(url: impl Into<String>, window: &Window, cx: &mut App) {
     let id = window.window_handle().window_id();
     cx.default_global::<Requests>().0.push((id, url.into()));
 }
 
-/// `window` から依頼された URL をすべて取り出す。
+/// `window` から要求された URL をすべて取り出す。
 pub fn take(window: &Window, cx: &mut App) -> Vec<String> {
     let id = window.window_handle().window_id();
     let requests = &mut cx.default_global::<Requests>().0;

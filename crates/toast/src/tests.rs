@@ -57,7 +57,7 @@ fn fits(commands: &[PanelCommand]) -> bool {
         .any(|c| matches!(c, PanelCommand::FitHeight(_)))
 }
 
-/// 出ていく途中のアウトを終わらせ、次の場所へ移らせる（アウトは実時間で待つので、待った後にする）。
+/// アウト中の遷移を強制完了させ、次の位置への遷移を発生させる（アウトは実時間で待機するため、待機後に呼び出す）。
 fn finish_out(view: &gpui::Entity<Toast>, cx: &mut VisualTestContext) {
     view.update(cx, |t, _| {
         if let Phase::Out(_) = t.phase {
@@ -75,9 +75,9 @@ fn hud_shows(c: &[PanelCommand]) -> bool {
         && c.last() == Some(&PanelCommand::Hide(false))
 }
 
-/// 時計を見ていなければ視界の端に出て、時計を見ると手首へ、ダッシュボードを開くとダッシュボードへ移る。どの移動も、
-/// 今の場所で消えきって（前の中身のまま）から、次の場所へ瞬間的に移って現れる（目の前を横切らない）。
-/// ダッシュボードを閉じると片付き、ダッシュボードで見たものは手首にも戻らない。
+/// 時計を注視していなければ HUD に表示され、注視すると手首へ、ダッシュボードを開くとダッシュボードへ遷移する。すべての遷移で、
+/// 現在位置でフェードアウト完了（前のコンテンツのまま）後、次の位置へ瞬間移動してフェードインする（視界を横切らない）。
+/// ダッシュボードを閉じると非表示になり、ダッシュボードで表示済みの通知は手首にも遷移しない。
 #[gpui::test]
 fn the_toast_moves_out_and_in_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
@@ -86,17 +86,17 @@ fn the_toast_moves_out_and_in_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mu
     assert_eq!(place(&view, cx), Place::Hud);
     assert!(hud_shows(&c), "{c:?}");
     assert!(cx.debug_bounds("toast-hud-1").is_some());
-    assert!(cx.debug_bounds("toast-1").is_none(), "HUD は押せない");
+    assert!(cx.debug_bounds("toast-1").is_none(), "HUD は非インタラクティブ");
 
-    // 時計を見る: まず HUD で消える（中身は HUD のまま）。消えきってから手首で現れる。
+    // 時計を注視: まず HUD でフェードアウト（コンテンツは HUD のまま）。完全消失後に手首でフェードイン。
     set(cx, |c| {
         c.panels.entry(WRIST).or_default().status.gazed = true
     });
     assert_eq!(take(cx, TOAST), [PanelCommand::Hide(true)]);
-    assert_eq!(place(&view, cx), Place::Hud, "消える間は前の場所");
+    assert_eq!(place(&view, cx), Place::Hud, "フェードアウト中は前の位置");
     assert!(
         cx.debug_bounds("toast-hud-1").is_some(),
-        "消える間は前の中身"
+        "フェードアウト中は前のコンテンツ"
     );
     finish_out(&view, cx);
     let c = take(cx, TOAST);
@@ -112,7 +112,7 @@ fn the_toast_moves_out_and_in_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mu
     assert_eq!(c.last(), Some(&PanelCommand::Hide(false)));
     assert!(cx.debug_bounds("toast-1").is_some());
 
-    // ダッシュボードを開く: 手首で消えて、手首から外れ、ダッシュボードの上で現れる。
+    // ダッシュボードを開く: 手首でフェードアウトし、手首から切り離され、ダッシュボード上部でフェードインする。
     set(cx, |c| {
         c.dock = Some((BAR, 0.5));
         c.panels.entry(BAR).or_default();
@@ -138,7 +138,7 @@ fn the_toast_moves_out_and_in_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mu
     );
     assert_eq!(c.last(), Some(&PanelCommand::Hide(false)));
 
-    // ダッシュボードを閉じる: 消えて外れる。ダッシュボードで見たものは手首に戻らない。
+    // ダッシュボードを閉じる: フェードアウトして切り離される。ダッシュボードで表示済みの通知は手首に遷移しない。
     set(cx, |c| c.panels.get_mut(&BAR).unwrap().status.hidden = true);
     assert_eq!(take(cx, TOAST), [PanelCommand::Hide(true)]);
     finish_out(&view, cx);
@@ -150,12 +150,12 @@ fn the_toast_moves_out_and_in_from_the_hud_to_the_wrist_to_the_dashboard(cx: &mu
     assert_eq!(
         place(&view, cx),
         Place::Hidden,
-        "ダッシュボードで見たものは手首に戻らない"
+        "ダッシュボードで表示済みの通知は手首に遷移しない"
     );
     assert!(take(cx, TOAST).is_empty());
 }
 
-/// 消えきる前（アウトの途中）には次の場所へ移らない。
+/// フェードアウト完了前（アウト遷移中）は次の位置へ遷移しない。
 #[gpui::test]
 fn the_toast_waits_for_its_out_animation(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
@@ -167,14 +167,14 @@ fn the_toast_waits_for_its_out_animation(cx: &mut TestAppContext) {
     assert_eq!(take(cx, TOAST), [PanelCommand::Hide(true)]);
     for _ in 0..3 {
         set(cx, |_| {});
-        assert!(take(cx, TOAST).is_empty(), "まだ消えている途中");
+        assert!(take(cx, TOAST).is_empty(), "フェードアウト中");
     }
     std::thread::sleep(Duration::from_millis(Motion::Exit.duration_ms()) + OUT_MARGIN);
     set(cx, |_| {});
     assert_eq!(place(&view, cx), Place::Wrist);
 }
 
-/// カードは新しいものが上から積まれる（手首・ダッシュボードでも、HUD でも）。
+/// カードは新しいものが上に積まれる（手首・ダッシュボード・HUD いずれでも）。
 #[gpui::test]
 fn the_newest_card_is_on_top(cx: &mut TestAppContext) {
     let (_view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
@@ -185,8 +185,8 @@ fn the_newest_card_is_on_top(cx: &mut TestAppContext) {
     assert!(new.top() < old.top(), "HUD: {new:?} {old:?}");
 }
 
-/// 手首・ダッシュボードの通知は広げず（ホバーしてもボタンは出ない）、押すとアプリへは届けずに通知センターを、その
-/// 通知を広げて開くよう頼む。
+/// 手首・ダッシュボードの通知は展開しない（ホバーしてもアクションボタンは表示しない）。クリックするとアプリには通知せず、
+/// 通知センターに該当通知を展開して開くよう要求する。
 #[gpui::test]
 fn cards_jump_to_the_notification_center(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
@@ -200,7 +200,7 @@ fn cards_jump_to_the_notification_center(cx: &mut TestAppContext) {
     cx.run_until_parked();
     assert!(
         cx.debug_bounds("toast-action-1-0").is_none(),
-        "ホバーしても広げない"
+        "ホバーしても展開しない"
     );
     cx.simulate_click(at, Modifiers::none());
     cx.run_until_parked();
@@ -210,19 +210,19 @@ fn cards_jump_to_the_notification_center(cx: &mut TestAppContext) {
     });
     assert_eq!(asked, (1, Some(1)));
     let shown = view.read_with(cx, |t, _| t.shown.iter().map(|n| n.id).collect::<Vec<_>>());
-    assert_eq!(shown, [2], "押したものは読んだので消える（ほかは残る）");
+    assert_eq!(shown, [2], "クリックした通知は閲覧済みとなり消える（他は残留する）");
     assert!(
         !take(cx, TOAST)
             .iter()
             .any(|c| matches!(c, PanelCommand::Notification { .. })),
-        "アプリへは届けない"
+        "アプリへは通知しない"
     );
     let urls = cx.update(|window, cx| design::link::take(window, cx));
-    assert!(urls.is_empty(), "URL も開かない");
+    assert!(urls.is_empty(), "URL も開かない（通知センターに委譲する）");
 }
 
-/// 通知センターがダッシュボードにはまって出ている間は、トーストは出ない（届いたものも含めて見たことになり、閉じても
-/// もう出ない）。
+/// 通知センターがダッシュボードにドッキングして表示されている間は、トーストは非表示になる（新規到着分を含め閲覧済みとなり、
+/// 閉じても再表示されない）。
 #[gpui::test]
 fn the_toast_steps_aside_for_the_notification_center(cx: &mut TestAppContext) {
     const CENTER: PanelId = 9;
@@ -247,12 +247,12 @@ fn the_toast_steps_aside_for_the_notification_center(cx: &mut TestAppContext) {
     assert_eq!(
         place(&view, cx),
         Place::Hidden,
-        "通知センターに並ぶので出さない"
+        "通知センターに表示されるためトーストは非表示"
     );
     set(cx, |c| {
         c.notifications = Arc::from([note(1, None), note(2, None)])
     });
-    assert_eq!(place(&view, cx), Place::Hidden, "出ている間に届いたものも");
+    assert_eq!(place(&view, cx), Place::Hidden, "表示中に到着した通知も非表示");
     set(cx, |c| c.panels.get_mut(&BAR).unwrap().status.hidden = true);
     set(cx, |c| {
         c.panels.entry(WRIST).or_default().status.gazed = true
@@ -260,11 +260,11 @@ fn the_toast_steps_aside_for_the_notification_center(cx: &mut TestAppContext) {
     assert_eq!(
         place(&view, cx),
         Place::Hidden,
-        "通知センターで見たものはもう出ない"
+        "通知センターで閲覧済みの通知は再表示されない"
     );
 }
 
-/// HUD の中身の外側の端は、どの端でも両目に確実に映る範囲の端に来て、その外へは出ない（UI スケールが大きくても）。
+/// HUD コンテンツの外縁は、すべてのアンカー位置で両目の確実可視範囲の端に一致し、範囲外にはみ出さない（UI スケールが大きくても）。
 #[test]
 fn the_hud_stays_inside_the_safe_area() {
     let safe = Fov::NARROW.safe();
@@ -279,7 +279,7 @@ fn the_hud_stays_inside_the_safe_area() {
                 (p.length() - HUD_DISTANCE).abs() < HUD_DISTANCE * 0.15,
                 "{anchor:?}"
             );
-            // 寄せた側の外側の端の角度（頭の正面から）。パネルが範囲より大きければ中心は反対側へ回るが、端は動かない。
+            // アンカー側の外縁の角度（頭部正面基準）。パネルが範囲より大きい場合、中心は反対側に回るが、外縁位置は不変。
             let check = |s: f32, c: f32, half: f32, neg: f32, pos: f32| {
                 if s == 0.0 {
                     assert_eq!(c, 0.0, "{anchor:?}");
@@ -291,14 +291,14 @@ fn the_hud_stays_inside_the_safe_area() {
             };
             check(sx, p.x, half.x, safe.left, safe.right);
             check(sy, p.y, half.y, safe.down, safe.up);
-            // 頭の方を向いている。
+            // 頭部方向を向いている。
             let facing = pose.orientation * Vec3::Z;
             assert!(facing.angle_between(-p) < 1e-3, "{anchor:?}");
         }
     }
 }
 
-/// 出しきれない分の「ほか n 件」は、一番下のカードに重ならない（手首・ダッシュボードの下に寄せる並べ方でも、HUD でも）。
+/// 表示上限を超過した「ほか n 件」は、最下部のカードに重ならない（手首・ダッシュボードの下寄せレイアウトでも、HUD でも）。
 #[gpui::test]
 fn the_more_line_does_not_overlap_the_cards(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|_, cx| Toast::new(TOAST, WRIST, cx));
@@ -325,8 +325,8 @@ fn the_more_line_does_not_overlap_the_cards(cx: &mut TestAppContext) {
     );
 }
 
-/// 手首の通知はマウスのドラッグでも指のスライド（横のスクロール）でも左右へ片付く。片付けるのはその場だけで、押した
-/// ことにはせず、通知センター（クイック設定の一覧）からも消さない。短いスワイプは元へ戻る。
+/// 手首の通知はマウスドラッグでも指のスライド（横スクロール）でも左右に非表示にできる。非表示はその場のみの効果で、
+/// アクティベートとは扱わず、通知センター（クイック設定の一覧）からも削除しない。短いスワイプは元に戻る。
 #[gpui::test]
 fn cards_swipe_away(cx: &mut TestAppContext) {
     use gpui::{MouseButton, ScrollDelta, ScrollWheelEvent, TouchPhase, point};
@@ -336,7 +336,7 @@ fn cards_swipe_away(cx: &mut TestAppContext) {
         c.panels.entry(WRIST).or_default().status.gazed = true;
     });
     take(cx, TOAST);
-    // 離した後: 横へ抜ける・戻る動きを待って描き、抜けたなら高さを畳む動きも待って描く（畳みきって片付く）。
+    // リリース後: 横方向への退出・復帰アニメーションを待って描画し、退出の場合は高さの畳みアニメーションも待つ（完全に畳まれて非表示になる）。
     let settle = |cx: &mut VisualTestContext| {
         std::thread::sleep(Duration::from_millis(Motion::Return.duration_ms() + 50));
         set(cx, |_| {});
@@ -364,7 +364,7 @@ fn cards_swipe_away(cx: &mut TestAppContext) {
         Modifiers::none(),
     );
     settle(cx);
-    assert!(card(cx, 3).is_none(), "大きく動かすと片付く");
+    assert!(card(cx, 3).is_none(), "大きくドラッグすると非表示になる");
     // 指: 横のスクロールで右へ少しだけ動かすと戻る。大きく動かすと片付く。
     let swipe = |cx: &mut VisualTestContext, id: u32, by: f32| {
         let at = card(cx, id).unwrap().center();
@@ -383,18 +383,18 @@ fn cards_swipe_away(cx: &mut TestAppContext) {
         settle(cx);
     };
     swipe(cx, 2, 20.0);
-    assert!(card(cx, 2).is_some(), "短いスワイプは戻る");
+    assert!(card(cx, 2).is_some(), "短いスワイプは元に戻る");
     swipe(cx, 2, f32::from(width));
     assert!(card(cx, 2).is_none());
-    assert!(card(cx, 1).is_some(), "ほかの通知は残る");
+    assert!(card(cx, 1).is_some(), "他の通知は残留する");
     assert!(
         !take(cx, TOAST)
             .iter()
             .any(|c| matches!(c, PanelCommand::Notification { .. })),
-        "スワイプは押したことにしない"
+        "スワイプはアクティベートとして扱わない"
     );
     let urls = cx.update(|window, cx| design::link::take(window, cx));
     assert!(urls.is_empty());
     let left = cx.update(|_, cx| cx.global::<PanelControl>().notifications.len());
-    assert_eq!(left, 3, "一覧からは消さない");
+    assert_eq!(left, 3, "通知一覧からは削除しない");
 }

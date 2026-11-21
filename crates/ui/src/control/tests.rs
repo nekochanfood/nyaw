@@ -2,7 +2,7 @@ use super::*;
 use crate::test_util::*;
 use kernel::vr::{Quat, RawController, Vec3, mock::MockBackend};
 
-/// 右手で頭（原点）から `to` の方を狙い、掴む・離すを 60 tick 続ける。
+/// 右手で頭（原点）から `to` 方向を照準し、掴み・解放を 60 tick 継続する。
 fn hand(kernel: &mut Kernel<MockBackend>, to: Vec3, grab: bool) {
     kernel.subsystems.backend.frame.controllers = vec![RawController {
         hand: Hand::Right,
@@ -18,7 +18,7 @@ fn hand(kernel: &mut Kernel<MockBackend>, to: Vec3, grab: bool) {
     }
 }
 
-/// はめた画面を手で引っこ抜く・近づけて離してはめると、はまっている画面の記録（[`docked`]）もそれに合わせて変わる。
+/// ドック中の画面を手で引き抜き、再び近づけて離すとドック状態の記録（[`docked`]）が追従する。
 #[gpui::test]
 fn pulling_a_screen_off_by_hand_and_docking_it_again_updates_docked(cx: &mut TestAppContext) {
     let mut kernel = Kernel::with_backend(MockBackend::default(), Default::default());

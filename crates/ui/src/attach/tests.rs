@@ -1,13 +1,13 @@
 use super::*;
 use crate::test_util::*;
 
-/// `panel` に積まれた操作を取り出す。
+/// `panel` にキューイングされた操作を取り出す。
 fn take(panel: PanelId, cx: &mut App) -> Vec<PanelCommand> {
     let ctl = cx.default_global::<PanelControl>();
     std::mem::take(&mut ctl.panels.entry(panel).or_default().commands)
 }
 
-/// 手に持っている間だけ、ダッシュボードが出ていなければロックする（変わったときだけ積む）。手から外れたら外す。
+/// 手に保持中のパネルは、ダッシュボード非表示時のみグラブロックする（変更時のみキューイング）。手から外れると解除する。
 #[gpui::test]
 fn a_panel_in_hand_is_grabbable_only_while_the_dashboard_shows(cx: &mut TestAppContext) {
     cx.update(|cx| {
@@ -25,25 +25,25 @@ fn a_panel_in_hand_is_grabbable_only_while_the_dashboard_shows(cx: &mut TestAppC
         let hidden =
             |on| move |ctl: &mut PanelControl| ctl.panels.entry(5).or_default().status.hidden = on;
         assert_eq!(step(cx, &|_| {}), []);
-        // 頭に付けたものは手ではない。
+        // HMD に装着されたものは手として扱わない。
         assert_eq!(step(cx, &attach(Some(Device::Hmd))), []);
         let left = Some(Device::Controller(Hand::Left));
         assert_eq!(step(cx, &attach(left.clone())), [PanelCommand::Lock(true)]);
         assert_eq!(step(cx, &|_| {}), []);
-        // ダッシュボード（はめる場所の持ち主 5）が出ると掴め、隠れるとまたロックする。
+        // ダッシュボード（ドック持ち主 5）が表示されるとグラブ可能になり、非表示で再ロックする。
         assert_eq!(
             step(cx, &|ctl| ctl.dock = Some((5, 0.0))),
             [PanelCommand::Lock(false)]
         );
         assert_eq!(step(cx, &hidden(true)), [PanelCommand::Lock(true)]);
-        // 手から外れたらロックを外す。
+        // 手から外れるとロックを解除する。
         assert_eq!(step(cx, &attach(None)), [PanelCommand::Lock(false)]);
         assert_eq!(step(cx, &hidden(false)), []);
     });
 }
 
-/// 手を選ぶと持ち主をその手に持ち、ポップオーバーは閉じる。はめた画面は外して独立させてから持つ。持っていなければ
-/// 「手から外す」は無い。
+/// 手を選択すると持ち主をその手に装着し、ポップオーバーは閉じる。ドック中の画面は取り外して独立させてから装着する。
+/// 未保持時は「手から外す」は表示されない。
 #[gpui::test]
 fn choosing_a_hand_holds_the_owner_in_it(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, cx| {
@@ -74,7 +74,7 @@ fn choosing_a_hand_holds_the_owner_in_it(cx: &mut TestAppContext) {
     assert_eq!(cx.update(|_, cx| take(3, cx)), [PanelCommand::Close]);
 }
 
-/// 持っている手を選び直しても何もしない（閉じるだけ）。
+/// 装着中の手を再選択しても何もしない（ポップオーバーを閉じるのみ）。
 #[gpui::test]
 fn choosing_the_held_hand_again_changes_nothing(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| NavMenu {
@@ -90,7 +90,7 @@ fn choosing_the_held_hand_again_changes_nothing(cx: &mut TestAppContext) {
     assert_eq!(cx.update(|_, cx| take(4, cx)), [PanelCommand::Close]);
 }
 
-/// 「手から外す」は持ち主をその場に残して手から外し、ポップオーバーを閉じる。
+/// 「手から外す」は持ち主をその場に残して手から取り外し、ポップオーバーを閉じる。
 #[gpui::test]
 fn letting_go_detaches_the_owner(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| NavMenu {
@@ -106,8 +106,8 @@ fn letting_go_detaches_the_owner(cx: &mut TestAppContext) {
     assert_eq!(cx.update(|_, cx| take(3, cx)), [PanelCommand::Close]);
 }
 
-/// はめる場所にはまっていれば「ダッシュボードから外す」、外れていて場所が開いていれば「戻す」が出て、選ぶとそうして閉じる。
-/// はめられないパネルや、場所が出ていなければ出さない。
+/// ドック中であれば「ダッシュボードから外す」、未装着でドックが空きなら「戻す」を表示し、選択で実行して閉じる。
+/// ドック非対応パネルやドック非表示時は表示しない。
 #[gpui::test]
 fn the_menu_docks_and_undocks_the_owner(cx: &mut TestAppContext) {
     let rows =
@@ -161,8 +161,8 @@ fn the_menu_docks_and_undocks_the_owner(cx: &mut TestAppContext) {
     assert_eq!(dock.update(|_, cx| take(3, cx)), [PanelCommand::Close]);
 }
 
-/// ポップオーバーはナビゲーションバーの上に、カードの右端をバーの帯の右端（「…」の側）にそろえて出す。バーは頭からの距離で
-/// 大きくなるので、ポップオーバーも同じ割合で大きく・遠くなる（バーとの見た目の比が変わらない）。
+/// ポップオーバーはナビゲーションバー上に、カード右端をバーの帯の右端（「…」側）に揃えて表示する。
+/// バーは頭からの距離に比例して拡大するため、ポップオーバーも同じ比率で拡大する（見た目の比率が一定）。
 #[gpui::test]
 fn the_menu_sits_over_the_nav_bar_at_its_scale(cx: &mut TestAppContext) {
     let mut kernel =
@@ -187,7 +187,7 @@ fn the_menu_sits_over_the_nav_bar_at_its_scale(cx: &mut TestAppContext) {
         let (size, res) = spec.size(kernel);
         let pose = spec.pose_for(kernel, 2);
         let b = kernel.panel(bar);
-        // 1px の大きさ（m）と、ポップオーバー・帯の右端と、カードの下端・帯の上端（バーの面の上で）。
+        // 1px あたりの大きさ（m）、ポップオーバー・帯の右端座標、カード下端・帯上端（バー面上の座標）。
         let (m, n) = (size.x / res.0 as f32, b.size.x / NAV_BAR_PX.0 as f32);
         let local = b.pose.inverse().transform_point(pose.position);
         let card_right = local.x + size.x / 2.0 - margin * m;
@@ -202,7 +202,7 @@ fn the_menu_sits_over_the_nav_bar_at_its_scale(cx: &mut TestAppContext) {
             (card_bottom - band_top - design::spacing::SM * n).abs() < 1e-5,
             "{card_bottom} {band_top}"
         );
-        // バー（と持ち主）より手前に浮かせる。
+        // バー（と持ち主）より手前に浮かせて配置する。
         assert!(
             (local.z - MENU_LIFT * b.size.x / NAV_BAR_M).abs() < 1e-5,
             "{local}"

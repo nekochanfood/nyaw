@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# 画面層。初回起動のセットアップウィザード。
+# 画面層：初回起動時のセットアップウィザード
 [dependencies]
 design.workspace = true
 i18n.workspace = true

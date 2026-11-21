@@ -84,7 +84,7 @@ pub fn main() -> ExitCode {
         ..Default::default()
     };
     let kernel = Kernel::with_backend(Box::new(backend) as Box<dyn VrBackend>, config);
-    // GPUI の Testing 8 枚（2 行）と、本番と同じビーム。
+    // GPUI の Testing 8 枚（2 行）と、本番と同一のビーム。
     let mut panels: Vec<PanelSpec> = (0..8)
         .map(|i| {
             let (col, row) = ((i % 4) as f32, (i / 4) as f32);
@@ -201,14 +201,14 @@ fn scenario(emu: &Emu, remote: &Sender<ui::Remote>, opened: usize, t0: Instant) 
     let secs = |x: f32| Duration::from_secs_f32(x * s);
     let mut phases = Vec::new();
     let mut next_id = opened;
-    // 起動直後の描画が落ち着くまで待つ。 Not included in measurement.
+    // 起動直後の描画が安定するまで待機する。計測には含めない。
     std::thread::sleep(Duration::from_secs(3));
 
     run_phase(&mut phases, t0, "idle", secs(4.0), |_| emu.point(None));
     run_phase(&mut phases, t0, "sweep", secs(8.0), |f| sweep_frame(emu, f));
     // check whether continued operation itself made things heavier (compare with the first idle).
     run_phase(&mut phases, t0, "idle-mid", secs(4.0), |_| emu.point(None));
-    // 0.5 秒ごとに Testing パネルを開き、前のパネルを閉じる。
+    // 0.5 秒ごとに Testing パネルを開き、直前のパネルを閉じる。
     run_phase(&mut phases, t0, "spawn", secs(8.0), |f| {
         sweep_frame(emu, f);
         if f % 45 != 0 {

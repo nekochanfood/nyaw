@@ -1,8 +1,8 @@
-//! Testing パネル本体（[`Testing`]）の描画: VR・GPUI の操作と、ほかのテスト用の画面を開くボタン。
+//! Testing パネル本体（[`Testing`]）の描画: VR・GPUI の操作および各テスト画面を開くボタン。
 
 use super::*;
 
-/// ピクセル単位のスクロール（トラックパッド等）を行に換算するときの1行の高さ。
+/// ピクセル単位のスクロール（トラックパッド等）を行数に換算する際の 1 行の高さ。
 const SCROLL_LINE_PX: f32 = 20.0;
 
 impl Render for Testing {
@@ -18,7 +18,7 @@ impl Render for Testing {
         let tracker = st.trackers.first().map(|id| Device::Tracker(id.clone()));
         let focus = self.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         let theme = Theme::current(cx);
-        // この画面のボタンは現在のテーマで描く（上のモジュール関数 `button` を隠す）。
+        // この画面のボタンは現在のテーマで描画する（モジュールレベルの `button` をシャドーイングする）。
         macro_rules! button {
             ($($a:expr),+ $(,)?) => {
                 themed_button(&theme, $($a),+)
@@ -44,7 +44,7 @@ impl Render for Testing {
             "testing.panel.language",
             &[("language", &ui::lang(settings.language).native_name())],
         );
-        // このパネル自身の操作（表示・テーマ・言語・ロック・計測）。
+        // このパネルの操作（表示・テーマ・言語・ロック・プロファイリング）。
         let panel_row = row()
             .child(
                 button!(
@@ -59,7 +59,7 @@ impl Render for Testing {
                     .on_click(change(Setting::Theme(settings.theme.toggled()))),
             )
             .child(
-                // 言語の名前はその言語自身で出す（どの言語で表示していても読める）。
+                // 言語名はその言語自体で表示する（どの言語表示中でも読める）。
                 button!("toggle-language", language_label, false)
                     .on_click(change(Setting::Language(next_language(settings.language)))),
             )
@@ -78,7 +78,7 @@ impl Render for Testing {
                     c.profiling = !c.profiling;
                 }),
             );
-        // 取り付け先（今どこに付いているかで光る）。
+        // アタッチ先（現在のアタッチ先がハイライトされる）。
         let attach_row = row()
             .child(
                 button!(
@@ -120,7 +120,7 @@ impl Render for Testing {
                 )),
             )
             .child({
-                // 見えている最初のトラッカーに取り付ける。見えていなければ何もしない。
+                // 最初の可視トラッカーにアタッチする。可視トラッカーがなければ何もしない。
                 let b = button!(
                     "attach-tracker",
                     match &tracker {
@@ -143,7 +143,7 @@ impl Render for Testing {
                 button!("detach", i18n::t(cx, "testing.attach.detach"), false)
                     .on_click(command(self.panel, PanelCommand::Detach)),
             );
-        // コントローラの入力の表示（押せない）。見出しの行に置く。
+        // コントローラ入力のインジケーター（非インタラクティブ）。見出し行に配置する。
         let input_row = row()
             .child(indicator(
                 &theme,
@@ -158,7 +158,7 @@ impl Render for Testing {
                 st.grabbed,
             ));
 
-        // 隣に開く画面。
+        // 隣に開くテスト画面群。
         let open_row =
             row()
                 .child(
@@ -353,7 +353,7 @@ impl Render for Testing {
                     .on_click({
                         let panel = self.panel;
                         move |_, _, cx| {
-                            // 全キーの表を並べるので Testing と同じ大きさ。
+                            // 全キーの一覧を表示するため Testing と同一サイズ。
                             cx.default_global::<PanelControl>().spawns.push(
                                 PanelSpec::spawn(panel, |id, _, _| LocaleTest::new(id))
                                     .sized(TESTING_SIZE, TESTING_PX)
@@ -363,7 +363,7 @@ impl Render for Testing {
                     }),
                 );
 
-        // ボタン・切り替え・長押し・ポップアップ。
+        // ボタン・トグル・長押し・ポップアップメニュー。
         let press_row = row()
             .child(
                 button!(
@@ -430,7 +430,7 @@ impl Render for Testing {
                         ))
                     }),
             );
-        // ドラッグ＆ドロップ: 左を右へ運ぶ。
+        // ドラッグ＆ドロップ: 左のアイテムを右のターゲットへ搬送する。
         let drag_row = row()
             .child(
                 button!("drag-chip", i18n::t(cx, "testing.drag_me"), false)
@@ -528,7 +528,7 @@ impl Render for Testing {
                     }),
                 ));
 
-        // 見出し: 何の画面か、このパネルの今の状態、閉じる。
+        // ヘッダー: 画面タイトル、現在のパネル状態、閉じるボタン。
         let header = div()
             .flex()
             .items_center()
@@ -579,7 +579,7 @@ impl Render for Testing {
                     .child(input_row),
             );
 
-        // カードが複数なので地を敷く。左 = このパネルと開く画面、右 = 部品の操作。
+        // 複数カードのため背景を敷く。左列 = パネル操作と画面起動、右列 = コンポーネント操作。
         components::panel(&theme)
             .flex()
             .flex_col()

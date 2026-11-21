@@ -42,15 +42,15 @@ impl MockTexture {
 pub struct MockBackend {
     /// 不透明度 API のないランタイムを再現する。
     pub unsupported_alpha: bool,
-    /// 明るさの合成に対応していない（画素を暗くして送らせる）。
+    /// 明るさの合成に未対応（画素を暗くして送信させる）。
     pub unsupported_tint: bool,
-    /// 毎回の `poll` で返す値。テストはフレーム間でこれを書き換える。
+    /// 毎回の `poll` で返す値。テストはフレーム間でこの値を書き換えて使用する。
     pub frame: Frame,
     /// 作成されたオーバーレイ。添字は `OverlayId.0`。
     pub overlays: Vec<MockOverlay>,
-    /// シーンのアプリへの入力を止めている（[`VrBackend::block_app_input`]）。
+    /// シーンのアプリへの入力をブロック中（[`VrBackend::block_app_input`]）。
     pub app_input_blocked: bool,
-    /// 自動起動（[`VrBackend::auto_launch`]）。`None` は切り替えられないランタイム。
+    /// 自動起動（[`VrBackend::auto_launch`]）。`None` は切り替え不可のランタイム。
     pub auto_launch: Option<bool>,
     /// 両目に映る範囲（[`VrBackend::fov`]）。
     pub fov: Option<crate::Fov>,

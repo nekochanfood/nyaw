@@ -1,4 +1,4 @@
-//! 横断: logfmt 形式の構造化ロガー。nyaw のすべてのクレートはログをここを通して出す（`println!` / `eprintln!` は使わない）。
+//! 横断: logfmt 形式の構造化ロガー。nyaw の全クレートはログをこのクレート経由で出力する（`println!` / `eprintln!` は使用しない）。
 //!
 //! ```
 //! let runtime = "NoVr";
@@ -6,8 +6,8 @@
 //! // ts=2026-10-13T09:00:00.123Z level=info target=nyaw msg="runtime selected" runtime=NoVr fallback=true
 //! ```
 //!
-//! 出力先（[`Sink`]）の組み立てはブートローダー（`main`）だけが行う。ファイル出力と世代管理は [`FileSink`] が担い、保存先は呼び出し側が指定する。
-//! 外部クレートが `log` クレートで出すログ（gpui など）も [`init`] 以降は同じロガーへ流れる。
+//! 出力先（[`Sink`]）の構成はブートローダー（`main`）のみが行う。ファイル出力と世代ローテーションは [`FileSink`] が担い、保存先は呼び出し側が指定する。
+//! 外部クレートが `log` クレートで出力するログ（gpui など）も [`init`] 以降は同一ロガーに合流する。
 
 mod file;
 pub use file::{FileSink, create_rotated, prev_log_path};
@@ -71,28 +71,28 @@ impl FromStr for Level {
     }
 }
 
-/// 1 件のログ。`fields` は書いた順に出力される。
+/// 1 件のログレコード。`fields` は記述順に出力される。
 #[derive(Debug, Clone, Copy)]
 pub struct Record<'a> {
     pub level: Level,
-    /// 発生元。マクロ経由なら `module_path!()`、`log` ブリッジ経由なら `log::Record::target()`。
+    /// 発生元。マクロ経由では `module_path!()`、`log` ブリッジ経由では `log::Record::target()`。
     pub target: &'a str,
     pub msg: &'a str,
     pub fields: &'a [(&'a str, String)],
 }
 
-/// ログの出力先。`line` は改行を含まない 1 行の logfmt。
+/// ログの出力先。`line` は改行を含まない logfmt の 1 行。
 pub trait Sink: Send + Sync {
     fn write(&self, line: &str);
-    /// 表示用シンクはレコードを整形できる。既定では保存用の logfmt を書く。
+    /// 表示用シンクはレコードを独自に整形できる。既定では保存用の logfmt を書き出す。
     fn write_record(&self, _record: &Record, _ts: SystemTime, line: &str) {
         self.write(line);
     }
     fn flush(&self) {}
 }
 
-/// 標準エラー出力へ書くシンク。端末では現地時刻と列揃え、リダイレクト時は logfmt。
-/// 色は `NO_COLOR` が空でなく設定されている場合、または `TERM=dumb` の場合に無効。
+/// 標準エラー出力へ書き出すシンク。端末ではローカル時刻と列揃えで表示し、リダイレクト時は logfmt を出力する。
+/// 色は `NO_COLOR` が空でない値で設定されている場合、または `TERM=dumb` の場合に無効化される。
 pub struct StderrSink;
 
 impl Sink for StderrSink {
@@ -117,7 +117,7 @@ pub struct Logger {
 }
 
 impl Logger {
-    /// `min` 未満のレベルは捨てる。シンクが無ければ何も出さない。
+    /// `min` 未満のレベルは破棄する。シンクがなければ出力しない。
     pub fn new(min: Level) -> Self {
         Self {
             min,
@@ -158,7 +158,7 @@ impl Logger {
 
 static GLOBAL: OnceLock<Logger> = OnceLock::new();
 
-/// 既に初期化済み（[`init`] 済み、または初期化前にログを出してフォールバックが使われた）。
+/// 既に初期化済み（[`init`] 完了済み、または初期化前のログ出力でフォールバックが使用された）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AlreadyInitialized;
 
@@ -170,23 +170,23 @@ impl fmt::Display for AlreadyInitialized {
 
 impl std::error::Error for AlreadyInitialized {}
 
-/// グローバルロガーを設定し、`log` クレートのログも同じロガーへ流す。プロセスで 1 回だけ。
+/// グローバルロガーを設定し、`log` クレートのログも同一ロガーへ合流させる。プロセスで 1 回のみ実行可能。
 pub fn init(logger: Logger) -> Result<(), AlreadyInitialized> {
     let min = logger.min;
     GLOBAL.set(logger).map_err(|_| AlreadyInitialized)?;
-    // 他で `log` のロガーが設定済みならそちらを優先する（ブリッジが無くても自前のログは出る）。
+    // 他で `log` のロガーが設定済みならそちらを優先する（ブリッジがなくても自前のログは出力される）。
     if log::set_logger(&BRIDGE).is_ok() {
         log::set_max_level(to_log_filter(min));
     }
     Ok(())
 }
 
-/// グローバルロガー。[`init`] 前は標準エラー出力・Info 以上にフォールバックする（テストでもログが消えない）。
+/// グローバルロガー。[`init`] 前は標準エラー出力・Info 以上にフォールバックする（テスト環境でもログが失われない）。
 pub fn global() -> &'static Logger {
     GLOBAL.get_or_init(|| Logger::new(Level::Info).sink(StderrSink))
 }
 
-/// マクロ用。フィールドを組み立てる前にレベルで弾く。
+/// マクロ用。フィールド構築前にレベルでフィルタリングする。
 #[doc(hidden)]
 pub fn enabled(level: Level) -> bool {
     global().enabled(level)
@@ -198,7 +198,7 @@ pub fn dispatch(record: &Record) {
     global().log(record);
 }
 
-/// `level=info msg=...` のような logfmt の 1 行を作る。先頭は常に `ts level target msg`、続けて `fields` を順に。
+/// `level=info msg=...` のような logfmt の 1 行を生成する。先頭は常に `ts level target msg`、以降 `fields` を順に出力する。
 pub fn format(record: &Record, ts: SystemTime) -> String {
     let mut out = String::with_capacity(96);
     out.push_str("ts=");
@@ -246,7 +246,7 @@ fn push_pair(out: &mut String, key: &str, value: &str) {
     push_value(out, value);
 }
 
-/// 空・空白・`=`・`"`・制御文字を含む値は引用してエスケープする。それ以外（日本語を含む）はそのまま。
+/// 空文字列・空白・`=`・`"`・制御文字を含む値はクォートしてエスケープする。それ以外（日本語を含む）はそのまま出力する。
 fn push_value(out: &mut String, value: &str) {
     let needs_quote = value.is_empty()
         || value
@@ -271,7 +271,7 @@ fn push_value(out: &mut String, value: &str) {
     out.push('"');
 }
 
-/// UTC の RFC 3339（ミリ秒）。`2026-10-13T09:00:00.123Z`。エポック以前は 1970-01-01 に丸める。
+/// UTC の RFC 3339 形式（ミリ秒精度）。`2026-10-13T09:00:00.123Z`。エポック以前は 1970-01-01 にクランプする。
 fn rfc3339_millis(ts: SystemTime) -> String {
     let d = ts.duration_since(UNIX_EPOCH).unwrap_or_default();
     let secs = d.as_secs();
@@ -286,7 +286,7 @@ fn rfc3339_millis(ts: SystemTime) -> String {
     )
 }
 
-/// 1970-01-01 からの日数 → (年, 月, 日)。Howard Hinnant の days_from_civil の逆変換。
+/// 1970-01-01 からの日数 → (年, 月, 日)。Howard Hinnant の civil_from_days アルゴリズム。
 fn civil_from_days(z: i64) -> (i64, u32, u32) {
     let z = z + 719_468;
     let era = z.div_euclid(146_097);
@@ -300,7 +300,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (y, m, d)
 }
 
-// ---- log クレートからの橋渡し ----
+// ---- log クレートからのブリッジ ----
 
 struct Bridge;
 
@@ -353,7 +353,7 @@ fn to_log_filter(l: Level) -> log::LevelFilter {
 // ---- マクロ ----
 
 /// `logger::log!(Level::Info, "msg", key = value, key = ?debug_value)`。
-/// `key = expr` は `Display`、`key = ?expr` は `Debug` で整形する。レベルで弾かれたらフィールドは評価しない。
+/// `key = expr` は `Display`、`key = ?expr` は `Debug` で整形する。レベルでフィルタリングされた場合はフィールドを評価しない。
 #[macro_export]
 macro_rules! log {
     ($level:expr, $msg:expr $(, $($rest:tt)*)?) => {{
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn macro_builds_display_and_debug_fields_and_skips_disabled_levels() {
-        // グローバルは未初期化なので Info 以上。Debug のフィールドは評価されない。
+        // グローバルは未初期化のため Info 以上のみ通過する。Debug のフィールドは評価されない。
         let mut evaluated = false;
         crate::debug!(
             "x",

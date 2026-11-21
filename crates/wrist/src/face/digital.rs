@@ -1,16 +1,16 @@
-//! デジタルの文字盤: 時刻を数字で、秒まで出す。デザインごとに、数字を出す仕掛け（液晶・めくる札・端末）が違う。
+//! デジタル文字盤: 時刻を数字で、秒まで表示する。デザインごとに、数字の表示方式（液晶・フリップ・ターミナル）が異なる。
 
 use design::{font, font_size, radius, spacing};
 use gpui::{Div, FontWeight, div, prelude::*, px, relative, rgba};
 
 use super::Face;
 
-/// 液晶: 7 セグメントの数字。消えているセグメントも薄く見える。下の帯が秒で満ちる（塗りの色）。
+/// 液晶: 7 セグメントの数字。消灯セグメントも薄く表示される。下部のバーが秒で充填される（アクセントカラー）。
 pub fn lcd(f: &Face) -> Div {
     let t = f.theme;
-    // 消えているセグメント: 文字の色のごく薄いもの。
+    // 消灯セグメント: テキスト色の極低不透明度。
     let unlit = t.neutral_text & !0xff | 0x1c;
-    // `all` は全部のセグメントを灯した字（同じ幅なので、ぴったり重なる）。
+    // `all` は全セグメント点灯文字（同一幅のため、正確に重なる）。
     let digits = |text: String, all: &'static str, size: f32| {
         div()
             .relative()
@@ -45,7 +45,7 @@ pub fn lcd(f: &Face) -> Div {
         .child(bar)
 }
 
-/// フリップ時計: 時と分を 1 枚ずつの札に出す（札の中央に折れ目）。札の間の点は塗りの色。
+/// フリップ時計: 時と分を 1 枚ずつのカードに表示する（カード中央に折れ目）。カード間のドットはアクセントカラー。
 pub fn flip(f: &Face) -> Div {
     let t = f.theme;
     let (width, height) = (138.0, 156.0);
@@ -62,7 +62,7 @@ pub fn flip(f: &Face) -> Div {
             .text_size(f.px(104.0))
             .font_weight(FontWeight::BOLD)
             .child(text)
-            // 折れ目: 札を上下に分ける、カードの色の細い線。
+            // 折れ目: カードを上下に分割する、カード色の細い線。
             .child(
                 div()
                     .absolute()
@@ -115,7 +115,7 @@ pub fn flip(f: &Face) -> Div {
         )
 }
 
-/// ターミナル: 等幅の文字で、コマンドの出力のように日付と時刻を出す。カーソル（塗りの色）は 1 秒おきに点滅する。
+/// ターミナル: 等幅フォントで、コマンド出力のように日付と時刻を表示する。カーソル（アクセントカラー）は 1 秒ごとに点滅する。
 pub fn terminal(f: &Face) -> Div {
     let t = f.theme;
     let prompt = |command: &'static str| {

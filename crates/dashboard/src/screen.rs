@@ -1,10 +1,10 @@
-//! ダッシュボード自身の画面（[`Screen`]）: クイック設定・ランチャー・再生中。中身はそれぞれのファイル
-//! （`quick_settings.rs` / `launcher.rs` / `now_playing.rs`）の `impl Screen` にある。ここは作り方と、取得元の一覧の見張りだけ。
+//! ダッシュボード内部画面（[`Screen`]）: クイック設定・ランチャー・再生中。各画面の実装は
+//! `quick_settings.rs` / `launcher.rs` / `now_playing.rs` の `impl Screen` にある。本モジュールは生成とソース一覧の監視のみ。
 
 use super::*;
 
-/// クイック設定・ランチャー・再生中の起動仕様（`page` はそのどれか）。開くと `opened` でダッシュボードにはまる。
-/// 閉じるのはナビゲーションバーかバーの同じボタン。
+/// クイック設定・ランチャー・再生中の起動仕様（`page` でいずれかを指定）。開くと `opened` でダッシュボードにドッキングする。
+/// クローズはナビゲーションバーまたはバーの同じボタンで行う。
 pub(crate) fn screen_spec(
     from: PanelId,
     page: Page,
@@ -31,7 +31,7 @@ impl Screen {
         dashboard: WeakEntity<Dashboard>,
         cx: &mut Context<Self>,
     ) -> Self {
-        // 時計・電池・再生位置は 1 秒ごとに描き直す。ランチャーは取得元の到着を待つ間だけ。
+        // 時計・電池・再生位置は 1 秒間隔で再描画する。ランチャーはソース到着待ちの間のみ。
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -75,7 +75,7 @@ impl Screen {
         if page == Page::QuickSettings {
             this.answer_center(panel, cx);
         }
-        // 再生中の画面は、アプリのアイコンが OS から取れないとき（デスクトップのアプリ）にウィンドウのものを使う。
+        // 再生中画面では、OS からアプリアイコンを取得できない場合（デスクトップアプリ）にウィンドウアイコンで代替する。
         if matches!(page, Page::Launcher | Page::NowPlaying) {
             this.refresh();
         }
@@ -101,7 +101,7 @@ impl Screen {
         this
     }
 
-    /// 取得元を取り直す（取得は別スレッド。届くまでは 1 秒ごとの描き直しで見に来る）。
+    /// ソース一覧を再取得する（取得は別スレッドで実行。完了まで 1 秒間隔の再描画でポーリングする）。
     pub(crate) fn refresh(&mut self) {
         match Sources::refresh() {
             Ok(pending) => (self.pending, self.error) = (Some(pending), None),
@@ -109,7 +109,7 @@ impl Screen {
         }
     }
 
-    /// 取得元の一覧が届いていれば受け取る。
+    /// ソース一覧の取得が完了していれば結果を受け取る。
     pub(crate) fn poll_sources(&mut self) {
         let Some(result) = self.pending.as_ref().and_then(Sources::poll) else {
             return;
@@ -138,7 +138,7 @@ impl Render for Screen {
         match self.page {
             Page::Launcher => self.apps_page(&theme, cx),
             Page::NowPlaying => self.now_playing(cx),
-            // デバッグ・設定は main が渡す別の画面で、Screen にはならない。
+            // デバッグ・設定は main が渡す別画面であり、Screen にはならない。
             _ => {
                 let width = clock_width(window, QUICK_TIME_PX);
                 self.quick_settings(&theme, width, window, cx)

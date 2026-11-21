@@ -1,4 +1,4 @@
-//! カーネル: 一点集中型の中枢。ブートローダー（`main`）が起こし、UI や画面はこれだけを相手にする。
+//! カーネル: 一点集中型の中枢。ブートローダー（`main`）が初期化し、UI や画面はこれだけを相手にする。
 //!
 //! 最下部の [`subsystems`] が OS・ランタイム・入力・描画の差を吸収し、その上で設定とパネル管理を行う。
 //! フレームの進行（[`Kernel::tick`]）・パネルへの操作（[`Kernel::apply`]）・描画結果の受け取り
@@ -47,23 +47,23 @@ pub struct TickTiming {
 #[derive(Debug, Clone, PartialEq)]
 pub enum PanelCommand {
     Attach(Device, Pose),
-    /// その手のコントローラに、レーザーの出る所から前へ伸ばして取り付ける（手を起こすと立って見える。大きければ縮める。
+    /// その手のコントローラに、レーザーの射出点から前方へ伸ばして取り付ける（手を起こすと立って見える。大きければ縮小する。
     /// `Overlay::attach_to_hand`）。
     AttachToHand(Hand),
     Detach,
     Lock(bool),
     /// 頭の向き（左右だけ）と歩きにゆるく追従する（[`overlay::LazyFollow`]。`None` で外す）。
     LazyFollow(Option<LazyFollow>),
-    /// このパネルがロックダウンを取る・放す。取っている間、このパネルは（自分が放すまで）閉じられず（[`PanelCommand::Close`] は無視する）、
-    /// カーネルはロックダウン中（[`Settings::lockdown`]）になる。シェル（ダッシュボードなど）はそれを見て開閉を控える。
-    /// 取り手は何枚でもよく、全員が放す（か閉じる）までロックダウンは続く。閉じる前に放すなら、同じパネルのコマンドに
-    /// `Lockdown(false)`、`Close` の順で積む。設定ファイルには残さない。
+    /// このパネルがロックダウンを取得・解放する。取得中のパネルは自ら解放するまで閉じられず（[`PanelCommand::Close`] は無視される）、
+    /// カーネルはロックダウン状態（[`Settings::lockdown`]）となる。シェル（ダッシュボードなど）はこの状態を参照して開閉を控える。
+    /// 取得元は複数パネルでもよく、全パネルが解放（または閉鎖）するまでロックダウンは継続する。閉じる前に解放する場合は、同一パネルのコマンドに
+    /// `Lockdown(false)`、`Close` の順で積む。設定ファイルには永続化しない。
     Lockdown(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
-    /// このパネルの上端を、画面をはめる場所にする（上端から起こす角度。`None` でやめる。`Overlay::set_dock_slot`）。
+    /// このパネルの上端を、画面をドッキングするスロットにする（上端からの傾斜角度。`None` で解除。`Overlay::set_dock_slot`）。
     DockSlot(Option<f32>),
-    /// はめる場所から掴んで引っこ抜ける・近づけて離すとはまる画面にする（`Overlay::set_dockable`）。
+    /// ドッキングスロットから掴んで取り外せる・近づけて離すとドッキングする画面にする（`Overlay::set_dockable`）。
     Dockable(bool),
     /// 取り付けたまま掴んで動かせる、取り付け先からの距離の上限（m。`Overlay::set_reach`。`None` で限らない）。
     Reach(Option<f32>),
@@ -86,20 +86,20 @@ pub enum PanelCommand {
     Animated(bool),
     /// このパネルが出ている間、空間全体を暗くする（`Overlay::set_veil`）。
     Veil(bool),
-    /// レーザーを素通りさせる（`Overlay::set_pass_through`。視界の端に出す表示だけのもの）。
+    /// レーザーを透過させる（`Overlay::set_pass_through`。視界の端に配置する表示専用のパネル向け）。
     PassThrough(bool),
-    /// 出入りを不透明度だけにする（`Overlay::set_fade_only`。動きは中身が描くパネル）。
+    /// 表示・非表示の遷移を不透明度のみで行う（`Overlay::set_fade_only`。アニメーションはパネル自身が描画する）。
     FadeOnly(bool),
     /// OS に通知を出す（デバッグのテスト用。`Notifications::send`）。
     SendNotification(subsystems::notifications::Outgoing),
-    /// 通知を押さずに片付ける（OS の通知センターから消す。`Notifications::remove`）。
+    /// 通知をアクションなしで消去する（OS の通知センターから削除する。`Notifications::remove`）。
     RemoveNotification(u32),
     Close,
-    /// 隠す・出し直す（`Overlay::set_hidden`。閉じずにビュー・配信・音を残す）。
+    /// 非表示・再表示を切り替える（`Overlay::set_hidden`。閉じずにビュー・配信・音声を維持する）。
     Hide(bool),
-    /// その手のレーザーを描くパネルにする（ヒット判定の対象外になり、置き場所はオーバーレイが決める）。
+    /// その手のレーザーを描画するパネルにする（ヒット判定の対象外となり、配置はオーバーレイ層が決定する）。
     Pointer(Hand, Pointer),
-    /// 解像度（UI の論理ピクセル）を変える。1m あたりのピクセル数を保って VR 上の大きさも変わる。
+    /// 解像度（UI の論理ピクセル）を変更する。1m あたりのピクセル数を維持するため VR 上の大きさも変化する。
     Resize(u32, u32),
     /// 現在の縦横比のまま、VR 上の高さだけを揃える。
     FitHeight(f32),
@@ -112,14 +112,14 @@ pub enum PanelCommand {
     NavBar(PanelId),
     /// デスクトップの配信を開始・停止する。第2引数は取得の上限 FPS（1〜240）。
     Stream(Option<desktop::Source>, u32),
-    /// 配信しているウィンドウを OS で前に出してフォーカスする（OS のキーボード・マウスの操作が届くように）。
-    /// ウィンドウの配信を始めたときはカーネルが自分で前に出すので、隠していた配信を出し直したときなどに使う。
+    /// 配信中のウィンドウを OS 上で前面化してフォーカスする（OS のキーボード・マウス操作が届くようにする）。
+    /// ウィンドウ配信の開始時はカーネルが自動的に前面化するため、非表示にしていた配信を再表示する場合などに使用する。
     FocusSource,
-    /// 配信中のウィンドウを OS で最小化する。
+    /// 配信中のウィンドウを OS 上で最小化する。
     MinimizeSource,
-    /// このパネルのスピーカーで音を鳴らす（`true` で繰り返す）。読み込みは別スレッドで、いくつでも重ねて鳴らせる。
+    /// このパネルのスピーカーで音声を再生する（`true` でループ再生）。読み込みは別スレッドで行い、複数同時に再生できる。
     Play(audio::Sound, bool),
-    /// このパネルの中の点（パネルのピクセル、左上原点）から一度だけ音を鳴らす。キーボードのキーのように、押した所から聞こえる。
+    /// このパネルの中の点（パネルのピクセル、左上原点）から一度だけ音声を再生する。キーボードのキーのように、押した位置から聞こえる。
     /// `pitch` は速さ（1 = そのまま。上げると高く短くなる）、`volume` は音量（1 = そのまま、0 = 無音）。
     PlayAt {
         sound: audio::Sound,
@@ -127,15 +127,15 @@ pub enum PanelCommand {
         pitch: f32,
         volume: f32,
     },
-    /// このパネルを閉じるときにパネルの中央から一度鳴らす音。閉じた後も鳴り終わるまでその場所から聞こえる。
+    /// このパネルを閉じるときにパネルの中央から一度再生する音声。閉じた後も再生終了までその位置から聞こえる。
     CloseSound(audio::Sound),
-    /// このパネルで鳴っている音をすべて止める。
+    /// このパネルで再生中の音声をすべて停止する。
     StopAudio,
-    /// このパネルの音を置き場所から聞こえるようにする（既定）。`false` でそのまま左右に鳴らす。
+    /// このパネルの音声を配置位置から聞こえるようにする（既定）。`false` でステレオのまま再生する。
     Spatial(bool),
-    /// このパネルのスピーカーをモノラル・ステレオのどちらで鳴らすか（既定は音に合わせる）。
+    /// このパネルのスピーカーをモノラル・ステレオのどちらで再生するか（既定は音声に合わせる）。
     SpeakerLayout(audio::Layout),
-    /// 仮想キーボードの一操作を OS の前面のアプリへ送る（このパネルが OS を操作するパネルのとき）。
+    /// 仮想キーボードの一操作を OS の前面アプリへ送信する（このパネルが OS 操作用パネルの場合）。
     TypeToOs {
         stroke: subsystems::keyboard::Stroke,
         layout: subsystems::keyboard::Layout,
@@ -151,7 +151,7 @@ pub enum Setting {
     Theme(ThemeMode),
     /// パーソナルカラー（`personal_color`）。範囲の外の値は範囲に収める。
     PersonalColor(PersonalColor),
-    /// 自分で作った色をパーソナルカラーにし、履歴（`color_history`）の先頭に覚える。同じ色は 1 つだけ残り、古いものから落ちる。
+    /// 自作の色をパーソナルカラーに設定し、履歴（`color_history`）の先頭に記録する。同じ色は 1 つだけ残し、古いものから削除する。
     CustomColor(PersonalColor),
     /// 画面の言語（`language`）。
     Language(Language),
@@ -161,58 +161,58 @@ pub enum Setting {
     PointerRelease(f32),
     /// レーザーの見える長さ（m。`laser_length`）。
     LaserLength(f32),
-    /// 設定画面のポインタの動きの調整のしかた（`pointer_tuning`）。カーネルは値を持つだけで、従うのは設定画面。
+    /// 設定画面のポインタの動きの調整方式（`pointer_tuning`）。カーネルは値を保持するのみで、解釈は設定画面が行う。
     PointerTuning(PointerTuning),
     /// カーソルの大きさの倍率（`cursor_scale`。範囲に収め、刻みに丸める）。
     CursorScale(f32),
-    /// ツールチップを出すか（`tooltips`）。カーネルは値を持つだけで、従うのは UI 層。
+    /// ツールチップを表示するか（`tooltips`）。カーネルは値を保持するのみで、解釈は UI 層が行う。
     Tooltips(bool),
-    /// 押したとき（`tap_sound`）・指したとき（`hover_sound`）の音を鳴らすか。カーネルは値を持つだけで、従うのは UI 層。
+    /// タップ時（`tap_sound`）・ホバー時（`hover_sound`）の効果音を再生するか。カーネルは値を保持するのみで、解釈は UI 層が行う。
     TapSound(bool),
     HoverSound(bool),
     /// コントローラを持たない手の調整値（`[hand]`）。範囲の外の値は範囲に収める。
     Hand(subsystems::input::HandTuning),
-    /// 利き手（`dominant_hand`）。カーネルは値を持つだけで、パネルは動かさない（従うのは左右で振る舞いが変わる側）。
+    /// 利き手（`dominant_hand`）。カーネルは値を保持するのみで、パネルの配置は変更しない（解釈は左右で動作が変わる側が行う）。
     DominantHand(DominantHand),
     /// wrist の文字盤のデザイン（`wrist_design`）。
     WristDesign(WristDesign),
-    /// wrist を掴んで置き直した姿勢（`wrist_offset`。左手首での値）。カーネルは値を持つだけで、付けるのは wrist。
+    /// wrist を掴んで再配置した姿勢（`wrist_offset`。左手首での値）。カーネルは値を保持するのみで、取り付けは wrist が行う。
     WristOffset(Pose),
-    /// wrist の大きさの倍率（`wrist_scale`。範囲に収める）。カーネルは値を持つだけで、従うのは wrist。
+    /// wrist の大きさの倍率（`wrist_scale`。範囲に収める）。カーネルは値を保持するのみで、解釈は wrist が行う。
     WristScale(f32),
     /// ミラーリングの取得の上限 FPS（`mirror_frame_rate`。1〜240 に収める）。配信中のミラーもこの FPS でかけ直す。
     MirrorFrameRate(u32),
     /// 仮想キーボードの種類（`keyboard`）。
     Keyboard(subsystems::keyboard::KeyboardType),
-    /// 仮想キーボードの大きさの倍率（`keyboard_scale`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、従うのは UI 層。
+    /// 仮想キーボードの大きさの倍率（`keyboard_scale`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、解釈は UI 層が行う。
     KeyboardScale(f32),
-    /// 仮想キーボードのキーの間隔の倍率（`key_gap`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、従うのは UI 層。
+    /// 仮想キーボードのキーの間隔の倍率（`key_gap`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、解釈は UI 層が行う。
     KeyGap(f32),
-    /// ダッシュボードが出ている間、ゲームへの入力を止めるか（`block_input`）。
+    /// ダッシュボード表示中にゲームへの入力をブロックするか（`block_input`）。
     BlockInput(bool),
     /// 距離 LOD の品質（`lod_quality`）。
     LodQuality(LodQuality),
-    /// セットアップウィザードを終えたか（`setup_done`）。
+    /// セットアップウィザードを完了したか（`setup_done`）。
     SetupDone(bool),
-    /// 文字の大きさの倍率（`text_scale`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、効かせるのは UI 層。
+    /// 文字の大きさの倍率（`text_scale`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、適用は UI 層が行う。
     TextScale(f32),
     /// UI スケール: パネルの VR 上の大きさの倍率（`ui_scale`。範囲に収め、刻みに丸める）。開いているパネルもその場で変わる。
     UiScale(f32),
-    /// すべての文字を太字にするか（`bold_text`）。カーネルは値を持つだけで、効かせるのは UI 層。
+    /// すべての文字を太字にするか（`bold_text`）。カーネルは値を保持するのみで、適用は UI 層が行う。
     BoldText(bool),
-    /// 仮想キーボードのキーを押した音を鳴らすか（`key_sound`）。カーネルは値を持つだけで、従うのは鳴らす側（UI 層）。
+    /// 仮想キーボードのキー押下音を再生するか（`key_sound`）。カーネルは値を保持するのみで、再生は UI 層が行う。
     KeySound(bool),
-    /// キーを押した音の音量（`key_sound_volume`。0〜1 に収め、刻みに丸める）。カーネルは値を持つだけ。
+    /// キー押下音の音量（`key_sound_volume`。0〜1 に収め、刻みに丸める）。カーネルは値を保持するのみ。
     KeySoundVolume(f32),
     /// ランタイムの起動と同時に開くか（`VrBackend::set_auto_launch`）。値はランタイムが持つので設定ファイルには書かない。
     AutoLaunch(bool),
-    /// アップデートのチャンネル（`update_channel`）。カーネルは値を持つだけで、従うのは `updater`。
+    /// アップデートのチャンネル（`update_channel`）。カーネルは値を保持するのみで、解釈は `updater` が行う。
     UpdateChannel(UpdateChannel),
-    /// ダッシュボードの距離（m。`dashboard_distance`。範囲に収め、刻みに丸める）。カーネルは値を持つだけで、置くのはダッシュボード。
+    /// ダッシュボードの距離（m。`dashboard_distance`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、配置はダッシュボードが行う。
     DashboardDistance(f32),
     /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。`dashboard_height`。範囲に収め、刻みに丸める）。
     DashboardHeight(f32),
-    /// 通知を視界の端に出す所（`notification_anchor`）。カーネルは値を持つだけで、置くのは通知の画面。
+    /// 通知を視界の端に表示する位置（`notification_anchor`）。カーネルは値を保持するのみで、配置は通知画面が行う。
     NotificationAnchor(NotificationAnchor),
 }
 
@@ -352,32 +352,32 @@ pub struct PanelStatus {
     pub desktop_stats: Option<DesktopStats>,
     /// このパネルのスピーカー。
     pub audio: AudioStatus,
-    /// はまる所の見本（[`Pointer::Dock`]）なら、その手で掴んでいる画面に出す一行（`Overlay::dock_hint`）。
+    /// ドッキングスロットの見本（[`Pointer::Dock`]）の場合、その手で掴んでいる画面に表示する一行（`Overlay::dock_hint`）。
     pub dock_hint: Option<DockHint>,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
 pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     pub config: Config,
-    /// テストがモックを直接いじるために公開している。本番コードはメソッド経由で使う。
+    /// テストがモックを直接操作するために公開している。本番コードはメソッド経由で使用する。
     pub subsystems: Subsystems<B>,
     overlay: Overlay,
     timing: TickTiming,
     pointer_mode: PointerMode,
-    /// テーマの変更を書き戻す設定ファイル。`boot` だけが設定する（テスト用のカーネルは実ファイルを触らない）。
+    /// テーマの変更を書き戻す設定ファイル。`boot` のみが設定する（テスト用のカーネルは実ファイルに触れない）。
     config_path: Option<std::path::PathBuf>,
     /// 進めたフレームの数（[`Self::panel_frame_due`]）。
     frame: u64,
     /// パネルごとの LOD（[`Self::panel_lod`]）。tick ごとに前の値から決める。
     lods: Vec<u8>,
     desktop_panels: std::collections::HashMap<PanelId, desktop_panels::DesktopPanel>,
-    /// 音の出力。テスト用のカーネルはデバイスを開かず（`audio::Engine::offline`）、テストが `render` で回す。
+    /// 音声出力。テスト用のカーネルはデバイスを開かず（`audio::Engine::offline`）、テストが `render` で駆動する。
     pub audio: audio::Engine,
-    /// 音を鳴らした・設定したパネルのスピーカー。
+    /// 音声を再生・設定したパネルのスピーカー。
     speakers: std::collections::HashMap<PanelId, audio_panels::SpeakerConfig>,
     /// パネルごとの、次に使う点の音のスピーカー（[`PanelCommand::PlayAt`]）。
     point_slots: std::collections::HashMap<PanelId, u64>,
-    /// 閉じるときに鳴らす音（[`PanelCommand::CloseSound`]）。
+    /// 閉じるときに再生する音声（[`PanelCommand::CloseSound`]）。
     close_sounds: std::collections::HashMap<PanelId, audio::Sound>,
     /// 全体の設定によらないポインタの方式（[`PanelCommand::PointerMode`]）。
     pointer_modes: std::collections::HashMap<PanelId, PointerMode>,
@@ -389,15 +389,15 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     runtime_double_press: u32,
     /// 骨格だけの手のショートカット（親指と小指）の長押し。二回押しと同じく [`PanelStatus::double_press`] に数える。
     hand_shortcut: LongPress,
-    /// OS の前面のアプリのキーボードの監視と入力（[`Kernel::os_keyboard`]。使い始めるまで起こさない）。
+    /// OS の前面アプリのキーボードの監視と入力（[`Kernel::os_keyboard`]。使用開始まで初期化しない）。
     os_keyboard: Option<os::keyboard::Watcher>,
-    /// 映しているウィンドウが前面になるのを待つ OS への入力（[`os_keyboard::PendingKey`]）。
+    /// 配信中のウィンドウが前面化するのを待つ OS への入力（[`os_keyboard::PendingKey`]）。
     pending_os_input: Vec<os_keyboard::PendingKey>,
     /// 最後の tick の電池（[`Kernel::batteries`]）。
     batteries: Vec<vr::Battery>,
-    /// 再生中のメディアの見張り（[`Kernel::now_playing`]）。`boot` だけが起こす（テスト用のカーネルは OS に触らない）。
+    /// 再生中のメディアの監視（[`Kernel::now_playing`]）。`boot` のみが初期化する（テスト用のカーネルは OS に触れない）。
     media: Option<subsystems::media::Media>,
-    /// OS の通知の見張り（[`Kernel::notifications`]）。`boot` だけが起こす。
+    /// OS の通知の監視（[`Kernel::notifications`]）。`boot` のみが初期化する。
     notifications: Option<subsystems::notifications::Notifications>,
 }
 
@@ -685,7 +685,7 @@ impl<B: VrBackend> Kernel<B> {
             .clamp(1, desktop::MAX_FRAME_RATE)
     }
 
-    /// アプリ全体の設定を変える。
+    /// アプリ全体の設定を変更する。
     pub fn set(&mut self, setting: Setting) {
         let (key, value) = match setting {
             Setting::PointerMode(m) => {
@@ -1043,7 +1043,7 @@ impl<B: VrBackend> Kernel<B> {
             .map_or_else(|| Arc::from([]), |n| n.now())
     }
 
-    /// OS の通知の見張りを差し替える（`boot` は OS のものを起こす。E2E は決まった一覧 `Notifications::fixed`）。
+    /// OS の通知の監視を差し替える（`boot` は OS の監視を初期化する。E2E は固定一覧 `Notifications::fixed`）。
     pub fn set_notifications(&mut self, notifications: subsystems::notifications::Notifications) {
         self.notifications = Some(notifications);
     }
@@ -1064,7 +1064,7 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.pointing_hands(panel)
     }
 
-    /// 掴んで引っこ抜いた（`false`）・はめた（`true`）画面（[`Overlay::take_dock_changes`]）。受け取ると空になる。
+    /// 掴んで取り外した（`false`）・ドッキングした（`true`）画面（[`Overlay::take_dock_changes`]）。受け取ると空になる。
     pub fn take_dock_changes(&mut self) -> Vec<(PanelId, bool)> {
         self.overlay.take_dock_changes()
     }

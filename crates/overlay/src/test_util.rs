@@ -1,4 +1,4 @@
-//! テストで使う共通の道具。テストはそれぞれのモジュールの子（`hand/tests.rs` など）に置く。
+//! テスト共通ユーティリティ。各テストはモジュール直下（`hand/tests.rs` 等）に配置する。
 
 use super::*;
 pub(crate) use vr::{Quat, RawController, mock::MockBackend};
@@ -35,7 +35,7 @@ pub(crate) fn controller(vr: &mut Subsystems<MockBackend>, aim: Pose, inputs: &[
     }];
 }
 
-/// 掴み移動がなめらかに追いつくまで、同じ入力のまま tick する。
+/// グラブ移動が収束するまで同一入力で tick を繰り返す。
 pub(crate) fn settle(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay) {
     for _ in 0..60 {
         ov.tick(vr);
@@ -46,7 +46,7 @@ pub(crate) fn kinds(ev: &[UiEvent]) -> Vec<PointerEvent> {
     ev.iter().map(|e| e.event).collect()
 }
 
-/// 親（0 番）の手前に小さな子を置く。
+/// 親（ID 0）の手前に小さい子パネルを配置する。
 pub(crate) fn with_child(carry: bool) -> (Subsystems<MockBackend>, Overlay) {
     let (mut vr, mut ov) = setup();
     let child = ov
@@ -74,7 +74,7 @@ pub(crate) fn with_child(carry: bool) -> (Subsystems<MockBackend>, Overlay) {
     (vr, ov)
 }
 
-/// 親（ダッシュボードのバー）の上端に立てた子（はめた画面）を持つ組。親は大きさを変えられない。
+/// 親（ダッシュボードバー）の上端にスロット子（はめ込み画面）を持つ組を返す。親はリサイズ不可。
 pub(crate) fn with_slot_child() -> (Subsystems<MockBackend>, Overlay) {
     let (mut vr, mut ov) = with_child(true);
     ov.set_animated(&mut vr.backend, 1, false);
@@ -91,7 +91,7 @@ pub(crate) fn with_slot_child() -> (Subsystems<MockBackend>, Overlay) {
     );
     ov.set_resizable(0, false);
     ov.tick(&mut vr);
-    // 子が目の高さの正面に来るよう、親を下げる（掴んだ子は目の方を向くので、目の高さなら回らない）。
+    // 子を目の高さの正面に配置するため親を下げる。目の高さの子は視線方向を向くため回転しない。
     let lift = ov.panel(1).pose.position.y;
     ov.set_pose(0, at(0.0, -lift, -1.0));
     ov.tick(&mut vr);
@@ -113,7 +113,7 @@ pub(crate) fn assert_at(ov: &Overlay, vr: &Subsystems<MockBackend>, expected: Ve
     );
 }
 
-/// パネル（z = -1）の前にレーザーとカーソルを置き、右手で中心を指す。
+/// パネル（z = −1）の手前にレーザーとカーソルを配置し、右手で中心を指す構成を返す。
 pub(crate) fn with_pointers() -> (Subsystems<MockBackend>, Overlay, PanelId, PanelId) {
     let (mut vr, mut ov) = setup();
     let mut add = |ov: &mut Overlay, part| {

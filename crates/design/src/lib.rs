@@ -1,16 +1,16 @@
-//! デザイン層。UI の見た目の責務を 3 層に分ける。
+//! デザイン層。UI の見た目の責務を 3 層に分離する。
 //!
 //! 1. **Constants**（[`scale`] / [`radius`] / [`spacing`] / [`font_size`] / [`letter_spacing`] / [`duration_ms`]）:
-//!    生の値だけ。色の用途は持たない。個性（スケール・角丸・字間）はここと [`components`] の装飾で出す。
-//! 2. **Utilities**（[`Theme`]）: 役割（Radix Colors に倣い、`accent` → `blue` のようなスケールの別名、`accent-solid` のような段の用途名、`panel` のようなテーマで変わる名前）→ 色。部品は役割だけを見る。
-//!    役割の組のコントラスト比は build.rs が検証するので、スケールを変えても読めない組み合わせは作れない。
+//!    生の値のみ。色の用途は持たない。個性（スケール・角丸・字間）はここと [`components`] の装飾で表現する。
+//! 2. **Utilities**（[`Theme`]）: 役割（Radix Colors に倣い、`accent` → `blue` のようなスケールの別名、`accent-solid` のような段の用途名、`panel` のようなテーマで変わる名前）→ 色。部品は役割のみを参照する。
+//!    役割の組のコントラスト比は build.rs が検証するため、スケールを変更しても可読性を確保できない組み合わせは作成できない。
 //!
-//! 動き（[`animation`]）: 出る・消える・動かすの 3 種の [`animation::Motion`] と、値を時間で動かす [`animation::Animation`]。実体は `animation` クレート。
+//! アニメーション（[`animation`]）: 出現・消滅・移動の 3 種の [`animation::Motion`] と、値を時間で遷移させる [`animation::Animation`]。実体は `animation` クレート。
 //! 3. **Components**（[`components`]）: ボタン・スイッチ・スライダー。
 //!
-//! アイコンは Phosphor を [`icon`] モジュールで path として描く（使うものだけをビルドに含める）。
+//! アイコンは Phosphor を [`icon`] モジュールで path として描画する（使用するもののみをビルドに含める）。
 //!
-//! 値は `tokens.json` が唯一の情報源（色は Radix Colors を OKLCH にしたもの）で、build.rs がこのクレートのコードにする。
+//! 値は `tokens.json` が唯一の情報源（色は Radix Colors を OKLCH に変換したもの）で、build.rs がこのクレートのコードに変換する。
 //! 色は `0xRRGGBBAA`（`gpui::rgba` にそのまま渡せる）。
 
 include!(concat!(env!("OUT_DIR"), "/tokens.rs"));
@@ -52,11 +52,11 @@ pub use logo::{Logo, logo};
 #[cfg(feature = "gpui")]
 include!(concat!(env!("OUT_DIR"), "/icons.rs"));
 
-/// パネルの影のぼかし（ガウスの σ）。ずらさず四方へ広がる影で、重なったパネルどうしの境界を見せる。
+/// パネルの影のぼかし（ガウスの σ）。オフセットなしで四方へ広がる影により、重なったパネル間の境界を示す。
 pub const PANEL_SHADOW_BLUR: f32 = 8.0;
-/// パネルの地をウィンドウの縁から離す幅。影はパネルのテクスチャの中に描くので、ここに収める。
-/// GPUI は影を σ の 3 倍まで描くので、それと同じにして影が切れないようにする。
-/// オーバーレイ層もナビゲーションバーの置き場所に使うので、GPUI を持たない値の側に置く。
+/// パネル背景をウィンドウ端から離す幅。影はパネルのテクスチャ内に描画するため、この範囲に収める。
+/// GPUI は影を σ の 3 倍まで描画するため、同値にして影が途切れないようにする。
+/// オーバーレイ層もナビゲーションバーの配置に使用するため、GPUI を持たない値の側に定義する。
 pub const PANEL_MARGIN: f32 = 3.0 * PANEL_SHADOW_BLUR;
 
 /// 部品のトランジションを有効にする GPUI のグローバル（置いたときだけ動く。テストは置かないので即座に切り替わる）。

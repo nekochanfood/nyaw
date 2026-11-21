@@ -1,6 +1,6 @@
-//! Vulkan: CPU 上の RGBA を GPU のイメージへ書き込む。OpenVR（`SetOverlayTexture`）と
-//! OpenXR（スワップチェーン）で共有する。インスタンスとデバイスの作り方だけがランタイムごとに違う
-//! （OpenXR はランタイム経由で作る必要がある）ので、作成は呼び出し側に任せる。
+//! Vulkan: CPU 上の RGBA を GPU イメージへ書き込む。OpenVR（`SetOverlayTexture`）と
+//! OpenXR（スワップチェーン）で共有する。インスタンスとデバイスの作成方法のみがランタイムごとに異なる
+//! （OpenXR はランタイム経由で作成する必要がある）ため、作成は呼び出し側に委譲する。
 
 use std::ffi::{CStr, CString, c_char};
 
@@ -12,14 +12,14 @@ pub(crate) fn vk_err(what: &str) -> impl FnOnce(vk::Result) -> VrError + '_ {
     move |e| VrError::Runtime(format!("{what}: {e}"))
 }
 
-/// オーバーレイの画素の形式。GPUI の読み戻しは sRGB で符号化された RGBA。
+/// オーバーレイのピクセルフォーマット。GPUI の読み戻しは sRGB エンコードされた RGBA。
 pub(crate) const FORMAT: vk::Format = vk::Format::R8G8B8A8_SRGB;
 
 pub(crate) fn entry() -> Result<ash::Entry, VrError> {
     unsafe { ash::Entry::load() }.map_err(|e| VrError::Runtime(format!("Vulkan: {e}")))
 }
 
-/// スペース区切りの拡張名（OpenVR が返す形式）を分割する。
+/// スペース区切りの拡張名（OpenVR が返す形式）を分割して返す。
 pub(crate) fn extension_names(list: &str) -> Vec<CString> {
     list.split_whitespace()
         .map(|s| CString::new(s).unwrap())
@@ -30,7 +30,7 @@ fn pointers(names: &[CString]) -> Vec<*const c_char> {
     names.iter().map(|n| n.as_ptr()).collect()
 }
 
-/// `create` に `VkInstanceCreateInfo` を渡してインスタンスを作らせる。
+/// `create` に `VkInstanceCreateInfo` を渡してインスタンスを作成させる。
 pub(crate) fn create_instance(
     entry: &ash::Entry,
     extensions: &[CString],
@@ -47,7 +47,7 @@ pub(crate) fn create_instance(
     Ok(unsafe { ash::Instance::load(entry.static_fn(), raw) })
 }
 
-/// グラフィックス用のキューを 1 本持つデバイスを `create` に作らせる。
+/// グラフィックス用キューを 1 本持つデバイスを `create` に作成させる。
 pub(crate) fn create_device(
     entry: ash::Entry,
     instance: ash::Instance,
@@ -82,7 +82,7 @@ pub(crate) fn create_device(
     Gpu::new(entry, instance, physical, device, family)
 }
 
-/// 書き込み先として自前で確保したイメージ（OpenVR 用）。
+/// 書き込み先として自前で確保した VkImage（OpenVR 用）。
 pub(crate) struct Image {
     pub image: vk::Image,
     memory: vk::DeviceMemory,
@@ -95,21 +95,21 @@ struct Staging {
     mapped: *mut u8,
 }
 
-/// 転送 1 回分のコマンドバッファ・フェンス・一時バッファ。順番に使い回す。
+/// 転送 1 回分のコマンドバッファ・フェンス・ステージングバッファ。順番に再利用する。
 struct Slot {
     cmd: vk::CommandBuffer,
     fence: vk::Fence,
     staging: Option<Staging>,
-    /// 送ったまま完了を確かめていない。
+    /// サブミット済みだが完了未確認。
     busy: bool,
-    /// 最後に送った転送の通し番号（[`Gpu::retire`]）。
+    /// 最後にサブミットした転送のシーケンス番号（[`Gpu::retire`]）。
     seq: u64,
 }
 
-/// 同時に GPU へ出しておける転送の数。書き込みは完了を待たずに返り、この数だけ後に同じ枠を使うときに待つ。
-/// ゲームが GPU を使い切っている間は完了待ちが長く伸び、フレームループごと止まっていた。
-/// ランタイム（SteamVR / OpenXR）は渡したキューでイメージを読むので、キューの順序で書き込みの後に読まれる。
-// ponytail: 1 フレームの転送がこれを超えると同じフレームの前の転送を待つ。パネルを大量に同時更新するなら増やす。
+/// GPU へ同時にサブミット可能な転送数。書き込みは完了を待たずに返り、この数だけ後に同じスロットを再利用する際に待機する。
+/// ゲームが GPU を占有している間はフェンス待機が長引き、フレームループ全体が停止していた。
+/// ランタイム（SteamVR / OpenXR）は渡したキューでイメージを読むため、キュー順序により書き込み後に読まれることが保証される。
+// ponytail: 1 フレームの転送がこの数を超えると同一フレームの先行転送を待機する。パネルを大量に同時更新する場合は増やす。
 const SLOTS: usize = 8;
 
 pub(crate) struct Gpu {
@@ -121,11 +121,11 @@ pub(crate) struct Gpu {
     pool: vk::CommandPool,
     slots: Vec<Slot>,
     next: usize,
-    /// 送った転送の数（通し番号）。
+    /// サブミット済み転送のカウント（シーケンス番号）。
     submitted: u64,
-    /// 捨てたイメージと、捨てた時点の通し番号。それより後の転送が終われば、ランタイムの読み出しも済んでいる。
+    /// 破棄予約済みのイメージと破棄時点のシーケンス番号。それ以降の転送が完了すれば、ランタイムの読み出しも完了している。
     retired: Vec<(u64, Image)>,
-    /// Vulkan のライブラリ。関数ポインタが指す先なので最後に解放する。
+    /// Vulkan ライブラリ。関数ポインタの参照先のため、最後に解放する。
     _entry: ash::Entry,
 }
 
@@ -273,8 +273,8 @@ impl Gpu {
         }
     }
 
-    /// 次の枠を取る（前にその枠で送った転送の完了を待つ）。CPU から見える一時バッファは `size` 以上にする。
-    /// 枠の番号・コマンドバッファ・一時バッファとその書き込み先を返す。
+    /// 次のスロットを取得する（前回そのスロットでサブミットした転送の完了を待機する）。CPU 可視ステージングバッファは `size` 以上を確保する。
+    /// スロット番号・コマンドバッファ・ステージングバッファとその書き込み先ポインタを返す。
     fn slot(
         &mut self,
         size: usize,
@@ -292,7 +292,7 @@ impl Gpu {
                     .map_err(vk_err("vkResetFences"))?;
             }
             slot.busy = false;
-            // キューは順に終わるので、この番号までの転送（とその後ろに積まれたランタイムの読み出し）は済んでいる。
+            // キューは順に完了するため、この番号までの転送（およびその後にキューイングされたランタイムの読み出し）は完了済み。
             let done = slot.seq;
             for (_, image) in self.retired.extract_if(.., |(at, _)| *at < done) {
                 unsafe {
@@ -379,7 +379,7 @@ impl Gpu {
         }
     }
 
-    /// 枠 `i` に記録したコマンドを送る。完了は待たない（次にその枠を使うときに待つ）。
+    /// スロット `i` に記録したコマンドをサブミットする。完了は待機しない（次にそのスロットを使用する際に待機する）。
     fn submit(&mut self, i: usize) -> Result<(), VrError> {
         let slot = &mut self.slots[i];
         let cmds = [slot.cmd];
@@ -397,14 +397,14 @@ impl Gpu {
         Ok(())
     }
 
-    /// 使い終えたイメージを捨てる。ランタイムがまだ読んでいるかもしれないので、後の転送が終わってから破棄する
-    /// （大きさが変わるたびに GPU 全体の完了を待つと、ゲーム中はそれだけで数十 ms 止まっていた）。
+    /// 使用済みイメージを破棄予約する。ランタイムがまだ読み出し中の可能性があるため、後続の転送完了後に破棄する
+    /// （サイズ変更のたびに GPU 全体のアイドル待ちを行うと、ゲーム中はそれだけで数十 ms のストールが発生していた）。
     pub fn retire(&mut self, image: Image) {
         self.retired.push((self.submitted, image));
     }
 
-    /// `rgba`（行間に詰め物なし）を `image` 全体へ書き込み、`layout` に遷移させる。
-    /// 以前の中身は捨てる。GPU の完了は待たない（[`SLOTS`]）。
+    /// `rgba`（行間パディングなし）を `image` 全体へ書き込み、`layout` に遷移させる。
+    /// 既存の内容は破棄する。GPU の完了は待機しない（[`SLOTS`]）。
     pub fn upload(
         &mut self,
         image: vk::Image,
@@ -489,7 +489,7 @@ impl Gpu {
         self.submit(slot)
     }
 
-    /// `image`（`layout` の状態）の全体を RGBA で読み戻し、`layout` に戻す。テスト用の疎通確認。
+    /// `image`（`layout` 状態）の全体を RGBA で読み戻し、`layout` に復帰させる。テスト用の疎通確認。
     pub fn download(
         &mut self,
         image: vk::Image,
@@ -566,7 +566,7 @@ impl Gpu {
                 .map_err(vk_err("vkEndCommandBuffer"))?;
         }
         self.submit(slot)?;
-        // 読み戻しは結果が要るのでここで待つ。
+        // 読み戻しは結果が必要なため、ここで完了を待機する。
         self.wait_idle();
         Ok(unsafe { std::slice::from_raw_parts(staging, len) }.to_vec())
     }
@@ -596,7 +596,7 @@ impl Drop for Gpu {
     }
 }
 
-/// C 文字列のバッファ（NUL 終端）を `String` にする。
+/// C 文字列バッファ（NUL 終端）を `String` に変換する。
 pub(crate) fn c_buf_to_string(buf: &[c_char]) -> String {
     unsafe { CStr::from_ptr(buf.as_ptr()) }
         .to_string_lossy()

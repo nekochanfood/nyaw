@@ -1,5 +1,5 @@
-//! nyaw のロゴ。`logo(Logo::Mini).height(px(48.))` は今のテーマ（[`Mode`]）に合う SVG を描く。
-//! SVG の実体は `assets/logos/`（ビルドに埋め込む）。読み込みと描画は GPUI のアセットで裏のスレッドが行う。
+//! nyaw のロゴ。`logo(Logo::Mini).height(px(48.))` は現在のテーマ（[`Mode`]）に合う SVG を描画する。
+//! SVG の実体は `assets/logos/`（ビルドに埋め込む）。読み込みと描画は GPUI のアセットでバックグラウンドスレッドが行う。
 //! exe に埋め込むアイコンは別（`assets/icons/*.ico`、ルートの `build.rs`）。
 
 use std::sync::Arc;
@@ -11,17 +11,17 @@ use gpui::{
 
 use crate::Mode;
 
-/// ロゴの種類。
+/// ロゴの種別。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Logo {
-    /// 文字入りの横長（352.49 × 150.19）。
+    /// テキスト入りの横長型（352.49 × 150.19）。
     Full,
-    /// 耳だけの縦長（172.62 × 213.42）。アイコン向き。
+    /// 耳のみの縦長型（172.62 × 213.42）。アイコン用。
     Mini,
 }
 
 impl Logo {
-    /// `mode` の背景に合う SVG の中身。
+    /// `mode` の背景に適合する SVG の内容。
     pub fn svg(self, mode: Mode) -> &'static [u8] {
         match (self, mode) {
             (Logo::Full, Mode::Light) => {
@@ -46,7 +46,7 @@ impl Logo {
 
 struct LogoAsset;
 impl Asset for LogoAsset {
-    /// 種類・モード・描く画素数（幅, 高さ）
+    /// 種別・モード・描画画素数（幅, 高さ）
     type Source = (Logo, Mode, u32, u32);
     type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
@@ -70,7 +70,7 @@ impl Asset for LogoAsset {
     }
 }
 
-/// ロゴの部品。高さで大きさを決め、幅は縦横比から出す。
+/// ロゴ部品。高さで大きさを決定し、幅は縦横比から算出する。
 #[derive(IntoElement)]
 pub struct LogoView {
     kind: Logo,
@@ -92,7 +92,7 @@ impl LogoView {
         self
     }
 
-    /// 今のテーマではなく、このモード用のロゴを使う（見比べるとき）。
+    /// 現在のテーマではなく、指定モード用のロゴを使用する（比較表示用）。
     pub fn mode(mut self, mode: Mode) -> Self {
         self.mode = Some(mode);
         self
@@ -124,7 +124,7 @@ impl RenderOnce for LogoView {
 mod tests {
     use super::*;
 
-    /// 縦横比の定数は SVG の viewBox と合っている（差し替えで食い違うと歪む）。
+    /// 縦横比の定数が SVG の viewBox と一致していること（不一致の場合、描画が歪む）。
     #[test]
     fn aspect_matches_view_box() {
         for kind in [Logo::Full, Logo::Mini] {

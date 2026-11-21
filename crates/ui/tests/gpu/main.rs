@@ -1,6 +1,6 @@
-//! 実プラットフォーム + GPU で動かすテスト。GUI はメインスレッドで回し、GPUI のアプリは 1 プロセスで 1 回しか起こせないので、
-//! 各ケースは独自の main を持つ。ファイルごとに別バイナリにするとリンクが本数分かかるので 1 本にまとめ、
-//! このバイナリが自分自身をケースごとに子プロセスとして起こす（`NYAW_GPU_CASE` でどのケースか渡す）。
+//! 実プラットフォーム + GPU で動作するテスト。GUI はメインスレッドで実行し、GPUI のアプリは 1 プロセスで 1 回しか起動できないため、
+//! 各ケースは独自の main を持つ。ファイルごとに別バイナリにするとリンクが本数分必要になるため 1 本にまとめ、
+//! このバイナリが自分自身をケースごとに子プロセスとして起動する（`NYAW_GPU_CASE` でケースを指定する）。
 //!
 //! 1 ケースだけ流す: `cargo test -p ui --test gpu -- --ignored stress`（名前の一部で絞る）
 
@@ -27,7 +27,7 @@ use std::process::{Command, ExitCode, Termination};
 
 const CASE: &str = "NYAW_GPU_CASE";
 
-/// ケースの main（`()` か `ExitCode` を返す）を終了コードにする。
+/// ケースの main（`()` または `ExitCode` を返す）を終了コードに変換する。
 fn report<T: Termination>(main: fn() -> T) -> ExitCode {
     main().report()
 }

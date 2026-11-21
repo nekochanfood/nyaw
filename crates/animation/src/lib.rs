@@ -1,5 +1,5 @@
-//! アニメーション。animato をここで包み、呼び出し側は [`Motion`] と [`Animation`] だけを見る。
-//! 長さは `duration_ms`（tokens.json）、イージングは用途ごとに 1 つ決めてある。
+//! アニメーション基盤。animato をラップし、呼び出し側は [`Motion`] と [`Animation`] のみを参照する。
+//! 長さは `duration_ms`（tokens.json 由来）、イージングは用途ごとに固定。
 
 use std::time::{Duration, Instant};
 
@@ -7,27 +7,27 @@ use animato::{Easing, Tween, Update};
 
 include!(concat!(env!("OUT_DIR"), "/duration_ms.rs"));
 
-/// ボタンの滑り込み・滑り出しの長さ（ms）。
+/// ボタンのスライドイン・スライドアウトの長さ（ms）。
 const SLIDE_MS: u64 = 350;
 
-/// サイドバーの印が出る・消える長さ（ms）。
+/// サイドバーのインジケーター表示・非表示の長さ（ms）。
 const HOP_MS: u64 = 300;
 
-/// 画面の入れ替え・積み下ろしの長さ（ms）。
+/// ページ遷移（プッシュ・ポップ・切り替え）の長さ（ms）。
 const PAGE_MS: u64 = 300;
 
-/// 磁石に吸い寄せられてはまる・磁石から外れて飛び出す長さ（ms）。
+/// マグネット吸着・離脱時の長さ（ms）。
 const ATTRACT_MS: u64 = 320;
 const POP_MS: u64 = 300;
 
-/// 使っていないものが薄れて消える長さ（ms）。気付かないくらいゆっくり。
-// ponytail: 固定の長さ。速すぎる・遅すぎると感じたらここを調整する。
+/// 非アクティブ要素のフェードアウトの長さ（ms）。知覚されにくい程度に緩やか。
+// ponytail: 固定値。体感が合わなければここを調整する。
 const FADE_MS: u64 = 1000;
 
-/// 幅の動きと中身の動きのずれ（入りは幅が先、出は中身が先）。
+/// 幅と中身の動きの時間差（表示時は幅が先行、非表示時は中身が先行）。
 pub const LAG: Duration = Duration::from_millis(80);
 
-/// ボタンの出具合。`rise`（縦のずれと透明度。行き過ぎる）と `grow`（幅。行き過ぎない）は別々に動く。1 で出きっている。
+/// ボタンの表示度合い。`rise`（縦方向のオフセットと透明度。オーバーシュートあり）と `grow`（幅。オーバーシュートなし）が独立に遷移する。1.0 で完全表示。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Slide {
     pub rise: f32,
@@ -45,18 +45,18 @@ impl Slide {
     };
 }
 
-/// 縦の動き（行き過ぎる）と幅の動き（行き過ぎない）の組。ボタンの滑り込み・滑り出しに使う。
+/// 縦方向（オーバーシュートあり）と幅方向（オーバーシュートなし）のアニメーションの組。ボタンのスライドイン・スライドアウトに使用する。
 pub struct Pair {
     rise: Animation,
     grow: Animation,
-    /// まだ動き出していない側（入りなら `rise`、出なら `grow`）があと何秒待つか。
+    /// 遅延側（表示時は `rise`、非表示時は `grow`）の残り待機時間（秒）。
     wait: f32,
-    /// 待っているのは `rise` か（そうでなければ `grow`）。
+    /// 待機中のフィールドが `rise` か（`false` なら `grow`）。
     rise_waits: bool,
 }
 
 impl Pair {
-    /// 入り（`entering`）は幅が先に開き始め、少し遅れて中身が出る。出は中身が先に消え始め、少し遅れて幅が閉じる。
+    /// `entering` が真の場合は幅が先に広がり、遅れて中身が表示される。偽の場合は中身が先に消え、遅れて幅が閉じる。
     pub fn new(from: f32, to: f32, rise: Motion, entering: bool) -> Self {
         let grow = if entering {
             Motion::Grow
@@ -66,7 +66,7 @@ impl Pair {
         Self::with_grow(from, to, rise, grow, entering)
     }
 
-    /// [`Self::new`] の幅（高さ）の動きを `grow` にしたもの。
+    /// [`Self::new`] の幅方向の Motion を明示的に指定する変種。
     pub fn with_grow(from: f32, to: f32, rise: Motion, grow: Motion, entering: bool) -> Self {
         Self {
             rise: Animation::new(from, to, rise),
@@ -95,40 +95,40 @@ impl Pair {
     }
 }
 
-/// 動きの用途。長さとイージングはここで決まる。
+/// 動きの用途。長さとイージングが一意に定まる。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Motion {
-    /// 現れる。ゆっくり着地する（ease-out）。
+    /// 出現。緩やかに着地する（ease-out）。
     Enter,
-    /// 消える。現れるの逆再生（同じ長さで ease-in）。
+    /// 退出。Enter の逆再生（同じ長さで ease-in）。
     Exit,
-    /// 元に戻る。消えるときと同じ長さで、終わり際にゆっくり着地する（ease-out）。
+    /// 復帰。Exit と同じ長さで、終端が緩やかに着地する（ease-out）。
     Return,
-    /// 位置や明るさの移り変わり（ease-in-out）。
+    /// 位置・明度など値の遷移（ease-in-out）。
     Move,
-    /// 移動と大きさの変化が続く、形の移り変わり（ease-in-out。段が多いので一番遅い長さ）。
+    /// 移動と寸法変化を伴う形状遷移（ease-in-out。段階が多いため最長の duration）。
     Morph,
-    /// ボタンが滑り込む。少し行き過ぎてから収まる（ease-out-back）。
+    /// ボタンのスライドイン。わずかにオーバーシュートしてから収まる（ease-out-back）。
     SlideIn,
-    /// ボタンが滑り出る。滑り込みの逆の動きで、少し引いてから下へ引っ込む（ease-in-back。滑り込みと同じ長さ）。
+    /// ボタンのスライドアウト。SlideIn の逆動作で、わずかに引いてから退出する（ease-in-back。SlideIn と同じ長さ）。
     SlideOut,
-    /// ボタンの幅が開く・閉じる。行き過ぎず、すぐ動き出して滑らかに止まる（ease-out。滑り込みと同じ長さ）。
+    /// ボタンの幅の拡張。オーバーシュートなしで即座に動き出し、滑らかに停止する（ease-out。SlideIn と同じ長さ）。
     Grow,
-    /// ボタンの幅が閉じる。開くの逆再生（ease-in。同じ長さ）。
+    /// ボタンの幅の縮小。Grow の逆再生（ease-in。同じ長さ）。
     Shrink,
-    /// 選んでいる印が消える。すぐ動き出し、行き過ぎずに滑らかに止まる（ease-out）。
+    /// 選択インジケーターの退出。即座に動き出し、オーバーシュートなしで停止する（ease-out）。
     Hop,
-    /// 選んでいる印が出る。ゆっくり動き出し、行き過ぎずに滑らかに止まる（ease-in-out。消えると同じ長さ）。
+    /// 選択インジケーターの出現。緩やかに動き出し、オーバーシュートなしで停止する（ease-in-out。Hop と同じ長さ）。
     HopIn,
-    /// スイッチのノブ。行き過ぎずに滑らかに止まる（ease-out）。
+    /// トグルスイッチのノブ移動。オーバーシュートなしで滑らかに停止する（ease-out）。
     Toggle,
-    /// 画面の積み下ろし・入れ替え。ゆっくり動き出してゆっくり止まる、緩急の強い ease-in-out（quint）。
+    /// ページのプッシュ・ポップ・切り替え。緩急の強い ease-in-out（quint）。
     Page,
-    /// 使っていないものが時間をかけて薄れて消える（ease-in-out。一番長い）。
+    /// 非アクティブ要素の緩やかなフェードアウト（ease-in-out。最長の duration）。
     Fade,
-    /// 磁石に吸い寄せられてはまる。近づくほど速まり、当たって小さく跳ね返ってから収まる（[`attract`]）。
+    /// マグネット吸着。近づくほど加速し、到達後にわずかにバウンドして収束する（[`attract`]）。
     Attract,
-    /// 磁石から外れて飛び出す。すぐ動き出し、少し行き過ぎてから収まる（ease-out-back）。
+    /// マグネット離脱。即座に動き出し、わずかにオーバーシュートしてから収まる（ease-out-back）。
     Pop,
 }
 
@@ -147,7 +147,7 @@ impl Motion {
         }
     }
 
-    /// 進み具合 `p`（0..=1）をこの動きのイージングに通した値。長さは呼び出し側が持つ（色の移り変わりや波紋）。
+    /// 進行度 `p`（0..=1）にこの Motion のイージングを適用した値を返す。duration は呼び出し側が管理する（色の遷移や波紋など）。
     pub fn ease(self, p: f32) -> f32 {
         self.easing().apply(p)
     }
@@ -159,21 +159,21 @@ impl Motion {
             }
             Motion::Exit | Motion::Shrink => Easing::EaseInCubic,
             Motion::Move | Motion::Morph | Motion::HopIn | Motion::Fade => Easing::EaseInOutCubic,
-            // 緩急を強めに（始めも終わりもゆっくり、真ん中が速い）。
+            // 始点・終点ともに緩やかで、中間が速い強い緩急。
             Motion::Page => Easing::EaseInOutQuint,
             Motion::SlideIn | Motion::Pop => Easing::EaseOutBack,
             Motion::Attract => Easing::Custom(attract),
-            // 滑り込みを逆に再生した動き（ease-in-back は 1 - ease-out-back(1 - t)）。
+            // SlideIn の逆再生（ease-in-back = 1 - ease-out-back(1 - t)）。
             Motion::SlideOut => Easing::EaseInBack,
         }
     }
 }
 
-/// 磁石に吸い寄せられる動きで、行き先に当たるまでの割合と、当たってから跳ね返る大きさ（行き先までの距離に対する割合）。
+/// マグネット吸着の到達時点の進行度と、到達後のバウンド振幅（移動距離に対する割合）。
 const IMPACT: f32 = 0.7;
 const REBOUND: f32 = 0.04;
 
-/// 磁石に吸い寄せられる動き: 近づくほど速まって [`IMPACT`] で行き先に当たり（ease-in）、[`REBOUND`] だけ跳ね返って収まる。
+/// マグネット吸着のイージング: 加速しながら [`IMPACT`] の時点で目標に到達し（ease-in）、[`REBOUND`] の振幅でバウンドして収束する。
 fn attract(t: f32) -> f32 {
     if t < IMPACT {
         (t / IMPACT).powi(2)
@@ -182,7 +182,7 @@ fn attract(t: f32) -> f32 {
     }
 }
 
-/// `from` から `to` へ [`Motion`] の長さで動く値。毎フレーム [`Animation::advance`] に経過秒を渡す。
+/// `from` から `to` へ [`Motion`] の duration で遷移する値。毎フレーム [`Animation::advance`] に経過秒を渡す。
 #[derive(Debug)]
 pub struct Animation(Tween<f32>);
 
@@ -196,7 +196,7 @@ impl Animation {
         )
     }
 
-    /// `dt` 秒進めて、今の値を返す。
+    /// `dt` 秒分進め、現在の値を返す。
     pub fn advance(&mut self, dt: f32) -> f32 {
         self.0.update(dt);
         self.0.value()
@@ -211,8 +211,8 @@ impl Animation {
     }
 }
 
-/// `Animation` と違い毎フレーム進めず、始めた時刻と「今」から値を引く。呼び出し側は `Instant::now()` を渡すだけ。
-/// 動いている間（`at` の 2 つ目が `true`）は描き続けること。
+/// `Animation` と異なり毎フレームの `advance` が不要で、開始時刻と現在時刻から値を算出する。呼び出し側は `Instant::now()` を渡すだけでよい。
+/// 遷移中（`at` の第 2 返り値が `true`）は毎フレームの再描画が必要。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Transition {
     from: f32,
@@ -229,7 +229,7 @@ impl Transition {
         }
     }
 
-    /// 今の値と、まだ動いているか。
+    /// 現在の値と、遷移中か否か。
     pub fn at(&self, now: Instant) -> (f32, bool) {
         let Some((start, motion)) = self.start else {
             return (self.to, false);
@@ -242,12 +242,12 @@ impl Transition {
         (self.from + (self.to - self.from) * motion.ease(p), true)
     }
 
-    /// 向かっている先（動き終わっていれば今の値）。
+    /// 遷移先の値（遷移完了後は現在の値と一致する）。
     pub fn target(&self) -> f32 {
         self.to
     }
 
-    /// 今の値から `to` へ `motion` で動き直す。行き先が同じなら何もしない。`animated` でなければ即座。
+    /// 現在の値から `to` へ `motion` で遷移を開始する。遷移先が同一なら何もしない。`animated` が偽なら即座に完了する。
     pub fn go(&mut self, to: f32, motion: Motion, now: Instant, animated: bool) {
         if self.to == to {
             return;

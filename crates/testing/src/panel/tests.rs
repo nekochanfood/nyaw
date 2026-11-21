@@ -1,8 +1,8 @@
 use super::*;
 use crate::test_util::*;
 
-/// ミラーリング画面の確認用: 操作のパネルで選ぶと、表示のパネルが描き直しを頼まれ、選んだ状態の表示になる。
-/// どの状態でも表示が出て、止まった状態（最小化・閉じた・失敗）のときだけボタン（戻す・再試行）が出る。
+/// ミラーリング画面の検証: 操作パネルで状態を選択すると、プレビューパネルに再描画が要求され、選択した状態が表示される。
+/// 全状態で表示が行われ、停止状態（最小化・閉じた・失敗）の場合のみアクションボタン（復帰・再試行）が表示される。
 #[gpui::test]
 fn mirror_test_controls_the_preview_panel(cx: &mut TestAppContext) {
     let shared = Rc::new(MirrorShared::default());
@@ -55,7 +55,7 @@ fn mirror_test_controls_the_preview_panel(cx: &mut TestAppContext) {
     }
 }
 
-/// ボタンは操作要求を積むだけで、反映はフレームループ（`ui::sync_panel`）の仕事。
+/// ボタンは操作コマンドをキューイングするのみで、反映はフレームループ（`ui::sync_panel`）が担当する。
 #[gpui::test]
 fn attach_button_queues_command(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Testing::default());
@@ -70,7 +70,7 @@ fn attach_button_queues_command(cx: &mut TestAppContext) {
     assert_eq!(queued, [PanelCommand::Attach(Device::Hmd, HMD_OFFSET)]);
 }
 
-/// テーマボタンは全体のテーマを切り替える要求を積む。切り替わると画面の色も変わる。
+/// テーマボタンはグローバルテーマの切り替え要求をキューイングする。切り替え後に画面の色も変化する。
 #[gpui::test]
 fn theme_button_requests_toggle_and_screen_follows(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Testing::default());
@@ -84,7 +84,7 @@ fn theme_button_requests_toggle_and_screen_follows(cx: &mut TestAppContext) {
     assert!(cx.update(|_, cx| Theme::current(cx)) == Theme::LIGHT);
 }
 
-/// 言語ボタンは次の言語へ切り替える要求を積む（設定ファイルへの書き戻しはカーネルの仕事）。
+/// 言語ボタンは次の言語への切り替え要求をキューイングする（設定ファイルへの永続化はカーネルが担当する）。
 #[gpui::test]
 fn language_button_requests_the_next_language(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Testing::default());
@@ -95,7 +95,7 @@ fn language_button_requests_the_next_language(cx: &mut TestAppContext) {
     assert_eq!(queued, [Setting::Language(Language::Ja)]);
 }
 
-/// Profiler ボタンは計測の有効・無効を切り替える。
+/// Profiler ボタンはプロファイリングの有効・無効を切り替える。
 #[gpui::test]
 fn profiler_button_toggles_profiling(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Testing::default());
@@ -109,7 +109,7 @@ fn profiler_button_toggles_profiling(cx: &mut TestAppContext) {
     assert!(!profiling(cx));
 }
 
-/// 描画のテストパネルと負荷試験の画面は Testing から召喚できる。
+/// 描画テストパネルおよびストレステスト画面は Testing から起動できる。
 #[gpui::test]
 fn test_panel_buttons_spawn_panels(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Testing::default());

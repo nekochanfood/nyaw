@@ -1,6 +1,6 @@
-//! Components: 役割（[`Theme`]）と Constants だけで組む部品。生の色は書かない。
-//! 部品は `on_click` などをそのまま足せる（`Styled` / `InteractiveElement` を中の `Stateful<Div>` に委ねている）。
-//! ホバー・押下の色は [`duration_ms::NORMAL`] かけて OKLab で補間する（[`Motion`] が有効なときだけ）。
+//! Components: 役割（[`Theme`]）と Constants のみで構成する UI 部品。色の直接指定は行わない。
+//! 部品は `on_click` 等をそのまま付与できる（`Styled` / `InteractiveElement` を内部の `Stateful<Div>` に委譲）。
+//! ホバー・押下の色は [`duration_ms::NORMAL`] かけて OKLab 空間で補間する（[`Motion`] が有効な場合のみ）。
 
 use std::time::Instant;
 
@@ -39,17 +39,17 @@ use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Variant {
-    /// 既定。カードに載せる前提で、カードよりわずかに暗い無彩色。
+    /// 既定。カード上に配置する前提で、カードよりわずかに暗い無彩色。
     Default,
     Primary,
     Danger,
-    /// カードではなく背景（[`panel`] の地）に直接置くとき。背景から浮くよう、背景との差を取った無彩色。
+    /// カードではなく背景（[`panel`] の地）に直接配置する場合。背景から浮くよう、背景との差分を取った無彩色。
     OnBackground,
-    /// 背景の無いボタン（画像の上に置く操作など）。ふだんは透明で、ホバー・押下だけ背景用の色が付く。
+    /// 背景のないボタン（画像上に配置する操作等）。通常は透明で、ホバー・押下時のみ背景色が付く。
     Ghost,
 }
 
-/// 色の移り変わり: `from` から `to` へ `start` から動いている。`start` が `None` なら落ち着いている。
+/// 色の遷移: `from` から `to` へ `start` 時点から遷移中。`start` が `None` なら静止状態。
 #[derive(Clone, Copy)]
 struct Fade {
     from: u32,
@@ -58,7 +58,7 @@ struct Fade {
 }
 
 impl Fade {
-    /// 今の色と、まだ動いているか。
+    /// 現在の色と、遷移が継続中かどうか。
     fn at(&self, now: Instant) -> (u32, bool) {
         let Some(start) = self.start else {
             return (self.to, false);
@@ -75,13 +75,13 @@ impl Fade {
     }
 }
 
-/// 0xRRGGBBAA の不透明度に `opacity`（0..=1）を掛ける。
+/// 0xRRGGBBAA のアルファ値に `opacity`（0..=1）を乗算する。
 fn scale_alpha(color: u32, opacity: f32) -> u32 {
     let alpha = ((color & 0xff) as f32 * opacity).round() as u32;
     color & !0xff | alpha
 }
 
-/// 0xRRGGBBAA を OKLab で混ぜる（アルファは線形に混ぜる）。
+/// 0xRRGGBBAA を OKLab 空間で混色する（アルファは線形補間）。
 pub(crate) fn mix(a: u32, b: u32, t: f32) -> u32 {
     let lab = |c: u32| -> Oklab {
         let s: Srgb<f32> = Srgb::<u8>::from(c >> 8).into_format();
@@ -97,12 +97,12 @@ pub(crate) fn mix(a: u32, b: u32, t: f32) -> u32 {
 struct State {
     pointer: Pointer,
     fade: Fade,
-    /// 押した位置（ウィンドウ座標）と時刻。波紋の起点。
+    /// 押下位置（ウィンドウ座標）と時刻。波紋エフェクトの起点。
     ripple: Option<(Point<Pixels>, Instant)>,
 }
 
-/// 波紋の `elapsed_ms` 時点の（半径, 不透明度 0..=255）。`reach` は起点から最も遠い角までの距離。終わっていれば `None`。
-/// 半径は ease-out で広がり、不透明度は線形に薄れる。
+/// 波紋の `elapsed_ms` 時点の（半径, 不透明度 0..=255）。`reach` は起点から最遠の角までの距離。完了していれば `None`。
+/// 半径は ease-out で拡大し、不透明度は線形に減衰する。
 fn ripple_frame(elapsed_ms: f32, reach: f32) -> Option<(f32, u8)> {
     let t = elapsed_ms / duration_ms::SLOW as f32;
     if !(0.0..1.0).contains(&t) {
@@ -114,13 +114,13 @@ fn ripple_frame(elapsed_ms: f32, reach: f32) -> Option<(f32, u8)> {
     ))
 }
 
-/// 角丸を半分の幅・高さに収める（CSS と同じく、大きすぎる角丸は丸めた長さに縮む）。[左上, 右上, 右下, 左下]。
+/// 角丸を幅・高さの半分以内にクランプする（CSS と同様、過大な角丸は縮小される）。[左上, 右上, 右下, 左下]。
 fn clamp_corners(c: [f32; 4], width: f32, height: f32) -> [f32; 4] {
     let max = (width.min(height) / 2.0).max(0.0);
     c.map(|r| r.clamp(0.0, max))
 }
 
-/// 半径 `r` の角で、辺から `d` の高さの行が内側へ削られる長さ。`d >= r` なら 0。
+/// 半径 `r` の角丸において、辺から `d` の高さの水平線が角丸により内側へ食い込む長さ。`d >= r` なら 0。
 fn corner_inset(r: f32, d: f32) -> f32 {
     if d >= r {
         return 0.0;
@@ -128,7 +128,7 @@ fn corner_inset(r: f32, d: f32) -> f32 {
     r - (r * r - (r - d) * (r - d)).sqrt()
 }
 
-/// 波紋の最初の不透明度（0..=255）。
+/// 波紋の初期不透明度（0..=255）。
 const RIPPLE_ALPHA: f32 = 64.0;
 
 #[derive(Clone, Copy, Default)]
@@ -137,7 +137,7 @@ struct Pointer {
     pressed: bool,
 }
 
-/// ボタンの高さと左右の余白（文字 `font_size::MD` に対して、高さ ≒ 2.8 倍、左右 ≒ 1.7 倍）。最小ヒット領域（48）を下回らない。
+/// ボタンの高さと左右パディング（文字 `font_size::MD` に対して高さ ≒ 2.8 倍、左右 ≒ 1.7 倍）。最小タッチ領域（48px）を下回らない。
 pub const BUTTON_HEIGHT: f32 = 54.0;
 const BUTTON_PADDING: f32 = 32.0;
 
@@ -149,36 +149,36 @@ pub struct Button {
     rest: u32,
     hover: u32,
     active: u32,
-    /// 波紋の色（文字色）。
+    /// 波紋の色（文字色と同一）。
     ink: u32,
     ripple: bool,
-    /// ホバーの効果音を出さない（行のように、中の要素が代わりにホバーの演出をするとき）。
+    /// ホバー効果音を抑制する（行のように、内部の要素がホバー演出を代行する場合）。
     quiet: bool,
-    /// [`Variant::Ghost`] のボタンか（[`Button::background_opacity`] と [`Button::ghost_background`] はこれだけに効く）。
+    /// [`Variant::Ghost`] であるか（[`Button::background_opacity`] と [`Button::ghost_background`] は Ghost にのみ作用する）。
     ghost: bool,
     /// [`Variant::Ghost`] のホバー・押下の背景の不透明度（0..=1）。
     background_opacity: f32,
-    /// ホバー中にカーソルへ出す説明（[`Tooltips`]）。
+    /// ホバー時にカーソル付近に表示するツールチップ（[`Tooltips`]）。
     tooltip: Option<SharedString>,
-    /// 押せない（[`disabled_button`]）。押した音を出さない。
+    /// 無効状態（[`disabled_button`]）。押下時の効果音も抑制する。
     disabled: bool,
 }
 
 impl Button {
-    /// 波紋（押した位置から広がる効果）を出さない。既定は出す。
+    /// 波紋エフェクト（押下位置から広がる効果）を無効にする。既定では有効。
     pub fn no_ripple(mut self) -> Self {
         self.ripple = false;
         self
     }
 
-    /// ホバー中にカーソルへ説明を出す。アイコンだけのボタンなど、見た目だけでは意味が伝わりにくいものに付ける。
+    /// ホバー時にカーソル付近にツールチップを表示する。アイコンのみのボタン等、外観だけでは意味が伝わりにくいものに付与する。
     pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
         self.tooltip = Some(text.into());
         self
     }
 
-    /// [`Variant::Ghost`] のホバー・押下の背景の不透明度（0..=1。範囲外は丸める）。指定しなければ 100%。
-    /// ふだんは透明なので変わらない。ほかの種類のボタンでは何もしない。要素全体の `opacity`（文字や中身も薄くなる）とは別。
+    /// [`Variant::Ghost`] のホバー・押下時の背景不透明度（0..=1。範囲外はクランプ）。未指定時は 100%。
+    /// 通常時は透明のため影響しない。Ghost 以外の種類では効果なし。要素全体の `opacity`（文字や中身も影響を受ける）とは別。
     pub fn background_opacity(mut self, opacity: f32) -> Self {
         self.background_opacity = if opacity.is_finite() {
             opacity.clamp(0.0, 1.0)
@@ -188,8 +188,8 @@ impl Button {
         self
     }
 
-    /// [`Variant::Ghost`] のホバー・押下の背景色を `theme` のものにする。背景が今のテーマと同じ明るさで、背景に紛れて見えない
-    /// ときに、反対のテーマ（ライトの上ではダーク、ダークの上ではライト）の色を渡す。ほかの種類のボタンでは何もしない。
+    /// [`Variant::Ghost`] のホバー・押下の背景色を `theme` のものに差し替える。背景が現在のテーマと同じ明るさで
+    /// ボタンが背景に埋もれる場合に、反対のテーマ（ライト上ならダーク、ダーク上ならライト）の色を渡す。Ghost 以外では効果なし。
     pub fn ghost_background(mut self, theme: &Theme) -> Self {
         if self.ghost {
             self.hover = theme.control_on_background_hover;
@@ -198,7 +198,7 @@ impl Button {
         self
     }
 
-    /// 平常・ホバー・押下の背景色（[`Button::background_opacity`] を掛けたもの）。
+    /// 通常・ホバー・押下の背景色（[`Button::background_opacity`] 適用済み）。
     fn colors(&self) -> (u32, u32, u32) {
         let scale = |c| {
             if self.ghost {
@@ -210,14 +210,14 @@ impl Button {
         (scale(self.rest), scale(self.hover), scale(self.active))
     }
 
-    /// ホバー・押下で地の色を変えず、波紋も出さない（中にボタンを置いたカード。地の色が変わると中のボタンが紛れる）。
-    /// 押せることとホバーの音はそのまま。
+    /// ホバー・押下で背景色を変えず、波紋も抑制する（内部にボタンを含むカード用。背景色の変化により内部ボタンが埋もれるのを防ぐ）。
+    /// クリック可能であることとホバー効果音はそのまま維持する。
     pub fn still(mut self) -> Self {
         (self.hover, self.active, self.ripple) = (self.rest, self.rest, false);
         self
     }
 
-    /// 切り替えボタンが有効なときの見た目（平常時の色が押下の色になる）。
+    /// トグルボタンが有効状態のときの外観（通常時の色を押下色に変更する）。
     pub fn selected(mut self, selected: bool) -> Self {
         if selected {
             self.rest = self.active;
@@ -237,8 +237,8 @@ pub fn button(
     b
 }
 
-/// 押せないボタン: 今その状態であること（「設定中」など）を、ボタンのあった場所に示す。塗りの無い枠だけのカプセルに、
-/// チェックの印と文字（`neutral-text-low`）。ホバー・押下で色が変わらず、波紋も音も出ない。地・カードのどちらにも置ける。
+/// 無効化ボタン: 現在の状態（「設定中」等）をボタンの位置に表示する。塗りのない枠線のみのカプセルに、
+/// チェックマークと文字（`neutral-text-low`）を配置する。ホバー・押下で色は変わらず、波紋も効果音も出ない。地・カードのどちらにも配置可能。
 pub fn disabled_button(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -261,7 +261,7 @@ pub fn disabled_button(
     b
 }
 
-/// アイコンだけの丸いボタン。見た目だけでは意味が伝わりにくいので、説明（ツールチップ）を必ず持たせる。
+/// アイコンのみの丸型ボタン。外観だけでは意味が伝わりにくいため、ツールチップを必須とする。
 pub fn icon_button(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -276,14 +276,14 @@ pub fn icon_button(
     )
 }
 
-/// 中身の無い、横長のボタン（文字のボタンと同じ高さ・角丸・状態色。左右の余白は小さめ）。中身（アイコンと文字など）は呼び出し側が足す。
+/// 中身のない横長ボタン（文字ボタンと同じ高さ・角丸・状態色。左右パディングは控えめ）。中身（アイコンと文字等）は呼び出し側が追加する。
 pub fn content_button(theme: &Theme, id: impl Into<SharedString>, variant: Variant) -> Button {
     let mut b = base_button(theme, id.into(), variant);
     b.base = b.base.px(px(spacing::LG)).gap(px(spacing::SM));
     b
 }
 
-/// 中身の無い丸いボタン（アイコンボタンと同じ寸法・状態色・必須の説明）。中身（アプリのアイコンの画像など）は呼び出し側が足す。
+/// 中身のない丸型ボタン（アイコンボタンと同じ寸法・状態色・必須ツールチップ）。中身（アプリアイコンの画像等）は呼び出し側が追加する。
 pub fn round_button(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -295,7 +295,7 @@ pub fn round_button(
     b
 }
 
-/// Twemoji の丸いボタン。アイコンボタンと同じ寸法・状態色・必須の説明を持つ。
+/// Twemoji の丸型ボタン。アイコンボタンと同じ寸法・状態色・必須ツールチップを持つ。
 pub fn emoji_button(
     theme: &Theme,
     id: &'static str,
@@ -311,7 +311,7 @@ pub fn emoji_button(
     b
 }
 
-/// 高さ・角丸・色・文字だけを決めたボタン。中身と横の大きさは呼び出し側が足す。
+/// 高さ・角丸・色・文字のみを設定したボタンの基底。中身と横幅は呼び出し側が追加する。
 fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
     let (bg, hover, active, fg) = match variant {
         Variant::Default => (
@@ -355,7 +355,7 @@ fn base_button(theme: &Theme, id: SharedString, variant: Variant) -> Button {
         .justify_center()
         .rounded(px(radius::FULL))
         .text_size(px(font_size::MD))
-        // 太字の 18.66px 以上は大きい文字（WCAG の 3:1）。ボタンの文字色の検査はこれを前提にしている。
+        // 太字の 18.66px 以上は WCAG の「大きい文字」（コントラスト比 3:1 で可）。ボタン文字色の検証はこの前提に基づく。
         .font_weight(FontWeight::BOLD)
         .text_color(rgba(fg));
     Button {
@@ -427,7 +427,7 @@ impl RenderOnce for Button {
             }
             c
         } else if cx.has_global::<Motion>() {
-            // 目標が変わった。今の色から新しい目標へ向けて動き直す。
+            // 目標色が変化した。現在の色から新しい目標へ遷移を再開する。
             let (from, _) = f.at(now);
             state.update(cx, |s, _| {
                 s.fade = Fade {
@@ -449,9 +449,9 @@ impl RenderOnce for Button {
             target
         };
 
-        // ポインタの状態を書き換えて描き直す。
+        // ポインタの状態を更新し再描画を要求する。
         let press = state.clone();
-        // ツールチップの持ち主。このボタンが描かれなくなる（状態が捨てられる）と要求も消える。
+        // ツールチップの所有者。このボタンが描画されなくなり状態が破棄されると、要求も消滅する。
         let owner = state.clone().into_any().downgrade();
         let set = move |hovered: Option<bool>, pressed: Option<bool>| {
             let state = state.clone();
@@ -478,7 +478,7 @@ impl RenderOnce for Button {
         let disabled = self.disabled;
         let (down, up) = (set(None, Some(true)), set(None, Some(false)));
         let up_out = set(None, Some(false));
-        // ボタンごとに違う角丸（`rounded*` で上書きされたものも含む）。指定が無い角は 0。
+        // ボタンごとに異なる角丸（`rounded*` で上書き済みのものを含む）。未指定の角は 0。
         let rem = window.rem_size();
         let corners = {
             let c = &self.base.style().corner_radii;
@@ -521,8 +521,8 @@ impl RenderOnce for Button {
                         );
                         let quad =
                             fill(circle, rgba(ink & !0xff | u32::from(a))).corner_radii(px(r));
-                        // 角丸で切る: gpui のマスクは長方形だけなので、角の部分は 1px の帯に分けて
-                        // 帯ごとに角丸の内側だけをマスクにして描き、間の長方形部分は一度で描く。
+                        // 角丸でクリッピングする。GPUI のマスクは矩形のみのため、角丸部分は 1px 幅の帯に分割し
+                        // 帯ごとに角丸内側をマスクとして描画し、中間の矩形部分は一括描画する。
                         let (width, height) = (f32::from(b.size.width), f32::from(b.size.height));
                         let [tl, tr, br, bl] = clamp_corners(corners, width, height);
                         let (top, bottom) = (tl.max(tr), bl.max(br));
@@ -556,7 +556,7 @@ impl RenderOnce for Button {
                 .size_full(),
             )
         });
-        // GPUI の on_hover はウィンドウに一つなので、手ごとの移動でも要求を更新する。
+        // GPUI の on_hover はウィンドウにつき一つのため、マウス移動ごとに要求を更新する。
         let (move_id, move_tip, move_owner) = (id.clone(), tip.clone(), owner.clone());
         self.base
             .bg(rgba(color))
@@ -603,8 +603,8 @@ impl RenderOnce for Button {
 
 pub use crate::drive::keep_drawing;
 
-/// 円の進み具合: 一辺 `size` px・太さ `stroke` px の線の輪。溝（`groove`）の上に、上から時計回りに `progress`（0〜1）
-/// だけアクセントの色で満ちる。中身（残り時間など）は呼び出し側が `relative` の親で重ねる。
+/// プログレスリング: 一辺 `size` px・太さ `stroke` px の円弧。溝（`groove`）の上に、上から時計回りに `progress`（0〜1）
+/// 分だけアクセント色で描画する。中身（残り時間等）は呼び出し側が `relative` の親で重ねる。
 pub fn progress_ring(theme: &Theme, size: f32, stroke: f32, progress: f32) -> impl IntoElement {
     let (track, fill) = (theme.groove, theme.accent_solid);
     let progress = if progress.is_finite() {
@@ -617,7 +617,7 @@ pub fn progress_ring(theme: &Theme, size: f32, stroke: f32, progress: f32) -> im
         move |bounds, _, window, _| {
             let center = bounds.center();
             let r = (bounds.size.width.min(bounds.size.height) - px(stroke)) / 2.0;
-            // 円弧は細かい折れ線で描く（180° を超える弧の向きの取り違えが無い）。
+            // 円弧を折れ線で近似する（180° 超の弧での方向誤りを回避）。
             let arc = |to: f32| {
                 let mut path = gpui::PathBuilder::stroke(px(stroke));
                 let steps = (to * 96.0).ceil().max(1.0) as usize;
@@ -647,9 +647,9 @@ pub fn progress_ring(theme: &Theme, size: f32, stroke: f32, progress: f32) -> im
     .size(px(size))
 }
 
-/// 読み込み中のスピナー。一辺 `size` px の輪（溝 `groove`）の上を、1/4 周の丸い端の弧（`accent_solid`）が 0.5 秒で一周する。
-/// ciel / website_V3 のスピナーと同じ形（半径 20・線幅 6、弧は周の 1/4）と速さ。時刻は全部品で共通なので、
-/// 複数並べても同じ角度で回る。
+/// 読み込み中スピナー。一辺 `size` px の溝（`groove`）の上を、1/4 周の丸端弧（`accent_solid`）が 0.5 秒で一周する。
+/// ciel / website_V3 のスピナーと同一形状（半径 20・線幅 6・弧は周の 1/4）および速度。時刻は全部品で共通のため、
+/// 複数配置しても同じ角度で回転する。
 pub fn spinner(theme: &Theme, size: f32) -> impl IntoElement {
     let (track, fill) = (theme.groove, theme.accent_solid);
     canvas(
@@ -662,7 +662,7 @@ pub fn spinner(theme: &Theme, size: f32) -> impl IntoElement {
             let r = px(SPINNER_RADIUS * scale);
             let center = bounds.center();
             let turns = spinner_turns(crate::drive::now());
-            // 円弧は細かい折れ線で描く（progress_ring と同じ）。`from` は始点、`len` は長さ（どちらも周の割合）。
+            // 円弧を折れ線で近似する（progress_ring と同様）。`from` は始点、`len` は長さ（いずれも周の割合）。
             let arc = |from: f32, len: f32| {
                 let mut path = gpui::PathBuilder::stroke(stroke);
                 let steps = (len * 96.0).ceil().max(1.0) as usize;
@@ -680,7 +680,7 @@ pub fn spinner(theme: &Theme, size: f32) -> impl IntoElement {
             if let Some(path) = arc(0.0, 1.0) {
                 window.paint_path(path, rgba(track));
             }
-            // 弧は真上（-90°）から始まり、時計回りに回る。丸い端は線の両端に半円を足して作る。
+            // 弧は真上（-90°）から時計回りに描画する。丸端は線の両端に半円を付加して生成する。
             let start = turns - 0.25;
             if let Some(path) = arc(start, SPINNER_ARC) {
                 window.paint_path(path, rgba(fill));
@@ -705,16 +705,16 @@ pub fn spinner(theme: &Theme, size: f32) -> impl IntoElement {
     .size(px(size))
 }
 
-/// ciel の SVG（`viewBox="0 0 50 50"`、`r=20`、`stroke-width=6`、`stroke-dasharray="31.4 94.2"`）の寸法。
+/// ciel の SVG（`viewBox="0 0 50 50"`, `r=20`, `stroke-width=6`, `stroke-dasharray="31.4 94.2"`）由来の寸法。
 const SPINNER_VIEW: f32 = 50.0;
 const SPINNER_RADIUS: f32 = 20.0;
 const SPINNER_STROKE: f32 = 6.0;
-/// 弧の長さ（周の割合）。31.4 / (31.4 + 94.2) = 1/4。
+/// 弧の長さ（周に対する割合）。31.4 / (31.4 + 94.2) = 1/4。
 const SPINNER_ARC: f32 = 0.25;
-/// 一周する時間（ms）。
+/// 一周に要する時間（ms）。
 const SPINNER_PERIOD_MS: u128 = 500;
 
-/// 時刻 `now` での回転量（周の割合 0..1）。一定の速さ（linear）。
+/// 時刻 `now` における回転量（周の割合 0..1）。等速（linear）。
 fn spinner_turns(now: Instant) -> f32 {
     static ORIGIN: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let origin = *ORIGIN.get_or_init(|| now);
@@ -722,8 +722,8 @@ fn spinner_turns(now: Instant) -> f32 {
     ms as f32 / SPINNER_PERIOD_MS as f32
 }
 
-/// 状態の画面: 上下左右中央に、縦へ「アイコン・タイトル・（あれば）理由・（必要なら）ボタン」。読み込み中は [`spinner`]、
-/// エラーは X のアイコンを `icon` に渡す。パネル全体を使う（[`card_panel`]）。
+/// ステータス画面: 上下左右中央に「アイコン・タイトル・（任意）理由・（任意）ボタン」を縦に配置する。読み込み中は [`spinner`]、
+/// エラーは X アイコンを `icon` に渡す。パネル全体を使用する（[`card_panel`]）。
 pub fn status_screen(
     theme: &Theme,
     icon: impl IntoElement,
@@ -755,9 +755,9 @@ pub fn status_screen(
         .children(action)
 }
 
-/// [`status_screen`] の上に置くアイコン。一辺 `size` px の枠の中に、[`spinner`] の輪と同じ見た目の大きさ（輪の外径）で
-/// グリフを出す。Phosphor のグリフは枠の 208/256 しか使わないので、その分だけ大きく描いて、枠の大きさは変えない
-/// （スピナーと入れ替わっても、並びがずれない）。
+/// [`status_screen`] 上に配置するアイコン。一辺 `size` px の枠内に、[`spinner`] の外径と同じ視覚的サイズで
+/// グリフを描画する。Phosphor のグリフは枠の 208/256 しか使わないため、その分拡大して枠サイズは維持する
+/// （スピナーと入れ替わってもレイアウトがずれない）。
 pub fn status_icon(glyph: &'static crate::Icon, size: f32) -> impl IntoElement {
     let ring = (2.0 * SPINNER_RADIUS + SPINNER_STROKE) / SPINNER_VIEW;
     let drawn = size * ring / (208.0 / 256.0);
@@ -770,7 +770,7 @@ pub fn status_icon(glyph: &'static crate::Icon, size: f32) -> impl IntoElement {
         .child(div().flex_none().child(crate::icon(glyph).size(px(drawn))))
 }
 
-/// オン / オフのスイッチ。押したときの処理は呼び出し側が `on_click` で足す。
+/// オン / オフのスイッチ。押下時の処理は呼び出し側が `on_click` で付与する。
 pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<Div> {
     let (w, h, pad) = (44.0, 24.0, 2.0);
     let knob = h - pad * 2.0;
@@ -779,7 +779,7 @@ pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<
         id: format!("{id}-knob").into(),
         on,
         size: knob,
-        // ノブが動く距離。
+        // ノブの移動距離。
         travel: w - pad * 2.0 - knob,
         pad,
         track: (theme.groove, theme.accent_solid),
@@ -797,18 +797,18 @@ pub fn switch(theme: &Theme, id: impl Into<SharedString>, on: bool) -> Stateful<
         .child(knob)
 }
 
-/// [`switch`] のノブ。オンオフが変わると `Motion::Toggle` で滑る（行き過ぎない）。
+/// [`switch`] のノブ。オンオフの切り替え時に `Motion::Toggle` でスライドする（オーバーシュートなし）。
 #[derive(IntoElement)]
 struct SwitchKnob {
     id: SharedString,
     on: bool,
     size: f32,
     travel: f32,
-    /// ノブの外側の余白。
+    /// ノブ外側のパディング。
     pad: f32,
-    /// 背景の色（オフ, オン）。
+    /// 背景色（オフ, オン）。
     track: (u32, u32),
-    /// ノブの色（オフ, オン）。
+    /// ノブ色（オフ, オン）。
     knob_color: (u32, u32),
 }
 
@@ -826,7 +826,7 @@ impl RenderOnce for SwitchKnob {
         }
         let at = at.clamp(0.0, 1.0);
         let c = |(off, on): (u32, u32)| rgba(mix(off, on, at));
-        // 背景はスイッチ全体に敷き、ノブと同じ進み具合で色が移る。
+        // 背景はスイッチ全体に敷き、ノブと同じ進行度で色が遷移する。
         div()
             .flex()
             .items_center()
@@ -849,16 +849,16 @@ impl RenderOnce for SwitchKnob {
 pub use crate::PANEL_MARGIN;
 use crate::PANEL_SHADOW_BLUR;
 
-/// パネルの地の置き方: ウィンドウの縁から [`PANEL_MARGIN`] 内側を埋め、その余白に影を落とす。
-/// 大きさは `absolute` と `inset` で決まるので、呼び出し側は `.relative()` や `.size_full()` で上書きしない
-/// （`absolute` のままで、中の `absolute` の子の基準になる）。
+/// パネル基底の配置: ウィンドウの縁から [`PANEL_MARGIN`] 内側を埋め、その余白に影を描画する。
+/// サイズは `absolute` と `inset` で決定されるため、呼び出し側は `.relative()` や `.size_full()` で上書きしない
+/// （`absolute` のままで、内部の `absolute` 子要素の基準点となる）。
 fn panel_base(div: Div) -> Div {
     div.absolute()
         .inset(px(PANEL_MARGIN))
         .shadow(panel_shadow())
 }
 
-/// パネルの影（ずらさず四方へ広がる）。
+/// パネルの影（オフセットなしで四方へ拡散）。
 fn panel_shadow() -> Vec<gpui::BoxShadow> {
     vec![gpui::BoxShadow {
         color: gpui::hsla(0.0, 0.0, 0.0, 0.4),
@@ -869,8 +869,8 @@ fn panel_shadow() -> Vec<gpui::BoxShadow> {
     }]
 }
 
-/// パネル全体の地。角丸は `XL`、中身との間隔は `MD`（12）なので、中のカードの角丸は同心の `XL − MD = LG`。
-/// カードを複数並べる画面だけが使い、中身は [`card`] に入れる。カードが 1 枚なら [`card_panel`]。
+/// パネル全体の背景。角丸 `XL`、内部との間隔 `MD`（12）のため、内部カードの角丸は同心の `XL − MD = LG`。
+/// カードを複数配置する画面でのみ使用し、中身は [`card`] に入れる。カードが 1 枚なら [`card_panel`]。
 pub fn panel(theme: &Theme) -> Div {
     panel_base(div())
         .p(px(spacing::MD))
@@ -879,7 +879,7 @@ pub fn panel(theme: &Theme) -> Div {
         .text_color(rgba(theme.neutral_text))
 }
 
-/// 地（[`panel`]）の上に置くカード。要素は基本的にカードの中に置く。
+/// 背景（[`panel`]）の上に配置するカード。要素は原則としてカード内に配置する。
 pub fn card(theme: &Theme) -> Div {
     div()
         .rounded(px(radius::LG))
@@ -887,33 +887,33 @@ pub fn card(theme: &Theme) -> Div {
         .text_color(rgba(theme.neutral_text))
 }
 
-/// 中身の幅に収まるカードのパネル（[`card_panel`] の、窓いっぱいに広がらない版）。置き場所は呼ぶ側が決める。
+/// 中身の幅に収まるカードパネル（[`card_panel`] の、ウィンドウ全体に広がらない版）。配置は呼び出し側が決定する。
 pub fn card_panel_fit(theme: &Theme) -> Div {
     card(theme).rounded(px(radius::XL)).shadow(panel_shadow())
 }
 
-/// カードが 1 枚だけの画面: 地（[`panel`]）を敷かず、カードがパネル全体になる。角丸はパネルの `XL`。
+/// カード 1 枚のみの画面: 背景（[`panel`]）を敷かず、カードがパネル全体を占める。角丸はパネルの `XL`。
 pub fn card_panel(theme: &Theme) -> Div {
     panel_base(card(theme)).rounded(px(radius::XL))
 }
 
-/// ナビゲーションバーの地の高さ（ボタン + 上下 `SM`）。カプセル形なので、ボタン（`FULL`）の角は帯の角と同心になる。
+/// ナビゲーションバーの高さ（ボタン + 上下 `SM`）。カプセル形のため、ボタン（`FULL`）の角丸はバーの角丸と同心。
 pub const NAV_BAR_HEIGHT: f32 = BUTTON_HEIGHT + 2.0 * spacing::SM;
 
-/// 触れていないときのナビゲーションバー（丸い線）の幅（帯に対する割合）と高さ（px）。
+/// 非ホバー時のナビゲーションバー（丸い線）の幅（バーに対する割合）と高さ（px）。
 const NAV_LINE_WIDTH: f32 = 0.4;
 const NAV_LINE_HEIGHT: f32 = spacing::MD;
 
-/// ナビゲーションバー: パネルの下に付き、パネルを操作する帯。左にパネルのタイトル（左寄せ）、右端に閉じるボタン（アイコンだけ。
-/// id は `nav-close`）。`minimize` なら閉じる代わりにしまうボタン（マイナス。id は `nav-minimize`）。
-/// カード 1 枚の帯で、角丸は `FULL`。押したときの処理（閉じる・しまう）は `on_close` で受け取る。
-/// ボタンはすべて右に寄せる: `trailing`（パネルごとの操作）は閉じるボタンの左に、並べた順に左から並べる。
-/// 帯は窓の縁から [`PANEL_MARGIN`] 内側に置き（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
+/// ナビゲーションバー: パネル下部に配置し、パネルを操作する帯。左にタイトル（左寄せ）、右端に閉じるボタン（アイコンのみ、
+/// id は `nav-close`）。`minimize` 指定時は最小化ボタン（マイナス、id は `nav-minimize`）に差し替わる。
+/// カード 1 枚の帯で角丸 `FULL`。押下時の処理（閉じる・最小化）は `on_close` で受け取る。
+/// ボタンはすべて右寄せ: `trailing`（パネル固有の操作）は閉じるボタンの左に、指定順で左から配置する。
+/// バーはウィンドウ縁から [`PANEL_MARGIN`] 内側に配置し（影の余白）、高さは [`NAV_BAR_HEIGHT`]。
 ///
-/// `open`（0〜1）は広がり具合。0（触れていない）はボタンもタイトルも出さない丸い線で、帯の上端に寄せて置く。
-/// 広がるときは、まず線が帯の上下中央へ下りてから、そこを中心に上下左右へ広がる（縮むときは逆に、縮んでから上がる）。
-/// 置き場所のアンカー（帯の上端の左右中央。持ち主に付ける・頭からの距離で大きくするのに使う）とは別に、
-/// 広がりのアンカー（帯の中心）を持つ。中身は帯の中に置いて帯と一緒に動き、広がりの後半で不透明度だけで現れる。
+/// `open`（0〜1）は展開度。0（非ホバー時）はボタンもタイトルも表示しない丸い線で、バー上端に寄せる。
+/// 展開時はまず線がバーの上下中央へ降り、そこを中心に上下左右へ広がる（縮小時は逆に、縮んでから上がる）。
+/// 配置アンカー（バー上端の左右中央。所有者に付与・先頭からの距離で拡大に使用）とは別に、
+/// 展開アンカー（バーの中心）を持つ。中身はバー内に配置してバーと連動し、展開後半で不透明度のみで出現する。
 pub fn nav_bar(
     theme: &Theme,
     open: f32,
@@ -928,7 +928,7 @@ pub fn nav_bar(
     } else {
         ("nav-close", &crate::icons::X)
     };
-    // 前半で動き、後半で広がる。それぞれの区間の中でも ease-in-out にして、つなぎ目で急に変わらないようにする。
+    // 前半で移動し、後半で展開する。各区間内も ease-in-out を適用し、つなぎ目で急変しないようにする。
     const MOVE_END: f32 = 0.35;
     let smooth = |t: f32| {
         let t = t.clamp(0.0, 1.0);
@@ -939,9 +939,9 @@ pub fn nav_bar(
     let grown = smooth((open - MOVE_END) / (1.0 - MOVE_END));
     let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
     let height = lerp(NAV_LINE_HEIGHT, NAV_BAR_HEIGHT, grown);
-    // 広がりの中心（帯の上下中央）。動く前は、線の上端が帯の上端に来るところまで上げておく。
+    // 展開の中心（バーの上下中央）。移動前は、線の上端がバーの上端に位置するまで上方へオフセットする。
     let center_offset = lerp(-(NAV_BAR_HEIGHT - NAV_LINE_HEIGHT) / 2.0, 0.0, moved);
-    // タイトルは帯の左に寄せる。長くてもボタンにかからないよう、右にボタンの分を空けて省略する。
+    // タイトルはバー左寄せ。長い場合もボタンに重ならないよう、右にボタン分の余白を確保して省略する。
     let buttons = (1 + trailing.len()) as f32 * (BUTTON_HEIGHT + spacing::SM) + spacing::SM;
     div().absolute().inset(px(PANEL_MARGIN)).child(
         div()
@@ -955,7 +955,7 @@ pub fn nav_bar(
             .justify_center()
             .child(
                 card(theme)
-                    // 縮んだ線はダークでも暗い背景に埋もれないよう、ライトの色で描き、広がるにつれて今のテーマの色へ移る。
+                    // 縮小時の線はダークテーマでも暗い背景に埋もれないようライトの色で描画し、展開に伴い現テーマの色へ遷移する。
                     .bg(rgba(mix(Theme::LIGHT.card, theme.card, grown)))
                     .relative()
                     .shadow(panel_shadow())
@@ -1005,9 +1005,9 @@ pub fn nav_bar(
     )
 }
 
-/// 一覧の行: 左にアイコンと文字、右に `>`。行は [`list`] のカードに並べる前提で、安静時はカードと同じ色、
-/// ホバー・押下で `control-hover` / `control-active` に沈む（区切り線とカードの角は [`list`] が付ける）。
-/// 選んでいる行は `.selected(true)`（押下の色のまま）。高さはボタンと同じ。
+/// リスト行: 左にアイコンと文字、右に `>`。[`list`] のカード内に並べる前提で、静止時はカードと同色、
+/// ホバー・押下で `control-hover` / `control-active` に変化する（区切り線とカードの角丸は [`list`] が付与する）。
+/// 選択中の行は `.selected(true)`（押下色を維持）。高さはボタンと同一。
 pub fn list_item(
     theme: &Theme,
     id: &'static str,
@@ -1021,7 +1021,7 @@ pub fn list_item(
     )
 }
 
-/// メニューの行: 一覧の行（[`list_item`]）と同じで、右の `>` が無い（その場で何かをする項目。先へ進む一覧ではない）。
+/// メニュー行: リスト行（[`list_item`]）と同一だが、右の `>` がない（その場で実行する項目。遷移を伴うリストではない）。
 pub fn menu_item(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -1037,16 +1037,16 @@ pub fn menu_item(
         .gap(px(spacing::MD))
         .px(px(spacing::LG))
         .rounded(px(0.0))
-        // 行は文字が主役のボタンではないので太字にしない（文字は本文と同じ `MD`）。
+        // 行は文字主体のボタンではないため太字にしない（文字サイズは本文と同じ `MD`）。
         .font_weight(FontWeight::NORMAL)
         .child(crate::icon(glyph).size(px(font_size::LG)))
         .child(div().flex_1().min_w_0().truncate().child(label.into()));
     b
 }
 
-/// タイル: 押せるカード。グリッドに並べる（ダッシュボードの取得元・クイック設定）。地（[`panel`]）に直接置き、
-/// 安静時はカードと同じ色、ホバー・押下で `control-hover` / `control-active`。有効な切り替えは `.selected(true)`。
-/// 中身は縦に中央揃えで積む。大きさと中身（アイコン・文字）は呼び出し側が足す。
+/// タイル: 押下可能なカード。グリッドに配置する（ダッシュボードのソース・クイック設定）。背景（[`panel`]）に直接配置し、
+/// 静止時はカードと同色、ホバー・押下で `control-hover` / `control-active`。有効トグルは `.selected(true)`。
+/// 中身は縦に中央揃えで積む。サイズと中身（アイコン・文字）は呼び出し側が追加する。
 pub fn tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
     let mut b = base_button(theme, id.into(), Variant::Default);
     (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
@@ -1060,13 +1060,13 @@ pub fn tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
     b
 }
 
-/// 選べるカード（[`choice`]）の、選んでいる印の枠の太さと、右上のチェックの丸の大きさ（px）。
+/// 選択カード（[`choice`]）の選択時の枠線太さと、右上チェックバッジの直径（px）。
 const CHOICE_RING: f32 = 3.0;
 const CHOICE_BADGE: f32 = 24.0;
 
-/// 選べるカード: いくつかの中から 1 つ選ぶ、見本や絵を載せた箱（地の上に置く。[`tile`] と同じくカードの色で、ホバー・押下で沈む）。
-/// 選んでいるものは塗りの色の枠で囲み、右上にチェックの印を出す（色の差だけに頼らない）。
-/// 中身 `content` は中央に置く（印は中身の上に重ねるので、中身はここで受け取る）。高さは中身に合わせ、幅は呼び出し側が足す。
+/// 選択カード: 複数の中から 1 つ選ぶ、見本や画像を載せたカード（背景上に配置。[`tile`] と同様カード色で、ホバー・押下で変化）。
+/// 選択中のカードはアクセント色の枠で囲み、右上にチェックバッジを表示する（色の差異のみに依存しない）。
+/// 中身 `content` は中央に配置する（バッジは中身の上に重ねるため、中身はここで受け取る）。高さは中身に合わせ、幅は呼び出し側が追加する。
 pub fn choice(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -1110,8 +1110,8 @@ pub fn choice(
     b
 }
 
-/// 地の上に置くタイル（アプリ一覧のアプリなど）: [`tile`] と同じく縦に並べるが、カードの地を敷かず、ホバー・押下のときだけ
-/// 色が付く。ふだんは地（`background`）と同じ色（透明にするとホバーの色から戻るフェードが途中で切れる。[`sidebar_item`]）。
+/// 背景上に配置するタイル（アプリ一覧のアプリ等）: [`tile`] と同様に縦配置だが、カード背景を敷かず、ホバー・押下時のみ
+/// 色が付く。通常時は背景（`background`）と同色（透明にするとホバー色からのフェードアウトが途切れる。[`sidebar_item`] 参照）。
 pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
     let mut b = tile(theme, id);
     (b.rest, b.hover, b.active) = (
@@ -1122,15 +1122,15 @@ pub fn ghost_tile(theme: &Theme, id: impl Into<SharedString>) -> Button {
     b
 }
 
-/// サイドバーの行の左端の印（選んでいる行だけ）の高さと幅（px）。
+/// サイドバー行の左端インジケーター（選択行のみ）の高さと幅（px）。
 pub const SIDEBAR_INDICATOR: (f32, f32) = (24.0, 4.0);
-/// 印と行の左端の間。行の背景（丸い端）の内側に収め、アイコンとも `MD` 空ける。
+/// インジケーターと行左端の間隔。行の背景（丸い端）内に収め、アイコンとも `MD` 離す。
 pub const SIDEBAR_INDICATOR_INSET: f32 = spacing::SM;
 
-/// サイドバーの行: 左にアイコンと文字。サイドバーの地（`sidebar`）に置く前提で、ふだんは地と同じ色（背景が無いように
-/// 見える。透明にするとホバーの色から戻るフェードが途中で切れるので地の色を使う）、ホバー・押下で `control-on-background-*`。
-/// 選んでいる行（`selected`）は文字が `neutral-text`（ダークでは白）になる（左端の印は [`sidebar`] が行ごとに描き、出し入れする）。選んでいない行は
-/// `neutral-text-low`（選んだ行より薄いが、地とのコントラスト比 4.5 を保つ）。高さはボタンと同じ。
+/// サイドバー行: 左にアイコンと文字。サイドバーの地（`sidebar`）上に配置する前提で、通常時は地と同色（背景が無いように
+/// 見せる。透明にするとホバー色からのフェードアウトが途切れるため地色を使用）、ホバー・押下で `control-on-background-*`。
+/// 選択行（`selected`）は文字が `neutral-text`（ダークでは白。左端インジケーターは [`sidebar`] が行ごとに描画・アニメーション）。非選択行は
+/// `neutral-text-low`（選択行より薄いが、地とのコントラスト比 4.5 を維持）。高さはボタンと同一。
 pub fn sidebar_item(
     theme: &Theme,
     id: &'static str,
@@ -1171,10 +1171,10 @@ pub fn sidebar_item(
     b
 }
 
-/// サイドバーの行（[`sidebar_item`]）を `XS` 空けて縦に並べ、`selected` 番目の行の左端にアクセント（`accent-solid`）の印を描く。
-/// 印は行ごとに持ち、選ぶ行が変わると、前の行の印は行の中央へ向かって縮んで消え、同時に新しい行の印が中央から伸びて出る
-/// （消えるのは `Motion::Hop`（ease-out）、出るのは `Motion::HopIn`（ease-in-out））。縮むときは上下に縮んで幅と同じ高さ（1:1）になってから全体が小さくなり、出るときはその逆
-/// （幅より低く潰れることはない）。印の出方は `id` ごとに覚える。
+/// サイドバー行（[`sidebar_item`]）を `XS` 間隔で縦に並べ、`selected` 番目の行の左端にアクセント（`accent-solid`）のインジケーターを描画する。
+/// インジケーターは行ごとに保持し、選択行の変更時に旧行のインジケーターは中央へ縮んで消え、同時に新行のインジケーターが中央から伸びて出現する
+/// （消滅は `Motion::Hop`（ease-out）、出現は `Motion::HopIn`（ease-in-out））。縮小時は上下に幅と同じ高さ（1:1）まで縮んでから全体が縮小し、出現時はその逆
+/// （幅より低く潰れることはない）。インジケーターの出現状態は `id` ごとに保持する。
 pub fn sidebar(
     theme: &Theme,
     window: &mut Window,
@@ -1189,10 +1189,10 @@ pub fn sidebar(
     let shown = |i: usize| if i == selected { 1.0 } else { 0.0 };
     let now = crate::drive::now();
     let animated = cx.has_global::<Motion>();
-    // 行ごとの印の出具合（0 = 無い、1 = 出きった）。
+    // 行ごとのインジケーター出現度（0 = 非表示、1 = 完全表示）。
     let state = window.use_keyed_state(id, cx, |_, _| Vec::<Transition>::new());
     let shapes: Vec<(f32, bool)> = state.update(cx, |ts, _| {
-        // 開いたときから選んでいる行の印は出ている。
+        // 初期表示時点で選択行のインジケーターは表示済み。
         while ts.len() < items.len() {
             ts.push(Transition::rest(shown(ts.len())));
         }
@@ -1212,7 +1212,7 @@ pub fn sidebar(
     if shapes.iter().any(|&(_, moving)| moving) {
         keep_drawing(window, cx);
     }
-    // 出具合 `p` の印の大きさ: 高さは `p` に比例し、幅は高さに届くまで同じ（1:1 の点から縦に伸びる）。
+    // 出現度 `p` のインジケーターサイズ: 高さは `p` に比例し、幅は高さに達するまで固定（1:1 の点から縦に伸びる）。
     let marks = shapes
         .into_iter()
         .enumerate()
@@ -1237,12 +1237,12 @@ pub fn sidebar(
         .flex_col()
         .gap(px(spacing::XS))
         .children(items)
-        // 行の後に置き、行の地より上に描く。
+        // 行の後に配置し、行の背景より上に描画する。
         .children(marks)
 }
 
-/// 行（[`list_item`]）をカード 1 枚に縦に並べ、行の間に 1px の区切り線を引く。
-/// 端の行はカードの角（`LG`）に合わせて丸める（行の塗りがカードの角からはみ出さない）。
+/// 行（[`list_item`]）をカード 1 枚に縦に並べ、行間に 1px の区切り線を描画する。
+/// 先頭・末尾の行はカードの角丸（`LG`）に合わせて丸める（行の塗りがカードの角からはみ出さない）。
 pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
     let items: Vec<Button> = items.into_iter().collect();
     let last = items.len().saturating_sub(1);
@@ -1262,17 +1262,17 @@ pub fn list(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
         }))
 }
 
-/// メニューの外側の余白（カードの縁と行のあいだ）。行のホバーの色がカードの縁から少しだけ離れる幅。
+/// メニューの外側パディング（カード縁と行の間）。行のホバー色がカード縁からわずかに離れる幅。
 pub const MENU_PADDING: f32 = spacing::XS;
-/// メニューのカードの角丸。行の角丸（`LG`）に余白を足した同心の丸み。
+/// メニューカードの角丸。行の角丸（`LG`）にパディングを加えた同心の値。
 pub const MENU_RADIUS: f32 = radius::LG + MENU_PADDING;
-/// メニューの行の高さ。一覧の行（ボタンの高さ）より詰め、最小ヒット領域（48）ちょうどにする。
+/// メニュー行の高さ。リスト行（ボタンの高さ）より詰め、最小タッチ領域（48px）ちょうどにする。
 pub const MENU_ITEM_HEIGHT: f32 = 48.0;
-/// メニューの行の左右の余白。カードの余白と足して、文字がカードの縁から `LG` 離れる。
+/// メニュー行の左右パディング。カードのパディングと合計して、文字がカード縁から `LG` 離れる。
 const MENU_ITEM_PADDING: f32 = spacing::MD;
 
-/// 選択の行: 一覧の行（[`menu_item`]）の右に今の値と開閉の印（`caret-up-down`）。押したら呼び出し側が
-/// [`select_popover`] を `.child` で足して選択肢を開く（行の右下に右端を揃えて浮かぶ）。
+/// 選択行: メニュー行（[`menu_item`]）の右に現在の値と開閉キャレット（`caret-up-down`）を配置する。押下時に呼び出し側が
+/// [`select_popover`] を `.child` で付与して選択肢を開く（行の右下に右端を揃えて浮遊）。
 pub fn select(
     theme: &Theme,
     id: &'static str,
@@ -1280,7 +1280,7 @@ pub fn select(
     label: impl Into<SharedString>,
     value: impl Into<SharedString>,
 ) -> Button {
-    // 右の要素が自分の余白を持つので、行の右の余白は詰める。
+    // 右の要素が独自のパディングを持つため、行の右パディングは詰める。
     let mut b = inert(menu_item(theme, id, glyph, label)).pr(px(spacing::SM));
     let pick_h = BUTTON_HEIGHT - spacing::SM * 2.0;
     let mut pick = base_button(theme, format!("{id}-pick").into(), Variant::Default);
@@ -1289,7 +1289,7 @@ pub fn select(
         .base
         .relative()
         .gap(px(spacing::SM))
-        // 余白は縦横 1:1: 行の縁との間は上下右とも `SM`、文字の周りも上下と左右が同じ。
+        // パディングは縦横 1:1: 行の縁との間は上下右とも `SM`、文字の周りも上下左右同一。
         .px(px((pick_h - font_size::MD) / 2.0))
         .h(px(pick_h))
         .rounded(px(radius::MD))
@@ -1301,19 +1301,19 @@ pub fn select(
                 .size(px(font_size::MD))
                 .color(rgba(theme.neutral_text_low)),
         );
-    // 押した動きは行が受ける（行の `on_click`）。ホバーと押下の演出はこの要素だけ。
+    // クリック処理は行が受ける（行の `on_click`）。ホバーと押下の演出はこの要素のみ。
     b.base = b.base.relative().child(pick);
     b
 }
 
-/// 行はボタンのままだが、ホバー・押下の色と波紋は出さない（演出は中の要素に任せる）。
+/// 行はボタンのままだが、ホバー・押下の色変化と波紋を抑制する（演出は内部要素に委譲する）。
 fn inert(mut b: Button) -> Button {
     (b.hover, b.active, b.ripple, b.quiet) = (b.rest, b.rest, false, true);
     b
 }
 
-/// オン / オフの行: 一覧の行（[`menu_item`]）の右に [`switch`]（`{id}-switch`）。行のどこを押しても切り替える（行のホバーの色に
-/// スイッチが紛れないよう、行はホバーの色を出さない）。押したときの処理は呼び出し側が `on_click` で足す。
+/// オン / オフ行: メニュー行（[`menu_item`]）の右に [`switch`]（`{id}-switch`）を配置する。行のどこを押しても切り替わる（行のホバー色に
+/// スイッチが埋もれないよう、行はホバー色を出さない）。押下時の処理は呼び出し側が `on_click` で付与する。
 pub fn switch_item(
     theme: &Theme,
     id: &'static str,
@@ -1326,8 +1326,8 @@ pub fn switch_item(
     b
 }
 
-/// スライダーの行: 一覧の行（[`menu_item`]）の右に今の値（`{id}-value`）と [`slider`]。行そのものは押せない（色も波紋も音も出ない）。
-/// 値の文字は名前の側に置き、スライダーは右端に寄せる（文字の長さ・大きさが変わっても、動かしている最中のスライダーが動かない）。
+/// スライダー行: メニュー行（[`menu_item`]）の右に現在値（`{id}-value`）と [`slider`] を配置する。行自体は操作不可（色変化・波紋・効果音なし）。
+/// 値の文字はラベル側に配置し、スライダーは右端に寄せる（文字の長さ・サイズが変わっても、操作中のスライダーが移動しない）。
 pub fn slider_item(
     theme: &Theme,
     id: &'static str,
@@ -1352,13 +1352,13 @@ pub fn slider_item(
     b
 }
 
-/// 選択肢のポップオーバーが開くときに下りてくる距離（px）。
+/// 選択肢ポップオーバーが開く際の降下距離（px）。
 pub const SELECT_POPOVER_RISE: f32 = spacing::SM;
 
-/// 選択肢のポップオーバーの最小の幅（px）。幅は中身（いちばん長い選択肢）に合わせ、短いときだけこれまで広げる。
+/// 選択肢ポップオーバーの最小幅（px）。幅は中身（最長の選択肢）に合わせ、短い場合のみこの値まで拡張する。
 pub const SELECT_POPOVER_MIN_WIDTH: f32 = 200.0;
 
-/// 選択肢の行（[`select_popover`] に並べる）: 文字だけで、選んでいる行は右端にチェック。
+/// 選択肢の行（[`select_popover`] 内に配置）: 文字のみで、選択中の行は右端にチェックマークを表示する。
 pub fn select_option(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -1378,9 +1378,9 @@ pub fn select_option(
     b
 }
 
-/// ドロップダウンのボタン: 今の値と開閉の印（[`select`] と同じ `caret-up-down`）。行の中ではなく単独で置く、複数から
-/// 1 つ選ぶ操作（行の中なら [`select`]）。`glyph` があれば値の左に出す。押したら呼び出し側が [`dropdown_popover`] を
-/// `.child` で足して選択肢を開く。
+/// ドロップダウンボタン: 現在の値と開閉キャレット（[`select`] と同じ `caret-up-down`）を表示する。行内ではなく単独で配置する、
+/// 複数から 1 つ選ぶ操作（行内なら [`select`]）。`glyph` 指定時は値の左に表示する。押下時に呼び出し側が [`dropdown_popover`] を
+/// `.child` で付与して選択肢を開く。
 pub fn dropdown(
     theme: &Theme,
     id: impl Into<SharedString>,
@@ -1393,7 +1393,7 @@ pub fn dropdown(
     b.base = b
         .base
         .relative()
-        // 文字の側は広く、印の側は少し詰める（印は自分の余白を持つ）。
+        // 文字側は広め、キャレット側は狭め（キャレットは独自のパディングを持つ）。
         .pl(px(spacing::XL))
         .pr(px(spacing::LG))
         .font_weight(FontWeight::NORMAL)
@@ -1403,19 +1403,19 @@ pub fn dropdown(
     b
 }
 
-/// 選択肢のポップオーバーを出す場所（開いた要素から見て）。
+/// 選択肢ポップオーバーの表示位置（開いた要素を基準とする）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Popover {
-    /// 右下に右端を揃える（[`select`] の行）。
+    /// 右下に右端揃えで配置（[`select`] の行）。
     BelowEnd,
-    /// 下に左右中央を揃える（[`dropdown`]）。
+    /// 下に左右中央揃えで配置（[`dropdown`]）。
     Below,
-    /// 上に左端を揃える（画面の下の隅に置いた [`dropdown`]）。
+    /// 上に左端揃えで配置（画面下隅に配置した [`dropdown`]）。
     AboveStart,
 }
 
-/// [`dropdown`] の選択肢のポップオーバー: [`select_popover`] と同じもので、ボタンの下に左右中央を揃えて出す。`up` なら
-/// （画面の下の隅に置いたボタン用に）上に、左端を揃えて出す。
+/// [`dropdown`] の選択肢ポップオーバー: [`select_popover`] と同一で、ボタンの下に左右中央揃えで表示する。`up` の場合は
+/// （画面下隅に配置したボタン用に）上に左端揃えで表示する。
 #[allow(clippy::too_many_arguments)]
 pub fn dropdown_popover(
     theme: &Theme,
@@ -1435,11 +1435,11 @@ pub fn dropdown_popover(
     popover(theme, window, cx, id, open, place, items, on_dismiss)
 }
 
-/// 選択肢のポップオーバー（[`select`] の子に置く）: 行の右下に右端を揃え、メニューのカード（[`menu`]）に影と縁取りを付けて浮かべる。
-/// 後ろにウィンドウ全体（`viewport`）を覆う透明な板を敷き、外を押すとそれが受けて `on_dismiss` を呼ぶ（下の要素は押されない。
-/// 開いている行をもう一度押しても、閉じてすぐ開き直さない）。
-/// 行（`id`）ごとに毎回呼び、`open` で開閉する。開くと [`SELECT_POPOVER_RISE`] 上から下りながら現れ（`Motion::Enter`）、
-/// 閉じるとその逆で消える（`Motion::Exit`）。消えきるまでは描き続け、閉じ始めた時点で外の板は外す。
+/// 選択肢ポップオーバー（[`select`] の子に配置）: 行の右下に右端揃えで、メニューカード（[`menu`]）に影と縁取りを付けて浮遊させる。
+/// 背面にウィンドウ全体（`viewport`）を覆う透明な板を敷き、外部クリック時にそれが受けて `on_dismiss` を呼ぶ（下の要素は押されない。
+/// 開いている行の再クリックでも、閉じてすぐ再度開くことはない）。
+/// 行（`id`）ごとに毎回呼び、`open` で開閉する。開くと [`SELECT_POPOVER_RISE`] 上方から降りながら出現し（`Motion::Enter`）、
+/// 閉じるとその逆で消滅する（`Motion::Exit`）。消滅完了まで描画を継続し、閉じ始めた時点で背面の板は除去する。
 pub fn select_popover(
     theme: &Theme,
     window: &mut Window,
@@ -1492,11 +1492,11 @@ fn popover(
         keep_drawing(window, cx);
     }
     if !open && !moving {
-        // 行の並びに割り込まないよう、空でも浮かせる。
+        // 行の並びに影響しないよう、空でも浮遊させる。
         return div().absolute();
     }
     let viewport = window.viewport_size();
-    // 開いた要素の縁の上の、大きさの無い点。ここにカードの角（か辺の中央）を合わせる。
+    // 開いた要素の縁上の、サイズゼロの点。ここにカードの角（または辺の中央）を合わせる。
     let (at, anchor) = match place {
         Popover::BelowEnd => (div().right_0().bottom_0(), gpui::Anchor::TopRight),
         Popover::Below => (
@@ -1505,14 +1505,14 @@ fn popover(
         ),
         Popover::AboveStart => (div().left_0().top_0(), gpui::Anchor::BottomLeft),
     };
-    // 開いた要素との間は `XS`。現れるときは、その向こうから [`SELECT_POPOVER_RISE`] だけ寄ってくる。
+    // 開いた要素との間隔は `XS`。出現時は、その向こう側から [`SELECT_POPOVER_RISE`] 分だけ接近する。
     let gap = px(spacing::XS - SELECT_POPOVER_RISE * (1.0 - shown));
     let card = menu(theme, items)
         .id("select-popover")
         .occlude()
         .min_w(px(SELECT_POPOVER_MIN_WIDTH))
         .opacity(shown)
-        // ダークではカードの上に重なると同じ色で境目が消えるので、影に加えて薄い線で縁取る。
+        // ダークテーマではカード上に重なると同色で境目が消えるため、影に加えて薄い線で縁取る。
         .border_1()
         .border_color(rgba(theme.neutral_border_subtle))
         .shadow_md();
@@ -1540,10 +1540,10 @@ fn popover(
         .child(deferred(anchored().anchor(anchor).snap_to_window().child(card)).priority(1))
 }
 
-/// メニューの行（[`menu_item`]）を縦に並べる。区切り線は引かず、行はカード（[`MENU_RADIUS`]）と同心の角丸にし、ホバー・押下のときだけ沈む。
-/// 行は一覧より詰める（高さ [`MENU_ITEM_HEIGHT`]、左右 [`MENU_ITEM_PADDING`]）。
+/// メニュー行（[`menu_item`]）を縦に配置する。区切り線は描画せず、行はカード（[`MENU_RADIUS`]）と同心の角丸にし、ホバー・押下時のみ変化する。
+/// 行はリストより詰める（高さ [`MENU_ITEM_HEIGHT`]、左右 [`MENU_ITEM_PADDING`]）。
 pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
-    // 内側のカードも外のパネルと同じ角丸にする（小さいと、外の角を地で塗りつぶして丸みが変わらないように見える）。
+    // 内側のカードも外のパネルと同じ角丸にする（小さいと、外の角が背景色で塗りつぶされ丸みが変化しないように見える）。
     card(theme)
         .rounded(px(MENU_RADIUS))
         .flex()
@@ -1556,20 +1556,20 @@ pub fn menu(theme: &Theme, items: impl IntoIterator<Item = Button>) -> Div {
         }))
 }
 
-/// 見出しのアイコンの大きさ。
+/// 見出しアイコンのサイズ。
 pub(crate) const HEADING_ICON: f32 = 64.0;
-/// 見出しの文の行の高さ（文字の大きさに対する比）。
+/// 見出しテキストの行の高さ（文字サイズに対する比率）。
 pub(crate) const HEADING_LEADING: f32 = 1.4;
-/// 見出しの間隔: アイコン → タイトル（タイトル → 概要の倍。アイコンと文を分け、文どうしはひとまとまりに見せる）。
+/// 見出しの間隔: アイコン → タイトル（タイトル → 概要の倍。アイコンとテキストを分離し、テキスト同士は一体に見せる）。
 const HEADING_HERO_GAP: f32 = spacing::LG;
-/// 見出しの間隔: タイトル → 概要。
+/// 見出しの間隔: タイトル → 説明。
 const HEADING_GAP: f32 = spacing::SM;
 
-/// 見出し: 上からアイコンなど（`hero`。`{id}-hero`）・タイトル（`{id}-title`）・概要（`{id}-description`）を左揃えで縦に並べる。
-/// ダイアログとウィザードの画面で共通の見た目: アイコン → タイトルは [`HEADING_HERO_GAP`]、タイトル → 概要は [`HEADING_GAP`]。
-/// タイトルは `LG` の太字、概要は `MD` の `text-low`（行の高さはどちらも [`HEADING_LEADING`]）。概要の文字の形は
-/// 包む側が決めるので、`description` は文字列でも、スクロールする枠などでもよい。空のタイトル・無い概要は出さない。
-/// 中央揃えにするなら、返した列に `items_center().text_center()` を付ける。
+/// 見出し: 上からアイコン等（`hero`、`{id}-hero`）・タイトル（`{id}-title`）・説明（`{id}-description`）を左揃えで縦配置する。
+/// ダイアログとウィザードの画面で共通の見た目: アイコン → タイトルは [`HEADING_HERO_GAP`]、タイトル → 説明は [`HEADING_GAP`]。
+/// タイトルは `LG` の太字、説明は `MD` の `text-low`（行の高さはいずれも [`HEADING_LEADING`]）。説明の内容形式は
+/// 呼び出し側が決定するため、`description` は文字列でもスクロール可能な枠でもよい。空タイトル・`None` の説明は表示しない。
+/// 中央揃えにする場合は、返された列に `items_center().text_center()` を付与する。
 pub(crate) fn heading(
     theme: &Theme,
     id: &str,
@@ -1609,7 +1609,7 @@ pub(crate) fn heading(
                 .id(SharedString::from(description_id.clone()))
                 .debug_selector(move || description_id)
                 .when(has_title, |d| d.mt(px(HEADING_GAP)))
-                // 中身がスクロールする枠なら、見出しの列が低いときに概要だけが縮む。
+                // 中身がスクロール枠の場合、見出し列が低い際に説明部分のみが縮小される。
                 .min_h_0()
                 .flex()
                 .flex_col()
@@ -1620,19 +1620,19 @@ pub(crate) fn heading(
         }))
 }
 
-/// ダイアログのパネルの幅（px。影の余白を含む。1px = 1mm）。ボタンを横に並べ、文は 1 行に 24 字ほど。
+/// ダイアログパネルの幅（px。影の余白を含む。1px = 1mm）。ボタンを横に並べ、テキストは 1 行約 24 文字。
 pub const DIALOG_WIDTH: u32 = 560;
-/// 概要が見える行数の上限。超える分はスクロールする。
+/// 説明の表示行数上限。超過分はスクロールする。
 const DIALOG_LINES: usize = 3;
 
-/// ダイアログのパネルの高さ（px。影の余白を含む。幅は [`DIALOG_WIDTH`]）。
-/// タイトルと概要を実際に折り返して数える（概要は [`DIALOG_LINES`] 行まで）。開くとき（`PanelSpec::sized`）に使えば、
-/// 余白が潰れも余りもしない高さで開く。
-// ponytail: 開いたあとに言語が変わっても測り直さない（長くなった分は概要がスクロールする）。要るなら描いた配置から測り直す。
+/// ダイアログパネルの高さ（px。影の余白を含む。幅は [`DIALOG_WIDTH`]）。
+/// タイトルと説明を実際に折り返して行数を計算する（説明は [`DIALOG_LINES`] 行まで）。開く際に（`PanelSpec::sized`）使用すれば、
+/// パディングが過不足のない高さで開く。
+// ponytail: 開いた後に言語が変わっても再計算しない（長くなった分は説明がスクロールする）。必要なら描画済みレイアウトから再計算する。
 pub fn dialog_height(window: &Window, title: &str, description: &str) -> u32 {
-    // 文の幅 = パネル − 影の余白 − 縁（概要はさらに右の `SM`）。
+    // テキスト幅 = パネル − 影の余白 − 縁（説明はさらに右に `SM`）。
     let inner = DIALOG_WIDTH as f32 - 2.0 * (PANEL_MARGIN + spacing::XL);
-    // 行の高さとアイコンから作る高さなので、文字の大きさの倍率に合わせる（文字の折り返しはテキストシステムが同じ倍率で測る）。
+    // 行の高さとアイコンから算出するため、テキストスケールに合わせる（テキストの折り返しはテキストシステムが同じ倍率で計測する）。
     let scale = gpui::text_scale();
     let lines = |text: &str, size: f32, weight: FontWeight, wrap: f32| {
         let font = gpui::Font {
@@ -1679,13 +1679,13 @@ pub fn dialog_height(window: &Window, title: &str, description: &str) -> u32 {
     h.ceil() as u32
 }
 
-/// ダイアログ（子パネル）の中身。[`dialog`] で作る。
+/// ダイアログ（子パネル）の内容。[`dialog`] で生成する。
 #[derive(IntoElement)]
 pub struct Dialog {
     id: &'static str,
     theme: Theme,
     glyph: &'static crate::Icon,
-    /// アイコンのウェイト（既定は塗り。[`Dialog::weight`]）。
+    /// アイコンのウェイト（既定は Fill。[`Dialog::weight`]）。
     weight: crate::Weight,
     title: SharedString,
     description: SharedString,
@@ -1693,19 +1693,19 @@ pub struct Dialog {
 }
 
 impl Dialog {
-    /// アイコンのウェイトを変える（既定は塗り）。塗りだと強すぎる・形が分かりにくいアイコン（電源など）に。
+    /// アイコンのウェイトを変更する（既定は Fill）。Fill では強すぎる、または形状が判別しにくいアイコン（電源等）に使用する。
     pub fn weight(mut self, weight: crate::Weight) -> Self {
         self.weight = weight;
         self
     }
 }
 
-/// ダイアログ（子パネル）の中身。上に見出し（アイコン・タイトル・概要。ウィザードの画面と同じ [`heading`]。左揃え）、
-/// 下にボタンを同じ幅で横 1 列に並べる。間隔は決まった値で、全体を上下の中央に置く（余った高さは上下の縁に分ける）。
-/// 概要は [`DIALOG_LINES`] 行まで見せ、超える分やパネルに収まらない分は概要だけがスクロールする（`{id}-body`、棒は `{id}-bars`）。
+/// ダイアログ（子パネル）の内容。上に見出し（アイコン・タイトル・説明。ウィザードの画面と共通の [`heading`]。左揃え）、
+/// 下にボタンを均等幅で横 1 列に配置する。間隔は固定値で、全体を上下中央に配置する（余った高さは上下の縁に分配）。
+/// 説明は [`DIALOG_LINES`] 行まで表示し、超過分やパネルに収まらない分は説明のみスクロールする（`{id}-body`、バーは `{id}-bars`）。
 /// パネルは幅 [`DIALOG_WIDTH`]、高さ [`dialog_height`]。
-/// ボタンは渡した順に左から並べる: 肯定（主の操作）を右端に、否定（キャンセル・閉じる）を左に。`id` はパネルの中で一意に。
-/// 開く・閉じる・答えを返すのは呼び出し側（`ui::PanelSpec::child`）。
+/// ボタンは渡した順に左から配置: 肯定（主操作）を右端に、否定（キャンセル・閉じる）を左に。`id` はパネル内で一意とする。
+/// 開閉・応答の返却は呼び出し側（`ui::PanelSpec::child`）が行う。
 pub fn dialog(
     theme: &Theme,
     id: &'static str,
@@ -1741,10 +1741,10 @@ impl RenderOnce for Dialog {
             .read(cx)
             .clone();
         let body_id = format!("{id}-body");
-        // 余白は縁 `XL`、見出しの中は [`heading`] のとおり、文 → ボタン `XL`。
-        // 概要の枠は [`DIALOG_LINES`] 行までで、超える分はスクロールする。縮められる（min_h_0）のも見出しの列と概要の枠だけなので、
-        // パネルが低くても概要だけが縮む。
-        // 右の `SM` は、スクロールバーが文にかからないための余白（左は付けず、文の左端をタイトルに揃える）。
+        // パディングは縁 `XL`、見出し内は [`heading`] の通り、テキスト → ボタン `XL`。
+        // 説明枠は [`DIALOG_LINES`] 行までで、超過分はスクロールする。縮小可能（min_h_0）なのは見出し列と説明枠のみのため、
+        // パネルが低くても説明のみが縮小される。
+        // 右の `SM` はスクロールバーがテキストに重ならないための余白（左は付けず、テキスト左端をタイトルに揃える）。
         let body = div()
             .id(SharedString::from(body_id.clone()))
             .debug_selector(move || body_id.clone())
@@ -1786,12 +1786,12 @@ impl RenderOnce for Dialog {
     }
 }
 
-/// テーマの見本の窓 1 枚の大きさと、手前の窓を奥の窓からずらす量（px）。
+/// テーマプレビューの窓 1 枚のサイズと、手前の窓を奥の窓からずらすオフセット（px）。
 const PREVIEW_WINDOW: (f32, f32) = (176.0, 120.0);
 const PREVIEW_SHIFT: (f32, f32) = (96.0, 44.0);
 
-/// テーマの見本（文字の無い絵。`theme-preview`）: 地の上に重なった 2 枚の窓。手前の窓に、文字に見立てた線と塗りの色のボタン。
-/// テーマやパーソナルカラーを選ぶ画面で、`theme` にした結果を見せる。大きさは決まっていて、置き場所は呼び出し側が決める。
+/// テーマプレビュー（テキストなしの図示、`theme-preview`）: 背景上に重なった 2 枚の窓。手前の窓にテキストを模した線とアクセント色のボタンを配置する。
+/// テーマやパーソナルカラーの選択画面で、`theme` 適用結果を表示する。サイズは固定で、配置は呼び出し側が決定する。
 pub fn theme_preview(theme: &Theme) -> Div {
     let line = |width: f32, color: u32| {
         div()
@@ -1810,11 +1810,11 @@ pub fn theme_preview(theme: &Theme) -> Div {
             .flex_col()
             .gap(px(spacing::SM))
             .rounded(px(radius::LG))
-            // 窓は影で地から浮かせる（枠線は使わない）。
+            // 窓は影で背景から浮かせる（枠線は使用しない）。
             .shadow_md()
             .bg(rgba(theme.card))
     };
-    // ボタンの上に載る色（`on-accent`）も、短い線で見せる。
+    // ボタン上に載る色（`on-accent`）も短い線で表現する。
     let button = div()
         .w(px(52.0))
         .h(px(22.0))
@@ -1861,7 +1861,7 @@ pub fn theme_preview(theme: &Theme) -> Div {
         )
 }
 
-/// グループ: 小さな見出しの下に中身（カードや一覧）。設定の項目をまとめる。
+/// グループ: 小見出しの下に中身（カードやリスト）を配置する。設定項目のグルーピングに使用する。
 pub fn group(theme: &Theme, title: impl Into<SharedString>, body: impl IntoElement) -> Div {
     div()
         .flex()
@@ -1877,7 +1877,7 @@ pub fn group(theme: &Theme, title: impl Into<SharedString>, body: impl IntoEleme
         .child(body)
 }
 
-/// 画面やパネルの地。文字色も役割から決まる。
+/// 画面やパネルの背景面。文字色もロールから決定する。
 pub fn surface(theme: &Theme) -> Div {
     div()
         .font(crate::font::font())
@@ -1900,16 +1900,16 @@ mod tests {
         let (rest, hover, active) = ghost().colors();
         assert_eq!(hover, light.control_on_background_hover);
         let (r, h, a) = ghost().background_opacity(0.5).colors();
-        assert_eq!(r & 0xff, 0, "ふだんは透明のまま");
+        assert_eq!(r & 0xff, 0, "通常時は透明のまま");
         assert_eq!((rest & 0xff, r), (0, rest));
         assert_eq!(h, scale_alpha(hover, 0.5));
         assert_eq!(a, scale_alpha(active, 0.5));
         assert_eq!(
             ghost().background_opacity(7.0).colors().1,
             hover,
-            "範囲外は 100%"
+            "範囲外は 100% にクランプ"
         );
-        // 色の取り換えと不透明度は、どの順でも同じ。
+        // 色の差し替えと不透明度は、適用順序に依存しない。
         let swapped = (
             dark.control_on_background_hover,
             dark.control_on_background_active,
@@ -1927,7 +1927,7 @@ mod tests {
             (one.1, one.2),
             (scale_alpha(swapped.0, 0.5), scale_alpha(swapped.1, 0.5))
         );
-        // Ghost 以外は何も変わらない。
+        // Ghost 以外では効果なし。
         let plain = base_button(light, "d".into(), Variant::Default)
             .ghost_background(dark)
             .background_opacity(0.5);
@@ -1970,7 +1970,7 @@ mod tests {
 
     #[test]
     fn fade_blends_alpha_for_transparent_rest() {
-        // Ghost: 休止色は透明。ホバーへ向かう途中の背景は半透明であるべき。
+        // Ghost: 静止色は透明。ホバーへの遷移途中の背景は半透明であるべき。
         let mid = mix(0x80808000, 0x808080ff, 0.5);
         assert_eq!(mid & 0xff, 0x80, "{mid:08x}");
     }
@@ -1987,13 +1987,13 @@ mod tests {
 
     #[test]
     fn corner_cuts_follow_the_radius() {
-        // 辺ぎわの行ほど深く削れ、半径に届けば削れない。
+        // 辺に近い行ほど深く削れ、半径に達すると削れない。
         assert!(corner_inset(10.0, 0.5) > corner_inset(10.0, 5.0));
         assert_eq!(corner_inset(10.0, 10.0), 0.0);
         assert_eq!(corner_inset(0.0, 0.5), 0.0);
-        // 円の式に乗る（半径 10、辺から 5 の行は 10 - sqrt(75)）。
+        // 円の方程式に従う（半径 10、辺から 5 の行は 10 - sqrt(75)）。
         assert!((corner_inset(10.0, 5.0) - (10.0 - 75f32.sqrt())).abs() < 1e-5);
-        // 巨大な角丸（カプセル）は高さの半分に縮む。
+        // 過大な角丸（カプセル形）は高さの半分にクランプされる。
         assert_eq!(
             clamp_corners([9999.0, 4.0, -1.0, 0.0], 100.0, 40.0),
             [20.0, 4.0, 0.0, 0.0]

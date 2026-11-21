@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# 画面の文言の多言語対応。言語ごとの表（locales/*.toml）を埋め込み、GPUI のグローバルの言語で引く。
+# 画面の文言の多言語対応。言語ごとの定義表（locales/*.toml）を埋め込み、GPUI のグローバルの言語で参照する。
 [dependencies]
 # 日付の書式（`date`）。
 chrono.workspace = true

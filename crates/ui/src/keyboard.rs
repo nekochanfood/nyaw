@@ -1,4 +1,4 @@
-//! キーボードは対象パネルへだけ入力を送る。GPUI / OS への転送は対象パネルが登録する。
+//! キーボードは対象パネルにのみ入力を送信する。GPUI / OS への転送は対象パネルが登録する。
 use gpui::{
     App, AppContext, Context, FocusHandle, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
     PlatformInput, Window, prelude::*,
@@ -16,13 +16,13 @@ mod view;
 pub(crate) use view::preload;
 pub use view::{KeyAppearance, KeyboardView};
 
-/// アクション（閉じるなど、パネルの操作のボタン）の一辺。
+/// アクション（閉じる等、パネル操作ボタン）の一辺。
 const ACTION_SIZE: f32 = 48.;
-/// フルサイズの F キーの段の右端（Pause の右端。1u）。ここからテンキーの右端までが空いている。
+/// フルサイズの F キー段の右端（Pause の右端。1u）。ここからテンキー右端までが空き領域。
 const FULL_FUNCTION_ROW_END_U: f32 = 18.5;
 
-/// キーの上に設けるアクションの段（ボタン + キーとの間）の高さ。フルサイズはアクションを
-/// テンキーの上の空きに置くので、段を設けない。
+/// キー上部に設けるアクション段（ボタン + キーとの間隔）の高さ。フルサイズはアクションを
+/// テンキー上の空き領域に配置するため、段を設けない。
 fn action_row(kind: KeyboardType) -> f32 {
     if kind == KeyboardType::Full {
         0.
@@ -31,9 +31,9 @@ fn action_row(kind: KeyboardType) -> f32 {
     }
 }
 
-/// アクションを右寄せで並べる場所。子に [`ACTION_SIZE`] 角のボタンを足していく。
-/// フルサイズはテンキーの上の空き（F キーの段の右）にキーの段の高さで重ね、右端のボタンがテンキーの − の列にそろう。
-/// ほかはキーの上の段。カードの子として、フルサイズはキーより後（上に重ねる）、ほかはキーより前に置く。
+/// アクションを右寄せで配置する領域。子として [`ACTION_SIZE`] 角のボタンを追加する。
+/// フルサイズはテンキー上の空き（F キー段の右）にキー段の高さで重ね、右端のボタンがテンキーの − 列に揃う。
+/// その他はキー上の段。カードの子として、フルサイズはキーより後（上に重ねる）、その他はキーより前に配置する。
 fn action_area(kind: KeyboardType) -> gpui::Div {
     let area = gpui::div()
         .flex()
@@ -55,7 +55,7 @@ fn action_area(kind: KeyboardType) -> gpui::Div {
     }
 }
 
-/// 種類（`kind`）のキーがちょうど収まるパネルの解像度。
+/// 種類（`kind`）のキーがちょうど収まるパネル解像度。
 fn panel_resolution(kind: KeyboardType) -> (u32, u32) {
     let inset = 2. * (design::components::PANEL_MARGIN + design::spacing::LG);
     (
@@ -64,20 +64,20 @@ fn panel_resolution(kind: KeyboardType) -> (u32, u32) {
     )
 }
 
-/// ホームポジション（F と J の間。G と H の境目）の、キーの並びの左端からの位置（1u。`geometry::keycaps` の AC 段）。
+/// ホームポジション（F と J の間、G と H の境目）の、キー列左端からの位置（1u。`geometry::keycaps` の AC 段）。
 const HOME_U: f32 = 6.75;
 
-/// コントローラを握ったまま、手首を手の甲の方（外）へ無理なく倒せる角度（rad）。
+/// コントローラを握ったまま、手首を手の甲側（外側）へ無理なく傾けられる角度（rad）。
 const WRIST_TILT: f32 = 22.5 * std::f32::consts::PI / 180.;
-/// 打つときの手（コントローラの先）からキーボードまでの距離（m）。キーボードは頭の前 0.8m（`TYPING_AT`）、手はその 35cm ほど手前。
-// ponytail: 目安の固定値で、合わなければここを調整する。人ごとに合わせるなら、開いた瞬間の手との距離から大きさを決める。
+/// タイピング時の手（コントローラ先端）からキーボードまでの距離（m）。キーボードは頭の前方 0.8m（`TYPING_AT`）、手はその約 35cm 手前。
+// ponytail: 目安の固定値で、合わなければここを調整する。個人に合わせる場合は、起動時の手との距離からサイズを決定する。
 const HAND_DISTANCE: f32 = 0.45;
-/// 等倍（設定の大きさ `keyboard_scale` = 1）の、手首で端まで届く大きさに対する倍率（実機で試して合わせた値）。
+/// 等倍（設定のサイズ `keyboard_scale` = 1）の、手首で端まで届くサイズに対する倍率（実機で調整した値）。
 const SIZE_SCALE: f32 = 3.75;
 
-/// 種類（`kind`）の、設定の大きさ（`scale`）での標準の大きさ（m。UI スケールは掛ける前）。キーの大きさは種類によらずそろえる。
-/// 等倍は、既定でいちばん広いフルサイズで、ホームポジションに向けた手首を外へ [`WRIST_TILT`] 倒すと遠い方のキーの端に届く
-/// 大きさの、[`SIZE_SCALE`] 倍。
+/// 種類（`kind`）と設定のサイズ（`scale`）での標準サイズ（m。UI スケール適用前）。キーサイズは種類によらず統一する。
+/// 等倍は、既定で最も幅広いフルサイズで、ホームポジションに向けた手首を外側へ [`WRIST_TILT`] 傾けると遠い方のキー端に届く
+/// サイズの [`SIZE_SCALE`] 倍。
 fn panel_size(kind: KeyboardType, scale: f32) -> Vec2 {
     let (w, h) = panel_resolution(kind);
     let full = KeyboardType::Full.width();
@@ -85,13 +85,13 @@ fn panel_size(kind: KeyboardType, scale: f32) -> Vec2 {
     Vec2::new(w as f32, h as f32) * (scale * SIZE_SCALE * HAND_DISTANCE * WRIST_TILT.tan() / far)
 }
 
-/// パネルの幅に対する、中心から見たホームポジションの横位置（割合）。キーの並びはパネルの左の余白の内側から始まる。
+/// パネル幅に対する、中心基準のホームポジション横位置（割合）。キー列はパネル左余白の内側から始まる。
 fn home_offset(resolution: (u32, u32)) -> f32 {
     let left = design::components::PANEL_MARGIN + design::spacing::LG;
     (left + HOME_U * view::KEY_UNIT) / resolution.0 as f32 - 0.5
 }
 
-/// 掴むとパネルの中心ではなくホームポジションを手で動かして頭へ向ける（ホームポジションを中心に角度が付く）。
+/// グラブするとパネル中心ではなくホームポジションを手で移動して頭へ向ける（ホームポジションを中心に角度が付く）。
 /// 位置は幅 `width_m`（m）のパネルのローカル座標（m）。
 fn grab_anchor(resolution: (u32, u32), width_m: f32) -> kernel::Pose {
     kernel::Pose::new(
@@ -100,7 +100,7 @@ fn grab_anchor(resolution: (u32, u32), width_m: f32) -> kernel::Pose {
     )
 }
 
-/// 全体の設定のキーボードの種類（設定が無ければ既定）。
+/// グローバル設定のキーボード種類（設定がなければ既定値）。
 fn keyboard_kind(cx: &App) -> KeyboardType {
     crate::settings(cx).keyboard
 }
@@ -134,15 +134,15 @@ pub struct InputRouting {
 }
 impl gpui::Global for InputRouting {}
 
-/// OS の前面のアプリのキーボードの状態。フレームループがカーネル（[`kernel::Kernel::os_keyboard`]）から書き写す。
-/// 最初に呼ぶとカーネルに監視を始めさせる（それまでは既定値）。
+/// OS のフォアグラウンドアプリのキーボード状態。フレームループがカーネル（[`kernel::Kernel::os_keyboard`]）から転記する。
+/// 初回呼び出し時にカーネルに監視を開始させる（それまでは既定値）。
 pub fn system_keyboard(cx: &mut App) -> Settings {
     let ctl = cx.default_global::<crate::PanelControl>();
     ctl.os_keyboard_wanted = true;
     ctl.os_keyboard.clone()
 }
 
-/// 対象パネルが、そのパネルに届いた入力の処理を登録する。
+/// 対象パネルが、そのパネルへの入力処理を登録する。
 pub fn register_input(
     panel: PanelId,
     receive: impl Fn(KeyboardInput, &mut App) -> Result<(), String> + 'static,
@@ -159,7 +159,7 @@ pub fn unregister_input(panel: PanelId, cx: &mut App) {
     }
 }
 
-/// GPUI パネルの入力欄を選択したときの標準処理。入力先のフォーカスを保持して召喚する。
+/// GPUI パネルの入力欄選択時の標準処理。入力先のフォーカスを保持してキーボードを起動する。
 pub fn focus_input(panel: PanelId, focus: &FocusHandle, window: &mut Window, cx: &mut App) {
     window.focus(focus, cx);
     let (handle, focus) = (window.window_handle(), focus.clone());
@@ -193,8 +193,8 @@ pub fn focus_input(panel: PanelId, focus: &FocusHandle, window: &mut Window, cx:
     show_keyboard(panel, KeyboardMode::Transient, cx);
 }
 
-/// OS を操作するパネル（`panel`）の仮想キーボードを出し入れする（出したら `true`）。
-/// 届いた入力はカーネルに頼んで OS の前面のアプリへ送る（[`PanelCommand::TypeToOs`]）。
+/// OS 操作パネル（`panel`）の仮想キーボードをトグルする（表示時に `true`）。
+/// 入力はカーネル経由で OS のフォアグラウンドアプリへ送信する（[`PanelCommand::TypeToOs`]）。
 pub fn toggle_os_keyboard(panel: PanelId, cx: &mut App) -> bool {
     register_os_input(panel, cx);
     let shown = toggle_keyboard(panel, cx);
@@ -204,8 +204,8 @@ pub fn toggle_os_keyboard(panel: PanelId, cx: &mut App) -> bool {
     shown
 }
 
-/// `from` へ打つ OS キーボードが出ていれば、閉じずに `to`（OS を操作するパネル）へ打つものにする（譲ったら `true`）。
-/// どちらも同じ OS キーボードなので、出し直さずに同じ場所のまま使い続けられる。
+/// `from` 向けの OS キーボードが表示中であれば、閉じずに `to`（OS 操作パネル）へ送信先を変更する（譲渡時 `true`）。
+/// 同一の OS キーボードのため、再起動せず同じ位置のまま使い続けられる。
 pub fn hand_over_os_keyboard(from: PanelId, to: PanelId, cx: &mut App) -> bool {
     let routing = cx.default_global::<InputRouting>();
     let Some(session) = routing
@@ -228,7 +228,7 @@ pub fn hand_over_os_keyboard(from: PanelId, to: PanelId, cx: &mut App) -> bool {
     true
 }
 
-/// `panel` に届いた入力を、カーネルに頼んで OS の前面のアプリへ送る（[`PanelCommand::TypeToOs`]）。
+/// `panel` への入力をカーネル経由で OS のフォアグラウンドアプリへ送信する（[`PanelCommand::TypeToOs`]）。
 fn register_os_input(panel: PanelId, cx: &mut App) {
     register_input(
         panel,
@@ -247,7 +247,7 @@ fn register_os_input(panel: PanelId, cx: &mut App) {
     );
 }
 
-/// ビューの借用が解けてから対象パネル一つに配送する。宛先を失っても他へ転送しない。
+/// ビューの借用解放後に対象パネルへ配送する。宛先を失っても他へ転送しない。
 pub fn send_key(target: PanelId, input: KeyboardInput, cx: &mut App) {
     cx.defer(move |cx| {
         let closed = cx
@@ -271,7 +271,7 @@ pub fn send_key(target: PanelId, input: KeyboardInput, cx: &mut App) {
     });
 }
 
-/// `target` のナビゲーションバーを描き直させる（OS キーボードのトグルの色をキーボードの出入りに合わせる）。
+/// `target` のナビゲーションバーを再描画する（OS キーボードトグルの色をキーボードの表示/非表示に同期する）。
 fn redraw_nav_bar(target: PanelId, cx: &mut App) {
     let ctl = cx.default_global::<crate::PanelControl>();
     if let Some(&bar) = ctl.nav_bars.get(&target) {
@@ -333,18 +333,18 @@ pub fn show_keyboard(target: PanelId, mode: KeyboardMode, cx: &mut App) {
         }
     })
     .sized(size, resolution)
-    // 仮想キーボードは自前の X ボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
+    // 仮想キーボードは独自の閉じるボタン（`close-keyboard`）で閉じる。ナビゲーションバーは付けない。
     .without_nav_bar()
-    // タッチの方式では離すまで押されず、押している間の手ブレでスワイプになって押し損じる。押した瞬間に押す。
+    // タッチ方式ではリリースまで押下されず、押下中の手ブレでスワイプと誤認される。タッチダウン時に即押下する。
     .pointer_mode(kernel::PointerMode::Mouse)
-    // 開いた瞬間の手元の打ちやすい高さに、対象パネル（ダッシュボードにはめた画面も）と同じ向きで、
-    // ホームポジションを対象の中心の左右に合わせて出す。親子関係は作らない（対象を動かしても付いて行かない）。
+    // 起動時の手元のタイピング位置に、対象パネル（ダッシュボードにドックした画面も含む）と同じ向きで、
+    // ホームポジションを対象の中心の左右に合わせて表示する。親子関係は作らない（対象を移動しても追従しない）。
     .typing(home_offset(resolution) * size.x)
     .grab_anchor(grab_anchor(resolution, size.x));
     cx.default_global::<crate::PanelControl>().spawns.push(spec);
 }
 
-/// デスクトップパネルのトグルボタンから呼ぶ。フォーカスが移っても常駐する。
+/// デスクトップパネルのトグルボタンから呼び出す。フォーカスが移動しても常駐する。
 pub fn toggle_keyboard(target: PanelId, cx: &mut App) -> bool {
     if cx
         .default_global::<InputRouting>()
@@ -365,7 +365,7 @@ pub fn keyboard_visible(target: PanelId, cx: &App) -> bool {
         .is_some_and(|s| s.target == target)
 }
 
-/// ポインタで別の場所を選んだときだけ一時キーボードを閉じる。
+/// ポインタで別の場所を選択した場合のみ一時キーボードを閉じる。
 pub fn pointer_selected(panel: Option<PanelId>, cx: &mut App) {
     if cx
         .try_global::<InputRouting>()
@@ -390,8 +390,8 @@ pub fn panel_closed(panel: PanelId, cx: &mut App) {
     }
 }
 
-/// 呼び出し元が隠れたら（ダッシュボードごと隠したはめた画面など）、そこへ打つキーボードも閉じる。
-/// キーボードは呼び出し元の子ではないので、一緒には隠れない。
+/// 呼び出し元が非表示になった場合（ダッシュボードごと非表示にしたドック中の画面等）、そのキーボードも閉じる。
+/// キーボードは呼び出し元の子ではないため、自動的には非表示にならない。
 pub fn panel_hidden(panel: PanelId, cx: &mut App) {
     if cx
         .try_global::<InputRouting>()
@@ -404,7 +404,7 @@ pub fn panel_hidden(panel: PanelId, cx: &mut App) {
 
 struct KeyboardPanel {
     panel: PanelId,
-    /// パネルの大きさを合わせてある種類（アクションの置き場所もこれで決まる）と、設定の大きさ。
+    /// パネルサイズを合わせてある種類（アクションの配置位置もこれで決まる）と、設定のサイズ。
     kind: KeyboardType,
     scale: f32,
     keyboard: gpui::Entity<KeyboardView>,

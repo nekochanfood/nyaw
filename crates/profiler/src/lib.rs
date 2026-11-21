@@ -1,13 +1,13 @@
-//! Layer 5 横: アプリケーションのプロファイラ。`--profile` で起動したときだけ動き、普段は存在しない。
-//! UI 層のフレームループが段階ごとの所要時間を [`Profiler::record`] に渡し、ここで
-//! 1. 直近 [`CAPACITY`] フレームを保持して OS のウィンドウ（[`ProfilerView`]）にグラフと数値で出し、
-//! 2. 1 フレーム 1 行の CSV（[`CSV_HEADER`]）にダンプする（pandas / Excel / gnuplot 等でそのまま読める）。
+//! Layer 5 横断: アプリケーションプロファイラ。`--profile` で起動した場合のみ動作し、通常時は存在しない。
+//! UI 層のフレームループが段階ごとの所要時間を [`Profiler::record`] に渡し、本モジュールで
+//! 1. 直近 [`CAPACITY`] フレームを保持して OS ウィンドウ（[`ProfilerView`]）にグラフと数値で表示し、
+//! 2. 1 フレーム 1 行の CSV（[`CSV_HEADER`]）にダンプする（pandas / Excel / gnuplot 等でそのまま読み込み可能）。
 //!
-//! CPU / GPU の分け方（GPUI は GPU タイマーを公開していないので、同期して待つ段階の実時間で測る）:
+//! CPU / GPU の区分（GPUI は GPU タイマーを公開していないため、同期待ち段階の実時間で計測する）:
 //! - CPU = `input`（入力の配送とパネル操作の反映）+ `draw`（GPUI のレイアウトとシーン構築）+ `overlay`（オーバーレイ層）
 //! - GPU = `render`（GPU 描画と CPU への読み戻し）+ `upload`（VR ランタイムへのテクスチャ転送）
-//!   + `compositor`（novr のエミュレーターの合成と表示）
-//! - `wait` = 次のフレームまでの待ち（VR は vsync、novr はエミュレーターの周期）。アイドル時間。
+//!   + `compositor`（novr エミュレーターの合成と表示）
+//! - `wait` = 次フレームまでの待機（VR では vsync、novr ではエミュレーターの周期）。アイドル時間。
 
 use std::{
     collections::VecDeque,
@@ -20,18 +20,18 @@ use gpui::{
     px, rgb, size,
 };
 
-/// 保持してグラフに出すフレーム数。
+/// 保持してグラフに表示するフレーム数。
 pub const CAPACITY: usize = 900;
-/// グラフの 1 列の幅（px）。この幅に入るフレームは平均してまとめて描く。
+/// グラフの 1 列の幅（px）。この幅に収まるフレームは平均して 1 本にまとめて描画する。
 const COLUMN_PX: f32 = 2.0;
-/// 数値（平均・p99 など）を出す直近のフレーム数。
+/// 統計値（平均・p99 など）を算出する直近のフレーム数。
 pub const WINDOW: usize = 90;
-/// 予算（1 フレームの目標時間）のこの倍を超えたフレームをドロップとみなす。
+/// フレーム予算（1 フレームの目標時間）のこの倍を超えたフレームをドロップと判定する。
 pub const DROP_FACTOR: f64 = 1.5;
-/// CSV の列。時間はすべてミリ秒。`t_ms` は計測開始からの経過。
+/// CSV の列定義。時間はすべてミリ秒単位。`t_ms` は計測開始からの経過時間。
 pub const CSV_HEADER: &str = "frame,t_ms,interval_ms,wait_ms,input_ms,draw_ms,render_ms,upload_ms,profiler_ms,overlay_ms,compositor_ms,cpu_ms,gpu_ms,budget_ms,dropped";
 
-/// 1 フレームの段階ごとの所要時間。
+/// 1 フレームの各段階の所要時間。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Stages {
     pub wait: Duration,
@@ -39,11 +39,11 @@ pub struct Stages {
     pub draw: Duration,
     pub render: Duration,
     pub upload: Duration,
-    /// プロファイラ窓自身の描画（render + paint）。待ちの間に main スレッドで走るので wait からは差し引く。
+    /// プロファイラウィンドウ自身の描画（render + paint）。待機中に main スレッドで実行されるため wait から差し引く。
     pub profiler: Duration,
-    /// オーバーレイ層（追従・ヒット判定・ポインタの配置・アニメーション）。
+    /// オーバーレイ層（追従・ヒットテスト・ポインタ配置・アニメーション）。
     pub overlay: Duration,
-    /// ランタイムがこのスレッドで合成・表示にかけた時間（novr のエミュレーター。VR ランタイムは 0）。
+    /// ランタイムがこのスレッドで合成・表示に費やした時間（novr エミュレーター。VR ランタイムでは 0）。
     pub compositor: Duration,
 }
 
@@ -60,9 +60,9 @@ impl Stages {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Sample {
     pub frame: u64,
-    /// 計測開始からの経過。
+    /// 計測開始からの経過時間。
     pub at: Duration,
-    /// 前のフレームからの間隔（= フレーム時間）。
+    /// 前フレームからの間隔（= フレーム時間）。
     pub interval: Duration,
     pub stages: Stages,
     pub budget: Duration,
@@ -94,7 +94,7 @@ impl Sample {
     }
 }
 
-/// 直近 [`WINDOW`] フレームの集計。
+/// 直近 [`WINDOW`] フレームの統計サマリー。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Summary {
     pub fps: f64,
@@ -105,7 +105,7 @@ pub struct Summary {
     pub gpu_avg: Duration,
     pub stages_avg: Stages,
     pub budget: Duration,
-    /// 起動からの総フレーム数と総ドロップ数。
+    /// 起動からの累計フレーム数と累計ドロップ数。
     pub frames: u64,
     pub dropped: u64,
 }
@@ -113,12 +113,12 @@ pub struct Summary {
 pub struct Profiler {
     start: Instant,
     last: Option<Instant>,
-    /// 既知の予算（novr のタイマー周期）。`None` なら間隔から推定する（VR は vsync で決まる）。
+    /// 既知のフレーム予算（novr のタイマー周期）。`None` の場合は間隔から推定する（VR では vsync で決定される）。
     budget: Option<Duration>,
     samples: VecDeque<Sample>,
     frames: u64,
     dropped: u64,
-    /// 前回の `record` 以降にプロファイラ窓の描画にかかった時間。
+    /// 前回の `record` 以降にプロファイラウィンドウの描画に費やした時間。
     self_time: Duration,
     out: Option<Box<dyn Write>>,
 }
@@ -126,7 +126,7 @@ pub struct Profiler {
 impl gpui::Global for Profiler {}
 
 impl Profiler {
-    /// `out` があれば CSV の見出しを書き、以降 1 フレーム 1 行ずつ書く。予算は間隔から推定する。
+    /// `out` が指定されていれば CSV ヘッダーを書き出し、以降 1 フレーム 1 行ずつ書き込む。予算は間隔から推定する。
     pub fn new(out: Option<Box<dyn Write>>) -> io::Result<Self> {
         let mut out = out;
         if let Some(w) = out.as_mut() {
@@ -145,14 +145,14 @@ impl Profiler {
         })
     }
 
-    /// 予算（1 フレームの目標時間）が分かっているとき（novr のタイマー周期）に指定する。
+    /// フレーム予算（1 フレームの目標時間）が既知の場合（novr のタイマー周期）に指定する。
     pub fn with_budget(mut self, budget: Duration) -> Self {
         self.budget = Some(budget);
         self
     }
 
-    /// フレームの終わり（`now`）に呼ぶ。最初の 1 回は間隔が分からないので段階の合計を間隔とする。
-    /// プロファイラ窓の描画時間を足す。次の `record` で `Stages::profiler` に入り、wait から差し引かれる。
+    /// フレーム終了時（`now`）に呼び出す。初回は間隔が不明なため段階の合計を間隔とする。
+    /// プロファイラウィンドウの描画時間を加算する。次の `record` で `Stages::profiler` に計上され、wait から差し引かれる。
     pub fn add_self_time(&mut self, d: Duration) {
         self.self_time += d;
     }
@@ -181,7 +181,7 @@ impl Profiler {
         }
         self.samples.push_back(sample);
         if let Some(w) = self.out.as_mut() {
-            // 落ちても残るよう毎フレーム書き切る。書けなくなったらダンプだけ止める（計測と表示は続ける）。
+            // クラッシュ時にも残るよう毎フレーム書き切る。書き込み失敗時はダンプのみ停止する（計測と表示は継続する）。
             if writeln!(w, "{}", sample.csv_row())
                 .and_then(|_| w.flush())
                 .is_err()
@@ -191,8 +191,8 @@ impl Profiler {
         }
     }
 
-    /// 1 フレームの目標時間。既知でなければ保持中の間隔の下位 10% 点（= vsync 周期）で推定する。
-    // ponytail: ずっと vsync に間に合わないと推定が伸びてドロップを数え損ねる。困ったら VrBackend に表示周波数を足す。
+    /// 1 フレームの目標時間。既知でなければ保持中の間隔の下位 10 パーセンタイル（= vsync 周期）で推定する。
+    // ponytail: 恒常的に vsync に間に合わない場合、推定値が膨張しドロップを過小計上する。必要なら VrBackend に表示周波数を追加する。
     pub fn budget(&self) -> Duration {
         self.budget.unwrap_or_else(|| {
             let v: Vec<Duration> = self.samples.iter().map(|s| s.interval).collect();
@@ -238,7 +238,7 @@ impl Profiler {
     }
 }
 
-/// 最近傍順位法の百分位点。
+/// 最近傍順位法によるパーセンタイル算出。
 fn percentile(mut v: Vec<Duration>, p: f64) -> Option<Duration> {
     if v.is_empty() {
         return None;
@@ -258,7 +258,7 @@ const DIM: u32 = 0x8a8f9c;
 const BUDGET: u32 = 0xf2b134;
 const DROP: u32 = 0xe5484d;
 
-/// グラフに積む 1 段。
+/// グラフの 1 積み上げ層。
 struct Layer {
     name: &'static str,
     color: u32,
@@ -315,7 +315,7 @@ fn ms(d: Duration) -> String {
     format!("{:.2} ms", d.as_secs_f64() * 1e3)
 }
 
-/// プロファイラのウィンドウ。フレームループが毎フレーム描き直しを頼む。
+/// プロファイラウィンドウ。フレームループが毎フレーム再描画を要求する。
 #[derive(Default)]
 pub struct ProfilerView;
 
@@ -380,7 +380,7 @@ impl Render for ProfilerView {
     }
 }
 
-/// 段を積み上げた棒グラフ（1 フレーム 1 本、右端が最新）と凡例。縦軸は予算の 2 倍まで。
+/// 積み上げ棒グラフ（1 フレーム 1 本、右端が最新）と凡例。縦軸はフレーム予算の 2 倍まで。
 fn chart(
     title: &'static str,
     samples: &[Sample],
@@ -412,8 +412,8 @@ fn chart(
             for i in 1..4 {
                 hline(window, y_of(top * i as f64 / 4.0), rgb(GRID).into());
             }
-            // 1 フレーム 1 本だと幅 1px 未満の四角が数千個になり、描くだけで重い。COLUMN_PX ごとの列に平均してまとめる
-            // （ドロップは列の中に 1 つでもあれば印を付ける）。新しいものが右端。
+            // 1 フレーム 1 本だと幅 1px 未満の矩形が数千個になり描画負荷が高い。COLUMN_PX ごとの列に平均して集約する
+            // （ドロップは列内に 1 つでもあればマーカーを付ける）。最新が右端。
             let columns = (f32::from(b.size.width) / COLUMN_PX).floor().max(1.0) as usize;
             let per = CAPACITY.div_ceil(columns).max(1);
             let w = b.size.width / columns as f32;
@@ -508,7 +508,7 @@ mod tests {
 
     const MS: Duration = Duration::from_millis(1);
 
-    /// テスト用: 書いた内容を後から読める出力先。
+    /// テスト用: 書き込み内容を事後に読み出せる出力先。
     #[derive(Clone, Default)]
     struct Shared(Arc<Mutex<Vec<u8>>>);
 
@@ -539,7 +539,7 @@ mod tests {
         for at in [10, 20, 36, 50, 80] {
             p.record(p.start + MS * at, stages(8, 1, 1));
         }
-        // 間隔: 最初は段階の合計 10、以降 10, 16, 14, 30 → 15ms を超えるのは 16 と 30
+        // 間隔: 初回は段階の合計 10、以降 10, 16, 14, 30 → 15ms 超過は 16 と 30
         let s = p.summary();
         assert_eq!((s.frames, s.dropped), (5, 2));
         assert_eq!(s.frame_max, 30 * MS);

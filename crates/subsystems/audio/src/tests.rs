@@ -2,7 +2,7 @@ use super::*;
 
 const RATE: u32 = 48_000;
 
-/// 1 秒ぶんを描いて、左右それぞれの二乗和を返す。
+/// 指定フレーム数をレンダリングし、左右それぞれのエネルギー（二乗和）を返す。
 fn energy(engine: &mut Engine, frames: usize) -> (f32, f32) {
     let mut out = vec![0.0; frames * 2];
     engine.render(&mut out);
@@ -12,11 +12,11 @@ fn energy(engine: &mut Engine, frames: usize) -> (f32, f32) {
         .fold((0.0, 0.0), |(l, r), s| (l + s[0] * s[0], r + s[1] * s[1]))
 }
 
-/// 一定の値の音（`channels` は 1 か 2。2 なら左だけ `left`、右だけ `right`）。
+/// 一定振幅のテスト音声（`channels` は 1 または 2。2ch 時は左 `left`、右 `right`）。
 fn tone(left: f32, right: f32, channels: u16, frames: usize) -> Clip {
     let samples: Vec<f32> = (0..frames)
         .flat_map(|i| {
-            // 符号を交互にして直流にしない（HRTF は低域を落とす）。
+            // 符号を交互に反転して DC 成分を除去する（HRTF は低域を減衰させる）。
             let s = if i % 2 == 0 { 1.0 } else { -1.0 };
             [left * s, right * s]
         })
@@ -46,7 +46,7 @@ fn identical_stereo_is_mono_and_auto_follows_the_clip() {
     assert_eq!(Layout::Auto.resolve(&stereo), Channels::Stereo);
     assert_eq!(Layout::Stereo.resolve(&mono), Channels::Stereo);
     assert_eq!(Layout::Mono.resolve(&stereo), Channels::Mono);
-    // 3ch 以上は前の 2ch。
+    // 3ch 以上は先頭 2ch のみ使用。
     let surround = Clip::from_samples(&[0.1, 0.2, 0.9, 0.3, 0.4, 0.9], 3, RATE).unwrap();
     assert_eq!(surround.channels(), Channels::Stereo);
     assert_eq!(surround.frames(), 2);
@@ -81,8 +81,8 @@ fn spatial_speaker_is_heard_from_its_side() {
     e.set_speaker(1, speaker(Vec3::new(2.0, 0.0, 0.0)));
     e.play(1, tone(0.5, 0.5, 1, RATE as usize), true);
     let (l, r) = energy(&mut e, 4096);
-    assert!(r > l * 10.0, "右に置いたスピーカーは右から: {l} {r}");
-    // 頭を右へ 180° 回すと（後ろを向く）左から。
+    assert!(r > l * 10.0, "右側に配置したスピーカーの音は右から聞こえる: {l} {r}");
+    // 頭を 180° 右回転（後方を向く）すると左から聞こえる。
     e.set_listener(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
     let (l, r) = energy(&mut e, 4096);
     assert!(l > r * 10.0, "{l} {r}");
@@ -101,7 +101,7 @@ fn opting_out_of_spatialization_ignores_position() {
     e.play(1, tone(0.5, 0.5, 1, RATE as usize), true);
     let (l, r) = energy(&mut e, 4096);
     assert!(l > 0.0 && (l - r).abs() < 1e-3, "{l} {r}");
-    // 距離でも減らない。
+    // 距離による減衰もない。
     let (near, _) = {
         let mut e = Engine::offline(RATE, false);
         e.set_speaker(
@@ -125,14 +125,14 @@ fn distance_attenuates_beyond_one_meter() {
         e.play(1, tone(0.5, 0.5, 1, RATE as usize), true);
         energy(&mut e, 4096).0
     };
-    assert!((level(0.5) - level(1.0)).abs() < 1e-3, "1m までは減らない");
-    // 2 倍の距離で振幅 1/2 = エネルギー 1/4。
+    assert!((level(0.5) - level(1.0)).abs() < 1e-3, "1m 以内では減衰しない");
+    // 2 倍の距離で振幅 1/2 = エネルギー 1/4 となる。
     assert!((level(2.0) / level(1.0) - 0.25).abs() < 0.01);
 }
 
 #[test]
 fn stereo_speaker_plays_each_channel_from_its_edge() {
-    // 左だけ鳴る音を、正面 2m・幅 4m のスピーカーで。左端（-2, 0, -2）から聞こえる。
+    // 左チャンネルのみの音声を、正面 2m・幅 4m のスピーカーで再生。左端（-2, 0, -2）から聞こえる。
     let left_only = || tone(0.5, 0.0, 2, RATE as usize);
     let mut e = Engine::offline(RATE, false);
     e.set_speaker(
@@ -145,7 +145,7 @@ fn stereo_speaker_plays_each_channel_from_its_edge() {
     e.play(1, left_only(), true);
     let (l, r) = energy(&mut e, 4096);
     assert!(l > r * 4.0, "{l} {r}");
-    // モノラルに切り替えると中央から（左右同じ）。
+    // モノラルに切り替えると中央から再生される（左右同一）。
     e.set_speaker(
         1,
         Speaker {
@@ -177,7 +177,7 @@ fn voices_mix_simultaneously_and_finish() {
     let (both, _) = energy(&mut e, 64);
     assert!(
         both > one * 8.0,
-        "3 つ重なれば振幅 3 倍 = エネルギー 9 倍: {one} {both}"
+        "3 音重畳で振幅 3 倍 = エネルギー 9 倍: {one} {both}"
     );
     energy(&mut e, BLOCK * 2);
     e.poll();
@@ -236,7 +236,7 @@ fn resamples_to_the_output_rate() {
 fn sound_is_decoded_off_thread_and_failures_finish() {
     let mut e = Engine::offline(RATE, false);
     let v = e.play_sound(1, Sound::File("does/not/exist.wav".into()), false);
-    assert!(e.is_playing(v), "読み込み中も鳴っている扱い");
+    assert!(e.is_playing(v), "読み込み中も再生中として扱われる");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while e.is_playing(v) && std::time::Instant::now() < deadline {
         e.poll();
@@ -264,7 +264,7 @@ fn stopping_while_loading_never_sounds() {
         let mut e = Engine::offline(RATE, false);
         e.set_speaker(1, speaker(Vec3::NEG_Z));
         let v = e.play_sound(1, Sound::Wav(wav), true);
-        // 読み込みが終わる前に止める（Stop が Play より先にミキサーへ届く）。
+        // 読み込み完了前に停止する（Stop が Play より先にミキサーへ到達する）。
         if removal {
             e.remove_speaker(1);
         } else {
@@ -284,7 +284,7 @@ fn stopping_while_loading_never_sounds() {
     }
 }
 
-/// 実際の Steam Audio（`NYAW_PHONON` か OS の既定の場所の phonon）で、HRTF で右から聞こえることを確かめる。
+/// 実際の Steam Audio（`NYAW_PHONON` または OS 既定パスの phonon）を用いて、HRTF により右側から聞こえることを検証する。
 /// `cargo test -p audio -- --ignored steam_audio`
 #[test]
 #[ignore]
@@ -293,19 +293,19 @@ fn steam_audio_spatializes_with_hrtf() {
     assert_eq!(e.spatializer(), Spatializer::SteamAudio);
     e.set_speaker(1, speaker(Vec3::new(2.0, 0.0, 0.0)));
     e.play(1, tone(0.5, 0.5, 1, RATE as usize), true);
-    // 畳み込みの立ち上がりを捨ててから測る。
+    // 畳み込みの過渡応答を捨ててから測定する。
     energy(&mut e, BLOCK * 4);
     let (l, r) = energy(&mut e, 4096);
     assert!(r > l * 2.0, "{l} {r}");
-    // ステレオのスピーカーでも 2 つの音源が HRTF を通る。
+    // ステレオスピーカーでも 2 つの音源それぞれが HRTF を通過する。
     e.set_speaker(2, speaker(Vec3::NEG_Z));
     e.play(2, tone(0.5, 0.0, 2, RATE as usize), true);
     let (l2, r2) = energy(&mut e, 4096);
     assert!(l2 > l && r2 > 0.0);
 }
 
-/// 既定の出力デバイスで実際に鳴らし、コールバックが回って鳴り終わるまで（音が出る）。
-/// `cargo test -p audio -- --ignored output_device`（Steam Audio を使うなら `NYAW_PHONON` か実行ファイルの隣に phonon）
+/// 既定の出力デバイスで実際に再生し、コールバックにより再生が完了するまで待機する（音声が出力される）。
+/// `cargo test -p audio -- --ignored output_device`（Steam Audio 使用時は `NYAW_PHONON` または実行ファイル同一ディレクトリに phonon を配置）
 #[test]
 #[ignore]
 fn output_device_plays_to_the_end() {
@@ -317,7 +317,7 @@ fn output_device_plays_to_the_end() {
     assert_ne!(
         e.spatializer(),
         Spatializer::Unavailable,
-        "出力デバイスが無い"
+        "出力デバイスが存在しない"
     );
     e.set_speaker(1, speaker(Vec3::new(1.0, 0.0, -1.0)));
     let v = e.play(1, tone(0.2, 0.2, 1, RATE as usize / 4), false);
@@ -325,5 +325,5 @@ fn output_device_plays_to_the_end() {
         e.poll();
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    assert!(!e.is_playing(v), "コールバックが回っていない");
+    assert!(!e.is_playing(v), "コールバックが実行されていない");
 }

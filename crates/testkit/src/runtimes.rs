@@ -1,8 +1,8 @@
 //! Prepares real runtimes (Monado / SteamVR) for E2E tests. The equivalent of Playwright's
 //! `npx playwright install` ([`install`]) and `webServer` ([`Launched`] returned by [`launch`]).
 //!
-//! ランタイムの準備は現在 Windows 向け。保存先は `NYAW_RUNTIMES_PATH`、未指定なら
-//! `%LOCALAPPDATA%\nyaw\runtimes`。testkit はこの中だけを管理する。
+//! ランタイムの準備は現在 Windows 向け。保存先は `NYAW_RUNTIMES_PATH`（未指定時は
+//! `%LOCALAPPDATA%\nyaw\runtimes`）。testkit はこのディレクトリ内のみを管理する。
 //! - SteamVR is managed by Steam, so testkit neither installs nor removes it (it only locates it and gives guidance).
 //! - Only one real runtime can run on a machine, so tests run one at a time (like Playwright's `workers: 1`).
 //!
@@ -25,7 +25,7 @@ use kernel::vr::{Runtime, VrBackend, VrError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// OpenXR。Windows 向けの GitLab CI 成果物を入れる。
+    /// OpenXR。Windows 向け GitLab CI ビルドの成果物を使用する。
     Monado,
     /// OpenVR. To run without an HMD, it is launched with a config that enables the bundled null driver.
     SteamVr,
@@ -216,7 +216,7 @@ fn run(cmd: &mut Command) -> Result<(), String> {
 fn open_url(url: &str) -> Result<(), String> {
     #[cfg(windows)]
     {
-        // start の最初の引数はウィンドウタイトル。
+        // `start` の第 1 引数はウィンドウタイトル。
         run(Command::new("cmd").args(["/C", "start", "", url]))
     }
     #[cfg(not(windows))]

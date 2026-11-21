@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# 全層から直接使ってよい唯一の横断クレート。下位のクレートに依存してはならない。
+# 全層から直接参照可能な唯一の横断クレート。下位クレートへの依存を禁止する
 [dependencies]
 log.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

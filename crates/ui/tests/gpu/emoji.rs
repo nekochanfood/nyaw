@@ -1,4 +1,4 @@
-//! 実 GPU で SVG の配色・サイズ・文章内の折り返しと改行を確かめる。
+//! 実 GPU で SVG の配色・サイズ・文章内の折り返しと改行を検証する。
 #[cfg(windows)]
 pub fn main() {
     use gpui::{
@@ -70,7 +70,7 @@ pub fn main() {
                     .update_window(window.into(), |_, w, cx| capture(w, cx))
                     .unwrap()
                     .unwrap();
-                // 非同期で SVG が届くまで待つ。
+                // 非同期で SVG が到着するまで待機する。
                 if frame.width == 440
                     && yellow(&frame, 0, 64) > 1000
                     && yellow(&frame, 184, 224) > 200

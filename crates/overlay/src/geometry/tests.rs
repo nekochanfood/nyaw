@@ -1,6 +1,6 @@
 use super::*;
 
-/// 掴み移動の追いつきは経過時間で決まる: 2 tick 分の時間を 1 回で進めても同じ所に来る。
+/// グラブ移動の補間は経過時間に依存: 2 tick 分の時間を 1 回で進めても同じ結果になる。
 #[test]
 fn approach_depends_on_elapsed_time_not_ticks() {
     let (from, to) = (Pose::IDENTITY, Pose::new(Vec3::X, Quat::IDENTITY));

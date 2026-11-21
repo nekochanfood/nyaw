@@ -1,6 +1,6 @@
-//! 入力サブシステム（ドライバ）。VR サブシステムから来るデバイスごとの生入力を、
-//! オーバーレイ層が理解する少数のアクションに変換する。コントローラ追加 = [`PROFILES`] に1行追加。
-//! この層より上でプロファイル名を見てはいけない。
+//! 入力サブシステム（ドライバ）。VR サブシステムから受け取るデバイスごとの生入力を、
+//! オーバーレイ層が理解する少数のアクションに変換する。コントローラ追加 = [`PROFILES`] に 1 行追加。
+//! この層より上でプロファイル名を参照してはならない。
 
 use vr::{Facing, Hand, HandSkeleton, Mat3, Pose, Quat, RawController, TIPS, Vec2, Vec3};
 
@@ -21,19 +21,19 @@ pub struct ControllerState {
     /// UI 要素のクリック・押下。
     pub select: bool,
     pub click_button: ClickButton,
-    /// select の入力の強さ（0〜1。トリガーの引き具合）。押下の判定前の引き始めを知るため。
+    /// select の入力強度（0〜1。トリガーの引き量）。押下判定前の引き始めを検出するため。
     pub trigger: f32,
-    /// パネルを掴んで動かす。
+    /// パネルをグラブして移動する。
     pub grab: bool,
     pub menu: bool,
-    /// ショートカットボタン（左手の下のボタン。Touch は X、Index は左手の A）。何に使うかは画面が決める。右手では常に `false`。
+    /// ショートカットボタン（左手の下のボタン。Touch は X、Index は左手の A）。用途は画面が決定する。右手では常に `false`。
     pub shortcut: bool,
     pub scroll: Vec2,
-    /// 掴んでいるパネルの拡大縮小（-1..1、+ で大きく）。機種の割り当ては無く、[`vr::RESIZE_INPUT`] をそのまま読む。
+    /// グラブ中パネルの拡縮（-1..1、+ で拡大）。機種の割り当ては無く、[`vr::RESIZE_INPUT`] をそのまま読み取る。
     pub resize: f32,
-    /// ランタイムが数えたショートカットの二回押し（[`vr::DOUBLE_PRESS_INPUT`]。SteamVR）。1 フレームだけ真。
+    /// ランタイムがカウントしたショートカットの二回押し（[`vr::DOUBLE_PRESS_INPUT`]。SteamVR）。1 フレームのみ真。
     pub double_press: bool,
-    /// 顔に向けているのが手のひらか手の甲か。骨格だけの手（[`HAND_PROFILE`]）のときだけ分かる。
+    /// 顔に向けているのが手のひらか手の甲か。骨格のみの手（[`HAND_PROFILE`]）の場合のみ判定可能。
     pub facing: Option<Facing>,
     /// 骨格だけの手の判定に使った値（確認用）。コントローラでは `None`。
     pub metrics: Option<HandMetrics>,
@@ -45,7 +45,7 @@ struct Profile {
     select: &'static [&'static str],
     grab: &'static [&'static str],
     menu: &'static [&'static str],
-    /// 左手のときだけ読む。
+    /// 左手の場合のみ読み取る。
     shortcut: &'static [&'static str],
     scroll: Option<(&'static str, &'static str)>,
 }
@@ -63,7 +63,7 @@ const PROFILES: &[Profile] = &[
     SIMPLE,
     Profile {
         id: "valve/index_controller",
-        // OpenVR では軸の種類の宣言がずれるドライバがあるので、トリガーのボタン（select/click）でも押せるようにする。
+        // OpenVR では軸の種類の宣言が不一致のドライバがあるため、トリガーのボタン（select/click）でも押下可能にする。
         select: &["trigger/value", "select/click"],
         grab: &["squeeze/value"],
         menu: &["b/click"],
@@ -72,26 +72,26 @@ const PROFILES: &[Profile] = &[
     },
     Profile {
         id: "oculus/touch_controller",
-        // OpenVR では軸の種類の宣言がずれるドライバがあるので、トリガーのボタン（select/click）でも押せるようにする。
+        // OpenVR では軸の種類の宣言が不一致のドライバがあるため、トリガーのボタン（select/click）でも押下可能にする。
         select: &["trigger/value", "select/click"],
         grab: &["squeeze/value"],
         menu: &["menu/click", "y/click", "b/click"],
         shortcut: &["x/click"],
         scroll: Some(("thumbstick/x", "thumbstick/y")),
     },
-    // コントローラの無い手（スケルタル入力。[`hand_controller`] が作る）。親指と人差し指でつまむとクリック、握ると掴む。
+    // コントローラの無い手（スケルタル入力。[`hand_controller`] が生成する）。親指と人差し指でピンチするとクリック、握るとグラブ。
     Profile {
         id: HAND_PROFILE,
         select: &["pinch_ext/value"],
         grab: &["grasp_ext/value"],
         menu: &[],
-        // 左手の親指と小指でつまむ（顔に手のひらを向けている間だけ。二回でダッシュボード）。
+        // 左手の親指と小指でピンチする（顔に手のひらを向けている間のみ。二回でダッシュボード）。
         shortcut: &[LITTLE_PINCH_INPUT],
         scroll: None,
     },
     Profile {
         id: "htc/vive_controller",
-        // OpenVR では軸の種類の宣言がずれるドライバがあるので、トリガーのボタン（select/click）でも押せるようにする。
+        // OpenVR では軸の種類の宣言が不一致のドライバがあるため、トリガーのボタン（select/click）でも押下可能にする。
         select: &["trigger/value", "select/click"],
         grab: &["squeeze/click"],
         menu: &["menu/click"],
@@ -109,30 +109,30 @@ const LITTLE_RAW_INPUT: &str = "nyaw/little_raw";
 /// 骨格だけの手が顔へ手のひらを向けている度合い（[`vr::HandSkeleton::palm_toward`]。-1〜1）。
 const PALM_TOWARD_INPUT: &str = "nyaw/palm_toward";
 
-/// つまみの強さが 0〜1 に変わる距離の幅（m）と、握りの強さが 0〜1 に変わる角度の幅（ラジアン）。押下（[`PRESS`]）はこの幅の 6 割の所、
-/// 離す（`RELEASE`）のは 4 割の所なので、離すのはつまみで押下の距離 + 8mm、握りで押下の角度 - 16°。
+/// ピンチ強度が 0〜1 に変化する距離幅（m）と、握り強度が 0〜1 に変化する角度幅（ラジアン）。押下（[`PRESS`]）はこの幅の 6 割の位置、
+/// リリース（`RELEASE`）は 4 割の位置のため、リリースはピンチで押下距離 + 8mm、握りで押下角度 - 16°。
 const PINCH_SPAN_M: f32 = 0.04;
 const GRIP_SPAN_RAD: f32 = 80.0 * std::f32::consts::PI / 180.0;
 
-/// 骨格だけの手の調整値（`config.toml` の `[hand]`、`kernel::Setting::Hand`）。どれも省略できる。
+/// 骨格のみの手の調整値（`config.toml` の `[hand]`、`kernel::Setting::Hand`）。すべて省略可能。
 // ponytail: 距離は手の大きさによらない固定値。手の大きさで効き方が違うなら、手の長さで割った比にする。
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct HandTuning {
-    /// 親指と人差し指の先がこの距離（mm）まで近づくとクリック。離すのはこれ + 8mm。
+    /// 親指と人差し指の先がこの距離（mm）まで接近するとクリック。リリースはこれ + 8mm。
     pub pinch_mm: f32,
-    /// 親指と小指の先がこの距離（mm）まで近づくとショートカット（左手の X ボタン）。小指は親指に届きにくいので少し緩い。
+    /// 親指と小指の先がこの距離（mm）まで接近するとショートカット（左手の X ボタン）。小指は親指に届きにくいため閾値がやや緩い。
     pub little_mm: f32,
-    /// 中指・薬指・小指の曲がり（中手骨と、基節から指先への向きのなす角）の平均がこの角度（度）を越えると掴む。離すのはこれ - 16°。
+    /// 中指・薬指・小指の屈曲角（中手骨と基節から指先への向きのなす角）の平均がこの角度（度）を超えるとグラブ。リリースはこれ - 16°。
     pub grip_deg: f32,
-    /// 手のひらの向きと顔へのなす角がこれ（度）以内なら、手のひらを顔に向けているとみなす（ショートカットの条件）。
+    /// 手のひらの向きと顔へのなす角がこの角度（度）以内であれば、手のひらを顔に向けていると判定する（ショートカットの条件）。
     pub palm_deg: f32,
-    /// 手のレーザーの揺れの抑え（0〜1）。大きいほど止めたときに揺れないが、ゆっくり動かすときに遅れる（速く振れば付いてくる）。
+    /// 手のレーザーの揺れ抑制（0〜1）。大きいほど静止時の揺れが減るが、低速移動時に遅延する（高速移動では追従する）。
     pub smoothing: f32,
-    /// つまみかけてから離すまで（握っている間も）レーザーを鈍くする強さ（0〜1）。1 に近いほどクリックでカーソルが動かない。
+    /// ピンチ開始からリリースまで（グラブ中も）レーザーを鈍化させる強度（0〜1）。1 に近いほどクリック時にカーソルが移動しない。
     pub click_steady: f32,
-    /// クリックしている（つまんでいる）間、押した瞬間のレーザーで止めておく範囲（度）。手がこれより大きく動けば、
-    /// 止めるのをやめて付いていく（ドラッグ・スワイプ）。0 で止めない。
+    /// クリック中（ピンチ中）、押下瞬間のレーザー位置に固定する範囲（度）。手がこの角度を超えて移動すれば、
+    /// 固定を解除して追従する（ドラッグ・スワイプ）。0 で固定しない。
     pub click_hold_deg: f32,
 }
 
@@ -140,7 +140,7 @@ impl Default for HandTuning {
     fn default() -> Self {
         Self {
             pinch_mm: 26.0,
-            // 二回つまむので、離したことをはっきり分けるよう、しっかり付けるまで押下にしない（離すのは + 8mm）。
+            // 二回ピンチするため、リリースを明確に区別できるよう、しっかり接触するまで押下にしない（リリースは + 8mm）。
             little_mm: 16.0,
             grip_deg: 88.0,
             palm_deg: 70.0,
@@ -152,14 +152,14 @@ impl Default for HandTuning {
 }
 
 impl HandTuning {
-    /// 調整できる範囲（下限, 上限）。画面のスライダーと読み込みの両方で使う。
+    /// 調整可能な範囲（下限, 上限）。画面のスライダーと読み込みの両方で使用する。
     pub const PINCH_MM: (f32, f32) = (10.0, 50.0);
     pub const GRIP_DEG: (f32, f32) = (50.0, 140.0);
     pub const PALM_DEG: (f32, f32) = (20.0, 90.0);
     pub const UNIT: (f32, f32) = (0.0, 1.0);
     pub const CLICK_HOLD_DEG: (f32, f32) = (0.0, 20.0);
 
-    /// 範囲の外の値を範囲に収める（壊れた設定ファイルでも動くように）。
+    /// 範囲外の値を範囲内に収める（破損した設定ファイルでも動作するように）。
     pub fn clamped(self) -> Self {
         let c = |v: f32, (lo, hi): (f32, f32)| if v.is_finite() { v.clamp(lo, hi) } else { lo };
         Self {
@@ -174,14 +174,14 @@ impl HandTuning {
     }
 }
 
-/// 骨格だけの手の判定に使った値（確認用。[`ControllerState::metrics`]）。強さは [`PRESS`] で押下、`RELEASE` で離す。
+/// 骨格のみの手の判定に使用した値（確認用。[`ControllerState::metrics`]）。強度は [`PRESS`] で押下、`RELEASE` でリリース。
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct HandMetrics {
-    /// 親指と人差し指のつまみの強さ（クリック）。
+    /// 親指と人差し指のピンチ強度（クリック）。
     pub pinch: f32,
-    /// 中指・薬指・小指の握りの強さ（掴む）。
+    /// 中指・薬指・小指の握り強度（グラブ）。
     pub grip: f32,
-    /// 親指と小指のつまみの強さ（手のひらの向きによらない。ショートカットはこれに手のひらの条件が付く）。
+    /// 親指と小指のピンチ強度（手のひらの向きに依存しない。ショートカットはこれに手のひら条件が付加される）。
     pub little: f32,
     /// 手のひらを顔へ向けている度合い（なす角の cos）。
     pub palm_toward: f32,
@@ -192,7 +192,7 @@ fn pinch_strength(d: f32, press: f32) -> f32 {
     ((press + PRESS * PINCH_SPAN_M - d) / PINCH_SPAN_M).clamp(0.0, 1.0)
 }
 
-/// 指（[`TIPS`] の添字）の曲がり（ラジアン。伸ばしきって 0、握りこぶしで 150° 前後）。
+/// 指（[`TIPS`] の添字）の屈曲角（ラジアン。完全伸展で 0、握りこぶしで 150° 前後）。
 fn curl(skeleton: &HandSkeleton, finger: usize) -> f32 {
     let j = |i: usize| skeleton.joints[i].position;
     // 指ごとの関節は 中手骨, 基節, 中節, 末節, 先端 の順（先端から 4 つ前が中手骨）。

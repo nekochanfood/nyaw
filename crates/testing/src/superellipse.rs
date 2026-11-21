@@ -1,14 +1,14 @@
 use super::*;
 
-/// 角丸のスーパーエリプス（CSS `superellipse(k)`）を確かめる画面。`superellipse-radius` で角の大きさ、
-/// `superellipse-k` で強さ k（0 = 面取り、1 = 円、2 = スクワークル、負 = えぐれ）を動かすと、
-/// `superellipse-preview`（塗り）と `superellipse-outline`（枠線）が変わる。下の見本は k を固定して並べる。
+/// スーパーエリプス角丸（CSS `superellipse(k)`）の検証画面。`superellipse-radius` で角の半径、
+/// `superellipse-k` で強度 k（0 = 面取り、1 = 円弧、2 = スクワークル、負 = 凹み）を調整すると、
+/// `superellipse-preview`（塗り）と `superellipse-outline`（枠線）が更新される。下段のサンプルは k を固定して一覧表示する。
 pub struct SuperellipseTest {
     radius: f32,
     k: f32,
 }
 
-/// 強さ k のスライダーの範囲。
+/// 強度 k のスライダー範囲。
 const K_MIN: f32 = -2.0;
 const K_MAX: f32 = 4.0;
 const RADIUS_MAX: f32 = 80.0;

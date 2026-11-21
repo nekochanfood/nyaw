@@ -1,83 +1,82 @@
-//! ビューとフレームループの受け渡し口（[`PanelControl`]）と、ビューが使う操作（パネルへの要求・全体の設定・はめる場所）。
+//! ビューとフレームループ間の受け渡し口（[`PanelControl`]）および、ビューから利用する操作（パネルへの要求・全体設定・ドック）。
 
 use super::*;
 
-/// 1パネル分の操作要求と状態。
+/// パネル単位の操作要求キューと状態。
 #[derive(Debug, Default)]
 pub struct PanelState {
     pub commands: Vec<PanelCommand>,
     pub status: PanelStatus,
-    /// 見えている間は毎フレーム描き直す（アニメーションし続けるビューが立てる）。
+    /// 表示中は毎フレーム再描画する。連続アニメーションを行うビューが設定する。
     pub live: bool,
-    /// 次のフレームで 1 回描き直す（タイマーなどで自分から変わるビューが立て、フレームループが下ろす）。
-    /// 何もしていないパネルの推測の描き直し（[`IDLE_REDRAW`]）を待たずに、変わったときだけ描ける。
+    /// 次フレームで 1 回再描画する。タイマー等で自発的に更新するビューが設定し、フレームループが消費する。
+    /// アイドル時の推測再描画（[`IDLE_REDRAW`]）を待たず、変更時にのみ再描画できる。
     pub redraw: bool,
-    /// このパネルそのものをレーザーで指している手。フレームループが [`sync_panel`] で毎フレーム書く（変わっても描き直させない）。
-    /// コントローラの入力をパネルに見せてよいかの条件（[`PanelControl::controllers`] を絞る）。
+    /// このパネルをレーザーで指している手の一覧。フレームループが [`sync_panel`] で毎フレーム更新する（変更時の再描画は不要）。
+    /// コントローラ入力のフィルタ条件として使用（[`PanelControl::controllers`] の絞り込み）。
     pub pointing: Vec<Hand>,
-    /// 取り付け先から見た姿勢（取り付けていれば。掴んで離すと変わる）と、VR 上の大きさ（m。等倍のつもりの値: UI スケールを
-    /// 割り戻したもの）。フレームループが [`sync_panel`] で毎フレーム書く（ナビゲーションバーの大きさは毎 tick 変わるので、
-    /// 変わっても描き直させない）。置き直した所を覚えておく画面（wrist）が読む。
+    /// 取り付け先から見た相対姿勢（取り付け時のみ有効、掴んで離すと更新）と VR 上の大きさ（m、UI スケール除算済み）。
+    /// フレームループが [`sync_panel`] で毎フレーム更新する（変更時の再描画は不要）。wrist が配置記憶に使用する。
     pub offset: Option<Pose>,
     pub size: Vec2,
-    /// このパネルが最後に描き直したときの全体の設定（[`PanelControl::settings`]。変われば描き直す）。
+    /// 最後の再描画時点の全体設定（[`PanelControl::settings`]）。変更があれば再描画する。
     seen: Settings,
 }
 
-/// ビューとフレームループの受け渡し口（GPUI のグローバル）。ビューは対象パネルの `commands` に積み、
-/// フレームループが [`sync_panel`] でオーバーレイに反映して `status` を書き戻す。
-/// ビューの型に依存しないので、本番・testkit のどのキットも同じ経路を通る。
+/// ビューとフレームループ間の受け渡し口（GPUI グローバル）。ビューが `commands` にキューイングした操作を、
+/// フレームループが [`sync_panel`] でオーバーレイに反映し `status` を書き戻す。
+/// ビューの型に依存しないため、本番・testkit 共通で利用する。
 #[derive(Default)]
 pub struct PanelControl {
     pub panels: HashMap<PanelId, PanelState>,
-    /// アプリ全体の設定（テーマ・言語・ポインタ）。フレームループが [`sync_settings`] で書き戻す。
+    /// アプリ全体の設定（テーマ・言語・ポインタ）。フレームループが [`sync_settings`] で更新する。
     pub settings: Settings,
-    /// ビューが積む、全体の設定の変更要求（パネルを問わない）。フレームループが [`sync_settings`] で反映する。
+    /// ビューがキューイングする全体設定の変更要求（パネル非依存）。フレームループが [`sync_settings`] で反映する。
     pub setting_changes: Vec<Setting>,
-    /// OS の前面のアプリのキーボードの状態（[`keyboard::system_keyboard`] で読む）。
-    /// 読まれてから（`os_keyboard_wanted`）フレームループが [`sync_settings`] でカーネルから書き写す。
+    /// OS のフォアグラウンドアプリのキーボード状態（[`keyboard::system_keyboard`] で参照）。
+    /// `os_keyboard_wanted` が設定された後、フレームループが [`sync_settings`] でカーネルから転写する。
     pub os_keyboard: kernel::subsystems::os::keyboard::Settings,
     pub(crate) os_keyboard_wanted: bool,
     pub spawns: Vec<PanelSpec>,
-    /// 計測するか。ビューが切り替え、フレームループが計測とプロファイラパネルの開閉を合わせる。
-    /// パネルの閉じるボタンでも `false` になる。
+    /// プロファイリングの有効・無効。ビューが切り替え、フレームループが計測とプロファイラパネルの開閉を同期する。
+    /// パネルの閉じるボタンからも無効化される。
     pub profiling: bool,
-    /// 手ごとの、タッチの長押しの進み具合（0〜1。[`PointerBridge::hold_progress`]）。ポインタ（カーソル）がリングで見せる。
+    /// 手ごとのタッチ長押し進捗（0〜1、[`PointerBridge::hold_progress`]）。ポインタのリング表示に使用する。
     pub hold: HashMap<Hand, f32>,
-    /// 手ごとの、ツールチップの文字（指している要素が [`design::components::Tooltips`] に置いたもの）と、
-    /// カーソルの上下どちらに出すか。フレームループが [`sync_tooltips`] で書き、ツールチップのパネルが描く。
+    /// 手ごとのツールチップ文字列（ポイント先の要素が [`design::components::Tooltips`] に設定した内容）と、
+    /// カーソルに対する表示位置（上下）。フレームループが [`sync_tooltips`] で書き込み、ツールチップパネルが描画する。
     pub tooltip: HashMap<Hand, gpui::SharedString>,
     pub anchor: HashMap<Hand, Anchor>,
-    /// 骨格が取れている手（スケルタル入力）と HMD の姿勢。フレームループが [`sync_panel`] で毎フレーム書く。
-    /// どのパネルの状態でもないので、変わってもパネルを描き直させない（見たいビューは `PanelState::live` で毎フレーム描く）。
+    /// スケルタル入力が取得できている手と HMD の姿勢。フレームループが [`sync_panel`] で毎フレーム更新する。
+    /// パネル固有の状態ではないため、変更時に再描画は行わない（必要なビューは `PanelState::live` で毎フレーム描画する）。
     pub hands: Vec<kernel::vr::HandSkeleton>,
     pub hmd: kernel::Pose,
-    /// 手ごとの入力の状態（判定の確認用）。`hands` と同じく毎フレーム書く。
+    /// 手ごとの入力状態（判定の確認用）。`hands` と同様に毎フレーム更新する。
     pub controllers: Vec<kernel::ControllerState>,
-    /// 電池の残量を申告しているデバイス。`hands` と同じく毎フレーム書く（変わってもパネルを描き直させない）。
+    /// バッテリー残量を報告しているデバイス。`hands` と同様に毎フレーム更新する（変更時の再描画は不要）。
     pub batteries: Vec<kernel::vr::Battery>,
-    /// 再生中のメディア（[`kernel::Kernel::now_playing`]）。`hands` と同じく毎フレーム書く。
+    /// 再生中のメディア（[`kernel::Kernel::now_playing`]）。`hands` と同様に毎フレーム更新する。
     pub media: Option<std::sync::Arc<kernel::subsystems::media::NowPlaying>>,
-    /// 起動してから届いた OS の通知（[`kernel::Kernel::notifications`]。届いた順）。`hands` と同じく毎フレーム書く。
+    /// 起動後に受信した OS 通知（[`kernel::Kernel::notifications`]、受信順）。`hands` と同様に毎フレーム更新する。
     pub notifications:
         std::sync::Arc<[std::sync::Arc<kernel::subsystems::notifications::Notification>]>,
-    /// 両目に映る範囲（[`kernel::Kernel::fov`]。HUD は `Fov::safe` の内側に置く）。`hands` と同じく毎フレーム書く。
+    /// 両目の視野範囲（[`kernel::Kernel::fov`]）。HUD は `Fov::safe` の内側に配置する。`hands` と同様に毎フレーム更新する。
     pub fov: Option<kernel::Fov>,
-    /// 終了を頼む。フレームループがアプリを終える（テストのハーネスもこれで終える）。
+    /// アプリの終了要求。フレームループがアプリを終了する（テストハーネスも同様）。
     pub quit: bool,
-    /// 開いているパネルの数（閉じたものは数えない）と、同時に開ける数の上限（[`MAX_PANELS`] とランタイムの上限の小さい方）。
-    /// フレームループが毎フレーム書く。
+    /// 開いているパネル数（閉じたものを除く）と同時オープン上限（[`MAX_PANELS`] とランタイム上限の小さい方）。
+    /// フレームループが毎フレーム更新する。
     pub open: usize,
     pub limit: usize,
-    /// 持ち主のパネル → そのナビゲーションバー。バーが開いたときに書く（持ち主の状態でバーを描き直すため）。
+    /// 持ち主パネルからナビゲーションバーへの対応。バーの起動時に登録する（持ち主の状態変化でバーを再描画するため）。
     pub nav_bars: HashMap<PanelId, PanelId>,
-    /// 画面をはめられる場所（ダッシュボード）: 持ち主と、その上端に立てる角度（[`kernel::Parent::slot`]）。[`dock`] で使う。
+    /// ドック（ダッシュボード）: 持ち主パネルと、上端に立てる角度（[`kernel::Parent::slot`]）。[`dock`] で使用する。
     pub dock: Option<(PanelId, f32)>,
-    /// 今はめている画面（[`docked`] で、まだはまっているか確かめて読む）。
+    /// 現在ドックに装着されている画面（[`docked`] で有効性を検証してから参照する）。
     docked: Option<PanelId>,
 }
 
-/// 画面をはめる場所（[`PanelControl::dock`]）が出ていれば（閉じても隠してもいなければ）、その持ち主と角度。
+/// ドック（[`PanelControl::dock`]）が有効（閉じられても隠されてもいない）であれば、その持ち主と角度を返す。
 pub(crate) fn dock_slot(cx: &App) -> Option<(PanelId, f32)> {
     let ctl = cx.try_global::<PanelControl>()?;
     ctl.dock.filter(|(owner, _)| {
@@ -87,7 +86,7 @@ pub(crate) fn dock_slot(cx: &App) -> Option<(PanelId, f32)> {
     })
 }
 
-/// はめる場所に今はまっている画面。
+/// 現在ドックに装着されている画面。
 pub fn docked(cx: &App) -> Option<PanelId> {
     let (owner, _) = dock_slot(cx)?;
     let ctl = cx.global::<PanelControl>();
@@ -98,8 +97,8 @@ pub fn docked(cx: &App) -> Option<PanelId> {
     })
 }
 
-/// `panel` をはめる場所にはめる（持ち主に付いて動き、掴むと持ち主ごと動く）。はまっていた画面は閉じる。
-/// 場所が開いていなければ何もしない。
+/// `panel` をドックに装着する（持ち主に追従し、掴むと持ち主ごと移動する）。既存の装着画面は閉じる。
+/// ドックが利用不可の場合は何もしない。
 pub fn dock(panel: PanelId, cx: &mut App) {
     let Some((owner, tilt)) = dock_slot(cx) else {
         return;
@@ -118,7 +117,7 @@ pub fn dock(panel: PanelId, cx: &mut App) {
     command(panel, PanelCommand::Parent(Some(parent)), cx);
 }
 
-/// はめた `panel` を外して独立させる（その場に残り、持ち主が閉じても閉じない）。
+/// `panel` をドックから取り外して独立させる（その場に残り、持ち主が閉じても存続する）。
 pub fn undock(panel: PanelId, cx: &mut App) {
     let ctl = cx.default_global::<PanelControl>();
     if ctl.docked == Some(panel) {
@@ -127,15 +126,15 @@ pub fn undock(panel: PanelId, cx: &mut App) {
     command(panel, PanelCommand::Parent(None), cx);
 }
 
-/// `owner` の上端を、画面をはめる場所にする（`tilt` だけ起こして立てる。[`dock`] で使う）。はめられる画面
-/// （[`PanelSpec::dockable`]）は、ここから掴んで引っこ抜け、近づけて離すとはまる（オーバーレイ層の磁石）。
+/// `owner` の上端をドックとして登録する（`tilt` 分の角度で起こして立てる。[`dock`] で使用）。
+/// ドック対応画面（[`PanelSpec::dockable`]）は掴んで引き抜き、近づけて離すと装着される（オーバーレイ層のマグネット）。
 pub fn offer_dock(owner: PanelId, tilt: f32, cx: &mut App) {
     cx.default_global::<PanelControl>().dock = Some((owner, tilt));
     command(owner, PanelCommand::DockSlot(Some(tilt)), cx);
 }
 
-/// 掴んで引っこ抜いた・はめた画面（[`Kernel::take_dock_changes`]）を、はまっている画面の記録に写し、はめる場所の持ち主
-/// （ボタンの強調）とその画面のナビゲーションバー（外す・戻すボタン）を描き直させる。
+/// ドックの着脱変更（[`Kernel::take_dock_changes`]）を装着記録に反映し、ドック持ち主の
+/// ボタン強調状態と該当画面のナビゲーションバー（取り外し・復帰ボタン）を再描画させる。
 fn sync_docking<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) {
     let changes = kernel.take_dock_changes();
     for &(panel, docked) in &changes {
@@ -158,45 +157,45 @@ fn sync_docking<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) {
 
 impl gpui::Global for PanelControl {}
 
-/// `panel` への操作を積む（フレームループが次の [`sync_panel`] でカーネルに反映する）。
+/// `panel` への操作をキューイングする（フレームループが次の [`sync_panel`] でカーネルに反映する）。
 pub fn command(panel: PanelId, command: PanelCommand, cx: &mut App) {
     commands(panel, [command], cx);
 }
 
-/// [`command`] の複数版（積んだ順に反映する）。
+/// [`command`] の複数版。キューイングされた順に反映する。
 pub fn commands(panel: PanelId, commands: impl IntoIterator<Item = PanelCommand>, cx: &mut App) {
     let state = cx.default_global::<PanelControl>().panels.entry(panel);
     state.or_default().commands.extend(commands);
 }
 
-/// `panel` を次のフレームで 1 回描き直させる（[`PanelState::redraw`]）。
+/// `panel` の次フレームでの 1 回再描画を要求する（[`PanelState::redraw`]）。
 pub fn redraw(panel: PanelId, cx: &mut App) {
     let state = cx.default_global::<PanelControl>().panels.entry(panel);
     state.or_default().redraw = true;
 }
 
-/// 自分から変わったビュー（タイマー・非同期の結果）の `cx.notify()`。
-/// フレームループはビューの notify を知らないので、[`redraw`] も頼む。
+/// 自発的に更新したビュー（タイマー・非同期処理の結果）からの `cx.notify()`。
+/// フレームループはビューの notify を検知できないため、[`redraw`] も併せて要求する。
 pub fn notify<V: 'static>(panel: PanelId, cx: &mut Context<V>) {
     cx.notify();
     redraw(panel, cx);
 }
 
-/// 全体の設定の変更を積む（フレームループが次の [`sync_settings`] で反映する）。
+/// 全体設定の変更をキューイングする（フレームループが次の [`sync_settings`] で反映する）。
 pub fn set(setting: Setting, cx: &mut App) {
     let control = cx.default_global::<PanelControl>();
     control.setting_changes.push(setting);
 }
 
-/// 今の全体の設定（フレームループが書き戻したもの。無ければ既定）。
+/// 現在の全体設定（フレームループが書き戻した値、未設定時は既定値）。
 pub fn settings(cx: &App) -> Settings {
     let control = cx.try_global::<PanelControl>();
     control.map(|c| c.settings).unwrap_or_default()
 }
 
-/// ビューが積んだ操作要求を `panel` に反映し、状態を書き戻す。変わったらウィンドウを描き直す（`true` を返す）。
-/// 全体の設定（[`sync_settings`]）と、掴んで外した・はめた画面（[`sync_docking`]）もここで反映するので、呼び出し側は
-/// パネルごとにこれだけを呼べばよい。入力を配送した後・描画する前に毎フレーム呼ぶ。
+/// ビューがキューイングした操作要求を `panel` に反映し、状態を書き戻す。変更があればウィンドウを再描画する（`true` を返す）。
+/// 全体設定（[`sync_settings`]）とドック着脱（[`sync_docking`]）も内部で反映するため、呼び出し側はパネルごとにこの関数のみ
+/// 呼べばよい。入力配送後・描画前に毎フレーム呼び出す。
 pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut App) -> bool {
     sync_settings(kernel, cx);
     sync_docking(kernel, cx);
@@ -232,8 +231,8 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     true
 }
 
-/// ビューが積んだ全体の設定の変更をカーネルに反映し、今の設定を書き戻す。変わったら `true`。
-/// テーマ・言語は GPUI のグローバルにも置く（画面は `design::Theme::current` / `i18n::t` で引く）。
+/// ビューがキューイングした全体設定の変更をカーネルに反映し、現在の設定を書き戻す。変更があれば `true`。
+/// テーマ・言語は GPUI グローバルにも設定する（画面は `design::Theme::current` / `i18n::t` で参照する）。
 pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool {
     let ctl = cx.default_global::<PanelControl>();
     for s in ctl.setting_changes.drain(..) {
@@ -245,7 +244,7 @@ pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool
     let settings = kernel.settings();
     let changed = ctl.settings != settings;
     ctl.settings = settings;
-    // 文字の大きさと太字化は GPUI の側（スレッドごと）に置く。そちらが食い違っていれば、設定が変わっていなくても合わせる。
+    // 文字サイズと太字化は GPUI 側（スレッド単位）に保持する。不整合があれば、設定未変更でも同期する。
     design::font::set_text(settings.text_scale, settings.bold_text, cx);
     if !changed {
         return false;
@@ -265,7 +264,7 @@ pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool
     true
 }
 
-/// カーネルの言語に対応する i18n の言語。
+/// カーネルの言語設定を i18n の言語に変換する。
 pub fn lang(l: Language) -> i18n::Lang {
     match l {
         Language::En => i18n::Lang::En,
@@ -273,7 +272,7 @@ pub fn lang(l: Language) -> i18n::Lang {
     }
 }
 
-/// i18n の言語に対応するカーネルの言語（[`lang`] の逆）。
+/// i18n の言語をカーネルの言語設定に変換する（[`lang`] の逆変換）。
 pub fn language(l: i18n::Lang) -> Language {
     match l {
         i18n::Lang::En => Language::En,

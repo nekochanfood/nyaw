@@ -4,9 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-# UI 層。パネルを GPUI のウィンドウで実体化する。
+# UI 層。パネルを GPUI ウィンドウとして実体化する。
 [dependencies]
-# 描画は kernel::rendering が担う。UI の入力注入とテストにも test-support を使う。
+# 描画は kernel::rendering が担当する。入力注入とテストには test-support フィーチャーを使用する。
 gpui = { workspace = true, features = ["test-support"] }
 gpui_platform = { workspace = true, features = ["test-support"] }
 kernel = { workspace = true, features = ["rendering-host"] }
@@ -26,8 +26,8 @@ setup.workspace = true
 dashboard.workspace = true
 toast.workspace = true
 
-# 実プラットフォーム + GPU で動かすテスト（tests/gpu）。GUI はメインスレッドで回すため独自 main。
-# ケースごとに子プロセスで起こす。ストレステスト（ベンチマーク）などは `-- --ignored` のときだけ流す。
+# 実プラットフォーム + GPU を使用する E2E テスト（tests/gpu）。GUI はメインスレッド上で動作するため独自の main を持つ。
+# 各テストケースを子プロセスとして起動する。ストレステスト等は `-- --ignored` 指定時のみ実行する。
 [[test]]
 name = "gpu"
 harness = false

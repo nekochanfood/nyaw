@@ -1,30 +1,30 @@
-//! novr のエミュレーターの GPU コンポジタ（wgpu）。パネルを透視投影したテクスチャ付きの四角としてウィンドウに直接描く。
-//! CPU の合成（novr.rs の `rasterize`）と同じ見た目（無彩色の市松模様の背景、描画順・遠い順に奥から重ねる、ストレートアルファ）。
-//! 透視の割り付けと奥行きの切り取りは GPU がする。テクスチャは送られたときだけ GPU へ上げる。
+//! novr エミュレーターの GPU コンポジタ（wgpu）。パネルを透視投影でテクスチャ付きクアッドとしてウィンドウに直接描画する。
+//! CPU 合成（novr.rs の `rasterize`）と同一の見た目（無彩色の市松模様背景、描画順は遠い順に奥から重ねる、ストレートアルファ）。
+//! 透視投影の割り当てと奥行きクリッピングは GPU が処理する。テクスチャは更新時のみ GPU へアップロードする。
 
 use glam::{Mat4, Vec3};
 use minifb::Window;
 
 use crate::{Pose, Vec2};
 
-/// 市松模様の 1 マス（px）と 2 色（0〜1。CPU の合成と同じ値）。
+/// 市松模様の 1 マスのサイズ（px）と 2 色（0〜1。CPU 合成と同一の値）。
 const CHECKER: f32 = 16.0;
 const CHECKER_GRAY: [f32; 2] = [0x6b as f32 / 255.0, 0x8a as f32 / 255.0];
 
-/// 1 枚のクアッドを描く材料（毎フレーム novr.rs が渡す）。
+/// 1 枚のクアッドの描画データ（毎フレーム novr.rs が供給する）。
 pub(crate) struct Draw {
-    /// どのクアッドか（GPU 側のテクスチャの持ち主）。
+    /// クアッドのインデックス（GPU 側のテクスチャ所有者）。
     pub quad: usize,
     pub pose: Pose,
-    /// 大きさ（m）。
+    /// サイズ（m）。
     pub size: Vec2,
     /// 不透明度（0〜1）。
     pub alpha: f32,
-    /// 色に掛ける明るさ（0〜1）。
+    /// 色に乗算するティント値（0〜1）。
     pub tint: f32,
 }
 
-/// 1 枚のクアッドの GPU 側の持ち物。
+/// 1 枚のクアッドの GPU 側リソース。
 struct Slot {
     texture: wgpu::Texture,
     size: (u32, u32),
@@ -33,7 +33,7 @@ struct Slot {
 }
 
 pub(crate) struct Gpu {
-    // サーフェスはウィンドウより先に落とす（Emulator のフィールドの順でウィンドウより前に置く）。
+    // サーフェスはウィンドウより先にドロップする（Emulator のフィールド順でウィンドウより前に配置する）。
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -45,7 +45,7 @@ pub(crate) struct Gpu {
     slots: Vec<Option<Slot>>,
 }
 
-/// 1 枚分の uniform（4 隅のクリップ座標と不透明度）。
+/// 1 枚分の uniform（4 隅のクリップ空間座標と不透明度）。
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct QuadUniform {
@@ -61,7 +61,7 @@ struct Quad { corners: array<vec4<f32>, 4>, alpha: vec4<f32> };
 
 struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 
-// 4 隅は左上・右上・左下・右下の順で、三角形の帯で描く。
+// 4 隅は左上・右上・左下・右下の順で、三角形のストリップとして描画する。
 @vertex fn quad_vs(@builtin(vertex_index) i: u32) -> V {
     var uv = array<vec2<f32>, 4>(vec2(0.0, 0.0), vec2(1.0, 0.0), vec2(0.0, 1.0), vec2(1.0, 1.0));
     var o: V;
@@ -99,10 +99,10 @@ impl Gpu {
         self.slots.get(quad)?.as_ref().map(|slot| slot.size)
     }
 
-    /// `window` に描く GPU コンポジタを作る。使える GPU が無ければエラー（呼び出し側は CPU で合成する）。
+    /// `window` に描画する GPU コンポジタを作成する。利用可能な GPU がなければエラーを返す（呼び出し側は CPU で合成する）。
     pub(crate) fn new(window: &Window, size: (u32, u32)) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
-        // SAFETY: サーフェスは Emulator の中でウィンドウより先に落とす（フィールドの順）。ウィンドウは Emulator が持ち続ける。
+        // SAFETY: サーフェスは Emulator 内でウィンドウより先にドロップする（フィールド順）。ウィンドウは Emulator が所有し続ける。
         let surface = unsafe {
             use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
             let target = wgpu::SurfaceTargetUnsafe::RawHandle {
@@ -126,14 +126,14 @@ impl Gpu {
         }))
         .map_err(|e| format!("failed to create GPU device: {e}"))?;
         let caps = surface.get_capabilities(&adapter);
-        // CPU の合成と同じく sRGB の値のまま混ぜるので、sRGB でない形式を選ぶ。
+        // CPU 合成と同様に sRGB 値のままブレンドするため、非 sRGB フォーマットを選択する。
         let format = caps
             .formats
             .iter()
             .copied()
             .find(|f| !f.is_srgb())
             .unwrap_or(caps.formats[0]);
-        // 周期は poll が作るので、表示で待たない。
+        // フレーム周期は poll が生成するため、表示側で待機しない。
         let present_mode = if caps.present_modes.contains(&wgpu::PresentMode::Mailbox) {
             wgpu::PresentMode::Mailbox
         } else if caps.present_modes.contains(&wgpu::PresentMode::Immediate) {
@@ -258,7 +258,7 @@ impl Gpu {
         })
     }
 
-    /// ウィンドウの大きさが変わった。
+    /// ウィンドウサイズ変更時に呼び出す。
     pub(crate) fn resize(&mut self, size: (u32, u32)) {
         if size.0 == 0 || size.1 == 0 || (self.config.width, self.config.height) == size {
             return;
@@ -267,14 +267,14 @@ impl Gpu {
         self.surface.configure(&self.device, &self.config);
     }
 
-    /// クアッドのテクスチャ・uniform・bind group を手放す（wgpu が GPU の使用が済むまで延命する）。
+    /// クアッドのテクスチャ・uniform・bind group を解放する（wgpu が GPU の使用完了まで延命する）。
     pub(crate) fn release(&mut self, quad: usize) {
         if let Some(slot) = self.slots.get_mut(quad) {
             *slot = None;
         }
     }
 
-    /// テクスチャを上げる（大きさが変わったら作り直す）。
+    /// テクスチャをアップロードする（サイズ変更時は再作成する）。
     pub(crate) fn upload(&mut self, quad: usize, (w, h, rgba): (u32, u32, &[u8])) {
         if self.slots.len() <= quad {
             self.slots.resize_with(quad + 1, || None);
@@ -290,7 +290,7 @@ impl Gpu {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                // CPU の合成と同じく sRGB の値のまま混ぜる。
+                // CPU 合成と同様に sRGB 値のままブレンドする。
                 format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
@@ -349,7 +349,7 @@ impl Gpu {
         );
     }
 
-    /// 背景の上に `draws` を奥から手前の順に描いて表示する。`fov_y` は縦の視野角（ラジアン）。
+    /// 背景の上に `draws` を奥から手前の順に描画して表示する。`fov_y` は縦の視野角（ラジアン）。
     pub(crate) fn draw(&mut self, draws: &[Draw], fov_y: f32, near: f32) -> Result<(), String> {
         let (w, h) = (self.config.width as f32, self.config.height as f32);
         let proj = Mat4::perspective_rh(fov_y, w / h, near, 1000.0);
@@ -373,7 +373,7 @@ impl Gpu {
                 ],
                 alpha: [d.alpha, d.tint, 0.0, 0.0],
             };
-            // SAFETY: QuadUniform は repr(C) の f32 だけ。
+            // SAFETY: QuadUniform は repr(C) で f32 のみで構成される。
             let bytes = unsafe {
                 std::slice::from_raw_parts(
                     &uniform as *const QuadUniform as *const u8,
@@ -387,7 +387,7 @@ impl Gpu {
             wgpu::CurrentSurfaceTexture::Success(t)
             | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
             other => {
-                // 失われた・古くなったサーフェスは作り直して、このフレームは飛ばす。
+                // 喪失した・期限切れのサーフェスは再作成し、このフレームはスキップする。
                 self.surface.configure(&self.device, &self.config);
                 return Err(format!("failed to acquire present target: {other:?}"));
             }

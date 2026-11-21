@@ -1,9 +1,9 @@
-//! Layer 5 画面: OS の通知のトースト。1 枚のパネルを使い回し、届いた通知を視界の端（HUD）→ 手首の時計の上 →
-//! ダッシュボードの上へ移す（進むだけで戻らない。[`flow`]）。場所を移るときは、今の場所で消えて（アウト）から次の場所へ
-//! 瞬間的に移り、そこで現れる（イン）。目の前を横切って視界を遮らないように。HUD はアイコンと見出しだけで押せず、
-//! 手首とダッシュボードでは本文（行数を限って）まで出し、押すと通知センター（ダッシュボードのクイック設定の一覧。
-//! 詳しい中身と通知のボタンはそこで出す）が開く。左右にスワイプするとその場で片付く（[`ui::swipe`]。通知センターからは
-//! 消さない）。通知センターが出ている間は出ない（同じものが並ぶので）。開くのは wrist。
+//! Layer 5 画面: OS 通知のトースト表示。1 枚のパネルを再利用し、到着した通知を HUD → 手首の時計上部 →
+//! ダッシュボード上部へ遷移させる（一方向のみ。[`flow`]）。表示位置の遷移時は、現在位置でフェードアウトしてから
+//! 次の位置へ瞬間移動し、フェードインする（視界を横切らないようにする）。HUD はアイコンと見出しのみで非インタラクティブ、
+//! 手首・ダッシュボードでは本文（行数制限あり）まで表示し、クリックで通知センター（ダッシュボードのクイック設定一覧、
+//! 詳細と通知アクションはそこで表示）を開く。左右スワイプでその場で非表示にできる（[`ui::swipe`]、通知センターからは
+//! 削除しない）。通知センター表示中はトーストを非表示にする（重複表示を避けるため）。開くのは wrist。
 
 mod flow;
 
@@ -32,35 +32,35 @@ use ui::{PanelControl, PanelSpec};
 pub use flow::Place;
 use flow::{Flow, Scene};
 
-/// パネルの解像度（px）。中身は置き場所の側（HUD は設定の端、手首とダッシュボードは下）に寄せ、残りは透明。
+/// パネルの解像度（px）。コンテンツは表示位置側（HUD はアンカー端、手首・ダッシュボードは下部）に寄せ、残りは透明。
 pub const RES_PX: (u32, u32) = (420, 600);
-/// 置き場所ごとの密度（px/m）。どこでもダッシュボードの画面と同じくらいの見た目の大きさになるよう、遠い HUD は粗く、
-/// 近い手首は細かく。HUD は視界の端でも気づけるよう少し大きく。
+/// 表示位置ごとの密度（px/m）。すべての位置でダッシュボード画面と同程度の見た目サイズとなるよう、遠い HUD は低密度、
+/// 近い手首は高密度に設定する。HUD は視界の端でも気づけるようやや大きめにする。
 const HUD_PX_PER_M: f32 = 600.0;
 const WRIST_PX_PER_M: f32 = 3000.0;
 const DASHBOARD_PX_PER_M: f32 = 1000.0;
 /// HUD の頭からの距離（m）。
 pub const HUD_DISTANCE: f32 = 1.5;
-/// 手首の時計の上に立てる角度（rad。顔の方へ起こす）。時計を見る目は文字盤の正面にあり、その上の通知は少し斜めに見えるので。
+/// 手首の時計上部に立てる傾斜角（rad、顔方向へ起こす）。視点は文字盤の正面にあり、その上の通知はやや斜めに見えるため。
 const WRIST_TILT: f32 = 0.3;
-/// 並べる数（それより多ければ「ほか n 件」）。
+/// 表示上限数（超過分は「ほか n 件」として表示）。
 const HUD_ROWS: usize = 3;
 const CARD_ROWS: usize = 3;
 /// HUD のアイコンの一辺（px）。
 const HUD_ICON: f32 = 28.0;
-/// 並べたカードのまとまりが、出入りで滑る距離（px）。
+/// カード群がイン・アウト時にスライドする距離（px）。
 const SLIDE_PX: f32 = 56.0;
-/// 足されたカードが上から落ちてくる距離（px）。
+/// 追加されたカードが上部からドロップインする距離（px）。
 const DROP_PX: f32 = 24.0;
-/// アウトが終わりきるのを待つ余裕（アウトの長さに足す。フレームの遅れで消えきる前に移らないように）。
+/// アウト完了を待つマージン（アウト時間に加算する。フレーム遅延により完全消失前に遷移しないようにする）。
 const OUT_MARGIN: Duration = Duration::from_millis(50);
 
-/// トーストの起動仕様。手首の時計 `wrist` の上と、ダッシュボード（`PanelControl::dock`）の上へも移る。`opened` は作られた
-/// パネルの ID を受け取る。
+/// トーストの起動仕様。手首の時計 `wrist` 上部およびダッシュボード（`PanelControl::dock`）上部にも遷移する。
+/// `opened` は生成されたパネル ID を受け取るコールバック。
 pub fn spec(wrist: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'static) -> PanelSpec {
     PanelSpec::root(Pose::IDENTITY, move |panel, _, cx: &mut Context<Toast>| {
         opened(panel, cx);
-        // 何も届いていない間は隠しておく。出入りは不透明度だけにして、どちらへ動くかは中身が描く。
+        // 通知未到着時は非表示にしておく。遷移は不透明度のみで行い、スライド方向はコンテンツ側が描画する。
         ui::commands(
             panel,
             [PanelCommand::Hide(true), PanelCommand::FadeOnly(true)],
@@ -71,7 +71,7 @@ pub fn spec(wrist: PanelId, opened: impl FnOnce(PanelId, &mut gpui::App) + 'stat
     .sized(size(HUD_PX_PER_M), RES_PX)
     .locked()
     .without_resize()
-    // 常駐で、置き場所は自分で決める（閉じる・動かす対象ではない）。ナビゲーションバーは付けない。
+    // 常駐パネルで、表示位置は自律的に決定する（閉じる・移動の対象外）。ナビゲーションバーは付与しない。
     .without_nav_bar()
 }
 
@@ -80,8 +80,8 @@ fn size(px_per_m: f32) -> Vec2 {
     Vec2::new(RES_PX.0 as f32, RES_PX.1 as f32) / px_per_m
 }
 
-/// 頭から見た HUD の置き場所。中身の外側の端（パネルの端から影の余白の内側）が、両目に確実に映る範囲 `safe`
-/// （[`Fov::safe`]）の `anchor` の側の端に来るよう、[`HUD_DISTANCE`] 先に置いて頭の方へ向ける。`scale` は UI スケール。
+/// 頭部基準の HUD 配置位置。コンテンツ外縁（パネル端から影余白の内側）が、両目の確実可視範囲 `safe`
+/// （[`Fov::safe`]）の `anchor` 側の端に一致するよう、[`HUD_DISTANCE`] 先に配置して頭部方向へ向ける。`scale` は UI スケール。
 // ponytail: 頭へ向けて回した分、外の端は 1° ほど外へずれる。セーフエリアの余裕（視野の 40%）に収まるので詰めない。
 pub fn hud_pose(anchor: NotificationAnchor, safe: Fov, scale: f32) -> Pose {
     let (sx, sy) = anchor.side();
@@ -108,14 +108,14 @@ pub fn hud_pose(anchor: NotificationAnchor, safe: Fov, scale: f32) -> Pose {
     )
 }
 
-/// パネルを置いた先（同じなら置き直さない）。
+/// パネルの配置先（同一であれば再配置しない）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Target {
     Hud(Pose),
     Parent(Parent),
 }
 
-/// 出入りの段階。出ていく間（`Out`）は前の中身のまま描き、消えきってから次の場所へ移る。
+/// イン・アウトの遷移フェーズ。アウト中（`Out`）は前のコンテンツのまま描画し、完全消失後に次の位置へ遷移する。
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
     Hidden,
@@ -128,21 +128,21 @@ pub struct Toast {
     panel: PanelId,
     wrist: PanelId,
     flow: Flow,
-    /// 今パネルを置いている所（出入りしている間も）。隠れていれば `None`。
+    /// 現在のパネル配置先（遷移中も含む）。非表示時は `None`。
     target: Option<Target>,
     phase: Phase,
-    /// 描いている置き場所（出ていく間も前のまま）。
+    /// 描画中の表示位置（アウト中も遷移前の位置を維持）。
     place: Place,
-    /// 出している通知（新しい順）と、出しきれなかった数。
+    /// 表示中の通知（新しい順）と、表示上限を超過した件数。
     shown: Vec<Arc<Notification>>,
     more: usize,
-    /// 前のフレームに並べていた通知（無くなったカードを、消えていく間だけ描き残す）。
+    /// 前フレームで表示していた通知（消去されたカードをフェードアウト完了まで描画し続ける）。
     prev: Vec<Arc<Notification>>,
-    /// カードの出入り（上から積む）。
+    /// カードのイン・アウトアニメーション（上から積む）。
     stack: Entering,
-    /// カードの置かれた所（ウィンドウの px。前のフレームに測った自然な大きさ）。出入りで高さを伸び縮みさせる。
+    /// カードの配置矩形（ウィンドウ px 座標。前フレームで計測した自然サイズ）。イン・アウト時に高さの伸縮アニメーションに使用する。
     boxes: Rc<RefCell<HashMap<u32, Bounds<Pixels>>>>,
-    /// 左右のスワイプで片付ける（[`ui::swipe`]）。
+    /// 左右スワイプによる非表示操作（[`ui::swipe`]）。
     swipes: Swipes,
     icons: ui::notification::Icons,
 }
@@ -174,7 +174,7 @@ impl Toast {
         }
     }
 
-    /// 今の置き場所（出ていく間も前の場所。隠れていれば [`Place::Hidden`]）。
+    /// 現在の表示位置（アウト中も遷移前の位置を返す。非表示時は [`Place::Hidden`]）。
     pub fn place(&self) -> Place {
         if self.target.is_some() {
             self.place
@@ -183,8 +183,8 @@ impl Toast {
         }
     }
 
-    /// フレームループが状態を書き戻すたびに、置き場所と出す通知を決め直す。場所が変わるときは、今の場所で消えきってから
-    /// 次の場所で現れる。同じ場所なら中身だけ入れ替える（カードが上から積まれ、無くなったものは消えていく）。
+    /// フレームループの状態書き戻しごとに、表示位置と対象通知を再決定する。位置が変わる場合は現在位置でフェードアウト完了後に
+    /// 次の位置でフェードインする。同一位置ならコンテンツのみ入れ替える（カードが上から積まれ、消去分はフェードアウトする）。
     fn sync(&mut self, cx: &mut Context<Self>) {
         let ctl = cx.global::<PanelControl>();
         let status = |id: PanelId| ctl.panels.get(&id).map(|p| &p.status);
@@ -203,7 +203,7 @@ impl Toast {
         let notes = ctl.notifications.clone();
         let settings = ctl.settings;
         let safe = ctl.fov.unwrap_or(Fov::NARROW).safe();
-        // 読んだもの（通知センターに並んだ・押した）はもう出さない。
+        // 閲覧済み（通知センターに表示済み・アクティベート済み）の通知は表示対象外とする。
         let ids: Vec<u32> = notes
             .iter()
             .map(|n| n.id)
@@ -246,7 +246,7 @@ impl Toast {
             .collect();
         let more = shown.len().saturating_sub(rows);
         let shown: Vec<_> = shown.into_iter().take(rows).collect();
-        // 出ていく途中: 前の中身のまま、消えきるまで待つ。消えきったら親から外す（親を出し直したときに一緒に出ないように）。
+        // アウト中: 前のコンテンツのまま、完全消失まで待機する。完全消失後に親から切り離す（親の再表示時に連動しないようにする）。
         if let Phase::Out(since) = self.phase {
             let out = Duration::from_millis(Motion::Exit.duration_ms()) + OUT_MARGIN;
             if now.saturating_duration_since(since) < out {
@@ -259,7 +259,7 @@ impl Toast {
         }
         match (self.target, target) {
             (Some(at), Some(next)) if at == next => self.set_content(shown, more, cx),
-            // 違う所へ移る・隠す: まずこの場所で消える（中身はそのまま）。
+            // 異なる位置への遷移・非表示化: まず現在位置でフェードアウトする（コンテンツは維持）。
             (Some(_), _) => {
                 logger::debug!("toast leaves", from = ?self.place, to = ?place);
                 ui::command(self.panel, PanelCommand::Hide(true), cx);
@@ -275,7 +275,7 @@ impl Toast {
         }
     }
 
-    /// 隠れているパネルを `next` へ移して出す（イン）。カードは上から順に積まれる。
+    /// 非表示のパネルを `next` に配置してフェードインする。カードは上から順に積まれる。
     fn show(&mut self, place: Place, next: Target, now: Instant, cx: &mut Context<Self>) {
         let height = RES_PX.1 as f32
             / match place {
@@ -284,7 +284,7 @@ impl Toast {
                 _ => DASHBOARD_PX_PER_M,
             };
         let mut commands = match next {
-            // 頭に付ける前に、今の頭の前へ置いておく（頭を追えないランタイム（novr）では、そのままそこに残る）。
+            // 頭部アタッチ前に、現在の頭部前方に配置しておく（頭部追従非対応のランタイム（novr）ではその位置に留まる）。
             Target::Hud(pose) => vec![
                 PanelCommand::Place(pose),
                 PanelCommand::Attach(Device::Hmd, pose),
@@ -298,13 +298,13 @@ impl Toast {
         commands.extend([PanelCommand::FitHeight(height), PanelCommand::Hide(false)]);
         ui::commands(self.panel, commands, cx);
         (self.target, self.place, self.phase) = (Some(next), place, Phase::In(now));
-        // 前の場所のカードは引き継がず、ここで上から順に積み直す。
+        // 前の位置のカードは引き継がず、新しい位置で上から順に積み直す。
         (self.shown, self.prev) = (Vec::new(), Vec::new());
         self.stack.replay();
         ui::notify(self.panel, cx);
     }
 
-    /// 出している通知を入れ替える（変わったときだけ描き直す）。
+    /// 表示中の通知を更新する（変更があった場合のみ再描画する）。
     fn set_content(&mut self, shown: Vec<Arc<Notification>>, more: usize, cx: &mut Context<Self>) {
         let same = shown.len() == self.shown.len()
             && shown
@@ -318,8 +318,8 @@ impl Toast {
         ui::notify(self.panel, cx);
     }
 
-    /// 並べたカードのまとまりが隠れている側（px の向き）: 手首・ダッシュボードは下（下から上に入り、上から下に出る）、
-    /// HUD は寄せた端の外（上の端なら上、左右の端なら横）。
+    /// カード群がスライドする隠れ側の方向（px 単位）: 手首・ダッシュボードは下（下→上にイン、上→下にアウト）、
+    /// HUD はアンカー端の外側（上端なら上方向、左右端なら横方向）。
     fn hidden_side(&self, cx: &gpui::App) -> Vec2 {
         match self.place {
             Place::Hud => match ui::settings(cx).notification_anchor.side() {
@@ -330,7 +330,7 @@ impl Toast {
         }
     }
 
-    /// まとまりのずれ（px）。入り・出の途中なら動き続ける（`true`）。
+    /// カード群のオフセット（px）。イン・アウト遷移中であればアニメーション継続（`true`）。
     fn slide(&mut self, now: Instant, cx: &gpui::App) -> (Vec2, bool) {
         let side = self.hidden_side(cx) * SLIDE_PX;
         let progress = |since: Instant, motion: Motion| {
@@ -355,7 +355,7 @@ impl Toast {
         }
     }
 
-    /// HUD の 1 行: アイコンと見出し（1 行。長ければ省略）。押せない。
+    /// HUD の 1 行: アイコンと見出し（1 行、長い場合は省略表示）。非インタラクティブ。
     fn pill(&mut self, theme: &Theme, n: &Notification) -> AnyElement {
         let id = n.id;
         let image = self.icons.of(n);
@@ -380,8 +380,8 @@ impl Toast {
             .into_any_element()
     }
 
-    /// 手首・ダッシュボードの 1 枚（[`ui::notification::card`]。広げない）。押すと通知センターがその通知を広げて開く。
-    /// 左右にスワイプしている間は横にずれて薄れる（[`ui::swipe`]）。
+    /// 手首・ダッシュボードの 1 枚（[`ui::notification::card`]、展開なし）。クリックで通知センターが該当通知を展開して開く。
+    /// 左右スワイプ中は横方向にオフセットしてフェードする（[`ui::swipe`]）。
     fn card(&mut self, theme: &Theme, n: &Notification, look: Look) -> AnyElement {
         let id = n.id;
         let image = self.icons.of(n);
@@ -403,7 +403,7 @@ impl Toast {
     }
 }
 
-/// 揃え方（HUD は寄せた端の側。手首・ダッシュボードは中央）。
+/// 揃え方（HUD はアンカー端側、手首・ダッシュボードは中央）。
 #[derive(Clone, Copy)]
 enum Alignment {
     Start,
@@ -411,9 +411,9 @@ enum Alignment {
     End,
 }
 
-/// カード 1 枚の出入り（上から積む）: 出具合 `s` に合わせて高さが伸び（下のカードを押し下げる）、上から落ちてきて現れる。
-/// 消えるときは逆に縮んで上へ抜ける。高さは前のフレームに測った自然な高さ（`boxes`）。出きったら自然な高さに任せる
-/// （ホバーで伸びても追従する）。カードとの隙間は寄せた端の反対側（`gap_top` なら上）に取る。
+/// カード 1 枚のドロップインアニメーション（上から積む）: 進捗 `s` に応じて高さを伸ばし（下のカードを押し下げる）、上部からドロップインで出現する。
+/// 消去時は逆に縮小して上方へ退出する。高さは前フレームで計測した自然高さ（`boxes`）を使用する。イン完了後は自然高さに委ねる
+/// （ホバーによる伸長にも追従する）。カード間のギャップはアンカー端の反対側（`gap_top` なら上）に配置する。
 fn drop_in(
     s: Slide,
     id: u32,
@@ -460,7 +460,7 @@ fn drop_in(
     div()
         .w_full()
         .flex_none()
-        // 高さは画素に揃える（端数で動くと、ほかのカードの文字だけが画素に吸い付いて震える）。
+        // 高さはピクセルに揃える（端数のまま動くと、他カードのテキストのみがピクセルスナップして振動する）。
         .when(grow < 1.0, |d| {
             d.h(px((natural * grow).round())).overflow_hidden()
         })
@@ -479,7 +479,7 @@ impl Render for Toast {
         let now = Instant::now();
         let theme = Theme::current(cx);
         let hud = self.place == Place::Hud;
-        // HUD は設定の端に、手首・ダッシュボードは下（立てた所）に寄せる。カードはどこでも新しいものが上。
+        // HUD はアンカー端に、手首・ダッシュボードは下部（起立位置）に寄せる。カードはすべての位置で新しいものが上。
         let (sx, sy) = if hud {
             ui::settings(cx).notification_anchor.side()
         } else {
@@ -491,7 +491,7 @@ impl Render for Toast {
             _ => Alignment::Center,
         };
         let (offset, sliding) = self.slide(now, cx);
-        // スワイプで畳みきったカードは、もう出さない（消えていく動きも済んでいる。通知センターには残る）。
+        // スワイプで完全に畳まれたカードは以降表示しない（フェードアウトも完了済み。通知センターには残留する）。
         for id in self.swipes.take_gone(now) {
             self.flow.done(id);
             self.shown.retain(|n| n.id != id);
@@ -518,7 +518,7 @@ impl Render for Toast {
             let content = if hud {
                 self.pill(&theme, n)
             } else {
-                // 横へ抜けたカードは高さを畳み、下のカードが滑らかに詰まる。
+                // 横方向に退出したカードは高さを畳み、下のカードが滑らかに詰まる。
                 let look = self.swipes.look(n.id, now);
                 s.grow *= look.height;
                 self.card(&theme, n, look)
@@ -531,8 +531,8 @@ impl Render for Toast {
         if self.stack.finish() || sliding || self.swipes.busy() {
             components::keep_drawing(window, cx);
         }
-        // 「ほか n 件」は並べたカードの下。カードの隙間が上に付く並べ方（下に寄せる）では、ここにも同じ隙間を空ける
-        // （空けないと一番下のカードに重なる）。
+        // 「ほか n 件」はカード列の下部に表示する。ギャップが上に付くレイアウト（下寄せ）では、ここにも同じギャップを設ける
+        // （設けないと最下部のカードに重なる）。
         let more = (self.more > 0).then(|| {
             div().when(sy < 0.0, |d| d.pt(px(spacing::SM))).child(
                 components::card_panel_fit(&theme)
@@ -571,7 +571,7 @@ impl Render for Toast {
                 _ => d.justify_center(),
             })
             .child(column)
-            // 押せる所でだけ、カードのスワイプを受ける。
+            // インタラクティブな位置でのみ、カードのスワイプ操作を受け付ける。
             .when(!hud, |d| {
                 let (swipes, panel) = (self.swipes.clone(), self.panel);
                 d.child(

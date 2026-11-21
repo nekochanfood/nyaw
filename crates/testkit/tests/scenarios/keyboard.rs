@@ -1,11 +1,11 @@
-//! 表示されたキーをレーザー / novr のポインタで押して入力欄まで通す。
+//! 表示されたキーをレーザーまたは novr ポインタで押下し、入力欄への文字入力を検証する。
 use gpui::Context;
 use kernel::subsystems::keyboard::{Database, KeyboardType, Layout};
 use testing::KeyboardTest;
 use testkit::{Driver, Vec2, VrKit, on_every_runtime};
 
 fn screen(layout: &str, variant: &str, cx: &mut Context<KeyboardTest>) -> KeyboardTest {
-    // 非同期ワーカーの速度に依存せず、同じ初期配列から画面操作を始める。
+    // 非同期ワーカーの処理速度に依存せず、固定のレイアウトから画面操作を開始する。
     let db = Database::load().unwrap();
     let layout = Layout::new(layout, variant);
     let keyboard = db.keyboard(&layout).unwrap();

@@ -1,5 +1,5 @@
-//! パネルのスピーカー。パネルの中で鳴らす音は、そのパネルの置き場所・向き・幅のスピーカーから聞こえる。
-//! 立体化は既定で有効で、`PanelCommand::Spatial(false)` で外す（オプトアウト）。
+//! パネルのスピーカー。パネル内で再生する音声は、そのパネルの配置位置・向き・幅のスピーカーから聞こえる。
+//! 空間化は既定で有効であり、`PanelCommand::Spatial(false)` で無効化する（オプトアウト）。
 
 use super::*;
 use audio::{Layout, Sound, Spatializer};
@@ -20,10 +20,10 @@ impl Default for SpeakerConfig {
     }
 }
 
-/// パネルのスピーカーの状態。ビューの表示用。
+/// パネルのスピーカーの状態。ビュー表示用。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AudioStatus {
-    /// このパネルで鳴っている（読み込み中を含む）音の数。
+    /// このパネルで再生中（読み込み中を含む）の音声の数。
     pub playing: usize,
     pub spatial: bool,
     pub layout: Layout,
@@ -43,8 +43,8 @@ impl Default for AudioStatus {
     }
 }
 
-/// 点の音（[`PanelCommand::PlayAt`]）に使うスピーカーの数（パネルごと）。順に使い回すので、続けて鳴らしても
-/// 前の音の残りは元の点から聞こえる。
+/// 点の音声（[`PanelCommand::PlayAt`]）に使用するスピーカーの数（パネルごと）。順に使い回すため、連続して再生しても
+/// 前の音声の残りは元の点から聞こえる。
 // ponytail: 8 個を超えて同時に鳴らすと、いちばん古い音が新しい点へ移る。足りなければ増やす。
 const POINT_SPEAKERS: u64 = 8;
 
@@ -79,7 +79,7 @@ impl<B: VrBackend> Kernel<B> {
         self.audio.play_sound(panel as u64, sound, looping);
     }
 
-    /// パネルの中の点から鳴らす。音源はその点の 1 点（左右を混ぜる）で、鳴らした時の置き場所に留まる（短い音のため）。
+    /// パネルの中の点から再生する。音源はその点 1 箇所（左右をミックス）で、再生開始時の配置位置に固定される（短い音声のため）。
     /// `volume` は音量（1 = そのまま。負の値は無音）。
     pub(super) fn play_audio_at(
         &mut self,
@@ -124,8 +124,8 @@ impl<B: VrBackend> Kernel<B> {
         self.audio.set_speaker(panel as u64, self.speaker(panel));
     }
 
-    /// 毎 tick、鳴っているスピーカーをパネルに合わせて動かし、閉じたパネルの音を止める。
-    /// 鳴っていなければ何も送らない（テスト用のカーネルは出力を回さないので、命令を溜めない）。
+    /// 毎 tick、再生中のスピーカーをパネルに合わせて移動し、閉じたパネルの音声を停止する。
+    /// 再生中でなければ何も送信しない（テスト用のカーネルは出力を駆動しないため、命令を蓄積しない）。
     pub(super) fn update_audio(&mut self) {
         self.audio.poll();
         let closed: Vec<PanelId> = self
@@ -138,7 +138,7 @@ impl<B: VrBackend> Kernel<B> {
             self.speakers.remove(&p);
             self.audio.remove_speaker(p as u64);
         }
-        // 点の音は鳴らした場所に留まるので、閉じたパネルでも鳴り終わるまで残す（閉じる音など）。
+        // 点の音声は再生開始位置に固定されるため、閉じたパネルでも再生終了まで残す（閉じる音声など）。
         let finished: Vec<PanelId> = self
             .point_slots
             .keys()

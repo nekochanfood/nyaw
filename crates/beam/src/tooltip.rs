@@ -1,9 +1,9 @@
-//! ツールチップ。カーソルの子のパネル（[`Pointer::Tooltip`]）に、指している要素の説明を描く。
-//! パネルの中心がカーソルで、箱はオーバーレイ層が決めた向き（[`Anchor`]）に出す。
+//! ツールチップ。カーソル子パネル（[`Pointer::Tooltip`]）にホバー中の要素の説明を描画する。
+//! パネル中心がカーソル位置で、ボックスはオーバーレイ層が決定した方向（[`Anchor`]）に配置される。
 //!
-//! - 出るときは向きの側へ、カーソルから離れるようにスライドしながら現れる（[`Motion::Enter`]、ease-out）。消えるときは逆。
-//! - 要素から離れても [`GRACE`] の間は残り、その間に別の要素を指せば文字を変える（箱の幅は [`Motion::Move`] で伸び縮みする）。
-//! - 向きが変わったら、今の側で消えてから新しい側で出る。
+//! - 出現時はアンカー方向へカーソルから離れるようにスライドしながらフェードインする（[`Motion::Enter`]、ease-out）。退出時は逆。
+//! - 要素から離れても [`GRACE`] 期間は残存し、その間に別の要素をホバーすればテキストを切り替える（ボックス幅は [`Motion::Move`] で遷移する）。
+//! - アンカー方向が変更された場合、現在側で退出してから新しい側で出現する。
 
 use std::time::{Duration, Instant};
 
@@ -12,26 +12,26 @@ use design::components::{TOOLTIP_HEIGHT, tooltip, tooltip_width};
 use gpui::{Context, SharedString, Window, div, prelude::*, px};
 use kernel::{Anchor, Hand, PanelId, Pointer};
 
-/// 要素から離れてから、消え始めるまでの猶予。
+/// 要素から離れてから退出アニメーション開始までの猶予期間。
 pub const GRACE: Duration = Duration::from_millis(125);
-/// スライドする距離（px）。
+/// スライド距離（px）。
 const SLIDE: f32 = design::spacing::SM;
 
-/// 今の表示。
+/// 現在の表示状態。
 #[derive(Debug)]
 pub struct State {
-    /// 描いている文字と向き。消えきるまで残る。
+    /// 表示中のテキストとアンカー方向。退出アニメーション完了まで保持される。
     pub shown: Option<(SharedString, Anchor)>,
-    /// 見えている度合い（0〜1）と、向かっている先。
+    /// 可視度（0〜1）と遷移先の値。
     pub vis: f32,
     vis_to: f32,
     vis_anim: Option<Animation>,
-    /// 箱の幅（px）と、文字を変えたときの伸び縮み。
+    /// ボックスの幅（px）とテキスト変更時のリサイズアニメーション。
     pub width: f32,
     width_anim: Option<Animation>,
-    /// 今の文字を出した時刻（収まらない文字を流し始める起点）。
+    /// 現在のテキストの表示開始時刻（マーキースクロールの基準時刻）。
     pub since: Option<Instant>,
-    /// 要素から離れた時刻（猶予の始まり）。
+    /// 要素から離れた時刻（猶予期間の開始）。
     left: Option<Instant>,
     last: Option<Instant>,
 }
@@ -53,8 +53,8 @@ impl Default for State {
 }
 
 impl State {
-    /// 1 回分進める。`request` は今指している要素の文字、`anchor` は出したい向き、`animated` が偽なら動かさずに切り替える。
-    /// `measure` は文字の箱の幅。まだ動いている・猶予を数えているなら `true`（次のフレームも描く）。
+    /// 1 フレーム分進める。`request` はホバー中の要素のテキスト、`anchor` はアンカー方向、`animated` が偽なら即座に切り替える。
+    /// `measure` はテキストのボックス幅を返す。遷移中または猶予カウント中なら `true` を返す（次フレームも再描画が必要）。
     pub fn step(
         &mut self,
         now: Instant,
@@ -79,7 +79,7 @@ impl State {
             }
         }
 
-        // 出したい文字: 指していればそれ、離れてから猶予の間は今の文字のまま。
+        // 表示対象のテキスト: ホバー中ならそのテキスト、離れてから猶予期間中は現在のテキストを維持。
         let wanted = match request {
             Some(t) => {
                 self.left = None;
@@ -112,7 +112,7 @@ impl State {
                 }
                 self.go(1.0, Motion::Enter, animated);
             }
-            // 向きが変わった: 今の側で消えきってから、新しい側で出る。
+            // アンカー方向変更: 現在側で完全に退出してから新しい側で出現する。
             (Some(_), Some(_)) if self.vis > 0.0 => self.go(0.0, Motion::Exit, animated),
             (Some(t), _) => {
                 self.width = measure(&t);
@@ -141,25 +141,25 @@ impl State {
     }
 }
 
-/// `hand` のツールチップを描くパネル。
+/// `hand` のツールチップ描画パネル。
 pub struct Tooltip {
     pub hand: Hand,
     pub panel: PanelId,
     pub state: State,
 }
 
-/// 箱の端をカーソルの中心から離す距離（px）。大きさの倍率 `cursor` を掛けたカーソルの輪の外側から `spacing::SM` 空ける。
+/// ボックス端とカーソル中心の距離（px）。スケール倍率 `cursor` を乗じたカーソルリング外縁から `spacing::SM` の余白を取る。
 fn gap(cursor: f32) -> f32 {
     let ring = super::CURSOR_M * (super::RING_RADIUS_PX + super::RING_WIDTH_PX / 2.0)
         / super::CURSOR_PX.0 as f32;
     cursor * ring * super::TOOLTIP_PX.0 as f32 / super::TOOLTIP_M + design::spacing::SM
 }
 
-/// 箱の上端（px）。向き `anchor` の側に、カーソルから `gap` 離し、見えていない分 `hide` だけカーソルへ寄せる。
+/// ボックス上端の Y 座標（px）。アンカー `anchor` の方向にカーソルから `gap` 離し、非表示度 `hide` 分だけカーソル側に戻す。
 fn top(anchor: Option<Anchor>, gap: f32, hide: f32) -> f32 {
     let h = super::TOOLTIP_PX.1 as f32;
     match anchor {
-        // 上に出る箱は下から（カーソルの側から）上がってくる。下はその逆。
+        // 上方配置のボックスは下側（カーソル側）からスライドイン。下方配置はその逆。
         Some(Anchor::Above) => h / 2.0 - gap - TOOLTIP_HEIGHT + hide,
         _ => h / 2.0 + gap - hide,
     }
@@ -182,12 +182,12 @@ impl Render for Tooltip {
                 tooltip_width(t, window).min(max)
             });
         let s = &self.state;
-        // 収まらない文字は流す。
+        // 収まらないテキストはマーキースクロールする。
         let scroll = s.shown.as_ref().zip(s.since).and_then(|((t, _), since)| {
             let t0 = now.saturating_duration_since(since).as_secs_f32();
             design::components::tooltip_scroll(tooltip_width(t, window), s.width, t0)
         });
-        // 動いている・猶予を数えている・流している間は毎フレーム描き直してもらう。
+        // 遷移中・猶予カウント中・スクロール中は毎フレームの再描画を要求する。
         cx.default_global::<ui::PanelControl>()
             .panels
             .entry(self.panel)
@@ -263,11 +263,11 @@ mod tests {
             s.step(t0 + MS(50), Some(&req), Anchor::Above, true, |_| 40.0);
             s.vis
         };
-        // ease-out: 前半で半分以上出ている。
+        // ease-out: 前半で半分以上の可視度に到達する。
         assert!(mid > 0.5 && mid < 1.0, "{mid}");
         assert!(
             !run(&mut s, t0, 60, 400, Some("Save"), Anchor::Above),
-            "止まれば描き直さない"
+            "停止後は再描画不要"
         );
         assert_eq!((s.vis, s.width), (1.0, 40.0));
     }
@@ -276,10 +276,10 @@ mod tests {
     fn stays_for_the_grace_then_fades_out() {
         let (t0, mut s) = (Instant::now(), State::default());
         run(&mut s, t0, 0, 400, Some("Save"), Anchor::Above);
-        // 離れて猶予の間は残る（猶予を数えるため描き直し続ける）。
+        // 離れて猶予期間中は残存する（猶予カウントのため再描画を継続する）。
         assert!(run(&mut s, t0, 410, 450, None, Anchor::Above));
         assert_eq!(s.vis, 1.0);
-        // 猶予が過ぎたら消える。
+        // 猶予期間経過後に退出する。
         run(&mut s, t0, 470, 1000, None, Anchor::Above);
         assert!(s.shown.is_none() && s.vis == 0.0);
     }
@@ -291,10 +291,10 @@ mod tests {
         run(&mut s, t0, 410, 440, None, Anchor::Above);
         run(&mut s, t0, 450, 460, Some("Open settings"), Anchor::Above);
         assert_eq!(s.shown.as_ref().unwrap().0, "Open settings");
-        assert_eq!(s.vis, 1.0, "消えずに文字だけ変わる");
+        assert_eq!(s.vis, 1.0, "退出せずテキストのみ切り替わる");
         assert!(
             s.width > 40.0 && s.width < 130.0,
-            "幅は動いている途中: {}",
+            "幅は遷移中: {}",
             s.width
         );
         run(&mut s, t0, 470, 900, Some("Open settings"), Anchor::Above);
@@ -309,7 +309,7 @@ mod tests {
         assert_eq!(
             s.shown.as_ref().unwrap().1,
             Anchor::Above,
-            "消えきるまでは元の側"
+            "退出完了まで元のアンカー方向を維持"
         );
         assert!(s.vis < 1.0);
         run(&mut s, t0, 460, 1000, Some("Save"), Anchor::Below);
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(s.vis, 1.0);
     }
 
-    /// カーソルをいちばん大きくしても、箱は輪に重ならず、パネルからもはみ出さない（上下どちらでも）。
+    /// カーソルを最大サイズにしても、ボックスはリングに重ならず、パネルからもはみ出さない（上下いずれの方向でも）。
     #[test]
     fn box_clears_the_cursor_ring_and_stays_in_the_panel_at_any_cursor_scale() {
         let h = super::super::TOOLTIP_PX.1 as f32;
@@ -330,7 +330,7 @@ mod tests {
                 "{cursor}"
             );
         }
-        assert!(gap(2.0) > gap(1.0), "大きいカーソルほど離す");
+        assert!(gap(2.0) > gap(1.0), "カーソルが大きいほど距離が増加する");
     }
 
     #[test]
@@ -340,7 +340,7 @@ mod tests {
         s.step(t0, Some(&req), Anchor::Below, false, |_| 40.0);
         assert_eq!((s.vis, s.width), (1.0, 40.0));
         s.step(t0 + MS(10), None, Anchor::Below, false, |_| 40.0);
-        assert!(s.shown.is_some(), "猶予の間は残る");
+        assert!(s.shown.is_some(), "猶予期間中は残存する");
         s.step(t0 + MS(10) + GRACE, None, Anchor::Below, false, |_| 40.0);
         assert!(s.shown.is_none());
     }

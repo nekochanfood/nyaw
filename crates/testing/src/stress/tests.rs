@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_util::*;
 
-/// Fill は上限ちょうどまで出し（待っている分も数える）、Grid・Close all は出したもののうち開いているものだけに効く。
+/// Fill は上限ちょうどまで生成し（キューイング中の分もカウント）、Grid・Close all は生成済みの未閉じパネルにのみ作用する。
 #[gpui::test]
 fn stress_fill_stops_at_limit_and_commands_reach_spawned(cx: &mut TestAppContext) {
     let (view, cx) = cx.add_window_view(|_, _| StressTest::new(0));
@@ -16,7 +16,7 @@ fn stress_fill_stops_at_limit_and_commands_reach_spawned(cx: &mut TestAppContext
     let spawns = cx.update(|_, cx| std::mem::take(&mut cx.default_global::<PanelControl>().spawns));
     assert_eq!(spawns.len(), 5);
 
-    // 開いたことにする（ビルドで積まれる ID の代わり）。1 枚は閉じられた。
+    // 生成済みとして登録する（ビルド時に追加される ID の代替）。1 枚は閉じ済み。
     view.update(cx, |s, _| s.spawned.borrow_mut().extend([1, 2, 3]));
     cx.update(|_, cx| {
         let c = cx.default_global::<PanelControl>();

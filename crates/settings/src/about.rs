@@ -1,5 +1,5 @@
-//! 情報（一般の行 `settings-about` から開く詳しい画面）: バージョンと、ライセンスの一覧（`setting-licenses`）・
-//! リポジトリ（`setting-source`。ブラウザで開く）。ライセンスの一覧は情報の上に積む。
+//! 情報（一般カテゴリの `settings-about` から開く詳細画面）: バージョン表示、ライセンス一覧（`setting-licenses`）、
+//! リポジトリリンク（`setting-source`、ブラウザで開く）。ライセンス一覧は情報画面の上にスタックする。
 
 use design::components;
 use design::{Theme, font_size, radius, spacing};
@@ -7,7 +7,7 @@ use gpui::{Context, Div, div, prelude::*, px, rgba, uniform_list};
 
 use crate::{Page, Settings};
 
-// 依存のライセンスの表 `LICENSES`: `(名前, バージョン, ライセンス, URL)`。build.rs がビルド時に作る。
+// 依存ライセンステーブル `LICENSES`: `(名前, バージョン, ライセンス, URL)`。build.rs がビルド時に生成する。
 include!(concat!(env!("OUT_DIR"), "/licenses.rs"));
 
 /// 情報画面のロゴの高さ（px）。
@@ -15,7 +15,7 @@ const ABOUT_LOGO_PX: f32 = 144.0;
 
 pub(crate) fn page(s: &Settings, theme: &Theme, cx: &mut Context<Settings>) -> Vec<Div> {
     vec![
-        // 先頭にフルサイズのロゴ。上下の余白は同じだけ取り、狭くしない。
+        // 先頭にフルサイズのロゴを配置。上下に均等な余白を確保する。
         div()
             .flex()
             .justify_center()
@@ -38,7 +38,7 @@ pub(crate) fn page(s: &Settings, theme: &Theme, cx: &mut Context<Settings>) -> V
                     .child(updater::VERSION),
             )],
         ),
-        // バージョンと、ライセンス・ソースコードの間の区切り線。
+        // バージョン行とライセンス・ソースコード行の間の区切り線。
         div().h(px(1.0)).bg(rgba(theme.neutral_border_subtle)),
         components::list(
             theme,
@@ -59,8 +59,8 @@ pub(crate) fn page(s: &Settings, theme: &Theme, cx: &mut Context<Settings>) -> V
     ]
 }
 
-/// ライセンス: 依存ごとの行。押すとそのリポジトリをブラウザで開く。数百行あるので、見えている行だけを
-/// 作る `uniform_list` で並べる（行の高さは揃える。区切り線は先頭の行だけ透明にして高さを変えない）。
+/// ライセンス一覧: 依存ごとに 1 行を表示し、クリックでリポジトリをブラウザで開く。数百行に及ぶため
+/// `uniform_list` による仮想化で可視行のみを生成する（行の高さは均一。先頭行の区切り線のみ透明にして高さを維持）。
 pub(crate) fn licenses(s: &Settings, theme: &Theme) -> Vec<Div> {
     let last = LICENSES.len() - 1;
     let rows = uniform_list("licenses", LICENSES.len(), move |range, _, cx| {
@@ -113,7 +113,7 @@ pub(crate) fn licenses(s: &Settings, theme: &Theme) -> Vec<Div> {
     ]
 }
 
-/// 外部（ブラウザ）で開く行の右端の印。
+/// 外部リンク（ブラウザで開く）行の右端に表示するアイコン。
 fn external_icon(theme: &Theme) -> impl IntoElement {
     design::icon(&design::icons::ARROW_SQUARE_OUT)
         .size(px(font_size::MD))

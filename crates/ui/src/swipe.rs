@@ -1,7 +1,7 @@
-//! 縦に並んだ項目（通知のカード）を左右にスワイプして片付ける。トーストと通知センター（ダッシュボードの一覧）が使う。
-//! タッチの方式では押したまま動かすと横のスクロールで届き、マウスの方式ではドラッグで届く。どちらも横に動かした分だけ
-//! 項目が付いてきて薄れ、離したときに幅の [`DISMISS`] を超えていれば横へ抜け、そのあと高さが畳まれて下の項目が
-//! 滑らかに詰まる（畳みきったら [`Swipes::take_gone`] が一度だけ返す。片付けるのは呼ぶ側）。超えていなければ元へ戻る。
+//! 縦に並んだ項目（通知カード）を左右スワイプで除去する。トーストと通知センター（ダッシュボード一覧）が使用する。
+//! タッチ方式では押下したまま横スクロール、マウス方式ではドラッグで操作する。いずれも横方向の移動量に追従して項目が
+//! フェードアウトし、リリース時に幅の [`DISMISS`] を超えていれば横へスライドアウト後に高さが折りたたまれ下の項目が
+//! 滑らかに詰まる（折りたたみ完了時に [`Swipes::take_gone`] が一度だけ返す。除去は呼び出し側が行う）。閾値未満なら元に戻る。
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -16,30 +16,30 @@ use gpui::{
 };
 use kernel::PanelId;
 
-/// 離したとき、これだけ（項目の幅に対する割合）横に動かしていれば片付ける。
+/// リリース時にこの割合（項目幅に対する比率）以上横移動していれば除去する。
 pub const DISMISS: f32 = 0.3;
-/// マウスで押してから、これだけ（px）動かすまではスワイプにしない（押すつもりの手ブレ）。
+/// マウス押下後にこの距離（px）移動するまではスワイプとして扱わない（押下意図の手ブレ防止）。
 const SLOP: f32 = 8.0;
-/// 離した後に横へ抜ける・戻る動きと、抜けた後に高さを畳む動き。
+/// リリース後のスライドアウト・復帰と、スライドアウト後の高さ折りたたみの動き。
 const SETTLE: Motion = Motion::Return;
-/// 抜けた項目の高さを畳む動き（下が詰まる）。ゆっくり動き出してゆっくり止まる（終わり際に速いと、詰まりきる所で跳ねて見える）。
+/// スライドアウト済み項目の高さ折りたたみ動作（下の項目が詰まる）。ease-in-out で遷移する（終盤が速いと詰まり切る箇所でバウンスして見える）。
 pub const COLLAPSE: Motion = Motion::Morph;
-/// スワイプせずに片付ける項目（[`Swipes::dismiss`]）が横へ抜ける動き。止まった所から動き出すので、指で動かした続きの
-/// [`SETTLE`] より長く、ゆっくり動き出してゆっくり抜ける（短いと消えるのが速すぎる）。
+/// スワイプなしで除去する項目（[`Swipes::dismiss`]）のスライドアウト動作。静止状態から開始するため、ドラッグ継続の
+/// [`SETTLE`] より長く、ease-in-out でスライドアウトする（短いと消滅が速すぎる）。
 pub const FLICK: Motion = Motion::Morph;
 
-/// 1 つの項目のスワイプ。
+/// 単一項目のスワイプ状態。
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Gesture {
-    /// マウスで押した（まだ動かしていない）。
+    /// マウス押下済み（未移動）。
     Pressed { id: u32, at: Point<Pixels> },
-    /// 横に動かしている（`moved` px）。マウスなら押した所の横の位置 `start` から測る。
+    /// ドラッグ中（`moved` px）。マウスの場合は押下位置の X 座標 `start` を基準に計測する。
     Dragging {
         id: u32,
         moved: f32,
         start: Option<f32>,
     },
-    /// 離した: `from` から `to`（横へ抜けるなら ±幅、戻るなら 0）へ動いている。
+    /// リリース済み: `from` から `to`（スライドアウトなら ±幅、復帰なら 0）へ遷移中。
     Settling {
         id: u32,
         from: f32,
@@ -51,26 +51,26 @@ enum Gesture {
 #[derive(Debug, Default)]
 struct State {
     gesture: Option<Gesture>,
-    /// 横へ抜けきった項目: 抜けた先（px）と、抜けきった時刻（そこから高さを畳む）。
+    /// スライドアウト完了済み項目: スライドアウト先（px）と完了時刻（ここから高さを折りたたむ）。
     gone: HashMap<u32, (f32, Instant)>,
-    /// スワイプせずに片付ける項目（[`Swipes::dismiss`]）: 横へ抜け始める時刻。
+    /// スワイプなしで除去する項目（[`Swipes::dismiss`]）: スライドアウト開始時刻。
     flicks: HashMap<u32, Instant>,
-    /// 項目の置かれた所（ウィンドウの px。前のフレームに測ったもの）。どの項目の上で始まったか・幅を見る。
+    /// 項目の矩形（ウィンドウ px。前フレームで計測）。スワイプ開始位置の判定と幅の取得に使用する。
     boxes: HashMap<u32, Bounds<Pixels>>,
 }
 
-/// 項目 `id` の今の様子（[`Swipes::look`]）。
+/// 項目 `id` の現在の表示状態（[`Swipes::look`]）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Look {
-    /// 横のずれ（px）。
+    /// 水平オフセット（px）。
     pub offset: f32,
-    /// 不透明度（離れるほど薄い）。
+    /// 不透明度（移動量に比例してフェードアウト）。
     pub opacity: f32,
-    /// 高さの残り（1 = そのまま、0 = 畳みきった）。
+    /// 高さの残存率（1 = 通常、0 = 折りたたみ完了）。
     pub height: f32,
 }
 
-/// スワイプの状態（描くたびに置き直すウィンドウの受け口と共有する）。
+/// スワイプ状態（毎フレーム再配置されるウィンドウのイベントリスナーと共有する）。
 #[derive(Clone, Default)]
 pub struct Swipes(Rc<RefCell<State>>);
 
@@ -85,7 +85,7 @@ impl State {
             .map_or(1.0, |b| f32::from(b.size.width).max(1.0))
     }
 
-    /// 離した: 幅の [`DISMISS`] を超えていれば横へ抜け、超えていなければ元へ戻る。
+    /// リリース処理: 幅の [`DISMISS`] を超えていればスライドアウト、未満なら元に復帰する。
     fn release(&mut self, now: Instant) {
         match self.gesture {
             Some(Gesture::Dragging { id, moved, .. }) => {
@@ -118,7 +118,7 @@ impl State {
 }
 
 impl Swipes {
-    /// 項目 `id` の今の様子。横へ抜けきったら、そこから高さを畳む。
+    /// 項目 `id` の現在の表示状態を取得する。スライドアウト完了時にそこから高さの折りたたみを開始する。
     pub fn look(&self, id: u32, now: Instant) -> Look {
         let mut s = self.0.borrow_mut();
         let width = s.width(id);
@@ -165,8 +165,8 @@ impl Swipes {
         }
     }
 
-    /// 時間で動いている途中か（次のフレームも描く）。指やマウスで動かしている間は入力のたびに描き直すので含めない
-    /// （離したことが届かないまま残っても、描き続けない）。
+    /// 時間駆動のアニメーション中か（次フレームも描画が必要）。ドラッグ中は入力のたびに再描画するため含めない
+    /// （リリースイベントが未到着で残留しても、無限に描画し続けない）。
     pub fn busy(&self) -> bool {
         let s = self.0.borrow();
         !s.gone.is_empty()
@@ -174,7 +174,7 @@ impl Swipes {
             || matches!(s.gesture, Some(Gesture::Settling { .. }))
     }
 
-    /// 畳みきった項目（一度だけ返す。呼ぶ側は、このフレームからもう並べない）。
+    /// 折りたたみ完了した項目を返す（一度だけ）。呼び出し側はこのフレーム以降、該当項目を描画しない。
     pub fn take_gone(&self, now: Instant) -> Vec<u32> {
         let mut s = self.0.borrow_mut();
         let done: Vec<u32> = s
@@ -190,8 +190,8 @@ impl Swipes {
         done
     }
 
-    /// 項目 `id` をスワイプせずに片付ける（まとめて消すとき）。`start` に右へ抜け始め（スワイプして離したのと同じ動き）、
-    /// 抜けきったら高さを畳み、畳みきったら [`Self::take_gone`] が返す。時刻をずらして呼べば順に抜ける。
+    /// 項目 `id` をスワイプなしで除去する（一括消去時）。`start` から右へスライドアウトを開始し（スワイプリリースと同じ動作）、
+    /// 完了後に高さを折りたたみ、折りたたみ完了時に [`Self::take_gone`] が返す。時刻をずらして呼べば順次スライドアウトする。
     pub fn dismiss(&self, id: u32, start: Instant) {
         let mut s = self.0.borrow_mut();
         if !s.gone.contains_key(&id) {
@@ -199,7 +199,7 @@ impl Swipes {
         }
     }
 
-    /// 並べなくなった項目を忘れる。
+    /// 表示されなくなった項目の状態を破棄する。
     pub fn forget(&self, drawn: &[u32]) {
         let mut s = self.0.borrow_mut();
         s.gone.retain(|id, _| drawn.contains(id));
@@ -207,12 +207,12 @@ impl Swipes {
         s.boxes.retain(|id, _| drawn.contains(id));
     }
 
-    /// 項目 `id` の前のフレームの大きさ（測っていなければ `None`）。
+    /// 項目 `id` の前フレームの矩形（未計測なら `None`）。
     pub fn bounds(&self, id: u32) -> Option<Bounds<Pixels>> {
         self.0.borrow().boxes.get(&id).copied()
     }
 
-    /// 項目 `child` を、今の様子（横のずれと薄れ。高さは呼ぶ側が [`Look::height`] で畳む）で包み、置かれた所を測る。
+    /// 項目 `child` を現在の表示状態（水平オフセットとフェード。高さは呼び出し側が [`Look::height`] で折りたたむ）で包み、矩形を計測する。
     pub fn item(&self, id: u32, look: Look, child: impl IntoElement) -> AnyElement {
         let state = self.0.clone();
         div()
@@ -239,8 +239,8 @@ impl Swipes {
             .into_any_element()
     }
 
-    /// このフレームのスワイプの受け口をウィンドウに置く（描くたびに置き直す。項目より後に描く所で呼ぶ）。`panel` は
-    /// 描き直すパネル。
+    /// 今フレームのスワイプイベントリスナーをウィンドウに配置する（毎フレーム再配置。項目描画後に呼ぶ）。`panel` は
+    /// 再描画対象パネル。
     pub fn listen(&self, panel: PanelId, window: &mut Window) {
         let redraw = move |window: &mut Window, cx: &mut App| {
             crate::redraw(panel, cx);
@@ -253,7 +253,7 @@ impl Swipes {
             };
             let (dx, dy) = (f32::from(d.x), f32::from(d.y));
             let mut s = state.borrow_mut();
-            // 新しい指のスライドが始まったのに前のものが残っている（離したことが届かなかった）なら、前のものは捨てる。
+            // 新しいタッチスライドが開始されたのに前回分が残留している（リリースイベント未到着）場合は破棄する。
             if phase == DispatchPhase::Capture
                 && e.touch_phase == TouchPhase::Started
                 && matches!(s.gesture, Some(Gesture::Dragging { start: None, .. }))
@@ -261,7 +261,7 @@ impl Swipes {
                 s.gesture = None;
             }
             match (phase, s.gesture, e.touch_phase) {
-                // 指のスライド（タッチの方式）の始まりが横向きなら、その項目を動かす。
+                // タッチスライドの開始方向が水平なら、その項目のドラッグを開始する。
                 (DispatchPhase::Bubble, None, TouchPhase::Started) if dx.abs() > dy.abs() => {
                     let Some(id) = s.card_at(e.position) else {
                         return;
@@ -300,7 +300,7 @@ impl Swipes {
         });
         let state = self.0.clone();
         window.on_mouse_event(move |e: &MouseMoveEvent, phase, window, cx| {
-            // ボタンを押していない動きは別の手のもの（GPUI のマウスは 1 つ）。押しているときだけ見る。
+            // ボタン非押下中の移動は別の手によるもの（GPUI のマウスは 1 つ）。押下中のみ処理する。
             if phase != DispatchPhase::Capture || e.pressed_button != Some(MouseButton::Left) {
                 return;
             }
@@ -342,7 +342,7 @@ impl Swipes {
             }
             let mut s = state.borrow_mut();
             match s.gesture {
-                // 離した所の項目を押したことにしない。
+                // リリース位置の項目へのクリックイベント伝播を防止する。
                 Some(Gesture::Dragging { .. }) => cx.stop_propagation(),
                 Some(Gesture::Pressed { .. }) => {}
                 _ => return,
@@ -377,33 +377,33 @@ mod tests {
         s
     }
 
-    /// 幅の 3 割を超えて動かして離すと、その向きへ抜けてから高さが畳まれ、畳みきったら一度だけ返る。超えなければ戻る。
+    /// 幅の 3 割超を移動してリリースするとその方向へスライドアウト後に高さが折りたたまれ、完了時に一度だけ返す。閾値未満なら復帰する。
     #[test]
     fn a_far_enough_swipe_slides_out_then_collapses() {
         let t = Instant::now();
         let ms = |n: u64| t + Duration::from_millis(n);
         let far = dragged(-150.0);
         far.0.borrow_mut().release(t);
-        assert_eq!(far.look(7, t).offset, -150.0, "離した所から動き出す");
+        assert_eq!(far.look(7, t).offset, -150.0, "リリース位置から遷移開始");
         let out = ms(SETTLE.duration_ms() + 1);
         assert_eq!(far.look(7, out).offset, -400.0);
         assert_eq!(far.look(7, out).opacity, 0.0);
-        assert!(far.busy(), "まだ畳んでいる");
+        assert!(far.busy(), "折りたたみ中");
         let half = far.look(7, out + Duration::from_millis(COLLAPSE.duration_ms() / 2));
         assert!(half.height > 0.0 && half.height < 1.0, "{half:?}");
-        assert!(far.take_gone(out).is_empty(), "畳みきるまでは返さない");
+        assert!(far.take_gone(out).is_empty(), "折りたたみ完了まで返さない");
         let end = out + Duration::from_millis(COLLAPSE.duration_ms() + 1);
         assert_eq!(far.take_gone(end), [7]);
-        assert!(far.take_gone(end).is_empty(), "一度だけ");
+        assert!(far.take_gone(end).is_empty(), "一度のみ返す");
         assert!(!far.busy());
         assert!(
             !dragged(80.0).busy(),
-            "動かしている間は入力のたびに描くので、描き続けない"
+            "ドラッグ中は入力のたびに再描画するため、busy にしない"
         );
         let short = dragged(80.0);
         short.0.borrow_mut().release(t);
         assert_eq!(short.look(7, out).offset, 0.0);
         assert!(short.take_gone(end).is_empty());
-        assert_eq!(short.look(3, end).offset, 0.0, "ほかの項目は動かない");
+        assert_eq!(short.look(3, end).offset, 0.0, "他の項目は影響を受けない");
     }
 }
