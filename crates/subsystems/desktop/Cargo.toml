@@ -36,3 +36,8 @@ windows = { version = "0.61.3", features = [
     # インストール済みアプリ（shell:AppsFolder）の名前・ID・実行ファイル・アイコンの取得に使用
     "Win32_UI_Shell_PropertiesSystem", "Win32_Storage_EnhancedStorage",
 ] }
+
+# wlroots の取り込みと入力注入を、テスト内の最小限のコンポジタ（tests/wlr_protocol.rs）で検証する。
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+wayland-server = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["server"] }
