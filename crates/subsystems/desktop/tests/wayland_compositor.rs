@@ -44,6 +44,11 @@ fn decode([r, g, b]: [u8; 3]) -> Option<(u32, u32)> {
 /// テスト用ウィンドウが受け取ったもの。
 #[derive(Default)]
 struct Seen {
+    /// ウィンドウを描いた倍率（画素の位置 ＝ ポインタの位置 × 倍率）と、論理的な大きさ。
+    scale: i32,
+    size: (i32, i32),
+    /// 最後に描いた時刻（これより後に取り込んだ画面に映っている）。
+    drawn: Option<Instant>,
     pointer: Option<(f64, f64)>,
     buttons: Vec<(u32, bool)>,
     typed: String,
@@ -58,6 +63,45 @@ struct Client {
     surface: Option<wl_surface::WlSurface>,
     xkb: Option<xkb::State>,
     size: (i32, i32),
+    scale: i32,
+}
+
+impl Client {
+    /// 出力の倍率に合わせた解像度で、位置を表す模様を描く。
+    fn draw(&mut self, qh: &QueueHandle<Self>) {
+        let (w, h) = if self.size.0 > 0 {
+            self.size
+        } else {
+            (400, 300)
+        };
+        let s = self.scale.max(1);
+        let (bw, bh) = (w * s, h * s);
+        let len = (bw * bh * 4) as usize;
+        let fd = rustix::fs::memfd_create(c"client", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
+        let mut file = std::fs::File::from(fd);
+        let mut pixels = Vec::with_capacity(len);
+        for y in 0..bh as u32 {
+            for x in 0..bw as u32 {
+                let [r, g, b] = encode(x, y);
+                pixels.extend([b, g, r, 0xff]);
+            }
+        }
+        file.write_all(&pixels).unwrap();
+        let pool = self
+            .shm
+            .as_ref()
+            .unwrap()
+            .create_pool(file.as_fd(), len as i32, qh, ());
+        let buffer = pool.create_buffer(0, bw, bh, bw * 4, wl_shm::Format::Xrgb8888, qh, ());
+        pool.destroy();
+        let surface = self.surface.as_ref().unwrap();
+        surface.set_buffer_scale(s);
+        surface.attach(Some(&buffer), 0, 0);
+        surface.damage_buffer(0, 0, bw, bh);
+        surface.commit();
+        let mut seen = self.seen.lock().unwrap();
+        (seen.scale, seen.size, seen.drawn) = (s, (w, h), Some(Instant::now()));
+    }
 }
 
 impl Dispatch<wl_registry::WlRegistry, ()> for Client {
@@ -76,7 +120,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for Client {
         } = e
         {
             match interface.as_str() {
-                "wl_compositor" => c.compositor = Some(r.bind(name, version.min(4), qh, ())),
+                "wl_compositor" => c.compositor = Some(r.bind(name, version.min(6), qh, ())),
                 "wl_shm" => c.shm = Some(r.bind(name, 1, qh, ())),
                 "xdg_wm_base" => c.wm = Some(r.bind(name, 1, qh, ())),
                 "wl_seat" if c.seat.is_none() => {
@@ -134,30 +178,7 @@ impl Dispatch<xdg_surface::XdgSurface, ()> for Client {
             return;
         };
         s.ack_configure(serial);
-        let (w, h) = c.size;
-        let (w, h) = if w > 0 { (w, h) } else { (400, 300) };
-        let len = (w * h * 4) as usize;
-        let fd = rustix::fs::memfd_create(c"client", rustix::fs::MemfdFlags::CLOEXEC).unwrap();
-        let mut file = std::fs::File::from(fd);
-        let mut pixels = Vec::with_capacity(len);
-        for y in 0..h as u32 {
-            for x in 0..w as u32 {
-                let [r, g, b] = encode(x, y);
-                pixels.extend([b, g, r, 0xff]);
-            }
-        }
-        file.write_all(&pixels).unwrap();
-        let pool = c
-            .shm
-            .as_ref()
-            .unwrap()
-            .create_pool(file.as_fd(), len as i32, qh, ());
-        let buffer = pool.create_buffer(0, w, h, w * 4, wl_shm::Format::Xrgb8888, qh, ());
-        pool.destroy();
-        let surface = c.surface.as_ref().unwrap();
-        surface.attach(Some(&buffer), 0, 0);
-        surface.damage(0, 0, w, h);
-        surface.commit();
+        c.draw(qh);
     }
 }
 
@@ -275,9 +296,26 @@ no_events!(
     wl_compositor::WlCompositor,
     wl_shm::WlShm,
     wl_shm_pool::WlShmPool,
-    wl_buffer::WlBuffer,
-    wl_surface::WlSurface
+    wl_buffer::WlBuffer
 );
+
+impl Dispatch<wl_surface::WlSurface, ()> for Client {
+    fn event(
+        c: &mut Self,
+        _: &wl_surface::WlSurface,
+        e: wl_surface::Event,
+        _: &(),
+        _: &Connection,
+        qh: &QueueHandle<Self>,
+    ) {
+        if let wl_surface::Event::PreferredBufferScale { factor } = e
+            && factor != c.scale
+        {
+            c.scale = factor;
+            c.draw(qh);
+        }
+    }
+}
 
 /// 既知の色のウィンドウを開き、受け取ったものを記録し続ける。
 fn open_window(display: &str) -> Arc<Mutex<Seen>> {
@@ -301,6 +339,7 @@ fn open_window(display: &str) -> Arc<Mutex<Seen>> {
             surface: None,
             xkb: None,
             size: (0, 0),
+            scale: 1,
         };
         queue.roundtrip(&mut client).unwrap();
         let surface = client.compositor.as_ref().unwrap().create_surface(&qh, ());
@@ -311,6 +350,8 @@ fn open_window(display: &str) -> Arc<Mutex<Seen>> {
             .get_xdg_surface(&surface, &qh, ());
         let toplevel = xdg.get_toplevel(&qh, ());
         toplevel.set_title("nyaw test".into());
+        // 全画面にして、ウィンドウ内の位置が出力上の位置と一致するようにする。
+        toplevel.set_fullscreen(None);
         surface.commit();
         client.surface = Some(surface);
         loop {
@@ -360,40 +401,79 @@ fn a_wayland_compositor_streams_points_and_types() {
     )
     .unwrap();
     let seen = open_window(&display);
-    // 取り込んだ画面で、テスト用ウィンドウの中ほどの画素を選び、その色からウィンドウ内の位置を読む。
+    // 全画面のテスト用ウィンドウが映った画面で、指す点と、そこに映るウィンドウの画素を決める。色を正確に保つ
+    // コンポジタでは色から読み（出力が反転していても合う）、色を変えて描くもの（色管理のある Hyprland）では
+    // 出力上の位置（画素の中心 ÷ 出力の倍率 × ウィンドウの倍率）から求める。
+    // 静止した画面ではフレームが届かないため、最後に届いたものを使い続ける。
+    let mut last = None;
     let (size, points) = until("the window on screen", Duration::from_secs(10), || {
-        let update = stream.poll()?;
-        if let Status::Failed(e) = &update.status {
-            panic!("capture failed: {e}");
+        if let Some(update) = stream.poll() {
+            if let Status::Failed(e) = &update.status {
+                panic!("capture failed: {e}");
+            }
+            last = update.frame.or(last.take());
         }
-        let frame = update.frame?;
+        let frame = last.clone()?;
+        let (scale, logical, drawn) = {
+            let seen = seen.lock().unwrap();
+            (seen.scale, seen.size, seen.drawn?)
+        };
+        // 描いた後に取り込んだ画面だけを使う。
+        if scale == 0 || logical.0 <= 0 || frame.captured < drawn {
+            return None;
+        }
         let (bytes, stride) = frame.external.as_ref()?.host_bytes()?;
         let at = |x: u32, y: u32| {
             let i = y as usize * stride + x as usize * 4;
             [bytes[i + 2], bytes[i + 1], bytes[i]]
         };
-        let hits: Vec<(u32, u32)> = (0..frame.height)
-            .step_by(4)
-            .flat_map(|y| (0..frame.width).step_by(4).map(move |x| (x, y)))
-            .filter(|&(x, y)| decode(at(x, y)).is_some())
-            .collect();
-        if hits.len() < 100 {
-            return None;
+        if let Some(path) = std::env::var_os("NYAW_TEST_DUMP") {
+            let mut ppm = format!("P6 {} {} 255\n", frame.width, frame.height).into_bytes();
+            for y in 0..frame.height {
+                for x in 0..frame.width {
+                    ppm.extend(at(x, y));
+                }
+            }
+            std::fs::write(path, ppm).unwrap();
         }
-        // 上寄りと下寄りの点（上下が反転していれば、どちらかで大きくずれる）。
-        let (y_min, y_max) = (
-            hits.iter().map(|h| h.1).min()?,
-            hits.iter().map(|h| h.1).max()?,
-        );
-        let x_mid = hits.iter().map(|h| u64::from(h.0)).sum::<u64>() / hits.len() as u64;
-        let points: Vec<((u32, u32), (u32, u32))> = [4, 1, 3]
+        // 4×4 の範囲がすべて位置どおりに並ぶ画素だけを、色の読める画素とする（色の変換で偶然そろうことを除く）。
+        // 上下が反転した画面では、下へ行くほど位置が減る。
+        let exact = |x: u32, y: u32| {
+            let l = decode(at(x, y))?;
+            let block = |step: fn(u32, u32) -> Option<u32>| {
+                (0..4u32)
+                    .flat_map(|dy| (0..4u32).map(move |dx| (dx, dy)))
+                    .all(|(dx, dy)| {
+                        decode(at(x + dx, y + dy)) == step(l.1, dy).map(|v| (l.0 + dx, v))
+                    })
+            };
+            (block(|v, d| Some(v + d)) || block(u32::checked_sub)).then_some(l)
+        };
+        let ratio = f64::from(scale) * f64::from(logical.0) / f64::from(frame.width);
+        let points: Vec<((u32, u32), (u32, u32))> = [(3, 2), (6, 7), (8, 5)]
             .into_iter()
-            .map(|q| {
-                let target = (x_mid as u32 + q, y_min + (y_max - y_min) * q / 5 + 2);
-                decode(at(target.0, target.1)).map(|local| (target, local))
+            .map(|(qx, qy)| {
+                let target = (frame.width * qx / 10 + 3, frame.height * qy / 10 + 1);
+                let geometric = (
+                    ((f64::from(target.0) + 0.5) * ratio) as u32,
+                    ((f64::from(target.1) + 0.5) * ratio) as u32,
+                );
+                // 色から読んだ位置は、出力上の位置か、その上下反転と一致するときだけ信用する。
+                let height = (f64::from(logical.1) * f64::from(scale)) as u32;
+                let flipped = (geometric.0, height.saturating_sub(1 + geometric.1));
+                let local = exact(target.0, target.1)
+                    .filter(|l| {
+                        l.0.abs_diff(geometric.0) <= 1
+                            && (l.1.abs_diff(geometric.1) <= 1 || l.1.abs_diff(flipped.1) <= 1)
+                    })
+                    .unwrap_or(geometric);
+                (target, local)
             })
-            .collect::<Option<_>>()?;
-        Some(((frame.width, frame.height), points))
+            .collect();
+        // ウィンドウが描かれてから取り込んだ画面を使う（色の読める点が一つでもあるか、少し待つ）。
+        let readable = points.iter().any(|(t, l)| exact(t.0, t.1) == Some(*l));
+        let settled = drawn.elapsed() > Duration::from_millis(500);
+        (readable || settled).then_some(((frame.width, frame.height), points))
     });
 
     // マウス: 画面で見えている点を指すと、ウィンドウはその点の位置でポインタを受け取る（出力の向きによらない）。
@@ -409,7 +489,11 @@ fn a_wayland_compositor_streams_points_and_types() {
         at.y = target.1 as f32 / h;
         stream.touch(at).unwrap();
         // 開いた時点のポインタの位置も届くため、送った点に来るまで待つ。
-        let near = |p: (f64, f64)| (p.0.floor(), p.1.floor()) == (local.0 as f64, local.1 as f64);
+        // 色から読むのはウィンドウの画素（倍率倍）の位置。ポインタの位置に倍率を掛けると同じ画素に入る。
+        let scale = f64::from(seen.lock().unwrap().scale.max(1));
+        let near = |p: (f64, f64)| {
+            ((p.0 * scale).floor(), (p.1 * scale).floor()) == (local.0 as f64, local.1 as f64)
+        };
         let deadline = Instant::now() + Duration::from_secs(5);
         let pointer = loop {
             let p = seen.lock().unwrap().pointer;
@@ -438,8 +522,10 @@ fn a_wayland_compositor_streams_points_and_types() {
         (p != before).then_some(p)
     })
     .unwrap();
+    // 画面の 10 画素は、ウィンドウの画素（倍率倍）でも 10 画素。
+    let scale = f64::from(seen.lock().unwrap().scale.max(1));
     assert_eq!(
-        (moved.0 - before.unwrap().0).abs().round(),
+        ((moved.0 - before.unwrap().0) * scale).abs().round(),
         10.0,
         "moves by whole pixels"
     );
