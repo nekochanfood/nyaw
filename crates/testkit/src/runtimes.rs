@@ -272,9 +272,12 @@ const STEAMVR_PROCESSES: [&str; 7] = [
 ];
 
 /// Config for running SteamVR without an HMD. Leaves the usual config untouched and points `VR_CONFIG_PATH` at a folder containing only this.
+/// On Linux the compositor only drives an HMD in direct mode, which the null driver's HMD has no display for; direct mode
+/// is turned off and the compositor falls back to a window instead (`allowFallbackMirrorWindowLinux`, X11 only).
 const STEAMVR_NULL_SETTINGS: &str = r#"{
-  "steamvr": { "requireHmd": false, "forcedDriver": "null", "activateMultipleDrivers": true },
-  "driver_null": { "enable": true }
+  "steamvr": { "requireHmd": false, "forcedDriver": "null", "activateMultipleDrivers": true, "allowFallbackMirrorWindowLinux": true },
+  "driver_null": { "enable": true },
+  "direct_mode": { "enable": false }
 }
 "#;
 
@@ -364,6 +367,13 @@ pub unsafe fn launch(kind: Kind) -> Result<Launched, LaunchError> {
                 .map_err(|e| LaunchError::Io(e.to_string()))?;
             unsafe { launched.set_env("VR_CONFIG_PATH", dir.clone().into()) };
             launched.scratch = Some(dir);
+            // The compositor's fallback window asserts on Wayland, so it runs on X11 (XWayland) when there is one.
+            if cfg!(target_os = "linux") && std::env::var_os("DISPLAY").is_some() {
+                unsafe {
+                    launched.set_env("SDL_VIDEODRIVER", "x11".into());
+                    launched.unset_env("WAYLAND_DISPLAY");
+                }
+            }
         }
     }
     Ok(launched)
@@ -399,6 +409,11 @@ impl Launched {
     unsafe fn set_env(&mut self, key: &'static str, value: OsString) {
         self.env.push((key, std::env::var_os(key)));
         unsafe { std::env::set_var(key, value) };
+    }
+
+    unsafe fn unset_env(&mut self, key: &'static str) {
+        self.env.push((key, std::env::var_os(key)));
+        unsafe { std::env::remove_var(key) };
     }
 }
 
