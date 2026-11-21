@@ -63,7 +63,7 @@ const BAR_PX: (u32, u32) = (
 );
 const BAR_M: Vec2 = Vec2::new(SIZE_M.x, SIZE_M.x * BAR_PX.1 as f32 / BAR_PX.0 as f32);
 /// 高さ設定 0 の基準位置（頭の高さからの相対 m）。ドッキング画面の中心が目の高さよりやや下になる位置。
-const HEIGHT_ORIGIN: f32 = -0.1;
+const HEIGHT_ORIGIN: f32 = -0.05;
 /// 画面を開いた直後のドッキング位置（既定の距離・高さにおけるドッキング先。開くと即座にドッキングする）。
 const SCREEN_POSE: Pose = Pose::new(
     Vec3::new(0.0, HEIGHT_ORIGIN, -kernel::DASHBOARD_DISTANCE),

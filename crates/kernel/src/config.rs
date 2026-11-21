@@ -156,7 +156,7 @@ pub fn snap(value: f32, min: f32, max: f32, step: f32, fallback: f32) -> f32 {
 }
 
 /// ダッシュボードの置き場所（[`DashboardTable::distance`] / [`DashboardTable::height`]）の既定・範囲と刻み（m）。
-/// 距離ははめた画面の中心まで。高さは目の高さの 0.1m 下（ダッシュボードの `HEIGHT_ORIGIN`）を 0 とする相対（上が +）。
+/// 距離ははめた画面の中心まで。高さは目の高さの 0.05m 下（ダッシュボードの `HEIGHT_ORIGIN`）を 0 とする相対（上が +）。
 pub const DASHBOARD_DISTANCE: f32 = 1.3;
 pub const DASHBOARD_DISTANCE_MIN: f32 = 0.6;
 pub const DASHBOARD_DISTANCE_MAX: f32 = 2.0;
@@ -508,7 +508,7 @@ pub struct ToastTable {
 pub struct DashboardTable {
     /// 距離（m。[`DASHBOARD_DISTANCE_MIN`]〜[`DASHBOARD_DISTANCE_MAX`]）。省略で [`DASHBOARD_DISTANCE`]。
     pub distance: Option<f32>,
-    /// 高さ（m。[`DASHBOARD_HEIGHT_MIN`]〜[`DASHBOARD_HEIGHT_MAX`]）。目の高さの 0.1m 下を 0 とし、上を正とする。省略で 0。
+    /// 高さ（m。[`DASHBOARD_HEIGHT_MIN`]〜[`DASHBOARD_HEIGHT_MAX`]）。目の高さの 0.05m 下を 0 とし、上を正とする。省略で 0。
     pub height: Option<f32>,
 }
 
