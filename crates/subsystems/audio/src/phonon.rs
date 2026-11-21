@@ -115,15 +115,25 @@ pub(crate) struct Binaural(Handle);
 unsafe impl Send for Binaural {}
 
 /// ライブラリの検索名。`NYAW_PHONON` 環境変数でパスを指定可能。未設定時は OS の既定の検索順序に従う（Windows は実行ファイルと同一ディレクトリが最優先）。
+/// Linux の `dlopen` は実行ファイルのディレクトリを探索しないため、そこに同梱したライブラリがあればそのパスを指定する。
 fn library_name() -> std::ffi::OsString {
-    std::env::var_os("NYAW_PHONON").unwrap_or_else(|| {
-        format!(
-            "{}phonon{}",
-            std::env::consts::DLL_PREFIX,
-            std::env::consts::DLL_SUFFIX
-        )
-        .into()
-    })
+    if let Some(path) = std::env::var_os("NYAW_PHONON") {
+        return path;
+    }
+    let name = format!(
+        "{}phonon{}",
+        std::env::consts::DLL_PREFIX,
+        std::env::consts::DLL_SUFFIX
+    );
+    if cfg!(not(windows))
+        && let Some(bundled) = std::env::current_exe()
+            .ok()
+            .and_then(|exe| Some(exe.parent()?.join(&name)))
+            .filter(|p| p.exists())
+    {
+        return bundled.into();
+    }
+    name.into()
 }
 
 unsafe extern "system" fn log(level: i32, message: *const c_char) {
