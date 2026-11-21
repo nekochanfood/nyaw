@@ -2,12 +2,13 @@
 //! DMA-BUF は VkImage として、共有メモリはテクセルバッファとして CPU を介さずに読み、全面を覆う三角形 1 枚の描画で
 //! 並びを揃える（透明度の無い形式は不透明にする）。書き先はオーバーレイのイメージの UNORM のビュー（値をそのまま写す）。
 
+#[cfg(target_os = "linux")]
+use std::os::{
+    fd::{AsRawFd, FromRawFd, IntoRawFd},
+    unix::fs::MetadataExt,
+};
 use std::{
     ffi::{CStr, CString, c_void},
-    os::{
-        fd::{AsRawFd, FromRawFd, IntoRawFd},
-        unix::fs::MetadataExt,
-    },
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -80,6 +81,7 @@ const KIND_BUFFER: usize = 1;
 
 pub(crate) struct Importer {
     pub formats: ImportFormats,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     fd: Option<khr::external_memory_fd::Device>,
     host: Option<ext::external_memory_host::Device>,
     max_texels: u32,
@@ -105,6 +107,7 @@ pub(crate) struct Transient {
 
 /// 取り込んだ DMA-BUF を引く値。同じバッファは同じ inode を持ち、取り込んでいる間は別のバッファに使われない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 struct Key {
     dev: u64,
     ino: u64,
@@ -563,6 +566,7 @@ impl Gpu {
         image: &ExternalImage,
     ) -> Result<(Source, vk::DeviceMemory), VrError> {
         match &image.memory {
+            #[cfg(target_os = "linux")]
             Memory::DmaBuf {
                 fd,
                 modifier,
@@ -596,6 +600,7 @@ impl Gpu {
         }
     }
 
+    #[cfg(target_os = "linux")]
     fn import_dmabuf(
         &self,
         ext: &khr::external_memory_fd::Device,
@@ -1041,6 +1046,13 @@ impl Gpu {
 }
 
 /// DMA-BUF の画像を引く値（共有メモリは使い回さない。写像が外れた後に取り込みを残せないため）。
+#[cfg(not(target_os = "linux"))]
+fn key(_: &ExternalImage) -> Option<Key> {
+    None
+}
+
+/// DMA-BUF の画像を引く値（共有メモリは使い回さない。写像が外れた後に取り込みを残せないため）。
+#[cfg(target_os = "linux")]
 fn key(image: &ExternalImage) -> Option<Key> {
     let Memory::DmaBuf {
         fd,
@@ -1167,6 +1179,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     #[ignore = "needs a Vulkan GPU"]
     fn dmabuf_is_imported_and_drawn_as_rgba() {
         let mut gpu = gpu();
