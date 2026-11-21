@@ -25,7 +25,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 |---|---|---|
 | 0 | [`crates/logger`](crates/logger/AGENT.md) | logfmt 形式に対応した横断的構造化ロガー。 |
 | 0 | [`crates/animation`](crates/animation/AGENT.md) | アニメーション計算と遷移状態の管理。GPUI や UI 部品には依存しない。 |
-| 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | 下位サブシステムを統括し、上位層へ共通フレーム情報を供給する。 |
+| 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | 各サブシステムの再エクスポートと、VR ランタイムの入力から共通フレーム情報を作る処理。 |
 | 1 | [`crates/subsystems/os`](crates/subsystems/os/AGENT.md) | データ保存先パス、ランタイム検出、高精度タイマーなどの OS 差異の吸収。 |
 | 1 | [`crates/subsystems/vr`](crates/subsystems/vr/AGENT.md) | OpenVR、OpenXR、および非 VR 用エミュレーター（novr）のランタイム抽象化。 |
 | 1 | [`crates/subsystems/input`](crates/subsystems/input/AGENT.md) | コントローラの機種別入力マッピングと骨格ハンドトラッキングの処理。 |
@@ -146,6 +146,11 @@ ui::run
 ## 画面の分離と制御
 
 UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個別仕様を知らない。各画面は独立したクレート（`crates/dashboard`、`crates/wrist` など）として実装され、実行時に `PanelSpec` の集合として渡される。
+
+画面どうしは原則として依存しない。複数の画面が使う部品は UI 層に置く（トーストとダッシュボードが使う `ui::notification` など）。例外は次の 2 つである。
+
+- **シェルとしての `wrist`**: `wrist` は腕時計の表示に加えて、シェルの役割（ダッシュボードの開閉、トーストの生成、ロックダウンへの対応）を兼ねる。そのため `dashboard` と `toast` に依存する。
+- **開発用の `testing`**: 設定画面の部品を検証するため `settings` に依存する。
 
 ### 画面とカーネル間の通信
 
