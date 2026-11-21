@@ -370,7 +370,7 @@ impl InstalledApps {
                 #[cfg(windows)]
                 let result = windows::installed_apps();
                 #[cfg(not(windows))]
-                let result = Err(Error(
+                let result: Result<Vec<InstalledApp>, Error> = Err(Error(
                     "listing apps is not available on this platform yet".into(),
                 ));
                 let _ = tx.send(result.map(|mut apps| {
