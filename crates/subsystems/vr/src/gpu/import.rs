@@ -4,8 +4,12 @@
 
 use std::{
     ffi::{CStr, CString, c_void},
-    os::fd::{AsRawFd, FromRawFd, IntoRawFd},
+    os::{
+        fd::{AsRawFd, FromRawFd, IntoRawFd},
+        unix::fs::MetadataExt,
+    },
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use ash::{ext, khr, vk};
@@ -91,14 +95,41 @@ pub(crate) struct Importer {
 
 /// GPU が読み終えるまで残す、1 回の取り込みの資源。
 pub(crate) struct Transient {
-    source: Source,
-    memory: vk::DeviceMemory,
+    /// 使い回さない読み元（共有メモリ）か、使い回さなくなった読み元（[`Cached`]）。
+    source: Option<(Source, vk::DeviceMemory)>,
     target: vk::ImageView,
     framebuffer: vk::Framebuffer,
     /// 書き込み元へ返すのは、GPU が読み終えてから。
-    _image: Arc<ExternalImage>,
+    _image: Option<Arc<ExternalImage>>,
 }
 
+/// 取り込んだ DMA-BUF を引く値。同じバッファは同じ inode を持ち、取り込んでいる間は別のバッファに使われない。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Key {
+    dev: u64,
+    ino: u64,
+    modifier: u64,
+    offset: u32,
+    stride: u32,
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+}
+
+/// 使い回す DMA-BUF の取り込み。表示サーバーは少数のバッファを順に使うため、取り込みは 1 回で済む
+/// （毎回取り込むと 1920×1080 で約 0.7ms かかっていた）。
+pub(crate) struct Cached {
+    key: Key,
+    source: Source,
+    memory: vk::DeviceMemory,
+    used: Instant,
+}
+
+/// 使い回す取り込みの上限と、使われなくなってから手放すまでの時間。
+const CACHE: usize = 16;
+const UNUSED: Duration = Duration::from_secs(2);
+
+#[derive(Clone, Copy)]
 enum Source {
     Image(vk::Image, vk::ImageView),
     Buffer(vk::Buffer, vk::BufferView),
@@ -428,19 +459,45 @@ impl Gpu {
         if self.import.is_none() {
             return Err(VrError::Runtime("Vulkan: no external memory import".into()));
         }
+        self.collect();
         let (slot, cmd) = self.next_slot()?;
+        self.forget_unused();
+        let key = key(image);
+        let cached = key.and_then(|k| self.cache.iter_mut().find(|c| c.key == k));
+        let (source, owned) = match cached {
+            Some(c) => {
+                c.used = Instant::now();
+                (c.source, None)
+            }
+            None => {
+                let importer = self.import.as_ref().unwrap();
+                let (source, memory) = self.import_source(importer, image)?;
+                match key {
+                    Some(key) => {
+                        self.remember(Cached {
+                            key,
+                            source,
+                            memory,
+                            used: Instant::now(),
+                        });
+                        (source, None)
+                    }
+                    None => (source, Some((source, memory))),
+                }
+            }
+        };
         let importer = self.import.as_ref().unwrap();
-        let (source, memory) = self.import_source(importer, image)?;
         let transient = match self.record(importer, slot, cmd, target, image, &source, layout) {
             Ok((target, framebuffer)) => Transient {
-                source,
-                memory,
+                source: owned,
                 target,
                 framebuffer,
-                _image: image.clone(),
+                _image: Some(image.clone()),
             },
             Err(e) => {
-                self.destroy_source(source, memory);
+                if let Some((source, memory)) = owned {
+                    self.destroy_source(source, memory);
+                }
                 return Err(e);
             }
         };
@@ -451,6 +508,53 @@ impl Gpu {
         self.retired
             .push((self.submitted, Retired::Import(transient)));
         Ok(())
+    }
+
+    /// 取り込みを使い回せるようにする。上限を超えたら最も古いものを手放す。
+    fn remember(&mut self, cached: Cached) {
+        if self.cache.len() >= CACHE
+            && let Some(oldest) = self
+                .cache
+                .iter()
+                .enumerate()
+                .min_by_key(|(_, c)| c.used)
+                .map(|(i, _)| i)
+        {
+            let old = self.cache.swap_remove(oldest);
+            self.retire_cached(old);
+        }
+        self.cache.push(cached);
+    }
+
+    /// しばらく使われていない取り込み（止まった配信や、交渉し直して捨てられたバッファ）を手放す。
+    fn forget_unused(&mut self) {
+        let now = Instant::now();
+        let unused: Vec<Cached> = self
+            .cache
+            .extract_if(.., |c| now.duration_since(c.used) > UNUSED)
+            .collect();
+        for cached in unused {
+            self.retire_cached(cached);
+        }
+    }
+
+    /// 送信中のコマンドが読み終えてから破棄する。
+    fn retire_cached(&mut self, cached: Cached) {
+        let transient = Transient {
+            source: Some((cached.source, cached.memory)),
+            target: vk::ImageView::null(),
+            framebuffer: vk::Framebuffer::null(),
+            _image: None,
+        };
+        self.retired
+            .push((self.submitted, Retired::Import(transient)));
+    }
+
+    /// 破棄時にすべての取り込みを手放す（GPU は待機済み）。
+    pub(super) fn forget_all(&mut self) {
+        for cached in std::mem::take(&mut self.cache) {
+            self.destroy_source(cached.source, cached.memory);
+        }
     }
 
     fn import_source(
@@ -930,8 +1034,36 @@ impl Gpu {
             self.device.destroy_framebuffer(t.framebuffer, None);
             self.device.destroy_image_view(t.target, None);
         }
-        self.destroy_source(t.source, t.memory);
+        if let Some((source, memory)) = t.source {
+            self.destroy_source(source, memory);
+        }
     }
+}
+
+/// DMA-BUF の画像を引く値（共有メモリは使い回さない。写像が外れた後に取り込みを残せないため）。
+fn key(image: &ExternalImage) -> Option<Key> {
+    let Memory::DmaBuf {
+        fd,
+        modifier,
+        offset,
+        stride,
+    } = &image.memory
+    else {
+        return None;
+    };
+    // fd は借りるだけで閉じない。
+    let file = std::mem::ManuallyDrop::new(unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) });
+    let meta = file.metadata().ok()?;
+    Some(Key {
+        dev: meta.dev(),
+        ino: meta.ino(),
+        modifier: *modifier,
+        offset: *offset,
+        stride: *stride,
+        width: image.width,
+        height: image.height,
+        format: image.format,
+    })
 }
 
 fn color_range() -> vk::ImageSubresourceRange {
@@ -1139,6 +1271,18 @@ mod tests {
             .download(target.image, 4, 2, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
             .unwrap();
         assert_eq!(read, rgba, "modifier {:#x}", props.drm_format_modifier);
+        // 表示サーバーが同じバッファに次の画面を書いても、取り込みは使い回して新しい内容を読む。
+        let (mut bgrx, _) = pattern(16);
+        bgrx.iter_mut().for_each(|v| *v = 255 - *v);
+        gpu.upload(source, 4, 2, &bgrx, vk::ImageLayout::GENERAL)
+            .unwrap();
+        gpu.convert(target.image, &image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .unwrap();
+        let read = gpu
+            .download(target.image, 4, 2, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+            .unwrap();
+        assert_eq!(&read[..4], [255, 255, 255 - 7, 255]);
+        assert_eq!(gpu.cache.len(), 1, "imported once");
         gpu.wait_idle();
         gpu.destroy_image(target);
         unsafe {

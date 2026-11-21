@@ -142,6 +142,8 @@ pub(crate) struct Gpu {
     retired: Vec<(u64, Retired)>,
     /// 表示サーバーの画像の取り込み（[`Gpu::convert`]）。拡張が無ければ `None`。
     import: Option<import::Importer>,
+    /// 使い回す DMA-BUF の取り込み。
+    cache: Vec<import::Cached>,
     /// Vulkan ライブラリ。関数ポインタの参照先のため、最後に解放する。
     _entry: ash::Entry,
 }
@@ -216,6 +218,7 @@ impl Gpu {
                 submitted: 0,
                 retired: Vec::new(),
                 import,
+                cache: Vec::new(),
                 _entry: entry,
             })
         }
@@ -323,16 +326,43 @@ impl Gpu {
             slot.busy = false;
             // キューは順に完了するため、この番号までの転送（およびその後にキューイングされたランタイムの読み出し）は完了済み。
             let done = slot.seq;
-            let finished: Vec<Retired> = self
-                .retired
-                .extract_if(.., |(at, _)| *at < done)
-                .map(|(_, r)| r)
-                .collect();
-            for retired in finished {
-                self.free(retired);
-            }
+            self.release_done(done);
         }
         Ok((i, self.slots[i].cmd))
+    }
+
+    /// 完了した転送を待たずに確かめ、使い終えた資源を手放す（取り込んだ画像は書き込み元へ返る）。
+    /// 転送が続かない間もバッファを返すため、毎フレーム呼ぶ。
+    pub fn collect(&mut self) {
+        let mut done = 0;
+        for slot in &mut self.slots {
+            if slot.busy && unsafe { self.device.get_fence_status(slot.fence) } == Ok(true) {
+                if unsafe { self.device.reset_fences(&[slot.fence]) }.is_err() {
+                    continue;
+                }
+                slot.busy = false;
+            }
+            if !slot.busy {
+                done = done.max(slot.seq);
+            }
+        }
+        self.release_done(done);
+    }
+
+    /// シーケンス番号 `done` までの転送が完了した。イメージはランタイムがその後に読むため一つ後の完了を待ち、
+    /// 取り込みの資源は自分の転送だけが読むためすぐに手放す。
+    fn release_done(&mut self, done: u64) {
+        let finished: Vec<Retired> = self
+            .retired
+            .extract_if(.., |(at, r)| match r {
+                Retired::Image(_) => *at < done,
+                Retired::Import(_) => *at <= done,
+            })
+            .map(|(_, r)| r)
+            .collect();
+        for retired in finished {
+            self.free(retired);
+        }
     }
 
     fn free(&self, retired: Retired) {
@@ -627,6 +657,7 @@ impl Drop for Gpu {
         for (_, retired) in std::mem::take(&mut self.retired) {
             self.free(retired);
         }
+        self.forget_all();
         if let Some(import) = self.import.take() {
             import.destroy(&self.device);
         }

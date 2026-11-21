@@ -498,6 +498,8 @@ impl VrBackend for OpenVrBackend {
 
     fn poll(&mut self) -> Frame {
         let predict = self.wait_vsync();
+        // 読み終えた取り込みのバッファを、次の画像を待たずに表示サーバーへ返す。
+        self.gpu.collect();
         let s = self.system();
         let mut quit = false;
         let mut event = MaybeUninit::<sys::VREvent_t>::zeroed();

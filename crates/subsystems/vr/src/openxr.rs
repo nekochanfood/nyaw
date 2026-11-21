@@ -810,6 +810,8 @@ impl VrBackend for OpenXrBackend {
     fn poll(&mut self) -> Frame {
         // 前回の poll から今までに送られた画像を載せて、前のフレームを閉じる。
         self.end_frame();
+        // 読み終えた取り込みのバッファを、次の画像を待たずに表示サーバーへ返す。
+        self.gpu.collect();
         if self.lost {
             return self.idle();
         }
