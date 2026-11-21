@@ -1,0 +1,59 @@
+# Zed の crates/gpui_wgpu（rev 26363aab）を複製し、ワークスペース継承を具体的な依存指定に展開したもの。
+# Linux のパネル描画（crates/subsystems/rendering/src/gpui/linux.rs）が使用する。
+# 変更点（NYAW: で標識）:
+# - WGSL を vendor/gpui で拡張したシーン構造体（`ContentMask` の角丸、`Quad` / `Shadow` の超楕円と変形）に合わせ、
+#   角丸クリッピング・超楕円の角・回転を vendor/gpui_windows/src/shaders.hlsl と同等に描画する。
+# - ヘッドレスレンダラは透明で下塗りして事前乗算アルファの画素を返し、読み戻しを GPU の完了を待たずに行う
+#   （Windows と同じく 1 回遅れ）。
+# - パイプラインとバインドグループレイアウトを、同じデバイス上のレンダラ間で共有する（パネルごとのシェーダーのコンパイルを省く）。
+# Zed を更新する際は、新リビジョンを複製し直して NYAW: の箇所を再適用する。
+#
+# vendor はワークスペース外のため、テストは vendor/gpui を patch に指定して単独で実行する（GPU を使用する描画のテストを含む）:
+#   cd vendor/gpui_wgpu && CARGO_TARGET_DIR=../../target/vendor-tests cargo test --features test-support \
+#     --config 'patch."https://github.com/zed-industries/zed".gpui.path="../gpui"'
+# 生成される Cargo.lock は一時ファイルであり、コミットしない。
+[package]
+name = "gpui_wgpu"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "Apache-2.0"
+
+[lib]
+path = "src/gpui_wgpu.rs"
+doctest = false
+
+[features]
+default = []
+bench-support = ["gpui/bench-support", "dep:image"]
+font-kit = ["dep:font-kit"]
+test-support = ["gpui/test-support", "dep:image"]
+
+[dependencies]
+gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa", default-features = false }
+anyhow = "1.0.86"
+bytemuck = "1"
+collections = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
+cosmic-text = "0.19.0"
+etagere = "0.2"
+itertools = "0.14.0"
+image = { version = "0.25.1", default-features = false, optional = true }
+log = { version = "0.4", default-features = false, features = ["std"] }
+parking_lot = "0.12.1"
+profiling = "1"
+raw-window-handle = "0.6"
+smallvec = { version = "1.6", features = ["union", "const_new"] }
+swash = "0.2.6"
+unicode-bidi = { version = "0.3.18", default-features = false, features = ["hardcoded-data"] }
+unicode-segmentation = "1.10"
+gpui_util = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "94b0f28166665e8fd2f53ff6d268a14955c82269", package = "zed-font-kit", version = "0.14.1-zed", default-features = false, optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
+wgpu = { version = "29.0", default-features = false, features = ["std", "parking_lot", "metal", "gles", "vulkan", "wgsl", "webgpu"] }
+
+[target.'cfg(not(any(target_os = "linux", target_os = "freebsd")))'.dependencies]
+wgpu = { version = "29.0", default-features = true }
+
+[dev-dependencies]
+naga = { version = "29.0.4", features = ["wgsl-in"] }

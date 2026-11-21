@@ -219,7 +219,12 @@ fn open_url(url: &str) -> Result<(), String> {
         // `start` の第 1 引数はウィンドウタイトル。
         run(Command::new("cmd").args(["/C", "start", "", url]))
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        // Steam registers itself for steam:// links with the desktop.
+        run(Command::new("xdg-open").arg(url))
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = url;
         Err("no URL opener is implemented for this target".into())
@@ -237,11 +242,17 @@ fn monado() -> Option<Monado> {
     monado_in(&root().join("monado"))
 }
 
+/// The executable name of Monado's service.
+const MONADO_SERVICE: &str = if cfg!(windows) {
+    "monado-service.exe"
+} else {
+    "monado-service"
+};
+
 /// Monado extracted by testkit (`<dir>/install/...`).
 fn monado_in(dir: &Path) -> Option<Monado> {
     let install = dir.join("install");
-    #[cfg(windows)]
-    let service = install.join("bin").join("monado-service.exe");
+    let service = install.join("bin").join(MONADO_SERVICE);
     let manifest = install.join("openxr_monado.json");
     (service.is_file() && manifest.is_file()).then_some(Monado { service, manifest })
 }
@@ -261,9 +272,12 @@ const STEAMVR_PROCESSES: [&str; 7] = [
 ];
 
 /// Config for running SteamVR without an HMD. Leaves the usual config untouched and points `VR_CONFIG_PATH` at a folder containing only this.
+/// On Linux the compositor only drives an HMD in direct mode, which the null driver's HMD has no display for; direct mode
+/// is turned off and the compositor falls back to a window instead (`allowFallbackMirrorWindowLinux`, X11 only).
 const STEAMVR_NULL_SETTINGS: &str = r#"{
-  "steamvr": { "requireHmd": false, "forcedDriver": "null", "activateMultipleDrivers": true },
-  "driver_null": { "enable": true }
+  "steamvr": { "requireHmd": false, "forcedDriver": "null", "activateMultipleDrivers": true, "allowFallbackMirrorWindowLinux": true },
+  "driver_null": { "enable": true },
+  "direct_mode": { "enable": false }
 }
 "#;
 
@@ -353,6 +367,13 @@ pub unsafe fn launch(kind: Kind) -> Result<Launched, LaunchError> {
                 .map_err(|e| LaunchError::Io(e.to_string()))?;
             unsafe { launched.set_env("VR_CONFIG_PATH", dir.clone().into()) };
             launched.scratch = Some(dir);
+            // The compositor's fallback window asserts on Wayland, so it runs on X11 (XWayland) when there is one.
+            if cfg!(target_os = "linux") && std::env::var_os("DISPLAY").is_some() {
+                unsafe {
+                    launched.set_env("SDL_VIDEODRIVER", "x11".into());
+                    launched.unset_env("WAYLAND_DISPLAY");
+                }
+            }
         }
     }
     Ok(launched)
@@ -388,6 +409,11 @@ impl Launched {
     unsafe fn set_env(&mut self, key: &'static str, value: OsString) {
         self.env.push((key, std::env::var_os(key)));
         unsafe { std::env::set_var(key, value) };
+    }
+
+    unsafe fn unset_env(&mut self, key: &'static str) {
+        self.env.push((key, std::env::var_os(key)));
+        unsafe { std::env::remove_var(key) };
     }
 }
 
@@ -435,15 +461,22 @@ impl Drop for Launched {
 // --- Processes ------------------------------------------------------------------------------
 
 /// Processes (from one snapshot) whose executable name (without extension) is in `names`.
+/// Linux cuts the process name to 15 bytes, so the executable's file name is checked too.
 fn running(names: &[&str]) -> Vec<sysinfo::Pid> {
     let mut sys = sysinfo::System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    sys.refresh_processes_specifics(
+        sysinfo::ProcessesToUpdate::All,
+        sysinfo::ProcessRefreshKind::new().with_exe(sysinfo::UpdateKind::OnlyIfNotSet),
+    );
+    let matches = |name: &std::ffi::OsStr| {
+        let n = name.to_string_lossy().to_lowercase();
+        let n = n.strip_suffix(".exe").unwrap_or(&n);
+        names.contains(&n)
+    };
     sys.processes()
         .iter()
         .filter(|(_, p)| {
-            let n = p.name().to_string_lossy().to_lowercase();
-            let n = n.strip_suffix(".exe").unwrap_or(&n);
-            names.contains(&n)
+            matches(p.name()) || p.exe().and_then(Path::file_name).is_some_and(matches)
         })
         .map(|(pid, _)| *pid)
         .collect()
@@ -484,7 +517,7 @@ mod tests {
         fs::create_dir_all(&bin).unwrap();
         assert!(monado_in(&dir).is_none());
 
-        let exe = "monado-service.exe";
+        let exe = MONADO_SERVICE;
         fs::write(bin.join(exe), "").unwrap();
         assert!(
             monado_in(&dir).is_none(),

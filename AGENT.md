@@ -95,7 +95,7 @@ VR ランタイムや重い依存関係（wgpu、minifb、OpenVR、OpenXR）は 
   logger::warn!("パネル描画の取得に失敗しました", error = e, panel = ?panel);
   ```
 - **出力フォーマット**: 1 行 1 件の logfmt 形式を採用する。先頭は `ts=... level=... target=... msg=...` で固定し、以降に任意のキー・値フィールドを記述順で続ける。キー名は snake_case とし、`target` には `module_path!()` を記録する。
-- **出力先とログ退避**: 出力先は標準エラー出力（`logger::StderrSink`）とローカルログファイル（`logger::FileSink`、Windows 環境では `%LOCALAPPDATA%\nyaw\logs\nyaw.log`）の 2 系統とする。起動時に前回のログを `nyaw-prev.log` に 1 世代のみ退避し、新規にファイルを作成する。
+- **出力先とログ退避**: 出力先は標準エラー出力（`logger::StderrSink`）とローカルログファイル（`logger::FileSink`、Windows 環境では `%LOCALAPPDATA%\nyaw\logs\nyaw.log`、Linux 環境では `$XDG_STATE_HOME/nyaw/logs/nyaw.log`）の 2 系統とする。起動時に前回のログを `nyaw-prev.log` に 1 世代のみ退避し、新規にファイルを作成する。
 - **ログレベルの制御**: 環境変数 `NYAW_LOG`（`trace` / `debug` / `info` / `warn` / `error`、既定値は `info`）で動的に制御する。初期化完了前のログは標準エラー出力へ `info` レベル以上で出力される。外部ライブラリ（GPUI など）のログも同ロガーへ転送し、パニック時もフックを通じて `error` として記録する。
 
 ## ランタイムの設計思想
@@ -105,6 +105,14 @@ nyaw において、novr（ウィンドウ型エミュレーター）、SteamVR 
 - **novr の位置づけ**: novr はテスト専用の暫定実装ではなく、実機 VR を持たない環境や通常開発において日常的に利用される正式なランタイムである。そのため、ビルド済みバイナリにおいても常時利用可能とする。
 - **上位層の非依存性**: UI 層以上のコンポーネントは、背後で動作しているランタイムの種類によって処理を分岐させない。どのランタイムであっても、パネルは GPUI の非表示オフスクリーンウィンドウ上で描画され、ピクセルデータとして読み戻された後にオーバーレイ層へ転送される。
 - **機能差の許容**: コントローラの 6 自由度トラッキングやパネルの直接掴み移動など、VR ハードウェアに固有の機能が novr 上で代替されないことは仕様として許容する。ただし、ポインタによる基本操作や画面遷移はすべてのランタイムで同一に実行できなければならない。
+
+## 対応 OS
+
+nyaw は Windows と Linux で動作する。OS の差異は Subsystems 層で吸収し、UI 層以上のコードは OS によって処理を分岐させない。
+
+- **保存先・ランタイム検出・タイマーなど**: `crates/subsystems/os` が OS ごとのバックエンドを持つ（[`crates/subsystems/os/AGENT.md`](crates/subsystems/os/AGENT.md)）。
+- **パネルの描画**: Windows では GPUI 標準の非表示ウィンドウ（Direct3D）、Linux では表示サーバーに接続しないオフスクリーンのウィンドウ（wgpu）で描画する。差異は `crates/subsystems/rendering` が吸収する（[`crates/subsystems/rendering/AGENT.md`](crates/subsystems/rendering/AGENT.md)）。
+- **OS との連携機能**: 画面・ウィンドウの配信と入力注入（`desktop`）、アプリの一覧と起動（`desktop`）、再生中のメディアの取得と操作（`media`）、OS 通知の取得（`notifications`）、OS へのキー入力の送信（`os::keyboard`）は、現在 Windows でのみ実装している。Linux ではこれらのサブシステムが「利用できない」ことを返し、上位層はその状態で動作を続ける（たとえばランチャーと画面配信は、利用できない旨を表示する）。
 
 ## フレームサイクルの処理手順
 

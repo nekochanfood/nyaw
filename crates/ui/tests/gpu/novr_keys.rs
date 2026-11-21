@@ -3,6 +3,9 @@
 //! emulator's window and used to drop its WM_KEYDOWN (`translate_accelerator` in vendor/gpui_windows), so double
 //! presses were counted only by luck. Opens a real window, so it only runs with `--ignored` (Windows only).
 
+// Everything below the entry point is for Windows.
+#![cfg_attr(not(windows), allow(unused_imports, dead_code))]
+
 use crate::common;
 
 use std::process::ExitCode;
@@ -22,14 +25,23 @@ const PRESSES: u32 = 40;
 /// Time between the key events of one double press (down, up, down, up).
 const STEP: Duration = Duration::from_millis(30);
 
+// The emulator's window is found and fed through Win32, so the case runs on Windows only.
+#[cfg(windows)]
 #[link(name = "user32")]
 unsafe extern "system" {
     fn FindWindowW(class: *const u16, title: *const u16) -> isize;
     fn PostMessageW(hwnd: isize, msg: u32, wparam: usize, lparam: isize) -> i32;
 }
 
+#[cfg(not(windows))]
 pub fn main() -> ExitCode {
-    if !cfg!(windows) || !common::should_run("novr_keys") {
+    println!("novr_keys: skipped (posts Win32 key messages)");
+    ExitCode::SUCCESS
+}
+
+#[cfg(windows)]
+pub fn main() -> ExitCode {
+    if !common::should_run("novr_keys") {
         return ExitCode::SUCCESS;
     }
     // the windowed emulator, as `--novr` in production.
@@ -61,6 +73,7 @@ pub fn main() -> ExitCode {
 }
 
 /// The double presses the kernel has counted so far.
+#[cfg(windows)]
 fn double_presses(remote: &Sender<ui::Remote>) -> u32 {
     let (tx, rx) = channel();
     remote
@@ -73,6 +86,7 @@ fn double_presses(remote: &Sender<ui::Remote>) -> u32 {
         .expect("frame loop is not responding")
 }
 
+#[cfg(windows)]
 fn scenario(remote: &Sender<ui::Remote>) {
     let title: Vec<u16> = TITLE.encode_utf16().chain([0]).collect();
     let deadline = Instant::now() + common::TIMEOUT;

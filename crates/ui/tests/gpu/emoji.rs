@@ -1,5 +1,5 @@
 //! 実 GPU で SVG の配色・サイズ・文章内の折り返しと改行を検証する。
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn main() {
     use gpui::{
         AppContext, Context, IntoElement, ParentElement, Render, Styled, Window, div, px, rgb,
@@ -49,7 +49,7 @@ pub fn main() {
     }
     let result = Rc::new(RefCell::new(None));
     let out = result.clone();
-    gpui_platform::application().run(move |cx| {
+    ui::application().run(move |cx| {
         design::font::install(cx);
         let window = open_panel_window(cx, (440, 400), |_, cx| {
             let view = cx.new(|_| Sample).into();
@@ -172,7 +172,7 @@ pub fn main() {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn main() {
     println!("emoji: skipped (GPU readback requires Windows)");
 }

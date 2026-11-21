@@ -419,3 +419,19 @@ fn reveal_is_taken_once(cx: &mut gpui::TestAppContext) {
         assert!(!take_reveal(cx));
     });
 }
+
+/// インストーラーを配布していない OS では、一覧を参照せずに、確認できない理由をエラーとして示す。
+#[gpui::test]
+fn without_a_source_checking_reports_that_updates_are_unavailable(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(Updater {
+            source: String::new(),
+            ..Default::default()
+        });
+        check_now(cx);
+        let u = state(cx);
+        assert!(matches!(u.step, Step::Idle));
+        assert!(!u.checked);
+        assert_eq!(u.error.as_deref(), Some(NO_INSTALLER));
+    });
+}
