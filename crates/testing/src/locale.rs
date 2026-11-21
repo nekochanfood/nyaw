@@ -3,7 +3,7 @@
 use super::*;
 
 /// ローカライズを検証する画面（`locale-test`）。
-/// - `lang-en` / `lang-ja` で言語を切り替える（全パネルに反映され、設定ファイルの `language` に保存される。`Setting::Language`）。
+/// - `lang-en` / `lang-ja` で言語を切り替える（全パネルに反映され、設定ファイルの `i18n.language` に保存される。`Setting::Language`）。
 ///   ボタンの名前はその言語自体で表示する。現在の言語のボタンがハイライトされる。
 /// - `locale-current` に現在の言語、`locale-missing` に翻訳の欠落（言語ごとにテーブルにないキー）を表示する。
 /// - サンプル（`locale-samples`）: 長文の折り返し、プレースホルダー（`{count}`）、翻訳により長さの変わるボタン。

@@ -123,7 +123,7 @@ impl<B: VrBackend> Kernel<B> {
                 status: Status::Starting,
                 contacts: [None; 2],
                 hovered: [None; 2],
-                active: self.config.dominant_hand.hand(),
+                active: self.config.kernel.dominant_hand.hand(),
                 original_resolution,
                 meter: Meter::new(Instant::now()),
                 stats: None,
@@ -176,7 +176,7 @@ impl<B: VrBackend> Kernel<B> {
                             status: Status::Failed(error),
                             contacts: [None; 2],
                             hovered: [None; 2],
-                            active: self.config.dominant_hand.hand(),
+                            active: self.config.kernel.dominant_hand.hand(),
                             original_resolution,
                             meter: Meter::new(Instant::now()),
                             stats: None,
@@ -450,14 +450,10 @@ mod tests {
     use vr::{Quat, RawController, Vec3, mock::MockBackend};
 
     fn setup() -> (Kernel<MockBackend>, PanelId, mock::Controller) {
-        let mut kernel = Kernel::with_backend(
-            MockBackend::default(),
-            Config {
-                pointer_smoothing: Some(0.0),
-                pointer_mode: Some(PointerMode::Mouse),
-                ..Default::default()
-            },
-        );
+        let mut config = Config::default();
+        config.overlay.pointer_smoothing = Some(0.0);
+        config.kernel.pointer_mode = Some(PointerMode::Mouse);
+        let mut kernel = Kernel::with_backend(MockBackend::default(), config);
         let panel = kernel
             .add_panel(
                 "desktop",

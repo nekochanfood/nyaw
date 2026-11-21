@@ -15,29 +15,14 @@ fn main() -> ExitCode {
         os::attach_console();
     }
     let config = config::load();
-    init_logger(config.as_ref().ok().and_then(|c| c.log.clone()));
-    let config = match config {
-        Ok(c) => c,
-        Err(e) => {
-            logger::warn!("failed to read config file, starting with defaults", path = ?config::path(), error = e);
-            config::Config {
-                runtime: config::salvage_runtime(),
-                ..Default::default()
-            }
-        }
-    };
+    init_logger(config.as_ref().ok().and_then(|c| c.logger.level.clone()));
+    let config = config.unwrap_or_else(|e| {
+        logger::warn!("failed to read config file, starting with defaults", path = ?config::path(), error = e);
+        config::Config::default()
+    });
     let args = Args::parse(std::env::args().skip(1));
-    // 設定ファイルの `runtime` は非推奨（コマンドラインで指定する）。デバッグビルドでのみ、コマンドライン引数が未指定の場合に参照する。
-    // リリースビルドでは無視する（novr は明示的な指定を必要とするため、設定ファイルへの記載を促さない）。
-    if let Some(r) = &config.runtime {
-        logger::warn!(
-            "runtime in config file is deprecated, pass it on the command line",
-            runtime = r,
-            ignored = !cfg!(debug_assertions)
-        );
-    }
-    let from_config = config.runtime.clone().filter(|_| cfg!(debug_assertions));
-    let requested = args.runtime.or(from_config);
+    // ランタイムはコマンドラインでのみ指定する（novr は明示的な指定を必要とするため、設定ファイルには置かない）。
+    let requested = args.runtime;
     // novr はテスト用。リリースビルドでは VR ランタイムが見つからなくても自動的に novr へフォールバックせず、明示的な指定を必要とする。
     let Ok(kernel) = Kernel::boot(requested.as_deref(), config, cfg!(debug_assertions)) else {
         // コンソール非接続時にもユーザーへ通知するためダイアログを使用する。回避策は表示しない（novr を一般ユーザーに案内しない）。
@@ -119,7 +104,7 @@ fn start_profiler(path: Option<PathBuf>) -> profiler::Profiler {
     })
 }
 
-/// 標準エラー出力と `os::log_dir()/nyaw.log` に出力するロガーを初期化する。レベルの優先順位は `NYAW_LOG` > 設定ファイルの `log`（既定 info）。
+/// 標準エラー出力と `os::log_dir()/nyaw.log` に出力するロガーを初期化する。レベルの優先順位は `NYAW_LOG` > 設定ファイルの `logger.level`（既定 info）。
 fn init_logger(from_config: Option<String>) {
     let requested = config::log_level().or(from_config);
     let level = requested.as_deref().and_then(|s| s.parse().ok());

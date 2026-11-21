@@ -3,7 +3,7 @@
 use super::*;
 
 /// レーザーを調整する画面（`smoothing-test`）。`smoothing-slider` でスムージングの強度を、`laser-length-slider` で
-/// レーザーの表示長を変更すると即座に反映され、設定ファイルの `pointer_smoothing` / `laser_length` にも保存される
+/// レーザーの表示長を変更すると即座に反映され、設定ファイルの `overlay.pointer_smoothing` / `overlay.laser_length` にも保存される
 /// （`Setting::PointerSmoothing` / `LaserLength`）。下部の小さなターゲットを狙い、静止時の振動と、移動時の遅延を比較する。
 pub struct SmoothingTest {}
 

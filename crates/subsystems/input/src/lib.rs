@@ -114,7 +114,7 @@ const PALM_TOWARD_INPUT: &str = "nyaw/palm_toward";
 const PINCH_SPAN_M: f32 = 0.04;
 const GRIP_SPAN_RAD: f32 = 80.0 * std::f32::consts::PI / 180.0;
 
-/// 骨格のみの手の調整値（`config.toml` の `[hand]`、`kernel::Setting::Hand`）。すべて省略可能。
+/// 骨格のみの手の調整値（`config.toml` の `[input.hand]`、`kernel::Setting::Hand`）。すべて省略可能。
 // ponytail: 距離は手の大きさによらない固定値。手の大きさで効き方が違うなら、手の長さで割った比にする。
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default)]

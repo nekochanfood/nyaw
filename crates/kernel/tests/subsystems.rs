@@ -7,13 +7,9 @@ use kernel::{
 
 #[test]
 fn controller_changes_and_disconnects_do_not_leak_pressed_state_to_panels() {
-    let mut kernel = Kernel::with_backend(
-        MockBackend::default(),
-        Config {
-            pointer_smoothing: Some(0.0),
-            ..Default::default()
-        },
-    );
+    let mut config = Config::default();
+    config.overlay.pointer_smoothing = Some(0.0);
+    let mut kernel = Kernel::with_backend(MockBackend::default(), config);
     let panel = kernel
         .add_panel(
             "input",

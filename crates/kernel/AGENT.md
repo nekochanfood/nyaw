@@ -8,71 +8,60 @@
 
 アプリケーションの設定は `subsystems::os::config_dir()/config.toml` に保存される。実行時の設定値はパネル操作（`PanelCommand`）から分離されており、`Kernel::set(Setting)` で更新し、`Kernel::settings()` で参照する。
 
-設定の優先順位は「コマンドライン引数 > 設定ファイル」である（ログレベルに関しては環境変数 `NYAW_LOG` > 設定ファイル）。
+設定の優先順位は「コマンドライン引数 > 設定ファイル」である（ログレベルに関しては環境変数 `NYAW_LOG` > 設定ファイル）。使用する VR ランタイムはコマンドライン引数でのみ指定し、設定ファイルには置かない。
+
+### テーブルの決まり
+
+`config.toml` のトップレベルにはテーブルだけを置き、値はすべていずれかのテーブルに入れる。テーブルの名前は、その値を受け取って動作を変えるクレートの名前にする。カーネルが値を保持するだけの設定も、解釈するクレートのテーブルに入れる。テーブルの中のキーは、テーブル名と重なる接頭辞を付けない（`[wrist]` の `scale` など）。
+
+Rust 側では、テーブルごとに構造体（`config::WristTable` など）を 1 つ定義し、`Config` のフィールドにする。値を `Config` に直接置くと、どのクレートの設定かをキーから判別できなくなるためである。この決まりはテスト `every_top_level_key_is_a_crate_table` が検査し、トップレベルにテーブル以外の値があるか、テーブルの名前がワークスペースのクレート名でなければ失敗する。新しい設定を追加するときは、該当するクレートのテーブル構造体にフィールドを追加し、そのクレートのテーブルがまだ無ければ構造体ごと追加する。
+
+`Config` のフィールド、`Setting` の列挙子、`Settings` のフィールドは、どれもルート `AGENT.md` のクレート一覧と同じ層の順に並べる。旧形式（トップレベルにキーを並べた形式）との互換性は持たない。旧形式のキーは未知のキーとして無視され、既定値に戻る。
 
 ### 設定項目一覧
 
-各設定項目は `config.toml` のキー、対応する `Setting` / `Settings` の列挙型、および既定値を持つ。
+各設定項目は `config.toml` のテーブルとキー、対応する `Setting` の列挙子、および既定値を持つ。
 
-#### 外観・デザイン
-
-| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
-|---|---|---|---|
-| `theme` | `"dark" \| "light"`<br>`Setting::Theme` | `"dark"` | UI の明暗テーマ。`ui::sync_settings` を通じて `design::Mode` に反映される。 |
-| `[personal_color]` | `{ lightness, chroma, hue }`<br>`Setting::PersonalColor` | 未設定 (`None`) | ボタンや強調表示に使用するアクセントカラー。未設定時はテーマの既定色を用いる。 |
-| `[[color_history]]` | 色配列（最大 8 件）<br>`Setting::CustomColor` | 空 | ユーザーが作成したカスタムカラーの履歴。新規作成時に先頭へ追加され、重複は除外される。 |
-| `language` | `"en" \| "ja"`<br>`Setting::Language` | 自動検出 | 表示言語。未設定時は `os::ui_language` から取得し、未対応言語の場合は `"en"` とする。 |
-
-#### 腕時計パネル (wrist)
-
-| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
-|---|---|---|---|
-| `wrist_design` | 文字列（`WristFace`）<br>`Setting::WristDesign` | `"dots"` | 腕時計パネルの文字盤デザイン。 |
-| `[wrist_offset]` | `{ position, orientation }`<br>`Setting::WristOffset` | 未設定 (`None`) | 左手コントローラ先端から見た腕時計パネルの相対姿勢。掴み操作で調整された値が保存される。 |
-| `wrist_scale` | 浮動小数点数 (`0.5`〜`3.0`)<br>`Setting::WristScale` | `1.0` | 腕時計パネルの表示倍率。 |
-
-#### ポインタと入力制御
-
-| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
-|---|---|---|---|
-| `dominant_hand` | `"right" \| "left"`<br>`Setting::DominantHand` | `"right"` | 利き手の設定。デスクトップ配信パネルに対する OS マウス操作権を保持する。 |
-| `pointer_smoothing` | 浮動小数点数 (`0.0`〜`0.998`)<br>`Setting::PointerSmoothing` | `0.998` | コントローラレーザーの手振れ補正係数。 |
-| `pointer_release_deg` | 浮動小数点数 (`0.5`〜`45.0` 度)<br>`Setting::PointerRelease` | `11.25` | 手振れ補正中にレーザーが手から遅れた際、補正強度を半減させる閾値角度。 |
-| `laser_length` | 浮動小数点数 (`0.05`〜`1.5` m)<br>`Setting::LaserLength` | `0.3` | コントローラから照射されるレーザーの可視長。 |
-| `cursor_scale` | 浮動小数点数 (`0.5`〜`2.0`)<br>`Setting::CursorScale` | `1.0` | パネル上のカーソル表示倍率（0.1 刻み）。 |
-| `pointer_tuning` | `"simple" \| "detailed"`<br>`Setting::PointerTuning` | `"simple"` | 設定画面におけるポインタ調整項目の表示モード。 |
-| `block_input` | 真偽値<br>`Setting::BlockInput` | `true` | ダッシュボード表示中に背後のゲームに対する入力を遮断するかどうか。 |
-
-#### 効果音・操作フィードバック
-
-| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
-|---|---|---|---|
-| `tooltips` | 真偽値<br>`Setting::Tooltips` | `true` | UI 要素に対するツールチップ表示の有効化。 |
-| `tap_sound` | 真偽値<br>`Setting::TapSound` | `true` | ボタン押下時の効果音の有効化。 |
-| `hover_sound` | 真偽値<br>`Setting::HoverSound` | `true` | ボタンにホバーした際の効果音の有効化。 |
-
-#### 仮想キーボード
-
-| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
-|---|---|---|---|
-| `keyboard` | `"full" \| "tenkeyless" \| "compact"`<br>`Setting::Keyboard` | `"full"` | 仮想キーボードの配列レイアウト。 |
-| `keyboard_scale` | 浮動小数点数 (`0.5`〜`2.0`)<br>`Setting::KeyboardScale` | `1.0` | 仮想キーボードの表示倍率（0.1 刻み）。 |
-| `key_gap` | 浮動小数点数 (`0.0`〜`2.0`)<br>`Setting::KeyGap` | `1.0` | キー間の間隔倍率（0.1 刻み）。 |
-| `key_sound` | 真偽値<br>`Setting::KeySound` | `true` | キー押下時の打鍵音の有効化。 |
-| `key_sound_volume` | 浮動小数点数 (`0.0`〜`1.0`)<br>`Setting::KeySoundVolume` | `1.0` | 打鍵音の音量（0.1 刻み）。 |
-
-#### ダッシュボードとシステム連携
-
-| 設定キー | 型 / 設定列挙型 | 既定値 | 内容 |
-|---|---|---|---|
-| `dashboard_distance` | 浮動小数点数 (`0.6`〜`2.0` m)<br>`Setting::DashboardDistance` | `1.3` | ダッシュボードの出現距離（0.05m 刻み）。 |
-| `dashboard_height` | 浮動小数点数 (`-0.5`〜`0.5` m)<br>`Setting::DashboardHeight` | `0.0` | ダッシュボードの出現基準高さからのオフセット（0.05m 刻み）。 |
-| `dashboard_dim` | 浮動小数点数 (`0.0`〜`1.0`)<br>`Setting::DashboardDim` | `0.5` | ダッシュボード表示中に背景を暗くする度合い（黒の不透明度、0.1 刻み）。表示中の変更も即座に反映される。 |
-| `mirror_frame_rate` | 整数 (`1`〜`240` FPS)<br>`Setting::MirrorFrameRate` | `60` | 画面・ウィンドウミラーリングのキャプチャ上限フレームレート。 |
-| `notification_anchor` | 文字列（`NotificationAnchor`）<br>`Setting::NotificationAnchor` | `"bottom"` | トースト通知の視界内固定位置（上下左右・四隅の計 8 か所）。 |
-| `update_channel` | `"stable" \| "nightly"`<br>`Setting::UpdateChannel` | `"stable"` | アプリケーションの更新確認チャンネル。 |
-| （設定ファイル外） | `Setting::AutoLaunch(bool)` | ランタイム依存 | SteamVR 起動時の自動起動連携。SteamVR 自身が設定を保持する。 |
-| `setup_done` | 真偽値<br>`Setting::SetupDone` | `false` | 初期セットアップウィザードが完了しているかどうか。 |
+| テーブル | キー | 型 / 設定列挙型 | 既定値 | 内容 |
+|---|---|---|---|---|
+| `[logger]` | `level` | `"trace" \| "debug" \| "info" \| "warn" \| "error"` | `"info"` | ログレベル。環境変数 `NYAW_LOG` があればそちらを優先する。画面からは変更しない。 |
+| `[vr]` | `emulator_gpu` | 真偽値 | `true` | novr のエミュレーターの合成に GPU を使うかどうか。`false` にすると CPU で合成する。画面からは変更しない。 |
+| `[input.hand]` | `pinch_mm` など | `subsystems::input::HandTuning`<br>`Setting::Hand` | 各既定値 | コントローラを持たない手の判定しきい値とレーザーの揺れ抑制。書いたキーだけが変わる。 |
+| `[keyboard]` | `kind` | `"full" \| "tenkeyless" \| "compact"`<br>`Setting::Keyboard` | `"full"` | 仮想キーボードの種類。 |
+| `[keyboard]` | `scale` | 浮動小数点数 (`0.5`〜`2.0`)<br>`Setting::KeyboardScale` | `1.0` | 仮想キーボードの表示倍率（0.1 刻み）。 |
+| `[keyboard]` | `key_gap` | 浮動小数点数 (`0.0`〜`2.0`)<br>`Setting::KeyGap` | `1.0` | キー間の間隔倍率（0.1 刻み）。 |
+| `[keyboard]` | `key_sound` | 真偽値<br>`Setting::KeySound` | `true` | キー押下時の打鍵音の有効化。 |
+| `[keyboard]` | `key_sound_volume` | 浮動小数点数 (`0.0`〜`1.0`)<br>`Setting::KeySoundVolume` | `1.0` | 打鍵音の音量（0.1 刻み）。 |
+| `[desktop]` | `frame_rate` | 整数 (`1`〜`240` FPS)<br>`Setting::MirrorFrameRate` | `60` | 画面・ウィンドウミラーリングのキャプチャ上限フレームレート。 |
+| `[overlay]` | `ui_scale` | 浮動小数点数 (`0.7`〜`1.5`)<br>`Setting::UiScale` | `1.0` | 全パネルの空間寸法の倍率（[アクセシビリティ設定](#アクセシビリティ設定)）。 |
+| `[overlay]` | `pointer_smoothing` | 浮動小数点数 (`0.0`〜`0.998`)<br>`Setting::PointerSmoothing` | `0.998` | コントローラレーザーの手振れ補正係数。 |
+| `[overlay]` | `pointer_release_deg` | 浮動小数点数 (`0.5`〜`45.0` 度)<br>`Setting::PointerRelease` | `11.25` | 手振れ補正中にレーザーが手から遅れた際、補正強度を半減させる閾値角度。 |
+| `[overlay]` | `laser_length` | 浮動小数点数 (`0.05`〜`1.5` m)<br>`Setting::LaserLength` | `0.3` | コントローラから照射されるレーザーの可視長。 |
+| `[overlay]` | `cursor_scale` | 浮動小数点数 (`0.5`〜`2.0`)<br>`Setting::CursorScale` | `1.0` | パネル上のカーソル表示倍率（0.1 刻み）。 |
+| `[overlay]` | `block_input` | 真偽値<br>`Setting::BlockInput` | `true` | ダッシュボード表示中に背後のゲームに対する入力を遮断するかどうか。 |
+| `[overlay]` | `veil_opacity` | 浮動小数点数 (`0.0`〜`1.0`)<br>`Setting::DashboardDim` | `0.5` | 空間全体の暗転幕の濃さ（黒の不透明度、0.1 刻み）。ダッシュボード表示中に背景を暗くする度合いであり、表示中の変更も即座に反映される。 |
+| `[kernel]` | `dominant_hand` | `"right" \| "left"`<br>`Setting::DominantHand` | `"right"` | 利き手の設定。デスクトップ配信パネルに対する OS マウス操作権を保持する。 |
+| `[kernel]` | `pointer_mode` | `"mouse" \| "touch"`<br>`Setting::PointerMode` | `"touch"` | レーザーのエミュレート方式。設定画面には無く、`Setting::PointerMode` で変更しても書き戻さない。 |
+| `[kernel]` | `lod_quality` | 整数 (`0`〜`3`)<br>`Setting::LodQuality` | `2` | 距離 LOD の品質（[パネルの LOD](#パネルの-lod詳細度制御)）。 |
+| `[ui]` | `tooltips` | 真偽値<br>`Setting::Tooltips` | `true` | UI 要素に対するツールチップ表示の有効化。 |
+| `[ui]` | `tap_sound` | 真偽値<br>`Setting::TapSound` | `true` | ボタン押下時の効果音の有効化。 |
+| `[ui]` | `hover_sound` | 真偽値<br>`Setting::HoverSound` | `true` | ボタンにホバーした際の効果音の有効化。 |
+| `[design]` | `theme` | `"dark" \| "light"`<br>`Setting::Theme` | `"dark"` | UI の明暗テーマ。`ui::sync_settings` を通じて `design::Mode` に反映される。 |
+| `[design]` | `personal_color` | `{ lightness, chroma, hue }`<br>`Setting::PersonalColor` | 未設定 (`None`) | ボタンや強調表示に使用するアクセントカラー。未設定時はテーマの既定色を用いる。 |
+| `[design]` | `color_history` | 色の配列（最大 8 件）<br>`Setting::CustomColor` | 空 | ユーザーが作成したカスタムカラーの履歴。新規作成時に先頭へ追加され、重複は除外される。 |
+| `[design]` | `text_scale` | 浮動小数点数 (`0.8`〜`1.5`)<br>`Setting::TextScale` | `1.0` | 文字の大きさの倍率（[アクセシビリティ設定](#アクセシビリティ設定)）。 |
+| `[design]` | `bold_text` | 真偽値<br>`Setting::BoldText` | `false` | すべての文字を太字にするかどうか（[アクセシビリティ設定](#アクセシビリティ設定)）。 |
+| `[i18n]` | `language` | `"en" \| "ja"`<br>`Setting::Language` | 自動検出 | 表示言語。未設定時は `os::ui_language` から取得し、未対応言語の場合は `"en"` とする。 |
+| `[wrist]` | `design` | 文字列（`WristDesign`）<br>`Setting::WristDesign` | `"dots"` | 腕時計パネルの文字盤デザイン。 |
+| `[wrist]` | `offset` | `{ position, orientation }`<br>`Setting::WristOffset` | 未設定 (`None`) | 左手コントローラ先端から見た腕時計パネルの相対姿勢。掴み操作で調整された値が保存される。 |
+| `[wrist]` | `scale` | 浮動小数点数 (`0.5`〜`3.0`)<br>`Setting::WristScale` | `1.0` | 腕時計パネルの表示倍率。 |
+| `[toast]` | `anchor` | 文字列（`NotificationAnchor`）<br>`Setting::NotificationAnchor` | `"bottom"` | トースト通知の視界内固定位置（上下左右・四隅の計 8 か所）。 |
+| `[dashboard]` | `distance` | 浮動小数点数 (`0.6`〜`2.0` m)<br>`Setting::DashboardDistance` | `1.3` | ダッシュボードの出現距離（0.05m 刻み）。 |
+| `[dashboard]` | `height` | 浮動小数点数 (`-0.5`〜`0.5` m)<br>`Setting::DashboardHeight` | `0.0` | ダッシュボードの出現基準高さからのオフセット（0.05m 刻み）。 |
+| `[settings]` | `pointer_tuning` | `"simple" \| "detailed"`<br>`Setting::PointerTuning` | `"simple"` | 設定画面におけるポインタ調整項目の表示モード。 |
+| `[setup]` | `done` | 真偽値<br>`Setting::SetupDone` | `false` | 初期セットアップウィザードが完了しているかどうか。 |
+| `[updater]` | `channel` | `"stable" \| "nightly"`<br>`Setting::UpdateChannel` | `"stable"` | アプリケーションの更新確認チャンネル。 |
+| （設定ファイル外） | | `Setting::AutoLaunch(bool)` | ランタイム依存 | SteamVR 起動時の自動起動連携。SteamVR 自身が設定を保持する。 |
 
 ## 主な公開 API
 
@@ -128,7 +117,7 @@ Kernel::{
 
 視界内のパネル数が増加した際の描画負荷を低減するため、距離とピクセル密度に応じた Level of Detail（LOD）制御を適用する。
 
-- **LOD レベルの決定**: 設定ファイル内の `lod_quality`（0: 無効、1: Low、2: Mid、3: High、既定値は 2）に基づき、`Kernel::panel_lod` が HMD とパネル中心点との距離を基準に算出する。距離はパネルのピクセル密度（基準: 1000px/m）で正規化されるため、引き伸ばされた粗いパネルは近傍にあるものとして扱われ、ぼやけたまま残る現象を防ぐ。
+- **LOD レベルの決定**: 設定ファイルの `kernel.lod_quality`（0: 無効、1: Low、2: Mid、3: High、既定値は 2）に基づき、`Kernel::panel_lod` が HMD とパネル中心点との距離を基準に算出する。距離はパネルのピクセル密度（基準: 1000px/m）で正規化されるため、引き伸ばされた粗いパネルは近傍にあるものとして扱われ、ぼやけたまま残る現象を防ぐ。
 - **レーザー注視パネルの保護**: コントローラのレーザーが当たっているパネル（`Overlay::pointed`）およびツールチップは、距離に関わらず常に最高解像度（LOD0）を維持する。
 - **解像度とフレームレートの間引き**:
   - 解像度: LOD0〜3 はそれぞれ等倍、1/2、1/4、1/8 の解像度へ縮小される。
@@ -150,8 +139,8 @@ Kernel::{
 
 | 設定ファイルキー | 設定列挙型 | 範囲（既定値） | 反映経路と影響範囲 |
 |---|---|---|---|
-| `text_scale` | `TextScale(f32)` | `0.8`〜`1.5` (`1.0`) | `ui::sync_settings` を経由して `design::font::set_text` へ渡され、システム全体のフォント描画サイズを一括調整する。 |
-| `ui_scale` | `UiScale(f32)` | `0.7`〜`1.5` (`1.0`) | `Overlay::set_scale` に渡され、配置済みおよび新規生成される全パネルの空間寸法を一括拡大縮小する。 |
-| `bold_text` | `BoldText(bool)` | `true` / `false` (`false`) | `text_scale` と同様にフォントシステムへ渡され、全テキストの太字ウェイトを有効化する。 |
+| `design.text_scale` | `TextScale(f32)` | `0.8`〜`1.5` (`1.0`) | `ui::sync_settings` を経由して `design::font::set_text` へ渡され、システム全体のフォント描画サイズを一括調整する。 |
+| `overlay.ui_scale` | `UiScale(f32)` | `0.7`〜`1.5` (`1.0`) | `Overlay::set_scale` に渡され、配置済みおよび新規生成される全パネルの空間寸法を一括拡大縮小する。 |
+| `design.bold_text` | `BoldText(bool)` | `true` / `false` (`false`) | `text_scale` と同様にフォントシステムへ渡され、全テキストの太字ウェイトを有効化する。 |
 
 倍率の入力値は 0.1 刻み（`SCALE_STEP`）に丸められる（不正値は等倍）。テキストスケールはレイアウト崩れを防ぐため 1.5 倍を上限とし、UI スケールは視界への収まりを考慮して 1.5 倍を上限とする。

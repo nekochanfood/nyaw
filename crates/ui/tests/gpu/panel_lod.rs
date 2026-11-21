@@ -46,16 +46,14 @@ pub fn main() -> ExitCode {
     let off = std::env::args().any(|a| a == "--off");
     let clicks = Arc::new(AtomicUsize::new(0));
     let clicked = clicks.clone();
-    let config = Config {
-        lod_quality: if off {
-            kernel::LodQuality::Off
-        } else {
-            kernel::LodQuality::Mid
-        },
-        pointer_smoothing: Some(0.0),
-        pointer_mode: Some(PointerMode::Mouse),
-        ..Default::default()
+    let mut config = Config::default();
+    config.kernel.lod_quality = if off {
+        kernel::LodQuality::Off
+    } else {
+        kernel::LodQuality::Mid
     };
+    config.kernel.pointer_mode = Some(PointerMode::Mouse);
+    config.overlay.pointer_smoothing = Some(0.0);
     let kernel = Kernel::with_backend(Box::new(mock.clone()) as Box<dyn VrBackend>, config);
     let panels = vec![
         PanelSpec::root(
