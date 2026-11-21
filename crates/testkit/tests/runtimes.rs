@@ -30,6 +30,8 @@ fn main() -> ExitCode {
         .into_iter()
         .filter(|k| filters.is_empty() || filters.iter().any(|f| k.name().contains(f.as_str())));
 
+    // SteamVR is launched without Wayland (runtimes::launch); the desktop scenario streams this session's display.
+    let wayland = std::env::var_os("WAYLAND_DISPLAY");
     let (mut passed, mut failed, mut skipped) = (0, 0, 0);
     for kind in kinds {
         print!("test runtimes::{kind} ... ");
@@ -65,6 +67,12 @@ fn main() -> ExitCode {
             mark("connect");
             overlay_reaches_runtime(vr.as_mut());
             mark("overlay");
+            external_image_reaches_runtime(vr.as_mut());
+            mark("external");
+            if std::env::var_os("NYAW_E2E_DESKTOP").is_some() {
+                desktop_reaches_runtime(vr.as_mut(), wayland.as_deref());
+                mark("desktop");
+            }
             fov_is_reported(vr.as_mut());
             mark("fov");
             home_runs_on_runtime(vr);
@@ -155,6 +163,212 @@ fn overlay_reaches_runtime(vr: &mut dyn VrBackend) {
             );
         }
     }
+}
+
+/// A display server's image (shared memory, B/G/R/unused) is imported on the runtime's GPU and arrives as RGBA.
+fn external_image_reaches_runtime(vr: &mut dyn VrBackend) {
+    use std::sync::Arc;
+    let Some(align) = vr.import_formats().and_then(|f| f.host_alignment) else {
+        eprintln!("  external: this runtime cannot import shared memory");
+        return;
+    };
+    let id = vr
+        .create_overlay("nyaw.e2e.external", 0.5)
+        .expect("failed to create overlay");
+    vr.set_overlay_pose(id, Pose::new(Vec3::new(0.0, 1.5, -1.0), Quat::IDENTITY));
+    let (w, h) = (64u32, 32u32);
+    let len = ((w * h * 4) as usize).div_ceil(align) * align;
+    let layout = std::alloc::Layout::from_size_align(len, align).unwrap();
+    let ptr = unsafe { std::alloc::alloc(layout) };
+    let bgrx = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
+    let mut want = Vec::new();
+    for (i, px) in bgrx
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .take((w * h) as usize)
+        .enumerate()
+    {
+        let (r, g, b) = ((i % 64 * 4) as u8, (i / 64 * 8) as u8, 100);
+        *px = [b, g, r, 0];
+        want.extend([r, g, b, 255]);
+    }
+    let image = Arc::new(kernel::vr::ExternalImage::new(
+        w,
+        h,
+        kernel::vr::PixelFormat::Bgrx,
+        kernel::vr::Memory::Host {
+            ptr,
+            len,
+            offset: 0,
+            stride: w * 4,
+        },
+        || {},
+    ));
+    vr.submit_overlay_external(id, &image)
+        .expect("the runtime imports shared memory");
+    drop(image);
+    if vr.runtime() == Runtime::OpenVr {
+        assert!(
+            read_back(vr, id, &want) == want,
+            "the imported image differs from what was sent"
+        );
+    }
+    vr.destroy_overlay(id);
+    // The runtime keeps the import until a later submission completes; send one before freeing the memory.
+    let other = vr.create_overlay("nyaw.e2e.flush", 0.1).unwrap();
+    vr.submit_overlay_pixels(other, 1, 1, &[0; 4]);
+    for _ in 0..10 {
+        vr.submit_overlay_pixels(other, 1, 1, &[0; 4]);
+        vr.poll();
+    }
+    vr.destroy_overlay(other);
+    unsafe { std::alloc::dealloc(ptr, layout) };
+}
+
+/// The desktop of this session (NYAW_E2E_DESKTOP=1): stream the first screen with the runtime's import formats
+/// (DMA-BUF through the portal on Wayland), and show its frames on the runtime for a second.
+fn desktop_reaches_runtime(vr: &mut dyn VrBackend, wayland: Option<&std::ffi::OsStr>) {
+    use kernel::desktop::{Sources, Status, Stream};
+    // SAFETY: no other thread reads the environment yet (the capture threads start below).
+    if let Some(display) = wayland {
+        unsafe { std::env::set_var("WAYLAND_DISPLAY", display) };
+    }
+    let pending = Sources::refresh().expect("list screens");
+    let start = Instant::now();
+    let screens = loop {
+        if let Some(result) = pending.poll() {
+            break result.expect("list screens");
+        }
+        assert!(start.elapsed() < Duration::from_secs(10), "listing screens");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let screen = screens.first().expect("a screen").clone();
+    // NYAW_E2E_DESKTOP=rgba compares with the path that swizzles on the CPU and uploads RGBA.
+    let import = vr
+        .import_formats()
+        .filter(|_| std::env::var("NYAW_E2E_DESKTOP").as_deref() != Ok("rgba"));
+    eprintln!("  desktop: {} with {import:?}", screen.name);
+    let stream = Stream::start_with(screen, 60, import).expect("start streaming");
+    let _moving = animate();
+    let id = vr
+        .create_overlay("nyaw.e2e.desktop", 1.0)
+        .expect("failed to create overlay");
+    vr.set_overlay_pose(id, Pose::new(Vec3::new(0.0, 1.5, -1.5), Quat::IDENTITY));
+    let (mut frames, mut external, mut size) = (0, 0, (0, 0));
+    let (mut cost, mut latency) = (Duration::ZERO, Duration::ZERO);
+    let start = Instant::now();
+    // A still screen sends few frames (the compositor sends on change): stop after 2 s once one has arrived.
+    while start.elapsed() < Duration::from_secs(30)
+        && !(frames > 0 && start.elapsed() > Duration::from_secs(2))
+    {
+        if let Some(update) = stream.poll() {
+            if let Status::Failed(e) = &update.status {
+                panic!("desktop capture failed: {e}");
+            }
+            if let Some(frame) = update.frame {
+                // From the display server's frame (as the capture worker received it) to the runtime.
+                let submitted = Instant::now();
+                latency += submitted.saturating_duration_since(frame.captured) + frame.cost;
+                match &frame.external {
+                    Some(image) => {
+                        vr.submit_overlay_external(id, image)
+                            .expect("import a desktop frame");
+                        external += 1;
+                    }
+                    None => vr.submit_overlay_pixels(id, frame.width, frame.height, &frame.rgba),
+                }
+                cost += submitted.elapsed();
+                if frames == 0 {
+                    eprintln!("  desktop: first frame {:?}", frame.external);
+                }
+                size = (frame.width, frame.height);
+                frames += 1;
+            }
+        }
+        vr.poll();
+    }
+    eprintln!(
+        "  desktop: {frames} frames ({external} imported) of {size:?}, submitted in {:?} on average, {:?} after capture",
+        cost / frames.max(1),
+        (latency + cost) / frames.max(1),
+    );
+    assert!(frames > 0, "no desktop frame arrived");
+    if vr.runtime() == Runtime::OpenVr {
+        let (w, h, rgba) = kernel::vr::openvr_overlay_image(id).expect("read back the desktop");
+        assert_eq!((w, h), size);
+        assert!(
+            rgba.as_chunks::<4>().0.iter().all(|p| p[3] == 255),
+            "the desktop is opaque"
+        );
+        assert!(rgba.iter().any(|&v| v != 0), "the desktop is not black");
+    }
+    drop(stream);
+    vr.destroy_overlay(id);
+    if wayland.is_some() {
+        unsafe { std::env::remove_var("WAYLAND_DISPLAY") };
+    }
+}
+
+/// Keeps repainting a strip along the top of the X server's whole screen (XWayland on Wayland, so it crosses every
+/// monitor) until dropped, so the compositor keeps sending frames while the desktop scenario measures them.
+#[cfg(target_os = "linux")]
+fn animate() -> Option<impl Drop> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    use x11rb::{connection::Connection, protocol::xproto::*};
+    struct Stop(Arc<AtomicBool>, Option<std::thread::JoinHandle<()>>);
+    impl Drop for Stop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+            if let Some(t) = self.1.take() {
+                let _ = t.join();
+            }
+        }
+    }
+    let (conn, screen) = x11rb::connect(None).ok()?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopping = stop.clone();
+    let thread = std::thread::spawn(move || {
+        let root = conn.setup().roots[screen].root;
+        let width = conn.setup().roots[screen].width_in_pixels;
+        let window = conn.generate_id().unwrap();
+        conn.create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            window,
+            root,
+            0,
+            0,
+            width,
+            100,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            x11rb::COPY_FROM_PARENT,
+            &CreateWindowAux::new().override_redirect(1),
+        )
+        .unwrap();
+        conn.map_window(window).unwrap();
+        let mut i = 0u32;
+        while !stopping.load(Ordering::Acquire) {
+            i = i.wrapping_add(1);
+            let color = (i * 7919) & 0xff_ffff;
+            let _ = conn.change_window_attributes(
+                window,
+                &ChangeWindowAttributesAux::new().background_pixel(color),
+            );
+            let _ = conn.clear_area(false, window, 0, 0, 0, 0);
+            let _ = conn.flush();
+            std::thread::sleep(Duration::from_millis(16));
+        }
+    });
+    Some(Stop(stop, Some(thread)))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn animate() -> Option<()> {
+    None
 }
 
 /// Operates the Testing screen on a real runtime: attaches the panel to the HMD with a button and locks it,

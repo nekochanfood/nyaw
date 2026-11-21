@@ -26,6 +26,10 @@ kernel = { workspace = true, features = ["test-support"] }
 wrist.workspace = true
 updater.workspace = true
 
+# runtimes の配信の計測（NYAW_E2E_DESKTOP）で、XWayland のウィンドウを塗り替え続けて画面を動かす。
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+x11rb = "0.13"
+
 # E2E on real runtimes. The launched runtime reads environment variables, so run it from a single-threaded custom main
 [[test]]
 name = "runtimes"

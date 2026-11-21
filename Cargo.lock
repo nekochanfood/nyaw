@@ -5793,6 +5793,7 @@ dependencies = [
  "ui",
  "updater",
  "wrist",
+ "x11rb",
 ]
 
 [[package]]
