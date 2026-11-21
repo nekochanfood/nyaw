@@ -6,8 +6,11 @@
 use std::{
     os::fd::OwnedFd,
     path::PathBuf,
-    sync::{Arc, Mutex, Weak},
-    time::Instant,
+    sync::{
+        Arc, Mutex, TryLockError, Weak,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::{Duration, Instant},
 };
 
 use ashpd::desktop::{
@@ -53,6 +56,12 @@ pub(super) struct Portal {
     streams: Vec<PortalStream>,
 }
 
+/// 開始の要求がこの時間で返らなければ、OS の確認画面が出ているとみなす（保存した選択で復元できれば数十 ms で返る）。
+const DIALOG_AFTER: Duration = Duration::from_millis(400);
+
+/// 確認画面の応答を待っている（同じセッションを待つ他の配信も許可待ちを知らせる）。
+static ASKING: AtomicBool = AtomicBool::new(false);
+
 /// 最後に失敗した要求の時刻とエラー。
 type Failure = Option<(Instant, Error)>;
 
@@ -60,9 +69,23 @@ type Failure = Option<(Instant, Error)>;
 static SHARED: Mutex<(Weak<Portal>, Failure)> = Mutex::new((Weak::new(), None));
 
 /// 共有中のセッション。無ければ開く（確認画面が閉じられるまで待つ）。画面の配信と OS キーボードが共有する。
-pub(super) fn shared() -> Result<Arc<Portal>, Error> {
+pub(super) fn shared(wake: Option<&Wake>) -> Result<Arc<Portal>, Error> {
     let asked = Instant::now();
-    let mut guard = SHARED.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = loop {
+        match SHARED.try_lock() {
+            Ok(guard) => break guard,
+            Err(TryLockError::Poisoned(e)) => break e.into_inner(),
+            // 他の配信が開いている間に確認画面が出れば、こちらも許可待ちを知らせる。
+            Err(TryLockError::WouldBlock) => {
+                if ASKING.load(Ordering::Acquire)
+                    && let Some(wake) = wake
+                {
+                    wake.ask();
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
     if let Some(portal) = guard.0.upgrade() {
         return Ok(portal);
     }
@@ -72,7 +95,23 @@ pub(super) fn shared() -> Result<Arc<Portal>, Error> {
     {
         return Err(error.clone());
     }
-    match pollster::block_on(Portal::open()) {
+    let done = Arc::new(AtomicBool::new(false));
+    {
+        let (done, wake) = (done.clone(), wake.cloned());
+        std::thread::spawn(move || {
+            std::thread::sleep(DIALOG_AFTER);
+            if !done.load(Ordering::Acquire) {
+                ASKING.store(true, Ordering::Release);
+                if let Some(wake) = wake {
+                    wake.ask();
+                }
+            }
+        });
+    }
+    let opened = pollster::block_on(Portal::open());
+    done.store(true, Ordering::Release);
+    ASKING.store(false, Ordering::Release);
+    match opened {
         Ok(portal) => {
             let portal = Arc::new(portal);
             *guard = (Arc::downgrade(&portal), None);
@@ -302,7 +341,7 @@ impl Capture {
             .iter()
             .find(|o| o.global as isize == source.target)
             .ok_or_else(|| Error(crate::failure::NO_PIXELS.into()))?;
-        let portal = shared()?;
+        let portal = shared(Some(&wake))?;
         let stream = portal
             .stream(output, outputs.len())
             .ok_or_else(|| Error(crate::failure::NOT_SHARED.into()))?;

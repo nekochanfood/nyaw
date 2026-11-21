@@ -61,19 +61,22 @@ impl Keyboard {
                 foreground: 0,
                 ..os::keyboard::detect()
             };
-            let opened = super::backend()
-                .map_err(|e| e.to_string())
-                .and_then(|backend| match backend {
-                    Backend::X11 => X11::new().map(|x| Sender::X11(Box::new(x))),
-                    Backend::Wlr => Wlr::new().map(|w| Sender::Wlr(Box::new(w))),
-                    Backend::Portal => portal::shared().map_err(|e| e.to_string()).and_then(|p| {
-                        if p.keyboard() {
-                            Ok(Sender::Portal(p))
-                        } else {
-                            Err("the desktop portal did not allow the keyboard".into())
-                        }
-                    }),
-                });
+            let opened =
+                super::backend()
+                    .map_err(|e| e.to_string())
+                    .and_then(|backend| match backend {
+                        Backend::X11 => X11::new().map(|x| Sender::X11(Box::new(x))),
+                        Backend::Wlr => Wlr::new().map(|w| Sender::Wlr(Box::new(w))),
+                        Backend::Portal => portal::shared(None)
+                            .map_err(|e| e.to_string())
+                            .and_then(|p| {
+                                if p.keyboard() {
+                                    Ok(Sender::Portal(p))
+                                } else {
+                                    Err("the desktop portal did not allow the keyboard".into())
+                                }
+                            }),
+                    });
             if let Err(error) = &opened {
                 logger::warn!("cannot send keys to the OS", error = error);
             }

@@ -203,6 +203,9 @@ impl Error {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Starting,
+    /// OS の確認画面で、画面の共有の許可を待っている（Linux の xdg-desktop-portal）。許可されれば、そのまま
+    /// [`Status::Starting`] を経て配信が始まる。
+    Permission,
     Streaming,
     Minimized,
     Closed,
@@ -511,6 +514,9 @@ enum Input {
 struct Wake {
     tx: SyncSender<Input>,
     pending: Arc<AtomicBool>,
+    /// 配信の状態の出口（開始前に [`Self::ask`] で許可待ちを知らせる）。
+    update: Arc<Mutex<Option<Update>>>,
+    asked: Arc<AtomicBool>,
 }
 
 impl Wake {
@@ -518,6 +524,17 @@ impl Wake {
     fn wake(&self) {
         if !self.pending.swap(true, Ordering::AcqRel) {
             let _ = self.tx.try_send(Input::Frame);
+        }
+    }
+
+    /// 取り込みを開始する前に、OS の確認画面で許可を待っていることを知らせる（[`Status::Permission`]）。
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn ask(&self) {
+        if !self.asked.swap(true, Ordering::AcqRel) {
+            *self.update.lock().unwrap() = Some(Update {
+                status: Status::Permission,
+                frame: None,
+            });
         }
     }
 }
@@ -642,6 +659,8 @@ impl Stream {
         let wake = Wake {
             tx: input.clone(),
             pending: Arc::new(AtomicBool::new(false)),
+            update: update.clone(),
+            asked: Arc::new(AtomicBool::new(false)),
         };
         let output = update.clone();
         let stopping = stop.clone();
@@ -650,6 +669,13 @@ impl Stream {
             .spawn(move || {
                 let result = (|| {
                     let mut session = open(stopping.clone(), wake.clone())?;
+                    // 許可されたら、最初の画像が届くまでは開始中に戻す。
+                    if wake.asked.load(Ordering::Acquire) {
+                        *output.lock().unwrap() = Some(Update {
+                            status: Status::Starting,
+                            frame: None,
+                        });
+                    }
                     let mut next_frame = Instant::now();
                     let mut inputs: Vec<Input> = Vec::new();
                     let mut minimized = false;
@@ -1172,6 +1198,36 @@ mod tests {
             stream
                 .poll()
                 .is_some_and(|u| u.status == Status::Closed && u.frame.is_none())
+        });
+    }
+
+    /// 開始前に OS の確認画面を待つ間は許可待ちを知らせ、許可されたら再試行なしで配信を始める。
+    #[test]
+    fn worker_reports_waiting_for_permission_then_streams_once_allowed() {
+        let (allow, allowed) = mpsc::sync_channel::<()>(1);
+        let (tx, _rx) = mpsc::sync_channel(4);
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, wake| {
+            wake.ask();
+            allowed.recv().unwrap();
+            Ok(Fake {
+                dropped: Arc::new(AtomicBool::new(false)),
+                input: tx,
+                frame: 0,
+            })
+        })
+        .unwrap();
+        until(|| {
+            stream
+                .poll()
+                .is_some_and(|u| u.status == Status::Permission)
+        });
+        thread::sleep(Duration::from_millis(50));
+        assert!(stream.poll().is_none(), "still waiting");
+        allow.send(()).unwrap();
+        until(|| {
+            stream
+                .poll()
+                .is_some_and(|u| u.status == Status::Streaming && u.frame.is_some())
         });
     }
 

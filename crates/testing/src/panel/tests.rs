@@ -14,6 +14,7 @@ fn mirror_test_controls_the_preview_panel(cx: &mut TestAppContext) {
         ("mirror-case-launching", false),
         ("mirror-case-launch-failed", false),
         ("mirror-case-starting", false),
+        ("mirror-case-permission", false),
         ("mirror-case-streaming", false),
         ("mirror-case-minimized", true),
         ("mirror-case-closed", true),

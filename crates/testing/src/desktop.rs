@@ -55,6 +55,7 @@ fn status_text(status: Option<&Status>, cx: &App) -> SharedString {
     match status {
         None => i18n::t(cx, "desktop.idle"),
         Some(Status::Starting) => i18n::t(cx, "desktop.starting"),
+        Some(Status::Permission) => i18n::t(cx, "desktop.permission"),
         Some(Status::Streaming) => i18n::t(cx, "desktop.streaming"),
         Some(Status::Minimized) => i18n::t(cx, "desktop.minimized"),
         Some(Status::Closed) => i18n::t(cx, "desktop.closed"),
@@ -520,10 +521,11 @@ fn failure_samples() -> [(&'static str, Error); 8] {
     ]
 }
 
-const MIRROR_STATES: [(MirrorState, &str); 6] = [
+const MIRROR_STATES: [(MirrorState, &str); 7] = [
     (MirrorState::Launching, "mirror-case-launching"),
     (MirrorState::LaunchFailed, "mirror-case-launch-failed"),
     (MirrorState::Starting, "mirror-case-starting"),
+    (MirrorState::Permission, "mirror-case-permission"),
     (MirrorState::Streaming, "mirror-case-streaming"),
     (MirrorState::Minimized, "mirror-case-minimized"),
     (MirrorState::Closed, "mirror-case-closed"),

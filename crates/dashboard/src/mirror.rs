@@ -63,7 +63,10 @@ impl Mirror {
             .panels
             .get(&self.panel)
             .and_then(|p| p.status.desktop.clone());
-        if matches!(status, Some(Status::Starting | Status::Streaming)) {
+        if matches!(
+            status,
+            Some(Status::Starting | Status::Permission | Status::Streaming)
+        ) {
             self.ending = false;
             return;
         }
