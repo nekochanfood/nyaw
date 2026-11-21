@@ -2147,7 +2147,6 @@ dependencies = [
 [[package]]
 name = "gpui_wgpu"
 version = "0.1.0"
-source = "git+https://github.com/zed-industries/zed?rev=26363aabdb31a0c016728634202e1ad5067033aa#26363aabdb31a0c016728634202e1ad5067033aa"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2166,7 +2165,6 @@ dependencies = [
  "swash",
  "unicode-bidi",
  "unicode-segmentation",
- "web-sys",
  "wgpu",
 ]
 
@@ -3847,6 +3845,7 @@ dependencies = [
 name = "os"
 version = "2026.0.3-beta.11"
 dependencies = [
+ "logger",
  "windows 0.62.2",
 ]
 
@@ -4606,10 +4605,15 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 name = "rendering"
 version = "2026.0.3-beta.11"
 dependencies = [
+ "anyhow",
+ "futures",
  "gpui",
+ "gpui_platform",
+ "gpui_wgpu",
  "gpui_windows",
  "image",
  "logger",
+ "raw-window-handle",
  "vr",
 ]
 
@@ -6316,7 +6320,6 @@ dependencies = [
  "thiserror 2.0.21",
  "wgpu-core-deps-apple",
  "wgpu-core-deps-emscripten",
- "wgpu-core-deps-wasm",
  "wgpu-core-deps-windows-linux-android",
  "wgpu-hal",
  "wgpu-naga-bridge",
@@ -6337,15 +6340,6 @@ name = "wgpu-core-deps-emscripten"
 version = "29.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01e09be551dc939498bdd5f6b2c66e55ab275dad25825267a08605a80fc9f0af"
-dependencies = [
- "wgpu-hal",
-]
-
-[[package]]
-name = "wgpu-core-deps-wasm"
-version = "29.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af1fb1798be2a912497d4c224f72d39bb0cb34af50e8bcc29865bc339c943059"
 dependencies = [
  "wgpu-hal",
 ]
