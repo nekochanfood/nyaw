@@ -472,6 +472,15 @@ pub fn launch(app: &InstalledApp) -> Result<(), Error> {
     }
 }
 
+/// 仮想キーボードから OS の入力先へキーと文字列を送る監視役（`os::keyboard`）。Linux では表示サーバーとの接続
+/// （portal では画面の配信と同じセッション）を使って送るため、ここで作る。接続は監視のスレッドで最初に行う。
+pub fn os_keyboard() -> os::keyboard::Watcher {
+    #[cfg(target_os = "linux")]
+    return os::keyboard::Watcher::with_host(linux::keyboard());
+    #[cfg(not(target_os = "linux"))]
+    os::keyboard::Watcher::new()
+}
+
 /// `items` を、名前に `query` を含むもの（大文字小文字を区別しない）に絞る。空なら全部。
 pub fn matching<'a, T>(items: &'a [T], name: impl Fn(&T) -> &str, query: &str) -> Vec<&'a T> {
     let query = query.trim().to_lowercase();

@@ -2,6 +2,7 @@
 //! 仮想ポインタ）、その他の Wayland（xdg-desktop-portal の ScreenCast・RemoteDesktop と PipeWire）を使い分ける。
 //! 取り込んだ画像は、ランタイムが取り込める限り CPU で並べ替えずに GPU へ渡す（`vr::ExternalImage`）。
 
+mod keyboard;
 mod pipewire;
 mod portal;
 mod wayland;
@@ -55,6 +56,11 @@ fn backend() -> Result<Backend, Error> {
         return Ok(Backend::X11);
     }
     Err(Error(super::failure::NO_DISPLAY_SERVER.into()))
+}
+
+/// OS キーボードの送信先（[`crate::os_keyboard`]）。
+pub(super) fn keyboard() -> keyboard::Keyboard {
+    keyboard::Keyboard::new()
 }
 
 pub(super) fn sources() -> Result<Vec<Source>, Error> {

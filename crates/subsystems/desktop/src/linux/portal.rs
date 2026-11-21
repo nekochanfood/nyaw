@@ -41,11 +41,13 @@ enum Kind {
         session: Session<RemoteDesktop>,
         /// ポインタの操作が許可された。
         pointer: bool,
+        /// キーボードの操作が許可された（OS キーボード。[`Portal::send_keys`]）。
+        keyboard: bool,
     },
     Cast(Session<Screencast>),
 }
 
-struct Portal {
+pub(super) struct Portal {
     screencast: Screencast,
     kind: Kind,
     streams: Vec<PortalStream>,
@@ -57,8 +59,8 @@ type Failure = Option<(Instant, Error)>;
 /// 共有中のセッションと、最後に失敗した要求（同時に待っていた他の配信が確認画面を出し直さないため）。
 static SHARED: Mutex<(Weak<Portal>, Failure)> = Mutex::new((Weak::new(), None));
 
-/// 共有中のセッション。無ければ開く（確認画面が閉じられるまで待つ）。
-fn shared() -> Result<Arc<Portal>, Error> {
+/// 共有中のセッション。無ければ開く（確認画面が閉じられるまで待つ）。画面の配信と OS キーボードが共有する。
+pub(super) fn shared() -> Result<Arc<Portal>, Error> {
     let asked = Instant::now();
     let mut guard = SHARED.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(portal) = guard.0.upgrade() {
@@ -130,7 +132,7 @@ impl Portal {
                 let session = portal.create_session(Default::default()).await?;
                 screencast.select_sources(&session, sources).await?;
                 let devices = SelectDevicesOptions::default()
-                    .set_devices(BitFlags::from(DeviceType::Pointer))
+                    .set_devices(DeviceType::Pointer | DeviceType::Keyboard)
                     .set_persist_mode(PersistMode::ExplicitlyRevoked)
                     .set_restore_token(token.as_deref());
                 portal.select_devices(&session, devices).await?;
@@ -140,12 +142,14 @@ impl Portal {
                     .response()?;
                 save_token(selected.restore_token());
                 let pointer = selected.devices().contains(DeviceType::Pointer);
+                let keyboard = selected.devices().contains(DeviceType::Keyboard);
                 let streams = selected.streams().to_vec();
                 (
                     Kind::Remote {
                         portal,
                         session,
                         pointer,
+                        keyboard,
                     },
                     streams,
                 )
@@ -171,7 +175,8 @@ impl Portal {
         logger::info!(
             "screen sharing started",
             streams = streams.len(),
-            input = matches!(kind, Kind::Remote { pointer: true, .. })
+            pointer = matches!(kind, Kind::Remote { pointer: true, .. }),
+            keyboard = matches!(kind, Kind::Remote { keyboard: true, .. })
         );
         Ok(Self {
             screencast,
@@ -208,6 +213,64 @@ impl Portal {
             .find(|s| s.position() == Some((output.logical.0, output.logical.1)))
             .or_else(|| (monitors.len() == 1 && outputs == 1).then(|| &monitors[0]))
             .copied()
+    }
+}
+
+impl Portal {
+    /// OS キーボードを許可された。
+    pub fn keyboard(&self) -> bool {
+        matches!(self.kind, Kind::Remote { keyboard: true, .. })
+    }
+
+    /// キーは evdev のキーコードで（コンポジタの配列で解釈される）、文字列は文字の keysym で送る。
+    pub fn send_keys(&self, output: os::keyboard::Output) -> std::io::Result<()> {
+        let Kind::Remote {
+            portal,
+            session,
+            keyboard: true,
+            ..
+        } = &self.kind
+        else {
+            return Err(std::io::Error::other(
+                "the desktop portal did not allow the keyboard",
+            ));
+        };
+        let state = |down| {
+            if down {
+                KeyState::Pressed
+            } else {
+                KeyState::Released
+            }
+        };
+        let err = |e: ashpd::Error| std::io::Error::other(e.to_string());
+        match output {
+            os::keyboard::Output::Keys(keys) => {
+                for key in keys {
+                    pollster::block_on(portal.notify_keyboard_keycode(
+                        session,
+                        key.code.into(),
+                        state(key.down),
+                        Default::default(),
+                    ))
+                    .map_err(err)?;
+                }
+            }
+            os::keyboard::Output::Text(text) => {
+                for c in text.chars() {
+                    let keysym = super::keyboard::keysym(c) as i32;
+                    for down in [true, false] {
+                        pollster::block_on(portal.notify_keyboard_keysym(
+                            session,
+                            keysym,
+                            state(down),
+                            Default::default(),
+                        ))
+                        .map_err(err)?;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -261,6 +324,7 @@ impl Capture {
             portal,
             session,
             pointer: true,
+            ..
         } = &self.portal.kind
         else {
             return None;

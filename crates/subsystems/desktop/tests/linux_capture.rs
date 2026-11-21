@@ -16,7 +16,7 @@ use x11rb::{
         Event,
         xproto::{
             ChangeWindowAttributesAux, ConnectionExt as _, CreateGCAux, CreateWindowAux, EventMask,
-            Rectangle, WindowClass,
+            InputFocus, Rectangle, WindowClass,
         },
     },
 };
@@ -164,10 +164,7 @@ fn x11_captures_the_screen_and_clicks_through_xtest() {
                 y,
             })
             .unwrap();
-        let want = (
-            (319.0 * x).round() as i16,
-            (239.0 * y).round() as i16,
-        );
+        let want = ((319.0 * x).round() as i16, (239.0 * y).round() as i16);
         until("the X pointer", Duration::from_secs(5), || {
             let p = conn.query_pointer(root).unwrap().reply().unwrap();
             ((p.root_x, p.root_y) == want).then_some(())
@@ -311,4 +308,111 @@ fn portal_streams_a_screen() {
         alpha.contains(&255) && alpha.contains(&0),
         "an opaque arrow on a clear background"
     );
+}
+
+/// 届いたキーの押下を、今の配列で文字（keysym）に戻す。Shift の押下中は 2 段目を読む。
+fn typed(conn: &impl Connection, events: &[Event]) -> Vec<u32> {
+    let setup = conn.setup();
+    let (min, max) = (setup.min_keycode, setup.max_keycode);
+    let map = conn
+        .get_keyboard_mapping(min, max - min + 1)
+        .unwrap()
+        .reply()
+        .unwrap();
+    let per = map.keysyms_per_keycode as usize;
+    let syms = |k: u8| &map.keysyms[(k - min) as usize * per..][..per];
+    let mut shift = false;
+    let mut out = Vec::new();
+    for event in events {
+        match event {
+            Event::KeyPress(e) if [0xffe1, 0xffe2].contains(&syms(e.detail)[0]) => shift = true,
+            Event::KeyRelease(e) if [0xffe1, 0xffe2].contains(&syms(e.detail)[0]) => shift = false,
+            Event::KeyPress(e) => {
+                let s = syms(e.detail);
+                out.push(if shift && s[1] != 0 { s[1] } else { s[0] });
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// X11: OS キーボードは XTest でフォーカス中のウィンドウへ、キー（修飾キー付き）と、配列に無い文字を含む文字列を送る。
+#[test]
+#[ignore = "starts a rootful Xwayland on the desktop"]
+fn x11_types_keys_and_text_into_the_focused_window() {
+    use os::keyboard::{Output, chord};
+    let display = ":58";
+    let _server = Server(
+        Command::new("Xwayland")
+            .args([display, "-geometry", "320x240", "-noreset"])
+            .spawn()
+            .expect("Xwayland"),
+    );
+    let (conn, screen) = until("Xwayland", Duration::from_secs(10), || {
+        x11rb::connect(Some(display)).ok()
+    });
+    // SAFETY: このテストは単独で実行する（--test-threads=1）。
+    unsafe {
+        std::env::set_var("DISPLAY", display);
+        std::env::set_var("NYAW_CAPTURE", "x11");
+    }
+    let root = conn.setup().roots[screen].root;
+    let window = conn.generate_id().unwrap();
+    conn.create_window(
+        x11rb::COPY_DEPTH_FROM_PARENT,
+        window,
+        root,
+        0,
+        0,
+        320,
+        240,
+        0,
+        WindowClass::INPUT_OUTPUT,
+        x11rb::COPY_FROM_PARENT,
+        &CreateWindowAux::new()
+            .override_redirect(1)
+            .event_mask(EventMask::KEY_PRESS | EventMask::KEY_RELEASE),
+    )
+    .unwrap();
+    conn.map_window(window).unwrap();
+    conn.get_input_focus().unwrap().reply().unwrap();
+    conn.set_input_focus(InputFocus::POINTER_ROOT, window, x11rb::CURRENT_TIME)
+        .unwrap();
+    conn.get_input_focus().unwrap().reply().unwrap();
+
+    let keyboard = desktop::os_keyboard();
+    let settings = until("the focused window", Duration::from_secs(5), || {
+        let s = keyboard.settings();
+        (s.foreground == u64::from(window)).then_some(s)
+    });
+    assert!(settings.error.is_none(), "{:?}", settings.error);
+    // キーの押下・解放だけを数える（Xwayland は起動直後に配列の変更を通知する）。
+    let events = |n: usize| {
+        let mut got = Vec::new();
+        until("the keys", Duration::from_secs(5), || {
+            while let Some(e) = conn.poll_for_event().unwrap() {
+                if matches!(e, Event::KeyPress(_) | Event::KeyRelease(_)) {
+                    got.push(e);
+                }
+            }
+            (got.len() >= n).then_some(())
+        });
+        got
+    };
+
+    // Shift + A（evdev 42 と 30）
+    keyboard
+        .send(settings.foreground, Output::Keys(chord(&[42], 30)))
+        .unwrap();
+    let got = events(4);
+    assert_eq!(typed(&conn, &got), [u32::from(b'A')]);
+
+    // 配列にある文字（H は Shift 付き）と、無い文字（é、語）。
+    keyboard
+        .send(settings.foreground, Output::Text("Hé語".into()))
+        .unwrap();
+    let got = events(8);
+    assert_eq!(typed(&conn, &got), [u32::from(b'H'), 0xe9, 0x0100_8a9e]);
+    assert!(keyboard.settings().error.is_none());
 }

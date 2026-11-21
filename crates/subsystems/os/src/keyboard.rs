@@ -49,6 +49,12 @@ pub trait Host: Send + 'static {
     fn send(&mut self, output: Output) -> io::Result<()>;
 }
 
+/// この OS のキー配列の検出だけを行う（送信は行わない）。Linux で入力を送る側（desktop）が、
+/// [`Host::settings`] の配列の部分に使う。
+pub fn detect() -> Settings {
+    platform::Backend::new().settings()
+}
+
 impl Host for platform::Backend {
     fn settings(&mut self) -> Settings {
         self.settings()

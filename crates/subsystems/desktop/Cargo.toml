@@ -20,6 +20,8 @@ x11rb = { version = "0.13", features = ["shm", "randr", "xfixes", "xtest", "dama
 wayland-client = "0.31"
 wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# wlroots の仮想キーボード（OS キーボード。src/linux/keyboard.rs）。
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
 ashpd = { version = "0.13", default-features = false, features = ["async-io", "screencast", "remote_desktop"] }
 pollster = "0.4"
 pipewire = { version = "0.9", features = ["v0_3_65"] }
@@ -41,3 +43,4 @@ windows = { version = "0.61.3", features = [
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 wayland-server = "0.31"
 wayland-protocols-wlr = { version = "0.3", features = ["server"] }
+wayland-protocols-misc = { version = "0.3", features = ["server"] }
