@@ -1,4 +1,4 @@
-//! OS サブシステム。保存先・ランタイム検出・タイマー精度・GPU 優先度を提供する。
+//! OS サブシステム。保存先・ランタイム検出・タイマー精度・GPU 優先度を提供する（Windows / Linux）。
 //! OS 固有の実装はバックエンドに閉じ、上位層へ公開しない。
 
 use std::{fs, io, path::Path};
@@ -12,16 +12,27 @@ pub use windows::{
     openvr_paths_file, openxr_runtime_manifest, precise_timers, ui_language,
 };
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{
+    attach_console, config_dir, data_dir, error_dialog, high_gpu_priority, log_dir,
+    openvr_paths_file, openxr_runtime_manifest, precise_timers, ui_language,
+};
+
+#[cfg(not(any(windows, target_os = "linux")))]
 compile_error!("no OS backend is implemented for this target");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
     Windows,
+    Linux,
 }
 
 #[cfg(windows)]
 pub const CURRENT: Os = Os::Windows;
+#[cfg(target_os = "linux")]
+pub const CURRENT: Os = Os::Linux;
 
 /// `path` に `contents` を書き込む（親ディレクトリが存在しなければ作成する）。内容が同一であれば書き込まない。
 pub fn write_file(path: &Path, contents: &str) -> io::Result<()> {

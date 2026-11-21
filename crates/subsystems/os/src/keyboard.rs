@@ -9,6 +9,9 @@ use std::{
 #[cfg(windows)]
 #[path = "keyboard/windows.rs"]
 mod platform;
+#[cfg(target_os = "linux")]
+#[path = "keyboard/linux.rs"]
+mod platform;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
