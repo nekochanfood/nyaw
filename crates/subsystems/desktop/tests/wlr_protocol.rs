@@ -618,11 +618,11 @@ fn wlroots_streams_and_points_through_screencopy_and_a_virtual_pointer() {
         stream.scroll(0.5, 0.5, 0.0, 3.0).unwrap();
         let wanted = [
             "pointer on output true",
-            "motion 0 16 of 64x32",
+            "motion 1 33 of 128x64",
             "button 0x110 Pressed",
-            "motion 63 16 of 64x32",
+            "motion 127 33 of 128x64",
             "button 0x110 Released",
-            "motion 32 16 of 64x32",
+            "motion 65 33 of 128x64",
             "axis VerticalScroll -1",
         ];
         until("the pointer", || {

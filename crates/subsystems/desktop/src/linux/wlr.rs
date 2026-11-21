@@ -518,14 +518,16 @@ fn evdev_button(button: Button) -> u32 {
 
 impl Inject for VirtualPointer<'_> {
     fn motion(&mut self, x: f32, y: f32) -> Result<(), Error> {
-        // 大きさが分からないうちは 0〜9999 の範囲で送る（出力に対する割合で解釈される）。
+        // 大きさが分からないうちは 10000 画素とみなす（出力に対する割合で解釈される）。
         let (w, h) = match self.size {
             (0, _) | (_, 0) => (10_000, 10_000),
             size => size,
         };
-        let px = super::pixel(x, w) as u32;
-        let py = super::pixel(y, h) as u32;
-        self.pointer.motion_absolute(self.time(), px, py, w, h);
+        // 画素の中心を指す（範囲を 2 倍にして 2x+1 を送る）。左上の角を送ると、出力の向きによっては隣の画素に入る。
+        let px = super::pixel(x, w) as u32 * 2 + 1;
+        let py = super::pixel(y, h) as u32 * 2 + 1;
+        self.pointer
+            .motion_absolute(self.time(), px, py, w * 2, h * 2);
         self.pointer.frame();
         self.flush()
     }

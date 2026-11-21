@@ -613,17 +613,25 @@ fn portal_trace_keys_right_after_permission() {
             }
         }
     };
-    until("the test window to be focused", Duration::from_secs(10), || {
-        pump(&mut log);
-        (conn.get_input_focus().unwrap().reply().unwrap().focus == window).then_some(())
-    });
+    until(
+        "the test window to be focused",
+        Duration::from_secs(10),
+        || {
+            pump(&mut log);
+            (conn.get_input_focus().unwrap().reply().unwrap().focus == window).then_some(())
+        },
+    );
     log.push(format!("[{}] focused", t()));
     let keyboard = desktop::os_keyboard();
     let settings = until("the keyboard", Duration::from_secs(10), || {
         let s = keyboard.settings();
         (s.foreground != 0 || s.error.is_some()).then_some(s)
     });
-    log.push(format!("[{}] keyboard ready, error {:?}", t(), settings.error));
+    log.push(format!(
+        "[{}] keyboard ready, error {:?}",
+        t(),
+        settings.error
+    ));
     // a, s, d, f を 300ms おきに 1 文字ずつ送る。
     let mut arrived = Vec::new();
     for code in [30u16, 31, 32, 33] {
@@ -638,14 +646,25 @@ fn portal_trace_keys_right_after_permission() {
             pump(&mut log);
             std::thread::sleep(Duration::from_millis(5));
         }
-        arrived.push(log[before..].iter().any(|l| l.contains(&format!("KeyPress {}", code + 8))));
+        arrived.push(
+            log[before..]
+                .iter()
+                .any(|l| l.contains(&format!("KeyPress {}", code + 8))),
+        );
     }
     std::thread::sleep(Duration::from_millis(300));
     pump(&mut log);
-    log.push(format!("[{}] keyboard error after: {:?}", t(), keyboard.settings().error));
+    log.push(format!(
+        "[{}] keyboard error after: {:?}",
+        t(),
+        keyboard.settings().error
+    ));
     for line in &log {
         eprintln!("{line}");
     }
     eprintln!("arrived: {arrived:?}");
-    assert!(arrived.iter().all(|a| *a), "some keys did not arrive: {arrived:?}");
+    assert!(
+        arrived.iter().all(|a| *a),
+        "some keys did not arrive: {arrived:?}"
+    );
 }
