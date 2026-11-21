@@ -74,10 +74,17 @@ subsystems ← overlay ← kernel ← ui ← 画面 (dashboard / wrist など) �
 ```
 
 - **カーネルとサブシステムの関係**: カーネルは設定およびフレーム進行の目的で `subsystems` を参照する。Subsystems 内部の依存順序は `os ← vr ← input / rendering`、`os ← keyboard`、`desktop ← media / notifications`（アプリ情報の解決と起動を `desktop` にまとめるため）とし、上位層への逆参照は行わない。`audio` は他サブシステムに依存せず、位置計算には `glam` を用いる。
-- **型と副作用の境界**: `kernel` は `subsystems` の一部を再エクスポートするが、上位層（UI や画面）が利用できるのはデータ型（共通語彙）と定数テーブルに限られる。OS やランタイムに対する副作用（入力の注入やパケット送信）を直接呼ぶことは禁止し、必ず `PanelCommand` を通じてカーネルへ依頼する。
+- **OS 機能へのアクセス**: OS の API（プロセス・ファイル・通信、`windows` クレートなど）を直接呼べるのは、サブシステム・カーネル・`logger`・`testkit` だけである。上位層（UI や画面など）が OS の機能を使うときは、サブシステムの関数（`kernel` の再エクスポート経由）か、カーネルへの依頼（パネルへの操作は `PanelCommand`、システムへの要求は `Request`）を通す。必要な関数がなければ、先にサブシステムへ追加する。この規則は `clippy.toml` の `disallowed-methods` / `disallowed-types` が検査する（後述の「OS 機能の禁止の仕組み」）。
 - **型の共通語彙**: UI 層、画面、`testkit` が参照する下位の型は、`kernel` の再エクスポート経由で取得する。`overlay` は `vr` の型（`Pose` など）を共通語彙として直接利用してよい。
 - **横断クレートの例外**: `logger` はすべての層から直接参照できる唯一の横断クレートである。ただし、`logger` 自体はワークスペース内の自前クレートに一切依存しない。
 - **デザインシステムと動きの分離**: `design` の定数定義（Constants）および `animation` クレートは GPUI に依存しないため、`overlay` がパネルのアニメーションや余白計算に参照できる。GPUI に依存するコンポーネントやテーマ定義は UI 層以上のみで利用する。
+
+### OS 機能の禁止の仕組み
+
+ルートの `clippy.toml` は、標準ライブラリのプロセス・ファイル・通信の API（`std::process::Command`、`std::fs::*`、`std::net::*`）と、`ureq`・gpui の OS 機能（`App::open_url` など）の使用を禁止する。CI の `cargo clippy --workspace --all-targets -- -D warnings` が違反を検出する。`windows` クレートは上位層の依存に含まれないため、コンパイラが呼び出しを防ぐ。
+
+- **許可する側の設定**: clippy は設定ファイルを継承・結合せず、クレートのディレクトリから親へ向かって最初に見つけた 1 つだけを使う。そのため `crates/kernel`・`crates/logger`・`crates/subsystems`・`crates/testkit` は、OS の機能以外の規則（URL を開く処理の制限）だけを複製した `clippy.toml` を持つ。ルートの規則を変えたら複製も揃える。
+- **ビルドスクリプトとテスト**: 上位層のビルドスクリプト（コード生成）と、ファイルやプロセスを使うテスト（`ui/tests/gpu` の画像出力など）は、ファイルや関数の先頭に `#![allow(clippy::disallowed_methods, clippy::disallowed_types)]` と理由のコメントを置く。アプリ本体のコードには置かない。
 
 ### フィーチャーによる依存の制御
 

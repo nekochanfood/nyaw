@@ -3,6 +3,8 @@
 //! このバイナリが自分自身をケースごとに子プロセスとして起動する（`NYAW_GPU_CASE` でケースを指定する）。
 //!
 //! 1 ケースだけ流す: `cargo test -p ui --test gpu -- --ignored stress`（名前の一部で絞る）
+// ケースを子プロセスとして起動し、描画結果を画像ファイルに書き出すため、プロセスとファイル操作の制限（clippy.toml）を外す。
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 mod a11y;
 mod common;

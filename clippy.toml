@@ -1,5 +1,37 @@
-# URL を開く処理は ui::link の制御点のみに限定する（URL をユーザーに提示して確認を得てから開く）。各コンポーネント・画面は design::link::open 経由で依頼する。
-# allow-invalid: gpui に依存しないクレートではパスを解決できないため。
+# OS の機能（プロセス・ファイル・通信）を使えるのは、サブシステム（crates/subsystems）・カーネル・ロガー・testkit だけ。
+# それ以外のクレート（UI・画面など）は、サブシステムかカーネルの関数を通して使う（AGENT.md の「OS 機能へのアクセス」）。
+# clippy は設定ファイルを継承・結合しないため、許可する側（crates/kernel・crates/logger・crates/subsystems・crates/testkit）は
+# 自分の clippy.toml を持ち、下の URL の規則だけを複製する。規則を変えたら複製も揃える。
+# allow-invalid: そのパスを解決できないクレート（gpui や ureq に依存しないもの）でエラーにしないため。
+# ponytail: Path::exists などのメタデータの参照は対象外。上位層で使われ始めたら追加する。
+
 disallowed-methods = [
+    # URL を開く処理は ui::link の制御点のみに限定する（URL をユーザーに提示して確認を得てから開く）。各コンポーネント・画面は design::link::open 経由で依頼する。
     { path = "gpui::App::open_url", reason = "design::link::open 経由で依頼する（ui::link がユーザーに URL を提示し確認を得てから開く）", allow-invalid = true },
+    { path = "gpui::App::reveal_path", reason = "OS の機能はサブシステムに置き、上位層はその関数を呼ぶ", allow-invalid = true },
+    { path = "gpui::App::open_with_system", reason = "OS の機能はサブシステムに置き、上位層はその関数を呼ぶ", allow-invalid = true },
+    { path = "std::fs::read", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::read_to_string", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::read_dir", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::write", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::create_dir", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::create_dir_all", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::remove_file", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::remove_dir", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::remove_dir_all", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::rename", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::copy", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::metadata", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "ureq::get", reason = "通信はサブシステムに置き、上位層はその関数を呼ぶ", allow-invalid = true },
+    { path = "ureq::post", reason = "通信はサブシステムに置き、上位層はその関数を呼ぶ", allow-invalid = true },
+]
+
+disallowed-types = [
+    { path = "std::process::Command", reason = "プロセスの起動はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::File", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::fs::OpenOptions", reason = "ファイル操作はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::net::TcpStream", reason = "通信はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::net::TcpListener", reason = "通信はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "std::net::UdpSocket", reason = "通信はサブシステムに置き、上位層はその関数を呼ぶ" },
+    { path = "ureq::Agent", reason = "通信はサブシステムに置き、上位層はその関数を呼ぶ", allow-invalid = true },
 ]
