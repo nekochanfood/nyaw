@@ -5,7 +5,13 @@
 #   角丸クリッピング・超楕円の角・回転を vendor/gpui_windows/src/shaders.hlsl と同等に描画する。
 # - ヘッドレスレンダラは透明で下塗りして事前乗算アルファの画素を返し、読み戻しを GPU の完了を待たずに行う
 #   （Windows と同じく 1 回遅れ）。
+# - パイプラインとバインドグループレイアウトを、同じデバイス上のレンダラ間で共有する（パネルごとのシェーダーのコンパイルを省く）。
 # Zed を更新する際は、新リビジョンを複製し直して NYAW: の箇所を再適用する。
+#
+# vendor はワークスペース外のため、テストは vendor/gpui を patch に指定して単独で実行する（GPU を使用する描画のテストを含む）:
+#   cd vendor/gpui_wgpu && CARGO_TARGET_DIR=../../target/vendor-tests cargo test --features test-support \
+#     --config 'patch."https://github.com/zed-industries/zed".gpui.path="../gpui"'
+# 生成される Cargo.lock は一時ファイルであり、コミットしない。
 [package]
 name = "gpui_wgpu"
 version = "0.1.0"

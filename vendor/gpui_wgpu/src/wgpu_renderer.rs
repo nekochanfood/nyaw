@@ -130,6 +130,7 @@ pub struct WgpuSurfaceConfig {
     pub preferred_present_mode: Option<wgpu::PresentMode>,
 }
 
+#[derive(Clone)]
 struct WgpuPipelines {
     quads: wgpu::RenderPipeline,
     shadows: wgpu::RenderPipeline,
@@ -163,6 +164,7 @@ struct InstanceBindings {
     polychrome_sprites: InstanceBinding,
 }
 
+#[derive(Clone)]
 struct WgpuBindGroupLayouts {
     globals: wgpu::BindGroupLayout,
     instances: wgpu::BindGroupLayout,
@@ -1219,7 +1221,55 @@ impl WgpuRenderer {
     }
 }
 
+/// NYAW: pipelines and bind group layouts already built on a device, by the parameters they were built with.
+/// Creating them parses and compiles the shaders (~18 ms per renderer), and nyaw opens a headless renderer per panel.
+type SharedPipelines = Vec<(
+    (wgpu::TextureFormat, wgpu::CompositeAlphaMode, u32, bool, bool),
+    std::sync::Weak<wgpu::Device>,
+    WgpuBindGroupLayouts,
+    WgpuPipelines,
+)>;
+static SHARED_PIPELINES: parking_lot::Mutex<SharedPipelines> = parking_lot::Mutex::new(Vec::new());
+
 impl WgpuRendererCore {
+    /// NYAW: [`Self::create_bind_group_layouts`] and [`Self::create_pipelines`], reusing what an earlier renderer
+    /// built on the same device with the same parameters. Entries of dropped (lost) devices are discarded.
+    fn shared_pipelines(
+        device: &Arc<wgpu::Device>,
+        target_format: wgpu::TextureFormat,
+        alpha_mode: wgpu::CompositeAlphaMode,
+        path_sample_count: u32,
+        dual_source_blending: bool,
+        uses_webgl_instance_data: bool,
+    ) -> (WgpuBindGroupLayouts, WgpuPipelines) {
+        let key = (
+            target_format,
+            alpha_mode,
+            path_sample_count,
+            dual_source_blending,
+            uses_webgl_instance_data,
+        );
+        let mut shared = SHARED_PIPELINES.lock();
+        shared.retain(|(_, owner, _, _)| owner.strong_count() > 0);
+        if let Some((_, _, layouts, pipelines)) = shared.iter().find(|(k, owner, _, _)| {
+            *k == key && owner.upgrade().is_some_and(|d| Arc::ptr_eq(&d, device))
+        }) {
+            return (layouts.clone(), pipelines.clone());
+        }
+        let layouts = Self::create_bind_group_layouts(device, uses_webgl_instance_data);
+        let pipelines = Self::create_pipelines(
+            device,
+            &layouts,
+            target_format,
+            alpha_mode,
+            path_sample_count,
+            dual_source_blending,
+            uses_webgl_instance_data,
+        );
+        shared.push((key, Arc::downgrade(device), layouts.clone(), pipelines.clone()));
+        (layouts, pipelines)
+    }
+
     fn new(
         context: &WgpuContext,
         atlas: Arc<WgpuAtlas>,
@@ -1232,10 +1282,8 @@ impl WgpuRendererCore {
         let uses_webgl_instance_data = context.uses_webgl_instance_data();
         let dual_source_blending =
             context.supports_dual_source_blending() && !uses_webgl_instance_data;
-        let bind_group_layouts = Self::create_bind_group_layouts(&device, uses_webgl_instance_data);
-        let pipelines = Self::create_pipelines(
+        let (bind_group_layouts, pipelines) = Self::shared_pipelines(
             &device,
-            &bind_group_layouts,
             target_format,
             alpha_mode,
             rendering_params.path_sample_count,
