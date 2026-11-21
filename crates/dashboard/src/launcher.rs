@@ -113,7 +113,7 @@ impl Screen {
             self.open_window(source, icon, cx);
             return;
         }
-        match kernel::desktop::launch(&app) {
+        match kernel::desktop::launch(&app.id) {
             Ok(()) => {
                 self.error = None;
                 let icon = self

@@ -3050,6 +3050,7 @@ dependencies = [
 name = "media"
 version = "2026.0.3-dev.0"
 dependencies = [
+ "desktop",
  "image",
  "logger",
  "windows 0.61.3",
