@@ -363,6 +363,9 @@ fn open_window(display: &str) -> Arc<Mutex<Seen>> {
     seen
 }
 
+/// 照合で許す誤差（画素）。
+static SLACK: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
 fn until<T>(what: &str, timeout: Duration, mut f: impl FnMut() -> Option<T>) -> T {
     let deadline = Instant::now() + timeout;
     loop {
@@ -473,6 +476,16 @@ fn a_wayland_compositor_streams_points_and_types() {
         // ウィンドウが描かれてから取り込んだ画面を使う（色の読める点が一つでもあるか、少し待つ）。
         let readable = points.iter().any(|(t, l)| exact(t.0, t.1) == Some(*l));
         let settled = drawn.elapsed() > Duration::from_millis(500);
+        // 画像の大きさが出力の大きさ × 倍率と違うコンポジタ（ShojiWM の後継の取り込みは 1 画素大きい）では、
+        // 中身がわずかに伸縮するため 1 画素の誤差を許す。
+        let slack = u32::from(frame.width != (logical.0 * scale) as u32);
+        SLACK.store(slack, std::sync::atomic::Ordering::Relaxed);
+        if slack > 0 && (readable || settled) {
+            eprintln!(
+                "the frame is {}x{} for a {}x{} output at scale {scale}: allowing 1 px",
+                frame.width, frame.height, logical.0, logical.1
+            );
+        }
         (readable || settled).then_some(((frame.width, frame.height), points))
     });
 
@@ -491,8 +504,10 @@ fn a_wayland_compositor_streams_points_and_types() {
         // 開いた時点のポインタの位置も届くため、送った点に来るまで待つ。
         // 色から読むのはウィンドウの画素（倍率倍）の位置。ポインタの位置に倍率を掛けると同じ画素に入る。
         let scale = f64::from(seen.lock().unwrap().scale.max(1));
+        let slack = f64::from(SLACK.load(std::sync::atomic::Ordering::Relaxed));
         let near = |p: (f64, f64)| {
-            ((p.0 * scale).floor(), (p.1 * scale).floor()) == (local.0 as f64, local.1 as f64)
+            ((p.0 * scale).floor() - local.0 as f64).abs() <= slack
+                && ((p.1 * scale).floor() - local.1 as f64).abs() <= slack
         };
         let deadline = Instant::now() + Duration::from_secs(5);
         let pointer = loop {
@@ -509,6 +524,38 @@ fn a_wayland_compositor_streams_points_and_types() {
         eprintln!(
             "screen {target:?} shows the window's {local:?}; pointing there, the window got {pointer:?}"
         );
+    }
+    // カーソル: 後継の ext-image-copy-capture では、画像とホットスポット、指した位置が届く。wlr-screencopy では届かず、
+    // パネルには nyaw のポインタを表示する。NYAW_TEST_CURSOR=1 なら届くことを必須にする。
+    let last = ((at.x * w).round() as i32, (at.y * h).round() as i32);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let cursor = loop {
+        if let Some(c) = stream.cursor() {
+            break Some(c);
+        }
+        if Instant::now() > deadline {
+            break None;
+        }
+        thread::sleep(Duration::from_millis(10));
+    };
+    match cursor {
+        Some(c) => {
+            eprintln!(
+                "cursor {}x{}, hotspot {:?}",
+                c.image.width, c.image.height, c.hotspot
+            );
+            assert!(c.hotspot.0 < c.image.width && c.hotspot.1 < c.image.height);
+            // 位置はバッファの画素座標の決まりだが、論理座標で送るコンポジタ（Hyprland）もあるため、記録だけする。
+            thread::sleep(Duration::from_millis(100));
+            eprintln!("cursor reported at {:?} for {last:?}", stream.pointer());
+        }
+        None => {
+            assert!(
+                std::env::var_os("NYAW_TEST_CURSOR").is_none(),
+                "no cursor image arrived"
+            );
+            eprintln!("no cursor image: the panel shows nyaw's pointer");
+        }
     }
     let before = seen.lock().unwrap().pointer;
     stream

@@ -69,7 +69,10 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
             "zxdg_output_manager_v1" => {
                 state.xdg = Some(registry.bind(name, version.min(3), qh, ()));
             }
-            "zwlr_screencopy_manager_v1" => state.screencopy = true,
+            // wlroots 系の取り込み（後継の ext-image-copy-capture か、wlr-screencopy）。
+            "zwlr_screencopy_manager_v1" | "ext_image_copy_capture_manager_v1" => {
+                state.screencopy = true
+            }
             _ => {}
         }
     }

@@ -97,7 +97,7 @@ cargo run --release -- --novr
 
 <a name="note-update"></a>\*6 アップデートは Windows のインストーラーで適用します。Linux 向けの配布物はまだないため、Linux では更新を確認しません。
 
-<a name="note-linux-desktop"></a>\*7 Linux で配信できるのはディスプレイ（画面）のみで、個別のウィンドウは配信できません。表示サーバーに応じて、X11 では XSHM と XTest、wlroots 系のコンポジタでは wlr-screencopy と仮想ポインタ・仮想キーボード、その他の Wayland（KDE Plasma、GNOME など）では xdg-desktop-portal と PipeWire を使います。portal では初回にデスクトップに表示される確認画面で、共有するディスプレイを選んで許可する必要があります（パネルには許可待ちである旨を表示します）。X11 と KDE Plasma は実機で、wlroots はテスト用の最小限のコンポジタで検証しました。wlroots では OS のカーソルの画像を取得できず、portal ではキー配列に無い文字を入力できない場合があります。
+<a name="note-linux-desktop"></a>\*7 Linux で配信できるのはディスプレイ（画面）のみで、個別のウィンドウは配信できません。表示サーバーに応じて、X11 では XSHM と XTest、wlroots 系のコンポジタでは ext-image-copy-capture（無ければ wlr-screencopy）と仮想ポインタ・仮想キーボード、その他の Wayland（KDE Plasma、GNOME など）では xdg-desktop-portal と PipeWire を使います。portal では初回にデスクトップに表示される確認画面で、共有するディスプレイを選んで許可する必要があります（パネルには許可待ちである旨を表示します）。X11、KDE Plasma、niri、Hyprland、ShojiWM で検証しました。wlr-screencopy で取り込む場合は OS のカーソルの画像を取得できないため、nyaw のポインタを表示します。portal ではキー配列に無い文字を入力できない場合があります。
 
 ## ライセンス
 

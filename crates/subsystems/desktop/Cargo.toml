@@ -18,7 +18,7 @@ logger.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", features = ["shm", "randr", "xfixes", "xtest", "damage"] }
 wayland-client = "0.31"
-wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # wlroots の仮想キーボード（OS キーボード。src/linux/keyboard.rs）。
 wayland-protocols-misc = { version = "0.3", features = ["client"] }
