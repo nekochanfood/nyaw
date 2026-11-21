@@ -225,7 +225,7 @@ pub enum Setting {
     // `[dashboard]`
     /// ダッシュボードの距離（m。`dashboard.distance`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、配置はダッシュボードが行う。
     DashboardDistance(f32),
-    /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。`dashboard.height`。範囲に収め、刻みに丸める）。
+    /// ダッシュボードの高さ（m。目の高さの 0.05m 下からの相対で上が +。`dashboard.height`。範囲に収め、刻みに丸める）。
     DashboardHeight(f32),
     // `[settings]`
     /// 設定画面のポインタの動きの調整方式（`settings.pointer_tuning`）。カーネルは値を保持するのみで、解釈は設定画面が行う。
@@ -300,7 +300,7 @@ pub struct Settings {
     // `[dashboard]`
     /// ダッシュボードの距離（m。はめた画面の中心まで）。
     pub dashboard_distance: f32,
-    /// ダッシュボードの高さ（m。上が +。0 で画面の中心が目の高さの 0.1m 下）。
+    /// ダッシュボードの高さ（m。上が +。0 で画面の中心が目の高さの 0.05m 下）。
     pub dashboard_height: f32,
     // `[settings]`
     pub pointer_tuning: PointerTuning,
@@ -1705,7 +1705,7 @@ mod tests {
         }
     }
 
-    /// ダッシュボードの距離・高さは既定で正面 1.3m・高さ 0（目の高さの 0.1m 下）。互いに独立で、範囲と刻みに収まる。
+    /// ダッシュボードの距離・高さは既定で正面 1.3m・高さ 0（目の高さの 0.05m 下）。互いに独立で、範囲と刻みに収まる。
     #[test]
     fn dashboard_placement_has_defaults_and_stays_in_range() {
         let (mut k, _) = lod_kernel();
