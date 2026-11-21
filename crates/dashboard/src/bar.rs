@@ -92,6 +92,7 @@ impl Dashboard {
             prev_media: false,
             prev_update: false,
             prev_sep: false,
+            overflow_menu: None,
             scroll: ScrollHandle::new(),
             enter: Entering::new(cfg!(test)),
             center_asked: cx
@@ -138,12 +139,43 @@ impl Dashboard {
 
     /// 開いているメニューのポップオーバー（外側押下でクローズ済みなら `None`）。
     fn open_menu(&self, cx: &App) -> Option<PanelId> {
-        self.menu.filter(|id| {
-            !cx.global::<PanelControl>()
-                .panels
-                .get(id)
-                .is_some_and(|p| p.status.closed)
-        })
+        open_popover(self.menu, cx)
+    }
+
+    /// 並べきれない配信（[`MAX_STREAM_BUTTONS`] 個を超えた分）。
+    fn overflow(&self) -> &[Stream] {
+        &self.streams[shown_streams(self.streams.len())..]
+    }
+
+    /// 並べきれない配信の一覧ポップオーバーを開閉する（バーの右端に揃える）。
+    fn toggle_overflow(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = open_popover(self.overflow_menu, cx) {
+            close(id, cx);
+            self.overflow_menu = None;
+        } else {
+            let streams: Vec<_> = self
+                .overflow()
+                .iter()
+                .map(|s| (s.panel, s.name.clone(), s.kind))
+                .collect();
+            let (bar, dashboard) = (self.panel, cx.weak_entity());
+            let rows = streams.len();
+            let (size, res) = overflow_size(rows);
+            let right_gap = BAR_PX.0 as f32 - f32::from(self.scroll.bounds().right());
+            let spec = PanelSpec::popover(bar, move |id, _, cx: &mut Context<StreamMenu>| {
+                let _ = dashboard.update(cx, |d, _| d.overflow_menu = Some(id));
+                StreamMenu {
+                    panel: id,
+                    dashboard,
+                    streams,
+                }
+            })
+            .sized(size, res)
+            .offset(overflow_offset(right_gap, rows))
+            .without_resize();
+            cx.default_global::<PanelControl>().spawns.push(spec);
+        }
+        ui::notify(self.panel, cx);
     }
 
     /// メニューを開閉する。表示中にボタンを押下すると外側押下として扱われ、オーバーレイがクローズする。
@@ -399,7 +431,29 @@ impl Dashboard {
     }
 }
 
-fn stream_key(panel: PanelId) -> SharedString {
+/// バーに並べる配信ボタンの最大数（あふれる場合は最後の 1 つを、残りを一覧表示するボタンに充てる）。
+const MAX_STREAM_BUTTONS: usize = 10;
+
+/// 配信が `n` 個あるとき、バーにボタンとして並べる個数。
+fn shown_streams(n: usize) -> usize {
+    if n > MAX_STREAM_BUTTONS {
+        MAX_STREAM_BUTTONS - 1
+    } else {
+        n
+    }
+}
+
+/// 開いているポップオーバー（外側押下でクローズ済みなら `None`）。
+fn open_popover(id: Option<PanelId>, cx: &App) -> Option<PanelId> {
+    id.filter(|id| {
+        !cx.global::<PanelControl>()
+            .panels
+            .get(id)
+            .is_some_and(|p| p.status.closed)
+    })
+}
+
+pub(crate) fn stream_key(panel: PanelId) -> SharedString {
     format!("dashboard-stream-{panel}").into()
 }
 
@@ -481,8 +535,16 @@ impl Render for Dashboard {
         let theme = Theme::current(cx);
         let current = self.current(cx);
         let docked = ui::docked(cx);
-        let streams: Vec<_> = streams_now
-            .iter()
+        // 並べきれない配信は末尾のボタンの一覧ポップオーバーにまとめる（消えていく最中のものは、滑り出るため並べたままにする）。
+        let (mut live, shown) = (0, shown_streams(self.streams.len()));
+        let (visible, _): (Vec<_>, Vec<_>) = streams_now.iter().partition(|(_, leaving)| {
+            *leaving || {
+                live += 1;
+                live <= shown
+            }
+        });
+        let streams: Vec<_> = visible
+            .into_iter()
             .enumerate()
             .map(|(i, (s, leaving))| {
                 let id = s.panel;
@@ -520,6 +582,27 @@ impl Render for Dashboard {
                 )
             })
             .collect();
+        let overflow_docked = self.overflow().iter().any(|s| docked == Some(s.panel));
+        let overflow_button = (!self.overflow().is_empty()).then(|| {
+            let key = SharedString::from("dashboard-stream-overflow");
+            let t = enter.progress(&key, stream_slot + 1 + shown, now_at);
+            slide_in(
+                t,
+                components::BUTTON_HEIGHT,
+                components::icon_button(
+                    &theme,
+                    key,
+                    &icons::DOTS_THREE,
+                    i18n::t(cx, "dashboard.streams"),
+                    if overflow_docked || open_popover(self.overflow_menu, cx).is_some() {
+                        Variant::Primary
+                    } else {
+                        Variant::Default
+                    },
+                )
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_overflow(cx))),
+            )
+        });
         let variant = |page| {
             if current == Some(page) {
                 Variant::Primary
@@ -655,6 +738,7 @@ impl Render for Dashboard {
             items.push(fade_in(separator_t, SEPARATOR_W, separator(&theme)).into_any_element());
         }
         items.extend(streams.into_iter().map(IntoElement::into_any_element));
+        items.extend(overflow_button.map(IntoElement::into_any_element));
         // ウィンドウは固定幅だが、バーは内容幅に収めて中央配置する（[`MAX_BAR_PX`] を超える場合は上限固定で横スクロール）。
         div()
             .absolute()
