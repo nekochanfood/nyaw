@@ -1,6 +1,8 @@
 //! この層より上のすべての層のテスト用、メモリ上のバックエンド。
 
-use crate::{Frame, OverlayId, Pose, Runtime, VrBackend, VrError};
+use std::sync::Arc;
+
+use crate::{ExternalImage, Frame, ImportFormats, OverlayId, Pose, Runtime, VrBackend, VrError};
 
 /// モックが記録するオーバーレイ1枚分の状態。
 #[derive(Debug)]
@@ -16,6 +18,8 @@ pub struct MockOverlay {
     /// 色の明るさ（[`VrBackend::set_overlay_tint`]）。
     pub tint: f32,
     pub pixel_submissions: usize,
+    /// 外部の画像（[`VrBackend::submit_overlay_external`]）を受け取った回数。
+    pub external_submissions: usize,
     pub sort: u32,
     /// 最後に送られたテクスチャ。
     pub texture: Option<MockTexture>,
@@ -54,6 +58,10 @@ pub struct MockBackend {
     pub auto_launch: Option<bool>,
     /// 両目に映る範囲（[`VrBackend::fov`]）。
     pub fov: Option<crate::Fov>,
+    /// 取り込める外部の画像（[`VrBackend::import_formats`]）。`None` なら RGBA だけを受け付ける。
+    pub import: Option<ImportFormats>,
+    /// 最後に受け取った外部の画像（GPU の読み出しが終わるまで保持する実装を再現する）。
+    pub held: Option<Arc<ExternalImage>>,
 }
 
 impl VrBackend for MockBackend {
@@ -93,6 +101,7 @@ impl VrBackend for MockBackend {
             alpha: 1.0,
             tint: 1.0,
             pixel_submissions: 0,
+            external_submissions: 0,
             sort: 0,
             texture: None,
             destroyed: false,
@@ -152,5 +161,50 @@ impl VrBackend for MockBackend {
             height,
             rgba: rgba.to_vec(),
         });
+    }
+
+    fn import_formats(&self) -> Option<ImportFormats> {
+        self.import.clone()
+    }
+
+    /// 共有メモリの画像は CPU で RGBA に並べ替えて記録する（GPU の取り込みと同じ結果）。DMA-BUF は大きさだけを記録する。
+    fn submit_overlay_external(
+        &mut self,
+        id: OverlayId,
+        image: &Arc<ExternalImage>,
+    ) -> Result<(), VrError> {
+        if self.import.is_none() {
+            return Err(VrError::NotImplemented(self.runtime()));
+        }
+        let rgba = match image.host_bytes() {
+            Some((bytes, stride)) => (0..image.height as usize)
+                .flat_map(|y| {
+                    bytes[y * stride..y * stride + image.width as usize * 4]
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|p| {
+                            let [r, g, b] = if image.format.bgr() {
+                                [p[2], p[1], p[0]]
+                            } else {
+                                [p[0], p[1], p[2]]
+                            };
+                            [r, g, b, if image.format.opaque() { 255 } else { p[3] }]
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .flatten()
+                .collect(),
+            None => Vec::new(),
+        };
+        let o = &mut self.overlays[id.0 as usize];
+        o.external_submissions += 1;
+        o.texture = Some(MockTexture {
+            width: image.width,
+            height: image.height,
+            rgba,
+        });
+        self.held = Some(image.clone());
+        Ok(())
     }
 }

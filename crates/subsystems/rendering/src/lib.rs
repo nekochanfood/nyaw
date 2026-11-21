@@ -4,7 +4,17 @@
 #[cfg(feature = "gpui")]
 pub mod gpui;
 
-use vr::{Device, OverlayId, Pose, VrBackend, VrError};
+use std::sync::Arc;
+
+use vr::{Device, ExternalImage, OverlayId, Pose, VrBackend, VrError};
+
+/// 最後に届いた画像。
+#[derive(Debug, Clone, PartialEq)]
+enum Texture {
+    Pixels(u32, u32, Vec<u8>),
+    /// 表示サーバーの画像（[`Surface::store_external`]）。書き込み元のバッファを占有しないよう、送信後は保持しない。
+    External(Option<Arc<ExternalImage>>),
+}
 
 /// ランタイム上の描画先。最後の画像と送信済み状態、解放状態を保持する。
 #[derive(Debug, Clone, PartialEq)]
@@ -12,7 +22,7 @@ pub struct Surface {
     id: OverlayId,
     /// ランタイムのオーバーレイのキー（[`Self::restore`] で作り直すときに使う）。
     key: String,
-    texture: Option<(u32, u32, Vec<u8>)>,
+    texture: Option<Texture>,
     released: bool,
     /// ランタイム側のオーバーレイのみを破棄済み（[`Self::park`]）。画像・描画順は保持したまま。
     parked: bool,
@@ -111,7 +121,16 @@ impl Surface {
         );
         // park 中も保持する（再作成時に送信する）。
         if !self.released {
-            self.texture = Some((width, height, rgba.to_vec()));
+            self.texture = Some(Texture::Pixels(width, height, rgba.to_vec()));
+        }
+    }
+
+    /// 表示サーバーの画像を次の [`Self::present`] で GPU へ取り込ませる。取り込んだ後は保持しないため、不透明度・明るさを
+    /// ランタイムが合成できない場合も画素は加工しない。
+    // ponytail: 取り込んだ画像は減衰・暗転の代替処理を受けない。OpenVR と color_scale_bias のある OpenXR は合成できる。
+    pub fn store_external(&mut self, image: Arc<ExternalImage>) {
+        if !self.released {
+            self.texture = Some(Texture::External(Some(image)));
         }
     }
 
@@ -206,7 +225,15 @@ impl Surface {
         if native && !upload {
             return;
         }
-        if let Some((width, height, rgba)) = &self.texture {
+        if let Some(Texture::External(pending)) = &mut self.texture {
+            if let Some(image) = pending.take()
+                && let Err(error) = vr.submit_overlay_external(self.id, &image)
+            {
+                logger::warn!("cannot import a desktop image", error = error);
+            }
+            return;
+        }
+        if let Some(Texture::Pixels(width, height, rgba)) = &self.texture {
             let fade = if native { 1.0 } else { opacity };
             if fade == 1.0 && dim == 0.0 {
                 vr.submit_overlay_pixels(self.id, *width, *height, rgba);
