@@ -137,7 +137,7 @@ fn resizing_a_docked_screen_does_not_pull_it_out() {
     ov.tick(&mut vr);
     controller(&mut vr, aim_at(slot.position), &resize);
     ov.tick(&mut vr);
-    // トリガーを押して手を前に出し大きさを変えている間は、抜ける所まで手がぶれても抜けない。
+    // トリガーを押したまま手を前に出して大きさを変えている間は、抜ける距離より大きく手を横に振っても抜けない。
     let size = ov.panel(1).size;
     let to = slot.position + Vec3::X * 0.5;
     let aim = aim_at(to);
@@ -150,11 +150,11 @@ fn resizing_a_docked_screen_does_not_pull_it_out() {
     assert!(ov.panel(1).size.x > size.x);
     assert!(ov.panel(1).parent.is_some());
     assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Pull));
-    // トリガーを離しても、変え終えた所から引き直すまでは抜けない。
+    // トリガーを離しただけでは抜けない。
     pull_to(&mut vr, &mut ov, to);
     assert!(ov.panel(1).parent.is_some());
     assert!(ov.take_dock_changes().is_empty());
-    // 引き直せば抜ける。
+    // そこからさらに引くと抜ける。
     pull_to(&mut vr, &mut ov, to + Vec3::X * 0.5);
     assert!(ov.panel(1).parent.is_none());
     assert_eq!(ov.take_dock_changes(), vec![(1, false)]);
