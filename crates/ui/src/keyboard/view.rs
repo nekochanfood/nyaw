@@ -8,11 +8,11 @@ use gpui::{App, Context, Window, div, prelude::*, px, rgba, uniform_list};
 use kernel::{
     PanelId,
     subsystems::{
-        keyboard::{Database, Keyboard, KeyboardType, Layout},
+        keyboard::{self, Keyboard, KeyboardType, Layout},
         os::keyboard::Settings,
     },
 };
-use std::{sync::OnceLock, thread, time::Duration};
+use std::time::Duration;
 
 pub(super) const KEY_UNIT: f32 = 64.;
 
@@ -86,21 +86,6 @@ impl KeyAppearance {
             },
         }
     }
-}
-
-/// キー配列データベース（プロセスに 1 つ）。読み込みは XKB の数百ファイルのディスク I/O を伴うため、キーボード初回表示時に
-/// 開始するとディスク負荷が高い間はキーのないカードが数秒間表示される。起動時に [`preload`] で事前読み込みする。
-static DATABASE: OnceLock<Result<Database, String>> = OnceLock::new();
-
-fn database() -> &'static Result<Database, String> {
-    DATABASE.get_or_init(|| Database::load().map_err(|e| e.to_string()))
-}
-
-/// キー配列データベースをバックグラウンドスレッドで読み込み開始する（UI 起動時）。
-pub(crate) fn preload() {
-    thread::spawn(|| {
-        database();
-    });
 }
 
 /// 任意の画面に配置可能なキーボード。配列は共有データベースからバックグラウンドスレッドで構築し、入力先の決定は UI に委ねる。
@@ -198,7 +183,7 @@ impl KeyboardView {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    database()
+                    keyboard::shared()
                         .as_ref()
                         .map_err(Clone::clone)
                         .and_then(|db| db.keyboard(&layout))
@@ -221,7 +206,7 @@ impl KeyboardView {
         }
         self.loading = false;
         if self.layouts.is_empty()
-            && let Ok(db) = database()
+            && let Ok(db) = keyboard::shared()
         {
             self.layouts = db.layouts.clone();
         }
@@ -683,6 +668,7 @@ impl Render for KeyboardView {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
+    use kernel::subsystems::keyboard::Database;
     use std::{cell::Cell, rc::Rc};
 
     fn ready(db: &Database, layout: &str, kind: KeyboardType) -> KeyboardView {
@@ -1065,7 +1051,7 @@ mod tests {
     /// 以前はビューごとに読み込みを開始していたため、初回表示時にディスク I/O 待ちでキーのないカードが表示されていた。
     #[gpui::test]
     fn a_new_keyboard_gets_its_keys_without_waiting_for_the_poll(cx: &mut TestAppContext) {
-        preload();
+        keyboard::preload();
         let view = cx.new(|cx| KeyboardView::new(0, cx));
         // 時計を進めない（100ms ごとのポーリングは実行されない）。
         cx.run_until_parked();
