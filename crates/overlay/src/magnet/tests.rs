@@ -320,7 +320,8 @@ fn the_ghost_frames_the_slot_without_moving_and_waits_for_its_picture() {
     assert!(vr.backend.overlays[ghost].visible);
     // 地の縁より少し外まで、帯の分だけ上に伸び、Z ファイティングしないよう少し奥にある。
     let margin = PANEL_MARGIN * 0.3 / 300.0;
-    let rect = Vec2::new(0.4, 0.3) - Vec2::splat(2.0 * margin) + Vec2::splat(2.0 * GHOST_PAD_PX / 1000.0);
+    let rect =
+        Vec2::new(0.4, 0.3) - Vec2::splat(2.0 * margin) + Vec2::splat(2.0 * GHOST_PAD_PX / 1000.0);
     let band = DOCK_HINT_PX as f32 / 1000.0;
     let at = slot.position + Vec3::Y * band / 2.0 - Vec3::Z * GHOST_SINK;
     let res = (
