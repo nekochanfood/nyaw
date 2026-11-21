@@ -264,9 +264,15 @@ fn err(e: impl Display) -> String {
     e.to_string()
 }
 
+/// 更新に用いるインストーラー（`installer/nyaw.iss`）を配布している OS。それ以外の OS では、更新を確認しない。
+const HAS_INSTALLER: bool = cfg!(windows);
+/// インストーラーを配布していない OS で、確認の代わりに表示するエラー。
+const NO_INSTALLER: &str = "automatic updates are not available on this platform yet";
+
 /// 更新の状態（GPUI のグローバル）。ダッシュボードのボタンと設定のアップデート画面が同一インスタンスを参照する。
 pub struct Updater {
     /// 比較元（現在実行中のビルド）・一覧の URL・ダウンロード先・インストーラーの実行方法。テストが差し替える。
+    /// 一覧の URL が空であれば、更新を確認しない（インストーラーを配布していない OS）。
     pub build: u32,
     pub source: String,
     pub dir: PathBuf,
@@ -287,7 +293,12 @@ impl Default for Updater {
     fn default() -> Self {
         Self {
             build: BUILD,
-            source: releases_url(),
+            // インストーラーのない OS では一覧を参照しない（[`check_now`] がエラーとして表示する）。
+            source: if HAS_INSTALLER {
+                releases_url()
+            } else {
+                String::new()
+            },
             dir: std::env::temp_dir().join("nyaw-update"),
             launch: run_installer,
             found: Vec::new(),
@@ -333,6 +344,10 @@ pub fn available(cx: &App) -> bool {
 pub fn check_now(cx: &mut App) {
     let u = cx.default_global::<Updater>();
     if !matches!(u.step, Step::Idle) {
+        return;
+    }
+    if u.source.is_empty() {
+        u.error = Some(NO_INSTALLER.into());
         return;
     }
     u.step = Step::Checking;
