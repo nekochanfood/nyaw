@@ -16,7 +16,7 @@ use gpui::{
     RequestFrameOptions, Scene, Size, Task, ThermalState, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControlArea, WindowParams, WindowVisibility, px,
 };
-use gpui_wgpu::WgpuHeadlessRenderer;
+use gpui_wgpu::{CosmicTextSystem, WgpuHeadlessRenderer};
 
 thread_local! {
     /// 次回の `resize` で適用する描画スケール（[`with_render_scale`]）。
@@ -43,9 +43,12 @@ pub fn collect_readback<R>(f: impl FnOnce() -> R) -> R {
     r
 }
 
-/// ヘッドレスの Linux プラットフォーム（イベントループ・実行器・文字描画）に、オフスクリーンのウィンドウを組み合わせる。
+/// ヘッドレスの Linux プラットフォーム（イベントループ・実行器）に、文字描画とオフスクリーンのウィンドウを組み合わせる。
 pub struct OffscreenPlatform {
     inner: Rc<dyn Platform>,
+    /// Zed のワークスペースは gpui_linux を表示サーバー（wayland / x11）なしで取り込むため、そのヘッドレスの文字描画は
+    /// 何も描かない（`NoopTextSystem`）。表示サーバーありの gpui_linux と同じ文字描画（cosmic-text とシステムのフォント）を使う。
+    text_system: Arc<CosmicTextSystem>,
 }
 
 impl OffscreenPlatform {
@@ -53,8 +56,23 @@ impl OffscreenPlatform {
         // 表示サーバーに接続しない（SteamVR から起動されたときなど、表示サーバーが無くても動く）。
         Self {
             inner: gpui_platform::current_platform(true),
+            text_system: Arc::new(CosmicTextSystem::new(&system_ui_font())),
         }
     }
+}
+
+/// GPUI のシステム UI 書体（`.SystemUIFont`。書体を指定しない文字）に使う、デスクトップの sans-serif（fontconfig）。
+/// Windows の Segoe UI に相当する。gpui_linux は Zed が同梱する IBM Plex Sans を使うが、nyaw は同梱しない。
+fn system_ui_font() -> String {
+    std::process::Command::new("fc-match")
+        .args(["--format=%{family[0]}", "sans-serif"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_owned())
+        .filter(|family| !family.is_empty())
+        // ponytail: fontconfig が無い環境では、よく入っている書体を名指しする。
+        .unwrap_or_else(|| "DejaVu Sans".into())
 }
 
 impl Default for OffscreenPlatform {
@@ -90,7 +108,7 @@ impl Platform for OffscreenPlatform {
         self.inner.foreground_executor()
     }
     fn text_system(&self) -> Arc<dyn PlatformTextSystem> {
-        self.inner.text_system()
+        self.text_system.clone()
     }
     fn run(&self, on_finish_launching: Box<dyn 'static + FnOnce()>) {
         self.inner.run(on_finish_launching)

@@ -32,7 +32,8 @@ gpui_windows = { workspace = true, features = ["test-support"], optional = true 
 
 # Linux はパネルを表示サーバーに作らず、wgpu のオフスクリーン描画先に描く（src/gpui/linux.rs）。
 [target.'cfg(target_os = "linux")'.dependencies]
-gpui_wgpu = { workspace = true, features = ["test-support"], optional = true }
+# font-kit は書体の太さ・字形の照合（表示サーバーありの gpui_linux と同じ）。
+gpui_wgpu = { workspace = true, features = ["test-support", "font-kit"], optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 futures = { version = "0.3", optional = true }
 anyhow = { version = "1", optional = true }
