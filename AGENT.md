@@ -112,7 +112,7 @@ nyaw は Windows と Linux で動作する。OS の差異は Subsystems 層で�
 
 - **保存先・ランタイム検出・タイマーなど**: `crates/subsystems/os` が OS ごとのバックエンドを持つ（[`crates/subsystems/os/AGENT.md`](crates/subsystems/os/AGENT.md)）。
 - **パネルの描画**: Windows では GPUI 標準の非表示ウィンドウ（Direct3D）、Linux では表示サーバーに接続しないオフスクリーンのウィンドウ（wgpu）で描画する。差異は `crates/subsystems/rendering` が吸収する（[`crates/subsystems/rendering/AGENT.md`](crates/subsystems/rendering/AGENT.md)）。
-- **OS との連携機能**: 画面・ウィンドウの配信と入力注入（`desktop`）、アプリの一覧と起動（`desktop`）、再生中のメディアの取得と操作（`media`）、OS 通知の取得（`notifications`）、OS へのキー入力の送信（`os::keyboard`）は、現在 Windows でのみ実装している。Linux ではこれらのサブシステムが「利用できない」ことを返し、上位層はその状態で動作を続ける（たとえばランチャーと画面配信は、利用できない旨を表示する）。
+- **OS との連携機能**: 画面の配信と入力注入、および OS へのキー入力の送信は、Windows と Linux の両方で実装している（`desktop`。Linux は X11・wlroots・xdg-desktop-portal を使い分ける。詳細は [`crates/subsystems/desktop/AGENT.md`](crates/subsystems/desktop/AGENT.md)）。個別のウィンドウの配信、アプリの一覧と起動（`desktop`）、再生中のメディアの取得と操作（`media`）、OS 通知の取得（`notifications`）は、現在 Windows でのみ実装している。Linux ではこれらのサブシステムが「利用できない」ことを返し、上位層はその状態で動作を続ける（たとえばランチャーは、利用できない旨を表示する）。
 
 ## フレームサイクルの処理手順
 

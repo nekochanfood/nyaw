@@ -28,6 +28,7 @@ Linux 環境では、上記に加えて以下が必要です。
 - Vulkan に対応した GPU ドライバ（パネルの描画とランタイムへの転送に使用）
 - fontconfig（書体を指定しない文字に使う書体の選択に使用）
 - curl と unzip（ビルド時に Steam Audio を取得するために使用。取得できない場合、空間音響は左右のパンニングで代替されます）
+- PipeWire と libxkbcommon の開発用ファイル、および libclang（画面の配信と OS キーボードに使用。Arch Linux では `pipewire`、`libxkbcommon`、`clang`、Debian / Ubuntu では `libpipewire-0.3-dev`、`libxkbcommon-dev`、`libclang-dev`）
 
 ### 起動コマンド
 
@@ -66,10 +67,10 @@ cargo run --release -- --novr
 <tr><td>設定画面</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
 <tr><td>セットアップウィザード</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
 <tr><td>仮想キーボードによる nyaw の画面への文字入力</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
-<tr><td>仮想キーボードによる他のアプリへのキー入力</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>仮想キーボードによる他のアプリへのキー入力</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡<a href="#note-linux-desktop"><sup>*7</sup></a></td><td align="center">🟡</td><td align="center">🟡</td></tr>
 <tr><td>OS の通知のトースト表示</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
-<tr><td>画面・ウィンドウの配信</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
-<tr><td>配信中の画面・ウィンドウへの操作</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>画面・ウィンドウの配信</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡<a href="#note-linux-desktop"><sup>*7</sup></a></td><td align="center">🟡</td><td align="center">🟡</td></tr>
+<tr><td>配信中の画面・ウィンドウへの操作</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡<a href="#note-linux-desktop"><sup>*7</sup></a></td><td align="center">🟡</td><td align="center">🟡</td></tr>
 <tr><td>アプリの一覧と起動</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
 <tr><td>再生中のメディアの表示と操作</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
 <tr><td>空間音響（Steam Audio の HRTF）</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
@@ -84,7 +85,7 @@ cargo run --release -- --novr
 </tbody>
 </table>
 
-<a name="note-linux"></a>\*1 Linux では、HMD を接続しない SteamVR（null ドライバ）にオーバーレイとして接続し、パネルが SteamVR のコンポジタに合成されることを確認しました。共通実装の列は、エミュレーターを用いたテストで検証しています。実機の HMD とコントローラは未検証であり、OpenVR の列ではそれらを必要とする機能を 🟡 としています。🔴 の機能は、OS との連携（通知、画面の取り込み、入力の注入など）を Windows でのみ実装しています。
+<a name="note-linux"></a>\*1 Linux では、HMD を接続しない SteamVR（null ドライバ）にオーバーレイとして接続し、パネルが SteamVR のコンポジタに合成されることを確認しました。共通実装の列は、エミュレーターを用いたテストで検証しています。実機の HMD とコントローラは未検証であり、OpenVR の列ではそれらを必要とする機能を 🟡 としています。🔴 の機能は、OS との連携（通知、アプリの一覧、再生中のメディアなど）を Windows でのみ実装しています。
 
 <a name="note-openxr"></a>\*2 OpenXR のオーバーレイには `XR_EXTX_overlay` に対応したランタイム（Monado など）が必要です。SteamVR の OpenXR ランタイムはこの拡張に対応していないため、SteamVR では `--openxr` を指定しても OpenVR で接続します。OpenXR は Windows の Monado（HMD のシミュレーション）でのみ検証しており、実機のコントローラと Linux での動作は未検証です。
 
@@ -95,6 +96,8 @@ cargo run --release -- --novr
 <a name="note-runtime-api"></a>\*5 OpenXR には、デバイスの電池残量の取得、ランタイムへのアプリの自動起動の登録、他のアプリへの入力の遮断を行う標準の API がありません。
 
 <a name="note-update"></a>\*6 アップデートは Windows のインストーラーで適用します。Linux 向けの配布物はまだないため、Linux では更新を確認しません。
+
+<a name="note-linux-desktop"></a>\*7 Linux で配信できるのはディスプレイ（画面）のみで、個別のウィンドウは配信できません。表示サーバーに応じて、X11 では XSHM と XTest、wlroots 系のコンポジタでは wlr-screencopy と仮想ポインタ・仮想キーボード、その他の Wayland（KDE Plasma、GNOME など）では xdg-desktop-portal と PipeWire を使います。portal では初回にデスクトップに表示される確認画面で、共有するディスプレイを選んで許可する必要があります（パネルには許可待ちである旨を表示します）。X11 と KDE Plasma は実機で、wlroots はテスト用の最小限のコンポジタで検証しました。wlroots では OS のカーソルの画像を取得できず、portal ではキー配列に無い文字を入力できない場合があります。
 
 ## ライセンス
 

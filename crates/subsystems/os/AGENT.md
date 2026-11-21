@@ -44,4 +44,4 @@ error_dialog(title, msg);   // 致命的エラー時のネイティブダイア�
 | GPU の優先度 | HIGH に引き上げる | 汎用の API がないため引き上げない（常に `false`） |
 | エラーのダイアログ | `MessageBoxW` | zenity または kdialog。どちらもなければログに記録する |
 
-キーボード（`keyboard`）の Linux バックエンドは、キー配列の検出のみを行う。配列は `XKB_DEFAULT_LAYOUT` > `setxkbmap -query` > `localectl status` の順に探索し、起動時に一度だけ検出する。OS への入力送信（Windows の `SendInput` に相当）には対応しておらず、送信は常にエラーを返す。
+キーボード（`keyboard`）の Linux バックエンドは、キー配列の検出のみを行う。配列は `XKB_DEFAULT_LAYOUT` > `setxkbmap -query` > `localectl status` の順に探索し、起動時に一度だけ検出する。OS への入力送信（Windows の `SendInput` に相当）には表示サーバーとの接続が要るため、Linux では `desktop` が `Host` を実装して送信を担い、配列は `keyboard::detect` から受け取る（[`../desktop/AGENT.md`](../desktop/AGENT.md)）。このバックエンド単体の送信は、常にエラーを返す。
