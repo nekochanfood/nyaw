@@ -463,7 +463,7 @@ fn extra_streams_move_into_the_overflow_popover(cx: &mut TestAppContext) {
     let streams = bar.read_with(cx, |d, _| {
         d.overflow()
             .iter()
-            .map(|s| (s.panel, s.name.clone(), s.kind))
+            .map(|s| (s.panel, s.name.clone(), s.kind, s.icon.clone()))
             .collect()
     });
     let (_menu, mcx) = cx.add_window_view(|_, _| StreamMenu {

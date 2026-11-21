@@ -1028,6 +1028,16 @@ pub fn menu_item(
     glyph: &'static crate::Icon,
     label: impl Into<SharedString>,
 ) -> Button {
+    menu_item_with(theme, id, crate::icon(glyph).size(px(font_size::LG)), label)
+}
+
+/// [`menu_item`] の先頭に任意の要素（アプリアイコンの画像など）を置く版。大きさは呼び出し側が `font_size::LG` に合わせる。
+pub fn menu_item_with(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    glyph: impl IntoElement,
+    label: impl Into<SharedString>,
+) -> Button {
     let mut b = base_button(theme, id.into(), Variant::Default);
     (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
     b.base = b
@@ -1039,7 +1049,7 @@ pub fn menu_item(
         .rounded(px(0.0))
         // 行は文字主体のボタンではないため太字にしない（文字サイズは本文と同じ `MD`）。
         .font_weight(FontWeight::NORMAL)
-        .child(crate::icon(glyph).size(px(font_size::LG)))
+        .child(glyph)
         .child(div().flex_1().min_w_0().truncate().child(label.into()));
     b
 }

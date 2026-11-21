@@ -118,20 +118,27 @@ impl Render for Menu {
 pub struct StreamMenu {
     pub(crate) panel: PanelId,
     pub(crate) dashboard: WeakEntity<Dashboard>,
-    /// 並べきれなかった配信（パネルと名前と種類）。
-    pub(crate) streams: Vec<(PanelId, SharedString, SourceKind)>,
+    /// 並べきれなかった配信（パネルと名前と種類とアプリアイコン）。
+    pub(crate) streams: Vec<(PanelId, SharedString, SourceKind, Option<Arc<RenderImage>>)>,
 }
 
 impl Render for StreamMenu {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let items = self.streams.iter().map(|(id, name, kind)| {
+        let items = self.streams.iter().map(|(id, name, kind, icon)| {
             let (stream, panel, dashboard) = (*id, self.panel, self.dashboard.clone());
-            let glyph = match kind {
-                SourceKind::Window => &icons::APP_WINDOW,
-                SourceKind::Screen => &icons::MONITOR,
+            let glyph = match (kind, icon) {
+                (SourceKind::Window, Some(icon)) => {
+                    img(icon.clone()).size(px(font_size::LG)).into_any_element()
+                }
+                (SourceKind::Window, None) => design::icon(&icons::APP_WINDOW)
+                    .size(px(font_size::LG))
+                    .into_any_element(),
+                (SourceKind::Screen, _) => design::icon(&icons::MONITOR)
+                    .size(px(font_size::LG))
+                    .into_any_element(),
             };
-            components::menu_item(&theme, stream_key(stream), glyph, name.clone()).on_click(
+            components::menu_item_with(&theme, stream_key(stream), glyph, name.clone()).on_click(
                 move |_, _, cx| {
                     close(panel, cx);
                     let _ = dashboard.update(cx, |d, cx| d.toggle_stream(stream, cx));

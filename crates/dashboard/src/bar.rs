@@ -156,7 +156,7 @@ impl Dashboard {
             let streams: Vec<_> = self
                 .overflow()
                 .iter()
-                .map(|s| (s.panel, s.name.clone(), s.kind))
+                .map(|s| (s.panel, s.name.clone(), s.kind, s.icon.clone()))
                 .collect();
             let (bar, dashboard) = (self.panel, cx.weak_entity());
             let rows = streams.len();
