@@ -67,6 +67,7 @@
 |---|---|---|---|
 | `dashboard_distance` | 浮動小数点数 (`0.6`〜`2.0` m)<br>`Setting::DashboardDistance` | `1.3` | ダッシュボードの出現距離（0.05m 刻み）。 |
 | `dashboard_height` | 浮動小数点数 (`-0.5`〜`0.5` m)<br>`Setting::DashboardHeight` | `0.0` | ダッシュボードの出現基準高さからのオフセット（0.05m 刻み）。 |
+| `dashboard_dim` | 浮動小数点数 (`0.0`〜`1.0`)<br>`Setting::DashboardDim` | `0.5` | ダッシュボード表示中に背景を暗くする度合い（黒の不透明度、0.1 刻み）。表示中の変更も即座に反映される。 |
 | `mirror_frame_rate` | 整数 (`1`〜`240` FPS)<br>`Setting::MirrorFrameRate` | `60` | 画面・ウィンドウミラーリングのキャプチャ上限フレームレート。 |
 | `notification_anchor` | 文字列（`NotificationAnchor`）<br>`Setting::NotificationAnchor` | `"bottom"` | トースト通知の視界内固定位置（上下左右・四隅の計 8 か所）。 |
 | `update_channel` | `"stable" \| "nightly"`<br>`Setting::UpdateChannel` | `"stable"` | アプリケーションの更新確認チャンネル。 |

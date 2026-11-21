@@ -410,6 +410,9 @@ pub struct Config {
     pub dashboard_distance: Option<f32>,
     /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。[`DASHBOARD_HEIGHT_MIN`]〜[`DASHBOARD_HEIGHT_MAX`]）。省略で 0。
     pub dashboard_height: Option<f32>,
+    /// ダッシュボード表示中に背景を暗くする度合い（黒の不透明度）。0 で暗くせず、1 で真っ黒になる。刻みは [`SCALE_STEP`]。
+    /// 省略で `overlay::VEIL`。画面での切り替えはここへ書き戻される。
+    pub dashboard_dim: Option<f32>,
     /// 通知を視界の端に出す所（[`NotificationAnchor`]）。省略で `top`。画面での切り替えはここへ書き戻される。
     pub notification_anchor: NotificationAnchor,
 }
@@ -793,7 +796,7 @@ emulator = false
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// ダッシュボードの距離・高さはどちらも省略でき、書き戻しても互いを消さない。`snap` は範囲と刻みに収める。
+    /// ダッシュボードの距離・高さ・背景の暗さはどれも省略でき、書き戻しても互いを消さない。`snap` は範囲と刻みに収める。
     #[test]
     fn dashboard_keys_parse_round_trip_and_snap() {
         let c = parse("").unwrap();
@@ -818,10 +821,15 @@ emulator = false
         let path = dir.join("config.toml");
         save_at(&path, "dashboard_distance", value(0.8f32)).unwrap();
         save_at(&path, "dashboard_height", value(0.25f32)).unwrap();
+        save_at(&path, "dashboard_dim", value(0.75f32)).unwrap();
         let back = parse(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(
-            (back.dashboard_distance, back.dashboard_height),
-            (Some(0.8), Some(0.25))
+            (
+                back.dashboard_distance,
+                back.dashboard_height,
+                back.dashboard_dim
+            ),
+            (Some(0.8), Some(0.25), Some(0.75))
         );
         let _ = fs::remove_dir_all(&dir);
     }
