@@ -68,3 +68,32 @@ fn pulling_a_screen_off_by_hand_and_docking_it_again_updates_docked(cx: &mut Tes
     assert_eq!(kernel.panel(screen).parent.map(|p| p.panel), Some(bar));
     assert_eq!(sync(&mut kernel, cx), (Some(screen), sound(DOCK_SOUND)));
 }
+
+/// パネルを掴むと掴んだ音が、離すと離した音がそのパネルから鳴る。掴み続けている間は鳴らない。
+#[gpui::test]
+fn grabbing_and_releasing_a_panel_plays_its_sounds(cx: &mut TestAppContext) {
+    let mut kernel = Kernel::with_backend(MockBackend::default(), Default::default());
+    let ahead = Vec3::new(0.0, 0.0, -1.0);
+    let pose = Pose::new(ahead, Quat::IDENTITY);
+    let panel = kernel
+        .add_panel("panel", pose, Vec2::new(0.4, 0.3), (400, 300))
+        .unwrap();
+    kernel.apply(panel, PanelCommand::Animated(false));
+    // 反映した後、次のフレームへ向けてキューイングされた操作。
+    let sync = |kernel: &mut Kernel<MockBackend>, cx: &mut TestAppContext| {
+        cx.update(|cx| {
+            sync_panel(kernel, panel, cx);
+            let ctl = cx.default_global::<PanelControl>();
+            std::mem::take(&mut ctl.panels.get_mut(&panel).unwrap().commands)
+        })
+    };
+    let sound = |wav| vec![PanelCommand::Play(kernel::audio::Sound::Wav(wav), false)];
+    assert_eq!(sync(&mut kernel, cx), vec![]);
+    hand(&mut kernel, ahead, true);
+    assert!(kernel.status(panel).grabbed);
+    assert_eq!(sync(&mut kernel, cx), sound(HOLD_SOUND));
+    hand(&mut kernel, ahead, true);
+    assert_eq!(sync(&mut kernel, cx), vec![]);
+    hand(&mut kernel, ahead, false);
+    assert_eq!(sync(&mut kernel, cx), sound(RELEASE_SOUND));
+}

@@ -148,6 +148,10 @@ pub(crate) fn dock_sound(panel: PanelId, docked: bool, cx: &mut App) {
     command(panel, PanelCommand::Play(sound, false), cx);
 }
 
+/// パネルを掴んだときと離したときの音（[`sync_panel`] が鳴らす）。
+pub(crate) const HOLD_SOUND: &[u8] = include_bytes!("../assets/grab/hold.wav");
+pub(crate) const RELEASE_SOUND: &[u8] = include_bytes!("../assets/grab/release.wav");
+
 /// ドックの着脱変更（[`Kernel::take_dock_changes`]）を装着記録に反映し、ドック持ち主の
 /// ボタン強調状態と該当画面のナビゲーションバー（取り外し・復帰ボタン）を再描画させる。着脱音も鳴らす。
 fn sync_docking<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) {
@@ -240,6 +244,16 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     let status = kernel.status(panel);
     if ctl.status == status && ctl.seen == settings {
         return false;
+    }
+    // 掴んだ・離した音は、手で動かすパネル（`PanelStatus::grabbed`）から次のフレームで鳴らす。
+    if ctl.status.grabbed != status.grabbed {
+        let wav = if status.grabbed {
+            HOLD_SOUND
+        } else {
+            RELEASE_SOUND
+        };
+        let sound = kernel::audio::Sound::Wav(wav);
+        ctl.commands.push(PanelCommand::Play(sound, false));
     }
     ctl.status = status;
     ctl.seen = settings;
