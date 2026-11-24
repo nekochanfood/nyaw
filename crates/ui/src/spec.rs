@@ -52,6 +52,9 @@ pub struct PanelSpec {
     lockdown: bool,
     /// グラブでリサイズ可能（既定。[`Self::without_resize`] で無効化する）。
     resizable: bool,
+    /// 角を掴んで解像度を変えられる範囲（[`Self::corner_resize`]）と、縦横比を保つか（[`Self::keep_aspect`]）。
+    corner_resize: Option<kernel::ResizeLimits>,
+    keep_aspect: bool,
     /// アタッチ中にグラブで移動可能な範囲（[`Self::reach`]）。
     reach: Option<f32>,
     /// 全体設定に依存しないポインタモード（[`Self::pointer_mode`]）。
@@ -118,6 +121,8 @@ impl PanelSpec {
             lazy_follow: None,
             lockdown: false,
             resizable: true,
+            corner_resize: None,
+            keep_aspect: false,
             reach: None,
             pointer_mode: None,
             grab_anchor: None,
@@ -306,6 +311,23 @@ impl PanelSpec {
     /// グラブによるリサイズを無効化する（固定サイズのパネル。ダッシュボードのバー等）。
     pub fn without_resize(mut self) -> Self {
         self.resizable = false;
+        self
+    }
+
+    /// 角を掴んで縦横の解像度（UI の表示領域）を `min`〜`max` の範囲で変えられるようにする（[`PanelCommand::CornerResize`]）。
+    /// 中心は動かず、手を動かした軸だけ両側へ広がる・縮む。画面は与えられた大きさに合わせて組む。
+    pub fn corner_resize(mut self, min: (u32, u32), max: (u32, u32)) -> Self {
+        self.corner_resize = Some(kernel::ResizeLimits {
+            min,
+            max,
+            keep_aspect: false,
+        });
+        self
+    }
+
+    /// 角を掴んで大きさを変えるとき（[`Self::corner_resize`]）、縦横比を保つ。
+    pub fn keep_aspect(mut self) -> Self {
+        self.keep_aspect = true;
         self
     }
 
@@ -602,6 +624,16 @@ pub(crate) fn open_panel(
     }
     if !spec.resizable {
         kernel.apply(panel, PanelCommand::Resizable(false));
+    }
+    if let Some(limits) = spec.corner_resize {
+        let keep_aspect = spec.keep_aspect;
+        kernel.apply(
+            panel,
+            PanelCommand::CornerResize(Some(kernel::ResizeLimits {
+                keep_aspect,
+                ..limits
+            })),
+        );
     }
     if spec.dockable {
         kernel.apply(panel, PanelCommand::Dockable(true));

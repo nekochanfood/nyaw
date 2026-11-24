@@ -98,6 +98,7 @@ Kernel::{
 - `FadeOnly(bool)`: 表示・非表示の遷移演出を不透明度のフェードのみにする。
 - `Hide(bool)`: パネルを破棄せず不可視化（または再可視化）する。
 - `Resizable(bool)`: ユーザーによるサイズ変更の許可・不許可を設定する。
+- `CornerResize(Option<ResizeLimits>)`: 角を掴んで解像度（画面の表示領域）を範囲内で変えられるようにする（既定は無効）。
 - `DockSlot(Option<f32>)` / `Dockable(bool)`: ドッキングスロットの配置と、把持による分離・吸着を可能にする。
 - `GrabAnchor(Option<Pose>)`: 掴み操作時の基準姿勢を指定する。
 - `FocusSource`: ミラーリング対象のウィンドウを OS 側で前面化する。

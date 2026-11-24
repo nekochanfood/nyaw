@@ -17,6 +17,7 @@ mod lazy_follow;
 pub use lazy_follow::LazyFollow;
 pub use subsystems::ControllerState;
 
+mod corner;
 mod family;
 mod frame;
 mod geometry;
@@ -27,6 +28,8 @@ mod panels;
 mod pointers;
 mod status;
 
+pub use corner::ResizeLimits;
+use corner::*;
 use family::*;
 use frame::*;
 pub use geometry::anchored;
@@ -82,6 +85,8 @@ pub struct Panel {
     pub locked: bool,
     /// グラブでリサイズ可能（[`Overlay::set_resizable`]。既定は可能）。
     pub resizable: bool,
+    /// 角を掴んで縦横の解像度を変えられる範囲（[`Overlay::set_corner_resize`]）。`None` なら角では変えない（既定）。
+    pub corner_resize: Option<ResizeLimits>,
     /// 取り付け状態でのグラブ移動時の取り付け先からの距離上限（m。[`Overlay::set_reach`]）。`None` なら無制限。
     pub reach: Option<f32>,
     /// グラブ時に手で移動して頭へ向ける基準（パネルローカル姿勢。[`Overlay::set_grab_anchor`]）。`None` ならパネル自体。
@@ -160,6 +165,10 @@ pub enum Pointer {
     /// ドックスロットのヒント表示。ドッカブルパネルのグラブ中、スロット位置にパネルと同サイズで配置する
     /// （上端に [`DOCK_HINT_PX`] の帯を加えた解像度をオーバーレイ層が決定）。パネルより奥に描画。内容は [`Overlay::dock_hint`]。
     Dock,
+    /// 角を囲む線。角で大きさを変えられるパネル（[`Overlay::set_corner_resize`]）の角を指している間と、掴んで大きさを
+    /// 変えている間、その角に置く。窓の中心がパネル面の角に来て、窓 1px がパネル 1px になる（[`design::CORNER_HANDLE_PX`]）。
+    /// 右下の角の線を描けば、ほかの角には回して置く。
+    Corner,
 }
 
 /// ツールチップのカーソルに対する上下配置。
@@ -335,6 +344,10 @@ struct HandState {
     magnet: Option<Magnet>,
     /// この手のドックヒント（[`Pointer::Dock`]）の表示進行度。
     ghost: Ghost,
+    /// 指している角（パネルと角の向き。[`corner_at`]）。毎 tick 更新する。
+    corner: Option<(PanelId, Vec2)>,
+    /// 角を掴んで大きさを変えている途中。
+    stretch: Option<Stretch>,
 }
 
 /// 位置トランジション: `from` から `to` へ移動する。`to` が `None` なら毎 tick 算出される配置先（ドックスロット）へ向かう。

@@ -36,10 +36,10 @@ impl Overlay {
         }
         for &id in &self.present {
             let p = &self.panels[id];
-            // ドックゴーストはレーザーではなくグラブ中のパネルに付随する（place_ghosts）。
+            // ドックゴーストと角の線はレーザーではなくパネルに付随する（place_ghosts・place_corners）。
             let Some((hand, part)) = p
                 .pointer
-                .filter(|&(_, part)| !p.closed && part != Pointer::Dock)
+                .filter(|&(_, part)| !p.closed && !matches!(part, Pointer::Dock | Pointer::Corner))
             else {
                 continue;
             };

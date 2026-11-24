@@ -37,6 +37,7 @@ impl Overlay {
             attached: None,
             locked: false,
             resizable: true,
+            corner_resize: None,
             reach: None,
             grab_anchor: None,
             closed: false,
@@ -287,7 +288,7 @@ impl Overlay {
         let sort = match part {
             Pointer::Laser => LASER_SORT,
             Pointer::Cursor => CURSOR_SORT,
-            Pointer::Drag => DRAG_SORT,
+            Pointer::Drag | Pointer::Corner => DRAG_SORT,
             Pointer::Tooltip => TOOLTIP_SORT + tooltip_step(hand),
             Pointer::Dock => GHOST_SORT,
         };
