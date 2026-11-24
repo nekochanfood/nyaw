@@ -16,6 +16,92 @@ pub(super) struct DesktopPanel {
     original_resolution: (u32, u32),
     meter: Meter,
     pub stats: Option<DesktopStats>,
+    /// 映している取得元のメニューと、それを映す子パネル（[`sync_popups`]）。配信を差し替えても引き継ぎ、次の tick で合わせる。
+    popups: Vec<(desktop::Popup, PanelId)>,
+    /// 最後に合わせたメニューの一覧（[`Stream::popups`] が変わったかを見る）。
+    popups_seen: Arc<[desktop::Popup]>,
+}
+
+/// 配信パネル `parent` の子パネル `shown` を、取得元の手前に出ているメニュー `popups`（手前から順）に合わせる。
+/// メニューは取得元とは別のウィンドウで映像に含まれないので、親の面の同じ所に重ねる子パネル（[`Parent::over`]）で見せる。
+/// 消えたメニューの子パネルは閉じ、動いた・描き変わったメニューは置き直して送り直す。
+fn sync_popups(
+    overlay: &mut Overlay,
+    vr: &mut dyn VrBackend,
+    parent: PanelId,
+    shown: &mut Vec<(desktop::Popup, PanelId)>,
+    popups: &[desktop::Popup],
+) {
+    shown.retain(|(popup, panel)| {
+        let open = !overlay.panel(*panel).closed && popups.iter().any(|p| p.id == popup.id);
+        if !open {
+            overlay.close(vr, *panel);
+        }
+        open
+    });
+    for popup in popups {
+        let at = shown.iter().position(|(p, _)| p.id == popup.id);
+        if at.is_some_and(|i| shown[i].0 == *popup) {
+            continue;
+        }
+        let (w, h) = (popup.image.width, popup.image.height);
+        let panel = match at {
+            Some(i) => {
+                shown[i].0 = popup.clone();
+                shown[i].1
+            }
+            None => {
+                let pose = overlay.panel(parent).pose;
+                let key = format!("nyaw.popup.{}", overlay.len());
+                let panel = match overlay.add_panel(vr, &key, pose, Vec2::ONE, (w, h)) {
+                    Ok(panel) => panel,
+                    Err(error) => {
+                        logger::warn!("cannot show a desktop popup", panel = parent, error = ?error);
+                        continue;
+                    }
+                };
+                // OS のメニュー自体に出入りの動きがあるので、アニメーションは付けない。掴んでも動かさない（掴むときは配信パネルを掴む）。
+                overlay.set_animated(vr, panel, false);
+                overlay.set_locked(vr, panel, true);
+                overlay.set_panel_capture(panel, true);
+                if overlay.panel(parent).hidden {
+                    overlay.set_hidden(vr, panel, true);
+                }
+                shown.push((popup.clone(), panel));
+                panel
+            }
+        };
+        overlay.set_content_resolution(panel, (w, h));
+        overlay.set_parent(
+            vr,
+            panel,
+            Some(Parent {
+                panel: parent,
+                over: Some(popup.area),
+                ..Default::default()
+            }),
+        );
+        overlay.submit(vr, panel, w, h, &popup.image.rgba);
+    }
+}
+
+/// `event` の位置を `f` で移す。
+fn moved(event: PointerEvent, f: impl Fn(Vec2) -> Vec2) -> PointerEvent {
+    match event {
+        PointerEvent::Move { pos } => PointerEvent::Move { pos: f(pos) },
+        PointerEvent::Down { pos } => PointerEvent::Down { pos: f(pos) },
+        PointerEvent::Up { pos } => PointerEvent::Up { pos: f(pos) },
+        PointerEvent::DownButton { pos, button } => PointerEvent::DownButton {
+            pos: f(pos),
+            button,
+        },
+        PointerEvent::UpButton { pos, button } => PointerEvent::UpButton {
+            pos: f(pos),
+            button,
+        },
+        PointerEvent::Scroll { pos, delta } => PointerEvent::Scroll { pos: f(pos), delta },
+        PointerEvent::Leave => PointerEvent::Leave,
+    }
 }
 
 /// 配信の直近一秒の統計。表示用。
@@ -111,10 +197,12 @@ impl<B: VrBackend> Kernel<B> {
                 "desktop stream needs an open content panel".into(),
             ));
         }
-        let original_resolution = self
+        let (original_resolution, popups) = self
             .desktop_panels
-            .get(&panel)
-            .map_or(p.resolution, |p| p.original_resolution);
+            .remove(&panel)
+            .map_or((p.resolution, Vec::new()), |p| {
+                (p.original_resolution, p.popups)
+            });
         self.desktop_panels.insert(
             panel,
             DesktopPanel {
@@ -127,6 +215,8 @@ impl<B: VrBackend> Kernel<B> {
                 original_resolution,
                 meter: Meter::new(Instant::now()),
                 stats: None,
+                popups,
+                popups_seen: Arc::from([]),
             },
         );
         self.overlay.set_panel_capture(panel, true);
@@ -161,11 +251,11 @@ impl<B: VrBackend> Kernel<B> {
                 }
                 Err(error) => {
                     logger::warn!("desktop capture failed", panel = panel, error = error);
-                    let original_resolution = self
+                    let (original_resolution, popups) = self
                         .desktop_panels
-                        .get(&panel)
-                        .map_or(self.overlay.panel(panel).resolution, |p| {
-                            p.original_resolution
+                        .remove(&panel)
+                        .map_or((self.overlay.panel(panel).resolution, Vec::new()), |p| {
+                            (p.original_resolution, p.popups)
                         });
                     self.overlay.set_panel_capture(panel, false);
                     self.desktop_panels.insert(
@@ -180,11 +270,20 @@ impl<B: VrBackend> Kernel<B> {
                             original_resolution,
                             meter: Meter::new(Instant::now()),
                             stats: None,
+                            popups,
+                            popups_seen: Arc::from([]),
                         },
                     );
                 }
             }
-        } else if let Some(p) = self.desktop_panels.remove(&panel) {
+        } else if let Some(mut p) = self.desktop_panels.remove(&panel) {
+            sync_popups(
+                &mut self.overlay,
+                &mut self.subsystems.backend,
+                panel,
+                &mut p.popups,
+                &[],
+            );
             self.overlay.set_panel_capture(panel, false);
             self.overlay.set_os_cursor(panel, None);
             self.overlay
@@ -301,6 +400,25 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay.set_panel_capture(id, false);
             }
         }
+        // 配信が止まったら（失敗も含む）メニューも消す。
+        for (&id, panel) in &mut self.desktop_panels {
+            let popups = panel
+                .stream
+                .as_ref()
+                .filter(|_| panel.status == Status::Streaming)
+                .map(Stream::popups);
+            let vr = &mut self.subsystems.backend;
+            match popups {
+                Some(popups) if !Arc::ptr_eq(&popups, &panel.popups_seen) => {
+                    sync_popups(&mut self.overlay, vr, id, &mut panel.popups, &popups);
+                    panel.popups_seen = popups;
+                }
+                None if !panel.popups.is_empty() => {
+                    sync_popups(&mut self.overlay, vr, id, &mut panel.popups, &[]);
+                }
+                _ => {}
+            }
+        }
         // OS のカーソルは映像に含めず、指している手のカーソルを差し替えて描画する。
         for (&id, panel) in &self.desktop_panels {
             let cursor = panel
@@ -309,7 +427,9 @@ impl<B: VrBackend> Kernel<B> {
                 .filter(|_| panel.status == Status::Streaming)
                 .and_then(Stream::cursor)
                 .map(|c| (panel.active, c));
-            self.overlay.set_os_cursor(id, cursor);
+            for p in std::iter::once(id).chain(panel.popups.iter().map(|(_, p)| *p)) {
+                self.overlay.set_os_cursor(p, cursor.clone());
+            }
         }
     }
 
@@ -317,6 +437,34 @@ impl<B: VrBackend> Kernel<B> {
         // 親の閉鎖や外側クリックによって、この tick 内で閉じられた配信も止める。
         self.desktop_panels
             .retain(|id, _| !self.overlay.panel(*id).closed);
+        // メニューの子パネルへの入力は、配信パネルの画素に移して配信パネルへの入力にする（はみ出したメニューは面の外）。
+        // 配信パネルへの入力は面の中に留める（押したまま外へ出たら端を指す）。
+        for event in events.iter_mut() {
+            let Some((parent, area)) = self.desktop_panels.iter().find_map(|(&id, p)| {
+                if id == event.panel {
+                    return Some((id, None));
+                }
+                p.popups
+                    .iter()
+                    .find(|(_, panel)| *panel == event.panel)
+                    .map(|(popup, _)| (id, Some(popup.area)))
+            }) else {
+                continue;
+            };
+            let size = |id| {
+                let (w, h) = self.overlay.panel(id).resolution;
+                Vec2::new(w as f32, h as f32)
+            };
+            let (outer, inner) = (size(parent), size(event.panel));
+            event.event = moved(event.event, |pos| match area {
+                None => pos.clamp(Vec2::ZERO, outer),
+                Some([x, y, w, h]) => {
+                    let at = (pos / inner).clamp(Vec2::ZERO, Vec2::ONE);
+                    Vec2::new(x + at.x * w, y + at.y * h) * outer
+                }
+            });
+            event.panel = parent;
+        }
         events.retain(|event| {
             let Some(panel) = self.desktop_panels.get_mut(&event.panel) else {
                 return true;
@@ -533,6 +681,71 @@ mod tests {
         hand(&mut kernel, 0.8, false);
         kernel.tick();
         assert!(control.touches().iter().any(|t| t.phase == TouchPhase::Up));
+    }
+
+    /// 取得元の手前にメニューが出たら、配信パネルを親にして面の同じ所に重ねる子パネルを開き、絵を送る。子パネルへの入力は
+    /// 取得元の座標（ウィンドウの外へはみ出した所も）で送る。メニューが消えたら、また配信が止まったら子パネルを閉じる。
+    #[test]
+    fn popups_become_child_panels_over_the_stream_and_take_input() {
+        let (mut kernel, panel, control) = setup();
+        // 配信パネルは幅 1m・高さ 0.5m。メニューは右下へはみ出す（取得元の幅・高さを 1 として x 0.75〜1.25, y 0.5〜1.5）。
+        let popup = desktop::Popup {
+            id: 9,
+            area: [0.75, 0.5, 0.5, 1.0],
+            image: desktop::Icon {
+                width: 2,
+                height: 2,
+                rgba: [200; 16].into(),
+            },
+        };
+        control.set_popups(vec![popup.clone()]);
+        kernel.tick();
+        let child = kernel.overlay.len() - 1;
+        let p = kernel.panel(child);
+        assert_eq!(
+            p.parent.map(|q| (q.panel, q.over)),
+            Some((panel, Some(popup.area)))
+        );
+        assert_eq!(p.resolution, (2, 2));
+        let texture = kernel
+            .subsystems
+            .backend
+            .overlays
+            .iter()
+            .find(|o| o.key.starts_with("nyaw.popup."))
+            .and_then(|o| o.texture.as_ref())
+            .map(|t| t.rgba.clone());
+        assert_eq!(texture, Some(vec![200; 16]));
+        // メニューの右下寄り（配信パネルの外）を押す。
+        kernel.subsystems.backend.frame.controllers = vec![RawController {
+            hand: Hand::Right,
+            profile: "khr/simple_controller".into(),
+            aim: Pose::new(Vec3::new(0.6, -0.4, 0.0), Quat::IDENTITY),
+            inputs: vec![("select/click".into(), 1.0)],
+        }];
+        kernel.tick();
+        let down = control
+            .touches()
+            .into_iter()
+            .find(|t| t.phase == TouchPhase::Down)
+            .expect("the press reaches the source");
+        assert!(
+            (down.x - 1.1).abs() < 1e-4 && (down.y - 1.3).abs() < 1e-4,
+            "{down:?}"
+        );
+        control.set_popups(Vec::new());
+        kernel.tick();
+        assert!(kernel.panel(child).closed);
+        control.set_popups(vec![popup]);
+        kernel.tick();
+        let child = kernel.overlay.len() - 1;
+        assert!(!kernel.panel(child).closed);
+        control.publish(Update {
+            status: Status::Closed,
+            frame: None,
+        });
+        kernel.tick();
+        assert!(kernel.panel(child).closed);
     }
 
     #[test]

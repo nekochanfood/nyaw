@@ -1,6 +1,6 @@
 use super::{
-    Button, Capabilities, Cursor, Error, Frame, Icon, InstalledApp, Session, Source, SourceKind,
-    Touch, TouchPhase, Wake,
+    Button, Capabilities, Cursor, Error, Frame, Icon, InstalledApp, Popup, Session, Source,
+    SourceKind, Touch, TouchPhase, Wake,
 };
 
 pub(super) const CAPABILITIES: Capabilities = Capabilities {
@@ -102,19 +102,7 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
         true.into()
     }
     unsafe extern "system" fn window(hwnd: HWND, data: LPARAM) -> BOOL {
-        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
-            return true.into();
-        }
-        let mut cloaked = 0u32;
-        let _ = unsafe {
-            DwmGetWindowAttribute(
-                hwnd,
-                DWMWA_CLOAKED,
-                &mut cloaked as *mut _ as _,
-                size_of::<u32>() as u32,
-            )
-        };
-        if cloaked != 0 {
+        if !unsafe { IsWindowVisible(hwnd) }.as_bool() || unsafe { cloaked(hwnd) } {
             return true.into();
         }
         let mut title = [0u16; 1024];
@@ -154,6 +142,164 @@ pub(super) fn sources() -> Result<Vec<Source>, Error> {
         source.name = screen_label(&source.name, &screens);
     }
     Ok(sources)
+}
+
+/// DWM が隠しているウィンドウ（別の仮想デスクトップにあるものなど）か。
+unsafe fn cloaked(hwnd: HWND) -> bool {
+    let mut cloaked = 0u32;
+    let _ = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_CLOAKED,
+            &mut cloaked as *mut _ as _,
+            size_of::<u32>() as u32,
+        )
+    };
+    cloaked != 0
+}
+
+/// 取得元のウィンドウより手前（Z オーダーで先）にある、同じプロセスのポップアップ（[`above`] が集める）。
+struct Above {
+    target: HWND,
+    process: u32,
+    windows: Vec<(HWND, RECT)>,
+}
+
+/// [`EnumWindows`] は手前から順に呼ぶので、取得元の番で止める。メニューやツールチップは枠もタイトルも無い
+/// ポップアップなので、タイトルのあるもの（ダイアログや同じアプリの別のウィンドウ）と、押せないもの（影など）は除く。
+unsafe extern "system" fn above(hwnd: HWND, data: LPARAM) -> BOOL {
+    let above = unsafe { &mut *(data.0 as *mut Above) };
+    if hwnd == above.target {
+        return false.into();
+    }
+    let mut process = 0;
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process)) };
+    if process != above.process
+        || !unsafe { IsWindowVisible(hwnd) }.as_bool()
+        || unsafe { cloaked(hwnd) }
+    {
+        return true.into();
+    }
+    let style = unsafe { GetWindowLongW(hwnd, GWL_STYLE) } as u32;
+    let extended = unsafe { GetWindowLongW(hwnd, GWL_EXSTYLE) } as u32;
+    if style & WS_POPUP.0 == 0
+        || style & WS_CAPTION.0 == WS_CAPTION.0
+        || style & WS_DISABLED.0 != 0
+        || extended & WS_EX_TRANSPARENT.0 != 0
+    {
+        return true.into();
+    }
+    // 影を除いた見た目の範囲（取得元の範囲と同じ測り方）。
+    let mut rect = RECT::default();
+    let measured = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut rect as *mut _ as _,
+            size_of::<RECT>() as u32,
+        )
+    };
+    if measured.is_ok() && rect.right > rect.left && rect.bottom > rect.top {
+        above.windows.push((hwnd, rect));
+    }
+    true.into()
+}
+
+/// `windows` のうち、`bounds` に重なるものと、それに重なるもの（外へはみ出したサブメニュー）を、元の順のまま返す。
+// ponytail: 重なりだけで決める。同じアプリの関係ない小窓が重なっていても拾う。外れる例が出たら所有者のウィンドウで絞る。
+fn touching<T>(bounds: RECT, windows: Vec<(T, RECT)>) -> Vec<(T, RECT)> {
+    let overlaps = |a: &RECT, b: &RECT| {
+        a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
+    };
+    let mut kept = vec![false; windows.len()];
+    let mut grew = true;
+    while grew {
+        grew = false;
+        for i in 0..windows.len() {
+            let rect = &windows[i].1;
+            if !kept[i]
+                && (overlaps(rect, &bounds)
+                    || windows
+                        .iter()
+                        .zip(&kept)
+                        .any(|((_, r), &k)| k && overlaps(rect, r)))
+            {
+                kept[i] = true;
+                grew = true;
+            }
+        }
+    }
+    windows
+        .into_iter()
+        .zip(kept)
+        .filter_map(|(w, k)| k.then_some(w))
+        .collect()
+}
+
+/// 画面の `rect`（仮想画面の画素）を不透明な RGBA として切り出す。メニューは最前面に出るので、そこに映っているのはメニューそのもの。
+unsafe fn screen_rgba(rect: RECT) -> Option<Icon> {
+    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
+    if width <= 0 || height <= 0 || width > 4096 || height > 4096 {
+        return None;
+    }
+    let info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width,
+            // 負の高さを指定してトップダウン順にする
+            biHeight: -height,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    unsafe {
+        let screen = GetDC(None);
+        let dc = CreateCompatibleDC(Some(screen));
+        let mut bits = std::ptr::null_mut();
+        let rgba = CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)
+            .ok()
+            .filter(|_| !bits.is_null())
+            .and_then(|bitmap| {
+                let old = SelectObject(dc, bitmap.into());
+                // 出るときのメニューは半透明（レイヤード）なので、それも含めて写す。
+                let copied = BitBlt(
+                    dc,
+                    0,
+                    0,
+                    width,
+                    height,
+                    Some(screen),
+                    rect.left,
+                    rect.top,
+                    ROP_CODE(SRCCOPY.0 | CAPTUREBLT.0),
+                )
+                .is_ok();
+                let rgba = copied.then(|| {
+                    let bgra = std::slice::from_raw_parts(
+                        bits as *const u8,
+                        (width * height * 4) as usize,
+                    );
+                    bgra.as_chunks::<4>()
+                        .0
+                        .iter()
+                        .flat_map(|p| [p[2], p[1], p[0], 255])
+                        .collect::<Vec<u8>>()
+                });
+                SelectObject(dc, old);
+                let _ = DeleteObject(bitmap.into());
+                rgba
+            });
+        let _ = DeleteDC(dc);
+        ReleaseDC(None, screen);
+        rgba.map(|rgba| Icon {
+            width: width as u32,
+            height: height as u32,
+            rgba: rgba.into(),
+        })
+    }
 }
 
 /// GDI 装置名（`"\\.\DISPLAY2"`）から、接続先モニターの製品名（EDID 名。`"DELL U2720Q"` 等）への対応表を返す。
@@ -555,6 +701,8 @@ pub(super) struct Capture {
     mouse: MouseDevice,
     /// 最後に取得したカーソルのハンドルと画像（同一ハンドルであれば再取得を省略する）。
     cursor: Option<(isize, Option<Arc<Cursor>>)>,
+    /// 最後に渡したメニュー（[`Session::popups`]）のウィンドウ。押した所がメニューなら、取得元でなくても入力を送る。
+    popups: Vec<HWND>,
     _apartment: Apartment,
 }
 
@@ -671,6 +819,7 @@ impl Capture {
             source,
             mouse: MouseDevice::default(),
             cursor: None,
+            popups: Vec::new(),
             _apartment: apartment,
         })
     }
@@ -762,7 +911,8 @@ impl Capture {
             }
             if let Ok(bounds) = self.bounds() {
                 let point = normalized_point(bounds, touch.x, touch.y);
-                if unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) } == hwnd {
+                let root = unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) };
+                if root == hwnd || self.popups.contains(&root) {
                     return Ok(Some(point));
                 }
             }
@@ -856,6 +1006,49 @@ impl Session for Capture {
             .map(|(image, hotspot)| Arc::new(Cursor { image, hotspot }));
         self.cursor = Some((handle, cursor.clone()));
         cursor
+    }
+
+    fn popups(&mut self) -> Vec<Popup> {
+        let target = HWND(self.source.target as _);
+        let Some(bounds) = (self.source.kind == SourceKind::Window)
+            .then(|| self.bounds().ok())
+            .flatten()
+        else {
+            self.popups.clear();
+            return Vec::new();
+        };
+        let mut above = Above {
+            target,
+            process: 0,
+            windows: Vec::new(),
+        };
+        unsafe { GetWindowThreadProcessId(target, Some(&mut above.process)) };
+        if above.process != 0 {
+            // 取得元の番で列挙を止めると失敗が返るが、それまでに集めたものを使う。
+            let _ =
+                unsafe { EnumWindows(Some(self::above), LPARAM(&mut above as *mut _ as isize)) };
+        }
+        let (width, height) = (
+            (bounds.right - bounds.left) as f32,
+            (bounds.bottom - bounds.top) as f32,
+        );
+        let popups: Vec<Popup> = touching(bounds, above.windows)
+            .into_iter()
+            .filter_map(|(hwnd, r)| {
+                Some(Popup {
+                    id: hwnd.0 as usize as u64,
+                    area: [
+                        (r.left - bounds.left) as f32 / width,
+                        (r.top - bounds.top) as f32 / height,
+                        (r.right - r.left) as f32 / width,
+                        (r.bottom - r.top) as f32 / height,
+                    ],
+                    image: unsafe { screen_rgba(r) }?,
+                })
+            })
+            .collect();
+        self.popups = popups.iter().map(|p| HWND(p.id as usize as _)).collect();
+        popups
     }
 
     fn skip(&mut self) -> Result<(), Error> {
@@ -1188,6 +1381,29 @@ mod tests {
         .join()
         .unwrap()
         .unwrap();
+    }
+
+    /// 取得元に重なるメニューと、その外へはみ出したサブメニューを拾い、離れた小窓と縁に接するだけのもの（影など）は拾わない。
+    #[test]
+    fn popups_are_the_ones_touching_the_window_or_another_popup() {
+        let rect = |left, top, right, bottom| RECT {
+            left,
+            top,
+            right,
+            bottom,
+        };
+        let window = rect(0, 0, 100, 100);
+        let found = touching(
+            window,
+            vec![
+                ("submenu", rect(150, 60, 220, 120)),
+                ("far", rect(300, 300, 320, 320)),
+                ("menu", rect(80, 50, 160, 150)),
+                ("edge", rect(-10, 0, 0, 100)),
+            ],
+        );
+        let names: Vec<_> = found.iter().map(|(n, _)| *n).collect();
+        assert_eq!(names, ["submenu", "menu"]);
     }
 
     #[test]

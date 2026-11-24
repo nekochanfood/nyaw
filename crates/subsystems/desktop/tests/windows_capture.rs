@@ -3,7 +3,7 @@
 
 use desktop::{SourceKind, Sources, Status, Stream, Touch, TouchPhase};
 use std::{
-    sync::Mutex,
+    sync::{Mutex, mpsc},
     thread,
     time::{Duration, Instant},
 };
@@ -390,4 +390,115 @@ fn occluded_window_activation_and_rejected_touch_do_not_stop_capture() {
             u.status == Status::Closed
         })
     });
+}
+
+/// 取得元のウィンドウから開いたメニュー（別のウィンドウ）を、ウィンドウの外へはみ出した所も含めて切り出し、
+/// メニューの項目を押すとその項目が選ばれる。
+#[test]
+#[ignore = "opens a real window and its menu, captures the menu and clicks an item; run on an interactive Windows desktop"]
+fn context_menu_is_captured_apart_from_the_window_and_takes_clicks() {
+    let _guard = NATIVE_INPUT.lock().unwrap();
+    let (go, wait) = mpsc::channel::<()>();
+    let (opened, ready) = mpsc::channel::<()>();
+    let (chosen_tx, chosen) = mpsc::channel();
+    // メニューの処理（TrackPopupMenu）はウィンドウを作ったスレッドで待つので、ウィンドウごと別のスレッドに置く。
+    let owner = thread::spawn(move || unsafe {
+        SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(procedure),
+            lpszClassName: w!("nyaw.desktop.menu.e2e"),
+            hbrBackground: HBRUSH(GetStockObject(WHITE_BRUSH).0),
+            ..Default::default()
+        };
+        assert_ne!(RegisterClassW(&class), 0);
+        let window = TestWindow(Some(
+            CreateWindowExW(
+                WS_EX_TOPMOST,
+                w!("nyaw.desktop.menu.e2e"),
+                w!("nyaw desktop menu E2E"),
+                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                100,
+                100,
+                360,
+                240,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap(),
+        ));
+        let hwnd = window.0.unwrap();
+        opened.send(()).unwrap();
+        while wait.try_recv().is_err() {
+            let mut message = MSG::default();
+            while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                let _ = TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+            thread::sleep(Duration::from_millis(5));
+        }
+        let menu = CreatePopupMenu().unwrap();
+        AppendMenuW(menu, MF_STRING, 1, w!("first")).unwrap();
+        AppendMenuW(menu, MF_STRING, 2, w!("second")).unwrap();
+        let _ = SetForegroundWindow(hwnd);
+        // ウィンドウの右下寄りで開き、ウィンドウの外へはみ出させる。
+        let item = TrackPopupMenu(menu, TPM_RETURNCMD, 400, 300, None, hwnd, None);
+        let _ = DestroyMenu(menu);
+        chosen_tx.send(item.0).unwrap();
+        drop(window);
+    });
+    ready.recv_timeout(Duration::from_secs(15)).unwrap();
+    let sources = Sources::refresh().unwrap();
+    let mut list = None;
+    until(|| {
+        list = sources.poll();
+        list.is_some()
+    });
+    let source = list
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "nyaw desktop menu E2E")
+        .expect("test window in source list");
+    let stream = Stream::start(source).unwrap();
+    until(|| {
+        stream.poll().is_some_and(|u| {
+            assert!(!matches!(u.status, Status::Failed(_)), "{:?}", u.status);
+            u.frame.is_some()
+        })
+    });
+    assert!(stream.popups().is_empty());
+    go.send(()).unwrap();
+    let mut popup = None;
+    until(|| {
+        popup = stream.popups().first().cloned();
+        popup.is_some()
+    });
+    let popup = popup.unwrap();
+    let [x, y, w, h] = popup.area;
+    assert!(x > 0.5 && x + w > 1.0, "the menu runs off the right edge: {:?}", popup.area);
+    assert!(
+        popup.image.rgba.chunks(4).any(|p| p[..3] != [0, 0, 0]),
+        "menu pixels are captured"
+    );
+    // 2 つ目の項目（下寄り）を押す。
+    for phase in [TouchPhase::Down, TouchPhase::Up] {
+        stream
+            .touch(Touch {
+                id: 0,
+                phase,
+                x: x + w / 2.0,
+                y: y + h * 0.75,
+            })
+            .unwrap();
+    }
+    let mut item = None;
+    until(|| {
+        item = chosen.try_recv().ok();
+        item.is_some()
+    });
+    assert_eq!(item, Some(2));
+    until(|| stream.popups().is_empty());
+    owner.join().unwrap();
 }
