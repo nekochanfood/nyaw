@@ -52,8 +52,8 @@ pub(crate) struct Magnet {
     tilt: f32,
     /// はまる所に付いている（はまっていた画面を掴んだ・近づけて吸い付いた）。抜けるまで、はまる所から動かない。
     pub(crate) stuck: bool,
-    /// 抜けた・吸い付いたときの動き（始めた姿勢・動き・経過秒）。終わるまで、置きたい所へこの動きで向かう。
-    jump: Option<(Pose, Motion, f32)>,
+    /// 抜けた・吸い付いたときの動き（始めた姿勢・経過秒）。終わるまで、置きたい所へ [`Motion::Pop`] で向かう。
+    jump: Option<(Pose, f32)>,
 }
 
 /// 手ごとの見本の出具合。置き場所が分かるよう、出入りのフェードのほかは動かさない。
@@ -135,8 +135,8 @@ impl Magnet {
     }
 
     /// 手が置きたい所 `target` と、はまる所 `slot` から、この tick の画面の姿勢（今は `cur`）。
-    /// はまる所に付いている間ははまる所から動かず、抜けると手へ飛び出す（[`Motion::Pop`]）。外れている間は近づくほど
-    /// はまる所へ引き寄せ、吸い付くとはまる所へ飛び込む（[`Motion::Attract`]）。抜けた・吸い付いたら `Some(stuck)`。
+    /// はまる所に付いている間ははまる所から動かず、抜けると手へ飛び出す。外れている間は近づくほどはまる所へ引き寄せ、
+    /// 吸い付くとはまる所へ飛び込む。どちらも少し行き過ぎてから収まる（[`Motion::Pop`]）。抜けた・吸い付いたら `Some(stuck)`。
     pub(crate) fn follow(
         &mut self,
         cur: Pose,
@@ -152,8 +152,7 @@ impl Magnet {
         };
         if let Some(stuck) = flipped {
             self.stuck = stuck;
-            let motion = if stuck { Motion::Attract } else { Motion::Pop };
-            self.jump = Some((cur, motion, 0.0));
+            self.jump = Some((cur, 0.0));
         }
         let want = if self.stuck {
             slot
@@ -165,14 +164,14 @@ impl Magnet {
             )
         };
         let pose = match &mut self.jump {
-            Some((from, motion, t)) => {
+            Some((from, t)) => {
                 *t += dt;
-                let p = *t * 1000.0 / motion.duration_ms() as f32;
+                let p = *t * 1000.0 / Motion::Pop.duration_ms() as f32;
                 if p >= 1.0 {
                     self.jump = None;
                     want
                 } else {
-                    let e = motion.ease(p);
+                    let e = Motion::Pop.ease(p);
                     Pose::new(
                         from.position.lerp(want.position, e),
                         from.orientation.slerp(want.orientation, e.clamp(0.0, 1.0)),
@@ -247,7 +246,7 @@ impl Overlay {
             .collect()
     }
 
-    /// はまる所に付けたまま離した画面をはめる（はまっていれば何もしない）。磁石に引かれて収まる（[`Motion::Attract`]）。
+    /// はまる所に付けたまま離した画面をはめる（はまっていれば何もしない）。吸い付いた所に収まる。
     /// 離すまでの間に、ほかの画面がはまった・はめる場所が隠れた（閉じた）なら何もしない。
     pub(crate) fn land(&mut self, vr: &mut dyn VrBackend) {
         for id in std::mem::take(&mut self.landed) {
