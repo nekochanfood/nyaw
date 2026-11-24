@@ -18,9 +18,6 @@ pub const DOCK_HINT_PX: u32 = 72;
 const GHOST_MAX_PX: f32 = 1024.0;
 /// 見本を、はまる所からどれだけ奥に置くか（m）。同じ面に置くと、はまった画面と Z ファイティングする。
 const GHOST_SINK: f32 = 0.01;
-/// 見本の枠を、画面の地の縁からどれだけ外へ広げるか（px）。枠線の太さの 2 倍の余白を空けて枠線を描くため、太さの 3 倍にする。
-/// はまっている間も、画面の周りに枠が見える。
-const GHOST_PAD_PX: f32 = 3.0 * DOCK_BORDER_PX;
 /// 掴んでいる画面がはまる所にこれより近づくと見本をフェードインし、これより遠ざかるとフェードアウトする（m）。
 /// 濃さは距離で変えず、近いか遠いかの二択。境目で行き来しないよう、消える距離を少し遠くする。
 const GHOST_SHOW: f32 = 0.45;
@@ -320,7 +317,7 @@ impl Overlay {
                 let face = target.size - Vec2::splat(2.0 * face_margin(target));
                 let density = (target.resolution.0 as f32 / target.size.x)
                     .min(GHOST_MAX_PX / face.max_element());
-                let rect = face + Vec2::splat(2.0 * GHOST_PAD_PX / density);
+                let rect = face + Vec2::splat(2.0 * BRACKET_PAD_PX / density);
                 let res = (
                     (rect.x * density).round().max(1.0) as u32,
                     (rect.y * density).round().max(1.0) as u32 + DOCK_HINT_PX,

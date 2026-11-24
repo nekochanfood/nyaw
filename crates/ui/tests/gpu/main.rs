@@ -22,6 +22,7 @@ mod panel_lod;
 mod rotation;
 mod round_clip;
 mod stress;
+mod stroke_caps;
 mod superellipse;
 mod test_panels;
 
@@ -52,6 +53,7 @@ const CASES: &[Case] = &[
     ("rotation", || report(rotation::main)),
     ("round_clip", || report(round_clip::main)),
     ("stress", || report(stress::main)),
+    ("stroke_caps", || report(stroke_caps::main)),
     ("superellipse", || report(superellipse::main)),
     ("test_panels", || report(test_panels::main)),
 ];

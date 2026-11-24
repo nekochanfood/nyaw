@@ -512,6 +512,7 @@ dependencies = [
  "gpui",
  "i18n",
  "kernel",
+ "lyon",
  "ui",
 ]
 
