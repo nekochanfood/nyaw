@@ -1,64 +1,46 @@
 //! 角を囲む線（[`Pointer::Corner`]）。角で大きさを変えられるパネルの角を指している間と、掴んで大きさを変えている間に出る。
-//! パネル面の角丸から少し離して、角丸と同じ中心の円弧とそこから辺に沿って伸ばした線を描く。
-//! 描くのは右下の角だけで、配置と回転（ほかの角）はオーバーレイ層が決める。
+//! はまる所の見本と同じ角枠（[`crate::bracket`]）で、パネル面から同じだけ離して角を囲む。掴んでいる間は強調色にする。
+//! 描くのは右下の角だけで、配置・回転（ほかの角）・フェードはオーバーレイ層が決める。
 
-use design::{CORNER_HANDLE_PX, radius};
-use gpui::{
-    Bounds, Context, PathBuilder, Pixels, Window, canvas, div, point, prelude::*, px, rgba,
-};
-use kernel::{Hand, Pointer, Pose, Vec2};
+use design::{BRACKET_PAD_PX, CORNER_HANDLE_PX, Theme};
+use gpui::{Context, Window, div, prelude::*, px};
+use kernel::{Hand, PanelId, Pointer, Pose, Vec2};
 use ui::PanelSpec;
 
-use super::{COLOR, OUTLINE};
+use crate::bracket::{self, Corner};
 
-/// 線の太さと、パネル面の角丸から線までの隙間、円弧の両端から辺に沿って伸ばす長さ（px。パネルの 1px と同じ）。
-const LINE_PX: f32 = 6.0;
-const GAP_PX: f32 = 10.0;
-const ARM_PX: f32 = 56.0;
-/// 白い面の上でも見えるよう、線の下に敷く縁取りの幅（片側、px）。
-const OUTLINE_PX: f32 = 3.0;
-/// 円弧を近似する線分の数。
-const STEPS: usize = 16;
+/// 角枠で囲む角丸矩形の一辺（px）。辺に沿って伸ばす線が、矩形の大きさで短くならない長さにする。
+const FRAME_PX: f32 = 2.0 * CORNER_HANDLE_PX as f32;
 
 /// `hand` の角の線の起動仕様。
 pub fn spec(hand: Hand) -> PanelSpec {
     let px = CORNER_HANDLE_PX;
-    PanelSpec::root(Pose::IDENTITY, |_, _, _| CornerHandle)
+    PanelSpec::root(Pose::IDENTITY, |panel, _, _| CornerHandle { panel })
         .sized(Vec2::splat(0.24), (px, px))
         .pointer(hand, Pointer::Corner)
 }
 
 /// 窓の中心がパネル面の角（丸める前の角）に来る。その右下の角を囲む線を描く。
-pub struct CornerHandle;
-
-impl Render for CornerHandle {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(
-            canvas(
-                |_, _, _| {},
-                |bounds, _, window, _| {
-                    line(bounds, LINE_PX + 2.0 * OUTLINE_PX, OUTLINE, window);
-                    line(bounds, LINE_PX, COLOR, window);
-                },
-            )
-            .size_full(),
-        )
-    }
+pub struct CornerHandle {
+    panel: PanelId,
 }
 
-/// 角丸の中心を中心とする 4 分の 1 の円弧と、その両端から上・左へ伸ばした線を、太さ `width`、色 `color` で描く。
-fn line(bounds: Bounds<Pixels>, width: f32, color: u32, window: &mut Window) {
-    let c = bounds.center();
-    let (cx, cy) = (f32::from(c.x) - radius::XL, f32::from(c.y) - radius::XL);
-    let r = radius::XL + GAP_PX + LINE_PX / 2.0;
-    let mut b = PathBuilder::stroke(px(width));
-    b.move_to(point(px(cx + r), px(cy - ARM_PX)));
-    for i in 0..=STEPS {
-        let a = std::f32::consts::FRAC_PI_2 * i as f32 / STEPS as f32;
-        b.line_to(point(px(cx + r * a.cos()), px(cy + r * a.sin())));
-    }
-    b.line_to(point(px(cx - ARM_PX), px(cy + r)));
-    if let Ok(path) = b.build() {
-        window.paint_path(path, rgba(color));
+impl Render for CornerHandle {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let held = cx
+            .try_global::<ui::PanelControl>()
+            .and_then(|c| c.panels.get(&self.panel))
+            .is_some_and(|s| s.status.corner_held);
+        let color = bracket::color(&Theme::current(cx), held);
+        // 右下の隅が、窓の中心（パネル面の角）から外へ BRACKET_PAD_PX の所に来る角丸矩形。
+        let at = CORNER_HANDLE_PX as f32 / 2.0 + BRACKET_PAD_PX - FRAME_PX;
+        div().size_full().child(
+            bracket::frame(&[Corner::BottomRight], color)
+                .absolute()
+                .left(px(at))
+                .top(px(at))
+                .w(px(FRAME_PX))
+                .h(px(FRAME_PX)),
+        )
     }
 }
