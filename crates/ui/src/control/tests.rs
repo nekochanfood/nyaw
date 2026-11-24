@@ -33,14 +33,17 @@ fn pulling_a_screen_off_by_hand_and_docking_it_again_updates_docked(cx: &mut Tes
         .unwrap();
     kernel.apply(screen, PanelCommand::Animated(false));
     kernel.apply(screen, PanelCommand::Dockable(true));
-    // ドック状態の記録と、反映前に画面へキューイングされた音。
+    // ドック状態の記録と、反映前に画面へキューイングされた着脱音（掴んだ音・離した音は除く）。
     let sync = |kernel: &mut Kernel<MockBackend>, cx: &mut TestAppContext| {
         cx.update(|cx| {
             sync_docking(kernel, cx);
             let queued = &cx.default_global::<PanelControl>().panels[&screen].commands;
             let sounds: Vec<_> = queued
                 .iter()
-                .filter(|c| matches!(c, PanelCommand::Play(..)))
+                .filter(|c| {
+                    matches!(c, PanelCommand::Play(kernel::audio::Sound::Wav(w), _)
+                        if *w == DOCK_SOUND || *w == UNDOCK_SOUND)
+                })
                 .cloned()
                 .collect();
             for p in [bar, screen] {
