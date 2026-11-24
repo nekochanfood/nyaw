@@ -477,7 +477,11 @@ fn context_menu_is_captured_apart_from_the_window_and_takes_clicks() {
     });
     let popup = popup.unwrap();
     let [x, y, w, h] = popup.area;
-    assert!(x > 0.5 && x + w > 1.0, "the menu runs off the right edge: {:?}", popup.area);
+    assert!(
+        x > 0.5 && x + w > 1.0,
+        "the menu runs off the right edge: {:?}",
+        popup.area
+    );
     assert!(
         popup.image.rgba.chunks(4).any(|p| p[..3] != [0, 0, 0]),
         "menu pixels are captured"
