@@ -3,6 +3,7 @@
 //! 掴んでいる間は解像度を変えず（画面に描き直させない）、中身を半透明の黒い板（代わりの板）へフェードで切り替えて板だけを
 //! 伸び縮みさせる。離したときに解像度を変え、新しい大きさの絵が届いたら中身へフェードで戻す。
 
+use super::magnet::GHOST_SINK;
 use super::*;
 use design::{CORNER_HANDLE_PX, radius};
 
@@ -157,6 +158,15 @@ impl Overlay {
         self.panels[id].corner_resize = limits;
     }
 
+    /// いずれかの手が `id` の角を掴んで大きさを変えているなら、その大きさ（代わりの板の大きさ。[`Stretch::size`]）。
+    /// ナビゲーションバーと角の線は、パネルの大きさの代わりにこれに合わせる。
+    pub(crate) fn stretched(&self, id: PanelId) -> Option<Vec2> {
+        self.hands
+            .values()
+            .find_map(|h| h.stretch.filter(|s| s.panel == id))
+            .map(|s| s.size)
+    }
+
     /// `hand` で角を掴んで大きさを変えている途中か（角の線の色を変える）。
     pub fn corner_held(&self, hand: Hand) -> bool {
         self.hands.get(&hand).is_some_and(|h| h.stretch.is_some())
@@ -244,8 +254,7 @@ impl Overlay {
                 continue;
             };
             let h = self.hands.entry(hand).or_default();
-            let stretch = h.stretch;
-            let target = stretch.map(|s| (s.panel, s.corner)).or(h.corner);
+            let target = h.stretch.map(|s| (s.panel, s.corner)).or(h.corner);
             if target.is_some() {
                 h.line.at = target;
             }
@@ -264,16 +273,14 @@ impl Overlay {
                 let t = &self.panels[target];
                 // 出入りのアニメーションの縮み。掴んでいる間は代わりの板の大きさに合わせる。
                 let k = t.displayed_size().x / t.size.x;
-                let size = stretch
-                    .filter(|s| s.panel == target)
-                    .map_or(t.size, |s| s.size)
-                    * k;
+                let size = self.stretched(target).unwrap_or(t.size) * k;
                 // 線の窓の中心をパネル面の角（丸める前の角）に合わせ、窓 1px をパネル 1px にする。
+                // ナビゲーションバーと重なっても前に出ないよう、はまる所の見本と同じだけ奥に置く（描画順もパネルの下）。
                 let face = size / 2.0 - Vec2::splat(face_margin(t) * k);
                 let roll = corner.y.atan2(corner.x) + std::f32::consts::FRAC_PI_4;
                 let pose = t.pose
                     * Pose::new(
-                        (face * corner).extend(LIFT_STEP),
+                        (face * corner).extend(-GHOST_SINK),
                         Quat::from_rotation_z(roll),
                     );
                 let width = CORNER_HANDLE_PX as f32 * t.size.x / t.resolution.0 as f32 * k;
