@@ -289,9 +289,9 @@ impl Overlay {
         let sort = match part {
             Pointer::Laser => LASER_SORT,
             Pointer::Cursor => CURSOR_SORT,
-            Pointer::Drag | Pointer::Corner => DRAG_SORT,
+            Pointer::Drag => DRAG_SORT,
             Pointer::Tooltip => TOOLTIP_SORT + tooltip_step(hand),
-            Pointer::Dock => GHOST_SORT,
+            Pointer::Dock | Pointer::Corner => GHOST_SORT,
         };
         p.surface.set_sort(vr, sort);
         // レーザーは長さ（幅）のみ変更、太さ（高さ）は生成時のまま。

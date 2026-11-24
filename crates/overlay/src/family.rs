@@ -211,8 +211,10 @@ impl Overlay {
             let (opacity, dim) = (o.opacity, o.dim);
             let up = o.pose.orientation * Vec3::Y;
             // キャプチャ中のパネルはシャドウマージンなし。マージンありとして内側に配置するとバーが描画に食い込む（face_margin）。
-            let margin = face_margin(o) * o.displayed_size().y / o.size.y;
-            let anchor = o.pose.position - up * (o.displayed_size().y / 2.0 - margin);
+            // 角を掴んで大きさを変えている間は、代わりの板の下端に付ける。
+            let k = o.displayed_size().y / o.size.y;
+            let height = self.stretched(owner).map_or(o.size.y, |s| s.y) * k;
+            let anchor = o.pose.position - up * (height / 2.0 - face_margin(o) * k);
             let rotation = o.pose.orientation;
             let eye = self.hmd.position;
             // ドック子（ダッシュボードにはめた画面）のバーは頭からの距離でサイズ変更しない（1m 先でのサイズ固定。

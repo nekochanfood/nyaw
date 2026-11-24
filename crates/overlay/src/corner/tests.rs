@@ -284,6 +284,9 @@ fn the_corner_line_fades_in_at_the_pointed_corner() {
             .truncate()
             .abs_diff_eq(Vec2::new(-face.x, face.y), 1e-4)
     );
+    // ナビゲーションバーと重なっても前に出ないよう、はまる所の見本と同じだけ奥に置き、描画順もパネルの下にする。
+    assert!((o.pose.position.z - (-1.0 - GHOST_SINK)).abs() < 1e-5);
+    assert!(o.sort < vr.backend.overlays[0].sort);
     // 右下の線を半回転させて左上に置く。
     let roll = o.pose.orientation * Vec3::X;
     assert!(roll.abs_diff_eq(Vec3::NEG_X, 1e-4), "{roll}");
@@ -309,6 +312,36 @@ fn the_corner_line_fades_in_at_the_pointed_corner() {
     wait(Motion::Exit);
     ov.tick(&mut vr);
     assert!(!vr.backend.overlays[line].visible);
+}
+
+#[test]
+fn the_nav_bar_follows_the_stand_in_while_held() {
+    let (mut vr, mut ov) = resizable();
+    let bar = ov
+        .add_panel(
+            &mut vr.backend,
+            "bar",
+            Pose::IDENTITY,
+            Vec2::new(0.4, 0.05),
+            (400, 50),
+        )
+        .unwrap();
+    ov.set_nav_bar(&mut vr.backend, bar, 0);
+    let top = |ov: &Overlay| ov.panel(bar).pose.position.y + ov.panel(bar).size.y / 2.0;
+    ov.tick(&mut vr);
+    assert!((top(&ov) + 0.25 - MARGIN).abs() < 1e-4, "{}", top(&ov));
+    // 右下の角を掴んで下へ 10cm。解像度はまだ変えないが、バーは代わりの板の下端（10cm 下）に付いてくる。
+    controller(&mut vr, aim(0.45, -0.2), &GRAB);
+    ov.tick(&mut vr);
+    controller(&mut vr, aim(0.45, -0.3), &GRAB);
+    settle(&mut vr, &mut ov);
+    assert_eq!(ov.panel(0).resolution, (1000, 500));
+    assert!((top(&ov) + 0.35 - MARGIN).abs() < 1e-4, "{}", top(&ov));
+    // 離して解像度を変えた後も同じ所にいる。
+    controller(&mut vr, aim(0.45, -0.3), &[]);
+    ov.tick(&mut vr);
+    assert_eq!(ov.panel(0).resolution, (1000, 700));
+    assert!((top(&ov) + 0.35 - MARGIN).abs() < 1e-4, "{}", top(&ov));
 }
 
 #[test]
