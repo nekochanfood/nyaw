@@ -136,8 +136,20 @@ pub fn offer_dock(owner: PanelId, tilt: f32, cx: &mut App) {
     command(owner, PanelCommand::DockSlot(Some(tilt)), cx);
 }
 
+/// ドックへの装着音と取り外し音。
+pub(crate) const DOCK_SOUND: &[u8] = include_bytes!("../assets/dock/dock.wav");
+pub(crate) const UNDOCK_SOUND: &[u8] = include_bytes!("../assets/dock/undock.wav");
+
+/// 着脱した `panel` から、装着音（`docked` が真）か取り外し音を再生する。
+/// 手やメニューで着脱したときに鳴らす。[`dock`]・[`undock`] 自体は鳴らさないので、バーのボタンによる画面の切り替えは無音になる。
+pub(crate) fn dock_sound(panel: PanelId, docked: bool, cx: &mut App) {
+    let wav = if docked { DOCK_SOUND } else { UNDOCK_SOUND };
+    let sound = kernel::audio::Sound::Wav(wav);
+    command(panel, PanelCommand::Play(sound, false), cx);
+}
+
 /// ドックの着脱変更（[`Kernel::take_dock_changes`]）を装着記録に反映し、ドック持ち主の
-/// ボタン強調状態と該当画面のナビゲーションバー（取り外し・復帰ボタン）を再描画させる。
+/// ボタン強調状態と該当画面のナビゲーションバー（取り外し・復帰ボタン）を再描画させる。着脱音も鳴らす。
 fn sync_docking<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) {
     let changes = kernel.take_dock_changes();
     for &(panel, docked) in &changes {
@@ -152,6 +164,7 @@ fn sync_docking<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) {
         for p in owner.into_iter().chain(bar) {
             redraw(p, cx);
         }
+        dock_sound(panel, docked, cx);
     }
     if !changes.is_empty() {
         cx.refresh_windows();

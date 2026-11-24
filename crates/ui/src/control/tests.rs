@@ -18,7 +18,8 @@ fn hand(kernel: &mut Kernel<MockBackend>, to: Vec3, grab: bool) {
     }
 }
 
-/// ドック中の画面を手で引き抜き、再び近づけて離すとドック状態の記録（[`docked`]）が追従する。
+/// ドック中の画面を手で引き抜き、再び近づけて離すとドック状態の記録（[`docked`]）が追従し、画面から着脱音が鳴る。
+/// [`dock`] で装着したとき（バーのボタンによる切り替え）は鳴らない。
 #[gpui::test]
 fn pulling_a_screen_off_by_hand_and_docking_it_again_updates_docked(cx: &mut TestAppContext) {
     let mut kernel = Kernel::with_backend(MockBackend::default(), Default::default());
@@ -31,19 +32,28 @@ fn pulling_a_screen_off_by_hand_and_docking_it_again_updates_docked(cx: &mut Tes
         .unwrap();
     kernel.apply(screen, PanelCommand::Animated(false));
     kernel.apply(screen, PanelCommand::Dockable(true));
+    // ドック状態の記録と、反映前に画面へキューイングされた音。
     let sync = |kernel: &mut Kernel<MockBackend>, cx: &mut TestAppContext| {
         cx.update(|cx| {
+            sync_docking(kernel, cx);
+            let queued = &cx.default_global::<PanelControl>().panels[&screen].commands;
+            let sounds: Vec<_> = queued
+                .iter()
+                .filter(|c| matches!(c, PanelCommand::Play(..)))
+                .cloned()
+                .collect();
             for p in [bar, screen] {
                 sync_panel(kernel, p, cx);
             }
-            docked(cx)
+            (docked(cx), sounds)
         })
     };
+    let sound = |wav| vec![PanelCommand::Play(kernel::audio::Sound::Wav(wav), false)];
     cx.update(|cx| {
         offer_dock(bar, 0.0, cx);
         dock(screen, cx);
     });
-    assert_eq!(sync(&mut kernel, cx), Some(screen));
+    assert_eq!(sync(&mut kernel, cx), (Some(screen), vec![]));
     kernel.tick();
     let slot = kernel.panel(screen).pose.position;
     let away = slot + Vec3::X * 0.5;
@@ -51,10 +61,10 @@ fn pulling_a_screen_off_by_hand_and_docking_it_again_updates_docked(cx: &mut Tes
     hand(&mut kernel, away, true);
     hand(&mut kernel, away, false);
     assert_eq!(kernel.panel(screen).parent, None);
-    assert_eq!(sync(&mut kernel, cx), None);
+    assert_eq!(sync(&mut kernel, cx), (None, sound(UNDOCK_SOUND)));
     hand(&mut kernel, away, true);
     hand(&mut kernel, slot, true);
     hand(&mut kernel, slot, false);
     assert_eq!(kernel.panel(screen).parent.map(|p| p.panel), Some(bar));
-    assert_eq!(sync(&mut kernel, cx), Some(screen));
+    assert_eq!(sync(&mut kernel, cx), (Some(screen), sound(DOCK_SOUND)));
 }
