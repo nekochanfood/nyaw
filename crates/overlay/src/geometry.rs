@@ -35,11 +35,16 @@ pub(crate) fn approach(from: Pose, to: Pose, dt: f32) -> Pose {
     {
         return to;
     }
-    let k = 1.0 - (1.0 - SMOOTH).powf(dt / TICK_MIN);
+    let k = smoothing(dt);
     Pose::new(
         from.position.lerp(to.position, k),
         from.orientation.slerp(to.orientation, k),
     )
+}
+
+/// 経過 `dt` 秒で目標へ近づく割合（[`SMOOTH`] を経過時間で換算したもの）。
+pub(crate) fn smoothing(dt: f32) -> f32 {
+    1.0 - (1.0 - SMOOTH).powf(dt / TICK_MIN)
 }
 
 /// パネル面の縁とクアッドの縁の間隔（m。シャドウマージン）。
@@ -71,6 +76,17 @@ pub(crate) fn hit_test(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
 
 /// レイとパネルを含む平面の交点（パネル外も含む）のピクセル座標とレイ上の距離。レイが面と平行または後方なら `None`。
 pub(crate) fn plane_hit(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
+    let (local, t) = plane_point(p, aim)?;
+    let size = p.displayed_size();
+    let (w, h) = (p.resolution.0 as f32, p.resolution.1 as f32);
+    Some((
+        Vec2::new((local.x / size.x + 0.5) * w, (0.5 - local.y / size.y) * h),
+        t,
+    ))
+}
+
+/// レイとパネルを含む平面の交点（パネルローカル座標、m）とレイ上の距離。レイが面と平行または後方なら `None`。
+pub(crate) fn plane_point(p: &Panel, aim: &Pose) -> Option<(Vec3, f32)> {
     let normal = p.pose.orientation * Vec3::Z;
     let dir = aim.forward();
     let denom = dir.dot(normal);
@@ -81,13 +97,7 @@ pub(crate) fn plane_hit(p: &Panel, aim: &Pose) -> Option<(Vec2, f32)> {
     if t < 0.0 {
         return None;
     }
-    let local = p.pose.inverse().transform_point(aim.position + dir * t);
-    let size = p.displayed_size();
-    let (w, h) = (p.resolution.0 as f32, p.resolution.1 as f32);
-    Some((
-        Vec2::new((local.x / size.x + 0.5) * w, (0.5 - local.y / size.y) * h),
-        t,
-    ))
+    Some((p.pose.inverse().transform_point(aim.position + dir * t), t))
 }
 
 /// 等倍設計の姿勢 `pose` とグラブ基準 `anchor`（パネルローカル姿勢。等倍）から、UI スケール `scale` 適用時の

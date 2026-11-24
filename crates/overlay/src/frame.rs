@@ -157,9 +157,12 @@ impl Overlay {
         }
         for c in &frame.controllers {
             self.update_hand(c, &frame, &mut events);
-            if let Some((id, ..)) = self.hands[&c.hand].dragging
-                && self.hands[&c.hand].scaling.is_some()
-            {
+            let h = &self.hands[&c.hand];
+            let resized = h
+                .stretch
+                .map(|s| s.panel)
+                .or(h.dragging.filter(|_| h.scaling.is_some()).map(|d| d.0));
+            if let Some(id) = resized {
                 let p = &self.panels[id];
                 p.surface.set_width(vr, p.displayed_size().x);
             }
@@ -229,6 +232,7 @@ impl Overlay {
         self.place_nav_bars(vr, now);
         self.place_pointers(vr);
         self.place_ghosts(vr, now);
+        self.place_corners(vr);
         self.follow_roots();
         for &id in &self.present {
             let p = &mut self.panels[id];

@@ -104,9 +104,11 @@ impl Overlay {
     pub fn pointed(&self, id: PanelId) -> bool {
         let owner = self.panels[id].nav_bar_of;
         let is = |x: PanelId| x == id || Some(x) == owner;
-        self.hands
-            .values()
-            .any(|h| h.hover.is_some_and(is) || h.dragging.is_some_and(|d| is(d.0)))
+        self.hands.values().any(|h| {
+            h.hover.is_some_and(is)
+                || h.dragging.is_some_and(|d| is(d.0))
+                || h.stretch.is_some_and(|s| is(s.panel))
+        })
     }
 
     /// `id` 自体（ナビバー・子を除く）をレーザーで指している手の一覧。
@@ -118,11 +120,11 @@ impl Overlay {
             .collect()
     }
 
-    /// `id` をいずれかの手でグラブ中か。
+    /// `id` をいずれかの手でグラブ中か（角を掴んで大きさを変えている間も含む）。
     pub fn grabbed(&self, id: PanelId) -> bool {
-        self.hands
-            .values()
-            .any(|h| h.dragging.is_some_and(|d| d.0 == id))
+        self.hands.values().any(|h| {
+            h.dragging.is_some_and(|d| d.0 == id) || h.stretch.is_some_and(|s| s.panel == id)
+        })
     }
 }
 

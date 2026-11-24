@@ -27,7 +27,7 @@ pub use config::{
 };
 pub use overlay::{
     self, Anchor, DockHint, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent,
-    UiEvent,
+    ResizeLimits, UiEvent,
 };
 pub use subsystems::ControllerState;
 pub use vr::{Device, Fov, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
@@ -61,6 +61,9 @@ pub enum PanelCommand {
     Lockdown(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
+    /// 角を掴んで縦横の解像度を変えられるようにする（`Overlay::set_corner_resize`。`None` で戻す）。
+    /// 1m あたりのピクセル数を保つので、UI の表示領域が変わる。変えた解像度は範囲に収める。
+    CornerResize(Option<ResizeLimits>),
     /// このパネルの上端を、画面をドッキングするスロットにする（上端からの傾斜角度。`None` で解除。`Overlay::set_dock_slot`）。
     DockSlot(Option<f32>),
     /// ドッキングスロットから掴んで取り外せる・近づけて離すとドッキングする画面にする（`Overlay::set_dockable`）。
@@ -969,13 +972,12 @@ impl<B: VrBackend> Kernel<B> {
     }
 
     /// 前の段階 `prev` から、距離で次の段階を決める。境目の前後で行き来しないよう、下げる側は閾値を縮める。
-    /// レーザーが指している（操作しようとしている）パネルとツールチップ、はまる所の見本は、距離によらず LOD0。
+    /// レーザーが指している（操作しようとしている）パネルとツールチップ、はまる所の見本、角の線は、距離によらず LOD0。
     fn lod_for(&self, id: PanelId, prev: Option<u8>) -> u8 {
         if self.overlay.pointed(id)
-            || self
-                .panel(id)
-                .pointer
-                .is_some_and(|(_, part)| matches!(part, Pointer::Tooltip | Pointer::Dock))
+            || self.panel(id).pointer.is_some_and(|(_, part)| {
+                matches!(part, Pointer::Tooltip | Pointer::Dock | Pointer::Corner)
+            })
         {
             return 0;
         }
@@ -1211,6 +1213,7 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::DockSlot(tilt) => self.overlay.set_dock_slot(panel, tilt),
             PanelCommand::Dockable(dockable) => self.overlay.set_dockable(panel, dockable),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
+            PanelCommand::CornerResize(limits) => self.overlay.set_corner_resize(panel, limits),
             PanelCommand::Reach(reach) => self.overlay.set_reach(panel, reach),
             PanelCommand::PointerMode(mode) => {
                 self.pointer_modes.insert(panel, mode);
