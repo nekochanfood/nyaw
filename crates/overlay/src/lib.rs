@@ -400,6 +400,8 @@ pub struct Overlay {
     dock_slot: Option<(PanelId, f32)>,
     /// アンドック（`false`）・ドック（`true`）されたパネル（[`Overlay::take_dock_changes`] で取得）。
     dock_changes: Vec<(PanelId, bool)>,
+    /// 掴んだまま、はまる所から抜けた（`false`）・吸い付いた（`true`）パネル（[`Overlay::take_dock_snaps`] で取得）。
+    dock_snaps: Vec<(PanelId, bool)>,
     /// ドックスロットに接触した状態でリリースされたパネル（今 tick 終了時にドック・再ドックする）。
     landed: Vec<PanelId>,
 }

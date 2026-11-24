@@ -231,6 +231,12 @@ impl Overlay {
         std::mem::take(&mut self.dock_changes)
     }
 
+    /// 掴んだまま、はまる所から抜けた（`false`）・吸い付いた（`true`）画面。受け取ると空になる（上の層が着脱音を鳴らす）。
+    /// 親が変わるのを待たないので、吸い付けたまま引き抜き直しても、そのたびに入る。
+    pub fn take_dock_snaps(&mut self) -> Vec<(PanelId, bool)> {
+        std::mem::take(&mut self.dock_snaps)
+    }
+
     /// `hand` の見本に出す一行（その手ではめられる画面を掴んでいなければ `None`）。
     pub fn dock_hint(&self, hand: Hand) -> Option<DockHint> {
         let h = self.hands.get(&hand)?;

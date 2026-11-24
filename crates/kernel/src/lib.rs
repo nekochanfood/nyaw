@@ -1128,6 +1128,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.take_dock_changes()
     }
 
+    /// 掴んだまま、はまる所から抜けた（`false`）・吸い付いた（`true`）画面（[`Overlay::take_dock_snaps`]）。受け取ると空になる。
+    pub fn take_dock_snaps(&mut self) -> Vec<(PanelId, bool)> {
+        self.overlay.take_dock_snaps()
+    }
+
     /// 最後の tick の手ごとの入力の状態（骨格だけの手は判定に使った値 `metrics` 付き）。
     pub fn controllers(&self) -> &[ControllerState] {
         self.overlay.controllers()

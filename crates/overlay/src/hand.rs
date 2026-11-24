@@ -136,6 +136,9 @@ impl Overlay {
                         .transform_point((pose * pivot.inverse()).position);
                     st.dragging = Some((id, offset, new_len, pivot, resize));
                 }
+                if let Some(stuck) = flipped {
+                    self.dock_snaps.push((id, stuck));
+                }
                 if let (Some(false), Some(m)) = (flipped, st.magnet)
                     && magnet::unplug(p, m.owner())
                 {
