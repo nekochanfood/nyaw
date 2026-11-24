@@ -193,9 +193,10 @@ fn a_free_screen_is_drawn_in_catches_and_docks_when_let_go() {
     assert_eq!(ov.take_dock_changes(), vec![(1, true)]);
 }
 
-/// ダッシュボードから呼び出してはめる（バーやナビゲーションバーのボタン。[`Overlay::set_parent`]）ときは、跳ね返らずに滑らかに収まる。
+/// ダッシュボードから呼び出してはめる（バーやナビゲーションバーのボタン。[`Overlay::set_parent`]）ときも、手ではめるときと
+/// 同じく、はまる所を少し行き過ぎてから収まる（[`Motion::Pop`]）。
 #[test]
-fn docking_from_the_dashboard_eases_in_without_overshoot() {
+fn docking_from_the_dashboard_overshoots_and_settles() {
     let (mut vr, mut ov) = docked(false);
     let slot = ov.panel(1).pose.position;
     ov.set_animated(&mut vr.backend, 1, true);
@@ -203,19 +204,20 @@ fn docking_from_the_dashboard_eases_in_without_overshoot() {
     ov.set_parent(&mut vr.backend, 1, None);
     ov.glides.clear();
     ov.set_pose(1, at(0.6, 0.0, -1.0));
+    let toward = (slot - ov.panel(1).pose.position).normalize();
     ov.set_parent(&mut vr.backend, 1, Some(slot_parent()));
-    // 動きの時間を 20ms ずつ進めると、はまる所までの距離は縮み続け（行き過ぎない・跳ね返らない）、最後ははまる所に着く。
-    let mut last = ov.panel(1).pose.position.distance(slot);
+    // 動きの時間を 20ms ずつ進め、はまる所へ向かう向きにどれだけ行き過ぎたかを測る。最後ははまる所に着く。
+    let mut past = 0.0f32;
     for _ in 0..30 {
         if let Some(g) = ov.glides.get_mut(&1) {
             g.last -= std::time::Duration::from_millis(20);
         }
         ov.settle_family(&[], &[]);
         ov.glide(&[], Instant::now());
-        let d = ov.panel(1).pose.position.distance(slot);
-        assert!(d <= last + 1e-6, "{d} > {last}");
-        last = d;
+        past = past.max((ov.panel(1).pose.position - slot).dot(toward));
     }
+    assert!(past > 0.01, "{past}");
+    let last = ov.panel(1).pose.position.distance(slot);
     assert!(last < 1e-4, "{last}");
 }
 

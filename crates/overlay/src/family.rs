@@ -25,7 +25,7 @@ impl Overlay {
             return;
         }
         let at = parent.map(|p| self.panels[p.panel].pose);
-        // ドック・アンドック時は可視ならトランジションで移動する。ドック（ダッシュボードから呼び出す）時はオーバーシュートなしで収束、
+        // ドック・アンドック時は可視ならトランジションで移動する。どちらも少し行き過ぎてから収まり（[`Motion::Pop`]）、
         // アンドック時は離脱を示すため手前へ飛び出す。グラブ中は手に追従するため移動しない。
         let held = self.grabbed(id);
         let q = &self.panels[id];
@@ -39,7 +39,7 @@ impl Overlay {
                 Some(q.pose * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY)),
                 Motion::Pop,
             )),
-            (false, true) => Some((None, Motion::Move)),
+            (false, true) => Some((None, Motion::Pop)),
             _ => None,
         };
         if let Some((to, motion)) = to {
