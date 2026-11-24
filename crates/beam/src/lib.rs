@@ -1,6 +1,6 @@
 //! Layer 6 パネル: コントローラのビーム。手ごとに、手元から伸びるレーザー、指示先パネルに貼り付く
 //! カーソル（小円）、ドラッグ中の要素の外観（中身は GPUI が描画する `ui::DragPreview`）、カーソル子要素のツールチップ（[`tooltip`]）、
-//! ドッキング可能パネル把持中のスロットゴースト（[`dock`]。角枠は [`bracket`]）の計 5 枚。描画のみを担い、配置・長さ・表示制御はオーバーレイ層が毎 tick 決定する。
+//! ドッキング可能パネル把持中のスロットゴースト（[`dock`]。角枠は [`bracket`]）、角で大きさを変えられるパネルの角を囲む線（[`corner`]）の計 6 枚。描画のみを担い、配置・長さ・表示制御はオーバーレイ層が毎 tick 決定する。
 
 use gpui::{
     Bounds, Context, PathBuilder, Pixels, Point, Window, canvas, div, hsla, linear_color_stop,
@@ -11,8 +11,10 @@ use kernel::{Hand, Pointer, Pose, Vec2};
 use ui::PanelSpec;
 
 pub mod bracket;
+pub mod corner;
 pub mod dock;
 pub mod tooltip;
+pub use corner::CornerHandle;
 pub use dock::DockGhost;
 pub use tooltip::Tooltip;
 
@@ -67,6 +69,7 @@ pub fn specs() -> Vec<PanelSpec> {
                     .pointer(hand, Pointer::Drag),
                 tooltip::spec(hand),
                 dock::spec(hand),
+                corner::spec(hand),
             ]
         })
         .collect()
