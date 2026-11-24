@@ -106,7 +106,7 @@ fn letting_go_detaches_the_owner(cx: &mut TestAppContext) {
     assert_eq!(cx.update(|_, cx| take(3, cx)), [PanelCommand::Close]);
 }
 
-/// ドック中であれば「ダッシュボードから外す」、未装着でドックが空きなら「戻す」を表示し、選択で実行して閉じる。
+/// ドック中であれば「ダッシュボードから外す」、未装着でドックが空きなら「戻す」を表示し、選択で着脱音とともに実行して閉じる。
 /// ドック非対応パネルやドック非表示時は表示しない。
 #[gpui::test]
 fn the_menu_docks_and_undocks_the_owner(cx: &mut TestAppContext) {
@@ -144,9 +144,10 @@ fn the_menu_docks_and_undocks_the_owner(cx: &mut TestAppContext) {
     assert!(undock.debug_bounds("nav-dock").is_none());
     let row = undock.debug_bounds("nav-undock").unwrap();
     undock.simulate_click(row.center(), gpui::Modifiers::none());
+    let sound = |wav| PanelCommand::Play(kernel::audio::Sound::Wav(wav), false);
     assert_eq!(
         undock.update(|_, cx| take(1, cx)),
-        [PanelCommand::Parent(None)]
+        [PanelCommand::Parent(None), sound(UNDOCK_SOUND)]
     );
     assert_eq!(undock.update(|_, cx| take(3, cx)), [PanelCommand::Close]);
 
@@ -156,7 +157,7 @@ fn the_menu_docks_and_undocks_the_owner(cx: &mut TestAppContext) {
     dock.simulate_click(row.center(), gpui::Modifiers::none());
     assert!(matches!(
         dock.update(|_, cx| take(1, cx)).as_slice(),
-        [PanelCommand::Parent(Some(p))] if p.panel == 5 && p.docked
+        [PanelCommand::Parent(Some(p)), s] if p.panel == 5 && p.docked && *s == sound(DOCK_SOUND)
     ));
     assert_eq!(dock.update(|_, cx| take(3, cx)), [PanelCommand::Close]);
 }
