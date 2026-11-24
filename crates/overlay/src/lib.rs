@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use animation::{Animation, Motion, Transition};
-use design::{DOCK_BORDER_PX, PANEL_MARGIN};
+use design::{BRACKET_PAD_PX, PANEL_MARGIN};
 use subsystems::{Frame, Subsystems, desktop::Cursor, rendering::Surface, vr};
 
 use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
