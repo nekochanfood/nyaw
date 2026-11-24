@@ -54,7 +54,8 @@ impl Overlay {
         st.menu = c.menu;
         st.corner = None;
 
-        // 角を掴んでいる間は、レーザーが面に当たる点に合わせて大きさだけを変える（パネルは動かさない）。
+        // 角を掴んでいる間は、レーザーが面に当たる点に合わせて大きさを決める（パネルは動かさない）。
+        // 解像度は離したときに変える。それまでは代わりの板だけが伸び縮みする（place_stand_ins）。
         if let Some(mut s) = st.stretch {
             let p = &mut self.panels[s.panel];
             if c.grab && !p.closed && !p.hidden {
@@ -70,6 +71,13 @@ impl Overlay {
                 return;
             }
             st.stretch = None;
+            // 新しい大きさの絵が届くまで、代わりの板を出したままにする。
+            let before = p.surface.texture_size();
+            if s.commit(p)
+                && let Some(stand_in) = self.stand_ins.get_mut(&s.panel)
+            {
+                stand_in.waiting = Some((before, Instant::now()));
+            }
         }
 
         if let Some((id, offset, len, pivot, resize)) = st.dragging {

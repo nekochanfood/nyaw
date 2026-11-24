@@ -132,6 +132,8 @@ pub struct Panel {
     dim_to: f32,
     /// 表示の進行度。サイズは 75%〜100%、不透明度は 0%〜100%。
     opacity: f32,
+    /// 角を掴んで大きさを変えている間の、代わりの板の出具合（[`Overlay::place_stand_ins`]）。中身の不透明度は 1 からこれを引いた割合。
+    stand_in: f32,
     surface: Surface,
     /// 今 tick で追従させるデバイスと相対姿勢。ランタイムに委譲可能ならそうする。
     follow: Option<(Device, Pose)>,
@@ -348,6 +350,8 @@ struct HandState {
     corner: Option<(PanelId, Vec2)>,
     /// 角を掴んで大きさを変えている途中。
     stretch: Option<Stretch>,
+    /// この手の角の線（[`Pointer::Corner`]）の出具合。
+    line: Line,
 }
 
 /// 位置トランジション: `from` から `to` へ移動する。`to` が `None` なら毎 tick 算出される配置先（ドックスロット）へ向かう。
@@ -417,6 +421,8 @@ pub struct Overlay {
     dock_snaps: Vec<(PanelId, bool)>,
     /// ドックスロットに接触した状態でリリースされたパネル（今 tick 終了時にドック・再ドックする）。
     landed: Vec<PanelId>,
+    /// 角を掴んで大きさを変えているパネルの、中身の代わりに出す板（[`Overlay::place_stand_ins`]）。
+    stand_ins: HashMap<PanelId, StandIn>,
 }
 
 /// 空間全体の暗転幕（[`Overlay::set_veil`]）。

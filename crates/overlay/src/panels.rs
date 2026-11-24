@@ -59,6 +59,7 @@ impl Overlay {
             dim: 0.0,
             dim_to: 0.0,
             opacity: 1.0,
+            stand_in: 0.0,
             surface,
             follow: None,
             lazy_follow: None,
