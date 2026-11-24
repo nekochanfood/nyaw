@@ -18,7 +18,8 @@ fn hand(kernel: &mut Kernel<MockBackend>, to: Vec3, grab: bool) {
     }
 }
 
-/// ドック中の画面を手で引き抜き、再び近づけて離すとドック状態の記録（[`docked`]）が追従し、画面から着脱音が鳴る。
+/// ドック中の画面を手で引き抜き、再び近づけて離すとドック状態の記録（[`docked`]）が追従する。
+/// 着脱音は、掴んだまま抜けた・吸い付いたときに画面から鳴る（吸い付けては引き抜き直すたびに鳴り、離したときは鳴らない）。
 /// [`dock`] で装着したとき（バーのボタンによる切り替え）は鳴らない。
 #[gpui::test]
 fn pulling_a_screen_off_by_hand_and_docking_it_again_updates_docked(cx: &mut TestAppContext) {
@@ -59,14 +60,22 @@ fn pulling_a_screen_off_by_hand_and_docking_it_again_updates_docked(cx: &mut Tes
     let away = slot + Vec3::X * 0.5;
     hand(&mut kernel, slot, true);
     hand(&mut kernel, away, true);
-    hand(&mut kernel, away, false);
     assert_eq!(kernel.panel(screen).parent, None);
     assert_eq!(sync(&mut kernel, cx), (None, sound(UNDOCK_SOUND)));
+    // 掴んだまま吸い付けると鳴り、そのまま引き抜き直すとまた鳴る（記録は離すまで変わらない）。
+    hand(&mut kernel, slot, true);
+    assert_eq!(sync(&mut kernel, cx), (None, sound(DOCK_SOUND)));
+    hand(&mut kernel, away, true);
+    assert_eq!(sync(&mut kernel, cx), (None, sound(UNDOCK_SOUND)));
+    hand(&mut kernel, away, false);
+    assert_eq!(sync(&mut kernel, cx), (None, vec![]));
     hand(&mut kernel, away, true);
     hand(&mut kernel, slot, true);
+    assert_eq!(sync(&mut kernel, cx), (None, sound(DOCK_SOUND)));
+    // 離すとはまるが、音は吸い付いたときに鳴らしたので鳴らさない。
     hand(&mut kernel, slot, false);
     assert_eq!(kernel.panel(screen).parent.map(|p| p.panel), Some(bar));
-    assert_eq!(sync(&mut kernel, cx), (Some(screen), sound(DOCK_SOUND)));
+    assert_eq!(sync(&mut kernel, cx), (Some(screen), vec![]));
 }
 
 /// パネルを掴むと掴んだ音が、離すと離した音がそのパネルから鳴る。掴み続けている間は鳴らない。

@@ -141,7 +141,8 @@ pub(crate) const DOCK_SOUND: &[u8] = include_bytes!("../assets/dock/dock.wav");
 pub(crate) const UNDOCK_SOUND: &[u8] = include_bytes!("../assets/dock/undock.wav");
 
 /// 着脱した `panel` から、装着音（`docked` が真）か取り外し音を再生する。
-/// 手やメニューで着脱したときに鳴らす。[`dock`]・[`undock`] 自体は鳴らさないので、バーのボタンによる画面の切り替えは無音になる。
+/// 手で掴んだ画面がはまる所に吸い付いた・抜けたとき（離したときではない）と、メニューで着脱したときに鳴らす。
+/// [`dock`]・[`undock`] 自体は鳴らさないので、バーのボタンによる画面の切り替えは無音になる。
 pub(crate) fn dock_sound(panel: PanelId, docked: bool, cx: &mut App) {
     let wav = if docked { DOCK_SOUND } else { UNDOCK_SOUND };
     let sound = kernel::audio::Sound::Wav(wav);
@@ -153,8 +154,12 @@ pub(crate) const HOLD_SOUND: &[u8] = include_bytes!("../assets/grab/hold.wav");
 pub(crate) const RELEASE_SOUND: &[u8] = include_bytes!("../assets/grab/release.wav");
 
 /// ドックの着脱変更（[`Kernel::take_dock_changes`]）を装着記録に反映し、ドック持ち主の
-/// ボタン強調状態と該当画面のナビゲーションバー（取り外し・復帰ボタン）を再描画させる。着脱音も鳴らす。
+/// ボタン強調状態と該当画面のナビゲーションバー（取り外し・復帰ボタン）を再描画させる。
+/// 着脱音は、掴んだ画面が吸い付いた・抜けたとき（[`Kernel::take_dock_snaps`]）に鳴らす。
 fn sync_docking<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) {
+    for (panel, docked) in kernel.take_dock_snaps() {
+        dock_sound(panel, docked, cx);
+    }
     let changes = kernel.take_dock_changes();
     for &(panel, docked) in &changes {
         let ctl = cx.default_global::<PanelControl>();
@@ -168,7 +173,6 @@ fn sync_docking<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) {
         for p in owner.into_iter().chain(bar) {
             redraw(p, cx);
         }
-        dock_sound(panel, docked, cx);
     }
     if !changes.is_empty() {
         cx.refresh_windows();

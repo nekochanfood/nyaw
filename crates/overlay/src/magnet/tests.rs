@@ -97,11 +97,13 @@ fn a_docked_screen_holds_still_then_pops_out_into_the_hand() {
     assert!(p.parent.is_some());
     assert_eq!(ov.panel(0).pose, bar);
     assert!(ov.take_dock_changes().is_empty());
+    assert!(ov.take_dock_snaps().is_empty());
     // 抜けるまで引くと、ダッシュボードから外れて手に付いて動く（ダッシュボードはその場に残る）。
     let to = slot.position + Vec3::X * 0.5;
     pull_to(&mut vr, &mut ov, to);
     assert!(ov.panel(1).parent.is_none());
     assert_eq!(ov.take_dock_changes(), vec![(1, false)]);
+    assert_eq!(ov.take_dock_snaps(), vec![(1, false)]);
     assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Attach));
     // 手ブレ抑えでレーザーは少し遅れて付いてくる。
     let got = ov.panel(1).pose.position;
@@ -185,12 +187,15 @@ fn a_free_screen_is_drawn_in_catches_and_docks_when_let_go() {
     assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Release));
     assert!(DockHint::Release.docks() && !DockHint::Attach.docks());
     assert!(ov.panel(1).parent.is_none());
-    // 離すとはまる。
+    assert!(ov.take_dock_changes().is_empty());
+    assert_eq!(ov.take_dock_snaps(), vec![(1, true)]);
+    // 離すとはまる（吸い付いたのは離す前なので、吸い付きとしては入らない）。
     release(&mut vr, &mut ov, close);
     let p = ov.panel(1);
     assert_eq!(p.parent, Some(slot_parent()));
     assert!(p.pose.position.abs_diff_eq(slot.position, 1e-4));
     assert_eq!(ov.take_dock_changes(), vec![(1, true)]);
+    assert!(ov.take_dock_snaps().is_empty());
 }
 
 /// ダッシュボードから呼び出してはめる（バーやナビゲーションバーのボタン。[`Overlay::set_parent`]）ときも、手ではめるときと
@@ -230,12 +235,16 @@ fn a_caught_screen_can_be_pulled_off_again_without_docking() {
     ov.tick(&mut vr);
     pull_to(&mut vr, &mut ov, slot.position + Vec3::X * 0.05);
     assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Release));
+    assert_eq!(ov.take_dock_snaps(), vec![(1, true)]);
+    // 親は変わっていなくても、抜けたことは入る。
     let far = slot.position - Vec3::X * 0.5;
     pull_to(&mut vr, &mut ov, far);
     assert_eq!(ov.dock_hint(Hand::Right), Some(DockHint::Attach));
+    assert_eq!(ov.take_dock_snaps(), vec![(1, false)]);
     release(&mut vr, &mut ov, far);
     assert!(ov.panel(1).parent.is_none());
     assert!(ov.take_dock_changes().is_empty());
+    assert!(ov.take_dock_snaps().is_empty());
 }
 
 #[test]
