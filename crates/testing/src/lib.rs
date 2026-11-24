@@ -12,6 +12,7 @@
 //! - スケルタル入力: [`SkeletonTest`] で、手の関節をギズモ描画し、親指と他の指によるピンチ判定を確認する
 //! - 通知: [`NotificationTest`] で、Windows に実際の通知を送信し、トースト（HUD → 手首 → ダッシュボード）と通知一覧を検証する
 //! - 音声: [`AudioTest`] で、パネルスピーカーからの空間音響（同時再生・空間化の無効化・モノラル / ステレオ）を検証する
+//! - 角でのサイズ変更: [`ResizeTest`] の角を掴んで動かし、解像度（表示領域）が範囲内で変わり中身が組み直されるのを確認する
 //! - 負荷: [`StressTest`] で上限までパネルを生成し、閉じる・ランダム配置・整列を行う
 //!
 //! すべての要素に `debug_selector` で名前が付与されている（名前 = `id`）。
@@ -62,6 +63,7 @@ mod lod;
 mod nav;
 mod panel;
 mod pointer;
+mod resize;
 mod scrollbar;
 mod smoothing;
 mod stress;
@@ -74,6 +76,7 @@ pub use locale::*;
 pub use lod::*;
 pub use nav::*;
 pub use pointer::*;
+pub use resize::*;
 pub use scrollbar::*;
 pub use smoothing::*;
 pub use stress::*;
