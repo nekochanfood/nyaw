@@ -525,6 +525,36 @@ fn hud_child_sits_in_the_top_left_corner_without_taking_input() {
     assert!(events.iter().all(|e| e.panel == 0));
 }
 
+/// 面に重ねる子は、親の面の指定した範囲の手前にその大きさで置かれ、親の大きさが変わっても範囲に付いてくる。
+/// 親を暗くせず、重なった所を押すと子に届く。
+#[test]
+fn over_child_covers_its_area_of_the_parent_and_takes_input() {
+    let (mut vr, mut ov) = with_child(false);
+    ov.set_panel_capture(0, true);
+    ov.set_parent(
+        &mut vr.backend,
+        1,
+        Some(Parent {
+            panel: 0,
+            over: Some([0.5, 0.25, 0.25, 0.5]),
+            ..Default::default()
+        }),
+    );
+    assert_eq!(ov.panel(1).size, Vec2::new(0.25, 0.5));
+    let at_area = Vec3::new(0.125, 0.0, -1.0 + HUD_LIFT);
+    assert!(ov.panel(1).pose.position.abs_diff_eq(at_area, 1e-5));
+    ov.panels[0].size = Vec2::new(2.0, 1.0);
+    ov.tick(&mut vr);
+    assert_eq!(ov.panel(1).size, Vec2::new(0.5, 0.5));
+    let at_area = Vec3::new(0.25, 0.0, -1.0 + HUD_LIFT);
+    assert!(ov.panel(1).pose.position.abs_diff_eq(at_area, 1e-5));
+    assert_eq!(ov.panel(0).dim_to, 0.0);
+    controller(&mut vr, at(0.25, 0.0, 0.0), &[("trigger/value", 1.0)]);
+    let events = ov.tick(&mut vr);
+    assert!(!events.is_empty());
+    assert!(events.iter().all(|e| e.panel == 1));
+}
+
 #[test]
 fn pressing_outside_the_child_closes_it_unless_blocked() {
     let press = |ov: &mut Overlay, vr: &mut Subsystems<MockBackend>, x: f32| {
@@ -601,6 +631,7 @@ fn pressing_a_nested_child_keeps_its_parent_dialog() {
             docked: false,
             slot: None,
             stack: false,
+            over: None,
         }),
     );
     controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
@@ -628,6 +659,7 @@ fn closing_the_parent_closes_its_children_and_cycles_are_refused() {
             docked: false,
             slot: None,
             stack: false,
+            over: None,
         }),
     );
     assert_eq!(

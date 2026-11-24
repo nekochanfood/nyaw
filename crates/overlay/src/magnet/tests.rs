@@ -217,7 +217,7 @@ fn docking_from_the_dashboard_overshoots_and_settles() {
         if let Some(g) = ov.glides.get_mut(&1) {
             g.last -= std::time::Duration::from_millis(20);
         }
-        ov.settle_family(&[], &[]);
+        ov.settle_family(&mut vr.backend, &[], &[]);
         ov.glide(&[], Instant::now());
         past = past.max((ov.panel(1).pose.position - slot).dot(toward));
     }
