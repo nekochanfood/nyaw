@@ -237,6 +237,11 @@ settings = "設定"
 navigation = "ナビゲーション"
 mirror = "ミラーリング画面"
 slide = "ボタンスライド"
+resize = "角でサイズ変更"
+resize_aspect = "角でサイズ変更（縦横比を固定）"
+
+[testing.resize]
+hint = "角を掴んで動かすと、幅と高さが変わります（{min}〜{max} px）"
 
 [testing.slide]
 add = "末尾に追加"

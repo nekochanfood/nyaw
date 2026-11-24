@@ -237,6 +237,11 @@ settings = "Settings"
 navigation = "Navigation"
 mirror = "Mirroring screen"
 slide = "Button slide"
+resize = "Corner resize"
+resize_aspect = "Corner resize (keep aspect)"
+
+[testing.resize]
+hint = "Grab a corner and move it to change the width and height ({min} to {max} px)"
 
 [testing.slide]
 add = "Add at end"

@@ -329,6 +329,31 @@ impl Render for Testing {
                         .on_click(spawn_mirror_test(self.panel)),
                 )
                 .child(
+                    button!("resize-test", i18n::t(cx, "testing.open.resize"), false).on_click({
+                        let panel = self.panel;
+                        move |_, _, cx| {
+                            cx.default_global::<PanelControl>()
+                                .spawns
+                                .push(ResizeTest::spec(panel, false))
+                        }
+                    }),
+                )
+                .child(
+                    button!(
+                        "resize-test-aspect",
+                        i18n::t(cx, "testing.open.resize_aspect"),
+                        false
+                    )
+                    .on_click({
+                        let panel = self.panel;
+                        move |_, _, cx| {
+                            cx.default_global::<PanelControl>()
+                                .spawns
+                                .push(ResizeTest::spec(panel, true))
+                        }
+                    }),
+                )
+                .child(
                     button!("slide-test", i18n::t(cx, "testing.open.slide"), false).on_click(
                         spawn_view(self.panel, "testing.open.slide", |id, _| SlideTest::new(id)),
                     ),
