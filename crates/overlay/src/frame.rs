@@ -66,7 +66,8 @@ impl Overlay {
         if p.closed && p.opacity == 0.0 {
             p.surface.release(vr);
         } else {
-            p.surface.present(vr, p.opacity * p.awake, p.dim, upload);
+            p.surface
+                .present(vr, p.opacity * p.awake * (1.0 - p.stand_in), p.dim, upload);
         }
     }
 
@@ -157,12 +158,9 @@ impl Overlay {
         }
         for c in &frame.controllers {
             self.update_hand(c, &frame, &mut events);
-            let h = &self.hands[&c.hand];
-            let resized = h
-                .stretch
-                .map(|s| s.panel)
-                .or(h.dragging.filter(|_| h.scaling.is_some()).map(|d| d.0));
-            if let Some(id) = resized {
+            if let Some((id, ..)) = self.hands[&c.hand].dragging
+                && self.hands[&c.hand].scaling.is_some()
+            {
                 let p = &self.panels[id];
                 p.surface.set_width(vr, p.displayed_size().x);
             }
@@ -232,7 +230,8 @@ impl Overlay {
         self.place_nav_bars(vr, now);
         self.place_pointers(vr);
         self.place_ghosts(vr, now);
-        self.place_corners(vr);
+        self.place_stand_ins(vr, now);
+        self.place_corners(vr, now);
         self.follow_roots();
         for &id in &self.present {
             let p = &mut self.panels[id];

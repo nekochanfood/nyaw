@@ -398,6 +398,8 @@ pub struct PanelStatus {
     pub audio: AudioStatus,
     /// ドッキングスロットの見本（[`Pointer::Dock`]）の場合、その手で掴んでいる画面に表示する一行（`Overlay::dock_hint`）。
     pub dock_hint: Option<DockHint>,
+    /// 角の線（[`Pointer::Corner`]）の場合、その手で角を掴んで大きさを変えている途中か（`Overlay::corner_held`）。
+    pub corner_held: bool,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -1322,6 +1324,9 @@ impl<B: VrBackend> Kernel<B> {
                 .pointer
                 .filter(|&(_, part)| part == Pointer::Dock)
                 .and_then(|(hand, _)| self.overlay.dock_hint(hand)),
+            corner_held: p.pointer.is_some_and(|(hand, part)| {
+                part == Pointer::Corner && self.overlay.corner_held(hand)
+            }),
         }
     }
 }

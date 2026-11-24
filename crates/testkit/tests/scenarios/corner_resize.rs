@@ -1,5 +1,6 @@
-//! Resizing a panel by a corner (the testing screen's `resize-test`): the panel resolution, and with it the view's viewport,
-//! follows the hand on the moved axis only, both sides at once, within the limits.
+//! Resizing a panel by a corner (the testing screen's `resize-test`): while the corner is held the view is not redrawn and a
+//! stand-in shows the new size; on release the panel resolution, and with it the view's viewport, changes on the moved axis
+//! only, both sides at once, and the content comes back.
 
 use gpui::TestAppContext;
 use kernel::{PanelCommand, ResizeLimits};
@@ -15,6 +16,12 @@ const LIMITS: ResizeLimits = ResizeLimits {
 /// Width of the `resize-size` line, which spans the viewport less the margin and the padding.
 fn line_width(kit: &mut VrKit<'_, ResizeTest>) -> f32 {
     kit.bounds("resize-size").size.width.into()
+}
+
+/// Opacity of the panel's content in VR.
+fn content_alpha(kit: &VrKit<'_, ResizeTest>) -> f32 {
+    let id = kit.kernel.panel(0).overlay_id().0 as usize;
+    kit.kernel.subsystems.backend.overlays[id].alpha
 }
 
 #[gpui::test]
@@ -33,24 +40,31 @@ fn grabbing_a_corner_changes_the_viewport_on_the_moved_axis(cx: &mut TestAppCont
     kit.point_at(grab).press(Action::Grab);
     kit.aim_at(to).settle();
 
-    // Both the left and the right edge come in by 10cm; the height and the center stay.
+    // While held, the view keeps its viewport (nothing is laid out again) and the content is swapped for the stand-in.
+    assert_eq!(kit.kernel.panel(0).resolution, (w, h));
+    assert_eq!(line_width(&mut kit), before);
+    assert_eq!(content_alpha(&kit), 0.0);
+
+    // Released, both the left and the right edge come in by 10cm; the height and the center stay.
+    kit.release(Action::Grab).step();
     let (w1, h1) = kit.kernel.panel(0).resolution;
     let narrower = w - w1;
     assert!((narrower as f32 - 0.2 * density).abs() <= 1.0, "{w} → {w1}");
     assert_eq!(h1, h);
     assert!(kit.panel_pose().position.abs_diff_eq(center, 1e-4));
-    // The view is laid out again in the narrower viewport, and that is what VR shows.
+    // The view is laid out again in the narrower viewport, and once that is drawn the content is shown again.
     let line = line_width(&mut kit);
     assert!(
         (line - (before - narrower as f32)).abs() < 0.5,
         "{before} → {line}"
     );
+    kit.step();
+    assert_eq!(content_alpha(&kit), 1.0);
     let tex = kit.texture();
     let shown = tex.width as f32 / tex.height as f32;
     assert!((shown - w1 as f32 / h as f32).abs() < 0.01, "{shown}");
 
-    // Released, the size stays; moving the hand afterwards changes nothing.
-    kit.release(Action::Grab);
+    // Moving the hand afterwards changes nothing.
     kit.aim_at(to + Vec3::X * 0.2).settle();
     assert_eq!(kit.kernel.panel(0).resolution, (w1, h1));
 }
