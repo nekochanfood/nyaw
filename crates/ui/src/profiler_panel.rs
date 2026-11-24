@@ -81,7 +81,7 @@ pub(crate) fn sync_profiler(
         {
             // グラフは毎フレーム変化するが、判読には PROFILER_REDRAW 間隔で十分。毎フレーム描画すると描画・リードバック・
             // 合成のコストでプロファイリング自体が重くなる（プロファイラウィンドウだけで 1 フレーム約 20ms を要した）。
-            let _ = cx.update_window(slots.windows[p].1, |_, w, _| w.refresh());
+            let _ = cx.update_window(slots.window(p), |_, w, _| w.refresh());
             slots.drawn[p] = None;
         }
     });
