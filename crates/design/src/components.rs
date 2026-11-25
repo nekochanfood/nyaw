@@ -847,7 +847,7 @@ impl RenderOnce for SwitchKnob {
 }
 
 pub use crate::PANEL_MARGIN;
-use crate::PANEL_SHADOW_BLUR;
+use crate::{PANEL_SHADOW_ALPHA, PANEL_SHADOW_BLUR};
 
 /// パネル基底の配置: ウィンドウの縁から [`PANEL_MARGIN`] 内側を埋め、その余白に影を描画する。
 /// サイズは `absolute` と `inset` で決定されるため、呼び出し側は `.relative()` や `.size_full()` で上書きしない
@@ -861,7 +861,7 @@ fn panel_base(div: Div) -> Div {
 /// パネルの影（オフセットなしで四方へ拡散）。
 fn panel_shadow() -> Vec<gpui::BoxShadow> {
     vec![gpui::BoxShadow {
-        color: gpui::hsla(0.0, 0.0, 0.0, 0.4),
+        color: gpui::hsla(0.0, 0.0, 0.0, PANEL_SHADOW_ALPHA),
         offset: point(px(0.0), px(0.0)),
         blur_radius: px(PANEL_SHADOW_BLUR),
         spread_radius: px(0.0),

@@ -47,14 +47,20 @@ pub(crate) fn smoothing(dt: f32) -> f32 {
     1.0 - (1.0 - SMOOTH).powf(dt / TICK_MIN)
 }
 
-/// パネル面の縁とクアッドの縁の間隔（m。シャドウマージン）。
-// ponytail: キャプチャ中は全面描画でマージンなし。マージンなしのケースが他にも出たらパネルにフラグを持たせる。
-pub(crate) fn face_margin(p: &Panel) -> f32 {
-    if p.capture {
+/// パネル面の縁とクアッドの縁の間隔（テクスチャの画素。シャドウマージン）。取り込み中の配信映像は全面が面なので無いが、
+/// 面に重ねる子（[`Parent::over`]）は取り込み中でも影を持つ（[`with_shadow`]）。
+// ponytail: キャプチャで決める。マージンの有無が入力の扱いと食い違うケースが他にも出たらパネルにフラグを持たせる。
+pub(crate) fn margin_px(p: &Panel) -> f32 {
+    if p.capture && !p.parent.is_some_and(|q| q.over.is_some()) {
         0.0
     } else {
-        PANEL_MARGIN * p.size.y / p.resolution.1 as f32
+        PANEL_MARGIN
     }
+}
+
+/// パネル面の縁とクアッドの縁の間隔（m。[`margin_px`]）。
+pub(crate) fn face_margin(p: &Panel) -> f32 {
+    margin_px(p) * p.size.y / p.resolution.1 as f32
 }
 
 /// `at` に配置し表面（+Z）を `eye` に向け、上（+Y）を `up` に近づけた回転。`up` と視線が平行なら `None`。

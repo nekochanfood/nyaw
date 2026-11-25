@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use animation::{Animation, Motion, Transition};
-use design::{BRACKET_PAD_PX, PANEL_MARGIN};
+use design::{BRACKET_PAD_PX, PANEL_MARGIN, PANEL_SHADOW_ALPHA, PANEL_SHADOW_BLUR};
 use subsystems::{Frame, Subsystems, desktop::Cursor, rendering::Surface, vr};
 
 use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
@@ -30,6 +30,7 @@ mod status;
 
 pub use corner::ResizeLimits;
 use corner::*;
+pub use family::with_shadow;
 use family::*;
 use frame::*;
 pub use geometry::anchored;
@@ -62,8 +63,9 @@ pub struct Parent {
     /// 変更時は滑らかに遷移する。ダッシュボード上の通知など、はめ込み画面と並べて上に表示するもの。
     pub stack: bool,
     /// 親の面の一部に重ねる子（配信しているウィンドウのメニューなど）。値は親の面の左上を原点、面の幅・高さを 1 とした
-    /// 子の左上と大きさ（`[x, y, 幅, 高さ]`。面の外へはみ出してよい）。親を暗転させず入力も止めない。
-    /// 親の大きさが変わっても、毎 tick この範囲の手前に置き直して大きさも合わせる。
+    /// 子の面の左上と大きさ（`[x, y, 幅, 高さ]`。面の外へはみ出してよい）。親を暗転させず入力も止めない。
+    /// 親の大きさが変わっても、毎 tick 子の面をこの範囲に合わせる。子は取り込み中でも影の余白を持つ（[`with_shadow`]）。
+    /// 奥行きと描画順は [`OVER_LIFT`]・[`OVER_SORT`]。
     pub over: Option<[f32; 4]>,
 }
 
@@ -204,14 +206,21 @@ const CURSOR_LIFT: f32 = LIFT_STEP * 2.0;
 // ponytail: 固定値。実機でちらつくなら拡大する。
 const LIFT_STEP: f32 = 0.001;
 /// 描画順。最奥が空間全体の暗転幕（[`Overlay::set_veil`]）、次にドックヒント（[`Pointer::Dock`]。グラブ中のパネルと
-/// そのナビバーが常に上に重なる）、その上にパネル。
+/// そのナビバーが常に上に重なる）、その上にパネル、親の前に描く子（[`HUD_SORT`]）、面に重ねる子（[`OVER_SORT`]）。
+/// どのランタイムも奥行きではなく描画順で重ねる（同じ順どうしの前後はランタイムしだいで、重なった所がちらつく）。
 const VEIL_SORT: u32 = 0;
 const GHOST_SORT: u32 = 1;
 const PANEL_SORT: u32 = 2;
-const LASER_SORT: u32 = 3;
-const DRAG_SORT: u32 = 4;
-const CURSOR_SORT: u32 = 5;
-const TOOLTIP_SORT: u32 = 6;
+/// 面に重ねる子（[`Parent::over`]）の描画順の始まり。同じ親の面に重ねる子どうしは、後から開いたものほど 1 段ずつ上にする
+/// （OS のメニューと同じく、新しく出たものが上）。親の前に描く子（ナビバーなど）より上にし、親の下へはみ出したメニューが
+/// ナビバーに隠れないようにする。
+const OVER_SORT: u32 = HUD_SORT + 1;
+/// 面に重ねる子に別々の描画順を割り当てる段数。これより多く重なったら、いちばん上の段を共有する。
+const OVER_LAYERS: u32 = 8;
+const LASER_SORT: u32 = OVER_SORT + OVER_LAYERS;
+const DRAG_SORT: u32 = LASER_SORT + 1;
+const CURSOR_SORT: u32 = LASER_SORT + 2;
+const TOOLTIP_SORT: u32 = LASER_SORT + 3;
 /// グラブ移動で目標へ 1/120 秒（[`TICK_MIN`]）あたり近づく割合。経過時間で換算するためフレーム落ちでも追従速度は一定。
 /// 目標との差が [`SNAP`] 未満なら目標にスナップする。
 const SMOOTH: f32 = 0.3;
@@ -226,8 +235,9 @@ pub const VEIL: f32 = 0.5;
 pub const SLOT_GAP: f32 = 0.02;
 /// スロット子が入れ替わりで退出するときの後退距離（m）。
 const SLOT_RETREAT: f32 = 0.15;
-/// 表示専用子の描画順。角は親中心より頭から遠いため、深度ソートだと親の裏に回り不可視になる。
-const HUD_SORT: u32 = LASER_SORT;
+/// 親の前に描く子（表示専用子・ナビバー・ポップオーバー・スタック子）の描画順。角は親中心より頭から遠いため、
+/// 頭からの距離で前後を決めるランタイムだと、親と同じ順では親の裏に回り不可視になる。
+const HUD_SORT: u32 = PANEL_SORT + 1;
 /// 手ブレ抑制の既定値: レーザー方向が 1 tick ごとに前回方向を保持する割合（0 = 抑制なし）。
 /// ヒット判定もこの方向で行うため、クリック位置の揺れも抑制される。
 // ponytail: tick 単位のためリフレッシュレートで効きが変わる。必要なら経過時間ベースに変更する。
@@ -263,6 +273,13 @@ impl Panel {
             return self.size;
         }
         self.size * (0.75 + 0.25 * self.opacity)
+    }
+
+    /// 面の範囲（テクスチャの画素。影の余白を除いた左上と大きさ）。
+    pub fn face(&self) -> (Vec2, Vec2) {
+        let (w, h) = (self.resolution.0 as f32, self.resolution.1 as f32);
+        let pad = margin_px(self);
+        (Vec2::splat(pad), Vec2::new(w, h) - Vec2::splat(2.0 * pad))
     }
 
     /// パネル上のピクセル座標（左上原点）をトラッキング空間の点に変換する。ヒット判定の逆変換。

@@ -5,6 +5,9 @@ use super::*;
 /// 表示専用子（[`Parent::hud`]）とナビバーを親面からどれだけ手前（m）に配置するか。
 /// その上を指したカーソル（[`CURSOR_LIFT`]）より奥にする。
 const HUD_LIFT: f32 = LIFT_STEP;
+/// 面に重ねる子（[`Parent::over`]）を親面からどれだけ手前（m）に置くか。ナビバー・表示専用子（[`HUD_LIFT`]）より手前にし、
+/// 同じ親に重ねる子どうしも、後から開いたものほど [`LIFT_STEP`] ずつ手前にする（描画順 [`OVER_SORT`] と同じ並び）。
+const OVER_LIFT: f32 = HUD_LIFT + LIFT_STEP;
 /// スロット子をアンドックしたとき、離脱を明示するために面の法線方向（頭側）へ移動する距離（m）。
 const UNDOCK_PULL: f32 = 0.2;
 /// スタック子（[`Parent::stack`]）が変化した配置先へ追従する時定数（秒）。
@@ -49,9 +52,8 @@ impl Overlay {
         q.parent = parent;
         // 表示専用子・ポップオーバー（固定して外側プレスで閉じる子）・スタック子は他パネルより前に描画する。ランタイムは
         // 深度ではなく描画順で合成するため、同一順だと重なり部分がフリッカーする（ドックパネル上のメニューや、ドックパネルの
-        // 出入りで上に移動するスタック子など）。
-        let front =
-            parent.is_some_and(|p| p.hud || p.stack || (p.docked && p.dismiss) || p.over.is_some());
+        // 出入りで上に移動するスタック子など）。面に重ねる子の描画順は cover が決める。
+        let front = parent.is_some_and(|p| p.hud || p.stack || (p.docked && p.dismiss));
         q.surface
             .set_sort(vr, if front { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
@@ -61,7 +63,8 @@ impl Overlay {
         self.cover(vr, id);
     }
 
-    /// 親の面の一部に重ねる子（[`Parent::over`]）を、その範囲の手前に置き、大きさをその範囲に合わせる。
+    /// 親の面の一部に重ねる子（[`Parent::over`]）の面をその範囲に合わせ、親の前に置く。同じ親に重ねる子のうち、
+    /// 先に開いた（PanelId の小さい）ものの数だけ、描画順を上げて手前に出す。
     fn cover(&mut self, vr: &mut dyn VrBackend, id: PanelId) {
         let Some(Parent {
             panel,
@@ -71,22 +74,44 @@ impl Overlay {
         else {
             return;
         };
+        let below = self
+            .present
+            .iter()
+            .filter(|&&c| {
+                let q = &self.panels[c];
+                c < id
+                    && !q.closed
+                    && q.parent
+                        .is_some_and(|q| q.panel == panel && q.over.is_some())
+            })
+            .count() as u32;
+        let layer = below.min(OVER_LAYERS - 1);
         let outer = &self.panels[panel];
         let face = outer.size - Vec2::splat(2.0 * face_margin(outer));
         let offset = Pose::new(
             Vec3::new(
                 (x + w / 2.0 - 0.5) * face.x,
                 (0.5 - y - h / 2.0) * face.y,
-                HUD_LIFT,
+                OVER_LIFT + LIFT_STEP * layer as f32,
             ),
             Quat::IDENTITY,
         );
-        let (pose, size) = (outer.pose * offset, face * Vec2::new(w, h));
+        let pose = outer.pose * offset;
         let p = &mut self.panels[id];
+        // 影の余白（面の外）の分だけ広げる。余白は画素で決まるので、面の画素数との比で広げる。
+        let (res, pad) = (
+            Vec2::new(p.resolution.0 as f32, p.resolution.1 as f32),
+            2.0 * margin_px(p),
+        );
+        let size = face * Vec2::new(w, h) * res / (res - Vec2::splat(pad)).max(Vec2::ONE);
         (p.offset, p.pose) = (offset, pose);
         if !p.size.abs_diff_eq(size, 1e-6) {
             p.size = size;
             p.surface.set_width(vr, p.displayed_size().x);
+        }
+        let sort = OVER_SORT + layer;
+        if p.surface.sort() != sort {
+            p.surface.set_sort(vr, sort);
         }
     }
 
@@ -398,6 +423,49 @@ pub(crate) fn carried(panels: &[Panel], id: PanelId) -> Vec<PanelId> {
         cur = panel;
     }
     v
+}
+
+/// 不透明な画像 `rgba`（`width`×`height`）の周りに、パネルと同じ影（ずらさず四方へ広がる。ぼかしの σ
+/// [`PANEL_SHADOW_BLUR`]、濃さ [`PANEL_SHADOW_ALPHA`]）を描いた余白（[`PANEL_MARGIN`]）を足した画像と、その大きさ。
+/// GPUI で描かない画像（配信しているウィンドウのメニュー）を、面に重ねる子（[`Parent::over`]）として出すときに使う。
+pub fn with_shadow(width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
+    let pad = PANEL_MARGIN as u32;
+    let (w, h) = (width + 2 * pad, height + 2 * pad);
+    // 長方形の影は縦と横に分けて求められる。軸ごとに、面の範囲をガウスでぼかしたときに掛かる割合を求め、掛け合わせる。
+    let r = pad as i64;
+    let kernel: Vec<f32> = (-r..=r)
+        .map(|k| (-((k * k) as f32) / (2.0 * PANEL_SHADOW_BLUR * PANEL_SHADOW_BLUR)).exp())
+        .collect();
+    let total: f32 = kernel.iter().sum();
+    let blur = |len: u32, inside: u32| -> Vec<f32> {
+        let face = r..r + inside as i64;
+        (0..len as i64)
+            .map(|i| {
+                (-r..=r)
+                    .zip(&kernel)
+                    .filter(|(k, _)| face.contains(&(i + k)))
+                    .map(|(_, g)| g)
+                    .sum::<f32>()
+                    / total
+            })
+            .collect()
+    };
+    let (across, down) = (blur(w, width), blur(h, height));
+    let mut out = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let (ix, iy) = (x.wrapping_sub(pad), y.wrapping_sub(pad));
+            if ix < width && iy < height {
+                let i = ((iy * width + ix) * 4) as usize;
+                out.extend_from_slice(&rgba[i..i + 4]);
+            } else {
+                // 黒なので、事前乗算アルファでもそのままの値でも同じ。
+                let a = PANEL_SHADOW_ALPHA * across[x as usize] * down[y as usize];
+                out.extend_from_slice(&[0, 0, 0, (a * 255.0).round() as u8]);
+            }
+        }
+    }
+    (w, h, out)
 }
 
 #[cfg(test)]

@@ -525,34 +525,114 @@ fn hud_child_sits_in_the_top_left_corner_without_taking_input() {
     assert!(events.iter().all(|e| e.panel == 0));
 }
 
-/// 面に重ねる子は、親の面の指定した範囲の手前にその大きさで置かれ、親の大きさが変わっても範囲に付いてくる。
-/// 親を暗くせず、重なった所を押すと子に届く。
+/// 面に重ねる子（`id`）を、配信中の親（ID 0）の面の `area` に重ねる。子は取り込み中でも影の余白を持つ。
+fn over(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay, id: PanelId, area: [f32; 4]) {
+    ov.set_panel_capture(id, true);
+    ov.set_parent(
+        &mut vr.backend,
+        id,
+        Some(Parent {
+            panel: 0,
+            over: Some(area),
+            ..Default::default()
+        }),
+    );
+}
+
+/// 面に重ねる子は、面（影の余白の内側）が親の面の指定した範囲に重なるよう、ナビバーより手前に置かれる。
+/// 親の大きさが変わっても範囲に付いてくる。親を暗くせず、重なった所を押すと子に届く。
 #[test]
 fn over_child_covers_its_area_of_the_parent_and_takes_input() {
     let (mut vr, mut ov) = with_child(false);
     ov.set_panel_capture(0, true);
-    ov.set_parent(
-        &mut vr.backend,
-        1,
-        Some(Parent {
-            panel: 0,
-            over: Some([0.5, 0.25, 0.25, 0.5]),
-            ..Default::default()
-        }),
+    // 面は 50×100 画素。左右上下に影の余白が付く。
+    let pad = 2.0 * PANEL_MARGIN;
+    ov.panels[1].resolution = (50 + pad as u32, 100 + pad as u32);
+    over(&mut vr, &mut ov, 1, [0.5, 0.25, 0.25, 0.5]);
+    let grown = |face: Vec2| face * Vec2::new((50.0 + pad) / 50.0, (100.0 + pad) / 100.0);
+    assert!(
+        ov.panel(1)
+            .size
+            .abs_diff_eq(grown(Vec2::new(0.25, 0.5)), 1e-5)
     );
-    assert_eq!(ov.panel(1).size, Vec2::new(0.25, 0.5));
-    let at_area = Vec3::new(0.125, 0.0, -1.0 + HUD_LIFT);
+    let at_area = Vec3::new(0.125, 0.0, -1.0 + OVER_LIFT);
     assert!(ov.panel(1).pose.position.abs_diff_eq(at_area, 1e-5));
     ov.panels[0].size = Vec2::new(2.0, 1.0);
     ov.tick(&mut vr);
-    assert_eq!(ov.panel(1).size, Vec2::new(0.5, 0.5));
-    let at_area = Vec3::new(0.25, 0.0, -1.0 + HUD_LIFT);
+    assert!(
+        ov.panel(1)
+            .size
+            .abs_diff_eq(grown(Vec2::new(0.5, 0.5)), 1e-5)
+    );
+    let at_area = Vec3::new(0.25, 0.0, -1.0 + OVER_LIFT);
     assert!(ov.panel(1).pose.position.abs_diff_eq(at_area, 1e-5));
+    assert_eq!(
+        ov.panel(1).face(),
+        (Vec2::splat(PANEL_MARGIN), Vec2::new(50.0, 100.0))
+    );
     assert_eq!(ov.panel(0).dim_to, 0.0);
     controller(&mut vr, at(0.25, 0.0, 0.0), &[("trigger/value", 1.0)]);
     let events = ov.tick(&mut vr);
     assert!(!events.is_empty());
     assert!(events.iter().all(|e| e.panel == 1));
+}
+
+/// 同じ親の面に重ねる子どうしは、後から開いたものほど描画順が 1 段上で、1 段手前にある（重なった所がちらつかない）。
+/// どれもナビバーより上。先の子が閉じたら段を詰める。
+#[test]
+fn later_over_children_stack_above_earlier_ones() {
+    let (mut vr, mut ov) = with_child(false);
+    ov.set_panel_capture(0, true);
+    let later = ov
+        .add_panel(
+            &mut vr.backend,
+            "later",
+            at(0.0, 0.0, -0.9),
+            Vec2::new(0.4, 0.4),
+            (60, 60),
+        )
+        .unwrap();
+    for (id, area) in [(1, [0.1, 0.1, 0.3, 0.3]), (later, [0.3, 0.3, 0.3, 0.3])] {
+        over(&mut vr, &mut ov, id, area);
+    }
+    ov.tick(&mut vr);
+    let sort = |vr: &Subsystems<MockBackend>, key: &str| {
+        vr.backend
+            .overlays
+            .iter()
+            .find(|o| o.key == key)
+            .unwrap()
+            .sort
+    };
+    assert_eq!(
+        (sort(&vr, "child"), sort(&vr, "later")),
+        (OVER_SORT, OVER_SORT + 1)
+    );
+    let lift = |ov: &Overlay, id: PanelId| ov.panel(id).pose.position.z + 1.0;
+    assert!((lift(&ov, later) - lift(&ov, 1) - LIFT_STEP).abs() < 1e-6);
+    ov.close(&mut vr.backend, 1);
+    ov.tick(&mut vr);
+    assert_eq!(sort(&vr, "later"), OVER_SORT);
+    assert!((lift(&ov, later) - OVER_LIFT).abs() < 1e-6);
+}
+
+/// メニューに足す影は、画像を真ん中にそのまま置き、余白はパネルと同じ濃さから外へ向かって薄くなる黒にする。
+#[test]
+fn with_shadow_frames_the_image_with_a_fading_panel_shadow() {
+    let (w, h, rgba) = with_shadow(64, 64, &[200; 64 * 64 * 4]);
+    let pad = PANEL_MARGIN as u32;
+    assert_eq!((w, h), (64 + 2 * pad, 64 + 2 * pad));
+    let px = |x: u32, y: u32| {
+        let i = ((y * w + x) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+    };
+    assert_eq!(px(pad, pad), [200; 4]);
+    assert_eq!(px(pad + 63, pad + 63), [200; 4]);
+    let near = px(pad - 1, pad + 32);
+    let far = px(pad - 12, pad + 32);
+    assert_eq!(&near[..3], &[0, 0, 0]);
+    assert!(near[3] > far[3] && far[3] > px(0, 0)[3], "{near:?} {far:?}");
+    assert!(near[3] <= (PANEL_SHADOW_ALPHA * 255.0) as u8);
 }
 
 #[test]
