@@ -616,18 +616,18 @@ fn later_over_children_stack_above_earlier_ones() {
     assert!((lift(&ov, later) - OVER_LIFT).abs() < 1e-6);
 }
 
-/// メニューに足す影は、画像を真ん中にそのまま置き、余白はパネルと同じ濃さから外へ向かって薄くなる黒にする。
+/// メニューに足す影は、画像を真ん中に不透明のまま置き、余白はパネルと同じ濃さから外へ向かって薄くなる黒にする。
 #[test]
 fn with_shadow_frames_the_image_with_a_fading_panel_shadow() {
-    let (w, h, rgba) = with_shadow(64, 64, &[200; 64 * 64 * 4]);
+    let (w, h, rgba) = with_shadow(64, 64, &[200; 64 * 64 * 4], 0.0);
     let pad = PANEL_MARGIN as u32;
     assert_eq!((w, h), (64 + 2 * pad, 64 + 2 * pad));
     let px = |x: u32, y: u32| {
         let i = ((y * w + x) * 4) as usize;
         [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
     };
-    assert_eq!(px(pad, pad), [200; 4]);
-    assert_eq!(px(pad + 63, pad + 63), [200; 4]);
+    assert_eq!(px(pad, pad), [200, 200, 200, 255]);
+    assert_eq!(px(pad + 63, pad + 63), [200, 200, 200, 255]);
     let near = px(pad - 1, pad + 32);
     let far = px(pad - 12, pad + 32);
     assert_eq!(&near[..3], &[0, 0, 0]);
@@ -901,4 +901,22 @@ fn nav_bar_and_children_follow_the_device_their_root_rides_on() {
         assert!(pose.position.abs_diff_eq(p.position, 1e-5), "{id}");
         assert!(pose.orientation.abs_diff_eq(p.orientation, 1e-5), "{id}");
     }
+}
+
+/// 角丸のメニューは、角の外側を透かしてその下に影を見せ、辺の中ほどはそのまま描く。
+#[test]
+fn with_shadow_cuts_rounded_corners_out_of_the_image() {
+    let (w, _, rgba) = with_shadow(64, 64, &[200; 64 * 64 * 4], 8.0);
+    let pad = PANEL_MARGIN as u32;
+    let px = |x: u32, y: u32| {
+        let i = ((y * w + x) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+    };
+    let corner = px(pad, pad);
+    assert!(
+        corner[0] < 20 && corner[3] > 0 && corner[3] < 128,
+        "{corner:?}"
+    );
+    assert_eq!(px(pad + 32, pad), [200, 200, 200, 255]);
+    assert_eq!(px(pad + 8, pad + 8), [200, 200, 200, 255]);
 }

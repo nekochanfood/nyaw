@@ -26,7 +26,10 @@ use ::windows::{
         Graphics::{
             Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP},
             Direct3D11::*,
-            Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
+            Dwm::{
+                DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DWMWA_WINDOW_CORNER_PREFERENCE,
+                DWMWCP_ROUND, DWMWCP_ROUNDSMALL, DwmGetWindowAttribute,
+            },
             Dxgi::IDXGIDevice,
             Gdi::*,
         },
@@ -45,7 +48,10 @@ use ::windows::{
             },
         },
         UI::{
-            HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext},
+            HiDpi::{
+                DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow,
+                SetThreadDpiAwarenessContext,
+            },
             Input::KeyboardAndMouse::*,
             Shell::{
                 BHID_EnumItems, ExtractIconExW, FOLDERID_AppsFolder, IEnumShellItems, IShellItem,
@@ -234,6 +240,36 @@ fn touching<T>(bounds: RECT, windows: Vec<(T, RECT)>) -> Vec<(T, RECT)> {
         .zip(kept)
         .filter_map(|(w, k)| k.then_some(w))
         .collect()
+}
+
+/// DWM がウィンドウの角を丸めて見せる半径（画素。丸めなければ 0）。Windows 11 のメニューは小さく丸める指定になっている。
+/// 指定を読めない（Windows 10 など）なら丸めない。
+unsafe fn corner_radius(hwnd: HWND) -> f32 {
+    let mut preference = 0i32;
+    let read = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            &mut preference as *mut _ as _,
+            size_of::<i32>() as u32,
+        )
+    };
+    if read.is_err() {
+        return 0.0;
+    }
+    rounding(preference, unsafe { GetDpiForWindow(hwnd) })
+}
+
+/// 角の丸めの指定（`DWMWA_WINDOW_CORNER_PREFERENCE`）と DPI から、丸める半径（画素）。半径は 96 DPI で、大きく丸めるなら 8px、
+/// 小さく丸めるなら 4px（実機のメニューの角で確かめた）。
+// ponytail: 既定（OS に任せる）は丸めない扱い。OS が丸めるのに角に背景が写るウィンドウが出たら、ウィンドウの種類で決める。
+fn rounding(preference: i32, dpi: u32) -> f32 {
+    let base = match preference {
+        p if p == DWMWCP_ROUND.0 => 8.0,
+        p if p == DWMWCP_ROUNDSMALL.0 => 4.0,
+        _ => 0.0,
+    };
+    base * dpi as f32 / 96.0
 }
 
 /// 画面の `rect`（仮想画面の画素）を不透明な RGBA として切り出す。メニューは最前面に出るので、そこに映っているのはメニューそのもの。
@@ -1044,6 +1080,7 @@ impl Session for Capture {
                         (r.bottom - r.top) as f32 / height,
                     ],
                     image: unsafe { screen_rgba(r) }?,
+                    radius: unsafe { corner_radius(hwnd) },
                 })
             })
             .collect();
@@ -1360,6 +1397,7 @@ impl Drop for MouseDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::windows::Win32::Graphics::Dwm::{DWMWCP_DEFAULT, DWMWCP_DONOTROUND};
 
     /// 存在しないアプリの起動は、OS のダイアログを出さずにエラーを返す。
     #[test]
@@ -1404,6 +1442,15 @@ mod tests {
         );
         let names: Vec<_> = found.iter().map(|(n, _)| *n).collect();
         assert_eq!(names, ["submenu", "menu"]);
+    }
+
+    /// 角の丸めは指定と DPI で決まり、丸めない指定と OS に任せる指定（既定）は 0。
+    #[test]
+    fn corners_round_by_preference_and_dpi() {
+        assert_eq!(rounding(DWMWCP_ROUNDSMALL.0, 96), 4.0);
+        assert_eq!(rounding(DWMWCP_ROUND.0, 144), 12.0);
+        assert_eq!(rounding(DWMWCP_DONOTROUND.0, 96), 0.0);
+        assert_eq!(rounding(DWMWCP_DEFAULT.0, 96), 0.0);
     }
 
     #[test]

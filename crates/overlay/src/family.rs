@@ -425,47 +425,60 @@ pub(crate) fn carried(panels: &[Panel], id: PanelId) -> Vec<PanelId> {
     v
 }
 
-/// 不透明な画像 `rgba`（`width`×`height`）の周りに、パネルと同じ影（ずらさず四方へ広がる。ぼかしの σ
-/// [`PANEL_SHADOW_BLUR`]、濃さ [`PANEL_SHADOW_ALPHA`]）を描いた余白（[`PANEL_MARGIN`]）を足した画像と、その大きさ。
+/// 不透明な画像 `rgba`（`width`×`height`）を、角の半径 `radius`（画素）の角丸に切り抜き、周りにパネルと同じ影（ずらさず
+/// 四方へ広がる。ぼかしの σ [`PANEL_SHADOW_BLUR`]、濃さ [`PANEL_SHADOW_ALPHA`]）を描いた余白（[`PANEL_MARGIN`]）を
+/// 足した画像と、その大きさ。角丸の外側は透け、その下の影が見える。出力は事前乗算アルファ。
 /// GPUI で描かない画像（配信しているウィンドウのメニュー）を、面に重ねる子（[`Parent::over`]）として出すときに使う。
-pub fn with_shadow(width: u32, height: u32, rgba: &[u8]) -> (u32, u32, Vec<u8>) {
+pub fn with_shadow(width: u32, height: u32, rgba: &[u8], radius: f32) -> (u32, u32, Vec<u8>) {
     let pad = PANEL_MARGIN as u32;
     let (w, h) = (width + 2 * pad, height + 2 * pad);
-    // 長方形の影は縦と横に分けて求められる。軸ごとに、面の範囲をガウスでぼかしたときに掛かる割合を求め、掛け合わせる。
-    let r = pad as i64;
-    let kernel: Vec<f32> = (-r..=r)
-        .map(|k| (-((k * k) as f32) / (2.0 * PANEL_SHADOW_BLUR * PANEL_SHADOW_BLUR)).exp())
-        .collect();
-    let total: f32 = kernel.iter().sum();
-    let blur = |len: u32, inside: u32| -> Vec<f32> {
-        let face = r..r + inside as i64;
-        (0..len as i64)
-            .map(|i| {
-                (-r..=r)
-                    .zip(&kernel)
-                    .filter(|(k, _)| face.contains(&(i + k)))
-                    .map(|(_, g)| g)
-                    .sum::<f32>()
-                    / total
-            })
-            .collect()
-    };
-    let (across, down) = (blur(w, width), blur(h, height));
+    let half = Vec2::new(width as f32, height as f32) / 2.0;
+    let radius = radius.clamp(0.0, half.min_element());
     let mut out = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
         for x in 0..w {
-            let (ix, iy) = (x.wrapping_sub(pad), y.wrapping_sub(pad));
-            if ix < width && iy < height {
-                let i = ((iy * width + ix) * 4) as usize;
-                out.extend_from_slice(&rgba[i..i + 4]);
+            // 画素の中心から角丸の縁までの距離（画素。外が正）。
+            let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - Vec2::splat(pad as f32) - half;
+            let q = at.abs() - (half - Vec2::splat(radius));
+            let d = q.max(Vec2::ZERO).length() + q.max_element().min(0.0) - radius;
+            // 縁にかかる画素は、かかった割合だけ描いて角を滑らかにする。
+            let cover = (0.5 - d).clamp(0.0, 1.0);
+            // 影は、縁からの距離をガウスでぼかした割合（まっすぐな縁では長方形をぼかした影と一致し、角では近い形になる）。
+            let shadow = if cover < 1.0 {
+                PANEL_SHADOW_ALPHA * normal_cdf(-d / PANEL_SHADOW_BLUR)
             } else {
-                // 黒なので、事前乗算アルファでもそのままの値でも同じ。
-                let a = PANEL_SHADOW_ALPHA * across[x as usize] * down[y as usize];
-                out.extend_from_slice(&[0, 0, 0, (a * 255.0).round() as u8]);
-            }
+                0.0
+            };
+            let (ix, iy) = (x.wrapping_sub(pad), y.wrapping_sub(pad));
+            let color = if ix < width && iy < height {
+                let i = ((iy * width + ix) * 4) as usize;
+                [rgba[i], rgba[i + 1], rgba[i + 2]]
+            } else {
+                [0; 3]
+            };
+            // 黒い影の上に、かかった割合の画像を重ねる。
+            let tone = |v: u8| (v as f32 * cover).round() as u8;
+            let alpha = cover + shadow * (1.0 - cover);
+            out.extend_from_slice(&[
+                tone(color[0]),
+                tone(color[1]),
+                tone(color[2]),
+                (alpha * 255.0).round() as u8,
+            ]);
         }
     }
     (w, h, out)
+}
+
+/// 標準正規分布の累積分布関数。誤差関数は Abramowitz–Stegun 7.1.26 の近似（誤差 1.5e-7）。
+fn normal_cdf(z: f32) -> f32 {
+    let x = f64::from(z) / std::f64::consts::SQRT_2;
+    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
+    let poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t
+        + 0.254829592)
+        * t;
+    let erf = (1.0 - poly * (-x * x).exp()).copysign(x);
+    (0.5 * (1.0 + erf)) as f32
 }
 
 #[cfg(test)]

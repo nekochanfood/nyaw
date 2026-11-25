@@ -47,7 +47,8 @@ fn sync_popups(
             continue;
         }
         let image = &popup.image;
-        let (w, h, rgba) = overlay::with_shadow(image.width, image.height, &image.rgba);
+        let (w, h, rgba) =
+            overlay::with_shadow(image.width, image.height, &image.rgba, popup.radius);
         let panel = match at {
             Some(i) => {
                 shown[i].0 = popup.clone();
@@ -695,6 +696,7 @@ mod tests {
                 height: 100,
                 rgba: [200; 100 * 100 * 4].into(),
             },
+            radius: 0.0,
         }
     }
 
@@ -739,7 +741,7 @@ mod tests {
             p.parent.map(|q| (q.panel, q.over)),
             Some((panel, Some(menu.area)))
         );
-        let pad = overlay::with_shadow(1, 1, &[0; 4]).0 - 1;
+        let pad = overlay::with_shadow(1, 1, &[0; 4], 0.0).0 - 1;
         assert_eq!(p.resolution, (100 + pad, 100 + pad));
         let texture = kernel
             .subsystems
@@ -754,7 +756,11 @@ mod tests {
             let i = ((y * (100 + pad) + x) * 4) as usize;
             texture[i..i + 4].to_vec()
         };
-        assert_eq!(px(pad / 2 + 50, pad / 2 + 50), [200; 4], "the menu itself");
+        assert_eq!(
+            px(pad / 2 + 50, pad / 2 + 50),
+            [200, 200, 200, 255],
+            "the menu itself"
+        );
         assert_eq!(
             &px(pad / 2 - 1, pad / 2 + 50)[..3],
             &[0, 0, 0],
