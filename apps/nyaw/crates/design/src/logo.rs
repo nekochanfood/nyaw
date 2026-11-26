@@ -1,6 +1,6 @@
 //! nyaw のロゴ。`logo(Logo::Mini).height(px(48.))` は現在のテーマ（[`Mode`]）に合う SVG を描画する。
-//! SVG の実体は `assets/logos/`（ビルドに埋め込む）。読み込みと描画は GPUI のアセットでバックグラウンドスレッドが行う。
-//! exe に埋め込むアイコンは別（`assets/icons/*.ico`、ルートの `build.rs`）。
+//! SVG の実体はリポジトリルートの `assets/logos/`（ビルドに埋め込む）。読み込みと描画は GPUI のアセットでバックグラウンドスレッドが行う。
+//! exe に埋め込むアイコンは別（リポジトリルートの `assets/icons/*.ico`、アプリの `build.rs`）。
 
 use std::sync::Arc;
 
@@ -25,13 +25,17 @@ impl Logo {
     pub fn svg(self, mode: Mode) -> &'static [u8] {
         match (self, mode) {
             (Logo::Full, Mode::Light) => {
-                include_bytes!("../../../assets/logos/Logo_Full_Light.svg")
+                include_bytes!("../../../../../assets/logos/Logo_Full_Light.svg")
             }
-            (Logo::Full, Mode::Dark) => include_bytes!("../../../assets/logos/Logo_Full_Dark.svg"),
+            (Logo::Full, Mode::Dark) => {
+                include_bytes!("../../../../../assets/logos/Logo_Full_Dark.svg")
+            }
             (Logo::Mini, Mode::Light) => {
-                include_bytes!("../../../assets/logos/Logo_Mini_Light.svg")
+                include_bytes!("../../../../../assets/logos/Logo_Mini_Light.svg")
             }
-            (Logo::Mini, Mode::Dark) => include_bytes!("../../../assets/logos/Logo_Mini_Dark.svg"),
+            (Logo::Mini, Mode::Dark) => {
+                include_bytes!("../../../../../assets/logos/Logo_Mini_Dark.svg")
+            }
         }
     }
 
