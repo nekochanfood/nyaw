@@ -122,6 +122,15 @@ fn main() {
     }
     fields.extend(mutable["light"].as_object().unwrap().keys().cloned());
 
+    // 操作部品の色（`control*`）を追加したとき、地とのコントラストの規則を書き忘れられないようにする。
+    let surfaces = root["surface"].as_array().expect("surface が見つからない");
+    for f in fields.iter().filter(|f| f.starts_with("control")) {
+        assert!(
+            surfaces.iter().any(|r| r["fg"] == f.as_str()),
+            "{f}: 置く地とのコントラストの規則が surface にない"
+        );
+    }
+
     let mut resolved: BTreeMap<&str, BTreeMap<String, (String, Srgb)>> = BTreeMap::new();
     for theme in THEMES {
         let reference = |r: &str| -> (String, Srgb) {
@@ -181,14 +190,16 @@ fn main() {
             writeln!(out, "        {}: {},", field(f), resolved[theme][f].0).unwrap();
         }
         out += "    };\n";
-        for rule in root["contrast"]
-            .as_array()
-            .unwrap()
+        for rule in ["contrast", "surface", "distinct"]
             .iter()
-            .chain(root["distinct"].as_array().unwrap())
+            .flat_map(|kind| root[*kind].as_array().unwrap())
         {
             let (fg, bg) = (rule["fg"].as_str().unwrap(), rule["bg"].as_str().unwrap());
-            let min = rule["min"].as_f64().unwrap();
+            // 下限は全テーマ共通の数値か、テーマ別の `{ "dark": .., "light": .. }`。
+            let min = rule["min"]
+                .as_f64()
+                .or_else(|| rule["min"][theme].as_f64())
+                .unwrap_or_else(|| panic!("コントラスト検査: {fg} / {bg} の min がない"));
             let c = |r: &str| {
                 resolved[theme]
                     .get(r)
