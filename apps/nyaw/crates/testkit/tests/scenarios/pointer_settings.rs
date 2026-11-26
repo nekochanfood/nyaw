@@ -55,6 +55,8 @@ fn playing(kit: &VrKit<'_, Settings>) -> usize {
 /// page (coming from the sidebar) and by pressing it, which opens the page again.
 fn cues(kit: &mut VrKit<'_, Settings>) -> (usize, usize) {
     kit.click("settings-back").hover("settings-general");
+    // 同じ種類の音は 50ms（`Cue::min_gap`）以内に続けて鳴らないため、間隔を空ける
+    std::thread::sleep(std::time::Duration::from_millis(60));
     let before = playing(kit);
     kit.hover("settings-pointer");
     let hover = playing(kit) - before;

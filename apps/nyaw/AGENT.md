@@ -210,7 +210,7 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 
 テストスイートは単体テスト、UI 検証、E2E シナリオテストに分類される。なお、重い E2E テストはローカル環境で実行し、CI ジョブには含めない。
 
-- **ワークスペース全体のテスト実行**: `cargo test --workspace` を実行する。ビルドには cmake および C++ コンパイラが必要となる。CI 環境では `cargo fmt --check`、`cargo clippy`、`cargo test` が並列ジョブとして実行される。
+- **ワークスペース全体のテスト実行**: `cargo test --workspace` を実行する。ビルドには cmake および C++ コンパイラが必要となる。CI 環境では `cargo fmt --check`、`cargo clippy`、`cargo test` が並列ジョブとして実行される。`cargo clippy` と `cargo test` は Windows と Linux の両方で実行する。OS ごとの実装はその OS でしかコンパイルされないためである。Linux の `test` は、ワークスペース外の `vendor/gpui_wgpu` のテストも実行する。表示サーバーや VR ランタイムを要する `#[ignore]` のテストは、どちらの OS でも CI では実行しない。
 - **単体テスト**: 各クレート内の `#[cfg(test)]` に記述し、自層の範囲内で完結させる。外部ランタイムとの通信は `vr::mock::MockBackend` を使用する。循環依存を防ぐため、単体テストから `testkit` を参照してはならない。
 - **シナリオテスト**: `crates/testkit/tests/` に配置する。GPUI の `.debug_selector(|| "識別名".into())` を指定して要素を探索・操作し、プロファイル名や生の座標計算をテストコードに直接書かない。
   - **全ランタイム共通テスト**: クリックやホバーなどの基本操作は `Driver` インターフェースに対して 1 回記述し、`on_every_runtime!` マクロを用いて novr および VR の両環境で網羅実行する。

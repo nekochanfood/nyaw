@@ -551,6 +551,8 @@ fn until<T>(what: &str, mut f: impl FnMut() -> Option<T>) -> T {
 #[test]
 fn wlroots_streams_and_points_through_screencopy_and_a_virtual_pointer() {
     let Some(compositor) = Compositor::start() else {
+        // CI で省略すると未検証のまま成功するため、失敗にする（XDG_RUNTIME_DIR は ci.yml で設定する）
+        assert!(std::env::var_os("CI").is_none(), "no Wayland socket in CI");
         return;
     };
     // SAFETY: このファイルのテストはこれだけで、取り込みのスレッドはこの後に起動する。

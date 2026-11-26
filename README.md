@@ -26,7 +26,7 @@ Linux 環境では、上記に加えて以下が必要です。
 
 - pkg-config と ALSA の開発用ファイル（音声出力に使用。Arch Linux では `alsa-lib`、Debian / Ubuntu では `libasound2-dev`）
 - Vulkan に対応した GPU ドライバ（パネルの描画とランタイムへの転送に使用）
-- fontconfig（書体を指定しない文字に使う書体の選択に使用）
+- fontconfig と Xlib の開発用ファイル（fontconfig は書体を指定しない文字に使う書体の選択に、Xlib は OpenXR ローダーのビルドに使用。Arch Linux では `fontconfig`、`libx11`、Debian / Ubuntu では `libfontconfig1-dev`、`libx11-dev`）
 - curl と unzip（ビルド時に Steam Audio を取得するために使用。取得できない場合、空間音響は左右のパンニングで代替されます）
 - PipeWire と libxkbcommon の開発用ファイル、および libclang（画面の配信と OS キーボードに使用。Arch Linux では `pipewire`、`libxkbcommon`、`clang`、Debian / Ubuntu では `libpipewire-0.3-dev`、`libxkbcommon-dev`、`libclang-dev`）
 
