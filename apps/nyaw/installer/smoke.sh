@@ -92,8 +92,13 @@ case $format in
     fi
     [ ! -e /usr/bin/nyaw ]
     $sudo sh "$scripts/install-package.sh" "$package" "$name" "$sha" "$format"
-    # 同じパッケージの再導入と、上書きの導入が成功すること
+    # 同じパッケージを再導入すると、ファイルが置き換わること。何もせずに正常終了すると、更新できたと誤って判断される
+    echo changed | $sudo tee /usr/lib/nyaw/update-info > /dev/null
     $sudo sh "$scripts/install-package.sh" "$package" "$name" "$sha" "$format"
+    if grep -qx changed /usr/lib/nyaw/update-info; then
+      echo "reinstalling the package did not replace its files" >&2
+      exit 1
+    fi
     # パッケージマネージャーが認識する版。プレリリースは同じ番号の正式版より古い版になる表記とする
     version=${name#nyaw-}
     version=${version%"-$suffix"}

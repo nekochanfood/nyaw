@@ -13,13 +13,18 @@ echo "$sha256  $dir/$name" | sha256sum -c - > /dev/null
 chmod 755 "$dir"
 chmod 644 "$dir/$name"
 
-# 更新の新旧はビルド番号で判定する。バージョン文字列の順序では古くなる版（-patch.<番号> など）も適用できるようにする
+# 更新の新旧はビルド番号で判定する。バージョン文字列の順序では古くなる版（-patch.<番号> など）も適用できるようにする。
+# apt と dnf は同じバージョンが導入済みだと何もせずに正常終了し、更新できたと誤って判断される。
+# そのため、同じバージョンでもファイルを置き換える指定をする
 case $format in
   deb)
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --allow-downgrades "$dir/$name"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall --allow-downgrades "$dir/$name"
     ;;
   rpm)
-    if command -v dnf > /dev/null; then
+    # 名前、バージョン、リリース、アーキテクチャが同じパッケージが導入済みか
+    if rpm -q "$(rpm -qp "$dir/$name")" > /dev/null 2>&1; then
+      rpm -U --replacepkgs --replacefiles "$dir/$name"
+    elif command -v dnf > /dev/null; then
       dnf install -y "$dir/$name"
     elif command -v zypper > /dev/null; then
       zypper --non-interactive install --allow-unsigned-rpm --oldpackage "$dir/$name"
