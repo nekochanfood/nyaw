@@ -249,6 +249,13 @@ impl Overlay {
             .collect()
     }
 
+    /// `id` を掴んでいて、はまる所に付いている（離せばはまる）。吸い付いただけなら、離すまで親は変わらない。
+    pub(crate) fn stuck(&self, id: PanelId) -> bool {
+        self.hands
+            .values()
+            .any(|h| h.dragging.is_some_and(|d| d.0 == id) && h.magnet.is_some_and(|m| m.stuck))
+    }
+
     /// はまる所に付けたまま離した画面をはめる（はまっていれば何もしない）。吸い付いた所に収まる。
     /// 離すまでの間に、ほかの画面がはまった・はめる場所が隠れた（閉じた）なら何もしない。
     pub(crate) fn land(&mut self, vr: &mut dyn VrBackend) {
