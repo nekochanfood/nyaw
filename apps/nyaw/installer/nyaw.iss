@@ -29,7 +29,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\nyaw.exe
-SetupIconFile=..\assets\icons\nyaw-light.ico
+SetupIconFile=..\..\..\assets\icons\nyaw-light.ico
 OutputDir=..\target\installer
 ; アプリの更新はリリースに添付されたこの名前のファイルをインストールする（crates/updater の is_installer）
 OutputBaseFilename=nyaw-{#AppVersion}-setup
@@ -45,8 +45,8 @@ Source: "..\target\release\nyaw.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Steam Audio。`cargo build` で crates/subsystems/audio/build.rs が配置する。存在しなければ（ダウンロード失敗時）ここでエラーになる
 Source: "..\target\release\phonon.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\target\release\steamaudio-THIRDPARTY.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\LICENSE-MIT"; DestDir: "{app}"
-Source: "..\LICENSE-APACHE"; DestDir: "{app}"
+Source: "..\..\..\LICENSE-MIT"; DestDir: "{app}"
+Source: "..\..\..\LICENSE-APACHE"; DestDir: "{app}"
 
 ; SteamVR に登録した vrmanifest（crates/subsystems/vr/AGENT.md の「SteamVR のアプリ登録」）。削除された nyaw を SteamVR が自動起動しないように
 [UninstallDelete]
