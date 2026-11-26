@@ -7,6 +7,7 @@
 mod attach;
 mod corner_resize;
 mod dashboard;
+mod dashboard_menu;
 mod desktop_stream;
 mod dialog;
 mod emoji;

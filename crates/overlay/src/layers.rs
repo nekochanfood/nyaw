@@ -41,8 +41,14 @@ fn lift(panels: &mut [Panel], order: &[PanelId], held: &[PanelId]) {
         let Some((on, _)) = lies_on(&panels[id]) else {
             continue;
         };
-        // 相手に積んだものは、相手の直後に続けて並んでいる。
-        let Some(from) = order[..i].iter().position(|&b| b == on) else {
+        // 比べるのは、相手（か相手にはめた画面）から自分の手前までに積んだもの。
+        let from = order[..i].iter().position(|&b| {
+            b == on
+                || panels[b]
+                    .parent
+                    .is_some_and(|q| q.panel == on && q.slot.is_some())
+        });
+        let Some(from) = from else {
             continue;
         };
         let (face, p) = (&panels[on], &panels[id]);
@@ -98,7 +104,9 @@ fn lies_on(p: &Panel) -> Option<(PanelId, Layer)> {
 
 /// 描くパネルを下から上の順に並べる。相手に重ねるパネル（[`lies_on`]）は相手と一まとまりにして、層・開いた順に積む
 /// （子の子は子のすぐ上）。まとまりどうしは、根元の中心が `eye` から遠い順。同じ親にはめた画面と積む子（[`Parent::slot`]）は
-/// 移動中に重なるので一つのまとまりにし、退くもの・画面・積む子の順に重ねる。
+/// 移動中に重なるので一つのまとまりにし、退くもの・画面・積む子の順に重ねる。画面をはめた親が開くダイアログ・
+/// ポップオーバー・面に重ねる子は、親から立ち上がって画面にも重なるので、親と画面の両方を積んだ後に積む
+/// （親と画面の前後は距離のまま）。
 fn stacking(panels: &mut [Panel], present: &[PanelId], eye: Vec3) -> Vec<PanelId> {
     let mut roots = Vec::new();
     let mut above: HashMap<PanelId, Vec<(Layer, PanelId)>> = HashMap::new();
@@ -111,6 +119,20 @@ fn stacking(panels: &mut [Panel], present: &[PanelId], eye: Vec3) -> Vec<PanelId
     for v in above.values_mut() {
         v.sort_unstable();
     }
+    // はめた画面のある親の、画面にも重なる子は取り分けておく。
+    let mut raised = Vec::new();
+    for (&on, v) in &mut above {
+        let docked = |&id: &PanelId| {
+            panels[id]
+                .parent
+                .is_some_and(|q| q.panel == on && q.slot.is_some())
+        };
+        if roots.iter().any(docked) {
+            let from = v.partition_point(|&(layer, _)| layer < Layer::Dialog);
+            raised.push((on, v.split_off(from)));
+        }
+    }
+    raised.sort_unstable_by_key(|&(on, _)| on);
     // まとまりの鍵は、はめた画面なら親、それ以外は自分。
     let mut groups: HashMap<(bool, PanelId), Vec<PanelId>> = HashMap::new();
     for id in roots {
@@ -148,18 +170,40 @@ fn stacking(panels: &mut [Panel], present: &[PanelId], eye: Vec3) -> Vec<PanelId
         .collect();
     groups.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
     let mut order = Vec::with_capacity(present.len());
+    // 画面のまとまりを積み終えた親。
+    let mut screens = Vec::new();
     for (.., members) in groups {
+        if let Some(q) = panels[members[0]].parent.filter(|q| q.slot.is_some()) {
+            screens.push(q.panel);
+        }
         for id in members {
-            let mut next = vec![id];
-            while let Some(id) = next.pop() {
-                order.push(id);
-                if let Some(v) = above.remove(&id) {
-                    next.extend(v.into_iter().rev().map(|(_, c)| c));
-                }
+            pile(id, &mut above, &mut order);
+        }
+        while let Some(i) = raised
+            .iter()
+            .position(|(on, _)| screens.contains(on) && order.contains(on))
+        {
+            for (_, id) in raised.remove(i).1 {
+                pile(id, &mut above, &mut order);
             }
         }
     }
     order
+}
+
+/// `id` と、その上に重ねるもの（子の子は子のすぐ上）を `order` に積む。
+fn pile(
+    id: PanelId,
+    above: &mut HashMap<PanelId, Vec<(Layer, PanelId)>>,
+    order: &mut Vec<PanelId>,
+) {
+    let mut next = vec![id];
+    while let Some(id) = next.pop() {
+        order.push(id);
+        if let Some(v) = above.remove(&id) {
+            next.extend(v.into_iter().rev().map(|(_, c)| c));
+        }
+    }
 }
 
 impl Overlay {

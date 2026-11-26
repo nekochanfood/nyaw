@@ -253,3 +253,33 @@ fn a_tilted_child_keeps_its_requested_depth() {
     );
     assert!(sort(&vr, "tilted") > sort(&vr, "main"));
 }
+
+/// 親が開いたポップオーバーは、親にはめた画面にも重なるので、親が画面より遠くても画面より上。
+/// 親と画面の前後は変えず、親のナビバーは画面の下のまま。
+#[test]
+fn a_popover_is_drawn_over_the_screens_docked_to_its_owner() {
+    let (mut vr, mut ov) = setup();
+    // ダッシュボードと同じく、親（バー役）は目より下で、はめた画面の方が頭に近い。
+    ov.set_pose(0, at(0.0, -0.8, -1.0));
+    let screen = add(&mut vr, &mut ov, "screen", at(0.0, 0.0, -1.0));
+    let screen_bar = add(&mut vr, &mut ov, "screen bar", at(0.0, 0.2, -0.8));
+    ov.set_nav_bar(&mut vr.backend, screen_bar, screen);
+    ov.set_parent(
+        &mut vr.backend,
+        screen,
+        Some(Parent {
+            panel: 0,
+            docked: true,
+            slot: Some(0.0),
+            ..Default::default()
+        }),
+    );
+    let bar = add(&mut vr, &mut ov, "bar", at(0.0, -0.5, -1.0));
+    ov.set_nav_bar(&mut vr.backend, bar, 0);
+    popover(&mut vr, &mut ov, "menu", 0.03);
+    ov.tick(&mut vr);
+    let far = |id: PanelId| ov.panel(id).pose.position.length();
+    assert!(far(screen) < far(0));
+    let order = ["main", "bar", "screen", "screen bar", "menu"].map(|k| sort(&vr, k));
+    assert!(order.is_sorted_by(|a, b| a < b), "{order:?}");
+}
