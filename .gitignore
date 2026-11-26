@@ -1,5 +1,6 @@
-/target
-/target-*
-
 # ローカルのネストされた worktree
 /.worktrees/
+
+# pnpm
+node_modules/
+.pnpm/

@@ -9,3 +9,9 @@ runtimes = "run -q -p testkit --bin runtimes --"
 # MSVC の link.exe より高速。テストバイナリが多いため、リンク時間がビルド全体の大きな割合を占める
 [target.x86_64-pc-windows-msvc]
 linker = "rust-lld.exe"
+
+# >>> pnpm-managed cargo sources >>>
+[[include]]
+path = "../.pnpm/crates/config.toml"
+optional = true
+# <<< pnpm-managed cargo sources <<<
