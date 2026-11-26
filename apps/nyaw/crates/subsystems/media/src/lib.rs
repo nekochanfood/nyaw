@@ -1,4 +1,5 @@
-//! 再生中のメディア（音楽・動画）の情報取得と操作。Windows バックエンドは GSMTC（`GlobalSystemMediaTransportControlsSessionManager`）を使用する。
+//! 再生中のメディア（音楽・動画）の情報取得と操作。バックエンドは、Windows では GSMTC
+//! （`GlobalSystemMediaTransportControlsSessionManager`）、Linux では MPRIS（D-Bus）を使用する。
 //! OS への問い合わせ・画像の読み込みとぼかし処理はワーカースレッドが実行し、メインスレッドは最新の結果を
 //! 参照するのみ（[`Media::now`]）。操作（[`Command`]）もワーカーへ送信するだけで待機しない。
 
@@ -12,6 +13,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(windows)]
 mod windows;
 
@@ -115,7 +118,6 @@ type Pick = (String, usize);
 
 /// OS への 1 回の問い合わせ結果（画像は読み込み前の状態）。
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(windows), allow(dead_code))]
 struct Raw {
     title: String,
     artist: String,
@@ -149,7 +151,6 @@ impl Raw {
 }
 
 /// `sessions` 内で `pick` に該当するセッションのインデックスを返す。該当なし（終了済み）の場合は `None`。
-#[cfg_attr(not(windows), allow(dead_code))]
 fn picked(sessions: &[String], pick: Option<&Pick>) -> Option<usize> {
     let (id, nth) = pick?;
     sessions
@@ -161,15 +162,14 @@ fn picked(sessions: &[String], pick: Option<&Pick>) -> Option<usize> {
 }
 
 /// OS 固有の問い合わせバックエンド。ワーカースレッドのみが保持する。
-#[cfg_attr(not(windows), allow(dead_code))]
 trait Backend {
     /// 現在再生中（一時停止中を含む）のメディアがあればその情報を返す。`pick` のセッションがあればそれを、なければ OS が
     /// 最も関連性が高いと判断したものを取得し、以後の操作（[`Backend::command`]）もそのセッションに送信する。
     fn read(&mut self, pick: Option<&Pick>) -> Option<Raw>;
     /// 直前の [`Backend::read`] で取得したジャケット画像のファイル内容。
     fn art(&mut self) -> Option<Vec<u8>>;
-    /// アプリ `id` の表示名、アイコン画像のファイル内容、および実行ファイル名（[`App::exe`]）を返す。
-    fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>, Option<String>);
+    /// アプリ `id` の表示名、アイコン、および実行ファイル名（[`App::exe`]）を返す。
+    fn app(&mut self, id: &str) -> (String, Option<Image>, Option<String>);
     fn command(&mut self, command: Command);
 }
 
@@ -183,6 +183,11 @@ pub struct Media {
 impl Media {
     /// ワーカーを起こす。OS が対応していなければ、何も再生していない扱いのまま。
     pub fn start() -> Self {
+        Self::spawn(backend)
+    }
+
+    /// `backend` が返す問い合わせ先を監視するワーカーを起こす（問い合わせ先はワーカーのスレッドで作る）。
+    fn spawn(backend: impl FnOnce() -> Option<Box<dyn Backend>> + Send + 'static) -> Self {
         let latest = Arc::new(Mutex::new(None));
         let stop = Arc::new(AtomicBool::new(false));
         let (commands, rx) = mpsc::channel::<Command>();
@@ -259,7 +264,9 @@ impl Drop for Media {
 fn backend() -> Option<Box<dyn Backend>> {
     #[cfg(windows)]
     return windows::Session::new().map(|b| Box::new(b) as Box<dyn Backend>);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::Session::new().map(|b| Box::new(b) as Box<dyn Backend>);
+    #[cfg(not(any(windows, target_os = "linux")))]
     None
 }
 
@@ -299,9 +306,6 @@ impl Cache {
         }
         if self.app.as_ref().is_none_or(|a| a.id != raw.app_id) {
             let (name, icon, exe) = backend.app(&raw.app_id);
-            let icon = icon
-                .and_then(|bytes| image::load_from_memory(&bytes).ok())
-                .map(|i| to_image(fit(&i, ICON_PX)));
             self.app = Some(App {
                 id: raw.app_id.clone(),
                 name,
@@ -327,6 +331,13 @@ impl Cache {
             sessions: raw.sessions.len(),
         }
     }
+}
+
+/// アイコン画像のファイル内容を読み込み、[`ICON_PX`] に収める。
+#[cfg_attr(not(windows), allow(dead_code))]
+fn icon_from_file(bytes: &[u8]) -> Option<Image> {
+    let image = image::load_from_memory(bytes).ok()?;
+    Some(to_image(fit(&image, ICON_PX)))
 }
 
 /// 画像の平均の相対輝度（0〜1。sRGB をリニアに直して重み付け）。
@@ -385,7 +396,6 @@ fn to_image(image: image::DynamicImage) -> Image {
 }
 
 /// アプリの ID から表示名を作る（"Spotify.exe" → "Spotify"、"org.example.Player" → "Player"）。表示名が取れないときに使う。
-#[cfg_attr(not(windows), allow(dead_code))]
 fn fallback_name(id: &str) -> String {
     let id = id.rsplit(['!', '\\', '/']).next().unwrap_or(id);
     let id = id
@@ -418,7 +428,7 @@ mod tests {
                 .unwrap();
             Some(png)
         }
-        fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>, Option<String>) {
+        fn app(&mut self, id: &str) -> (String, Option<Image>, Option<String>) {
             self.app_reads += 1;
             (fallback_name(id), None, None)
         }
