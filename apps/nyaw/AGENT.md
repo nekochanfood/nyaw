@@ -199,16 +199,19 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 - **プレリリースの発行**: ブランチ上で Actions の `release.yml` をチャネル名（alpha や beta など）を指定して手動実行すると、プレリリースが発行される。この際、`Cargo.toml` のバージョン表記は変更しない。
 - **更新判定の基準**: アプリケーション本体による新旧判定は、バージョン文字列ではなくビルド番号（コミット番号およびビルドメタデータ）の大小比較によって行う。
 
-### Linux の配布（AppImage）
+### Linux の配布
 
-`installer/appimage.sh` がリリースビルドから AppImage を作成し、`.github/workflows/appimage.yml` が CI で実行する。
+`installer/linux.sh` がリリースビルドから AppImage、tar.gz、deb、rpm、pkg.tar.zst を作成し、`.github/workflows/linux.yml` が CI で実行する。deb、rpm、pkg.tar.zst の定義は `installer/nfpm.yaml` にまとめる。
 
-- **ビルド環境**: AppImage は、ビルドした環境より古い glibc では起動できないため、CI は Debian 12 のコンテナ（glibc 2.36）でビルドする。PipeWire の Rust のバインディングは、Debian 12 標準の 0.3.65 のヘッダーにない定数を参照するため、PipeWire の開発パッケージは `bookworm-backports` から導入する。実行時には標準の PipeWire を使える（`appimage.yml` が確認する）。
-- **同梱するライブラリ**: Steam Audio（`libphonon.so`）だけを実行ファイルの隣に置く。Vulkan のローダーとドライバ、ALSA、PipeWire は、実行する環境の設定やプラグインと組み合わせて動作するため同梱しない。他の共有ライブラリ（libxkbcommon、fontconfig、FreeType など）も実行する環境のものを使う。このため、これらがない環境では起動しない。
-- **AppRun**: 実行ファイルへのシンボリックリンクとする。`LD_LIBRARY_PATH` などを設定すると、nyaw が起動する子プロセスにも引き継がれる。
-- **ランタイム**: 静的リンクの type2-runtime を版と SHA-256 で固定する。実行する環境に libfuse2 は不要だが、マウントには FUSE が必要である。
-- **起動用のパス**: 実行ファイルはマウント先にあるため、アプリのパスを外部に登録する処理は `os::launch_path` を使う（[`crates/subsystems/os/AGENT.md`](crates/subsystems/os/AGENT.md)）。
-- **確認**: AppImage の構成を変更したブランチでは、push で `appimage.yml` が実行される。Ubuntu 24.04 と、標準パッケージのままの Debian 12 で、VR ランタイムがない場合の終了と、仮想ディスプレイ上でのエミュレーターの動作を確認する。
+- **ビルド環境**: ビルドした環境より古い glibc では起動できないため、CI は Debian 12 のコンテナ（glibc 2.36）でビルドする。すべての形式で同じバイナリを配布する。PipeWire の Rust のバインディングは、Debian 12 標準の 0.3.65 のヘッダーにない定数を参照するため、PipeWire の開発パッケージは `bookworm-backports` から導入する。実行時には標準の PipeWire を使える（`linux.yml` が確認する）。
+- **同梱するライブラリ**: Steam Audio（`libphonon.so`）だけを実行ファイルの隣に置く。Vulkan のローダーとドライバ、ALSA、PipeWire は、実行する環境の設定やプラグインと組み合わせて動作するため同梱しない。他の共有ライブラリも実行する環境のものを使い、パッケージは依存関係として宣言する。依存関係には、リンクの一覧に現れない、実行時に読み込むライブラリ（Vulkan のローダー、エミュレーターのウィンドウが使う X11 と Wayland のライブラリ）も含める。
+- **配置**: パッケージは `/usr/lib/nyaw/` に実行ファイル、Steam Audio、更新情報を置き、`/usr/bin/nyaw` をシンボリックリンクにする。
+- **AppImage**: AppRun は実行ファイルへのシンボリックリンクとする。`LD_LIBRARY_PATH` などを設定すると、nyaw が起動する子プロセスにも引き継がれる。ランタイムは静的リンクの type2-runtime であり、実行する環境に libfuse2 は不要だが、マウントには FUSE が必要である。
+- **起動用のパス**: AppImage の実行ファイルはマウント先にあるため、アプリのパスを外部に登録する処理は `os::launch_path` を使う（[`crates/subsystems/os/AGENT.md`](crates/subsystems/os/AGENT.md)）。
+- **更新情報**: AppImage は、ランタイムの `.upd_info` セクションに AppImage の仕様の更新情報（`gh-releases-zsync`）を書き込み、差分更新の索引（`.zsync`）をリリースに添付する。他の形式は、同じ書式の `update-info` ファイルを実行ファイルの隣に置く。対象のリリースの範囲は、正式版では `latest`、プレリリース版では `latest-all` とする。更新の仕組みは [`crates/subsystems/update/AGENT.md`](crates/subsystems/update/AGENT.md) を参照する。
+- **ファイル名**: アセット名はアプリの更新が配布形式の判別に使う。名前を変える場合は、`update` クレートの `Package` も合わせて変える。
+- **外部の道具**: type2-runtime と nfpm は、版と SHA-256 を `installer/linux.sh` で固定する。
+- **確認**: 配布物の構成や更新の処理を変更したブランチでは、push で `linux.yml` が実行される。`installer/smoke.sh` が各形式を Ubuntu、Debian、Fedora、Arch Linux に導入し、VR ランタイムがない場合の終了、仮想ディスプレイ上でのエミュレーターの動作、Steam Audio の読み込みを確認する。パッケージは、更新で使うインストールのスクリプトで導入する。
 
 ### コード規約と UI 規則
 

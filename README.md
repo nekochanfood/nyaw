@@ -48,25 +48,41 @@ cargo run --release -- --openxr
 cargo run --release -- --novr
 ```
 
-## Linux の配布物（AppImage）
+## Linux の配布物
 
-Linux（x86_64）向けには、リリースに AppImage を添付します。ダウンロードしたファイルに実行権限を付けて起動します。
+Linux（x86_64）向けには、次の形式をリリースに添付します。
 
-```sh
-chmod +x nyaw-*-x86_64.AppImage
-./nyaw-*-x86_64.AppImage
-```
+| ファイル | 対象 | 導入と起動 |
+|---|---|---|
+| `nyaw-<版>-x86_64.AppImage` | 各ディストリビューション | `chmod +x` で実行権限を付けて起動します |
+| `nyaw-<版>-x86_64.tar.gz` | 各ディストリビューション | 展開して `nyaw/nyaw` を起動します |
+| `nyaw-<版>-amd64.deb` | Debian、Ubuntu | `sudo apt install ./nyaw-<版>-amd64.deb` |
+| `nyaw-<版>-x86_64.rpm` | Fedora など | `sudo dnf install ./nyaw-<版>-x86_64.rpm` |
+| `nyaw-<版>-x86_64.pkg.tar.zst` | Arch Linux | `sudo pacman -U nyaw-<版>-x86_64.pkg.tar.zst` |
 
-実行する環境には以下が必要です。
+動作には Debian 12 相当以降の環境（glibc 2.36 以降）と、Vulkan に対応した GPU ドライバが必要です。deb、rpm、pkg.tar.zst は、必要なライブラリをパッケージの依存関係として導入します。AppImage と tar.gz を使う場合は、次のライブラリが導入されている必要があります。
 
-- glibc 2.36 以降
-- FUSE（`fusermount3` または `fusermount`）。使えない環境では、`--appimage-extract-and-run` を付けると展開してから起動します
-- Vulkan に対応した GPU ドライバ
-- ALSA、PipeWire、libxkbcommon、fontconfig、FreeType の共有ライブラリ
+- ALSA、PipeWire、libxkbcommon、Vulkan のローダー
+- libX11、libXcursor、libwayland-client、libwayland-cursor（エミュレーターのウィンドウで使います）
 
-SteamVR の自動起動には、有効にした時点の AppImage ファイルのパスが登録されます。ファイルを移動した場合や、新しい版のファイルに差し替えた場合は、自動起動を一度無効にしてから有効にし直してください。
+AppImage の起動には FUSE（`fusermount3` または `fusermount`）も必要です。FUSE を使えない環境では、`--appimage-extract-and-run` を付けると展開してから起動します。
 
-AppImage を手元で作成する場合は、`apps/nyaw/` で `cargo build --release` を実行してから `installer/appimage.sh` を実行します（`mksquashfs` が必要です）。作成した AppImage が要求する glibc の版は、ビルドした環境によって決まります。
+### アップデート
+
+どの形式でも、設定のアップデート画面から更新できます。画面を起動せずに更新する場合は、`nyaw --update` を実行します。更新後は、`--update` を除いた引数で起動し直します。
+
+- **AppImage、tar.gz**: ファイルを置き換えます。置き場所への書き込み権限が必要です。AppImage はファイル名を変えずに内容を置き換えるため、ファイル名の版は更新されません。
+- **deb、rpm、pkg.tar.zst**: パッケージマネージャーでインストールします。デスクトップに表示される認証の画面で許可してください。polkit の認証エージェントが必要です。apt などのリポジトリは提供していません。
+
+AppImage には、AppImageUpdate などの外部ツール向けの更新情報も埋め込んでいます。他の形式には、同じ書式の更新情報を `update-info` ファイルとして同梱しています。
+
+### SteamVR の自動起動
+
+設定画面のほか、SteamVR の実行中に `nyaw --steamvr-autostart=on`（無効にする場合は `off`）を実行して切り替えられます。登録されるのは、有効にした時点のファイルのパスです。AppImage や tar.gz の置き場所を移動した場合や、別の名前のファイルに差し替えた場合は、一度無効にしてから有効にし直してください。
+
+### 配布物の作成
+
+`apps/nyaw/` で `cargo build --release` を実行してから、`installer/linux.sh` を実行します（`mksquashfs` と `zsyncmake` が必要です）。作成した配布物が要求する glibc の版は、ビルドした環境によって決まります。
 
 ## 対応状況
 
