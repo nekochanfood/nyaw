@@ -1,7 +1,8 @@
-name: nyaw AppImage
+name: nyaw Linux packages
 
-# Linux の配布物（AppImage）をビルドする。release.yml が呼び出す。
-# AppImage の構成（このファイルと apps/nyaw/installer/）を変更したブランチでは、push でも実行して確認する。
+# Linux の配布物（AppImage、tar.gz、deb、rpm、pkg.tar.zst）をビルドし、各ディストリビューションで起動を確認する。
+# release.yml が呼び出す。配布物の構成（このファイルと apps/nyaw/installer/）や、更新時のインストール処理を変更した
+# ブランチでは、push でも実行する。
 on:
   workflow_call:
     inputs:
@@ -10,12 +11,15 @@ on:
         type: string
         default: ''
       cache-only:
-        description: ビルドキャッシュの作成のみを行い、AppImage は作成しない
+        description: ビルドキャッシュの作成のみを行い、配布物は作成しない
         type: boolean
         default: false
   push:
     branches-ignore: [main]
-    paths: [.github/workflows/appimage.yml, apps/nyaw/installer/**]
+    paths:
+      - .github/workflows/linux.yml
+      - apps/nyaw/installer/**
+      - apps/nyaw/crates/subsystems/update/**
 
 env:
   CARGO_INCREMENTAL: '0'
@@ -41,7 +45,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
-            build-essential ca-certificates cmake curl git pkg-config squashfs-tools unzip \
+            build-essential ca-certificates cmake curl git pkg-config squashfs-tools unzip zsync \
             libasound2-dev libclang-dev libfontconfig1-dev libfreetype-dev libx11-dev libxkbcommon-dev
           # PipeWire の Rust のバインディングは、Debian 12 の 0.3.65 のヘッダーにない定数を参照するため、
           # 開発パッケージは backports から導入する。起動できる PipeWire の版は smoke ジョブで確認する
@@ -65,7 +69,7 @@ jobs:
         with:
           workspaces: apps/nyaw
           # ci.yml の ubuntu のジョブとはシステムのライブラリが異なるため、キャッシュを分ける
-          prefix-key: v0-appimage-debian12
+          prefix-key: v0-linux-packages-debian12
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # ライセンス一覧生成のため、開発用依存パッケージを含む全ソースをオフラインビルド前に先行フェッチ
       - if: ${{ !inputs.cache-only || steps.cache.outputs.cache-hit != 'true' }}
@@ -73,7 +77,7 @@ jobs:
           cargo fetch --locked
           cargo build --release
       - if: ${{ !inputs.cache-only }}
-        run: installer/appimage.sh
+        run: installer/linux.sh
       # 実行する環境に必要なライブラリと glibc の版をログに残す
       - if: ${{ !inputs.cache-only }}
         run: |
@@ -82,13 +86,13 @@ jobs:
       - if: ${{ !inputs.cache-only }}
         uses: actions/upload-artifact@v4
         with:
-          name: appimage${{ inputs.version && format('-{0}', inputs.version) }}
-          path: apps/nyaw/target/installer/*.AppImage
+          name: linux-packages${{ inputs.version && format('-{0}', inputs.version) }}
+          path: apps/nyaw/target/installer/nyaw[-_]*
           if-no-files-found: error
-          # AppImage は圧縮済み
+          # 配布物は圧縮済み
           compression-level: 0
 
-  # ビルドに使っていない環境で、作成した AppImage が起動することを確認する
+  # ビルドに使っていない環境に各形式を導入し、起動することを確認する（installer/smoke.sh）
   smoke:
     needs: build
     if: ${{ !inputs.cache-only }}
@@ -97,49 +101,29 @@ jobs:
       matrix:
         include:
           # FUSE でマウントして実行する
-          - target: ubuntu-24.04
-            container: ''
-            packages: libasound2t64 libpipewire-0.3-0t64
-            runtime-args: ''
+          - { target: appimage on ubuntu-24.04, format: appimage, container: '' }
           # 動作要件の下限（標準パッケージの PipeWire 0.3.65）。コンテナでは FUSE を使えないため、展開して実行する
-          - target: debian-12
-            container: debian:12
-            packages: libasound2 libpipewire-0.3-0
-            runtime-args: --appimage-extract-and-run
+          - { target: appimage on debian-12, format: appimage, container: 'debian:12' }
+          - { target: tar.gz on ubuntu-24.04, format: tar, container: '' }
+          - { target: deb on debian-12, format: deb, container: 'debian:12' }
+          - { target: deb on ubuntu-24.04, format: deb, container: 'ubuntu:24.04' }
+          - { target: rpm on fedora, format: rpm, container: 'fedora:latest' }
+          - { target: pkg.tar.zst on archlinux, format: pacman, container: 'archlinux:latest' }
     name: smoke (${{ matrix.target }})
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     permissions:
       contents: read
-    defaults:
-      run:
-        shell: bash
-    env:
-      RUNTIME_ARGS: ${{ matrix.runtime-args }}
     steps:
+      # git のないコンテナでは、checkout はアーカイブを展開する（スクリプトだけを使うため履歴は不要）
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            apps/nyaw/installer
+            apps/nyaw/crates/subsystems/update/src/linux
       - uses: actions/download-artifact@v4
         with:
-          name: appimage${{ inputs.version && format('-{0}', inputs.version) }}
-      # 実行時に必要なライブラリ。mesa-vulkan-drivers は GPU のないランナーで描画するソフトウェア実装（lavapipe）
-      - run: |
-          sudo=$(command -v sudo || true)
-          $sudo apt-get update
-          $sudo apt-get install -y --no-install-recommends ${{ matrix.packages }} \
-            libfontconfig1 libfreetype6 libxkbcommon0 libxkbcommon-x11-0 mesa-vulkan-drivers xvfb xauth
-          chmod +x nyaw-*-x86_64.AppImage
-      # VR ランタイムのない環境では、エラーをログに記録して終了コード 1 で終了する。起動と動的リンクを確認する
-      - name: Start without a VR runtime
-        run: |
-          status=0
-          timeout 120 ./nyaw-*-x86_64.AppImage $RUNTIME_ARGS > no-runtime.log 2>&1 || status=$?
-          cat no-runtime.log
-          [ "$status" = 1 ]
-          grep -q 'cannot show an error dialog' no-runtime.log
-      # エミュレーターは自分では終了しないため、時間切れ（終了コード 124）まで動き続ければ成功とする
-      - name: Run the emulator
-        run: |
-          status=0
-          xvfb-run -a timeout 30 ./nyaw-*-x86_64.AppImage $RUNTIME_ARGS --novr > novr.log 2>&1 || status=$?
-          cat novr.log
-          [ "$status" = 124 ]
-          ! grep -qi 'panic' novr.log
+          name: linux-packages${{ inputs.version && format('-{0}', inputs.version) }}
+          path: dist
+      - run: bash apps/nyaw/installer/smoke.sh ${{ matrix.format }} dist
