@@ -23,8 +23,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # ビルドした環境より古い glibc では起動できないため、配布先の下限とする Debian 12（glibc 2.36）でビルドする。
-    # 画面の配信は PipeWire 0.3.65 以降の API を指定しており、Ubuntu 22.04 の 0.3.48 では不足する
+    # ビルドした環境より古い glibc では起動できないため、配布先の下限とする Debian 12（glibc 2.36）でビルドする
     container: debian:12
     permissions:
       contents: read
@@ -43,7 +42,12 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             build-essential ca-certificates cmake curl git pkg-config squashfs-tools unzip \
-            libasound2-dev libclang-dev libfontconfig1-dev libfreetype-dev libpipewire-0.3-dev libx11-dev libxkbcommon-dev
+            libasound2-dev libclang-dev libfontconfig1-dev libfreetype-dev libx11-dev libxkbcommon-dev
+          # PipeWire の Rust のバインディングは、Debian 12 の 0.3.65 のヘッダーにない定数を参照するため、
+          # 開発パッケージは backports から導入する。起動できる PipeWire の版は smoke ジョブで確認する
+          echo 'deb http://deb.debian.org/debian bookworm-backports main' > /etc/apt/sources.list.d/backports.list
+          apt-get update
+          apt-get install -y --no-install-recommends -t bookworm-backports libpipewire-0.3-dev
       - uses: actions/checkout@v4
         with:
           # 依存クレートの build.rs からトークンを遮断するため資格情報を破棄
@@ -84,29 +88,50 @@ jobs:
           # AppImage は圧縮済み
           compression-level: 0
 
-  # ビルドに使っていないディストリビューションで、作成した AppImage が起動することを確認する
+  # ビルドに使っていない環境で、作成した AppImage が起動することを確認する
   smoke:
     needs: build
     if: ${{ !inputs.cache-only }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # FUSE でマウントして実行する
+          - target: ubuntu-24.04
+            container: ''
+            packages: libasound2t64 libpipewire-0.3-0t64
+            runtime-args: ''
+          # 動作要件の下限（標準パッケージの PipeWire 0.3.65）。コンテナでは FUSE を使えないため、展開して実行する
+          - target: debian-12
+            container: debian:12
+            packages: libasound2 libpipewire-0.3-0
+            runtime-args: --appimage-extract-and-run
+    name: smoke (${{ matrix.target }})
     runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
     permissions:
       contents: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      RUNTIME_ARGS: ${{ matrix.runtime-args }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: appimage${{ inputs.version && format('-{0}', inputs.version) }}
       # 実行時に必要なライブラリ。mesa-vulkan-drivers は GPU のないランナーで描画するソフトウェア実装（lavapipe）
       - run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libasound2t64 libfontconfig1 libfreetype6 libpipewire-0.3-0t64 libxkbcommon0 libxkbcommon-x11-0 \
-            mesa-vulkan-drivers xvfb xauth
+          sudo=$(command -v sudo || true)
+          $sudo apt-get update
+          $sudo apt-get install -y --no-install-recommends ${{ matrix.packages }} \
+            libfontconfig1 libfreetype6 libxkbcommon0 libxkbcommon-x11-0 mesa-vulkan-drivers xvfb xauth
           chmod +x nyaw-*-x86_64.AppImage
-      # VR ランタイムのない環境では、エラーをログに記録して終了コード 1 で終了する。マウントと動的リンクを確認する
+      # VR ランタイムのない環境では、エラーをログに記録して終了コード 1 で終了する。起動と動的リンクを確認する
       - name: Start without a VR runtime
         run: |
           status=0
-          timeout 60 ./nyaw-*-x86_64.AppImage > no-runtime.log 2>&1 || status=$?
+          timeout 120 ./nyaw-*-x86_64.AppImage $RUNTIME_ARGS > no-runtime.log 2>&1 || status=$?
           cat no-runtime.log
           [ "$status" = 1 ]
           grep -q 'cannot show an error dialog' no-runtime.log
@@ -114,7 +139,7 @@ jobs:
       - name: Run the emulator
         run: |
           status=0
-          xvfb-run -a timeout 30 ./nyaw-*-x86_64.AppImage --novr > novr.log 2>&1 || status=$?
+          xvfb-run -a timeout 30 ./nyaw-*-x86_64.AppImage $RUNTIME_ARGS --novr > novr.log 2>&1 || status=$?
           cat novr.log
           [ "$status" = 124 ]
           ! grep -qi 'panic' novr.log
