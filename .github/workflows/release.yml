@@ -1,36 +1,45 @@
 name: nyaw Release
 
-# インストーラーをビルドしてリリースアセットを添付するワークフロー。
+# 配布物（Windows のインストーラーと Linux の AppImage）をビルドしてリリースアセットを添付するワークフロー。
+# plan で内容を決め、windows と appimage でビルドし、両方が揃った場合に限り publish で公開する。
 # 以下のトリガーに対応する:
 # 1. main ブランチへのマージ（Prepare release によるバージョン更新 PR のマージ時）:
-#    PR ブランチ側で事前ビルドされたインストーラー成果物を再利用し、v<バージョン> の正式リリースを作成・添付する。
+#    PR ブランチ側で事前ビルドされた成果物を再利用し、v<バージョン> の正式リリースを作成・添付する。
 # 2. 手動実行（workflow_dispatch）によるプレリリース発行:
 #    チャネル名（alpha, beta 等）を指定して実行した場合、v<バージョン>-<チャネル名>.<連番> のプレリリースを発行する。
-# 3. 手動実行（引数なし）によるインストーラーの事前生成:
-#    対象ブランチのインストーラーをビルドし、アーティファクトとして保存する（Prepare release からの呼び出し用）。
+# 3. 手動実行（引数なし）による配布物の事前生成:
+#    対象ブランチの配布物をビルドし、アーティファクトとして保存する（Prepare release からの呼び出し用）。
 # 4. 手動で公開（published）されたリリースに対するアセット添付。
 on:
   release:
     types: [published]
   push:
     branches: [main]
-    # インストーラーの内容に関わる変更だけで実行する（版上げの PR は apps/nyaw/Cargo.toml を変える）
-    paths: [apps/nyaw/**, assets/**, .github/workflows/release.yml]
-  # チャネル名を指定して実行するとプレリリースを発行する。空欄の場合はインストーラーのビルド・アーティファクト保存のみを行う
+    # 配布物の内容に関わる変更だけで実行する（版上げの PR は apps/nyaw/Cargo.toml を変える）
+    paths: [apps/nyaw/**, assets/**, .github/workflows/release.yml, .github/workflows/appimage.yml]
+  # チャネル名を指定して実行するとプレリリースを発行する。空欄の場合は配布物のビルド・アーティファクト保存のみを行う
   workflow_dispatch:
     inputs:
       prerelease:
-        description: プレリリースのチャネル名（alpha, beta 等。連番は自動付与）。空欄の場合はインストーラーの事前ビルドのみ実行
+        description: プレリリースのチャネル名（alpha, beta 等。連番は自動付与）。空欄の場合は配布物の事前ビルドのみ実行
         required: false
 
 jobs:
-  installer:
-    runs-on: windows-latest
+  plan:
+    runs-on: ubuntu-latest
     permissions:
-      contents: write
-      # PR ブランチで生成されたインストーラーの取得、およびリリース後のバージョン進行ワークフロー起動用権限
-      actions: write
+      contents: read
+      # PR ブランチで生成された成果物の検索
+      actions: read
       pull-requests: read
+    outputs:
+      tag: ${{ steps.outputs.outputs.tag }}
+      # タグから先頭の v を除いた値。成果物のファイル名と、アーティファクト名に使う
+      version: ${{ steps.outputs.outputs.version }}
+      prev: ${{ steps.outputs.outputs.prev }}
+      build: ${{ steps.outputs.outputs.build }}
+      publish: ${{ steps.outputs.outputs.publish }}
+      reuse-run: ${{ steps.outputs.outputs.reuse-run }}
     defaults:
       run:
         shell: bash
@@ -39,9 +48,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # 依存クレートの build.rs から書き込み権限付きトークンを遮断するため資格情報を破棄
           persist-credentials: false
-          # ビルド番号（HEAD までの通算コミット数）を算出するため全履歴を取得
+          # ビルド番号（HEAD までの通算コミット数）の比較と、タグの検索に全履歴を使う
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       # リリース対象タグ（TAG）、ビルド実行フラグ（BUILD）、およびリリース発行フラグ（PUBLISH）の決定
@@ -117,9 +125,9 @@ jobs:
             echo "::error::tag $TAG does not match these package versions: $bad"
             exit 1
           fi
-          echo "NYAW_VERSION=${TAG#v}" >> "$GITHUB_ENV"
-      # PR ブランチ側で先行ビルドされたインストーラー成果物の再利用（同一コミット・同一ツリーの場合のみ採用）
-      - name: Reuse the installer built in the PR
+      # PR ブランチ側で先行ビルドされた成果物の再利用（同一コミット・同一ツリーの場合のみ採用）。
+      # アーティファクト名はバージョンを含むため、同じコミットから発行したプレリリースの成果物は選ばれない
+      - name: Reuse the artifacts built in the PR
         if: env.PUBLISH == '1' && !inputs.prerelease
         continue-on-error: true
         env:
@@ -137,42 +145,119 @@ jobs:
             fi
           fi
           for run in $(gh run list -w release.yml -c "$head" -s success --json databaseId -q '.[].databaseId'); do
-            gh run download "$run" -n installer -D pr-installer && break
+            names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" -q '.artifacts[] | select(.expired | not) | .name')
+            if grep -qxF "installer-${TAG#v}" <<<"$names" && grep -qxF "appimage-${TAG#v}" <<<"$names"; then
+              echo "::notice::reusing the artifacts built by run $run for $head"
+              echo "REUSE_RUN=$run" >> "$GITHUB_ENV"
+              break
+            fi
           done
-          mkdir -p target/installer
-          mv "pr-installer/nyaw-${TAG#v}-setup.exe" target/installer/
-          echo "::notice::reusing the installer built by run $run for $head"
-          echo "BUILD=" >> "$GITHUB_ENV"
-      - if: env.BUILD == '1'
-        id: cache
+      - id: outputs
+        run: |
+          {
+            echo "tag=${TAG:-}"
+            echo "version=${TAG:+${TAG#v}}"
+            echo "prev=${PREV:-}"
+            echo "build=${BUILD:-}"
+            echo "publish=${PUBLISH:-}"
+            echo "reuse-run=${REUSE_RUN:-}"
+          } >> "$GITHUB_OUTPUT"
+
+  windows:
+    needs: plan
+    if: needs.plan.outputs.build == '1' && needs.plan.outputs.reuse-run == ''
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      NYAW_VERSION: ${{ needs.plan.outputs.version }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/nyaw
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 依存クレートの build.rs からトークンを遮断するため資格情報を破棄
+          persist-credentials: false
+          # ビルド番号（HEAD までの通算コミット数）を算出するため全履歴を取得
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - id: cache
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/nyaw
           # キャッシュ保存は main ブランチに限定
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # キャッシュヒット時は不要な再ビルドをスキップ
-      - if: env.BUILD == '1' && env.TAG == '' && steps.cache.outputs.cache-hit == 'true'
-        run: echo "BUILD=" >> "$GITHUB_ENV"
-      # ライセンス一覧生成のため、開発用依存パッケージを含む全ソースをオフラインビルド前に先行フェッチ
-      - if: env.BUILD == '1'
-        run: cargo fetch --locked
-      - if: env.BUILD == '1'
-        run: cargo build --release
+      # タグがない場合の目的はキャッシュの作成だけであるため、キャッシュヒット時はビルドを省略する。
+      # ライセンス一覧生成のため、開発用依存パッケージを含む全ソースをオフラインビルド前に先行フェッチする
+      - if: env.TAG != '' || steps.cache.outputs.cache-hit != 'true'
+        run: |
+          cargo fetch --locked
+          cargo build --release
       # Inno Setup コンパイラ（iscc）の環境確認とセットアップ
-      - if: env.BUILD == '1' && env.TAG != ''
+      - if: env.TAG != ''
         run: command -v iscc || choco install innosetup -y --no-progress
-      - if: env.BUILD == '1' && env.TAG != ''
+      - if: env.TAG != ''
         run: iscc installer/nyaw.iss
-      # PR ブランチ実行時は生成されたインストーラーをアーティファクトとして保存
-      - if: env.TAG != '' && env.PUBLISH != '1'
+      - if: env.TAG != ''
         uses: actions/upload-artifact@v4
         with:
-          name: installer
+          name: installer-${{ needs.plan.outputs.version }}
           path: apps/nyaw/target/installer/*.exe
           if-no-files-found: error
+
+  appimage:
+    needs: plan
+    if: needs.plan.outputs.build == '1' && needs.plan.outputs.reuse-run == ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/appimage.yml
+    with:
+      version: ${{ needs.plan.outputs.version }}
+      cache-only: ${{ needs.plan.outputs.tag == '' }}
+
+  publish:
+    needs: [plan, windows, appimage]
+    # 成果物を再利用する場合は、ビルドのジョブは実行されない（skipped）
+    if: >-
+      !cancelled() && needs.plan.outputs.publish == '1' &&
+      (needs.plan.outputs.reuse-run != '' || (needs.windows.result == 'success' && needs.appimage.result == 'success'))
+    runs-on: ubuntu-latest
+    permissions:
+      # リリースの作成と、リリース後のバージョン進行ワークフローの起動
+      contents: write
+      actions: write
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      PREV: ${{ needs.plan.outputs.prev }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          # ビルド番号（HEAD までの通算コミット数）を算出するため全履歴を取得
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: installer-${{ needs.plan.outputs.version }}
+          path: dist
+          run-id: ${{ needs.plan.outputs.reuse-run || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage-${{ needs.plan.outputs.version }}
+          path: dist
+          run-id: ${{ needs.plan.outputs.reuse-run || github.run_id }}
+          github-token: ${{ github.token }}
+      # 片方の配布物だけのリリースを作らないよう、作成の前に両方の存在を確認する
+      - run: ls -l "dist/nyaw-$VERSION-setup.exe" "dist/nyaw-$VERSION-x86_64.AppImage"
       # GitHub Releases の作成（プレリリースまたは正式リリース）
-      - if: env.PUBLISH == '1'
-        run: |
+      - run: |
           pre=
           if [[ $TAG == *-* ]]; then
             pre=--prerelease
@@ -182,20 +267,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       # リリースノート末尾へ不可視のビルド番号注釈（<!-- nyaw-build: <番号> -->）を付加
-      - if: env.PUBLISH == '1'
-        run: |
+      - run: |
           build=$(git rev-list --count HEAD)
           gh release view "$TAG" --json body -q .body | sed '/^<!-- nyaw-build: [0-9]* -->$/d' > notes.md
           { echo; echo "<!-- nyaw-build: $build -->"; } >> notes.md
           gh release edit "$TAG" --notes-file notes.md
         env:
           GH_TOKEN: ${{ github.token }}
-      - if: env.PUBLISH == '1'
-        run: gh release upload "$TAG" target/installer/*.exe --clobber
+      - run: gh release upload "$TAG" "dist/nyaw-$VERSION-setup.exe" "dist/nyaw-$VERSION-x86_64.AppImage" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
       # 正式リリース発行後、main ブランチを次期バージョン（-dev.0）へ自動進行させるため Prepare release をトリガー
-      - if: github.event_name == 'push' && env.TAG != ''
+      - if: github.event_name == 'push'
         run: |
           v=${TAG#v}
           next=${v%%-*}
