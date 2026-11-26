@@ -1,0 +1,43 @@
+name: Web
+
+# ウェブサイト（apps/web/）の検査。参照するアプリ側の資産が変わったときも実行する
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - apps/web/**
+      - assets/**
+      - apps/nyaw/crates/design/tokens.json
+      - package.json
+      - pnpm-lock.yaml
+      - pnpm-workspace.yaml
+      - .github/workflows/web.yml
+  pull_request:
+    paths: *paths
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm の版はルート package.json の packageManager に従う
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      # ウェブサイトに Cargo の依存は要らない。オプションや環境変数では無効にできないため、設定を書き換える
+      - run: sed -i '/^cargo:/,/enabled:/s/enabled: true/enabled: false/' pnpm-workspace.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter web fmt:check
+      - run: pnpm --filter web lint
+      - run: pnpm --filter web typecheck
+      - run: pnpm --filter web test
+      - run: pnpm --filter web build

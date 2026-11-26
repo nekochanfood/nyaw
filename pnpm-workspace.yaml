@@ -5,3 +5,8 @@ packages:
 # Cargo の依存も pnpm install で解決・取得する（pnpm の実験的な機能。ルート AGENT.md の「pnpm と Cargo」）
 cargo:
   enabled: true
+
+# ビルドスクリプトの実行を許可する依存（ネイティブのバイナリを用意する）
+allowBuilds:
+  esbuild: true
+  workerd: true

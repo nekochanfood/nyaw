@@ -24,13 +24,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [rust, actions]
+        language: [rust, actions, javascript-typescript]
     steps:
       - uses: actions/checkout@v4
       - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
-          # Rust と Actions はビルドなしで解析できる。
+          # どの言語もビルドなしで解析できる。
           build-mode: none
           config-file: .github/codeql/codeql-config.yml
       - uses: github/codeql-action/analyze@v4
