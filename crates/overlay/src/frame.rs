@@ -228,6 +228,7 @@ impl Overlay {
             }
         }
         self.place_nav_bars(vr, now);
+        self.place_layers(vr);
         self.place_pointers(vr);
         self.place_ghosts(vr, now);
         self.place_stand_ins(vr, now);

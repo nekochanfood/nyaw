@@ -29,7 +29,7 @@ impl Overlay {
         // サイズは等倍設計で渡される。UI スケールはここで適用する（[`Self::set_scale`]）。
         let size = size * self.scale();
         let mut surface = Surface::new(vr, key, size.x, pose)?;
-        surface.set_sort(vr, PANEL_SORT);
+        surface.set_sort(vr, WORLD_SORT);
         self.panels.push(Panel {
             pose,
             size,
@@ -61,6 +61,7 @@ impl Overlay {
             opacity: 1.0,
             stand_in: 0.0,
             surface,
+            depth: None,
             follow: None,
             lazy_follow: None,
             dockable: false,
@@ -152,13 +153,11 @@ impl Overlay {
     /// `id` を `owner` のナビバーにする。以降は毎 tick 持ち主の下端左右中央にバーの上端左右中央を
     /// 合わせて配置する。現在の `size` を頭から 1m 先でのサイズとし、距離に比例して拡大する（ツールチップと同様）。
     /// 自分自身・クローズ済みパネルは持ち主に指定不可（何もしない）。
-    pub fn set_nav_bar(&mut self, vr: &mut dyn VrBackend, id: PanelId, owner: PanelId) {
+    pub fn set_nav_bar(&mut self, _vr: &mut dyn VrBackend, id: PanelId, owner: PanelId) {
         if owner == id || self.panels[owner].closed {
             return;
         }
         let p = &mut self.panels[id];
-        // 持ち主のシャドウマージンに重なるため表示専用子と同じく手前に出す（place_nav_bars）。
-        p.surface.set_sort(vr, HUD_SORT);
         p.nav_bar_of = Some(owner);
         p.nav_bar_size = p.size;
         p.attached = None;

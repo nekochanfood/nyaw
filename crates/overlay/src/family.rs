@@ -16,7 +16,7 @@ const NAV_BAR_LINGER: std::time::Duration = std::time::Duration::from_millis(150
 impl Overlay {
     /// `id` を `parent` の子にする（`None` で独立）。現在位置を保持し以降は親に追従する。取り付けは解除される。
     /// 自分自身・子孫・閉じたパネルは親に指定不可（何もしない）。
-    pub fn set_parent(&mut self, vr: &mut dyn VrBackend, id: PanelId, parent: Option<Parent>) {
+    pub fn set_parent(&mut self, _vr: &mut dyn VrBackend, id: PanelId, parent: Option<Parent>) {
         if let Some(p) = parent
             && (p.panel == id
                 || self.panels[p.panel].closed
@@ -47,12 +47,6 @@ impl Overlay {
         }
         let q = &mut self.panels[id];
         q.parent = parent;
-        // 表示専用子・ポップオーバー（固定して外側プレスで閉じる子）・スタック子は他パネルより前に描画する。ランタイムは
-        // 深度ではなく描画順で合成するため、同一順だと重なり部分がフリッカーする（ドックパネル上のメニューや、ドックパネルの
-        // 出入りで上に移動するスタック子など）。
-        let front = parent.is_some_and(|p| p.hud || p.stack || (p.docked && p.dismiss));
-        q.surface
-            .set_sort(vr, if front { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
             q.attached = None;
             q.offset = at.inverse() * q.pose;

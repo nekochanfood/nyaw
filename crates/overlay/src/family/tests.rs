@@ -128,7 +128,8 @@ fn idle_nav_bar_gives_its_overlay_back_and_comes_back_when_pointed() {
     assert!(!ov.panel(bar).surface.parked());
     assert_eq!(ov.panel(bar).overlay_id(), OverlayId(2));
     let o = &vr.backend.overlays[2];
-    assert_eq!((o.key.as_str(), o.sort, o.alpha), ("bar", HUD_SORT, 1.0));
+    assert_eq!((o.key.as_str(), o.alpha), ("bar", 1.0));
+    assert!(o.sort > vr.backend.overlays[0].sort);
     assert_eq!(o.texture.as_ref().unwrap().rgba, [9u8; 16]);
     assert_eq!(o.pose, ov.panel(bar).pose);
     assert!(!o.destroyed);
@@ -404,8 +405,8 @@ fn popovers_are_drawn_in_front_of_panels() {
             ..Default::default()
         }),
     );
-    assert_eq!(vr.backend.overlays[1].sort, HUD_SORT);
-    assert_eq!(vr.backend.overlays[0].sort, PANEL_SORT);
+    ov.tick(&mut vr);
+    assert!(vr.backend.overlays[1].sort > vr.backend.overlays[0].sort);
 }
 
 #[test]
@@ -736,8 +737,7 @@ fn a_stacked_child_appears_in_place_and_in_front() {
             .unwrap()
             .sort
     };
-    assert_eq!(sort("toast"), HUD_SORT);
-    assert_eq!(sort("child"), PANEL_SORT);
+    assert!(sort("toast") > sort("child"));
 }
 
 /// ロックされた子（スタックされた通知）があってもバーをグラブするとドック画面をグラブした扱いになる。
