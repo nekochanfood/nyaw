@@ -119,6 +119,19 @@ pub struct Cursor {
     pub hotspot: (u32, u32),
 }
 
+/// 取得元のウィンドウの手前に出ている、同じアプリの小さなウィンドウ（右クリックやタイトルバーのメニュー、ツールチップなど）。
+/// ウィンドウの取り込みは取得元のウィンドウしか映さないため、メニューのウィンドウを別に取り込んで渡す。上位層が映像の上に重ねて描く。
+#[derive(Debug, Clone, PartialEq)]
+pub struct Popup {
+    /// OS のウィンドウ識別子。出ている間は変わらないので、同じメニューを見分けるのに使う。
+    pub id: u64,
+    /// 取得元の左上を原点、取得元の幅・高さを 1 とした左上と大きさ（`[x, y, 幅, 高さ]`）。取得元の外へはみ出すことがある。
+    pub area: [f32; 4],
+    /// メニューのウィンドウだけの画像。[`Icon`] と違い事前乗算アルファで、角の外側や影のための余白は透明（後ろのウィンドウは
+    /// 写らない）。
+    pub image: Icon,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error(pub String);
 
@@ -271,7 +284,8 @@ pub enum Button {
     Right,
 }
 
-/// 左上原点、0〜1 の座標。パネル外へ出た接点は端に留める。ID は左右の手に対応する 0 / 1。
+/// 取得元の左上を原点、取得元の幅・高さを 1 とした座標。ID は左右の手に対応する 0 / 1。
+/// 取得元の外へはみ出したメニュー（[`Popup`]）を指せるよう、外側も取得元 1 つ分まで受け付け、それより外は端に留める。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Touch {
     pub id: u32,
@@ -280,13 +294,18 @@ pub struct Touch {
     pub y: f32,
 }
 
+/// 入力の座標（[`Touch`]）を受け付ける範囲に留める。
+fn reach(v: f32) -> f32 {
+    v.clamp(-1.0, 2.0)
+}
+
 impl Touch {
     fn validated(mut self) -> Result<Self, Error> {
         if self.id >= 2 || !self.x.is_finite() || !self.y.is_finite() {
             return Err(Error("invalid desktop touch contact".into()));
         }
-        self.x = self.x.clamp(0.0, 1.0);
-        self.y = self.y.clamp(0.0, 1.0);
+        self.x = reach(self.x);
+        self.y = reach(self.y);
         Ok(self)
     }
 }
@@ -503,6 +522,10 @@ trait Session {
     fn cursor(&mut self) -> Option<Arc<Cursor>> {
         None
     }
+    /// 取得元の手前に出ているメニュー（[`Popup`]。手前のものから順に）。
+    fn popups(&mut self) -> Vec<Popup> {
+        Vec::new()
+    }
 }
 
 /// 最新画像は常に一枚だけ保持し、遅れたフレームを蓄積しない。
@@ -513,12 +536,15 @@ pub struct Stream {
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     cursor: Arc<Mutex<Option<Arc<Cursor>>>>,
+    popups: Arc<Mutex<Arc<[Popup]>>>,
     /// ウィンドウを映しているとき、そのウィンドウ（OS のウィンドウ識別子）。画面や特定できないものは `None`。
     window: Option<u64>,
 }
 
 /// 接点の維持と停止要求の処理のため、待ちはこれより長くしない。
 const POLL: Duration = Duration::from_millis(8);
+/// メニューを調べ直す間隔の上限。FPS を下げていても、メニューが出た・消えた・指している項目が変わったのを遅れずに映す。
+const POPUP_INTERVAL: Duration = Duration::from_millis(33);
 
 impl Stream {
     pub fn start(source: Source) -> Result<Self, Error> {
@@ -564,6 +590,8 @@ impl Stream {
         let pausing = paused.clone();
         let cursor = Arc::new(Mutex::new(None));
         let cursor_out = cursor.clone();
+        let popups = Arc::new(Mutex::new(Arc::from([])));
+        let popups_out = popups.clone();
         let (input, rx) = mpsc::sync_channel(64);
         let wake = Wake {
             tx: input.clone(),
@@ -580,6 +608,8 @@ impl Stream {
                     let mut inputs: Vec<Input> = Vec::new();
                     let mut minimized = false;
                     let mut shown = None;
+                    let mut shown_popups: Arc<[Popup]> = Arc::from([]);
+                    let mut next_popups = Instant::now();
                     while !stopping.load(Ordering::Acquire) {
                         if session.minimized() {
                             minimized = true;
@@ -641,6 +671,15 @@ impl Stream {
                             continue;
                         }
                         let now = Instant::now();
+                        // メニューは映像とは別に取り込む。ウィンドウの中身が変わらず画像が届かない間も、出た・消えたを伝える。
+                        if now >= next_popups {
+                            next_popups = now + interval.min(POPUP_INTERVAL);
+                            let popups = session.popups();
+                            if popups[..] != shown_popups[..] {
+                                shown_popups = popups.into();
+                                *popups_out.lock().unwrap() = shown_popups.clone();
+                            }
+                        }
                         if now < next_frame {
                             continue;
                         }
@@ -661,6 +700,7 @@ impl Stream {
                     Ok::<_, Error>(minimized)
                 })();
                 *cursor_out.lock().unwrap() = None;
+                *popups_out.lock().unwrap() = Arc::from([]);
                 *output.lock().unwrap() = Some(Update {
                     status: match result {
                         Ok(true) => Status::Minimized,
@@ -677,6 +717,7 @@ impl Stream {
             stop,
             paused,
             cursor,
+            popups,
             window: None,
         })
     }
@@ -695,6 +736,13 @@ impl Stream {
         self.cursor.lock().ok()?.clone()
     }
 
+    /// 取得元の手前に出ているメニュー（[`Popup`]。手前のものから順に）。変わっていなければ同じ `Arc` を返す。
+    pub fn popups(&self) -> Arc<[Popup]> {
+        self.popups
+            .lock()
+            .map_or_else(|_| Arc::from([]), |p| p.clone())
+    }
+
     pub fn touch(&self, touch: Touch) -> Result<(), Error> {
         self.send(Input::Touch(touch.validated()?))
     }
@@ -708,8 +756,8 @@ impl Stream {
             return Err(Error("invalid desktop scroll".into()));
         }
         self.send(Input::Scroll {
-            x: x.clamp(0.0, 1.0),
-            y: y.clamp(0.0, 1.0),
+            x: reach(x),
+            y: reach(y),
             dx,
             dy,
         })
@@ -874,19 +922,20 @@ mod tests {
         assert!(Frame::new(u32::MAX, u32::MAX, vec![]).is_err());
     }
 
+    /// はみ出したメニューを指せるよう取得元の外も受け付けるが、取得元 1 つ分より外は端に留める。
     #[test]
     fn touch_rejects_nonfinite_coordinates_and_unknown_contacts() {
         let touch = Touch {
             id: 0,
             phase: TouchPhase::Down,
-            x: -1.0,
-            y: 2.0,
+            x: -3.0,
+            y: 1.5,
         };
         assert_eq!(
             touch.validated().unwrap(),
             Touch {
-                x: 0.0,
-                y: 1.0,
+                x: -1.0,
+                y: 1.5,
                 ..touch
             }
         );
@@ -1042,6 +1091,42 @@ mod tests {
         // 前に出せなくても配信は続く。
         stream.focus().unwrap();
         rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    }
+
+    /// 映像が届かなくてもメニューは伝え、止まったら消す。
+    #[test]
+    fn worker_publishes_popups_without_frames_and_clears_them_on_stop() {
+        struct Menu;
+        impl Session for Menu {
+            fn frame(&mut self) -> Result<Option<Frame>, Error> {
+                Ok(None)
+            }
+            fn touch(&mut self, _: Touch) -> Result<(), Error> {
+                Ok(())
+            }
+            fn popups(&mut self) -> Vec<Popup> {
+                vec![Popup {
+                    id: 7,
+                    area: [0.5, 0.5, 0.2, 0.4],
+                    image: Icon {
+                        width: 1,
+                        height: 1,
+                        rgba: [9; 4].into(),
+                    },
+                }]
+            }
+        }
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, _| Ok(Menu)).unwrap();
+        until(|| stream.popups().first().is_some_and(|p| p.id == 7));
+        let first = stream.popups();
+        thread::sleep(POPUP_INTERVAL * 2);
+        assert!(
+            Arc::ptr_eq(&first, &stream.popups()),
+            "変わらなければ同じ Arc"
+        );
+        let popups = stream.popups.clone();
+        drop(stream);
+        until(|| popups.lock().unwrap().is_empty());
     }
 
     #[test]

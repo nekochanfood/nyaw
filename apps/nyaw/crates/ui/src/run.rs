@@ -210,14 +210,11 @@ pub fn run_with(
                 });
                 // 前フレームの配送でホバーした要素のツールチップを手に振り分ける。変更があればツールチップパネルを再描画する。
                 let tooltip_changed = cx.update(|cx| {
-                    let ids = slots
-                        .open
-                        .iter()
-                        .map(|&p| (p, slots.windows[p].1.window_id()));
+                    let ids = slots.open.iter().map(|&p| (p, slots.window(p).window_id()));
                     sync_tooltips(&kernel, &bridges, ids, cx)
                 });
                 for &p in &slots.open {
-                    let w = slots.windows[p].1;
+                    let w = slots.window(p);
                     let part = kernel.panel(p).pointer.map(|(_, part)| part);
                     if hold_changed && part == Some(Pointer::Cursor) {
                         slots.drawn[p] = None;
@@ -257,7 +254,7 @@ pub fn run_with(
                 // アイドル状態のパネルの再描画は 1 フレームに 1 枚まで（同一フレームに重なると読み戻しの待機が積み上がる）。
                 let mut idle_slot = true;
                 for panel in slots.open.iter().copied() {
-                    let window = slots.windows[panel].1;
+                    let window = slots.window(panel);
                     let inputs = inputs.remove(&panel).unwrap_or_default();
                     if kernel.panel(panel).closed {
                         cx.update(|cx| {
@@ -518,9 +515,11 @@ pub fn run_with(
     });
 }
 
-/// フレームループがパネルごとに保持する状態。添字は PanelId（カーネルが開いた順に 0 から PanelId を割り当て、ウィンドウも同じ順序で追加する）。
+/// フレームループがパネルごとに保持する状態。`windows` 以外の添字は PanelId（カーネルが開いた順に 0 から割り当てる）。
+/// カーネルが自分で開くパネル（配信しているウィンドウのメニュー）にはウィンドウが無いので、その PanelId は欠番になる。
 #[derive(Default)]
 pub(crate) struct Slots {
+    /// 開いたウィンドウ（PanelId の順）。
     pub(crate) windows: Vec<(PanelId, AnyWindowHandle)>,
     /// 開いているパネル（閉じたものは除く）。
     open: Vec<PanelId>,
@@ -535,20 +534,27 @@ pub(crate) struct Slots {
 }
 
 impl Slots {
-    /// 開いたパネルを追加する。
+    /// 開いたパネルを追加する。PanelId は開いた順に増える。
     pub(crate) fn push(&mut self, (panel, window): (PanelId, AnyWindowHandle)) {
-        // 添字でアクセスするため、ずれると別パネルのウィンドウを描画してしまう。
-        assert_eq!(
-            panel,
-            self.windows.len(),
-            "PanelId must match the window index"
-        );
+        // 添字でアクセスするため、戻ると別パネルの状態を上書きしてしまう。
+        assert!(panel >= self.last.len(), "PanelId must grow");
         self.windows.push((panel, window));
         self.open.push(panel);
-        self.last.push(None);
-        self.drawn.push(None);
-        self.idle.push(IDLE_REDRAW);
-        self.seen.push(false);
+        // 間のウィンドウの無いパネルの分も空けておく。
+        let n = panel + 1;
+        self.last.resize_with(n, || None);
+        self.drawn.resize(n, None);
+        self.idle.resize(n, IDLE_REDRAW);
+        self.seen.resize(n, false);
+    }
+
+    /// `panel` のウィンドウ。
+    pub(crate) fn window(&self, panel: PanelId) -> AnyWindowHandle {
+        let i = self
+            .windows
+            .binary_search_by_key(&panel, |&(id, _)| id)
+            .expect("the panel has a window");
+        self.windows[i].1
     }
 }
 
