@@ -5,9 +5,6 @@ use super::*;
 /// 表示専用子（[`Parent::hud`]）とナビバーを親面からどれだけ手前（m）に配置するか。
 /// その上を指したカーソル（[`CURSOR_LIFT`]）より奥にする。
 const HUD_LIFT: f32 = LIFT_STEP;
-/// 面に重ねる子（[`Parent::over`]）を親面からどれだけ手前（m）に置くか。ナビバー・表示専用子（[`HUD_LIFT`]）より手前にし、
-/// 同じ親に重ねる子どうしも、後から開いたものほど [`LIFT_STEP`] ずつ手前にする（描画順 [`OVER_SORT`] と同じ並び）。
-const OVER_LIFT: f32 = HUD_LIFT + LIFT_STEP;
 /// スロット子をアンドックしたとき、離脱を明示するために面の法線方向（頭側）へ移動する距離（m）。
 const UNDOCK_PULL: f32 = 0.2;
 /// スタック子（[`Parent::stack`]）が変化した配置先へ追従する時定数（秒）。
@@ -50,21 +47,19 @@ impl Overlay {
         }
         let q = &mut self.panels[id];
         q.parent = parent;
-        // 表示専用子・ポップオーバー（固定して外側プレスで閉じる子）・スタック子は他パネルより前に描画する。ランタイムは
-        // 深度ではなく描画順で合成するため、同一順だと重なり部分がフリッカーする（ドックパネル上のメニューや、ドックパネルの
-        // 出入りで上に移動するスタック子など）。面に重ねる子の描画順は cover が決める。
-        let front = parent.is_some_and(|p| p.hud || p.stack || (p.docked && p.dismiss));
-        q.surface
-            .set_sort(vr, if front { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
             q.attached = None;
-            q.offset = at.inverse() * q.pose;
+            // 姿勢はずらしたまま残す（次の順位決めまでの当たり判定がずれないように）。要望にはずらす前を使う。
+            q.offset = at.inverse() * q.unlifted();
+        } else {
+            // 独立したら、今の位置がそのまま要望になる。
+            q.lift = 0.0;
         }
         self.cover(vr, id);
     }
 
-    /// 親の面の一部に重ねる子（[`Parent::over`]）の面をその範囲に合わせ、親の前に置く。同じ親に重ねる子のうち、
-    /// 先に開いた（PanelId の小さい）ものの数だけ、描画順を上げて手前に出す。
+    /// 親の面の一部に重ねる子（[`Parent::over`]）の面をその範囲に収め、親の 1 段手前を要望する（子どうしの前後と奥行きは
+    /// [`Overlay::place_layers`] が決める）。
     fn cover(&mut self, vr: &mut dyn VrBackend, id: PanelId) {
         let Some(Parent {
             panel,
@@ -74,39 +69,27 @@ impl Overlay {
         else {
             return;
         };
-        let below = self
-            .present
-            .iter()
-            .filter(|&&c| {
-                let q = &self.panels[c];
-                c < id
-                    && !q.closed
-                    && q.parent
-                        .is_some_and(|q| q.panel == panel && q.over.is_some())
-            })
-            .count() as u32;
-        let layer = below.min(OVER_LAYERS - 1);
         let outer = &self.panels[panel];
         let face = outer.size - Vec2::splat(2.0 * face_margin(outer));
         let offset = Pose::new(
             Vec3::new(
                 (x + w / 2.0 - 0.5) * face.x,
                 (0.5 - y - h / 2.0) * face.y,
-                OVER_LIFT + LIFT_STEP * layer as f32,
+                LIFT_STEP,
             ),
             Quat::IDENTITY,
         );
         let pose = outer.pose * offset;
         let p = &mut self.panels[id];
-        let size = face * Vec2::new(w, h);
-        (p.offset, p.pose) = (offset, pose);
+        // 子の面の画素数。ランタイムは幅と画素の縦横比で描くので、比は変えずに範囲へ収める。
+        let res = Vec2::new(p.resolution.0 as f32, p.resolution.1 as f32);
+        let margin = if p.capture { 0.0 } else { PANEL_MARGIN };
+        let inner = (res - Vec2::splat(2.0 * margin)).max(Vec2::ONE);
+        let size = res * (face * Vec2::new(w, h) / inner).min_element();
+        (p.offset, p.pose, p.lift) = (offset, pose, 0.0);
         if !p.size.abs_diff_eq(size, 1e-6) {
             p.size = size;
             p.surface.set_width(vr, p.displayed_size().x);
-        }
-        let sort = OVER_SORT + layer;
-        if p.surface.sort() != sort {
-            p.surface.set_sort(vr, sort);
         }
     }
 
@@ -131,11 +114,11 @@ impl Overlay {
                     self.panels[cur].offset = self.slot_offset(cur, panel, tilt);
                 }
                 if carry {
-                    let (pose, offset) = (self.panels[cur].pose, self.panels[cur].offset);
+                    let (pose, offset) = (self.panels[cur].unlifted(), self.panels[cur].offset);
                     self.panels[panel].pose = pose * offset.inverse();
                 } else {
                     self.panels[cur].offset =
-                        self.panels[panel].pose.inverse() * self.panels[cur].pose;
+                        self.panels[panel].pose.inverse() * self.panels[cur].unlifted();
                     break;
                 }
                 cur = panel;

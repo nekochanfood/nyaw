@@ -50,6 +50,7 @@ impl Surface {
     pub fn has_texture(&self) -> bool {
         self.texture.is_some()
     }
+
     /// 最後に指定した描画順（[`Self::set_sort`]）。
     pub fn sort(&self) -> u32 {
         self.sort

@@ -182,7 +182,7 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 
 ### バージョン管理とリリース手順
 
-本プロジェクトは Calendar Versioning（CalVer（現在 `2026.0.3-dev.0`、形式: `YYYY.MINOR.MICRO[-dev.PATCH]`））を採用しており、`Cargo.toml` の `[workspace.package]` で一括管理する。
+本プロジェクトは Calendar Versioning（CalVer（現在 `2026.0.4-dev.0`、形式: `YYYY.MINOR.MICRO[-dev.PATCH]`））を採用しており、`Cargo.toml` の `[workspace.package]` で一括管理する。
 
 - **タグ命名規則**: リリースタグは `v<CalVer>`（安定版）または `v<CalVer>-<チャネル名>.<番号>`（プレリリース版）とする。
 - **正式リリースの流れ**: GitHub Actions の `prepare-release.yml` ワークフローにバージョン番号を指定して実行すると、バージョン更新の Pull Request が自動生成される。この PR をマージすると、`release.yml` がインストーラーをビルドし、GitHub Releases に正式版が発行される。発行完了後、`main` ブランチのバージョン番号は自動的に次の版の `-dev.0` へ進む。

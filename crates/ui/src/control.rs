@@ -19,8 +19,17 @@ pub struct PanelState {
     /// フレームループが [`sync_panel`] で毎フレーム更新する（変更時の再描画は不要）。wrist が配置記憶に使用する。
     pub offset: Option<Pose>,
     pub size: Vec2,
+    /// 確定した重なり順と奥行き。毎フレーム更新する（変更時の再描画は不要。表示する検証画面は `live` にする）。
+    pub layer: PanelLayer,
     /// 最後の再描画時点の全体設定（[`PanelControl::settings`]）。変更があれば再描画する。
     seen: Settings,
+}
+
+/// パネルの確定した重なり（`kernel::Panel` の `draw_order`・`lifted`）。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PanelLayer {
+    pub order: u32,
+    pub lifted: f32,
 }
 
 /// ビューとフレームループ間の受け渡し口（GPUI グローバル）。ビューが `commands` にキューイングした操作を、
@@ -245,6 +254,10 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     let p = kernel.panel(panel);
     ctl.offset = p.attached.as_ref().map(|(_, offset)| *offset);
     ctl.size = p.size / kernel.ui_scale();
+    ctl.layer = PanelLayer {
+        order: p.draw_order(),
+        lifted: p.lifted(),
+    };
     let status = kernel.status(panel);
     if ctl.status == status && ctl.seen == settings {
         return false;

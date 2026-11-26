@@ -182,8 +182,7 @@ impl Overlay {
             }
             let p = &self.panels[s.panel];
             match Surface::new(vr, &format!("nyaw.stand-in.{}", s.panel), p.size.x, p.pose) {
-                Ok(mut surface) => {
-                    surface.set_sort(vr, PANEL_SORT);
+                Ok(surface) => {
                     let stand_in = StandIn {
                         surface,
                         shown: Transition::rest(0.0),
@@ -230,6 +229,11 @@ impl Overlay {
             let face = size - Vec2::splat(2.0 * face_margin(p));
             let px = (face * density(p) * STAND_IN_SCALE).round().max(Vec2::ONE);
             let px = (px.x as u32, px.y as u32);
+            // 中身のすぐ上。そのパネルに重ねるもの（ナビバーなど）より下（[`Self::place_layers`]）。
+            let sort = p.surface.sort() + 1;
+            if si.surface.sort() != sort {
+                si.surface.set_sort(vr, sort);
+            }
             let upload = si.sent != Some(px);
             if upload {
                 let rgba = rounded_rect(px, radius::XL * STAND_IN_SCALE, STAND_IN_ALPHA);
