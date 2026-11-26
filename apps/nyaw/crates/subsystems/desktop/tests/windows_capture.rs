@@ -1,7 +1,7 @@
 //! 実デスクトップを使用するため、`--ignored` を明示的に指定した場合にのみ実行される。
 #![cfg(windows)]
 
-use desktop::{SourceKind, Sources, Status, Stream, Touch, TouchPhase};
+use desktop::{Source, SourceKind, Sources, Status, Stream, Touch, TouchPhase};
 use std::{
     sync::{Mutex, mpsc},
     thread,
@@ -86,6 +86,22 @@ impl Drop for TestWindow {
             }
         }
     }
+}
+
+/// 取得元の一覧から、タイトルが `name` のウィンドウを探す。
+#[track_caller]
+fn window_source(name: &str) -> Source {
+    let sources = Sources::refresh().unwrap();
+    let mut list = None;
+    until(|| {
+        list = sources.poll();
+        list.is_some()
+    });
+    list.unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == name)
+        .expect("test window in source list")
 }
 
 #[track_caller]
@@ -266,18 +282,7 @@ fn occluded_window_activation_and_rejected_touch_do_not_stop_capture() {
         WINDOW_EX_STYLE::default(),
     );
     let hwnd = source_window.0.unwrap();
-    let sources = Sources::refresh().unwrap();
-    let mut list = None;
-    until(|| {
-        list = sources.poll();
-        list.is_some()
-    });
-    let source = list
-        .unwrap()
-        .unwrap()
-        .into_iter()
-        .find(|s| s.name == "nyaw desktop visibility source")
-        .unwrap();
+    let source = window_source("nyaw desktop visibility source");
     let stream = Stream::start(source).unwrap();
     let poll_frame = || {
         stream.poll().is_some_and(|u| {
@@ -449,18 +454,7 @@ fn context_menu_is_captured_apart_from_the_window_and_takes_clicks() {
         drop(window);
     });
     ready.recv_timeout(Duration::from_secs(15)).unwrap();
-    let sources = Sources::refresh().unwrap();
-    let mut list = None;
-    until(|| {
-        list = sources.poll();
-        list.is_some()
-    });
-    let source = list
-        .unwrap()
-        .unwrap()
-        .into_iter()
-        .find(|s| s.name == "nyaw desktop menu E2E")
-        .expect("test window in source list");
+    let source = window_source("nyaw desktop menu E2E");
     let stream = Stream::start(source).unwrap();
     until(|| {
         stream.poll().is_some_and(|u| {
@@ -574,18 +568,7 @@ fn popup_arrives_with_its_own_alpha_and_nothing_behind_it() {
         paint_layered(popup.0.unwrap(), WIDTH, HEIGHT, &pixels);
         (window, popup)
     };
-    let sources = Sources::refresh().unwrap();
-    let mut list = None;
-    until(|| {
-        list = sources.poll();
-        list.is_some()
-    });
-    let source = list
-        .unwrap()
-        .unwrap()
-        .into_iter()
-        .find(|s| s.name == "nyaw desktop alpha E2E")
-        .expect("test window in source list");
+    let source = window_source("nyaw desktop alpha E2E");
     let stream = Stream::start(source).unwrap();
     let mut found = None;
     until(|| {
