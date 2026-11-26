@@ -1350,6 +1350,7 @@ name = "desktop"
 version = "2026.0.4-dev.0"
 dependencies = [
  "ashpd",
+ "image",
  "logger",
  "os",
  "pipewire",

@@ -28,6 +28,8 @@ ashpd = { version = "0.13", default-features = false, features = ["async-io", "s
 pollster = "0.4"
 pipewire = { version = "0.9", features = ["v0_3_65"] }
 rustix = { version = "1", features = ["fs", "mm", "event", "param", "time"] }
+# アプリのアイコン（アイコンテーマと .desktop が指す PNG）の読み込み（src/linux/apps.rs）。
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [

@@ -19,6 +19,7 @@ OS 固有の条件付きコンパイル（`#[cfg(windows)]` 等）は、その�
 config_dir();               // 設定保存先ディレクトリの取得
 log_dir();                  // ログ保存先ディレクトリの取得
 data_dir();                 // ユーザーデータ保存先ディレクトリの取得
+data_search_dirs();         // 共有データの検索先の取得（Linux のみ）
 precise_timers();           // 高精度タイマーの有効化
 high_gpu_priority();        // GPU プロセス優先度の引き上げ
 ui_language();              // OS 表示言語の取得
@@ -37,6 +38,7 @@ error_dialog(title, msg);   // 致命的エラー時のネイティブダイア�
 | 設定（`config_dir`） | `%LOCALAPPDATA%\nyaw` | `$XDG_CONFIG_HOME/nyaw`（既定 `~/.config/nyaw`） |
 | データ（`data_dir`） | `%LOCALAPPDATA%\nyaw` | `$XDG_DATA_HOME/nyaw`（既定 `~/.local/share/nyaw`） |
 | ログ（`log_dir`） | `%LOCALAPPDATA%\nyaw\logs` | `$XDG_STATE_HOME/nyaw/logs`（既定 `~/.local/state/nyaw/logs`） |
+| 共有データの検索先（`data_search_dirs`） | なし | `$XDG_DATA_HOME`、`$XDG_DATA_DIRS`（既定 `/usr/local/share:/usr/share`） |
 | OpenVR のパス定義 | `%LOCALAPPDATA%\openvr\openvrpaths.vrpath` | `$XDG_CONFIG_HOME/openvr/openvrpaths.vrpath` |
 | OpenXR のランタイム | `XR_RUNTIME_JSON`、レジストリの `ActiveRuntime` | `XR_RUNTIME_JSON`、`openxr/1/active_runtime.json`（OpenXR ローダーと同じ探索順） |
 | 表示言語 | `GetUserDefaultUILanguage` | 環境変数 `LC_ALL` > `LC_MESSAGES` > `LANG` |

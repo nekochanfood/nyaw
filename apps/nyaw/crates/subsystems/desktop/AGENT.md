@@ -4,7 +4,7 @@
 
 ディスプレイ画面および個別アプリケーションウィンドウの列挙、キャプチャ画像の取得、および OS に対する直接的なタッチ入力の注入を担当する。また、インストール済みアプリの一覧、アプリ ID からの名前・実行ファイル名・アイコンの解決、およびアプリの起動を担当する。Linux では OS キーボード（仮想キーボードから OS の入力先への送信）も担う。
 
-Windows 環境では Windows Graphics Capture (WGC) および Synthetic Pointer API を使用する。Linux 環境の方式は「Linux の配信と操作」の節で述べる。Linux で扱うのはディスプレイ（画面）だけであり、個別のウィンドウとアプリの一覧・起動は Windows でのみ実装している。
+Windows 環境では Windows Graphics Capture (WGC) および Synthetic Pointer API を使用する。Linux 環境の方式は「Linux の配信と操作」の節で述べる。Linux で扱うのはディスプレイ（画面）だけであり、個別のウィンドウとアプリの一覧・起動は Windows でのみ実装している。アプリ ID から情報を引く `installed_app` は、Linux でも実装している。
 
 ## ウィンドウとアプリケーション情報の突合
 
@@ -20,6 +20,7 @@ Windows 環境では Windows Graphics Capture (WGC) および Synthetic Pointer 
 
 - `InstalledApps::refresh`: スタートメニューのアプリをすべて列挙する（アイコンを読み込むため数秒かかる）。
 - `installed_app(id)` / `app_icon(id)`: 1 つのアプリの情報、またはアイコンだけを引く。
+- Linux の `installed_app`（`src/linux/apps.rs`）: `.desktop` ファイルを `os::data_search_dirs` の優先順に探す。`<id>.desktop` が無ければ、ファイル名、`StartupWMClass`、名前の順に、大文字と小文字を区別せずに照合する。メディアプレイヤーが申告する名前は、ファイル名と一致するとは限らないためである（`spotify-launcher` で導入した Spotify のファイル名は `spotify-launcher.desktop` である）。ID は他のプロセスが申告する値であるため、`/` を含むものは受け付けない。アイコンは、`Icon` が絶対パスならそのファイルを、名前なら hicolor テーマと pixmaps の PNG を読む。利用者が選んだアイコンテーマと SVG は読まない。`exe` は設定しない。
 - `launch(id)`: アプリを起動する。シェルの API は STA を前提とするものがあるため、Windows では STA の専用スレッドで `ShellExecuteExW` を呼ぶ。呼び出し元のスレッド（通知のワーカーは MTA）の COM の初期化状態には依存しない。失敗は呼び出し側に返し、OS のエラーダイアログは出さない（VR から見えないため）。
 
 ## 画面・ウィンドウのキャプチャと配信

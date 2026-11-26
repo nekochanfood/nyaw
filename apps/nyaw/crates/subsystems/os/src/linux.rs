@@ -79,6 +79,27 @@ fn xdg_state_home() -> Option<PathBuf> {
     env_path("XDG_STATE_HOME").or_else(|| Some(home()?.join(".local").join("state")))
 }
 
+/// 共有データ（`.desktop` ファイルやアイコン）の検索先。優先度の高い順に、`$XDG_DATA_HOME`、
+/// `$XDG_DATA_DIRS`（既定 `/usr/local/share:/usr/share`）を返す。
+pub fn data_search_dirs() -> Vec<PathBuf> {
+    let system = std::env::var("XDG_DATA_DIRS").ok();
+    search_dirs(xdg_data_home(), system.as_deref())
+}
+
+fn search_dirs(user: Option<PathBuf>, system: Option<&str>) -> Vec<PathBuf> {
+    let system = system
+        .filter(|v| !v.is_empty())
+        .unwrap_or("/usr/local/share:/usr/share");
+    user.into_iter()
+        .chain(
+            system
+                .split(':')
+                .map(PathBuf::from)
+                .filter(|p| p.is_absolute()),
+        )
+        .collect()
+}
+
 /// nyaw 自身の設定の保存先: `$XDG_CONFIG_HOME/nyaw`。開発版（debug ビルド）は、開発版で変更した設定や登録用のファイルが
 /// インストールしたリリース版のものと競合しないよう、`nyaw-dev` に分離する。
 pub fn config_dir() -> Option<PathBuf> {
@@ -136,6 +157,22 @@ mod tests {
         assert_eq!(primary_language("fr_FR.UTF-8"), None, "非対応の言語");
         assert_eq!(primary_language("C"), None);
         assert_eq!(primary_language("C.UTF-8"), None);
+    }
+
+    #[test]
+    fn the_users_data_directory_comes_before_the_system_ones() {
+        let user = Some(PathBuf::from("/home/u/.local/share"));
+        assert_eq!(
+            search_dirs(user.clone(), Some("/opt/share:relative::/usr/share")),
+            ["/home/u/.local/share", "/opt/share", "/usr/share"].map(PathBuf::from),
+            "相対パスと空の要素は無視する"
+        );
+        for unset in [None, Some("")] {
+            assert_eq!(
+                search_dirs(user.clone(), unset),
+                ["/home/u/.local/share", "/usr/local/share", "/usr/share"].map(PathBuf::from)
+            );
+        }
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! 仮想ポインタ）、その他の Wayland（xdg-desktop-portal の ScreenCast・RemoteDesktop と PipeWire）を使い分ける。
 //! 取り込んだ画像は、ランタイムが取り込める限り CPU で並べ替えずに GPU へ渡す（`vr::ExternalImage`）。
 
+pub(super) mod apps;
 mod keyboard;
 mod pipewire;
 mod portal;

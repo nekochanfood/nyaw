@@ -463,11 +463,14 @@ pub fn app_icon(id: &str) -> Option<Icon> {
 }
 
 /// アプリ（[`InstalledApp::id`] と同じ ID）の名前・実行ファイル名・アイコン。一覧（[`InstalledApps`]）に無いアプリは `None`。
-/// シェルに問い合わせて待機するため、フレームループでは呼び出さない。
+/// Linux では `.desktop` ファイルから引き、ファイル名に一致しなければ `StartupWMClass` か名前が `id` に一致するものを返す。
+/// シェルへの問い合わせやファイルの読み込みで待機するため、フレームループでは呼び出さない。
 pub fn installed_app(id: &str) -> Option<InstalledApp> {
     #[cfg(windows)]
     return windows::installed_app(id);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::apps::installed_app(id);
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = id;
         None
