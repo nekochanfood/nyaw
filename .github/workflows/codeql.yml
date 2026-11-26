@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   analyze:
+    name: "repo: CodeQL (${{ matrix.language }})"
     # ドラフト状態の PR では実行をスキップ（ready_for_review 時に自動実行）
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest

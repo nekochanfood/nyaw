@@ -21,7 +21,7 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | 静的解析、型検査、テスト        |
 | `pnpm run deploy`                            | Cloudflare Workers へのデプロイ |
 
-CI（`.github/workflows/web.yml`）は整形の確認、静的解析、型検査、テスト、ビルドを実行する。
+CI（`.github/workflows/web.yml`）は整形の確認、静的解析、型検査、テスト、ビルドを、それぞれ別のジョブ（`web: <名前>`）で並列に実行する。
 
 ## デザイントークン
 

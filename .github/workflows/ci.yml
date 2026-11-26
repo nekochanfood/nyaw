@@ -1,4 +1,4 @@
-name: CI
+name: nyaw CI
 
 on:
   # ウェブサイト（apps/web/）だけの変更ではアプリの CI を実行しない（ルート AGENT.md の「リポジトリ構成」）
@@ -34,6 +34,7 @@ defaults:
 
 jobs:
   fmt:
+    name: "nyaw: fmt"
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
@@ -46,6 +47,7 @@ jobs:
 
   # Clippy による静的解析。PR 作成・更新時および main への push 時のみ実行
   clippy:
+    name: "nyaw: clippy"
     # ドラフト状態の PR では実行をスキップ（ready_for_review 時に自動実行）
     if: (github.event_name == 'pull_request' && !github.event.pull_request.draft) || github.ref == 'refs/heads/main'
     runs-on: windows-latest
@@ -62,6 +64,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
+    name: "nyaw: test"
     if: github.event_name != 'pull_request'
     runs-on: windows-latest
     env:

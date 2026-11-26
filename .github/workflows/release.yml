@@ -1,4 +1,4 @@
-name: Release
+name: nyaw Release
 
 # インストーラーをビルドしてリリースアセットを添付するワークフロー。
 # 以下のトリガーに対応する:
@@ -24,6 +24,7 @@ on:
 
 jobs:
   installer:
+    name: "nyaw: installer"
     runs-on: windows-latest
     permissions:
       contents: write

@@ -1,4 +1,4 @@
-name: Web
+name: web CI
 
 # ウェブサイト（apps/web/）の検査。参照するアプリ側の資産が変わったときも実行する
 on:
@@ -24,7 +24,13 @@ permissions:
 
 jobs:
   check:
+    name: "web: ${{ matrix.task }}"
     runs-on: ubuntu-latest
+    strategy:
+      # 1 つが失敗しても、ほかの検査の結果は出す
+      fail-fast: false
+      matrix:
+        task: ["fmt:check", lint, typecheck, test, build]
     steps:
       - uses: actions/checkout@v4
       # pnpm の版はルート package.json の packageManager に従う
@@ -37,8 +43,4 @@ jobs:
       - run: |
           sed -i '/^cargo:/,/enabled:/s/enabled: true/enabled: false/' pnpm-workspace.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter web fmt:check
-      - run: pnpm --filter web lint
-      - run: pnpm --filter web typecheck
-      - run: pnpm --filter web test
-      - run: pnpm --filter web build
+      - run: pnpm --filter web run ${{ matrix.task }}
