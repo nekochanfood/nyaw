@@ -1,5 +1,11 @@
 //! Windows の保存先・ランタイム検出・タイマー・GPU 設定。
+use std::io;
 use std::path::PathBuf;
+
+/// このアプリを次回起動するときに指定するパス（実行ファイル）。
+pub fn launch_path() -> io::Result<PathBuf> {
+    std::env::current_exe()
+}
 
 /// OS のタイマーの精度を 1ms に設定する（プロセス終了まで有効）。Windows の既定は 15.6ms 刻みで、
 /// フレームループの「1ms 譲る」待機が 1 刻みに丸められてフレームが延長される。

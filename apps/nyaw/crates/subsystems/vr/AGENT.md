@@ -51,6 +51,7 @@ OpenVR 環境における操作は、SteamVR Input システム（`openvr/action
 `openvr/app.rs` が SteamVR へのマニフェスト登録と自動起動制御を担う。
 
 - **マニフェストの生成**: 自動起動を有効化した際、設定ディレクトリ内に `vrmanifest` ファイル（起動コマンド引数 `--openvr` を指定。実行ファイルのパスは Windows では `binary_path_windows`、Linux では `binary_path_linux` に記載）を出力し、`AddApplicationManifest` を通じて SteamVR に恒久登録する。
+- **起動するパス**: マニフェストには `os::launch_path` が返すパス（AppImage では AppImage ファイル）を記載する。登録を書き出すのは自動起動を有効化した時点だけであるため、その後にファイルを移動するか名前を変えた場合は、自動起動を一度無効にしてから有効にし直す。版ごとにファイル名が異なる AppImage を手動で差し替えた場合も同様である。
 - **識別情報の管理**: リリースビルド（`nekochanfood.nyaw`）と開発ビルド（`nekochanfood.nyaw.dev`）でマニフェストおよび識別子を分離し、開発環境による本番環境の上書きを防止する。接続時は `IdentifyApplication` により自身を名乗ることで、コントローラバインドの同一性を担保する。
 
 ## HUD セーフエリアの算出（HUD のセーフエリア）
