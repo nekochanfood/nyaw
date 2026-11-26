@@ -4,6 +4,7 @@ use std::{
     fs, io,
     path::PathBuf,
     sync::{Arc, OnceLock},
+    thread,
 };
 
 use kbvm::{
@@ -21,6 +22,20 @@ pub mod geometry;
 pub use geometry::{KeyShape, KeyboardType, Keycap};
 
 include!(concat!(env!("OUT_DIR"), "/data.rs"));
+
+/// プロセスで共有する配列データベース（最初の呼び出しで読み込む）。読み込みは XKB の数百ファイルのディスク I/O を伴い、
+/// キーボードの初回表示時に始めるとディスク負荷が高い間はキーのないカードが数秒間表示されるため、起動時に [`preload`] で始めておく。
+pub fn shared() -> &'static Result<Database, String> {
+    static DATABASE: OnceLock<Result<Database, String>> = OnceLock::new();
+    DATABASE.get_or_init(|| Database::load().map_err(|e| e.to_string()))
+}
+
+/// [`shared`] の読み込みを別スレッドで始める（UI の起動時に呼ぶ）。
+pub fn preload() {
+    thread::spawn(|| {
+        shared();
+    });
+}
 
 fn check_diagnostics(diagnostics: Vec<Diagnostic>) -> Result<(), String> {
     let errors: Vec<_> = diagnostics

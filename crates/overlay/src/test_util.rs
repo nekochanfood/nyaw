@@ -69,6 +69,7 @@ pub(crate) fn with_child(carry: bool) -> (Subsystems<MockBackend>, Overlay) {
             docked: false,
             slot: None,
             stack: false,
+            over: None,
         }),
     );
     (vr, ov)

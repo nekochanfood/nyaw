@@ -2,7 +2,7 @@
 
 層: 1 Subsystems
 
-ディスプレイ画面および個別アプリケーションウィンドウの列挙、キャプチャ画像の取得、および OS に対する直接的なタッチ入力の注入を担当する。Linux では OS キーボード（仮想キーボードから OS の入力先への送信）も担う。
+ディスプレイ画面および個別アプリケーションウィンドウの列挙、キャプチャ画像の取得、および OS に対する直接的なタッチ入力の注入を担当する。また、インストール済みアプリの一覧、アプリ ID からの名前・実行ファイル名・アイコンの解決、およびアプリの起動を担当する。Linux では OS キーボード（仮想キーボードから OS の入力先への送信）も担う。
 
 Windows 環境では Windows Graphics Capture (WGC) および Synthetic Pointer API を使用する。Linux 環境の方式は「Linux の配信と操作」の節で述べる。Linux で扱うのはディスプレイ（画面）だけであり、個別のウィンドウとアプリの一覧・起動は Windows でのみ実装している。
 
@@ -13,6 +13,14 @@ Windows 環境では Windows Graphics Capture (WGC) および Synthetic Pointer 
 - `app_key(exe)`: 実行ファイル名を正規化して小文字かつ拡張子なしの検索キーを生成する。
 - `InstalledApp::owns(&Source)`: 指定されたウィンドウが該当アプリケーションに属しているかを判定する。
 - `Source::replacement` / `Source::successor`: キャプチャ対象のウィンドウが閉じられた際、タイトルやプロセス情報から後継ウィンドウを特定する。
+
+## インストール済みアプリの解決と起動
+
+アプリ ID（Windows は AppUserModelId）からアプリの情報を引く処理と起動は、本サブシステムだけが実装する。`media`（再生中のアプリの名前と実行ファイル名）と `notifications`（通知のアイコンと、通知を押したときの起動）も本サブシステムの関数を呼ぶ。他の OS に対応する場合は、ここだけを実装すればよい。
+
+- `InstalledApps::refresh`: スタートメニューのアプリをすべて列挙する（アイコンを読み込むため数秒かかる）。
+- `installed_app(id)` / `app_icon(id)`: 1 つのアプリの情報、またはアイコンだけを引く。
+- `launch(id)`: アプリを起動する。シェルの API は STA を前提とするものがあるため、Windows では STA の専用スレッドで `ShellExecuteExW` を呼ぶ。呼び出し元のスレッド（通知のワーカーは MTA）の COM の初期化状態には依存しない。失敗は呼び出し側に返し、OS のエラーダイアログは出さない（VR から見えないため）。
 
 ## 画面・ウィンドウのキャプチャと配信
 
@@ -62,13 +70,17 @@ Frame::external;         // ランタイムへ直接渡す表示サーバーの�
 Source;                  // キャプチャ元情報（名前、アプリアイコン、製品名等）
 Cursor;                  // OS カーソル画像とホットスポット情報
 capabilities();          // ホバーや最小化対応などのバックエンド能力問い合わせ
-app_icon(aumid);         // AppUserModelId からのアプリアイコン非同期取得
+InstalledApps;           // インストール済みアプリの一覧の取得（別スレッド）
+installed_app(id);       // アプリ ID からのアプリ情報の取得
+app_icon(id);            // アプリ ID からのアイコンの取得
+launch(id);              // アプリの起動
 os_keyboard();           // OS キーボードの監視役（Linux は表示サーバー経由で送信する）
 ```
 
 ## テスト手法
 
 - **単体・モックテスト**: `desktop/test-support` フィーチャーを有効化し、モックを用いて最新画像の更新、タッチイベントの配送、およびセッション終了処理を検証する。
+- **アプリの解決と起動の実機検証**: `cargo run -p desktop --example apps` で一覧を出力し、各アプリを ID から引き直した結果が一覧と一致するかを確認する。`cargo test -p desktop -- --ignored launches_an_app_from_an_mta_thread` は電卓を MTA のスレッドから起動する。
 - **実機キャプチャテスト**: `crates/subsystems/desktop/tests/windows_capture.rs` および `testkit/tests/scenarios/desktop_stream.rs`（いずれも `#[ignore]` 指定）を用いて実デスクトップ環境での動作を検証する。
 - **Linux の実機テスト**: `tests/linux_capture.rs`（`#[ignore]` 指定。`-- --ignored --test-threads=1` で実行する）は、X11 の項目を rootful の Xwayland を別に起動して検証する（取り込みの画素、ポインタの位置とクリック、カーソルの画像、OS キーボード）。portal の項目は実際のセッションで検証する（許可待ちから配信の開始まで、ポインタの位置、カーソル、テスト用の XWayland ウィンドウへの OS キーボード）。許可待ちの項目は保存した選択を消して確認画面を出させるため、許可の操作が要る。`NYAW_KEEP_CHOICE=1` を指定すると選択を残し、許可待ちの確認を省く。
 - **実際のコンポジタでのテスト**: `NYAW_TEST_WAYLAND=<ソケット名> cargo test -p desktop --test wayland_compositor -- --ignored` は、入れ子で起動したコンポジタ（利用者のデスクトップではないもの）に、位置を色で表す全画面のウィンドウを開き、取り込んだ画面で見えている画素を指したときにウィンドウがその画素でポインタを受け取ること、クリック、OS キーボードを検証する。niri 26.04、Hyprland 0.57.2（倍率 2）、ShojiWM で通ることを確認した。`NYAW_TEST_CURSOR=1` でカーソルの画像が届くことを必須にする。

@@ -58,11 +58,16 @@ jobs:
           else
             BEFORE=$(git merge-base HEAD "$BEFORE")
           fi
-          if prev=$(git describe --tags --abbrev=0 "$BEFORE" 2> /dev/null); then
-            echo "PREV=$prev" >> "$GITHUB_ENV"
-          fi
           ver() { sed -n 's/^version = "\([^"]*\)".*/\1/p'; }
           new=$(ver < Cargo.toml)
+          # 変更履歴の起点。安定版は前の安定版からとし、間のプレリリースで入った変更も含める
+          stable=()
+          if [ -z "$PRERELEASE" ] && [[ $new != *-* ]]; then
+            stable=(--exclude '*-*')
+          fi
+          if prev=$(git describe --tags --abbrev=0 "${stable[@]}" "$BEFORE" 2> /dev/null); then
+            echo "PREV=$prev" >> "$GITHUB_ENV"
+          fi
           if [ -n "$PRERELEASE" ]; then
             if [[ $new == *-* ]]; then
               echo "::error::the version $new already has a label; run this on the version-bump PR's branch"

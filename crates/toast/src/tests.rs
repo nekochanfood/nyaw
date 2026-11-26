@@ -1,5 +1,6 @@
 use super::*;
 use gpui::{Modifiers, TestAppContext, VisualTestContext};
+use kernel::Request;
 use kernel::subsystems::notifications::{Action, App};
 use std::time::SystemTime;
 
@@ -38,6 +39,11 @@ fn set(cx: &mut VisualTestContext, f: impl FnOnce(&mut PanelControl)) {
         window.refresh();
     });
     cx.run_until_parked();
+}
+
+/// 蓄積されたシステムへの要求を取り出す。
+fn take_requests(cx: &mut VisualTestContext) -> Vec<Request> {
+    cx.update(|_, cx| std::mem::take(&mut cx.default_global::<PanelControl>().requests))
 }
 
 fn take(cx: &mut VisualTestContext, id: PanelId) -> Vec<PanelCommand> {
@@ -219,9 +225,9 @@ fn cards_jump_to_the_notification_center(cx: &mut TestAppContext) {
         "クリックした通知は閲覧済みとなり消える（他は残留する）"
     );
     assert!(
-        !take(cx, TOAST)
+        !take_requests(cx)
             .iter()
-            .any(|c| matches!(c, PanelCommand::Notification { .. })),
+            .any(|c| matches!(c, Request::Notification { .. })),
         "アプリへは通知しない"
     );
     let urls = cx.update(|window, cx| design::link::take(window, cx));
@@ -399,9 +405,9 @@ fn cards_swipe_away(cx: &mut TestAppContext) {
     assert!(card(cx, 2).is_none());
     assert!(card(cx, 1).is_some(), "他の通知は残留する");
     assert!(
-        !take(cx, TOAST)
+        !take_requests(cx)
             .iter()
-            .any(|c| matches!(c, PanelCommand::Notification { .. })),
+            .any(|c| matches!(c, Request::Notification { .. })),
         "スワイプはアクティベートとして扱わない"
     );
     let urls = cx.update(|window, cx| design::link::take(window, cx));

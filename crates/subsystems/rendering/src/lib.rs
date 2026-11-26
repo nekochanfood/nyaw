@@ -61,6 +61,16 @@ impl Surface {
         self.texture.is_some()
     }
 
+    /// 最後に指定した描画順（[`Self::set_sort`]）。
+    pub fn sort(&self) -> u32 {
+        self.sort
+    }
+
+    /// 最後に受け取った画像の画素数。
+    pub fn texture_size(&self) -> Option<(u32, u32)> {
+        self.texture.as_ref().map(|(w, h, _)| (*w, *h))
+    }
+
     /// ランタイム側のオーバーレイを解放済み（[`Self::park`]）。
     pub fn parked(&self) -> bool {
         self.parked

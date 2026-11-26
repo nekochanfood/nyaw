@@ -88,7 +88,8 @@ impl Overlay {
         if p.closed && p.opacity == 0.0 {
             p.surface.release(vr);
         } else {
-            p.surface.present(vr, p.opacity * p.awake, p.dim, upload);
+            p.surface
+                .present(vr, p.opacity * p.awake * (1.0 - p.stand_in), p.dim, upload);
         }
     }
 
@@ -203,7 +204,7 @@ impl Overlay {
         for id in std::mem::take(&mut self.dismissed) {
             self.close(vr, id);
         }
-        self.settle_family(&dragged, &pulled);
+        self.settle_family(vr, &dragged, &pulled);
         self.glide(&dragged, now);
         // 離した画面の吸い付く動きは次の tick から（この tick はまだ掴んでいた扱いで、動きを止めてしまう）。
         self.land(vr);
@@ -249,8 +250,11 @@ impl Overlay {
             }
         }
         self.place_nav_bars(vr, now);
+        self.place_layers(vr, &dragged);
         self.place_pointers(vr);
         self.place_ghosts(vr, now);
+        self.place_stand_ins(vr, now);
+        self.place_corners(vr, now);
         self.follow_roots();
         for &id in &self.present {
             let p = &mut self.panels[id];

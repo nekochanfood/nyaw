@@ -67,9 +67,7 @@ impl Screen {
                     );
                     cx.default_global::<PanelControl>().spawns.push(spec);
                 }
-                None if m.controls.raise => {
-                    commands(self.panel, [PanelCommand::Media(media::Command::Raise)], cx)
-                }
+                None if m.controls.raise => ui::request(Request::Media(media::Command::Raise), cx),
                 None => {}
             }
         }
@@ -107,10 +105,9 @@ impl Screen {
             .icon
             .clone()
             .or_else(|| app_window.and_then(|(_, i)| i.clone()));
-        let panel = self.panel;
         let send = move |command| {
             move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
-                commands(panel, [PanelCommand::Media(command)], cx)
+                ui::request(Request::Media(command), cx)
             }
         };
         let control = |id: &'static str, glyph, key, enabled: bool, command| {
@@ -305,11 +302,8 @@ impl Screen {
                                                     let at = f32::from(e.position.x - b.origin.x)
                                                         / f32::from(b.size.width).max(1.0);
                                                     let to = duration.mul_f32(at.clamp(0.0, 1.0));
-                                                    commands(
-                                                        panel,
-                                                        [PanelCommand::Media(
-                                                            media::Command::Seek(to),
-                                                        )],
+                                                    ui::request(
+                                                        Request::Media(media::Command::Seek(to)),
                                                         cx,
                                                     );
                                                 },

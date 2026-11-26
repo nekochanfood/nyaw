@@ -142,6 +142,7 @@ impl Render for NavMenu {
                 } else {
                     dock(owner, cx)
                 }
+                dock_sound(owner, !inside, cx);
                 command(panel, PanelCommand::Close, cx);
             })
         });

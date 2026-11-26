@@ -54,6 +54,11 @@ pub(crate) fn commands(cx: &mut VisualTestContext, id: PanelId) -> Vec<PanelComm
     })
 }
 
+/// 蓄積されたシステムへの要求を取り出す。
+pub(crate) fn take_requests(cx: &mut VisualTestContext) -> Vec<Request> {
+    cx.update(|_, cx| std::mem::take(&mut cx.default_global::<PanelControl>().requests))
+}
+
 /// `id` に蓄積されたコマンドを取り出す（[`commands`] はコピーのみ）。
 pub(crate) fn take_commands(cx: &mut VisualTestContext, id: PanelId) -> Vec<PanelCommand> {
     cx.update(|_, cx| {

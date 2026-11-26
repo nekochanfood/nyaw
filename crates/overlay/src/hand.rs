@@ -52,6 +52,33 @@ impl Overlay {
         }
         st.grab_held = c.grab;
         st.menu = c.menu;
+        st.corner = None;
+
+        // 角を掴んでいる間は、レーザーが面に当たる点に合わせて大きさを決める（パネルは動かさない）。
+        // 解像度は離したときに変える。それまでは代わりの板だけが伸び縮みする（place_stand_ins）。
+        if let Some(mut s) = st.stretch {
+            let p = &mut self.panels[s.panel];
+            if c.grab && !p.closed && !p.hidden {
+                let hit = s.follow(p, &aim, self.dt);
+                st.stretch = Some(s);
+                st.ray = hit.map(|(point, t)| Ray {
+                    hand: c.aim,
+                    aim,
+                    len: t,
+                    hit: Some((s.panel, point)),
+                });
+                st.drawn = Some(aim.orientation);
+                return;
+            }
+            st.stretch = None;
+            // 新しい大きさの絵が届くまで、代わりの板を出したままにする。
+            let before = p.surface.texture_size();
+            if s.commit(p)
+                && let Some(stand_in) = self.stand_ins.get_mut(&s.panel)
+            {
+                stand_in.waiting = Some((before, Instant::now()));
+            }
+        }
 
         if let Some((id, offset, len, pivot, resize)) = st.dragging {
             if c.grab {
@@ -135,6 +162,9 @@ impl Overlay {
                         .inverse()
                         .transform_point((pose * pivot.inverse()).position);
                     st.dragging = Some((id, offset, new_len, pivot, resize));
+                }
+                if let Some(stuck) = flipped {
+                    self.dock_snaps.push((id, stuck));
                 }
                 if let (Some(false), Some(m)) = (flipped, st.magnet)
                     && magnet::unplug(p, m.owner())
@@ -231,6 +261,15 @@ impl Overlay {
             hit: Some((id, aim.position + aim.forward() * t)),
         });
         st.drawn = st.ray.map(|r| r.aim.orientation);
+        // 角で大きさを変えられるパネルなら、指している角を覚える（線を出し、掴めば大きさを変える）。
+        // トリガーを押している間（中身をドラッグしている間）は出さない。
+        st.corner = hit
+            .filter(|&(id, ..)| {
+                !c.select
+                    && self.panels[id].grabbable()
+                    && !has_child(&self.panels, &self.present, id)
+            })
+            .and_then(|(id, pos, _)| Some((id, corner_at(&self.panels[id], pos)?)));
         // ロック中・ゆるく追従中のパネルは掴めない（掴みボタンは無視して普通に指す）。
         let grab_started = grab_started
             && hit.is_some_and(|h| {
@@ -267,6 +306,15 @@ impl Overlay {
             return;
         };
         if grab_started {
+            // 角を掴んだら、動かさずに大きさを変える。
+            if let Some((id, corner)) = st.corner {
+                st.stretch = Stretch::grab(id, &self.panels[id], corner, &aim);
+                if st.stretch.is_some() {
+                    st.hover = None;
+                    st.select = false;
+                    return;
+                }
+            }
             let t = hit.map_or(0.0, |h| h.2);
             // ナビゲーションバーを掴むと持ち主を掴む（バーは持ち主に付いてくる）。
             let grabbed = self.panels[id].nav_bar_of.unwrap_or(id);

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use animation::{Animation, Motion, Transition};
-use design::PANEL_MARGIN;
+use design::{BRACKET_PAD_PX, PANEL_MARGIN};
 use subsystems::{Frame, Subsystems, desktop::Cursor, rendering::Surface, vr};
 
 use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
@@ -17,16 +17,20 @@ mod lazy_follow;
 pub use lazy_follow::LazyFollow;
 pub use subsystems::ControllerState;
 
+mod corner;
 mod family;
 mod frame;
 mod geometry;
 mod hand;
+mod layers;
 mod magnet;
 mod options;
 mod panels;
 mod pointers;
 mod status;
 
+pub use corner::ResizeLimits;
+use corner::*;
 use family::*;
 use frame::*;
 pub use geometry::anchored;
@@ -58,12 +62,16 @@ pub struct Parent {
     /// `slot` 子で、他にスロット子（はめ込み画面）があればその上端の上に積む（なければ親の上端）。積み先の
     /// 変更時は滑らかに遷移する。ダッシュボード上の通知など、はめ込み画面と並べて上に表示するもの。
     pub stack: bool,
+    /// 親の面の一部に重ねる子。値は親の面の左上を原点、面の幅・高さを 1 とした範囲（`[x, y, 幅, 高さ]`。面の外へ
+    /// はみ出してよい）。子の面（影の余白を除く）を、子の解像度の縦横比のままこの範囲に収まる最大の大きさで中央に置く。
+    /// 位置と大きさは毎 tick 範囲に合わせ直すので、掴んで子だけを動かすことはできない。親を暗転させず入力も止めない。
+    pub over: Option<[f32; 4]>,
 }
 
 impl Parent {
-    /// 親を暗転させ入力を止める子か（ダイアログ等）。表示専用の子・固定子は止めない。
+    /// 親を暗転させ入力を止める子か（ダイアログ等）。表示専用の子・固定子・面に重ねる子は止めない。
     fn blocks(&self) -> bool {
-        !self.hud && !self.docked
+        !self.hud && !self.docked && self.over.is_none()
     }
 }
 
@@ -82,6 +90,8 @@ pub struct Panel {
     pub locked: bool,
     /// グラブでリサイズ可能（[`Overlay::set_resizable`]。既定は可能）。
     pub resizable: bool,
+    /// 角を掴んで縦横の解像度を変えられる範囲（[`Overlay::set_corner_resize`]）。`None` なら角では変えない（既定）。
+    pub corner_resize: Option<ResizeLimits>,
     /// 取り付け状態でのグラブ移動時の取り付け先からの距離上限（m。[`Overlay::set_reach`]）。`None` なら無制限。
     pub reach: Option<f32>,
     /// グラブ時に手で移動して頭へ向ける基準（パネルローカル姿勢。[`Overlay::set_grab_anchor`]）。`None` ならパネル自体。
@@ -112,6 +122,8 @@ pub struct Panel {
     pub nav_bar_of: Option<PanelId>,
     /// ナビバーの頭から 1m 先での基準サイズ（`size` は毎 tick これ × 距離で算出）。
     nav_bar_size: Vec2,
+    /// ナビバーの大きさを固定している度合い（1 = 基準サイズ固定、0 = 距離に比例）。次に置くときに合わせ直すなら `None`。
+    pinned: Option<Transition>,
     /// ナビバーの覚醒度（1 = 表示中、0 = フェードアウト完了。不透明度に乗算）と遷移先。
     /// 持ち主・バーともに未ポインティングのまま一定時間経過すると線が縮小しつつフェードし、
     /// 完全消失時にランタイムオーバーレイを解放する（パネル・ビュー・画像は保持）。
@@ -127,7 +139,13 @@ pub struct Panel {
     dim_to: f32,
     /// 表示の進行度。サイズは 75%〜100%、不透明度は 0%〜100%。
     opacity: f32,
+    /// 角を掴んで大きさを変えている間の、代わりの板の出具合（[`Overlay::place_stand_ins`]）。中身の不透明度は 1 からこれを引いた割合。
+    stand_in: f32,
     surface: Surface,
+    /// 描画順を決めるのに使う頭からの距離（m。急には動かさない。[`Overlay::place_layers`]）。
+    depth: Option<f32>,
+    /// 重なる下のパネルより手前にするために、`pose` を要望の位置から面の手前へずらした量（m。[`Overlay::place_layers`]）。
+    lift: f32,
     /// 今 tick で追従させるデバイスと相対姿勢。ランタイムに委譲可能ならそうする。
     follow: Option<(Device, Pose)>,
     /// 頭の向きに緩やかに追従する（[`Overlay::set_lazy_follow`]）。取り付けより優先する。
@@ -160,6 +178,10 @@ pub enum Pointer {
     /// ドックスロットのヒント表示。ドッカブルパネルのグラブ中、スロット位置にパネルと同サイズで配置する
     /// （上端に [`DOCK_HINT_PX`] の帯を加えた解像度をオーバーレイ層が決定）。パネルより奥に描画。内容は [`Overlay::dock_hint`]。
     Dock,
+    /// 角を囲む線。角で大きさを変えられるパネル（[`Overlay::set_corner_resize`]）の角を指している間と、掴んで大きさを
+    /// 変えている間、その角に置く。窓の中心がパネル面の角に来て、窓 1px がパネル 1px になる（[`design::CORNER_HANDLE_PX`]）。
+    /// 右下の角の線を描けば、ほかの角には回して置く。
+    Corner,
 }
 
 /// ツールチップのカーソルに対する上下配置。
@@ -188,15 +210,17 @@ const CURSOR_LIFT: f32 = LIFT_STEP * 2.0;
 /// 1mm は 10m 先でも 24bit 深度バッファで約 8 段の差がある。
 // ponytail: 固定値。実機でちらつくなら拡大する。
 const LIFT_STEP: f32 = 0.001;
-/// 描画順。最奥が空間全体の暗転幕（[`Overlay::set_veil`]）、次にドックヒント（[`Pointer::Dock`]。グラブ中のパネルと
-/// そのナビバーが常に上に重なる）、その上にパネル。
+/// 描画順の帯。最奥が空間全体の暗転幕（[`Overlay::set_veil`]）、次にドックヒント（[`Pointer::Dock`]。グラブ中のパネルと
+/// そのナビバーが常に上に重なる）、[`WORLD_SORT`] からパネル、最も手前がレーザーまわり。パネルどうしの順位は
+/// [`Overlay::place_layers`] が毎 tick 決める。どのパネルも描画順を直に指定しない。
 const VEIL_SORT: u32 = 0;
 const GHOST_SORT: u32 = 1;
-const PANEL_SORT: u32 = 2;
-const LASER_SORT: u32 = 3;
-const DRAG_SORT: u32 = 4;
-const CURSOR_SORT: u32 = 5;
-const TOOLTIP_SORT: u32 = 6;
+const WORLD_SORT: u32 = 2;
+/// パネルの順位が届かない大きさにする。
+const LASER_SORT: u32 = 10_000;
+const DRAG_SORT: u32 = LASER_SORT + 1;
+const CURSOR_SORT: u32 = LASER_SORT + 2;
+const TOOLTIP_SORT: u32 = LASER_SORT + 3;
 /// グラブ移動で目標へ 1/120 秒（[`TICK_MIN`]）あたり近づく割合。経過時間で換算するためフレーム落ちでも追従速度は一定。
 /// 目標との差が [`SNAP`] 未満なら目標にスナップする。
 const SMOOTH: f32 = 0.3;
@@ -211,8 +235,6 @@ pub const VEIL: f32 = 0.5;
 pub const SLOT_GAP: f32 = 0.02;
 /// スロット子が入れ替わりで退出するときの後退距離（m）。
 const SLOT_RETREAT: f32 = 0.15;
-/// 表示専用子の描画順。角は親中心より頭から遠いため、深度ソートだと親の裏に回り不可視になる。
-const HUD_SORT: u32 = LASER_SORT;
 /// 手ブレ抑制の既定値: レーザー方向が 1 tick ごとに前回方向を保持する割合（0 = 抑制なし）。
 /// ヒット判定もこの方向で行うため、クリック位置の揺れも抑制される。
 // ponytail: tick 単位のためリフレッシュレートで効きが変わる。必要なら経過時間ベースに変更する。
@@ -242,6 +264,21 @@ struct Ray {
 }
 
 impl Panel {
+    /// 重なりのためにずらす前の姿勢。姿勢から相対位置を作り直すときはこちらを使う（ずらした量を要望に混ぜない）。
+    fn unlifted(&self) -> Pose {
+        self.pose * Pose::new(Vec3::NEG_Z * self.lift, Quat::IDENTITY)
+    }
+
+    /// 確定した描画順（大きいほど手前。[`Overlay::place_layers`]）。
+    pub fn draw_order(&self) -> u32 {
+        self.surface.sort()
+    }
+
+    /// 重なる下のパネルより手前にするために、要望の位置から手前へずらした量（m）。
+    pub fn lifted(&self) -> f32 {
+        self.lift
+    }
+
     /// アニメーション反映後の表示サイズ。中心の位置・姿勢は不変。
     pub fn displayed_size(&self) -> Vec2 {
         if self.fade_only {
@@ -335,6 +372,12 @@ struct HandState {
     magnet: Option<Magnet>,
     /// この手のドックヒント（[`Pointer::Dock`]）の表示進行度。
     ghost: Ghost,
+    /// 指している角（パネルと角の向き。[`corner_at`]）。毎 tick 更新する。
+    corner: Option<(PanelId, Vec2)>,
+    /// 角を掴んで大きさを変えている途中。
+    stretch: Option<Stretch>,
+    /// この手の角の線（[`Pointer::Corner`]）の出具合。
+    line: Line,
 }
 
 /// 位置トランジション: `from` から `to` へ移動する。`to` が `None` なら毎 tick 算出される配置先（ドックスロット）へ向かう。
@@ -400,8 +443,12 @@ pub struct Overlay {
     dock_slot: Option<(PanelId, f32)>,
     /// アンドック（`false`）・ドック（`true`）されたパネル（[`Overlay::take_dock_changes`] で取得）。
     dock_changes: Vec<(PanelId, bool)>,
+    /// 掴んだまま、はまる所から抜けた（`false`）・吸い付いた（`true`）パネル（[`Overlay::take_dock_snaps`] で取得）。
+    dock_snaps: Vec<(PanelId, bool)>,
     /// ドックスロットに接触した状態でリリースされたパネル（今 tick 終了時にドック・再ドックする）。
     landed: Vec<PanelId>,
+    /// 角を掴んで大きさを変えているパネルの、中身の代わりに出す板（[`Overlay::place_stand_ins`]）。
+    stand_ins: HashMap<PanelId, StandIn>,
 }
 
 /// 空間全体の暗転幕（[`Overlay::set_veil`]）。

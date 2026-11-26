@@ -307,9 +307,9 @@ fn quick_settings_width_matches_the_laid_out_button(cx: &mut TestAppContext) {
     }
 }
 
-/// 配信が蓄積して最大幅を超えそうな場合でも、バーは上限で固定され横スクロール可能になる。
+/// 配信が蓄積しても、ボタンは最大 10 個に収まるため、バーは最大幅を超えず横スクロールも不要になる。
 #[gpui::test]
-fn bar_stops_at_the_max_width_and_scrolls(cx: &mut TestAppContext) {
+fn bar_stays_within_the_max_width_however_many_streams_open(cx: &mut TestAppContext) {
     let (bar, cx) = cx.add_window_view(|_, cx| {
         cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
         Dashboard::new(1, summon, summon, cx)
@@ -328,8 +328,8 @@ fn bar_stops_at_the_max_width_and_scrolls(cx: &mut TestAppContext) {
     });
     cx.run_until_parked();
     let width = f32::from(cx.debug_bounds("dashboard-bar").unwrap().size.width);
-    assert!(width <= MAX_BAR_PX + 1.0, "上限で固定: {width}");
-    assert!(bar.read_with(cx, |d, _| d.scroll.max_offset().x) > px(0.0));
+    assert!(width <= MAX_BAR_PX + 1.0, "上限を超えない: {width}");
+    assert_eq!(bar.read_with(cx, |d, _| d.scroll.max_offset().x), px(0.0));
 }
 
 /// バーはウィンドウ全幅には広がらず、内容幅に収まって中央配置される。
@@ -410,6 +410,75 @@ fn streams_accumulate_and_switch_without_closing(cx: &mut TestAppContext) {
             .collect::<Vec<_>>()
     });
     assert_eq!(streams, [5]);
+}
+
+/// 配信ボタンは最大 10 個（9 個＋一覧ボタン）。10 個までは全部並び、超えた分は一覧ポップオーバーから選べる。
+#[test]
+fn at_most_ten_stream_buttons_are_shown() {
+    let shown: Vec<_> = [0, 1, 9, 10, 11, 30]
+        .into_iter()
+        .map(|n| shown_streams(n) + usize::from(n > MAX_STREAM_BUTTONS))
+        .collect();
+    assert_eq!(shown, [0, 1, 9, 10, 10, 10]);
+}
+
+/// テスト用に、配信ボタンの ID を `'static` にして返す。
+fn stream_id(id: u64) -> &'static str {
+    Box::leak(format!("dashboard-stream-{id}").into_boxed_str())
+}
+
+#[gpui::test]
+fn extra_streams_move_into_the_overflow_popover(cx: &mut TestAppContext) {
+    let (bar, cx) = cx.add_window_view(|_, cx| {
+        cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+        Dashboard::new(1, summon, summon, cx)
+    });
+    let add = |cx: &mut VisualTestContext, ids: std::ops::Range<u64>| {
+        bar.update(cx, |d, cx| {
+            for id in ids {
+                d.add_stream(
+                    id as _,
+                    SourceKind::Window,
+                    format!("W{id}").into(),
+                    None,
+                    false,
+                    cx,
+                );
+            }
+        });
+        cx.run_until_parked();
+    };
+    // ちょうど 10 個なら一覧ボタンは出さず、すべて並ぶ。
+    add(cx, 10..20);
+    assert!((10..20).all(|id| cx.debug_bounds(stream_id(id)).is_some()));
+    assert!(cx.debug_bounds("dashboard-stream-overflow").is_none());
+    // 11 個目から、9 個＋一覧ボタンになる。
+    add(cx, 20..22);
+    assert!((10..19).all(|id| cx.debug_bounds(stream_id(id)).is_some()));
+    assert!((19..22).all(|id| cx.debug_bounds(stream_id(id)).is_none()));
+    // 一覧ボタンはポップオーバーを開き、あふれた配信（19・20・21）を選ぶとドッキングして閉じる。
+    click(cx, "dashboard-stream-overflow");
+    let spec = cx.update(|_, cx| cx.default_global::<PanelControl>().spawns.pop().unwrap());
+    assert!(spec.parent().is_some_and(|p| p.panel == 1 && p.dismiss));
+    let streams = bar.read_with(cx, |d, _| {
+        d.overflow()
+            .iter()
+            .map(|s| (s.panel, s.name.clone(), s.kind, s.icon.clone()))
+            .collect()
+    });
+    let (_menu, mcx) = cx.add_window_view(|_, _| StreamMenu {
+        panel: 9,
+        dashboard: bar.downgrade(),
+        streams,
+    });
+    mcx.run_until_parked();
+    assert!(mcx.debug_bounds(stream_id(18)).is_none());
+    for id in 19..22 {
+        assert!(mcx.debug_bounds(stream_id(id)).is_some());
+    }
+    click(mcx, "dashboard-stream-20");
+    assert!(commands(mcx, 9).contains(&PanelCommand::Close));
+    assert!(commands(mcx, 20).iter().any(docked_to_bar));
 }
 
 /// 手動で取り外して独立させた配信のボタンは残り、クローズ時にのみ除去される。押下でダッシュボードに再ドッキングする。

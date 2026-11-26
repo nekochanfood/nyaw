@@ -9,4 +9,6 @@ design.workspace = true
 gpui.workspace = true
 i18n.workspace = true
 kernel.workspace = true
+# 角枠の線の端を丸める（`LineCap`。GPUI は `StrokeOptions` だけを再エクスポートする。GPUI と同じ版）
+lyon = "1.0"
 ui.workspace = true

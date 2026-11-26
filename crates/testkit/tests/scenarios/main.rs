@@ -5,12 +5,15 @@
 //! 同一バイナリに含めると全コアで並列実行されて CPU 競合が発生し、タイムアウトで判定が不安定になる。
 
 mod attach;
+mod corner_resize;
 mod dashboard;
+mod dashboard_menu;
 mod desktop_stream;
 mod dialog;
 mod emoji;
 mod hold_in_hand;
 mod keyboard;
+mod layers;
 mod multi_panel;
 mod nav_bar;
 mod navigation;

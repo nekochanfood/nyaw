@@ -17,9 +17,7 @@ pub const DOCK_HINT_PX: u32 = 72;
 /// 見本の長い辺のピクセル数の上限（大きな配信でも窓を大きくしすぎない）。
 const GHOST_MAX_PX: f32 = 1024.0;
 /// 見本を、はまる所からどれだけ奥に置くか（m）。同じ面に置くと、はまった画面と Z ファイティングする。
-const GHOST_SINK: f32 = 0.01;
-/// 見本の枠を、画面の地の縁からどれだけ外へ広げるか（m）。はまっている間も、画面の周りに枠が見える。
-const GHOST_PAD: f32 = 0.01;
+pub(crate) const GHOST_SINK: f32 = 0.01;
 /// 掴んでいる画面がはまる所にこれより近づくと見本をフェードインし、これより遠ざかるとフェードアウトする（m）。
 /// 濃さは距離で変えず、近いか遠いかの二択。境目で行き来しないよう、消える距離を少し遠くする。
 const GHOST_SHOW: f32 = 0.45;
@@ -51,8 +49,8 @@ pub(crate) struct Magnet {
     tilt: f32,
     /// はまる所に付いている（はまっていた画面を掴んだ・近づけて吸い付いた）。抜けるまで、はまる所から動かない。
     pub(crate) stuck: bool,
-    /// 抜けた・吸い付いたときの動き（始めた姿勢・動き・経過秒）。終わるまで、置きたい所へこの動きで向かう。
-    jump: Option<(Pose, Motion, f32)>,
+    /// 抜けた・吸い付いたときの動き（始めた姿勢・経過秒）。終わるまで、置きたい所へ [`Motion::Pop`] で向かう。
+    jump: Option<(Pose, f32)>,
 }
 
 /// 手ごとの見本の出具合。置き場所が分かるよう、出入りのフェードのほかは動かさない。
@@ -134,8 +132,8 @@ impl Magnet {
     }
 
     /// 手が置きたい所 `target` と、はまる所 `slot` から、この tick の画面の姿勢（今は `cur`）。
-    /// はまる所に付いている間ははまる所から動かず、抜けると手へ飛び出す（[`Motion::Pop`]）。外れている間は近づくほど
-    /// はまる所へ引き寄せ、吸い付くとはまる所へ飛び込む（[`Motion::Attract`]）。抜けた・吸い付いたら `Some(stuck)`。
+    /// はまる所に付いている間ははまる所から動かず、抜けると手へ飛び出す。外れている間は近づくほどはまる所へ引き寄せ、
+    /// 吸い付くとはまる所へ飛び込む。どちらも少し行き過ぎてから収まる（[`Motion::Pop`]）。抜けた・吸い付いたら `Some(stuck)`。
     pub(crate) fn follow(
         &mut self,
         cur: Pose,
@@ -151,8 +149,7 @@ impl Magnet {
         };
         if let Some(stuck) = flipped {
             self.stuck = stuck;
-            let motion = if stuck { Motion::Attract } else { Motion::Pop };
-            self.jump = Some((cur, motion, 0.0));
+            self.jump = Some((cur, 0.0));
         }
         let want = if self.stuck {
             slot
@@ -164,14 +161,14 @@ impl Magnet {
             )
         };
         let pose = match &mut self.jump {
-            Some((from, motion, t)) => {
+            Some((from, t)) => {
                 *t += dt;
-                let p = *t * 1000.0 / motion.duration_ms() as f32;
+                let p = *t * 1000.0 / Motion::Pop.duration_ms() as f32;
                 if p >= 1.0 {
                     self.jump = None;
                     want
                 } else {
-                    let e = motion.ease(p);
+                    let e = Motion::Pop.ease(p);
                     Pose::new(
                         from.position.lerp(want.position, e),
                         from.orientation.slerp(want.orientation, e.clamp(0.0, 1.0)),
@@ -230,6 +227,12 @@ impl Overlay {
         std::mem::take(&mut self.dock_changes)
     }
 
+    /// 掴んだまま、はまる所から抜けた（`false`）・吸い付いた（`true`）画面。受け取ると空になる（上の層が着脱音を鳴らす）。
+    /// 親が変わるのを待たないので、吸い付けたまま引き抜き直しても、そのたびに入る。
+    pub fn take_dock_snaps(&mut self) -> Vec<(PanelId, bool)> {
+        std::mem::take(&mut self.dock_snaps)
+    }
+
     /// `hand` の見本に出す一行（その手ではめられる画面を掴んでいなければ `None`）。
     pub fn dock_hint(&self, hand: Hand) -> Option<DockHint> {
         let h = self.hands.get(&hand)?;
@@ -246,7 +249,14 @@ impl Overlay {
             .collect()
     }
 
-    /// はまる所に付けたまま離した画面をはめる（はまっていれば何もしない）。磁石に引かれて収まる（[`Motion::Attract`]）。
+    /// `id` を掴んでいて、はまる所に付いている（離せばはまる）。吸い付いただけなら、離すまで親は変わらない。
+    pub(crate) fn stuck(&self, id: PanelId) -> bool {
+        self.hands
+            .values()
+            .any(|h| h.dragging.is_some_and(|d| d.0 == id) && h.magnet.is_some_and(|m| m.stuck))
+    }
+
+    /// はまる所に付けたまま離した画面をはめる（はまっていれば何もしない）。吸い付いた所に収まる。
     /// 離すまでの間に、ほかの画面がはまった・はめる場所が隠れた（閉じた）なら何もしない。
     pub(crate) fn land(&mut self, vr: &mut dyn VrBackend) {
         for id in std::mem::take(&mut self.landed) {
@@ -311,9 +321,10 @@ impl Overlay {
             if let Some(((t, ..), m)) = held {
                 let target = &self.panels[t];
                 let slot = m.slot(&self.panels, &self.present, scale, t);
-                let rect = target.size - Vec2::splat(2.0 * (face_margin(target) - GHOST_PAD));
+                let face = target.size - Vec2::splat(2.0 * face_margin(target));
                 let density = (target.resolution.0 as f32 / target.size.x)
-                    .min(GHOST_MAX_PX / rect.max_element());
+                    .min(GHOST_MAX_PX / face.max_element());
+                let rect = face + Vec2::splat(2.0 * BRACKET_PAD_PX / density);
                 let res = (
                     (rect.x * density).round().max(1.0) as u32,
                     (rect.y * density).round().max(1.0) as u32 + DOCK_HINT_PX,

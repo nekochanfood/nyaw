@@ -49,9 +49,10 @@ use ::windows::{
             Input::KeyboardAndMouse::*,
             Shell::{
                 BHID_EnumItems, ExtractIconExW, FOLDERID_AppsFolder, IEnumShellItems, IShellItem,
-                IShellItem2, IShellItemImageFactory, KF_FLAG_DEFAULT, SHCreateItemFromParsingName,
+                IShellItem2, IShellItemImageFactory, KF_FLAG_DEFAULT, SEE_MASK_FLAG_NO_UI,
+                SEE_MASK_NOASYNC, SHCreateItemFromParsingName, SHELLEXECUTEINFOW,
                 SHGetKnownFolderItem, SIGDN_NORMALDISPLAY, SIIGBF_BIGGERSIZEOK, SIIGBF_ICONONLY,
-                ShellExecuteW,
+                ShellExecuteExW,
             },
             WindowsAndMessaging::*,
         },
@@ -400,12 +401,6 @@ pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
     let folder: IShellItem =
         unsafe { SHGetKnownFolderItem(&FOLDERID_AppsFolder, KF_FLAG_DEFAULT, None) }?;
     let items: IEnumShellItems = unsafe { folder.BindToHandler(None, &BHID_EnumItems) }?;
-    let take = |s: ::windows::core::Result<PWSTR>| {
-        let s = s.ok()?;
-        let text = unsafe { s.to_string() }.ok();
-        unsafe { CoTaskMemFree(Some(s.0 as *const _)) };
-        text
-    };
     let mut apps = Vec::new();
     loop {
         let mut item = [None];
@@ -414,26 +409,61 @@ pub(super) fn installed_apps() -> Result<Vec<InstalledApp>, Error> {
         {
             break;
         }
-        let Some(item) = item[0].take().and_then(|i| i.cast::<IShellItem2>().ok()) else {
-            continue;
-        };
-        let (Some(name), Some(id)) = (
-            take(unsafe { item.GetDisplayName(SIGDN_NORMALDISPLAY) }),
-            take(unsafe { item.GetString(&PKEY_AppUserModel_ID) }),
-        ) else {
-            continue;
-        };
-        let exe = take(unsafe { item.GetString(&PKEY_Link_TargetParsingPath) })
-            .filter(|p| p.to_ascii_lowercase().ends_with(".exe"))
-            .and_then(|p| p.rsplit('\\').next().map(str::to_owned));
-        apps.push(InstalledApp {
-            name,
-            id,
-            exe,
-            icon: shell_icon(&item),
-        });
+        if let Some(app) = item[0]
+            .take()
+            .and_then(|i| i.cast::<IShellItem2>().ok())
+            .and_then(|i| app_of(&i, None))
+        {
+            apps.push(app);
+        }
     }
     Ok(apps)
+}
+
+/// AppUserModelId `id` のスタートメニューのアプリ。シェル項目の取得に STA が必要なため、専用スレッドで実行する（[`sta`]）。
+pub(super) fn installed_app(id: &str) -> Option<InstalledApp> {
+    sta(|| {
+        let path = ::windows::core::HSTRING::from(format!("shell:AppsFolder\\{id}"));
+        let item: IShellItem2 = unsafe { SHCreateItemFromParsingName(&path, None) }.ok()?;
+        app_of(&item, Some(id.to_owned()))
+    })
+    .flatten()
+}
+
+/// シェル項目 `item` のアプリ。ID は `id`（`None` なら項目の AppUserModelId）。名前か ID が無ければ `None`。
+fn app_of(item: &IShellItem2, id: Option<String>) -> Option<InstalledApp> {
+    let name = take(unsafe { item.GetDisplayName(SIGDN_NORMALDISPLAY) })?;
+    let id = id.or_else(|| take(unsafe { item.GetString(&PKEY_AppUserModel_ID) }))?;
+    let exe = take(unsafe { item.GetString(&PKEY_Link_TargetParsingPath) })
+        .filter(|p| p.to_ascii_lowercase().ends_with(".exe"))
+        .and_then(|p| p.rsplit('\\').next().map(str::to_owned));
+    Some(InstalledApp {
+        name,
+        id,
+        exe,
+        icon: shell_icon(item),
+    })
+}
+
+/// シェルが確保した文字列を読み取り、解放する。
+fn take(s: ::windows::core::Result<PWSTR>) -> Option<String> {
+    let s = s.ok()?;
+    let text = unsafe { s.to_string() }.ok();
+    unsafe { CoTaskMemFree(Some(s.0 as *const _)) };
+    text
+}
+
+/// `f` を STA の専用スレッドで実行し、終わるまで待つ。シェルの API は STA を前提とするものがあるため、呼び出し元スレッド
+/// （通知のワーカーは MTA）の COM の初期化状態に依存しないようにする。スレッドが異常終了したら `None`。
+fn sta<T: Send>(f: impl FnOnce() -> T + Send) -> Option<T> {
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+            f()
+        })
+        .join()
+        .ok()
+    })
 }
 
 /// シェル項目のアイコン（64px）を取得する。
@@ -468,40 +498,37 @@ fn shell_icon(item: &IShellItem2) -> Option<Icon> {
     })
 }
 
-/// アプリ（AppUserModelId）のスタートメニューアイコンを取得する。シェル項目の取得に STA が必要なため、
-/// 呼び出し元スレッドの COM 初期化状態に依存しないよう専用スレッドで実行する。
+/// アプリ（AppUserModelId）のスタートメニューアイコンを取得する。シェル項目の取得に STA が必要なため、専用スレッドで実行する（[`sta`]）。
 pub(super) fn app_icon(id: &str) -> Option<Icon> {
-    std::thread::scope(|s| {
-        s.spawn(|| {
-            let _ = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
-            let path = ::windows::core::HSTRING::from(format!("shell:AppsFolder\\{id}"));
-            let item: IShellItem2 = unsafe { SHCreateItemFromParsingName(&path, None) }.ok()?;
-            shell_icon(&item)
-        })
-        .join()
-        .ok()
-        .flatten()
+    sta(|| {
+        let path = ::windows::core::HSTRING::from(format!("shell:AppsFolder\\{id}"));
+        let item: IShellItem2 = unsafe { SHCreateItemFromParsingName(&path, None) }.ok()?;
+        shell_icon(&item)
     })
+    .flatten()
 }
 
 /// AppUserModelId を指定してアプリを起動する（ストアアプリ・デスクトップアプリとも `shell:AppsFolder` 経由で起動可能）。
+/// 専用スレッド（[`sta`]）は起動を依頼したらすぐ終わるため、起動の処理が終わるまで待つ指定（`SEE_MASK_NOASYNC`）を付ける。
+/// 失敗は呼び出し側が表示するので、OS のエラーダイアログ（VR からは見えない）は出さない（`SEE_MASK_FLAG_NO_UI`）。
 pub(super) fn launch(id: &str) -> Result<(), Error> {
-    let path = ::windows::core::HSTRING::from(format!("shell:AppsFolder\\{id}"));
-    let done = unsafe {
-        ShellExecuteW(
-            None,
-            ::windows::core::w!("open"),
-            &path,
-            PCWSTR::null(),
-            PCWSTR::null(),
-            SW_SHOWNORMAL,
-        )
-    };
-    // 戻り値 32 以下はエラー（ShellExecute の仕様）
-    if done.0 as isize <= 32 {
-        return Err(Error(format!("cannot launch {id} ({})", done.0 as isize)));
-    }
-    Ok(())
+    sta(|| {
+        let path = ::windows::core::HSTRING::from(format!("shell:AppsFolder\\{id}"));
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,
+            lpVerb: ::windows::core::w!("open"),
+            lpFile: PCWSTR(path.as_ptr()),
+            nShow: SW_SHOWNORMAL.0,
+            ..Default::default()
+        };
+        unsafe { ShellExecuteExW(&mut info) }.map_err(|e| Error(format!("cannot launch {id}: {e}")))
+    })
+    .unwrap_or_else(|| {
+        Err(Error(format!(
+            "cannot launch {id}: the launcher thread failed"
+        )))
+    })
 }
 
 struct Apartment;
@@ -1140,6 +1167,29 @@ impl Drop for MouseDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 存在しないアプリの起動は、OS のダイアログを出さずにエラーを返す。
+    #[test]
+    fn launching_an_unknown_app_fails_quietly() {
+        assert!(launch("nyaw.test.no-such-app").is_err());
+    }
+
+    /// 実機検証: 電卓を ID で引き、MTA のスレッド（通知のワーカーと同じ）から起動する。起動した電卓は手で閉じる。
+    /// `cargo test -p desktop -- --ignored launches_an_app_from_an_mta_thread`
+    #[test]
+    #[ignore]
+    fn launches_an_app_from_an_mta_thread() {
+        let id = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App";
+        assert!(installed_app(id).is_some(), "the calculator is installed");
+        std::thread::spawn(move || {
+            let _ = unsafe { RoInitialize(RO_INIT_MULTITHREADED) };
+            launch(id)
+        })
+        .join()
+        .unwrap()
+        .unwrap();
+    }
+
     #[test]
     fn wheel_sends_whole_notches_only() {
         let mut acc = 0.0;

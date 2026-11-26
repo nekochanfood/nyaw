@@ -109,6 +109,16 @@ impl<V: Render> Panels<V> {
         for spec in spawns {
             self.add_spec(cx, kernel, spec);
         }
+        // As in production (`ui::run` resizes the window to the panel resolution), the window follows resolution changes
+        // (the keyboard's `PanelCommand::Resize`, resizing by a corner).
+        for (panel, window) in self.windows.iter().copied().enumerate() {
+            let (w, h) = kernel.panel(panel).resolution;
+            let size = gpui::size(gpui::px(w as f32), gpui::px(h as f32));
+            let mut window = VisualTestContext::from_window(window, &cx.cx);
+            if window.update(|window, _| window.viewport_size()) != size {
+                window.simulate_resize(size);
+            }
+        }
         cx.run_until_parked();
         for (panel, window) in self.windows.iter().copied().enumerate() {
             let frame = cx

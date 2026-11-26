@@ -19,6 +19,8 @@ SmoothingTest;       // レーザー手振れ補正係数の動的調整検証
 WizardTest;          // ウィザードコンポーネント（welcome, step, done）の検証
 LogoTest;            // 各種サイズ・テーマ下におけるロゴ描画の検証
 SuperellipseTest;    // スーパーエリプス角丸パラメータ（k値）の検証
+ResizeTest;          // 角を掴んだサイズ変更（解像度の変更）の検証
+LayerTest;           // パネルの重なり（描画順と奥行き）の検証
 ```
 
 ## ファイル構成と実装規則
@@ -31,6 +33,8 @@ SuperellipseTest;    // スーパーエリプス角丸パラメータ（k値）�
 | `nav.rs` | `NavTest` | プッシュ遷移、スワイプバック、スクロール優先度の検証。 |
 | `dialog.rs` | `DialogTest` | 通常ダイアログおよびモーダルダイアログ（排他制御）の親子関係検証。 |
 | `scrollbar.rs` | `TestingScrollbar` | GPUI リストおよびコンテナのスクロール挙動検証。 |
+| `resize.rs` | `ResizeTest` | 角を掴んだサイズ変更（表示領域の変化と組み直し、範囲、縦横比の固定）の検証。 |
+| `layers.rs` | `LayerTest` | パネルの重なりの検証。見本ごとに確定した描画順と、手前にずらした距離（mm）を表示する。 |
 | `stress.rs` | `StressTest` | パネルの大量生成と破棄による負荷・スタッター検証。 |
 
 ## Testing パネルの要素一覧
@@ -46,12 +50,14 @@ SuperellipseTest;    // スーパーエリプス角丸パラメータ（k値）�
 - `pointer-test`: 入力方式検証画面（`PointerTest`）の展開。タッチスワイプとマウスドラッグの挙動差確認。
 - `dialog-test`: 子パネル検証画面（`DialogTest`）の展開。親パネルの暗転、入力遮断、および連動把持の確認。
 - `settings-test`: 設定画面（[`crates/settings`](../settings/AGENT.md)）の呼び出し。
+- `layer-test`: レイヤー検証画面（`LayerTest`）の展開。`layer-over`（面に重ねる子。押すたびに右下へずらして重ねる）・`layer-popover`・`layer-dialog`・`layer-hud`・`layer-far`（30cm 奥の独立パネル）で見本を出し、`layer-clear` でまとめて閉じる。各見本の `layer-readout` に確定した描画順とずらした距離が出る。
 - `nav-test`: 画面スタック検証画面（`NavTest`）の展開。プッシュ遷移およびスワイプバックの閾値判定。
 - `audio-test`: 空間音響検証画面（`AudioTest`）の展開。2ch 再生、ループ再生、立体音響の有効/無効切り替え。
 - `skeleton-test`: ハンドトラッキング検証画面（`SkeletonTest`）の展開。関節ギズモの描画、ピンチジェスチャー判定。
 - `notification-test`: OS 通知連携画面（`NotificationTest`）の展開。テスト通知の発行とトースト表示の確認。
 - `attach-hmd` / `attach-left` / `attach-right` / `attach-tracker` / `detach`: デバイスへのアタッチおよび解除。
 - `lock`: パネルの空間固定（掴み禁止）の切り替え。
+- `resize-test` / `resize-test-aspect`: 角を掴んだサイズ変更の検証画面（`ResizeTest`）の展開。表示領域の大きさ（`resize-size`）と、幅に合わせて折り返すタイル（`resize-tile-N`）で、解像度が 400 × 300〜1600 × 1200 の範囲で変わり、中身が組み直されることを確認する。`resize-test-aspect` は縦横比を固定する。
 
 ### GPUI コアコンポーネントの検証
 

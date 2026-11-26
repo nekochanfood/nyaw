@@ -27,7 +27,7 @@ use kernel::desktop::{
 use kernel::subsystems::media;
 use kernel::subsystems::notifications::Notification;
 use kernel::vr::{Pose, Quat, Vec2, Vec3};
-use kernel::{PanelCommand, PanelId};
+use kernel::{PanelCommand, PanelId, Request};
 use ui::mirror::{MirrorState, mirror_screen};
 use ui::{PanelControl, PanelSpec, commands};
 
@@ -63,7 +63,7 @@ const BAR_PX: (u32, u32) = (
 );
 const BAR_M: Vec2 = Vec2::new(SIZE_M.x, SIZE_M.x * BAR_PX.1 as f32 / BAR_PX.0 as f32);
 /// 高さ設定 0 の基準位置（頭の高さからの相対 m）。ドッキング画面の中心が目の高さよりやや下になる位置。
-const HEIGHT_ORIGIN: f32 = -0.1;
+const HEIGHT_ORIGIN: f32 = -0.05;
 /// 画面を開いた直後のドッキング位置（既定の距離・高さにおけるドッキング先。開くと即座にドッキングする）。
 const SCREEN_POSE: Pose = Pose::new(
     Vec3::new(0.0, HEIGHT_ORIGIN, -kernel::DASHBOARD_DISTANCE),
@@ -185,7 +185,7 @@ pub enum Page {
 }
 
 /// ダッシュボード（バー）。左からメニュー（デバッグ・設定のポップオーバー）・時刻と電池（クイック設定）・
-/// ランチャー、区切り線を挟んで開いた配信のボタン（蓄積され、あふれると横スクロールする）。
+/// ランチャー、区切り線を挟んで開いた配信のボタン（最大 10 個。あふれる分は末尾のボタンの一覧ポップオーバーにまとめる）。
 /// 閉じる（非表示にする）操作は X ボタンの二回押しかダッシュボード外の押下。
 /// 現在ドッキング中の画面・配信のボタンは強調色で表示する。
 pub struct Dashboard {
@@ -210,6 +210,8 @@ pub struct Dashboard {
     prev_media: bool,
     prev_update: bool,
     prev_sep: bool,
+    /// 開いている配信の一覧ポップオーバー（[`StreamMenu`]）。
+    overflow_menu: Option<PanelId>,
     /// バーの横スクロール（最大幅を超えたとき）。
     scroll: ScrollHandle,
     /// 応えた、通知センターを開く頼みの回数（[`ui::notification::Center::asked`]）。

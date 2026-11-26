@@ -243,6 +243,8 @@ mod tests {
 
     /// 画面のソースで使っているキー（`i18n::t(cx, "…")` / `i18n::tf(cx, "…", …)`）が、どの言語の表にもある。
     #[test]
+    // ソースファイルを読むため、ファイル操作の制限（clippy.toml）を外す。
+    #[allow(clippy::disallowed_methods)]
     fn keys_used_in_the_sources_exist() {
         let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
         let mut used = Vec::new();

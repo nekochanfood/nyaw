@@ -29,7 +29,7 @@ impl Overlay {
         // サイズは等倍設計で渡される。UI スケールはここで適用する（[`Self::set_scale`]）。
         let size = size * self.scale();
         let mut surface = Surface::new(vr, key, size.x, pose)?;
-        surface.set_sort(vr, PANEL_SORT);
+        surface.set_sort(vr, WORLD_SORT);
         self.panels.push(Panel {
             pose,
             size,
@@ -37,6 +37,7 @@ impl Overlay {
             attached: None,
             locked: false,
             resizable: true,
+            corner_resize: None,
             reach: None,
             grab_anchor: None,
             closed: false,
@@ -51,6 +52,7 @@ impl Overlay {
             parent: None,
             nav_bar_of: None,
             nav_bar_size: size,
+            pinned: None,
             awake: 1.0,
             wake: Transition::rest(1.0),
             pointed_at: Instant::now(),
@@ -58,7 +60,10 @@ impl Overlay {
             dim: 0.0,
             dim_to: 0.0,
             opacity: 1.0,
+            stand_in: 0.0,
             surface,
+            depth: None,
+            lift: 0.0,
             follow: None,
             lazy_follow: None,
             dockable: false,
@@ -150,13 +155,11 @@ impl Overlay {
     /// `id` を `owner` のナビバーにする。以降は毎 tick 持ち主の下端左右中央にバーの上端左右中央を
     /// 合わせて配置する。現在の `size` を頭から 1m 先でのサイズとし、距離に比例して拡大する（ツールチップと同様）。
     /// 自分自身・クローズ済みパネルは持ち主に指定不可（何もしない）。
-    pub fn set_nav_bar(&mut self, vr: &mut dyn VrBackend, id: PanelId, owner: PanelId) {
+    pub fn set_nav_bar(&mut self, _vr: &mut dyn VrBackend, id: PanelId, owner: PanelId) {
         if owner == id || self.panels[owner].closed {
             return;
         }
         let p = &mut self.panels[id];
-        // 持ち主のシャドウマージンに重なるため表示専用子と同じく手前に出す（place_nav_bars）。
-        p.surface.set_sort(vr, HUD_SORT);
         p.nav_bar_of = Some(owner);
         p.nav_bar_size = p.size;
         p.attached = None;
@@ -289,7 +292,7 @@ impl Overlay {
             Pointer::Cursor => CURSOR_SORT,
             Pointer::Drag => DRAG_SORT,
             Pointer::Tooltip => TOOLTIP_SORT + tooltip_step(hand),
-            Pointer::Dock => GHOST_SORT,
+            Pointer::Dock | Pointer::Corner => GHOST_SORT,
         };
         p.surface.set_sort(vr, sort);
         // レーザーは長さ（幅）のみ変更、太さ（高さ）は生成時のまま。

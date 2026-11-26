@@ -30,17 +30,34 @@ const MENU_LIFT: f32 = 0.03;
 /// メニューポップオーバーのバーからの相対位置: バーのカプセル左端（ウィンドウ左端から `bar_left` px）の上に、
 /// ドッキング画面と同じく垂直に立て、画面よりわずかに手前に配置する。
 pub(crate) fn menu_offset(bar_left: f32) -> Pose {
+    let shift = (bar_left - components::PANEL_MARGIN).max(0.0) * BAR_M.x / BAR_PX.0 as f32;
+    popover_offset((MENU_M.x - BAR_M.x) / 2.0 + shift, MENU_M, MENU_PX)
+}
+
+/// 配信の一覧ポップオーバーの位置: バーのカプセル右端（ウィンドウ右端から `bar_right_gap` px）に右端を揃える。
+pub(crate) fn overflow_offset(bar_right_gap: f32, rows: usize) -> Pose {
+    let (size, res) = overflow_size(rows);
+    let shift = (bar_right_gap - components::PANEL_MARGIN).max(0.0) * BAR_M.x / BAR_PX.0 as f32;
+    popover_offset((BAR_M.x - size.x) / 2.0 - shift, size, res)
+}
+
+/// バーの上に垂直に立てるポップオーバー（サイズ `size`・解像度 `res`）の、バー中心からの相対位置（`x` は横方向の位置）。
+fn popover_offset(x: f32, size: Vec2, res: (u32, u32)) -> Pose {
     let margin = |size: Vec2, res: (u32, u32)| components::PANEL_MARGIN * size.y / res.1 as f32;
     let rotation = Quat::from_rotation_x(BAR_TILT);
-    // ポップオーバーのウィンドウはカード外にシャドウ余白を持つため、その分だけ左にはみ出させてカード左端をカプセルに揃える。
-    let shift = (bar_left - components::PANEL_MARGIN).max(0.0) * BAR_M.x / BAR_PX.0 as f32;
-    let top = Vec3::new(
-        (MENU_M.x - BAR_M.x) / 2.0 + shift,
-        BAR_M.y / 2.0 - margin(BAR_M, BAR_PX),
-        0.0,
-    );
-    let lift = kernel::overlay::SLOT_GAP + MENU_M.y / 2.0 - margin(MENU_M, MENU_PX);
+    let top = Vec3::new(x, BAR_M.y / 2.0 - margin(BAR_M, BAR_PX), 0.0);
+    let lift = kernel::overlay::SLOT_GAP + size.y / 2.0 - margin(size, res);
     Pose::new(top + rotation * Vec3::new(0.0, lift, MENU_LIFT), rotation)
+}
+
+/// `rows` 行の一覧ポップオーバーのサイズと解像度。
+pub(crate) fn overflow_size(rows: usize) -> (Vec2, (u32, u32)) {
+    let height = rows as f32 * components::MENU_ITEM_HEIGHT
+        + 2.0 * components::MENU_PADDING
+        + 2.0 * components::PANEL_MARGIN;
+    let res = (MENU_PX.0, height as u32);
+    let scale = SIZE_M.x / RES_PX.0 as f32;
+    (Vec2::new(res.0 as f32 * scale, res.1 as f32 * scale), res)
 }
 
 /// メニューポップオーバー: デバッグ・設定（選択するとその画面をドッキングする）と、末尾にアプリ終了（確認ダイアログを表示）。
@@ -94,6 +111,43 @@ impl Render for Menu {
                 .into_iter()
                 .flatten(),
             ))
+    }
+}
+
+/// バーに並べきれない配信の一覧ポップオーバー。選択するとその配信をドッキング（ドッキング中なら非表示化）してクローズする。
+pub struct StreamMenu {
+    pub(crate) panel: PanelId,
+    pub(crate) dashboard: WeakEntity<Dashboard>,
+    /// 並べきれなかった配信（パネルと名前と種類とアプリアイコン）。
+    pub(crate) streams: Vec<(PanelId, SharedString, SourceKind, Option<Arc<RenderImage>>)>,
+}
+
+impl Render for StreamMenu {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let items = self.streams.iter().map(|(id, name, kind, icon)| {
+            let (stream, panel, dashboard) = (*id, self.panel, self.dashboard.clone());
+            let glyph = match (kind, icon) {
+                (SourceKind::Window, Some(icon)) => {
+                    img(icon.clone()).size(px(font_size::LG)).into_any_element()
+                }
+                (SourceKind::Window, None) => design::icon(&icons::APP_WINDOW)
+                    .size(px(font_size::LG))
+                    .into_any_element(),
+                (SourceKind::Screen, _) => design::icon(&icons::MONITOR)
+                    .size(px(font_size::LG))
+                    .into_any_element(),
+            };
+            components::menu_item_with(&theme, stream_key(stream), glyph, name.clone()).on_click(
+                move |_, _, cx| {
+                    close(panel, cx);
+                    let _ = dashboard.update(cx, |d, cx| d.toggle_stream(stream, cx));
+                },
+            )
+        });
+        components::card_panel(&theme)
+            .rounded(px(components::MENU_RADIUS))
+            .child(components::menu(&theme, items))
     }
 }
 

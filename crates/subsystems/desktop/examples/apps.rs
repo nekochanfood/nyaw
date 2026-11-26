@@ -1,4 +1,5 @@
 //! インストール済みアプリの一覧を出力する（名前・実行ファイル名・アイコンの有無）。所要時間も表示する。
+//! 各アプリを ID から引き直し（`desktop::installed_app`）、一覧と名前・実行ファイル名が一致しないものも出力する。
 //! `cargo run -p desktop --example apps`
 
 fn main() {
@@ -21,4 +22,18 @@ fn main() {
         );
     }
     println!("{} apps in {:?}", apps.len(), start.elapsed());
+    let mismatched: Vec<_> = apps
+        .iter()
+        .filter(|a| {
+            desktop::installed_app(&a.id).is_none_or(|b| (&b.name, &b.exe) != (&a.name, &a.exe))
+        })
+        .collect();
+    for a in &mismatched {
+        println!("lookup by id differs: {} ({})", a.name, a.id);
+    }
+    println!(
+        "{} of {} apps differ when looked up by id",
+        mismatched.len(),
+        apps.len()
+    );
 }

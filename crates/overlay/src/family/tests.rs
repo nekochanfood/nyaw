@@ -128,7 +128,8 @@ fn idle_nav_bar_gives_its_overlay_back_and_comes_back_when_pointed() {
     assert!(!ov.panel(bar).surface.parked());
     assert_eq!(ov.panel(bar).overlay_id(), OverlayId(2));
     let o = &vr.backend.overlays[2];
-    assert_eq!((o.key.as_str(), o.sort, o.alpha), ("bar", HUD_SORT, 1.0));
+    assert_eq!((o.key.as_str(), o.alpha), ("bar", 1.0));
+    assert!(o.sort > vr.backend.overlays[0].sort);
     assert_eq!(o.texture.as_ref().unwrap().rgba, [9u8; 16]);
     assert_eq!(o.pose, ov.panel(bar).pose);
     assert!(!o.destroyed);
@@ -404,8 +405,8 @@ fn popovers_are_drawn_in_front_of_panels() {
             ..Default::default()
         }),
     );
-    assert_eq!(vr.backend.overlays[1].sort, HUD_SORT);
-    assert_eq!(vr.backend.overlays[0].sort, PANEL_SORT);
+    ov.tick(&mut vr);
+    assert!(vr.backend.overlays[1].sort > vr.backend.overlays[0].sort);
 }
 
 #[test]
@@ -430,6 +431,45 @@ fn docked_panels_nav_bar_keeps_its_size_at_any_distance() {
         near.abs_diff_eq(Vec2::new(0.4, 0.05), 1e-5),
         "1m 先でのサイズ固定"
     );
+}
+
+/// 切り離し・はめ込みで固定と距離比例が入れ替わっても、バーの大きさは一瞬で飛ばず滑らかに移る。
+#[test]
+fn nav_bar_eases_between_fixed_and_distance_scaling() {
+    let (mut vr, mut ov) = with_slot_child();
+    let bar = ov
+        .add_panel(
+            &mut vr.backend,
+            "bar",
+            Pose::IDENTITY,
+            Vec2::new(0.4, 0.05),
+            (2, 2),
+        )
+        .unwrap();
+    ov.set_nav_bar(&mut vr.backend, bar, 1);
+    ov.submit(&mut vr.backend, bar, 2, 2, &[255u8; 16]);
+    vr.backend.frame.hmd.position = Vec3::Z * 3.0;
+    ov.tick(&mut vr);
+    let slot = ov.panel(1).parent;
+    let t0 = Instant::now();
+    for (secs, parent, docked) in [(0, None, false), (2, slot, true)] {
+        let from = ov.panel(bar).size.x;
+        ov.set_parent(&mut vr.backend, 1, parent);
+        let start = t0 + std::time::Duration::from_secs(secs);
+        let mut at = |ov: &mut Overlay, ms| {
+            ov.place_nav_bars(
+                &mut vr.backend,
+                start + std::time::Duration::from_millis(ms),
+            );
+            ov.panel(bar).size.x
+        };
+        let first = at(&mut ov, 0);
+        assert!((first - from).abs() < 1e-4, "{from} → {first}");
+        let mid = at(&mut ov, 150);
+        let last = at(&mut ov, 1000);
+        assert!((mid - from) * (last - mid) > 0.0, "{from} → {mid} → {last}");
+        assert_eq!((last - 0.4).abs() < 1e-5, docked, "{last}");
+    }
 }
 
 #[test]
@@ -525,6 +565,96 @@ fn hud_child_sits_in_the_top_left_corner_without_taking_input() {
     assert!(events.iter().all(|e| e.panel == 0));
 }
 
+/// `id` を親（ID 0）の面の `area` に重ねる。
+fn lay_over(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay, id: PanelId, area: [f32; 4]) {
+    ov.set_parent(
+        &mut vr.backend,
+        id,
+        Some(Parent {
+            panel: 0,
+            over: Some(area),
+            ..Default::default()
+        }),
+    );
+}
+
+/// 面に重ねる子は親の面の指定した範囲に置かれ、親の大きさが変わっても付いてくる。親を暗くせず、重なった所を押すと子に届く。
+#[test]
+fn over_child_covers_its_area_of_the_parent_and_takes_input() {
+    let (mut vr, mut ov) = with_child(false);
+    // どちらも全面描画（影の余白なし）。
+    ov.set_panel_capture(0, true);
+    ov.set_panel_capture(1, true);
+    ov.set_content_resolution(1, (25, 50));
+    lay_over(&mut vr, &mut ov, 1, [0.5, 0.25, 0.25, 0.5]);
+    assert!(ov.panel(1).size.abs_diff_eq(Vec2::new(0.25, 0.5), 1e-5));
+    let at_area = Vec3::new(0.125, 0.0, -1.0 + LIFT_STEP);
+    assert!(ov.panel(1).pose.position.abs_diff_eq(at_area, 1e-5));
+    ov.panels[0].size = Vec2::new(2.0, 2.0);
+    ov.tick(&mut vr);
+    assert!(ov.panel(1).size.abs_diff_eq(Vec2::new(0.5, 1.0), 1e-5));
+    let at_area = Vec3::new(0.25, 0.0, -1.0 + LIFT_STEP);
+    assert!(ov.panel(1).pose.position.abs_diff_eq(at_area, 1e-5));
+    assert_eq!(ov.panel(0).dim_to, 0.0);
+    controller(&mut vr, at(0.25, 0.0, 0.0), &[("trigger/value", 1.0)]);
+    let events = ov.tick(&mut vr);
+    assert!(!events.is_empty());
+    assert!(events.iter().all(|e| e.panel == 1));
+}
+
+/// 範囲と縦横比が違っても引き伸ばさず収める。影の余白がある子は、余白を除いた面を範囲に合わせる。
+#[test]
+fn over_child_fits_its_face_into_the_area_without_stretching() {
+    let (mut vr, mut ov) = with_child(false);
+    ov.set_panel_capture(0, true);
+    let margin = PANEL_MARGIN as u32;
+    ov.set_content_resolution(1, (100 + 2 * margin, 100 + 2 * margin));
+    lay_over(&mut vr, &mut ov, 1, [0.0, 0.0, 0.5, 0.25]);
+    let child = ov.panel(1);
+    assert!((child.size.x - child.size.y).abs() < 1e-5);
+    let face = child.size - Vec2::splat(2.0 * face_margin(child));
+    assert!(face.abs_diff_eq(Vec2::splat(0.25), 1e-5), "{face}");
+    let center = Vec3::new(-0.25, 0.375, -1.0 + LIFT_STEP);
+    assert!(child.pose.position.abs_diff_eq(center, 1e-5));
+}
+
+/// 同じ親の面に重ねる子どうしは、後から開いたものが描画順も奥行きも上。先の子が閉じたら詰める。枚数に上限はない。
+#[test]
+fn later_over_children_stack_above_earlier_ones() {
+    let (mut vr, mut ov) = with_child(false);
+    lay_over(&mut vr, &mut ov, 1, [0.1, 0.1, 0.5, 0.5]);
+    let mut ids = vec![1];
+    for i in 0..10 {
+        let key = format!("over{i}");
+        let id = ov
+            .add_panel(
+                &mut vr.backend,
+                &key,
+                at(0.0, 0.0, -0.9),
+                Vec2::splat(0.4),
+                (40, 40),
+            )
+            .unwrap();
+        lay_over(&mut vr, &mut ov, id, [0.1, 0.1, 0.5, 0.5]);
+        ids.push(id);
+    }
+    ov.tick(&mut vr);
+    let sorts = |ov: &Overlay, ids: &[PanelId]| -> Vec<u32> {
+        ids.iter().map(|&i| ov.panel(i).surface.sort()).collect()
+    };
+    let depth = |ov: &Overlay, id: PanelId| ov.panel(id).pose.position.z + 1.0;
+    assert!(sorts(&ov, &ids).is_sorted_by(|a, b| a < b));
+    for (i, &id) in ids.iter().enumerate() {
+        let want = LIFT_STEP * (i + 1) as f32;
+        assert!((depth(&ov, id) - want).abs() < 1e-5, "{i}");
+    }
+    ov.set_animated(&mut vr.backend, 1, false);
+    ov.close(&mut vr.backend, 1);
+    ov.tick(&mut vr);
+    ov.tick(&mut vr);
+    assert!((depth(&ov, ids[1]) - LIFT_STEP).abs() < 1e-5);
+}
+
 #[test]
 fn pressing_outside_the_child_closes_it_unless_blocked() {
     let press = |ov: &mut Overlay, vr: &mut Subsystems<MockBackend>, x: f32| {
@@ -601,6 +731,7 @@ fn pressing_a_nested_child_keeps_its_parent_dialog() {
             docked: false,
             slot: None,
             stack: false,
+            over: None,
         }),
     );
     controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
@@ -628,6 +759,7 @@ fn closing_the_parent_closes_its_children_and_cycles_are_refused() {
             docked: false,
             slot: None,
             stack: false,
+            over: None,
         }),
     );
     assert_eq!(
@@ -736,8 +868,7 @@ fn a_stacked_child_appears_in_place_and_in_front() {
             .unwrap()
             .sort
     };
-    assert_eq!(sort("toast"), HUD_SORT);
-    assert_eq!(sort("child"), PANEL_SORT);
+    assert!(sort("toast") > sort("child"));
 }
 
 /// ロックされた子（スタックされた通知）があってもバーをグラブするとドック画面をグラブした扱いになる。

@@ -10,12 +10,13 @@ members = [
     "crates/subsystems/audio",
     "crates/subsystems/media",
     "crates/subsystems/notifications",
+    "crates/subsystems/update",
 ]
 # vendor/ は改変した zed クレートのコピー（個別の Cargo.toml を参照）。ワークスペースには含めない
 exclude = ["vendor"]
 
 [workspace.package]
-version = "2026.0.3-beta.11"
+version = "2026.0.4-dev.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/nekochanfood/nyaw"
@@ -37,6 +38,7 @@ desktop = { path = "crates/subsystems/desktop" }
 audio = { path = "crates/subsystems/audio" }
 media = { path = "crates/subsystems/media" }
 notifications = { path = "crates/subsystems/notifications" }
+update = { path = "crates/subsystems/update" }
 kernel = { path = "crates/kernel", default-features = false }
 subsystems = { path = "crates/subsystems", default-features = false }
 vr = { path = "crates/subsystems/vr", default-features = false }

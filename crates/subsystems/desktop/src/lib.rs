@@ -462,13 +462,25 @@ pub fn app_icon(id: &str) -> Option<Icon> {
     }
 }
 
-/// アプリを起動する（待たない）。
-pub fn launch(app: &InstalledApp) -> Result<(), Error> {
+/// アプリ（[`InstalledApp::id`] と同じ ID）の名前・実行ファイル名・アイコン。一覧（[`InstalledApps`]）に無いアプリは `None`。
+/// シェルに問い合わせて待機するため、フレームループでは呼び出さない。
+pub fn installed_app(id: &str) -> Option<InstalledApp> {
     #[cfg(windows)]
-    return windows::launch(&app.id);
+    return windows::installed_app(id);
     #[cfg(not(windows))]
     {
-        let _ = app;
+        let _ = id;
+        None
+    }
+}
+
+/// アプリ（[`InstalledApp::id`] と同じ ID）を起動する（アプリの起動完了は待たない）。どのスレッドからでも呼び出せる。
+pub fn launch(id: &str) -> Result<(), Error> {
+    #[cfg(windows)]
+    return windows::launch(id);
+    #[cfg(not(windows))]
+    {
+        let _ = id;
         Err(Error(
             "launching apps is not available on this platform yet".into(),
         ))

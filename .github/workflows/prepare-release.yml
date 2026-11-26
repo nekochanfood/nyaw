@@ -72,7 +72,12 @@ jobs:
           git commit -qam "chore(release): $NEW"
           git push origin "release/v$NEW"
           gh workflow run release.yml --ref "release/v$NEW"
-          prev=$(git describe --tags --abbrev=0 2> /dev/null) || true
+          # 安定版は前の安定版からの変更履歴にする（release.yml と同じ規則）
+          stable=()
+          if [[ $NEW != *-* ]]; then
+            stable=(--exclude '*-*')
+          fi
+          prev=$(git describe --tags --abbrev=0 "${stable[@]}" 2> /dev/null) || true
           notes=$(gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
             -f tag_name="v$NEW" -f target_commitish="release/v$NEW" ${prev:+-f previous_tag_name="$prev"} -q .body)
           printf 'Merging this releases v%s with the installer built by the Release run on this branch.\n\n%s\n' "$NEW" "$notes" > body.md

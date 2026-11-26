@@ -140,6 +140,7 @@ detach = "Let go"
 update = "Update available"
 title = "Dashboard"
 now_playing = "Now Playing"
+streams = "More windows and screens"
 nothing_playing = "Nothing is playing"
 open_app = "Open the app"
 app_unavailable = "App window unavailable"
@@ -240,6 +241,23 @@ settings = "Settings"
 navigation = "Navigation"
 mirror = "Mirroring screen"
 slide = "Button slide"
+resize = "Corner resize"
+resize_aspect = "Corner resize (keep aspect)"
+layers = "Layers"
+
+[layer_test]
+over = "Over"
+popover = "Popover"
+dialog = "Dialog"
+hud = "HUD"
+far = "Far panel"
+clear = "Close all"
+close = "Close"
+readout = "Draw order {order} / pushed forward {lifted} mm"
+hint = "Open samples and check how they overlap. A larger draw order is drawn in front. Popovers close when you press outside them; a dialog dims this panel."
+
+[testing.resize]
+hint = "Grab a corner and move it to change the width and height ({min} to {max} px)"
 
 [testing.slide]
 add = "Add at end"

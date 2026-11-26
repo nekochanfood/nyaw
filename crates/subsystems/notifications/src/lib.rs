@@ -1,5 +1,6 @@
-//! OS の通知（トースト）を読み取り、押下されたら OS と同じ経路でアプリへ配信する。Windows は `UserNotificationListener`
-//! （通知センターの一覧）と、通知の元の XML（ボタンと押したときの引数。OS の通知の DB にある）。
+//! OS の通知（トースト）を読み取り、押下されたら OS と同じ経路でアプリへ配信する。一覧の取得方法と、押したときに何をするか
+//! （[`Plan`]）の決定・実行は OS ごとのバックエンド（[`Backend`]）が担い、このファイルは OS に依存しない。
+//! Windows は `UserNotificationListener`（通知センターの一覧）と、通知の元の XML（ボタンと押したときの引数）を使う。
 //! 問い合わせ・アイコンの読み込み・押したときの呼び出しはワーカーが行い、メインスレッドは最新の一覧を受け取るだけ
 //! （[`Notifications::now`]）。押下（[`Notifications::activate`]）もワーカーへ送信するのみで待機しない。
 
@@ -83,12 +84,14 @@ pub enum Request {
     Remove(u32),
 }
 
-/// 押下時に実行する処理（ワーカー内部でのみ保持する）。
+/// 押下時に実行する処理（ワーカー内部でのみ保持する）。どの処理にするかはバックエンドが決める（[`Backend::plans`]）。
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
 enum Plan {
     /// URL を開く（画面がユーザーに確認してから開く）。
     Url(String),
-    /// アプリの通知の受け口に引数を渡す（OS が通知を押したときと同じ）。
+    /// アプリの通知の受け口に値を渡す（OS が通知を押したときと同じ）。値の意味はバックエンドが決める
+    /// （Windows はトーストの引数）。
     Invoke(String),
     /// アプリを起動する。
     Launch,
@@ -111,18 +114,13 @@ struct Raw {
 trait Backend {
     /// 通知センターにある通知。読み取り不可であれば `None`（前の一覧のまま）。
     fn read(&mut self) -> Option<Vec<Raw>>;
-    /// 通知 `id` の元の XML。
-    fn payload(&mut self, id: u32) -> Option<String>;
-    /// 通知 `id` のアプリのアイコンの画像のファイルの中身。
-    fn icon(&mut self, id: u32) -> Option<Vec<u8>>;
-    /// アプリ `app` のスタートメニューのアイコン（通知がロゴを保持しない場合）。
-    fn shell_icon(&mut self, app: &str) -> Option<Image> {
-        desktop::app_icon(app)
-    }
-    /// アプリ `app` が通知の受信インターフェース（押下時の引数を受け取る口）を保持しているか。
-    fn invokable(&mut self, app: &str) -> bool;
-    /// 押下をアプリへ配信する（`args` が `None` であればアプリを起動する）。配信成功時は `true`。
-    fn activate(&mut self, app: &str, args: Option<&str>) -> bool;
+    /// 通知 `raw` の本文を押したときと、各ボタン（表示名付き）を押したときに実行する処理。
+    /// 押下時の情報を読めなければ、本文でアプリを起動するだけにする。
+    fn plans(&mut self, raw: &Raw) -> (Plan, Vec<(String, Plan)>);
+    /// 通知 `raw` を出したアプリのアイコン（一辺 [`ICON_PX`] 以内）。
+    fn icon(&mut self, raw: &Raw) -> Option<Image>;
+    /// 通知 `id`（アプリ `app`）の押下を、`plan` に従ってアプリへ配信する。[`Plan::Url`] は渡されない。配信成功時は `true`。
+    fn activate(&mut self, id: u32, app: &str, plan: &Plan) -> bool;
     /// 通知センターから削除する。
     fn remove(&mut self, id: u32);
     /// OS に通知を送信する。
@@ -169,19 +167,11 @@ impl State {
     }
 
     fn entry(&mut self, raw: Raw, backend: &mut dyn Backend) -> Entry {
-        let invoke = backend.invokable(&raw.app_id);
-        // ponytail: DB は リスナーに見えた時点で書かれている（実測）ので読み直さない。読めなければ本文で開くだけ。
-        let (launch, actions) = backend
-            .payload(raw.id)
-            .map_or((Plan::Launch, Vec::new()), |xml| parse(&xml, invoke));
+        let (launch, actions) = backend.plans(&raw);
         let icon = self
             .icons
             .entry(raw.app_id.clone())
-            // ストアのアプリは通知がロゴを持つ。デスクトップのアプリ（Chrome・Discord など）はスタートメニューから引く。
-            .or_insert_with(|| {
-                (backend.icon(raw.id).and_then(|b| decode(&b)))
-                    .or_else(|| backend.shell_icon(&raw.app_id))
-            })
+            .or_insert_with(|| backend.icon(&raw))
             .clone();
         let mut texts = raw.texts.into_iter().filter(|t| !t.trim().is_empty());
         let title = texts.next().unwrap_or_default();
@@ -227,10 +217,9 @@ impl State {
             Some(a) => e.actions.get(a),
         };
         let done = match plan {
-            Some(Plan::Invoke(args)) => backend.activate(&e.note.app.id, Some(args)),
-            Some(Plan::Launch) => backend.activate(&e.note.app.id, None),
             // URL は画面が確かめてから開く（ここには来ない）。
             Some(Plan::Url(_)) | None => false,
+            Some(plan) => backend.activate(id, &e.note.app.id, plan),
         };
         if done {
             backend.remove(id);
@@ -254,48 +243,8 @@ impl State {
     }
 }
 
-/// 通知の元の XML（トーストの XML）から、本文を押したときとボタンを押したときにすることを読む。`invoke` はアプリが通知の
-/// 受け口を持っているか（無ければ引数を渡せないので、本文はアプリを開くだけ・引数で動くボタンは出さない）。
-/// 右クリックのメニュー（`placement`）・文字を打つ欄の横のボタン（`hint-inputId`）・OS のボタン（`system`）・
-/// ウェブ以外の URL は出さない（URL は確かめてから開く決まりで、`http` / `https` しか開けない）。
-fn parse(xml: &str, invoke: bool) -> (Plan, Vec<(String, Plan)>) {
-    let Ok(doc) = roxmltree::Document::parse(xml.trim_start_matches('\u{feff}')) else {
-        return (Plan::Launch, Vec::new());
-    };
-    let toast = doc.root_element();
-    let plan = |kind: Option<&str>, args: &str| match kind.unwrap_or("foreground") {
-        "protocol" => web(args).then(|| Plan::Url(args.to_owned())),
-        "foreground" | "background" if invoke => Some(Plan::Invoke(args.to_owned())),
-        _ => None,
-    };
-    let launch = plan(
-        toast.attribute("activationType"),
-        toast.attribute("launch").unwrap_or(""),
-    )
-    .unwrap_or(Plan::Launch);
-    let actions = toast
-        .descendants()
-        .filter(|n| n.has_tag_name("action"))
-        .filter(|a| a.attribute("placement").is_none() && a.attribute("hint-inputId").is_none())
-        .filter_map(|a| {
-            let label = a.attribute("content")?.trim();
-            let plan = plan(
-                a.attribute("activationType"),
-                a.attribute("arguments").unwrap_or(""),
-            )?;
-            (!label.is_empty()).then(|| (label.to_owned(), plan))
-        })
-        .collect();
-    (launch, actions)
-}
-
-/// ブラウザで開く URL か。
-fn web(url: &str) -> bool {
-    let scheme = url.split_once(':').map_or("", |(s, _)| s);
-    scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")
-}
-
-/// 画像のファイルの中身を読み、一辺 [`ICON_PX`] に収める。
+/// 画像のファイルの中身を読み、一辺 [`ICON_PX`] に収める（バックエンドがアイコンを返すときに使う）。
+#[cfg_attr(not(windows), allow(dead_code))]
 fn decode(bytes: &[u8]) -> Option<Image> {
     let image = image::load_from_memory(bytes).ok()?;
     let image = if image.width() > ICON_PX || image.height() > ICON_PX {
@@ -422,13 +371,15 @@ fn backend() -> Option<Box<dyn Backend>> {
 mod tests {
     use super::*;
 
+    /// 押下時の処理の組（本文、表示名付きのボタン）。
+    type Plans = (Plan, Vec<(String, Plan)>);
+
     /// 決まった一覧を返す問い合わせ先。届けた・消した・アイコンを読んだ回数を覚える。
     #[derive(Default)]
     struct Fake {
         raws: Vec<Raw>,
-        payloads: HashMap<u32, String>,
-        invokable: bool,
-        activated: Vec<(String, Option<String>)>,
+        plans: HashMap<u32, Plans>,
+        activated: Vec<(u32, String, Plan)>,
         removed: Vec<u32>,
         icon_reads: usize,
     }
@@ -437,25 +388,20 @@ mod tests {
         fn read(&mut self) -> Option<Vec<Raw>> {
             Some(self.raws.clone())
         }
-        fn payload(&mut self, id: u32) -> Option<String> {
-            self.payloads.get(&id).cloned()
+        fn plans(&mut self, raw: &Raw) -> Plans {
+            let unknown = (Plan::Launch, Vec::new());
+            self.plans.get(&raw.id).cloned().unwrap_or(unknown)
         }
-        fn icon(&mut self, _: u32) -> Option<Vec<u8>> {
+        fn icon(&mut self, _: &Raw) -> Option<Image> {
             self.icon_reads += 1;
             let mut png = Vec::new();
             image::RgbaImage::from_pixel(128, 128, image::Rgba([1, 2, 3, 255]))
                 .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
                 .unwrap();
-            Some(png)
+            decode(&png)
         }
-        fn shell_icon(&mut self, _: &str) -> Option<Image> {
-            None
-        }
-        fn invokable(&mut self, _: &str) -> bool {
-            self.invokable
-        }
-        fn activate(&mut self, app: &str, args: Option<&str>) -> bool {
-            self.activated.push((app.into(), args.map(str::to_owned)));
+        fn activate(&mut self, id: u32, app: &str, plan: &Plan) -> bool {
+            self.activated.push((id, app.into(), plan.clone()));
             true
         }
         fn remove(&mut self, id: u32) {
@@ -516,50 +462,21 @@ mod tests {
         assert_eq!((icon.width, icon.height), (ICON_PX, ICON_PX));
     }
 
-    const TOAST: &str = r#"<toast launch="open-chat" activationType="foreground">
-        <visual><binding template="ToastGeneric"><text>Hi</text></binding></visual>
-        <actions>
-          <input id="reply" type="text"/>
-          <action content="Send" hint-inputId="reply" arguments="send"/>
-          <action content="Mute" arguments="mute" activationType="background"/>
-          <action content="Open site" arguments="https://example.com/a" activationType="protocol"/>
-          <action content="Settings" arguments="ms-settings:notifications" activationType="protocol"/>
-          <action content="Snooze" arguments="snooze" activationType="system"/>
-          <action content="Notification settings" placement="contextMenu" arguments="x"/>
-        </actions></toast>"#;
-
-    /// 受け口のあるアプリは、本文もボタンも引数を渡す。ウェブの URL のボタンは URL として出し、
-    /// 打つ欄・OS のボタン・右クリックのメニュー・ウェブ以外の URL は出さない。
-    #[test]
-    fn actions_are_read_from_the_toast_xml() {
-        let (launch, actions) = parse(TOAST, true);
-        assert_eq!(launch, Plan::Invoke("open-chat".into()));
-        assert_eq!(
-            actions,
-            [
-                ("Mute".to_owned(), Plan::Invoke("mute".into())),
-                (
-                    "Open site".to_owned(),
-                    Plan::Url("https://example.com/a".into())
-                ),
-            ]
-        );
-        // 受け口が無ければ、本文はアプリを開くだけで、引数で動くボタンは出さない。
-        let (launch, actions) = parse(TOAST, false);
-        assert_eq!(launch, Plan::Launch);
-        assert_eq!(actions.len(), 1);
-        // 本文が URL を開くトースト。
-        let url = r#"<toast launch="HTTPS://example.com" activationType="protocol"/>"#;
-        assert_eq!(parse(url, false).0, Plan::Url("HTTPS://example.com".into()));
-        assert_eq!(parse("not xml", true), (Plan::Launch, Vec::new()));
-    }
-
     /// 押すとアプリへ届け、通知センターから消して一覧からも落とす。URL のボタンはワーカーでは何もしない。
     #[test]
     fn activating_delivers_and_removes() {
+        let plans = (
+            Plan::Invoke("open-chat".into()),
+            vec![
+                ("Mute".to_owned(), Plan::Invoke("mute".into())),
+                (
+                    "Open site".to_owned(),
+                    Plan::Url("https://example.com/a".into()),
+                ),
+            ],
+        );
         let mut fake = Fake {
-            invokable: true,
-            payloads: HashMap::from([(2, TOAST.to_owned())]),
+            plans: HashMap::from([(2, plans)]),
             ..Default::default()
         };
         let mut state = State::default();
@@ -576,12 +493,12 @@ mod tests {
         assert!(state.activate(2, Some(0), &mut fake));
         assert_eq!(
             fake.activated,
-            [("Chat".to_owned(), Some("mute".to_owned()))]
+            [(2, "Chat".to_owned(), Plan::Invoke("mute".into()))]
         );
         assert_eq!(fake.removed, [2]);
-        // XML が読めなかった通知は、本文でアプリを開く。
+        // 押下時の情報が読めなかった通知は、本文でアプリを開く。
         assert!(state.activate(3, None, &mut fake));
-        assert_eq!(fake.activated[1], ("Chat".to_owned(), None));
+        assert_eq!(fake.activated[1], (3, "Chat".to_owned(), Plan::Launch));
         assert!(state.list().is_empty());
     }
 

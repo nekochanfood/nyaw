@@ -1,4 +1,4 @@
-//! Layer 5: UI 層。各オーバーレイパネルを GPUI の非表示ウィンドウで描画し、
+//! Layer 4: UI 層。各オーバーレイパネルを GPUI の非表示ウィンドウで描画し、
 //! レーザーイベントを GPUI のマウス入力へ変換して、描画結果をカーネルに返す。
 
 pub use kernel::rendering::gpui::{
@@ -30,7 +30,7 @@ use kernel::subsystems::input::ClickButton;
 use kernel::vr::{Hand, Quat, Vec3};
 use kernel::{
     Anchor, Device, Kernel, Language, PanelCommand, PanelId, PanelStatus, Pointer, PointerEvent,
-    PointerMode, Pose, Setting, Settings, ThemeMode, Vec2, VrBackend,
+    PointerMode, Pose, Request, Setting, Settings, ThemeMode, Vec2, VrBackend,
 };
 use profiler::{Profiler, ProfilerView, Stages};
 

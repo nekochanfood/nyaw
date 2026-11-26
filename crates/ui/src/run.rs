@@ -146,7 +146,7 @@ pub fn run_with(
         design::font::install(cx);
         design::corner::install();
         // キーボード初回表示時にディスクから配列を読み始めると、完了までキーのないカードが表示される。事前に読み込む。
-        keyboard::preload();
+        kernel::subsystems::keyboard::preload();
         if let Some(p) = profiler {
             cx.set_global(with_budget(p));
             cx.default_global::<PanelControl>().profiling = true;
@@ -319,7 +319,7 @@ pub fn run_with(
                             .map(|s| s.status.clone());
                         changed = sync_panel(&mut kernel, panel, cx);
                         redraw |= changed;
-                        // LOD・ポインタ状態・ドックヒントはそのパネル固有の状態。変更のたびに他パネルまで再描画させない。
+                        // LOD・ポインタ状態・ドックヒント・角の線の色はそのパネル固有の状態。変更のたびに他パネルまで再描画させない。
                         let status = kernel.status(panel);
                         others = changed
                             && before.is_none_or(|b| {
@@ -327,6 +327,7 @@ pub fn run_with(
                                     lod: status.lod,
                                     pointed: status.pointed,
                                     dock_hint: status.dock_hint,
+                                    corner_held: status.corner_held,
                                     ..b
                                 } != status
                             });

@@ -1,6 +1,8 @@
 //! バージョン文字列とビルド番号を埋め込む（`$OUT_DIR/version.rs`）。
 //! ビルド番号 = HEAD までのコミット数。main はリニア履歴（rebase マージ）のため、新しいビルドほど大きい。
 //! バージョン文字列は `NYAW_VERSION`（リリースワークフローがタグから渡す。`2026.0.1-beta.1` など）、未設定であれば Cargo.toml の値。
+// ビルド時にファイルを読み書きし、外部コマンドを実行するため、OS の機能の制限（clippy.toml）を外す（アプリには含まれない）。
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 use std::process::Command;
 

@@ -27,7 +27,7 @@ pub use config::{
 };
 pub use overlay::{
     self, Anchor, DockHint, LazyFollow, Overlay, Panel, PanelId, Parent, Pointer, PointerEvent,
-    UiEvent,
+    ResizeLimits, UiEvent,
 };
 pub use subsystems::ControllerState;
 pub use vr::{Device, Fov, Hand, Pose, Runtime, Vec2, VrBackend, VrError};
@@ -61,6 +61,9 @@ pub enum PanelCommand {
     Lockdown(bool),
     /// 掴んで大きさを変えられるか（`Overlay::set_resizable`）。
     Resizable(bool),
+    /// 角を掴んで縦横の解像度を変えられるようにする（`Overlay::set_corner_resize`。`None` で戻す）。
+    /// 1m あたりのピクセル数を保つので、UI の表示領域が変わる。変えた解像度は範囲に収める。
+    CornerResize(Option<ResizeLimits>),
     /// このパネルの上端を、画面をドッキングするスロットにする（上端からの傾斜角度。`None` で解除。`Overlay::set_dock_slot`）。
     DockSlot(Option<f32>),
     /// ドッキングスロットから掴んで取り外せる・近づけて離すとドッキングする画面にする（`Overlay::set_dockable`）。
@@ -69,14 +72,6 @@ pub enum PanelCommand {
     Reach(Option<f32>),
     /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
     PointerMode(PointerMode),
-    /// 再生中のメディアを操作する（再生・一時停止・曲送り・シーク・アプリを前に出す。[`Kernel::now_playing`]）。
-    Media(subsystems::media::Command),
-    /// OS の通知 `id` の本文（`action` が `None`）か `action` 番目のボタンを押したことを、アプリへ届ける
-    /// （[`Kernel::notifications`]。届けた通知は OS の通知センターからも消える）。URL を開くものは画面が開く。
-    Notification {
-        id: u32,
-        action: Option<usize>,
-    },
     /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。`Overlay::set_grab_anchor`）。
     GrabAnchor(Option<Pose>),
     /// 掴む基準を付け替え、今の基準（無ければ中心）のあった所に新しい基準が来るようにパネルを動かす
@@ -90,10 +85,6 @@ pub enum PanelCommand {
     PassThrough(bool),
     /// 表示・非表示の遷移を不透明度のみで行う（`Overlay::set_fade_only`。アニメーションはパネル自身が描画する）。
     FadeOnly(bool),
-    /// OS に通知を出す（デバッグのテスト用。`Notifications::send`）。
-    SendNotification(subsystems::notifications::Outgoing),
-    /// 通知をアクションなしで消去する（OS の通知センターから削除する。`Notifications::remove`）。
-    RemoveNotification(u32),
     Close,
     /// 非表示・再表示を切り替える（`Overlay::set_hidden`。閉じずにビュー・配信・音声を維持する）。
     Hide(bool),
@@ -140,6 +131,21 @@ pub enum PanelCommand {
         stroke: subsystems::keyboard::Stroke,
         layout: subsystems::keyboard::Layout,
     },
+}
+
+/// 上位層（ビュー）からシステムへの要求。どのパネルにも属さない操作で、[`Kernel::request`] が処理する
+/// （パネルへの操作は [`PanelCommand`]、全体設定の変更は [`Setting`]）。
+#[derive(Debug, Clone, PartialEq)]
+pub enum Request {
+    /// 再生中のメディアを操作する（再生・一時停止・曲送り・シーク・アプリを前に出す。[`Kernel::now_playing`]）。
+    Media(subsystems::media::Command),
+    /// OS の通知 `id` の本文（`action` が `None`）か `action` 番目のボタンを押したことを、アプリへ届ける
+    /// （[`Kernel::notifications`]。届けた通知は OS の通知センターからも消える）。URL を開くものは画面が開く。
+    Notification { id: u32, action: Option<usize> },
+    /// OS に通知を出す（デバッグのテスト用。`Notifications::send`）。
+    SendNotification(subsystems::notifications::Outgoing),
+    /// 通知をアクションなしで消去する（OS の通知センターから削除する。`Notifications::remove`）。
+    RemoveNotification(u32),
 }
 
 /// アプリ全体の設定の変更（[`Kernel::set`]）。パネルを問わず効き、`PointerMode` と `AutoLaunch` 以外は設定ファイルへ書き戻される
@@ -222,7 +228,7 @@ pub enum Setting {
     // `[dashboard]`
     /// ダッシュボードの距離（m。`dashboard.distance`。範囲に収め、刻みに丸める）。カーネルは値を保持するのみで、配置はダッシュボードが行う。
     DashboardDistance(f32),
-    /// ダッシュボードの高さ（m。目の高さの 0.1m 下からの相対で上が +。`dashboard.height`。範囲に収め、刻みに丸める）。
+    /// ダッシュボードの高さ（m。目の高さの 0.05m 下からの相対で上が +。`dashboard.height`。範囲に収め、刻みに丸める）。
     DashboardHeight(f32),
     // `[settings]`
     /// 設定画面のポインタの動きの調整方式（`settings.pointer_tuning`）。カーネルは値を保持するのみで、解釈は設定画面が行う。
@@ -297,7 +303,7 @@ pub struct Settings {
     // `[dashboard]`
     /// ダッシュボードの距離（m。はめた画面の中心まで）。
     pub dashboard_distance: f32,
-    /// ダッシュボードの高さ（m。上が +。0 で画面の中心が目の高さの 0.1m 下）。
+    /// ダッシュボードの高さ（m。上が +。0 で画面の中心が目の高さの 0.05m 下）。
     pub dashboard_height: f32,
     // `[settings]`
     pub pointer_tuning: PointerTuning,
@@ -392,6 +398,8 @@ pub struct PanelStatus {
     pub audio: AudioStatus,
     /// ドッキングスロットの見本（[`Pointer::Dock`]）の場合、その手で掴んでいる画面に表示する一行（`Overlay::dock_hint`）。
     pub dock_hint: Option<DockHint>,
+    /// 角の線（[`Pointer::Corner`]）の場合、その手で角を掴んで大きさを変えている途中か（`Overlay::corner_held`）。
+    pub corner_held: bool,
 }
 
 /// 中枢。本番は `Kernel`（= `Kernel<Box<dyn VrBackend>>`）、テストは具象のバックエンド（モック等）を持てる。
@@ -966,13 +974,12 @@ impl<B: VrBackend> Kernel<B> {
     }
 
     /// 前の段階 `prev` から、距離で次の段階を決める。境目の前後で行き来しないよう、下げる側は閾値を縮める。
-    /// レーザーが指している（操作しようとしている）パネルとツールチップは、距離によらず LOD0。
+    /// レーザーが指している（操作しようとしている）パネルとツールチップ、はまる所の見本、角の線は、距離によらず LOD0。
     fn lod_for(&self, id: PanelId, prev: Option<u8>) -> u8 {
         if self.overlay.pointed(id)
-            || self
-                .panel(id)
-                .pointer
-                .is_some_and(|(_, part)| part == Pointer::Tooltip)
+            || self.panel(id).pointer.is_some_and(|(_, part)| {
+                matches!(part, Pointer::Tooltip | Pointer::Dock | Pointer::Corner)
+            })
         {
             return 0;
         }
@@ -1125,6 +1132,11 @@ impl<B: VrBackend> Kernel<B> {
         self.overlay.take_dock_changes()
     }
 
+    /// 掴んだまま、はまる所から抜けた（`false`）・吸い付いた（`true`）画面（[`Overlay::take_dock_snaps`]）。受け取ると空になる。
+    pub fn take_dock_snaps(&mut self) -> Vec<(PanelId, bool)> {
+        self.overlay.take_dock_snaps()
+    }
+
     /// 最後の tick の手ごとの入力の状態（骨格だけの手は判定に使った値 `metrics` 付き）。
     pub fn controllers(&self) -> &[ControllerState] {
         self.overlay.controllers()
@@ -1154,6 +1166,32 @@ impl<B: VrBackend> Kernel<B> {
             .submit(&mut self.subsystems.backend, panel, width, height, rgba)
     }
 
+    /// システムへの要求を処理する（[`Request`]）。メディアと通知の操作は各ワーカーへ送信するだけで待機しない。
+    pub fn request(&mut self, request: Request) {
+        match request {
+            Request::Media(command) => {
+                if let Some(media) = &self.media {
+                    media.send(command);
+                }
+            }
+            Request::Notification { id, action } => {
+                if let Some(n) = &self.notifications {
+                    n.activate(id, action);
+                }
+            }
+            Request::SendNotification(toast) => {
+                if let Some(n) = &self.notifications {
+                    n.send(toast);
+                }
+            }
+            Request::RemoveNotification(id) => {
+                if let Some(n) = &self.notifications {
+                    n.remove(id);
+                }
+            }
+        }
+    }
+
     pub fn apply(&mut self, panel: PanelId, cmd: PanelCommand) {
         match cmd {
             PanelCommand::Attach(device, offset) => self.overlay.attach(panel, device, offset),
@@ -1174,32 +1212,13 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
             PanelCommand::PassThrough(pass) => self.overlay.set_pass_through(panel, pass),
             PanelCommand::FadeOnly(fade_only) => self.overlay.set_fade_only(panel, fade_only),
-            PanelCommand::SendNotification(toast) => {
-                if let Some(n) = &self.notifications {
-                    n.send(toast);
-                }
-            }
-            PanelCommand::RemoveNotification(id) => {
-                if let Some(n) = &self.notifications {
-                    n.remove(id);
-                }
-            }
             PanelCommand::DockSlot(tilt) => self.overlay.set_dock_slot(panel, tilt),
             PanelCommand::Dockable(dockable) => self.overlay.set_dockable(panel, dockable),
             PanelCommand::Resizable(resizable) => self.overlay.set_resizable(panel, resizable),
+            PanelCommand::CornerResize(limits) => self.overlay.set_corner_resize(panel, limits),
             PanelCommand::Reach(reach) => self.overlay.set_reach(panel, reach),
             PanelCommand::PointerMode(mode) => {
                 self.pointer_modes.insert(panel, mode);
-            }
-            PanelCommand::Media(command) => {
-                if let Some(media) = &self.media {
-                    media.send(command);
-                }
-            }
-            PanelCommand::Notification { id, action } => {
-                if let Some(n) = &self.notifications {
-                    n.activate(id, action);
-                }
             }
             PanelCommand::GrabAnchor(anchor) => self.overlay.set_grab_anchor(panel, anchor),
             PanelCommand::MoveGrabAnchor(anchor) => self.overlay.move_grab_anchor(panel, anchor),
@@ -1305,6 +1324,9 @@ impl<B: VrBackend> Kernel<B> {
                 .pointer
                 .filter(|&(_, part)| part == Pointer::Dock)
                 .and_then(|(hand, _)| self.overlay.dock_hint(hand)),
+            corner_held: p.pointer.is_some_and(|(hand, part)| {
+                part == Pointer::Corner && self.overlay.corner_held(hand)
+            }),
         }
     }
 }
@@ -1696,7 +1718,7 @@ mod tests {
         }
     }
 
-    /// ダッシュボードの距離・高さは既定で正面 1.3m・高さ 0（目の高さの 0.1m 下）。互いに独立で、範囲と刻みに収まる。
+    /// ダッシュボードの距離・高さは既定で正面 1.3m・高さ 0（目の高さの 0.05m 下）。互いに独立で、範囲と刻みに収まる。
     #[test]
     fn dashboard_placement_has_defaults_and_stays_in_range() {
         let (mut k, _) = lod_kernel();
@@ -1908,6 +1930,16 @@ mod tests {
     fn tooltip_keeps_full_resolution_when_far_from_the_head() {
         let (mut k, p) = lod_kernel();
         k.apply(p, PanelCommand::Pointer(vr::Hand::Right, Pointer::Tooltip));
+        k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 100.0;
+        k.tick();
+        assert_eq!(k.panel_lod(p), 0);
+    }
+
+    /// はまる所の見本の帯の文字が、距離で粗くならない。
+    #[test]
+    fn dock_ghost_keeps_full_resolution_when_far_from_the_head() {
+        let (mut k, p) = lod_kernel();
+        k.apply(p, PanelCommand::Pointer(vr::Hand::Right, Pointer::Dock));
         k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 100.0;
         k.tick();
         assert_eq!(k.panel_lod(p), 0);

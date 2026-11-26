@@ -135,6 +135,11 @@ impl<'a, V: Render> VrKit<'a, V> {
     /// Aims the laser at a pixel on the panel and steps one frame.
     pub fn point_at(&mut self, px: Vec2) -> &mut Self {
         let target = self.kernel.panel(self.panel).pixel_to_world(px);
+        self.aim_at(target)
+    }
+
+    /// Aims the laser at a point in tracking space (also off the panel) and steps one frame.
+    pub fn aim_at(&mut self, target: Vec3) -> &mut Self {
         let c = self.ctrl();
         let dir = (target - c.aim.position).normalize();
         c.aim.orientation = Quat::from_rotation_arc(Vec3::NEG_Z, dir);
@@ -158,6 +163,14 @@ impl<'a, V: Render> VrKit<'a, V> {
     pub fn release(&mut self, action: Action) -> &mut Self {
         self.ctrl().held.retain(|&a| a != action);
         self.step()
+    }
+
+    /// Steps until a grab-move or a resize by a corner has caught up with the hand.
+    pub fn settle(&mut self) -> &mut Self {
+        for _ in 0..DRAG_SETTLE {
+            self.step();
+        }
+        self
     }
 
     /// Grabs the panel center, translates the hand until the panel center reaches `to`, then releases.

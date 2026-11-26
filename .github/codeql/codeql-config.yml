@@ -1,0 +1,4 @@
+# vendor/ は上流のソースを取り込んだもので、このリポジトリでは修正しないため解析対象から外す。
+paths-ignore:
+  - vendor
+  - target

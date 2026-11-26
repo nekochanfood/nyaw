@@ -39,7 +39,7 @@ use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Variant {
-    /// 既定。カード上に配置する前提で、カードよりわずかに暗い無彩色。
+    /// 既定。カード上に配置する前提の無彩色。ダークではカードよりわずかに明るく、ライトではわずかに暗い。
     Default,
     Primary,
     Danger,
@@ -1028,6 +1028,16 @@ pub fn menu_item(
     glyph: &'static crate::Icon,
     label: impl Into<SharedString>,
 ) -> Button {
+    menu_item_with(theme, id, crate::icon(glyph).size(px(font_size::LG)), label)
+}
+
+/// [`menu_item`] の先頭に任意の要素（アプリアイコンの画像など）を置く版。大きさは呼び出し側が `font_size::LG` に合わせる。
+pub fn menu_item_with(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    glyph: impl IntoElement,
+    label: impl Into<SharedString>,
+) -> Button {
     let mut b = base_button(theme, id.into(), Variant::Default);
     (b.rest, b.hover, b.active) = (theme.card, theme.control_hover, theme.control_active);
     b.base = b
@@ -1039,7 +1049,7 @@ pub fn menu_item(
         .rounded(px(0.0))
         // 行は文字主体のボタンではないため太字にしない（文字サイズは本文と同じ `MD`）。
         .font_weight(FontWeight::NORMAL)
-        .child(crate::icon(glyph).size(px(font_size::LG)))
+        .child(glyph)
         .child(div().flex_1().min_w_0().truncate().child(label.into()));
     b
 }
@@ -1932,6 +1942,21 @@ mod tests {
             .ghost_background(dark)
             .background_opacity(0.5);
         assert_eq!(plain.colors().1, light.control_hover);
+    }
+
+    #[test]
+    fn dark_layers_get_lighter_towards_the_front() {
+        let t = &Theme::DARK;
+        // 無彩色なので、1 チャンネルの大小が明度の大小。
+        let layers = [
+            t.background,
+            t.card,
+            t.control,
+            t.control_hover,
+            t.control_active,
+        ]
+        .map(|c| c >> 24);
+        assert!(layers.is_sorted_by(|a, b| a < b), "{layers:?}");
     }
 
     #[test]

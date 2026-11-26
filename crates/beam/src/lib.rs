@@ -1,17 +1,20 @@
 //! Layer 6 パネル: コントローラのビーム。手ごとに、手元から伸びるレーザー、指示先パネルに貼り付く
 //! カーソル（小円）、ドラッグ中の要素の外観（中身は GPUI が描画する `ui::DragPreview`）、カーソル子要素のツールチップ（[`tooltip`]）、
-//! ドッキング可能パネル把持中のスロットゴースト（[`dock`]）の計 5 枚。描画のみを担い、配置・長さ・表示制御はオーバーレイ層が毎 tick 決定する。
+//! ドッキング可能パネル把持中のスロットゴースト（[`dock`]。角枠は [`bracket`]）、角で大きさを変えられるパネルの角を囲む線（[`corner`]）の計 6 枚。描画のみを担い、配置・長さ・表示制御はオーバーレイ層が毎 tick 決定する。
 
 use gpui::{
     Bounds, Context, PathBuilder, Pixels, Point, Window, canvas, div, hsla, linear_color_stop,
     linear_gradient, point, prelude::*, px, rgba,
 };
-use kernel::overlay::LASER_MAX;
+use kernel::overlay::{LASER_LENGTH, LASER_MAX};
 use kernel::{Hand, Pointer, Pose, Vec2};
 use ui::PanelSpec;
 
+pub mod bracket;
+pub mod corner;
 pub mod dock;
 pub mod tooltip;
+pub use corner::CornerHandle;
 pub use dock::DockGhost;
 pub use tooltip::Tooltip;
 
@@ -22,7 +25,7 @@ const OUTLINE: u32 = 0x000000a0;
 /// 高さは長さによらず [`LASER_THICK_M`] に固定する。線をテクスチャ全面に描画するため線の縁 = クアッドの縁となり、
 /// 拡大しても滲まない（細い線を透明領域内に描くと、拡大時の補間で縁がぼける）。
 /// 縦の画素数は Windows の非表示ウィンドウの最小サイズ制約による。
-const LASER_PX: (u32, u32) = (1024, 64);
+pub const LASER_PX: (u32, u32) = (1024, 64);
 /// レーザーの太さ（m 単位）。
 const LASER_THICK_M: f32 = 0.003;
 /// レーザーの不透明度の分割数。各区間を線形グラデーションで接続し、曲線を近似する。
@@ -66,6 +69,7 @@ pub fn specs() -> Vec<PanelSpec> {
                     .pointer(hand, Pointer::Drag),
                 tooltip::spec(hand),
                 dock::spec(hand),
+                corner::spec(hand),
             ]
         })
         .collect()
@@ -81,13 +85,22 @@ fn laser_fade(t: f32) -> f32 {
 }
 
 impl Render for Laser {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let alpha = (COLOR & 0xff) as f32 / 255.0;
-        let white = |t: f32| hsla(0.0, 0.0, 1.0, alpha * laser_fade(t));
+        let white = move |t: f32| hsla(0.0, 0.0, 1.0, alpha * laser_fade(t));
         let n = LASER_FADE_STEPS as f32;
+        // 手元の端は丸める（半楕円。テクスチャの上では横に縮めて描き、空間で半円に見えるようにする）。
+        let cap = canvas(
+            |_, _, _| {},
+            move |bounds, _, window, _| paint_cap(bounds, white(0.0), window),
+        )
+        .w(px(cap_px(ui::settings(cx).laser_length)))
+        .h_full()
+        .flex_none();
         div()
             .size_full()
             .flex()
+            .child(cap)
             .children((0..LASER_FADE_STEPS).map(|i| {
                 let (a, b) = (i as f32 / n, (i + 1) as f32 / n);
                 div().flex_1().h_full().bg(linear_gradient(
@@ -96,6 +109,37 @@ impl Render for Laser {
                     linear_color_stop(white(b), 1.0),
                 ))
             }))
+    }
+}
+
+/// 手元の端の丸み（半楕円）の横の半径（テクスチャの px）。テクスチャは横だけがレーザーの見える長さ `length`（m）に伸びるので、
+/// 太さの半分をその縮尺で割り戻し、空間で半円に見える幅にする。設定が届く前（0）は既定の長さで求める。
+// ponytail: 見える長さより近くを指すとレーザーが縮み、丸みも横に縮む。目立つなら今の長さを UI へ渡して描き直す。
+fn cap_px(length: f32) -> f32 {
+    let length = if length > 0.0 { length } else { LASER_LENGTH };
+    (LASER_THICK_M / 2.0 * LASER_PX.0 as f32 / length)
+        .round()
+        .max(1.0)
+}
+
+/// `bounds` の幅を横の半径、高さの半分を縦の半径とする、左向きの半楕円を `color` で塗る。
+fn paint_cap(bounds: Bounds<Pixels>, color: gpui::Hsla, window: &mut Window) {
+    const STEPS: usize = 16;
+    let (x, y) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+    let (rx, ry) = (
+        f32::from(bounds.size.width),
+        f32::from(bounds.size.height) / 2.0,
+    );
+    let mut path = PathBuilder::fill();
+    // 右上から左端を回って右下まで。
+    path.move_to(point(px(x + rx), px(y)));
+    for i in 1..=STEPS {
+        let a = std::f32::consts::PI * i as f32 / STEPS as f32;
+        path.line_to(point(px(x + rx - rx * a.sin()), px(y + ry - ry * a.cos())));
+    }
+    path.close();
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
     }
 }
 
@@ -178,6 +222,15 @@ impl Render for DragLayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_laser_cap_looks_round_in_space() {
+        // 横の縮尺（見える長さ ÷ 横の画素数）で空間の長さに戻すと、丸みの横の半径は太さの半分になる（空間で半円）。
+        let m_per_px = LASER_LENGTH / LASER_PX.0 as f32;
+        let rx = cap_px(LASER_LENGTH) * m_per_px;
+        assert!((rx - LASER_THICK_M / 2.0).abs() <= m_per_px / 2.0, "{rx}");
+        assert_eq!(cap_px(0.0), cap_px(LASER_LENGTH));
+    }
 
     #[test]
     fn laser_fades_out_toward_the_cursor_along_sine_out() {

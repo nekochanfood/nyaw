@@ -3,6 +3,8 @@
 //! このバイナリが自分自身をケースごとに子プロセスとして起動する（`NYAW_GPU_CASE` でケースを指定する）。
 //!
 //! 1 ケースだけ流す: `cargo test -p ui --test gpu -- --ignored stress`（名前の一部で絞る）
+// ケースを子プロセスとして起動し、描画結果を画像ファイルに書き出すため、プロセスとファイル操作の制限（clippy.toml）を外す。
+#![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 mod a11y;
 mod common;
@@ -20,6 +22,7 @@ mod panel_lod;
 mod rotation;
 mod round_clip;
 mod stress;
+mod stroke_caps;
 mod superellipse;
 mod test_panels;
 
@@ -50,6 +53,7 @@ const CASES: &[Case] = &[
     ("rotation", || report(rotation::main)),
     ("round_clip", || report(round_clip::main)),
     ("stress", || report(stress::main)),
+    ("stroke_caps", || report(stroke_caps::main)),
     ("superellipse", || report(superellipse::main)),
     ("test_panels", || report(test_panels::main)),
 ];

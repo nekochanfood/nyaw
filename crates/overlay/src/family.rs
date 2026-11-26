@@ -25,7 +25,7 @@ impl Overlay {
             return;
         }
         let at = parent.map(|p| self.panels[p.panel].pose);
-        // ドック・アンドック時は可視ならトランジションで移動する。ドック（ダッシュボードから呼び出す）時はオーバーシュートなしで収束、
+        // ドック・アンドック時は可視ならトランジションで移動する。どちらも少し行き過ぎてから収まり（[`Motion::Pop`]）、
         // アンドック時は離脱を示すため手前へ飛び出す。グラブ中は手に追従するため移動しない。
         let held = self.grabbed(id);
         let q = &self.panels[id];
@@ -39,7 +39,7 @@ impl Overlay {
                 Some(q.pose * Pose::new(Vec3::Z * UNDOCK_PULL, Quat::IDENTITY)),
                 Motion::Pop,
             )),
-            (false, true) => Some((None, Motion::Move)),
+            (false, true) => Some((None, Motion::Pop)),
             _ => None,
         };
         if let Some((to, motion)) = to {
@@ -47,15 +47,49 @@ impl Overlay {
         }
         let q = &mut self.panels[id];
         q.parent = parent;
-        // 表示専用子・ポップオーバー（固定して外側プレスで閉じる子）・スタック子は他パネルより前に描画する。ランタイムは
-        // 深度ではなく描画順で合成するため、同一順だと重なり部分がフリッカーする（ドックパネル上のメニューや、ドックパネルの
-        // 出入りで上に移動するスタック子など）。
-        let front = parent.is_some_and(|p| p.hud || p.stack || (p.docked && p.dismiss));
-        q.surface
-            .set_sort(vr, if front { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
             q.attached = None;
-            q.offset = at.inverse() * q.pose;
+            // 姿勢はずらしたまま残す（次の順位決めまでの当たり判定がずれないように）。要望にはずらす前を使う。
+            q.offset = at.inverse() * q.unlifted();
+        } else {
+            // 独立したら、今の位置がそのまま要望になる。
+            q.lift = 0.0;
+        }
+        self.cover(vr, id);
+    }
+
+    /// 親の面の一部に重ねる子（[`Parent::over`]）の面をその範囲に収め、親の 1 段手前を要望する（子どうしの前後と奥行きは
+    /// [`Overlay::place_layers`] が決める）。
+    fn cover(&mut self, vr: &mut dyn VrBackend, id: PanelId) {
+        let Some(Parent {
+            panel,
+            over: Some([x, y, w, h]),
+            ..
+        }) = self.panels[id].parent
+        else {
+            return;
+        };
+        let outer = &self.panels[panel];
+        let face = outer.size - Vec2::splat(2.0 * face_margin(outer));
+        let offset = Pose::new(
+            Vec3::new(
+                (x + w / 2.0 - 0.5) * face.x,
+                (0.5 - y - h / 2.0) * face.y,
+                LIFT_STEP,
+            ),
+            Quat::IDENTITY,
+        );
+        let pose = outer.pose * offset;
+        let p = &mut self.panels[id];
+        // 子の面の画素数。ランタイムは幅と画素の縦横比で描くので、比は変えずに範囲へ収める。
+        let res = Vec2::new(p.resolution.0 as f32, p.resolution.1 as f32);
+        let margin = if p.capture { 0.0 } else { PANEL_MARGIN };
+        let inner = (res - Vec2::splat(2.0 * margin)).max(Vec2::ONE);
+        let size = res * (face * Vec2::new(w, h) / inner).min_element();
+        (p.offset, p.pose, p.lift) = (offset, pose, 0.0);
+        if !p.size.abs_diff_eq(size, 1e-6) {
+            p.size = size;
+            p.surface.set_width(vr, p.displayed_size().x);
         }
     }
 
@@ -63,7 +97,12 @@ impl Overlay {
     /// その後、非グラブの子を親（浅い順）に合わせる。親がグラブされてもデバイス追従で動いても子はここで追従する。
     // ponytail: 親のリサイズでは子の相対位置を変えない（子はそのサイズのまま）。
     /// 磁石で引いている子（`pulled`。[`Magnet`]）は親を連れず、親との位置関係も変更しない。
-    pub(crate) fn settle_family(&mut self, dragged: &[PanelId], pulled: &[PanelId]) {
+    pub(crate) fn settle_family(
+        &mut self,
+        vr: &mut dyn VrBackend,
+        dragged: &[PanelId],
+        pulled: &[PanelId],
+    ) {
         for &id in dragged.iter().filter(|id| !pulled.contains(id)) {
             let mut cur = id;
             while let Some(Parent {
@@ -75,11 +114,11 @@ impl Overlay {
                     self.panels[cur].offset = self.slot_offset(cur, panel, tilt);
                 }
                 if carry {
-                    let (pose, offset) = (self.panels[cur].pose, self.panels[cur].offset);
+                    let (pose, offset) = (self.panels[cur].unlifted(), self.panels[cur].offset);
                     self.panels[panel].pose = pose * offset.inverse();
                 } else {
                     self.panels[cur].offset =
-                        self.panels[panel].pose.inverse() * self.panels[cur].pose;
+                        self.panels[panel].pose.inverse() * self.panels[cur].unlifted();
                     break;
                 }
                 cur = panel;
@@ -120,6 +159,8 @@ impl Overlay {
                         ),
                         Quat::IDENTITY,
                     );
+                } else if parent.over.is_some() {
+                    self.cover(vr, id);
                 }
                 self.panels[id].pose = self.panels[parent.panel].pose * self.panels[id].offset;
             }
@@ -193,7 +234,8 @@ impl Overlay {
     }
 
     /// ナビバーを持ち主の下端へ配置する。持ち主面の下端（シャドウマージン [`PANEL_MARGIN`] の内側）の左右中央を
-    /// アンカーに、バーの上端の左右中央を合わせる。頭から同じ見かけサイズになるようアンカーまでの距離に比例して拡大する。
+    /// アンカーに、バーの上端の左右中央を合わせる。頭から同じ見かけサイズになるようアンカーまでの距離に比例して拡大する
+    /// （固定した持ち主のバーは 1m 先でのサイズ固定。切り替えは [`Motion::Morph`] で移す）。
     /// 持ち主の出入りアニメーション（75%〜100%）で縮んだ下端にも追従する。
     /// 持ち主もバーも非ポイント状態で [`NAV_BAR_LINGER`] 経過するとフェードアウトし（[`Motion::Fade`]）、完了後に
     /// ランタイムのオーバーレイを解放する（[`Surface::park`]。パネル・ビュー・最終画像は保持）。
@@ -211,21 +253,31 @@ impl Overlay {
             let (opacity, dim) = (o.opacity, o.dim);
             let up = o.pose.orientation * Vec3::Y;
             // キャプチャ中のパネルはシャドウマージンなし。マージンありとして内側に配置するとバーが描画に食い込む（face_margin）。
-            let margin = face_margin(o) * o.displayed_size().y / o.size.y;
-            let anchor = o.pose.position - up * (o.displayed_size().y / 2.0 - margin);
+            // 角を掴んで大きさを変えている間は、代わりの板の下端に付ける。
+            let k = o.displayed_size().y / o.size.y;
+            let height = self.stretched(owner).map_or(o.size.y, |s| s.y) * k;
+            let anchor = o.pose.position - up * (height / 2.0 - face_margin(o) * k);
             let rotation = o.pose.orientation;
             let eye = self.hmd.position;
             // ドック子（ダッシュボードにはめた画面）のバーは頭からの距離でサイズ変更しない（1m 先でのサイズ固定。
-            // ダッシュボードと一体の部品として画面との比率を維持する）。
-            let docked = o.parent.is_some_and(|q| q.docked);
+            // ダッシュボードと一体の部品として画面との比率を維持する）。掴んだまま吸い付いた画面も、離すのを待たずにはめた扱い。
+            let docked = o.parent.is_some_and(|q| q.docked) || self.stuck(owner);
             let leaving = o.hidden || o.closed;
             let p = &mut self.panels[id];
             let size = if leaving {
+                // 隠れている間は大きさを変えない。出し直すときはその時の拡大の仕方で現れる。
+                p.pinned = None;
                 p.size
-            } else if docked {
-                p.nav_bar_size
             } else {
-                p.nav_bar_size * anchor.distance(eye)
+                // 固定（1）と距離に比例（0）の混ぜ具合。切り離し・はめ込みで一瞬で大きさが飛ばないように移す。
+                // 見えていないバーはその場で切り替える。
+                let to = if docked { 1.0 } else { 0.0 };
+                let animated = p.animated && p.surface.has_texture();
+                let pinned = p.pinned.get_or_insert(Transition::rest(to));
+                pinned.go(to, Motion::Morph, now, animated);
+                let k = pinned.at(now).0;
+                let far = anchor.distance(eye);
+                p.nav_bar_size * (far + (1.0 - far) * k)
             };
             let resized = !p.size.abs_diff_eq(size, 1e-4);
             p.size = size;

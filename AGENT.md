@@ -25,7 +25,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 |---|---|---|
 | 0 | [`crates/logger`](crates/logger/AGENT.md) | logfmt 形式に対応した横断的構造化ロガー。 |
 | 0 | [`crates/animation`](crates/animation/AGENT.md) | アニメーション計算と遷移状態の管理。GPUI や UI 部品には依存しない。 |
-| 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | 下位サブシステムを統括し、上位層へ共通フレーム情報を供給する。 |
+| 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | 各サブシステムの再エクスポートと、VR ランタイムの入力から共通フレーム情報を作る処理。 |
 | 1 | [`crates/subsystems/os`](crates/subsystems/os/AGENT.md) | データ保存先パス、ランタイム検出、高精度タイマーなどの OS 差異の吸収。 |
 | 1 | [`crates/subsystems/vr`](crates/subsystems/vr/AGENT.md) | OpenVR、OpenXR、および非 VR 用エミュレーター（novr）のランタイム抽象化。 |
 | 1 | [`crates/subsystems/input`](crates/subsystems/input/AGENT.md) | コントローラの機種別入力マッピングと骨格ハンドトラッキングの処理。 |
@@ -35,6 +35,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 | 1 | [`crates/subsystems/desktop`](crates/subsystems/desktop/AGENT.md) | 画面・ウィンドウのキャプチャ、画像取得、OS 側への入力注入。 |
 | 1 | [`crates/subsystems/media`](crates/subsystems/media/AGENT.md) | システム内で再生中のメディア情報の取得と再生制御。 |
 | 1 | [`crates/subsystems/notifications`](crates/subsystems/notifications/AGENT.md) | OS 通知の取得と、通知クリック時の対象アプリ起動連携。 |
+| 1 | [`crates/subsystems/update`](crates/subsystems/update/AGENT.md) | リリース一覧の取得、インストーラーのダウンロードと検証、インストーラーの起動。 |
 | 2 | [`crates/overlay`](crates/overlay/AGENT.md) | パネル配置、アタッチ処理、光線交差判定、掴み移動、親子関係、暗転演出の制御。 |
 | 3 | [`crates/kernel`](crates/kernel/AGENT.md) | 設定管理、毎フレームの更新サイクル、パネル操作を統合する中核。 |
 | 4 | [`crates/ui`](crates/ui/AGENT.md) | GPUI のオフスクリーンウィンドウによるパネル描画とポインタイベント変換。 |
@@ -48,7 +49,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 | 5 | [`crates/settings`](crates/settings/AGENT.md) | カテゴリ別に整理されたアプリケーション詳細設定画面。 |
 | 5 | [`crates/setup`](crates/setup/AGENT.md) | 初回起動時や設定リセット時に表示するセットアップウィザード。 |
 | 5 | [`crates/beam`](crates/beam/AGENT.md) | コントローラのレーザー光線、カーソル表示、ドラッグ挙動、ツールチップ。 |
-| 5 | [`crates/updater`](crates/updater/AGENT.md) | GitHub Releases を用いた更新確認とバックグラウンドアップデート。 |
+| 5 | [`crates/updater`](crates/updater/AGENT.md) | 更新の状態と、更新確認・インストールの操作（ダッシュボードと設定画面が共有する。画面ではない）。 |
 | 6 | `src/main.rs` | アプリケーション起動処理。ロガー初期化、設定読み込み、初期パネル生成を担う。 |
 | 7 | [`crates/testkit`](crates/testkit/AGENT.md) | 宣言的な E2E シナリオテスト用テストハーネス（開発専用）。 |
 
@@ -72,11 +73,18 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 subsystems ← overlay ← kernel ← ui ← 画面 (dashboard / wrist など) ← main
 ```
 
-- **カーネルとサブシステムの関係**: カーネルは設定およびフレーム進行の目的で `subsystems` を参照する。Subsystems 内部の依存順序は `os ← vr ← input / rendering` とし、上位層への逆参照は行わない。`audio` は他サブシステムに依存せず、位置計算には `glam` を用いる。
-- **型と副作用の境界**: `kernel` は `subsystems` の一部を再エクスポートするが、上位層（UI や画面）が利用できるのはデータ型（共通語彙）と定数テーブルに限られる。OS やランタイムに対する副作用（入力の注入やパケット送信）を直接呼ぶことは禁止し、必ず `PanelCommand` を通じてカーネルへ依頼する。
+- **カーネルとサブシステムの関係**: カーネルは設定およびフレーム進行の目的で `subsystems` を参照する。Subsystems 内部の依存順序は `os ← vr ← input / rendering`、`os ← keyboard`、`desktop ← media / notifications`（アプリ情報の解決と起動を `desktop` にまとめるため）とし、上位層への逆参照は行わない。`audio` は他サブシステムに依存せず、位置計算には `glam` を用いる。
+- **OS 機能へのアクセス**: OS の API（プロセス・ファイル・通信、`windows` クレートなど）を直接呼べるのは、サブシステム・カーネル・`logger`・`testkit` だけである。上位層（UI や画面など）が OS の機能を使うときは、サブシステムの関数（`kernel` の再エクスポート経由）か、カーネルへの依頼（パネルへの操作は `PanelCommand`、システムへの要求は `Request`）を通す。必要な関数がなければ、先にサブシステムへ追加する。この規則は `clippy.toml` の `disallowed-methods` / `disallowed-types` が検査する（後述の「OS 機能の禁止の仕組み」）。
 - **型の共通語彙**: UI 層、画面、`testkit` が参照する下位の型は、`kernel` の再エクスポート経由で取得する。`overlay` は `vr` の型（`Pose` など）を共通語彙として直接利用してよい。
 - **横断クレートの例外**: `logger` はすべての層から直接参照できる唯一の横断クレートである。ただし、`logger` 自体はワークスペース内の自前クレートに一切依存しない。
 - **デザインシステムと動きの分離**: `design` の定数定義（Constants）および `animation` クレートは GPUI に依存しないため、`overlay` がパネルのアニメーションや余白計算に参照できる。GPUI に依存するコンポーネントやテーマ定義は UI 層以上のみで利用する。
+
+### OS 機能の禁止の仕組み
+
+ルートの `clippy.toml` は、標準ライブラリのプロセス・ファイル・通信の API（`std::process::Command`、`std::fs::*`、`std::net::*`）と、`ureq`・gpui の OS 機能（`App::open_url` など）の使用を禁止する。CI の `cargo clippy --workspace --all-targets -- -D warnings` が違反を検出する。上位層は `windows` クレートに依存していないため、その API を呼ぶコードはコンパイルできない。
+
+- **許可する側の設定**: clippy は設定ファイルを継承・結合せず、クレートのディレクトリから親へ向かって最初に見つけた 1 つだけを使う。そのため `crates/kernel`・`crates/logger`・`crates/subsystems`・`crates/testkit` は、OS の機能以外の規則（URL を開く処理の制限）だけを複製した `clippy.toml` を持つ。ルートの規則を変えたら複製も揃える。
+- **ビルドスクリプトとテスト**: 上位層のビルドスクリプト（コード生成）と、ファイルやプロセスを使うテスト（`ui/tests/gpu` の画像出力など）は、ファイルや関数の先頭に `#![allow(clippy::disallowed_methods, clippy::disallowed_types)]` と理由のコメントを置く。アプリ本体のコードには置かない。
 
 ### フィーチャーによる依存の制御
 
@@ -147,13 +155,19 @@ ui::run
 
 UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個別仕様を知らない。各画面は独立したクレート（`crates/dashboard`、`crates/wrist` など）として実装され、実行時に `PanelSpec` の集合として渡される。
 
+画面どうしは原則として依存しない。複数の画面が使う部品は UI 層に置く（トーストとダッシュボードが使う `ui::notification` など）。例外は次の 2 つである。
+
+- **シェルとしての `wrist`**: `wrist` は腕時計の表示に加えて、シェルの役割（ダッシュボードの開閉、トーストの生成、ロックダウンへの対応）を兼ねる。そのため `dashboard` と `toast` に依存する。
+- **開発用の `testing`**: 設定画面の部品を検証するため `settings` に依存する。
+
 ### 画面とカーネル間の通信
 
 画面からカーネルに対する状態変更の要求は、GPUI のグローバルリソースである `PanelControl` を介して非同期に行う。
 
 1. **個別パネルの操作**: パネル固有の操作（取り付け、取り外し、ロック等）は、PanelId を指定して `PanelControl` に `PanelCommand` を積む。フレームループ内の `sync_panel` がこれをカーネルへ適用し、最新の `PanelStatus` を画面側へ書き戻す。
 2. **全体設定の変更**: テーマや言語などのシステム全体に関わる設定は、`PanelControl::setting_changes` に `Setting` を積む。`sync_settings` がこれをカーネルへ反映し、`PanelControl::settings` を更新する。
-3. **ヘルパー関数の利用**: 画面側からコマンドを発行する際は、重複コードの作成を避け、`ui::command` や `ui::set` などの共通入口関数を使用する。
+3. **システムへの要求**: メディアの操作や OS の通知の操作など、どのパネルにも属さない要求は、`PanelControl::requests` に `Request` を積む。`sync_settings` がこれをカーネルへ渡す（`Kernel::request`）。
+4. **ヘルパー関数の利用**: 画面側からコマンドを発行する際は、重複コードの作成を避け、`ui::command`・`ui::set`・`ui::request` などの共通入口関数を使用する。
 
 ## パフォーマンス設計原則
 
@@ -176,7 +190,7 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 
 ### バージョン管理とリリース手順
 
-本プロジェクトは Calendar Versioning（CalVer（現在 `2026.0.3-beta.11`、形式: `YYYY.MINOR.MICRO[-dev.PATCH]`））を採用しており、`Cargo.toml` の `[workspace.package]` で一括管理する。
+本プロジェクトは Calendar Versioning（CalVer（現在 `2026.0.4-dev.0`、形式: `YYYY.MINOR.MICRO[-dev.PATCH]`））を採用しており、`Cargo.toml` の `[workspace.package]` で一括管理する。
 
 - **タグ命名規則**: リリースタグは `v<CalVer>`（安定版）または `v<CalVer>-<チャネル名>.<番号>`（プレリリース版）とする。
 - **正式リリースの流れ**: GitHub Actions の `prepare-release.yml` ワークフローにバージョン番号を指定して実行すると、バージョン更新の Pull Request が自動生成される。この PR をマージすると、`release.yml` がインストーラーをビルドし、GitHub Releases に正式版が発行される。発行完了後、`main` ブランチのバージョン番号は自動的に次の版の `-dev.0` へ進む。

@@ -19,8 +19,17 @@ pub struct PanelState {
     /// フレームループが [`sync_panel`] で毎フレーム更新する（変更時の再描画は不要）。wrist が配置記憶に使用する。
     pub offset: Option<Pose>,
     pub size: Vec2,
+    /// 確定した重なり順と奥行き。毎フレーム更新する（変更時の再描画は不要。表示する検証画面は `live` にする）。
+    pub layer: PanelLayer,
     /// 最後の再描画時点の全体設定（[`PanelControl::settings`]）。変更があれば再描画する。
     seen: Settings,
+}
+
+/// パネルの確定した重なり（`kernel::Panel` の `draw_order`・`lifted`）。
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PanelLayer {
+    pub order: u32,
+    pub lifted: f32,
 }
 
 /// ビューとフレームループ間の受け渡し口（GPUI グローバル）。ビューが `commands` にキューイングした操作を、
@@ -33,6 +42,9 @@ pub struct PanelControl {
     pub settings: Settings,
     /// ビューがキューイングする全体設定の変更要求（パネル非依存）。フレームループが [`sync_settings`] で反映する。
     pub setting_changes: Vec<Setting>,
+    /// ビューがキューイングするシステムへの要求（メディア・OS の通知の操作。パネル非依存）。フレームループが
+    /// [`sync_settings`] でカーネルへ渡す（[`Kernel::request`]）。
+    pub requests: Vec<Request>,
     /// OS のフォアグラウンドアプリのキーボード状態（[`keyboard::system_keyboard`] で参照）。
     /// `os_keyboard_wanted` が設定された後、フレームループが [`sync_settings`] でカーネルから転写する。
     pub os_keyboard: kernel::subsystems::os::keyboard::Settings,
@@ -133,9 +145,30 @@ pub fn offer_dock(owner: PanelId, tilt: f32, cx: &mut App) {
     command(owner, PanelCommand::DockSlot(Some(tilt)), cx);
 }
 
+/// ドックへの装着音と取り外し音。
+pub(crate) const DOCK_SOUND: &[u8] = include_bytes!("../assets/dock/dock.wav");
+pub(crate) const UNDOCK_SOUND: &[u8] = include_bytes!("../assets/dock/undock.wav");
+
+/// 着脱した `panel` から、装着音（`docked` が真）か取り外し音を再生する。
+/// 手で掴んだ画面がはまる所に吸い付いた・抜けたとき（離したときではない）と、メニューで着脱したときに鳴らす。
+/// [`dock`]・[`undock`] 自体は鳴らさないので、バーのボタンによる画面の切り替えは無音になる。
+pub(crate) fn dock_sound(panel: PanelId, docked: bool, cx: &mut App) {
+    let wav = if docked { DOCK_SOUND } else { UNDOCK_SOUND };
+    let sound = kernel::audio::Sound::Wav(wav);
+    command(panel, PanelCommand::Play(sound, false), cx);
+}
+
+/// パネルを掴んだときと離したときの音（[`sync_panel`] が鳴らす）。
+pub(crate) const HOLD_SOUND: &[u8] = include_bytes!("../assets/grab/hold.wav");
+pub(crate) const RELEASE_SOUND: &[u8] = include_bytes!("../assets/grab/release.wav");
+
 /// ドックの着脱変更（[`Kernel::take_dock_changes`]）を装着記録に反映し、ドック持ち主の
 /// ボタン強調状態と該当画面のナビゲーションバー（取り外し・復帰ボタン）を再描画させる。
+/// 着脱音は、掴んだ画面が吸い付いた・抜けたとき（[`Kernel::take_dock_snaps`]）に鳴らす。
 fn sync_docking<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) {
+    for (panel, docked) in kernel.take_dock_snaps() {
+        dock_sound(panel, docked, cx);
+    }
     let changes = kernel.take_dock_changes();
     for &(panel, docked) in &changes {
         let ctl = cx.default_global::<PanelControl>();
@@ -187,6 +220,11 @@ pub fn set(setting: Setting, cx: &mut App) {
     control.setting_changes.push(setting);
 }
 
+/// システムへの要求をキューイングする（フレームループが次の [`sync_settings`] でカーネルへ渡す）。
+pub fn request(request: Request, cx: &mut App) {
+    cx.default_global::<PanelControl>().requests.push(request);
+}
+
 /// 現在の全体設定（フレームループが書き戻した値、未設定時は既定値）。
 pub fn settings(cx: &App) -> Settings {
     let control = cx.try_global::<PanelControl>();
@@ -216,9 +254,23 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     let p = kernel.panel(panel);
     ctl.offset = p.attached.as_ref().map(|(_, offset)| *offset);
     ctl.size = p.size / kernel.ui_scale();
+    ctl.layer = PanelLayer {
+        order: p.draw_order(),
+        lifted: p.lifted(),
+    };
     let status = kernel.status(panel);
     if ctl.status == status && ctl.seen == settings {
         return false;
+    }
+    // 掴んだ・離した音は、手で動かすパネル（`PanelStatus::grabbed`）から次のフレームで鳴らす。
+    if ctl.status.grabbed != status.grabbed {
+        let wav = if status.grabbed {
+            HOLD_SOUND
+        } else {
+            RELEASE_SOUND
+        };
+        let sound = kernel::audio::Sound::Wav(wav);
+        ctl.commands.push(PanelCommand::Play(sound, false));
     }
     ctl.status = status;
     ctl.seen = settings;
@@ -231,12 +283,15 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     true
 }
 
-/// ビューがキューイングした全体設定の変更をカーネルに反映し、現在の設定を書き戻す。変更があれば `true`。
+/// ビューがキューイングした全体設定の変更とシステムへの要求をカーネルに反映し、現在の設定を書き戻す。設定に変更があれば `true`。
 /// テーマ・言語は GPUI グローバルにも設定する（画面は `design::Theme::current` / `i18n::t` で参照する）。
 pub fn sync_settings<B: VrBackend>(kernel: &mut Kernel<B>, cx: &mut App) -> bool {
     let ctl = cx.default_global::<PanelControl>();
     for s in ctl.setting_changes.drain(..) {
         kernel.set(s);
+    }
+    for r in ctl.requests.drain(..) {
+        kernel.request(r);
     }
     if ctl.os_keyboard_wanted {
         ctl.os_keyboard = kernel.os_keyboard();

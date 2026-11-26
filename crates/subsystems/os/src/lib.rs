@@ -23,17 +23,6 @@ pub use linux::{
 #[cfg(not(any(windows, target_os = "linux")))]
 compile_error!("no OS backend is implemented for this target");
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Os {
-    Windows,
-    Linux,
-}
-
-#[cfg(windows)]
-pub const CURRENT: Os = Os::Windows;
-#[cfg(target_os = "linux")]
-pub const CURRENT: Os = Os::Linux;
-
 /// `path` に `contents` を書き込む（親ディレクトリが存在しなければ作成する）。内容が同一であれば書き込まない。
 pub fn write_file(path: &Path, contents: &str) -> io::Result<()> {
     if fs::read_to_string(path).is_ok_and(|old| old == contents) {

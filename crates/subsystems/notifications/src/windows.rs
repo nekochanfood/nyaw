@@ -34,7 +34,7 @@ use windows::{
     core::{GUID, HSTRING, PCWSTR, w},
 };
 
-use super::{Backend, Raw};
+use super::{Backend, Image, Plan, Raw, decode};
 
 /// Windows 時刻（1601 年基点、100ns 単位）と UNIX 時刻の差分（100ns 単位）。
 const EPOCH_DIFF: i64 = 116_444_736_000_000_000;
@@ -75,6 +75,23 @@ impl Listener {
             .activators
             .entry(app.to_owned())
             .or_insert_with(|| registered(app).or_else(|| shortcut(app)))
+    }
+
+    /// 通知 `id` のアプリのロゴ（画像のファイルの中身）。ストアのアプリの通知だけが持つ。
+    fn logo(&mut self, id: u32) -> Option<Vec<u8>> {
+        let logo = self
+            .notes
+            .get(&id)?
+            .AppInfo()
+            .and_then(|a| a.DisplayInfo())
+            .and_then(|d| {
+                d.GetLogo(Size {
+                    Width: 64.0,
+                    Height: 64.0,
+                })
+            })
+            .ok()?;
+        read_stream(&logo.into())
     }
 }
 
@@ -129,35 +146,26 @@ impl Backend for Listener {
         Some(raws)
     }
 
-    fn payload(&mut self, id: u32) -> Option<String> {
-        db::payload(id)
+    fn plans(&mut self, raw: &Raw) -> (Plan, Vec<(String, Plan)>) {
+        let invoke = self.activator(&raw.app_id).is_some();
+        // ponytail: DB は リスナーに見えた時点で書かれている（実測）ので読み直さない。読めなければ本文で開くだけ。
+        db::payload(raw.id).map_or((Plan::Launch, Vec::new()), |xml| parse(&xml, invoke))
     }
 
-    fn icon(&mut self, id: u32) -> Option<Vec<u8>> {
-        let logo = self
-            .notes
-            .get(&id)?
-            .AppInfo()
-            .and_then(|a| a.DisplayInfo())
-            .and_then(|d| {
-                d.GetLogo(Size {
-                    Width: 64.0,
-                    Height: 64.0,
-                })
-            })
-            .ok()?;
-        read_stream(&logo.into())
+    fn icon(&mut self, raw: &Raw) -> Option<Image> {
+        // ストアのアプリは通知がロゴを持つ。デスクトップのアプリ（Chrome・Discord など）はスタートメニューから引く。
+        (self.logo(raw.id).and_then(|b| decode(&b))).or_else(|| desktop::app_icon(&raw.app_id))
     }
 
-    fn invokable(&mut self, app: &str) -> bool {
-        self.activator(app).is_some()
-    }
-
-    fn activate(&mut self, app: &str, args: Option<&str>) -> bool {
-        let done = match (self.activator(app), args) {
-            (Some(clsid), args) => invoke(clsid, app, args.unwrap_or("")),
-            (None, None) => launch(app),
-            (None, Some(_)) => return false,
+    fn activate(&mut self, _: u32, app: &str, plan: &Plan) -> bool {
+        let done = match (self.activator(app), plan) {
+            (Some(clsid), Plan::Invoke(args)) => {
+                invoke(clsid, app, args).map_err(|e| e.to_string())
+            }
+            (Some(clsid), Plan::Launch) => invoke(clsid, app, "").map_err(|e| e.to_string()),
+            // アクティベーターを持たないアプリは、スタートメニューから起動するのと同じく開くだけ。
+            (None, Plan::Launch) => desktop::launch(app).map_err(|e| e.to_string()),
+            _ => return false,
         };
         if let Err(e) = &done {
             logger::warn!(
@@ -232,13 +240,45 @@ fn invoke(clsid: GUID, app: &str, args: &str) -> windows::core::Result<()> {
     }
 }
 
-/// アプリを起動する（スタートメニューからの起動と同一。パッケージアプリ・デスクトップアプリの両方に対応する）。
-fn launch(app: &str) -> windows::core::Result<()> {
-    std::process::Command::new("explorer.exe")
-        .arg(format!("shell:AppsFolder\\{app}"))
-        .spawn()
-        .map(drop)
-        .map_err(|e| windows::core::Error::new(windows::core::HRESULT(-1), e.to_string()))
+/// 通知の元の XML（トーストの XML）から、本文を押したときとボタンを押したときにすることを読む。`invoke` はアプリが通知の
+/// 受け口を持っているか（無ければ引数を渡せないので、本文はアプリを開くだけ・引数で動くボタンは出さない）。
+/// 右クリックのメニュー（`placement`）・文字を打つ欄の横のボタン（`hint-inputId`）・OS のボタン（`system`）・
+/// ウェブ以外の URL は出さない（URL は確かめてから開く決まりで、`http` / `https` しか開けない）。
+fn parse(xml: &str, invoke: bool) -> (Plan, Vec<(String, Plan)>) {
+    let Ok(doc) = roxmltree::Document::parse(xml.trim_start_matches('\u{feff}')) else {
+        return (Plan::Launch, Vec::new());
+    };
+    let toast = doc.root_element();
+    let plan = |kind: Option<&str>, args: &str| match kind.unwrap_or("foreground") {
+        "protocol" => web(args).then(|| Plan::Url(args.to_owned())),
+        "foreground" | "background" if invoke => Some(Plan::Invoke(args.to_owned())),
+        _ => None,
+    };
+    let launch = plan(
+        toast.attribute("activationType"),
+        toast.attribute("launch").unwrap_or(""),
+    )
+    .unwrap_or(Plan::Launch);
+    let actions = toast
+        .descendants()
+        .filter(|n| n.has_tag_name("action"))
+        .filter(|a| a.attribute("placement").is_none() && a.attribute("hint-inputId").is_none())
+        .filter_map(|a| {
+            let label = a.attribute("content")?.trim();
+            let plan = plan(
+                a.attribute("activationType"),
+                a.attribute("arguments").unwrap_or(""),
+            )?;
+            (!label.is_empty()).then(|| (label.to_owned(), plan))
+        })
+        .collect();
+    (launch, actions)
+}
+
+/// ブラウザで開く URL か。
+fn web(url: &str) -> bool {
+    let scheme = url.split_once(':').map_or("", |(s, _)| s);
+    scheme.eq_ignore_ascii_case("https") || scheme.eq_ignore_ascii_case("http")
 }
 
 /// レジストリに登録された通知アクティベーター（`AppUserModelId\<ID>\CustomActivator`。Firefox・Office 等）。
@@ -493,6 +533,44 @@ mod tests {
         );
     }
 
+    const TOAST: &str = r#"<toast launch="open-chat" activationType="foreground">
+        <visual><binding template="ToastGeneric"><text>Hi</text></binding></visual>
+        <actions>
+          <input id="reply" type="text"/>
+          <action content="Send" hint-inputId="reply" arguments="send"/>
+          <action content="Mute" arguments="mute" activationType="background"/>
+          <action content="Open site" arguments="https://example.com/a" activationType="protocol"/>
+          <action content="Settings" arguments="ms-settings:notifications" activationType="protocol"/>
+          <action content="Snooze" arguments="snooze" activationType="system"/>
+          <action content="Notification settings" placement="contextMenu" arguments="x"/>
+        </actions></toast>"#;
+
+    /// 受け口のあるアプリは、本文もボタンも引数を渡す。ウェブの URL のボタンは URL として出し、
+    /// 打つ欄・OS のボタン・右クリックのメニュー・ウェブ以外の URL は出さない。
+    #[test]
+    fn actions_are_read_from_the_toast_xml() {
+        let (launch, actions) = parse(TOAST, true);
+        assert_eq!(launch, Plan::Invoke("open-chat".into()));
+        assert_eq!(
+            actions,
+            [
+                ("Mute".to_owned(), Plan::Invoke("mute".into())),
+                (
+                    "Open site".to_owned(),
+                    Plan::Url("https://example.com/a".into())
+                ),
+            ]
+        );
+        // 受け口が無ければ、本文はアプリを開くだけで、引数で動くボタンは出さない。
+        let (launch, actions) = parse(TOAST, false);
+        assert_eq!(launch, Plan::Launch);
+        assert_eq!(actions.len(), 1);
+        // 本文が URL を開くトースト。
+        let url = r#"<toast launch="HTTPS://example.com" activationType="protocol"/>"#;
+        assert_eq!(parse(url, false).0, Plan::Url("HTTPS://example.com".into()));
+        assert_eq!(parse("not xml", true), (Plan::Launch, Vec::new()));
+    }
+
     /// 実機検証: PowerShell の名前でトーストを送信し、リスナーが取得できること・DB からボタンを読み込めることを確認する。
     /// `cargo test -p notifications -- --ignored --nocapture`（Windows。通知アクセスが許可されていること）。
     #[test]
@@ -513,22 +591,19 @@ mod tests {
         assert!(raws.len() > before, "{} -> {}", before, raws.len());
         let raw = raws.iter().max_by_key(|r| r.id).unwrap();
         assert_eq!(raw.texts, ["nyaw & <probe>", "probe"]);
-        let (launch, actions) = super::super::parse(&listener.payload(raw.id).unwrap(), false);
-        assert_eq!(
-            launch,
-            super::super::Plan::Url("https://example.com/".into())
-        );
+        let (launch, actions) = parse(&db::payload(raw.id).unwrap(), false);
+        assert_eq!(launch, Plan::Url("https://example.com/".into()));
         assert_eq!(
             actions,
             [(
                 "Site".to_owned(),
-                super::super::Plan::Url("https://example.com/a?b=1&c=2".into())
+                Plan::Url("https://example.com/a?b=1&c=2".into())
             )]
         );
         let shell = desktop::app_icon(&raw.app_id).map(|i| (i.width, i.height));
         println!(
             "{raw:?} logo={:?} shell={shell:?}",
-            listener.icon(raw.id).map(|b| b.len())
+            listener.logo(raw.id).map(|b| b.len())
         );
         assert!(
             shell.is_some(),
