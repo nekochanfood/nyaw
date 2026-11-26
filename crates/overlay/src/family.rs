@@ -49,7 +49,11 @@ impl Overlay {
         q.parent = parent;
         if let Some(at) = at {
             q.attached = None;
-            q.offset = at.inverse() * q.pose;
+            // 姿勢はずらしたまま残す（次の順位決めまでの当たり判定がずれないように）。要望にはずらす前を使う。
+            q.offset = at.inverse() * q.unlifted();
+        } else {
+            // 独立したら、今の位置がそのまま要望になる。
+            q.lift = 0.0;
         }
     }
 
@@ -69,11 +73,11 @@ impl Overlay {
                     self.panels[cur].offset = self.slot_offset(cur, panel, tilt);
                 }
                 if carry {
-                    let (pose, offset) = (self.panels[cur].pose, self.panels[cur].offset);
+                    let (pose, offset) = (self.panels[cur].unlifted(), self.panels[cur].offset);
                     self.panels[panel].pose = pose * offset.inverse();
                 } else {
                     self.panels[cur].offset =
-                        self.panels[panel].pose.inverse() * self.panels[cur].pose;
+                        self.panels[panel].pose.inverse() * self.panels[cur].unlifted();
                     break;
                 }
                 cur = panel;

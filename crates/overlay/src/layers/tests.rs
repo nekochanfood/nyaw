@@ -107,3 +107,90 @@ fn a_stacked_child_is_drawn_over_later_screens_of_the_same_parent() {
     ov.tick(&mut vr);
     assert!(sort(&vr, "screen") < sort(&vr, "toast"));
 }
+
+/// 親の面から `z` 手前を要望するポップオーバー。親（ID 0。z = −1）の中央に重ねる。
+fn popover(vr: &mut Subsystems<MockBackend>, ov: &mut Overlay, key: &str, z: f32) -> PanelId {
+    let id = add(vr, ov, key, at(0.0, 0.0, -1.0 + z));
+    ov.set_animated(&mut vr.backend, id, false);
+    ov.set_parent(&mut vr.backend, id, menu_of_main());
+    id
+}
+
+fn menu_of_main() -> Option<Parent> {
+    Some(Parent {
+        panel: 0,
+        docked: true,
+        dismiss: true,
+        ..Default::default()
+    })
+}
+
+/// 親の面から手前に出ている距離。
+fn front(ov: &Overlay, id: PanelId) -> f32 {
+    ov.panel(id).pose.position.z + 1.0
+}
+
+/// 重なる 2 枚が同じ距離を要望すると後の方が 1 段手前になり、下が閉じれば要望に戻る。
+#[test]
+fn equal_requests_are_split_and_given_back() {
+    let (mut vr, mut ov) = setup();
+    let first = popover(&mut vr, &mut ov, "first", 0.002);
+    let second = popover(&mut vr, &mut ov, "second", 0.002);
+    ov.tick(&mut vr);
+    ov.tick(&mut vr);
+    assert!((front(&ov, first) - 0.002).abs() < 1e-6);
+    assert!((front(&ov, second) - 0.002 - LIFT_STEP).abs() < 1e-6);
+    ov.set_animated(&mut vr.backend, first, false);
+    ov.close(&mut vr.backend, first);
+    ov.tick(&mut vr);
+    ov.tick(&mut vr);
+    assert!((front(&ov, second) - 0.002).abs() < 1e-6);
+}
+
+/// 空いていれば要望どおり。重ならないもの・ずっと奥を要望したものは動かさない。
+#[test]
+fn requests_are_kept_when_nothing_is_in_the_way() {
+    let (mut vr, mut ov) = setup();
+    let high = popover(&mut vr, &mut ov, "high", 0.03);
+    let behind = popover(&mut vr, &mut ov, "behind", -0.3);
+    let aside = add(&mut vr, &mut ov, "aside", at(2.0, 0.0, -1.0));
+    ov.set_parent(&mut vr.backend, aside, menu_of_main());
+    ov.tick(&mut vr);
+    assert!((front(&ov, high) - 0.03).abs() < 1e-6);
+    assert!((front(&ov, behind) + 0.3).abs() < 1e-6);
+    assert!(front(&ov, aside).abs() < 1e-6);
+}
+
+/// ずらした量は要望に混ざらない: 付け直しや掴んで離すのを繰り返しても、下が消えれば元の距離に戻る。
+#[test]
+fn the_granted_depth_never_becomes_the_request() {
+    for carry in [true, false] {
+        let (mut vr, mut ov) = setup();
+        ov.set_animated(&mut vr.backend, 0, false);
+        let under = popover(&mut vr, &mut ov, "under", 0.002);
+        let over = popover(&mut vr, &mut ov, "over", 0.002);
+        // ダイアログは掴めて、外を押しても閉じない。
+        let parent = Parent {
+            panel: 0,
+            carry,
+            ..Default::default()
+        };
+        ov.set_parent(&mut vr.backend, under, Some(parent));
+        ov.set_parent(&mut vr.backend, over, Some(parent));
+        ov.tick(&mut vr);
+        assert!((front(&ov, over) - 0.002 - LIFT_STEP).abs() < 1e-6);
+        for _ in 0..5 {
+            ov.set_parent(&mut vr.backend, over, Some(parent));
+            for grip in [1.0, 1.0, 0.0] {
+                controller(&mut vr, Pose::IDENTITY, &[("squeeze/value", grip)]);
+                ov.tick(&mut vr);
+                assert_eq!(ov.grabbed(over), grip > 0.0, "carry = {carry}");
+            }
+        }
+        vr.backend.frame.controllers.clear();
+        ov.close(&mut vr.backend, under);
+        settle(&mut vr, &mut ov);
+        let gap = ov.panel(over).pose.position.z - ov.panel(0).pose.position.z;
+        assert!((gap - 0.002).abs() < 1e-5, "carry = {carry}: {gap}");
+    }
+}

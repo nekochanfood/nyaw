@@ -138,6 +138,8 @@ pub struct Panel {
     surface: Surface,
     /// 描画順を決めるのに使う頭からの距離（m。急には動かさない。[`Overlay::place_layers`]）。
     depth: Option<f32>,
+    /// 重なる下のパネルより手前にするために、`pose` を要望の位置から面の手前へずらした量（m。[`Overlay::place_layers`]）。
+    lift: f32,
     /// 今 tick で追従させるデバイスと相対姿勢。ランタイムに委譲可能ならそうする。
     follow: Option<(Device, Pose)>,
     /// 頭の向きに緩やかに追従する（[`Overlay::set_lazy_follow`]）。取り付けより優先する。
@@ -256,6 +258,11 @@ struct Ray {
 }
 
 impl Panel {
+    /// 重なりのためにずらす前の姿勢。姿勢から相対位置を作り直すときはこちらを使う（ずらした量を要望に混ぜない）。
+    fn unlifted(&self) -> Pose {
+        self.pose * Pose::new(Vec3::NEG_Z * self.lift, Quat::IDENTITY)
+    }
+
     /// アニメーション反映後の表示サイズ。中心の位置・姿勢は不変。
     pub fn displayed_size(&self) -> Vec2 {
         if self.fade_only {

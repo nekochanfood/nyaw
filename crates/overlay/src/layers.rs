@@ -1,5 +1,8 @@
-//! パネルの描画順（レイヤー）。ランタイムは奥行きではなく描画順で重ねるため、順位はここだけで決める。
+//! パネルの描画順と重なりの奥行き（レイヤー）。ランタイムは奥行きではなく描画順で重ねるため、順位はここだけで決める。
 //! 覚えるのはパネル同士の関係（[`Parent`]・ナビバーの持ち主）だけで、番号は毎 tick 全部振り直す。
+//!
+//! 相手の面からどれだけ手前に置くか（相対姿勢の Z）は呼び出し元の要望で、確定値はここで決める。重なる下のパネルより
+//! 手前になければ、[`LIFT_STEP`] 手前までずらす。要望（`offset`）とずらした量（`lift`）は分けて持ち、混ぜない。
 
 use super::*;
 
@@ -15,6 +18,58 @@ enum Layer {
 /// まとまりの奥行きを据え置く幅（m）。距離の差がこの 2 倍を超えて動くまで前後を入れ替えない（ちらつき防止）。
 // ponytail: 固定値。実機で入れ替わりがちらつく・遅れるなら調整する。
 const DEPTH_SLACK: f32 = 0.01;
+/// 手前にずらす量の上限（m）。これより奥を要望したパネルは、離して置いたものとして動かさない。
+// ponytail: 固定値。上限があるので、ずらしたまま掴んでも要望との差は小さい。
+const LIFT_REACH: f32 = 0.02;
+
+/// `p` の面を基準にした `q` の中心。面が平行でなければ（起こして立てたもの）重なりを比べないので `None`。
+fn on_face(p: &Panel, q: &Panel) -> Option<Vec3> {
+    (p.pose.orientation.dot(q.pose.orientation).abs() > 0.9999)
+        .then(|| p.pose.orientation.inverse() * (q.pose.position - p.pose.position))
+}
+
+/// `order`（[`stacking`] の順）のパネルを、重ねる相手とそれまでに積んだものより手前にする。掴んでいるパネル
+/// （`held`）は手に従うので、ずらした量を変えない。
+fn lift(panels: &mut [Panel], order: &[PanelId], held: &[PanelId]) {
+    for (i, &id) in order.iter().enumerate() {
+        if held.contains(&id) {
+            continue;
+        }
+        panels[id].lift = 0.0;
+        let Some((on, _)) = lies_on(&panels[id]) else {
+            continue;
+        };
+        // 相手に積んだものは、相手の直後に続けて並んでいる。
+        let Some(from) = order[..i].iter().position(|&b| b == on) else {
+            continue;
+        };
+        let (face, p) = (&panels[on], &panels[id]);
+        let Some(at) = on_face(face, p) else {
+            continue;
+        };
+        let floor = order[from..i]
+            .iter()
+            .filter_map(|&b| {
+                let q = &panels[b];
+                let below = on_face(face, q)?;
+                let gap = (below - at).truncate().abs() * 2.0;
+                gap.cmplt(p.size + q.size)
+                    .all()
+                    .then_some(below.z + LIFT_STEP)
+            })
+            .reduce(f32::max);
+        let Some(by) = floor
+            .map(|floor| floor - at.z)
+            .filter(|&by| by > 0.0 && by <= LIFT_REACH)
+        else {
+            continue;
+        };
+        let normal = face.pose.orientation * Vec3::Z;
+        let p = &mut panels[id];
+        p.pose.position += normal * by;
+        p.lift = by;
+    }
+}
 
 /// `p` を必ず重ねる相手と層。頭からの距離で並べる独立したパネルは `None`。
 fn lies_on(p: &Panel) -> Option<(PanelId, Layer)> {
@@ -103,9 +158,11 @@ fn stacking(panels: &mut [Panel], present: &[PanelId], eye: Vec3) -> Vec<PanelId
 }
 
 impl Overlay {
-    /// 全パネルの順位を決め、変わったものだけランタイムへ送る。番号は 2 つおきで、すぐ上の空きは代わりの板が使う。
-    pub(crate) fn place_layers(&mut self, vr: &mut dyn VrBackend) {
+    /// 全パネルの順位と重なりの奥行きを決め、順位が変わったものだけランタイムへ送る。番号は 2 つおきで、すぐ上の空きは
+    /// 代わりの板が使う。掴んでいるパネル（`held`）以外の姿勢が出そろってから呼ぶ。
+    pub(crate) fn place_layers(&mut self, vr: &mut dyn VrBackend, held: &[PanelId]) {
         let order = stacking(&mut self.panels, &self.present, self.hmd.position);
+        lift(&mut self.panels, &order, held);
         for (sort, id) in (WORLD_SORT..).step_by(2).zip(order) {
             let surface = &mut self.panels[id].surface;
             if surface.sort() != sort {

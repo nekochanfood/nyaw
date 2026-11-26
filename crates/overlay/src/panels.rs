@@ -62,6 +62,7 @@ impl Overlay {
             stand_in: 0.0,
             surface,
             depth: None,
+            lift: 0.0,
             follow: None,
             lazy_follow: None,
             dockable: false,
