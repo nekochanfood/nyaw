@@ -21,7 +21,7 @@ on:
   workflow_dispatch:
     inputs:
       prerelease:
-        description: プレリリースのチャネル名（alpha, beta 等。連番は自動付与）。空欄の場合は配布物の事前ビルドのみ実行
+        description: プレリリースのチャネル名（alpha, beta 等の英数字。連番は自動付与）。空欄の場合は配布物の事前ビルドのみ実行
         required: false
 
 jobs:
@@ -103,14 +103,16 @@ jobs:
           fi
           echo "TAG=v$new" >> "$GITHUB_ENV"
           echo "BUILD=1" >> "$GITHUB_ENV"
-      # タグ形式の検証（v<CalVer>[-<チャネル名>.<番号>]）と各パッケージバージョンとの整合性チェック
+      # タグ形式の検証（v<CalVer>[-<チャネル名>.<番号>]）と各パッケージバージョンとの整合性チェック。
+      # チャネル名は英数字に限る。deb、rpm、pacman のバージョンは非 ASCII 文字を使えず、ハイフンは区切りになる。
+      # nfpm はエラーを出さずに壊れたバージョンのパッケージを作成するため、ビルドの前に拒否する
       - name: Check tag matches Cargo.toml versions
         if: env.TAG != ''
         run: |
           set -o pipefail
-          re='^v?[0-9]{4}\.[0-9]+\.[0-9]+(-[^<>:"|?*/\[:space:]]+\.[0-9]+)?$'
+          re='^v?[0-9]{4}\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+\.[0-9]+)?$'
           if ! [[ "$TAG" =~ $re ]]; then
-            echo "::error::tag $TAG is not v<CalVer>[-<label>.<number>] (e.g. v2026.0.1-beta.1)"
+            echo "::error::tag $TAG is not v<CalVer>[-<label>.<number>] with an alphanumeric label (e.g. v2026.0.1-beta.1)"
             exit 1
           fi
           pkgs=$(cargo metadata --no-deps --format-version 1 |
