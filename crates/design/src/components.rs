@@ -39,7 +39,7 @@ use crate::{Motion, Theme, duration_ms, font_size, radius, spacing};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Variant {
-    /// 既定。カード上に配置する前提で、カードよりわずかに暗い無彩色。
+    /// 既定。カード上に配置する前提の無彩色。ダークではカードよりわずかに明るく、ライトではわずかに暗い。
     Default,
     Primary,
     Danger,
@@ -1942,6 +1942,21 @@ mod tests {
             .ghost_background(dark)
             .background_opacity(0.5);
         assert_eq!(plain.colors().1, light.control_hover);
+    }
+
+    #[test]
+    fn dark_layers_get_lighter_towards_the_front() {
+        let t = &Theme::DARK;
+        // 無彩色なので、1 チャンネルの大小が明度の大小。
+        let layers = [
+            t.background,
+            t.card,
+            t.control,
+            t.control_hover,
+            t.control_active,
+        ]
+        .map(|c| c >> 24);
+        assert!(layers.is_sorted_by(|a, b| a < b), "{layers:?}");
     }
 
     #[test]
