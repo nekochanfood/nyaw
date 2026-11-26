@@ -87,25 +87,6 @@ fn sync_popups(
     }
 }
 
-/// `event` の位置を `f` で移す。
-fn moved(event: PointerEvent, f: impl Fn(Vec2) -> Vec2) -> PointerEvent {
-    match event {
-        PointerEvent::Move { pos } => PointerEvent::Move { pos: f(pos) },
-        PointerEvent::Down { pos } => PointerEvent::Down { pos: f(pos) },
-        PointerEvent::Up { pos } => PointerEvent::Up { pos: f(pos) },
-        PointerEvent::DownButton { pos, button } => PointerEvent::DownButton {
-            pos: f(pos),
-            button,
-        },
-        PointerEvent::UpButton { pos, button } => PointerEvent::UpButton {
-            pos: f(pos),
-            button,
-        },
-        PointerEvent::Scroll { pos, delta } => PointerEvent::Scroll { pos: f(pos), delta },
-        PointerEvent::Leave => PointerEvent::Leave,
-    }
-}
-
 /// 配信の直近一秒の統計。表示用。
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct DesktopStats {
@@ -199,18 +180,25 @@ impl<B: VrBackend> Kernel<B> {
                 "desktop stream needs an open content panel".into(),
             ));
         }
+        self.replace_desktop(panel, Some(stream), Status::Starting);
+        self.overlay.set_panel_capture(panel, true);
+        Ok(())
+    }
+
+    /// `panel` の配信を `stream` に差し替える。配信を始める前の解像度と、映しているメニューは引き継ぐ。
+    fn replace_desktop(&mut self, panel: PanelId, stream: Option<Stream>, status: Status) {
         let (original_resolution, popups) = self
             .desktop_panels
             .remove(&panel)
-            .map_or((p.resolution, Vec::new()), |p| {
+            .map_or((self.overlay.panel(panel).resolution, Vec::new()), |p| {
                 (p.original_resolution, p.popups)
             });
         self.desktop_panels.insert(
             panel,
             DesktopPanel {
-                stream: Some(stream),
+                stream,
                 source: None,
-                status: Status::Starting,
+                status,
                 contacts: [None; 2],
                 hovered: [None; 2],
                 active: self.config.kernel.dominant_hand.hand(),
@@ -221,8 +209,6 @@ impl<B: VrBackend> Kernel<B> {
                 popups_seen: Arc::from([]),
             },
         );
-        self.overlay.set_panel_capture(panel, true);
-        Ok(())
     }
 
     pub fn desktop_streaming(&self, panel: PanelId) -> bool {
@@ -253,29 +239,8 @@ impl<B: VrBackend> Kernel<B> {
                 }
                 Err(error) => {
                     logger::warn!("desktop capture failed", panel = panel, error = error);
-                    let (original_resolution, popups) = self
-                        .desktop_panels
-                        .remove(&panel)
-                        .map_or((self.overlay.panel(panel).resolution, Vec::new()), |p| {
-                            (p.original_resolution, p.popups)
-                        });
                     self.overlay.set_panel_capture(panel, false);
-                    self.desktop_panels.insert(
-                        panel,
-                        DesktopPanel {
-                            stream: None,
-                            source: None,
-                            status: Status::Failed(error),
-                            contacts: [None; 2],
-                            hovered: [None; 2],
-                            active: self.config.kernel.dominant_hand.hand(),
-                            original_resolution,
-                            meter: Meter::new(Instant::now()),
-                            stats: None,
-                            popups,
-                            popups_seen: Arc::from([]),
-                        },
-                    );
+                    self.replace_desktop(panel, None, Status::Failed(error));
                 }
             }
         } else if let Some(mut p) = self.desktop_panels.remove(&panel) {
@@ -453,17 +418,26 @@ impl<B: VrBackend> Kernel<B> {
             }) else {
                 continue;
             };
-            let (w, h) = self.overlay.panel(parent).resolution;
-            let outer = Vec2::new(w as f32, h as f32);
-            let (cw, ch) = self.overlay.panel(event.panel).resolution;
-            let face = Vec2::new(cw as f32, ch as f32);
-            event.event = moved(event.event, |pos| match area {
-                None => pos.clamp(Vec2::ZERO, outer),
-                Some([x, y, w, h]) => {
-                    let at = pos / face;
-                    Vec2::new(x + at.x * w, y + at.y * h) * outer
-                }
-            });
+            let size = |id| {
+                let (w, h) = self.overlay.panel(id).resolution;
+                Vec2::new(w as f32, h as f32)
+            };
+            let (outer, face) = (size(parent), size(event.panel));
+            if let PointerEvent::Move { pos }
+            | PointerEvent::Down { pos }
+            | PointerEvent::Up { pos }
+            | PointerEvent::DownButton { pos, .. }
+            | PointerEvent::UpButton { pos, .. }
+            | PointerEvent::Scroll { pos, .. } = &mut event.event
+            {
+                *pos = match area {
+                    None => pos.clamp(Vec2::ZERO, outer),
+                    Some([x, y, w, h]) => {
+                        let at = *pos / face;
+                        Vec2::new(x + at.x * w, y + at.y * h) * outer
+                    }
+                };
+            }
             event.panel = parent;
         }
         events.retain(|event| {
