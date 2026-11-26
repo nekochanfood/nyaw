@@ -94,6 +94,16 @@ case $format in
     $sudo sh "$scripts/install-package.sh" "$package" "$name" "$sha" "$format"
     # 同じパッケージの再導入と、上書きの導入が成功すること
     $sudo sh "$scripts/install-package.sh" "$package" "$name" "$sha" "$format"
+    # パッケージマネージャーが認識する版。プレリリースは同じ番号の正式版より古い版になる表記とする
+    version=${name#nyaw-}
+    version=${version%"-$suffix"}
+    case $format in
+      deb) installed=$(dpkg-query -W -f='${Version}' nyaw) expected=${version/-/\~} ;;
+      rpm) installed=$(rpm -q --qf '%{VERSION}' nyaw) expected=${version/-/\~} ;;
+      pacman) installed=$(pacman -Q nyaw | cut -d' ' -f2) expected=${version//-/}-1 ;;
+    esac
+    echo "installed version: $installed"
+    [ "$installed" = "$expected" ]
     check_info /usr/lib/nyaw/update-info "${suffix//./\\.}"
     [ "$(readlink -f /usr/bin/nyaw)" = /usr/lib/nyaw/nyaw ]
     nyaw=/usr/bin/nyaw

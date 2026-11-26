@@ -139,7 +139,13 @@ build_package() {
   cp -p "$files"/* "$dir/"
   package_info "nyaw-*-$3" > "$dir/update-info"
   sed "s/@GLIBC@/$glibc/g" "$installer/nfpm.yaml" > "$dir/nfpm.yaml"
-  (cd "$dir" && NYAW_PACKAGE_VERSION=$version "$work/nfpm/nfpm" package -f nfpm.yaml -p "$1" -t "$output/nyaw-$version-$3")
+  # nfpm は pacman のパッケージではハイフン以降のプレリリースの表記を除くため、ハイフンを除いて渡す
+  # （pacman は 2026.0.4beta.3 を 2026.0.4 より古い版と判定する）
+  local package_version=$version
+  if [ "$1" = archlinux ]; then
+    package_version=${version//-/}
+  fi
+  (cd "$dir" && NYAW_PACKAGE_VERSION=$package_version "$work/nfpm/nfpm" package -f nfpm.yaml -p "$1" -t "$output/nyaw-$version-$3")
   echo "update information ($2): $(cat "$dir/update-info")"
 }
 
