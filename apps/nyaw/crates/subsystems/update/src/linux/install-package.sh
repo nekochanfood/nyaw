@@ -21,15 +21,19 @@ case $format in
     DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall --allow-downgrades "$dir/$name"
     ;;
   rpm)
-    # 名前、バージョン、リリース、アーキテクチャが同じパッケージが導入済みか
-    if rpm -q "$(rpm -qp "$dir/$name")" > /dev/null 2>&1; then
-      rpm -U --replacepkgs --replacefiles "$dir/$name"
-    elif command -v dnf > /dev/null; then
-      dnf install -y "$dir/$name"
+    # Fedora 45 以降の rpm は署名のないパッケージを拒否する。dnf はファイルを指定した導入では署名を検査しないため、
+    # dnf があれば再導入にも使う（内容は上の SHA-256 で照合済み）
+    if command -v dnf > /dev/null; then
+      # 名前、バージョン、リリース、アーキテクチャが同じパッケージが導入済みの場合は、再導入する
+      if rpm -q "$(rpm -qp --nosignature "$dir/$name")" > /dev/null 2>&1; then
+        dnf reinstall -y "$dir/$name"
+      else
+        dnf install -y "$dir/$name"
+      fi
     elif command -v zypper > /dev/null; then
-      zypper --non-interactive install --allow-unsigned-rpm --oldpackage "$dir/$name"
+      zypper --non-interactive install --allow-unsigned-rpm --oldpackage --force "$dir/$name"
     else
-      rpm -U --oldpackage "$dir/$name"
+      rpm -U --nosignature --replacepkgs --replacefiles --oldpackage "$dir/$name"
     fi
     ;;
   pacman)
