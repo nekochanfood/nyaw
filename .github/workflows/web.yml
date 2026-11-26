@@ -34,7 +34,8 @@ jobs:
           node-version: 24
           cache: pnpm
       # ウェブサイトに Cargo の依存は要らない。オプションや環境変数では無効にできないため、設定を書き換える
-      - run: sed -i '/^cargo:/,/enabled:/s/enabled: true/enabled: false/' pnpm-workspace.yaml
+      - run: |
+          sed -i '/^cargo:/,/enabled:/s/enabled: true/enabled: false/' pnpm-workspace.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter web fmt:check
       - run: pnpm --filter web lint
