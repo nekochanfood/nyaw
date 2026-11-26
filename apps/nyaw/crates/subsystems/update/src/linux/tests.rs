@@ -1,4 +1,5 @@
 use super::*;
+use crate::UpdateInfo;
 
 /// テストごとの空のディレクトリ。
 fn temp(name: &str) -> PathBuf {
@@ -9,16 +10,8 @@ fn temp(name: &str) -> PathBuf {
 }
 
 #[test]
-fn the_marker_names_the_package_format() {
-    for (marker, package) in [
-        ("tar\n", Package::Tar),
-        ("deb", Package::Deb),
-        ("rpm\n", Package::Rpm),
-        ("pacman\n", Package::Pacman),
-    ] {
-        assert_eq!(Package::from_marker(marker), Some(package));
-    }
-    assert_eq!(Package::from_marker("appimage"), None);
+fn a_build_outside_a_package_has_no_package_format() {
+    assert_eq!(UpdateInfo::installed(), None);
     assert_eq!(Package::current(), None, "テストのバイナリは配布物ではない");
 }
 

@@ -1,8 +1,50 @@
 //! 配布形式。更新では、実行中のビルドと同じ形式のアセットを取得する。
 
-/// Linux の tar.gz、deb、rpm、pkg.tar.zst が実行ファイルの隣に置き、自身の形式を記録するファイル（`installer/linux.sh`）。
+/// Linux の tar.gz、deb、rpm、pkg.tar.zst が、実行ファイルの隣に置く更新情報のファイル（`installer/linux.sh`）。
 #[cfg(target_os = "linux")]
-const MARKER: &str = "package-format";
+const UPDATE_INFO: &str = "update-info";
+
+/// 配布物に同梱する更新情報。AppImage の更新情報と同じく `|` で区切った 1 行で、
+/// `gh-releases|<所有者>|<リポジトリ>|<latest / latest-all>|<アセット名のパターン>` の形式とする。
+/// 4 番目は対象のリリースの範囲である。アプリの更新は、これではなく利用者の設定（更新チャンネル）に従う。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpdateInfo {
+    /// GitHub のリポジトリ（`<所有者>/<リポジトリ>`）。
+    pub repository: String,
+    /// アセット名のパターンが示す配布形式。
+    pub package: Package,
+}
+
+impl UpdateInfo {
+    /// 書式に合わない場合、およびこのアプリが適用できない形式の場合は `None`。
+    pub fn parse(text: &str) -> Option<Self> {
+        let fields: Vec<&str> = text.trim().split('|').collect();
+        let &["gh-releases", owner, repo, "latest" | "latest-all", pattern] = fields.as_slice()
+        else {
+            return None;
+        };
+        // 取得先の URL に含めるため、GitHub の名前に使える文字に限る。
+        let name = |s: &str| {
+            !s.is_empty()
+                && s != "."
+                && s != ".."
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+        };
+        let package = Package::of(pattern)?;
+        (name(owner) && name(repo) && package != Package::WindowsSetup).then(|| Self {
+            repository: format!("{owner}/{repo}"),
+            package,
+        })
+    }
+
+    /// 実行ファイルの隣の更新情報。
+    #[cfg(target_os = "linux")]
+    pub fn installed() -> Option<Self> {
+        let exe = std::env::current_exe().ok()?;
+        Self::parse(&std::fs::read_to_string(exe.parent()?.join(UPDATE_INFO)).ok()?)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Package {
@@ -65,19 +107,6 @@ impl Package {
         if os::running_appimage().is_some() {
             return Some(Self::AppImage);
         }
-        let exe = std::env::current_exe().ok()?;
-        let marker = std::fs::read_to_string(exe.parent()?.join(MARKER)).ok()?;
-        Self::from_marker(&marker)
-    }
-
-    #[cfg(target_os = "linux")]
-    pub(crate) fn from_marker(marker: &str) -> Option<Self> {
-        match marker.trim() {
-            "tar" => Some(Self::Tar),
-            "deb" => Some(Self::Deb),
-            "rpm" => Some(Self::Rpm),
-            "pacman" => Some(Self::Pacman),
-            _ => None,
-        }
+        UpdateInfo::installed().map(|info| info.package)
     }
 }

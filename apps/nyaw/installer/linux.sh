@@ -58,6 +58,17 @@ install -m644 -t "$files" \
 install -m644 "$root/assets/logos/Logo_Mini_Light.svg" "$files/nyaw.svg"
 docs=(steamaudio-THIRDPARTY.md LICENSE-MIT LICENSE-APACHE)
 
+# 更新情報の対象とするリリースの範囲。`latest` は正式版だけを対象とするため、プレリリース版は
+# 正式版とプレリリースの新しい方を対象とする `latest-all` にする
+channel=latest
+if [[ $version == *-* ]]; then
+  channel=latest-all
+fi
+# package_info <アセット名のパターン>: AppImage 以外の形式に同梱する更新情報（crates/subsystems/update の UpdateInfo）
+package_info() {
+  echo "gh-releases|${repository%/*}|${repository#*/}|$channel|$1"
+}
+
 # AppImage
 dir=$work/nyaw.AppDir
 install -Dm755 -t "$dir/usr/bin" "$files/nyaw"
@@ -76,10 +87,6 @@ mksquashfs "$dir" "$work/nyaw.squashfs" -root-owned -noappend -no-xattrs -comp z
 
 # 更新情報（AppImage の仕様）。AppImageUpdate などのツールは、ランタイムの .upd_info セクションから更新の取得先を読む。
 # `latest` は正式版だけを対象とするため、プレリリース版は正式版とプレリリースの新しい方を対象とする `latest-all` にする
-channel=latest
-if [[ $version == *-* ]]; then
-  channel=latest-all
-fi
 update_info="gh-releases-zsync|${repository%/*}|${repository#*/}|$channel|nyaw-*-x86_64.AppImage.zsync"
 install -m755 "$runtime" "$work/runtime"
 read -r offset size < <(readelf -SW "$work/runtime" |
@@ -96,16 +103,16 @@ install -m755 "$work/$appimage" "$output/$appimage"
 # 差分更新の索引。取得先の URL は索引と同じ場所からの相対パスとする
 (cd "$output" && zsyncmake -u "$appimage" -o "$appimage.zsync" "$appimage" > /dev/null)
 
-# tar.gz。展開した nyaw ディレクトリから起動する。package-format はアプリの更新が参照する
+# tar.gz。展開した nyaw ディレクトリから起動する。update-info はアプリの更新が参照する
 mkdir -p "$work/tar/nyaw"
 cp -p "$files"/* "$work/tar/nyaw/"
-echo tar > "$work/tar/nyaw/package-format"
+package_info 'nyaw-*-x86_64.tar.gz' > "$work/tar/nyaw/update-info"
 tar -czf "$output/nyaw-$version-x86_64.tar.gz" --owner=0 --group=0 -C "$work/tar" nyaw
 
 # deb、rpm、pkg.tar.zst
-for format in deb rpm pacman; do
-  echo "$format" > "$files/package-format-$format"
-done
+package_info 'nyaw-*-amd64.deb' > "$files/update-info-deb"
+package_info 'nyaw-*-x86_64.rpm' > "$files/update-info-rpm"
+package_info 'nyaw-*-x86_64.pkg.tar.zst' > "$files/update-info-pacman"
 cp "$installer/nfpm.yaml" "$files/"
 package() { # package <nfpm の形式> <出力ファイル名>
   (cd "$files" && NYAW_PACKAGE_VERSION=$version "$work/nfpm/nfpm" package -f nfpm.yaml -p "$1" -t "$output/$2")
@@ -115,4 +122,5 @@ package rpm "nyaw-$version-x86_64.rpm"
 package archlinux "nyaw-$version-x86_64.pkg.tar.zst"
 
 ls -l "$output"
-echo "update information: $update_info"
+echo "update information (AppImage): $update_info"
+grep -H . "$work/tar/nyaw/update-info" "$files"/update-info-*

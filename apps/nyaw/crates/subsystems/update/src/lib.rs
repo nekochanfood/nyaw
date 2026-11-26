@@ -17,7 +17,7 @@ pub mod fake;
 #[cfg(target_os = "linux")]
 mod linux;
 mod package;
-pub use package::Package;
+pub use package::{Package, UpdateInfo};
 
 /// リリース一覧のサイズと、インストーラーのサイズ上限。
 const MAX_LIST: u64 = 4 << 20;
@@ -130,15 +130,22 @@ fn loopback(url: String) -> Option<String> {
     (!port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())).then_some(url)
 }
 
-/// リリース一覧を返す GitHub API の URL（リポジトリは Cargo.toml の `repository`）。環境変数 `NYAW_UPDATE_URL` に
-/// ループバックの URL があれば、その値を返す。
+/// リリース一覧を返す GitHub API の URL。リポジトリは、配布物の更新情報（[`UpdateInfo`]）があればその値、
+/// なければ Cargo.toml の `repository` とする。環境変数 `NYAW_UPDATE_URL` にループバックの URL があれば、その値を返す。
 pub fn releases_url() -> String {
     if let Some(url) = std::env::var(URL_OVERRIDE).ok().and_then(loopback) {
         return url;
     }
-    let repo = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
-    let api = repo.replacen("https://github.com/", "https://api.github.com/repos/", 1);
-    format!("{api}/releases?per_page=30")
+    #[cfg(target_os = "linux")]
+    if let Some(info) = UpdateInfo::installed() {
+        return github_releases(&info.repository);
+    }
+    let repository = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
+    github_releases(repository.trim_start_matches("https://github.com/"))
+}
+
+fn github_releases(repository: &str) -> String {
+    format!("https://api.github.com/repos/{repository}/releases?per_page=30")
 }
 
 /// 一覧 `url` のリリースを取得する（どれを推奨するかは呼び出し側が決める）。ネットワークアクセスを伴うため別スレッドで呼び出す。

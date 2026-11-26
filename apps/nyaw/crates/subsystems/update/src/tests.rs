@@ -55,6 +55,42 @@ fn each_asset_name_belongs_to_one_package() {
     }
 }
 
+#[test]
+fn the_bundled_update_information_names_the_repository_and_the_format() {
+    for (pattern, package) in [
+        ("nyaw-*-x86_64.tar.gz", Package::Tar),
+        ("nyaw-*-amd64.deb", Package::Deb),
+        ("nyaw-*-x86_64.rpm", Package::Rpm),
+        ("nyaw-*-x86_64.pkg.tar.zst", Package::Pacman),
+    ] {
+        for channel in ["latest", "latest-all"] {
+            assert_eq!(
+                UpdateInfo::parse(&format!(
+                    "gh-releases|nekochanfood|nyaw|{channel}|{pattern}\n"
+                )),
+                Some(UpdateInfo {
+                    repository: "nekochanfood/nyaw".into(),
+                    package
+                }),
+                "{pattern}"
+            );
+        }
+    }
+    for broken in [
+        "",
+        "deb",
+        "zsync|https://example.com/nyaw.zsync",
+        "gh-releases|nekochanfood|nyaw|v1|nyaw-*-amd64.deb",
+        "gh-releases|nekochanfood|nyaw|latest|other-*.deb",
+        "gh-releases|nekochanfood|nyaw|latest|nyaw-*-setup.exe",
+        "gh-releases|..|nyaw|latest|nyaw-*-amd64.deb",
+        "gh-releases|a/b|nyaw|latest|nyaw-*-amd64.deb",
+        "gh-releases||nyaw|latest|nyaw-*-amd64.deb",
+    ] {
+        assert_eq!(UpdateInfo::parse(broken), None, "{broken}");
+    }
+}
+
 /// 各形式は、一覧の中から自身のアセットを選ぶ。そのアセットがないリリースは対象にしない。
 #[test]
 fn a_release_offers_the_asset_of_the_running_package() {

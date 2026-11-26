@@ -18,15 +18,15 @@ contents:
       mode: 0755
   - src: ./libphonon.so
     dst: /usr/lib/nyaw/libphonon.so
-  # アプリの更新は、実行ファイルの隣の package-format で配布形式を判別する（crates/subsystems/update の Package）
-  - src: ./package-format-deb
-    dst: /usr/lib/nyaw/package-format
+  # アプリの更新は、実行ファイルの隣の update-info で配布形式と取得先を判別する（crates/subsystems/update の UpdateInfo）
+  - src: ./update-info-deb
+    dst: /usr/lib/nyaw/update-info
     packager: deb
-  - src: ./package-format-rpm
-    dst: /usr/lib/nyaw/package-format
+  - src: ./update-info-rpm
+    dst: /usr/lib/nyaw/update-info
     packager: rpm
-  - src: ./package-format-pacman
-    dst: /usr/lib/nyaw/package-format
+  - src: ./update-info-pacman
+    dst: /usr/lib/nyaw/update-info
     packager: archlinux
   - src: /usr/lib/nyaw/nyaw
     dst: /usr/bin/nyaw

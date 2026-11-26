@@ -49,6 +49,12 @@ one() { # one <ファイル名のパターン>: 一致するファイルが 1 �
   echo "${found[0]}"
 }
 
+# check_info <update-info のファイル> <アセット名のパターンの末尾>: 同梱の更新情報の内容を確認する
+check_info() {
+  echo "update information: $(cat "$1")"
+  grep -x -E "gh-releases\|[^|]+\|nyaw\|latest(-all)?\|nyaw-\*-$2" "$1"
+}
+
 args=()
 case $format in
   appimage)
@@ -66,15 +72,16 @@ case $format in
   tar)
     add_packages "${libraries[@]}"
     tar -xzf "$(one 'nyaw-*-x86_64.tar.gz')" -C "$work"
-    [ "$(cat "$work/nyaw/package-format")" = tar ]
+    check_info "$work/nyaw/update-info" 'x86_64\.tar\.gz'
     nyaw=$work/nyaw/nyaw
     ;;
   deb | rpm | pacman)
     case $format in
-      deb) package=$(one 'nyaw-*-amd64.deb') ;;
-      rpm) package=$(one 'nyaw-*-x86_64.rpm') ;;
-      pacman) package=$(one 'nyaw-*-x86_64.pkg.tar.zst') ;;
+      deb) suffix=amd64.deb ;;
+      rpm) suffix=x86_64.rpm ;;
+      pacman) suffix=x86_64.pkg.tar.zst ;;
     esac
+    package=$(one "nyaw-*-$suffix")
     # アプリの更新が root で実行するスクリプトで導入し、依存関係の解決とあわせて確認する
     name=$(basename "$package")
     sha=$(sha256sum "$package" | cut -d' ' -f1)
@@ -87,7 +94,7 @@ case $format in
     $sudo sh "$scripts/install-package.sh" "$package" "$name" "$sha" "$format"
     # 同じパッケージの再導入と、上書きの導入が成功すること
     $sudo sh "$scripts/install-package.sh" "$package" "$name" "$sha" "$format"
-    [ "$(cat /usr/lib/nyaw/package-format)" = "$format" ]
+    check_info /usr/lib/nyaw/update-info "${suffix//./\\.}"
     [ "$(readlink -f /usr/bin/nyaw)" = /usr/lib/nyaw/nyaw ]
     nyaw=/usr/bin/nyaw
     ;;
