@@ -234,7 +234,8 @@ impl Overlay {
     }
 
     /// ナビバーを持ち主の下端へ配置する。持ち主面の下端（シャドウマージン [`PANEL_MARGIN`] の内側）の左右中央を
-    /// アンカーに、バーの上端の左右中央を合わせる。頭から同じ見かけサイズになるようアンカーまでの距離に比例して拡大する。
+    /// アンカーに、バーの上端の左右中央を合わせる。頭から同じ見かけサイズになるようアンカーまでの距離に比例して拡大する
+    /// （固定した持ち主のバーは 1m 先でのサイズ固定。切り替えは [`Motion::Morph`] で移す）。
     /// 持ち主の出入りアニメーション（75%〜100%）で縮んだ下端にも追従する。
     /// 持ち主もバーも非ポイント状態で [`NAV_BAR_LINGER`] 経過するとフェードアウトし（[`Motion::Fade`]）、完了後に
     /// ランタイムのオーバーレイを解放する（[`Surface::park`]。パネル・ビュー・最終画像は保持）。
@@ -259,16 +260,24 @@ impl Overlay {
             let rotation = o.pose.orientation;
             let eye = self.hmd.position;
             // ドック子（ダッシュボードにはめた画面）のバーは頭からの距離でサイズ変更しない（1m 先でのサイズ固定。
-            // ダッシュボードと一体の部品として画面との比率を維持する）。
-            let docked = o.parent.is_some_and(|q| q.docked);
+            // ダッシュボードと一体の部品として画面との比率を維持する）。掴んだまま吸い付いた画面も、離すのを待たずにはめた扱い。
+            let docked = o.parent.is_some_and(|q| q.docked) || self.stuck(owner);
             let leaving = o.hidden || o.closed;
             let p = &mut self.panels[id];
             let size = if leaving {
+                // 隠れている間は大きさを変えない。出し直すときはその時の拡大の仕方で現れる。
+                p.pinned = None;
                 p.size
-            } else if docked {
-                p.nav_bar_size
             } else {
-                p.nav_bar_size * anchor.distance(eye)
+                // 固定（1）と距離に比例（0）の混ぜ具合。切り離し・はめ込みで一瞬で大きさが飛ばないように移す。
+                // 見えていないバーはその場で切り替える。
+                let to = if docked { 1.0 } else { 0.0 };
+                let animated = p.animated && p.surface.has_texture();
+                let pinned = p.pinned.get_or_insert(Transition::rest(to));
+                pinned.go(to, Motion::Morph, now, animated);
+                let k = pinned.at(now).0;
+                let far = anchor.distance(eye);
+                p.nav_bar_size * (far + (1.0 - far) * k)
             };
             let resized = !p.size.abs_diff_eq(size, 1e-4);
             p.size = size;
