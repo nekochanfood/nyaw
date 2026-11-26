@@ -35,8 +35,22 @@
 - **変更の判定**: `changes.yml`が変更されたファイルから対象を判定し、`ci.yml`（アプリ）と `web.yml`（ウェブサイト。Cargo の依存は取得しない）は関係するジョブだけを実行する。対象外のジョブは「スキップ」になる。判定の規則は `.github/scripts/changes.sh` にあり、変えたら `bash .github/scripts/changes.test.sh` で確かめる。パッケージやそれが読むファイルを増やしたら、規則にも足す（足し忘れると検査されない）。
 - **CodeQL**: PR の Rust の解析だけを、アプリに関係する変更があるときに限る。
 - **`main` への push による `release.yml`**: `apps/nyaw/`・`assets/`・`release.yml` の変更だけで実行する。
-- **リリース**: バージョン（CalVer）、タグ、GitHub Releases はアプリ専用とする（アプリの更新確認が参照する）。ウェブサイトだけの PR には `web` ラベルを付け、リリースノートから除外する（`.github/release.yml`）。
+- **リリース**: バージョン（CalVer）、タグ、GitHub Releases はアプリ専用とする（アプリの更新確認が参照する）。ウェブサイトだけの PR は `skip-changelog` ラベル（トリアージが付ける）で、リリースノートから除外する（`.github/release.yml`）。
 - **ビルド番号**: アプリのビルド番号はリポジトリ全体のコミット数のため、他のパッケージのコミットでも増える（大小比較には影響しない）。
+
+## トリアージ
+
+`triage.yml` が Issue と PR にラベルを付ける。判定の規則は `.github/scripts/triage.sh` にあり、変えたら `bash .github/scripts/triage.test.sh` で確かめる。
+
+| ラベル | 付け方 |
+|---|---|
+| `app: nyaw` / `app: web` | PR は変更したファイルの場所で判定する（`assets/` は両方）。Issue はテンプレートの「対象」のチェックで判定する。 |
+| `repo` | PR がどのアプリのファイルも変えない場合（CI、ルートの文書など）。 |
+| `size: XS`・`S`・`M`・`L`・`XL` | PR の変更行数が 10 未満・50 未満・250 未満・1000 未満・それ以上。ロックファイル、生成物、`vendor/` は数えない。Issue の規模は機械的に決められないため、手で付ける。 |
+| `skip-changelog` | ウェブサイトのファイルを変え、アプリのファイルを変えない PR。 |
+| `needs-triage` | 「対象」が選ばれていない Issue。対象を選ぶか `app:` のラベルを付ける。 |
+
+PR の `app:`・`size:`・`repo`・`skip-changelog` は、更新のたびに判定し直す（手で変えても戻る）。パッケージを増やしたら規則とテンプレートに足す。
 
 ## 規約
 

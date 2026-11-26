@@ -1,0 +1,61 @@
+name: Triage
+
+# Issue と PR に、対象と規模のラベルを付ける（判定の規則は .github/scripts/triage.sh）。
+# フォークからの PR にもラベルを付けるため、書き込み権限を持つ pull_request_target を使う。
+# 安全のため、PR のコードは取り出さず実行もしない（checkout は base のブランチ）。PR と Issue の内容はデータとしてだけ扱う
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  issues:
+    types: [opened, edited, reopened]
+
+concurrency:
+  group: triage-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          # 本文は利用者が自由に書けるため、スクリプトに埋め込まず環境変数で渡す
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+          issue="repos/$GITHUB_REPOSITORY/issues/$NUMBER"
+          # managed は、このワークフローが付け外しするラベル。ほかのラベル（手で付けたもの）は変えない
+          if [ "$GITHUB_EVENT_NAME" = pull_request_target ]; then
+            want=$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$NUMBER/files" \
+              -q '.[] | "\(.filename)\t\(.changes)"' | bash .github/scripts/triage.sh pr)
+            managed='^(app: |size: |repo$|skip-changelog$)'
+          else
+            want=$(printf '%s' "$BODY" | bash .github/scripts/triage.sh issue)
+            have=$(gh api "$issue/labels" -q '.[].name')
+            if [ -z "$want" ]; then
+              # 対象が選ばれていない。手で対象を付けた Issue はそのままにする
+              if ! grep -q '^app: ' <<< "$have"; then
+                gh api "$issue/labels" -f 'labels[]=needs-triage' > /dev/null
+              fi
+              exit 0
+            fi
+            managed='^(app: |needs-triage$)'
+          fi
+          have=$(gh api "$issue/labels" -q '.[].name')
+          while IFS= read -r label; do
+            if [[ $label =~ $managed ]] && ! grep -qxF -- "$label" <<< "$want"; then
+              gh api -X DELETE "$issue/labels/$(jq -rn --arg l "$label" '$l | @uri')" > /dev/null
+            fi
+          done <<< "$have"
+          while IFS= read -r label; do
+            gh api "$issue/labels" -f "labels[]=$label" > /dev/null
+          done <<< "$want"
