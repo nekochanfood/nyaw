@@ -76,6 +76,8 @@ AppImage の起動には FUSE（`fusermount3` または `fusermount`）も必要
 
 AppImage には、AppImageUpdate などの外部ツール向けの更新情報も埋め込んでいます。他の形式には、同じ書式の更新情報を `update-info` ファイルとして同梱しています。
 
+コマンドライン版の `appimageupdatetool` は、既定では新しい版を別の名前のファイルとして保存します。この場合、SteamVR の自動起動には古いファイルが登録されたままになります。登録を保つには、`--overwrite` を指定して同じファイルを置き換えてください。
+
 ### SteamVR の自動起動
 
 設定画面のほか、SteamVR の実行中に `nyaw --steamvr-autostart=on`（無効にする場合は `off`）を実行して切り替えられます。登録されるのは、有効にした時点のファイルのパスです。AppImage や tar.gz の置き場所を移動した場合や、別の名前のファイルに差し替えた場合は、一度無効にしてから有効にし直してください。
@@ -119,7 +121,7 @@ AppImage には、AppImageUpdate などの外部ツール向けの更新情報�
 <tr><td>コントローラなどの電池残量の表示</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td><td align="center">🟢</td><td align="center">🟡</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td></tr>
 <tr><td>ランタイムの起動に合わせた自動起動</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td><td align="center">🟢</td><td align="center">🟡</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td></tr>
 <tr><td>ダッシュボード表示中のゲームへの入力のブロック</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td><td align="center">🟢</td><td align="center">🟡</td><td align="center">-<a href="#note-runtime-api"><sup>*5</sup></a></td></tr>
-<tr><td>アップデートの確認と適用</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴<a href="#note-update"><sup>*6</sup></a></td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>アップデートの確認と適用</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢<a href="#note-update"><sup>*6</sup></a></td><td align="center">🟢</td><td align="center">🟡</td></tr>
 </tbody>
 </table>
 
@@ -133,7 +135,7 @@ AppImage には、AppImageUpdate などの外部ツール向けの更新情報�
 
 <a name="note-runtime-api"></a>\*5 OpenXR には、デバイスの電池残量の取得、ランタイムへのアプリの自動起動の登録、他のアプリへの入力の遮断を行う標準の API がありません。
 
-<a name="note-update"></a>\*6 アップデートは Windows のインストーラーで適用します。Linux の AppImage は自動更新に未対応のため、Linux では更新を確認しません。
+<a name="note-update"></a>\*6 Windows はインストーラーで、Linux は配布物の形式ごとの方法で適用します（「Linux の配布物」の「アップデート」を参照）。`cargo build` の成果物など、配布物から起動していない Linux のビルドは更新を確認しません。Linux の更新は、エミュレーターと各ディストリビューションの隔離環境で、検証用のリリース一覧を使って確認しました。公開されたリリースからの更新と、polkit の認証の画面は未確認です。
 
 <a name="note-linux-desktop"></a>\*7 Linux で配信できるのはディスプレイ（画面）のみで、個別のウィンドウは配信できません。表示サーバーに応じて、X11 では XSHM と XTest、wlroots 系のコンポジタでは ext-image-copy-capture（無ければ wlr-screencopy）と仮想ポインタ・仮想キーボード、その他の Wayland（KDE Plasma、GNOME など）では xdg-desktop-portal と PipeWire を使います。portal では初回にデスクトップに表示される確認画面で、共有するディスプレイを選んで許可する必要があります（パネルには許可待ちである旨を表示します）。X11、KDE Plasma、niri、Hyprland、ShojiWM で検証しました。wlr-screencopy で取り込む場合は OS のカーソルの画像を取得できないため、nyaw のポインタを表示します。portal ではキー配列に無い文字を入力できない場合があります。
 
