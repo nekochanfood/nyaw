@@ -267,6 +267,16 @@ impl Panel {
         self.pose * Pose::new(Vec3::NEG_Z * self.lift, Quat::IDENTITY)
     }
 
+    /// 確定した描画順（大きいほど手前。[`Overlay::place_layers`]）。
+    pub fn draw_order(&self) -> u32 {
+        self.surface.sort()
+    }
+
+    /// 重なる下のパネルより手前にするために、要望の位置から手前へずらした量（m）。
+    pub fn lifted(&self) -> f32 {
+        self.lift
+    }
+
     /// アニメーション反映後の表示サイズ。中心の位置・姿勢は不変。
     pub fn displayed_size(&self) -> Vec2 {
         if self.fade_only {

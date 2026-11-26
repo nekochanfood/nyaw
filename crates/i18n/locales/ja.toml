@@ -239,6 +239,18 @@ mirror = "ミラーリング画面"
 slide = "ボタンスライド"
 resize = "角でサイズ変更"
 resize_aspect = "角でサイズ変更（縦横比を固定）"
+layers = "レイヤー"
+
+[layer_test]
+over = "面に重ねる子"
+popover = "ポップオーバー"
+dialog = "ダイアログ"
+hud = "HUD"
+far = "奥のパネル"
+clear = "全部閉じる"
+close = "閉じる"
+readout = "描画順 {order}・手前にずらした距離 {lifted} mm"
+hint = "見本を出して重なり方を確認します。描画順が大きいほど手前です。ポップオーバーは外を押すと閉じ、ダイアログはこの画面を暗くします。"
 
 [testing.resize]
 hint = "角を掴んで動かすと、幅と高さが変わります（{min}〜{max} px）"

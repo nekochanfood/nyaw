@@ -354,6 +354,16 @@ impl Render for Testing {
                     }),
                 )
                 .child(
+                    button!("layer-test", i18n::t(cx, "testing.open.layers"), false).on_click({
+                        let panel = self.panel;
+                        move |_, _, cx| {
+                            cx.default_global::<PanelControl>()
+                                .spawns
+                                .push(LayerTest::spec(panel))
+                        }
+                    }),
+                )
+                .child(
                     button!("slide-test", i18n::t(cx, "testing.open.slide"), false).on_click(
                         spawn_view(self.panel, "testing.open.slide", |id, _| SlideTest::new(id)),
                     ),

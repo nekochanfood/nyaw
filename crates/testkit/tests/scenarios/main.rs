@@ -12,6 +12,7 @@ mod dialog;
 mod emoji;
 mod hold_in_hand;
 mod keyboard;
+mod layers;
 mod multi_panel;
 mod nav_bar;
 mod navigation;

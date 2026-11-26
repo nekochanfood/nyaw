@@ -171,6 +171,26 @@ impl PanelSpec {
         }
     }
 
+    /// `from` の面の一部 `area`（面を 1 とした `[x, y, 幅, 高さ]`。[`kernel::Parent::over`]）に重ねて表示する。
+    /// `from` を暗転せず入力もブロックしない。位置と大きさは範囲と解像度の縦横比で決まり、掴むと `from` ごと動く。
+    /// ナビゲーションバーは付けない。
+    pub fn over<V: Render>(
+        from: PanelId,
+        area: [f32; 4],
+        build: impl FnOnce(PanelId, &mut Window, &mut Context<V>) -> V + 'static,
+    ) -> Self {
+        Self {
+            parent: Some(kernel::Parent {
+                panel: from,
+                carry: true,
+                over: Some(area),
+                ..Default::default()
+            }),
+            nav_bar: false,
+            ..Self::spawn(from, build)
+        }
+    }
+
     /// 起動時の `from`（[`Self::spawn`] / [`Self::child`] / [`Self::popover`] の親）から見た配置位置。
     pub fn offset(mut self, offset: Pose) -> Self {
         self.offset = Some(offset);
