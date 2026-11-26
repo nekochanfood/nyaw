@@ -13,6 +13,8 @@ enum Layer {
     Hud,
     Dialog,
     Popover,
+    /// 親の面の一部に重ねる子（[`Parent::over`]）。
+    Over,
 }
 
 /// まとまりの奥行きを据え置く幅（m）。距離の差がこの 2 倍を超えて動くまで前後を入れ替えない（ちらつき防止）。
@@ -79,6 +81,8 @@ fn lies_on(p: &Panel) -> Option<(PanelId, Layer)> {
     let q = p.parent?;
     let layer = if q.slot.is_some() {
         return None;
+    } else if q.over.is_some() {
+        Layer::Over
     } else if q.hud {
         Layer::Hud
     } else if !q.docked {
