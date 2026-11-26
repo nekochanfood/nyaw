@@ -392,7 +392,7 @@ fn occluded_window_activation_and_rejected_touch_do_not_stop_capture() {
     });
 }
 
-/// 取得元のウィンドウから開いたメニュー（別のウィンドウ）を、ウィンドウの外へはみ出した所も含めて切り出し、
+/// 取得元のウィンドウから開いたメニュー（別のウィンドウ）を、ウィンドウの外へはみ出した所も含めて取り込み、
 /// メニューの項目を押すとその項目が選ばれる。
 #[test]
 #[ignore = "opens a real window and its menu, captures the menu and clicks an item; run on an interactive Windows desktop"]
