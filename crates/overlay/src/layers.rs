@@ -52,7 +52,8 @@ fn lift(panels: &mut [Panel], order: &[PanelId], held: &[PanelId]) {
         let floor = order[from..i]
             .iter()
             .filter_map(|&b| {
-                let q = &panels[b];
+                // 隠して消えきったものは、重なる相手に数えない。
+                let q = Some(&panels[b]).filter(|q| b == on || !q.hidden || q.opacity > 0.0)?;
                 let below = on_face(face, q)?;
                 let gap = (below - at).truncate().abs() * 2.0;
                 gap.cmplt(p.size + q.size)

@@ -194,3 +194,62 @@ fn the_granted_depth_never_becomes_the_request() {
         assert!((gap - 0.002).abs() < 1e-5, "carry = {carry}: {gap}");
     }
 }
+
+/// 同じ親に付くものは、開いた順に関係なく層の順に重なる。
+#[test]
+fn siblings_are_ordered_by_layer_not_by_age() {
+    let (mut vr, mut ov) = setup();
+    let layers = [
+        Parent {
+            over: Some([0.0, 0.0, 1.0, 1.0]),
+            ..Default::default()
+        },
+        menu_of_main().unwrap(),
+        Parent::default(),
+        Parent {
+            hud: true,
+            ..Default::default()
+        },
+    ];
+    // 上の層から先に作る。
+    let ids = layers.map(|parent| {
+        let id = add(&mut vr, &mut ov, "child", at(0.0, 0.0, -0.9));
+        let parent = Parent { panel: 0, ..parent };
+        ov.set_parent(&mut vr.backend, id, Some(parent));
+        id
+    });
+    ov.tick(&mut vr);
+    let sorts = ids.map(|id| ov.panel(id).surface.sort());
+    assert!(sorts.is_sorted_by(|a, b| a > b), "{sorts:?}");
+}
+
+/// 消えきった非表示のパネルは、重なる兄弟を手前へ押し出さない。
+#[test]
+fn a_hidden_panel_pushes_nothing_forward() {
+    let (mut vr, mut ov) = setup();
+    let under = popover(&mut vr, &mut ov, "under", 0.002);
+    let over = popover(&mut vr, &mut ov, "over", 0.002);
+    ov.set_hidden(&mut vr.backend, under, true);
+    ov.tick(&mut vr);
+    assert!((front(&ov, over) - 0.002).abs() < 1e-6);
+    ov.set_hidden(&mut vr.backend, under, false);
+    ov.tick(&mut vr);
+    assert!((front(&ov, over) - 0.002 - LIFT_STEP).abs() < 1e-6);
+}
+
+/// 相手の面に対して起こして立てたものは、順位だけを決めて距離は変えない。
+#[test]
+fn a_tilted_child_keeps_its_requested_depth() {
+    let (mut vr, mut ov) = setup();
+    let tilted = Pose::new(Vec3::new(0.0, 0.0, -1.0), Quat::from_rotation_x(0.3));
+    let id = add(&mut vr, &mut ov, "tilted", tilted);
+    ov.set_parent(&mut vr.backend, id, menu_of_main());
+    ov.tick(&mut vr);
+    assert!(
+        ov.panel(id)
+            .pose
+            .position
+            .abs_diff_eq(tilted.position, 1e-6)
+    );
+    assert!(sort(&vr, "tilted") > sort(&vr, "main"));
+}

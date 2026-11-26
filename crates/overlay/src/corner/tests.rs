@@ -337,6 +337,10 @@ fn the_nav_bar_follows_the_stand_in_while_held() {
     settle(&mut vr, &mut ov);
     assert_eq!(ov.panel(0).resolution, (1000, 500));
     assert!((top(&ov) + 0.35 - MARGIN).abs() < 1e-4, "{}", top(&ov));
+    // 描画順は、中身 < 代わりの板 < ナビゲーションバー。
+    let board = stand_in(&vr).unwrap().sort;
+    assert!(vr.backend.overlays[0].sort < board);
+    assert!(board < vr.backend.overlays[bar].sort);
     // 離して解像度を変えた後も同じ所にいる。
     controller(&mut vr, aim(0.45, -0.3), &[]);
     ov.tick(&mut vr);
