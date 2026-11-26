@@ -24,8 +24,8 @@ pub(super) struct DesktopPanel {
 
 /// 配信パネル `parent` の子パネル `shown` を、取得元の手前に出ているメニュー `popups`（手前から順）に合わせる。
 /// メニューは取得元とは別のウィンドウで映像に含まれないので、親の面の同じ所に重ねる子パネル（[`Parent::over`]）で見せる。
-/// 消えたメニューの子パネルは閉じ、動いた・描き変わったメニューは置き直して送り直す。メニューの周りにはパネルと同じ影を描く
-/// （OS の影は合成のときに描き足されるもので、切り出せない）。
+/// 消えたメニューの子パネルは閉じ、動いた・描き変わったメニューは置き直して送り直す。画像はメニューのウィンドウだけを
+/// 取り込んだもの（透明な所は透ける）なので、加工せずに送る。
 fn sync_popups(
     overlay: &mut Overlay,
     vr: &mut dyn VrBackend,
@@ -47,8 +47,7 @@ fn sync_popups(
             continue;
         }
         let image = &popup.image;
-        let (w, h, rgba) =
-            overlay::with_shadow(image.width, image.height, &image.rgba, popup.radius);
+        let (w, h) = (image.width, image.height);
         let panel = match at {
             Some(i) => {
                 shown[i].0 = popup.clone();
@@ -85,7 +84,7 @@ fn sync_popups(
                 ..Default::default()
             }),
         );
-        overlay.submit(vr, panel, w, h, &rgba);
+        overlay.submit(vr, panel, w, h, &image.rgba);
     }
 }
 
@@ -442,8 +441,7 @@ impl<B: VrBackend> Kernel<B> {
         self.desktop_panels
             .retain(|id, _| !self.overlay.panel(*id).closed);
         // メニューの子パネルへの入力は、配信パネルの画素に移して配信パネルへの入力にする（はみ出したメニューは面の外）。
-        // 影の余白を指したときは、メニューの縁へ寄せず、その下にあるウィンドウの所を指したことにする（メニューの外を押せば
-        // デスクトップと同じくメニューが閉じる）。配信パネルへの入力は面の中に留める（押したまま外へ出たら端を指す）。
+        // 配信パネルへの入力は面の中に留める（押したまま外へ出たら端を指す）。
         for event in events.iter_mut() {
             let Some((parent, area)) = self.desktop_panels.iter().find_map(|(&id, p)| {
                 if id == event.panel {
@@ -458,11 +456,12 @@ impl<B: VrBackend> Kernel<B> {
             };
             let (w, h) = self.overlay.panel(parent).resolution;
             let outer = Vec2::new(w as f32, h as f32);
-            let (origin, face) = self.overlay.panel(event.panel).face();
+            let (cw, ch) = self.overlay.panel(event.panel).resolution;
+            let face = Vec2::new(cw as f32, ch as f32);
             event.event = moved(event.event, |pos| match area {
                 None => pos.clamp(Vec2::ZERO, outer),
                 Some([x, y, w, h]) => {
-                    let at = (pos - origin) / face;
+                    let at = pos / face;
                     Vec2::new(x + at.x * w, y + at.y * h) * outer
                 }
             });
@@ -696,7 +695,6 @@ mod tests {
                 height: 100,
                 rgba: [200; 100 * 100 * 4].into(),
             },
-            radius: 0.0,
         }
     }
 
@@ -724,8 +722,8 @@ mod tests {
         down
     }
 
-    /// 取得元の手前にメニューが出たら、配信パネルを親にして面の同じ所に重ねる子パネルを開き、影を付けた絵を送る。子パネルへの
-    /// 入力は取得元の座標（ウィンドウの外へはみ出した所も）で送り、影の余白を押したら、その下にあるウィンドウの所を押す。
+    /// 取得元の手前にメニューが出たら、配信パネルを親にして面の同じ所に重ねる子パネルを開き、メニューの絵をそのまま送る。子パネルへの
+    /// 入力は取得元の座標（ウィンドウの外へはみ出した所も）で送る。
     /// メニューが消えたら、また配信が止まったら子パネルを閉じる。
     #[test]
     fn popups_become_child_panels_over_the_stream_and_take_input() {
@@ -741,8 +739,7 @@ mod tests {
             p.parent.map(|q| (q.panel, q.over)),
             Some((panel, Some(menu.area)))
         );
-        let pad = overlay::with_shadow(1, 1, &[0; 4], 0.0).0 - 1;
-        assert_eq!(p.resolution, (100 + pad, 100 + pad));
+        assert_eq!(p.resolution, (100, 100));
         let texture = kernel
             .subsystems
             .backend
@@ -752,19 +749,10 @@ mod tests {
             .and_then(|o| o.texture.as_ref())
             .map(|t| t.rgba.clone())
             .unwrap();
-        let px = |x: u32, y: u32| {
-            let i = ((y * (100 + pad) + x) * 4) as usize;
-            texture[i..i + 4].to_vec()
-        };
         assert_eq!(
-            px(pad / 2 + 50, pad / 2 + 50),
-            [200, 200, 200, 255],
-            "the menu itself"
-        );
-        assert_eq!(
-            &px(pad / 2 - 1, pad / 2 + 50)[..3],
-            &[0, 0, 0],
-            "the shadow"
+            texture[..],
+            menu.image.rgba[..],
+            "the menu as captured, nothing added"
         );
         // メニューの右下寄り（配信パネルの外）を押すと、取得元の外の座標で届く。
         let down = press_at(&mut kernel, &control, 0.6, -0.4);
@@ -772,10 +760,10 @@ mod tests {
             (down.x - 1.1).abs() < 1e-4 && (down.y - 1.3).abs() < 1e-4,
             "{down:?}"
         );
-        // メニューの左の影（配信パネルの上）を押すと、メニューの縁ではなく、その下のウィンドウの所に届く。
-        let down = press_at(&mut kernel, &control, 0.2, -0.1);
+        // メニューの左端寄り（配信パネルの上）を押すと、メニューの面がそのまま `area` に重なっている所に届く。
+        let down = press_at(&mut kernel, &control, 0.27, -0.1);
         assert!(
-            (down.x - 0.7).abs() < 1e-4 && (down.y - 0.7).abs() < 1e-4,
+            (down.x - 0.77).abs() < 1e-4 && (down.y - 0.7).abs() < 1e-4,
             "{down:?}"
         );
         control.set_popups(Vec::new());

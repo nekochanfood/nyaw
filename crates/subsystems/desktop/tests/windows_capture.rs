@@ -9,8 +9,8 @@ use std::{
 };
 use windows::{
     Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, WPARAM},
-        Graphics::Gdi::{GetStockObject, HBRUSH, WHITE_BRUSH},
+        Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, SIZE, WPARAM},
+        Graphics::Gdi::*,
         UI::{
             HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext},
             Input::Pointer::GetPointerTouchInfo,
@@ -505,4 +505,156 @@ fn context_menu_is_captured_apart_from_the_window_and_takes_clicks() {
     assert_eq!(item, Some(2));
     until(|| stream.popups().is_empty());
     owner.join().unwrap();
+}
+
+/// メニューの画像はメニューのウィンドウだけから取る。透明な所（Chrome などのメニューが周りに持つ余白）には後ろのウィンドウが
+/// 写らず、メニューの透明度がそのまま（事前乗算アルファで）届く。
+#[test]
+#[ignore = "opens real windows and captures a translucent popup with WGC; run on an interactive Windows desktop"]
+fn popup_arrives_with_its_own_alpha_and_nothing_behind_it() {
+    let _guard = NATIVE_INPUT.lock().unwrap();
+    const WIDTH: i32 = 200;
+    const HEIGHT: i32 = 100;
+    let (window, popup) = unsafe {
+        SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(procedure),
+            lpszClassName: w!("nyaw.desktop.alpha.e2e"),
+            hbrBackground: HBRUSH(GetStockObject(WHITE_BRUSH).0),
+            ..Default::default()
+        };
+        assert_ne!(RegisterClassW(&class), 0);
+        let create = |ex_style, title, style, x, y, width, height| {
+            TestWindow(Some(
+                CreateWindowExW(
+                    ex_style,
+                    w!("nyaw.desktop.alpha.e2e"),
+                    title,
+                    style,
+                    x,
+                    y,
+                    width,
+                    height,
+                    None,
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            ))
+        };
+        let window = create(
+            WS_EX_TOPMOST,
+            w!("nyaw desktop alpha E2E"),
+            WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            100,
+            100,
+            360,
+            240,
+        );
+        let popup = create(
+            WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+            w!(""),
+            WS_POPUP | WS_VISIBLE,
+            150,
+            150,
+            WIDTH,
+            HEIGHT,
+        );
+        // 左半分は透明、右半分は不透明な赤（BGRA の u32）。
+        let pixels: Vec<u32> = (0..WIDTH * HEIGHT)
+            .map(|i| {
+                if i % WIDTH < WIDTH / 2 {
+                    0
+                } else {
+                    0xFFFF_0000
+                }
+            })
+            .collect();
+        paint_layered(popup.0.unwrap(), WIDTH, HEIGHT, &pixels);
+        (window, popup)
+    };
+    let sources = Sources::refresh().unwrap();
+    let mut list = None;
+    until(|| {
+        list = sources.poll();
+        list.is_some()
+    });
+    let source = list
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|s| s.name == "nyaw desktop alpha E2E")
+        .expect("test window in source list");
+    let stream = Stream::start(source).unwrap();
+    let mut found = None;
+    until(|| {
+        stream.poll();
+        found = stream.popups().first().cloned();
+        found.is_some()
+    });
+    let image = found.unwrap().image;
+    assert_eq!((image.width, image.height), (WIDTH as u32, HEIGHT as u32));
+    let px = |x: i32| {
+        let i = ((HEIGHT / 2 * WIDTH + x) * 4) as usize;
+        image.rgba[i..i + 4].to_vec()
+    };
+    assert_eq!(
+        px(WIDTH / 4),
+        [0, 0, 0, 0],
+        "nothing behind the popup shows"
+    );
+    assert_eq!(px(WIDTH * 3 / 4), [255, 0, 0, 255], "the popup itself");
+    drop(popup);
+    until(|| stream.popups().is_empty());
+    drop(window);
+}
+
+/// レイヤードウィンドウに画素ごとの透過を持つ絵（事前乗算の BGRA）を設定する。
+unsafe fn paint_layered(hwnd: HWND, width: i32, height: i32, pixels: &[u32]) {
+    unsafe {
+        let screen = GetDC(None);
+        let dc = CreateCompatibleDC(Some(screen));
+        let info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height,
+                biPlanes: 1,
+                biBitCount: 32,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        let bitmap = CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
+        std::ptr::copy_nonoverlapping(pixels.as_ptr(), bits as *mut u32, pixels.len());
+        let old = SelectObject(dc, bitmap.into());
+        let size = SIZE {
+            cx: width,
+            cy: height,
+        };
+        let blend = BLENDFUNCTION {
+            BlendOp: AC_SRC_OVER as u8,
+            BlendFlags: 0,
+            SourceConstantAlpha: 255,
+            AlphaFormat: AC_SRC_ALPHA as u8,
+        };
+        UpdateLayeredWindow(
+            hwnd,
+            Some(screen),
+            None,
+            Some(&size),
+            Some(dc),
+            Some(&POINT::default()),
+            COLORREF(0),
+            Some(&blend),
+            ULW_ALPHA,
+        )
+        .unwrap();
+        SelectObject(dc, old);
+        let _ = DeleteObject(bitmap.into());
+        let _ = DeleteDC(dc);
+        ReleaseDC(None, screen);
+    }
 }

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use animation::{Animation, Motion, Transition};
-use design::{BRACKET_PAD_PX, PANEL_MARGIN, PANEL_SHADOW_ALPHA, PANEL_SHADOW_BLUR};
+use design::{BRACKET_PAD_PX, PANEL_MARGIN};
 use subsystems::{Frame, Subsystems, desktop::Cursor, rendering::Surface, vr};
 
 use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
@@ -30,7 +30,6 @@ mod status;
 
 pub use corner::ResizeLimits;
 use corner::*;
-pub use family::with_shadow;
 use family::*;
 use frame::*;
 pub use geometry::anchored;
@@ -64,7 +63,7 @@ pub struct Parent {
     pub stack: bool,
     /// 親の面の一部に重ねる子（配信しているウィンドウのメニューなど）。値は親の面の左上を原点、面の幅・高さを 1 とした
     /// 子の面の左上と大きさ（`[x, y, 幅, 高さ]`。面の外へはみ出してよい）。親を暗転させず入力も止めない。
-    /// 親の大きさが変わっても、毎 tick 子の面をこの範囲に合わせる。子は取り込み中でも影の余白を持つ（[`with_shadow`]）。
+    /// 親の大きさが変わっても、毎 tick 子の面をこの範囲に合わせる。
     /// 奥行きと描画順は [`OVER_LIFT`]・[`OVER_SORT`]。
     pub over: Option<[f32; 4]>,
 }
@@ -273,13 +272,6 @@ impl Panel {
             return self.size;
         }
         self.size * (0.75 + 0.25 * self.opacity)
-    }
-
-    /// 面の範囲（テクスチャの画素。影の余白を除いた左上と大きさ）。
-    pub fn face(&self) -> (Vec2, Vec2) {
-        let (w, h) = (self.resolution.0 as f32, self.resolution.1 as f32);
-        let pad = margin_px(self);
-        (Vec2::splat(pad), Vec2::new(w, h) - Vec2::splat(2.0 * pad))
     }
 
     /// パネル上のピクセル座標（左上原点）をトラッキング空間の点に変換する。ヒット判定の逆変換。

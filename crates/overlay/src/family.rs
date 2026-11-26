@@ -98,12 +98,7 @@ impl Overlay {
         );
         let pose = outer.pose * offset;
         let p = &mut self.panels[id];
-        // 影の余白（面の外）の分だけ広げる。余白は画素で決まるので、面の画素数との比で広げる。
-        let (res, pad) = (
-            Vec2::new(p.resolution.0 as f32, p.resolution.1 as f32),
-            2.0 * margin_px(p),
-        );
-        let size = face * Vec2::new(w, h) * res / (res - Vec2::splat(pad)).max(Vec2::ONE);
+        let size = face * Vec2::new(w, h);
         (p.offset, p.pose) = (offset, pose);
         if !p.size.abs_diff_eq(size, 1e-6) {
             p.size = size;
@@ -423,62 +418,6 @@ pub(crate) fn carried(panels: &[Panel], id: PanelId) -> Vec<PanelId> {
         cur = panel;
     }
     v
-}
-
-/// 不透明な画像 `rgba`（`width`×`height`）を、角の半径 `radius`（画素）の角丸に切り抜き、周りにパネルと同じ影（ずらさず
-/// 四方へ広がる。ぼかしの σ [`PANEL_SHADOW_BLUR`]、濃さ [`PANEL_SHADOW_ALPHA`]）を描いた余白（[`PANEL_MARGIN`]）を
-/// 足した画像と、その大きさ。角丸の外側は透け、その下の影が見える。出力は事前乗算アルファ。
-/// GPUI で描かない画像（配信しているウィンドウのメニュー）を、面に重ねる子（[`Parent::over`]）として出すときに使う。
-pub fn with_shadow(width: u32, height: u32, rgba: &[u8], radius: f32) -> (u32, u32, Vec<u8>) {
-    let pad = PANEL_MARGIN as u32;
-    let (w, h) = (width + 2 * pad, height + 2 * pad);
-    let half = Vec2::new(width as f32, height as f32) / 2.0;
-    let radius = radius.clamp(0.0, half.min_element());
-    let mut out = Vec::with_capacity((w * h * 4) as usize);
-    for y in 0..h {
-        for x in 0..w {
-            // 画素の中心から角丸の縁までの距離（画素。外が正）。
-            let at = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - Vec2::splat(pad as f32) - half;
-            let q = at.abs() - (half - Vec2::splat(radius));
-            let d = q.max(Vec2::ZERO).length() + q.max_element().min(0.0) - radius;
-            // 縁にかかる画素は、かかった割合だけ描いて角を滑らかにする。
-            let cover = (0.5 - d).clamp(0.0, 1.0);
-            // 影は、縁からの距離をガウスでぼかした割合（まっすぐな縁では長方形をぼかした影と一致し、角では近い形になる）。
-            let shadow = if cover < 1.0 {
-                PANEL_SHADOW_ALPHA * normal_cdf(-d / PANEL_SHADOW_BLUR)
-            } else {
-                0.0
-            };
-            let (ix, iy) = (x.wrapping_sub(pad), y.wrapping_sub(pad));
-            let color = if ix < width && iy < height {
-                let i = ((iy * width + ix) * 4) as usize;
-                [rgba[i], rgba[i + 1], rgba[i + 2]]
-            } else {
-                [0; 3]
-            };
-            // 黒い影の上に、かかった割合の画像を重ねる。
-            let tone = |v: u8| (v as f32 * cover).round() as u8;
-            let alpha = cover + shadow * (1.0 - cover);
-            out.extend_from_slice(&[
-                tone(color[0]),
-                tone(color[1]),
-                tone(color[2]),
-                (alpha * 255.0).round() as u8,
-            ]);
-        }
-    }
-    (w, h, out)
-}
-
-/// 標準正規分布の累積分布関数。誤差関数は Abramowitz–Stegun 7.1.26 の近似（誤差 1.5e-7）。
-fn normal_cdf(z: f32) -> f32 {
-    let x = f64::from(z) / std::f64::consts::SQRT_2;
-    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
-    let poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t
-        + 0.254829592)
-        * t;
-    let erf = (1.0 - poly * (-x * x).exp()).copysign(x);
-    (0.5 * (1.0 + erf)) as f32
 }
 
 #[cfg(test)]

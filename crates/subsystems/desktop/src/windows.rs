@@ -26,10 +26,7 @@ use ::windows::{
         Graphics::{
             Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_DRIVER_TYPE_WARP},
             Direct3D11::*,
-            Dwm::{
-                DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DWMWA_WINDOW_CORNER_PREFERENCE,
-                DWMWCP_ROUND, DWMWCP_ROUNDSMALL, DwmGetWindowAttribute,
-            },
+            Dwm::{DWMWA_CLOAKED, DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute},
             Dxgi::IDXGIDevice,
             Gdi::*,
         },
@@ -48,10 +45,7 @@ use ::windows::{
             },
         },
         UI::{
-            HiDpi::{
-                DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, GetDpiForWindow,
-                SetThreadDpiAwarenessContext,
-            },
+            HiDpi::{DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, SetThreadDpiAwarenessContext},
             Input::KeyboardAndMouse::*,
             Shell::{
                 BHID_EnumItems, ExtractIconExW, FOLDERID_AppsFolder, IEnumShellItems, IShellItem,
@@ -240,102 +234,6 @@ fn touching<T>(bounds: RECT, windows: Vec<(T, RECT)>) -> Vec<(T, RECT)> {
         .zip(kept)
         .filter_map(|(w, k)| k.then_some(w))
         .collect()
-}
-
-/// DWM がウィンドウの角を丸めて見せる半径（画素。丸めなければ 0）。Windows 11 のメニューは小さく丸める指定になっている。
-/// 指定を読めない（Windows 10 など）なら丸めない。
-unsafe fn corner_radius(hwnd: HWND) -> f32 {
-    let mut preference = 0i32;
-    let read = unsafe {
-        DwmGetWindowAttribute(
-            hwnd,
-            DWMWA_WINDOW_CORNER_PREFERENCE,
-            &mut preference as *mut _ as _,
-            size_of::<i32>() as u32,
-        )
-    };
-    if read.is_err() {
-        return 0.0;
-    }
-    rounding(preference, unsafe { GetDpiForWindow(hwnd) })
-}
-
-/// 角の丸めの指定（`DWMWA_WINDOW_CORNER_PREFERENCE`）と DPI から、丸める半径（画素）。半径は 96 DPI で、大きく丸めるなら 8px、
-/// 小さく丸めるなら 4px（実機のメニューの角で確かめた）。
-// ponytail: 既定（OS に任せる）は丸めない扱い。OS が丸めるのに角に背景が写るウィンドウが出たら、ウィンドウの種類で決める。
-fn rounding(preference: i32, dpi: u32) -> f32 {
-    let base = match preference {
-        p if p == DWMWCP_ROUND.0 => 8.0,
-        p if p == DWMWCP_ROUNDSMALL.0 => 4.0,
-        _ => 0.0,
-    };
-    base * dpi as f32 / 96.0
-}
-
-/// 画面の `rect`（仮想画面の画素）を不透明な RGBA として切り出す。メニューは最前面に出るので、そこに映っているのはメニューそのもの。
-unsafe fn screen_rgba(rect: RECT) -> Option<Icon> {
-    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
-    if width <= 0 || height <= 0 || width > 4096 || height > 4096 {
-        return None;
-    }
-    let info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER {
-            biSize: size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: width,
-            // 負の高さを指定してトップダウン順にする
-            biHeight: -height,
-            biPlanes: 1,
-            biBitCount: 32,
-            biCompression: BI_RGB.0,
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-    unsafe {
-        let screen = GetDC(None);
-        let dc = CreateCompatibleDC(Some(screen));
-        let mut bits = std::ptr::null_mut();
-        let rgba = CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)
-            .ok()
-            .filter(|_| !bits.is_null())
-            .and_then(|bitmap| {
-                let old = SelectObject(dc, bitmap.into());
-                // 出るときのメニューは半透明（レイヤード）なので、それも含めて写す。
-                let copied = BitBlt(
-                    dc,
-                    0,
-                    0,
-                    width,
-                    height,
-                    Some(screen),
-                    rect.left,
-                    rect.top,
-                    ROP_CODE(SRCCOPY.0 | CAPTUREBLT.0),
-                )
-                .is_ok();
-                let rgba = copied.then(|| {
-                    let bgra = std::slice::from_raw_parts(
-                        bits as *const u8,
-                        (width * height * 4) as usize,
-                    );
-                    bgra.as_chunks::<4>()
-                        .0
-                        .iter()
-                        .flat_map(|p| [p[2], p[1], p[0], 255])
-                        .collect::<Vec<u8>>()
-                });
-                SelectObject(dc, old);
-                let _ = DeleteObject(bitmap.into());
-                rgba
-            });
-        let _ = DeleteDC(dc);
-        ReleaseDC(None, screen);
-        rgba.map(|rgba| Icon {
-            width: width as u32,
-            height: height as u32,
-            rgba: rgba.into(),
-        })
-    }
 }
 
 /// GDI 装置名（`"\\.\DISPLAY2"`）から、接続先モニターの製品名（EDID 名。`"DELL U2720Q"` 等）への対応表を返す。
@@ -720,25 +618,44 @@ impl Drop for Apartment {
     }
 }
 
-pub(super) struct Capture {
-    session: GraphicsCaptureSession,
-    pool: Direct3D11CaptureFramePool,
-    _item: GraphicsCaptureItem,
+/// 取り込みに使う D3D の装置。取得元とメニューの取り込みで共用する。
+struct Gpu {
     device: ID3D11Device,
     context: ID3D11DeviceContext,
     direct: IDirect3DDevice,
+}
+
+/// 1 つの取り込み対象（取得元か、その手前のメニュー）の WGC セッションと、届いた画像の読み出し。
+struct Grab {
+    session: GraphicsCaptureSession,
+    pool: Direct3D11CaptureFramePool,
+    _item: GraphicsCaptureItem,
     size: SizeInt32,
     staging: Option<ID3D11Texture2D>,
     /// 一時停止中に保持した最新フレーム（[`Session::skip`]）。プール内の 1 スロットを占有するが、残りの 1 スロットで次フレームを受信できる。
     held: Option<::windows::Graphics::Capture::Direct3D11CaptureFrame>,
     ready: Arc<AtomicBool>,
+}
+
+/// 出ているメニュー 1 つの取り込み。
+struct Menu {
+    hwnd: HWND,
+    /// 取り込みを始められなかったメニューは `None`（出ている間は試し直さない）。
+    grab: Option<Grab>,
+    /// 最後に届いた画像。最初の画像が届くまでは `None`。
+    image: Option<Icon>,
+}
+
+pub(super) struct Capture {
+    grab: Grab,
+    gpu: Gpu,
     closed: Arc<AtomicBool>,
     source: Source,
     mouse: MouseDevice,
     /// 最後に取得したカーソルのハンドルと画像（同一ハンドルであれば再取得を省略する）。
     cursor: Option<(isize, Option<Arc<Cursor>>)>,
-    /// 最後に渡したメニュー（[`Session::popups`]）のウィンドウ。押した所がメニューなら、取得元でなくても入力を送る。
-    popups: Vec<HWND>,
+    /// 取得元の手前に出ているメニュー（手前から順）。押した所がメニューなら、取得元でなくても入力を送る。
+    menus: Vec<Menu>,
     _apartment: Apartment,
 }
 
@@ -813,49 +730,26 @@ impl Capture {
         let dxgi: IDXGIDevice = device.cast()?;
         let direct: IDirect3DDevice =
             unsafe { CreateDirect3D11DeviceFromDXGIDevice(&dxgi)? }.cast()?;
-        let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
-            &direct,
-            DirectXPixelFormat::B8G8R8A8UIntNormalized,
-            2,
-            size,
-        )?;
-        let ready = Arc::new(AtomicBool::new(false));
-        let signal = ready.clone();
-        pool.FrameArrived(&TypedEventHandler::new(move |_, _| {
-            signal.store(true, Ordering::Release);
-            wake.wake();
-            Ok(())
-        }))?;
         let closed = Arc::new(AtomicBool::new(false));
         let signal = closed.clone();
         item.Closed(&TypedEventHandler::new(move |_, _| {
             signal.store(true, Ordering::Release);
             Ok(())
         }))?;
-        let session = pool.CreateCaptureSession(&item)?;
-        // 既定では OS がリフレッシュレートより粗くフレームを間引く。毎 vsync でフレームを生成させ、FPS 上限はワーカー側で制御する
-        // （上限間隔を指定すると vsync の倍数に切り上げられ、143Hz モニターで 60fps を指定すると 48fps になる）。
-        // Windows 11 24H2 より前にはこの API が存在しないため、失敗時は既定動作のまま続行する
-        let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000 });
-        // カーソルはキャプチャ映像に含めず、上位レイヤーがポインタとして描画する（Windows 10 2004 より前ではこの設定は無効）
-        let _ = session.SetIsCursorCaptureEnabled(false);
-        session.StartCapture()?;
-        Ok(Self {
-            session,
-            pool,
-            _item: item,
+        let gpu = Gpu {
             device,
             context,
             direct,
-            size,
-            staging: None,
-            held: None,
-            ready,
+        };
+        let grab = Grab::open(&gpu, item, size, Some(wake))?;
+        Ok(Self {
+            grab,
+            gpu,
             closed,
             source,
             mouse: MouseDevice::default(),
             cursor: None,
-            popups: Vec::new(),
+            menus: Vec::new(),
             _apartment: apartment,
         })
     }
@@ -948,7 +842,7 @@ impl Capture {
             if let Ok(bounds) = self.bounds() {
                 let point = normalized_point(bounds, touch.x, touch.y);
                 let root = unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) };
-                if root == hwnd || self.popups.contains(&root) {
+                if root == hwnd || self.menus.iter().any(|m| m.hwnd == root) {
                     return Ok(Some(point));
                 }
             }
@@ -958,6 +852,64 @@ impl Capture {
             self.heartbeat()?;
             std::thread::sleep(std::time::Duration::from_millis(4));
         }
+    }
+}
+
+impl Grab {
+    /// `hwnd`（メニュー）だけを取り込む。後ろのウィンドウは映らず、ウィンドウの透明な所は透明で届く。
+    fn window(gpu: &Gpu, hwnd: HWND) -> Result<Self, Error> {
+        let interop: IGraphicsCaptureItemInterop =
+            factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
+        let item: GraphicsCaptureItem = unsafe { interop.CreateForWindow(hwnd) }?;
+        let size = item.Size()?;
+        if size.Width <= 0 || size.Height <= 0 {
+            return Err(Error(super::failure::NO_PIXELS.into()));
+        }
+        let grab = Self::open(gpu, item, size, None)?;
+        // メニューの周りに取り込み中の黄色い枠を出さない。非対応の OS では枠が出る。
+        let _ = grab.session.SetIsBorderRequired(false);
+        Ok(grab)
+    }
+
+    /// `item` の取り込みを始める。画像の到着で `wake` があればワーカーを起こす。
+    fn open(
+        gpu: &Gpu,
+        item: GraphicsCaptureItem,
+        size: SizeInt32,
+        wake: Option<Wake>,
+    ) -> Result<Self, Error> {
+        let pool = Direct3D11CaptureFramePool::CreateFreeThreaded(
+            &gpu.direct,
+            DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            2,
+            size,
+        )?;
+        let ready = Arc::new(AtomicBool::new(false));
+        let signal = ready.clone();
+        pool.FrameArrived(&TypedEventHandler::new(move |_, _| {
+            signal.store(true, Ordering::Release);
+            if let Some(wake) = &wake {
+                wake.wake();
+            }
+            Ok(())
+        }))?;
+        let session = pool.CreateCaptureSession(&item)?;
+        // 既定では OS がリフレッシュレートより粗くフレームを間引く。毎 vsync でフレームを生成させ、FPS 上限はワーカー側で制御する
+        // （上限間隔を指定すると vsync の倍数に切り上げられ、143Hz モニターで 60fps を指定すると 48fps になる）。
+        // Windows 11 24H2 より前にはこの API が存在しないため、失敗時は既定動作のまま続行する
+        let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 10_000 });
+        // カーソルはキャプチャ映像に含めず、上位レイヤーがポインタとして描画する（Windows 10 2004 より前ではこの設定は無効）
+        let _ = session.SetIsCursorCaptureEnabled(false);
+        session.StartCapture()?;
+        Ok(Self {
+            session,
+            pool,
+            _item: item,
+            size,
+            staging: None,
+            held: None,
+            ready,
+        })
     }
 
     fn next_frame(
@@ -991,6 +943,104 @@ impl Capture {
             }
         }
         Ok(latest)
+    }
+
+    /// 新しい画像が届いていれば読み出す。画素は事前乗算アルファの RGBA で、透明な所はそのまま透明になる。
+    fn read(&mut self, gpu: &Gpu) -> Result<Option<Frame>, Error> {
+        let Some(frame) = self.latest()? else {
+            return Ok(None);
+        };
+        let captured = frame.SystemRelativeTime().map(captured_at);
+        let result = (|| {
+            let size = frame.ContentSize()?;
+            if size.Width <= 0 || size.Height <= 0 {
+                return Ok(None);
+            }
+            if size != self.size {
+                self.size = size;
+                self.staging = None;
+                return Ok(None);
+            }
+            let access: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
+            let texture: ID3D11Texture2D = unsafe { access.GetInterface()? };
+            let mut desc = D3D11_TEXTURE2D_DESC::default();
+            unsafe {
+                texture.GetDesc(&mut desc);
+            }
+            let (width, height) = (size.Width as u32, size.Height as u32);
+            if width > desc.Width || height > desc.Height {
+                return Ok(None);
+            }
+            if let Some(staging) = &self.staging {
+                let mut previous = D3D11_TEXTURE2D_DESC::default();
+                unsafe {
+                    staging.GetDesc(&mut previous);
+                }
+                if previous.Width != desc.Width || previous.Height != desc.Height {
+                    self.staging = None;
+                }
+            }
+            if self.staging.is_none() {
+                desc.Usage = D3D11_USAGE_STAGING;
+                desc.BindFlags = 0;
+                desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
+                desc.MiscFlags = 0;
+                unsafe {
+                    gpu.device
+                        .CreateTexture2D(&desc, None, Some(&mut self.staging))?;
+                }
+            }
+            let staging = self
+                .staging
+                .as_ref()
+                .ok_or_else(|| Error(super::failure::D3D_STAGING.into()))?;
+            unsafe {
+                gpu.context.CopyResource(staging, &texture);
+                let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+                gpu.context
+                    .Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
+                let bytes = (mapped.RowPitch as usize).checked_mul(height as usize);
+                let result = if mapped.pData.is_null()
+                    || bytes.is_none_or(|n| n > 256 * 1024 * 1024 || n > isize::MAX as usize)
+                {
+                    Err(Error(super::failure::INVALID_TEXTURE.into()))
+                } else {
+                    Frame::from_bgra(
+                        width,
+                        height,
+                        mapped.RowPitch as usize,
+                        std::slice::from_raw_parts(mapped.pData as *const u8, bytes.unwrap()),
+                    )
+                };
+                gpu.context.Unmap(staging, 0);
+                result.map(Some)
+            }
+        })();
+        frame.Close()?;
+        drop(frame);
+        let result = result.map(|f| {
+            f.map(|f| Frame {
+                captured: captured.unwrap_or(f.captured),
+                ..f
+            })
+        });
+        // リサイズ中のフレームは破棄し、フレーム参照を解放してからプールを再生成する
+        if self.staging.is_none() {
+            self.pool.Recreate(
+                &gpu.direct,
+                DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                2,
+                self.size,
+            )?;
+        }
+        result
+    }
+}
+
+impl Drop for Grab {
+    fn drop(&mut self) {
+        let _ = self.session.Close();
+        let _ = self.pool.Close();
     }
 }
 
@@ -1050,7 +1100,7 @@ impl Session for Capture {
             .then(|| self.bounds().ok())
             .flatten()
         else {
-            self.popups.clear();
+            self.menus.clear();
             return Vec::new();
         };
         let mut above = Above {
@@ -1068,10 +1118,27 @@ impl Session for Capture {
             (bounds.right - bounds.left) as f32,
             (bounds.bottom - bounds.top) as f32,
         );
-        let popups: Vec<Popup> = touching(bounds, above.windows)
-            .into_iter()
-            .filter_map(|(hwnd, r)| {
-                Some(Popup {
+        let mut old = std::mem::take(&mut self.menus);
+        let mut popups = Vec::new();
+        for (hwnd, r) in touching(bounds, above.windows) {
+            let mut menu = match old.iter().position(|m| m.hwnd == hwnd) {
+                Some(i) => old.swap_remove(i),
+                None => Menu {
+                    hwnd,
+                    grab: Grab::window(&self.gpu, hwnd).ok(),
+                    image: None,
+                },
+            };
+            // 読み出せなかったメニューは最後の画像のままにし、取得元の配信は止めない（閉じる途中のメニューは失敗しうる）。
+            if let Some(Ok(Some(frame))) = menu.grab.as_mut().map(|g| g.read(&self.gpu)) {
+                menu.image = Some(Icon {
+                    width: frame.width,
+                    height: frame.height,
+                    rgba: frame.rgba.into(),
+                });
+            }
+            if let Some(image) = &menu.image {
+                popups.push(Popup {
                     id: hwnd.0 as usize as u64,
                     area: [
                         (r.left - bounds.left) as f32 / width,
@@ -1079,108 +1146,21 @@ impl Session for Capture {
                         (r.right - r.left) as f32 / width,
                         (r.bottom - r.top) as f32 / height,
                     ],
-                    image: unsafe { screen_rgba(r) }?,
-                    radius: unsafe { corner_radius(hwnd) },
-                })
-            })
-            .collect();
-        self.popups = popups.iter().map(|p| HWND(p.id as usize as _)).collect();
+                    image: image.clone(),
+                });
+            }
+            self.menus.push(menu);
+        }
         popups
     }
 
     fn skip(&mut self) -> Result<(), Error> {
-        self.held = self.latest()?;
+        self.grab.held = self.grab.latest()?;
         Ok(())
     }
 
     fn frame(&mut self) -> Result<Option<Frame>, Error> {
-        let Some(frame) = self.latest()? else {
-            return Ok(None);
-        };
-        let captured = frame.SystemRelativeTime().map(captured_at);
-        let result = (|| {
-            let size = frame.ContentSize()?;
-            if size.Width <= 0 || size.Height <= 0 {
-                return Ok(None);
-            }
-            if size != self.size {
-                self.size = size;
-                self.staging = None;
-                return Ok(None);
-            }
-            let access: IDirect3DDxgiInterfaceAccess = frame.Surface()?.cast()?;
-            let texture: ID3D11Texture2D = unsafe { access.GetInterface()? };
-            let mut desc = D3D11_TEXTURE2D_DESC::default();
-            unsafe {
-                texture.GetDesc(&mut desc);
-            }
-            let (width, height) = (size.Width as u32, size.Height as u32);
-            if width > desc.Width || height > desc.Height {
-                return Ok(None);
-            }
-            if let Some(staging) = &self.staging {
-                let mut previous = D3D11_TEXTURE2D_DESC::default();
-                unsafe {
-                    staging.GetDesc(&mut previous);
-                }
-                if previous.Width != desc.Width || previous.Height != desc.Height {
-                    self.staging = None;
-                }
-            }
-            if self.staging.is_none() {
-                desc.Usage = D3D11_USAGE_STAGING;
-                desc.BindFlags = 0;
-                desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ.0 as u32;
-                desc.MiscFlags = 0;
-                unsafe {
-                    self.device
-                        .CreateTexture2D(&desc, None, Some(&mut self.staging))?;
-                }
-            }
-            let staging = self
-                .staging
-                .as_ref()
-                .ok_or_else(|| Error(super::failure::D3D_STAGING.into()))?;
-            unsafe {
-                self.context.CopyResource(staging, &texture);
-                let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-                self.context
-                    .Map(staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))?;
-                let bytes = (mapped.RowPitch as usize).checked_mul(height as usize);
-                let result = if mapped.pData.is_null()
-                    || bytes.is_none_or(|n| n > 256 * 1024 * 1024 || n > isize::MAX as usize)
-                {
-                    Err(Error(super::failure::INVALID_TEXTURE.into()))
-                } else {
-                    Frame::from_bgra(
-                        width,
-                        height,
-                        mapped.RowPitch as usize,
-                        std::slice::from_raw_parts(mapped.pData as *const u8, bytes.unwrap()),
-                    )
-                };
-                self.context.Unmap(staging, 0);
-                result.map(Some)
-            }
-        })();
-        frame.Close()?;
-        drop(frame);
-        let result = result.map(|f| {
-            f.map(|f| Frame {
-                captured: captured.unwrap_or(f.captured),
-                ..f
-            })
-        });
-        // リサイズ中のフレームは破棄し、フレーム参照を解放してからプールを再生成する
-        if self.staging.is_none() {
-            self.pool.Recreate(
-                &self.direct,
-                DirectXPixelFormat::B8G8R8A8UIntNormalized,
-                2,
-                self.size,
-            )?;
-        }
-        result
+        self.grab.read(&self.gpu)
     }
 
     fn touch(&mut self, touch: Touch) -> Result<(), Error> {
@@ -1222,13 +1202,6 @@ impl Session for Capture {
             normalized_point(self.bounds()?, x, y)
         };
         self.mouse.scroll(point, dx, dy)
-    }
-}
-
-impl Drop for Capture {
-    fn drop(&mut self) {
-        let _ = self.session.Close();
-        let _ = self.pool.Close();
     }
 }
 
@@ -1397,7 +1370,6 @@ impl Drop for MouseDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ::windows::Win32::Graphics::Dwm::{DWMWCP_DEFAULT, DWMWCP_DONOTROUND};
 
     /// 存在しないアプリの起動は、OS のダイアログを出さずにエラーを返す。
     #[test]
@@ -1442,15 +1414,6 @@ mod tests {
         );
         let names: Vec<_> = found.iter().map(|(n, _)| *n).collect();
         assert_eq!(names, ["submenu", "menu"]);
-    }
-
-    /// 角の丸めは指定と DPI で決まり、丸めない指定と OS に任せる指定（既定）は 0。
-    #[test]
-    fn corners_round_by_preference_and_dpi() {
-        assert_eq!(rounding(DWMWCP_ROUNDSMALL.0, 96), 4.0);
-        assert_eq!(rounding(DWMWCP_ROUND.0, 144), 12.0);
-        assert_eq!(rounding(DWMWCP_DONOTROUND.0, 96), 0.0);
-        assert_eq!(rounding(DWMWCP_DEFAULT.0, 96), 0.0);
     }
 
     #[test]
