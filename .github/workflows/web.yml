@@ -1,0 +1,44 @@
+name: web CI
+
+# ウェブサイト（apps/web/）の検査。参照するアプリ側の資産が変わったときも実行する（changes ジョブが判定する）。
+# 実行するのは、ドラフトでない PR の更新と main への push だけ（作業ブランチへの push では実行しない）
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    uses: ./.github/workflows/changes.yml
+
+  # name は指定しない。スキップされたジョブでは式が展開されず、式の中身が名前として表示される
+  check:
+    needs: changes
+    if: needs.changes.outputs.web == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
+    runs-on: ubuntu-latest
+    strategy:
+      # 1 つが失敗しても、ほかの検査の結果は出す
+      fail-fast: false
+      matrix:
+        task: ["fmt:check", lint, typecheck, test, build]
+    steps:
+      - uses: actions/checkout@v4
+      # pnpm の版はルート package.json の packageManager に従う
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      # ウェブサイトに Cargo の依存は要らない。オプションや環境変数では無効にできないため、設定を書き換える
+      - run: |
+          sed -i '/^cargo:/,/enabled:/s/enabled: true/enabled: false/' pnpm-workspace.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter web run ${{ matrix.task }}

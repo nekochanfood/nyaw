@@ -22,6 +22,7 @@ pub struct Controller {
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     cursor: Arc<Mutex<Option<Arc<Cursor>>>>,
+    popups: Arc<Mutex<Arc<[Popup]>>>,
 }
 
 pub fn stream() -> (Stream, Controller) {
@@ -38,6 +39,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
     let stop = Arc::new(AtomicBool::new(false));
     let paused = Arc::new(AtomicBool::new(false));
     let cursor = Arc::new(Mutex::new(None));
+    let popups = Arc::new(Mutex::new(Arc::from([])));
     let (tx, rx) = mpsc::sync_channel(64);
     (
         Stream {
@@ -47,6 +49,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
             paused: paused.clone(),
             cursor: cursor.clone(),
             pointer: Arc::new(Mutex::new(None)),
+            popups: popups.clone(),
             window,
         },
         Controller {
@@ -55,6 +58,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
             stop,
             paused,
             cursor,
+            popups,
         },
     )
 }
@@ -66,6 +70,10 @@ impl Controller {
     /// OS カーソルが変更されたことを通知する（[`Stream::cursor`]）。
     pub fn set_cursor(&self, cursor: Option<Cursor>) {
         *self.cursor.lock().unwrap() = cursor.map(Arc::new);
+    }
+    /// 取得元の手前に出ているメニューが変わったことを通知する（[`Stream::popups`]）。
+    pub fn set_popups(&self, popups: Vec<Popup>) {
+        *self.popups.lock().unwrap() = popups.into();
     }
     pub fn touches(&self) -> Vec<Touch> {
         self.input

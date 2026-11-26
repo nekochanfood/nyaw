@@ -372,6 +372,14 @@ pub(crate) fn has_child(panels: &[Panel], present: &[PanelId], id: PanelId) -> b
         .any(|q| !q.closed && !q.hidden && q.parent.is_some_and(|p| p.panel == id && p.blocks()))
 }
 
+/// `id` を掴んだときに掴むパネル。ナビゲーションバーなら持ち主、親の面に重ねる子（[`Parent::over`]）なら親。
+pub(crate) fn held(panels: &[Panel], id: PanelId) -> PanelId {
+    let p = &panels[id];
+    p.nav_bar_of
+        .or(p.parent.filter(|q| q.over.is_some()).map(|q| q.panel))
+        .unwrap_or(id)
+}
+
 /// `id` の親、その親…（近い順）。
 /// 親・持ち主（ナビゲーションバーの）をたどった根元。親も持ち主も無ければ `id` 自身。
 pub(crate) fn root(panels: &[Panel], id: PanelId) -> PanelId {

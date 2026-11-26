@@ -1,0 +1,52 @@
+name: Detect changes
+
+# 変更の内容から、検査が必要な対象を判定する（判定の規則は .github/scripts/changes.sh）。他のワークフローから呼び出す
+on:
+  workflow_call:
+    outputs:
+      nyaw:
+        value: ${{ jobs.detect.outputs.nyaw }}
+      web:
+        value: ${{ jobs.detect.outputs.web }}
+
+permissions:
+  contents: read
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      nyaw: ${{ steps.detect.outputs.nyaw }}
+      web: ${{ steps.detect.outputs.web }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: bash .github/scripts/changes.test.sh
+      - id: detect
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # 比較元の決定:
+          # - PR: チェックアウトしたマージコミットの 1 つめの親（base の先頭）。PR の変更だけになる
+          # - main への push: push の前のコミット
+          # - 作業ブランチへの push: main との分岐点。最後の push だけを見ると、以前の変更の検査が漏れる
+          base=
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) base=HEAD^1 ;;
+            push)
+              if [ "$GITHUB_REF" = refs/heads/main ]; then
+                base=$BEFORE
+              else
+                base=$(git merge-base origin/main HEAD) || base=
+              fi
+              ;;
+          esac
+          # 比較元がわからないとき（定期実行、手動実行、強制 push で消えたコミットなど）は、すべて検査する
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2> /dev/null; then
+            printf 'nyaw=true\nweb=true\n' | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # --no-renames: 移動は、移動元と移動先の両方の変更として扱う
+          git diff --name-only --no-renames "$base" HEAD | bash .github/scripts/changes.sh | tee -a "$GITHUB_OUTPUT"
