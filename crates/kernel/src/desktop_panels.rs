@@ -728,6 +728,13 @@ mod tests {
     #[test]
     fn popups_become_child_panels_over_the_stream_and_take_input() {
         let (mut kernel, panel, control) = setup();
+        // 配信パネルのナビバー。下へはみ出すメニューはこれより上に描く。
+        let bar = kernel
+            .add_panel("bar", Pose::IDENTITY, Vec2::new(1.0, 0.1), (100, 10))
+            .unwrap();
+        kernel
+            .overlay
+            .set_nav_bar(&mut kernel.subsystems.backend, bar, panel);
         // 配信パネルは幅 1m・高さ 0.5m で、中心が (0, 0)。メニューは右下へはみ出す（取得元の幅・高さを 1 として
         // x 0.75〜1.25, y 0.5〜1.5。空間では x 0.25〜0.75m, y 0〜-0.5m）。
         let menu = popup(9, [0.75, 0.5, 0.5, 1.0]);
@@ -779,6 +786,10 @@ mod tests {
             kernel.panel(child).parent.and_then(|q| q.over),
             Some(submenu.area)
         );
+        // 描画順は下から、配信パネル・ナビバー・メニュー・サブメニュー。
+        kernel.tick();
+        let order = [panel, bar, child - 1, child].map(|id| kernel.panel(id).draw_order());
+        assert!(order.is_sorted_by(|a, b| a < b), "{order:?}");
         control.publish(Update {
             status: Status::Closed,
             frame: None,
