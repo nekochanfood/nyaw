@@ -195,9 +195,20 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 本プロジェクトは Calendar Versioning（CalVer（現在 `2026.0.4-dev.0`、形式: `YYYY.MINOR.MICRO[-dev.PATCH]`））を採用しており、`Cargo.toml` の `[workspace.package]` で一括管理する。
 
 - **タグ命名規則**: リリースタグは `v<CalVer>`（安定版）または `v<CalVer>-<チャネル名>.<番号>`（プレリリース版）とする。
-- **正式リリースの流れ**: GitHub Actions の `prepare-release.yml` ワークフローにバージョン番号を指定して実行すると、バージョン更新の Pull Request が自動生成される。この PR をマージすると、`release.yml` がインストーラーをビルドし、GitHub Releases に正式版が発行される。発行完了後、`main` ブランチのバージョン番号は自動的に次の版の `-dev.0` へ進む。
+- **正式リリースの流れ**: GitHub Actions の `prepare-release.yml` ワークフローにバージョン番号を指定して実行すると、バージョン更新の Pull Request が自動生成される。この PR をマージすると、`release.yml` が Windows のインストーラーと Linux の AppImage を用意し、両方が揃った場合に限り GitHub Releases に正式版を発行する。PR のブランチでビルドした成果物が同じ内容のコミットのものであれば、再ビルドせずに添付する。発行完了後、`main` ブランチのバージョン番号は自動的に次の版の `-dev.0` へ進む。
 - **プレリリースの発行**: ブランチ上で Actions の `release.yml` をチャネル名（alpha や beta など）を指定して手動実行すると、プレリリースが発行される。この際、`Cargo.toml` のバージョン表記は変更しない。
 - **更新判定の基準**: アプリケーション本体による新旧判定は、バージョン文字列ではなくビルド番号（コミット番号およびビルドメタデータ）の大小比較によって行う。
+
+### Linux の配布（AppImage）
+
+`installer/appimage.sh` がリリースビルドから AppImage を作成し、`.github/workflows/appimage.yml` が CI で実行する。
+
+- **ビルド環境**: AppImage は、ビルドした環境より古い glibc では起動できないため、CI は Debian 12 のコンテナ（glibc 2.36）でビルドする。画面の配信が PipeWire 0.3.65 以降の API を指定するため、これより古い PipeWire を持つディストリビューションではビルドできない。
+- **同梱するライブラリ**: Steam Audio（`libphonon.so`）だけを実行ファイルの隣に置く。Vulkan のローダーとドライバ、ALSA、PipeWire は、実行する環境の設定やプラグインと組み合わせて動作するため同梱しない。他の共有ライブラリ（libxkbcommon、fontconfig、FreeType など）も実行する環境のものを使う。このため、これらがない環境では起動しない。
+- **AppRun**: 実行ファイルへのシンボリックリンクとする。`LD_LIBRARY_PATH` などを設定すると、nyaw が起動する子プロセスにも引き継がれる。
+- **ランタイム**: 静的リンクの type2-runtime を版と SHA-256 で固定する。実行する環境に libfuse2 は不要だが、マウントには FUSE が必要である。
+- **起動用のパス**: 実行ファイルはマウント先にあるため、アプリのパスを外部に登録する処理は `os::launch_path` を使う（[`crates/subsystems/os/AGENT.md`](crates/subsystems/os/AGENT.md)）。
+- **確認**: AppImage の構成を変更したブランチでは、push で `appimage.yml` が実行される。ビルドに使っていない Ubuntu で、VR ランタイムがない場合の終了と、仮想ディスプレイ上でのエミュレーターの動作を確認する。
 
 ### コード規約と UI 規則
 

@@ -48,6 +48,26 @@ cargo run --release -- --openxr
 cargo run --release -- --novr
 ```
 
+## Linux の配布物（AppImage）
+
+Linux（x86_64）向けには、リリースに AppImage を添付します。ダウンロードしたファイルに実行権限を付けて起動します。
+
+```sh
+chmod +x nyaw-*-x86_64.AppImage
+./nyaw-*-x86_64.AppImage
+```
+
+実行する環境には以下が必要です。
+
+- glibc 2.36 以降
+- FUSE（`fusermount3` または `fusermount`）。使えない環境では、`--appimage-extract-and-run` を付けると展開してから起動します
+- Vulkan に対応した GPU ドライバ
+- ALSA、PipeWire、libxkbcommon、fontconfig、FreeType の共有ライブラリ
+
+SteamVR の自動起動には、有効にした時点の AppImage ファイルのパスが登録されます。ファイルを移動した場合や、新しい版のファイルに差し替えた場合は、自動起動を一度無効にしてから有効にし直してください。
+
+AppImage を手元で作成する場合は、`apps/nyaw/` で `cargo build --release` を実行してから `installer/appimage.sh` を実行します（`mksquashfs` が必要です）。作成した AppImage が要求する glibc の版は、ビルドした環境によって決まります。
+
 ## 対応状況
 
 🟢 は対応済み、🟡 は一部のみ対応または未検証、🔴 は未対応、- は仕様上対応できないことを表します。各 OS の「共通実装」は VR ランタイムに依存しない部分（画面、ロジック、OS との連携）の対応状況を、「OpenVR」と「OpenXR」はその OS でそのランタイムを使用したときの対応状況を表します。
@@ -97,7 +117,7 @@ cargo run --release -- --novr
 
 <a name="note-runtime-api"></a>\*5 OpenXR には、デバイスの電池残量の取得、ランタイムへのアプリの自動起動の登録、他のアプリへの入力の遮断を行う標準の API がありません。
 
-<a name="note-update"></a>\*6 アップデートは Windows のインストーラーで適用します。Linux 向けの配布物はまだないため、Linux では更新を確認しません。
+<a name="note-update"></a>\*6 アップデートは Windows のインストーラーで適用します。Linux の AppImage は自動更新に未対応のため、Linux では更新を確認しません。
 
 <a name="note-linux-desktop"></a>\*7 Linux で配信できるのはディスプレイ（画面）のみで、個別のウィンドウは配信できません。表示サーバーに応じて、X11 では XSHM と XTest、wlroots 系のコンポジタでは ext-image-copy-capture（無ければ wlr-screencopy）と仮想ポインタ・仮想キーボード、その他の Wayland（KDE Plasma、GNOME など）では xdg-desktop-portal と PipeWire を使います。portal では初回にデスクトップに表示される確認画面で、共有するディスプレイを選んで許可する必要があります（パネルには許可待ちである旨を表示します）。X11、KDE Plasma、niri、Hyprland、ShojiWM で検証しました。wlr-screencopy で取り込む場合は OS のカーソルの画像を取得できないため、nyaw のポインタを表示します。portal ではキー配列に無い文字を入力できない場合があります。
 
