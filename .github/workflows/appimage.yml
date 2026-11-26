@@ -1,0 +1,120 @@
+name: nyaw AppImage
+
+# Linux の配布物（AppImage）をビルドする。release.yml が呼び出す。
+# AppImage の構成（このファイルと apps/nyaw/installer/）を変更したブランチでは、push でも実行して確認する。
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 埋め込むバージョン（空欄の場合は Cargo.toml の値）
+        type: string
+        default: ''
+      cache-only:
+        description: ビルドキャッシュの作成のみを行い、AppImage は作成しない
+        type: boolean
+        default: false
+  push:
+    branches-ignore: [main]
+    paths: [.github/workflows/appimage.yml, apps/nyaw/installer/**]
+
+env:
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # ビルドした環境より古い glibc では起動できないため、配布先の下限とする Debian 12（glibc 2.36）でビルドする。
+    # 画面の配信は PipeWire 0.3.65 以降の API を指定しており、Ubuntu 22.04 の 0.3.48 では不足する
+    container: debian:12
+    permissions:
+      contents: read
+    env:
+      NYAW_VERSION: ${{ inputs.version }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: apps/nyaw
+    steps:
+      # checkout が履歴を取得できるよう、先に git を導入する（git がないと履歴のないアーカイブを展開する）。
+      # 開発パッケージの用途は ci.yml の LINUX_PACKAGES を参照。コンテナにはビルドの道具も含まれないため併せて導入する
+      - name: Install the build dependencies
+        working-directory: /
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            build-essential ca-certificates cmake curl git pkg-config squashfs-tools unzip \
+            libasound2-dev libclang-dev libfontconfig1-dev libfreetype-dev libpipewire-0.3-dev libx11-dev libxkbcommon-dev
+      - uses: actions/checkout@v4
+        with:
+          # 依存クレートの build.rs からトークンを遮断するため資格情報を破棄
+          persist-credentials: false
+          # ビルド番号（HEAD までの通算コミット数）を算出するため全履歴を取得
+          fetch-depth: 0
+      # コンテナのユーザーと作業ディレクトリの所有者が異なる。build.rs は git に失敗するとビルド番号を 0 にするため、
+      # ここで git が動作することを確認する
+      - run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          echo "build number: $(git rev-list --count HEAD)"
+      - uses: dtolnay/rust-toolchain@stable
+      - id: cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/nyaw
+          # ci.yml の ubuntu のジョブとはシステムのライブラリが異なるため、キャッシュを分ける
+          prefix-key: v0-appimage-debian12
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # ライセンス一覧生成のため、開発用依存パッケージを含む全ソースをオフラインビルド前に先行フェッチ
+      - if: ${{ !inputs.cache-only || steps.cache.outputs.cache-hit != 'true' }}
+        run: |
+          cargo fetch --locked
+          cargo build --release
+      - if: ${{ !inputs.cache-only }}
+        run: installer/appimage.sh
+      # 実行する環境に必要なライブラリと glibc の版をログに残す
+      - if: ${{ !inputs.cache-only }}
+        run: |
+          readelf -d target/release/nyaw | grep NEEDED
+          objdump -T target/release/nyaw | grep -oE 'GLIBC(XX)?_[0-9.]+' | sort -Vu | awk -F_ '{ v[$1] = $2 } END { for (k in v) print k, v[k] }'
+      - if: ${{ !inputs.cache-only }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: appimage
+          path: apps/nyaw/target/installer/*.AppImage
+          if-no-files-found: error
+          # AppImage は圧縮済み
+          compression-level: 0
+
+  # ビルドに使っていないディストリビューションで、作成した AppImage が起動することを確認する
+  smoke:
+    needs: build
+    if: ${{ !inputs.cache-only }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: appimage
+      # 実行時に必要なライブラリ。mesa-vulkan-drivers は GPU のないランナーで描画するソフトウェア実装（lavapipe）
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2t64 libfontconfig1 libfreetype6 libpipewire-0.3-0t64 libxkbcommon0 libxkbcommon-x11-0 \
+            mesa-vulkan-drivers xvfb xauth
+          chmod +x nyaw-*-x86_64.AppImage
+      # VR ランタイムのない環境では、エラーをログに記録して終了コード 1 で終了する。マウントと動的リンクを確認する
+      - name: Start without a VR runtime
+        run: |
+          status=0
+          timeout 60 ./nyaw-*-x86_64.AppImage > no-runtime.log 2>&1 || status=$?
+          cat no-runtime.log
+          [ "$status" = 1 ]
+          grep -q 'cannot show an error dialog' no-runtime.log
+      # エミュレーターは自分では終了しないため、時間切れ（終了コード 124）まで動き続ければ成功とする
+      - name: Run the emulator
+        run: |
+          status=0
+          xvfb-run -a timeout 30 ./nyaw-*-x86_64.AppImage --novr > novr.log 2>&1 || status=$?
+          cat novr.log
+          [ "$status" = 124 ]
+          ! grep -qi 'panic' novr.log
