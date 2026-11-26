@@ -1,0 +1,39 @@
+{
+  "name": "web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "tokens": "node scripts/tokens.mjs",
+    "dev": "pnpm run tokens && vite dev",
+    "build": "pnpm run tokens && vite build",
+    "preview": "vite preview",
+    "typecheck": "pnpm run tokens && tsc --noEmit",
+    "test": "vitest run",
+    "lint": "oxlint --deny-warnings",
+    "fmt": "oxfmt",
+    "fmt:check": "oxfmt --check",
+    "deploy": "pnpm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "@tanstack/react-router": "^1.170.46",
+    "@tanstack/react-start": "^1.169.7",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.70.1",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.1",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "oxfmt": "^0.80.0",
+    "oxlint": "^1.95.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.168.0"
+  }
+}

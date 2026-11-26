@@ -1,4 +1,4 @@
-name: Release
+name: nyaw Release
 
 # インストーラーをビルドしてリリースアセットを添付するワークフロー。
 # 以下のトリガーに対応する:
@@ -14,7 +14,8 @@ on:
     types: [published]
   push:
     branches: [main]
-    paths-ignore: [apps/web/**]
+    # インストーラーの内容に関わる変更だけで実行する（版上げの PR は apps/nyaw/Cargo.toml を変える）
+    paths: [apps/nyaw/**, assets/**, .github/workflows/release.yml]
   # チャネル名を指定して実行するとプレリリースを発行する。空欄の場合はインストーラーのビルド・アーティファクト保存のみを行う
   workflow_dispatch:
     inputs:

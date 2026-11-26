@@ -1,4 +1,4 @@
-name: Prepare release
+name: nyaw Prepare release
 
 # リリース準備ワークフロー:
 # 手動実行により指定バージョンのブランチ（release/v<バージョン>）を作成し、バージョン更新コミットと main 宛ての PR を発行する。
