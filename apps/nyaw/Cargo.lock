@@ -3264,7 +3264,9 @@ dependencies = [
  "desktop",
  "image",
  "logger",
+ "ureq",
  "windows 0.61.3",
+ "zbus",
 ]
 
 [[package]]

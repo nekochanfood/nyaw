@@ -17,7 +17,7 @@ use windows::{
     core::HSTRING,
 };
 
-use super::{Backend, Command, Controls, Pick, Raw, fallback_name, picked};
+use super::{Backend, Command, Controls, Image, Pick, Raw, fallback_name, icon_from_file, picked};
 
 /// Windows 時刻（1601 年基点、100ns 単位）と UNIX 時刻の差分（100ns 単位）。
 const EPOCH_DIFF: i64 = 116_444_736_000_000_000;
@@ -144,7 +144,7 @@ impl Backend for Session {
         read_stream(&self.properties.as_ref()?.Thumbnail().ok()?)
     }
 
-    fn app(&mut self, id: &str) -> (String, Option<Vec<u8>>, Option<String>) {
+    fn app(&mut self, id: &str) -> (String, Option<Image>, Option<String>) {
         // ストアアプリ（および登録済みアプリ）は AppInfo から名前とロゴを取得可能。ブラウザのような ID を持つ
         // デスクトップアプリ（"Chrome"、Firefox の "308046B0AF4A39CB" 等）はスタートメニューから解決する。
         // "Spotify.exe" のように ID が実行ファイル名のものはどちらでも解決できないため、ID から名前を生成する
@@ -168,7 +168,8 @@ impl Backend for Session {
                 })
                 .ok()
             })
-            .and_then(|r| read_stream(&r.into()));
+            .and_then(|r| read_stream(&r.into()))
+            .and_then(|bytes| icon_from_file(&bytes));
         (name, logo, shell.and_then(|a| a.exe))
     }
 

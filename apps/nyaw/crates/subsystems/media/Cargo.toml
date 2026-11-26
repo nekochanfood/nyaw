@@ -11,6 +11,12 @@ desktop.workspace = true
 # ジャケットおよびアプリアイコンの読み込みと背景用のぼかし処理（gpui と同一バージョン）
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
+# Linux は MPRIS（D-Bus）でプレイヤーを監視・操作する（src/linux.rs）。zbus は desktop が使う ashpd と共通。
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+# https のジャケット画像の取得（update と同じく rustls を使用し、OS の TLS に依存しない）
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
     "Foundation", "ApplicationModel", "Media_Control", "Storage_Streams", "Win32_System_WinRT",
