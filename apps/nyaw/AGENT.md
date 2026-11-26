@@ -203,12 +203,12 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 
 `installer/appimage.sh` がリリースビルドから AppImage を作成し、`.github/workflows/appimage.yml` が CI で実行する。
 
-- **ビルド環境**: AppImage は、ビルドした環境より古い glibc では起動できないため、CI は Debian 12 のコンテナ（glibc 2.36）でビルドする。画面の配信が PipeWire 0.3.65 以降の API を指定するため、これより古い PipeWire を持つディストリビューションではビルドできない。
+- **ビルド環境**: AppImage は、ビルドした環境より古い glibc では起動できないため、CI は Debian 12 のコンテナ（glibc 2.36）でビルドする。PipeWire の Rust のバインディングは、Debian 12 標準の 0.3.65 のヘッダーにない定数を参照するため、PipeWire の開発パッケージは `bookworm-backports` から導入する。実行時には標準の PipeWire を使える（`appimage.yml` が確認する）。
 - **同梱するライブラリ**: Steam Audio（`libphonon.so`）だけを実行ファイルの隣に置く。Vulkan のローダーとドライバ、ALSA、PipeWire は、実行する環境の設定やプラグインと組み合わせて動作するため同梱しない。他の共有ライブラリ（libxkbcommon、fontconfig、FreeType など）も実行する環境のものを使う。このため、これらがない環境では起動しない。
 - **AppRun**: 実行ファイルへのシンボリックリンクとする。`LD_LIBRARY_PATH` などを設定すると、nyaw が起動する子プロセスにも引き継がれる。
 - **ランタイム**: 静的リンクの type2-runtime を版と SHA-256 で固定する。実行する環境に libfuse2 は不要だが、マウントには FUSE が必要である。
 - **起動用のパス**: 実行ファイルはマウント先にあるため、アプリのパスを外部に登録する処理は `os::launch_path` を使う（[`crates/subsystems/os/AGENT.md`](crates/subsystems/os/AGENT.md)）。
-- **確認**: AppImage の構成を変更したブランチでは、push で `appimage.yml` が実行される。ビルドに使っていない Ubuntu で、VR ランタイムがない場合の終了と、仮想ディスプレイ上でのエミュレーターの動作を確認する。
+- **確認**: AppImage の構成を変更したブランチでは、push で `appimage.yml` が実行される。Ubuntu 24.04 と、標準パッケージのままの Debian 12 で、VR ランタイムがない場合の終了と、仮想ディスプレイ上でのエミュレーターの動作を確認する。
 
 ### コード規約と UI 規則
 
