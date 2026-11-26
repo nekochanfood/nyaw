@@ -134,6 +134,8 @@ const UNUSED: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
 enum Source {
+    // 作るのは DMA-BUF の取り込み（Linux のみ）だけである。
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     Image(vk::Image, vk::ImageView),
     Buffer(vk::Buffer, vk::BufferView),
 }
@@ -866,6 +868,8 @@ impl Gpu {
                     };
                     (KIND_BUFFER, params)
                 }
+                // 共有メモリ以外の置き場所（DMA-BUF）は Linux にしかない。
+                #[cfg(target_os = "linux")]
                 (Source::Buffer(..), _) => unreachable!("buffers come from host memory"),
             };
             d.begin_command_buffer(
