@@ -260,8 +260,8 @@ impl Overlay {
             let rotation = o.pose.orientation;
             let eye = self.hmd.position;
             // ドック子（ダッシュボードにはめた画面）のバーは頭からの距離でサイズ変更しない（1m 先でのサイズ固定。
-            // ダッシュボードと一体の部品として画面との比率を維持する）。
-            let docked = o.parent.is_some_and(|q| q.docked);
+            // ダッシュボードと一体の部品として画面との比率を維持する）。掴んだまま吸い付いた画面も、離すのを待たずにはめた扱い。
+            let docked = o.parent.is_some_and(|q| q.docked) || self.stuck(owner);
             let leaving = o.hidden || o.closed;
             let p = &mut self.panels[id];
             let size = if leaving {

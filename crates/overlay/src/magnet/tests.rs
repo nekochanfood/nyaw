@@ -198,6 +198,26 @@ fn a_free_screen_is_drawn_in_catches_and_docks_when_let_go() {
     assert!(ov.take_dock_snaps().is_empty());
 }
 
+/// 掴んだまま吸い付いた画面のナビゲーションバーは、離すのを待たずに固定の大きさになり、抜ければ距離に比例に戻る。
+#[test]
+fn the_nav_bar_switches_scaling_as_the_held_screen_catches_and_pops_out() {
+    let (mut vr, mut ov) = docked(true);
+    // 頭を 1m 下げて、固定（1m 先の大きさ 0.2m）と距離に比例（約 2 倍）を見分ける。
+    vr.backend.frame.hmd.position = Vec3::Z;
+    let slot = ov.panel(1).pose.position;
+    let away = undock_aside(&mut vr, &mut ov);
+    controller(&mut vr, aim_at(away), GRAB);
+    ov.tick(&mut vr);
+    assert!(ov.panel(2).size.x > 0.35);
+    pull_to(&mut vr, &mut ov, slot + Vec3::X * 0.05);
+    assert!(ov.grabbed(1) && ov.panel(1).parent.is_none());
+    let caught = ov.panel(2).size.x;
+    assert!((caught - 0.2).abs() < 1e-4, "{caught}");
+    pull_to(&mut vr, &mut ov, slot - Vec3::X * 0.5);
+    let free = ov.panel(2).size.x;
+    assert!(free > 0.35, "{free}");
+}
+
 /// ダッシュボードから呼び出してはめる（バーやナビゲーションバーのボタン。[`Overlay::set_parent`]）ときも、手ではめるときと
 /// 同じく、はまる所を少し行き過ぎてから収まる（[`Motion::Pop`]）。
 #[test]
