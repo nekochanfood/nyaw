@@ -19,8 +19,8 @@ jobs:
   changes:
     uses: ./.github/workflows/changes.yml
 
+  # name は指定しない。スキップされたジョブでは式が展開されず、式の中身が名前として表示される
   check:
-    name: ${{ matrix.task }}
     needs: changes
     if: needs.changes.outputs.web == 'true' && (github.event_name != 'pull_request' || !github.event.pull_request.draft)
     runs-on: ubuntu-latest
