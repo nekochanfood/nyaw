@@ -13,7 +13,7 @@ use vr::{Device, ExternalImage, OverlayId, Pose, VrBackend, VrError};
 enum Texture {
     Pixels(u32, u32, Vec<u8>),
     /// 表示サーバーの画像（[`Surface::store_external`]）。書き込み元のバッファを占有しないよう、送信後は保持しない。
-    External(Option<Arc<ExternalImage>>),
+    External(u32, u32, Option<Arc<ExternalImage>>),
 }
 
 /// ランタイム上の描画先。最後の画像と送信済み状態、解放状態を保持する。
@@ -68,7 +68,9 @@ impl Surface {
 
     /// 最後に受け取った画像の画素数。
     pub fn texture_size(&self) -> Option<(u32, u32)> {
-        self.texture.as_ref().map(|(w, h, _)| (*w, *h))
+        self.texture.as_ref().map(|texture| match texture {
+            Texture::Pixels(w, h, _) | Texture::External(w, h, _) => (*w, *h),
+        })
     }
 
     /// ランタイム側のオーバーレイを解放済み（[`Self::park`]）。
@@ -140,7 +142,8 @@ impl Surface {
     // ponytail: 取り込んだ画像は減衰・暗転の代替処理を受けない。OpenVR と color_scale_bias のある OpenXR は合成できる。
     pub fn store_external(&mut self, image: Arc<ExternalImage>) {
         if !self.released {
-            self.texture = Some(Texture::External(Some(image)));
+            let (width, height) = (image.width, image.height);
+            self.texture = Some(Texture::External(width, height, Some(image)));
         }
     }
 
@@ -235,7 +238,7 @@ impl Surface {
         if native && !upload {
             return;
         }
-        if let Some(Texture::External(pending)) = &mut self.texture {
+        if let Some(Texture::External(_, _, pending)) = &mut self.texture {
             if let Some(image) = pending.take()
                 && let Err(error) = vr.submit_overlay_external(self.id, &image)
             {

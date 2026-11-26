@@ -33,6 +33,8 @@ Linux 環境では、上記に加えて以下が必要です。
 ### 起動コマンド
 
 ```sh
+cd apps/nyaw
+
 # VR ランタイムを自動検出して起動
 cargo run --release
 
@@ -104,4 +106,4 @@ cargo run --release -- --novr
 本ソフトウェアは [MIT ライセンス](LICENSE-MIT) または [Apache-2.0 ライセンス](LICENSE-APACHE) の下で配布されています。
 
 絵文字グラフィックには [Twemoji](https://github.com/jdecked/twemoji) v17.0.3 の SVG を同梱しています。  
-Graphics: Twitter, Inc. and contributors / [CC BY 4.0](crates/design/twemoji/LICENSE-GRAPHICS)。
+Graphics: Twitter, Inc. and contributors / [CC BY 4.0](apps/nyaw/crates/design/twemoji/LICENSE-GRAPHICS)。

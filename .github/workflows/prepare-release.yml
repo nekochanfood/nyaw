@@ -16,6 +16,9 @@ on:
 jobs:
   prepare:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/nyaw
     permissions:
       contents: write
       pull-requests: write

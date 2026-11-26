@@ -1,0 +1,7 @@
+packages:
+  - apps/*
+  - '!**/vendor/**'
+
+# Cargo の依存も pnpm install で解決・取得する（pnpm の実験的な機能。ルート AGENT.md の「pnpm と Cargo」）
+cargo:
+  enabled: true
