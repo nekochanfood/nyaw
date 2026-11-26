@@ -14,8 +14,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    uses: ./.github/workflows/changes.yml
+
   analyze:
-    name: "repo: CodeQL (${{ matrix.language }})"
+    needs: changes
     # ドラフト状態の PR では実行をスキップ（ready_for_review 時に自動実行）
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
@@ -25,7 +28,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [rust, actions, javascript-typescript]
+        # Rust の解析は時間がかかるため、PR ではアプリに関係する変更があるときだけ行う（main と定期実行では常に行う）
+        language: ${{ fromJSON((github.event_name != 'pull_request' || needs.changes.outputs.nyaw == 'true') && '["rust","actions","javascript-typescript"]' || '["actions","javascript-typescript"]') }}
     steps:
       - uses: actions/checkout@v4
       - uses: github/codeql-action/init@v4

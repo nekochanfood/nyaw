@@ -1,2 +1,3 @@
 apps/nyaw/crates/design/twemoji/svg.bin binary
 apps/web/** text=auto eol=lf
+.github/scripts/** text eol=lf
