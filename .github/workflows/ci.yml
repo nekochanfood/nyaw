@@ -1,9 +1,12 @@
 name: CI
 
 on:
+  # ウェブサイト（web/）だけの変更ではアプリの CI を実行しない（ルート AGENT.md の「リポジトリ構成」）
   push:
+    paths-ignore: [web/**]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    paths-ignore: [web/**]
 
 # 同一ブランチ・PR への連続 push 時は先行する古い実行を自動キャンセルする。
 # main ブランチはキャッシュ保存を担うためキャンセル対象外とし、実行ごとに独立したグループを割り当てる。
