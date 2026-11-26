@@ -63,9 +63,8 @@ fn sync_popups(
                         continue;
                     }
                 };
-                // OS のメニュー自体に出入りの動きがあるので、アニメーションは付けない。掴んでも動かさない（掴むときは配信パネルを掴む）。
+                // OS のメニュー自体に出入りの動きがあるので、アニメーションは付けない。
                 overlay.set_animated(vr, panel, false);
-                overlay.set_locked(vr, panel, true);
                 overlay.set_panel_capture(panel, true);
                 if overlay.panel(parent).hidden {
                     overlay.set_hidden(vr, panel, true);

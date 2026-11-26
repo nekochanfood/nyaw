@@ -273,8 +273,9 @@ impl Overlay {
         // ロック中・ゆるく追従中のパネルは掴めない（掴みボタンは無視して普通に指す）。
         let grab_started = grab_started
             && hit.is_some_and(|h| {
-                std::iter::once(self.panels[h.0].nav_bar_of.unwrap_or(h.0))
-                    .chain(carried(&self.panels, h.0))
+                let id = held(&self.panels, h.0);
+                std::iter::once(id)
+                    .chain(carried(&self.panels, id))
                     .all(|q| self.panels[q].grabbable())
             });
 
@@ -316,8 +317,8 @@ impl Overlay {
                 }
             }
             let t = hit.map_or(0.0, |h| h.2);
-            // ナビゲーションバーを掴むと持ち主を掴む（バーは持ち主に付いてくる）。
-            let grabbed = self.panels[id].nav_bar_of.unwrap_or(id);
+            // ナビゲーションバーを掴むと持ち主を、親の面に重ねる子を掴むと親を掴む（バーは持ち主に、子は親に付いてくる）。
+            let grabbed = held(&self.panels, id);
             let (id, pivot) = grab_target(&self.panels, &self.present, grabbed, frame);
             // 大きさを変えるのは、掴んだものそのものを動かすときだけ（ダッシュボードのバーを掴んで上の画面を変えない）。
             let resize = id == grabbed && self.panels[id].resizable;

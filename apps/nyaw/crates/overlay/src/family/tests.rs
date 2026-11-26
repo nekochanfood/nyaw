@@ -602,6 +602,30 @@ fn over_child_covers_its_area_of_the_parent_and_takes_input() {
     assert!(events.iter().all(|e| e.panel == 1));
 }
 
+/// 面に重ねる子を掴むと親を掴み、子は親の面の同じ所に付いてくる。
+#[test]
+fn grabbing_an_over_child_grabs_the_parent() {
+    let (mut vr, mut ov) = with_child(false);
+    ov.set_panel_capture(0, true);
+    ov.set_panel_capture(1, true);
+    lay_over(&mut vr, &mut ov, 1, [0.5, 0.25, 0.25, 0.5]);
+    // 親から見た子の位置（掴んだ親は頭へ向くので、空間の座標では比べない）。
+    let local = |ov: &Overlay| {
+        ov.panel(0)
+            .pose
+            .inverse()
+            .transform_point(ov.panel(1).pose.position)
+    };
+    let before = local(&ov);
+    controller(&mut vr, at(0.125, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+    ov.tick(&mut vr);
+    assert!(ov.grabbed(0) && !ov.grabbed(1));
+    controller(&mut vr, at(1.125, 0.0, 0.0), &[("squeeze/value", 1.0)]);
+    settle(&mut vr, &mut ov);
+    assert!(ov.panel(0).pose.position.x > 0.9);
+    assert!(local(&ov).abs_diff_eq(before, 1e-4));
+}
+
 /// 範囲と縦横比が違っても引き伸ばさず収める。影の余白がある子は、余白を除いた面を範囲に合わせる。
 #[test]
 fn over_child_fits_its_face_into_the_area_without_stretching() {
