@@ -74,7 +74,7 @@ cargo run --release -- --novr
 <tr><td>画面・ウィンドウの配信</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡<a href="#note-linux-desktop"><sup>*7</sup></a></td><td align="center">🟡</td><td align="center">🟡</td></tr>
 <tr><td>配信中の画面・ウィンドウへの操作</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡<a href="#note-linux-desktop"><sup>*7</sup></a></td><td align="center">🟡</td><td align="center">🟡</td></tr>
 <tr><td>アプリの一覧と起動</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
-<tr><td>再生中のメディアの表示と操作</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🔴</td><td align="center">🔴</td><td align="center">🔴</td></tr>
+<tr><td>再生中のメディアの表示と操作</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢<a href="#note-linux-media"><sup>*8</sup></a></td><td align="center">🟢</td><td align="center">🟡</td></tr>
 <tr><td>空間音響（Steam Audio の HRTF）</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
 <tr><td>視野に合わせた HUD の配置</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
 <tr><td>距離に応じた描画解像度の調整（LOD）</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟢</td><td align="center">🟡</td></tr>
@@ -87,7 +87,7 @@ cargo run --release -- --novr
 </tbody>
 </table>
 
-<a name="note-linux"></a>\*1 Linux では、HMD を接続しない SteamVR（null ドライバ）にオーバーレイとして接続し、パネルが SteamVR のコンポジタに合成されることを確認しました。共通実装の列は、エミュレーターを用いたテストで検証しています。実機の HMD とコントローラは未検証であり、OpenVR の列ではそれらを必要とする機能を 🟡 としています。🔴 の機能は、OS との連携（通知、アプリの一覧、再生中のメディアなど）を Windows でのみ実装しています。
+<a name="note-linux"></a>\*1 Linux では、HMD を接続しない SteamVR（null ドライバ）にオーバーレイとして接続し、パネルが SteamVR のコンポジタに合成されることを確認しました。共通実装の列は、エミュレーターを用いたテストで検証しています。実機の HMD とコントローラは未検証であり、OpenVR の列ではそれらを必要とする機能を 🟡 としています。🔴 の機能は、OS との連携（通知、アプリの一覧など）を Windows でのみ実装しています。
 
 <a name="note-openxr"></a>\*2 OpenXR のオーバーレイには `XR_EXTX_overlay` に対応したランタイム（Monado など）が必要です。SteamVR の OpenXR ランタイムはこの拡張に対応していないため、SteamVR では `--openxr` を指定しても OpenVR で接続します。OpenXR は Windows の Monado（HMD のシミュレーション）でのみ検証しており、実機のコントローラと Linux での動作は未検証です。
 
@@ -100,6 +100,8 @@ cargo run --release -- --novr
 <a name="note-update"></a>\*6 アップデートは Windows のインストーラーで適用します。Linux 向けの配布物はまだないため、Linux では更新を確認しません。
 
 <a name="note-linux-desktop"></a>\*7 Linux で配信できるのはディスプレイ（画面）のみで、個別のウィンドウは配信できません。表示サーバーに応じて、X11 では XSHM と XTest、wlroots 系のコンポジタでは ext-image-copy-capture（無ければ wlr-screencopy）と仮想ポインタ・仮想キーボード、その他の Wayland（KDE Plasma、GNOME など）では xdg-desktop-portal と PipeWire を使います。portal では初回にデスクトップに表示される確認画面で、共有するディスプレイを選んで許可する必要があります（パネルには許可待ちである旨を表示します）。X11、KDE Plasma、niri、Hyprland、ShojiWM で検証しました。wlr-screencopy で取り込む場合は OS のカーソルの画像を取得できないため、nyaw のポインタを表示します。portal ではキー配列に無い文字を入力できない場合があります。
+
+<a name="note-linux-media"></a>\*8 Linux では、MPRIS（D-Bus）に対応したプレイヤーを表示して操作します。KDE Plasma で Spotify と Chromium 系のブラウザ（Helium）を使い、情報の取得を検証しました。再生・一時停止、シーク、曲送り、曲戻しは Spotify で検証しました。アプリの画面を前面に出す操作は、プレイヤーへの要求が届くことまでを確認しており、ウィンドウが前面に出ることは未検証です。アプリのアイコンは、`.desktop` ファイルが指す PNG（絶対パス、hicolor テーマ、pixmaps）がある場合に表示します。
 
 ## ライセンス
 

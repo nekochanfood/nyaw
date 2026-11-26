@@ -16,7 +16,7 @@ Windows 環境では Windows Graphics Capture (WGC) および Synthetic Pointer 
 
 ## インストール済みアプリの解決と起動
 
-アプリ ID（Windows は AppUserModelId）からアプリの情報を引く処理と起動は、本サブシステムだけが実装する。`media`（再生中のアプリの名前と実行ファイル名）と `notifications`（通知のアイコンと、通知を押したときの起動）も本サブシステムの関数を呼ぶ。他の OS に対応する場合は、ここだけを実装すればよい。
+アプリ ID（Windows は AppUserModelId）からアプリの情報を引く処理と起動は、本サブシステムだけが実装する。`media`（再生中のアプリの情報。Windows は名前と実行ファイル名、Linux は名前とアイコン）と `notifications`（通知のアイコンと、通知を押したときの起動）も本サブシステムの関数を呼ぶ。他の OS に対応する場合は、ここだけを実装すればよい。
 
 - `InstalledApps::refresh`: スタートメニューのアプリをすべて列挙する（アイコンを読み込むため数秒かかる）。
 - `installed_app(id)` / `app_icon(id)`: 1 つのアプリの情報、またはアイコンだけを引く。
