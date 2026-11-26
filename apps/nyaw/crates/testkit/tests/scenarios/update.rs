@@ -86,7 +86,7 @@ fn github() -> String {
 static LAUNCHED: Mutex<Option<PathBuf>> = Mutex::new(None);
 
 /// Stands in for running the installer (the real one would replace this test binary).
-fn launch(path: &Path) -> Result<(), String> {
+fn launch(path: &Path, _: &updater::Installer) -> Result<(), String> {
     *LAUNCHED.lock().unwrap() = Some(path.to_owned());
     Ok(())
 }
@@ -230,7 +230,9 @@ fn real_github_release_installs_on_request(cx: &mut TestAppContext) {
     let mut kit = NoVrKit::new(cx, move |_, cx| {
         cx.set_global(updater::Updater {
             build: from,
-            launch: |path| updater::start_installer(path, ["--novr".to_owned()]),
+            launch: |path, installer| {
+                updater::start_installer(path, installer, ["--novr".to_owned()])
+            },
             ..Default::default()
         });
         Settings::new(0)

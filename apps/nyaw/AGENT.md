@@ -194,10 +194,24 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 
 本プロジェクトは Calendar Versioning（CalVer（現在 `2026.0.4-dev.0`、形式: `YYYY.MINOR.MICRO[-dev.PATCH]`））を採用しており、`Cargo.toml` の `[workspace.package]` で一括管理する。
 
-- **タグ命名規則**: リリースタグは `v<CalVer>`（安定版）または `v<CalVer>-<チャネル名>.<番号>`（プレリリース版）とする。
-- **正式リリースの流れ**: GitHub Actions の `prepare-release.yml` ワークフローにバージョン番号を指定して実行すると、バージョン更新の Pull Request が自動生成される。この PR をマージすると、`release.yml` がインストーラーをビルドし、GitHub Releases に正式版が発行される。発行完了後、`main` ブランチのバージョン番号は自動的に次の版の `-dev.0` へ進む。
+- **タグ命名規則**: リリースタグは `v<CalVer>`（安定版）または `v<CalVer>-<チャネル名>.<番号>`（プレリリース版）とする。チャネル名は英数字に限る（`release.yml` と `prepare-release.yml` が検査する）。Linux のパッケージのバージョンは非 ASCII 文字を使えず、ハイフンは区切りになるためである。パッケージのバージョンは、deb と rpm では `2026.0.4~beta.1`、pacman では `2026.0.4beta.1` となる。どちらも正式版 `2026.0.4` より古いと判定される。`patch` のように正式版より後に発行するチャネルも同じ扱いになるため、パッケージマネージャーで手動で導入する場合はダウングレードの指定が必要になることがある（アプリの更新はこの指定を含む）。
+- **正式リリースの流れ**: GitHub Actions の `prepare-release.yml` ワークフローにバージョン番号を指定して実行すると、バージョン更新の Pull Request が自動生成される。この PR をマージすると、`release.yml` が Windows のインストーラーと Linux の AppImage を用意し、両方が揃った場合に限り GitHub Releases に正式版を発行する。PR のブランチでビルドした成果物が同じ内容のコミットのものであれば、再ビルドせずに添付する。発行完了後、`main` ブランチのバージョン番号は自動的に次の版の `-dev.0` へ進む。
 - **プレリリースの発行**: ブランチ上で Actions の `release.yml` をチャネル名（alpha や beta など）を指定して手動実行すると、プレリリースが発行される。この際、`Cargo.toml` のバージョン表記は変更しない。
 - **更新判定の基準**: アプリケーション本体による新旧判定は、バージョン文字列ではなくビルド番号（コミット番号およびビルドメタデータ）の大小比較によって行う。
+
+### Linux の配布
+
+`installer/linux.sh` がリリースビルドから AppImage、tar.gz、deb、rpm、pkg.tar.zst を作成し、`.github/workflows/linux.yml` が CI で実行する。deb、rpm、pkg.tar.zst の定義は `installer/nfpm.yaml` にまとめる。
+
+- **ビルド環境**: CI は、形式ごとのディストリビューションのコンテナで並列にビルドする。AppImage、tar.gz、deb は Debian 12、rpm は Fedora、pkg.tar.zst は Arch Linux でビルドする。ビルドした環境より古い glibc では起動できないため、各パッケージはバイナリが参照する最も新しい glibc の版を依存関係に記載する。広い環境を対象とする AppImage と tar.gz は、最も古い Debian 12（glibc 2.36）でビルドする。Debian 12 では、PipeWire の Rust のバインディングは、Debian 12 標準の 0.3.65 のヘッダーにない定数を参照するため、PipeWire の開発パッケージは `bookworm-backports` から導入する。実行時には標準の PipeWire を使える（`linux.yml` が確認する）。
+- **同梱するライブラリ**: Steam Audio（`libphonon.so`）だけを実行ファイルの隣に置く。Vulkan のローダーとドライバ、ALSA、PipeWire は、実行する環境の設定やプラグインと組み合わせて動作するため同梱しない。他の共有ライブラリも実行する環境のものを使い、パッケージは依存関係として宣言する。依存関係には、リンクの一覧に現れない、実行時に読み込むライブラリ（Vulkan のローダー、エミュレーターのウィンドウが使う X11 と Wayland のライブラリ）も含める。
+- **配置**: パッケージは `/usr/lib/nyaw/` に実行ファイル、Steam Audio、更新情報を置き、`/usr/bin/nyaw` をシンボリックリンクにする。
+- **AppImage**: AppRun は実行ファイルへのシンボリックリンクとする。`LD_LIBRARY_PATH` などを設定すると、nyaw が起動する子プロセスにも引き継がれる。ランタイムは静的リンクの type2-runtime であり、実行する環境に libfuse2 は不要だが、マウントには FUSE が必要である。
+- **起動用のパス**: AppImage の実行ファイルはマウント先にあるため、アプリのパスを外部に登録する処理は `os::launch_path` を使う（[`crates/subsystems/os/AGENT.md`](crates/subsystems/os/AGENT.md)）。
+- **更新情報**: AppImage は、ランタイムの `.upd_info` セクションに AppImage の仕様の更新情報（`gh-releases-zsync`）を書き込み、差分更新の索引（`.zsync`）をリリースに添付する。他の形式は、同じ書式の `update-info` ファイルを実行ファイルの隣に置く。対象のリリースの範囲は、正式版では `latest`、プレリリース版では `latest-all` とする。更新の仕組みは [`crates/subsystems/update/AGENT.md`](crates/subsystems/update/AGENT.md) を参照する。
+- **ファイル名**: アセット名はアプリの更新が配布形式の判別に使う。名前を変える場合は、`update` クレートの `Package` も合わせて変える。
+- **外部の道具**: type2-runtime と nfpm は、版と SHA-256 を `installer/linux.sh` で固定する。
+- **確認**: 配布物の構成や更新の処理を変更したブランチでは、push で `linux.yml` が実行される。`installer/smoke.sh` が各形式を Ubuntu、Debian、Fedora、Arch Linux に導入し、VR ランタイムがない場合の終了、仮想ディスプレイ上でのエミュレーターの動作、Steam Audio の読み込みを確認する。パッケージは、更新で使うインストールのスクリプトで導入する。
 
 ### コード規約と UI 規則
 

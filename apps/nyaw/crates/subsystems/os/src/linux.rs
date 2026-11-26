@@ -1,5 +1,6 @@
 //! Linux の保存先・ランタイム検出・タイマー・GPU 設定。保存先は XDG Base Directory に従う。
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 
 /// Linux の `sleep` は hrtimer によりナノ秒単位の精度を持つため、タイマーの精度は変更しない。
 pub fn precise_timers() {}
@@ -50,6 +51,34 @@ pub fn error_dialog(title: &str, text: &str) {
         // ダイアログを表示できない場合は、ログ（標準エラー出力とファイル）にのみ記録する。
         logger::error!("cannot show an error dialog", title = title, text = text);
     }
+}
+
+/// このアプリを次回起動するときに指定するパス。AppImage の実行ファイルは一時的なマウント先にあり、終了すると
+/// 参照できなくなるため、AppImage ファイル（`APPIMAGE`）を返す。それ以外は実行ファイルを返す。
+pub fn launch_path() -> io::Result<PathBuf> {
+    let exe = std::env::current_exe()?;
+    Ok(appimage_of(&exe).unwrap_or(exe))
+}
+
+/// 実行中の nyaw を収める AppImage ファイル。AppImage から起動していなければ `None`。
+pub fn running_appimage() -> Option<PathBuf> {
+    appimage_of(&std::env::current_exe().ok()?)
+}
+
+fn appimage_of(exe: &Path) -> Option<PathBuf> {
+    containing_appimage(exe, env_path("APPIMAGE"), env_path("APPDIR"))
+}
+
+/// `exe` を収める AppImage。2 つの環境変数は子プロセスにも引き継がれるため、`exe` が `appdir` の下にある場合に限る。
+fn containing_appimage(
+    exe: &Path,
+    appimage: Option<PathBuf>,
+    appdir: Option<PathBuf>,
+) -> Option<PathBuf> {
+    let appdir = appdir?;
+    // `current_exe` はシンボリックリンクを解決したパスを返すため、`appdir` も解決して比較する。
+    let appdir = appdir.canonicalize().unwrap_or(appdir);
+    appimage.filter(|_| exe.starts_with(appdir))
 }
 
 fn env_path(key: &str) -> Option<PathBuf> {
@@ -173,6 +202,24 @@ mod tests {
                 ["/home/u/.local/share", "/usr/local/share", "/usr/share"].map(PathBuf::from)
             );
         }
+    }
+
+    #[test]
+    fn an_appimage_is_launched_by_its_own_file() {
+        let appimage = Some(PathBuf::from("/home/u/nyaw.AppImage"));
+        let appdir = Some(PathBuf::from("/tmp/.mount_nyawXXXX"));
+        let inside = Path::new("/tmp/.mount_nyawXXXX/usr/bin/nyaw");
+        assert_eq!(
+            containing_appimage(inside, appimage.clone(), appdir.clone()),
+            appimage
+        );
+        assert_eq!(
+            containing_appimage(Path::new("/usr/bin/nyaw"), appimage.clone(), appdir.clone()),
+            None,
+            "別の AppImage から起動された場合は、引き継いだ環境変数を使わない"
+        );
+        assert_eq!(containing_appimage(inside, appimage, None), None);
+        assert_eq!(containing_appimage(inside, None, appdir), None);
     }
 
     #[test]

@@ -1,6 +1,6 @@
-//! リリースの取得とインストーラーの実行。GitHub のリリース一覧を取得してパースし、インストーラーをダウンロードして
-//! サイズと SHA-256 を検証し、インストーラーを起動する。通信・ファイル・プロセスを扱うため、上位層（`updater`）はこれを呼ぶだけで、
-//! OS の API を直接使わない。インストーラーの形式（Inno Setup）とファイル名の規則は、このクレートの中だけで扱う。
+//! リリースの取得と更新の適用。GitHub のリリース一覧を取得してパースし、実行中のビルドと同じ配布形式の
+//! アセット（インストーラー）をダウンロードしてサイズと SHA-256 を検証し、適用する。通信・ファイル・プロセスを扱うため、
+//! 上位層（`updater`）はこれを呼ぶだけで、OS の API を直接使わない。配布形式とファイル名の規則は、このクレートの中だけで扱う。
 
 use std::fmt::Display;
 use std::fs;
@@ -14,6 +14,10 @@ use sha2::{Digest, Sha256};
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod fake;
+#[cfg(target_os = "linux")]
+mod linux;
+mod package;
+pub use package::{Package, UpdateInfo};
 
 /// リリース一覧のサイズと、インストーラーのサイズ上限。
 const MAX_LIST: u64 = 4 << 20;
@@ -49,14 +53,6 @@ pub struct Installer {
     pub sha256: String,
 }
 
-/// リリースのインストーラーか判定する（`nyaw-<バージョン>-setup.exe`。`installer/nyaw.iss`）。パス区切りを含む名前はダウンロード先外に到達するため除外する。
-pub fn is_installer(name: &str) -> bool {
-    name.len() > "nyaw--setup.exe".len()
-        && name.starts_with("nyaw-")
-        && name.ends_with("-setup.exe")
-        && !name.contains(['/', '\\'])
-}
-
 /// リリースノート末尾の非表示注釈 `<!-- nyaw-build: <番号> -->`（リリースワークフローが追加する）からビルド番号を読み取る。
 /// ファイル名には含めない。GitHub も nyaw の Markdown も HTML コメントをレンダリングしない。
 pub fn notes_build(notes: &str) -> Option<u32> {
@@ -87,8 +83,9 @@ struct ApiAsset {
     digest: Option<String>,
 }
 
-/// GitHub のリリース一覧（API の JSON）をパースする。下書きと、インストーラー・SHA-256・ビルド番号のいずれかが欠けたものは除外する。
-pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
+/// GitHub のリリース一覧（API の JSON）をパースする。下書きと、`package` のインストーラー・SHA-256・ビルド番号の
+/// いずれかが欠けたものは除外する。
+pub fn parse_releases(json: &[u8], package: Package) -> Result<Vec<Release>, String> {
     let list: Vec<ApiRelease> =
         serde_json::from_slice(json).map_err(|e| format!("cannot read the release list: {e}"))?;
     Ok(list
@@ -96,7 +93,7 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
         .filter(|r| !r.draft)
         .filter_map(|r| {
             let build = notes_build(r.body.as_deref()?)?;
-            let asset = r.assets.iter().find(|a| is_installer(&a.name))?;
+            let asset = r.assets.iter().find(|a| package.matches(&a.name))?;
             let sha256 = asset.digest.as_deref()?.strip_prefix("sha256:")?.to_owned();
             Some(Release {
                 version: r
@@ -124,15 +121,35 @@ pub fn parse_releases(json: &[u8]) -> Result<Vec<Release>, String> {
         .collect())
 }
 
-/// リリース一覧を返す GitHub API の URL（リポジトリは Cargo.toml の `repository`）。
+/// 更新の検証用に、リリース一覧の URL を差し替える環境変数。ループバックの URL だけを受け付ける。
+const URL_OVERRIDE: &str = "NYAW_UPDATE_URL";
+
+/// `http://127.0.0.1:<ポート>/...` の形式の URL。それ以外のホストは、差し替え先として使わない。
+fn loopback(url: String) -> Option<String> {
+    let (port, _) = url.strip_prefix("http://127.0.0.1:")?.split_once('/')?;
+    (!port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())).then_some(url)
+}
+
+/// リリース一覧を返す GitHub API の URL。リポジトリは、配布物の更新情報（[`UpdateInfo`]）があればその値、
+/// なければ Cargo.toml の `repository` とする。環境変数 `NYAW_UPDATE_URL` にループバックの URL があれば、その値を返す。
 pub fn releases_url() -> String {
-    let repo = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
-    let api = repo.replacen("https://github.com/", "https://api.github.com/repos/", 1);
-    format!("{api}/releases?per_page=30")
+    if let Some(url) = std::env::var(URL_OVERRIDE).ok().and_then(loopback) {
+        return url;
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(info) = UpdateInfo::installed() {
+        return github_releases(&info.repository);
+    }
+    let repository = env!("CARGO_PKG_REPOSITORY").trim_end_matches('/');
+    github_releases(repository.trim_start_matches("https://github.com/"))
+}
+
+fn github_releases(repository: &str) -> String {
+    format!("https://api.github.com/repos/{repository}/releases?per_page=30")
 }
 
 /// 一覧 `url` のリリースを取得する（どれを推奨するかは呼び出し側が決める）。ネットワークアクセスを伴うため別スレッドで呼び出す。
-pub fn check(url: &str) -> Result<Vec<Release>, String> {
+pub fn check(url: &str, package: Package) -> Result<Vec<Release>, String> {
     let mut response = agent(LIST_TIMEOUT)
         .get(url)
         .header("Accept", "application/vnd.github+json")
@@ -148,14 +165,14 @@ pub fn check(url: &str) -> Result<Vec<Release>, String> {
     if body.len() as u64 > MAX_LIST {
         return Err(format!("the release list is larger than {MAX_LIST} bytes"));
     }
-    parse_releases(&body)
+    parse_releases(&body, package)
 }
 
 /// `release` のインストーラーを `dir` にダウンロードし、サイズと SHA-256 を検証する。ダウンロード済みバイト数を `progress` に書き込む。
 /// 不一致の場合はファイルを削除してエラーを返す。ネットワークとファイルアクセスを伴うため別スレッドで呼び出す。
 pub fn download(release: &Release, dir: &Path, progress: &AtomicU64) -> Result<PathBuf, String> {
     let installer = &release.installer;
-    if !is_installer(&installer.name) || installer.size > MAX_INSTALLER {
+    if Package::of(&installer.name).is_none() || installer.size > MAX_INSTALLER {
         return Err(format!("refusing to download {}", installer.name));
     }
     let mut response = agent(DOWNLOAD_TIMEOUT)
@@ -218,21 +235,35 @@ pub fn installer_args(pid: u32, relaunch: impl IntoIterator<Item = String>) -> V
     args
 }
 
-/// ダウンロード済みインストーラーを実行し、完了後に現在と同じ引数で再起動させる（完了を待たない。待機するのはインストーラー側）。
-pub fn run_installer(path: &Path) -> Result<(), String> {
-    start_installer(path, std::env::args().skip(1))
+/// ダウンロード済みの `installer`（`path`）を適用し、現在と同じ引数で再起動させる。呼び出し側は、成功後にアプリを終了する。
+/// Linux のパッケージは認証とインストールの完了まで戻らないため、別スレッドで呼び出す。
+pub fn run_installer(path: &Path, installer: &Installer) -> Result<(), String> {
+    start_installer(path, installer, std::env::args().skip(1))
 }
 
-/// ダウンロード済みインストーラーを実行し、完了後に `relaunch` の引数で再起動させる。
+/// [`run_installer`] と同じ処理を行い、`relaunch` の引数で再起動させる。Windows ではインストーラーを起動して完了を待たずに
+/// 戻る（インストーラーがアプリの終了を待つ）。
 pub fn start_installer(
     path: &Path,
+    installer: &Installer,
     relaunch: impl IntoIterator<Item = String>,
 ) -> Result<(), String> {
-    std::process::Command::new(path)
-        .args(installer_args(std::process::id(), relaunch))
-        .spawn()
-        .map(drop)
-        .map_err(|e| format!("cannot start {}: {e}", path.display()))
+    let package = Package::of(&installer.name)
+        .ok_or_else(|| format!("unknown package: {}", installer.name))?;
+    if package == Package::WindowsSetup {
+        return std::process::Command::new(path)
+            .args(installer_args(std::process::id(), relaunch))
+            .spawn()
+            .map(drop)
+            .map_err(|e| format!("cannot start {}: {e}", path.display()));
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let exe = linux::apply(package, path, installer)?;
+        linux::relaunch(&exe, relaunch)
+    }
+    #[cfg(not(target_os = "linux"))]
+    Err(format!("{} cannot be installed on this OS", installer.name))
 }
 
 fn agent(timeout: Duration) -> ureq::Agent {
@@ -248,8 +279,12 @@ fn err(e: impl Display) -> String {
     e.to_string()
 }
 
-/// インストーラーの既定のダウンロード先（一時ディレクトリの下）。
+/// インストーラーの既定のダウンロード先。Linux の一時ディレクトリは利用者間で共有されるため、利用者のデータの下にする。
 pub fn download_dir() -> PathBuf {
+    #[cfg(target_os = "linux")]
+    if let Some(dir) = os::data_dir() {
+        return dir.join("update");
+    }
     std::env::temp_dir().join("nyaw-update")
 }
 

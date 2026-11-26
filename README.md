@@ -48,6 +48,42 @@ cargo run --release -- --openxr
 cargo run --release -- --novr
 ```
 
+## Linux の配布物
+
+Linux（x86_64）向けには、次の形式をリリースに添付します。
+
+| ファイル | 対象 | 導入と起動 |
+|---|---|---|
+| `nyaw-<版>-x86_64.AppImage` | 各ディストリビューション | `chmod +x` で実行権限を付けて起動します |
+| `nyaw-<版>-x86_64.tar.gz` | 各ディストリビューション | 展開して `nyaw/nyaw` を起動します |
+| `nyaw-<版>-amd64.deb` | Debian、Ubuntu | `sudo apt install ./nyaw-<版>-amd64.deb` |
+| `nyaw-<版>-x86_64.rpm` | Fedora など | `sudo dnf install ./nyaw-<版>-x86_64.rpm` |
+| `nyaw-<版>-x86_64.pkg.tar.zst` | Arch Linux | `sudo pacman -U nyaw-<版>-x86_64.pkg.tar.zst` |
+
+AppImage、tar.gz、deb は Debian 12 でビルドしていて、動作には Debian 12 相当以降の環境（glibc 2.36 以降）が必要です。rpm は Fedora 44、pkg.tar.zst は更新済みの Arch Linux でビルドするため、それより古い glibc の環境にはインストールできません。いずれも Vulkan に対応した GPU ドライバが必要です。deb、rpm、pkg.tar.zst は、必要なライブラリをパッケージの依存関係として導入します。AppImage と tar.gz を使う場合は、次のライブラリが導入されている必要があります。
+
+- ALSA、PipeWire、libxkbcommon、Vulkan のローダー
+- libX11、libXcursor、libwayland-client、libwayland-cursor（エミュレーターのウィンドウで使います）
+
+AppImage の起動には FUSE（`fusermount3` または `fusermount`）も必要です。FUSE を使えない環境では、`--appimage-extract-and-run` を付けると展開してから起動します。
+
+### アップデート
+
+どの形式でも、設定のアップデート画面から更新できます。画面を起動せずに更新する場合は、`nyaw --update` を実行します。更新後は、`--update` を除いた引数で起動し直します。
+
+- **AppImage、tar.gz**: ファイルを置き換えます。置き場所への書き込み権限が必要です。AppImage はファイル名を変えずに内容を置き換えるため、ファイル名の版は更新されません。
+- **deb、rpm、pkg.tar.zst**: パッケージマネージャーでインストールします。デスクトップに表示される認証の画面で許可してください。polkit の認証エージェントが必要です。apt などのリポジトリは提供していません。
+
+AppImage には、AppImageUpdate などの外部ツール向けの更新情報も埋め込んでいます。他の形式には、同じ書式の更新情報を `update-info` ファイルとして同梱しています。
+
+### SteamVR の自動起動
+
+設定画面のほか、SteamVR の実行中に `nyaw --steamvr-autostart=on`（無効にする場合は `off`）を実行して切り替えられます。登録されるのは、有効にした時点のファイルのパスです。AppImage や tar.gz の置き場所を移動した場合や、別の名前のファイルに差し替えた場合は、一度無効にしてから有効にし直してください。
+
+### 配布物の作成
+
+`apps/nyaw/` で `cargo build --release` を実行してから、`installer/linux.sh` を実行します。引数で形式（`appimage`、`tar`、`deb`、`rpm`、`pacman`）を指定でき、省略するとすべて作成します。AppImage の作成には `mksquashfs` と `zsyncmake` が必要です。作成した配布物が要求する glibc の版は、ビルドした環境によって決まります。
+
 ## 対応状況
 
 🟢 は対応済み、🟡 は一部のみ対応または未検証、🔴 は未対応、- は仕様上対応できないことを表します。各 OS の「共通実装」は VR ランタイムに依存しない部分（画面、ロジック、OS との連携）の対応状況を、「OpenVR」と「OpenXR」はその OS でそのランタイムを使用したときの対応状況を表します。
@@ -97,7 +133,7 @@ cargo run --release -- --novr
 
 <a name="note-runtime-api"></a>\*5 OpenXR には、デバイスの電池残量の取得、ランタイムへのアプリの自動起動の登録、他のアプリへの入力の遮断を行う標準の API がありません。
 
-<a name="note-update"></a>\*6 アップデートは Windows のインストーラーで適用します。Linux 向けの配布物はまだないため、Linux では更新を確認しません。
+<a name="note-update"></a>\*6 アップデートは Windows のインストーラーで適用します。Linux の AppImage は自動更新に未対応のため、Linux では更新を確認しません。
 
 <a name="note-linux-desktop"></a>\*7 Linux で配信できるのはディスプレイ（画面）のみで、個別のウィンドウは配信できません。表示サーバーに応じて、X11 では XSHM と XTest、wlroots 系のコンポジタでは ext-image-copy-capture（無ければ wlr-screencopy）と仮想ポインタ・仮想キーボード、その他の Wayland（KDE Plasma、GNOME など）では xdg-desktop-portal と PipeWire を使います。portal では初回にデスクトップに表示される確認画面で、共有するディスプレイを選んで許可する必要があります（パネルには許可待ちである旨を表示します）。X11、KDE Plasma、niri、Hyprland、ShojiWM で検証しました。wlr-screencopy で取り込む場合は OS のカーソルの画像を取得できないため、nyaw のポインタを表示します。portal ではキー配列に無い文字を入力できない場合があります。
 

@@ -8,7 +8,7 @@ pub mod keyboard;
 mod windows;
 #[cfg(windows)]
 pub use windows::{
-    attach_console, config_dir, data_dir, error_dialog, high_gpu_priority, log_dir,
+    attach_console, config_dir, data_dir, error_dialog, high_gpu_priority, launch_path, log_dir,
     openvr_paths_file, openxr_runtime_manifest, precise_timers, ui_language,
 };
 
@@ -17,7 +17,8 @@ mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{
     attach_console, config_dir, data_dir, data_search_dirs, error_dialog, high_gpu_priority,
-    log_dir, openvr_paths_file, openxr_runtime_manifest, precise_timers, ui_language,
+    launch_path, log_dir, openvr_paths_file, openxr_runtime_manifest, precise_timers,
+    running_appimage, ui_language,
 };
 
 #[cfg(not(any(windows, target_os = "linux")))]

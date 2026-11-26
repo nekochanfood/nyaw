@@ -65,7 +65,7 @@ impl App {
         self.auto_launch
     }
 
-    /// 有効化時は、この実行ファイルを起動する vrmanifest を書き出して再登録してから有効化する。無効化時は登録を残す（識別を維持する）。
+    /// 有効化時は、このアプリを起動する vrmanifest を書き出して再登録してから有効化する。無効化時は登録を残す（識別を維持する）。
     pub fn set_auto_launch(&mut self, on: bool) -> Result<(), VrError> {
         let t = unsafe { &*self.table };
         if on {
@@ -90,7 +90,7 @@ impl App {
 
 /// `os::config_dir()/openvr/<アプリの名前>.vrmanifest` に書き出し、SteamVR に恒久的に登録する。
 fn register_manifest(t: &sys::VR_IVRApplications_FnTable) -> Result<PathBuf, VrError> {
-    let exe = std::env::current_exe().map_err(|e| VrError::Runtime(format!("current_exe: {e}")))?;
+    let exe = os::launch_path().map_err(|e| VrError::Runtime(format!("launch path: {e}")))?;
     let path = os::config_dir()
         .ok_or_else(|| VrError::Runtime("config directory unknown".into()))?
         .join("openvr")
