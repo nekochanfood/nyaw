@@ -1,6 +1,7 @@
 name: web CI
 
-# ウェブサイト（apps/web/）の検査。参照するアプリ側の資産が変わったときも実行する
+# ウェブサイト（apps/web/）の検査。参照するアプリ側の資産が変わったときも実行する。
+# 実行するのは、ドラフトでない PR の更新と main への push だけ（作業ブランチへの push では実行しない）
 on:
   push:
     branches: [main]
@@ -13,6 +14,7 @@ on:
       - pnpm-workspace.yaml
       - .github/workflows/web.yml
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
     paths: *paths
 
 concurrency:
@@ -25,6 +27,7 @@ permissions:
 jobs:
   check:
     name: "web: ${{ matrix.task }}"
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     runs-on: ubuntu-latest
     strategy:
       # 1 つが失敗しても、ほかの検査の結果は出す
