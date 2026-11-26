@@ -17,7 +17,10 @@ check true false apps/nyaw/crates/ui/src/lib.rs
 check true false apps/nyaw/Cargo.lock .github/workflows/ci.yml
 check true true apps/nyaw/crates/design/tokens.json
 check true true assets/logos/Logo_Full_Dark.svg
-check true true .github/scripts/changes.sh
+check true true .github/workflows/changes.yml
+# CI の補助スクリプトは、それぞれのテストで確かめる（判定の規則は changes ジョブが毎回テストする）
+check false false .github/scripts/triage.sh .github/scripts/triage.test.sh .github/workflows/triage.yml
+check false false .github/scripts/changes.sh .github/scripts/changes.test.sh
 check true true apps/web/AGENT.md apps/nyaw/src/main.rs
 check false false README.md AGENT.md .github/workflows/release.yml
 check false false ""
