@@ -22,6 +22,7 @@ mod family;
 mod frame;
 mod geometry;
 mod hand;
+mod layers;
 mod magnet;
 mod options;
 mod panels;
@@ -61,12 +62,16 @@ pub struct Parent {
     /// `slot` 子で、他にスロット子（はめ込み画面）があればその上端の上に積む（なければ親の上端）。積み先の
     /// 変更時は滑らかに遷移する。ダッシュボード上の通知など、はめ込み画面と並べて上に表示するもの。
     pub stack: bool,
+    /// 親の面の一部に重ねる子。値は親の面の左上を原点、面の幅・高さを 1 とした範囲（`[x, y, 幅, 高さ]`。面の外へ
+    /// はみ出してよい）。子の面（影の余白を除く）を、子の解像度の縦横比のままこの範囲に収まる最大の大きさで中央に置く。
+    /// 位置と大きさは毎 tick 範囲に合わせ直すので、掴んで子だけを動かすことはできない。親を暗転させず入力も止めない。
+    pub over: Option<[f32; 4]>,
 }
 
 impl Parent {
-    /// 親を暗転させ入力を止める子か（ダイアログ等）。表示専用の子・固定子は止めない。
+    /// 親を暗転させ入力を止める子か（ダイアログ等）。表示専用の子・固定子・面に重ねる子は止めない。
     fn blocks(&self) -> bool {
-        !self.hud && !self.docked
+        !self.hud && !self.docked && self.over.is_none()
     }
 }
 
@@ -135,6 +140,10 @@ pub struct Panel {
     /// 角を掴んで大きさを変えている間の、代わりの板の出具合（[`Overlay::place_stand_ins`]）。中身の不透明度は 1 からこれを引いた割合。
     stand_in: f32,
     surface: Surface,
+    /// 描画順を決めるのに使う頭からの距離（m。急には動かさない。[`Overlay::place_layers`]）。
+    depth: Option<f32>,
+    /// 重なる下のパネルより手前にするために、`pose` を要望の位置から面の手前へずらした量（m。[`Overlay::place_layers`]）。
+    lift: f32,
     /// 今 tick で追従させるデバイスと相対姿勢。ランタイムに委譲可能ならそうする。
     follow: Option<(Device, Pose)>,
     /// 頭の向きに緩やかに追従する（[`Overlay::set_lazy_follow`]）。取り付けより優先する。
@@ -199,15 +208,17 @@ const CURSOR_LIFT: f32 = LIFT_STEP * 2.0;
 /// 1mm は 10m 先でも 24bit 深度バッファで約 8 段の差がある。
 // ponytail: 固定値。実機でちらつくなら拡大する。
 const LIFT_STEP: f32 = 0.001;
-/// 描画順。最奥が空間全体の暗転幕（[`Overlay::set_veil`]）、次にドックヒント（[`Pointer::Dock`]。グラブ中のパネルと
-/// そのナビバーが常に上に重なる）、その上にパネル。
+/// 描画順の帯。最奥が空間全体の暗転幕（[`Overlay::set_veil`]）、次にドックヒント（[`Pointer::Dock`]。グラブ中のパネルと
+/// そのナビバーが常に上に重なる）、[`WORLD_SORT`] からパネル、最も手前がレーザーまわり。パネルどうしの順位は
+/// [`Overlay::place_layers`] が毎 tick 決める。どのパネルも描画順を直に指定しない。
 const VEIL_SORT: u32 = 0;
 const GHOST_SORT: u32 = 1;
-const PANEL_SORT: u32 = 2;
-const LASER_SORT: u32 = 3;
-const DRAG_SORT: u32 = 4;
-const CURSOR_SORT: u32 = 5;
-const TOOLTIP_SORT: u32 = 6;
+const WORLD_SORT: u32 = 2;
+/// パネルの順位が届かない大きさにする。
+const LASER_SORT: u32 = 10_000;
+const DRAG_SORT: u32 = LASER_SORT + 1;
+const CURSOR_SORT: u32 = LASER_SORT + 2;
+const TOOLTIP_SORT: u32 = LASER_SORT + 3;
 /// グラブ移動で目標へ 1/120 秒（[`TICK_MIN`]）あたり近づく割合。経過時間で換算するためフレーム落ちでも追従速度は一定。
 /// 目標との差が [`SNAP`] 未満なら目標にスナップする。
 const SMOOTH: f32 = 0.3;
@@ -222,8 +233,6 @@ pub const VEIL: f32 = 0.5;
 pub const SLOT_GAP: f32 = 0.02;
 /// スロット子が入れ替わりで退出するときの後退距離（m）。
 const SLOT_RETREAT: f32 = 0.15;
-/// 表示専用子の描画順。角は親中心より頭から遠いため、深度ソートだと親の裏に回り不可視になる。
-const HUD_SORT: u32 = LASER_SORT;
 /// 手ブレ抑制の既定値: レーザー方向が 1 tick ごとに前回方向を保持する割合（0 = 抑制なし）。
 /// ヒット判定もこの方向で行うため、クリック位置の揺れも抑制される。
 // ponytail: tick 単位のためリフレッシュレートで効きが変わる。必要なら経過時間ベースに変更する。
@@ -253,6 +262,21 @@ struct Ray {
 }
 
 impl Panel {
+    /// 重なりのためにずらす前の姿勢。姿勢から相対位置を作り直すときはこちらを使う（ずらした量を要望に混ぜない）。
+    fn unlifted(&self) -> Pose {
+        self.pose * Pose::new(Vec3::NEG_Z * self.lift, Quat::IDENTITY)
+    }
+
+    /// 確定した描画順（大きいほど手前。[`Overlay::place_layers`]）。
+    pub fn draw_order(&self) -> u32 {
+        self.surface.sort()
+    }
+
+    /// 重なる下のパネルより手前にするために、要望の位置から手前へずらした量（m）。
+    pub fn lifted(&self) -> f32 {
+        self.lift
+    }
+
     /// アニメーション反映後の表示サイズ。中心の位置・姿勢は不変。
     pub fn displayed_size(&self) -> Vec2 {
         if self.fade_only {

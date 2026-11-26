@@ -13,6 +13,7 @@
 //! - 通知: [`NotificationTest`] で、Windows に実際の通知を送信し、トースト（HUD → 手首 → ダッシュボード）と通知一覧を検証する
 //! - 音声: [`AudioTest`] で、パネルスピーカーからの空間音響（同時再生・空間化の無効化・モノラル / ステレオ）を検証する
 //! - 角でのサイズ変更: [`ResizeTest`] の角を掴んで動かし、解像度（表示領域）が範囲内で変わり中身が組み直されるのを確認する
+//! - レイヤー: [`LayerTest`] で、面に重ねる子・ポップオーバー・ダイアログ・HUD・奥のパネルを出し、重なり方と確定した描画順・奥行きを確認する
 //! - 負荷: [`StressTest`] で上限までパネルを生成し、閉じる・ランダム配置・整列を行う
 //!
 //! すべての要素に `debug_selector` で名前が付与されている（名前 = `id`）。
@@ -58,6 +59,7 @@ pub use skeleton::{
 mod anim;
 mod dialog;
 mod font;
+mod layers;
 mod locale;
 mod lod;
 mod nav;
@@ -72,6 +74,7 @@ mod transparent;
 pub use anim::*;
 pub use dialog::*;
 pub use font::*;
+pub use layers::*;
 pub use locale::*;
 pub use lod::*;
 pub use nav::*;

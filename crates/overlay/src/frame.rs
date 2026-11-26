@@ -182,7 +182,7 @@ impl Overlay {
         for id in std::mem::take(&mut self.dismissed) {
             self.close(vr, id);
         }
-        self.settle_family(&dragged, &pulled);
+        self.settle_family(vr, &dragged, &pulled);
         self.glide(&dragged, now);
         // 離した画面の吸い付く動きは次の tick から（この tick はまだ掴んでいた扱いで、動きを止めてしまう）。
         self.land(vr);
@@ -228,6 +228,7 @@ impl Overlay {
             }
         }
         self.place_nav_bars(vr, now);
+        self.place_layers(vr, &dragged);
         self.place_pointers(vr);
         self.place_ghosts(vr, now);
         self.place_stand_ins(vr, now);

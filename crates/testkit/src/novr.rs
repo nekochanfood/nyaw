@@ -67,6 +67,11 @@ impl<'a, V: Render> NoVrKit<'a, V> {
         self
     }
 
+    /// Number of panels opened so far, closed ones included (the next PanelId).
+    pub fn panel_count(&self) -> usize {
+        self.panels.windows.len()
+    }
+
     /// Selects the panel used for subsequent operations and reads.
     pub fn select_panel(&mut self, panel: PanelId) -> &mut Self {
         assert!(panel < self.panels.windows.len(), "no panel {panel}");

@@ -47,15 +47,49 @@ impl Overlay {
         }
         let q = &mut self.panels[id];
         q.parent = parent;
-        // 表示専用子・ポップオーバー（固定して外側プレスで閉じる子）・スタック子は他パネルより前に描画する。ランタイムは
-        // 深度ではなく描画順で合成するため、同一順だと重なり部分がフリッカーする（ドックパネル上のメニューや、ドックパネルの
-        // 出入りで上に移動するスタック子など）。
-        let front = parent.is_some_and(|p| p.hud || p.stack || (p.docked && p.dismiss));
-        q.surface
-            .set_sort(vr, if front { HUD_SORT } else { PANEL_SORT });
         if let Some(at) = at {
             q.attached = None;
-            q.offset = at.inverse() * q.pose;
+            // 姿勢はずらしたまま残す（次の順位決めまでの当たり判定がずれないように）。要望にはずらす前を使う。
+            q.offset = at.inverse() * q.unlifted();
+        } else {
+            // 独立したら、今の位置がそのまま要望になる。
+            q.lift = 0.0;
+        }
+        self.cover(vr, id);
+    }
+
+    /// 親の面の一部に重ねる子（[`Parent::over`]）の面をその範囲に収め、親の 1 段手前を要望する（子どうしの前後と奥行きは
+    /// [`Overlay::place_layers`] が決める）。
+    fn cover(&mut self, vr: &mut dyn VrBackend, id: PanelId) {
+        let Some(Parent {
+            panel,
+            over: Some([x, y, w, h]),
+            ..
+        }) = self.panels[id].parent
+        else {
+            return;
+        };
+        let outer = &self.panels[panel];
+        let face = outer.size - Vec2::splat(2.0 * face_margin(outer));
+        let offset = Pose::new(
+            Vec3::new(
+                (x + w / 2.0 - 0.5) * face.x,
+                (0.5 - y - h / 2.0) * face.y,
+                LIFT_STEP,
+            ),
+            Quat::IDENTITY,
+        );
+        let pose = outer.pose * offset;
+        let p = &mut self.panels[id];
+        // 子の面の画素数。ランタイムは幅と画素の縦横比で描くので、比は変えずに範囲へ収める。
+        let res = Vec2::new(p.resolution.0 as f32, p.resolution.1 as f32);
+        let margin = if p.capture { 0.0 } else { PANEL_MARGIN };
+        let inner = (res - Vec2::splat(2.0 * margin)).max(Vec2::ONE);
+        let size = res * (face * Vec2::new(w, h) / inner).min_element();
+        (p.offset, p.pose, p.lift) = (offset, pose, 0.0);
+        if !p.size.abs_diff_eq(size, 1e-6) {
+            p.size = size;
+            p.surface.set_width(vr, p.displayed_size().x);
         }
     }
 
@@ -63,7 +97,12 @@ impl Overlay {
     /// その後、非グラブの子を親（浅い順）に合わせる。親がグラブされてもデバイス追従で動いても子はここで追従する。
     // ponytail: 親のリサイズでは子の相対位置を変えない（子はそのサイズのまま）。
     /// 磁石で引いている子（`pulled`。[`Magnet`]）は親を連れず、親との位置関係も変更しない。
-    pub(crate) fn settle_family(&mut self, dragged: &[PanelId], pulled: &[PanelId]) {
+    pub(crate) fn settle_family(
+        &mut self,
+        vr: &mut dyn VrBackend,
+        dragged: &[PanelId],
+        pulled: &[PanelId],
+    ) {
         for &id in dragged.iter().filter(|id| !pulled.contains(id)) {
             let mut cur = id;
             while let Some(Parent {
@@ -75,11 +114,11 @@ impl Overlay {
                     self.panels[cur].offset = self.slot_offset(cur, panel, tilt);
                 }
                 if carry {
-                    let (pose, offset) = (self.panels[cur].pose, self.panels[cur].offset);
+                    let (pose, offset) = (self.panels[cur].unlifted(), self.panels[cur].offset);
                     self.panels[panel].pose = pose * offset.inverse();
                 } else {
                     self.panels[cur].offset =
-                        self.panels[panel].pose.inverse() * self.panels[cur].pose;
+                        self.panels[panel].pose.inverse() * self.panels[cur].unlifted();
                     break;
                 }
                 cur = panel;
@@ -120,6 +159,8 @@ impl Overlay {
                         ),
                         Quat::IDENTITY,
                     );
+                } else if parent.over.is_some() {
+                    self.cover(vr, id);
                 }
                 self.panels[id].pose = self.panels[parent.panel].pose * self.panels[id].offset;
             }
