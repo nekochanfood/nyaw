@@ -27,10 +27,20 @@ env:
   CARGO_INCREMENTAL: '0'
 
 jobs:
+  # 各ディストリビューションの形式は、そのディストリビューションのコンテナでビルドする。ビルドした環境より古い glibc では
+  # 起動できないため、AppImage、tar.gz、deb は配布先の下限とする Debian 12（glibc 2.36）でビルドする
   build:
+    strategy:
+      # 1 つの失敗で他のディストリビューションの結果が失われないようにする
+      fail-fast: false
+      matrix:
+        include:
+          - { distro: debian, container: 'debian:12', formats: appimage tar deb }
+          - { distro: fedora, container: 'fedora:44', formats: rpm }
+          - { distro: arch, container: 'archlinux:latest', formats: pacman }
+    name: build (${{ matrix.distro }})
     runs-on: ubuntu-latest
-    # ビルドした環境より古い glibc では起動できないため、配布先の下限とする Debian 12（glibc 2.36）でビルドする
-    container: debian:12
+    container: ${{ matrix.container }}
     permissions:
       contents: read
     env:
@@ -42,7 +52,8 @@ jobs:
     steps:
       # checkout が履歴を取得できるよう、先に git を導入する（git がないと履歴のないアーカイブを展開する）。
       # 開発パッケージの用途は ci.yml の LINUX_PACKAGES を参照。コンテナにはビルドの道具も含まれないため併せて導入する
-      - name: Install the build dependencies
+      - name: Install the build dependencies (Debian)
+        if: matrix.distro == 'debian'
         working-directory: /
         run: |
           apt-get update
@@ -54,6 +65,20 @@ jobs:
           echo 'deb http://deb.debian.org/debian bookworm-backports main' > /etc/apt/sources.list.d/backports.list
           apt-get update
           apt-get install -y --no-install-recommends -t bookworm-backports libpipewire-0.3-dev
+      - name: Install the build dependencies (Fedora)
+        if: matrix.distro == 'fedora'
+        working-directory: /
+        run: |
+          dnf install -y --setopt=install_weak_deps=False \
+            binutils cmake curl gcc gcc-c++ git make pkgconf-pkg-config unzip \
+            alsa-lib-devel clang-devel fontconfig-devel freetype-devel libX11-devel libxkbcommon-devel pipewire-devel
+      - name: Install the build dependencies (Arch Linux)
+        if: matrix.distro == 'arch'
+        working-directory: /
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel cmake curl git unzip \
+            alsa-lib clang fontconfig freetype2 libx11 libxkbcommon pipewire
       - uses: actions/checkout@v4
         with:
           # 依存クレートの build.rs からトークンを遮断するため資格情報を破棄
@@ -71,7 +96,7 @@ jobs:
         with:
           workspaces: apps/nyaw
           # ci.yml の ubuntu のジョブとはシステムのライブラリが異なるため、キャッシュを分ける
-          prefix-key: v0-linux-packages-debian12
+          prefix-key: v0-linux-packages-${{ matrix.distro }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       # ライセンス一覧生成のため、開発用依存パッケージを含む全ソースをオフラインビルド前に先行フェッチ
       - if: ${{ !inputs.cache-only || steps.cache.outputs.cache-hit != 'true' }}
@@ -79,7 +104,7 @@ jobs:
           cargo fetch --locked
           cargo build --release
       - if: ${{ !inputs.cache-only }}
-        run: installer/linux.sh
+        run: installer/linux.sh ${{ matrix.formats }}
       # 実行する環境に必要なライブラリと glibc の版をログに残す
       - if: ${{ !inputs.cache-only }}
         run: |
@@ -88,7 +113,7 @@ jobs:
       - if: ${{ !inputs.cache-only }}
         uses: actions/upload-artifact@v4
         with:
-          name: linux-packages${{ inputs.version && format('-{0}', inputs.version) }}
+          name: linux-packages-${{ matrix.distro }}${{ inputs.version && format('-{0}', inputs.version) }}
           path: apps/nyaw/target/installer/nyaw[-_]*
           if-no-files-found: error
           # 配布物は圧縮済み
@@ -103,14 +128,14 @@ jobs:
       matrix:
         include:
           # FUSE でマウントして実行する
-          - { target: appimage on ubuntu-24.04, format: appimage, container: '' }
+          - { target: appimage on ubuntu-24.04, format: appimage, distro: debian, container: '' }
           # 動作要件の下限（標準パッケージの PipeWire 0.3.65）。コンテナでは FUSE を使えないため、展開して実行する
-          - { target: appimage on debian-12, format: appimage, container: 'debian:12' }
-          - { target: tar.gz on ubuntu-24.04, format: tar, container: '' }
-          - { target: deb on debian-12, format: deb, container: 'debian:12' }
-          - { target: deb on ubuntu-24.04, format: deb, container: 'ubuntu:24.04' }
-          - { target: rpm on fedora, format: rpm, container: 'fedora:latest' }
-          - { target: pkg.tar.zst on archlinux, format: pacman, container: 'archlinux:latest' }
+          - { target: appimage on debian-12, format: appimage, distro: debian, container: 'debian:12' }
+          - { target: tar.gz on ubuntu-24.04, format: tar, distro: debian, container: '' }
+          - { target: deb on debian-12, format: deb, distro: debian, container: 'debian:12' }
+          - { target: deb on ubuntu-24.04, format: deb, distro: debian, container: 'ubuntu:24.04' }
+          - { target: rpm on fedora, format: rpm, distro: fedora, container: 'fedora:latest' }
+          - { target: pkg.tar.zst on archlinux, format: pacman, distro: arch, container: 'archlinux:latest' }
     name: smoke (${{ matrix.target }})
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
@@ -126,6 +151,6 @@ jobs:
             apps/nyaw/crates/subsystems/update/src/linux
       - uses: actions/download-artifact@v4
         with:
-          name: linux-packages${{ inputs.version && format('-{0}', inputs.version) }}
+          name: linux-packages-${{ matrix.distro }}${{ inputs.version && format('-{0}', inputs.version) }}
           path: dist
       - run: bash apps/nyaw/installer/smoke.sh ${{ matrix.format }} dist

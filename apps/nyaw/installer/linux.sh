@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Linux の配布物を作成する。`cargo build --release` の後に実行する（CI は .github/workflows/linux.yml）。
-# 必要なコマンドは curl、mksquashfs（squashfs-tools）、zsyncmake（zsync）、readelf（binutils）、tar。
-# 同梱の方針と更新情報は AGENT.md の「Linux の配布」。
+# 引数は作成する形式（appimage、tar、deb、rpm、pacman）。省略した場合はすべて作成する。
+# 必要なコマンドは curl、tar、objdump（binutils）と、AppImage の場合は mksquashfs（squashfs-tools）、
+# zsyncmake（zsync）、readelf。同梱の方針と更新情報は AGENT.md の「Linux の配布」。
 # 出力は target/installer/ の次のファイル:
 #   nyaw-<バージョン>-x86_64.AppImage、同 .AppImage.zsync、同 .tar.gz、同 .rpm、同 .pkg.tar.zst、nyaw-<バージョン>-amd64.deb
 # ファイル名は、アプリの更新が配布形式の判別に使う（crates/subsystems/update の Package）
@@ -20,6 +21,19 @@ app=$(dirname "$installer")
 root=$(cd "$app/../.." && pwd)
 target=${CARGO_TARGET_DIR:-$app/target}
 output=$target/installer
+formats=("$@")
+if [ "${#formats[@]}" = 0 ]; then
+  formats=(appimage tar deb rpm pacman)
+fi
+for format in "${formats[@]}"; do
+  case $format in
+    appimage | tar | deb | rpm | pacman) ;;
+    *)
+      echo "unknown format: $format" >&2
+      exit 2
+      ;;
+  esac
+done
 tools=$target/installer-tools
 # バージョンはリリースワークフローがタグから渡す（NYAW_VERSION）。未設定であれば Cargo.toml の値
 version=${NYAW_VERSION:-$(sed -n 's/^version = "\([^"]*\)".*/\1/p' "$app/Cargo.toml")}
@@ -35,18 +49,9 @@ fetch() {
   echo "$3  $1" | sha256sum --check --quiet
 }
 
-runtime=$tools/runtime-$RUNTIME_VERSION-x86_64
-fetch "$runtime" \
-  "https://github.com/AppImage/type2-runtime/releases/download/$RUNTIME_VERSION/runtime-x86_64" "$RUNTIME_SHA256"
-nfpm_archive=$tools/nfpm-$NFPM_VERSION.tar.gz
-fetch "$nfpm_archive" \
-  "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
-  "$NFPM_SHA256"
-
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$output" "$work/nfpm"
-tar -xzf "$nfpm_archive" -C "$work/nfpm" nfpm
+mkdir -p "$output"
 
 # すべての形式に含めるファイル
 files=$work/files
@@ -69,58 +74,84 @@ package_info() {
   echo "gh-releases|${repository%/*}|${repository#*/}|$channel|$1"
 }
 
-# AppImage
-dir=$work/nyaw.AppDir
-install -Dm755 -t "$dir/usr/bin" "$files/nyaw"
-install -m644 -t "$dir/usr/bin" "$files/libphonon.so"
-for doc in "${docs[@]}"; do
-  install -Dm644 -t "$dir/usr/share/doc/nyaw" "$files/$doc"
-done
-# ルート直下の .desktop、アイコン、.DirIcon は AppImage の仕様が要求する
-install -Dm644 -t "$dir/usr/share/applications" "$files/nyaw.desktop"
-install -Dm644 -t "$dir/usr/share/icons/hicolor/scalable/apps" "$files/nyaw.svg"
-install -m644 -t "$dir" "$files/nyaw.desktop" "$files/nyaw.svg"
-ln -s nyaw.svg "$dir/.DirIcon"
-# nyaw と子プロセスの環境変数を変えないよう、AppRun はスクリプトではなく実行ファイルへのリンクにする
-ln -s usr/bin/nyaw "$dir/AppRun"
-mksquashfs "$dir" "$work/nyaw.squashfs" -root-owned -noappend -no-xattrs -comp zstd -quiet -no-progress
+build_appimage() {
+  runtime=$tools/runtime-$RUNTIME_VERSION-x86_64
+  fetch "$runtime" \
+    "https://github.com/AppImage/type2-runtime/releases/download/$RUNTIME_VERSION/runtime-x86_64" "$RUNTIME_SHA256"
+  dir=$work/nyaw.AppDir
+  install -Dm755 -t "$dir/usr/bin" "$files/nyaw"
+  install -m644 -t "$dir/usr/bin" "$files/libphonon.so"
+  for doc in "${docs[@]}"; do
+    install -Dm644 -t "$dir/usr/share/doc/nyaw" "$files/$doc"
+  done
+  # ルート直下の .desktop、アイコン、.DirIcon は AppImage の仕様が要求する
+  install -Dm644 -t "$dir/usr/share/applications" "$files/nyaw.desktop"
+  install -Dm644 -t "$dir/usr/share/icons/hicolor/scalable/apps" "$files/nyaw.svg"
+  install -m644 -t "$dir" "$files/nyaw.desktop" "$files/nyaw.svg"
+  ln -s nyaw.svg "$dir/.DirIcon"
+  # nyaw と子プロセスの環境変数を変えないよう、AppRun はスクリプトではなく実行ファイルへのリンクにする
+  ln -s usr/bin/nyaw "$dir/AppRun"
+  mksquashfs "$dir" "$work/nyaw.squashfs" -root-owned -noappend -no-xattrs -comp zstd -quiet -no-progress
 
-# 更新情報（AppImage の仕様）。AppImageUpdate などのツールは、ランタイムの .upd_info セクションから更新の取得先を読む。
-# `latest` は正式版だけを対象とするため、プレリリース版は正式版とプレリリースの新しい方を対象とする `latest-all` にする
-update_info="gh-releases-zsync|${repository%/*}|${repository#*/}|$channel|nyaw-*-x86_64.AppImage.zsync"
-install -m755 "$runtime" "$work/runtime"
-read -r offset size < <(readelf -SW "$work/runtime" |
-  awk '{ for (i = 1; i < NF; i++) if ($i == ".upd_info") print $(i + 3), $(i + 4) }')
-if [ "${#update_info}" -ge "$((16#$size))" ]; then
-  echo "the update information does not fit in .upd_info: $update_info" >&2
-  exit 1
-fi
-printf '%s' "$update_info" | dd of="$work/runtime" bs=1 seek="$((16#$offset))" conv=notrunc status=none
+  # 更新情報（AppImage の仕様）。AppImageUpdate などのツールは、ランタイムの .upd_info セクションから更新の取得先を読む
+  update_info="gh-releases-zsync|${repository%/*}|${repository#*/}|$channel|nyaw-*-x86_64.AppImage.zsync"
+  install -m755 "$runtime" "$work/runtime"
+  read -r offset size < <(readelf -SW "$work/runtime" |
+    awk '{ for (i = 1; i < NF; i++) if ($i == ".upd_info") print $(i + 3), $(i + 4) }')
+  if [ "${#update_info}" -ge "$((16#$size))" ]; then
+    echo "the update information does not fit in .upd_info: $update_info" >&2
+    exit 1
+  fi
+  printf '%s' "$update_info" | dd of="$work/runtime" bs=1 seek="$((16#$offset))" conv=notrunc status=none
 
-appimage=nyaw-$version-x86_64.AppImage
-cat "$work/runtime" "$work/nyaw.squashfs" > "$work/$appimage"
-install -m755 "$work/$appimage" "$output/$appimage"
-# 差分更新の索引。取得先の URL は索引と同じ場所からの相対パスとする
-(cd "$output" && zsyncmake -u "$appimage" -o "$appimage.zsync" "$appimage" > /dev/null)
-
-# tar.gz。展開した nyaw ディレクトリから起動する。update-info はアプリの更新が参照する
-mkdir -p "$work/tar/nyaw"
-cp -p "$files"/* "$work/tar/nyaw/"
-package_info 'nyaw-*-x86_64.tar.gz' > "$work/tar/nyaw/update-info"
-tar -czf "$output/nyaw-$version-x86_64.tar.gz" --owner=0 --group=0 -C "$work/tar" nyaw
-
-# deb、rpm、pkg.tar.zst
-package_info 'nyaw-*-amd64.deb' > "$files/update-info-deb"
-package_info 'nyaw-*-x86_64.rpm' > "$files/update-info-rpm"
-package_info 'nyaw-*-x86_64.pkg.tar.zst' > "$files/update-info-pacman"
-cp "$installer/nfpm.yaml" "$files/"
-package() { # package <nfpm の形式> <出力ファイル名>
-  (cd "$files" && NYAW_PACKAGE_VERSION=$version "$work/nfpm/nfpm" package -f nfpm.yaml -p "$1" -t "$output/$2")
+  appimage=nyaw-$version-x86_64.AppImage
+  cat "$work/runtime" "$work/nyaw.squashfs" > "$work/$appimage"
+  install -m755 "$work/$appimage" "$output/$appimage"
+  # 差分更新の索引。取得先の URL は索引と同じ場所からの相対パスとする
+  (cd "$output" && zsyncmake -u "$appimage" -o "$appimage.zsync" "$appimage" > /dev/null)
+  echo "update information (appimage): $update_info"
 }
-package deb "nyaw-$version-amd64.deb"
-package rpm "nyaw-$version-x86_64.rpm"
-package archlinux "nyaw-$version-x86_64.pkg.tar.zst"
+
+# 展開した nyaw ディレクトリから起動する。update-info はアプリの更新が参照する
+build_tar() {
+  mkdir -p "$work/tar/nyaw"
+  cp -p "$files"/* "$work/tar/nyaw/"
+  package_info 'nyaw-*-x86_64.tar.gz' > "$work/tar/nyaw/update-info"
+  echo "update information (tar): $(cat "$work/tar/nyaw/update-info")"
+  tar -czf "$output/nyaw-$version-x86_64.tar.gz" --owner=0 --group=0 -C "$work/tar" nyaw
+}
+
+# 要求する glibc の版は、ビルドした環境で決まる。導入できても起動できない環境がないよう、バイナリが参照する
+# 最も新しい版を依存関係に記載する
+glibc=$(objdump -T "$files/nyaw" | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/GLIBC_//' | sort -Vu | tail -1)
+
+# build_package <nfpm の形式> <update-info の名前> <アセット名の末尾>
+build_package() {
+  local nfpm_archive=$tools/nfpm-$NFPM_VERSION.tar.gz
+  fetch "$nfpm_archive" \
+    "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz" \
+    "$NFPM_SHA256"
+  mkdir -p "$work/nfpm"
+  tar -xzf "$nfpm_archive" -C "$work/nfpm" nfpm
+  # nfpm の作業ファイルが tar.gz などに混ざらないよう、形式ごとのディレクトリで作成する
+  local dir=$work/package-$2
+  mkdir -p "$dir"
+  cp -p "$files"/* "$dir/"
+  package_info "nyaw-*-$3" > "$dir/update-info"
+  sed "s/@GLIBC@/$glibc/g" "$installer/nfpm.yaml" > "$dir/nfpm.yaml"
+  (cd "$dir" && NYAW_PACKAGE_VERSION=$version "$work/nfpm/nfpm" package -f nfpm.yaml -p "$1" -t "$output/nyaw-$version-$3")
+  echo "update information ($2): $(cat "$dir/update-info")"
+}
+
+for format in "${formats[@]}"; do
+  case $format in
+    appimage) build_appimage ;;
+    tar) build_tar ;;
+    deb) build_package deb deb amd64.deb ;;
+    rpm) build_package rpm rpm x86_64.rpm ;;
+    pacman) build_package archlinux pacman x86_64.pkg.tar.zst ;;
+  esac
+done
 
 ls -l "$output"
-echo "update information (AppImage): $update_info"
-grep -H . "$work/tar/nyaw/update-info" "$files"/update-info-*
+echo "required glibc: $glibc"

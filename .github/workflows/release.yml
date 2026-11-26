@@ -146,7 +146,11 @@ jobs:
           fi
           for run in $(gh run list -w release.yml -c "$head" -s success --json databaseId -q '.[].databaseId'); do
             names=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts" -q '.artifacts[] | select(.expired | not) | .name')
-            if grep -qxF "installer-${TAG#v}" <<<"$names" && grep -qxF "linux-packages-${TAG#v}" <<<"$names"; then
+            found=0
+            for name in installer linux-packages-{debian,fedora,arch}; do
+              grep -qxF "$name-${TAG#v}" <<<"$names" && found=$((found + 1))
+            done
+            if [ "$found" = 4 ]; then
               echo "::notice::reusing the artifacts built by run $run for $head"
               echo "REUSE_RUN=$run" >> "$GITHUB_ENV"
               break
@@ -250,7 +254,9 @@ jobs:
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
-          name: linux-packages-${{ needs.plan.outputs.version }}
+          # ディストリビューションごとのビルドの成果物をまとめて取得する
+          pattern: linux-packages-*-${{ needs.plan.outputs.version }}
+          merge-multiple: true
           path: dist
           run-id: ${{ needs.plan.outputs.reuse-run || github.run_id }}
           github-token: ${{ github.token }}

@@ -203,7 +203,7 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 
 `installer/linux.sh` がリリースビルドから AppImage、tar.gz、deb、rpm、pkg.tar.zst を作成し、`.github/workflows/linux.yml` が CI で実行する。deb、rpm、pkg.tar.zst の定義は `installer/nfpm.yaml` にまとめる。
 
-- **ビルド環境**: ビルドした環境より古い glibc では起動できないため、CI は Debian 12 のコンテナ（glibc 2.36）でビルドする。すべての形式で同じバイナリを配布する。PipeWire の Rust のバインディングは、Debian 12 標準の 0.3.65 のヘッダーにない定数を参照するため、PipeWire の開発パッケージは `bookworm-backports` から導入する。実行時には標準の PipeWire を使える（`linux.yml` が確認する）。
+- **ビルド環境**: CI は、形式ごとのディストリビューションのコンテナで並列にビルドする。AppImage、tar.gz、deb は Debian 12、rpm は Fedora、pkg.tar.zst は Arch Linux でビルドする。ビルドした環境より古い glibc では起動できないため、各パッケージはバイナリが参照する最も新しい glibc の版を依存関係に記載する。広い環境を対象とする AppImage と tar.gz は、最も古い Debian 12（glibc 2.36）でビルドする。Debian 12 では、PipeWire の Rust のバインディングは、Debian 12 標準の 0.3.65 のヘッダーにない定数を参照するため、PipeWire の開発パッケージは `bookworm-backports` から導入する。実行時には標準の PipeWire を使える（`linux.yml` が確認する）。
 - **同梱するライブラリ**: Steam Audio（`libphonon.so`）だけを実行ファイルの隣に置く。Vulkan のローダーとドライバ、ALSA、PipeWire は、実行する環境の設定やプラグインと組み合わせて動作するため同梱しない。他の共有ライブラリも実行する環境のものを使い、パッケージは依存関係として宣言する。依存関係には、リンクの一覧に現れない、実行時に読み込むライブラリ（Vulkan のローダー、エミュレーターのウィンドウが使う X11 と Wayland のライブラリ）も含める。
 - **配置**: パッケージは `/usr/lib/nyaw/` に実行ファイル、Steam Audio、更新情報を置き、`/usr/bin/nyaw` をシンボリックリンクにする。
 - **AppImage**: AppRun は実行ファイルへのシンボリックリンクとする。`LD_LIBRARY_PATH` などを設定すると、nyaw が起動する子プロセスにも引き継がれる。ランタイムは静的リンクの type2-runtime であり、実行する環境に libfuse2 は不要だが、マウントには FUSE が必要である。

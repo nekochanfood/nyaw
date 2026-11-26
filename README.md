@@ -60,7 +60,7 @@ Linux（x86_64）向けには、次の形式をリリースに添付します。
 | `nyaw-<版>-x86_64.rpm` | Fedora など | `sudo dnf install ./nyaw-<版>-x86_64.rpm` |
 | `nyaw-<版>-x86_64.pkg.tar.zst` | Arch Linux | `sudo pacman -U nyaw-<版>-x86_64.pkg.tar.zst` |
 
-動作には Debian 12 相当以降の環境（glibc 2.36 以降）と、Vulkan に対応した GPU ドライバが必要です。deb、rpm、pkg.tar.zst は、必要なライブラリをパッケージの依存関係として導入します。AppImage と tar.gz を使う場合は、次のライブラリが導入されている必要があります。
+AppImage、tar.gz、deb は Debian 12 でビルドしていて、動作には Debian 12 相当以降の環境（glibc 2.36 以降）が必要です。rpm は Fedora 44、pkg.tar.zst は更新済みの Arch Linux でビルドするため、それより古い glibc の環境にはインストールできません。いずれも Vulkan に対応した GPU ドライバが必要です。deb、rpm、pkg.tar.zst は、必要なライブラリをパッケージの依存関係として導入します。AppImage と tar.gz を使う場合は、次のライブラリが導入されている必要があります。
 
 - ALSA、PipeWire、libxkbcommon、Vulkan のローダー
 - libX11、libXcursor、libwayland-client、libwayland-cursor（エミュレーターのウィンドウで使います）
@@ -82,7 +82,7 @@ AppImage には、AppImageUpdate などの外部ツール向けの更新情報�
 
 ### 配布物の作成
 
-`apps/nyaw/` で `cargo build --release` を実行してから、`installer/linux.sh` を実行します（`mksquashfs` と `zsyncmake` が必要です）。作成した配布物が要求する glibc の版は、ビルドした環境によって決まります。
+`apps/nyaw/` で `cargo build --release` を実行してから、`installer/linux.sh` を実行します。引数で形式（`appimage`、`tar`、`deb`、`rpm`、`pacman`）を指定でき、省略するとすべて作成します。AppImage の作成には `mksquashfs` と `zsyncmake` が必要です。作成した配布物が要求する glibc の版は、ビルドした環境によって決まります。
 
 ## 対応状況
 
