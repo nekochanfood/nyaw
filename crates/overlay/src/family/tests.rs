@@ -433,6 +433,45 @@ fn docked_panels_nav_bar_keeps_its_size_at_any_distance() {
     );
 }
 
+/// 切り離し・はめ込みで固定と距離比例が入れ替わっても、バーの大きさは一瞬で飛ばず滑らかに移る。
+#[test]
+fn nav_bar_eases_between_fixed_and_distance_scaling() {
+    let (mut vr, mut ov) = with_slot_child();
+    let bar = ov
+        .add_panel(
+            &mut vr.backend,
+            "bar",
+            Pose::IDENTITY,
+            Vec2::new(0.4, 0.05),
+            (2, 2),
+        )
+        .unwrap();
+    ov.set_nav_bar(&mut vr.backend, bar, 1);
+    ov.submit(&mut vr.backend, bar, 2, 2, &[255u8; 16]);
+    vr.backend.frame.hmd.position = Vec3::Z * 3.0;
+    ov.tick(&mut vr);
+    let slot = ov.panel(1).parent;
+    let t0 = Instant::now();
+    for (secs, parent, docked) in [(0, None, false), (2, slot, true)] {
+        let from = ov.panel(bar).size.x;
+        ov.set_parent(&mut vr.backend, 1, parent);
+        let start = t0 + std::time::Duration::from_secs(secs);
+        let mut at = |ov: &mut Overlay, ms| {
+            ov.place_nav_bars(
+                &mut vr.backend,
+                start + std::time::Duration::from_millis(ms),
+            );
+            ov.panel(bar).size.x
+        };
+        let first = at(&mut ov, 0);
+        assert!((first - from).abs() < 1e-4, "{from} → {first}");
+        let mid = at(&mut ov, 150);
+        let last = at(&mut ov, 1000);
+        assert!((mid - from) * (last - mid) > 0.0, "{from} → {mid} → {last}");
+        assert_eq!((last - 0.4).abs() < 1e-5, docked, "{last}");
+    }
+}
+
 #[test]
 fn resizing_a_slot_child_keeps_its_bottom_on_the_parent() {
     const RESIZE: &str = subsystems::vr::RESIZE_INPUT;

@@ -52,6 +52,7 @@ impl Overlay {
             parent: None,
             nav_bar_of: None,
             nav_bar_size: size,
+            pinned: None,
             awake: 1.0,
             wake: Transition::rest(1.0),
             pointed_at: Instant::now(),
