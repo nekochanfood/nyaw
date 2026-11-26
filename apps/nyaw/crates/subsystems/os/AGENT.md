@@ -21,6 +21,7 @@ config_dir();               // 設定保存先ディレクトリの取得
 log_dir();                  // ログ保存先ディレクトリの取得
 data_dir();                 // ユーザーデータ保存先ディレクトリの取得
 launch_path();              // 次回の起動に指定するパスの取得
+running_appimage();         // 実行中の AppImage ファイルの取得（Linux のみ）
 data_search_dirs();         // 共有データの検索先の取得（Linux のみ）
 precise_timers();           // 高精度タイマーの有効化
 high_gpu_priority();        // GPU プロセス優先度の引き上げ

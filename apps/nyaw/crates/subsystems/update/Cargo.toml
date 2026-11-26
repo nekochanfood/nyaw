@@ -11,6 +11,8 @@ repository.workspace = true
 test-support = []
 
 [dependencies]
+# 実行中の AppImage と、利用者のデータの保存先
+os.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # ダウンロードしたインストーラーの SHA-256 を GitHub 公開値と照合する

@@ -21,6 +21,14 @@ fn main() -> ExitCode {
         config::Config::default()
     });
     let args = Args::parse(std::env::args().skip(1));
+    logger::info!(
+        "starting nyaw",
+        version = updater::VERSION,
+        build = updater::BUILD
+    );
+    if args.update {
+        return update(config.updater.channel);
+    }
     // ランタイムはコマンドラインでのみ指定する（novr は明示的な指定を必要とするため、設定ファイルには置かない）。
     let requested = args.runtime;
     // novr はテスト用。リリースビルドでは VR ランタイムが見つからなくても自動的に novr へフォールバックせず、明示的な指定を必要とする。
@@ -52,10 +60,38 @@ fn main() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// `--update`: 画面を起動せずに更新する。適用した場合は、`--update` を除いた引数で更新後の版が起動する。
+fn update(channel: config::UpdateChannel) -> ExitCode {
+    let relaunch = std::env::args()
+        .skip(1)
+        .filter(|a| a != "--update")
+        .collect();
+    match updater::update_headless(channel, relaunch) {
+        Ok(Some(release)) => {
+            logger::info!(
+                "update applied, restarting",
+                version = release.version,
+                build = release.build
+            );
+            ExitCode::SUCCESS
+        }
+        Ok(None) => {
+            logger::info!("up to date");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            logger::error!("cannot update", error = e);
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq)]
 struct Args {
     /// `--novr` / `--openxr` / `--openvr`（`--profile` 以外の最初の引数）。
     runtime: Option<String>,
+    /// `--update`: 画面を起動せずに更新する。
+    update: bool,
     /// `--profile` で `Some(None)`（既定のダンプ先）、`--profile=PATH` で `Some(Some(PATH))`。
     profile: Option<Option<PathBuf>>,
 }
@@ -66,6 +102,10 @@ impl Args {
         for a in args {
             if a == "--console" {
                 continue; // main の先頭で処理済み
+            }
+            if a == "--update" {
+                out.update = true;
+                continue;
             }
             match a.strip_prefix("--profile") {
                 Some("") => out.profile = Some(None),
@@ -155,21 +195,31 @@ mod tests {
             parse(&["--novr"]),
             Args {
                 runtime: Some("--novr".into()),
-                profile: None
+                ..Args::default()
+            }
+        );
+        assert_eq!(
+            parse(&["--update", "--novr"]),
+            Args {
+                runtime: Some("--novr".into()),
+                update: true,
+                ..Args::default()
             }
         );
         assert_eq!(
             parse(&["--profile", "--openxr"]),
             Args {
                 runtime: Some("--openxr".into()),
-                profile: Some(None)
+                profile: Some(None),
+                ..Args::default()
             }
         );
         assert_eq!(
             parse(&["--openvr", "--profile=out/p.csv"]),
             Args {
                 runtime: Some("--openvr".into()),
-                profile: Some(Some(PathBuf::from("out/p.csv")))
+                profile: Some(Some(PathBuf::from("out/p.csv"))),
+                ..Args::default()
             }
         );
         assert_eq!(parse(&["--console"]), Args::default());

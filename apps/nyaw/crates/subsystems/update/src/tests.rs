@@ -19,16 +19,88 @@ fn the_build_number_hides_in_the_notes_and_installers_are_plain_names() {
     assert_eq!(notes_build("## What's Changed"), None);
     assert_eq!(notes_build("<!-- nyaw-build: x -->"), None);
     // インストーラーのファイル名にはバージョンのみ（ビルド番号は含めない）。バージョン名は任意。
-    assert!(is_installer("nyaw-2026.0.1-patch.2-setup.exe"));
-    assert!(is_installer("nyaw-2026.0.1-リリース候補.1-setup.exe"));
-    assert!(!is_installer("nyaw--setup.exe"));
-    assert!(!is_installer("phonon.dll"));
-    assert!(!is_installer("nyaw-..\\x-setup.exe"));
+    let setup = |name| Package::WindowsSetup.matches(name);
+    assert!(setup("nyaw-2026.0.1-patch.2-setup.exe"));
+    assert!(setup("nyaw-2026.0.1-リリース候補.1-setup.exe"));
+    assert!(!setup("nyaw--setup.exe"));
+    assert!(!setup("phonon.dll"));
+    assert!(!setup("nyaw-..\\x-setup.exe"));
+}
+
+/// リリースに添付する各形式のアセット名（`installer/linux.sh`、`installer/nyaw.iss`）は、それぞれ 1 つの形式に対応する。
+#[test]
+fn each_asset_name_belongs_to_one_package() {
+    for (name, package) in [
+        ("nyaw-2026.0.4-setup.exe", Package::WindowsSetup),
+        ("nyaw-2026.0.4-x86_64.AppImage", Package::AppImage),
+        ("nyaw-2026.0.4-beta.1-x86_64.tar.gz", Package::Tar),
+        ("nyaw-2026.0.4-beta.1-amd64.deb", Package::Deb),
+        ("nyaw-2026.0.4-x86_64.rpm", Package::Rpm),
+        ("nyaw-2026.0.4-x86_64.pkg.tar.zst", Package::Pacman),
+    ] {
+        assert_eq!(Package::of(name), Some(package), "{name}");
+        assert_eq!(
+            Package::ALL.iter().filter(|p| p.matches(name)).count(),
+            1,
+            "{name}"
+        );
+    }
+    for other in [
+        "nyaw-2026.0.4-x86_64.AppImage.zsync",
+        "nyaw--amd64.deb",
+        "nyaw-../x-amd64.deb",
+        "other-2026.0.4-amd64.deb",
+    ] {
+        assert_eq!(Package::of(other), None, "{other}");
+    }
+}
+
+/// 各形式は、一覧の中から自身のアセットを選ぶ。そのアセットがないリリースは対象にしない。
+#[test]
+fn a_release_offers_the_asset_of_the_running_package() {
+    let digest = Some("sha256:abc");
+    let list = serde_json::to_vec(&serde_json::json!([
+        fake::release(
+            "v2026.0.4",
+            false,
+            Some(700),
+            &[
+                ("nyaw-2026.0.4-setup.exe", 1, digest),
+                ("nyaw-2026.0.4-x86_64.AppImage.zsync", 1, digest),
+                ("nyaw-2026.0.4-x86_64.AppImage", 2, digest),
+                ("nyaw-2026.0.4-amd64.deb", 3, digest),
+            ],
+            "https://example.com"
+        ),
+        fake::release(
+            "v2026.0.3",
+            false,
+            Some(600),
+            &[("nyaw-2026.0.3-setup.exe", 1, digest)],
+            "https://example.com"
+        ),
+    ]))
+    .unwrap();
+    let offered = |package| {
+        parse_releases(&list, package)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.installer.name)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        offered(Package::AppImage),
+        ["nyaw-2026.0.4-x86_64.AppImage"]
+    );
+    assert_eq!(offered(Package::Deb), ["nyaw-2026.0.4-amd64.deb"]);
+    assert_eq!(offered(Package::Rpm), Vec::<String>::new());
+    assert_eq!(offered(Package::WindowsSetup).len(), 2);
 }
 
 #[test]
 fn incomplete_and_draft_releases_are_dropped() {
-    let releases = parse_releases(&fake::varied("https://example.com")).unwrap();
+    let releases =
+        parse_releases(&fake::varied("https://example.com"), Package::WindowsSetup).unwrap();
     assert_eq!(
         releases
             .iter()
@@ -64,6 +136,22 @@ fn the_api_url_comes_from_the_repository() {
         releases_url(),
         "https://api.github.com/repos/nekochanfood/nyaw/releases?per_page=30"
     );
+}
+
+#[test]
+fn only_a_loopback_server_can_stand_in_for_github() {
+    let accepts = |url: &str| loopback(url.to_owned()).is_some();
+    assert!(accepts("http://127.0.0.1:8080/releases"));
+    for url in [
+        "https://127.0.0.1:8080/releases",
+        "http://example.com/releases",
+        "http://127.0.0.1.example.com:80/releases",
+        "http://127.0.0.1:80@example.com/releases",
+        "http://127.0.0.1:/releases",
+        "http://127.0.0.1:8080",
+    ] {
+        assert!(!accepts(url), "{url}");
+    }
 }
 
 #[test]
@@ -103,7 +191,7 @@ fn temp(name: &str) -> PathBuf {
 #[test]
 fn downloads_and_verifies_the_installer() {
     let (base, files) = fixture();
-    let found = check(&format!("{base}/releases")).unwrap();
+    let found = check(&format!("{base}/releases"), Package::WindowsSetup).unwrap();
     let release = found
         .into_iter()
         .find(|r| r.build == 655)
@@ -145,6 +233,9 @@ fn downloads_and_verifies_the_installer() {
     );
     assert!(!path.exists());
     files.lock().unwrap().clear();
-    assert!(check(&format!("{base}/releases")).is_err(), "404");
+    assert!(
+        check(&format!("{base}/releases"), Package::WindowsSetup).is_err(),
+        "404"
+    );
     let _ = fs::remove_dir_all(dir);
 }

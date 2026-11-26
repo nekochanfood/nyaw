@@ -57,7 +57,16 @@ pub fn error_dialog(title: &str, text: &str) {
 /// 参照できなくなるため、AppImage ファイル（`APPIMAGE`）を返す。それ以外は実行ファイルを返す。
 pub fn launch_path() -> io::Result<PathBuf> {
     let exe = std::env::current_exe()?;
-    Ok(containing_appimage(&exe, env_path("APPIMAGE"), env_path("APPDIR")).unwrap_or(exe))
+    Ok(appimage_of(&exe).unwrap_or(exe))
+}
+
+/// 実行中の nyaw を収める AppImage ファイル。AppImage から起動していなければ `None`。
+pub fn running_appimage() -> Option<PathBuf> {
+    appimage_of(&std::env::current_exe().ok()?)
+}
+
+fn appimage_of(exe: &Path) -> Option<PathBuf> {
+    containing_appimage(exe, env_path("APPIMAGE"), env_path("APPDIR"))
 }
 
 /// `exe` を収める AppImage。2 つの環境変数は子プロセスにも引き継がれるため、`exe` が `appdir` の下にある場合に限る。

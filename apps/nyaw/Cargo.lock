@@ -3667,6 +3667,7 @@ dependencies = [
  "setup",
  "testing",
  "ui",
+ "updater",
  "winresource",
  "wrist",
 ]
@@ -6218,6 +6219,7 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 name = "update"
 version = "2026.0.4-dev.0"
 dependencies = [
+ "os",
  "serde",
  "serde_json",
  "sha2",
