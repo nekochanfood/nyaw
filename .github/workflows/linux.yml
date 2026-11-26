@@ -20,6 +20,8 @@ on:
       - .github/workflows/linux.yml
       - apps/nyaw/installer/**
       - apps/nyaw/crates/subsystems/update/**
+      - apps/nyaw/crates/updater/**
+      - apps/nyaw/src/**
 
 env:
   CARGO_INCREMENTAL: '0'

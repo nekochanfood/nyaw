@@ -6,7 +6,7 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kernel::{Kernel, config, subsystems::os};
+use kernel::{Kernel, Setting, config, subsystems::os};
 use logger::{Level, Logger, StderrSink};
 
 fn main() -> ExitCode {
@@ -37,6 +37,9 @@ fn main() -> ExitCode {
         os::error_dialog("nyaw", "ランタイムが見つかりませんでした");
         return ExitCode::FAILURE;
     };
+    if let Some(on) = args.steamvr_autostart {
+        return steamvr_autostart(kernel, on);
+    }
     // ダッシュボードのデバッグボタンで開く画面は Testing、設定ボタンで開く画面は Testing の設定画面（内容はプレースホルダー）。
     let mut panels = vec![wrist::spec(
         &kernel.settings(),
@@ -86,12 +89,30 @@ fn update(channel: config::UpdateChannel) -> ExitCode {
     }
 }
 
+/// `--steamvr-autostart=on|off`: 画面を起動せずに、SteamVR の起動と同時に nyaw を起動する設定を切り替える。
+/// 実行中の SteamVR が必要。
+fn steamvr_autostart(mut kernel: Kernel, on: bool) -> ExitCode {
+    kernel.set(Setting::AutoLaunch(on));
+    match kernel.settings().auto_launch {
+        Some(now) if now == on => {
+            logger::info!("SteamVR auto launch changed", enabled = on);
+            ExitCode::SUCCESS
+        }
+        now => {
+            logger::error!("cannot change SteamVR auto launch", current = ?now);
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[derive(Debug, Default, PartialEq)]
 struct Args {
     /// `--novr` / `--openxr` / `--openvr`（`--profile` 以外の最初の引数）。
     runtime: Option<String>,
     /// `--update`: 画面を起動せずに更新する。
     update: bool,
+    /// `--steamvr-autostart=on|off`: SteamVR の自動起動を切り替える。
+    steamvr_autostart: Option<bool>,
     /// `--profile` で `Some(None)`（既定のダンプ先）、`--profile=PATH` で `Some(Some(PATH))`。
     profile: Option<Option<PathBuf>>,
 }
@@ -105,6 +126,10 @@ impl Args {
             }
             if a == "--update" {
                 out.update = true;
+                continue;
+            }
+            if let Some(value @ ("on" | "off")) = a.strip_prefix("--steamvr-autostart=") {
+                out.steamvr_autostart = Some(value == "on");
                 continue;
             }
             match a.strip_prefix("--profile") {
@@ -223,5 +248,13 @@ mod tests {
             }
         );
         assert_eq!(parse(&["--console"]), Args::default());
+        assert_eq!(
+            parse(&["--steamvr-autostart=off", "--openvr"]),
+            Args {
+                runtime: Some("--openvr".into()),
+                steamvr_autostart: Some(false),
+                ..Args::default()
+            }
+        );
     }
 }
