@@ -235,7 +235,7 @@ mod tests {
             .with_ymd_and_hms(2026, 11, 12, 9, 0, 0)
             .unwrap();
         cx.update(|cx| {
-            assert_eq!(date(cx, thursday), "Thu Nov 12");
+            assert_eq!(date(cx, thursday), "Thu 12 Nov");
             cx.set_global(Lang::Ja);
             assert_eq!(date(cx, thursday), "11月12日（木）");
         });
