@@ -25,6 +25,8 @@ pub struct PanelState {
     seen: Settings,
     /// 案内（[`crate::tour`]）で暗くしている（カーネルに送った [`PanelCommand::Dim`]）。
     dimmed: bool,
+    /// 案内がこのナビゲーションバーのボタンを説明していて、消さずに出している（[`PanelCommand::StayAwake`]）。
+    awake: bool,
 }
 
 /// パネルの確定した重なり（`kernel::Panel` の `draw_order`・`lifted`）。
@@ -250,11 +252,17 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     let settings = ctl.settings;
     // 案内の最中は、焦点に無いパネルを暗くする（レーザーなどの表示専用のパネルは除く）。
     let dim = tour::dims(panel, cx) && kernel.panel(panel).pointer.is_none();
+    // 案内がナビゲーションバーのボタンを説明している間は、指していなくてもバーを消さない。
+    let awake = tour::lights(panel, cx) && kernel.panel(panel).nav_bar_of.is_some();
     let ctl = cx.default_global::<PanelControl>();
     let ctl = ctl.panels.entry(panel).or_default();
     if ctl.dimmed != dim {
         ctl.dimmed = dim;
         ctl.commands.push(PanelCommand::Dim(dim));
+    }
+    if ctl.awake != awake {
+        ctl.awake = awake;
+        ctl.commands.push(PanelCommand::StayAwake(awake));
     }
     ctl.pointing = kernel.pointing_hands(panel);
     for c in ctl.commands.drain(..) {

@@ -85,6 +85,9 @@ pub enum PanelCommand {
     Dim(bool),
     /// 子の、親から見た姿勢を変え、今の位置から滑らかに移す（`Overlay::set_offset`。等倍のつもりの値）。
     Offset(Pose),
+    /// ナビゲーションバーを、指していなくても消さずに出しておく（`Overlay::set_stay_awake`）。案内がバーのボタンを
+    /// 説明している間。
+    StayAwake(bool),
     /// レーザーを透過させる（`Overlay::set_pass_through`。視界の端に配置する表示専用のパネル向け）。
     PassThrough(bool),
     /// 表示・非表示の遷移を不透明度のみで行う（`Overlay::set_fade_only`。アニメーションはパネル自身が描画する）。
@@ -1216,6 +1219,7 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
             PanelCommand::Dim(dim) => self.overlay.set_dimmed(panel, dim),
             PanelCommand::Offset(offset) => self.overlay.set_offset(panel, offset),
+            PanelCommand::StayAwake(on) => self.overlay.set_stay_awake(panel, on),
             PanelCommand::PassThrough(pass) => self.overlay.set_pass_through(panel, pass),
             PanelCommand::FadeOnly(fade_only) => self.overlay.set_fade_only(panel, fade_only),
             PanelCommand::DockSlot(tilt) => self.overlay.set_dock_slot(panel, tilt),

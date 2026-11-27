@@ -108,6 +108,9 @@ pub struct Panel {
     pub veil: bool,
     /// 子がいなくても暗くする（[`Overlay::set_dimmed`]。案内中に、案内の対象でないパネルを暗くする）。
     pub dimmed: bool,
+    /// ナビゲーションバーを、指していなくても消さずに出しておく（[`Overlay::set_stay_awake`]。案内がバーのボタンを
+    /// 説明している間）。
+    pub stay_awake: bool,
     /// レーザーが素通りする（[`Overlay::set_pass_through`]）。ヒット判定をスキップする。
     pub pass_through: bool,
     /// イン・アウトを不透明度のみで行う（[`Overlay::set_fade_only`]）。

@@ -80,6 +80,11 @@ pub fn set(focus: Option<Focus>, cx: &mut App) {
     cx.refresh_windows();
 }
 
+/// `panel` が焦点の `lit` にあるか（強調する要素を説明しているパネル）。
+pub(crate) fn lights(panel: PanelId, cx: &App) -> bool {
+    focus(cx).is_some_and(|f| f.lit.contains(&panel))
+}
+
 /// `panel` を暗くするか（案内の最中で、焦点に無いパネル）。
 pub(crate) fn dims(panel: PanelId, cx: &App) -> bool {
     focus(cx).is_some_and(|f| !free(f, panel, cx) && !f.lit.contains(&panel))
