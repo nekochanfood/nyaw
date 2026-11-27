@@ -204,6 +204,22 @@ fn spec_attaches_locks_and_sizes_panel(cx: &mut TestAppContext) {
     assert_eq!((p.size, p.resolution), (Vec2::new(0.1, 0.05), (10, 5)));
 }
 
+/// `full_detail` を付けて開いたパネルは、遠くにあっても LOD0（付けないパネルは距離で粗くなる）。
+#[gpui::test]
+fn full_detail_spec_keeps_a_far_panel_at_full_resolution(cx: &mut TestAppContext) {
+    let mut kernel = Kernel::boot(Some("novr"), Default::default(), false).unwrap();
+    let far = Pose::new(Vec3::new(0.0, 0.0, -100.0), Quat::IDENTITY);
+    let mut open = |spec: PanelSpec| {
+        cx.update(|cx| open_panel(&mut kernel, spec, 0, cx))
+            .unwrap()
+            .0
+    };
+    let sharp = open(PanelSpec::root(far, |_, _, _| Probe::default()).full_detail());
+    let plain = open(PanelSpec::root(far, |_, _, _| Probe::default()));
+    assert_eq!(kernel.panel_lod(sharp), 0);
+    assert!(kernel.panel_lod(plain) > 0);
+}
+
 /// 視界前方に配置するパネルは頭の水平方向に置き、うつむいていても垂直に配置する。
 #[test]
 fn in_view_places_level_in_front_of_head() {

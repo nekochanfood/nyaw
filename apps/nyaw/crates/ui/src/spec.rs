@@ -66,6 +66,8 @@ pub struct PanelSpec {
     animated: bool,
     /// 表示中に空間全体を暗転する（[`Self::with_veil`]）。
     veil: bool,
+    /// 距離によらず最高の精細さで描く（[`Self::full_detail`]）。
+    full_detail: bool,
     /// レーザー描画用パネル。
     pointer: Option<(Hand, Pointer)>,
     /// ナビゲーションバーに表示するタイトル。
@@ -129,6 +131,7 @@ impl PanelSpec {
             parent: None,
             animated: true,
             veil: false,
+            full_detail: false,
             pointer: None,
             title: None,
             nav_bar: true,
@@ -366,6 +369,12 @@ impl PanelSpec {
     /// このパネルの表示・非表示アニメーションを無効化する。
     pub fn without_animation(mut self) -> Self {
         self.animated = false;
+        self
+    }
+
+    /// 距離によらず最高の精細さ（LOD0）で描く（[`PanelCommand::FullDetail`]）。いつも読ませたいパネル用。
+    pub fn full_detail(mut self) -> Self {
+        self.full_detail = true;
         self
     }
 
@@ -629,6 +638,9 @@ pub(crate) fn open_panel(
     }
     if spec.veil {
         kernel.apply(panel, PanelCommand::Veil(true));
+    }
+    if spec.full_detail {
+        kernel.apply(panel, PanelCommand::FullDetail(true));
     }
     if let Some((device, offset)) = spec.attach.take() {
         kernel.apply(panel, PanelCommand::Attach(device, offset));

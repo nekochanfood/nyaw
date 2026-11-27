@@ -499,6 +499,8 @@ impl Dashboard {
         })
         .in_view(SCREEN_POSE)
         .sized(COACH_M, COACH_PX)
+        // 案内の文字は、ダッシュボードの距離や置き場所によらず粗くしない。
+        .full_detail()
         // 案内のパネルは閉じたり動かしたりする対象ではない（終えるときは「終了」ボタン）。
         .without_nav_bar()
         .without_resize()
