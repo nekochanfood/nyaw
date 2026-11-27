@@ -16,17 +16,19 @@ fn steps_go_from_the_intro_to_done_and_back() {
 /// 開始画面ははめ、ほかは説明する所の近くに浮かべる。バーの説明は画面がはまっていなければバーの上、はまっていれば画面の右。
 #[test]
 fn the_coach_goes_near_what_each_step_explains() {
-    assert_eq!(Step::Intro.spot(true), Spot::Docked);
-    assert_eq!(Step::QuickSettings.spot(true), Spot::Bar);
-    assert_eq!(Step::Launcher.spot(false), Spot::Beside);
-    assert_eq!(Step::Grab.spot(false), Spot::Beside);
-    assert_eq!(Step::NavBar.spot(false), Spot::Below);
+    assert_eq!(Step::Intro.spot(true, false), Spot::Docked);
+    assert_eq!(Step::QuickSettings.spot(true, false), Spot::Bar);
+    assert_eq!(Step::Launcher.spot(false, false), Spot::Beside);
+    assert_eq!(Step::Grab.spot(false, false), Spot::Beside);
+    assert_eq!(Step::NavBar.spot(false, false), Spot::Below);
     assert_eq!(
-        Step::NavBar.spot(true),
+        Step::NavBar.spot(true, true),
         Spot::Docked,
         "画面を閉じたら、はめる"
     );
-    assert_eq!(Step::Minimize.spot(false), Spot::Below);
+    // 入った時点で画面が無いだけでは、はめない（入るときに開く画面に押し出されて閉じてしまう）。
+    assert_eq!(Step::NavBar.spot(true, false), Spot::Below);
+    assert_eq!(Step::Minimize.spot(false, false), Spot::Below);
 }
 
 /// ダッシュボードの距離・高さの設定（既定と両端）。

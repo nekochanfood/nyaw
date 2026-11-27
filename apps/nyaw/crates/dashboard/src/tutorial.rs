@@ -75,17 +75,33 @@ impl Step {
         STEPS[at.saturating_sub(1)]
     }
 
-    /// 案内のパネルを置く所。`free` はダッシュボードに画面がはまっていないか。画面のバーの手順で画面を閉じたら、
-    /// 空いたはまる所にはめる。
-    fn spot(self, free: bool) -> Spot {
+    /// 案内のパネルを置く所。`free` はダッシュボードに画面がはまっていないか、`done` はこの手順の操作をしたか。
+    /// 画面のバーの手順でユーザーが画面を閉じたら、空いたはまる所にはめる。手順に入った時点で画面が無くても
+    /// はめない（入るときにクイック設定を開いてはめるので、はめた案内のパネルがそれに押し出されて閉じてしまう）。
+    fn spot(self, free: bool, done: bool) -> Spot {
         match self {
             Step::Intro => Spot::Docked,
-            Step::NavBar if free => Spot::Docked,
+            Step::NavBar if free && done => Spot::Docked,
             Step::NavBar | Step::Minimize => Spot::Below,
             Step::Grab | Step::Dock | Step::Pick | Step::Operate => Spot::Beside,
             _ if free => Spot::Bar,
             _ => Spot::Beside,
         }
+    }
+
+    /// 操作をしたら次の手順へ進む手順か（操作の結果が次の手順の前提になる: 画面を外す・ランチャーを開く・練習用の
+    /// ウィンドウを選ぶ・しまう）。画面を外す手順と戻す手順は一続きで、外したら戻す手順へ進み、戻せたら「よくできました」
+    /// を出す。ほかの手順は、操作をしても「よくできました」を出すだけで、進むのは「次へ」。
+    fn leads_on(self) -> bool {
+        matches!(
+            self,
+            Step::Grab | Step::Launcher | Step::Pick | Step::Minimize
+        )
+    }
+
+    /// 操作を案内する手順か（「やってみましょう」を出し、操作をするまで「次へ」に色を付けない）。
+    fn has_action(self) -> bool {
+        !matches!(self, Step::Intro | Step::Bar | Step::Menu | Step::Done)
     }
 
     /// 開始画面と完了を除いた、何番目の手順か（1 から）。
@@ -343,12 +359,15 @@ impl Dashboard {
         if step == Step::Toggle {
             self.follow_hint(hidden, cx);
         }
-        // 案内した操作をしても次へは進めない（進むのは「次へ」だけ）。案内のパネルに「できました」を出す。
+        // 案内した操作をしたら、案内のパネルに「よくできました」を出す（次へは進めない）。ただし操作がそのまま次の手順に
+        // つながる手順（画面を外す・ランチャーを開く・練習用のウィンドウを選ぶ・しまう）は、操作をしたら次へ進む。
         let now = self.step_done(step, cx);
         let t = self.tutorial.as_mut().expect("running");
         let did = now && !t.was && !t.done;
         t.was = now;
-        if did {
+        if did && step.leads_on() {
+            self.tutorial_go(step.next(), cx);
+        } else if did {
             self.mark_done(cx);
         }
         self.place_coach(cx);
@@ -406,7 +425,7 @@ impl Dashboard {
             return;
         };
         let free = ui::docked(cx).is_none_or(|d| d == coach);
-        let (was, spot) = (t.spot, t.step.spot(free));
+        let (was, spot) = (t.spot, t.step.spot(free, t.done));
         if was == Some(spot) {
             return;
         }
@@ -1011,7 +1030,7 @@ impl Render for Coach {
                 .font_weight(FontWeight::BOLD)
                 .child(n.to_string())
         };
-        // 右上の進み具合: 今の番号を大きく、全体の数を小さく上端にそろえる（開始画面と完了には無い）。
+        // 右上の進み具合: 今の番号を大きく、全体の数を小さく下端にそろえる（開始画面と完了には無い）。
         let progress = (![Step::Intro, Step::Done].contains(&step)).then(|| {
             let sign = |up: bool| if up { 1.0 } else { -1.0 };
             let current = match slide {
@@ -1026,7 +1045,7 @@ impl Render for Coach {
                 .top(px(WIZARD_MARGIN))
                 .right(px(WIZARD_MARGIN))
                 .flex()
-                .items_start()
+                .items_end()
                 .gap(px(spacing::XS))
                 .child(
                     div()
@@ -1045,18 +1064,39 @@ impl Render for Coach {
                         .child(format!("/{}", STEPS.len() - 2)),
                 )
         });
-        // 案内した操作をしたら、「次へ」の左に印を出す（次へは進めない）。
-        let did = done.then(|| {
+        // 操作を案内する手順では、「次へ」の左に「やってみましょう」を出し、操作をしたら「できました」に替える
+        // （次へは進めない）。「次へ」は、操作をするまで色を付けない（押せば進める）。
+        let tried = step.has_action().then(|| {
+            let (id, glyph, text, color) = if done {
+                (
+                    "tutorial-done",
+                    &icons::CHECK_CIRCLE,
+                    i18n::t(cx, "tutorial.did"),
+                    theme.accent_text,
+                )
+            } else {
+                (
+                    "tutorial-try",
+                    &icons::HAND_TAP,
+                    i18n::t(cx, "tutorial.try"),
+                    theme.neutral_text_low,
+                )
+            };
             div()
-                .debug_selector(|| "tutorial-done".into())
+                .debug_selector(move || id.into())
                 .flex()
                 .items_center()
                 .gap(px(spacing::XS))
-                .text_color(rgba(theme.accent_text))
+                .text_color(rgba(color))
                 .font_weight(FontWeight::BOLD)
-                .child(design::icon(&icons::CHECK_CIRCLE).size(px(font_size::LG)))
-                .child(i18n::t(cx, "tutorial.did"))
+                .child(design::icon(glyph).size(px(font_size::LG)))
+                .child(text)
         });
+        let next = if done || !step.has_action() {
+            components::wizard_next(&theme, "tutorial-next", i18n::t(cx, "tutorial.next"))
+        } else {
+            components::wizard_next_muted(&theme, "tutorial-next", i18n::t(cx, "tutorial.next"))
+        };
         // 下の帯: 開始画面は左に「スキップ」、完了は左に「戻る」と右に「完了」。ほかは左に終了（開いたドア。
         // 確かめてから終える）と「戻る」、右に「次へ」。
         let (start, forward) = match step {
@@ -1092,11 +1132,7 @@ impl Render for Coach {
                     let spec = quit_dialog(coach, dashboard.clone(), window, cx);
                     cx.default_global::<PanelControl>().spawns.push(spec);
                 });
-                (
-                    vec![quit, back],
-                    components::wizard_next(&theme, "tutorial-next", i18n::t(cx, "tutorial.next"))
-                        .on_click(act(go(false))),
-                )
+                (vec![quit, back], next.on_click(act(go(false))))
             }
         };
         // ページの中身だけをウィザードと同じく横に滑らせる（手順の番号までを積み、進むと積み、戻ると下ろす）。
@@ -1134,7 +1170,7 @@ impl Render for Coach {
                                     .flex()
                                     .items_center()
                                     .gap(px(spacing::LG))
-                                    .children(did)
+                                    .children(tried)
                                     .child(forward),
                             ),
                     )
