@@ -330,3 +330,42 @@ fn the_coach_starts_docked_then_floats_near_each_step_and_goes_back(cx: &mut Tes
     assert_eq!(kit.app(|cx| ui::docked(cx)), Some(screen));
     near(&kit, CoachSpot::Beside);
 }
+
+/// Going back sets the dashboard up as it was when that step began, so its action can be done again: what later
+/// steps opened (the screen, the launcher, the practice window) closes.
+#[gpui::test]
+fn going_back_undoes_what_later_steps_opened(cx: &mut TestAppContext) {
+    let (mut kit, _) = start(cx);
+    for _ in 0..5 {
+        click(&mut kit, "tutorial-next");
+    }
+    assert!(at(&mut kit, "tutorial-step-Grab"));
+    assert!(kit.find("quick-time").is_some(), "opened on the way in");
+    click(&mut kit, "tutorial-back");
+    assert!(at(&mut kit, "tutorial-step-QuickSettings"));
+    assert!(kit.find("quick-time").is_none(), "closed again");
+    click(&mut kit, "dashboard-quick-settings");
+    assert!(kit.find("quick-time").is_some() && done(&mut kit));
+
+    // Forward to using the practice window, then back to picking it and to opening the launcher.
+    for _ in 0..6 {
+        click(&mut kit, "tutorial-next");
+    }
+    assert!(at(&mut kit, "tutorial-step-Operate"));
+    let practice = kit.find("practice-list").expect("practice window");
+    click(&mut kit, "tutorial-back");
+    assert!(at(&mut kit, "tutorial-step-Pick"));
+    assert!(kit.kernel.panel(practice).closed);
+    assert!(
+        kit.find("dashboard-practice").is_some(),
+        "the launcher is open"
+    );
+    click(&mut kit, "tutorial-back");
+    assert!(at(&mut kit, "tutorial-step-Launcher"));
+    assert!(
+        kit.find("dashboard-search").is_none(),
+        "the launcher closed"
+    );
+    click(&mut kit, "dashboard-launcher");
+    assert!(kit.find("dashboard-search").is_some() && done(&mut kit));
+}
