@@ -567,6 +567,10 @@ menu = "Menu button"
 system = "System button"
 bumper = "Bumper"
 view = "View button"
+dpad_up = "D-pad up"
+dpad_down = "D-pad down"
+dpad_left = "D-pad left"
+dpad_right = "D-pad right"
 
 [guide_test]
 title = "Controller guide"

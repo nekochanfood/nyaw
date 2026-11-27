@@ -158,6 +158,10 @@ pub fn part_name(cx: &App, part: &str) -> SharedString {
         "system" => i18n::t(cx, "guide.part.system"),
         "bumper" => i18n::t(cx, "guide.part.bumper"),
         "view" => i18n::t(cx, "guide.part.view"),
+        "dpad_up" => i18n::t(cx, "guide.part.dpad_up"),
+        "dpad_down" => i18n::t(cx, "guide.part.dpad_down"),
+        "dpad_left" => i18n::t(cx, "guide.part.dpad_left"),
+        "dpad_right" => i18n::t(cx, "guide.part.dpad_right"),
         other => other.replace('_', " ").to_uppercase().into(),
     }
 }
