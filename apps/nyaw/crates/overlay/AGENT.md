@@ -87,6 +87,7 @@ Overlay::{
     set_nav_bar,       // ナビゲーションバーの関連付け
     set_veil,          // 空間暗転（ベール）の有効化
     set_dimmed,        // 子が無くても暗くする（案内中）
+    set_offset,        // 子の親から見た姿勢を変え、滑らかに移す
     set_resolution,    // パネル解像度の更新
     set_corner_resize, // 角を掴んだ解像度の変更（オプトイン）
     set_dock_slot,     // ドッキングスロットの設定

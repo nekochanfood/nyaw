@@ -191,6 +191,17 @@ impl Overlay {
         slot_offset_in(&self.panels, &self.present, self.scale(), id, parent, tilt)
     }
 
+    /// 子 `id` の親から見た姿勢を `offset`（等倍のつもりの値）に変え、今の位置から滑らかに移す（[`Motion::Move`]）。
+    /// 親の無いパネルには何もしない。
+    pub fn set_offset(&mut self, id: PanelId, offset: Pose) {
+        if self.panels[id].parent.is_none() {
+            return;
+        }
+        self.glide_to(id, None, Motion::Move);
+        let scaled = Pose::new(offset.position * self.scale(), offset.orientation);
+        self.panels[id].offset = scaled;
+    }
+
     /// `id` を現在位置から `to`（`None` なら毎 tick 算出のドック位置）へ `motion` で移動する（[`Glide`]）。非表示ならその場で移動。
     pub(crate) fn glide_to(&mut self, id: PanelId, to: Option<Pose>, motion: Motion) {
         let q = &mut self.panels[id];

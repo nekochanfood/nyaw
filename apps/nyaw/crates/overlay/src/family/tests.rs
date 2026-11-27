@@ -546,6 +546,24 @@ fn hiding_a_dialog_restores_its_parents_brightness() {
     assert_eq!(ov.panel(0).dim_to, 0.0);
 }
 
+/// 子の親から見た姿勢を変えると、子はそこへ移り、以後は新しい姿勢で親に付いてくる。
+#[test]
+fn set_offset_moves_a_child_to_its_new_place_by_its_parent() {
+    let (mut vr, mut ov) = with_child(true);
+    let to = Pose::new(Vec3::new(0.5, 0.2, 0.1), Quat::IDENTITY);
+    ov.set_offset(1, to);
+    for _ in 0..3 {
+        ov.tick(&mut vr);
+    }
+    let want = ov.panel(0).pose * to;
+    assert!(ov.panel(1).pose.position.abs_diff_eq(want.position, 1e-4));
+    // 親のない独立したパネルは動かさない。
+    let before = ov.panel(0).pose;
+    ov.set_offset(0, to);
+    ov.tick(&mut vr);
+    assert_eq!(ov.panel(0).pose, before);
+}
+
 /// 子がいなくても `set_dimmed` で暗くでき、戻すと明るくなる。暗くしても入力は止めない（止めるのは描画側）。
 #[test]
 fn a_dimmed_panel_darkens_without_a_child_and_still_takes_input() {
