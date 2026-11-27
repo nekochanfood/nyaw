@@ -319,7 +319,7 @@ fn the_arrival_time_is_relative_then_absolute(cx: &mut TestAppContext) {
         assert_eq!(s(23 * 3600), "23 h ago");
         assert_eq!(s(24 * 3600), "1 d ago");
         assert_eq!(s(6 * 24 * 3600 + 23 * 3600), "6 d ago");
-        assert_eq!(s(7 * 24 * 3600), "Nov 9, 15:30");
+        assert_eq!(s(7 * 24 * 3600), "9 Nov, 15:30");
         assert_eq!(
             stamp(
                 cx,
