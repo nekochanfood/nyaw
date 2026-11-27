@@ -72,10 +72,12 @@ fn table(lang: Lang) -> &'static Table {
 
 /// TOML のネストされたテーブルを `.` 区切りのキーにフラット化する。文言は解放しない（プロセスの存続期間中使用する）。
 fn parse(lang: Lang) -> Table {
-    let root: toml::Table = lang
-        .source()
-        .parse()
-        .unwrap_or_else(|e| panic!("locales/{}/messages.toml is not valid TOML: {e}", lang.code()));
+    let root: toml::Table = lang.source().parse().unwrap_or_else(|e| {
+        panic!(
+            "locales/{}/messages.toml is not valid TOML: {e}",
+            lang.code()
+        )
+    });
     let mut out = Table::new();
     fn walk(prefix: &str, t: &toml::Table, out: &mut Table) {
         for (k, v) in t {
