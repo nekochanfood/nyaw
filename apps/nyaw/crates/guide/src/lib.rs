@@ -4,6 +4,7 @@
 
 use std::sync::{Arc, OnceLock};
 
+use design::animation::Motion;
 use design::{Theme, font_size, radius, spacing};
 use gpui::{
     App, Hsla, Image, ImageFormat, IntoElement, PathBuilder, Pixels, Point, RenderOnce,
@@ -601,7 +602,8 @@ const ENTER_RISE: f32 = 0.12;
 /// 押すと透明から現れつつ内へ沈み（[`PRESS`]）、離すと外へ広がり、広がる間は濃いまま終わり際に消える（[`RIPPLE`]）。
 pub fn double_tap(t: f32) -> [(f32, f32); 2] {
     let t = t.rem_euclid(TAP_PERIOD);
-    let out = |k: f32| 1.0 - (1.0 - k) * (1.0 - k);
+    // イージングは animation に集約する（減速して止まる・加速して消える）。
+    let out = |k: f32| Motion::Enter.ease(k);
     TAPS.map(|at| {
         let dt = t - at;
         if (0.0..PRESS).contains(&dt) {
@@ -611,7 +613,7 @@ pub fn double_tap(t: f32) -> [(f32, f32); 2] {
             let k = (dt - PRESS) / RIPPLE;
             (
                 1.0 - PRESS_DEPTH + (PRESS_DEPTH + RIPPLE_GROW) * out(k),
-                1.0 - k * k * k,
+                1.0 - Motion::Exit.ease(k),
             )
         } else {
             (1.0, 0.0)
@@ -619,10 +621,9 @@ pub fn double_tap(t: f32) -> [(f32, f32); 2] {
     })
 }
 
-/// 登場の進み具合（0〜1）。`elapsed` は [`Zoom::enter`] からの秒。待ってから減速しつつ上がる（ease-out cubic）。
+/// 登場の進み具合（0〜1）。`elapsed` は [`Zoom::enter`] からの秒。待ってから減速しつつ上がる（`Motion::Enter`）。
 pub fn entrance(elapsed: f32) -> f32 {
-    let k = ((elapsed - ENTER_DELAY) / ENTER).clamp(0.0, 1.0);
-    1.0 - (1.0 - k).powi(3)
+    Motion::Enter.ease(((elapsed - ENTER_DELAY) / ENTER).clamp(0.0, 1.0))
 }
 
 /// コントローラを寄って映し、部品 `parts` をダブルタップの波紋（2 つずつ、押すと沈み、離すと広がって消える）で示す。
