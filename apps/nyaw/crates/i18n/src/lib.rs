@@ -1,6 +1,6 @@
 //! 画面の文言の多言語対応。対応言語は [`Lang`]（英語・日本語）。
 //!
-//! 文言は言語ごとの定義表 `locales/<code>.toml` に配置し、キー（`testing.title` のような `.` 区切り。TOML のテーブルがそのまま区切りとなる）で参照する。
+//! 文言は言語ごとの定義表 `locales/<code>/messages.toml` に配置し、キー（`testing.title` のような `.` 区切り。TOML のテーブルがそのまま区切りとなる）で参照する。
 //! 画面は `render` で [`t`] / [`tf`] を呼び出す。言語は GPUI のグローバル [`Lang`] で、切り替えると全ウィンドウが再描画される
 //! （`ui::sync_panel` がカーネルの設定から反映する）。定義表に存在しないキーは英語にフォールバックし、英語にも存在しなければキーそのものを返す。
 //!
@@ -55,8 +55,8 @@ impl Lang {
 
     fn source(self) -> &'static str {
         match self {
-            Lang::En => include_str!("../locales/en.toml"),
-            Lang::Ja => include_str!("../locales/ja.toml"),
+            Lang::En => include_str!("../locales/en/messages.toml"),
+            Lang::Ja => include_str!("../locales/ja/messages.toml"),
         }
     }
 }
@@ -75,7 +75,7 @@ fn parse(lang: Lang) -> Table {
     let root: toml::Table = lang
         .source()
         .parse()
-        .unwrap_or_else(|e| panic!("locales/{}.toml is not valid TOML: {e}", lang.code()));
+        .unwrap_or_else(|e| panic!("locales/{}/messages.toml is not valid TOML: {e}", lang.code()));
     let mut out = Table::new();
     fn walk(prefix: &str, t: &toml::Table, out: &mut Table) {
         for (k, v) in t {
@@ -223,7 +223,7 @@ mod tests {
             assert_eq!(t(cx, "common.close"), "Close", "English until set");
             cx.set_global(Lang::Ja);
             assert_eq!(t(cx, "common.close"), "閉じる");
-            assert_eq!(tf(cx, "testing.clicked", &[("count", &2)]), "クリック 2 回");
+            assert_eq!(tf(cx, "testing.clicked", &[("count", &2)]), "クリック 2回");
         });
     }
 
@@ -270,7 +270,7 @@ mod tests {
             for lang in Lang::ALL {
                 assert!(
                     get(lang, &key).is_some(),
-                    "{}: {key} is not in locales/{}.toml",
+                    "{}: {key} is not in locales/{}/messages.toml",
                     path.display(),
                     lang.code()
                 );
