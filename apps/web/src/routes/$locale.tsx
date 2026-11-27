@@ -35,10 +35,13 @@ function Layout() {
       >
         {t("skip")}
       </a>
-      {/* 帯の内側に載る本文のカード。下端だけを丸め、その先の帯の色にフッターが続く */}
-      <div className="m-(--frame-gutter) mb-0 flex min-h-[calc(100svh-2*var(--frame-gutter))] flex-col rounded-b-(--frame-radius) bg-card">
+      {/*
+        帯の内側に載る本文のカード。下端だけを丸め、その先の帯の色にフッターが続く。
+        clip は hidden と違いスクロールの箱を作らないので、ヘッダーの sticky が効いたまま角で切り取れる
+      */}
+      <div className="m-(--frame-gutter) mb-0 flex min-h-[calc(100svh-2*var(--frame-gutter))] flex-col overflow-clip rounded-b-(--frame-radius) bg-card">
         <Header />
-        <main id="main" className="grow">
+        <main id="main" className="flex grow flex-col">
           <Outlet />
         </main>
       </div>

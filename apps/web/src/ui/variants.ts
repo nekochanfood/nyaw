@@ -6,7 +6,9 @@
 export const cx = (...classes: (string | false | null | undefined)[]) =>
   classes.filter(Boolean).join(" ");
 
-const FADE = "transition-colors duration-(--duration-slow)";
+/** ホバーの色はゆっくり変え、押したときは少し縮む */
+const FADE =
+  "transition-[color,background-color,scale] duration-(--duration-slow) ease-out active:scale-[0.96]";
 
 export const BUTTON_VARIANTS = {
   /** 地の上に直接置くアイコン・文字ボタン。ホバーの間だけ面が出る */
@@ -15,6 +17,8 @@ export const BUTTON_VARIANTS = {
   surface: `bg-control hover:bg-control-hover active:bg-control-active ${FADE}`,
   /** 本文色で塗った強調ボタン。文字は面の色で抜く */
   solid: `bg-neutral-text text-card hover:bg-neutral-text/85 ${FADE}`,
+  /** 帯（フッター）の上に置くアイコンボタン。ホバーの間だけ面が出る */
+  onFrame: `hover:bg-card ${FADE}`,
   /** 文字だけのリンク。ホバーで本文色になる */
   text: `text-neutral-text-low hover:text-neutral-text ${FADE}`,
 } as const;
@@ -45,9 +49,9 @@ export function buttonClass({ variant = "ghost", size = "icon", className }: But
 
 export const TEXT_VARIANTS = {
   /** ページの最上部の大見出し */
-  display: "font-serif text-4xl sm:text-5xl lg:text-6xl leading-[1.1] tracking-tight text-balance",
+  display: "text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.15] tracking-tight text-balance",
   /** 区画の見出し */
-  section: "font-serif text-3xl sm:text-4xl leading-tight tracking-tight text-balance",
+  section: "text-3xl sm:text-4xl font-bold leading-tight tracking-tight text-balance",
   /** カードの見出し */
   card: "text-lg font-bold",
   /** 見出しの上に添える小さな文字 */
@@ -65,9 +69,18 @@ export function textClass(variant: keyof typeof TEXT_VARIANTS, className?: strin
 /** 浮いたパネル。ドロップダウンやポップオーバー */
 export const panelClass = "bg-card text-neutral-text border border-neutral-border-subtle";
 
+/**
+ * 中に項目を並べるパネルの角丸と余白。外側の半径を「項目の半径（lg）＋余白」にして、内外の角を同心にする。
+ * 中の項目は rounded-lg にする。
+ */
+export const POPUP_INSET = {
+  menu: "p-1 rounded-[calc(var(--radius-lg)+--spacing(1))]",
+  popover: "p-2 rounded-[calc(var(--radius-lg)+--spacing(2))]",
+} as const;
+
 /** メニューの項目。ホバーでもキーボードでも data-highlighted で同じ面が出る */
 export const menuItemClass =
-  "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer data-highlighted:bg-control-on-background";
+  "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer transition-colors duration-(--duration-normal) data-highlighted:bg-control-on-background";
 
 /** 本文の幅。ヘッダー・本文・フッターで揃える */
 export const containerClass = "mx-auto w-full max-w-6xl px-5 sm:px-8";

@@ -1,6 +1,6 @@
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { Link } from "@tanstack/react-router";
-import { createTimeline, stagger } from "animejs";
+import { animate, createTimeline, stagger } from "animejs";
 import { useLayoutEffect, useRef } from "react";
 
 import { useLocale, useT } from "@/i18n/index";
@@ -19,9 +19,20 @@ export function useNavItems() {
   const t = useT("nav");
   const locale = useLocale();
   return [
-    { label: t("features"), to: "/$locale", hash: "features", params: { locale } },
+    { label: t("features"), to: "/$locale/features", hash: undefined, params: { locale } },
     { label: t("download"), to: "/$locale/download", hash: undefined, params: { locale } },
   ] as const;
+}
+
+/** ロゴをホバーしたときに、首をかしげるように小さく揺らす */
+function wiggle(el: HTMLElement) {
+  if (reducedMotion()) return;
+  animate(el, {
+    rotate: [0, -10, 8, -4, 0],
+    duration: 700,
+    ease: "out(2)",
+    composition: "replace",
+  });
 }
 
 export function Header() {
@@ -50,7 +61,7 @@ export function Header() {
   return (
     <header
       ref={ref}
-      className="sticky top-(--frame-gutter) z-30 h-16 before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:-bottom-full before:-z-1 before:bg-card/80 before:mask-b-from-40% before:backdrop-blur-lg"
+      className="sticky top-(--frame-gutter) z-30 h-16 before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:bg-card/80 before:mask-b-from-60% before:backdrop-blur-md"
     >
       <div className={cx(containerClass, "flex h-full items-center justify-between gap-2")}>
         <div className="flex items-center gap-2">
@@ -60,8 +71,9 @@ export function Header() {
             params={{ locale }}
             aria-label={t("home")}
             className="mr-2 rounded-lg p-1"
+            onMouseEnter={(e) => wiggle(e.currentTarget)}
           >
-            <Logo className="h-7 w-auto" />
+            <Logo kind="mini" className="h-8 w-auto" />
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
             {items.map((item) => (

@@ -44,7 +44,7 @@ export function Footer() {
         <div className="flex flex-col-reverse gap-10 sm:flex-row sm:justify-between">
           <div className="flex flex-wrap gap-x-16 gap-y-8">
             <Column title={t("title_product")}>
-              <Link to="/$locale" params={{ locale }} hash="features" className={linkClass}>
+              <Link to="/$locale/features" params={{ locale }} className={linkClass}>
                 {nav("features")}
               </Link>
               <Link to="/$locale/download" params={{ locale }} className={linkClass}>
@@ -57,14 +57,20 @@ export function Footer() {
               <External href={ISSUES_URL}>{t("issues")}</External>
             </Column>
           </div>
-          <Logo className="h-12 w-auto self-start" />
+          <Logo className="h-20 w-auto self-start sm:h-28" />
         </div>
         <div className="flex items-end justify-between gap-6">
           <div className="flex flex-col gap-1">
             <p className={textClass("muted")}>{t("licence")}</p>
             <p className={textClass("muted")}>{t("copyright")}</p>
           </div>
-          <ButtonAnchor href={REPO_URL} target="_blank" rel="noopener" aria-label={nav("github")}>
+          <ButtonAnchor
+            href={REPO_URL}
+            target="_blank"
+            rel="noopener"
+            aria-label={nav("github")}
+            variant="onFrame"
+          >
             <GithubLogo size={20} />
           </ButtonAnchor>
         </div>

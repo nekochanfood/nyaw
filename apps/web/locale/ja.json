@@ -3,7 +3,8 @@
     "title": "SteamVR と OpenXR のための VR オーバーレイ",
     "description": "ヘッドセットを着けたまま、ウィンドウをミラーリングして、通知の確認やメディアの操作を行います。",
     "download_title": "ダウンロード",
-    "not_found_title": "ページが見つかりません"
+    "not_found_title": "ページが見つかりません",
+    "features_title": "機能"
   },
   "nav": {
     "features": "機能",
@@ -53,7 +54,9 @@
     "appearance_title": "テーマとカラー",
     "appearance_body": "ライトとダークのテーマと、ボタンなどに使うアクセントカラーを選びます。",
     "guides_title": "操作ガイド",
-    "guides_body": "チュートリアルとコントローラの操作ガイドで、すべての操作を確かめます。"
+    "guides_body": "チュートリアルとコントローラの操作ガイドで、すべての操作を確かめます。",
+    "body": "ミラーリングした画面から手首の通知まで、nyaw が VR に持ち込むものの一覧です。",
+    "more": "すべての機能を見る"
   },
   "cta": {
     "title": "nyaw を入手",
@@ -63,17 +66,12 @@
   "download": {
     "title": "nyaw をダウンロード",
     "body": "Windows PC に nyaw をインストールして、SteamVR か OpenXR ランタイムと一緒に起動します。",
-    "latest": "最新版",
     "released": "{date}公開",
     "installer": "インストーラーをダウンロード",
     "size": "{size} MB",
     "checking": "最新版を確認しています",
     "unavailable": "最新版を確認できませんでした。GitHub Releases から入手してください",
     "releases": "GitHub Releases を開く",
-    "preview_title": "プレビュー版",
-    "preview_body": "まだ正式に公開していない機能を含む版です。動作が不安定な場合があります。",
-    "preview_download": "{version} をダウンロード",
-    "preview_none": "最新版より新しいプレビュー版はありません",
     "requirements_title": "動作環境",
     "requirement_os": "Windows 10または11（64ビット）",
     "requirement_runtime": "SteamVR または OpenXR ランタイム",
@@ -83,7 +81,14 @@
     "install_start": "SteamVR を起動して、nyaw を開きます。",
     "install_setup": "セットアップに従って、利き手、テーマ、文字盤を選びます。",
     "updates": "更新は設定画面から確認してインストールします。",
-    "all_releases": "すべてのリリース"
+    "all_releases": "すべてのリリース",
+    "channel": "リリースの種類",
+    "stable": "安定版",
+    "stable_body": "動作を確かめた版です。迷ったらこちらを選びます。",
+    "nightly": "ナイトリー",
+    "nightly_body": "まだ正式に公開していない機能を含む版です。動作が不安定な場合があります。",
+    "nightly_none": "安定版より新しいナイトリーはありません",
+    "version": "バージョン {version}"
   },
   "footer": {
     "licence": "MIT または Apache-2.0 ライセンス",

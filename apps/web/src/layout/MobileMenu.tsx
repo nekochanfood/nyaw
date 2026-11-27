@@ -60,7 +60,7 @@ export function MobileMenu() {
                 params={item.params}
                 hash={item.hash}
                 onClick={close}
-                className="border-b border-neutral-border-subtle py-4 font-serif text-3xl"
+                className="border-b border-neutral-border-subtle py-4 text-3xl font-bold"
               >
                 {item.label}
               </Link>
@@ -70,7 +70,7 @@ export function MobileMenu() {
               href={REPO_URL}
               target="_blank"
               rel="noopener"
-              className="flex items-center gap-3 py-4 font-serif text-3xl"
+              className="flex items-center gap-3 py-4 text-3xl font-bold"
             >
               <GithubLogo size={28} />
               {t("github")}

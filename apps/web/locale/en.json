@@ -3,7 +3,8 @@
     "title": "VR overlay for SteamVR and OpenXR",
     "description": "Mirror windows, read notifications and control media without taking off your headset.",
     "download_title": "Download",
-    "not_found_title": "Page not found"
+    "not_found_title": "Page not found",
+    "features_title": "Features"
   },
   "nav": {
     "features": "Features",
@@ -53,7 +54,9 @@
     "appearance_title": "Themes and colours",
     "appearance_body": "Choose a light or dark theme and an accent colour for buttons and other elements.",
     "guides_title": "Built-in guides",
-    "guides_body": "A short tutorial and controller guides walk you through every control."
+    "guides_body": "A short tutorial and controller guides walk you through every control.",
+    "body": "Everything nyaw brings into VR, from mirrored windows to notifications on your wrist.",
+    "more": "See all features"
   },
   "cta": {
     "title": "Get nyaw",
@@ -63,17 +66,12 @@
   "download": {
     "title": "Download nyaw",
     "body": "Install nyaw on your Windows PC and start it with SteamVR or an OpenXR runtime.",
-    "latest": "Latest version",
     "released": "Released {date}",
     "installer": "Download installer",
     "size": "{size} MB",
     "checking": "Checking the latest version",
     "unavailable": "Couldn't check the latest version. Get it from GitHub Releases",
     "releases": "Open GitHub Releases",
-    "preview_title": "Preview builds",
-    "preview_body": "Builds with features that haven't been released yet. They may be unstable.",
-    "preview_download": "Download {version}",
-    "preview_none": "No preview build is newer than the latest version",
     "requirements_title": "System requirements",
     "requirement_os": "Windows 10 or 11 (64-bit)",
     "requirement_runtime": "SteamVR or an OpenXR runtime",
@@ -83,7 +81,14 @@
     "install_start": "Start SteamVR and open nyaw.",
     "install_setup": "Follow the setup to choose your hand, theme and watch face.",
     "updates": "Check for and install updates from Settings.",
-    "all_releases": "All releases"
+    "all_releases": "All releases",
+    "channel": "Release channel",
+    "stable": "Stable",
+    "stable_body": "The tested version. Choose this one if you're not sure.",
+    "nightly": "Nightly",
+    "nightly_body": "Builds with features that haven't been released yet. They may be unstable.",
+    "nightly_none": "No nightly build is newer than the stable version",
+    "version": "Version {version}"
   },
   "footer": {
     "licence": "Licensed under MIT or Apache-2.0",

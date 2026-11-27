@@ -9,7 +9,7 @@ import {
   TOOLTIP_PRESENCE,
   usePopupPresence,
 } from "@/ui/usePopupPresence";
-import { cx, panelClass } from "@/ui/variants";
+import { cx, panelClass, POPUP_INSET } from "@/ui/variants";
 
 type PopupProps = {
   /** Root に渡している open。出入りのアニメーションに使う */
@@ -41,7 +41,10 @@ export function MenuPopup({
   return (
     <Menu.Portal>
       <Menu.Positioner {...positioner(side, align)}>
-        <Menu.Popup ref={ref} className={cx(panelClass, "rounded-xl p-1 outline-none", className)}>
+        <Menu.Popup
+          ref={ref}
+          className={cx(panelClass, POPUP_INSET.menu, "outline-none", className)}
+        >
           {children}
         </Menu.Popup>
       </Menu.Positioner>
@@ -65,7 +68,7 @@ export function PopoverPopup({
         <Popover.Popup
           ref={ref}
           initialFocus={(type) => type === "keyboard"}
-          className={cx(panelClass, "rounded-xl p-2 outline-none", className)}
+          className={cx(panelClass, POPUP_INSET.popover, "outline-none", className)}
         >
           {children}
         </Popover.Popup>

@@ -23,25 +23,25 @@ const release = (
 });
 
 describe("pickReleases", () => {
-  it("最新の正式版を選び、それより古いプレビュー版は出さない", () => {
-    const { stable, preview } = pickReleases([
+  it("最新の正式版を選び、それより古いナイトリーは出さない", () => {
+    const { stable, nightly } = pickReleases([
       release("v2026.0.4-beta.4", "2026-11-27T07:00:00Z"),
       release("v2026.0.4", "2026-11-27T13:00:00Z"),
       release("v2026.0.3", "2026-11-20T00:00:00Z"),
     ]);
     expect(stable?.version).toBe("2026.0.4");
     expect(stable?.installer.url).toBe("https://example.com/v2026.0.4.exe");
-    expect(preview).toBeUndefined();
+    expect(nightly).toBeUndefined();
   });
 
-  it("正式版より新しいプレビュー版を選ぶ。ラベルは何でもよい", () => {
-    const { stable, preview } = pickReleases([
+  it("正式版より新しいナイトリーを選ぶ。ラベルは何でもよい", () => {
+    const { stable, nightly } = pickReleases([
       release("v2026.0.4", "2026-11-27T13:00:00Z"),
       release("v2026.0.5-potato.2", "2026-11-29T00:00:00Z"),
       release("v2026.0.5-potato.1", "2026-11-28T00:00:00Z"),
     ]);
     expect(stable?.version).toBe("2026.0.4");
-    expect(preview?.version).toBe("2026.0.5-potato.2");
+    expect(nightly?.version).toBe("2026.0.5-potato.2");
   });
 
   it("下書きとインストーラーのないリリースは飛ばす", () => {
@@ -53,14 +53,14 @@ describe("pickReleases", () => {
     expect(stable?.version).toBe("2026.0.4");
   });
 
-  it("正式版がなければプレビュー版だけを返す", () => {
-    const { stable, preview } = pickReleases([release("v2026.0.1-beta.1", "2026-11-01T00:00:00Z")]);
+  it("正式版がなければナイトリーだけを返す", () => {
+    const { stable, nightly } = pickReleases([release("v2026.0.1-beta.1", "2026-11-01T00:00:00Z")]);
     expect(stable).toBeUndefined();
-    expect(preview?.version).toBe("2026.0.1-beta.1");
+    expect(nightly?.version).toBe("2026.0.1-beta.1");
   });
 
   it("空の一覧では何も返さない", () => {
-    expect(pickReleases([])).toEqual({ stable: undefined, preview: undefined });
+    expect(pickReleases([])).toEqual({ stable: undefined, nightly: undefined });
   });
 });
 

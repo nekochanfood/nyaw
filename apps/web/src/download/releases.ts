@@ -30,7 +30,7 @@ function usable(releases: GitHubRelease[]) {
 }
 
 /**
- * 最新の正式版と、それより新しいプレビュー版（あれば）を選ぶ。
+ * 最新の正式版と、それより新しいナイトリー（あれば）を選ぶ。
  * 版の新旧はアプリと同じく版の文字列では比べられない（ラベルが自由）ので、公開日時で比べる。
  */
 export function pickReleases(releases: GitHubRelease[]) {
@@ -42,12 +42,12 @@ export function pickReleases(releases: GitHubRelease[]) {
     installer: { url: installer.browser_download_url, size: installer.size },
   });
   const stable = list.find((r) => !r.release.prerelease);
-  const preview = list.find(
+  const nightly = list.find(
     (r) => r.release.prerelease && (!stable || r.published > stable.published),
   );
   return {
     stable: stable ? toRelease(stable) : undefined,
-    preview: preview ? toRelease(preview) : undefined,
+    nightly: nightly ? toRelease(nightly) : undefined,
   };
 }
 

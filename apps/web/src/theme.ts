@@ -33,8 +33,17 @@ export function useTheme(): Theme | null {
   return useSyncExternalStore(subscribe, current, () => null);
 }
 
+/** テーマを切り替えてから、色のトランジションを外すまでの時間（styles.css の 300ms より少し長く） */
+const FADE_MS = 350;
+let fading = 0;
+
 export function setTheme(theme: Theme) {
-  document.documentElement.dataset.theme = theme;
+  const root = document.documentElement;
+  // 切り替えの間だけ、すべての要素の色を同じ速さで変える（styles.css の data-theme-fading）
+  root.dataset.themeFading = "";
+  root.dataset.theme = theme;
+  clearTimeout(fading);
+  fading = window.setTimeout(() => delete root.dataset.themeFading, FADE_MS);
   try {
     localStorage.setItem(STORAGE_KEY, theme);
   } catch {

@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as LocaleRouteImport } from './routes/$locale'
 import { Route as LocaleIndexRouteImport } from './routes/$locale/index'
 import { Route as LocaleDownloadRouteImport } from './routes/$locale/download'
+import { Route as LocaleFeaturesRouteImport } from './routes/$locale/features'
 
 const LocaleRoute = LocaleRouteImport.update({
   id: '/$locale',
@@ -28,28 +29,42 @@ const LocaleDownloadRoute = LocaleDownloadRouteImport.update({
   path: '/download',
   getParentRoute: () => LocaleRoute,
 } as any)
+const LocaleFeaturesRoute = LocaleFeaturesRouteImport.update({
+  id: '/features',
+  path: '/features',
+  getParentRoute: () => LocaleRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/$locale': typeof LocaleRouteWithChildren
   '/$locale/download': typeof LocaleDownloadRoute
+  '/$locale/features': typeof LocaleFeaturesRoute
   '/$locale/': typeof LocaleIndexRoute
 }
 export interface FileRoutesByTo {
   '/$locale/download': typeof LocaleDownloadRoute
+  '/$locale/features': typeof LocaleFeaturesRoute
   '/$locale': typeof LocaleIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/$locale': typeof LocaleRouteWithChildren
   '/$locale/download': typeof LocaleDownloadRoute
+  '/$locale/features': typeof LocaleFeaturesRoute
   '/$locale/': typeof LocaleIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/$locale' | '/$locale/download' | '/$locale/'
+  fullPaths:
+    '/$locale' | '/$locale/download' | '/$locale/features' | '/$locale/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/$locale/download' | '/$locale'
-  id: '__root__' | '/$locale' | '/$locale/download' | '/$locale/'
+  to: '/$locale/download' | '/$locale/features' | '/$locale'
+  id:
+    | '__root__'
+    | '/$locale'
+    | '/$locale/download'
+    | '/$locale/features'
+    | '/$locale/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -79,16 +94,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof LocaleDownloadRouteImport
       parentRoute: typeof LocaleRoute
     }
+    '/$locale/features': {
+      id: '/$locale/features'
+      path: '/features'
+      fullPath: '/$locale/features'
+      preLoaderRoute: typeof LocaleFeaturesRouteImport
+      parentRoute: typeof LocaleRoute
+    }
   }
 }
 
 interface LocaleRouteChildren {
   LocaleDownloadRoute: typeof LocaleDownloadRoute
+  LocaleFeaturesRoute: typeof LocaleFeaturesRoute
   LocaleIndexRoute: typeof LocaleIndexRoute
 }
 
 const LocaleRouteChildren: LocaleRouteChildren = {
   LocaleDownloadRoute: LocaleDownloadRoute,
+  LocaleFeaturesRoute: LocaleFeaturesRoute,
   LocaleIndexRoute: LocaleIndexRoute,
 }
 

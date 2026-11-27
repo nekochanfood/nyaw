@@ -1,12 +1,30 @@
 import { DownloadSimple } from "@phosphor-icons/react/dist/csr/DownloadSimple";
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
+import { PawPrint } from "@phosphor-icons/react/dist/csr/PawPrint";
 import { useRef } from "react";
 
+import { Composite, type Layer } from "@/composite/Composite";
 import { useLocale, useT } from "@/i18n/index";
 import { REPO_URL } from "@/links";
 import { useReveal } from "@/motion/useReveal";
 import { ButtonAnchor, ButtonLink } from "@/ui/Button";
 import { containerClass, cx, textClass } from "@/ui/variants";
+
+/** 正面のミラーリングの画面、手前のダッシュボードと腕時計、奥に外したクイック設定 */
+const LAYERS: Layer[] = [
+  {
+    role: "quick-settings",
+    moment: "quick-settings",
+    left: 58,
+    top: 2,
+    width: 40,
+    z: -160,
+    rotateY: -24,
+  },
+  { role: "mirroring", moment: "mirroring", left: 12, top: 4, width: 62, z: 0, rotateY: 6 },
+  { role: "dashboard", moment: "mirroring", left: -6, top: 66, width: 92, z: 90, rotateX: 18 },
+  { role: "wrist", moment: "mirroring", left: 68, top: 56, width: 22, z: 180, rotateY: -14 },
+];
 
 export function Hero() {
   const t = useT("hero");
@@ -14,13 +32,13 @@ export function Hero() {
   const ref = useRef<HTMLElement>(null);
   useReveal(ref);
   return (
-    <section ref={ref} className={cx(containerClass, "pt-16 pb-12 sm:pt-24 lg:pt-32")}>
+    <section ref={ref} className={cx(containerClass, "pt-12 pb-8 sm:pt-20 lg:pt-24")}>
       <div data-reveal-group className="flex max-w-3xl flex-col items-start gap-6">
         <p
           data-reveal
-          className="flex items-center gap-2 text-sm font-medium text-neutral-text-low"
+          className="flex items-center gap-2 rounded-full bg-ctp-lavender/15 px-3 py-1 text-sm font-medium"
         >
-          <span aria-hidden className="size-2 rounded-full bg-ctp-lavender" />
+          <PawPrint aria-hidden size={16} weight="fill" className="text-ctp-lavender" />
           {t("eyebrow")}
         </p>
         <h1 data-reveal className={textClass("display")}>
@@ -38,6 +56,20 @@ export function Hero() {
             <GithubLogo size={20} />
             {t("github")}
           </ButtonAnchor>
+        </div>
+      </div>
+      <div data-reveal-group>
+        <div
+          data-reveal
+          className="mt-14 overflow-hidden rounded-2xl bg-linear-135 from-ctp-lavender/20 via-ctp-pink/15 to-ctp-peach/15 px-4 py-8 sm:px-10 sm:py-14"
+        >
+          <Composite
+            layers={LAYERS}
+            aspect={16 / 10}
+            tilt={{ from: [6, -8], to: [12, 10] }}
+            label={t("scene_label")}
+            className="mx-auto max-w-4xl"
+          />
         </div>
       </div>
     </section>
