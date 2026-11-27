@@ -593,6 +593,7 @@ impl OpenXrBackend {
             out.push(RawController {
                 hand,
                 profile,
+                model: String::new(),
                 aim: from_posef(location.pose),
                 inputs,
             });

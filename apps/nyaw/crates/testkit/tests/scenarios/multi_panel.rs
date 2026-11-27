@@ -74,6 +74,7 @@ fn hands_keep_independent_pressed_state_on_same_panel() {
         .map(|hand| RawController {
             hand,
             profile: "valve/index_controller".into(),
+            model: String::new(),
             aim: Pose::IDENTITY,
             inputs: if hand == Hand::Right {
                 vec![("trigger/value".into(), 1.0)]

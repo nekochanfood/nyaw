@@ -7,6 +7,7 @@ fn hand(kernel: &mut Kernel<MockBackend>, to: Vec3, grab: bool) {
     kernel.subsystems.backend.frame.controllers = vec![RawController {
         hand: Hand::Right,
         profile: "valve/index_controller".into(),
+        model: String::new(),
         aim: Pose::new(
             Vec3::ZERO,
             Quat::from_rotation_arc(Vec3::NEG_Z, to.normalize()),

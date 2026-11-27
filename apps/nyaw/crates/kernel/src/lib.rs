@@ -1417,6 +1417,7 @@ mod tests {
             k.subsystems.backend.frame.controllers = vec![vr::RawController {
                 hand: Hand::Left,
                 profile: "oculus/touch_controller".into(),
+                model: String::new(),
                 aim: Pose::IDENTITY,
                 inputs: vec![("x/click".into(), if held { 1.0 } else { 0.0 })],
             }];
@@ -1462,6 +1463,7 @@ mod tests {
             k.subsystems.backend.frame.controllers = vec![vr::RawController {
                 hand: Hand::Left,
                 profile: "valve/index_controller".into(),
+                model: String::new(),
                 aim: Pose::IDENTITY,
                 inputs: vec![(vr::DOUBLE_PRESS_INPUT.into(), pulse)],
             }];
@@ -1955,6 +1957,7 @@ mod tests {
         k.subsystems.backend.frame.controllers = vec![vr::RawController {
             hand: Hand::Right,
             profile: "khr/simple_controller".into(),
+            model: String::new(),
             aim: Pose::new(vr::Vec3::Z, vr::Quat::IDENTITY),
             inputs: vec![],
         }];

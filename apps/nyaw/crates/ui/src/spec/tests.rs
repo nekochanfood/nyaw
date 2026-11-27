@@ -44,6 +44,7 @@ fn typing_panel_sits_just_above_the_hands_and_faces_mostly_the_eyes() {
     let hand = |hand, x| kernel::vr::RawController {
         hand,
         profile: "valve/index_controller".into(),
+        model: String::new(),
         aim: Pose::new(eye + Vec3::new(x, -0.45, -0.3), Quat::IDENTITY),
         inputs: Vec::new(),
     };
@@ -166,6 +167,7 @@ fn typing_panel_sits_low_in_view_while_lying() {
     kernel.subsystems.backend.frame.controllers = vec![kernel::vr::RawController {
         hand: Hand::Right,
         profile: "valve/index_controller".into(),
+        model: String::new(),
         aim: Pose::new(Vec3::new(0.2, 0.6, 0.0), Quat::IDENTITY),
         inputs: Vec::new(),
     }];

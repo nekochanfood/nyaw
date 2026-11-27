@@ -76,6 +76,7 @@ fn one_hand_moving_the_mouse_makes_the_other_resend_its_position() {
     kernel.subsystems.backend.frame.controllers = vec![kernel::vr::RawController {
         hand: Hand::Right,
         profile: "valve/index_controller".into(),
+        model: String::new(),
         aim: Pose::IDENTITY,
         inputs: Vec::new(),
     }];

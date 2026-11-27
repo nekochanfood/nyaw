@@ -542,6 +542,10 @@ impl VrBackend for OpenVrBackend {
                 frame.controllers.push(RawController {
                     hand,
                     profile: profile.into(),
+                    model: self.string_property(
+                        device,
+                        sys::ETrackedDeviceProperty_Prop_RenderModelName_String,
+                    ),
                     // バインディングの `/pose/tip`（SteamVR が機種ごとに定義するレーザーの出口）。
                     aim,
                     inputs: inputs(profile, hand, actions),

@@ -133,6 +133,7 @@ impl Vr {
         self.mock.lock().unwrap().frame.controllers = vec![RawController {
             hand: Hand::Right,
             profile: PROFILE.into(),
+            model: String::new(),
             aim: self.aim,
             inputs: self.inputs.clone(),
         }];

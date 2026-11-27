@@ -37,9 +37,12 @@ pub struct ControllerState {
     pub facing: Option<Facing>,
     /// 骨格だけの手の判定に使った値（確認用）。コントローラでは `None`。
     pub metrics: Option<HandMetrics>,
+    /// 握っているコントローラの機種と割り当て（操作ガイド用）。骨格だけの手では `None`。
+    pub controller: Option<Controller>,
 }
 
 /// アクションごとの入力名（OpenXR の語彙）。報告された候補のうち最も大きい値を採用する。
+#[derive(Debug, PartialEq)]
 struct Profile {
     id: &'static str,
     select: &'static [&'static str],
@@ -217,6 +220,7 @@ pub fn hand_controller(skeleton: &HandSkeleton, hmd: Pose, tuning: &HandTuning) 
     RawController {
         hand: skeleton.hand,
         profile: HAND_PROFILE.into(),
+        model: String::new(),
         aim,
         inputs: vec![
             (
@@ -468,6 +472,243 @@ pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerSta
         facing: raw
             .input(PALM_TOWARD_INPUT)
             .map(|t| if t >= 0.0 { Facing::Palm } else { Facing::Back }),
+        controller: Controller::identify(raw),
+    }
+}
+
+/// コントローラの機種（外観）。操作ガイドが画像とボタンの位置を選ぶのに使う。名前は SteamVR のレンダーモデルに揃える。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Model {
+    Index,
+    Vive,
+    RiftCv1,
+    RiftS,
+    Quest2,
+    /// Quest 3 / 3S の Touch Plus。機種が分からないときの代わり（最も多く使われている形）。
+    QuestPlus,
+    QuestPro,
+    Pico4,
+    Pico4Ultra,
+    Focus3,
+    Frame,
+}
+
+/// 機種の表: 製品名、レンダーモデル名の系列（先頭が画像の名前。左右は `_left` / `_right` が付く）、左右で共通の画像か、
+/// 既定の割り当て（ランタイムがプロファイルを報告しない一覧表示用）。
+const MODELS: &[(Model, &str, &[&str], bool, &str)] = &[
+    (
+        Model::Index,
+        "Valve Index Controller",
+        &["valve_controller_knu_1_0", "valve_controller_knu_ev2_0"],
+        false,
+        "valve/index_controller",
+    ),
+    (
+        Model::Vive,
+        "VIVE Controller",
+        &["vr_controller_vive_1_5"],
+        true,
+        "htc/vive_controller",
+    ),
+    (
+        Model::RiftCv1,
+        "Oculus Rift Touch",
+        &["oculus_cv1_controller"],
+        false,
+        "oculus/touch_controller",
+    ),
+    (
+        Model::RiftS,
+        "Oculus Rift S / Quest Touch",
+        &["oculus_rifts_controller", "oculus_quest_controller"],
+        false,
+        "oculus/touch_controller",
+    ),
+    (
+        Model::Quest2,
+        "Meta Quest 2 Touch",
+        &["oculus_quest2_controller"],
+        false,
+        "oculus/touch_controller",
+    ),
+    (
+        Model::QuestPlus,
+        "Meta Quest Touch Plus",
+        &["oculus_quest_plus_controller"],
+        false,
+        "oculus/touch_controller",
+    ),
+    (
+        Model::QuestPro,
+        "Meta Quest Touch Pro",
+        &["oculus_quest_pro_controller"],
+        false,
+        "oculus/touch_controller",
+    ),
+    (
+        Model::Pico4,
+        "PICO 4 Controller",
+        &["pico_4_controller"],
+        false,
+        "oculus/touch_controller",
+    ),
+    (
+        Model::Pico4Ultra,
+        "PICO 4 Ultra Controller",
+        &["pico_4_ultra_controller"],
+        false,
+        "oculus/touch_controller",
+    ),
+    (
+        Model::Focus3,
+        "VIVE Focus 3 Controller",
+        &["vive_focus3_controller"],
+        false,
+        "oculus/touch_controller",
+    ),
+    (
+        Model::Frame,
+        "Steam Frame Controller",
+        &["frame_controller"],
+        false,
+        "oculus/touch_controller",
+    ),
+];
+
+impl Model {
+    pub const ALL: [Model; 11] = [
+        Model::QuestPlus,
+        Model::Quest2,
+        Model::QuestPro,
+        Model::RiftS,
+        Model::RiftCv1,
+        Model::Index,
+        Model::Vive,
+        Model::Pico4,
+        Model::Pico4Ultra,
+        Model::Focus3,
+        Model::Frame,
+    ];
+
+    fn row(
+        self,
+    ) -> &'static (
+        Model,
+        &'static str,
+        &'static [&'static str],
+        bool,
+        &'static str,
+    ) {
+        MODELS
+            .iter()
+            .find(|r| r.0 == self)
+            .expect("MODELS covers every Model")
+    }
+
+    /// 製品名（商標のため訳さない）。
+    pub fn name(self) -> &'static str {
+        self.row().1
+    }
+
+    /// `hand` の画像の名前（`assets/renders/<left|right>/<名前>.png`）。
+    pub fn render_model(self, hand: Hand) -> String {
+        let (_, _, names, shared, _) = *self.row();
+        match (shared, hand) {
+            (true, _) => names[0].to_owned(),
+            (false, Hand::Left) => format!("{}_left", names[0]),
+            (false, Hand::Right) => format!("{}_right", names[0]),
+        }
+    }
+
+    /// ランタイムが報告したレンダーモデル名（`{indexcontroller}valve_controller_knu_1_0_left` など）の機種。
+    pub fn from_render_model(name: &str) -> Option<Model> {
+        // `{ドライバ名}` の前置きは外す。
+        let name = name.rsplit('}').next().unwrap_or(name).to_ascii_lowercase();
+        MODELS
+            .iter()
+            .find(|(_, _, names, _, _)| {
+                names
+                    .iter()
+                    .any(|n| name == *n || name.strip_prefix(n).is_some_and(|s| s.starts_with('_')))
+            })
+            .map(|r| r.0)
+    }
+}
+
+/// 握っているコントローラ: 機種（外観）と、実際に読んでいる割り当て。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Controller {
+    pub model: Model,
+    profile: &'static Profile,
+}
+
+/// 操作ガイドに出す操作（[`Action`] とスクロール）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Control {
+    Select,
+    Grab,
+    Menu,
+    Shortcut,
+    Scroll,
+}
+
+impl Control {
+    pub const ALL: [Control; 5] = [
+        Control::Select,
+        Control::Grab,
+        Control::Menu,
+        Control::Shortcut,
+        Control::Scroll,
+    ];
+}
+
+impl Controller {
+    /// 生入力からの判定。機種はレンダーモデル名、無ければ割り当て（プロファイル）、それも無ければ Quest Touch Plus。
+    pub fn identify(raw: &RawController) -> Option<Controller> {
+        let profile = profile(&raw.profile);
+        (profile.id != HAND_PROFILE).then(|| Controller {
+            model: Model::from_render_model(&raw.model).unwrap_or(match profile.id {
+                "valve/index_controller" => Model::Index,
+                "htc/vive_controller" => Model::Vive,
+                _ => Model::QuestPlus,
+            }),
+            profile,
+        })
+    }
+
+    /// 一覧表示用: `model` を既定の割り当てで使ったとき。
+    pub fn of(model: Model) -> Controller {
+        Controller {
+            model,
+            profile: profile(model.row().4),
+        }
+    }
+
+    /// `control` を起こす部品（`assets/renders/buttons` の `id`。`trigger`・`grip`・`b`…）。割り当てが無ければ空。
+    /// 機種に無い部品も含む（Touch のメニューは左の ≡ か Y、右の B）ので、画像側に在るものだけを使う。
+    pub fn parts(&self, control: Control, hand: Hand) -> Vec<&'static str> {
+        let p = self.profile;
+        let inputs: Vec<&'static str> = match control {
+            Control::Select => p.select.to_vec(),
+            Control::Grab => p.grab.to_vec(),
+            Control::Menu => p.menu.to_vec(),
+            Control::Shortcut if hand == Hand::Left => p.shortcut.to_vec(),
+            Control::Shortcut => Vec::new(),
+            Control::Scroll => p.scroll.map(|(x, _)| x).into_iter().collect(),
+        };
+        let mut parts = Vec::new();
+        for input in inputs {
+            // OpenXR の入力名の部品を、画像のボタン名へ（握りは squeeze、トリガーのボタンは select）。
+            let part = match input.split('/').next().unwrap_or(input) {
+                "squeeze" => "grip",
+                "select" => "trigger",
+                other => other,
+            };
+            if !parts.contains(&part) {
+                parts.push(part);
+            }
+        }
+        parts
     }
 }
 
@@ -479,6 +720,7 @@ mod tests {
         RawController {
             hand: Hand::Right,
             profile: profile.into(),
+            model: String::new(),
             aim: Pose::IDENTITY,
             inputs: inputs.iter().map(|(n, v)| (n.to_string(), *v)).collect(),
         }
@@ -719,6 +961,7 @@ mod tests {
                 let mut raw = RawController {
                     hand: Hand::Right,
                     profile: HAND_PROFILE.into(),
+                    model: String::new(),
                     aim: Pose::new(Vec3::ZERO, looking(dir)),
                     inputs: vec![("pinch_ext/value".into(), pinch)],
                 };
@@ -842,6 +1085,91 @@ mod tests {
         let right = hand(Hand::Right, RIGHT_WRIST, up, OPEN, Some(4));
         assert!(!state(&right, head(), None).shortcut);
         assert_eq!(map(&raw("valve/index_controller", &[]), None).facing, None);
+    }
+
+    fn identify(profile: &str, model: &str) -> Option<Model> {
+        let mut r = raw(profile, &[]);
+        r.model = model.into();
+        map(&r, None).controller.map(|c| c.model)
+    }
+
+    /// SteamVR が報告するレンダーモデル名（ドライバの前置き付き・別名・大文字）から機種が分かる。
+    #[test]
+    fn render_model_names_identify_the_model() {
+        let touch = "oculus/touch_controller";
+        for (name, model) in [
+            (
+                "{indexcontroller}valve_controller_knu_1_0_left",
+                Model::Index,
+            ),
+            ("valve_controller_knu_ev2_0_right", Model::Index),
+            ("oculus_quest2_controller_right", Model::Quest2),
+            (
+                "{oculus}oculus_quest_plus_controller_left",
+                Model::QuestPlus,
+            ),
+            ("oculus_quest_controller_left", Model::RiftS),
+            ("pico_4_ultra_controller_right", Model::Pico4Ultra),
+            ("pico_4_controller_right", Model::Pico4),
+            ("vr_controller_vive_1_5", Model::Vive),
+            ("Frame_Controller_Left", Model::Frame),
+        ] {
+            assert_eq!(identify(touch, name), Some(model), "{name}");
+        }
+        // 名前が分からなければ割り当てから、それも分からなければ Quest Touch Plus。
+        assert_eq!(identify("valve/index_controller", ""), Some(Model::Index));
+        assert_eq!(
+            identify("htc/vive_controller", "acme_wand"),
+            Some(Model::Vive)
+        );
+        assert_eq!(
+            identify(touch, "acme_controller_left"),
+            Some(Model::QuestPlus)
+        );
+        assert_eq!(identify("acme/mystery", ""), Some(Model::QuestPlus));
+        // 骨格だけの手はコントローラではない。
+        assert_eq!(identify(HAND_PROFILE, ""), None);
+        // 名前の一部だけ同じ別の機種には当てない。
+        assert_eq!(Model::from_render_model("pico_4_controllerx_left"), None);
+    }
+
+    /// 画像の名前は機種と手で決まり、判定に戻すと同じ機種になる。
+    #[test]
+    fn render_model_round_trips() {
+        for model in Model::ALL {
+            for hand in [Hand::Left, Hand::Right] {
+                let name = model.render_model(hand);
+                assert_eq!(Model::from_render_model(&name), Some(model), "{name}");
+            }
+        }
+        assert_eq!(
+            Model::Vive.render_model(Hand::Left),
+            "vr_controller_vive_1_5"
+        );
+    }
+
+    /// ガイドの部品は割り当てから引く。実際の割り当て（簡易コントローラなど）が機種の既定より優先される。
+    #[test]
+    fn parts_follow_the_profile() {
+        let index = Controller::of(Model::Index);
+        assert_eq!(index.parts(Control::Select, Hand::Right), ["trigger"]);
+        assert_eq!(index.parts(Control::Grab, Hand::Right), ["grip"]);
+        assert_eq!(index.parts(Control::Menu, Hand::Right), ["b"]);
+        assert_eq!(index.parts(Control::Shortcut, Hand::Left), ["a"]);
+        assert!(index.parts(Control::Shortcut, Hand::Right).is_empty());
+        assert_eq!(index.parts(Control::Scroll, Hand::Left), ["thumbstick"]);
+        let quest = Controller::of(Model::QuestPlus);
+        assert_eq!(quest.parts(Control::Menu, Hand::Right), ["menu", "y", "b"]);
+        assert_eq!(quest.parts(Control::Shortcut, Hand::Left), ["x"]);
+        let vive = Controller::of(Model::Vive);
+        assert_eq!(vive.parts(Control::Scroll, Hand::Right), ["trackpad"]);
+        // PICO を簡易コントローラの割り当てで読んでいる（SteamVR に既定のバインドが無い）。
+        let mut r = raw("khr/simple_controller", &[]);
+        r.model = "pico_4_controller_right".into();
+        let pico = map(&r, None).controller.unwrap();
+        assert_eq!(pico.model, Model::Pico4);
+        assert_eq!(pico.parts(Control::Select, Hand::Right), ["trigger"]);
+        assert!(pico.parts(Control::Grab, Hand::Right).is_empty());
     }
 
     #[test]

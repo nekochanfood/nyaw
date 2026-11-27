@@ -133,6 +133,8 @@ pub const DOUBLE_PRESS_INPUT: &str = "nyaw/double_press";
 pub struct RawController {
     pub hand: Hand,
     pub profile: String,
+    /// ランタイムが報告した機種の外観（SteamVR のレンダーモデル名）。分からなければ空。機種の判定は入力層の仕事。
+    pub model: String,
     pub aim: Pose,
     pub inputs: Vec<(String, f32)>,
 }
@@ -747,6 +749,7 @@ mod tests {
             controllers: vec![RawController {
                 hand: Hand::Left,
                 profile: String::new(),
+                model: String::new(),
                 aim: at(2.0),
                 inputs: Vec::new(),
             }],

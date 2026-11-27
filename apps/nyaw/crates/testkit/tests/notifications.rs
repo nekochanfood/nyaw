@@ -87,6 +87,7 @@ fn press_x_twice(kit: &mut VrKit<Wrist>) {
         kit.kernel.subsystems.backend.frame.controllers = vec![RawController {
             hand: Hand::Left,
             profile: PROFILE.into(),
+            model: String::new(),
             aim: raised(),
             inputs: if held {
                 vec![(name.into(), 1.0)]

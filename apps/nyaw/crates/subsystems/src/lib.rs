@@ -233,6 +233,7 @@ mod tests {
         RawController {
             hand,
             profile: profile.into(),
+            model: String::new(),
             aim: Pose::IDENTITY,
             inputs: inputs.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
         }
@@ -274,7 +275,12 @@ mod tests {
                 ],
             )];
             let frame = systems.poll();
-            let state = frame.controllers[0];
+            // 機種（操作ガイド用）は違って当然なので、共通のアクションだけを比べる。
+            assert!(frame.controllers[0].controller.is_some());
+            let state = ControllerState {
+                controller: None,
+                ..frame.controllers[0]
+            };
             assert!(state.select && state.grab && state.menu);
             assert_eq!(state.scroll, Vec2::new(0.25, -0.5));
             assert_eq!(state.select_progress(), 1.0);

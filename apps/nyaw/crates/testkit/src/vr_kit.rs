@@ -23,6 +23,8 @@ const DRAG_SETTLE: usize = 60;
 struct VirtualController {
     hand: Hand,
     profile: String,
+    /// Render model name reported by the runtime (empty = unknown).
+    model: String,
     aim: Pose,
     held: Vec<Action>,
     /// How far the stick (trackpad) is tilted.
@@ -107,6 +109,12 @@ impl<'a, V: Render> VrKit<'a, V> {
     /// Switches the controller model of the current hand.
     pub fn profile(&mut self, id: &str) -> &mut Self {
         self.ctrl().profile = id.to_owned();
+        self
+    }
+
+    /// Makes the current hand report this render model (as SteamVR does), to pose as a specific controller.
+    pub fn render_model(&mut self, name: &str) -> &mut Self {
+        self.ctrl().model = name.to_owned();
         self
     }
 
@@ -232,6 +240,7 @@ impl<'a, V: Render> VrKit<'a, V> {
                 self.controllers.push(VirtualController {
                     hand,
                     profile: DEFAULT_PROFILE.to_owned(),
+                    model: String::new(),
                     aim: Pose::new(rest_position(hand), Quat::IDENTITY),
                     held: Vec::new(),
                     stick: Vec2::ZERO,
@@ -261,6 +270,7 @@ fn raw(c: &VirtualController) -> RawController {
     RawController {
         hand: c.hand,
         profile: c.profile.clone(),
+        model: c.model.clone(),
         aim: c.aim,
         inputs,
     }
