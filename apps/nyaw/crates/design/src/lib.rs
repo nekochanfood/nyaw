@@ -39,6 +39,8 @@ pub mod icon;
 pub mod link;
 #[cfg(feature = "gpui")]
 pub mod logo;
+#[cfg(feature = "gpui")]
+pub mod spot;
 
 #[cfg(feature = "gpui")]
 pub use emoji::{emoji, emoji_text};

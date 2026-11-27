@@ -22,13 +22,19 @@ pub(crate) struct NavBar {
 impl Render for NavBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = design::drive::now();
+        // 案内がこのバーのボタンを説明している間は、指していなくても広げておく（畳んだ線の上に輪を描かない）。
+        let shown = crate::tour::focus(cx).is_some_and(|f| f.lit.contains(&self.id));
         // ポイント状態は `sync_panel` が状態に書き込み、変更時にこのバーを再描画する。
         let state = cx
             .default_global::<PanelControl>()
             .panels
             .entry(self.id)
             .or_default();
-        let to = if state.status.pointed { 1.0 } else { 0.0 };
+        let to = if state.status.pointed || shown {
+            1.0
+        } else {
+            0.0
+        };
         // 展開・収縮ともに ease-in-out で遷移する。
         let animated = cx.has_global::<design::Motion>();
         self.open
@@ -116,11 +122,18 @@ impl Render for NavBar {
     }
 }
 
-pub struct PanelRoot(AnyView);
+/// パネルの中身を包むルートビュー。パネルの ID を知っていれば（[`Self::of`]）、案内（[`crate::tour`]）の覆いを重ねる。
+pub struct PanelRoot(AnyView, Option<PanelId>);
 
 impl PanelRoot {
+    /// 案内の覆いを重ねないルート（レーザーなどの表示専用のパネル、単体の検証）。
     pub fn new(view: AnyView) -> Self {
-        Self(view)
+        Self(view, None)
+    }
+
+    /// パネル `panel` のルート。案内の最中は、焦点に合わせた覆いを重ねる。
+    pub fn of(panel: PanelId, view: AnyView) -> Self {
+        Self(view, Some(panel))
     }
 
     pub fn view(&self) -> AnyView {
@@ -129,11 +142,15 @@ impl PanelRoot {
 }
 
 impl Render for PanelRoot {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        // 全パネル共通のフォント設定（子要素が継承する）。
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mask = self
+            .1
+            .and_then(|panel| crate::tour::mask(panel, window, cx));
+        // 全パネル共通のフォント設定（子要素が継承する）。覆いは中身の後に置く（後の要素ほど上になり、先に入力を受ける）。
         div()
             .size_full()
             .font(design::font::font())
             .child(self.0.clone())
+            .children(mask)
     }
 }

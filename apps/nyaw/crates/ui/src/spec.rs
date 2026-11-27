@@ -681,9 +681,14 @@ pub(crate) fn open_panel(
         cx.default_global::<PanelControl>().spawns.push(bar);
     }
     let drag_layer = spec.pointer.is_some_and(|(_, part)| part == Pointer::Drag);
+    // レーザー・カーソルなどの表示専用のパネルは、案内の最中も覆わない。
+    let pointer = spec.pointer.is_some();
     let window: AnyWindowHandle = open_panel_window(cx, spec.resolution, |w, cx| {
         let view = spec.build(panel, w, cx);
-        cx.new(|_| PanelRoot::new(view))
+        cx.new(|_| match pointer {
+            true => PanelRoot::new(view),
+            false => PanelRoot::of(panel, view),
+        })
     })
     .expect("open panel window")
     .into();
