@@ -81,5 +81,5 @@ export const POPUP_INSET = {
 export const menuItemClass =
   "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer transition-colors duration-(--duration-normal) data-highlighted:bg-control-on-background";
 
-/** 本文の幅。ヘッダー・本文・フッターで揃える */
-export const containerClass = "mx-auto w-full max-w-6xl px-5 sm:px-8";
+/** 本文の左右の余白。幅は帯の内側（4:3 まで。styles.css の frame-x）いっぱいに使う */
+export const containerClass = "w-full px-5 sm:px-8";

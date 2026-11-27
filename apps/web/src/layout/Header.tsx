@@ -92,10 +92,10 @@ export function Header() {
     <header ref={ref} className="header-band sticky top-(--frame-gutter) z-30 h-16">
       {/*
         スマートフォンの幅では、高さ 64px に 40px のボタンを置いた上下の余白（12px）と左右の余白をそろえる。
-        それより広い幅では、本文と同じ幅と余白（containerClass）にして、項目の端を本文の端にそろえる。
+        それより広い幅では、本文と同じ余白（containerClass）にして、項目の端を本文の端にそろえる。
         左端の項目は、ボタンの中の余白の分だけ外へ出し、アイコンやロゴの見た目の端を本文の端に合わせる
       */}
-      <div className="mx-auto flex h-full w-full max-w-6xl items-center justify-between gap-2 px-3 sm:px-8">
+      <div className="flex h-full w-full items-center justify-between gap-2 px-3 sm:px-8">
         <div className="flex items-center gap-2">
           {/* 狭い画面のメニューのボタン。ロゴの左隣に置く */}
           <div data-header-item className="sm:-ml-2.5 md:hidden">

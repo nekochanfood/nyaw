@@ -168,12 +168,15 @@
 }
 
 /*
-  帯の内側の幅。横幅は縦の長さまで（1:1 まで）に限り、中央に置く。はみ出した左右は帯の色になる。
+  帯の内側の幅。横幅は縦の長さの 4/3 倍まで（4:3 まで）に限り、中央に置く。はみ出した左右は帯の色になる。
   枠、本文のカード、フッター、メニューなど、帯の内側に置くものはこれで幅をそろえる
 */
 @utility frame-x {
   margin-inline: auto;
-  width: min(calc(100% - 2 * var(--frame-gutter)), calc(100dvh - 2 * var(--frame-gutter)));
+  width: min(
+    calc(100% - 2 * var(--frame-gutter)),
+    calc((100dvh - 2 * var(--frame-gutter)) * 4 / 3)
+  );
 }
 
 /* 真円とピルは潰さない */

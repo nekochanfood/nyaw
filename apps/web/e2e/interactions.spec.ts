@@ -56,6 +56,8 @@ test.describe("ダウンロード", () => {
       page.getByRole("link", { name: /Download installer/ }).filter({ visible: true }),
     ).toHaveAttribute("href", /v2026\.0\.4\/nyaw-2026\.0\.4-setup\.exe$/);
     await page.getByRole("tab", { name: "Nightly" }).click();
+    // 切り替えの瞬間は新旧のパネルが重なることがあるので、見えている版が 1 つになるのを待つ
+    await expect(version).toHaveCount(1);
     await expect(version).toHaveText("2026.0.5-beta.1");
     await expect(page.getByText("27 November 2026")).toHaveCount(0);
     await expect(page.getByText("Released 28 November 2026")).toBeVisible();

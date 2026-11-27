@@ -3,6 +3,7 @@ import { type CSSProperties, useEffect, useRef } from "react";
 
 import { useLocale } from "@/i18n/index";
 import { reducedMotion } from "@/motion/reducedMotion";
+import { useTheme } from "@/theme";
 import { cx } from "@/ui/variants";
 
 /** アプリのキャプチャ（apps/nyaw の `site` のテスト）が書き出すパネルと、その場面 */
@@ -36,11 +37,13 @@ type Props = {
 };
 
 /**
- * パネルのキャプチャを、奥行きと傾きを付けて重ねた絵。テーマの両方の絵を置き、表示を CSS で切り替える
- * （サーバーではテーマが分からない）。隠れている側は loading="lazy" なので読み込まれない。
+ * パネルのキャプチャを、奥行きと傾きを付けて重ねた絵。サーバーではテーマが分からないので、絵はテーマが
+ * 分かってから（ハイドレーションの後）、そのテーマのものだけを読み込む。
+ * loading="lazy" は付けない。WebKit では 3D 変形した箱の中の画像が画面に入ったと判定されず、読み込まれない。
  */
 export function Composite({ layers, aspect, tilt, label, className }: Props) {
   const locale = useLocale();
+  const theme = useTheme();
   const rootRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const middle = (i: 0 | 1) => (tilt.from[i] + tilt.to[i]) / 2;
@@ -73,29 +76,26 @@ export function Composite({ layers, aspect, tilt, label, className }: Props) {
         className="absolute inset-0 transform-3d"
         style={{ transform: `rotateX(${middle(0)}deg) rotateY(${middle(1)}deg)` }}
       >
-        {layers.map((layer) => {
-          const style: CSSProperties = {
-            left: `${layer.left}%`,
-            top: `${layer.top}%`,
-            width: `${layer.width}%`,
-            transform: `translateZ(${layer.z ?? 0}px) rotateX(${layer.rotateX ?? 0}deg) rotateY(${layer.rotateY ?? 0}deg)`,
-          };
-          return (["light", "dark"] as const).map((theme) => (
-            <img
-              key={`${layer.role}-${theme}`}
-              src={src(theme, locale, layer)}
-              alt=""
-              loading="lazy"
-              decoding="async"
-              draggable={false}
-              className={cx(
-                "absolute h-auto select-none",
-                theme === "light" ? "dark:hidden" : "hidden dark:block",
-              )}
-              style={style}
-            />
-          ));
-        })}
+        {theme &&
+          layers.map((layer) => {
+            const style: CSSProperties = {
+              left: `${layer.left}%`,
+              top: `${layer.top}%`,
+              width: `${layer.width}%`,
+              transform: `translateZ(${layer.z ?? 0}px) rotateX(${layer.rotateX ?? 0}deg) rotateY(${layer.rotateY ?? 0}deg)`,
+            };
+            return (
+              <img
+                key={layer.role}
+                src={src(theme, locale, layer)}
+                alt=""
+                decoding="async"
+                draggable={false}
+                className="absolute h-auto select-none"
+                style={style}
+              />
+            );
+          })}
       </div>
     </div>
   );
