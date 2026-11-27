@@ -1,0 +1,101 @@
+{
+  "meta": {
+    "title": "VR overlay for SteamVR and OpenXR",
+    "description": "Mirror windows, read notifications and control media without taking off your headset.",
+    "download_title": "Download",
+    "not_found_title": "Page not found"
+  },
+  "nav": {
+    "features": "Features",
+    "download": "Download",
+    "github": "GitHub",
+    "skip": "Skip to content",
+    "theme": "Toggle theme",
+    "language": "Change language",
+    "open_menu": "Open menu",
+    "close_menu": "Close menu",
+    "home": "nyaw home"
+  },
+  "hero": {
+    "eyebrow": "VR overlay for SteamVR and OpenXR",
+    "title": "Your desktop, right beside you in VR",
+    "body": "Mirror windows, read notifications and control media without taking off your headset.",
+    "download": "Download for Windows",
+    "github": "View on GitHub",
+    "scene_label": "nyaw's dashboard, a mirrored window, quick settings and the wrist watch floating in VR",
+    "scroll": "Scroll to explore"
+  },
+  "tour": {
+    "title": "Everything within reach",
+    "dashboard_title": "Dashboard",
+    "dashboard_body": "Press the shortcut on the left controller twice to open it. Start mirroring, play media and change settings from one bar.",
+    "mirroring_title": "Screen mirroring",
+    "mirroring_body": "Pick a screen or window from the launcher to display it above the dashboard. Point the laser and press to use it like a mouse.",
+    "quick_settings_title": "Quick settings",
+    "quick_settings_body": "Press the clock on the dashboard to open quick settings and adjust common settings on the spot.",
+    "wrist_title": "Wrist watch",
+    "wrist_body": "Glance at your wrist to check the time. New notifications appear at the edge of your view and on your wrist."
+  },
+  "features": {
+    "title": "Features",
+    "mirroring_title": "Screen mirroring",
+    "mirroring_body": "Display any screen or window in VR and use it with the laser.",
+    "notifications_title": "Notifications",
+    "notifications_body": "Windows notifications appear at the edge of your view and on your wrist.",
+    "media_title": "Media controls",
+    "media_body": "See what's playing and skip tracks from the dashboard.",
+    "keyboard_title": "Virtual keyboard",
+    "keyboard_body": "Type into mirrored apps with a keyboard in front of you.",
+    "hands_title": "Hand tracking",
+    "hands_body": "Use your hands as well as your controllers.",
+    "runtimes_title": "SteamVR and OpenXR",
+    "runtimes_body": "Runs on SteamVR or an OpenXR runtime, and starts together with SteamVR.",
+    "appearance_title": "Themes and colours",
+    "appearance_body": "Choose a light or dark theme and an accent colour for buttons and other elements.",
+    "guides_title": "Built-in guides",
+    "guides_body": "A short tutorial and controller guides walk you through every control."
+  },
+  "cta": {
+    "title": "Get nyaw",
+    "body": "Free and open source. Runs on Windows 10 and 11.",
+    "download": "Go to download"
+  },
+  "download": {
+    "title": "Download nyaw",
+    "body": "Install nyaw on your Windows PC and start it with SteamVR or an OpenXR runtime.",
+    "latest": "Latest version",
+    "released": "Released {date}",
+    "installer": "Download installer",
+    "size": "{size} MB",
+    "checking": "Checking the latest version",
+    "unavailable": "Couldn't check the latest version. Get it from GitHub Releases",
+    "releases": "Open GitHub Releases",
+    "preview_title": "Preview builds",
+    "preview_body": "Builds with features that haven't been released yet. They may be unstable.",
+    "preview_download": "Download {version}",
+    "preview_none": "No preview build is newer than the latest version",
+    "requirements_title": "System requirements",
+    "requirement_os": "Windows 10 or 11 (64-bit)",
+    "requirement_runtime": "SteamVR or an OpenXR runtime",
+    "requirement_headset": "A VR headset and controllers",
+    "install_title": "Install",
+    "install_run": "Run the downloaded installer.",
+    "install_start": "Start SteamVR and open nyaw.",
+    "install_setup": "Follow the setup to choose your hand, theme and watch face.",
+    "updates": "Check for and install updates from Settings.",
+    "all_releases": "All releases"
+  },
+  "footer": {
+    "licence": "Licensed under MIT or Apache-2.0",
+    "issues": "Report an issue",
+    "releases": "Releases",
+    "source": "Source code",
+    "title_product": "Product",
+    "title_resources": "Resources",
+    "copyright": "© 2026 nekochanfood"
+  },
+  "not_found": {
+    "title": "Page not found",
+    "home": "Back to home"
+  }
+}

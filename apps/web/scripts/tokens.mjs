@@ -40,7 +40,12 @@ export function tokensCss({ scales, static: statics, steps, aliases, mutable, ra
     "@theme inline {",
     "  --color-*: initial;",
     ...[...light.keys()].map((role) => `  --color-${role}: var(--${role});`),
-    ...Object.entries(radius).map(([name, px]) => `  --radius-${name}: ${px}px;`),
+    // 角の形がスーパーエリプスのときは、styles.css の --corner-scale で半径を広げる（full は真円のまま）
+    ...Object.entries(radius).map(([name, px]) =>
+      name === "full"
+        ? `  --radius-${name}: ${px}px;`
+        : `  --radius-${name}: calc(${px}px * var(--corner-scale, 1));`,
+    ),
     "}",
     "",
   ].join("\n");

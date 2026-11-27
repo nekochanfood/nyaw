@@ -10,7 +10,20 @@
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@locale/*": ["./locale/*"],
+      "@assets/*": ["../../assets/*"]
+    },
+    "resolveJsonModule": true
   },
-  "include": ["src", "vite.config.ts", "vitest.config.ts"]
+  "include": [
+    "src",
+    "vite.config.ts",
+    "vitest.config.ts",
+    "alias.ts",
+    "playwright.config.ts",
+    "e2e"
+  ]
 }

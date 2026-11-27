@@ -1,0 +1,101 @@
+{
+  "meta": {
+    "title": "SteamVR と OpenXR のための VR オーバーレイ",
+    "description": "ヘッドセットを着けたまま、ウィンドウをミラーリングして、通知の確認やメディアの操作を行います。",
+    "download_title": "ダウンロード",
+    "not_found_title": "ページが見つかりません"
+  },
+  "nav": {
+    "features": "機能",
+    "download": "ダウンロード",
+    "github": "GitHub",
+    "skip": "本文へ移動",
+    "theme": "テーマを切り替え",
+    "language": "言語を変更",
+    "open_menu": "メニューを開く",
+    "close_menu": "メニューを閉じる",
+    "home": "nyaw のホーム"
+  },
+  "hero": {
+    "eyebrow": "SteamVR と OpenXR のための VR オーバーレイ",
+    "title": "デスクトップを、VR の手元に",
+    "body": "ヘッドセットを着けたまま、ウィンドウをミラーリングして、通知の確認やメディアの操作を行います。",
+    "download": "Windows 版をダウンロード",
+    "github": "GitHub で見る",
+    "scene_label": "VR 空間に浮かぶ nyaw のダッシュボード、ミラーリング中のウィンドウ、クイック設定、腕時計",
+    "scroll": "スクロールして見る"
+  },
+  "tour": {
+    "title": "すべてを手の届く場所に",
+    "dashboard_title": "ダッシュボード",
+    "dashboard_body": "左コントローラのショートカットを2回押して開きます。ミラーリングの開始、メディアの再生、設定の変更をひとつのバーから行います。",
+    "mirroring_title": "画面ミラーリング",
+    "mirroring_body": "ランチャーから画面やウィンドウを選んで、ダッシュボードの上に表示します。レーザーを向けてボタンを押し、マウスのように操作します。",
+    "quick_settings_title": "クイック設定",
+    "quick_settings_body": "ダッシュボードの時計を押してクイック設定を開き、よく使う設定をその場で変更します。",
+    "wrist_title": "腕時計",
+    "wrist_body": "手首に目を向けて時刻を確認します。届いた通知は視界の端と手首に表示します。"
+  },
+  "features": {
+    "title": "機能",
+    "mirroring_title": "画面ミラーリング",
+    "mirroring_body": "PC の画面やウィンドウを VR 内に表示し、レーザーで操作します。",
+    "notifications_title": "通知",
+    "notifications_body": "Windows の通知を視界の端と手首に表示します。",
+    "media_title": "メディア操作",
+    "media_body": "再生中のメディアを確認し、ダッシュボードから曲を送ります。",
+    "keyboard_title": "仮想キーボード",
+    "keyboard_body": "ミラーリング中のアプリに、目の前のキーボードで文字を入力します。",
+    "hands_title": "ハンドトラッキング",
+    "hands_body": "コントローラだけでなく、手の動きでも操作します。",
+    "runtimes_title": "SteamVR と OpenXR",
+    "runtimes_body": "SteamVR と OpenXR ランタイムのどちらでも動作し、SteamVR と連動して起動します。",
+    "appearance_title": "テーマとカラー",
+    "appearance_body": "ライトとダークのテーマと、ボタンなどに使うアクセントカラーを選びます。",
+    "guides_title": "操作ガイド",
+    "guides_body": "チュートリアルとコントローラの操作ガイドで、すべての操作を確かめます。"
+  },
+  "cta": {
+    "title": "nyaw を入手",
+    "body": "無料のオープンソースソフトウェアです。Windows 10と11で動作します。",
+    "download": "ダウンロードへ"
+  },
+  "download": {
+    "title": "nyaw をダウンロード",
+    "body": "Windows PC に nyaw をインストールして、SteamVR か OpenXR ランタイムと一緒に起動します。",
+    "latest": "最新版",
+    "released": "{date}公開",
+    "installer": "インストーラーをダウンロード",
+    "size": "{size} MB",
+    "checking": "最新版を確認しています",
+    "unavailable": "最新版を確認できませんでした。GitHub Releases から入手してください",
+    "releases": "GitHub Releases を開く",
+    "preview_title": "プレビュー版",
+    "preview_body": "まだ正式に公開していない機能を含む版です。動作が不安定な場合があります。",
+    "preview_download": "{version} をダウンロード",
+    "preview_none": "最新版より新しいプレビュー版はありません",
+    "requirements_title": "動作環境",
+    "requirement_os": "Windows 10または11（64ビット）",
+    "requirement_runtime": "SteamVR または OpenXR ランタイム",
+    "requirement_headset": "VR ヘッドセットとコントローラ",
+    "install_title": "インストール",
+    "install_run": "ダウンロードしたインストーラーを実行します。",
+    "install_start": "SteamVR を起動して、nyaw を開きます。",
+    "install_setup": "セットアップに従って、利き手、テーマ、文字盤を選びます。",
+    "updates": "更新は設定画面から確認してインストールします。",
+    "all_releases": "すべてのリリース"
+  },
+  "footer": {
+    "licence": "MIT または Apache-2.0 ライセンス",
+    "issues": "問題を報告",
+    "releases": "リリース",
+    "source": "ソースコード",
+    "title_product": "プロダクト",
+    "title_resources": "リソース",
+    "copyright": "© 2026 nekochanfood"
+  },
+  "not_found": {
+    "title": "ページが見つかりません",
+    "home": "ホームに戻る"
+  }
+}

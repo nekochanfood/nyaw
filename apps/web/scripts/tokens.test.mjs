@@ -12,7 +12,8 @@ test("アプリのトークンをライトとダークの役割に解決する",
   expect(css).toContain(`--background: light-dark(${gray.light[2]}, ${gray.dark[0]});`);
   expect(css).toContain(`--neutral-text: light-dark(${gray.light[11]}, ${gray.dark[11]});`);
   expect(css).toContain("--color-background: var(--background);");
-  expect(css).toContain("--radius-md: 8px;");
+  expect(css).toContain("--radius-md: calc(8px * var(--corner-scale, 1));");
+  expect(css).toContain("--radius-full: 9999px;");
 });
 
 test("未知の参照は失敗する", () => {

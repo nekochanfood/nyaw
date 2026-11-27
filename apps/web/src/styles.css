@@ -1,7 +1,124 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
-body {
-  background: var(--background);
-  color: var(--neutral-text);
+/* 見出しの書体。アプリが時計の文字盤などに使うものを、そのまま読み込む（欧文と数字のみ） */
+@font-face {
+  font-family: "Geist Serif";
+  src: url("../../nyaw/crates/design/fonts/GeistSerif-Regular.ttf") format("truetype");
+  font-display: swap;
+}
+
+/* ダークは、保存したテーマか、保存していなければ OS の設定で決まる（src/theme.ts） */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+/* トークンの light-dark() は color-scheme に従う。保存したテーマで OS の設定を上書きする */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/*
+  アクセントは Catppuccin。ライトは Latte、ダークはロゴと同じ Frappé を使う。
+  基調の無彩色（トークン）の上に、アイコンや強調など小さな面積で置く。
+*/
+@theme inline {
+  --color-ctp-pink: light-dark(#ea76cb, #f4b8e4);
+  --color-ctp-mauve: light-dark(#8839ef, #ca9ee6);
+  --color-ctp-red: light-dark(#d20f39, #e78284);
+  --color-ctp-peach: light-dark(#fe640b, #ef9f76);
+  --color-ctp-yellow: light-dark(#df8e1d, #e5c890);
+  --color-ctp-green: light-dark(#40a02b, #a6d189);
+  --color-ctp-teal: light-dark(#179299, #81c8be);
+  --color-ctp-sky: light-dark(#04a5e5, #99d1db);
+  --color-ctp-blue: light-dark(#1e66f5, #8caaee);
+  --color-ctp-lavender: light-dark(#7287fd, #babbf1);
+
+  --font-sans:
+    "Gen Interface JP", Inter, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui,
+    sans-serif;
+  --font-serif: "Geist Serif", var(--font-sans);
+
+  /* トークンの xl（24px）より大きい角丸 */
+  --radius-2xl: calc(32px * var(--corner-scale, 1));
+}
+
+:root {
+  /*
+    スーパーエリプスは同じ半径だと通常の角丸より角が立って見えるので、対応するブラウザでだけ半径を広げる。
+    トークンの角丸（rounded-sm〜xl）はこの倍率を掛けた値になる。
+  */
+  --corner-scale: 1;
+  /* ページ全体を囲む帯の太さと、その内側の角丸 */
+  --frame-gutter: 8px;
+  --frame-radius: calc(24px * var(--corner-scale));
+  /* ページ内リンクの飛び先がヘッダー（h-16）に隠れないようにする */
+  scroll-padding-top: calc(4rem + var(--frame-gutter));
+}
+
+@supports (corner-shape: superellipse(1.4)) {
+  :root {
+    --corner-scale: 1.5;
+  }
+}
+
+@media (min-width: 64rem) {
+  :root {
+    --frame-gutter: 12px;
+  }
+}
+
+@layer base {
+  /* 角はスーパーエリプス。対応していないブラウザでは通常の角丸になる */
+  *,
+  ::before,
+  ::after {
+    corner-shape: superellipse(1.4);
+  }
+
+  html {
+    background: var(--groove);
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    color: var(--neutral-text);
+    line-break: strict;
+    overflow-wrap: anywhere;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--color-ctp-lavender) 35%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-ctp-lavender);
+    outline-offset: 2px;
+  }
+}
+
+/* 真円とピルは潰さない */
+@utility rounded-full {
+  corner-shape: round;
+}
+
+/* lenis が推奨するスタイル */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis:not(.lenis-autoToggle).lenis-stopped {
+  overflow: clip;
 }
