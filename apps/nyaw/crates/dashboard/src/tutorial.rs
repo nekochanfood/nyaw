@@ -5,7 +5,8 @@
 //! 入るときに用意する。
 
 use design::Icon;
-use gpui::ClickEvent;
+use design::components::WIZARD_MARGIN;
+use gpui::{ClickEvent, MouseButton};
 use guide::{Control, Controller, Model};
 use kernel::Hand;
 
@@ -68,6 +69,23 @@ impl Step {
         STEPS[(at + 1).min(STEPS.len() - 1)]
     }
 
+    /// 前の手順（最初はそのまま）。
+    pub fn back(self) -> Step {
+        let at = STEPS.iter().position(|&s| s == self).unwrap_or(0);
+        STEPS[at.saturating_sub(1)]
+    }
+
+    /// 案内のパネルを置く所。`free` はダッシュボードに画面がはまっていないか。
+    fn spot(self, free: bool) -> Spot {
+        match self {
+            Step::Intro => Spot::Docked,
+            Step::NavBar | Step::Minimize => Spot::Below,
+            Step::Grab | Step::Dock | Step::Pick | Step::Operate => Spot::Beside,
+            _ if free => Spot::Bar,
+            _ => Spot::Beside,
+        }
+    }
+
     /// 開始画面と完了を除いた、何番目の手順か（1 から）。
     fn number(self) -> usize {
         STEPS.iter().position(|&s| s == self).unwrap_or(0)
@@ -104,27 +122,25 @@ impl Step {
             | Step::Minimize
             | Step::Recall => &[Control::Select],
             Step::Grab | Step::Dock => &[Control::Grab],
-            Step::Operate => &[Control::Select, Control::Scroll],
+            Step::Operate => &[
+                Control::Select,
+                Control::Scroll,
+                Control::RightClick,
+                Control::MiddleClick,
+            ],
             Step::Bar | Step::Toggle | Step::Menu | Step::Done => &[],
         }
     }
 }
 
-/// 案内の手順のうち、区切りの見出しに出す名前（開始画面と完了は無し）。
-fn section(step: Step, cx: &App) -> Option<SharedString> {
-    let name = match step {
-        Step::Intro | Step::Done => return None,
-        Step::Bar | Step::Toggle | Step::Menu | Step::QuickSettings => {
-            i18n::t(cx, "tutorial.section_dashboard")
-        }
-        Step::Grab | Step::Dock | Step::NavBar => i18n::t(cx, "tutorial.section_panel"),
-        _ => i18n::t(cx, "tutorial.section_mirror"),
-    };
-    Some(name)
-}
-
-/// 手順の見出しと説明。
-fn texts(step: Step, shortcut: Option<&str>, cx: &App) -> (SharedString, SharedString) {
+/// 手順の見出しと説明。`shortcut` はショートカットのボタンの名前、`clicks` は右クリック・中クリックで親指を触れておく
+/// ボタンの名前（無い機種は `None`）。
+fn texts(
+    step: Step,
+    shortcut: Option<&str>,
+    clicks: Option<(&str, &str)>,
+    cx: &App,
+) -> (SharedString, SharedString) {
     match step {
         Step::Intro => (
             i18n::t(cx, "tutorial.intro_title"),
@@ -171,7 +187,14 @@ fn texts(step: Step, shortcut: Option<&str>, cx: &App) -> (SharedString, SharedS
         ),
         Step::Operate => (
             i18n::t(cx, "tutorial.operate_title"),
-            i18n::t(cx, "tutorial.operate_body"),
+            match clicks {
+                Some((right, middle)) => i18n::tf(
+                    cx,
+                    "tutorial.operate_body",
+                    &[("right", &right), ("middle", &middle)],
+                ),
+                None => i18n::t(cx, "tutorial.operate_body_left"),
+            },
         ),
         Step::Minimize => (
             i18n::t(cx, "tutorial.minimize_title"),
@@ -188,29 +211,69 @@ fn texts(step: Step, shortcut: Option<&str>, cx: &App) -> (SharedString, SharedS
     }
 }
 
-/// 案内のパネルの大きさ（1px = 1mm）。
-const COACH_M: Vec2 = Vec2::new(0.6, 0.76);
-pub const COACH_PX: (u32, u32) = (600, 760);
-/// 案内のパネルを、はめた画面の右端からどれだけ離し（m）、どれだけ内へ向けるか（rad）。
-const COACH_GAP: f32 = 0.04;
-const COACH_TURN: f32 = 30.0 * std::f32::consts::PI / 180.0;
-/// 案内のパネルに出すコントローラの画像の一辺（px。説明の列が左右に半分ずつ付く）と、寄って映す枠の高さ。
+/// 案内のパネルの大きさ（m）と解像度（px）。セットアップウィザードと同じ 4:3 で、どの手順でも変えない。1px = 0.8mm に
+/// 詰め、頭から 1.3m 前後で、1.5m 先のウィザード（1px = 1mm）と文字が同じくらいの大きさに見えるようにする。
+/// 画面の右に置いても、右端が頭から 50° ほどに収まる。
+pub const COACH_M: Vec2 = Vec2::new(0.64, 0.48);
+pub const COACH_PX: (u32, u32) = (800, 600);
+/// 案内のパネルを画面の右に置くとき、はめた画面の右端から空ける角度（rad。頭から見て）。
+const COACH_GAP: f32 = 2.0 * std::f32::consts::PI / 180.0;
+/// 画面の下のバーを説明するとき、画面の右に置く案内のパネルを下げる量（m）。
+const COACH_DROP: f32 = 0.2;
+/// 案内のパネルの中身の幅と、コントローラの画像を出す枠の高さ（px）。枠は下の帯の上に固定し、説明の長さで動かさない。
+const CONTENT_PX: f32 = COACH_PX.0 as f32 - 2.0 * (components::PANEL_MARGIN + WIZARD_MARGIN);
+const VISUAL_PX: f32 = 260.0;
+/// コントローラの画像の一辺（px。説明の列が左右に半分ずつ付く）と、寄って映す枠の縁を地へ溶かす幅。
 const GUIDE_PX: f32 = 240.0;
-const ZOOM_PX: f32 = 300.0;
-/// 練習用のウィンドウのリストの行数と、行の高さ（px）。下までスクロールしないと最後のボタンが見えない。
-const PRACTICE_ROWS: usize = 12;
-const PRACTICE_ROW_PX: f32 = 56.0;
+const ZOOM_EDGE_PX: f32 = 56.0;
+/// 見出しの横のアイコンと、進み具合の今の番号の大きさ（px）。
+const TITLE_ICON_PX: f32 = 40.0;
+const PROGRESS_PX: f32 = 44.0;
 
-/// 案内のパネルの、バーから見た姿勢（距離・高さの設定が `distance`・`height` のとき）。はめた画面の右に、内へ向けて立てる。
-pub fn coach_offset(distance: f32, height: f32) -> Pose {
-    let half = COACH_M.x / 2.0;
-    let (sin, cos) = COACH_TURN.sin_cos();
-    let center = Vec3::new(
-        SIZE_M.x / 2.0 + COACH_GAP + half * cos,
-        HEIGHT_ORIGIN + height,
-        -distance + half * sin,
-    );
-    pose(distance, height).inverse() * Pose::new(center, Quat::from_rotation_y(-COACH_TURN))
+/// 案内のパネルを置く所。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Spot {
+    /// ダッシュボードにはめる（開始画面）。
+    Docked,
+    /// バーの上に浮かべる（画面がはまっていないとき、バーのボタンを説明する。はめた所と同じ位置）。
+    Bar,
+    /// はめた画面の右。
+    Beside,
+    /// はめた画面の右の、下寄り（画面の下のバーを説明する）。
+    Below,
+}
+
+/// 頭から見た案内のパネルの姿勢（ダッシュボードの距離・高さの設定が `distance`・`height` のとき。頭は水平に前を向く）。
+/// どの置き場所でも頭からの距離をはめた所と同じにして頭のほうへ向け、見かけの大きさを変えない。
+pub fn coach_pose(spot: Spot, distance: f32, height: f32) -> Pose {
+    let margin = |size: Vec2, res: (u32, u32)| components::PANEL_MARGIN * size.y / res.1 as f32;
+    // バーの上端（[`pose`] と同じ計算）と、案内のパネルの面の高さの半分。
+    let face = SIZE_M.y / 2.0 - margin(SIZE_M, RES_PX);
+    let top = HEIGHT_ORIGIN + height - (face + ui::NAV_BAR_HEIGHT_M + kernel::overlay::SLOT_GAP);
+    let half = COACH_M.y / 2.0 - margin(COACH_M, COACH_PX);
+    // はめた所: ナビゲーションバーを持たないので、バーの上端から隙間だけ上に下端が来る。
+    let docked = Vec3::new(0.0, top + kernel::overlay::SLOT_GAP + half, -distance);
+    let r = docked.length();
+    // 画面の右: 頭から見て、はめた画面の右端から `COACH_GAP` 空けて左端が来る向き。
+    let beside = |y: f32| {
+        let flat = (r * r - y * y).max(0.0).sqrt();
+        let yaw = (SIZE_M.x / 2.0).atan2(distance) + COACH_GAP + (COACH_M.x / 2.0).atan2(flat);
+        Pose::new(
+            Vec3::new(flat * yaw.sin(), y, -flat * yaw.cos()),
+            Quat::from_rotation_y(-yaw),
+        )
+    };
+    match spot {
+        // バーの上は、はめた所と同じ位置（外れて浮かぶだけ）。
+        Spot::Docked | Spot::Bar => Pose::new(docked, Quat::IDENTITY),
+        Spot::Beside => beside(HEIGHT_ORIGIN + height),
+        Spot::Below => beside(HEIGHT_ORIGIN + height - COACH_DROP),
+    }
+}
+
+/// 案内のパネルの、バーから見た姿勢（[`coach_pose`]）。
+fn coach_offset(spot: Spot, distance: f32, height: f32) -> Pose {
+    pose(distance, height).inverse() * coach_pose(spot, distance, height)
 }
 
 /// 進めている案内。
@@ -221,16 +284,31 @@ pub(crate) struct Tutorial {
     /// 案内のパネルと、練習用のウィンドウ（開いたら）。
     pub(crate) coach: Option<PanelId>,
     pub(crate) practice: Option<PanelId>,
-    /// 前に見たとき、手順の操作が済んでいたか。済んでいない状態から済んだ状態に変わったら次へ進む。
-    done: bool,
+    /// 前に見たとき、手順の操作が済んでいたか（済んでいない状態から済んだ状態に変わったら `done`）。
+    was: bool,
+    /// この手順で、案内した操作をした（案内のパネルに「できました」を出す。次へは進まない）。
+    pub(crate) done: bool,
     /// 開閉の手順で、ダッシュボードが隠れたのを見た。
     hid: bool,
+    /// 案内のパネルを置いた所（[`Dashboard::place_coach`]）。
+    spot: Option<Spot>,
 }
 
 impl Dashboard {
     /// 進めている案内の手順（案内していなければ `None`）。
     pub(crate) fn tutorial_step(&self) -> Option<Step> {
         self.tutorial.as_ref().map(|t| t.step)
+    }
+
+    /// 手順の操作をした: 案内のパネルに「できました」を出す（その手順の間は出したまま）。
+    fn mark_done(&mut self, cx: &mut Context<Self>) {
+        let Some(t) = &mut self.tutorial else {
+            return;
+        };
+        t.done = true;
+        if let Some(coach) = t.coach {
+            ui::redraw(coach, cx);
+        }
     }
 
     /// 案内の頼み（`ui::tour::start`）に応え、案内を進める。頼まれたときに隠れていれば、出てから始める。
@@ -252,18 +330,59 @@ impl Dashboard {
         if step == Step::Toggle && hidden {
             self.tutorial.as_mut().expect("running").hid = true;
         }
-        let done = self.step_done(step, cx);
+        // 案内した操作をしても次へは進めない（進むのは「次へ」だけ）。案内のパネルに「できました」を出す。
+        let now = self.step_done(step, cx);
         let t = self.tutorial.as_mut().expect("running");
-        let advance = done && !t.done;
-        t.done = done;
-        if advance {
-            self.tutorial_go(step.next(), cx);
+        let did = now && !t.was && !t.done;
+        t.was = now;
+        if did {
+            self.mark_done(cx);
         }
+        self.place_coach(cx);
         let focus = self.tour_focus(cx);
         ui::tour::set(Some(focus), cx);
     }
 
-    /// 案内を始める: はめている画面を外し、開いているポップオーバーを閉じて、案内のパネルを画面の右に開く。
+    /// 案内のパネルを、今の手順で説明する所の近くへ動かす（置き場所が変わったときだけ）。開始画面ではダッシュボードに
+    /// はめ、始めると外れて浮かぶ。浮かんでいる間もバーの子なので、ダッシュボードと一緒に動き、一緒に隠れる。
+    fn place_coach(&mut self, cx: &mut Context<Self>) {
+        let Some(t) = &self.tutorial else {
+            return;
+        };
+        let Some(coach) = t.coach else {
+            return;
+        };
+        let free = ui::docked(cx).is_none_or(|d| d == coach);
+        let (was, spot) = (t.spot, t.step.spot(free));
+        if was == Some(spot) {
+            return;
+        }
+        if let Some(t) = &mut self.tutorial {
+            t.spot = Some(spot);
+        }
+        if spot == Spot::Docked {
+            if free {
+                ui::dock(coach, cx);
+            }
+            return;
+        }
+        if was == Some(Spot::Docked) {
+            // はめた所から外し、バーの子（はめない）にする。外した所から次の置き場所へ滑らかに動く。
+            ui::undock(coach, cx);
+            let float = kernel::Parent {
+                panel: self.panel,
+                carry: true,
+                docked: true,
+                ..Default::default()
+            };
+            ui::command(coach, PanelCommand::Parent(Some(float)), cx);
+        }
+        let s = ui::settings(cx);
+        let offset = coach_offset(spot, s.dashboard_distance, s.dashboard_height);
+        ui::command(coach, PanelCommand::Offset(offset), cx);
+    }
+
+    /// 案内を始める: はめている画面を外し、開いているポップオーバーを閉じて、案内のパネル（開始画面）をはめて開く。
     fn start_tutorial(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = ui::docked(cx) {
             if self.streams.iter().any(|s| s.panel == id) {
@@ -284,22 +403,27 @@ impl Dashboard {
             entered: design::drive::now(),
             coach: None,
             practice: None,
+            was: false,
             done: false,
             hid: false,
+            spot: None,
         });
-        let s = ui::settings(cx);
         let dashboard = cx.weak_entity();
         let spec = PanelSpec::spawn(self.panel, move |id, _, cx: &mut Context<Coach>| {
+            // 開始画面はダッシュボードにはめて開く（画面のボタンと同じく、はまる所に合わせて正面に置いてから）。
+            ui::dock(id, cx);
             let weak = dashboard.clone();
             let _ = dashboard.update(cx, |d, _| {
                 if let Some(t) = &mut d.tutorial {
-                    t.coach = Some(id);
+                    (t.coach, t.spot) = (Some(id), Some(Spot::Docked));
                 }
             });
-            Coach { dashboard: weak }
+            Coach {
+                panel: id,
+                dashboard: weak,
+            }
         })
-        .docked_to(self.panel)
-        .offset(coach_offset(s.dashboard_distance, s.dashboard_height))
+        .in_view(SCREEN_POSE)
         .sized(COACH_M, COACH_PX)
         // 案内のパネルは閉じたり動かしたりする対象ではない（終えるときは「終了」ボタン）。
         .without_nav_bar()
@@ -318,6 +442,8 @@ impl Dashboard {
         t.entered = design::drive::now();
         t.hid = false;
         let coach = t.coach;
+        // 先に案内のパネルを動かす（はめた所から外してから、手順に要る画面をはめる）。
+        self.place_coach(cx);
         match step {
             Step::Grab | Step::Dock | Step::NavBar if self.lesson_screen(cx).is_none() => {
                 self.toggle(Page::QuickSettings, cx);
@@ -333,10 +459,10 @@ impl Dashboard {
             }
             _ => {}
         }
-        // 入った時点で済んでいる操作では進まない（変わったときだけ進む）。
-        let done = self.step_done(step, cx);
+        // 入った時点で済んでいる操作は、した扱いにしない（済んでいない状態から変わったときだけ）。
+        let was = self.step_done(step, cx);
         if let Some(t) = &mut self.tutorial {
-            t.done = done;
+            (t.was, t.done) = (was, false);
         }
         let focus = self.tour_focus(cx);
         ui::tour::set(Some(focus), cx);
@@ -381,7 +507,7 @@ impl Dashboard {
         self.streams.iter().any(|s| s.panel == id && s.stashed)
     }
 
-    /// 手順 `step` の操作が済んでいるか（済んだときに自動で次へ進む）。
+    /// 手順 `step` の操作が済んでいるか（済んでいない状態から済んだら「できました」を出す）。
     fn step_done(&self, step: Step, cx: &App) -> bool {
         match step {
             Step::Toggle => self.tutorial.as_ref().is_some_and(|t| t.hid) && !self.hidden(cx),
@@ -396,7 +522,7 @@ impl Dashboard {
             Step::Launcher => self.current(cx) == Some(Page::Launcher),
             Step::Pick | Step::Recall => self.practice_shown(cx),
             Step::Minimize => self.practice().is_some_and(|p| self.stashed(p)),
-            // 練習用のウィンドウの課題は、そのボタンを押したときに進める（[`Self::practice_done`]）。
+            // 練習用のウィンドウの課題は、終えたときに印を付ける（[`Self::practice_done`]）。
             Step::Intro | Step::Bar | Step::Menu | Step::Operate | Step::Done => false,
         }
     }
@@ -430,7 +556,7 @@ impl Dashboard {
             Step::Grab | Step::Dock => f.lit = [bar].into_iter().chain(screen).collect(),
             Step::NavBar => {
                 f.lit = screen.into_iter().chain(screen.and_then(nav)).collect();
-                (f.spots, f.marks) = (ids(&["nav-close"]), ids(&["nav-more"]));
+                f.spots = ids(&["nav-close"]);
             }
             Step::Launcher => (f.lit, f.spots) = (vec![bar], ids(&["dashboard-launcher"])),
             Step::Pick => {
@@ -440,7 +566,7 @@ impl Dashboard {
             Step::Operate => f.free.extend(practice),
             Step::Minimize => {
                 f.lit = practice.into_iter().chain(practice.and_then(nav)).collect();
-                (f.spots, f.marks) = (ids(&["nav-minimize-source"]), ids(&["nav-keyboard"]));
+                f.spots = ids(&["nav-minimize-source"]);
             }
             Step::Recall => {
                 f.lit = vec![bar];
@@ -467,8 +593,8 @@ impl Dashboard {
             let _ = dashboard.update(cx, |d, cx| d.practice_opened(id, cx));
             Practice {
                 dashboard: weak,
-                scroll: ScrollHandle::new(),
-                pressed: false,
+                clicked: [false; 3],
+                scrolled: false,
             }
         })
         // 映した画面と同じく、ドッキングスロットに合わせて正面に置く。
@@ -494,10 +620,10 @@ impl Dashboard {
         self.add_stream(id, SourceKind::Window, name, None, false, cx);
     }
 
-    /// 練習用のウィンドウの課題（いちばん下のボタン）を終えた。操作の手順なら次へ進む。
+    /// 練習用のウィンドウの課題（どのクリックとスクロールも試した）を終えた。操作の手順なら「できました」を出す。
     fn practice_done(&mut self, cx: &mut Context<Self>) {
         if self.tutorial_step() == Some(Step::Operate) {
-            self.tutorial_go(Step::Operate.next(), cx);
+            self.mark_done(cx);
         }
     }
 }
@@ -519,17 +645,18 @@ fn controller(hand: Hand, cx: &App) -> Controller {
 
 /// 案内のパネル: 区切りと進み具合、見出しと説明、コントローラの画像、下に「終了」と「次へ」。
 pub(crate) struct Coach {
+    panel: PanelId,
     dashboard: WeakEntity<Dashboard>,
 }
 
 impl Render for Coach {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
-        let step = self
-            .dashboard
-            .upgrade()
-            .and_then(|d| d.read(cx).tutorial.as_ref().map(|t| (t.step, t.entered)));
-        let Some((step, entered)) = step else {
+        let state = self.dashboard.upgrade().and_then(|d| {
+            let t = d.read(cx).tutorial.as_ref()?;
+            Some((t.step, t.entered, t.done))
+        });
+        let Some((step, entered, done)) = state else {
             return div();
         };
         let act = |f: fn(&mut Dashboard, &mut Context<Dashboard>)| {
@@ -538,14 +665,26 @@ impl Render for Coach {
                 let _ = d.update(cx, f);
             }
         };
-        let next = |d: &mut Dashboard, cx: &mut Context<Dashboard>| {
-            if let Some(step) = d.tutorial_step() {
-                d.tutorial_go(step.next(), cx)
+        let go = |back: bool| -> fn(&mut Dashboard, &mut Context<Dashboard>) {
+            if back {
+                |d, cx| {
+                    if let Some(step) = d.tutorial_step() {
+                        d.tutorial_go(step.back(), cx)
+                    }
+                }
+            } else {
+                |d, cx| {
+                    if let Some(step) = d.tutorial_step() {
+                        d.tutorial_go(step.next(), cx)
+                    }
+                }
             }
         };
         let end = |d: &mut Dashboard, cx: &mut Context<Dashboard>| d.end_tutorial(cx);
         // ショートカットは左手、ほかの操作は利き手のコントローラで示す。
         let left = controller(Hand::Left, cx);
+        let hand = ui::settings(cx).dominant_hand.hand();
+        let own = controller(hand, cx);
         let shortcut: Vec<&'static str> = left
             .parts(Control::Shortcut, Hand::Left)
             .into_iter()
@@ -556,14 +695,43 @@ impl Render for Coach {
             })
             .collect();
         let name = shortcut.first().map(|p| guide::part_name(cx, p));
-        let (title, body) = texts(step, name.as_deref(), cx);
-        let hand = ui::settings(cx).dominant_hand.hand();
-        let own = controller(hand, cx);
+        let click = |control| {
+            own.parts(control, hand)
+                .first()
+                .map(|p| guide::part_name(cx, p))
+        };
+        let clicks = click(Control::RightClick).zip(click(Control::MiddleClick));
+        let (title, body) = texts(
+            step,
+            name.as_deref(),
+            clicks.as_ref().map(|(r, m)| (r.as_ref(), m.as_ref())),
+            cx,
+        );
+        let back = components::wizard_back(&theme, "tutorial-back", i18n::t(cx, "tutorial.back"))
+            .on_click(act(go(true)));
+        // 完了は、ウィザードの完了画面と同じ見た目（アイコン・見出し・説明を中央に）。
+        if step == Step::Done {
+            let finish =
+                components::wizard_next(&theme, "tutorial-finish", i18n::t(cx, "tutorial.finish"))
+                    .on_click(act(end));
+            return components::wizard_panel(&theme)
+                .debug_selector(move || format!("tutorial-step-{step:?}"))
+                .child(components::wizard_welcome(
+                    &theme,
+                    "tutorial",
+                    components::wizard_icon(&theme, step.icon()),
+                    title,
+                    body,
+                    Some(back),
+                    finish,
+                ));
+        }
         let visual = if step == Step::Toggle {
             Some(
                 guide::zoom(left.model, Hand::Left)
-                    .size(px(GUIDE_PX * 2.0), px(ZOOM_PX))
+                    .size(px(CONTENT_PX), px(VISUAL_PX))
                     .parts(shortcut)
+                    .edges(px(ZOOM_EDGE_PX))
                     .enter(Some(entered))
                     .into_any_element(),
             )
@@ -580,101 +748,337 @@ impl Render for Coach {
                     .into_any_element()
             })
         };
-        let progress = section(step, cx).map(|s| {
-            let n = step.number().to_string();
-            let total = (STEPS.len() - 2).to_string();
-            i18n::tf(
-                cx,
-                "tutorial.progress",
-                &[("section", &s), ("n", &n), ("total", &total)],
-            )
+        // 右上の進み具合: 今の番号を大きく、全体の数を小さく上端にそろえる（開始画面には無い）。
+        let progress = (step != Step::Intro).then(|| {
+            div()
+                .debug_selector(|| "tutorial-progress".into())
+                .flex_none()
+                .flex()
+                .items_start()
+                .gap(px(spacing::XS))
+                .child(
+                    div()
+                        .text_size(px(PROGRESS_PX))
+                        .line_height(px(PROGRESS_PX))
+                        .font_weight(FontWeight::BOLD)
+                        .child(step.number().to_string()),
+                )
+                .child(
+                    div()
+                        .text_size(px(font_size::MD))
+                        .text_color(rgba(theme.neutral_text_low))
+                        .child(format!("/{}", STEPS.len() - 2)),
+                )
         });
-        let (other, forward) = match step {
+        // 案内した操作をしたら、「次へ」の左に印を出す（次へは進めない）。
+        let did = done.then(|| {
+            div()
+                .debug_selector(|| "tutorial-done".into())
+                .flex()
+                .items_center()
+                .gap(px(spacing::XS))
+                .text_color(rgba(theme.accent_text))
+                .font_weight(FontWeight::BOLD)
+                .child(design::icon(&icons::CHECK_CIRCLE).size(px(font_size::LG)))
+                .child(i18n::t(cx, "tutorial.did"))
+        });
+        // 下の帯: 開始画面は左に「スキップ」。ほかは左に終了（開いたドア。確かめてから終える）と「戻る」。右に「次へ」。
+        let (start, forward) = match step {
             Step::Intro => (
-                Some(
+                vec![
                     components::button(
                         &theme,
                         "tutorial-skip",
                         i18n::t(cx, "tutorial.skip"),
-                        Variant::Default,
+                        Variant::OnBackground,
                     )
                     .on_click(act(end)),
-                ),
+                ],
                 components::wizard_next(&theme, "tutorial-next", i18n::t(cx, "tutorial.start"))
-                    .on_click(act(next)),
+                    .on_click(act(go(false))),
             ),
-            Step::Done => (
-                None,
-                components::wizard_next(&theme, "tutorial-finish", i18n::t(cx, "tutorial.finish"))
-                    .on_click(act(end)),
-            ),
-            _ => (
-                Some(
-                    components::button(
-                        &theme,
-                        "tutorial-quit",
-                        i18n::t(cx, "tutorial.quit"),
-                        Variant::Default,
-                    )
-                    .on_click(act(end)),
-                ),
-                components::wizard_next(&theme, "tutorial-next", i18n::t(cx, "tutorial.next"))
-                    .on_click(act(next)),
-            ),
+            _ => {
+                let coach = self.panel;
+                let dashboard = self.dashboard.clone();
+                let quit = components::icon_button(
+                    &theme,
+                    "tutorial-quit",
+                    &icons::DOOR_OPEN,
+                    i18n::t(cx, "tutorial.quit"),
+                    Variant::OnBackground,
+                )
+                .on_click(move |_, window, cx| {
+                    let spec = quit_dialog(coach, dashboard.clone(), window, cx);
+                    cx.default_global::<PanelControl>().spawns.push(spec);
+                });
+                (
+                    vec![quit, back],
+                    components::wizard_next(&theme, "tutorial-next", i18n::t(cx, "tutorial.next"))
+                        .on_click(act(go(false))),
+                )
+            }
         };
-        let head = components::heading(
-            &theme,
-            "tutorial",
-            components::wizard_icon(&theme, step.icon()),
-            title,
-            Some(body),
-        );
-        components::card_panel(&theme)
-            .debug_selector(move || format!("tutorial-step-{step:?}"))
-            .p(px(spacing::XL))
+        // 上の段: アイコン・見出しと説明・進み具合を横に並べる。コントローラの枠は下の帯の上に高さを固定し、
+        // 説明の長さで位置を動かさない。
+        let head = div()
+            .flex_1()
+            .min_h_0()
             .flex()
-            .flex_col()
-            .gap(px(spacing::LG))
-            .children(progress.map(|p| {
-                div()
-                    .debug_selector(|| "tutorial-progress".into())
-                    .text_size(px(font_size::SM))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(rgba(theme.accent_text))
-                    .child(p)
-            }))
-            .child(head)
+            .items_start()
+            .gap(px(spacing::MD))
             .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .children(visual),
+                design::icon(step.icon())
+                    .size(px(TITLE_ICON_PX))
+                    .color(rgba(theme.accent_solid)),
             )
             .child(
                 div()
-                    .w_full()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
-                    .justify_between()
-                    .child(other.map_or_else(|| div().into_any_element(), |b| b.into_any_element()))
-                    .child(forward),
+                    .flex_col()
+                    .gap(px(spacing::SM))
+                    .child(
+                        div()
+                            .text_size(px(font_size::LG))
+                            .font_weight(FontWeight::BOLD)
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(font_size::MD))
+                            .text_color(rgba(theme.neutral_text_low))
+                            .child(body),
+                    ),
+            )
+            .children(progress);
+        components::wizard_panel(&theme)
+            .debug_selector(move || format!("tutorial-step-{step:?}"))
+            .child(
+                div()
+                    .size_full()
+                    .p(px(WIZARD_MARGIN))
+                    .flex()
+                    .flex_col()
+                    .gap(px(spacing::MD))
+                    .child(head)
+                    .child(
+                        div()
+                            .flex_none()
+                            .h(px(VISUAL_PX))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .children(visual),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .flex()
+                            .justify_between()
+                            .items_center()
+                            .child(div().flex().gap(px(spacing::SM)).children(start))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(spacing::LG))
+                                    .children(did)
+                                    .child(forward),
+                            ),
+                    ),
             )
     }
 }
 
-/// 練習用のウィンドウ: 映したアプリの代わりに操作を試す。下までスクロールして、いちばん下のボタンを押す。
+/// チュートリアルを途中で終えるか確かめるダイアログ（案内のパネル `coach` の子）の起動仕様。
+fn quit_dialog(
+    coach: PanelId,
+    dashboard: WeakEntity<Dashboard>,
+    window: &Window,
+    cx: &App,
+) -> PanelSpec {
+    let width = components::DIALOG_WIDTH;
+    let height = components::dialog_height(
+        window,
+        &i18n::t(cx, "tutorial.quit_title"),
+        &i18n::t(cx, "tutorial.quit_body"),
+    );
+    PanelSpec::child(coach, true, move |panel, _, _| QuitTutorial {
+        panel,
+        dashboard,
+    })
+    .sized(
+        Vec2::new(width as f32 / 1000.0, height as f32 / 1000.0),
+        (width, height),
+    )
+    .without_nav_bar()
+}
+
+/// チュートリアルを途中で終えるか確かめるダイアログ。`tutorial-quit-confirm` で終え、`tutorial-quit-cancel` なら
+/// ダイアログだけ閉じて案内を続ける。
+pub(crate) struct QuitTutorial {
+    panel: PanelId,
+    dashboard: WeakEntity<Dashboard>,
+}
+
+impl Render for QuitTutorial {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let (panel, dashboard) = (self.panel, self.dashboard.clone());
+        components::dialog(
+            &theme,
+            "tutorial-quit-dialog",
+            &icons::DOOR_OPEN,
+            i18n::t(cx, "tutorial.quit_title"),
+            i18n::t(cx, "tutorial.quit_body"),
+            [
+                components::button(
+                    &theme,
+                    "tutorial-quit-cancel",
+                    i18n::t(cx, "common.cancel"),
+                    Variant::Default,
+                )
+                .on_click(move |_, _, cx| ui::command(panel, PanelCommand::Close, cx)),
+                components::button(
+                    &theme,
+                    "tutorial-quit-confirm",
+                    i18n::t(cx, "tutorial.quit_confirm"),
+                    Variant::Danger,
+                )
+                .on_click(move |_, _, cx| {
+                    ui::command(panel, PanelCommand::Close, cx);
+                    let _ = dashboard.update(cx, |d, cx| d.end_tutorial(cx));
+                }),
+            ],
+        )
+        // ドアの形が塗りでは潰れて判別しにくいため、線描画にする。
+        .weight(design::Weight::Regular)
+    }
+}
+
+/// 練習用のウィンドウ: 映したアプリの代わりに、マウスの操作を試す。左・右・中クリックの的と、スクロールするリスト。
 pub(crate) struct Practice {
     dashboard: WeakEntity<Dashboard>,
-    scroll: ScrollHandle,
-    /// いちばん下のボタンを押した。
-    pub(crate) pressed: bool,
+    /// 左・右・中クリックで的を押したか。
+    pub(crate) clicked: [bool; 3],
+    /// リストをスクロールしたか。
+    pub(crate) scrolled: bool,
+}
+
+/// 練習用のウィンドウのクリックの的: (ボタン, ID, アイコン, 名前のキー（`guide.control`）)。
+const TARGETS: [(MouseButton, &str, &Icon, Control); 3] = [
+    (
+        MouseButton::Left,
+        "practice-left",
+        &icons::MOUSE_LEFT_CLICK,
+        Control::Select,
+    ),
+    (
+        MouseButton::Right,
+        "practice-right",
+        &icons::MOUSE_RIGHT_CLICK,
+        Control::RightClick,
+    ),
+    (
+        MouseButton::Middle,
+        "practice-middle",
+        &icons::MOUSE_MIDDLE_CLICK,
+        Control::MiddleClick,
+    ),
+];
+/// クリックの的の高さと、スクロールするリストの行数・行の高さ（px）。
+const TARGET_PX: f32 = 150.0;
+const PRACTICE_ROWS: usize = 12;
+const PRACTICE_ROW_PX: f32 = 48.0;
+
+impl Practice {
+    /// 試せる操作をすべて試したら、案内に知らせる。右・中クリックは、利き手のコントローラにある場合だけ数える。
+    fn check(&self, cx: &mut Context<Self>) {
+        let hand = ui::settings(cx).dominant_hand.hand();
+        let own = controller(hand, cx);
+        let all = TARGETS
+            .iter()
+            .zip(self.clicked)
+            .all(|((_, _, _, c), done)| {
+                done || (*c != Control::Select && own.parts(*c, hand).is_empty())
+            });
+        if all && self.scrolled {
+            let _ = self.dashboard.update(cx, |d, cx| d.practice_done(cx));
+        }
+    }
 }
 
 impl Render for Practice {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::current(cx);
+        let hand = ui::settings(cx).dominant_hand.hand();
+        let own = controller(hand, cx);
+        let accent = rgba(theme.accent_solid);
+        let targets = TARGETS
+            .iter()
+            .enumerate()
+            .map(|(i, &(button, id, glyph, control))| {
+                let done = self.clicked[i];
+                // 右・中クリックは、親指を触れておくボタンのある機種だけ（無ければそう書く）。
+                let unavailable = control != Control::Select && own.parts(control, hand).is_empty();
+                let label = match control {
+                    Control::Select => i18n::t(cx, "tutorial.practice_left"),
+                    other => guide::control_name(cx, other),
+                };
+                let note = if done {
+                    i18n::t(cx, "tutorial.did")
+                } else if unavailable {
+                    i18n::t(cx, "tutorial.practice_unavailable")
+                } else {
+                    i18n::t(cx, "tutorial.practice_try")
+                };
+                div()
+                    .id(id)
+                    .debug_selector(move || id.into())
+                    .flex_1()
+                    .h(px(TARGET_PX))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(spacing::SM))
+                    .rounded(px(design::radius::LG))
+                    .bg(rgba(theme.control))
+                    .border_2()
+                    .border_color(if done {
+                        accent
+                    } else {
+                        rgba(theme.neutral_border_subtle)
+                    })
+                    .when(unavailable && !done, |d| d.opacity(0.5))
+                    .child(
+                        design::icon(if done { &icons::CHECK_CIRCLE } else { glyph })
+                            .size(px(TITLE_ICON_PX))
+                            .color(if done {
+                                accent
+                            } else {
+                                rgba(theme.neutral_text)
+                            }),
+                    )
+                    .child(div().font_weight(FontWeight::BOLD).child(label))
+                    .child(
+                        div()
+                            .text_size(px(font_size::SM))
+                            .text_color(rgba(theme.neutral_text_low))
+                            .child(note),
+                    )
+                    .on_mouse_down(
+                        button,
+                        cx.listener(move |this, _, _, cx| {
+                            if !this.clicked[i] {
+                                this.clicked[i] = true;
+                                this.check(cx);
+                                cx.notify();
+                            }
+                        }),
+                    )
+            });
         let rows = (1..=PRACTICE_ROWS).map(|n| {
             div()
                 .flex_none()
@@ -690,25 +1094,6 @@ impl Render for Practice {
                     &[("n", &n.to_string())],
                 ))
         });
-        let goal = if self.pressed {
-            components::disabled_button(
-                &theme,
-                "practice-goal",
-                i18n::t(cx, "tutorial.practice_done"),
-            )
-        } else {
-            components::button(
-                &theme,
-                "practice-goal",
-                i18n::t(cx, "tutorial.practice_press"),
-                Variant::Primary,
-            )
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.pressed = true;
-                cx.notify();
-                let _ = this.dashboard.update(cx, |d, cx| d.practice_done(cx));
-            }))
-        };
         components::card_panel(&theme)
             .p(px(spacing::XL))
             .flex()
@@ -725,6 +1110,24 @@ impl Render for Practice {
                     .text_color(rgba(theme.neutral_text_low))
                     .child(i18n::t(cx, "tutorial.practice_hint")),
             )
+            .child(div().flex().gap(px(spacing::MD)).children(targets))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(spacing::SM))
+                    .font_weight(FontWeight::BOLD)
+                    .when(self.scrolled, |d| d.text_color(accent))
+                    .child(
+                        design::icon(if self.scrolled {
+                            &icons::CHECK_CIRCLE
+                        } else {
+                            &icons::MOUSE_SCROLL
+                        })
+                        .size(px(font_size::LG)),
+                    )
+                    .child(i18n::t(cx, "tutorial.practice_scroll")),
+            )
             .child(
                 div()
                     .id("practice-list")
@@ -732,18 +1135,18 @@ impl Render for Practice {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
+                    .rounded(px(design::radius::LG))
+                    .bg(rgba(theme.control))
                     .flex()
                     .flex_col()
                     .children(rows)
-                    .child(
-                        div()
-                            .flex_none()
-                            .py(px(spacing::LG))
-                            .flex()
-                            .justify_center()
-                            .child(goal),
-                    ),
+                    .on_scroll_wheel(cx.listener(|this, _, _, cx| {
+                        if !this.scrolled {
+                            this.scrolled = true;
+                            this.check(cx);
+                            cx.notify();
+                        }
+                    })),
             )
     }
 }

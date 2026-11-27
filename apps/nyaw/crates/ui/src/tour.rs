@@ -7,11 +7,11 @@ use gpui::{AnyElement, Bounds, HitboxBehavior, Pixels, SharedString, canvas, poi
 use super::*;
 
 /// 強調の輪を要素の縁から離す幅と、線の太さ（px）。
-const RING_PAD: f32 = 6.0;
+const RING_PAD: f32 = 4.0;
 const RING_W: f32 = 3.0;
-/// 押せる要素の輪の外へ広がって消える光の、1 周期（秒）と広がる幅（px）。
+/// 押せる要素の輪の外へ広がって消える光の、1 周期（秒）と広がる幅（px）。隣の要素（ボタンの間は 8px）にかからない幅にする。
 const PULSE: f32 = 1.6;
-const PULSE_GROW: f32 = 14.0;
+const PULSE_GROW: f32 = 5.0;
 
 /// 案内の状態（GPUI のグローバル）。
 #[derive(Default)]
@@ -26,7 +26,7 @@ impl gpui::Global for Tour {}
 /// 案内の焦点。ここに無いパネルは暗くなり、入力を受けない。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Focus {
-    /// 暗くせず、入力もそのまま通すパネル（案内のパネル、練習用のウィンドウ）。
+    /// 暗くせず、入力もそのまま通すパネル（案内のパネル、練習用のウィンドウ）。その子（ダイアログ）も同じく扱う。
     pub free: Vec<PanelId>,
     /// 暗くせず、強調して押せる要素（`spots`）にだけ入力を通すパネル。
     pub lit: Vec<PanelId>,
@@ -82,14 +82,23 @@ pub fn set(focus: Option<Focus>, cx: &mut App) {
 
 /// `panel` を暗くするか（案内の最中で、焦点に無いパネル）。
 pub(crate) fn dims(panel: PanelId, cx: &App) -> bool {
-    focus(cx).is_some_and(|f| !f.free.contains(&panel) && !f.lit.contains(&panel))
+    focus(cx).is_some_and(|f| !free(f, panel, cx) && !f.lit.contains(&panel))
+}
+
+/// `panel` に入力をそのまま通すか: 焦点の `free` のパネルか、その子（案内のパネルから開いたダイアログ）。
+fn free(f: &Focus, panel: PanelId, cx: &App) -> bool {
+    let parent = cx
+        .try_global::<PanelControl>()
+        .and_then(|c| c.panels.get(&panel))
+        .and_then(|p| p.status.parent);
+    f.free.contains(&panel) || parent.is_some_and(|p| f.free.contains(&p))
 }
 
 /// `panel` のウィンドウに重ねる覆い。焦点のパネルでは強調する要素を輪で囲み、押せる要素の外への入力を止める。
 /// 焦点に無いパネルでは、すべての入力を止める。案内の最中でないか、入力をそのまま通すパネルなら `None`。
 pub(crate) fn mask(panel: PanelId, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let f = focus(cx)?;
-    if f.free.contains(&panel) {
+    if free(f, panel, cx) {
         return None;
     }
     let lit = f.lit.contains(&panel);

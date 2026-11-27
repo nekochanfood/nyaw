@@ -49,7 +49,7 @@ use now_playing::*;
 use parts::*;
 use screen::*;
 use tutorial::*;
-pub use tutorial::{COACH_PX, coach_offset};
+pub use tutorial::{COACH_M, COACH_PX, Spot as CoachSpot, coach_pose};
 
 #[cfg(test)]
 mod test_util;

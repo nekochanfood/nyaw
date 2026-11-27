@@ -1,6 +1,6 @@
 //! The tutorial on the dashboard (it starts when setup finishes). The tour lights one part of the UI at a time and
-//! dims and blocks the rest, every step can be passed with Next, doing the suggested action moves on by itself, and a
-//! practice window stands in for a mirrored app. Runs the real wrist and dashboard on the novr emulator.
+//! dims and blocks the rest, only Next moves on (doing the suggested action marks the step done), and a practice
+//! window stands in for a mirrored app. Runs the real wrist and dashboard on the novr emulator.
 
 use gpui::TestAppContext;
 use testkit::{Button, Driver, NoVrKit};
@@ -57,6 +57,12 @@ fn running(kit: &mut NoVrKit<Wrist>) -> bool {
     kit.app(|cx| ui::tour::running(cx))
 }
 
+/// Whether the coach marks the step's suggested action as done.
+fn done(kit: &mut NoVrKit<Wrist>) -> bool {
+    kit.find("tutorial-done").is_some()
+}
+
+/// Doing what a step suggests marks it done on the coach but stays on the step: only Next moves on.
 #[gpui::test]
 fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut TestAppContext) {
     let (mut kit, dashboard) = start(cx);
@@ -77,12 +83,17 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     assert!(!kit.kernel.panel(dashboard).dimmed);
     click(&mut kit, "tutorial-next");
     assert!(at(&mut kit, "tutorial-step-Toggle"));
-    // Closing and opening again with the shortcut moves on by itself.
+    // Closing and opening again with the shortcut is marked done; the step stays.
+    assert!(!done(&mut kit));
     press_x_twice(&mut kit);
     assert!(kit.kernel.status(dashboard).hidden);
     press_x_twice(&mut kit);
     assert!(!kit.kernel.status(dashboard).hidden);
+    assert!(at(&mut kit, "tutorial-step-Toggle"));
+    assert!(done(&mut kit));
+    click(&mut kit, "tutorial-next");
     assert!(at(&mut kit, "tutorial-step-Menu"));
+    assert!(!done(&mut kit), "a new step starts undone");
     click(&mut kit, "tutorial-next");
 
     // Only the highlighted button takes the press: the launcher stays shut, the clock opens quick settings.
@@ -95,42 +106,48 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     );
     click(&mut kit, "dashboard-quick-settings");
     let screen = kit.find("quick-time").expect("quick settings opened");
-    assert!(at(&mut kit, "tutorial-step-Grab"));
+    assert!(at(&mut kit, "tutorial-step-QuickSettings") && done(&mut kit));
+    click(&mut kit, "tutorial-next");
     // Grabbing a screen off the dashboard needs a tracked hand; Next passes it.
+    assert!(at(&mut kit, "tutorial-step-Grab"));
     click(&mut kit, "tutorial-next");
     assert!(at(&mut kit, "tutorial-step-Dock"));
     click(&mut kit, "tutorial-next");
 
-    // The screen's bar: × closes the screen and moves on.
+    // The screen's bar: × closes the screen.
     assert!(at(&mut kit, "tutorial-step-NavBar"));
     let nav = kit.kernel.nav_bar(screen).expect("the screen has a bar");
     kit.select_panel(nav).click("nav-close");
     settle(&mut kit);
     assert!(kit.kernel.panel(screen).closed);
+    assert!(at(&mut kit, "tutorial-step-NavBar") && done(&mut kit));
+    click(&mut kit, "tutorial-next");
 
     // The launcher lists the practice window while the tour runs; picking it docks it like a mirrored window.
     assert!(at(&mut kit, "tutorial-step-Launcher"));
     click(&mut kit, "dashboard-launcher");
+    assert!(at(&mut kit, "tutorial-step-Launcher") && done(&mut kit));
+    click(&mut kit, "tutorial-next");
     assert!(at(&mut kit, "tutorial-step-Pick"));
     click(&mut kit, "dashboard-practice");
-    assert!(at(&mut kit, "tutorial-step-Operate"));
     let practice = kit.find("practice-list").expect("practice window opened");
+    assert!(at(&mut kit, "tutorial-step-Pick") && done(&mut kit));
+    click(&mut kit, "tutorial-next");
+    assert!(at(&mut kit, "tutorial-step-Operate"));
     assert!(!kit.kernel.panel(practice).dimmed);
 
-    // The practice window takes any input: scroll to the end of its list and press the button there.
-    kit.select_panel(practice);
-    for _ in 0..30 {
-        let (list, goal) = (kit.bounds("practice-list"), kit.bounds("practice-goal"));
-        if goal.bottom() <= list.bottom() {
-            break;
-        }
-        kit.scroll("practice-list", -3.0);
-    }
-    kit.click("practice-goal");
+    // The practice window takes any input. novr's controller left-clicks only (right and middle clicks need a
+    // controller that reports a touched button), so left-clicking its target and scrolling its list is all of it.
+    kit.select_panel(practice).click("practice-left");
     settle(&mut kit);
-    assert!(at(&mut kit, "tutorial-step-Minimize"));
+    assert!(!done(&mut kit), "the list is not scrolled yet");
+    kit.select_panel(practice).scroll("practice-list", -3.0);
+    settle(&mut kit);
+    assert!(at(&mut kit, "tutorial-step-Operate") && done(&mut kit));
+    click(&mut kit, "tutorial-next");
 
-    // On the window's bar the keyboard button is only shown (it would type into the OS); − puts the window away.
+    // On the window's bar the keyboard button can't be pressed (it would type into the OS); − puts the window away.
+    assert!(at(&mut kit, "tutorial-step-Minimize"));
     let nav = kit
         .kernel
         .nav_bar(practice)
@@ -142,6 +159,8 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     kit.select_panel(nav).click("nav-minimize-source");
     settle(&mut kit);
     assert!(kit.kernel.status(practice).hidden);
+    assert!(at(&mut kit, "tutorial-step-Minimize") && done(&mut kit));
+    click(&mut kit, "tutorial-next");
 
     // Its button on the bar brings it back.
     assert!(at(&mut kit, "tutorial-step-Recall"));
@@ -149,6 +168,8 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     kit.select_panel(dashboard).click(button);
     settle(&mut kit);
     assert!(!kit.kernel.status(practice).hidden);
+    assert!(at(&mut kit, "tutorial-step-Recall") && done(&mut kit));
+    click(&mut kit, "tutorial-next");
 
     // Done closes the practice window and the coach, and lifts the dimming.
     assert!(at(&mut kit, "tutorial-step-Done"));
@@ -202,7 +223,7 @@ fn every_step_can_be_passed_with_next(cx: &mut TestAppContext) {
     assert!(!kit.kernel.status(dashboard).hidden);
 }
 
-/// Skip on the first screen ends the tour at once; End tutorial ends it midway and closes the practice window.
+/// Skip on the first screen ends the tour at once. The door ends it midway after asking, and closes the practice window.
 #[gpui::test]
 fn the_tour_can_be_skipped_or_ended_midway(cx: &mut TestAppContext) {
     let (mut kit, dashboard) = start(cx);
@@ -228,7 +249,67 @@ fn the_tour_can_be_skipped_or_ended_midway(cx: &mut TestAppContext) {
     }
     assert!(at(&mut kit, "tutorial-step-Operate"));
     let practice = kit.find("practice-list").expect("practice window");
+    // The door asks first: the dialog takes presses during the tour, and Cancel keeps the tour going.
     click(&mut kit, "tutorial-quit");
+    let dialog = kit
+        .find("tutorial-quit-dialog-title")
+        .expect("asks before ending");
+    assert!(!kit.kernel.panel(dialog).dimmed);
+    click(&mut kit, "tutorial-quit-cancel");
+    assert!(kit.kernel.panel(dialog).closed);
+    assert!(running(&mut kit));
+    assert!(at(&mut kit, "tutorial-step-Operate"));
+    click(&mut kit, "tutorial-quit");
+    click(&mut kit, "tutorial-quit-confirm");
     assert!(!running(&mut kit));
     assert!(kit.kernel.panel(practice).closed);
+    assert!(kit.find("tutorial-quit-dialog-title").is_none());
+}
+
+/// The start screen opens docked on the dashboard. Start lifts it off, and it floats near what each step explains:
+/// above the bar, beside the docked screen, lower down by the screen's bar. Back goes to the previous step (down to
+/// the start screen, docked again) without moving on by itself.
+#[gpui::test]
+fn the_coach_starts_docked_then_floats_near_each_step_and_goes_back(cx: &mut TestAppContext) {
+    use dashboard::CoachSpot;
+    let (mut kit, dashboard) = start(cx);
+    let coach = kit.find("tutorial-step-Intro").expect("start screen");
+    let parent = |kit: &NoVrKit<Wrist>| kit.kernel.panel(coach).parent.expect("on the dashboard");
+    let near = |kit: &NoVrKit<Wrist>, spot| {
+        let want = dashboard::coach_pose(spot, kernel::DASHBOARD_DISTANCE, 0.0).position;
+        let got = kit.kernel.panel(coach).pose.position;
+        assert!(got.distance(want) < 0.02, "{spot:?}: {got} != {want}");
+    };
+    assert!(parent(&kit).slot.is_some() && parent(&kit).panel == dashboard);
+    near(&kit, CoachSpot::Docked);
+
+    click(&mut kit, "tutorial-next");
+    assert!(at(&mut kit, "tutorial-step-Bar"));
+    assert!(parent(&kit).slot.is_none() && parent(&kit).panel == dashboard);
+    assert!(kit.app(|cx| ui::docked(cx)).is_none(), "the slot is free");
+    near(&kit, CoachSpot::Bar);
+    click(&mut kit, "tutorial-back");
+    assert!(at(&mut kit, "tutorial-step-Intro"));
+    assert!(parent(&kit).slot.is_some());
+    near(&kit, CoachSpot::Docked);
+
+    for _ in 0..5 {
+        click(&mut kit, "tutorial-next");
+    }
+    assert!(at(&mut kit, "tutorial-step-Grab"));
+    let screen = kit
+        .find("quick-time")
+        .expect("quick settings docked on the way in");
+    near(&kit, CoachSpot::Beside);
+    click(&mut kit, "tutorial-next");
+    click(&mut kit, "tutorial-next");
+    assert!(at(&mut kit, "tutorial-step-NavBar"));
+    near(&kit, CoachSpot::Below);
+    // Back to grabbing: the screen stays docked, and that doesn't count as done.
+    click(&mut kit, "tutorial-back");
+    click(&mut kit, "tutorial-back");
+    assert!(at(&mut kit, "tutorial-step-Grab"));
+    assert!(!done(&mut kit));
+    assert_eq!(kit.app(|cx| ui::docked(cx)), Some(screen));
+    near(&kit, CoachSpot::Beside);
 }
