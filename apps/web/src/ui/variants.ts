@@ -6,9 +6,8 @@
 export const cx = (...classes: (string | false | null | undefined)[]) =>
   classes.filter(Boolean).join(" ");
 
-/** ホバーの色はゆっくり変え、押したときは少し縮む */
-const FADE =
-  "transition-[color,background-color,scale] duration-(--duration-slow) ease-out active:scale-[0.96]";
+/** ホバーの色はゆっくり変える。押したときは波紋（ripple.ts）が広がる */
+const FADE = "transition-colors duration-(--duration-slow) ease-out";
 
 export const BUTTON_VARIANTS = {
   /** 地の上に直接置くアイコン・文字ボタン。ホバーの間だけ面が出る */

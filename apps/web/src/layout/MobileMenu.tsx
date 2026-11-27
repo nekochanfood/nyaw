@@ -54,7 +54,7 @@ export function MobileMenu() {
           <nav className="flex flex-col">
             {items.map((item) => (
               <Link
-                key={item.label}
+                key={item.to}
                 data-menu-item
                 to={item.to}
                 params={item.params}

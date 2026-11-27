@@ -18,8 +18,11 @@ export const ButtonAnchor = forwardRef<HTMLAnchorElement, AnchorProps>(function 
   { variant, size, className, ...props },
   ref,
 ) {
-  // oxlint-disable-next-line jsx-a11y/anchor-has-content -- 中身とラベルは children か aria-label から入る
-  return <a ref={ref} className={buttonClass({ variant, size, className })} {...props} />;
+  // リンクの見た目のボタンにも波紋を出す（ripple.ts）
+  return (
+    // oxlint-disable-next-line jsx-a11y/anchor-has-content -- 中身とラベルは children か aria-label から入る
+    <a ref={ref} data-ripple className={buttonClass({ variant, size, className })} {...props} />
+  );
 });
 
 /** 見た目はボタン、要素はルーターの <Link>。サイト内のページへのリンクに使う */

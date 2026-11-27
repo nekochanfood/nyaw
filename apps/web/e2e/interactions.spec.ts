@@ -97,3 +97,17 @@ test("動きがあるときも、読み込み画面、ページの入れ替え�
   await expect(page.locator("[data-page]")).toHaveCSS("opacity", "1");
   assertNoErrors();
 });
+
+test("動きがあるときに言語を替えても、ヘッダーのリンクは見えたまま", async ({ page, isMobile }) => {
+  test.skip(isMobile, "ナビゲーションのリンクはデスクトップの幅だけに出る");
+  await page.goto("/en");
+  const features = page.getByRole("banner").getByRole("link", { name: "Features" });
+  await expect(features).toHaveCSS("opacity", "1");
+  await page.getByRole("button", { name: "Change language" }).click();
+  await page.getByRole("menuitemradio", { name: "日本語" }).click();
+  await expect(page).toHaveURL(/\/ja$/);
+  await expect(page.getByRole("banner").getByRole("link", { name: "機能" })).toHaveCSS(
+    "opacity",
+    "1",
+  );
+});

@@ -47,15 +47,19 @@ export function Header() {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!loaded || !el || reducedMotion()) return;
+    // 登場が終わったら、項目を隠す CSS（styles.css の .motion）を外す。あとで作り直された項目も見えるようにする
+    const ready = () => (document.documentElement.dataset.headerReady = "");
     const anim = animate(el.querySelectorAll("[data-header-item]"), {
       opacity: [0, 1],
       y: [-32, 0],
       duration: 800,
       delay: stagger(50, { start: 300 }),
       ease: "out(3)",
+      onComplete: ready,
     });
     return () => {
       anim.cancel();
+      ready();
     };
   }, [loaded]);
 
@@ -75,8 +79,9 @@ export function Header() {
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
             {items.map((item) => (
+              // key は言語で変わらないリンク先にする（文言にすると、言語を替えたときに作り直される）
               <ButtonLink
-                key={item.label}
+                key={item.to}
                 data-header-item
                 to={item.to}
                 params={item.params}

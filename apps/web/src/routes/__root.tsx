@@ -8,6 +8,7 @@ import { defaultLocale, isLocale } from "@/i18n/config";
 import appCss from "@/styles.css?url";
 import { motionScript } from "@/motion/stage";
 import { themeScript } from "@/theme";
+import { useRipple } from "@/ui/ripple";
 import { LoadingProvider, LoadingScreen } from "@/layout/Loading";
 import { NotFound } from "@/layout/NotFound";
 
@@ -35,6 +36,7 @@ export const Route = createRootRoute({
 
 function Shell({ children }: { children: ReactNode }) {
   const { locale } = useParams({ strict: false });
+  useRipple();
   // 操作を受け付けられるようになった印。E2E テストはこれを待ってから操作する
   useEffect(() => {
     document.documentElement.dataset.hydrated = "";
