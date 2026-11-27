@@ -192,7 +192,9 @@ fn left_controller(cx: &App) -> Controller {
 }
 
 /// 完了を設定に記録し、ロックダウンを解除してからこのパネルを閉じる（同一パネルのコマンドはキュー順に処理される）。
+/// 同じ押下で開くダッシュボードに、チュートリアルを頼む（`ui::tour::start`）。
 fn finish(panel: PanelId, cx: &mut App) {
+    ui::tour::start(cx);
     let control = cx.default_global::<PanelControl>();
     control.setting_changes.push(Setting::SetupDone(true));
     let commands = &mut control.panels.entry(panel).or_default().commands;

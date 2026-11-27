@@ -8,6 +8,7 @@ license.workspace = true
 chrono.workspace = true
 design.workspace = true
 gpui.workspace = true
+guide.workspace = true
 i18n.workspace = true
 kernel.workspace = true
 logger.workspace = true

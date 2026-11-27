@@ -80,6 +80,8 @@ enum Tile {
     Running { at: usize, n: usize },
     /// [`Screen::apps`] のインデックスと起動中フラグ。
     App { at: usize, n: usize, running: bool },
+    /// チュートリアルの練習用のウィンドウ（案内の最中だけ、起動中のアプリの先頭に置く）。
+    Practice,
 }
 
 impl Screen {
@@ -183,13 +185,17 @@ impl Screen {
 
         l.rows.push(LauncherRow::RunningHeader);
         l.running = self.running_apps(cx);
-        let running: Vec<_> = l
-            .running
-            .iter()
-            .enumerate()
-            .filter(|(_, r)| matches(&r.name))
-            .enumerate()
-            .map(|(n, (at, _))| Tile::Running { at, n })
+        let practice = ui::tour::running(cx).then_some(Tile::Practice);
+        let running: Vec<_> = practice
+            .into_iter()
+            .chain(
+                l.running
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, r)| matches(&r.name))
+                    .enumerate()
+                    .map(|(n, (at, _))| Tile::Running { at, n }),
+            )
             .collect();
         if running.is_empty() {
             l.rows.push(if self.pending.is_some() {
@@ -383,6 +389,18 @@ impl Screen {
                 }))
                 .into_any_element()
             }
+            Tile::Practice => app_tile(
+                theme,
+                "dashboard-practice".into(),
+                tile_icon(&icons::GRADUATION_CAP),
+                &i18n::t(cx, "tutorial.practice_title"),
+                false,
+                window,
+            )
+            .on_click(cx.listener(|this, _, _, cx| {
+                let _ = this.dashboard.update(cx, |d, cx| d.open_practice(cx));
+            }))
+            .into_any_element(),
             Tile::App { at, n, running } => {
                 let (app, icon) = &self.apps[at];
                 let app = app.clone();
