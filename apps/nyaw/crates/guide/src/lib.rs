@@ -584,7 +584,10 @@ pub fn framing(model: Model, hand: Hand, w: f32, h: f32) -> (f32, Point<f32>) {
 /// ダブルタップの 1 周期（秒）と、2 つの波紋の始まり。
 const TAP_PERIOD: f32 = 1.8;
 const TAPS: [f32; 2] = [0.0, 0.3];
-/// 波紋が広がりきって消える時間（秒）と、広がる大きさ（ボタンを囲む円の半径に対する増分）。
+/// 押す: 波紋がボタンを囲む円の大きさで透明から現れ、内へ沈みながら濃くなる時間（秒）と、沈む割合。
+const PRESS: f32 = 0.16;
+const PRESS_DEPTH: f32 = 0.15;
+/// 離す: 沈んだ波紋が外へ広がりきって消える時間（秒）と、広がる大きさ（ボタンを囲む円の半径に対する増分）。
 const RIPPLE: f32 = 0.8;
 const RIPPLE_GROW: f32 = 0.6;
 /// 波紋の線の太さ（px）。
@@ -595,14 +598,21 @@ const ENTER: f32 = 0.6;
 const ENTER_RISE: f32 = 0.12;
 
 /// 周期の中の時刻 `t`（秒）での波紋（大きさ・濃さ。大きさ 1 がボタンを囲む円。出ていなければ濃さ 0）。
-/// ボタンを囲む円から外へ広がり、広がる間は濃いまま、終わり際に消える。
+/// 押すと透明から現れつつ内へ沈み（[`PRESS`]）、離すと外へ広がり、広がる間は濃いまま終わり際に消える（[`RIPPLE`]）。
 pub fn double_tap(t: f32) -> [(f32, f32); 2] {
     let t = t.rem_euclid(TAP_PERIOD);
+    let out = |k: f32| 1.0 - (1.0 - k) * (1.0 - k);
     TAPS.map(|at| {
-        let k = (t - at) / RIPPLE;
-        if (0.0..1.0).contains(&k) {
-            let ease = 1.0 - (1.0 - k) * (1.0 - k);
-            (1.0 + RIPPLE_GROW * ease, 1.0 - k * k * k)
+        let dt = t - at;
+        if (0.0..PRESS).contains(&dt) {
+            let k = dt / PRESS;
+            (1.0 - PRESS_DEPTH * out(k), out(k))
+        } else if (PRESS..PRESS + RIPPLE).contains(&dt) {
+            let k = (dt - PRESS) / RIPPLE;
+            (
+                1.0 - PRESS_DEPTH + (PRESS_DEPTH + RIPPLE_GROW) * out(k),
+                1.0 - k * k * k,
+            )
         } else {
             (1.0, 0.0)
         }
@@ -615,7 +625,7 @@ pub fn entrance(elapsed: f32) -> f32 {
     1.0 - (1.0 - k).powi(3)
 }
 
-/// コントローラを寄って映し、部品 `parts` をダブルタップの波紋（2 つずつ広がって消える）で示す。
+/// コントローラを寄って映し、部品 `parts` をダブルタップの波紋（2 つずつ、押すと沈み、離すと広がって消える）で示す。
 /// 常に出ている円は無い（ボタンと刻印を隠さない）。`enter` を渡すと、その時刻から下から上がりつつ現れ、上がりきってから波紋を出す。
 /// `zoom(model, hand).size(w, h).parts(vec!["x"]).fade(px(160.)).enter(Some(at))`。枠の外は切る。
 #[derive(IntoElement)]
@@ -896,18 +906,31 @@ mod tests {
         assert!(max > min * 1.3, "機種ごとに寄り方が違う: {min} {max}");
     }
 
-    /// ダブルタップ: 周期ごとに波紋が 2 つ、ボタンを囲む円から外へ広がって消える。2 つ目のあとは何も出ずに待つ。
+    /// ダブルタップ: 周期ごとに波紋が 2 つ、押すと沈みながら現れ、離すと外へ広がって消える。2 つ目のあとは何も出ずに待つ。
     #[test]
     fn double_tap_ripples_twice_then_rests() {
         for (i, at) in TAPS.into_iter().enumerate() {
+            // 押す: 透明から濃くなりつつ、円より内へ沈む。
+            let press: Vec<(f32, f32)> = (0..5)
+                .map(|n| double_tap(at + PRESS * n as f32 / 5.0)[i])
+                .collect();
+            assert_eq!(press[0], (1.0, 0.0), "いきなり出ない");
+            assert!(
+                press.windows(2).all(|w| w[1].0 < w[0].0 && w[1].1 > w[0].1),
+                "{press:?}"
+            );
+            // 離す: 外へ広がり、広がる間は濃い。
             let sizes: Vec<f32> = (0..8)
-                .map(|n| double_tap(at + RIPPLE * n as f32 / 8.0)[i].0)
+                .map(|n| double_tap(at + PRESS + RIPPLE * n as f32 / 8.0)[i].0)
                 .collect();
             assert!(
-                sizes[0] == 1.0 && sizes.windows(2).all(|w| w[1] > w[0]),
+                sizes.windows(2).all(|w| w[1] > w[0]) && sizes[7] > 1.0,
                 "{sizes:?}"
             );
-            assert!(double_tap(at + RIPPLE * 0.5)[i].1 > 0.5, "広がる間は濃い");
+            assert!(
+                double_tap(at + PRESS + RIPPLE * 0.5)[i].1 > 0.5,
+                "広がる間は濃い"
+            );
         }
         assert!(double_tap(TAP_PERIOD - 0.1).iter().all(|(_, a)| *a == 0.0));
         let both = double_tap(0.4);
