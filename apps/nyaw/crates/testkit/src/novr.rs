@@ -79,6 +79,21 @@ impl<'a, V: Render> NoVrKit<'a, V> {
         self
     }
 
+    /// The open panel that shows `selector` (for panels the app opened itself, whose ids the test doesn't know).
+    pub fn find(&mut self, selector: &'static str) -> Option<PanelId> {
+        (0..self.panels.windows.len()).find(|&id| {
+            !self.kernel.panel(id).closed
+                && VisualTestContext::from_window(self.panels.windows[id], &self.cx.cx)
+                    .debug_bounds(selector)
+                    .is_some()
+        })
+    }
+
+    /// Runs `f` with the app (to read or request through GPUI globals, such as `ui::tour`).
+    pub fn app<R>(&mut self, f: impl FnOnce(&mut gpui::App) -> R) -> R {
+        self.cx.update(|_, cx| f(cx))
+    }
+
     fn visual(&self) -> VisualTestContext {
         VisualTestContext::from_window(self.panels.windows[self.panel], &self.cx.cx)
     }
