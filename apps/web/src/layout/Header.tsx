@@ -65,13 +65,14 @@ export function Header() {
   return (
     <header ref={ref} className="header-band sticky top-(--frame-gutter) z-30 h-16">
       {/*
-        高さ 64px に 40px のボタンを置くので上下の余白は 12px。左右も 12px にして、カードの角からの余白をそろえる。
-        本文が中央に寄る広い幅（xl 以上）では、本文と同じ幅（containerClass）に寄せて、項目の端を本文の端にそろえる
+        スマートフォンの幅では、高さ 64px に 40px のボタンを置いた上下の余白（12px）と左右の余白をそろえる。
+        それより広い幅では、本文と同じ幅と余白（containerClass）にして、項目の端を本文の端にそろえる。
+        左端の項目は、ボタンの中の余白の分だけ外へ出し、アイコンやロゴの見た目の端を本文の端に合わせる
       */}
-      <div className="mx-auto flex h-full w-full max-w-6xl items-center justify-between gap-2 px-3 xl:px-8">
+      <div className="mx-auto flex h-full w-full max-w-6xl items-center justify-between gap-2 px-3 sm:px-8">
         <div className="flex items-center gap-2">
           {/* 狭い画面のメニューのボタン。ロゴの左隣に置く */}
-          <div data-header-item className="md:hidden">
+          <div data-header-item className="sm:-ml-2.5 md:hidden">
             <MobileMenu />
           </div>
           <Link
@@ -79,7 +80,7 @@ export function Header() {
             to="/$locale"
             params={{ locale }}
             aria-label={t("home")}
-            className="mr-2 rounded-lg p-1"
+            className="mr-2 rounded-lg p-1 md:-ml-1"
             onMouseEnter={(e) => wiggle(e.currentTarget)}
           >
             <Logo kind="mini" className="h-8 w-auto" />
