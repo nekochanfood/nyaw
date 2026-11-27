@@ -27,7 +27,7 @@ Model, Controller, Control;             // 入力層（input）の再エクス�
 
 ## 画像と表
 
-- **正本**: リポジトリルートの `assets/renders/<left|right>/<レンダーモデル名>.png`（2048 × 2048、背景透過。寄って映しても粗くならない大きさ）と `assets/renders/buttons/<left|right>/<名前>.json`（ボタンの中心・画像上の半径 `radius`・正面から見えるか）。どちらも `assets/renders/tools` が Blender と SteamVR の部品から作る。手で座標を打たない。
+- **正本**: リポジトリルートの `assets/renders/<left|right>/<レンダーモデル名>.png`（2048 × 2048、背景透過。寄って映しても粗くならない大きさ）と `assets/renders/buttons/<left|right>/<名前>.json`（ボタンの中心・画像上の半径 `radius`・正面から見えるか。丸いボタンは写った輪郭（上面と側面。スティックは頭）を囲む円なので、印の円がボタンにぴったり重なる。上面の中心が隠れた丸いボタン（PICO 4 の system）は見えない部品として扱う）。どちらも `assets/renders/tools` が Blender と SteamVR の部品から作る。手で座標を打たない。
 - **埋め込み**: 全 22 枚と表を `include_bytes!` / `include_str!` で埋め込む（約 45MB）。表の座標の大きさ（`coordinates.width`）は `IMAGE_PX` と一致しなければならない（読むときに確かめる）。表は初めて使うときに 1 度だけ読み、PNG のデコードは GPUI のアセット（バックグラウンド）が行う。
 - 機種を足すときは、`assets/renders` に画像と表を作り、入力層の `MODELS` と、この crate の `ASSETS` に 1 行ずつ足す（`every_model_has_a_render` が漏れを検出する）。
 
@@ -41,7 +41,7 @@ Model, Controller, Control;             // 入力層（input）の再エクス�
 ## 寄って映す（`zoom`）
 
 - **寄り方**: 機種ごとにボタンの並ぶ広さと画像の中の位置が違うので、倍率は表から決める。顔（握りを除く見えるボタンをすべて囲む枠、`face`）が枠の幅の `FACE_W`・高さの `FACE_H` に収まる最大の倍率にし、顔の中心を枠の横中央・高さ `FACE_Y` に置く。下の握りは枠の下で切れる。
-- **動き**: 常に出ている円は無く、ダブルタップのリズム（`TAP_PERIOD` ごとに 2 つ）で波紋だけを出す。波紋はボタンを囲む円から外へ（半径の `RIPPLE_GROW` 倍だけ）広がり、終わり際に消える。`enter` を渡すと、その時刻から少し待って（`ENTER_DELAY`）下から上がりつつ現れ（`ENTER`、`ENTER_RISE`）、上がりきってから波紋を出す。動いている間は `design::drive::keep_drawing` で描き続ける。示す部品が画像に無ければ（Steam Frame の左手の X など）波紋は出さず、登場のあとは止まる。
+- **動き**: 常に出ている円は無く、ダブルタップのリズム（`TAP_PERIOD` ごとに 2 つ）で波紋だけを出す。波紋はボタンを囲む円の大きさで透明から現れつつ内へ沈み（押す。`PRESS`・`PRESS_DEPTH`）、離すと外へ（半径の `RIPPLE_GROW` 倍だけ）広がって、終わり際に消える。`enter` を渡すと、その時刻から少し待って（`ENTER_DELAY`）下から上がりつつ現れ（`ENTER`、`ENTER_RISE`）、上がりきってから波紋を出す。動いている間は `design::drive::keep_drawing` で描き続ける。示す部品が画像に無ければ（Steam Frame の左手の X など）波紋は出さず、登場のあとは止まる。
 - **溶かし**: `fade` の高さで、画像の上に地の色（`theme.background`）から透明へのグラデーションを重ねる。
 
 ## テスト
