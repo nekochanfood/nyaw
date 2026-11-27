@@ -5,7 +5,7 @@
 use std::sync::{Arc, OnceLock};
 
 use design::animation::Motion;
-use design::{Theme, font_size, radius, spacing};
+use design::{Theme, font_size, spacing};
 use gpui::{
     App, Hsla, Image, ImageFormat, IntoElement, PathBuilder, Pixels, Point, RenderOnce,
     SharedString, Window, canvas, div, img, point, prelude::*, px, rgba,
@@ -134,6 +134,8 @@ pub fn control_name(cx: &App, control: Control) -> SharedString {
         Control::Menu => i18n::t(cx, "guide.control.menu"),
         Control::Shortcut => i18n::t(cx, "guide.control.shortcut"),
         Control::Scroll => i18n::t(cx, "guide.control.scroll"),
+        Control::RightClick => i18n::t(cx, "guide.control.right_click"),
+        Control::MiddleClick => i18n::t(cx, "guide.control.middle_click"),
     }
 }
 
@@ -145,6 +147,8 @@ pub fn control_detail(cx: &App, control: Control) -> SharedString {
         Control::Menu => i18n::t(cx, "guide.detail.menu"),
         Control::Shortcut => i18n::t(cx, "guide.detail.shortcut"),
         Control::Scroll => i18n::t(cx, "guide.detail.scroll"),
+        Control::RightClick => i18n::t(cx, "guide.detail.right_click"),
+        Control::MiddleClick => i18n::t(cx, "guide.detail.middle_click"),
     }
 }
 
@@ -202,6 +206,8 @@ pub fn control_id(control: Control) -> &'static str {
         Control::Menu => "menu",
         Control::Shortcut => "shortcut",
         Control::Scroll => "scroll",
+        Control::RightClick => "right-click",
+        Control::MiddleClick => "middle-click",
     }
 }
 
@@ -258,7 +264,11 @@ impl ControllerGuide {
 pub const GUTTER: f32 = 0.5;
 /// 説明の札の高さ（px）。札どうしはこれ以上離す。列に入りきらなければ詰め、説明文を省く（[`TITLE_ONLY_H`] 未満）。
 const LABEL_H: f32 = 52.0;
-const LABEL_GAP: f32 = 6.0;
+const LABEL_GAP: f32 = 16.0;
+/// 札の見出し（操作の名前）と説明文（部品の名前）の間（px）。
+const LABEL_LINE_GAP: f32 = 4.0;
+/// テールの始まりと札の文字の間（px）。
+const LABEL_TAIL_GAP: f32 = spacing::SM;
 const TITLE_ONLY_H: f32 = 44.0;
 /// 円をボタンの縁からどれだけ離すか（表示の px）。線の太さ（[`RING_W`]）を引いても隙間が残り、ボタンの形と刻印が見える。
 const RING_PAD: f32 = 9.0;
@@ -288,7 +298,8 @@ pub struct Placed {
 }
 
 /// 画像の一辺 `size`（px）のときの説明の配置。部品が 1 つも無い説明は `None`。
-/// 札は部品の高さに置き、重なる分だけ下へ（下端を越えたら上へ）ずらす。左右は部品が画像のどちら側か。
+/// 札は部品の高さに置き、重なる分だけ下へ（下端を越えたら上へ）ずらす。左右は部品が画像のどちら側かで決め、
+/// 片側に偏る分は中央寄りの部品から反対側へ回して、左右の数の差を 1 以内にする。
 pub fn layout(model: Model, hand: Hand, size: f32, callouts: &[Callout]) -> Vec<Option<Placed>> {
     let scale = size / IMAGE_PX;
     let gutter = size * GUTTER;
@@ -318,15 +329,14 @@ pub fn layout(model: Model, hand: Hand, size: f32, callouts: &[Callout]) -> Vec<
             })
         })
         .collect();
-    // 片側の列に入りきらなければ、中央寄りの部品の札から反対側へ回す（部品の x は円の中心から）。
+    // 片側に偏っていれば、中央寄りの部品の札から反対側へ回す（部品の x は円の中心から）。
     let step = LABEL_H + LABEL_GAP;
-    let capacity = ((size + LABEL_GAP) / step).floor().max(1.0) as usize;
     let x_of =
         |p: &Placed| p.targets.iter().map(|(_, c)| c.x).sum::<f32>() / p.targets.len() as f32;
     for left in [true, false] {
         loop {
             let count = |side: bool| placed.iter().flatten().filter(|p| p.left == side).count();
-            if count(left) <= capacity || count(!left) >= capacity {
+            if count(left) <= count(!left) + 1 {
                 break;
             }
             let inner = placed
@@ -405,6 +415,16 @@ impl RenderOnce for ControllerGuide {
         let size = f32::from(self.size);
         let gutter = size * GUTTER;
         let placed = layout(self.model, self.hand, size, &self.callouts);
+        // 札の無い側の列は空けない（画像と札をまとめた幅で中央に寄せられるように）。配置は左の列がある前提なので、
+        // 左の列が無ければ左へ `gutter` だけずらす。
+        let side = |left: bool| placed.iter().flatten().any(|p| p.left == left);
+        let (left_w, right_w) = (
+            if side(true) { gutter } else { 0.0 },
+            if side(false) { gutter } else { 0.0 },
+        );
+        let dx = left_w - gutter;
+        let shift = |p: Point<f32>| point(p.x + dx, p.y);
+        let width = left_w + size + right_w;
         let accent = Hsla::from(rgba(theme.accent_solid));
         let strength = |i: usize| match self.focus {
             Some(f) if f != i => 0.3,
@@ -419,17 +439,17 @@ impl RenderOnce for ControllerGuide {
             .filter_map(|(i, p)| {
                 let p = p.as_ref()?;
                 let x = if p.left {
-                    gutter - spacing::SM
+                    left_w - spacing::SM
                 } else {
-                    gutter + size + spacing::SM
+                    left_w + size + spacing::SM
                 };
                 Some((
                     strength(i),
                     point(x, p.y),
-                    elbow(p, size),
+                    shift(elbow(p, size)),
                     p.targets
                         .iter()
-                        .map(|(ring, end)| (ring.is_none(), *end))
+                        .map(|(ring, end)| (ring.is_none(), shift(*end)))
                         .collect(),
                 ))
             })
@@ -466,12 +486,12 @@ impl RenderOnce for ControllerGuide {
         let mut root = div()
             .relative()
             .flex_none()
-            .w(px(size + 2.0 * gutter))
+            .w(px(width))
             .h(self.size)
             .child(
                 img(image.clone())
                     .absolute()
-                    .left(px(gutter))
+                    .left(px(left_w))
                     .top_0()
                     .size(self.size),
             )
@@ -483,13 +503,13 @@ impl RenderOnce for ControllerGuide {
                 let Some(r) = ring else { continue };
                 // ボタンの縁から離した円。UI の角丸はスーパーエリプスなので、円に戻す。
                 let id = format!("{}-ring", callout.id);
-                let d = 2.0 * r.radius;
+                let (c, d) = (shift(r.center), 2.0 * r.radius);
                 root = root.child(
                     div()
                         .debug_selector(move || id.clone())
                         .absolute()
-                        .left(px(r.center.x - r.radius))
-                        .top(px(r.center.y - r.radius))
+                        .left(px(c.x - r.radius))
+                        .top(px(c.y - r.radius))
                         .size(px(d))
                         .rounded_full()
                         .circular_corners()
@@ -497,35 +517,35 @@ impl RenderOnce for ControllerGuide {
                         .border_color(accent.opacity(alpha)),
                 );
             }
-            let width = gutter - 2.0 * spacing::SM;
+            // 札は地に直接置く文字だけ（背景・枠は付けない）。画像の側へ寄せる。強調する札の見出しはアクセント色。
             let id = callout.id.clone();
             let label = div()
                 .debug_selector(move || id.to_string())
                 .absolute()
                 .top(px(p.y - p.h / 2.0))
                 .h(px(p.h))
-                .max_w(px(width))
-                .when(p.left, |d| d.right(px(size + gutter + spacing::SM)))
-                .when(!p.left, |d| d.left(px(gutter + size + spacing::SM)))
+                .max_w(px(gutter - 2.0 * spacing::SM - LABEL_TAIL_GAP))
+                .when(p.left, |d| {
+                    d.right(px(width - left_w + spacing::SM + LABEL_TAIL_GAP))
+                })
+                .when(!p.left, |d| {
+                    d.left(px(left_w + size + spacing::SM + LABEL_TAIL_GAP))
+                })
                 .opacity(alpha)
-                .px(px(spacing::SM))
                 .flex()
                 .flex_col()
                 .justify_center()
-                .rounded(px(radius::LG))
-                .bg(rgba(theme.card))
-                .border_1()
-                .border_color(if self.focus == Some(i) {
-                    accent
-                } else {
-                    rgba(theme.neutral_border_subtle).into()
-                })
+                .gap(px(LABEL_LINE_GAP))
                 .when(p.left, |d| d.items_end())
                 .child(
                     div()
                         .text_size(px(font_size::MD))
                         .font_weight(gpui::FontWeight::BOLD)
-                        .text_color(rgba(theme.neutral_text))
+                        .text_color(if self.focus == Some(i) {
+                            accent
+                        } else {
+                            rgba(theme.neutral_text).into()
+                        })
                         .truncate()
                         .child(callout.title.clone()),
                 )
@@ -637,6 +657,7 @@ pub struct Zoom {
     h: f32,
     parts: Vec<&'static str>,
     fade: f32,
+    edges: f32,
     enter: Option<std::time::Instant>,
 }
 
@@ -648,6 +669,7 @@ pub fn zoom(model: Model, hand: Hand) -> Zoom {
         h: 400.0,
         parts: Vec::new(),
         fade: 0.0,
+        edges: 0.0,
         enter: None,
     }
 }
@@ -667,6 +689,12 @@ impl Zoom {
     /// 枠の上端からこの高さ（px）で、画像を地（パネルの背景色）へ溶かす。上に重なる文字と干渉させない。
     pub fn fade(mut self, fade: Pixels) -> Self {
         self.fade = f32::from(fade);
+        self
+    }
+
+    /// 枠の四辺をこの幅（px）で地の色へ溶かす（画像が枠で急に途切れて見えないように）。上端は [`Self::fade`] と広い方。
+    pub fn edges(mut self, edges: Pixels) -> Self {
+        self.edges = f32::from(edges);
         self
     }
 
@@ -757,22 +785,30 @@ impl RenderOnce for Zoom {
                         waves.into_iter().chain([anchor])
                     })),
             )
-            .when(self.fade > 0.0, |d| {
-                d.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .w_full()
-                        .h(px(self.fade))
-                        .bg(gpui::linear_gradient(
-                            180.0,
-                            gpui::linear_color_stop(bg, 0.0),
-                            gpui::linear_color_stop(bg.opacity(0.0), 1.0),
-                        )),
-                )
-            })
+            .children(fades(bg, self.fade.max(self.edges), self.edges))
     }
+}
+
+/// 枠の上端を `top`、ほかの三辺を `edges` の幅（px）で、地の色 `bg` へ溶かす帯（幅 0 の辺には置かない）。
+fn fades(bg: Hsla, top: f32, edges: f32) -> Vec<gpui::Div> {
+    // (グラデーションの向き（度。地の色の側から）, 辺に沿って置く帯)
+    let band = |angle: f32, d: gpui::Div| {
+        d.absolute().bg(gpui::linear_gradient(
+            angle,
+            gpui::linear_color_stop(bg, 0.0),
+            gpui::linear_color_stop(bg.opacity(0.0), 1.0),
+        ))
+    };
+    let mut out = Vec::new();
+    if top > 0.0 {
+        out.push(band(180.0, div().top_0().left_0().w_full().h(px(top))));
+    }
+    if edges > 0.0 {
+        out.push(band(0.0, div().bottom_0().left_0().w_full().h(px(edges))));
+        out.push(band(90.0, div().top_0().left_0().h_full().w(px(edges))));
+        out.push(band(270.0, div().top_0().right_0().h_full().w(px(edges))));
+    }
+    out
 }
 
 #[cfg(test)]
@@ -872,6 +908,28 @@ mod tests {
                 }
                 let trigger = placed[0].as_ref().unwrap();
                 assert!(trigger.targets.iter().all(|(r, _)| r.is_none()));
+            }
+        }
+    }
+
+    /// 札は左右どちらかに偏らない（左右の数の差は 1 以内）。部品が片側に寄っている機種でも、中央寄りの部品から反対側へ回す。
+    #[test]
+    fn labels_are_balanced_between_the_sides() {
+        let all = ["trigger", "grip", "a", "b", "thumbstick", "system", "menu"];
+        for n in 1..=all.len() {
+            let callouts: Vec<_> = all[..n].iter().map(|p| callout(p, &[p])).collect();
+            for model in Model::ALL {
+                for hand in [Hand::Left, Hand::Right] {
+                    let placed = layout(model, hand, 240.0, &callouts);
+                    let count =
+                        |left: bool| placed.iter().flatten().filter(|p| p.left == left).count();
+                    assert!(
+                        count(true).abs_diff(count(false)) <= 1,
+                        "{model:?} {hand:?} {n}: {} {}",
+                        count(true),
+                        count(false)
+                    );
+                }
             }
         }
     }

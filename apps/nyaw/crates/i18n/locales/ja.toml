@@ -551,6 +551,8 @@ grab = "つかむ"
 menu = "メニュー"
 shortcut = "ショートカット"
 scroll = "スクロール"
+right_click = "右クリック"
+middle_click = "中クリック"
 
 [guide.detail]
 select = "ボタンやリンクを押す"
@@ -558,6 +560,8 @@ grab = "押したままパネルを動かす"
 menu = "画面ごとのメニュー"
 shortcut = "2 回押すとダッシュボード"
 scroll = "リストをスクロール"
+right_click = "触れたままトリガーで右クリック"
+middle_click = "触れたままトリガーで中クリック"
 
 [guide.part]
 trigger = "トリガー"
