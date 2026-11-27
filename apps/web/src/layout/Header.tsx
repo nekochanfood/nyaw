@@ -1,7 +1,7 @@
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { Link } from "@tanstack/react-router";
 import { animate, stagger } from "animejs";
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { useLocale, useT } from "@/i18n/index";
 import { REPO_URL } from "@/links";
@@ -41,6 +41,32 @@ export function Header() {
   const items = useNavItems();
   const ref = useRef<HTMLElement>(null);
   const loaded = useLoadingDone();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuWasOpen = useRef(false);
+
+  // 狭い画面のメニューを開いている間は、ロゴと右のボタンを上へ引っ込める。閉じたら戻す
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || menuWasOpen.current === menuOpen) return;
+    menuWasOpen.current = menuOpen;
+    const targets = [...el.querySelectorAll<HTMLElement>("[data-menu-hide]")];
+    // 引っ込めている間は、フォーカスも当たらないようにする
+    for (const target of targets) target.inert = menuOpen;
+    if (reducedMotion()) {
+      for (const target of targets) target.style.visibility = menuOpen ? "hidden" : "";
+      return;
+    }
+    const anim = animate(targets, {
+      opacity: menuOpen ? 0 : 1,
+      y: menuOpen ? -24 : 0,
+      duration: menuOpen ? 250 : 500,
+      delay: stagger(40),
+      ease: menuOpen ? "in(2)" : "out(3)",
+    });
+    return () => {
+      anim.cancel();
+    };
+  }, [menuOpen]);
 
   // 読み込み画面が消えたら、ページのフェードイン（PageTransition）に少し遅れて、項目が上から順に降りてくる
   useLayoutEffect(() => {
@@ -73,10 +99,11 @@ export function Header() {
         <div className="flex items-center gap-2">
           {/* 狭い画面のメニューのボタン。ロゴの左隣に置く */}
           <div data-header-item className="sm:-ml-2.5 md:hidden">
-            <MobileMenu />
+            <MobileMenu open={menuOpen} setOpen={setMenuOpen} />
           </div>
           <Link
             data-header-item
+            data-menu-hide
             to="/$locale"
             params={{ locale }}
             aria-label={t("home")}
@@ -102,7 +129,7 @@ export function Header() {
             ))}
           </nav>
         </div>
-        <div className="flex items-center gap-1">
+        <div data-menu-hide className="flex items-center gap-1">
           <div data-header-item className="hidden sm:block">
             <Tooltip label={t("github")}>
               <ButtonAnchor href={REPO_URL} target="_blank" rel="noopener" aria-label={t("github")}>
