@@ -46,6 +46,7 @@ impl Overlay {
             animated: true,
             veil: false,
             dimmed: false,
+            stay_awake: false,
             pass_through: false,
             fade_only: false,
             capture: false,
@@ -274,6 +275,11 @@ impl Overlay {
     /// 幕はパネルより奥に描画するためパネル・レーザーは暗転しない。
     pub fn set_veil(&mut self, id: PanelId, veil: bool) {
         self.panels[id].veil = veil;
+    }
+
+    /// ナビゲーションバー `id` を、指していなくても消さずに出しておく（`false` で戻す。眠っていれば出し直す）。
+    pub fn set_stay_awake(&mut self, id: PanelId, on: bool) {
+        self.panels[id].stay_awake = on;
     }
 
     /// 子が開いているときと同じ暗さにする（`false` で戻す）。入力は止めない（止めるのは描画側）。

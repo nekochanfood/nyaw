@@ -23,7 +23,7 @@ impl Render for NavBar {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let now = design::drive::now();
         // 案内がこのバーのボタンを説明している間は、指していなくても広げておく（畳んだ線の上に輪を描かない）。
-        let shown = crate::tour::focus(cx).is_some_and(|f| f.lit.contains(&self.id));
+        let shown = crate::tour::lights(self.id, cx);
         // ポイント状態は `sync_panel` が状態に書き込み、変更時にこのバーを再描画する。
         let state = cx
             .default_global::<PanelControl>()

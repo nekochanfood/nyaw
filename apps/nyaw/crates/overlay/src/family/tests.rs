@@ -143,6 +143,42 @@ fn idle_nav_bar_gives_its_overlay_back_and_comes_back_when_pointed() {
     assert!(vr.backend.overlays[2].alpha > 0.99);
 }
 
+/// 出しておくよう頼まれたバーは、指していなくても消えない。眠っていたバーは出し直し、頼みを外すとまた消える。
+#[test]
+fn a_nav_bar_asked_to_stay_awake_does_not_go_away() {
+    let (mut vr, mut ov) = setup();
+    let bar = ov
+        .add_panel(
+            &mut vr.backend,
+            "bar",
+            Pose::IDENTITY,
+            Vec2::new(0.2, 0.05),
+            (2, 2),
+        )
+        .unwrap();
+    ov.set_nav_bar(&mut vr.backend, bar, 0);
+    ov.set_animated(&mut vr.backend, 0, false);
+    ov.set_animated(&mut vr.backend, bar, false);
+    ov.submit(&mut vr.backend, 0, 2, 2, &[255u8; 16]);
+    ov.submit(&mut vr.backend, bar, 2, 2, &[7u8; 16]);
+    let idle = |ov: &mut Overlay| ov.panels[bar].pointed_at -= NAV_BAR_LINGER;
+    ov.tick(&mut vr);
+    idle(&mut ov);
+    ov.tick(&mut vr);
+    assert!(ov.panel(bar).surface.parked(), "asleep while nobody points");
+    ov.set_stay_awake(bar, true);
+    ov.tick(&mut vr);
+    assert!(!ov.panel(bar).surface.parked());
+    idle(&mut ov);
+    ov.tick(&mut vr);
+    assert!(!ov.panel(bar).surface.parked(), "stays while asked");
+    ov.set_stay_awake(bar, false);
+    ov.tick(&mut vr);
+    idle(&mut ov);
+    ov.tick(&mut vr);
+    assert!(ov.panel(bar).surface.parked());
+}
+
 #[test]
 fn hidden_docked_panel_keeps_its_nav_bar_size_while_undocking() {
     let (mut vr, mut ov) = with_slot_child();

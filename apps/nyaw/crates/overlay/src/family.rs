@@ -259,7 +259,7 @@ impl Overlay {
             else {
                 continue;
             };
-            let pointed = self.pointed(id);
+            let pointed = self.pointed(id) || self.panels[id].stay_awake;
             let o = &self.panels[owner];
             let (opacity, dim) = (o.opacity, o.dim);
             let up = o.pose.orientation * Vec3::Y;

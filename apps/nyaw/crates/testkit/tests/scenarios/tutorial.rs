@@ -142,6 +142,8 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     // The screen's bar: × closes the screen.
     assert!(at(&mut kit, "tutorial-step-NavBar"));
     let nav = kit.kernel.nav_bar(screen).expect("the screen has a bar");
+    // The bar being explained stays shown even when nobody points at the screen.
+    assert!(kit.kernel.panel(nav).stay_awake);
     kit.select_panel(nav).click("nav-close");
     settle(&mut kit);
     assert!(kit.kernel.panel(screen).closed);
@@ -176,6 +178,7 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
         .kernel
         .nav_bar(practice)
         .expect("the practice window has a bar");
+    assert!(kit.kernel.panel(nav).stay_awake);
     let count = kit.panel_count();
     kit.select_panel(nav).click("nav-keyboard");
     settle(&mut kit);
@@ -184,7 +187,8 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     settle(&mut kit);
     assert!(kit.kernel.status(practice).hidden);
 
-    // Putting it away leads on, too: its button on the bar brings it back.
+    // Putting it away leads on, too: its button on the bar brings it back. The bar no longer has to stay shown.
+    assert!(!kit.kernel.panel(nav).stay_awake);
     assert!(at(&mut kit, "tutorial-step-Recall"));
     let button: &'static str = Box::leak(format!("dashboard-stream-{practice}").into_boxed_str());
     kit.select_panel(dashboard).click(button);
