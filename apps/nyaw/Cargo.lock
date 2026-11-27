@@ -143,7 +143,7 @@ dependencies = [
 
 [[package]]
 name = "animation"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "animato",
  "serde_json",
@@ -419,7 +419,7 @@ checksum = "1505bd5d3d116872e7271a6d4e16d81d0c8570876c8de68093a09ac269d8aac0"
 
 [[package]]
 name = "audio"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "cpal",
  "glam",
@@ -506,7 +506,7 @@ checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
 
 [[package]]
 name = "beam"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "design",
  "gpui",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "dashboard"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "chrono",
  "design",
@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "design"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "animation",
  "gpui",
@@ -1254,7 +1254,7 @@ dependencies = [
 
 [[package]]
 name = "desktop"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "windows 0.61.3",
 ]
@@ -2201,7 +2201,7 @@ dependencies = [
 
 [[package]]
 name = "guide"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "design",
  "gpui",
@@ -2384,7 +2384,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "i18n"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "chrono",
  "gpui",
@@ -2588,7 +2588,7 @@ dependencies = [
 
 [[package]]
 name = "input"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "serde",
  "vr",
@@ -2739,7 +2739,7 @@ dependencies = [
 
 [[package]]
 name = "kernel"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "hound",
  "logger",
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "keyboard"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "kbvm",
  "logger",
@@ -2934,7 +2934,7 @@ dependencies = [
 
 [[package]]
 name = "logger"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "chrono",
  "log",
@@ -3061,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "media"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "desktop",
  "image",
@@ -3254,7 +3254,7 @@ checksum = "0676bb32a98c1a483ce53e500a81ad9c3d5b3f7c920c28c24e9cb0980d0b5bc8"
 
 [[package]]
 name = "notifications"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "desktop",
  "image",
@@ -3429,7 +3429,7 @@ dependencies = [
 
 [[package]]
 name = "nyaw"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "beam",
  "kernel",
@@ -3859,14 +3859,14 @@ dependencies = [
 
 [[package]]
 name = "os"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "windows 0.62.2",
 ]
 
 [[package]]
 name = "overlay"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "animation",
  "design",
@@ -4175,7 +4175,7 @@ dependencies = [
 
 [[package]]
 name = "profiler"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "gpui",
 ]
@@ -4618,7 +4618,7 @@ checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
 name = "rendering"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "gpui",
  "gpui_windows",
@@ -5048,7 +5048,7 @@ dependencies = [
 
 [[package]]
 name = "settings"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "design",
  "gpui",
@@ -5061,7 +5061,7 @@ dependencies = [
 
 [[package]]
 name = "setup"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "design",
  "gpui",
@@ -5272,7 +5272,7 @@ dependencies = [
 
 [[package]]
 name = "subsystems"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "audio",
  "desktop",
@@ -5456,7 +5456,7 @@ dependencies = [
 
 [[package]]
 name = "testing"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "design",
  "gpui",
@@ -5469,7 +5469,7 @@ dependencies = [
 
 [[package]]
 name = "testkit"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "gpui",
  "guide",
@@ -5602,7 +5602,7 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "toast"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "design",
  "gpui",
@@ -5797,7 +5797,7 @@ dependencies = [
 
 [[package]]
 name = "ui"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "beam",
  "dashboard",
@@ -5897,7 +5897,7 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "update"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "serde",
  "serde_json",
@@ -5907,7 +5907,7 @@ dependencies = [
 
 [[package]]
 name = "updater"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "gpui",
  "kernel",
@@ -6033,7 +6033,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vr"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "ash",
  "glam",
@@ -7002,7 +7002,7 @@ checksum = "1ebf944e87a7c253233ad6766e082e3cd714b5d03812acc24c318f549614536e"
 
 [[package]]
 name = "wrist"
-version = "2026.0.4-dev.0"
+version = "2026.0.4-beta.4"
 dependencies = [
  "chrono",
  "dashboard",
