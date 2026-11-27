@@ -25,8 +25,8 @@ export function useNavItems() {
 }
 
 /** ロゴをホバーしたときに、首をかしげるように小さく揺らす */
-function wiggle(el: HTMLElement) {
-  if (reducedMotion()) return;
+function wiggle(el: Element | null) {
+  if (!el || reducedMotion()) return;
   animate(el, {
     rotate: [0, -10, 8, -4, 0],
     duration: 700,
@@ -91,14 +91,13 @@ export function Header() {
   return (
     <header ref={ref} className="header-band sticky top-(--frame-gutter) z-30 h-16">
       {/*
-        高さ 64px に 40px のボタンを置くので、上下の余白は 12px。右のボタンは右も 12px にして、カードの右上の角に収める。
-        左は、スマートフォンの幅では 12px にし、それより広い幅では本文と同じ余白（containerClass）にして本文の端に
-        そろえる。左端の項目はボタンの中の余白の分だけ外へ出し、アイコンやロゴの見た目の端を本文の端に合わせる
+        高さ 64px に 40px のボタンを置くので、上下の余白は 12px。左右も 12px にして、両端のボタンをカードの角に収める。
+        ロゴは、左端に来る幅（md 以上）では自分の左の余白で本文の端にそろえる
       */}
-      <div className="flex h-full w-full items-center justify-between gap-2 pr-3 pl-3 sm:pl-8">
+      <div className="flex h-full w-full items-center justify-between gap-2 px-3">
         <div className="flex items-center gap-2">
           {/* 狭い画面のメニューのボタン。ロゴの左隣に置く */}
-          <div data-header-item className="sm:-ml-2.5 md:hidden">
+          <div data-header-item className="md:hidden">
             <MobileMenu open={menuOpen} setOpen={setMenuOpen} />
           </div>
           <Link
@@ -107,10 +106,14 @@ export function Header() {
             to="/$locale"
             params={{ locale }}
             aria-label={t("home")}
-            className="mr-2 rounded-lg p-1 md:-ml-1"
-            onMouseEnter={(e) => wiggle(e.currentTarget)}
+            // 左の余白は、ヘッダーの余白（12px）と足して本文の端（sm 以上で 32px）になる幅
+            className="mr-2 flex h-10 items-center rounded-lg px-1 md:pl-5"
+            onMouseEnter={(e) => wiggle(e.currentTarget.querySelector("[data-logo]"))}
           >
-            <Logo kind="mini" className="h-8 w-auto" />
+            {/* 揺らすのはロゴの絵だけ。余白込みの箱を回すと、回転の中心がずれる */}
+            <span data-logo className="inline-flex">
+              <Logo kind="mini" className="h-8 w-auto" />
+            </span>
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
             {items.map((item) => (
