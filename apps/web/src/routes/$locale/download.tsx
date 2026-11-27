@@ -48,13 +48,12 @@ function Card({
 
 function Download() {
   const t = useT("download");
-  const nav = useT("nav");
   const ref = useRef<HTMLDivElement>(null);
   const releases = useReleases();
   useReveal(ref);
   return (
     <>
-      <PageTitle title={nav("download")} />
+      <PageTitle title={translate("en", "nav", "download")} />
       <PageSection>
         <div ref={ref} className="flex flex-col gap-12">
           <div data-reveal-group>

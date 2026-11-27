@@ -61,7 +61,7 @@ export function Header() {
   return (
     <header
       ref={ref}
-      className="sticky top-(--frame-gutter) z-30 h-16 before:pointer-events-none before:absolute before:inset-0 before:-z-1 before:bg-card/80 before:mask-b-from-60% before:backdrop-blur-md"
+      className="header-band sticky top-(--frame-gutter) z-30 h-16"
     >
       <div className={cx(containerClass, "flex h-full items-center justify-between gap-2")}>
         <div className="flex items-center gap-2">

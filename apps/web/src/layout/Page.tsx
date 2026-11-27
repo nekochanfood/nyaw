@@ -10,14 +10,18 @@ const graphemes = (text: string) =>
     (s) => s.segment,
   );
 
-/** 下位のページの上部。ページの名前を大きく置き、1 文字ずつ下から上がってくる */
+/**
+ * 下位のページの上部。ページの名前を大きく置き、1 文字ずつ上から降りながら現れる。
+ * 名前は表示の言語にかかわらず英語で、書体は D-DIN にする。
+ */
 export function PageTitle({ title }: { title: string }) {
   const ref = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el || reducedMotion()) return;
     const anim = animate(el.querySelectorAll("[data-char]"), {
-      y: ["110%", "0%"],
+      y: ["-60%", "0%"],
+      opacity: [0, 1],
       duration: 700,
       delay: stagger(30, { start: 150 }),
       ease: "out(4)",
@@ -30,15 +34,13 @@ export function PageTitle({ title }: { title: string }) {
     <div className={cx(containerClass, "flex h-56 items-end pb-8 md:h-96 md:pb-12")}>
       <h1
         ref={ref}
+        lang="en"
         aria-label={title}
-        className="text-5xl font-bold tracking-tight sm:text-6xl md:text-8xl"
+        className="font-display text-6xl font-bold tracking-tight sm:text-7xl md:text-9xl"
       >
         {graphemes(title).map((char, i) => (
-          // 下に隠れた位置から上がるので、文字ごとに下を切り取る
-          <span key={`${i}-${char}`} aria-hidden className="inline-block overflow-clip pb-[0.1em]">
-            <span data-char className="inline-block whitespace-pre">
-              {char}
-            </span>
+          <span key={`${i}-${char}`} data-char aria-hidden className="inline-block whitespace-pre">
+            {char}
           </span>
         ))}
       </h1>

@@ -29,7 +29,7 @@ function FeaturesPage() {
   useReveal(ref);
   return (
     <>
-      <PageTitle title={t("title")} />
+      <PageTitle title={translate("en", "features", "title")} />
       <PageSection>
         <div ref={ref} className="flex flex-col gap-12">
           <div data-reveal-group>

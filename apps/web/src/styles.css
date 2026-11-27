@@ -1,6 +1,14 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
+/* ページ名を大きく置く部分の書体（Datto の D-DIN。SIL OFL 1.1、src/fonts/LICENSE-d-din.txt）。欧文と数字のみ */
+@font-face {
+  font-family: "D-DIN";
+  src: url("./fonts/D-DIN-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
 /* ダークは、保存したテーマか、保存していなければ OS の設定で決まる（src/theme.ts） */
 @custom-variant dark {
   &:where([data-theme="dark"], [data-theme="dark"] *) {
@@ -40,6 +48,7 @@
   --font-sans:
     "Gen Interface JP", Inter, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui,
     sans-serif;
+  --font-display: "D-DIN", var(--font-sans);
 
   /* トークンの xl（24px）より大きい角丸 */
   --radius-2xl: calc(32px * var(--corner-scale, 1));
@@ -116,6 +125,34 @@
     box-shadow !important;
   transition-duration: 300ms !important;
   transition-timing-function: ease !important;
+}
+
+/*
+  ヘッダーの裏の帯。ヘッダーの高さの 2.25 倍まで伸ばし、背後を地の色でぼかしたうえで、
+  下へ向かって段階的に透明にする（直線のグラデーションだと、帯の下端に境目が見える）
+*/
+.header-band::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 -125% 0;
+  z-index: -1;
+  pointer-events: none;
+  background-color: var(--card);
+  backdrop-filter: blur(16px);
+  mask-image: linear-gradient(
+    to bottom,
+    black,
+    rgb(0 0 0 / 0.95) 10%,
+    rgb(0 0 0 / 0.87) 20%,
+    rgb(0 0 0 / 0.75) 30%,
+    rgb(0 0 0 / 0.58) 40%,
+    rgb(0 0 0 / 0.4) 50%,
+    rgb(0 0 0 / 0.25) 60%,
+    rgb(0 0 0 / 0.14) 70%,
+    rgb(0 0 0 / 0.07) 80%,
+    rgb(0 0 0 / 0.02) 90%,
+    transparent
+  );
 }
 
 /* 真円とピルは潰さない */
