@@ -31,7 +31,7 @@ Avoid framing UI elements as substitutes, test stand-ins, or developer commentar
 ### 2.1 Action Sequences: Direct Imperatives
 When guiding the user through steps, use clear, connected imperatives. Keep the rhythm brisk and actionable.
 
-- `Point at a screen and squeeze the grip to grab it. Pull toward you to detach it from the dashboard.`
+- `Point at a screen and squeeze the grip to grab it. Pull towards you to detach it from the dashboard.`
 - `Press {button} on the left controller twice to toggle the dashboard.`
 
 ### 2.2 Plain UI Terminology over Pipeline Jargon
@@ -47,9 +47,9 @@ Internal graphics pipeline, audio engine, or operating system constructs must be
 | **Child over surface / Far panel** | Scene-graph tree traversal terms | **Surface layer / Background panel** |
 
 ### 2.3 Encouraging, Equal Tone
-Avoid condescending praise or school-teacher remarks (e.g., "Good boy!", "Nice work!"). Use respectful, satisfying confirmation.
+Avoid condescending praise or school-teacher remarks (e.g., "Good boy!"). Use respectful, satisfying confirmation. "Great!" is welcome for celebrating a successful action together with the user.
 
-- **Prefer**: `All set!`, `Done!`, `Complete!`
+- **Prefer**: `Great!`, `All set!`, `Done!`, `Complete!`
 
 ---
 
@@ -62,12 +62,28 @@ Avoid condescending praise or school-teacher remarks (e.g., "Good boy!", "Nice w
   - Button labels, menu items, table headers, and tab titles.
   - Brief single-sentence alerts, error messages, toast notifications, and status lines.
   - Examples:
-    - `Window was minimized` (No period)
+    - `Window was minimised` (No period)
     - `Screen capture is not available on this device` (No period)
     - `Notification received` (No period)
     - `All keys are translated` (No period)
 
-### 3.2 Capitalization
+### 3.2 Spelling
+- **British English**: Write UI strings in British English. Avoid American spellings and American date order.
+- **Exceptions**: Keep `dialog` (computing term) and the official names of other products as they are.
+
+| Avoid (American) | Prefer (British) | Pattern |
+| :--- | :--- | :--- |
+| `Color`, `Favorite`, `Behavior` | `Colour`, `Favourite`, `Behaviour` | -or → -our |
+| `Center`, `Meter` (unit of length) | `Centre`, `Metre` | -er → -re |
+| `Minimize`, `Localization`, `Spatialize` | `Minimise`, `Localisation`, `Spatialise` | -ize / -ization → -ise / -isation |
+| `Analyze` | `Analyse` | -yze → -yse |
+| `Catalog`, `Analog` | `Catalogue`, `Analogue` | -og → -ogue |
+| `License` (noun), `Defense` | `Licence`, `Defence` | -se → -ce (the verb stays `license`) |
+| `Canceled`, `Labeled` | `Cancelled`, `Labelled` | Double the final l |
+| `Toward`, `Gray` | `Towards`, `Grey` | Word choice |
+| `Nov 12` | `12 Nov` | Day before month |
+
+### 3.3 Capitalization
 - **Sentence case**: Used for titles, section headers, instructions, dialog bodies, and button labels (e.g., `Quick settings`, `Restore window`, `End tutorial`).
 - **Brand & Proper Nouns**: Preserve official capitalization (`SteamVR`, `nyaw`, `Windows PowerShell`, `FPS`).
 
@@ -83,8 +99,8 @@ Avoid condescending praise or school-teacher remarks (e.g., "Good boy!", "Nice w
 | **Controller** | Controller | Gamepad, wand | Motion controllers |
 | **Grab** | Grab | Drag, pick up | Moving floating panels with grip |
 | **Detach / Put back** | Detach from dashboard / Put back | Undock / Dock | Separating windows from the shelf |
-| **Minimize** | Minimize / Put away | Hide, stash | Reducing a mirrored screen to a pill |
+| **Minimise** | Minimise / Put away | Hide, stash | Reducing a mirrored screen to a pill |
 | **Laser** | Laser | Pointer beam, raycast | The pointer line extending from hands |
-| **Quick settings** | Quick settings | Control center | Clock-activated control panel |
+| **Quick settings** | Quick settings | Control centre | Clock-activated control panel |
 | **Launcher** | Launcher | App drawer | Menu for choosing windows to mirror |
 | **Practice window** | Practice window | Test dummy, mock app | Interactive tutorial panel |
