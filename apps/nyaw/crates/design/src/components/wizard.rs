@@ -98,6 +98,23 @@ pub fn wizard_next(
     )
 }
 
+/// 色の付かない「次へ」ボタン（[`wizard_next`] と同じ形で、地に置く無彩色）。先に試してほしい操作がまだのときなど、
+/// 進めはするが進むことを勧めない場面に使う。
+pub fn wizard_next_muted(
+    theme: &Theme,
+    id: impl Into<SharedString>,
+    label: impl Into<SharedString>,
+) -> Button {
+    arrow_button(
+        theme,
+        id,
+        label,
+        &crate::icons::CARET_RIGHT,
+        true,
+        Variant::OnBackground,
+    )
+}
+
 /// 「戻る」ボタン（左の caret + 文字）。
 pub fn wizard_back(
     theme: &Theme,
