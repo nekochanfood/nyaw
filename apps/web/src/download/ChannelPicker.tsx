@@ -103,7 +103,9 @@ export function ChannelPicker({ state }: { state: ReturnType<typeof useReleases>
       onValueChange={(v: Channel) => setChannel(v)}
       className="flex flex-col gap-6"
     >
+      {/* 波紋のコンテナがタブの中に入ると、選んだタブの下に敷く面の表示が崩れるので、ここでは出さない */}
       <Tabs.List
+        data-no-ripple
         aria-label={t("channel")}
         className="relative z-0 inline-flex self-start rounded-full bg-control p-1"
       >
