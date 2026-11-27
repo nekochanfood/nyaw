@@ -32,6 +32,7 @@ ui::capture(window);
 - `dockable`, `docked_to`: ダッシュボードへのドッキング可否および初期ドッキング先。
 - `with_os_keyboard`, `typing`: 仮想キーボード連携の指定。
 - `with_veil`: 開いている間の空間暗転演出の付与。
+- `full_detail`: 距離によらず最高の精細さ（LOD0）で描く（いつも読ませたいパネル。チュートリアルの案内のパネル）。
 - `fit_height`, `without_resize`, `reach`: パネル寸法およびリサイズ制約の設定。
 - `corner_resize`, `keep_aspect`: 角を掴んで解像度（画面の表示領域）を範囲内で変えられるようにする（オプトイン）。`keep_aspect` で縦横比を固定する。
 

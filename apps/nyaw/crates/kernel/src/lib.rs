@@ -88,6 +88,9 @@ pub enum PanelCommand {
     /// ナビゲーションバーを、指していなくても消さずに出しておく（`Overlay::set_stay_awake`）。案内がバーのボタンを
     /// 説明している間。
     StayAwake(bool),
+    /// 距離によらず最高の精細さ（LOD0）で描く（[`Kernel::panel_lod`]）。チュートリアルの案内のパネルのように、いつも
+    /// 読ませたいもの。
+    FullDetail(bool),
     /// レーザーを透過させる（`Overlay::set_pass_through`。視界の端に配置する表示専用のパネル向け）。
     PassThrough(bool),
     /// 表示・非表示の遷移を不透明度のみで行う（`Overlay::set_fade_only`。アニメーションはパネル自身が描画する）。
@@ -436,6 +439,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     pointer_modes: std::collections::HashMap<PanelId, PointerMode>,
     /// ロックダウンを取っているパネル（[`PanelCommand::Lockdown`]）。
     lockdown_holders: std::collections::BTreeSet<PanelId>,
+    /// 距離によらず LOD0 で描くパネル（[`PanelCommand::FullDetail`]）。
+    full_detail: std::collections::BTreeSet<PanelId>,
     /// ショートカットボタンの二回連続押し（[`PanelStatus::double_press`]）。
     shortcut: DoublePress,
     /// ランタイムが数えた二回押しの合計（[`vr::DOUBLE_PRESS_INPUT`]）。
@@ -618,6 +623,7 @@ impl<B: VrBackend> Kernel<B> {
             close_sounds: Default::default(),
             pointer_modes: Default::default(),
             lockdown_holders: Default::default(),
+            full_detail: Default::default(),
             shortcut: DoublePress::default(),
             runtime_double_press: 0,
             hand_shortcut: LongPress::default(),
@@ -981,9 +987,11 @@ impl<B: VrBackend> Kernel<B> {
     }
 
     /// 前の段階 `prev` から、距離で次の段階を決める。境目の前後で行き来しないよう、下げる側は閾値を縮める。
-    /// レーザーが指している（操作しようとしている）パネルとツールチップ、はまる所の見本、角の線は、距離によらず LOD0。
+    /// レーザーが指している（操作しようとしている）パネルとツールチップ、はまる所の見本、角の線、最高の精細さを頼まれた
+    /// パネル（[`PanelCommand::FullDetail`]）は、距離によらず LOD0。
     fn lod_for(&self, id: PanelId, prev: Option<u8>) -> u8 {
         if self.overlay.pointed(id)
+            || self.full_detail.contains(&id)
             || self.panel(id).pointer.is_some_and(|(_, part)| {
                 matches!(part, Pointer::Tooltip | Pointer::Dock | Pointer::Corner)
             })
@@ -1220,6 +1228,13 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Dim(dim) => self.overlay.set_dimmed(panel, dim),
             PanelCommand::Offset(offset) => self.overlay.set_offset(panel, offset),
             PanelCommand::StayAwake(on) => self.overlay.set_stay_awake(panel, on),
+            PanelCommand::FullDetail(on) => {
+                if on {
+                    self.full_detail.insert(panel);
+                } else {
+                    self.full_detail.remove(&panel);
+                }
+            }
             PanelCommand::PassThrough(pass) => self.overlay.set_pass_through(panel, pass),
             PanelCommand::FadeOnly(fade_only) => self.overlay.set_fade_only(panel, fade_only),
             PanelCommand::DockSlot(tilt) => self.overlay.set_dock_slot(panel, tilt),
@@ -1945,6 +1960,19 @@ mod tests {
         k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 100.0;
         k.tick();
         assert_eq!(k.panel_lod(p), 0);
+    }
+
+    /// 最高の精細さを頼まれたパネルは、遠くても LOD0。頼みを外せば距離の段階に戻る。
+    #[test]
+    fn full_detail_panel_keeps_full_resolution_when_far_from_the_head() {
+        let (mut k, p) = lod_kernel();
+        k.apply(p, PanelCommand::FullDetail(true));
+        k.subsystems.backend.frame.hmd.position = vr::Vec3::Z * 100.0;
+        k.tick();
+        assert_eq!(k.panel_lod(p), 0);
+        k.apply(p, PanelCommand::FullDetail(false));
+        k.tick();
+        assert_eq!(k.panel_lod(p), 3);
     }
 
     /// はまる所の見本の帯の文字が、距離で粗くならない。
