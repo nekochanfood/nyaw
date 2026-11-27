@@ -92,7 +92,7 @@ Overlay::{
     set_corner_resize, // 角を掴んだ解像度の変更（オプトイン）
     set_dock_slot,     // ドッキングスロットの設定
     set_dockable,      // ドッキング可能フラグの設定
-    set_lazy_follow,   // 頭部追従の設定
+    set_lazy_follow,   // 頭部追従の設定（出ているパネルに付けるときは、頭の正面へ滑らかに置き直す）
     set_scale,         // UI スケールの設定
     gazed,             // ユーザー視線の注視判定
     tick,              // 1フレームの姿勢計算と交差判定

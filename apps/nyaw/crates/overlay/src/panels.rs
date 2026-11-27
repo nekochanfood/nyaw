@@ -173,6 +173,10 @@ impl Overlay {
 
     /// 頭の向き（ヨーのみ）と歩行に緩やかに追従させる（`None` で解除）。アタッチより優先する。グラブ中は手に従う。
     pub fn set_lazy_follow(&mut self, id: PanelId, follow: Option<LazyFollow>) {
+        // 出ているパネルを付いてこさせるときは、最初に頭の正面へ置き直す動きを滑らかにする。
+        if follow.is_some() {
+            self.glide_to(id, None, Motion::Move);
+        }
         self.panels[id].lazy_follow = follow;
     }
 
