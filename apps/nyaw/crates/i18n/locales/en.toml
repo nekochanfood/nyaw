@@ -281,8 +281,9 @@ auto_launch_off = "Start it myself"
 back = "Back"
 next = "Next"
 done_title = "You're all set!"
-done_description = "You can change any of these later in Settings. Enjoy nyaw."
-finish = "Finish"
+done_description = "Press {button} on your left controller twice to open the dashboard. That finishes the setup. You can change these settings any time in Settings."
+done_description_any = "Press the shortcut on your left controller twice to open the dashboard. That finishes the setup. You can change these settings any time in Settings."
+controller_in_use = "In use"
 
 [wizard]
 welcome_title = "Welcome"

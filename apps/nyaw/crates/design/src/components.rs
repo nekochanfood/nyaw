@@ -1580,7 +1580,7 @@ const HEADING_GAP: f32 = spacing::SM;
 /// タイトルは `LG` の太字、説明は `MD` の `text-low`（行の高さはいずれも [`HEADING_LEADING`]）。説明の内容形式は
 /// 呼び出し側が決定するため、`description` は文字列でもスクロール可能な枠でもよい。空タイトル・`None` の説明は表示しない。
 /// 中央揃えにする場合は、返された列に `items_center().text_center()` を付与する。
-pub(crate) fn heading(
+pub fn heading(
     theme: &Theme,
     id: &str,
     hero: impl IntoElement,

@@ -2,12 +2,13 @@ use gpui::{TestAppContext, px};
 use kernel::{DominantHand, Language, PanelCommand, ThemeMode, WristDesign};
 use setup::{SetupWizard, Step};
 use testing::{BACKGROUND, PANEL_BG, SetupWizardSpawn, Testing};
-use testkit::{Action, Driver, NoVrKit, Vec2, VrKit};
+use testkit::{Action, Button, Driver, NoVrKit, Vec2, VrKit};
 
-/// The wizard walks through every decision. Each choice applies at once, and only Finish marks the setup done.
+/// The wizard walks through every decision. Each choice applies at once, and only opening the dashboard from the
+/// last page (the shortcut pressed twice) marks the setup done.
 #[gpui::test]
 fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
-    let mut kit = NoVrKit::new(cx, |_, _| SetupWizard::new(0));
+    let mut kit = NoVrKit::new(cx, |_, cx| SetupWizard::build(0, cx));
     assert!(!kit.kernel.settings().setup_done);
     // 起動仕様（`setup::spec`）と同様に、表示時点からロックダウンを有効にする。表示中は閉じることができない。
     kit.kernel.apply(0, PanelCommand::Lockdown(true));
@@ -82,23 +83,48 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     // novr モードでは SteamVR のステップは表示されず、文字盤の次が完了画面になる（戻る際も省略される）。
     kit.click("setup-next");
 
-    // 完了画面からも戻ることができる（左下の「戻る」。「完了」は右下）。「完了」を押すまではセットアップ未完了のまま。
+    // 完了画面: 「完了」ボタンは無く、左下の「戻る」だけ。下に左手のコントローラを映し、ショートカット（novr は Quest
+    // Touch Plus の X）を示す。この画面ではロックダウンを解き、ダッシュボードを開けるようにする。
     assert!(kit.read(|v| v.wizard.is_last()));
-    let (finish, back) = (kit.bounds("setup-finish"), kit.bounds("setup-back"));
-    assert!(back.right() < finish.left() && back.bottom() == finish.bottom());
-    kit.click("setup-back");
+    assert!(kit.try_bounds("setup-finish").is_none());
+    assert!(kit.try_bounds("zoom-ring-x").is_some(), "X ボタンを示す");
+    let (back, ring) = (kit.bounds("setup-back"), kit.bounds("zoom-ring-x"));
+    assert!(back.left() < ring.left() && ring.top() > kit.bounds("setup-description").bottom());
+    kit.step();
+    assert!(
+        !kit.kernel.settings().lockdown,
+        "完了画面ではロックダウンを解く"
+    );
+    // 戻るとロックダウンをかけ直す。二回押しても完了しない。
+    kit.click("setup-back").step();
     assert_eq!(kit.read(|v| v.step()), Step::Wrist);
+    assert!(kit.kernel.settings().lockdown);
+    press_x_twice(&mut kit);
+    assert!(!kit.kernel.settings().setup_done);
+    assert!(!kit.kernel.panel(0).closed);
     kit.click("setup-next");
     assert!(kit.read(|v| v.wizard.is_last()));
     kit.step();
     assert!(!kit.kernel.settings().setup_done);
-    kit.click("setup-finish").step();
+    // X を二回押す（ダッシュボードを開く操作）と完了する。
+    press_x_twice(&mut kit);
+    kit.step();
     assert!(kit.kernel.settings().setup_done);
     assert!(
         !kit.kernel.settings().lockdown,
         "完了後にロックダウンが解除される"
     );
     assert!(kit.kernel.panel(0).closed);
+}
+
+/// Presses the left hand's X button twice in a row (novr: the X key), ticking only the kernel so both presses land
+/// within `kernel::DOUBLE_PRESS` (see the dashboard scenario), then lets the views see it.
+fn press_x_twice(kit: &mut NoVrKit<SetupWizard>) {
+    for held in [true, false, true, false] {
+        kit.kernel.subsystems.backend.set_button(Button::X, held);
+        kit.kernel.tick();
+    }
+    kit.step();
 }
 
 /// On OpenVR, a step after the watch face asks whether nyaw starts with SteamVR. It stays off until chosen.

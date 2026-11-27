@@ -1,5 +1,6 @@
 //! 実 GPU でコントローラガイドを描画する: Testing のガイド画面（ダーク・ライト、割り当てに合わせた強調）と、
-//! 全機種・左右の全ボタンを囲んだ一覧を `target/tmp/guide-*.bmp` に書き出す（円の見た目は画像を目視確認する）。
+//! 全機種・左右の全ボタンを囲んだ一覧、全機種のセットアップの完了画面（左手を寄って映す）を `target/tmp/guide-*.bmp` に
+//! 書き出す（円の見た目と寄り方は画像を目視確認する）。
 //! 検査: 画像が読み込まれて描かれ、見えるボタンの円（アクセント色）が描かれる。
 #[cfg(windows)]
 pub fn main() {
@@ -49,7 +50,7 @@ pub fn main() {
     let out = shots.clone();
     gpui_platform::application().run(move |cx| {
         design::font::install(cx);
-        let open = |cx: &mut gpui::App, setup: fn(&mut GuideTest)| {
+        let open = |cx: &mut gpui::App, setup: fn(&mut GuideTest)| -> gpui::AnyWindowHandle {
             open_panel_window(cx, GUIDE_PX, move |_, cx| {
                 let view = cx
                     .new(|cx| {
@@ -61,12 +62,13 @@ pub fn main() {
                 cx.new(|_| PanelRoot::new(view))
             })
             .unwrap()
+            .into()
         };
         // 使用中（コントローラが無いので Quest Touch Plus）・Index の左手で決定を強調・Vive の全ボタン。
-        let windows = [
-            ("in-use", open(cx, |_| {})),
+        let mut windows = vec![
+            ("in-use".to_owned(), open(cx, |_| {})),
             (
-                "index-left-select",
+                "index-left-select".to_owned(),
                 open(cx, |g| {
                     g.shown = Shown::Model(Model::Index);
                     g.hand = Hand::Left;
@@ -74,13 +76,29 @@ pub fn main() {
                 }),
             ),
             (
-                "vive-all",
+                "vive-all".to_owned(),
                 open(cx, |g| {
                     g.shown = Shown::Model(Model::Vive);
                     g.all_parts = true;
                 }),
             ),
         ];
+        // セットアップの完了画面（パネルと同じ 1152 × 864）。開発ビルドのドロップダウンと同じく、映す機種を選ぶ。
+        for m in Model::ALL {
+            let window = open_panel_window(cx, (1152, 864), move |_, cx| {
+                cx.new(|_| {
+                    let mut v = setup::SetupWizard::new(0);
+                    while v.wizard.next() {}
+                    v.preview = Some(m);
+                    v
+                })
+            })
+            .unwrap();
+            windows.push((
+                format!("done-{}", m.render_model(Hand::Left)),
+                window.into(),
+            ));
+        }
         let sheet = open_panel_window(cx, sheet_px, |_, cx| {
             let view = cx.new(|_| Sheet).into();
             cx.new(|_| PanelRoot::new(view))
@@ -99,7 +117,7 @@ pub fn main() {
                 let name = format!("{mode:?}").to_lowercase();
                 for (label, window) in &windows {
                     let frame = cx
-                        .update_window((*window).into(), |_, w, cx| capture(w, cx))
+                        .update_window(*window, |_, w, cx| capture(w, cx))
                         .unwrap()
                         .unwrap();
                     out.borrow_mut().push((format!("{label}-{name}"), frame));
@@ -115,7 +133,11 @@ pub fn main() {
         .detach();
     });
     let shots = shots.take();
-    assert_eq!(shots.len(), 8, "every window captured");
+    assert_eq!(
+        shots.len(),
+        2 * (4 + Model::ALL.len()),
+        "every window captured"
+    );
     for (name, frame) in &shots {
         save(frame, &format!("target/tmp/guide-{name}.bmp"));
         // コントローラの画像（白〜灰の本体）と、円（アクセントの青）が描かれている。

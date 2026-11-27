@@ -4,7 +4,9 @@
   blender -b ControllerRender.blend -P render.py -- --final   # 本番 (.blend の設定 = Cycles) -> renders/
 
 .blend が source/ フォルダにある構成では、出力先はその 1 つ上 (--final は left/ right/ を直下に作る):
-  blender -b source/ControllerRender.blend --python-exit-code 1 -P tools/render.py -- --final
+  blender -b source/ControllerRender.blend --python-exit-code 1 -P tools/render.py -- --final --size 2048
+
+アプリ (apps/nyaw/crates/guide) は 2048 x 2048 を前提にする (表の座標の大きさを読むときに確かめる)。
 
 各ボタン中心の画像上の座標と大きさ (radius) は、コントローラごとに buttons/<left|right>/<名前>.json に書く (button_map.py)。
 --map-only は画像を描かずに JSON だけ作り直す。テクスチャは SteamVR のファイルを直接参照する。

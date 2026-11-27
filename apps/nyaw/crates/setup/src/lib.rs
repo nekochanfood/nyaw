@@ -2,14 +2,15 @@
 //! 外観と遷移は `design::components` のウィザード（`wizard_*` + `navigation`）。パネルの地は設定画面のコンテンツ側と同じ背景色で、
 //! アクセシビリティ・外観・文字盤は設定画面と同一の部品（`ui::prefs`）をそのまま配置する。選択内容は即座に全体設定へ反映する。
 
-use design::components::{self, Button, Variant, Wizard};
+use design::components::{self, Button, Variant, WIZARD_CONTENT, WIZARD_MARGIN, Wizard};
 use design::{Icon, Logo, Theme, font_size, icons, spacing};
 use gpui::{
     App, ClickEvent, Context, Div, Entity, FontWeight, IntoElement, MouseDownEvent, Render,
     SharedString, Window, div, prelude::*, px,
 };
+use guide::{Control, Controller, Model};
 use kernel::vr::{Pose, Quat, Vec2, Vec3};
-use kernel::{DominantHand, LazyFollow, PanelCommand, PanelId, Setting, Settings};
+use kernel::{DominantHand, Hand, LazyFollow, PanelCommand, PanelId, Setting, Settings};
 use ui::{PanelControl, PanelSpec};
 
 /// パネルサイズ（1px = 1mm）。オーバーレイの既定と同じ 4:3 で、最も高さのある文字盤ステップ（見出し・設定画面と同一の
@@ -25,6 +26,14 @@ const CHOICE_ICON: f32 = 48.0;
 const FOLLOW_DISTANCE: f32 = 1.5;
 /// 正面（頭部から [`FOLLOW_DISTANCE`] 先）。
 const IN_FRONT: Pose = Pose::new(Vec3::new(0.0, 0.0, -FOLLOW_DISTANCE), Quat::IDENTITY);
+/// 完了画面で、下に寄って映すコントローラの枠の高さ（画面の高さに対する割合）と、その上端で地へ溶かす高さ（枠に対する割合）。
+/// 文字が大きく見出しが下へ伸びても、溶けた部分に重なるだけで読める。
+const ZOOM_H: f32 = 0.68;
+const ZOOM_FADE: f32 = 0.3;
+/// 完了画面の見出しを置く上の帯（画面の高さに対する割合）。
+const DONE_HEAD_H: f32 = 0.34;
+/// 開発ビルドだけ、完了画面の右上にコントローラを切り替えるドロップダウンを出す（機種ごとの映り方を確かめる）。
+const CONTROLLER_PICKER: bool = cfg!(debug_assertions);
 
 /// ステップ。[`STEPS`] の順に遷移する。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,7 +77,7 @@ pub fn follow() -> LazyFollow {
 /// 初回起動で正面に表示するウィザードの起動仕様。
 pub fn spec() -> PanelSpec {
     // 親パネルのないルートパネルのため、頭部の正面に表示する。
-    PanelSpec::root(IN_FRONT, |id, _, _| SetupWizard::new(id))
+    PanelSpec::root(IN_FRONT, |id, _, cx| SetupWizard::build(id, cx))
         .in_view(IN_FRONT)
         .sized(SIZE, PX)
         // 閉じ不可（ロックダウン中は閉じる要求も無視される）のため、ナビゲーションバーを付与しない。
@@ -79,7 +88,7 @@ pub fn spec() -> PanelSpec {
 
 /// デバッグからの強制再実行: パネル `from` の隣に開く。
 pub fn spawn_spec(from: PanelId) -> PanelSpec {
-    PanelSpec::spawn(from, |id, _, _| SetupWizard::new(id))
+    PanelSpec::spawn(from, |id, _, cx| SetupWizard::build(id, cx))
         .sized(SIZE, PX)
         .without_nav_bar()
         .lockdown()
@@ -94,6 +103,13 @@ pub struct SetupWizard {
     /// 外観・文字盤の部品（`ui::prefs`）の状態。
     pub appearance: ui::prefs::Appearance,
     pub watch: ui::prefs::WatchFaces,
+    /// 完了画面に映すコントローラ（開発ビルドのドロップダウンで選ぶ）。`None` は左手で使用中の機種。
+    pub preview: Option<Model>,
+    pub preview_open: bool,
+    /// 反映したショートカットの二回押しの回数（[`kernel::PanelStatus::double_press`]）。
+    presses: u32,
+    /// 完了画面でロックダウンを解いている（ダッシュボードを開けるように）。
+    unlocked: bool,
 }
 
 impl SetupWizard {
@@ -104,6 +120,34 @@ impl SetupWizard {
             language_open: false,
             appearance: Default::default(),
             watch: Default::default(),
+            preview: None,
+            preview_open: false,
+            presses: 0,
+            unlocked: false,
+        }
+    }
+
+    /// パネルとして開くウィザード: ショートカットの二回押し（[`kernel::PanelStatus::double_press`]）を見る。
+    pub fn build(panel: PanelId, cx: &mut Context<Self>) -> Self {
+        cx.observe_global::<PanelControl>(Self::sync).detach();
+        let mut v = Self::new(panel);
+        v.presses = presses(panel, cx);
+        v
+    }
+
+    /// 完了画面ではロックダウンを解き、ショートカットの二回押しでダッシュボードを開けるようにする（開くのは wrist）。
+    /// その二回押しで完了する。ほかの画面ではロックダウンを保つ。押した回数が変わるたび・画面を移るたびに呼ぶ。
+    fn sync(&mut self, cx: &mut Context<Self>) {
+        let n = presses(self.panel, cx);
+        let pressed = n != self.presses;
+        self.presses = n;
+        let done = self.step() == Step::Done;
+        if done != self.unlocked {
+            self.unlocked = done;
+            ui::command(self.panel, PanelCommand::Lockdown(!done), cx);
+        }
+        if done && pressed {
+            finish(self.panel, cx);
         }
     }
 
@@ -126,6 +170,21 @@ impl SetupWizard {
             }
         }
     }
+}
+
+/// パネル `panel` から見たショートカットの二回押しの回数。
+fn presses(panel: PanelId, cx: &App) -> u32 {
+    cx.try_global::<PanelControl>()
+        .and_then(|c| c.panels.get(&panel))
+        .map_or(0, |p| p.status.double_press)
+}
+
+/// 左手で使用中のコントローラ（無ければ Quest Touch Plus）。ショートカットは左手のボタン。
+fn left_controller(cx: &App) -> Controller {
+    cx.try_global::<PanelControl>()
+        .and_then(|c| c.controllers.iter().find(|c| c.hand == Hand::Left))
+        .and_then(|c| c.controller)
+        .unwrap_or(Controller::of(Model::QuestPlus))
 }
 
 /// 完了を設定に記録し、ロックダウンを解除してからこのパネルを閉じる（同一パネルのコマンドはキュー順に処理される）。
@@ -195,9 +254,16 @@ fn text_choice(
 fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut App) -> Div {
     let theme = Theme::current(cx);
     let now = ui::settings(cx);
-    let (panel, language_open, appearance, watch) = {
+    let (panel, language_open, appearance, watch, preview, preview_open) = {
         let v = wizard.read(cx);
-        (v.panel, v.language_open, v.appearance, v.watch)
+        (
+            v.panel,
+            v.language_open,
+            v.appearance,
+            v.watch,
+            v.preview,
+            v.preview_open,
+        )
     };
     let go = |forward: bool| {
         let wizard = wizard.clone();
@@ -205,6 +271,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             let now = ui::settings(cx);
             wizard.update(cx, |v, cx| {
                 v.go(forward, &now);
+                v.sync(cx);
                 cx.notify();
             })
         }
@@ -380,22 +447,129 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             )
         }
         Step::Done => {
-            let done = components::wizard_next(&theme, "setup-finish", i18n::t(cx, "setup.finish"))
-                .on_click(move |_, _, cx| finish(panel, cx));
-            // 完了前に確認できるよう、左下に「戻る」を配置。
+            // 下に左手のコントローラを寄って映し、ショートカットのボタンをダブルタップの動きで示す。それを押してダッシュボードを
+            // 開くと完了する（[`SetupWizard::sync`]）。「完了」ボタンは置かない。
+            let hand = Hand::Left;
+            let controller = preview.map_or_else(|| left_controller(cx), Controller::of);
+            let model = controller.model;
+            let shortcut: Vec<&'static str> = controller
+                .parts(Control::Shortcut, hand)
+                .into_iter()
+                .filter(|p| guide::parts(model, hand, p).iter().any(|q| q.visible))
+                .collect();
+            let description = match shortcut.first() {
+                Some(p) => i18n::tf(
+                    cx,
+                    "setup.done_description",
+                    &[("button", &guide::part_name(cx, p))],
+                ),
+                None => i18n::t(cx, "setup.done_description_any"),
+            };
+            let view = window.viewport_size();
+            let (w, h) = (view.width, view.height * ZOOM_H);
+            let zoom = guide::zoom(model, hand)
+                .size(w, h)
+                .parts(shortcut)
+                .fade(h * ZOOM_FADE);
             let back = components::wizard_back(&theme, "setup-back", i18n::t(cx, "setup.back"))
                 .on_click(go(false));
-            components::wizard_welcome(
+            let head = components::heading(
                 &theme,
                 "setup",
                 components::wizard_icon(&theme, &icons::CHECK_CIRCLE),
                 i18n::t(cx, "setup.done_title"),
-                i18n::t(cx, "setup.done_description"),
-                Some(back),
-                done,
+                Some(description),
             )
+            .max_w(px(WIZARD_CONTENT))
+            .items_center()
+            .text_center();
+            div()
+                .relative()
+                .size_full()
+                .child(div().absolute().left_0().bottom_0().child(zoom))
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(view.height * DONE_HEAD_H)
+                        .px(px(WIZARD_MARGIN))
+                        .flex()
+                        .items_end()
+                        .justify_center()
+                        .child(head),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .left(px(WIZARD_MARGIN))
+                        .bottom(px(WIZARD_MARGIN))
+                        .child(back),
+                )
+                .when(CONTROLLER_PICKER, |d| {
+                    d.child(
+                        div()
+                            .absolute()
+                            .top(px(WIZARD_MARGIN))
+                            .right(px(WIZARD_MARGIN))
+                            .child(controller_picker(wizard, preview, preview_open, window, cx)),
+                    )
+                })
         }
     }
+}
+
+/// 完了画面に映すコントローラを選ぶドロップダウン（`setup-controller`。開発ビルドのみ）。先頭は使用中の機種、続いて全機種。
+fn controller_picker(
+    wizard: &Entity<SetupWizard>,
+    preview: Option<Model>,
+    open: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    let theme = Theme::current(cx);
+    let set_open = update(wizard, |v: &mut SetupWizard, open| v.preview_open = open);
+    let pick = update(wizard, |v: &mut SetupWizard, model| {
+        v.preview = model;
+        v.preview_open = false;
+    });
+    let in_use = i18n::t(cx, "setup.controller_in_use");
+    let choices = std::iter::once((None, "in-use".to_owned(), in_use.clone()))
+        .chain(Model::ALL.map(|m| (Some(m), m.render_model(Hand::Left), m.name().into())));
+    let options: Vec<_> = choices
+        .map(|(model, id, label)| {
+            let pick = pick.clone();
+            components::select_option(
+                &theme,
+                format!("setup-controller-{id}"),
+                label,
+                preview == model,
+            )
+            .on_click(move |_, window, cx| pick(model, window, cx))
+        })
+        .collect();
+    let dismiss = set_open.clone();
+    let popover = components::dropdown_popover(
+        &theme,
+        window,
+        cx,
+        "setup-controller",
+        open,
+        false,
+        options,
+        move |_: &MouseDownEvent, window, cx| dismiss(false, window, cx),
+    );
+    let label: SharedString = preview.map_or(in_use, |m| m.name().into());
+    components::dropdown(
+        &theme,
+        "setup-controller",
+        Variant::OnBackground,
+        None,
+        label,
+    )
+    .on_click(move |_, window, cx| set_open(true, window, cx))
+    .child(popover)
 }
 
 impl Render for SetupWizard {
