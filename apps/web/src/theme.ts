@@ -33,17 +33,27 @@ export function useTheme(): Theme | null {
   return useSyncExternalStore(subscribe, current, () => null);
 }
 
-/** テーマを切り替えてから、色のトランジションを外すまでの時間（styles.css の 300ms より少し長く） */
-const FADE_MS = 350;
-let fading = 0;
-
+/**
+ * テーマを切り替える。要素ごとの色のトランジションは使わず、切り替える瞬間だけ全要素のトランジションを止めて
+ * 色を一度に変え、見た目の変化は画面全体のクロスフェード（View Transitions API）で見せる。
+ *
+ * 要素ごとにトランジションさせると、親から継承した色（文字やアイコン）が補間の途中で毎フレーム変わり、
+ * 自分の color のトランジションを持つ子孫がそれを新しい行き先とみなして作り直し続けるので、チカチカする。
+ */
 export function setTheme(theme: Theme) {
   const root = document.documentElement;
-  // 切り替えの間だけ、すべての要素の色を同じ速さで変える（styles.css の data-theme-fading）
-  root.dataset.themeFading = "";
-  root.dataset.theme = theme;
-  clearTimeout(fading);
-  fading = window.setTimeout(() => delete root.dataset.themeFading, FADE_MS);
+  const apply = () => {
+    root.dataset.themeSwitching = "";
+    root.dataset.theme = theme;
+    // トランジションを止めた状態で、新しいテーマのスタイルを確定させてから戻す（戻しても値は変わらない）
+    void root.offsetWidth;
+    delete root.dataset.themeSwitching;
+  };
+  if (document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    document.startViewTransition(apply);
+  } else {
+    apply();
+  }
   try {
     localStorage.setItem(STORAGE_KEY, theme);
   } catch {

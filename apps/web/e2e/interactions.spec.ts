@@ -8,8 +8,8 @@ test("テーマの切り替えを保存し、読み込み直しても保つ", as
   const html = page.locator("html");
   await page.getByRole("button", { name: "Toggle theme" }).click();
   await expect(html).toHaveAttribute("data-theme", "dark");
-  // 切り替えの間だけ付く、色のトランジションの印は外れる
-  await expect(html).not.toHaveAttribute("data-theme-fading");
+  // 切り替える瞬間だけ付く、トランジションを止める印は残らない
+  await expect(html).not.toHaveAttribute("data-theme-switching");
   expect(await page.evaluate(() => localStorage.getItem("nyaw-theme"))).toBe("dark");
   await page.reload();
   await expect(html).toHaveAttribute("data-theme", "dark");

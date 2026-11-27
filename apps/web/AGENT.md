@@ -7,6 +7,7 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 - TanStack Start（React）を Cloudflare Workers で動かす（`vite.config.ts`、`wrangler.jsonc`）。サーバーの入口は `src/server.ts`。
 - スタイルは Tailwind CSS、UI の部品は Base UI（`@base-ui/react`）、アイコンは Phosphor Icons を使う。
 - 動きは anime.js で付ける（ポップアップの出入り、スクロールに連動する動き）。スクロールは lenis で滑らかにする。動きを減らす設定（`prefers-reduced-motion`）では、どちらも使わない。
+- 動きの順番は `src/motion/stage.ts` で決める。読み込み画面 → ページのフェードイン（`PageTransition`）→ ページの中の動き（ページ名の文字、スクロールで現れる要素）の順に進め、遷移のときはフェードアウトしてから次のページの描画が落ち着くのを待つ。動く要素は動きが始まるまで CSS で隠す（`.motion`）。
 - 整形と静的解析は [Oxc](https://oxc.rs/) のツール（oxfmt、oxlint。それぞれ別のパッケージ）を使う。
 - テストは Vitest（`src/**/*.test.ts`）と Playwright（`e2e/`）を使う。
 - インポートは別名で書く（`@/` は `src/`、`@locale/` は `locale/`、`@assets/` はルートの `assets/`）。別名は `alias.ts` と `tsconfig.json` の `paths` で揃える。
@@ -20,7 +21,7 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 ## 見た目
 
 - 基調はアプリのトークンの無彩色、アクセントは Catppuccin（ライトは Latte、ダークはロゴと同じ Frappé。`ctp-*` の色）。
-- テーマは保存したもの（`localStorage`）か OS の設定に従う。`src/theme.ts` の `themeScript` が描画の前に `<html data-theme>` を付ける。切り替えの間だけ、すべての要素の色を同じ速さで変える（`data-theme-fading`）。
+- テーマは保存したもの（`localStorage`）か OS の設定に従う。`src/theme.ts` の `themeScript` が描画の前に `<html data-theme>` を付ける。切り替えは画面全体のクロスフェード（View Transitions API）で見せ、要素ごとの色のトランジションは使わない（継承した色の補間が毎フレーム作り直され、文字やアイコンがチカチカする）。
 - 角はスーパーエリプス（`corner-shape`）。対応するブラウザでは、トークンの角丸に `--corner-scale` を掛けて広げる。中に項目を並べるパネルは、外側の半径を「中の半径＋余白」にして角を同心にする。
 - 下位のページは、ページ名を大きく置く上部（`PageTitle`。英語の名前を D-DIN で表示する）と、一段沈んだ色の本文（`PageSection`）に分ける。
 

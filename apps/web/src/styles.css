@@ -113,18 +113,19 @@
 }
 
 /*
-  テーマの切り替え（src/theme.ts の setTheme）の間だけ、すべての要素の色を同じ速さで変える。
-  要素ごとのトランジションに任せると、色が変わる速さが要素ごとにばらばらになる。
+  テーマの切り替え（src/theme.ts の setTheme）。切り替える瞬間だけ全要素のトランジションを止め、
+  見た目は画面全体のクロスフェードで変える
 */
-:root[data-theme-fading],
-:root[data-theme-fading] *,
-:root[data-theme-fading] *::before,
-:root[data-theme-fading] *::after {
-  transition-property:
-    color, background-color, border-color, outline-color, text-decoration-color, fill, stroke,
-    box-shadow !important;
-  transition-duration: 300ms !important;
-  transition-timing-function: ease !important;
+:root[data-theme-switching],
+:root[data-theme-switching] *,
+:root[data-theme-switching] *::before,
+:root[data-theme-switching] *::after {
+  transition: none !important;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 300ms;
+  animation-timing-function: ease;
 }
 
 /*
