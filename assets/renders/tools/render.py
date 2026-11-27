@@ -6,7 +6,7 @@
 .blend が source/ フォルダにある構成では、出力先はその 1 つ上 (--final は left/ right/ を直下に作る):
   blender -b source/ControllerRender.blend --python-exit-code 1 -P tools/render.py -- --final
 
-各ボタン中心の画像上の座標は、コントローラごとに buttons/<left|right>/<名前>.json に書く (button_map.py)。
+各ボタン中心の画像上の座標と大きさ (radius) は、コントローラごとに buttons/<left|right>/<名前>.json に書く (button_map.py)。
 --map-only は画像を描かずに JSON だけ作り直す。テクスチャは SteamVR のファイルを直接参照する。
 
 コレクション内の MESH が対象。モデルを追加するならコレクションに入れるだけ。.blend は保存しない。
