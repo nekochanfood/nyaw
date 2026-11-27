@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "coordinates": {
+    "width": 1024,
+    "height": 1024,
+    "origin": "top-left",
+    "x_y": "pixels",
+    "u_v": "normalized 0..1"
+  },
+  "render_model": "valve_controller_knu_1_0_right",
+  "render_model_aliases": [
+    "valve_controller_knu_ev2_0_right"
+  ],
+  "source_render_model": "valve_controller_knu_ev2_0_right",
+  "hand": "right",
+  "controller_type": "knuckles",
+  "image": "right/valve_controller_knu_1_0_right.png",
+  "buttons": [
+    {
+      "id": "a",
+      "input": "/user/hand/right/input/a",
+      "x": 277.0,
+      "y": 319.2,
+      "u": 0.27053,
+      "v": 0.31174,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "b",
+      "input": "/user/hand/right/input/b",
+      "x": 241.8,
+      "y": 281.1,
+      "u": 0.23611,
+      "v": 0.27447,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "grip",
+      "input": "/user/hand/right/input/grip",
+      "x": 402.6,
+      "y": 588.1,
+      "u": 0.3932,
+      "v": 0.57435,
+      "visible": true,
+      "visibility": 0.901,
+      "approximate": true
+    },
+    {
+      "id": "system",
+      "input": "/user/hand/right/input/system",
+      "x": 331.0,
+      "y": 336.4,
+      "u": 0.32327,
+      "v": 0.32851,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "thumbstick",
+      "input": "/user/hand/right/input/thumbstick",
+      "x": 378.1,
+      "y": 196.4,
+      "u": 0.36923,
+      "v": 0.19183,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "trackpad",
+      "input": "/user/hand/right/input/trackpad",
+      "x": 319.1,
+      "y": 272.8,
+      "u": 0.31163,
+      "v": 0.26641,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "trigger",
+      "input": "/user/hand/right/input/trigger",
+      "x": 303.3,
+      "y": 325.1,
+      "u": 0.29621,
+      "v": 0.31747,
+      "visible": false,
+      "visibility": 0.0
+    }
+  ],
+  "inputs_without_position": [
+    {
+      "input": "/user/hand/right/input/pinch",
+      "reason": "gesture"
+    },
+    {
+      "input": "/user/hand/right/input/finger/index",
+      "reason": "gesture"
+    },
+    {
+      "input": "/user/hand/right/input/finger/middle",
+      "reason": "gesture"
+    },
+    {
+      "input": "/user/hand/right/input/finger/ring",
+      "reason": "gesture"
+    },
+    {
+      "input": "/user/hand/right/input/finger/pinky",
+      "reason": "gesture"
+    }
+  ]
+}

@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "coordinates": {
+    "width": 1024,
+    "height": 1024,
+    "origin": "top-left",
+    "x_y": "pixels",
+    "u_v": "normalized 0..1"
+  },
+  "render_model": "frame_controller_left",
+  "render_model_aliases": [],
+  "source_render_model": "frame_controller_left",
+  "hand": "left",
+  "controller_type": "frame_controller",
+  "image": "left/frame_controller_left.png",
+  "buttons": [
+    {
+      "id": "bumper",
+      "input": "/user/hand/left/input/bumper",
+      "x": 630.6,
+      "y": 251.2,
+      "u": 0.61585,
+      "v": 0.24532,
+      "visible": false,
+      "visibility": 0.0
+    },
+    {
+      "id": "dpad_down",
+      "input": "/user/hand/left/input/dpad_down",
+      "x": 492.3,
+      "y": 222.6,
+      "u": 0.48071,
+      "v": 0.21737,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "dpad_left",
+      "input": "/user/hand/left/input/dpad_left",
+      "x": 473.1,
+      "y": 160.2,
+      "u": 0.46198,
+      "v": 0.15644,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "dpad_right",
+      "input": "/user/hand/left/input/dpad_right",
+      "x": 563.4,
+      "y": 217.9,
+      "u": 0.55022,
+      "v": 0.21283,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "dpad_up",
+      "input": "/user/hand/left/input/dpad_up",
+      "x": 544.3,
+      "y": 155.5,
+      "u": 0.53152,
+      "v": 0.15189,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "grip",
+      "input": "/user/hand/left/input/grip",
+      "x": 524.8,
+      "y": 572.4,
+      "u": 0.51248,
+      "v": 0.559,
+      "visible": true,
+      "visibility": 0.632
+    },
+    {
+      "id": "system",
+      "input": "/user/hand/left/input/system",
+      "x": 508.3,
+      "y": 337.8,
+      "u": 0.49641,
+      "v": 0.32991,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "thumbstick",
+      "input": "/user/hand/left/input/thumbstick",
+      "x": 676.0,
+      "y": 303.2,
+      "u": 0.66013,
+      "v": 0.2961,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "trigger",
+      "input": "/user/hand/left/input/trigger",
+      "x": 581.5,
+      "y": 344.4,
+      "u": 0.56788,
+      "v": 0.33633,
+      "visible": false,
+      "visibility": 0.0
+    },
+    {
+      "id": "view",
+      "input": "/user/hand/left/input/view",
+      "x": 654.3,
+      "y": 196.5,
+      "u": 0.639,
+      "v": 0.19191,
+      "visible": true,
+      "visibility": 1.0
+    }
+  ],
+  "inputs_without_position": [
+    {
+      "input": "/user/hand/left/input/thumbrest",
+      "reason": "no_render_model_component"
+    }
+  ]
+}

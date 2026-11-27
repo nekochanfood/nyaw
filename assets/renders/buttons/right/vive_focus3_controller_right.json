@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "coordinates": {
+    "width": 1024,
+    "height": 1024,
+    "origin": "top-left",
+    "x_y": "pixels",
+    "u_v": "normalized 0..1"
+  },
+  "render_model": "vive_focus3_controller_right",
+  "render_model_aliases": [],
+  "source_render_model": "vive_focus3_controller_right",
+  "hand": "right",
+  "controller_type": "vive_focus3_controller",
+  "image": "right/vive_focus3_controller_right.png",
+  "buttons": [
+    {
+      "id": "a",
+      "input": "/user/hand/right/input/a",
+      "x": 463.6,
+      "y": 386.3,
+      "u": 0.45273,
+      "v": 0.37723,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "b",
+      "input": "/user/hand/right/input/b",
+      "x": 399.7,
+      "y": 350.5,
+      "u": 0.39032,
+      "v": 0.34225,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "grip",
+      "input": "/user/hand/right/input/grip",
+      "x": 524.3,
+      "y": 564.0,
+      "u": 0.51199,
+      "v": 0.55082,
+      "visible": true,
+      "visibility": 0.765
+    },
+    {
+      "id": "system",
+      "input": null,
+      "x": 551.6,
+      "y": 361.1,
+      "u": 0.53872,
+      "v": 0.35266,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "thumbstick",
+      "input": "/user/hand/right/input/joystick",
+      "x": 501.8,
+      "y": 264.8,
+      "u": 0.49001,
+      "v": 0.2586,
+      "visible": true,
+      "visibility": 0.805
+    },
+    {
+      "id": "trigger",
+      "input": "/user/hand/right/input/trigger",
+      "x": 476.7,
+      "y": 329.0,
+      "u": 0.46554,
+      "v": 0.32129,
+      "visible": false,
+      "visibility": 0.0
+    }
+  ],
+  "inputs_without_position": []
+}
