@@ -586,6 +586,8 @@ const PRESS_DEPTH: f32 = 0.2;
 /// 離す: 縮んだ波紋が外へ広がりきって消える時間（秒）と、広がる大きさ（円の半径に対する増分）。
 const RIPPLE: f32 = 0.8;
 const RIPPLE_GROW: f32 = 1.2;
+/// 波紋の線の太さ（px）。ガイドの円（[`RING_W`]）より太くし、寄って大きく映したボタンの上でも見える。
+const RIPPLE_W: f32 = 7.0;
 
 /// 周期の中の時刻 `t`（秒）での、押下ごとの波紋（大きさ・濃さ。大きさ 1 がボタンを囲む円。出ていなければ濃さ 0）。
 /// 押すと縁から内へ縮んで現れ、離すと外へ広がって消える。
@@ -720,7 +722,7 @@ impl RenderOnce for Zoom {
                 let waves = ripples
                     .iter()
                     .filter(|(_, a)| *a > 0.0)
-                    .map(|&(grow, a)| circle(c, r * grow, RING_W, accent.opacity(a)))
+                    .map(|&(grow, a)| circle(c, r * grow, RIPPLE_W, accent.opacity(a)))
                     .collect::<Vec<_>>();
                 // 示す部品の位置（見えない。テストが場所を確かめる）。
                 let id = format!("zoom-ring-{}", p.id);
