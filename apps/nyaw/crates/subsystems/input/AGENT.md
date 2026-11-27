@@ -42,5 +42,5 @@ Model::{ALL, name, render_model, from_render_model};
 
 コントローラの外観（[`guide`](../../guide/AGENT.md) が画像とボタンの位置を選ぶ鍵）を `Model` で表す。名前は SteamVR のレンダーモデルに揃え、表は `MODELS`。
 
-- **判定の順**: ランタイムが報告したレンダーモデル名（`RawController::model`。SteamVR の `Prop_RenderModelName_String`。`{ドライバ名}` の前置きと大文字小文字は無視し、`_left` / `_right` の付いた系列と別名に合わせる）→ 割り当て（プロファイル。Index と Vive）→ **Quest Touch Plus**（Quest 3 / 3S。最も多く使われている形のため、分からないときの代わりにする）。OpenXR と novr はレンダーモデル名を報告しない。
-- **部品**: 操作ごとの部品は、実際に読んでいる割り当て（`PROFILES`）の入力名の先頭（`squeeze` は `grip`、`select` は `trigger` と読み替える）。機種に無い部品も返すので（Touch のメニューは ≡・Y・B）、表示側が画像にある部品だけを使う。PICO のように SteamVR に既定のバインドが無く簡易コントローラとして読んでいる機種は、その割り当てのまま表示する（つかむが無い、など）。
+- **判定の順**: ランタイムが報告したレンダーモデル名（`RawController::model`。SteamVR の `Prop_RenderModelName_String`。`{ドライバ名}` の前置きと大文字小文字は無視し、`_left` / `_right` の付いた系列と別名に合わせる）→ 割り当て（プロファイル。Index・Vive・Steam Frame）→ **Quest Touch Plus**（Quest 3 / 3S。最も多く使われている形のため、分からないときの代わりにする）。OpenXR と novr はレンダーモデル名を報告しない。
+- **部品**: 操作ごとの部品は、実際に読んでいる割り当て（`PROFILES`）の入力名の先頭（`squeeze` は `grip`、`select` は `trigger` と読み替える）。機種に無い部品も返すので（Touch のメニューは ≡・Y・B）、表示側が画像にある部品だけを使う。Steam Frame は OpenXR にプロファイルが無いので nyaw の名前（`FRAME_PROFILE`、`valve/frame_controller`）で、SteamVR の既定のバインド（`bindings_frame_controller.json`）から読む。ショートカットはどの機種にもある（Vive は左のトラックパッドのクリック、Frame は左の十字キーの下。`every_controller_has_a_shortcut`）。PICO のように SteamVR に既定のバインドが無く簡易コントローラとして読んでいる機種は、その割り当てのまま表示する（つかむが無い、など）。

@@ -281,8 +281,9 @@ auto_launch_off = "手動で起動する"
 back = "戻る"
 next = "次へ"
 done_title = "準備完了"
-done_description = "ここで設定した内容は、後からいつでも「設定」で変更できます。"
-finish = "完了"
+done_description = "左手のコントローラの {button} を 2 回押してダッシュボードを開くと、セットアップが完了します。ここで設定した内容は、後からいつでも「設定」で変更できます。"
+done_description_any = "左手のコントローラのショートカットを 2 回押してダッシュボードを開くと、セットアップが完了します。ここで設定した内容は、後からいつでも「設定」で変更できます。"
+controller_in_use = "使用中のコントローラ"
 
 [wizard]
 welcome_title = "ようこそ"
@@ -566,6 +567,10 @@ menu = "メニューボタン"
 system = "システムボタン"
 bumper = "バンパー"
 view = "ビューボタン"
+dpad_up = "十字キーの上"
+dpad_down = "十字キーの下"
+dpad_left = "十字キーの左"
+dpad_right = "十字キーの右"
 
 [guide_test]
 title = "コントローラガイド"

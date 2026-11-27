@@ -12,7 +12,7 @@ use crate::{
     FingerTracking, Hand, HandSkeleton, JOINT_COUNT, PALM, Pose, Quat, Vec2, Vec3, VrError,
 };
 
-const FILES: [(&str, &str); 4] = [
+const FILES: [(&str, &str); 5] = [
     ("actions.json", include_str!("actions.json")),
     (
         "bindings_knuckles.json",
@@ -25,6 +25,10 @@ const FILES: [(&str, &str); 4] = [
     (
         "bindings_vive_controller.json",
         include_str!("bindings_vive_controller.json"),
+    ),
+    (
+        "bindings_frame_controller.json",
+        include_str!("bindings_frame_controller.json"),
     ),
 ];
 
@@ -348,7 +352,7 @@ mod tests {
     }
 
     /// 既定バインディングは manifest に載っていて、出力先はどれも manifest のアクション。
-    /// 利用者が割り当てる `resize` 以外の入力アクションは、どの機種でも最低限バインドされている。
+    /// 利用者が割り当てる `resize` 以外の入力アクション（ショートカットを含む）は、どの機種でも最低限バインドされている。
     #[test]
     fn bindings_match_manifest() {
         let manifest = json(FILES[0].1);
@@ -369,7 +373,8 @@ mod tests {
             for out in &bound {
                 assert!(names.contains(&out.as_str()), "{name}: {out}");
             }
-            for need in ["aim", "select", "grab", "menu", "scroll"] {
+            // ショートカット（二回押しでダッシュボード）も、どの機種でも開けるよう必ずバインドする。
+            for need in ["aim", "select", "grab", "menu", "scroll", "shortcut"] {
                 let full = format!("/actions/nyaw/in/{need}");
                 assert!(bound.contains(&full), "{name}: {need} unbound");
             }

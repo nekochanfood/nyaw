@@ -42,6 +42,9 @@ PARTS = {
     "thumbstick": "thumbstick", "trackpad": "trackpad", "dpad": "dpad",
 }
 # 上面の中心を取る部品。それ以外 (trigger, grip, bumper) は見えている面の中心を取る
+# スティックの輪郭に使う点: 上面からこの深さ (m) までのうち、軸からの距離が最も遠い点のこの割合以上 (頭の縁)
+STICK_HEAD = 0.006
+STICK_RIM = 0.85
 TOP_FACE = {"a", "b", "x", "y", "menu", "view", "system", "thumbstick", "trackpad", "dpad"}
 NOT_PHYSICAL = ("pinch", "finger/")
 
@@ -184,6 +187,28 @@ def point(center, samples, weights, bvh, proj, always_snap):
     }
 
 
+def outline(verts, faces, bvh, proj, head=None):
+    """丸いボタンの見えている輪郭 (上面と側面) を囲む円: 画像上の中心と半径。見えなければ None。
+    斜めから見ると側面も写るので、上面の中心と大きさだけでは写ったボタンからずれる。
+    head (上面の中心, 軸) があれば、上面から STICK_HEAD の深さまでのうち、軸から最も離れた縁の点だけを使う
+    (スティックは太い頭だけで、下の細い軸や台を含めない)。"""
+    _, _, _, samples = surface(verts, faces)
+    points = np.concatenate([samples.reshape(-1, 3), verts])
+    if head is not None:
+        center, axis = head
+        height = points @ axis
+        points = points[height > height.max() - STICK_HEAD]
+        offset = points - center
+        radial = np.linalg.norm(offset - np.outer(offset @ axis, axis), axis=1)
+        points = points[radial > radial.max() * STICK_RIM]
+    seen = visible(points, bvh, proj.view)
+    if not seen.any():
+        return None
+    screen = proj.pixels(points[seen])
+    center = (screen.min(0) + screen.max(0)) / 2
+    return center, float(np.linalg.norm(screen - center, axis=1).max())
+
+
 def visible_face(verts, faces, bvh, proj):
     tri, normal, area, samples = surface(verts, faces)
     toward = normal @ proj.view
@@ -259,7 +284,18 @@ def controller(name, hand, mesh, proj):
                 near = np.linalg.norm(samples - arm, axis=1) < 0.004
                 add(f"dpad_{direction}", point(arm, samples[near], weights[near], bvh, proj, False))
         else:
-            add(part, point(center, samples, weights, bvh, proj, False), **extra)
+            position = point(center, samples, weights, bvh, proj, False)
+            # 丸いボタンは写った輪郭に合わせる (印の円がボタンにぴったり重なる)。上面の中心が隠れたボタン
+            # (PICO 4 の system はトラッキングリングの陰) は円が合わないので、隠れた部品として扱う
+            if position.get("adjusted"):
+                position["visible"] = False
+            ring = None if position.get("adjusted") else outline(
+                verts, faces, bvh, proj, (center, axis) if part == "thumbstick" else None)
+            if ring is not None:
+                (x, y), radius = ring
+                position.update(x=round(float(x), 1), y=round(float(y), 1), radius=round(radius, 1),
+                                u=round(float(x) / proj.width, 5), v=round(float(y) / proj.height, 5))
+            add(part, position, **extra)
 
     # 同じ物理ボタンを指す部品が 2 つある機種は 1 つにまとめる
     system = next((b for b in buttons if b["id"] == "system"), None)

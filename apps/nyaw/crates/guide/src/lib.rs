@@ -4,6 +4,7 @@
 
 use std::sync::{Arc, OnceLock};
 
+use design::animation::Motion;
 use design::{Theme, font_size, radius, spacing};
 use gpui::{
     App, Hsla, Image, ImageFormat, IntoElement, PathBuilder, Pixels, Point, RenderOnce,
@@ -13,7 +14,7 @@ use kernel::Hand;
 pub use kernel::subsystems::input::{Control, Controller, Model};
 
 /// 画像の一辺（px）。ボタンの座標はこの大きさの画像の上の値。
-pub const IMAGE_PX: f32 = 1024.0;
+pub const IMAGE_PX: f32 = 2048.0;
 
 /// ボタン 1 つ（`assets/renders/buttons/<手>/<名前>.json` の `buttons`）。座標は画像の px。
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
@@ -29,7 +30,13 @@ pub struct Part {
 }
 
 #[derive(serde::Deserialize)]
+struct Coordinates {
+    width: f32,
+}
+
+#[derive(serde::Deserialize)]
 struct Sheet {
+    coordinates: Coordinates,
     buttons: Vec<Part>,
 }
 
@@ -89,6 +96,10 @@ fn asset(model: Model, hand: Hand) -> &'static (Arc<Image>, Vec<Part>) {
     LOADED[i].get_or_init(|| {
         let (_, _, png, json) = ASSETS[i];
         let sheet: Sheet = serde_json::from_str(json).expect("assets/renders/buttons JSON");
+        assert_eq!(
+            sheet.coordinates.width, IMAGE_PX,
+            "assets/renders/buttons の座標の大きさ"
+        );
         (
             Arc::new(Image::from_bytes(ImageFormat::Png, png.to_vec())),
             sheet.buttons,
@@ -148,6 +159,10 @@ pub fn part_name(cx: &App, part: &str) -> SharedString {
         "system" => i18n::t(cx, "guide.part.system"),
         "bumper" => i18n::t(cx, "guide.part.bumper"),
         "view" => i18n::t(cx, "guide.part.view"),
+        "dpad_up" => i18n::t(cx, "guide.part.dpad_up"),
+        "dpad_down" => i18n::t(cx, "guide.part.dpad_down"),
+        "dpad_left" => i18n::t(cx, "guide.part.dpad_left"),
+        "dpad_right" => i18n::t(cx, "guide.part.dpad_right"),
         other => other.replace('_', " ").to_uppercase().into(),
     }
 }
@@ -251,7 +266,7 @@ const RING_W: f32 = 3.0;
 /// 小さく写るボタンでも、円の内側に収める最小の半径（表示の px）。
 const RING_MIN: f32 = 7.0;
 /// 握り全体のような大きな部品でも画像を覆わないよう、ボタンの半径をこれ（画像の px）で打ち切る。
-const RING_MAX: f32 = 110.0;
+const RING_MAX: f32 = 220.0;
 
 /// 円 1 つ（表示の px。部品が見えないときは無い）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -533,6 +548,233 @@ impl RenderOnce for ControllerGuide {
     }
 }
 
+/// 寄って映すとき、顔（[`face`]）の幅・高さを枠のこの割合までにする（小さい方の倍率に合わせる）。
+const FACE_W: f32 = 0.42;
+const FACE_H: f32 = 0.55;
+/// 顔の中心を置く高さ（枠の高さに対する割合）。下の握りは枠の下で切れる。
+const FACE_Y: f32 = 0.5;
+
+/// 顔: 見えるボタン（握りを除く）をすべて囲む枠（画像の px。左上と右下）。機種ごとにボタンの並ぶ広さが違うので、
+/// 寄って映すときの倍率をここから決める（[`framing`]）。
+pub fn face(model: Model, hand: Hand) -> (Point<f32>, Point<f32>) {
+    let face = sheet(model, hand)
+        .iter()
+        .filter(|p| p.visible && !p.id.starts_with("grip"));
+    face.fold(
+        (point(f32::MAX, f32::MAX), point(f32::MIN, f32::MIN)),
+        |(lo, hi), p| {
+            (
+                point(lo.x.min(p.x - p.radius), lo.y.min(p.y - p.radius)),
+                point(hi.x.max(p.x + p.radius), hi.y.max(p.y + p.radius)),
+            )
+        },
+    )
+}
+
+/// 幅 `w`・高さ `h`（px）の枠に寄って映すときの、画像の一辺と左上（枠の px）。顔を枠の横中央・[`FACE_Y`] の高さに置く。
+pub fn framing(model: Model, hand: Hand, w: f32, h: f32) -> (f32, Point<f32>) {
+    let (lo, hi) = face(model, hand);
+    let s = (w * FACE_W / (hi.x - lo.x)).min(h * FACE_H / (hi.y - lo.y));
+    let center = point((lo.x + hi.x) / 2.0 * s, (lo.y + hi.y) / 2.0 * s);
+    (
+        IMAGE_PX * s,
+        point(w / 2.0 - center.x, h * FACE_Y - center.y),
+    )
+}
+
+/// ダブルタップの 1 周期（秒）と、2 つの波紋の始まり。
+const TAP_PERIOD: f32 = 1.8;
+const TAPS: [f32; 2] = [0.0, 0.3];
+/// 押す: 波紋がボタンを囲む円の大きさで透明から現れ、内へ沈みながら濃くなる時間（秒）と、沈む割合。
+const PRESS: f32 = 0.16;
+const PRESS_DEPTH: f32 = 0.15;
+/// 離す: 沈んだ波紋が外へ広がりきって消える時間（秒）と、広がる大きさ（ボタンを囲む円の半径に対する増分）。
+const RIPPLE: f32 = 0.8;
+const RIPPLE_GROW: f32 = 0.6;
+/// 波紋の線の太さ（px）。
+const RIPPLE_W: f32 = 5.0;
+/// 登場: 待つ時間（秒。ページの遷移を待つ）、下から上がってくる時間（秒）と距離（枠の高さに対する割合）。
+const ENTER_DELAY: f32 = 0.15;
+const ENTER: f32 = 0.6;
+const ENTER_RISE: f32 = 0.12;
+
+/// 周期の中の時刻 `t`（秒）での波紋（大きさ・濃さ。大きさ 1 がボタンを囲む円。出ていなければ濃さ 0）。
+/// 押すと透明から現れつつ内へ沈み（[`PRESS`]）、離すと外へ広がり、広がる間は濃いまま終わり際に消える（[`RIPPLE`]）。
+pub fn double_tap(t: f32) -> [(f32, f32); 2] {
+    let t = t.rem_euclid(TAP_PERIOD);
+    // イージングは animation に集約する（減速して止まる・加速して消える）。
+    let out = |k: f32| Motion::Enter.ease(k);
+    TAPS.map(|at| {
+        let dt = t - at;
+        if (0.0..PRESS).contains(&dt) {
+            let k = dt / PRESS;
+            (1.0 - PRESS_DEPTH * out(k), out(k))
+        } else if (PRESS..PRESS + RIPPLE).contains(&dt) {
+            let k = (dt - PRESS) / RIPPLE;
+            (
+                1.0 - PRESS_DEPTH + (PRESS_DEPTH + RIPPLE_GROW) * out(k),
+                1.0 - Motion::Exit.ease(k),
+            )
+        } else {
+            (1.0, 0.0)
+        }
+    })
+}
+
+/// 登場の進み具合（0〜1）。`elapsed` は [`Zoom::enter`] からの秒。待ってから減速しつつ上がる（`Motion::Enter`）。
+pub fn entrance(elapsed: f32) -> f32 {
+    Motion::Enter.ease(((elapsed - ENTER_DELAY) / ENTER).clamp(0.0, 1.0))
+}
+
+/// コントローラを寄って映し、部品 `parts` をダブルタップの波紋（2 つずつ、押すと沈み、離すと広がって消える）で示す。
+/// 常に出ている円は無い（ボタンと刻印を隠さない）。`enter` を渡すと、その時刻から下から上がりつつ現れ、上がりきってから波紋を出す。
+/// `zoom(model, hand).size(w, h).parts(vec!["x"]).fade(px(160.)).enter(Some(at))`。枠の外は切る。
+#[derive(IntoElement)]
+pub struct Zoom {
+    model: Model,
+    hand: Hand,
+    w: f32,
+    h: f32,
+    parts: Vec<&'static str>,
+    fade: f32,
+    enter: Option<std::time::Instant>,
+}
+
+pub fn zoom(model: Model, hand: Hand) -> Zoom {
+    Zoom {
+        model,
+        hand,
+        w: 400.0,
+        h: 400.0,
+        parts: Vec::new(),
+        fade: 0.0,
+        enter: None,
+    }
+}
+
+impl Zoom {
+    pub fn size(mut self, w: Pixels, h: Pixels) -> Self {
+        (self.w, self.h) = (f32::from(w), f32::from(h));
+        self
+    }
+
+    /// 示す部品（[`Controller::parts`]）。画像に無い部品は示さない。
+    pub fn parts(mut self, parts: Vec<&'static str>) -> Self {
+        self.parts = parts;
+        self
+    }
+
+    /// 枠の上端からこの高さ（px）で、画像を地（パネルの背景色）へ溶かす。上に重なる文字と干渉させない。
+    pub fn fade(mut self, fade: Pixels) -> Self {
+        self.fade = f32::from(fade);
+        self
+    }
+
+    /// 現れ始める時刻（[`design::drive::now`] の時計）。`None` なら最初から出ている。
+    pub fn enter(mut self, at: Option<std::time::Instant>) -> Self {
+        self.enter = at;
+        self
+    }
+}
+
+/// 登場の無いときの波紋の時刻の起点（周期の位相をそろえるだけなので、最初に描いた時刻でよい）。
+static EPOCH: OnceLock<std::time::Instant> = OnceLock::new();
+
+impl RenderOnce for Zoom {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = Theme::current(cx);
+        let accent = Hsla::from(rgba(theme.accent_solid));
+        let (size, at) = framing(self.model, self.hand, self.w, self.h);
+        let scale = size / IMAGE_PX;
+        let (image, _) = asset(self.model, self.hand);
+        let now = design::drive::now();
+        // 波紋は上がりきってから。
+        let (shown, t) = match self.enter {
+            Some(at) => {
+                let elapsed = now.saturating_duration_since(at).as_secs_f32();
+                (entrance(elapsed), elapsed - ENTER_DELAY - ENTER)
+            }
+            None => (
+                1.0,
+                now.duration_since(*EPOCH.get_or_init(|| now)).as_secs_f32(),
+            ),
+        };
+        let ripples = double_tap(t).map(|(g, a)| (g, if t < 0.0 { 0.0 } else { a }));
+        let found: Vec<Part> = self
+            .parts
+            .iter()
+            .flat_map(|p| parts(self.model, self.hand, p))
+            .filter(|p| p.visible)
+            .collect();
+        if !found.is_empty() || shown < 1.0 {
+            design::drive::keep_drawing(window, cx);
+        }
+        let circle = |c: Point<f32>, r: f32, w: f32, color: Hsla| {
+            div()
+                .absolute()
+                .left(px(c.x - r))
+                .top(px(c.y - r))
+                .size(px(2.0 * r))
+                .rounded_full()
+                .circular_corners()
+                .border(px(w))
+                .border_color(color)
+        };
+        let bg = Hsla::from(rgba(theme.background));
+        div()
+            .relative()
+            .flex_none()
+            .w(px(self.w))
+            .h(px(self.h))
+            .overflow_hidden()
+            .child(
+                // 画像と波紋は一緒に上がってくる（溶かしの帯は枠に留まる）。
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px((1.0 - shown) * ENTER_RISE * self.h))
+                    .size_full()
+                    .opacity(shown)
+                    .child(
+                        img(image.clone())
+                            .absolute()
+                            .left(px(at.x))
+                            .top(px(at.y))
+                            .size(px(size)),
+                    )
+                    .children(found.iter().flat_map(|p| {
+                        let c = point(at.x + p.x * scale, at.y + p.y * scale);
+                        let r = (p.radius.min(RING_MAX) * scale).max(RING_MIN) + RING_PAD;
+                        let waves = ripples
+                            .iter()
+                            .filter(|(_, a)| *a > 0.0)
+                            .map(|&(grow, a)| circle(c, r * grow, RIPPLE_W, accent.opacity(a)))
+                            .collect::<Vec<_>>();
+                        // 示す部品の位置（見えない。テストが場所を確かめる）。
+                        let id = format!("zoom-ring-{}", p.id);
+                        let anchor =
+                            circle(c, r, 0.0, accent.opacity(0.0)).debug_selector(move || id);
+                        waves.into_iter().chain([anchor])
+                    })),
+            )
+            .when(self.fade > 0.0, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .w_full()
+                        .h(px(self.fade))
+                        .bg(gpui::linear_gradient(
+                            180.0,
+                            gpui::linear_color_stop(bg, 0.0),
+                            gpui::linear_color_stop(bg.opacity(0.0), 1.0),
+                        )),
+                )
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,5 +874,80 @@ mod tests {
                 assert!(trigger.targets.iter().all(|(r, _)| r.is_none()));
             }
         }
+    }
+
+    /// 寄って映すと、どの機種も顔（握り以外の見えるボタン）が枠の中に収まり、枠の幅か高さの割合いっぱいになる。
+    /// ボタンの並ぶ広さが違うので、機種ごとに倍率が変わる。
+    #[test]
+    fn framing_fits_each_face_into_the_box() {
+        let (w, h) = (1152.0, 560.0);
+        let mut scales = Vec::new();
+        for model in Model::ALL {
+            for hand in [Hand::Left, Hand::Right] {
+                let (size, at) = framing(model, hand, w, h);
+                let s = size / IMAGE_PX;
+                let (lo, hi) = face(model, hand);
+                let (lo, hi) = (
+                    point(at.x + lo.x * s, at.y + lo.y * s),
+                    point(at.x + hi.x * s, at.y + hi.y * s),
+                );
+                assert!(
+                    lo.x >= 0.0 && lo.y >= 0.0 && hi.x <= w && hi.y <= h,
+                    "{model:?} {hand:?}"
+                );
+                let full = ((hi.x - lo.x) / (w * FACE_W)).max((hi.y - lo.y) / (h * FACE_H));
+                assert!((full - 1.0).abs() < 1e-3, "{model:?} {hand:?} {full}");
+                assert!(((lo.x + hi.x) / 2.0 - w / 2.0).abs() < 1e-2);
+                scales.push(s);
+            }
+        }
+        let (min, max) = scales
+            .iter()
+            .fold((f32::MAX, 0f32), |(a, b), s| (a.min(*s), b.max(*s)));
+        assert!(max > min * 1.3, "機種ごとに寄り方が違う: {min} {max}");
+    }
+
+    /// ダブルタップ: 周期ごとに波紋が 2 つ、押すと沈みながら現れ、離すと外へ広がって消える。2 つ目のあとは何も出ずに待つ。
+    #[test]
+    fn double_tap_ripples_twice_then_rests() {
+        for (i, at) in TAPS.into_iter().enumerate() {
+            // 押す: 透明から濃くなりつつ、円より内へ沈む。
+            let press: Vec<(f32, f32)> = (0..5)
+                .map(|n| double_tap(at + PRESS * n as f32 / 5.0)[i])
+                .collect();
+            assert_eq!(press[0], (1.0, 0.0), "いきなり出ない");
+            assert!(
+                press.windows(2).all(|w| w[1].0 < w[0].0 && w[1].1 > w[0].1),
+                "{press:?}"
+            );
+            // 離す: 外へ広がり、広がる間は濃い。
+            let sizes: Vec<f32> = (0..8)
+                .map(|n| double_tap(at + PRESS + RIPPLE * n as f32 / 8.0)[i].0)
+                .collect();
+            assert!(
+                sizes.windows(2).all(|w| w[1] > w[0]) && sizes[7] > 1.0,
+                "{sizes:?}"
+            );
+            assert!(
+                double_tap(at + PRESS + RIPPLE * 0.5)[i].1 > 0.5,
+                "広がる間は濃い"
+            );
+        }
+        assert!(double_tap(TAP_PERIOD - 0.1).iter().all(|(_, a)| *a == 0.0));
+        let both = double_tap(0.4);
+        assert!(both.iter().all(|(_, a)| *a > 0.0), "{both:?}");
+        let (a, b) = (double_tap(0.1)[0], double_tap(0.1 + TAP_PERIOD)[0]);
+        assert!((a.0 - b.0).abs() < 1e-4, "繰り返す");
+    }
+
+    /// 登場: 少し待ってから、減速しつつ現れきる。
+    #[test]
+    fn entrance_waits_then_eases_in() {
+        assert_eq!(entrance(0.0), 0.0);
+        assert_eq!(entrance(ENTER_DELAY), 0.0);
+        let mid = entrance(ENTER_DELAY + ENTER / 2.0);
+        assert!(mid > 0.5 && mid < 1.0, "{mid}");
+        assert_eq!(entrance(ENTER_DELAY + ENTER), 1.0);
+        assert_eq!(entrance(10.0), 1.0);
     }
 }

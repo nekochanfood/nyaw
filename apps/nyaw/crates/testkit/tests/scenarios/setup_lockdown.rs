@@ -30,7 +30,7 @@ fn flat_distance(a: Vec3, b: Vec3) -> f32 {
 
 #[gpui::test]
 fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppContext) {
-    let mut kit = VrKit::new(cx, |_, _| SetupWizard::new(0));
+    let mut kit = VrKit::new(cx, |_, cx| SetupWizard::build(0, cx));
     // 起動仕様（`setup::spec`）と同じロックダウンおよび追従を設定する。
     kit.kernel.apply(0, PanelCommand::Lockdown(true));
     kit.kernel.apply(
@@ -80,22 +80,45 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
     assert!((flat_distance(p, walked.position) - d).abs() < 5e-2, "{p}");
     assert!((p.y - 1.0).abs() < 5e-2, "高さ {}", p.y);
 
-    // 追従中でも操作可能: 最後まで進めて完了すると、ロックダウンが解除されてパネルが閉じる。
+    // 追従中でも操作可能: 最後まで進める。完了画面ではロックダウンを解き（ショートカットの二回押しでダッシュボードを開けるように）、
+    // 二回押しで完了する（novr の通し操作 `setup::setup_decides_each_setting_and_marks_done`）。
     // 非表示のステップ（OpenVR 以外での SteamVR ステップ）はスキップされるため、ステップ数ではなく末尾まで押す。
     for _ in 1..setup::STEPS.len() {
         if kit.read(|v| v.wizard.is_last()) {
             break;
         }
+        assert!(
+            kit.kernel.settings().lockdown,
+            "完了画面まではロックダウンを続ける"
+        );
         kit.click("setup-next");
     }
     assert!(kit.read(|v| v.wizard.is_last()));
-    assert!(
-        kit.kernel.settings().lockdown,
-        "「完了」押下までロックダウンは継続する"
-    );
-    kit.click("setup-finish");
     kit.step();
-    assert!(kit.kernel.settings().setup_done);
     assert!(!kit.kernel.settings().lockdown);
-    assert!(kit.kernel.panel(0).closed);
+    assert!(!kit.kernel.panel(0).closed, "二回押すまで開いたまま");
+}
+
+/// 完了画面は、左手で使用中のコントローラを映し、その機種のショートカットのボタンを示す（Index なら A）。
+#[gpui::test]
+fn done_page_shows_the_left_controller_in_use(cx: &mut TestAppContext) {
+    let mut kit = VrKit::new(cx, |_, cx| {
+        let mut v = SetupWizard::build(0, cx);
+        for _ in setup::STEPS {
+            v.go(true, &kernel::Settings::default());
+        }
+        v
+    });
+    kit.hand(kernel::Hand::Left)
+        .profile("valve/index_controller")
+        .render_model("{indexcontroller}valve_controller_knu_1_0_left");
+    kit.step().step();
+    assert!(kit.try_bounds("zoom-ring-a").is_some());
+    assert!(kit.try_bounds("zoom-ring-x").is_none());
+    // 開発ビルドだけ、右上のドロップダウンでほかの機種を映せる。
+    kit.click("setup-controller")
+        .click("setup-controller-oculus_quest_plus_controller_left");
+    assert_eq!(kit.read(|v| v.preview), Some(guide::Model::QuestPlus));
+    assert!(kit.try_bounds("zoom-ring-x").is_some());
+    assert!(kit.try_bounds("zoom-ring-a").is_none());
 }
