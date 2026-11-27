@@ -17,8 +17,9 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    // 開発サーバーはページごとにモジュールを変換し直して遅いので、ビルドしたものを配信する
-    command: `pnpm run build && pnpm exec vite preview --host 127.0.0.1 --port ${port} --strictPort`,
+    // 開発サーバーはページごとにモジュールを変換し直して遅いので、ビルドしたものを配信する。
+    // Windows のコマンドプロンプトからも動くよう、pnpm を介さずに起動する
+    command: `node scripts/tokens.mjs && npx vite build && npx vite preview --host 127.0.0.1 --port ${port} --strictPort`,
     url: `http://127.0.0.1:${port}/robots.txt`,
     reuseExistingServer: !process.env.CI,
     timeout: 300_000,

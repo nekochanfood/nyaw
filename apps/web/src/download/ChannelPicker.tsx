@@ -128,7 +128,7 @@ export function ChannelPicker({ state }: { state: ReturnType<typeof useReleases>
           key={c}
           value={c}
           ref={c === channel ? enter : undefined}
-          className="flex flex-col gap-4 outline-none"
+          className="flex flex-col gap-4 outline-none [&[hidden]]:hidden"
         >
           <p className={cx(textClass("muted"), "max-w-xl")}>{t(`${c}_body`)}</p>
           {body(c)}

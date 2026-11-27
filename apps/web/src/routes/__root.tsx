@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 import { createRootRoute, HeadContent, Outlet, Scripts, useParams } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 
 import iconDark from "@assets/logos/Logo_Mini_Dark.svg?url";
 import iconLight from "@assets/logos/Logo_Mini_Light.svg?url";
@@ -33,6 +33,10 @@ export const Route = createRootRoute({
 
 function Shell({ children }: { children: ReactNode }) {
   const { locale } = useParams({ strict: false });
+  // 操作を受け付けられるようになった印。E2E テストはこれを待ってから操作する
+  useEffect(() => {
+    document.documentElement.dataset.hydrated = "";
+  }, []);
   return (
     // data-theme は描画の前に themeScript が付けるので、サーバーの HTML と食い違う
     <html lang={isLocale(locale) ? locale : defaultLocale} suppressHydrationWarning>

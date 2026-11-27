@@ -3,3 +3,5 @@ dist/
 .tanstack/
 # scripts/tokens.mjs が生成する
 src/tokens.css
+test-results/
+playwright-report/

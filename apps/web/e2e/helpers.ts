@@ -41,8 +41,12 @@ export async function mockReleases(page: Page, status = 200) {
   );
 }
 
-/** 開いたページで、起動の動きとスクロールで現れる要素の動きが終わるのを待たずに読めるようにする */
+/**
+ * 動きを減らす設定でページを開き、操作を受け付けられるようになるまで待つ。
+ * 起動の動きやスクロールで現れる要素の動きを待たずに読め、ハイドレーションの前に押して空振りすることもない。
+ */
 export async function gotoStill(page: Page, path: string) {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto(path);
+  await page.locator("html[data-hydrated]").waitFor({ state: "attached" });
 }
