@@ -26,7 +26,8 @@ pub struct ControllerState {
     /// パネルをグラブして移動する。
     pub grab: bool,
     pub menu: bool,
-    /// ショートカットボタン（左手の下のボタン。Touch は X、Index は左手の A）。用途は画面が決定する。右手では常に `false`。
+    /// ショートカットボタン（左手の下のボタン。Touch は X、Index は左手の A、Vive は左手のトラックパッドのクリック、
+    /// Steam Frame は左手の十字キーの下）。用途は画面が決定する。右手では常に `false`。
     pub shortcut: bool,
     pub scroll: Vec2,
     /// グラブ中パネルの拡縮（-1..1、+ で拡大）。機種の割り当ては無く、[`vr::RESIZE_INPUT`] をそのまま読み取る。
@@ -98,10 +99,24 @@ const PROFILES: &[Profile] = &[
         select: &["trigger/value", "select/click"],
         grab: &["squeeze/click"],
         menu: &["menu/click"],
-        shortcut: &[],
+        // ほかのボタンはすべて別の操作に使うので、スクロールに使うトラックパッドのクリック（押し込み）。
+        shortcut: &["trackpad/click"],
         scroll: Some(("trackpad/x", "trackpad/y")),
     },
+    // Steam Frame（SteamVR の `frame_controller`）。OpenXR にプロファイルが無いので nyaw の名前。割り当ては、SteamVR が
+    // Touch の割り当てを Frame へ移すときと同じ（左の X → 十字キーの下、左の Y → 十字キーの上）。
+    Profile {
+        id: FRAME_PROFILE,
+        select: &["trigger/value", "select/click"],
+        grab: &["squeeze/value"],
+        menu: &["dpad_up/click", "b/click"],
+        shortcut: &["dpad_down/click"],
+        scroll: Some(("thumbstick/x", "thumbstick/y")),
+    },
 ];
+
+/// Steam Frame のプロファイル（OpenXR に無いので nyaw の名前）。
+pub const FRAME_PROFILE: &str = "valve/frame_controller";
 
 /// 骨格だけの手のプロファイル（OpenXR の XR_EXT_hand_interaction に揃える）。
 pub const HAND_PROFILE: &str = "ext/hand_interaction_ext";
@@ -571,7 +586,7 @@ const MODELS: &[(Model, &str, &[&str], bool, &str)] = &[
         "Steam Frame Controller",
         &["frame_controller"],
         false,
-        "oculus/touch_controller",
+        FRAME_PROFILE,
     ),
 ];
 
@@ -670,6 +685,7 @@ impl Controller {
             model: Model::from_render_model(&raw.model).unwrap_or(match profile.id {
                 "valve/index_controller" => Model::Index,
                 "htc/vive_controller" => Model::Vive,
+                FRAME_PROFILE => Model::Frame,
                 _ => Model::QuestPlus,
             }),
             profile,
@@ -780,6 +796,18 @@ mod tests {
         assert_eq!(scroll_source("khr/simple_controller"), None);
     }
 
+    /// どのコントローラにも、左手にショートカット（二回押しでダッシュボード）の入力がある（無いとダッシュボードを開けない）。
+    #[test]
+    fn every_controller_has_a_shortcut() {
+        for p in PROFILES.iter().filter(|p| p.id != SIMPLE.id) {
+            assert!(!p.shortcut.is_empty(), "{}", p.id);
+        }
+        for m in Model::ALL {
+            let parts = Controller::of(m).parts(Control::Shortcut, Hand::Left);
+            assert!(!parts.is_empty(), "{m:?}");
+        }
+    }
+
     /// ランタイムが数えたダブルタップは、手を問わずそのまま伝わる。
     #[test]
     fn runtime_double_press_passes_through() {
@@ -788,7 +816,7 @@ mod tests {
         assert!(!map(&raw("valve/index_controller", &[]), None).double_press);
     }
 
-    /// X ボタンは左手だけ。右手の同じボタン（Index の A）は数えない。
+    /// ショートカットは左手だけ。右手の同じボタン（Index の A）は数えない。
     #[test]
     fn shortcut_is_left_hand_x() {
         let left = |r: RawController| RawController {
@@ -800,7 +828,11 @@ mod tests {
         let index = raw("valve/index_controller", &[("a/click", 1.0)]);
         assert!(!map(&index, None).shortcut);
         assert!(map(&left(index), None).shortcut);
-        assert_eq!(source("htc/vive_controller", Action::Shortcut), None);
+        // Vive は左のトラックパッドのクリック、Steam Frame は左の十字キーの下。
+        let vive = raw("htc/vive_controller", &[("trackpad/click", 1.0)]);
+        assert!(map(&left(vive), None).shortcut);
+        let frame = raw(FRAME_PROFILE, &[("dpad_down/click", 1.0)]);
+        assert!(map(&left(frame), None).shortcut);
     }
 
     use std::f32::consts::PI;
@@ -1163,6 +1195,10 @@ mod tests {
         assert_eq!(quest.parts(Control::Shortcut, Hand::Left), ["x"]);
         let vive = Controller::of(Model::Vive);
         assert_eq!(vive.parts(Control::Scroll, Hand::Right), ["trackpad"]);
+        assert_eq!(vive.parts(Control::Shortcut, Hand::Left), ["trackpad"]);
+        let frame = Controller::of(Model::Frame);
+        assert_eq!(frame.parts(Control::Shortcut, Hand::Left), ["dpad_down"]);
+        assert_eq!(frame.parts(Control::Menu, Hand::Left), ["dpad_up", "b"]);
         // PICO を簡易コントローラの割り当てで読んでいる（SteamVR に既定のバインドが無い）。
         let mut r = raw("khr/simple_controller", &[]);
         r.model = "pico_4_controller_right".into();

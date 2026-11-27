@@ -852,6 +852,8 @@ fn profile(controller_type: &str) -> &'static str {
         "knuckles" => "valve/index_controller",
         "oculus_touch" => "oculus/touch_controller",
         "vive_controller" => "htc/vive_controller",
+        // OpenXR に無いので nyaw の名前（入力層の `FRAME_PROFILE`）。
+        "frame_controller" => "valve/frame_controller",
         _ => "khr/simple_controller",
     }
 }
@@ -859,11 +861,11 @@ fn profile(controller_type: &str) -> &'static str {
 /// SteamVR Input のアクションを、入力層が機種ごとに引く OpenXR の入力名で表す。
 fn inputs(profile: &str, hand: Hand, a: HandActions) -> Vec<(String, f32)> {
     let on = |b: bool| if b { 1.0 } else { 0.0 };
-    // Index のメニューは B ボタン。他の機種の表では menu/click で引く。
-    let menu = if profile == "valve/index_controller" {
-        "b/click"
-    } else {
-        "menu/click"
+    // Index のメニューは B ボタン、Steam Frame は左の十字キーの上と右の B。他の機種の表では menu/click で引く。
+    let menu = match (profile, hand) {
+        ("valve/index_controller", _) | ("valve/frame_controller", Hand::Right) => "b/click",
+        ("valve/frame_controller", Hand::Left) => "dpad_up/click",
+        _ => "menu/click",
     };
     let (middle, right) = match hand {
         Hand::Left => ("y/touch", "x/touch"),
@@ -977,6 +979,7 @@ mod tests {
         assert_eq!(profile("knuckles"), "valve/index_controller");
         assert_eq!(profile("oculus_touch"), "oculus/touch_controller");
         assert_eq!(profile("vive_controller"), "htc/vive_controller");
+        assert_eq!(profile("frame_controller"), "valve/frame_controller");
         assert_eq!(profile("unknown_thing"), "khr/simple_controller");
     }
 
@@ -1013,5 +1016,11 @@ mod tests {
         assert_eq!(value(&left, "a/touch"), None);
         assert_eq!(value(&right, "b/touch"), Some(1.0));
         assert_eq!(value(&right, "y/touch"), None);
+        // Steam Frame のメニューは左の十字キーの上と右の B。
+        let left = inputs("valve/frame_controller", Hand::Left, a);
+        let right = inputs("valve/frame_controller", Hand::Right, a);
+        assert_eq!(value(&left, "dpad_up/click"), Some(1.0));
+        assert_eq!(value(&right, "b/click"), Some(1.0));
+        assert_eq!(value(&left, crate::DOUBLE_PRESS_INPUT), Some(1.0));
     }
 }

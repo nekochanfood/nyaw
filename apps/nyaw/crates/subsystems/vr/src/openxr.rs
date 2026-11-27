@@ -63,6 +63,7 @@ const BINDINGS: &[(&str, &[&str])] = &[
             "trigger/value",
             "squeeze/click",
             "menu/click",
+            "trackpad/click",
             "trackpad/x",
             "trackpad/y",
         ],
