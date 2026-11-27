@@ -91,11 +91,11 @@ export function Header() {
   return (
     <header ref={ref} className="header-band sticky top-(--frame-gutter) z-30 h-16">
       {/*
-        スマートフォンの幅では、高さ 64px に 40px のボタンを置いた上下の余白（12px）と左右の余白をそろえる。
-        それより広い幅では、本文と同じ余白（containerClass）にして、項目の端を本文の端にそろえる。
-        両端の項目は、ボタンの中の余白の分だけ外へ出し、アイコンやロゴの見た目の端を本文の端に合わせる
+        高さ 64px に 40px のボタンを置くので、上下の余白は 12px。右のボタンは右も 12px にして、カードの右上の角に収める。
+        左は、スマートフォンの幅では 12px にし、それより広い幅では本文と同じ余白（containerClass）にして本文の端に
+        そろえる。左端の項目はボタンの中の余白の分だけ外へ出し、アイコンやロゴの見た目の端を本文の端に合わせる
       */}
-      <div className="flex h-full w-full items-center justify-between gap-2 px-3 sm:px-8">
+      <div className="flex h-full w-full items-center justify-between gap-2 pr-3 pl-3 sm:pl-8">
         <div className="flex items-center gap-2">
           {/* 狭い画面のメニューのボタン。ロゴの左隣に置く */}
           <div data-header-item className="sm:-ml-2.5 md:hidden">
@@ -129,7 +129,7 @@ export function Header() {
             ))}
           </nav>
         </div>
-        <div data-menu-hide className="flex items-center gap-1 sm:-mr-2.5">
+        <div data-menu-hide className="flex items-center gap-1">
           <div data-header-item className="hidden sm:block">
             <Tooltip label={t("github")}>
               <ButtonAnchor href={REPO_URL} target="_blank" rel="noopener" aria-label={t("github")}>
