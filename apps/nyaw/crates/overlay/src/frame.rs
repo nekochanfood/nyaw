@@ -31,6 +31,28 @@ impl Overlay {
             width as usize * height as usize * 4,
             "invalid RGBA buffer size"
         );
+        self.submit_with(vr, panel, width, height, |s| s.store(width, height, rgba));
+    }
+
+    /// 表示サーバーの画像（配信の画面）を、CPU を介さずランタイムの GPU へ取り込ませる（[`Self::submit`] と同じ扱い）。
+    pub fn submit_external(
+        &mut self,
+        vr: &mut dyn VrBackend,
+        panel: PanelId,
+        image: Arc<vr::ExternalImage>,
+    ) {
+        let (width, height) = (image.width, image.height);
+        self.submit_with(vr, panel, width, height, |s| s.store_external(image));
+    }
+
+    fn submit_with(
+        &mut self,
+        vr: &mut dyn VrBackend,
+        panel: PanelId,
+        width: u32,
+        height: u32,
+        store: impl FnOnce(&mut Surface),
+    ) {
         let p = &mut self.panels[panel];
         if p.closed {
             return;
@@ -44,7 +66,7 @@ impl Overlay {
         if entering {
             p.opacity = 0.0;
         }
-        p.surface.store(width, height, rgba);
+        store(&mut p.surface);
         Self::present(vr, p, true);
         if entering && !p.hidden {
             // 初回の GPU 転送が終わってから時計を始める。

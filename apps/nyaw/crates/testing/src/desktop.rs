@@ -55,6 +55,7 @@ fn status_text(status: Option<&Status>, cx: &App) -> SharedString {
     match status {
         None => i18n::t(cx, "desktop.idle"),
         Some(Status::Starting) => i18n::t(cx, "desktop.starting"),
+        Some(Status::Permission) => i18n::t(cx, "desktop.permission"),
         Some(Status::Streaming) => i18n::t(cx, "desktop.streaming"),
         Some(Status::Minimized) => i18n::t(cx, "desktop.minimized"),
         Some(Status::Closed) => i18n::t(cx, "desktop.closed"),
@@ -497,7 +498,7 @@ impl Render for MirrorPreview {
 }
 
 /// 理由別のサンプルエラー（実際のメッセージを使用するため、分類の不整合をここで検出できる）。
-fn failure_samples() -> [(&'static str, Error); 6] {
+fn failure_samples() -> [(&'static str, Error); 8] {
     use kernel::desktop::failure::*;
     [
         (
@@ -511,6 +512,8 @@ fn failure_samples() -> [(&'static str, Error); 6] {
             Error(INVALID_BOUNDS.into()),
         ),
         ("mirror-case-failed-graphics", Error(D3D_DEVICE.into())),
+        ("mirror-case-failed-denied", Error(DENIED.into())),
+        ("mirror-case-failed-notshared", Error(NOT_SHARED.into())),
         (
             "mirror-case-failed-other",
             Error("unexpected failure (0x80004005)".into()),
@@ -518,10 +521,11 @@ fn failure_samples() -> [(&'static str, Error); 6] {
     ]
 }
 
-const MIRROR_STATES: [(MirrorState, &str); 6] = [
+const MIRROR_STATES: [(MirrorState, &str); 7] = [
     (MirrorState::Launching, "mirror-case-launching"),
     (MirrorState::LaunchFailed, "mirror-case-launch-failed"),
     (MirrorState::Starting, "mirror-case-starting"),
+    (MirrorState::Permission, "mirror-case-permission"),
     (MirrorState::Streaming, "mirror-case-streaming"),
     (MirrorState::Minimized, "mirror-case-minimized"),
     (MirrorState::Closed, "mirror-case-closed"),

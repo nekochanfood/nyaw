@@ -106,7 +106,7 @@ VR ランタイムや重い依存関係（wgpu、minifb、OpenVR、OpenXR）は 
   logger::warn!("パネル描画の取得に失敗しました", error = e, panel = ?panel);
   ```
 - **出力フォーマット**: 1 行 1 件の logfmt 形式を採用する。先頭は `ts=... level=... target=... msg=...` で固定し、以降に任意のキー・値フィールドを記述順で続ける。キー名は snake_case とし、`target` には `module_path!()` を記録する。
-- **出力先とログ退避**: 出力先は標準エラー出力（`logger::StderrSink`）とローカルログファイル（`logger::FileSink`、Windows 環境では `%LOCALAPPDATA%\nyaw\logs\nyaw.log`）の 2 系統とする。起動時に前回のログを `nyaw-prev.log` に 1 世代のみ退避し、新規にファイルを作成する。
+- **出力先とログ退避**: 出力先は標準エラー出力（`logger::StderrSink`）とローカルログファイル（`logger::FileSink`、Windows 環境では `%LOCALAPPDATA%\nyaw\logs\nyaw.log`、Linux 環境では `$XDG_STATE_HOME/nyaw/logs/nyaw.log`）の 2 系統とする。起動時に前回のログを `nyaw-prev.log` に 1 世代のみ退避し、新規にファイルを作成する。
 - **ログレベルの制御**: 環境変数 `NYAW_LOG`（`trace` / `debug` / `info` / `warn` / `error`、既定値は `info`）で動的に制御する。初期化完了前のログは標準エラー出力へ `info` レベル以上で出力される。外部ライブラリ（GPUI など）のログも同ロガーへ転送し、パニック時もフックを通じて `error` として記録する。
 
 ## ランタイムの設計思想
@@ -116,6 +116,14 @@ nyaw において、novr（ウィンドウ型エミュレーター）、SteamVR 
 - **novr の位置づけ**: novr はテスト専用の暫定実装ではなく、実機 VR を持たない環境や通常開発において日常的に利用される正式なランタイムである。そのため、ビルド済みバイナリにおいても常時利用可能とする。
 - **上位層の非依存性**: UI 層以上のコンポーネントは、背後で動作しているランタイムの種類によって処理を分岐させない。どのランタイムであっても、パネルは GPUI の非表示オフスクリーンウィンドウ上で描画され、ピクセルデータとして読み戻された後にオーバーレイ層へ転送される。
 - **機能差の許容**: コントローラの 6 自由度トラッキングやパネルの直接掴み移動など、VR ハードウェアに固有の機能が novr 上で代替されないことは仕様として許容する。ただし、ポインタによる基本操作や画面遷移はすべてのランタイムで同一に実行できなければならない。
+
+## 対応 OS
+
+nyaw は Windows と Linux で動作する。OS の差異は Subsystems 層で吸収し、UI 層以上のコードは OS によって処理を分岐させない。
+
+- **保存先・ランタイム検出・タイマーなど**: `crates/subsystems/os` が OS ごとのバックエンドを持つ（[`crates/subsystems/os/AGENT.md`](crates/subsystems/os/AGENT.md)）。
+- **パネルの描画**: Windows では GPUI 標準の非表示ウィンドウ（Direct3D）、Linux では表示サーバーに接続しないオフスクリーンのウィンドウ（wgpu）で描画する。差異は `crates/subsystems/rendering` が吸収する（[`crates/subsystems/rendering/AGENT.md`](crates/subsystems/rendering/AGENT.md)）。
+- **OS との連携機能**: 画面の配信と入力注入、および OS へのキー入力の送信は、Windows と Linux の両方で実装している（`desktop`。Linux は X11・wlroots・xdg-desktop-portal を使い分ける。詳細は [`crates/subsystems/desktop/AGENT.md`](crates/subsystems/desktop/AGENT.md)）。再生中のメディアの取得と操作（`media`。Windows は GSMTC、Linux は MPRIS）と、アプリ ID からの名前とアイコンの解決（`desktop`）も、Windows と Linux の両方で実装している。個別のウィンドウの配信、アプリの一覧と起動（`desktop`）、OS 通知の取得（`notifications`）は、現在 Windows でのみ実装している。Linux ではこれらのサブシステムが「利用できない」ことを返し、上位層はその状態で動作を続ける（たとえばランチャーは、利用できない旨を表示する）。
 
 ## フレームサイクルの処理手順
 
@@ -187,10 +195,24 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 
 本プロジェクトは Calendar Versioning（CalVer（現在 `2026.0.4-dev.0`、形式: `YYYY.MINOR.MICRO[-dev.PATCH]`））を採用しており、`Cargo.toml` の `[workspace.package]` で一括管理する。
 
-- **タグ命名規則**: リリースタグは `v<CalVer>`（安定版）または `v<CalVer>-<チャネル名>.<番号>`（プレリリース版）とする。
-- **正式リリースの流れ**: GitHub Actions の `prepare-release.yml` ワークフローにバージョン番号を指定して実行すると、バージョン更新の Pull Request が自動生成される。この PR をマージすると、`release.yml` がインストーラーをビルドし、GitHub Releases に正式版が発行される。発行完了後、`main` ブランチのバージョン番号は自動的に次の版の `-dev.0` へ進む。
+- **タグ命名規則**: リリースタグは `v<CalVer>`（安定版）または `v<CalVer>-<チャネル名>.<番号>`（プレリリース版）とする。チャネル名は英数字に限る（`release.yml` と `prepare-release.yml` が検査する）。Linux のパッケージのバージョンは非 ASCII 文字を使えず、ハイフンは区切りになるためである。パッケージのバージョンは、deb と rpm では `2026.0.4~beta.1`、pacman では `2026.0.4beta.1` となる。どちらも正式版 `2026.0.4` より古いと判定される。`patch` のように正式版より後に発行するチャネルも同じ扱いになるため、パッケージマネージャーで手動で導入する場合はダウングレードの指定が必要になることがある（アプリの更新はこの指定を含む）。
+- **正式リリースの流れ**: GitHub Actions の `prepare-release.yml` ワークフローにバージョン番号を指定して実行すると、バージョン更新の Pull Request が自動生成される。この PR をマージすると、`release.yml` が Windows のインストーラーと Linux の AppImage を用意し、両方が揃った場合に限り GitHub Releases に正式版を発行する。PR のブランチでビルドした成果物が同じ内容のコミットのものであれば、再ビルドせずに添付する。発行完了後、`main` ブランチのバージョン番号は自動的に次の版の `-dev.0` へ進む。
 - **プレリリースの発行**: ブランチ上で Actions の `release.yml` をチャネル名（alpha や beta など）を指定して手動実行すると、プレリリースが発行される。この際、`Cargo.toml` のバージョン表記は変更しない。
 - **更新判定の基準**: アプリケーション本体による新旧判定は、バージョン文字列ではなくビルド番号（コミット番号およびビルドメタデータ）の大小比較によって行う。
+
+### Linux の配布
+
+`installer/linux.sh` がリリースビルドから AppImage、tar.gz、deb、rpm、pkg.tar.zst を作成し、`.github/workflows/linux.yml` が CI で実行する。deb、rpm、pkg.tar.zst の定義は `installer/nfpm.yaml` にまとめる。
+
+- **ビルド環境**: CI は、形式ごとのディストリビューションのコンテナで並列にビルドする。AppImage、tar.gz、deb は Debian 12、rpm は Fedora、pkg.tar.zst は Arch Linux でビルドする。ビルドした環境より古い glibc では起動できないため、各パッケージはバイナリが参照する最も新しい glibc の版を依存関係に記載する。広い環境を対象とする AppImage と tar.gz は、最も古い Debian 12（glibc 2.36）でビルドする。Debian 12 では、PipeWire の Rust のバインディングは、Debian 12 標準の 0.3.65 のヘッダーにない定数を参照するため、PipeWire の開発パッケージは `bookworm-backports` から導入する。実行時には標準の PipeWire を使える（`linux.yml` が確認する）。
+- **同梱するライブラリ**: Steam Audio（`libphonon.so`）だけを実行ファイルの隣に置く。Vulkan のローダーとドライバ、ALSA、PipeWire は、実行する環境の設定やプラグインと組み合わせて動作するため同梱しない。他の共有ライブラリも実行する環境のものを使い、パッケージは依存関係として宣言する。依存関係には、リンクの一覧に現れない、実行時に読み込むライブラリ（Vulkan のローダー、エミュレーターのウィンドウが使う X11 と Wayland のライブラリ）も含める。
+- **配置**: パッケージは `/usr/lib/nyaw/` に実行ファイル、Steam Audio、更新情報を置き、`/usr/bin/nyaw` をシンボリックリンクにする。
+- **AppImage**: AppRun は実行ファイルへのシンボリックリンクとする。`LD_LIBRARY_PATH` などを設定すると、nyaw が起動する子プロセスにも引き継がれる。ランタイムは静的リンクの type2-runtime であり、実行する環境に libfuse2 は不要だが、マウントには FUSE が必要である。
+- **起動用のパス**: AppImage の実行ファイルはマウント先にあるため、アプリのパスを外部に登録する処理は `os::launch_path` を使う（[`crates/subsystems/os/AGENT.md`](crates/subsystems/os/AGENT.md)）。
+- **更新情報**: AppImage は、ランタイムの `.upd_info` セクションに AppImage の仕様の更新情報（`gh-releases-zsync`）を書き込み、差分更新の索引（`.zsync`）をリリースに添付する。他の形式は、同じ書式の `update-info` ファイルを実行ファイルの隣に置く。対象のリリースの範囲は、正式版では `latest`、プレリリース版では `latest-all` とする。更新の仕組みは [`crates/subsystems/update/AGENT.md`](crates/subsystems/update/AGENT.md) を参照する。
+- **ファイル名**: アセット名はアプリの更新が配布形式の判別に使う。名前を変える場合は、`update` クレートの `Package` も合わせて変える。
+- **外部の道具**: type2-runtime と nfpm は、版と SHA-256 を `installer/linux.sh` で固定する。
+- **確認**: 配布物の構成や更新の処理を変更したブランチでは、push で `linux.yml` が実行される。`installer/smoke.sh` が各形式を Ubuntu、Debian、Fedora、Arch Linux に導入し、VR ランタイムがない場合の終了、仮想ディスプレイ上でのエミュレーターの動作、Steam Audio の読み込みを確認する。パッケージは、更新で使うインストールのスクリプトで導入する。
 
 ### コード規約と UI 規則
 
@@ -203,7 +225,7 @@ UI 層（`crates/ui`）は単一の共通基盤であり、特定の画面の個
 
 テストスイートは単体テスト、UI 検証、E2E シナリオテストに分類される。なお、重い E2E テストはローカル環境で実行し、CI ジョブには含めない。
 
-- **ワークスペース全体のテスト実行**: `cargo test --workspace` を実行する。ビルドには cmake および C++ コンパイラが必要となる。CI 環境では `cargo fmt --check`、`cargo clippy`、`cargo test` が並列ジョブとして実行される。
+- **ワークスペース全体のテスト実行**: `cargo test --workspace` を実行する。ビルドには cmake および C++ コンパイラが必要となる。CI 環境では `cargo fmt --check`、`cargo clippy`、`cargo test` が並列ジョブとして実行される。`cargo clippy` と `cargo test` は Windows と Linux の両方で実行する。OS ごとの実装はその OS でしかコンパイルされないためである。Linux の `test` は、ワークスペース外の `vendor/gpui_wgpu` のテストも実行する。表示サーバーや VR ランタイムを要する `#[ignore]` のテストは、どちらの OS でも CI では実行しない。
 - **単体テスト**: 各クレート内の `#[cfg(test)]` に記述し、自層の範囲内で完結させる。外部ランタイムとの通信は `vr::mock::MockBackend` を使用する。循環依存を防ぐため、単体テストから `testkit` を参照してはならない。
 - **シナリオテスト**: `crates/testkit/tests/` に配置する。GPUI の `.debug_selector(|| "識別名".into())` を指定して要素を探索・操作し、プロファイル名や生の座標計算をテストコードに直接書かない。
   - **全ランタイム共通テスト**: クリックやホバーなどの基本操作は `Driver` インターフェースに対して 1 回記述し、`on_every_runtime!` マクロを用いて novr および VR の両環境で網羅実行する。

@@ -7,6 +7,7 @@
 
 #[cfg(feature = "novr")]
 mod compositor;
+mod external;
 // openvr と openxr で使用する部分が異なるため、片方のみのビルドでは未使用になる。
 #[cfg(any(feature = "openvr", feature = "openxr"))]
 #[cfg_attr(not(all(feature = "openvr", feature = "openxr")), allow(dead_code))]
@@ -30,6 +31,7 @@ mod openxr;
 
 use std::fmt;
 
+pub use external::{ExternalImage, ImportFormats, Memory, PixelFormat};
 pub use glam::{Mat3, Quat, Vec2, Vec3};
 
 /// 頭がこの角度（ラジアン）を超えて見上げる・横に傾くと、仰臥姿勢とみなし始める（[`Pose::panel_up`]）。
@@ -448,6 +450,19 @@ pub trait VrBackend {
     fn set_overlay_sort(&mut self, id: OverlayId, order: u32);
     /// RGBA8、行間にパディングなし。
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]);
+    /// [`submit_overlay_external`](Self::submit_overlay_external) で取り込める画像。取り込めなければ `None`
+    /// （呼び出し側は RGBA を [`submit_overlay_pixels`](Self::submit_overlay_pixels) で送る）。
+    fn import_formats(&self) -> Option<ImportFormats> {
+        None
+    }
+    /// 表示サーバーの画像を GPU 上で取り込み、RGBA に並べ替えて表示する。`image` は GPU が読み終えるまで保持する。
+    fn submit_overlay_external(
+        &mut self,
+        _id: OverlayId,
+        _image: &std::sync::Arc<ExternalImage>,
+    ) -> Result<(), VrError> {
+        Err(VrError::NotImplemented(self.runtime()))
+    }
     /// オーバーレイを破棄してリソースを返却する。以降 `id` は使用しない。閉じたパネルが蓄積しないよう、既定は何もしない。
     fn destroy_overlay(&mut self, _id: OverlayId) {}
     /// 直前の [`poll`](Self::poll) でランタイムがアプリのスレッドで合成・表示に要した時間（待機は含まない）。
@@ -526,6 +541,16 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {
         (**self).submit_overlay_pixels(id, width, height, rgba)
+    }
+    fn import_formats(&self) -> Option<ImportFormats> {
+        (**self).import_formats()
+    }
+    fn submit_overlay_external(
+        &mut self,
+        id: OverlayId,
+        image: &std::sync::Arc<ExternalImage>,
+    ) -> Result<(), VrError> {
+        (**self).submit_overlay_external(id, image)
     }
     fn destroy_overlay(&mut self, id: OverlayId) {
         (**self).destroy_overlay(id)

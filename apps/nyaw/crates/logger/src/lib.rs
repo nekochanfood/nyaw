@@ -306,13 +306,28 @@ struct Bridge;
 
 static BRIDGE: Bridge = Bridge;
 
+/// 内部の都合を info・warn で記録する外部クレート（D-Bus の zbus など）。error 未満は debug として扱う。
+const CHATTY: &[&str] = &["zbus"];
+
+fn bridged_level(target: &str, level: log::Level) -> Level {
+    let level = from_log_level(level);
+    let chatty = CHATTY
+        .iter()
+        .any(|c| target == *c || target.strip_prefix(c).is_some_and(|t| t.starts_with("::")));
+    if chatty && level != Level::Error {
+        Level::Debug.min(level)
+    } else {
+        level
+    }
+}
+
 impl log::Log for Bridge {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
-        enabled(from_log_level(metadata.level()))
+        enabled(bridged_level(metadata.target(), metadata.level()))
     }
 
     fn log(&self, record: &log::Record) {
-        let level = from_log_level(record.level());
+        let level = bridged_level(record.target(), record.level());
         if !enabled(level) {
             return;
         }
@@ -417,6 +432,18 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    /// zbus の info・warn は debug に下げ、error と他のクレートはそのまま。
+    #[test]
+    fn chatty_crates_are_demoted_below_error() {
+        use log::Level as L;
+        assert_eq!(bridged_level("zbus::proxy", L::Warn), Level::Debug);
+        assert_eq!(bridged_level("zbus", L::Info), Level::Debug);
+        assert_eq!(bridged_level("zbus::conn", L::Trace), Level::Trace);
+        assert_eq!(bridged_level("zbus::conn", L::Error), Level::Error);
+        assert_eq!(bridged_level("zbusy", L::Warn), Level::Warn);
+        assert_eq!(bridged_level("gpui", L::Warn), Level::Warn);
+    }
 
     #[derive(Clone, Default)]
     struct Capture(Arc<Mutex<Vec<String>>>);

@@ -3,12 +3,14 @@
 use super::*;
 use std::time::{Duration, Instant};
 use subsystems::keyboard::{Layout, Stroke};
-use subsystems::os::keyboard::{Output, Settings, Watcher, chord};
+use subsystems::os::keyboard::{Output, Settings, chord};
 
 impl<B: VrBackend> Kernel<B> {
     /// OS のフォアグラウンドアプリのキーボード状態（レイアウト・IME・ロックキー・入力先）。初回呼び出し時に監視を開始する。
     pub fn os_keyboard(&mut self) -> Settings {
-        self.os_keyboard.get_or_insert_with(Watcher::new).settings()
+        self.os_keyboard
+            .get_or_insert_with(desktop::os_keyboard)
+            .settings()
     }
 
     /// ミラーリング中のパネルからの入力は、対象ウィンドウがフォアグラウンドになってから送信する（別アプリへの誤入力を防止）。
@@ -78,7 +80,7 @@ pub(super) struct PendingKey {
     since: Instant,
 }
 
-/// フォアグラウンド待機のタイムアウト。フォアグラウンド昇格要求は非同期で、判定も [`Watcher`] のポーリング周期で更新される。
+/// フォアグラウンド待機のタイムアウト。フォアグラウンド昇格要求は非同期で、判定も `os::keyboard::Watcher` のポーリング周期で更新される。
 const PENDING_TTL: Duration = Duration::from_secs(1);
 /// 待機入力の上限数（フォアグラウンドに昇格できないウィンドウへの蓄積を防止する）。
 const PENDING_MAX: usize = 64;
@@ -106,6 +108,7 @@ fn os_output(stroke: Stroke, layout: &Layout, settings: &Settings) -> Option<Out
 #[cfg(test)]
 mod tests {
     use super::*;
+    use subsystems::os::keyboard::Watcher;
 
     #[test]
     fn same_layout_sends_keys_and_other_layouts_send_text() {

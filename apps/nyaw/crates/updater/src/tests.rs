@@ -8,7 +8,9 @@ use update::fake::{self, fixture};
 
 #[test]
 fn the_newest_build_above_ours_wins_whatever_the_version_says() {
-    let releases = update::parse_releases(&fake::varied("https://example.com")).unwrap();
+    let releases =
+        update::parse_releases(&fake::varied("https://example.com"), Package::WindowsSetup)
+            .unwrap();
     let newer = |build| newest(&releases, build, UpdateChannel::Nightly).map(|r| r.version);
     assert_eq!(newer(650).as_deref(), Some("2026.0.1-patch.2"));
     assert_eq!(
@@ -35,7 +37,8 @@ fn temp(name: &str) -> PathBuf {
 static LAUNCHED: Mutex<Option<PathBuf>> = Mutex::new(None);
 static FAIL: AtomicBool = AtomicBool::new(false);
 
-fn fake_launch(path: &Path) -> Result<(), String> {
+fn fake_launch(path: &Path, installer: &Installer) -> Result<(), String> {
+    assert!(path.ends_with(&installer.name));
     if FAIL.load(Ordering::Relaxed) {
         return Err("cannot start".into());
     }
@@ -121,5 +124,21 @@ fn reveal_is_taken_once(cx: &mut gpui::TestAppContext) {
         reveal(cx);
         assert!(take_reveal(cx));
         assert!(!take_reveal(cx));
+    });
+}
+
+/// 配布物から起動していないビルドでは、一覧を参照せずに、確認できない理由をエラーとして示す。
+#[gpui::test]
+fn without_a_source_checking_reports_that_updates_are_unavailable(cx: &mut gpui::TestAppContext) {
+    cx.update(|cx| {
+        cx.set_global(Updater {
+            source: String::new(),
+            ..Default::default()
+        });
+        check_now(cx);
+        let u = state(cx);
+        assert!(matches!(u.step, Step::Idle));
+        assert!(!u.checked);
+        assert_eq!(u.error.as_deref(), Some(NOT_PACKAGED));
     });
 }

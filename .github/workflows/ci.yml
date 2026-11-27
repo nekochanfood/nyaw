@@ -17,6 +17,10 @@ env:
   CARGO_INCREMENTAL: "0"
   # CI テストでは空間音響（phonon）を使用しないため、Steam Audio SDK（約180MB）のダウンロードを抑止
   NYAW_SKIP_PHONON: "1"
+  # Linux のビルドに必要な開発パッケージ（ランナーに含まれる cmake、C++ コンパイラ、pkg-config は除く）。
+  # libx11-dev は OpenXR ローダーの cmake 構成、libclang-dev は PipeWire のバインディング生成に使用する
+  LINUX_PACKAGES: >-
+    libasound2-dev libclang-dev libfontconfig1-dev libfreetype-dev libpipewire-0.3-dev libx11-dev libxkbcommon-dev
 
 # sccache は以下の理由により使用しない:
 # 1. 外部依存の成果物は rust-cache（target ディレクトリ）で十分に保持される。
@@ -47,13 +51,21 @@ jobs:
       - run: cargo fmt --all --check
 
   # Clippy による静的解析。PR 作成・更新時および main への push 時のみ実行
+  # OS ごとの実装（#[cfg] で分岐するコード）はその OS でしかコンパイルされないため、Windows と Linux の両方で実行する
   clippy:
     # ドラフト状態の PR では実行をスキップ（ready_for_review 時に自動実行）
     needs: changes
     if: needs.changes.outputs.nyaw == 'true' && ((github.event_name == 'pull_request' && !github.event.pull_request.draft) || github.ref == 'refs/heads/main')
-    runs-on: windows-latest
+    strategy:
+      # 片方の OS が失敗しても、もう片方の結果は出す
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -67,12 +79,25 @@ jobs:
   test:
     needs: changes
     if: needs.changes.outputs.nyaw == 'true' && github.event_name != 'pull_request'
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
     env:
-      # テストバイナリごとのデバッグシンボル（PDB）生成とリンク負荷を抑制するため無効化（パニック箇所の行番号は保持される）
+      # テストバイナリごとのデバッグシンボル生成とリンク負荷を抑制するため無効化（パニック箇所の行番号は保持される）
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
+      # mesa-vulkan-drivers は GPU のないランナーで描画テストを動かすソフトウェア実装（lavapipe）。
+      # dbus は media のテストが起動する dbus-daemon。
+      # XDG_RUNTIME_DIR は wlroots のテストが Wayland のソケットを置く場所（ランナーでの設定に依存しないよう指定する）
+      - if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends $LINUX_PACKAGES mesa-vulkan-drivers dbus
+          install -d -m 700 "$RUNNER_TEMP/xdg-runtime"
+          echo "XDG_RUNTIME_DIR=$RUNNER_TEMP/xdg-runtime" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -82,3 +107,12 @@ jobs:
           # 途中キャンセルやテスト失敗時の不完全な target 保存を防ぐため、正常終了した main のみキャッシュを保存
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --no-fail-fast
+      # Linux のパネル描画（vendor/gpui_wgpu）はワークスペースに含まれないため個別に実行する（Cargo.toml の手順）。
+      # 依存の版をアプリに揃えるため、ワークスペースの Cargo.lock を起点にする。上のテストが失敗しても実行する
+      - if: ${{ !cancelled() && runner.os == 'Linux' }}
+        working-directory: apps/nyaw/vendor/gpui_wgpu
+        env:
+          CARGO_TARGET_DIR: ../../target/vendor-tests
+        run: |
+          cp ../../Cargo.lock .
+          cargo test --features test-support --config 'patch."https://github.com/zed-industries/zed".gpui.path="../gpui"'

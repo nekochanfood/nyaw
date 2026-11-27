@@ -36,7 +36,8 @@ pub trait Driver<V> {
 外部の VR ランタイムプロセスを実際に起動し、本番同等のパイプラインで動作を検証する（`crates/testkit/tests/runtimes.rs`、`#[ignore]` 指定）。
 
 - **実行コマンド**: `cargo test -p testkit --test runtimes -- --ignored [monado|steamvr]`
+- **画面の配信の検証 (`NYAW_E2E_DESKTOP`)**: `1` を指定すると、ランタイムが取り込める形式でこのセッションの画面を配信し（Wayland では portal 経由の DMA-BUF）、フレームをランタイムへ送って読み戻す。XWayland の帯を塗り替え続けて画面を動かし、1 フレームの送信時間を出力する。`rgba` を指定すると、比較のため RGBA で送る。SteamVR は Wayland なしで起動するため、この検証の間だけ `WAYLAND_DISPLAY` を戻す。
 - **ライフサイクル管理**: `testkit::runtimes` がランタイムプロセスを自動起動し、テスト完了時に安全に停止・クリーンアップする。既存の起動中ランタイムが存在する場合は設定破壊を防ぐためテストをスキップする。
 - **環境構築ツール (`cargo runtimes`)**: テストに必要なランタイムの取得・インストールを行うヘルパーコマンド（保存先: `%LOCALAPPDATA%\nyaw\runtimes`）。
   - **Monado**: GitLab CI の Windows ビルド成果物を取得し、シミュレーション HMD モードで起動して OpenXR レイヤーの動作を検証する。
-  - **SteamVR**: null ドライバを有効化した独立の一時設定（`VR_CONFIG_PATH`）を指定して起動し、物理 HMD が接続されていない環境でもオーバーレイ転送と読み戻しを検査する。
+  - **SteamVR**: null ドライバを有効化した独立の一時設定（`VR_CONFIG_PATH`）を指定して起動し、物理 HMD が接続されていない環境でもオーバーレイ転送と読み戻しを検査する。Linux のコンポジタは HMD を direct mode でのみ駆動するが、null ドライバの HMD には対応するディスプレイがない。そのため一時設定で direct mode を無効にし、ウィンドウへのフォールバック（`allowFallbackMirrorWindowLinux`）を許可する。このフォールバックは X11 でのみ動作するため、起動する SteamVR には `SDL_VIDEODRIVER=x11` を設定し、`WAYLAND_DISPLAY` を外す（XWayland を使用する）。

@@ -1,4 +1,4 @@
-//! OS サブシステム。保存先・ランタイム検出・タイマー精度・GPU 優先度を提供する。
+//! OS サブシステム。保存先・ランタイム検出・タイマー精度・GPU 優先度を提供する（Windows / Linux）。
 //! OS 固有の実装はバックエンドに閉じ、上位層へ公開しない。
 
 use std::{fs, io, path::Path};
@@ -8,11 +8,20 @@ pub mod keyboard;
 mod windows;
 #[cfg(windows)]
 pub use windows::{
-    attach_console, config_dir, data_dir, error_dialog, high_gpu_priority, log_dir,
+    attach_console, config_dir, data_dir, error_dialog, high_gpu_priority, launch_path, log_dir,
     openvr_paths_file, openxr_runtime_manifest, precise_timers, ui_language,
 };
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+pub use linux::{
+    attach_console, config_dir, data_dir, data_search_dirs, error_dialog, high_gpu_priority,
+    launch_path, log_dir, openvr_paths_file, openxr_runtime_manifest, precise_timers,
+    running_appimage, ui_language,
+};
+
+#[cfg(not(any(windows, target_os = "linux")))]
 compile_error!("no OS backend is implemented for this target");
 
 /// `path` に `contents` を書き込む（親ディレクトリが存在しなければ作成する）。内容が同一であれば書き込まない。

@@ -7,6 +7,30 @@ license.workspace = true
 [features]
 test-support = []
 
+[dependencies]
+# 表示サーバーの画像をランタイムの GPU へ直接渡す型（vr::ExternalImage）。
+vr.workspace = true
+os.workspace = true
+logger.workspace = true
+
+# Linux の取り込みと入力注入。表示サーバーごとに X11（XSHM / XTest）、wlroots（wlr-screencopy / 仮想ポインタ）、
+# その他の Wayland（xdg-desktop-portal の ScreenCast・RemoteDesktop と PipeWire）を使い分ける（src/linux/）。
+[target.'cfg(target_os = "linux")'.dependencies]
+x11rb = { version = "0.13", features = ["shm", "randr", "xfixes", "xtest", "damage"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable", "staging"] }
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+# wlroots の仮想キーボード（OS キーボード。src/linux/keyboard.rs）。
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+# portal の OS キーボードで、コンポジタの配列から文字のキーと段（Shift・AltGr）を引く。
+xkbcommon = { version = "0.9", default-features = false }
+ashpd = { version = "0.13", default-features = false, features = ["async-io", "screencast", "remote_desktop"] }
+pollster = "0.4"
+pipewire = { version = "0.9", features = ["v0_3_65"] }
+rustix = { version = "1", features = ["fs", "mm", "event", "param", "time"] }
+# アプリのアイコン（アイコンテーマと .desktop が指す PNG）の読み込み（src/linux/apps.rs）。
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61.3", features = [
     "Foundation", "Graphics_Capture", "Graphics_DirectX_Direct3D11", "Win32_Devices_Display",
@@ -20,3 +44,9 @@ windows = { version = "0.61.3", features = [
     # アプリの起動（ShellExecuteExW の引数の構造体がレジストリのキーを含む）
     "Win32_System_Registry",
 ] }
+
+# wlroots の取り込みと入力注入を、テスト内の最小限のコンポジタ（tests/wlr_protocol.rs）で検証する。
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+wayland-server = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["server"] }
+wayland-protocols-misc = { version = "0.3", features = ["server"] }

@@ -109,9 +109,9 @@ pub struct Hooks {
 /// フレームループ（メインスレッド）で実行する処理。
 pub type Remote = Box<dyn FnOnce(&mut App) + Send>;
 
-/// パネルを描画する GPUI アプリケーション。プラットフォームの選択は GPUI に委ねる。
+/// パネルを描画する GPUI アプリケーション。プラットフォームの選択は描画ホスト（Subsystems の rendering）に委ねる。
 pub fn application() -> gpui::Application {
-    gpui_platform::application()
+    kernel::rendering::gpui::application()
 }
 
 /// メインスレッドを占有する。GPUI のイベントループがランタイムのフレームループも駆動する。

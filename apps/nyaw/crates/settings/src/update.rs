@@ -51,7 +51,7 @@ fn body(theme: &Theme, channel: components::Button, window: &mut Window, cx: &mu
     let latest = updater::latest(cx);
     let u = updater::state(cx);
     let (step, error, checked) = (u.step.clone(), u.error.clone(), u.checked);
-    if matches!(step, Step::Checking | Step::Downloading(_)) {
+    if matches!(step, Step::Checking | Step::Downloading(_) | Step::Applying) {
         components::keep_drawing(window, cx);
     }
     let low = rgba(theme.neutral_text_low);
@@ -125,6 +125,9 @@ fn body(theme: &Theme, channel: components::Button, window: &mut Window, cx: &mu
                     &[("percent", &format!("{:.0}", p * 100.0))],
                 ))
         }
+        Step::Applying => div()
+            .debug_selector(|| "update-applying".into())
+            .child(i18n::t(cx, "update.applying")),
         Step::Installing => div()
             .debug_selector(|| "update-installing".into())
             .child(i18n::t(cx, "update.installing")),

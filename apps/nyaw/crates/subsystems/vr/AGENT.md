@@ -32,6 +32,14 @@ VR 機器が接続されていない環境や日常的な開発・テストの�
 
 ## SteamVR (OpenVR) 連携
 
+### SteamVR への接続（Windows / Linux）
+
+`openvr_api` の代わりに SteamVR の `vrclient`（Windows は `bin/vrclient_x64.dll`、Linux は `bin/linux64/vrclient.so`）を直接読み込み、`IVRClientCore` を呼び出す（`openvr/client.rs`）。x64 では Windows と Linux（System V）のいずれでも、仮想関数は `this` を第 1 引数とする C 呼び出し規約と同一であるため、関数テーブルの定義は共通である。
+
+次の vsync までの待機時間は、ドライバが返す表示周波数・vsync からの経過時間・表示までの遅延から求める。Linux の null ドライバは範囲外の表示周波数を返すため、これらの値は範囲（10〜1000Hz、1 周期以内、0〜1 秒）を検査し、範囲外であれば 90Hz・1 周期・0 とみなす。
+
+SteamVR の OpenXR ランタイムは `XR_EXTX_overlay` を提供しない。そのため SteamVR では、`--openxr` を指定しても OpenXR のオーバーレイセッションは生成できず、OpenVR に接続する（`connect` のフォールバック）。
+
 ### アクションバインディング
 
 OpenVR 環境における操作は、SteamVR Input システム（`openvr/actions.json`）を介して処理される。コントローラの機種別割り当ては SteamVR の設定画面から変更可能である。
@@ -42,7 +50,8 @@ OpenVR 環境における操作は、SteamVR Input システム（`openvr/action
 
 `openvr/app.rs` が SteamVR へのマニフェスト登録と自動起動制御を担う。
 
-- **マニフェストの生成**: 自動起動を有効化した際、設定ディレクトリ内に `vrmanifest` ファイル（起動コマンド引数 `--openvr` を指定）を出力し、`AddApplicationManifest` を通じて SteamVR に恒久登録する。
+- **マニフェストの生成**: 自動起動を有効化した際、設定ディレクトリ内に `vrmanifest` ファイル（起動コマンド引数 `--openvr` を指定。実行ファイルのパスは Windows では `binary_path_windows`、Linux では `binary_path_linux` に記載）を出力し、`AddApplicationManifest` を通じて SteamVR に恒久登録する。
+- **起動するパス**: マニフェストには `os::launch_path` が返すパス（AppImage では AppImage ファイル）を記載する。登録を書き出すのは自動起動を有効化した時点だけであるため、その後にファイルを移動するか名前を変えた場合は、自動起動を一度無効にしてから有効にし直す。版ごとにファイル名が異なる AppImage を手動で差し替えた場合も同様である。
 - **識別情報の管理**: リリースビルド（`nekochanfood.nyaw`）と開発ビルド（`nekochanfood.nyaw.dev`）でマニフェストおよび識別子を分離し、開発環境による本番環境の上書きを防止する。接続時は `IdentifyApplication` により自身を名乗ることで、コントローラバインドの同一性を担保する。
 
 ## HUD セーフエリアの算出（HUD のセーフエリア）
@@ -56,4 +65,9 @@ OpenVR 環境における操作は、SteamVR Input システム（`openvr/action
 ## 描画転送と現在の制約
 
 - **フレームバッファ転送**: GPUI の描画結果を CPU 側へ読み戻し、更新差分が存在する場合に Vulkan イメージへ再転送してランタイムへ渡す（`src/gpu.rs`、1024×768 解像度で約 1.6ms）。GPUI の Direct3D / Vulkan テクスチャをゼロコピーで直接共有する経路は未実装である。
-- **実機検証の範囲**: OpenVR は null ドライバ環境での接続および Vulkan オーバーレイ送信まで検証済み。OpenXR は Monado 環境（Windows）でのオーバーレイ表示まで検証済みであり、実機コントローラの完全な挙動検証は継続課題である。
+- **表示サーバーの画像の取り込み（Linux）**: 画面の配信では、表示サーバーの画像（`ExternalImage`）を CPU で並べ替えずに取り込む（`VrBackend::import_formats` / `submit_overlay_external`、`src/gpu/import.rs`）。DMA-BUF は DRM 修飾子付きの VkImage として、共有メモリはテクセルバッファとして読み、全面を覆う三角形 1 枚の描画でオーバーレイのイメージの UNORM のビューへ書き写す（バイトの値をそのまま写す。B と R の並びを揃え、透明度の無い形式は不透明にする）。このビューのため、オーバーレイのイメージと OpenXR のスワップチェーンは可変形式で作る（作れないランタイムでは可変形式なしで作り、取り込みだけが失敗する）。
+  - 取り込みの拡張（`VK_EXT_external_memory_dma_buf`、`VK_EXT_image_drm_format_modifier`、`VK_EXT_external_memory_host` など）は、Linux で GPU が対応している場合に限り有効にする。Windows のオーバーレイのイメージは従来どおりに作る。
+  - 表示サーバーは少数のバッファを順に使うため、取り込んだ DMA-BUF は inode と配置で引いて使い回し、使うたびに外部のキューから所有を移す。2 秒使われないもの、または 16 を超えたものは手放す。
+  - 取り込みの資源と画像は自分の送信が完了したら手放し、バッファを表示サーバーへ返す。完了は毎フレームの `poll` で待たずに確かめる。次の転送を待ってから手放す方式では、配信の画像しか送らない間に PipeWire のバッファ（4 枚）がすべて手元に残り、配信が止まった。
+  - SteamVR（null ドライバ）で 1920×1080 の KDE の画面を portal 経由で配信したとき、1 フレームの送信にかかるメインスレッドの時間は、RGBA の転送で平均 0.97ms、取り込みで平均 0.16ms（使い回しが効いた後は約 0.08ms。各バッファの初回の取り込みは 3〜7ms）だった。
+- **実機検証の範囲**: OpenVR は null ドライバ環境での接続および Vulkan オーバーレイ送信まで、Windows と Linux の両方で検証済み（Linux では SteamVR のコンポジタに nyaw のパネルが合成されることも確認した）。OpenXR は Monado 環境（Windows）でのオーバーレイ表示まで検証済みで、Linux では未検証である。実機コントローラの完全な挙動検証は継続課題である。

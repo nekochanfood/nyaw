@@ -2,7 +2,7 @@
 //! separate static files, so a face that fails to register or match silently falls back to another weight.
 //! The GUI event loop must run on the main thread, so this runs in main without the test harness.
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 pub fn main() {
     use std::{cell::RefCell, rc::Rc, time::Duration};
 
@@ -86,7 +86,7 @@ pub fn main() {
     println!("font_weights: ok ({n} / {m} / {b})");
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn main() {
     println!("font_weights: skipped (non-Windows unsupported)");
 }

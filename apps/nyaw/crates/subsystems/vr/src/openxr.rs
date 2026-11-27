@@ -603,6 +603,27 @@ impl OpenXrBackend {
     }
 
     fn submit(&mut self, id: u64, width: u32, height: u32, rgba: &[u8]) -> Result<(), VrError> {
+        // OpenXR はカラー用のスワップチェーンを COLOR_ATTACHMENT_OPTIMAL で返してもらう決まり。
+        self.submit_with(id, width, height, |gpu, image| {
+            gpu.upload(
+                image,
+                width,
+                height,
+                rgba,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            )
+        })
+    }
+
+    /// スワップチェーンから取得したイメージを `write` に書かせて返す。
+    fn submit_with(
+        &mut self,
+        id: u64,
+        width: u32,
+        height: u32,
+        write: impl FnOnce(&mut Gpu, vk::Image) -> Result<(), VrError>,
+    ) -> Result<(), VrError> {
+        let mutable = self.gpu.import_formats().is_some();
         let overlay = self
             .overlays
             .get_mut(&id)
@@ -617,13 +638,13 @@ impl OpenXrBackend {
                 self.gpu.wait_idle();
                 drop(old);
             }
-            let handle = self
-                .session
-                .create_swapchain(&xr::SwapchainCreateInfo {
+            let create = |usage| {
+                self.session.create_swapchain(&xr::SwapchainCreateInfo {
                     create_flags: xr::SwapchainCreateFlags::EMPTY,
                     usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
                         | xr::SwapchainUsageFlags::TRANSFER_DST
-                        | xr::SwapchainUsageFlags::TRANSFER_SRC,
+                        | xr::SwapchainUsageFlags::TRANSFER_SRC
+                        | usage,
                     format: gpu::FORMAT.as_raw() as u32,
                     sample_count: 1,
                     width,
@@ -632,7 +653,16 @@ impl OpenXrBackend {
                     array_size: 1,
                     mip_count: 1,
                 })
-                .map_err(xr_err("xrCreateSwapchain"))?;
+            };
+            // 取り込んだ画像は UNORM のビューで書き写す（Gpu::convert）。可変形式を作れないランタイムでは、
+            // 取り込みは失敗するが RGBA の転送は続ける。
+            let handle = if mutable {
+                create(xr::SwapchainUsageFlags::MUTABLE_FORMAT)
+                    .or_else(|_| create(xr::SwapchainUsageFlags::EMPTY))
+            } else {
+                create(xr::SwapchainUsageFlags::EMPTY)
+            }
+            .map_err(xr_err("xrCreateSwapchain"))?;
             let images = handle
                 .enumerate_images()
                 .map_err(xr_err("xrEnumerateSwapchainImages"))?
@@ -655,14 +685,7 @@ impl OpenXrBackend {
         sc.handle
             .wait_image(xr::Duration::from_nanos(100_000_000))
             .map_err(xr_err("xrWaitSwapchainImage"))?;
-        // OpenXR はカラー用のスワップチェーンを COLOR_ATTACHMENT_OPTIMAL で返してもらう決まり。
-        let uploaded = self.gpu.upload(
-            sc.images[index as usize],
-            width,
-            height,
-            rgba,
-            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        );
+        let uploaded = write(&mut self.gpu, sc.images[index as usize]);
         sc.last = Some(index as usize);
         sc.handle
             .release_image()
@@ -792,6 +815,8 @@ impl VrBackend for OpenXrBackend {
     fn poll(&mut self) -> Frame {
         // 前回の poll から今までに送られた画像を載せて、前のフレームを閉じる。
         self.end_frame();
+        // 読み終えた取り込みのバッファを、次の画像を待たずに表示サーバーへ返す。
+        self.gpu.collect();
         if self.lost {
             return self.idle();
         }
@@ -986,6 +1011,23 @@ impl VrBackend for OpenXrBackend {
         if let Err(e) = self.submit(id.0, width, height, rgba) {
             eprintln!("{e}");
         }
+    }
+
+    fn import_formats(&self) -> Option<crate::ImportFormats> {
+        self.gpu.import_formats()
+    }
+
+    fn submit_overlay_external(
+        &mut self,
+        id: OverlayId,
+        image: &std::sync::Arc<crate::ExternalImage>,
+    ) -> Result<(), VrError> {
+        if self.lost {
+            return Ok(());
+        }
+        self.submit_with(id.0, image.width, image.height, |gpu, target| {
+            gpu.convert(target, image, vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+        })
     }
 }
 

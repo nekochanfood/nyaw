@@ -28,6 +28,7 @@ log = "0.4"
 gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_windows = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
+gpui_wgpu = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 animation = { path = "crates/animation" }
 logger = { path = "crates/logger" }
 os = { path = "crates/subsystems/os" }
@@ -74,6 +75,7 @@ setup.workspace = true
 testing.workspace = true
 settings.workspace = true
 beam.workspace = true
+updater.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
@@ -108,3 +110,5 @@ opt-level = 2
 [patch."https://github.com/zed-industries/zed"]
 gpui_windows = { path = "vendor/gpui_windows" }
 gpui = { path = "vendor/gpui" }
+# Linux のパネル描画（wgpu）。シェーダーを vendor/gpui で拡張したシーン構造体に合わせてある（vendor/gpui_wgpu/Cargo.toml）
+gpui_wgpu = { path = "vendor/gpui_wgpu" }

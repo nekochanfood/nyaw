@@ -1,6 +1,7 @@
 //! ミラーリング画面（配信を映すパネル）の、映像非表示時のプレースホルダー。
 //! いずれの状態でも中央に縦方向で「アイコン・タイトル・理由（該当時）・ボタン（必要時）」を配置する。
-//! 読み込み中はスピナー、エラーは X アイコン、切断系の状態はプラグアイコンを表示する。
+//! 読み込み中はスピナー、OS の確認画面で許可を待つ間は画面共有のアイコン、エラーは X アイコン、切断系の状態は
+//! プラグアイコンを表示する。
 //! ダッシュボードと Testing の確認画面で見た目を統一するため、共通モジュールとして配置する。
 
 use design::{Theme, components, icons};
@@ -44,6 +45,8 @@ pub enum MirrorState {
     /// 待機したがウィンドウが検出されなかった。
     LaunchFailed,
     Starting,
+    /// OS の確認画面で、画面の共有の許可を待っている。許可されればそのまま配信が始まる。
+    Permission,
     Streaming,
     Minimized,
     Closed,
@@ -55,6 +58,7 @@ impl MirrorState {
     pub fn from_status(status: Option<Status>) -> Self {
         match status {
             None | Some(Status::Starting) => Self::Starting,
+            Some(Status::Permission) => Self::Permission,
             Some(Status::Streaming) => Self::Streaming,
             Some(Status::Minimized) => Self::Minimized,
             Some(Status::Closed) => Self::Closed,
@@ -78,6 +82,7 @@ impl MirrorState {
                 Self::Launching => "desktop.launching",
                 Self::LaunchFailed => "desktop.launch_failed",
                 Self::Starting => "desktop.starting",
+                Self::Permission => "desktop.permission",
                 Self::Streaming => "desktop.streaming",
                 Self::Minimized => "desktop.minimized",
                 Self::Closed => "desktop.closed",
@@ -87,7 +92,11 @@ impl MirrorState {
     }
 
     /// 失敗の理由（ローカライズ済み）。分類不能なエラーは元のメッセージをそのまま表示する。
+    /// 許可待ちでは、どこで何をすればよいかを示す。
     pub fn reason(&self, cx: &App) -> Option<SharedString> {
+        if *self == Self::Permission {
+            return Some(i18n::t(cx, "desktop.permission_hint"));
+        }
         let Self::Failed(error) = self else {
             return None;
         };
@@ -97,6 +106,8 @@ impl MirrorState {
             Reason::NoPixels => i18n::t(cx, "desktop.reason.no_pixels"),
             Reason::InvalidBounds => i18n::t(cx, "desktop.reason.invalid_bounds"),
             Reason::Graphics => i18n::t(cx, "desktop.reason.graphics"),
+            Reason::Denied => i18n::t(cx, "desktop.reason.denied"),
+            Reason::NotShared => i18n::t(cx, "desktop.reason.not_shared"),
             Reason::Other => error.to_string().into(),
         })
     }
@@ -108,6 +119,9 @@ impl MirrorState {
             }
             Self::LaunchFailed | Self::Failed(_) => {
                 components::status_icon(&icons::X_CIRCLE, ICON_PX).into_any_element()
+            }
+            Self::Permission => {
+                components::status_icon(&icons::MONITOR_ARROW_UP, ICON_PX).into_any_element()
             }
             Self::Streaming => components::status_icon(&icons::MONITOR, ICON_PX).into_any_element(),
             Self::Minimized | Self::Closed => {

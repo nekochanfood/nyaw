@@ -65,7 +65,7 @@ impl App {
         self.auto_launch
     }
 
-    /// 有効化時は、この実行ファイルを起動する vrmanifest を書き出して再登録してから有効化する。無効化時は登録を残す（識別を維持する）。
+    /// 有効化時は、このアプリを起動する vrmanifest を書き出して再登録してから有効化する。無効化時は登録を残す（識別を維持する）。
     pub fn set_auto_launch(&mut self, on: bool) -> Result<(), VrError> {
         let t = unsafe { &*self.table };
         if on {
@@ -90,7 +90,7 @@ impl App {
 
 /// `os::config_dir()/openvr/<アプリの名前>.vrmanifest` に書き出し、SteamVR に恒久的に登録する。
 fn register_manifest(t: &sys::VR_IVRApplications_FnTable) -> Result<PathBuf, VrError> {
-    let exe = std::env::current_exe().map_err(|e| VrError::Runtime(format!("current_exe: {e}")))?;
+    let exe = os::launch_path().map_err(|e| VrError::Runtime(format!("launch path: {e}")))?;
     let path = os::config_dir()
         .ok_or_else(|| VrError::Runtime("config directory unknown".into()))?
         .join("openvr")
@@ -104,6 +104,13 @@ fn register_manifest(t: &sys::VR_IVRApplications_FnTable) -> Result<PathBuf, VrE
     Ok(path)
 }
 
+/// SteamVR が実行ファイルのパスを読み取るキー。OS ごとに異なる。
+const BINARY_PATH_KEY: &str = if cfg!(windows) {
+    "binary_path_windows"
+} else {
+    "binary_path_linux"
+};
+
 /// SteamVR のアプリの定義。`is_dashboard_overlay` が無いと自動起動を切り替えられない。
 fn manifest(exe: &Path) -> String {
     // str の Debug は `\` と `"` をエスケープするので、パスはそのまま JSON の文字列になる。
@@ -115,7 +122,7 @@ fn manifest(exe: &Path) -> String {
     {{
       "app_key": "{APP_KEY}",
       "launch_type": "binary",
-      "binary_path_windows": {exe},
+      "{BINARY_PATH_KEY}": {exe},
       "arguments": "--openvr",
       "is_dashboard_overlay": true,
       "strings": {{ "en_us": {{ "name": "{APP_NAME}" }} }}
@@ -136,7 +143,7 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&manifest(exe)).unwrap();
         let app = &json["applications"][0];
         assert_eq!(app["app_key"], APP_KEY);
-        assert_eq!(app["binary_path_windows"], exe.to_str().unwrap());
+        assert_eq!(app[BINARY_PATH_KEY], exe.to_str().unwrap());
         assert_eq!(app["arguments"], "--openvr");
         assert_eq!(app["is_dashboard_overlay"], true);
     }

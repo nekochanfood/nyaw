@@ -24,10 +24,14 @@ pub struct Capabilities {
 pub fn capabilities() -> Capabilities {
     #[cfg(windows)]
     return windows::CAPABILITIES;
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::CAPABILITIES;
+    #[cfg(not(any(windows, target_os = "linux")))]
     Capabilities::default()
 }
 
+#[cfg(target_os = "linux")]
+mod linux;
 #[cfg(any(test, feature = "test-support"))]
 pub mod mock;
 #[cfg(windows)]
@@ -155,17 +159,23 @@ pub enum Reason {
     InvalidBounds,
     /// グラフィックスの処理で失敗した。
     Graphics,
+    /// 画面の共有を OS の確認画面で拒否された（Linux の xdg-desktop-portal）。
+    Denied,
+    /// OS の確認画面で、この画面が共有の対象に選ばれなかった。
+    NotShared,
     /// 上のどれでもない。
     Other,
 }
 
 impl Reason {
-    pub const ALL: [Reason; 6] = [
+    pub const ALL: [Reason; 8] = [
         Reason::WindowUnavailable,
         Reason::Unsupported,
         Reason::NoPixels,
         Reason::InvalidBounds,
         Reason::Graphics,
+        Reason::Denied,
+        Reason::NotShared,
         Reason::Other,
     ];
 }
@@ -181,6 +191,10 @@ pub mod failure {
     pub const D3D_CONTEXT: &str = "D3D11 context missing";
     pub const D3D_STAGING: &str = "D3D11 staging texture missing";
     pub const INVALID_TEXTURE: &str = "invalid mapped desktop texture";
+    pub const NO_DISPLAY_SERVER: &str = "no X11 or Wayland display server to capture";
+    pub const UNSUPPORTED_FORMAT: &str = "the screen's pixel format is not supported";
+    pub const DENIED: &str = "screen sharing was not allowed";
+    pub const NOT_SHARED: &str = "this screen was not chosen for sharing";
 }
 
 impl Error {
@@ -188,7 +202,9 @@ impl Error {
         use failure::*;
         match self.0.as_str() {
             WINDOW_HIDDEN | WINDOW_MINIMIZED => Reason::WindowUnavailable,
-            UNSUPPORTED => Reason::Unsupported,
+            UNSUPPORTED | NO_DISPLAY_SERVER | UNSUPPORTED_FORMAT => Reason::Unsupported,
+            DENIED => Reason::Denied,
+            NOT_SHARED => Reason::NotShared,
             NO_PIXELS => Reason::NoPixels,
             INVALID_BOUNDS => Reason::InvalidBounds,
             D3D_DEVICE | D3D_CONTEXT | D3D_STAGING | INVALID_TEXTURE => Reason::Graphics,
@@ -200,6 +216,9 @@ impl Error {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     Starting,
+    /// OS の確認画面で、画面の共有の許可を待っている（Linux の xdg-desktop-portal）。許可されれば、そのまま
+    /// [`Status::Starting`] を経て配信が始まる。
+    Permission,
     Streaming,
     Minimized,
     Closed,
@@ -210,7 +229,10 @@ pub enum Status {
 pub struct Frame {
     pub width: u32,
     pub height: u32,
+    /// RGBA（事前乗算済み）。[`Self::external`] があれば空。
     pub rgba: Vec<u8>,
+    /// ランタイムの GPU へ直接取り込む表示サーバーの画像（[`Stream::start_with`] で取り込める形式を渡した場合）。
+    pub external: Option<Arc<vr::ExternalImage>>,
     /// OS が画面を取り込んだ時刻。不明であれば受信時刻。遅延の計測に使用する。
     pub captured: Instant,
     /// ワーカーで GPU から読み出して並べ替えるのに要した時間。
@@ -230,14 +252,40 @@ impl Frame {
             width,
             height,
             rgba,
+            external: None,
             captured: Instant::now(),
             cost: Duration::ZERO,
         })
     }
 
+    /// 表示サーバーの画像をそのまま渡すフレーム。
+    pub fn external(image: vr::ExternalImage) -> Self {
+        Self {
+            width: image.width,
+            height: image.height,
+            rgba: Vec::new(),
+            external: Some(Arc::new(image)),
+            captured: Instant::now(),
+            cost: Duration::ZERO,
+        }
+    }
+
     /// GPU の行パディングを取り除き、事前乗算済み BGRA を RGBA にする。
     // shortcut: 画像転送は CPU 経由。大きな画面の転送が律速になったら GPU の共有テクスチャへ置き換える。
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn from_bgra(width: u32, height: u32, stride: usize, data: &[u8]) -> Result<Self, Error> {
+        Self::from_pixels(width, height, stride, data, vr::PixelFormat::Bgra)
+    }
+
+    /// 行パディングを取り除き、`format` の画素を RGBA にする。透明度の無い形式は不透明にする。
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+    fn from_pixels(
+        width: u32,
+        height: u32,
+        stride: usize,
+        data: &[u8],
+        format: vr::PixelFormat,
+    ) -> Result<Self, Error> {
         let row = (width as usize)
             .checked_mul(4)
             .ok_or_else(|| Error("frame overflow".into()))?;
@@ -251,6 +299,8 @@ impl Frame {
         if width == 0 || height == 0 || stride < row || required.is_none_or(|n| data.len() < n) {
             return Err(Error("invalid desktop frame stride or buffer".into()));
         }
+        let alpha = if format.opaque() { 0xff00_0000 } else { 0 };
+        let swap = format.bgr();
         // 1 画素を u32 として並べ替え、コピーと同じ 1 回の走査で済ませる（バイト単位の入れ替えはベクトル化されず 3 倍遅い）。
         let mut rgba = vec![0; size];
         for (y, dst) in rgba.chunks_exact_mut(row).enumerate() {
@@ -262,7 +312,12 @@ impl Frame {
                 .zip(src.as_chunks::<4>().0)
             {
                 let x = u32::from_le_bytes(*s);
-                *d = (x & 0xff00_ff00 | (x >> 16) & 0xff | (x & 0xff) << 16).to_le_bytes();
+                let x = if swap {
+                    x & 0xff00_ff00 | (x >> 16) & 0xff | (x & 0xff) << 16
+                } else {
+                    x
+                };
+                *d = (x | alpha).to_le_bytes();
             }
         }
         Self::new(width, height, rgba)
@@ -327,7 +382,9 @@ impl Sources {
             .spawn(move || {
                 #[cfg(windows)]
                 let result = windows::sources();
-                #[cfg(not(windows))]
+                #[cfg(target_os = "linux")]
+                let result = linux::sources();
+                #[cfg(not(any(windows, target_os = "linux")))]
                 let result = Err(Error(
                     "desktop capture is not available on this platform yet".into(),
                 ));
@@ -389,7 +446,7 @@ impl InstalledApps {
                 #[cfg(windows)]
                 let result = windows::installed_apps();
                 #[cfg(not(windows))]
-                let result = Err(Error(
+                let result: Result<Vec<InstalledApp>, Error> = Err(Error(
                     "listing apps is not available on this platform yet".into(),
                 ));
                 let _ = tx.send(result.map(|mut apps| {
@@ -425,11 +482,14 @@ pub fn app_icon(id: &str) -> Option<Icon> {
 }
 
 /// アプリ（[`InstalledApp::id`] と同じ ID）の名前・実行ファイル名・アイコン。一覧（[`InstalledApps`]）に無いアプリは `None`。
-/// シェルに問い合わせて待機するため、フレームループでは呼び出さない。
+/// Linux では `.desktop` ファイルから引き、ファイル名に一致しなければ `StartupWMClass` か名前が `id` に一致するものを返す。
+/// シェルへの問い合わせやファイルの読み込みで待機するため、フレームループでは呼び出さない。
 pub fn installed_app(id: &str) -> Option<InstalledApp> {
     #[cfg(windows)]
     return windows::installed_app(id);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return linux::apps::installed_app(id);
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = id;
         None
@@ -449,6 +509,15 @@ pub fn launch(id: &str) -> Result<(), Error> {
     }
 }
 
+/// 仮想キーボードから OS の入力先へキーと文字列を送る監視役（`os::keyboard`）。Linux では表示サーバーとの接続
+/// （portal では画面の配信と同じセッション）を使って送るため、ここで作る。接続は監視のスレッドで最初に行う。
+pub fn os_keyboard() -> os::keyboard::Watcher {
+    #[cfg(target_os = "linux")]
+    return os::keyboard::Watcher::with_host(linux::keyboard());
+    #[cfg(not(target_os = "linux"))]
+    os::keyboard::Watcher::new()
+}
+
 /// `items` を、名前に `query` を含むもの（大文字小文字を区別しない）に絞る。空なら全部。
 pub fn matching<'a, T>(items: &'a [T], name: impl Fn(&T) -> &str, query: &str) -> Vec<&'a T> {
     let query = query.trim().to_lowercase();
@@ -458,6 +527,7 @@ pub fn matching<'a, T>(items: &'a [T], name: impl Fn(&T) -> &str, query: &str) -
         .collect()
 }
 
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 enum Input {
     Touch(Touch),
     Button(Touch, Button),
@@ -478,17 +548,32 @@ enum Input {
 struct Wake {
     tx: SyncSender<Input>,
     pending: Arc<AtomicBool>,
+    /// 配信の状態の出口（開始前に [`Self::ask`] で許可待ちを知らせる）。
+    update: Arc<Mutex<Option<Update>>>,
+    asked: Arc<AtomicBool>,
 }
 
 impl Wake {
-    #[cfg_attr(not(windows), allow(dead_code))]
+    #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
     fn wake(&self) {
         if !self.pending.swap(true, Ordering::AcqRel) {
             let _ = self.tx.try_send(Input::Frame);
         }
     }
+
+    /// 取り込みを開始する前に、OS の確認画面で許可を待っていることを知らせる（[`Status::Permission`]）。
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    fn ask(&self) {
+        if !self.asked.swap(true, Ordering::AcqRel) {
+            *self.update.lock().unwrap() = Some(Update {
+                status: Status::Permission,
+                frame: None,
+            });
+        }
+    }
 }
 
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 trait Session {
     fn frame(&mut self) -> Result<Option<Frame>, Error>;
     /// 一時停止中（[`Stream::set_paused`]）に `frame` の代わりに呼ぶ。読み戻さずに最新の画像だけ持ち、再開したらそれを返す。
@@ -522,6 +607,11 @@ trait Session {
     fn cursor(&mut self) -> Option<Arc<Cursor>> {
         None
     }
+    /// OS のポインタの位置（取り込み元の左上原点、0〜1。取り込み元の外や、表示サーバーが知らせなければ `None`）。
+    fn pointer(&mut self) -> Option<(f32, f32)> {
+        None
+    }
+
     /// 取得元の手前に出ているメニュー（[`Popup`]。手前のものから順に）。
     fn popups(&mut self) -> Vec<Popup> {
         Vec::new()
@@ -536,6 +626,7 @@ pub struct Stream {
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
     cursor: Arc<Mutex<Option<Arc<Cursor>>>>,
+    pointer: Arc<Mutex<Option<(f32, f32)>>>,
     popups: Arc<Mutex<Arc<[Popup]>>>,
     /// ウィンドウを映しているとき、そのウィンドウ（OS のウィンドウ識別子）。画面や特定できないものは `None`。
     window: Option<u64>,
@@ -552,8 +643,22 @@ impl Stream {
     }
 
     pub fn start_at(source: Source, frame_rate: u32) -> Result<Self, Error> {
+        Self::start_with(source, frame_rate, None)
+    }
+
+    /// `import` はランタイムが GPU へ直接取り込める画像（[`vr::VrBackend::import_formats`]）。取り込めるものは
+    /// [`Frame::external`] で渡し、それ以外は RGBA に並べ替えて渡す。
+    pub fn start_with(
+        source: Source,
+        frame_rate: u32,
+        import: Option<vr::ImportFormats>,
+    ) -> Result<Self, Error> {
+        #[cfg(target_os = "linux")]
+        return Self::spawn(frame_rate, move |_, wake| linux::open(source, wake, import));
+        // ponytail: Windows は WGC の画像を CPU へ読み戻す。共有テクスチャで渡すなら import を使う。
         #[cfg(windows)]
         {
+            let _ = import;
             let window = (source.kind == SourceKind::Window && source.concrete())
                 .then_some(source.target as usize as u64);
             let mut stream = Self::spawn(frame_rate, move |_, wake| {
@@ -562,9 +667,9 @@ impl Stream {
             stream.window = window;
             Ok(stream)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "linux")))]
         {
-            let _ = (source, frame_rate);
+            let _ = (source, frame_rate, import);
             Err(Error(
                 "desktop capture is not available on this platform yet".into(),
             ))
@@ -590,12 +695,16 @@ impl Stream {
         let pausing = paused.clone();
         let cursor = Arc::new(Mutex::new(None));
         let cursor_out = cursor.clone();
+        let pointer = Arc::new(Mutex::new(None));
+        let pointer_out = pointer.clone();
         let popups = Arc::new(Mutex::new(Arc::from([])));
         let popups_out = popups.clone();
         let (input, rx) = mpsc::sync_channel(64);
         let wake = Wake {
             tx: input.clone(),
             pending: Arc::new(AtomicBool::new(false)),
+            update: update.clone(),
+            asked: Arc::new(AtomicBool::new(false)),
         };
         let output = update.clone();
         let stopping = stop.clone();
@@ -604,6 +713,13 @@ impl Stream {
             .spawn(move || {
                 let result = (|| {
                     let mut session = open(stopping.clone(), wake.clone())?;
+                    // 許可されたら、最初の画像が届くまでは開始中に戻す。
+                    if wake.asked.load(Ordering::Acquire) {
+                        *output.lock().unwrap() = Some(Update {
+                            status: Status::Starting,
+                            frame: None,
+                        });
+                    }
                     let mut next_frame = Instant::now();
                     let mut inputs: Vec<Input> = Vec::new();
                     let mut minimized = false;
@@ -661,6 +777,7 @@ impl Stream {
                             shown = now_cursor;
                             *cursor_out.lock().unwrap() = shown.clone();
                         }
+                        *pointer_out.lock().unwrap() = session.pointer();
                         if session.minimized() {
                             minimized = true;
                             break;
@@ -700,6 +817,7 @@ impl Stream {
                     Ok::<_, Error>(minimized)
                 })();
                 *cursor_out.lock().unwrap() = None;
+                *pointer_out.lock().unwrap() = None;
                 *popups_out.lock().unwrap() = Arc::from([]);
                 *output.lock().unwrap() = Some(Update {
                     status: match result {
@@ -717,6 +835,7 @@ impl Stream {
             stop,
             paused,
             cursor,
+            pointer,
             popups,
             window: None,
         })
@@ -734,6 +853,12 @@ impl Stream {
     /// 今の OS のカーソル（隠れている・取れなければ `None`）。
     pub fn cursor(&self) -> Option<Arc<Cursor>> {
         self.cursor.lock().ok()?.clone()
+    }
+
+    /// OS のポインタの位置（取り込み元の左上原点、0〜1）。取り込み元の外にある場合や、表示サーバーが位置を
+    /// 知らせない場合（Windows、wlroots）は `None`。
+    pub fn pointer(&self) -> Option<(f32, f32)> {
+        *self.pointer.lock().ok()?
     }
 
     /// 取得元の手前に出ているメニュー（[`Popup`]。手前のものから順に）。変わっていなければ同じ `Arc` を返す。
@@ -809,6 +934,9 @@ mod tests {
         assert_eq!(reason(NO_PIXELS), Reason::NoPixels);
         assert_eq!(reason(INVALID_BOUNDS), Reason::InvalidBounds);
         assert_eq!(reason(D3D_STAGING), Reason::Graphics);
+        assert_eq!(reason(NO_DISPLAY_SERVER), Reason::Unsupported);
+        assert_eq!(reason(DENIED), Reason::Denied);
+        assert_eq!(reason(NOT_SHARED), Reason::NotShared);
         assert_eq!(reason("something else"), Reason::Other);
     }
 
@@ -1171,6 +1299,36 @@ mod tests {
             stream
                 .poll()
                 .is_some_and(|u| u.status == Status::Closed && u.frame.is_none())
+        });
+    }
+
+    /// 開始前に OS の確認画面を待つ間は許可待ちを知らせ、許可されたら再試行なしで配信を始める。
+    #[test]
+    fn worker_reports_waiting_for_permission_then_streams_once_allowed() {
+        let (allow, allowed) = mpsc::sync_channel::<()>(1);
+        let (tx, _rx) = mpsc::sync_channel(4);
+        let stream = Stream::spawn(DEFAULT_FRAME_RATE, move |_, wake| {
+            wake.ask();
+            allowed.recv().unwrap();
+            Ok(Fake {
+                dropped: Arc::new(AtomicBool::new(false)),
+                input: tx,
+                frame: 0,
+            })
+        })
+        .unwrap();
+        until(|| {
+            stream
+                .poll()
+                .is_some_and(|u| u.status == Status::Permission)
+        });
+        thread::sleep(Duration::from_millis(50));
+        assert!(stream.poll().is_none(), "still waiting");
+        allow.send(()).unwrap();
+        until(|| {
+            stream
+                .poll()
+                .is_some_and(|u| u.status == Status::Streaming && u.frame.is_some())
         });
     }
 

@@ -14,6 +14,7 @@ fn mirror_test_controls_the_preview_panel(cx: &mut TestAppContext) {
         ("mirror-case-launching", false),
         ("mirror-case-launch-failed", false),
         ("mirror-case-starting", false),
+        ("mirror-case-permission", false),
         ("mirror-case-streaming", false),
         ("mirror-case-minimized", true),
         ("mirror-case-closed", true),
@@ -22,6 +23,8 @@ fn mirror_test_controls_the_preview_panel(cx: &mut TestAppContext) {
         ("mirror-case-failed-nopixels", true),
         ("mirror-case-failed-invalidbounds", true),
         ("mirror-case-failed-graphics", true),
+        ("mirror-case-failed-denied", true),
+        ("mirror-case-failed-notshared", true),
         ("mirror-case-failed-other", true),
     ];
     let mut seen = Vec::new();

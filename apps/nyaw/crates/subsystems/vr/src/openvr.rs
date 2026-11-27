@@ -201,18 +201,13 @@ impl OpenVrBackend {
     /// そうしないと待たずに空回りし、毎回全パネルを描き直してフレームレートを落とす。
     fn wait_vsync(&self) -> f32 {
         let hz = self.hmd_float(sys::ETrackedDeviceProperty_Prop_DisplayFrequency_Float);
-        // ponytail: 周波数が取れないときは 90Hz とみなす。
-        let period = if hz > 0.0 { 1.0 / hz } else { 1.0 / 90.0 };
         let (mut since, mut counter) = (0.0f32, Default::default());
         let synced = unsafe { f(self.system().GetTimeSinceLastVsync)(&mut since, &mut counter) };
-        let left = if synced {
-            period - since.rem_euclid(period)
-        } else {
-            period
-        };
+        let photons =
+            self.hmd_float(sys::ETrackedDeviceProperty_Prop_SecondsFromVsyncToPhotons_Float);
+        let (left, predict) = vsync_timing(hz, synced.then_some(since), photons);
         std::thread::sleep(std::time::Duration::from_secs_f32(left));
-        // ここから描画して送ったものは、コンポジタの次のフレームで表示される。
-        period + self.hmd_float(sys::ETrackedDeviceProperty_Prop_SecondsFromVsyncToPhotons_Float)
+        predict
     }
 
     /// 高さを固定したオーバーレイの見た目の高さを、テクセルの縦横比（横 / 縦）で合わせる。
@@ -330,6 +325,25 @@ impl OpenVrBackend {
     }
 
     fn submit(&mut self, id: u64, width: u32, height: u32, rgba: &[u8]) -> Result<(), VrError> {
+        self.submit_with(id, width, height, |gpu, image| {
+            gpu.upload(
+                image,
+                width,
+                height,
+                rgba,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+            )
+        })
+    }
+
+    /// `write` がリングの次のイメージを書き、そのイメージをオーバーレイのテクスチャにする。
+    fn submit_with(
+        &mut self,
+        id: u64,
+        width: u32,
+        height: u32,
+        write: impl FnOnce(&mut Gpu, vk::Image) -> Result<(), VrError>,
+    ) -> Result<(), VrError> {
         let mut replacement = if self
             .textures
             .get(&id)
@@ -358,13 +372,7 @@ impl OpenVrBackend {
         t.next = (t.next + 1) % RING;
         // SteamVR は Vulkan のテクスチャを TRANSFER_SRC_OPTIMAL で受け取る。
         let result = (|| {
-            self.gpu.upload(
-                image,
-                width,
-                height,
-                rgba,
-                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-            )?;
+            write(&mut self.gpu, image)?;
             let g = &self.gpu;
             let mut data = sys::VRVulkanTextureData_t {
                 m_nImage: image.as_raw(),
@@ -403,6 +411,35 @@ impl OpenVrBackend {
         }
         result
     }
+}
+
+/// HMD の表示周波数として受け付ける範囲（Hz）。
+const MIN_DISPLAY_HZ: f32 = 10.0;
+const MAX_DISPLAY_HZ: f32 = 1000.0;
+
+/// 次の vsync までの待機秒数と、このフレームで送出する姿勢が表示されるまでの秒数（姿勢の予測に使用する）。
+/// `hz` は表示周波数、`since` は直前の vsync からの経過秒数（取得できなければ `None`）、`photons` は vsync から表示までの秒数。
+/// ドライバによっては表示周波数として範囲外の値を返す（Linux の null ドライバで実測）。そのような値は使わず、周波数は 90Hz、
+/// 待機は 1 周期、表示までの遅れは 0 とみなす。
+fn vsync_timing(hz: f32, since: Option<f32>, photons: f32) -> (f32, f32) {
+    // ponytail: 周波数を取得できない場合は 90Hz とみなす。
+    let period = if (MIN_DISPLAY_HZ..=MAX_DISPLAY_HZ).contains(&hz) {
+        1.0 / hz
+    } else {
+        1.0 / 90.0
+    };
+    let left = since
+        .filter(|s| s.is_finite())
+        .map(|s| period - s.rem_euclid(period))
+        .filter(|left| *left > 0.0 && *left <= period)
+        .unwrap_or(period);
+    // ここから描画して送出した画像は、コンポジタの次のフレームで表示される。
+    let photons = if (0.0..=1.0).contains(&photons) {
+        photons
+    } else {
+        0.0
+    };
+    (left, period + photons)
 }
 
 fn create_ring<T, E>(
@@ -461,6 +498,8 @@ impl VrBackend for OpenVrBackend {
 
     fn poll(&mut self) -> Frame {
         let predict = self.wait_vsync();
+        // 読み終えた取り込みのバッファを、次の画像を待たずに表示サーバーへ返す。
+        self.gpu.collect();
         let s = self.system();
         let mut quit = false;
         let mut event = MaybeUninit::<sys::VREvent_t>::zeroed();
@@ -740,6 +779,22 @@ impl VrBackend for OpenVrBackend {
         log(self.submit(id.0, width, height, rgba));
         self.apply_height(id.0);
     }
+
+    fn import_formats(&self) -> Option<crate::ImportFormats> {
+        self.gpu.import_formats()
+    }
+
+    fn submit_overlay_external(
+        &mut self,
+        id: OverlayId,
+        image: &std::sync::Arc<crate::ExternalImage>,
+    ) -> Result<(), VrError> {
+        self.submit_with(id.0, image.width, image.height, |gpu, target| {
+            gpu.convert(target, image, vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+        })?;
+        self.apply_height(id.0);
+        Ok(())
+    }
 }
 
 /// 疎通確認用: オーバーレイが今ランタイム側で持っている画像（幅, 高さ, RGBA）を読み戻す。
@@ -931,6 +986,33 @@ mod tests {
         assert!(at.position.abs_diff_eq((raw * tip).position, 1e-6));
         assert!(at.orientation.abs_diff_eq((raw * tip).orientation, 1e-6));
         assert_eq!(role_device(&tips, 4, raw).0, (4, Pose::IDENTITY));
+    }
+
+    /// 直前の vsync からの経過時間を周期で割った余りだけ待つ。ドライバが有限でない値を返しても待機は 1 周期以内で、
+    /// 姿勢の予測も有限の値になる。
+    #[test]
+    fn vsync_timing_survives_bad_driver_values() {
+        let period = 1.0 / 90.0;
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-5;
+        let (left, predict) = vsync_timing(90.0, Some(0.004), 0.01);
+        assert!(close(left, period - 0.004) && close(predict, period + 0.01));
+        // 経過時間が 1 周期を超えて返るドライバ（Quest 系）では、余りを使う。
+        let (left, _) = vsync_timing(90.0, Some(period * 3.0 + 0.002), 0.0);
+        assert!(close(left, period - 0.002));
+        for (hz, since, photons) in [
+            (f32::NAN, Some(0.004), 0.01),
+            (0.0, Some(f32::INFINITY), f32::NAN),
+            (90.0, Some(f32::NAN), -1.0),
+            (f32::INFINITY, None, f32::INFINITY),
+            (1e-30, Some(0.004), 0.01),
+        ] {
+            let (left, predict) = vsync_timing(hz, since, photons);
+            assert!(
+                left.is_finite() && left > 0.0 && left <= period + 1e-6,
+                "{hz} {since:?}"
+            );
+            assert!(predict.is_finite() && predict >= period, "{hz} {photons}");
+        }
     }
 
     #[test]

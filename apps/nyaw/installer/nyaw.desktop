@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=nyaw
+Comment=VR overlay
+Comment[ja]=VR オーバーレイ
+Exec=nyaw
+Icon=nyaw
+Categories=Utility;
+Terminal=false

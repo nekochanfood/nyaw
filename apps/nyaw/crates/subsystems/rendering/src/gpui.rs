@@ -6,6 +6,21 @@ use ::gpui::{
 };
 mod lod;
 pub use lod::set_render_lod;
+#[cfg(target_os = "linux")]
+mod linux;
+
+/// パネルを描画する GPUI アプリケーション。Windows では GPUI 標準のプラットフォームが非表示のウィンドウを生成し、
+/// Linux では表示サーバー上に生成しないオフスクリーンのウィンドウを用いる（[`linux`]）。
+pub fn application() -> ::gpui::Application {
+    #[cfg(target_os = "linux")]
+    {
+        ::gpui::Application::with_platform(std::rc::Rc::new(linux::OffscreenPlatform::new()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        gpui_platform::application()
+    }
+}
 
 /// CPU に読み戻した UI の1フレーム（RGBA8、行間に詰め物なし）。
 #[derive(Debug, Clone, PartialEq)]
@@ -41,6 +56,8 @@ pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
 pub fn collect(window: &mut Window) -> Option<Frame> {
     #[cfg(windows)]
     let img = gpui_windows::collect_readback(|| window.render_to_image());
+    #[cfg(target_os = "linux")]
+    let img = linux::collect_readback(|| window.render_to_image());
     img.ok().map(|img| Frame {
         width: img.width(),
         height: img.height(),

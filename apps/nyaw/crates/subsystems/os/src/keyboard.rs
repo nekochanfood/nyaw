@@ -9,6 +9,9 @@ use std::{
 #[cfg(windows)]
 #[path = "keyboard/windows.rs"]
 mod platform;
+#[cfg(target_os = "linux")]
+#[path = "keyboard/linux.rs"]
+mod platform;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Settings {
@@ -44,6 +47,12 @@ enum Command {
 pub trait Host: Send + 'static {
     fn settings(&mut self) -> Settings;
     fn send(&mut self, output: Output) -> io::Result<()>;
+}
+
+/// この OS のキー配列の検出だけを行う（送信は行わない）。Linux で入力を送る側（desktop）が、
+/// [`Host::settings`] の配列の部分に使う。
+pub fn detect() -> Settings {
+    platform::Backend::new().settings()
 }
 
 impl Host for platform::Backend {
