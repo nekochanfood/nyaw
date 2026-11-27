@@ -43,7 +43,7 @@ function Layout() {
         切り取った箱の内側にあると、ヘッダーの帯（backdrop-filter と mask-image）のマスクが効かなくなり、
         帯が不透明のパネルになる
       */}
-      <div className="m-(--frame-gutter) mb-0 flex min-h-[calc(100svh-2*var(--frame-gutter))] flex-col overflow-clip rounded-b-[calc(var(--frame-radius)/var(--corner-scale))] bg-card [corner-shape:round]">
+      <div className="frame-x mt-(--frame-gutter) flex min-h-[calc(100svh-2*var(--frame-gutter))] flex-col overflow-clip rounded-b-[calc(var(--frame-radius)/var(--corner-scale))] bg-card [corner-shape:round]">
         <Header />
         <main id="main" className="flex grow flex-col">
           <PageTransition>

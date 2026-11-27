@@ -58,7 +58,7 @@ function Shell({ children }: { children: ReactNode }) {
         {/* 画面の四辺を帯で覆い、内側の角を丸める。スクロールしても動かない */}
         <div
           aria-hidden
-          className="pointer-events-none fixed inset-(--frame-gutter) z-40 rounded-(--frame-radius) shadow-[0_0_0_100vmax_var(--groove)]"
+          className="frame-x pointer-events-none fixed inset-x-0 inset-y-(--frame-gutter) z-40 rounded-(--frame-radius) shadow-[0_0_0_100vmax_var(--groove)]"
         />
         <Scripts />
       </body>

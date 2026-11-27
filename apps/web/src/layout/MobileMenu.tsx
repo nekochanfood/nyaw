@@ -70,7 +70,7 @@ export function MobileMenu({ open, setOpen }: { open: boolean; setOpen: (open: b
           ref={ref}
           // タップやクリックで開いたときに、最初のリンクにフォーカスの枠を出さない。キーボードのときだけ中へ移す
           initialFocus={(type) => type === "keyboard"}
-          className="fixed inset-x-(--frame-gutter) top-[calc(var(--frame-gutter)+4rem)] bottom-(--frame-gutter) z-30 flex flex-col gap-2 overflow-y-auto rounded-b-(--frame-radius) bg-card px-5 pt-4 pb-8 outline-none"
+          className="frame-x fixed inset-x-0 top-[calc(var(--frame-gutter)+4rem)] bottom-(--frame-gutter) z-30 flex flex-col gap-2 overflow-y-auto rounded-b-(--frame-radius) bg-card px-5 pt-4 pb-8 outline-none"
         >
           <Dialog.Title className="sr-only">{t("open_menu")}</Dialog.Title>
           <nav className="flex flex-col">
