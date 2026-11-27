@@ -15,6 +15,9 @@ impl Dashboard {
             .detach();
         cx.observe_global::<PanelControl>(Self::follow_placement)
             .detach();
+        // セットアップの後などに頼まれたら、チュートリアルを始める（`tutorial.rs`）。
+        cx.observe_global::<PanelControl>(Self::follow_tutorial)
+            .detach();
         // 件数は未読通知数。
         cx.observe_global::<ui::notification::Read>(|this, cx| ui::notify(this.panel, cx))
             .detach();
@@ -99,6 +102,9 @@ impl Dashboard {
                 .try_global::<ui::notification::Center>()
                 .map_or(0, |c| c.asked),
             center_waiting: false,
+            tutorial: None,
+            tour_asked: cx.try_global::<ui::tour::Tour>().map_or(0, |t| t.asked),
+            tour_waiting: false,
         }
     }
 
@@ -110,7 +116,7 @@ impl Dashboard {
             return;
         }
         self.center_asked = asked;
-        if cx.global::<PanelControl>().settings.lockdown {
+        if cx.global::<PanelControl>().settings.lockdown || ui::tour::running(cx) {
             return;
         }
         if self.hidden(cx) {
@@ -130,7 +136,7 @@ impl Dashboard {
         ui::notify(self.panel, cx);
     }
 
-    fn hidden(&self, cx: &App) -> bool {
+    pub(crate) fn hidden(&self, cx: &App) -> bool {
         cx.global::<PanelControl>()
             .panels
             .get(&self.panel)
@@ -138,7 +144,7 @@ impl Dashboard {
     }
 
     /// 開いているメニューのポップオーバー（外側押下でクローズ済みなら `None`）。
-    fn open_menu(&self, cx: &App) -> Option<PanelId> {
+    pub(crate) fn open_menu(&self, cx: &App) -> Option<PanelId> {
         open_popover(self.menu, cx)
     }
 
@@ -245,7 +251,7 @@ impl Dashboard {
 
     /// ドッキング中の配信を、クローズせず非表示にして取り外す（ボタンで再表示可能）。配信でなければ何もしない
     /// （他の画面は、次にドッキングする画面と入れ替わりにクローズされる）。
-    fn stash_docked(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn stash_docked(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = ui::docked(cx) {
             self.stash(id, cx);
         }
@@ -258,7 +264,7 @@ impl Dashboard {
     }
 
     /// 配信 `id` を、クローズせず非表示にして取り外す。配信でなければ何もしない。
-    fn stash(&mut self, id: PanelId, cx: &mut Context<Self>) {
+    pub(crate) fn stash(&mut self, id: PanelId, cx: &mut Context<Self>) {
         let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) else {
             return;
         };
@@ -333,7 +339,7 @@ impl Dashboard {
     }
 
     /// `page` の未クローズ画面（ドッキング中でも、取り外して独立させた状態でも）。
-    fn page_panel(&self, page: Page, cx: &App) -> Option<PanelId> {
+    pub(crate) fn page_panel(&self, page: Page, cx: &App) -> Option<PanelId> {
         let closed = |id: &PanelId| {
             cx.try_global::<PanelControl>()
                 .and_then(|c| c.panels.get(id))
@@ -403,7 +409,11 @@ impl Dashboard {
         // 前回の確認時も表示中だった場合のみ反応。非表示中（再表示と同一フレームを含む）の押下は無視し、
         // 表示直後に非表示化されるのを防ぐ（開始音だけ再生されて表示されない状態を回避）。
         let seen = self.outside.replace((count, hidden));
-        if seen.is_some_and(|(seen, was_hidden)| seen != count && !was_hidden) && !hidden {
+        // 開閉を許さない案内の最中は、押しても隠さない。
+        if seen.is_some_and(|(seen, was_hidden)| seen != count && !was_hidden)
+            && !hidden
+            && ui::tour::may_toggle(cx)
+        {
             hide(self.panel, cx);
         }
     }
@@ -444,7 +454,7 @@ fn shown_streams(n: usize) -> usize {
 }
 
 /// 開いているポップオーバー（外側押下でクローズ済みなら `None`）。
-fn open_popover(id: Option<PanelId>, cx: &App) -> Option<PanelId> {
+pub(crate) fn open_popover(id: Option<PanelId>, cx: &App) -> Option<PanelId> {
     id.filter(|id| {
         !cx.global::<PanelControl>()
             .panels
@@ -754,7 +764,13 @@ impl Render for Dashboard {
                     Some(MAX_BAR_PX),
                     items,
                 )
-                .debug_selector(|| "dashboard-bar".into()),
+                .debug_selector(|| "dashboard-bar".into())
+                // チュートリアルがバー全体を指すときの印（`design::spot`）。
+                .children(design::spot::mark(
+                    "dashboard-bar",
+                    px(design::radius::FULL),
+                    cx,
+                )),
             )
     }
 }

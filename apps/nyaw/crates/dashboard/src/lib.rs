@@ -39,6 +39,7 @@ mod now_playing;
 mod parts;
 mod quick_settings;
 mod screen;
+mod tutorial;
 
 use bar::*;
 use launcher::*;
@@ -47,6 +48,8 @@ use mirror::*;
 use now_playing::*;
 use parts::*;
 use screen::*;
+use tutorial::*;
+pub use tutorial::{COACH_PX, coach_offset};
 
 #[cfg(test)]
 mod test_util;
@@ -218,6 +221,11 @@ pub struct Dashboard {
     center_asked: u32,
     /// 通知センターを頼まれたときダッシュボードが隠れていた。出てからはめる（隠れている間ははめられない）。
     center_waiting: bool,
+    /// 進めているチュートリアル（`tutorial.rs`）。
+    tutorial: Option<Tutorial>,
+    /// 応えた、案内の頼みの回数（[`ui::tour::Tour::asked`]）と、頼まれたとき隠れていたか（出てから始める）。
+    tour_asked: u32,
+    tour_waiting: bool,
 }
 
 /// ダッシュボードから開く画面のうち、ダッシュボード自身のもの（クイック設定・ランチャー・再生中）。

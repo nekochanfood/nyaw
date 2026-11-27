@@ -205,6 +205,11 @@ impl Render for Testing {
                     )
                 }))
                 .child(
+                    // ダッシュボードのチュートリアルを始める（このデバッグ画面は閉じ、ダッシュボードで案内が始まる）。
+                    button!("tutorial", i18n::t(cx, "testing.open.tutorial"), false)
+                        .on_click(|_, _, cx| ui::tour::start(cx)),
+                )
+                .child(
                     button!("wizard-test", i18n::t(cx, "testing.open.wizard"), false)
                         .on_click(wizard::spawn(self.panel)),
                 )

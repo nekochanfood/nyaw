@@ -198,7 +198,8 @@ impl Toast {
             dashboard: dock.is_some(),
             center: dock.is_some() && center.is_some() && ui::docked(cx) == center,
             gazing: status(self.wrist).is_some_and(|s| s.gazed),
-            lockdown: ctl.settings.lockdown,
+            // 案内の最中も、通知で案内を遮らないよう保留する。
+            lockdown: ctl.settings.lockdown || ui::tour::running(cx),
         };
         let notes = ctl.notifications.clone();
         let settings = ctl.settings;

@@ -239,8 +239,8 @@ impl Wrist {
             return;
         }
         self.toggles = toggles;
-        // ロックダウン中はダッシュボードを開けない（押したことだけ受け取って捨てる）。
-        if locked {
+        // ロックダウン中と、開閉を許さない案内の最中はダッシュボードを開閉しない（押したことだけ受け取って捨てる）。
+        if locked || !ui::tour::may_toggle(cx) {
             return;
         }
         match open {
