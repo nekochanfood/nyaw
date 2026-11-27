@@ -21,6 +21,11 @@ fn the_coach_goes_near_what_each_step_explains() {
     assert_eq!(Step::Launcher.spot(false), Spot::Beside);
     assert_eq!(Step::Grab.spot(false), Spot::Beside);
     assert_eq!(Step::NavBar.spot(false), Spot::Below);
+    assert_eq!(
+        Step::NavBar.spot(true),
+        Spot::Docked,
+        "画面を閉じたら、はめる"
+    );
     assert_eq!(Step::Minimize.spot(false), Spot::Below);
 }
 

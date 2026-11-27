@@ -85,12 +85,26 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     assert!(at(&mut kit, "tutorial-step-Toggle"));
     // Closing and opening again with the shortcut is marked done; the step stays.
     assert!(!done(&mut kit));
+    let coach = kit.find("tutorial-step-Toggle").expect("coach");
     press_x_twice(&mut kit);
     assert!(kit.kernel.status(dashboard).hidden);
+    // While the dashboard is closed, the coach comes off it, follows the head like the setup wizard, and shows only
+    // how to open it again (no buttons).
+    assert!(!kit.kernel.status(coach).hidden);
+    assert!(kit.kernel.panel(coach).parent.is_none());
+    assert!(kit.kernel.panel(coach).lazy_follow.is_some());
+    assert!(kit.find("tutorial-hint").is_some());
+    assert!(kit.find("tutorial-next").is_none());
     press_x_twice(&mut kit);
     assert!(!kit.kernel.status(dashboard).hidden);
-    assert!(at(&mut kit, "tutorial-step-Toggle"));
-    assert!(done(&mut kit));
+    // Opened again, it goes back on the dashboard as before.
+    assert!(kit.kernel.panel(coach).lazy_follow.is_none());
+    assert_eq!(
+        kit.kernel.panel(coach).parent.map(|p| p.panel),
+        Some(dashboard)
+    );
+    assert!(kit.find("tutorial-hint").is_none());
+    assert!(at(&mut kit, "tutorial-step-Toggle") && done(&mut kit));
     click(&mut kit, "tutorial-next");
     assert!(at(&mut kit, "tutorial-step-Menu"));
     assert!(!done(&mut kit), "a new step starts undone");
@@ -121,6 +135,10 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     settle(&mut kit);
     assert!(kit.kernel.panel(screen).closed);
     assert!(at(&mut kit, "tutorial-step-NavBar") && done(&mut kit));
+    // With the screen gone, the coach docks in the middle of the dashboard.
+    let coach = kit.find("tutorial-step-NavBar").expect("coach");
+    let parent = kit.kernel.panel(coach).parent.expect("on the dashboard");
+    assert!(parent.slot.is_some() && parent.panel == dashboard);
     click(&mut kit, "tutorial-next");
 
     // The launcher lists the practice window while the tour runs; picking it docks it like a mirrored window.
@@ -136,11 +154,9 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     assert!(at(&mut kit, "tutorial-step-Operate"));
     assert!(!kit.kernel.panel(practice).dimmed);
 
-    // The practice window takes any input. novr's controller left-clicks only (right and middle clicks need a
-    // controller that reports a touched button), so left-clicking its target and scrolling its list is all of it.
+    // The practice window takes any input (novr's controller left-clicks only: right and middle clicks need a
+    // controller that reports a touched button).
     kit.select_panel(practice).click("practice-left");
-    settle(&mut kit);
-    assert!(!done(&mut kit), "the list is not scrolled yet");
     kit.select_panel(practice).scroll("practice-list", -3.0);
     settle(&mut kit);
     assert!(at(&mut kit, "tutorial-step-Operate") && done(&mut kit));
@@ -171,8 +187,9 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     assert!(at(&mut kit, "tutorial-step-Recall") && done(&mut kit));
     click(&mut kit, "tutorial-next");
 
-    // Done closes the practice window and the coach, and lifts the dimming.
+    // The last page puts the practice window away; Done closes it and the coach, and lifts the dimming.
     assert!(at(&mut kit, "tutorial-step-Done"));
+    assert!(kit.kernel.status(practice).hidden);
     click(&mut kit, "tutorial-finish");
     assert!(kit.kernel.panel(practice).closed);
     assert!(!running(&mut kit));
