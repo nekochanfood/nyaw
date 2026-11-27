@@ -155,6 +155,17 @@
   );
 }
 
+/*
+  動く要素は、動きが始まるまで隠しておく（src/motion/stage.ts の motionScript が付ける .motion の間だけ）。
+  ページ全体、ヘッダーの項目、ページ名の文字、スクロールで現れる要素。動きは anime.js が不透明度を 1 にして終える
+*/
+.motion [data-page],
+.motion [data-header-item],
+.motion [data-char],
+.motion [data-reveal] {
+  opacity: 0;
+}
+
 /* 真円とピルは潰さない */
 @utility rounded-full {
   corner-shape: round;

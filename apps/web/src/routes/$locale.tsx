@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { isLocale } from "@/i18n/config";
 import { Footer } from "@/layout/Footer";
 import { Header } from "@/layout/Header";
+import { PageTransition } from "@/layout/PageTransition";
 import { useSmoothScroll } from "@/motion/useSmoothScroll";
 import { getOrigin } from "@/seo";
 import { useLocale, useT } from "@/i18n/index";
@@ -45,7 +46,9 @@ function Layout() {
       <div className="m-(--frame-gutter) mb-0 flex min-h-[calc(100svh-2*var(--frame-gutter))] flex-col overflow-clip rounded-b-[calc(var(--frame-radius)/var(--corner-scale))] bg-card [corner-shape:round]">
         <Header />
         <main id="main" className="flex grow flex-col">
-          <Outlet />
+          <PageTransition>
+            <Outlet />
+          </PageTransition>
         </main>
       </div>
       <Footer />

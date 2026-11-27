@@ -79,3 +79,21 @@ test("動きを減らす設定でも、スクロールで現れる要素は最�
   await expect(card).toBeVisible();
   expect(await card.evaluate((el) => getComputedStyle(el.closest("li")!).opacity)).toBe("1");
 });
+
+test("動きがあるときも、読み込み画面、ページの入れ替え、ページ名の文字の順に進み、最後は全部見える", async ({
+  page,
+}) => {
+  const assertNoErrors = watchErrors(page);
+  await mockReleases(page);
+  await page.goto("/en");
+  await expect(page.locator("#loading-screen")).toBeHidden();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveCSS("opacity", "1");
+  await page.getByRole("link", { name: "Download for Windows" }).click();
+  await expect(page).toHaveURL(/\/en\/download$/);
+  // フェードインが終わってから、ページ名の文字が順に現れる
+  const chars = page.locator("[data-char]");
+  await expect(chars.first()).toHaveCSS("opacity", "1");
+  await expect(chars.last()).toHaveCSS("opacity", "1");
+  await expect(page.locator("[data-page]")).toHaveCSS("opacity", "1");
+  assertNoErrors();
+});

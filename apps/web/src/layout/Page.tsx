@@ -2,6 +2,7 @@ import { animate, stagger } from "animejs";
 import { type ReactNode, useLayoutEffect, useRef } from "react";
 
 import { reducedMotion } from "@/motion/reducedMotion";
+import { usePageShown } from "@/motion/stage";
 import { containerClass, cx } from "@/ui/variants";
 
 /** 文字（書記素）ごとに分ける。分けた文字は React が描くので、文字の差し替えと競合しない */
@@ -16,9 +17,11 @@ const graphemes = (text: string) =>
  */
 export function PageTitle({ title }: { title: string }) {
   const ref = useRef<HTMLHeadingElement>(null);
+  const shown = usePageShown();
+  // ページのフェードインが終わってから始める。それまで文字は styles.css が隠している
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!el || reducedMotion()) return;
+    if (!shown || !el || reducedMotion()) return;
     const anim = animate(el.querySelectorAll("[data-char]"), {
       y: ["-60%", "0%"],
       opacity: [0, 1],
@@ -27,9 +30,9 @@ export function PageTitle({ title }: { title: string }) {
       ease: "out(4)",
     });
     return () => {
-      anim.revert();
+      anim.cancel();
     };
-  }, [title]);
+  }, [title, shown]);
   return (
     <div className={cx(containerClass, "flex h-56 items-end pb-8 md:h-96 md:pb-12")}>
       <h1

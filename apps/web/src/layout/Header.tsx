@@ -1,6 +1,6 @@
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { Link } from "@tanstack/react-router";
-import { animate, createTimeline, stagger } from "animejs";
+import { animate, stagger } from "animejs";
 import { useLayoutEffect, useRef } from "react";
 
 import { useLocale, useT } from "@/i18n/index";
@@ -11,6 +11,7 @@ import { Tooltip } from "@/ui/Popup";
 import { containerClass, cx } from "@/ui/variants";
 import { LanguageMenu } from "@/layout/LanguageMenu";
 import { Logo } from "@/layout/Logo";
+import { useLoadingDone } from "@/layout/Loading";
 import { MobileMenu } from "@/layout/MobileMenu";
 import { ThemeToggle } from "@/layout/ThemeToggle";
 
@@ -40,23 +41,23 @@ export function Header() {
   const locale = useLocale();
   const items = useNavItems();
   const ref = useRef<HTMLElement>(null);
+  const loaded = useLoadingDone();
 
-  // 開いたときに本文がフェードしながら上がり、続いてヘッダーの項目が上から順に降りてくる
+  // 読み込み画面が消えたら、ページのフェードイン（PageTransition）に少し遅れて、項目が上から順に降りてくる
   useLayoutEffect(() => {
     const el = ref.current;
-    const main = document.getElementById("main");
-    if (!el || !main || reducedMotion()) return;
-    const timeline = createTimeline()
-      .add(main, { opacity: [0, 1], y: [40, 0], duration: 500, ease: "out(2)" })
-      .add(
-        el.querySelectorAll("[data-header-item]"),
-        { opacity: [0, 1], y: [-32, 0], duration: 800, delay: stagger(50), ease: "out(3)" },
-        "-=200",
-      );
+    if (!loaded || !el || reducedMotion()) return;
+    const anim = animate(el.querySelectorAll("[data-header-item]"), {
+      opacity: [0, 1],
+      y: [-32, 0],
+      duration: 800,
+      delay: stagger(50, { start: 300 }),
+      ease: "out(3)",
+    });
     return () => {
-      timeline.revert();
+      anim.cancel();
     };
-  }, []);
+  }, [loaded]);
 
   return (
     <header ref={ref} className="header-band sticky top-(--frame-gutter) z-30 h-16">

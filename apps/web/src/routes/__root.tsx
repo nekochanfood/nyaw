@@ -6,7 +6,9 @@ import iconDark from "@assets/logos/Logo_Mini_Dark.svg?url";
 import iconLight from "@assets/logos/Logo_Mini_Light.svg?url";
 import { defaultLocale, isLocale } from "@/i18n/config";
 import appCss from "@/styles.css?url";
+import { motionScript } from "@/motion/stage";
 import { themeScript } from "@/theme";
+import { LoadingProvider, LoadingScreen } from "@/layout/Loading";
 import { NotFound } from "@/layout/NotFound";
 
 export const Route = createRootRoute({
@@ -42,12 +44,15 @@ function Shell({ children }: { children: ReactNode }) {
     <html lang={isLocale(locale) ? locale : defaultLocale} suppressHydrationWarning>
       <head>
         {/* oxlint-disable-next-line react/no-danger -- 保存したテーマを描画の前に反映する。中身は固定の文字列 */}
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        <script dangerouslySetInnerHTML={{ __html: themeScript + motionScript }} />
         <HeadContent />
       </head>
       <body>
         {/* Base UI のポップアップを前面に出すため、ページの重なり順を分ける */}
-        <div className="isolate">{children}</div>
+        <LoadingScreen />
+        <LoadingProvider>
+          <div className="isolate">{children}</div>
+        </LoadingProvider>
         {/* 画面の四辺を帯で覆い、内側の角を丸める。スクロールしても動かない */}
         <div
           aria-hidden
