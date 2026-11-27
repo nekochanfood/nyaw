@@ -110,6 +110,8 @@ pub struct SetupWizard {
     presses: u32,
     /// 完了画面でロックダウンを解いている（ダッシュボードを開けるように）。
     unlocked: bool,
+    /// 完了画面に入った時刻（コントローラが下から現れる動きの起点。`design::drive::now` の時計）。
+    pub done_at: Option<std::time::Instant>,
 }
 
 impl SetupWizard {
@@ -124,6 +126,7 @@ impl SetupWizard {
             preview_open: false,
             presses: 0,
             unlocked: false,
+            done_at: None,
         }
     }
 
@@ -144,6 +147,7 @@ impl SetupWizard {
         let done = self.step() == Step::Done;
         if done != self.unlocked {
             self.unlocked = done;
+            self.done_at = done.then(design::drive::now);
             ui::command(self.panel, PanelCommand::Lockdown(!done), cx);
         }
         if done && pressed {
@@ -254,7 +258,7 @@ fn text_choice(
 fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut App) -> Div {
     let theme = Theme::current(cx);
     let now = ui::settings(cx);
-    let (panel, language_open, appearance, watch, preview, preview_open) = {
+    let (panel, language_open, appearance, watch, preview, preview_open, done_at) = {
         let v = wizard.read(cx);
         (
             v.panel,
@@ -263,6 +267,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             v.watch,
             v.preview,
             v.preview_open,
+            v.done_at,
         )
     };
     let go = |forward: bool| {
@@ -470,7 +475,8 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             let zoom = guide::zoom(model, hand)
                 .size(w, h)
                 .parts(shortcut)
-                .fade(h * ZOOM_FADE);
+                .fade(h * ZOOM_FADE)
+                .enter(done_at);
             let back = components::wizard_back(&theme, "setup-back", i18n::t(cx, "setup.back"))
                 .on_click(go(false));
             let head = components::heading(
