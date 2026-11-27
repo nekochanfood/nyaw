@@ -150,7 +150,20 @@ pub fn main() {
             .iter()
             .filter(|p| p[2] > 180 && p[0] < 120 && p[2] as i32 - p[0] as i32 > 90)
             .count();
-        assert!(body > 5000, "{name}: controller image not drawn ({body})");
+        if name.starts_with("done-") {
+            // 完了画面は寄って映すので、黒いコントローラ（Quest Pro など）でも地と違う画素が広く占める。
+            let bg = px[400 * frame.width as usize + 10];
+            let drawn = px
+                .iter()
+                .filter(|p| (0..3).map(|i| p[i].abs_diff(bg[i]) as u32).sum::<u32>() > 60)
+                .count();
+            assert!(
+                drawn > 50_000,
+                "{name}: controller image not drawn ({drawn})"
+            );
+        } else {
+            assert!(body > 5000, "{name}: controller image not drawn ({body})");
+        }
         assert!(accent > 300, "{name}: no highlight ring ({accent})");
         println!("guide {name}: body {body}, accent {accent}");
     }
