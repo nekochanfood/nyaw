@@ -81,6 +81,8 @@ pub enum PanelCommand {
     Animated(bool),
     /// このパネルが出ている間、空間全体を暗くする（`Overlay::set_veil`）。
     Veil(bool),
+    /// 子が開いているときと同じ暗さにする（`Overlay::set_dimmed`。入力は止めない）。案内（`ui::tour`）が、対象でないパネルを暗くする。
+    Dim(bool),
     /// レーザーを透過させる（`Overlay::set_pass_through`。視界の端に配置する表示専用のパネル向け）。
     PassThrough(bool),
     /// 表示・非表示の遷移を不透明度のみで行う（`Overlay::set_fade_only`。アニメーションはパネル自身が描画する）。
@@ -1210,6 +1212,7 @@ impl<B: VrBackend> Kernel<B> {
                     .set_animated(&mut self.subsystems.backend, panel, animated)
             }
             PanelCommand::Veil(veil) => self.overlay.set_veil(panel, veil),
+            PanelCommand::Dim(dim) => self.overlay.set_dimmed(panel, dim),
             PanelCommand::PassThrough(pass) => self.overlay.set_pass_through(panel, pass),
             PanelCommand::FadeOnly(fade_only) => self.overlay.set_fade_only(panel, fade_only),
             PanelCommand::DockSlot(tilt) => self.overlay.set_dock_slot(panel, tilt),
