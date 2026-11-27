@@ -149,7 +149,7 @@ impl<V: Render> Panels<V> {
         let (size, res) = spec.size(kernel);
         let (root, cx) = cx
             .cx
-            .add_window_view(|window, cx| PanelRoot::new(spec.build(id, window, cx)));
+            .add_window_view(|window, cx| PanelRoot::of(id, spec.build(id, window, cx)));
         // As in production, the window and the panel take the spec's resolution and VR size (`pose_for` places it by that size).
         cx.simulate_resize(gpui::size(gpui::px(res.0 as f32), gpui::px(res.1 as f32)));
         let view = root.read_with(cx, |root, _| root.view().downcast::<V>().ok());

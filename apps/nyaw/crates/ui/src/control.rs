@@ -23,6 +23,8 @@ pub struct PanelState {
     pub layer: PanelLayer,
     /// 最後の再描画時点の全体設定（[`PanelControl::settings`]）。変更があれば再描画する。
     seen: Settings,
+    /// 案内（[`crate::tour`]）で暗くしている（カーネルに送った [`PanelCommand::Dim`]）。
+    dimmed: bool,
 }
 
 /// パネルの確定した重なり（`kernel::Panel` の `draw_order`・`lifted`）。
@@ -246,7 +248,14 @@ pub fn sync_panel<B: VrBackend>(kernel: &mut Kernel<B>, panel: PanelId, cx: &mut
     ctl.notifications = kernel.notifications();
     ctl.fov = kernel.fov();
     let settings = ctl.settings;
+    // 案内の最中は、焦点に無いパネルを暗くする（レーザーなどの表示専用のパネルは除く）。
+    let dim = tour::dims(panel, cx) && kernel.panel(panel).pointer.is_none();
+    let ctl = cx.default_global::<PanelControl>();
     let ctl = ctl.panels.entry(panel).or_default();
+    if ctl.dimmed != dim {
+        ctl.dimmed = dim;
+        ctl.commands.push(PanelCommand::Dim(dim));
+    }
     ctl.pointing = kernel.pointing_hands(panel);
     for c in ctl.commands.drain(..) {
         kernel.apply(panel, c);

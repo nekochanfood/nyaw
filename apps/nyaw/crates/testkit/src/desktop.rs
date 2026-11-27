@@ -101,7 +101,7 @@ impl<'a, V: Render> DesktopKit<'a, V> {
         let (root, cx) = self
             .cx
             .cx
-            .add_window_view(|window, cx| PanelRoot::new(spec.build(id, window, cx)));
+            .add_window_view(|window, cx| PanelRoot::of(id, spec.build(id, window, cx)));
         let window = cx.update(|window, _| window.window_handle());
         let vp = cx.update(|window, _| window.viewport_size());
         let res = (f32::from(vp.width) as u32, f32::from(vp.height) as u32);

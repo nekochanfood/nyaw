@@ -556,11 +556,14 @@ impl RenderOnce for Button {
                 .size_full(),
             )
         });
+        // 案内が強調するボタンなら、範囲を書き込む（`spot`）。
+        let spot = crate::spot::mark(id.clone(), px(corners[0]), cx);
         // GPUI の on_hover はウィンドウにつき一つのため、マウス移動ごとに要求を更新する。
         let (move_id, move_tip, move_owner) = (id.clone(), tip.clone(), owner.clone());
         self.base
             .bg(rgba(color))
             .children(wave)
+            .children(spot)
             .on_mouse_move(move |_, w, cx| {
                 if !quiet {
                     crate::cue::hover(&move_id, w, cx);
