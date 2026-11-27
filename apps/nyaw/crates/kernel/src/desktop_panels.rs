@@ -600,6 +600,7 @@ mod tests {
         kernel.subsystems.backend.frame.controllers = vec![RawController {
             hand: Hand::Right,
             profile: "khr/simple_controller".into(),
+            model: String::new(),
             aim: Pose::new(Vec3::new(x, 0.0, 0.0), Quat::IDENTITY),
             inputs: vec![("select/click".into(), if select { 1.0 } else { 0.0 })],
         }];
@@ -681,6 +682,7 @@ mod tests {
         kernel.subsystems.backend.frame.controllers = vec![RawController {
             hand: Hand::Right,
             profile: "khr/simple_controller".into(),
+            model: String::new(),
             aim: Pose::new(Vec3::new(x, y, 0.0), Quat::IDENTITY),
             inputs: vec![("select/click".into(), 1.0)],
         }];

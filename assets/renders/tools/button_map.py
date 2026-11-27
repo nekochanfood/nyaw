@@ -1,4 +1,4 @@
-"""SteamVR のレンダーモデル部品から、各ボタンの中心がレンダー画像のどの画素かを求める。
+"""SteamVR のレンダーモデル部品から、各ボタンの中心がレンダー画像のどの画素か (と、画像上の半径) を求める。
 
 render.py から呼ぶ。ボタンの形状は SteamVR の部品 OBJ、入力名は入力プロファイルが正本で、
 手で座標を打つ場所はない。座標は画像の左上が原点。
@@ -171,8 +171,13 @@ def point(center, samples, weights, bvh, proj, always_snap):
         target_seen = screen[np.linalg.norm(screen - target, axis=1).argmin()]
         adjusted = not always_snap
         target = target_seen
+    # 画像上の大きさ: 上面は全体を、見えている面 (グリップなど細長いもの) は 8 割を囲む円の半径
+    screen = proj.pixels(samples if not always_snap else samples[seen]) if len(samples) else np.empty((0, 2))
+    spread = np.linalg.norm(screen - target, axis=1)
+    radius = float(spread.max() if not always_snap else np.percentile(spread, 80)) if len(spread) else 0.0
     return {
         "x": round(float(target[0]), 1), "y": round(float(target[1]), 1),
+        "radius": round(radius, 1),
         "u": round(float(target[0]) / proj.width, 5), "v": round(float(target[1]) / proj.height, 5),
         "visible": bool(seen.any() or center_seen), "visibility": round(ratio, 3),
         **({"adjusted": True} if adjusted else {}),

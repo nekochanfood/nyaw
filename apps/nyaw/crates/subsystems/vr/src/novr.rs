@@ -252,6 +252,7 @@ impl Emulator {
             RawController {
                 hand,
                 profile: PROFILE.to_owned(),
+                model: String::new(),
                 aim,
                 inputs: vec![
                     ("trigger/value".to_owned(), f32::from(u8::from(trigger))),

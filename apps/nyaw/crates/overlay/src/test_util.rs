@@ -30,6 +30,7 @@ pub(crate) fn controller(vr: &mut Subsystems<MockBackend>, aim: Pose, inputs: &[
     vr.backend.frame.controllers = vec![RawController {
         hand: Hand::Right,
         profile: "valve/index_controller".into(),
+        model: String::new(),
         aim,
         inputs: inputs.iter().map(|(n, v)| (n.to_string(), *v)).collect(),
     }];

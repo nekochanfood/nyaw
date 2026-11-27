@@ -519,6 +519,7 @@ mod tests {
             &kernel::vr::RawController {
                 hand: Hand::Left,
                 profile: kernel::subsystems::input::HAND_PROFILE.into(),
+                model: String::new(),
                 aim: Pose::IDENTITY,
                 inputs: vec![("nyaw/palm_toward".into(), 1.0)],
             },

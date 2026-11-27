@@ -27,6 +27,7 @@ fn controller_changes_and_disconnects_do_not_leak_pressed_state_to_panels() {
         kernel.subsystems.backend.frame.controllers = vec![RawController {
             hand: Hand::Right,
             profile: profile.into(),
+            model: String::new(),
             aim: Pose::IDENTITY,
             inputs: vec![("trigger/value".into(), 0.5)],
         }];
