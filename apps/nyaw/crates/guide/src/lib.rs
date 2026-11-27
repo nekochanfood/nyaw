@@ -597,13 +597,14 @@ pub fn double_tap(t: f32) -> [(f32, f32); 2] {
         let dt = t - at;
         if (0.0..PRESS).contains(&dt) {
             let k = dt / PRESS;
-            (1.0 - PRESS_DEPTH * k, k)
+            // すぐに濃くなり、広がる間も濃いまま、終わり際に消える。
+            (1.0 - PRESS_DEPTH * k, (4.0 * k).min(1.0))
         } else if (PRESS..PRESS + RIPPLE).contains(&dt) {
             let k = (dt - PRESS) / RIPPLE;
             let ease = 1.0 - (1.0 - k) * (1.0 - k);
             (
                 1.0 - PRESS_DEPTH + (PRESS_DEPTH + RIPPLE_GROW) * ease,
-                1.0 - k,
+                1.0 - k * k * k,
             )
         } else {
             (1.0, 0.0)
