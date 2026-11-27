@@ -447,7 +447,7 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             )
         }
         Step::Done => {
-            // 下に左手のコントローラを寄って映し、ショートカットのボタンをダブルタップの動きで示す。それを押してダッシュボードを
+            // 下に左手のコントローラを寄って映し、ショートカットのボタンをダブルタップの波紋で示す。それを押してダッシュボードを
             // 開くと完了する（[`SetupWizard::sync`]）。「完了」ボタンは置かない。
             let hand = Hand::Left;
             let controller = preview.map_or_else(|| left_controller(cx), Controller::of);

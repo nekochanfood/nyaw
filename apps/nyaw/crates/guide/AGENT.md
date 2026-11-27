@@ -16,7 +16,7 @@ sheet(model, hand); parts(model, hand, "grip"); // 画像のボタンの表（�
 control_name / control_detail / part_name;      // 表示用の名前（i18n の guide.*）
 layout(model, hand, size, &callouts);   // 円・札・テールの配置（描画と同じ計算。テスト用）
 zoom(model, hand)                       // 寄って映す（Zoom）。セットアップの完了画面が使う
-    .size(w, h).parts(vec!["x"])        // 枠の大きさと、ダブルタップの動きで示す部品
+    .size(w, h).parts(vec!["x"])        // 枠の大きさと、ダブルタップの波紋で示す部品
     .fade(px(160.));                    // 枠の上端を地の色へ溶かす（上に重なる文字と干渉させない）
 face(model, hand); framing(model, hand, w, h); double_tap(t); // 寄り方と動き（テスト用）
 Model, Controller, Control;             // 入力層（input）の再エクスポート
@@ -40,7 +40,7 @@ Model, Controller, Control;             // 入力層（input）の再エクス�
 ## 寄って映す（`zoom`）
 
 - **寄り方**: 機種ごとにボタンの並ぶ広さと画像の中の位置が違うので、倍率は表から決める。顔（握りを除く見えるボタンをすべて囲む枠、`face`）が枠の幅の `FACE_W`・高さの `FACE_H` に収まる最大の倍率にし、顔の中心を枠の横中央・高さ `FACE_Y` に置く。下の握りは枠の下で切れる。
-- **動き**: 示す部品の円が、ダブルタップのリズム（`TAP_PERIOD` ごとに 2 回）で縮んで戻り（押す動き）、押すたびに波紋が広がって消える。動いている間は `design::drive::keep_drawing` で描き続ける。示す部品が画像に無ければ（Steam Frame の左手の X など）円は出さず、動きも止める。
+- **動き**: 常に出ている円は無く、ダブルタップのリズム（`TAP_PERIOD` ごとに 2 回）で波紋だけを出す。波紋はボタンを囲む円の大きさから内へ縮みながら現れ（押す）、外へ広がって消える（離す）。動いている間は `design::drive::keep_drawing` で描き続ける。示す部品が画像に無ければ（Steam Frame の左手の X など）波紋は出さず、動きも止める。
 - **溶かし**: `fade` の高さで、画像の上に地の色（`theme.background`）から透明へのグラデーションを重ねる。
 
 ## テスト

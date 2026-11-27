@@ -580,33 +580,34 @@ pub fn framing(model: Model, hand: Hand, w: f32, h: f32) -> (f32, Point<f32>) {
 /// ダブルタップの 1 周期（秒）と、2 回の押下の始まり。
 const TAP_PERIOD: f32 = 1.8;
 const TAPS: [f32; 2] = [0.0, 0.3];
-/// 押下で円が縮む時間（秒）と、縮む割合。
-const PRESS: f32 = 0.22;
-const PRESS_DEPTH: f32 = 0.16;
-/// 波紋が広がりきる時間（秒）と、広がる大きさ（円の半径に対する増分）。
+/// 押下: 波紋がボタンの縁から内へ縮みながら現れる時間（秒）と、縮む割合。押し込む動きを思わせる。
+const PRESS: f32 = 0.12;
+const PRESS_DEPTH: f32 = 0.2;
+/// 離す: 縮んだ波紋が外へ広がりきって消える時間（秒）と、広がる大きさ（円の半径に対する増分）。
 const RIPPLE: f32 = 0.8;
 const RIPPLE_GROW: f32 = 1.2;
 
-/// 周期の中の時刻 `t`（秒）での、円の大きさ（1 が元）と、押下ごとの波紋（大きさ・濃さ。出ていなければ濃さ 0）。
-pub fn double_tap(t: f32) -> (f32, [(f32, f32); 2]) {
+/// 周期の中の時刻 `t`（秒）での、押下ごとの波紋（大きさ・濃さ。大きさ 1 がボタンを囲む円。出ていなければ濃さ 0）。
+/// 押すと縁から内へ縮んで現れ、離すと外へ広がって消える。
+pub fn double_tap(t: f32) -> [(f32, f32); 2] {
     let t = t.rem_euclid(TAP_PERIOD);
-    let mut ring = 1.0f32;
-    let ripples = TAPS.map(|at| {
+    TAPS.map(|at| {
         let dt = t - at;
         if (0.0..PRESS).contains(&dt) {
-            ring = ring.min(1.0 - PRESS_DEPTH * (std::f32::consts::PI * dt / PRESS).sin());
-        }
-        if (0.0..RIPPLE).contains(&dt) {
-            let k = dt / RIPPLE;
-            (1.0 + RIPPLE_GROW * (1.0 - (1.0 - k) * (1.0 - k)), 1.0 - k)
+            let k = dt / PRESS;
+            (1.0 - PRESS_DEPTH * k, k)
+        } else if (PRESS..PRESS + RIPPLE).contains(&dt) {
+            let k = (dt - PRESS) / RIPPLE;
+            let ease = 1.0 - (1.0 - k) * (1.0 - k);
+            (1.0 - PRESS_DEPTH + (PRESS_DEPTH + RIPPLE_GROW) * ease, 1.0 - k)
         } else {
             (1.0, 0.0)
         }
-    });
-    (ring, ripples)
+    })
 }
 
-/// コントローラを寄って映し、部品 `parts` をダブルタップの動き（円が縮み、波紋が 2 回広がる）で示す。
+/// コントローラを寄って映し、部品 `parts` をダブルタップの波紋（押すと縮み、離すと広がって消える。2 回ずつ）で示す。
+/// 常に出ている円は無い（ボタンと刻印を隠さない）。
 /// `zoom(model, hand).size(w, h).parts(vec!["x"]).fade(px(160.))`。枠の外は切る。
 #[derive(IntoElement)]
 pub struct Zoom {
@@ -660,7 +661,7 @@ impl RenderOnce for Zoom {
         let (image, _) = asset(self.model, self.hand);
         let now = design::drive::now();
         let t = now.duration_since(*EPOCH.get_or_init(|| now)).as_secs_f32();
-        let (press, ripples) = double_tap(t);
+        let ripples = double_tap(t);
         let found: Vec<Part> = self
             .parts
             .iter()
@@ -716,12 +717,12 @@ impl RenderOnce for Zoom {
                 let waves = ripples
                     .iter()
                     .filter(|(_, a)| *a > 0.0)
-                    .map(|&(grow, a)| circle(c, r * grow, RING_W, accent.opacity(0.6 * a)))
+                    .map(|&(grow, a)| circle(c, r * grow, RING_W, accent.opacity(a)))
                     .collect::<Vec<_>>();
+                // 示す部品の位置（見えない。テストが場所を確かめる）。
                 let id = format!("zoom-ring-{}", p.id);
-                waves
-                    .into_iter()
-                    .chain([circle(c, r * press, RING_W, accent).debug_selector(move || id)])
+                let anchor = circle(c, r, 0.0, accent.opacity(0.0)).debug_selector(move || id);
+                waves.into_iter().chain([anchor])
             }))
     }
 }
@@ -858,26 +859,24 @@ mod tests {
         assert!(max > min * 1.3, "機種ごとに寄り方が違う: {min} {max}");
     }
 
-    /// ダブルタップ: 周期ごとに円が 2 回縮んで戻り、押すたびに波紋が出て消える。2 回目のあとは止まって待つ。
+    /// ダブルタップ: 周期ごとに波紋が 2 回、縁から内へ縮んで現れ（押す）、外へ広がって消える（離す）。2 回目のあとは何も出ずに待つ。
     #[test]
-    fn double_tap_presses_twice_then_rests() {
+    fn double_tap_ripples_twice_then_rests() {
         let frames: Vec<_> = (0..180).map(|i| double_tap(i as f32 * 0.01)).collect();
-        let pressed: Vec<bool> = frames.iter().map(|(r, _)| *r < 0.95).collect();
-        let presses = pressed.windows(2).filter(|w| !w[0] && w[1]).count() + pressed[0] as usize;
-        assert_eq!(presses, 2);
-        assert!(
-            frames
-                .iter()
-                .all(|(r, _)| *r <= 1.0 && *r >= 1.0 - PRESS_DEPTH)
-        );
-        let (rest, ripples) = double_tap(TAP_PERIOD - 0.1);
-        assert_eq!(rest, 1.0);
-        assert!(ripples.iter().all(|(_, a)| *a == 0.0));
-        let (_, both) = double_tap(0.4);
-        assert!(both.iter().all(|(g, a)| *a > 0.0 && *g > 1.0), "{both:?}");
-        assert!(
-            (double_tap(0.1).0 - double_tap(0.1 + TAP_PERIOD).0).abs() < 1e-4,
-            "繰り返す"
-        );
+        for i in 0..2 {
+            let shown: Vec<bool> = frames.iter().map(|w| w[i].1 > 0.0).collect();
+            let starts = shown.windows(2).filter(|w| !w[0] && w[1]).count();
+            assert_eq!(starts, 1, "波紋 {i} は周期に 1 回");
+        }
+        // 押している間は縁より内、離すと縁を越えて広がる。
+        let pressing = double_tap(PRESS * 0.9)[0];
+        assert!(pressing.0 < 1.0 && pressing.1 > 0.5, "{pressing:?}");
+        let released = double_tap(PRESS + RIPPLE * 0.5)[0];
+        assert!(released.0 > 1.0 && released.1 > 0.0, "{released:?}");
+        assert!(double_tap(TAP_PERIOD - 0.1).iter().all(|(_, a)| *a == 0.0));
+        let both = double_tap(0.4);
+        assert!(both.iter().all(|(_, a)| *a > 0.0), "{both:?}");
+        let (a, b) = (double_tap(0.1)[0], double_tap(0.1 + TAP_PERIOD)[0]);
+        assert!((a.0 - b.0).abs() < 1e-4, "繰り返す");
     }
 }
