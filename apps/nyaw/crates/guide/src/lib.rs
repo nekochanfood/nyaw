@@ -599,7 +599,10 @@ pub fn double_tap(t: f32) -> [(f32, f32); 2] {
         } else if (PRESS..PRESS + RIPPLE).contains(&dt) {
             let k = (dt - PRESS) / RIPPLE;
             let ease = 1.0 - (1.0 - k) * (1.0 - k);
-            (1.0 - PRESS_DEPTH + (PRESS_DEPTH + RIPPLE_GROW) * ease, 1.0 - k)
+            (
+                1.0 - PRESS_DEPTH + (PRESS_DEPTH + RIPPLE_GROW) * ease,
+                1.0 - k,
+            )
         } else {
             (1.0, 0.0)
         }
