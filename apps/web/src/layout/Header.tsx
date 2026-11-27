@@ -8,7 +8,6 @@ import { REPO_URL } from "@/links";
 import { reducedMotion } from "@/motion/reducedMotion";
 import { ButtonAnchor, ButtonLink } from "@/ui/Button";
 import { Tooltip } from "@/ui/Popup";
-import { containerClass, cx } from "@/ui/variants";
 import { LanguageMenu } from "@/layout/LanguageMenu";
 import { Logo } from "@/layout/Logo";
 import { useLoadingDone } from "@/layout/Loading";
@@ -65,7 +64,8 @@ export function Header() {
 
   return (
     <header ref={ref} className="header-band sticky top-(--frame-gutter) z-30 h-16">
-      <div className={cx(containerClass, "flex h-full items-center justify-between gap-2")}>
+      {/* 高さ 64px に 40px のボタンを置くので上下の余白は 12px。左右も 12px にして、カードの角からの余白をそろえる */}
+      <div className="flex h-full items-center justify-between gap-2 px-3">
         <div className="flex items-center gap-2">
           <Link
             data-header-item
