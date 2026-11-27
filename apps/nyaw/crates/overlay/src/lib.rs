@@ -106,6 +106,8 @@ pub struct Panel {
     pub animated: bool,
     /// 表示中に空間全体を暗転させる（[`Overlay::set_veil`]）。
     pub veil: bool,
+    /// 子がいなくても暗くする（[`Overlay::set_dimmed`]。案内中に、案内の対象でないパネルを暗くする）。
+    pub dimmed: bool,
     /// レーザーが素通りする（[`Overlay::set_pass_through`]）。ヒット判定をスキップする。
     pub pass_through: bool,
     /// イン・アウトを不透明度のみで行う（[`Overlay::set_fade_only`]）。

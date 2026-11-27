@@ -202,7 +202,7 @@ impl Overlay {
             if p.closed {
                 continue;
             }
-            let parent = parents.contains(&p.nav_bar_of.unwrap_or(id));
+            let parent = parents.contains(&p.nav_bar_of.unwrap_or(id)) || p.dimmed;
             let to = if parent { DIM } else { 0.0 };
             // ナビゲーションバーの暗さは持ち主を写す（place_nav_bars）。
             if p.dim_to == to || p.nav_bar_of.is_some() {

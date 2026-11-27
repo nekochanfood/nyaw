@@ -546,6 +546,20 @@ fn hiding_a_dialog_restores_its_parents_brightness() {
     assert_eq!(ov.panel(0).dim_to, 0.0);
 }
 
+/// 子がいなくても `set_dimmed` で暗くでき、戻すと明るくなる。暗くしても入力は止めない（止めるのは描画側）。
+#[test]
+fn a_dimmed_panel_darkens_without_a_child_and_still_takes_input() {
+    let (mut vr, mut ov) = setup();
+    ov.set_dimmed(0, true);
+    ov.tick(&mut vr);
+    assert_eq!(ov.panel(0).dim_to, DIM);
+    controller(&mut vr, at(0.0, 0.0, 0.0), &[("trigger/value", 1.0)]);
+    assert!(ov.tick(&mut vr).iter().any(|e| e.panel == 0));
+    ov.set_dimmed(0, false);
+    ov.tick(&mut vr);
+    assert_eq!(ov.panel(0).dim_to, 0.0);
+}
+
 #[test]
 fn hud_child_sits_in_the_top_left_corner_without_taking_input() {
     let (mut vr, mut ov) = with_child(false);

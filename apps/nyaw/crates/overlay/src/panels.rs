@@ -45,6 +45,7 @@ impl Overlay {
             pointer: None,
             animated: true,
             veil: false,
+            dimmed: false,
             pass_through: false,
             fade_only: false,
             capture: false,
@@ -269,6 +270,11 @@ impl Overlay {
     /// 幕はパネルより奥に描画するためパネル・レーザーは暗転しない。
     pub fn set_veil(&mut self, id: PanelId, veil: bool) {
         self.panels[id].veil = veil;
+    }
+
+    /// 子が開いているときと同じ暗さにする（`false` で戻す）。入力は止めない（止めるのは描画側）。
+    pub fn set_dimmed(&mut self, id: PanelId, dimmed: bool) {
+        self.panels[id].dimmed = dimmed;
     }
 
     /// レーザーを透過させる（ポイント不可、背後のパネルをポイント可能）。視界端に出す表示専用 HUD 用。
