@@ -1,0 +1,234 @@
+//! The tutorial on the dashboard (it starts when setup finishes). The tour lights one part of the UI at a time and
+//! dims and blocks the rest, every step can be passed with Next, doing the suggested action moves on by itself, and a
+//! practice window stands in for a mirrored app. Runs the real wrist and dashboard on the novr emulator.
+
+use gpui::TestAppContext;
+use testkit::{Button, Driver, NoVrKit};
+use wrist::Wrist;
+
+/// Frames for a click to take effect (open a panel, apply its commands, hand the status back).
+fn settle(kit: &mut NoVrKit<Wrist>) {
+    for _ in 0..12 {
+        kit.step();
+    }
+}
+
+/// The left hand's X button twice (novr: the X key). Ticks only the kernel, so both presses fall within
+/// `kernel::DOUBLE_PRESS` even in a slow debug build (see `dashboard.rs`).
+fn press_x_twice(kit: &mut NoVrKit<Wrist>) {
+    for held in [true, false, true, false] {
+        kit.kernel.subsystems.backend.set_button(Button::X, held);
+        kit.kernel.tick();
+    }
+    settle(kit);
+}
+
+/// Opens the wrist, asks for the tour (as finishing setup does) and shows the dashboard. Returns the dashboard.
+fn start(cx: &mut TestAppContext) -> (NoVrKit<'_, Wrist>, usize) {
+    let mut kit = NoVrKit::new(cx, |_, cx| {
+        Wrist::new(
+            0,
+            |f, o| testing::spec(f, o),
+            |f, o| settings::spec(f, o),
+            cx,
+        )
+    });
+    kit.step().step();
+    kit.app(ui::tour::start);
+    press_x_twice(&mut kit);
+    let dashboard = kit.read(|w| w.dashboard).expect("dashboard opened");
+    (kit, dashboard)
+}
+
+/// Clicks `selector` on the panel that shows it.
+fn click(kit: &mut NoVrKit<Wrist>, selector: &'static str) {
+    let panel = kit
+        .find(selector)
+        .unwrap_or_else(|| panic!("{selector:?} is not shown"));
+    kit.select_panel(panel).click(selector);
+    settle(kit);
+}
+
+fn at(kit: &mut NoVrKit<Wrist>, step: &'static str) -> bool {
+    kit.find(step).is_some()
+}
+
+fn running(kit: &mut NoVrKit<Wrist>) -> bool {
+    kit.app(|cx| ui::tour::running(cx))
+}
+
+#[gpui::test]
+fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut TestAppContext) {
+    let (mut kit, dashboard) = start(cx);
+    assert!(at(&mut kit, "tutorial-step-Intro"));
+    // Outside the focus, the bar and the wrist are dimmed and take no press: the menu doesn't open.
+    assert!(kit.kernel.panel(dashboard).dimmed);
+    assert!(kit.kernel.panel(0).dimmed);
+    let count = kit.panel_count();
+    kit.select_panel(dashboard).click("dashboard-menu");
+    settle(&mut kit);
+    assert_eq!(kit.panel_count(), count, "the bar took the press");
+    // The shortcut doesn't close the dashboard while the tour doesn't allow it.
+    press_x_twice(&mut kit);
+    assert!(!kit.kernel.status(dashboard).hidden);
+
+    click(&mut kit, "tutorial-next");
+    assert!(at(&mut kit, "tutorial-step-Bar"));
+    assert!(!kit.kernel.panel(dashboard).dimmed);
+    click(&mut kit, "tutorial-next");
+    assert!(at(&mut kit, "tutorial-step-Toggle"));
+    // Closing and opening again with the shortcut moves on by itself.
+    press_x_twice(&mut kit);
+    assert!(kit.kernel.status(dashboard).hidden);
+    press_x_twice(&mut kit);
+    assert!(!kit.kernel.status(dashboard).hidden);
+    assert!(at(&mut kit, "tutorial-step-Menu"));
+    click(&mut kit, "tutorial-next");
+
+    // Only the highlighted button takes the press: the launcher stays shut, the clock opens quick settings.
+    assert!(at(&mut kit, "tutorial-step-QuickSettings"));
+    kit.select_panel(dashboard).click("dashboard-launcher");
+    settle(&mut kit);
+    assert!(
+        kit.find("dashboard-search").is_none(),
+        "the launcher opened"
+    );
+    click(&mut kit, "dashboard-quick-settings");
+    let screen = kit.find("quick-time").expect("quick settings opened");
+    assert!(at(&mut kit, "tutorial-step-Grab"));
+    // Grabbing a screen off the dashboard needs a tracked hand; Next passes it.
+    click(&mut kit, "tutorial-next");
+    assert!(at(&mut kit, "tutorial-step-Dock"));
+    click(&mut kit, "tutorial-next");
+
+    // The screen's bar: × closes the screen and moves on.
+    assert!(at(&mut kit, "tutorial-step-NavBar"));
+    let nav = kit.kernel.nav_bar(screen).expect("the screen has a bar");
+    kit.select_panel(nav).click("nav-close");
+    settle(&mut kit);
+    assert!(kit.kernel.panel(screen).closed);
+
+    // The launcher lists the practice window while the tour runs; picking it docks it like a mirrored window.
+    assert!(at(&mut kit, "tutorial-step-Launcher"));
+    click(&mut kit, "dashboard-launcher");
+    assert!(at(&mut kit, "tutorial-step-Pick"));
+    click(&mut kit, "dashboard-practice");
+    assert!(at(&mut kit, "tutorial-step-Operate"));
+    let practice = kit.find("practice-list").expect("practice window opened");
+    assert!(!kit.kernel.panel(practice).dimmed);
+
+    // The practice window takes any input: scroll to the end of its list and press the button there.
+    kit.select_panel(practice);
+    for _ in 0..30 {
+        let (list, goal) = (kit.bounds("practice-list"), kit.bounds("practice-goal"));
+        if goal.bottom() <= list.bottom() {
+            break;
+        }
+        kit.scroll("practice-list", -3.0);
+    }
+    kit.click("practice-goal");
+    settle(&mut kit);
+    assert!(at(&mut kit, "tutorial-step-Minimize"));
+
+    // On the window's bar the keyboard button is only shown (it would type into the OS); − puts the window away.
+    let nav = kit
+        .kernel
+        .nav_bar(practice)
+        .expect("the practice window has a bar");
+    let count = kit.panel_count();
+    kit.select_panel(nav).click("nav-keyboard");
+    settle(&mut kit);
+    assert_eq!(kit.panel_count(), count, "the keyboard opened");
+    kit.select_panel(nav).click("nav-minimize-source");
+    settle(&mut kit);
+    assert!(kit.kernel.status(practice).hidden);
+
+    // Its button on the bar brings it back.
+    assert!(at(&mut kit, "tutorial-step-Recall"));
+    let button: &'static str = Box::leak(format!("dashboard-stream-{practice}").into_boxed_str());
+    kit.select_panel(dashboard).click(button);
+    settle(&mut kit);
+    assert!(!kit.kernel.status(practice).hidden);
+
+    // Done closes the practice window and the coach, and lifts the dimming.
+    assert!(at(&mut kit, "tutorial-step-Done"));
+    click(&mut kit, "tutorial-finish");
+    assert!(kit.kernel.panel(practice).closed);
+    assert!(!running(&mut kit));
+    assert!(kit.find("tutorial-step-Done").is_none());
+    assert!(!kit.kernel.panel(dashboard).dimmed);
+    assert!(!kit.kernel.panel(0).dimmed);
+}
+
+/// Nothing has to be done to move on: Next alone goes through every step, and each step that needs something
+/// (a docked screen, the launcher, the practice window, or the window put away) gets it on the way in.
+#[gpui::test]
+fn every_step_can_be_passed_with_next(cx: &mut TestAppContext) {
+    let (mut kit, dashboard) = start(cx);
+    let steps = [
+        "tutorial-step-Intro",
+        "tutorial-step-Bar",
+        "tutorial-step-Toggle",
+        "tutorial-step-Menu",
+        "tutorial-step-QuickSettings",
+        "tutorial-step-Grab",
+        "tutorial-step-Dock",
+        "tutorial-step-NavBar",
+        "tutorial-step-Launcher",
+        "tutorial-step-Pick",
+        "tutorial-step-Operate",
+        "tutorial-step-Minimize",
+        "tutorial-step-Recall",
+    ];
+    for step in steps {
+        assert!(at(&mut kit, step), "not at {step}");
+        match step {
+            "tutorial-step-Grab" => assert!(kit.find("quick-time").is_some()),
+            "tutorial-step-Pick" => assert!(kit.find("dashboard-practice").is_some()),
+            "tutorial-step-Operate" => assert!(kit.find("practice-list").is_some()),
+            _ => {}
+        }
+        if step == "tutorial-step-Recall" {
+            let practice = kit.find("practice-list").expect("practice window");
+            assert!(kit.kernel.status(practice).hidden, "not put away");
+        }
+        click(&mut kit, "tutorial-next");
+    }
+    assert!(at(&mut kit, "tutorial-step-Done"));
+    let practice = kit.find("practice-list").expect("practice window");
+    click(&mut kit, "tutorial-finish");
+    assert!(kit.kernel.panel(practice).closed);
+    assert!(!running(&mut kit));
+    assert!(!kit.kernel.status(dashboard).hidden);
+}
+
+/// Skip on the first screen ends the tour at once; End tutorial ends it midway and closes the practice window.
+#[gpui::test]
+fn the_tour_can_be_skipped_or_ended_midway(cx: &mut TestAppContext) {
+    let (mut kit, dashboard) = start(cx);
+    click(&mut kit, "tutorial-skip");
+    assert!(!running(&mut kit));
+    assert!(kit.find("tutorial-step-Intro").is_none());
+    assert!(!kit.kernel.panel(dashboard).dimmed);
+    // With the tour over, the bar takes presses again.
+    let count = kit.panel_count();
+    kit.select_panel(dashboard).click("dashboard-menu");
+    settle(&mut kit);
+    assert!(kit.panel_count() > count, "the menu didn't open");
+    // Close the menu again.
+    kit.select_panel(dashboard).click("dashboard-menu");
+    settle(&mut kit);
+
+    // Asked again (from the debug screen), it starts over on the shown dashboard.
+    kit.app(ui::tour::start);
+    settle(&mut kit);
+    assert!(at(&mut kit, "tutorial-step-Intro"));
+    for _ in 0..10 {
+        click(&mut kit, "tutorial-next");
+    }
+    assert!(at(&mut kit, "tutorial-step-Operate"));
+    let practice = kit.find("practice-list").expect("practice window");
+    click(&mut kit, "tutorial-quit");
+    assert!(!running(&mut kit));
+    assert!(kit.kernel.panel(practice).closed);
+}

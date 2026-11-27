@@ -26,6 +26,7 @@ mod stress;
 mod stroke_caps;
 mod superellipse;
 mod test_panels;
+mod tutorial;
 
 use std::process::{Command, ExitCode, Termination};
 
@@ -58,6 +59,7 @@ const CASES: &[Case] = &[
     ("stroke_caps", || report(stroke_caps::main)),
     ("superellipse", || report(superellipse::main)),
     ("test_panels", || report(test_panels::main)),
+    ("tutorial", || report(tutorial::main)),
 ];
 
 fn main() -> ExitCode {
