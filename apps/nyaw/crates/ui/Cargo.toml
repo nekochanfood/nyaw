@@ -26,6 +26,12 @@ wrist.workspace = true
 setup.workspace = true
 dashboard.workspace = true
 toast.workspace = true
+# ウェブサイト用のキャプチャ（tests/gpu/site.rs）が PNG で書き出す
+png = "0.18"
+
+[target.'cfg(windows)'.dev-dependencies]
+# ウェブサイト用のキャプチャがパネルを高い密度で描画する（tests/gpu/site.rs）
+gpui_windows = { workspace = true, features = ["test-support"] }
 
 # 実プラットフォーム + GPU を使用する E2E テスト（tests/gpu）。GUI はメインスレッド上で動作するため独自の main を持つ。
 # 各テストケースを子プロセスとして起動する。ストレステスト等は `-- --ignored` 指定時のみ実行する。

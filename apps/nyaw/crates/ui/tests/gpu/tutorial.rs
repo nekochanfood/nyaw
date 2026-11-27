@@ -76,7 +76,7 @@ pub fn main() -> ExitCode {
 }
 
 /// The screen point of pixel `(x, y)` on a panel at `pose` that is `size` px and `width` m wide.
-fn on_panel(emu: &Emu, pose: Pose, size: (f32, f32), width: f32, (x, y): (f32, f32)) -> Vec2 {
+pub fn on_panel(emu: &Emu, pose: Pose, size: (f32, f32), width: f32, (x, y): (f32, f32)) -> Vec2 {
     let k = width / size.0;
     let local = Vec3::new((x - size.0 / 2.0) * k, (size.1 / 2.0 - y) * k, 0.0);
     let world = pose.transform_point(local);
@@ -84,7 +84,7 @@ fn on_panel(emu: &Emu, pose: Pose, size: (f32, f32), width: f32, (x, y): (f32, f
         .expect("the panel is in front of the eye")
 }
 
-fn click(emu: &Emu, at: Vec2) {
+pub fn click(emu: &Emu, at: Vec2) {
     press(emu, at);
     // Let the page change and the panels settle.
     std::thread::sleep(Duration::from_millis(900));
@@ -115,7 +115,8 @@ fn color((w, _, rgba): &(u32, u32, Vec<u8>), at: Vec2) -> [u8; 3] {
     [rgba[i], rgba[i + 1], rgba[i + 2]]
 }
 
-fn scenario(emu: &Emu, remote: &std::sync::mpsc::Sender<ui::Remote>) {
+/// Startup, then Next through every page of setup.
+pub fn pass_setup(emu: &Emu) {
     // Startup and the first renders.
     std::thread::sleep(Duration::from_secs(4));
     let wizard = Pose::new(WIZARD, Quat::IDENTITY);
@@ -130,28 +131,37 @@ fn scenario(emu: &Emu, remote: &std::sync::mpsc::Sender<ui::Remote>) {
     for _ in 0..SETUP_PAGES {
         click(emu, next);
     }
-    shoot(emu, "00-setup-done");
+}
+
+/// X twice opens the dashboard and finishes setup; the dashboard starts the tutorial.
+pub fn open_dashboard(emu: &Emu) {
     emu.point(None);
-    // X twice opens the dashboard and finishes setup; the dashboard starts the tutorial.
     for down in [true, false, true, false] {
         emu.button(Button::X, down);
         std::thread::sleep(Duration::from_millis(40));
     }
     std::thread::sleep(Duration::from_secs(2));
+}
 
-    // The eye is the origin and the dashboard's settings are the defaults. "Next" (and "Start", "Done") sits at the lower
-    // right of the coach: margin 24 + padding 24, at least 135 px wide, 54 px high.
+/// The screen point of the coach's "Next" (and "Start", "Done") while it stands at `spot`. The eye is the origin and the
+/// dashboard's settings are the defaults. It sits at the lower right: margin 24 + padding 24, at least 135 px wide, 54 px high.
+pub fn forward(emu: &Emu, spot: CoachSpot) -> Vec2 {
     let size = (dashboard::COACH_PX.0 as f32, dashboard::COACH_PX.1 as f32);
-    let coach = |spot| dashboard::coach_pose(spot, kernel::DASHBOARD_DISTANCE, 0.0);
-    let forward = |spot| {
-        on_panel(
-            emu,
-            coach(spot),
-            size,
-            dashboard::COACH_M.x,
-            (size.0 - 48.0 - 50.0, size.1 - 48.0 - 27.0),
-        )
-    };
+    let coach = dashboard::coach_pose(spot, kernel::DASHBOARD_DISTANCE, 0.0);
+    on_panel(
+        emu,
+        coach,
+        size,
+        dashboard::COACH_M.x,
+        (size.0 - 48.0 - 50.0, size.1 - 48.0 - 27.0),
+    )
+}
+
+fn scenario(emu: &Emu, remote: &std::sync::mpsc::Sender<ui::Remote>) {
+    pass_setup(emu);
+    shoot(emu, "00-setup-done");
+    open_dashboard(emu);
+
     let running = || {
         let (tx, rx) = channel();
         let _ = remote.send(Box::new(move |cx| {
@@ -160,9 +170,10 @@ fn scenario(emu: &Emu, remote: &std::sync::mpsc::Sender<ui::Remote>) {
         rx.recv_timeout(common::TIMEOUT).expect("no answer")
     };
     assert!(running(), "the tutorial did not start");
+    let size = (dashboard::COACH_PX.0 as f32, dashboard::COACH_PX.1 as f32);
     let card = on_panel(
         emu,
-        coach(CoachSpot::Bar),
+        dashboard::coach_pose(CoachSpot::Bar, kernel::DASHBOARD_DISTANCE, 0.0),
         size,
         dashboard::COACH_M.x,
         (size.0 / 2.0, 60.0),
@@ -175,13 +186,13 @@ fn scenario(emu: &Emu, remote: &std::sync::mpsc::Sender<ui::Remote>) {
         }
         // From 9 to 10 the counter gains a digit: catch the pages and the counter mid-slide too.
         if *step == "pick" {
-            press(emu, forward(*spot));
+            press(emu, forward(emu, *spot));
             std::thread::sleep(Duration::from_millis(60));
             shoot(emu, "10-sliding");
             std::thread::sleep(Duration::from_millis(900));
             continue;
         }
-        click(emu, forward(*spot));
+        click(emu, forward(emu, *spot));
     }
     // Done closes the coach and the practice window and ends the tour.
     let after = shoot(emu, "15-finished");
