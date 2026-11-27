@@ -476,28 +476,21 @@ impl RenderOnce for ControllerGuide {
             let alpha = strength(i);
             for (ring, _) in &p.targets {
                 let Some(r) = ring else { continue };
-                // ボタンの縁から離した円。外側に薄い影を重ね、白い本体の上でも読めるようにする。
+                // ボタンの縁から離した円。UI の角丸はスーパーエリプスなので、円に戻す。
                 let id = format!("{}-ring", callout.id);
-                let circle = |d: f32, w: f32, color: Hsla| {
+                let d = 2.0 * r.radius;
+                root = root.child(
                     div()
+                        .debug_selector(move || id.clone())
                         .absolute()
-                        .left(px(r.center.x - d / 2.0))
-                        .top(px(r.center.y - d / 2.0))
+                        .left(px(r.center.x - r.radius))
+                        .top(px(r.center.y - r.radius))
                         .size(px(d))
                         .rounded_full()
-                        .border(px(w))
-                        .border_color(color)
-                };
-                root = root
-                    .child(circle(
-                        2.0 * r.radius + 4.0,
-                        RING_W + 4.0,
-                        gpui::black().opacity(0.28 * alpha),
-                    ))
-                    .child(
-                        circle(2.0 * r.radius, RING_W, accent.opacity(alpha))
-                            .debug_selector(move || id.clone()),
-                    );
+                        .circular_corners()
+                        .border(px(RING_W))
+                        .border_color(accent.opacity(alpha)),
+                );
             }
             let width = gutter - 2.0 * spacing::SM;
             let id = callout.id.clone();
