@@ -83,12 +83,12 @@ fn setup_decides_each_setting_and_marks_done(cx: &mut TestAppContext) {
     // novr モードでは SteamVR のステップは表示されず、文字盤の次が完了画面になる（戻る際も省略される）。
     kit.click("setup-next");
 
-    // 完了画面: 「完了」ボタンは無く、左下の「戻る」だけ。下に左手のコントローラを映し、ショートカット（novr は Quest
-    // Touch Plus の X）を示す。この画面ではロックダウンを解き、ダッシュボードを開けるようにする。
+    // 完了画面: 「完了」ボタンは無く、左下の「戻る」だけ。下に左手のコントローラを映し、ショートカット（novr は Index
+    // として報告し、X キーが左手の A）を示す。この画面ではロックダウンを解き、ダッシュボードを開けるようにする。
     assert!(kit.read(|v| v.wizard.is_last()));
     assert!(kit.try_bounds("setup-finish").is_none());
-    assert!(kit.try_bounds("zoom-ring-x").is_some(), "X ボタンを示す");
-    let (back, ring) = (kit.bounds("setup-back"), kit.bounds("zoom-ring-x"));
+    assert!(kit.try_bounds("zoom-ring-a").is_some(), "左手の A を示す");
+    let (back, ring) = (kit.bounds("setup-back"), kit.bounds("zoom-ring-a"));
     assert!(back.left() < ring.left() && ring.top() > kit.bounds("setup-description").bottom());
     kit.step();
     assert!(

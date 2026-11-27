@@ -84,13 +84,13 @@ fn setup_wizard_is_locked_down_and_lazily_follows_the_user(cx: &mut TestAppConte
     // 二回押しで完了する（novr の通し操作 `setup::setup_decides_each_setting_and_marks_done`）。
     // 非表示のステップ（OpenVR 以外での SteamVR ステップ）はスキップされるため、ステップ数ではなく末尾まで押す。
     for _ in 1..setup::STEPS.len() {
+        if kit.read(|v| v.wizard.is_last()) {
+            break;
+        }
         assert!(
             kit.kernel.settings().lockdown,
             "完了画面まではロックダウンを続ける"
         );
-        if kit.read(|v| v.wizard.is_last()) {
-            break;
-        }
         kit.click("setup-next");
     }
     assert!(kit.read(|v| v.wizard.is_last()));
