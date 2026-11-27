@@ -6,7 +6,7 @@
 
 use design::Icon;
 use design::components::WIZARD_MARGIN;
-use gpui::{ClickEvent, MouseButton};
+use gpui::{ClickEvent, MouseButton, Pixels};
 use guide::{Control, Controller, Model};
 use kernel::Hand;
 
@@ -231,8 +231,6 @@ const ZOOM_EDGE_PX: f32 = 56.0;
 /// 見出しの横のアイコンと、進み具合の今の番号の大きさ（px）。
 const TITLE_ICON_PX: f32 = 40.0;
 const PROGRESS_PX: f32 = 44.0;
-/// 進み具合（右上）の幅の目安と、そこから見出しまでの間を合わせた幅（px）。見出しの行の右をこれだけ空ける。
-const PROGRESS_W: f32 = 120.0;
 /// 手順を移ったとき、進み具合の番号を滑らせる時間（秒）。
 const PROGRESS_SLIDE: f32 = 0.3;
 /// 開き方だけを出すときの、寄って映すコントローラの枠の高さ（px）。
@@ -502,22 +500,7 @@ impl Dashboard {
         let coach = t.coach;
         // 先に案内のパネルを動かす（はめた所から外してから、手順に要る画面をはめる）。
         self.place_coach(cx);
-        match step {
-            Step::Grab | Step::Dock | Step::NavBar if self.lesson_screen(cx).is_none() => {
-                self.toggle(Page::QuickSettings, cx);
-            }
-            Step::Pick if self.current(cx) != Some(Page::Launcher) => {
-                self.toggle(Page::Launcher, cx);
-            }
-            Step::Operate | Step::Minimize if !self.practice_shown(cx) => self.open_practice(cx),
-            // 呼び戻す手順と完了では、練習用のウィンドウをしまっておく。
-            Step::Recall | Step::Done if self.practice_shown(cx) => {
-                if let Some(p) = self.practice() {
-                    self.minimize(p, cx);
-                }
-            }
-            _ => {}
-        }
+        self.prepare(step, cx);
         // 入った時点で済んでいる操作は、した扱いにしない（済んでいない状態から変わったときだけ）。
         let was = self.step_done(step, cx);
         if let Some(t) = &mut self.tutorial {
@@ -529,6 +512,71 @@ impl Dashboard {
             ui::redraw(coach, cx);
         }
         ui::notify(self.panel, cx);
+    }
+
+    /// 手順 `step` に入るときの状態にそろえる。進んでも戻っても同じ状態から始まるので、戻ればその手順の操作を
+    /// やり直せる（後の手順で開いた画面や練習用のウィンドウは閉じる）。
+    fn prepare(&mut self, step: Step, cx: &mut Context<Self>) {
+        // 練習用のウィンドウ: 操作としまう手順では出し、呼び戻す手順と完了ではしまい、それより前では閉じる。
+        match step {
+            Step::Operate | Step::Minimize if !self.practice_shown(cx) => self.open_practice(cx),
+            Step::Operate | Step::Minimize => {}
+            Step::Recall | Step::Done => {
+                if let Some(p) = self.practice().filter(|_| self.practice_shown(cx)) {
+                    self.minimize(p, cx);
+                }
+            }
+            _ => self.close_practice(cx),
+        }
+        // ダッシュボードのボタンで開く画面: 画面の手順ではクイック設定、選ぶ手順ではランチャーを開き、画面を開く
+        // 前の手順では閉じる。
+        match step {
+            // つかむ手順は、はめた状態から（外していれば、はめ直す）。
+            Step::Grab if self.current(cx) != Some(Page::QuickSettings) => {
+                self.close_pages_but(Some(Page::QuickSettings), cx);
+                self.toggle(Page::QuickSettings, cx);
+            }
+            Step::Dock | Step::NavBar if self.lesson_screen(cx).is_none() => {
+                self.toggle(Page::QuickSettings, cx);
+            }
+            Step::Grab | Step::Dock | Step::NavBar => {}
+            Step::Pick => {
+                self.close_pages_but(Some(Page::Launcher), cx);
+                if self.current(cx) != Some(Page::Launcher) {
+                    self.toggle(Page::Launcher, cx);
+                }
+            }
+            Step::Intro
+            | Step::Bar
+            | Step::Toggle
+            | Step::Menu
+            | Step::QuickSettings
+            | Step::Launcher => self.close_pages_but(None, cx),
+            // 練習用のウィンドウを開くと、はまっていた画面と入れ替わる。
+            Step::Operate | Step::Minimize | Step::Recall | Step::Done => {}
+        }
+    }
+
+    /// ダッシュボードのボタンで開いた画面を、`keep` の種類のほかは閉じる。
+    fn close_pages_but(&mut self, keep: Option<Page>, cx: &mut Context<Self>) {
+        let gone: Vec<PanelId> = self
+            .pages
+            .iter()
+            .filter(|&&(page, id)| Some(page) != keep && !closed(id, cx))
+            .map(|&(_, id)| id)
+            .collect();
+        for id in gone {
+            close(id, cx);
+        }
+        self.pages.retain(|&(page, _)| Some(page) == keep);
+    }
+
+    /// 練習用のウィンドウを閉じる（バーのボタンも消える）。
+    fn close_practice(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.tutorial.as_mut().and_then(|t| t.practice.take()) else {
+            return;
+        };
+        close(id, cx);
     }
 
     /// 案内を終える（スキップ・終了・完了）。練習用のウィンドウと案内のパネルを閉じる。
@@ -708,6 +756,19 @@ pub(crate) struct Coach {
     dashboard: WeakEntity<Dashboard>,
 }
 
+/// 進み具合の番号を置く箱の幅（2 桁分）。
+fn progress_digits(window: &Window) -> Pixels {
+    design::font::width("00", PROGRESS_PX, FontWeight::BOLD, window)
+}
+
+/// 進み具合（番号の箱と全体の数）の幅。見出しの行の右をこれだけ空ける。
+fn progress_width(window: &Window) -> Pixels {
+    let total = format!("/{}", STEPS.len() - 2);
+    progress_digits(window)
+        + px(spacing::XS)
+        + design::font::width(total, font_size::MD, FontWeight::NORMAL, window)
+}
+
 /// ショートカットのボタン（左手。画像に写る部品）と、その名前。
 fn shortcut(cx: &App) -> (Controller, Vec<&'static str>, Option<SharedString>) {
     let left = controller(Hand::Left, cx);
@@ -727,7 +788,7 @@ fn shortcut(cx: &App) -> (Controller, Vec<&'static str>, Option<SharedString>) {
 /// 手順 `step` のページの中身（アイコン・見出し・説明・コントローラの画像）。ページを移ると、ウィザードと同じく
 /// 横に滑って入れ替わる（[`components::navigation`]）。下の帯と進み具合はページの外に置き、滑らせない。
 /// `entered` は今の手順に入った時刻（寄って映すコントローラが現れる動きの起点。抜けていくページは `None`）。
-fn page(step: Step, entered: Option<Instant>, cx: &mut App) -> AnyElement {
+fn page(step: Step, entered: Option<Instant>, window: &Window, cx: &mut App) -> AnyElement {
     let theme = Theme::current(cx);
     let (left, parts, name) = shortcut(cx);
     let hand = ui::settings(cx).dominant_hand.hand();
@@ -803,13 +864,14 @@ fn page(step: Step, entered: Option<Instant>, cx: &mut App) -> AnyElement {
                     .flex_col()
                     .gap(px(spacing::LG))
                     .child(
-                        // 行の高さを進み具合の番号にそろえ、説明が番号のすぐ下に詰まらないようにする。
+                        // 行の高さを進み具合の番号にそろえ、説明が番号のすぐ下に詰まらないようにする。右は進み具合の
+                        // 幅（と間）だけ空ける。見出しは 1 行にし、それでも入らなければ末尾を省く。
                         div()
                             .min_h(px(PROGRESS_PX))
                             .flex()
                             .items_center()
                             .gap(px(spacing::MD))
-                            .pr(px(PROGRESS_W))
+                            .pr(progress_width(window) + px(spacing::LG))
                             .child(
                                 design::icon(step.icon())
                                     .size(px(TITLE_ICON_PX))
@@ -819,6 +881,7 @@ fn page(step: Step, entered: Option<Instant>, cx: &mut App) -> AnyElement {
                                 div()
                                     .flex_1()
                                     .min_w_0()
+                                    .truncate()
                                     .text_size(px(font_size::LG))
                                     .font_weight(FontWeight::BOLD)
                                     .child(title),
@@ -935,7 +998,7 @@ impl Render for Coach {
             design::drive::keep_drawing(window, cx);
         }
         // 番号は右寄せで折り返さず、2 桁分の幅の箱の中で滑らせる（桁が変わっても箱の幅は変わらない）。
-        let digits = design::font::width("00", PROGRESS_PX, FontWeight::BOLD, window);
+        let digits = progress_digits(window);
         let number = |n: usize, offset: f32, opacity: f32| {
             div()
                 .absolute()
@@ -1043,7 +1106,7 @@ impl Render for Coach {
             &theme,
             "tutorial-nav",
             &stack,
-            move |&i, _, cx| page(STEPS[i], (STEPS[i] == step).then_some(entered), cx),
+            move |&i, window, cx| page(STEPS[i], (STEPS[i] == step).then_some(entered), window, cx),
             |_, _| {},
         )
         .without_swipe_back();

@@ -33,8 +33,8 @@ const STEPS: [(&str, CoachSpot); 14] = [
     ("grab", CoachSpot::Beside),
     ("dock", CoachSpot::Beside),
     ("nav-bar", CoachSpot::Below),
-    // Quick settings is still docked (Next didn't close it).
-    ("launcher", CoachSpot::Beside),
+    // Quick settings closes on the way in, so the slot is free.
+    ("launcher", CoachSpot::Bar),
     ("pick", CoachSpot::Beside),
     ("operate", CoachSpot::Beside),
     ("minimize", CoachSpot::Below),
