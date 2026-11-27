@@ -12,6 +12,7 @@ mod dock_magnet;
 mod emoji;
 mod font_weights;
 mod gpu_capture;
+mod guide;
 mod keyboard;
 mod look;
 mod look_toast;
@@ -43,6 +44,7 @@ const CASES: &[Case] = &[
     ("emoji", || report(emoji::main)),
     ("font_weights", || report(font_weights::main)),
     ("gpu_capture", || report(gpu_capture::main)),
+    ("guide", || report(guide::main)),
     ("keyboard", || report(keyboard::main)),
     ("look", || report(look::main)),
     ("look_toast", || report(look_toast::main)),

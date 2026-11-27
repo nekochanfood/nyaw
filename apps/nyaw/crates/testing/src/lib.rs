@@ -13,6 +13,7 @@
 //! - 通知: [`NotificationTest`] で、Windows に実際の通知を送信し、トースト（HUD → 手首 → ダッシュボード）と通知一覧を検証する
 //! - 音声: [`AudioTest`] で、パネルスピーカーからの空間音響（同時再生・空間化の無効化・モノラル / ステレオ）を検証する
 //! - 角でのサイズ変更: [`ResizeTest`] の角を掴んで動かし、解像度（表示領域）が範囲内で変わり中身が組み直されるのを確認する
+//! - 操作ガイド: [`GuideTest`] で、使用中のコントローラの判定と、画像の上で操作部分を囲む円・テール・説明を確認する
 //! - レイヤー: [`LayerTest`] で、面に重ねる子・ポップオーバー・ダイアログ・HUD・奥のパネルを出し、重なり方と確定した描画順・奥行きを確認する
 //! - 負荷: [`StressTest`] で上限までパネルを生成し、閉じる・ランダム配置・整列を行う
 //!
@@ -56,6 +57,8 @@ pub use skeleton::{
     HandTuningTest, PINCH_DISTANCE, SKELETON_PX, SKELETON_SIZE, SkeletonTest, TUNING_PX,
     TUNING_SIZE, pinches,
 };
+mod guide;
+pub use guide::{GUIDE_PX, GUIDE_SIZE, GuideTest, Shown};
 mod anim;
 mod dialog;
 mod font;

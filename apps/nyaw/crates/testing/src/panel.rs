@@ -288,6 +288,16 @@ impl Render for Testing {
                     }),
                 )
                 .child(
+                    button!("guide-test", i18n::t(cx, "testing.open.guide"), false).on_click({
+                        let panel = self.panel;
+                        move |_, _, cx| {
+                            cx.default_global::<PanelControl>()
+                                .spawns
+                                .push(GuideTest::spec(panel))
+                        }
+                    }),
+                )
+                .child(
                     button!("smoothing-test", i18n::t(cx, "testing.open.laser"), false).on_click(
                         spawn_view(self.panel, "testing.open.laser", |id, _| {
                             SmoothingTest::new(id)

@@ -55,6 +55,7 @@ setup = { path = "crates/setup" }
 dashboard = { path = "crates/dashboard" }
 beam = { path = "crates/beam" }
 updater = { path = "crates/updater" }
+guide = { path = "crates/guide" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [package]

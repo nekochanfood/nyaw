@@ -21,6 +21,7 @@ LogoTest;            // 各種サイズ・テーマ下におけるロゴ描画�
 SuperellipseTest;    // スーパーエリプス角丸パラメータ（k値）の検証
 ResizeTest;          // 角を掴んだサイズ変更（解像度の変更）の検証
 LayerTest;           // パネルの重なり（描画順と奥行き）の検証
+GuideTest;           // コントローラガイド（機種の判定と、操作部分の円・テール・説明）の検証
 ```
 
 ## ファイル構成と実装規則
@@ -35,6 +36,7 @@ LayerTest;           // パネルの重なり（描画順と奥行き）の検�
 | `scrollbar.rs` | `TestingScrollbar` | GPUI リストおよびコンテナのスクロール挙動検証。 |
 | `resize.rs` | `ResizeTest` | 角を掴んだサイズ変更（表示領域の変化と組み直し、範囲、縦横比の固定）の検証。 |
 | `layers.rs` | `LayerTest` | パネルの重なりの検証。見本ごとに確定した描画順と、手前にずらした距離（mm）を表示する。 |
+| `guide.rs` | `GuideTest` | 使用中のコントローラの判定（手ごと）と、[`guide`](../guide/AGENT.md) の表示。左に機種の一覧（`guide-in-use`・`guide-model-*`）と手（`guide-hand-*`）、右にガイドと割り当ての一覧（`guide-bind-<操作>`。ホバーで強調）。`guide-all-parts` で画像のすべてのボタンを囲む。 |
 | `stress.rs` | `StressTest` | パネルの大量生成と破棄による負荷・スタッター検証。 |
 
 ## Testing パネルの要素一覧
@@ -51,6 +53,7 @@ LayerTest;           // パネルの重なり（描画順と奥行き）の検�
 - `dialog-test`: 子パネル検証画面（`DialogTest`）の展開。親パネルの暗転、入力遮断、および連動把持の確認。
 - `settings-test`: 設定画面（[`crates/settings`](../settings/AGENT.md)）の呼び出し。
 - `layer-test`: レイヤー検証画面（`LayerTest`）の展開。`layer-over`（面に重ねる子。押すたびに右下へずらして重ねる）・`layer-popover`・`layer-dialog`・`layer-hud`・`layer-far`（30cm 奥の独立パネル）で見本を出し、`layer-clear` でまとめて閉じる。各見本の `layer-readout` に確定した描画順とずらした距離が出る。
+- `guide-test`: コントローラガイドの検証画面（`GuideTest`）の展開。
 - `nav-test`: 画面スタック検証画面（`NavTest`）の展開。プッシュ遷移およびスワイプバックの閾値判定。
 - `audio-test`: 空間音響検証画面（`AudioTest`）の展開。2ch 再生、ループ再生、立体音響の有効/無効切り替え。
 - `skeleton-test`: ハンドトラッキング検証画面（`SkeletonTest`）の展開。関節ギズモの描画、ピンチジェスチャー判定。

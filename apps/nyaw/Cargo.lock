@@ -2200,6 +2200,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "guide"
+version = "2026.0.4-dev.0"
+dependencies = [
+ "design",
+ "gpui",
+ "i18n",
+ "kernel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "half"
 version = "2.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5447,6 +5459,7 @@ version = "2026.0.4-dev.0"
 dependencies = [
  "design",
  "gpui",
+ "guide",
  "i18n",
  "kernel",
  "settings",
@@ -5458,6 +5471,7 @@ name = "testkit"
 version = "2026.0.4-dev.0"
 dependencies = [
  "gpui",
+ "guide",
  "kernel",
  "logger",
  "minifb",
@@ -5789,6 +5803,7 @@ dependencies = [
  "design",
  "gpui",
  "gpui_platform",
+ "guide",
  "i18n",
  "kernel",
  "logger",

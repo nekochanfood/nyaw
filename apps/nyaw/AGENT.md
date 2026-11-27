@@ -44,6 +44,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 | 4 | [`crates/design`](crates/design/AGENT.md) | デザインシステム（トークン、共通コンポーネント、テーマ管理）。 |
 | 4 | [`crates/profiler`](crates/profiler/AGENT.md) | 計測時のみ動作する軽量プロファイラ。 |
 | 4 | [`crates/i18n`](crates/i18n/AGENT.md) | 画面表示文字列の多言語対応（英語・日本語）。 |
+| 4 | [`crates/guide`](crates/guide/AGENT.md) | コントローラの操作ガイド（レンダリング画像の操作部分を円で囲み、テールで説明と結ぶ）。 |
 | 5 | [`crates/testing`](crates/testing/AGENT.md) | 開発時の動作確認・E2E テスト用の各種検証画面。 |
 | 5 | [`crates/wrist`](crates/wrist/AGENT.md) | 手首に常駐する腕時計型パネル。 |
 | 5 | [`crates/toast`](crates/toast/AGENT.md) | OS 通知のトースト表示（HUD、手首、ダッシュボード間を移動）。 |
