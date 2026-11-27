@@ -85,13 +85,18 @@ fn on_panel(emu: &Emu, pose: Pose, size: (f32, f32), width: f32, (x, y): (f32, f
 }
 
 fn click(emu: &Emu, at: Vec2) {
+    press(emu, at);
+    // Let the page change and the panels settle.
+    std::thread::sleep(Duration::from_millis(900));
+}
+
+/// Clicks without waiting for the page change to finish.
+fn press(emu: &Emu, at: Vec2) {
     emu.point(Some(at));
     std::thread::sleep(Duration::from_millis(150));
     emu.button(Button::Trigger, true);
     std::thread::sleep(Duration::from_millis(80));
     emu.button(Button::Trigger, false);
-    // Let the page change and the panels settle.
-    std::thread::sleep(Duration::from_millis(900));
 }
 
 fn shoot(emu: &Emu, name: &str) -> (u32, u32, Vec<u8>) {
@@ -167,6 +172,14 @@ fn scenario(emu: &Emu, remote: &std::sync::mpsc::Sender<ui::Remote>) {
         let shot = shoot(emu, &format!("{:02}-{step}", i + 1));
         if *step == "done" {
             during = Some(shot);
+        }
+        // From 9 to 10 the counter gains a digit: catch the pages and the counter mid-slide too.
+        if *step == "pick" {
+            press(emu, forward(*spot));
+            std::thread::sleep(Duration::from_millis(60));
+            shoot(emu, "10-sliding");
+            std::thread::sleep(Duration::from_millis(900));
+            continue;
         }
         click(emu, forward(*spot));
     }

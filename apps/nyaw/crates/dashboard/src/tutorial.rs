@@ -231,8 +231,8 @@ const ZOOM_EDGE_PX: f32 = 56.0;
 /// 見出しの横のアイコンと、進み具合の今の番号の大きさ（px）。
 const TITLE_ICON_PX: f32 = 40.0;
 const PROGRESS_PX: f32 = 44.0;
-/// 進み具合（右上）の幅の目安（px）。見出しの行の右をこれだけ空ける。
-const PROGRESS_W: f32 = 96.0;
+/// 進み具合（右上）の幅の目安と、そこから見出しまでの間を合わせた幅（px）。見出しの行の右をこれだけ空ける。
+const PROGRESS_W: f32 = 120.0;
 /// 手順を移ったとき、進み具合の番号を滑らせる時間（秒）。
 const PROGRESS_SLIDE: f32 = 0.3;
 /// 開き方だけを出すときの、寄って映すコントローラの枠の高さ（px）。
@@ -801,9 +801,11 @@ fn page(step: Step, entered: Option<Instant>, cx: &mut App) -> AnyElement {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .gap(px(spacing::SM))
+                    .gap(px(spacing::LG))
                     .child(
+                        // 行の高さを進み具合の番号にそろえ、説明が番号のすぐ下に詰まらないようにする。
                         div()
+                            .min_h(px(PROGRESS_PX))
                             .flex()
                             .items_center()
                             .gap(px(spacing::MD))
@@ -932,11 +934,15 @@ impl Render for Coach {
         if slide.is_some() {
             design::drive::keep_drawing(window, cx);
         }
+        // 番号は右寄せで折り返さず、2 桁分の幅の箱の中で滑らせる（桁が変わっても箱の幅は変わらない）。
+        let digits = design::font::width("00", PROGRESS_PX, FontWeight::BOLD, window);
         let number = |n: usize, offset: f32, opacity: f32| {
             div()
-                .relative()
+                .absolute()
+                .right_0()
                 .top(px(offset))
                 .opacity(opacity)
+                .whitespace_nowrap()
                 .text_size(px(PROGRESS_PX))
                 .line_height(px(PROGRESS_PX))
                 .font_weight(FontWeight::BOLD)
@@ -949,13 +955,8 @@ impl Render for Coach {
                 Some((_, k, up)) => number(step.number(), sign(up) * (1.0 - k) * PROGRESS_PX, k),
                 None => number(step.number(), 0.0, 1.0),
             };
-            let leaving = slide.map(|(f, k, up)| {
-                div().absolute().top_0().left_0().child(number(
-                    f.number(),
-                    -sign(up) * k * PROGRESS_PX,
-                    1.0 - k,
-                ))
-            });
+            let leaving =
+                slide.map(|(f, k, up)| number(f.number(), -sign(up) * k * PROGRESS_PX, 1.0 - k));
             div()
                 .debug_selector(|| "tutorial-progress".into())
                 .absolute()
@@ -967,7 +968,9 @@ impl Render for Coach {
                 .child(
                     div()
                         .relative()
+                        .flex_none()
                         .overflow_hidden()
+                        .w(digits)
                         .h(px(PROGRESS_PX))
                         .child(current)
                         .children(leaving),
