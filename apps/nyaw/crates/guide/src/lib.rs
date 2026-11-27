@@ -677,6 +677,7 @@ impl RenderOnce for Zoom {
                 .top(px(c.y - r))
                 .size(px(2.0 * r))
                 .rounded_full()
+                .circular_corners()
                 .border(px(w))
                 .border_color(color)
         };
@@ -717,14 +718,10 @@ impl RenderOnce for Zoom {
                     .filter(|(_, a)| *a > 0.0)
                     .map(|&(grow, a)| circle(c, r * grow, RING_W, accent.opacity(0.6 * a)))
                     .collect::<Vec<_>>();
-                let pr = r * press;
-                waves.into_iter().chain([
-                    circle(c, pr + 2.0, RING_W + 4.0, gpui::black().opacity(0.28)),
-                    circle(c, pr, RING_W, accent).debug_selector({
-                        let id = format!("zoom-ring-{}", p.id);
-                        move || id
-                    }),
-                ])
+                let id = format!("zoom-ring-{}", p.id);
+                waves
+                    .into_iter()
+                    .chain([circle(c, r * press, RING_W, accent).debug_selector(move || id)])
             }))
     }
 }
