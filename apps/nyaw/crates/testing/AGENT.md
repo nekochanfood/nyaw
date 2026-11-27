@@ -54,6 +54,7 @@ GuideTest;           // コントローラガイド（機種の判定と、操�
 - `settings-test`: 設定画面（[`crates/settings`](../settings/AGENT.md)）の呼び出し。
 - `layer-test`: レイヤー検証画面（`LayerTest`）の展開。`layer-over`（面に重ねる子。押すたびに右下へずらして重ねる）・`layer-popover`・`layer-dialog`・`layer-hud`・`layer-far`（30cm 奥の独立パネル）で見本を出し、`layer-clear` でまとめて閉じる。各見本の `layer-readout` に確定した描画順とずらした距離が出る。
 - `guide-test`: コントローラガイドの検証画面（`GuideTest`）の展開。
+- `tutorial`: ダッシュボードのチュートリアルを始める（`ui::tour::start`。はめていたこの画面は閉じる）。
 - `nav-test`: 画面スタック検証画面（`NavTest`）の展開。プッシュ遷移およびスワイプバックの閾値判定。
 - `audio-test`: 空間音響検証画面（`AudioTest`）の展開。2ch 再生、ループ再生、立体音響の有効/無効切り替え。
 - `skeleton-test`: ハンドトラッキング検証画面（`SkeletonTest`）の展開。関節ギズモの描画、ピンチジェスチャー判定。
