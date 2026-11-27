@@ -19,6 +19,7 @@ sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 
 # The screens the scenarios operate. The kit itself knows nothing about screens
 [dev-dependencies]
+dashboard.workspace = true
 testing.workspace = true
 guide.workspace = true
 settings.workspace = true

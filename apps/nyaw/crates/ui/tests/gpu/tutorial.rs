@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use common::{Driven, Emu};
+use dashboard::CoachSpot;
 use kernel::vr::novr::Button;
 use kernel::vr::{Quat, Vec3};
 use kernel::{Kernel, Pose, Vec2, VrBackend};
@@ -21,21 +22,25 @@ const WIZARD: Vec3 = Vec3::new(0.0, 0.0, -1.5);
 const WIZARD_PX: (f32, f32) = (1152.0, 864.0);
 /// The pages of setup before Done in novr (no SteamVR step).
 const SETUP_PAGES: usize = 5;
-/// Steps of the tour after the first screen, up to Done.
-const STEPS: [&str; 13] = [
-    "bar",
-    "toggle",
-    "menu",
-    "quick-settings",
-    "grab",
-    "dock",
-    "nav-bar",
-    "launcher",
-    "pick",
-    "operate",
-    "minimize",
-    "recall",
-    "done",
+/// Steps of the tour from the first screen up to Done, and where the coach stands at each when only Next is pressed:
+/// docked at first, above the bar while nothing is docked, beside the docked screen (lower by the screen's bar).
+const STEPS: [(&str, CoachSpot); 14] = [
+    ("intro", CoachSpot::Docked),
+    ("bar", CoachSpot::Bar),
+    ("toggle", CoachSpot::Bar),
+    ("menu", CoachSpot::Bar),
+    ("quick-settings", CoachSpot::Bar),
+    ("grab", CoachSpot::Beside),
+    ("dock", CoachSpot::Beside),
+    ("nav-bar", CoachSpot::Below),
+    // Quick settings is still docked (Next didn't close it).
+    ("launcher", CoachSpot::Beside),
+    ("pick", CoachSpot::Beside),
+    ("operate", CoachSpot::Beside),
+    ("minimize", CoachSpot::Below),
+    // The practice window is put away, so the slot is free.
+    ("recall", CoachSpot::Bar),
+    ("done", CoachSpot::Bar),
 ];
 
 pub fn main() -> ExitCode {
@@ -70,13 +75,10 @@ pub fn main() -> ExitCode {
     common::exit_code("tutorial", &result)
 }
 
-/// The screen point of pixel `(x, y)` on a panel at `pose` that is `size` px (1px = 1mm).
-fn on_panel(emu: &Emu, pose: Pose, size: (f32, f32), (x, y): (f32, f32)) -> Vec2 {
-    let local = Vec3::new(
-        (x - size.0 / 2.0) / 1000.0,
-        (size.1 / 2.0 - y) / 1000.0,
-        0.0,
-    );
+/// The screen point of pixel `(x, y)` on a panel at `pose` that is `size` px and `width` m wide.
+fn on_panel(emu: &Emu, pose: Pose, size: (f32, f32), width: f32, (x, y): (f32, f32)) -> Vec2 {
+    let k = width / size.0;
+    let local = Vec3::new((x - size.0 / 2.0) * k, (size.1 / 2.0 - y) * k, 0.0);
     let world = pose.transform_point(local);
     emu.run(move |e| e.project(world))
         .expect("the panel is in front of the eye")
@@ -113,7 +115,13 @@ fn scenario(emu: &Emu, remote: &std::sync::mpsc::Sender<ui::Remote>) {
     std::thread::sleep(Duration::from_secs(4));
     let wizard = Pose::new(WIZARD, Quat::IDENTITY);
     // "Next" sits at the lower right of every page (margin 24 + padding 24, at least 135 px wide).
-    let next = on_panel(emu, wizard, WIZARD_PX, (1040.0, WIZARD_PX.1 - 48.0 - 27.0));
+    let next = on_panel(
+        emu,
+        wizard,
+        WIZARD_PX,
+        WIZARD_PX.0 / 1000.0,
+        (1040.0, WIZARD_PX.1 - 48.0 - 27.0),
+    );
     for _ in 0..SETUP_PAGES {
         click(emu, next);
     }
@@ -126,18 +134,19 @@ fn scenario(emu: &Emu, remote: &std::sync::mpsc::Sender<ui::Remote>) {
     }
     std::thread::sleep(Duration::from_secs(2));
 
-    // The coach stands right of the dashboard's slot (the eye is the origin, the settings are the defaults).
-    let coach = dashboard::pose(kernel::DASHBOARD_DISTANCE, 0.0)
-        * dashboard::coach_offset(kernel::DASHBOARD_DISTANCE, 0.0);
+    // The eye is the origin and the dashboard's settings are the defaults. "Next" (and "Start", "Done") sits at the lower
+    // right of the coach: margin 24 + padding 24, at least 135 px wide, 54 px high.
     let size = (dashboard::COACH_PX.0 as f32, dashboard::COACH_PX.1 as f32);
-    let card = on_panel(emu, coach, size, (size.0 / 2.0, 40.0));
-    let forward = on_panel(
-        emu,
-        coach,
-        size,
-        (size.0 - 48.0 - 50.0, size.1 - 48.0 - 27.0),
-    );
-    let intro = shoot(emu, "01-intro");
+    let coach = |spot| dashboard::coach_pose(spot, kernel::DASHBOARD_DISTANCE, 0.0);
+    let forward = |spot| {
+        on_panel(
+            emu,
+            coach(spot),
+            size,
+            dashboard::COACH_M.x,
+            (size.0 - 48.0 - 50.0, size.1 - 48.0 - 27.0),
+        )
+    };
     let running = || {
         let (tx, rx) = channel();
         let _ = remote.send(Box::new(move |cx| {
@@ -146,17 +155,27 @@ fn scenario(emu: &Emu, remote: &std::sync::mpsc::Sender<ui::Remote>) {
         rx.recv_timeout(common::TIMEOUT).expect("no answer")
     };
     assert!(running(), "the tutorial did not start");
-    for (i, step) in STEPS.iter().enumerate() {
-        click(emu, forward);
-        shoot(emu, &format!("{:02}-{step}", i + 2));
+    let card = on_panel(
+        emu,
+        coach(CoachSpot::Bar),
+        size,
+        dashboard::COACH_M.x,
+        (size.0 / 2.0, 60.0),
+    );
+    let mut during = None;
+    for (i, (step, spot)) in STEPS.iter().enumerate() {
+        let shot = shoot(emu, &format!("{:02}-{step}", i + 1));
+        if *step == "done" {
+            during = Some(shot);
+        }
+        click(emu, forward(*spot));
     }
-    assert!(running(), "the tutorial ended before Done");
     // Done closes the coach and the practice window and ends the tour.
-    click(emu, forward);
     let after = shoot(emu, "15-finished");
     assert!(!running(), "the tutorial did not end");
+    let during = during.expect("reached Done");
     assert_ne!(
-        color(&intro, card),
+        color(&during, card),
         color(&after, card),
         "the coach is still shown"
     );
