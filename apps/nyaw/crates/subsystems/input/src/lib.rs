@@ -454,20 +454,10 @@ pub fn map(raw: &RawController, prev: Option<&ControllerState>) -> ControllerSta
         hand: raw.hand,
         aim: raw.aim,
         select: held(trigger, was(|c| c.select)),
-        click_button: if p.id == "oculus/touch_controller" {
-            let (right, middle) = match raw.hand {
-                Hand::Left => ("x/touch", "y/touch"),
-                Hand::Right => ("a/touch", "b/touch"),
-            };
-            if raw.input(right).unwrap_or(0.0) > 0.5 {
-                ClickButton::Right
-            } else if raw.input(middle).unwrap_or(0.0) > 0.5 {
-                ClickButton::Middle
-            } else {
-                ClickButton::Left
-            }
-        } else {
-            ClickButton::Left
+        click_button: match click_touches(p, raw.hand) {
+            Some((right, _)) if raw.input(right).unwrap_or(0.0) > 0.5 => ClickButton::Right,
+            Some((_, middle)) if raw.input(middle).unwrap_or(0.0) > 0.5 => ClickButton::Middle,
+            _ => ClickButton::Left,
         },
         trigger,
         grab: held(strongest(raw, p.grab), was(|c| c.grab)),
@@ -657,7 +647,16 @@ pub struct Controller {
     profile: &'static Profile,
 }
 
-/// 操作ガイドに出す操作（[`Action`] とスクロール）。
+/// 映した画面を右クリック・中クリックするとき、親指を触れておくボタン（触れたかの入力名。右クリック・中クリックの順）。
+/// 触れたかを報告するボタンのある機種（Touch）だけ。ほかの機種は左クリックだけになる。
+fn click_touches(p: &Profile, hand: Hand) -> Option<(&'static str, &'static str)> {
+    (p.id == "oculus/touch_controller").then_some(match hand {
+        Hand::Left => ("x/touch", "y/touch"),
+        Hand::Right => ("a/touch", "b/touch"),
+    })
+}
+
+/// 操作ガイドに出す操作（[`Action`] とスクロール、映した画面の右クリック・中クリック）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Control {
     Select,
@@ -665,15 +664,21 @@ pub enum Control {
     Menu,
     Shortcut,
     Scroll,
+    /// 親指をボタンに触れたままトリガーを引く（[`ClickButton::Right`]）。
+    RightClick,
+    /// 親指を別のボタンに触れたままトリガーを引く（[`ClickButton::Middle`]）。
+    MiddleClick,
 }
 
 impl Control {
-    pub const ALL: [Control; 5] = [
+    pub const ALL: [Control; 7] = [
         Control::Select,
         Control::Grab,
         Control::Menu,
         Control::Shortcut,
         Control::Scroll,
+        Control::RightClick,
+        Control::MiddleClick,
     ];
 }
 
@@ -711,6 +716,8 @@ impl Controller {
             Control::Shortcut if hand == Hand::Left => p.shortcut.to_vec(),
             Control::Shortcut => Vec::new(),
             Control::Scroll => p.scroll.map(|(x, _)| x).into_iter().collect(),
+            Control::RightClick => click_touches(p, hand).map(|(r, _)| r).into_iter().collect(),
+            Control::MiddleClick => click_touches(p, hand).map(|(_, m)| m).into_iter().collect(),
         };
         let mut parts = Vec::new();
         for input in inputs {
@@ -1240,5 +1247,18 @@ mod tests {
             r.inputs.push((own_right.into(), 1.0));
             assert_eq!(map(&r, None).click_button, ClickButton::Right);
         }
+    }
+
+    /// 右クリック・中クリックで触れておくボタンは、操作ガイドの部品にもなる（Touch だけ。左手は X・Y、右手は A・B）。
+    #[test]
+    fn right_and_middle_click_parts_are_the_touched_buttons() {
+        let touch = Controller::of(Model::QuestPlus);
+        assert_eq!(touch.parts(Control::RightClick, Hand::Right), ["a"]);
+        assert_eq!(touch.parts(Control::MiddleClick, Hand::Right), ["b"]);
+        assert_eq!(touch.parts(Control::RightClick, Hand::Left), ["x"]);
+        assert_eq!(touch.parts(Control::MiddleClick, Hand::Left), ["y"]);
+        let index = Controller::of(Model::Index);
+        assert!(index.parts(Control::RightClick, Hand::Right).is_empty());
+        assert!(index.parts(Control::MiddleClick, Hand::Right).is_empty());
     }
 }

@@ -551,6 +551,8 @@ grab = "Grab"
 menu = "Menu"
 shortcut = "Shortcut"
 scroll = "Scroll"
+right_click = "Right click"
+middle_click = "Middle click"
 
 [guide.detail]
 select = "Press buttons and links"
@@ -558,6 +560,8 @@ grab = "Hold to move a panel"
 menu = "Menu of the screen"
 shortcut = "Press twice to open the dashboard"
 scroll = "Scroll lists"
+right_click = "Touch and pull the trigger to right-click"
+middle_click = "Touch and pull the trigger to middle-click"
 
 [guide.part]
 trigger = "Trigger"
