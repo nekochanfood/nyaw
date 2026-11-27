@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "coordinates": {
+    "width": 1024,
+    "height": 1024,
+    "origin": "top-left",
+    "x_y": "pixels",
+    "u_v": "normalized 0..1"
+  },
+  "render_model": "vr_controller_vive_1_5",
+  "render_model_aliases": [],
+  "source_render_model": "vr_controller_vive_1_5",
+  "hand": "right",
+  "controller_type": "vive_controller",
+  "image": "right/vr_controller_vive_1_5.png",
+  "buttons": [
+    {
+      "id": "grip_left",
+      "input": "/user/hand/right/input/grip",
+      "x": 538.1,
+      "y": 630.9,
+      "u": 0.52545,
+      "v": 0.61612,
+      "visible": true,
+      "visibility": 0.145
+    },
+    {
+      "id": "grip_right",
+      "input": "/user/hand/right/input/grip",
+      "x": 721.5,
+      "y": 553.2,
+      "u": 0.70457,
+      "v": 0.54019,
+      "visible": false,
+      "visibility": 0.0
+    },
+    {
+      "id": "menu",
+      "input": "/user/hand/right/input/application_menu",
+      "x": 487.4,
+      "y": 246.1,
+      "u": 0.47593,
+      "v": 0.24033,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "system",
+      "input": "/user/hand/right/input/system",
+      "x": 635.2,
+      "y": 552.0,
+      "u": 0.62033,
+      "v": 0.53908,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "trackpad",
+      "input": "/user/hand/right/input/trackpad",
+      "x": 550.9,
+      "y": 380.6,
+      "u": 0.53795,
+      "v": 0.37168,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "trigger",
+      "input": "/user/hand/right/input/trigger",
+      "x": 549.1,
+      "y": 448.2,
+      "u": 0.53624,
+      "v": 0.43768,
+      "visible": false,
+      "visibility": 0.0
+    }
+  ],
+  "inputs_without_position": []
+}

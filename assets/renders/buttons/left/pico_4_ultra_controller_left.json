@@ -1,0 +1,90 @@
+{
+  "schema_version": 1,
+  "coordinates": {
+    "width": 1024,
+    "height": 1024,
+    "origin": "top-left",
+    "x_y": "pixels",
+    "u_v": "normalized 0..1"
+  },
+  "render_model": "pico_4_ultra_controller_left",
+  "render_model_aliases": [],
+  "source_render_model": "pico_4_ultra_controller_left",
+  "hand": "left",
+  "controller_type": "pico_controller",
+  "image": "left/pico_4_ultra_controller_left.png",
+  "buttons": [
+    {
+      "id": "grip",
+      "input": "/user/hand/left/input/grip",
+      "x": 516.1,
+      "y": 549.9,
+      "u": 0.50401,
+      "v": 0.53698,
+      "visible": true,
+      "visibility": 0.644
+    },
+    {
+      "id": "menu",
+      "input": "/user/hand/left/input/system",
+      "x": 415.2,
+      "y": 182.0,
+      "u": 0.40545,
+      "v": 0.1777,
+      "visible": true,
+      "visibility": 1.0,
+      "input_assumed": true
+    },
+    {
+      "id": "system",
+      "input": null,
+      "x": 423.1,
+      "y": 267.5,
+      "u": 0.41316,
+      "v": 0.26124,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "thumbstick",
+      "input": "/user/hand/left/input/joystick",
+      "x": 531.6,
+      "y": 149.2,
+      "u": 0.51918,
+      "v": 0.14574,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "trigger",
+      "input": "/user/hand/left/input/trigger",
+      "x": 574.9,
+      "y": 272.1,
+      "u": 0.56145,
+      "v": 0.26571,
+      "visible": false,
+      "visibility": 0.0
+    },
+    {
+      "id": "x",
+      "input": "/user/hand/left/input/x",
+      "x": 532.7,
+      "y": 304.5,
+      "u": 0.52025,
+      "v": 0.29732,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "y",
+      "input": "/user/hand/left/input/y",
+      "x": 625.4,
+      "y": 258.5,
+      "u": 0.61075,
+      "v": 0.2524,
+      "visible": true,
+      "visibility": 1.0
+    }
+  ],
+  "inputs_without_position": []
+}

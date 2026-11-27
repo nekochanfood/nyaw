@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "coordinates": {
+    "width": 1024,
+    "height": 1024,
+    "origin": "top-left",
+    "x_y": "pixels",
+    "u_v": "normalized 0..1"
+  },
+  "render_model": "oculus_quest_plus_controller_left",
+  "render_model_aliases": [],
+  "source_render_model": "oculus_quest_plus_controller_left",
+  "hand": "left",
+  "controller_type": "oculus_touch",
+  "image": "left/oculus_quest_plus_controller_left.png",
+  "buttons": [
+    {
+      "id": "grip",
+      "input": "/user/hand/left/input/grip",
+      "x": 508.8,
+      "y": 586.0,
+      "u": 0.49684,
+      "v": 0.57226,
+      "visible": true,
+      "visibility": 0.821
+    },
+    {
+      "id": "menu",
+      "input": "/user/hand/left/input/system",
+      "x": 444.2,
+      "y": 253.3,
+      "u": 0.43378,
+      "v": 0.24741,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "thumbstick",
+      "input": "/user/hand/left/input/joystick",
+      "x": 545.0,
+      "y": 110.7,
+      "u": 0.53218,
+      "v": 0.10809,
+      "visible": true,
+      "visibility": 0.968
+    },
+    {
+      "id": "trigger",
+      "input": "/user/hand/left/input/trigger",
+      "x": 694.7,
+      "y": 291.1,
+      "u": 0.67841,
+      "v": 0.2843,
+      "visible": false,
+      "visibility": 0.0
+    },
+    {
+      "id": "x",
+      "input": "/user/hand/left/input/x",
+      "x": 575.2,
+      "y": 284.7,
+      "u": 0.56169,
+      "v": 0.278,
+      "visible": true,
+      "visibility": 1.0
+    },
+    {
+      "id": "y",
+      "input": "/user/hand/left/input/y",
+      "x": 695.3,
+      "y": 242.8,
+      "u": 0.67896,
+      "v": 0.23709,
+      "visible": true,
+      "visibility": 1.0
+    }
+  ],
+  "inputs_without_position": [
+    {
+      "input": "/user/hand/left/input/thumbrest",
+      "reason": "no_render_model_component"
+    }
+  ]
+}

@@ -6,6 +6,9 @@
 .blend が source/ フォルダにある構成では、出力先はその 1 つ上 (--final は left/ right/ を直下に作る):
   blender -b source/ControllerRender.blend --python-exit-code 1 -P tools/render.py -- --final
 
+各ボタン中心の画像上の座標は、コントローラごとに buttons/<left|right>/<名前>.json に書く (button_map.py)。
+--map-only は画像を描かずに JSON だけ作り直す。テクスチャは SteamVR のファイルを直接参照する。
+
 コレクション内の MESH が対象。モデルを追加するならコレクションに入れるだけ。.blend は保存しない。
 レンダリング中だけ、元の法線に沿って丸めた細分化メッシュに差し替える (--subdiv 0 で無効)。
 元のメッシュは変更しない。
@@ -20,6 +23,10 @@ from pathlib import Path
 import bpy
 import numpy as np
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.dont_write_bytecode = True
+import button_map
+
 SIDES = {"左手": "left", "右手": "right"}
 
 p = argparse.ArgumentParser()
@@ -27,6 +34,7 @@ p.add_argument("--final", action="store_true")
 p.add_argument("--size", type=int, help="正方形の一辺 (px)。省略時は .blend の解像度")
 p.add_argument("--margin", type=float, default=0.05, help="長辺側の片側余白 (画像に対する割合)")
 p.add_argument("--out", help="出力先フォルダ。省略時は preview/ (--final は renders/。source/ 構成では 1 つ上)")
+p.add_argument("--map-only", action="store_true", help="画像を描かず buttons/ の JSON だけ作る")
 p.add_argument("--only", default="", help="名前にこの文字列を含むモデルだけ")
 p.add_argument("--subdiv", type=int, default=2, help="細分化レベル。辺を 2**N 分割する (0 で無効)")
 p.add_argument("--bend", type=float, default=30, help="辺を丸める上限角度 (度)。超える辺は直線のまま")
@@ -34,6 +42,12 @@ args = p.parse_args(sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else
 
 scene = bpy.context.scene
 r = scene.render
+
+# テクスチャは SteamVR を直接参照する。欠けるとピンク色のまま出力されるので先に止める
+missing = sorted({bpy.path.abspath(i.filepath) for i in bpy.data.images
+                  if i.users and i.source == "FILE" and not i.packed_file
+                  and not Path(bpy.path.abspath(i.filepath)).is_file()})
+assert not missing, f"テクスチャが見つからない (SteamVR の場所を確認): {missing}"
 if args.size:
     r.resolution_x = r.resolution_y = args.size
 r.resolution_percentage = 100
@@ -73,10 +87,12 @@ if args.final and r.engine == "CYCLES":
     use_gpu()
 W, H = r.resolution_x, r.resolution_y
 blend_dir = Path(bpy.data.filepath).parent
+# buttons/ は本番画像の隣に置くので、--map-only も本番の出力先を使う
+production = args.final or args.map_only
 if blend_dir.name == "source":
-    out_root = blend_dir.parent / (args.out or ("." if args.final else "preview"))
+    out_root = blend_dir.parent / (args.out or ("." if production else "preview"))
 else:
-    out_root = blend_dir / (args.out or ("renders" if args.final else "preview"))
+    out_root = blend_dir / (args.out or ("renders" if production else "preview"))
 
 
 def fit(cam, obj):
@@ -245,10 +261,18 @@ for col_name, side in SIDES.items():
                 o.hide_render = not (o == target or (o.type == "LIGHT" and o.name in objs))
         path = out_root / side / (re.sub(r"\.\d+$", "", target.name) + ".png")
         r.filepath = str(path)
+        original = target.data
         with subdivided(target):
             fit(cam, target)
-            bpy.ops.render.render(write_still=True)
-        check(path)
+            dg = bpy.context.evaluated_depsgraph_get()
+            proj = button_map.Projection(
+                cam.evaluated_get(dg).matrix_world.copy(), target.matrix_world.copy(),
+                cam.data.ortho_scale, (cam.data.shift_x, cam.data.shift_y), W, H)
+            if not args.map_only:
+                bpy.ops.render.render(write_still=True)
+        button_map.write(out_root, button_map.controller(path.stem, side, original, proj), W, H)
+        if not args.map_only:
+            check(path)
         print(f"OK {side}/{path.name}", flush=True)
         done += 1
 
