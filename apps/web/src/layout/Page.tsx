@@ -18,7 +18,7 @@ const graphemes = (text: string) =>
 export function PageTitle({ title }: { title: string }) {
   const ref = useRef<HTMLHeadingElement>(null);
   const shown = usePageShown();
-  // ページのフェードインが終わってから始める。それまで文字は styles.css が隠している
+  // ページのフェードインと同時に始める。それまで文字は styles.css が隠している
   useLayoutEffect(() => {
     const el = ref.current;
     if (!shown || !el || reducedMotion()) return;
@@ -26,7 +26,7 @@ export function PageTitle({ title }: { title: string }) {
       y: ["-60%", "0%"],
       opacity: [0, 1],
       duration: 700,
-      delay: stagger(30, { start: 150 }),
+      delay: stagger(30, { start: 50 }),
       ease: "out(4)",
     });
     return () => {

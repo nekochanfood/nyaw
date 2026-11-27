@@ -6,7 +6,7 @@ import { usePageShown } from "@/motion/stage";
 
 /**
  * `ref` の中の `[data-reveal]` を、画面の下から 85% の位置まで来たときに順に浮かび上がらせる（1 回だけ）。
- * ページのフェードインが終わってから始める。それまでは styles.css が隠している（JavaScript が動き、
+ * ページのフェードインと同時に始める。それまでは styles.css が隠している（JavaScript が動き、
  * 動きを減らす設定でないときだけ）。
  */
 export function useReveal(ref: RefObject<HTMLElement | null>) {
