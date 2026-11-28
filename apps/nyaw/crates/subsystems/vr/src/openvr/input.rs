@@ -36,6 +36,8 @@ const FILES: [(&str, &str); 5] = [
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub(super) struct HandActions {
     pub select: bool,
+    /// トリガーの引き量（0〜1）。押下は入力層もしきい値で判定する。
+    pub trigger: f32,
     pub grab: bool,
     pub menu: bool,
     pub middle_touch: bool,
@@ -52,6 +54,7 @@ pub(super) struct Input {
     set: u64,
     aim: u64,
     select: u64,
+    trigger: u64,
     grab: u64,
     menu: u64,
     middle_touch: u64,
@@ -104,6 +107,7 @@ impl Input {
             set: handle(t.GetActionSetHandle, "/actions/nyaw")?,
             aim: action("/actions/nyaw/in/aim")?,
             select: action("/actions/nyaw/in/select")?,
+            trigger: action("/actions/nyaw/in/trigger")?,
             grab: action("/actions/nyaw/in/grab")?,
             menu: action("/actions/nyaw/in/menu")?,
             middle_touch: action("/actions/nyaw/in/middle_touch")?,
@@ -286,43 +290,34 @@ impl Input {
                 && d.bState
                 && (!pulse || d.bChanged)
         };
-        let mut a: sys::InputAnalogActionData_t = unsafe { MaybeUninit::zeroed().assume_init() };
-        let e = unsafe {
-            f(t.GetAnalogActionData)(
-                self.scroll,
-                &mut a,
-                size_of::<sys::InputAnalogActionData_t>() as u32,
-                source,
-            )
-        };
-        let scroll = if e == sys::EVRInputError_VRInputError_None && a.bActive {
-            Vec2::new(a.x, a.y)
-        } else {
-            Vec2::ZERO
-        };
-        let mut r: sys::InputAnalogActionData_t = unsafe { MaybeUninit::zeroed().assume_init() };
-        let e = unsafe {
-            f(t.GetAnalogActionData)(
-                self.resize,
-                &mut r,
-                size_of::<sys::InputAnalogActionData_t>() as u32,
-                source,
-            )
-        };
-        let resize = if e == sys::EVRInputError_VRInputError_None && r.bActive {
-            r.x
-        } else {
-            0.0
+        // 割り当てが無ければ 0。
+        let analog = |action| {
+            let mut d: sys::InputAnalogActionData_t =
+                unsafe { MaybeUninit::zeroed().assume_init() };
+            let e = unsafe {
+                f(t.GetAnalogActionData)(
+                    action,
+                    &mut d,
+                    size_of::<sys::InputAnalogActionData_t>() as u32,
+                    source,
+                )
+            };
+            if e == sys::EVRInputError_VRInputError_None && d.bActive {
+                Vec2::new(d.x, d.y)
+            } else {
+                Vec2::ZERO
+            }
         };
         HandActions {
             select: digital(self.select, false),
+            trigger: analog(self.trigger).x,
             grab: digital(self.grab, false),
             menu: digital(self.menu, false),
             middle_touch: digital(self.middle_touch, false),
             right_touch: digital(self.right_touch, false),
             shortcut: digital(self.shortcut, true),
-            scroll,
-            resize,
+            scroll: analog(self.scroll),
+            resize: analog(self.resize).x,
         }
     }
 }
@@ -377,6 +372,30 @@ mod tests {
             for need in ["aim", "select", "grab", "menu", "scroll", "shortcut"] {
                 let full = format!("/actions/nyaw/in/{need}");
                 assert!(bound.contains(&full), "{name}: {need} unbound");
+            }
+        }
+    }
+
+    /// どの機種も、両手のトリガーが押下と引き量の両方を出す。引き量が欠けると、押下のしきい値が SteamVR 任せになる。
+    #[test]
+    fn both_triggers_report_click_and_pull() {
+        for (name, body) in &FILES[1..] {
+            let bindings = json(body);
+            let sources = bindings["bindings"]["/actions/nyaw"]["sources"]
+                .as_array()
+                .unwrap();
+            for hand in ["left", "right"] {
+                let path = format!("/user/hand/{hand}/input/trigger");
+                let trigger: Vec<_> = sources.iter().filter(|s| s["path"] == *path).collect();
+                // 同じ部品を二度書くと、片方の割り当てが使われないことがある。
+                assert_eq!(trigger.len(), 1, "{name}: {path}");
+                for (input, action) in [("click", "select"), ("pull", "trigger")] {
+                    assert_eq!(
+                        trigger[0]["inputs"][input]["output"],
+                        format!("/actions/nyaw/in/{action}"),
+                        "{name}: {path} {input}"
+                    );
+                }
             }
         }
     }

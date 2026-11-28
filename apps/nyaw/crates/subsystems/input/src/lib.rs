@@ -56,7 +56,8 @@ struct Profile {
 
 const SIMPLE: Profile = Profile {
     id: "khr/simple_controller",
-    select: &["select/click"],
+    // SteamVR では、既定のバインドが無い機種もこの割り当てで読み、引き量が届くことがある。
+    select: &["select/click", "trigger/value"],
     grab: &[],
     menu: &["menu/click"],
     shortcut: &[],
@@ -1228,6 +1229,42 @@ mod tests {
             &[("trigger/value", 0.0), ("select/click", 1.0)],
         );
         assert!(map(&r, None).select);
+    }
+
+    /// コントローラはどの機種も、引き量だけ（SteamVR が押下を報告しない浅い引き）でも、押下の報告だけ
+    /// （軸の宣言が違うドライバ）でも押せる。両方が届く場合は、どちらも離れるまで押したままにする。
+    #[test]
+    fn every_controller_selects_by_pull_or_button() {
+        for id in PROFILES
+            .iter()
+            .map(|p| p.id)
+            .filter(|&id| id != HAND_PROFILE)
+        {
+            let r = |pull, click| raw(id, &[("trigger/value", pull), ("select/click", click)]);
+            let started = map(&r(0.3, 0.0), None);
+            assert!(!started.select, "{id}");
+            // 押下の手前の引きは、手ブレ抑えに使う。
+            assert_eq!(started.select_progress(), 0.5, "{id}");
+            assert!(!map(&r(0.55, 0.0), None).select, "{id}");
+            assert!(map(&r(0.65, 0.0), None).select, "{id}");
+            let held = map(&r(0.0, 1.0), None);
+            assert!(held.select, "{id}");
+            // 押下の報告が先に消えても、引いている間は押したまま。
+            assert!(map(&r(0.45, 0.0), Some(&held)).select, "{id}");
+            assert!(!map(&r(0.35, 0.0), Some(&held)).select, "{id}");
+        }
+    }
+
+    /// 触れたかを報告しない割り当ての機種では、親指のタッチでクリックの種類が変わらない。
+    #[test]
+    fn only_touch_changes_the_click_button() {
+        for id in PROFILES.iter().map(|p| p.id) {
+            if id == "oculus/touch_controller" {
+                continue;
+            }
+            let r = raw(id, &[("a/touch", 1.0), ("b/touch", 1.0)]);
+            assert_eq!(map(&r, None).click_button, ClickButton::Left, "{id}");
+        }
     }
 
     #[test]
