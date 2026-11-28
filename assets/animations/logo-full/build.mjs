@@ -61,6 +61,11 @@ const TAIL = { start: 46, slide: 30, grown: 92, minScale: 20, thicken: 20 };
 // ゆっくり穏やかになる（slow Hz へ、時定数 relax 秒で近づく）。damping は減衰比、until で残りの揺れをちょうど 0 にして止める
 const SWING = { from: 35, release: 62, fast: 1.8, slow: 0.8, relax: 0.35, damping: 0.42, until: 160 };
 
+// ロゴ全体の左右のずれ。しっぽが出るまでは、しっぽを除いた部品（文字と耳）を左右の中央に置き、
+// しっぽが w から出てくるのに合わせて from から to まで左へ動かして、完成形の位置に収める
+// 区間は、しっぽが速く伸びるフレーム（70 前後）が中ほどになるように取る。遅らせると、途中で絵の中心が右へ寄る
+const SHIFT = { from: 56, to: 86 };
+
 // バブル（ロゴの地の円）は、ずれた位置から回り込むように漂って、settle で元の位置に収まる
 const BUBBLES = { settle: 130, drift: 26, turns: 0.6 };
 
@@ -302,6 +307,8 @@ const EASE = { o: { x: [0.33], y: [0] }, i: { x: [0.67], y: [1] } };
 const LINEAR = { o: { x: [0], y: [0] }, i: { x: [1], y: [1] } };
 // CSS の easeInOutCirc に相当する 3 次ベジェ
 const CIRC_IN_OUT = { o: { x: [0.85], y: [0] }, i: { x: [0.15], y: [1] } };
+// CSS の easeInOutCubic に相当する 3 次ベジェ
+const CUBIC_IN_OUT = { o: { x: [0.65], y: [0] }, i: { x: [0.35], y: [1] } };
 
 // [フレーム, 値] の並びをキーフレームにする。値は数か配列
 function keys(list, ease = EASE) {
@@ -614,6 +621,22 @@ function bubbleGroups(circles) {
 
 // ---- 合成 ----
 
+// ロゴ全体を載せる層の位置（SHIFT を参照）。ずれの幅は、全部品の中心と、しっぽを除いた部品の中心の差
+function shiftPosition(svg) {
+  const centerX = (contours) => {
+    const [x0, , x1] = bbox(contours);
+    return (x0 + x1) / 2;
+  };
+  const dx = r2(centerX(svg.contours) - centerX(Object.keys(PARTS).flatMap((name) => contoursOf(svg, name))));
+  return keys(
+    [
+      [SHIFT.from, [dx, 0]],
+      [SHIFT.to, [0, 0]],
+    ],
+    CUBIC_IN_OUT,
+  );
+}
+
 // 文字の段と、その奥の耳としっぽの段に分けて重ねる。段ごとに、塗り、輪郭、バブルを持つ。
 // 段を分けるのは、耳としっぽの輪郭と塗りを文字の輪郭より奥に置き、文字の下から出てくるようにするため
 function build(theme) {
@@ -634,6 +657,21 @@ function build(theme) {
     precomp(`${name} 塗り`, id),
     ...rest,
   ];
+  // Lottie では配列の先頭が手前に描かれる。段の中では、輪郭を塗りの奥に置く。押せる範囲は一番手前に置き、バブルなどより先に拾う
+  const scene = [
+    layer("文字と耳 押せる範囲", {
+      shapes: [...TEXT, ...EARS].map((name) => partGroup(svg, name, [hitItem(fillItem(svg.fill), name)])),
+    }),
+    tail.hit,
+    ...tier("front", "文字", [partsLayer(svg, TEXT, "outline")]),
+    // しっぽの塗りは耳の塗りと、しっぽの輪郭は耳の輪郭と同じ高さに置く。
+    // この段は、見えてよい範囲だけを残すマスクで切り抜く（バブルは型の側で切り抜かれる）
+    ...tier("back", "耳としっぽ", [...tail.fills, partsLayer(svg, EARS, "outline"), tail.outline]).map((l) =>
+      l.tt ? l : { ...l, hasMask: true, masksProperties: reveal },
+    ),
+  ];
+  // 全体を 1 つのプリコンポにまとめ、その層を左右に動かす。マスクと型も一緒に動く
+  assets.push({ id: "scene", nm: "ロゴ全体", layers: scene });
   return {
     v: "5.12.2",
     fr: FPS,
@@ -645,19 +683,7 @@ function build(theme) {
     ddd: 0,
     assets,
     markers: Object.entries(SEGMENTS).map(([cm, [from, to]]) => ({ tm: from, cm, dr: to - from })),
-    // Lottie では配列の先頭が手前に描かれる。段の中では、輪郭を塗りの奥に置く。押せる範囲は一番手前に置き、バブルなどより先に拾う
-    layers: [
-      layer("文字と耳 押せる範囲", {
-        shapes: [...TEXT, ...EARS].map((name) => partGroup(svg, name, [hitItem(fillItem(svg.fill), name)])),
-      }),
-      tail.hit,
-      ...tier("front", "文字", [partsLayer(svg, TEXT, "outline")]),
-      // しっぽの塗りは耳の塗りと、しっぽの輪郭は耳の輪郭と同じ高さに置く。
-      // この段は、見えてよい範囲だけを残すマスクで切り抜く（バブルは型の側で切り抜かれる）
-      ...tier("back", "耳としっぽ", [...tail.fills, partsLayer(svg, EARS, "outline"), tail.outline]).map((l) =>
-        l.tt ? l : { ...l, hasMask: true, masksProperties: reveal },
-      ),
-    ],
+    layers: [precomp("ロゴ全体", "scene", { ks: transform({ position: shiftPosition(svg) }) })],
   };
 }
 

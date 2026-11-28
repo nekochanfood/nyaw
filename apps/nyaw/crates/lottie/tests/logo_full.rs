@@ -85,6 +85,31 @@ fn intro_ends_on_the_still_logo() {
     }
 }
 
+/// しっぽが出る前は、文字と耳が左右の中央にある。イントロの最後は、しっぽを含むロゴ全体が中央にある。
+#[test]
+fn stays_centered_before_and_after_the_tail() {
+    let anim = load(LIGHT);
+    let end = anim.marker("intro").unwrap().end();
+    for frame in [56., end] {
+        let pixmap = anim.render(frame, 401, 199).unwrap();
+        let columns = || {
+            pixmap
+                .pixels()
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.alpha() > 128)
+                .map(|(i, _)| i % 401)
+        };
+        let left = columns().min().expect("何か描かれていること");
+        let right = columns().max().unwrap();
+        let center = (left + right + 1) as f64 / 2.;
+        assert!(
+            (center - anim.width / 2.).abs() < 8.,
+            "フレーム {frame}: 中心 {center}"
+        );
+    }
+}
+
 #[test]
 fn hit_finds_parts_after_the_intro() {
     let anim = load(LIGHT);

@@ -33,7 +33,7 @@ nyaw のアニメーション（リポジトリルートの `assets/animations/`
 ## テスト
 
 - 単体テスト: 値の補間とイージング、トリム。
-- `tests/logo_full.rs`: `assets/animations/logo-full` を読み、マーカー、最初のフレームが空であること、イントロの最後のフレームが静止画のロゴ（resvg で描く）とほぼ同じこと、押した位置の判定を確かめる。
+- `tests/logo_full.rs`: `assets/animations/logo-full` を読み、マーカー、最初のフレームが空であること、しっぽが出る前とイントロの最後に絵が左右の中央にあること、イントロの最後のフレームが静止画のロゴ（resvg で描く）とほぼ同じこと、押した位置の判定を確かめる。
 
 ```sh
 cargo test -p lottie
