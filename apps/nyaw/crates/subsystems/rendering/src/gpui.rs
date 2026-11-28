@@ -22,19 +22,26 @@ pub fn capture(window: &mut Window, cx: &mut App) -> gpui::Result<Frame> {
     window.draw(cx).clear(cx);
     let frame = read_back(window)?;
     // 読み戻しは 1 回遅れのため、いま描画した絵を受け取る（キューイングされていなければ返った絵が現在の絵）。
-    Ok(collect(window).unwrap_or(frame))
+    collect(window)
+        .or(frame)
+        .ok_or_else(|| std::io::Error::other("cannot read the drawn picture back").into())
 }
 
 /// 再描画済みのシーンを GPU で描画し、読み戻しをキューイングする（[`capture`] の後半。プロファイラが別々に計測するため分離してある）。
-/// GPU の完了を待機せず、前にキューイングした読み戻しの絵（無ければ最後に返した絵）を返す。いま描画した絵は
-/// 次のフレームの [`collect`] か、次の `read_back` で受け取る。
-pub fn read_back(window: &mut Window) -> gpui::Result<Frame> {
-    let img = window.render_to_image()?;
-    Ok(Frame {
-        width: img.width(),
-        height: img.height(),
-        rgba: img.into_raw(),
-    })
+/// GPU の完了を待機せず、前にキューイングした読み戻しの絵を返す。それを [`collect`] で受け取り済みなら `None`
+/// （直前に返した絵が最新のまま）。いま描画した絵は、次のフレームの [`collect`] か、次の `read_back` で受け取る。
+/// 開いた直後と大きさを変えた直後は、完了を待っていまの絵を返す。
+pub fn read_back(window: &mut Window) -> gpui::Result<Option<Frame>> {
+    match window.render_to_image() {
+        Ok(img) => Ok(Some(Frame {
+            width: img.width(),
+            height: img.height(),
+            rgba: img.into_raw(),
+        })),
+        #[cfg(windows)]
+        Err(e) if e.is::<gpui_windows::ReadbackPending>() => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// 前の [`read_back`] でキューイングした読み戻しを、再描画せずに受け取る。キューイングされていなければ `None`。

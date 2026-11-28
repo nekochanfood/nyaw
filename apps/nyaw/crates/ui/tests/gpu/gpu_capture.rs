@@ -65,15 +65,20 @@ pub fn main() {
                     }
                 }
             }
-            // read_back does not wait for the GPU: it returns the previous picture, and collect returns the one just drawn.
+            // read_back does not wait for the GPU: once the previous picture was handed out it returns nothing, then the
+            // picture drawn one call earlier, and collect returns the one just drawn.
             let pair = cx
                 .update_window(window.into(), |_, window, cx| {
-                    color.set(OTHER_BG);
-                    window.refresh();
-                    window.draw(cx).clear(cx);
-                    let before = ui::read_back(window).map(|f| f.rgba[..4].to_vec());
+                    let mut draw = |next: u32| {
+                        color.set(next);
+                        window.refresh();
+                        window.draw(cx).clear(cx);
+                        ui::read_back(window).map(|f| f.map(|f| f.rgba[..4].to_vec()))
+                    };
+                    let handed_out = draw(OTHER_BG);
+                    let before = draw(PANEL_BG);
                     let after = ui::collect(window).map(|f| f.rgba[..4].to_vec());
-                    (before, after)
+                    (handed_out, before, after)
                 })
                 .unwrap();
             *delayed_out.borrow_mut() = Some(pair);
@@ -123,15 +128,20 @@ pub fn main() {
             .map(|c| (c & 0xff) as u8)
             .to_vec()
     };
-    let (before, after) = delayed.take().expect("delayed readback not checked");
+    let (handed_out, before, after) = delayed.take().expect("delayed readback not checked");
+    assert_eq!(
+        handed_out.unwrap(),
+        None,
+        "a picture is not handed out twice"
+    );
     assert_eq!(
         before.unwrap(),
-        rgba(PANEL_BG),
+        Some(rgba(OTHER_BG)),
         "read_back returns the previous picture"
     );
     assert_eq!(
         after,
-        Some(rgba(OTHER_BG)),
+        Some(rgba(PANEL_BG)),
         "collect returns the picture just drawn"
     );
     println!("gpu_capture: delayed readback ok");

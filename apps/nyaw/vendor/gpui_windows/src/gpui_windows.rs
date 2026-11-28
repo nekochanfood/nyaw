@@ -41,7 +41,7 @@ pub(crate) use wrapper::*;
 pub use platform::WindowsPlatform;
 // NYAW: 非同期リードバックの回収用エントリポイント。
 #[cfg(any(test, feature = "test-support"))]
-pub use directx_renderer::collect_readback;
+pub use directx_renderer::{ReadbackPending, collect_readback};
 // NYAW: パネル LOD 用の描画スケール変更。
 pub use window::with_render_scale;
 
