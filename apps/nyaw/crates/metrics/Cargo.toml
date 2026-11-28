@@ -1,0 +1,8 @@
+[package]
+name = "metrics"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# オーバーレイ層（MIT OR Apache-2.0）とデザイン層（GPL-3.0-or-later）が共有する寸法。overlay が GPL のクレートに依存しないよう分離する。
+[dependencies]

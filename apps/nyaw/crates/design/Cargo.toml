@@ -2,19 +2,20 @@
 name = "design"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "GPL-3.0-or-later"
 
 # デザイン層。値（Constants）→ 役割とテーマ（Utilities）→ 部品（Components）の 3 層構成。
 # 値は tokens.json を唯一の情報源とし、build.rs が Rust コードへ変換する。
 [features]
 # 部品（Components）・アイコン・テーマのグローバル等、GPUI で描画するもの。
-# 無効にすると値（Constants）と動き（animation）のみとなり、GPUI に依存しない下位層（overlay）からも利用できる。
+# 無効にすると値（Constants）と動き（animation）のみとなり、GPUI に依存しない。
 default = ["gpui"]
 gpui = ["dep:gpui", "dep:pulldown-cmark", "dep:unicode-segmentation", "dep:lottie", "dep:image", "dep:logger"]
 
 [dependencies]
 palette = "0.7"
 animation.workspace = true
+metrics.workspace = true
 gpui = { workspace = true, features = ["test-support"], optional = true }
 unicode-segmentation = { version = "1.13", optional = true }
 # リリースノート等の Markdown 描画に使用（components::markdown）。

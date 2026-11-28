@@ -5,7 +5,7 @@
 
 use super::magnet::GHOST_SINK;
 use super::*;
-use design::{CORNER_HANDLE_PX, radius};
+use metrics::{CORNER_HANDLE_PX, PANEL_RADIUS};
 
 /// 角とみなす範囲: パネル面の角から内側へこの幅（px）と、その外側の影の余白。
 // ponytail: 固定の幅。掴みにくい・誤って掴むならここで調整する。
@@ -236,7 +236,7 @@ impl Overlay {
             }
             let upload = si.sent != Some(px);
             if upload {
-                let rgba = rounded_rect(px, radius::XL * STAND_IN_SCALE, STAND_IN_ALPHA);
+                let rgba = rounded_rect(px, PANEL_RADIUS * STAND_IN_SCALE, STAND_IN_ALPHA);
                 si.surface.store(px.0, px.1, &rgba);
                 si.sent = Some(px);
             }

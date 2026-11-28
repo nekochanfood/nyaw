@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use animation::{Animation, Motion, Transition};
-use design::{BRACKET_PAD_PX, PANEL_MARGIN};
+use metrics::{BRACKET_PAD_PX, PANEL_MARGIN};
 use subsystems::{Frame, Subsystems, desktop::Cursor, rendering::Surface, vr};
 
 use vr::{Device, Hand, HandSkeleton, Mat3, OverlayId, Pose, Quat, Vec2, Vec3, VrBackend, VrError};
@@ -184,7 +184,7 @@ pub enum Pointer {
     /// （上端に [`DOCK_HINT_PX`] の帯を加えた解像度をオーバーレイ層が決定）。パネルより奥に描画。内容は [`Overlay::dock_hint`]。
     Dock,
     /// 角を囲む線。角で大きさを変えられるパネル（[`Overlay::set_corner_resize`]）の角を指している間と、掴んで大きさを
-    /// 変えている間、その角に置く。窓の中心がパネル面の角に来て、窓 1px がパネル 1px になる（[`design::CORNER_HANDLE_PX`]）。
+    /// 変えている間、その角に置く。窓の中心がパネル面の角に来て、窓 1px がパネル 1px になる（[`metrics::CORNER_HANDLE_PX`]）。
     /// 右下の角の線を描けば、ほかの角には回して置く。
     Corner,
 }

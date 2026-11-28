@@ -60,20 +60,10 @@ pub use lottie::intro_logo;
 #[cfg(feature = "gpui")]
 include!(concat!(env!("OUT_DIR"), "/icons.rs"));
 
-/// パネルの影のぼかし（ガウスの σ）。オフセットなしで四方へ広がる影により、重なったパネル間の境界を示す。
-pub const PANEL_SHADOW_BLUR: f32 = 8.0;
-/// パネル背景をウィンドウ端から離す幅。影はパネルのテクスチャ内に描画するため、この範囲に収める。
-/// GPUI は影を σ の 3 倍まで描画するため、同値にして影が途切れないようにする。
-/// オーバーレイ層もナビゲーションバーの配置に使用するため、GPUI を持たない値の側に定義する。
-pub const PANEL_MARGIN: f32 = 3.0 * PANEL_SHADOW_BLUR;
-/// 角枠（beam の `bracket`。はまる所の見本などが使う、角丸矩形の隅だけを囲む線）の太さ（px）。
-pub const BRACKET_LINE_PX: f32 = 6.0;
-/// パネル面から角枠の外側までの幅（px）。面と線の間に、線の太さの 2 倍の隙間を空ける。
-/// オーバーレイ層が見本の大きさの決定に使用するため、GPUI を持たない値の側に定義する。
-pub const BRACKET_PAD_PX: f32 = 3.0 * BRACKET_LINE_PX;
-/// 角を囲む線（パネルの角を掴んで大きさを変えるときの目印）の窓の一辺（px）。オーバーレイ層は窓の中心をパネル面の角に置き、
-/// 窓 1px がパネル 1px になる大きさにする。Windows の非表示ウィンドウの最小サイズ制約があるため、これより小さくしない。
-pub const CORNER_HANDLE_PX: u32 = 240;
+pub use metrics::{
+    BRACKET_LINE_PX, BRACKET_PAD_PX, CORNER_HANDLE_PX, PANEL_MARGIN, PANEL_SHADOW_BLUR,
+};
+const _: () = assert!(radius::XL == metrics::PANEL_RADIUS);
 
 /// 部品のトランジションを有効にする GPUI のグローバル（置いたときだけ動く。テストは置かないので即座に切り替わる）。
 /// 描き直してほしいウィンドウと時刻を `animating` に積む。フレームループ（`ui`）は時刻の来たウィンドウを描き直す（[`drive`]）。
