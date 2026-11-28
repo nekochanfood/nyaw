@@ -47,17 +47,20 @@ export function LoadingProvider({ children }: { children: ReactNode }) {
 }
 
 /*
-  CSS を読み込む前から描けるよう、読み込み画面の見た目はここに直接書く。色はトークン（--card など）が
-  読み込まれていればそれを、まだならその値を直接使う。ダークは保存したテーマか OS の設定で決まる。
+  CSS を読み込む前から描けるよう、読み込み画面の見た目はここに直接書く。色は styles.css の役割（--card など）が
+  読み込まれていればそれを、まだなら Catppuccin の値（ライトは Latte、ダークは Frappé）を直接使う。
+  ダークは保存したテーマか OS の設定で決まる。
 */
 const STYLE = `
-#loading-screen{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:var(--card,#fff)}
-#loading-screen circle{stroke:var(--neutral-border,#d9d9d9)}
-#loading-screen circle+circle{stroke:var(--color-ctp-lavender,#7287fd)}
+#loading-screen{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:var(--card,#eff1f5)}
+#loading-screen circle{stroke:var(--neutral-border,#bcc0cc)}
+#loading-screen circle+circle{stroke:var(--ctp-lavender,#7287fd)}
 #loading-screen svg{animation:loading-spin .8s linear infinite}
 @keyframes loading-spin{to{transform:rotate(360deg)}}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]) #loading-screen{background:var(--card,oklch(.285 0 0))}}
-:root[data-theme=dark] #loading-screen{background:var(--card,oklch(.285 0 0))}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) #loading-screen{background:var(--card,#303446)}:root:not([data-theme=light]) #loading-screen circle{stroke:var(--neutral-border,#51576d)}:root:not([data-theme=light]) #loading-screen circle+circle{stroke:var(--ctp-lavender,#babbf1)}}
+:root[data-theme=dark] #loading-screen{background:var(--card,#303446)}
+:root[data-theme=dark] #loading-screen circle{stroke:var(--neutral-border,#51576d)}
+:root[data-theme=dark] #loading-screen circle+circle{stroke:var(--ctp-lavender,#babbf1)}
 @media (prefers-reduced-motion:reduce){#loading-screen svg{animation-duration:2.4s}}
 #loading-screen .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 `;

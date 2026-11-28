@@ -13,19 +13,10 @@
   }
 }
 
-/* ライトは dark の裏返し。トークンのライトの値だけを上書きするときに使う */
-@custom-variant light {
-  &:where([data-theme="light"], [data-theme="light"] *) {
-    @slot;
-  }
-  @media (prefers-color-scheme: light) {
-    &:where(:root:not([data-theme="dark"]), :root:not([data-theme="dark"]) *) {
-      @slot;
-    }
-  }
+/* 色の light-dark() は color-scheme に従う。保存したテーマで OS の設定を上書きする */
+:root {
+  color-scheme: light dark;
 }
-
-/* トークンの light-dark() は color-scheme に従う。保存したテーマで OS の設定を上書きする */
 :root[data-theme="light"] {
   color-scheme: light;
 }
@@ -34,18 +25,54 @@
 }
 
 /*
-  アクセントは Catppuccin の Lavender。ライトは Latte、ダークはロゴと同じ Frappé の値を使う。
-  基調の無彩色（トークン）の上に、選択範囲、フォーカスの枠、遷移の進み具合の線など小さな面積で置く。
+  色は Catppuccin。ライトは Latte、ダークはロゴと同じ Frappé の値を使う。使う色だけを --ctp-* に置き、ページの役割
+  （カード、帯、本文の文字など）に割り当てる。アクセントの Lavender は、選択範囲、フォーカスの枠、遷移の
+  進み具合の線など小さな面積に置く
 */
+:root {
+  --ctp-base: light-dark(#eff1f5, #303446);
+  --ctp-crust: light-dark(#dce0e8, #232634);
+  --ctp-surface0: light-dark(#ccd0da, #414559);
+  --ctp-surface1: light-dark(#bcc0cc, #51576d);
+  --ctp-subtext0: light-dark(#6c6f85, #a5adce);
+  --ctp-text: light-dark(#4c4f69, #c6d0f5);
+  --ctp-lavender: light-dark(#7287fd, #babbf1);
+
+  /* 本文のカード、ポップアップの面 */
+  --card: var(--ctp-base);
+  /* ページを囲む帯（外枠）。ヘッダー、フッター、狭い画面のメニューの面もこの色にする */
+  --frame: var(--ctp-crust);
+  /* 本文の文字。塗りのボタンの面にも使う */
+  --neutral-text: var(--ctp-text);
+  /* 控えめな文字 */
+  --neutral-text-low: var(--ctp-subtext0);
+  /* 細い区切り線、ポップアップの枠 */
+  --neutral-border-subtle: var(--ctp-surface0);
+  /* 読み込み画面の輪の地 */
+  --neutral-border: var(--ctp-surface1);
+  /* カードの上の項目をホバー・選択したときの面 */
+  --control-on-background: var(--ctp-surface0);
+  /* ツールチップの面と文字 */
+  --tooltip: var(--ctp-text);
+  --on-tooltip: var(--ctp-base);
+}
+
+/* Tailwind の色は、上の役割とアクセントだけにする */
 @theme inline {
-  --color-ctp-lavender: light-dark(#7287fd, #babbf1);
+  --color-*: initial;
+  --color-card: var(--card);
+  --color-frame: var(--frame);
+  --color-neutral-text: var(--neutral-text);
+  --color-neutral-text-low: var(--neutral-text-low);
+  --color-neutral-border-subtle: var(--neutral-border-subtle);
+  --color-control-on-background: var(--control-on-background);
+  --color-tooltip: var(--tooltip);
+  --color-on-tooltip: var(--on-tooltip);
+  --color-ctp-lavender: var(--ctp-lavender);
 
   --font-sans:
     "Gen Interface JP", Inter, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui,
     sans-serif;
-
-  /* ページを囲む帯（外枠）の色。ヘッダー、フッター、狭い画面のメニューの面もこの色にする */
-  --color-frame: var(--frame);
 }
 
 :root {
@@ -57,21 +84,7 @@
 
   /*
     ページ全体を囲む帯（外枠）。上辺の帯はヘッダー（h-16）の高さ、ほかの三辺は --frame-gutter の太さにする。
-    帯の色は、ライトではアプリの groove より二段明るくし（白いカードとの差を縮める）、ダークでは groove のまま
   */
-  --frame: var(--neutral-bg);
-  @variant dark {
-    --frame: var(--groove);
-  }
-
-  /*
-    ライトの黒（本文の色。塗りのボタンの面にも使う）は、アプリのトークン（oklch 0.2435）より明るくし、
-    白いカードとのコントラストを和らげる。ツールチップの面（トークンでは真っ黒）も同じ色にする
-  */
-  @variant light {
-    --neutral-text: oklch(0.33 0 0);
-    --tooltip: var(--neutral-text);
-  }
   --frame-gutter: 8px;
   --frame-top: 4rem;
   /*
@@ -146,11 +159,11 @@
   }
 
   ::selection {
-    background: color-mix(in oklch, var(--color-ctp-lavender) 35%, transparent);
+    background: color-mix(in oklch, var(--ctp-lavender) 35%, transparent);
   }
 
   :focus-visible {
-    outline: 2px solid var(--color-ctp-lavender);
+    outline: 2px solid var(--ctp-lavender);
     outline-offset: 2px;
   }
 }
