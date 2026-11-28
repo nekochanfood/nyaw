@@ -8,6 +8,9 @@ import { reducedMotion } from "@/motion/reducedMotion";
 import { setPageShown, waitSettled } from "@/motion/stage";
 import { scrollToTop } from "@/motion/useSmoothScroll";
 
+/** ページのフェードアウトとフェードインの時間（ms） */
+const FADE_MS = 400;
+
 /** 言語を除いたパス。言語だけが違う移動は同じページとみなし、フェードしない */
 const page = (pathname: string) => {
   const [, first, ...rest] = pathname.split("/");
@@ -62,7 +65,9 @@ export function PageTransition({ children }: { children: ReactNode }) {
           finishProgress.current = progress(lineRef.current, barRef.current).finish;
           const el = ref.current;
           if (el && !reducedMotion()) {
-            await animate(el, { opacity: 0, y: 40, duration: 400, ease: "in(2)" });
+            // フェードアウトと同じ時間をかけて、ページの先頭へ滑らかに戻る。次のページは先頭から始まる
+            scrollToTop(FADE_MS);
+            await animate(el, { opacity: 0, y: 40, duration: FADE_MS, ease: "in(2)" });
           }
           return false;
         },
@@ -87,7 +92,7 @@ export function PageTransition({ children }: { children: ReactNode }) {
     let anim: ReturnType<typeof animate> | undefined;
     void waitSettled(router, abort.signal).then(() => {
       finishProgress.current();
-      anim = animate(el, { opacity: [0, 1], y: [40, 0], duration: 400, ease: "out(2)" });
+      anim = animate(el, { opacity: [0, 1], y: [40, 0], duration: FADE_MS, ease: "out(2)" });
       // 中の動きはフェードインと重ねて始める（終わるのを待つと、動き出しが遅く見える）
       setPageShown(true);
     });
