@@ -22,7 +22,9 @@
         const height = anim.animationData.h * scale;
         const canvas = Object.assign(document.createElement("canvas"), { width, height });
         const ctx = canvas.getContext("2d");
-        for (let frame = 0; frame < anim.totalFrames; frame++) {
+        // 書き出すのはイントロの区間だけ（耳やしっぽを押したときの反応の区間は含めない）
+        const intro = anim.animationData.markers.find((m) => m.cm === "intro");
+        for (let frame = intro.tm; frame < intro.tm + intro.dr; frame++) {
           anim.goToAndStop(frame, true);
           const svg = container.querySelector("svg").cloneNode(true);
           svg.setAttribute("style", `width:${width}px;height:${height}px`);
