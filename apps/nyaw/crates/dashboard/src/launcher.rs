@@ -261,7 +261,12 @@ impl Screen {
                 .collect();
         let mut running: Vec<RunningApp> = Vec::new();
         for (source, image) in &self.sources {
-            if mirror_of(source, cx).is_some_and(|(_, resident)| resident) {
+            if mirror_of(source, cx).is_some_and(|(_, resident)| resident)
+                || self
+                    .dashboard
+                    .upgrade()
+                    .is_some_and(|d| d.read(cx).lists_screen(source))
+            {
                 continue;
             }
             let key = source

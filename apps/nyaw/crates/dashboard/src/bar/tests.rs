@@ -406,7 +406,7 @@ fn streams_accumulate_and_switch_without_closing(cx: &mut TestAppContext) {
         bar.read(cx)
             .streams
             .iter()
-            .map(|s| s.panel)
+            .filter_map(|s| s.panel())
             .collect::<Vec<_>>()
     });
     assert_eq!(streams, [5]);
@@ -460,12 +460,7 @@ fn extra_streams_move_into_the_overflow_popover(cx: &mut TestAppContext) {
     click(cx, "dashboard-stream-overflow");
     let spec = cx.update(|_, cx| cx.default_global::<PanelControl>().spawns.pop().unwrap());
     assert!(spec.parent().is_some_and(|p| p.panel == 1 && p.dismiss));
-    let streams = bar.read_with(cx, |d, _| {
-        d.overflow()
-            .iter()
-            .map(|s| (s.panel, s.name.clone(), s.kind, s.icon.clone()))
-            .collect()
-    });
+    let streams = bar.read_with(cx, |d, _| d.overflow().to_vec());
     let (_menu, mcx) = cx.add_window_view(|_, _| StreamMenu {
         panel: 9,
         dashboard: bar.downgrade(),
@@ -546,6 +541,51 @@ fn resident_streams_stay_on_the_bar_and_minimize(cx: &mut TestAppContext) {
     assert!(c.contains(&PanelCommand::Hide(true)));
     assert!(!c.contains(&PanelCommand::Close), "クローズしないはず");
     assert!(bar.read_with(cx, |d, _| d.streams[0].stashed));
+}
+
+/// モニターはボタンだけを先に並べ、初めて押したときに配信パネルを作ってドッキングする。ボタンは同じ項目のまま。
+#[gpui::test]
+fn screens_open_their_panel_on_the_first_press(cx: &mut TestAppContext) {
+    let screen = |name, target| {
+        let source = kernel::desktop::mock::source(name, SourceKind::Screen);
+        kernel::desktop::mock::with_target(source, target)
+    };
+    let (bar, cx) = cx.add_window_view(|_, cx| {
+        cx.default_global::<PanelControl>().dock = Some((1, BAR_TILT));
+        Dashboard::new(1, summon, summon, cx)
+    });
+    let first = screen("Display 1", 1);
+    bar.update(cx, |d, cx| {
+        d.list_screens(vec![screen("Display 2", 2), first.clone()], cx)
+    });
+    cx.run_until_parked();
+    assert!(cx.update(|_, cx| cx.global::<PanelControl>().spawns.is_empty()));
+    assert!(bar.read_with(cx, |d, _| d.lists_screen(&first)));
+    assert!(cx.debug_bounds("dashboard-screen-1").is_some());
+
+    click(cx, "dashboard-screen-0");
+    open_spawned(cx, 4);
+    cx.run_until_parked();
+    let c = take_commands(cx, 4);
+    assert!(matches!(&c[0], PanelCommand::Stream(Some(s), _) if s.same_target(&first)));
+    assert!(c.iter().any(docked_to_bar));
+    let hidden = |want| c.iter().position(|c| *c == PanelCommand::Hide(want));
+    assert!(hidden(true) < hidden(false), "非表示で開いてから表示する");
+    bar.read_with(cx, |d, _| {
+        let streams: Vec<_> = d
+            .streams
+            .iter()
+            .map(|s| (s.key.to_string(), s.panel(), s.stashed))
+            .collect();
+        assert_eq!(
+            streams,
+            [
+                ("dashboard-screen-0".to_string(), Some(4), false),
+                ("dashboard-screen-1".to_string(), None, true),
+            ]
+        );
+        assert!(!d.lists_screen(&first));
+    });
 }
 
 /// トーストから通知センターの表示を要求されると、非表示のダッシュボードを再表示し、表示後にクイック設定（通知一覧）をドッキングする

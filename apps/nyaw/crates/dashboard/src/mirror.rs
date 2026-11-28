@@ -350,8 +350,8 @@ pub(crate) fn mirror_of(source: &Source, cx: &App) -> Option<(PanelId, bool)> {
 
 /// `source` を配信するパネルの起動仕様。`docked` ならランチャーと入れ替わりにドッキングし、
 /// そうでなければ起動元画面 `from` の手前に重ねて開く。
-/// `resident`（`dashboard` がある場合）は常駐配信: ドッキングせず非表示で開き、バーのボタンで表示する。ナビゲーションバーでは
-/// クローズせず格納する。
+/// `resident`（`dashboard` がある場合）は常駐配信: 非表示で開き、`docked` なら続けてドッキングして表示する。
+/// ナビゲーションバーではクローズせず格納する。
 /// タイトルはソース名で、ナビゲーションバーでクローズすると配信も停止する。
 pub(crate) fn mirror_spec(
     source: Source,
@@ -369,6 +369,10 @@ pub(crate) fn mirror_spec(
         start_mirror(panel, source.clone(), icon, dashboard.clone(), resident, cx);
         if resident {
             commands(panel, [PanelCommand::Hide(true)], cx);
+            // 非表示で開いてからドッキングして表示する（[`Dashboard::toggle_stream`]）。
+            if docked && let Some(dashboard) = &dashboard {
+                let _ = dashboard.update(cx, |d, cx| d.show_stream(panel, cx));
+            }
         } else if docked {
             ui::dock(panel, cx);
         }

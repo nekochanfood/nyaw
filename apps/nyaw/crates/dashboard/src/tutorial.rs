@@ -457,7 +457,7 @@ impl Dashboard {
     /// 案内を始める: はめている画面を外し、開いているポップオーバーを閉じて、案内のパネル（開始画面）をはめて開く。
     fn start_tutorial(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = ui::docked(cx) {
-            if self.streams.iter().any(|s| s.panel == id) {
+            if self.streams.iter().any(|s| s.panel() == Some(id)) {
                 self.stash(id, cx);
             } else {
                 close(id, cx);
@@ -632,7 +632,9 @@ impl Dashboard {
 
     /// 配信 `id` をしまってある（バーのボタンだけが残っている）。
     fn stashed(&self, id: PanelId) -> bool {
-        self.streams.iter().any(|s| s.panel == id && s.stashed)
+        self.streams
+            .iter()
+            .any(|s| s.panel() == Some(id) && s.stashed)
     }
 
     /// 手順 `step` の操作が済んでいるか（済んでいない状態から済んだら「できました」を出す）。
