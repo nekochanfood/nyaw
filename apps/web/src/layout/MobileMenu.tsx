@@ -14,8 +14,11 @@ import { slideFrom, usePopupPresence } from "@/ui/usePopupPresence";
 import { buttonClass } from "@/ui/variants";
 import { useNavItems } from "@/layout/nav";
 
-/** 面の出入り。閉じるときは、中の項目（3 つ）が消え終わるまで面を残す */
-const PRESENCE = slideFrom("bottom", 16, "slow", "slow");
+/**
+ * 面の出入り。面は帯と同じ色なので、閉じるときは、項目が消え始めてから面を薄れさせ、下の本文のカードが
+ * ゆっくり見えてくるようにする（既定の in(3) では、最後の一瞬で消えたように見える）
+ */
+const PRESENCE = { ...slideFrom("bottom", 16, "slow", "slow"), exitEase: "out(2)", exitDelay: 120 };
 
 /**
  * 狭い画面のメニュー。ヘッダーの下から画面の下端までを帯と同じ色で覆い、本文のカードを隠して、帯の上にページの一覧を
@@ -62,8 +65,8 @@ export function MobileMenu({ open, setOpen }: { open: boolean; setOpen: (open: b
     [presence],
   );
   /*
-    閉じるときは、項目が下から順に沈みながら消え、そのあとで面が消える。面は帯と同じ色なので、面が薄れるだけでは
-    閉じる動きが見えない。項目は面の退場（PRESENCE）より先に消し終える。閉じている途中で開き直したときは戻す
+    閉じるときは、項目が下から順に沈みながら消え、少し遅れて面が薄れる（PRESENCE）。
+    閉じている途中で開き直したときは戻す
   */
   useLayoutEffect(() => {
     const el = popupRef.current;

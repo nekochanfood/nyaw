@@ -4,8 +4,19 @@ import { useCallback, useLayoutEffect, useRef } from "react";
 import { type Duration, duration } from "@/motion/duration";
 import { reducedMotion } from "@/motion/reducedMotion";
 
-/** 出入りの動き。`axis` 方向に `offset` px ずれた位置からフェードしながら戻る。時間はトークンの名前 */
-export type Presence = { axis: "x" | "y"; offset: number; enter: Duration; exit: Duration };
+/**
+ * 出入りの動き。`axis` 方向に `offset` px ずれた位置からフェードしながら戻る。時間はトークンの名前。
+ * 退場は、既定ではすぐに始まり、後半で加速する（`in(3)`。小さなポップアップ向け）。画面を広く覆うものは、
+ * `exitEase` と `exitDelay`（ms）で、中身が消えてから下の面がゆっくり見えてくるように変える
+ */
+export type Presence = {
+  axis: "x" | "y";
+  offset: number;
+  enter: Duration;
+  exit: Duration;
+  exitEase?: string;
+  exitDelay?: number;
+};
 
 export type Side = "top" | "bottom" | "left" | "right";
 
@@ -51,7 +62,7 @@ export function holdPopup(el: Element) {
  * `presence` はモジュールの定数を渡す。
  */
 export function usePopupPresence<T extends HTMLElement>(open: boolean, presence: Presence) {
-  const { axis, offset, enter, exit } = presence;
+  const { axis, offset, enter, exit, exitEase = "in(3)", exitDelay = 0 } = presence;
   const elRef = useRef<T | null>(null);
   const release = useRef<(() => void) | null>(null);
   const justMounted = useRef(false);
@@ -89,13 +100,14 @@ export function usePopupPresence<T extends HTMLElement>(open: boolean, presence:
       opacity: open ? 1 : 0,
       [axis]: open ? 0 : offset,
       duration: duration(open ? enter : exit),
-      ease: open ? "out(3)" : "in(3)",
+      delay: open ? 0 : exitDelay,
+      ease: open ? "out(3)" : exitEase,
       onComplete: done,
     });
     return () => {
       anim.cancel();
     };
-  }, [open, axis, offset, enter, exit]);
+  }, [open, axis, offset, enter, exit, exitEase, exitDelay]);
 
   return ref;
 }
