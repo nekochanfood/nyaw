@@ -273,3 +273,8 @@ html.lenis body {
 .lenis:not(.lenis-autoToggle).lenis-stopped {
   overflow: clip;
 }
+
+/* イントロのフルロゴ（src/layout/IntroLogo.tsx）。再生し終えたら、耳やしっぽの押せる範囲で指の形にする */
+[data-intro-ready] .intro-hit {
+  cursor: pointer;
+}

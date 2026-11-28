@@ -27,7 +27,10 @@ export interface IntroLogo {
   /** ロゴの外形の大きさの箱（introLogoClass）。合成の余白の分は、中で外側へはみ出す */
   node: HTMLDivElement;
   theme: Theme;
-  /** 最後まで再生する */
+  /**
+   * イントロの区間を再生する。再生し終えたら、耳やしっぽを押すと、その部品がぴくっとするようになる
+   * （押せる範囲と反応の区間は、Lottie の中にある。assets/animations/logo-full/README.md を参照）
+   */
   play: () => Promise<void>;
   destroy: () => void;
 }
@@ -61,6 +64,13 @@ export async function loadIntroLogo(theme: Theme): Promise<IntroLogo> {
     autoplay: false,
     animationData,
   });
+  // 押せる範囲（class が "intro-hit <部品>" の path）を押したら、その部品の反応の区間（"twitch-<部品>"）を再生する。
+  // イントロの再生中は受け付けない
+  node.addEventListener("click", (e) => {
+    const hit = e.target instanceof Element && e.target.closest(".intro-hit");
+    if (!hit || !("introReady" in node.dataset)) return;
+    anim.playSegments(segment(animationData, `twitch-${hit.classList[1]}`), true);
+  });
   // lottie-web は SVG に translate3d を付けて、独立した描画の層にする。外側の要素の位置が変わると、この層が端数のピクセル位置で
   // 描き直され、箱の端に古い画素が残る。層を分けず、外側の要素と一緒に描かせる
   stage.querySelector("svg")?.style.setProperty("transform", "none");
@@ -69,11 +79,23 @@ export async function loadIntroLogo(theme: Theme): Promise<IntroLogo> {
     theme,
     play: () =>
       new Promise((resolve) => {
-        anim.addEventListener("complete", () => resolve());
-        anim.play();
+        const done = () => {
+          anim.removeEventListener("complete", done);
+          node.dataset.introReady = "";
+          resolve();
+        };
+        anim.addEventListener("complete", done);
+        anim.playSegments(segment(animationData, "intro"), true);
       }),
     destroy: () => anim.destroy(),
   };
+}
+
+/** Lottie のマーカーの区間を [始め, 終わり] で返す */
+function segment(data: { markers: { tm: number; cm: string; dr: number }[] }, name: string): [number, number] {
+  const marker = data.markers.find((m) => m.cm === name);
+  if (!marker) throw new Error(`イントロに区間 ${name} がない`);
+  return [marker.tm, marker.tm + marker.dr];
 }
 
 /** ランディングページの置き場所。イントロを受け取れるのは、今表示している 1 つだけ */
