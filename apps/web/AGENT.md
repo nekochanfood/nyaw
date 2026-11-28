@@ -16,7 +16,7 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 
 - ページは言語ごとのパス（`/en/…`、`/ja/…`）に置く。言語のないパス（`/`、`/download` など）は、`src/server/localeRedirect.ts` が cookie（言語メニューで選んだ言語）か Accept-Language で選んだ言語へ 308 で転送する。
 - 文言は `locale/{en,ja}.json` に置き、`useT(名前空間)` で引く。英語と日本語のキーと変数が揃っていること、英語がイギリス英語の綴りであること、日本語の和欧文の間隔はテストが確かめる。文言はアプリの翻訳のガイドライン（`apps/nyaw/crates/i18n/locales/*/GUIDELINES.md`）に従う。
-- ページのタイトルは「（ページ名） / nyaw」。`head` は `src/seo.ts` の `seo` で、canonical、言語ごとの hreflang、OGP を出す。robots.txt と sitemap.xml は `src/server/seoFiles.ts` が返す。
+- ページのタイトルは「（ページ名） / nyaw」。`head` は `src/seo.ts` の `seo` で、canonical、言語ごとの hreflang、OGP（画像を除く）を出す。robots.txt と sitemap.xml は `src/server/seoFiles.ts` が返す。
 
 ## 見た目
 
@@ -30,13 +30,13 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 
 ## アプリのキャプチャ
 
-ランディングページと機能紹介の絵は、アプリのパネルのキャプチャ（`public/scene/<テーマ>-<言語>/<場面>/`）を CSS の 3D 変形で重ねたもの（`src/composite/Composite.tsx`）。キャプチャはアプリの GPU テストが書き出す。アプリの見た目が変わったら、`apps/nyaw/` で次を実行して作り直す（Windows と GPU が要る）。
+アプリの GPU テストは、パネルのキャプチャを `public/scene/<テーマ>-<言語>/<場面>/` に書き出す。今のページはキャプチャを使っていない（`public/scene/` はない）。ページの絵に使うときは、`apps/nyaw/` で次を実行して書き出す（Windows と GPU が要る）。
 
 ```sh
 cargo test -p ui --test gpu -- --ignored site
 ```
 
-OGP の画像（`public/og-<言語>.png`）は `pnpm og` で作り直す（キャプチャか文言を変えたとき）。
+OGP の画像はまだない。用意したら、`src/seo.ts` の `seo` に og:image と twitter:image を足す。
 
 ## コマンド
 
@@ -49,7 +49,6 @@ OGP の画像（`public/og-<言語>.png`）は `pnpm og` で作り直す（キ�
 | `pnpm fmt` / `pnpm fmt:check`                | 整形と、その確認                             |
 | `pnpm lint` / `pnpm typecheck` / `pnpm test` | 静的解析、型検査、単体テスト                 |
 | `pnpm e2e`                                   | E2E テスト（ビルドしたサイトを配信して実行） |
-| `pnpm og`                                    | OGP の画像の書き出し                         |
 | `pnpm run deploy`                            | Cloudflare Workers へのデプロイ              |
 
 E2E テストを初めて実行するときは、`pnpm exec playwright install chromium webkit` でブラウザを取得する。

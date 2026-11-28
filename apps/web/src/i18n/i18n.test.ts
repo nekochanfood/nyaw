@@ -41,11 +41,9 @@ describe("翻訳リソース", () => {
 });
 
 describe("translate", () => {
-  it("変数を展開し、ない変数はそのまま残す", () => {
-    expect(translate("en", "download", "released", { date: "27 Nov 2026" })).toBe(
-      "Released 27 Nov 2026",
-    );
-    expect(translate("ja", "download", "released")).toBe("{date}公開");
+  it("言語ごとの訳を引く", () => {
+    expect(translate("en", "nav", "download")).toBe("Download");
+    expect(translate("ja", "nav", "download")).toBe("ダウンロード");
   });
 });
 

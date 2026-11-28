@@ -13,7 +13,6 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "deploy": "pnpm run build && wrangler deploy",
-    "og": "node scripts/og.mjs",
     "e2e": "playwright test"
   },
   "dependencies": {

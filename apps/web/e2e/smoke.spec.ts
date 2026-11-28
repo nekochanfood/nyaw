@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-import { gotoStill, mockReleases, watchErrors } from "./helpers";
+import { gotoStill, watchErrors } from "./helpers";
 
 test.describe("言語の振り分け", () => {
   test("ルートは Accept-Language の言語へ転送する", async ({ request }) => {
@@ -26,35 +26,16 @@ test.describe("言語の振り分け", () => {
   });
 });
 
-for (const [path, heading] of [
-  ["/en", "Your desktop, right beside you in VR"],
-  ["/ja", "デスクトップを、VR の手元に"],
-  ["/en/features", "Features"],
-  ["/ja/download", "Download"],
-] as const) {
+for (const path of ["/en", "/ja", "/en/features", "/ja/download"]) {
   test(`${path} がエラーなく開く`, async ({ page }) => {
     const assertNoErrors = watchErrors(page);
-    await mockReleases(page);
     await gotoStill(page, path);
     await expect(page.locator("html")).toHaveAttribute("lang", path.slice(1, 3));
-    await expect(page.getByRole("heading", { level: 1, name: heading })).toBeVisible();
+    await expect(page.getByRole("banner")).toBeVisible();
+    await expect(page.getByRole("contentinfo")).toBeVisible();
     assertNoErrors();
   });
 }
-
-test("パネルの絵は表示中のテーマの画像を読み込む", async ({ page }) => {
-  await gotoStill(page, "/en");
-  const scene = page.getByRole("img", { name: /dashboard, a mirrored window/ });
-  await scene.scrollIntoViewIfNeeded();
-  const visible = scene.locator("img:visible");
-  await expect(visible).toHaveCount(4);
-  for (const img of await visible.all()) {
-    await expect(img).toHaveAttribute("src", /\/scene\/light-en\//);
-    await expect
-      .poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth))
-      .toBeGreaterThan(0);
-  }
-});
 
 test("head に SEO と OGP のタグがある", async ({ page, baseURL }) => {
   await gotoStill(page, "/ja/download");
@@ -67,12 +48,6 @@ test("head に SEO と OGP のタグがある", async ({ page, baseURL }) => {
     "href",
     `${baseURL}/en/download`,
   );
-  await expect(page.locator('meta[property="og:image"]')).toHaveAttribute(
-    "content",
-    `${baseURL}/og-ja.png`,
-  );
-  const og = await page.request.get("/og-ja.png");
-  expect(og.headers()["content-type"]).toBe("image/png");
 });
 
 test("robots.txt と sitemap.xml を返す", async ({ request, baseURL }) => {

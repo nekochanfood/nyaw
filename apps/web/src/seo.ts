@@ -9,9 +9,6 @@ export const getOrigin = createServerFn().handler(() => new URL(getRequest().url
 /** ページのタイトル。「（ページ名） / nyaw」 */
 export const pageTitle = (page: string) => `${page} / nyaw`;
 
-/** OGP の画像（1200×630）。`pnpm og` が public/ に書き出す */
-export const ogImage = (locale: Locale) => `/og-${locale}.png`;
-
 const OG_LOCALE: Record<Locale, string> = { en: "en_GB", ja: "ja_JP" };
 
 /** ページの head。`path` は言語を除いたパス（`/`、`/download`） */
@@ -29,7 +26,6 @@ export function seo({
   description: string;
 }) {
   const url = (l: Locale) => `${origin}/${l}${path === "/" ? "" : path}`;
-  const image = origin + ogImage(locale);
   return {
     meta: [
       { title },
@@ -40,13 +36,10 @@ export function seo({
       { property: "og:description", content: description },
       { property: "og:url", content: url(locale) },
       { property: "og:locale", content: OG_LOCALE[locale] },
-      { property: "og:image", content: image },
-      { property: "og:image:width", content: "1200" },
-      { property: "og:image:height", content: "630" },
-      { name: "twitter:card", content: "summary_large_image" },
+      // OGP の画像はまだない。用意したら og:image と twitter:image を足し、カードを summary_large_image にする
+      { name: "twitter:card", content: "summary" },
       { name: "twitter:title", content: title },
       { name: "twitter:description", content: description },
-      { name: "twitter:image", content: image },
     ],
     links: [
       { rel: "canonical", href: url(locale) },

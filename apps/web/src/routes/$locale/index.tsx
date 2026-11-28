@@ -1,9 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 
 import { translate } from "@/i18n/index";
-import { GetNyaw } from "@/landing/GetNyaw";
-import { Hero } from "@/landing/Hero";
-import { Showcase } from "@/landing/Showcase";
 import { pageTitle, seo } from "@/seo";
 
 export const Route = createFileRoute("/$locale/")({
@@ -20,12 +17,7 @@ export const Route = createFileRoute("/$locale/")({
   component: Landing,
 });
 
+/** ランディングページ。中身はまだない */
 function Landing() {
-  return (
-    <>
-      <Hero />
-      <Showcase />
-      <GetNyaw />
-    </>
-  );
+  return null;
 }
