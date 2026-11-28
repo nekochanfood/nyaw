@@ -52,20 +52,31 @@ export function Footer() {
 
   /*
     画面に入ったら、本文のスクロールで現れる要素（useReveal）と同じ動きで浮かび上がる。左側（リンク、ライセンス）と
-    右側（ロゴ、GitHub のボタン）は同時に動き出し、左側は上から、右側は下から順に現れる。フッターはページを移っても
-    残るので、最初のページの表示のあとに 1 回だけ作る
+    右側（ロゴ、GitHub のボタン）は同時に動き出し、左側は左にあるものから、右側は右にあるものから順に現れる
+    （横の位置が同じものは上から）。並びは画面の幅で変わるので、作るときの位置で決める。
+    フッターはページを移っても残るので、ページが表示されるたびに隠し直して作り直す。表示されるときは先頭まで
+    戻っているので、隠し直してもフッターは画面の外にある
   */
   useEffect(() => {
     const root = ref.current;
-    if (!shown || timeline.current || !root || reducedMotion()) return;
-    const side = (name: "left" | "right") => root.querySelectorAll(`[data-footer-side="${name}"]`);
+    if (!shown || !root || reducedMotion()) return;
+    timeline.current?.revert();
+    const side = (name: "left" | "right", from: "left" | "right") =>
+      [...root.querySelectorAll<HTMLElement>(`[data-footer-side="${name}"]`)]
+        .map((el) => ({ el, box: el.getBoundingClientRect() }))
+        .sort((a, b) =>
+          from === "left"
+            ? a.box.left - b.box.left || a.box.top - b.box.top
+            : b.box.right - a.box.right || a.box.top - b.box.top,
+        )
+        .map(({ el }) => el);
     timeline.current = createTimeline({
       autoplay: onScroll({ target: root, enter: "85% top", repeat: false }),
     })
-      .add(side("left"), { ...REVEAL, delay: stagger(REVEAL_STAGGER) }, 0)
-      .add(side("right"), { ...REVEAL, delay: stagger(REVEAL_STAGGER, { from: "last" }) }, 0);
+      .add(side("left", "left"), { ...REVEAL, delay: stagger(REVEAL_STAGGER) }, 0)
+      .add(side("right", "right"), { ...REVEAL, delay: stagger(REVEAL_STAGGER) }, 0);
   }, [shown]);
-  useEffect(() => () => void timeline.current?.cancel(), []);
+  useEffect(() => () => void timeline.current?.revert(), []);
 
   return (
     <footer ref={ref} className="w-full py-(--content-pad-x) md:frame-x">
