@@ -53,7 +53,7 @@
   /* カードの上の項目をホバー・選択したときの面 */
   --control-on-background: var(--ctp-surface0);
   /* ポップアップの影。ライトは Latte の Text、ダークは Frappé の Crust を薄くする */
-  --popup-shadow: light-dark(rgb(76 79 105 / 0.2), rgb(35 38 52 / 0.6));
+  --popup-shadow: light-dark(rgb(76 79 105 / 0.25), rgb(35 38 52 / 0.7));
   /* ツールチップの面と文字 */
   --tooltip: var(--ctp-text);
   --on-tooltip: var(--ctp-base);
@@ -68,7 +68,6 @@
   --color-neutral-text-low: var(--neutral-text-low);
   --color-neutral-border-subtle: var(--neutral-border-subtle);
   --color-control-on-background: var(--control-on-background);
-  --color-popup-shadow: var(--popup-shadow);
   --color-tooltip: var(--tooltip);
   --color-on-tooltip: var(--on-tooltip);
   --color-ctp-lavender: var(--ctp-lavender);

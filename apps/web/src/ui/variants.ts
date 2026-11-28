@@ -55,9 +55,9 @@ export function textClass(variant: keyof typeof TEXT_VARIANTS, className?: strin
   return cx(TEXT_VARIANTS[variant], className);
 }
 
-/** 浮いたパネル。ドロップダウンのメニュー */
+/** 浮いたパネル。ドロップダウンのメニュー。影はずらさず、四方へ柔らかく広げる */
 export const panelClass =
-  "bg-card text-neutral-text border border-neutral-border-subtle shadow-lg shadow-popup-shadow";
+  "bg-card text-neutral-text border border-neutral-border-subtle shadow-[0_0_32px_var(--popup-shadow)]";
 
 /**
  * 中に項目を並べるパネルの角丸と余白。外側の半径を「項目の半径（lg）＋余白」にして、内外の角を同心にする。
