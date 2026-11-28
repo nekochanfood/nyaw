@@ -77,8 +77,7 @@
   --corner-scale: 1;
 
   /*
-    ページ全体を囲む帯（外枠）。上辺の帯はヘッダー（h-16）の高さ、下辺は --frame-gutter、左右は --frame-side の
-    太さにする。左右の帯は md 以上でだけ付け、md 未満では本文を画面の左右の端まで広げる。
+    ページ全体を囲む帯（外枠）。上辺の帯はヘッダー（h-16）の高さ、ほかの三辺は --frame-gutter の太さにする。
     帯の色は、ライトではアプリの groove より二段明るくし（白いカードとの差を縮める）、ダークでは groove のまま
   */
   --frame: var(--neutral-bg);
@@ -95,14 +94,13 @@
     --tooltip: var(--neutral-text);
   }
   --frame-gutter: 8px;
-  --frame-side: 0px;
   --frame-top: 4rem;
   /*
-    ヘッダーの左右の余白（md 以上）。ヘッダーの 40px のボタンは、上辺の帯の中で上下に (--frame-top - 40px) / 2 の余白を持つ。
+    ヘッダーの左右の余白。ヘッダーの 40px のボタンは、上辺の帯の中で上下に (--frame-top - 40px) / 2 の余白を持つ。
     左右も画面の端から同じ距離にするため、左右の帯の太さを引く
   */
   --header-inset: calc((var(--frame-top) - 2.5rem) / 2);
-  --header-pad-x: max(0px, calc(var(--header-inset) - var(--frame-side)));
+  --header-pad-x: max(0px, calc(var(--header-inset) - var(--frame-gutter)));
   /* 帯の内側の高さ。ツールバーの出し入れで変わらない svh で測る */
   --frame-height: calc(100svh - var(--frame-top) - var(--frame-gutter));
   /* 帯の内側の角丸。--frame-radius-base は倍率を掛ける前の値で、通常の角丸（corner-shape: round）に使う */
@@ -127,12 +125,6 @@
 @supports (corner-shape: superellipse(1.4)) {
   :root {
     --corner-scale: 1.5;
-  }
-}
-
-@media (min-width: 48rem) {
-  :root {
-    --frame-side: var(--frame-gutter);
   }
 }
 
@@ -251,16 +243,13 @@
 }
 
 /*
-  帯の内側の幅。md 以上では、横幅は帯の内側の縦の長さ（上のヘッダーと下の帯を除いた高さ）まで（1:1 まで）に限り、
-  中央に置く。はみ出した左右は帯の色になる。md 未満では、左右の帯を付けず、画面の幅いっぱいに使う。
+  帯の内側の幅。横幅は帯の内側の縦の長さ（上のヘッダーと下の帯を除いた高さ）まで（1:1 まで）に限り、
+  中央に置く。はみ出した左右は帯の色になる。
   ヘッダー、枠、本文のカード、フッター、メニューなど、帯の内側に置くものはこれで幅をそろえる
 */
 @utility frame-x {
   margin-inline: auto;
-  width: 100%;
-  @media (min-width: 48rem) {
-    width: min(calc(100% - 2 * var(--frame-side)), var(--frame-height));
-  }
+  width: min(calc(100% - 2 * var(--frame-gutter)), var(--frame-height));
 }
 
 /* 真円とピルは潰さない */
