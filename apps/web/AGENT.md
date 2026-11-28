@@ -63,6 +63,7 @@ CI（`.github/workflows/web.yml`）は整形の確認、静的解析、型検査
 - 色は役割の名前で Tailwind に登録し（`bg-card`、`text-neutral-text` など）、Tailwind の既定の色は使わない。ライトとダークは `light-dark()` で、`color-scheme`（テーマ）に従う。
 - 角丸と時間も共有する。余白は Tailwind の既定（4px の倍数）を使う。文字の大きさなど、アプリの画面向けの値は共有しない。
 - コントラストの検査はアプリのビルドが `tokens.json` に定義された組み合わせに対して行う。ウェブサイト独自の組み合わせは検査されない。
+- ウェブサイトだけで変える値（帯の色、ライトの本文の色など）は、`tokens.json` を変えず、`src/styles.css` の `:root` で上書きする。片方のテーマだけ変えるときは、`@variant light` か `@variant dark` の中に書く。上書きした値もコントラストの検査を受けない。
 - 参照の解決規則は `apps/nyaw/crates/design/build.rs` と重複する。解決できない参照があると生成は失敗する。
 
 `src/routeTree.gen.ts` は TanStack Router が生成する。手で編集せず、コミットする。
