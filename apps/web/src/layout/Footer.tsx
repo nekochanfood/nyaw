@@ -35,14 +35,15 @@ function External({ href, children }: { href: string; children: ReactNode }) {
 
 /**
  * 帯と同じ色の面に置くフッター。本文のカードの下に続く。余白は上下左右とも本文の左右の余白（--content-pad-x）。
- * フッターの左右の端は、上の本文のカードの端にそろう
+ * md 以上では、フッターの左右の端を上の本文のカードの端にそろえる（frame-x）。md 未満では画面の幅いっぱいに置く。
+ * フッターは帯と同じ色なので、左右の帯の分も余白に見え、左右だけ広く見えるため
  */
 export function Footer() {
   const t = useT("footer");
   const nav = useT("nav");
   const locale = useLocale();
   return (
-    <footer className="frame-x py-(--content-pad-x)">
+    <footer className="w-full py-(--content-pad-x) md:frame-x">
       <div className={cx(containerClass, "flex flex-col gap-12")}>
         <div className="flex flex-col-reverse gap-10 sm:flex-row sm:justify-between">
           <div className="flex flex-wrap gap-x-16 gap-y-8">
