@@ -18,6 +18,10 @@ env:
   # CI テストでは空間音響（phonon）を使用しないため、Steam Audio SDK（約180MB）のダウンロードを抑止
   NYAW_SKIP_PHONON: "1"
 
+# Rust のバージョンは各ワークフローの dtolnay/rust-toolchain で固定する（prepare-release.yml と release.yml も同じ値にする）。
+# rust-cache のキーには Rust のバージョンが含まれ、キャッシュは main でしか保存しない。stable を指定すると、
+# 新しいリリースのたびに、main が保存し直すまで全ブランチでキャッシュが使えなくなる。
+
 # sccache は以下の理由により使用しない:
 # 1. 外部依存の成果物は rust-cache（target ディレクトリ）で十分に保持される。
 # 2. Clippy は clippy-driver 経由で呼び出されるため sccache でキャッシュできない（multiple input files 制約）。
@@ -40,7 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.1
         with:
           components: rustfmt
         # コードフォーマットの検証
@@ -54,7 +58,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.1
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
@@ -73,7 +77,7 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.100.1
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/nyaw
