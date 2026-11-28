@@ -127,7 +127,8 @@ export function Header() {
           </nav>
         </div>
         <div data-menu-hide className="flex items-center gap-1">
-          <div data-header-item className="hidden sm:block">
+          {/* GitHub への入口は、狭い画面（md 未満）ではフルスクリーンメニューの項目に任せる */}
+          <div data-header-item className="hidden md:block">
             <Tooltip label={t("github")}>
               <ButtonAnchor
                 href={REPO_URL}
