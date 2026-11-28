@@ -83,11 +83,12 @@ export function Header() {
     <header ref={ref} className="frame-x sticky top-0 z-(--layer-header) h-(--frame-top)">
       {/*
         上辺の帯（styles.css の --frame-top）に載せる。面は持たず、帯の色がそのまま見える。
-        高さ 64px に 40px のボタンを置くので、上下の余白は 12px。左右は、画面の端からの距離が上下と同じになるよう、
-        左右の帯の太さを引いた幅にする（styles.css の --header-pad-x）。
+        高さ 64px に 40px のボタンを置くので、上下の余白は 12px。md 以上では、左右も画面の端からの距離が上下と
+        同じになるよう、帯の内側の幅（frame-x）に置き、左右の帯の太さを引いた余白（styles.css の --header-pad-x）を持つ。
+        md 未満では帯の内側の幅が画面の幅になるので、余白を持たず、両端のボタンを画面の左右の端に付ける。
         ロゴは、左端に来る幅（md 以上）では自分の左の余白で本文の端にそろえる
       */}
-      <div className="flex h-full w-full items-center justify-between gap-2 px-(--header-pad-x)">
+      <div className="flex h-full w-full items-center justify-between gap-2 md:px-(--header-pad-x)">
         <div className="flex items-center gap-2">
           {/* 狭い画面のメニューのボタン。ロゴの左隣に置く */}
           <div data-header-item className="md:hidden">
