@@ -1,10 +1,14 @@
 import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { Link } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { createTimeline, onScroll, stagger, type Timeline } from "animejs";
+import { type ReactNode, useEffect, useRef } from "react";
 
 import { useLocale, useT } from "@/i18n/index";
 import { ISSUES_URL, RELEASES_URL, REPO_URL } from "@/links";
+import { reducedMotion } from "@/motion/reducedMotion";
+import { usePageShown } from "@/motion/stage";
+import { REVEAL, REVEAL_STAGGER } from "@/motion/useReveal";
 import { ButtonAnchor } from "@/ui/Button";
 import { buttonClass, containerClass, cx, textClass } from "@/ui/variants";
 import { Logo } from "@/layout/Logo";
@@ -17,7 +21,7 @@ const linkClass = buttonClass({
 
 function Column({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="flex min-w-36 flex-col gap-1.5">
+    <div data-reveal data-footer-side="left" className="flex min-w-36 flex-col gap-1.5">
       <h2 className="py-1 text-sm font-bold">{title}</h2>
       {children}
     </div>
@@ -42,8 +46,29 @@ export function Footer() {
   const t = useT("footer");
   const nav = useT("nav");
   const locale = useLocale();
+  const ref = useRef<HTMLElement>(null);
+  const shown = usePageShown();
+  const timeline = useRef<Timeline | null>(null);
+
+  /*
+    画面に入ったら、本文のスクロールで現れる要素（useReveal）と同じ動きで浮かび上がる。左側（リンク、ライセンス）と
+    右側（ロゴ、GitHub のボタン）は同時に動き出し、左側は上から、右側は下から順に現れる。フッターはページを移っても
+    残るので、最初のページの表示のあとに 1 回だけ作る
+  */
+  useEffect(() => {
+    const root = ref.current;
+    if (!shown || timeline.current || !root || reducedMotion()) return;
+    const side = (name: "left" | "right") => root.querySelectorAll(`[data-footer-side="${name}"]`);
+    timeline.current = createTimeline({
+      autoplay: onScroll({ target: root, enter: "85% top", repeat: false }),
+    })
+      .add(side("left"), { ...REVEAL, delay: stagger(REVEAL_STAGGER) }, 0)
+      .add(side("right"), { ...REVEAL, delay: stagger(REVEAL_STAGGER, { from: "last" }) }, 0);
+  }, [shown]);
+  useEffect(() => () => void timeline.current?.cancel(), []);
+
   return (
-    <footer className="w-full py-(--content-pad-x) md:frame-x">
+    <footer ref={ref} className="w-full py-(--content-pad-x) md:frame-x">
       <div className={cx(containerClass, "flex flex-col gap-12")}>
         <div className="flex flex-col-reverse gap-10 sm:flex-row sm:justify-between">
           <div className="flex flex-wrap gap-x-16 gap-y-8">
@@ -61,12 +86,18 @@ export function Footer() {
               <External href={ISSUES_URL}>{t("issues")}</External>
             </Column>
           </div>
-          <Logo className="h-20 w-auto self-start sm:h-28" />
+          <div data-reveal data-footer-side="right" className="self-start">
+            <Logo className="h-20 w-auto sm:h-28" />
+          </div>
         </div>
         <div className="flex items-end justify-between gap-6">
           <div className="flex flex-col gap-1">
-            <p className={textClass("muted")}>{t("licence")}</p>
-            <p className={textClass("muted")}>{t("copyright")}</p>
+            <p data-reveal data-footer-side="left" className={textClass("muted")}>
+              {t("licence")}
+            </p>
+            <p data-reveal data-footer-side="left" className={textClass("muted")}>
+              {t("copyright")}
+            </p>
           </div>
           <ButtonAnchor
             href={REPO_URL}
@@ -74,6 +105,8 @@ export function Footer() {
             rel="noopener"
             aria-label={nav("github")}
             variant="onFrame"
+            data-reveal
+            data-footer-side="right"
           >
             <GithubLogo size={20} />
           </ButtonAnchor>
