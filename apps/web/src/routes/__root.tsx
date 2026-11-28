@@ -11,6 +11,7 @@ import { themeScript } from "@/theme";
 import { useRipple } from "@/ui/ripple";
 import { LoadingProvider, LoadingScreen } from "@/layout/Loading";
 import { NotFound } from "@/layout/NotFound";
+import { SiteLayout } from "@/layout/SiteLayout";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -31,7 +32,11 @@ export const Route = createRootRoute({
   }),
   shellComponent: Shell,
   component: Outlet,
-  notFoundComponent: NotFound,
+  notFoundComponent: () => (
+    <SiteLayout>
+      <NotFound />
+    </SiteLayout>
+  ),
 });
 
 function Shell({ children }: { children: ReactNode }) {
