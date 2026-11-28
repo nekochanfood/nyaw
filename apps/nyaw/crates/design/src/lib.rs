@@ -40,6 +40,8 @@ pub mod link;
 #[cfg(feature = "gpui")]
 pub mod logo;
 #[cfg(feature = "gpui")]
+pub mod lottie;
+#[cfg(feature = "gpui")]
 pub mod spot;
 
 #[cfg(feature = "gpui")]
@@ -50,6 +52,8 @@ pub use icon::{Icon, Weight, icon};
 
 #[cfg(feature = "gpui")]
 pub use logo::{Logo, logo};
+#[cfg(feature = "gpui")]
+pub use lottie::intro_logo;
 
 #[cfg(feature = "gpui")]
 include!(concat!(env!("OUT_DIR"), "/icons.rs"));
