@@ -113,8 +113,15 @@ impl Surface {
         Ok(())
     }
 
+    /// `rgba` を複製して保持する。大きさが同じなら、前の画像のバッファに上書きする（パネルの画像は数 MB あり、
+    /// 送るたびに確保すると、ページフォールトで転送が遅くなる）。
     pub fn store(&mut self, width: u32, height: u32, rgba: &[u8]) {
-        self.store_owned(width, height, rgba.to_vec());
+        match &mut self.texture {
+            Some((w, h, buf)) if (*w, *h, buf.len()) == (width, height, rgba.len()) => {
+                buf.copy_from_slice(rgba);
+            }
+            _ => self.store_owned(width, height, rgba.to_vec()),
+        }
     }
 
     /// [`Self::store`] の、画素を複製せずに受け取る版。大きな画像を毎フレーム送る呼び出し側が使う。
@@ -262,6 +269,22 @@ mod tests {
         let pixels = rgba.as_ptr();
         surface.store_owned(1, 1, rgba);
         assert_eq!(surface.texture.as_ref().unwrap().2.as_ptr(), pixels);
+    }
+
+    #[test]
+    fn same_size_pixels_overwrite_the_previous_buffer() {
+        let mut vr = MockBackend::default();
+        let mut surface = Surface::new(&mut vr, "reuse", 1.0, Pose::IDENTITY).unwrap();
+        surface.store(2, 1, &[1; 8]);
+        let first = surface.texture.as_ref().unwrap().2.as_ptr();
+        surface.store(2, 1, &[2; 8]);
+        let (_, _, pixels) = surface.texture.as_ref().unwrap();
+        assert_eq!((pixels.as_ptr(), pixels.as_slice()), (first, &[2; 8][..]));
+        // 大きさが変われば確保し直し、前の大きいバッファは抱えない。
+        surface.store(1, 1, &[3; 4]);
+        let (width, height, pixels) = surface.texture.as_ref().unwrap();
+        assert_eq!((*width, *height, pixels.as_slice()), (1, 1, &[3; 4][..]));
+        assert_eq!(pixels.capacity(), 4);
     }
 
     #[test]

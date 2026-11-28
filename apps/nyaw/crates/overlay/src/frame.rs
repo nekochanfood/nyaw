@@ -26,7 +26,9 @@ impl Overlay {
         height: u32,
         rgba: &[u8],
     ) {
-        self.submit_owned(vr, panel, width, height, rgba.to_vec());
+        self.submit_with(vr, panel, width, height, rgba.len(), |surface| {
+            surface.store(width, height, rgba)
+        });
     }
 
     /// [`Self::submit`] の、画素を複製せずに受け取る版（画面の配信）。
@@ -38,8 +40,23 @@ impl Overlay {
         height: u32,
         rgba: Vec<u8>,
     ) {
+        self.submit_with(vr, panel, width, height, rgba.len(), |surface| {
+            surface.store_owned(width, height, rgba)
+        });
+    }
+
+    /// `len` バイトの画素を `store` で描画先に持たせて送る。
+    fn submit_with(
+        &mut self,
+        vr: &mut dyn VrBackend,
+        panel: PanelId,
+        width: u32,
+        height: u32,
+        len: usize,
+        store: impl FnOnce(&mut Surface),
+    ) {
         assert_eq!(
-            rgba.len(),
+            len,
             width as usize * height as usize * 4,
             "invalid RGBA buffer size"
         );
@@ -56,7 +73,7 @@ impl Overlay {
         if entering {
             p.opacity = 0.0;
         }
-        p.surface.store_owned(width, height, rgba);
+        store(&mut p.surface);
         Self::present(vr, p, true);
         if entering && !p.hidden {
             // 初回の GPU 転送が終わってから時計を始める。
