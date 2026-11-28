@@ -71,10 +71,7 @@
               const vbWidth = Number(svg.match(/viewBox="[^"]*"/)[0].split(/[ "]/)[3]);
               $("still").style.padding = `${(((w - vbWidth) / 2 / w) * 100).toFixed(3)}%`;
             });
-          if (captureFrame !== null) {
-            anim.goToAndStop(Number(captureFrame), true);
-            document.body.dataset.ready = "1";
-          }
+          if (captureFrame !== null) anim.goToAndStop(Number(captureFrame), true);
         });
         anim.addEventListener("enterFrame", () => {
           $("seek").value = anim.currentFrame;
