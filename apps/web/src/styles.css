@@ -78,9 +78,9 @@
 
   /*
     ページ全体を囲む帯（外枠）。上辺の帯はヘッダー（h-16）の高さ、ほかの三辺は --frame-gutter の太さにする。
-    帯の色は、ライトではアプリの groove より一段明るくし（白いカードとの差を縮める）、ダークでは groove のまま
+    帯の色は、ライトではアプリの groove より二段明るくし（白いカードとの差を縮める）、ダークでは groove のまま
   */
-  --frame: var(--neutral-bg-hover);
+  --frame: var(--neutral-bg);
   @variant dark {
     --frame: var(--groove);
   }

@@ -4,7 +4,7 @@ import { List } from "@phosphor-icons/react/dist/csr/List";
 import { X } from "@phosphor-icons/react/dist/csr/X";
 import { Link } from "@tanstack/react-router";
 import { animate, stagger } from "animejs";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 
 import { useT } from "@/i18n/index";
 import { REPO_URL } from "@/links";
@@ -14,7 +14,8 @@ import { slideFrom, usePopupPresence } from "@/ui/usePopupPresence";
 import { buttonClass } from "@/ui/variants";
 import { useNavItems } from "@/layout/nav";
 
-const PRESENCE = slideFrom("bottom", 16, "slow", "normal");
+/** 面の出入り。閉じるときは、中の項目（3 つ）が消え終わるまで面を残す */
+const PRESENCE = slideFrom("bottom", 16, "slow", "slow");
 
 /**
  * 狭い画面のメニュー。ヘッダーの下から画面の下端までを帯と同じ色で覆い、本文のカードを隠して、帯の上にページの一覧を
@@ -40,11 +41,16 @@ export function MobileMenu({ open, setOpen }: { open: boolean; setOpen: (open: b
     };
   }, [open]);
   const presence = usePopupPresence<HTMLDivElement>(open, PRESENCE);
+  const popupRef = useRef<HTMLDivElement | null>(null);
+  const justMounted = useRef(false);
   // 開いたときに、項目が上から順に入る
   const ref = useCallback(
     (el: HTMLDivElement | null) => {
       presence(el);
-      if (!el || reducedMotion()) return;
+      popupRef.current = el;
+      if (!el) return;
+      justMounted.current = true;
+      if (reducedMotion()) return;
       animate(el.querySelectorAll("[data-menu-item]"), {
         opacity: [0, 1],
         y: [16, 0],
@@ -55,6 +61,26 @@ export function MobileMenu({ open, setOpen }: { open: boolean; setOpen: (open: b
     },
     [presence],
   );
+  /*
+    閉じるときは、項目が下から順に沈みながら消え、そのあとで面が消える。面は帯と同じ色なので、面が薄れるだけでは
+    閉じる動きが見えない。項目は面の退場（PRESENCE）より先に消し終える。閉じている途中で開き直したときは戻す
+  */
+  useLayoutEffect(() => {
+    const el = popupRef.current;
+    const mounted = justMounted.current;
+    justMounted.current = false;
+    if (!el || (open && mounted) || reducedMotion()) return;
+    const anim = animate(el.querySelectorAll("[data-menu-item]"), {
+      opacity: open ? 1 : 0,
+      y: open ? 0 : 16,
+      duration: duration("normal"),
+      delay: stagger(40, { reversed: !open }),
+      ease: open ? "out(3)" : "in(2)",
+    });
+    return () => {
+      anim.cancel();
+    };
+  }, [open]);
   const close = () => setOpen(false);
   return (
     <Dialog.Root open={open} onOpenChange={setOpen}>
