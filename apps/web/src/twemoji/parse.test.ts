@@ -16,10 +16,7 @@ describe("parseTwemoji", () => {
   });
 
   it("続けて書いた国旗は分ける", () => {
-    expect(parseTwemoji("🇬🇧🇯🇵")).toEqual([
-      emoji("🇬🇧", "1f1ec-1f1e7"),
-      emoji("🇯🇵", "1f1ef-1f1f5"),
-    ]);
+    expect(parseTwemoji("🇬🇧🇯🇵")).toEqual([emoji("🇬🇧", "1f1ec-1f1e7"), emoji("🇯🇵", "1f1ef-1f1f5")]);
   });
 
   it("地の文と絵文字を、出てくる順に分ける", () => {

@@ -98,7 +98,10 @@ export async function loadIntroLogo(theme: Theme): Promise<IntroLogo> {
 }
 
 /** Lottie のマーカーの区間を [始め, 終わり] で返す */
-function segment(data: { markers: { tm: number; cm: string; dr: number }[] }, name: string): [number, number] {
+function segment(
+  data: { markers: { tm: number; cm: string; dr: number }[] },
+  name: string,
+): [number, number] {
   const marker = data.markers.find((m) => m.cm === name);
   if (!marker) throw new Error(`イントロに区間 ${name} がない`);
   return [marker.tm, marker.tm + marker.dr];
@@ -194,7 +197,10 @@ export function IntroLogoSlot({ pending }: { pending: boolean }) {
   const waiting = pending || (selfPlay && !failed && !adopted);
   return (
     <div ref={box} className={introLogoClass}>
-      <div data-intro-static className={cx("absolute inset-0", (waiting || showIntro) && "invisible")}>
+      <div
+        data-intro-static
+        className={cx("absolute inset-0", (waiting || showIntro) && "invisible")}
+      >
         <Logo className="h-full w-full" />
       </div>
       {/*

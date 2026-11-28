@@ -59,6 +59,7 @@ function SpinningLogo() {
   return (
     <button
       type="button"
+      aria-label="nyaw"
       // 押した反応は回転で見せるので、波紋（ui/ripple.ts）は出さない
       data-no-ripple
       className="block cursor-pointer rounded-lg"

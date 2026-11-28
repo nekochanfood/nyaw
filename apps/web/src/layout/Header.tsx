@@ -84,7 +84,10 @@ export function Header() {
   }, [loaded]);
 
   return (
-    <header ref={ref} className="@container frame-x sticky top-0 z-(--layer-header) h-(--frame-top)">
+    <header
+      ref={ref}
+      className="@container frame-x sticky top-0 z-(--layer-header) h-(--frame-top)"
+    >
       {/*
         上辺の帯（styles.css の --frame-top）に載せる。面は持たず、帯の色がそのまま見える。
         高さ 64px に 40px のボタンを置くので、上下の余白は 12px。左右は、画面の端からの距離が上下と同じになるよう、
