@@ -8,6 +8,7 @@
   "actions": [
     { "name": "/actions/nyaw/in/aim", "type": "pose" },
     { "name": "/actions/nyaw/in/select", "type": "boolean" },
+    { "name": "/actions/nyaw/in/trigger", "type": "vector1", "requirement": "optional" },
     { "name": "/actions/nyaw/in/grab", "type": "boolean" },
     { "name": "/actions/nyaw/in/menu", "type": "boolean" },
     { "name": "/actions/nyaw/in/middle_touch", "type": "boolean", "requirement": "optional" },
@@ -27,6 +28,7 @@
       "/actions/nyaw": "nyaw",
       "/actions/nyaw/in/aim": "Laser",
       "/actions/nyaw/in/select": "Click",
+      "/actions/nyaw/in/trigger": "Click (trigger pull)",
       "/actions/nyaw/in/grab": "Grab panel",
       "/actions/nyaw/in/menu": "Menu",
       "/actions/nyaw/in/middle_touch": "Middle click modifier",

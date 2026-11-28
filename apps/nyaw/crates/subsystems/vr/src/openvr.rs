@@ -873,6 +873,7 @@ fn inputs(profile: &str, hand: Hand, a: HandActions) -> Vec<(String, f32)> {
     };
     [
         ("select/click", on(a.select)),
+        ("trigger/value", a.trigger),
         ("squeeze/value", on(a.grab)),
         ("squeeze/click", on(a.grab)),
         (menu, on(a.menu)),
@@ -983,11 +984,34 @@ mod tests {
         assert_eq!(profile("unknown_thing"), "khr/simple_controller");
     }
 
+    /// 押下を報告しない浅い引きでも、引き量はどの機種でも入力層へ届く。
+    #[test]
+    fn trigger_pull_reaches_every_profile() {
+        let a = HandActions {
+            trigger: 0.3,
+            ..Default::default()
+        };
+        for profile in [
+            "khr/simple_controller",
+            "valve/index_controller",
+            "oculus/touch_controller",
+            "htc/vive_controller",
+            "valve/frame_controller",
+        ] {
+            for hand in [Hand::Left, Hand::Right] {
+                let v = inputs(profile, hand, a);
+                assert_eq!(value(&v, "trigger/value"), Some(0.3), "{profile}");
+                assert_eq!(value(&v, "select/click"), Some(0.0), "{profile}");
+            }
+        }
+    }
+
     /// どの機種でも、アクションが入力層の表で引ける名前に出る。
     #[test]
     fn actions_map_to_each_profile() {
         let a = HandActions {
             select: true,
+            trigger: 0.75,
             grab: true,
             menu: true,
             middle_touch: true,
@@ -998,6 +1022,7 @@ mod tests {
         };
         let v = inputs("valve/index_controller", Hand::Right, a);
         assert_eq!(value(&v, "select/click"), Some(1.0));
+        assert_eq!(value(&v, "trigger/value"), Some(0.75));
         assert_eq!(value(&v, "squeeze/value"), Some(1.0));
         assert_eq!(value(&v, "b/click"), Some(1.0));
         assert_eq!(value(&v, crate::DOUBLE_PRESS_INPUT), Some(1.0));
