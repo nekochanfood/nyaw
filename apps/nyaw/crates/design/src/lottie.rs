@@ -117,7 +117,9 @@ impl Playback {
         };
         self.segment = Some(Segment {
             from: marker.start,
-            to: marker.end(),
+            // 終端のフレームは再生し終えたあとも表示する。最後の区間の終端は合成の外（`out_point`）で何も描かれないので、
+            // その 1 フレーム手前で止める。
+            to: marker.end().min(anim.out_point - 1.0),
             since: now,
             intro: false,
         });
@@ -432,6 +434,33 @@ mod tests {
         assert!(p.ready());
         assert!((now - t0).as_secs_f64() - 3.0 < 0.001);
         assert_eq!(p.until(999.0, anim.frame_rate, now), Duration::ZERO);
+    }
+
+    /// どの部品の反応も、再生し終えると完成形のロゴが表示されたままになる（最後の区間の終端は、合成の外にある）。
+    #[test]
+    fn every_reaction_ends_on_the_whole_logo() {
+        let anim = anim();
+        let intro_end = anim.marker("intro").unwrap().end();
+        let whole = anim.render(intro_end, 401, 199).unwrap();
+        // 部品ごとに、押せる位置を 1 つ探す
+        let mut parts = std::collections::BTreeMap::new();
+        for y in (0..199).step_by(3) {
+            for x in (0..401).step_by(3) {
+                if let Some(class) = anim.hit(intro_end, f64::from(x), f64::from(y)) {
+                    parts.entry(class).or_insert((f64::from(x), f64::from(y)));
+                }
+            }
+        }
+        assert_eq!(parts.len(), 10, "{parts:?}");
+        for (part, (x, y)) in parts {
+            let t0 = Instant::now();
+            let mut p = Playback::default();
+            p.start(&anim, false, t0);
+            assert!(p.press(&anim, x, y, t0), "{part}");
+            assert!(!p.advance(anim.frame_rate, t0 + Duration::from_secs(1)));
+            let shown = anim.render(p.frame(), 401, 199).unwrap();
+            assert!(shown.data() == whole.data(), "{part}: frame {}", p.frame());
+        }
     }
 
     #[test]
