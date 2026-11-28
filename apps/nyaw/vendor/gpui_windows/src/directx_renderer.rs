@@ -60,15 +60,31 @@ pub(crate) struct DirectXRenderer {
     readback: Option<Readback>,
 }
 
-/// NYAW: リードバック用のステージングテクスチャ 2 枚、コピー発行済みで未読のスロット番号、および最後に返した画像。
+/// NYAW: リードバック用のステージングテクスチャ 2 枚、コピー発行済みで未読のスロット番号、およびこの大きさの画像を返したか。
 #[cfg(any(test, feature = "test-support"))]
 struct Readback {
     staging: [ID3D11Texture2D; 2],
     width: u32,
     height: u32,
     pending: Option<usize>,
-    last: Option<image::RgbaImage>,
+    delivered: bool,
 }
+
+/// NYAW: `render_to_image` に返す画像がまだないことを示すエラー。発行したリードバックは次の呼び出しで返る。
+/// 直前に返した画像が最新のままなので、複製して返し直さない。
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+pub struct ReadbackPending;
+
+#[cfg(any(test, feature = "test-support"))]
+impl std::fmt::Display for ReadbackPending {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the readback is still pending")
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl std::error::Error for ReadbackPending {}
 
 #[cfg(any(test, feature = "test-support"))]
 thread_local! {
@@ -78,7 +94,8 @@ thread_local! {
 
 /// NYAW: `f`（`Window::render_to_image` を呼ぶ）の実行中、再描画を行わず前回発行済みのリードバックを回収する。
 /// 発行済みリードバックが存在しない場合はエラーを返す。通常の `render_to_image` は GPU の完了を待機せず、
-/// 前回の呼び出しで取得した画像を返す（GPU が高負荷の場合、完了待機が数 ms〜十数 ms に達し呼び出し側のフレーム落ちを招くため）。
+/// 前回の呼び出しで発行したリードバックの画像を返す。それを回収済みなら [`ReadbackPending`] を返す
+/// （GPU が高負荷の場合、完了待機が数 ms〜十数 ms に達し呼び出し側のフレーム落ちを招くため）。
 /// 描画結果を取得するには、次のフレームでこの関数を呼び出す。
 #[cfg(any(test, feature = "test-support"))]
 pub fn collect_readback<R>(f: impl FnOnce() -> R) -> R {
@@ -465,11 +482,7 @@ impl DirectXRenderer {
         if COLLECT.with(|c| c.get()) {
             let rb = self.readback.as_mut().context("no readback pending")?;
             let slot = rb.pending.take().context("no readback pending")?;
-            let img = self.map_readback(slot)?;
-            if let Some(rb) = &mut self.readback {
-                rb.last = Some(img.clone());
-            }
-            return Ok(img);
+            return self.map_readback(slot);
         }
         self.render(scene, background_appearance)?;
 
@@ -514,7 +527,7 @@ impl DirectXRenderer {
                 width,
                 height,
                 pending: None,
-                last: None,
+                delivered: false,
             });
         }
         let rb = self.readback.as_mut().unwrap();
@@ -524,21 +537,18 @@ impl DirectXRenderer {
             // コピーコマンドを即座に GPU へ送出し、次回の回収時に完了済みとなるようにする。
             context.Flush();
         }
-        // NYAW: 待機せず、前回発行済みのリードバック（なければ最後に返した画像）を返す。どちらも存在しない初回のみ待機する。
+        // NYAW: 待機せず、前回発行済みのリードバックを返す。回収済みなら、いま発行した分が次に返る。
         if let Some(prev) = rb.pending.replace(slot) {
-            let img = self.map_readback(prev)?;
-            if let Some(rb) = &mut self.readback {
-                rb.last = Some(img.clone());
-            }
-            return Ok(img);
+            return self.map_readback(prev);
         }
-        if let Some(last) = &rb.last {
-            return Ok(last.clone());
+        if rb.delivered {
+            return Err(ReadbackPending.into());
         }
+        // この大きさの画像をまだ返していない（開いた直後・大きさを変えた直後）ので、完了を待って返す。
         rb.pending = None;
         let img = self.map_readback(slot)?;
         if let Some(rb) = &mut self.readback {
-            rb.last = Some(img.clone());
+            rb.delivered = true;
         }
         Ok(img)
     }

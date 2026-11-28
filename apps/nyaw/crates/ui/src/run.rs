@@ -406,6 +406,7 @@ pub fn run_with(
                             window.draw(cx).clear(cx);
                             let scene = Instant::now();
                             // 読み戻しは GPU 完了を待たず 1 フレーム遅れで返す。描画結果は次のフレームで受け取る。
+                            // 前の結果を受け取り済みなら、この描画で返る絵はない（`None`）。
                             let frame = read_back(window);
                             collecting.insert(panel);
                             stages.draw += scene - t;
@@ -416,7 +417,7 @@ pub fn run_with(
                             let frame = collect(window);
                             stages.render += t.elapsed();
                             collected = true;
-                            frame.map(Ok)
+                            frame.map(|f| Ok(Some(f)))
                         } else {
                             None
                         }
@@ -444,7 +445,7 @@ pub fn run_with(
                     }
                     match frame {
                         // 開直後はウィンドウサイズの反映が間に合わず 1x1 で描画される。送出せず次フレームで再描画する。
-                        Some(Ok(f))
+                        Some(Ok(Some(f)))
                             if render_sizes.get(&panel).is_some_and(|&(res, lod)| {
                                 (f.width, f.height)
                                     != ((res.0 >> lod).max(1), (res.1 >> lod).max(1))
@@ -453,9 +454,12 @@ pub fn run_with(
                             slots.drawn[panel] = None;
                         }
                         // ピクセルが変化した場合のみ送出する（GPU 書き込みと完了待ちを省略する）。
+                        // 返る絵がない描画は、直前の絵から変わっていないとみなす（結果は次のフレームで判定する）。
                         Some(Ok(f)) => {
                             slots.drawn[panel] = Some(Instant::now());
-                            let same = slots.last[panel].as_ref() == Some(&f);
+                            let same = f
+                                .as_ref()
+                                .is_none_or(|f| slots.last[panel].as_ref() == Some(f));
                             // 要求による描画は推測間隔を短縮しない（自発的に再描画を要求するビューは推測描画が不要）。
                             // 描画したフレームの画像は前回の読み戻し（1 フレーム遅れ）のため、変化の判定は受け取ったフレームで行う。
                             slots.idle[panel] = if idle_due && same && !changed {
@@ -467,7 +471,7 @@ pub fn run_with(
                             } else {
                                 IDLE_REDRAW
                             };
-                            if !same {
+                            if let Some(f) = f.filter(|_| !same) {
                                 let t = Instant::now();
                                 kernel.submit(panel, f.width, f.height, &f.rgba);
                                 stages.upload += t.elapsed();
