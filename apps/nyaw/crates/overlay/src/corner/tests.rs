@@ -9,7 +9,7 @@ const LIMITS: ResizeLimits = ResizeLimits {
     keep_aspect: false,
 };
 /// パネル面の縁とクアッドの縁の間隔（m。1m あたり 1000px）。
-const MARGIN: f32 = design::PANEL_MARGIN / 1000.0;
+const MARGIN: f32 = metrics::PANEL_MARGIN / 1000.0;
 
 /// 1m × 0.5m（1000 × 500px、1m あたり 1000px）のパネルを正面 1m に置き、角で大きさを変えられるようにする。
 fn resizable() -> (Subsystems<MockBackend>, Overlay) {
