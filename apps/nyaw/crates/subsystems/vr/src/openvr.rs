@@ -613,6 +613,11 @@ impl VrBackend for OpenVrBackend {
         }
     }
 
+    fn display_interval(&self) -> Option<Duration> {
+        let hz = self.hmd_float(sys::ETrackedDeviceProperty_Prop_DisplayFrequency_Float);
+        (hz > 0.0).then(|| Duration::from_secs_f32(1.0 / hz))
+    }
+
     fn max_overlays(&self) -> Option<usize> {
         // ランタイム全体（ほかのアプリの分も含む）の数。実際に作れる数はこれより少ないことがある。
         Some(sys::k_unMaxOverlayCount as usize)

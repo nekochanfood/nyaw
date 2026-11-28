@@ -460,6 +460,10 @@ pub trait VrBackend {
     fn frame_interval(&self) -> Option<std::time::Duration> {
         None
     }
+    /// 画面の表示周期。画面の配信は、これより短い間隔で取り込まない。分からなければ `None`。
+    fn display_interval(&self) -> Option<std::time::Duration> {
+        self.frame_interval()
+    }
     /// 直前に合成したフレームで、オーバーレイの画面上の領域が 1 画素でも他のオーバーレイに遮蔽されずに存在したか
     /// （他のパネルに遮蔽された・視野外であれば `false`。自身の透明度は問わない）。
     /// ランタイムが提供しなければ `None`（呼び出し側が視野で推定する）。非可視パネルの再描画を省略するために使用する。
@@ -541,6 +545,9 @@ impl<T: VrBackend + ?Sized> VrBackend for Box<T> {
     }
     fn frame_interval(&self) -> Option<std::time::Duration> {
         (**self).frame_interval()
+    }
+    fn display_interval(&self) -> Option<std::time::Duration> {
+        (**self).display_interval()
     }
     fn block_app_input(&mut self, block: bool) {
         (**self).block_app_input(block)

@@ -21,6 +21,7 @@ pub struct Controller {
     input: Receiver<Input>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    min_interval: Arc<AtomicU64>,
     cursor: Arc<Mutex<Option<Arc<Cursor>>>>,
     popups: Arc<Mutex<Arc<[Popup]>>>,
 }
@@ -38,6 +39,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
     let update = Arc::new(Mutex::new(None));
     let stop = Arc::new(AtomicBool::new(false));
     let paused = Arc::new(AtomicBool::new(false));
+    let min_interval = Arc::new(AtomicU64::new(0));
     let cursor = Arc::new(Mutex::new(None));
     let popups = Arc::new(Mutex::new(Arc::from([])));
     let (tx, rx) = mpsc::sync_channel(64);
@@ -47,6 +49,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
             input: tx,
             stop: stop.clone(),
             paused: paused.clone(),
+            min_interval: min_interval.clone(),
             cursor: cursor.clone(),
             popups: popups.clone(),
             window,
@@ -56,6 +59,7 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
             input: rx,
             stop,
             paused,
+            min_interval,
             cursor,
             popups,
         },
@@ -65,6 +69,10 @@ fn stream_of(window: Option<u64>) -> (Stream, Controller) {
 impl Controller {
     pub fn publish(&self, update: Update) {
         *self.update.lock().unwrap() = Some(update);
+    }
+    /// 要求されている取得の間隔の下限（[`Stream::set_min_interval`]）。
+    pub fn min_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_nanos(self.min_interval.load(Ordering::Relaxed))
     }
     /// OS カーソルが変更されたことを通知する（[`Stream::cursor`]）。
     pub fn set_cursor(&self, cursor: Option<Cursor>) {

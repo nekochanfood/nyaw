@@ -4,7 +4,7 @@ use std::{
     fmt,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, SyncSender},
     },
     thread,
@@ -535,6 +535,8 @@ pub struct Stream {
     input: SyncSender<Input>,
     stop: Arc<AtomicBool>,
     paused: Arc<AtomicBool>,
+    /// 取得の間隔の下限（ナノ秒。[`Self::set_min_interval`]）。
+    min_interval: Arc<AtomicU64>,
     cursor: Arc<Mutex<Option<Arc<Cursor>>>>,
     popups: Arc<Mutex<Arc<[Popup]>>>,
     /// ウィンドウを映しているとき、そのウィンドウ（OS のウィンドウ識別子）。画面や特定できないものは `None`。
@@ -580,7 +582,9 @@ impl Stream {
                 "desktop frame rate must be between 1 and {MAX_FRAME_RATE}"
             )));
         }
-        let interval = Duration::from_secs_f64(1. / f64::from(frame_rate));
+        let rate_interval = Duration::from_secs_f64(1. / f64::from(frame_rate));
+        let min_interval = Arc::new(AtomicU64::new(0));
+        let floor = min_interval.clone();
         let update = Arc::new(Mutex::new(Some(Update {
             status: Status::Starting,
             frame: None,
@@ -611,6 +615,8 @@ impl Stream {
                     let mut shown_popups: Arc<[Popup]> = Arc::from([]);
                     let mut next_popups = Instant::now();
                     while !stopping.load(Ordering::Acquire) {
+                        let floor = Duration::from_nanos(floor.load(Ordering::Relaxed));
+                        let interval = rate_interval.max(floor);
                         if session.minimized() {
                             minimized = true;
                             break;
@@ -716,6 +722,7 @@ impl Stream {
             input,
             stop,
             paused,
+            min_interval,
             cursor,
             popups,
             window: None,
@@ -725,6 +732,13 @@ impl Stream {
     /// 見えていない間は画像の取得（GPU からの読み戻し）を止める。入力と終了の検知は続ける。
     pub fn set_paused(&self, paused: bool) {
         self.paused.store(paused, Ordering::Release);
+    }
+
+    /// 取得の間隔を `interval` より短くしない（開始時の上限 FPS の間隔のほうが長ければ、そちらに従う）。
+    /// VR の表示より速く取り込んだ画像は、使われないまま次の画像に置き換わる。
+    pub fn set_min_interval(&self, interval: Duration) {
+        let nanos = u64::try_from(interval.as_nanos()).unwrap_or(u64::MAX);
+        self.min_interval.store(nanos, Ordering::Relaxed);
     }
 
     pub fn poll(&self) -> Option<Update> {
@@ -1011,6 +1025,30 @@ mod tests {
         assert_eq!(rx.recv_timeout(Duration::from_secs(3)).unwrap(), touch);
         drop(stream);
         until(|| observer.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn worker_does_not_capture_faster_than_the_minimum_interval() {
+        let (tx, _rx) = mpsc::sync_channel(4);
+        // 上限は 240 FPS。下限の間隔を 100ms にすると、毎秒 10 枚になる。
+        let stream = Stream::spawn(MAX_FRAME_RATE, move |_, _| {
+            Ok(Fake {
+                dropped: Arc::new(AtomicBool::new(false)),
+                input: tx,
+                frame: 0,
+            })
+        })
+        .unwrap();
+        stream.set_min_interval(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(150));
+        stream.poll();
+        let started = Instant::now();
+        let mut frames = 0;
+        while started.elapsed() < Duration::from_millis(600) {
+            frames += usize::from(stream.poll().is_some_and(|u| u.frame.is_some()));
+            thread::sleep(Duration::from_millis(2));
+        }
+        assert!((2..=8).contains(&frames), "{frames} frames in 600ms");
     }
 
     #[test]
