@@ -1,10 +1,12 @@
 import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { Link } from "@tanstack/react-router";
+import { createTimeline } from "animejs";
 import type { ReactNode } from "react";
 
 import { useLocale, useT } from "@/i18n/index";
 import { ISSUES_URL, RELEASES_URL, REPO_URL } from "@/links";
+import { reducedMotion } from "@/motion/reducedMotion";
 import { ButtonAnchor } from "@/ui/Button";
 import { buttonClass, containerClass, cx, textClass } from "@/ui/variants";
 import { Logo } from "@/layout/Logo";
@@ -30,6 +32,44 @@ function External({ href, children }: { href: string; children: ReactNode }) {
       {children}
       <ArrowSquareOut aria-hidden className="ml-1 inline align-[-0.125em]" />
     </a>
+  );
+}
+
+/** しゃがんでから跳び上がって 1 回転し、着地でぷにっと弾む。動いている間の押下は無視する */
+function spin(button: HTMLElement) {
+  const body = button.firstElementChild as HTMLElement;
+  if (reducedMotion() || "spinning" in button.dataset) return;
+  button.dataset.spinning = "";
+  createTimeline({ onComplete: () => delete button.dataset.spinning })
+    .add(body, { scaleX: 1.15, scaleY: 0.82, duration: 120, ease: "out(2)" })
+    .add(body, { y: -24, scaleX: 0.92, scaleY: 1.08, duration: 280, ease: "out(2)" })
+    .add(body, { y: 0, scaleX: 1, scaleY: 1, duration: 280, ease: "in(2)" })
+    .add(body, { scaleX: 1.18, scaleY: 0.82, duration: 90, ease: "out(2)" })
+    .add(body, { scaleX: 1, scaleY: 1, duration: 600, ease: "outElastic(1, 0.4)" })
+    // 回転は跳んでいる間に済ませる。伸び縮みは足元、回転は中心を軸にするので、要素を分ける
+    .add(
+      body.firstElementChild as HTMLElement,
+      { rotate: [0, 360], duration: 560, ease: "inOut(2)" },
+      120,
+    );
+}
+
+/** 押すと回るミニロゴ */
+function SpinningLogo() {
+  return (
+    <button
+      type="button"
+      // 押した反応は回転で見せるので、波紋（ui/ripple.ts）は出さない
+      data-no-ripple
+      className="block cursor-pointer rounded-lg"
+      onClick={(e) => spin(e.currentTarget)}
+    >
+      <span className="block origin-bottom">
+        <span className="flex">
+          <Logo kind="mini" className="h-auto w-12" />
+        </span>
+      </span>
+    </button>
   );
 }
 
@@ -62,13 +102,13 @@ export function Footer() {
             </Column>
           </div>
           <div className="max-sm:hidden">
-            <Logo className="h-20 w-auto" />
+            <SpinningLogo />
           </div>
         </div>
         <div className="flex items-end justify-between gap-6">
           <div className="flex flex-col gap-1">
             <div className="mb-3 sm:hidden">
-              <Logo className="h-16 w-auto" />
+              <SpinningLogo />
             </div>
             <p className={textClass("muted")}>{t("licence")}</p>
             <p className={textClass("muted")}>{t("copyright")}</p>
