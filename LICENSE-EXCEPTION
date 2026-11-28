@@ -12,10 +12,11 @@ source code of the following:
   - Steam Audio (the phonon library), including the third-party components
     contained in it, such as Intel Integrated Performance Primitives;
   - the SteamVR runtime;
-  - the third-party materials described in assets/renders/acknowledgements.md.
+  - the third-party materials described in assets/renders/acknowledgements.md;
+  - the Brand Assets described in LICENSE-BRAND.
 
 This permission does not grant any right to use or redistribute those
-components or materials. Their own terms continue to apply to them.
+components, materials or assets. Their own terms continue to apply to them.
 
 You may remove this additional permission from your copy of a covered work, as
 provided in section 7 of the GPL.
