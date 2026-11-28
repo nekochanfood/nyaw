@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 
+import { reducedMotion } from "@/motion/reducedMotion";
+
 export type Theme = "light" | "dark";
 
 const STORAGE_KEY = "nyaw-theme";
@@ -49,7 +51,7 @@ export function setTheme(theme: Theme) {
     void root.offsetWidth;
     delete root.dataset.themeSwitching;
   };
-  if (document.startViewTransition && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  if (document.startViewTransition && !reducedMotion()) {
     document.startViewTransition(apply);
   } else {
     apply();

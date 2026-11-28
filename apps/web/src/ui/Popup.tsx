@@ -21,7 +21,7 @@ type PopupProps = {
 };
 
 const positioner = (side: Side, align: PopupProps["align"]) => ({
-  className: "z-50",
+  className: "z-(--layer-popup)",
   side,
   align,
   sideOffset: 8,
@@ -85,7 +85,7 @@ export function Tooltip({ label, children }: { label: string; children: ReactEle
     <BaseTooltip.Root open={open} onOpenChange={setOpen}>
       <BaseTooltip.Trigger render={children} />
       <BaseTooltip.Portal>
-        <BaseTooltip.Positioner className="z-50" side="bottom" sideOffset={6}>
+        <BaseTooltip.Positioner className="z-(--layer-popup)" side="bottom" sideOffset={6}>
           <BaseTooltip.Popup
             ref={ref}
             className="rounded-lg bg-tooltip px-2.5 py-1 text-xs text-on-tooltip"

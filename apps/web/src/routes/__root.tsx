@@ -57,11 +57,11 @@ function Shell({ children }: { children: ReactNode }) {
             {children}
             {/*
               画面の四辺を帯で覆い、内側の角を丸める。スクロールしても動かない。上辺の帯にはヘッダーが載るので、
-              ページと同じ重なりの中に置き、ヘッダー（z-50）をこの上に出す
+              ページと同じ重なりの中に置き、ヘッダーをこの上に出す（styles.css の --layer-*）
             */}
             <div
               aria-hidden
-              className="frame-x pointer-events-none fixed inset-x-0 top-(--frame-top) bottom-(--frame-gutter) z-40 rounded-(--frame-radius) shadow-[0_0_0_100vmax_var(--groove)]"
+              className="frame-x pointer-events-none fixed inset-x-0 top-(--frame-top) bottom-(--frame-gutter) z-(--layer-frame) rounded-(--frame-radius) shadow-[0_0_0_100vmax_var(--frame)]"
             />
           </div>
         </LoadingProvider>

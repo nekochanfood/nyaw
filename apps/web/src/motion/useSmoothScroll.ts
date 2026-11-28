@@ -20,8 +20,9 @@ export function useSmoothScroll() {
     let destroy = () => {};
     void import("lenis").then(({ default: Lenis }) => {
       if (destroyed) return;
-      // ページ内リンクも滑らかに移動する。飛び先はヘッダー（h-16）と帯の分だけ下げる
-      const lenis = new Lenis({ autoRaf: true, anchors: { offset: -80 } });
+      // ページ内リンクも滑らかに移動する。飛び先は、ブラウザと同じく scroll-padding-top（styles.css）だけ下げる
+      const padding = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+      const lenis = new Lenis({ autoRaf: true, anchors: { offset: -padding } });
       current = lenis;
       destroy = () => {
         lenis.destroy();

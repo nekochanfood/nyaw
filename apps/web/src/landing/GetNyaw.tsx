@@ -5,7 +5,7 @@ import { useLocale, useT } from "@/i18n/index";
 import { Logo } from "@/layout/Logo";
 import { useReveal } from "@/motion/useReveal";
 import { ButtonLink } from "@/ui/Button";
-import { containerClass, cx, textClass } from "@/ui/variants";
+import { containerClass, cx, SURFACE, textClass } from "@/ui/variants";
 
 /** ページの終わりの、ダウンロードへの案内 */
 export function GetNyaw() {
@@ -17,7 +17,10 @@ export function GetNyaw() {
     <section ref={ref} className={cx(containerClass, "pb-24 sm:pb-32")}>
       <div
         data-reveal-group
-        className="flex flex-col items-start gap-6 rounded-2xl bg-groove/50 p-8 sm:flex-row sm:items-center sm:justify-between sm:p-12"
+        className={cx(
+          SURFACE.inset,
+          "flex flex-col items-start gap-6 p-8 sm:flex-row sm:items-center sm:justify-between sm:p-12",
+        )}
       >
         <div className="flex flex-col gap-3">
           <div data-reveal>

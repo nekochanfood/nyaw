@@ -10,7 +10,7 @@ import { animate } from "animejs";
 
 import { useT } from "@/i18n/index";
 import { reducedMotion } from "@/motion/reducedMotion";
-import { cx, textClass } from "@/ui/variants";
+import { cx, SURFACE, textClass } from "@/ui/variants";
 
 /** 機能と、そのアイコンの面の色（Catppuccin のアクセント） */
 const FEATURES = [
@@ -48,7 +48,7 @@ export function Features() {
           key={key}
           data-reveal
           onMouseEnter={(e) => hop(e.currentTarget)}
-          className="flex flex-col gap-4 rounded-2xl bg-card p-6"
+          className={cx(SURFACE.card, "flex flex-col gap-4 p-6")}
         >
           <span
             data-icon

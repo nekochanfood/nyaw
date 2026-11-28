@@ -6,7 +6,7 @@ import { Composite, type Layer, type Tilt } from "@/composite/Composite";
 import { useLocale, useT } from "@/i18n/index";
 import { useReveal } from "@/motion/useReveal";
 import { ButtonLink } from "@/ui/Button";
-import { containerClass, cx, textClass } from "@/ui/variants";
+import { containerClass, cx, SURFACE, textClass } from "@/ui/variants";
 
 const BAR = { role: "dashboard", moment: "mirroring" } as const;
 
@@ -81,7 +81,10 @@ export function Showcase() {
           <article
             key={scene.key}
             data-reveal-group
-            className="grid items-center gap-8 rounded-2xl bg-control/50 p-4 sm:p-8 lg:grid-cols-2 lg:gap-12"
+            className={cx(
+              SURFACE.inset,
+              "grid items-center gap-8 p-4 sm:p-8 lg:grid-cols-2 lg:gap-12",
+            )}
           >
             <div className={cx("flex flex-col gap-4 p-2 sm:p-0", i % 2 === 1 && "lg:order-2")}>
               <PawPrint

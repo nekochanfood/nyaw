@@ -8,12 +8,13 @@ import { useCallback, useEffect, useRef } from "react";
 
 import { useT } from "@/i18n/index";
 import { REPO_URL } from "@/links";
+import { duration } from "@/motion/duration";
 import { reducedMotion } from "@/motion/reducedMotion";
 import { slideFrom, usePopupPresence } from "@/ui/usePopupPresence";
 import { buttonClass } from "@/ui/variants";
-import { useNavItems } from "@/layout/Header";
+import { useNavItems } from "@/layout/nav";
 
-const PRESENCE = slideFrom("bottom", 16, 250, 180);
+const PRESENCE = slideFrom("bottom", 16, "slow", "normal");
 
 /**
  * 狭い画面のメニュー。ヘッダーの下から画面の下端までを帯と同じ色で覆い、本文のカードを隠して、帯の上にページの一覧を
@@ -31,7 +32,7 @@ export function MobileMenu({ open, setOpen }: { open: boolean; setOpen: (open: b
     if (!iconRef.current || reducedMotion()) return;
     const anim = animate(iconRef.current, {
       rotate: [-90, 0],
-      duration: 250,
+      duration: duration("normal"),
       ease: "outBack(1.7)",
     });
     return () => {
@@ -70,7 +71,7 @@ export function MobileMenu({ open, setOpen }: { open: boolean; setOpen: (open: b
           ref={ref}
           // タップやクリックで開いたときに、最初のリンクにフォーカスの枠を出さない。キーボードのときだけ中へ移す
           initialFocus={(type) => type === "keyboard"}
-          className="frame-x fixed inset-x-0 top-(--frame-top) bottom-0 z-30 flex flex-col gap-2 overflow-y-auto bg-groove px-5 pt-4 pb-8 outline-none"
+          className="frame-x fixed inset-x-0 top-(--frame-top) bottom-0 z-(--layer-menu) flex flex-col gap-2 overflow-y-auto bg-frame px-5 pt-4 pb-8 outline-none"
         >
           <Dialog.Title className="sr-only">{t("open_menu")}</Dialog.Title>
           <nav className="flex flex-col">

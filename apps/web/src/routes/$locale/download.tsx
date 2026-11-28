@@ -10,7 +10,7 @@ import { PageSection, PageTitle } from "@/layout/Page";
 import { RELEASES_URL } from "@/links";
 import { useReveal } from "@/motion/useReveal";
 import { pageTitle, seo } from "@/seo";
-import { cx, textClass } from "@/ui/variants";
+import { buttonClass, cx, SURFACE, textClass } from "@/ui/variants";
 
 export const Route = createFileRoute("/$locale/download")({
   head: ({ match }) => {
@@ -38,9 +38,9 @@ function Card({
   return (
     <div
       data-reveal
-      className={cx("flex flex-col gap-4 rounded-2xl bg-card p-6 sm:p-8", className)}
+      className={cx(SURFACE.card, "flex flex-col gap-4 p-6 sm:p-8", className)}
     >
-      {title && <h2 className="text-xl font-bold">{title}</h2>}
+      {title && <h2 className={textClass("card")}>{title}</h2>}
       {children}
     </div>
   );
@@ -90,7 +90,7 @@ function Download() {
                   <li key={key} className="flex gap-3 text-sm leading-relaxed">
                     <span
                       aria-hidden
-                      className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-ctp-lavender/20 text-xs font-bold text-ctp-lavender"
+                      className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-ctp-lavender/15 text-xs font-bold text-ctp-lavender"
                     >
                       {i + 1}
                     </span>
@@ -105,7 +105,11 @@ function Download() {
             href={RELEASES_URL}
             target="_blank"
             rel="noopener"
-            className="inline-flex items-center gap-2 self-start rounded-full text-sm text-neutral-text-low transition-colors hover:text-neutral-text"
+            className={buttonClass({
+              variant: "text",
+              size: "none",
+              className: "inline-flex items-center gap-2 self-start text-sm",
+            })}
           >
             {t("all_releases")}
             <ArrowSquareOut aria-hidden />

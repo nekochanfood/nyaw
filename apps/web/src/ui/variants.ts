@@ -68,6 +68,16 @@ export function textClass(variant: keyof typeof TEXT_VARIANTS, className?: strin
   return cx(TEXT_VARIANTS[variant], className);
 }
 
+/**
+ * 区画の中に置く面。角丸はどちらも 2xl。
+ * - `card`: 本文のカードと同じ色。地より沈んだ区画（PageSection）の上に置く
+ * - `inset`: 下の面に、操作の面の色を半分だけ重ねる。カードの上にも、沈んだ区画の上にも置ける
+ */
+export const SURFACE = {
+  card: "rounded-2xl bg-card",
+  inset: "rounded-2xl bg-control/50",
+} as const;
+
 /** 浮いたパネル。ドロップダウンやポップオーバー */
 export const panelClass = "bg-card text-neutral-text border border-neutral-border-subtle";
 

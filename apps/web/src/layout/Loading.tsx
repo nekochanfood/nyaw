@@ -1,6 +1,7 @@
 import { animate } from "animejs";
 import { createContext, type ReactNode, useContext, useEffect, useState } from "react";
 
+import { duration } from "@/motion/duration";
 import { reducedMotion } from "@/motion/reducedMotion";
 
 const LoadingContext = createContext(false);
@@ -25,7 +26,7 @@ export function LoadingProvider({ children }: { children: ReactNode }) {
       setDone(true);
       anim = animate(el, {
         opacity: 0,
-        duration: reducedMotion() ? 0 : 200,
+        duration: reducedMotion() ? 0 : duration("normal"),
         ease: "out(2)",
         onComplete: () => {
           el.style.display = "none";

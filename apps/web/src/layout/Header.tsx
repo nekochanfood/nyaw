@@ -12,17 +12,8 @@ import { LanguageMenu } from "@/layout/LanguageMenu";
 import { Logo } from "@/layout/Logo";
 import { useLoadingDone } from "@/layout/Loading";
 import { MobileMenu } from "@/layout/MobileMenu";
+import { useNavItems } from "@/layout/nav";
 import { ThemeToggle } from "@/layout/ThemeToggle";
-
-/** ヘッダーとモバイルのメニューに並べるページ */
-export function useNavItems() {
-  const t = useT("nav");
-  const locale = useLocale();
-  return [
-    { label: t("features"), to: "/$locale/features", hash: undefined, params: { locale } },
-    { label: t("download"), to: "/$locale/download", hash: undefined, params: { locale } },
-  ] as const;
-}
 
 /** ロゴをホバーしたときに、首をかしげるように小さく揺らす */
 function wiggle(el: Element | null) {
@@ -89,7 +80,7 @@ export function Header() {
   }, [loaded]);
 
   return (
-    <header ref={ref} className="frame-x sticky top-0 z-50 h-(--frame-top)">
+    <header ref={ref} className="frame-x sticky top-0 z-(--layer-header) h-(--frame-top)">
       {/*
         上辺の帯（styles.css の --frame-top）に載せる。面は持たず、帯の色がそのまま見える。
         高さ 64px に 40px のボタンを置くので、上下の余白は 12px。左右も 12px にする。

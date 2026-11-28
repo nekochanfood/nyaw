@@ -1,15 +1,21 @@
 import { animate } from "animejs";
 import { useCallback, useLayoutEffect, useRef } from "react";
 
+import { type Duration, duration } from "@/motion/duration";
 import { reducedMotion } from "@/motion/reducedMotion";
 
-/** 出入りの動き。`axis` 方向に `offset` px ずれた位置からフェードしながら戻る */
-export type Presence = { axis: "x" | "y"; offset: number; enter: number; exit: number };
+/** 出入りの動き。`axis` 方向に `offset` px ずれた位置からフェードしながら戻る。時間はトークンの名前 */
+export type Presence = { axis: "x" | "y"; offset: number; enter: Duration; exit: Duration };
 
 export type Side = "top" | "bottom" | "left" | "right";
 
 /** アンカーから離れる向きに `distance` px だけスライドする出入り */
-export function slideFrom(side: Side, distance: number, enter: number, exit: number): Presence {
+export function slideFrom(
+  side: Side,
+  distance: number,
+  enter: Duration,
+  exit: Duration,
+): Presence {
   const axis = side === "top" || side === "bottom" ? "y" : "x";
   // 下や右に出るものは、アンカー側（上や左）から現れる
   const offset = side === "bottom" || side === "right" ? -distance : distance;
@@ -17,17 +23,17 @@ export function slideFrom(side: Side, distance: number, enter: number, exit: num
 }
 
 export const DROPDOWN_PRESENCE = {
-  bottom: slideFrom("bottom", 12, 200, 150),
-  top: slideFrom("top", 12, 200, 150),
-  left: slideFrom("left", 12, 200, 150),
-  right: slideFrom("right", 12, 200, 150),
+  bottom: slideFrom("bottom", 12, "normal", "quick"),
+  top: slideFrom("top", 12, "normal", "quick"),
+  left: slideFrom("left", 12, "normal", "quick"),
+  right: slideFrom("right", 12, "normal", "quick"),
 };
 
 export const TOOLTIP_PRESENCE = {
-  bottom: slideFrom("bottom", 8, 150, 100),
-  top: slideFrom("top", 8, 150, 100),
-  left: slideFrom("left", 8, 150, 100),
-  right: slideFrom("right", 8, 150, 100),
+  bottom: slideFrom("bottom", 8, "quick", "fast"),
+  top: slideFrom("top", 8, "quick", "fast"),
+  left: slideFrom("left", 8, "quick", "fast"),
+  right: slideFrom("right", 8, "quick", "fast"),
 };
 
 /**
@@ -57,7 +63,12 @@ export function usePopupPresence<T extends HTMLElement>(open: boolean, presence:
       if (!el) return;
       justMounted.current = true;
       if (reducedMotion()) return;
-      animate(el, { opacity: [0, 1], [axis]: [offset, 0], duration: enter, ease: "out(3)" });
+      animate(el, {
+        opacity: [0, 1],
+        [axis]: [offset, 0],
+        duration: duration(enter),
+        ease: "out(3)",
+      });
     },
     [axis, offset, enter],
   );
@@ -77,7 +88,7 @@ export function usePopupPresence<T extends HTMLElement>(open: boolean, presence:
     const anim = animate(el, {
       opacity: open ? 1 : 0,
       [axis]: open ? 0 : offset,
-      duration: open ? enter : exit,
+      duration: duration(open ? enter : exit),
       ease: open ? "out(3)" : "in(3)",
       onComplete: done,
     });

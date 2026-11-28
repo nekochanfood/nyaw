@@ -32,7 +32,7 @@ function Layout() {
     <TooltipProvider delay={400}>
       <a
         href="#main"
-        className="fixed top-4 left-4 z-50 -translate-y-24 rounded-full bg-neutral-text px-4 py-2 text-sm text-card focus:translate-y-0"
+        className="fixed top-4 left-4 z-(--layer-top) -translate-y-24 rounded-full bg-neutral-text px-4 py-2 text-sm text-card focus:translate-y-0"
       >
         {t("skip")}
       </a>
@@ -46,7 +46,7 @@ function Layout() {
         切り取った箱の内側にあると、ぼかしの層（backdrop-filter と mask-image）のマスクが効かなくなり、
         層が不透明のパネルになる
       */}
-      <div className="frame-x flex min-h-[calc(100svh-var(--frame-top)-var(--frame-gutter))] flex-col overflow-clip rounded-b-[calc(var(--frame-radius)/var(--corner-scale))] bg-card [corner-shape:round]">
+      <div className="frame-x flex min-h-(--frame-height) flex-col overflow-clip rounded-b-(--frame-radius-base) bg-card [corner-shape:round]">
         <div aria-hidden className="edge-fade edge-fade-top" />
         <main id="main" className="flex grow flex-col">
           <PageTransition>

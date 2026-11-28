@@ -12,6 +12,7 @@ import type { useReleases } from "@/download/useReleases";
 import type { Locale } from "@/i18n/config";
 import { useLocale, useT } from "@/i18n/index";
 import { RELEASES_URL } from "@/links";
+import { duration } from "@/motion/duration";
 import { reducedMotion } from "@/motion/reducedMotion";
 import { ButtonAnchor } from "@/ui/Button";
 import { cx, textClass } from "@/ui/variants";
@@ -76,7 +77,7 @@ export function ChannelPicker({ state }: { state: ReturnType<typeof useReleases>
   // 切り替えたパネルは、下から少し浮かび上がる
   const enter = useCallback((el: HTMLDivElement | null) => {
     if (!el || reducedMotion()) return;
-    animate(el, { opacity: [0, 1], y: [8, 0], duration: 250, ease: "out(3)" });
+    animate(el, { opacity: [0, 1], y: [8, 0], duration: duration("normal"), ease: "out(3)" });
   }, []);
 
   const body = (c: Channel) => {

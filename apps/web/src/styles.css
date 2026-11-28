@@ -52,6 +52,9 @@
 
   /* トークンの xl（24px）より大きい角丸 */
   --radius-2xl: calc(32px * var(--corner-scale, 1));
+
+  /* ページを囲む帯（外枠）の色。ヘッダー、フッター、狭い画面のメニューの面もこの色にする */
+  --color-frame: var(--frame);
 }
 
 :root {
@@ -60,12 +63,36 @@
     トークンの角丸（rounded-sm〜xl）はこの倍率を掛けた値になる。
   */
   --corner-scale: 1;
-  /* ページ全体を囲む帯の太さと、その内側の角丸。上辺の帯はヘッダー（h-16）の高さにする */
+
+  /*
+    ページ全体を囲む帯（外枠）。上辺の帯はヘッダー（h-16）の高さ、ほかの三辺は --frame-gutter の太さにする。
+    帯の色は、ライトではアプリの groove より一段明るくし（白いカードとの差を縮める）、ダークでは groove のまま
+  */
+  --frame: var(--neutral-bg-hover);
+  @variant dark {
+    --frame: var(--groove);
+  }
   --frame-gutter: 8px;
   --frame-top: 4rem;
-  --frame-radius: calc(24px * var(--corner-scale));
-  /* ページ内リンクの飛び先がヘッダーに隠れないようにする */
+  /* 帯の内側の高さ。ツールバーの出し入れで変わらない svh で測る */
+  --frame-height: calc(100svh - var(--frame-top) - var(--frame-gutter));
+  /* 帯の内側の角丸。--frame-radius-base は倍率を掛ける前の値で、通常の角丸（corner-shape: round）に使う */
+  --frame-radius-base: 24px;
+  --frame-radius: calc(var(--frame-radius-base) * var(--corner-scale));
+  /* ページ内リンクの飛び先がヘッダーに隠れないようにする（lenis もこの値を読む） */
   scroll-padding-top: var(--frame-top);
+
+  /*
+    重なり順。ページ（__root の isolate の中）では、本文 < 本文の上下の端のぼかし < 帯 < ヘッダー < 最前面
+    （スキップリンク、遷移の進み具合の線）。ページの外（body の直下）に出すものは、ページの上に
+    狭い画面のメニュー < ポップアップの順で重ねる。読み込み画面は CSS を読む前から描くので、自分で最前面に置く
+  */
+  --layer-edge-fade: 1;
+  --layer-frame: 2;
+  --layer-header: 3;
+  --layer-top: 4;
+  --layer-menu: 1;
+  --layer-popup: 2;
 }
 
 @supports (corner-shape: superellipse(1.4)) {
@@ -89,7 +116,7 @@
   }
 
   html {
-    background: var(--groove);
+    background: var(--frame);
     font-family: var(--font-sans);
     -webkit-tap-highlight-color: transparent;
     text-size-adjust: 100%;
@@ -136,7 +163,7 @@
 */
 .edge-fade {
   position: sticky;
-  z-index: 30;
+  z-index: var(--layer-edge-fade);
   height: 0;
   pointer-events: none;
 }
@@ -195,10 +222,7 @@
 */
 @utility frame-x {
   margin-inline: auto;
-  width: min(
-    calc(100% - 2 * var(--frame-gutter)),
-    calc(100dvh - var(--frame-top) - var(--frame-gutter))
-  );
+  width: min(calc(100% - 2 * var(--frame-gutter)), var(--frame-height));
 }
 
 /* 真円とピルは潰さない */
