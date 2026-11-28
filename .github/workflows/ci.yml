@@ -44,8 +44,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.100.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.100.1
           components: rustfmt
         # コードフォーマットの検証
       - run: cargo fmt --all --check
@@ -58,8 +59,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.100.1
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.100.1
           components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
@@ -77,7 +79,9 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.100.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.1
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/nyaw

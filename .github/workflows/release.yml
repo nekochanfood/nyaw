@@ -43,7 +43,9 @@ jobs:
           persist-credentials: false
           # ビルド番号（HEAD までの通算コミット数）を算出するため全履歴を取得
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@1.100.1
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.1
       # リリース対象タグ（TAG）、ビルド実行フラグ（BUILD）、およびリリース発行フラグ（PUBLISH）の決定
       - name: Decide the release
         env:
