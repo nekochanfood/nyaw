@@ -99,8 +99,8 @@ export function Header() {
             to="/$locale"
             params={{ locale }}
             aria-label={t("home")}
-            // 左の余白は、ヘッダーの余白と足して本文の端（sm 以上で 32px）になる幅
-            className="mr-2 flex h-10 items-center rounded-lg px-1 md:pl-[calc(2rem-var(--header-pad-x))]"
+            // 左の余白は、ヘッダーの余白と足して本文の端（--content-pad-x）になる幅
+            className="mr-2 flex h-10 items-center rounded-lg px-1 md:pl-[calc(var(--content-pad-x)-var(--header-pad-x))]"
             onMouseEnter={(e) => wiggle(e.currentTarget.querySelector("[data-logo]"))}
           >
             {/* 揺らすのはロゴの絵だけ。余白込みの箱を回すと、回転の中心がずれる */}

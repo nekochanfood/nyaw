@@ -39,7 +39,7 @@ export function Footer() {
   const nav = useT("nav");
   const locale = useLocale();
   return (
-    <footer className="frame-x pt-14 pb-12">
+    <footer className="frame-x py-(--footer-pad-y)">
       <div className={cx(containerClass, "flex flex-col gap-12")}>
         <div className="flex flex-col-reverse gap-10 sm:flex-row sm:justify-between">
           <div className="flex flex-wrap gap-x-16 gap-y-8">
