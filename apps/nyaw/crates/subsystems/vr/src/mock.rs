@@ -54,6 +54,8 @@ pub struct MockBackend {
     pub auto_launch: Option<bool>,
     /// 両目に映る範囲（[`VrBackend::fov`]）。
     pub fov: Option<crate::Fov>,
+    /// 画面の表示周期（[`VrBackend::display_interval`]）。
+    pub display_interval: Option<std::time::Duration>,
 }
 
 impl VrBackend for MockBackend {
@@ -67,6 +69,10 @@ impl VrBackend for MockBackend {
 
     fn auto_launch(&self) -> Option<bool> {
         self.auto_launch
+    }
+
+    fn display_interval(&self) -> Option<std::time::Duration> {
+        self.display_interval
     }
 
     fn fov(&self) -> Option<crate::Fov> {

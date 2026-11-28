@@ -153,6 +153,8 @@ pub(crate) struct OpenXrBackend {
     running: bool,
     /// `begin` 済みで `end` していないフレームの表示時刻。
     in_frame: Option<xr::Time>,
+    /// 直近のフレームでランタイムが返した表示周期。
+    period: Option<std::time::Duration>,
     /// ランタイムとの接続が喪失した（クラッシュ等）。以後は何もしない。
     lost: bool,
     /// セッションが EXITING / LOSS_PENDING になった。`Frame::quit` で上位へ通知する。
@@ -374,6 +376,7 @@ impl OpenXrBackend {
             running: false,
             fov: None,
             in_frame: None,
+            period: None,
             lost: false,
             quit: false,
             gpu,
@@ -813,6 +816,10 @@ impl VrBackend for OpenXrBackend {
         }
         let time = state.predicted_display_time;
         self.in_frame = Some(time);
+        self.period = u64::try_from(state.predicted_display_period.as_nanos())
+            .ok()
+            .filter(|&nanos| nanos > 0)
+            .map(std::time::Duration::from_nanos);
 
         if let Err(e) = self
             .session
@@ -972,6 +979,10 @@ impl VrBackend for OpenXrBackend {
             )
             .ok()?;
         Some((sc.width, sc.height, rgba))
+    }
+
+    fn display_interval(&self) -> Option<std::time::Duration> {
+        self.period
     }
 
     fn submit_overlay_pixels(&mut self, id: OverlayId, width: u32, height: u32, rgba: &[u8]) {

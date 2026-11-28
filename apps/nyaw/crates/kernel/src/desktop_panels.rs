@@ -316,9 +316,15 @@ impl<B: VrBackend> Kernel<B> {
         self.desktop_panels
             .retain(|id, _| !self.overlay.panel(*id).closed);
         // 非表示の配信は取得を一時停止する。再表示すると停止中の最新の画像から再開する。
+        // 表示周期より速くは取り込まない。
+        let display = (!self.desktop_panels.is_empty())
+            .then(|| self.subsystems.backend.display_interval())
+            .flatten()
+            .unwrap_or_default();
         for (&id, panel) in &self.desktop_panels {
             if let Some(stream) = &panel.stream {
                 stream.set_paused(!self.panel_seen(id));
+                stream.set_min_interval(display);
             }
         }
         let now = Instant::now();
@@ -604,6 +610,16 @@ mod tests {
             aim: Pose::new(Vec3::new(x, 0.0, 0.0), Quat::IDENTITY),
             inputs: vec![("select/click".into(), if select { 1.0 } else { 0.0 })],
         }];
+    }
+
+    #[test]
+    fn streams_are_limited_to_the_display_interval() {
+        let (mut kernel, _, control) = setup();
+        assert_eq!(control.min_interval(), Duration::ZERO);
+        let display = Duration::from_micros(11_111);
+        kernel.subsystems.backend.display_interval = Some(display);
+        kernel.tick();
+        assert_eq!(control.min_interval(), display);
     }
 
     #[test]
