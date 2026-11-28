@@ -11,7 +11,7 @@ import { Tooltip } from "@/ui/Popup";
 import { LanguageMenu } from "@/layout/LanguageMenu";
 import { Logo } from "@/layout/Logo";
 import { useLoadingDone } from "@/layout/Loading";
-import { MobileMenu } from "@/layout/MobileMenu";
+import { MENU_ITEM_SHIFT, MobileMenu } from "@/layout/MobileMenu";
 import { useNavItems } from "@/layout/nav";
 import { ThemeToggle } from "@/layout/ThemeToggle";
 
@@ -49,7 +49,7 @@ export function Header() {
     }
     const anim = animate(targets, {
       opacity: menuOpen ? 0 : 1,
-      y: menuOpen ? -24 : 0,
+      y: menuOpen ? -MENU_ITEM_SHIFT : 0,
       duration: menuOpen ? 250 : 500,
       delay: stagger(40),
       ease: menuOpen ? "in(2)" : "out(3)",

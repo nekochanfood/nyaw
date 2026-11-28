@@ -14,11 +14,15 @@ import { slideFrom, usePopupPresence } from "@/ui/usePopupPresence";
 import { buttonClass } from "@/ui/variants";
 import { useNavItems } from "@/layout/nav";
 
+/** メニューの開閉で、項目が動く距離（px）。ヘッダーの項目（Header）とメニューの項目で同じにする */
+export const MENU_ITEM_SHIFT = 24;
+
 /**
- * 面の出入り。面は帯と同じ色なので、閉じるときは、項目が消え始めてから面を薄れさせ、下の本文のカードが
+ * 面の出入り。面は帯と同じ色で動きが見えないので、ずらさずに薄れるだけにする（ずらすと、中の項目の動く量が
+ * ヘッダーの項目とずれる）。閉じるときは、項目が消え始めてから面を薄れさせ、下の本文のカードが
  * ゆっくり見えてくるようにする（既定の in(3) では、最後の一瞬で消えたように見える）
  */
-const PRESENCE = { ...slideFrom("bottom", 16, "slow", "slow"), exitEase: "out(2)", exitDelay: 120 };
+const PRESENCE = { ...slideFrom("bottom", 0, "slow", "slow"), exitEase: "out(2)", exitDelay: 120 };
 
 /**
  * 狭い画面のメニュー。ヘッダーの下から画面の下端までを帯と同じ色で覆い、本文のカードを隠して、帯の上にページの一覧を
@@ -56,7 +60,7 @@ export function MobileMenu({ open, setOpen }: { open: boolean; setOpen: (open: b
       if (reducedMotion()) return;
       animate(el.querySelectorAll("[data-menu-item]"), {
         opacity: [0, 1],
-        y: [16, 0],
+        y: [MENU_ITEM_SHIFT, 0],
         duration: 500,
         delay: stagger(60, { start: 80 }),
         ease: "out(4)",
@@ -75,7 +79,7 @@ export function MobileMenu({ open, setOpen }: { open: boolean; setOpen: (open: b
     if (!el || (open && mounted) || reducedMotion()) return;
     const anim = animate(el.querySelectorAll("[data-menu-item]"), {
       opacity: open ? 1 : 0,
-      y: open ? 0 : 16,
+      y: open ? 0 : MENU_ITEM_SHIFT,
       duration: duration("normal"),
       delay: stagger(40, { reversed: !open }),
       ease: open ? "out(3)" : "in(2)",
