@@ -1,8 +1,15 @@
 //! パネル用ウィンドウの表示設定。
+use std::sync::Arc;
+
 use gpui::{
-    App, Bounds, Entity, Point, Render, Window, WindowBackgroundAppearance, WindowBounds,
-    WindowHandle, WindowOptions, px, size,
+    App, Bounds, Entity, Point, Render, RenderImage, Window, WindowBackgroundAppearance,
+    WindowBounds, WindowHandle, WindowOptions, px, size,
 };
+
+/// RGBA の画素を GPUI の画像にする。使わなくなった画像はフレームループが解放する（[`design::images`]）。
+pub fn render_image(width: u32, height: u32, rgba: Vec<u8>) -> Option<Arc<RenderImage>> {
+    kernel::rendering::gpui::render_image(width, height, rgba).map(design::images::track)
+}
 
 /// パネル用ウィンドウの設定。描画は VR（novr はエミュレーター）へ送出するため、デスクトップ上には表示しない。
 pub fn panel_window_options(resolution: (u32, u32)) -> WindowOptions {
