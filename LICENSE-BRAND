@@ -1,0 +1,56 @@
+nyaw Brand Assets License
+
+Copyright (c) 2026 nekochanfood. All rights reserved.
+
+1. Brand Assets
+
+"Brand Assets" means:
+
+  - the name "nyaw";
+  - the logos in assets/logos, including logo.ai;
+  - the icons in assets/icons;
+  - the logo animations (the .json and .webp files) in
+    assets/animations/logo-full;
+  - copies of the above, including those embedded in a build of nyaw or of its
+    website.
+
+The Brand Assets are not licensed under the GPL, the MIT License or the Apache
+License, even where they are distributed together with material that is. The
+scripts and documents in assets/animations/logo-full are not Brand Assets.
+
+2. Permitted uses
+
+You may, without asking:
+
+  a. copy and redistribute official, unmodified releases of nyaw, in source or
+     binary form, with the Brand Assets they contain;
+  b. use the name and the unmodified logos to refer to nyaw, for example in
+     articles, videos, reviews and links;
+  c. build and run nyaw, modified or not, for your own use;
+  d. keep the Brand Assets in a copy of the source repository, including a
+     public fork, used to develop or propose changes to nyaw, as long as you do
+     not distribute builds or run a public website made from a modified copy
+     with the Brand Assets in it.
+
+3. Uses that need written permission
+
+In particular, you may not, without written permission:
+
+  - modify the logos, icons or logo animations, or make new ones based on them;
+  - distribute a modified version of nyaw, or publish a modified version of its
+    website, under the name "nyaw" or with any of the Brand Assets (remove or
+    replace them first);
+  - use the Brand Assets for another product or service;
+  - use them in a way that suggests that you or your work are endorsed by, or
+    affiliated with, the nyaw project when that is not the case.
+
+4. Other rights
+
+All rights not expressly granted here are reserved. As permitted by section 7(e)
+of the GNU General Public License, version 3, no rights under trademark law are
+granted for the Brand Assets. Nothing here limits uses that the law allows
+without permission. The Brand Assets are provided "as is", without warranty of
+any kind.
+
+Versions of these assets that were published before this file was added remain
+available under the terms they were published with.

@@ -47,6 +47,7 @@ Source: "..\target\release\phonon.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\target\release\steamaudio-THIRDPARTY.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\..\LICENSE-GPL"; DestDir: "{app}"
 Source: "..\..\..\LICENSE-EXCEPTION"; DestDir: "{app}"
+Source: "..\..\..\LICENSE-BRAND"; DestDir: "{app}"
 Source: "..\..\..\LICENSE-MIT"; DestDir: "{app}"
 Source: "..\..\..\LICENSE-APACHE"; DestDir: "{app}"
 
