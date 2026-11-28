@@ -17,7 +17,7 @@ const linkClass = buttonClass({
 
 function Column({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="flex min-w-36 flex-col gap-1.5">
+    <div className="flex flex-col gap-1.5">
       <h2 className="py-1 text-sm font-bold">{title}</h2>
       {children}
     </div>
@@ -45,8 +45,8 @@ export function Footer() {
   return (
     <footer className="w-full py-(--content-pad-x) md:frame-x">
       <div className={cx(containerClass, "flex flex-col gap-12")}>
-        <div className="flex flex-col-reverse gap-10 sm:flex-row sm:justify-between">
-          <div className="flex flex-wrap gap-x-16 gap-y-8">
+        <div className="flex justify-between gap-10">
+          <div className="flex flex-wrap gap-x-12 gap-y-8">
             <Column title={t("title_product")}>
               <Link to="/$locale/features" params={{ locale }} className={linkClass}>
                 {nav("features")}
@@ -61,10 +61,15 @@ export function Footer() {
               <External href={ISSUES_URL}>{t("issues")}</External>
             </Column>
           </div>
-          <Logo className="h-20 w-auto self-start sm:h-28" />
+          <div className="max-sm:hidden">
+            <Logo className="h-20 w-auto" />
+          </div>
         </div>
         <div className="flex items-end justify-between gap-6">
           <div className="flex flex-col gap-1">
+            <div className="mb-3 sm:hidden">
+              <Logo className="h-16 w-auto" />
+            </div>
             <p className={textClass("muted")}>{t("licence")}</p>
             <p className={textClass("muted")}>{t("copyright")}</p>
           </div>
