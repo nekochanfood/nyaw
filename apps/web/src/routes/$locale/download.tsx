@@ -36,10 +36,7 @@ function Card({
   className?: string;
 }) {
   return (
-    <div
-      data-reveal
-      className={cx(SURFACE.card, "flex flex-col gap-4 p-6 sm:p-8", className)}
-    >
+    <div data-reveal className={cx(SURFACE.card, "flex flex-col gap-4 p-6 sm:p-8", className)}>
       {title && <h2 className={textClass("card")}>{title}</h2>}
       {children}
     </div>

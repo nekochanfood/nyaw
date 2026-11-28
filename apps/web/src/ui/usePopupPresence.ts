@@ -21,12 +21,7 @@ export type Presence = {
 export type Side = "top" | "bottom" | "left" | "right";
 
 /** アンカーから離れる向きに `distance` px だけスライドする出入り */
-export function slideFrom(
-  side: Side,
-  distance: number,
-  enter: Duration,
-  exit: Duration,
-): Presence {
+export function slideFrom(side: Side, distance: number, enter: Duration, exit: Duration): Presence {
   const axis = side === "top" || side === "bottom" ? "y" : "x";
   // 下や右に出るものは、アンカー側（上や左）から現れる
   const offset = side === "bottom" || side === "right" ? -distance : distance;
