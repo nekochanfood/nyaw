@@ -105,9 +105,11 @@ export function Header() {
             to="/$locale"
             params={{ locale }}
             aria-label={t("home")}
+            // ロゴの画像をドラッグ不可にしても、リンクごとドラッグできるので、リンクも止める
+            draggable={false}
             // 左の余白は、ヘッダーの余白と足して本文の端（--content-pad-x）になる幅。右は、md 以上で隣のリンクの文字までが
             // 左と同じ 32px になる幅（px-1 の 4px + mr-1 の 4px + gap-2 の 8px + リンクの余白の 16px）
-            className="mr-1 flex h-10 items-center rounded-lg px-1 md:pl-[calc(var(--content-pad-x)-var(--header-pad-x))] motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out"
+            className="mr-1 flex h-10 select-none items-center rounded-lg px-1 md:pl-[calc(var(--content-pad-x)-var(--header-pad-x))] motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out"
             onMouseEnter={(e) => wiggle(e.currentTarget.querySelector("[data-logo]"))}
           >
             {/* 揺らすのはロゴの絵だけ。余白込みの箱を回すと、回転の中心がずれる */}

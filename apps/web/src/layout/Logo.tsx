@@ -14,8 +14,18 @@ export function Logo({ kind = "full", className }: { kind?: "full" | "mini"; cla
   const [light, dark] = SOURCES[kind];
   return (
     <>
-      <img src={light} alt="nyaw" className={cx("dark:hidden", className)} />
-      <img src={dark} alt="nyaw" className={cx("hidden dark:block", className)} />
+      <img
+        src={light}
+        alt="nyaw"
+        draggable={false}
+        className={cx("select-none dark:hidden", className)}
+      />
+      <img
+        src={dark}
+        alt="nyaw"
+        draggable={false}
+        className={cx("hidden select-none dark:block", className)}
+      />
     </>
   );
 }
