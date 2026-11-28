@@ -30,7 +30,7 @@ fn hovered_element_tooltip_goes_to_the_pointing_hand(cx: &mut TestAppContext) {
     kit.hover("tip-long");
     assert_eq!(
         tooltip(&mut kit, Hand::Right).as_deref(),
-        Some("Open the settings of this panel")
+        Some("Open this panel's settings")
     );
     // Icon-only buttons always carry one.
     kit.hover("tip-icon-gear");
@@ -47,7 +47,7 @@ fn two_hands_keep_different_tooltips_on_the_same_panel(cx: &mut TestAppContext) 
     assert_eq!(tooltip(&mut kit, Hand::Right).as_deref(), Some("Save"));
     assert_eq!(
         tooltip(&mut kit, Hand::Left).as_deref(),
-        Some("Open the settings of this panel")
+        Some("Open this panel's settings")
     );
     kit.hand(Hand::Left).hover("tip-short");
     assert_eq!(tooltip(&mut kit, Hand::Left).as_deref(), Some("Save"));
@@ -82,6 +82,6 @@ fn no_tooltip_while_tooltips_are_off(cx: &mut TestAppContext) {
     kit.hover("tip-long");
     assert_eq!(
         tooltip(&mut kit, Hand::Right).as_deref(),
-        Some("Open the settings of this panel")
+        Some("Open this panel's settings")
     );
 }
