@@ -5,7 +5,7 @@ import { type ReactNode, useLayoutEffect, useRef } from "react";
 import { isLocale } from "@/i18n/config";
 import { useLoadingDone } from "@/layout/Loading";
 import { reducedMotion } from "@/motion/reducedMotion";
-import { setPageShown, waitSettled } from "@/motion/stage";
+import { waitSettled } from "@/motion/stage";
 import { scrollToTop } from "@/motion/useSmoothScroll";
 
 /** ページのフェードアウトとフェードインの時間（ms） */
@@ -42,7 +42,6 @@ function progress(line: HTMLElement | null, bar: HTMLElement | null) {
 
 /**
  * ページの出入りの動き。遷移の前に今のページをフェードアウトし、次のページの描画が落ち着いてからフェードインする。
- * フェードインを始めると同時に表示済み（setPageShown）にして、ページの中の動きを始めさせる。
  */
 export function PageTransition({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -61,7 +60,6 @@ export function PageTransition({ children }: { children: ReactNode }) {
         enableBeforeUnload: false,
         blockerFn: async ({ currentLocation, nextLocation }) => {
           if (page(nextLocation.pathname) === page(currentLocation.pathname)) return false;
-          setPageShown(false);
           finishProgress.current = progress(lineRef.current, barRef.current).finish;
           const el = ref.current;
           if (el && !reducedMotion()) {
@@ -84,7 +82,6 @@ export function PageTransition({ children }: { children: ReactNode }) {
     if (!isFirst) scrollToTop();
     if (reducedMotion()) {
       finishProgress.current();
-      setPageShown(true);
       return;
     }
     el.style.opacity = "0";
@@ -93,8 +90,6 @@ export function PageTransition({ children }: { children: ReactNode }) {
     void waitSettled(router, abort.signal).then(() => {
       finishProgress.current();
       anim = animate(el, { opacity: [0, 1], y: [40, 0], duration: FADE_MS, ease: "out(2)" });
-      // 中の動きはフェードインと重ねて始める（終わるのを待つと、動き出しが遅く見える）
-      setPageShown(true);
     });
     return () => {
       abort.abort();

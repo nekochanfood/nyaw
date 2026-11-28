@@ -1,35 +1,9 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { useSyncExternalStore } from "react";
 
 /*
-  ページの動きの順番を決める状態。
-  読み込み画面 → ページのフェードイン（とヘッダーの入場）と同時に表示済み → ページの中の動き、の順に進める。
-  遷移のときは表示済みを外し、フェードアウト → 次のページの描画が落ち着くのを待つ → フェードインと同時に表示済み、と進める。
-  ページの中の動き（ページ名の文字、スクロールで現れる要素）は、表示済みになってから始める（usePageShown）。
+  ページの出入りの順番を支える部品。PageTransition は、読み込み画面 → ページのフェードイン、の順に進め、遷移のときは
+  フェードアウト → 次のページの描画が落ち着くのを待つ（waitSettled）→ フェードイン、と進める。
 */
-
-let shown = false;
-const listeners = new Set<() => void>();
-
-export function setPageShown(value: boolean) {
-  if (shown === value) return;
-  shown = value;
-  for (const listener of listeners) listener();
-}
-
-function subscribe(listener: () => void) {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
-}
-
-/** 今のページのフェードインが始まったか。ページの中の動きは、これが true になってから始める */
-export function usePageShown() {
-  return useSyncExternalStore(
-    subscribe,
-    () => shown,
-    () => false,
-  );
-}
 
 /** これを超えたら、落ち着いていなくてもフェードインする（読み込みが遅いときに空白のまま待たせない） */
 const MAX_WAIT_MS = 2000;

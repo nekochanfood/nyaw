@@ -28,25 +28,17 @@ export function slideFrom(side: Side, distance: number, enter: Duration, exit: D
   return { axis, offset, enter, exit };
 }
 
-export const DROPDOWN_PRESENCE = {
-  bottom: slideFrom("bottom", 12, "normal", "quick"),
-  top: slideFrom("top", 12, "normal", "quick"),
-  left: slideFrom("left", 12, "normal", "quick"),
-  right: slideFrom("right", 12, "normal", "quick"),
-};
+/** 下に開くドロップダウンのメニュー */
+export const DROPDOWN_PRESENCE = slideFrom("bottom", 12, "normal", "quick");
 
-export const TOOLTIP_PRESENCE = {
-  bottom: slideFrom("bottom", 8, "quick", "fast"),
-  top: slideFrom("top", 8, "quick", "fast"),
-  left: slideFrom("left", 8, "quick", "fast"),
-  right: slideFrom("right", 8, "quick", "fast"),
-};
+/** 下に出るツールチップ */
+export const TOOLTIP_PRESENCE = slideFrom("bottom", 8, "quick", "fast");
 
 /**
  * Base UI は閉じたポップアップを `getAnimations()`（WAAPI）が終わるまで残してから外す。anime.js は WAAPI を
  * 使わないので、退場の間だけ中身のない WAAPI のアニメーションを走らせて引き止め、戻り値を呼んで放す。
  */
-export function holdPopup(el: Element) {
+function holdPopup(el: Element) {
   // ponytail: 放し忘れても 10 秒で外れる
   const hold = el.animate([], { duration: 10_000 });
   return () => hold.finish();

@@ -1,14 +1,6 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
-/* ページ名を大きく置く部分の書体（Datto の D-DIN。SIL OFL 1.1、src/fonts/LICENSE-d-din.txt）。欧文と数字のみ */
-@font-face {
-  font-family: "D-DIN";
-  src: url("./fonts/D-DIN-Bold.woff2") format("woff2");
-  font-weight: 700;
-  font-display: swap;
-}
-
 /* ダークは、保存したテーマか、保存していなければ OS の設定で決まる（src/theme.ts） */
 @custom-variant dark {
   &:where([data-theme="dark"], [data-theme="dark"] *) {
@@ -42,28 +34,15 @@
 }
 
 /*
-  アクセントは Catppuccin。ライトは Latte、ダークはロゴと同じ Frappé を使う。
-  基調の無彩色（トークン）の上に、アイコンや強調など小さな面積で置く。
+  アクセントは Catppuccin の Lavender。ライトは Latte、ダークはロゴと同じ Frappé の値を使う。
+  基調の無彩色（トークン）の上に、選択範囲、フォーカスの枠、遷移の進み具合の線など小さな面積で置く。
 */
 @theme inline {
-  --color-ctp-pink: light-dark(#ea76cb, #f4b8e4);
-  --color-ctp-mauve: light-dark(#8839ef, #ca9ee6);
-  --color-ctp-red: light-dark(#d20f39, #e78284);
-  --color-ctp-peach: light-dark(#fe640b, #ef9f76);
-  --color-ctp-yellow: light-dark(#df8e1d, #e5c890);
-  --color-ctp-green: light-dark(#40a02b, #a6d189);
-  --color-ctp-teal: light-dark(#179299, #81c8be);
-  --color-ctp-sky: light-dark(#04a5e5, #99d1db);
-  --color-ctp-blue: light-dark(#1e66f5, #8caaee);
   --color-ctp-lavender: light-dark(#7287fd, #babbf1);
 
   --font-sans:
     "Gen Interface JP", Inter, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui,
     sans-serif;
-  --font-display: "D-DIN", var(--font-sans);
-
-  /* トークンの xl（24px）より大きい角丸 */
-  --radius-2xl: calc(32px * var(--corner-scale, 1));
 
   /* ページを囲む帯（外枠）の色。ヘッダー、フッター、狭い画面のメニューの面もこの色にする */
   --color-frame: var(--frame);
@@ -242,12 +221,10 @@
 
 /*
   動く要素は、動きが始まるまで隠しておく（src/motion/stage.ts の motionScript が付ける .motion の間だけ）。
-  ページ全体、ヘッダーの項目、ページ名の文字、スクロールで現れる要素。動きは anime.js が不透明度を 1 にして終える
+  ページ全体と、ヘッダーの項目。動きは anime.js が不透明度を 1 にして終える
 */
 .motion [data-page],
-.motion:not([data-header-ready]) [data-header-item],
-.motion [data-char],
-.motion [data-reveal] {
+.motion:not([data-header-ready]) [data-header-item] {
   opacity: 0;
 }
 

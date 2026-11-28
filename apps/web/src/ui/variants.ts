@@ -10,10 +10,6 @@ export const cx = (...classes: (string | false | null | undefined)[]) =>
 const FADE = "transition-colors duration-(--duration-slow) ease-out";
 
 export const BUTTON_VARIANTS = {
-  /** 地の上に直接置くアイコン・文字ボタン。ホバーの間だけ面が出る */
-  ghost: `hover:bg-control-on-background data-popup-open:bg-control-on-background ${FADE}`,
-  /** 面のあるボタン */
-  surface: `bg-control hover:bg-control-hover active:bg-control-active ${FADE}`,
   /** 本文色で塗った強調ボタン。文字は面の色で抜く */
   solid: `bg-neutral-text text-card hover:bg-neutral-text/85 ${FADE}`,
   /**
@@ -31,7 +27,6 @@ export const BUTTON_SIZES = {
   /** 20px のアイコン */
   icon: "size-10 inline-flex items-center justify-center",
   md: "h-10 px-4 text-sm font-medium inline-flex items-center gap-2",
-  lg: "h-12 px-6 text-base font-medium inline-flex items-center gap-2",
 } as const;
 
 export type ButtonStyle = {
@@ -40,7 +35,7 @@ export type ButtonStyle = {
   className?: string;
 };
 
-export function buttonClass({ variant = "ghost", size = "icon", className }: ButtonStyle = {}) {
+export function buttonClass({ variant = "onFrame", size = "icon", className }: ButtonStyle = {}) {
   return cx(
     "rounded-full select-none disabled:opacity-50 cursor-pointer",
     BUTTON_VARIANTS[variant],
@@ -50,16 +45,8 @@ export function buttonClass({ variant = "ghost", size = "icon", className }: But
 }
 
 export const TEXT_VARIANTS = {
-  /** ページの最上部の大見出し */
-  display: "text-4xl sm:text-5xl lg:text-6xl font-bold leading-[1.15] tracking-tight text-balance",
   /** 区画の見出し */
   section: "text-3xl sm:text-4xl font-bold leading-tight tracking-tight text-balance",
-  /** カードの見出し */
-  card: "text-lg font-bold",
-  /** 見出しの上に添える小さな文字 */
-  eyebrow: "text-sm font-medium text-neutral-text-low",
-  /** 本文より一段大きい導入文 */
-  lead: "text-lg leading-relaxed text-neutral-text-low text-pretty",
   /** 控えめな説明文 */
   muted: "text-sm leading-relaxed text-neutral-text-low text-pretty",
 } as const;
@@ -68,17 +55,7 @@ export function textClass(variant: keyof typeof TEXT_VARIANTS, className?: strin
   return cx(TEXT_VARIANTS[variant], className);
 }
 
-/**
- * 区画の中に置く面。角丸はどちらも 2xl。
- * - `card`: 本文のカードと同じ色。地より沈んだ区画（PageSection）の上に置く
- * - `inset`: 下の面に、操作の面の色を半分だけ重ねる。カードの上にも、沈んだ区画の上にも置ける
- */
-export const SURFACE = {
-  card: "rounded-2xl bg-card",
-  inset: "rounded-2xl bg-control/50",
-} as const;
-
-/** 浮いたパネル。ドロップダウンやポップオーバー */
+/** 浮いたパネル。ドロップダウンのメニュー */
 export const panelClass = "bg-card text-neutral-text border border-neutral-border-subtle";
 
 /**
@@ -87,7 +64,6 @@ export const panelClass = "bg-card text-neutral-text border border-neutral-borde
  */
 export const POPUP_INSET = {
   menu: "p-1 rounded-[calc(var(--radius-lg)+--spacing(1))]",
-  popover: "p-2 rounded-[calc(var(--radius-lg)+--spacing(2))]",
 } as const;
 
 /** メニューの項目。ホバーでもキーボードでも data-highlighted で同じ面が出る */

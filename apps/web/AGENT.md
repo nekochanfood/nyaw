@@ -6,8 +6,8 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 
 - TanStack Start（React）を Cloudflare Workers で動かす（`vite.config.ts`、`wrangler.jsonc`）。サーバーの入口は `src/server.ts`。
 - スタイルは Tailwind CSS、UI の部品は Base UI（`@base-ui/react`）、アイコンは Phosphor Icons を使う。
-- 動きは anime.js で付ける（ポップアップの出入り、スクロールに連動する動き）。スクロールは lenis で滑らかにする。動きを減らす設定（`prefers-reduced-motion`）では、どちらも使わない。
-- 動きの順番は `src/motion/stage.ts` で決める。読み込み画面 → ページのフェードイン（`PageTransition`）→ ページの中の動き（ページ名の文字、スクロールで現れる要素）の順に進め、遷移のときはフェードアウトしてから次のページの描画が落ち着くのを待つ。動く要素は動きが始まるまで CSS で隠す（`.motion`）。
+- 動きは anime.js で付ける（ポップアップの出入り、ページの出入り、ヘッダーの項目の登場）。スクロールは lenis で滑らかにする。動きを減らす設定（`prefers-reduced-motion`）では、どちらも使わない。
+- ページの出入りは `PageTransition` が動かす。読み込み画面 → ページのフェードインの順に進め、遷移のときはフェードアウトしてから次のページの描画が落ち着くのを待つ（`src/motion/stage.ts` の `waitSettled`）。動く要素は動きが始まるまで CSS で隠す（`.motion`）。
 - 整形と静的解析は [Oxc](https://oxc.rs/) のツール（oxfmt、oxlint。それぞれ別のパッケージ）を使う。
 - テストは Vitest（`src/**/*.test.ts`）と Playwright（`e2e/`）を使う。
 - インポートは別名で書く（`@/` は `src/`、`@locale/` は `locale/`、`@assets/` はルートの `assets/`）。別名は `alias.ts` と `tsconfig.json` の `paths` で揃える。
@@ -20,13 +20,12 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 
 ## 見た目
 
-- 基調はアプリのトークンの無彩色、アクセントは Catppuccin（ライトは Latte、ダークはロゴと同じ Frappé。`ctp-*` の色）。
+- 基調はアプリのトークンの無彩色、アクセントは Catppuccin の Lavender（ライトは Latte、ダークはロゴと同じ Frappé。`ctp-lavender`）。
 - テーマは保存したもの（`localStorage`）か OS の設定に従う。`src/theme.ts` の `themeScript` が描画の前に `<html data-theme>` を付ける。切り替えは画面全体のクロスフェード（View Transitions API）で見せ、要素ごとの色のトランジションは使わない（継承した色の補間が毎フレーム作り直され、文字やアイコンがチカチカする）。
 - 角はスーパーエリプス（`corner-shape`）。対応するブラウザでは、トークンの角丸に `--corner-scale` を掛けて広げる。中に項目を並べるパネルは、外側の半径を「中の半径＋余白」にして角を同心にする。
-- 下位のページは、ページ名を大きく置く上部（`PageTitle`。英語の名前を D-DIN で表示する）と、一段沈んだ色の本文（`PageSection`）に分ける。
 - ページは帯（外枠）で囲み、その内側に本文のカードを置く。ヘッダーは上辺の帯に、フッターはカードの下の帯に載る。帯の寸法（`--frame-*`）、帯の色（`frame`。ライトはアプリの groove より二段明るい）、重なり順（`--layer-*`）は `src/styles.css` の `:root` にまとめ、ほかの場所に数値を書かない。帯の内側に置くものの幅は `frame-x` でそろえる。
-- 区画の中に置く面は `SURFACE`（`src/ui/variants.ts`）から選ぶ。同じクラスの組み合わせが 2 か所以上に出てきたら、`variants.ts` に名前を付けて足す。
-- UI の状態の切り替え（ポップアップの出入り、パネルの切り替え）の時間は、トークンの時間（`src/motion/duration.ts` の `duration`）を使う。ページの演出（入場、スクロールに連動する動き）の時間は、それぞれの動きが持つ。
+- 見た目のクラスの組み合わせは `src/ui/variants.ts` にまとめる。同じ組み合わせが 2 か所以上に出てきたら、`variants.ts` に名前を付けて足す。
+- UI の状態の切り替え（ポップアップの出入り、パネルの切り替え）の時間は、トークンの時間（`src/motion/duration.ts` の `duration`）を使う。ページの演出（ページの出入り、ヘッダーの項目の登場）の時間は、それぞれの動きが持つ。
 
 ## アプリのキャプチャ
 
