@@ -3,7 +3,7 @@
 //! アクセシビリティ・外観・文字盤は設定画面と同一の部品（`ui::prefs`）をそのまま配置する。選択内容は即座に全体設定へ反映する。
 
 use design::components::{self, Button, Variant, WIZARD_CONTENT, WIZARD_MARGIN, Wizard};
-use design::{Icon, Logo, Theme, font_size, icons, spacing};
+use design::{Icon, Theme, font_size, icons, spacing};
 use gpui::{
     App, ClickEvent, Context, Div, Entity, FontWeight, IntoElement, MouseDownEvent, Render,
     SharedString, Window, div, prelude::*, px,
@@ -361,7 +361,8 @@ fn page(step: Step, wizard: &Entity<SetupWizard>, window: &mut Window, cx: &mut 
             components::wizard_welcome(
                 &theme,
                 "setup",
-                design::logo(Logo::Full).height(px(LOGO_HEIGHT)),
+                // イントロを再生し、再生し終えたら文字や耳やしっぽを押すと反応する
+                design::intro_logo("setup-logo").height(px(LOGO_HEIGHT)),
                 i18n::t(cx, "setup.welcome_title"),
                 i18n::t(cx, "setup.welcome_description"),
                 Some(others),

@@ -21,7 +21,8 @@ pub(crate) fn page(s: &Settings, theme: &Theme, cx: &mut Context<Settings>) -> V
             .justify_center()
             .py(px(spacing::XL))
             .debug_selector(|| "about-logo".into())
-            .child(design::logo(design::Logo::Full).height(px(ABOUT_LOGO_PX))),
+            // イントロを再生し、再生し終えたら文字や耳やしっぽを押すと反応する
+            .child(design::intro_logo("about-intro-logo").height(px(ABOUT_LOGO_PX))),
         components::list(
             theme,
             [components::menu_item(

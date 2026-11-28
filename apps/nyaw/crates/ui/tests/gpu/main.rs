@@ -13,6 +13,7 @@ mod emoji;
 mod font_weights;
 mod gpu_capture;
 mod guide;
+mod intro_logo;
 mod keyboard;
 mod look;
 mod look_toast;
@@ -46,6 +47,7 @@ const CASES: &[Case] = &[
     ("font_weights", || report(font_weights::main)),
     ("gpu_capture", || report(gpu_capture::main)),
     ("guide", || report(guide::main)),
+    ("intro_logo", || report(intro_logo::main)),
     ("keyboard", || report(keyboard::main)),
     ("look", || report(look::main)),
     ("look_toast", || report(look_toast::main)),
