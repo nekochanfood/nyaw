@@ -1,12 +1,6 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logos/Logo_Full_Dark.svg">
-    <img src="assets/logos/Logo_Full_Light.svg" alt="nyaw" width="320">
-  </picture>
+  <img src="assets/animations/logo-full/logo-full-light.webp" alt="nyaw" width="364">
 </p>
-
-<h1 align="center">nyaw (にゃう)</h1>
-
 <p align="center">VR オーバーレイアプリ</p>
 
 ## ビルドと起動

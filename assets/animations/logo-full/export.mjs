@@ -1,6 +1,8 @@
-// イントロを MP4 に書き出す。ヘッドレスの Chrome で export.html を開いて 1 フレームずつ PNG にし、ffmpeg で動画にまとめる。
-// 実行: node assets/animations/logo-full/export.mjs [light|dark] [--scale 2] [--bg #rrggbb]
+// イントロを MP4 かアニメーション WebP に書き出す。ヘッドレスの Chrome で export.html を開いて 1 フレームずつ PNG にし、ffmpeg でまとめる。
+// 実行: node assets/animations/logo-full/export.mjs [light|dark] [--webp] [--scale n] [--bg #rrggbb]
 // テーマを省くと両方を書き出す。出力は assets/animations/logo-full/out/logo-full-<テーマ>.mp4。
+// --webp は透過の logo-full-<テーマ>.webp を、このディレクトリに書き出す（1 回だけ再生し、完成形で止まる）。README は light を使う。
+// 倍率の既定は MP4 が 2 倍、WebP は容量を抑えるため 1.5 倍
 // Chrome と ffmpeg が要る。Chrome の場所は環境変数 CHROME で変えられる。
 // MP4 は透明を持てないので、背景色を敷く（既定はレビューのページと同じ色）
 
@@ -28,10 +30,10 @@ const CHROME_CANDIDATES = [
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
-  options: { scale: { type: "string", default: "2" }, bg: { type: "string" } },
+  options: { scale: { type: "string" }, bg: { type: "string" }, webp: { type: "boolean", default: false } },
 });
 const themes = positionals.length > 0 ? positionals : ["light", "dark"];
-const scale = Number(values.scale);
+const scale = Number(values.scale ?? (values.webp ? 1.5 : 2));
 for (const theme of themes) if (!(theme in BACKGROUNDS)) throw new Error(`テーマは light か dark: ${theme}`);
 if (!(scale > 0)) throw new Error(`--scale は正の数: ${values.scale}`);
 
@@ -83,23 +85,22 @@ for (const theme of themes) {
   const work = await mkdtemp(join(tmpdir(), "logo-full-"));
   const frames = join(work, "frames");
   await mkdir(frames);
-  const background = values.bg ?? BACKGROUNDS[theme];
+  const background = values.bg ?? (values.webp ? "" : BACKGROUNDS[theme]);
   try {
     console.log(`${theme}: フレームを描いている`);
     await renderFrames(theme, background, frames);
-    const out = join(HERE, "out", `logo-full-${theme}.mp4`);
-    // H.264 の 4:2:0 は縦横が偶数でないと書けないので、奇数なら背景色で 1 ピクセル足す
-    await run("ffmpeg", [
-      "-y",
-      "-framerate", String(FPS),
-      "-i", join(frames, "%04d.png"),
-      "-vf", `pad=ceil(iw/2)*2:ceil(ih/2)*2:color=${background}`,
-      "-c:v", "libx264",
-      "-pix_fmt", "yuv420p",
-      "-crf", "16",
-      "-movflags", "+faststart",
-      out,
-    ]);
+    const out = values.webp ? join(HERE, `logo-full-${theme}.webp`) : join(HERE, "out", `logo-full-${theme}.mp4`);
+    const encode = values.webp
+      ? ["-c:v", "libwebp_anim", "-pix_fmt", "yuva420p", "-quality", "75", "-loop", "1"]
+      : [
+          // H.264 の 4:2:0 は縦横が偶数でないと書けないので、奇数なら背景色で 1 ピクセル足す
+          "-vf", `pad=ceil(iw/2)*2:ceil(ih/2)*2:color=${background}`,
+          "-c:v", "libx264",
+          "-pix_fmt", "yuv420p",
+          "-crf", "16",
+          "-movflags", "+faststart",
+        ];
+    await run("ffmpeg", ["-y", "-framerate", String(FPS), "-i", join(frames, "%04d.png"), ...encode, out]);
     console.log(`wrote ${out}`);
   } finally {
     await rm(work, { recursive: true, force: true });

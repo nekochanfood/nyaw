@@ -32,8 +32,12 @@
           const image = new Image();
           image.src = url;
           await image.decode();
-          ctx.fillStyle = background;
-          ctx.fillRect(0, 0, width, height);
+          // 背景色がなければ透明のまま描く（WebP）
+          ctx.clearRect(0, 0, width, height);
+          if (background) {
+            ctx.fillStyle = background;
+            ctx.fillRect(0, 0, width, height);
+          }
           ctx.drawImage(image, 0, 0, width, height);
           URL.revokeObjectURL(url);
           const png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
