@@ -91,12 +91,19 @@
   --frame-top: 4rem;
   /*
     ヘッダーの左右の余白。ヘッダーの 40px のボタンは、上辺の帯の中で上下に (--frame-top - 40px) / 2 の余白を持つ。
-    左右も画面の端から同じ距離にするため、左右の帯の太さを引く
+    左右も画面の端から同じ距離にするため、左右の帯の太さを引く。
+    帯の内側が画面の左右の端から離れる（幅が --frame-height に達する）と、そろえる相手が画面の端ではなくなるので、
+    本文のカードの角丸の分を空ける。倍率を掛けた --frame-radius は、40px のボタンの中の余白も加わって空きすぎるので使わない。
+    100cqw はヘッダーの幅。1000 倍して、1px でも足りなければ下限になるようにする
   */
   --header-inset: calc((var(--frame-top) - 2.5rem) / 2);
   /* 本文の左右の余白（containerClass）。sm 以上で広げる */
   --content-pad-x: 1.25rem;
-  --header-pad-x: max(0px, calc(var(--header-inset) - var(--frame-gutter)));
+  --header-pad-x: clamp(
+    max(0px, var(--header-inset) - var(--frame-gutter)),
+    var(--frame-radius-base) - (var(--frame-height) - 100cqw) * 1000,
+    var(--frame-radius-base)
+  );
   /* 帯の内側の高さ。ツールバーの出し入れで変わらない svh で測る */
   --frame-height: calc(100svh - var(--frame-top) - var(--frame-gutter));
   /* 帯の内側の角丸。--frame-radius-base は倍率を掛ける前の値で、通常の角丸（corner-shape: round）に使う */

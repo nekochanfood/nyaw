@@ -84,14 +84,16 @@ export function Header() {
   }, [loaded]);
 
   return (
-    <header ref={ref} className="frame-x sticky top-0 z-(--layer-header) h-(--frame-top)">
+    <header ref={ref} className="@container frame-x sticky top-0 z-(--layer-header) h-(--frame-top)">
       {/*
         上辺の帯（styles.css の --frame-top）に載せる。面は持たず、帯の色がそのまま見える。
         高さ 64px に 40px のボタンを置くので、上下の余白は 12px。左右は、画面の端からの距離が上下と同じになるよう、
-        左右の帯の太さを引いた幅にする（styles.css の --header-pad-x）。
-        ロゴは、左端に来る幅（md 以上）では自分の左の余白で本文の端にそろえる
+        左右の帯の太さを引いた幅にする。帯の内側が画面の端から離れているときは、本文のカードの角丸の分にする
+        （styles.css の --header-pad-x）。
+        ロゴは、左端に来る幅（md 以上）では自分の左の余白で本文の端にそろえる。
+        左右の余白が切り替わるときは滑らかに動かす。ロゴの余白も同じ時間と緩急で動かし、2 つの和を保つ
       */}
-      <div className="flex h-full w-full items-center justify-between gap-2 px-(--header-pad-x)">
+      <div className="flex h-full w-full items-center justify-between gap-2 px-(--header-pad-x) motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out">
         <div data-header-side="left" className="flex items-center gap-2">
           {/* 狭い画面のメニューのボタン。ロゴの左隣に置く */}
           <div data-header-item className="md:hidden">
@@ -103,8 +105,9 @@ export function Header() {
             to="/$locale"
             params={{ locale }}
             aria-label={t("home")}
-            // 左の余白は、ヘッダーの余白と足して本文の端（--content-pad-x）になる幅
-            className="mr-2 flex h-10 items-center rounded-lg px-1 md:pl-[calc(var(--content-pad-x)-var(--header-pad-x))]"
+            // 左の余白は、ヘッダーの余白と足して本文の端（--content-pad-x）になる幅。右は、md 以上で隣のリンクの文字までが
+            // 左と同じ 32px になる幅（px-1 の 4px + mr-1 の 4px + gap-2 の 8px + リンクの余白の 16px）
+            className="mr-1 flex h-10 items-center rounded-lg px-1 md:pl-[calc(var(--content-pad-x)-var(--header-pad-x))] motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out"
             onMouseEnter={(e) => wiggle(e.currentTarget.querySelector("[data-logo]"))}
           >
             {/* 揺らすのはロゴの絵だけ。余白込みの箱を回すと、回転の中心がずれる */}
