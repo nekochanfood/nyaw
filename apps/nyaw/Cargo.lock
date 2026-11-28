@@ -1246,6 +1246,9 @@ dependencies = [
  "animation",
  "gpui",
  "gpui_platform",
+ "image",
+ "logger",
+ "lottie",
  "palette",
  "pulldown-cmark",
  "serde_json",
@@ -2948,6 +2951,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fae87c125b03c1d2c0150c90365d7d6bcc53fb73a9acaef207d2d065860f062"
 dependencies = [
  "imgref",
+]
+
+[[package]]
+name = "lottie"
+version = "2026.0.5-dev.0"
+dependencies = [
+ "animato",
+ "kurbo 0.13.1",
+ "resvg",
+ "serde_json",
+ "tiny-skia",
 ]
 
 [[package]]
