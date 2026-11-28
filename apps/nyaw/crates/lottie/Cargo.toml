@@ -1,0 +1,18 @@
+[package]
+name = "lottie"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Lottie の再生。JSON を読み、指定フレームを RGBA に描き、押した位置の部品を判定する。
+# 対応するのは nyaw のアニメーション（assets/animations）が使う機能だけ（AGENT.md を参照）。GPUI には依存しない。
+[dependencies]
+serde_json = "1"
+kurbo = "0.13"
+tiny-skia = "0.11"
+# キーフレームの間のイージング（3 次ベジェ）。animation クレートと同じ版
+animato = { version = "1.7.2", default-features = false }
+
+[dev-dependencies]
+# テストで、静止画のロゴ（SVG）を描いて最後のフレームと比べる。GPUI が使う版と同じ
+resvg = "0.46"

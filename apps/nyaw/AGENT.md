@@ -27,6 +27,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 |---|---|---|
 | 0 | [`crates/logger`](crates/logger/AGENT.md) | logfmt 形式に対応した横断的構造化ロガー。 |
 | 0 | [`crates/animation`](crates/animation/AGENT.md) | アニメーション計算と遷移状態の管理。GPUI や UI 部品には依存しない。 |
+| 0 | [`crates/lottie`](crates/lottie/AGENT.md) | Lottie の再生（指定フレームの描画、押した位置の部品の判定、区間の名前）。GPUI には依存しない。 |
 | 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | 各サブシステムの再エクスポートと、VR ランタイムの入力から共通フレーム情報を作る処理。 |
 | 1 | [`crates/subsystems/os`](crates/subsystems/os/AGENT.md) | データ保存先パス、ランタイム検出、高精度タイマーなどの OS 差異の吸収。 |
 | 1 | [`crates/subsystems/vr`](crates/subsystems/vr/AGENT.md) | OpenVR、OpenXR、および非 VR 用エミュレーター（novr）のランタイム抽象化。 |
