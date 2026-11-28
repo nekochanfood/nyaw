@@ -102,11 +102,6 @@
   --header-inset: calc((var(--frame-top) - 2.5rem) / 2);
   /* 本文の左右の余白（containerClass）。sm 以上で広げる */
   --content-pad-x: 1.25rem;
-  /*
-    フッターの上下の余白。フッターの中身は、左右では画面の端から「左右の帯 + 本文の左右の余白」だけ離れる。
-    上（本文のカードの下端から）と下（画面の下端まで）も同じ距離にする
-  */
-  --footer-pad-y: calc(var(--frame-gutter) + var(--content-pad-x));
   --header-pad-x: max(0px, calc(var(--header-inset) - var(--frame-gutter)));
   /* 帯の内側の高さ。ツールバーの出し入れで変わらない svh で測る */
   --frame-height: calc(100svh - var(--frame-top) - var(--frame-gutter));
