@@ -15,6 +15,7 @@
       figure { margin: 0; padding: 24px; background: var(--panel); border-radius: 12px; }
       figcaption { font-size: 13px; opacity: 0.7; margin-top: 8px; }
       #still img { width: 100%; display: block; }
+      #anim .intro-hit { cursor: pointer; }
       .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
       input[type="range"] { flex: 1; min-width: 200px; }
       button, select { font: inherit; padding: 4px 12px; }
@@ -35,7 +36,7 @@
       <button id="theme">ダーク</button>
     </div>
     <div class="stage">
-      <figure><div id="anim"></div><figcaption>Lottie（logo-full-<span id="themeName">light</span>.json）</figcaption></figure>
+      <figure><div id="anim"></div><figcaption>Lottie（logo-full-<span id="themeName">light</span>.json）。再生し終えたら、耳やしっぽを押すとぴくっとする</figcaption></figure>
       <figure id="stillFig"><div id="still"><img alt="静止画のロゴ" /></div><figcaption>比較用の静止画（assets/logos）。Lottie の合成と同じ余白を付けて並べる。最後のフレームはこれと同じ見た目になる</figcaption></figure>
     </div>
     <script>
@@ -46,6 +47,12 @@
       let theme = params.get("theme") ?? "light";
       let anim;
       const $ = (id) => document.getElementById(id);
+      // マーカー（build.mjs の SEGMENTS）の区間を [始め, 終わり] で返す
+      const segment = (name) => {
+        const marker = anim.animationData.markers.find((m) => m.cm === name);
+        return [marker.tm, marker.tm + marker.dr];
+      };
+      const playIntro = () => anim.playSegments(segment("intro"), true);
 
       function load() {
         document.body.dataset.theme = theme;
@@ -57,7 +64,7 @@
           container: $("anim"),
           renderer: "svg",
           loop: $("loop").checked,
-          autoplay: captureFrame === null,
+          autoplay: false,
           path: `./logo-full-${theme}.json`,
         });
         anim.addEventListener("DOMLoaded", () => {
@@ -72,6 +79,7 @@
               $("still").style.padding = `${(((w - vbWidth) / 2 / w) * 100).toFixed(3)}%`;
             });
           if (captureFrame !== null) anim.goToAndStop(Number(captureFrame), true);
+          else playIntro();
         });
         anim.addEventListener("enterFrame", () => {
           $("seek").value = anim.currentFrame;
@@ -85,7 +93,12 @@
         anim.isPaused ? anim.play() : anim.pause();
         $("play").textContent = anim.isPaused ? "再生" : "一時停止";
       };
-      $("replay").onclick = () => anim.goToAndPlay(0, true);
+      $("replay").onclick = playIntro;
+      // 押せる範囲（class が "intro-hit <部品>"）を押したら、その部品の反応の区間を再生する
+      $("anim").onclick = (e) => {
+        const hit = e.target.closest?.(".intro-hit");
+        if (hit) anim.playSegments(segment(`twitch-${hit.classList[1]}`), true);
+      };
       $("seek").oninput = (e) => {
         anim.goToAndStop(Number(e.target.value), true);
         $("frame").textContent = `${e.target.value} / ${anim.totalFrames - 1}`;

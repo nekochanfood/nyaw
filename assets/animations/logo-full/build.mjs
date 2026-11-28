@@ -15,7 +15,17 @@ const THEMES = ["Light", "Dark"];
 // ---- 設定 ----
 
 const FPS = 60;
-const DURATION = 180; // フレーム数（3 秒）
+// 区間。intro はイントロ（3 秒）。twitch-<部品> は完成形のロゴの部品を押したときの反応で、どれも完成形から始まり完成形で終わる。
+// REACTIONS は反応する部品と区間の長さ（フレーム）で、イントロの後ろにこの順に並べる。
+// 区間は Lottie のマーカー（markers）として書き出すので、プレイヤーは名前で区間を選んで再生できる
+const INTRO = 180;
+const REACTIONS = { earL: 20, earR: 20, tail: 36, n: 24, y: 24, a: 24, w: 24, ni: 24, ya: 24, u: 24 };
+const SEGMENTS = { intro: [0, INTRO] };
+for (const [part, length] of Object.entries(REACTIONS)) {
+  const from = Object.values(SEGMENTS).at(-1)[1];
+  SEGMENTS[`twitch-${part}`] = [from, from + length];
+}
+const DURATION = Object.values(SEGMENTS).at(-1)[1]; // フレーム数
 // 合成の四辺に足す余白。出現の行き過ぎ、耳の回転、しっぽの揺れで、絵がロゴの外形より外へ出るため。
 // プレイヤーは合成の範囲の外を描かないので、余白がないとその部分が欠ける
 const MARGIN = 24;
@@ -346,9 +356,11 @@ function layer(nm, props) {
 
 // ---- 部品の動き ----
 
-// ステッカーが貼られるように、0 から行き過ぎて戻る。横と縦をずらして、弾む感じを出す。
-// tilt は出だしの傾き（度）、stretch は行き過ぎたときの横の伸び（1 で 118%）
-function pop(t0, { tilt = 8, stretch = 1 } = {}) {
+// 文字は、ステッカーが貼られるように、0 から行き過ぎて戻る。横と縦をずらして、弾む感じを出す。
+// tilt は出だしの傾き（度）、stretch は行き過ぎたときの横の伸び（1 で 118%）。
+// 押したときの反応（twitch-<name>）では、縦に縮んでから伸び、少し揺れて戻る
+function pop(name, t0, { tilt = 8, stretch = 1 } = {}) {
+  const [r] = SEGMENTS[`twitch-${name}`];
   return {
     scale: keys([
       [t0, [0, 0]],
@@ -356,12 +368,21 @@ function pop(t0, { tilt = 8, stretch = 1 } = {}) {
       [t0 + 15, [92, 108]],
       [t0 + 21, [103, 97]],
       [t0 + 27, [100, 100]],
+      [r, [100, 100]],
+      [r + 5, [112, 88]],
+      [r + 11, [94, 108]],
+      [r + 17, [102, 98]],
+      [r + 23, [100, 100]],
     ]),
     rotation: keys([
       [t0, -tilt * 2],
       [t0 + 10, tilt * 0.6],
       [t0 + 18, -tilt * 0.25],
       [t0 + 27, 0],
+      [r, 0],
+      [r + 6, tilt * 0.8],
+      [r + 14, -tilt * 0.4],
+      [r + 23, 0],
     ]),
   };
 }
@@ -396,16 +417,16 @@ function ear(t0, dir, twitches) {
 }
 
 const MOTION = {
-  n: pop(4),
-  y: pop(9, { tilt: -8 }),
-  a: pop(14),
-  w: pop(19, { tilt: -8 }),
-  ni: pop(32, { stretch: 0.95 }),
-  ya: pop(42, { tilt: -10, stretch: 0.95 }),
-  u: pop(52, { stretch: 0.95 }),
+  n: pop("n", 4),
+  y: pop("y", 9, { tilt: -8 }),
+  a: pop("a", 14),
+  w: pop("w", 19, { tilt: -8 }),
+  ni: pop("ni", 32, { stretch: 0.95 }),
+  ya: pop("ya", 42, { tilt: -10, stretch: 0.95 }),
+  u: pop("u", 52, { stretch: 0.95 }),
   // 耳は、下にある文字（左の耳は n と y、右の耳は a と w）の出現の拡大が収まってから出す
-  earL: ear(38, 1, [88, 106]),
-  earR: ear(46, -1, [120]),
+  earL: ear(38, 1, [88, 106, SEGMENTS["twitch-earL"][0]]),
+  earR: ear(46, -1, [120, SEGMENTS["twitch-earR"][0]]),
 };
 
 // しっぽ全体の回転（度）を 2 フレームごとに求める（SWING を参照）。ばねの式を数値積分する
@@ -431,6 +452,19 @@ function tailSwing() {
   return out;
 }
 
+// しっぽを押したときの反応（twitch-tail）の回転（度）を 2 フレームごとに求める。先端をぴくっと持ち上げ、揺れ返しながら戻す
+function tailTwitch() {
+  const [from, to] = SEGMENTS["twitch-tail"];
+  const w = 2 * Math.PI * 2.4;
+  const out = [];
+  for (let t = from; t <= to; t += 2) {
+    const tau = (t - from) / FPS;
+    const fade = 1 - ((t - from) / (to - from)) ** 4;
+    out.push([t, r2(-12 * Math.exp(-4 * tau) * Math.sin(w * tau) * fade)]);
+  }
+  return out;
+}
+
 // ---- 層 ----
 
 const contoursOf = (svg, name) => PARTS[name].paths.map((k) => svg.contours[k]);
@@ -445,18 +479,28 @@ function pivot(name, contours) {
   return [(x0 + x1) / 2, (y0 + y1) / 2];
 }
 
+// 部品の形を、部品の動きを持つグループにする。items はグループの中に足す項目
+function partGroup(svg, name, items = []) {
+  const contours = contoursOf(svg, name);
+  const anchor = pivot(name, contours).map(r2);
+  const { scale, rotation, offset } = MOTION[name];
+  const position = offset ? keys(offset.map(([t, d]) => [t, roundPts([add(anchor, d)])[0]])) : still(anchor);
+  return group(name, [...contours.map((c) => pathItem(toShape(c))), ...items], transform({ anchor, position, scale, rotation }));
+}
+
+// 押したときの反応を選ぶための、押せる範囲の塗りや線。不透明度 0 に固定して見えなくする（動かさない）。
+// SVG では、透明でも塗りや線があれば押した位置を拾える。lottie-web は、塗りと線の項目の cl を、描く path の class にする。
+// class は "intro-hit <部品>" で、部品の反応の区間は "twitch-<部品>"
+const hitItem = (item, part) => ({ ...item, o: still(0), cl: `intro-hit ${part}` });
+
 // 部品をまとめた 1 つのシェイプレイヤーを作る。kind は "fill"（塗り）か "outline"（輪郭）。
 // 部品はそれぞれグループにし、動きはグループのトランスフォームに持たせる。塗りやストロークは、グループの外に 1 つだけ置き、
 // 全部品にまとめて掛ける。ストロークの幅が部品の拡大の影響を受けず、ロゴ全体の輪郭として一定の幅になる
 function partsLayer(svg, names, kind) {
   const groups = names.map((name) => {
-    const contours = contoursOf(svg, name);
-    const anchor = pivot(name, contours).map(r2);
-    const { scale, rotation, offset } = MOTION[name];
-    const position = offset ? keys(offset.map(([t, d]) => [t, roundPts([add(anchor, d)])[0]])) : still(anchor);
     // 補助の矩形は輪郭の隙間を埋めるためのものなので、輪郭の側にだけ入れる
     const rects = kind === "fill" ? [] : (PARTS[name].rects ?? []).map((k) => svg.rects[k]).map(([x, y, w, h]) => rectItem([x + w / 2, y + h / 2], [w, h]));
-    return group(name, [...contours.map((c) => pathItem(toShape(c))), ...rects], transform({ anchor, position, scale, rotation }));
+    return partGroup(svg, name, rects);
   });
   // 閉じた形に端の形は効かないが、大きさ 0 の形では丸い端が点として描かれてしまうので、平らな端（1）にする
   const paint = kind === "fill" ? fillItem(svg.fill) : strokeItem(svg.outline, svg.width, 1);
@@ -484,7 +528,7 @@ function tailLayers(svg, theme) {
   const motion = transform({
     anchor: root,
     position: sampled(TAIL.start, TAIL.start + TAIL.slide, (t) => roundPts([lerp(hidden, root, circInOut(progress(t)))])[0]),
-    rotation: keys(tailSwing(), LINEAR),
+    rotation: keys([...tailSwing(), ...tailTwitch()], LINEAR),
   });
   // 塗りの線の太さ。イーズイン（3 次）で、前半は細いまま、後半で一気に元の太さになる。
   // 層ごと拡大縮小すると輪郭の幅まで変わるので、線の太さだけを動かす。輪郭はこれに、ロゴ共通の輪郭の幅を足した太さにする
@@ -498,6 +542,10 @@ function tailLayers(svg, theme) {
     // バブルと帯は、しっぽの塗りを型にして切り抜く。型はしっぽと同じ線なので、動きに合わせて切り抜く形も変わる
     fills: [fill("しっぽ バブルの型", { td: 1 }), decorationsLayer(svg, theme, "しっぽ バブル"), fill("しっぽ 塗り")],
     outline: layer("しっぽ 輪郭", { ks: motion, shapes: [line("しっぽ", svg.outline, thickness(svg.width))] }),
+    hit: layer("しっぽ 押せる範囲", {
+      ks: motion,
+      shapes: [group("しっぽ", [pathItem(spine), trim, hitItem(strokeItem(svg.outline, width + svg.width), "tail")])],
+    }),
   };
 }
 
@@ -596,8 +644,13 @@ function build(theme) {
     nm: "nyaw フルロゴ イントロ",
     ddd: 0,
     assets,
-    // Lottie では配列の先頭が手前に描かれる。段の中では、輪郭を塗りの奥に置く
+    markers: Object.entries(SEGMENTS).map(([cm, [from, to]]) => ({ tm: from, cm, dr: to - from })),
+    // Lottie では配列の先頭が手前に描かれる。段の中では、輪郭を塗りの奥に置く。押せる範囲は一番手前に置き、バブルなどより先に拾う
     layers: [
+      layer("文字と耳 押せる範囲", {
+        shapes: [...TEXT, ...EARS].map((name) => partGroup(svg, name, [hitItem(fillItem(svg.fill), name)])),
+      }),
+      tail.hit,
       ...tier("front", "文字", [partsLayer(svg, TEXT, "outline")]),
       // しっぽの塗りは耳の塗りと、しっぽの輪郭は耳の輪郭と同じ高さに置く。
       // この段は、見えてよい範囲だけを残すマスクで切り抜く（バブルは型の側で切り抜かれる）
