@@ -10,7 +10,7 @@ license.workspace = true
 # 部品（Components）・アイコン・テーマのグローバル等、GPUI で描画するもの。
 # 無効にすると値（Constants）と動き（animation）のみとなり、GPUI に依存しない下位層（overlay）からも利用できる。
 default = ["gpui"]
-gpui = ["dep:gpui", "dep:pulldown-cmark", "dep:unicode-segmentation"]
+gpui = ["dep:gpui", "dep:pulldown-cmark", "dep:unicode-segmentation", "dep:lottie", "dep:image", "dep:logger"]
 
 [dependencies]
 palette = "0.7"
@@ -19,6 +19,10 @@ gpui = { workspace = true, features = ["test-support"], optional = true }
 unicode-segmentation = { version = "1.13", optional = true }
 # リリースノート等の Markdown 描画に使用（components::markdown）。
 pulldown-cmark = { version = "0.13", default-features = false, optional = true }
+# Lottie の再生（lottie::intro_logo）。描いた画素を GPUI の画像にするため、gpui と同じ版の image を使う。
+lottie = { workspace = true, optional = true }
+image = { version = "0.25", default-features = false, optional = true }
+logger = { workspace = true, optional = true }
 
 [dev-dependencies]
 gpui_platform = { workspace = true, features = ["test-support"] }
