@@ -658,7 +658,7 @@ pub fn spinner(theme: &Theme, size: f32) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, cx| {
-            keep_drawing(window, cx);
+            crate::drive::keep_drawing_decor(window, cx);
             let side = f32::from(bounds.size.width.min(bounds.size.height));
             let scale = side / SPINNER_VIEW;
             let stroke = px(SPINNER_STROKE * scale);

@@ -76,11 +76,13 @@ pub const BRACKET_PAD_PX: f32 = 3.0 * BRACKET_LINE_PX;
 pub const CORNER_HANDLE_PX: u32 = 240;
 
 /// 部品のトランジションを有効にする GPUI のグローバル（置いたときだけ動く。テストは置かないので即座に切り替わる）。
-/// 動いている間のウィンドウを `animating` に積む。フレームループ（`ui`）は、これを見て毎フレーム描き直し、読み出したら消す。
+/// 描き直してほしいウィンドウと時刻を `animating` に積む。フレームループ（`ui`）は時刻の来たウィンドウを描き直す（[`drive`]）。
 #[cfg(feature = "gpui")]
 #[derive(Default)]
 pub struct Motion {
-    pub animating: std::collections::HashSet<gpui::WindowId>,
+    pub animating: std::collections::HashMap<gpui::WindowId, std::time::Instant>,
+    /// フレームループが描き直しを駆動している場合の、今のフレームの時刻。
+    frame: Option<std::time::Instant>,
 }
 
 #[cfg(feature = "gpui")]

@@ -7,6 +7,7 @@
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
 
 mod a11y;
+mod anim_cost;
 mod common;
 mod dock_magnet;
 mod emoji;
@@ -43,6 +44,7 @@ type Case = (&'static str, fn() -> ExitCode);
 
 const CASES: &[Case] = &[
     ("a11y", || report(a11y::main)),
+    ("anim_cost", || report(anim_cost::main)),
     ("dock_magnet", || report(dock_magnet::main)),
     ("emoji", || report(emoji::main)),
     ("font_weights", || report(font_weights::main)),

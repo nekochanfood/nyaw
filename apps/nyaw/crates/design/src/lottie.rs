@@ -2,11 +2,14 @@
 //! （リポジトリルートの `assets/animations/logo-full`）を再生し、再生し終えたら、文字や耳やしっぽを押すとその部品が反応する。
 //! 読み込みと描画はバックグラウンドスレッドで行う。進め方（[`Playback`]）は GPUI に依存しない。詳しくは AGENT.md。
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use gpui::{
     App, Bounds, ElementId, IntoElement, MouseButton, MouseDownEvent, Pixels, RenderImage,
-    RenderOnce, Window, canvas, div, img, prelude::*, px,
+    RenderOnce, Window, WindowId, canvas, div, img, prelude::*, px,
 };
 use lottie::Animation;
 
@@ -88,6 +91,15 @@ impl Playback {
         true
     }
 
+    /// 再生中の区間が `frame` に進むまで、`now` から待つ時間（丸めで手前のフレームにならないよう、0.1ms 長くする）。
+    pub fn until(&self, frame: f64, frame_rate: f64, now: Instant) -> Duration {
+        let Some(seg) = self.segment else {
+            return Duration::ZERO;
+        };
+        let after = Duration::from_secs_f64((frame - seg.from).max(0.0) / frame_rate);
+        (seg.since + after + Duration::from_micros(100)).saturating_duration_since(now)
+    }
+
     /// 合成の座標 `(x, y)` が押された。イントロを再生し終えていて、部品（`cl` が `intro-hit <部品>`）に当たれば、
     /// その部品の反応の区間（`twitch-<部品>`）を始めて `true` を返す。
     pub fn press(&mut self, anim: &Animation, x: f64, y: f64, now: Instant) -> bool {
@@ -160,17 +172,19 @@ impl Player {
         }
     }
 
-    /// 毎回の描画で呼ぶ。読み込みと描画を必要に応じて始める。次のフレームも描くべきなら `true`。
+    /// 毎回の描画で呼ぶ。読み込みと描画を必要に応じて始め、画像を差し替えるときに `window` の描き直しを頼む。
+    /// 再生中は次のフレームの画像を先に作り、その時刻になってから差し替える。
     fn tick(
         &mut self,
         mode: Mode,
         size: (u32, u32),
         animated: bool,
+        window: WindowId,
         cx: &mut gpui::Context<Self>,
-    ) -> bool {
+    ) {
         let anim = match self.load(mode) {
             Load::Ready(anim) => anim.clone(),
-            Load::Loading | Load::Failed => return false,
+            Load::Loading | Load::Failed => return,
             load @ Load::Idle => {
                 *load = Load::Loading;
                 cx.spawn(async move |this, cx| {
@@ -187,43 +201,53 @@ impl Player {
                             }
                         };
                         cx.notify();
+                        drive::redraw(window, cx);
                     });
                 })
                 .detach();
-                return false;
+                return;
             }
         };
         let now = drive::now();
         self.playback.start(&anim, animated, now);
         let playing = self.playback.advance(anim.frame_rate, now);
-        let key = Key {
+        if self.rendering.is_some() || size.0 == 0 || size.1 == 0 {
+            return;
+        }
+        let mut key = Key {
             frame: self.playback.frame().floor() as i64,
             mode,
             width: size.0,
             height: size.1,
         };
-        let shown = self.image.as_ref().map(|(_, k)| *k);
-        if shown != Some(key) && self.rendering.is_none() && size.0 > 0 && size.1 > 0 {
-            self.rendering = Some(key);
-            cx.spawn(async move |this, cx| {
-                let image = cx
-                    .background_executor()
-                    .spawn(async move {
-                        anim.render(key.frame as f64, key.width, key.height)
-                            .and_then(to_image)
-                    })
-                    .await;
-                let _ = this.update(cx, |p, cx| {
-                    p.rendering = None;
-                    if let Some(image) = image {
-                        p.image = Some((image, key));
-                    }
-                    cx.notify();
-                });
-            })
-            .detach();
+        let mut wait = Duration::ZERO;
+        if self.image.as_ref().is_some_and(|(_, shown)| *shown == key) {
+            if !playing {
+                return;
+            }
+            key.frame += 1;
+            wait = self.playback.until(key.frame as f64, anim.frame_rate, now);
         }
-        playing || self.rendering.is_some()
+        self.rendering = Some(key);
+        let render = drive::not_before(wait, move || {
+            anim.render(key.frame as f64, key.width, key.height)
+                .and_then(to_image)
+        });
+        cx.spawn(async move |this, cx| {
+            let image = cx
+                .background_executor()
+                .spawn(async move { render() })
+                .await;
+            let _ = this.update(cx, |p, cx| {
+                p.rendering = None;
+                if let Some(image) = image {
+                    p.image = Some((image, key));
+                }
+                cx.notify();
+                drive::redraw(window, cx);
+            });
+        })
+        .detach();
     }
 
     /// ウィンドウの座標 `position` が押された。反応を始めたら `true`。
@@ -297,10 +321,8 @@ impl RenderOnce for IntroLogo {
         );
 
         let state = window.use_keyed_state(self.id.clone(), cx, |_, _| Player::default());
-        let keep = state.update(cx, |p, cx| p.tick(mode, size, animated, cx));
-        if keep {
-            drive::keep_drawing(window, cx);
-        }
+        let id = window.window_handle().window_id();
+        state.update(cx, |p, cx| p.tick(mode, size, animated, id, cx));
         let (failed, image) = state.read_with(cx, |p, _| {
             let load = match mode {
                 Mode::Light => &p.light,
@@ -354,8 +376,6 @@ impl RenderOnce for IntroLogo {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
-
     use super::*;
 
     fn anim() -> Animation {
@@ -388,6 +408,30 @@ mod tests {
         // 反応の区間を再生し終えると、そこで止まる
         assert!(!p.advance(anim.frame_rate, end + Duration::from_secs(1)));
         assert_eq!(p.frame(), twitch.end());
+    }
+
+    /// 待つ時間のとおりに進めると、イントロの全フレームを 1 枚ずつ飛ばさず通り、合成の長さで終わる。
+    #[test]
+    fn waiting_until_each_frame_steps_through_every_frame() {
+        let anim = anim();
+        let t0 = Instant::now();
+        let mut p = Playback::default();
+        p.start(&anim, true, t0);
+        let (mut now, mut steps) = (t0, 0);
+        loop {
+            let next = p.frame().floor() + 1.0;
+            now += p.until(next, anim.frame_rate, now);
+            let playing = p.advance(anim.frame_rate, now);
+            assert_eq!(p.frame().floor(), next);
+            steps += 1;
+            if !playing {
+                break;
+            }
+        }
+        assert_eq!(steps, 180);
+        assert!(p.ready());
+        assert!((now - t0).as_secs_f64() - 3.0 < 0.001);
+        assert_eq!(p.until(999.0, anim.frame_rate, now), Duration::ZERO);
     }
 
     #[test]
