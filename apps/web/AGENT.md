@@ -8,7 +8,7 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 - スタイルは Tailwind CSS、UI の部品は Base UI（`@base-ui/react`）、アイコンは Phosphor Icons を使う。
 - 絵文字は `ui/Twemoji` で [jdecked/twemoji](https://github.com/jdecked/twemoji) の画像にして表示する（パーサーは `src/twemoji/parse.ts`）。画像は版を固定して jsDelivr から取得する。グラフィックは CC-BY 4.0。
 - 動きは anime.js で付ける（ポップアップの出入り、ページの出入り、ヘッダーの項目の登場）。スクロールは lenis で滑らかにする。動きを減らす設定（`prefers-reduced-motion`）では、どちらも使わない。
-- 読み込み画面では、HTML を読み終えたらフルロゴのイントロ（`assets/animations/logo-full` の Lottie）を lottie-web で再生する（`src/layout/Loading.tsx`、`src/layout/IntroLogo.tsx`）。ランディングページでは、再生したロゴの DOM をそのままページの置き場所へ移して使い続け、ほかのページではロゴ、背景の順にフェードアウトする。別のページからランディングページへ移ったときは、置き場所でイントロを再生する。再生し終えたロゴは、文字、耳、しっぽを押すと、その部品が反応する（Lottie の中の押せる範囲と反応の区間を使う。イントロの再生中は受け付けない）。動きを減らす設定では再生しない。
+- フルロゴのイントロ（`assets/animations/logo-full` の Lottie）は、ランディングページだけで lottie-web で再生する（`src/layout/Loading.tsx`、`src/layout/IntroLogo.tsx`）。ランディングページを最初に開いたときは、HTML を読み終えたら読み込み画面で再生し、再生したロゴの DOM をそのままページの置き場所へ移して使い続ける。ほかのページの読み込み画面は、イントロを出さずにフェードして消す。別のページからランディングページへ移ったときは、置き場所でイントロを再生する。再生し終えたロゴは、文字、耳、しっぽを押すと、その部品が反応する（Lottie の中の押せる範囲と反応の区間を使う。イントロの再生中は受け付けない）。動きを減らす設定では再生しない。
 - ページの出入りは `PageTransition` が動かす。読み込み画面 → ページのフェードインの順に進め、遷移のときはフェードアウトしてから次のページの描画が落ち着くのを待つ（`src/motion/stage.ts` の `waitSettled`）。動く要素は動きが始まるまで CSS で隠す（`.motion`）。
 - 整形と静的解析は [Oxc](https://oxc.rs/) のツール（oxfmt、oxlint。それぞれ別のパッケージ）を使う。
 - テストは Vitest（`src/**/*.test.ts`）と Playwright（`e2e/`）を使う。

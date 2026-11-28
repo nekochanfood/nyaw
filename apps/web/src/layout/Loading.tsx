@@ -31,12 +31,12 @@ const transparent = (color: string) =>
   color.replace(/rgba?\(([^,]+),([^,]+),([^,)]+).*\)/, "rgba($1,$2,$3,0)");
 
 /**
- * 読み込み画面を進める。HTML を読み終えた時点（DOMContentLoaded）で、スピナーをフルロゴのイントロに替えて再生する。
- * 背景は再生が終わるまで残す。画像やフォントの読み込みは待たない。
+ * 読み込み画面を進める。ランディングページ（イントロの置き場所があるページ）では、HTML を読み終えた時点
+ * （DOMContentLoaded）で、スピナーをフルロゴのイントロに替えて再生する。背景は再生が終わるまで残す。
+ * 画像やフォントの読み込みは待たない。
  *
- * 再生が終わったら、ランディングページ（イントロの置き場所があるページ）では、背景をフェードアウトしながら、
- * 再生したロゴをそのまま置き場所へ滑らかに移す。ほかのページでは、ロゴをフェードアウトしてから背景をフェードアウトする。
- * 動きを減らす設定のときと、イントロを読み込めないときは、再生せずに読み込み画面をフェードして消す
+ * 再生が終わったら、背景をフェードアウトしながら、再生したロゴをそのまま置き場所へ滑らかに移す。
+ * ほかのページのとき、動きを減らす設定のとき、イントロを読み込めないときは、再生せずに読み込み画面をフェードして消す
  */
 export function LoadingProvider({ children }: { children: ReactNode }) {
   const [done, setDone] = useState(false);
@@ -77,7 +77,9 @@ export function LoadingProvider({ children }: { children: ReactNode }) {
         hide();
       };
 
-      if (reducedMotion()) return plain();
+      // イントロはランディングページだけで出す。置き場所の登録（introSlotElement）はハイドレーション後なので、
+      // この時点では HTML にある置き場所の静止画で見分ける
+      if (reducedMotion() || !document.querySelector("[data-intro-static]")) return plain();
       let logo: IntroLogo;
       try {
         logo = await loadIntroLogo(currentTheme());
@@ -89,19 +91,16 @@ export function LoadingProvider({ children }: { children: ReactNode }) {
       screen.append(logo.node);
       await logo.play();
       if (cancelled) return;
-      release();
 
+      // 再生中にほかのページへ移ると、置き場所がなくなる
       const target = introSlotElement();
       if (!target) {
-        await fade(logo.node, { opacity: 0 });
-        setDone(true);
-        await fade(screen, { opacity: 0 });
+        await plain();
         logo.destroy();
-        hide();
-        setIntro(false);
         return;
       }
 
+      release();
       setDone(true);
       fade(screen, { backgroundColor: transparent(getComputedStyle(screen).backgroundColor) });
       await slide(logo.node, target, () => cancelled);
@@ -182,7 +181,7 @@ const STYLE = `
 #loading-screen .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 `;
 
-/** アクセスした直後に、ページの上に重ねる読み込み画面。読み込みを終えると、中央でフルロゴのイントロを再生する */
+/** アクセスした直後に、ページの上に重ねる読み込み画面。ランディングページでは、読み込みを終えると中央でフルロゴのイントロを再生する */
 export function LoadingScreen() {
   return (
     <>
