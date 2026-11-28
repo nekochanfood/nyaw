@@ -2959,6 +2959,7 @@ version = "2026.0.5-dev.0"
 dependencies = [
  "animato",
  "kurbo 0.13.1",
+ "log",
  "resvg",
  "serde_json",
  "tiny-skia",

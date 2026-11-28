@@ -3,7 +3,7 @@
 
 use std::collections::HashMap;
 
-use kurbo::Affine;
+use kurbo::{Affine, Shape, Size};
 use tiny_skia::{
     FillRule, LineCap, LineJoin, Mask, MaskType, Paint, PathBuilder, Pixmap, Transform,
 };
@@ -116,9 +116,13 @@ fn paint(op: &Op, target: &mut Pixmap, clip: Option<&Mask>) {
     if op.color[3] <= 0. || op.paths.is_empty() {
         return;
     }
+    // 拡大率が 0 の部品は、全部の点が重なる。端が butt の線は何も描かれず、tiny-skia は輪郭を作れないと警告するので足さない。
+    let butt = matches!(op.paint, scene::Paint::Stroke { cap: Cap::Butt, .. });
     let mut builder = PathBuilder::new();
     for p in &op.paths {
-        scene::push_skia(&mut builder, p);
+        if !(butt && p.bounding_box().size() == Size::ZERO) {
+            scene::push_skia(&mut builder, p);
+        }
     }
     let Some(path) = builder.finish() else { return };
     let mut brush = Paint::default();

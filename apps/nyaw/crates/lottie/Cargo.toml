@@ -14,5 +14,7 @@ tiny-skia = "0.11"
 animato = { version = "1.7.2", default-features = false }
 
 [dev-dependencies]
+# テストで、描画中に tiny-skia が出す警告を集める
+log.workspace = true
 # テストで、静止画のロゴ（SVG）を描いて最後のフレームと比べる。GPUI が使う版と同じ
 resvg = "0.46"
