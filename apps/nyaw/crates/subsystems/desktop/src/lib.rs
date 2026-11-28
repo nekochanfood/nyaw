@@ -491,7 +491,7 @@ impl Wake {
 
 trait Session {
     fn frame(&mut self) -> Result<Option<Frame>, Error>;
-    /// 一時停止中（[`Stream::set_paused`]）に `frame` の代わりに呼ぶ。読み戻さずに最新の画像だけ持ち、再開したらそれを返す。
+    /// 一時停止中（[`Stream::set_paused`]）と次の取得を待つ間に、`frame` の代わりに呼ぶ。読み戻さずに最新の画像だけ持ち、再開したらそれを返す。
     fn skip(&mut self) -> Result<(), Error> {
         Ok(())
     }
@@ -687,6 +687,8 @@ impl Stream {
                             }
                         }
                         if now < next_frame {
+                            // 2 枚の保持枠が埋まると、OS は後から届いた画像を捨てる。待つ間も最新の 1 枚だけを持つ。
+                            session.skip()?;
                             continue;
                         }
                         // 取得の前に下ろし、取得中に届いた画像の通知を落とさない。

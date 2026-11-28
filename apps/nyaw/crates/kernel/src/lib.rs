@@ -1016,7 +1016,13 @@ impl<B: VrBackend> Kernel<B> {
             LodQuality::High => 4.0,
         };
         let p = self.panel(id);
-        let density = p.resolution.0 as f32 / p.size.x / LOD_PX_PER_M;
+        // 配信の解像度は取り込み元で決まるので、見かけの大きさ（横幅 1m を基準）で換算する。
+        // 画素の密度で換算すると、高解像度のモニターは近くで見ていても間引かれる。
+        let density = if self.desktop_streaming(id) {
+            1.0 / p.size.x
+        } else {
+            p.resolution.0 as f32 / p.size.x / LOD_PX_PER_M
+        };
         let distance = p.pose.position.distance(self.hmd().position) * density;
         let count = |scale: f32| {
             [near, near * 2.0, near * 4.0]

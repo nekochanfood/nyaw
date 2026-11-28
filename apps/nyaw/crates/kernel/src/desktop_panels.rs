@@ -316,7 +316,8 @@ impl<B: VrBackend> Kernel<B> {
         self.desktop_panels
             .retain(|id, _| !self.overlay.panel(*id).closed);
         // 非表示の配信は取得を一時停止する。再表示すると停止中の最新の画像から再開する。
-        // 表示周期より速くは取り込まない。
+        // 表示周期より速くは取り込まない。離れた配信は、ほかのパネルの描き直し（[`Kernel::panel_frame_due`]）と
+        // 同じく、LOD n で 2^n フレームに 1 回にする。
         let display = (!self.desktop_panels.is_empty())
             .then(|| self.subsystems.backend.display_interval())
             .flatten()
@@ -324,7 +325,7 @@ impl<B: VrBackend> Kernel<B> {
         for (&id, panel) in &self.desktop_panels {
             if let Some(stream) = &panel.stream {
                 stream.set_paused(!self.panel_seen(id));
-                stream.set_min_interval(display);
+                stream.set_min_interval(display * (1 << self.panel_lod(id)));
             }
         }
         let now = Instant::now();
@@ -620,6 +621,29 @@ mod tests {
         kernel.subsystems.backend.display_interval = Some(display);
         kernel.tick();
         assert_eq!(control.min_interval(), display);
+    }
+
+    /// 配信の間引きは見かけの大きさで決まる。取り込み元の解像度が高くても、近くで見る間は間引かない。
+    #[test]
+    fn distant_streams_are_captured_less_often_whatever_their_resolution() {
+        let (mut kernel, panel, control) = setup();
+        let display = Duration::from_millis(10);
+        kernel.subsystems.backend.display_interval = Some(display);
+        control.publish(Update {
+            status: Status::Streaming,
+            frame: Some(Arc::new(Frame::new(3840, 1, vec![0; 3840 * 4]).unwrap())),
+        });
+        kernel.tick();
+        kernel.tick();
+        // 横幅 1m のパネルを 1m 先で見ている。
+        assert_eq!(kernel.panel_lod(panel), 0);
+        assert_eq!(control.min_interval(), display);
+        // 3m 先（Mid の LOD1 は 2m から）。段階は tick の終わりに決まるので、次の tick で反映される。
+        kernel.subsystems.backend.frame.hmd.position.z = 2.0;
+        kernel.tick();
+        kernel.tick();
+        assert_eq!(kernel.panel_lod(panel), 1);
+        assert_eq!(control.min_interval(), display * 2);
     }
 
     #[test]
