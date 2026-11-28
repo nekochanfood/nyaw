@@ -324,6 +324,21 @@ const fillItem = (color) => ({ ty: "fl", c: still(hex(color)), o: still(100), r:
 const strokeItem = (color, w, lc = 2) => ({ ty: "st", c: still(hex(color)), o: still(100), w: typeof w === "number" ? still(w) : w, lc, lj: 2 });
 const rectItem = (center, size) => ({ ty: "rc", d: 1, p: still(roundPts([center])[0]), s: still(size), r: still(0) });
 
+// 軸に沿った矩形の、閉じた形
+const rectShape = (x0, y0, x1, y1) => ({
+  c: true,
+  v: roundPts([
+    [x0, y0],
+    [x1, y0],
+    [x1, y1],
+    [x0, y1],
+  ]),
+  i: Array(4).fill([0, 0]),
+  o: Array(4).fill([0, 0]),
+});
+// 形の内側だけを描く、層のマスク（足し合わせ）
+const mask = (nm, shape) => ({ inv: false, mode: "a", pt: still(shape), o: still(100), x: still(0), nm });
+
 let nextInd = 1;
 function layer(nm, props) {
   return { ddd: 0, ind: nextInd++, ty: 4, nm, sr: 1, ks: transform(), ao: 0, ip: 0, op: DURATION, st: 0, bm: 0, ...props };
@@ -481,7 +496,7 @@ function tailLayers(svg, theme) {
   const fill = (nm, props = {}) => layer(nm, { ks: motion, shapes: [line("しっぽ", svg.fill, thickness(0))], ...props });
   return {
     // バブルと帯は、しっぽの塗りを型にして切り抜く。型はしっぽと同じ線なので、動きに合わせて切り抜く形も変わる
-    fills: [fill("しっぽ バブルの型", { td: 1 }), layer("しっぽ バブル", { tt: 1, shapes: decorations(svg, theme) }), fill("しっぽ 塗り")],
+    fills: [fill("しっぽ バブルの型", { td: 1 }), decorationsLayer(svg, theme, "しっぽ バブル"), fill("しっぽ 塗り")],
     outline: layer("しっぽ 輪郭", { ks: motion, shapes: [line("しっぽ", svg.outline, thickness(svg.width))] }),
   };
 }
@@ -495,23 +510,25 @@ function revealMasks(svg) {
   const top = Math.min(...LETTERS.map((n) => bbox(contoursOf(svg, n))[1]));
   const right = bbox(contoursOf(svg, "w"))[2];
   const FAR = 10000;
-  const rect = (x0, y0, x1, y1) => ({
-    c: true,
-    v: roundPts([
-      [x0, y0],
-      [x1, y0],
-      [x1, y1],
-      [x0, y1],
-    ]),
-    i: Array(4).fill([0, 0]),
-    o: Array(4).fill([0, 0]),
-  });
-  const mask = (nm, shape) => ({ inv: false, mode: "a", pt: still(shape), o: still(100), x: still(0), nm });
-  return [mask("耳の範囲", rect(-FAR, -FAR, FAR, top + REVEAL.below)), mask("しっぽの範囲", rect(right - REVEAL.inset, -FAR, FAR, FAR))];
+  return [
+    mask("耳の範囲", rectShape(-FAR, -FAR, FAR, top + REVEAL.below)),
+    mask("しっぽの範囲", rectShape(right - REVEAL.inset, -FAR, FAR, FAR)),
+  ];
 }
 
-// 塗りの上に重ねる飾り（斜めの帯と、バブル）。型で切り抜いて使う
-const decorations = (svg, theme) => [...sweepGroups(theme), ...bubbleGroups(svg.circles)];
+// 塗りの上に重ねる飾り（斜めの帯と、バブル）の層。直前の層を型（アルファマット）にして切り抜く。
+// 型の外は描かれないはずだが、合成の端では型の切り抜きの境目からバブルが細い線になって漏れることがある
+// （描く位置が端数のピクセルのとき）。形は合成の端から MARGIN 離れているので、飾りは端から少し内側までに限る
+function decorationsLayer(svg, theme, nm) {
+  const [w, h] = svg.size;
+  const INSET = 4;
+  return layer(nm, {
+    tt: 1,
+    hasMask: true,
+    masksProperties: [mask("合成の内側", rectShape(INSET, INSET, w - INSET, h - INSET))],
+    shapes: [...sweepGroups(theme), ...bubbleGroups(svg.circles)],
+  });
+}
 
 // 斜めの帯（SWEEP を参照）
 function sweepGroups(theme) {
@@ -565,7 +582,7 @@ function build(theme) {
   // 塗りの合成を型（アルファマット）にして、直後のバブルと帯をその段の形で切り抜く
   const tier = (id, name, rest) => [
     precomp(`${name} バブルの型`, id, { td: 1 }),
-    layer(`${name} バブル`, { tt: 1, shapes: decorations(svg, theme) }),
+    decorationsLayer(svg, theme, `${name} バブル`),
     precomp(`${name} 塗り`, id),
     ...rest,
   ];
