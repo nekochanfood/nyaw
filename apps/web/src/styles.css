@@ -27,7 +27,7 @@
 /*
   色は Catppuccin。ライトは Latte、ダークはロゴと同じ Frappé の値を使う。使う色だけを --ctp-* に置き、ページの役割
   （カード、帯、本文の文字など）に割り当てる。アクセントの Lavender は、選択範囲、フォーカスの枠、遷移の
-  進み具合の線など小さな面積と、ポップアップの影に使う
+  進み具合の線など小さな面積に置く
 */
 :root {
   --ctp-base: light-dark(#eff1f5, #303446);
@@ -52,6 +52,8 @@
   --neutral-border: var(--ctp-surface1);
   /* カードの上の項目をホバー・選択したときの面 */
   --control-on-background: var(--ctp-surface0);
+  /* ポップアップの影。ライトは Latte の Text、ダークは Frappé の Crust を薄くする */
+  --popup-shadow: light-dark(rgb(76 79 105 / 0.2), rgb(35 38 52 / 0.6));
   /* ツールチップの面と文字 */
   --tooltip: var(--ctp-text);
   --on-tooltip: var(--ctp-base);
@@ -66,6 +68,7 @@
   --color-neutral-text-low: var(--neutral-text-low);
   --color-neutral-border-subtle: var(--neutral-border-subtle);
   --color-control-on-background: var(--control-on-background);
+  --color-popup-shadow: var(--popup-shadow);
   --color-tooltip: var(--tooltip);
   --color-on-tooltip: var(--on-tooltip);
   --color-ctp-lavender: var(--ctp-lavender);
