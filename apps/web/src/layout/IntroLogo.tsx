@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Logo } from "@/layout/Logo";
 import { reducedMotion } from "@/motion/reducedMotion";
@@ -32,6 +32,8 @@ export interface IntroLogo {
    * （押せる範囲と反応の区間は、Lottie の中にある。assets/animations/logo-full/README.md を参照）
    */
   play: () => Promise<void>;
+  /** イントロを再生し終えた状態（完成形）にし、部品を押せるようにする */
+  finish: () => void;
   destroy: () => void;
 }
 
@@ -87,6 +89,10 @@ export async function loadIntroLogo(theme: Theme): Promise<IntroLogo> {
         anim.addEventListener("complete", done);
         anim.playSegments(segment(animationData, "intro"), true);
       }),
+    finish: () => {
+      anim.goToAndStop(segment(animationData, "intro")[1], true);
+      node.dataset.introReady = "";
+    },
     destroy: () => anim.destroy(),
   };
 }
@@ -117,32 +123,37 @@ export function adoptIntroLogo(logo: IntroLogo) {
  * - `pending` の間（最初に開いたときで、読み込み画面のイントロがこれから渡される）は、静止画も出さずに場所だけを取っておく。
  * - 別のページから移ってきたとき（置いた時点で `pending` でない）は、自分でイントロを読み込み、ページが見え始めたら再生する。
  *   読み込む間は場所だけを取っておき、動きを減らす設定のときと、読み込めないときは静止画を出す。
- * - 受け取ったあとでテーマを切り替えたら、色が合わないのでイントロを隠して静止画を出す（テーマを戻せば、またイントロを出す）
+ * - 受け取ったあとでテーマを切り替えたら、色が合わないので、新しいテーマのイントロを再生し終えた状態（完成形）で読み込んで
+ *   差し替える。部品を押せるのはそのまま保つ。読み込む間は静止画を出す
  */
 export function IntroLogoSlot({ pending }: { pending: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   const host = useRef<HTMLDivElement>(null);
   const [adopted, setAdopted] = useState<IntroLogo | null>(null);
+  // 今入れ物にあるイントロ。置き場所が外れるときに片付ける
+  const current = useRef<IntroLogo | null>(null);
   // サーバーと、最初に開いたときのハイドレーションでは pending が true なので、どちらでも false になり食い違わない
   const [selfPlay] = useState(() => !pending && !reducedMotion());
   const [failed, setFailed] = useState(false);
   const theme = useTheme();
 
+  // 入れ物のイントロを logo に替える。箱の大きさは置き場所が決めるので、ロゴの中身だけを置き場所の箱いっぱいに広げる
+  const adopt = useCallback((logo: IntroLogo) => {
+    logo.node.removeAttribute("style");
+    logo.node.className = "absolute inset-0";
+    host.current?.append(logo.node);
+    current.current?.node.remove();
+    current.current?.destroy();
+    current.current = logo;
+    setAdopted(logo);
+  }, []);
+
   useEffect(() => {
-    const adopt = (logo: IntroLogo) => {
-      // 箱の大きさは置き場所が決めるので、ロゴの中身だけを置き場所の箱いっぱいに広げる
-      logo.node.removeAttribute("style");
-      logo.node.className = "absolute inset-0";
-      host.current?.append(logo.node);
-      setAdopted(logo);
-    };
-    let own: IntroLogo | undefined;
     let cancelled = false;
     if (selfPlay) {
       loadIntroLogo(currentTheme()).then(
         async (logo) => {
           if (cancelled) return logo.destroy();
-          own = logo;
           adopt(logo);
           await pageVisible(box.current);
           if (!cancelled) await logo.play();
@@ -151,18 +162,33 @@ export function IntroLogoSlot({ pending }: { pending: boolean }) {
       );
     } else {
       slotHost = box.current;
-      slot = (logo) => {
-        own = logo;
-        adopt(logo);
-      };
+      slot = adopt;
     }
     return () => {
       cancelled = true;
       slot = null;
       slotHost = null;
-      own?.destroy();
+      current.current?.destroy();
+      current.current = null;
     };
-  }, [selfPlay]);
+  }, [selfPlay, adopt]);
+
+  // テーマを切り替えたら、新しいテーマのイントロを完成形で読み込んで差し替える
+  useEffect(() => {
+    if (!adopted || theme === null || theme === adopted.theme) return;
+    let cancelled = false;
+    loadIntroLogo(theme).then(
+      (logo) => {
+        if (cancelled) return logo.destroy();
+        logo.finish();
+        adopt(logo);
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [theme, adopted, adopt]);
 
   const showIntro = adopted !== null && (theme === null || theme === adopted.theme);
   const waiting = pending || (selfPlay && !failed && !adopted);
