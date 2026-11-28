@@ -20,7 +20,7 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 
 ## 見た目
 
-- 色は Catppuccin（ライトは Latte、ダークはロゴと同じ Frappé）。`src/styles.css` の `--ctp-*` に使う色だけを置き、ページの役割（`card`、`frame`、`neutral-text` など）に割り当てる。アクセントは Lavender（`ctp-lavender`）を小さな面積に置く。
+- 色は Catppuccin（ライトは Latte、ダークはロゴと同じ Frappé）。`src/styles.css` の `--ctp-*` に使う色だけを置き、ページの役割（`card`、`frame`、`neutral-text` など）に割り当てる。アクセントは Lavender（`ctp-lavender`）で、小さな面積とポップアップの影に使う。
 - テーマは保存したもの（`localStorage`）か OS の設定に従う。`src/theme.ts` の `themeScript` が描画の前に `<html data-theme>` を付ける。切り替えは画面全体のクロスフェード（View Transitions API）で見せ、要素ごとの色のトランジションは使わない（継承した色の補間が毎フレーム作り直され、文字やアイコンがチカチカする）。
 - 角はスーパーエリプス（`corner-shape`）。対応するブラウザでは、トークンの角丸に `--corner-scale` を掛けて広げる。中に項目を並べるパネルは、外側の半径を「中の半径＋余白」にして角を同心にする。
 - ページは帯（外枠）で囲み、その内側に本文のカードを置く。ヘッダーは上辺の帯に、フッターはカードの下の帯に載る。帯の寸法（`--frame-*`）、帯の色（`frame`。Catppuccin の Crust）、重なり順（`--layer-*`）は `src/styles.css` の `:root` にまとめ、ほかの場所に数値を書かない。帯の内側に置くものの幅は `frame-x` でそろえる。
