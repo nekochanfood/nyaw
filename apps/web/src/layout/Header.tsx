@@ -1,6 +1,6 @@
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { Link } from "@tanstack/react-router";
-import { animate, stagger } from "animejs";
+import { animate, createTimeline, stagger } from "animejs";
 import { useLayoutEffect, useRef, useState } from "react";
 
 import { useLocale, useT } from "@/i18n/index";
@@ -59,22 +59,26 @@ export function Header() {
     };
   }, [menuOpen]);
 
-  // 読み込み画面が消えたら、ページのフェードイン（PageTransition）に少し遅れて、項目が上から順に降りてくる
+  /*
+    読み込み画面が消えたら、ページのフェードイン（PageTransition）に少し遅れて、項目が上から降りてくる。
+    左側（メニューのボタン、ロゴ、ページへのリンク）と右側（GitHub、言語、テーマ）は同時に動き出し、
+    左側は左端の項目から、右側は右端の項目から順に降りてくる。幅によって出ない項目は数えない
+  */
   useLayoutEffect(() => {
     const el = ref.current;
     if (!loaded || !el || reducedMotion()) return;
     // 登場が終わったら、項目を隠す CSS（styles.css の .motion）を外す。あとで作り直された項目も見えるようにする
     const ready = () => (document.documentElement.dataset.headerReady = "");
-    const anim = animate(el.querySelectorAll("[data-header-item]"), {
-      opacity: [0, 1],
-      y: [-32, 0],
-      duration: 800,
-      delay: stagger(50, { start: 300 }),
-      ease: "out(3)",
-      onComplete: ready,
-    });
+    const items = (side: "left" | "right") =>
+      [
+        ...el.querySelectorAll<HTMLElement>(`[data-header-side="${side}"] [data-header-item]`),
+      ].filter((item) => item.getClientRects().length > 0);
+    const drop = { opacity: [0, 1], y: [-32, 0], duration: 800, ease: "out(3)" };
+    const timeline = createTimeline({ onComplete: ready })
+      .add(items("left"), { ...drop, delay: stagger(50, { start: 300 }) }, 0)
+      .add(items("right"), { ...drop, delay: stagger(50, { start: 300, from: "last" }) }, 0);
     return () => {
-      anim.cancel();
+      timeline.cancel();
       ready();
     };
   }, [loaded]);
@@ -88,7 +92,7 @@ export function Header() {
         ロゴは、左端に来る幅（md 以上）では自分の左の余白で本文の端にそろえる
       */}
       <div className="flex h-full w-full items-center justify-between gap-2 px-(--header-pad-x)">
-        <div className="flex items-center gap-2">
+        <div data-header-side="left" className="flex items-center gap-2">
           {/* 狭い画面のメニューのボタン。ロゴの左隣に置く */}
           <div data-header-item className="md:hidden">
             <MobileMenu open={menuOpen} setOpen={setMenuOpen} />
@@ -126,7 +130,7 @@ export function Header() {
             ))}
           </nav>
         </div>
-        <div data-menu-hide className="flex items-center gap-1">
+        <div data-header-side="right" data-menu-hide className="flex items-center gap-1">
           {/* GitHub への入口は、狭い画面（md 未満）ではフルスクリーンメニューの項目に任せる */}
           <div data-header-item className="hidden md:block">
             <Tooltip label={t("github")}>
