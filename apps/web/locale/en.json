@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "title": "VR overlay for SteamVR and OpenXR",
+    "description": "Mirror windows, read notifications and control media without taking off your headset.",
+    "download_title": "Download",
+    "download_description": "Install nyaw on your Windows PC and start it with SteamVR or an OpenXR runtime.",
+    "not_found_title": "Page not found",
+    "features_title": "Features",
+    "features_description": "Everything nyaw brings into VR, from mirrored windows to notifications on your wrist."
+  },
+  "nav": {
+    "features": "Features",
+    "download": "Download",
+    "github": "GitHub",
+    "skip": "Skip to content",
+    "theme": "Toggle theme",
+    "language": "Change language",
+    "open_menu": "Open menu",
+    "close_menu": "Close menu",
+    "home": "nyaw home"
+  },
+  "footer": {
+    "licence": "Licensed under MIT or Apache-2.0",
+    "issues": "Report an issue",
+    "releases": "Releases",
+    "source": "Source code",
+    "title_product": "Product",
+    "title_resources": "Resources",
+    "copyright": "© 2026 nekochanfood"
+  },
+  "not_found": {
+    "title": "Page not found",
+    "home": "Back to home"
+  }
+}

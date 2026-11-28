@@ -9,50 +9,118 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
+import { Route as LocaleRouteImport } from './routes/$locale'
+import { Route as LocaleIndexRouteImport } from './routes/$locale/index'
+import { Route as LocaleDownloadRouteImport } from './routes/$locale/download'
+import { Route as LocaleFeaturesRouteImport } from './routes/$locale/features'
 
-const IndexRoute = IndexRouteImport.update({
+const LocaleRoute = LocaleRouteImport.update({
+  id: '/$locale',
+  path: '/$locale',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LocaleIndexRoute = LocaleIndexRouteImport.update({
   id: '/',
   path: '/',
-  getParentRoute: () => rootRouteImport,
+  getParentRoute: () => LocaleRoute,
+} as any)
+const LocaleDownloadRoute = LocaleDownloadRouteImport.update({
+  id: '/download',
+  path: '/download',
+  getParentRoute: () => LocaleRoute,
+} as any)
+const LocaleFeaturesRoute = LocaleFeaturesRouteImport.update({
+  id: '/features',
+  path: '/features',
+  getParentRoute: () => LocaleRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
+  '/$locale': typeof LocaleRouteWithChildren
+  '/$locale/download': typeof LocaleDownloadRoute
+  '/$locale/features': typeof LocaleFeaturesRoute
+  '/$locale/': typeof LocaleIndexRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
+  '/$locale/download': typeof LocaleDownloadRoute
+  '/$locale/features': typeof LocaleFeaturesRoute
+  '/$locale': typeof LocaleIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
+  '/$locale': typeof LocaleRouteWithChildren
+  '/$locale/download': typeof LocaleDownloadRoute
+  '/$locale/features': typeof LocaleFeaturesRoute
+  '/$locale/': typeof LocaleIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    '/$locale' | '/$locale/download' | '/$locale/features' | '/$locale/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/$locale/download' | '/$locale/features' | '/$locale'
+  id:
+    | '__root__'
+    | '/$locale'
+    | '/$locale/download'
+    | '/$locale/features'
+    | '/$locale/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
+  LocaleRoute: typeof LocaleRouteWithChildren
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/$locale': {
+      id: '/$locale'
+      path: '/$locale'
+      fullPath: '/$locale'
+      preLoaderRoute: typeof LocaleRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/$locale/': {
+      id: '/$locale/'
+      path: '/'
+      fullPath: '/$locale/'
+      preLoaderRoute: typeof LocaleIndexRouteImport
+      parentRoute: typeof LocaleRoute
+    }
+    '/$locale/download': {
+      id: '/$locale/download'
+      path: '/download'
+      fullPath: '/$locale/download'
+      preLoaderRoute: typeof LocaleDownloadRouteImport
+      parentRoute: typeof LocaleRoute
+    }
+    '/$locale/features': {
+      id: '/$locale/features'
+      path: '/features'
+      fullPath: '/$locale/features'
+      preLoaderRoute: typeof LocaleFeaturesRouteImport
+      parentRoute: typeof LocaleRoute
     }
   }
 }
 
+interface LocaleRouteChildren {
+  LocaleDownloadRoute: typeof LocaleDownloadRoute
+  LocaleFeaturesRoute: typeof LocaleFeaturesRoute
+  LocaleIndexRoute: typeof LocaleIndexRoute
+}
+
+const LocaleRouteChildren: LocaleRouteChildren = {
+  LocaleDownloadRoute: LocaleDownloadRoute,
+  LocaleFeaturesRoute: LocaleFeaturesRoute,
+  LocaleIndexRoute: LocaleIndexRoute,
+}
+
+const LocaleRouteWithChildren =
+  LocaleRoute._addFileChildren(LocaleRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
+  LocaleRoute: LocaleRouteWithChildren,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

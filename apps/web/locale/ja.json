@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "title": "SteamVR と OpenXR のための VR オーバーレイ",
+    "description": "ヘッドセットを着けたまま、ウィンドウをミラーリングして、通知の確認やメディアの操作を行います。",
+    "download_title": "ダウンロード",
+    "download_description": "Windows PC に nyaw をインストールして、SteamVR か OpenXR ランタイムと一緒に起動します。",
+    "not_found_title": "ページが見つかりません",
+    "features_title": "機能",
+    "features_description": "ミラーリングした画面から手首の通知まで、nyaw が VR に持ち込むものの一覧です。"
+  },
+  "nav": {
+    "features": "機能",
+    "download": "ダウンロード",
+    "github": "GitHub",
+    "skip": "本文へ移動",
+    "theme": "テーマを切り替え",
+    "language": "言語を変更",
+    "open_menu": "メニューを開く",
+    "close_menu": "メニューを閉じる",
+    "home": "nyaw のホーム"
+  },
+  "footer": {
+    "licence": "MIT または Apache-2.0 ライセンス",
+    "issues": "問題を報告",
+    "releases": "リリース",
+    "source": "ソースコード",
+    "title_product": "プロダクト",
+    "title_resources": "リソース",
+    "copyright": "© 2026 nekochanfood"
+  },
+  "not_found": {
+    "title": "ページが見つかりません",
+    "home": "ホームに戻る"
+  }
+}

@@ -1,7 +1,282 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
-body {
-  background: var(--background);
-  color: var(--neutral-text);
+/* ダークは、保存したテーマか、保存していなければ OS の設定で決まる（src/theme.ts） */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
+
+/* 色の light-dark() は color-scheme に従う。保存したテーマで OS の設定を上書きする */
+:root {
+  color-scheme: light dark;
+}
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+/*
+  色は Catppuccin。ライトは Latte、ダークはロゴと同じ Frappé の値を使う。使う色だけを --ctp-* に置き、ページの役割
+  （カード、帯、本文の文字など）に割り当てる。アクセントの Lavender は、選択範囲、フォーカスの枠など
+  小さな面積に置く。遷移の進み具合の線は Blue にする
+*/
+:root {
+  --ctp-base: light-dark(#eff1f5, #303446);
+  --ctp-crust: light-dark(#dce0e8, #232634);
+  --ctp-surface0: light-dark(#ccd0da, #414559);
+  --ctp-overlay0: light-dark(#9ca0b0, #737994);
+  --ctp-subtext0: light-dark(#6c6f85, #a5adce);
+  --ctp-text: light-dark(#4c4f69, #c6d0f5);
+  --ctp-lavender: light-dark(#7287fd, #babbf1);
+  --ctp-blue: light-dark(#1e66f5, #8caaee);
+
+  /* 本文のカード、ポップアップの面 */
+  --card: var(--ctp-base);
+  /* ページを囲む帯（外枠）。ヘッダー、フッター、狭い画面のメニューの面もこの色にする */
+  --frame: var(--ctp-crust);
+  /* 本文の文字。塗りのボタンの面にも使う */
+  --neutral-text: var(--ctp-text);
+  /* 控えめな文字 */
+  --neutral-text-low: var(--ctp-subtext0);
+  /* 細い区切り線、ポップアップの枠 */
+  --neutral-border-subtle: var(--ctp-surface0);
+  /* 読み込み画面の輪の地 */
+  --neutral-border: var(--ctp-overlay0);
+  /* カードの上の項目をホバー・選択したときの面 */
+  --control-on-background: var(--ctp-surface0);
+  /* ポップアップの影。ライトは Latte の Text、ダークは Frappé の Crust を薄くする */
+  --popup-shadow: light-dark(rgb(76 79 105 / 0.25), rgb(35 38 52 / 0.7));
+  /* ツールチップの面と文字 */
+  --tooltip: var(--ctp-text);
+  --on-tooltip: var(--ctp-base);
+}
+
+/* Tailwind の色は、上の役割とアクセントだけにする */
+@theme inline {
+  --color-*: initial;
+  --color-card: var(--card);
+  --color-frame: var(--frame);
+  --color-neutral-text: var(--neutral-text);
+  --color-neutral-text-low: var(--neutral-text-low);
+  --color-neutral-border-subtle: var(--neutral-border-subtle);
+  --color-control-on-background: var(--control-on-background);
+  --color-tooltip: var(--tooltip);
+  --color-on-tooltip: var(--on-tooltip);
+  --color-ctp-lavender: var(--ctp-lavender);
+  --color-ctp-blue: var(--ctp-blue);
+
+  --font-sans:
+    "Gen Interface JP", Inter, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui,
+    sans-serif;
+}
+
+:root {
+  /*
+    スーパーエリプスは同じ半径だと通常の角丸より角が立って見えるので、対応するブラウザでだけ半径を広げる。
+    トークンの角丸（rounded-sm〜xl）はこの倍率を掛けた値になる。
+  */
+  --corner-scale: 1;
+
+  /*
+    ページ全体を囲む帯（外枠）。上辺の帯はヘッダー（h-16）の高さ、ほかの三辺は --frame-gutter の太さにする。
+  */
+  --frame-gutter: 8px;
+  --frame-top: 4rem;
+  /*
+    ヘッダーの左右の余白。ヘッダーの 40px のボタンは、上辺の帯の中で上下に (--frame-top - 40px) / 2 の余白を持つ。
+    左右も画面の端から同じ距離にするため、左右の帯の太さを引く。
+    帯の内側が画面の左右の端から離れる（幅が --frame-height に達する）と、そろえる相手が画面の端ではなくなるので、
+    本文のカードの角丸の分を空ける。倍率を掛けた --frame-radius は、40px のボタンの中の余白も加わって空きすぎるので使わない。
+    100cqw はヘッダーの幅。1000 倍して、1px でも足りなければ下限になるようにする
+  */
+  --header-inset: calc((var(--frame-top) - 2.5rem) / 2);
+  /* 本文の左右の余白（containerClass）。sm 以上で広げる */
+  --content-pad-x: 1.25rem;
+  --header-pad-x: clamp(
+    max(0px, var(--header-inset) - var(--frame-gutter)),
+    var(--frame-radius-base) - (var(--frame-height) - 100cqw) * 1000,
+    var(--frame-radius-base)
+  );
+  /* 帯の内側の高さ。ツールバーの出し入れで変わらない svh で測る */
+  --frame-height: calc(100svh - var(--frame-top) - var(--frame-gutter));
+  /* 帯の内側の角丸。--frame-radius-base は倍率を掛ける前の値で、通常の角丸（corner-shape: round）に使う */
+  --frame-radius-base: 24px;
+  --frame-radius: calc(var(--frame-radius-base) * var(--corner-scale));
+  /* ページ内リンクの飛び先がヘッダーに隠れないようにする（lenis もこの値を読む） */
+  scroll-padding-top: var(--frame-top);
+
+  /*
+    重なり順。ページ（__root の isolate の中）では、本文 < 本文の上下の端のぼかし < 遷移の進み具合の線 < 帯
+    < ヘッダー < 最前面（スキップリンク）。進み具合の線は帯の下に置き、帯の内側の角丸で切り取らせる。ページの外（body の直下）に出すものは、ページの上に
+    狭い画面のメニュー < ポップアップの順で重ねる。読み込み画面は CSS を読む前から描くので、自分で最前面に置く
+  */
+  --layer-edge-fade: 1;
+  --layer-progress: 2;
+  --layer-frame: 3;
+  --layer-header: 4;
+  --layer-top: 5;
+  --layer-menu: 1;
+  --layer-popup: 2;
+}
+
+@supports (corner-shape: superellipse(1.4)) {
+  :root {
+    --corner-scale: 1.5;
+  }
+}
+
+@media (min-width: 40rem) {
+  :root {
+    --content-pad-x: 2rem;
+  }
+}
+
+@media (min-width: 64rem) {
+  :root {
+    --frame-gutter: 12px;
+  }
+}
+
+@layer base {
+  /* 角はスーパーエリプス。対応していないブラウザでは通常の角丸になる */
+  *,
+  ::before,
+  ::after {
+    corner-shape: superellipse(1.4);
+  }
+
+  html {
+    background: var(--frame);
+    font-family: var(--font-sans);
+    -webkit-tap-highlight-color: transparent;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    color: var(--neutral-text);
+    line-break: strict;
+    overflow-wrap: anywhere;
+    /* 日本語は文節の切れ目で折り返す（lang="ja" のときだけ効く） */
+    word-break: auto-phrase;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--ctp-lavender) 35%, transparent);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--ctp-lavender);
+    outline-offset: 2px;
+  }
+}
+
+/*
+  テーマの切り替え（src/theme.ts の setTheme）。切り替える瞬間だけ全要素のトランジションを止め、
+  見た目は画面全体のクロスフェードで変える
+*/
+:root[data-theme-switching],
+:root[data-theme-switching] *,
+:root[data-theme-switching] *::before,
+:root[data-theme-switching] *::after {
+  transition: none !important;
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 300ms;
+  animation-timing-function: ease;
+}
+
+/*
+  本文のカードの上下の端のぼかし。カードの中に高さ 0 の sticky な要素を置き、帯の内側の上端（下端）に張り付かせる。
+  そこから 4rem だけ、背後をカードの色でぼかしたうえで、帯から離れる向きへ段階的に透明にする
+  （直線のグラデーションだと、ぼかしの端に境目が見える）。カードの中に置くので、カードの外のフッターにはかからない
+*/
+.edge-fade {
+  position: sticky;
+  z-index: var(--layer-edge-fade);
+  height: 0;
+  pointer-events: none;
+}
+.edge-fade::before {
+  content: "";
+  position: absolute;
+  inset-inline: 0;
+  height: 4rem;
+  background-color: var(--card);
+  backdrop-filter: blur(16px);
+  mask-image: linear-gradient(
+    var(--edge-fade-direction),
+    black,
+    rgb(0 0 0 / 0.95) 10%,
+    rgb(0 0 0 / 0.87) 20%,
+    rgb(0 0 0 / 0.75) 30%,
+    rgb(0 0 0 / 0.58) 40%,
+    rgb(0 0 0 / 0.4) 50%,
+    rgb(0 0 0 / 0.25) 60%,
+    rgb(0 0 0 / 0.14) 70%,
+    rgb(0 0 0 / 0.07) 80%,
+    rgb(0 0 0 / 0.02) 90%,
+    transparent
+  );
+}
+.edge-fade-top {
+  top: var(--frame-top);
+  --edge-fade-direction: to bottom;
+}
+.edge-fade-top::before {
+  top: 0;
+}
+.edge-fade-bottom {
+  bottom: var(--frame-gutter);
+  --edge-fade-direction: to top;
+}
+.edge-fade-bottom::before {
+  bottom: 0;
+}
+
+/*
+  動く要素は、動きが始まるまで隠しておく（src/motion/stage.ts の motionScript が付ける .motion の間だけ）。
+  ページ全体と、ヘッダーの項目。動きは anime.js が不透明度を 1 にして終える
+*/
+.motion [data-page],
+.motion:not([data-header-ready]) [data-header-item] {
+  opacity: 0;
+}
+
+/*
+  帯の内側の幅。横幅は帯の内側の縦の長さ（上のヘッダーと下の帯を除いた高さ）まで（1:1 まで）に限り、
+  中央に置く。はみ出した左右は帯の色になる。
+  ヘッダー、枠、本文のカード、フッター、メニューなど、帯の内側に置くものはこれで幅をそろえる
+*/
+@utility frame-x {
+  margin-inline: auto;
+  width: min(calc(100% - 2 * var(--frame-gutter)), var(--frame-height));
+}
+
+/* 真円とピルは潰さない */
+@utility rounded-full {
+  corner-shape: round;
+}
+
+/* lenis が推奨するスタイル */
+html.lenis,
+html.lenis body {
+  height: auto;
+}
+.lenis:not(.lenis-autoToggle).lenis-stopped {
+  overflow: clip;
+}
+
+/* イントロのフルロゴ（src/layout/IntroLogo.tsx）。再生し終えたら、耳やしっぽの押せる範囲で指の形にする */
+[data-intro-ready] .intro-hit {
+  cursor: pointer;
 }
