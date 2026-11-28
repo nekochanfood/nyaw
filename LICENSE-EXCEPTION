@@ -1,0 +1,21 @@
+Additional permission under GNU GPL version 3 section 7
+
+This permission applies to the parts of nyaw that are licensed under the GNU
+General Public License, version 3 or any later version ("GPL-3.0-or-later").
+
+If you modify such a part, or any covered work, by linking or combining it with
+any of the following (or a modified version of them), the licensors of nyaw
+grant you additional permission to convey the resulting work. Corresponding
+Source for a non-source form of such a combination does not need to include the
+source code of the following:
+
+  - Steam Audio (the phonon library), including the third-party components
+    contained in it, such as Intel Integrated Performance Primitives;
+  - the SteamVR runtime;
+  - the third-party materials described in assets/renders/acknowledgements.md.
+
+This permission does not grant any right to use or redistribute those
+components or materials. Their own terms continue to apply to them.
+
+You may remove this additional permission from your copy of a covered work, as
+provided in section 7 of the GPL.

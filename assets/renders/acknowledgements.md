@@ -17,4 +17,4 @@ This project is not affiliated with, sponsored by, or endorsed by Valve Corporat
 
 ## Third-party assets and licensing
 
-The controller designs, 3D models, textures, and logos remain the property of their respective rights holders. The MIT and Apache-2.0 licenses of this repository do not apply to those third-party materials, including where they appear in the rendered images or where model geometry is stored in `source/ControllerRender.blend`. The `.blend` file does not embed the textures; it references them in a local SteamVR installation. This acknowledgement does not grant any right to use or redistribute them.
+The controller designs, 3D models, textures, and logos remain the property of their respective rights holders. The GPL-3.0-or-later, MIT and Apache-2.0 licenses of this repository do not apply to those third-party materials, including where they appear in the rendered images or where model geometry is stored in `source/ControllerRender.blend`. The `.blend` file does not embed the textures; it references them in a local SteamVR installation. This acknowledgement does not grant any right to use or redistribute them.

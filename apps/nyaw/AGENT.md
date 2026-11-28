@@ -28,6 +28,7 @@ nyaw は、GPUI で GUI を描画する VR オーバーレイシステムであ�
 | 0 | [`crates/logger`](crates/logger/AGENT.md) | logfmt 形式に対応した横断的構造化ロガー。 |
 | 0 | [`crates/animation`](crates/animation/AGENT.md) | アニメーション計算と遷移状態の管理。GPUI や UI 部品には依存しない。 |
 | 0 | [`crates/lottie`](crates/lottie/AGENT.md) | Lottie の再生（指定フレームの描画、押した位置の部品の判定、区間の名前）。GPUI には依存しない。 |
+| 0 | `crates/metrics` | オーバーレイ層とデザイン層が共有するパネルの寸法。 |
 | 1 | [`crates/subsystems`](crates/subsystems/AGENT.md) | 各サブシステムの再エクスポートと、VR ランタイムの入力から共通フレーム情報を作る処理。 |
 | 1 | [`crates/subsystems/os`](crates/subsystems/os/AGENT.md) | データ保存先パス、ランタイム検出、高精度タイマーなどの OS 差異の吸収。 |
 | 1 | [`crates/subsystems/vr`](crates/subsystems/vr/AGENT.md) | OpenVR、OpenXR、および非 VR 用エミュレーター（novr）のランタイム抽象化。 |
@@ -81,7 +82,8 @@ subsystems ← overlay ← kernel ← ui ← 画面 (dashboard / wrist など) �
 - **OS 機能へのアクセス**: OS の API（プロセス・ファイル・通信、`windows` クレートなど）を直接呼べるのは、サブシステム・カーネル・`logger`・`testkit` だけである。上位層（UI や画面など）が OS の機能を使うときは、サブシステムの関数（`kernel` の再エクスポート経由）か、カーネルへの依頼（パネルへの操作は `PanelCommand`、システムへの要求は `Request`）を通す。必要な関数がなければ、先にサブシステムへ追加する。この規則は `clippy.toml` の `disallowed-methods` / `disallowed-types` が検査する（後述の「OS 機能の禁止の仕組み」）。
 - **型の共通語彙**: UI 層、画面、`testkit` が参照する下位の型は、`kernel` の再エクスポート経由で取得する。`overlay` は `vr` の型（`Pose` など）を共通語彙として直接利用してよい。
 - **横断クレートの例外**: `logger` はすべての層から直接参照できる唯一の横断クレートである。ただし、`logger` 自体はワークスペース内の自前クレートに一切依存しない。
-- **デザインシステムと動きの分離**: `design` の定数定義（Constants）および `animation` クレートは GPUI に依存しないため、`overlay` がパネルのアニメーションや余白計算に参照できる。GPUI に依存するコンポーネントやテーマ定義は UI 層以上のみで利用する。
+- **寸法と動きの分離**: `metrics` および `animation` クレートは GPUI に依存しないため、`overlay` がパネルのアニメーションや余白計算に参照できる。`design` は UI 層以上のみで利用する。
+- **ライセンスの境界**: `MIT OR Apache-2.0` のクレートは、`GPL-3.0-or-later` のクレート（`nyaw`・`ui`・`design`・画面など）に依存してはならない（開発用の依存も同様）。依存すると、そのクレートを利用する側にも GPL の条件が及ぶ。新しいクレートは、どちらのライセンスにするかを決めて `Cargo.toml` とルートの `README.md` に記載する。
 
 ### OS 機能の禁止の仕組み
 

@@ -2,7 +2,7 @@
 name = "i18n"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "GPL-3.0-or-later"
 
 # 画面の文言の多言語対応。言語ごとの定義表（locales/*.toml）を埋め込み、GPUI のグローバルの言語で参照する。
 [dependencies]

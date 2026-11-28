@@ -29,6 +29,7 @@ gpui = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c01
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 gpui_windows = { git = "https://github.com/zed-industries/zed", rev = "26363aabdb31a0c016728634202e1ad5067033aa" }
 animation = { path = "crates/animation" }
+metrics = { path = "crates/metrics" }
 lottie = { path = "crates/lottie" }
 logger = { path = "crates/logger" }
 os = { path = "crates/subsystems/os" }
@@ -63,7 +64,8 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 name = "nyaw"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+# GPL のクレートは license を個別に指定する。追加許可はリポジトリルートの LICENSE-EXCEPTION
+license = "GPL-3.0-or-later"
 
 [dependencies]
 logger.workspace = true

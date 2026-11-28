@@ -2,7 +2,7 @@
 name = "setup"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "GPL-3.0-or-later"
 
 # 画面層：初回起動時のセットアップウィザード
 [dependencies]
