@@ -9,6 +9,38 @@ use ui::Frame;
 // ponytail: only solid rectangles, rounded corners, borders (no edge anti-aliasing) and straight underlines. Wavy lines, shadows, text and images are not painted. Add them when something needs visual verification.
 pub fn capture(window: &mut Window, cx: &mut App) -> Frame {
     window.draw(cx).clear(cx);
+    paint(window)
+}
+
+/// The scene a frame was rasterized from, and that frame.
+pub type Cached = (String, Frame);
+
+/// Like [`capture`], but while the scene is unchanged returns the cached frame. Rasterizing is about 90% of a frame's
+/// time, and most frames a test steps through (waiting for a click to take effect) look the same.
+pub fn capture_cached<'a>(
+    window: &mut Window,
+    cx: &mut App,
+    cache: &'a mut Option<Cached>,
+) -> &'a Frame {
+    window.draw(cx).clear(cx);
+    // Everything `paint` reads. `Quad` has no `PartialEq`, so compare the `Debug` output.
+    let scene = format!(
+        "{:?}",
+        (
+            window.viewport_size(),
+            window.scale_factor(),
+            window.painted_quads(),
+            window.painted_underlines(),
+        )
+    );
+    if cache.as_ref().is_none_or(|(last, _)| *last != scene) {
+        *cache = Some((scene, paint(window)));
+    }
+    &cache.as_ref().expect("filled above").1
+}
+
+/// Rasterizes the scene of the last draw.
+fn paint(window: &Window) -> Frame {
     let scale = window.scale_factor();
     let vp = window.viewport_size();
     let width = (f32::from(vp.width) * scale).round() as u32;

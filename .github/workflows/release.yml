@@ -43,7 +43,9 @@ jobs:
           persist-credentials: false
           # ビルド番号（HEAD までの通算コミット数）を算出するため全履歴を取得
           fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.100.1
       # リリース対象タグ（TAG）、ビルド実行フラグ（BUILD）、およびリリース発行フラグ（PUBLISH）の決定
       - name: Decide the release
         env:
@@ -143,6 +145,9 @@ jobs:
           mv "pr-installer/nyaw-${TAG#v}-setup.exe" target/installer/
           echo "::notice::reusing the installer built by run $run for $head"
           echo "BUILD=" >> "$GITHUB_ENV"
+      # rust-cache はインストール済みの全バージョンをキーに含める。runner の stable を残すと、runner の更新でキーが変わる
+      - if: env.BUILD == '1'
+        run: rustup toolchain uninstall stable
       - if: env.BUILD == '1'
         id: cache
         uses: Swatinem/rust-cache@v2

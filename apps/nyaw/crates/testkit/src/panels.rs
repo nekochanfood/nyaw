@@ -18,6 +18,8 @@ pub(crate) struct Panels<V: 'static> {
     pub(crate) views: Vec<Option<Entity<V>>>,
     pub(crate) windows: Vec<AnyWindowHandle>,
     bridges: HashMap<(PanelId, Hand), PointerBridge>,
+    /// Each panel's last rasterized frame.
+    frames: HashMap<PanelId, Option<raster::Cached>>,
     /// If `Some`, shows each panel's rendering in a window (`NYAW_E2E_WATCH`).
     pub(crate) watch: Option<Watch>,
 }
@@ -28,6 +30,7 @@ impl<V: Render> Panels<V> {
             views: Vec::new(),
             windows: Vec::new(),
             bridges: HashMap::new(),
+            frames: HashMap::new(),
             watch,
         }
     }
@@ -121,12 +124,20 @@ impl<V: Render> Panels<V> {
         }
         cx.run_until_parked();
         for (panel, window) in self.windows.iter().copied().enumerate() {
+            // As in production (`ui::run`), closed panels are not drawn. Screens that open and close (the tutorial)
+            // leave many behind.
+            if kernel.panel(panel).closed {
+                continue;
+            }
+            let cache = self.frames.entry(panel).or_default();
             let frame = cx
                 .cx
-                .update_window(window, |_, window, cx| raster::capture(window, cx))
+                .update_window(window, |_, window, cx| {
+                    raster::capture_cached(window, cx, cache)
+                })
                 .unwrap();
             if let Some(w) = &mut self.watch {
-                w.show(panel, &frame);
+                w.show(panel, frame);
             }
             kernel.submit(panel, frame.width, frame.height, &frame.rgba);
         }
