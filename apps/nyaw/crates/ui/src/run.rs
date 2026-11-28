@@ -502,6 +502,8 @@ pub fn run_with(
                 }
                 let open = slots.open.len();
                 cx.update(|cx| {
+                    // ウィンドウの更新の外で呼ぶ。更新中のウィンドウのアトラスには適用されない。
+                    design::images::sweep(cx);
                     let c = cx.default_global::<PanelControl>();
                     (c.open, c.limit) = (open, limit);
                 });

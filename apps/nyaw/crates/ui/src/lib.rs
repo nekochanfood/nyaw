@@ -1,9 +1,7 @@
 //! Layer 4: UI 層。各オーバーレイパネルを GPUI の非表示ウィンドウで描画し、
 //! レーザーイベントを GPUI のマウス入力へ変換して、描画結果をカーネルに返す。
 
-pub use kernel::rendering::gpui::{
-    Frame, capture, collect, read_back, render_image, set_render_lod,
-};
+pub use kernel::rendering::gpui::{Frame, capture, collect, read_back, set_render_lod};
 mod cue;
 pub mod keyboard;
 mod link;
@@ -14,7 +12,7 @@ pub mod prefs;
 mod quit;
 pub mod swipe;
 pub mod tour;
-pub use panel_window::{open_panel_window, panel_window_options};
+pub use panel_window::{open_panel_window, panel_window_options, render_image};
 pub use quit::{QuitDialog, quit_dialog};
 
 use std::{

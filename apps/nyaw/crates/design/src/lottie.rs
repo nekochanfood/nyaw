@@ -254,7 +254,9 @@ fn to_image(pixmap: lottie::Pixmap) -> Option<Arc<RenderImage>> {
         bgra.extend_from_slice(&[c.blue(), c.green(), c.red(), c.alpha()]);
     }
     let buffer = image::RgbaImage::from_raw(w, h, bgra)?;
-    Some(Arc::new(RenderImage::new(vec![image::Frame::new(buffer)])))
+    Some(crate::images::track(Arc::new(RenderImage::new(vec![
+        image::Frame::new(buffer),
+    ]))))
 }
 
 /// フルロゴのイントロの部品。高さで大きさを決め、幅は [`Logo::Full`] の縦横比から決める（静止画の [`crate::logo`] と同じ大きさ）。
