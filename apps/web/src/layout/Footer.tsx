@@ -1,14 +1,10 @@
 import { ArrowSquareOut } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
 import { GithubLogo } from "@phosphor-icons/react/dist/csr/GithubLogo";
 import { Link } from "@tanstack/react-router";
-import { createTimeline, onScroll, stagger, type Timeline } from "animejs";
-import { type ReactNode, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 
 import { useLocale, useT } from "@/i18n/index";
 import { ISSUES_URL, RELEASES_URL, REPO_URL } from "@/links";
-import { reducedMotion } from "@/motion/reducedMotion";
-import { usePageShown } from "@/motion/stage";
-import { REVEAL, REVEAL_STAGGER } from "@/motion/useReveal";
 import { ButtonAnchor } from "@/ui/Button";
 import { buttonClass, containerClass, cx, textClass } from "@/ui/variants";
 import { Logo } from "@/layout/Logo";
@@ -21,7 +17,7 @@ const linkClass = buttonClass({
 
 function Column({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div data-reveal data-footer-side="left" className="flex min-w-36 flex-col gap-1.5">
+    <div className="flex min-w-36 flex-col gap-1.5">
       <h2 className="py-1 text-sm font-bold">{title}</h2>
       {children}
     </div>
@@ -46,40 +42,8 @@ export function Footer() {
   const t = useT("footer");
   const nav = useT("nav");
   const locale = useLocale();
-  const ref = useRef<HTMLElement>(null);
-  const shown = usePageShown();
-  const timeline = useRef<Timeline | null>(null);
-
-  /*
-    画面に入ったら、本文のスクロールで現れる要素（useReveal）と同じ動きで浮かび上がる。左側（リンク、ライセンス）と
-    右側（ロゴ、GitHub のボタン）は同時に動き出し、左側は左にあるものから、右側は右にあるものから順に現れる
-    （横の位置が同じものは上から）。並びは画面の幅で変わるので、作るときの位置で決める。
-    フッターはページを移っても残るので、ページが表示されるたびに隠し直して作り直す。表示されるときは先頭まで
-    戻っているので、隠し直してもフッターは画面の外にある
-  */
-  useEffect(() => {
-    const root = ref.current;
-    if (!shown || !root || reducedMotion()) return;
-    timeline.current?.revert();
-    const side = (name: "left" | "right", from: "left" | "right") =>
-      [...root.querySelectorAll<HTMLElement>(`[data-footer-side="${name}"]`)]
-        .map((el) => ({ el, box: el.getBoundingClientRect() }))
-        .sort((a, b) =>
-          from === "left"
-            ? a.box.left - b.box.left || a.box.top - b.box.top
-            : b.box.right - a.box.right || a.box.top - b.box.top,
-        )
-        .map(({ el }) => el);
-    timeline.current = createTimeline({
-      autoplay: onScroll({ target: root, enter: "85% top", repeat: false }),
-    })
-      .add(side("left", "left"), { ...REVEAL, delay: stagger(REVEAL_STAGGER) }, 0)
-      .add(side("right", "right"), { ...REVEAL, delay: stagger(REVEAL_STAGGER) }, 0);
-  }, [shown]);
-  useEffect(() => () => void timeline.current?.revert(), []);
-
   return (
-    <footer ref={ref} className="w-full py-(--content-pad-x) md:frame-x">
+    <footer className="w-full py-(--content-pad-x) md:frame-x">
       <div className={cx(containerClass, "flex flex-col gap-12")}>
         <div className="flex flex-col-reverse gap-10 sm:flex-row sm:justify-between">
           <div className="flex flex-wrap gap-x-16 gap-y-8">
@@ -97,18 +61,12 @@ export function Footer() {
               <External href={ISSUES_URL}>{t("issues")}</External>
             </Column>
           </div>
-          <div data-reveal data-footer-side="right" className="self-start">
-            <Logo className="h-20 w-auto sm:h-28" />
-          </div>
+          <Logo className="h-20 w-auto self-start sm:h-28" />
         </div>
         <div className="flex items-end justify-between gap-6">
           <div className="flex flex-col gap-1">
-            <p data-reveal data-footer-side="left" className={textClass("muted")}>
-              {t("licence")}
-            </p>
-            <p data-reveal data-footer-side="left" className={textClass("muted")}>
-              {t("copyright")}
-            </p>
+            <p className={textClass("muted")}>{t("licence")}</p>
+            <p className={textClass("muted")}>{t("copyright")}</p>
           </div>
           <ButtonAnchor
             href={REPO_URL}
@@ -116,8 +74,6 @@ export function Footer() {
             rel="noopener"
             aria-label={nav("github")}
             variant="onFrame"
-            data-reveal
-            data-footer-side="right"
           >
             <GithubLogo size={20} />
           </ButtonAnchor>

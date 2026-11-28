@@ -4,10 +4,6 @@ import { type RefObject, useEffect } from "react";
 import { reducedMotion } from "@/motion/reducedMotion";
 import { usePageShown } from "@/motion/stage";
 
-/** スクロールで現れる要素の動き。下から浮かび上がる。並んだ要素は `REVEAL_STAGGER`（ms）ずつずらす */
-export const REVEAL = { opacity: [0, 1], y: [24, 0], duration: 700, ease: "out(3)" };
-export const REVEAL_STAGGER = 80;
-
 /**
  * `ref` の中の `[data-reveal]` を、画面の下から 85% の位置まで来たときに順に浮かび上がらせる（1 回だけ）。
  * ページのフェードインと同時に始める。それまでは styles.css が隠している（JavaScript が動き、
@@ -20,8 +16,11 @@ export function useReveal(ref: RefObject<HTMLElement | null>) {
     if (!shown || !root || reducedMotion()) return;
     const anims = [...root.querySelectorAll<HTMLElement>("[data-reveal-group]")].map((group) =>
       animate(group.querySelectorAll("[data-reveal]"), {
-        ...REVEAL,
-        delay: stagger(REVEAL_STAGGER),
+        opacity: [0, 1],
+        y: [24, 0],
+        duration: 700,
+        delay: stagger(80),
+        ease: "out(3)",
         autoplay: onScroll({ target: group, enter: "85% top", repeat: false }),
       }),
     );
