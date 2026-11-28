@@ -137,7 +137,7 @@ fn launching_app_opens_a_waiting_screen_that_starts_mirroring(cx: &mut TestAppCo
         bar.read(cx)
             .streams
             .iter()
-            .map(|s| s.panel)
+            .filter_map(|s| s.panel())
             .collect::<Vec<_>>()
     });
     assert_eq!(streams, [4], "バーに配信ボタンが追加されるはず");
@@ -272,7 +272,7 @@ fn choosing_a_source_docks_its_mirror_without_closing_the_dashboard(cx: &mut Tes
         bar.read(cx)
             .streams
             .iter()
-            .map(|s| s.panel)
+            .filter_map(|s| s.panel())
             .collect::<Vec<_>>()
     });
     assert_eq!(streams, [4]);

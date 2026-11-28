@@ -56,7 +56,7 @@ impl Dashboard {
             Err(e) => logger::warn!("cannot list installed apps", error = e),
         })
         .detach();
-        // モニター一覧の取得完了後、すべてを配信として事前に開く。非表示中は描画しないため、描画とは別に待機する。
+        // モニター一覧の取得完了後、すべてのモニターのボタンをバーに並べる。配信パネルは初めて押したときに作る。
         // テストでは取得しない（OS 一覧の到着タイミングがテストの同期と競合し、配信の開閉状態が非決定的になる）。
         let preload = if cfg!(test) {
             None
@@ -75,7 +75,7 @@ impl Dashboard {
                 };
                 match sources {
                     Ok(sources) => {
-                        let _ = this.update(cx, |d, cx| d.open_screens(sources, cx));
+                        let _ = this.update(cx, |d, cx| d.list_screens(sources, cx));
                     }
                     Err(e) => logger::warn!("cannot list screens to mirror", error = e),
                 }
@@ -159,11 +159,7 @@ impl Dashboard {
             close(id, cx);
             self.overflow_menu = None;
         } else {
-            let streams: Vec<_> = self
-                .overflow()
-                .iter()
-                .map(|s| (s.panel, s.name.clone(), s.kind, s.icon.clone()))
-                .collect();
+            let streams = self.overflow().to_vec();
             let (bar, dashboard) = (self.panel, cx.weak_entity());
             let rows = streams.len();
             let (size, res) = overflow_size(rows);
@@ -217,33 +213,62 @@ impl Dashboard {
         resident: bool,
         cx: &mut Context<Self>,
     ) {
-        self.streams.push(Stream {
-            panel,
-            kind,
-            name,
-            icon,
-            stashed: resident,
+        // 先にボタンを並べたモニターは、同じ項目にパネルを割り当てる。
+        let listed = self.streams.iter_mut().find(|s| {
+            matches!(&s.target, Target::Screen(source)
+                if mirror_of(source, cx).is_some_and(|(id, _)| id == panel))
         });
+        match listed {
+            Some(stream) => stream.target = Target::Panel(panel),
+            None => self.streams.push(Stream {
+                key: stream_key(panel),
+                target: Target::Panel(panel),
+                kind,
+                name,
+                icon,
+                stashed: resident,
+            }),
+        }
         ui::notify(self.panel, cx);
     }
 
-    /// すべてのモニターを常駐配信として非表示で事前に開く（バーのボタンで表示可能。クローズせず格納する）。
-    /// 既に配信中のものは開かない。
-    fn open_screens(&mut self, mut sources: Vec<Source>, cx: &mut Context<Self>) {
+    /// すべてのモニターのボタンを常駐配信としてバーに並べる。配信パネルは作らない（[`Self::activate`]）。
+    /// 起動直後の GPU メモリーとキャプチャを節約する。既に配信中のモニターは並べない。
+    fn list_screens(&mut self, mut sources: Vec<Source>, cx: &mut Context<Self>) {
         sources.sort_by(|a, b| a.name.cmp(&b.name));
-        for source in sources {
-            if source.kind == SourceKind::Screen
-                && source.concrete()
-                && mirror_of(&source, cx).is_none()
-            {
-                let spec = mirror_spec(
-                    source,
-                    None,
-                    Some(cx.weak_entity()),
-                    self.panel,
-                    true,
-                    false,
-                );
+        let screens = sources
+            .into_iter()
+            .filter(|s| s.kind == SourceKind::Screen && s.concrete() && mirror_of(s, cx).is_none());
+        let screens: Vec<_> = screens.collect();
+        self.streams
+            .extend(screens.into_iter().enumerate().map(|(i, source)| Stream {
+                key: format!("dashboard-screen-{i}").into(),
+                kind: source.kind,
+                name: source.name.clone().into(),
+                icon: None,
+                stashed: true,
+                target: Target::Screen(source),
+            }));
+        ui::notify(self.panel, cx);
+    }
+
+    /// まだ配信パネルを作っていないモニター `source` のボタンがバーにあるか。
+    pub(crate) fn lists_screen(&self, source: &Source) -> bool {
+        self.streams
+            .iter()
+            .any(|s| matches!(&s.target, Target::Screen(listed) if listed.same_target(source)))
+    }
+
+    /// バーの配信ボタン `key` を押した。パネルがあればドッキングと格納を切り替え、まだなければ常駐配信を作ってドッキングする。
+    pub(crate) fn activate(&mut self, key: &str, cx: &mut Context<Self>) {
+        let Some(stream) = self.streams.iter().find(|s| s.key.as_ref() == key) else {
+            return;
+        };
+        match stream.target.clone() {
+            Target::Panel(id) => self.toggle_stream(id, cx),
+            Target::Screen(source) => {
+                let dashboard = Some(cx.weak_entity());
+                let spec = mirror_spec(source, None, dashboard, self.panel, true, true);
                 cx.default_global::<PanelControl>().spawns.push(spec);
             }
         }
@@ -265,7 +290,7 @@ impl Dashboard {
 
     /// 配信 `id` を、クローズせず非表示にして取り外す。配信でなければ何もしない。
     pub(crate) fn stash(&mut self, id: PanelId, cx: &mut Context<Self>) {
-        let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) else {
+        let Some(stream) = self.streams.iter_mut().find(|s| s.panel() == Some(id)) else {
             return;
         };
         stream.stashed = true;
@@ -291,12 +316,12 @@ impl Dashboard {
             && let Some(previous) = previous
             && [previous, id]
                 .iter()
-                .all(|p| self.streams.iter().any(|s| s.panel == *p))
+                .all(|p| self.streams.iter().any(|s| s.panel() == Some(*p)))
         {
             ui::keyboard::hand_over_os_keyboard(previous, id, cx);
         }
         self.stash_docked(cx);
-        if !docked && let Some(stream) = self.streams.iter_mut().find(|s| s.panel == id) {
+        if !docked && let Some(stream) = self.streams.iter_mut().find(|s| s.panel() == Some(id)) {
             stream.stashed = false;
             // 非表示のままドッキングしてから表示する。先に表示すると、非表示時の位置（その後ダッシュボードを移動していれば遠方）から
             // ドッキング位置へスライド・回転して入ってくる。
@@ -317,7 +342,7 @@ impl Dashboard {
 
     /// 配信 `id` がダッシュボードの配信で、未ドッキングならドッキングする（独立状態のものは移動しない）。
     pub(crate) fn show_stream(&mut self, id: PanelId, cx: &mut Context<Self>) {
-        if ui::docked(cx) != Some(id) && self.streams.iter().any(|s| s.panel == id) {
+        if ui::docked(cx) != Some(id) && self.streams.iter().any(|s| s.panel() == Some(id)) {
             self.toggle_stream(id, cx);
         }
     }
@@ -325,8 +350,10 @@ impl Dashboard {
     /// クローズ済み配信のボタンを除去する。独立状態のものは残す（ボタンで復帰可能）。
     fn prune_streams(&mut self, cx: &App) {
         let ctl = cx.global::<PanelControl>();
-        self.streams
-            .retain(|s| !ctl.panels.get(&s.panel).is_some_and(|p| p.status.closed));
+        self.streams.retain(|s| {
+            !s.panel()
+                .is_some_and(|id| ctl.panels.get(&id).is_some_and(|p| p.status.closed))
+        });
     }
 
     /// 現在ドッキング中の画面。
@@ -483,13 +510,33 @@ fn quick_settings_width(time_width: f32, count: Option<f32>) -> f32 {
 /// ダッシュボードで開いた配信。
 #[derive(Clone)]
 pub(crate) struct Stream {
-    pub(crate) panel: PanelId,
-    kind: SourceKind,
-    name: SharedString,
+    /// ボタンの識別子。パネルを作る前と後で変わらないので、ボタンが出入りしない。
+    pub(crate) key: SharedString,
+    pub(crate) target: Target,
+    pub(crate) kind: SourceKind,
+    pub(crate) name: SharedString,
     /// ウィンドウのアプリアイコン（取得できなければウィンドウアイコンで代替）。
-    icon: Option<Arc<RenderImage>>,
+    pub(crate) icon: Option<Arc<RenderImage>>,
     /// 他の配信を選択したため非表示にして取り外した状態。
     pub(crate) stashed: bool,
+}
+
+impl Stream {
+    /// 配信パネル。まだ一度も開いていないモニターは `None`。
+    pub(crate) fn panel(&self) -> Option<PanelId> {
+        match self.target {
+            Target::Panel(id) => Some(id),
+            Target::Screen(_) => None,
+        }
+    }
+}
+
+/// 配信ボタンが指すもの。
+#[derive(Clone)]
+pub(crate) enum Target {
+    Panel(PanelId),
+    /// まだ配信パネルを作っていないモニター。
+    Screen(Source),
 }
 
 /// バーの区切り線の高さ（px）。
@@ -522,7 +569,7 @@ impl Render for Dashboard {
         let streams_now = with_leaving(
             self.streams.clone(),
             &self.prev_streams,
-            |s| stream_key(s.panel),
+            |s| s.key.clone(),
             &mut enter,
             now_at,
         );
@@ -557,8 +604,7 @@ impl Render for Dashboard {
             .into_iter()
             .enumerate()
             .map(|(i, (s, leaving))| {
-                let id = s.panel;
-                let variant = if docked == Some(id) {
+                let variant = if docked.is_some() && docked == s.panel() {
                     Variant::Primary
                 } else {
                     Variant::Default
@@ -576,7 +622,8 @@ impl Render for Dashboard {
                         .size(px(font_size::LG))
                         .into_any_element(),
                 };
-                let key = stream_key(id);
+                let key = s.key.clone();
+                let pressed = s.key.clone();
                 let t = if *leaving {
                     enter.progress_out(&key, now_at)
                 } else {
@@ -588,11 +635,12 @@ impl Render for Dashboard {
                     components::round_button(&theme, key, s.name.clone(), variant)
                         .flex_none()
                         .child(glyph)
-                        .on_click(cx.listener(move |this, _, _, cx| this.toggle_stream(id, cx))),
+                        .on_click(cx.listener(move |this, _, _, cx| this.activate(&pressed, cx))),
                 )
             })
             .collect();
-        let overflow_docked = self.overflow().iter().any(|s| docked == Some(s.panel));
+        let overflow_docked =
+            docked.is_some() && self.overflow().iter().any(|s| docked == s.panel());
         let overflow_button = (!self.overflow().is_empty()).then(|| {
             let key = SharedString::from("dashboard-stream-overflow");
             let t = enter.progress(&key, stream_slot + 1 + shown, now_at);
