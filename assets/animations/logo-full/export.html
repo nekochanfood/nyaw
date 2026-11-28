@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>フルロゴのイントロ（書き出し）</title>
+    <!-- export.mjs がヘッドレスの Chrome で開く。review.html と同じ lottie-web の SVG の描画を使う -->
+    <script src="https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie_svg.min.js"></script>
+  </head>
+  <body>
+    <div id="anim"></div>
+    <script>
+      // 各フレームを SVG のまま画像として読み、背景色を敷いた canvas に描いて、PNG を export.mjs に送る
+      const params = new URLSearchParams(location.search);
+      const theme = params.get("theme");
+      const scale = Number(params.get("scale"));
+      const background = params.get("bg");
+      const container = document.getElementById("anim");
+      const anim = lottie.loadAnimation({ container, renderer: "svg", autoplay: false, loop: false, path: `./logo-full-${theme}.json` });
+
+      anim.addEventListener("DOMLoaded", async () => {
+        const width = anim.animationData.w * scale;
+        const height = anim.animationData.h * scale;
+        const canvas = Object.assign(document.createElement("canvas"), { width, height });
+        const ctx = canvas.getContext("2d");
+        for (let frame = 0; frame < anim.totalFrames; frame++) {
+          anim.goToAndStop(frame, true);
+          const svg = container.querySelector("svg").cloneNode(true);
+          svg.setAttribute("style", `width:${width}px;height:${height}px`);
+          const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(svg)], { type: "image/svg+xml" }));
+          const image = new Image();
+          image.src = url;
+          await image.decode();
+          ctx.fillStyle = background;
+          ctx.fillRect(0, 0, width, height);
+          ctx.drawImage(image, 0, 0, width, height);
+          URL.revokeObjectURL(url);
+          const png = await new Promise((resolve) => canvas.toBlob(resolve, "image/png"));
+          await fetch(`/export/frame/${frame}`, { method: "POST", body: png });
+        }
+        await fetch("/export/done", { method: "POST" });
+      });
+    </script>
+  </body>
+</html>
