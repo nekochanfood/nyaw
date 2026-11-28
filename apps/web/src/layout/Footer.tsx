@@ -40,8 +40,8 @@ export function Footer() {
   const locale = useLocale();
   return (
     <footer className="frame-x pt-14 pb-12">
-      {/* 左右の余白は sm 以上でだけ本文とそろえる。sm 未満では、帯の内側の端（本文のカードの端）にそろえる */}
-      <div className="flex w-full flex-col gap-12 sm:px-8">
+      {/* 左右の余白は持たず、帯の内側の端（本文のカードの端）にそろえる */}
+      <div className="flex w-full flex-col gap-12">
         <div className="flex flex-col-reverse gap-10 sm:flex-row sm:justify-between">
           <div className="flex flex-wrap gap-x-16 gap-y-8">
             <Column title={t("title_product")}>
