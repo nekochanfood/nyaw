@@ -13,7 +13,8 @@ const DARK_QUERY = "(prefers-color-scheme: dark)";
  */
 export const themeScript = `try{var t=localStorage.getItem("${STORAGE_KEY}");if(t==="light"||t==="dark")document.documentElement.dataset.theme=t}catch(e){}`;
 
-function current(): Theme {
+/** 表示中のテーマ。ブラウザーでだけ呼べる */
+export function currentTheme(): Theme {
   const set = document.documentElement.dataset.theme;
   if (set === "light" || set === "dark") return set;
   return matchMedia(DARK_QUERY).matches ? "dark" : "light";
@@ -32,7 +33,7 @@ function subscribe(notify: () => void) {
 
 /** 表示中のテーマ。サーバーでは決まらないので `null` を返す */
 export function useTheme(): Theme | null {
-  return useSyncExternalStore(subscribe, current, () => null);
+  return useSyncExternalStore(subscribe, currentTheme, () => null);
 }
 
 /**
