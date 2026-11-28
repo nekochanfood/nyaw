@@ -147,7 +147,7 @@ pub fn run_with(
         // トランジション有効化前のため、起動時のテーマはアニメーションなしで確定する。
         sync_settings(&mut kernel, cx);
         // 部品のトランジションを有効化する（テストキットでは設定しない）。
-        cx.set_global(design::Motion::default());
+        cx.set_global(design::Motion::driven());
         design::font::install(cx);
         design::corner::install();
         // キーボード初回表示時にディスクから配列を読み始めると、完了までキーのないカードが表示される。事前に読み込む。
@@ -196,6 +196,11 @@ pub fn run_with(
                 }
                 let mut inputs: HashMap<PanelId, Vec<(Hand, PlatformInput)>> = HashMap::new();
                 let gpui_inputs = pump(&mut kernel, &mut bridges);
+                // アニメーションの描き直しの間隔は、ランタイムの待ち（vsync）が明けたこの時刻から数える。
+                cx.update(|cx| {
+                    cx.global_mut::<design::Motion>()
+                        .begin_frame(design::drive::now())
+                });
                 for (panel, hand, input) in gpui_inputs {
                     inputs.entry(panel).or_default().push((hand, input));
                 }
@@ -333,12 +338,11 @@ pub fn run_with(
                                     ..b
                                 } != status
                             });
-                        // 部品やテーマ切替のトランジション実行中は毎フレーム再描画する。
+                        // 部品のアニメーションは要求した時刻に、テーマ切替のトランジション中は毎フレーム再描画する。
                         let transitioning = cx.has_global::<design::Motion>()
                             && cx
                                 .global_mut::<design::Motion>()
-                                .animating
-                                .remove(&window.window_handle().window_id())
+                                .take_due(window.window_handle().window_id())
                             || design::Theme::fading(cx);
                         // 要求された再描画は非表示であれば破棄する（表示された瞬間に再描画する）。
                         asked = cx.has_global::<PanelControl>()
@@ -395,6 +399,10 @@ pub fn run_with(
                         }
                         if redraw {
                             let t = Instant::now();
+                            if cx.has_global::<design::Motion>() {
+                                cx.global_mut::<design::Motion>()
+                                    .drawing(window.window_handle().window_id());
+                            }
                             window.draw(cx).clear(cx);
                             let scene = Instant::now();
                             // 読み戻しは GPU 完了を待たず 1 フレーム遅れで返す。描画結果は次のフレームで受け取る。

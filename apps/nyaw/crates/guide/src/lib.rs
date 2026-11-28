@@ -3,6 +3,7 @@
 //! 詳細は `AGENT.md`。
 
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use design::animation::Motion;
 use design::{Theme, font_size, spacing};
@@ -618,6 +619,13 @@ const ENTER_DELAY: f32 = 0.15;
 const ENTER: f32 = 0.6;
 const ENTER_RISE: f32 = 0.12;
 
+/// 時刻 `t`（秒）が、周期の中で波紋の出ていない合間なら、次の周期の波紋が始まるまでの秒。
+fn rest(t: f32) -> Option<f32> {
+    let t = t.rem_euclid(TAP_PERIOD);
+    // 境界の丸めがずれないよう、[`double_tap`] と同じ引き算で比べる。
+    (t - TAPS[1] >= PRESS + RIPPLE).then_some(TAP_PERIOD - t)
+}
+
 /// 周期の中の時刻 `t`（秒）での波紋（大きさ・濃さ。大きさ 1 がボタンを囲む円。出ていなければ濃さ 0）。
 /// 押すと透明から現れつつ内へ沈み（[`PRESS`]）、離すと外へ広がり、広がる間は濃いまま終わり際に消える（[`RIPPLE`]）。
 pub fn double_tap(t: f32) -> [(f32, f32); 2] {
@@ -734,8 +742,16 @@ impl RenderOnce for Zoom {
             .flat_map(|p| parts(self.model, self.hand, p))
             .filter(|p| p.visible)
             .collect();
-        if !found.is_empty() || shown < 1.0 {
+        // 登場の間は毎フレーム、波紋は装飾の頻度で描き、波紋の出ない合間は次の波紋まで描かない。
+        if shown < 1.0 {
             design::drive::keep_drawing(window, cx);
+        } else if !found.is_empty() {
+            match rest(t) {
+                Some(rest) => {
+                    design::drive::draw_at(now + Duration::from_secs_f32(rest), window, cx)
+                }
+                None => design::drive::keep_drawing_decor(window, cx),
+            }
         }
         let circle = |c: Point<f32>, r: f32, w: f32, color: Hsla| {
             div()
@@ -996,6 +1012,26 @@ mod tests {
         assert!(both.iter().all(|(_, a)| *a > 0.0), "{both:?}");
         let (a, b) = (double_tap(0.1)[0], double_tap(0.1 + TAP_PERIOD)[0]);
         assert!((a.0 - b.0).abs() < 1e-4, "繰り返す");
+    }
+
+    /// 合間と判定した時刻から次の波紋の始まりまで、波紋は一度も出ない。波紋が出ている間は合間ではない。
+    #[test]
+    fn rest_covers_only_the_time_without_ripples() {
+        let visible = |t: f32| double_tap(t).iter().any(|(_, a)| *a > 0.0);
+        let (mut rests, mut shown) = (0, 0);
+        for n in 0..720 {
+            let t = n as f32 * 0.005;
+            if let Some(rest) = rest(t) {
+                rests += 1;
+                assert!((0..20).all(|k| !visible(t + rest * k as f32 / 20.0)), "{t}");
+                assert!(visible(t + rest + 0.05), "{t}: the next ripple starts");
+            }
+            if visible(t) {
+                shown += 1;
+                assert_eq!(rest(t), None, "{t}");
+            }
+        }
+        assert!(rests > 0 && shown > 0);
     }
 
     /// 登場: 少し待ってから、減速しつつ現れきる。

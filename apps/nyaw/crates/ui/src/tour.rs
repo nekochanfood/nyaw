@@ -110,7 +110,7 @@ pub(crate) fn mask(panel: PanelId, window: &mut Window, cx: &mut App) -> Option<
     let (spots, marks) = (f.spots.clone(), f.marks.clone());
     let accent = gpui::Hsla::from(gpui::rgba(design::Theme::current(cx).accent_solid));
     if lit {
-        design::drive::keep_drawing(window, cx);
+        design::drive::keep_drawing_decor(window, cx);
     }
     let pulse = (design::drive::now()
         .duration_since(*EPOCH.get_or_init(Instant::now))
