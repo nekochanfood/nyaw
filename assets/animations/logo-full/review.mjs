@@ -9,7 +9,7 @@ import { dirname, extname, join, normalize } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../..");
-const TYPES = { ".html": "text/html", ".json": "application/json", ".svg": "image/svg+xml", ".js": "text/javascript" };
+const TYPES = { ".html": "text/html", ".json": "application/json", ".svg": "image/svg+xml", ".js": "text/javascript", ".webp": "image/webp" };
 
 // assets を配信するサーバーを立てる。handle(req, res) が true を返したリクエストは、配信せずにそちらに任せる。
 // port に 0 を渡すと空いているポートを使う。立ち上がったら、そのサーバーを返す

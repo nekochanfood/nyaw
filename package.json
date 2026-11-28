@@ -1,5 +1,9 @@
 {
   "name": "nyaw-monorepo",
   "private": true,
+  "scripts": {
+    "logo:review": "node assets/animations/logo-full/review.mjs",
+    "logo:webp": "node assets/animations/logo-full/export.mjs --webp"
+  },
   "packageManager": "pnpm@12.23.0"
 }

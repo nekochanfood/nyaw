@@ -1,7 +1,9 @@
 // イントロを MP4 かアニメーション WebP に書き出す。ヘッドレスの Chrome で export.html を開いて 1 フレームずつ PNG にし、ffmpeg でまとめる。
 // 実行: node assets/animations/logo-full/export.mjs [light|dark] [--webp] [--scale n] [--bg #rrggbb]
-// テーマを省くと両方を書き出す。出力は assets/animations/logo-full/out/logo-full-<テーマ>.mp4。
-// --webp は透過の logo-full-<テーマ>.webp を、このディレクトリに書き出す（1 回だけ再生し、完成形で止まる）。README は light を使う。
+// README の WebP を作り直すだけなら: node --run logo:webp
+// 書き出す前に build.mjs で JSON を作り直すので、古い JSON から書き出すことはない。
+// テーマを省くと、MP4 は両方、WebP は README が使う light だけを書き出す。MP4 の出力は assets/animations/logo-full/out/logo-full-<テーマ>.mp4。
+// --webp は透過の logo-full-<テーマ>.webp を、このディレクトリに書き出す（1 回だけ再生し、完成形で止まる）。
 // 倍率の既定は MP4 が 2 倍、WebP は容量を抑えるため 1.5 倍
 // Chrome と ffmpeg が要る。Chrome の場所は環境変数 CHROME で変えられる。
 // MP4 は透明を持てないので、背景色を敷く（既定はレビューのページと同じ色）
@@ -32,7 +34,7 @@ const { values, positionals } = parseArgs({
   allowPositionals: true,
   options: { scale: { type: "string" }, bg: { type: "string" }, webp: { type: "boolean", default: false } },
 });
-const themes = positionals.length > 0 ? positionals : ["light", "dark"];
+const themes = positionals.length > 0 ? positionals : values.webp ? ["light"] : ["light", "dark"];
 const scale = Number(values.scale ?? (values.webp ? 1.5 : 2));
 for (const theme of themes) if (!(theme in BACKGROUNDS)) throw new Error(`テーマは light か dark: ${theme}`);
 if (!(scale > 0)) throw new Error(`--scale は正の数: ${values.scale}`);
@@ -80,6 +82,8 @@ async function renderFrames(theme, background, frames) {
   }
 }
 
+// build.mjs は、読み込むだけで JSON を生成する
+await import("./build.mjs");
 await mkdir(join(HERE, "out"), { recursive: true });
 for (const theme of themes) {
   const work = await mkdtemp(join(tmpdir(), "logo-full-"));

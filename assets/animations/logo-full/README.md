@@ -13,17 +13,19 @@
 ## 生成、レビュー、書き出し
 
 ```sh
-node assets/animations/logo-full/build.mjs    # JSON を作り直す
-node assets/animations/logo-full/review.mjs   # http://localhost:4173/animations/logo-full/review.html を開く
-node assets/animations/logo-full/export.mjs   # out/ に MP4 を書き出す
-node assets/animations/logo-full/export.mjs light --webp   # README 用の WebP を作り直す
+node --run logo:webp                          # JSON と README 用の WebP を作り直す
+node --run logo:review                        # http://localhost:4173/animations/logo-full/review.html を開く
+node assets/animations/logo-full/build.mjs    # JSON だけを作り直す
+node assets/animations/logo-full/export.mjs   # JSON を作り直し、out/ に MP4 を書き出す
 ```
+
+`pnpm run` でも動くが、依存のインストールが先に走ることがある。これらのスクリプトに依存はないので、`node --run` を使う。
 
 レビューのページでは、再生と一時停止、フレーム単位のシーク、速さの変更、テーマの切り替えができ、隣に静止画のロゴを並べて最後のフレームと見比べられる。`?theme=dark&frame=40` を付けると、そのフレームで止まり操作部が隠れるので、ヘッドレスのブラウザーで撮影できる。
 
-MP4 の書き出しは、ヘッドレスの Chrome でレビューのページと同じ描画を 1 フレームずつ PNG にし、ffmpeg で動画にまとめる。Chrome と ffmpeg が要る（Chrome の場所は環境変数 `CHROME` で変えられる）。テーマを `light` か `dark` で指定でき、省くと両方を書き出す。`--scale` で倍率（既定は MP4 が 2 倍、WebP が 1.5 倍）、`--bg` で背景色を変えられる。MP4 は透明を持てないので背景色を敷き、既定はレビューのページの背景と同じ色にする。出力先の `out/` は Git に入れない。
+MP4 の書き出しは、ヘッドレスの Chrome でレビューのページと同じ描画を 1 フレームずつ PNG にし、ffmpeg で動画にまとめる。Chrome と ffmpeg が要る（Chrome の場所は環境変数 `CHROME` で変えられる）。テーマを `light` か `dark` で指定でき、省くと MP4 は両方、WebP は light だけを書き出す。`--scale` で倍率（既定は MP4 が 2 倍、WebP が 1.5 倍）、`--bg` で背景色を変えられる。MP4 は透明を持てないので背景色を敷き、既定はレビューのページの背景と同じ色にする。出力先の `out/` は Git に入れない。
 
-GitHub の README は Lottie を再生できないので、`--webp` で透過のアニメーション WebP を書き出して貼る。60fps で 1 回だけ再生して完成形で止まる。GitHub ではテーマに合わせた画像の切り替えが効かないことがあるので、light に固定する。ロゴを描き直したり動きを変えたりしたら、これも作り直す。
+GitHub の README は Lottie を再生できないので、`node --run logo:webp`（`export.mjs --webp`）で透過のアニメーション WebP を書き出して貼る。60fps で 1 回だけ再生して完成形で止まる。GitHub ではテーマに合わせた画像の切り替えが効かないことがあるので、light に固定する。ロゴを描き直したり動きを変えたりしたら、これも作り直す。
 
 lottie-web は、レビューと書き出しのページが CDN から読む。
 
