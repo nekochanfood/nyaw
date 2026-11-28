@@ -72,6 +72,8 @@ pub enum PanelCommand {
     Reach(Option<f32>),
     /// このパネルだけ、全体の設定によらずこの方式でポインタを流す（[`Kernel::panel_pointer_mode`]）。
     PointerMode(PointerMode),
+    /// このパネルには右・中クリックもそのまま流す（[`Kernel::panel_mouse_buttons`]）。
+    MouseButtons,
     /// 掴んだとき、手で動かして頭へ向ける基準（このパネルから見た姿勢。`Overlay::set_grab_anchor`）。
     GrabAnchor(Option<Pose>),
     /// 掴む基準を付け替え、今の基準（無ければ中心）のあった所に新しい基準が来るようにパネルを動かす
@@ -437,6 +439,8 @@ pub struct Kernel<B: VrBackend = Box<dyn VrBackend>> {
     close_sounds: std::collections::HashMap<PanelId, audio::Sound>,
     /// 全体の設定によらないポインタの方式（[`PanelCommand::PointerMode`]）。
     pointer_modes: std::collections::HashMap<PanelId, PointerMode>,
+    /// 右・中クリックを受け取るパネル（[`PanelCommand::MouseButtons`]）。
+    mouse_buttons: std::collections::BTreeSet<PanelId>,
     /// ロックダウンを取っているパネル（[`PanelCommand::Lockdown`]）。
     lockdown_holders: std::collections::BTreeSet<PanelId>,
     /// 距離によらず LOD0 で描くパネル（[`PanelCommand::FullDetail`]）。
@@ -622,6 +626,7 @@ impl<B: VrBackend> Kernel<B> {
             point_slots: Default::default(),
             close_sounds: Default::default(),
             pointer_modes: Default::default(),
+            mouse_buttons: Default::default(),
             lockdown_holders: Default::default(),
             full_detail: Default::default(),
             shortcut: DoublePress::default(),
@@ -650,6 +655,12 @@ impl<B: VrBackend> Kernel<B> {
             .get(&panel)
             .copied()
             .unwrap_or(self.pointer_mode)
+    }
+
+    /// `panel` が右・中クリックも受け取るか（[`PanelCommand::MouseButtons`]）。受け取らないパネルでは、どのクリックも
+    /// 通常のクリックにする。
+    pub fn panel_mouse_buttons(&self, panel: PanelId) -> bool {
+        self.mouse_buttons.contains(&panel)
     }
 
     /// ロックダウン中か: 開いているパネルのどれかがロックダウンを取っている（[`PanelCommand::Lockdown`]）。
@@ -1244,6 +1255,9 @@ impl<B: VrBackend> Kernel<B> {
             PanelCommand::Reach(reach) => self.overlay.set_reach(panel, reach),
             PanelCommand::PointerMode(mode) => {
                 self.pointer_modes.insert(panel, mode);
+            }
+            PanelCommand::MouseButtons => {
+                self.mouse_buttons.insert(panel);
             }
             PanelCommand::GrabAnchor(anchor) => self.overlay.set_grab_anchor(panel, anchor),
             PanelCommand::MoveGrabAnchor(anchor) => self.overlay.move_grab_anchor(panel, anchor),

@@ -731,6 +731,7 @@ impl Dashboard {
         .titled("tutorial.practice_title")
         .dockable()
         .with_os_keyboard()
+        .with_mouse_buttons()
         .source_minimizable(move |id, cx| {
             let _ = stash.update(cx, |d, cx| d.minimize(id, cx));
         });

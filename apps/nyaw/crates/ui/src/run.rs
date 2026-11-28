@@ -62,7 +62,12 @@ pub fn pump<B: VrBackend>(
         let distance = p.pose.position.distance(kernel.hmd().position);
         bridge.slop =
             SWIPE_SLOP_DEG.to_radians().tan() * distance * p.resolution.0 as f32 / p.size.x;
-        let input = bridge.translate(e.event, mode);
+        let event = if kernel.panel_mouse_buttons(e.panel) {
+            e.event
+        } else {
+            e.event.primary()
+        };
+        let input = bridge.translate(event, mode);
         if bridge.held() {
             // 長押しでドラッグに遷移した。他パネルへ移動可能にするため、オーバーレイのキャプチャを解除する。
             kernel.release_capture(e.hand);

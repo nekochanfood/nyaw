@@ -163,6 +163,9 @@ fn the_tour_walks_through_the_dashboard_screens_and_a_practice_mirror(cx: &mut T
     let practice = kit.find("practice-list").expect("practice window opened");
     assert!(at(&mut kit, "tutorial-step-Operate"));
     assert!(!kit.kernel.panel(practice).dimmed);
+    // Only the practice window, standing in for a mirrored app, takes right and middle clicks.
+    assert!(kit.kernel.panel_mouse_buttons(practice));
+    assert!(!kit.kernel.panel_mouse_buttons(dashboard));
 
     // The practice window takes any input (novr's controller left-clicks only: right and middle clicks need a
     // controller that reports a touched button).

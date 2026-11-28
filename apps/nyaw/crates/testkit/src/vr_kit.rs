@@ -29,6 +29,8 @@ struct VirtualController {
     held: Vec<Action>,
     /// How far the stick (trackpad) is tilted.
     stick: Vec2,
+    /// Raw inputs set with [`VrKit::input`].
+    inputs: Vec<(String, f32)>,
 }
 
 /// Resting position of the hands (slightly below the head, left and right). The laser is aimed from here at the target.
@@ -173,6 +175,17 @@ impl<'a, V: Render> VrKit<'a, V> {
         self.step()
     }
 
+    /// Sets a raw input of the current hand and steps one frame, for states that no [`Action`] expresses (a thumb
+    /// resting on a button, a half-pulled trigger). It stays until set again; 0 removes it.
+    pub fn input(&mut self, name: &str, value: f32) -> &mut Self {
+        let inputs = &mut self.ctrl().inputs;
+        inputs.retain(|(n, _)| n != name);
+        if value != 0.0 {
+            inputs.push((name.to_owned(), value));
+        }
+        self.step()
+    }
+
     /// Steps until a grab-move or a resize by a corner has caught up with the hand.
     pub fn settle(&mut self) -> &mut Self {
         for _ in 0..DRAG_SETTLE {
@@ -244,6 +257,7 @@ impl<'a, V: Render> VrKit<'a, V> {
                     aim: Pose::new(rest_position(hand), Quat::IDENTITY),
                     held: Vec::new(),
                     stick: Vec2::ZERO,
+                    inputs: Vec::new(),
                 });
                 self.controllers.len() - 1
             }
@@ -267,6 +281,7 @@ fn raw(c: &VirtualController) -> RawController {
             .unwrap_or_else(|| panic!("{} has no input corresponding to scrolling", c.profile));
         inputs.extend([(x.to_owned(), c.stick.x), (y.to_owned(), c.stick.y)]);
     }
+    inputs.extend(c.inputs.iter().cloned());
     RawController {
         hand: c.hand,
         profile: c.profile.clone(),
