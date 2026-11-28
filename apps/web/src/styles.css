@@ -110,14 +110,15 @@
   scroll-padding-top: var(--frame-top);
 
   /*
-    重なり順。ページ（__root の isolate の中）では、本文 < 本文の上下の端のぼかし < 帯 < ヘッダー < 最前面
-    （スキップリンク、遷移の進み具合の線）。ページの外（body の直下）に出すものは、ページの上に
+    重なり順。ページ（__root の isolate の中）では、本文 < 本文の上下の端のぼかし < 遷移の進み具合の線 < 帯
+    < ヘッダー < 最前面（スキップリンク）。進み具合の線は帯の下に置き、帯の内側の角丸で切り取らせる。ページの外（body の直下）に出すものは、ページの上に
     狭い画面のメニュー < ポップアップの順で重ねる。読み込み画面は CSS を読む前から描くので、自分で最前面に置く
   */
   --layer-edge-fade: 1;
-  --layer-frame: 2;
-  --layer-header: 3;
-  --layer-top: 4;
+  --layer-progress: 2;
+  --layer-frame: 3;
+  --layer-header: 4;
+  --layer-top: 5;
   --layer-menu: 1;
   --layer-popup: 2;
 }
