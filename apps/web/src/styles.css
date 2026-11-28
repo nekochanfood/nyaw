@@ -26,17 +26,18 @@
 
 /*
   色は Catppuccin。ライトは Latte、ダークはロゴと同じ Frappé の値を使う。使う色だけを --ctp-* に置き、ページの役割
-  （カード、帯、本文の文字など）に割り当てる。アクセントの Lavender は、選択範囲、フォーカスの枠、遷移の
-  進み具合の線など小さな面積に置く
+  （カード、帯、本文の文字など）に割り当てる。アクセントの Lavender は、選択範囲、フォーカスの枠など
+  小さな面積に置く。遷移の進み具合の線は Blue にする
 */
 :root {
   --ctp-base: light-dark(#eff1f5, #303446);
   --ctp-crust: light-dark(#dce0e8, #232634);
   --ctp-surface0: light-dark(#ccd0da, #414559);
-  --ctp-surface1: light-dark(#bcc0cc, #51576d);
+  --ctp-overlay0: light-dark(#9ca0b0, #737994);
   --ctp-subtext0: light-dark(#6c6f85, #a5adce);
   --ctp-text: light-dark(#4c4f69, #c6d0f5);
   --ctp-lavender: light-dark(#7287fd, #babbf1);
+  --ctp-blue: light-dark(#1e66f5, #8caaee);
 
   /* 本文のカード、ポップアップの面 */
   --card: var(--ctp-base);
@@ -49,7 +50,7 @@
   /* 細い区切り線、ポップアップの枠 */
   --neutral-border-subtle: var(--ctp-surface0);
   /* 読み込み画面の輪の地 */
-  --neutral-border: var(--ctp-surface1);
+  --neutral-border: var(--ctp-overlay0);
   /* カードの上の項目をホバー・選択したときの面 */
   --control-on-background: var(--ctp-surface0);
   /* ポップアップの影。ライトは Latte の Text、ダークは Frappé の Crust を薄くする */
@@ -71,6 +72,7 @@
   --color-tooltip: var(--tooltip);
   --color-on-tooltip: var(--on-tooltip);
   --color-ctp-lavender: var(--ctp-lavender);
+  --color-ctp-blue: var(--ctp-blue);
 
   --font-sans:
     "Gen Interface JP", Inter, "Noto Sans JP", "Hiragino Sans", "Yu Gothic UI", system-ui,

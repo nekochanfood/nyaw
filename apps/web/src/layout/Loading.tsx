@@ -169,14 +169,14 @@ function slide(node: HTMLElement, target: HTMLElement, cancelled: () => boolean)
 */
 const STYLE = `
 #loading-screen{position:fixed;inset:0;z-index:100;display:flex;align-items:center;justify-content:center;background:var(--card,#eff1f5)}
-#loading-screen>svg circle{stroke:var(--neutral-border,#bcc0cc)}
-#loading-screen>svg circle+circle{stroke:var(--ctp-lavender,#7287fd)}
+#loading-screen>svg circle{stroke:var(--neutral-border,#9ca0b0)}
+#loading-screen>svg circle+circle{stroke:var(--neutral-text,#4c4f69)}
 #loading-screen>svg{animation:loading-spin .8s linear infinite}
 @keyframes loading-spin{to{transform:rotate(360deg)}}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]) #loading-screen{background:var(--card,#303446)}:root:not([data-theme=light]) #loading-screen>svg circle{stroke:var(--neutral-border,#51576d)}:root:not([data-theme=light]) #loading-screen>svg circle+circle{stroke:var(--ctp-lavender,#babbf1)}}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]) #loading-screen{background:var(--card,#303446)}:root:not([data-theme=light]) #loading-screen>svg circle{stroke:var(--neutral-border,#737994)}:root:not([data-theme=light]) #loading-screen>svg circle+circle{stroke:var(--neutral-text,#c6d0f5)}}
 :root[data-theme=dark] #loading-screen{background:var(--card,#303446)}
-:root[data-theme=dark] #loading-screen>svg circle{stroke:var(--neutral-border,#51576d)}
-:root[data-theme=dark] #loading-screen>svg circle+circle{stroke:var(--ctp-lavender,#babbf1)}
+:root[data-theme=dark] #loading-screen>svg circle{stroke:var(--neutral-border,#737994)}
+:root[data-theme=dark] #loading-screen>svg circle+circle{stroke:var(--neutral-text,#c6d0f5)}
 @media (prefers-reduced-motion:reduce){#loading-screen>svg{animation-duration:2.4s}}
 #loading-screen .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap}
 `;

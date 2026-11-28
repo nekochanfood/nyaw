@@ -110,7 +110,7 @@ export function PageTransition({ children }: { children: ReactNode }) {
       >
         <div
           ref={barRef}
-          className="relative h-full w-full rounded-full bg-ctp-lavender text-ctp-lavender"
+          className="relative h-full w-full rounded-full bg-ctp-blue text-ctp-blue"
           style={{ transform: "translateX(-100%)" }}
         >
           {/* 先端の光。線の色のぼかした帯を、棒の右端に重ねる */}
