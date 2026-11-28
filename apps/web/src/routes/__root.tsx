@@ -53,13 +53,18 @@ function Shell({ children }: { children: ReactNode }) {
         {/* Base UI のポップアップを前面に出すため、ページの重なり順を分ける */}
         <LoadingScreen />
         <LoadingProvider>
-          <div className="isolate">{children}</div>
+          <div className="isolate">
+            {children}
+            {/*
+              画面の四辺を帯で覆い、内側の角を丸める。スクロールしても動かない。上辺の帯にはヘッダーが載るので、
+              ページと同じ重なりの中に置き、ヘッダー（z-50）をこの上に出す
+            */}
+            <div
+              aria-hidden
+              className="frame-x pointer-events-none fixed inset-x-0 top-(--frame-top) bottom-(--frame-gutter) z-40 rounded-(--frame-radius) shadow-[0_0_0_100vmax_var(--groove)]"
+            />
+          </div>
         </LoadingProvider>
-        {/* 画面の四辺を帯で覆い、内側の角を丸める。スクロールしても動かない */}
-        <div
-          aria-hidden
-          className="frame-x pointer-events-none fixed inset-x-0 inset-y-(--frame-gutter) z-40 rounded-(--frame-radius) shadow-[0_0_0_100vmax_var(--groove)]"
-        />
         <Scripts />
       </body>
     </html>

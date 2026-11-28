@@ -39,7 +39,7 @@ export function ThemeToggle() {
         aria-label={t("theme")}
         pressed={theme === "dark"}
         onPressedChange={(dark) => setTheme(dark ? "dark" : "light")}
-        className={buttonClass()}
+        className={buttonClass({ variant: "onFrame" })}
       >
         <span ref={iconRef} className="inline-flex">
           {theme === "dark" ? <Moon size={20} weight="fill" /> : <Sun size={20} weight="fill" />}

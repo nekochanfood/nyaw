@@ -36,20 +36,24 @@ function Layout() {
       >
         {t("skip")}
       </a>
+      {/* ヘッダーは上辺の帯に載せる。本文のカードの外に置き、フッターと同じく帯の色の上に並ぶ */}
+      <Header />
       {/*
-        帯の内側に載る本文のカード。下端だけを丸め、その先の帯の色にフッターが続く。
-        clip は hidden と違いスクロールの箱を作らないので、ヘッダーの sticky が効いたまま角で切り取れる。
+        帯の内側に載る本文のカード。下端だけを丸め、その先の帯の色にフッターが続く。上端の角は、画面に固定した
+        帯（__root）が丸める。上下の端には、帯にかかる本文をぼかす層（styles.css の .edge-fade）を置く。
+        clip は hidden と違いスクロールの箱を作らないので、ぼかしの層の sticky が効いたまま角で切り取れる。
         角はここだけ通常の角丸にし、半径も倍率を掛ける前の値にする。Chromium では、スーパーエリプスの角で
-        切り取った箱の内側にあると、ヘッダーの帯（backdrop-filter と mask-image）のマスクが効かなくなり、
-        帯が不透明のパネルになる
+        切り取った箱の内側にあると、ぼかしの層（backdrop-filter と mask-image）のマスクが効かなくなり、
+        層が不透明のパネルになる
       */}
-      <div className="frame-x mt-(--frame-gutter) flex min-h-[calc(100svh-2*var(--frame-gutter))] flex-col overflow-clip rounded-b-[calc(var(--frame-radius)/var(--corner-scale))] bg-card [corner-shape:round]">
-        <Header />
+      <div className="frame-x flex min-h-[calc(100svh-var(--frame-top)-var(--frame-gutter))] flex-col overflow-clip rounded-b-[calc(var(--frame-radius)/var(--corner-scale))] bg-card [corner-shape:round]">
+        <div aria-hidden className="edge-fade edge-fade-top" />
         <main id="main" className="flex grow flex-col">
           <PageTransition>
             <Outlet />
           </PageTransition>
         </main>
+        <div aria-hidden className="edge-fade edge-fade-bottom" />
       </div>
       <Footer />
     </TooltipProvider>

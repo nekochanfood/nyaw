@@ -60,11 +60,12 @@
     トークンの角丸（rounded-sm〜xl）はこの倍率を掛けた値になる。
   */
   --corner-scale: 1;
-  /* ページ全体を囲む帯の太さと、その内側の角丸 */
+  /* ページ全体を囲む帯の太さと、その内側の角丸。上辺の帯はヘッダー（h-16）の高さにする */
   --frame-gutter: 8px;
+  --frame-top: 4rem;
   --frame-radius: calc(24px * var(--corner-scale));
-  /* ページ内リンクの飛び先がヘッダー（h-16）に隠れないようにする */
-  scroll-padding-top: calc(4rem + var(--frame-gutter));
+  /* ページ内リンクの飛び先がヘッダーに隠れないようにする */
+  scroll-padding-top: var(--frame-top);
 }
 
 @supports (corner-shape: superellipse(1.4)) {
@@ -129,19 +130,25 @@
 }
 
 /*
-  ヘッダーの裏の帯。ヘッダーの高さの 2.25 倍まで伸ばし、背後を地の色でぼかしたうえで、
-  下へ向かって段階的に透明にする（直線のグラデーションだと、帯の下端に境目が見える）
+  本文のカードの上下の端のぼかし。カードの中に高さ 0 の sticky な要素を置き、帯の内側の上端（下端）に張り付かせる。
+  そこから 4rem だけ、背後をカードの色でぼかしたうえで、帯から離れる向きへ段階的に透明にする
+  （直線のグラデーションだと、ぼかしの端に境目が見える）。カードの中に置くので、カードの外のフッターにはかからない
 */
-.header-band::before {
+.edge-fade {
+  position: sticky;
+  z-index: 30;
+  height: 0;
+  pointer-events: none;
+}
+.edge-fade::before {
   content: "";
   position: absolute;
-  inset: 0 0 -125% 0;
-  z-index: -1;
-  pointer-events: none;
+  inset-inline: 0;
+  height: 4rem;
   background-color: var(--card);
   backdrop-filter: blur(16px);
   mask-image: linear-gradient(
-    to bottom,
+    var(--edge-fade-direction),
     black,
     rgb(0 0 0 / 0.95) 10%,
     rgb(0 0 0 / 0.87) 20%,
@@ -154,6 +161,20 @@
     rgb(0 0 0 / 0.02) 90%,
     transparent
   );
+}
+.edge-fade-top {
+  top: var(--frame-top);
+  --edge-fade-direction: to bottom;
+}
+.edge-fade-top::before {
+  top: 0;
+}
+.edge-fade-bottom {
+  bottom: var(--frame-gutter);
+  --edge-fade-direction: to top;
+}
+.edge-fade-bottom::before {
+  bottom: 0;
 }
 
 /*
@@ -168,14 +189,15 @@
 }
 
 /*
-  帯の内側の幅。横幅は縦の長さの 4/3 倍まで（4:3 まで）に限り、中央に置く。はみ出した左右は帯の色になる。
-  枠、本文のカード、フッター、メニューなど、帯の内側に置くものはこれで幅をそろえる
+  帯の内側の幅。横幅は帯の内側の縦の長さ（上のヘッダーと下の帯を除いた高さ）まで（1:1 まで）に限り、
+  中央に置く。はみ出した左右は帯の色になる。
+  ヘッダー、枠、本文のカード、フッター、メニューなど、帯の内側に置くものはこれで幅をそろえる
 */
 @utility frame-x {
   margin-inline: auto;
   width: min(
     calc(100% - 2 * var(--frame-gutter)),
-    calc((100dvh - 2 * var(--frame-gutter)) * 4 / 3)
+    calc(100dvh - var(--frame-top) - var(--frame-gutter))
   );
 }
 

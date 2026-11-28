@@ -34,7 +34,7 @@ export function LanguageMenu() {
   return (
     <Menu.Root open={open} onOpenChange={setOpen} modal={false}>
       <Tooltip label={t("language")}>
-        <Menu.Trigger aria-label={t("language")} className={buttonClass()}>
+        <Menu.Trigger aria-label={t("language")} className={buttonClass({ variant: "onFrame" })}>
           <Translate size={20} />
         </Menu.Trigger>
       </Tooltip>

@@ -8,7 +8,7 @@ export function NotFound() {
   const t = useT("not_found");
   const locale = useLocale();
   return (
-    <div className="frame-x my-(--frame-gutter) flex min-h-[calc(100svh-2*var(--frame-gutter))] flex-col items-center justify-center gap-6 bg-card p-8 text-center">
+    <div className="frame-x mt-(--frame-top) mb-(--frame-gutter) flex min-h-[calc(100svh-var(--frame-top)-var(--frame-gutter))] flex-col items-center justify-center gap-6 bg-card p-8 text-center">
       <title>{pageTitle(translate(locale, "meta", "not_found_title"))}</title>
       <meta name="robots" content="noindex" />
       <p className="text-7xl font-bold text-neutral-text-low">404</p>

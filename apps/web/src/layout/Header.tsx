@@ -89,9 +89,10 @@ export function Header() {
   }, [loaded]);
 
   return (
-    <header ref={ref} className="header-band sticky top-(--frame-gutter) z-30 h-16">
+    <header ref={ref} className="frame-x sticky top-0 z-50 h-(--frame-top)">
       {/*
-        高さ 64px に 40px のボタンを置くので、上下の余白は 12px。左右も 12px にして、両端のボタンをカードの角に収める。
+        上辺の帯（styles.css の --frame-top）に載せる。面は持たず、帯の色がそのまま見える。
+        高さ 64px に 40px のボタンを置くので、上下の余白は 12px。左右も 12px にする。
         ロゴは、左端に来る幅（md 以上）では自分の左の余白で本文の端にそろえる
       */}
       <div className="flex h-full w-full items-center justify-between gap-2 px-3">
@@ -124,6 +125,7 @@ export function Header() {
                 to={item.to}
                 params={item.params}
                 hash={item.hash}
+                variant="onFrame"
                 size="md"
                 className="font-normal"
               >
@@ -135,7 +137,13 @@ export function Header() {
         <div data-menu-hide className="flex items-center gap-1">
           <div data-header-item className="hidden sm:block">
             <Tooltip label={t("github")}>
-              <ButtonAnchor href={REPO_URL} target="_blank" rel="noopener" aria-label={t("github")}>
+              <ButtonAnchor
+                href={REPO_URL}
+                target="_blank"
+                rel="noopener"
+                aria-label={t("github")}
+                variant="onFrame"
+              >
                 <GithubLogo size={20} />
               </ButtonAnchor>
             </Tooltip>

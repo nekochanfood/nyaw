@@ -14,7 +14,7 @@ const page = (pathname: string) => {
   return `/${(isLocale(first) ? rest : [first, ...rest]).filter(Boolean).join("/")}`;
 };
 
-/** 遷移の進み具合を示す線。画面の上端の帯の内側に出す */
+/** 遷移の進み具合を示す線。上辺の帯（ヘッダー）のすぐ下、本文のカードの上端に出す */
 function progress(bar: HTMLElement | null) {
   if (!bar || reducedMotion()) return { finish: () => {} };
   const timeline = createTimeline()
@@ -96,7 +96,7 @@ export function PageTransition({ children }: { children: ReactNode }) {
       <div
         ref={barRef}
         aria-hidden
-        className="frame-x pointer-events-none fixed inset-x-0 top-(--frame-gutter) z-50 h-0.5 origin-left rounded-full bg-ctp-lavender opacity-0"
+        className="frame-x pointer-events-none fixed inset-x-0 top-(--frame-top) z-50 h-0.5 origin-left rounded-full bg-ctp-lavender opacity-0"
         style={{ transform: "scaleX(0)" }}
       />
       <div ref={ref} data-page className="flex grow flex-col">

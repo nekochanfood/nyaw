@@ -16,8 +16,11 @@ export const BUTTON_VARIANTS = {
   surface: `bg-control hover:bg-control-hover active:bg-control-active ${FADE}`,
   /** 本文色で塗った強調ボタン。文字は面の色で抜く */
   solid: `bg-neutral-text text-card hover:bg-neutral-text/85 ${FADE}`,
-  /** 帯（フッター）の上に置くアイコンボタン。ホバーの間だけ面が出る */
-  onFrame: `hover:bg-card ${FADE}`,
+  /**
+   * 帯（ヘッダー、フッター）の上に置くボタン。ホバーの間だけ面が出る。面は本文の色を薄く重ねたもので、
+   * ライトでは帯より暗く、ダークでは帯より明るくなる
+   */
+  onFrame: `hover:bg-neutral-text/8 data-popup-open:bg-neutral-text/8 ${FADE}`,
   /** 文字だけのリンク。ホバーで本文色になる */
   text: `text-neutral-text-low hover:text-neutral-text ${FADE}`,
 } as const;
@@ -81,5 +84,5 @@ export const POPUP_INSET = {
 export const menuItemClass =
   "flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm outline-none cursor-pointer transition-colors duration-(--duration-normal) data-highlighted:bg-control-on-background";
 
-/** 本文の左右の余白。幅は帯の内側（4:3 まで。styles.css の frame-x）いっぱいに使う */
+/** 本文の左右の余白。幅は帯の内側（1:1 まで。styles.css の frame-x）いっぱいに使う */
 export const containerClass = "w-full px-5 sm:px-8";
