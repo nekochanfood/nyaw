@@ -335,3 +335,17 @@ fn starting_a_stream_clears_old_gpui_hover_and_scroll_momentum() {
     assert!(pump(&mut kernel, &mut bridges).is_empty());
     assert!(bridges[&(panel, Hand::Right)].momentum.is_none());
 }
+
+/// 右・中ボタンを受け取らないパネル向けには、通常の押下と解放にする。
+#[test]
+fn primary_turns_aux_buttons_into_a_click() {
+    let (pos, button) = (Vec2::ZERO, ClickButton::Right);
+    assert_eq!(
+        PointerEvent::DownButton { pos, button }.primary(),
+        PointerEvent::Down { pos }
+    );
+    assert_eq!(
+        PointerEvent::UpButton { pos, button }.primary(),
+        PointerEvent::Up { pos }
+    );
+}

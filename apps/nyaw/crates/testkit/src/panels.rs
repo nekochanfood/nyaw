@@ -145,6 +145,7 @@ impl<V: Render> Panels<V> {
         let id = self.windows.len();
         let pose = spec.pose_for(kernel, id);
         let parent = spec.parent();
+        let input = spec.input_options();
         let (bar, owner) = (spec.nav_bar_spec(id), spec.nav_bar_of());
         let (size, res) = spec.size(kernel);
         let (root, cx) = cx
@@ -154,6 +155,7 @@ impl<V: Render> Panels<V> {
         cx.simulate_resize(gpui::size(gpui::px(res.0 as f32), gpui::px(res.1 as f32)));
         let view = root.read_with(cx, |root, _| root.view().downcast::<V>().ok());
         let panel = self.add(cx, kernel, pose, Some(size), view);
+        input.apply(kernel, panel);
         if let Some(parent) = parent {
             kernel.apply(panel, kernel::PanelCommand::Parent(Some(parent)));
         }

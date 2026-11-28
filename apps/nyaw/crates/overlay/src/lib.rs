@@ -336,6 +336,17 @@ pub enum PointerEvent {
     Leave,
 }
 
+impl PointerEvent {
+    /// 右・中ボタンの押下と解放を、通常（左）の押下と解放にする。ほかはそのまま。
+    pub fn primary(self) -> Self {
+        match self {
+            Self::DownButton { pos, .. } => Self::Down { pos },
+            Self::UpButton { pos, .. } => Self::Up { pos },
+            other => other,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UiEvent {
     pub panel: PanelId,

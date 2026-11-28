@@ -59,6 +59,8 @@ pub struct PanelSpec {
     reach: Option<f32>,
     /// 全体設定に依存しないポインタモード（[`Self::pointer_mode`]）。
     pointer_mode: Option<PointerMode>,
+    /// 右・中クリックを受け取る（[`Self::with_mouse_buttons`]）。
+    mouse_buttons: bool,
     /// グラブ時に手で移動する基準点（[`Self::grab_anchor`]）。
     grab_anchor: Option<Pose>,
     /// 親子関係の設定（[`Self::child`]）。
@@ -127,6 +129,7 @@ impl PanelSpec {
             keep_aspect: false,
             reach: None,
             pointer_mode: None,
+            mouse_buttons: false,
             grab_anchor: None,
             parent: None,
             animated: true,
@@ -364,6 +367,21 @@ impl PanelSpec {
     pub fn pointer_mode(mut self, mode: PointerMode) -> Self {
         self.pointer_mode = Some(mode);
         self
+    }
+
+    /// 右・中クリックも受け取る（映した画面の操作を試すパネル）。指定しなければ、親指をボタンに触れたまま
+    /// トリガーを引いても通常のクリックになる。
+    pub fn with_mouse_buttons(mut self) -> Self {
+        self.mouse_buttons = true;
+        self
+    }
+
+    /// ポインタ入力の受け取り方。本番と testkit の両方が、パネルを開くときに適用する（[`InputOptions::apply`]）。
+    pub fn input_options(&self) -> InputOptions {
+        InputOptions {
+            pointer_mode: self.pointer_mode,
+            mouse_buttons: self.mouse_buttons,
+        }
     }
 
     /// このパネルの表示・非表示アニメーションを無効化する。
@@ -616,6 +634,24 @@ pub(crate) enum Title {
     Text(gpui::SharedString),
 }
 
+/// [`PanelSpec`] のうち、ポインタ入力の受け取り方の指定。
+#[derive(Debug, Clone, Copy)]
+pub struct InputOptions {
+    pointer_mode: Option<PointerMode>,
+    mouse_buttons: bool,
+}
+
+impl InputOptions {
+    pub fn apply<B: VrBackend>(self, kernel: &mut Kernel<B>, panel: PanelId) {
+        if let Some(mode) = self.pointer_mode {
+            kernel.apply(panel, PanelCommand::PointerMode(mode));
+        }
+        if self.mouse_buttons {
+            kernel.apply(panel, PanelCommand::MouseButtons);
+        }
+    }
+}
+
 /// カーネルにパネルを作成し、GPUI ウィンドウを起動する。
 /// ランタイムがオーバーレイを作成できない場合（数の上限等）はエラーを出力して `None` を返す。
 pub(crate) fn open_panel(
@@ -673,9 +709,7 @@ pub(crate) fn open_panel(
     if spec.reach.is_some() {
         kernel.apply(panel, PanelCommand::Reach(spec.reach));
     }
-    if let Some(mode) = spec.pointer_mode {
-        kernel.apply(panel, PanelCommand::PointerMode(mode));
-    }
+    spec.input_options().apply(kernel, panel);
     if spec.grab_anchor.is_some() {
         kernel.apply(panel, PanelCommand::GrabAnchor(spec.grab_anchor));
     }
