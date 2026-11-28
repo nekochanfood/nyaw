@@ -6,6 +6,7 @@ nyaw のウェブサイト。リポジトリ全体の構成と共有の規約は
 
 - TanStack Start（React）を Cloudflare Workers で動かす（`vite.config.ts`、`wrangler.jsonc`）。サーバーの入口は `src/server.ts`。
 - スタイルは Tailwind CSS、UI の部品は Base UI（`@base-ui/react`）、アイコンは Phosphor Icons を使う。
+- 絵文字は `ui/Twemoji` で [jdecked/twemoji](https://github.com/jdecked/twemoji) の画像にして表示する（パーサーは `src/twemoji/parse.ts`）。画像は版を固定して jsDelivr から取得する。グラフィックは CC-BY 4.0。
 - 動きは anime.js で付ける（ポップアップの出入り、ページの出入り、ヘッダーの項目の登場）。スクロールは lenis で滑らかにする。動きを減らす設定（`prefers-reduced-motion`）では、どちらも使わない。
 - ページの出入りは `PageTransition` が動かす。読み込み画面 → ページのフェードインの順に進め、遷移のときはフェードアウトしてから次のページの描画が落ち着くのを待つ（`src/motion/stage.ts` の `waitSettled`）。動く要素は動きが始まるまで CSS で隠す（`.motion`）。
 - 整形と静的解析は [Oxc](https://oxc.rs/) のツール（oxfmt、oxlint。それぞれ別のパッケージ）を使う。
