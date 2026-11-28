@@ -14,20 +14,25 @@ const page = (pathname: string) => {
   return `/${(isLocale(first) ? rest : [first, ...rest]).filter(Boolean).join("/")}`;
 };
 
-/** 遷移の進み具合を示す線。本文のカードの上端に出し、両端は帯の内側の角丸で切り取られる */
-function progress(bar: HTMLElement | null) {
-  if (!bar || reducedMotion()) return { finish: () => {} };
+/**
+ * 遷移の進み具合を示す線。本文のカードの上端に出す。`line` は線の場所で、出入りのときに不透明度だけを変える。
+ * `bar` は線の幅いっぱいの棒で、左へずらしておき、右へ送って進み具合を見せる。始めは素早く 18% まで出し、
+ * そのあとは読み込みが終わるまで 85% へゆっくり近づける。終わったら端まで送り、少し置いて消す
+ */
+function progress(line: HTMLElement | null, bar: HTMLElement | null) {
+  if (!line || !bar || reducedMotion()) return { finish: () => {} };
   const timeline = createTimeline()
-    .add(bar, { opacity: [0, 1], duration: 150 }, 0)
-    .add(bar, { scaleX: [0, 0.2], duration: 200, ease: "out(2)" }, 0)
-    .add(bar, { scaleX: 0.85, duration: 6000, ease: "out(1)" });
+    .add(line, { opacity: [0, 1], duration: 150 }, 0)
+    .add(bar, { x: ["-100%", "-82%"], duration: 200, ease: "out(2)" }, 0)
+    .add(bar, { x: "-15%", duration: 8000, ease: "out(1)" });
   return {
     finish: () => {
       timeline.cancel();
       createTimeline()
-        .add(bar, { scaleX: 1, duration: 180, ease: "out(2)" })
-        .add(bar, { opacity: 0, duration: 200 }, "+=50")
-        .set(bar, { scaleX: 0 });
+        .add(line, { opacity: 1, duration: 100 }, 0)
+        .add(bar, { x: "0%", duration: 180, ease: "out(2)" }, 0)
+        .add(line, { opacity: 0, duration: 200 }, "+=50")
+        .set(bar, { x: "-100%" });
     },
   };
 }
@@ -41,6 +46,7 @@ export function PageTransition({ children }: { children: ReactNode }) {
   const loaded = useLoadingDone();
   const key = useRouterState({ select: (s) => page((s.resolvedLocation ?? s.location).pathname) });
   const ref = useRef<HTMLDivElement>(null);
+  const lineRef = useRef<HTMLDivElement>(null);
   const barRef = useRef<HTMLDivElement>(null);
   const finishProgress = useRef(() => {});
   const first = useRef(true);
@@ -53,7 +59,7 @@ export function PageTransition({ children }: { children: ReactNode }) {
         blockerFn: async ({ currentLocation, nextLocation }) => {
           if (page(nextLocation.pathname) === page(currentLocation.pathname)) return false;
           setPageShown(false);
-          finishProgress.current = progress(barRef.current).finish;
+          finishProgress.current = progress(lineRef.current, barRef.current).finish;
           const el = ref.current;
           if (el && !reducedMotion()) {
             await animate(el, { opacity: 0, y: 40, duration: 400, ease: "in(2)" });
@@ -93,12 +99,24 @@ export function PageTransition({ children }: { children: ReactNode }) {
 
   return (
     <>
+      {/*
+        線の場所。左へずらした棒や先端の光は帯の内側の外へはみ出すが、線は帯の下の重なりにあるので、
+        はみ出した部分は帯に覆われる（styles.css の --layer-progress）
+      */}
       <div
-        ref={barRef}
+        ref={lineRef}
         aria-hidden
-        className="frame-x pointer-events-none fixed inset-x-0 top-(--frame-top) z-(--layer-progress) h-0.5 origin-left rounded-full bg-ctp-lavender opacity-0"
-        style={{ transform: "scaleX(0)" }}
-      />
+        className="frame-x pointer-events-none fixed inset-x-0 top-(--frame-top) z-(--layer-progress) h-0.5 opacity-0"
+      >
+        <div
+          ref={barRef}
+          className="relative h-full w-full rounded-full bg-ctp-lavender text-ctp-lavender"
+          style={{ transform: "translateX(-100%)" }}
+        >
+          {/* 先端の光。線の色のぼかした帯を、棒の右端に重ねる */}
+          <span className="absolute top-1/2 -right-4 h-3 w-32 -translate-y-1/2 rounded-full bg-[linear-gradient(90deg,transparent_0%,currentColor_82%,transparent_100%)] opacity-80 blur-[4px]" />
+        </div>
+      </div>
       <div ref={ref} data-page className="flex grow flex-col">
         {children}
       </div>
