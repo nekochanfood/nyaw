@@ -83,10 +83,10 @@ export function Header() {
     <header ref={ref} className="frame-x sticky top-0 z-(--layer-header) h-(--frame-top)">
       {/*
         上辺の帯（styles.css の --frame-top）に載せる。面は持たず、帯の色がそのまま見える。
-        高さ 64px に 40px のボタンを置くので、上下の余白は 12px。左右の余白は持たず、両端のボタンを
-        帯の内側の端（本文のカードの端）にそろえる。ロゴは、左端に来る幅（md 以上）では自分の左の余白で本文の端にそろえる
+        高さ 64px に 40px のボタンを置くので、上下の余白は 12px。左右も 12px にする。
+        ロゴは、左端に来る幅（md 以上）では自分の左の余白で本文の端にそろえる
       */}
-      <div className="flex h-full w-full items-center justify-between gap-2">
+      <div className="flex h-full w-full items-center justify-between gap-2 px-3">
         <div className="flex items-center gap-2">
           {/* 狭い画面のメニューのボタン。ロゴの左隣に置く */}
           <div data-header-item className="md:hidden">
@@ -98,8 +98,8 @@ export function Header() {
             to="/$locale"
             params={{ locale }}
             aria-label={t("home")}
-            // 左の余白は、本文の端（sm 以上で 32px）と同じ幅
-            className="mr-2 flex h-10 items-center rounded-lg px-1 md:pl-8"
+            // 左の余白は、ヘッダーの余白（12px）と足して本文の端（sm 以上で 32px）になる幅
+            className="mr-2 flex h-10 items-center rounded-lg px-1 md:pl-5"
             onMouseEnter={(e) => wiggle(e.currentTarget.querySelector("[data-logo]"))}
           >
             {/* 揺らすのはロゴの絵だけ。余白込みの箱を回すと、回転の中心がずれる */}

@@ -6,7 +6,7 @@ import type { ReactNode } from "react";
 import { useLocale, useT } from "@/i18n/index";
 import { ISSUES_URL, RELEASES_URL, REPO_URL } from "@/links";
 import { ButtonAnchor } from "@/ui/Button";
-import { buttonClass, textClass } from "@/ui/variants";
+import { buttonClass, containerClass, cx, textClass } from "@/ui/variants";
 import { Logo } from "@/layout/Logo";
 
 const linkClass = buttonClass({
@@ -40,8 +40,7 @@ export function Footer() {
   const locale = useLocale();
   return (
     <footer className="frame-x pt-14 pb-12">
-      {/* 左右の余白は持たず、帯の内側の端（本文のカードの端）にそろえる */}
-      <div className="flex w-full flex-col gap-12">
+      <div className={cx(containerClass, "flex flex-col gap-12")}>
         <div className="flex flex-col-reverse gap-10 sm:flex-row sm:justify-between">
           <div className="flex flex-wrap gap-x-16 gap-y-8">
             <Column title={t("title_product")}>
