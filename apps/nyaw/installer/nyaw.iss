@@ -45,6 +45,8 @@ Source: "..\target\release\nyaw.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Steam Audio。`cargo build` で crates/subsystems/audio/build.rs が配置する。存在しなければ（ダウンロード失敗時）ここでエラーになる
 Source: "..\target\release\phonon.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\target\release\steamaudio-THIRDPARTY.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\..\LICENSE-GPL"; DestDir: "{app}"
+Source: "..\..\..\LICENSE-EXCEPTION"; DestDir: "{app}"
 Source: "..\..\..\LICENSE-MIT"; DestDir: "{app}"
 Source: "..\..\..\LICENSE-APACHE"; DestDir: "{app}"
 

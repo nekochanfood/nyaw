@@ -3,7 +3,7 @@ name = "updater"
 description = "アプリの自動更新：GitHub リリースから新しいビルドを検出し、ユーザーの承認後にインストーラーをダウンロードしてサイレント実行する"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "GPL-3.0-or-later"
 repository.workspace = true
 
 # 通信・ダウンロード・インストーラーの起動は update サブシステム（kernel::subsystems::update）が行う

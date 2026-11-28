@@ -20,7 +20,7 @@
     "home": "nyaw home"
   },
   "footer": {
-    "licence": "Licensed under MIT or Apache-2.0",
+    "licence": "Licensed under GPL-3.0-or-later",
     "issues": "Report an issue",
     "releases": "Releases",
     "source": "Source code",

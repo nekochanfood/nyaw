@@ -36,7 +36,16 @@ cargo run --release -- --novr
 
 ## ライセンス
 
-本ソフトウェアは [MIT ライセンス](LICENSE-MIT) または [Apache-2.0 ライセンス](LICENSE-APACHE) の下で配布されています。
+nyaw アプリとウェブサイトは [GPL-3.0-or-later](LICENSE-GPL)（[追加許可](LICENSE-EXCEPTION)あり）、再利用できる基盤のクレートは [MIT ライセンス](LICENSE-MIT) または [Apache-2.0 ライセンス](LICENSE-APACHE) の下で配布されています。
+
+| ライセンス | 対象 |
+|---|---|
+| GPL-3.0-or-later | `apps/web`、`apps/nyaw` のアプリ本体（`src`、`build.rs`、`installer`）、`apps/nyaw/crates` の `ui`・`design`・`i18n`・`dashboard`・`settings`・`setup`・`wrist`・`toast`・`beam`・`updater`・`guide`・`testing`・`testkit` |
+| MIT OR Apache-2.0 | 上記以外（`subsystems`、`kernel`、`overlay`、`logger`、`animation`、`lottie`、`profiler`、`metrics` など） |
+
+同梱する第三者の素材とソース（`apps/nyaw/vendor`、フォント、アイコン、Twemoji、キーボードのデータなど）には、それぞれの配置先に記載したライセンスが適用されます。`assets/renders` のコントローラ画像は、どちらのライセンスの対象でもありません（[詳細](assets/renders/acknowledgements.md)）。
+
+過去に MIT または Apache-2.0 で公開した版は、引き続きその条件で利用できます。
 
 絵文字グラフィックには [Twemoji](https://github.com/jdecked/twemoji) v17.0.3 の SVG を同梱しています。  
 Graphics: Twitter, Inc. and contributors / [CC BY 4.0](apps/nyaw/crates/design/twemoji/LICENSE-GRAPHICS)。

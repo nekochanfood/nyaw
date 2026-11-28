@@ -2,7 +2,7 @@
 name = "testkit"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "GPL-3.0-or-later"
 publish = false
 
 # Development only. Production crates must reference this only via dev-dependencies.

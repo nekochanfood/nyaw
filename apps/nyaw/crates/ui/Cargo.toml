@@ -2,7 +2,7 @@
 name = "ui"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "GPL-3.0-or-later"
 
 # UI 層。パネルを GPUI ウィンドウとして実体化する。
 [dependencies]

@@ -2,7 +2,7 @@
 name = "guide"
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license = "GPL-3.0-or-later"
 
 # 操作ガイド: コントローラのレンダリング画像と、操作部分を囲む円・テール・説明（画像と座標はリポジトリルートの assets/renders を埋め込む）。
 [dependencies]

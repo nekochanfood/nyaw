@@ -20,7 +20,7 @@
     "home": "nyaw のホーム"
   },
   "footer": {
-    "licence": "MIT または Apache-2.0 ライセンス",
+    "licence": "GPL-3.0-or-later ライセンス",
     "issues": "問題を報告",
     "releases": "リリース",
     "source": "ソースコード",
