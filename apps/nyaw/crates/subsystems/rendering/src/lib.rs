@@ -114,6 +114,11 @@ impl Surface {
     }
 
     pub fn store(&mut self, width: u32, height: u32, rgba: &[u8]) {
+        self.store_owned(width, height, rgba.to_vec());
+    }
+
+    /// [`Self::store`] の、画素を複製せずに受け取る版。大きな画像を毎フレーム送る呼び出し側が使う。
+    pub fn store_owned(&mut self, width: u32, height: u32, rgba: Vec<u8>) {
         assert_eq!(
             rgba.len(),
             width as usize * height as usize * 4,
@@ -121,7 +126,7 @@ impl Surface {
         );
         // park 中も保持する（再作成時に送信する）。
         if !self.released {
-            self.texture = Some((width, height, rgba.to_vec()));
+            self.texture = Some((width, height, rgba));
         }
     }
 
@@ -248,6 +253,16 @@ impl Surface {
 mod tests {
     use super::*;
     use vr::{Vec3, mock::MockBackend};
+
+    #[test]
+    fn owned_pixels_are_kept_without_copying() {
+        let mut vr = MockBackend::default();
+        let mut surface = Surface::new(&mut vr, "owned", 1.0, Pose::IDENTITY).unwrap();
+        let rgba = vec![7; 4];
+        let pixels = rgba.as_ptr();
+        surface.store_owned(1, 1, rgba);
+        assert_eq!(surface.texture.as_ref().unwrap().2.as_ptr(), pixels);
+    }
 
     #[test]
     fn native_alpha_keeps_pixels_and_skips_reupload() {

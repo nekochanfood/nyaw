@@ -349,12 +349,14 @@ impl<B: VrBackend> Kernel<B> {
                 self.overlay
                     .set_content_resolution(id, (frame.width, frame.height));
                 let started = Instant::now();
-                self.overlay.submit(
+                // 画素は 1 枚で数 MB あるので、取り込んだバッファをそのまま渡す。
+                let frame = Arc::unwrap_or_clone(frame);
+                self.overlay.submit_owned(
                     &mut self.subsystems.backend,
                     id,
                     frame.width,
                     frame.height,
-                    &frame.rgba,
+                    frame.rgba,
                 );
                 let done = Instant::now();
                 panel.meter.add(
