@@ -1,6 +1,6 @@
 name: web CI
 
-# ウェブサイト（apps/web/）の検査。参照するアプリ側の資産が変わったときも実行する（changes ジョブが判定する）。
+# ウェブサイト（apps/web/）の検査と公開。参照するアプリ側の資産が変わったときも実行する（changes ジョブが判定する）。
 # 実行するのは、ドラフトでない PR の更新と main への push だけ（作業ブランチへの push では実行しない）
 on:
   push:
@@ -8,8 +8,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
+# main はキャンセル対象外とし、実行ごとに独立したグループにする。後続の push がウェブサイトに関係しないと、
+# キャンセルされた実行の変更が公開されないまま残る
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -69,3 +71,41 @@ jobs:
             apps/web/playwright-report/
             apps/web/test-results/
           retention-days: 7
+
+  # nyaw.chanfoo.net（Cloudflare Workers）への公開。main の変更がウェブサイトに関係し、検査がすべて成功したときに実行する
+  deploy:
+    needs: [changes, check, e2e]
+    if: needs.changes.outputs.web == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # 公開は 1 件ずつ実行する。queue: max がないと、順番待ちのジョブは後から来たジョブに置き換えられる
+    concurrency:
+      group: web-deploy
+      queue: max
+    # CLOUDFLARE_API_TOKEN と CLOUDFLARE_ACCOUNT_ID は、この環境のシークレットに置く（使えるのは main だけ）
+    environment:
+      name: production
+      url: https://nyaw.chanfoo.net
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: |
+          sed -i '/^cargo:/,/enabled:/s/enabled: true/enabled: false/' pnpm-workspace.yaml
+      - run: pnpm install --frozen-lockfile
+      # 検査の所要時間は実行ごとに違うため、古いコミットの公開が後になることがある。
+      # main の先頭までの間にウェブサイトの変更があれば、そのコミットの実行に任せる
+      - env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin main
+          newer=$(git diff --name-only --no-renames HEAD FETCH_HEAD | bash .github/scripts/changes.sh)
+          if grep -qx web=true <<< "$newer"; then
+            echo "::notice::main にウェブサイトの新しい変更があるため、このコミットは公開しない"
+            exit 0
+          fi
+          pnpm --filter web run deploy

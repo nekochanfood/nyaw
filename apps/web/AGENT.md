@@ -56,6 +56,14 @@ E2E テストを初めて実行するときは、`pnpm exec playwright install c
 
 CI（`.github/workflows/web.yml`）は整形の確認、静的解析、型検査、単体テスト、ビルド、E2E テストを、それぞれ別のジョブで並列に実行する。実行するのは、ドラフトでない PR の更新と `main` への push だけである。
 
+## 公開
+
+サイトは <https://nyaw.chanfoo.net> で公開する（`wrangler.jsonc` のカスタムドメイン）。
+
+- `web.yml` の `deploy` ジョブがデプロイする。実行するのは、`main` への push がウェブサイトに関係し（判定は `.github/scripts/changes.sh` の `web`）、検査がすべて成功したときである。検査が失敗した場合、公開中の内容は変わらない。
+- 認証には GitHub の `production` 環境のシークレット `CLOUDFLARE_API_TOKEN`（テンプレート「Edit Cloudflare Workers」で作り、対象をこのアカウントと `chanfoo.net` に絞る）と `CLOUDFLARE_ACCOUNT_ID` を使う。この環境は `main` からしか使えない。
+- 失敗したデプロイは、Actions の画面で失敗したジョブを再実行する。
+
 ## デザイントークン
 
 `scripts/tokens.mjs` がアプリの `tokens.json` から、角丸と時間を `src/tokens.css` に書き出す（`dev`・`build`・`typecheck` が実行する。コミットしない）。

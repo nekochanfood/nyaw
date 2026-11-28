@@ -4,5 +4,7 @@
   "compatibility_date": "2026-11-24",
   "compatibility_flags": ["nodejs_compat"],
   "main": "src/server.ts",
+  // DNS レコードと証明書はデプロイ時に Cloudflare が作る。routes があるので workers.dev では公開されない
+  "routes": [{ "pattern": "nyaw.chanfoo.net", "custom_domain": true }],
   "observability": { "enabled": true },
 }
