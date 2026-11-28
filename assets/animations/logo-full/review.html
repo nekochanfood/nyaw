@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>フルロゴのイントロ（レビュー）</title>
+    <!-- レビューのためだけに CDN から読む。サイトなど本番の側では、それぞれの依存として入れる -->
+    <script src="https://cdn.jsdelivr.net/npm/lottie-web@5.12.2/build/player/lottie_svg.min.js"></script>
+    <style>
+      :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+      body { margin: 0; padding: 24px; display: grid; gap: 16px; background: var(--bg); color: var(--fg); }
+      body[data-theme="light"] { --bg: #eff1f5; --fg: #4c4f69; --panel: #e6e9ef; }
+      body[data-theme="dark"] { --bg: #303446; --fg: #c6d0f5; --panel: #292c3c; }
+      .stage { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+      figure { margin: 0; padding: 24px; background: var(--panel); border-radius: 12px; }
+      figcaption { font-size: 13px; opacity: 0.7; margin-top: 8px; }
+      #still img { width: 100%; display: block; }
+      .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+      input[type="range"] { flex: 1; min-width: 200px; }
+      button, select { font: inherit; padding: 4px 12px; }
+      output { font-variant-numeric: tabular-nums; min-width: 9ch; }
+      body.capture { padding: 0; }
+      body.capture .bar, body.capture figcaption, body.capture #stillFig { display: none; }
+      body.capture .stage { display: block; }
+    </style>
+  </head>
+  <body data-theme="light">
+    <div class="bar">
+      <button id="play">一時停止</button>
+      <button id="replay">最初から</button>
+      <input id="seek" type="range" min="0" step="1" value="0" />
+      <output id="frame"></output>
+      <label>速さ <select id="speed"><option>0.25</option><option>0.5</option><option selected>1</option></select></label>
+      <label><input id="loop" type="checkbox" checked /> 繰り返す</label>
+      <button id="theme">ダーク</button>
+    </div>
+    <div class="stage">
+      <figure><div id="anim"></div><figcaption>Lottie（logo-full-<span id="themeName">light</span>.json）</figcaption></figure>
+      <figure id="stillFig"><div id="still"><img alt="静止画のロゴ" /></div><figcaption>比較用の静止画（assets/logos）。Lottie の合成と同じ余白を付けて並べる。最後のフレームはこれと同じ見た目になる</figcaption></figure>
+    </div>
+    <script>
+      // ?theme=dark&frame=40 で、そのフレームに止めて操作部を隠す（ヘッドレスのブラウザーで撮るため）
+      const params = new URLSearchParams(location.search);
+      const captureFrame = params.get("frame");
+      if (captureFrame !== null) document.body.classList.add("capture");
+      let theme = params.get("theme") ?? "light";
+      let anim;
+      const $ = (id) => document.getElementById(id);
+
+      function load() {
+        document.body.dataset.theme = theme;
+        $("themeName").textContent = theme;
+        $("theme").textContent = theme === "light" ? "ダーク" : "ライト";
+        $("still").querySelector("img").src = `../../logos/Logo_Full_${theme === "light" ? "Light" : "Dark"}.svg`;
+        anim?.destroy();
+        anim = lottie.loadAnimation({
+          container: $("anim"),
+          renderer: "svg",
+          loop: $("loop").checked,
+          autoplay: captureFrame === null,
+          path: `./logo-full-${theme}.json`,
+        });
+        anim.addEventListener("DOMLoaded", () => {
+          $("seek").max = anim.totalFrames - 1;
+          // 合成は、ロゴの外形の四辺に余白を足した大きさ。静止画にも同じ割合の余白を付けて、大きさをそろえる
+          const { w, h } = anim.animationData;
+          $("anim").style.aspectRatio = `${w} / ${h}`;
+          fetch($("still").querySelector("img").src)
+            .then((r) => r.text())
+            .then((svg) => {
+              const vbWidth = Number(svg.match(/viewBox="[^"]*"/)[0].split(/[ "]/)[3]);
+              $("still").style.padding = `${(((w - vbWidth) / 2 / w) * 100).toFixed(3)}%`;
+            });
+          if (captureFrame !== null) {
+            anim.goToAndStop(Number(captureFrame), true);
+            document.body.dataset.ready = "1";
+          }
+        });
+        anim.addEventListener("enterFrame", () => {
+          $("seek").value = anim.currentFrame;
+          $("frame").textContent = `${Math.floor(anim.currentFrame)} / ${anim.totalFrames - 1}`;
+        });
+        anim.setSpeed(Number($("speed").value));
+        $("play").textContent = "一時停止";
+      }
+
+      $("play").onclick = () => {
+        anim.isPaused ? anim.play() : anim.pause();
+        $("play").textContent = anim.isPaused ? "再生" : "一時停止";
+      };
+      $("replay").onclick = () => anim.goToAndPlay(0, true);
+      $("seek").oninput = (e) => {
+        anim.goToAndStop(Number(e.target.value), true);
+        $("frame").textContent = `${e.target.value} / ${anim.totalFrames - 1}`;
+        $("play").textContent = "再生";
+      };
+      $("speed").onchange = (e) => anim.setSpeed(Number(e.target.value));
+      $("loop").onchange = (e) => (anim.loop = e.target.checked);
+      $("theme").onclick = () => {
+        theme = theme === "light" ? "dark" : "light";
+        load();
+      };
+      load();
+    </script>
+  </body>
+</html>
