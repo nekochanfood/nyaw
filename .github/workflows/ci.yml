@@ -63,6 +63,8 @@ jobs:
         with:
           toolchain: 1.100.1
           components: clippy
+      # rust-cache はインストール済みの全バージョンをキーに含める。runner の stable を残すと、runner の更新でキーが変わる
+      - run: rustup toolchain uninstall stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/nyaw
@@ -82,6 +84,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.100.1
+      # rust-cache はインストール済みの全バージョンをキーに含める。runner の stable を残すと、runner の更新でキーが変わる
+      - run: rustup toolchain uninstall stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: apps/nyaw

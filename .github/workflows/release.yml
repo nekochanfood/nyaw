@@ -145,6 +145,9 @@ jobs:
           mv "pr-installer/nyaw-${TAG#v}-setup.exe" target/installer/
           echo "::notice::reusing the installer built by run $run for $head"
           echo "BUILD=" >> "$GITHUB_ENV"
+      # rust-cache はインストール済みの全バージョンをキーに含める。runner の stable を残すと、runner の更新でキーが変わる
+      - if: env.BUILD == '1'
+        run: rustup toolchain uninstall stable
       - if: env.BUILD == '1'
         id: cache
         uses: Swatinem/rust-cache@v2
